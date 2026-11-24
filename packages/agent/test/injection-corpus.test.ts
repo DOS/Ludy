@@ -46,6 +46,7 @@ import {
   type EInvoiceReasonFacts,
   type ExpenseVarianceNoteFacts,
   type HrAddendumCheckInput,
+  type HrOkrCheckinDraftInput,
   type HrProbationSummaryInput,
   type HrSelfPolicyQaInput,
   type HrSelfRequestDraftInput,
@@ -1302,6 +1303,7 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
     cover('hr.request_draft');
     cover('hr.policy_qa');
     cover('hr.addendum_check');
+    cover('hr.okr_checkin_draft');
 
     const recruitingInput: RecruitingBriefInput = {
       language: 'vi',
@@ -1355,6 +1357,26 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
       previousTitle: 'Chuyên viên',
       newTitle: 'Trưởng nhóm',
     };
+    const okrCheckinInput: HrOkrCheckinDraftInput = {
+      language: 'vi',
+      quarter: '2026-Q4',
+      objectiveScope: 'individual',
+      objectiveTitle: 'Tối ưu giao hàng nội thành',
+      keyResultTitle: 'Hoàn thành 4 bước tự động hóa đơn hàng',
+      metricType: 'project_tasks',
+      targetValue: '4',
+      currentValue: '3',
+      unit: 'công việc',
+      progressPct: '75',
+      departmentName: 'Vận hành',
+      lastCheckinNote: null,
+      projectsAvailable: true,
+      projectAccessible: true,
+      linkedProjectName: 'Vận hành Q4',
+      completedLinkedTasks: 3,
+      totalLinkedTasks: 4,
+      linkedTaskTitles: [{ title: 'Kết nối đơn vị vận chuyển', completed: true }],
+    };
 
     for (const c of INJECTION_CORPUS) {
       const reader = new InboxReader(STUB_CONFIG, {
@@ -1385,6 +1407,10 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
           output: { note: c.poisonedOutput },
           usage: zeroUsage,
         }),
+        hrOkrCheckinDraft: async () => ({
+          output: { draft: c.poisonedOutput },
+          usage: zeroUsage,
+        }),
       });
 
       const recRes = await reader.recruitingBrief({ ...recruitingInput, notes: [c.untrustedInput] });
@@ -1409,6 +1435,10 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
       const addRes = await reader.hrAddendumCheck({ ...addendumInput, language: c.language, changeSummary: c.untrustedInput });
       expect(addRes.reason, `addendum reason ${c.id}`).not.toBe('ok');
       expect(addRes.lyNote, `addendum lyNote ${c.id}`).toBeNull();
+
+      const okrRes = await reader.hrOkrCheckinDraft({ ...okrCheckinInput, language: c.language, lastCheckinNote: c.untrustedInput });
+      expect(okrRes.ai.ok, `okr ai.ok ${c.id}`).toBe(false);
+      expect(okrRes.draft, `okr draft ${c.id}`).toBeNull();
     }
 
     const requestDraftBase: HrSelfRequestDraftInput = {

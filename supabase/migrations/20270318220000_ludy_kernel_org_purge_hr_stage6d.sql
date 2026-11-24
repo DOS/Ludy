@@ -1,7 +1,6 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
 -- The org purge deletes HR quarterly OKR key results and objectives ahead of payroll_employee and department (#4529 Stage 6D).
--- This replaces ludy_kernel.org_purge from 20270316130100_ludy_kernel_org_purge_sign_api_keys (with 20270316140000 ludy_* schema names)
--- adding ludy_hr.okr_key_result and ludy_hr.okr_objective in v_kernel_first; nothing else changes.
+-- Restates ludy_kernel.org_purge post-20270318200000; nothing else changes.
 SET LOCAL lock_timeout = '2s';
 
 CREATE OR REPLACE FUNCTION ludy_kernel.org_purge(p_min_days integer)
@@ -45,15 +44,15 @@ DECLARE
     'ludy_sign.signing_otp', 'ludy_sign.signing_token', 'ludy_sign.ai_analysis', 'ludy_sign.field', 'ludy_sign.signer', 'ludy_sign.envelope',
     'ludy_kernel.member_vy_memory', 'ludy_kernel.member_vy_result',
     'ludy_hr.candidate', 'ludy_hr.job_opening',
-    'ludy_hr.payroll_bank_template', 'ludy_hr.payroll_dependent', 'ludy_hr.attendance_log', 'ludy_hr.attendance_qr_config', 'ludy_hr.onboarding_submission', 'ludy_hr.overtime_request', 'ludy_hr.probation_review', 'ludy_hr.okr_key_result', 'ludy_hr.okr_objective', 'ludy_hr.leave_request', 'ludy_hr.payroll_leave_entry', 'ludy_hr.payroll_employee', 'ludy_hr.department',
+    'ludy_hr.payroll_bank_template', 'ludy_hr.payroll_dependent', 'ludy_hr.attendance_log', 'ludy_hr.attendance_qr_config', 'ludy_hr.onboarding_submission', 'ludy_hr.overtime_request', 'ludy_hr.probation_review', 'ludy_hr.leave_request', 'ludy_hr.payroll_leave_entry', 'ludy_hr.employee_asset_handover', 'ludy_hr.okr_key_result', 'ludy_hr.okr_objective', 'ludy_hr.payroll_employee', 'ludy_hr.department',
     'ludy_meetings.glossary_term', 'ludy_meetings.minutes_template', 'ludy_meetings.chat_post_body', 'ludy_meetings.chat_post', 'ludy_meetings.chat_channel_target', 'ludy_meetings.chat_channel', 'ludy_meetings.morning_notice', 'ludy_meetings.calendar_agenda', 'ludy_meetings.capture_session', 'ludy_meetings.hook_delivery', 'ludy_meetings.member_hook', 'ludy_meetings.translation', 'ludy_meetings.meeting_note', 'ludy_meetings.media_key', 'ludy_meetings.action_item', 'ludy_meetings.meeting_result', 'ludy_meetings.transcript_segment', 'ludy_meetings.live_line', 'ludy_meetings.live_chunk', 'ludy_meetings.audio_segment', 'ludy_meetings.meeting_video', 'ludy_meetings.meeting_reader', 'ludy_meetings.meeting',
     'ludy_kernel.saved_reply', 'ludy_kernel.conversation_setting', 'ludy_kernel.member_availability', 'ludy_kernel.conversation_composing', 'ludy_kernel.conversation_draft', 'ludy_kernel.conversation_note', 'ludy_kernel.conversation_read', 'ludy_kernel.conversation_attachment', 'ludy_kernel.conversation_message', 'ludy_kernel.conversation', 'ludy_kernel.conversation_identity', 'ludy_kernel.channel_access',
     'ludy_ads.ad_flag_setting', 'ludy_ads.ad_campaign_request', 'ludy_ads.ad_campaign_draft', 'ludy_ads.ad_spend_cap', 'ludy_ads.ad_org_setting', 'ludy_ads.ad_sync_run', 'ludy_ads.ad_spend_day', 'ludy_ads.ad_account',
     'ludy_kernel.today_mail', 'ludy_kernel.saved_view', 'ludy_notes.link', 'ludy_notes.todo', 'ludy_notes.todo_list', 'ludy_notes.attachment', 'ludy_notes.note_version', 'ludy_notes.note', 'ludy_notes.notebook', 'ludy_notes.note_template',
-    'ludy_projects.roadmap_announcement', 'ludy_projects.roadmap_vote', 'ludy_projects.roadmap_subscriber', 'ludy_projects.roadmap_otp', 'ludy_projects.roadmap_item', 'ludy_projects.roadmap_board',
-    'ludy_projects.time_entry', 'ludy_projects.task_dependency', 'ludy_projects.project_task', 'ludy_projects.project_column', 'ludy_projects.project_cycle', 'ludy_projects.project_member', 'ludy_projects.project',
+    'ludy_projects.roadmap_signal', 'ludy_projects.roadmap_announcement', 'ludy_projects.roadmap_vote', 'ludy_projects.roadmap_subscriber', 'ludy_projects.roadmap_otp', 'ludy_projects.roadmap_item', 'ludy_projects.roadmap_board',
+    'ludy_projects.project_triage_item', 'ludy_projects.time_entry', 'ludy_projects.task_dependency', 'ludy_projects.project_task', 'ludy_projects.project_column', 'ludy_projects.project_cycle', 'ludy_projects.project_member', 'ludy_projects.project',
     'ludy_kernel.activity', 'ludy_kernel.agent_wakeup', 'ludy_kernel.extraction',
-    'ludy_kernel.inbound_message', 'ludy_kernel.notification', 'ludy_kernel.notification_mute', 'ludy_kernel.inbox_item',
+    'ludy_kernel.inbound_message', 'ludy_kernel.push_subscription', 'ludy_kernel.notification', 'ludy_kernel.notification_mute', 'ludy_kernel.inbox_item',
     'ludy_kernel.mail_event', 'ludy_kernel.mail_suppression', 'ludy_kernel.mail_message',
     'ludy_kernel.member_invite', 'ludy_kernel.auth_session_org', 'ludy_kernel.inbound_drop',
     'ludy_kernel.idempotency_key', 'ludy_kernel.extension_token', 'ludy_kernel.extension_auth_code', 'ludy_kernel.agent_wake_delivery', 'ludy_kernel.agent_wake_signal_seen', 'ludy_kernel.agent_grant_wake', 'ludy_kernel.agent_grant', 'ludy_kernel.oauth_state', 'ludy_kernel.outbox_pending', 'ludy_kernel.outbox_held',
@@ -119,12 +118,24 @@ BEGIN
   DELETE FROM ludy_finance.einvoice_draft d WHERE d.org_id = v_org;
   GET DIAGNOSTICS v_n = ROW_COUNT;
   v_deleted := v_deleted || pg_catalog.jsonb_build_object('ludy_finance.einvoice_draft', v_n);
+  DELETE FROM ludy_hr.salary_advance_request r WHERE r.org_id = v_org;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  v_deleted := v_deleted || pg_catalog.jsonb_build_object('ludy_hr.salary_advance_request', v_n);
+  DELETE FROM ludy_hr.payroll_adjustment_item a WHERE a.org_id = v_org;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  v_deleted := v_deleted || pg_catalog.jsonb_build_object('ludy_hr.payroll_adjustment_item', v_n);
+  DELETE FROM ludy_hr.business_trip_request b WHERE b.org_id = v_org;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  v_deleted := v_deleted || pg_catalog.jsonb_build_object('ludy_hr.business_trip_request', v_n);
   DELETE FROM ludy_hr.payroll_line l WHERE l.org_id = v_org;
   GET DIAGNOSTICS v_n = ROW_COUNT;
   v_deleted := v_deleted || pg_catalog.jsonb_build_object('ludy_hr.payroll_line', v_n);
   DELETE FROM ludy_hr.payroll_run r WHERE r.org_id = v_org;
   GET DIAGNOSTICS v_n = ROW_COUNT;
   v_deleted := v_deleted || pg_catalog.jsonb_build_object('ludy_hr.payroll_run', v_n);
+  DELETE FROM ludy_hr.contract_addendum ca WHERE ca.org_id = v_org;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  v_deleted := v_deleted || pg_catalog.jsonb_build_object('ludy_hr.contract_addendum', v_n);
   DELETE FROM ludy_hr.payroll_employment e WHERE e.org_id = v_org;
   GET DIAGNOSTICS v_n = ROW_COUNT;
   v_deleted := v_deleted || pg_catalog.jsonb_build_object('ludy_hr.payroll_employment', v_n);

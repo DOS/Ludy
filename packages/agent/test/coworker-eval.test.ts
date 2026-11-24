@@ -330,6 +330,10 @@ function createStubRuntime() {
       output: { note: 'Phụ lục PL-2026-01 cho P1 đầy đủ ngày hiệu lực 01/12/2026 theo Điều 33.' },
       usage: zeroUsage,
     }),
+    hrOkrCheckinDraft: async () => ({
+      output: { draft: 'Trong quý 2026-Q4, P1 đã đạt 3/4 công việc (75%) cho dự án Vận hành Q4.' },
+      usage: zeroUsage,
+    }),
   });
 
   return createCoworkerEvalRuntime(STUB_CONFIG, {

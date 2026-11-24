@@ -406,16 +406,7 @@ CREATE POLICY hr_okr_objective_update ON ludy_hr.okr_objective AS RESTRICTIVE FO
     )
   );
 
-CREATE POLICY hr_okr_objective_delete ON ludy_hr.okr_objective AS RESTRICTIVE FOR DELETE TO ludy_tenant
-  USING (
-    (SELECT ludy_kernel.ctx_actor_type()) = 'user'
-    AND EXISTS (
-      SELECT 1 FROM ludy_kernel.tenant_member m
-       WHERE m.org_id = okr_objective.org_id
-         AND m.user_id = (SELECT ludy_kernel.ctx_user_id())
-         AND m.role IN ('owner', 'admin')
-    )
-  );
+DROP POLICY IF EXISTS hr_okr_objective_delete ON ludy_hr.okr_objective;
 
 -- 4. Anti-recursion SECURITY DEFINER RLS helpers for okr_key_result referencing okr_objective.
 CREATE OR REPLACE FUNCTION ludy_hr.can_read_okr_objective(p_org_id uuid, p_objective_id uuid)

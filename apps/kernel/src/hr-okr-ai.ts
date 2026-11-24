@@ -5,6 +5,7 @@
 import {
   AiBudgetExhaustedError,
   AiMeterMissingError,
+  PayrollPromptLeakError,
   buildDeterministicOkrCheckinSummary,
   withAiScope,
   type AiMeter,
@@ -66,12 +67,16 @@ export async function draftOkrCheckinSummary(
     status: HrOkrDraftCheckinResult['status'],
     draftNote: string | null,
   ): Promise<HrOkrDraftCheckinResult> => {
-    await ports.record({
-      keyResultId: facts.keyResultId,
-      aiStatus: status,
-      progressPct: facts.progressPct,
-      completedLinkedTasks: facts.completedLinkedTasks,
-    }).catch(() => {});
+    await ports
+      .record({
+        keyResultId: facts.keyResultId,
+        aiStatus: status,
+        progressPct: facts.progressPct,
+        completedLinkedTasks: facts.completedLinkedTasks,
+      })
+      .catch((error: unknown) => {
+        console.error('[hr-okr-ai] draft audit write failed', error instanceof Error ? error.name : typeof error);
+      });
     return {
       status,
       draftNote,
@@ -108,10 +113,19 @@ export async function draftOkrCheckinSummary(
 
   const guardedMeter: AiMeter = {
     admit: async (call) => {
-      if (await ports.isAiStopped()) {
-        throw new HrOkrAiStoppedError();
+      try {
+        if (await ports.isAiStopped()) {
+          throw new HrOkrAiStoppedError();
+        }
+        const admitted = await baseMeter.admit(call);
+        if (await ports.isAiStopped()) {
+          throw new HrOkrAiStoppedError();
+        }
+        return admitted;
+      } catch (error: unknown) {
+        ticket.refund?.();
+        throw error;
       }
-      return baseMeter.admit(call);
     },
     record: (call, usage) => baseMeter.record(call, usage),
   };
@@ -161,14 +175,25 @@ export async function draftOkrCheckinSummary(
     if (error instanceof HrOkrAiStoppedError) {
       return finish('off', null);
     }
+    if (error instanceof PayrollPromptLeakError) {
+      ticket.refund?.();
+      return finish('failed', null);
+    }
     if (error instanceof AiBudgetExhaustedError) {
       return finish('budget', null);
     }
     if (error instanceof AiMeterMissingError) {
+      ticket.refund?.();
       throw error;
     }
     if (error instanceof DomainError && (error.status === 401 || error.status === 403 || error.status === 404)) {
       throw error;
+    }
+    if (error instanceof DomainError && error.code === 'AI_BUDGET_EXHAUSTED') {
+      return finish('budget', null);
+    }
+    if (error instanceof DomainError && (error.code === 'RATE_LIMITED' || error.status === 429)) {
+      return finish('busy', null);
     }
     console.error('[hr-okr-ai] draft failed', error instanceof Error ? error.name : typeof error);
     return finish('failed', null);
