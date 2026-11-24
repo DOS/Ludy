@@ -702,7 +702,7 @@ export const en = {
       label: "Tell me about the day's meetings every morning",
       at: 'At',
       zone: 'In your time zone: {zone}',
-      noMail: 'This server cannot send email yet, so only the notice in the app is shown until the installer sets up mail.',
+      noMail: 'This server cannot send email yet, so no email is sent until the installer sets up mail. In-app notices still work, and browser push also fires if enabled on a device.',
       saved: 'Saved',
     },
     todayMail: {
