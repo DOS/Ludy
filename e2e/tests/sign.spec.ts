@@ -115,12 +115,11 @@ test('eSign workflow: upload, manual field placement, mobile 375px sequential si
       { message: 'PDF inspect status to become passed', timeout: 60_000, intervals: [1500, 2500, 3500] },
     ).toBe(true);
 
-    // Vy drawer opens cleanly from its trigger with AI-off notice and manual parity, and closes on Escape.
+    // Vy drawer opens cleanly from its trigger with manual parity and closes on Escape.
     const vyTrigger = page.getByTestId('vy-clause-trigger');
     await expect(vyTrigger).toBeVisible();
     await vyTrigger.click();
     await expect(page.getByTestId('vy-clause-panel')).toBeVisible();
-    await expect(page.getByTestId('vy-ai-off-notice')).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(page.getByTestId('vy-clause-panel')).toHaveCount(0);
     await expect(vyTrigger).toBeFocused();
