@@ -339,6 +339,10 @@ describe('Slice 4f public counterparty summary & sender editor UI (#3822)', () =
 
   it('exposes min-h-11 Version Diff and Contract Drafter entry buttons on /sign/envelopes and /sign/templates', () => {
     const qc = new QueryClient();
+    qc.setQueryData(['me', 'get'], {
+      userId: 'u-owner',
+      orgs: [{ orgId: 'o1', slug: 'acme', name: 'Acme', role: 'owner' }],
+    });
     qc.setQueryData(['sign', 'envelopes', 'acme', 'all'], { items: [] });
     qc.setQueryData(['sign', 'templates', 'list', 'all', ''], { items: [] });
 

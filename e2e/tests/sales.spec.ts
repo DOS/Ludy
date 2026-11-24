@@ -70,7 +70,7 @@ test('set the tax code, upload a sales e-invoice, approve it, then find it in th
     await nav.getByRole('link', { name: /^Chứng từ(\s+\d+\+?)?$/ }).click();
     await page.getByRole('link', { name: 'Tất cả chứng từ' }).click();
     const document = page.getByRole('row').filter({ hasText: 'C26TAB-1234' });
-    await expect(document.getByRole('cell')).toHaveText(['15/09/2026', 'C26TAB-1234', 'Bán ra', BUYER, /^1\.800\.000/, /^180\.000/, /^1\.980\.000/, 'Đã ghi sổ', 'Ghi chú']);
+    await expect(document.getByRole('cell')).toHaveText(['15/09/2026', 'C26TAB-1234', 'Bán ra', BUYER, /^1\.800\.000/, /^180\.000/, /^1\.980\.000/, 'Đã ghi sổ', 'Xem nhanhGhi chú']);
 
     await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
     await nav.getByRole('link', { name: 'Bút toán' }).click();

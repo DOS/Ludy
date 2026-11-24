@@ -2,7 +2,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { BLOCKING_CHECK_IDS, UNCLASSIFIED_ACCOUNT_CODE, isEngageProposalKind, vietnamToday, type CashVoucherProposal, type JournalVoucherProposal } from '@ludy/kernel-contract';
 import { Link, useNavigate } from '@tanstack/react-router';
-import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
 import { Badge } from '@ludy/ui/components/badge';
 import { Button } from '@ludy/ui/components/button';
@@ -22,7 +22,7 @@ import { DateInput } from './date-input.tsx';
 import { useLegalEntity } from './entity-switcher.tsx';
 import { LookupOriginalCard } from './lookup-original-card.tsx';
 import { StepUpDialog } from './two-factor.tsx';
-import { CardSkeleton, DocumentSkeleton, ErrorText, ListSkeleton, PageHeader, ProposalSkeleton, Spinner } from './ui.tsx';
+import { CardSkeleton, DocumentSkeleton, ErrorText, ListSkeleton, PageHeader, PhoneActionBar, ProposalSkeleton, Spinner } from './ui.tsx';
 import { accountLabel, pickableAccounts } from '../lib/accounts.ts';
 import { errorMessage, fetchFile, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
 import { AttachedOriginalsCard } from './attached-originals-card.tsx';
@@ -42,7 +42,6 @@ import { previewVoucherJournal, voucherProblem } from '../lib/vouchers.ts';
 import { partySearch } from '../lib/parties.ts';
 import { checksByConcern, isAdsProposalKind, isEInvoiceIssueKind, nextAfterDecision, nextPendingId, previousPendingId } from '../lib/review.ts';
 import { useReviewShortcuts, type ReviewHandlers } from '../lib/review-shortcuts.ts';
-import { useScrollRoom } from '../lib/scroll-room.ts';
 import { pollEvery, useStreamLive } from '../lib/stream-hook.ts';
 import { installedModules, useModulesVersion } from '../lib/org-modules.ts';
 import { AiWrittenBadge } from './ai-written-badge.tsx';
@@ -1375,18 +1374,6 @@ export function ProposalDetail({ slug, id, split = false, mode = 'page', onDone,
         </>
       )}
     </>
-  );
-}
-
-// The approval bar fixed to the foot of a phone's screen. A control the keyboard focuses stops above it, never under it
-// (#1575): its height is the page's bottom scroll padding while it shows.
-function PhoneActionBar({ children }: { children: ReactNode }) {
-  const bar = useRef<HTMLDivElement>(null);
-  useScrollRoom(bar, 'bottom');
-  return (
-    <div ref={bar} className="fixed inset-x-0 bottom-0 z-20 flex flex-wrap items-center justify-end gap-2 border-t bg-sidebar px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-      {children}
-    </div>
   );
 }
 
