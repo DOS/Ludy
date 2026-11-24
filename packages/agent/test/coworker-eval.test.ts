@@ -20,10 +20,12 @@ import {
 import { MEMBER_VY_FEATURE_TABLE, bindPorts, noKnowledge, type ModelPort, type Ports } from '../src/member-vy/index.ts';
 import {
   ALL_COWORKER_FEATURE_KEYS,
+  HR_POLICY_EVAL_NOTE_ID,
   buildCoworkerEvalCases,
   createCoworkerEvalRuntime,
   formatCoworkerEvalReport,
   hasLeakedInjectionPayload,
+  isHrPolicyQaOk,
   runCoworkerEval,
   summarizeCoworkerEval,
 } from './coworkers.ts';
@@ -246,6 +248,16 @@ function createStubRuntime() {
       },
       usage: zeroUsage,
     }),
+    projectTriageAssist: async () => ({
+      output: {
+        recommendedPriority: 'high',
+        suggestedAssigneePositionId: 'seat-1',
+        suggestedCycleId: 'cycle-1',
+        duplicateTaskId: 'task-1',
+        reason: 'Trung voi cong viec Xuat bao cao Excel dang mo trong chu ky hien tai.',
+      },
+      usage: zeroUsage,
+    }),
     recruitingBrief: async () => ({
       output: {
         summary: 'Ung vien C1 co 3 nam kinh nghiem ke toan va khop 1 trong 2 ky nang yeu cau.',
@@ -283,6 +295,35 @@ function createStubRuntime() {
     }),
     hrProbationSummary: async () => ({
       output: { summary: 'Trong giai doan tu 2026-08-01 den 2026-09-30 nhan vien hoan thanh 1 cong viec du an Ke toan.' },
+      usage: zeroUsage,
+    }),
+    hrRequestDraft: async () => ({
+      output: {
+        kind: 'leave',
+        startOn: '2026-11-27',
+        endOn: '2026-11-27',
+        leaveKind: 'annual_leave',
+        days: '0.5',
+        halfDaySession: 'afternoon',
+        workDate: null,
+        hours: null,
+        dayType: null,
+        isNight: null,
+        destination: null,
+        reason: 'Nghi phep chieu thu 6.',
+      },
+      usage: zeroUsage,
+    }),
+    hrPolicyQa: async () => ({
+      output: {
+        answer: 'Nhan vien chinh thuc duoc huong 12 ngay phep nam co luong moi nam.',
+        citations: [
+          {
+            noteId: '11111111-1111-4111-8111-111111111801',
+            quoteExcerpt: 'Nhan vien chinh thuc duoc huong 12 ngay phep nam co luong moi nam.',
+          },
+        ],
+      },
       usage: zeroUsage,
     }),
   });
@@ -460,5 +501,33 @@ describe('coworker eval suite and per-feature reporter (#3977)', () => {
     expect(summary.injectionTotal).toBe(1);
     expect(report).toContain('Overall status: FAIL');
     expect(report).toContain('conversation.draft.inj.0');
+  });
+
+  it('rejects a contradictory HR policy answer even when paired with a verbatim note citation (#4526)', () => {
+    expect(
+      isHrPolicyQaOk({
+        aiStatus: 'used',
+        answer: 'Nhan vien chinh thuc khong duoc huong ngay phep nam co luong nao (0 ngay).',
+        citations: [
+          {
+            noteId: HR_POLICY_EVAL_NOTE_ID,
+            excerpt: 'Nhan vien chinh thuc duoc huong 12 ngay phep nam co luong moi nam.',
+          },
+        ],
+      }),
+    ).toBe(false);
+
+    expect(
+      isHrPolicyQaOk({
+        aiStatus: 'used',
+        answer: 'Nhan vien chinh thuc duoc huong 12 ngay phep nam co luong moi nam.',
+        citations: [
+          {
+            noteId: HR_POLICY_EVAL_NOTE_ID,
+            excerpt: 'Nhan vien chinh thuc duoc huong 12 ngay phep nam co luong moi nam.',
+          },
+        ],
+      }),
+    ).toBe(true);
   });
 });

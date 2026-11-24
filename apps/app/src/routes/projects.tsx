@@ -34,6 +34,7 @@ import { ProjectAcceptanceSignHandoff } from '../components/project-acceptance-s
 import { ProjectColumnsDialog } from '../components/project-columns-dialog.tsx';
 import { ProjectCyclesPanel } from '../components/project-cycles.tsx';
 import { ProjectRoadmapPanel } from '../components/project-roadmap-panel.tsx';
+import { ProjectTriagePanel } from '../components/project-triage-panel.tsx';
 import { ProjectTasksFromSourceDialog } from '../components/project-tasks-from-source-dialog.tsx';
 import { ProjectTemplateDialog } from '../components/project-template-dialog.tsx';
 import { ProjectTimeTab } from '../components/project-time-panel.tsx';
@@ -174,11 +175,20 @@ export function ProjectsPage() {
   const { slug } = useParams({ strict: false }) as { slug: string };
   const navigate = useNavigate();
   const t = useTranslations('projects');
-  const [workspaceTab, setWorkspaceTab] = useState<'projects' | 'roadmap'>('projects');
+  const [workspaceTab, setWorkspaceTab] = useState<'projects' | 'triage' | 'roadmap'>(() => {
+    if (typeof window === 'undefined') return 'projects';
+    const tab = new URLSearchParams(window.location.search).get('tab');
+    return tab === 'triage' || tab === 'roadmap' ? tab : 'projects';
+  });
   const [statusFilter, setStatusFilter] = useState<ProjectStatusFilter>('open');
   const [search, setSearch] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
   const [templateOpen, setTemplateOpen] = useState(false);
+
+  const triageBadgeQuery = useQuery(
+    orpc.projects.triage.list.queryOptions({ input: { statuses: ['pending'], limit: 1 } }),
+  );
+  const triagePendingCount = triageBadgeQuery.data?.counts.pending ?? 0;
 
   const statuses = statusFilterParam(statusFilter);
   const query = useQuery(orpc.projects.list.queryOptions({ input: statuses ? { status: statuses } : {} }));
@@ -210,12 +220,20 @@ export function ProjectsPage() {
 
       <Tabs
         value={workspaceTab}
-        onValueChange={(next) => setWorkspaceTab(next as 'projects' | 'roadmap')}
+        onValueChange={(next) => setWorkspaceTab(next as 'projects' | 'triage' | 'roadmap')}
         data-testid="projects-workspace-tabs"
       >
         <TabsList aria-label={t('workspaceTabs.label')}>
           <TabsTrigger value="projects" className="min-h-11">
             {t('workspaceTabs.projects')}
+          </TabsTrigger>
+          <TabsTrigger value="triage" className="min-h-11 gap-1.5" data-testid="projects-triage-tab">
+            <span>{t('workspaceTabs.triage')}</span>
+            {triagePendingCount > 0 && (
+              <Badge variant="secondary" data-testid="projects-triage-tab-badge">
+                {triagePendingCount}
+              </Badge>
+            )}
           </TabsTrigger>
           <TabsTrigger value="roadmap" className="min-h-11" data-testid="projects-roadmap-tab">
             {t('workspaceTabs.roadmap')}
@@ -223,7 +241,9 @@ export function ProjectsPage() {
         </TabsList>
       </Tabs>
 
-      {workspaceTab === 'roadmap' ? (
+      {workspaceTab === 'triage' ? (
+        <ProjectTriagePanel orgSlug={slug} />
+      ) : workspaceTab === 'roadmap' ? (
         <ProjectRoadmapPanel orgSlug={slug} />
       ) : (
         <>
@@ -317,10 +337,13 @@ export function ProjectDetailPage() {
   const t = useTranslations('projects');
   const tn = useTranslations('notes');
 
-  const userPickedView = useRef(false);
-  const [view, setView] = useState<ProjectViewMode>(() =>
-    typeof window === 'undefined' ? 'board' : defaultProjectView(window.innerWidth),
-  );
+  const initialTriageView =
+    typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('view') === 'triage';
+  const userPickedView = useRef(initialTriageView);
+  const [view, setView] = useState<ProjectViewMode>(() => {
+    if (initialTriageView) return 'triage';
+    return typeof window === 'undefined' ? 'board' : defaultProjectView(window.innerWidth);
+  });
   const [positionId, setPositionId] = useState<string>('');
   const [includeCancelled, setIncludeCancelled] = useState(false);
   const [attachOpen, setAttachOpen] = useState(false);
@@ -389,6 +412,10 @@ export function ProjectDetailPage() {
     refetchInterval: (query) =>
       view === 'timeline' && query.state.data?.tasks.some((item) => item.checkedOut) ? 5_000 : false,
   });
+  const projectTriageBadgeQuery = useQuery(
+    orpc.projects.triage.list.queryOptions({ input: { projectId: id, statuses: ['pending'], limit: 1 } }),
+  );
+  const projectTriagePendingCount = projectTriageBadgeQuery.data?.counts.pending ?? 0;
   const cyclesEnabled = boardQuery.data?.project.cyclesEnabled === true;
   const pointsEnabled = boardQuery.data?.project.pointsEnabled === true;
   useEffect(() => {
@@ -691,10 +718,19 @@ export function ProjectDetailPage() {
               <ProjectIcon name="clock" className="size-3.5" />
               <span>{t('detail.viewTime')}</span>
             </TabsTrigger>
+            <TabsTrigger value="triage" data-testid="view-toggle-triage" className="h-auto min-h-11 flex-none gap-1.5 px-2.5 sm:min-h-9">
+              <ProjectIcon name="filters" className="size-3.5" />
+              <span>{t('detail.viewTriage')}</span>
+              {projectTriagePendingCount > 0 && (
+                <Badge variant="secondary" data-testid="project-triage-tab-badge">
+                  {projectTriagePendingCount}
+                </Badge>
+              )}
+            </TabsTrigger>
           </TabsList>
         </Tabs>
 
-        {view !== 'time' && view !== 'timeline' && (
+        {view !== 'time' && view !== 'timeline' && view !== 'triage' && (
           <div className="flex flex-wrap items-center gap-3">
             <div className="flex min-w-44 items-center gap-2">
               <Label htmlFor="project-seat-filter" className="sr-only">
@@ -728,7 +764,9 @@ export function ProjectDetailPage() {
         )}
       </div>
 
-      {view === 'time' ? (
+      {view === 'triage' ? (
+        <ProjectTriagePanel key={project.id} orgSlug={slug} projectId={project.id} />
+      ) : view === 'time' ? (
         <ProjectTimeTab
           slug={slug}
           projectId={project.id}

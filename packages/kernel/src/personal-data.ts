@@ -682,6 +682,21 @@ export const PERSONAL_DATA_COLUMNS = {
     handling: 'erase',
     reason: 'A project time entry note written by a member, which may name a person: mentions are replaced with a redaction marker',
   },
+  'ludy_projects.project_triage_item.title': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: 'A project triage item title (internal or external signal), which may name a person: mentions are replaced with a redaction marker',
+  },
+  'ludy_projects.project_triage_item.description': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: 'A project triage item description, which may name a person: mentions are replaced with a redaction marker',
+  },
+  'ludy_projects.project_triage_item.decline_reason': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: 'A project triage item decline reason written by a member, which may name a person: mentions are replaced with a redaction marker',
+  },
   // eSign (#3323, #3427): unsealed signers (draft, voided, expired, or declined with sealed_file_id IS NULL) are removed on erasure; active, completed, and sealed signer records and append-only audit events stay for statutory verification; ephemeral email OTP rows erase via definer.
   'ludy_sign.signer.name': {
     kind: 'name',
@@ -1273,6 +1288,9 @@ const SHORT_NUMBER_COLUMNS = new Set([
   'ludy_projects.roadmap_announcement.title',
   'ludy_projects.roadmap_announcement.body_md',
   'ludy_projects.time_entry.note',
+  'ludy_projects.project_triage_item.title',
+  'ludy_projects.project_triage_item.description',
+  'ludy_projects.project_triage_item.decline_reason',
   'ludy_hr.candidate.notes',
 ]);
 // The meeting text columns the redaction of ludy_meetings.personal_erase would change, left as they are for a short number (#3064).
@@ -1974,6 +1992,95 @@ export const personalDataErase = defineCommand({
          WHERE c.org_id = ${ctx.orgId}::uuid AND c.preview IS NOT NULL AND coalesce(${previewMatch}, false)
          RETURNING c.id`.execute(ctx.trx);
       add('ludy_finance.marketplace_column_check.preview', previewRows.length);
+
+      // Project triage items BEFORE tasks (#4493): preserves canonical lock order
+      // ludy_projects.project_triage_item -> ludy_kernel.task -> ludy_projects.project -> ludy_projects.roadmap_item
+      // matching projectTriageAccept (zero deadlock) and closing both READ COMMITTED races:
+      // if projectTriageAccept locks pti first, erase waits for commit and then redacts the new task;
+      // if erase updates pti first, projectTriageAccept waits on FOR UPDATE and reads the already-redacted text.
+      const triageTitle = freeTextMatch(probe, sql.ref('pti.title'));
+      const triageDesc = freeTextMatch(probe, sql.ref('pti.description'));
+      const triageDecline = freeTextMatch(probe, sql.ref('pti.decline_reason'));
+      const { rows: triageRows } = await sql<{
+        triage_id: string;
+        next_title: string;
+        next_description: string | null;
+        next_decline_reason: string | null;
+        title: boolean;
+        description: boolean;
+        decline_reason: boolean;
+      }>`
+        UPDATE ludy_projects.project_triage_item pti
+           SET title = CASE
+                         WHEN ${triageTitle} THEN COALESCE(
+                           NULLIF(pg_catalog.btrim(pg_catalog.left(${freeTextRedact(probe, sql.ref('pti.title'), REDACTED_MARK)}, 300)), ''),
+                           ${REDACTED_MARK}
+                         )
+                         ELSE pti.title
+                       END,
+               description = CASE
+                               WHEN ${triageDesc} THEN pg_catalog.left(${freeTextRedact(probe, sql.ref('pti.description'), REDACTED_MARK)}, 10000)
+                               ELSE pti.description
+                             END,
+               decline_reason = CASE
+                                  WHEN ${triageDecline} THEN pg_catalog.left(${freeTextRedact(probe, sql.ref('pti.decline_reason'), REDACTED_MARK)}, 1000)
+                                  ELSE pti.decline_reason
+                                END,
+               updated_at = ${ctx.now}
+          FROM ludy_projects.project_triage_item o
+         WHERE o.org_id = pti.org_id AND o.id = pti.id AND pti.org_id = ${ctx.orgId}::uuid
+           AND (${triageTitle} OR coalesce(${triageDesc}, false) OR coalesce(${triageDecline}, false))
+         RETURNING pti.id AS triage_id,
+                   pti.title AS next_title,
+                   pti.description AS next_description,
+                   pti.decline_reason AS next_decline_reason,
+                   ${freeTextMatch(probe, sql.ref('o.title'))} AS title,
+                   coalesce(${freeTextMatch(probe, sql.ref('o.description'))}, false) AS description,
+                   coalesce(${freeTextMatch(probe, sql.ref('o.decline_reason'))}, false) AS decline_reason`.execute(ctx.trx);
+      add('ludy_projects.project_triage_item.title', triageRows.filter((r) => r.title).length);
+      add('ludy_projects.project_triage_item.description', triageRows.filter((r) => r.description).length);
+      add('ludy_projects.project_triage_item.decline_reason', triageRows.filter((r) => r.decline_reason).length);
+      if (triageRows.length > 0) {
+        const ids = triageRows.map((r) => r.triage_id);
+        const nextTitles = triageRows.map((r) => r.next_title);
+        const nextDescriptions = triageRows.map((r) => r.next_description);
+        const nextDeclines = triageRows.map((r) => r.next_decline_reason);
+        await sql`
+          UPDATE ludy_kernel.idempotency_key k
+             SET response = pg_catalog.jsonb_set(
+                   pg_catalog.jsonb_set(
+                     pg_catalog.jsonb_set(
+                       k.response,
+                       '{value,item,title}',
+                       pg_catalog.to_jsonb(u.next_title),
+                       false
+                     ),
+                     '{value,item,description}',
+                     coalesce(pg_catalog.to_jsonb(u.next_description), 'null'::jsonb),
+                     false
+                   ),
+                   '{value,item,declineReason}',
+                   coalesce(pg_catalog.to_jsonb(u.next_decline_reason), 'null'::jsonb),
+                   false
+                 )
+            FROM ROWS FROM (
+                   pg_catalog.unnest(${ids}::text[]),
+                   pg_catalog.unnest(${nextTitles}::text[]),
+                   pg_catalog.unnest(${nextDescriptions}::text[]),
+                   pg_catalog.unnest(${nextDeclines}::text[])
+                 ) AS u(triage_id, next_title, next_description, next_decline_reason)
+           WHERE k.org_id = ${ctx.orgId}::uuid
+             AND k.command IN (
+               'projects.triage.create',
+               'projects.triage.accept',
+               'projects.triage.merge',
+               'projects.triage.snooze',
+               'projects.triage.decline',
+               'projects.triage.reopen'
+             )
+             AND k.response IS NOT NULL
+             AND k.response -> 'value' -> 'item' ->> 'id' = u.triage_id`.execute(ctx.trx);
+      }
 
       // Tasks that quote the person (#1961): the value is replaced in the title and the description, as the owner (an
       // owner's update passes the task guards, which hold agents; taint, lease, status and entity stay as they are, and

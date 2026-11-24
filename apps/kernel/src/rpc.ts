@@ -56,7 +56,7 @@ import type { z } from 'zod';
 import type { CompanyCandidates, ConversationAutoDraft, zAgentBudget, zAgentTemplate, zAiMeter, zAiUsageReport, zSignEnvelopeDetail, zSignTemplateDetail, zTask } from '@ludy/kernel-contract';
 import type { FollowupSource, MeetingBriefSource, QuoteSuggestSource, SuggestedSlots } from '@ludy/mod-crm';
 import type { MeetingResults, Notes, Transcript } from '@ludy/kernel-contract';
-import type { ProjectCycleSummarySource, ProjectWeeklyStatusSource, RoadmapAiChangelogSource, RoadmapAiDedupeSource, RoadmapAiSignalMatchSource } from '@ludy/mod-projects';
+import type { ProjectCycleSummarySource, ProjectTriageAssistSource, ProjectWeeklyStatusSource, RoadmapAiChangelogSource, RoadmapAiDedupeSource, RoadmapAiSignalMatchSource } from '@ludy/mod-projects';
 import { enrichMeetingSignalMatchSource } from '@ludy/mod-projects';
 import { sql } from 'kysely';
 import { AiBudgetExhaustedError, withAiScope, type AiMeter, type BriefFacts, type BriefResult, type WeeklyFacts, type WeeklyResult } from '@ludy/agent';
@@ -75,12 +75,15 @@ import {
   type AttendanceAnomaliesPorts,
 } from './attendance-coworker-ai.ts';
 import { draftProbationSummary, hrProbationAi, type HrProbationPorts } from './hr-probation-ai.ts';
+import { askSelfHrPolicy, draftSelfHrRequest, hrSelfAi, type HrSelfAiPorts } from './hr-self-ai.ts';
 import type { HrAttendanceAnomaliesSnapshot } from '@ludy/kernel-contract';
 import type {
   HrInviteDraftContext,
   HrLaborCheckSnapshot,
   HrProbationBriefSource,
   HrRecruitingBriefSnapshot,
+  HrSelfAiStatusContext,
+  HrSelfPolicySearchContext,
 } from '@ludy/mod-hr';
 import { buildEngageInviteDraftResult } from '@ludy/mod-hr';
 import { einvoiceAi, suggestEInvoiceDraft } from './einvoice-ai.ts';
@@ -92,6 +95,7 @@ import { meetingBriefAi, prepareMeetingBrief } from './crm-meeting-brief-ai.ts';
 import { prepareProjectWeeklyStatus, projectWeeklyStatusAi } from './project-weekly-status-ai.ts';
 import { prepareProjectCycleSummary, projectCycleSummaryAi } from './project-cycle-summary-ai.ts';
 import { prepareRoadmapChangelogDraft, prepareRoadmapDedupe, prepareRoadmapSignalMatch, projectRoadmapAi } from './project-roadmap-ai.ts';
+import { prepareProjectTriageAssist, projectTriageAi } from './project-triage-ai.ts';
 import { quoteAi, suggestQuoteLines } from './quote-ai.ts';
 import {
   askSignVault,
@@ -575,6 +579,16 @@ export function createRpcHandler(
       : null,
     suggestionBudget(),
   );
+  const selfHrAi = hrSelfAi(
+    conversationReader && (conversationReader.hrRequestDraft || conversationReader.hrPolicyQa)
+      ? {
+          ...(conversationReader.hrRequestDraft ? { hrRequestDraft: conversationReader.hrRequestDraft.bind(conversationReader) } : {}),
+          ...(conversationReader.hrPolicyQa ? { hrPolicyQa: conversationReader.hrPolicyQa.bind(conversationReader) } : {}),
+        }
+      : null,
+    suggestionBudget(),
+    suggestionBudget(),
+  );
   // The finance coworker's wording of a payment reminder (#2488): the same reader and model, a budget of its own. It reads no customer text (the model is told the
   // notice level, the language and the sender's name), so the org's switch for AI on its customers' messages does not apply.
   const reminderAi: ReminderAi = { reader: conversationReader?.reminderWords ? { reminderWords: conversationReader.reminderWords.bind(conversationReader) } : null, budget: suggestionBudget() };
@@ -637,6 +651,10 @@ export function createRpcHandler(
           ...(conversationReader.roadmapSignalMatch ? { roadmapSignalMatch: conversationReader.roadmapSignalMatch.bind(conversationReader) } : {}),
         }
       : null,
+    suggestionBudget(),
+  );
+  const projectTriageCoworker = projectTriageAi(
+    conversationReader?.projectTriageAssist ? { projectTriageAssist: conversationReader.projectTriageAssist.bind(conversationReader) } : null,
     suggestionBudget(),
   );
   const signCoworker = signAi(
@@ -827,6 +845,12 @@ export function createRpcHandler(
     read: (input) => runtime.query<HrProbationBriefSource>('hr.probation.brief.read', input, { actor, orgId }),
     isAiStopped: async () => (await runtime.query<{ aiStopped: boolean }>('hr.probation.ai_status', {}, { actor, orgId })).aiStopped,
     record: (input) => runtime.execute('hr.probation.brief.audit', input, { actor, orgId }),
+  });
+  const hrSelfAiPorts = (orgId: string, actor: UserActor): HrSelfAiPorts => ({
+    readDraftContext: () => runtime.query<HrSelfAiStatusContext>('hr.self.request_draft.context', {}, { actor, orgId }),
+    searchPolicyNotes: (input) => runtime.query<HrSelfPolicySearchContext>('hr.self.policy_qa.search', input, { actor, orgId }),
+    isAiStopped: async (includeNotes = false) =>
+      (await runtime.query<{ aiStopped: boolean }>('hr.self.ai_status', { includeNotes }, { actor, orgId })).aiStopped,
   });
   const hrQuery =
     (name: string) =>
@@ -1254,6 +1278,34 @@ export function createRpcHandler(
           submit: os.hr.self.businessTrips.submit.handler(hrCommand('hr.self.business_trip.submit')),
           cancel: os.hr.self.businessTrips.cancel.handler(hrCommand('hr.self.business_trip.cancel')),
         },
+        requestDraft: os.hr.self.requestDraft.handler(({ context, input }) =>
+          inHr(context, (orgId, actor) =>
+            draftSelfHrRequest(
+              selfHrAi,
+              hrSelfAiPorts(orgId, actor),
+              runtime,
+              orgId,
+              actor,
+              input,
+              aiMeter ? aiMeter(actor) : 'runtime',
+              aiPrice ? { price: aiPrice } : undefined,
+            ),
+          ),
+        ),
+        policyQa: os.hr.self.policyQa.handler(({ context, input }) =>
+          inHr(context, (orgId, actor) =>
+            askSelfHrPolicy(
+              selfHrAi,
+              hrSelfAiPorts(orgId, actor),
+              runtime,
+              orgId,
+              actor,
+              input,
+              aiMeter ? aiMeter(actor) : 'runtime',
+              aiPrice ? { price: aiPrice } : undefined,
+            ),
+          ),
+        ),
       },
       attendance: {
         list: os.hr.attendance.list.handler(hrQuery('hr.attendance.list')),
@@ -5014,6 +5066,42 @@ export function createRpcHandler(
       deleteTimeEntry: os.projects.deleteTimeEntry.handler(projectsCommand('projects.time.delete')),
       timeSummary: os.projects.timeSummary.handler(projectsQuery('projects.time.summary')),
       exportTimeCsv: os.projects.exportTimeCsv.handler(projectsQuery('projects.time.export_csv')),
+      triage: {
+        create: os.projects.triage.create.handler(projectsCommand('projects.triage.create')),
+        list: os.projects.triage.list.handler(projectsQuery('projects.triage.list')),
+        accept: os.projects.triage.accept.handler(projectsCommand('projects.triage.accept')),
+        merge: os.projects.triage.merge.handler(projectsCommand('projects.triage.merge')),
+        snooze: os.projects.triage.snooze.handler(projectsCommand('projects.triage.snooze')),
+        decline: os.projects.triage.decline.handler(projectsCommand('projects.triage.decline')),
+        reopen: os.projects.triage.reopen.handler(projectsCommand('projects.triage.reopen')),
+        assist: os.projects.triage.assist.handler(({ context, input }) =>
+          inProjects(context, async (orgId, actor) => {
+            const source = await runtime.query<ProjectTriageAssistSource>(
+              'projects.triage_assist_source',
+              { itemId: input.itemId },
+              { actor, orgId },
+            );
+            let conversationAutoDraft = true;
+            if (source.item.sourceType === 'kernel.conversation') {
+              const { autoDraft } = await runtime.query<ConversationAutoDraft>(
+                'kernel.conversation.auto_draft',
+                {},
+                { actor, orgId },
+              );
+              if (!autoDraft) return { ai: 'off' as const, proposal: null };
+              conversationAutoDraft = autoDraft;
+            }
+            return prepareProjectTriageAssist(
+              projectTriageCoworker,
+              orgId,
+              actor.userId,
+              source,
+              input.language ?? 'vi',
+              { conversationAutoDraft },
+            );
+          }),
+        ),
+      },
     },
     sign: {
       envelope: {

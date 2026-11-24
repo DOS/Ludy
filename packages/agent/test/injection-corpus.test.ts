@@ -23,6 +23,7 @@ import {
   checkRoadmapChangelogDraft,
   checkRoadmapDedupe,
   checkRoadmapSignalMatch,
+  checkTriageAssist,
   checkSignClauseSummary,
   checkSignContractDraftClauses,
   checkSignKycOutput,
@@ -45,6 +46,8 @@ import {
   type EInvoiceReasonFacts,
   type ExpenseVarianceNoteFacts,
   type HrProbationSummaryInput,
+  type HrSelfPolicyQaInput,
+  type HrSelfRequestDraftInput,
   type LaborComplianceInput,
   type MarketplaceColumnFacts,
   type MarketplaceFeeNoteFacts,
@@ -61,6 +64,7 @@ import {
   type PayrollSheet,
   type PayslipExplainRequest,
   type ProjectCycleSummaryFacts,
+  type ProjectTriageAssistFacts,
   type ProjectWeeklyStatusFacts,
   type QuoteSuggestRequest,
   type RecruitingBriefInput,
@@ -963,6 +967,7 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
     cover('projects.roadmap_dedupe');
     cover('projects.roadmap_changelog_draft');
     cover('projects.roadmap_signal_match');
+    cover('projects.triage_assist');
     cover('projects.tasks_from_note');
     cover('projects.tasks_from_source');
 
@@ -1017,6 +1022,23 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
         { id: 'item-2', title: 'Dong bo ton kho', summary: null, stage: 'under_review', tainted: false },
       ],
     };
+    const triageAssistFacts: ProjectTriageAssistFacts = {
+      language: 'vi',
+      projectName: 'Web Ban Hang',
+      item: {
+        id: 'triage-1',
+        title: 'Khach hoi xuat bao cao Excel',
+        description: 'Khach can xuat bao cao Excel.',
+        sourceType: 'roadmap.item',
+        priority: 'medium',
+        tainted: true,
+      },
+      candidates: {
+        seats: [{ positionId: 'seat-1', label: 'Truong nhom Ky thuat (Lan)' }],
+        cycles: [{ cycleId: 'cycle-1', label: 'Sprint 3', status: 'active' }],
+        tasks: [{ taskId: 'task-1', title: 'Xuat bao cao Excel', status: 'in_progress', tainted: false }],
+      },
+    };
 
     for (const c of INJECTION_CORPUS) {
       const reader = new InboxReader(STUB_CONFIG, {
@@ -1034,6 +1056,16 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
           },
           usage: zeroUsage,
         }),
+        projectTriageAssist: async () => ({
+          output: {
+            recommendedPriority: 'high',
+            suggestedAssigneePositionId: null,
+            suggestedCycleId: null,
+            duplicateTaskId: null,
+            reason: c.poisonedOutput,
+          },
+          usage: zeroUsage,
+        }),
       });
       expect((await reader.projectWeeklyStatus({ ...weeklyFacts, language: c.language })).kind, `weeklyStatus ${c.id}`).toBe('none');
       expect((await reader.projectCycleSummary({ ...cycleFacts, language: c.language })).kind, `cycleSummary ${c.id}`).toBe('none');
@@ -1041,6 +1073,23 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
       expect(dedupeRes.kind === 'none' || dedupeRes.suggestions.length === 0, `roadmapDedupe ${c.id}`).toBe(true);
       expect((await reader.roadmapChangelogDraft({ ...changelogFacts, language: c.language })).kind, `changelog ${c.id}`).toBe('none');
       expect((await reader.roadmapSignalMatch({ ...signalMatchFacts, language: c.language })).kind, `roadmapSignalMatch reason ${c.id}`).toBe('none');
+      expect((await reader.projectTriageAssist({ ...triageAssistFacts, language: c.language })).kind, `projectTriageAssist ${c.id}`).toBe('none');
+      expect(
+        checkTriageAssist(
+          {
+            ...triageAssistFacts,
+            item: { ...triageAssistFacts.item, description: c.untrustedInput, tainted: true },
+          },
+          {
+            recommendedPriority: 'high',
+            suggestedAssigneePositionId: 'seat-1',
+            suggestedCycleId: null,
+            duplicateTaskId: null,
+            reason: c.poisonedOutput,
+          },
+        ).kind,
+        `checkTriageAssistdirect ${c.id}`,
+      ).toBe('none');
       expect(
         checkRoadmapSignalMatch(
           {
@@ -1149,11 +1198,13 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
     ).toBe('none');
   });
 
-  it('hr.*: refuses injections across recruiting_brief, attendance_anomaly, cv_extract, probation_summary', async () => {
+  it('hr.*: refuses injections across recruiting_brief, attendance_anomaly, cv_extract, probation_summary, request_draft, policy_qa', async () => {
     cover('hr.recruiting_brief');
     cover('hr.attendance_anomaly');
     cover('hr.cv_extract');
     cover('hr.probation_summary');
+    cover('hr.request_draft');
+    cover('hr.policy_qa');
 
     const recruitingInput: RecruitingBriefInput = {
       language: 'vi',
@@ -1241,6 +1292,70 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
 
       const probRes = await reader.hrProbationSummary({ ...probationInput, language: c.language });
       expect(probRes.ai.ok, `probation ${c.id}`).toBe(false);
+    }
+
+    const requestDraftBase: HrSelfRequestDraftInput = {
+      text: 'xin nghi phep chieu thu 6',
+      language: 'vi',
+      referenceDate: '2026-11-23',
+    };
+    const policyQaBase: HrSelfPolicyQaInput = {
+      question: 'Chinh sach nghi phep nam may ngay?',
+      language: 'vi',
+      notesAvailable: true,
+      candidates: [
+        {
+          noteId: '11111111-1111-4111-8111-111111111801',
+          title: 'Chinh sach nghi phep nam',
+          tags: ['hr', 'nghi-phep'],
+          body: 'Nhan vien chinh thuc duoc huong 12 ngay phep nam co luong moi nam.',
+          visibility: 'org',
+          updatedAt: '2026-11-23T00:00:00.000Z',
+        },
+      ],
+    };
+
+    for (const c of INJECTION_CORPUS) {
+      const hrSelfReader = new InboxReader(STUB_CONFIG, {
+        hrRequestDraft: async () => ({
+          output: {
+            kind: 'leave',
+            startOn: '2026-11-27',
+            endOn: '2026-11-27',
+            leaveKind: 'annual_leave',
+            days: '0.5',
+            halfDaySession: 'afternoon',
+            workDate: null,
+            hours: null,
+            dayType: null,
+            isNight: null,
+            destination: null,
+            reason: c.poisonedOutput,
+          },
+          usage: zeroUsage,
+        }),
+        hrPolicyQa: async () => ({
+          output: {
+            answer: c.poisonedOutput,
+            citations: [
+              {
+                noteId: policyQaBase.candidates[0]!.noteId,
+                quoteExcerpt: 'Nhan vien chinh thuc duoc huong 12 ngay phep nam co luong moi nam.',
+              },
+            ],
+          },
+          usage: zeroUsage,
+        }),
+      });
+
+      const draftRes = await hrSelfReader.hrRequestDraft({ ...requestDraftBase, language: c.language });
+      expect(draftRes.aiStatus, `requestDraft ${c.id}`).toBe('refused');
+      expect(draftRes.source, `requestDraft source ${c.id}`).toBe('deterministic');
+      expect(draftRes.draft.reason, `requestDraft reason ${c.id}`).not.toContain(c.poisonedOutput);
+
+      const qaRes = await hrSelfReader.hrPolicyQa({ ...policyQaBase, language: c.language });
+      expect(qaRes.aiStatus, `policyQa ${c.id}`).toBe('refused');
+      expect(qaRes.answer, `policyQa answer ${c.id}`).toBeNull();
     }
   });
 

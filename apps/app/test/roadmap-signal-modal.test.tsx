@@ -73,6 +73,7 @@ vi.mock('../src/lib/api.ts', () => {
 
 vi.mock('../src/lib/org-modules.ts', () => ({
   installedModules: () => ['projects', 'crm', 'meetings'],
+  useModulesVersion: () => 0,
 }));
 
 vi.mock('@ludy/ui/components/dialog', () => ({

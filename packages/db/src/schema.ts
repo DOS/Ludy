@@ -1557,6 +1557,24 @@ export type ProjectsRoadmapSignalTable = Refine<
   }
 >;
 
+export const PROJECT_TRIAGE_SOURCE_TYPES = ['roadmap.item', 'kernel.conversation', 'meetings.meeting', 'manual'] as const;
+export type ProjectTriageSourceType = (typeof PROJECT_TRIAGE_SOURCE_TYPES)[number];
+
+export const PROJECT_TRIAGE_STATUSES = ['pending', 'snoozed', 'accepted', 'merged', 'declined'] as const;
+export type ProjectTriageStatus = (typeof PROJECT_TRIAGE_STATUSES)[number];
+
+export const PROJECT_TRIAGE_PRIORITIES = ['urgent', 'high', 'medium', 'low', 'none'] as const;
+export type ProjectTriagePriority = (typeof PROJECT_TRIAGE_PRIORITIES)[number];
+
+export type ProjectsProjectTriageItemTable = Refine<
+  G.ProjectsProjectTriageItemTable,
+  {
+    source_type: ProjectTriageSourceType;
+    status: Generated<ProjectTriageStatus>;
+    priority: Generated<ProjectTriagePriority>;
+  }
+>;
+
 // Electronic signatures (Sign, #3323): envelope workflow, signers, fields, AI analysis, and hash-chained events.
 export const SIGN_ENVELOPE_STATUSES = ['draft', 'sent', 'in_progress', 'completed', 'declined', 'voided', 'expired'] as const;
 export type SignEnvelopeStatus = (typeof SIGN_ENVELOPE_STATUSES)[number];
@@ -1825,6 +1843,7 @@ type Refined = Tables<{
   'ludy_projects.project': ProjectsProjectTable;
   'ludy_projects.project_column': ProjectsProjectColumnTable;
   'ludy_projects.project_cycle': ProjectsProjectCycleTable;
+  'ludy_projects.project_triage_item': ProjectsProjectTriageItemTable;
   'ludy_projects.roadmap_announcement': ProjectsRoadmapAnnouncementTable;
   'ludy_projects.roadmap_item': ProjectsRoadmapItemTable;
   'ludy_projects.roadmap_signal': ProjectsRoadmapSignalTable;
