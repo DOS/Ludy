@@ -1442,7 +1442,7 @@ export function createRpcHandler(
         objective: {
           create: os.hr.okr.objective.create.handler(hrCommand('hr.okr.objective.create')),
           update: os.hr.okr.objective.update.handler(hrCommand('hr.okr.objective.update')),
-          setStatus: os.hr.okr.objective.setStatus.handler(hrCommand('hr.okr.objective.set_status')),
+          updateStatus: os.hr.okr.objective.updateStatus.handler(hrCommand('hr.okr.objective.set_status')),
         },
         kr: {
           add: os.hr.okr.kr.add.handler(hrCommand('hr.okr.kr.add')),

@@ -35,7 +35,7 @@ vi.mock('../src/lib/api.ts', async () => {
       hr: {
         okr: {
           draftCheckin: vi.fn(),
-          objective: { create: vi.fn(), update: vi.fn(), setStatus: vi.fn() },
+          objective: { create: vi.fn(), update: vi.fn(), updateStatus: vi.fn() },
           kr: { add: vi.fn(), update: vi.fn(), remove: vi.fn(), checkin: vi.fn(), syncProjects: vi.fn() },
         },
       },

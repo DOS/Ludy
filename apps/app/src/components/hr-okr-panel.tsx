@@ -195,7 +195,7 @@ export function HrOkrPanel({ mode }: { mode: 'manager' | 'self' }) {
 
   const setObjStatus = useMutation({
     mutationFn: (vars: { objectiveId: string; status: HrOkrStatus }) =>
-      client.hr.okr.objective.setStatus(vars),
+      client.hr.okr.objective.updateStatus(vars),
     onSuccess: refreshTree,
   });
 

@@ -1583,7 +1583,7 @@ export const contract = {
       objective: {
         create: oc.input(zHrOkrObjectiveCreate).output(zHrOkrObjectiveMutationResult),
         update: oc.input(zHrOkrObjectiveUpdate).output(zHrOkrObjectiveMutationResult),
-        setStatus: oc.input(zHrOkrObjectiveSetStatus).output(zHrOkrObjectiveMutationResult),
+        updateStatus: oc.input(zHrOkrObjectiveSetStatus).output(zHrOkrObjectiveMutationResult),
       },
       kr: {
         add: oc.input(zHrOkrKeyResultAdd).output(zHrOkrKeyResultMutationResult),
