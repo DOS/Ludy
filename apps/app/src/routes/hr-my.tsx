@@ -28,6 +28,7 @@ import { HrSelfOnboardingCard, HrSelfOvertimeCard, type HrOvertimeCardPrefill } 
 import { HrSelfAdvanceTripCards } from '../components/hr-stage6b-cards.tsx';
 import { HrSelfCoworkerCard, type HrSelfLeavePrefill, type HrSelfOvertimePrefill } from '../components/hr-self-coworker-card.tsx';
 import { HrSelfAssetsCard } from '../components/hr-stage6c-panels.tsx';
+import { HrOkrPanel } from '../components/hr-okr-panel.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../components/ui.tsx';
 import { HrAttendanceCheckinCard } from '../components/hr-attendance-checkin-card.tsx';
 import { useFormat } from '../i18n/provider.tsx';
@@ -674,6 +675,7 @@ export function HrSelfServicePage() {
       {profile && (linked || managesTeam) && <HrSelfOvertimeCard linked={linked} prefill={otPrefill} />}
       {profile && (linked || managesTeam) && <HrSelfAdvanceTripCards linked={linked} />}
       {profile && linked && <HrSelfAssetsCard />}
+      {profile && (linked || managesTeam) && <HrOkrPanel mode="self" />}
     </>
   );
 }

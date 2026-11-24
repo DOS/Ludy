@@ -554,6 +554,8 @@ export const OWNER_RUN_EXPORT_TABLES = {
   'hr.business_trip_request': { from: 'ludy_hr.business_trip_request', omit: [] },
   'hr.contract_addendum': { from: 'ludy_hr.contract_addendum', omit: [] },
   'hr.employee_asset_handover': { from: 'ludy_hr.employee_asset_handover', omit: [] },
+  'hr.okr_objective': { from: 'ludy_hr.okr_objective', omit: [] },
+  'hr.okr_key_result': { from: 'ludy_hr.okr_key_result', omit: [] },
   // Lightweight recruiting openings and candidates (#3425), readable by owners and admins only.
   'hr.job_opening': { from: 'ludy_hr.job_opening', omit: [] },
   'hr.candidate': { from: 'ludy_hr.candidate', omit: [] },

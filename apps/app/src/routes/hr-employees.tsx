@@ -51,6 +51,7 @@ import { BankSelect } from '../components/bank-select.tsx';
 import { HrContractNd337Notice, HrContractSignHandoff } from '../components/hr-contract-sign-handoff.tsx';
 import { LeaveBalancePanel } from '../components/hr-leave-panel.tsx';
 import { HrProbationPanel } from '../components/hr-probation-panel.tsx';
+import { HrOkrPanel } from '../components/hr-okr-panel.tsx';
 import { SeveranceCalculatorPanel } from '../components/hr-severance-panel.tsx';
 import { HrAddendumPanel, HrAssetsPanel, HrCareerTimelinePanel, countUnreturnedAssets } from '../components/hr-stage6c-panels.tsx';
 import { HrOnboardingReviewQueue, HrOvertimeReviewQueue } from '../components/hr-stage5b-queues.tsx';
@@ -2623,6 +2624,7 @@ export function HrEmployeesPage() {
       )}
       {manager && (
         <>
+          <HrOkrPanel mode="manager" />
           <LeaveApprovalQueue />
           <HrOnboardingReviewQueue />
           <HrOvertimeReviewQueue />
