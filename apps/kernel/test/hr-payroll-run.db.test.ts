@@ -959,7 +959,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     expect(dependents[0]).toMatchObject({ display_name: EXPORT_DEPENDENT });
     expect(leaveEntries[0]).toMatchObject({ employee_id: employees[0]?.id, month: '2026-06', kind: 'annual_leave' });
     const text = JSON.stringify([employees, employments, dependents, runs, lines, leaveEntries]);
-    for (const needle of [EXPORT_IDENTITY, EXPORT_IDENTITY_DIGITS, EXPORT_ACCOUNT, EXPORT_ACCOUNT_DIGITS, EXPORT_TAX, EXPORT_INSURANCE, 'crove:s1:']) expect(text, needle).not.toContain(needle);
+    for (const needle of [EXPORT_IDENTITY, EXPORT_IDENTITY_DIGITS, EXPORT_ACCOUNT, EXPORT_ACCOUNT_DIGITS, EXPORT_TAX, EXPORT_INSURANCE, 'ludy:s1:', 'crove:s1:']) expect(text, needle).not.toContain(needle);
     const audits = await withAdmin(
       async (c) => (await c.query<{ outcome: string; detail: string; row: string }>(`SELECT outcome, detail::text AS detail, audit_event::text AS row FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.org.export.people' ORDER BY id`, [o.orgId])).rows,
     );
@@ -1039,7 +1039,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
       const rows = all.slice(0, -1);
       expect(rows.length, table).toBe(expected);
       if (expected > 0) expect(rows[0]?.org_id).toBe(closing.orgId);
-      for (const needle of [EXPORT_IDENTITY_DIGITS, EXPORT_ACCOUNT_DIGITS, 'crove:s1:']) expect(text).not.toContain(needle);
+      for (const needle of [EXPORT_IDENTITY_DIGITS, EXPORT_ACCOUNT_DIGITS, 'ludy:s1:', 'crove:s1:']) expect(text).not.toContain(needle);
     }
     // Another org's owner reads their own people, never this org's.
     const own = JSON.parse((await (await get('hr.payroll_dependent', other.owner, other.slug)).text()).trim().split('\n')[0] as string) as { org_id: string };
