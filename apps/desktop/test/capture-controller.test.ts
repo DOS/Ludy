@@ -101,6 +101,7 @@ describe('meeting window classification & join URL sanitization', () => {
 
   it('parses helper --list-windows JSON safely and tolerates non-zero exit', async () => {
     const windows = await listMeetingWindows({
+      platform: 'win32',
       exePath: 'C:\\fake\\ludy-wasapi-loopback.exe',
       exec: async () => ({
         code: 0,
@@ -111,6 +112,7 @@ describe('meeting window classification & join URL sanitization', () => {
     expect(windows).toEqual([{ hwnd: '0x11', pid: 400, client: 'zalo', appName: 'Zalo PC', title: 'Cuoc goi' }]);
 
     const empty = await listMeetingWindows({
+      platform: 'win32',
       exePath: 'C:\\fake\\ludy-wasapi-loopback.exe',
       exec: async () => ({ code: 1, stdout: '', stderr: 'fail' }),
     });
@@ -690,6 +692,7 @@ describe('PCM 4-byte framing, worker startup cleanup, WASAPI ready handshake & M
     const mod = createDesktopCaptureModule({
       isPackaged: false,
       resourcesPath: '',
+      platform: 'win32',
       bridge,
       startupTimeoutMs: 40,
       resolveHelperPath: () => 'C:\\fake\\ludy-wasapi-loopback.exe',
@@ -716,6 +719,7 @@ describe('PCM 4-byte framing, worker startup cleanup, WASAPI ready handshake & M
     const startPromise = createDesktopCaptureModule({
       isPackaged: false,
       resourcesPath: '',
+      platform: 'win32',
       bridge,
       startupTimeoutMs: 200,
       resolveHelperPath: () => 'C:\\fake\\ludy-wasapi-loopback.exe',

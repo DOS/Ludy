@@ -174,8 +174,12 @@ suite('eSign meeting_minutes hardening & offboarding export follow-ups (#4641)',
     return meetingId;
   }
 
-  async function createCompletedMinutesEnvelope(meetingId: string, tag: string, options: { withAttachment?: boolean } = {}) {
-    const { fileId: sourceFileId } = await ingestSignFile(asUser(recorderId), `comp-src-${tag}`);
+  async function createCompletedMinutesEnvelope(
+    meetingId: string,
+    tag: string,
+    options: { withAttachment?: boolean; sourceFileId?: string } = {},
+  ) {
+    const sourceFileId = options.sourceFileId ?? (await ingestSignFile(asUser(recorderId), `comp-src-${tag}`)).fileId;
     const { envelopeId } = await runtime.execute<{ envelopeId: string }>(
       'sign.envelope.create',
       {
@@ -308,8 +312,12 @@ suite('eSign meeting_minutes hardening & offboarding export follow-ups (#4641)',
     return { envelopeId, sourceFileId, sealedFileId, certFileId, attachmentFileId };
   }
 
-  async function createUnsignedMinutesEnvelope(meetingId: string, tag: string, opts: { send?: boolean } = {}) {
-    const { fileId: sourceFileId } = await ingestSignFile(asUser(recorderId), `uns-src-${tag}`);
+  async function createUnsignedMinutesEnvelope(
+    meetingId: string,
+    tag: string,
+    opts: { send?: boolean; sourceFileId?: string } = {},
+  ) {
+    const sourceFileId = opts.sourceFileId ?? (await ingestSignFile(asUser(recorderId), `uns-src-${tag}`)).fileId;
     const { envelopeId } = await runtime.execute<{ envelopeId: string }>(
       'sign.envelope.create',
       {
@@ -356,6 +364,42 @@ suite('eSign meeting_minutes hardening & offboarding export follow-ups (#4641)',
       await runtime.execute('sign.envelope.send', { envelopeId }, { actor: asUser(recorderId), orgId });
     }
     return { envelopeId, sourceFileId };
+  }
+
+  async function collectExportTable(
+    table: 'sign.envelope' | 'sign.signer' | 'sign.field' | 'sign.signing_event' | 'sign.envelope_obligation' | 'kernel.file',
+  ) {
+    const items: Array<Record<string, unknown>> = [];
+    await workerRuntime.stream(
+      'kernel.org.export.snapshot',
+      { table },
+      { actor: asSystem('org-export'), orgId },
+      async (batch) => {
+        for (const line of (batch as { lines: string[] }).lines) {
+          items.push(JSON.parse(line) as Record<string, unknown>);
+        }
+      },
+    );
+    return items;
+  }
+
+  async function isExportableSignFileAsOwner(fileId: string, source: 'sign_document' | 'sign_sealed' | 'sign_certificate' = 'sign_document') {
+    const ownerClient = await appPool!.connect();
+    try {
+      await ownerClient.query('BEGIN');
+      await ownerClient.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [
+        orgId,
+        makeContextToken(ownerId),
+      ]);
+      const res = await ownerClient.query<{ ok: boolean }>(
+        'SELECT ludy_sign.is_exportable_sign_file($1::uuid, $2::uuid, $3::text) AS ok',
+        [orgId, fileId, source],
+      );
+      await ownerClient.query('ROLLBACK');
+      return res.rows[0]?.ok ?? false;
+    } finally {
+      ownerClient.release();
+    }
   }
 
   beforeAll(async () => {
@@ -646,22 +690,7 @@ suite('eSign meeting_minutes hardening & offboarding export follow-ups (#4641)',
       memberClient.release();
     }
 
-    const collectTable = async (
-      table: 'sign.envelope' | 'sign.signer' | 'sign.field' | 'sign.signing_event' | 'sign.envelope_obligation' | 'kernel.file',
-    ) => {
-      const items: Array<Record<string, unknown>> = [];
-      await workerRuntime.stream(
-        'kernel.org.export.snapshot',
-        { table },
-        { actor: asSystem('org-export'), orgId },
-        async (batch) => {
-          for (const line of (batch as { lines: string[] }).lines) {
-            items.push(JSON.parse(line) as Record<string, unknown>);
-          }
-        },
-      );
-      return items;
-    };
+    const collectTable = collectExportTable;
 
     const exportedEnvIds = (await collectTable('sign.envelope')).map((r) => r.id as string);
     expect(exportedEnvIds).toEqual(
@@ -881,5 +910,93 @@ suite('eSign meeting_minutes hardening & offboarding export follow-ups (#4641)',
     } finally {
       adminClient.release();
     }
+  });
+
+  it('exports shared source_file_id only when an exportable completed envelope shares the same source (#4692)', async () => {
+    // 1. Same-meeting coexistence (org-visible deleted meeting): completed + erased unsigned share one source_file_id -> exported.
+    const mtgOrgShared = await createSharedMeeting({ visibility: 'org', tag: 'shared-org' });
+    const sharedOrgSrc = await ingestSignFile(asUser(recorderId), 'shared-org-src');
+    const orgSharedComp = await createCompletedMinutesEnvelope(mtgOrgShared, 'shared-org-comp', {
+      sourceFileId: sharedOrgSrc.fileId,
+    });
+    const orgSharedUns = await createUnsignedMinutesEnvelope(mtgOrgShared, 'shared-org-uns', {
+      send: true,
+      sourceFileId: sharedOrgSrc.fileId,
+    });
+    await runtime.execute('meetings.meeting.delete', { meetingId: mtgOrgShared }, { actor: asUser(recorderId), orgId });
+
+    // 2. Same-meeting attendees-only exclusion: completed (retained_org_visible = false) + erased unsigned share one source_file_id -> excluded.
+    const mtgAttShared = await createSharedMeeting({ visibility: 'attendees', tag: 'shared-att' });
+    const sharedAttSrc = await ingestSignFile(asUser(recorderId), 'shared-att-src');
+    const attSharedComp = await createCompletedMinutesEnvelope(mtgAttShared, 'shared-att-comp', {
+      sourceFileId: sharedAttSrc.fileId,
+    });
+    const attSharedUns = await createUnsignedMinutesEnvelope(mtgAttShared, 'shared-att-uns', {
+      send: true,
+      sourceFileId: sharedAttSrc.fileId,
+    });
+    await runtime.execute('meetings.meeting.owner_delete', { meetingId: mtgAttShared }, { actor: asMfa(ownerId), orgId });
+
+    // 3. Cross-source exclusion: meeting A's erased unsigned row sharing meeting B's completed source_file_id stays denied.
+    const mtgCrossA = await createSharedMeeting({ visibility: 'org', tag: 'cross-a' });
+    const mtgCrossB = await createSharedMeeting({ visibility: 'org', tag: 'cross-b' });
+    const crossSrc = await ingestSignFile(asUser(recorderId), 'shared-cross-src');
+    const crossBComp = await createCompletedMinutesEnvelope(mtgCrossB, 'cross-b-comp', {
+      sourceFileId: crossSrc.fileId,
+    });
+
+    await expect(
+      runtime.execute(
+        'sign.envelope.create',
+        {
+          title: 'Cross-source reuse denied',
+          sourceKind: 'meeting_minutes',
+          sourceId: mtgCrossA,
+          sourceFileId: crossSrc.fileId,
+        },
+        { actor: asUser(recorderId), orgId },
+      ),
+    ).rejects.toMatchObject({ code: 'SIGN_FORBIDDEN', status: 403 });
+
+    const crossAUns = await createUnsignedMinutesEnvelope(mtgCrossA, 'cross-a-uns', { send: true });
+    await runtime.execute('meetings.meeting.delete', { meetingId: mtgCrossA }, { actor: asUser(recorderId), orgId });
+    await runtime.execute('meetings.meeting.delete', { meetingId: mtgCrossB }, { actor: asUser(recorderId), orgId });
+
+    expect(await isExportableSignFileAsOwner(crossSrc.fileId)).toBe(true);
+
+    // Simulate a legacy cross-source source_file_id reference on erased meeting A without touching meeting B.
+    await adminPool!.query(
+      `UPDATE ludy_sign.envelope
+          SET source_file_id = $3::uuid
+        WHERE org_id = $1::uuid AND id = $2::uuid`,
+      [orgId, crossAUns.envelopeId, crossSrc.fileId],
+    );
+
+    expect(await isExportableSignFileAsOwner(sharedOrgSrc.fileId)).toBe(true);
+    expect(await isExportableSignFileAsOwner(sharedAttSrc.fileId)).toBe(false);
+    expect(await isExportableSignFileAsOwner(crossSrc.fileId)).toBe(false);
+    expect(await isExportableSignFileAsOwner(crossBComp.sealedFileId, 'sign_sealed')).toBe(true);
+
+    const exportedEnvIds = (await collectExportTable('sign.envelope')).map((r) => r.id as string);
+    expect(exportedEnvIds).toEqual(expect.arrayContaining([orgSharedComp.envelopeId, crossBComp.envelopeId]));
+    expect(exportedEnvIds).not.toContain(orgSharedUns.envelopeId);
+    expect(exportedEnvIds).not.toContain(attSharedComp.envelopeId);
+    expect(exportedEnvIds).not.toContain(attSharedUns.envelopeId);
+    expect(exportedEnvIds).not.toContain(crossAUns.envelopeId);
+
+    const exportedFileIds = (await collectExportTable('kernel.file')).map((r) => r.id as string);
+    expect(exportedFileIds).toEqual(
+      expect.arrayContaining([
+        sharedOrgSrc.fileId,
+        orgSharedComp.sealedFileId,
+        orgSharedComp.certFileId,
+        crossBComp.sealedFileId,
+        crossBComp.certFileId,
+      ]),
+    );
+    expect(exportedFileIds).not.toContain(sharedAttSrc.fileId);
+    expect(exportedFileIds).not.toContain(attSharedComp.sealedFileId);
+    expect(exportedFileIds).not.toContain(attSharedComp.certFileId);
+    expect(exportedFileIds).not.toContain(crossSrc.fileId);
   });
 });

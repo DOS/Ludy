@@ -25,6 +25,7 @@ import {
 } from './consent.ts';
 import {
   PROCESS_LOOPBACK_UNSUPPORTED,
+  ProcessLoopbackUnsupportedError,
   type CaptureModule,
   type CapturePiece,
   type CaptureSource,
@@ -96,7 +97,7 @@ export interface CaptureControllerDeps {
 }
 
 const SILENT_WARNING_TEXT: Record<'silent-loopback' | 'silent-mic', string> = {
-  'silent-loopback': 'Không nghe thấy âm thanh từ ứng dụng họp (kiểm tra loa/ứng dụng).',
+  'silent-loopback': 'Không nghe thấy âm thanh từ ứng dụng họp (kiểm tra loa/ứng dụng hoặc quyền ghi âm hệ thống).',
   'silent-mic': 'Micro đang im lặng hoặc chưa bật; bản ghi chỉ có âm thanh cuộc họp.',
 };
 
@@ -314,12 +315,15 @@ export function createCaptureController(deps: CaptureControllerDeps) {
       deps.onTrayState({ phase: 'consent', meetingTitle: null, elapsedMs: 0, warning: null });
 
       if ((error as { code?: unknown })?.code === PROCESS_LOOPBACK_UNSUPPORTED) {
-        const msg =
-          draft.noticeLanguage === 'en'
+        const custom = error instanceof ProcessLoopbackUnsupportedError ? error.messages : undefined;
+        const canFallback = error instanceof ProcessLoopbackUnsupportedError ? error.systemFallbackAvailable : true;
+        const msg = custom
+          ? custom[draft.noticeLanguage]
+          : draft.noticeLanguage === 'en'
             ? 'This Windows version does not support per-app audio loopback (requires Windows 10 build 20348+ or Windows 11). Tick confirmation below only if you agree to capture whole-system audio instead.'
             : 'Phiên bản Windows này chưa hỗ trợ tách âm thanh riêng từng ứng dụng (cần Windows 10 build 20348+ hoặc Windows 11). Chỉ đánh dấu xác nhận bên dưới nếu bạn đồng ý ghi toàn bộ âm thanh máy.';
-        deps.ui.updateConsentState(currentView({ busy: false, error: msg, systemFallbackRequired: true }));
-        return { ok: false, error: msg, systemFallbackRequired: true };
+        deps.ui.updateConsentState(currentView({ busy: false, error: msg, systemFallbackRequired: canFallback }));
+        return { ok: false, error: msg, systemFallbackRequired: canFallback };
       }
 
       if (error instanceof DesktopApiError && error.code === 'CAPTURE_ALREADY_RUNNING') {

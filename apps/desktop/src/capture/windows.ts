@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { listMacMeetingApps } from './macos.ts';
 
 export interface NativeWindowInfo {
   hwnd: string;
@@ -101,7 +102,17 @@ export const defaultExecHelper: ExecHelper = (exePath, args) =>
     child.once('close', (code) => resolve({ code, stdout: Buffer.concat(out).toString('utf8'), stderr: Buffer.concat(err).toString('utf8') }));
   });
 
-export async function listMeetingWindows(options: { exePath?: string | null; exec?: ExecHelper } = {}): Promise<OfferedWindow[]> {
+export async function listMeetingWindows(
+  options: {
+    exePath?: string | null;
+    exec?: ExecHelper;
+    platform?: NodeJS.Platform;
+    listMacApps?: () => Promise<OfferedWindow[]>;
+  } = {},
+): Promise<OfferedWindow[]> {
+  if ((options.platform ?? process.platform) === 'darwin') {
+    return (options.listMacApps ?? listMacMeetingApps)();
+  }
   const exePath = options.exePath === undefined ? resolveHelperExePath() : options.exePath;
   if (!exePath) return [];
   const res = await (options.exec ?? defaultExecHelper)(exePath, ['--list-windows']);
