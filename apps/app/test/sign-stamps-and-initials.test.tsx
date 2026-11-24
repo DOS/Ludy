@@ -23,9 +23,11 @@ import {
 } from '../src/lib/sign-fields.ts';
 import {
   SignCeremonyReadyView,
+  buildOtpRequiredViewState,
   buildSignSubmitPayload,
   isApproverCeremonyMode,
   isFieldFilled,
+  withPreservedCeremonyFieldValues,
 } from '../src/routes/sign-ceremony.tsx';
 import { SignSettingsPage } from '../src/routes/sign-settings.tsx';
 import { canAutoSendTemplate } from '../src/routes/sign-templates.tsx';
@@ -393,9 +395,76 @@ describe('eSign Slice 4a helpers & UI (#3817)', () => {
     memberQc.setQueryData(['sign', 'member_signature', 'list', 'acme'], { items: [] });
     memberQc.setQueryData(['sign', 'stamp', 'list', 'acme'], { items: [stampItem], canManage: false });
     const memberHtml = renderWithProviders(<SignSettingsPage />, memberQc);
+    expect(memberHtml).toContain('sign-settings-profiles-section');
     expect(memberHtml).toContain('org-stamp-readonly-notice');
     expect(memberHtml).not.toContain('org-stamp-create-form');
     expect(memberHtml).not.toContain(`org-stamp-archive-${stampItem.id}`);
+
+    // Viewer role and pending orgQuery gate out SignMemberSignaturesAndStampsSection so 403 list queries never fire (#4281).
+    const viewerQc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    viewerQc.setQueryData(['org', 'get'], { slug: 'acme', role: 'viewer' });
+    const viewerHtml = renderWithProviders(<SignSettingsPage />, viewerQc);
+    expect(viewerHtml).not.toContain('sign-settings-profiles-section');
+    expect(viewerHtml).not.toContain('sign-settings-member-signatures-card');
+    expect(viewerHtml).not.toContain('sign-settings-org-stamps-card');
+
+    const pendingQc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const pendingHtml = renderWithProviders(<SignSettingsPage />, pendingQc);
+    expect(pendingHtml).not.toContain('sign-settings-profiles-section');
+    expect(pendingHtml).not.toContain('sign-settings-member-signatures-card');
+    expect(pendingHtml).not.toContain('sign-settings-org-stamps-card');
+  });
+
+  it('preserves attachment metadata in quick-saved signature patches and inPerson flag in OTP fallback (#4281, #4331)', () => {
+    const existingAttachment = {
+      fileId: '01900000-0000-7000-8000-000000000401',
+      filename: 'id-front.jpg',
+      contentType: 'image/jpeg',
+      sizeBytes: 2048,
+      sha256: 'e'.repeat(64),
+      uploadedAt: '2026-11-24T00:00:00Z',
+    };
+    const merged = withPreservedCeremonyFieldValues(
+      {
+        valueText: 'Ghi chú',
+        valueChecked: true,
+        attachment: existingAttachment,
+      },
+      {
+        signaturePngDataUrl: `data:image/png;base64,${TINY_PNG}`,
+        signatureKind: 'drawn',
+      },
+    );
+    expect(merged.attachment).toEqual(existingAttachment);
+    expect(merged.valueText).toBe('Ghi chú');
+    expect(merged.valueChecked).toBe(true);
+    expect(merged.signaturePngDataUrl).toContain(TINY_PNG);
+
+    expect(
+      buildOtpRequiredViewState({
+        orgName: 'Công ty ABC',
+        title: 'Hợp đồng',
+        inPerson: true,
+      }),
+    ).toEqual({
+      state: 'otp_required',
+      orgName: 'Công ty ABC',
+      title: 'Hợp đồng',
+      maskedEmail: null,
+      inPerson: true,
+    });
+    expect(
+      buildOtpRequiredViewState({
+        orgName: 'Công ty ABC',
+        title: 'Hợp đồng',
+        inPerson: false,
+      }),
+    ).toEqual({
+      state: 'otp_required',
+      orgName: 'Công ty ABC',
+      title: 'Hợp đồng',
+      maskedEmail: null,
+    });
   });
 
   it('prefers orgNameHint over getCurrentOrg() in loadCeremonyWorkspaceProfiles so multi-org stamps never cross workspaces', async () => {

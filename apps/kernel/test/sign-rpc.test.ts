@@ -801,6 +801,307 @@ describe('os.sign RPC handlers (#3325)', () => {
     const oversizedPdf = new Uint8Array(SIGN_ATTACHMENT_MAX_BYTES + 1);
     oversizedPdf.set(validPdf, 0);
     expect(verifySignAttachmentBytes(oversizedPdf)).toBeNull();
+
+    // Android Motion Photo JPEGs (and Samsung MotionPhoto_Data trailers) append an MP4 track after EOI (#4331, #4394).
+    const mp4Box = (type: string, body: Uint8Array): Uint8Array => {
+      const out = new Uint8Array(8 + body.byteLength);
+      const size = out.byteLength;
+      out[0] = (size >>> 24) & 0xff;
+      out[1] = (size >>> 16) & 0xff;
+      out[2] = (size >>> 8) & 0xff;
+      out[3] = size & 0xff;
+      out.set(new TextEncoder().encode(type), 4);
+      out.set(body, 8);
+      return out;
+    };
+    const concatBytes = (...parts: Uint8Array[]): Uint8Array => {
+      const total = parts.reduce((acc, p) => acc + p.byteLength, 0);
+      const out = new Uint8Array(total);
+      let off = 0;
+      for (const p of parts) {
+        out.set(p, off);
+        off += p.byteLength;
+      }
+      return out;
+    };
+    const makeMotionPhotoMp4 = (opts?: { handler?: string; majorBrand?: string; omitMoov?: boolean }) => {
+      const brand = opts?.majorBrand ?? 'mp42';
+      const handler = opts?.handler ?? 'vide';
+      const ftyp = mp4Box(
+        'ftyp',
+        new TextEncoder().encode(`${brand}\u0000\u0000\u0000\u0000mp42isom`),
+      );
+      const hdlrBody = new Uint8Array(12);
+      hdlrBody.set(new TextEncoder().encode(handler), 8);
+      const hdlr = mp4Box('hdlr', hdlrBody);
+      const mdia = mp4Box('mdia', hdlr);
+      const trak = mp4Box('trak', mdia);
+      const moov = mp4Box('moov', trak);
+      const mdat = mp4Box('mdat', new Uint8Array([0x00, 0x00, 0x00, 0x01]));
+      return opts?.omitMoov ? concatBytes(ftyp, mdat) : concatBytes(ftyp, mdat, moov);
+    };
+
+    const validMotionMp4 = makeMotionPhotoMp4();
+    const androidMotionPhoto = concatBytes(validJpeg, validMotionMp4);
+    const samsungMotionPhoto = concatBytes(validJpeg, new TextEncoder().encode('MotionPhoto_Data'), validMotionMp4);
+    const paddedMotionPhoto = concatBytes(validJpeg, new Uint8Array(16), validMotionMp4);
+    const paddedSamsungMotionPhoto = concatBytes(
+      validJpeg,
+      new Uint8Array(16),
+      new TextEncoder().encode('MotionPhoto_Data'),
+      validMotionMp4,
+    );
+    const zeroPaddedJpeg = concatBytes(validJpeg, new Uint8Array(16));
+    expect(verifySignAttachmentBytes(androidMotionPhoto)).toBe('image/jpeg');
+    expect(verifySignAttachmentBytes(samsungMotionPhoto)).toBe('image/jpeg');
+    expect(verifySignAttachmentBytes(paddedMotionPhoto)).toBe('image/jpeg');
+    expect(verifySignAttachmentBytes(paddedSamsungMotionPhoto)).toBe('image/jpeg');
+    expect(verifySignAttachmentBytes(zeroPaddedJpeg)).toBe('image/jpeg');
+
+    // Reject > 64 zero bytes before Motion Photo MP4 and trailing garbage after padded Motion Photo MP4 (#4394).
+    expect(verifySignAttachmentBytes(concatBytes(validJpeg, new Uint8Array(65), validMotionMp4))).toBeNull();
+    expect(verifySignAttachmentBytes(concatBytes(validJpeg, new Uint8Array(65)))).toBeNull();
+    expect(
+      verifySignAttachmentBytes(
+        concatBytes(validJpeg, new Uint8Array(16), validMotionMp4, new TextEncoder().encode('<script/>')),
+      ),
+    ).toBeNull();
+
+    // Reject polyglot/corrupt trailers after EOI and EXIF-thumbnail EOI masquerading as frame EOI.
+    expect(
+      verifySignAttachmentBytes(concatBytes(validJpeg, new TextEncoder().encode('<script>alert(1)</script>'))),
+    ).toBeNull();
+    expect(
+      verifySignAttachmentBytes(concatBytes(validJpeg, new Uint8Array([0x50, 0x4b, 0x03, 0x04]))),
+    ).toBeNull();
+    expect(
+      verifySignAttachmentBytes(concatBytes(androidMotionPhoto, new TextEncoder().encode('<svg/>'))),
+    ).toBeNull();
+    expect(
+      verifySignAttachmentBytes(concatBytes(validJpeg, makeMotionPhotoMp4({ handler: 'soun' }))),
+    ).toBeNull();
+    expect(
+      verifySignAttachmentBytes(concatBytes(validJpeg, makeMotionPhotoMp4({ omitMoov: true }))),
+    ).toBeNull();
+    expect(
+      verifySignAttachmentBytes(concatBytes(validJpeg, makeMotionPhotoMp4({ majorBrand: 'M4A ' }))),
+    ).toBeNull();
+
+    // Truncated JPEG whose APP1 EXIF segment embeds FF D9 near the tail must be rejected.
+    const fakeExifPayload = new Uint8Array([
+      0x45, 0x78, 0x69, 0x66, 0x00, 0x00, 0xff, 0xd8, 0xff, 0xd9, 0x00, 0x00, 0x00, 0x00,
+    ]);
+    const truncatedExifJpeg = new Uint8Array([
+      0xff, 0xd8, 0xff, 0xc0, 0x00, 0x0b, 0x08, 0x00, 0x01, 0x00, 0x01, 0x01, 0x01, 0x11, 0x00,
+      0xff, 0xe1, 0x00, fakeExifPayload.byteLength + 2, ...fakeExifPayload,
+    ]);
+    expect(verifySignAttachmentBytes(truncatedExifJpeg)).toBeNull();
+
+    // Progressive multi-scan JPEG (SOF2 + DHT + two SOS scans + EOI) is accepted (#4331, #4394).
+    const progressiveJpeg = new Uint8Array([
+      0xff, 0xd8,
+      0xff, 0xc2, 0x00, 0x0b, 0x08, 0x00, 0x01, 0x00, 0x01, 0x01, 0x01, 0x11, 0x00,
+      0xff, 0xda, 0x00, 0x08, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x12, 0xff, 0x00, 0x34,
+      0xff, 0xc4, 0x00, 0x04, 0x10, 0x00,
+      0xff, 0xda, 0x00, 0x08, 0x01, 0x01, 0x00, 0x01, 0x3f, 0x00, 0x56,
+      0xff, 0xd9,
+    ]);
+    expect(verifySignAttachmentBytes(progressiveJpeg)).toBe('image/jpeg');
+
+    // Android Ultra HDR JPEGs (MPF APP2 and/or XMP GContainer APP1 GainMap) + optional Motion Photo trailer (#4394).
+    const makeMpfApp2Segment = (
+      primarySizePlaceholder: number,
+      gainMapRelOffset: number,
+      gainMapSize: number,
+      littleEndian = true,
+    ): Uint8Array => {
+      // Body: "MPF\0" (4) + TIFF header (8) + IFD count(2) + 2 entries(24) + nextIfd(4) + 2 MP entries(32) = 74 bytes.
+      const body = new Uint8Array(74);
+      const view = new DataView(body.buffer);
+      body.set([0x4d, 0x50, 0x46, 0x00], 0);
+      body.set(littleEndian ? [0x49, 0x49, 0x2a, 0x00] : [0x4d, 0x4d, 0x00, 0x2a], 4);
+      view.setUint32(8, 8, littleEndian); // firstIfdOffset relative to tiffStart (byte 4)
+      const ifdBase = 12;
+      view.setUint16(ifdBase, 2, littleEndian);
+      // Tag 0xB001: NumberOfImages = 2 (LONG=4, count=1)
+      view.setUint16(ifdBase + 2, 0xb001, littleEndian);
+      view.setUint16(ifdBase + 4, 4, littleEndian);
+      view.setUint32(ifdBase + 6, 1, littleEndian);
+      view.setUint32(ifdBase + 10, 2, littleEndian);
+      // Tag 0xB002: MPEntry (UNDEFINED=7, count=32, offset=38 from tiffStart -> byte 42)
+      view.setUint16(ifdBase + 14, 0xb002, littleEndian);
+      view.setUint16(ifdBase + 16, 7, littleEndian);
+      view.setUint32(ifdBase + 18, 32, littleEndian);
+      view.setUint32(ifdBase + 22, 38, littleEndian);
+      view.setUint32(ifdBase + 26, 0, littleEndian);
+      // MP Entry 0 (primary: dataOffset = 0)
+      const mpBase = 42;
+      view.setUint32(mpBase + 4, primarySizePlaceholder, littleEndian);
+      view.setUint32(mpBase + 8, 0, littleEndian);
+      // MP Entry 1 (gainMap: size and offset relative to tiffStart)
+      view.setUint32(mpBase + 20, gainMapSize, littleEndian);
+      view.setUint32(mpBase + 24, gainMapRelOffset, littleEndian);
+
+      const seg = new Uint8Array(4 + body.byteLength);
+      seg[0] = 0xff;
+      seg[1] = 0xe2;
+      const segLen = 2 + body.byteLength;
+      seg[2] = (segLen >>> 8) & 0xff;
+      seg[3] = segLen & 0xff;
+      seg.set(body, 4);
+      return seg;
+    };
+
+    const makeXmpApp1Segment = (xml: string): Uint8Array => {
+      const hdr = new TextEncoder().encode('http://ns.adobe.com/xap/1.0/\0');
+      const body = concatBytes(hdr, new TextEncoder().encode(xml));
+      const seg = new Uint8Array(4 + body.byteLength);
+      seg[0] = 0xff;
+      seg[1] = 0xe1;
+      const segLen = 2 + body.byteLength;
+      seg[2] = (segLen >>> 8) & 0xff;
+      seg[3] = segLen & 0xff;
+      seg.set(body, 4);
+      return seg;
+    };
+
+    const primaryTailAfterSoi = validJpeg.subarray(2);
+    const buildMpfUltraHdr = (opts?: { littleEndian?: boolean; declaredGainMapLen?: number; gapBytes?: Uint8Array }) => {
+      const le = opts?.littleEndian ?? true;
+      const gap = opts?.gapBytes ?? new Uint8Array(0);
+      const dummyMpf = makeMpfApp2Segment(0, 0, 0, le);
+      // Primary structure: SOI(2) + APP2(dummyMpf) + primaryTailAfterSoi; tiffStart is at file offset 2 + 4 + 4 = 10.
+      const primaryLen = 2 + dummyMpf.byteLength + primaryTailAfterSoi.byteLength;
+      const gainMapRelOffset = primaryLen + gap.byteLength - 10;
+      const gainMapSize = opts?.declaredGainMapLen ?? validJpeg.byteLength;
+      const mpfSeg = makeMpfApp2Segment(primaryLen, gainMapRelOffset, gainMapSize, le);
+      return concatBytes(new Uint8Array([0xff, 0xd8]), mpfSeg, primaryTailAfterSoi, gap, validJpeg);
+    };
+
+    const xmpXml = `<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:Container="http://ns.google.com/photos/1.0/container/" xmlns:Item="http://ns.google.com/photos/1.0/container/item/"><Container:Directory><rdf:Seq><rdf:li rdf:parseType="Resource"><Container:Item Item:Semantic="Primary" Item:Mime="image/jpeg"/></rdf:li><rdf:li rdf:parseType="Resource"><Container:Item Item:Semantic="GainMap" Item:Mime="image/jpeg" Item:Length="${validJpeg.byteLength}"/></rdf:li></rdf:Seq></Container:Directory></rdf:Description></rdf:RDF></x:xmpmeta>`;
+    const xmpSeg = makeXmpApp1Segment(xmpXml);
+    const xmpUltraHdrJpeg = concatBytes(new Uint8Array([0xff, 0xd8]), xmpSeg, primaryTailAfterSoi, validJpeg);
+
+    const mpfUltraHdrLe = buildMpfUltraHdr({ littleEndian: true });
+    const mpfUltraHdrBe = buildMpfUltraHdr({ littleEndian: false });
+    expect(verifySignAttachmentBytes(mpfUltraHdrLe)).toBe('image/jpeg');
+    expect(verifySignAttachmentBytes(mpfUltraHdrBe)).toBe('image/jpeg');
+    expect(verifySignAttachmentBytes(xmpUltraHdrJpeg)).toBe('image/jpeg');
+    // Combined Ultra HDR + Motion Photo MP4 trailer.
+    expect(verifySignAttachmentBytes(concatBytes(xmpUltraHdrJpeg, new Uint8Array(8), validMotionMp4))).toBe(
+      'image/jpeg',
+    );
+    expect(verifySignAttachmentBytes(concatBytes(mpfUltraHdrLe, validMotionMp4))).toBe('image/jpeg');
+
+    // Reject undeclared appended second JPEG (no MPF or XMP GainMap declaration).
+    expect(verifySignAttachmentBytes(concatBytes(validJpeg, validJpeg))).toBeNull();
+    // Reject mismatched MPF length (shorter/longer than GainMap JPEG) and trailing garbage after GainMap.
+    expect(
+      verifySignAttachmentBytes(buildMpfUltraHdr({ declaredGainMapLen: validJpeg.byteLength - 4 })),
+    ).toBeNull();
+    expect(
+      verifySignAttachmentBytes(buildMpfUltraHdr({ declaredGainMapLen: validJpeg.byteLength + 10 })),
+    ).toBeNull();
+    expect(
+      verifySignAttachmentBytes(concatBytes(mpfUltraHdrLe, new TextEncoder().encode('<script>alert(1)</script>'))),
+    ).toBeNull();
+    expect(
+      verifySignAttachmentBytes(concatBytes(xmpUltraHdrJpeg, new TextEncoder().encode('garbage'))),
+    ).toBeNull();
+    expect(
+      verifySignAttachmentBytes(buildMpfUltraHdr({ gapBytes: new Uint8Array([0xde, 0xad, 0xbe, 0xef]) })),
+    ).toBeNull();
+    // Reject malformed XMP GainMap declaring a non-JPEG Mime type.
+    const badXmpSeg = makeXmpApp1Segment(xmpXml.replace('Item:Semantic="GainMap" Item:Mime="image/jpeg"', 'Item:Semantic="GainMap" Item:Mime="image/png"'));
+    expect(
+      verifySignAttachmentBytes(concatBytes(new Uint8Array([0xff, 0xd8]), badXmpSeg, primaryTailAfterSoi, validJpeg)),
+    ).toBeNull();
+
+    // Reject unclosed repeated <Container:Item tokens across multiple 60 KB XMP APP1 segments in linear time (ReDoS guard).
+    const redosXmpSeg = makeXmpApp1Segment('<Container:Item '.repeat(4000));
+    const redosJpeg = concatBytes(
+      new Uint8Array([0xff, 0xd8]),
+      redosXmpSeg,
+      redosXmpSeg,
+      redosXmpSeg,
+      redosXmpSeg,
+      primaryTailAfterSoi,
+      validJpeg,
+    );
+    const redosStartMs = performance.now();
+    expect(verifySignAttachmentBytes(redosJpeg)).toBeNull();
+    expect(performance.now() - redosStartMs).toBeLessThan(2000);
+
+    // Enforce JPEG_MAX_XMP_APP1_SEGMENTS = 4 cap across standard XMP APP1 segments.
+    const benignXmpSeg = makeXmpApp1Segment('<x:xmpmeta/>');
+    expect(
+      verifySignAttachmentBytes(
+        concatBytes(new Uint8Array([0xff, 0xd8]), benignXmpSeg, benignXmpSeg, benignXmpSeg, benignXmpSeg, primaryTailAfterSoi),
+      ),
+    ).toBe('image/jpeg');
+    expect(
+      verifySignAttachmentBytes(
+        concatBytes(
+          new Uint8Array([0xff, 0xd8]),
+          benignXmpSeg,
+          benignXmpSeg,
+          benignXmpSeg,
+          benignXmpSeg,
+          benignXmpSeg,
+          primaryTailAfterSoi,
+        ),
+      ),
+    ).toBeNull();
+
+    // Reject duplicate 0xB001 or 0xB002 tags inside the same MPF Index IFD.
+    const makeDupTagMpfJpeg = (dupTag: 0xb001 | 0xb002): Uint8Array => {
+      const body = new Uint8Array(86);
+      const view = new DataView(body.buffer);
+      body.set([0x4d, 0x50, 0x46, 0x00, 0x49, 0x49, 0x2a, 0x00], 0);
+      view.setUint32(8, 8, true);
+      const ifdBase = 12;
+      view.setUint16(ifdBase, 3, true);
+      const writeTag = (slot: number, tag: number) => {
+        const at = ifdBase + 2 + slot * 12;
+        if (tag === 0xb001) {
+          view.setUint16(at, 0xb001, true);
+          view.setUint16(at + 2, 4, true);
+          view.setUint32(at + 4, 1, true);
+          view.setUint32(at + 8, 2, true);
+        } else {
+          view.setUint16(at, 0xb002, true);
+          view.setUint16(at + 2, 7, true);
+          view.setUint32(at + 4, 32, true);
+          view.setUint32(at + 8, 50, true);
+        }
+      };
+      if (dupTag === 0xb001) {
+        writeTag(0, 0xb001);
+        writeTag(1, 0xb001);
+        writeTag(2, 0xb002);
+      } else {
+        writeTag(0, 0xb001);
+        writeTag(1, 0xb002);
+        writeTag(2, 0xb002);
+      }
+      view.setUint32(ifdBase + 2 + 3 * 12, 0, true);
+      const seg = new Uint8Array(4 + body.byteLength);
+      seg[0] = 0xff;
+      seg[1] = 0xe2;
+      const segLen = 2 + body.byteLength;
+      seg[2] = (segLen >>> 8) & 0xff;
+      seg[3] = segLen & 0xff;
+      const primaryLen = 2 + seg.byteLength + primaryTailAfterSoi.byteLength;
+      const mpBase = 54;
+      view.setUint32(mpBase + 4, primaryLen, true);
+      view.setUint32(mpBase + 8, 0, true);
+      view.setUint32(mpBase + 20, validJpeg.byteLength, true);
+      view.setUint32(mpBase + 24, primaryLen - 10, true);
+      seg.set(body, 4);
+      return concatBytes(new Uint8Array([0xff, 0xd8]), seg, primaryTailAfterSoi, validJpeg);
+    };
+    expect(verifySignAttachmentBytes(makeDupTagMpfJpeg(0xb001))).toBeNull();
+    expect(verifySignAttachmentBytes(makeDupTagMpfJpeg(0xb002))).toBeNull();
   });
 
   it('wires os.sign.vault.search and os.sign.vault.ask with AI-off parity and metered AI-on citations (#4439)', async () => {

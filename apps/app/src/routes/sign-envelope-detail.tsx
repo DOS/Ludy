@@ -109,7 +109,7 @@ export function fromDatetimeLocalValue(raw: string): string | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
 }
 
-export function canManageEnvelopeLinksAndVoid(input: {
+export function canManageEnvelopeLinks(input: {
   role: string | null | undefined;
   userId: string | null | undefined;
   createdBy: string | null | undefined;
@@ -120,6 +120,19 @@ export function canManageEnvelopeLinksAndVoid(input: {
   if (input.role === 'member') {
     if (input.sourceKind === 'meeting_minutes') return true;
     if (input.userId && input.createdBy === input.userId) return true;
+  }
+  return false;
+}
+
+export function canVoidEnvelope(input: {
+  role: string | null | undefined;
+  userId: string | null | undefined;
+  createdBy: string | null | undefined;
+}): boolean {
+  if (!input.role) return false;
+  if (input.role === 'owner' || input.role === 'admin') return true;
+  if (input.role === 'member') {
+    return Boolean(input.userId && input.createdBy === input.userId);
   }
   return false;
 }
@@ -239,12 +252,21 @@ export function SignEnvelopeDetailPage() {
   const isDraft = envelope?.status === 'draft';
   const roleHere = meQuery.data?.orgs.find((o) => o.slug === slug)?.role ?? orgQuery.data?.role;
   const currentUserId = meQuery.data?.userId ?? null;
-  const canManageLinksAndVoid = meQuery.data
-    ? canManageEnvelopeLinksAndVoid({
+  const canManageLinks = meQuery.data
+    ? canManageEnvelopeLinks({
         role: roleHere,
         userId: currentUserId,
         createdBy: envelope?.createdBy,
         sourceKind: envelope?.sourceKind,
+      })
+    : orgQuery.data
+      ? orgQuery.data.role === 'owner' || orgQuery.data.role === 'admin'
+      : false;
+  const canVoid = meQuery.data
+    ? canVoidEnvelope({
+        role: roleHere,
+        userId: currentUserId,
+        createdBy: envelope?.createdBy,
       })
     : orgQuery.data
       ? orgQuery.data.role === 'owner' || orgQuery.data.role === 'admin'
@@ -1029,7 +1051,7 @@ export function SignEnvelopeDetailPage() {
                 </Button>
               </>
             ) : null}
-            {canManageLinksAndVoid && (envelope.status === 'sent' || envelope.status === 'in_progress') ? (
+            {canVoid && (envelope.status === 'sent' || envelope.status === 'in_progress') ? (
               <Button type="button" variant="destructive" onClick={() => setVoidDialogOpen(true)}>
                 {t('actions.void')}
               </Button>
@@ -1141,11 +1163,11 @@ export function SignEnvelopeDetailPage() {
             onAddSigner={handleAddSigner}
             onRemoveSigner={handleRemoveSigner}
             onMoveSigner={handleMoveSigner}
-            {...(canManageLinksAndVoid ? { onCopyZaloLink: handleCopyZaloLink } : {})}
+            {...(canManageLinks ? { onCopyZaloLink: handleCopyZaloLink } : {})}
             {...(canRemind ? { onRemindSigner: handleRemindSigner } : {})}
             {...(canCorrectRecipients ? { onCorrectSigner: openCorrectRecipientDialog } : {})}
             onStartInPerson={
-              canWriteSign && (!meQuery.data || Boolean(roleHere && roleHere !== 'viewer'))
+              canRemind
                 ? (signerId) => {
                     selectInPersonDialogSigner(signerId);
                   }

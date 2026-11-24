@@ -663,7 +663,7 @@ describe('eSign templates UI components (#3526)', () => {
         <IntlProvider locale={locale} timeZone="Asia/Ho_Chi_Minh" messages={catalog(locale)}>
           <DirectLinkCard
             detail={detail}
-            freshDirectUrl={null}
+            freshDirectUrl="https://app.ludy.vn/-/sign/d#freshDirectToken000000000000000000000001"
             pending={true}
             rotating={true}
             onToggleEnabled={() => {}}
@@ -677,6 +677,7 @@ describe('eSign templates UI components (#3526)', () => {
       expect(rotateBusy).toContain(expectedRotate);
       expect(rotateBusy).toContain('data-loading=""');
       expect(rotateBusy).toContain('aria-busy="true"');
+      expect(rotateBusy).toMatch(/<button[^>]*max-sm:min-h-11[^>]*>/);
     }
   });
 });

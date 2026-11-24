@@ -248,7 +248,7 @@ export const en: Dictionary = {
       {
         key: 'sign',
         name: 'Ludy eSign',
-        body: `Self-contained PDF signing: PDF safety check before opening, optional field and risk suggestions from ${N.gm}, Zalo links or email with optional verification code, tamper-evident sealing with an audit certificate, and offline verification.`,
+        body: `End-to-end PDF signing: sandbox PDF safety checks, 5 SME starter contracts and reusable templates, ${N.gm} field and playbook checks, Zalo or direct signing links, in-person counter signing, verified attachments, tamper-evident sealing with audit certificates, and offline verification.`,
         agent: N.gm,
         page: 'sign',
       },
@@ -587,15 +587,15 @@ export const en: Dictionary = {
     },
     sign: {
       name: 'Ludy eSign',
-      body: 'Upload a PDF or hand off from a Ludy Engage quote, place fields with optional AI suggestions, send private Zalo links or emails with optional verification code, apply tamper-evident sealing with an audit certificate, and verify files offline.',
+      body: 'Draft contracts or reuse templates, hand off from Engage, Teamwork, Projects or HR, place fields and stamps with optional AI playbook checks, send Zalo links, direct links or in-person sessions, track renewals and verify sealed files offline.',
       points: [
-        'Isolated PDF safety check (up to 25 MB, 200 pages), rejecting password-protected files and hidden active scripts; stored separately from Finance invoice scanning',
-        'Private signing links that never send the access token to the server and clear it from the address bar on load, parallel or sequential routing on 360px+ phones, and optional 6-digit email verification code',
-        'Tamper-evident PDF sealing, appended audit certificate page, append-only event chain, and local browser verification without uploading the file',
-        'One-click handoff from Ludy Engage quotes (with live signing status on the quote), a dedicated one-click approval screen for approvers, and completion emails delivering the sealed PDF to signers and CC recipients',
+        'Isolated PDF safety check (up to 25 MB, 200 pages), 5 built-in SME starter templates, reusable template library with automatic text-tag placement, and offline page-by-page revision comparison',
+        '9 field types including red company or title stamps, 1-click initial all pages, dropdown/radio choices and verified ID or business attachments; optional AI field, risk and 6-rule SME playbook checks with human approval',
+        'Private Zalo links, optional 6-digit email verification code, permanent direct links, public form hub and 30-minute in-person counter sessions; in-flight recipient corrections and audited delegation',
+        'One-click handoffs from Ludy Engage quotes, meeting minutes, project acceptance and HR labor contracts; tamper-evident sealing with audit certificates, renewal alerts on Today, offline verification, webhooks and REST API',
       ],
       soonLabel: 'Coming soon',
-      soon: 'Vietnam public CA connections (VNPT SmartCA, Viettel MySign, MISA WeSign) and long-term signature validation for envelopes (awaiting envelope workflow wiring, provider test credentials and legal review), reusable templates and permanent direct signing links',
+      soon: 'Vietnam public CA connections (VNPT SmartCA, Viettel MySign, MISA WeSign) and long-term signature validation for envelopes (awaiting envelope workflow wiring, provider test credentials and legal review)',
     },
   },
   trust: {

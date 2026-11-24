@@ -117,4 +117,18 @@ describe('Ludy eSign landing page (#4605)', () => {
       ].sort(),
     );
   });
+
+  it('keeps home eSign module blurb and landing counter tablet sizing aligned with shipped Slices 2-5 (#4331, #4394)', async () => {
+    const { en } = await import('../src/content/en');
+    const { vi } = await import('../src/content/vi');
+    expect(en.modules.sign.soon).not.toContain('reusable templates');
+    expect(en.modules.sign.soon).not.toContain('direct signing links');
+    expect(vi.modules.sign.soon).not.toContain('mẫu tài liệu dùng lại');
+    expect(vi.modules.sign.soon).not.toContain('liên kết ký cố định');
+
+    const numbersSource = readFileSync(join(WEB_SRC, 'components', 'landing', 'numbers.tsx'), 'utf8');
+    expect(numbersSource).toContain('md:grid-cols-5');
+    expect(numbersSource).toContain('md:text-base');
+    expect(numbersSource).toContain('lg:text-2xl');
+  });
 });

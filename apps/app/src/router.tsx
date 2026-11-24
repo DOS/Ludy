@@ -4,7 +4,7 @@ import { useTranslations } from 'use-intl';
 import { Button } from '@ludy/ui/components/button';
 import { ScreenTitle } from './components/ui.tsx';
 import { errorMessage, getCurrentOrg, isUnauthenticated, orpc, queryClient, setCurrentOrg } from './lib/api.ts';
-import { accessToken, auth, getConfig, needsSecondFactor, needsSecondFactorNow } from './lib/auth.ts';
+import { auth, getConfig, needsSecondFactor, needsSecondFactorNow } from './lib/auth.ts';
 import { landingFor } from './lib/clients.ts';
 import { effectiveModules, outsideInstalled, screenInstalled } from './lib/modules.ts';
 import { installedModules, setOrgModules } from './lib/org-modules.ts';
@@ -124,11 +124,21 @@ import { SignPublicHubPage } from './routes/sign-public-hub.tsx';
 import { SignTemplatesPage } from './routes/sign-templates.tsx';
 import { SignVerifyPage } from './routes/sign-verify.tsx';
 import { SignSettingsPage } from './routes/sign-settings.tsx';
-import { SIGN_DIRECT_PAGE_PATH, SIGN_PAGE_PATH, SIGN_PUBLIC_HUB_PAGE_PREFIX } from './lib/sign-hash.ts';
+import {
+  SIGN_DIRECT_PAGE_PATH,
+  SIGN_PAGE_PATH,
+  SIGN_PUBLIC_HUB_PAGE_PREFIX,
+} from './lib/sign-hash.ts';
+import { enforceSessionGuard, ensureSignedOutListener } from './lib/ceremony-boot.ts';
 import { PublicRoadmapPage } from './routes/public-roadmap.tsx';
 
 async function requireSession() {
-  if (!(await accessToken())) throw redirect({ to: '/login' });
+  await enforceSessionGuard({
+    onAuthenticated: () => ensureSignedOutListener({ navigateToLogin: () => void router.navigate({ to: '/login' }) }),
+    onRedirectToLogin: () => {
+      throw redirect({ to: '/login' });
+    },
+  });
 }
 
 // A user with a verified second factor finishes signing in on /mfa before seeing any data.
