@@ -42,13 +42,15 @@ Việc cần người thật (JOY): **B-OA1** thêm quyền đọc lịch vào m
 
 ## Nhóm C: nhập bản ghi sau cuộc họp (đã hoãn, quyết định của JOY ngày 2026-11-15)
 
-> **Quyết định của JOY (2026-11-15): nhóm C để vào lộ trình làm sau, chưa làm bây giờ.** C2 (Google Meet), C3 (Zoom), C4 (Microsoft Teams), bước C2a (#3306, rút âm thanh từ video của Meet) và các việc cần người thật C-OA1 đến C-OA3 (#3177 đến #3179) đã chuyển sang kho ý tưởng (Icebox), mức P3.
+> **Hiện trạng (2026-11-24): nhóm C đã làm xong và đang TẮT.** Ngày 2026-11-15 JOY hoãn nhóm C; ngày 2026-11-18 PO Meetings đưa lại lên mức P2 theo chỉ đạo của JOY (làm xong backlog thì tiến tới các tích hợp), và nhóm C đã được làm bằng dữ liệu mẫu và giả lập: lõi C1, C2 (Google Meet, chỉ lấy bản chép lời do chính Google tạo, cho cuộc họp mình tổ chức), C2a (rút âm thanh từ file video của nền tảng), C3 (Zoom) và C4 (Microsoft Teams). Mọi bộ nối đều TẮT sẵn, không bài kiểm tra nào gọi nền tảng thật, và chưa có gì chạy trên production cho tới khi JOY làm xong các việc C-OA1 đến C-OA3 (#3177 đến #3179, còn mở) và chạy thử thật lần đầu. **Cố ý chưa làm:** đường lấy ÂM THANH của Google (file ghi hình nằm trong Drive của người tổ chức, cần quyền Drive loại "hạn chế" hoặc đường Google Picker; chờ JOY quyết định sau lần chạy thử đầu).
+>
+> **Lịch sử: quyết định của JOY (2026-11-15) là nhóm C để vào lộ trình làm sau, chưa làm bây giờ (đã được nâng lại ngày 2026-11-18, xem hiện trạng ở trên).** C2 (Google Meet), C3 (Zoom), C4 (Microsoft Teams), bước C2a (#3306, rút âm thanh từ video của Meet) và các việc cần người thật C-OA1 đến C-OA3 (#3177 đến #3179) đã chuyển sang kho ý tưởng (Icebox), mức P3.
 >
 > **Lý do:** khoảng 99% người dùng Ludy không có Google Workspace, Zoom Pro hay Microsoft 365 gói doanh nghiệp, nên tài khoản miễn phí không ghi hình lên đám mây được và các nền tảng đó không có gì để đưa cho Ludy. Người dùng miễn phí đã có hai đường: tiện ích Ludy ghi cuộc gọi Meet trực tiếp, và tải lên file đã ghi (kể cả file Zoom ghi trên máy).
 >
 > **Giữ lại gì:** lõi C1 đã làm xong và được giữ (kết nối nền tảng, danh sách gợi ý, tải bản ghi, cách xác nhận mới, màn hình trong ứng dụng); hiện chỉ có nền tảng thử (sandbox), chưa nối với nền tảng thật. Việc làm chắc thêm bộ kiểm soát tải file (#3291, PR #3305) cũng giữ vì nó bảo vệ mã đã nằm trong sản phẩm. Những điều đã đọc từ trang của Google (quyền đọc file Drive thuộc loại "hạn chế", nên phải có đánh giá bảo mật CASA; đường Google Picker với quyền `drive.file` là lựa chọn đầu của JOY) nằm ở issue #3174, để dùng khi nhóm C quay lại.
 
-Phần còn lại của mục này là thiết kế cho lúc nhóm C quay lại, không phải cam kết.
+Phần còn lại của mục này là thiết kế mà nhóm C đã được làm theo (bản tiếng Anh có ghi chú "đã làm" cho từng bước).
 
 
 Ba nền tảng đều đóng hoặc tính tiền đường nghe trực tiếp nhưng còn đường **lấy bản ghi sau cuộc họp**. Ludy chỉ dùng đường này và **ưu tiên lấy file âm thanh** để tự chép tiếng Việt bằng bộ chép lời của Ludy, vì bản chép lời có sẵn của nền tảng có thể kém tiếng Việt.
@@ -88,7 +90,7 @@ Dịch ghi chú trực tiếp, thư theo dõi đã dịch, chia sẻ bản dịc
 1. Nhóm A trước (không cần tài khoản): A1 và A2, A6 song song với A3 và A4; A5 sau A4.
 2. D1 sớm (nhỏ, giảm nguy cơ bị cửa hàng từ chối), D2 sau D1 và sau D-OA1.
 3. B1 rồi B2; B4 và B5 làm lúc nào cũng được sau khi có cơ chế webhook của A6; B3 sau B1 và B-OA2.
-4. Nhóm C: lõi C1 đã làm xong; C2, C3, C4 đã hoãn (quyết định của JOY ngày 2026-11-15); nếu quay lại thì theo nền tảng khách thí điểm dùng (báo cáo gợi ý Google, Zoom, Microsoft).
+4. Nhóm C: lõi C1 và C2, C3, C4 đã làm xong và đang tắt (hoãn ngày 2026-11-15, nâng lại ngày 2026-11-18); chạy thật theo nền tảng khách thí điểm dùng (báo cáo gợi ý Google, Zoom, Microsoft), mỗi nền tảng chờ việc của JOY.
 
 ## Các câu đã được PO Meetings quyết (2026-11-14) và một câu còn mở
 
