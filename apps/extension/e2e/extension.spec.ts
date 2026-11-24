@@ -65,6 +65,8 @@ test('the installed manifest asks for nothing beyond the list', async () => {
   expect([...(manifest.permissions ?? [])].sort()).toEqual(['identity', 'storage']);
   expect(manifest.host_permissions).toEqual(['https://app.ludy.vn/*']);
   expect([...(manifest.optional_permissions ?? [])].sort()).toEqual(['activeTab', 'offscreen', 'scripting', 'tabCapture']);
+  // The one page a website may navigate to (#4662): the sign-in tab's landing page, for the cloud address and localhost only; not a permission, so no install or update warning.
+  expect((manifest as { web_accessible_resources?: unknown }).web_accessible_resources).toEqual([{ resources: ['connected.html'], matches: ['https://app.ludy.vn/*', 'http://localhost/*'] }]);
 });
 
 test('the installed manifest names its icons, and the package holds them', async () => {
@@ -128,7 +130,8 @@ test('with meetings off in the org the feature does not show, with it on it does
 });
 
 test('the code exchange carries the extension\'s own Origin, which the kernel binds the code to (#2850)', async () => {
-  // Signed out, pointing at the fake Ludy. The popup's own sign-in runs; only the browser window is replaced: it answers
+  // Signed out, pointing at the fake Ludy on 127.0.0.1, an address the manifest does not let reach the landing page (only the cloud address and localhost are listed), so the
+  // sign-in keeps the browser window (#4662). The popup's own sign-in runs; only the browser window is replaced: it answers
   // with the redirect address the extension asked for plus a code, as the app's connect page would.
   const worker = context.serviceWorkers()[0]!;
   await worker.evaluate((origin) => chrome.storage.local.set({ 'ludy-extension-state': { address: origin, accounts: {}, activeOrg: null, enabled: {} } }), fake.origin);
@@ -160,6 +163,116 @@ test('the code exchange carries the extension\'s own Origin, which the kernel bi
   expect(exchange).toHaveLength(1);
   expect(exchange[0]!.origin).toBe(`chrome-extension://${extensionId}`);
   expect(fake.exchanges[0]).toEqual({ code: `crc_${'A'.repeat(43)}`, codeVerifier: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/) });
+  await page.close();
+});
+
+// Sign-in in a normal tab (#4662). The fake Ludy answers on `localhost` here, which the manifest lets reach the landing page (the cloud address is the other); the tab the popup opens
+// is a real tab of the fake's origin, and the test sends it to the landing page the way the app's connect page does: a navigation started by that page, which the browser allows
+// only because of web_accessible_resources.
+const localOrigin = () => fake.origin.replace('127.0.0.1', 'localhost');
+const signedOut = async (address: string) => {
+  await context.serviceWorkers()[0]!.evaluate((origin) => chrome.storage.local.set({ 'ludy-extension-state': { address: origin, accounts: {}, activeOrg: null, enabled: {} } }), address);
+  fake.requests.length = 0;
+  fake.exchanges.length = 0;
+};
+const CODE = `crc_${'B'.repeat(43)}`;
+
+test('sign-in opens one normal tab, which the landing page finishes and closes (#4662)', async () => {
+  await signedOut(localOrigin());
+  const page = await popup();
+  await page.evaluate(() => {
+    (window as unknown as { windowFlows: number }).windowFlows = 0;
+    (chrome.identity as { launchWebAuthFlow: unknown }).launchWebAuthFlow = async () => {
+      (window as unknown as { windowFlows: number }).windowFlows += 1;
+      return undefined;
+    };
+  });
+  const [tab] = await Promise.all([context.waitForEvent('page'), page.getByRole('button', { name: 'Đăng nhập Ludy' }).click()]);
+  await tab.waitForURL(/\/-\/extension\/connect\?/);
+  const asked = new URL(tab.url());
+  expect(asked.origin).toBe(localOrigin());
+  expect(asked.pathname).toBe('/-/extension/connect');
+  const redirect = asked.searchParams.get('redirect_uri') ?? '';
+  expect(redirect).toBe(`chrome-extension://${extensionId}/connected.html`);
+  expect(asked.searchParams.get('code_challenge_method')).toBe('S256');
+  expect(asked.searchParams.get('code_challenge')).toMatch(/^[A-Za-z0-9_-]{43}$/);
+  const state = asked.searchParams.get('state') ?? '';
+  expect(state).not.toBe('');
+  // No browser window was asked for, and nothing is exchanged before the app answers.
+  expect(await page.evaluate(() => (window as unknown as { windowFlows: number }).windowFlows)).toBe(0);
+  expect(fake.exchanges).toHaveLength(0);
+
+  // The app's connect page, once the member approved: the tab itself goes to the extension's landing page with the code.
+  await tab.evaluate((to) => location.assign(to), `${redirect}?code=${CODE}&org=cong-ty&state=${state}`).catch(() => undefined);
+  await tab.waitForURL(`chrome-extension://${extensionId}/connected.html`);
+  await expect(tab.getByText('Đã kết nối với Ludy')).toBeVisible();
+  await expect.poll(() => fake.exchanges.length).toBe(1);
+  expect(fake.exchanges[0]).toEqual({ code: CODE, codeVerifier: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/) });
+  const exchange = fake.requests.filter((r) => r.method === 'POST' && r.path === '/api/extension/token');
+  expect(exchange).toHaveLength(1);
+  expect(exchange[0]!.origin).toBe(`chrome-extension://${extensionId}`);
+  const stored = (await context.serviceWorkers()[0]!.evaluate(async () => (await chrome.storage.local.get('ludy-extension-state'))['ludy-extension-state'])) as { activeOrg: string; accounts: Record<string, { orgSlug: string; token: string }> };
+  expect(stored.activeOrg).toBe('org1');
+  expect(stored.accounts.org1).toMatchObject({ orgSlug: 'cong-ty', token: 'crx_signed_in' });
+  // The tab closes itself; the popup shows the signed-in state the next time it opens.
+  await expect.poll(() => tab.isClosed(), { timeout: 10_000 }).toBe(true);
+  await page.close();
+  const again = await popup();
+  await expect(again.locator('#org')).toBeVisible();
+  await expect(again.locator('#org option')).toHaveText(['cong-ty']);
+  await again.close();
+});
+
+test('the landing page ignores an answer with another state, and finishes the sign-in that is waiting (#4662)', async () => {
+  await signedOut(localOrigin());
+  const page = await popup();
+  const [tab] = await Promise.all([context.waitForEvent('page'), page.getByRole('button', { name: 'Đăng nhập Ludy' }).click()]);
+  await tab.waitForURL(/\/-\/extension\/connect\?/);
+  const asked = new URL(tab.url());
+  const redirect = asked.searchParams.get('redirect_uri') ?? '';
+  const state = asked.searchParams.get('state') ?? '';
+  // A forged or stale answer: another state. It trades nothing and leaves the pending sign-in alone.
+  const stranger = await context.newPage();
+  await stranger.goto(`${localOrigin()}/`);
+  await stranger.evaluate((to) => location.assign(to), `${redirect}?code=${CODE}&org=cong-ty&state=not-the-state`).catch(() => undefined);
+  await stranger.waitForURL(`chrome-extension://${extensionId}/connected.html`);
+  await expect(stranger.getByText('Không có lần đăng nhập nào đang chờ')).toBeVisible();
+  expect(fake.exchanges).toHaveLength(0);
+  await stranger.close();
+  // The real answer still finishes it.
+  await tab.evaluate((to) => location.assign(to), `${redirect}?code=${CODE}&org=cong-ty&state=${state}`).catch(() => undefined);
+  await tab.waitForURL(`chrome-extension://${extensionId}/connected.html`);
+  await expect(tab.getByText('Đã kết nối với Ludy')).toBeVisible();
+  await expect.poll(() => fake.exchanges.length).toBe(1);
+  await page.close();
+});
+
+test('a tab the browser will not open keeps the browser window (#4662)', async () => {
+  await signedOut(localOrigin());
+  const page = await popup();
+  await page.evaluate(() => {
+    const seen: { windowRedirect: string } = { windowRedirect: '' };
+    (chrome.tabs as { create: unknown }).create = async () => {
+      throw new Error('blocked');
+    };
+    (chrome.identity as { launchWebAuthFlow: unknown }).launchWebAuthFlow = async ({ url }: { url: string }) => {
+      const params = new URL(url).searchParams;
+      seen.windowRedirect = params.get('redirect_uri') ?? '';
+      const back = new URL(seen.windowRedirect);
+      back.searchParams.set('code', `crc_${'C'.repeat(43)}`);
+      back.searchParams.set('org', 'cong-ty');
+      back.searchParams.set('state', params.get('state') ?? '');
+      return back.toString();
+    };
+    (window as unknown as { seen: typeof seen }).seen = seen;
+  });
+  await page.getByRole('button', { name: 'Đăng nhập Ludy' }).click();
+  await expect.poll(() => fake.exchanges.length).toBe(1);
+  const redirect = await page.evaluate(() => (window as unknown as { seen: { windowRedirect: string } }).seen.windowRedirect);
+  expect(new URL(redirect).hostname).toBe(`${extensionId}.chromiumapp.org`);
+  // The tab route left nothing pending behind: a landing page opened now finds no sign-in waiting.
+  const pending = await context.serviceWorkers()[0]!.evaluate(async () => (await chrome.storage.session.get('ludy-pending-signin'))['ludy-pending-signin']);
+  expect(pending).toBeUndefined();
   await page.close();
 });
 

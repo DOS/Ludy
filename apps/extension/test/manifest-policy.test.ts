@@ -13,6 +13,10 @@ describe('manifest permission list', () => {
     expect(manifestViolations(manifest())).toEqual([]);
   });
 
+  it('the shipped manifest declares exactly the sign-in landing page (#4662, step 2)', () => {
+    expect(manifest().web_accessible_resources).toEqual([{ resources: ['connected.html'], matches: ['https://app.ludy.vn/*', 'http://localhost/*'] }]);
+  });
+
   it('no web accessible resource at all, or exactly the sign-in landing page for the cloud address and localhost, keeps the list (#4662)', () => {
     const without = { ...manifest() };
     delete without.web_accessible_resources;

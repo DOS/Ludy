@@ -6,7 +6,16 @@ declare namespace chrome {
     const id: string | undefined;
     const lastError: { message?: string } | undefined;
     function getURL(path: string): string;
-    function getManifest(): { name?: string; description?: string; version: string; permissions?: string[]; optional_permissions?: string[]; host_permissions?: string[]; icons?: Record<string, string> };
+    function getManifest(): {
+      name?: string;
+      description?: string;
+      version: string;
+      permissions?: string[];
+      optional_permissions?: string[];
+      host_permissions?: string[];
+      web_accessible_resources?: Array<{ resources?: string[]; matches?: string[] }>;
+      icons?: Record<string, string>;
+    };
     function sendMessage(message: unknown): Promise<unknown>;
     const onMessage: {
       addListener(listener: (message: unknown, sender: unknown, sendResponse: (response?: unknown) => void) => boolean | void): void;
@@ -24,6 +33,8 @@ declare namespace chrome {
       clear(): Promise<void>;
     }
     const local: Area;
+    // Kept in memory for the browser session, readable by the extension's own pages only (not by content scripts).
+    const session: Area;
   }
   namespace identity {
     function launchWebAuthFlow(details: { url: string; interactive: boolean }): Promise<string | undefined>;
@@ -42,6 +53,9 @@ declare namespace chrome {
     }
     function query(query: { active: boolean; currentWindow: boolean }): Promise<Tab[]>;
     function create(properties: { url: string }): Promise<Tab>;
+    // The tab of the extension page that asks, and closing a tab: neither needs the `tabs` permission.
+    function getCurrent(): Promise<Tab | undefined>;
+    function remove(tabId: number): Promise<void>;
   }
   namespace scripting {
     interface InjectionResult<T = unknown> {

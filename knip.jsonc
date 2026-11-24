@@ -22,7 +22,7 @@
     "apps/extension": {
       // The manifest names these as the extension's pages and worker; the scripts run from package.json and CI. The
       // Playwright specs are run by `playwright test` from the package script.
-      "entry": ["src/background.ts", "src/offscreen.ts", "src/popup.ts", "src/mic.ts", "scripts/*.mjs", "e2e/*.spec.ts"]
+      "entry": ["src/background.ts", "src/offscreen.ts", "src/popup.ts", "src/mic.ts", "src/connected.ts", "scripts/*.mjs", "e2e/*.spec.ts"]
     },
     "apps/extract": {
       // child.ts is spawned by path from the sandbox (src/sandbox.ts); the container scripts run inside the image in CI.
