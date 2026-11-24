@@ -543,6 +543,7 @@ export function SignEnvelopesPage() {
   };
 
   const handleCopyZaloLink = async (item: SignEnvelopeSummary) => {
+    if (!canManageEnvelope(item)) return;
     const reqId = rowActionReqRef.current + 1;
     rowActionReqRef.current = reqId;
     setPendingRowAction({ id: item.id, kind: 'zalo' });
@@ -592,8 +593,13 @@ export function SignEnvelopesPage() {
         if (rowActionReqRef.current === reqId) toast(t('actions.remindedToast'));
         return;
       }
+      // Link-only reminders mint a raw signing token, so restrict them to creators, owners, and admins.
+      if (!canManageEnvelope(item)) {
+        toast(t('actions.noActiveSignerToast'));
+        return;
+      }
       const target = dueSigners.find((s) => s.deliveryMode === 'link') ?? dueSigners[0];
-      if (!target || !canManageEnvelope(item)) {
+      if (!target) {
         toast(t('actions.noActiveSignerToast'));
         return;
       }

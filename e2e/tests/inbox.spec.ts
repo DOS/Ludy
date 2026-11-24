@@ -143,7 +143,7 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
     await page.getByRole('link', { name: 'Tất cả chứng từ' }).click();
     const document = page.getByRole('row').filter({ hasText: 'C26TAB-1234' });
     await expect(document).toHaveCount(1);
-    await expect(document.getByRole('cell')).toHaveText(['15/09/2026', 'C26TAB-1234', 'Mua vào', SELLER, /^1\.800\.000/, /^180\.000/, /^1\.980\.000/, 'Đã ghi sổ', 'Ghi chú']);
+    await expect(document.getByRole('cell')).toHaveText(['15/09/2026', 'C26TAB-1234', 'Mua vào', SELLER, /^1\.800\.000/, /^180\.000/, /^1\.980\.000/, 'Đã ghi sổ', 'Xem nhanhGhi chú']);
 
     await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
     await nav.getByRole('link', { name: 'Bút toán' }).click();

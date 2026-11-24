@@ -409,6 +409,44 @@ describe('Wave P2-3 Peek Sheets across Documents, SignEnvelopes, TodayList, and 
     expect(memberHtml).toContain('data-testid="sign-peek-remind"');
     expect(memberHtml).toContain('data-testid="sign-peek-in-person"');
 
+    // Non-creator member on a meeting-minutes envelope cannot act on links, remind, or in-person (#4530)
+    const envMinutes = '00000000-0000-4000-8000-000000000203';
+    const minutesEnvelope = {
+      ...envelopeList[1]!,
+      id: envMinutes,
+      title: 'Biên bản họp HĐTV',
+      sourceKind: 'meeting_minutes' as const,
+      createdBy: 'u-someone-else',
+    };
+    testState.qc.setQueryData(['sign', 'envelopes', 'acme', 'all'], { items: [...envelopeList, minutesEnvelope] });
+    testState.qc.setQueryData(['sign', 'envelope', 'acme', envMinutes], {
+      envelope: minutesEnvelope,
+      signers: [
+        {
+          id: 's-3',
+          routingOrder: 1,
+          signerRole: 'signer',
+          roleLabel: 'Thư ký',
+          name: 'Lê Minh',
+          email: 'minh@example.com',
+          phone: null,
+          deliveryMode: 'email',
+          requireEmailOtp: false,
+          status: 'pending',
+          tokenLastRemindedAt: null,
+          createdAt: '2026-11-21T00:00:00.000Z',
+          updatedAt: '2026-11-21T00:00:00.000Z',
+        },
+      ],
+      fields: [],
+    });
+    testState.forcedPeekId = envMinutes;
+    const minutesMemberHtml = renderScreen(<SignEnvelopesPage />);
+    expect(minutesMemberHtml).not.toContain('data-testid="sign-peek-copy-zalo"');
+    expect(minutesMemberHtml).not.toContain('data-testid="sign-peek-remind"');
+    expect(minutesMemberHtml).not.toContain('data-testid="sign-peek-in-person"');
+    expect(minutesMemberHtml).toContain('data-testid="sign-peek-open-link"');
+
     // Viewer cannot see create CTA or any mutating actions inside rows or PeekSheet
     testState.qc.setQueryData(['me', 'get'], {
       userId: 'u-viewer',
