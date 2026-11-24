@@ -3,7 +3,7 @@
 // broken servers are tools/mcp-conformance/fake-server.mjs with one flaw each; the wake-up receivers are the tool's sample receiver with one fault.
 import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
-import { hintProblems, isProposalShaped, runConformance } from '../mcp-conformance/checks.mjs';
+import { hintProblems, isProposalShaped, parseMcpBody, runConformance } from '../mcp-conformance/checks.mjs';
 import { main, parseOptions } from '../mcp-conformance/cli.mjs';
 import { FAKE_OWNER_TOKEN, startFakeServer } from '../mcp-conformance/fake-server.mjs';
 import { sampleOf } from '../mcp-conformance/sample-args.mjs';
@@ -180,6 +180,7 @@ describe('the command line', () => {
     expect(() => parseOptions([], {})).toThrow('--url');
     expect(() => parseOptions(['--url', 'nope'], {})).toThrow('--url');
     expect(() => parseOptions(['--url', 'http://localhost:8080', '--proposal-args', '[1]'], {})).toThrow('JSON object');
+    expect(() => parseOptions(['--url', 'http://localhost:8080', '--proposal-args', '{}'], {})).toThrow('--proposal-tool');
   });
 
   it('reads the token and the receiver secret from the environment, never from an argument', () => {
@@ -231,5 +232,19 @@ describe('the command line', () => {
     expect(await run(['--url', noAccount.url, '--strict'], {})).toBe(1);
     const complete = await fake();
     expect(await run(['--url', complete.url, '--strict'], env)).toBe(0);
+  });
+});
+
+describe('mcp conformance review fixes', () => {
+  it('an --org the account may not connect fails oauth.flow instead of connecting another org', async () => {
+    const server = await fake([]);
+    const results = await runConformance({ url: server.url, token: FAKE_OWNER_TOKEN, org: 'not-mine' });
+    expect(failed(results)).toEqual(['oauth.flow']);
+    expect(results.find((r) => r.name === 'oauth.flow')?.message).toContain('--org not-mine');
+  });
+
+  it('reads an event stream answer whose JSON spans several data lines, after a notification event', () => {
+    const text = 'event: message\ndata: {"jsonrpc":"2.0","method":"notifications/x"}\n\nevent: message\ndata: {"jsonrpc":"2.0",\ndata: "id":1,"result":{"ok":true}}\n\n';
+    expect(parseMcpBody(text, 'text/event-stream')).toEqual({ jsonrpc: '2.0', id: 1, result: { ok: true } });
   });
 });

@@ -22,6 +22,8 @@ import { VECTORS, createReceiver, sendSamples, verifyWake, signWake } from './wa
 
 const PROTOCOL_VERSION = '2025-11-25';
 const REDIRECT_URI = 'http://127.0.0.1:8976/callback';
+/** Whether an address is the registered client redirect: same origin and exactly the same path (a look-alike such as /callback-evil is not). @param {URL} url */
+const isClientRedirect = (url) => url.origin === new URL(REDIRECT_URI).origin && url.pathname === new URL(REDIRECT_URI).pathname;
 const READ_SCOPE = 'ludy.read';
 const WRITE_SCOPE = 'ludy.engage.write';
 
@@ -83,10 +85,18 @@ export function isProposalShaped(schema) {
 }
 
 /** @param {string} text */
-function parseMcpBody(text, contentType = '') {
+export function parseMcpBody(text, contentType = '') {
   if (contentType.includes('text/event-stream')) {
-    const data = text.split('\n').filter((line) => line.startsWith('data:')).map((line) => line.slice(5).trim());
-    return JSON.parse(data.at(-1) ?? 'null');
+    // One event is the blank-line-separated block whose `data:` lines join with newlines; the answer is the last event that parses as a JSON-RPC message with an id.
+    const events = text.split(/\r?\n\r?\n/).map((block) => block.split(/\r?\n/).filter((line) => line.startsWith('data:')).map((line) => line.slice(5).replace(/^ /, '')).join('\n'));
+    const messages = events.flatMap((data) => {
+      try {
+        return data.trim() ? [JSON.parse(data)] : [];
+      } catch {
+        return [];
+      }
+    });
+    return messages.findLast((m) => m && typeof m === 'object' && 'id' in m) ?? messages.at(-1) ?? null;
   }
   return JSON.parse(text);
 }
@@ -218,7 +228,7 @@ export async function runConformance(options) {
       if (res.status >= 300 && res.status < 400 && location) {
         const next = new URL(location, url);
         if (next.pathname.startsWith('/oauth/interaction/')) return { kind: 'interaction', url: next.toString() };
-        if (next.toString().startsWith(REDIRECT_URI)) {
+        if (isClientRedirect(next)) {
           const error = next.searchParams.get('error');
           if (error) return { kind: 'error', error };
           const code = next.searchParams.get('code');
@@ -299,7 +309,8 @@ export async function runConformance(options) {
     const details = await request(`${base}/oauth/interaction/${uid}/details`, { headers: bearer, jar });
     const detailsDoc = /** @type {any} */ (details.json);
     if (details.status !== 200 || !Array.isArray(detailsDoc?.orgs) || detailsDoc.orgs.length === 0) throw fail(`the consent page details answered ${details.status} ${details.text.slice(0, 160)}: the account must be an owner or admin of an org`);
-    const org = detailsDoc.orgs.find((/** @type {any} */ o) => o.orgId === options.org || o.slug === options.org) ?? detailsDoc.orgs[0];
+    const org = options.org ? detailsDoc.orgs.find((/** @type {any} */ o) => o.orgId === options.org || o.slug === options.org) : detailsDoc.orgs[0];
+    if (!org) throw fail(`--org ${options.org} is not among the orgs this account may connect (${detailsDoc.orgs.map((/** @type {any} */ o) => o.slug).join(', ')}); nothing was approved`);
     const consent = await request(`${base}/oauth/interaction/${uid}/consent`, {
       method: 'POST',
       headers: { ...bearer, 'content-type': 'application/json' },
@@ -347,7 +358,7 @@ export async function runConformance(options) {
       const location = res.headers.get('location');
       if (!(res.status >= 300 && res.status < 400 && location)) throw fail(`the consent did not lead back to the client (answered ${res.status} ${res.text.slice(0, 120)})`);
       const next = new URL(location, url);
-      if (next.toString().startsWith(REDIRECT_URI)) {
+      if (isClientRedirect(next)) {
         const error = next.searchParams.get('error');
         if (error) throw fail(`the authorization after consent ended in error ${error}`);
         const code = next.searchParams.get('code');

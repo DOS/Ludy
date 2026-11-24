@@ -52,6 +52,7 @@ export function parseOptions(argv, env) {
     }
     if (proposalArgs === null || typeof proposalArgs !== 'object' || Array.isArray(proposalArgs)) throw new Error('--proposal-args must be a JSON object');
   }
+  if (proposalArgs && !values['proposal-tool']) throw new Error('--proposal-args needs --proposal-tool (the arguments belong to one tool)');
   return {
     url: values.url,
     signUp: values['sign-up'] === true,
