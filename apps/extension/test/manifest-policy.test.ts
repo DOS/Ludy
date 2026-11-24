@@ -13,6 +13,17 @@ describe('manifest permission list', () => {
     expect(manifestViolations(manifest())).toEqual([]);
   });
 
+  it('no web accessible resource at all, or exactly the sign-in landing page for the cloud address and localhost, keeps the list (#4662)', () => {
+    const without = { ...manifest() };
+    delete without.web_accessible_resources;
+    expect(manifestViolations(without)).toEqual([]);
+    const pinned = { ...manifest(), web_accessible_resources: [{ resources: ['connected.html'], matches: ['https://app.ludy.vn/*', 'http://localhost/*'] }] };
+    expect(manifestViolations(pinned)).toEqual([]);
+    // The order of the lists does not matter; anything else does.
+    const reordered = { ...manifest(), web_accessible_resources: [{ matches: ['http://localhost/*', 'https://app.ludy.vn/*'], resources: ['connected.html'] }] };
+    expect(manifestViolations(reordered)).toEqual([]);
+  });
+
   it('the base install asks for storage and identity and one host, nothing else', () => {
     const m = manifest();
     expect(m.permissions).toEqual(['storage', 'identity']);
@@ -43,6 +54,15 @@ describe('manifest permission list', () => {
     ['a meeting site', { host_permissions: ['https://app.ludy.vn/*', 'https://meet.google.com/*'] }],
     ['a content script', { content_scripts: [{ matches: ['https://meet.google.com/*'], js: ['x.js'] }] }],
     ['externally_connectable', { externally_connectable: { matches: ['https://*/*'] } }],
+    ['web_accessible_resources for every site', { web_accessible_resources: [{ resources: ['connected.html'], matches: ['https://*/*'] }] }],
+    ['web_accessible_resources for all urls', { web_accessible_resources: [{ resources: ['connected.html'], matches: ['<all_urls>'] }] }],
+    ['a second web accessible page', { web_accessible_resources: [{ resources: ['connected.html', 'popup.html'], matches: ['https://app.ludy.vn/*', 'http://localhost/*'] }] }],
+    ['web_accessible_resources of a second entry', { web_accessible_resources: [{ resources: ['connected.html'], matches: ['https://app.ludy.vn/*', 'http://localhost/*'] }, { resources: ['popup.html'], matches: ['https://app.ludy.vn/*'] }] }],
+    ['web_accessible_resources limited to extension ids', { web_accessible_resources: [{ resources: ['connected.html'], matches: ['https://app.ludy.vn/*', 'http://localhost/*'], extension_ids: ['*'] }] }],
+    ['web_accessible_resources with a dynamic url', { web_accessible_resources: [{ resources: ['connected.html'], matches: ['https://app.ludy.vn/*', 'http://localhost/*'], use_dynamic_url: true }] }],
+    ['web_accessible_resources that is not a list', { web_accessible_resources: {} }],
+    ['an empty web_accessible_resources list', { web_accessible_resources: [] }],
+    ['the cloud address missing from web_accessible_resources', { web_accessible_resources: [{ resources: ['connected.html'], matches: ['http://localhost/*'] }] }],
     ['a missing permission', { permissions: ['storage'] }],
     ['manifest v2', { manifest_version: 2 }],
     ['unsafe-eval', { content_security_policy: { extension_pages: "script-src 'self' 'unsafe-eval'" } }],
