@@ -2622,10 +2622,12 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
       "crove_meetings.member_vy_media_files",
       // The live notes door (#3110): reads the run's waiting result row as audio_for_member_vy does, for the live pieces of the recorder's own meeting.
       "crove_meetings.live_for_member_vy",
+      // The notes discard trigger (#3453): cancels running note-bound Vy runs and deletes matching member_vy_result rows on note delete.
+      "crove_notes.note_discard_vy",
     ];
     // Functions whose change has not landed yet (the two-step rule of AGENTS.md: this file runs from the base branch): accepted while absent, and held to the list the moment
-    // they exist. crove_notes.note_discard_vy (#3453) is the BEFORE DELETE trigger on crove_notes.note that purges matching rows from crove_kernel.member_vy_result. Remove an entry once its function moves to FROZEN on main.
-    const PENDING: string[] = ['crove_notes.note_discard_vy'];
+    // they exist. Empty: the frozen list above is exact. Add an entry here only in an invariant-only PR that precedes the change.
+    const PENDING: string[] = [];
     const found = await admin((c) =>
       c.query<{ fn: string }>(
         `SELECT n.nspname || '.' || p.proname AS fn FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace

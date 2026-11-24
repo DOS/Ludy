@@ -2045,9 +2045,10 @@ export const personalDataErase = defineCommand({
          RETURNING c.id`.execute(ctx.trx);
       add('ludy_finance.marketplace_column_check.preview', previewRows.length);
 
-      // Project triage items BEFORE tasks (#4493): preserves canonical lock order
-      // ludy_projects.project_triage_item -> ludy_kernel.task -> ludy_projects.project -> ludy_projects.roadmap_item
-      // matching projectTriageAccept (zero deadlock) and closing both READ COMMITTED races:
+      // Project triage items BEFORE tasks (#4493) and roadmap items/boards BEFORE projects (#4689): preserves canonical lock order
+      // ludy_projects.project_triage_item -> ludy_kernel.task -> ludy_projects.roadmap_item -> ludy_projects.roadmap_board -> ludy_projects.project
+      // matching projectTriageAccept, roadmapItemConvertToTask, roadmapBoardUpdate, roadmap_board_guard_tr, and roadmap_item_privacy_guard_tr
+      // (zero deadlock) and closing both READ COMMITTED races:
       // if projectTriageAccept locks pti first, erase waits for commit and then redacts the new task;
       // if erase updates pti first, projectTriageAccept waits on FOR UPDATE and reads the already-redacted text.
       const triageTitle = freeTextMatch(probe, sql.ref('pti.title'));
@@ -2214,6 +2215,57 @@ export const personalDataErase = defineCommand({
       projectWeeklyMails = droppedWeekly.length;
       projectWeeklyDelivered = droppedWeekly.filter((m) => DELIVERED_MAIL_STATUSES.includes(m.status)).length;
       add('ludy_kernel.mail_message.payload', projectWeeklyMails);
+      // Public roadmap items and boards (#4399, ADR-0057) BEFORE projects (#4689):
+      // preserves canonical lock order (roadmap_item -> roadmap_board -> project) matching
+      // roadmap_item_privacy_guard_tr, roadmap_board_guard_tr, and roadmapItemConvertToTask,
+      // while staying after mail_message drop so mail predicates still see unredacted project text.
+      const itemTitleMatch = freeTextMatch(probe, sql.ref('i.public_title'));
+      const itemSummaryMatch = freeTextMatch(probe, sql.ref('i.public_summary'));
+      const itemSubmitterMatch = freeTextMatch(probe, sql.ref('i.submitter_display_name'));
+      const { rows: roadmapItems } = await sql<{ public_title: boolean; public_summary: boolean; submitter_display_name: boolean }>`
+        UPDATE ludy_projects.roadmap_item i
+           SET public_title = CASE
+                                WHEN ${itemTitleMatch}
+                                  THEN COALESCE(
+                                    NULLIF(pg_catalog.btrim(pg_catalog.left(${freeTextRedact(probe, sql.ref('i.public_title'), REDACTED_MARK)}, ${ROADMAP_ITEM_TITLE_MAX}::int)), ''),
+                                    ${REDACTED_MARK}
+                                  )
+                                ELSE i.public_title
+                              END,
+               public_summary = CASE WHEN ${itemSummaryMatch} THEN pg_catalog.left(${freeTextRedact(probe, sql.ref('i.public_summary'), REDACTED_MARK)}, ${ROADMAP_ITEM_SUMMARY_MAX}::int)
+                                     ELSE i.public_summary END,
+               submitter_display_name = CASE WHEN ${itemSubmitterMatch} THEN NULL ELSE i.submitter_display_name END,
+               updated_at = ${ctx.now}
+          FROM ludy_projects.roadmap_item o
+         WHERE o.org_id = i.org_id AND o.id = i.id AND i.org_id = ${ctx.orgId}::uuid
+           AND (${itemTitleMatch} OR coalesce(${itemSummaryMatch}, false) OR coalesce(${itemSubmitterMatch}, false))
+         RETURNING ${freeTextMatch(probe, sql.ref('o.public_title'))} AS public_title, coalesce(${freeTextMatch(probe, sql.ref('o.public_summary'))}, false) AS public_summary, coalesce(${freeTextMatch(probe, sql.ref('o.submitter_display_name'))}, false) AS submitter_display_name`.execute(ctx.trx);
+      add('ludy_projects.roadmap_item.public_title', roadmapItems.filter((r) => r.public_title).length);
+      add('ludy_projects.roadmap_item.public_summary', roadmapItems.filter((r) => r.public_summary).length);
+      add('ludy_projects.roadmap_item.submitter_display_name', roadmapItems.filter((r) => r.submitter_display_name).length);
+
+      const boardTitleMatch = freeTextMatch(probe, sql.ref('b.title'));
+      const boardDescMatch = freeTextMatch(probe, sql.ref('b.description'));
+      const { rows: roadmapBoards } = await sql<{ title: boolean; description: boolean }>`
+        UPDATE ludy_projects.roadmap_board b
+           SET title = CASE
+                         WHEN ${boardTitleMatch}
+                           THEN COALESCE(
+                             NULLIF(pg_catalog.btrim(pg_catalog.left(${freeTextRedact(probe, sql.ref('b.title'), REDACTED_MARK)}, ${ROADMAP_TITLE_MAX}::int)), ''),
+                             ${REDACTED_MARK}
+                           )
+                         ELSE b.title
+                       END,
+               description = CASE WHEN ${boardDescMatch} THEN pg_catalog.left(${freeTextRedact(probe, sql.ref('b.description'), REDACTED_MARK)}, ${ROADMAP_DESCRIPTION_MAX}::int)
+                                  ELSE b.description END,
+               updated_at = ${ctx.now}
+          FROM ludy_projects.roadmap_board o
+         WHERE o.org_id = b.org_id AND o.id = b.id AND b.org_id = ${ctx.orgId}::uuid
+           AND (${boardTitleMatch} OR coalesce(${boardDescMatch}, false))
+         RETURNING ${freeTextMatch(probe, sql.ref('o.title'))} AS title, coalesce(${freeTextMatch(probe, sql.ref('o.description'))}, false) AS description`.execute(ctx.trx);
+      add('ludy_projects.roadmap_board.title', roadmapBoards.filter((r) => r.title).length);
+      add('ludy_projects.roadmap_board.description', roadmapBoards.filter((r) => r.description).length);
+
       // Projects and project templates that quote the person (#2591, #2607): replace mentions in name, description, and template_tasks, bounded to column limits.
       const projectName = freeTextMatch(probe, sql.ref('p.name'));
       const projectDescription = freeTextMatch(probe, sql.ref('p.description'));
@@ -2275,54 +2327,6 @@ export const personalDataErase = defineCommand({
          RETURNING ${freeTextMatch(probe, sql.ref('o.name'))} AS name, coalesce(${freeTextMatch(probe, sql.ref('o.goal'))}, false) AS goal`.execute(ctx.trx);
       add('ludy_projects.project_cycle.name', cycles.filter((c) => c.name).length);
       add('ludy_projects.project_cycle.goal', cycles.filter((c) => c.goal).length);
-
-      // Public roadmap boards and items (#4399, ADR-0057): redact mentions in titles/summaries and clear matching submitter display names.
-      const boardTitleMatch = freeTextMatch(probe, sql.ref('b.title'));
-      const boardDescMatch = freeTextMatch(probe, sql.ref('b.description'));
-      const { rows: roadmapBoards } = await sql<{ title: boolean; description: boolean }>`
-        UPDATE ludy_projects.roadmap_board b
-           SET title = CASE
-                         WHEN ${boardTitleMatch}
-                           THEN COALESCE(
-                             NULLIF(pg_catalog.btrim(pg_catalog.left(${freeTextRedact(probe, sql.ref('b.title'), REDACTED_MARK)}, ${ROADMAP_TITLE_MAX}::int)), ''),
-                             ${REDACTED_MARK}
-                           )
-                         ELSE b.title
-                       END,
-               description = CASE WHEN ${boardDescMatch} THEN pg_catalog.left(${freeTextRedact(probe, sql.ref('b.description'), REDACTED_MARK)}, ${ROADMAP_DESCRIPTION_MAX}::int)
-                                  ELSE b.description END,
-               updated_at = ${ctx.now}
-          FROM ludy_projects.roadmap_board o
-         WHERE o.org_id = b.org_id AND o.id = b.id AND b.org_id = ${ctx.orgId}::uuid
-           AND (${boardTitleMatch} OR coalesce(${boardDescMatch}, false))
-         RETURNING ${freeTextMatch(probe, sql.ref('o.title'))} AS title, coalesce(${freeTextMatch(probe, sql.ref('o.description'))}, false) AS description`.execute(ctx.trx);
-      add('ludy_projects.roadmap_board.title', roadmapBoards.filter((r) => r.title).length);
-      add('ludy_projects.roadmap_board.description', roadmapBoards.filter((r) => r.description).length);
-
-      const itemTitleMatch = freeTextMatch(probe, sql.ref('i.public_title'));
-      const itemSummaryMatch = freeTextMatch(probe, sql.ref('i.public_summary'));
-      const itemSubmitterMatch = freeTextMatch(probe, sql.ref('i.submitter_display_name'));
-      const { rows: roadmapItems } = await sql<{ public_title: boolean; public_summary: boolean; submitter_display_name: boolean }>`
-        UPDATE ludy_projects.roadmap_item i
-           SET public_title = CASE
-                                WHEN ${itemTitleMatch}
-                                  THEN COALESCE(
-                                    NULLIF(pg_catalog.btrim(pg_catalog.left(${freeTextRedact(probe, sql.ref('i.public_title'), REDACTED_MARK)}, ${ROADMAP_ITEM_TITLE_MAX}::int)), ''),
-                                    ${REDACTED_MARK}
-                                  )
-                                ELSE i.public_title
-                              END,
-               public_summary = CASE WHEN ${itemSummaryMatch} THEN pg_catalog.left(${freeTextRedact(probe, sql.ref('i.public_summary'), REDACTED_MARK)}, ${ROADMAP_ITEM_SUMMARY_MAX}::int)
-                                     ELSE i.public_summary END,
-               submitter_display_name = CASE WHEN ${itemSubmitterMatch} THEN NULL ELSE i.submitter_display_name END,
-               updated_at = ${ctx.now}
-          FROM ludy_projects.roadmap_item o
-         WHERE o.org_id = i.org_id AND o.id = i.id AND i.org_id = ${ctx.orgId}::uuid
-           AND (${itemTitleMatch} OR coalesce(${itemSummaryMatch}, false) OR coalesce(${itemSubmitterMatch}, false))
-         RETURNING ${freeTextMatch(probe, sql.ref('o.public_title'))} AS public_title, coalesce(${freeTextMatch(probe, sql.ref('o.public_summary'))}, false) AS public_summary, coalesce(${freeTextMatch(probe, sql.ref('o.submitter_display_name'))}, false) AS submitter_display_name`.execute(ctx.trx);
-      add('ludy_projects.roadmap_item.public_title', roadmapItems.filter((r) => r.public_title).length);
-      add('ludy_projects.roadmap_item.public_summary', roadmapItems.filter((r) => r.public_summary).length);
-      add('ludy_projects.roadmap_item.submitter_display_name', roadmapItems.filter((r) => r.submitter_display_name).length);
 
       const signalAccountMatch = freeTextMatch(probe, sql.ref('s.account_label'));
       const signalQuoteMatch = freeTextMatch(probe, sql.ref('s.quote_excerpt'));

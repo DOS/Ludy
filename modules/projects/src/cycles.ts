@@ -1031,8 +1031,8 @@ export const projectCycleComplete = defineCommand({
       throw cycleOpenTasksExist();
     }
 
-    // Mark cycle completed first so project_task trigger sees pc.status = 'completed' and tags carryover,
-    // then snapshot all cycle tasks before moving carried-over open tasks out.
+    // Mark cycle completed and snapshot all cycle tasks (marking carried_over = true on open tasks)
+    // before moving carried-over open tasks out so project_task trigger tags left_reason = 'carryover'.
     const completed = await ctx.trx
       .updateTable('ludy_projects.project_cycle')
       .set({

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The Ludy extension's sign-in (issue #2582, ADR-0047 point 10). The extension opens /-/extension/connect in a browser
-// window (chrome.identity.launchWebAuthFlow) with its PKCE challenge, its redirect address and a state. The member signs
+// tab, or window (chrome.identity.launchWebAuthFlow), with its PKCE challenge, its redirect address and a state. The member signs
 // in as usual, chooses the org and approves; the app asks the kernel for a one-time code and sends the window back to the
 // extension's redirect address with it. The extension then trades the code and its verifier for a token. The member's
 // password and browser session never reach the extension.
@@ -8,9 +8,10 @@ import { DESKTOP_CLIENT_ID, EXTENSION_SCOPE_IDS, extensionClientAllowsScopes, ty
 import { promoteMigratedItem, readLegacyAwareItem, removeMigratedItem, writeMigratedItem } from './storage-migrate.ts';
 
 export const CONNECT_PATH = '/-/extension/connect';
-// Chrome and Edge give an extension this redirect address: https://<32 letters a to p>.chromiumapp.org/<path>. Nothing
-// else may receive the code.
-const REDIRECT = /^https:\/\/[a-p]{32}\.chromiumapp\.org\/[A-Za-z0-9_./-]{0,100}$/;
+// Chrome and Edge give an extension this redirect address for a browser window (launchWebAuthFlow): https://<32 letters a to p>.chromiumapp.org/<path>.
+// An extension that signs in in a normal tab (#4662) gets the member sent to its own landing page instead, chrome-extension://<32 letters a to p>/connected.html:
+// that one page, which the extension lists as web accessible to this app's address only. Nothing else may receive the code.
+const REDIRECT = /^(?:https:\/\/[a-p]{32}\.chromiumapp\.org\/[A-Za-z0-9_./-]{0,100}|chrome-extension:\/\/[a-p]{32}\/connected\.html)$/;
 // Ludy Desktop (ADR-0055 slice 2, #4515) is not a browser extension: it gets the code on a loopback address of the same machine (RFC 8252
 // section 7.3), 127.0.0.1 and an unprivileged port, one fixed path. A code sent there is useless without the PKCE verifier only the app holds.
 const DESKTOP_REDIRECT = /^http:\/\/127\.0\.0\.1:([0-9]{4,5})\/ludy-desktop\/callback$/;

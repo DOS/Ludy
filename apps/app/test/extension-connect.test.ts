@@ -60,6 +60,44 @@ describe('parseConnectRequest', () => {
   });
 });
 
+describe('the extension page address of a tab sign-in (#4662)', () => {
+  const PAGE = `chrome-extension://${EXTENSION}/connected.html`;
+
+  it('accepts the landing page of an allowed extension, and only that page', () => {
+    const request = parseConnectRequest(query({ redirect_uri: PAGE }), ALLOWED);
+    expect(request).toMatchObject({ client: 'extension', extensionId: EXTENSION, redirect: PAGE });
+    for (const redirect of [
+      `chrome-extension://${EXTENSION}/popup.html`,
+      `chrome-extension://${EXTENSION}/connected.html?x=1`,
+      `chrome-extension://${EXTENSION}/connected.html#x`,
+      `chrome-extension://${EXTENSION}/connected.html/`,
+      `chrome-extension://${EXTENSION}/a/connected.html`,
+      `chrome-extension://${EXTENSION}`,
+      `chrome-extension://${'q'.repeat(32)}/connected.html`,
+      `chrome-extension://${EXTENSION.toUpperCase()}/connected.html`,
+      `chrome-extension://${EXTENSION}x/connected.html`,
+      `chrome-extension://user@${EXTENSION}/connected.html`,
+      `chrome-extension://${EXTENSION}.evil.example/connected.html`,
+      `moz-extension://${EXTENSION}/connected.html`,
+      `http://${EXTENSION}/connected.html`,
+    ]) {
+      expect(parseConnectRequest(query({ redirect_uri: redirect }), ALLOWED), redirect).toBeNull();
+    }
+  });
+
+  it('an extension the deployment does not list does not get the code in this form either', () => {
+    const other = 'ponmlkjihgfedcbaponmlkjihgfedcba'.slice(0, 32);
+    expect(parseConnectRequest(query({ redirect_uri: `chrome-extension://${other}/connected.html` }), ALLOWED)).toBeNull();
+    expect(parseConnectRequest(query({ redirect_uri: `chrome-extension://${other}/connected.html` }), [other])?.extensionId).toBe(other);
+  });
+
+  it('sends the code, the org and the state to the landing page, or the refusal, and keeps the request while the member signs in', () => {
+    const request = parseConnectRequest(query({ redirect_uri: PAGE }), ALLOWED)!;
+    expect(connectRedirect(request, { code: 'crc_x', org: 'acme' })).toBe(`${PAGE}?code=crc_x&org=acme&state=st_1-A`);
+    expect(connectRedirect(request, { error: 'access_denied' })).toBe(`${PAGE}?error=access_denied&state=st_1-A`);
+  });
+});
+
 describe('connectRedirect', () => {
   it('sends the code, the org and the state back to the extension, or the refusal', () => {
     const request = parseConnectRequest(query(), ALLOWED)!;
@@ -111,6 +149,17 @@ describe('the request kept while the member signs in', () => {
     rememberConnect(request, now);
     forgetConnect();
     expect(pendingConnect(ALLOWED, now)).toBeNull();
+  });
+
+  it('keeps a request for an extension page address (#4662) the same way, and checks it again as the address was checked', () => {
+    const request = parseConnectRequest(query({ redirect_uri: `chrome-extension://${EXTENSION}/connected.html` }), ALLOWED)!;
+    const now = 1_700_000_000_000;
+    rememberConnect(request, now);
+    expect(pendingConnect(ALLOWED, now + 1000)).toEqual(request);
+    // The extension left the list while the member signed in, or storage was changed to another page of the extension: dropped.
+    expect(pendingConnect([], now + 1000)).toBeNull();
+    store.set('ludy-pending-extension-connect', JSON.stringify({ request: { ...request, redirect: `chrome-extension://${EXTENSION}/popup.html` }, savedAt: now }));
+    expect(pendingConnect(ALLOWED, now + 1000)).toBeNull();
   });
 
   it('checks what storage holds as it checked the address', () => {

@@ -223,24 +223,20 @@ function buildChangelogAllowedNumbersInput(facts: RoadmapChangelogDraftFacts): {
   trustedTexts: string[];
 } {
   const figures: SummaryFigure[] = [{ label: 'Shipped item count', value: facts.items.length }];
-  const channels: string[] = [oneLine(facts.boardTitle, TITLE_PROMPT_CHARS)];
-  const trustedTexts: string[] = [oneLine(facts.boardTitle, TITLE_PROMPT_CHARS)];
+  const channels: string[] = [];
+  const trustedTexts: string[] = [];
+  const addTrusted = (text: string): void => {
+    if (!text) return;
+    channels.push(text);
+    trustedTexts.push(text);
+  };
+  addTrusted(oneLine(facts.boardTitle, TITLE_PROMPT_CHARS));
 
   for (const item of facts.items.slice(0, 20)) {
-    const isTrusted = item.tainted === false;
-    const title = oneLine(item.publicTitle, TITLE_PROMPT_CHARS);
-    channels.push(title);
-    if (isTrusted && title) trustedTexts.push(title);
-    if (item.category) {
-      const cat = oneLine(item.category, 60);
-      channels.push(cat);
-      if (isTrusted && cat) trustedTexts.push(cat);
-    }
-    if (item.publicSummary) {
-      const summary = oneLine(item.publicSummary, SUMMARY_PROMPT_CHARS);
-      channels.push(summary);
-      if (isTrusted && summary) trustedTexts.push(summary);
-    }
+    if (item.tainted !== false) continue;
+    addTrusted(oneLine(item.publicTitle, TITLE_PROMPT_CHARS));
+    if (item.category) addTrusted(oneLine(item.category, 60));
+    if (item.publicSummary) addTrusted(oneLine(item.publicSummary, SUMMARY_PROMPT_CHARS));
   }
 
   return {
