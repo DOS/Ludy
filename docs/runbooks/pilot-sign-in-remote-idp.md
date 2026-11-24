@@ -40,7 +40,7 @@ Then read the same `.env` for lines the release of step 2 would start honouring:
 
 ## Step 2. The release
 
-The API's compose file must carry the identity-provider settings: a release that includes this runbook's change (`docker-compose.yml` passes `AUTH_ISSUER`, `AUTH_SESSION_CHECK`, `AUTH_JWKS_URL`, `PUBLIC_AUTH_URL`, `PUBLIC_AUTH_ANON_KEY`, `AUTH_ALLOWED_EMAILS`, `AUTH_OAUTH_PROVIDERS`, `AUTH_HOSTED_LOGIN_*`, `AUTH_OAUTH_CLIENT_ID`, `AUTH_SIGN_IN`, `AUTH_OAUTH_NAME` and honours an empty `AUTH_UPSTREAM_URL`; the OAuth settings need the release of #4704 or later, whose migration `20270319210000` the deploy applies). Check the running release is at or after it (`GET /version` build against the PR's merge commit); if not, deploy one first through the normal release ([deploy.md](deploy.md)). Everything after this step is settings only.
+The API's compose file must carry the identity-provider settings: a release that includes this runbook's change (`docker-compose.yml` passes `AUTH_ISSUER`, `AUTH_SESSION_CHECK`, `AUTH_JWKS_URL`, `PUBLIC_AUTH_URL`, `PUBLIC_AUTH_ANON_KEY`, `AUTH_ALLOWED_EMAILS`, `AUTH_OAUTH_PROVIDERS`, `AUTH_HOSTED_LOGIN_*`, `AUTH_OAUTH_CLIENT_ID`, `AUTH_SIGN_IN`, `AUTH_OAUTH_NAME` and honours an empty `AUTH_UPSTREAM_URL`; the OAuth settings need the release of #4704 or later, whose migration `20270323020000` the deploy applies). Check the running release is at or after it (`GET /version` build against the PR's merge commit); if not, deploy one first through the normal release ([deploy.md](deploy.md)). Everything after this step is settings only.
 
 ## Step 3. The app's build (harmless first)
 
