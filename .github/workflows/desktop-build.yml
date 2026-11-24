@@ -6,7 +6,13 @@ name: desktop-build
 #
 # NOTHING is signed or published from here, and no secret or certificate is used anywhere: the output is a development build, and Windows will warn
 # about it (docs/desktop/install.md). Signed installers and an update server are the owner's steps (docs/desktop/signing-runbook.md).
-# The job has read access to the repository only. No pull_request_target.
+# The jobs have read access to the repository only. No pull_request_target.
+#
+# Job 2, "windows-install-smoke" (#4566): installs the unsigned Squirrel build on the runner and proves what unit tests and fakes cannot: the tray
+# process and single-instance lock, sign-in through the system browser (PKCE, token in DPAPI, read back after a restart) against a fake Ludy on
+# 127.0.0.1, a corrupt update that leaves the old version running, an update from version A to B through a 127.0.0.1 feed, and the uninstall.
+# The only network is loopback; the fake server and the app's smoke channel are in apps/desktop (test/support/fake-ludy.ts, src/smoke.ts), and
+# the smoke channel is off unless the Ludy address is a loopback one. Docs: docs/desktop/windows-smoke.md.
 
 on:
   pull_request:
@@ -121,3 +127,60 @@ jobs:
           path: apps/desktop/out/installer/
           retention-days: 7
           if-no-files-found: error
+
+  windows-install-smoke:
+    name: Windows install smoke (tray, sign-in, update A to B, uninstall)
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '26'
+
+      - name: Install pnpm
+        run: npm install -g pnpm@10.34.7 --no-fund --no-audit
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --filter "@ludy/desktop" --filter "ludy-monorepo"
+
+      # Same preparation as the build job (electron-winstaller's own install script is not run, see the note there).
+      - name: Prepare the Squirrel tools
+        shell: pwsh
+        run: |
+          $vendor = Join-Path (node -p "require('path').dirname(require.resolve('electron-winstaller/package.json'))") 'vendor'
+          Copy-Item (Join-Path $vendor '7z-x64.exe') (Join-Path $vendor '7z.exe')
+          Copy-Item (Join-Path $vendor '7z-x64.dll') (Join-Path $vendor '7z.dll')
+        working-directory: apps/desktop
+
+      - name: Build version A (0.1.0, unsigned)
+        shell: pwsh
+        run: |
+          node apps/desktop/scripts/package.mjs --version 0.1.0
+          if ($LASTEXITCODE -ne 0) { throw 'build of version A failed' }
+          Copy-Item apps/desktop/out/installer "$env:RUNNER_TEMP/ludy-installer-a" -Recurse
+
+      - name: Build version B (0.1.1, unsigned)
+        shell: pwsh
+        run: |
+          node apps/desktop/scripts/package.mjs --version 0.1.1
+          if ($LASTEXITCODE -ne 0) { throw 'build of version B failed' }
+          Copy-Item apps/desktop/out/installer "$env:RUNNER_TEMP/ludy-installer-b" -Recurse
+
+      # The run names every step it makes and stops at the first one that fails (summary and logs below); loopback network only.
+      - name: Install, start, sign in, update A to B, uninstall
+        shell: pwsh
+        run: node apps/desktop/scripts/smoke-windows.mjs --installer-a "$env:RUNNER_TEMP/ludy-installer-a" --installer-b "$env:RUNNER_TEMP/ludy-installer-b" --out "$env:RUNNER_TEMP/ludy-smoke-logs"
+
+      # Logs hold no token (the last smoke step searches them for the tokens the fake issued); no installer is kept here.
+      - name: Keep the smoke logs for 7 days
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ludy-desktop-windows-smoke-logs
+          path: ${{ runner.temp }}/ludy-smoke-logs/
+          retention-days: 7
+          if-no-files-found: warn
