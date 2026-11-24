@@ -137,7 +137,7 @@ test.describe('eSign Slices 2-5 E2E', () => {
 
     // Activate template, enable Direct Signing Link, and toggle Public Hub visibility.
     await page.getByTestId('sign-tpl-activate-btn').click();
-    const directToggle = page.locator('#sign-tpl-direct-enabled');
+    const directToggle = page.getByRole('checkbox', { name: 'Bật liên kết ký trực tiếp' });
     await expect(directToggle).toBeVisible();
 
     const enableDirectResp = page.waitForResponse(
@@ -152,11 +152,15 @@ test.describe('eSign Slices 2-5 E2E', () => {
     const directUrl = await directUrlInput.inputValue();
     expect(directUrl).toContain('/-/sign/d#');
 
+    const publicHubToggle = page.getByRole('checkbox', {
+      name: 'Hiển thị trên cổng biểu mẫu công khai',
+    });
+    await expect(publicHubToggle).toBeVisible();
     const enableHubResp = page.waitForResponse(
       (res) =>
         res.url().includes('/api/rpc/sign/template/direct_link_set') && res.request().method() === 'POST',
     );
-    await page.getByTestId('sign-tpl-direct-public-hub-checkbox').check();
+    await publicHubToggle.check();
     expect((await enableHubResp).status()).toBe(200);
 
     const publicHubUrlInput = page.getByTestId('sign-tpl-public-hub-url-input');
@@ -291,7 +295,7 @@ test.describe('eSign Slices 2-5 E2E', () => {
     await page.getByTestId('sign-api-key-dismiss-btn').click();
     await expect(page.getByTestId('sign-api-key-list')).toContainText('E2E Partner Integration Key');
 
-    // Webhook SSRF check: private loopback IP must be rejected cleanly with 422.
+    // Webhook SSRF check: private loopback IP must be rejected at Zod validation with 400.
     const webhooksSection = page.getByTestId('sign-webhooks-section');
     await expect(webhooksSection).toBeVisible();
     await expect(page.getByTestId('sign-webhooks-count-badge')).toContainText('0 / 20 địa chỉ');
@@ -302,8 +306,10 @@ test.describe('eSign Slices 2-5 E2E', () => {
       (res) => res.url().includes('/api/rpc/sign/webhook/create') && res.request().method() === 'POST',
     );
     await page.getByTestId('sign-webhook-create-submit').click();
-    expect((await ssrfResp).status()).toBe(422);
+    expect((await ssrfResp).status()).toBe(400);
     await expect(page.getByTestId('sign-webhooks-count-badge')).toContainText('0 / 20 địa chỉ');
+    await expect(page.getByTestId('sign-webhooks-list')).toHaveCount(0);
+    await expect(page.getByTestId('sign-webhooks-secret-reveal')).toHaveCount(0);
 
     // Valid public HTTPS webhook creation (no ping fired; deleted right after secret verification).
     await ssrfUrlInput.fill('https://example.com/ludy-esign-webhook');
@@ -369,10 +375,13 @@ test.describe('eSign Slices 2-5 E2E', () => {
     await expect(page.getByTestId('playbook-findings-list')).toBeVisible({ timeout: 20_000 });
     await expect(page.getByTestId('playbook-summary-counts')).toBeVisible();
     await expect(page.getByTestId('playbook-findings-list')).toContainText('Custom Exclusivity Check');
+    await expect(page.getByTestId('playbook-run-rule-btn')).toBeEnabled({ timeout: 20_000 });
 
-    // Verify AI check gracefully surfaces notice when AI endpoint is disabled in E2E stack.
+    // Verify AI check gracefully surfaces notice when AI endpoint is disabled in E2E stack,
+    // and wait for mutation/invalidation to settle so override uses the current check revision.
     await page.getByTestId('playbook-run-ai-btn').click();
     await expect(page.getByTestId('playbook-ai-notice')).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId('playbook-run-ai-btn')).toBeEnabled({ timeout: 20_000 });
 
     // Apply a manual override on the first finding row and assert persisted badge.
     const overrideSelect = page.locator('[data-testid^="playbook-override-select-"]').first();
@@ -400,15 +409,20 @@ test.describe('eSign Slices 2-5 E2E', () => {
     await addSignerForm.locator('#signer-name').fill(signerName);
     await addSignerForm.locator('#signer-delivery').selectOption('link');
     await addSignerForm.getByRole('button', { name: 'Thêm người nhận' }).click();
+    await expect(page.getByTestId('signer-list')).toContainText(signerName, { timeout: 15_000 });
 
     await page.getByTestId('palette-add-signature').click();
     await page.getByTestId('palette-add-attachment').click();
+    await expect(page.locator('[data-testid^="placed-field-"]')).toHaveCount(2);
     const saveFieldsBtn = page.getByTestId('sign-save-fields-btn');
+    await expect(saveFieldsBtn).toBeEnabled();
     await saveFieldsBtn.click();
     await expect(saveFieldsBtn).toBeDisabled({ timeout: 15_000 });
 
     await page.getByTestId('sign-send-open-btn').click();
-    await page.getByRole('button', { name: 'Gửi yêu cầu ký' }).click();
+    const sendConfirmDialog = page.getByRole('dialog', { name: 'Xác nhận gửi yêu cầu ký' });
+    await expect(sendConfirmDialog).toBeVisible();
+    await sendConfirmDialog.getByRole('button', { name: 'Gửi yêu cầu ký' }).click();
     await expect(page.getByText('Đã gửi', { exact: true }).first()).toBeVisible({ timeout: 20_000 });
 
     const zaloLinksCard = page.getByTestId('minted-zalo-links-card');
