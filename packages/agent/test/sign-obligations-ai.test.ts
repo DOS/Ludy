@@ -754,6 +754,90 @@ describe('checkSignObligationExtract (#3821)', () => {
     });
     expect(vnSmeUnlabelled.proposal?.contractValue).toBe('250000000');
     expect(vnSmeUnlabelled.proposal?.currency).toBe('VND');
+
+    // 11. B1-Delta (#4393): lowercase/mixed-case unambiguous major ISO codes ("50,000 usd", "10,000 eur", "50,000 Usd",
+    //     and dual-currency "50,000 usd (tương đương 1.250.000.000 VND)") reject VND and accept USD/EUR.
+    for (const [textLine, expectedCode, expectedAmt] of [
+      ['Giá trị hợp đồng: 50,000 usd.', 'USD', '50000'],
+      ['Giá trị hợp đồng: 10,000 eur.', 'EUR', '10000'],
+      ['Giá trị hợp đồng: 50,000 Usd.', 'USD', '50000'],
+      ['Tổng giá trị: 50,000 usd (tương đương 1.250.000.000 VND)', 'USD', '50000'],
+    ] as const) {
+      const ciReq: SignObligationExtractRequest = {
+        envelopeTitle: `Hợp đồng ${expectedCode}`,
+        pageCount: 1,
+        pages: [{ page: 1, text: `Bên B: Công ty ABC\n${textLine}` }],
+      };
+      const ciVnd = checkSignObligationExtract(ciReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: expectedAmt,
+        currency: 'VND',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: textLine },
+        ],
+        obligations: [],
+      });
+      expect(ciVnd.proposal?.contractValue).toBeNull();
+
+      const ciOk = checkSignObligationExtract(ciReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: expectedAmt,
+        currency: expectedCode,
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: textLine },
+        ],
+        obligations: [],
+      });
+      expect(ciOk.proposal?.contractValue).toBe(expectedAmt);
+      expect(ciOk.proposal?.currency).toBe(expectedCode);
+    }
+
+    // 12. B2-Delta (#4393): boundary, percentage, unit suffix, version/date/code, and newline separation
+    //     prevent false-positive foreign triggers on unlabelled VND contracts.
+    const edgeProseCases = [
+      'ALL 100% sản phẩm đạt chuẩn.\nBên B: Công ty ABC\nGiá trị hợp đồng: 250.000.000.',
+      'TOP 10% khách hàng thân thiết.\nBên B: Công ty ABC\nGiá trị hợp đồng: 250.000.000.',
+      'ALL 10.5% chiết khấu, ALL 5 % phụ phí.\nBên B: Công ty ABC\nGiá trị hợp đồng: 250.000.000.',
+      'Cấu hình AMD 64bit và CAD 30kg.\nBên B: Công ty ABC\nGiá trị hợp đồng: 250.000.000.',
+      '1. ALL RIGHTS RESERVED\nBên B: Công ty ABC\nGiá trị hợp đồng: 250.000.000.',
+      'Bên B: Công ty ABC\nGiá trị hợp đồng: 250.000.000.\nALL RIGHTS RESERVED',
+      'Bên B: Công ty ABC\n250.000.000\nALL RIGHTS RESERVED\nGiá trị hợp đồng: 250.000.000.',
+      'Bên B: Công ty ABC\nDịch vụ lập trình PHP\n100.000.000\nGiá trị hợp đồng: 250.000.000.',
+      'Phiên bản v2.0 PHP và lịch 01/2026 ALL cho HD-01/CAD/2026.\nBên B: Công ty ABC\nGiá trị hợp đồng: 250.000.000.',
+    ] as const;
+    for (const contractText of edgeProseCases) {
+      const edgeReq: SignObligationExtractRequest = {
+        envelopeTitle: 'Hợp đồng nội địa',
+        pageCount: 1,
+        pages: [{ page: 1, text: contractText }],
+      };
+      const edgeRes = checkSignObligationExtract(edgeReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '250000000',
+        currency: 'VND',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: 'Giá trị hợp đồng: 250.000.000.' },
+        ],
+        obligations: [],
+      });
+      expect(edgeRes.proposal?.contractValue).toBe('250000000');
+      expect(edgeRes.proposal?.currency).toBe('VND');
+    }
   });
 });
 
