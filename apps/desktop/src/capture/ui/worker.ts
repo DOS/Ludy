@@ -118,11 +118,18 @@ export function bootCaptureWorker(): void {
 
       const mimeType = pickDesktopAudioMime((t) => MediaRecorder.isTypeSupported(t));
       const mainRecorder = new MediaRecorder(mix.stream, mimeType ? { mimeType } : undefined);
-      const liveRecorder = cfg.liveNotes ? new MediaRecorder(mix.stream, mimeType ? { mimeType } : undefined) : null;
+      const liveRecorder = cfg.liveNotes
+        ? new MediaRecorder(mix.stream, { ...(mimeType ? { mimeType } : {}), audioBitsPerSecond: 64_000 })
+        : null;
       const startedAt = Date.now();
       let mainSeq = 0;
       let liveSeq = 0;
       let lastLiveAt = startedAt;
+      const pendingReads = new Set<Promise<void>>();
+      const trackRead = (p: Promise<void>) => {
+        pendingReads.add(p);
+        void p.finally(() => pendingReads.delete(p));
+      };
 
       const mainStopped = new Promise<void>((resolve) => mainRecorder.addEventListener('stop', () => resolve(), { once: true }));
       const liveStopped = liveRecorder
@@ -133,9 +140,11 @@ export function bootCaptureWorker(): void {
         if (ev.data.size === 0) return;
         const seq = mainSeq++;
         const offsetMs = Date.now() - startedAt;
-        void ev.data.arrayBuffer().then((bytes) => {
-          bridge.workerChunk({ kind: 'main', seq, bytes, mimeType: mainRecorder.mimeType || mimeType || 'audio/webm', offsetMs, durationMs: 5000 });
-        });
+        trackRead(
+          ev.data.arrayBuffer().then((bytes) => {
+            bridge.workerChunk({ kind: 'main', seq, bytes, mimeType: mainRecorder.mimeType || mimeType || 'audio/webm', offsetMs, durationMs: 5000 });
+          }),
+        );
       };
       if (liveRecorder) {
         liveRecorder.ondataavailable = (ev) => {
@@ -144,9 +153,11 @@ export function bootCaptureWorker(): void {
           const durationMs = Math.max(1000, nowTs - lastLiveAt);
           lastLiveAt = nowTs;
           const seq = liveSeq++;
-          void ev.data.arrayBuffer().then((bytes) => {
-            bridge.workerChunk({ kind: 'live', seq, bytes, mimeType: liveRecorder.mimeType || mimeType || 'audio/webm', offsetMs: nowTs - startedAt, durationMs });
-          });
+          trackRead(
+            ev.data.arrayBuffer().then((bytes) => {
+              bridge.workerChunk({ kind: 'live', seq, bytes, mimeType: liveRecorder.mimeType || mimeType || 'audio/webm', offsetMs: nowTs - startedAt, durationMs });
+            }),
+          );
         };
       }
 
@@ -174,6 +185,9 @@ export function bootCaptureWorker(): void {
         if (liveRecorder && liveRecorder.state !== 'inactive') liveRecorder.stop();
         if (mainRecorder.state !== 'inactive') mainRecorder.stop();
         await Promise.all([mainStopped, liveStopped]);
+        while (pendingReads.size > 0) {
+          await Promise.allSettled(pendingReads);
+        }
         teardown();
         bridge.workerStopped();
       });

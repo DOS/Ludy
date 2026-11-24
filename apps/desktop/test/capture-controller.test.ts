@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Unit tests for desktop capture pipeline: meeting window recognition, RMS silence alerts, live chunk queue,
 // local disk recovery store, consent-before-audio ordering, Win10 fallback policy, 409 handling, and build skip on non-win32.
-import { execFile } from 'node:child_process';
+import { execFile, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { PassThrough } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { describe, expect, it } from 'vitest';
@@ -16,12 +18,19 @@ import {
   type PillViewState,
 } from '../src/capture/controller.ts';
 import {
+  createDesktopCaptureModule,
+  createPcmFrameChunker,
+  type ElectronWorkerBridge,
+} from '../src/capture/desktop-capture.ts';
+import {
   ProcessLoopbackUnsupportedError,
   type CaptureModule,
   type CaptureStartOptions,
 } from '../src/capture/interface.ts';
 import { createSilenceMonitor, rmsFloat32, rmsInt16Interleaved } from '../src/capture/levels.ts';
 import { createDesktopLiveSender, createDiskRecordingStore } from '../src/capture/live-sender.ts';
+import { PCM_WORKLET_NAME, registerPcmWorklet } from '../src/capture/ui/pcm-worklet.ts';
+import { bootCaptureWorker } from '../src/capture/ui/worker.ts';
 import {
   classifyMeetingWindow,
   listMeetingWindows,
@@ -519,9 +528,304 @@ describe('capture controller (consent, Win10 fallback policy, 409 lock, heartbea
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  it('surfaces initial micMissing alert on start and omits reason on user recordingStopped (B5, NB5)', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'ludy-micmiss-'));
+    try {
+      const trayPatches: Array<Partial<CaptureTrayState>> = [];
+      const pillsShown: PillViewState[] = [];
+      const stoppedPayloads: Array<Record<string, unknown>> = [];
+      const controller = createCaptureController({
+        capture: {
+          async start(_s, _k, opts) {
+            opts?.onMicMissing?.();
+          },
+          async stop() {},
+          pieces: (async function* () {})(),
+        },
+        recordingStore: createDiskRecordingStore(root),
+        fetch: async (url, init) => {
+          const u = String(url);
+          if (u.endsWith('/api/rpc/meetings/create')) return json(200, { json: { meetingId: 'mtg-mic' } });
+          if (u.endsWith('/api/rpc/meetings/recordingStopped')) {
+            stoppedPayloads.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+          }
+          return json(200, { json: { open: true } });
+        },
+        listWindows: async () => [],
+        getSession: () => makeSession({ uploads: 'direct' }),
+        onTrayState: (p) => trayPatches.push(p),
+        ui: {
+          updateConsentState: () => undefined,
+          showPill: (p) => pillsShown.push(p),
+          updatePill: () => undefined,
+          hidePill: () => undefined,
+          closeConsent: () => undefined,
+        },
+      });
+
+      await controller.startCapture(makeDraft());
+      expect(pillsShown[0]?.warning).toContain('Micro đang im lặng hoặc chưa bật');
+      expect(trayPatches.some((p) => p.warning?.includes('Micro đang im lặng'))).toBe(true);
+
+      await controller.stopCapture('user');
+      expect(stoppedPayloads.length).toBe(1);
+      const rpcJson = stoppedPayloads[0]?.json as Record<string, unknown>;
+      expect('reason' in rpcJson).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });
 
-describe('build-native host guard', () => {
+describe('PCM 4-byte framing, worker startup cleanup, WASAPI ready handshake & MediaRecorder flush', () => {
+  it('buffers 0..3 remainder bytes in createPcmFrameChunker and guards worklet misalignment (B4)', () => {
+    const emitted: Uint8Array[] = [];
+    const chunker = createPcmFrameChunker((buf) => emitted.push(new Uint8Array(buf)));
+
+    chunker.push(new Uint8Array([1, 2, 3, 4, 5])); // 4n+1 -> emits 4, keeps 1
+    chunker.push(new Uint8Array([6, 7, 8, 9, 10, 11])); // 1+6 = 7 (4n+3) -> emits 4, keeps 3
+    chunker.push(new Uint8Array([12, 13, 14, 15, 16, 17])); // 3+6 = 9 (4n+1) -> emits 8, keeps 1
+    chunker.push(new Uint8Array([18, 19])); // 1+2 = 3 (4n+3) -> emits 0, keeps 3
+    chunker.push(new Uint8Array([20])); // 3+1 = 4 -> emits 4, keeps 0
+
+    for (const piece of emitted) expect(piece.byteLength % 4).toBe(0);
+    expect(Array.from(Buffer.concat(emitted))).toEqual(Array.from({ length: 20 }, (_, i) => i + 1));
+
+    // Direct worklet check with malformed 4n+2 payload truncates cleanly without throwing RangeError.
+    const g = globalThis as Record<string, unknown>;
+    const prevProc = g.AudioWorkletProcessor;
+    const prevReg = g.registerProcessor;
+    try {
+      class FakeAudioWorkletProcessor {
+        port = { onmessage: null as ((ev: { data: ArrayBuffer }) => void) | null };
+      }
+      let registeredCtor: (new () => FakeAudioWorkletProcessor & { process(i: Float32Array[][], o: Float32Array[][]): boolean }) | null = null;
+      g.AudioWorkletProcessor = FakeAudioWorkletProcessor;
+      g.registerProcessor = (name: string, ctor: typeof registeredCtor) => {
+        if (name === PCM_WORKLET_NAME) registeredCtor = ctor;
+      };
+      registerPcmWorklet();
+      const proc = new registeredCtor!();
+      const malformed = new Uint8Array(6);
+      const dv = new DataView(malformed.buffer);
+      dv.setInt16(0, 16384, true);
+      dv.setInt16(2, -16384, true);
+      dv.setInt16(4, 32767, true);
+      expect(() => proc.port.onmessage?.({ data: malformed.buffer })).not.toThrow();
+      const left = new Float32Array(2);
+      const right = new Float32Array(2);
+      proc.process([], [[left, right]]);
+      expect(left[0]).toBeCloseTo(0.5, 4);
+      expect(right[0]).toBeCloseTo(-0.5, 4);
+      expect(left[1]).toBe(0);
+    } finally {
+      g.AudioWorkletProcessor = prevProc;
+      g.registerProcessor = prevReg;
+    }
+  });
+
+  it('cleans worker/helper/fallback state if worker startup rejects and supports restart (B3, B8)', async () => {
+    let workerClosed = 0;
+    let disarmed = 0;
+    let armed = 0;
+    let sentPcm: Uint8Array[] = [];
+    let readyOutcome: { ok: boolean; error?: string } = { ok: false, error: 'NO_MIC' };
+    let fakeProc: (EventEmitter & { stdin: PassThrough; stdout: PassThrough; stderr: PassThrough; kill(): boolean }) | null = null;
+
+    const bridge: ElectronWorkerBridge = {
+      async openWorkerWindow() {
+        return {
+          webContentsId: 77,
+          sendStart: () => {
+            queueMicrotask(() => readyHandlers.forEach((cb) => cb(readyOutcome)));
+          },
+          sendStop: () => {
+            queueMicrotask(() => stopHandlers.forEach((cb) => cb()));
+          },
+          sendPcm: (buf) => sentPcm.push(new Uint8Array(buf)),
+          close: () => {
+            workerClosed += 1;
+          },
+        };
+      },
+      armSystemFallback: () => {
+        armed += 1;
+      },
+      disarmSystemFallback: () => {
+        disarmed += 1;
+      },
+      onWorkerReady: (cb) => {
+        readyHandlers.add(cb);
+        return () => readyHandlers.delete(cb);
+      },
+      onWorkerStopped: (cb) => {
+        stopHandlers.add(cb);
+        return () => stopHandlers.delete(cb);
+      },
+      onWorkerChunk: () => () => undefined,
+      onWorkerLevels: () => () => undefined,
+      onWorkerEnded: () => () => undefined,
+    };
+    const readyHandlers = new Set<(res: { ok: boolean; error?: string }) => void>();
+    const stopHandlers = new Set<() => void>();
+
+    const makeFakeChild = () => {
+      const ee = new EventEmitter() as EventEmitter & {
+        stdin: PassThrough;
+        stdout: PassThrough;
+        stderr: PassThrough;
+        kill(): boolean;
+      };
+      ee.stdin = new PassThrough();
+      ee.stdout = new PassThrough();
+      ee.stderr = new PassThrough();
+      ee.kill = () => {
+        ee.emit('exit', 0);
+        return true;
+      };
+      return ee;
+    };
+
+    const mod = createDesktopCaptureModule({
+      isPackaged: false,
+      resourcesPath: '',
+      bridge,
+      startupTimeoutMs: 40,
+      resolveHelperPath: () => 'C:\\fake\\ludy-wasapi-loopback.exe',
+      spawnHelper: () => {
+        fakeProc = makeFakeChild();
+        return fakeProc as unknown as ChildProcessWithoutNullStreams;
+      },
+    });
+
+    // Startup timeout without WASAPI_READY sentinel rejects cleanly (no blind 400ms pass).
+    await expect(mod.start('system-audio-and-microphone', '', { targetPid: 100 })).rejects.toThrow(/WASAPI_READY/);
+    expect(disarmed).toBeGreaterThanOrEqual(1);
+
+    // Worker failing ready after system-fallback cleans up queue, closes worker, and disarms fallback.
+    readyOutcome = { ok: false, error: 'NO_MIC' };
+    await expect(mod.start('system-audio', '', { allowSystemFallback: true })).rejects.toThrow('NO_MIC');
+    expect(armed).toBe(1);
+    expect(disarmed).toBeGreaterThanOrEqual(2);
+    expect(workerClosed).toBe(1);
+    expect(() => mod.pieces).toThrow('capture is not running');
+
+    // Second start recovers cleanly when WASAPI_READY + worker ok both succeed, aligning 4n+1 PCM stdout splits.
+    readyOutcome = { ok: true };
+    const startPromise = createDesktopCaptureModule({
+      isPackaged: false,
+      resourcesPath: '',
+      bridge,
+      startupTimeoutMs: 200,
+      resolveHelperPath: () => 'C:\\fake\\ludy-wasapi-loopback.exe',
+      spawnHelper: () => {
+        fakeProc = makeFakeChild();
+        queueMicrotask(() => fakeProc?.stderr.write('WASAPI_READY\n'));
+        return fakeProc as unknown as ChildProcessWithoutNullStreams;
+      },
+    });
+    await startPromise.start('system-audio-and-microphone', '', { targetPid: 200 });
+    fakeProc!.stdout.write(Buffer.from([1, 2, 3, 4, 5]));
+    fakeProc!.stdout.write(Buffer.from([6, 7, 8]));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(sentPcm.every((b) => b.byteLength % 4 === 0)).toBe(true);
+    expect(Array.from(Buffer.concat(sentPcm))).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    await startPromise.stop();
+  });
+
+  it('awaits pending Blob.arrayBuffer() before firing workerStopped (NB2)', async () => {
+    const g = globalThis as Record<string, unknown>;
+    const prevWindow = g.window;
+    const prevAudioCtx = g.AudioContext;
+    const prevMediaRecorder = g.MediaRecorder;
+
+    try {
+      let startHandler: ((cfg: { source: string; mode: string; liveNotes: boolean }) => void) | null = null;
+      let stopHandler: (() => Promise<void> | void) | null = null;
+      const events: string[] = [];
+      const releaseReads: Array<() => void> = [];
+
+      g.AudioContext = class {
+        createMediaStreamDestination() {
+          return { stream: {} };
+        }
+        async close() {}
+      };
+
+      class FakeMediaRecorder {
+        state = 'recording';
+        mimeType = 'audio/webm';
+        ondataavailable: ((ev: { data: { size: number; arrayBuffer(): Promise<ArrayBuffer> } }) => void) | null = null;
+        private stopListeners: Array<() => void> = [];
+        static isTypeSupported(t: string) {
+          return t === 'audio/webm;codecs=opus';
+        }
+        constructor(_stream: unknown, opts?: { audioBitsPerSecond?: number }) {
+          if (opts?.audioBitsPerSecond) events.push(`bps:${opts.audioBitsPerSecond}`);
+        }
+        addEventListener(type: string, cb: () => void) {
+          if (type === 'stop') this.stopListeners.push(cb);
+        }
+        start() {}
+        stop() {
+          this.state = 'inactive';
+          this.ondataavailable?.({
+            data: {
+              size: 4,
+              arrayBuffer: () =>
+                new Promise<ArrayBuffer>((resolve) => {
+                  releaseReads.push(() => resolve(new Uint8Array([1, 2, 3, 4]).buffer));
+                }),
+            },
+          });
+          for (const cb of this.stopListeners) cb();
+        }
+      }
+      g.MediaRecorder = FakeMediaRecorder;
+      g.window = {
+        ludyDesktopBridge: {
+          onWorkerStart: (cb: typeof startHandler) => {
+            startHandler = cb;
+            return () => undefined;
+          },
+          onWorkerStop: (cb: typeof stopHandler) => {
+            stopHandler = cb;
+            return () => undefined;
+          },
+          onWorkerPcm: () => () => undefined,
+          workerReady: () => events.push('ready'),
+          workerStopped: () => events.push('stopped'),
+          workerChunk: (c: { kind: string }) => events.push(`chunk:${c.kind}`),
+          workerLevels: () => undefined,
+          workerUnexpectedEnd: () => undefined,
+        },
+      };
+
+      bootCaptureWorker();
+      startHandler!({ source: 'system-audio', mode: 'mic-only', liveNotes: true });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(events).toContain('bps:64000');
+      expect(events).toContain('ready');
+
+      const stopPromise = Promise.resolve(stopHandler!());
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      // workerStopped must still be blocked on pending main + live Blob.arrayBuffer() reads!
+      expect(events).not.toContain('stopped');
+      expect(releaseReads.length).toBe(2);
+      for (const release of releaseReads) release();
+      await stopPromise;
+      expect(events.indexOf('chunk:main')).toBeLessThan(events.indexOf('stopped'));
+      expect(events.indexOf('chunk:live')).toBeLessThan(events.indexOf('stopped'));
+    } finally {
+      g.window = prevWindow;
+      g.AudioContext = prevAudioCtx;
+      g.MediaRecorder = prevMediaRecorder;
+    }
+  });
+});
+
+describe('build-native host guard & MSVC flag escaping', () => {
   it('skips natively outside win32 unless --require-win32 is enforced', async () => {
     if (process.platform === 'win32') return;
     const run = promisify(execFile);
@@ -529,5 +833,15 @@ describe('build-native host guard', () => {
     const skipped = await run(process.execPath, [script]);
     expect(skipped.stdout).toContain('skipped native helper build');
     await expect(run(process.execPath, [script, '--require-win32'])).rejects.toThrow(/requires win32/);
+  });
+
+  it('formats cl.exe /Fo path without a trailing backslash before closing quote (B1)', async () => {
+    const run = promisify(execFile);
+    const script = fileURLToPath(new URL('../scripts/build-native.mjs', import.meta.url));
+    const { stdout } = await run(process.execPath, [script, '--print-cl-args']);
+    const line = stdout.trim();
+    expect(line).toMatch(/\/Fo:"[^"]+ludy-wasapi-loopback\.obj"/);
+    expect(line).not.toMatch(/\\"/);
+    expect(line).toContain('/link ole32.lib mmdevapi.lib user32.lib');
   });
 });

@@ -18,7 +18,10 @@ export function registerPcmWorklet(): void {
     constructor() {
       super();
       this.port.onmessage = (event: MessageEvent<ArrayBuffer>) => {
-        const view = new Int16Array(event.data);
+        // Only consume complete 16-bit stereo PCM frames (4 bytes per frame) so odd pipe splits cannot throw RangeError or slip channels.
+        const alignedBytes = event.data.byteLength - (event.data.byteLength % 4);
+        if (alignedBytes === 0) return;
+        const view = new Int16Array(event.data, 0, alignedBytes / 2);
         const floats = new Float32Array(view.length);
         for (let i = 0; i < view.length; i++) {
           floats[i] = (view[i] ?? 0) / 32768;

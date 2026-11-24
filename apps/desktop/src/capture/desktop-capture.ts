@@ -76,10 +76,43 @@ export interface DesktopCaptureDeps {
   resourcesPath: string;
   bridge: ElectronWorkerBridge;
   log?: (line: string) => void;
+  spawnHelper?: (exePath: string, args: readonly string[]) => ChildProcessWithoutNullStreams;
+  resolveHelperPath?: (options: { isPackaged: boolean; resourcesPath: string }) => string | null;
+  startupTimeoutMs?: number;
+}
+
+export function createPcmFrameChunker(onFrame: (buf: ArrayBuffer) => void) {
+  let remainder = new Uint8Array(0);
+  return {
+    push(chunk: Uint8Array): void {
+      if (chunk.byteLength === 0) return;
+      let combined: Uint8Array;
+      if (remainder.byteLength > 0) {
+        combined = new Uint8Array(remainder.byteLength + chunk.byteLength);
+        combined.set(remainder, 0);
+        combined.set(chunk, remainder.byteLength);
+      } else {
+        combined = chunk;
+      }
+      const aligned = combined.byteLength - (combined.byteLength % 4);
+      if (aligned > 0) {
+        const frameBuf = new Uint8Array(aligned);
+        frameBuf.set(combined.subarray(0, aligned));
+        onFrame(frameBuf.buffer);
+      }
+      remainder = aligned < combined.byteLength ? Uint8Array.from(combined.subarray(aligned)) : new Uint8Array(0);
+    },
+    reset(): void {
+      remainder = new Uint8Array(0);
+    },
+  };
 }
 
 export function createDesktopCaptureModule(deps: DesktopCaptureDeps): CaptureModule {
   const log = deps.log ?? (() => undefined);
+  const spawnHelper = deps.spawnHelper ?? ((exePath, args) => spawn(exePath, args, { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] }));
+  const findHelper = deps.resolveHelperPath ?? resolveHelperExePath;
+  const startupTimeoutMs = deps.startupTimeoutMs ?? 10_000;
   let helper: ChildProcessWithoutNullStreams | null = null;
   let queue: AsyncPieceQueue | null = null;
   let activeCleanup: Array<() => void> = [];
@@ -112,14 +145,11 @@ export function createDesktopCaptureModule(deps: DesktopCaptureDeps): CaptureMod
       const mode: 'wasapi' | 'system-fallback' | 'mic-only' = source === 'microphone' ? 'mic-only' : useWasapi ? 'wasapi' : 'system-fallback';
 
       if (useWasapi) {
-        const exePath = resolveHelperExePath({ isPackaged: deps.isPackaged, resourcesPath: deps.resourcesPath });
+        const exePath = findHelper({ isPackaged: deps.isPackaged, resourcesPath: deps.resourcesPath });
         if (!exePath) {
           throw new ProcessLoopbackUnsupportedError();
         }
-        helper = spawn(exePath, ['--pid', String(options!.targetPid)], {
-          windowsHide: true,
-          stdio: ['pipe', 'pipe', 'pipe'],
-        });
+        helper = spawnHelper(exePath, ['--pid', String(options!.targetPid)]);
         await new Promise<void>((resolve, reject) => {
           const proc = helper!;
           let settled = false;
@@ -127,26 +157,30 @@ export function createDesktopCaptureModule(deps: DesktopCaptureDeps): CaptureMod
           const finishOk = () => {
             if (settled) return;
             settled = true;
-            clearTimeout(probeTimer);
+            clearTimeout(startupTimer);
+            detachStartup();
             resolve();
           };
           const finishErr = (err: Error) => {
             if (settled) return;
             settled = true;
-            clearTimeout(probeTimer);
+            clearTimeout(startupTimer);
+            detachStartup();
             cleanupAll();
             reject(err);
           };
-          const onFirstData = () => finishOk();
-          proc.stdout.once('data', onFirstData);
-          proc.stderr.on('data', (chunk: Buffer) => {
+          const onStderr = (chunk: Buffer) => {
             stderr += chunk.toString('utf8');
             if (stderr.includes('PROCESS_LOOPBACK_UNSUPPORTED')) {
               finishErr(new ProcessLoopbackUnsupportedError());
+              return;
             }
-          });
-          proc.once('error', () => finishErr(new ProcessLoopbackUnsupportedError()));
-          proc.once('exit', (code) => {
+            if (/\bWASAPI_READY\b/.test(stderr)) {
+              finishOk();
+            }
+          };
+          const onError = () => finishErr(new ProcessLoopbackUnsupportedError());
+          const onExit = (code: number | null) => {
             if (!settled) {
               if (code === 42 || stderr.includes('PROCESS_LOOPBACK_UNSUPPORTED')) {
                 finishErr(new ProcessLoopbackUnsupportedError());
@@ -154,9 +188,18 @@ export function createDesktopCaptureModule(deps: DesktopCaptureDeps): CaptureMod
                 finishErr(new Error(`WASAPI loopback exited (${String(code)}): ${stderr.trim() || 'unknown'}`));
               }
             }
-          });
-          // Process loopback produces no stdout packet until the target app outputs audio or silence (~300 ms probe covers activation errors).
-          const probeTimer = setTimeout(finishOk, 400);
+          };
+          const detachStartup = () => {
+            proc.stderr.off('data', onStderr);
+            proc.off('error', onError);
+            proc.off('exit', onExit);
+          };
+          proc.stderr.on('data', onStderr);
+          proc.once('error', onError);
+          proc.once('exit', onExit);
+          const startupTimer = setTimeout(() => {
+            finishErr(new Error(`WASAPI loopback helper timed out waiting for WASAPI_READY (${startupTimeoutMs} ms)`));
+          }, startupTimeoutMs);
         });
       } else if (mode === 'system-fallback') {
         if (!options?.allowSystemFallback) {
@@ -174,78 +217,91 @@ export function createDesktopCaptureModule(deps: DesktopCaptureDeps): CaptureMod
         ticksBeforeAlert: 7,
       });
 
-      const worker = await deps.bridge.openWorkerWindow();
-      activeCleanup.push(() => worker.close());
+      try {
+        const worker = await deps.bridge.openWorkerWindow();
+        activeCleanup.push(() => worker.close());
 
-      if (helper) {
-        const proc = helper;
-        const onStdout = (chunk: Buffer) => {
-          const copy = new Uint8Array(chunk.byteLength);
-          copy.set(chunk);
-          worker.sendPcm(copy.buffer);
-        };
-        proc.stdout.on('data', onStdout);
-        proc.stderr.on('data', (d: Buffer) => log(`wasapi: ${d.toString('utf8').trim()}`));
-        proc.once('close', (code) => {
-          if (stopFn) {
-            log(`wasapi helper exited mid-capture (code ${String(code)})`);
-          }
-        });
-        activeCleanup.push(() => proc.stdout.off('data', onStdout));
-      }
-
-      const offChunk = deps.bridge.onWorkerChunk((chunk) => {
-        const bytes = new Uint8Array(chunk.bytes);
-        if (chunk.kind === 'main') {
-          pieceQueue.push({ sequence: chunk.seq, offsetMs: chunk.offsetMs, mimeType: chunk.mimeType, data: bytes });
-        } else {
-          options?.onLiveChunk?.({ bytes, mimeType: chunk.mimeType, durationMs: chunk.durationMs });
-        }
-      });
-      const offLevels = deps.bridge.onWorkerLevels((levels) => {
-        const snap = monitor.recordTick(levels.loopbackRms, levels.micRms);
-        for (const alert of snap.newlyTriggered) {
-          options?.onSilentAlert?.(alert);
-        }
-      });
-      const offEnded = deps.bridge.onWorkerEnded((reason) => {
-        options?.onUnexpectedEnd?.(reason);
-      });
-      activeCleanup.push(offChunk, offLevels, offEnded);
-
-      await new Promise<void>((resolve, reject) => {
-        const offReady = deps.bridge.onWorkerReady((res) => {
-          offReady();
-          if (!res.ok) {
-            reject(new Error(res.error ?? 'CAPTURE_WORKER_FAILED'));
-            return;
-          }
-          if (res.micMissing) options?.onMicMissing?.();
-          resolve();
-        });
-        worker.sendStart({ source, mode, liveNotes: Boolean(options?.onLiveChunk) });
-      });
-
-      let stopping: Promise<void> | null = null;
-      stopFn = () => {
-        if (stopping) return stopping;
-        stopping = (async () => {
-          await new Promise<void>((resolve) => {
-            const timeout = setTimeout(resolve, 4000);
-            const offStopped = deps.bridge.onWorkerStopped(() => {
-              clearTimeout(timeout);
-              offStopped();
-              resolve();
-            });
-            worker.sendStop();
+        if (helper) {
+          const proc = helper;
+          const chunker = createPcmFrameChunker((buf) => worker.sendPcm(buf));
+          const onStdout = (chunk: Buffer) => chunker.push(chunk);
+          const onStderr = (d: Buffer) => log(`wasapi: ${d.toString('utf8').trim()}`);
+          const onClose = (code: number | null) => {
+            if (stopFn) {
+              log(`wasapi helper exited mid-capture (code ${String(code)})`);
+              options?.onUnexpectedEnd?.('unknown');
+            }
+          };
+          proc.stdout.on('data', onStdout);
+          proc.stderr.on('data', onStderr);
+          proc.once('close', onClose);
+          activeCleanup.push(() => {
+            chunker.reset();
+            proc.stdout.off('data', onStdout);
+            proc.stderr.off('data', onStderr);
+            proc.off('close', onClose);
           });
-          cleanupAll();
-          pieceQueue.close();
-          queue = null;
-          stopFn = null;
-        })();
-        return stopping;
-      };
+        }
+
+        const offChunk = deps.bridge.onWorkerChunk((chunk) => {
+          const bytes = new Uint8Array(chunk.bytes);
+          if (chunk.kind === 'main') {
+            pieceQueue.push({ sequence: chunk.seq, offsetMs: chunk.offsetMs, mimeType: chunk.mimeType, data: bytes });
+          } else {
+            options?.onLiveChunk?.({ bytes, mimeType: chunk.mimeType, durationMs: chunk.durationMs });
+          }
+        });
+        const offLevels = deps.bridge.onWorkerLevels((levels) => {
+          const snap = monitor.recordTick(levels.loopbackRms, levels.micRms);
+          for (const alert of snap.newlyTriggered) {
+            options?.onSilentAlert?.(alert);
+          }
+        });
+        const offEnded = deps.bridge.onWorkerEnded((reason) => {
+          options?.onUnexpectedEnd?.(reason);
+        });
+        activeCleanup.push(offChunk, offLevels, offEnded);
+
+        await new Promise<void>((resolve, reject) => {
+          const offReady = deps.bridge.onWorkerReady((res) => {
+            offReady();
+            if (!res.ok) {
+              reject(new Error(res.error ?? 'CAPTURE_WORKER_FAILED'));
+              return;
+            }
+            if (res.micMissing) options?.onMicMissing?.();
+            resolve();
+          });
+          worker.sendStart({ source, mode, liveNotes: Boolean(options?.onLiveChunk) });
+        });
+
+        let stopping: Promise<void> | null = null;
+        stopFn = () => {
+          if (stopping) return stopping;
+          stopping = (async () => {
+            await new Promise<void>((resolve) => {
+              const timeout = setTimeout(resolve, 4000);
+              const offStopped = deps.bridge.onWorkerStopped(() => {
+                clearTimeout(timeout);
+                offStopped();
+                resolve();
+              });
+              worker.sendStop();
+            });
+            cleanupAll();
+            pieceQueue.close();
+            queue = null;
+            stopFn = null;
+          })();
+          return stopping;
+        };
+      } catch (error) {
+        cleanupAll();
+        pieceQueue.close();
+        queue = null;
+        stopFn = null;
+        throw error;
+      }
     },
     get pieces(): AsyncIterable<CapturePiece> {
       if (!queue) throw new Error('capture is not running');

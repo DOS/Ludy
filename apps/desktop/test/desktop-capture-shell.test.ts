@@ -153,7 +153,11 @@ describe('shell capture gate & reconnect', () => {
           client: 'desktop',
           scopes: returnedScopes,
           expiresAt: '2027-02-01T00:00:00.000Z',
-          features: { meetings: true, agenda: true, notes: true },
+          features: {
+            meetings: returnedScopes.includes('meetings'),
+            agenda: returnedScopes.includes('agenda'),
+            notes: true,
+          },
         });
       }
       return json(404, {});
@@ -220,6 +224,35 @@ describe('shell capture gate & reconnect', () => {
     });
     await sDisabled.start();
     expect(sDisabled.model().capture?.enabled).toBe(false);
+
+    // Server disables meetings module -> reconnectNeeded stays false even with zero-scope token.
+    const sModuleOff = createShell({
+      config: loadConfig({ env: { LUDY_URL: 'https://ludy.example.vn' }, configFile: null }),
+      store: memoryStore({
+        ludyUrl: 'https://ludy.example.vn',
+        token: TOKEN,
+        tokenId: 'tid',
+        orgId: 'oid',
+        orgSlug: 'acme',
+        scopes: [],
+        expiresAt: '2027-02-01T00:00:00.000Z',
+      }),
+      updater: noUpdater(),
+      fetch: async (url) => {
+        if (String(url).endsWith('/api/config')) return json(200, { meetingsDesktopCapture: true, uploads: 'direct', modules: [] });
+        return json(200, {
+          client: 'desktop',
+          scopes: [],
+          features: { meetings: false, agenda: false, notes: false },
+        });
+      },
+      openExternal: async () => undefined,
+      deviceName: 'WinBox',
+      setInterval: () => 0,
+      clearInterval: () => {},
+    });
+    await sModuleOff.start();
+    expect(sModuleOff.model().capture).toMatchObject({ enabled: false, reconnectNeeded: false });
   });
 });
 

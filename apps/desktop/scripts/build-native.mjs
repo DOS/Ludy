@@ -27,6 +27,11 @@ export function findVsDevCmd(env = process.env, exists = existsSync) {
   return exists(vcvars) ? vcvars : null;
 }
 
+export function formatClArgs(srcPath = source, outExe = output, objDir = outDir) {
+  const objFile = join(objDir, 'ludy-wasapi-loopback.obj');
+  return `/nologo /EHsc /O2 /std:c++17 /W3 /DUNICODE /D_UNICODE "${srcPath}" /Fe:"${outExe}" /Fo:"${objFile}" /link ole32.lib mmdevapi.lib user32.lib`;
+}
+
 export async function buildNative({ requireWin32 = false } = {}) {
   if (process.platform !== 'win32') {
     if (requireWin32) {
@@ -36,7 +41,7 @@ export async function buildNative({ requireWin32 = false } = {}) {
   }
   await rm(outDir, { recursive: true, force: true });
   await mkdir(outDir, { recursive: true });
-  const clArgs = `/nologo /EHsc /O2 /std:c++17 /W3 /DUNICODE /D_UNICODE "${source}" /Fe:"${output}" /Fo:"${outDir}\\" /link ole32.lib mmdevapi.lib user32.lib`;
+  const clArgs = formatClArgs();
   const vcvars = findVsDevCmd();
   const cmdLine = vcvars ? `call "${vcvars}" >nul && cl.exe ${clArgs}` : `cl.exe ${clArgs}`;
   const res = spawnSync('cmd.exe', ['/d', '/s', '/c', `"${cmdLine}"`], { windowsVerbatimArguments: true, stdio: 'inherit' });
@@ -50,6 +55,10 @@ export async function buildNative({ requireWin32 = false } = {}) {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  if (process.argv.includes('--print-cl-args')) {
+    console.log(formatClArgs());
+    process.exit(0);
+  }
   const requireWin32 = process.argv.includes('--require-win32');
   const result = await buildNative({ requireWin32 });
   if (result.skipped) {

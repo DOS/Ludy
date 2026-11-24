@@ -141,7 +141,7 @@ export function createShell(deps: ShellDeps): Shell {
       const hasAgendaScope = status.me.scopes.includes('agenda');
       const meetingsEnabled = publicCfg.meetingsDesktopCapture && status.me.features.meetings && hasMeetingsScope;
       const agendaEnabled = meetingsEnabled && status.me.features.agenda && hasAgendaScope;
-      const reconnectNeeded = publicCfg.meetingsDesktopCapture && status.me.features.meetings && !hasMeetingsScope;
+      const reconnectNeeded = publicCfg.meetingsDesktopCapture && publicCfg.modules.includes('meetings') && !hasMeetingsScope;
       capture = { ...capture, enabled: meetingsEnabled, agendaEnabled, reconnectNeeded };
       if (auth.kind === 'signed-in') {
         auth = { ...auth, online: true };
@@ -215,13 +215,14 @@ export function createShell(deps: ShellDeps): Shell {
         scopes: done.scopes,
         expiresAt: done.expiresAt,
       });
-      const meetingsEnabled = publicCfg.meetingsDesktopCapture && done.scopes.includes('meetings');
+      const hasMeetingsScope = done.scopes.includes('meetings');
+      const meetingsEnabled = publicCfg.meetingsDesktopCapture && hasMeetingsScope;
       const agendaEnabled = meetingsEnabled && done.scopes.includes('agenda');
       capture = {
         ...capture,
         enabled: meetingsEnabled,
         agendaEnabled,
-        reconnectNeeded: publicCfg.meetingsDesktopCapture && !done.scopes.includes('meetings'),
+        reconnectNeeded: publicCfg.meetingsDesktopCapture && publicCfg.modules.includes('meetings') && !hasMeetingsScope,
       };
       setAuth({ kind: 'signed-in', orgSlug: result.org, online: true, persisted: saved === 'persisted' });
     } catch (error) {

@@ -101,16 +101,18 @@ export function bootConsentUi(): void {
       noneOpt.value = '';
       noneOpt.textContent = 'Không chọn sự kiện lịch';
       agendaSelect.appendChild(noneOpt);
-      for (const ev of state.agendaEvents) {
-        if (!ev.id) continue;
+      state.agendaEvents.forEach((ev, idx) => {
         const opt = document.createElement('option');
-        opt.value = ev.id;
+        opt.value = String(idx);
         const time = new Date(ev.startsAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         opt.textContent = `${time} - ${ev.title}`;
         opt.dataset.title = ev.title;
+        if (ev.id) opt.dataset.agendaId = ev.id;
         agendaSelect.appendChild(opt);
+      });
+      if (prevAgenda && Array.from(agendaSelect.options).some((o) => o.value === prevAgenda)) {
+        agendaSelect.value = prevAgenda;
       }
-      if (prevAgenda) agendaSelect.value = prevAgenda;
     } else {
       agendaWrap.classList.add('hidden');
     }
@@ -169,6 +171,8 @@ export function bootConsentUi(): void {
     const chosen = windowSelect.value;
     const isMicOnly = chosen === 'mic-only';
     const targetPid = !isMicOnly && chosen.startsWith('pid:') ? Number(chosen.slice(4)) : undefined;
+    const selectedAgenda = agendaSelect.selectedOptions[0];
+    const agendaId = selectedAgenda?.dataset.agendaId;
     void bridge.consentStart({
       title: titleInput.value,
       consentMethod: consentMethod.value,
@@ -177,7 +181,7 @@ export function bootConsentUi(): void {
       liveNotes: liveNotes.checked,
       source: isMicOnly ? 'microphone' : 'system-audio-and-microphone',
       ...(targetPid !== undefined && Number.isInteger(targetPid) ? { targetPid } : {}),
-      ...(agendaSelect.value ? { agendaId: agendaSelect.value } : {}),
+      ...(agendaId ? { agendaId } : {}),
       ...(joinUrlInput.value.trim() ? { joinUrl: joinUrlInput.value.trim() } : {}),
       ...(fallbackConfirm.checked ? { allowSystemFallback: true } : {}),
     });

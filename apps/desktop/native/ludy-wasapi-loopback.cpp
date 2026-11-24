@@ -22,6 +22,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -138,34 +139,53 @@ class ActivationHandler final : public IActivateAudioInterfaceCompletionHandler,
   }
 
   HRESULT STDMETHODCALLTYPE ActivateCompleted(IActivateAudioInterfaceAsyncOperation* op) override {
+    HRESULT localHr = E_UNEXPECTED;
+    IAudioClient* localClient = nullptr;
     if (op) {
       IUnknown* raw = nullptr;
-      HRESULT hr = op->GetActivateResult(&activateHr_, &raw);
-      if (SUCCEEDED(hr) && SUCCEEDED(activateHr_) && raw) {
-        activateHr_ = raw->QueryInterface(__uuidof(IAudioClient), reinterpret_cast<void**>(&client_));
+      HRESULT getHr = op->GetActivateResult(&localHr, &raw);
+      if (SUCCEEDED(getHr) && SUCCEEDED(localHr) && raw) {
+        localHr = raw->QueryInterface(__uuidof(IAudioClient), reinterpret_cast<void**>(&localClient));
       }
       if (raw) raw->Release();
-      if (FAILED(hr)) activateHr_ = hr;
-    } else {
-      activateHr_ = E_UNEXPECTED;
+      if (FAILED(getHr)) localHr = getHr;
     }
-    SetEvent(readyEvent_);
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (client_) client_->Release();
+    activateHr_ = localHr;
+    client_ = localClient;
+    completed_ = true;
+    if (readyEvent_) SetEvent(readyEvent_);
     return S_OK;
   }
 
-  HRESULT activateHr() const { return activateHr_; }
-  IAudioClient* client() const { return client_; }
-  void releaseClient() {
+  bool takeResult(HRESULT& outHr, IAudioClient*& outClient) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    // Detach before caller closes readyEvent_ (e.g., on timeout) so ActivateCompleted never signals a closed handle.
+    readyEvent_ = nullptr;
+    if (!completed_) {
+      outHr = HRESULT_FROM_WIN32(ERROR_TIMEOUT);
+      outClient = nullptr;
+      return false;
+    }
+    outHr = activateHr_;
+    outClient = client_;
+    client_ = nullptr;
+    return true;
+  }
+
+ private:
+  ~ActivationHandler() {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (client_) {
       client_->Release();
       client_ = nullptr;
     }
   }
-
- private:
-  ~ActivationHandler() { releaseClient(); }
   std::atomic<ULONG> refCount_{1};
+  std::mutex mutex_;
   HANDLE readyEvent_;
+  bool completed_{false};
   HRESULT activateHr_{E_FAIL};
   IAudioClient* client_{nullptr};
 };
@@ -175,20 +195,26 @@ bool isProcessLoopbackUnsupportedHr(HRESULT hr) {
          hr == HRESULT_FROM_WIN32(ERROR_NOT_SUPPORTED) || hr == HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND);
 }
 
-struct StopWatchCtx {
-  HANDLE stopEvent;
-};
-
 DWORD WINAPI watchStdinThread(LPVOID arg) {
-  auto* ctx = static_cast<StopWatchCtx*>(arg);
+  HANDLE hWatchStop = static_cast<HANDLE>(arg);
   char buf[16];
   DWORD readBytes = 0;
   HANDLE hIn = GetStdHandle(STD_INPUT_HANDLE);
   while (ReadFile(hIn, buf, sizeof(buf), &readBytes, nullptr) && readBytes > 0) {
-    // Wait cleanly until stdin closes (parent shutdown or crash).
+    if (WaitForSingleObject(hWatchStop, 0) == WAIT_OBJECT_0) break;
   }
-  SetEvent(ctx->stopEvent);
+  SetEvent(hWatchStop);
+  CloseHandle(hWatchStop);
   return 0;
+}
+
+void stopWatchThread(HANDLE hStop, HANDLE hWatch) {
+  SetEvent(hStop);
+  if (hWatch) {
+    CancelSynchronousIo(hWatch);
+    WaitForSingleObject(hWatch, 2000);
+    CloseHandle(hWatch);
+  }
 }
 
 int streamProcessLoopback(DWORD targetPid) {
@@ -210,8 +236,14 @@ int streamProcessLoopback(DWORD targetPid) {
     return 2;
   }
 
-  StopWatchCtx watchCtx{hStop};
-  HANDLE hWatch = CreateThread(nullptr, 0, watchStdinThread, &watchCtx, 0, nullptr);
+  HANDLE hWatchStop = nullptr;
+  HANDLE hWatch = nullptr;
+  if (DuplicateHandle(GetCurrentProcess(), hStop, GetCurrentProcess(), &hWatchStop, 0, FALSE, DUPLICATE_SAME_ACCESS)) {
+    hWatch = CreateThread(nullptr, 0, watchStdinThread, static_cast<LPVOID>(hWatchStop), 0, nullptr);
+    if (!hWatch) {
+      CloseHandle(hWatchStop);
+    }
+  }
 
   auto* handler = new ActivationHandler(hReady);
   AUDIOCLIENT_ACTIVATION_PARAMS params{};
@@ -225,23 +257,24 @@ int streamProcessLoopback(DWORD targetPid) {
   activateParams.blob.pBlobData = reinterpret_cast<BYTE*>(&params);
 
   IActivateAudioInterfaceAsyncOperation* asyncOp = nullptr;
+  IAudioClient* audioClient = nullptr;
   hr = ActivateAudioInterfaceAsync(VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK, __uuidof(IAudioClient), &activateParams, handler, &asyncOp);
   if (SUCCEEDED(hr)) {
     WaitForSingleObject(hReady, 5000);
-    hr = handler->activateHr();
+    handler->takeResult(hr, audioClient);
+  } else {
+    HRESULT ignoredHr = E_FAIL;
+    handler->takeResult(ignoredHr, audioClient);
   }
   if (asyncOp) asyncOp->Release();
 
-  if (FAILED(hr) || !handler->client()) {
+  if (FAILED(hr) || !audioClient) {
     HRESULT failHr = FAILED(hr) ? hr : E_FAIL;
     std::fprintf(stderr, "%s:0x%08lX\n", isProcessLoopbackUnsupportedHr(failHr) ? "PROCESS_LOOPBACK_UNSUPPORTED" : "ACTIVATE_FAILED", static_cast<unsigned long>(failHr));
     int code = isProcessLoopbackUnsupportedHr(failHr) ? 42 : 2;
+    if (audioClient) audioClient->Release();
     handler->Release();
-    SetEvent(hStop);
-    if (hWatch) {
-      WaitForSingleObject(hWatch, 500);
-      CloseHandle(hWatch);
-    }
+    stopWatchThread(hStop, hWatch);
     CloseHandle(hReady);
     CloseHandle(hStop);
     CoUninitialize();
@@ -256,7 +289,6 @@ int streamProcessLoopback(DWORD targetPid) {
   wfx.nBlockAlign = static_cast<WORD>((wfx.nChannels * wfx.wBitsPerSample) / 8);
   wfx.nAvgBytesPerSec = wfx.nSamplesPerSec * wfx.nBlockAlign;
 
-  IAudioClient* audioClient = handler->client();
   hr = audioClient->Initialize(AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_LOOPBACK, 200000, 0, &wfx, nullptr);
   if (hr == AUDCLNT_E_UNSUPPORTED_FORMAT) {
     hr = audioClient->Initialize(
@@ -281,6 +313,8 @@ int streamProcessLoopback(DWORD targetPid) {
     std::fprintf(stderr, "%s:0x%08lX\n", isProcessLoopbackUnsupportedHr(hr) ? "PROCESS_LOOPBACK_UNSUPPORTED" : "INIT_FAILED", static_cast<unsigned long>(hr));
     exitCode = isProcessLoopbackUnsupportedHr(hr) ? 42 : 3;
   } else {
+    std::fputs("WASAPI_READY\n", stderr);
+    std::fflush(stderr);
     HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
     std::vector<uint8_t> silenceBuf;
     while (WaitForSingleObject(hStop, 10) == WAIT_TIMEOUT) {
@@ -318,12 +352,9 @@ int streamProcessLoopback(DWORD targetPid) {
   }
 
   if (captureClient) captureClient->Release();
+  audioClient->Release();
   handler->Release();
-  SetEvent(hStop);
-  if (hWatch) {
-    WaitForSingleObject(hWatch, 500);
-    CloseHandle(hWatch);
-  }
+  stopWatchThread(hStop, hWatch);
   CloseHandle(hReady);
   CloseHandle(hStop);
   CoUninitialize();

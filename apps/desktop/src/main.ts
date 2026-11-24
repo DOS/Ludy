@@ -3,10 +3,10 @@
 // Loads ONLY local bundled files over privileged ludy-desktop://ui with strict CSP, locks permissions exclusively to the
 // internal capture worker window, persists tokens in DPAPI/keychain, and keeps capture logic isolated under src/capture/.
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { chmod, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { hostname } from 'node:os';
-import { dirname, extname, join, normalize, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   app,
@@ -22,6 +22,7 @@ import {
   session,
   shell,
   Tray,
+  type IpcMainEvent,
   type MenuItemConstructorOptions,
 } from 'electron';
 import { noticeToCopy, type RecordingNoticeLanguage } from './capture/consent.ts';
@@ -29,6 +30,7 @@ import { createCaptureController, type CaptureDraft, type ConsentWindowViewState
 import { createDesktopCaptureModule, CAPTURE_UI_SPECS, type ElectronWorkerBridge } from './capture/desktop-capture.ts';
 import { createDiskRecordingStore } from './capture/live-sender.ts';
 import { installCaptureSessionHandlers } from './capture/session-handlers.ts';
+import { isExpectedUiOrigin, resolveUiBundleFile, UI_CSP } from './capture/ui-bundle.ts';
 import { listMeetingWindows, resolveHelperExePath } from './capture/windows.ts';
 import { deviceNameFor } from './connect-url.ts';
 import { loadConfig, parseLudyUrl } from './config.ts';
@@ -51,12 +53,6 @@ protocol.registerSchemesAsPrivileged([
 // LUDY_DESKTOP_USER_DATA is a throwaway profile for the CI smoke run and for tests: it never reads or writes a member's real one.
 app.setPath('userData', process.env.LUDY_DESKTOP_USER_DATA ? resolve(process.env.LUDY_DESKTOP_USER_DATA) : join(app.getPath('appData'), 'ludy-desktop'));
 
-const MIME_BY_EXT: Readonly<Record<string, string>> = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'application/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-};
-
 async function main(): Promise<void> {
   // Squirrel.Windows runs the app with a flag at install, update and uninstall: make or remove the shortcuts, then quit.
   const hookOnly = await handleSquirrelStartup(process.argv, {
@@ -74,7 +70,7 @@ async function main(): Promise<void> {
 
   app.on('web-contents-created', (_event, contents) => {
     contents.on('will-navigate', (event, url) => {
-      if (!url.startsWith(`${CAPTURE_UI_SPECS.origin}/`)) event.preventDefault();
+      if (!isExpectedUiOrigin(url, CAPTURE_UI_SPECS.origin)) event.preventDefault();
     });
     contents.setWindowOpenHandler(() => ({ action: 'deny' }));
   });
@@ -87,17 +83,15 @@ async function main(): Promise<void> {
 
   session.defaultSession.protocol.handle('ludy-desktop', async (request) => {
     try {
-      const parsed = new URL(request.url);
-      if (parsed.hostname !== 'ui') return new Response('Not found', { status: 404 });
-      const cleanRel = normalize(parsed.pathname.replace(/^\/+/, ''));
-      const fullPath = resolve(uiRoot, cleanRel);
-      if (!fullPath.startsWith(uiRoot) || !existsSync(fullPath)) {
+      const resolved = resolveUiBundleFile(uiRoot, request.url);
+      if (!resolved || !statSync(resolved.path).isFile()) {
         return new Response('Not found', { status: 404 });
       }
-      const res = await net.fetch(pathToFileURL(fullPath).toString());
+      const res = await net.fetch(pathToFileURL(resolved.path).toString());
       const headers = new Headers(res.headers);
-      headers.set('content-type', MIME_BY_EXT[extname(fullPath)] ?? 'application/octet-stream');
-      headers.set('content-security-policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'none'; img-src 'none'; object-src 'none'; frame-ancestors 'none'");
+      headers.set('content-type', resolved.mimeType);
+      headers.set('content-security-policy', UI_CSP);
+      headers.set('x-content-type-options', 'nosniff');
       return new Response(res.body, { status: res.status, headers });
     } catch {
       return new Response('Not found', { status: 404 });
@@ -169,47 +163,57 @@ async function main(): Promise<void> {
   });
 
   let consentWindow: BrowserWindow | null = null;
+  let openingConsent: Promise<void> | null = null;
   let pillWindow: BrowserWindow | null = null;
   let lastConsentView: ConsentWindowViewState | null = null;
   let lastPillView: PillViewState | null = null;
   let allowPillClose = false;
 
-  const ensureConsentWindow = async () => {
-    const view = await controller.openConsent();
-    lastConsentView = view;
-    if (consentWindow && !consentWindow.isDestroyed()) {
-      consentWindow.show();
-      consentWindow.focus();
-      consentWindow.webContents.send('desktop-capture:consent-state', view);
-      return;
-    }
-    consentWindow = new BrowserWindow({
-      width: 520,
-      height: 700,
-      resizable: true,
-      minimizable: false,
-      maximizable: false,
-      autoHideMenuBar: true,
-      title: 'Bắt đầu ghi cuộc họp - Ludy Desktop',
-      webPreferences: { preload: preloadPath, contextIsolation: true, nodeIntegration: false, sandbox: true },
+  const ensureConsentWindow = (): Promise<void> => {
+    if (openingConsent) return openingConsent;
+    const run = (async () => {
+      const view = await controller.openConsent();
+      lastConsentView = view;
+      if (consentWindow && !consentWindow.isDestroyed()) {
+        consentWindow.show();
+        consentWindow.focus();
+        consentWindow.webContents.send('desktop-capture:consent-state', view);
+        return;
+      }
+      const win = new BrowserWindow({
+        width: 520,
+        height: 700,
+        resizable: true,
+        minimizable: false,
+        maximizable: false,
+        autoHideMenuBar: true,
+        title: 'Bắt đầu ghi cuộc họp - Ludy Desktop',
+        webPreferences: { preload: preloadPath, contextIsolation: true, nodeIntegration: false, sandbox: true },
+      });
+      consentWindow = win;
+      win.on('closed', () => {
+        if (consentWindow === win) consentWindow = null;
+        controller.cancelConsent();
+      });
+      await win.loadURL(`${CAPTURE_UI_SPECS.origin}/consent.html`);
+    })();
+    openingConsent = run.finally(() => {
+      if (openingConsent === run) openingConsent = null;
     });
-    consentWindow.on('closed', () => {
-      consentWindow = null;
-      controller.cancelConsent();
-    });
-    await consentWindow.loadURL(`${CAPTURE_UI_SPECS.origin}/consent.html`);
+    return openingConsent;
   };
 
   const ensurePillWindow = (state: PillViewState) => {
     lastPillView = state;
     if (pillWindow && !pillWindow.isDestroyed()) {
+      pillWindow.setSize(360, state.warning ? 112 : 68);
       pillWindow.webContents.send('desktop-capture:pill-update', state);
       return;
     }
     allowPillClose = false;
     pillWindow = new BrowserWindow({
       width: 360,
-      height: state.warning ? 96 : 68,
+      height: state.warning ? 112 : 68,
       frame: false,
       resizable: false,
       minimizable: false,
@@ -236,10 +240,14 @@ async function main(): Promise<void> {
         show: false,
         webPreferences: { preload: preloadPath, contextIsolation: true, nodeIntegration: false, sandbox: true },
       });
-      activeWorkerWebContentsId = win.webContents.id;
+      const workerId = win.webContents.id;
+      activeWorkerWebContentsId = workerId;
+      win.on('closed', () => {
+        if (activeWorkerWebContentsId === workerId) activeWorkerWebContentsId = null;
+      });
       await win.loadURL(`${CAPTURE_UI_SPECS.origin}/worker.html`);
       return {
-        webContentsId: win.webContents.id,
+        webContentsId: workerId,
         sendStart: (cfg) => {
           if (!win.isDestroyed()) win.webContents.send('desktop-capture:worker-start', cfg);
         },
@@ -250,7 +258,7 @@ async function main(): Promise<void> {
           if (!win.isDestroyed()) win.webContents.send('desktop-capture:worker-pcm', buf);
         },
         close: () => {
-          if (activeWorkerWebContentsId === win.webContents.id) activeWorkerWebContentsId = null;
+          if (activeWorkerWebContentsId === workerId) activeWorkerWebContentsId = null;
           if (!win.isDestroyed()) win.destroy();
         },
       };
@@ -262,27 +270,42 @@ async function main(): Promise<void> {
       systemFallbackArmed = false;
     },
     onWorkerReady(cb) {
-      const handler = (_ev: unknown, res: { ok: boolean; error?: string; micMissing?: boolean }) => cb(res);
+      const handler = (ev: IpcMainEvent, res: { ok: boolean; error?: string; micMissing?: boolean }) => {
+        if (activeWorkerWebContentsId === null || ev.sender.id !== activeWorkerWebContentsId) return;
+        cb(res);
+      };
       ipcMain.on('desktop-capture:worker-ready', handler);
       return () => ipcMain.removeListener('desktop-capture:worker-ready', handler);
     },
     onWorkerStopped(cb) {
-      const handler = () => cb();
+      const handler = (ev: IpcMainEvent) => {
+        if (activeWorkerWebContentsId === null || ev.sender.id !== activeWorkerWebContentsId) return;
+        cb();
+      };
       ipcMain.on('desktop-capture:worker-stopped', handler);
       return () => ipcMain.removeListener('desktop-capture:worker-stopped', handler);
     },
     onWorkerChunk(cb) {
-      const handler = (_ev: unknown, chunk: { kind: 'main' | 'live'; seq: number; bytes: ArrayBuffer; mimeType: string; offsetMs: number; durationMs: number }) => cb(chunk);
+      const handler = (ev: IpcMainEvent, chunk: { kind: 'main' | 'live'; seq: number; bytes: ArrayBuffer; mimeType: string; offsetMs: number; durationMs: number }) => {
+        if (activeWorkerWebContentsId === null || ev.sender.id !== activeWorkerWebContentsId) return;
+        cb(chunk);
+      };
       ipcMain.on('desktop-capture:worker-chunk', handler);
       return () => ipcMain.removeListener('desktop-capture:worker-chunk', handler);
     },
     onWorkerLevels(cb) {
-      const handler = (_ev: unknown, levels: { loopbackRms: number; micRms: number }) => cb(levels);
+      const handler = (ev: IpcMainEvent, levels: { loopbackRms: number; micRms: number }) => {
+        if (activeWorkerWebContentsId === null || ev.sender.id !== activeWorkerWebContentsId) return;
+        cb(levels);
+      };
       ipcMain.on('desktop-capture:worker-levels', handler);
       return () => ipcMain.removeListener('desktop-capture:worker-levels', handler);
     },
     onWorkerEnded(cb) {
-      const handler = (_ev: unknown, reason: 'device_lost' | 'unknown') => cb(reason);
+      const handler = (ev: IpcMainEvent, reason: 'device_lost' | 'unknown') => {
+        if (activeWorkerWebContentsId === null || ev.sender.id !== activeWorkerWebContentsId) return;
+        cb(reason);
+      };
       ipcMain.on('desktop-capture:worker-ended', handler);
       return () => ipcMain.removeListener('desktop-capture:worker-ended', handler);
     },
@@ -312,7 +335,7 @@ async function main(): Promise<void> {
       updatePill(state) {
         lastPillView = state;
         if (pillWindow && !pillWindow.isDestroyed()) {
-          if (state.warning) pillWindow.setSize(360, 96);
+          pillWindow.setSize(360, state.warning ? 112 : 68);
           pillWindow.webContents.send('desktop-capture:pill-update', state);
         }
       },
@@ -331,16 +354,29 @@ async function main(): Promise<void> {
     log,
   });
 
-  ipcMain.handle('desktop-capture:consent-init', () => lastConsentView ?? controller.openConsent());
-  ipcMain.handle('desktop-capture:refresh-windows', () => controller.refreshWindows());
-  ipcMain.handle('desktop-capture:refresh-agenda', () => controller.refreshAgenda());
-  ipcMain.handle('desktop-capture:copy-notice', (_ev, lang: RecordingNoticeLanguage) => {
+  const isConsentSender = (senderId: number): boolean => Boolean(consentWindow && !consentWindow.isDestroyed() && senderId === consentWindow.webContents.id);
+  const isPillSender = (senderId: number): boolean => Boolean(pillWindow && !pillWindow.isDestroyed() && senderId === pillWindow.webContents.id);
+
+  ipcMain.handle('desktop-capture:consent-init', (ev) => (isConsentSender(ev.sender.id) ? (lastConsentView ?? controller.openConsent()) : null));
+  ipcMain.handle('desktop-capture:refresh-windows', (ev) => (isConsentSender(ev.sender.id) ? controller.refreshWindows() : []));
+  ipcMain.handle('desktop-capture:refresh-agenda', (ev) => (isConsentSender(ev.sender.id) ? controller.refreshAgenda() : []));
+  ipcMain.handle('desktop-capture:copy-notice', (ev, lang: RecordingNoticeLanguage) => {
+    if (!isConsentSender(ev.sender.id)) return;
     clipboard.writeText(noticeToCopy(lang === 'en' ? 'en' : 'vi').text);
   });
-  ipcMain.handle('desktop-capture:start', (_ev, draft: CaptureDraft) => controller.startCapture(draft));
-  ipcMain.handle('desktop-capture:cancel', () => controller.cancelConsent());
-  ipcMain.handle('desktop-capture:pill-init', () => lastPillView);
-  ipcMain.handle('desktop-capture:stop', () => controller.stopCapture('user'));
+  ipcMain.handle('desktop-capture:start', (ev, draft: CaptureDraft) => {
+    if (!isConsentSender(ev.sender.id)) return { ok: false, error: 'INVALID_SENDER' };
+    if (draft.targetPid !== undefined && (!Number.isInteger(draft.targetPid) || draft.targetPid < 1 || draft.targetPid > 0x7fffffff)) {
+      return { ok: false, error: 'Mã tiến trình ứng dụng không hợp lệ.' };
+    }
+    return controller.startCapture(draft);
+  });
+  ipcMain.handle('desktop-capture:cancel', (ev) => {
+    if (!isConsentSender(ev.sender.id)) return;
+    controller.cancelConsent();
+  });
+  ipcMain.handle('desktop-capture:pill-init', (ev) => (isPillSender(ev.sender.id) ? lastPillView : null));
+  ipcMain.handle('desktop-capture:stop', (ev) => (isPillSender(ev.sender.id) ? controller.stopCapture('user') : undefined));
 
   const icons = new Map<TrayIcon, Electron.NativeImage>();
   const iconFor = (kind: TrayIcon): Electron.NativeImage => {
@@ -390,6 +426,8 @@ async function main(): Promise<void> {
   tray.on('click', () => tray.popUpContextMenu());
   app.on('second-instance', () => tray.popUpContextMenu());
   app.on('before-quit', () => {
+    allowPillClose = true;
+    if (pillWindow && !pillWindow.isDestroyed()) pillWindow.setClosable(true);
     clearInterval(windowPoll);
     desktop.stop();
   });

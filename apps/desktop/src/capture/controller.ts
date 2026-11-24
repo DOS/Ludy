@@ -216,6 +216,7 @@ export function createCaptureController(deps: CaptureControllerDeps) {
     });
 
     const startedCapture = { open: false };
+    let initialWarning: string | null = null;
     const pendingLiveChunks: Array<{ bytes: Uint8Array; mimeType: string; durationMs: number }> = [];
     try {
       await deps.recordingStore.prepareDir(recordingId);
@@ -237,8 +238,11 @@ export function createCaptureController(deps: CaptureControllerDeps) {
           deps.ui.updatePill({ meetingId: active.meetingId, title: active.title, elapsedMs: now() - active.startedAt, warning });
         },
         onMicMissing() {
-          if (!active) return;
           const warning = SILENT_WARNING_TEXT['silent-mic'];
+          if (!active) {
+            initialWarning = warning;
+            return;
+          }
           active.warning = warning;
           deps.onTrayState({ warning });
           deps.ui.updatePill({ meetingId: active.meetingId, title: active.title, elapsedMs: now() - active.startedAt, warning });
@@ -286,7 +290,7 @@ export function createCaptureController(deps: CaptureControllerDeps) {
         liveSender: draft.liveNotes ? liveQueue : null,
         heartbeatTimer,
         elapsedTimer,
-        warning: null,
+        warning: initialWarning,
         stopPromise: null,
         pumpPromise: null,
         stopReason: 'user',
@@ -297,9 +301,9 @@ export function createCaptureController(deps: CaptureControllerDeps) {
         liveQueue.push(buffered.bytes, buffered.mimeType, buffered.durationMs);
       }
       phase = 'recording';
-      deps.onTrayState({ phase: 'recording', meetingTitle: title, elapsedMs: 0, warning: null });
+      deps.onTrayState({ phase: 'recording', meetingTitle: title, elapsedMs: 0, warning: initialWarning });
       deps.ui.closeConsent();
-      deps.ui.showPill({ meetingId: created.meetingId, title, elapsedMs: 0, warning: null });
+      deps.ui.showPill({ meetingId: created.meetingId, title, elapsedMs: 0, warning: initialWarning });
       return { ok: true, meetingId: created.meetingId };
     } catch (error) {
       if (startedCapture.open) {
@@ -375,7 +379,7 @@ export function createCaptureController(deps: CaptureControllerDeps) {
         await deps.recordingStore.remove(run.recordingId).catch(() => undefined);
         await sendDesktopRecordingStopped(deps.fetch, run.session.ludyUrl, run.session.token, {
           meetingId: run.meetingId,
-          reason: run.stopReason === 'user' ? 'unknown' : run.stopReason,
+          ...(run.stopReason !== 'user' ? { reason: run.stopReason } : {}),
           lengthSeconds: 0,
         }).catch(() => undefined);
       } else {
@@ -393,7 +397,7 @@ export function createCaptureController(deps: CaptureControllerDeps) {
           log(`upload failed, local recording kept for retry: ${error instanceof Error ? error.message : 'unknown'}`);
           await sendDesktopRecordingStopped(deps.fetch, run.session.ludyUrl, run.session.token, {
             meetingId: run.meetingId,
-            reason: run.stopReason === 'user' ? 'unknown' : run.stopReason,
+            ...(run.stopReason !== 'user' ? { reason: run.stopReason } : {}),
             lengthSeconds: elapsedSeconds,
           }).catch(() => undefined);
         }

@@ -9,6 +9,7 @@
   --accent: #0f52ba;
   --accent-fg: #ffffff;
   --danger: #b91c1c;
+  --danger-fill: #b91c1c;
   --danger-bg: #fef2f2;
   --warning: #92400e;
   --warning-bg: #fffbeb;
@@ -16,8 +17,9 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --accent: #3b82f6;
-    --danger: #f87171;
+    --accent: #1d4ed8;
+    --danger: #fca5a5;
+    --danger-fill: #b91c1c;
     --danger-bg: #450a0a;
     --warning: #fbbf24;
     --warning-bg: #451a03;
@@ -93,6 +95,11 @@ textarea {
   gap: 8px;
 }
 
+.notice-actions {
+  display: flex;
+  gap: 6px;
+}
+
 .notice-text {
   margin: 0;
   font-size: 13px;
@@ -140,8 +147,8 @@ button.primary {
 }
 
 button.stop {
-  background: var(--danger);
-  border-color: var(--danger);
+  background: var(--danger-fill);
+  border-color: var(--danger-fill);
   color: #ffffff;
 }
 
