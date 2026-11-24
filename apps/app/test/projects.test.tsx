@@ -67,7 +67,16 @@ vi.mock('@tanstack/react-router', async (importOriginal) => {
 });
 
 const { ProjectBoardView } = await import('../src/components/project-board.tsx');
-const { ProjectsPage, ProjectDetailPage, boardOrderClientForOrg, countOtherProjectMembers } = await import('../src/routes/projects.tsx');
+const {
+  ProjectsPage,
+  ProjectDetailPage,
+  ProjectDetailView,
+  boardOrderClientForOrg,
+  buildProjectBoardInput,
+  buildProjectTimelineInput,
+  countOtherProjectMembers,
+  resolveTimeTabTasks,
+} = await import('../src/routes/projects.tsx');
 const { buildProjectDetailsUpdateInput, ProjectVisibilityField } = await import('../src/components/project-task-dialog.tsx');
 
 const wrap = (locale: 'vi' | 'en', node: ReactNode) => (
@@ -868,5 +877,79 @@ describe('projects SSR screens & board (#2591)', () => {
       pointsEnabled: false,
     });
     expect(changedDetails.visibility).toBe('private');
+  });
+
+  it('decouples Timeline filters and Time task pickers from Board filters (#4462)', () => {
+    const projectId = '00000000-0000-4000-8000-000000000001';
+    const seatA = '20000000-0000-4000-8000-000000000001';
+    const seatB = '20000000-0000-4000-8000-000000000002';
+
+    const boardInput = buildProjectBoardInput({
+      projectId,
+      positionId: seatA,
+      includeCancelled: true,
+      cycleFilter: { mode: 'active' },
+      filters: { v: 1, all: [{ field: 'search', op: 'contains', value: 'Hoa don' }] },
+      sort: null,
+    });
+    expect(boardInput.positionId).toBe(seatA);
+    expect(boardInput.includeCancelled).toBe(true);
+
+    const timelineInput = buildProjectTimelineInput({
+      projectId,
+      positionId: seatB,
+      includeCancelled: false,
+    });
+    expect(timelineInput).toEqual({ projectId, positionId: seatB });
+
+    const taskA = card({ id: 't-a', title: 'Hoa don thang 11' });
+    const taskB = card({ id: 't-b', title: 'Bao cao quy IV' });
+    expect(
+      resolveTimeTabTasks({ boardFiltered: true, boardTasks: [taskA], unfilteredTasks: undefined }),
+    ).toEqual([]);
+    expect(
+      resolveTimeTabTasks({ boardFiltered: true, boardTasks: [taskA], unfilteredTasks: [taskA, taskB] }),
+    ).toEqual([taskA, taskB]);
+    expect(
+      resolveTimeTabTasks({ boardFiltered: false, boardTasks: [taskA, taskB], unfilteredTasks: undefined }),
+    ).toEqual([taskA, taskB]);
+
+    // SSR: Timeline view keeps its own seat filter & includeCancelled controls visible (>= 44px on mobile).
+    const qc = queryClientState.current;
+    qc.clear();
+    const boardData: ProjectBoard = {
+      project: {
+        id: projectId,
+        name: 'Dự án Q4',
+        description: null,
+        ownerUserId: 'u1',
+        ownerName: 'Minh',
+        status: 'active',
+        visibility: 'org',
+        canManage: true,
+        canWrite: true,
+        createdAt: '2026-11-01T00:00:00.000Z',
+        updatedAt: '2026-11-12T00:00:00.000Z',
+      },
+      members: [],
+      seats: [seat({ id: seatA, title: 'Kế toán' })],
+      isTeamOrg: false,
+      viewerHasSeat: true,
+      tasks: [taskA, taskB],
+      totalVisible: 2,
+      hiddenByEntityCount: 0,
+      truncated: false,
+    };
+    qc.setQueryData(['projects', 'board', { projectId }], boardData);
+
+    const timelineHtml = renderToStaticMarkup(wrap('vi', <ProjectDetailView initialView="timeline" />));
+    expect(timelineHtml).toContain('data-testid="timeline-seat-filter"');
+    expect(timelineHtml).toContain('data-testid="timeline-include-cancelled"');
+    expect(timelineHtml).toContain('min-h-11');
+
+    const timeHtml = renderToStaticMarkup(wrap('vi', <ProjectDetailView initialView="time" />));
+    expect(timeHtml).toContain('data-testid="project-time-tab"');
+    expect(timeHtml).toContain('Hoa don thang 11');
+    expect(timeHtml).toContain('Bao cao quy IV');
   });
 });
