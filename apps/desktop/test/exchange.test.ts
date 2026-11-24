@@ -14,7 +14,7 @@ describe('exchangeCode', () => {
       return json(200, { token: TOKEN, tokenId: 'tid', orgId: 'oid', scopes: [], expiresAt: '2027-02-01T00:00:00.000Z' });
     };
     const done = await exchangeCode(fetchImpl, 'https://ludy.example.vn', 'crc_x', 'verifier');
-    expect(done).toEqual({ token: TOKEN, tokenId: 'tid', orgId: 'oid', expiresAt: '2027-02-01T00:00:00.000Z' });
+    expect(done).toEqual({ token: TOKEN, tokenId: 'tid', orgId: 'oid', scopes: [], expiresAt: '2027-02-01T00:00:00.000Z' });
     expect(seen!.url).toBe('https://ludy.example.vn/api/extension/token');
     expect(seen!.init.method).toBe('POST');
     expect(JSON.parse(String(seen!.init.body))).toEqual({ code: 'crc_x', codeVerifier: 'verifier', client: 'desktop' });

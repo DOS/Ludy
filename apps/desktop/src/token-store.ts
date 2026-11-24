@@ -11,6 +11,7 @@ export interface StoredSession {
   orgId: string;
   orgSlug: string;
   expiresAt: string;
+  scopes?: string[];
 }
 
 export interface SecretBox {
@@ -40,7 +41,10 @@ const VERSION = 1;
 function isStored(value: unknown): value is StoredSession {
   if (value === null || typeof value !== 'object') return false;
   const v = value as Record<string, unknown>;
-  return ['ludyUrl', 'token', 'tokenId', 'orgId', 'orgSlug', 'expiresAt'].every((key) => typeof v[key] === 'string' && (v[key] as string).length > 0);
+  if (!['ludyUrl', 'token', 'tokenId', 'orgId', 'orgSlug', 'expiresAt'].every((key) => typeof v[key] === 'string' && (v[key] as string).length > 0)) {
+    return false;
+  }
+  return v.scopes === undefined || (Array.isArray(v.scopes) && v.scopes.every((s) => typeof s === 'string'));
 }
 
 export function createSessionStore(options: { file: string; box: SecretBox; io: FileIO }): SessionStore {

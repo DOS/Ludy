@@ -66,6 +66,9 @@ jobs:
           Copy-Item (Join-Path $vendor '7z-x64.dll') (Join-Path $vendor '7z.dll')
         working-directory: apps/desktop
 
+      - name: Compile Win32 WASAPI loopback helper
+        run: node apps/desktop/scripts/build-native.mjs --require-win32
+
       - name: Build the unsigned Squirrel.Windows installer
         run: pnpm --filter "@ludy/desktop" run package
 

@@ -17,10 +17,11 @@ describe('capture module slot', () => {
   });
 });
 
-// Nothing in the shell records or opens the microphone: no source file may even mention the capture APIs.
+// Nothing outside src/capture records or opens the microphone: shell source files outside src/capture may never mention the capture APIs.
 describe('no capture in the shell', () => {
   const src = fileURLToPath(new URL('../src', import.meta.url));
-  const files = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? files(join(dir, e.name)) : [join(dir, e.name)]));
+  const files = (dir: string): string[] =>
+    readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? (dir === src && e.name === 'capture' ? [] : files(join(dir, e.name))) : [join(dir, e.name)]));
   const FORBIDDEN = ['getUserMedia', 'desktopCapturer', 'setDisplayMediaRequestHandler', 'askForMediaAccess', 'getDisplayMedia', 'MediaRecorder', 'MediaDevices', "audio: 'loopback'", 'audio: "loopback"'];
   it('mentions none of the capture APIs', () => {
     const offenders = files(src).flatMap((file) => FORBIDDEN.filter((word) => readFileSync(file, 'utf8').includes(word)).map((word) => `${file}: ${word}`));

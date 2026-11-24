@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { packager } from '@electron/packager';
 import { createWindowsInstaller } from 'electron-winstaller';
 import { build } from './build.mjs';
+import { buildNative } from './build-native.mjs';
 
 if (process.platform !== 'win32') {
   console.error('package.mjs builds the Squirrel.Windows installer and runs on Windows (in CI) only.');
@@ -21,6 +22,7 @@ const root = fileURLToPath(new URL('..', import.meta.url));
 const at = process.argv.indexOf('--version');
 const version = at === -1 ? undefined : process.argv[at + 1];
 if (version !== undefined && !/^\d+\.\d+\.\d+$/.test(version)) throw new Error('--version must be X.Y.Z');
+await buildNative({ requireWin32: true });
 const built = await build(version);
 const electronVersion = createRequire(import.meta.url)('electron/package.json').version;
 
@@ -37,7 +39,7 @@ const [appDirectory] = await packager({
   platform: 'win32',
   arch: 'x64',
   electronVersion,
-  asar: true,
+  asar: { unpackDir: 'bin' },
   overwrite: true,
   appVersion: built.version,
   appCopyright: 'AGPL-3.0-only',
