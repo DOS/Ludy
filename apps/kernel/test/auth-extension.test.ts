@@ -2,6 +2,7 @@
 // The extension token's credential format, its route list and the edge's scope check (#2582, ADR-0047 point 10).
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
+import type { ExtensionClient } from '@ludy/kernel-contract';
 import { DomainError } from '@ludy/kernel-runtime';
 import {
   EXTENSION_ROUTES,
@@ -133,5 +134,31 @@ describe('the routes an extension token may reach', () => {
     expect(refuseOutsideScopes(['meetings', 'agenda'], 'POST', '/api/rpc/meetings/agenda/next', 'desktop')).toBeNull();
     expect(refuseOutsideScopes(['meetings'], 'GET', `/api/meetings/${ID}/audio`, 'desktop')).toMatchObject({ status: 403 });
     expect(refuseOutsideScopes(['notes'], 'POST', '/api/rpc/notes/clip', 'desktop')).toMatchObject({ status: 403 });
+  });
+
+  it('fails closed at runtime when client is not an allowed ExtensionClient (#4690)', () => {
+    const invalidClients = [
+      undefined as unknown as ExtensionClient,
+      'other' as unknown as ExtensionClient,
+      '' as unknown as ExtensionClient,
+    ];
+    const cases = [
+      { scopes: ['notes'], method: 'POST', path: '/api/rpc/notes/clip' },
+      { scopes: ['meetings'], method: 'POST', path: '/api/rpc/meetings/create' },
+      { scopes: [], method: 'GET', path: '/api/extension/me' },
+    ] as const;
+    for (const invalidClient of invalidClients) {
+      for (const { scopes, method, path } of cases) {
+        const checked = authorizeExtensionRoute(scopes, method, path, invalidClient);
+        expect(checked.ok, `${String(invalidClient)} ${method} ${path}`).toBe(false);
+        if (!checked.ok) {
+          expect(checked.error).toBeInstanceOf(DomainError);
+          expect(checked.error).toMatchObject({ code: 'FORBIDDEN', status: 403, details: { rule: 'extension_scope' } });
+        }
+        const refused = refuseOutsideScopes(scopes, method, path, invalidClient);
+        expect(refused, `${String(invalidClient)} ${method} ${path}`).toBeInstanceOf(DomainError);
+        expect(refused).toMatchObject({ code: 'FORBIDDEN', status: 403, details: { rule: 'extension_scope' } });
+      }
+    }
   });
 });
