@@ -28,9 +28,9 @@ Always pass `LUDY_DIR=<DEPLOY_DIR> CROVE_DIR=<DEPLOY_DIR>` when running `<SRC_DI
 
 Per [ADR-0054](../adr/0054-rebrand-internal-crove-identifiers-to-ludy.md) section 2, existing data-at-rest cryptography and history stay intact and readable forever:
 
-- Subject sealing prefixes and AAD constants (`crove:s1:`, `CROVE_SIGN_SIGNER_PLACE`, and sibling `*_PLACE` AAD constants), input/export/archive/backup format tags (`crove.input.v1`, `crove.org-export.v2`, `crove-archive`, `CRB1`, `crove.backup.v1|...`), `crove_sign.playbook_rule:` hash domain, and WORM S3 object keys under `org/<org_id>/<sha256>`.
+- Subject sealing legacy decoders and AAD constants (`crove:s1:`, `CROVE_SIGN_SIGNER_PLACE`, and sibling `*_PLACE` AAD constants; new writes may transition to `ludy:s1:` while `crove:s1:` remains decoded), input/export/archive/backup format tags (`crove.input.v1`, `crove.org-export.v2`, `crove-archive`, `CRB1`, `crove.backup.v1|...`), `crove_sign.playbook_rule:` hash domain, and WORM S3 object keys under `org/<org_id>/<sha256>`.
 - Historical SQL migrations on `main` (`*_crove_*.sql`) and their ledger checksums in `ludy_meta.schema_migrations`.
-- Existing Docker named volumes (`crove_db-data`, `crove_files`, `crove_caddy-data`, `crove_caddy-config`, `crove_keys`, `crove_archive`, `crove_status`) stay attached in place by pinning `COMPOSE_PROJECT_NAME=crove` in `.env` during Stage 3.
+- Existing Docker named volumes (`crove_db-data`, `crove_files`, `crove_caddy-data`, `crove_caddy-config`, `crove_keys`, `crove_archive`, `crove_status`) are migrated cleanly via offline verified volume copies into `ludy_*` (`COMPOSE_PROJECT_NAME=ludy`) by [the pilot cutover workflow](../../.github/workflows/pilot-ludy-cutover.yml) (`tools/deploy/cutover-ludy.sh`), never simply dropped or replaced with blank volumes.
 
 ---
 
@@ -162,73 +162,58 @@ Run this stage **before** removing `CROVE_DOMAIN` from `.env` in Stage 3. Live p
 
 ---
 
-## Stage 3: Cut over pilot `.env`, GitHub `pilot` env (and optional `/opt/ludy` directory)
+## Stage 3: Cut over Docker volumes (`crove_*` -> `ludy_*`), pilot `.env`, GitHub `pilot`, and `/opt/ludy`
 
-### Part A: Pilot `.env` and GitHub `pilot` environment (`CROVE_*` -> `LUDY_*`)
+### Part A: Automated stack cutover via `pilot-ludy-cutover.yml` (`crove_*` -> `ludy_*`)
 
-1. **Docker volume preservation check (critical):**
-   Inspect existing volume names on the host:
+Owner decision (2026-11-24): eliminate all legacy `crove` names on the pilot host, migrating Docker named volumes to `ludy_*` and setting `COMPOSE_PROJECT_NAME=ludy` via the audited one-shot workflow [`.github/workflows/pilot-ludy-cutover.yml`](../../.github/workflows/pilot-ludy-cutover.yml) (running [`tools/deploy/cutover-ludy.sh`](../../tools/deploy/cutover-ludy.sh) over the existing `DEPLOY_SSH_KEY`).
 
-   ```bash
-   docker volume ls --format '{{.Name}}' | grep -E '^(crove|ludy)_' | sort
-   ```
-
-   Existing stacks bootstrapped under `name: crove` hold persistent state in `crove_db-data`, `crove_files`, `crove_caddy-data`, `crove_caddy-config`, `crove_keys`, `crove_archive`, and `crove_status`. Add **`COMPOSE_PROJECT_NAME=crove`** explicitly in `.env` so a future cleanup PR changing `docker-compose.yml`'s default `name: crove` to `name: ludy` never detaches or recreates blank `ludy_*` volumes. (Only omit or change `COMPOSE_PROJECT_NAME` during a dedicated offline volume-migration maintenance window.)
-
-2. **[OPERATOR]** In `<DEPLOY_DIR>/.env` (keeping mode `600` and owner matching the deploy user), migrate legacy `CROVE_*` keys (keeping the same credential values from the Stage 0 `.env` and owner's secret store unless rotating jointly) to their `LUDY_*` equivalents:
+1. **[OWNER / OPERATOR]** Run `Pilot Ludy cutover` (`workflow_dispatch` from `main`, `action: inspect`, blank confirmation) and review the output:
+   - Confirms which legacy `CROVE_*` key names exist in `.env` (no secrets printed), current `COMPOSE_PROJECT_NAME`, active `crove_*` volumes, and that all 12 `ludy_*` schemas plus migration `20270316140000` are present with 0 `crove_*` schemas.
+2. **[OWNER]** In GitHub repository `Settings -> Environments -> pilot` (environment level only):
+   - Set `DEPLOY_LUDY_MODULES` matching the active module list and delete `DEPLOY_CROVE_MODULES`.
+3. **[OWNER / OPERATOR]** With JOY's approval for the brief offline volume-copy window (~5 minutes depending on volume size), run `Pilot Ludy cutover` with `action: cutover-stack` and `confirm: cutover-pilot-to-ludy`. The script (`cutover-ludy.sh cutover-stack`) executes these steps atomically under `.deploy/lock`:
+   - Verifies all target `ludy_*` volumes are absent or empty (fails closed before touching anything if populated).
+   - Saves mode-600 backups of `.env`, `Caddyfile`, `compose.host.yml`, `compose.wal.yml` (if present), and a verified logical `pg_dump` (excluding `ludy_kernel.context_key`) into `<DEPLOY_DIR>/.deploy/cutover-backup-<stamp>/`.
+   - Stops all `crove` containers cleanly (non-`db` first, then `stop -t 60 db` so PostgreSQL checkpoints).
+   - Creates `ludy_<suffix>` volumes (Compose v2 labels) and copies every `crove_<suffix>` volume (except ephemeral `crove_media-scratch`) via pinned `postgres:17` with `--network none` and `--numeric-owner`, verifying file counts plus `PG_VERSION` and `global/pg_control` on `ludy_db-data`.
+   - Removes stopped `crove` containers and bridge networks (`down --remove-orphans`, never `-v`), preserving `crove_*` volumes intact until verification finishes.
+   - Syncs `Caddyfile`, `compose.host.yml`, and `compose.wal.yml` (if enabled), and rewrites `.env` in place (converting legacy `CROVE_*` -> `LUDY_*`, keeping existing `LUDY_*` values, rewriting `crove_<role>:` DB URL usernames to `ludy_<role>:`, and setting `COMPOSE_PROJECT_NAME=ludy`):
 
    | Legacy variable | Target `LUDY_*` variable | Notes |
    | --- | --- | --- |
-   | (add if absent) | `COMPOSE_PROJECT_NAME=crove` | Mandatory to keep existing `crove_*` Docker volumes attached across Phase 2 compose rename |
+   | (added/updated) | `COMPOSE_PROJECT_NAME=ludy` | Binds `docker compose` and future `deploy.sh` runs to `ludy_*` volumes |
    | `CROVE_DOMAIN` | `LUDY_DOMAIN` | Public pilot domain (`tools/deploy/caddy/Caddyfile`) |
    | `CROVE_UPSTREAM` | `LUDY_UPSTREAM` | Keep unset unless overriding loopback port |
-   | `CROVE_MODULES` | `LUDY_MODULES` | Active module list (for example `finance,crm,social,sign`) |
-   | `CROVE_APP_DB_PASSWORD` | `LUDY_APP_DB_PASSWORD` | Keep exact password matching `ludy_app` role (or rotate jointly before `migrate`) |
-   | `CROVE_WORKER_DB_PASSWORD` | `LUDY_WORKER_DB_PASSWORD` | Keep exact password matching `ludy_worker` role |
-   | `CROVE_PROBER_DB_PASSWORD` | `LUDY_PROBER_DB_PASSWORD` | Keep exact password matching `ludy_prober` role |
-   | `CROVE_REPORTER_DB_PASSWORD` | `LUDY_REPORTER_DB_PASSWORD` | Keep exact password matching `ludy_reporter` role |
-   | `CROVE_CONTEXT_TOKEN_KEY` | `LUDY_CONTEXT_TOKEN_KEY` | Keep existing key so active context tokens remain valid until rotation |
-   | `CROVE_SHARED_DATABASE` | `LUDY_SHARED_DATABASE` | Only if set on shared PostgreSQL |
+   | `CROVE_MODULES` | `LUDY_MODULES` | Active module list (or preserved if `LUDY_MODULES` already exists) |
+   | `CROVE_APP_DB_PASSWORD` | `LUDY_APP_DB_PASSWORD` | Matches `ludy_app` role password |
+   | `CROVE_WORKER_DB_PASSWORD` | `LUDY_WORKER_DB_PASSWORD` | Matches `ludy_worker` role password |
+   | `CROVE_PROBER_DB_PASSWORD` | `LUDY_PROBER_DB_PASSWORD` | Matches `ludy_prober` role password |
+   | `CROVE_REPORTER_DB_PASSWORD` | `LUDY_REPORTER_DB_PASSWORD` | Matches `ludy_reporter` role password |
+   | `CROVE_CONTEXT_TOKEN_KEY` | `LUDY_CONTEXT_TOKEN_KEY` | Keep existing key so active context tokens remain valid |
+   | `CROVE_SHARED_DATABASE` | `LUDY_SHARED_DATABASE` | Only if set |
    | `CROVE_ALLOW_ALL_IN_ONE` | `LUDY_ALLOW_ALL_IN_ONE` | Usually unset on split pilot layout |
-   | `CROVE_DIR` | `LUDY_DIR` | Only if backup scripts/timers pass stack path explicitly |
-   | `CROVE_DEPLOY_DIR` | `LUDY_DEPLOY_DIR` | Only if set for `deploy.sh` |
-   | `CROVE_ENV_FILE` | `LUDY_ENV_FILE` | Only if overridden |
-   | `CROVE_KEEP_RELEASES` | `LUDY_KEEP_RELEASES` | Release retention count if customized |
-   | `CROVE_KEEP_ENV_BACKUPS` | `LUDY_KEEP_ENV_BACKUPS` | `.env` backup retention count if customized |
-   | `CROVE_WORKER_SETTLE` | `LUDY_WORKER_SETTLE` | Only if customized |
-   | `CROVE_READY_TIMEOUT` | `LUDY_READY_TIMEOUT` | Only if customized |
-   | `CROVE_WAIT_TIMEOUT` | `LUDY_WAIT_TIMEOUT` | Only if customized |
-   | `CROVE_SMOKE_POLL_SECONDS` | `LUDY_SMOKE_POLL_SECONDS` | Only if customized |
+   | `CROVE_DIR` | `LUDY_DIR` | Only if set |
+   | `CROVE_DEPLOY_DIR` | `LUDY_DEPLOY_DIR` | Only if set |
+   | `CROVE_ENV_FILE` | `LUDY_ENV_FILE` | Only if set |
+   | `CROVE_KEEP_RELEASES` | `LUDY_KEEP_RELEASES` | Release retention count if set |
+   | `CROVE_KEEP_ENV_BACKUPS` | `LUDY_KEEP_ENV_BACKUPS` | `.env` backup retention count if set |
+   | `CROVE_WORKER_SETTLE` | `LUDY_WORKER_SETTLE` | Only if set |
+   | `CROVE_READY_TIMEOUT` | `LUDY_READY_TIMEOUT` | Only if set |
+   | `CROVE_WAIT_TIMEOUT` | `LUDY_WAIT_TIMEOUT` | Only if set |
+   | `CROVE_SMOKE_POLL_SECONDS` | `LUDY_SMOKE_POLL_SECONDS` | Only if set |
 
-   Also check:
-   - If `DATABASE_URL`, `WORKER_DATABASE_URL`, `PROBER_DATABASE_URL`, or `REPORTER_DATABASE_URL` are explicitly defined in `.env`, verify their usernames are `ludy_app`, `ludy_worker`, `ludy_prober`, and `ludy_reporter` (not `crove_*`). Note that bundled `docker-compose.yml` builds those URLs automatically from `LUDY_*_DB_PASSWORD` when omitted.
-   - Do **not** switch `AUTH_ISSUER` away from `crove-auth` unless the pilot's `ludy_kernel.user_account.issuer` rows already match or a migration/auth backfill has been verified; when using remote Supabase Auth (`DEPLOY_IDP_ENVIRONMENT=pilot`), `AUTH_ISSUER` already equals the remote HTTPS issuer URL and stays unchanged.
-   - Keep `BACKUP_FILES_SERVICE=worker`, `BACKUP_NODE_SERVICE=worker`, and `RESTORE_FILES_SERVICE=worker` as configured for the split pilot layout.
+   - Do **not** switch `AUTH_ISSUER` away from `crove-auth` manually in `.env` unless `user_account.issuer` rows already match or a migration backfill has run; remote Supabase Auth (`DEPLOY_IDP_ENVIRONMENT=pilot`) already uses its HTTPS issuer URL.
+   - Starts `ludy` stack (`db`, `migrate`, `auth`, `auth-grants`, infra, restarts `caddy`, `worker`, `api`, `prober`), runs loopback `deploy.sh smoke`, verifies 12 `ludy_*` schemas and 0 `crove_*` active PG sessions, and runs public smoke test via `DEPLOY_PUBLIC_URL`.
+4. **[CHECK]** Confirm the workflow succeeds, `/readyz` and `/version` answer on `https://<your domain>`, and run `action: inspect` once more to verify `active_project=ludy`, `legacy CROVE_* keys in env: none`, and `Active crove_* sessions: none`.
+5. **Prune legacy volumes (only after Stage 3 + Stage 6 + owner UI verification pass):** Run `Pilot Ludy cutover` with `action: prune-old-volumes` and `confirm: prune-crove-volumes` to remove old `crove_*` Docker volumes and unused `crove-db:local` image after confirming zero containers mount them.
+6. **Rollback:** `cutover-ludy.sh cutover-stack` automatically tears down `ludy` on failure, deletes newly created partial `ludy_*` volumes, restores `.env` and overlay backups from `<DEPLOY_DIR>/.deploy/cutover-backup-<stamp>/`, and brings the original `crove` stack back up on untouched `crove_*` volumes. Manual emergency restore after success follows the same reverse steps while `crove_*` volumes remain unpruned.
 
-3. **[OWNER]** In GitHub repository `Settings -> Environments -> pilot` (environment level only):
-   - If `DEPLOY_MODULES_ENVIRONMENT=pilot` and `DEPLOY_CROVE_MODULES` are configured, add variable `DEPLOY_LUDY_MODULES` with the same active module list, and delete `DEPLOY_CROVE_MODULES` once Part A verification passes.
+### Part B: Root OS rename (`/opt/crove` -> `/opt/ludy`, timers, `sshd_config.d`, and `SMOKE_ORG`)
 
-4. **[CHECK]** Recreate services with `--no-build` (the release images are pinned by digest and `<DEPLOY_DIR>` has no `tools/wal` build context) and verify zero legacy DB sessions or config warnings:
+These root-owned paths sit outside `DEPLOY_USER`'s SSH permissions and are executed by **[OWNER]** (or host admin) via root SSH:
 
-   ```bash
-   cd <DEPLOY_DIR>
-   docker compose config --quiet
-   docker compose up -d --no-build
-   curl -fsS https://<your domain>/readyz
-   curl -fsS https://<your domain>/api/config
-   docker compose exec -T db psql -U postgres -d postgres -Atc \
-     "SELECT usename, count(*) FROM pg_stat_activity WHERE usename LIKE 'crove_%' GROUP BY 1;"
-   ```
-
-   Confirm `pg_stat_activity` returns 0 rows. Run `pnpm pilot:check -- --url https://<your domain>` from `<SRC_DIR>` using the host settings (never commit `.env`), confirming no unexpected `FAIL`.
-
-5. **Rollback:** Restore the Stage 0 `.env` copy (`cp -p /root/env.pre-phase3-<stamp> <DEPLOY_DIR>/.env && chmod 600 <DEPLOY_DIR>/.env && cd <DEPLOY_DIR> && docker compose up -d --no-build`) and restore `DEPLOY_CROVE_MODULES` in GitHub `pilot` environment variables if removed.
-
-### Part B: Rename `/opt/crove` -> `/opt/ludy` and systemd timer (optional, owner choice)
-
-`deploy.yml` supports a custom `DEPLOY_DIR` variable on the `pilot` environment, so keeping `/opt/crove` (with `DEPLOY_DIR=/opt/crove`) is equally valid if JOY prefers zero host-directory churn. If JOY approves moving the host paths:
-
-1. **[OPERATOR]** Disable old timers first, move directories, add temporary compatibility symlinks, and switch `/etc/systemd/system/crove-backup.*` to `ludy-backup.*`:
+1. **[OWNER / ADMIN]** Disable old backup timers, rename host directories, update `BACKUP_DIR=/var/backups/ludy` in `/opt/ludy/.env`, move `/etc/ssh/sshd_config.d/10-crove.conf` -> `10-ludy.conf` (reload ssh only after verifying syntax with `sshd -t`), and replace `crove-backup.{service,timer}` with `ludy-backup.{service,timer}` (and update any `WAL` cron paths):
 
    ```bash
    systemctl disable --now crove-backup.timer || true
@@ -241,15 +226,19 @@ Run this stage **before** removing `CROVE_DOMAIN` from `.env` in Stage 3. Live p
    if [ -d /var/backups/crove ] && [ ! -e /var/backups/ludy ]; then
      mv /var/backups/crove /var/backups/ludy
    fi
+   if [ -f /etc/ssh/sshd_config.d/10-crove.conf ] && [ ! -e /etc/ssh/sshd_config.d/10-ludy.conf ]; then
+     mv /etc/ssh/sshd_config.d/10-crove.conf /etc/ssh/sshd_config.d/10-ludy.conf
+     sshd -t && systemctl reload ssh
+   fi
    ```
 
-   Update `BACKUP_DIR=/var/backups/ludy` in `/opt/ludy/.env` (if moving `/var/backups/crove`). Create `/etc/systemd/system/ludy-backup.service` and `ludy-backup.timer` per [backup-and-restore.md](backup-and-restore.md) with:
+   Create `/etc/systemd/system/ludy-backup.service` and `ludy-backup.timer` per [backup-and-restore.md](backup-and-restore.md) with:
 
    - `WorkingDirectory=/opt/ludy`
    - `Environment=LUDY_DIR=/opt/ludy`
    - `ExecStart=/opt/ludy-src/tools/backup/backup.sh`
 
-   Update any WAL backup cron entries to run `LUDY_DIR=/opt/ludy /opt/ludy-src/tools/backup/wal.sh backup ...`, then reload systemd:
+   Update `BACKUP_DIR=/var/backups/ludy` in `/opt/ludy/.env` and any WAL backup cron entries (`LUDY_DIR=/opt/ludy /opt/ludy-src/tools/backup/wal.sh backup ...`), remove legacy `/etc/systemd/system/crove-backup.*` after enabling `ludy-backup.timer`, then:
 
    ```bash
    systemctl daemon-reload
@@ -257,9 +246,12 @@ Run this stage **before** removing `CROVE_DOMAIN` from `.env` in Stage 3. Live p
    systemctl list-timers ludy-backup.timer
    ```
 
-2. **[OWNER]** In GitHub `Settings -> Environments -> pilot`, set variable `DEPLOY_DIR` = `/opt/ludy` (and `DEPLOY_ENV_FILE` = `/opt/ludy/.env` if set previously), then run Actions -> `deploy` -> `Run workflow` (`environment: pilot`, `action: deploy`) on the current release tag to confirm CI deploys cleanly into `/opt/ludy`.
-3. **[CHECK]** Confirm the `Deploy to pilot` workflow succeeds and `/opt/ludy/.deploy/current` updates cleanly.
-4. **Rollback:** Revert `DEPLOY_DIR` (and `DEPLOY_ENV_FILE`) on GitHub `pilot`, disable `ludy-backup.timer`, restore `/etc/systemd/system/crove-backup.timer`, reverse the renames (`rm -f /opt/crove && mv /opt/ludy /opt/crove`, `rm -f /opt/crove-src && mv /opt/ludy-src /opt/crove-src`, `mv /var/backups/ludy /var/backups/crove`), revert `BACKUP_DIR` in `.env` and WAL cron entries, and re-enable `crove-backup.timer`.
+2. **[OWNER]** In GitHub `Settings -> Environments -> pilot`:
+   - Set variable `DEPLOY_DIR` = `/opt/ludy` (and `DEPLOY_ENV_FILE` = `/opt/ludy/.env` if set previously).
+   - Once the smoke organization's slug is updated from `crove-smoke-test` -> `ludy-smoke-test`, update `SMOKE_ORG` = `ludy-smoke-test`.
+   - Run Actions -> `deploy` -> `Run workflow` (`environment: pilot`, `action: deploy`) on the current release tag to confirm CI deploys cleanly into `/opt/ludy`.
+3. **[CHECK]** Confirm `Deploy to pilot` succeeds, `/opt/ludy/.deploy/current` updates cleanly, then remove temporary symlinks (`rm -f /opt/crove /opt/crove-src`).
+4. **Rollback:** Revert `DEPLOY_DIR` (and `DEPLOY_ENV_FILE`, `SMOKE_ORG`) on GitHub `pilot`, disable `ludy-backup.timer`, restore `crove-backup.timer`, reverse renames (`rm -f /opt/crove && mv /opt/ludy /opt/crove`, `rm -f /opt/crove-src && mv /opt/ludy-src /opt/crove-src`, `mv /var/backups/ludy /var/backups/crove`), revert `BACKUP_DIR` in `.env`, and re-enable `crove-backup.timer`.
 
 ---
 
@@ -341,21 +333,25 @@ Never overwrite, delete, or change `WAL_ENCRYPTION_KEY` for the existing `crove/
    - On `WAL_S3_ACCESS_KEY_ID`: add `s3:ListBucket` / `GetObject` / `PutObject` / `DeleteObject` for `ludy/wal/*` while keeping full write permissions on `crove/wal/*` throughout the cutover rollback window (narrowing `crove/wal/*` to read-only only after Stage 7 sign-off, so a rollback running `wal.sh setup` can still push segments).
    - On `BACKUP_S3_ACCESS_KEY_ID` (used by `backup.sh`): add permissions on `ludy/*` matching its existing permissions on `crove/*`, keeping `crove/*` intact until old runs age out.
 2. **[CHECK]** Verify Stage 2 already placed the updated [`compose.wal.yml`](../../tools/backup/compose.wal.yml) (containing `${WAL_STANZA:-crove}`) in `<DEPLOY_DIR>/compose.wal.yml`, and verify the backup bucket already contains a healthy Stage 0 `backup.sh` run.
-3. **[OPERATOR]** In `<DEPLOY_DIR>/.env`, set:
+3. **[OPERATOR]** Either run `Pilot Ludy cutover` (`workflow_dispatch` from `main`, `action: switch-wal`, `confirm: switch-wal-to-ludy`, which builds `ludy-db:local`, sets `WAL_STANZA=ludy`, `BACKUP_S3_PREFIX=ludy`, and `WAL_DB_IMAGE=ludy-db:local` in `.env` with automatic rollback on failure, recreates `db`, and runs `wal.sh setup`, `wal.sh check`, and `wal.sh info`), OR run manually in `<DEPLOY_DIR>/.env`:
 
    ```ini
    WAL_STANZA=ludy
    BACKUP_S3_PREFIX=ludy
+   WAL_DB_IMAGE=ludy-db:local
    ```
 
-   Keep the existing `WAL_ENCRYPTION_KEY` (or store any new key separately in the owner's secret store alongside the old `WAL_ENCRYPTION_KEY` labeled by prefix `crove/`). Recreate only `db` (`--no-deps --no-build` so `migrate` does not re-run and no local build context is needed), initialize stanza `ludy`, take a full base backup + initial nightly run under `ludy/`:
+   Keep the existing `WAL_ENCRYPTION_KEY` (or store any new key separately in the owner's secret store alongside the old `WAL_ENCRYPTION_KEY` labeled by prefix `crove/`). Recreate only `db` (`--no-deps --no-build` after building `ludy-db:local` from `<SRC_DIR>/tools/wal`), initialize stanza `ludy`, take a full base backup + initial nightly run under `ludy/`:
 
    ```bash
    cd <DEPLOY_DIR>
+   docker build -t ludy-db:local <SRC_DIR>/tools/wal
    docker compose up -d --no-deps --no-build db
    LUDY_DIR=<DEPLOY_DIR> CROVE_DIR=<DEPLOY_DIR> <SRC_DIR>/tools/backup/wal.sh setup
    LUDY_DIR=<DEPLOY_DIR> CROVE_DIR=<DEPLOY_DIR> <SRC_DIR>/tools/backup/backup.sh
    ```
+
+   After verifying a live backup run under `ludy/`, run `LUDY_DIR=<DEPLOY_DIR> CROVE_DIR=<DEPLOY_DIR> <SRC_DIR>/tools/backup/backup.sh` (if using the `switch-wal` workflow) to populate the first nightly run under `ludy/`.
 
    Note on timing: during the brief seconds between `docker compose up -d --no-deps --no-build db` and `wal.sh setup` finishing, PostgreSQL buffers any closing WAL segment locally (`archive_command` retries cleanly); once `wal.sh setup` reloads `archive_command = 'pgbackrest --stanza=ludy archive-push %p'`, PostgreSQL flushes all pending segments to `/ludy/wal` and `wal.sh setup` takes the first full base backup automatically because `/ludy/wal` starts empty.
 
@@ -389,7 +385,7 @@ Never overwrite, delete, or change `WAL_ENCRYPTION_KEY` for the existing `crove/
 
    When restoring from that archive onto the scratch stack, always use `--archive-mode off`.
 
-6. **Rollback:** Ensure `WAL_S3_ACCESS_KEY_ID` still has write permissions on `crove/wal/*`. In `<DEPLOY_DIR>/.env`, revert `WAL_STANZA=crove` and `BACKUP_S3_PREFIX=crove` and restore the original `crove/` `WAL_ENCRYPTION_KEY` from Stage 0 (or the owner's secret store) if a new key was set for `ludy/`. Run `cd <DEPLOY_DIR> && docker compose up -d --no-deps --no-build db`, then run `LUDY_DIR=<DEPLOY_DIR> CROVE_DIR=<DEPLOY_DIR> <SRC_DIR>/tools/backup/wal.sh setup` so PostgreSQL reloads `archive_command = 'pgbackrest --stanza=crove archive-push %p'`. If any WAL segments already pushed to `ludy/` before rolling back, immediately run `wal.sh backup --type full` on stanza `crove` so PITR continuity has no missing segment gap.
+6. **Rollback:** Ensure `WAL_S3_ACCESS_KEY_ID` still has write permissions on `crove/wal/*`. In `<DEPLOY_DIR>/.env`, revert `WAL_STANZA=crove`, `BACKUP_S3_PREFIX=crove`, and `WAL_DB_IMAGE=crove-db:local`, and restore the original `crove/` `WAL_ENCRYPTION_KEY` from Stage 0 (or the owner's secret store) if a new key was set for `ludy/`. Run `cd <DEPLOY_DIR> && docker compose up -d --no-deps --no-build db`, then run `LUDY_DIR=<DEPLOY_DIR> CROVE_DIR=<DEPLOY_DIR> <SRC_DIR>/tools/backup/wal.sh setup` so PostgreSQL reloads `archive_command = 'pgbackrest --stanza=crove archive-push %p'`. If any WAL segments already pushed to `ludy/` before rolling back, immediately run `wal.sh backup --type full` on stanza `crove` so PITR continuity has no missing segment gap.
 
 ---
 
@@ -397,10 +393,10 @@ Never overwrite, delete, or change `WAL_ENCRYPTION_KEY` for the existing `crove/
 
 Do **not** open or merge the final contraction PR (removing `CROVE_*` fallbacks, `x-crove-*` headers, `crove-auth` issuer fallback, `crove` / `crove-extract` / `crove-media` service names, `/etc/crove-*-image`, `crove_*` role aliases, and dual-prefix `PENDING_TABLES` entries) until **all** boxes below are checked and confirmed:
 
-- [ ] Stage 1 deployed (`9f6cfe18b` + `#3972` cutover prep live on pilot; 12 `ludy_*` schemas active, 0 `crove_*` schemas).
-- [ ] Stage 2 complete (`Caddyfile`, `compose.host.yml`, and `compose.wal.yml` synced on host; Caddy serving cleanly after restart).
-- [ ] Stage 3 complete (`LUDY_*` variables and `COMPOSE_PROJECT_NAME=crove` active in pilot `.env`; 0 active `crove_*` PostgreSQL sessions; `DEPLOY_LUDY_MODULES` set if modules CI opt-in is enabled; `pnpm pilot:check` passing; optional `/opt/ludy` + `ludy-backup.timer` switched if selected).
+- [ ] Stage 1 deployed (`v0.3.10` / `#3971` live on pilot; 12 `ludy_*` schemas active, 0 `crove_*` schemas).
+- [ ] Stage 2 overlays synced (`Caddyfile`, `compose.host.yml`, and `compose.wal.yml`).
+- [ ] Stage 3 complete (`COMPOSE_PROJECT_NAME=ludy`, `ludy_*` Docker volumes, and `LUDY_*` variables active via `cutover-stack`; 0 active `crove_*` PostgreSQL sessions; `DEPLOY_LUDY_MODULES` active; `pnpm pilot:check` passing; old `crove_*` volumes pruned via `prune-old-volumes` after verification; `/opt/ludy`, `ludy-backup.timer`, and `SMOKE_ORG=ludy-smoke-test` updated).
 - [ ] Stage 4 complete (Cloudflare Email Worker sends `x-ludy-recipient` and inbound mail test passed).
 - [ ] Stage 5 complete (S3 bucket lifecycle rules updated to `ludy-*` with `ludy-retention=expired` and Object Lock preserved).
-- [ ] Stage 6 complete (`WAL_STANZA=ludy` + `BACKUP_S3_PREFIX=ludy` live, `wal.sh check` and `wal.sh info` green, `backup.sh` green, old `crove/` keys retained safely during overlap).
+- [ ] Stage 6 complete (`WAL_STANZA=ludy` + `BACKUP_S3_PREFIX=ludy` + `WAL_DB_IMAGE=ludy-db:local` live, `wal.sh check` and `wal.sh info` green, `backup.sh` green, old `crove/` keys retained safely during overlap).
 - [ ] Owner (JOY) UI sanity check completed on `<PUBLIC_URL>` (sign-in, creating/viewing a record, AI coworker action, inbound mail).

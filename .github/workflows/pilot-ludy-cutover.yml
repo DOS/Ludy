@@ -1,0 +1,203 @@
+name: Pilot Ludy cutover
+
+# One-time audited cutover workflow for #3972 (ADR-0054 Phase 3 Step S8):
+# moves the pilot host off crove_* Docker volumes and CROVE_* env vars onto ludy_* / COMPOSE_PROJECT_NAME=ludy
+# over the existing DEPLOY_SSH_KEY (without exposing host SSH to agents).
+# Only commits on refs/heads/main are allowed to run.
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Cutover step to run on the pilot host
+        type: choice
+        options:
+          - inspect
+          - cutover-stack
+          - switch-wal
+          - prune-old-volumes
+        default: inspect
+      confirm:
+        description: Required exact confirmation phrase (blank for inspect; cutover-pilot-to-ludy | switch-wal-to-ludy | prune-crove-volumes)
+        type: string
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-pilot
+  cancel-in-progress: false
+
+jobs:
+  cutover:
+    name: Pilot Ludy cutover
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: pilot
+    env:
+      INPUT_ACTION: ${{ inputs.action }}
+      INPUT_CONFIRM: ${{ inputs.confirm }}
+      GIT_REF: ${{ github.ref }}
+      PUBLIC_URL: ${{ vars.DEPLOY_PUBLIC_URL }}
+      SMOKE_ORG: ${{ vars.SMOKE_ORG }}
+    steps:
+      - name: Verify main branch and confirmation phrase
+        run: |
+          set -euo pipefail
+          if [ "$GIT_REF" != 'refs/heads/main' ]; then
+            echo "::error::Pilot cutover may run from refs/heads/main only (got '$GIT_REF')"
+            exit 1
+          fi
+          case "$INPUT_ACTION" in
+            inspect) ;;
+            cutover-stack)
+              [ "$INPUT_CONFIRM" = 'cutover-pilot-to-ludy' ] || {
+                echo '::error::Set confirm=cutover-pilot-to-ludy to run cutover-stack'
+                exit 1
+              }
+              ;;
+            switch-wal)
+              [ "$INPUT_CONFIRM" = 'switch-wal-to-ludy' ] || {
+                echo '::error::Set confirm=switch-wal-to-ludy to run switch-wal'
+                exit 1
+              }
+              ;;
+            prune-old-volumes)
+              [ "$INPUT_CONFIRM" = 'prune-crove-volumes' ] || {
+                echo '::error::Set confirm=prune-crove-volumes to run prune-old-volumes'
+                exit 1
+              }
+              ;;
+            *)
+              echo "::error::Unsupported action '$INPUT_ACTION'"
+              exit 1
+              ;;
+          esac
+
+      - name: Check environment SSH settings
+        id: config
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_PORT: ${{ vars.DEPLOY_PORT }}
+          DEPLOY_DIR: ${{ vars.DEPLOY_DIR }}
+          DEPLOY_ENV_FILE: ${{ vars.DEPLOY_ENV_FILE }}
+        run: |
+          set -euo pipefail
+          for name in DEPLOY_HOST DEPLOY_USER DEPLOY_SSH_KEY DEPLOY_KNOWN_HOSTS; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing required pilot secret: $name"
+              exit 1
+            fi
+          done
+          port="${DEPLOY_PORT:-22}"
+          dir="${DEPLOY_DIR:-/opt/crove}"
+          env_file="${DEPLOY_ENV_FILE:-$dir/.env}"
+          [[ "$DEPLOY_HOST" =~ ^[A-Za-z0-9.:-]+$ ]] || { echo '::error::DEPLOY_HOST must be a host name or IP'; exit 1; }
+          [[ "$DEPLOY_USER" =~ ^[a-z_][a-z0-9_-]*$ ]] || { echo '::error::DEPLOY_USER must be a plain user name'; exit 1; }
+          [[ "$port" =~ ^[0-9]{1,5}$ ]] && ((port >= 1 && port <= 65535)) || { echo '::error::DEPLOY_PORT must be a valid port'; exit 1; }
+          [[ "$dir" =~ ^/[A-Za-z0-9._/-]+$ ]] && [[ "$dir" != *..* ]] || { echo '::error::DEPLOY_DIR must be a clean absolute path'; exit 1; }
+          [[ "$env_file" =~ ^/[A-Za-z0-9._/-]+$ ]] && [[ "$env_file" != *..* ]] || { echo '::error::DEPLOY_ENV_FILE must be a clean absolute path'; exit 1; }
+          [[ "$GITHUB_RUN_ID" =~ ^[0-9]+$ && "$GITHUB_RUN_ATTEMPT" =~ ^[0-9]+$ ]] || { echo '::error::unexpected run id'; exit 1; }
+          if [ -n "$PUBLIC_URL" ] && ! [[ "$PUBLIC_URL" =~ ^https?://[A-Za-z0-9.:-]+/?$ ]]; then
+            echo '::error::DEPLOY_PUBLIC_URL must be an http(s) origin'
+            exit 1
+          fi
+
+          ssh_dir="$RUNNER_TEMP/cutover-ssh"
+          install -m 700 -d "$ssh_dir"
+          (
+            umask 077
+            printf '%s\n' "$DEPLOY_SSH_KEY" > "$ssh_dir/key"
+            printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$ssh_dir/known_hosts"
+          )
+          cat > "$ssh_dir/config" <<EOF
+          Host ludy-target
+            HostName $DEPLOY_HOST
+            User $DEPLOY_USER
+            Port $port
+            IdentityFile $ssh_dir/key
+            IdentitiesOnly yes
+            BatchMode yes
+            StrictHostKeyChecking yes
+            UserKnownHostsFile $ssh_dir/known_hosts
+            GlobalKnownHostsFile /dev/null
+            ConnectTimeout 20
+            ServerAliveInterval 30
+            ServerAliveCountMax 10
+          EOF
+          {
+            echo "ssh_config=$ssh_dir/config"
+            echo "dir=$dir"
+            echo "env_file=$env_file"
+            echo "remote=$dir/.deploy/incoming/cutover-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Upload cutover scripts and overlays
+        env:
+          SSH_CONFIG: ${{ steps.config.outputs.ssh_config }}
+          REMOTE: ${{ steps.config.outputs.remote }}
+        run: |
+          set -euo pipefail
+          tar -cf - -C tools/deploy cutover-ludy.sh deploy.sh caddy -C "$GITHUB_WORKSPACE/tools" backup wal \
+            | ssh -F "$SSH_CONFIG" ludy-target "umask 077 && mkdir -p '$REMOTE' && tar -xf - -C '$REMOTE'"
+
+      - name: Execute cutover action on host
+        env:
+          SSH_CONFIG: ${{ steps.config.outputs.ssh_config }}
+          REMOTE: ${{ steps.config.outputs.remote }}
+          DIR: ${{ steps.config.outputs.dir }}
+          ENV_FILE: ${{ steps.config.outputs.env_file }}
+        run: |
+          set -euo pipefail
+          case "$INPUT_ACTION" in
+            prune-old-volumes)
+              ssh -F "$SSH_CONFIG" ludy-target \
+                "bash '$REMOTE/cutover-ludy.sh' '$INPUT_ACTION' --dir '$DIR' --env-file '$ENV_FILE'"
+              ;;
+            inspect | cutover-stack | switch-wal)
+              ssh -F "$SSH_CONFIG" ludy-target \
+                "bash '$REMOTE/cutover-ludy.sh' '$INPUT_ACTION' --dir '$DIR' --env-file '$ENV_FILE' --overlay-dir '$REMOTE'"
+              ;;
+          esac
+
+      - name: Public smoke check after stack cutover
+        if: env.INPUT_ACTION == 'cutover-stack' && env.PUBLIC_URL != ''
+        env:
+          SMOKE_EMAIL: ${{ secrets.SMOKE_EMAIL }}
+          SMOKE_PASSWORD: ${{ secrets.SMOKE_PASSWORD }}
+          MODULES_ENV: ${{ vars.DEPLOY_MODULES_ENVIRONMENT }}
+          DEPLOY_MODULES: ${{ vars.DEPLOY_LUDY_MODULES || vars.DEPLOY_CROVE_MODULES }}
+        run: |
+          set -euo pipefail
+          if [ "$MODULES_ENV" = pilot ] && [ -n "$DEPLOY_MODULES" ]; then
+            export SMOKE_EXPECT_MODULES="$DEPLOY_MODULES"
+          fi
+          bash tools/deploy/deploy.sh smoke "$PUBLIC_URL"
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "- action: \`$INPUT_ACTION\`"
+            echo "- ref: \`$GIT_REF\` (\`$GITHUB_SHA\`)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Clean up
+        if: always()
+        env:
+          SSH_CONFIG: ${{ steps.config.outputs.ssh_config }}
+          REMOTE: ${{ steps.config.outputs.remote }}
+        run: |
+          if [ -n "$SSH_CONFIG" ] && [ -f "$SSH_CONFIG" ] && [ -n "$REMOTE" ]; then
+            ssh -F "$SSH_CONFIG" ludy-target "rm -rf '$REMOTE'" < /dev/null || true
+          fi
+          rm -rf "$RUNNER_TEMP/cutover-ssh"
