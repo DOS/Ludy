@@ -161,6 +161,7 @@ describe('shell token check', () => {
   it('ignores the answer of a check that was in flight when the member signed out', async () => {
     let release: (r: Response) => void = () => {};
     const fetchImpl: FetchLike = async (url) => {
+      if (String(url).endsWith('/api/config')) return json(200, {});
       if (String(url).endsWith('/api/extension/token')) return json(200, { token: TOKEN, tokenId: 'tid', orgId: 'oid', scopes: [], expiresAt: '2027-02-01T00:00:00.000Z' });
       return new Promise<Response>((resolve) => (release = resolve));
     };

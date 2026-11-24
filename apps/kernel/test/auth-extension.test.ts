@@ -113,5 +113,22 @@ describe('the routes an extension token may reach', () => {
     expect(refuseOutsideScopes([], 'POST', '/api/rpc/meetings/create')).toMatchObject({ status: 403 });
     // A route open to any token still needs a token that is valid, which authenticate() has settled before this runs.
     expect(refuseOutsideScopes([], 'GET', '/api/extension/me')).toBeNull();
+    // Ludy Desktop tokens share the meetings and agenda routes when scoped, and never reach notes or ungranted routes.
+    expect(refuseOutsideScopes([], 'GET', '/api/extension/me', 'desktop')).toBeNull();
+    expect(refuseOutsideScopes([], 'POST', '/api/rpc/meetings/create', 'desktop')).toMatchObject({ status: 403 });
+    for (const [method, path] of [
+      ['POST', '/api/rpc/meetings/create'],
+      ['POST', '/api/rpc/meetings/extensionStatus'],
+      ['POST', '/api/rpc/meetings/recordingStopped'],
+      ['POST', '/api/rpc/meetings/captureHeartbeat'],
+      ['POST', '/api/files/uploads'],
+      ['POST', `/api/meetings/${ID}/media`],
+      ['POST', `/api/meetings/${ID}/live-chunk`],
+    ] as const) {
+      expect(refuseOutsideScopes(['meetings'], method, path, 'desktop'), `${method} ${path}`).toBeNull();
+    }
+    expect(refuseOutsideScopes(['meetings', 'agenda'], 'POST', '/api/rpc/meetings/agenda/next', 'desktop')).toBeNull();
+    expect(refuseOutsideScopes(['meetings'], 'GET', `/api/meetings/${ID}/audio`, 'desktop')).toMatchObject({ status: 403 });
+    expect(refuseOutsideScopes(['notes'], 'POST', '/api/rpc/notes/clip', 'desktop')).toMatchObject({ status: 403 });
   });
 });

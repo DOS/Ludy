@@ -292,6 +292,16 @@ export const KERNEL_ERROR_CODES = [
   'HR_PAYROLL_ADJUSTMENT_INVALID_STATE',
   'HR_BUSINESS_TRIP_NOT_FOUND',
   'HR_BUSINESS_TRIP_INVALID_STATE',
+  'HR_EMPLOYMENT_NOT_FOUND',
+  'HR_ADDENDUM_NOT_FOUND',
+  'HR_ADDENDUM_NOT_DRAFT',
+  'HR_ADDENDUM_ALREADY_VOIDED',
+  'HR_ADDENDUM_NUMBER_TAKEN',
+  'HR_ADDENDUM_INVALID_PAY_RATE',
+  'HR_ASSET_NOT_FOUND',
+  'HR_ASSET_ALREADY_CLEARED',
+  'HR_ASSET_RETURN_BEFORE_HANDOVER',
+  'HR_UNRETURNED_ASSETS',
   // The pay run (#2531).
   'HR_RUN_NOT_FOUND',
   'HR_LINE_NOT_FOUND',
@@ -1631,6 +1641,8 @@ export const KERNEL_ERROR_RULES = {
   extension_org: 'FORBIDDEN',
   extension_only: 'FORBIDDEN',
   extension_id: 'FORBIDDEN',
+  // Ludy Desktop asked for capture scopes while MEETINGS_DESKTOP_CAPTURE is off (#4516).
+  desktop_capture_off: 'FORBIDDEN',
   // A connected AI app (an MCP grant) asked for something its scopes do not open (#3861, ADR-0051); it is the app's call, so a person rarely sees it.
   mcp_scope: 'FORBIDDEN',
 } as const satisfies Record<string, KernelErrorCode>;

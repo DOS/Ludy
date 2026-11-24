@@ -149,6 +149,7 @@ export * from './hr-self-coworker.ts';
 export * from './hr-payroll.ts';
 export * from './hr-probation.ts';
 export * from './hr-stage6b.ts';
+export * from './hr-addendum-assets.ts';
 export * from './hr-declarations.ts';
 export * from './hr-recruiting.ts';
 export * from './hr-bank-template.ts';

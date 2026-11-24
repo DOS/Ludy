@@ -93,15 +93,22 @@ function endCapture(l: Live): void {
   beat(l.writer.meta().meetingId, true);
 }
 
+const CAPTURE_KIND_KEYS = {
+  extension: 'record.captureKindExtension',
+  app: 'record.captureKindApp',
+  desktop: 'record.captureKindDesktop',
+} as const;
+
 // Another capture of this call exists (CAPTURE_ALREADY_RUNNING): which kind of client holds it and since when, in words; null for any other error.
 function captureRunningMessage(error: unknown): string | null {
   const e = error as { code?: unknown; data?: unknown } | null;
   if (e?.code !== 'CAPTURE_ALREADY_RUNNING') return null;
   const { kind, since } = (e.data ?? {}) as { kind?: unknown; since?: unknown };
   const at = typeof since === 'string' ? new Date(since) : null;
-  if ((kind !== 'extension' && kind !== 'app') || at === null || Number.isNaN(at.getTime())) return null;
+  const key = typeof kind === 'string' && Object.hasOwn(CAPTURE_KIND_KEYS, kind) ? CAPTURE_KIND_KEYS[kind as keyof typeof CAPTURE_KIND_KEYS] : null;
+  if (!key || at === null || Number.isNaN(at.getTime())) return null;
   return translate('record.captureRunning', {
-    kind: translate(kind === 'extension' ? 'record.captureKindExtension' : 'record.captureKindApp'),
+    kind: translate(key),
     time: at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
   });
 }

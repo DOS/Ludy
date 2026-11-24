@@ -447,6 +447,7 @@ export function EnvelopeObligationsCard({
               </Label>
               <Input
                 id="sign-obl-counterparty"
+                className="max-md:min-h-11"
                 value={counterpartyName}
                 placeholder={t('counterpartyPlaceholder')}
                 onChange={(e) => {
@@ -464,6 +465,7 @@ export function EnvelopeObligationsCard({
                 <Input
                   id="sign-obl-effective-date"
                   type="date"
+                  className="max-md:min-h-11"
                   value={effectiveDate}
                   onChange={(e) => {
                     setEffectiveDate(e.target.value);
@@ -478,6 +480,7 @@ export function EnvelopeObligationsCard({
                 <Input
                   id="sign-obl-expiry-date"
                   type="date"
+                  className="max-md:min-h-11"
                   value={expiryDate}
                   onChange={(e) => {
                     setExpiryDate(e.target.value);
@@ -497,6 +500,7 @@ export function EnvelopeObligationsCard({
                 min={0}
                 max={365}
                 inputMode="numeric"
+                className="max-md:min-h-11"
                 value={renewalNoticeDays}
                 placeholder={t('renewalNoticeDaysPlaceholder')}
                 onChange={(e) => {
@@ -526,7 +530,7 @@ export function EnvelopeObligationsCard({
                 <Input
                   id="sign-obl-contract-value"
                   inputMode="decimal"
-                  className="font-mono tabular-nums"
+                  className="font-mono tabular-nums max-md:min-h-11"
                   value={contractValue}
                   placeholder={t('contractValuePlaceholder')}
                   onChange={(e) => {
@@ -542,7 +546,7 @@ export function EnvelopeObligationsCard({
                 <NativeSelect
                   id="sign-obl-currency"
                   value={effectiveCurrency}
-                  className="w-full"
+                  className="w-full max-md:min-h-11"
                   onChange={(e) => {
                     setCurrency(e.target.value);
                     setDirty(true);
@@ -645,6 +649,7 @@ export function EnvelopeObligationsCard({
                           </Label>
                           <Input
                             id={titleInputId}
+                            className="max-md:min-h-11"
                             value={row.title}
                             placeholder={t('itemTitlePlaceholder')}
                             onChange={(e) => {
@@ -662,6 +667,7 @@ export function EnvelopeObligationsCard({
                           <Input
                             id={dueInputId}
                             type="date"
+                            className="max-md:min-h-11"
                             value={row.dueDate}
                             onChange={(e) => {
                               const val = e.target.value;

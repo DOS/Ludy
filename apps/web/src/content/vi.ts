@@ -248,7 +248,7 @@ export const vi = {
       {
         key: 'sign',
         name: 'Ludy eSign',
-        body: `Ký kết tài liệu PDF tự chủ: kiểm tra tệp PDF an toàn trước khi mở, ${N.gm} gợi ý tuỳ chọn ô ký và điều khoản rủi ro, gửi link Zalo hoặc email kèm mã xác thực tuỳ chọn, niêm phong chống sửa đổi kèm chứng chỉ kiểm tra và xác minh ngoại tuyến.`,
+        body: `Ký kết tài liệu PDF trọn quy trình: kiểm tra tệp PDF an toàn, 5 mẫu hợp đồng SME và mẫu dùng lại, ${N.gm} gợi ý ô ký và rà sổ tay, link Zalo hoặc liên kết cố định, ký tại quầy, đính kèm xác minh, niêm phong chống sửa đổi kèm chứng chỉ kiểm tra và xác minh ngoại tuyến.`,
         agent: N.gm,
         page: 'sign',
       },
@@ -587,15 +587,15 @@ export const vi = {
     },
     sign: {
       name: 'Ludy eSign',
-      body: 'Tải tệp PDF lên hoặc chuyển từ báo giá Ludy Engage, đặt ô ký có gợi ý từ AI, gửi link Zalo bảo mật hoặc email kèm mã xác thực tuỳ chọn, niêm phong chống sửa đổi kèm chứng chỉ kiểm tra và xác minh tệp ngoại tuyến.',
+      body: 'Soạn hợp đồng hoặc dùng lại mẫu, chuyển từ Engage, Cộng tác, Dự án hoặc Nhân sự, đặt ô ký và đóng dấu kèm rà sổ tay AI tuỳ chọn, gửi link Zalo, liên kết cố định hoặc ký tại quầy, theo dõi gia hạn và tự xác minh bản niêm phong ngoại tuyến.',
       points: [
-        'Kiểm tra an toàn tệp PDF (tối đa 25 MB, 200 trang), từ chối tệp đặt mật khẩu hoặc chứa mã thực thi ẩn; lưu trữ tách riêng khỏi hoá đơn tài chính',
-        'Link ký bảo mật không gửi mã truy cập về máy chủ và tự xoá khỏi thanh địa chỉ khi mở, ký song song hoặc tuần tự trên điện thoại từ 360px, tuỳ chọn mã xác thực email 6 chữ số',
-        'Niêm phong tệp chống sửa đổi, trang chứng nhận kiểm tra nối đuôi, lịch sử sự kiện không thể chỉnh sửa và xác minh tệp ngoại tuyến ngay trên trình duyệt',
-        'Chuyển thẳng từ báo giá Ludy Engage sang hồ sơ ký (kèm trạng thái đã ký ngay trên báo giá), màn hình phê duyệt riêng cho người duyệt và gửi email bản đã niêm phong cho các bên cùng người nhận bản sao',
+        'Kiểm tra an toàn PDF (tối đa 25 MB, 200 trang), 5 mẫu hợp đồng SME dựng sẵn, thư viện mẫu dùng lại tự động nhận diện thẻ trong PDF và so sánh bản sửa đổi ngoại tuyến',
+        '9 loại ô gồm con dấu đỏ công ty hoặc chức danh, ký nháy tất cả các trang một chạm, lựa chọn và tệp đính kèm xác minh; tuỳ chọn AI gợi ý ô ký, rà rủi ro và 6 quy tắc sổ tay SME cho người duyệt',
+        'Link Zalo bảo mật không lưu mã truy cập trên máy chủ, tuỳ chọn OTP email 6 số, liên kết ký cố định, cổng biểu mẫu công khai và ký tại quầy 30 phút; hỗ trợ sửa người nhận và uỷ quyền có kiểm toán',
+        'Chuyển thẳng từ báo giá Ludy Engage, biên bản họp, nghiệm thu dự án và hợp đồng Nhân sự; niêm phong chống sửa đổi kèm chứng chỉ kiểm tra, nhắc gia hạn trên Hôm nay, xác minh ngoại tuyến, webhook và REST API',
       ],
       soonLabel: 'Sắp ra mắt',
-      soon: 'Kết nối chữ ký số công cộng Việt Nam (VNPT SmartCA, Viettel MySign, MISA WeSign) và chữ ký số lưu dấu xác thực dài hạn cho hồ sơ ký (đang chờ nối vào luồng ký, thông số kiểm thử từ nhà cung cấp và rà soát pháp lý), mẫu tài liệu dùng lại và liên kết ký cố định',
+      soon: 'Kết nối chữ ký số công cộng Việt Nam (VNPT SmartCA, Viettel MySign, MISA WeSign) và chữ ký số lưu dấu xác thực dài hạn cho hồ sơ ký (đang chờ nối vào luồng ký, thông số kiểm thử từ nhà cung cấp và rà soát pháp lý)',
     },
   },
   trust: {

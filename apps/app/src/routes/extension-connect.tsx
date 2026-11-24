@@ -20,7 +20,7 @@ export function ExtensionConnectPage() {
   const t = useTranslations('extensionConnect');
   // Read once: the request was moved from the address bar to this tab's storage before sign-in.
   const read = useRef<ConnectRequest | null | undefined>(undefined);
-  if (read.current === undefined) read.current = pendingConnect(getConfig().extensionIds ?? []);
+  if (read.current === undefined) read.current = pendingConnect(getConfig().extensionIds ?? [], Date.now(), { desktopCapture: Boolean(getConfig().meetingsDesktopCapture) });
   const request = read.current;
   const me = useQuery(orpc.me.get.queryOptions());
   const [chosen, setChosen] = useState<string | null>(null);
@@ -51,8 +51,8 @@ export function ExtensionConnectPage() {
 
   const approve = useMutation({
     mutationFn: async () => {
-      // Ludy Desktop asks for no scope today (its features are not built, #4515); the extension needs at least one.
-      if (!request || !org || (effectiveScopes.length === 0 && request.client !== 'desktop')) throw new Error('no request');
+      // Sign-in-only desktop tokens may hold empty scopes; requests that asked for scopes need at least one effective scope.
+      if (!request || !org || (effectiveScopes.length === 0 && (!desktop || request.scopes.length > 0))) throw new Error('no request');
       const response = await apiFetch('/api/extension/authorize', {
         method: 'POST',
         headers: { 'content-type': 'application/json', [ORG_HEADER]: org.slug },
@@ -81,7 +81,7 @@ export function ExtensionConnectPage() {
   };
 
   const desktop = request?.client === 'desktop';
-  const noFeature = org && orgApps.isSuccess && effectiveScopes.length === 0 && !desktop;
+  const noFeature = org && orgApps.isSuccess && effectiveScopes.length === 0 && (!desktop || request.scopes.length > 0);
   return (
     <main className="flex min-h-full items-center justify-center bg-background px-4">
       <Card className="block w-full max-w-md space-y-4 p-6">
@@ -130,7 +130,7 @@ export function ExtensionConnectPage() {
             {orgApps.error && <ErrorText>{errorMessage(orgApps.error)}</ErrorText>}
             {approve.error && <ErrorText>{errorMessage(approve.error)}</ErrorText>}
             <div className="flex flex-wrap gap-2">
-              <Button size="lg" loading={approve.isPending || (Boolean(org) && orgApps.isPending)} disabled={!org || orgApps.isPending || orgApps.isError || (effectiveScopes.length === 0 && !desktop)} onClick={() => approve.mutate()}>
+              <Button size="lg" loading={approve.isPending || (Boolean(org) && orgApps.isPending)} disabled={!org || orgApps.isPending || orgApps.isError || (effectiveScopes.length === 0 && (!desktop || request.scopes.length > 0))} onClick={() => approve.mutate()}>
                 {t('approve')}
               </Button>
               <Button size="lg" variant="outline" disabled={approve.isPending} onClick={deny}>

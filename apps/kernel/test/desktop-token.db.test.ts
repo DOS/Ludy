@@ -12,7 +12,7 @@ import { createDb, createPool } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { DESKTOP_CLIENT_ID } from '@ludy/kernel-contract';
 import { kernelCommands, kernelQueries } from '@ludy/kernel';
-import { BlobNotFoundError, DomainError, Runtime, sha256Hex, type BlobStore, type CredentialBroker } from '@ludy/kernel-runtime';
+import { BlobNotFoundError, BlobTooLargeError, DomainError, Runtime, sha256Hex, type BlobRef, type BlobStore, type CredentialBroker, type DirectTransfers } from '@ludy/kernel-runtime';
 import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
 import { actorOf, createAuthenticator } from '../src/auth.ts';
 import { verifyExtensionBearer } from '../src/auth-extension.ts';
@@ -48,16 +48,31 @@ class MemoryStore implements BlobStore {
   }
 }
 
+class DirectMemoryStore extends MemoryStore {
+  readonly direct: DirectTransfers = {
+    presignUpload: async (key, maxBytes) => ({ url: 'memory://bucket', fields: { key }, expiresAt: new Date(Date.now() + 300_000), maxBytes }),
+    presignDownload: async (_ref: BlobRef) => null,
+    readStaged: async (key, maxBytes) => {
+      const bytes = await this.get(key);
+      if (bytes.byteLength > maxBytes) throw new BlobTooLargeError(key, maxBytes);
+      return { bytes, sha256: sha256Hex(bytes) };
+    },
+  };
+}
+
 const EXT_ID = 'a'.repeat(32);
 const challengeOf = (verifier: string) => createHash('sha256').update(verifier).digest('base64url');
+const webm = () => new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, 0x9f, 0x42, 0x86, 0x81, 0x01, 0x42, 0xf7, 0x81, ...Array.from({ length: 64 }, (_, i) => i)]);
 
-suite('Ludy Desktop token over HTTP (#4515, ADR-0055 slice 2)', () => {
+suite('Ludy Desktop token over HTTP (#4515, ADR-0055 slice 2 & slice 3 #4516)', () => {
   const dbName = `crove_test_desktop_http_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let appUrlString = '';
   let pool: pg.Pool;
   let app: ReturnType<typeof createHttpApp>;
   let db: ReturnType<typeof createDb>;
   let runtime: Runtime;
+  let broker: CredentialBroker;
   const accounts = new Map<string, { subject: string; email: string; session: string }>();
   let slug = '';
   let orgId = '';
@@ -93,28 +108,28 @@ suite('Ludy Desktop token over HTTP (#4515, ADR-0055 slice 2)', () => {
   const asBrowser = async (name: string, org: string | null = slug, mfa = false) => ({ authorization: `Bearer ${await jwt(name, mfa)}`, 'content-type': 'application/json', ...(org ? { 'x-crove-org': org } : {}) });
   const asToken = (token: string) => ({ authorization: `Bearer ${token}`, 'content-type': 'application/json' });
 
-  async function rpc(path: string, headers: Record<string, string>, input: unknown) {
-    const response = await app.request(`/api/rpc/${path}`, { method: 'POST', headers, body: JSON.stringify(input === undefined ? {} : { json: input }) });
+  async function rpc(path: string, headers: Record<string, string>, input: unknown, targetApp = app) {
+    const response = await targetApp.request(`/api/rpc/${path}`, { method: 'POST', headers, body: JSON.stringify(input === undefined ? {} : { json: input }) });
     const body = (await response.json()) as { json?: unknown };
     return { status: response.status, body: (body.json ?? body) as Record<string, unknown> & unknown[] };
   }
 
-  // The member approves in the app: Ludy Desktop's id with no scope, or any id and scopes for the extension.
-  async function authorize(name: string, extensionId: string, scopes: string[]) {
+  // The member approves in the app: Ludy Desktop's id with allowed scopes (when enabled), or any id and scopes for the extension.
+  async function authorize(name: string, extensionId: string, scopes: string[], targetApp = app) {
     const verifier = randomBytes(32).toString('base64url');
-    const response = await app.request('/api/extension/authorize', {
+    const response = await targetApp.request('/api/extension/authorize', {
       method: 'POST',
       headers: await asBrowser(name),
       body: JSON.stringify({ extensionId, codeChallenge: challengeOf(verifier), codeChallengeMethod: 'S256', scopes, deviceName: 'Ludy Desktop, Windows' }),
     });
-    const body = (await response.json()) as { code?: string };
-    return { verifier, status: response.status, code: body.code ?? '' };
+    const body = (await response.json()) as { code?: string; codeError?: string; details?: Record<string, unknown> };
+    return { verifier, status: response.status, code: body.code ?? '', body };
   }
 
   // The desktop shell trades its code: no Origin at all, and it says who it is. `origin` and `client` let a test play another caller.
-  async function exchange(code: string, codeVerifier: string, over: { origin?: string; client?: string | null } = {}) {
+  async function exchange(code: string, codeVerifier: string, over: { origin?: string; client?: string | null } = {}, targetApp = app) {
     const client = over.client === undefined ? 'desktop' : over.client;
-    const response = await app.request('/api/extension/token', {
+    const response = await targetApp.request('/api/extension/token', {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...(over.origin ? { origin: over.origin } : {}) },
       body: JSON.stringify({ code, codeVerifier, ...(client === null ? {} : { client }) }),
@@ -122,10 +137,10 @@ suite('Ludy Desktop token over HTTP (#4515, ADR-0055 slice 2)', () => {
     return { status: response.status, body: (await response.json()) as Record<string, unknown> };
   }
 
-  async function desktopSignIn(name: string) {
-    const issued = await authorize(name, DESKTOP_CLIENT_ID, []);
+  async function desktopSignIn(name: string, scopes: string[] = [], targetApp = app) {
+    const issued = await authorize(name, DESKTOP_CLIENT_ID, scopes, targetApp);
     expect(issued.status).toBe(200);
-    const done = await exchange(issued.code, issued.verifier);
+    const done = await exchange(issued.code, issued.verifier, {}, targetApp);
     expect(done.status).toBe(200);
     return done.body as { token: string; tokenId: string; orgId: string; scopes: string[]; expiresAt: string };
   }
@@ -147,6 +162,30 @@ suite('Ludy Desktop token over HTTP (#4515, ADR-0055 slice 2)', () => {
     expect(accepted.status).toBe(200);
   }
 
+  function buildHttpApp(desktopCapture: 'on' | 'off', store: BlobStore = new MemoryStore()) {
+    const config = loadConfig({
+      DATABASE_URL: appUrlString,
+      AUTH_JWT_SECRET: SECRET,
+      AUTH_ISSUER: ISSUER,
+      AUTH_SESSION_CHECK: 'off',
+      MIGRATIONS_DIR: MIGRATIONS,
+      WEB_DIST: '/nonexistent',
+      EXTENSION_IDS: EXT_ID,
+      MEETINGS_DESKTOP_CAPTURE: desktopCapture,
+    });
+    return createHttpApp({
+      config,
+      runtime,
+      store,
+      broker,
+      authenticate: createAuthenticator(config, db),
+      pool,
+      aiEnabled: false,
+      extensionTokenLimit: new RateLimiter({ perMinute: 200 }),
+      mediaMeasurer: fakeMediaMeasurer(),
+    });
+  }
+
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
     await root.connect();
@@ -160,30 +199,20 @@ suite('Ludy Desktop token over HTTP (#4515, ADR-0055 slice 2)', () => {
     const appUrl = new URL(adminUrl);
     appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
-    pool = createPool({ connectionString: appUrl.toString(), max: 8 });
+    appUrlString = appUrl.toString();
+    pool = createPool({ connectionString: appUrlString, max: 8 });
     db = createDb(pool);
-    const config = loadConfig({ DATABASE_URL: appUrl.toString(), AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: ISSUER, AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, WEB_DIST: '/nonexistent', EXTENSION_IDS: EXT_ID });
     runtime = new Runtime(db, { manifests: TEST_MANIFESTS, sessions: createSessionStatusSource('off'), stepUp: 'required' }).register({
       commands: [...kernelCommands, ...meetingsCommands],
       queries: [...kernelQueries({ inboundDomain: null }), ...meetingsQueries],
     });
-    const broker = {
+    broker = {
       keyId: 'k1-desktop-test',
       keyIds: ['k1-desktop-test'],
       derive: (purpose: string) => createHash('sha256').update(`test-secret:${purpose}`).digest(),
       deriveKey: (keyId: string, purpose: string) => createHash('sha256').update(`test-secret:${keyId}:${purpose}`).digest(),
     } as unknown as CredentialBroker;
-    app = createHttpApp({
-      config,
-      runtime,
-      store: new MemoryStore(),
-      broker,
-      authenticate: createAuthenticator(config, db),
-      pool,
-      aiEnabled: false,
-      extensionTokenLimit: new RateLimiter({ perMinute: 100 }),
-      mediaMeasurer: fakeMediaMeasurer(),
-    });
+    app = buildHttpApp('off');
     const created = await rpc('org/create', await asBrowser('owner', null), { name: `Desktop Org ${randomUUID().slice(0, 6)}`, idempotencyKey: randomUUID() });
     expect(created.status).toBe(200);
     slug = String(created.body.slug);
@@ -254,25 +283,40 @@ suite('Ludy Desktop token over HTTP (#4515, ADR-0055 slice 2)', () => {
     expect((await exchange(forDesktop.code, forDesktop.verifier)).status).toBe(200);
   });
 
-  it('keeps the scope rules: only the desktop id may ask for none, and a viewer may not connect a device', async () => {
+  it('keeps the scope rules off by default while letting Postgres enforce desktop capture scopes (#4516)', async () => {
+    const publicCfg = (await (await app.request('/api/config')).json()) as { meetingsDesktopCapture?: boolean };
+    expect(publicCfg.meetingsDesktopCapture).toBe(false);
     const noScope = await authorize('worker', EXT_ID, []);
     expect(noScope.status).toBe(422);
     expect((await authorize('worker', 'b'.repeat(32), ['meetings'])).status).toBe(403);
     expect((await authorize('viewer', DESKTOP_CLIENT_ID, [])).status).toBe(403);
-    // Least privilege: Ludy Desktop may not hold a scope either, until slice 3 needs one.
-    expect((await authorize('worker', DESKTOP_CLIENT_ID, ['meetings'])).status).toBe(422);
+    // Off by default (MEETINGS_DESKTOP_CAPTURE=off): asking for meetings from Ludy Desktop is refused with 403 at authorize, and notes stays 422 in the contract.
+    const captureOff = await authorize('worker', DESKTOP_CLIENT_ID, ['meetings']);
+    expect(captureOff.status).toBe(403);
+    expect(captureOff.body).toMatchObject({ code: 'FORBIDDEN' });
     expect((await authorize('worker', DESKTOP_CLIENT_ID, ['notes'])).status).toBe(422);
-    // The tables hold the same line when written straight (the HTTP schema is not the only guard): no scope is for a desktop token or a
-    // desktop-bound code only.
+    // The tables enforce the slice 3 CHECK constraints: desktop may hold [], ['meetings'], or ['meetings', 'agenda'], never ['notes']; extension always requires >= 1 scope.
     const bad = async (sqlText: string, params: unknown[]) => admin((c) => c.query(sqlText, params).then(() => 'inserted', () => 'refused'));
     const member = await admin(async (c) => (await c.query<{ user_id: string }>(`SELECT user_id FROM ludy_kernel.tenant_member WHERE org_id = $1 LIMIT 1`, [orgId])).rows[0]?.user_id);
     const tokenSql = `INSERT INTO ludy_kernel.extension_token (org_id, user_id, token_hash, device_name, scopes, created_at, expires_at, created_by, client) VALUES ($1, $2, $3, 'x', ARRAY[]::text[], now(), now() + interval '1 day', $2, $4)`;
     expect(await bad(tokenSql, [orgId, member, createHash('sha256').update(randomUUID()).digest(), 'extension'])).toBe('refused');
     expect(await bad(tokenSql, [orgId, member, createHash('sha256').update(randomUUID()).digest(), 'tablet'])).toBe('refused');
-    const scoped = tokenSql.replace('ARRAY[]::text[]', "ARRAY['meetings']::text[]");
-    expect(await bad(scoped, [orgId, member, createHash('sha256').update(randomUUID()).digest(), 'desktop'])).toBe('refused');
-    expect(await bad(scoped, [orgId, member, createHash('sha256').update(randomUUID()).digest(), 'extension'])).toBe('inserted');
+    const withMeetings = tokenSql.replace('ARRAY[]::text[]', "ARRAY['meetings']::text[]");
+    const withNotes = tokenSql.replace('ARRAY[]::text[]', "ARRAY['notes']::text[]");
+    const withMeetingsNotes = tokenSql.replace('ARRAY[]::text[]', "ARRAY['meetings', 'notes']::text[]");
+    expect(await bad(withMeetings, [orgId, member, createHash('sha256').update(randomUUID()).digest(), 'desktop'])).toBe('inserted');
+    expect(await bad(withNotes, [orgId, member, createHash('sha256').update(randomUUID()).digest(), 'desktop'])).toBe('refused');
+    expect(await bad(withMeetingsNotes, [orgId, member, createHash('sha256').update(randomUUID()).digest(), 'desktop'])).toBe('refused');
+    expect(await bad(withMeetings, [orgId, member, createHash('sha256').update(randomUUID()).digest(), 'extension'])).toBe('inserted');
     expect(await bad(tokenSql, [orgId, member, createHash('sha256').update(randomUUID()).digest(), 'desktop'])).toBe('inserted');
+
+    // Even if a desktop token row already holds meetings in SQL while MEETINGS_DESKTOP_CAPTURE=off, /api/extension/me strips scopes and every capture route refuses 403.
+    const rawToken = `crx_${randomBytes(32).toString('base64url')}`;
+    await admin((c) => c.query(withMeetings, [orgId, member, createHash('sha256').update(rawToken).digest(), 'desktop']));
+    const meOff = await app.request('/api/extension/me', { headers: asToken(rawToken) });
+    expect(meOff.status).toBe(200);
+    expect(await meOff.json()).toMatchObject({ client: 'desktop', scopes: [], features: { meetings: false, agenda: false, notes: false } });
+    expect((await rpc('meetings/create', asToken(rawToken), { title: 'Blocked', consentMethod: 'told_at_start', visibility: 'attendees', keepVideo: false })).status).toBe(403);
   });
 
   it('refuses a zero-scope desktop token on every route but /api/extension/me, at the edge and in the runtime', async () => {
@@ -349,5 +393,106 @@ suite('Ludy Desktop token over HTTP (#4515, ADR-0055 slice 2)', () => {
     const gone = await desktopSignIn('worker');
     await admin((c) => c.query(`UPDATE ludy_kernel.extension_token SET expires_at = now() - interval '1 second', created_at = now() - interval '2 days' WHERE id = $1`, [gone.tokenId]));
     expect((await app.request('/api/extension/me', { headers: asToken(gone.token) })).status).toBe(401);
+  });
+
+  it('lets a scoped desktop token open a desktop capture, heartbeat, upload media and stream live chunks when MEETINGS_DESKTOP_CAPTURE=on (#4516)', async () => {
+    const store = new DirectMemoryStore();
+    const captureApp = buildHttpApp('on', store);
+    const publicCfg = (await (await captureApp.request('/api/config')).json()) as { meetingsDesktopCapture?: boolean };
+    expect(publicCfg.meetingsDesktopCapture).toBe(true);
+
+    // A zero-scope desktop token still reaches /api/extension/me alone even when MEETINGS_DESKTOP_CAPTURE=on.
+    const bare = await desktopSignIn('worker', [], captureApp);
+    expect(bare.scopes).toEqual([]);
+    expect(await (await captureApp.request('/api/extension/me', { headers: asToken(bare.token) })).json()).toMatchObject({
+      client: 'desktop',
+      scopes: [],
+      features: { meetings: false, agenda: false, notes: false },
+    });
+    expect((await rpc('meetings/create', asToken(bare.token), { title: 'Bare', consentMethod: 'told_at_start', visibility: 'attendees', keepVideo: false }, captureApp)).status).toBe(403);
+
+    // Scoped desktop token: meetings + agenda allowed, notes still refused.
+    expect((await authorize('worker', DESKTOP_CLIENT_ID, ['notes'], captureApp)).status).toBe(422);
+    const scoped = await desktopSignIn('worker', ['meetings', 'agenda'], captureApp);
+    expect(scoped.scopes).toEqual(['agenda', 'meetings']);
+    expect(await (await captureApp.request('/api/extension/me', { headers: asToken(scoped.token) })).json()).toMatchObject({
+      tokenId: scoped.tokenId,
+      client: 'desktop',
+      scopes: ['agenda', 'meetings'],
+      features: { meetings: true, agenda: true, notes: false },
+    });
+
+    // meetings.meeting.create creates capture_session with kind = 'desktop' and audits capture: 'desktop'.
+    const created = await rpc(
+      'meetings/create',
+      asToken(scoped.token),
+      { title: 'Desktop Call', consentMethod: 'told_at_start', visibility: 'attendees', keepVideo: false, liveNotes: true },
+      captureApp,
+    );
+    expect(created.status).toBe(200);
+    const meetingId = String(created.body.meetingId);
+    const sessions = await admin(async (c) =>
+      (await c.query<{ kind: string; ended_reason: string | null }>('SELECT kind, ended_reason FROM ludy_meetings.capture_session WHERE meeting_id = $1', [meetingId])).rows,
+    );
+    expect(sessions).toEqual([{ kind: 'desktop', ended_reason: null }]);
+
+    // Heartbeat, status, and live-chunk work on the meeting this desktop token created.
+    expect(await rpc('meetings/captureHeartbeat', asToken(scoped.token), { meetingId }, captureApp)).toMatchObject({ status: 200, body: { open: true } });
+    expect(await rpc('meetings/extensionStatus', asToken(scoped.token), { meetingId }, captureApp)).toMatchObject({ status: 200, body: { hasAudio: false, liveNotes: true } });
+    const chunkBytes = webm();
+    const liveRes = await captureApp.request(`/api/meetings/${meetingId}/live-chunk?seq=0&lengthSeconds=15`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${scoped.token}`, 'content-type': 'audio/webm', 'content-length': String(chunkBytes.byteLength) },
+      body: chunkBytes,
+    });
+    expect(liveRes.status).toBe(200);
+
+    // Live-chunk still enforces consent record on the server: missing notice version gets 409 CONSENT_MISSING.
+    const noConsent = await rpc(
+      'meetings/create',
+      asToken(scoped.token),
+      { title: 'Missing Consent', consentMethod: 'told_at_start', visibility: 'attendees', keepVideo: false, liveNotes: true },
+      captureApp,
+    );
+    const noConsentId = String(noConsent.body.meetingId);
+    await admin((c) => c.query(`UPDATE ludy_meetings.meeting SET consent_notice_version = '' WHERE id = $1`, [noConsentId]));
+    const missingConsentChunk = await captureApp.request(`/api/meetings/${noConsentId}/live-chunk?seq=0&lengthSeconds=15`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${scoped.token}`, 'content-type': 'audio/webm', 'content-length': String(chunkBytes.byteLength) },
+      body: chunkBytes,
+    });
+    expect(missingConsentChunk.status).toBe(409);
+    expect(((await missingConsentChunk.json()) as { code?: string }).code).toBe('CONSENT_MISSING');
+
+    // Staged upload grant + /api/meetings/:id/media works for meeting_audio and refuses document purpose.
+    const docGrant = await captureApp.request('/api/files/uploads', { method: 'POST', headers: asToken(scoped.token), body: JSON.stringify({ purpose: 'document' }) });
+    expect(docGrant.status).toBe(403);
+    const grantRes = await captureApp.request('/api/files/uploads', { method: 'POST', headers: asToken(scoped.token), body: JSON.stringify({ purpose: 'meeting_audio' }) });
+    expect(grantRes.status).toBe(200);
+    const grant = (await grantRes.json()) as { uploadId: string; fields: { key: string } };
+    await store.put(grant.fields.key, chunkBytes);
+    const finalize = await captureApp.request(`/api/meetings/${meetingId}/media`, {
+      method: 'POST',
+      headers: asToken(scoped.token),
+      body: JSON.stringify({ uploadId: grant.uploadId, kind: 'audio', lengthSeconds: 60 }),
+    });
+    expect(finalize.status).toBe(200);
+    const ended = await admin(async (c) =>
+      (await c.query<{ kind: string; ended_reason: string | null }>('SELECT kind, ended_reason FROM ludy_meetings.capture_session WHERE meeting_id = $1', [meetingId])).rows,
+    );
+    expect(ended).toEqual([{ kind: 'desktop', ended_reason: 'media' }]);
+
+    // recordingStopped works on a desktop meeting with no media, ending the capture cleanly.
+    expect(await rpc('meetings/recordingStopped', asToken(scoped.token), { meetingId: noConsentId, reason: 'unknown', lengthSeconds: 0 }, captureApp)).toMatchObject({ status: 200 });
+    const stoppedSession = await admin(async (c) =>
+      (await c.query<{ ended_reason: string | null }>('SELECT ended_reason FROM ludy_meetings.capture_session WHERE meeting_id = $1', [noConsentId])).rows[0],
+    );
+    expect(stoppedSession?.ended_reason).toBe('stopped');
+
+    // Out-of-scope routes stay forbidden (notes, read routes, and other meetings stay isolated).
+    expect((await rpc('meetings/agenda/next', asToken(scoped.token), {}, captureApp)).status).toBe(200);
+    expect((await rpc('notes/clip', asToken(scoped.token), { text: 'x' }, captureApp)).status).toBe(403);
+    expect((await rpc('meetings/get', asToken(scoped.token), { meetingId }, captureApp)).status).toBe(403);
+    expect((await captureApp.request(`/api/meetings/${meetingId}/audio`, { headers: asToken(scoped.token) })).status).toBe(403);
   });
 });

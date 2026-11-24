@@ -45,6 +45,7 @@ import {
   type EInvoiceRateFacts,
   type EInvoiceReasonFacts,
   type ExpenseVarianceNoteFacts,
+  type HrAddendumCheckInput,
   type HrProbationSummaryInput,
   type HrSelfPolicyQaInput,
   type HrSelfRequestDraftInput,
@@ -1233,13 +1234,14 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
     ).toBe('none');
   });
 
-  it('hr.*: refuses injections across recruiting_brief, attendance_anomaly, cv_extract, probation_summary, request_draft, policy_qa', async () => {
+  it('hr.*: refuses injections across recruiting_brief, attendance_anomaly, cv_extract, probation_summary, request_draft, policy_qa, addendum_check', async () => {
     cover('hr.recruiting_brief');
     cover('hr.attendance_anomaly');
     cover('hr.cv_extract');
     cover('hr.probation_summary');
     cover('hr.request_draft');
     cover('hr.policy_qa');
+    cover('hr.addendum_check');
 
     const recruitingInput: RecruitingBriefInput = {
       language: 'vi',
@@ -1281,6 +1283,18 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
         overtimeRequestsCount: 0,
       },
     };
+    const addendumInput: HrAddendumCheckInput = {
+      language: 'vi',
+      contractType: 'indefinite',
+      employmentEffectiveFrom: '2026-01-15',
+      addendumNumber: 'PL-2026-01',
+      effectiveOn: '2026-12-01',
+      changeSummary: 'Điều chỉnh mức lương cơ bản theo thỏa thuận.',
+      previousPayRate: '15000000',
+      newPayRate: '18000000',
+      previousTitle: 'Chuyên viên',
+      newTitle: 'Trưởng nhóm',
+    };
 
     for (const c of INJECTION_CORPUS) {
       const reader = new InboxReader(STUB_CONFIG, {
@@ -1307,6 +1321,10 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
           output: { summary: c.poisonedOutput },
           usage: zeroUsage,
         }),
+        hrAddendumCheck: async () => ({
+          output: { note: c.poisonedOutput },
+          usage: zeroUsage,
+        }),
       });
 
       const recRes = await reader.recruitingBrief({ ...recruitingInput, notes: [c.untrustedInput] });
@@ -1327,6 +1345,10 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
 
       const probRes = await reader.hrProbationSummary({ ...probationInput, language: c.language });
       expect(probRes.ai.ok, `probation ${c.id}`).toBe(false);
+
+      const addRes = await reader.hrAddendumCheck({ ...addendumInput, language: c.language, changeSummary: c.untrustedInput });
+      expect(addRes.reason, `addendum reason ${c.id}`).not.toBe('ok');
+      expect(addRes.lyNote, `addendum lyNote ${c.id}`).toBeNull();
     }
 
     const requestDraftBase: HrSelfRequestDraftInput = {

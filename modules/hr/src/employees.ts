@@ -282,7 +282,7 @@ export function requireKnownBank(code: string | null | undefined): void {
 }
 
 // An employee row, locked for the change that follows. An erased one cannot be changed any more.
-async function loadEmployee(ctx: Ctx, employeeId: string, options: { allowErased?: boolean } = {}) {
+export async function loadEmployee(ctx: Ctx, employeeId: string, options: { allowErased?: boolean } = {}) {
   const row = await ctx.trx
     .selectFrom('ludy_hr.payroll_employee')
     .select(['id', 'legal_entity_id', 'department_id', 'status', 'ended_on', 'erased_at'])
@@ -318,7 +318,7 @@ export async function resolveDepartment(
   return { id: dept.id, name: dept.name, payFunction: dept.pay_function };
 }
 
-const requireActive = (employee: { status: string }): void => {
+export const requireActive = (employee: { status: string }): void => {
   if (employee.status !== 'active') throw new DomainError('HR_EMPLOYEE_ENDED', 409, 'Nhân viên này đã nghỉ việc');
 };
 
@@ -650,6 +650,7 @@ export const employeeEnd = defineCommand({
   target: targetOf,
   writes: [tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_employee', ['status', 'ended_on', 'updated_at'])],
   handler: async (ctx, input): Promise<HrWritten> => {
+    await lockEmployeeErasure(ctx.trx, ctx.orgId, input.employeeId);
     const employee = await loadEmployee(ctx, input.employeeId);
     requireActive(employee);
     // The last day of work cannot come before the first day of the first terms. A raise already scheduled after it stays as it is: its row cannot be changed.
@@ -664,13 +665,42 @@ export const employeeEnd = defineCommand({
     if (first && input.endedOn < iso(first.effective_from)) {
       throw new DomainError('HR_END_BEFORE_START', 422, 'Ngày nghỉ việc không thể trước ngày bắt đầu làm việc');
     }
+    const unreturned = await ctx.trx
+      .selectFrom('ludy_hr.employee_asset_handover')
+      .select(['id', 'asset_code', 'asset_name'])
+      .where('org_id', '=', ctx.orgId)
+      .where('employee_id', '=', input.employeeId)
+      .where('status', '=', 'assigned')
+      .orderBy('handed_over_on', 'asc')
+      .limit(200)
+      .execute();
+    const overrideNote = input.assetOverrideNote?.trim() ?? '';
+    if (unreturned.length > 0 && !overrideNote) {
+      const codes = unreturned.map((a) => `${a.asset_code} (${a.asset_name})`).join(', ');
+      throw new DomainError(
+        'HR_UNRETURNED_ASSETS',
+        409,
+        `Nhân viên còn ${unreturned.length} tài sản chưa thu hồi (${codes}). Hãy thu hồi hoặc nhập lý do ngoại lệ trước khi cho nghỉ việc.`,
+      );
+    }
     await ctx.trx
       .updateTable('ludy_hr.payroll_employee')
       .set({ status: 'ended', ended_on: input.endedOn, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.employeeId)
       .execute();
-    ctx.audit({ employeeId: input.employeeId, endedOn: input.endedOn });
+    ctx.audit({
+      employeeId: input.employeeId,
+      endedOn: input.endedOn,
+      ...(unreturned.length > 0
+        ? {
+            unreturnedAssetsCount: unreturned.length,
+            unreturnedAssetCodes: unreturned.map((a) => a.asset_code),
+            assetOverrideProvided: true,
+            assetOverrideNoteLength: overrideNote.length,
+          }
+        : {}),
+    });
     return { employeeId: input.employeeId };
   },
 });
@@ -777,6 +807,8 @@ export const employeeErase = defineCommand({
     tableWrite(hrManifest.tables, 'ludy_hr', 'salary_advance_request', ['status', 'reason', 'decision_note', 'updated_at']),
     tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_adjustment_item', ['status', 'reason', 'decision_note', 'updated_at']),
     tableWrite(hrManifest.tables, 'ludy_hr', 'business_trip_request', ['status', 'destination', 'purpose', 'decision_note', 'updated_at']),
+    tableWrite(hrManifest.tables, 'ludy_hr', 'contract_addendum', ['change_summary', 'previous_title', 'new_title', 'void_reason', 'updated_at']),
+    tableWrite(hrManifest.tables, 'ludy_hr', 'employee_asset_handover', ['serial_number', 'notes', 'updated_at']),
     // The person's key, deleted by ludy_kernel.subject_key_shred.
     tableWrite(kernelManifest.tables, 'ludy_kernel', 'subject_key', ['ref']),
   ],
@@ -943,6 +975,39 @@ export const employeeErase = defineCommand({
       .where('employee_id', '=', input.employeeId)
       .where((eb) => eb.or([eb('destination', 'is not', null), eb('purpose', 'is not', null), eb('decision_note', 'is not', null)]))
       .execute();
+    const erasedAddendums = await ctx.trx
+      .updateTable('ludy_hr.contract_addendum')
+      .set({
+        change_summary: '[erased]',
+        previous_title: null,
+        new_title: null,
+        void_reason: null,
+        updated_at: ctx.now,
+      })
+      .where('org_id', '=', ctx.orgId)
+      .where('employee_id', '=', input.employeeId)
+      .where((eb) =>
+        eb.or([
+          eb('change_summary', '!=', '[erased]'),
+          eb('previous_title', 'is not', null),
+          eb('new_title', 'is not', null),
+          eb('void_reason', 'is not', null),
+        ]),
+      )
+      .returning('id')
+      .execute();
+    const erasedAssets = await ctx.trx
+      .updateTable('ludy_hr.employee_asset_handover')
+      .set({
+        serial_number: null,
+        notes: null,
+        updated_at: ctx.now,
+      })
+      .where('org_id', '=', ctx.orgId)
+      .where('employee_id', '=', input.employeeId)
+      .where((eb) => eb.or([eb('serial_number', 'is not', null), eb('notes', 'is not', null)]))
+      .returning('id')
+      .execute();
     const { rows } = await sql<{ n: number }>`SELECT ludy_kernel.subject_key_shred(ARRAY[${subjectOf(input.employeeId)}]::text[]) AS n`.execute(ctx.trx);
     const shreddedKeys = Number(rows[0]?.n ?? 0);
     ctx.audit({
@@ -957,6 +1022,8 @@ export const employeeErase = defineCommand({
       cancelledBusinessTrips: cancelledTrips.length,
       erasedOnboardingSubmissions: erasedOnboarding.length,
       erasedProbationReviews: erasedProbation.length,
+      erasedAddendums: erasedAddendums.length,
+      erasedAssetHandovers: erasedAssets.length,
       retentionEnded: until,
     });
     return {
@@ -979,6 +1046,8 @@ export const employeeErase = defineCommand({
         'salary advance notes',
         'payroll adjustment notes',
         'business trip details',
+        'contract addendum summaries, titles and void reasons',
+        'asset handover serial numbers and notes',
       ],
       kept: [
         { what: 'the identity number, the account number, the tax code, the insurance number and the work permit number', reason: 'They stay in their row, but the key that opens them is deleted: nobody can read them again' },

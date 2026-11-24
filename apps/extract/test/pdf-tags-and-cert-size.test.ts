@@ -876,4 +876,53 @@ describe('Audit Certificate summary page size matching (pdf_seal, #3552)', () =>
     expect(textRes.text).toContain('giay-dkkd-cong-ty.pdf');
     expect(textRes.text).toContain(attachmentSha);
   }, 20_000);
+
+  it('paginates tall signer cards with many attachments across continued audit certificate pages without throwing (#4331, #4394)', async () => {
+    const doc = await PDFDocument.create();
+    doc.addPage([280, 360]);
+    const pdfBytes = await doc.save();
+    const pngBase64 = makeSignaturePng();
+    const baseCert = makeCertificate({
+      sourceSha256: createHash('sha256').update(pdfBytes).digest('hex'),
+    });
+
+    const attachments = Array.from({ length: 12 }, (_, idx) => ({
+      label: `Tai lieu dinh kem ${idx + 1}`,
+      filename: `ho-so-dinh-kem-so-${String(idx + 1).padStart(2, '0')}.pdf`,
+      sha256: createHash('sha256').update(`att-${idx + 1}`).digest('hex'),
+    }));
+
+    const sealRes = await parse(
+      'pdf_seal',
+      encodePdfSealInput({
+        pdfBase64: Buffer.from(pdfBytes).toString('base64'),
+        fields: [
+          {
+            type: 'signature',
+            page: 1,
+            xNorm: 0.2,
+            yNorm: 0.2,
+            wNorm: 0.3,
+            hNorm: 0.1,
+            imagePngBase64: pngBase64,
+          },
+        ],
+        certificate: {
+          ...baseCert,
+          signers: baseCert.signers.map((s, idx) => (idx === 0 ? { ...s, attachments } : s)),
+        },
+      }),
+    );
+    expect(sealRes.ok).toBe(true);
+    if (!sealRes.ok || sealRes.kind !== 'pdf_seal') throw new Error('expected pdf_seal');
+    const sealedBytes = new Uint8Array(Buffer.from(sealRes.sealedPdfBase64, 'base64'));
+    const sealedDoc = await PDFDocument.load(sealedBytes);
+    // 1 source page + multiple continued Audit Certificate pages.
+    expect(sealedDoc.getPageCount()).toBeGreaterThanOrEqual(4);
+    const pageTexts = await extractPageTexts(sealedBytes);
+    const certText = pageTexts.slice(1).join('\n');
+    expect(certText.replace(/\s+/g, ' ')).toContain('Tiếp theo / Continued');
+    expect(certText).toContain('ho-so-dinh-kem-so-01.pdf');
+    expect(certText).toContain('ho-so-dinh-kem-so-12.pdf');
+  }, 20_000);
 });

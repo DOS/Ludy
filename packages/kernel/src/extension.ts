@@ -10,7 +10,7 @@
 // token, list devices or revoke one.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { DESKTOP_CLIENT_ID, EXTENSION_SCOPE_IDS, zExtensionAuthorize, zExtensionTokenRevoke, zId, type ExtensionOrgTokenView, type ExtensionTokenView } from '@ludy/kernel-contract';
+import { DESKTOP_CLIENT_ID, EXTENSION_SCOPE_IDS, extensionClientAllowsScopes, zExtensionAuthorize, zExtensionTokenRevoke, zId, type ExtensionOrgTokenView, type ExtensionTokenView } from '@ludy/kernel-contract';
 import type { MemberRole } from '@ludy/db';
 import { DomainError, defineCommand, defineQuery, hasFreshMfa, type CommandContext } from '@ludy/kernel-runtime';
 
@@ -29,12 +29,12 @@ export const zExtensionCodeIssue = z
     scopes: zExtensionAuthorize.shape.scopes,
     deviceName: zExtensionAuthorize.shape.deviceName,
     // The extension the member approved (#2850): the code is bound to it and only that extension can exchange it. Required: no code is made
-    // without it (the unbound 5-argument definer is gone, step 2 #2855). DESKTOP_CLIENT_ID is Ludy Desktop (#4515): its code may carry no scope.
+    // without it (the unbound 5-argument definer is gone, step 2 #2855). DESKTOP_CLIENT_ID is Ludy Desktop (#4515/#4516): none or meetings/agenda, never notes.
     extensionId: zExtensionAuthorize.shape.extensionId,
   })
-  .refine((input) => (input.extensionId === DESKTOP_CLIENT_ID ? input.scopes.length === 0 : input.scopes.length >= 1), {
+  .refine((input) => extensionClientAllowsScopes(input.extensionId === DESKTOP_CLIENT_ID ? 'desktop' : 'extension', input.scopes), {
     path: ['scopes'],
-    message: 'the extension needs a scope, Ludy Desktop holds none',
+    message: 'the extension needs a scope, Ludy Desktop holds only meetings or agenda',
   });
 
 // The errors the extension definers raise, as domain errors; anything else goes through the runtime's mapping.
