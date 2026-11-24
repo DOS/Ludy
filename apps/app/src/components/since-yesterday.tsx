@@ -10,11 +10,18 @@ import { useTranslations } from 'use-intl';
 import type { SinceYesterdayItem } from '@ludy/kernel-contract';
 import { Card } from '@ludy/ui/components/card';
 import { NavIcon } from '@ludy/ui/components/nav-icon';
+import { cn } from '@ludy/ui/lib/utils';
 import { orpc } from '../lib/api.ts';
 import { SAFETY_POLL_MS, pollEvery, useStreamLive } from '../lib/stream-hook.ts';
 import { todayPath } from '../lib/today.ts';
+import { PHONE_TARGET } from '../lib/touch-target.ts';
 
-function SinceRow({ item, slug }: { item: SinceYesterdayItem; slug: string }) {
+export function useSinceYesterday() {
+  const live = useStreamLive();
+  return useQuery({ ...orpc.today.sinceYesterday.queryOptions(), refetchInterval: pollEvery(live, 5 * 60_000, SAFETY_POLL_MS) });
+}
+
+function SinceRow({ item, slug, compact }: { item: SinceYesterdayItem; slug: string; compact: boolean }) {
   const t = useTranslations('today.since');
   const router = useRouter();
   const path = todayPath(slug, item.href);
@@ -24,6 +31,24 @@ function SinceRow({ item, slug }: { item: SinceYesterdayItem; slug: string }) {
     event.preventDefault();
     router.history.push(path);
   };
+  if (compact) {
+    return (
+      <li>
+        <a
+          href={path}
+          onClick={go}
+          data-testid="since-yesterday-pill"
+          className={cn(
+            'inline-flex items-center gap-1.5 rounded-lg bg-secondary px-2.5 py-1.5 text-sm text-secondary-foreground transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
+            PHONE_TARGET,
+          )}
+        >
+          <NavIcon name="inbox" className="text-muted-foreground" />
+          <span>{t('line', { name: item.name, count: item.count })}</span>
+        </a>
+      </li>
+    );
+  }
   return (
     <li>
       <a href={path} onClick={go} className="flex items-center gap-3 px-4 py-3 text-sm hover:bg-muted/50 focus-visible:bg-muted/50">
@@ -35,13 +60,21 @@ function SinceRow({ item, slug }: { item: SinceYesterdayItem; slug: string }) {
   );
 }
 
-export function SinceYesterday({ slug }: { slug: string }) {
+export function SinceYesterday({ slug, variant = 'section' }: { slug: string; variant?: 'section' | 'strip' }) {
   const t = useTranslations('today.since');
-  const live = useStreamLive();
-  const since = useQuery({ ...orpc.today.sinceYesterday.queryOptions(), refetchInterval: pollEvery(live, 5 * 60_000, SAFETY_POLL_MS) });
+  const since = useSinceYesterday();
   const items = since.data?.items ?? [];
   // A failed refetch keeps the last good data in the query: the section still shows nothing then.
   if (since.isError || items.length === 0) return null;
+  if (variant === 'strip') {
+    return (
+      <ul className="flex flex-wrap items-center gap-2" aria-label={t('title')} data-testid="since-yesterday-strip">
+        {items.map((item) => (
+          <SinceRow key={item.agentId} item={item} slug={slug} compact />
+        ))}
+      </ul>
+    );
+  }
   return (
     <section className="mt-8" aria-labelledby="overview-since">
       <h2 id="overview-since" className="text-lg font-semibold">
@@ -51,7 +84,7 @@ export function SinceYesterday({ slug }: { slug: string }) {
       <Card className="mt-3 block overflow-hidden p-0">
         <ul className="divide-y">
           {items.map((item) => (
-            <SinceRow key={item.agentId} item={item} slug={slug} />
+            <SinceRow key={item.agentId} item={item} slug={slug} compact={false} />
           ))}
         </ul>
       </Card>
