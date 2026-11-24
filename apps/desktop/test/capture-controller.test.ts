@@ -842,6 +842,7 @@ describe('build-native host guard & MSVC flag escaping', () => {
     const line = stdout.trim();
     expect(line).toMatch(/\/Fo:"[^"]+ludy-wasapi-loopback\.obj"/);
     expect(line).not.toMatch(/\\"/);
-    expect(line).toContain('/link ole32.lib mmdevapi.lib user32.lib');
+    expect(line).toContain(' /MT /GS ');
+    expect(line).toContain('/link /DYNAMICBASE /HIGHENTROPYVA /NXCOMPAT ole32.lib mmdevapi.lib user32.lib');
   });
 });
