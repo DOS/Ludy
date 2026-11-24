@@ -32,6 +32,7 @@ import { Label } from '@ludy/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { Textarea } from '@ludy/ui/components/textarea';
 import { SafeRoadmapMarkdown } from './roadmap-markdown.tsx';
+import { SendToTriageDialog } from './send-to-triage-dialog.tsx';
 import { Empty, ErrorText, ListSkeleton } from './ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
@@ -989,6 +990,15 @@ export function ProjectRoadmapPanel({ orgSlug }: { orgSlug: string }) {
                                   {t('syncStageBtn')}
                                 </Button>
                               )}
+                              <SendToTriageDialog
+                                slug={orgSlug}
+                                sourceType="roadmap.item"
+                                sourceId={item.id}
+                                defaultTitle={item.publicTitle}
+                                defaultDescription={item.publicSummary}
+                                defaultProjectId={activeBoard.projectId ?? undefined}
+                                buttonTestId={`roadmap-admin-triage-${item.id}`}
+                              />
                             </div>
                           )}
                         </div>

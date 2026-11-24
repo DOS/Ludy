@@ -257,6 +257,7 @@ export interface LudyProjectsSchema {
   'ludy_projects.project_cycle': ProjectsProjectCycleTable;
   'ludy_projects.project_member': ProjectsProjectMemberTable;
   'ludy_projects.project_task': ProjectsProjectTaskTable;
+  'ludy_projects.project_triage_item': ProjectsProjectTriageItemTable;
   'ludy_projects.roadmap_announcement': ProjectsRoadmapAnnouncementTable;
   'ludy_projects.roadmap_board': ProjectsRoadmapBoardTable;
   'ludy_projects.roadmap_item': ProjectsRoadmapItemTable;
@@ -4055,6 +4056,29 @@ export interface ProjectsProjectTaskTable {
   start_on: string | null;
   cycle_id: string | null;
   story_points: number | null;
+}
+
+/** ludy_projects.project_triage_item */
+export interface ProjectsProjectTriageItemTable {
+  org_id: string;
+  id: Generated<string>;
+  project_id: string;
+  source_type: string;
+  source_id: string | null;
+  status: Generated<string>;
+  priority: Generated<string>;
+  title: string;
+  description: string | null;
+  tainted: Generated<boolean>;
+  snoozed_until: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  accepted_task_id: string | null;
+  merged_into_task_id: string | null;
+  decline_reason: string | null;
+  triaged_by: string | null;
+  triaged_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  created_by: string | null;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
 /** ludy_projects.roadmap_announcement */

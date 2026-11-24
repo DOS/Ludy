@@ -248,6 +248,16 @@ function createStubRuntime() {
       },
       usage: zeroUsage,
     }),
+    projectTriageAssist: async () => ({
+      output: {
+        recommendedPriority: 'high',
+        suggestedAssigneePositionId: 'seat-1',
+        suggestedCycleId: 'cycle-1',
+        duplicateTaskId: 'task-1',
+        reason: 'Trung voi cong viec Xuat bao cao Excel dang mo trong chu ky hien tai.',
+      },
+      usage: zeroUsage,
+    }),
     recruitingBrief: async () => ({
       output: {
         summary: 'Ung vien C1 co 3 nam kinh nghiem ke toan va khop 1 trong 2 ky nang yeu cau.',

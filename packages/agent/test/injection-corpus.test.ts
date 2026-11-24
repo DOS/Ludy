@@ -23,6 +23,7 @@ import {
   checkRoadmapChangelogDraft,
   checkRoadmapDedupe,
   checkRoadmapSignalMatch,
+  checkTriageAssist,
   checkSignClauseSummary,
   checkSignContractDraftClauses,
   checkSignKycOutput,
@@ -63,6 +64,7 @@ import {
   type PayrollSheet,
   type PayslipExplainRequest,
   type ProjectCycleSummaryFacts,
+  type ProjectTriageAssistFacts,
   type ProjectWeeklyStatusFacts,
   type QuoteSuggestRequest,
   type RecruitingBriefInput,
@@ -965,6 +967,7 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
     cover('projects.roadmap_dedupe');
     cover('projects.roadmap_changelog_draft');
     cover('projects.roadmap_signal_match');
+    cover('projects.triage_assist');
     cover('projects.tasks_from_note');
     cover('projects.tasks_from_source');
 
@@ -1019,6 +1022,23 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
         { id: 'item-2', title: 'Dong bo ton kho', summary: null, stage: 'under_review', tainted: false },
       ],
     };
+    const triageAssistFacts: ProjectTriageAssistFacts = {
+      language: 'vi',
+      projectName: 'Web Ban Hang',
+      item: {
+        id: 'triage-1',
+        title: 'Khach hoi xuat bao cao Excel',
+        description: 'Khach can xuat bao cao Excel.',
+        sourceType: 'roadmap.item',
+        priority: 'medium',
+        tainted: true,
+      },
+      candidates: {
+        seats: [{ positionId: 'seat-1', label: 'Truong nhom Ky thuat (Lan)' }],
+        cycles: [{ cycleId: 'cycle-1', label: 'Sprint 3', status: 'active' }],
+        tasks: [{ taskId: 'task-1', title: 'Xuat bao cao Excel', status: 'in_progress', tainted: false }],
+      },
+    };
 
     for (const c of INJECTION_CORPUS) {
       const reader = new InboxReader(STUB_CONFIG, {
@@ -1036,6 +1056,16 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
           },
           usage: zeroUsage,
         }),
+        projectTriageAssist: async () => ({
+          output: {
+            recommendedPriority: 'high',
+            suggestedAssigneePositionId: null,
+            suggestedCycleId: null,
+            duplicateTaskId: null,
+            reason: c.poisonedOutput,
+          },
+          usage: zeroUsage,
+        }),
       });
       expect((await reader.projectWeeklyStatus({ ...weeklyFacts, language: c.language })).kind, `weeklyStatus ${c.id}`).toBe('none');
       expect((await reader.projectCycleSummary({ ...cycleFacts, language: c.language })).kind, `cycleSummary ${c.id}`).toBe('none');
@@ -1043,6 +1073,23 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
       expect(dedupeRes.kind === 'none' || dedupeRes.suggestions.length === 0, `roadmapDedupe ${c.id}`).toBe(true);
       expect((await reader.roadmapChangelogDraft({ ...changelogFacts, language: c.language })).kind, `changelog ${c.id}`).toBe('none');
       expect((await reader.roadmapSignalMatch({ ...signalMatchFacts, language: c.language })).kind, `roadmapSignalMatch reason ${c.id}`).toBe('none');
+      expect((await reader.projectTriageAssist({ ...triageAssistFacts, language: c.language })).kind, `projectTriageAssist ${c.id}`).toBe('none');
+      expect(
+        checkTriageAssist(
+          {
+            ...triageAssistFacts,
+            item: { ...triageAssistFacts.item, description: c.untrustedInput, tainted: true },
+          },
+          {
+            recommendedPriority: 'high',
+            suggestedAssigneePositionId: 'seat-1',
+            suggestedCycleId: null,
+            duplicateTaskId: null,
+            reason: c.poisonedOutput,
+          },
+        ).kind,
+        `checkTriageAssistdirect ${c.id}`,
+      ).toBe('none');
       expect(
         checkRoadmapSignalMatch(
           {

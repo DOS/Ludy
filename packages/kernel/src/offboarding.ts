@@ -295,6 +295,11 @@ export const EXPORT_TABLES = {
   'projects.roadmap_vote': { from: 'ludy_projects.roadmap_vote', omit: ['voter_email_hash'] },
   'projects.task_dependency': { from: 'ludy_projects.task_dependency', omit: [] },
   'projects.time_entry': { from: 'ludy_projects.time_entry', omit: [] },
+  // ADR-0047 points 2 and 7: exclude attendees-only or expired meeting triage rows because system export bypasses ludy_meetings RLS.
+  'projects.project_triage_item': {
+    from: "(SELECT t.* FROM ludy_projects.project_triage_item t WHERE t.source_type <> 'meetings.meeting' OR EXISTS (SELECT 1 FROM ludy_kernel.meeting_export_rows() m WHERE m.org_id = t.org_id AND m.id = t.source_id))",
+    omit: [],
+  },
   // eSign (#3323, #3526, #3554, #3811, #3821): envelopes, post-signature obligations, signers (omitting deployment-keyed signer_ip_hash), fields, AI analysis summaries, hash-chained signing events, reusable templates, and CA PAdES signing requests (omitting idempotency_key); credential-bearing ca_connection, signing_token, signing_otp, and template_direct_link tables stay out, and attendees-only meeting_minutes envelopes stay out under ADR-0047 point 7.
   'sign.envelope': {
     from: '(SELECT e.* FROM ludy_sign.envelope e WHERE ludy_sign.is_exportable_envelope(e.org_id, e.source_kind, e.source_id))',

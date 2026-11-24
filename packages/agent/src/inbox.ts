@@ -163,6 +163,15 @@ import {
   type RoadmapSignalMatchModelOutput,
 } from './project-roadmap.ts';
 import {
+  checkTriageAssist,
+  triageAssistInstructions,
+  triageAssistPrompt,
+  zProjectTriageAssistOut,
+  type ProjectTriageAssistCheckResult,
+  type ProjectTriageAssistFacts,
+  type ProjectTriageAssistGenerator,
+} from './project-triage.ts';
+import {
   createSignAcceptanceDraftGenerator,
   draftSignAcceptanceSummary,
   type SignAcceptanceDraftGenerator,
@@ -423,6 +432,7 @@ export class InboxReader {
   private readonly generateRoadmapDedupe: RoadmapDedupeGenerator;
   private readonly generateRoadmapChangelogDraft: RoadmapChangelogDraftGenerator;
   private readonly generateRoadmapSignalMatch: RoadmapSignalMatchGenerator;
+  private readonly generateProjectTriageAssist: ProjectTriageAssistGenerator;
   private readonly generateLaborCheck: LaborComplianceGenerator;
   private readonly generateRecruitingBrief: RecruitingBriefGenerator;
   private readonly generateAttendanceAnomalies: AttendanceAnomalyGenerator;
@@ -435,7 +445,7 @@ export class InboxReader {
   private readonly expenseVariance: ExpenseVarianceCoworker;
 
   // The generators replace the model calls in tests; by default both go to the deployment's OpenAI-compatible endpoint, through the AI meter.
-  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; followup?: FollowupGenerator; crmFollowup?: CrmFollowupGenerator; meetingBrief?: MeetingBriefGenerator; overview?: OverviewGenerator; monthClose?: MonthCloseGenerator; cashForecast?: CashForecastGenerator; vatLate?: VatLateGenerator; payrollMatch?: PayrollMatchGenerator; einvoiceReason?: EInvoiceReasonGenerator; einvoiceRate?: EInvoiceRateGenerator; marketplaceLine?: MarketplaceLineGenerator; supplierPayableLine?: SupplierPayableLineGenerator; bankCandidatesLine?: BankCandidatesLineGenerator; misaCheckLine?: MisaCheckLineGenerator; misaAmisBlockerNotes?: MisaAmisBlockerNotesGenerator; marketplaceFeeNotes?: MarketplaceFeeNotesGenerator; marketplaceProposalNote?: MarketplaceProposalNoteGenerator; marketplaceColumns?: MarketplaceColumnsGenerator; stockSurplus?: StockSurplusGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; projectWeeklyStatus?: ProjectWeeklyStatusGenerator; projectCycleSummary?: ProjectCycleSummaryGenerator; roadmapDedupe?: RoadmapDedupeGenerator; roadmapChangelogDraft?: RoadmapChangelogDraftGenerator; roadmapSignalMatch?: RoadmapSignalMatchGenerator; laborCheck?: LaborComplianceGenerator; recruitingBrief?: RecruitingBriefGenerator; attendanceAnomalies?: AttendanceAnomalyGenerator; cvExtract?: CvExtractGenerator; hrProbationSummary?: HrProbationSummaryGenerator; hrRequestDraft?: HrSelfRequestDraftGenerator; hrPolicyQa?: HrSelfPolicyQaGenerator; signAcceptanceDraft?: SignAcceptanceDraftGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
+  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; followup?: FollowupGenerator; crmFollowup?: CrmFollowupGenerator; meetingBrief?: MeetingBriefGenerator; overview?: OverviewGenerator; monthClose?: MonthCloseGenerator; cashForecast?: CashForecastGenerator; vatLate?: VatLateGenerator; payrollMatch?: PayrollMatchGenerator; einvoiceReason?: EInvoiceReasonGenerator; einvoiceRate?: EInvoiceRateGenerator; marketplaceLine?: MarketplaceLineGenerator; supplierPayableLine?: SupplierPayableLineGenerator; bankCandidatesLine?: BankCandidatesLineGenerator; misaCheckLine?: MisaCheckLineGenerator; misaAmisBlockerNotes?: MisaAmisBlockerNotesGenerator; marketplaceFeeNotes?: MarketplaceFeeNotesGenerator; marketplaceProposalNote?: MarketplaceProposalNoteGenerator; marketplaceColumns?: MarketplaceColumnsGenerator; stockSurplus?: StockSurplusGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; projectWeeklyStatus?: ProjectWeeklyStatusGenerator; projectCycleSummary?: ProjectCycleSummaryGenerator; roadmapDedupe?: RoadmapDedupeGenerator; roadmapChangelogDraft?: RoadmapChangelogDraftGenerator; roadmapSignalMatch?: RoadmapSignalMatchGenerator; projectTriageAssist?: ProjectTriageAssistGenerator; laborCheck?: LaborComplianceGenerator; recruitingBrief?: RecruitingBriefGenerator; attendanceAnomalies?: AttendanceAnomalyGenerator; cvExtract?: CvExtractGenerator; hrProbationSummary?: HrProbationSummaryGenerator; hrRequestDraft?: HrSelfRequestDraftGenerator; hrPolicyQa?: HrSelfPolicyQaGenerator; signAcceptanceDraft?: SignAcceptanceDraftGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
     this.payroll = new PayrollCoworker(config, generators.payroll);
     this.expenseVariance = new ExpenseVarianceCoworker(config);
     this.generateLaborCheck = generators.laborCheck ?? createLaborComplianceGenerator(config);
@@ -700,6 +710,14 @@ export class InboxReader {
       (async ({ system, prompt }) => {
         const { output, usage } = await metered('projects.roadmap_signal_match', () =>
           generateText({ model: chatModel(config), output: Output.object({ schema: zRoadmapSignalMatchOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
+        );
+        return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
+      });
+    this.generateProjectTriageAssist =
+      generators.projectTriageAssist ??
+      (async ({ system, prompt }) => {
+        const { output, usage } = await metered('projects.triage_assist', () =>
+          generateText({ model: chatModel(config), output: Output.object({ schema: zProjectTriageAssistOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
         );
         return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
       });
@@ -1094,5 +1112,15 @@ export class InboxReader {
     });
     if (usage) onUsage?.(usage);
     return checkRoadmapSignalMatch(output, facts);
+  }
+
+  /** Vy's triage proposal for one triage inbox item (#4493): validated against allowlisted candidate UUIDs only. */
+  async projectTriageAssist(facts: ProjectTriageAssistFacts, onUsage?: (usage: AiUsage) => void): Promise<ProjectTriageAssistCheckResult> {
+    const { output, usage } = await this.generateProjectTriageAssist({
+      system: triageAssistInstructions(facts.language),
+      prompt: triageAssistPrompt(facts),
+    });
+    if (usage) onUsage?.(usage);
+    return checkTriageAssist(facts, output);
   }
 }
