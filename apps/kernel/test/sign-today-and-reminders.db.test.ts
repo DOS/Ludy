@@ -1054,4 +1054,70 @@ suite('eSign Slice 3c: Vy Today & 24h pre-expiry reminder on PostgreSQL 17 (#381
     expect(batchPass3.envelopesReminded).toBe(0);
     expect(batchPass3.remindedSigners).toBe(0);
   });
+
+  it('clamps ludy_sign.public_mail_token_issue token expires_at at 720 hours on legacy/long-expiry envelopes (#4270)', async () => {
+    const legacyOrg = orgA;
+    const sourceFileId = await ingestSourcePdf(legacyOrg, ownerA, 'legacy-720h');
+    const nowIso = '2026-11-24T00:00:00.000Z';
+    const farIso = '2027-06-01T00:00:00.000Z';
+    const envId = randomUUID();
+    const signerId = randomUUID();
+    const msgId = randomUUID();
+    const signerEmail = 'legacy-signer@sign-4270.test';
+
+    await withAdmin(async (c) => {
+      await c.query(
+        `INSERT INTO ludy_sign.envelope (
+           org_id, id, title, status, routing_mode, source_kind, source_file_id,
+           source_storage_key, source_generation, source_sha256, inspect_status, page_count,
+           expires_at, sent_at, created_by
+         )
+         SELECT $1::uuid, $2::uuid, 'Legacy 180d Envelope', 'sent', 'parallel', 'standalone', f.id,
+                f.storage_key, f.generation, f.sha256, 'passed', 1, $3::timestamptz, $4::timestamptz, $5::uuid
+         FROM ludy_kernel.file f
+         WHERE f.org_id = $1::uuid AND f.id = $6::uuid`,
+        [legacyOrg, envId, farIso, nowIso, ownerA, sourceFileId],
+      );
+      await c.query(
+        `INSERT INTO ludy_sign.signer (
+           org_id, id, envelope_id, routing_order, signer_role, role_label, name, email, delivery_mode, status
+         ) VALUES ($1::uuid, $2::uuid, $3::uuid, 1, 'signer', 'Ben B', 'Legacy Signer', $4, 'email', 'pending')`,
+        [legacyOrg, signerId, envId, signerEmail],
+      );
+      await c.query(
+        `INSERT INTO ludy_kernel.mail_message (
+           org_id, id, stream, source, source_id, template_key, to_address, to_hash, subject, payload, message_id_header, status
+         ) VALUES (
+           $1::uuid, $2::uuid, 'transactional', 'sign.envelope.send', $3::uuid, 'sign.invite', $4, $5,
+           'Moi ky', '{}'::jsonb, $6, 'queued'
+         )`,
+        [legacyOrg, msgId, signerId, signerEmail, sha256Hex(signerEmail), `<${randomUUID()}@sign-4270.test>`],
+      );
+    });
+
+    const wc = await workerPool.connect();
+    try {
+      await wc.query('BEGIN');
+      await wc.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [legacyOrg]);
+      const issued = await wc.query<{ v: { tokenId: string; expiresAt: string } | null }>(
+        `SELECT ludy_sign.public_mail_token_issue($1::uuid, $2::uuid, $3::uuid, $4::timestamptz, $5::timestamptz) AS v`,
+        [envId, signerId, msgId, farIso, nowIso],
+      );
+      await wc.query('COMMIT');
+      const expectedCapMs = new Date(nowIso).getTime() + 720 * HOUR_MS;
+      expect(issued.rows[0]?.v).not.toBeNull();
+      expect(new Date(issued.rows[0]!.v!.expiresAt).getTime()).toBe(expectedCapMs);
+
+      const tokRow = await withAdmin((c) =>
+        c.query<{ expires_at: Date }>('SELECT expires_at FROM ludy_sign.signing_token WHERE org_id = $1 AND id = $2', [
+          legacyOrg,
+          issued.rows[0]!.v!.tokenId,
+        ]),
+      );
+      expect(tokRow.rows[0]!.expires_at.getTime()).toBe(expectedCapMs);
+    } finally {
+      await wc.query('ROLLBACK').catch(() => {});
+      wc.release();
+    }
+  });
 });

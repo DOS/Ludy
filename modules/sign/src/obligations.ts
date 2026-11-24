@@ -1554,6 +1554,52 @@ export const signObligationsToday = defineQuery({
 
     if (rows.length === 0) return [];
 
+    let totalCount: number | undefined;
+    if (rows.length === OBLIGATION_TODAY_ROW_LIMIT) {
+      const dueHorizonVn = addDaysIso(todayVn, OBLIGATION_DUE_SOON_DAYS);
+      const countRow = await q
+        .clearSelect()
+        .select(
+          sql<string>`COALESCE(SUM(
+            (CASE WHEN o.expiry_date >= ${todayVn}::date AND (o.expiry_date - COALESCE(o.renewal_notice_days, 0)) <= ${noticeHorizonVn}::date THEN 1 ELSE 0 END)
+            + COALESCE((
+              SELECT pg_catalog.count(*)::int
+              FROM pg_catalog.jsonb_array_elements(o.obligations_json) AS elem
+              WHERE elem->>'status' = 'pending'
+                AND CASE
+                  WHEN elem->>'dueDate' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+                  THEN CASE
+                    WHEN pg_catalog.substring(elem->>'dueDate', 1, 4)::int >= 1
+                    THEN CASE
+                      WHEN pg_catalog.substring(elem->>'dueDate', 6, 2)::int IN (1, 3, 5, 7, 8, 10, 12)
+                        AND pg_catalog.substring(elem->>'dueDate', 9, 2)::int BETWEEN 1 AND 31
+                        THEN (elem->>'dueDate')::date <= ${dueHorizonVn}::date
+                      WHEN pg_catalog.substring(elem->>'dueDate', 6, 2)::int IN (4, 6, 9, 11)
+                        AND pg_catalog.substring(elem->>'dueDate', 9, 2)::int BETWEEN 1 AND 30
+                        THEN (elem->>'dueDate')::date <= ${dueHorizonVn}::date
+                      WHEN pg_catalog.substring(elem->>'dueDate', 6, 2)::int = 2
+                        AND pg_catalog.substring(elem->>'dueDate', 9, 2)::int BETWEEN 1 AND (
+                          CASE
+                            WHEN (pg_catalog.substring(elem->>'dueDate', 1, 4)::int % 4 = 0 AND pg_catalog.substring(elem->>'dueDate', 1, 4)::int % 100 <> 0)
+                              OR (pg_catalog.substring(elem->>'dueDate', 1, 4)::int % 400 = 0)
+                            THEN 29
+                            ELSE 28
+                          END
+                        )
+                        THEN (elem->>'dueDate')::date <= ${dueHorizonVn}::date
+                      ELSE false
+                    END
+                    ELSE false
+                  END
+                  ELSE false
+                END
+            ), 0)
+          ), 0)::text`.as('total'),
+        )
+        .executeTakeFirst();
+      totalCount = Number(countRow?.total ?? 0);
+    }
+
     const todayRows: SignObligationTodayRow[] = [];
     for (const r of rows) {
       if (!canAccessEnvelopeRow(ctx, { source_kind: r.sourceKind, created_by: r.createdBy })) {
@@ -1573,7 +1619,11 @@ export const signObligationsToday = defineQuery({
       });
     }
 
-    return signObligationsTodayItemsOf(todayRows, { role: ctx.role, now });
+    return signObligationsTodayItemsOf(todayRows, {
+      role: ctx.role,
+      now,
+      ...(totalCount === undefined ? {} : { totalCount }),
+    });
   },
 });
 

@@ -17,12 +17,15 @@ import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { decodePdfSealInput, type ExtractClient, type PdfSealInput } from '@ludy/extract-contract';
 import { buildKernelCommands, kernelQueries } from '@ludy/kernel';
 import { Runtime, fileKey, putFile, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
+import type { MailProvider, OutboundMail } from '@ludy/mail';
 import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { signCommands, signQueries } from '@ludy/mod-sign';
 import { createAuthenticator } from '../src/auth.ts';
 import { ConcurrencyLimiter } from '../src/concurrency.ts';
 import { AVAILABLE_MODULES, loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
+import { runMailJob } from '../src/mail-queue.ts';
+import { MAIL_TEMPLATES } from '../src/mail-templates.ts';
 import { RateLimiter } from '../src/rate-limit.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { SIGN_ACTOR, runSignPdfSealJob } from '../src/sign-worker.ts';
@@ -1110,5 +1113,410 @@ suite('eSign Slice 4b: choice fields & verified signer supporting attachments on
       bytes: hrAttBytes,
     });
     expect(unentitledRes.status).toBe(404);
+  });
+
+  it('records host_user_id on in-person attachment_uploaded events and clears pre-submit attachments on public_delegate (#4331)', async () => {
+    // 1. In-person attachment upload records host_user_id on attachment_uploaded and keeps hash chain valid.
+    const ipFileId = await ingestSignPdf(org.orgId, owner, 'in-person-att-host');
+    const ipEnv = await runtime.execute<{ envelopeId: string }>(
+      'sign.envelope.create',
+      { title: 'In-Person Attachment Host', routingMode: 'parallel', sourceFileId: ipFileId },
+      { actor: asUser(owner), orgId: org.orgId },
+    );
+    await workerRuntime.execute(
+      'sign.envelope.inspect_complete',
+      {
+        envelopeId: ipEnv.envelopeId,
+        outcome: 'passed',
+        pageCount: 1,
+        pageDimensions: [{ page: 1, widthPt: 595, heightPt: 842, rotation: 0 }],
+        detectedTags: [],
+      },
+      { actor: SIGN_ACTOR, orgId: org.orgId },
+    );
+    const ipSigner = await runtime.execute<{ signerId: string }>(
+      'sign.signer.add',
+      {
+        envelopeId: ipEnv.envelopeId,
+        signerRole: 'signer',
+        roleLabel: 'Khach tai quay',
+        name: 'Khach Quay',
+        deliveryMode: 'link',
+        requireEmailOtp: false,
+      },
+      { actor: asUser(owner), orgId: org.orgId },
+    );
+    const ipFields = await runtime.execute<{ fieldIds: string[] }>(
+      'sign.field.set',
+      {
+        envelopeId: ipEnv.envelopeId,
+        fields: [
+          {
+            signerId: ipSigner.signerId,
+            fieldType: 'signature',
+            pageNumber: 1,
+            xNorm: 0.1,
+            yNorm: 0.7,
+            wNorm: 0.25,
+            hNorm: 0.1,
+            required: true,
+          },
+          {
+            signerId: ipSigner.signerId,
+            fieldType: 'attachment',
+            pageNumber: 1,
+            xNorm: 0.5,
+            yNorm: 0.7,
+            wNorm: 0.25,
+            hNorm: 0.08,
+            label: 'Giay to tuy than',
+            required: true,
+          },
+        ],
+      },
+      { actor: asUser(owner), orgId: org.orgId },
+    );
+    await runtime.execute('sign.envelope.send', { envelopeId: ipEnv.envelopeId }, { actor: asUser(owner), orgId: org.orgId });
+
+    const inPersonSession = await runtime.execute<{ token: string }>(
+      'sign.signer.start_in_person',
+      { envelopeId: ipEnv.envelopeId, signerId: ipSigner.signerId, expiresInMinutes: 30 },
+      { actor: asUser(member), orgId: org.orgId },
+    );
+
+    const ipAttRes = await postMultipartAttachment(app, {
+      token: inPersonSession.token,
+      fieldId: ipFields.fieldIds[1]!,
+      bytes: VALID_PNG_BYTES,
+      filename: 'id-front.png',
+      mime: 'image/png',
+    });
+    expect(ipAttRes.status).toBe(200);
+
+    const ipEvents = await runtime.query<{
+      events: Array<{ eventType: string; hostUserId?: string | null; payload?: Record<string, unknown> }>;
+    }>('sign.envelope.events', { envelopeId: ipEnv.envelopeId }, { actor: asUser(owner), orgId: org.orgId });
+    const attEv = ipEvents.events.find((e) => e.eventType === 'attachment_uploaded');
+    expect(attEv?.hostUserId).toBe(member.userId);
+    expect(attEv?.payload?.hostUserId).toBe(member.userId);
+
+    const ipVerify = await runtime.query<{ valid: boolean; eventChain: { valid: boolean } }>(
+      'sign.envelope.verify',
+      { envelopeId: ipEnv.envelopeId },
+      { actor: asUser(owner), orgId: org.orgId },
+    );
+    expect(ipVerify.valid).toBe(true);
+    expect(ipVerify.eventChain.valid).toBe(true);
+
+    // 2. Remote attachment uploaded before public_delegate is cleared on delegation so the delegate starts clean
+    //    and the orphaned pre-delegation file becomes unreadable via can_read_sign_file / /api/files.
+    const delFileId = await ingestSignPdf(org.orgId, owner, 'delegate-clears-att');
+    const delEnv = await runtime.execute<{ envelopeId: string }>(
+      'sign.envelope.create',
+      {
+        title: 'Delegate Attachment Isolation',
+        routingMode: 'parallel',
+        allowDelegation: true,
+        sourceFileId: delFileId,
+      },
+      { actor: asUser(owner), orgId: org.orgId },
+    );
+    await workerRuntime.execute(
+      'sign.envelope.inspect_complete',
+      {
+        envelopeId: delEnv.envelopeId,
+        outcome: 'passed',
+        pageCount: 1,
+        pageDimensions: [{ page: 1, widthPt: 595, heightPt: 842, rotation: 0 }],
+        detectedTags: [],
+      },
+      { actor: SIGN_ACTOR, orgId: org.orgId },
+    );
+    const delSigner = await runtime.execute<{ signerId: string }>(
+      'sign.signer.add',
+      {
+        envelopeId: delEnv.envelopeId,
+        signerRole: 'signer',
+        roleLabel: 'Ben B',
+        name: 'Original Signer',
+        email: 'orig-del-att@example.com',
+        deliveryMode: 'link',
+        requireEmailOtp: false,
+      },
+      { actor: asUser(owner), orgId: org.orgId },
+    );
+    const delFields = await runtime.execute<{ fieldIds: string[] }>(
+      'sign.field.set',
+      {
+        envelopeId: delEnv.envelopeId,
+        fields: [
+          {
+            signerId: delSigner.signerId,
+            fieldType: 'signature',
+            pageNumber: 1,
+            xNorm: 0.1,
+            yNorm: 0.7,
+            wNorm: 0.25,
+            hNorm: 0.1,
+            required: true,
+          },
+          {
+            signerId: delSigner.signerId,
+            fieldType: 'attachment',
+            pageNumber: 1,
+            xNorm: 0.5,
+            yNorm: 0.7,
+            wNorm: 0.25,
+            hNorm: 0.08,
+            label: 'Ho so uy quyen',
+            required: true,
+          },
+        ],
+      },
+      { actor: asUser(owner), orgId: org.orgId },
+    );
+    const delSent = await runtime.execute<{ links: Array<{ token: string }> }>(
+      'sign.envelope.send',
+      { envelopeId: delEnv.envelopeId },
+      { actor: asUser(owner), orgId: org.orgId },
+    );
+    const origToken = delSent.links[0]!.token;
+
+    const preDelUpload = await postMultipartAttachment(app, {
+      token: origToken,
+      fieldId: delFields.fieldIds[1]!,
+      bytes: pdfFixture('delegator-private-id'),
+      filename: 'delegator-private.pdf',
+      mime: 'application/pdf',
+    });
+    expect(preDelUpload.status).toBe(200);
+    const preDelFileId = ((await preDelUpload.json()) as { fileId: string }).fileId;
+
+    const delHttp = await app.request('/api/sign/delegate', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        token: origToken,
+        delegateName: 'New Delegate',
+        delegateEmail: 'new-del-att@example.com',
+        reason: 'Transfer signing responsibility',
+      }),
+    });
+    expect(delHttp.status).toBe(200);
+
+    // Pre-submit attachment columns are cleared on ludy_sign.field, and orphaned sign_attachment file returns 404.
+    const clearedRow = await withAdmin(async (c) => {
+      const r = await c.query<{
+        attachment_file_id: string | null;
+        attachment_filename: string | null;
+        attachment_content_type: string | null;
+        attachment_size_bytes: number | null;
+        attachment_sha256: string | null;
+        filled_at: string | null;
+      }>(
+        `SELECT attachment_file_id, attachment_filename, attachment_content_type, attachment_size_bytes, attachment_sha256, filled_at
+         FROM ludy_sign.field WHERE org_id = $1 AND id = $2`,
+        [org.orgId, delFields.fieldIds[1]!],
+      );
+      return r.rows[0];
+    });
+    expect(clearedRow).toEqual({
+      attachment_file_id: null,
+      attachment_filename: null,
+      attachment_content_type: null,
+      attachment_size_bytes: null,
+      attachment_sha256: null,
+      filled_at: null,
+    });
+
+    const orphanedDownload = await app.request(`/api/files/${preDelFileId}`, {
+      headers: { authorization: `Bearer ${await tokenFor(owner)}`, 'x-crove-org': org.slug },
+    });
+    expect(orphanedDownload.status).toBe(404);
+
+    // 3. Delegation resets the per-recipient 20/h upload window so a delegate can upload replacement attachments
+    //    even if the original recipient already hit the 20/h cap prior to delegating.
+    const capFileId = await ingestSignPdf(org.orgId, owner, 'delegate-upload-window-reset');
+    const capEnv = await runtime.execute<{ envelopeId: string }>(
+      'sign.envelope.create',
+      {
+        title: 'Delegate Upload Cap Reset',
+        routingMode: 'parallel',
+        allowDelegation: true,
+        sourceFileId: capFileId,
+      },
+      { actor: asUser(owner), orgId: org.orgId },
+    );
+    await workerRuntime.execute(
+      'sign.envelope.inspect_complete',
+      {
+        envelopeId: capEnv.envelopeId,
+        outcome: 'passed',
+        pageCount: 1,
+        pageDimensions: [{ page: 1, widthPt: 595, heightPt: 842, rotation: 0 }],
+        detectedTags: [],
+      },
+      { actor: SIGN_ACTOR, orgId: org.orgId },
+    );
+    const capSigner = await runtime.execute<{ signerId: string }>(
+      'sign.signer.add',
+      {
+        envelopeId: capEnv.envelopeId,
+        signerRole: 'signer',
+        roleLabel: 'Ben B Cap',
+        name: 'First Signer',
+        email: 'first-cap-del@example.com',
+        deliveryMode: 'link',
+        requireEmailOtp: false,
+      },
+      { actor: asUser(owner), orgId: org.orgId },
+    );
+    const capFields = await runtime.execute<{ fieldIds: string[] }>(
+      'sign.field.set',
+      {
+        envelopeId: capEnv.envelopeId,
+        fields: [
+          {
+            signerId: capSigner.signerId,
+            fieldType: 'signature',
+            pageNumber: 1,
+            xNorm: 0.1,
+            yNorm: 0.7,
+            wNorm: 0.25,
+            hNorm: 0.1,
+            required: true,
+          },
+          {
+            signerId: capSigner.signerId,
+            fieldType: 'attachment',
+            pageNumber: 1,
+            xNorm: 0.5,
+            yNorm: 0.7,
+            wNorm: 0.25,
+            hNorm: 0.08,
+            label: 'Giay to thay the',
+            required: true,
+          },
+        ],
+      },
+      { actor: asUser(owner), orgId: org.orgId },
+    );
+    const capSent = await runtime.execute<{ links: Array<{ token: string }> }>(
+      'sign.envelope.send',
+      { envelopeId: capEnv.envelopeId },
+      { actor: asUser(owner), orgId: org.orgId },
+    );
+    const capOrigToken = capSent.links[0]!.token;
+
+    const sqlLimitConfig = loadConfig({
+      DATABASE_URL: appUrl,
+      AUTH_JWT_SECRET: JWT_TEST_KEY,
+      AUTH_ISSUER: ISSUER,
+      AUTH_SESSION_CHECK: 'off',
+      MIGRATIONS_DIR: MIGRATIONS,
+      WEB_DIST: '/nonexistent',
+    });
+    const sqlLimitApp = createHttpApp({
+      config: sqlLimitConfig,
+      runtime,
+      store,
+      authenticate: createAuthenticator(sqlLimitConfig, db),
+      pool,
+      aiEnabled: false,
+      signLimits: {
+        attachment: new RateLimiter({ perMinute: 100 }),
+        tokenAttachment: new RateLimiter({ perMinute: 100 }),
+      },
+    });
+
+    for (let i = 0; i < 20; i += 1) {
+      const up = await postMultipartAttachment(sqlLimitApp, {
+        token: capOrigToken,
+        fieldId: capFields.fieldIds[1]!,
+        bytes: pdfFixture(`orig-upload-${i}`),
+        filename: `orig-${i}.pdf`,
+        mime: 'application/pdf',
+      });
+      expect(up.status).toBe(200);
+    }
+    const capBlocked = await postMultipartAttachment(sqlLimitApp, {
+      token: capOrigToken,
+      fieldId: capFields.fieldIds[1]!,
+      bytes: pdfFixture('orig-upload-21'),
+      filename: 'orig-21.pdf',
+      mime: 'application/pdf',
+    });
+    expect(capBlocked.status).toBe(429);
+    await expect(capBlocked.json()).resolves.toMatchObject({ code: 'SIGN_ATTACHMENT_RATE_LIMITED' });
+
+    const capDelRes = await app.request('/api/sign/delegate', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        token: capOrigToken,
+        delegateName: 'Replacement Delegate',
+        delegateEmail: 'delegate-cap-reset@example.com',
+        reason: 'Reassign after exhausting draft uploads',
+      }),
+    });
+    expect(capDelRes.status).toBe(200);
+
+    // Trigger delegate mail dispatch with spyMailer to capture the newly issued delegate signing link.
+    const capInviteMailId = await withAdmin(async (c) => {
+      const r = await c.query<{ id: string }>(
+        `SELECT id FROM ludy_kernel.mail_message
+         WHERE org_id = $1 AND source_id = $2 AND template_key = 'sign.invite' AND status = 'queued'
+         ORDER BY created_at DESC LIMIT 1`,
+        [org.orgId, capSigner.signerId],
+      );
+      return r.rows[0]!.id;
+    });
+    const capMails: OutboundMail[] = [];
+    const capMailer: MailProvider = {
+      name: 'test_smtp',
+      enabled: true,
+      sendRetrySafety: 'idempotent',
+      async send(mail) {
+        capMails.push(mail);
+        return { status: 'accepted', providerMessageId: randomUUID() };
+      },
+      parseWebhook: () => [],
+    };
+    await runMailJob(
+      {
+        runtime: workerRuntime,
+        mailer: capMailer,
+        templates: MAIL_TEMPLATES,
+        publicUrl: 'http://localhost:8080',
+        bounceDomain: null,
+        store,
+      },
+      { orgId: org.orgId, messageId: capInviteMailId },
+    );
+    expect(capMails).toHaveLength(1);
+    const delegateTokenMatch = /\/-\/sign#([A-Za-z0-9_-]{43})/.exec(capMails[0]!.html + '\n' + capMails[0]!.text);
+    expect(delegateTokenMatch?.[1]).toBeTruthy();
+    const capDelegateToken = delegateTokenMatch![1]!;
+
+    const delReplacementUp = await postMultipartAttachment(sqlLimitApp, {
+      token: capDelegateToken,
+      fieldId: capFields.fieldIds[1]!,
+      bytes: pdfFixture('delegate-replacement-id'),
+      filename: 'delegate-replacement.pdf',
+      mime: 'application/pdf',
+    });
+    expect(delReplacementUp.status).toBe(200);
+
+    const delSubmitRes = await app.request('/api/sign/submit', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        token: capDelegateToken,
+        consentAccepted: true,
+        signatureKind: 'draw',
+        fields: [{ fieldId: capFields.fieldIds[0]!, signaturePngBase64: VALID_PNG_BASE64 }],
+      }),
+    });
+    expect(delSubmitRes.status).toBe(200);
   });
 });

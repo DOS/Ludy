@@ -117,8 +117,13 @@ async function isEntitled(billing: SignBilling, orgId: string): Promise<boolean>
   return entitledTo(entitlements, 'sign');
 }
 
-function templateBucketOf(orgSlug: string, templateId: string): string {
+function templateScopeOf(orgSlug: string, templateId: string): string {
   return `hub:${orgSlug.toLowerCase()}:${templateId.toLowerCase()}`;
+}
+
+function templateBucketOf(ip: string | null | undefined, orgSlug: string, templateId: string): string {
+  const ipKey = signIpHash(ip ?? null) ?? 'anonymous';
+  return `${templateScopeOf(orgSlug, templateId)}:${ipKey}`;
 }
 
 export async function runSignPublicHubList(
@@ -193,6 +198,7 @@ export async function resolvePublicHubPdf(
   rawOrgSlug: string,
   body: unknown,
   limitTemplate?: SignTokenLimiterFn,
+  meta?: { ip?: string | null },
 ): Promise<SignPdfLookup> {
   const slugParsed = zSignPublicHubOrgSlug.safeParse(rawOrgSlug);
   if (!slugParsed.success) return { status: 'not_found' };
@@ -201,7 +207,7 @@ export async function resolvePublicHubPdf(
 
   const orgSlug = slugParsed.data;
   const { templateId } = parsed.data;
-  const decision = limitTemplate?.(templateBucketOf(orgSlug, templateId));
+  const decision = limitTemplate?.(templateBucketOf(meta?.ip, orgSlug, templateId));
   if (decision && !decision.allowed) {
     return { status: 'rate_limited', retryAfterSeconds: decision.retryAfterSeconds };
   }
@@ -301,7 +307,7 @@ export async function runSignPublicHubAction(
   }
   const templateId = tplParsed.data;
 
-  const tplDecision = limiters?.limitTemplate?.(templateBucketOf(orgSlug, templateId));
+  const tplDecision = limiters?.limitTemplate?.(templateBucketOf(meta.ip, orgSlug, templateId));
   if (tplDecision && !tplDecision.allowed) {
     return { status: 'rate_limited', retryAfterSeconds: tplDecision.retryAfterSeconds };
   }
@@ -331,7 +337,7 @@ export async function runSignPublicHubAction(
     if (email.includes('\u0000')) {
       return { status: 'validation_error', message: 'NUL is not allowed' };
     }
-    const emailBucket = `${templateBucketOf(orgSlug, templateId)}:${sha256Hex(email.trim().toLowerCase())}`;
+    const emailBucket = `${templateScopeOf(orgSlug, templateId)}:${sha256Hex(email.trim().toLowerCase())}`;
     const emailDecision = limiters?.limitEmail?.(emailBucket);
     if (emailDecision && !emailDecision.allowed) {
       return { status: 'rate_limited', retryAfterSeconds: emailDecision.retryAfterSeconds };
