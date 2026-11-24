@@ -1,5 +1,5 @@
-# Crove marketing site (apps/web): the Next.js standalone server. Build from the repository root:
-#   docker build -f apps/web/Dockerfile -t crove-web .
+# Ludy marketing site (apps/web): the Next.js standalone server. Build from the repository root:
+#   docker build -f apps/web/Dockerfile -t ludy-web .
 # Base images are pinned by digest like the root Dockerfile (Node 26.11.1 here); see "Updating pinned images" in
 # AGENTS.md. The build downloads the fonts (next/font and the social preview images), so it needs network access.
 FROM node:26-slim@sha256:193fe51b64e77981119c98c2002c9e32a70e2f006fb4d25068ce0558998917f0 AS build

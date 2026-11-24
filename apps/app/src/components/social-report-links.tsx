@@ -64,7 +64,7 @@ export function ReportLinks({ channels }: { channels: readonly { id: string; dis
         ...(picked.size > 0 ? { connectionIds: [...picked] } : {}),
         ...(title.trim() ? { title: title.trim() } : {}),
         ...(note.trim() ? { note } : {}),
-        // A label report counts only Crove's posts.
+        // A label report counts only Ludy's posts.
         ...(labelId ? { labelId } : outside ? { includeExternal: true } : {}),
         // Every section in the page's order saves none, as a link before sections; the audience is one of them.
         ...(chosen ? { sections: chosen } : {}),

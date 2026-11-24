@@ -583,7 +583,7 @@ export function VatPage() {
   );
   const indexes = choice.kind === 'month' ? Array.from({ length: 12 }, (_, i) => i + 1) : [1, 2, 3, 4];
   const rateRows = data ? data.input.totals.byRate.map((input, i) => ({ input, output: data.output.totals.byRate[i] })) : [];
-  // Sales at a rate Crove cannot place count in the totals but in no form indicator (issue #358).
+  // Sales at a rate Ludy cannot place count in the totals but in no form indicator (issue #358).
   const otherSales = data?.output.totals.byRate.find((r) => r.rate === 'other')?.taxable ?? '0';
 
   return (

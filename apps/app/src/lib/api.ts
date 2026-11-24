@@ -150,7 +150,7 @@ export async function fetchVideoTicket(meetingId: string): Promise<{ ticket: str
 }
 
 // A stored file's bytes. With presigned transfers the kernel hands out a short-lived URL for the exact version it
-// recorded (after the same authorization), fetched without Crove's headers; otherwise the kernel streams it.
+// recorded (after the same authorization), fetched without Ludy's headers; otherwise the kernel streams it.
 export async function fetchFile(fileId: string): Promise<Blob> {
   if (getConfig().uploads === 'presigned') {
     const { url } = (await (await apiFetch(`/api/files/${fileId}?link=1`)).json()) as { url: string | null };
@@ -391,7 +391,7 @@ async function uploadStaged(
   for (const [name, value] of Object.entries(grant.fields)) form.append(name, value);
   // The file goes last: S3 ignores fields after it.
   form.append('file', file);
-  // No credentials or Crove headers: the form's signature is the only authorization the bucket sees.
+  // No credentials or Ludy headers: the form's signature is the only authorization the bucket sees.
   const stored = await fetch(grant.url, { method: 'POST', body: form, credentials: 'omit' }).catch(() => null);
   if (!stored?.ok) throw new ClientError('inbox.storageUploadFailed', (t) => t('inbox.storageUploadFailed', { name: file.name }));
   // A busy kernel refuses the completion without using the grant, so the same completion is retried.

@@ -9,7 +9,7 @@ import { stopAndSave } from './recording-controller.ts';
 import { sessionIdFromToken } from './sessions.ts';
 import { signOutWithRevoke } from './sign-out.ts';
 
-// Revokes this session in Crove, then signs this device out of Supabase Auth (auth-js tells the other tabs, and
+// Revokes this session in Ludy, then signs this device out of Supabase Auth (auth-js tells the other tabs, and
 // main.tsx sends every tab to /login). Scope is local: signing out everywhere is the sessions screen's job.
 // A pending invite token is dropped too, so a shared browser does not keep it for the next person (#134); only the
 // invite page's "use another email" keeps it (keepInvite), to come back to the invite after signing in again. So is
@@ -23,7 +23,7 @@ export async function signOut(options: { keepInvite?: boolean } = {}): Promise<v
   clearRecentItems();
   await forgetPushDevice((endpoint) => client.notifications.push.unsubscribe({ endpoint }));
   return signOutWithRevoke({
-    // The kernel's user id (me.get), not Supabase Auth's: a revoke names the Crove user (issue #184).
+    // The kernel's user id (me.get), not Supabase Auth's: a revoke names the Ludy user (issue #184).
     currentSession: async () => {
       const { data } = await auth().getSession();
       const sessionId = sessionIdFromToken(data.session?.access_token);
