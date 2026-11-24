@@ -112,7 +112,7 @@ function SubAccountRow({ account, canManage }: { account: ChartAccount; canManag
           >
             <span className="shrink-0 py-1.5 font-mono text-foreground">{account.code}</span>
             <Input required maxLength={200} aria-label={t('renameOf', { code: account.code })} value={name} onChange={(e) => setName(e.target.value)} />
-            <Button type="submit" variant="outline" size="sm" disabled={update.isPending}>
+            <Button type="submit" variant="outline" size="sm" loading={update.isPending}>
               {t('save')}
             </Button>
             <Button type="button" variant="ghost" size="sm" onClick={() => setRenaming(false)}>
@@ -138,6 +138,7 @@ function SubAccountRow({ account, canManage }: { account: ChartAccount; canManag
                 <Button
                   variant="ghost"
                   size="sm"
+                  loading={update.isPending && update.variables?.active !== undefined}
                   disabled={update.isPending}
                   onClick={() => update.mutate({ code: account.code, active: !account.active })}
                   aria-label={account.active ? t('deactivateOf', { account: label }) : t('reactivateOf', { account: label })}

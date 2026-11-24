@@ -50,14 +50,26 @@ test('solo owner creates a project, adds 5 tasks, drags one to Done, works keybo
   await projectsNav.click();
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/projects$`));
 
-  await test.step('create project with org-wide visibility notice', async () => {
-    await page.getByTestId('new-project-button').click();
+  await test.step('create project with org-wide visibility notice, Escape/focus return, dirty guard, and Cmd+Enter', async () => {
+    const newProjectBtn = page.getByTestId('new-project-button');
+    await newProjectBtn.click();
     const dialog = page.getByTestId('create-project-dialog');
+    await expect(dialog).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+    await expect(newProjectBtn).toBeFocused();
+
+    await newProjectBtn.click();
     await expect(dialog).toBeVisible();
     await expect(dialog.getByTestId('project-visibility-notice')).toContainText('Mọi thành viên trong tổ chức đều thấy dự án này');
     await dialog.getByLabel('Tên dự án').fill('Quyết toán quý IV');
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('dialog-discard')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Tiếp tục nhập' })).toBeFocused();
+    await page.getByRole('button', { name: 'Tiếp tục nhập' }).click();
+    await expect(dialog.getByLabel('Tên dự án')).toHaveValue('Quyết toán quý IV');
     await dialog.getByLabel('Mô tả ngắn (không bắt buộc)').fill('Kiểm tra sổ sách và nộp tờ khai');
-    await dialog.getByRole('button', { name: 'Tạo dự án' }).click();
+    await dialog.getByLabel('Tên dự án').press('Control+Enter');
     await expect(page).toHaveURL(new RegExp(`/o/${slug}/projects/[0-9a-f-]+$`));
   });
 
@@ -172,6 +184,48 @@ test('solo owner creates a project, adds 5 tasks, drags one to Done, works keybo
     await expect(taskRows).toHaveCount(4);
   });
 
+  await test.step('task edit and project settings open in FormPanel sheets with dirty-close, Escape/focus return, and Cmd+Enter', async () => {
+    await page.goto(projectUrl);
+    await page.waitForLoadState('networkidle');
+
+    const editTaskBtn = page.getByRole('button', { name: 'Sửa Việc dự án 3' });
+    await editTaskBtn.click();
+    const taskPanel = page.getByTestId('edit-project-task-dialog');
+    await expect(taskPanel).toBeVisible();
+    await expect(taskPanel).toHaveAttribute('data-slot', 'sheet-content');
+    await page.keyboard.press('Escape');
+    await expect(taskPanel).toHaveCount(0);
+    await expect(editTaskBtn).toBeFocused();
+
+    await editTaskBtn.click();
+    await expect(taskPanel).toBeVisible();
+    await taskPanel.getByLabel('Mô tả').fill('Ghi chú cập nhật qua Ctrl+Enter');
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('panel-discard')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Tiếp tục nhập' })).toBeFocused();
+    await page.getByRole('button', { name: 'Tiếp tục nhập' }).click();
+    await expect(taskPanel.getByLabel('Mô tả')).toHaveValue('Ghi chú cập nhật qua Ctrl+Enter');
+    await taskPanel.getByLabel('Tên việc').press('Control+Enter');
+    await expect(taskPanel).toHaveCount(0);
+
+    const settingsBtn = page.getByTestId('project-settings-button');
+    await settingsBtn.click();
+    const settingsPanel = page.getByTestId('project-settings-dialog');
+    await expect(settingsPanel).toBeVisible();
+    await expect(settingsPanel).toHaveAttribute('data-slot', 'sheet-content');
+    await page.keyboard.press('Escape');
+    await expect(settingsPanel).toHaveCount(0);
+    await expect(settingsBtn).toBeFocused();
+
+    await settingsBtn.click();
+    await settingsPanel.getByLabel('Tên dự án').fill('Quyết toán nháp');
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('panel-discard')).toBeVisible();
+    await page.getByRole('button', { name: 'Bỏ thay đổi' }).click();
+    await expect(settingsPanel).toHaveCount(0);
+    await expect(settingsBtn).toBeFocused();
+  });
+
   await test.step('360px phone defaults to List view with zero horizontal scroll and passes light/dark axe scan', async () => {
     await page.setViewportSize({ width: 360, height: 780 });
     const problems: string[] = [];
@@ -185,6 +239,17 @@ test('solo owner creates a project, adds 5 tasks, drags one to Done, works keybo
       await expect(page.getByTestId('project-list-row')).toHaveCount(5);
     }
     expect(problems).toEqual([]);
+
+    // FormPanel Sheet spans full width on 360px phone with >= 44px footer touch targets.
+    await page.getByRole('button', { name: 'Sửa Việc dự án 3' }).click();
+    const mobilePanel = page.getByTestId('edit-project-task-dialog');
+    await expect(mobilePanel).toBeVisible();
+    const panelBox = await mobilePanel.boundingBox();
+    expect(panelBox && Math.round(panelBox.width) >= 359).toBe(true);
+    const saveBox = await mobilePanel.getByRole('button', { name: 'Lưu thay đổi' }).boundingBox();
+    expect(saveBox && saveBox.height >= 44).toBe(true);
+    await page.keyboard.press('Escape');
+    await expect(mobilePanel).toHaveCount(0);
   });
 
   await test.step('keyboard Tab walk checks every interactive control shows focus ring cleanly', async () => {

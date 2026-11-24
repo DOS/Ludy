@@ -22,7 +22,8 @@ import { getConfig } from '../../lib/auth.ts';
 import { useFormat } from '../../i18n/provider.tsx';
 import { ROLES, roleChangeConfirmation, roleChangeKind, type Role, type RoleChangeKind } from '../../lib/members.ts';
 import { invitedEmailState } from '../../lib/duplicates.ts';
-import { asRoleKey, inviteRoleChoices } from '../../lib/member-roles.ts';
+import { asRoleKey, inviteRoleChoices, roleHintKey } from '../../lib/member-roles.ts';
+import { installedModules, useModulesVersion } from '../../lib/org-modules.ts';
 import { MEMBERS_CARD_ID } from '../approval-preset.tsx';
 
 export interface MemberRow {
@@ -217,6 +218,7 @@ export function InviteMember({
   const [departmentKey, setDepartmentKey] = useState('');
   const [entityIds, setEntityIds] = useState<string[]>([]);
   const [noEntity, setNoEntity] = useState(false);
+  useModulesVersion(); // the apps of the org can change while this form is open (the Marketing hint names ads only when ads runs)
   const canScope = isOwner && entities.length > 1;
   const choices = inviteRoleChoices(catalog, role);
   // A role that cannot go with the base role picked since (a viewer) is dropped.
@@ -353,7 +355,7 @@ export function InviteMember({
                     </NativeSelectOption>
                   ))}
                 </NativeSelect>
-                {department && <p className="text-xs text-subtle-foreground">{root(`memberRoles.hints.${department.key}`)}</p>}
+                {department && <p className="text-xs text-subtle-foreground">{root(`memberRoles.hints.${roleHintKey(department.key, installedModules())}`)}</p>}
                 {scoped && <p className="text-xs text-subtle-foreground">{t('inviteDepartmentScoped')}</p>}
               </div>
             ) : (

@@ -46,6 +46,8 @@ export interface ReadableTasksSource {
   anchorAt: string | null;
 }
 
+const visibleLength = (text: string): number => text.replace(/\p{Cf}/gu, '').trim().length;
+
 export function formatMeetingTaskSource(parts: {
   meeting: MeetingDetail;
   results: MeetingResults | null;
@@ -58,7 +60,8 @@ export function formatMeetingTaskSource(parts: {
   if (parts.results) {
     const draftHasContent =
       parts.results.draft !== null &&
-      (parts.results.draft.summary.trim().length > 0 || parts.results.draft.decisions.length > 0);
+      (visibleLength(parts.results.draft.summary) > 0 ||
+        parts.results.draft.decisions.some((d) => visibleLength(d) > 0));
     const primary = draftHasContent ? parts.results.draft : parts.results.published;
     if (primary) {
       if (primary.summary.trim().length > 0) {
@@ -172,6 +175,7 @@ export function ctxQueryFn(ctx: QueryContext): SourceQueryFn {
   return async <T>(name: string, input: Record<string, unknown>): Promise<SourceQueryResponse<T>> => {
     if (name.startsWith('notes.') && !ctx.installed('notes')) return { status: 'not_installed' };
     if (name.startsWith('meetings.') && !ctx.installed('meetings')) return { status: 'not_installed' };
+    if (name.startsWith('crm.') && !ctx.installed('crm')) return { status: 'not_installed' };
     return await ctx.query<T>(name, input);
   };
 }

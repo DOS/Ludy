@@ -48,7 +48,7 @@ describe('FormPanel closing', () => {
   });
   it('puts focus on "keep editing" and back on the first field afterwards', () => {
     expect(source).toMatch(/<Button type="button" autoFocus onClick=\{keepEditing\}>/);
-    expect(source).toContain("querySelector<HTMLElement>('input:not([type=hidden]), textarea, select')?.focus()");
+    expect(source).toContain("querySelector<HTMLElement>('input:not([type=hidden]):not(:disabled), textarea:not(:disabled), select:not(:disabled)')?.focus()");
   });
   it('says so in both languages', () => {
     for (const locale of ['vi', 'en'] as const) {
@@ -58,5 +58,12 @@ describe('FormPanel closing', () => {
       expect(common.keepEditing.length).toBeGreaterThan(0);
     }
     expect(catalog('vi').common.keepEditing).toBe('Tiếp tục nhập');
+  });
+  it('supports testId, noValidate, ReactNode description, and outside content without nesting forms', () => {
+    expect(source).toContain('description?: ReactNode | undefined');
+    expect(source).toContain('noValidate={noValidate}');
+    expect(source).toContain("'data-testid': testId");
+    expect(source).toContain('outside !== undefined');
+    expect(source).toContain('id={activeFormId}');
   });
 });

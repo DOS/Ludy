@@ -7,6 +7,13 @@ import { generateText, Output } from 'ai';
 import { z } from 'zod';
 import { draftLinksOutside } from './conversation.ts';
 import { chatModel, type AiConfig } from './index.ts';
+import {
+  hasAutonomousActionDirective,
+  hasObfuscatedContactOrLink,
+  hasPromptMarkupLeak,
+  hasUngroundedMoneyOrIdToken,
+  hasUngroundedMoneyOrScaleWords,
+} from './injection-guards.ts';
 import { metered, type AiUsage, type AiUsageSink } from './meter.ts';
 import { summaryNumbersOutside, type SummaryRequest } from './summary.ts';
 
@@ -232,7 +239,7 @@ export function checkSignAcceptanceDraft(
     if (cleanedText.length > SIGN_ACCEPTANCE_BULLET_MAX_CHARS) {
       return { kind: 'none', code: 'TOO_LONG', bullets: [] };
     }
-    if (hasDisallowedMarkup(cleanedText)) {
+    if (hasDisallowedMarkup(cleanedText) || hasPromptMarkupLeak(item.text) || hasPromptMarkupLeak(cleanedText)) {
       return { kind: 'none', code: 'FORMAT', bullets: [] };
     }
 
@@ -256,13 +263,23 @@ export function checkSignAcceptanceDraft(
       return { kind: 'none', code: 'UNKNOWN_TASK', bullets: [] };
     }
 
-    if (draftLinksOutside(cleanedText, []).length > 0 || EMAIL_IN_TEXT.test(cleanedText)) {
+    const trustedTitles = citedTasks.map((t) => t.title);
+    if (
+      draftLinksOutside(cleanedText, []).length > 0 ||
+      EMAIL_IN_TEXT.test(cleanedText) ||
+      hasObfuscatedContactOrLink(cleanedText, [])
+    ) {
       return { kind: 'none', code: 'LINK', bullets: [] };
     }
 
     const bulletGrounding = buildBulletAllowedGrounding(language, request.projectName, citedTasks);
     const badNumbers = summaryNumbersOutside(cleanedText, bulletGrounding);
-    if (badNumbers.length > 0) {
+    if (
+      badNumbers.length > 0 ||
+      hasAutonomousActionDirective(cleanedText) ||
+      hasUngroundedMoneyOrIdToken(cleanedText, trustedTitles) ||
+      (hasUngroundedMoneyOrScaleWords(cleanedText) && trustedTitles.every((t) => !hasUngroundedMoneyOrScaleWords(t)))
+    ) {
       return { kind: 'none', code: 'AI_OUTPUT_UNSAFE', bullets: [], badNumbers };
     }
 

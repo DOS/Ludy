@@ -101,6 +101,14 @@ describe('a translation is never a source: the migrations (E1, #3184)', () => {
       'ludy_kernel_org_purge_sign_kyc_check.sql',
       // #4441 (eSign Slice 5c): the purge restatement that adds crove_sign.api_key restates the whole list, the translation table included; its body is the previous one.
       'ludy_kernel_org_purge_sign_api_keys.sql',
+      // #3736 (generic web push): the purge restatement that adds ludy_kernel.push_subscription restates the whole list, the translation table included; its body is the previous one.
+      'ludy_kernel_push_subscription.sql',
+      // #4492 (Omnichannel Roadmap Signals): the purge restatement that adds crove_projects.roadmap_signal restates the whole list, the translation table included; its body is the previous one.
+      'ludy_kernel_org_purge_projects_roadmap_signals.sql',
+      // #4527 (HR Stage 6B): the purge restatement that adds ludy_hr.salary_advance_request, ludy_hr.payroll_adjustment_item, and ludy_hr.business_trip_request restates the whole list, the translation table included; its body is the previous one.
+      'ludy_kernel_org_purge_hr_stage6b.sql',
+      // #4493 (Slice 2): projects triage adds project_triage_item to org_purge.
+      'ludy_kernel_org_purge_projects_triage.sql',
     ]);
   });
 });

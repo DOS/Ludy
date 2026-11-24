@@ -73,7 +73,6 @@ const SOCIAL_SPINNERS: Readonly<Record<string, number>> = {
   'routes/social-labels.tsx': 1,
   'routes/social-post.tsx': 10,
   'routes/social-snippets.tsx': 1,
-  'routes/social.tsx': 2,
 };
 
 describe('buttons that are working', () => {

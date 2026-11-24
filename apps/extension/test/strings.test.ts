@@ -32,6 +32,13 @@ describe('popup strings', () => {
     expect(VIETNAMESE.signInDeviceNote).toMatch(/hệ điều hành/);
   });
 
+  it('has clear reopen hint wording for first-use activeTab in both languages (#3742)', () => {
+    expect(ENGLISH.clipReopenRequired).toMatch(/toolbar/i);
+    expect(ENGLISH.clipReopenRequired).toMatch(/reopen/i);
+    expect(VIETNAMESE.clipReopenRequired).toMatch(/thanh công cụ/);
+    expect(VIETNAMESE.clipReopenRequired).toMatch(/mở lại/);
+  });
+
   it('the consent step has its method choices and the confirmation in both languages', () => {
     for (const strings of [ENGLISH, VIETNAMESE]) {
       expect(Object.keys(strings.consentMethods).sort()).toEqual(['in_call_chat', 'in_invite', 'in_writing', 'told_at_start']);

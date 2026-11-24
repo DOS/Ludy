@@ -13,11 +13,11 @@ import { needsNewCaptcha, runPortalSync, type SyncProgress } from '../lib/portal
 
 type Phase = 'form' | 'working' | 'done';
 
-// Downloads settled so far: fetched, already in Crove, or not on the portal.
+// Downloads settled so far: fetched, already in Ludy, or not on the portal.
 const settled = (p: SyncProgress | null) => (p ? p.downloaded + p.duplicates + p.failed : 0);
 
 // "Lấy danh sách từ cổng thuế" (issue #325): the accountant types the client's portal password and the CAPTCHA the
-// portal shows, and Crove fetches the period's purchase list and invoice XML. The password lives in this form's state
+// portal shows, and Ludy fetches the period's purchase list and invoice XML. The password lives in this form's state
 // until the login request and is cleared right after it; the portal session the kernel answers is kept in a ref for
 // this one sync and dropped when it ends or the panel closes.
 export function PortalSyncPanel({ period, periodLabel, onChanged, onClose }: { period: string; periodLabel: string; onChanged: () => void; onClose: () => void }) {

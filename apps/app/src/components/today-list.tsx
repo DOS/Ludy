@@ -3,7 +3,7 @@
 // kernel.today, grouped by kind with flags first; each row links to the screen where the item is acted on. Nothing is
 // approved or sent from here: batch approval stays in the owning app's screen.
 import { useQuery } from '@tanstack/react-query';
-import { useState, type MouseEvent } from 'react';
+import { useState, type MouseEvent, type ReactNode } from 'react';
 import { Link, useRouter } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
 import { todayCoworkerKey, todayCount, type TodayCoworkers, type TodayItem, type TodaySeverity } from '@ludy/kernel-contract';
@@ -11,6 +11,7 @@ import { Badge } from '@ludy/ui/components/badge';
 import { Button } from '@ludy/ui/components/button';
 import { Card } from '@ludy/ui/components/card';
 import { NavIcon } from '@ludy/ui/components/nav-icon';
+import { cn } from '@ludy/ui/lib/utils';
 import { TodayBrief } from './today-brief.tsx';
 import { Empty, ErrorText, ListSkeleton } from './ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
@@ -18,6 +19,7 @@ import { errorMessage, orpc } from '../lib/api.ts';
 import { installedModules } from '../lib/org-modules.ts';
 import { SAFETY_POLL_MS, pollEvery, useStreamLive } from '../lib/stream-hook.ts';
 import { QUEUE_ROWS, TODAY_ICON, groupToday, limitGroups, proposalChips, queueRows, todayPath, todayTotal } from '../lib/today.ts';
+import { PHONE_TARGET } from '../lib/touch-target.ts';
 
 const SEVERITY_VARIANT: Record<TodaySeverity, 'destructive' | 'warning' | 'outline'> = { block: 'destructive', warn: 'warning', info: 'outline' };
 
@@ -63,7 +65,7 @@ function TodayRow({ item, slug, coworkers }: { item: TodayItem; slug: string; co
       <a
         href={path}
         onClick={go}
-        className="flex items-center gap-3 px-4 py-3 text-sm hover:bg-muted/50 focus-visible:bg-muted/50"
+        className={cn('flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-muted/50 focus-visible:bg-muted/50', PHONE_TARGET)}
       >
         <NavIcon name={TODAY_ICON[item.kind]} className="text-muted-foreground" />
         <span className="min-w-0 flex-1">
@@ -83,7 +85,7 @@ function TodayRow({ item, slug, coworkers }: { item: TodayItem; slug: string; co
   );
 }
 
-export function TodayList({ slug }: { slug: string }) {
+export function TodayList({ slug, emptyContent }: { slug: string; emptyContent?: ReactNode }) {
   const t = useTranslations('today');
   const live = useStreamLive();
   const today = useQuery({ ...orpc.today.list.queryOptions(), refetchInterval: pollEvery(live, 60_000, SAFETY_POLL_MS) });
@@ -97,25 +99,60 @@ export function TodayList({ slug }: { slug: string }) {
   const chips = proposalChips(items);
   const total = todayCount(items);
 
-  return (
-    <section aria-labelledby="overview-today">
-      <h2 id="overview-today" className="flex items-baseline gap-2 text-lg font-semibold">
-        {t('title')}
-        {total > 0 && (
-          <span className="font-mono text-sm font-normal tabular-nums text-subtle-foreground" data-testid="today-total">
-            {total}
-          </span>
-        )}
-      </h2>
-      <p className="mt-1 text-xs text-subtle-foreground">{t('subtitle')}</p>
-      <div className="mt-3">
-        {today.isPending ? (
+  if (today.isPending) {
+    return (
+      <section aria-labelledby="overview-today">
+        <h2 id="overview-today" className="flex items-baseline gap-2 text-base font-semibold text-foreground">
+          {t('title')}
+        </h2>
+        <p className="mt-1 text-xs text-subtle-foreground">{t('subtitle')}</p>
+        <div className="mt-3">
           <ListSkeleton rows={2} />
-        ) : today.isError ? (
+        </div>
+      </section>
+    );
+  }
+
+  if (today.isError) {
+    return (
+      <section aria-labelledby="overview-today">
+        <h2 id="overview-today" className="flex items-baseline gap-2 text-base font-semibold text-foreground">
+          {t('title')}
+        </h2>
+        <p className="mt-1 text-xs text-subtle-foreground">{t('subtitle')}</p>
+        <div className="mt-3">
           <ErrorText>{errorMessage(today.error)}</ErrorText>
-        ) : groups.length === 0 ? (
-          // Nothing waits: a new owner is pointed to the quick guide (#3596), where the accounting app is on.
+        </div>
+      </section>
+    );
+  }
+
+  if (groups.length === 0) {
+    if (emptyContent) {
+      return (
+        <section aria-labelledby="overview-today">
+          <Card className="block overflow-hidden p-0" data-testid="today-hero-card">
+            <div className="flex flex-wrap items-baseline justify-between gap-2 border-b px-4 py-3">
+              <h2 id="overview-today" className="text-base font-semibold text-foreground">
+                {t('title')}
+              </h2>
+              <span className="text-xs text-subtle-foreground">{t('empty')}</span>
+            </div>
+            {emptyContent}
+          </Card>
+        </section>
+      );
+    }
+    return (
+      <section aria-labelledby="overview-today">
+        <h2 id="overview-today" className="flex items-baseline gap-2 text-base font-semibold text-foreground">
+          {t('title')}
+        </h2>
+        <p className="mt-1 text-xs text-subtle-foreground">{t('subtitle')}</p>
+        <div className="mt-3">
+          {/* Nothing waits: a new owner is pointed to the quick guide (#3596), where the accounting app is on. */}
           <Empty
+            compact
             title={t('empty')}
             hint={t('emptyHint')}
             action={
@@ -126,41 +163,71 @@ export function TodayList({ slug }: { slug: string }) {
               ) : undefined
             }
           />
-        ) : (
-          <div className="space-y-5">
-            <TodayBrief slug={slug} items={items} name={today.data.coworkers.gm} />
-            {groups.map((group) => (
-              <div key={group.kind}>
-                <div className="mb-2 flex flex-wrap items-baseline gap-2">
-                  <h3 className="flex items-baseline gap-2 text-sm font-semibold">
-                    {t(`kinds.${group.kind}`)}
-                    <span className="font-mono text-xs font-normal tabular-nums text-subtle-foreground">{todayTotal(allGroups.find((g) => g.kind === group.kind)?.items ?? group.items)}</span>
-                  </h3>
-                  {/* Beside the heading, not in it, so the heading's name stays the kind and its count. */}
-                  {group.kind === 'proposal' &&
-                    chips.map((chip) => (
-                      <Badge key={chip.severity} variant={SEVERITY_VARIANT[chip.severity]} data-testid="today-chip">
-                        {t(`chip.${chip.severity}`, { count: chip.count })}
-                      </Badge>
-                    ))}
-                </div>
-                <Card className="block overflow-hidden p-0">
-                  <ul className="divide-y">
-                    {group.items.map((item) => (
-                      <TodayRow key={`${item.app}:${item.id}`} item={item} slug={slug} coworkers={today.data.coworkers} />
-                    ))}
-                  </ul>
-                </Card>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section aria-labelledby="overview-today">
+      <Card className="block overflow-hidden p-0" data-testid="today-hero-card">
+        <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b px-4 py-3">
+          <div className="flex flex-wrap items-baseline gap-2">
+            <h2 id="overview-today" className="flex items-baseline gap-2 text-base font-semibold text-foreground">
+              {t('title')}
+              {total > 0 && (
+                <span className="font-mono text-sm font-normal tabular-nums text-subtle-foreground" data-testid="today-total">
+                  {total}
+                </span>
+              )}
+            </h2>
+            <p className="text-xs text-subtle-foreground">{t('subtitle')}</p>
+          </div>
+        </div>
+        {/* TodayBrief integrated inside the same hero card without double card chrome or spacing (#4644). */}
+        <div
+          data-testid="today-brief-host"
+          className={cn(
+            'border-b bg-muted/20 empty:hidden',
+            '[&>[data-testid="today-brief"]]:rounded-none [&>[data-testid="today-brief"]]:border-0 [&>[data-testid="today-brief"]]:px-4 [&>[data-testid="today-brief"]]:py-2.5 [&>[data-testid="today-brief"]]:ring-0 [&>[data-testid="today-brief"]]:shadow-none',
+            '[&_[data-slot="card"]]:rounded-none [&_[data-slot="card"]]:border-0 [&_[data-slot="card"]]:bg-transparent [&_[data-slot="card"]]:px-4 [&_[data-slot="card"]]:py-2.5 [&_[data-slot="card"]]:ring-0 [&_[data-slot="card"]]:shadow-none',
+            '[&>[aria-busy="true"]]:h-12 [&>[aria-busy="true"]]:rounded-none [&>[aria-busy="true"]]:border-0',
+          )}
+        >
+          <TodayBrief slug={slug} items={items} name={today.data.coworkers.gm} />
+        </div>
+        <div className="divide-y">
+          {groups.map((group) => (
+            <div key={group.kind}>
+              <div className="flex flex-wrap items-center gap-2 bg-muted/30 px-4 py-2">
+                <h3 className="flex items-baseline gap-2 text-sm font-semibold text-foreground">
+                  {t(`kinds.${group.kind}`)}
+                  <span className="font-mono text-xs font-normal tabular-nums text-subtle-foreground">{todayTotal(allGroups.find((g) => g.kind === group.kind)?.items ?? group.items)}</span>
+                </h3>
+                {/* Beside the heading, not in it, so the heading's name stays the kind and its count. */}
+                {group.kind === 'proposal' &&
+                  chips.map((chip) => (
+                    <Badge key={chip.severity} variant={SEVERITY_VARIANT[chip.severity]} data-testid="today-chip">
+                      {t(`chip.${chip.severity}`, { count: chip.count })}
+                    </Badge>
+                  ))}
               </div>
-            ))}
-            {rows > QUEUE_ROWS && (
-              <Button type="button" variant="outline" size="sm" aria-expanded={all} onClick={() => setAll((v) => !v)} data-testid="today-toggle">
-                {all ? t('showLess') : t('showAll', { count: rows })}
-              </Button>
-            )}
+              <ul className="divide-y">
+                {group.items.map((item) => (
+                  <TodayRow key={`${item.app}:${item.id}`} item={item} slug={slug} coworkers={today.data.coworkers} />
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+        {rows > QUEUE_ROWS && (
+          <div className="border-t px-4 py-2.5">
+            <Button type="button" variant="outline" size="sm" aria-expanded={all} onClick={() => setAll((v) => !v)} data-testid="today-toggle">
+              {all ? t('showLess') : t('showAll', { count: rows })}
+            </Button>
           </div>
         )}
-      </div>
+      </Card>
     </section>
   );
 }

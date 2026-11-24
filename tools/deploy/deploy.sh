@@ -11,6 +11,7 @@
 #   deploy.sh rollback [--dir <dir>] [--env-file <file>]
 #   deploy.sh status   [--dir <dir>]
 #   deploy.sh smoke <base url> [build id]
+#   deploy.sh check-app-build <app url> <expected build> [api url]
 #   deploy.sh check-auth-settings <file>
 #   deploy.sh check-modules <list>
 #
@@ -79,6 +80,9 @@ KEEP_ENV_BACKUPS="${LUDY_KEEP_ENV_BACKUPS:-${CROVE_KEEP_ENV_BACKUPS:-5}}"
 SMOKE_URL="${LUDY_SMOKE_URL:-${CROVE_SMOKE_URL:-}}"
 # Seconds the account step of the smoke test waits for the worker to turn its upload into a proposal.
 SMOKE_POLL_SECONDS="${LUDY_SMOKE_POLL_SECONDS:-${CROVE_SMOKE_POLL_SECONDS:-120}}"
+# Seconds check-app-build waits for the static web host to serve the bundle matching /version (#3580).
+APP_BUILD_TIMEOUT="${LUDY_APP_BUILD_TIMEOUT:-${CROVE_APP_BUILD_TIMEOUT:-600}}"
+APP_BUILD_POLL="${LUDY_APP_BUILD_POLL:-${CROVE_APP_BUILD_POLL:-15}}"
 
 # Output may go to an SSH session that has dropped (see the signal traps in main): a failed write never stops a
 # deploy halfway.
@@ -215,6 +219,140 @@ smoke_version() {
     err "smoke: expected build $2 with no missing migration; /version answered: ${body:0:500}"
     return 1
   fi
+}
+
+smoke_get_nocache() {
+  curl -q --silent --show-error --fail --globoff --location --max-redirs 0 --proto '=http,https' --proto-redir '=http,https' --max-time 15 \
+    --header 'Cache-Control: no-cache' --header 'Pragma: no-cache' -- "$1"
+}
+
+CHECK_APP_OBSERVED='none'
+check_app_build_probe() {
+  local app_url="$1" expected="$2" work="$3"
+  local page raw_assets asset jsfile count=0 seen='' queued='' boot_seen=0 found_key='' found_val='' chunk_refs='' ref=''
+  CHECK_APP_OBSERVED='none'
+  rm -f "$work"/*.js
+
+  page="$(smoke_get_nocache "$app_url/login")" || {
+    CHECK_APP_OBSERVED='request failed'
+    return 1
+  }
+  if [[ "$page" != *'id="root"'* ]]; then
+    CHECK_APP_OBSERVED='missing root shell'
+    return 1
+  fi
+
+  raw_assets="$(printf '%s' "$page" | grep -oE '(src|href)=["'\'']/assets/[A-Za-z0-9._-]+\.js["'\'']' | sed -E 's/^(src|href)=["'\'']//; s/["'\'']$//' || true)"
+  if [ -z "$raw_assets" ]; then
+    CHECK_APP_OBSERVED='no script bundle in HTML'
+    return 1
+  fi
+
+  while IFS= read -r asset; do
+    [ -n "$asset" ] || continue
+    [[ "$asset" =~ ^/assets/[A-Za-z0-9._-]+\.js$ ]] && [[ "$asset" != *..* ]] || continue
+    if [ "$asset" = '/assets/theme-boot.js' ]; then
+      boot_seen=1
+      continue
+    fi
+    case " $queued " in *" $asset "*) ;; *) queued="${queued:+$queued }$asset" ;; esac
+  done <<<"$raw_assets"
+  if ((boot_seen)) && [ -z "$queued" ]; then
+    queued='/assets/theme-boot.js'
+  fi
+  if [ -z "$queued" ]; then
+    CHECK_APP_OBSERVED='no script bundle in HTML'
+    return 1
+  fi
+
+  local key_re='VITE_BUILD["'\''`]?[[:space:]]*[:=][[:space:]]*["'\''`][^"'\''`]{0,64}["'\''`]'
+  while [ -n "$queued" ] && ((count < 50)); do
+    asset="${queued%% *}"
+    if [ "$asset" = "$queued" ]; then queued=''; else queued="${queued#* }"; fi
+    [[ "$asset" =~ ^/assets/[A-Za-z0-9._-]+\.js$ ]] && [[ "$asset" != *..* ]] || continue
+    case " $seen " in *" $asset "*) continue ;; esac
+    seen="${seen:+$seen }$asset"
+    count=$((count + 1))
+
+    jsfile="$work/asset-$count.js"
+    if ! smoke_get_nocache "$app_url$asset" >"$jsfile"; then
+      if [ "$CHECK_APP_OBSERVED" = none ]; then CHECK_APP_OBSERVED="asset fetch failed ($asset)"; fi
+      continue
+    fi
+
+    found_key="$(grep -oE "$key_re" "$jsfile" | head -n 1 || true)"
+    if [ -n "$found_key" ]; then
+      found_val="${found_key#*[:=]}"
+      found_val="${found_val#"${found_val%%[![:space:]]*}"}"
+      found_val="${found_val#?}"
+      found_val="${found_val%?}"
+      if [ "$found_val" = "$expected" ]; then
+        return 0
+      fi
+      CHECK_APP_OBSERVED="${found_val:-(empty)}"
+      return 1
+    fi
+
+    chunk_refs="$(grep -oE '(/|\./)?assets/[A-Za-z0-9._-]+\.js' "$jsfile" || true)"
+    if [ -n "$chunk_refs" ]; then
+      while IFS= read -r ref; do
+        [ -n "$ref" ] || continue
+        ref="${ref#./}"
+        ref="/${ref#/}"
+        [[ "$ref" =~ ^/assets/[A-Za-z0-9._-]+\.js$ ]] && [[ "$ref" != *..* ]] || continue
+        case " $seen $queued " in *" $ref "*) ;; *) queued="${queued:+$queued }$ref" ;; esac
+      done <<<"$chunk_refs"
+    fi
+  done
+
+  return 1
+}
+
+# check_app_build <app url> <expected build> [api url]: verifies that the static web app at <app url> serves a JS
+# bundle whose VITE_BUILD matches <expected build> (and, when <api url> is given, that <api url>/version reports it).
+check_app_build() {
+  local app_url="${1%/}" expected="$2" api_url="${3:-}"
+  api_url="${api_url%/}"
+  [[ "$app_url" =~ ^https?://[A-Za-z0-9.:-]+$ ]] || die "$EXIT_USAGE" "app url must be an http(s) origin: '$1'"
+  valid_build "$expected" || die "$EXIT_USAGE" "the build id must match [A-Za-z0-9._-]{1,64}: '$expected'"
+  if [ -n "$api_url" ]; then
+    [[ "$api_url" =~ ^https?://[A-Za-z0-9.:-]+$ ]] || die "$EXIT_USAGE" "api url must be an http(s) origin: '$3'"
+  fi
+  [[ "$APP_BUILD_TIMEOUT" =~ ^[0-9]+$ && "$APP_BUILD_POLL" =~ ^[0-9]+$ ]] || die "$EXIT_USAGE" 'CROVE_APP_BUILD_TIMEOUT and CROVE_APP_BUILD_POLL must be non-negative integers'
+  local app_build_timeout=$((10#$APP_BUILD_TIMEOUT)) app_build_poll=$((10#$APP_BUILD_POLL))
+
+  if [ -n "$api_url" ]; then
+    smoke_version "$api_url" "$expected" || die "$EXIT_FAILED" "API at $api_url/version does not report build $expected"
+  fi
+
+  local rc=1 deadline=$((SECONDS + app_build_timeout))
+  APP_BUILD_WORK="$(mktemp -d)" || die "$EXIT_FAILED" 'cannot make a temporary directory to check the web bundle'
+  trap cleanup EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  while :; do
+    if check_app_build_probe "$app_url" "$expected" "$APP_BUILD_WORK"; then
+      if [ -n "$api_url" ] && ! smoke_version "$api_url" "$expected"; then
+        err "API at $api_url/version drifted away from build $expected"
+        rc=1
+        break
+      fi
+      log "web app ok: $app_url bundle VITE_BUILD matches ${api_url:+$api_url/version (}$expected${api_url:+)}"
+      rc=0
+      break
+    fi
+    if ((SECONDS >= deadline)); then
+      err "web app at $app_url does not serve bundle build $expected (observed: $CHECK_APP_OBSERVED)${api_url:+ matching $api_url/version}"
+      rc=1
+      break
+    fi
+    log "waiting for web app at $app_url to serve build $expected (observed: $CHECK_APP_OBSERVED)"
+    if ((app_build_poll > 0)); then sleep "$app_build_poll"; fi
+  done
+  rm -rf "$APP_BUILD_WORK"
+  APP_BUILD_WORK=''
+  trap - EXIT INT TERM
+  return "$rc"
 }
 
 # smoke_api <headers file> <url> [curl args...]: like smoke_get, as the signed-in user, without following redirects.
@@ -517,9 +655,10 @@ acquire_lock() {
 release_lock() { if [ "$LOCK_HELD" = 1 ]; then rm -rf "$(state_dir)/lock"; fi; }
 
 # The registry login's throwaway Docker config (pull_images); removed on every exit.
-PULL_CONFIG=''
+PULL_CONFIG='' APP_BUILD_WORK=''
 cleanup() {
   if [ -n "$PULL_CONFIG" ]; then rm -rf "$PULL_CONFIG"; fi
+  if [ -n "${APP_BUILD_WORK:-}" ]; then rm -rf "$APP_BUILD_WORK"; fi
   # The copies of the env file made while the context token key is written hold that key (and the old file). Stopped while
   # the env file itself is being overwritten, they are the way back: kept, and named.
   if [ "${KEY_WRITING:-0}" = 1 ]; then
@@ -1885,7 +2024,11 @@ main() {
       [ -z "${2:-}" ] || valid_build "$2" || die "$EXIT_USAGE" "the build id must match [A-Za-z0-9._-]{1,64}: '$2'"
       smoke "$1" account "${2:-}" || die "$EXIT_FAILED" "smoke test failed on $1"
       ;;
-    *) die "$EXIT_USAGE" 'usage: deploy.sh deploy|rollback|status|smoke|check-auth-settings|check-modules (see the header of this file)' ;;
+    check-app-build)
+      (($# >= 2 && $# <= 3)) || die "$EXIT_USAGE" 'usage: deploy.sh check-app-build <app url> <expected build> [api url]'
+      check_app_build "$1" "$2" "${3:-}" || exit "$EXIT_FAILED"
+      ;;
+    *) die "$EXIT_USAGE" 'usage: deploy.sh deploy|rollback|status|smoke|check-app-build|check-auth-settings|check-modules (see the header of this file)' ;;
   esac
 }
 

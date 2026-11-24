@@ -2,11 +2,25 @@
 // Component and screen rendering tests for eSign Slice 1c (#3325): Vy proposal overlays, AI-off parity,
 // signer roster, envelope list filters, hash-fragment ceremony security, and offline SHA-256 certificate verification.
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import type { ReactNode } from 'react';
+import { createRef, type ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { catalog } from '../src/i18n/runtime.ts';
+
+vi.mock('@ludy/ui/components/sheet', async () => {
+  const { createElement } = await import('react');
+  return {
+    Sheet: ({ open = true, children }: { open?: boolean; children?: ReactNode }) => (open ? createElement('div', { 'data-slot': 'sheet' }, children) : null),
+    SheetContent: ({ closeLabel, children, ...rest }: { closeLabel: string; children?: ReactNode; [k: string]: unknown }) =>
+      createElement('div', { role: 'dialog', 'data-close-label': closeLabel, ...rest }, children),
+    SheetHeader: ({ children }: { children?: ReactNode }) => createElement('div', { 'data-slot': 'sheet-header' }, children),
+    SheetBody: ({ children }: { children?: ReactNode }) => createElement('div', { 'data-slot': 'sheet-body' }, children),
+    SheetFooter: ({ children }: { children?: ReactNode }) => createElement('div', { 'data-slot': 'sheet-footer' }, children),
+    SheetTitle: ({ children }: { children?: ReactNode }) => createElement('h2', { 'data-slot': 'sheet-title' }, children),
+    SheetDescription: ({ children }: { children?: ReactNode }) => createElement('p', { 'data-slot': 'sheet-description' }, children),
+  };
+});
 import {
   publicSignApi,
   type SignAiAnalysis,
@@ -63,7 +77,7 @@ const { FieldOptionsAndAttachmentEditor } = await import('../src/components/sign
 const { FieldOverlayLayer } = await import('../src/components/sign/field-placer.tsx');
 const { isCurrentPdfTargetRendered } = await import('../src/components/sign/pdf-canvas-viewer.tsx');
 const { SignerPanel } = await import('../src/components/sign/signer-panel.tsx');
-const { VyClausePanel } = await import('../src/components/sign/vy-clause-panel.tsx');
+const { VyClausePanel, VyClauseSheet, VyClauseTrigger } = await import('../src/components/sign/vy-clause-panel.tsx');
 const { fetchEnvelopesForTab, filterEnvelopesByTab, SignEnvelopesPage } = await import('../src/routes/sign-envelopes.tsx');
 const {
   canManageEnvelopeLinksAndVoid,
@@ -1300,10 +1314,41 @@ describe('Public signing ceremony and offline SHA-256 verifier (#3325)', () => {
     expect(viHtml).toContain('data-testid="sign-detected-tags-banner"');
     expect(viHtml).toContain('data-testid="sign-apply-detected-tags-btn"');
     expect(viHtml).toContain('Áp dụng 3 ô từ thẻ tài liệu');
-    expect(viHtml).toContain('Tính năng AI đang tắt hoặc hết ngân sách tháng.');
+    expect(viHtml).toContain('data-testid="vy-clause-trigger"');
+    expect(viHtml).toContain('Vy đọc hợp đồng');
+
+    const triggerRef = createRef<HTMLButtonElement>();
+    const vyTriggerHtml = renderVi(
+      <VyClauseTrigger open={false} onToggle={vi.fn()} buttonRef={triggerRef} proposalCount={0} />,
+    );
+    expect(vyTriggerHtml).toContain('max-md:min-h-11');
+
+    const vySheetOffHtml = renderVi(
+      <VyClauseSheet
+        open
+        onClose={vi.fn()}
+        triggerRef={triggerRef}
+        aiAnalysis={{
+          status: 'disabled',
+          summaryText: null,
+          riskLevel: null,
+          proposedFields: [],
+          riskClauses: [],
+        }}
+        pendingProposals={[]}
+        editable={true}
+        analyzing={false}
+        onAnalyze={vi.fn()}
+        onJumpToPage={vi.fn()}
+        onApplyAllProposals={vi.fn()}
+      />,
+    );
+    expect(vySheetOffHtml).toContain('data-testid="vy-clause-sheet"');
+    expect(vySheetOffHtml).toContain('Tính năng AI đang tắt hoặc hết ngân sách tháng.');
 
     const enHtml = renderEn(<SignEnvelopeDetailPage />, qc);
     expect(enHtml).toContain('Apply 3 tag fields');
+    expect(enHtml).toContain('Vy contract review');
   });
 
   it('renders 24h pre-expiry auto-remind toggle on draft envelopes and declined reason + pre-expiry badge on signers (#3813)', () => {

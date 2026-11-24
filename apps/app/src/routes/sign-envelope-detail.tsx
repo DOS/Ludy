@@ -21,7 +21,7 @@ import { EnvelopePlaybookCard } from '../components/sign/envelope-playbook-card.
 import { PdfCanvasViewer } from '../components/sign/pdf-canvas-viewer.tsx';
 import { SenderSharedSummaryEditor } from '../components/sign/shared-summary-card.tsx';
 import { SignerPanel, type AddSignerFormInput } from '../components/sign/signer-panel.tsx';
-import { VyClausePanel } from '../components/sign/vy-clause-panel.tsx';
+import { VyClauseSheet, VyClauseTrigger } from '../components/sign/vy-clause-panel.tsx';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { ErrorText, isEmailAddress, ListSkeleton, PageHeader } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
@@ -162,6 +162,8 @@ export function SignEnvelopeDetailPage() {
   const [expiresAtInput, setExpiresAtInput] = useState('');
   const [autoRemindInput, setAutoRemindInput] = useState(true);
   const [sendDialogOpen, setSendDialogOpen] = useState(false);
+  const [vyOpen, setVyOpen] = useState(false);
+  const vyTriggerRef = useRef<HTMLButtonElement>(null);
   const [voidDialogOpen, setVoidDialogOpen] = useState(false);
   const [voidReason, setVoidReason] = useState('');
   const [mintedLinks, setMintedLinks] = useState<Array<{ signerId: string; url: string }>>([]);
@@ -997,6 +999,12 @@ export function SignEnvelopeDetailPage() {
         subtitle={`${t(`routing.${envelope.routingMode}`)} - ${t('fieldsCount', { count: String(draftFields.length) })}`}
         actions={
           <div className="flex flex-wrap gap-2">
+            <VyClauseTrigger
+              open={vyOpen}
+              onToggle={() => setVyOpen((v) => !v)}
+              buttonRef={vyTriggerRef}
+              proposalCount={pendingProposals.length}
+            />
             {canEditDraft ? (
               <>
                 <Button
@@ -1043,6 +1051,22 @@ export function SignEnvelopeDetailPage() {
             ) : null}
           </div>
         }
+      />
+
+      <VyClauseSheet
+        open={vyOpen}
+        onClose={() => setVyOpen(false)}
+        triggerRef={vyTriggerRef}
+        aiAnalysis={effectiveAi}
+        pendingProposals={pendingProposals}
+        editable={canEditDraft}
+        analyzing={analyzeMutation.isPending}
+        onAnalyze={() => analyzeMutation.mutate()}
+        onJumpToPage={(targetPage) => {
+          setPageNumber(Math.min(effectivePageCount, Math.max(1, targetPage)));
+          setVyOpen(false);
+        }}
+        onApplyAllProposals={handleApplyAllProposals}
       />
 
       {envelope.sourceKind === 'hr_contract' ? (
@@ -1398,16 +1422,6 @@ export function SignEnvelopeDetailPage() {
               onDownloadAttachment={(fileId, filename) => handleDownload(fileId, filename)}
             />
           ) : null}
-
-          <VyClausePanel
-            aiAnalysis={effectiveAi}
-            pendingProposals={pendingProposals}
-            editable={canEditDraft}
-            analyzing={analyzeMutation.isPending}
-            onAnalyze={() => analyzeMutation.mutate()}
-            onJumpToPage={(targetPage) => setPageNumber(Math.min(effectivePageCount, Math.max(1, targetPage)))}
-            onApplyAllProposals={handleApplyAllProposals}
-          />
 
           <EnvelopePlaybookCard
             envelopeId={envelope.id}

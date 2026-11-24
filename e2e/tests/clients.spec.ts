@@ -50,7 +50,9 @@ test('an accountant sees every company on one screen and opens one with a click'
   await test.step('one click opens a company, and the sidebar leads back', async () => {
     await page.getByRole('link', { name: 'Công ty Bình Minh' }).click();
     await expect(page).toHaveURL(new RegExp(`/o/${second}/overview$`));
-    await page.getByRole('complementary').getByRole('link', { name: 'Tất cả doanh nghiệp' }).click();
+    const sidebar = page.getByRole('complementary');
+    await sidebar.getByRole('button', { name: /^Tài khoản:/ }).click();
+    await sidebar.getByRole('link', { name: 'Tất cả doanh nghiệp' }).click();
     await expect(page).toHaveURL(/\/clients$/);
     await page.getByRole('row').filter({ hasText: 'Công ty An Bình' }).getByRole('link', { name: '1', exact: true }).click();
     await expect(page).toHaveURL(new RegExp(`/o/${first}/inbox$`));

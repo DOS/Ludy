@@ -337,7 +337,7 @@ export function VoucherFormPanel({ slug, onClose, fromLine }: { slug: string; on
       </div>
 
       <div>
-        <p className="text-xs font-medium tracking-wide uppercase text-subtle-foreground">{t('form.lines')}</p>
+        <p className="text-xs font-medium text-subtle-foreground">{t('form.lines')}</p>
         <div className="mt-2 space-y-2">
           {lines.map((l, i) => {
             const lineField = `line:${l.key}` as const;
@@ -445,7 +445,7 @@ export function VoucherFormPanel({ slug, onClose, fromLine }: { slug: string; on
 
       {!problem && (
         <div>
-          <p className="text-xs font-medium tracking-wide uppercase text-subtle-foreground">{t('form.preview')}</p>
+          <p className="text-xs font-medium text-subtle-foreground">{t('form.preview')}</p>
           <table className="mt-2 w-full text-sm">
             <tbody className="divide-y">
               {journal.map((j, i) => (
@@ -596,30 +596,32 @@ export function VouchersPage() {
       ) : (
         <>
           <DataTable
+            stacked
+            numeric={[5]}
             head={[t('columns.number'), t('columns.date'), t('columns.party'), t('columns.description'), t('columns.account'), t('columns.amount'), t('columns.status')]}
           >
             {rows.map((v) => (
               <TableRow key={v.id}>
-                <TableCell className="px-4 py-3">
+                <TableCell data-label={t('columns.number')}>
                   <span className="font-mono font-medium text-foreground">{v.code}</span>
                   <p className="text-xs text-subtle-foreground">{t(`types.${v.type}`)}</p>
                 </TableCell>
-                <TableCell className="px-4 py-3 text-muted-foreground">{f.date(v.date)}</TableCell>
-                <TableCell className="px-4 py-3 text-foreground">
+                <TableCell data-label={t('columns.date')} className="text-muted-foreground tabular-nums">{f.date(v.date)}</TableCell>
+                <TableCell data-label={t('columns.party')} className="text-foreground">
                   {v.party?.name ?? ''}
                   {v.personName && <p className="text-xs text-subtle-foreground">{v.personName}</p>}
                 </TableCell>
-                <TableCell className="px-4 py-3 text-foreground">{v.description}</TableCell>
-                <TableCell className="px-4 py-3 font-mono text-muted-foreground">{v.cashAccount}</TableCell>
-                <TableCell className="px-4 py-3 text-right text-foreground tabular-nums">{f.money(v.amount)}</TableCell>
-                <TableCell className="px-4 py-3">
+                <TableCell data-label={t('columns.description')} className="text-foreground">{v.description}</TableCell>
+                <TableCell data-label={t('columns.account')} className="font-mono text-muted-foreground">{v.cashAccount}</TableCell>
+                <TableCell data-label={t('columns.amount')} className="text-right text-foreground tabular-nums">{f.money(v.amount)}</TableCell>
+                <TableCell data-label={t('columns.status')}>
                   {v.reversal ? (
                     <Badge variant="warning">{t('reversed', { date: f.date(v.reversal.entryDate) })}</Badge>
                   ) : (
                     <Badge variant="success">{t('posted')}</Badge>
                   )}
                   {v.journalEntryId && (
-                    <Link to="/o/$slug/journal" params={{ slug }} hash={`entry-${v.journalEntryId}`} className="mt-1 block text-xs text-link hover:underline">
+                    <Link to="/o/$slug/journal" params={{ slug }} hash={`entry-${v.journalEntryId}`} className="mt-1 block text-xs text-link hover:underline max-sm:flex max-sm:w-fit">
                       {t('viewEntry')}
                     </Link>
                   )}

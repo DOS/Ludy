@@ -62,6 +62,20 @@ import {
   type HrProbationSummaryOutcome,
   type SummarizeProbationOptions,
 } from './hr-probation.ts';
+import {
+  answerSelfHrPolicyWithLy,
+  createHrPolicyQaGenerator,
+  createHrRequestDraftGenerator,
+  draftSelfHrRequestWithLy,
+  type AnswerSelfHrPolicyOptions,
+  type DraftSelfHrRequestOptions,
+  type HrSelfPolicyQaGenerator,
+  type HrSelfPolicyQaInput,
+  type HrSelfPolicyQaResult,
+  type HrSelfRequestDraftGenerator,
+  type HrSelfRequestDraftInput,
+  type HrSelfRequestDraftResult,
+} from './hr-self.ts';
 import { ORDER_FIELDS } from '@ludy/l10n-vn';
 import { checkMarketplaceColumns, marketplaceColumnsHaveNews, marketplaceColumnsInstructions, marketplaceColumnsPrompt, type MarketplaceColumnFacts, type MarketplaceColumnsResult } from './marketplace-columns.ts';
 import { checkMarketplaceProposalNote, marketplaceProposalNoteInstructions, marketplaceProposalNotePrompt, type MarketplaceProposalNoteFacts, type MarketplaceProposalNoteResult } from './marketplace-proposal-note.ts';
@@ -128,19 +142,35 @@ import {
 import {
   checkRoadmapChangelogDraft,
   checkRoadmapDedupe,
+  checkRoadmapSignalMatch,
   roadmapChangelogDraftInstructions,
   roadmapChangelogDraftPrompt,
   roadmapDedupeInstructions,
   roadmapDedupePrompt,
+  roadmapSignalMatchInstructions,
+  roadmapSignalMatchPrompt,
   zRoadmapChangelogDraftOut,
   zRoadmapDedupeOut,
+  zRoadmapSignalMatchOut,
   type RoadmapChangelogDraftCheckResult,
   type RoadmapChangelogDraftFacts,
   type RoadmapChangelogDraftModelOutput,
   type RoadmapDedupeCheckResult,
   type RoadmapDedupeFacts,
   type RoadmapDedupeModelOutput,
+  type RoadmapSignalMatchCheckResult,
+  type RoadmapSignalMatchFacts,
+  type RoadmapSignalMatchModelOutput,
 } from './project-roadmap.ts';
+import {
+  checkTriageAssist,
+  triageAssistInstructions,
+  triageAssistPrompt,
+  zProjectTriageAssistOut,
+  type ProjectTriageAssistCheckResult,
+  type ProjectTriageAssistFacts,
+  type ProjectTriageAssistGenerator,
+} from './project-triage.ts';
 import {
   createSignAcceptanceDraftGenerator,
   draftSignAcceptanceSummary,
@@ -210,6 +240,7 @@ export type ProjectWeeklyStatusGenerator = (args: { system: string; prompt: stri
 export type ProjectCycleSummaryGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zProjectWeeklyStatusOut> | null; usage?: AiUsage }>;
 export type RoadmapDedupeGenerator = (args: { system: string; prompt: string }) => Promise<{ output: RoadmapDedupeModelOutput | null; usage?: AiUsage }>;
 export type RoadmapChangelogDraftGenerator = (args: { system: string; prompt: string }) => Promise<{ output: RoadmapChangelogDraftModelOutput | null; usage?: AiUsage }>;
+export type RoadmapSignalMatchGenerator = (args: { system: string; prompt: string }) => Promise<{ output: RoadmapSignalMatchModelOutput | null; usage?: AiUsage }>;
 export type CrmFollowupGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zReminderOut> | null; usage?: AiUsage }>;
 export type ReminderGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zReminderOut> | null; usage?: AiUsage }>;
 const zOverviewOut = z.object({
@@ -400,17 +431,21 @@ export class InboxReader {
   private readonly generateProjectCycleSummary: ProjectCycleSummaryGenerator;
   private readonly generateRoadmapDedupe: RoadmapDedupeGenerator;
   private readonly generateRoadmapChangelogDraft: RoadmapChangelogDraftGenerator;
+  private readonly generateRoadmapSignalMatch: RoadmapSignalMatchGenerator;
+  private readonly generateProjectTriageAssist: ProjectTriageAssistGenerator;
   private readonly generateLaborCheck: LaborComplianceGenerator;
   private readonly generateRecruitingBrief: RecruitingBriefGenerator;
   private readonly generateAttendanceAnomalies: AttendanceAnomalyGenerator;
   private readonly generateCvExtract: CvExtractGenerator;
   private readonly generateHrProbationSummary: HrProbationSummaryGenerator;
+  private readonly generateHrRequestDraft: HrSelfRequestDraftGenerator;
+  private readonly generateHrPolicyQa: HrSelfPolicyQaGenerator;
   private readonly generateSignAcceptanceDraft: SignAcceptanceDraftGenerator;
   private readonly payroll: PayrollCoworker;
   private readonly expenseVariance: ExpenseVarianceCoworker;
 
   // The generators replace the model calls in tests; by default both go to the deployment's OpenAI-compatible endpoint, through the AI meter.
-  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; followup?: FollowupGenerator; crmFollowup?: CrmFollowupGenerator; meetingBrief?: MeetingBriefGenerator; overview?: OverviewGenerator; monthClose?: MonthCloseGenerator; cashForecast?: CashForecastGenerator; vatLate?: VatLateGenerator; payrollMatch?: PayrollMatchGenerator; einvoiceReason?: EInvoiceReasonGenerator; einvoiceRate?: EInvoiceRateGenerator; marketplaceLine?: MarketplaceLineGenerator; supplierPayableLine?: SupplierPayableLineGenerator; bankCandidatesLine?: BankCandidatesLineGenerator; misaCheckLine?: MisaCheckLineGenerator; misaAmisBlockerNotes?: MisaAmisBlockerNotesGenerator; marketplaceFeeNotes?: MarketplaceFeeNotesGenerator; marketplaceProposalNote?: MarketplaceProposalNoteGenerator; marketplaceColumns?: MarketplaceColumnsGenerator; stockSurplus?: StockSurplusGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; projectWeeklyStatus?: ProjectWeeklyStatusGenerator; projectCycleSummary?: ProjectCycleSummaryGenerator; roadmapDedupe?: RoadmapDedupeGenerator; roadmapChangelogDraft?: RoadmapChangelogDraftGenerator; laborCheck?: LaborComplianceGenerator; recruitingBrief?: RecruitingBriefGenerator; attendanceAnomalies?: AttendanceAnomalyGenerator; cvExtract?: CvExtractGenerator; hrProbationSummary?: HrProbationSummaryGenerator; signAcceptanceDraft?: SignAcceptanceDraftGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
+  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; followup?: FollowupGenerator; crmFollowup?: CrmFollowupGenerator; meetingBrief?: MeetingBriefGenerator; overview?: OverviewGenerator; monthClose?: MonthCloseGenerator; cashForecast?: CashForecastGenerator; vatLate?: VatLateGenerator; payrollMatch?: PayrollMatchGenerator; einvoiceReason?: EInvoiceReasonGenerator; einvoiceRate?: EInvoiceRateGenerator; marketplaceLine?: MarketplaceLineGenerator; supplierPayableLine?: SupplierPayableLineGenerator; bankCandidatesLine?: BankCandidatesLineGenerator; misaCheckLine?: MisaCheckLineGenerator; misaAmisBlockerNotes?: MisaAmisBlockerNotesGenerator; marketplaceFeeNotes?: MarketplaceFeeNotesGenerator; marketplaceProposalNote?: MarketplaceProposalNoteGenerator; marketplaceColumns?: MarketplaceColumnsGenerator; stockSurplus?: StockSurplusGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; projectWeeklyStatus?: ProjectWeeklyStatusGenerator; projectCycleSummary?: ProjectCycleSummaryGenerator; roadmapDedupe?: RoadmapDedupeGenerator; roadmapChangelogDraft?: RoadmapChangelogDraftGenerator; roadmapSignalMatch?: RoadmapSignalMatchGenerator; projectTriageAssist?: ProjectTriageAssistGenerator; laborCheck?: LaborComplianceGenerator; recruitingBrief?: RecruitingBriefGenerator; attendanceAnomalies?: AttendanceAnomalyGenerator; cvExtract?: CvExtractGenerator; hrProbationSummary?: HrProbationSummaryGenerator; hrRequestDraft?: HrSelfRequestDraftGenerator; hrPolicyQa?: HrSelfPolicyQaGenerator; signAcceptanceDraft?: SignAcceptanceDraftGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
     this.payroll = new PayrollCoworker(config, generators.payroll);
     this.expenseVariance = new ExpenseVarianceCoworker(config);
     this.generateLaborCheck = generators.laborCheck ?? createLaborComplianceGenerator(config);
@@ -418,6 +453,8 @@ export class InboxReader {
     this.generateAttendanceAnomalies = generators.attendanceAnomalies ?? createAttendanceAnomalyGenerator(config);
     this.generateCvExtract = generators.cvExtract ?? createCvExtractGenerator(config);
     this.generateHrProbationSummary = generators.hrProbationSummary ?? createHrProbationSummaryGenerator(config);
+    this.generateHrRequestDraft = generators.hrRequestDraft ?? createHrRequestDraftGenerator(config);
+    this.generateHrPolicyQa = generators.hrPolicyQa ?? createHrPolicyQaGenerator(config);
     this.generateSignAcceptanceDraft = generators.signAcceptanceDraft ?? createSignAcceptanceDraftGenerator(config);
     const timeoutMs = config.timeoutMs ?? 60_000;
     this.generateIntents =
@@ -668,6 +705,22 @@ export class InboxReader {
         );
         return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
       });
+    this.generateRoadmapSignalMatch =
+      generators.roadmapSignalMatch ??
+      (async ({ system, prompt }) => {
+        const { output, usage } = await metered('projects.roadmap_signal_match', () =>
+          generateText({ model: chatModel(config), output: Output.object({ schema: zRoadmapSignalMatchOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
+        );
+        return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
+      });
+    this.generateProjectTriageAssist =
+      generators.projectTriageAssist ??
+      (async ({ system, prompt }) => {
+        const { output, usage } = await metered('projects.triage_assist', () =>
+          generateText({ model: chatModel(config), output: Output.object({ schema: zProjectTriageAssistOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
+        );
+        return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
+      });
   }
 
   /** The suggested intent of each conversation, in the order given (null: no suggestion). At most INTENT_BATCH_MAX conversations are read. onUsage gets the
@@ -786,6 +839,18 @@ export class InboxReader {
     options?: Omit<SummarizeProbationOptions, 'generate'>,
   ): Promise<HrProbationSummaryOutcome> {
     return summarizeProbationEvidence(input, { ...options, generate: this.generateHrProbationSummary });
+  }
+  hrRequestDraft(
+    input: HrSelfRequestDraftInput,
+    options?: Omit<DraftSelfHrRequestOptions, 'generate'>,
+  ): Promise<HrSelfRequestDraftResult> {
+    return draftSelfHrRequestWithLy(input, { ...options, generate: this.generateHrRequestDraft });
+  }
+  hrPolicyQa(
+    input: HrSelfPolicyQaInput,
+    options?: Omit<AnswerSelfHrPolicyOptions, 'generate'>,
+  ): Promise<HrSelfPolicyQaResult> {
+    return answerSelfHrPolicyWithLy(input, { ...options, generate: this.generateHrPolicyQa });
   }
   signAcceptanceDraft(request: SignAcceptanceDraftRequest, onUsage?: (usage: AiUsage) => void): Promise<SignAcceptanceDraftOutcome> {
     return draftSignAcceptanceSummary(request, { generate: this.generateSignAcceptanceDraft, onUsage });
@@ -1036,5 +1101,26 @@ export class InboxReader {
     });
     if (usage) onUsage?.(usage);
     return checkRoadmapChangelogDraft(facts, output);
+  }
+
+  /** Vy's omnichannel roadmap signal match suggestions (#4492): read-only suggestions, never creates items or links signals. */
+  async roadmapSignalMatch(facts: RoadmapSignalMatchFacts, onUsage?: (usage: AiUsage) => void): Promise<RoadmapSignalMatchCheckResult> {
+    if (facts.sourceExcerpt.trim() === '' && facts.sourceTitle.trim() === '') return { kind: 'none', code: 'EMPTY' };
+    const { output, usage } = await this.generateRoadmapSignalMatch({
+      system: roadmapSignalMatchInstructions(facts.language),
+      prompt: roadmapSignalMatchPrompt(facts),
+    });
+    if (usage) onUsage?.(usage);
+    return checkRoadmapSignalMatch(output, facts);
+  }
+
+  /** Vy's triage proposal for one triage inbox item (#4493): validated against allowlisted candidate UUIDs only. */
+  async projectTriageAssist(facts: ProjectTriageAssistFacts, onUsage?: (usage: AiUsage) => void): Promise<ProjectTriageAssistCheckResult> {
+    const { output, usage } = await this.generateProjectTriageAssist({
+      system: triageAssistInstructions(facts.language),
+      prompt: triageAssistPrompt(facts),
+    });
+    if (usage) onUsage?.(usage);
+    return checkTriageAssist(facts, output);
   }
 }

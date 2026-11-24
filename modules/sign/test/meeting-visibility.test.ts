@@ -129,45 +129,54 @@ describe('meeting-visibility helpers and @ludy/mod-sign meeting minutes guards (
     sourceState = 2;
     await expect(assertCanCreateMeetingMinutesEnvelope(ownerCtx, 'meeting_minutes', MEETING_ID)).resolves.toBeUndefined();
 
-    const mtgRow = {
+    const draftMtgRow = {
       source_kind: 'meeting_minutes' as const,
       source_id: MEETING_ID,
       created_by: RECORDER_ID,
+      status: 'draft' as const,
     };
 
-    // Creator short-circuits true; system short-circuits true; agent is false.
+    // System actors short-circuit true; agent actors always get false.
     expect(
       await canAccessMeetingMinutesEnvelopeRow(
         { trx, orgId: ORG_ID, actor: { type: 'system', component: 'seal' } },
-        mtgRow,
+        draftMtgRow,
       ),
     ).toBe(true);
-    expect(await canAccessMeetingMinutesEnvelopeRow(makeUserQueryCtx(trx, RECORDER_ID, 'member'), mtgRow)).toBe(true);
     expect(
       await canAccessMeetingMinutesEnvelopeRow(
         { trx, orgId: ORG_ID, actor: { type: 'agent', agentId: OWNER_ID } as QueryContext['actor'] },
-        mtgRow,
+        draftMtgRow,
       ),
     ).toBe(false);
 
-    // Non-reader owner gets false / 404 when SQL helper returns false!
+    // Unsigned envelopes NEVER short-circuit for created_by: SQL helper decides active reader scope!
     accessAllowed = false;
+    expect(await canAccessMeetingMinutesEnvelopeRow(makeUserQueryCtx(trx, RECORDER_ID, 'member'), draftMtgRow)).toBe(false);
+
+    // Non-reader owner gets false / 404 when SQL helper returns false!
     await expect(
-      assertCanAccessMeetingMinutesEnvelopeRow(makeUserQueryCtx(trx, OWNER_ID, 'owner'), mtgRow),
+      assertCanAccessMeetingMinutesEnvelopeRow(makeUserQueryCtx(trx, OWNER_ID, 'owner'), draftMtgRow),
     ).rejects.toMatchObject({ code: 'SIGN_ENVELOPE_NOT_FOUND', status: 404 });
 
-    // Permitted attendee gets true when SQL helper returns true.
+    // Permitted attendee (or completed record when SQL helper allows) gets true when SQL helper returns true.
     accessAllowed = true;
     await expect(
-      assertCanAccessMeetingMinutesEnvelopeRow(makeUserQueryCtx(trx, ATTENDEE_ID, 'member'), mtgRow),
+      assertCanAccessMeetingMinutesEnvelopeRow(makeUserQueryCtx(trx, ATTENDEE_ID, 'member'), draftMtgRow),
     ).resolves.toBeUndefined();
+    expect(
+      await canAccessMeetingMinutesEnvelopeRow(makeUserQueryCtx(trx, RECORDER_ID, 'member'), {
+        ...draftMtgRow,
+        status: 'completed',
+      }),
+    ).toBe(true);
   });
 
   it('adds SQL visibility predicates for list and by_source even for owners and admins, and excludes agents', async () => {
     const { trx, queries } = createFakeTrx(() => ({ rows: [] }));
 
     await envelopeList.handler(makeUserQueryCtx(trx, OWNER_ID, 'owner'), { limit: 20 });
-    expect(queries[0]!.sql).toContain('can_access_meeting_minutes_envelope');
+    expect(queries[0]!.sql).toContain('can_access_meeting_minutes_envelope_row');
     expect(queries[0]!.parameters).toContain('meeting_minutes');
 
     queries.length = 0;
@@ -175,7 +184,7 @@ describe('meeting-visibility helpers and @ludy/mod-sign meeting minutes guards (
       sourceKind: 'meeting_minutes',
       sourceIds: [MEETING_ID],
     });
-    expect(queries[0]!.sql).toContain('can_access_meeting_minutes_envelope');
+    expect(queries[0]!.sql).toContain('can_access_meeting_minutes_envelope_row');
 
     const agentQuery = applyMeetingMinutesVisibilityFilter(
       trx.selectFrom('ludy_sign.envelope').select('id'),
@@ -187,12 +196,13 @@ describe('meeting-visibility helpers and @ludy/mod-sign meeting minutes guards (
 
   it('returns identical 404 to non-reader owners on get/events/verify/template.create and blocks reader template cloning with 403', async () => {
     let sourceState = 1;
+    let accessAllowed = false;
     const { trx } = createFakeTrx((compiled) => {
       if (compiled.sql.includes('check_meeting_minutes_source')) {
         return { rows: [{ state: sourceState }] };
       }
       if (compiled.sql.includes('can_access_meeting_minutes_envelope')) {
-        return { rows: [{ allowed: false }] };
+        return { rows: [{ allowed: accessAllowed }] };
       }
       if (compiled.sql.includes('"ludy_sign"."envelope"')) {
         return {
@@ -278,6 +288,7 @@ describe('meeting-visibility helpers and @ludy/mod-sign meeting minutes guards (
       }),
     ).rejects.toMatchObject({ code: 'SIGN_ENVELOPE_NOT_FOUND', status: 404 });
 
+    accessAllowed = true;
     await expect(
       templateCreate.handler(recorderCmd, {
         title: 'Recorder Clone Minutes Into Org Template',

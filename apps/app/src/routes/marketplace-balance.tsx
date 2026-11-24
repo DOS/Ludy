@@ -14,7 +14,7 @@ import { MarketplaceActions } from '../components/marketplace-actions.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc } from '../lib/api.ts';
 
-const NUM = 'px-4 py-3 text-right tabular-nums';
+const NUM = 'text-right tabular-nums';
 
 // The coworker's line. The facts are asked first and shown as soon as they arrive, so a slow or failing model never leaves the line blank; the sentence is asked second, only when something is waiting, and
 // is display only. With AI off, busy, out of budget or refused, the facts stand alone (the state is named in a few words).
@@ -139,7 +139,7 @@ export function MarketplaceBalancePage() {
           <DataTable head={[t('platform'), t('salesPosted'), t('paidOut'), t('awaitingPayout'), t('feesAwaitingInvoice')]} numeric={[1, 2, 3, 4]}>
             {rows.map((r) => (
               <TableRow key={`${r.legalEntityId}-${r.platform}`} data-testid="marketplace-balance-row">
-                <TableCell className="px-4 py-3">{r.platformName}</TableCell>
+                <TableCell>{r.platformName}</TableCell>
                 <TableCell className={NUM}>{f.money(r.salesPosted)}</TableCell>
                 <TableCell className={NUM}>{f.money(r.paidOut)}</TableCell>
                 <TableCell className={NUM} data-testid="marketplace-balance-awaiting">

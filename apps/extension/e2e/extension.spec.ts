@@ -598,6 +598,9 @@ test('Notes Quick Capture saves private note and to-do with zero optional permis
         <div id="only-hidden">
           <div hidden>HIDDEN_SECRET_TEXT</div>
           <div style="display:none">STYLE_HIDDEN_TEXT</div>
+          <div hidden><article>${'HIDDEN_ANCESTOR_ARTICLE '.repeat(10)}</article></div>
+          <div aria-hidden="true"><main>${'ARIA_HIDDEN_MAIN '.repeat(10)}</main></div>
+          <div style="display: none"><article>${'INLINE_HIDDEN_ARTICLE '.repeat(10)}</article></div>
           <form><textarea>SECRET_TEXTAREA</textarea><input type="password" value="SECRET_PW" /></form>
           <script>const secretVar = "SECRET_SCRIPT";</script>
         </div>
@@ -607,9 +610,20 @@ test('Notes Quick Capture saves private note and to-do with zero optional permis
       expect(snap.textFallback).toBe('Clean article body');
       expect(snap.contentHtml).not.toContain('HIDDEN_SECRET_TEXT');
       expect(snap.contentHtml).not.toContain('STYLE_HIDDEN_TEXT');
+      expect(snap.contentHtml).not.toContain('HIDDEN_ANCESTOR_ARTICLE');
+      expect(snap.contentHtml).not.toContain('ARIA_HIDDEN_MAIN');
+      expect(snap.contentHtml).not.toContain('INLINE_HIDDEN_ARTICLE');
       expect(snap.contentHtml).not.toContain('SECRET_TEXTAREA');
       expect(snap.contentHtml).not.toContain('SECRET_SCRIPT');
       expect(snap.contentHtml).not.toContain('Menu Item');
+
+      await articlePage.setContent(`
+        <div hidden><article>${'LONGER_HIDDEN_ARTICLE '.repeat(20)}</article></div>
+        <article>${'Visible primary article '.repeat(8).trim()}</article>
+      `);
+      const rankedSnap = await articlePage.evaluate(snapshotDomPage);
+      expect(rankedSnap.textFallback).toBe('Visible primary article '.repeat(8).trim());
+      expect(rankedSnap.contentHtml).not.toContain('LONGER_HIDDEN_ARTICLE');
     } finally {
       await articlePage.close();
     }

@@ -32,6 +32,9 @@ export const PAYROLL_EXPLAIN_MAX = 900;
 export const PAYROLL_EXPLAIN_SENTENCES_MAX = 6;
 // A net pay that moved by more than this percent against last month is an anomaly (the plan's "more than a threshold").
 export const PAY_MOVE_THRESHOLD_PERCENT = '20';
+// Large advance (> 50% of base wage) or retro/offset adjustment (> 30% of base wage) anomaly thresholds (#4527 Stage 6B).
+export const ADVANCE_SHARE_THRESHOLD_PERCENT = '50';
+export const ADJUSTMENT_SHARE_THRESHOLD_PERCENT = '30';
 // The pay of 5 million dong or more in one payment must be non-cash to be deductible (plan row 19).
 export const CASH_PAYMENT_LIMIT = '5000000';
 export const PAYROLL_SHEET_LINES_MAX = 200;
@@ -95,6 +98,9 @@ export interface PayrollLineFacts {
   overtimeMonthsInRow: number;
   dependentsWithoutRegistration: number;
   exceededAnnualDays?: string;
+  advanceAmount?: string;
+  retroPayAmount?: string;
+  offsetDeductionAmount?: string;
   checks: {
     minimumWageFailed: boolean;
     deductionCapFailed: boolean;
@@ -106,6 +112,8 @@ export interface PayrollLineFacts {
     workPermitExpiring?: boolean;
     bhxhSuspendedRegime?: boolean;
     nonResidentFlatPit?: boolean;
+    largeSalaryAdvance?: boolean;
+    largePayrollAdjustment?: boolean;
   };
 }
 
@@ -160,6 +168,9 @@ export function pseudonymizeSheet(lines: readonly PayrollSheetLine[], options: {
       overtimeMonthsInRow: Math.max(0, Math.trunc(line.overtimeMonthsInRow)),
       dependentsWithoutRegistration: Math.max(0, Math.trunc(line.dependentsWithoutRegistration)),
       exceededAnnualDays: new Decimal(line.exceededAnnualDays ?? '0').toFixed(),
+      advanceAmount: new Decimal(line.advanceAmount ?? '0').toFixed(),
+      retroPayAmount: new Decimal(line.retroPayAmount ?? '0').toFixed(),
+      offsetDeductionAmount: new Decimal(line.offsetDeductionAmount ?? '0').toFixed(),
       checks: {
         minimumWageFailed: line.checks.minimumWageFailed === true,
         deductionCapFailed: line.checks.deductionCapFailed === true,
@@ -171,6 +182,8 @@ export function pseudonymizeSheet(lines: readonly PayrollSheetLine[], options: {
         workPermitExpiring: line.checks.workPermitExpiring === true,
         bhxhSuspendedRegime: line.checks.bhxhSuspendedRegime === true,
         nonResidentFlatPit: line.checks.nonResidentFlatPit === true,
+        largeSalaryAdvance: line.checks.largeSalaryAdvance === true,
+        largePayrollAdjustment: line.checks.largePayrollAdjustment === true,
       },
     };
   });
@@ -249,6 +262,8 @@ export const PAYROLL_ANOMALY_KINDS = [
   'work_permit_expiring',
   'bhxh_suspended_regime',
   'non_resident_flat_pit',
+  'large_salary_advance',
+  'large_payroll_adjustment',
   'rule_blocks',
 ] as const;
 export type PayrollAnomalyKind = (typeof PAYROLL_ANOMALY_KINDS)[number];
@@ -337,6 +352,28 @@ export function findAnomalies(sheet: PayrollSheet): PayrollAnomaly[] {
         vi
           ? `${who}: áp dụng thuế TNCN 20% toàn phần đối với cá nhân không cư trú (${amountOf(line.figures.pit, language)})`
           : `${who}: flat 20% non-resident PIT applied (${amountOf(line.figures.pit, language)})`,
+      );
+    }
+    if (line.checks.largeSalaryAdvance) {
+      const adv = new Decimal(line.advanceAmount ?? '0').toFixed();
+      add(
+        'large_salary_advance',
+        who,
+        vi
+          ? `${who}: tạm ứng lương ${amountOf(adv, language)} vượt ngưỡng 50% lương cơ bản (${amountOf(line.figures.base_wage, language)})`
+          : `${who}: salary advance ${amountOf(adv, language)} exceeds 50% of base wage (${amountOf(line.figures.base_wage, language)})`,
+      );
+    }
+    if (line.checks.largePayrollAdjustment) {
+      const retro = new Decimal(line.retroPayAmount ?? '0');
+      const offset = new Decimal(line.offsetDeductionAmount ?? '0');
+      const adjTotal = retro.plus(offset).toFixed();
+      add(
+        'large_payroll_adjustment',
+        who,
+        vi
+          ? `${who}: điều chỉnh truy lĩnh/bù trừ ${amountOf(adjTotal, language)} vượt ngưỡng 30% lương cơ bản (${amountOf(line.figures.base_wage, language)})`
+          : `${who}: retro/offset payroll adjustment ${amountOf(adjTotal, language)} exceeds 30% of base wage (${amountOf(line.figures.base_wage, language)})`,
       );
     }
   }

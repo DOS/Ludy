@@ -19,7 +19,7 @@ import { DataTable, ErrorText, TableSkeleton } from './ui.tsx';
 import { useFormat, useLocaleSetting } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 
-const NUM = 'px-4 py-3 text-right tabular-nums';
+const NUM = 'text-right tabular-nums';
 const refresh = () => queryClient.invalidateQueries({ queryKey: orpc.stock.key() });
 const isZero = (value: string) => /^-?0+(?:\.0+)?$/.test(value);
 // A number as typed, in the way of the language of the screen: Vietnamese groups thousands with dots and writes decimals with a comma (1.500,5), English the other way round (1,500.5). The server
@@ -93,12 +93,12 @@ function CountForm({ legalEntityId, onDone, onCancel }: { legalEntityId: string 
           <DataTable head={[t('code'), t('name'), t('book'), t('counted'), t('unitCost')]} numeric={[2, 3, 4]}>
             {(preview.data ?? []).map((r) => (
               <TableRow key={r.itemId} data-testid="stock-count-item">
-                <TableCell className="px-4 py-3">{r.code}</TableCell>
-                <TableCell className="px-4 py-3">{r.name}</TableCell>
+                <TableCell>{r.code}</TableCell>
+                <TableCell>{r.name}</TableCell>
                 <TableCell className={NUM}>
                   {r.bookQuantity} {r.unit}
                 </TableCell>
-                <TableCell className="px-4 py-3 text-right">
+                <TableCell className="text-right">
                   <Input
                     aria-label={`${t('counted')} ${r.code}`}
                     inputMode="decimal"
@@ -107,7 +107,7 @@ function CountForm({ legalEntityId, onDone, onCancel }: { legalEntityId: string 
                     onChange={(e) => setCounted({ ...counted, [r.itemId]: e.target.value })}
                   />
                 </TableCell>
-                <TableCell className="px-4 py-3 text-right">
+                <TableCell className="text-right">
                   <Input
                     aria-label={`${t('unitCost')} ${r.code}`}
                     title={t('unitCostHint')}
@@ -304,8 +304,8 @@ function CountCard({ count, canWrite, slug }: { count: StockCount; canWrite: boo
       <DataTable head={[t('code'), t('name'), t('book'), t('counted'), t('difference'), t('value')]} numeric={[2, 3, 4, 5]}>
         {count.lines.map((l) => (
           <TableRow key={l.itemId} data-testid="stock-count-line">
-            <TableCell className="px-4 py-3">{l.code}</TableCell>
-            <TableCell className="px-4 py-3">{l.name}</TableCell>
+            <TableCell>{l.code}</TableCell>
+            <TableCell>{l.name}</TableCell>
             <TableCell className={NUM}>{l.bookQuantity}</TableCell>
             <TableCell className={NUM}>{l.countedQuantity}</TableCell>
             <TableCell className={NUM}>{isZero(l.difference) ? '' : l.difference}</TableCell>

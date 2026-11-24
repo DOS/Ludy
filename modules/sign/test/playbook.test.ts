@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Unit tests for Vietnam SME default playbook rules and deterministic AI-off contract evaluation (#4442).
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { SIGN_PLAYBOOK_MAX_TOTAL_CHARS, zId } from '@ludy/kernel-contract';
 import {
@@ -410,5 +411,21 @@ describe('evaluatePlaybookDeterministically AI-off parity (#4442)', () => {
       1,
     );
     expect(acceptanceOut[0]?.verdict).toBe('warn');
+  });
+
+  it('acquires the per-org advisory lock before checking the 50-rule cap in rule_upsert and seed_defaults (#4510)', () => {
+    const src = readFileSync(new URL('../src/playbook.ts', import.meta.url), 'utf8');
+    expect(src).toContain('sign.playbook.rule:');
+    const upsertIdx = src.indexOf('export const playbookRuleUpsert');
+    const seedIdx = src.indexOf('export const playbookSeedDefaults');
+    const lockInUpsert = src.indexOf('acquirePlaybookRuleOrgLock', upsertIdx);
+    const countInUpsert = src.indexOf("selectFrom('ludy_sign.playbook_rule')", lockInUpsert);
+    expect(lockInUpsert).toBeGreaterThan(upsertIdx);
+    expect(countInUpsert).toBeGreaterThan(lockInUpsert);
+
+    const lockInSeed = src.indexOf('acquirePlaybookRuleOrgLock', seedIdx);
+    const countInSeed = src.indexOf("selectFrom('ludy_sign.playbook_rule')", lockInSeed);
+    expect(lockInSeed).toBeGreaterThan(seedIdx);
+    expect(countInSeed).toBeGreaterThan(lockInSeed);
   });
 });

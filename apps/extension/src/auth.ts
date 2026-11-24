@@ -20,6 +20,16 @@ export async function newPkce(): Promise<Pkce> {
   return { verifier, challenge, state: b64url(crypto.getRandomValues(new Uint8Array(16))) };
 }
 
+// Conservative fallback for older deployments without `modules` in /api/config or stalled config discovery (#3742):
+// requesting only `meetings` preserves sign-in compatibility on pre-notes servers.
+export const FALLBACK_EXTENSION_SCOPES = ['meetings'] as const;
+
+export function resolveSignInScopes(availableModules: readonly string[] | undefined | null): readonly string[] {
+  if (!availableModules) return FALLBACK_EXTENSION_SCOPES;
+  const matched = FEATURES.map((f) => f.scope).filter((scope) => availableModules.includes(scope));
+  return matched.length > 0 ? matched : FALLBACK_EXTENSION_SCOPES;
+}
+
 // `withAgenda`: the member chose to see their next meetings (B2), so the consent page also lists the agenda scope; the plain sign-in never asks for it.
 export function connectUrl(
   address: string,
@@ -29,7 +39,7 @@ export function connectUrl(
   withAgenda = false,
   featureScopes: readonly string[] = FEATURES.map((f) => f.scope),
 ): string {
-  const requested = featureScopes.length > 0 ? featureScopes : FEATURES.map((f) => f.scope);
+  const requested = featureScopes.length > 0 ? featureScopes : FALLBACK_EXTENSION_SCOPES;
   const params = new URLSearchParams({
     code_challenge: pkce.challenge,
     code_challenge_method: 'S256',

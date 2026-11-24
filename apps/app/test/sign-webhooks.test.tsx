@@ -78,6 +78,7 @@ function renderWebhooks(
     role: string | null;
     list: SignWebhookListResult | null;
     deliveries?: SignWebhookDeliveryRecord[];
+    deliveriesError?: unknown;
     revealedSecret?: { webhookUrl: string; secret: string; hint: string } | null;
   },
 ): string {
@@ -87,6 +88,7 @@ function renderWebhooks(
         role={props.role}
         list={props.list}
         deliveries={props.deliveries ?? []}
+        deliveriesError={props.deliveriesError ?? null}
         selectedWebhookId={null}
         revealedSecret={props.revealedSecret ?? null}
       />
@@ -164,6 +166,17 @@ describe('SignWebhooksView (#4440)', () => {
     });
     expect(htmlEn).toContain('Outbound signing webhooks (HMAC)');
     expect(htmlEn).toContain('Dual-secret grace until');
+    expect(htmlEn).toContain('aria-describedby="sign-webhook-new-url-hint"');
+    expect(htmlEn).toContain('id="sign-webhook-new-url-hint"');
     assertPairedLabels(htmlEn);
+
+    const htmlErr = renderWebhooks('en', {
+      role: 'owner',
+      list: { items: [activeWh], brokerAvailable: true },
+      deliveries: [],
+      deliveriesError: new Error('Failed to load deliveries'),
+    });
+    expect(htmlErr).toContain('data-testid="sign-webhook-deliveries-error"');
+    expect(htmlErr).toContain('Failed to load deliveries');
   });
 });

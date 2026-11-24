@@ -280,7 +280,7 @@ describe('project dependencies helpers & UI (#2601)', () => {
         dueNextWeek: [],
       },
       bottlenecks: [
-        { id: TASK_A, title: 'Chốt hợp đồng khung', status: 'in_progress', due: null, blockedCount: 3 },
+        { id: TASK_A, title: 'Chốt hợp đồng\u202E khung', tainted: true, status: 'in_progress', due: null, blockedCount: 3 },
       ],
       hiddenByEntityCount: 0,
       sentences: [],
@@ -303,7 +303,7 @@ describe('project dependencies helpers & UI (#2601)', () => {
       ),
     );
     expect(viHtml).toContain('project-weekly-status-bottlenecks');
-    expect(viHtml).toContain('Chốt hợp đồng khung');
+    expect(viHtml).toContain('Chốt hợp đồng⟨U+202E⟩ khung');
     expect(viHtml).toContain('Chặn 3 việc mở');
   });
 });

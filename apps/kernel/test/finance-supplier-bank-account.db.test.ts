@@ -118,8 +118,8 @@ suite('a supplier\'s bank accounts (#3113 S1)', () => {
     expect(account).toMatchObject({ last4: LAST4, status: 'active', bankName: 'Vietcombank' });
     expect(JSON.stringify(account)).not.toContain(DIGITS);
     const stored = (await rows<{ number_sealed: string; account_holder_sealed: string; number_hash: string; hash_key_id: string }>('SELECT number_sealed, account_holder_sealed, number_hash, hash_key_id FROM ludy_finance.supplier_bank_account WHERE org_id = $1', [o.orgId]))[0];
-    expect(stored?.number_sealed.startsWith('crove:s1:')).toBe(true);
-    expect(stored?.account_holder_sealed.startsWith('crove:s1:')).toBe(true);
+    expect(stored?.number_sealed.startsWith('ludy:s1:')).toBe(true);
+    expect(stored?.account_holder_sealed.startsWith('ludy:s1:')).toBe(true);
     expect(stored?.number_hash).toMatch(/^[0-9a-f]{64}$/);
     expect(stored?.hash_key_id).toBe('k-test-1');
     // The whole of the org's finance rows and audit facts: no digits, no holder.

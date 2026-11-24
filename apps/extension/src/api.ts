@@ -88,7 +88,7 @@ export interface CaptureBeat {
 }
 
 export interface Client {
-  config(): Promise<{ uploads: 'presigned' | 'direct'; modules?: readonly string[] }>;
+  config(options?: { signal?: AbortSignal }): Promise<{ uploads: 'presigned' | 'direct'; modules?: readonly string[] }>;
   exchangeCode(code: string, codeVerifier: string): Promise<{ token: string; orgId: string; scopes: string[]; expiresAt: string }>;
   me(): Promise<Me>;
   // The member's next calendar meetings (B2, the agenda scope): null when the answer is not the expected shape. Throws LudyError with the HTTP status (403 when the token lacks the scope).
@@ -133,8 +133,8 @@ export function createClient(address: string, token: string | null, fetchImpl: F
     }
   };
   return {
-    async config() {
-      const body = (await (await call('/api/config', {}, false)).json()) as { uploads?: unknown; modules?: unknown };
+    async config(options) {
+      const body = (await (await call('/api/config', options?.signal ? { signal: options.signal } : {}, false)).json()) as { uploads?: unknown; modules?: unknown };
       const uploads = body.uploads === 'presigned' ? 'presigned' : 'direct';
       return Array.isArray(body.modules)
         ? { uploads, modules: body.modules.filter((m): m is string => typeof m === 'string') }

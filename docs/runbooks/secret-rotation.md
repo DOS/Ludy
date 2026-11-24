@@ -191,7 +191,7 @@ Whoever holds the webhook can post into the alert chat (or, for Telegram, act as
 
 ## 4. VAPID keys (browser push)
 
-`VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT` turn on browser push for the Social notifications someone must act on (#1238). Set all three or none: a partial or mismatched set stops `crove` (or `api` and `worker`) at start with a message naming the problem, and with none the app offers no push and the worker sends nothing. Whoever holds the private key can send notifications to every subscribed browser of the deployment (the push services still need each browser's endpoint and keys, which only the database holds), so keep it with the other secrets.
+`VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT` turn on browser push for the notifications someone must act on, Social's (#1238) and the kernel's, such as the minutes draft that is ready (#3736). Set all three or none: a partial or mismatched set stops `crove` (or `api` and `worker`) at start with a message naming the problem, and with none the app offers no push and the worker sends nothing. Whoever holds the private key can send notifications to every subscribed browser of the deployment (the push services still need each browser's endpoint and keys, which only the database holds), so keep it with the other secrets.
 
 1. Make a new pair (it is printed, never stored):
 

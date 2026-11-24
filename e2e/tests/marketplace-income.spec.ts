@@ -36,9 +36,15 @@ test('an income report waits as a card, is confirmed by a person; one naming unk
   const noBuyer = async () => {
     for (const value of Object.values(BUYER)) await expect(page.getByText(value, { exact: false })).toHaveCount(0);
   };
+  const expandActionStrip = async () => {
+    const toggle = page.getByTestId('inbox-action-strip-toggle');
+    await expect(toggle).toBeVisible({ timeout: 90_000 });
+    if ((await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click();
+  };
 
   await test.step('the order report is imported first, so the orders of the income report are known', async () => {
     await upload('bao-cao-don-hang-shopee.xlsx', ORDER_REPORT);
+    await expandActionStrip();
     await expect(page.getByTestId('staged-marketplace-report')).toBeVisible({ timeout: 90_000 });
     await page.getByTestId('staged-marketplace-import').click();
     await expect(page.getByTestId('staged-marketplace-report')).toHaveCount(0);
@@ -46,6 +52,7 @@ test('an income report waits as a card, is confirmed by a person; one naming unk
 
   await test.step('the income report waits as a card with the period, the totals and the net the file states, and no buyer value', async () => {
     await upload('bao-cao-thu-nhap-shopee.xlsx', KNOWN);
+    await expandActionStrip();
     const card = page.getByTestId('staged-income-report');
     await expect(card).toBeVisible({ timeout: 90_000 });
     await expect(card).toContainText('Shopee');
@@ -65,6 +72,7 @@ test('an income report waits as a card, is confirmed by a person; one naming unk
 
   await test.step('a report that names an order the org does not know shows the refusal in words and cannot be confirmed', async () => {
     await upload('bao-cao-thu-nhap-shopee-2.xlsx', UNKNOWN);
+    await expandActionStrip();
     const card = page.getByTestId('staged-income-report');
     await expect(card).toBeVisible({ timeout: 90_000 });
     await expect(card.getByTestId('staged-income-blocker-UNKNOWN_ORDERS')).toContainText('hãy nhập báo cáo đơn hàng của cùng kỳ trước');

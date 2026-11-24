@@ -17,6 +17,7 @@
 import { generateText, Output } from 'ai';
 import { z } from 'zod';
 import { chatModel, type AiConfig, type AiUsage } from './index.ts';
+import { hasAutonomousActionDirective, hasObfuscatedContactOrLink, hasPromptMarkupLeak, hasStealthControls } from './injection-guards.ts';
 import { metered } from './meter.ts';
 
 // One message of the thread as the writer reads it.
@@ -194,6 +195,7 @@ export class ConversationWriter {
     if (usage) onUsage?.(usage);
     const body = (output?.body ?? '').replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
     if (body === '') return { kind: 'none', code: 'EMPTY' };
+    if (hasStealthControls(body)) return { kind: 'none', code: 'FIGURES' };
     if (Array.from(body).length > request.maxChars) return { kind: 'none', code: 'TOO_LONG' };
     // What the model may state: the business's own messages and the saved replies it was given. A customer's words give back small numbers only.
     const seen = request.messages.slice(-DRAFT_MESSAGES_MAX);
@@ -201,6 +203,9 @@ export class ConversationWriter {
     const customer = seen.filter((m) => m.from === 'customer').map((m) => cut(m.text, DRAFT_MESSAGE_CHARS));
     if (draftFiguresOutside(body, trusted, customer).length > 0) return { kind: 'none', code: 'FIGURES' };
     if (draftLinksOutside(body, trusted).length > 0) return { kind: 'none', code: 'LINK' };
+    if (hasPromptMarkupLeak(body) || hasObfuscatedContactOrLink(body, trusted, [...trusted, ...customer]) || hasAutonomousActionDirective(body)) {
+      return { kind: 'none', code: 'LINK' };
+    }
     return { kind: 'draft', body };
   }
 }

@@ -13,6 +13,8 @@
 // sentence is attached to a finding only when it passed the checks.
 // A failure is named, never quoted: neither the sheet nor the model's answer is logged.
 import {
+  ADJUSTMENT_SHARE_THRESHOLD_PERCENT,
+  ADVANCE_SHARE_THRESHOLD_PERCENT,
   AiBudgetExhaustedError,
   PAYROLL_ANOMALY_KINDS,
   PAYROLL_SHEET_LINES_MAX,
@@ -112,6 +114,21 @@ export async function payrollSource(reads: PayrollReads, runId: string): Promise
     const overtime = (f: { overtime: string } | null | undefined) => f !== null && f !== undefined && new Decimal(f.overtime).greaterThan(0);
     const streak = overtime(figures) ? 1 + (overtime(previous) ? 1 + (overtime(beforeThat.get(l.employeeId)) ? 1 : 0) : 0) : 0;
     const annualLeaveExceeded = l.flags.includes('annual_leave_exceeded');
+    const numericInput = (key: string): string => {
+      const raw = l.inputs?.[key];
+      return typeof raw === 'string' && /^\d{1,16}(\.\d{1,2})?$/.test(raw) ? raw : '0';
+    };
+    const advanceAmt = new Decimal(numericInput('advance'));
+    const retroAmt = new Decimal(numericInput('retroPay'));
+    const offsetAmt = new Decimal(numericInput('offsetDeduction'));
+    const baseWage = new Decimal(figures.base_wage || '0');
+    const largeSalaryAdvance =
+      advanceAmt.greaterThan(0) &&
+      (baseWage.isZero() || advanceAmt.dividedBy(baseWage).times(100).greaterThan(ADVANCE_SHARE_THRESHOLD_PERCENT));
+    const totalAdj = retroAmt.plus(offsetAmt);
+    const largePayrollAdjustment =
+      totalAdj.greaterThan(0) &&
+      (baseWage.isZero() || totalAdj.dividedBy(baseWage).times(100).greaterThan(ADJUSTMENT_SHARE_THRESHOLD_PERCENT));
     return {
       employeeId: l.employeeId,
       figures,
@@ -125,6 +142,9 @@ export async function payrollSource(reads: PayrollReads, runId: string): Promise
       overtimeMonthsInRow: streak,
       dependentsWithoutRegistration: 0,
       exceededAnnualDays: annualLeaveExceeded && typeof l.exceededAnnualDays === 'string' ? l.exceededAnnualDays : '0',
+      advanceAmount: advanceAmt.toFixed(),
+      retroPayAmount: retroAmt.toFixed(),
+      offsetDeductionAmount: offsetAmt.toFixed(),
       checks: {
         minimumWageFailed: l.flags.includes('check_minimum_wage'),
         deductionCapFailed: l.flags.includes('check_deduction_cap'),
@@ -136,6 +156,8 @@ export async function payrollSource(reads: PayrollReads, runId: string): Promise
         workPermitExpiring: l.flags.includes('work_permit_expiring'),
         bhxhSuspendedRegime: l.flags.includes('bhxh_suspended_regime'),
         nonResidentFlatPit: l.flags.includes('non_resident_flat_pit'),
+        largeSalaryAdvance,
+        largePayrollAdjustment,
       },
     };
   });

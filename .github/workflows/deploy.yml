@@ -7,7 +7,9 @@ name: deploy
 # The commit's CI must be green first. Both images are built from that commit, pushed to GHCR and deployed by
 # digest; tools/deploy/deploy.sh on the host migrates, rolls the worker before the API, waits for /readyz, runs the
 # smoke test and rolls back on failure. Until the environment has its secrets, the deploy job only says so and
-# passes.
+# passes. After a successful `pilot` tag deploy, the `release-branch` job dispatches `.github/workflows/release-branch.yml`
+# on `main`, confirms `release` moved to the deployed commit, and (when `DEPLOY_APP_URL` is set) verifies the served
+# static bundle's `VITE_BUILD` matches `/version` (#3580).
 #
 # Opt-in (#2704): when the variable DEPLOY_IDP_ENVIRONMENT names the environment being deployed, the deploy writes the identity
 # provider settings (variables DEPLOY_IDP_AUTH_ISSUER, DEPLOY_IDP_AUTH_JWKS_URL, DEPLOY_IDP_PUBLIC_AUTH_URL,
@@ -212,6 +214,8 @@ jobs:
       packages: read
     outputs:
       deployed: ${{ steps.host.outcome == 'success' && steps.public-smoke.outcome != 'failure' }}
+      public_url: ${{ steps.config.outputs.public_url }}
+      app_url: ${{ steps.config.outputs.app_url }}
     env:
       ACTION: ${{ needs.target.outputs.action }}
       RELEASE: ${{ needs.target.outputs.release }}
@@ -233,6 +237,7 @@ jobs:
           DEPLOY_PORT: ${{ vars.DEPLOY_PORT }}
           DEPLOY_DIR: ${{ vars.DEPLOY_DIR }}
           DEPLOY_ENV_FILE: ${{ vars.DEPLOY_ENV_FILE }}
+          APP_URL: ${{ vars.DEPLOY_APP_URL }}
         run: |
           set -euo pipefail
           missing=()
@@ -256,6 +261,10 @@ jobs:
           [[ "$env_file" =~ ^/[A-Za-z0-9._/-]+$ ]] || { echo '::error::DEPLOY_ENV_FILE must be an absolute path of letters, digits, ., _, - and /'; exit 1; }
           if [ -n "$PUBLIC_URL" ] && ! [[ "$PUBLIC_URL" =~ ^https?://[A-Za-z0-9.:-]+/?$ ]]; then
             echo '::error::DEPLOY_PUBLIC_URL must be an origin such as https://crove.example.com'
+            exit 1
+          fi
+          if [ -n "$APP_URL" ] && ! [[ "$APP_URL" =~ ^https?://[A-Za-z0-9.:-]+/?$ ]]; then
+            echo '::error::DEPLOY_APP_URL must be an origin such as https://app.example.com'
             exit 1
           fi
 
@@ -284,6 +293,8 @@ jobs:
             echo "dir=$dir"
             echo "env_file=$env_file"
             echo "remote=$dir/.deploy/incoming/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+            echo "public_url=${PUBLIC_URL%/}"
+            echo "app_url=${APP_URL%/}"
           } >> "$GITHUB_OUTPUT"
 
       # The release's compose file and deploy script; a rollback uses the script of the ref this run started from.
@@ -546,3 +557,124 @@ jobs:
           else
             gh release create "$TAG" --verify-tag --title "$TAG" --notes-file "$RUNNER_TEMP/release-notes.md"
           fi
+
+  # Moves the web app's `release` branch (Vercel Production, docs/runbooks/split-app-api.md) to the deployed tag after
+  # the pilot API rollout succeeds (#3580), so the static host never drifts behind the API. Dispatches release-branch.yml
+  # on `main` (the `release` environment allows `main` only), waits for it to finish, verifies `release` points at the
+  # deployed commit, and, when DEPLOY_APP_URL is set, checks that the served bundle's VITE_BUILD matches /version.
+  release-branch:
+    name: Sync release branch
+    needs: [target, deploy]
+    if: ${{ !cancelled() && github.ref_type == 'tag' && needs.target.result == 'success' && needs.deploy.result == 'success' && needs.target.outputs.action == 'deploy' && needs.target.outputs.environment == 'pilot' && needs.deploy.outputs.deployed == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: needs.deploy.outputs.app_url != ''
+        with:
+          persist-credentials: false
+          ref: ${{ needs.target.outputs.sha }}
+
+      - name: Dispatch release-branch workflow and verify release ref
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ needs.target.outputs.release }}
+          SHA: ${{ needs.target.outputs.sha }}
+        run: |
+          set -euo pipefail
+          before_id="$(gh api "repos/$REPO/actions/workflows/release-branch.yml/runs?event=workflow_dispatch&branch=main&per_page=1" \
+            --jq '.workflow_runs[0].id // 0' 2>/dev/null || echo 0)"
+          [[ "$before_id" =~ ^[0-9]+$ ]] || before_id=0
+          dispatched_at="$(date -u -d '30 seconds ago' +%Y-%m-%dT%H:%M:%SZ)"
+          response="$(jq -cn --arg tag "$TAG" '{ref: "main", inputs: {tag: $tag}}' \
+            | gh api -X POST "repos/$REPO/actions/workflows/release-branch.yml/dispatches" \
+                -H 'Accept: application/vnd.github+json' \
+                -H 'X-GitHub-Api-Version: 2026-03-10' \
+                --input -)"
+          run_id="$(jq -r '.workflow_run_id // empty' <<<"$response" 2>/dev/null || true)"
+          run_url="$(jq -r '.html_url // empty' <<<"$response" 2>/dev/null || true)"
+          if [ -z "$run_id" ]; then
+            echo 'No workflow_run_id in dispatch response; looking up the dispatched run...'
+            lookup_deadline=$((SECONDS + 120))
+            while :; do
+              row="$(gh api "repos/$REPO/actions/workflows/release-branch.yml/runs?event=workflow_dispatch&branch=main&created=>=$dispatched_at&per_page=10" 2>/dev/null \
+                | jq -r --argjson before "$before_id" '([.workflow_runs[] | select(.id > $before)] | first) // empty | "\(.id)\t\(.html_url)"' || true)"
+              if [ -n "$row" ]; then
+                run_id="${row%%$'\t'*}"
+                run_url="${row#*$'\t'}"
+                break
+              fi
+              if ((SECONDS >= lookup_deadline)); then
+                echo "::error::dispatched release-branch.yml for $TAG, but could not find its workflow run"
+                exit 1
+              fi
+              sleep 5
+            done
+          fi
+          [[ "$run_id" =~ ^[0-9]+$ ]] || { echo "::error::unexpected workflow_run_id '$run_id'"; exit 1; }
+
+          echo "Waiting for release-branch run $run_id${run_url:+ ($run_url)}"
+          deadline=$((SECONDS + 2700))
+          consecutive_errors=0
+          while :; do
+            if run_info="$(gh api "repos/$REPO/actions/runs/$run_id" --jq '.status, (.conclusion // ""), (.html_url // "")' 2>/dev/null)"; then
+              consecutive_errors=0
+              {
+                IFS= read -r status
+                IFS= read -r conclusion
+                IFS= read -r html_url
+              } <<<"$run_info" || true
+              if [ -n "$html_url" ]; then run_url="$html_url"; fi
+              if [ "$status" = completed ]; then
+                if [ "$conclusion" != success ]; then
+                  echo "::error::release-branch run $run_id (${run_url:-unknown}) ended with conclusion '${conclusion:-unknown}'"
+                  exit 1
+                fi
+                echo "release-branch run $run_id succeeded (${run_url:-unknown})"
+                break
+              fi
+              echo "release-branch run $run_id status: $status"
+            else
+              consecutive_errors=$((consecutive_errors + 1))
+              if ((consecutive_errors >= 6)); then
+                echo "::error::failed to query release-branch run $run_id after $consecutive_errors consecutive attempts"
+                exit 1
+              fi
+              echo "Transient error querying release-branch run $run_id; retrying..."
+            fi
+            if ((SECONDS >= deadline)); then
+              echo "::error::timed out waiting for release-branch run $run_id (${run_url:-unknown}) to complete"
+              exit 1
+            fi
+            sleep 10
+          done
+
+          release_sha="$(gh api "repos/$REPO/git/ref/heads/release" \
+            --jq 'if type == "array" then (.[] | select(.ref == "refs/heads/release") | .object.sha) else select(.ref == "refs/heads/release") | .object.sha end')"
+          if [ "$release_sha" != "$SHA" ]; then
+            echo "::error::release branch points to ${release_sha:-none}, expected $SHA ($TAG)"
+            exit 1
+          fi
+          echo "Verified: refs/heads/release points to $release_sha ($TAG)"
+          echo "- release branch: \`$release_sha\` ($TAG)${run_url:+ ([run]($run_url))}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Verify web app bundle matches /version
+        if: needs.deploy.outputs.app_url != ''
+        env:
+          APP_URL: ${{ needs.deploy.outputs.app_url }}
+          PUBLIC_URL: ${{ needs.deploy.outputs.public_url }}
+          SHA: ${{ needs.target.outputs.sha }}
+        run: |
+          set -euo pipefail
+          bash tools/deploy/deploy.sh check-app-build "$APP_URL" "$SHA" "$PUBLIC_URL"
+
+      - name: Note web bundle check skipped
+        if: needs.deploy.outputs.app_url == ''
+        env:
+          SHA: ${{ needs.target.outputs.sha }}
+        run: |
+          echo "::notice title=Web bundle check skipped::DEPLOY_APP_URL is not set; release branch points to $SHA without verifying the live static bundle against /version."

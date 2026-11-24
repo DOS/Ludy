@@ -28,6 +28,9 @@ test('an imported report waits for its shipped line to be assigned, then takes t
       mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       buffer: Buffer.from(REPORT),
     });
+    const stripToggle = page.getByTestId('inbox-action-strip-toggle');
+    await expect(stripToggle).toBeVisible({ timeout: 90_000 });
+    if ((await stripToggle.getAttribute('aria-expanded')) !== 'true') await stripToggle.click();
     const card = page.getByTestId('staged-marketplace-report');
     await expect(card).toBeVisible({ timeout: 90_000 });
     await expect(card).toContainText('Shopee');

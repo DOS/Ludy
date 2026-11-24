@@ -155,6 +155,20 @@ export {
 } from './columns.ts';
 import { roadmapCommands, roadmapQueries } from './roadmap.ts';
 import { roadmapMcpQueries } from './roadmap-mcp.ts';
+import {
+  projectTriageAccept,
+  projectTriageAssistSource,
+  projectTriageCommands,
+  projectTriageCreate,
+  projectTriageDecline,
+  projectTriageList,
+  projectTriageMerge,
+  projectTriageQueries,
+  projectTriageReopen,
+  projectTriageSnooze,
+  type ProjectTriageAssistSource,
+} from './triage.ts';
+import { roadmapSignalCommands, roadmapSignalQueries } from './roadmap-signals.ts';
 export {
   generateEphemeralOtpWrapKey,
   openEphemeralOtpCode,
@@ -163,16 +177,36 @@ export {
   sealEphemeralOtpCode,
 } from './roadmap-mail.ts';
 export {
+  type ProjectTriageAssistSource,
+  projectTriageAccept,
+  projectTriageAssistSource,
+  projectTriageCreate,
+  projectTriageDecline,
+  projectTriageList,
+  projectTriageMerge,
+  projectTriageReopen,
+  projectTriageSnooze,
+};
+export {
   type RoadmapAiChangelogSource,
   type RoadmapAiDedupeSource,
 } from './roadmap.ts';
 export {
+  computeSignalRollup,
+  enrichMeetingSignalMatchSource,
+  type RoadmapAiSignalMatchSource,
+} from './roadmap-signals.ts';
+export {
   MCP_ROADMAP_DEFAULT,
   MCP_ROADMAP_MAX,
+  MCP_TRIAGE_DEFAULT,
+  MCP_TRIAGE_MAX,
   zMcpRoadmapDemandSummaryInput,
   zMcpRoadmapIdeasInput,
+  zMcpTriageSummaryInput,
   type McpRoadmapDemandSummaryInput,
   type McpRoadmapIdeasInput,
+  type McpTriageSummaryInput,
 } from './roadmap-mcp.ts';
 export {
   roadmapBoardCreate,
@@ -229,6 +263,8 @@ export const projectsCommands = [
   projectTaskSetDates,
   ...projectCycleCommands,
   ...roadmapCommands,
+  ...projectTriageCommands,
+  ...roadmapSignalCommands,
   projectTimeStart,
   projectTimeStop,
   projectTimeLog,
@@ -256,6 +292,8 @@ export const projectsQueries = [
   ...projectCycleQueries,
   ...roadmapQueries,
   ...roadmapMcpQueries,
+  ...projectTriageQueries,
+  ...roadmapSignalQueries,
   projectTimeSummary,
   projectTimeExportCsv,
 ];

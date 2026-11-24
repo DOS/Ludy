@@ -95,12 +95,12 @@ function S1aBook({ entityId }: { entityId: string }) {
       {book.error && <ErrorText>{errorMessage(book.error)}</ErrorText>}
       {download.error && <ErrorText>{errorMessage(download.error)}</ErrorText>}
       {book.data && (
-        <DataTable numeric={[3]} head={[t('columns.date'), t('columns.reference'), t('columns.description'), t('columns.amount')]}>
+        <DataTable stickyFirstCol numeric={[3]} head={[t('columns.date'), t('columns.reference'), t('columns.description'), t('columns.amount')]}>
           {book.data.rows.map((r) => (
             <TableRow key={r.entryId}>
-              <TableCell className="px-4 py-3 text-muted-foreground">{f.date(r.date)}</TableCell>
-              <TableCell className="px-4 py-3 font-mono text-xs">{r.reference ?? ''}</TableCell>
-              <TableCell className="px-4 py-3 text-foreground">
+              <TableCell className="text-muted-foreground tabular-nums">{f.date(r.date)}</TableCell>
+              <TableCell className="font-mono text-xs">{r.reference ?? ''}</TableCell>
+              <TableCell className="text-foreground">
                 {r.description}
                 {r.reversal && (
                   <Badge variant="secondary" className="ml-2">
@@ -108,14 +108,14 @@ function S1aBook({ entityId }: { entityId: string }) {
                   </Badge>
                 )}
               </TableCell>
-              <TableCell className="px-4 py-3 text-right tabular-nums">{f.money(r.amount)}</TableCell>
+              <TableCell className="text-right tabular-nums">{f.money(r.amount)}</TableCell>
             </TableRow>
           ))}
           <TableRow>
-            <TableCell className="px-4 py-3 font-medium text-foreground" colSpan={3}>
+            <TableCell className="font-medium text-foreground" colSpan={3}>
               {t('total')}
             </TableCell>
-            <TableCell className="px-4 py-3 text-right font-medium tabular-nums" data-testid="household-s1a-total">
+            <TableCell className="text-right font-medium tabular-nums" data-testid="household-s1a-total">
               {f.money(book.data.total)}
             </TableCell>
           </TableRow>
@@ -230,12 +230,12 @@ function S2aBook({ entityId, variant = 'S2a' }: { entityId: string; variant?: 'S
               </AlertDescription>
             </Alert>
           )}
-          <DataTable numeric={[4]} head={[t('columns.date'), t('columns.reference'), t('columns.description'), t('s2aByLine'), t('columns.amount')]}>
+          <DataTable stickyFirstCol numeric={[4]} head={[t('columns.date'), t('columns.reference'), t('columns.description'), t('s2aByLine'), t('columns.amount')]}>
             {data.rows.map((r) => (
               <TableRow key={r.entryId}>
-                <TableCell className="px-4 py-3 text-muted-foreground">{f.date(r.date)}</TableCell>
-                <TableCell className="px-4 py-3 font-mono text-xs">{r.reference ?? ''}</TableCell>
-                <TableCell className="px-4 py-3 text-foreground">
+                <TableCell className="text-muted-foreground tabular-nums">{f.date(r.date)}</TableCell>
+                <TableCell className="font-mono text-xs">{r.reference ?? ''}</TableCell>
+                <TableCell className="text-foreground">
                   {r.description}
                   {r.reversal && (
                     <Badge variant="secondary" className="ml-2">
@@ -243,43 +243,43 @@ function S2aBook({ entityId, variant = 'S2a' }: { entityId: string; variant?: 'S
                     </Badge>
                   )}
                 </TableCell>
-                <TableCell className="px-4 py-3 text-xs text-muted-foreground">
+                <TableCell className="text-xs text-muted-foreground">
                   {r.parts.map((pt) => (
                     <span key={pt.trade} className="block whitespace-nowrap" data-testid={`household-${p}-part-${pt.trade}`}>
                       {tradeName(pt.trade)}: {f.money(pt.amount)}
                     </span>
                   ))}
                 </TableCell>
-                <TableCell className="px-4 py-3 text-right tabular-nums">{f.money(r.amount)}</TableCell>
+                <TableCell className="text-right tabular-nums">{f.money(r.amount)}</TableCell>
               </TableRow>
             ))}
             <TableRow>
-              <TableCell className="px-4 py-3 font-medium text-foreground" colSpan={4}>
+              <TableCell className="font-medium text-foreground" colSpan={4}>
                 {t('total')}
               </TableCell>
-              <TableCell className="px-4 py-3 text-right font-medium tabular-nums" data-testid={`household-${p}-total`}>
+              <TableCell className="text-right font-medium tabular-nums" data-testid={`household-${p}-total`}>
                 {f.money(data.total)}
               </TableCell>
             </TableRow>
           </DataTable>
           {data.rows.length === 0 && <p className="mt-2 text-sm text-muted-foreground">{t('noRows')}</p>}
           <h3 className="mb-1 mt-4 text-sm font-semibold text-foreground">{t(withPit ? 's2aLinesTitle' : 's2bLinesTitle')}</h3>
-          <DataTable numeric={withPit ? [1, 2, 3, 4, 5] : [1, 2, 3]} head={[t('cnkdColumns.trade'), t('cnkdColumns.revenue'), t('cnkdColumns.vatPercent'), t('cnkdColumns.vat'), ...(withPit ? [t('cnkdColumns.pitPercent'), t('cnkdColumns.pit')] : [])]}>
+          <DataTable stickyFirstCol numeric={withPit ? [1, 2, 3, 4, 5] : [1, 2, 3]} head={[t('cnkdColumns.trade'), t('cnkdColumns.revenue'), t('cnkdColumns.vatPercent'), t('cnkdColumns.vat'), ...(withPit ? [t('cnkdColumns.pitPercent'), t('cnkdColumns.pit')] : [])]}>
             {data.lines.map((l) => (
               <TableRow key={l.trade}>
-                <TableCell className="px-4 py-3 text-foreground">
+                <TableCell className="text-foreground">
                   {tradeName(l.trade)}
                   {provisional}
                 </TableCell>
-                <TableCell className="px-4 py-3 text-right tabular-nums">{f.money(l.revenue)}</TableCell>
-                <TableCell className="px-4 py-3 text-right tabular-nums">{l.vatPercent}</TableCell>
-                <TableCell className="px-4 py-3 text-right tabular-nums">
+                <TableCell className="text-right tabular-nums">{f.money(l.revenue)}</TableCell>
+                <TableCell className="text-right tabular-nums">{l.vatPercent}</TableCell>
+                <TableCell className="text-right tabular-nums">
                   {f.money(l.vat)}
                   {provisionalForReader}
                 </TableCell>
-                {withPit && <TableCell className="px-4 py-3 text-right tabular-nums">{l.pitPercent}</TableCell>}
+                {withPit && <TableCell className="text-right tabular-nums">{l.pitPercent}</TableCell>}
                 {withPit && (
-                  <TableCell className="px-4 py-3 text-right tabular-nums">
+                  <TableCell className="text-right tabular-nums">
                     {f.money(l.pit ?? '0')}
                     {provisionalForReader}
                   </TableCell>
@@ -402,12 +402,12 @@ function S2cBook({ entityId }: { entityId: string }) {
             </Alert>
           )}
           <h3 className="mb-1 text-sm font-semibold text-foreground">{t('s2cRevenueTitle')}</h3>
-          <DataTable numeric={[3]} head={[t('columns.date'), t('columns.reference'), t('columns.description'), t('columns.amount')]}>
+          <DataTable stickyFirstCol numeric={[3]} head={[t('columns.date'), t('columns.reference'), t('columns.description'), t('columns.amount')]}>
             {data.revenueRows.map((r) => (
               <TableRow key={r.entryId}>
-                <TableCell className="px-4 py-3 text-muted-foreground">{f.date(r.date)}</TableCell>
-                <TableCell className="px-4 py-3 font-mono text-xs">{r.reference ?? ''}</TableCell>
-                <TableCell className="px-4 py-3 text-foreground">
+                <TableCell className="text-muted-foreground tabular-nums">{f.date(r.date)}</TableCell>
+                <TableCell className="font-mono text-xs">{r.reference ?? ''}</TableCell>
+                <TableCell className="text-foreground">
                   {r.description}
                   {r.reversal && (
                     <Badge variant="secondary" className="ml-2">
@@ -415,26 +415,26 @@ function S2cBook({ entityId }: { entityId: string }) {
                     </Badge>
                   )}
                 </TableCell>
-                <TableCell className="px-4 py-3 text-right tabular-nums">{f.money(r.amount)}</TableCell>
+                <TableCell className="text-right tabular-nums">{f.money(r.amount)}</TableCell>
               </TableRow>
             ))}
             <TableRow>
-              <TableCell className="px-4 py-3 font-medium text-foreground" colSpan={3}>
+              <TableCell className="font-medium text-foreground" colSpan={3}>
                 {t('total')}
               </TableCell>
-              <TableCell className="px-4 py-3 text-right font-medium tabular-nums" data-testid="household-s2c-revenue-total">
+              <TableCell className="text-right font-medium tabular-nums" data-testid="household-s2c-revenue-total">
                 {f.money(data.revenue)}
               </TableCell>
             </TableRow>
           </DataTable>
           {data.revenueRows.length === 0 && <p className="mt-2 text-sm text-muted-foreground">{t('noRows')}</p>}
           <h3 className="mb-1 mt-4 text-sm font-semibold text-foreground">{t('s2cExpenseTitle')}</h3>
-          <DataTable numeric={[5]} head={[t('columns.date'), t('columns.reference'), t('columns.description'), t('s2cColumns.account'), t('s2cColumns.group'), t('columns.amount')]}>
+          <DataTable stickyFirstCol numeric={[5]} head={[t('columns.date'), t('columns.reference'), t('columns.description'), t('s2cColumns.account'), t('s2cColumns.group'), t('columns.amount')]}>
             {data.expenseRows.map((r) => (
               <TableRow key={`${r.entryId}-${r.lineNo}`}>
-                <TableCell className="px-4 py-3 text-muted-foreground">{f.date(r.date)}</TableCell>
-                <TableCell className="px-4 py-3 font-mono text-xs">{r.reference ?? ''}</TableCell>
-                <TableCell className="px-4 py-3 text-foreground">
+                <TableCell className="text-muted-foreground tabular-nums">{f.date(r.date)}</TableCell>
+                <TableCell className="font-mono text-xs">{r.reference ?? ''}</TableCell>
+                <TableCell className="text-foreground">
                   {r.description}
                   {r.reversal && (
                     <Badge variant="secondary" className="ml-2">
@@ -442,11 +442,11 @@ function S2cBook({ entityId }: { entityId: string }) {
                     </Badge>
                   )}
                 </TableCell>
-                <TableCell className="px-4 py-3 font-mono text-xs">{r.accountCode}</TableCell>
-                <TableCell className="px-4 py-3 text-xs text-muted-foreground" data-testid={`household-s2c-group-${r.group ?? 'unmapped'}`}>
+                <TableCell className="font-mono text-xs">{r.accountCode}</TableCell>
+                <TableCell className="text-xs text-muted-foreground" data-testid={`household-s2c-group-${r.group ?? 'unmapped'}`}>
                   {groupName(r.group)}
                 </TableCell>
-                <TableCell className="px-4 py-3 text-right tabular-nums">{f.money(r.amount)}</TableCell>
+                <TableCell className="text-right tabular-nums">{f.money(r.amount)}</TableCell>
               </TableRow>
             ))}
           </DataTable>
@@ -455,11 +455,11 @@ function S2cBook({ entityId }: { entityId: string }) {
           <DataTable numeric={[1]} head={[t('s2cColumns.group'), t('columns.amount')]}>
             {data.groups.map((g) => (
               <TableRow key={g.group}>
-                <TableCell className="px-4 py-3 text-foreground">
+                <TableCell className="text-foreground">
                   {groupName(g.group)}
                   {provisional}
                 </TableCell>
-                <TableCell className="px-4 py-3 text-right tabular-nums" data-testid={`household-s2c-group-total-${g.group}`}>
+                <TableCell className="text-right tabular-nums" data-testid={`household-s2c-group-total-${g.group}`}>
                   {f.money(g.amount)}
                   {provisionalForReader}
                 </TableCell>
@@ -585,20 +585,20 @@ function S2eBook({ entityId }: { entityId: string }) {
                 {t('s2eAccount', { code: a.accountCode })}
                 {a.accountName ? ` - ${a.accountName}` : ''}
               </h3>
-              <DataTable numeric={[4, 5, 6]} head={[t('columns.date'), t('columns.reference'), t('columns.description'), t('s2eColumns.counter'), t('s2eColumns.in'), t('s2eColumns.out'), t('s2eColumns.balance')]}>
+              <DataTable stickyFirstCol numeric={[4, 5, 6]} head={[t('columns.date'), t('columns.reference'), t('columns.description'), t('s2eColumns.counter'), t('s2eColumns.in'), t('s2eColumns.out'), t('s2eColumns.balance')]}>
                 <TableRow>
-                  <TableCell className="px-4 py-3 font-medium text-foreground" colSpan={6}>
+                  <TableCell className="font-medium text-foreground" colSpan={6}>
                     {t('s2eOpening')}
                   </TableCell>
-                  <TableCell className="px-4 py-3 text-right tabular-nums" data-testid={`household-s2e-opening-${a.accountCode}`}>
+                  <TableCell className="text-right tabular-nums" data-testid={`household-s2e-opening-${a.accountCode}`}>
                     {f.money(a.opening)}
                   </TableCell>
                 </TableRow>
                 {a.rows.map((r) => (
                   <TableRow key={`${r.entryId}-${r.lineNo}`}>
-                    <TableCell className="px-4 py-3 text-muted-foreground">{f.date(r.date)}</TableCell>
-                    <TableCell className="px-4 py-3 font-mono text-xs">{r.reference ?? ''}</TableCell>
-                    <TableCell className="px-4 py-3 text-foreground">
+                    <TableCell className="text-muted-foreground tabular-nums">{f.date(r.date)}</TableCell>
+                    <TableCell className="font-mono text-xs">{r.reference ?? ''}</TableCell>
+                    <TableCell className="text-foreground">
                       {r.description}
                       {r.reversal && (
                         <Badge variant="secondary" className="ml-2">
@@ -606,25 +606,25 @@ function S2eBook({ entityId }: { entityId: string }) {
                         </Badge>
                       )}
                     </TableCell>
-                    <TableCell className="px-4 py-3 font-mono text-xs">{r.counterAccounts.join(', ')}</TableCell>
-                    <TableCell className="px-4 py-3 text-right tabular-nums">{f.money(r.cashIn)}</TableCell>
-                    <TableCell className="px-4 py-3 text-right tabular-nums">{f.money(r.cashOut)}</TableCell>
-                    <TableCell className="px-4 py-3 text-right tabular-nums">{f.money(r.balance)}</TableCell>
+                    <TableCell className="font-mono text-xs">{r.counterAccounts.join(', ')}</TableCell>
+                    <TableCell className="text-right tabular-nums">{f.money(r.cashIn)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{f.money(r.cashOut)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{f.money(r.balance)}</TableCell>
                   </TableRow>
                 ))}
                 <TableRow>
-                  <TableCell className="px-4 py-3 font-medium text-foreground" colSpan={4}>
+                  <TableCell className="font-medium text-foreground" colSpan={4}>
                     {t('s2eTotals')}
                   </TableCell>
-                  <TableCell className="px-4 py-3 text-right font-medium tabular-nums">{f.money(a.totalIn)}</TableCell>
-                  <TableCell className="px-4 py-3 text-right font-medium tabular-nums">{f.money(a.totalOut)}</TableCell>
-                  <TableCell className="px-4 py-3" />
+                  <TableCell className="text-right font-medium tabular-nums">{f.money(a.totalIn)}</TableCell>
+                  <TableCell className="text-right font-medium tabular-nums">{f.money(a.totalOut)}</TableCell>
+                  <TableCell />
                 </TableRow>
                 <TableRow>
-                  <TableCell className="px-4 py-3 font-medium text-foreground" colSpan={6}>
+                  <TableCell className="font-medium text-foreground" colSpan={6}>
                     {t('s2eClosing')}
                   </TableCell>
-                  <TableCell className="px-4 py-3 text-right font-medium tabular-nums" data-testid={`household-s2e-closing-${a.accountCode}`}>
+                  <TableCell className="text-right font-medium tabular-nums" data-testid={`household-s2e-closing-${a.accountCode}`}>
                     {f.money(a.closing)}
                     {provisional}
                   </TableCell>
@@ -722,32 +722,32 @@ function S2dBook({ entityId }: { entityId: string }) {
           {data.items.map((item) => (
             <div key={item.itemId} className="mb-4" data-testid={`household-s2d-item-${item.code}`}>
               <h3 className="mb-1 text-sm font-semibold text-foreground">{`${item.code} - ${item.name} (${item.unit})`}</h3>
-              <DataTable numeric={[3, 4, 5, 6]} head={[t('columns.date'), t('columns.reference'), t('columns.description'), t('s2dColumns.in'), t('s2dColumns.out'), t('s2dColumns.valueIn'), t('s2dColumns.balance')]}>
+              <DataTable stickyFirstCol numeric={[3, 4, 5, 6]} head={[t('columns.date'), t('columns.reference'), t('columns.description'), t('s2dColumns.in'), t('s2dColumns.out'), t('s2dColumns.valueIn'), t('s2dColumns.balance')]}>
                 <TableRow>
-                  <TableCell className="px-4 py-3 font-medium text-foreground" colSpan={2}>
+                  <TableCell className="font-medium text-foreground" colSpan={2}>
                     {t('s2dOpening')}
                   </TableCell>
-                  <TableCell className="px-4 py-3 text-muted-foreground" colSpan={4}>
+                  <TableCell className="text-muted-foreground" colSpan={4}>
                     {t('s2dOpeningValue', { value: f.money(item.openingValue) })}
                   </TableCell>
-                  <TableCell className="px-4 py-3 text-right tabular-nums">{item.openingQuantity}</TableCell>
+                  <TableCell className="text-right tabular-nums">{item.openingQuantity}</TableCell>
                 </TableRow>
                 {item.rows.map((r) => (
                   <TableRow key={r.moveId}>
-                    <TableCell className="px-4 py-3 text-muted-foreground">{f.date(r.date)}</TableCell>
-                    <TableCell className="px-4 py-3 font-mono text-xs">{r.reference ?? ''}</TableCell>
-                    <TableCell className="px-4 py-3 text-foreground">{ts(`sources.${r.source}`)}</TableCell>
-                    <TableCell className="px-4 py-3 text-right tabular-nums">{r.quantityIn}</TableCell>
-                    <TableCell className="px-4 py-3 text-right tabular-nums">{r.quantityOut}</TableCell>
-                    <TableCell className="px-4 py-3 text-right tabular-nums">{r.valueIn === null ? '' : f.money(r.valueIn)}</TableCell>
-                    <TableCell className="px-4 py-3 text-right tabular-nums">{r.balanceQuantity}</TableCell>
+                    <TableCell className="text-muted-foreground tabular-nums">{f.date(r.date)}</TableCell>
+                    <TableCell className="font-mono text-xs">{r.reference ?? ''}</TableCell>
+                    <TableCell className="text-foreground">{ts(`sources.${r.source}`)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{r.quantityIn}</TableCell>
+                    <TableCell className="text-right tabular-nums">{r.quantityOut}</TableCell>
+                    <TableCell className="text-right tabular-nums">{r.valueIn === null ? '' : f.money(r.valueIn)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{r.balanceQuantity}</TableCell>
                   </TableRow>
                 ))}
                 <TableRow>
-                  <TableCell className="px-4 py-3 font-medium text-foreground" colSpan={2}>
+                  <TableCell className="font-medium text-foreground" colSpan={2}>
                     {t('s2dMonthTotals')}
                   </TableCell>
-                  <TableCell className="px-4 py-3 text-muted-foreground" colSpan={4}>
+                  <TableCell className="text-muted-foreground" colSpan={4}>
                     {t('s2dTotalsLine', {
                       inQuantity: item.inQuantity,
                       inValue: f.money(item.inValue),
@@ -756,13 +756,13 @@ function S2dBook({ entityId }: { entityId: string }) {
                       unitCost: item.unitCost === null ? '' : f.money(item.unitCost),
                     })}
                   </TableCell>
-                  <TableCell className="px-4 py-3 text-right font-medium tabular-nums">{item.closingQuantity}</TableCell>
+                  <TableCell className="text-right font-medium tabular-nums">{item.closingQuantity}</TableCell>
                 </TableRow>
                 <TableRow>
-                  <TableCell className="px-4 py-3 font-medium text-foreground" colSpan={6}>
+                  <TableCell className="font-medium text-foreground" colSpan={6}>
                     {t('s2dClosing')}
                   </TableCell>
-                  <TableCell className="px-4 py-3 text-right font-medium tabular-nums" data-testid={`household-s2d-closing-${item.code}`}>
+                  <TableCell className="text-right font-medium tabular-nums" data-testid={`household-s2d-closing-${item.code}`}>
                     {f.money(item.closingValue)}
                     {provisional}
                   </TableCell>
@@ -951,21 +951,21 @@ function CnkdReturn({ entityId, trades }: { entityId: string; trades: readonly s
             </Alert>
           )}
           <p className="mb-2 text-sm text-muted-foreground">{t('cnkdPeriod', { from: f.date(data.period.from), to: f.date(data.period.to), revenue: f.money(data.revenue) })}</p>
-          <DataTable numeric={[1, 2, 3, 4, 5]} head={[t('cnkdColumns.trade'), t('cnkdColumns.revenue'), t('cnkdColumns.vatPercent'), t('cnkdColumns.vat'), t('cnkdColumns.pitPercent'), t('cnkdColumns.pit')]}>
+          <DataTable stickyFirstCol numeric={[1, 2, 3, 4, 5]} head={[t('cnkdColumns.trade'), t('cnkdColumns.revenue'), t('cnkdColumns.vatPercent'), t('cnkdColumns.vat'), t('cnkdColumns.pitPercent'), t('cnkdColumns.pit')]}>
             {data.lines.map((l) => (
               <TableRow key={l.trade}>
-                <TableCell className="px-4 py-3 text-foreground">
+                <TableCell className="text-foreground">
                   {t(`tradeNames.${l.trade}`)}
                   {provisional}
                 </TableCell>
-                <TableCell className="px-4 py-3 text-right tabular-nums">{f.money(l.revenue)}</TableCell>
-                <TableCell className="px-4 py-3 text-right tabular-nums">{l.vatPercent}</TableCell>
-                <TableCell className="px-4 py-3 text-right tabular-nums">
+                <TableCell className="text-right tabular-nums">{f.money(l.revenue)}</TableCell>
+                <TableCell className="text-right tabular-nums">{l.vatPercent}</TableCell>
+                <TableCell className="text-right tabular-nums">
                   {f.money(l.vat)}
                   {provisionalForReader}
                 </TableCell>
-                <TableCell className="px-4 py-3 text-right tabular-nums">{l.pitPercent}</TableCell>
-                <TableCell className="px-4 py-3 text-right tabular-nums">
+                <TableCell className="text-right tabular-nums">{l.pitPercent}</TableCell>
+                <TableCell className="text-right tabular-nums">
                   {f.money(l.pit)}
                   {provisionalForReader}
                 </TableCell>

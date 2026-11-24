@@ -73,6 +73,7 @@ export function OrgExtensionDevices({ members, viewerRole, me }: { members: read
                 <p className="flex flex-wrap items-center gap-2 text-foreground">
                   <span className="truncate font-medium">{name}</span>
                   <span className="truncate text-muted-foreground">{r.deviceName}</span>
+                  <Badge>{t(`client.${r.client}`)}</Badge>
                   {r.scopes.map((s) => (
                     <Badge key={s}>{t(`scope.${s}`)}</Badge>
                   ))}

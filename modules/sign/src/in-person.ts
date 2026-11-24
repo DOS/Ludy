@@ -40,7 +40,7 @@ export const signerStartInPerson = defineCommand({
     const userId = userIdOf(ctx);
     const row = await ctx.trx
       .selectFrom('ludy_sign.envelope')
-      .select(['id', 'status', 'source_kind', 'source_id', 'created_by', 'expires_at', 'source_sha256'])
+      .select(['id', 'status', 'source_kind', 'source_id', 'created_by', 'retained_org_visible', 'retained_reader_ids', 'expires_at', 'source_sha256'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.envelopeId)
       .forUpdate()

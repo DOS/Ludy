@@ -1,3 +1,5 @@
+import { stripStealthControls } from './injection-guards.ts';
+
 // An AI summary of a period's Social figures (#1237): the note an agency puts on a client report, drafted from the
 // period's own figures only. The model is told the figures, each formatted as the summary must write it, and the check
 // after the call (summaryNumbersOutside) refuses a summary that writes any other number: a summary that invents,
@@ -84,7 +86,7 @@ const NUMBER = /\p{Nd}+(?:[.,]\p{Nd}+)*/gu;
 
 /** The numbers a text writes, as written (read in NFKC). */
 export function numbersIn(text: string): string[] {
-  return text.normalize('NFKC').match(NUMBER) ?? [];
+  return stripStealthControls(text).normalize('NFKC').match(NUMBER) ?? [];
 }
 
 // The numbers a date (YYYY-MM-DD) may be written with: its year, and its month and day with and without the zero.

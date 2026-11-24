@@ -5,7 +5,17 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import type { TodoPlanResult, TodoPriority } from '@ludy/kernel-contract';
 import { Badge } from '@ludy/ui/components/badge';
 import { Button } from '@ludy/ui/components/button';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { NavIcon } from '@ludy/ui/components/nav-icon';
+import {
+  Sheet,
+  SheetBody,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from '@ludy/ui/components/sheet';
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
 import { useFormat } from '../i18n/provider.tsx';
@@ -14,6 +24,7 @@ import { toast } from '../lib/toast.ts';
 import { DateInput } from './date-input.tsx';
 import { errorCodeOf, noteVyBlocked, noteVyErrorKey } from './note-vy-panel.tsx';
 import { refreshNotes } from './notes-panel.tsx';
+import { CoworkerAttribution, ProposalSurface } from './proposal-surface.tsx';
 import { ErrorText } from './ui.tsx';
 
 interface FocusRowDraft {
@@ -87,7 +98,6 @@ export function MyWorkVyPlannerPanel({
   const f = useFormat();
   const locale = useLocale() === 'en' ? 'en' : 'vi';
   const api = useRef(clientForOrg(slug)).current;
-  const panelRef = useRef<HTMLElement>(null);
 
   const me = useQuery(orpc.me.get.queryOptions());
   const role = me.data?.orgs.find((o) => o.slug === slug)?.role;
@@ -148,7 +158,6 @@ export function MyWorkVyPlannerPanel({
       lastTriggerRef.current = false;
       return;
     }
-    panelRef.current?.focus();
     if (!lastTriggerRef.current && statusReady && blocked === null && !isViewer) {
       lastTriggerRef.current = true;
       planMutation.mutate();
@@ -157,7 +166,9 @@ export function MyWorkVyPlannerPanel({
 
   const handleClose = () => {
     onClose();
-    requestAnimationFrame(() => triggerRef.current?.focus());
+    window.setTimeout(() => {
+      if (triggerRef.current?.isConnected) triggerRef.current.focus();
+    }, 0);
   };
 
   const applyFocus = useMutation({
@@ -328,29 +339,259 @@ export function MyWorkVyPlannerPanel({
     : 0;
 
   return (
-    <section
-      ref={panelRef}
-      tabIndex={-1}
-      role="region"
-      aria-label={t('title')}
-      data-testid="my-work-vy-planner"
-      onKeyDown={(e) => {
-        if (e.key === 'Escape') {
-          e.stopPropagation();
-          handleClose();
-        }
+    <Sheet
+      open
+      onOpenChange={(next) => {
+        if (!next) handleClose();
       }}
-      className="space-y-3 rounded-lg border border-proposal/40 bg-proposal/5 p-3.5 text-sm outline-none"
     >
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <NavIcon name="appAi" className="text-proposal" />
-          <h2 className="font-medium text-foreground">{t('title')}</h2>
-          <Badge variant="proposal" data-testid="my-work-vy-ai-badge">
-            {t('aiBadge')}
-          </Badge>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
+      <SheetContent closeLabel={t('close')} className="sm:max-w-xl" data-testid="my-work-vy-planner">
+        <SheetHeader>
+          <SheetTitle>{t('title')}</SheetTitle>
+          <CoworkerAttribution
+            coworker="gm"
+            badgeLabel={t('aiBadge')}
+            badgeTestId="my-work-vy-ai-badge"
+          />
+          <SheetDescription>{t('hint')}</SheetDescription>
+        </SheetHeader>
+
+        <SheetBody>
+          <section role="region" aria-label={t('title')} className="space-y-4">
+            {blockedMessage && (
+              <div
+                role="status"
+                data-testid="my-work-vy-blocked"
+                className="rounded-md border border-dashed bg-background px-3 py-2 text-xs text-subtle-foreground"
+              >
+                {blockedMessage}
+              </div>
+            )}
+
+            {runErrorCode && <ErrorText data-testid="my-work-vy-error">{tv(`errors.${runErrorCode}`)}</ErrorText>}
+
+            {planMutation.isPending && (
+              <p role="status" data-testid="my-work-vy-loading" className="text-xs text-subtle-foreground">
+                {t('running')}
+              </p>
+            )}
+
+            {!planMutation.isPending && result?.state === 'ready' && (
+              <div className="space-y-4">
+                {result.dropped > 0 && (
+                  <p className="text-xs text-subtle-foreground" data-testid="my-work-vy-dropped">
+                    {t('droppedHint', { count: result.dropped })}
+                  </p>
+                )}
+
+                {result.focus.length === 0 && result.reschedules.length === 0 ? (
+                  <p role="status" data-testid="my-work-vy-empty" className="text-xs text-subtle-foreground">
+                    {t('empty')}
+                  </p>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="space-y-2 rounded-lg border border-border bg-card p-3">
+                      <h3 className="text-xs font-semibold text-foreground">{t('focusHeading')}</h3>
+                      {result.focus.length === 0 ? (
+                        <p className="text-xs text-subtle-foreground">{t('emptyFocus')}</p>
+                      ) : (
+                        <ul className="space-y-2" data-testid="my-work-vy-focus-list">
+                          {result.focus.map((item) => {
+                            const draft = focusDrafts[item.todoId] ?? {
+                              priority: item.priority,
+                              dueOn: item.dueOn && item.dueOn >= result.today ? item.dueOn : result.today,
+                              edited: false,
+                              applied: false,
+                              error: null,
+                            };
+                            const showProposal = !draft.edited && !draft.applied;
+                            return (
+                              <ProposalSurface
+                                as="li"
+                                key={item.todoId}
+                                proposed={!draft.applied}
+                                data-testid={`my-work-vy-focus-item-${item.todoId}`}
+                                className="space-y-2 rounded-lg p-3"
+                              >
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <span className="font-medium text-foreground">{item.title}</span>
+                                  {showProposal ? (
+                                    <Badge variant="proposal" data-testid={`my-work-vy-focus-proposal-badge-${item.todoId}`}>
+                                      {t('proposalMark')}
+                                    </Badge>
+                                  ) : draft.applied ? (
+                                    <Badge variant="outline" data-testid={`my-work-vy-focus-applied-badge-${item.todoId}`}>
+                                      {t('applied')}
+                                    </Badge>
+                                  ) : null}
+                                </div>
+                                {item.reason && <p className="text-xs text-muted-foreground">{item.reason}</p>}
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <NativeSelect
+                                    size="sm"
+                                    aria-label={t('priorityLabel', { title: item.title })}
+                                    value={String(draft.priority)}
+                                    disabled={draft.applied || applyFocus.isPending}
+                                    onChange={(e) => {
+                                      const nextP = Number(e.target.value) as TodoPriority;
+                                      setFocusDrafts((prev) => ({
+                                        ...prev,
+                                        [item.todoId]: { ...draft, priority: nextP, edited: true },
+                                      }));
+                                    }}
+                                  >
+                                    {PRIORITIES.map((p) => (
+                                      <NativeSelectOption key={p} value={p}>
+                                        {tt('priorityShort', { level: String(p) })}
+                                      </NativeSelectOption>
+                                    ))}
+                                  </NativeSelect>
+                                  <DateInput
+                                    aria-label={t('focusDateLabel', { title: item.title })}
+                                    value={draft.dueOn}
+                                    min={result.today}
+                                    disabled={draft.applied || applyFocus.isPending}
+                                    inputClassName="text-xs max-md:min-h-11"
+                                    onChange={(nextDueOn) =>
+                                      setFocusDrafts((prev) => ({
+                                        ...prev,
+                                        [item.todoId]: { ...draft, dueOn: nextDueOn, edited: true },
+                                      }))
+                                    }
+                                  />
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant={draft.applied ? 'outline' : 'default'}
+                                    className="ml-auto max-md:min-h-11"
+                                    disabled={draft.applied || applyFocus.isPending}
+                                    loading={applyFocus.isPending && applyFocus.variables?.todoId === item.todoId}
+                                    onClick={() => applyFocus.mutate(item)}
+                                    data-testid={`my-work-vy-focus-apply-${item.todoId}`}
+                                  >
+                                    {draft.applied ? t('applied') : t('applyFocus')}
+                                  </Button>
+                                </div>
+                                {draft.error && <ErrorText>{draft.error}</ErrorText>}
+                              </ProposalSurface>
+                            );
+                          })}
+                        </ul>
+                      )}
+                    </div>
+
+                    <div className="space-y-2 rounded-lg border border-border bg-card p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <h3 className="text-xs font-semibold text-foreground">{t('reschedulesHeading')}</h3>
+                        {remainingReschedules > 1 && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            className="max-md:min-h-11"
+                            loading={applyAllReschedules.isPending}
+                            disabled={applyAllReschedules.isPending}
+                            onClick={() => applyAllReschedules.mutate()}
+                            data-testid="my-work-vy-reschedule-apply-all"
+                          >
+                            {t('applyAllReschedules', { count: remainingReschedules })}
+                          </Button>
+                        )}
+                      </div>
+                      {result.reschedules.length === 0 ? (
+                        <p className="text-xs text-subtle-foreground">{t('emptyReschedules')}</p>
+                      ) : (
+                        <ul className="space-y-2" data-testid="my-work-vy-reschedule-list">
+                          {result.reschedules.map((item) => {
+                            const draft = rescheduleDrafts[item.todoId] ?? {
+                              dueOn: item.dueOn,
+                              edited: false,
+                              applied: false,
+                              error: null,
+                            };
+                            const showProposal = !draft.edited && !draft.applied;
+                            return (
+                              <ProposalSurface
+                                as="li"
+                                key={item.todoId}
+                                proposed={!draft.applied}
+                                data-testid={`my-work-vy-reschedule-item-${item.todoId}`}
+                                className="space-y-2 rounded-lg p-3"
+                              >
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <span className="font-medium text-foreground">{item.title}</span>
+                                  {showProposal ? (
+                                    <Badge variant="proposal" data-testid={`my-work-vy-reschedule-proposal-badge-${item.todoId}`}>
+                                      {t('proposalMark')}
+                                    </Badge>
+                                  ) : draft.applied ? (
+                                    <Badge variant="outline" data-testid={`my-work-vy-reschedule-applied-badge-${item.todoId}`}>
+                                      {t('applied')}
+                                    </Badge>
+                                  ) : null}
+                                </div>
+                                <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                                  {item.currentDueOn && <span>{t('previousDue', { due: f.date(item.currentDueOn) })}</span>}
+                                  {item.reason && <span>{item.reason}</span>}
+                                </div>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <DateInput
+                                    aria-label={t('newDateLabel', { title: item.title })}
+                                    value={draft.dueOn}
+                                    min={result.today}
+                                    disabled={draft.applied || applyOneReschedule.isPending || applyAllReschedules.isPending}
+                                    inputClassName="text-xs max-md:min-h-11"
+                                    onChange={(nextDueOn) =>
+                                      setRescheduleDrafts((prev) => ({
+                                        ...prev,
+                                        [item.todoId]: { ...draft, dueOn: nextDueOn, edited: true },
+                                      }))
+                                    }
+                                  />
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant={draft.applied ? 'outline' : 'default'}
+                                    className="ml-auto max-md:min-h-11"
+                                    disabled={
+                                      draft.applied ||
+                                      !draft.dueOn ||
+                                      draft.dueOn < result.today ||
+                                      applyOneReschedule.isPending ||
+                                      applyAllReschedules.isPending
+                                    }
+                                    loading={applyOneReschedule.isPending && applyOneReschedule.variables?.todoId === item.todoId}
+                                    onClick={() => applyOneReschedule.mutate(item)}
+                                    data-testid={`my-work-vy-reschedule-apply-${item.todoId}`}
+                                  >
+                                    {draft.applied ? t('applied') : t('applyReschedule')}
+                                  </Button>
+                                </div>
+                                {draft.error && <ErrorText>{draft.error}</ErrorText>}
+                              </ProposalSurface>
+                            );
+                          })}
+                        </ul>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </section>
+        </SheetBody>
+
+        <SheetFooter>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            className="max-md:min-h-11"
+            aria-label={t('close')}
+            onClick={handleClose}
+            data-testid="my-work-vy-close-btn"
+          >
+            {common('close')}
+          </Button>
           {statusReady && blocked === null && (
             <Button
               type="button"
@@ -365,237 +606,8 @@ export function MyWorkVyPlannerPanel({
               {t('rerun')}
             </Button>
           )}
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            className="max-md:min-h-11"
-            aria-label={t('close')}
-            onClick={handleClose}
-            data-testid="my-work-vy-close-btn"
-          >
-            {common('close')}
-          </Button>
-        </div>
-      </div>
-
-      <p className="text-xs text-subtle-foreground">{t('hint')}</p>
-
-      {blockedMessage && (
-        <div
-          role="status"
-          data-testid="my-work-vy-blocked"
-          className="rounded-md border border-dashed bg-background px-3 py-2 text-xs text-subtle-foreground"
-        >
-          {blockedMessage}
-        </div>
-      )}
-
-      {runErrorCode && <ErrorText data-testid="my-work-vy-error">{tv(`errors.${runErrorCode}`)}</ErrorText>}
-
-      {planMutation.isPending && (
-        <p role="status" data-testid="my-work-vy-loading" className="text-xs text-subtle-foreground">
-          {t('running')}
-        </p>
-      )}
-
-      {!planMutation.isPending && result?.state === 'ready' && (
-        <div className="space-y-4">
-          {result.dropped > 0 && (
-            <p className="text-xs text-subtle-foreground" data-testid="my-work-vy-dropped">
-              {t('droppedHint', { count: result.dropped })}
-            </p>
-          )}
-
-          {result.focus.length === 0 && result.reschedules.length === 0 ? (
-            <p role="status" data-testid="my-work-vy-empty" className="text-xs text-subtle-foreground">
-              {t('empty')}
-            </p>
-          ) : (
-            <div className="grid gap-4 lg:grid-cols-2">
-              <div className="space-y-2 rounded-md border bg-background p-3">
-                <h3 className="text-xs font-semibold tracking-wide text-foreground uppercase">{t('focusHeading')}</h3>
-                {result.focus.length === 0 ? (
-                  <p className="text-xs text-subtle-foreground">{t('emptyFocus')}</p>
-                ) : (
-                  <ul className="space-y-2" data-testid="my-work-vy-focus-list">
-                    {result.focus.map((item) => {
-                      const draft = focusDrafts[item.todoId] ?? {
-                        priority: item.priority,
-                        dueOn: item.dueOn && item.dueOn >= result.today ? item.dueOn : result.today,
-                        edited: false,
-                        applied: false,
-                        error: null,
-                      };
-                      const showProposal = !draft.edited && !draft.applied;
-                      return (
-                        <li
-                          key={item.todoId}
-                          data-testid={`my-work-vy-focus-item-${item.todoId}`}
-                          className="space-y-2 rounded-md border border-dashed border-proposal/60 bg-card p-2.5"
-                        >
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <span className="font-medium text-foreground">{item.title}</span>
-                            {showProposal ? (
-                              <Badge variant="proposal" data-testid={`my-work-vy-focus-proposal-badge-${item.todoId}`}>
-                                {t('proposalMark')}
-                              </Badge>
-                            ) : draft.applied ? (
-                              <Badge variant="outline" data-testid={`my-work-vy-focus-applied-badge-${item.todoId}`}>
-                                {t('applied')}
-                              </Badge>
-                            ) : null}
-                          </div>
-                          {item.reason && <p className="text-xs text-subtle-foreground">{item.reason}</p>}
-                          <div className="flex flex-wrap items-center gap-2">
-                            <select
-                              aria-label={t('priorityLabel', { title: item.title })}
-                              value={String(draft.priority)}
-                              disabled={draft.applied || applyFocus.isPending}
-                              onChange={(e) => {
-                                const nextP = Number(e.target.value) as TodoPriority;
-                                setFocusDrafts((prev) => ({
-                                  ...prev,
-                                  [item.todoId]: { ...draft, priority: nextP, edited: true },
-                                }));
-                              }}
-                              className="rounded-md border border-input bg-background px-2 py-1 text-xs text-foreground max-md:min-h-11"
-                            >
-                              {PRIORITIES.map((p) => (
-                                <option key={p} value={p}>
-                                  {tt('priorityShort', { level: String(p) })}
-                                </option>
-                              ))}
-                            </select>
-                            <DateInput
-                              aria-label={t('focusDateLabel', { title: item.title })}
-                              value={draft.dueOn}
-                              min={result.today}
-                              disabled={draft.applied || applyFocus.isPending}
-                              inputClassName="text-xs max-md:min-h-11"
-                              onChange={(nextDueOn) =>
-                                setFocusDrafts((prev) => ({
-                                  ...prev,
-                                  [item.todoId]: { ...draft, dueOn: nextDueOn, edited: true },
-                                }))
-                              }
-                            />
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant={draft.applied ? 'outline' : 'default'}
-                              className="ml-auto max-md:min-h-11"
-                              disabled={draft.applied || applyFocus.isPending}
-                              loading={applyFocus.isPending && applyFocus.variables?.todoId === item.todoId}
-                              onClick={() => applyFocus.mutate(item)}
-                              data-testid={`my-work-vy-focus-apply-${item.todoId}`}
-                            >
-                              {draft.applied ? t('applied') : t('applyFocus')}
-                            </Button>
-                          </div>
-                          {draft.error && <ErrorText>{draft.error}</ErrorText>}
-                        </li>
-                      );
-                    })}
-                  </ul>
-                )}
-              </div>
-
-              <div className="space-y-2 rounded-md border bg-background p-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <h3 className="text-xs font-semibold tracking-wide text-foreground uppercase">{t('reschedulesHeading')}</h3>
-                  {remainingReschedules > 1 && (
-                    <Button
-                      type="button"
-                      size="sm"
-                      className="max-md:min-h-11"
-                      loading={applyAllReschedules.isPending}
-                      disabled={applyAllReschedules.isPending}
-                      onClick={() => applyAllReschedules.mutate()}
-                      data-testid="my-work-vy-reschedule-apply-all"
-                    >
-                      {t('applyAllReschedules', { count: remainingReschedules })}
-                    </Button>
-                  )}
-                </div>
-                {result.reschedules.length === 0 ? (
-                  <p className="text-xs text-subtle-foreground">{t('emptyReschedules')}</p>
-                ) : (
-                  <ul className="space-y-2" data-testid="my-work-vy-reschedule-list">
-                    {result.reschedules.map((item) => {
-                      const draft = rescheduleDrafts[item.todoId] ?? {
-                        dueOn: item.dueOn,
-                        edited: false,
-                        applied: false,
-                        error: null,
-                      };
-                      const showProposal = !draft.edited && !draft.applied;
-                      return (
-                        <li
-                          key={item.todoId}
-                          data-testid={`my-work-vy-reschedule-item-${item.todoId}`}
-                          className="space-y-2 rounded-md border border-dashed border-proposal/60 bg-card p-2.5"
-                        >
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <span className="font-medium text-foreground">{item.title}</span>
-                            {showProposal ? (
-                              <Badge variant="proposal" data-testid={`my-work-vy-reschedule-proposal-badge-${item.todoId}`}>
-                                {t('proposalMark')}
-                              </Badge>
-                            ) : draft.applied ? (
-                              <Badge variant="outline" data-testid={`my-work-vy-reschedule-applied-badge-${item.todoId}`}>
-                                {t('applied')}
-                              </Badge>
-                            ) : null}
-                          </div>
-                          <div className="flex flex-wrap items-center gap-2 text-xs text-subtle-foreground">
-                            {item.currentDueOn && <span>{t('previousDue', { due: f.date(item.currentDueOn) })}</span>}
-                            {item.reason && <span>{item.reason}</span>}
-                          </div>
-                          <div className="flex flex-wrap items-center gap-2">
-                            <DateInput
-                              aria-label={t('newDateLabel', { title: item.title })}
-                              value={draft.dueOn}
-                              min={result.today}
-                              disabled={draft.applied || applyOneReschedule.isPending || applyAllReschedules.isPending}
-                              inputClassName="text-xs max-md:min-h-11"
-                              onChange={(nextDueOn) =>
-                                setRescheduleDrafts((prev) => ({
-                                  ...prev,
-                                  [item.todoId]: { ...draft, dueOn: nextDueOn, edited: true },
-                                }))
-                              }
-                            />
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant={draft.applied ? 'outline' : 'default'}
-                              className="ml-auto max-md:min-h-11"
-                              disabled={
-                                draft.applied ||
-                                !draft.dueOn ||
-                                draft.dueOn < result.today ||
-                                applyOneReschedule.isPending ||
-                                applyAllReschedules.isPending
-                              }
-                              loading={applyOneReschedule.isPending && applyOneReschedule.variables?.todoId === item.todoId}
-                              onClick={() => applyOneReschedule.mutate(item)}
-                              data-testid={`my-work-vy-reschedule-apply-${item.todoId}`}
-                            >
-                              {draft.applied ? t('applied') : t('applyReschedule')}
-                            </Button>
-                          </div>
-                          {draft.error && <ErrorText>{draft.error}</ErrorText>}
-                        </li>
-                      );
-                    })}
-                  </ul>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-    </section>
+        </SheetFooter>
+      </SheetContent>
+    </Sheet>
   );
 }

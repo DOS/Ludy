@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Strict meeting-minutes envelope confidentiality helpers for @ludy/mod-sign (#3811, docs/plan/esign.md Slice 3a, ADR-0047).
+// Strict meeting-minutes envelope confidentiality helpers for @ludy/mod-sign (#3811, #4531, docs/plan/esign.md Slice 3a, ADR-0047).
 // Envelopes with source_kind = 'meeting_minutes' may be created only for meetings in the caller's org whose minutes have
-// been explicitly shared and that the caller is permitted to read. Only permitted meeting readers, the envelope creator
-// (while still an active member of the org), or system workers may read, list, or mutate them.
+// been explicitly shared and that the caller is permitted to read:
+//   - Unsigned / in-flight envelopes (status <> 'completed') follow active meeting reader scope even for created_by
+//     (404 parity on reader removal, viewer demotion, retention expiry, or meeting deletion).
+//   - Signed / completed envelopes (status = 'completed') remain legal records under eSign retention: active readers
+//     (and creator while an active non-viewer org member) retain access across retention expiry and meeting deletion.
 // Unauthorized workspace members (including owners and admins on attendees-only meetings where they were not shared)
 // receive identical NOT_FOUND (404) responses on ID lookups so no existence oracle leaks.
 import { sql, type SelectQueryBuilder } from 'kysely';
@@ -15,6 +18,9 @@ export interface MeetingEnvelopeVisibilityRow {
   readonly source_kind: SignSourceKind | string;
   readonly source_id?: string | null;
   readonly created_by: string;
+  readonly status: string;
+  readonly retained_org_visible?: boolean | null;
+  readonly retained_reader_ids?: readonly string[] | null;
 }
 
 // Who may act on a meeting-minutes envelope is narrower than who may read it (#4530): every reader of the meeting reads it, but only its creator, an owner or an admin edits its draft, sends it,
@@ -71,14 +77,17 @@ export async function canAccessMeetingMinutesEnvelopeRow(
   if (row.source_kind !== 'meeting_minutes') return true;
   if (ctx.actor.type === 'system') return true;
   if (ctx.actor.type !== 'user') return false;
-  if (ctx.actor.userId === row.created_by) return true;
-  if (!row.source_id) return false;
+  if (row.status !== 'completed' && !row.source_id) return false;
 
+  const retainedReaderIds = row.retained_reader_ids ? [...row.retained_reader_ids] : null;
   const { rows } = await sql<{ allowed: boolean }>`
-    SELECT ludy_sign.can_access_meeting_minutes_envelope(
+    SELECT ludy_sign.can_access_meeting_minutes_envelope_row(
       ${ctx.orgId}::uuid,
-      ${row.source_id}::uuid,
-      ${row.created_by}::uuid
+      ${row.source_id ?? null}::uuid,
+      ${row.created_by}::uuid,
+      ${row.status}::text,
+      ${row.retained_org_visible ?? null}::boolean,
+      ${retainedReaderIds}::uuid[]
     ) AS allowed
   `.execute(ctx.trx);
   return Boolean(rows[0]?.allowed);
@@ -105,7 +114,7 @@ export function applyMeetingMinutesVisibilityFilter<O>(
   return query.where((eb) =>
     eb.or([
       eb('source_kind', '!=', 'meeting_minutes'),
-      sql<boolean>`ludy_sign.can_access_meeting_minutes_envelope(${eb.ref('org_id')}, ${eb.ref('source_id')}, ${eb.ref('created_by')})`,
+      sql<boolean>`ludy_sign.can_access_meeting_minutes_envelope_row(${eb.ref('org_id')}, ${eb.ref('source_id')}, ${eb.ref('created_by')}, ${eb.ref('status')}, ${eb.ref('retained_org_visible')}, ${eb.ref('retained_reader_ids')})`,
     ]),
   );
 }

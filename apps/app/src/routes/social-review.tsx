@@ -267,7 +267,7 @@ export function SocialReviewPage() {
   const data = page.data;
   const brand = data ? pageBrand(data.brand) : null;
   useBrandTitle(brand, data?.org ?? '');
-  // Neither mark until the page is known, so a branded link never shows Crove's logo while it loads.
+  // Neither mark until the page is known, so a branded link never shows Ludy's logo while it loads.
   const loading = token !== null && page.isLoading;
   return (
     <div className="min-h-screen bg-background px-4 py-6 text-foreground" style={accentStyle(brand)}>

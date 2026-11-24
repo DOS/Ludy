@@ -14,10 +14,14 @@ import { hrAttendanceCommands, hrAttendanceQueries } from './attendance.ts';
 import { hrOnboardingCommands, hrOnboardingQueries } from './onboarding.ts';
 import { hrOvertimeCommands, hrOvertimeQueries } from './overtime.ts';
 import { hrProbationCommands, hrProbationQueries } from './probation.ts';
+import { hrBusinessTripCommands, hrBusinessTripQueries } from './business-trips.ts';
+import { hrPayrollAdjustmentCommands, hrPayrollAdjustmentQueries } from './payroll-adjustments.ts';
+import { hrSalaryAdvanceCommands, hrSalaryAdvanceQueries } from './salary-advance.ts';
 import { hrRecruitingCommands, hrRecruitingQueries } from './recruiting.ts';
 import { hrTodayQueries } from './today.ts';
 import { hrRecruitingAnalyticsQueries } from './recruiting-analytics.ts';
 import { hrRecruitingIntakeCommands, hrRecruitingIntakeQueries } from './recruiting-intake.ts';
+import { hrSelfCoworkerQueries } from './self-coworker.ts';
 
 export * from './departments.ts';
 export * from './employees.ts';
@@ -28,6 +32,7 @@ export * from './recruiting.ts';
 export * from './today.ts';
 export * from './recruiting-analytics.ts';
 export * from './recruiting-intake.ts';
+export * from './self-coworker.ts';
 export * from './payroll-run.ts';
 export * from './payroll-preview.ts';
 export * from './payroll-posting.ts';
@@ -38,7 +43,8 @@ export { declarationMonths, type HrLaborCheckFact, type HrLaborCheckSnapshot } f
 export { buildDeclarationWorkbook, amountCell } from './declaration-xlsx.ts';
 export { buildBankFileWorkbook } from './bank-file-xlsx.ts';
 
-export const hrCommands = [...hrDepartmentCommands, ...hrEmployeeCommands, ...hrPayrollCommands, ...hrPostingCommands, ...hrPaymentCommands, ...hrBankFileCommands, ...hrDeclarationCommands, ...hrBankTemplateCommands, ...hrLeaveCommands, ...hrLeaveRequestCommands, ...hrAttendanceCommands, ...hrOnboardingCommands, ...hrOvertimeCommands, ...hrProbationCommands, ...hrRecruitingCommands, ...hrRecruitingIntakeCommands];
-export const hrQueries = [...hrDepartmentQueries, ...hrEmployeeQueries, ...hrPayrollQueries, ...hrPayrollPreviewQueries, ...hrPaymentQueries, ...hrBankFileQueries, ...hrDeclarationQueries, ...hrBankTemplateQueries, ...hrLeaveQueries, ...hrLeaveRequestQueries, ...hrAttendanceQueries, ...hrOnboardingQueries, ...hrOvertimeQueries, ...hrProbationQueries, ...hrRecruitingQueries, ...hrTodayQueries, ...hrRecruitingAnalyticsQueries, ...hrRecruitingIntakeQueries];
+export const hrCommands = [...hrDepartmentCommands, ...hrEmployeeCommands, ...hrPayrollCommands, ...hrPostingCommands, ...hrPaymentCommands, ...hrBankFileCommands, ...hrDeclarationCommands, ...hrBankTemplateCommands, ...hrLeaveCommands, ...hrLeaveRequestCommands, ...hrAttendanceCommands, ...hrOnboardingCommands, ...hrOvertimeCommands, ...hrProbationCommands, ...hrSalaryAdvanceCommands, ...hrPayrollAdjustmentCommands, ...hrBusinessTripCommands, ...hrRecruitingCommands, ...hrRecruitingIntakeCommands];
+export const hrQueries = [...hrDepartmentQueries, ...hrEmployeeQueries, ...hrPayrollQueries, ...hrPayrollPreviewQueries, ...hrPaymentQueries, ...hrBankFileQueries, ...hrDeclarationQueries, ...hrBankTemplateQueries, ...hrLeaveQueries, ...hrLeaveRequestQueries, ...hrAttendanceQueries, ...hrOnboardingQueries, ...hrOvertimeQueries, ...hrProbationQueries, ...hrSalaryAdvanceQueries, ...hrPayrollAdjustmentQueries, ...hrBusinessTripQueries, ...hrRecruitingQueries, ...hrTodayQueries, ...hrRecruitingAnalyticsQueries, ...hrRecruitingIntakeQueries, ...hrSelfCoworkerQueries];
 export type { HrProbationBriefSource } from './probation.ts';
+export type { HrSelfAiStatusContext, HrSelfPolicyNoteCandidate, HrSelfPolicySearchContext } from './self-coworker.ts';
 export { hrManifest } from './manifest.ts';

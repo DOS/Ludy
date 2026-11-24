@@ -27,6 +27,13 @@ const CONFIDENTIAL_SOURCE_KINDS = ['hr_contract', 'meeting_minutes'] as const;
 const TITLE_MAX = 300;
 const ROLE_LABEL_MAX = 120;
 const OBLIGATION_TITLE_MAX = 200;
+const EMAIL_IN_LABEL_RE = /[^\s@<>()[\],;:"\\]+@(?:[^\s@.<>()[\],;:"\\]+\.)+[^\s@.<>()[\],;:"\\]{2,}/g;
+
+export function sanitizeMcpRoleLabel(raw: string): string {
+  // Strip format/control characters without truncating first so U+FEFF or trailing segments cannot bypass redaction.
+  const cleaned = plainLine(raw, Math.max(ROLE_LABEL_MAX, raw.length));
+  return plainLine(cleaned.replace(EMAIL_IN_LABEL_RE, '[redacted]'), ROLE_LABEL_MAX);
+}
 
 export interface McpSignSignerCounts {
   total: number;
@@ -307,7 +314,7 @@ export const mcpSignEnvelopeGet = defineQuery({
         id: s.id,
         routingOrder: s.routing_order,
         signerRole: s.signer_role,
-        roleLabel: plainLine(s.role_label, ROLE_LABEL_MAX),
+        roleLabel: sanitizeMcpRoleLabel(s.role_label),
         status: s.status,
         viewedAt: isoOrNull(s.viewed_at),
         signedAt: isoOrNull(s.signed_at),
@@ -367,6 +374,24 @@ export const mcpSignRenewals = defineQuery({
   handler: async (ctx, input): Promise<McpSignRenewalsResult> => {
     requireCompanyGrant(ctx);
     const todayVn = vietnamToday(new Date());
+    const withinWindowSql = sql<boolean>`(
+      o.next_pending_due_date IS NOT NULL
+      OR (o.expiry_date IS NOT NULL AND (o.expiry_date - COALESCE(o.renewal_notice_days, 0)) <= (${todayVn}::date + ${input.withinDays}::integer))
+      OR o.obligations_json @> '[{"status":"pending"}]'::jsonb
+    )`;
+
+    const { rows: countRows } = await sql<{ total: number }>`
+      SELECT pg_catalog.count(*)::integer AS total
+      FROM ludy_sign.envelope_obligation o
+      JOIN ludy_sign.envelope e
+        ON e.org_id = o.org_id AND e.id = o.envelope_id
+      WHERE o.org_id = ${ctx.orgId}::uuid
+        AND o.status = 'confirmed'
+        AND e.status = 'completed'
+        AND e.source_kind NOT IN ('hr_contract', 'meeting_minutes')
+        AND ${withinWindowSql}
+    `.execute(ctx.trx);
+    const exactTotal = Number(countRows[0]?.total ?? 0);
 
     const rows = await ctx.trx
       .selectFrom('ludy_sign.envelope_obligation as o')
@@ -379,9 +404,12 @@ export const mcpSignRenewals = defineQuery({
       .where('o.status', '=', 'confirmed')
       .where('e.status', '=', 'completed')
       .where('e.source_kind', 'not in', [...CONFIDENTIAL_SOURCE_KINDS])
-      .orderBy(sql`(o.expiry_date - COALESCE(o.renewal_notice_days, 0)) ASC NULLS LAST`)
+      .where(withinWindowSql)
+      .orderBy(
+        sql`LEAST((o.expiry_date - COALESCE(o.renewal_notice_days, 0)), o.next_pending_due_date) ASC NULLS LAST`,
+      )
       .orderBy('o.updated_at', 'desc')
-      .orderBy('e.id', 'asc')
+      .orderBy('o.id', 'desc')
       .limit(200)
       .execute();
 
@@ -424,7 +452,7 @@ export const mcpSignRenewals = defineQuery({
         (a.item.envelopeId < b.item.envelopeId ? -1 : a.item.envelopeId > b.item.envelopeId ? 1 : 0),
     );
 
-    const total = ranked.length;
+    const total = Math.max(exactTotal, ranked.length);
     const items = ranked.slice(0, input.limit).map((r) => r.item);
     return { items, total, truncated: total > items.length };
   },

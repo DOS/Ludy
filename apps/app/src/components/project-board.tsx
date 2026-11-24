@@ -985,7 +985,7 @@ export function ProjectBoardView({
                   <div className="flex min-w-0 items-center gap-2">
                     <span className={`size-2 shrink-0 rounded-full ${dotClass}`} aria-hidden="true" />
                     <h2
-                      className="truncate text-xs font-semibold tracking-wide text-foreground uppercase"
+                      className="truncate text-xs font-semibold text-foreground"
                       title={isCustom ? `${title} · ${tt(`status.${status}`)}` : title}
                     >
                       {title}

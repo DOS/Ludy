@@ -31,6 +31,7 @@ export function projectCycleSummaryAi(
 function toTaskFacts(tasks: readonly ProjectWeeklyStatusTask[]): ProjectWeeklyStatusTaskFact[] {
   return tasks.map((task) => ({
     title: task.title,
+    tainted: task.tainted !== false,
     status: task.status,
     dueDay: task.due ? vietnamToday(new Date(task.due)) : null,
     commentCount: task.commentCount,

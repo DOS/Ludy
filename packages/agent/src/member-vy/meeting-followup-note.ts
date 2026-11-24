@@ -4,6 +4,13 @@
 // no URL/link/bare-domain, no email address or phone/8+-digit contact detail, no invisible/bidi/control characters, length bounds). Non-grounded or unsafe output is
 // rejected as a whole (never silently stripped or repaired). Nothing here reads a database, names a table or command, or persists prose.
 import { randomBytes } from 'node:crypto';
+import {
+  hasAutonomousActionDirective,
+  hasObfuscatedContactOrLink,
+  hasPromptMarkupLeak,
+  hasStealthControls,
+  hasUngroundedMoneyOrScaleWords,
+} from '../injection-guards.ts';
 import { privateText, revealPrivateText } from '../private-text.ts';
 import { figuresIn, hasBareLink, sameFigure } from './meeting-ask.ts';
 import { numbersIn } from './meeting-summary.ts';
@@ -124,10 +131,49 @@ const CURRENCY_RE = /[$€£¥₫₩₹]/gu;
 
 const GROUPED_INTEGER = /^[1-9]\d{0,2}(?:\.\d{3})+$/;
 const DASH_DATE = /^(?:\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])|(?:0[1-9]|[12]\d|3[01])-(?:0[1-9]|1[0-2])-\d{4})$/;
+// A day written with dots (28.11.2026): eight digits that are not a contact. The year is 19xx or 20xx, so a phone such as 09.12.4567 is not let through as one.
+const DOT_DATE = /^(?:0?[1-9]|[12]\d|3[01])\.(?:0?[1-9]|1[0-2])\.(?:19|20)\d{2}$/;
+// A hyphen with spaces around it, then a digit group: how a phone number is sometimes typed by hand (090 - 123 - 4567). The group is captured to see whether it holds a dot.
+const SPACED_DASH_DIGITS = /^[ \t]*-[ \t]*(\d+(?:\.\d+)*)/;
+// One dot or several, then a digit: the dot joins the digits on both sides of it (090.123.4567, 15.000.000).
+const DOTS_DIGIT = /^\.+\d/;
+// A dot, spaces, then a digit: a phone typed as "090. 123. 4567".
+const DOT_SPACE_DIGIT = /^\.[ \t]+\d/;
+const UNSPACED_DASH = /\d-\d/;
+// A run joined through a hyphen with spaces needs nine digits (a Vietnamese mobile has ten, eleven with 84): shorter ones are times (0900 - 1700), days (05 - 10 - 2026) and ranges.
+const SPACED_RUN_DIGITS_MIN = 9;
+// The dashes NFKC leaves alone (hyphen, non-breaking hyphen, figure dash, en dash, em dash, horizontal bar, minus sign) read as the hyphen they stand for (#4553).
+const OTHER_DASHES = /[\u2010-\u2015\u2212]/gu;
+// A run that opens like a phone number (0, 84 or +country digit) and goes on through groups of two digits or more split by a hyphen, a slash or an underscore (spaces allowed around it),
+// a comma with no space after it, a single line break, or spaces: 090/123/4567, 090_123_4567, 090,123,4567, 090-123 - 4567, 090 on one line and 123 4567 on the next. A comma and a
+// space, and a group of one digit, are a list (01, 02, 03; 0/1/2), not a number. A run does not start inside a date or number (right after a digit and a hyphen or slash).
+const PHONE_LEAD_RUN = /(?<![\d.]|\d[-/])(?:\+[ \t]?\d|0|84)\d*(?:(?:[ \t]*[-/_][ \t]*(?:\r?\n[ \t]*)?|,|[ \t]*\r?\n[ \t]*|[ \t]+)\d{2,})+/g;
+// A run that does not open like a phone number but is short groups split by spaced hyphens and ends in a group of four digits: 90 - 123 - 4567, 415 - 555 - 2671. A range, or tiers
+// of figures (100 - 200 - 300), are not one.
+const PHONE_LEADLESS_RUN = /(?<![\d.]|\d[-/])\d{1,3}(?:[ \t]+-[ \t]+\d{1,4})+[ \t]+-[ \t]+\d{4}(?!\d)/g;
+// A day that opens a run (28/11/2026, 05 - 10 - 2026, 2026-11-28, or only a day and a month: 08/12) is a date. What follows it may still be a contact: see hasLoosePhone.
+const DATE_START = /^(?:\d{4}-\d{2}-\d{2}|(?:0?[1-9]|[12]\d|3[01])[ \t]*[-/.][ \t]*(?:0?[1-9]|1[0-2])(?:[ \t]*[-/.][ \t]*(?:19|20)\d{2})?(?!\d|[-/.]\d))/;
 
+// The phone shapes the run scan below does not join: other separators, a line break, a number typed without its leading 0. Nine digits or more, as a Vietnamese mobile has ten
+// (eleven with 84) and a time (0900 - 1700) or a day has eight. These only add refusals: the run scan still decides everything it decided before.
+function hasLoosePhone(normalized: string): boolean {
+  for (const pattern of [PHONE_LEAD_RUN, PHONE_LEADLESS_RUN]) {
+    for (const found of normalized.matchAll(pattern)) {
+      const date = DATE_START.exec(found[0]);
+      // A date opens the run: the date is not a contact, but what follows it may be (05/12/2026, 090_123_4567).
+      if (date !== null) {
+        if (hasLoosePhone(found[0].slice(date[0].length))) return true;
+        continue;
+      }
+      if (found[0].replace(/\D/gu, '').length >= SPACED_RUN_DIGITS_MIN) return true;
+    }
+  }
+  return false;
+}
+// The same list as the contract's BARE_TLDS (meeting-followup.ts), 'test' included: a link the typed text is refused for is refused for the model's too (#4479).
 const BARE_TLDS = new Set([
   'com', 'net', 'org', 'vn', 'io', 'co', 'me', 'ly', 'app', 'info', 'biz', 'edu', 'gov', 'xyz', 'site', 'link', 'shop', 'online',
-  'cc', 'tv', 'ai', 'dev', 'ink', 'top', 'club', 'live', 'store', 'page', 'click', 'to', 'gl', 'cn', 'ru', 'us', 'uk', 'jp', 'kr',
+  'cc', 'tv', 'ai', 'dev', 'ink', 'top', 'club', 'live', 'store', 'page', 'click', 'to', 'gl', 'cn', 'ru', 'us', 'uk', 'jp', 'kr', 'test',
 ]);
 const IS_WORD_CHAR = /^[\p{L}\p{N}]$/u;
 function trimToWord(token: string): string {
@@ -139,33 +185,52 @@ function trimToWord(token: string): string {
   return chars.slice(from, to).join('');
 }
 
+// Any ASCII punctuation but the dot and the hyphen, and spaces, end a word: so does what is glued to a domain (a,123.com, a|x.com, a/x.com, a_x.com). Letters and digits of any
+// script stay in the word, so "chốt.Co" is one word with a non-ASCII letter and is not a domain.
+const WORD_BREAK = /[\s!-,/:-@[-`{-~]+/u;
+// Spaces around a dot between two ASCII words (abc . com) read as the dot they hide (#4553). A capital after the dot is a new sentence ("Xong . Ai làm"), not a domain.
+const SPACED_DOT = /(?<=[A-Za-z0-9-])[ \t]+\.[ \t]+(?=[a-z0-9-])/gu;
+
 function hasBareDomainLink(text: string): boolean {
   if (hasBareLink(text)) return true;
-  for (const raw of text.normalize('NFKC').split(/\s+/u)) {
-    const token = trimToWord(raw).toLowerCase();
-    if (token === '') continue;
-    const host = token.split(/[/?#:]/)[0] as string;
-    const labels = host.split('.');
-    if (labels.length < 2 || labels.some((l) => l === '')) continue;
-    const tld = labels[labels.length - 1] as string;
-    if (BARE_TLDS.has(tld) && labels.every((l) => [...l].every((c) => (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c === '-'))) return true;
+  // Punctuation glued to a domain (a,123.com, a|x.com), an ideographic full stop (123。com) and spaces around a dot (abc . com) do not hide it (#4479, #4553).
+  const base = text.normalize('NFKC').replace(/[。｡]/gu, '.');
+  // The text as it is and with the spaced dots closed: closing them can join two words into one that is no domain, so a link seen before is still seen.
+  for (const form of [base, base.replace(SPACED_DOT, '.')]) {
+    for (const raw of form.split(WORD_BREAK)) {
+      const token = trimToWord(raw).toLowerCase();
+      if (token === '') continue;
+      const labels = token.split('.');
+      if (labels.length < 2 || labels.some((l) => l === '')) continue;
+      const tld = labels[labels.length - 1] as string;
+      if (BARE_TLDS.has(tld) && labels.every((l) => [...l].every((c) => (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c === '-'))) return true;
+    }
   }
   return false;
 }
 
 function hasPhoneOrLongDigits(text: string): boolean {
   const normalized = text.normalize('NFKC');
+  const dashed = normalized.replace(OTHER_DASHES, '-');
+  // The run scan reads the text as typed and with the other dashes as hyphens, so a text it refused before is refused still; the loose shapes read the second.
+  return hasLongDigitRun(normalized) || (dashed !== normalized && hasLongDigitRun(dashed)) || hasLoosePhone(dashed);
+}
+
+function hasLongDigitRun(normalized: string): boolean {
   let start = -1;
   let last = -1;
   let digitCount = 0;
+  let spacedRun = false;
+  const standsAlone = (span: string): boolean => GROUPED_INTEGER.test(span) || DASH_DATE.test(span) || DOT_DATE.test(span);
   const flush = () => {
     if (start >= 0) {
       const span = normalized.slice(start, last + 1);
-      if (digitCount >= 8 && !GROUPED_INTEGER.test(span) && !DASH_DATE.test(span)) return true;
+      if (digitCount >= (spacedRun ? SPACED_RUN_DIGITS_MIN : 8) && !standsAlone(span)) return true;
     }
     start = -1;
     last = -1;
     digitCount = 0;
+    spacedRun = false;
     return false;
   };
   for (let i = 0; i <= normalized.length; i += 1) {
@@ -177,15 +242,22 @@ function hasPhoneOrLongDigits(text: string): boolean {
       digitCount += 1;
       continue;
     }
-    const joinSpace =
-      start >= 0 &&
-      (c === ' ' || c === '\t') &&
-      normalized[i + 1] !== '-' &&
-      !GROUPED_INTEGER.test(normalized.slice(start, last + 1)) &&
-      !DASH_DATE.test(normalized.slice(start, last + 1));
+    const span = start >= 0 ? normalized.slice(start, last + 1) : '';
+    const joinSpace = start >= 0 && (c === ' ' || c === '\t') && normalized[i + 1] !== '-' && !standsAlone(span);
     const joinDash = start >= 0 && c === '-' && normalized[i - 1] !== ' ' && normalized[i + 1] !== ' ';
+    // A phone typed with spaces around its hyphens (090 - 123 - 4567) or after its dots (090. 123. 4567) is one run. Only a run that opens like a phone number (0, 84 or +) is joined
+    // this way, so a range of figures (1000 - 2000, 2025 - 2026) or a sentence ("Năm 2025. 2026 ...") is not read as one; a run that holds a date, a grouped number or a dotted
+    // time (08.30 - 11.30) stands alone, and so does a group that follows a hyphen with a dot in it (0 - 15.000.000).
+    const phoneLead = normalized[start] === '0' || normalized.startsWith('84', start) || normalized[start - 1] === '+';
+    const phoneRun = start >= 0 && phoneLead && !standsAlone(span);
+    const dashed = start >= 0 && (c === ' ' || c === '\t' || c === '-') ? SPACED_DASH_DIGITS.exec(normalized.slice(i)) : null;
+    const joinSpacedDash = phoneRun && !joinDash && dashed !== null && !(dashed[1] ?? '').includes('.') && !span.includes('.') && !UNSPACED_DASH.test(span);
+    const joinDotSpace = phoneRun && c === '.' && DOT_SPACE_DIGIT.test(normalized.slice(i));
     const joinParen = start >= 0 && (c === ')' || (c === '(' && digitCount <= 3));
-    if (joinSpace || joinDash || joinParen || (start >= 0 && c === '.')) continue;
+    // A dot joins two digits (090.123.4567, 15.000.000), not a full stop that ends a sentence ("Năm 2025. 2026 ...").
+    const joinDot = start >= 0 && c === '.' && DOTS_DIGIT.test(normalized.slice(i));
+    if (joinSpacedDash) spacedRun = true;
+    if (joinSpace || joinDash || joinSpacedDash || joinDotSpace || joinParen || joinDot) continue;
     if (flush()) return true;
   }
   return false;
@@ -235,18 +307,30 @@ export function countNoteParts(body: string): { paragraphs: number; bullets: num
 export function checkFollowupPersonalNote(raw: string, facts: FollowupNoteFacts): MeetingFollowupNoteAnswer {
   const parsed = jsonObject(raw);
   if (typeof parsed.body !== 'string') throw new FollowupNoteError('FOLLOWUP_NOTE_UNPARSABLE');
+  if (hasStealthControls(parsed.body) || hasPromptMarkupLeak(parsed.body)) {
+    throw new FollowupNoteError('FOLLOWUP_NOTE_REFUSED');
+  }
   const body = cleanFollowupNoteBody(parsed.body);
   const length = Array.from(body).length;
   if (body === '' || length < FOLLOWUP_NOTE_LIMITS.bodyMinChars) throw new FollowupNoteError('FOLLOWUP_NOTE_EMPTY');
   if (length > FOLLOWUP_NOTE_LIMITS.bodyMaxChars) throw new FollowupNoteError('FOLLOWUP_NOTE_REFUSED');
 
   // Contact, link, URL, email, and phone / 8+-digit contact checks (never strip/repair silently).
-  if (ADDRESS_RE.test(body) || hasBareDomainLink(body) || hasPhoneOrLongDigits(body)) {
+  if (
+    ADDRESS_RE.test(body) ||
+    hasBareDomainLink(body) ||
+    hasPhoneOrLongDigits(body) ||
+    hasObfuscatedContactOrLink(body) ||
+    hasAutonomousActionDirective(body)
+  ) {
     throw new FollowupNoteError('FOLLOWUP_NOTE_REFUSED');
   }
 
   // Exact figure & date grounding against source meeting facts (#1237 rule).
   const source = sourceTextOf(facts);
+  if (!hasUngroundedMoneyOrScaleWords(source) && hasUngroundedMoneyOrScaleWords(body)) {
+    throw new FollowupNoteError('FOLLOWUP_NOTE_REFUSED');
+  }
   const sourceCurrencies = new Set(source.match(CURRENCY_RE) ?? []);
   for (const symbol of body.match(CURRENCY_RE) ?? []) {
     if (!sourceCurrencies.has(symbol)) throw new FollowupNoteError('FOLLOWUP_NOTE_REFUSED');

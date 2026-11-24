@@ -15,7 +15,7 @@
 //
 // A meeting that is unknown, of another org, of attendees only, not published, or whose text period ended answers one and the same MEETING_NOT_FOUND, so a client learns nothing about meetings it may not read.
 import { sql } from 'kysely';
-import { MCP_ACTIONS_MAX, MCP_DECISIONS_MAX, MCP_LINE_MAX, MCP_SEARCH_FIELDS, MCP_SEARCH_MEETINGS_MAX, MCP_SUMMARY_LINES_MAX, plainLine, zMcpDecisionsInput, zMcpMeetingsInput, zMcpMinutesInput, zMcpOpenActionsInput, zMcpSearchInput, zMcpSeriesOpenItemsInput } from '@ludy/kernel-contract';
+import { MCP_ACTIONS_MAX, MCP_DECISIONS_MAX, MCP_LINE_MAX, MCP_SEARCH_FIELDS, MCP_SEARCH_MEETINGS_MAX, MCP_SUMMARY_LINES_MAX, plainLine, zMcpDecisionsInput, zMcpMeetingsInput, zMcpMinutesInput, zMcpOpenActionsInput, zMcpSearchInput, zMcpSeriesOpenItemsInput, zMeetingVisibleIdsInput } from '@ludy/kernel-contract';
 import type { MemberRole } from '@ludy/db';
 import { DomainError, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { foldQuery, matchLine, snippetAround } from './mcp-search.ts';
@@ -404,4 +404,21 @@ export const mcpSearch = defineQuery({
   },
 });
 
-export const mcpMeetingsQueries = [mcpMeetings, mcpMinutes, mcpOpenActions, mcpSeriesOpenItems, mcpDecisions, mcpSearch];
+/** Internal company-grant batch visibility check called by projects.mcp.triage_summary via ctx.query; never exposed as a public MCP tool (#4493). */
+export const mcpMeetingVisibleIds = defineQuery({
+  name: 'meetings.mcp.visible_ids',
+  input: zMeetingVisibleIdsInput,
+  access: GRANTORS,
+  mcp: { scope: 'ludy.read' },
+  handler: async (ctx, input): Promise<{ visibleIds: string[] }> => {
+    requireCompanyGrant(ctx);
+    if (input.meetingIds.length === 0) return { visibleIds: [] };
+    const rows = await visibleMeetings(ctx)
+      .select('m.id')
+      .where('m.id', 'in', [...new Set(input.meetingIds)])
+      .execute();
+    return { visibleIds: rows.map((r) => r.id) };
+  },
+});
+
+export const mcpMeetingsQueries = [mcpMeetings, mcpMinutes, mcpOpenActions, mcpSeriesOpenItems, mcpDecisions, mcpSearch, mcpMeetingVisibleIds];

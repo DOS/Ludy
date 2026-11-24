@@ -6,6 +6,7 @@ import { DomainError } from '@ludy/kernel-runtime';
 import {
   EXTENSION_ROUTES,
   EXTENSION_TOKEN_PREFIX,
+  authorizeExtensionRoute,
   hashExtensionSecret,
   isExtensionBearer,
   matchExtensionRoute,
@@ -51,25 +52,25 @@ describe('extension secrets', () => {
 });
 
 describe('the routes an extension token may reach', () => {
-  // Landing in two steps (ADR-0055 slice 1, issue #4123): the route of the capture heartbeat may be on the list or not; the step that adds it moves it into the list below and empties this one.
-  const ROUTES_NEXT = ['POST /api/rpc/meetings/captureHeartbeat meetings'];
-  it('lists each route with its reason, the meetings ones with the meetings scope', () => {
-    const listed = EXTENSION_ROUTES.map((r) => `${r.method} ${r.path} ${r.scope}`);
-    // The optional route is on the list once or not at all (the filter below drops every copy of it).
-    for (const next of ROUTES_NEXT) expect(listed.filter((route) => route === next).length).toBeLessThanOrEqual(1);
-    expect(listed.filter((route) => !ROUTES_NEXT.includes(route))).toEqual([
-      'GET /api/extension/me null',
-      'POST /api/rpc/meetings/create meetings',
-      'POST /api/rpc/meetings/extensionStatus meetings',
-      'POST /api/rpc/meetings/recordingStopped meetings',
-      'POST /api/rpc/meetings/agenda/next agenda',
-      'POST /api/files/uploads meetings',
-      'POST /api/meetings/:id/media meetings',
-      'POST /api/meetings/:id/live-chunk meetings',
-      'POST /api/rpc/notes/clip notes',
-      'POST /api/rpc/notes/todos/quickCapture notes',
+  it('lists each route with its reason and write classification, the meetings ones with the meetings scope', () => {
+    const listed = EXTENSION_ROUTES.map((r) => `${r.method} ${r.path} ${r.scope} write=${r.write}`);
+    expect(listed).toEqual([
+      'GET /api/extension/me null write=false',
+      'POST /api/rpc/meetings/create meetings write=true',
+      'POST /api/rpc/meetings/extensionStatus meetings write=false',
+      'POST /api/rpc/meetings/recordingStopped meetings write=true',
+      'POST /api/rpc/meetings/captureHeartbeat meetings write=true',
+      'POST /api/rpc/meetings/agenda/next agenda write=false',
+      'POST /api/files/uploads meetings write=true',
+      'POST /api/meetings/:id/media meetings write=true',
+      'POST /api/meetings/:id/live-chunk meetings write=true',
+      'POST /api/rpc/notes/clip notes write=true',
+      'POST /api/rpc/notes/todos/quickCapture notes write=true',
     ]);
     expect(EXTENSION_ROUTES.every((r) => r.why.length > 20)).toBe(true);
+    const checked = authorizeExtensionRoute(['notes'], 'POST', '/api/rpc/notes/clip');
+    expect(checked.ok).toBe(true);
+    if (checked.ok) expect(checked.route.write).toBe(true);
   });
 
   it('matches a listed method and path exactly, with one UUID for an id', () => {

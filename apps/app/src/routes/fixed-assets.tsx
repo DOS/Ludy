@@ -430,7 +430,7 @@ export function FixedAssetsPage() {
         <DataTable head={[t('columns.name'), t('columns.accounts'), t('columns.schedule'), t('columns.cost'), t('columns.posted'), t('columns.remaining')]} numeric={[3, 4, 5]}>
           {rows.map((a) => (
             <TableRow key={a.id}>
-              <TableCell className="px-4 py-3 text-foreground">
+              <TableCell className="text-foreground">
                 <div className="flex flex-wrap items-center gap-2">
                   {a.name}
                   <Badge variant="outline">{t(`kinds.${a.kind}`)}</Badge>
@@ -443,16 +443,16 @@ export function FixedAssetsPage() {
                   </Button>
                 )}
               </TableCell>
-              <TableCell className="px-4 py-3 font-mono text-xs text-muted-foreground">
+              <TableCell className="font-mono text-xs text-muted-foreground">
                 {[a.assetAccount, a.accumulatedAccount, a.expenseAccount].filter(Boolean).join(' · ')}
               </TableCell>
-              <TableCell className="px-4 py-3 text-xs text-muted-foreground">
+              <TableCell className="text-xs text-muted-foreground">
                 {t('schedule', { start: monthLabel(a.startMonth), last: monthLabel(a.lastMonth), months: String(a.months) })}
                 <div>{a.lastPostedMonth ? t('postedThrough', { month: monthLabel(a.lastPostedMonth), count: String(a.postedMonths) }) : t('notPosted')}</div>
               </TableCell>
-              <TableCell className="px-4 py-3 text-right text-foreground tabular-nums">{f.money(a.cost)}</TableCell>
-              <TableCell className="px-4 py-3 text-right text-muted-foreground tabular-nums">{f.money(a.posted)}</TableCell>
-              <TableCell className="px-4 py-3 text-right text-foreground tabular-nums">{f.money(a.remaining)}</TableCell>
+              <TableCell className="text-right text-foreground tabular-nums">{f.money(a.cost)}</TableCell>
+              <TableCell className="text-right text-muted-foreground tabular-nums">{f.money(a.posted)}</TableCell>
+              <TableCell className="text-right text-foreground tabular-nums">{f.money(a.remaining)}</TableCell>
             </TableRow>
           ))}
         </DataTable>

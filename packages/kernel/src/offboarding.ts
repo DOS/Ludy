@@ -9,6 +9,7 @@
 import { sql } from 'kysely';
 import { z } from 'zod';
 import type { MemberRole } from '@ludy/db';
+import { FOLLOWUP_MAIL_SOURCE } from '@ludy/kernel-contract';
 import { DomainError, defineCommand, defineQuery, exportKey, GENERATION_PATTERN, type QueryContext } from '@ludy/kernel-runtime';
 
 const OWNERS: readonly MemberRole[] = ['owner'];
@@ -64,10 +65,13 @@ export const EXPORT_TABLES = {
   'kernel.saved_reply': { from: 'ludy_kernel.saved_reply', omit: [] },
   'kernel.conversation_note': { from: 'ludy_kernel.conversation_note', omit: [] },
   // Outbound mail (#538): the mail log, its delivery events (#539) and the org's suppression list. The address hashes
-  // are keyed by the deployment.
-  'kernel.mail_message': { from: 'ludy_kernel.mail_message', omit: [] },
+  // are keyed by the deployment. The follow-up mails of a meeting (#4533, ADR-0047) are left out: each holds the meeting's summary, decisions and action items or a note about it (payload),
+  // the subject the recorder typed and the recipients, and the meeting may be attendees-only, which the export leaves out. The mail log drops the payload 30 days after a mail reaches a final
+  // status (mail_retention_purge), but keeps the address and the subject for 13 months, so the rows stay out for as long as they exist. The delivery events (#4577) follow their mail: an event is
+  // exported only when its mail is (a mail_event always has its message, by foreign key; the anti-join touches only the small follow-up set), so no event points at a message the snapshot does not hold.
+  'kernel.mail_message': { from: `(SELECT m.* FROM ludy_kernel.mail_message m WHERE m.source <> '${FOLLOWUP_MAIL_SOURCE}')`, omit: [] },
   'kernel.mail_suppression': { from: 'ludy_kernel.mail_suppression', omit: [] },
-  'kernel.mail_event': { from: 'ludy_kernel.mail_event', omit: [] },
+  'kernel.mail_event': { from: `(SELECT e.* FROM ludy_kernel.mail_event e WHERE NOT EXISTS (SELECT 1 FROM ludy_kernel.mail_message m WHERE m.org_id = e.org_id AND m.id = e.message_id AND m.source = '${FOLLOWUP_MAIL_SOURCE}'))`, omit: [] },
   // What the org's people decided and set up in the kernel (#3367): budgets and kill switches, how long a proposal waits, the tax profile and the filings marked done,
   // the voucher number series with every allocation and void, which legal entity a record belongs to, the views members shared, availability, permission overrides and the Inbox.
   // What row security keeps to one member (notifications and their mutes, the daily mail setting, a member's own calendar and meeting platform accounts, private views)
@@ -286,10 +290,16 @@ export const EXPORT_TABLES = {
   'projects.project_task': { from: 'ludy_projects.project_task', omit: [] },
   'projects.roadmap_board': { from: 'ludy_projects.roadmap_board', omit: [] },
   'projects.roadmap_item': { from: 'ludy_projects.roadmap_item', omit: [] },
+  'projects.roadmap_signal': { from: 'ludy_projects.roadmap_signal', omit: [] },
   'projects.roadmap_announcement': { from: 'ludy_projects.roadmap_announcement', omit: [] },
   'projects.roadmap_vote': { from: 'ludy_projects.roadmap_vote', omit: ['voter_email_hash'] },
   'projects.task_dependency': { from: 'ludy_projects.task_dependency', omit: [] },
   'projects.time_entry': { from: 'ludy_projects.time_entry', omit: [] },
+  // ADR-0047 points 2 and 7: exclude attendees-only or expired meeting triage rows because system export bypasses ludy_meetings RLS.
+  'projects.project_triage_item': {
+    from: "(SELECT t.* FROM ludy_projects.project_triage_item t WHERE t.source_type <> 'meetings.meeting' OR EXISTS (SELECT 1 FROM ludy_kernel.meeting_export_rows() m WHERE m.org_id = t.org_id AND m.id = t.source_id))",
+    omit: [],
+  },
   // eSign (#3323, #3526, #3554, #3811, #3821): envelopes, post-signature obligations, signers (omitting deployment-keyed signer_ip_hash), fields, AI analysis summaries, hash-chained signing events, reusable templates, and CA PAdES signing requests (omitting idempotency_key); credential-bearing ca_connection, signing_token, signing_otp, and template_direct_link tables stay out, and attendees-only meeting_minutes envelopes stay out under ADR-0047 point 7.
   'sign.envelope': {
     from: '(SELECT e.* FROM ludy_sign.envelope e WHERE ludy_sign.is_exportable_envelope(e.org_id, e.source_kind, e.source_id))',
@@ -488,10 +498,13 @@ export const exportSnapshot = defineQuery({
       const omit = spec.omit as readonly string[];
       // The worker process a system audit row names (detail.workerInstance, #1951) is the deployment's, never the org's:
       // a host or pod name, left out of the org's copy as the audit log leaves it out (auditDetailLine).
+      // For projects.roadmap_signal (#4492, ADR-0047), omit quote_excerpt on attendees-only meetings not exported by meeting_export_rows().
       const scrub =
         table === 'kernel.audit_event'
           ? sql`|| pg_catalog.jsonb_build_object('detail', CASE WHEN pg_catalog.jsonb_typeof(t.detail) = 'object' THEN t.detail - 'workerInstance' ELSE t.detail END)`
-          : sql``;
+          : table === 'projects.roadmap_signal'
+            ? sql`|| CASE WHEN t.source_type = 'meetings.meeting' AND NOT EXISTS (SELECT 1 FROM ludy_kernel.meeting_export_rows() m WHERE m.org_id = t.org_id AND m.id = t.source_id) THEN pg_catalog.jsonb_build_object('quote_excerpt', NULL) ELSE '{}'::jsonb END`
+            : sql``;
       // spec.from is one of the constant names above, never input.
       await sql`
         DECLARE crove_org_export NO SCROLL CURSOR FOR
@@ -536,6 +549,9 @@ export const OWNER_RUN_EXPORT_TABLES = {
   },
   'hr.overtime_request': { from: 'ludy_hr.overtime_request', omit: [] },
   'hr.probation_review': { from: 'ludy_hr.probation_review', omit: [] },
+  'hr.salary_advance_request': { from: 'ludy_hr.salary_advance_request', omit: [] },
+  'hr.payroll_adjustment_item': { from: 'ludy_hr.payroll_adjustment_item', omit: [] },
+  'hr.business_trip_request': { from: 'ludy_hr.business_trip_request', omit: [] },
   // Lightweight recruiting openings and candidates (#3425), readable by owners and admins only.
   'hr.job_opening': { from: 'ludy_hr.job_opening', omit: [] },
   'hr.candidate': { from: 'ludy_hr.candidate', omit: [] },

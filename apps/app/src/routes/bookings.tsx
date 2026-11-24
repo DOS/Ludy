@@ -111,8 +111,8 @@ function BookingRow({
   return (
     <>
       <TableRow data-testid="booking-row">
-        <TableCell className="px-4 text-sm font-medium text-foreground">{when}</TableCell>
-        <TableCell className="px-4 text-sm">
+        <TableCell className="text-sm font-medium text-foreground">{when}</TableCell>
+        <TableCell className="text-sm">
           <p>{b.eventType.title}</p>
           <p className="text-xs text-muted-foreground">
             {b.hostUserIds
@@ -135,16 +135,16 @@ function BookingRow({
             </Badge>
           )}
         </TableCell>
-        <TableCell className="px-4 text-sm">
+        <TableCell className="text-sm">
           <p className="font-medium text-foreground">{b.visitor.name ?? t('erased')}</p>
           {b.visitor.email && <p className="text-xs text-muted-foreground">{b.visitor.email}</p>}
           {b.visitor.phone && <p className="text-xs text-muted-foreground">{b.visitor.phone}</p>}
           {b.visitor.note && <p className="mt-1 whitespace-pre-line text-xs text-muted-foreground">{b.visitor.note}</p>}
         </TableCell>
-        <TableCell className="px-4">
+        <TableCell>
           <Badge variant={b.status === 'confirmed' ? 'success' : 'outline'}>{t(`status.${b.status === 'confirmed' ? 'confirmed' : 'cancelled'}`)}</Badge>
         </TableCell>
-        <TableCell className="px-4">
+        <TableCell>
           <div className="flex flex-wrap items-start gap-1">
             {b.status === 'confirmed' && Date.parse(b.startsAt) > now && <Actions booking={b} slug={slug} zone={zone} />}
             {/* "Ghi lại cuộc họp này" (L1, #2587): opens the new-meeting screen prefilled and linked to this booking's contact and calendar event. It creates nothing
@@ -170,7 +170,7 @@ function BookingRow({
       </TableRow>
       {notesOpen && (
         <TableRow>
-          <TableCell colSpan={5} className="px-4 py-3">
+          <TableCell colSpan={5} className="py-3">
             <RecordNotesPanel
               slug={slug}
               target={{ targetType: 'crm.booking', targetId: b.id }}
