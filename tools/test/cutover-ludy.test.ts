@@ -268,7 +268,9 @@ case "$cmd" in
         echo "stub copy failed for $src" >&2
         exit 1
       fi
-      printf '%s\\n' "$dst" >>"$STUB_POPULATED_FILE"
+      if grep -qx "$src" "$STUB_POPULATED_FILE" 2>/dev/null; then
+        printf '%s\\n' "$dst" >>"$STUB_POPULATED_FILE"
+      fi
       printf 'verified %s -> %s (10 entries)\\n' "$src" "$dst"
       exit 0
     fi
@@ -352,7 +354,7 @@ function runWithStubs(f: StubFixture, args: string[], extraEnv: Record<string, s
     env: {
       ...process.env,
       PATH: `${f.binDir}${delimiter}${process.env['PATH'] ?? ''}`,
-      LUDY_READY_TIMEOUT: '1',
+      LUDY_READY_TIMEOUT: '5',
       LUDY_WAIT_TIMEOUT: '5',
       LUDY_WORKER_SETTLE: '0',
       STUB_LOG: f.stubLog,
@@ -364,7 +366,7 @@ function runWithStubs(f: StubFixture, args: string[], extraEnv: Record<string, s
 }
 
 describe.skipIf(!hasBash)('cutover-ludy.sh lifecycle & safety gates', () => {
-  it('pre-commit failure (during volume copy) removes partial ludy_* volumes, restores .env, and restarts crove', () => {
+  it('pre-commit failure (during volume copy) removes partial ludy_* volumes, restores .env, and restarts crove', { timeout: 15000 }, () => {
     const f = createCutoverFixture();
     const res = runWithStubs(
       f,
@@ -383,7 +385,7 @@ describe.skipIf(!hasBash)('cutover-ludy.sh lifecycle & safety gates', () => {
     expect(readFileSync(join(f.deployDir, '.env'), 'utf8')).toContain('CROVE_DOMAIN=api.example.com');
   });
 
-  it('post-commit failure (B1: smoke fails after ludy starts) preserves ludy_* volumes, never restarts crove, and leaves caddy down', () => {
+  it('post-commit failure (B1: smoke fails after ludy starts) preserves ludy_* volumes, never restarts crove, and leaves caddy down', { timeout: 15000 }, () => {
     const f = createCutoverFixture();
     const res = runWithStubs(
       f,
@@ -402,10 +404,10 @@ describe.skipIf(!hasBash)('cutover-ludy.sh lifecycle & safety gates', () => {
     expect(logText).not.toContain('caddy');
   });
 
-  it('success path starts caddy ONLY after loopback smoke passes and leaves both volume sets intact until prune', () => {
+  it('success path starts caddy ONLY after loopback smoke passes and leaves both volume sets intact until prune', { timeout: 15000 }, () => {
     const f = createCutoverFixture();
     const res = runWithStubs(f, ['cutover-stack', '--dir', f.deployDir, '--overlay-dir', f.overlayDir]);
-    expect(res.status).toBe(0);
+    expect(res.status, res.stderr).toBe(0);
 
     const logLines = readFileSync(f.stubLog, 'utf8').split('\n').filter(Boolean);
     const smokeIdx = logLines.findIndex((l) => l.startsWith('overlay-deploy smoke '));
@@ -417,7 +419,7 @@ describe.skipIf(!hasBash)('cutover-ludy.sh lifecycle & safety gates', () => {
     expect(readFileSync(f.volsFile, 'utf8')).toContain('crove_db-data');
   });
 
-  it('prune-old-volumes (L1 + L2) enforces matching populated ludy_* + WAL stanza ludy backup gates and removes temporary db.dump files', () => {
+  it('prune-old-volumes (L1 + L2) enforces matching ludy_* + WAL stanza ludy backup gates and removes temporary db.dump files', { timeout: 15000 }, () => {
     const f = createCutoverFixture();
     // Run cutover first so COMPOSE_PROJECT_NAME=ludy and cutover-backup-*/db.dump exist.
     expect(runWithStubs(f, ['cutover-stack', '--dir', f.deployDir, '--overlay-dir', f.overlayDir]).status).toBe(0);
@@ -456,5 +458,36 @@ describe.skipIf(!hasBash)('cutover-ludy.sh lifecycle & safety gates', () => {
     expect(readFileSync(f.volsFile, 'utf8')).not.toContain('crove_');
     expect(readFileSync(f.volsFile, 'utf8')).toContain('ludy_db-data');
     expect(existsSync(dumpPath)).toBe(false);
+  });
+
+  it('prune-old-volumes blocks mounted crove_* or uncopied data, while allowing legitimately empty S3 volumes', { timeout: 15000 }, () => {
+    const f = createCutoverFixture();
+    writeFileSync(
+      join(f.deployDir, '.env'),
+      ['COMPOSE_PROJECT_NAME=ludy', 'COMPOSE_FILE=docker-compose.yml:compose.pilot.yml', 'LUDY_DOMAIN=api.example.com', ''].join('\n'),
+    );
+    writeFileSync(f.volsFile, ['crove_db-data', 'crove_files', 'crove_archive', 'ludy_db-data', 'ludy_files', 'ludy_archive', ''].join('\n'));
+    writeFileSync(f.populatedFile, ['crove_db-data', 'ludy_db-data', 'crove_archive', ''].join('\n'));
+
+    // Container still mounting crove_* must block prune.
+    const mountedRef = runWithStubs(
+      f,
+      ['prune-old-volumes', '--dir', f.deployDir, '--overlay-dir', f.overlayDir],
+      { STUB_PS_CONTAINERS: 'abc123\n', STUB_INSPECT_MOUNTS: 'crove_files\n' },
+    );
+    expect(mountedRef.status).toBe(1);
+    expect(mountedRef.stderr).toContain('container(s) still reference crove_* volume(s): crove_files');
+
+    // Non-empty source crove_archive with empty replacement ludy_archive must block prune.
+    const emptyReplacement = runWithStubs(f, ['prune-old-volumes', '--dir', f.deployDir, '--overlay-dir', f.overlayDir]);
+    expect(emptyReplacement.status).toBe(1);
+    expect(emptyReplacement.stderr).toContain('source volume was non-empty but replacement volume ludy_archive (archive) is empty');
+
+    // Populating ludy_archive allows prune to succeed even though crove_files and ludy_files are both empty (S3 pilot).
+    writeFileSync(f.populatedFile, readFileSync(f.populatedFile, 'utf8') + 'ludy_archive\n');
+    const pruned = runWithStubs(f, ['prune-old-volumes', '--dir', f.deployDir, '--overlay-dir', f.overlayDir]);
+    expect(pruned.status).toBe(0);
+    expect(readFileSync(f.volsFile, 'utf8')).not.toContain('crove_');
+    expect(readFileSync(f.volsFile, 'utf8')).toContain('ludy_files');
   });
 });

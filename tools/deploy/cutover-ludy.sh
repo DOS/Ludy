@@ -510,7 +510,7 @@ wait_local_ready() {
   fi
   log "waiting for $url/readyz (up to ${READY_TIMEOUT}s)"
   while :; do
-    if curl --silent --show-error --fail --max-time 5 "$url/readyz" 2>/dev/null | grep -q '"ready":true'; then
+    if curl --silent --show-error --fail --max-time 5 "$url/readyz" 2>/dev/null | grep -F '"ready":true' >/dev/null; then
       READY_URL="$url"
       return 0
     fi
@@ -586,7 +586,7 @@ bring_up_stack() {
     log "starting worker on project $proj"
     dc_proj "$proj" up -d --no-build --no-deps --wait --wait-timeout "$WAIT_TIMEOUT" worker || return 1
     sleep "$WORKER_SETTLE"
-    dc_proj "$proj" ps --status running --services | grep -qx worker || {
+    dc_proj "$proj" ps --status running --services | grep -x worker >/dev/null || {
       err "worker is not running on project $proj"
       return 1
     }
@@ -681,7 +681,7 @@ do_inspect() {
   log "Compose services status (project=$proj):"
   dc_proj "$proj" ps --format 'table {{.Service}}\t{{.State}}\t{{.Status}}' || true
 
-  if dc_proj "$proj" ps --status running --services | grep -qx db; then
+  if dc_proj "$proj" ps --status running --services | grep -x db >/dev/null; then
     log 'PostgreSQL schemas:'
     dc_proj "$proj" exec -T db psql -U postgres -d postgres -Atc \
       "SELECT nspname FROM pg_namespace WHERE nspname ~ '^(crove|ludy)_' ORDER BY 1;" | sed 's/^/  /'
@@ -787,7 +787,7 @@ do_cutover_stack() {
   fi
   ROLLBACK_OLD_PROJECT="$proj"
 
-  dc_proj "$proj" ps --status running --services | grep -qx db || die "$EXIT_FAILED" "db is not running under project $proj"
+  dc_proj "$proj" ps --status running --services | grep -x db >/dev/null || die "$EXIT_FAILED" "db is not running under project $proj"
   check_expected_schemas "$proj" || exit "$EXIT_FAILED"
 
   local src_vols=() vol
@@ -800,7 +800,7 @@ do_cutover_stack() {
   done < <(docker volume ls --format '{{.Name}}' | grep -E "^${proj}_" | sort || true)
 
   ((${#src_vols[@]} > 0)) || die "$EXIT_FAILED" "no Docker volumes found matching ${proj}_*"
-  printf '%s\n' "${src_vols[@]}" | grep -qx "${proj}_db-data" || die "$EXIT_FAILED" "missing required ${proj}_db-data volume"
+  printf '%s\n' "${src_vols[@]}" | grep -x "${proj}_db-data" >/dev/null || die "$EXIT_FAILED" "missing required ${proj}_db-data volume"
 
   log "pulling helper copy image $VOLUME_COPY_IMAGE if needed"
   docker pull --quiet "$VOLUME_COPY_IMAGE" >/dev/null
@@ -928,7 +928,7 @@ do_cutover_stack() {
     return 1
   fi
 
-  if dc_proj ludy config --services | grep -qx caddy; then
+  if dc_proj ludy config --services | grep -x caddy >/dev/null; then
     log 'starting caddy on project ludy after checks passed'
     dc_proj ludy up -d --no-build --no-deps --wait --wait-timeout "$WAIT_TIMEOUT" caddy
     dc_proj ludy restart caddy
@@ -1010,11 +1010,11 @@ do_switch_wal() {
   info_out="$(env -u WAL_STANZA -u BACKUP_S3_PREFIX -u WAL_DB_IMAGE -u COMPOSE_PROJECT_NAME \
     LUDY_DIR="$DEPLOY_DIR" CROVE_DIR="$DEPLOY_DIR" bash "$STAGE_DIR/backup/wal.sh" info)"
   # Log only redacted summary to keep S3 bucket/endpoint details out of public CI logs (L2).
-  printf '%s\n' "$info_out" | grep -q 'stanza: ludy' || {
+  printf '%s\n' "$info_out" | grep -F 'stanza: ludy' >/dev/null || {
     err 'wal.sh info did not report stanza: ludy'
     return 1
   }
-  printf '%s\n' "$info_out" | grep -q 'status: ok' || {
+  printf '%s\n' "$info_out" | grep -F 'status: ok' >/dev/null || {
     err 'wal.sh info did not report status: ok'
     return 1
   }
@@ -1029,13 +1029,14 @@ do_prune_old_volumes() {
   require_paths 0
   require_docker_compose
   acquire_lock
+  trap '' HUP PIPE
   export_release_images
 
   local proj
   proj="$(detect_active_project)"
   [ "$proj" = ludy ] || die "$EXIT_USAGE" "COMPOSE_PROJECT_NAME must be ludy before pruning crove_* volumes (currently $proj)"
 
-  dc_proj ludy ps --status running --services | grep -qx db || die "$EXIT_FAILED" 'db is not running under project ludy'
+  dc_proj ludy ps --status running --services | grep -x db >/dev/null || die "$EXIT_FAILED" 'db is not running under project ludy'
   wait_local_ready ludy || die "$EXIT_FAILED" 'ludy API /readyz is not ready'
 
   local ids ids_arr=() mounted='' cid
@@ -1060,17 +1061,26 @@ do_prune_old_volumes() {
     esac
   done < <(docker volume ls --format '{{.Name}}' | grep -E '^crove_' | sort || true)
 
-  # L1: Verify every non-ephemeral crove_<suffix> has a populated ludy_<suffix> replacement BEFORE pruning.
+  # L1: Verify every non-ephemeral crove_<suffix> has a valid ludy_<suffix> replacement BEFORE pruning.
+  # Always require ludy_db-data to be non-empty; for other volumes (e.g. crove_files on an S3 pilot),
+  # allow empty -> empty when crove_<suffix> itself is empty, and refuse if source had data.
   if ((need_copy_probe)); then
     docker pull --quiet "$VOLUME_COPY_IMAGE" >/dev/null
     for v in "${old_vols[@]}"; do
       case "$v" in
         crove_media-scratch) continue ;;
       esac
-      local suffix="${v#crove_}" dst="ludy_${v#crove_}" existing
+      local suffix="${v#crove_}" dst="ludy_${v#crove_}" existing src_existing
       docker volume inspect "$dst" >/dev/null 2>&1 || die "$EXIT_FAILED" "refusing to prune $v: matching replacement volume $dst does not exist"
       existing="$(docker run --rm --network none -v "${dst}:/dst:ro" --entrypoint sh "$VOLUME_COPY_IMAGE" -c 'find /dst -mindepth 1 -maxdepth 1 -print -quit')"
-      [ -n "$existing" ] || die "$EXIT_FAILED" "refusing to prune $v: matching replacement volume $dst ($suffix) is empty"
+      if [ "$suffix" = db-data ]; then
+        [ -n "$existing" ] || die "$EXIT_FAILED" "refusing to prune $v: matching replacement volume $dst ($suffix) is empty"
+      elif [ -z "$existing" ]; then
+        src_existing="$(docker run --rm --network none -v "${v}:/dst:ro" --entrypoint sh "$VOLUME_COPY_IMAGE" -c 'find /dst -mindepth 1 -maxdepth 1 -print -quit')"
+        if [ -n "$src_existing" ]; then
+          die "$EXIT_FAILED" "refusing to prune $v: source volume was non-empty but replacement volume $dst ($suffix) is empty"
+        fi
+      fi
     done
   fi
 
@@ -1083,8 +1093,8 @@ do_prune_old_volumes() {
     [ "$stanza" = ludy ] || die "$EXIT_FAILED" "refusing to prune: WAL_STANZA must be ludy before removing crove_* volumes (currently ${stanza:-crove})"
     wal_info="$(env -u WAL_STANZA -u BACKUP_S3_PREFIX -u WAL_DB_IMAGE -u COMPOSE_PROJECT_NAME \
       LUDY_DIR="$DEPLOY_DIR" CROVE_DIR="$DEPLOY_DIR" bash "$OVERLAY_DIR/backup/wal.sh" info)" || die "$EXIT_FAILED" 'wal.sh info failed on stanza ludy'
-    printf '%s\n' "$wal_info" | grep -q 'stanza: ludy' || die "$EXIT_FAILED" 'refusing to prune: wal.sh info did not report stanza: ludy'
-    printf '%s\n' "$wal_info" | grep -q 'status: ok' || die "$EXIT_FAILED" 'refusing to prune: stanza ludy status is not ok'
+    printf '%s\n' "$wal_info" | grep -F 'stanza: ludy' >/dev/null || die "$EXIT_FAILED" 'refusing to prune: wal.sh info did not report stanza: ludy'
+    printf '%s\n' "$wal_info" | grep -F 'status: ok' >/dev/null || die "$EXIT_FAILED" 'refusing to prune: stanza ludy status is not ok'
     wal_backups="$(printf '%s\n' "$wal_info" | grep -cE '(full|diff|incr) backup:' || true)"
     ((wal_backups > 0)) || die "$EXIT_FAILED" 'refusing to prune: no verified backup exists on stanza ludy yet'
     log "WAL backup gate passed (stanza=ludy status=ok backups=$wal_backups)"
