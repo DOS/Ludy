@@ -255,6 +255,39 @@ suite('the pairing code of the MCP endpoint (#4591)', () => {
     expect((await refusal(issue(newCode(), 'While stopped', person(users.owner), org))).status).toBe(403);
   });
 
+  it('deletes a pending code when its person loses the role, is removed or is disabled, so giving the role back does not revive it', async () => {
+    const org = await freshOrg();
+    await q(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin')`, [org, users.admin]);
+    const pendingFor = async (code: string) => (await q(`SELECT 1 FROM crove_kernel.oauth_record WHERE model = 'PairingCode' AND key_hash = $1`, [sha(code)])).rowCount;
+    // Demoted and promoted again inside the 10 minutes.
+    const a = newCode();
+    await issue(a, 'Demoted', person(users.admin), org);
+    expect(await pendingFor(a)).toBe(1);
+    await q(`UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [org, users.admin]);
+    expect(await pendingFor(a)).toBe(0);
+    await q(`UPDATE crove_kernel.tenant_member SET role = 'admin' WHERE org_id = $1 AND user_id = $2`, [org, users.admin]);
+    expect((await redeem(a)).rows).toHaveLength(0);
+    // Removed and added again.
+    const b = newCode();
+    await issue(b, 'Removed', person(users.admin), org);
+    await q(`DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2`, [org, users.admin]);
+    expect(await pendingFor(b)).toBe(0);
+    await q(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin')`, [org, users.admin]);
+    expect((await redeem(b)).rows).toHaveLength(0);
+    // Another person's code in the same org is not touched.
+    const c = newCode();
+    await issue(c, 'Owner code', person(users.owner), org);
+    await q(`UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [org, users.admin]);
+    expect(await pendingFor(c)).toBe(1);
+    // A disabled account loses its codes in every org.
+    const d = newCode();
+    await issue(d, 'Disabled', person(users.owner), org);
+    await q(`UPDATE crove_kernel.user_account SET disabled_at = now() WHERE id = $1`, [users.owner]);
+    expect(await pendingFor(d)).toBe(0);
+    expect(await pendingFor(c)).toBe(0);
+    await q(`UPDATE crove_kernel.user_account SET disabled_at = NULL WHERE id = $1`, [users.owner]);
+  });
+
   it('ends the token with the grant: a revoke destroys its record at once, and a lost role closes the grant', async () => {
     const code = newCode();
     await issue(code, 'To revoke');

@@ -11188,6 +11188,8 @@ export const en = {
       howTo: 'The app sends it to {url} in a JSON body with one field, "code", and gets back a token to use as its Bearer token on the MCP address.',
       copy: 'Copy the code',
       copied: 'Copied',
+      copyFailed: 'Your browser did not allow copying. Select the code above and copy it by hand.',
+      stepUp: 'make a pairing code',
       done: 'I have the code',
     },
     wakeHostOnly: 'A wake-up message goes to {host}. Only the person who connected can change it; disconnect to stop it.',

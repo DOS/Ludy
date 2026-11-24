@@ -12,8 +12,9 @@ import { Input } from '@ludy/ui/components/input';
 import { MCP_WRITE_SCOPE_IDS } from '@ludy/kernel-contract';
 import { Card } from '@ludy/ui/components/card';
 import { useFormat } from '../i18n/provider.tsx';
-import { errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
 import { OrgMcpWake } from './org-mcp-wake.tsx';
+import { StepUpPrompt } from './two-factor.tsx';
 import { ErrorText, RowsSkeleton } from './ui.tsx';
 
 // Message keys cannot hold a dot, so a scope id has its own key.
@@ -45,7 +46,7 @@ function PairingCode() {
   const f = useFormat();
   const [open, setOpen] = useState(false);
   const [label, setLabel] = useState('');
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState<'no' | 'yes' | 'failed'>('no');
   // The form disappears when the code appears, so focus moves to the code's block (a keyboard or screen reader user is not left on a button that is gone) and back to the opener when it closes.
   const codeRef = useRef<HTMLDivElement>(null);
   const openerRef = useRef<HTMLButtonElement>(null);
@@ -61,14 +62,17 @@ function PairingCode() {
     issue.reset();
     setOpen(false);
     setLabel('');
-    setCopied(false);
+    setCopied('no');
     void queryClient.invalidateQueries({ queryKey: orpc.mcp.key() });
     queueMicrotask(() => openerRef.current?.focus());
   };
   const copy = (code: string) => {
-    void navigator.clipboard?.writeText(code).then(
-      () => setCopied(true),
-      () => setCopied(false),
+    // No clipboard (a page on plain http, an old browser) or a refusal: say so, and the code stays selectable on screen.
+    const write = navigator.clipboard?.writeText(code);
+    if (!write) return setCopied('failed');
+    void write.then(
+      () => setCopied('yes'),
+      () => setCopied('failed'),
     );
   };
   const origin = typeof window === 'undefined' ? '' : window.location.origin;
@@ -98,7 +102,8 @@ function PairingCode() {
             <Input autoFocus autoComplete="off" maxLength={120} placeholder={t('labelPlaceholder')} value={label} onChange={(e) => setLabel(e.target.value)} />
           </label>
           <p className="text-xs text-subtle-foreground">{t('scopeNote')}</p>
-          {issue.error && <ErrorText>{errorMessage(issue.error)}</ErrorText>}
+          {issue.error && !isStepUpRequired(issue.error) && <ErrorText>{errorMessage(issue.error)}</ErrorText>}
+          {isStepUpRequired(issue.error) && <StepUpPrompt action={t('stepUp')} onVerified={() => issue.mutate({ label: label.trim() })} onCancel={() => issue.reset()} />}
           <div className="flex flex-wrap gap-2">
             <Button type="submit" size="sm" loading={issue.isPending} disabled={label.trim() === ''}>
               {t('create')}
@@ -110,17 +115,18 @@ function PairingCode() {
         </form>
       )}
       {issue.data && (
-        <div ref={codeRef} tabIndex={-1} className="space-y-2 outline-none" role="status" data-testid="org-mcp-pairing-code">
-          <p className="font-medium text-foreground">{t('codeOnce')}</p>
-          <code className="block break-all rounded bg-muted px-2 py-2 text-center text-lg font-semibold tracking-widest text-foreground">{issue.data.code}</code>
+        <div ref={codeRef} tabIndex={-1} className="space-y-2 rounded-md focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none" role="group" aria-labelledby="org-mcp-pairing-once" data-testid="org-mcp-pairing-code">
+          <p id="org-mcp-pairing-once" className="font-medium text-foreground">{t('codeOnce')}</p>
+          <code className="block select-all break-all rounded bg-muted px-2 py-2 text-center text-lg font-semibold tracking-widest text-foreground">{issue.data.code}</code>
           <p className="text-xs text-subtle-foreground">{t('expires', { at: f.dateTime(issue.data.expiresAt) })}</p>
           <p className="text-xs text-subtle-foreground">{t('howTo', { url: `${origin}/oauth/pairing/redeem` })}</p>
+          {copied === 'failed' && <ErrorText>{t('copyFailed')}</ErrorText>}
           <div className="flex flex-wrap gap-2">
             <Button size="sm" variant="outline" onClick={() => copy(issue.data.code)}>
-              {copied ? t('copied') : t('copy')}
+              {copied === 'yes' ? t('copied') : t('copy')}
             </Button>
             <span role="status" className="sr-only">
-              {copied ? t('copied') : ''}
+              {copied === 'yes' ? t('copied') : ''}
             </span>
             <Button size="sm" onClick={done}>
               {t('done')}

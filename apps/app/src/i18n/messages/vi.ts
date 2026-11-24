@@ -11185,6 +11185,8 @@ export const vi = {
       howTo: 'Ứng dụng gửi mã tới {url} trong nội dung JSON có một trường "code" và nhận lại một mã truy cập để dùng làm Bearer token tại địa chỉ MCP.',
       copy: 'Sao chép mã',
       copied: 'Đã sao chép',
+      copyFailed: 'Trình duyệt không cho sao chép. Hãy chọn mã ở trên và sao chép thủ công.',
+      stepUp: 'tạo mã ghép nối',
       done: 'Tôi đã lưu mã',
     },
     wakeHostOnly: 'Có tin đánh thức gửi tới {host}. Chỉ người đã kết nối mới đổi được; ngắt kết nối để dừng.',

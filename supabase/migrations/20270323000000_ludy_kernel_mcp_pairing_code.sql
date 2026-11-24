@@ -7,6 +7,7 @@
 -- models of ours: 'PairingCode' (10 minutes, consumed once) and 'PairingToken' (as long as its grant). That keeps the pairing out of org_purge (an org-less store, the grant it opens is
 -- already purged) and keeps one place where a secret is a hash.
 --   mcp_pairing_issue   an owner or admin of the org in context stores the hash of a code (the code itself is made by the API and never reaches the database), 10 minutes, at most 5 live per org.
+--   mcp_pairing_member_trigger  a pending code is deleted when its person loses the owner or admin role, is removed or is disabled.
 --   mcp_pairing_redeem  the API trades a code's hash for a grant: consumes the code once (an UPDATE that only one of two racing calls can win), re-checks that the person who issued it is still an
 --                       owner or admin of an active org with no kill switch, makes the agent_grant (30 days, the read scope, `pairing:<id>` as its client), stores the token's hash with the grant's
 --                       authorization id (so a revoke, a lost role or a removed member destroys it with the grant, as for an OAuth grant) and writes the system's audit row. Every refusal alike returns no row.
@@ -73,6 +74,7 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 #variable_conflict use_column
 DECLARE
   v_payload jsonb;
+  v_made timestamptz;
   v_org uuid;
   v_user uuid;
   v_label text;
@@ -88,20 +90,21 @@ BEGIN
   -- Single use: the code is consumed by one UPDATE that matches only while it is unconsumed and unexpired, so of two calls with the same code exactly one gets the row.
   UPDATE ludy_kernel.oauth_record o SET consumed_at = pg_catalog.clock_timestamp()
   WHERE o.model = 'PairingCode' AND o.key_hash = p_code_hash AND o.consumed_at IS NULL AND o.expires_at > pg_catalog.clock_timestamp()
-  RETURNING o.payload INTO v_payload;
+  RETURNING o.payload, o.created_at INTO v_payload, v_made;
   IF NOT FOUND THEN
     RETURN;
   END IF;
   v_org := (v_payload ->> 'orgId')::uuid;
   v_user := (v_payload ->> 'userId')::uuid;
   v_label := v_payload ->> 'label';
-  -- The person who issued it must still be an owner or admin of an active org with no kill switch: a grant never exceeds the rights of the person who gave it.
+  -- The person who issued it must still be an owner or admin of an active org with no kill switch, and a member since before the code was made (a member removed and added again is a new
+  -- membership): a grant never exceeds the rights of the person who gave it. A role lost and given back within the 10 minutes is caught earlier, by the triggers below.
   IF NOT EXISTS (
     SELECT 1
     FROM ludy_kernel.tenant_member m
     JOIN ludy_kernel.tenant t ON t.org_id = m.org_id AND t.status = 'active'
     JOIN ludy_kernel.user_account u ON u.id = m.user_id AND u.disabled_at IS NULL
-    WHERE m.org_id = v_org AND m.user_id = v_user AND m.role IN ('owner', 'admin')
+    WHERE m.org_id = v_org AND m.user_id = v_user AND m.role IN ('owner', 'admin') AND m.created_at <= v_made
   ) OR ludy_kernel.global_kill_switch_on('ai') OR EXISTS (
     SELECT 1 FROM ludy_kernel.kill_switch k WHERE k.org_id = v_org AND k.scope = 'org' AND k.released_at IS NULL
   ) THEN
@@ -129,6 +132,40 @@ BEGIN
           pg_catalog.jsonb_build_object('mcpPairing', true, 'mcpGrant', v_id, 'mcpClient', v_client, 'mcpClientName', v_label, 'issuedBy', v_user));
   RETURN QUERY SELECT v_id, v_org, v_end;
 END $$;
+
+-- ---------------------------------------------------------------------------
+-- A pending code ends for good when its person stops being an owner or admin of the org, is removed from it, or is disabled
+-- ---------------------------------------------------------------------------
+-- As for a grant (mcp_grant_end_for_member): restoring the role later does not revive a code nobody asked for again.
+CREATE OR REPLACE FUNCTION ludy_kernel.mcp_pairing_member_trigger()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+BEGIN
+  IF TG_TABLE_NAME = 'tenant_member' THEN
+    IF TG_OP = 'DELETE' THEN
+      DELETE FROM ludy_kernel.oauth_record o WHERE o.model = 'PairingCode' AND o.payload ->> 'orgId' = OLD.org_id::text AND o.payload ->> 'userId' = OLD.user_id::text;
+    ELSIF OLD.role IN ('owner', 'admin') AND NEW.role NOT IN ('owner', 'admin') THEN
+      DELETE FROM ludy_kernel.oauth_record o WHERE o.model = 'PairingCode' AND o.payload ->> 'orgId' = NEW.org_id::text AND o.payload ->> 'userId' = NEW.user_id::text;
+    END IF;
+  ELSIF NEW.disabled_at IS NOT NULL AND OLD.disabled_at IS NULL THEN
+    DELETE FROM ludy_kernel.oauth_record o WHERE o.model = 'PairingCode' AND o.payload ->> 'userId' = NEW.id::text;
+  END IF;
+  RETURN NULL;
+END $$;
+REVOKE ALL ON FUNCTION ludy_kernel.mcp_pairing_member_trigger() FROM PUBLIC;
+DO $$
+DECLARE
+  r record;
+BEGIN
+  FOR r IN SELECT rolname FROM pg_catalog.pg_roles WHERE rolname LIKE 'ludy\_%' AND rolname <> current_user LOOP
+    EXECUTE pg_catalog.format('REVOKE ALL ON FUNCTION ludy_kernel.mcp_pairing_member_trigger() FROM %I', r.rolname);
+  END LOOP;
+END $$;
+DROP TRIGGER IF EXISTS mcp_pairing_member_role ON ludy_kernel.tenant_member;
+CREATE TRIGGER mcp_pairing_member_role AFTER UPDATE OF role OR DELETE ON ludy_kernel.tenant_member
+  FOR EACH ROW EXECUTE FUNCTION ludy_kernel.mcp_pairing_member_trigger();
+DROP TRIGGER IF EXISTS mcp_pairing_user_disabled ON ludy_kernel.user_account;
+CREATE TRIGGER mcp_pairing_user_disabled AFTER UPDATE OF disabled_at ON ludy_kernel.user_account
+  FOR EACH ROW EXECUTE FUNCTION ludy_kernel.mcp_pairing_member_trigger();
 
 -- ---------------------------------------------------------------------------
 -- Grants: the API's login alone. The worker never takes part in an authorization or an MCP request; the tenant role reaches nothing.
