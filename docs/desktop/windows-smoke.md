@@ -7,7 +7,7 @@ Job: `windows-install-smoke` in [desktop-build.yml](../../.github/workflows/desk
 | Step | What it proves |
 |---|---|
 | `feed-and-installers-present` | both builds have `Setup.exe`, `RELEASES` and a full nupkg |
-| `install-version-a-unsigned-silent` | `LudyDesktop-Setup.exe --silent` installs for the user (no admin) under `%LOCALAPPDATA%\LudyDesktop` |
+| `install-version-a-unsigned-silent` | `LudyDesktop-Setup.exe --silent` installs for the user (no admin) under `%LOCALAPPDATA%\LudyDesktop` and writes its "Apps and features" entry |
 | `shortcut-made-by-the-squirrel-install-hook` | the `--squirrel-install` startup hook ran `Update.exe --createShortcut` |
 | `first-start-reports-version-a` | the installed app starts, says it is packaged and Squirrel-installed (`squirrelInstalled`), and its first check finds no update |
 | `tray-process-and-menu` | the tray was created with the signed-out menu; exactly one main process |
@@ -15,9 +15,9 @@ Job: `windows-install-smoke` in [desktop-build.yml](../../.github/workflows/desk
 | `sign-in-through-the-system-browser` | the tray's sign-in opens the **default browser** (real `shell.openExternal`) at the fake sign-in page; PKCE S256; the loopback callback; one token exchange |
 | `token-stored-with-dpapi-never-plain` | `session.bin` is a Chromium `os_crypt` blob (`v10`), the token is not in it, and `Local State` holds a DPAPI-wrapped key |
 | `quit-then-restart-reads-token-back` | after a restart the app is signed in from the stored token without the sign-in page, and the server saw it |
-| `corrupt-update-leaves-the-running-version-untouched` | a feed whose package fails its checksum gives "update failed"; the same process and version keep running, still signed in |
+| `corrupt-update-leaves-the-running-version-untouched` | a feed whose package fails its checksum gives "update failed" on Squirrel's package checksum; the same process and version keep running, still signed in |
 | `update-a-to-b-and-restart` | Squirrel downloads B from the `127.0.0.1` feed, the tray offers the restart, the app restarts into B (version written to `running-version.txt`) and is still signed in |
-| `uninstall` | `Update.exe --uninstall` removes the app folders and the shortcuts (the `--squirrel-uninstall` hook) |
+| `uninstall` | `Update.exe --uninstall` removes the "Apps and features" entry and the shortcuts (the `--squirrel-uninstall` hook); no Ludy process is left. Squirrel keeps its install folder (marked `.dead`) for a later delete, because `Update.exe` cannot delete itself while it runs; the run records what is left |
 | `no-token-in-logs-or-artifacts` | none of the tokens the fake issued, nor a `crx_` marker, is in the logs that are uploaded |
 
 ## How it is driven

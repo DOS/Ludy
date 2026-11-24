@@ -146,6 +146,13 @@ function findShortcuts() {
   return found;
 }
 
+// The "Apps and features" entries Squirrel wrote for the user (HKCU Uninstall), by display name.
+async function uninstallEntries() {
+  const ps = "Get-ChildItem 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall' -ErrorAction SilentlyContinue | Get-ItemProperty | Where-Object { $_.DisplayName -like '*Ludy*' } | ForEach-Object { $_.DisplayName }";
+  const { stdout } = await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { timeoutMs: 60_000 });
+  return stdout.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+}
+
 function copyDiagnostics(tag) {
   const dir = join(out, 'squirrel');
   mkdirSync(dir, { recursive: true });
@@ -200,6 +207,9 @@ try {
     assert(result.code === 0, `Setup.exe exited with code ${result.code}`);
     await waitFor('Update.exe and the app folder', () => existsSync(updateExe) && existsSync(join(installRoot, `app-${versionA}`, EXE)), { timeoutMs: 60_000 });
     copyDiagnostics('after-install');
+    const entries = await uninstallEntries();
+    assert(entries.length > 0, 'no "Apps and features" entry for Ludy was written');
+    return `Apps and features: ${entries.join(', ')}`;
   });
 
   await step('shortcut-made-by-the-squirrel-install-hook', async () => {
@@ -213,6 +223,7 @@ try {
   await step('first-start-reports-version-a', async () => {
     // Setup.exe starts the app itself (--squirrel-firstrun). If it did not (or did not pass the test environment), start it like a shortcut.
     let note = 'started by Setup.exe';
+    log(`main processes right after Setup.exe: ${(await mainProcesses()).map((p) => p.pid).join(', ') || 'none'}`);
     let state = await waitState('state.json from the app Setup.exe started', (s) => s.version === versionA, { timeoutMs: 25_000 }).catch(() => null);
     if (state === null) {
       note = 'Setup.exe did not start the app with the test environment; started through Update.exe --processStart';
@@ -313,7 +324,9 @@ try {
     assert(procs.length === 1 && procs[0].pid === before.pid, 'the running process changed after a failed update');
     assert(failedState.version === versionA && failedState.execPath.includes(`\\app-${versionA}\\`), `the running version is now ${failedState.version}`);
     assert(failedState.auth.kind === 'signed-in', 'the sign-in was lost by a failed update');
-    return `error: ${String(failedState.update.message).slice(0, 160)}`;
+    // The failure must come from the damaged package (Squirrel's checksum step), not from something unrelated.
+    assert(/checksum/i.test(String(failedState.update.message)), `the update failed, but not on the package checksum: ${String(failedState.update.message).slice(0, 300)}`);
+    return 'failed on the package checksum, old version kept running';
   });
 
   await step('update-a-to-b-and-restart', async () => {
@@ -345,9 +358,13 @@ try {
     const result = await run(updateExe, ['--uninstall'], { timeoutMs: 120_000, env });
     log(`Update.exe --uninstall exit code ${result.code}`);
     assert(result.code === 0, `Update.exe --uninstall exited with code ${result.code}`);
-    await waitFor('the installed app folders to be removed', () => !existsSync(join(installRoot, `app-${versionB}`)) && !existsSync(join(installRoot, `app-${versionA}`)), { timeoutMs: 60_000 });
+    await waitFor('the "Apps and features" entry to be removed', async () => (await uninstallEntries()).length === 0, { timeoutMs: 30_000 });
     await waitFor('the Ludy shortcuts to be removed (the --squirrel-uninstall hook)', () => findShortcuts().length === 0, { timeoutMs: 30_000 });
     assert((await ludyProcesses()).length === 0, 'a Ludy process is still running after the uninstall');
+    // Squirrel leaves its install folder (marked .dead) to be deleted later because Update.exe cannot delete itself while it runs: recorded, not failed.
+    copyDiagnostics('after-uninstall');
+    const left = existsSync(installRoot) ? readdirSync(installRoot) : [];
+    return left.length === 0 ? 'install folder removed' : `left behind by Squirrel for a later delete: ${left.join(', ')}`;
   });
 
   await step('no-token-in-logs-or-artifacts', async () => {
