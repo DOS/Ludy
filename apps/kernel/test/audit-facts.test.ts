@@ -763,10 +763,11 @@ describe('audit facts and classified columns (#1626, #1632)', () => {
     for (const column of ['name', 'tax_code', 'address', 'email', 'phone']) expect(classified.has(column)).toBe(true);
   });
 
+  // Repo-wide synchronous file scan can exceed Vitest's 5s default under CI load (#4105).
   it('finds no fact that carries a classified column past auditValue', () => {
     const findings = files.flatMap((f) => scan(relative(ROOT, f).replaceAll('\\', '/'), readFileSync(f, 'utf8'), classified));
     expect(findings).toEqual([]);
-  });
+  }, 30_000);
 
   it('lists only files that exist and facts they still write', () => {
     for (const [file, entries] of Object.entries(ALLOWED)) {
