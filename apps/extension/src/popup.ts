@@ -15,6 +15,7 @@ import { captureActiveTab, CLIP_BODY_MAX, CLIP_TITLE_MAX, NOTES_SCOPE, parseTags
 import { formatClock, createIndexedDbChunkStore, noticeToCopy, otherNoticeLanguage, RECORDING_NOTICE, type RecordingMeta, type RecordingNoticeLanguage } from '@ludy/meeting-recorder';
 import { reportEnded, uploadSaved } from './capture-run.ts';
 import { createActiveTabTracker, createPopupConcurrency } from './popup-guards.ts';
+import { CONNECTED_PAGE, isExtensionPageAddress, loadNotesExcluded, PENDING_KEY, rememberNotesExcluded, tabSignInCovers, type PendingSignIn } from './signin.ts';
 
 const root = document.getElementById('root') as HTMLElement;
 const area = chrome.storage.local;
@@ -44,7 +45,6 @@ let copyNote = '';
 let agendaNote = '';
 let agendaRead: { token: string; promise: Promise<AgendaNext | null> } | null = null;
 let serverModules: { address: string; promise: Promise<readonly string[] | null> } | null = null;
-const notesExcludedOrgs = new Set<string>();
 // Set when the org refused the method as not written (A2, #3160): the unwritten choice is then not offered for the rest of this popup.
 let strictOrg = false;
 const CONFIG_DISCOVERY_TIMEOUT_MS = 3_000;
@@ -175,6 +175,21 @@ async function signIn(state: State, withAgenda = false): Promise<void> {
     const scopesToAsk = resolveSignInScopes(config?.modules);
     const askAgenda = withAgenda && scopesToAsk.includes('meetings');
     const pkce = await newPkce();
+    // A normal browser tab when the manifest lets the app's pages reach connected.html (the cloud address and localhost): the popup closes when the tab takes
+    // focus, so the tab's own page, not this one, finishes the sign-in (src/signin.ts, #4662). Any other address, or a tab the browser will not open, keeps the window below.
+    const tabRedirect = chrome.runtime.getURL(CONNECTED_PAGE);
+    if (tabSignInCovers(chrome.runtime.getManifest(), state.address) && isExtensionPageAddress(tabRedirect)) {
+      const pending: PendingSignIn = { verifier: pkce.verifier, state: pkce.state, address: state.address, redirect: tabRedirect, notesAsked: scopesToAsk.includes(NOTES_SCOPE), startedAt: Date.now() };
+      await chrome.storage.session.set({ [PENDING_KEY]: pending });
+      try {
+        await chrome.tabs.create({ url: connectUrl(state.address, pkce, tabRedirect, deviceName(navigator.userAgent), askAgenda, scopesToAsk) });
+        notice = '';
+        await render();
+        return;
+      } catch {
+        await chrome.storage.session.remove(PENDING_KEY);
+      }
+    }
     const redirect = chrome.identity.getRedirectURL('connect');
     const returned = await chrome.identity.launchWebAuthFlow({
       url: connectUrl(state.address, pkce, redirect, deviceName(navigator.userAgent), askAgenda, scopesToAsk),
@@ -185,8 +200,7 @@ async function signIn(state: State, withAgenda = false): Promise<void> {
       notice = result.error === 'access_denied' ? T.signInDenied : T.signInFailed;
     } else {
       const done = await createClient(state.address, null).exchangeCode(result.code, pkce.verifier);
-      if (scopesToAsk.includes(NOTES_SCOPE) && !done.scopes.includes(NOTES_SCOPE)) notesExcludedOrgs.add(done.orgId);
-      else notesExcludedOrgs.delete(done.orgId);
+      await rememberNotesExcluded(chrome.storage.session, done.orgId, scopesToAsk.includes(NOTES_SCOPE) && !done.scopes.includes(NOTES_SCOPE));
       const next = withAccount(await loadState(area), { orgId: done.orgId, orgSlug: result.org, token: done.token, expiresAt: done.expiresAt });
       captureDrafts.syncState(next);
       await saveState(area, next);
@@ -244,7 +258,7 @@ async function signedInView(state: State, onMount: Array<() => void>): Promise<N
   }
   const features = visibleFeatures(me);
   let showNotesAsk = false;
-  if (!me.scopes.includes(NOTES_SCOPE) && !notesExcludedOrgs.has(account.orgId)) {
+  if (!me.scopes.includes(NOTES_SCOPE) && !(await loadNotesExcluded(chrome.storage.session)).has(account.orgId)) {
     if (serverModules?.address !== state.address) {
       serverModules = {
         address: state.address,

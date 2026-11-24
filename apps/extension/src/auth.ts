@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Sign-in through the app (ADR-0047 point 10, M8 #2582): the extension opens the Ludy sign-in in a browser window with
-// its PKCE challenge, the member approves one org there, and the window returns to the extension's redirect address with a
-// one-time code, which the extension trades for its token. The password and the app's session never reach the extension.
+// Sign-in through the app (ADR-0047 point 10, M8 #2582): the extension opens the Ludy sign-in in a browser tab (or, as a fallback, a
+// window) with its PKCE challenge, the member approves one org there, and the app returns to the extension's redirect address with a
+// one-time code, which the extension trades for its token (src/signin.ts). The password and the app's session never reach the extension.
 import { ludyUrl } from './ludy-address.ts';
 import { FEATURES } from './features.ts';
 import { signInScopes } from './agenda.ts';
@@ -59,7 +59,8 @@ export function parseConnectResult(returnedUrl: string, pkce: Pkce, redirectUri:
   } catch {
     return { error: 'invalid' };
   }
-  if (`${url.origin}${url.pathname}` !== redirectUri || url.searchParams.get('state') !== pkce.state) return { error: 'invalid' };
+  // Scheme, host and path, not url.origin: an extension page (chrome-extension://<id>/connected.html) has no origin in every URL parser.
+  if (`${url.protocol}//${url.host}${url.pathname}` !== redirectUri || url.searchParams.get('state') !== pkce.state) return { error: 'invalid' };
   const error = url.searchParams.get('error');
   if (error !== null) return { error: error === 'access_denied' ? 'access_denied' : 'invalid' };
   const code = url.searchParams.get('code');

@@ -11,8 +11,8 @@ import { fileURLToPath } from 'node:url';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const src = join(root, 'src');
 const dist = join(root, 'dist');
-const ENTRIES = ['background', 'offscreen', 'popup', 'mic'].map((name) => join(src, `${name}.ts`));
-const STATIC = ['popup.html', 'popup.css', 'offscreen.html', 'mic.html'];
+const ENTRIES = ['background', 'offscreen', 'popup', 'mic', 'connected'].map((name) => join(src, `${name}.ts`));
+const STATIC = ['popup.html', 'popup.css', 'offscreen.html', 'mic.html', 'connected.html', 'connected.css'];
 // The icons the manifest names (`icons`, `action.default_icon`), copied as they are from icons/ (the Ludy mark: the web brand's 16 and 32 pixel favicons and the mark rendered at 48 and 128).
 const ICONS = ['icon-16.png', 'icon-32.png', 'icon-48.png', 'icon-128.png'];
 

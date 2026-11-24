@@ -12,5 +12,6 @@
   "host_permissions": ["https://app.ludy.vn/*"],
   "optional_permissions": ["tabCapture", "offscreen", "activeTab", "scripting"],
   "optional_host_permissions": ["https://*/*", "http://localhost/*"],
+  "web_accessible_resources": [{ "resources": ["connected.html"], "matches": ["https://app.ludy.vn/*", "http://localhost/*"] }],
   "content_security_policy": { "extension_pages": "script-src 'self'; object-src 'self'" }
 }
