@@ -87,7 +87,9 @@ export function SalesNumberGaps({
                 <h2 id="sales-number-gaps" className="text-sm font-semibold text-foreground">
                   {t('title', { count: f.number(data.missingCount) })}
                 </h2>
-                <span className="truncate font-mono text-xs text-muted-foreground">{summary}</span>
+                <span className="max-w-full truncate font-mono text-xs text-muted-foreground" title={summary}>
+                  {summary}
+                </span>
               </div>
               <p className="mt-0.5 text-xs text-subtle-foreground">{period ? t('hintPeriod') : t('hint')}</p>
             </div>
@@ -100,8 +102,8 @@ export function SalesNumberGaps({
               {action}
             </div>
           </div>
-          {expanded && <div className="mt-3">{table}</div>}
         </Card>
+        {expanded && <div className="mt-2">{table}</div>}
       </section>
     );
   }

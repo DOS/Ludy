@@ -398,7 +398,7 @@ export const en = {
       },
     },
     quickstart: {
-      title: 'Quick start in 3 steps',
+      title: '{count, plural, one {Quick start} other {Quick start in # steps}}',
       subtitle: 'Take one first step to bring live work onto your Home screen.',
       stepLabel: 'Step {step}',
       guideLink: 'Read the quick guide',

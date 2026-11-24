@@ -396,7 +396,7 @@ export const vi = {
       },
     },
     quickstart: {
-      title: 'Bắt đầu nhanh trong 3 bước',
+      title: '{count, plural, one {Bắt đầu nhanh} other {Bắt đầu nhanh trong # bước}}',
       subtitle: 'Làm một việc đầu tiên để thấy dữ liệu chạy ngay trên Trang tổng quan.',
       stepLabel: 'Bước {step}',
       guideLink: 'Xem hướng dẫn nhanh',

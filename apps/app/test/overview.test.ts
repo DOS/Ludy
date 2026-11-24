@@ -105,10 +105,16 @@ describe('org overview', () => {
       quickStartSteps({ modules: ['kernel'], role: 'owner' }).map((s) => s.id),
     ).toEqual(['createTask', 'configureApps', 'inviteTeam']);
 
-    // Member skips owner/admin settings steps; viewer gets no write CTAs.
+    // Member skips owner/admin settings and social channel-connect steps; viewer gets no write CTAs.
     expect(
       quickStartSteps({ modules: ['finance', 'notes'], role: 'member' }).map((s) => s.id),
     ).toEqual(['uploadInvoice', 'createNote', 'createTask']);
+    expect(
+      quickStartSteps({ modules: ['kernel', 'social'], role: 'member' }).map((s) => s.id),
+    ).toEqual(['createTask']);
+    expect(
+      quickStartSteps({ modules: ['kernel', 'social', 'crm', 'sign'], role: 'member' }).map((s) => s.id),
+    ).toEqual(['addContact', 'createEnvelope', 'createDeal']);
     expect(quickStartSteps({ modules: ['finance', 'notes'], role: 'viewer' })).toEqual([]);
   });
 

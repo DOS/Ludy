@@ -129,8 +129,9 @@ export function quickStartSteps({
   };
 
   // Step 1: First concrete value action from the primary enabled business app.
+  // Connecting social channels requires owner/admin permission, so members skip channel setup.
   if (has('finance')) add({ id: 'uploadInvoice', to: '/o/$slug/inbox', icon: 'documents' });
-  else if (has('social')) add({ id: 'connectChannel', to: '/o/$slug/social/channels', icon: 'social' });
+  else if (canManage && has('social')) add({ id: 'connectChannel', to: '/o/$slug/social/channels', icon: 'social' });
   else if (has('crm')) add({ id: 'addContact', to: '/o/$slug/contacts', icon: 'contacts' });
   else if (has('sign')) add({ id: 'createEnvelope', to: '/o/$slug/sign/envelopes', icon: 'signEnvelopes' });
   else if (has('notes')) add({ id: 'createNote', to: '/o/$slug/notes', icon: 'notes' });
@@ -145,7 +146,7 @@ export function quickStartSteps({
   if (has('crm')) add({ id: 'createDeal', to: '/o/$slug/deals', icon: 'deals' });
   add({ id: 'createTask', to: '/o/$slug/tasks', icon: 'tasks' });
   if (canManage) add({ id: 'inviteTeam', to: '/o/$slug/settings/members', icon: 'settingsMembers' });
-  if (has('social')) add({ id: 'connectChannel', to: '/o/$slug/social/channels', icon: 'social' });
+  if (canManage && has('social')) add({ id: 'connectChannel', to: '/o/$slug/social/channels', icon: 'social' });
 
   return steps;
 }

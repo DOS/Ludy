@@ -24,7 +24,7 @@ export function Day1QuickStart({
     <div data-testid="overview-quickstart">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/20 px-4 py-3">
         <div>
-          <h3 className="text-sm font-semibold text-foreground">{t('title')}</h3>
+          <h3 className="text-sm font-semibold text-foreground">{t('title', { count: steps.length })}</h3>
           <p className="mt-0.5 text-xs text-subtle-foreground">{t('subtitle')}</p>
         </div>
         {financeOn && (

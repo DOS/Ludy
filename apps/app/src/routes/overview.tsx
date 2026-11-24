@@ -155,13 +155,13 @@ function AppCards({
           const icon: NavIconName = card?.icon ?? OTHER_CARD_ICON[id as keyof typeof OTHER_CARD_ICON];
           const appStatuses = statuses(id);
           const pending = appStatuses.some((s) => s.pending);
-          const retryAction = appStatuses.find((s) => s.retry)?.retry;
+          const retryActions = appStatuses.flatMap((s) => (s.retry ? [s.retry] : []));
           const readyLabels = appStatuses.filter((s) => !s.pending && !s.retry && s.label).map((s) => s.label);
           const linkClass = cn(
             'inline-flex items-center gap-2 rounded-lg border bg-card px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
             PHONE_TARGET,
           );
-          if (retryAction) {
+          if (retryActions.length > 0) {
             return (
               <li key={id} data-app-status={id} className="inline-flex items-center gap-1.5 rounded-lg border bg-card px-3 py-1.5 text-xs">
                 <Link to={target(id, app)} params={{ slug }} className={cn('inline-flex items-center gap-2 font-medium text-foreground hover:text-link hover:underline', PHONE_TARGET)}>
@@ -169,7 +169,13 @@ function AppCards({
                   <span>{tn(`appNames.${id}`)}</span>
                 </Link>
                 <span className="text-subtle-foreground">{t('failed')}</span>
-                <button type="button" className={cn('text-link hover:underline', PHONE_TARGET)} onClick={retryAction}>
+                <button
+                  type="button"
+                  className={cn('text-link hover:underline', PHONE_TARGET)}
+                  onClick={() => {
+                    for (const retry of retryActions) retry();
+                  }}
+                >
                   {t('retry')}
                 </button>
               </li>
@@ -180,7 +186,11 @@ function AppCards({
               <Link to={target(id, app)} params={{ slug }} className={linkClass}>
                 <NavIcon name={icon} className="text-muted-foreground" />
                 <span className="font-medium text-foreground">{tn(`appNames.${id}`)}</span>
-                {pending && <Spinner className="size-3.5" />}
+                {pending && (
+                  <span aria-hidden="true">
+                    <Spinner className="size-3.5" />
+                  </span>
+                )}
                 {!pending && readyLabels.length > 0 && (
                   <span className="text-subtle-foreground tabular-nums">{readyLabels.join(' · ')}</span>
                 )}
@@ -279,6 +289,9 @@ export function OverviewPage() {
   const noFilingPeriod = financeOn && overview.data !== undefined && overview.data.vatFilingPeriod === null;
 
   const quickStart = quickStartSteps({ modules, role });
+  const waitingLoaded = allCounted(counts, ['failedFiles', 'notifications', 'tasks']);
+  const day1Settled = me.isSuccess && today.isSuccess && overview.isSuccess && waitingLoaded && !since.isPending;
+  const day1Error = Boolean(failed) || today.isError || me.isError;
   const day1Empty =
     quickStart.length > 0 &&
     isDay1Empty({
@@ -289,12 +302,15 @@ export function OverviewPage() {
       taxDuesCount: dues.length,
       pendingProposals: overview.data?.pendingProposals ?? 0,
       failedFiles: overview.data?.failedFiles ?? 0,
-      waitingLoaded: allCounted(counts, ['failedFiles', 'notifications', 'tasks']),
+      waitingLoaded,
       waitingCount: waiting.length,
       sinceResolved: !since.isPending,
       sinceCount: sinceItems.length,
-      hasError: Boolean(failed) || today.isError,
+      hasError: day1Error,
     });
+  // Wait for Day-1 detection to settle before mounting TodayWeekly (avoids premature AI calls and Day-1 layout shift).
+  const showWeekly = !day1Empty && (day1Settled || day1Error);
+  const showUpload = financeOn && role !== undefined && role !== 'viewer' && !day1Empty && (day1Settled || day1Error);
 
   // The choice is a button where the gap is (#3591), not a link in a sentence.
   const chooseVat = canChooseVat ? (
@@ -302,12 +318,11 @@ export function OverviewPage() {
       {tcl('chooseFilingPeriod')}
     </Link>
   ) : undefined;
-  const uploadAction =
-    financeOn && !day1Empty ? (
-      <Link to="/o/$slug/inbox" params={{ slug }} className={buttonVariants()}>
-        {t('upload')}
-      </Link>
-    ) : undefined;
+  const uploadAction = showUpload ? (
+    <Link to="/o/$slug/inbox" params={{ slug }} className={buttonVariants()}>
+      {t('upload')}
+    </Link>
+  ) : undefined;
 
   const hasOperationalStrip = waiting.length > 0 || Boolean(failed) || sinceItems.length > 0;
 
@@ -327,7 +342,7 @@ export function OverviewPage() {
 
       {/* Row 2: Compact operational strip combining Waiting counts + SinceYesterday coworker updates; hidden when empty (#4644). */}
       {hasOperationalStrip && (
-        <section className="mt-4" aria-label={t('operationalStrip')}>
+        <section className="mt-4 space-y-2" aria-label={t('operationalStrip')}>
           {failed && <ErrorText>{errorMessage(failed.error)}</ErrorText>}
           {(waiting.length > 0 || sinceItems.length > 0) && (
             <div data-testid="overview-operational-strip" className="flex flex-wrap items-center gap-2 rounded-xl border bg-card px-3 py-2">
@@ -365,7 +380,7 @@ export function OverviewPage() {
         data-testid="overview-row-3"
         className={cn(
           'mt-6 grid gap-6 lg:items-start',
-          !day1Empty && 'lg:grid-cols-2 [&:not(:has([data-weekly-slot]))]:lg:grid-cols-1',
+          showWeekly && 'lg:grid-cols-2 [&:not(:has([data-weekly-slot]))]:lg:grid-cols-1',
         )}
       >
         <section className="min-w-0" aria-labelledby="overview-tax">
@@ -403,7 +418,7 @@ export function OverviewPage() {
           <p className="mt-2 text-xs text-subtle-foreground">{tt('unconfirmed')}</p>
         </section>
 
-        {!day1Empty && (
+        {showWeekly && (
           <div className="min-w-0">
             <TodayWeekly slug={slug} />
           </div>

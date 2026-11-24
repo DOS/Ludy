@@ -335,7 +335,7 @@ describe('OverviewPage layout compression and Day-1 SME quick-start (#4644)', ()
     });
 
     expect(html).toContain('data-testid="overview-quickstart"');
-    expect(html).toContain(viMessages.today.quickstart.title);
+    expect(html).toContain('Bắt đầu nhanh trong 3 bước');
     expect(html).toContain(viMessages.today.empty);
     expect(html).toContain('data-testid="quickstart-step-uploadInvoice"');
     expect(html).toContain('data-testid="quickstart-step-configureApps"');
@@ -368,6 +368,35 @@ describe('OverviewPage layout compression and Day-1 SME quick-start (#4644)', ()
     const viewer = renderOverview({ role: 'viewer', overview: EMPTY_OVERVIEW, todayItems: [] });
     expect(viewer).not.toContain('data-testid="overview-quickstart"');
     expect(viewer).toContain(viMessages.today.empty);
+    expect(viewer).not.toContain(viMessages.overview.upload);
+
+    // Members never receive admin-only channel-connect quick-start CTAs.
+    state.modules = ['kernel', 'social'];
+    const memberSocialOnly = renderOverview({ locale: 'en', role: 'member', overview: EMPTY_OVERVIEW, todayItems: [] });
+    expect(memberSocialOnly).toContain('data-testid="quickstart-step-createTask"');
+    expect(memberSocialOnly).not.toContain('data-testid="quickstart-step-connectChannel"');
+    expect(memberSocialOnly).toContain('Quick start');
+    expect(memberSocialOnly).not.toContain('Quick start in 1 steps');
+  });
+
+  it('does not mount TodayWeekly or PageHeader uploadAction before initial queries settle', () => {
+    vi.setSystemTime(MONDAY);
+    const qc = state.client;
+    qc.clear();
+    setActiveLocale('vi');
+    const loadingHtml = renderToStaticMarkup(
+      <I18nProvider>
+        <QueryClientProvider client={qc}>
+          <IntlProvider locale="vi" messages={catalog('vi') as never} timeZone="Asia/Ho_Chi_Minh">
+            <OverviewPage />
+          </IntlProvider>
+        </QueryClientProvider>
+      </I18nProvider>,
+    );
+    expect(loadingHtml).not.toContain('data-weekly-slot=""');
+    expect(loadingHtml).not.toContain(viMessages.overview.upload);
+    // Loading spinner inside AppCards link is wrapped aria-hidden so link accessible text stays clean.
+    expect(loadingHtml).toMatch(/<span aria-hidden="true"><svg[^>]*data-slot="spinner"/);
   });
 
   it('replaces Day-1 quick-start with calm caught-up empty state once org activity exists', () => {
