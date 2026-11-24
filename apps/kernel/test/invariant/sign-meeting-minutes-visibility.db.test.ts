@@ -1488,40 +1488,78 @@ suite('eSign shared meeting minutes reader-scoped confidentiality invariants (#3
       workerClient.release();
     }
 
-    // 7. Dynamic reader revocation, retention expiry, creator retention, and tenant_member removal!
+    // 7. Dynamic reader revocation, creator role demotion, retention expiry, completed legal-record retention, and tenant_member removal (#3811, #4531 Step 1 of 2).
+    const readEnvelopeOutcome = async (
+      envelopeId: string,
+      actorId: string,
+    ): Promise<'ok' | 'not_found'> => {
+      try {
+        const res = await runtime.query<{ envelope: { id: string } }>(
+          'sign.envelope.get',
+          { envelopeId },
+          { actor: asUser(actorId), orgId },
+        );
+        expect(res.envelope.id).toBe(envelopeId);
+        return 'ok';
+      } catch (error) {
+        expect(error).toMatchObject({ code: 'SIGN_ENVELOPE_NOT_FOUND', status: 404 });
+        return 'not_found';
+      }
+    };
+
     await runtime.execute(
       'meetings.reader.remove',
       { meetingId: attendeesMeetingId, userId: attendeeId },
       { actor: asUser(recorderId), orgId },
     );
     // Attendee removed from meeting_reader immediately loses access to recEnv (created by recorderId),
-    // while retaining access to attTplEnv (where attendeeId IS created_by)!
+    // while recorderId retains access to the completed/sealed recEnv.
     await expect(
       runtime.query('sign.envelope.get', { envelopeId: recEnv.envelopeId }, { actor: asUser(attendeeId), orgId }),
     ).rejects.toMatchObject({ code: 'SIGN_ENVELOPE_NOT_FOUND', status: 404 });
-    const ownAttEnv = await runtime.query<{ envelope: { id: string } }>(
-      'sign.envelope.get',
-      { envelopeId: attTplEnv.envelopeId },
-      { actor: asUser(attendeeId), orgId },
-    );
-    expect(ownAttEnv.envelope.id).toBe(attTplEnv.envelopeId);
+    expect(await readEnvelopeOutcome(recEnv.envelopeId, recorderId)).toBe('ok');
 
-    // Re-add attendee, then expire text_retention_date: attendee loses access via meeting reader check and no new envelope can be created,
-    // while recorder (created_by) STILL retains access to recEnv until removed from tenant_member!
+    // Unsigned attTplEnv (draft, created_by = attendeeId): Step 1 accepts legacy 200 (before Step 2) OR 404 SIGN_ENVELOPE_NOT_FOUND (after Step 2).
+    // Step 2 tightens this to require 404 once created_by follows active meeting reader scope on unsigned envelopes.
+    expect(['ok', 'not_found']).toContain(await readEnvelopeOutcome(attTplEnv.envelopeId, attendeeId));
+
+    // Re-add attendee, then demote created_by to 'viewer':
+    //   - attendeeId loses access to recEnv (404, non-creator viewer cannot read meetings)
+    //   - unsigned attTplEnv accepts legacy 200 (Step 1) OR 404 SIGN_ENVELOPE_NOT_FOUND (Step 2)
+    //   - completed recEnv stays readable by recorderId
     await runtime.execute(
       'meetings.reader.add',
       { meetingId: attendeesMeetingId, userId: attendeeId },
       { actor: asUser(recorderId), orgId },
     );
     await adminPool!.query(
+      `UPDATE crove_kernel.tenant_member
+          SET role = 'viewer'
+        WHERE org_id = $1::uuid AND user_id = $2::uuid`,
+      [orgId, attendeeId],
+    );
+    await expect(
+      runtime.query('sign.envelope.get', { envelopeId: recEnv.envelopeId }, { actor: asUser(attendeeId), orgId }),
+    ).rejects.toMatchObject({ code: 'SIGN_ENVELOPE_NOT_FOUND', status: 404 });
+    expect(['ok', 'not_found']).toContain(await readEnvelopeOutcome(attTplEnv.envelopeId, attendeeId));
+    expect(await readEnvelopeOutcome(recEnv.envelopeId, recorderId)).toBe('ok');
+    await adminPool!.query(
+      `UPDATE crove_kernel.tenant_member
+          SET role = 'member'
+        WHERE org_id = $1::uuid AND user_id = $2::uuid`,
+      [orgId, attendeeId],
+    );
+
+    // Expire text_retention_date: no new meeting_minutes envelope can be created (404 SIGN_SOURCE_NOT_FOUND).
+    // Unsigned attTplEnv accepts legacy 200 for created_by (Step 1) OR 404 SIGN_ENVELOPE_NOT_FOUND (Step 2),
+    // while non-creator recorderId gets 404 on unsigned attTplEnv and non-readers still get 404 on both.
+    // Completed/sealed recEnv MUST remain readable by authorized eSign member recorderId (metadata + sealed PDF).
+    await adminPool!.query(
       `UPDATE crove_meetings.meeting
           SET text_retention_date = ((now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 1)
         WHERE org_id = $1::uuid AND id = $2::uuid`,
       [orgId, attendeesMeetingId],
     );
-    await expect(
-      runtime.query('sign.envelope.get', { envelopeId: recEnv.envelopeId }, { actor: asUser(attendeeId), orgId }),
-    ).rejects.toMatchObject({ code: 'SIGN_ENVELOPE_NOT_FOUND', status: 404 });
     await expect(
       runtime.execute(
         'sign.envelope.create',
@@ -1535,12 +1573,36 @@ suite('eSign shared meeting minutes reader-scoped confidentiality invariants (#3
       ),
     ).rejects.toMatchObject({ code: 'SIGN_SOURCE_NOT_FOUND', status: 404 });
 
-    const creatorStillReads = await runtime.query<{ envelope: { id: string } }>(
+    for (const nonReaderId of [ownerId, adminId, outsiderMemberId, viewerId]) {
+      await expect(
+        runtime.query('sign.envelope.get', { envelopeId: recEnv.envelopeId }, { actor: asUser(nonReaderId), orgId }),
+      ).rejects.toMatchObject({ code: 'SIGN_ENVELOPE_NOT_FOUND', status: 404 });
+      await expect(
+        runtime.query('sign.envelope.get', { envelopeId: attTplEnv.envelopeId }, { actor: asUser(nonReaderId), orgId }),
+      ).rejects.toMatchObject({ code: 'SIGN_ENVELOPE_NOT_FOUND', status: 404 });
+    }
+
+    await expect(
+      runtime.query('sign.envelope.get', { envelopeId: attTplEnv.envelopeId }, { actor: asUser(recorderId), orgId }),
+    ).rejects.toMatchObject({ code: 'SIGN_ENVELOPE_NOT_FOUND', status: 404 });
+    expect(['ok', 'not_found']).toContain(await readEnvelopeOutcome(attTplEnv.envelopeId, attendeeId));
+
+    // Completed legal record recEnv: Step 1 accepts legacy 404 (before Step 2) OR 200 (after Step 2) for reader attendeeId,
+    // while authorized eSign creator recorderId MUST ALWAYS retain access to recEnv and its sealed PDF!
+    expect(['ok', 'not_found']).toContain(await readEnvelopeOutcome(recEnv.envelopeId, attendeeId));
+    const creatorStillReads = await runtime.query<{ envelope: { id: string; status: string } }>(
       'sign.envelope.get',
       { envelopeId: recEnv.envelopeId },
       { actor: asUser(recorderId), orgId },
     );
     expect(creatorStillReads.envelope.id).toBe(recEnv.envelopeId);
+    expect(creatorStillReads.envelope.status).toBe('completed');
+    const sealedMetaAfterRetention = await runtime.query<{ id: string }>(
+      'kernel.file.get',
+      { id: sealedFileId },
+      { actor: asUser(recorderId), orgId },
+    );
+    expect(sealedMetaAfterRetention.id).toBe(sealedFileId);
 
     // Removing creator from tenant_member revokes SQL RLS & file access immediately.
     await adminPool!.query(

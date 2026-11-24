@@ -665,6 +665,19 @@ suite('projects.today on PostgreSQL (#2596)', () => {
       severity: 'warn',
       href: '/projects',
     });
+
+    // Ordinary member (no private-project bypass even when org has zero private projects) also sees all 505 overdue items cleanly.
+    const coworkerOverflow = zTodayItems.parse(await todayAt(org.orgId, coworker.userId));
+    expect(coworkerOverflow).toHaveLength(TODAY_ITEMS_MAX);
+    expect(coworkerOverflow.at(-1)).toEqual({
+      kind: 'flag',
+      app: 'projects',
+      id: 'more',
+      title: { key: 'projects.more', params: { count: 505 - (TODAY_ITEMS_MAX - 1) } },
+      count: 505 - (TODAY_ITEMS_MAX - 1),
+      severity: 'warn',
+      href: '/projects',
+    });
   });
 
   it('filters private project tasks at scale (506+ tasks + private project) for non-members, members, and owners', async () => {

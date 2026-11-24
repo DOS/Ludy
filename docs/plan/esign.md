@@ -56,6 +56,12 @@ Per owner instruction on `2026-11-22` grounded in the 2025-2026 Vietnam statutor
    - **Slice 5d ([#4442](https://github.com/DOS/Ludy/issues/4442)) - SME Contract Playbook Checklist & Cited Redlines:** `crove_sign.playbook_rule` (shipping 6 editable Vietnam SME default rules out of the box, including Commercial Law `2005` `Art. 301` `<= 8%` penalty cap) + `crove_sign.playbook_check`, backed by metered Vy review (`'sign.playbook_check'`, `tools: []`, verified `{ pageNumber, quoteExcerpt }` + copyable redline suggestions) with 100% deterministic rule/keyword + manual toggle fallback when AI is off.
    - **Slice 5e ([#4443](https://github.com/DOS/Ludy/issues/4443)) - Sender-Side Signer KYC Attachment Check:** `crove_sign.kyc_check` (`PERSONAL_DATA_COLUMNS` `handling: 'erase'` under PDPL `Law 91/2025/QH15`) checking Slice 4b `'attachment'` uploads (`CCCD`, `Giấy ĐKKD`, `Giấy ủy quyền`) via deterministic `crove-extract` PDF text/metadata checks + manual confirmation when AI is off, and optional workspace-member metered Vy check (`'sign.kyc_check'`, `tools: []`, zero public LLM calls, human confirms match/mismatch).
 
+### Meeting-Minutes Lifecycle & Reader Scope Decision (JOY, 2026-11-24, [#4531](https://github.com/DOS/Ludy/issues/4531))
+
+Separates legal records from unsigned drafts and in-flight packets for `source_kind = 'meeting_minutes'` ([ADR-0047](../adr/0047-meeting-notes-audio-and-transcripts.md)):
+- **Signed / completed `meeting_minutes` envelopes (`status = 'completed'`):** remain legal records under eSign's retention policy and are never deleted or retroactively hidden on meeting deletion or `text_retention_date` expiry.
+- **Unsigned / in-flight `meeting_minutes` envelopes:** follow active meeting reader scope even for `created_by` (losing access if removed from `meeting_reader` or demoted to `viewer`) and are voided and erased when the meeting is deleted or its text retention expires.
+
 ---
 
 ## 1. OPC/SME Fit & Competitor Benchmark
@@ -292,6 +298,7 @@ Every table column maps cleanly to `DATA_CLASSES` (`packages/kernel-contract/src
 
 - **Nightly `retention.ts` integration:** `sign-cleanup` prunes expired/revoked/used `signing_token` and `signing_otp` rows older than 30 days.
 - **Org deletion (`org-purge.ts`):** purges draft/voided envelopes, expired tokens/OTPs, and `ai_analysis` immediately; sealed evidence handling follows Ludy's legal retention rule.
+- **Meeting-minutes lifecycle (`#4531`, owner decision 2026-11-24):** completed (`status = 'completed'`) `meeting_minutes` envelopes remain legal records under eSign's retention policy (never deleted or retroactively hidden on meeting deletion or `text_retention_date` expiry); unsigned / in-flight `meeting_minutes` envelopes follow active meeting reader scope even for `created_by` (access revoked on `meeting_reader` removal or demotion to `viewer`) and are voided and erased on meeting deletion or text retention expiry.
 - **`[commentary]` Legal Sign-off Required (Lawyer `#62` before pilot billing):** Confirm under Vietnam **Law on Electronic Transactions `20/2023/QH15`**, **Decree `23/2025/ND-CP`**, and **Law on Personal Data Protection `91/2025/QH15` / Decree `356/2025/ND-CP`**: (a) whether completed commercial contracts and their `signing_event` / `sealed_file` records qualify under `keep_legal` statutory preservation overrides against a signer's erasure request, and (b) exact retention periods and counterparty disclosure wording shown in the signing consent banner.
 
 ---

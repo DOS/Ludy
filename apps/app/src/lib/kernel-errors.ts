@@ -51,6 +51,7 @@ export const KERNEL_ERROR_CODES = [
   'RETRY',
   'OVERLOADED',
   'OVERVIEW_UNAVAILABLE',
+  'SERVICE_UNAVAILABLE',
   'RATE_LIMITED',
   'IDEMPOTENCY_MISMATCH',
   // oRPC's own answers (input validation, an unexpected failure), worded in English by the library.

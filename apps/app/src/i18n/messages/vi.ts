@@ -15668,6 +15668,7 @@ export const vi = {
       RETRY: 'Xung đột đồng thời, hãy thử lại',
       OVERLOADED: 'Hệ thống đang quá tải, hãy thử lại sau',
       OVERVIEW_UNAVAILABLE: 'Chưa tải được số liệu các doanh nghiệp, hãy thử lại sau ít phút',
+      SERVICE_UNAVAILABLE: 'Không kiểm tra được trạng thái ứng dụng lúc này, hãy thử lại sau',
       RATE_LIMITED: 'Bạn gửi quá nhiều yêu cầu, hãy thử lại sau',
       IDEMPOTENCY_MISMATCH: 'Khóa idempotency đã dùng cho yêu cầu khác',
       BAD_REQUEST: 'Dữ liệu gửi lên không hợp lệ',

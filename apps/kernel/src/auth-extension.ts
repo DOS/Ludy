@@ -178,6 +178,8 @@ export interface ExtensionRoute {
   // Exact path; `:id` stands for one UUID segment.
   path: string;
   scope: ExtensionScope | null;
+  // Mutating or resource-allocating routes are additionally bounded by the per-extension-token write limiter (#3742).
+  write: boolean;
   why: string;
 }
 
@@ -185,17 +187,17 @@ export interface ExtensionRoute {
 // meetings scope creates a meeting with its consent record, gets an upload grant, finishes the upload of a meeting
 // the same token created and reads its status. The agenda scope reads the member's next few calendar events, title, times and join host.
 export const EXTENSION_ROUTES: readonly ExtensionRoute[] = Object.freeze([
-  { method: 'GET', path: '/api/extension/me', scope: null, why: 'who the token is for: org, scopes, end date and the features this deployment runs; no tenant data' },
-  { method: 'POST', path: '/api/rpc/meetings/create', scope: 'meetings', why: 'create a meeting with its consent record (meetings.meeting.create)' },
-  { method: 'POST', path: '/api/rpc/meetings/extensionStatus', scope: 'meetings', why: "a meeting this token created: its status and whether its audio and video arrived, never its content (meetings.meeting.extension_status)" },
-  { method: 'POST', path: '/api/rpc/meetings/recordingStopped', scope: 'meetings', why: 'a recording of this token ended with no media reaching the server: its end time and a stop code on a meeting this token created, once, so the recording chip lets go (meetings.meeting.recording_stopped)' },
-  { method: 'POST', path: '/api/rpc/meetings/captureHeartbeat', scope: 'meetings', why: "keep alive, or end, the capture of a recording this token created (ADR-0055 slice 1, #4123): a meeting id and whether to end it, and the answer is one boolean (meetings.capture.heartbeat)" },
-  { method: 'POST', path: '/api/rpc/meetings/agenda/next', scope: 'agenda', why: "the member's next calendar events for the popup's \"Sắp họp\" card: at most 5 within 30 minutes, title, times and join host only, from their own cache (meetings.agenda.next, B2)" },
-  { method: 'POST', path: '/api/files/uploads', scope: 'meetings', why: 'an upload grant, for the meeting_audio and meeting_video purposes only (the handler refuses any other purpose for a token)' },
-  { method: 'POST', path: '/api/meetings/:id/media', scope: 'meetings', why: 'finish the upload of the media of a meeting this token created (meetings.media.record)' },
-  { method: 'POST', path: '/api/meetings/:id/live-chunk', scope: 'meetings', why: 'a piece of the recording of a live-notes meeting this token created, sealed and stored by the route (meetings.live.chunk, ADR-0052 L4a)' },
-  { method: 'POST', path: '/api/rpc/notes/clip', scope: 'notes', why: 'save a quick note or clipped web page, always private and tainted (notes.note.clip, E4)' },
-  { method: 'POST', path: '/api/rpc/notes/todos/quickCapture', scope: 'notes', why: 'save a quick-captured personal to-do, always private and tainted (notes.todo.quick_capture, E4)' },
+  { method: 'GET', path: '/api/extension/me', scope: null, write: false, why: 'who the token is for: org, scopes, end date and the features this deployment runs; no tenant data' },
+  { method: 'POST', path: '/api/rpc/meetings/create', scope: 'meetings', write: true, why: 'create a meeting with its consent record (meetings.meeting.create)' },
+  { method: 'POST', path: '/api/rpc/meetings/extensionStatus', scope: 'meetings', write: false, why: "a meeting this token created: its status and whether its audio and video arrived, never its content (meetings.meeting.extension_status)" },
+  { method: 'POST', path: '/api/rpc/meetings/recordingStopped', scope: 'meetings', write: true, why: 'a recording of this token ended with no media reaching the server: its end time and a stop code on a meeting this token created, once, so the recording chip lets go (meetings.meeting.recording_stopped)' },
+  { method: 'POST', path: '/api/rpc/meetings/captureHeartbeat', scope: 'meetings', write: true, why: "keep alive, or end, the capture of a recording this token created (ADR-0055 slice 1, #4123): a meeting id and whether to end it, and the answer is one boolean (meetings.capture.heartbeat)" },
+  { method: 'POST', path: '/api/rpc/meetings/agenda/next', scope: 'agenda', write: false, why: "the member's next calendar events for the popup's \"Sắp họp\" card: at most 5 within 30 minutes, title, times and join host only, from their own cache (meetings.agenda.next, B2)" },
+  { method: 'POST', path: '/api/files/uploads', scope: 'meetings', write: true, why: 'an upload grant, for the meeting_audio and meeting_video purposes only (the handler refuses any other purpose for a token)' },
+  { method: 'POST', path: '/api/meetings/:id/media', scope: 'meetings', write: true, why: 'finish the upload of the media of a meeting this token created (meetings.media.record)' },
+  { method: 'POST', path: '/api/meetings/:id/live-chunk', scope: 'meetings', write: true, why: 'a piece of the recording of a live-notes meeting this token created, sealed and stored by the route (meetings.live.chunk, ADR-0052 L4a)' },
+  { method: 'POST', path: '/api/rpc/notes/clip', scope: 'notes', write: true, why: 'save a quick note or clipped web page, always private and tainted (notes.note.clip, E4)' },
+  { method: 'POST', path: '/api/rpc/notes/todos/quickCapture', scope: 'notes', write: true, why: 'save a quick-captured personal to-do, always private and tainted (notes.todo.quick_capture, E4)' },
 ]);
 
 const ROUTE_PATTERNS = EXTENSION_ROUTES.map((route) => ({
@@ -213,6 +215,22 @@ export function matchExtensionRoute(method: string, rawPath: string): ExtensionR
   return null;
 }
 
+const EXTENSION_SCOPE_ERROR = () => new DomainError('FORBIDDEN', 403, 'Mã của tiện ích Ludy không được dùng cho việc này', { rule: 'extension_scope' });
+
+// Checks the request against EXTENSION_ROUTES and the token's scopes (and desktop tokens never reach notes routes, #4516), returning the matched route when allowed.
+export function authorizeExtensionRoute(
+  scopes: readonly string[],
+  method: string,
+  rawPath: string,
+  client: ExtensionClient = 'extension',
+): { ok: true; route: ExtensionRoute } | { ok: false; error: DomainError } {
+  const route = matchExtensionRoute(method, rawPath);
+  if (route && (route.scope === null || (scopes.includes(route.scope) && (client !== 'desktop' || route.scope !== 'notes')))) {
+    return { ok: true, route };
+  }
+  return { ok: false, error: EXTENSION_SCOPE_ERROR() };
+}
+
 // The edge's check for a request made with an extension token: refused unless it names a listed route whose scope the
 // token holds (and desktop tokens never reach notes routes, #4516). 403 EXTENSION_SCOPE, said before any handler, body read or database call.
 export function refuseOutsideScopes(
@@ -221,7 +239,6 @@ export function refuseOutsideScopes(
   rawPath: string,
   client: ExtensionClient = 'extension',
 ): DomainError | null {
-  const route = matchExtensionRoute(method, rawPath);
-  if (route && (route.scope === null || (scopes.includes(route.scope) && (client !== 'desktop' || route.scope !== 'notes')))) return null;
-  return new DomainError('FORBIDDEN', 403, 'Mã của tiện ích Ludy không được dùng cho việc này', { rule: 'extension_scope' });
+  const checked = authorizeExtensionRoute(scopes, method, rawPath, client);
+  return checked.ok ? null : checked.error;
 }

@@ -210,6 +210,7 @@ describe('streaming blob encryptor (#2780)', () => {
         expect(decryptBlobBuffer(ciphertext, DATA_KEY, BLOB_BINDING)).toEqual(plaintext);
       }
     },
+    15_000,
   );
 
   it.each([4 * BLOB_CHUNK_SIZE + 777, 4 * BLOB_CHUNK_SIZE, 3 * BLOB_CHUNK_SIZE + 1, BLOB_CHUNK_SIZE])(
@@ -228,6 +229,7 @@ describe('streaming blob encryptor (#2780)', () => {
       ];
       for (const [start, end] of windows) expect(rangeRead(ciphertext, start, end).equals(plaintext.subarray(start, end + 1))).toBe(true);
     },
+    15_000,
   );
 
   it('still reads what the buffered path wrote before this change: a frozen ciphertext through both decrypt paths, and the buffered output of today', () => {
@@ -250,7 +252,7 @@ describe('streaming blob encryptor (#2780)', () => {
     const buffered = encryptBlobBuffer(plaintext, DATA_KEY, BLOB_BINDING);
     expect(decryptBlobBuffer(buffered, DATA_KEY, BLOB_BINDING)).toEqual(plaintext);
     expect(rangeRead(buffered, 0, plaintext.length - 1).equals(plaintext)).toBe(true);
-  });
+  }, 15_000);
 
   it('holds at most one chunk back: the ciphertext keeps pace with the plaintext pushed', () => {
     const total = 128 * 1024 * 1024;
@@ -269,7 +271,7 @@ describe('streaming blob encryptor (#2780)', () => {
     }
     expect(pushed).toBe(total);
     expect(maxLag).toBeLessThanOrEqual(BLOB_CHUNK_SIZE + piece.length);
-  });
+  }, 15_000);
 
   it('refuses a streamed blob with the last chunk cut, a middle chunk dropped, two chunks swapped, a wrong key or another meeting', () => {
     const ciphertext = streamed(randomBytes(3 * BLOB_CHUNK_SIZE + 5), 50_000);

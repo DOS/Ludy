@@ -15668,6 +15668,7 @@ export const en = {
       RETRY: 'Another change happened at the same time. Try again.',
       OVERLOADED: 'The server is busy. Try again later.',
       OVERVIEW_UNAVAILABLE: "Your companies' figures could not be loaded. Try again in a few minutes.",
+      SERVICE_UNAVAILABLE: 'Could not check app status right now. Try again later.',
       RATE_LIMITED: 'Too many requests. Try again later.',
       IDEMPOTENCY_MISMATCH: 'This request key was already used for a different request.',
       BAD_REQUEST: 'The request is not valid.',
