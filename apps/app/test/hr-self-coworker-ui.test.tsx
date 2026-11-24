@@ -113,6 +113,8 @@ describe('HR Stage 6A self-service coworker UI (#4526)', () => {
     expect(htmlVi).toContain('max-md:min-h-11');
     expect(htmlVi).toContain('data-testid="hr-my-ly-draft-badge"');
     expect(htmlVi).toContain('data-testid="hr-my-ly-draft-ai-off"');
+    expect(htmlVi).toContain('data-testid="hr-my-ly-half-day-session"');
+    expect(htmlVi).toContain('Buổi chiều');
     expect(htmlVi).toContain('data-testid="hr-my-ly-apply-leave"');
 
     const tripDraft: HrSelfRequestDraftResult = {

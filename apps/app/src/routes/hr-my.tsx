@@ -329,6 +329,7 @@ export function HrSelfServicePage() {
 
       {profile && (linked || isOrgManagerRole) && (
         <HrSelfCoworkerCard
+          key={slug || 'default'}
           linked={linked}
           onApplyLeave={handleApplyLeaveDraft}
           onApplyOvertime={handleApplyOvertimeDraft}

@@ -70,12 +70,15 @@ function buildGuardedMeter(
     meter === 'runtime' ? memberMeter(runtime as Runtime, actor, meterOptions ?? {}) : meter;
   return {
     admit: async (call) => {
-      if (await isAiStopped(includeNotes)) {
-        onAdmitRejected?.();
-        throw new HrSelfAiStoppedError();
-      }
       try {
-        return await baseMeter.admit(call);
+        if (await isAiStopped(includeNotes)) {
+          throw new HrSelfAiStoppedError();
+        }
+        const admitted = await baseMeter.admit(call);
+        if (await isAiStopped(includeNotes)) {
+          throw new HrSelfAiStoppedError();
+        }
+        return admitted;
       } catch (error: unknown) {
         onAdmitRejected?.();
         throw error;

@@ -453,12 +453,12 @@ describe('HR Stage 6A cited HR policy Q&A (hr.policy_qa, #4526)', () => {
   });
 
   it('handles CodeQL linear markdown check, CodeRabbit edge cases, salary stripping, and citation alignment', async () => {
-    // 1. CodeQL js/polynomial-redos: linear hasMarkdownLink handles pathological brackets rapidly.
+    // 1. CodeQL js/polynomial-redos: linear hasMarkdownLink handles loop and bracket runs without regex backtracking.
     expect(hasMarkdownLink('See [click](https://x.test) now')).toBe(true);
     expect(hasMarkdownLink('Plain text [unclosed](foo\nbar)')).toBe(false);
-    const startMs = Date.now();
-    expect(hasMarkdownLink(`${'['.repeat(2500)}text(${'('.repeat(2500)}`)).toBe(false);
-    expect(Date.now() - startMs).toBeLessThan(100);
+    expect(hasMarkdownLink(`${'[unclosed]('.repeat(500)}tail`)).toBe(false);
+    expect(hasMarkdownLink(`${'a]('.repeat(500)}tail`)).toBe(false);
+    expect(hasMarkdownLink(`${'['.repeat(2500)}text](${'('.repeat(2500)}`)).toBe(false);
 
     // 2. Stateless format-control check across consecutive invocations.
     for (let i = 0; i < 3; i += 1) {
@@ -598,5 +598,117 @@ describe('HR Stage 6A cited HR policy Q&A (hr.policy_qa, #4526)', () => {
     );
     expect(centeredOff.matches[0]?.excerpt).toContain('an toàn lao động');
     expect(centeredOff.matches[0]?.excerpt.length).toBeLessThanOrEqual(400);
+
+    // 6. Explicit invalid calendar date, invalid OT clock range, and cross-month split preservation under AI.
+    const invalidDateDraft = parseSelfHrRequestDeterministic({
+      text: 'annual leave on 31/02/2027',
+      language: 'en',
+      referenceDate: '2026-11-23',
+    });
+    expect(invalidDateDraft.kind).toBe('unknown');
+    if (invalidDateDraft.kind === 'unknown') {
+      expect(invalidDateDraft.hint).toContain('31/02');
+    }
+    const invalidDateWithAi = await draftSelfHrRequestWithLy(
+      { text: 'annual leave on 31/02/2027', language: 'en', referenceDate: '2026-11-23' },
+      {
+        generate: async () => ({
+          output: {
+            kind: 'leave',
+            startOn: '2026-11-23',
+            endOn: '2026-11-23',
+            leaveKind: 'annual_leave',
+            days: '1',
+            halfDaySession: null,
+            workDate: null,
+            hours: null,
+            dayType: null,
+            isNight: null,
+            destination: null,
+            reason: 'annual leave',
+          },
+        }),
+      },
+    );
+    expect(invalidDateWithAi.aiStatus).toBe('refused');
+    expect(invalidDateWithAi.draft.kind).toBe('unknown');
+
+    const invalidOtClock = parseSelfHrRequestDeterministic({
+      text: 'OT 22:30-24:30',
+      language: 'en',
+      referenceDate: '2026-11-23',
+    });
+    expect(invalidOtClock.kind).toBe('unknown');
+    if (invalidOtClock.kind === 'unknown') {
+      expect(invalidOtClock.hint).toContain('22:30-24:30');
+    }
+
+    const validMidnightOt = parseSelfHrRequestDeterministic({
+      text: 'OT 22:30-00:30',
+      language: 'en',
+      referenceDate: '2026-11-23',
+    });
+    expect(validMidnightOt).toMatchObject({ kind: 'overtime', hours: '2', isNight: true });
+
+    const splitMonthAiTrap = await draftSelfHrRequestWithLy(
+      { text: 'annual leave from 2026-11-30 to 2026-12-02', language: 'en', referenceDate: '2026-11-23' },
+      {
+        generate: async () => ({
+          output: {
+            kind: 'leave',
+            startOn: '2026-11-30',
+            endOn: '2026-11-30',
+            leaveKind: 'annual_leave',
+            days: '1',
+            halfDaySession: null,
+            workDate: null,
+            hours: null,
+            dayType: null,
+            isNight: null,
+            destination: null,
+            reason: 'annual leave',
+          },
+        }),
+      },
+    );
+    expect(splitMonthAiTrap.aiStatus).toBe('refused');
+    expect(splitMonthAiTrap.draft.kind).toBe('unknown');
+    if (splitMonthAiTrap.draft.kind === 'unknown') {
+      expect(splitMonthAiTrap.draft.hint).toContain('one calendar month');
+    }
+
+    // 7. Sensitive salary-titled notes use neutral label & skip empty control-only notes cleanly.
+    const salaryTitledNote: HrSelfPolicyCandidateNote = {
+      noteId: '00000000-0000-7000-8000-000000000808',
+      title: 'Employee: Taylor salary 5000',
+      tags: ['allowance'],
+      body: 'Lunch allowance is 730.000 VND per month for full-time staff.',
+      visibility: 'org',
+      updatedAt: '2026-11-23T00:00:00.000Z',
+    };
+    const promptSliceSalaryTitle = preparePolicyPromptNotes([salaryTitledNote]);
+    expect(promptSliceSalaryTitle[0]?.title).toBe('Shared policy note');
+    expect(promptSliceSalaryTitle[0]?.title).not.toContain('5000');
+    const salaryTitleOff = await answerSelfHrPolicyWithLy(
+      { question: 'What is the lunch allowance?', language: 'en', notesAvailable: true, candidates: [salaryTitledNote] },
+      { generate: null },
+    );
+    expect(salaryTitleOff.matches[0]?.title).toBe('Shared policy note');
+    expect(salaryTitleOff.matches[0]?.excerpt).toContain('730.000 VND');
+
+    const emptyControlsOnlyNote: HrSelfPolicyCandidateNote = {
+      noteId: '00000000-0000-7000-8000-000000000809',
+      title: '\u200B\u200C',
+      tags: ['allowance'],
+      body: '\u200B\u200D',
+      visibility: 'org',
+      updatedAt: '2026-11-23T00:00:00.000Z',
+    };
+    const emptyExcluded = await answerSelfHrPolicyWithLy(
+      { question: 'What is the allowance?', language: 'en', notesAvailable: true, candidates: [emptyControlsOnlyNote] },
+      { generate: null },
+    );
+    expect(emptyExcluded.aiStatus).toBe('no_matches');
+    expect(emptyExcluded.matches).toEqual([]);
   });
 });

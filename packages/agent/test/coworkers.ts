@@ -396,6 +396,25 @@ const PAYROLL_ZERO: PayrollFigures = {
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const isKindNotNone = (v: unknown) => isRecord(v) && typeof v.kind === 'string' && v.kind !== 'none';
 const isAiOk = (v: unknown) => isRecord(v) && isRecord(v.ai) && v.ai.ok === true;
+export const HR_POLICY_EVAL_NOTE_ID = '11111111-1111-4111-8111-111111111801';
+
+export function isHrPolicyQaOk(v: unknown): boolean {
+  if (!isRecord(v) || v.aiStatus !== 'used' || typeof v.answer !== 'string' || !Array.isArray(v.citations)) {
+    return false;
+  }
+  const foldedAnswer = v.answer
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .toLowerCase();
+  const hasEntitlement = /\b12\b/.test(foldedAnswer);
+  const contradicts = /\b(?:khong\s+duoc\s+huong|khong\s+co\s+phep|not\s+entitled|no\s+paid\s+(?:annual\s+)?leave|0\s+(?:ngay|days?))\b/.test(
+    foldedAnswer,
+  );
+  const citesExpectedNote = v.citations.some(
+    (c) => isRecord(c) && c.noteId === HR_POLICY_EVAL_NOTE_ID && typeof c.excerpt === 'string' && c.excerpt.length > 0,
+  );
+  return hasEntitlement && !contradicts && citesExpectedNote;
+}
 
 export function buildCoworkerEvalCases(): CoworkerEvalCase[] {
   const cases: CoworkerEvalCase[] = [];
@@ -1647,7 +1666,7 @@ export function buildCoworkerEvalCases(): CoworkerEvalCase[] {
     notesAvailable: true,
     candidates: [
       {
-        noteId: '11111111-1111-4111-8111-111111111801',
+        noteId: HR_POLICY_EVAL_NOTE_ID,
         title: 'Chinh sach nghi phep nam',
         tags: ['hr', 'nghi-phep'],
         body: 'Nhan vien chinh thuc duoc huong 12 ngay phep nam co luong moi nam.',
@@ -1657,8 +1676,6 @@ export function buildCoworkerEvalCases(): CoworkerEvalCase[] {
     ],
   };
   const isHrSelfDraftOk = (v: unknown) => isRecord(v) && v.aiStatus === 'used' && v.source === 'ai';
-  const isHrPolicyQaOk = (v: unknown) =>
-    isRecord(v) && v.aiStatus === 'used' && typeof v.answer === 'string' && Array.isArray(v.citations) && v.citations.length > 0;
   cases.push(
     cleanCase('hr.recruiting_brief.clean', 'hr.recruiting_brief', 'vi', (rt) =>
       runCleanChecked(() => unmetered(() => rt.inbox.recruitingBrief(recruitingInput)), isAiOk, 'hr.recruiting_brief'),

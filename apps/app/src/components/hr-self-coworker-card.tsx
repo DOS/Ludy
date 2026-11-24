@@ -65,48 +65,72 @@ export function HrSelfCoworkerCard({
   const slug = params?.slug || getCurrentOrg() || '';
 
   const [draftText, setDraftText] = useState('');
-  const [draftResult, setDraftResult] = useState<HrSelfRequestDraftResult | null>(initialDraftResult);
+  const [draftEntry, setDraftEntry] = useState<{
+    orgSlug: string;
+    text: string | null;
+    result: HrSelfRequestDraftResult;
+  } | null>(() => (initialDraftResult ? { orgSlug: slug, text: null, result: initialDraftResult } : null));
   const [appliedHint, setAppliedHint] = useState(false);
 
   const [questionText, setQuestionText] = useState('');
-  const [qaResult, setQaResult] = useState<HrSelfPolicyQaResult | null>(initialQaResult);
+  const [qaEntry, setQaEntry] = useState<{
+    orgSlug: string;
+    result: HrSelfPolicyQaResult;
+  } | null>(() => (initialQaResult ? { orgSlug: slug, result: initialQaResult } : null));
 
   const draftMut = useMutation({
-    mutationFn: (text: string) =>
+    mutationFn: ({ text }: { text: string; orgSlug: string }) =>
       client.hr.self.requestDraft({
         text,
         lang: locale,
       }),
-    onSuccess: (res) => {
-      setDraftResult(res);
+    onSuccess: (res, vars) => {
+      setDraftEntry({ orgSlug: vars.orgSlug, text: vars.text, result: res });
+      setAppliedHint(false);
+    },
+    onError: () => {
+      setDraftEntry(null);
       setAppliedHint(false);
     },
   });
 
   const qaMut = useMutation({
-    mutationFn: (question: string) =>
+    mutationFn: ({ question }: { question: string; orgSlug: string }) =>
       client.hr.self.policyQa({
         question,
         lang: locale,
         limit: 5,
       }),
-    onSuccess: (res) => {
-      setQaResult(res);
+    onSuccess: (res, vars) => {
+      setQaEntry({ orgSlug: vars.orgSlug, result: res });
+    },
+    onError: () => {
+      setQaEntry(null);
     },
   });
+
+  const draftResult =
+    draftEntry &&
+    draftEntry.orgSlug === slug &&
+    (draftEntry.text === null || draftEntry.text === draftText.trim())
+      ? draftEntry.result
+      : null;
+  const qaResult = qaEntry && qaEntry.orgSlug === slug ? qaEntry.result : null;
 
   const handleDraftSubmit = (ev: FormEvent<HTMLFormElement>) => {
     ev.preventDefault();
     const cleaned = draftText.trim();
     if (!cleaned || draftMut.isPending) return;
-    draftMut.mutate(cleaned);
+    setDraftEntry(null);
+    setAppliedHint(false);
+    draftMut.mutate({ text: cleaned, orgSlug: slug });
   };
 
   const handleQaSubmit = (ev: FormEvent<HTMLFormElement>) => {
     ev.preventDefault();
     const cleaned = questionText.trim();
     if (!cleaned || qaMut.isPending) return;
-    qaMut.mutate(cleaned);
+    qaMut.mutate({ question: cleaned, orgSlug: slug });
   };
 
   const shownCitations =
@@ -136,7 +160,12 @@ export function HrSelfCoworkerCard({
                   maxLength={1000}
                   placeholder={t('draft.inputPlaceholder')}
                   value={draftText}
-                  onChange={(ev) => setDraftText(ev.target.value)}
+                  onChange={(ev) => {
+                    setDraftText(ev.target.value);
+                    setDraftEntry(null);
+                    setAppliedHint(false);
+                    draftMut.reset();
+                  }}
                   data-testid="hr-my-ly-draft-input"
                 />
               </div>
@@ -158,8 +187,9 @@ export function HrSelfCoworkerCard({
                     disabled={draftMut.isPending}
                     onClick={() => {
                       setDraftText('');
-                      setDraftResult(null);
+                      setDraftEntry(null);
                       setAppliedHint(false);
+                      draftMut.reset();
                     }}
                     data-testid="hr-my-ly-draft-clear"
                   >
@@ -203,6 +233,11 @@ export function HrSelfCoworkerCard({
                           })}
                         </span>
                         <Badge variant="outline">{tLeave(`kinds.${d.leaveKind}`)}</Badge>
+                        {d.halfDaySession && (
+                          <Badge variant="secondary" data-testid="hr-my-ly-half-day-session">
+                            {t(d.halfDaySession === 'morning' ? 'draft.halfDayMorning' : 'draft.halfDayAfternoon')}
+                          </Badge>
+                        )}
                       </div>
                       {d.reason && (
                         <p className="text-xs text-subtle-foreground">
@@ -346,7 +381,8 @@ export function HrSelfCoworkerCard({
                   disabled={qaMut.isPending}
                   onClick={() => {
                     setQuestionText('');
-                    setQaResult(null);
+                    setQaEntry(null);
+                    qaMut.reset();
                   }}
                   data-testid="hr-my-ly-qa-clear"
                 >

@@ -2544,6 +2544,8 @@ export const vi = {
         previewLeaveTitle: 'Đề xuất đơn xin nghỉ phép',
         previewOvertimeTitle: 'Đề xuất đơn làm thêm giờ (OT)',
         previewDates: '{start} đến {end} ({days} ngày)',
+        halfDayMorning: 'Buổi sáng',
+        halfDayAfternoon: 'Buổi chiều',
         previewOvertimeMeta: 'Ngày {date} · {hours} giờ · {dayType}',
         nightShiftChip: 'Làm đêm (22:00 - 06:00)',
         reasonLabel: 'Lý do dự kiến: {reason}',

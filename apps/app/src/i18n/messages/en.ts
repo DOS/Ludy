@@ -2546,6 +2546,8 @@ export const en = {
         previewLeaveTitle: 'Proposed leave request',
         previewOvertimeTitle: 'Proposed overtime (OT) request',
         previewDates: '{start} to {end} ({days} day(s))',
+        halfDayMorning: 'Morning session',
+        halfDayAfternoon: 'Afternoon session',
         previewOvertimeMeta: 'Date {date} · {hours} h · {dayType}',
         nightShiftChip: 'Night shift (22:00 - 06:00)',
         reasonLabel: 'Suggested reason: {reason}',

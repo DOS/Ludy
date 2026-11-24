@@ -372,67 +372,114 @@ function resolveDayMonthYear(day: number, month: number, explicitYear: number | 
   return isValidIsoCalendarDate(candidate) ? candidate : null;
 }
 
-function extractDatesFromFolded(folded: string, refDate: string): { startOn: string; endOn: string } {
+interface ExtractedDates {
+  startOn: string;
+  endOn: string;
+  hasExplicitDate: boolean;
+  invalidDate: boolean;
+}
+
+function extractDatesFromFolded(folded: string, refDate: string): ExtractedDates {
+  const excludedSpans: { start: number; end: number }[] = [];
+  for (const cm of folded.matchAll(
+    /\b\d{1,2}(?::\d{2}|h\d{0,2})(?:\s*(?:-|den|toi|to)\s*\d{1,2}(?::\d{2}|h\d{0,2}))?\b/g,
+  )) {
+    if (cm.index !== undefined) {
+      excludedSpans.push({ start: cm.index, end: cm.index + cm[0].length });
+    }
+  }
+  const overlapsClock = (start: number, end: number) =>
+    excludedSpans.some((c) => start < c.end && end > c.start);
+
   // Range like "10-12/11" or "10 - 12/11/2026"
   const compactRange = /\b(\d{1,2})\s*-\s*(\d{1,2})[/.-](\d{1,2})(?:[/.-](\d{4}))?\b/.exec(folded);
-  if (compactRange) {
+  if (compactRange && compactRange.index !== undefined && !overlapsClock(compactRange.index, compactRange.index + compactRange[0].length)) {
     const d1 = Number(compactRange[1]);
     const d2 = Number(compactRange[2]);
     const mo = Number(compactRange[3]);
     const yr = compactRange[4] ? Number(compactRange[4]) : null;
     const s = resolveDayMonthYear(d1, mo, yr, refDate);
     const e = resolveDayMonthYear(d2, mo, yr, refDate);
-    if (s && e && e >= s) return { startOn: s, endOn: e };
+    if (s && e && e >= s) {
+      return { startOn: s, endOn: e, hasExplicitDate: true, invalidDate: false };
+    }
+    return { startOn: refDate, endOn: refDate, hasExplicitDate: true, invalidDate: true };
   }
 
+  let invalidDate = false;
+  let sawNumericDateToken = false;
+  const isoSpans: { start: number; end: number }[] = [];
   const collected: { start: number; end: number; iso: string }[] = [];
   for (const m of folded.matchAll(/\b(\d{4}-\d{2}-\d{2})\b/g)) {
     const iso = m[1]!;
-    if (isValidIsoCalendarDate(iso) && m.index !== undefined) {
+    if (m.index === undefined) continue;
+    sawNumericDateToken = true;
+    isoSpans.push({ start: m.index, end: m.index + m[0].length });
+    if (isValidIsoCalendarDate(iso)) {
       collected.push({ start: m.index, end: m.index + m[0].length, iso });
+    } else {
+      invalidDate = true;
     }
   }
   const overlapsExisting = (start: number, end: number) =>
-    collected.some((c) => start < c.end && end > c.start);
+    overlapsClock(start, end) ||
+    collected.some((c) => start < c.end && end > c.start) ||
+    isoSpans.some((c) => start < c.end && end > c.start);
 
   for (const m of folded.matchAll(/\b(\d{1,2})[/-](\d{1,2})(?:[/-](\d{4}))?\b|\b(\d{1,2})\.(\d{1,2})\.(\d{4})\b/g)) {
     if (m.index === undefined || overlapsExisting(m.index, m.index + m[0].length)) continue;
+    sawNumericDateToken = true;
     const day = Number(m[1] ?? m[4]);
     const month = Number(m[2] ?? m[5]);
     const yr = m[3] ? Number(m[3]) : m[6] ? Number(m[6]) : null;
     const resolved = resolveDayMonthYear(day, month, yr, refDate);
-    if (resolved) collected.push({ start: m.index, end: m.index + m[0].length, iso: resolved });
+    if (resolved) {
+      collected.push({ start: m.index, end: m.index + m[0].length, iso: resolved });
+    } else {
+      invalidDate = true;
+    }
   }
 
   for (const m of folded.matchAll(/\bngay\s+(\d{1,2})\s+thang\s+(\d{1,2})(?:\s+nam\s+(\d{4}))?\b/g)) {
     if (m.index === undefined || overlapsExisting(m.index, m.index + m[0].length)) continue;
+    sawNumericDateToken = true;
     const resolved = resolveDayMonthYear(Number(m[1]), Number(m[2]), m[3] ? Number(m[3]) : null, refDate);
-    if (resolved) collected.push({ start: m.index, end: m.index + m[0].length, iso: resolved });
+    if (resolved) {
+      collected.push({ start: m.index, end: m.index + m[0].length, iso: resolved });
+    } else {
+      invalidDate = true;
+    }
+  }
+
+  if (invalidDate) {
+    return { startOn: refDate, endOn: refDate, hasExplicitDate: true, invalidDate: true };
   }
 
   collected.sort((a, b) => a.start - b.start);
   if (collected.length >= 2) {
     const [a, b] = [collected[0]!.iso, collected[1]!.iso];
-    return a <= b ? { startOn: a, endOn: b } : { startOn: b, endOn: a };
+    return a <= b
+      ? { startOn: a, endOn: b, hasExplicitDate: true, invalidDate: false }
+      : { startOn: b, endOn: a, hasExplicitDate: true, invalidDate: false };
   }
   if (collected.length === 1) {
-    return { startOn: collected[0]!.iso, endOn: collected[0]!.iso };
+    return { startOn: collected[0]!.iso, endOn: collected[0]!.iso, hasExplicitDate: true, invalidDate: false };
   }
 
   if (/\b(?:ngay kia|ngay mot|day after tomorrow)\b/.test(folded)) {
     const d = addIsoDays(refDate, 2);
-    return { startOn: d, endOn: d };
+    return { startOn: d, endOn: d, hasExplicitDate: true, invalidDate: false };
   }
   if (/\b(?:ngay mai|sang mai|chieu mai|toi mai|mai|tomorrow)\b/.test(folded)) {
     const d = addIsoDays(refDate, 1);
-    return { startOn: d, endOn: d };
+    return { startOn: d, endOn: d, hasExplicitDate: true, invalidDate: false };
   }
   if (/\b(?:hom qua|yesterday)\b/.test(folded)) {
     const d = addIsoDays(refDate, -1);
-    return { startOn: d, endOn: d };
+    return { startOn: d, endOn: d, hasExplicitDate: true, invalidDate: false };
   }
   if (/\b(?:hom nay|sang nay|chieu nay|toi nay|today|tonight)\b/.test(folded)) {
-    return { startOn: refDate, endOn: refDate };
+    return { startOn: refDate, endOn: refDate, hasExplicitDate: true, invalidDate: false };
   }
 
   const nextWeek = /\b(?:tuan sau|tuan toi|next week)\b/.test(folded);
@@ -447,11 +494,11 @@ function extractDatesFromFolded(folded: string, refDate: string): { startOn: str
         const delta = (entry.weekday - curWeekday + 7) % 7;
         resolved = addIsoDays(refDate, delta);
       }
-      return { startOn: resolved, endOn: resolved };
+      return { startOn: resolved, endOn: resolved, hasExplicitDate: true, invalidDate: false };
     }
   }
 
-  return { startOn: refDate, endOn: refDate };
+  return { startOn: refDate, endOn: refDate, hasExplicitDate: sawNumericDateToken, invalidDate: false };
 }
 
 function buildBusinessTripHint(language: 'vi' | 'en'): string {
@@ -464,6 +511,18 @@ function buildSplitMonthLeaveHint(language: 'vi' | 'en', startOn: string, endOn:
   return language === 'en'
     ? `Leave requests must stay within one calendar month (${startOn} to ${endOn} crosses months). Please split into one request per month.`
     : `Đơn xin nghỉ phép không thể gộp qua hai tháng khác nhau (${startOn} đến ${endOn}). Vui lòng tách thành từng đơn riêng theo mỗi tháng.`;
+}
+
+function buildInvalidDateHint(language: 'vi' | 'en'): string {
+  return language === 'en'
+    ? 'The date in your request is not a valid calendar date (for example 31/02). Please check the date and try again.'
+    : 'Ngày trong yêu cầu không hợp lệ trên lịch (ví dụ 31/02). Vui lòng kiểm tra lại ngày và thử lại.';
+}
+
+function buildInvalidOvertimeRangeHint(language: 'vi' | 'en'): string {
+  return language === 'en'
+    ? 'The overtime time range is invalid (for example 22:30-24:30). Please use valid 24-hour times such as 18:00-21:00 or 22:30-00:30.'
+    : 'Khung giờ làm thêm không hợp lệ (ví dụ 22:30-24:30). Vui lòng nhập giờ hợp lệ dạng 24 giờ như 18:00-21:00 hoặc 22:30-00:30.';
 }
 
 function buildUnknownHint(language: 'vi' | 'en'): string {
@@ -489,8 +548,12 @@ function extractDestination(raw: string, folded: string): string | null {
   return cleaned.length >= 2 ? cleaned : null;
 }
 
-/** 100% deterministic VN/EN parser for short natural-language HR requests on `/hr/my`. Never writes DB. */
-export function parseSelfHrRequestDeterministic(input: HrSelfRequestDraftInput): HrSelfRequestDraftPayload {
+interface DeterministicHrAnalysis {
+  payload: HrSelfRequestDraftPayload;
+  requiresCorrectionOrSplit: boolean;
+}
+
+function analyzeSelfHrRequestDeterministic(input: HrSelfRequestDraftInput): DeterministicHrAnalysis {
   const refDate = resolveSelfHrReferenceDate(input.referenceDate);
   const fullText = cleanPlainLine(input.text, 1000).normalize('NFC');
   const reason = fullText.length > 300 ? fullText.slice(0, 300).trim() : fullText;
@@ -500,23 +563,22 @@ export function parseSelfHrRequestDeterministic(input: HrSelfRequestDraftInput):
     /\b(?:cong tac|di cong tac|business trip|travel request|work trip|onsite trip)\b/.test(folded);
   if (isBusinessTrip) {
     const dates = extractDatesFromFolded(folded, refDate);
-    const hasExplicitDate =
-      /\d{4}-\d{2}-\d{2}|\d{1,2}[/.-]\d{1,2}|\bngay\s+\d{1,2}\s+thang\s+\d{1,2}\b|\b(?:hom nay|sang nay|chieu nay|toi nay|ngay mai|sang mai|chieu mai|toi mai|mai|ngay kia|ngay mot|tuan sau|tuan toi|next week|thu\s*[2-7]|t[2-7]|chu nhat|cn|today|tomorrow|mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)\b/.test(
-        folded,
-      );
     let endOn = dates.endOn;
     const durMatch = /\b(\d{1,2})\s*(?:ngay|days?)\b/.exec(folded);
-    if (durMatch && dates.startOn === dates.endOn) {
+    if (!dates.invalidDate && durMatch && dates.startOn === dates.endOn) {
       const span = Math.max(1, Math.min(31, Number(durMatch[1])));
       endOn = addIsoDays(dates.startOn, span - 1);
     }
     return {
-      kind: 'business_trip_unsupported',
-      startOn: hasExplicitDate ? dates.startOn : null,
-      endOn: hasExplicitDate ? endOn : null,
-      destination: extractDestination(fullText, folded),
-      reason,
-      hint: buildBusinessTripHint(input.language),
+      payload: {
+        kind: 'business_trip_unsupported',
+        startOn: dates.hasExplicitDate && !dates.invalidDate ? dates.startOn : null,
+        endOn: dates.hasExplicitDate && !dates.invalidDate ? endOn : null,
+        destination: extractDestination(fullText, folded),
+        reason,
+        hint: buildBusinessTripHint(input.language),
+      },
+      requiresCorrectionOrSplit: false,
     };
   }
 
@@ -524,30 +586,65 @@ export function parseSelfHrRequestDeterministic(input: HrSelfRequestDraftInput):
     /\b(?:ot|lam them|tang ca|overtime|over time|extra hours)\b/.test(folded);
   if (isOvertime) {
     const dates = extractDatesFromFolded(folded, refDate);
+    if (dates.invalidDate) {
+      return {
+        payload: {
+          kind: 'unknown',
+          reason,
+          hint: buildInvalidDateHint(input.language),
+        },
+        requiresCorrectionOrSplit: true,
+      };
+    }
     const workDate = dates.startOn;
 
     let hoursNum = 2;
     const timeRange =
       /\b(\d{1,2})(?::(\d{2})|h(\d{2})?)(?:\s*-\s*|\s+(?:den|toi|to)\s+)(\d{1,2})(?::(\d{2})|h(\d{2})?)\b/.exec(folded);
+    if (timeRange) {
+      const sh = Number(timeRange[1]);
+      const sm = Number(timeRange[2] ?? timeRange[3] ?? '0');
+      const eh = Number(timeRange[4]);
+      const em = Number(timeRange[5] ?? timeRange[6] ?? '0');
+      const validClockRange =
+        sh <= 23 &&
+        sm < 60 &&
+        (eh < 24 || (eh === 24 && em === 0)) &&
+        em < 60;
+      if (!validClockRange) {
+        return {
+          payload: {
+            kind: 'unknown',
+            reason,
+            hint: buildInvalidOvertimeRangeHint(input.language),
+          },
+          requiresCorrectionOrSplit: true,
+        };
+      }
+      const startMin = sh * 60 + sm;
+      let endMin = eh * 60 + em;
+      if (endMin < startMin) endMin += 24 * 60;
+      const diff = (endMin - startMin) / 60;
+      if (diff <= 0 || diff > 24) {
+        return {
+          payload: {
+            kind: 'unknown',
+            reason,
+            hint: buildInvalidOvertimeRangeHint(input.language),
+          },
+          requiresCorrectionOrSplit: true,
+        };
+      }
+      hoursNum = diff;
+    }
+
     const explicitUnitHours = /\b(\d{1,2}(?:[.,]\d{1,2})?)\s*(?:gio|tieng|hours?|hrs?)\b/.exec(folded);
     const shortHours =
       /\b(\d{1,2}(?:[.,]\d{1,2})?)\s*h(?![0-9]|\s*(?:-|den|toi|to)\s*\d)\b/.exec(folded);
     if (explicitUnitHours?.[1]) {
       const parsed = Number(explicitUnitHours[1].replace(',', '.'));
       if (Number.isFinite(parsed) && parsed > 0 && parsed <= 24) hoursNum = parsed;
-    } else if (timeRange) {
-      const sh = Number(timeRange[1]);
-      const sm = Number(timeRange[2] ?? timeRange[3] ?? '0');
-      const eh = Number(timeRange[4]);
-      const em = Number(timeRange[5] ?? timeRange[6] ?? '0');
-      if (sh <= 23 && eh <= 24 && sm < 60 && em < 60) {
-        const startMin = sh * 60 + sm;
-        let endMin = eh * 60 + em;
-        if (endMin < startMin) endMin += 24 * 60;
-        const diff = (endMin - startMin) / 60;
-        if (diff > 0 && diff <= 24) hoursNum = diff;
-      }
-    } else if (shortHours?.[1]) {
+    } else if (!timeRange && shortHours?.[1]) {
       const parsed = Number(shortHours[1].replace(',', '.'));
       if (Number.isFinite(parsed) && parsed > 0 && parsed <= 24) hoursNum = parsed;
     }
@@ -567,12 +664,15 @@ export function parseSelfHrRequestDeterministic(input: HrSelfRequestDraftInput):
     }
 
     return {
-      kind: 'overtime',
-      workDate,
-      hours,
-      dayType,
-      isNight,
-      reason,
+      payload: {
+        kind: 'overtime',
+        workDate,
+        hours,
+        dayType,
+        isNight,
+        reason,
+      },
+      requiresCorrectionOrSplit: false,
     };
   }
 
@@ -600,11 +700,24 @@ export function parseSelfHrRequestDeterministic(input: HrSelfRequestDraftInput):
     }
 
     const dates = extractDatesFromFolded(folded, refDate);
+    if (dates.invalidDate) {
+      return {
+        payload: {
+          kind: 'unknown',
+          reason,
+          hint: buildInvalidDateHint(input.language),
+        },
+        requiresCorrectionOrSplit: true,
+      };
+    }
     if (dates.endOn > dates.startOn && dates.endOn.slice(0, 7) !== dates.startOn.slice(0, 7)) {
       return {
-        kind: 'unknown',
-        reason,
-        hint: buildSplitMonthLeaveHint(input.language, dates.startOn, dates.endOn),
+        payload: {
+          kind: 'unknown',
+          reason,
+          hint: buildSplitMonthLeaveHint(input.language, dates.startOn, dates.endOn),
+        },
+        requiresCorrectionOrSplit: true,
       };
     }
     const startOn = dates.startOn;
@@ -620,9 +733,12 @@ export function parseSelfHrRequestDeterministic(input: HrSelfRequestDraftInput):
         const expandedEnd = addIsoDays(startOn, Math.ceil(daysNum) - 1);
         if (expandedEnd.slice(0, 7) !== startOn.slice(0, 7)) {
           return {
-            kind: 'unknown',
-            reason,
-            hint: buildSplitMonthLeaveHint(input.language, startOn, expandedEnd),
+            payload: {
+              kind: 'unknown',
+              reason,
+              hint: buildSplitMonthLeaveHint(input.language, startOn, expandedEnd),
+            },
+            requiresCorrectionOrSplit: true,
           };
         }
         endOn = expandedEnd;
@@ -644,21 +760,32 @@ export function parseSelfHrRequestDeterministic(input: HrSelfRequestDraftInput):
     const days = isValidLeaveDaysValue(leaveKind, daysStr) ? daysStr : '1';
 
     return {
-      kind: 'leave',
-      startOn,
-      endOn,
-      leaveKind,
-      days,
-      reason,
-      halfDaySession,
+      payload: {
+        kind: 'leave',
+        startOn,
+        endOn,
+        leaveKind,
+        days,
+        reason,
+        halfDaySession,
+      },
+      requiresCorrectionOrSplit: false,
     };
   }
 
   return {
-    kind: 'unknown',
-    reason,
-    hint: buildUnknownHint(input.language),
+    payload: {
+      kind: 'unknown',
+      reason,
+      hint: buildUnknownHint(input.language),
+    },
+    requiresCorrectionOrSplit: false,
   };
+}
+
+/** 100% deterministic VN/EN parser for short natural-language HR requests on `/hr/my`. Never writes DB. */
+export function parseSelfHrRequestDeterministic(input: HrSelfRequestDraftInput): HrSelfRequestDraftPayload {
+  return analyzeSelfHrRequestDeterministic(input).payload;
 }
 
 export function selfRequestDraftInstructions(language: 'vi' | 'en'): string {
@@ -688,11 +815,15 @@ export function selfRequestDraftPrompt(input: HrSelfRequestDraftInput, refDate: 
 
 function validateAiRequestDraft(
   raw: HrSelfRequestDraftAiOut | null | undefined,
-  deterministic: HrSelfRequestDraftPayload,
+  analysis: DeterministicHrAnalysis,
   input: HrSelfRequestDraftInput,
 ): HrSelfRequestDraftPayload | null {
   if (!raw || typeof raw !== 'object') return null;
+  const { payload: deterministic, requiresCorrectionOrSplit } = analysis;
   if (deterministic.kind === 'business_trip_unsupported' && raw.kind !== 'business_trip_unsupported') {
+    return null;
+  }
+  if (requiresCorrectionOrSplit && raw.kind !== 'unknown') {
     return null;
   }
 
@@ -779,7 +910,7 @@ function validateAiRequestDraft(
   return {
     kind: 'unknown',
     reason,
-    hint: buildUnknownHint(input.language),
+    hint: requiresCorrectionOrSplit && deterministic.kind === 'unknown' ? deterministic.hint : buildUnknownHint(input.language),
   };
 }
 
@@ -812,7 +943,8 @@ export async function draftSelfHrRequestWithLy(
 ): Promise<HrSelfRequestDraftResult> {
   const refDate =
     input.referenceDate && isValidIsoCalendarDate(input.referenceDate) ? input.referenceDate : vietnamTodayIso();
-  const deterministic = parseSelfHrRequestDeterministic({ ...input, referenceDate: refDate });
+  const analysis = analyzeSelfHrRequestDeterministic({ ...input, referenceDate: refDate });
+  const deterministic = analysis.payload;
 
   if (options.aiDisabledReason) {
     return { aiStatus: options.aiDisabledReason, source: 'deterministic', tainted: true, draft: deterministic };
@@ -828,7 +960,7 @@ export async function draftSelfHrRequestWithLy(
     });
     if (generated.usage) options.onUsage?.(generated.usage);
 
-    const validated = validateAiRequestDraft(generated.output, deterministic, input);
+    const validated = validateAiRequestDraft(generated.output, analysis, input);
     if (!validated) {
       return { aiStatus: 'refused', source: 'deterministic', tainted: true, draft: deterministic };
     }
@@ -889,8 +1021,14 @@ function centerExcerptOnMatch(rawLine: string, keywords: readonly string[]): str
   return `${prefix}${core}${suffix}`.slice(0, max);
 }
 
+const NEUTRAL_POLICY_NOTE_TITLE = 'Shared policy note';
+
+function cleanSanitizedNoteTitle(rawTitle: string, maxLen: number): string {
+  return cleanPlainLine(stripPersonalSalaryLines(rawTitle), maxLen);
+}
+
 function buildBestNoteExcerpt(note: HrSelfPolicyCandidateNote, keywords: readonly string[]): { score: number; excerpt: string } {
-  const cleanTitle = cleanPlainLine(note.title, 280);
+  const cleanTitle = cleanSanitizedNoteTitle(note.title, 280);
   const foldedTitle = foldVietnameseText(cleanTitle);
   const foldedTags = foldVietnameseText(note.tags.join(' '));
   let score = 0;
@@ -937,11 +1075,13 @@ export interface PreparedPolicyPromptNote {
   body: string;
   visibility: 'org';
   updatedAt: string;
+  titleWasRedacted?: boolean;
 }
 
 /**
  * Prepares the exact policy note slice (max 5 org-visible notes, 12,000-char total budget, no tags,
- * personal salary/ID lines stripped, uniformly cleaned) shared between prompt construction and verification.
+ * personal salary/ID lines stripped from both titles and bodies, uniformly cleaned) shared between
+ * prompt construction and verification.
  */
 export function preparePolicyPromptNotes(
   notes: readonly HrSelfPolicyCandidateNote[],
@@ -952,15 +1092,17 @@ export function preparePolicyPromptNotes(
   for (const note of notes.slice(0, HR_SELF_POLICY_NOTES_MAX)) {
     if (note.visibility !== 'org') continue;
     if (remaining <= 0) break;
-    const title = cleanPlainLine(note.title, 200) || note.noteId;
+    const cleanTitle = cleanSanitizedNoteTitle(note.title, 200);
     const body = cleanHrUntrustedText(stripPersonalSalaryLines(note.body), remaining, false);
+    if (!cleanTitle && !body) continue;
     remaining -= body.length;
     prepared.push({
       noteId: note.noteId,
-      title,
+      title: cleanTitle || NEUTRAL_POLICY_NOTE_TITLE,
       body,
       visibility: 'org',
       updatedAt: note.updatedAt,
+      ...(cleanTitle ? {} : { titleWasRedacted: true }),
     });
   }
 
@@ -980,14 +1122,14 @@ export function selectPolicyQaMatches(
       const { score, excerpt } = buildBestNoteExcerpt(note, keywords);
       return { note, score, excerpt };
     })
-    .filter((item) => item.score > 0)
+    .filter((item) => item.score > 0 && item.excerpt.length > 0)
     .sort((a, b) => b.score - a.score || b.note.updatedAt.localeCompare(a.note.updatedAt));
 
   const capped = scored.slice(0, Math.max(1, Math.min(10, limit)));
   return {
     matches: capped.map((item) => ({
       noteId: item.note.noteId,
-      title: cleanPlainLine(item.note.title, 300) || item.note.noteId,
+      title: cleanSanitizedNoteTitle(item.note.title, 300) || NEUTRAL_POLICY_NOTE_TITLE,
       excerpt: item.excerpt,
       visibility: item.note.visibility,
       updatedAt: item.note.updatedAt,
@@ -1048,12 +1190,14 @@ export function checkSelfHrPolicyAnswer(
     return null;
   }
 
-  const byId = new Map<string, { note: PreparedPolicyPromptNote; normCorpus: string }>();
+  const byId = new Map<string, { note: PreparedPolicyPromptNote; titleCorpus: string; normCorpus: string }>();
   for (const n of preparedNotes) {
     if (n.visibility !== 'org') continue;
+    const titleCorpus = n.titleWasRedacted ? '' : cleanSanitizedNoteTitle(n.title, 300);
     byId.set(n.noteId, {
       note: n,
-      normCorpus: normalizeContractText(`${n.title}\n${n.body}`),
+      titleCorpus,
+      normCorpus: normalizeContractText(`${titleCorpus}\n${n.body}`),
     });
   }
 
@@ -1073,10 +1217,10 @@ export function checkSelfHrPolicyAnswer(
     const dedupe = `${noteId}:${normQuote}`;
     if (seen.has(dedupe)) continue;
     seen.add(dedupe);
-    citedCorpora.push(entry.note.title, entry.note.body);
+    citedCorpora.push(entry.titleCorpus, entry.note.body);
     verifiedCitations.push({
       noteId,
-      title: cleanPlainLine(entry.note.title, 300) || noteId,
+      title: entry.titleCorpus || NEUTRAL_POLICY_NOTE_TITLE,
       excerpt: cleanedExcerpt,
       visibility: entry.note.visibility,
       updatedAt: entry.note.updatedAt,

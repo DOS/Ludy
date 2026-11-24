@@ -20,10 +20,12 @@ import {
 import { MEMBER_VY_FEATURE_TABLE, bindPorts, noKnowledge, type ModelPort, type Ports } from '../src/member-vy/index.ts';
 import {
   ALL_COWORKER_FEATURE_KEYS,
+  HR_POLICY_EVAL_NOTE_ID,
   buildCoworkerEvalCases,
   createCoworkerEvalRuntime,
   formatCoworkerEvalReport,
   hasLeakedInjectionPayload,
+  isHrPolicyQaOk,
   runCoworkerEval,
   summarizeCoworkerEval,
 } from './coworkers.ts';
@@ -489,5 +491,33 @@ describe('coworker eval suite and per-feature reporter (#3977)', () => {
     expect(summary.injectionTotal).toBe(1);
     expect(report).toContain('Overall status: FAIL');
     expect(report).toContain('conversation.draft.inj.0');
+  });
+
+  it('rejects a contradictory HR policy answer even when paired with a verbatim note citation (#4526)', () => {
+    expect(
+      isHrPolicyQaOk({
+        aiStatus: 'used',
+        answer: 'Nhan vien chinh thuc khong duoc huong ngay phep nam co luong nao (0 ngay).',
+        citations: [
+          {
+            noteId: HR_POLICY_EVAL_NOTE_ID,
+            excerpt: 'Nhan vien chinh thuc duoc huong 12 ngay phep nam co luong moi nam.',
+          },
+        ],
+      }),
+    ).toBe(false);
+
+    expect(
+      isHrPolicyQaOk({
+        aiStatus: 'used',
+        answer: 'Nhan vien chinh thuc duoc huong 12 ngay phep nam co luong moi nam.',
+        citations: [
+          {
+            noteId: HR_POLICY_EVAL_NOTE_ID,
+            excerpt: 'Nhan vien chinh thuc duoc huong 12 ngay phep nam co luong moi nam.',
+          },
+        ],
+      }),
+    ).toBe(true);
   });
 });
