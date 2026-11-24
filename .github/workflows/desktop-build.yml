@@ -70,7 +70,7 @@ jobs:
         run: node apps/desktop/scripts/build-native.mjs --require-win32
 
       - name: Build the unsigned Squirrel.Windows installer
-        run: pnpm --filter "@ludy/desktop" run package
+        run: node apps/desktop/scripts/package.mjs --skip-native
 
       - name: Size of the build
         shell: pwsh
@@ -87,6 +87,7 @@ jobs:
           if (-not (Test-Path "$out/installer/RELEASES")) { throw 'no RELEASES file' }
           if (-not (Get-ChildItem "$out/installer" -Filter '*-full.nupkg')) { throw 'no full nupkg' }
           if (-not (Test-Path "$out/installer/LudyDesktop-Setup.exe")) { throw 'no Setup.exe' }
+          if (-not (Test-Path "$out/pkg/ludy-desktop-win32-x64/resources/app.asar.unpacked/bin/ludy-wasapi-loopback.exe")) { throw 'no unpacked native helper binary' }
 
       # Runs the packaged app (not the installer) with a throwaway profile and a Ludy address that answers nothing, for 20 seconds, and sums the working
       # set and private memory of its processes. It is a measurement, so a failure here does not fail the build.
