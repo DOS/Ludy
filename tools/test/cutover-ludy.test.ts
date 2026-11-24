@@ -31,6 +31,10 @@ describe.skipIf(!hasBash)('cutover-ludy.sh', () => {
     expect(traversal.status).toBe(2);
     expect(traversal.stderr).toContain('--dir');
 
+    const missingVal = run('inspect', '--dir');
+    expect(missingVal.status).toBe(2);
+    expect(missingVal.stderr).toContain('requires a value');
+
     const badUrl = run('inspect', '--dir', '/tmp', '--smoke-url', 'https://bad host/path');
     expect(badUrl.status).toBe(2);
     expect(badUrl.stderr).toContain('--smoke-url');
@@ -124,11 +128,14 @@ describe('pilot-ludy-cutover workflow and pinned copy image', () => {
     expect(workflow).toContain('prune-crove-volumes');
     expect(workflow).toMatch(/inspect \| cutover-stack \| switch-wal[\s\S]*--overlay-dir '\$REMOTE'/);
     expect(workflow).toContain('SMOKE_EXPECT_MODULES=');
-    // Avoid stdout-polluting command substitution on wait_local_ready and enforce pipefail during volume copies.
+    // Avoid stdout-polluting command substitution on wait_local_ready, enforce pipefail during volume copies,
+    // and replace overlay files atomically so root-owned 0644 files succeed under non-root DEPLOY_USER.
     expect(script).toContain('READY_URL=');
     expect(script).not.toMatch(/\$\(wait_local_ready\b/);
     expect(script).toContain('set -euo pipefail');
     expect(script).toContain('--entrypoint bash "$VOLUME_COPY_IMAGE"');
+    expect(script).toContain('copy_into_deploy_dir');
+    expect(script).not.toMatch(/^\s*(?:\w+\s+)*cp(?:\s+-\w+)?\s+[^#\n]+\s"\$DEPLOY_DIR\/(?:Caddyfile|compose\.)/m);
     // CodeQL Actions safety: never interpolate inputs directly inside run scripts.
     for (const runBlock of workflow.matchAll(/run:\s*\|\n([\s\S]*?)(?=\n\s*(?:- |env:|if:|name:|uses:|with:|$))/g)) {
       expect(runBlock[1]).not.toMatch(/\$\{\{\s*inputs\./);

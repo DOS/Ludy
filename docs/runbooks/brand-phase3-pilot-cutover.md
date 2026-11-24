@@ -237,6 +237,7 @@ These root-owned paths sit outside `DEPLOY_USER`'s SSH permissions and are execu
    - `WorkingDirectory=/opt/ludy`
    - `Environment=LUDY_DIR=/opt/ludy`
    - `ExecStart=/opt/ludy-src/tools/backup/backup.sh`
+   - Preserve `BACKUP_FILES_SERVICE=worker` and `BACKUP_NODE_SERVICE=worker` in `ludy-backup.service` if they were configured in `crove-backup.service` rather than `.env`.
 
    Update `BACKUP_DIR=/var/backups/ludy` in `/opt/ludy/.env` and any WAL backup cron entries (`LUDY_DIR=/opt/ludy /opt/ludy-src/tools/backup/wal.sh backup ...`), remove legacy `/etc/systemd/system/crove-backup.*` after enabling `ludy-backup.timer`, then:
 

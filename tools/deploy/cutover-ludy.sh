@@ -51,12 +51,17 @@ valid_smoke_url() {
 
 OPT_SHIFT=0
 parse_common_option() {
-  OPT_SHIFT=2
   case "$1" in
-    --dir) DEPLOY_DIR="${2:-}" ;;
-    --env-file) ENV_FILE="${2:-}" ;;
-    --overlay-dir) OVERLAY_DIR="${2:-}" ;;
-    --smoke-url) SMOKE_URL="${2:-}" ;;
+    --dir | --env-file | --overlay-dir | --smoke-url)
+      (($# >= 2)) || die "$EXIT_USAGE" "$1 requires a value"
+      OPT_SHIFT=2
+      case "$1" in
+        --dir) DEPLOY_DIR="$2" ;;
+        --env-file) ENV_FILE="$2" ;;
+        --overlay-dir) OVERLAY_DIR="$2" ;;
+        --smoke-url) SMOKE_URL="$2" ;;
+      esac
+      ;;
     *) OPT_SHIFT=0 ;;
   esac
 }
@@ -185,7 +190,6 @@ pilot_layout() {
 }
 
 # Exports release image variables from the active release so compose.host.yml references resolve identically to deploy.sh.
-RELEASE_IMAGE=''
 RELEASE_BUILD=''
 export_release_images() {
   local current='' rel_file
@@ -200,7 +204,6 @@ export_release_images() {
   ext="$(sed -n 's/^EXTRACT_IMAGE=//p' "$rel_file" | head -n 1)"
   med="$(sed -n 's/^MEDIA_IMAGE=//p' "$rel_file" | head -n 1)"
   bld="$(sed -n 's/^BUILD=//p' "$rel_file" | head -n 1)"
-  RELEASE_IMAGE="$img"
   RELEASE_BUILD="$bld"
   if [ -n "$img" ]; then export LUDY_IMAGE="$img" CROVE_IMAGE="$img"; fi
   if [ -n "$ext" ]; then export LUDY_EXTRACT_IMAGE="$ext" CROVE_EXTRACT_IMAGE="$ext"; fi
@@ -326,8 +329,8 @@ rewrite_env_file() {
   [ -f "$src" ] || die "$EXIT_USAGE" "env source not found: $src"
   local ludy_has=() crove_last=() i lineno=0 line line_cr cr_seen=0 lf_seen=0 last_compose=0
   for ((i = 0; i < ${#CROVE_NEW_KEYS[@]}; i++)); do
-    ludy_has[$i]=0
-    crove_last[$i]=0
+    ludy_has[i]=0
+    crove_last[i]=0
   done
 
   while IFS= read -r line || [ -n "$line" ]; do
@@ -343,9 +346,9 @@ rewrite_env_file() {
       if [ "$key" = COMPOSE_PROJECT_NAME ]; then
         last_compose=$lineno
       elif idx="$(target_map_index "$key")"; then
-        ludy_has[$idx]=1
+        ludy_has[idx]=1
       elif idx="$(key_map_index "$key")"; then
-        crove_last[$idx]=$lineno
+        crove_last[idx]=$lineno
       fi
     fi
   done <"$src"
@@ -465,14 +468,28 @@ check_expected_schemas() {
   }
 }
 
+# Replaces an operator overlay file in $DEPLOY_DIR atomically so root-owned 0644 files can be updated whenever
+# $DEPLOY_DIR itself is writable by DEPLOY_USER (matching deploy.sh activate).
+copy_into_deploy_dir() {
+  local src="$1" dst="$2" dir tmp
+  dir="$(dirname "$dst")"
+  tmp="$(mktemp "$dir/.cutover-file-tmp-XXXXXX")" || return 1
+  TEMP_FILES+=("$tmp")
+  cat "$src" >"$tmp" && chmod 0644 "$tmp" && mv -f "$tmp" "$dst"
+}
+
 wait_local_ready() {
   local proj="$1" api_svc mapped port url deadline=$((SECONDS + READY_TIMEOUT)) num_re='^[0-9]+$'
   READY_URL=''
-  if pilot_layout; then api_svc=api; else api_svc=crove; fi
-  mapped="$(dc_proj "$proj" port "$api_svc" 8080 | head -n 1)" || return 1
-  port="${mapped##*:}"
-  [[ "$port" =~ $num_re ]] || return 1
-  url="http://127.0.0.1:$port"
+  if [ -n "$SMOKE_URL" ]; then
+    url="${SMOKE_URL%/}"
+  else
+    if pilot_layout; then api_svc=api; else api_svc=crove; fi
+    mapped="$(dc_proj "$proj" port "$api_svc" 8080 | head -n 1)" || return 1
+    port="${mapped##*:}"
+    [[ "$port" =~ $num_re ]] || return 1
+    url="http://127.0.0.1:$port"
+  fi
   log "waiting for $url/readyz (up to ${READY_TIMEOUT}s)"
   while :; do
     if curl --silent --show-error --fail --max-time 5 "$url/readyz" 2>/dev/null | grep -q '"ready":true'; then
@@ -646,9 +663,16 @@ do_inspect() {
     log 'PostgreSQL schemas:'
     dc_proj "$proj" exec -T db psql -U postgres -d postgres -Atc \
       "SELECT nspname FROM pg_namespace WHERE nspname ~ '^(crove|ludy)_' ORDER BY 1;" | sed 's/^/  /'
-    log 'PostgreSQL migration 20270316140000 present:'
-    dc_proj "$proj" exec -T db psql -U postgres -d postgres -Atc \
-      "SELECT version || ' (' || applied_at || ')' FROM ludy_meta.schema_migrations WHERE version = '20270316140000';" | sed 's/^/  /'
+    local has_mig_tbl
+    has_mig_tbl="$(dc_proj "$proj" exec -T db psql -U postgres -d postgres -Atc \
+      "SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'ludy_meta' AND c.relname = 'schema_migrations';" || true)"
+    if [ "$has_mig_tbl" = 1 ]; then
+      log 'PostgreSQL migration 20270316140000 present:'
+      dc_proj "$proj" exec -T db psql -U postgres -d postgres -Atc \
+        "SELECT version || ' (' || applied_at || ')' FROM ludy_meta.schema_migrations WHERE version = '20270316140000';" | sed 's/^/  /'
+    else
+      log 'PostgreSQL migration 20270316140000 present: (ludy_meta.schema_migrations not created yet)'
+    fi
     log 'Active crove_* sessions:'
     dc_proj "$proj" exec -T db psql -U postgres -d postgres -Atc \
       "SELECT coalesce(nullif(string_agg(usename || ':' || count::text, ', '), ''), 'none') FROM (SELECT usename, count(*) FROM pg_stat_activity WHERE usename LIKE 'crove_%' GROUP BY 1) s;" | sed 's/^/  /'
@@ -706,7 +730,7 @@ rollback_cutover_stack() {
     local f
     for f in Caddyfile compose.host.yml compose.wal.yml; do
       if [ -f "$ROLLBACK_BACKUP_DIR/$f" ]; then
-        cp -p "$ROLLBACK_BACKUP_DIR/$f" "$DEPLOY_DIR/$f" || true
+        copy_into_deploy_dir "$ROLLBACK_BACKUP_DIR/$f" "$DEPLOY_DIR/$f" || true
       fi
     done
   fi
@@ -749,21 +773,21 @@ do_cutover_stack() {
   ((${#src_vols[@]} > 0)) || die "$EXIT_FAILED" "no Docker volumes found matching ${proj}_*"
   printf '%s\n' "${src_vols[@]}" | grep -qx "${proj}_db-data" || die "$EXIT_FAILED" "missing required ${proj}_db-data volume"
 
+  log "pulling helper copy image $VOLUME_COPY_IMAGE if needed"
+  docker pull --quiet "$VOLUME_COPY_IMAGE" >/dev/null
+
   # Fail closed BEFORE mutating anything if any target ludy_* volume is already populated.
   for vol in "${src_vols[@]}"; do
     local suffix="${vol#"${proj}_"}"
     local dst="ludy_$suffix"
     if docker volume inspect "$dst" >/dev/null 2>&1; then
       local existing
-      existing="$(docker run --rm --network none -v "${dst}:/dst:ro" --entrypoint sh "$VOLUME_COPY_IMAGE" -c 'find /dst -mindepth 1 | head -n 1' || true)"
+      existing="$(docker run --rm --network none -v "${dst}:/dst:ro" --entrypoint sh "$VOLUME_COPY_IMAGE" -c 'find /dst -mindepth 1 -maxdepth 1 -print -quit')"
       if [ -n "$existing" ]; then
         die "$EXIT_FAILED" "target volume $dst already exists and is non-empty; refusing to overwrite"
       fi
     fi
   done
-
-  log "pulling helper copy image $VOLUME_COPY_IMAGE if needed"
-  docker pull --quiet "$VOLUME_COPY_IMAGE" >/dev/null
 
   local stamp backup_dir f
   stamp="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -771,9 +795,10 @@ do_cutover_stack() {
   (
     umask 077
     mkdir -p "$backup_dir"
-    cp -p "$ENV_FILE" "$backup_dir/env.pre-cutover"
+    cp "$ENV_FILE" "$backup_dir/env.pre-cutover"
+    chmod 0600 "$backup_dir/env.pre-cutover"
     for f in Caddyfile compose.host.yml compose.wal.yml; do
-      if [ -f "$DEPLOY_DIR/$f" ]; then cp -p "$DEPLOY_DIR/$f" "$backup_dir/$f"; fi
+      if [ -f "$DEPLOY_DIR/$f" ]; then cp "$DEPLOY_DIR/$f" "$backup_dir/$f"; fi
     done
   )
   ROLLBACK_BACKUP_DIR="$backup_dir"
@@ -838,13 +863,13 @@ do_cutover_stack() {
   if [ -f "$DEPLOY_DIR/compose.host.yml" ]; then
     check_host_compose_safe "$DEPLOY_DIR/compose.host.yml" || return 1
     log 'updating Caddyfile and compose.host.yml from uploaded overlays'
-    cp "$OVERLAY_DIR/caddy/Caddyfile" "$DEPLOY_DIR/Caddyfile"
-    cp "$OVERLAY_DIR/caddy/compose.host.yml" "$DEPLOY_DIR/compose.host.yml"
+    copy_into_deploy_dir "$OVERLAY_DIR/caddy/Caddyfile" "$DEPLOY_DIR/Caddyfile"
+    copy_into_deploy_dir "$OVERLAY_DIR/caddy/compose.host.yml" "$DEPLOY_DIR/compose.host.yml"
   fi
   if [ -f "$DEPLOY_DIR/compose.wal.yml" ]; then
     [ -f "$OVERLAY_DIR/backup/compose.wal.yml" ] || die "$EXIT_FAILED" "missing $OVERLAY_DIR/backup/compose.wal.yml"
     log 'updating compose.wal.yml from uploaded overlay'
-    cp "$OVERLAY_DIR/backup/compose.wal.yml" "$DEPLOY_DIR/compose.wal.yml"
+    copy_into_deploy_dir "$OVERLAY_DIR/backup/compose.wal.yml" "$DEPLOY_DIR/compose.wal.yml"
   fi
 
   log "rewriting $ENV_FILE with LUDY_* and COMPOSE_PROJECT_NAME=ludy"
@@ -880,7 +905,7 @@ rollback_switch_wal() {
     write_env_in_place "$WAL_ROLLBACK_ENV" || true
   fi
   if [ -n "$WAL_ROLLBACK_COMPOSE" ] && [ -f "$WAL_ROLLBACK_COMPOSE" ]; then
-    cp -p "$WAL_ROLLBACK_COMPOSE" "$DEPLOY_DIR/compose.wal.yml" || true
+    copy_into_deploy_dir "$WAL_ROLLBACK_COMPOSE" "$DEPLOY_DIR/compose.wal.yml" || true
   fi
   dc_proj "$WAL_ROLLBACK_PROJECT" up -d --no-build --no-deps db || true
   wait_db_ready "$WAL_ROLLBACK_PROJECT" || true
@@ -910,8 +935,9 @@ do_switch_wal() {
   backup_compose="$(state_dir)/compose.wal.pre-switch-wal-$stamp"
   (
     umask 077
-    cp -p "$ENV_FILE" "$backup_env"
-    cp -p "$DEPLOY_DIR/compose.wal.yml" "$backup_compose"
+    cp "$ENV_FILE" "$backup_env"
+    chmod 0600 "$backup_env"
+    cp "$DEPLOY_DIR/compose.wal.yml" "$backup_compose"
   )
 
   WAL_ROLLBACK_ENV="$backup_env"
@@ -920,7 +946,7 @@ do_switch_wal() {
   WAL_ROLLBACK_ARMED=1
 
   log 'syncing latest compose.wal.yml and building ludy-db:local'
-  cp "$OVERLAY_DIR/backup/compose.wal.yml" "$DEPLOY_DIR/compose.wal.yml"
+  copy_into_deploy_dir "$OVERLAY_DIR/backup/compose.wal.yml" "$DEPLOY_DIR/compose.wal.yml"
   docker build -t ludy-db:local "$OVERLAY_DIR/wal"
 
   env_tmp="$(umask 077 && mktemp "$(state_dir)/.env.wal-tmp-XXXXXX")"
@@ -964,15 +990,13 @@ do_prune_old_volumes() {
   dc_proj ludy ps --status running --services | grep -qx db || die "$EXIT_FAILED" 'db is not running under project ludy'
   wait_local_ready ludy || die "$EXIT_FAILED" 'ludy API /readyz is not ready'
 
-  local ids mounted='' cid
-  ids="$(docker ps -aq || true)"
-  if [ -n "$ids" ]; then
-    mounted="$(
-      while IFS= read -r cid; do
-        [ -n "$cid" ] || continue
-        docker inspect -f '{{range .Mounts}}{{println .Name}}{{end}}' "$cid" 2>/dev/null || true
-      done <<<"$ids" | grep -E '^crove_' | sort -u || true
-    )"
+  local ids ids_arr=() mounted='' cid
+  ids="$(docker ps -aq)"
+  while IFS= read -r cid; do
+    [ -n "$cid" ] && ids_arr+=("$cid")
+  done <<<"$ids"
+  if ((${#ids_arr[@]} > 0)); then
+    mounted="$(docker inspect -f '{{range .Mounts}}{{println .Name}}{{end}}' "${ids_arr[@]}" | grep -E '^crove_' | sort -u || true)"
   fi
   if [ -n "$mounted" ]; then
     die "$EXIT_FAILED" "refusing to prune: container(s) still reference crove_* volume(s): $mounted"
