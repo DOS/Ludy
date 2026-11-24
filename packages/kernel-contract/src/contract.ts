@@ -429,6 +429,27 @@ import {
   zHrSelfRequestDraftAsk,
   zHrSelfRequestDraftResult,
 } from './hr-self-coworker.ts';
+import {
+  zHrAddendumCheckAsk,
+  zHrAddendumCheckResult,
+  zHrAddendumCreate,
+  zHrAddendumIssue,
+  zHrAddendumList,
+  zHrAddendumPdfAsk,
+  zHrAddendumPdfResult,
+  zHrAddendumUpdate,
+  zHrAddendumView,
+  zHrAddendumVoid,
+  zHrAddendumWriteResult,
+  zHrAssetAssign,
+  zHrAssetList,
+  zHrAssetUpdateStatus,
+  zHrAssetView,
+  zHrAssetWriteResult,
+  zHrSelfAssetView,
+  zHrTimelineAsk,
+  zHrTimelineResult,
+} from './hr-addendum-assets.ts';
 import { zHrLaborCheckAsk, zHrLaborCheckResult } from './hr-declarations.ts';
 import {
   zHrCandidateAdd,
@@ -1474,6 +1495,9 @@ export const contract = {
       },
       requestDraft: oc.input(zHrSelfRequestDraftAsk).output(zHrSelfRequestDraftResult),
       policyQa: oc.input(zHrSelfPolicyQaAsk).output(zHrSelfPolicyQaResult),
+      assets: {
+        list: oc.input(z.strictObject({})).output(z.array(zHrSelfAssetView)),
+      },
     },
     attendance: {
       list: oc.input(zHrAttendanceList).output(zHrAttendanceListResult),
@@ -1512,6 +1536,23 @@ export const contract = {
       draftSummary: oc.input(zHrProbationDraftAsk).output(zHrProbationDraftResult),
       decide: oc.input(zHrProbationDecide).output(zHrProbationDecideResult),
       list: oc.input(zHrProbationList).output(z.array(zHrProbationReviewView)),
+    },
+    addendum: {
+      list: oc.input(zHrAddendumList).output(z.array(zHrAddendumView)),
+      create: oc.input(zHrAddendumCreate).output(zHrAddendumWriteResult),
+      update: oc.input(zHrAddendumUpdate).output(zHrAddendumWriteResult),
+      issue: oc.input(zHrAddendumIssue).output(zHrAddendumWriteResult),
+      void: oc.input(zHrAddendumVoid).output(zHrAddendumWriteResult),
+      pdf: oc.input(zHrAddendumPdfAsk).output(zHrAddendumPdfResult),
+      check: oc.input(zHrAddendumCheckAsk).output(zHrAddendumCheckResult),
+    },
+    timeline: {
+      get: oc.input(zHrTimelineAsk).output(zHrTimelineResult),
+    },
+    assets: {
+      list: oc.input(zHrAssetList).output(z.array(zHrAssetView)),
+      assign: oc.input(zHrAssetAssign).output(zHrAssetWriteResult),
+      updateStatus: oc.input(zHrAssetUpdateStatus).output(zHrAssetWriteResult),
     },
     leaveRequests: {
       list: oc.input(zHrLeaveRequestList).output(z.array(zHrLeaveRequestView)),

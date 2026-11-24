@@ -121,7 +121,9 @@ export interface LudyHrSchema {
   'ludy_hr.attendance_qr_config': HrAttendanceQrConfigTable;
   'ludy_hr.business_trip_request': HrBusinessTripRequestTable;
   'ludy_hr.candidate': HrCandidateTable;
+  'ludy_hr.contract_addendum': HrContractAddendumTable;
   'ludy_hr.department': HrDepartmentTable;
+  'ludy_hr.employee_asset_handover': HrEmployeeAssetHandoverTable;
   'ludy_hr.job_opening': HrJobOpeningTable;
   'ludy_hr.leave_request': HrLeaveRequestTable;
   'ludy_hr.onboarding_submission': HrOnboardingSubmissionTable;
@@ -2071,6 +2073,29 @@ export interface HrCandidateTable {
   hired_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
+/** ludy_hr.contract_addendum */
+export interface HrContractAddendumTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  employee_id: ColumnType<string, string, NotGranted>;
+  employment_id: ColumnType<string | null, string | null, NotGranted>;
+  addendum_number: ColumnType<string, string, NotGranted>;
+  effective_on: string;
+  change_summary: string;
+  previous_pay_rate: string | null;
+  new_pay_rate: string | null;
+  previous_title: string | null;
+  new_title: string | null;
+  status: Generated<string>;
+  issued_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  voided_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  void_reason: string | null;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
 /** ludy_hr.department */
 export interface HrDepartmentTable {
   org_id: ColumnType<string, string, NotGranted>;
@@ -2084,6 +2109,25 @@ export interface HrDepartmentTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
   manager_user_id: string | null;
+}
+
+/** ludy_hr.employee_asset_handover */
+export interface HrEmployeeAssetHandoverTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  employee_id: ColumnType<string, string, NotGranted>;
+  asset_code: ColumnType<string, string, NotGranted>;
+  asset_name: string;
+  serial_number: string | null;
+  handed_over_on: ColumnType<string, string, NotGranted>;
+  returned_on: string | null;
+  status: Generated<string>;
+  notes: string | null;
+  cleared_by: string | null;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
 /** ludy_hr.job_opening */

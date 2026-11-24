@@ -28,8 +28,18 @@ export const hrManifest = defineModule({
         ['org_id', 'id', 'legal_entity_id', 'opening_id', 'stage', 'source', 'years_experience', 'matched_skills', 'planned_start_on', 'interview_event_id', 'interview_starts_at', 'interview_ends_at', 'hired_employee_id', 'hired_at', 'erased_at', 'created_by', 'created_at', 'updated_at'],
         { display_name: 'pii', email: 'contact', phone: 'contact', notes: 'pii', expected_wage: 'sensitive', agreed_wage: 'sensitive' },
       ),
+      // Labor contract addendums (#4528 Stage 6C): owners/admins only; wage deltas are sensitive, free-text summaries/titles are PII.
+      contract_addendum: columns(
+        ['org_id', 'id', 'legal_entity_id', 'employee_id', 'employment_id', 'addendum_number', 'effective_on', 'status', 'issued_at', 'voided_at', 'created_by', 'created_at', 'updated_at'],
+        { change_summary: 'pii', previous_pay_rate: 'sensitive', new_pay_rate: 'sensitive', previous_title: 'pii', new_title: 'pii', void_reason: 'pii' },
+      ),
       // Departments per legal entity (#3412, #4300): optional team structure with default pay_function and optional L1 leave manager. Org master data: internal.
       department: columns(['org_id', 'id', 'legal_entity_id', 'name', 'code', 'pay_function', 'manager_user_id', 'archived_at', 'created_by', 'created_at', 'updated_at']),
+      // Employee hardware/asset handover checklist (#4528 Stage 6C): owners/admins manage, linked employee reads non-sensitive own items.
+      employee_asset_handover: columns(
+        ['org_id', 'id', 'legal_entity_id', 'employee_id', 'asset_code', 'asset_name', 'handed_over_on', 'returned_on', 'status', 'cleared_by', 'created_by', 'created_at', 'updated_at'],
+        { serial_number: 'pii', notes: 'pii' },
+      ),
       // Lightweight recruiting job openings (#3425): role requirements and pay bands per legal entity, readable by owners and admins only.
       job_opening: columns(['org_id', 'id', 'legal_entity_id', 'department_id', 'title', 'department_name', 'contract_type', 'region', 'pay_function', 'budget_min_wage', 'budget_max_wage', 'required_skills', 'status', 'closed_at', 'created_by', 'created_at', 'updated_at']),
       // Employee leave requests with L1 -> final approval state machine (#4300): reason and decision_note hold user-written PII/text.
@@ -135,8 +145,10 @@ export const hrManifest = defineModule({
     { type: 'hr.business_trip_request', table: 'business_trip_request', legalEntityScoped: true, audit: 'command' },
     // Lightweight recruiting candidates and job openings (#3425): edited by owners and admins, audited as commands.
     { type: 'hr.candidate', table: 'candidate', legalEntityScoped: true, audit: 'command' },
+    { type: 'hr.contract_addendum', table: 'contract_addendum', legalEntityScoped: true, audit: 'command' },
     // Departments per legal entity (#3412): edited and archived by commands, so it is their audit target.
     { type: 'hr.department', table: 'department', legalEntityScoped: true, audit: 'command' },
+    { type: 'hr.employee_asset_handover', table: 'employee_asset_handover', legalEntityScoped: true, audit: 'command' },
     { type: 'hr.job_opening', table: 'job_opening', legalEntityScoped: true, audit: 'command' },
     { type: 'hr.leave_request', table: 'leave_request', legalEntityScoped: true, audit: 'command' },
     { type: 'hr.onboarding_submission', table: 'onboarding_submission', legalEntityScoped: true, audit: 'command' },

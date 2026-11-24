@@ -123,8 +123,6 @@ const PENDING_TABLES = new Set<string>([
   'crove_finance.stock_move',
   'crove_finance.stock_period',
   'crove_finance.stock_period_item',
-  'crove_hr.contract_addendum',
-  'crove_hr.employee_asset_handover',
   'crove_hr.okr_key_result',
   'crove_hr.okr_objective',
   'crove_kernel.agent_grant',
@@ -2286,7 +2284,7 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
     update: { set: 'display_name = display_name' },
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), display_name: 'RLS matrix candidate' } }),
   },
-  // #4528 (Stage 6C): employment contract addendum (owner/admin management and linked employee read in a user context; system and agent contexts read and write none).
+  // #4528 (Stage 6C): employment contract addendum (owners and admins in a user context; system and agent contexts read and write none).
   'crove_hr.contract_addendum': {
     update: { set: 'updated_at = updated_at' },
     make: (o) => {
