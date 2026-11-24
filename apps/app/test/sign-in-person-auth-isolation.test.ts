@@ -500,6 +500,57 @@ describe('In-person ceremony per-tab workspace auth isolation (#4278, #4394)', (
     registeredHandler!('SIGNED_OUT');
     expect(cleanupSpy).toHaveBeenCalledTimes(1);
     expect(navSpy).toHaveBeenCalledTimes(1);
+
+    const workspaceSignHash = await import('../src/lib/sign-hash.ts');
+    workspaceSignHash.markInPersonCeremonyIsolated();
+    registeredHandler!('SIGNED_OUT');
+    expect(cleanupSpy).toHaveBeenCalledTimes(1);
+    expect(navSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips subscribing in ensureSignedOutListener() when already isolated and retries cleanly if subscribe throws', async () => {
+    setupBrowser('https://app.ludy.vn/-/sign?in_person=1#token123', {
+      'ludy-auth': SAMPLE_SESSION,
+    });
+    const ceremonyBoot = await import('../src/lib/ceremony-boot.ts');
+    const subscribeSpy = vi.fn();
+
+    expect(
+      ceremonyBoot.ensureSignedOutListener({
+        subscribeAuthState: subscribeSpy,
+      }),
+    ).toBe(false);
+    expect(subscribeSpy).not.toHaveBeenCalled();
+
+    // Explicit isIsolated: () => true also short-circuits before subscribe in a fresh module.
+    vi.resetModules();
+    setupBrowser('https://app.ludy.vn/o/acme/overview', {
+      'ludy-auth': SAMPLE_SESSION,
+    });
+    const freshBoot = await import('../src/lib/ceremony-boot.ts');
+    expect(
+      freshBoot.ensureSignedOutListener({
+        isIsolated: () => true,
+        subscribeAuthState: subscribeSpy,
+      }),
+    ).toBe(false);
+    expect(subscribeSpy).not.toHaveBeenCalled();
+
+    // If subscribe throws, signedOutListenerAttached remains false so a later attach succeeds.
+    const throwingSubscribe = vi.fn(() => {
+      throw new Error('subscribe transient failure');
+    });
+    expect(() =>
+      freshBoot.ensureSignedOutListener({
+        subscribeAuthState: throwingSubscribe,
+      }),
+    ).toThrow('subscribe transient failure');
+    expect(
+      freshBoot.ensureSignedOutListener({
+        subscribeAuthState: subscribeSpy,
+      }),
+    ).toBe(true);
+    expect(subscribeSpy).toHaveBeenCalledTimes(1);
   });
 
   it('rejects session guard and skips auth listener if isolation flips true while accessToken() is pending', async () => {

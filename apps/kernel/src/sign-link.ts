@@ -689,10 +689,33 @@ const JPEG_MAX_ZERO_PADDING = 64;
 const JPEG_MAX_MPF_IMAGES = 4;
 const JPEG_MAX_IFD_ENTRIES = 64;
 const JPEG_MAX_XMP_ITEMS = 16;
+const JPEG_MAX_XMP_APP1_SEGMENTS = 4;
 const MP4_MAX_TOP_BOXES = 256;
 const MOTION_PHOTO_DATA_PREFIX = new TextEncoder().encode('MotionPhoto_Data');
 const MPF_APP2_PREFIX = new Uint8Array([0x4d, 0x50, 0x46, 0x00]); // "MPF\0"
 const XMP_APP1_PREFIX = new TextEncoder().encode('http://ns.adobe.com/xap/1.0/\0');
+const UTF8_DECODER = new TextDecoder('utf-8', { fatal: false });
+
+type XmpItemField = 'Semantic' | 'Mime' | 'Length' | 'Padding';
+
+const XMP_ITEM_FIELD_PATTERNS: Record<XmpItemField, { attr: RegExp; elem: RegExp }> = {
+  Semantic: {
+    attr: /(?:^|\s)(?:Item|GContainer):Semantic\s*=\s*(?:"([^"]*)"|'([^']*)')/,
+    elem: /<(?:Item|GContainer):Semantic>([^<]*)<\/(?:Item|GContainer):Semantic>/,
+  },
+  Mime: {
+    attr: /(?:^|\s)(?:Item|GContainer):Mime\s*=\s*(?:"([^"]*)"|'([^']*)')/,
+    elem: /<(?:Item|GContainer):Mime>([^<]*)<\/(?:Item|GContainer):Mime>/,
+  },
+  Length: {
+    attr: /(?:^|\s)(?:Item|GContainer):Length\s*=\s*(?:"([^"]*)"|'([^']*)')/,
+    elem: /<(?:Item|GContainer):Length>([^<]*)<\/(?:Item|GContainer):Length>/,
+  },
+  Padding: {
+    attr: /(?:^|\s)(?:Item|GContainer):Padding\s*=\s*(?:"([^"]*)"|'([^']*)')/,
+    elem: /<(?:Item|GContainer):Padding>([^<]*)<\/(?:Item|GContainer):Padding>/,
+  },
+};
 
 interface DeclaredJpegRange {
   start: number;
@@ -813,11 +836,13 @@ function parseMpfApp2Segment(
     const count = readU32Order(bytes, entryAt + 4, little);
 
     if (tag === 0xb001) {
+      if (imageCount !== null) return { status: 'invalid' };
       if (type !== 4 || count !== 1) return { status: 'invalid' };
       const val = readU32Order(bytes, entryAt + 8, little);
       if (val < 1 || val > JPEG_MAX_MPF_IMAGES) return { status: 'invalid' };
       imageCount = val;
     } else if (tag === 0xb002) {
+      if (mpEntryByteCount !== null) return { status: 'invalid' };
       if (type !== 7 || count < 16 || count > JPEG_MAX_MPF_IMAGES * 16) return { status: 'invalid' };
       mpEntryByteCount = count;
       mpEntryRelOffset = readU32Order(bytes, entryAt + 8, little);
@@ -859,14 +884,13 @@ function parseMpfApp2Segment(
   return { status: 'ok', secondaryRanges };
 }
 
-function readXmpItemField(attrs: string, body: string, field: string): string | null {
-  const attrRegex = new RegExp(`(?:^|\\s)(?:Item|GContainer):${field}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`);
-  const attrMatch = attrRegex.exec(attrs);
+function readXmpItemField(attrs: string, body: string, field: XmpItemField): string | null {
+  const { attr, elem } = XMP_ITEM_FIELD_PATTERNS[field];
+  const attrMatch = attr.exec(attrs);
   if (attrMatch) return (attrMatch[1] ?? attrMatch[2] ?? '').trim();
 
   if (!body) return null;
-  const elemRegex = new RegExp(`<(?:Item|GContainer):${field}>([^<]*)<\\/(?:Item|GContainer):${field}>`);
-  const elemMatch = elemRegex.exec(body);
+  const elemMatch = elem.exec(body);
   return elemMatch ? (elemMatch[1] ?? '').trim() : null;
 }
 
@@ -884,16 +908,14 @@ function parseXmpApp1Segment(
   if (segEnd - segStart < XMP_APP1_PREFIX.byteLength) return { status: 'none' };
   if (!bytesEqualPrefix(bytes.subarray(segStart, segEnd), XMP_APP1_PREFIX)) return { status: 'none' };
 
-  const xml = new TextDecoder('utf-8', { fatal: false }).decode(
-    bytes.subarray(segStart + XMP_APP1_PREFIX.byteLength, segEnd),
-  );
+  const xml = UTF8_DECODER.decode(bytes.subarray(segStart + XMP_APP1_PREFIX.byteLength, segEnd));
   if (!xml.includes('Container:Item') && !xml.includes('GContainer:Item')) {
     return { status: 'none' };
   }
 
   let primaryPadding = 0;
   const gainMaps: XmpGainMapDecl[] = [];
-  const itemTagRegex = /<(Container|GContainer):Item\b([^>]*)>/g;
+  const itemTagRegex = /<(Container|GContainer):Item\b([^<>]*)>/g;
   let itemCount = 0;
   let match: RegExpExecArray | null;
 
@@ -949,6 +971,7 @@ function inspectJpegStream(bytes: Uint8Array, collectMetadata: boolean): Primary
   let at = 2;
   let hasSof = false;
   let hasSos = false;
+  let xmpApp1Count = 0;
   let mpfSecondaryRanges: DeclaredJpegRange[] | null = null;
   let xmpGContainer: XmpGContainerInfo | null = null;
 
@@ -974,6 +997,11 @@ function inspectJpegStream(bytes: Uint8Array, collectMetadata: boolean): Primary
     const segStart = at + 2;
     const segEnd = at + segLen;
     at = segEnd;
+
+    if (marker === 0xe1 && bytesEqualPrefix(bytes.subarray(segStart, segEnd), XMP_APP1_PREFIX)) {
+      xmpApp1Count += 1;
+      if (xmpApp1Count > JPEG_MAX_XMP_APP1_SEGMENTS) return null;
+    }
 
     if (collectMetadata) {
       if (marker === 0xe2) {

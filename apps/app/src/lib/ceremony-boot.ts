@@ -20,15 +20,15 @@ export function ensureSignedOutListener(
     onSignedOutCleanup?: () => void;
   } = {},
 ): boolean {
+  const isIsolated = deps.isIsolated ?? isInPersonCeremonyIsolated;
+  if (isIsolated()) return false;
   if (deps.navigateToLogin) {
     signedOutNavigate = deps.navigateToLogin;
   }
   if (signedOutListenerAttached) return false;
   if (!deps.subscribeAuthState && !getConfig().authUrl) return false;
-  signedOutListenerAttached = true;
 
   const subscribe = deps.subscribeAuthState ?? ((cb) => auth().onAuthStateChange(cb));
-  const isIsolated = deps.isIsolated ?? isInPersonCeremonyIsolated;
   const cleanup =
     deps.onSignedOutCleanup ??
     (() => {
@@ -50,6 +50,7 @@ export function ensureSignedOutListener(
       }
     }
   });
+  signedOutListenerAttached = true;
   return true;
 }
 

@@ -1016,6 +1016,92 @@ describe('os.sign RPC handlers (#3325)', () => {
     expect(
       verifySignAttachmentBytes(concatBytes(new Uint8Array([0xff, 0xd8]), badXmpSeg, primaryTailAfterSoi, validJpeg)),
     ).toBeNull();
+
+    // Reject unclosed repeated <Container:Item tokens across multiple 60 KB XMP APP1 segments in linear time (ReDoS guard).
+    const redosXmpSeg = makeXmpApp1Segment('<Container:Item '.repeat(4000));
+    const redosJpeg = concatBytes(
+      new Uint8Array([0xff, 0xd8]),
+      redosXmpSeg,
+      redosXmpSeg,
+      redosXmpSeg,
+      redosXmpSeg,
+      primaryTailAfterSoi,
+      validJpeg,
+    );
+    const redosStartMs = performance.now();
+    expect(verifySignAttachmentBytes(redosJpeg)).toBeNull();
+    expect(performance.now() - redosStartMs).toBeLessThan(2000);
+
+    // Enforce JPEG_MAX_XMP_APP1_SEGMENTS = 4 cap across standard XMP APP1 segments.
+    const benignXmpSeg = makeXmpApp1Segment('<x:xmpmeta/>');
+    expect(
+      verifySignAttachmentBytes(
+        concatBytes(new Uint8Array([0xff, 0xd8]), benignXmpSeg, benignXmpSeg, benignXmpSeg, benignXmpSeg, primaryTailAfterSoi),
+      ),
+    ).toBe('image/jpeg');
+    expect(
+      verifySignAttachmentBytes(
+        concatBytes(
+          new Uint8Array([0xff, 0xd8]),
+          benignXmpSeg,
+          benignXmpSeg,
+          benignXmpSeg,
+          benignXmpSeg,
+          benignXmpSeg,
+          primaryTailAfterSoi,
+        ),
+      ),
+    ).toBeNull();
+
+    // Reject duplicate 0xB001 or 0xB002 tags inside the same MPF Index IFD.
+    const makeDupTagMpfJpeg = (dupTag: 0xb001 | 0xb002): Uint8Array => {
+      const body = new Uint8Array(86);
+      const view = new DataView(body.buffer);
+      body.set([0x4d, 0x50, 0x46, 0x00, 0x49, 0x49, 0x2a, 0x00], 0);
+      view.setUint32(8, 8, true);
+      const ifdBase = 12;
+      view.setUint16(ifdBase, 3, true);
+      const writeTag = (slot: number, tag: number) => {
+        const at = ifdBase + 2 + slot * 12;
+        if (tag === 0xb001) {
+          view.setUint16(at, 0xb001, true);
+          view.setUint16(at + 2, 4, true);
+          view.setUint32(at + 4, 1, true);
+          view.setUint32(at + 8, 2, true);
+        } else {
+          view.setUint16(at, 0xb002, true);
+          view.setUint16(at + 2, 7, true);
+          view.setUint32(at + 4, 32, true);
+          view.setUint32(at + 8, 50, true);
+        }
+      };
+      if (dupTag === 0xb001) {
+        writeTag(0, 0xb001);
+        writeTag(1, 0xb001);
+        writeTag(2, 0xb002);
+      } else {
+        writeTag(0, 0xb001);
+        writeTag(1, 0xb002);
+        writeTag(2, 0xb002);
+      }
+      view.setUint32(ifdBase + 2 + 3 * 12, 0, true);
+      const seg = new Uint8Array(4 + body.byteLength);
+      seg[0] = 0xff;
+      seg[1] = 0xe2;
+      const segLen = 2 + body.byteLength;
+      seg[2] = (segLen >>> 8) & 0xff;
+      seg[3] = segLen & 0xff;
+      const primaryLen = 2 + seg.byteLength + primaryTailAfterSoi.byteLength;
+      const mpBase = 54;
+      view.setUint32(mpBase + 4, primaryLen, true);
+      view.setUint32(mpBase + 8, 0, true);
+      view.setUint32(mpBase + 20, validJpeg.byteLength, true);
+      view.setUint32(mpBase + 24, primaryLen - 10, true);
+      seg.set(body, 4);
+      return concatBytes(new Uint8Array([0xff, 0xd8]), seg, primaryTailAfterSoi, validJpeg);
+    };
+    expect(verifySignAttachmentBytes(makeDupTagMpfJpeg(0xb001))).toBeNull();
+    expect(verifySignAttachmentBytes(makeDupTagMpfJpeg(0xb002))).toBeNull();
   });
 
   it('wires os.sign.vault.search and os.sign.vault.ask with AI-off parity and metered AI-on citations (#4439)', async () => {
