@@ -19138,6 +19138,10 @@ export const vi = {
         get: 'Xem quy định xác nhận trước khi ghi',
         set: 'Đổi quy định xác nhận trước khi ghi',
       },
+      minutes_esign: {
+        get: 'Xem biên bản họp có được gửi đi ký hay không',
+        set: 'Bật hoặc tắt việc ký biên bản họp',
+      },
       retention: {
         shred: 'Tiêu hủy âm thanh hoặc video, hoặc xóa cuộc họp, khi hết hạn lưu',
       },

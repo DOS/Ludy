@@ -19139,6 +19139,10 @@ export const en = {
         get: 'Read the consent policy of meetings',
         set: 'Change the consent policy of meetings',
       },
+      minutes_esign: {
+        get: 'Read whether meeting minutes can be sent for signing',
+        set: 'Turn signing of meeting minutes on or off',
+      },
       retention: {
         shred: 'Shred meeting audio or video, or delete a meeting, at its retention date',
       },
