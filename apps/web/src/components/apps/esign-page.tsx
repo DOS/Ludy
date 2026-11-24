@@ -4,7 +4,15 @@ import { esignEn } from '../../content/esign-en';
 import { esignVi } from '../../content/esign-vi';
 import { vi } from '../../content/vi';
 import { AppPage } from './app-page';
-import { CeremonyVisual, EsignHero, IntakeAndPlaceVisual, SealingAndVerifyVisual, VyReviewVisual } from './esign-visuals';
+import {
+  CeremonyVisual,
+  EsignHero,
+  HandoffsVisual,
+  IntakeAndTemplatesVisual,
+  IntegrationsVisual,
+  ObligationsAndPlaybookVisual,
+  SealingAndVerifyVisual,
+} from './esign-visuals';
 
 // The Ludy eSign page (/esign) in either language: the shared app page with this app's copy, its hero picture and one
 // visual per group of features. The group ids are those of the copy.
@@ -18,10 +26,12 @@ export function EsignPage({ lang }: { lang: 'vi' | 'en' }) {
       copy={copy}
       hero={<EsignHero {...props} />}
       visuals={{
-        [copy.groups.items[0]!.id]: <IntakeAndPlaceVisual {...props} />,
-        [copy.groups.items[1]!.id]: <CeremonyVisual {...props} />,
-        [copy.groups.items[2]!.id]: <SealingAndVerifyVisual {...props} />,
-        [copy.groups.items[3]!.id]: <VyReviewVisual {...props} />,
+        [copy.groups.items[0]!.id]: <IntakeAndTemplatesVisual {...props} />,
+        [copy.groups.items[1]!.id]: <HandoffsVisual {...props} />,
+        [copy.groups.items[2]!.id]: <CeremonyVisual {...props} />,
+        [copy.groups.items[3]!.id]: <SealingAndVerifyVisual {...props} />,
+        [copy.groups.items[4]!.id]: <ObligationsAndPlaybookVisual {...props} />,
+        [copy.groups.items[5]!.id]: <IntegrationsVisual {...props} />,
       }}
     />
   );
