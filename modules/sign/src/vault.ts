@@ -695,7 +695,7 @@ export const vaultSearch = defineQuery({
     const currentUserId = ctx.actor.type === 'user' ? ctx.actor.userId : null;
     const accessibleEnvRows = envRows.filter((row) => {
       if (!canAccessEnvelopeRow(ctx, row)) return false;
-      if (row.source_kind === 'meeting_minutes' && !row.source_id && currentUserId !== row.created_by) {
+      if (row.source_kind === 'meeting_minutes' && !row.source_id && (row.status !== 'completed' || currentUserId !== row.created_by)) {
         return false;
       }
       return true;

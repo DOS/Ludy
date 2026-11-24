@@ -1794,7 +1794,7 @@ export const playbookGet = defineQuery({
     assertUser(ctx);
     const env = await ctx.trx
       .selectFrom('ludy_sign.envelope')
-      .select(['id', 'source_kind', 'source_id', 'created_by', 'source_sha256'])
+      .select(['id', 'status', 'source_kind', 'source_id', 'created_by', 'retained_org_visible', 'retained_reader_ids', 'source_sha256'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.envelopeId)
       .executeTakeFirst();
@@ -1837,6 +1837,8 @@ export const playbookSource = defineQuery({
         'source_kind',
         'source_id',
         'created_by',
+        'retained_org_visible',
+        'retained_reader_ids',
         'inspect_status',
         'source_sha256',
         'source_file_id',
@@ -2127,7 +2129,7 @@ export const playbookRecordCheck = defineCommand({
 
     const env = await ctx.trx
       .selectFrom('ludy_sign.envelope')
-      .select(['id', 'source_kind', 'source_id', 'created_by', 'source_sha256', 'page_count'])
+      .select(['id', 'status', 'source_kind', 'source_id', 'created_by', 'retained_org_visible', 'retained_reader_ids', 'source_sha256', 'page_count'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.envelopeId)
       .executeTakeFirst();
@@ -2383,7 +2385,7 @@ export const playbookOverrideFinding = defineCommand({
     const userId = assertUser(ctx);
     const env = await ctx.trx
       .selectFrom('ludy_sign.envelope')
-      .select(['id', 'source_kind', 'source_id', 'created_by', 'source_sha256'])
+      .select(['id', 'status', 'source_kind', 'source_id', 'created_by', 'retained_org_visible', 'retained_reader_ids', 'source_sha256'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.envelopeId)
       .executeTakeFirst();
