@@ -16,6 +16,7 @@ import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/
 import type { NoteTemplate, NoteTemplateWritten, NoteVersion, NoteWritten, PersonalDataErasure } from '@ludy/kernel-contract';
 import { Runtime } from '@ludy/kernel-runtime';
 import { notesCommands, notesQueries } from '@ludy/mod-notes';
+import { enterUser } from './context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -26,6 +27,7 @@ const suite = ADMIN ? describe : describe.skip;
 suite('note templates and version history on PostgreSQL (#3562)', () => {
   const dbName = `crove_test_notes_e3_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let appUrl = '';
   const pools: pg.Pool[] = [];
   let app: Runtime;
   let worker: Runtime;
@@ -90,6 +92,10 @@ suite('note templates and version history on PostgreSQL (#3562)', () => {
       pools.push(pool);
       return new Runtime(createDb(pool), { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...notesCommands], queries: [...kernelQueries({ inboundDomain: null }), ...notesQueries] });
     };
+    const appUrlObj = new URL(adminUrl);
+    appUrlObj.username = 'ludy_app';
+    appUrlObj.password = 'test-app-pw';
+    appUrl = appUrlObj.toString();
     app = runtimeFor('ludy_app', 'test-app-pw');
     worker = runtimeFor('ludy_worker', 'test-worker-pw');
   }, 300_000);
@@ -322,5 +328,183 @@ suite('note templates and version history on PostgreSQL (#3562)', () => {
     }));
     expect(left.note).toHaveLength(1);
     expect(JSON.stringify(left)).not.toContain(value);
+  });
+
+  it('restricts org note_template insert and update to whole-org legal-entity scope across commands and SQL RLS (#4229)', async () => {
+    const o = await org();
+    const limited = await upsertIdentity(createDb(pools[0] as pg.Pool), {
+      issuer: 'notes-e3',
+      subject: `limited-${randomUUID().slice(0, 8)}`,
+      email: `limited-${randomUUID().slice(0, 8)}@example.com`,
+      name: null,
+    });
+    let branchId = '';
+    await admin(async (c) => {
+      branchId = (
+        await c.query<{ id: string }>(
+          `INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh A', 'branch', $2) RETURNING id`,
+          [o.orgId, o.owner],
+        )
+      ).rows[0]?.id as string;
+      await c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [o.orgId, limited]);
+      await c.query(
+        `INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`,
+        [o.orgId, limited, branchId, o.owner],
+      );
+    });
+
+    const asTenantSql = async <T>(userId: string, fn: (c: pg.Client) => Promise<T>): Promise<{ ok: true; value: T } | { ok: false; code: string; message: string }> => {
+      const c = new pg.Client({ connectionString: appUrl });
+      await c.connect();
+      try {
+        await c.query('BEGIN');
+        await enterUser(c, userId, o.orgId);
+        const value = await fn(c);
+        await c.query('COMMIT');
+        return { ok: true, value };
+      } catch (err) {
+        await c.query('ROLLBACK').catch(() => {});
+        const e = err as { code?: string; message?: string };
+        return { ok: false, code: e.code ?? '', message: e.message ?? String(err) };
+      } finally {
+        await c.end();
+      }
+    };
+
+    // Whole-org members/owners/admins can author org templates via command and direct SQL.
+    const ownerOrg = await o.exec<NoteTemplateWritten>(o.owner, 'notes.template.create', {
+      name: 'Mẫu công ty owner',
+      visibility: 'org',
+    });
+    const authorOrg = await o.exec<NoteTemplateWritten>(o.author, 'notes.template.create', {
+      name: 'Mẫu công ty author',
+      visibility: 'org',
+    });
+    const adminOrg = await o.exec<NoteTemplateWritten>(o.admin, 'notes.template.create', {
+      name: 'Mẫu công ty admin',
+      visibility: 'org',
+    });
+    expect(ownerOrg.revision).toBe(1);
+    expect(authorOrg.revision).toBe(1);
+    expect(adminOrg.revision).toBe(1);
+
+    const otherSqlOrg = await asTenantSql(o.other, (c) =>
+      c.query<{ id: string }>(
+        `INSERT INTO ludy_notes.note_template (org_id, author_user_id, visibility, name) VALUES ($1, $2, 'org', 'Mẫu SQL whole-org') RETURNING id`,
+        [o.orgId, o.other],
+      ),
+    );
+    expect(otherSqlOrg).toMatchObject({ ok: true });
+
+    // Branch-scoped member can author and update private templates, but cannot create or promote to org templates.
+    const limitedPriv = await o.exec<NoteTemplateWritten>(limited, 'notes.template.create', {
+      name: 'Mẫu riêng chi nhánh',
+      title: 'Ghi chú chi nhánh',
+      visibility: 'private',
+    });
+    expect(
+      await o.exec<NoteTemplateWritten>(limited, 'notes.template.update', {
+        templateId: limitedPriv.templateId,
+        revision: limitedPriv.revision,
+        name: 'Mẫu riêng chi nhánh v2',
+        title: 'Ghi chú chi nhánh',
+        body: 'Nội dung',
+        tags: [],
+        visibility: 'private',
+      }),
+    ).toEqual({ templateId: limitedPriv.templateId, revision: 2 });
+
+    await expect(
+      o.exec(limited, 'notes.template.create', { name: 'Mẫu org trái phép', visibility: 'org' }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', status: 403 });
+
+    await expect(
+      o.exec(limited, 'notes.template.update', {
+        templateId: limitedPriv.templateId,
+        revision: 2,
+        name: 'Thử nâng lên org',
+        title: '',
+        body: '',
+        tags: [],
+        visibility: 'org',
+      }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', status: 403 });
+
+    // Branch-scoped member cannot see or probe whole-org templates.
+    expect((await o.query<NoteTemplate[]>(limited, 'notes.template.list')).map((t) => t.id)).toEqual([limitedPriv.templateId]);
+    await expect(
+      o.exec(limited, 'notes.template.update', {
+        templateId: authorOrg.templateId,
+        revision: 1,
+        name: 'Dò mẫu org',
+        title: '',
+        body: '',
+        tags: [],
+        visibility: 'org',
+      }),
+    ).rejects.toMatchObject({ code: 'NOTE_TEMPLATE_NOT_FOUND', status: 404 });
+
+    // Direct SQL RLS rejects branch-scoped INSERT/UPDATE with visibility = 'org' (42501), while allowing 'private'.
+    expect(
+      await asTenantSql(limited, (c) =>
+        c.query(`INSERT INTO ludy_notes.note_template (org_id, author_user_id, visibility, name) VALUES ($1, $2, 'org', 'SQL org trái phép')`, [
+          o.orgId,
+          limited,
+        ]),
+      ),
+    ).toMatchObject({ ok: false, code: '42501' });
+
+    expect(
+      await asTenantSql(limited, (c) =>
+        c.query(`UPDATE ludy_notes.note_template SET visibility = 'org' WHERE id = $1`, [limitedPriv.templateId]),
+      ),
+    ).toMatchObject({ ok: false, code: '42501' });
+
+    expect(
+      await asTenantSql(limited, (c) =>
+        c.query<{ id: string }>(
+          `INSERT INTO ludy_notes.note_template (org_id, author_user_id, visibility, name) VALUES ($1, $2, 'private', 'SQL riêng chi nhánh') RETURNING id`,
+          [o.orgId, limited],
+        ),
+      ),
+    ).toMatchObject({ ok: true });
+
+    // When a whole-org author is later narrowed to a branch, keeping visibility = 'org' is refused (403 command / 42501 SQL),
+    // while demoting their own template back to 'private' remains allowed.
+    await admin((c) =>
+      c.query(
+        `INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`,
+        [o.orgId, o.author, branchId, o.owner],
+      ),
+    );
+    await expect(
+      o.exec(o.author, 'notes.template.update', {
+        templateId: authorOrg.templateId,
+        revision: 1,
+        name: 'Sửa vẫn giữ org',
+        title: '',
+        body: '',
+        tags: [],
+        visibility: 'org',
+      }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', status: 403 });
+
+    expect(
+      await asTenantSql(o.author, (c) =>
+        c.query(`UPDATE ludy_notes.note_template SET name = 'SQL giữ org' WHERE id = $1`, [authorOrg.templateId]),
+      ),
+    ).toMatchObject({ ok: false, code: '42501' });
+
+    expect(
+      await o.exec<NoteTemplateWritten>(o.author, 'notes.template.update', {
+        templateId: authorOrg.templateId,
+        revision: 1,
+        name: 'Thu về riêng tư',
+        title: '',
+        body: '',
+        tags: [],
+        visibility: 'private',
+      }),
+    ).toEqual({ templateId: authorOrg.templateId, revision: 2 });
   });
 });
