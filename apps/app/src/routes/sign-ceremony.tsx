@@ -72,6 +72,7 @@ export function startCeremonyQrPolling(params: {
   pollView: (token: string) => Promise<PublicSignViewState>;
   onNonReadyState: (view: PublicSignViewState) => void;
   onNotFound: () => void;
+  onTimeout?: () => void;
   intervalMs?: number;
   maxDurationMs?: number;
   now?: () => number;
@@ -119,6 +120,7 @@ export function startCeremonyQrPolling(params: {
     if (stopped || inFlight) return;
     if (now() - startedAt >= maxDurationMs) {
       stop();
+      params.onTimeout?.();
       return;
     }
     if (isHidden()) return;
@@ -323,6 +325,21 @@ export function SignInPersonHandoffCard({
   );
 }
 
+export function SignCeremonyQrEndedCard({ title }: { title: string }) {
+  const tQr = useTranslations('sign.qrHandoff');
+  return (
+    <Card className="mx-auto max-w-lg" data-testid="sign-ceremony-qr-ended">
+      <CardHeader>
+        <CardTitle>{tQr('qrEndedTitle')}</CardTitle>
+        <CardDescription className="font-medium text-foreground">{title}</CardDescription>
+      </CardHeader>
+      <CardContent className="text-sm text-muted-foreground">
+        <p>{tQr('qrEndedHint')}</p>
+      </CardContent>
+    </Card>
+  );
+}
+
 export function SignCeremonyPage() {
   const t = useTranslations('sign.ceremony');
   const tQr = useTranslations('sign.qrHandoff');
@@ -390,6 +407,8 @@ export function SignCeremonyPage() {
   const [delegateError, setDelegateError] = useState<string | null>(null);
   const [delegating, setDelegating] = useState(false);
   const [qrOpen, setQrOpen] = useState(false);
+  const [qrPollTimedOut, setQrPollTimedOut] = useState(false);
+  const [qrHandoffEndedTitle, setQrHandoffEndedTitle] = useState<string | null>(null);
 
   const fieldCardRefs = useRef<Record<string, HTMLElement | null>>({});
   const qrButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -398,6 +417,8 @@ export function SignCeremonyPage() {
   const resetCeremonyTransientState = useCallback(() => {
     requestGenRef.current += 1;
     setQrOpen(false);
+    setQrPollTimedOut(false);
+    setQrHandoffEndedTitle(null);
     setViewState(null);
     setLoadingView(false);
     setViewError(null);
@@ -884,15 +905,19 @@ export function SignCeremonyPage() {
     viewError,
   });
 
+  const readyTitle = viewState?.state === 'ready' ? viewState.title : null;
+
   useEffect(() => {
     if (!qrOpen || !qrHandoffEligible || !token) return;
     const pollEpoch = requestGenRef.current;
+    setQrPollTimedOut(false);
     return startCeremonyQrPolling({
       token,
       pollView: publicSignApi.view,
       onNonReadyState: (nextView) => {
         if (requestGenRef.current !== pollEpoch) return;
         setQrOpen(false);
+        setQrPollTimedOut(false);
         setViewState(nextView);
         if (isTerminalCeremonyViewState(nextView)) {
           forgetSignToken();
@@ -906,19 +931,24 @@ export function SignCeremonyPage() {
       onNotFound: () => {
         if (requestGenRef.current !== pollEpoch) return;
         setQrOpen(false);
+        setQrPollTimedOut(false);
         forgetSignToken();
         setPdfBytes(null);
+        setQrHandoffEndedTitle(readyTitle ?? tQr('qrEndedTitle'));
         setViewState(null);
-        setViewError(t('invalidHint'));
+      },
+      onTimeout: () => {
+        if (requestGenRef.current !== pollEpoch) return;
+        setQrPollTimedOut(true);
       },
     });
-  }, [qrOpen, qrHandoffEligible, token, t]);
+  }, [qrOpen, qrHandoffEligible, token, readyTitle, tQr]);
 
   const qrSigningUrl = qrHandoffEligible && token ? buildSigningUrl(token) : '';
 
   return (
     <div className="min-h-screen bg-background text-foreground">
-      <ScreenTitle name={viewState?.title ?? t('invalidTitle')} />
+      <ScreenTitle name={viewState?.title ?? qrHandoffEndedTitle ?? t('invalidTitle')} />
 
       <header className="border-b bg-card px-4 py-3">
         <div className="mx-auto flex max-w-3xl flex-col gap-1.5 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
@@ -937,7 +967,9 @@ export function SignCeremonyPage() {
       </header>
 
       <main className="mx-auto max-w-3xl px-3 py-5 pb-28 sm:px-6">
-        {!token || viewError ? (
+        {qrHandoffEndedTitle !== null ? (
+          <SignCeremonyQrEndedCard title={qrHandoffEndedTitle} />
+        ) : !token || viewError ? (
           <Card data-testid="sign-ceremony-invalid">
             <CardHeader>
               <CardTitle>{t('invalidTitle')}</CardTitle>
@@ -1138,11 +1170,14 @@ export function SignCeremonyPage() {
       {qrHandoffEligible && viewState?.state === 'ready' ? (
         <SignQrModal
           open={qrOpen}
-          onOpenChange={setQrOpen}
+          onOpenChange={(next) => {
+            setQrOpen(next);
+            if (!next) setQrPollTimedOut(false);
+          }}
           title={tQr('ceremonyModalTitle')}
           description={tQr('ceremonyModalDescription')}
           url={qrSigningUrl}
-          statusNotice={tQr('ceremonyPollingNotice')}
+          statusNotice={qrPollTimedOut ? tQr('ceremonyPollingTimedOut') : tQr('ceremonyPollingNotice')}
           triggerRef={qrButtonRef}
           testId="ceremony-qr-modal"
         />

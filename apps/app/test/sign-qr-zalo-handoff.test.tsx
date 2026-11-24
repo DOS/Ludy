@@ -133,6 +133,7 @@ const {
   CEREMONY_QR_POLL_INTERVAL_MS,
   CEREMONY_QR_POLL_MAX_MS,
   SignCeremonyPage,
+  SignCeremonyQrEndedCard,
   SignCeremonyReadyView,
   canShowCeremonyQrHandoff,
   startCeremonyQrPolling,
@@ -322,7 +323,7 @@ describe('QR Scan-to-Sign & Zalo OA Engage Handoff (Slice 6a, #4720)', () => {
 
   it('renders SignZaloHandoffPanel with direct zalo_oa threads, 48h window guard, and hides for !social or hr_contract/meeting_minutes', () => {
     const seedConversationData = (allowed: boolean, reason: string | null = null, replyWindowUntil: string | null = null) => {
-      runtimeState.qc.setQueryData(['conversations', 'list', { kind: 'direct', limit: 50 }], {
+      runtimeState.qc.setQueryData(['conversations', 'list', { kind: 'direct', limit: 100 }], {
         conversations: [
           {
             id: 'thread-zalo-1',
@@ -607,6 +608,15 @@ describe('QR Scan-to-Sign & Zalo OA Engage Handoff (Slice 6a, #4720)', () => {
     const invalidPageHtml = renderLocale(<SignCeremonyPage />, 'vi');
     expect(invalidPageHtml).not.toContain('ceremony-qr-handoff-btn');
     expect(invalidPageHtml).not.toContain('ceremony-qr-modal');
+
+    // Neutral post-handoff card renders cleanly in vi & en without misleading invalid/expired error copy
+    const endedViHtml = renderLocale(<SignCeremonyQrEndedCard title="Hợp đồng dịch vụ 2026" />, 'vi');
+    expect(endedViHtml).toContain('data-testid="sign-ceremony-qr-ended"');
+    expect(endedViHtml).toContain(viMessages.sign.qrHandoff.qrEndedTitle);
+    expect(endedViHtml).toContain('Hợp đồng dịch vụ 2026');
+    const endedEnHtml = renderLocale(<SignCeremonyQrEndedCard title="Service Agreement 2026" />, 'en');
+    expect(endedEnHtml).toContain('data-testid="sign-ceremony-qr-ended"');
+    expect(endedEnHtml).toContain(en.sign.qrHandoff.qrEndedTitle);
   });
 
   it('polls public view every 4_000 ms while open, pauses when document.hidden, stops on completion or 15 min cap', async () => {
@@ -698,11 +708,13 @@ describe('QR Scan-to-Sign & Zalo OA Engage Handoff (Slice 6a, #4720)', () => {
       pageCount: 1,
       fields: [],
     }) satisfies PublicSignViewState);
+    const onTimeout = vi.fn();
     const stopCap = startCeremonyQrPolling({
       token: SAMPLE_TOKEN,
       pollView: capPoll,
       onNonReadyState: vi.fn(),
       onNotFound: vi.fn(),
+      onTimeout,
       isHidden: () => false,
       subscribeVisibility: () => () => {},
     });
@@ -710,8 +722,10 @@ describe('QR Scan-to-Sign & Zalo OA Engage Handoff (Slice 6a, #4720)', () => {
     await vi.advanceTimersByTimeAsync(CEREMONY_QR_POLL_MAX_MS - CEREMONY_QR_POLL_INTERVAL_MS);
     const countBeforeCap = capPoll.mock.calls.length;
     expect(countBeforeCap).toBeGreaterThan(200);
+    expect(onTimeout).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(CEREMONY_QR_POLL_INTERVAL_MS * 5);
     expect(capPoll).toHaveBeenCalledTimes(countBeforeCap);
+    expect(onTimeout).toHaveBeenCalledTimes(1);
     stopCap();
 
     // Verify 404 stops polling cleanly via onNotFound

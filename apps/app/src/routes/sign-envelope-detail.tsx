@@ -411,6 +411,7 @@ export function SignEnvelopeDetailPage() {
     setAiAnalysisOverride(null);
     setDetectedPages(null);
     setPageNumber(1);
+    setMintedLinks([]);
     setQrModalTarget(null);
     setInPersonQrOpen(false);
   }, [id]);
@@ -806,6 +807,7 @@ export function SignEnvelopeDetailPage() {
       };
     },
     onSuccess: async ({ dialogGen, ...session }) => {
+      setMintedLinks((prev) => prev.filter((item) => item.signerId !== session.signerId));
       if (inPersonDialogGenRef.current === dialogGen && inPersonSignerIdRef.current === session.signerId) {
         setInPersonSession(session);
         toast(t('inPersonDialog.startedToast'));
@@ -1277,6 +1279,7 @@ export function SignEnvelopeDetailPage() {
           />
 
           <SignZaloHandoffPanel
+            key={envelope.id}
             envelope={{
               id: envelope.id,
               title: envelope.title,

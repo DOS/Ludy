@@ -141,7 +141,7 @@ function SignZaloHandoffInner({
   });
 
   const directThreadsQuery = useQuery({
-    ...orpc.conversations.list.queryOptions({ input: { kind: 'direct', limit: 50 } }),
+    ...orpc.conversations.list.queryOptions({ input: { kind: 'direct', limit: 100 } }),
     ...FRESH,
     retry: false,
   });
@@ -178,8 +178,7 @@ function SignZaloHandoffInner({
 
   const existingMintedUrl =
     mintedLinks.find((item) => item.signerId === selectedSigner.id)?.url ??
-    localMintedUrls[selectedSigner.id] ??
-    null;
+    (onMintedLink ? null : (localMintedUrls[selectedSigner.id] ?? null));
 
   const expiresAtText = envelope.expiresAt ? f.dateTime(envelope.expiresAt) : null;
   const previewDraft = buildSignZaloDraft({
@@ -217,8 +216,11 @@ function SignZaloHandoffInner({
       if (!signingUrl) {
         const minted = await signApi.createSignerLink(envelope.id, selectedSigner.id);
         signingUrl = buildSigningUrl(minted.token);
-        setLocalMintedUrls((prev) => ({ ...prev, [selectedSigner.id]: signingUrl! }));
-        onMintedLink?.(selectedSigner.id, signingUrl);
+        if (onMintedLink) {
+          onMintedLink(selectedSigner.id, signingUrl);
+        } else {
+          setLocalMintedUrls((prev) => ({ ...prev, [selectedSigner.id]: signingUrl! }));
+        }
       }
 
       const finalDraft = buildSignZaloDraft({
