@@ -170,4 +170,167 @@ describe('In-person ceremony per-tab workspace auth isolation (#4278, #4394)', (
     expect(signHash.isSignCeremonyPathname('/-/sign/d')).toBe(false);
     expect(signHash.isInPersonCeremonyIsolated()).toBe(false);
   });
+
+  it('keeps isolation sticky in memory when sessionStorage throws SecurityError or QuotaExceededError', async () => {
+    const { url, localStorage } = setupBrowser('https://app.ludy.vn/-/sign#tokenWithoutQueryFlag', {
+      'ludy-auth': SAMPLE_SESSION,
+    });
+    const throwingSessionStorage = {
+      getItem: () => {
+        throw new Error('SecurityError');
+      },
+      setItem: () => {
+        throw new Error('QuotaExceededError');
+      },
+      removeItem: () => {
+        throw new Error('SecurityError');
+      },
+    };
+    vi.stubGlobal('sessionStorage', throwingSessionStorage);
+    (globalThis as unknown as { window: { sessionStorage: unknown } }).window.sessionStorage = throwingSessionStorage;
+
+    const signHash = await import('../src/lib/sign-hash.ts');
+    const authMod = await import('../src/lib/auth.ts');
+    await authMod.loadConfig();
+
+    const initialClient = authMod.auth();
+    const disposeSpy = vi.spyOn(initialClient, 'dispose');
+    expect(await authMod.accessToken()).toBe('workspace-host-secret-jwt');
+
+    signHash.markInPersonCeremonyIsolated();
+    expect(disposeSpy).toHaveBeenCalledTimes(1);
+    expect(signHash.isInPersonCeremonyIsolated()).toBe(true);
+
+    // Navigating away from /-/sign still remains isolated despite failing sessionStorage.
+    url.pathname = '/o/acme/overview';
+    url.search = '';
+    expect(signHash.isInPersonCeremonyIsolated()).toBe(true);
+    expect(await authMod.accessToken()).toBeNull();
+    expect((await authMod.auth().getSession()).data.session).toBeNull();
+    expect(localStorage.getItem('ludy-auth')).toBe(SAMPLE_SESSION);
+
+    // URL auto-detection (?in_person=1) also latches in memory when sessionStorage throws.
+    vi.resetModules();
+    const urlEnv = setupBrowser('https://app.ludy.vn/-/sign?in_person=1#token123', {
+      'ludy-auth': SAMPLE_SESSION,
+    });
+    vi.stubGlobal('sessionStorage', throwingSessionStorage);
+    (globalThis as unknown as { window: { sessionStorage: unknown } }).window.sessionStorage = throwingSessionStorage;
+    const nextHash = await import('../src/lib/sign-hash.ts');
+    expect(nextHash.isInPersonCeremonyIsolated()).toBe(true);
+    urlEnv.url.pathname = '/o/acme/overview';
+    urlEnv.url.search = '';
+    expect(nextHash.isInPersonCeremonyIsolated()).toBe(true);
+  });
+
+  it('fires ceremonyIsolationListeners and disposes prior non-isolated AuthClient on /-/sign?in_person=1 URL detection', async () => {
+    const { url, sessionStorage } = setupBrowser('https://app.ludy.vn/o/acme/overview', {
+      'ludy-auth': SAMPLE_SESSION,
+    });
+
+    const signHash = await import('../src/lib/sign-hash.ts');
+    const authMod = await import('../src/lib/auth.ts');
+    await authMod.loadConfig();
+
+    const initialClient = authMod.auth();
+    const disposeSpy = vi.spyOn(initialClient, 'dispose');
+    const listenerSpy = vi.fn();
+    signHash.subscribeToCeremonyIsolation(listenerSpy);
+    expect(await authMod.accessToken()).toBe('workspace-host-secret-jwt');
+
+    // Navigating client-side to /-/sign?in_person=1 triggers URL detection cleanly.
+    url.pathname = '/-/sign';
+    url.search = '?in_person=1';
+    expect(signHash.isInPersonCeremonyIsolated()).toBe(true);
+    expect(listenerSpy).toHaveBeenCalledTimes(1);
+    expect(disposeSpy).toHaveBeenCalledTimes(1);
+    expect(sessionStorage.getItem(signHash.SIGN_IN_PERSON_ISOLATED_SESSION_KEY)).toBe('1');
+    expect(await authMod.accessToken()).toBeNull();
+    const isolatedClient = authMod.auth();
+    expect(isolatedClient).not.toBe(initialClient);
+    expect((await isolatedClient.getSession()).data.session).toBeNull();
+  });
+
+  it('guards needsSecondFactorNow, captureHostedCallback, invite tokens, and in-flight initializePromise disposal', async () => {
+    const inviteToken = 'AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_abcd12';
+    const seenHeaders: Array<Record<string, string>> = [];
+    const { url } = setupBrowser(
+      `https://app.ludy.vn/-/sign?in_person=1&code=hosted-code-123&state=state-1#tok`,
+      {
+        'ludy-auth': SAMPLE_SESSION,
+        'ludy-pending-invite': JSON.stringify({ token: inviteToken, savedAt: Date.now() }),
+      },
+    );
+    const origFetch = globalThis.fetch;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const target = String(input);
+        if (target.endsWith('/signup')) {
+          const hdrs = new Headers(init?.headers);
+          const obj: Record<string, string> = {};
+          hdrs.forEach((v, k) => {
+            obj[k.toLowerCase()] = v;
+          });
+          seenHeaders.push(obj);
+          return new Response(JSON.stringify({ msg: 'blocked' }), { status: 400 });
+        }
+        return origFetch(input, init);
+      }),
+    );
+    const signHash = await import('../src/lib/sign-hash.ts');
+    const authMod = await import('../src/lib/auth.ts');
+    await authMod.loadConfig();
+
+    expect(signHash.isInPersonCeremonyIsolated()).toBe(true);
+    // Isolated tabs ignore hosted callback URL parameters and never rewrite history or call MFA checks.
+    authMod.captureHostedCallback();
+    expect(url.search).toContain('code=hosted-code-123');
+    expect(await authMod.needsSecondFactorNow()).toBe(false);
+    // Distinct storageKey avoids GoTrueClient multi-instance collision with host workspace storage.
+    expect((authMod.auth() as unknown as { storageKey: string }).storageKey).toBe('ludy-auth-ceremony-isolated');
+    // Isolated auth client skips withInviteToken so pending invite tokens in localStorage are never read or sent.
+    await authMod.auth().signUp({ email: 'guest@example.com', password: 'password-123!' });
+    expect(seenHeaders).toHaveLength(1);
+    expect(seenHeaders[0]!['x-ludy-invite']).toBeUndefined();
+
+    // Verify dynamic isolation also awaits any in-flight initializePromise before final dispose().
+    vi.resetModules();
+    setupBrowser('https://app.ludy.vn/o/acme/overview?code=hosted-code-123&state=state-2', {
+      'ludy-auth': SAMPLE_SESSION,
+    });
+    const normalHash = await import('../src/lib/sign-hash.ts');
+    const normalAuth = await import('../src/lib/auth.ts');
+    await normalAuth.loadConfig();
+
+    // Normal tab captures hosted callback and runs MFA check against supplied client.
+    normalAuth.captureHostedCallback();
+    expect(normalHash.isInPersonCeremonyIsolated()).toBe(false);
+    expect(
+      await normalAuth.needsSecondFactorNow({
+        mfa: {
+          getAuthenticatorAssuranceLevel: async () => ({
+            data: { currentLevel: 'aal1', nextLevel: 'aal2', currentAuthenticationMethods: [] },
+            error: null,
+          }),
+          listFactors: async () => ({ data: { all: [], totp: [], phone: [] }, error: null }),
+        },
+      } as unknown as Parameters<typeof normalAuth.needsSecondFactorNow>[0]),
+    ).toBe(true);
+
+    const activeClient = normalAuth.auth();
+    const disposeSpy = vi.spyOn(activeClient, 'dispose');
+    let resolveInit!: () => void;
+    const inflight = new Promise<void>((resolve) => {
+      resolveInit = resolve;
+    });
+    (activeClient as unknown as { initializePromise: Promise<void> | null }).initializePromise = inflight;
+
+    normalHash.markInPersonCeremonyIsolated();
+    expect(disposeSpy).toHaveBeenCalledTimes(1);
+    resolveInit();
+    await inflight;
+    await Promise.resolve();
+    expect(disposeSpy).toHaveBeenCalledTimes(2);
+  });
 });

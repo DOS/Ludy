@@ -396,13 +396,13 @@ export function SignCeremonyPage() {
           if (isOtpRequiredError(pdfErr)) {
             setOtpSent(false);
             setOtpCode('');
-            setViewState({
-              state: 'otp_required',
-              orgName: view.orgName,
-              title: view.title,
-              maskedEmail: null,
-              ...(view.inPerson ? { inPerson: true } : {}),
-            });
+            setViewState(
+              buildOtpRequiredViewState({
+                orgName: view.orgName,
+                title: view.title,
+                inPerson: Boolean(inPersonMode || view.inPerson),
+              }),
+            );
           } else {
             setPdfError(t('invalidHint'));
           }

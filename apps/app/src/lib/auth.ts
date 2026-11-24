@@ -94,8 +94,12 @@ function migrateAuthPair(store: StorageLike, key: string, legacyKey: string): vo
   }
 }
 
+function isCeremonyIsolated(): boolean {
+  return clientIsolated || isInPersonCeremonyIsolated();
+}
+
 export function migrateAuthStorage(storage?: StorageLike): void {
-  if (!storage && isInPersonCeremonyIsolated()) return;
+  if (!storage && isCeremonyIsolated()) return;
   try {
     const store = storage ?? (typeof window === 'undefined' ? undefined : window.localStorage);
     if (!store) return;
@@ -119,8 +123,14 @@ export function migrateAuthStorage(storage?: StorageLike): void {
 }
 
 function disposeAuthClient(target: Client | null): void {
-  if (target && 'dispose' in target && typeof target.dispose === 'function') {
+  if (!target || !('dispose' in target) || typeof target.dispose !== 'function') return;
+  const dispose = () => {
     void target.dispose();
+  };
+  dispose();
+  const initPromise = (target as unknown as { initializePromise?: Promise<unknown> | null }).initializePromise;
+  if (initPromise) {
+    void Promise.resolve(initPromise).finally(dispose);
   }
 }
 
@@ -134,20 +144,22 @@ subscribeToCeremonyIsolation(() => {
 });
 
 export function auth(): Client {
-  const isolated = isInPersonCeremonyIsolated();
+  const isolated = isCeremonyIsolated();
   if (client && clientIsolated === isolated) return client;
   disposeAuthClient(client);
   client = null;
   clientIsolated = isolated;
   const { authUrl, authAnonKey } = getConfig();
   if (!isolated) migrateAuthStorage();
+  const baseFetch: typeof fetch = (input, init) => fetch(input, init);
   client = new AuthClient({
     url: authUrl,
     headers: authAnonKey ? { apikey: authAnonKey, Authorization: `Bearer ${authAnonKey}` } : {},
-    storageKey: AUTH_STORAGE_KEY,
+    storageKey: isolated ? `${AUTH_STORAGE_KEY}-ceremony-isolated` : AUTH_STORAGE_KEY,
     ...(isolated ? { storage: ISOLATED_CEREMONY_STORAGE } : {}),
-    // A sign-up from an accept link carries the invite token for the proxy's sign-up policy (#563).
-    fetch: withInviteToken((input, init) => fetch(input, init), new URL(authUrl, serverOrigin()).origin),
+    // A sign-up from an accept link carries the invite token for the proxy's sign-up policy (#563);
+    // isolated in-person ceremony tabs skip it so they cannot read workspace invite storage.
+    fetch: isolated ? baseFetch : withInviteToken(baseFetch, new URL(authUrl, serverOrigin()).origin),
     // Email links (confirmation, recovery) come back with a one-time code that only this browser can exchange.
     flowType: 'pkce',
     autoRefreshToken: !isolated,
@@ -158,14 +170,14 @@ export function auth(): Client {
 }
 
 export async function accessToken(): Promise<string | null> {
-  if (isInPersonCeremonyIsolated()) return null;
+  if (isCeremonyIsolated()) return null;
   const { data } = await auth().getSession();
   return data.session?.access_token ?? null;
 }
 
 // True when the session is signed in with a password only but the user has a verified second factor.
 export async function needsSecondFactor(): Promise<boolean> {
-  if (isInPersonCeremonyIsolated()) return false;
+  if (isCeremonyIsolated()) return false;
   const { data } = await auth().mfa.getAuthenticatorAssuranceLevel();
   return data?.currentLevel === 'aal1' && data.nextLevel === 'aal2';
 }
@@ -175,13 +187,14 @@ export async function needsSecondFactor(): Promise<boolean> {
 // /mfa asks this one: on the cached answer it would send that user back to the app, whose next request the kernel
 // refuses with MFA_REQUIRED, which opens /mfa again, page load after page load. For the same reason a failed answer
 // throws (the router shows its error page) instead of counting as "no factor".
-export async function needsSecondFactorNow(client: Pick<Client, 'mfa'> = auth()): Promise<boolean> {
-  if (isInPersonCeremonyIsolated()) return false;
-  const { data, error } = await client.mfa.getAuthenticatorAssuranceLevel();
+export async function needsSecondFactorNow(clientArg?: Pick<Client, 'mfa'>): Promise<boolean> {
+  if (isCeremonyIsolated()) return false;
+  const activeClient = clientArg ?? auth();
+  const { data, error } = await activeClient.mfa.getAuthenticatorAssuranceLevel();
   if (error) throw error;
   if (data?.currentLevel !== 'aal1') return false;
   if (data.nextLevel === 'aal2') return true;
-  const factors = await client.mfa.listFactors();
+  const factors = await activeClient.mfa.listFactors();
   if (factors.error) throw factors.error;
   return (factors.data?.all ?? []).some((factor) => factor.status === 'verified');
 }
@@ -307,7 +320,7 @@ let callbackNotice: CallbackNotice | null = null;
 let capturedHosted: HostedCallback | null = null;
 
 export function captureHostedCallback(): void {
-  if (isInPersonCeremonyIsolated()) return;
+  if (isCeremonyIsolated()) return;
   const callback = readHostedCallback(window.location);
   if (!callback) return;
   capturedHosted = callback;
@@ -325,7 +338,7 @@ export function discardHostedLogin(): void {
 }
 
 export async function settleCallback(): Promise<void> {
-  if (isInPersonCeremonyIsolated()) return;
+  if (isCeremonyIsolated()) return;
   captureHostedCallback();
   const hosted = capturedHosted;
   capturedHosted = null;

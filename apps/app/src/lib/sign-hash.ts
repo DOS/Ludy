@@ -32,6 +32,7 @@ export function isSignCeremonyPathname(pathname = typeof window !== 'undefined' 
 }
 
 const ceremonyIsolationListeners = new Set<() => void>();
+let inPersonCeremonyIsolatedInMemory = false;
 
 export function subscribeToCeremonyIsolation(listener: () => void): () => void {
   ceremonyIsolationListeners.add(listener);
@@ -41,6 +42,9 @@ export function subscribeToCeremonyIsolation(listener: () => void): () => void {
 }
 
 export function markInPersonCeremonyIsolated(storage?: StorageLike): void {
+  if (!storage) {
+    inPersonCeremonyIsolatedInMemory = true;
+  }
   const store = storage ?? getCeremonySessionStorage();
   if (store) {
     try {
@@ -60,6 +64,9 @@ export function isInPersonCeremonyIsolated(
   storage?: StorageLike,
   location: { pathname?: string; search?: string } | undefined = typeof window !== 'undefined' ? window.location : undefined,
 ): boolean {
+  if (!storage && inPersonCeremonyIsolatedInMemory) {
+    return true;
+  }
   const store = storage ?? getCeremonySessionStorage();
   try {
     if (store?.getItem(SIGN_IN_PERSON_ISOLATED_SESSION_KEY) === '1') {
@@ -69,7 +76,7 @@ export function isInPersonCeremonyIsolated(
     // Fall through to URL inspection when storage is unavailable.
   }
   if (location && isSignCeremonyPathname(location.pathname ?? '') && hasInPersonQueryFlag(location.search ?? '')) {
-    markInPersonCeremonyIsolated(store);
+    markInPersonCeremonyIsolated(storage);
     return true;
   }
   return false;
