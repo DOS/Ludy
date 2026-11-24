@@ -577,6 +577,7 @@ export const PERSONAL_DATA_COLUMNS = {
   'ludy_hr.contract_addendum.void_reason': { kind: 'other', handling: 'erase', reason: "Optional void reason recorded on an employee's contract addendum; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
   'ludy_hr.employee_asset_handover.serial_number': { kind: 'other', handling: 'erase', reason: "Assigned equipment serial number linked to an employee handover row; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
   'ludy_hr.employee_asset_handover.notes': { kind: 'other', handling: 'erase', reason: "Free-text handover/return note on an employee asset checklist row; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'ludy_hr.okr_key_result.last_checkin_note': { kind: 'other', handling: 'erase', reason: "Optional human check-in note on an employee's quarterly OKR key result; hr.payroll.employee.erase clears it once retention after the last day of work has passed" },
   'ludy_hr.candidate.display_name': { kind: 'name', handling: 'erase', reason: 'A job applicant name; erased by personal-data erasure or hr.recruiting.candidate.erase' },
   'ludy_hr.candidate.email': { kind: 'email', handling: 'erase', reason: 'A job applicant email; erased by personal-data erasure or hr.recruiting.candidate.erase' },
   'ludy_hr.candidate.phone': { kind: 'phone', handling: 'erase', reason: 'A job applicant phone number; erased by personal-data erasure or hr.recruiting.candidate.erase' },
