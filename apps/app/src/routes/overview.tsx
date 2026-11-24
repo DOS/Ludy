@@ -187,8 +187,8 @@ function AppCards({
                 <NavIcon name={icon} className="text-muted-foreground" />
                 <span className="font-medium text-foreground">{tn(`appNames.${id}`)}</span>
                 {pending && (
-                  <span aria-hidden="true">
-                    <Spinner className="size-3.5" />
+                  <span aria-hidden="true" className="inline-flex">
+                    <Spinner />
                   </span>
                 )}
                 {!pending && readyLabels.length > 0 && (

@@ -399,7 +399,7 @@ describe('OverviewPage layout compression and Day-1 SME quick-start (#4644)', ()
     expect(loadingHtml).not.toContain('data-weekly-slot=""');
     expect(loadingHtml).not.toContain(viMessages.overview.upload);
     // Loading spinner inside AppCards link is wrapped aria-hidden so link accessible text stays clean.
-    expect(loadingHtml).toMatch(/<span aria-hidden="true"><svg[^>]*data-slot="spinner"/);
+    expect(loadingHtml).toMatch(/<span aria-hidden="true"[^>]*><svg[^>]*data-slot="spinner"/);
   });
 
   it('replaces Day-1 quick-start with calm caught-up empty state once org activity exists', () => {
