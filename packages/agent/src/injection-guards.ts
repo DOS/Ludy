@@ -8,6 +8,9 @@ export const STEALTH_CONTROL_RE =
   /(?![\t\n\r])\p{Cc}|[\u00AD\u061C\u180E\u200B\u200C\u200E\u200F\u202A-\u202E\u2060-\u2069\uFEFF\u{E0000}-\u{E007F}]/u;
 
 const ALL_STEALTH_AND_CF_RE = /(?![\t\n\r])\p{Cc}|\p{Cf}|[\u{E0000}-\u{E007F}]/gu;
+// Matches invisible fillers, Braille blanks, Mongolian free variation selectors, combining grapheme joiner, private-use, unassigned, and lone surrogates (#4370, #4424).
+const EXTRA_INVISIBLE_FORMAT_RE = /[\u115F\u1160\u180B-\u180D\u2800\u3164\uFFA0\p{Co}\p{Cn}\p{Cs}]|\u034F/u;
+const EXTRA_INVISIBLE_FORMAT_GLOBAL_RE = /[\u115F\u1160\u180B-\u180D\u2800\u3164\uFFA0\p{Co}\p{Cn}\p{Cs}]|\u034F/gu;
 
 export function hasStealthControls(text: string): boolean {
   return STEALTH_CONTROL_RE.test(text);
@@ -15,6 +18,36 @@ export function hasStealthControls(text: string): boolean {
 
 export function stripStealthControls(text: string): string {
   return text.replace(ALL_STEALTH_AND_CF_RE, '');
+}
+
+/** Checks whether text holds stealth controls, Unicode format characters, or invisible filler/private-use/surrogate code points. */
+export function hasInvisibleFormat(text: string): boolean {
+  return STEALTH_CONTROL_RE.test(text) || /\p{Cf}/u.test(text) || EXTRA_INVISIBLE_FORMAT_RE.test(text);
+}
+
+/** Strips stealth, invisible, format, filler, private-use, unassigned, and surrogate chars, collapses whitespace to one line, and bounds by code point. */
+export function plainLine(value: string, max: number): string {
+  const cleaned = stripStealthControls(value)
+    .replace(EXTRA_INVISIBLE_FORMAT_GLOBAL_RE, '')
+    .replace(/[\p{Cc}\p{Zl}\p{Zp}\s]+/gu, ' ')
+    .trim();
+  return Array.from(cleaned).slice(0, max).join('').trim();
+}
+
+/** Strips longest trusted phrases first on token boundaries so short trusted words cannot split adversarial domains or phrases. */
+export function stripTrustedPhrases(text: string, trustedTexts: readonly string[]): string {
+  const ordered = [...trustedTexts]
+    .map((t) => t.normalize('NFC'))
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length);
+  let out = text.normalize('NFC');
+  for (const t of ordered) {
+    const escaped = t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const prefix = /^[\p{L}\p{M}\p{N}]/u.test(t) ? '(?<![\\p{L}\\p{M}\\p{N}])' : '';
+    const suffix = /[\p{L}\p{M}\p{N}]$/u.test(t) ? '(?![\\p{L}\\p{M}\\p{N}])' : '';
+    out = out.replace(new RegExp(`${prefix}${escaped}${suffix}`, 'gu'), ' ');
+  }
+  return out;
 }
 
 function normalizeForGuard(text: string): string {

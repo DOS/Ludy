@@ -569,6 +569,8 @@ export type ProjectWeeklyStatusTasks = z.infer<typeof zProjectWeeklyStatusTasks>
 export const zProjectWeeklyStatusBottleneck = z.strictObject({
   id: zId,
   title: z.string(),
+  // The title is an AI coworker's text (a task made from an approved ask): the screen marks the invisible characters (#4421, #4424).
+  tainted: z.boolean(),
   status: zTaskStatus,
   due: z.string().nullable(),
   blockedCount: z.number().int().positive(),

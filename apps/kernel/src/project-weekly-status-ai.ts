@@ -5,11 +5,14 @@
 // and task lists even when Vy's summary is off, paused, budget-exhausted, refused or failed. Nothing is stored or sent.
 import {
   AiBudgetExhaustedError,
+  PROJECT_WEEKLY_STATUS_COMMENT_CHARS,
+  PROJECT_WEEKLY_STATUS_TITLE_CHARS,
   type InboxReader,
   type ProjectWeeklyStatusFacts,
   type ProjectWeeklyStatusTaskFact,
 } from '@ludy/agent';
 import {
+  plainLine,
   vietnamToday,
   type ProjectWeeklyStatus,
   type ProjectWeeklyStatusState,
@@ -17,6 +20,8 @@ import {
 } from '@ludy/kernel-contract';
 import type { ProjectWeeklyStatusSource } from '@ludy/mod-projects';
 import type { DraftBudget } from './ai-draft-limit.ts';
+
+const PROJECT_WEEKLY_STATUS_COLUMN_CHARS = 80;
 
 export interface ProjectWeeklyStatusAi {
   reader: Pick<InboxReader, 'projectWeeklyStatus'> | null;
@@ -32,11 +37,12 @@ export function projectWeeklyStatusAi(
 
 function toTaskFacts(tasks: readonly ProjectWeeklyStatusTask[]): ProjectWeeklyStatusTaskFact[] {
   return tasks.map((task) => ({
-    title: task.title,
+    title: plainLine(task.title, PROJECT_WEEKLY_STATUS_TITLE_CHARS),
+    tainted: Boolean(task.tainted),
     status: task.status,
     dueDay: task.due ? vietnamToday(new Date(task.due)) : null,
     commentCount: task.commentCount,
-    latestComment: task.latestComment,
+    latestComment: task.latestComment ? plainLine(task.latestComment, PROJECT_WEEKLY_STATUS_COMMENT_CHARS) || null : null,
   }));
 }
 
@@ -60,7 +66,7 @@ async function generateSummary(
   const bottlenecks = source.bottlenecks ?? [];
   const facts: ProjectWeeklyStatusFacts = {
     language,
-    projectName: source.project.name,
+    projectName: plainLine(source.project.name, PROJECT_WEEKLY_STATUS_TITLE_CHARS),
     projectStatus: source.project.status,
     window: {
       from: source.window.from,
@@ -69,7 +75,14 @@ async function generateSummary(
       nextTo: source.window.nextTo,
     },
     counts: source.counts,
-    ...(source.columns && source.columns.length > 0 ? { columns: source.columns } : {}),
+    ...(source.columns && source.columns.length > 0
+      ? {
+          columns: source.columns.map((col) => ({
+            ...col,
+            name: plainLine(col.name, PROJECT_WEEKLY_STATUS_COLUMN_CHARS),
+          })),
+        }
+      : {}),
     ...(source.timeThisWeek ? { timeThisWeek: source.timeThisWeek } : {}),
     tasks: {
       doneThisWeek: toTaskFacts(source.tasks.doneThisWeek),
@@ -80,7 +93,8 @@ async function generateSummary(
     ...(bottlenecks.length > 0
       ? {
           bottlenecks: bottlenecks.map((item) => ({
-            title: item.title,
+            title: plainLine(item.title, PROJECT_WEEKLY_STATUS_TITLE_CHARS),
+            tainted: Boolean(item.tainted),
             status: item.status,
             dueDay: item.due ? vietnamToday(new Date(item.due)) : null,
             blockedCount: item.blockedCount,

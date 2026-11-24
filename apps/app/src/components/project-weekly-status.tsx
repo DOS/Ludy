@@ -429,7 +429,7 @@ export function ProjectWeeklyStatus({
               <ul className="space-y-1.5">
                 {(data.bottlenecks ?? []).map((item) => (
                   <li key={item.id} className="flex items-center justify-between gap-2 text-xs">
-                    <span className="truncate font-medium text-foreground">{item.title}</span>
+                    <span className="truncate font-medium text-foreground">{taskTitleText(item)}</span>
                     <Badge variant="warning" className="h-5 shrink-0 px-1.5 text-[11px] tabular-nums">
                       {t('bottlenecksBlockedCount', { count: item.blockedCount })}
                     </Badge>
