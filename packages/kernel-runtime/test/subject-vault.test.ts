@@ -16,7 +16,7 @@ describe('SubjectVault', () => {
     const { dataKey, keyId, wrapped } = vault.newDataKey(org, subject);
     expect(wrapped).toHaveLength(WRAPPED_SUBJECT_KEY_BYTES);
     const sealed = vault.seal(dataKey, org, subject, PLACE, '079123456789');
-    expect(sealed).toMatch(new RegExp(`^crove:s1:${subject}:[A-Za-z0-9_-]+$`));
+    expect(sealed).toMatch(new RegExp(`^ludy:s1:${subject}:[A-Za-z0-9_-]+$`));
     expect(sealed).not.toContain('079123456789');
     const parsed = parseSealed(sealed);
     expect(parsed?.subjectId).toBe(subject);
@@ -84,8 +84,23 @@ describe('SubjectVault', () => {
     expect(() => vault.seal(dataKey, org, subject, PLACE, 'x'.repeat(4097))).toThrow(SubjectKeyError);
     expect(() => new SubjectVault([])).toThrow(SubjectKeyError);
     expect(parseSealed('079123456789')).toBeNull();
+    expect(parseSealed(`ludy:s1:not-a-uuid:abc`)).toBeNull();
+    expect(parseSealed(`ludy:s1:${subject}:`)).toBeNull();
     expect(parseSealed(`crove:s1:not-a-uuid:abc`)).toBeNull();
     expect(parseSealed(`crove:s1:${subject}:`)).toBeNull();
+    expect(parseSealed(`other:s1:${subject}:abc`)).toBeNull();
+  });
+
+  it('decodes and opens legacy crove:s1: sealed values alongside new ludy:s1: writes', () => {
+    const vault = vaultOf(root());
+    const { dataKey, keyId, wrapped } = vault.newDataKey(org, subject);
+    const fresh = vault.seal(dataKey, org, subject, PLACE, 'legacy-compat-secret');
+    expect(fresh.startsWith('ludy:s1:')).toBe(true);
+    const legacy = `crove:s1:${fresh.slice('ludy:s1:'.length)}`;
+    const parsed = parseSealed(legacy);
+    expect(parsed?.subjectId).toBe(subject);
+    const openedKey = vault.unwrap(org, subject, keyId, wrapped);
+    expect(vault.open(openedKey, org, subject, PLACE, (parsed as NonNullable<typeof parsed>).packed)).toBe('legacy-compat-secret');
   });
 
   it('wraps a data key again under the current key (rotation, #2643): it opens with the new key alone, the values stay readable, and a fresh nonce is drawn', () => {

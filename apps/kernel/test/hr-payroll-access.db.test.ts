@@ -239,8 +239,8 @@ suite('HR payroll people on PostgreSQL (#2530)', () => {
     await o.exec(o.owner, 'hr.payroll.employee.edit', { employeeId: created.employeeId, identityNumber: '012 987 654 321' });
     expect(await hits()).toEqual([]);
     const row = await withAdmin(async (c) => (await c.query<{ national_id_sealed: string; bank_account_sealed: string }>('SELECT national_id_sealed, bank_account_sealed FROM ludy_hr.payroll_employee WHERE id = $1', [created.employeeId])).rows[0]);
-    expect(row?.national_id_sealed).toMatch(/^crove:s1:/);
-    expect(row?.bank_account_sealed).toMatch(/^crove:s1:/);
+    expect(row?.national_id_sealed).toMatch(/^ludy:s1:/);
+    expect(row?.bank_account_sealed).toMatch(/^ludy:s1:/);
     // A plain number cannot be written into a sealed column, even by a statement that bypasses the commands.
     await expect(withAdmin((c) => c.query("UPDATE ludy_hr.payroll_employee SET national_id_sealed = '079123456789' WHERE id = $1", [created.employeeId]))).rejects.toMatchObject({ code: '23514' });
     // The edit changed the identity number only.
@@ -256,8 +256,8 @@ suite('HR payroll people on PostgreSQL (#2530)', () => {
     // Both numbers are sealed: neither text is in any column of any crove table, and the stored text is a sealed value that opens at its own place only.
     expect(await hits([TAX, INS])).toEqual([]);
     const row = await withAdmin(async (c) => (await c.query<{ tax_code_sealed: string; insurance_number_sealed: string; birth_date: string }>('SELECT tax_code_sealed, insurance_number_sealed, birth_date::text FROM ludy_hr.payroll_employee WHERE id = $1', [created.employeeId])).rows[0]);
-    expect(row?.tax_code_sealed).toMatch(/^crove:s1:/);
-    expect(row?.insurance_number_sealed).toMatch(/^crove:s1:/);
+    expect(row?.tax_code_sealed).toMatch(/^ludy:s1:/);
+    expect(row?.insurance_number_sealed).toMatch(/^ludy:s1:/);
     await expect(withAdmin((c) => c.query(`UPDATE ludy_hr.payroll_employee SET tax_code_sealed = '${TAX}' WHERE id = $1`, [created.employeeId]))).rejects.toMatchObject({ code: '23514' });
     expect(await o.query<HrEmployee>(o.owner, 'hr.payroll.employee.get', { employeeId: created.employeeId })).toMatchObject({ birthDate: '1990-05-17', taxCode: TAX, insuranceNumber: INS, finalizationAuthorizedYears: [] });
     // The audit row of the add holds flags, never a value.
