@@ -37,6 +37,7 @@ import { loadConfig, parseLudyUrl } from './config.ts';
 import { trayIconPng } from './icons.ts';
 import { createLogger } from './redact.ts';
 import { createShell } from './shell.ts';
+import { createSmoke, smokeDirFor, type SmokeCommand } from './smoke.ts';
 import { handleSquirrelStartup } from './squirrel.ts';
 import { createSessionStore, type FileIO, type SecretBox } from './token-store.ts';
 import { describeTray, type TrayIcon, type TrayItem } from './tray-model.ts';
@@ -413,8 +414,59 @@ async function main(): Promise<void> {
     });
     tray.setContextMenu(Menu.buildFromTemplate(template));
   };
-  desktop.subscribe(render);
+  // The Windows smoke channel (#4566): off unless LUDY_DESKTOP_SMOKE_DIR is set AND the Ludy address is a loopback one (src/smoke.ts).
+  let secondInstances = 0;
+  let lastSpec = describeTray(desktop.model());
+  const smokeDir = smokeDirFor(process.env, config.ludyUrl);
+  const smoke =
+    smokeDir === null
+      ? null
+      : createSmoke({
+          io: {
+            writeState: async (json) => {
+              const temp = join(smokeDir, 'state.json.tmp');
+              await writeFile(temp, json);
+              await rename(temp, join(smokeDir, 'state.json'));
+            },
+            takeCommand: async () => {
+              const file = join(smokeDir, 'command.json');
+              const text = await readFile(file, 'utf8').catch(() => null);
+              if (text !== null) await rm(file, { force: true });
+              return text;
+            },
+          },
+          snapshot: () => ({
+            pid: process.pid,
+            version: app.getVersion(),
+            execPath: process.execPath,
+            packaged: app.isPackaged,
+            squirrelInstalled,
+            tray: {
+              created: !tray.isDestroyed(),
+              icon: lastSpec.icon,
+              tooltip: lastSpec.tooltip,
+              items: lastSpec.items.flatMap((item) => (item.kind === 'separator' ? [] : [`${item.kind === 'action' ? item.id : 'status'}: ${item.label}`])),
+            },
+            auth: desktop.model().auth,
+            update: desktop.model().update,
+            secondInstances,
+            updatedAt: new Date().toISOString(),
+          }),
+          run: (command: SmokeCommand) => {
+            // The same functions as the tray menu items.
+            if (command === 'check-update') updater.checkNow();
+            else actions[command]();
+          },
+          log,
+        });
+  const renderAndReport = (): void => {
+    lastSpec = describeTray(desktop.model());
+    render();
+    smoke?.report();
+  };
+  desktop.subscribe(renderAndReport);
   render();
+  smoke?.start();
 
   const windowPoll = setInterval(() => {
     const sess = desktop.currentSession();
@@ -424,11 +476,16 @@ async function main(): Promise<void> {
   }, 10_000);
 
   tray.on('click', () => tray.popUpContextMenu());
-  app.on('second-instance', () => tray.popUpContextMenu());
+  app.on('second-instance', () => {
+    secondInstances += 1;
+    smoke?.report();
+    tray.popUpContextMenu();
+  });
   app.on('before-quit', () => {
     allowPillClose = true;
     if (pillWindow && !pillWindow.isDestroyed()) pillWindow.setClosable(true);
     clearInterval(windowPoll);
+    smoke?.stop();
     desktop.stop();
   });
 
