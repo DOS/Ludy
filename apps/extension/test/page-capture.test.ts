@@ -289,4 +289,147 @@ describe('Web Clipper opt-in execution boundary', () => {
       input: { title: 'Demo', body: 'Body' },
     });
   });
+
+  it('surfaces reopenNeeded when executeScript fails immediately after activeTab grant inside an open popup (#3742)', async () => {
+    const contains = vi.fn(async () => true);
+    const query = vi.fn(async () => [{ id: 12 }]);
+    const executeScript = vi.fn(async () => {
+      throw new Error('Cannot access contents of the page. Extension manifest must request permission to access the respective host.');
+    }) as unknown as typeof chrome.scripting.executeScript;
+
+    expect(
+      await captureActiveTab({
+        permissions: { contains },
+        tabs: { query },
+        scripting: { executeScript },
+        clicked: true,
+        activeTabJustGranted: true,
+      }),
+    ).toEqual({ ok: false, reason: 'reopenNeeded' });
+
+    expect(
+      await captureActiveTab({
+        permissions: { contains },
+        tabs: { query },
+        scripting: { executeScript },
+        clicked: true,
+        activeTabJustGranted: false,
+      }),
+    ).toEqual({ ok: false, reason: 'failed' });
+
+    const succeedScript = vi.fn(async () => [
+      {
+        result: {
+          url: 'https://example.com/ok',
+          title: 'OK',
+          selectedHtml: '',
+          selectedText: '',
+          contentHtml: '<p>Done</p>',
+          textFallback: 'Done',
+        },
+      },
+    ]) as unknown as typeof chrome.scripting.executeScript;
+
+    expect(
+      await captureActiveTab({
+        permissions: { contains },
+        tabs: { query },
+        scripting: { executeScript: succeedScript },
+        clicked: true,
+        activeTabJustGranted: true,
+      }),
+    ).toEqual({
+      ok: true,
+      clip: { title: 'OK', body: 'Done', sourceUrl: 'https://example.com/ok' },
+    });
+  });
+
+  it('aborts /api/config cleanly when AbortSignal.timeout fires (#3742)', async () => {
+    const client = createClient('https://ludy.example', null, (_url, init) =>
+      new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(init.signal?.reason ?? new Error('aborted')), { once: true });
+      }),
+    );
+    await expect(client.config({ signal: AbortSignal.timeout(15) })).rejects.toThrow();
+  });
+
+  it('skips <article> and <main> candidates inside hidden ancestors in snapshotDomPage (#3742)', () => {
+    const prevDoc = (globalThis as { document?: unknown }).document;
+    const prevWin = (globalThis as { window?: unknown }).window;
+
+    interface FakeEl {
+      html: string;
+      textContent: string;
+      closestSelector: string | null;
+      closest: (sel: string) => FakeEl | null;
+      cloneNode: () => FakeEl;
+      querySelectorAll: () => FakeEl[];
+      remove: () => void;
+    }
+
+    const makeEl = (text: string, html: string, hiddenAncestorSelector: string | null): FakeEl => {
+      const el: FakeEl = {
+        html,
+        textContent: text,
+        closestSelector: hiddenAncestorSelector,
+        closest(sel: string) {
+          return this.closestSelector && sel.includes(this.closestSelector) ? this : null;
+        },
+        cloneNode() {
+          return { ...this, innerHTML: this.html } as FakeEl;
+        },
+        querySelectorAll() {
+          return [];
+        },
+        remove() {},
+      };
+      return el;
+    };
+
+    const hiddenArticle = makeEl('HIDDEN_ANCESTOR_ARTICLE '.repeat(12), '<p>HIDDEN_ANCESTOR_ARTICLE</p>', '[hidden]');
+    const ariaHiddenMain = makeEl('ARIA_HIDDEN_MAIN '.repeat(12), '<p>ARIA_HIDDEN_MAIN</p>', '[aria-hidden="true"]');
+    const displayNoneArticle = makeEl('DISPLAY_NONE_ARTICLE '.repeat(12), '<p>DISPLAY_NONE_ARTICLE</p>', '[style*="display: none"]');
+    const visibleArticle = makeEl('VISIBLE_ARTICLE_CONTENT '.repeat(8), '<p>VISIBLE_ARTICLE_CONTENT</p>', null);
+    const bodyEl = makeEl('VISIBLE_BODY', '<p>VISIBLE_BODY</p>', null);
+
+    (globalThis as { window: unknown }).window = {
+      location: { href: 'https://example.com/post' },
+      getSelection: () => null,
+    };
+    (globalThis as { document: unknown }).document = {
+      title: 'Post',
+      activeElement: null,
+      body: bodyEl,
+      documentElement: bodyEl,
+      createElement: () => {
+        let held: { innerHTML?: string; textContent?: string } | null = null;
+        return {
+          append(node: { innerHTML?: string; textContent?: string }) {
+            held = node;
+          },
+          querySelectorAll: () => [],
+          get innerHTML() {
+            return held?.innerHTML ?? '';
+          },
+          get textContent() {
+            return held?.textContent ?? '';
+          },
+        };
+      },
+      querySelectorAll: (selector: string) =>
+        selector.includes('article') ? [hiddenArticle, ariaHiddenMain, displayNoneArticle, visibleArticle] : [],
+    };
+
+    try {
+      const snap = snapshotDomPage();
+      expect(snap.contentHtml).toBe('<p>VISIBLE_ARTICLE_CONTENT</p>');
+      expect(snap.textFallback).toContain('VISIBLE_ARTICLE_CONTENT');
+      expect(snap.contentHtml).not.toContain('HIDDEN_ANCESTOR_ARTICLE');
+      expect(snap.contentHtml).not.toContain('ARIA_HIDDEN_MAIN');
+      expect(snap.contentHtml).not.toContain('DISPLAY_NONE_ARTICLE');
+    } finally {
+      (globalThis as { document?: unknown }).document = prevDoc;
+      (globalThis as { window?: unknown }).window = prevWin;
+    }
+  });
 });

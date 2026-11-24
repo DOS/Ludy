@@ -6,8 +6,8 @@ import { createHash } from 'node:crypto';
 import { EXTENSION_SCOPE_IDS } from '@ludy/kernel-contract';
 import { FEATURES, visibleFeatures } from '../src/features.ts';
 import { AGENDA_SCOPE } from '../src/agenda.ts';
-import { activeAccount, emptyState, readState, withAccount, withAddress, withFeature, withoutAccount } from '../src/state.ts';
-import { connectUrl, newPkce, parseConnectResult } from '../src/auth.ts';
+import { activeAccount, createCaptureDraftStore, emptyState, readState, withAccount, withAddress, withFeature, withoutAccount } from '../src/state.ts';
+import { FALLBACK_EXTENSION_SCOPES, connectUrl, newPkce, parseConnectResult, resolveSignInScopes } from '../src/auth.ts';
 import { capturePage, type PageCaptureFeature } from '../src/page-capture.ts';
 
 describe('features by module and permission', () => {
@@ -71,6 +71,112 @@ describe('sign-in', () => {
     expect(parseConnectResult(`${redirect}?code=crc_x&org=cong-ty&state=other`, pkce, redirect)).toEqual({ error: 'invalid' });
     expect(parseConnectResult(`https://evil.example/connect?code=crc_x&org=a&state=s1`, pkce, redirect)).toEqual({ error: 'invalid' });
     expect(parseConnectResult(`${redirect}?error=access_denied&state=s1`, pkce, redirect)).toEqual({ error: 'access_denied' });
+  });
+
+  it('narrows fallback sign-in scopes to meetings when /api/config omits modules or lacks matching features (#3742)', async () => {
+    expect(FALLBACK_EXTENSION_SCOPES).toEqual(['meetings']);
+    expect(resolveSignInScopes(undefined)).toEqual(['meetings']);
+    expect(resolveSignInScopes(null)).toEqual(['meetings']);
+    expect(resolveSignInScopes([])).toEqual(['meetings']);
+    expect(resolveSignInScopes(['kernel', 'finance'])).toEqual(['meetings']);
+    expect(resolveSignInScopes(['kernel', 'notes'])).toEqual(['notes']);
+    expect(resolveSignInScopes(['kernel', 'meetings'])).toEqual(['meetings']);
+    expect(resolveSignInScopes(['kernel', 'meetings', 'notes'])).toEqual(['meetings', 'notes']);
+
+    const pkce = await newPkce();
+    const redirect = 'https://abcdefghijklmnopabcdefghijklmnop.chromiumapp.org/connect';
+    const emptyFallback = new URL(connectUrl('https://ludy.congty.vn', pkce, redirect, 'Thiết bị', false, []));
+    expect(emptyFallback.searchParams.get('scope')).toBe('meetings');
+  });
+});
+
+describe('capture draft scope and concurrency (#3742)', () => {
+  it('keys capture drafts by (serverUrl, orgId) and clears drafts and pending ops on sign-out or server change', () => {
+    const store = createCaptureDraftStore();
+    const serverA = 'https://a.example';
+    const serverB = 'https://b.example';
+
+    store.syncState({
+      address: serverA,
+      accounts: {
+        org1: { orgId: 'org1', orgSlug: 'one', token: 't1', expiresAt: '2027-01-01T00:00:00Z' },
+        org2: { orgId: 'org2', orgSlug: 'two', token: 't2', expiresAt: '2027-01-01T00:00:00Z' },
+      },
+      activeOrg: 'org1',
+    });
+
+    const d1 = store.get(serverA, 'org1');
+    d1.draft.title = 'Org 1 secret';
+    d1.draft.body = 'Private note';
+    d1.draft.sourceUrl = 'https://example.com/1';
+
+    // Switching to org2 isolates the draft immediately.
+    const switchToOrg2 = store.syncState({
+      address: serverA,
+      accounts: {
+        org1: { orgId: 'org1', orgSlug: 'one', token: 't1', expiresAt: '2027-01-01T00:00:00Z' },
+        org2: { orgId: 'org2', orgSlug: 'two', token: 't2', expiresAt: '2027-01-01T00:00:00Z' },
+      },
+      activeOrg: 'org2',
+    });
+    expect(switchToOrg2.changed).toBe(true);
+    expect(store.get(serverA, 'org2').draft.title).toBe('');
+    expect(store.get(serverA, 'org2').draft.sourceUrl).toBeNull();
+
+    // Start an in-flight capture op in org2, then switch to org1 (without signing out org2).
+    const opOrg2 = store.beginOp(serverA, 'org2');
+    expect(opOrg2).not.toBeNull();
+    expect(opOrg2!.op.isLive()).toBe(true);
+    expect(opOrg2!.op.isActive()).toBe(true);
+
+    store.syncState({
+      address: serverA,
+      accounts: {
+        org1: { orgId: 'org1', orgSlug: 'one', token: 't1', expiresAt: '2027-01-01T00:00:00Z' },
+        org2: { orgId: 'org2', orgSlug: 'two', token: 't2', expiresAt: '2027-01-01T00:00:00Z' },
+      },
+      activeOrg: 'org1',
+    });
+    expect(opOrg2!.op.isLive()).toBe(true);
+    expect(opOrg2!.op.isActive()).toBe(false);
+    opOrg2!.op.end();
+    expect(store.get(serverA, 'org2').busy).toBe(false);
+
+    // Start an in-flight op in org1, then sign out org1 and sign right back into org1: old op must be invalidated.
+    const opOrg1 = store.beginOp(serverA, 'org1');
+    expect(opOrg1).not.toBeNull();
+    store.clearScope(serverA, 'org1');
+    store.syncState({
+      address: serverA,
+      accounts: {
+        org1: { orgId: 'org1', orgSlug: 'one', token: 't1b', expiresAt: '2027-01-01T00:00:00Z' },
+        org2: { orgId: 'org2', orgSlug: 'two', token: 't2', expiresAt: '2027-01-01T00:00:00Z' },
+      },
+      activeOrg: 'org1',
+    });
+    expect(opOrg1!.op.isLive()).toBe(false);
+    expect(opOrg1!.op.isActive()).toBe(false);
+    expect(store.get(serverA, 'org1').draft.title).toBe('');
+    expect(store.get(serverA, 'org1').busy).toBe(false);
+
+    // Calling end() on the stale op must not release a newly started op in the re-signed session.
+    const newOpOrg1 = store.beginOp(serverA, 'org1');
+    expect(newOpOrg1).not.toBeNull();
+    opOrg1!.op.end();
+    expect(store.get(serverA, 'org1').busy).toBe(true);
+    newOpOrg1!.op.end();
+
+    // Switching server URL clears drafts even if an orgId matches.
+    store.get(serverA, 'org1').draft.title = 'Server A only';
+    store.syncState({
+      address: serverB,
+      accounts: {
+        org1: { orgId: 'org1', orgSlug: 'one', token: 'tb', expiresAt: '2027-01-01T00:00:00Z' },
+      },
+      activeOrg: 'org1',
+    });
+    expect(store.get(serverB, 'org1').draft.title).toBe('');
+    expect(newOpOrg1!.op.isLive()).toBe(false);
   });
 });
 
