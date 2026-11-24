@@ -1192,8 +1192,8 @@ suite('Projects v2 Cycles & Story Points on PostgreSQL (#4361)', () => {
       );
       expect(carryHistory[0]?.left_reason).toBe('carryover');
 
-      // Now mutate tCarry points and complete it in sprint2, and reopen tDone.
-      // Sprint 1 snapshot metrics, velocity, burndown, and cycle_summary_source must stay 100% immutable!
+      // Now mutate tCarry points and complete it in sprint2, and reopen tDone + change tDone points on sprint1.
+      // Sprint 1 snapshot metrics, velocity, burndown, history points, and cycle_summary_source must stay 100% immutable!
       await exec(pMember.userId, snapOrg.orgId, 'projects.task.set_points', {
         projectId,
         taskId: tCarry,
@@ -1201,6 +1201,17 @@ suite('Projects v2 Cycles & Story Points on PostgreSQL (#4361)', () => {
       });
       await exec(pMember.userId, snapOrg.orgId, 'kernel.task.set_status', { id: tCarry, status: 'done' });
       await exec(pMember.userId, snapOrg.orgId, 'kernel.task.set_status', { id: tDone, status: 'in_progress' });
+      await exec(pMember.userId, snapOrg.orgId, 'projects.task.set_points', {
+        projectId,
+        taskId: tDone,
+        storyPoints: 34,
+      });
+
+      const { rows: tDoneHistAfter } = await admin.query<{ story_points: number | null }>(
+        'SELECT story_points FROM ludy_projects.project_cycle_task_history WHERE org_id = $1 AND cycle_id = $2 AND task_id = $3',
+        [snapOrg.orgId, sprint1.id, tDone],
+      );
+      expect(tDoneHistAfter[0]?.story_points).toBe(5);
 
       const afterMutationsMetrics = await query<ProjectCycleMetrics>(
         pMember.userId,

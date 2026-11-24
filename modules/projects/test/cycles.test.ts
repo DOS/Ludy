@@ -342,4 +342,33 @@ describe('@ludy/mod-projects cycles (#4361)', () => {
     expect(series[3]?.remainingPoints).toBeNull();
     expect(series[4]?.remainingPoints).toBeNull();
   });
+
+  it('keeps post-completion removed_from_project tasks active through closedOn', () => {
+    const series = computeCycleBurndown(
+      [
+        {
+          status: 'todo',
+          storyPoints: 5,
+          createdAt: '2027-02-01T02:00:00Z',
+          updatedAt: '2027-02-03T10:00:00Z',
+          doneAt: null,
+          inCommittedScope: true,
+          intervals: [
+            {
+              joinedAt: '2027-02-01T02:00:00Z',
+              leftAt: '2027-02-03T11:00:00Z',
+              leftReason: 'removed_from_project',
+              storyPoints: 5,
+            },
+          ],
+        },
+      ],
+      '2027-02-01',
+      '2027-02-04',
+      'completed',
+      '2027-02-03T09:00:00Z',
+      '2027-02-04T10:00:00Z',
+    );
+    expect(series.map((p) => p.remainingPoints)).toEqual([5, 5, 5, null]);
+  });
 });

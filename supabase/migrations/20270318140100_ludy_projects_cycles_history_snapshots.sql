@@ -160,7 +160,16 @@ BEGIN
         NEW.org_id, NEW.project_id, NEW.cycle_id, NEW.task_id, NEW.story_points, pg_catalog.now()
       );
     END IF;
-  ELSIF NEW.cycle_id IS NOT NULL AND OLD.story_points IS DISTINCT FROM NEW.story_points THEN
+  ELSIF NEW.cycle_id IS NOT NULL
+     AND OLD.story_points IS DISTINCT FROM NEW.story_points
+     AND NOT EXISTS (
+       SELECT 1
+         FROM ludy_projects.project_cycle pc
+        WHERE pc.org_id = NEW.org_id
+          AND pc.project_id = NEW.project_id
+          AND pc.id = NEW.cycle_id
+          AND pc.status = 'completed'
+     ) THEN
     UPDATE ludy_projects.project_cycle_task_history
        SET story_points = NEW.story_points
      WHERE org_id = NEW.org_id

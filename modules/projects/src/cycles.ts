@@ -330,6 +330,8 @@ export function computeCycleBurndown(
     observedUntil = todayVn >= startsOn ? clampLocalDate(todayVn, startsOn, endsOn) : null;
   }
 
+  const completedMs = completedAt ? new Date(completedAt).getTime() : null;
+
   const normalized = tasks.map((t) => {
     const rawDoneTs = t.status === 'done' ? (t.doneAt ?? t.updatedAt) : null;
     const rawDone = rawDoneTs !== null ? vietnamToday(new Date(rawDoneTs)) : null;
@@ -344,9 +346,16 @@ export function computeCycleBurndown(
         ? t.intervals.map((iv) => {
             const rawJoined = vietnamToday(new Date(iv.joinedAt));
             const effectiveJoined = rawJoined < startsOn ? startsOn : rawJoined;
-            // Carryover at completion stays remaining through closedOn; earlier removals drop on leftDay.
+            // Carryover at completion or removals strictly after cycle completion stay remaining through closedOn.
+            const leftAfterClose =
+              status === 'completed' &&
+              completedMs !== null &&
+              iv.leftAt !== null &&
+              new Date(iv.leftAt).getTime() >= completedMs;
             const effectiveLeft =
-              iv.leftAt !== null && iv.leftReason !== 'carryover' ? vietnamToday(new Date(iv.leftAt)) : null;
+              iv.leftAt !== null && iv.leftReason !== 'carryover' && !leftAfterClose
+                ? vietnamToday(new Date(iv.leftAt))
+                : null;
             return {
               effectiveJoined,
               effectiveLeft,
@@ -579,7 +588,10 @@ async function computeMetricsForProject(
 
       for (const snap of snapshotRows) {
         seenTaskIds.add(snap.task_id);
-        const intervals = toIntervals(historyByTask.get(snap.task_id));
+        const rawIntervals = toIntervals(historyByTask.get(snap.task_id));
+        const intervals = rawIntervals?.map((iv, idx) =>
+          idx === rawIntervals.length - 1 && iv.leftAt === null ? { ...iv, storyPoints: snap.story_points } : iv,
+        );
         samples.push({
           status: snap.task_status,
           storyPoints: snap.story_points,
