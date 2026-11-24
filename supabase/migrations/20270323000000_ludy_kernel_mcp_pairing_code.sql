@@ -156,7 +156,7 @@ DO $$
 DECLARE
   r record;
 BEGIN
-  FOR r IN SELECT rolname FROM pg_catalog.pg_roles WHERE rolname LIKE 'ludy\_%' AND rolname <> current_user LOOP
+  FOR r IN SELECT rolname FROM pg_catalog.pg_roles WHERE rolname LIKE ANY (ARRAY['ludy\_%', 'crove\_%']) AND rolname <> current_user LOOP
     EXECUTE pg_catalog.format('REVOKE ALL ON FUNCTION ludy_kernel.mcp_pairing_member_trigger() FROM %I', r.rolname);
   END LOOP;
 END $$;
@@ -175,7 +175,7 @@ DO $$
 DECLARE
   r record;
 BEGIN
-  FOR r IN SELECT rolname FROM pg_catalog.pg_roles WHERE rolname LIKE 'ludy\_%' AND rolname <> current_user LOOP
+  FOR r IN SELECT rolname FROM pg_catalog.pg_roles WHERE rolname LIKE ANY (ARRAY['ludy\_%', 'crove\_%']) AND rolname <> current_user LOOP
     EXECUTE pg_catalog.format('REVOKE ALL ON FUNCTION ludy_kernel.mcp_pairing_issue(bytea, text), ludy_kernel.mcp_pairing_redeem(bytea, bytea) FROM %I', r.rolname);
   END LOOP;
 END $$;

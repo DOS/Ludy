@@ -242,8 +242,8 @@ suite('the pairing code of the MCP endpoint (#4591)', () => {
   });
 
   // A fresh app over the same runtime and database: its own rate limits, so one test's attempts never count against another's.
-  const freshApp = async () => {
-    const config = loadConfig(bootEnv);
+  const freshApp = async (env: Record<string, string> = {}) => {
+    const config = loadConfig({ ...bootEnv, ...env });
     const oauth = await createOauthServer(config, (fn) => sharedRuntime.orgless(fn));
     return createHttpApp({ config, oauth, runtime: sharedRuntime, store: new MemoryStore(), authenticate: createAuthenticator(config, sharedDb), pool, aiEnabled: false });
   };
@@ -434,6 +434,17 @@ suite('the pairing code of the MCP endpoint (#4591)', () => {
       expect(response.headers.get('x-request-id')).toBeTruthy();
       expect(response.headers.get('content-type')).toContain('application/json');
     }
+  });
+
+  it('shares no budget between addresses: many callers, each within its own limit, are all answered', async () => {
+    // Behind one trusted proxy hop each request names its own address; 150 addresses in a minute would exhaust any shared ceiling of 120.
+    const app = await freshApp({ TRUSTED_PROXY_HOPS: '1' });
+    const statuses = new Set<number>();
+    for (let i = 0; i < 150; i++) {
+      const response = await app.request(`${base}/oauth/pairing/redeem`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-forwarded-for': `203.0.113.${i + 1}` }, body: JSON.stringify({ code: 'DDDD-DDDD-DDDD' }) });
+      statuses.add(response.status);
+    }
+    expect(statuses).toEqual(new Set([400]));
   });
 
   it('answers a body that is too large with 413 and does not read it', async () => {

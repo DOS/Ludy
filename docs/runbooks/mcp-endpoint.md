@@ -48,7 +48,7 @@ Case, dashes and spaces in the code do not matter. Answers (JSON, `cache-control
 | 200 | `{"access_token": "lpt_...", "token_type": "Bearer", "expires_in": <seconds>, "scope": "ludy.read"}` | the code was good; `expires_in` is the time left of the grant (30 days) |
 | 400 | `{"error": "invalid_grant", "error_description": "The pairing code is not valid"}` | **every** other case alike: wrong, malformed, already used, expired, or void because the person who made it is no longer an owner or admin, the org is stopped or a kill switch is on. Nothing tells them apart, and a refused code leaves no grant behind |
 | 413 | `{"error": "invalid_request", ...}` | a body over 1 KB |
-| 429 | `{"error": "too_many_requests", ...}` and `retry-after` | more than 10 attempts a minute from one address, or 120 a minute for one API instance (both counted in memory per instance; a flood from many addresses can therefore hold up redeems for a minute, which the person fixes by trying again) |
+| 429 | `{"error": "too_many_requests", ...}` and `retry-after` | more than 10 attempts a minute from one address (counted in memory per API instance; no budget is shared between addresses, so one caller cannot block pairing for the others) |
 
 Then call `PUBLIC_URL/mcp` as for any client, with `authorization: Bearer lpt_...` on every request (Streamable HTTP, `POST`). The token is opaque, 32 random bytes with the `lpt_` prefix, stored only as its SHA-256, and has no refresh: it lives as long as its grant (**30 days**, shorter than the OAuth grant's 90 because it is a static bearer), then the client pairs again. A token on `/api` is refused 401, as an OAuth token is. #4592 (the MCP conformance tool) uses this route and error shape.
 

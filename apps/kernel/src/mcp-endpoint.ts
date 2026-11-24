@@ -150,9 +150,9 @@ export function mountOauthProvider(
   const addressLimiter = new RateLimiter({ perMinute: 300, ...(deps.now ? { now: deps.now } : {}) });
   const registerLimiter = new RateLimiter({ perMinute: deps.registerPerMinute, ...(deps.now ? { now: deps.now } : {}) });
   const registerGlobalLimiter = new RateLimiter({ perMinute: deps.registerGlobalPerMinute, ...(deps.now ? { now: deps.now } : {}) });
-  // The pairing redeem (#4591): 10 attempts a minute per address and, as a ceiling on guessing, 120 for the whole API. The code is about 59 bits and lives 10 minutes.
+  // The pairing redeem (#4591): 10 attempts a minute per address, on top of the 300 a minute every /oauth/* route has. No budget is shared between addresses: a shared ceiling would let a caller with a few
+  // addresses block pairing for every org. The code is about 59 bits and lives 10 minutes, so 10 guesses a minute per address is nothing against 2^59.
   const pairingAddressLimiter = new RateLimiter({ perMinute: 10, ...(deps.now ? { now: deps.now } : {}) });
-  const pairingGlobalLimiter = new RateLimiter({ perMinute: 120, ...(deps.now ? { now: deps.now } : {}) });
 
   // The headers of every answer of these routes, ours and the provider's, set before either writes.
   const decorate = (c: Context, requestId: string) => {
@@ -245,8 +245,6 @@ export function mountOauthProvider(
     };
     const mine = pairingAddressLimiter.take(deps.clientKey(c));
     if (!mine.allowed) return finish(429, { error: 'too_many_requests', error_description: 'Too many requests, try again later' }, mine.retryAfterSeconds);
-    const all = pairingGlobalLimiter.take('all');
-    if (!all.allowed) return finish(429, { error: 'too_many_requests', error_description: 'Too many requests, try again later' }, all.retryAfterSeconds);
     const text = await readLimited(c.req.raw, MAX_PAIRING_BODY_BYTES);
     if (text === null) return finish(413, { error: 'invalid_request', error_description: 'Request body too large' });
     const refusal = () => finish(400, { error: 'invalid_grant', error_description: 'The pairing code is not valid' });
