@@ -2237,6 +2237,10 @@ BEGIN
 
   -- Re-sample wall-clock timestamp immediately before consuming token (#4278).
   v_now := pg_catalog.date_trunc('milliseconds', pg_catalog.clock_timestamp());
+  IF v_tok.expires_at <= v_now
+     OR (v_env.expires_at IS NOT NULL AND v_env.expires_at <= v_now) THEN
+    RETURN pg_catalog.jsonb_build_object('status', 'not_found');
+  END IF;
 
   UPDATE ludy_sign.signing_token
   SET used_at = v_now

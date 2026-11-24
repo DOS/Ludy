@@ -642,6 +642,118 @@ describe('checkSignObligationExtract (#3821)', () => {
       obligations: [],
     });
     expect(usdNokFallback.proposal?.contractValue).toBeNull();
+
+    // 9. B1 (#4393): symbol-marked & amount-adjacent ambiguous ISO currencies (₱50,000, ₽50,000, ₺50,000, 50,000 PHP)
+    //    cannot downgrade to VND while accepting their grounded foreign currency.
+    for (const [sampleText, expectedCode] of [
+      ['Bên B: Công ty ABC\nGiá trị hợp đồng: ₱50,000.', 'PHP'],
+      ['Bên B: Công ty ABC\nGiá trị hợp đồng: ₽50,000.', 'RUB'],
+      ['Bên B: Công ty ABC\nGiá trị hợp đồng: ₺50,000.', 'TRY'],
+      ['Bên B: Công ty ABC\nGiá trị hợp đồng: 50,000 PHP.', 'PHP'],
+    ] as const) {
+      const symReq: SignObligationExtractRequest = {
+        envelopeTitle: `Hợp đồng ${expectedCode}`,
+        pageCount: 1,
+        pages: [{ page: 1, text: sampleText }],
+      };
+      const quote = sampleText.split('\n')[1]!;
+      const downgradedSym = checkSignObligationExtract(symReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '50000',
+        currency: 'VND',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: quote },
+        ],
+        obligations: [],
+      });
+      expect(downgradedSym.proposal?.contractValue).toBeNull();
+
+      const validSym = checkSignObligationExtract(symReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '50000',
+        currency: expectedCode,
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: quote },
+        ],
+        obligations: [],
+      });
+      expect(validSym.proposal?.contractValue).toBe('50000');
+      expect(validSym.proposal?.currency).toBe(expectedCode);
+    }
+
+    // 10. B2 (#4393): (a) non-ISO 3-letter words (FOR, VAT) and prose-ambiguous codes (ALL, TRY) cannot hijack currency;
+    //     (b) unlabelled Vietnamese VND contracts with "ron cao su", "ALL RIGHTS RESERVED", "bản vẽ CAD", "PHP developer"
+    //     retain their valid VND contractValue.
+    const proseHijackReq: SignObligationExtractRequest = {
+      envelopeTitle: 'Hợp đồng dịch vụ',
+      pageCount: 1,
+      pages: [
+        {
+          page: 1,
+          text: 'ALL RIGHTS RESERVED\nBên B: Công ty ABC\nPlease try all packages for VAT 10%: 100.',
+        },
+      ],
+    };
+    for (const bogusCurrency of ['ALL', 'TRY', 'FOR', 'VAT']) {
+      const hijackRes = checkSignObligationExtract(proseHijackReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '100',
+        currency: bogusCurrency,
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: 'Please try all packages for VAT 10%: 100.' },
+        ],
+        obligations: [],
+      });
+      expect(hijackRes.proposal?.contractValue).toBeNull();
+      expect(hijackRes.proposal?.currency).toBe('VND');
+    }
+
+    const vnSmeProseReq: SignObligationExtractRequest = {
+      envelopeTitle: 'Hợp đồng gia công vật tư',
+      pageCount: 1,
+      pages: [
+        {
+          page: 1,
+          text: [
+            'ALL RIGHTS RESERVED',
+            'Bên B: Công ty ABC',
+            'Cung cấp ron cao su theo bản vẽ CAD cho PHP developer và CPU AMD.',
+            'Giá trị hợp đồng: 250.000.000.',
+          ].join('\n'),
+        },
+      ],
+    };
+    const vnSmeUnlabelled = checkSignObligationExtract(vnSmeProseReq, {
+      counterpartyName: 'Công ty ABC',
+      effectiveDate: null,
+      expiryDate: null,
+      renewalNoticeDays: null,
+      autoRenew: false,
+      contractValue: '250000000',
+      currency: 'VND',
+      citations: [
+        { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+        { field: 'contractValue', pageNumber: 1, quoteExcerpt: 'Giá trị hợp đồng: 250.000.000.' },
+      ],
+      obligations: [],
+    });
+    expect(vnSmeUnlabelled.proposal?.contractValue).toBe('250000000');
+    expect(vnSmeUnlabelled.proposal?.currency).toBe('VND');
   });
 });
 

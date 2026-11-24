@@ -2344,6 +2344,52 @@ export function isDateGroundedInQuote(isoDate: string, rawQuote: string): boolea
   return hasNumericMonth || hasWordMonth;
 }
 
+const FALLBACK_ISO_CURRENCIES = [
+  'AED', 'AUD', 'BRL', 'CAD', 'CHF', 'CNY', 'CZK', 'DKK', 'EUR', 'GBP',
+  'HKD', 'HUF', 'IDR', 'ILS', 'INR', 'JPY', 'KRW', 'MXN', 'MYR', 'NOK',
+  'NZD', 'PHP', 'PLN', 'RON', 'RUB', 'SAR', 'SEK', 'SGD', 'THB', 'TRY',
+  'TWD', 'USD', 'VND', 'ZAR',
+] as const;
+
+const ISO_CURRENCY_SET: ReadonlySet<string> = new Set([
+  ...ALL_ISO_CURRENCIES.map((c) => c.toUpperCase()),
+  ...FALLBACK_ISO_CURRENCIES,
+  'VND',
+]);
+
+// Uppercase ISO codes that also occur as everyday prose words or acronyms (e.g. "ALL RIGHTS RESERVED",
+// "bản vẽ CAD", "PHP developer", "ron cao su") are grounded ONLY via explicit currency symbols/names
+// or amount-adjacent tokens (e.g. "50,000 PHP", "CAD 100"), never from bare prose occurrences.
+const PROSE_AMBIGUOUS_ISO_CODES: ReadonlySet<string> = new Set([
+  ...Array.from(AMBIGUOUS_LOWERCASE_CURRENCIES, (c) => c.toUpperCase()),
+  'AMD',
+  'ARS',
+  'AWG',
+  'BMD',
+  'BND',
+  'BSD',
+  'CAD',
+  'CDF',
+  'GIP',
+  'IRR',
+  'ISK',
+  'KPW',
+  'LAK',
+  'RON',
+  'SAR',
+  'SBD',
+  'SCR',
+  'SDG',
+  'SLE',
+  'SLL',
+  'SRD',
+  'SSP',
+  'STD',
+  'STN',
+  'XDR',
+  'XSU',
+]);
+
 const CURRENCY_MARKER_RES_BY_CODE: Readonly<Record<string, readonly RegExp[]>> = {
   USD: [
     /(?<![\p{L}])us\$(?![\p{L}])/u,
@@ -2365,25 +2411,23 @@ const CURRENCY_MARKER_RES_BY_CODE: Readonly<Record<string, readonly RegExp[]>> =
   CHF: [/(?<![\p{L}])swiss francs?(?![\p{L}])/u],
   INR: [/₹/u, /(?<![\p{L}])indian rupees?(?![\p{L}])/u],
   NOK: [/(?<![\p{L}])norwegian kron(?:e|er)(?![\p{L}])/u],
-  PHP: [/₱/u],
-  RUB: [/₽/u],
-  TRY: [/₺/u],
+  PHP: [/₱/u, /(?<![\p{L}])philippine pesos?(?![\p{L}])/u],
+  RUB: [/₽/u, /(?<![\p{L}])russian rubles?(?![\p{L}])/u],
+  TRY: [/₺/u, /(?<![\p{L}])turkish liras?(?![\p{L}])/u],
+  PEN: [/(?<![\p{L}])peruvian sol(?:es)?(?![\p{L}])/u],
+  ALL: [/(?<![\p{L}])albanian lek(?:ë|e)?(?![\p{L}])/u],
+  TOP: [/(?<![\p{L}])tongan pa'?anga(?![\p{L}])/u],
+  RON: [/(?<![\p{L}])romanian le[iu](?![\p{L}])/u],
 };
 
-const KNOWN_FOREIGN_CURRENCY_CODES: readonly string[] = Array.from(
-  new Set(
-    [...ALL_ISO_CURRENCIES, ...EXTRA_CURRENCY_CODES.map((c) => c.toUpperCase())].filter(
-      (code) =>
-        /^[A-Z]{3}$/.test(code) &&
-        code !== 'VND' &&
-        code !== 'RMB' &&
-        code !== 'NTD' &&
-        !AMBIGUOUS_LOWERCASE_CURRENCIES.has(code.toLowerCase()),
-    ),
-  ),
+const KNOWN_BARE_FOREIGN_CODES: readonly string[] = Array.from(ISO_CURRENCY_SET).filter(
+  (code) => code !== 'VND' && !PROSE_AMBIGUOUS_ISO_CODES.has(code),
 );
+const MARKER_CURRENCY_ENTRIES = Object.entries(CURRENCY_MARKER_RES_BY_CODE);
 
-const THREE_LETTER_TOKEN_RE = /(?<![\p{L}])[a-z]{3}(?![\p{L}])/gu;
+const UPPER_THREE_LETTER_TOKEN_RE = /(?<![\p{L}])[A-Z]{3}(?![\p{L}])/gu;
+const AMOUNT_BEFORE_ISO_RE = /(?<![\p{L}\p{N}])\d[\d.,]* ?([A-Z]{3})(?![\p{L}])/gu;
+const ISO_BEFORE_AMOUNT_RE = /(?<![\p{L}])([A-Z]{3}) ?[-:/]? ?\d[\d.,]*(?![\p{L}%])/gu;
 
 const EXPLICIT_VND_UNIT_RE =
   /(?<![\p{L}])(?:vnd|vnđ|việt nam đồng|viet nam dong|vietnam dong)(?![\p{L}])|(?<=\d(?: ?(?:nghìn|ngàn|triệu|tỷ|tỉ) ))đồng(?![\p{L}])(?! (?:tiền|ý|hồ|thời|nhất|loạt|lòng|bộ|chí)(?![\p{L}]))|(?<=\d ?)đồng(?![\p{L}])(?! (?:tiền|ý|hồ|thời|nhất|loạt|lòng|bộ|chí)(?![\p{L}]))|(?<=\d ?)đ(?![\p{L}])|₫/u;
@@ -2392,47 +2436,79 @@ function hasExplicitVnd(rawText: string): boolean {
   return EXPLICIT_VND_UNIT_RE.test(normalizeContractText(rawText));
 }
 
-function extractThreeLetterTokens(norm: string): Set<string> {
-  const tokens = new Set<string>();
-  for (const m of norm.matchAll(THREE_LETTER_TOKEN_RE)) {
-    tokens.add(m[0]!);
+function extractCurrencySignals(rawText: string): {
+  norm: string;
+  bareUpperTokens: Set<string>;
+  amountAdjacentUpperTokens: Set<string>;
+} {
+  const preserved = normalizePreservingCase(rawText);
+  const preservedCollapsed = preserved.replace(/\s+/g, ' ').trim();
+  const norm = preservedCollapsed.replace(/\s*%/g, '%').toLowerCase();
+  const bareUpperTokens = new Set<string>();
+  for (const m of preserved.matchAll(UPPER_THREE_LETTER_TOKEN_RE)) {
+    bareUpperTokens.add(m[0]!);
   }
-  return tokens;
+  const amountAdjacentUpperTokens = new Set<string>();
+  for (const m of preservedCollapsed.matchAll(AMOUNT_BEFORE_ISO_RE)) {
+    amountAdjacentUpperTokens.add(m[1]!);
+  }
+  for (const m of preservedCollapsed.matchAll(ISO_BEFORE_AMOUNT_RE)) {
+    amountAdjacentUpperTokens.add(m[1]!);
+  }
+  return { norm, bareUpperTokens, amountAdjacentUpperTokens };
 }
 
-function isCurrencyGroundedInNorm(
+function isCurrencyGroundedInSignals(
   code: string,
   norm: string,
-  wordTokens: ReadonlySet<string>,
+  bareUpperTokens: ReadonlySet<string>,
+  amountAdjacentUpperTokens: ReadonlySet<string>,
 ): boolean {
   if (code === 'VND') return true;
-  if (!/^[A-Z]{3}$/.test(code)) return false;
-  if (wordTokens.has(code.toLowerCase())) return true;
+  if (!ISO_CURRENCY_SET.has(code)) return false;
   const markers = CURRENCY_MARKER_RES_BY_CODE[code];
-  return markers ? markers.some((re) => re.test(norm)) : false;
+  if (markers && markers.some((re) => re.test(norm))) {
+    return true;
+  }
+  if (PROSE_AMBIGUOUS_ISO_CODES.has(code)) {
+    return amountAdjacentUpperTokens.has(code);
+  }
+  return bareUpperTokens.has(code);
 }
 
 export function isCurrencyGroundedInText(currencyCode: string, rawText: string): boolean {
   const code = currencyCode.trim().toUpperCase();
   if (code === 'VND') return true;
-  if (!/^[A-Z]{3}$/.test(code)) return false;
-  const norm = normalizeContractText(rawText);
-  return isCurrencyGroundedInNorm(code, norm, extractThreeLetterTokens(norm));
+  if (!ISO_CURRENCY_SET.has(code)) return false;
+  const { norm, bareUpperTokens, amountAdjacentUpperTokens } = extractCurrencySignals(rawText);
+  return isCurrencyGroundedInSignals(code, norm, bareUpperTokens, amountAdjacentUpperTokens);
 }
 
 function groundedForeignCurrencies(rawText: string, extraCode?: string): Set<string> {
-  const norm = normalizeContractText(rawText);
-  const wordTokens = extractThreeLetterTokens(norm);
+  const { norm, bareUpperTokens, amountAdjacentUpperTokens } = extractCurrencySignals(rawText);
   const found = new Set<string>();
-  for (const code of KNOWN_FOREIGN_CURRENCY_CODES) {
-    if (isCurrencyGroundedInNorm(code, norm, wordTokens)) {
+  for (const [code, markers] of MARKER_CURRENCY_ENTRIES) {
+    if (markers.some((re) => re.test(norm))) {
       found.add(code);
     }
   }
-  if (extraCode && extraCode !== 'VND' && /^[A-Z]{3}$/.test(extraCode) && !found.has(extraCode)) {
-    if (isCurrencyGroundedInNorm(extraCode, norm, wordTokens)) {
-      found.add(extraCode);
+  for (const code of KNOWN_BARE_FOREIGN_CODES) {
+    if (bareUpperTokens.has(code)) {
+      found.add(code);
     }
+  }
+  for (const code of amountAdjacentUpperTokens) {
+    if (code !== 'VND' && ISO_CURRENCY_SET.has(code)) {
+      found.add(code);
+    }
+  }
+  if (
+    extraCode &&
+    extraCode !== 'VND' &&
+    !found.has(extraCode) &&
+    isCurrencyGroundedInSignals(extraCode, norm, bareUpperTokens, amountAdjacentUpperTokens)
+  ) {
+    found.add(extraCode);
   }
   return found;
 }
@@ -2448,12 +2524,12 @@ function isAmountWithCurrencyInLocalSpan(
   } catch {
     return false;
   }
-  const baseQuote = normalizeBaseText(rawQuote);
-  const clauses = baseQuote
-    .split(/[\n;|/()]+|[ \t]+-[ \t]+|,\s+|\s+(?:or|and|và|hoặc|tương đương)\s+/u)
+  const preservedQuote = normalizePreservingCase(rawQuote);
+  const clauses = preservedQuote
+    .split(/[\n;|/()]+|[ \t]+-[ \t]+|,\s+|\s+(?:or|and|và|hoặc|tương đương)\s+/iu)
     .map((part) => part.trim())
     .filter((part) => part.length > 0);
-  const candidateClauses = clauses.length > 0 ? clauses : [baseQuote];
+  const candidateClauses = clauses.length > 0 ? clauses : [preservedQuote];
   for (const clause of candidateClauses) {
     if (!parseQuoteDecimalCandidates(clause).some((c) => c.equals(target))) {
       continue;
@@ -2475,6 +2551,7 @@ function isCurrencyValidForContractValue(
   quoteExcerpt: string,
   combinedSourceRaw: string,
 ): boolean {
+  if (!ISO_CURRENCY_SET.has(candidateCurrency)) return false;
   const quoteForeign = groundedForeignCurrencies(quoteExcerpt, candidateCurrency);
   const quoteExplicitVnd = hasExplicitVnd(quoteExcerpt);
 
@@ -2671,13 +2748,16 @@ export function checkSignObligationExtract(
   }
 
   const rawCurrency = typeof raw.currency === 'string' ? stripFormatControl(raw.currency).trim().toUpperCase() : '';
-  const candidateCurrency = /^[A-Z]{3}$/.test(rawCurrency) ? rawCurrency : 'VND';
+  const hasRawCurrency = rawCurrency.length > 0;
+  const isValidIsoCurrency = !hasRawCurrency || ISO_CURRENCY_SET.has(rawCurrency);
+  const candidateCurrency = hasRawCurrency && isValidIsoCurrency ? rawCurrency : 'VND';
   let currency = 'VND';
   let contractValue: string | null = null;
   if (typeof raw.contractValue === 'string' && raw.contractValue.trim().length > 0) {
     const decStr = normalizeDecimalAmount(raw.contractValue);
     const cite = verifiedCitations.get('contractValue');
     if (
+      isValidIsoCurrency &&
       decStr !== null &&
       cite &&
       isAmountGroundedInQuote(decStr, cite.quoteExcerpt) &&
@@ -2689,6 +2769,8 @@ export function checkSignObligationExtract(
     } else {
       droppedCount += 1;
     }
+  } else if (hasRawCurrency && !isValidIsoCurrency) {
+    droppedCount += 1;
   } else if (candidateCurrency !== 'VND') {
     const docForeign = groundedForeignCurrencies(combinedSourceRaw, candidateCurrency);
     if (docForeign.has(candidateCurrency) && docForeign.size === 1 && !hasExplicitVnd(combinedSourceRaw)) {

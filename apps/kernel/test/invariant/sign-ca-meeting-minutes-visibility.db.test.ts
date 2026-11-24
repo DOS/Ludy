@@ -5,8 +5,9 @@
 //     across sign.ca.requests.by_envelope (sign/ca/list_requests), sign.ca.request.initiate, kernel.file.get,
 //     and GET /api/files/:padesFileId, with 0 RLS rows on ludy_sign.ca_signing_request and false from
 //     ludy_sign.can_read_sign_file
-//   - Dynamic reader removal and meeting retention expiry revoke non-creator attendee CA/PAdES access
-//     while retaining meeting creator access
+//   - Dynamic reader removal revokes non-creator attendee CA/PAdES access (404) while retaining creator access;
+//     after text_retention_date expires, completed legal-record CA/PAdES stays readable to creator + active readers
+//     while non-readers still receive 404 (#4531 A2)
 //   - kernel.org.export.snapshot omits meeting_minutes envelopes, their ca_signing_request rows, and
 //     their pades_file_id rows while preserving standalone CA envelopes and PAdES artifacts
 import { randomUUID } from 'node:crypto';
@@ -578,7 +579,9 @@ suite('eSign CA PAdES meeting minutes reader isolation invariants (#4157, ADR-00
       runtime.query('kernel.file.get', { id: mtgCa.padesFileId }, { actor: asUser(otherOwner), orgId: otherOrg.orgId }),
     ).rejects.toMatchObject({ code: 'NOT_FOUND', status: 404 });
 
-    // 4. Dynamic reader removal & meeting retention expiry revoke attendee access while keeping recorder creator access.
+    // 4. Dynamic reader removal revokes attendee access (404) while keeping recorder creator access;
+    //    under signed legal-record retention (#4531 A2), re-adding attendee keeps completed CA/PAdES readable
+    //    after text_retention_date expires while non-readers still receive 404.
     await runtime.execute(
       'meetings.reader.remove',
       { meetingId, userId: attendee.userId },
@@ -591,6 +594,14 @@ suite('eSign CA PAdES meeting minutes reader isolation invariants (#4157, ADR-00
       runtime.query('kernel.file.get', { id: mtgCa.padesFileId }, { actor: asUser(attendee), orgId: org.orgId }),
     ).rejects.toMatchObject({ code: 'NOT_FOUND', status: 404 });
 
+    // Creator retains access while attendee is removed.
+    const creatorFile = await runtime.query<{ id: string }>(
+      'kernel.file.get',
+      { id: mtgCa.padesFileId },
+      { actor: asUser(recorder), orgId: org.orgId },
+    );
+    expect(creatorFile.id).toBe(mtgCa.padesFileId);
+
     await runtime.execute(
       'meetings.reader.add',
       { meetingId, userId: attendee.userId },
@@ -602,20 +613,26 @@ suite('eSign CA PAdES meeting minutes reader isolation invariants (#4157, ADR-00
         WHERE org_id = $1::uuid AND id = $2::uuid`,
       [org.orgId, meetingId],
     );
+    for (const allowedUser of [recorder, attendee]) {
+      const caAfterRetention = await runtime.query<{ items: SignCaSigningRequestRecord[] }>(
+        'sign.ca.requests.by_envelope',
+        { envelopeId: mtgCa.envelopeId },
+        { actor: asUser(allowedUser), orgId: org.orgId },
+      );
+      expect(caAfterRetention.items.some((r) => r.id === mtgCa.requestId && r.padesFileId === mtgCa.padesFileId)).toBe(true);
+      const fileAfterRetention = await runtime.query<{ id: string }>(
+        'kernel.file.get',
+        { id: mtgCa.padesFileId },
+        { actor: asUser(allowedUser), orgId: org.orgId },
+      );
+      expect(fileAfterRetention.id).toBe(mtgCa.padesFileId);
+    }
     await expect(
-      runtime.query('sign.ca.requests.by_envelope', { envelopeId: mtgCa.envelopeId }, { actor: asUser(attendee), orgId: org.orgId }),
+      runtime.query('sign.ca.requests.by_envelope', { envelopeId: mtgCa.envelopeId }, { actor: asUser(owner), orgId: org.orgId }),
     ).rejects.toMatchObject({ code: 'SIGN_ENVELOPE_NOT_FOUND', status: 404 });
     await expect(
-      runtime.query('kernel.file.get', { id: mtgCa.padesFileId }, { actor: asUser(attendee), orgId: org.orgId }),
+      runtime.query('kernel.file.get', { id: mtgCa.padesFileId }, { actor: asUser(owner), orgId: org.orgId }),
     ).rejects.toMatchObject({ code: 'NOT_FOUND', status: 404 });
-
-    // Creator retains access to their own meeting_minutes CA request and PAdES PDF.
-    const creatorFile = await runtime.query<{ id: string }>(
-      'kernel.file.get',
-      { id: mtgCa.padesFileId },
-      { actor: asUser(recorder), orgId: org.orgId },
-    );
-    expect(creatorFile.id).toBe(mtgCa.padesFileId);
 
     // 5. kernel.org.export.snapshot omits meeting_minutes CA request + pades_file_id while preserving standalone CA rows.
     const exportedCaIds: string[] = [];
@@ -645,5 +662,5 @@ suite('eSign CA PAdES meeting minutes reader isolation invariants (#4157, ADR-00
     );
     expect(exportedFileIds).toContain(standaloneCa.padesFileId);
     expect(exportedFileIds).not.toContain(mtgCa.padesFileId);
-  }, 60_000);
+  }, 90_000);
 });

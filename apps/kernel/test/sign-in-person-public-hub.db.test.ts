@@ -863,7 +863,7 @@ suite('eSign Slice 4d in-person signing and public template hub (#3820)', () => 
     }
 
     // Case 1: Enter public_submit while still valid, block on ludy_sign.field lock until past deadline, then release -> 404 + used_at IS NULL.
-    const expDeadlineMs = Date.now() + 2500;
+    const expDeadlineMs = Date.now() + 3500;
     await runtime.execute(
       'sign.template.direct_link_set',
       {
@@ -917,6 +917,7 @@ suite('eSign Slice 4d in-person signing and public template hub (#3820)', () => 
     } finally {
       await expLockClient.query('ROLLBACK').catch(() => {});
       await expLockClient.end().catch(() => {});
+      await expSubmitPromise?.catch(() => {});
     }
     const expSubmit = await expSubmitPromise!;
     expect(expSubmit.status).toBe(404);
@@ -980,6 +981,7 @@ suite('eSign Slice 4d in-person signing and public template hub (#3820)', () => 
     } finally {
       await ctrlLockClient.query('ROLLBACK').catch(() => {});
       await ctrlLockClient.end().catch(() => {});
+      await ctrlSubmitPromise?.catch(() => {});
     }
     const ctrlSubmit = await ctrlSubmitPromise!;
     expect(ctrlSubmit.status).toBe(200);

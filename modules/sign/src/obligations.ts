@@ -1568,24 +1568,27 @@ export const signObligationsToday = defineQuery({
               WHERE elem->>'status' = 'pending'
                 AND CASE
                   WHEN elem->>'dueDate' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
-                    AND pg_catalog.substring(elem->>'dueDate', 1, 4)::int >= 1
                   THEN CASE
-                    WHEN pg_catalog.substring(elem->>'dueDate', 6, 2)::int IN (1, 3, 5, 7, 8, 10, 12)
-                      AND pg_catalog.substring(elem->>'dueDate', 9, 2)::int BETWEEN 1 AND 31
-                      THEN (elem->>'dueDate')::date <= ${dueHorizonVn}::date
-                    WHEN pg_catalog.substring(elem->>'dueDate', 6, 2)::int IN (4, 6, 9, 11)
-                      AND pg_catalog.substring(elem->>'dueDate', 9, 2)::int BETWEEN 1 AND 30
-                      THEN (elem->>'dueDate')::date <= ${dueHorizonVn}::date
-                    WHEN pg_catalog.substring(elem->>'dueDate', 6, 2)::int = 2
-                      AND pg_catalog.substring(elem->>'dueDate', 9, 2)::int BETWEEN 1 AND (
-                        CASE
-                          WHEN (pg_catalog.substring(elem->>'dueDate', 1, 4)::int % 4 = 0 AND pg_catalog.substring(elem->>'dueDate', 1, 4)::int % 100 <> 0)
-                            OR (pg_catalog.substring(elem->>'dueDate', 1, 4)::int % 400 = 0)
-                          THEN 29
-                          ELSE 28
-                        END
-                      )
-                      THEN (elem->>'dueDate')::date <= ${dueHorizonVn}::date
+                    WHEN pg_catalog.substring(elem->>'dueDate', 1, 4)::int >= 1
+                    THEN CASE
+                      WHEN pg_catalog.substring(elem->>'dueDate', 6, 2)::int IN (1, 3, 5, 7, 8, 10, 12)
+                        AND pg_catalog.substring(elem->>'dueDate', 9, 2)::int BETWEEN 1 AND 31
+                        THEN (elem->>'dueDate')::date <= ${dueHorizonVn}::date
+                      WHEN pg_catalog.substring(elem->>'dueDate', 6, 2)::int IN (4, 6, 9, 11)
+                        AND pg_catalog.substring(elem->>'dueDate', 9, 2)::int BETWEEN 1 AND 30
+                        THEN (elem->>'dueDate')::date <= ${dueHorizonVn}::date
+                      WHEN pg_catalog.substring(elem->>'dueDate', 6, 2)::int = 2
+                        AND pg_catalog.substring(elem->>'dueDate', 9, 2)::int BETWEEN 1 AND (
+                          CASE
+                            WHEN (pg_catalog.substring(elem->>'dueDate', 1, 4)::int % 4 = 0 AND pg_catalog.substring(elem->>'dueDate', 1, 4)::int % 100 <> 0)
+                              OR (pg_catalog.substring(elem->>'dueDate', 1, 4)::int % 400 = 0)
+                            THEN 29
+                            ELSE 28
+                          END
+                        )
+                        THEN (elem->>'dueDate')::date <= ${dueHorizonVn}::date
+                      ELSE false
+                    END
                     ELSE false
                   END
                   ELSE false
