@@ -14,6 +14,7 @@ export function findVsDevCmd(env?: NodeJS.ProcessEnv, exists?: ExistsFn, runSpaw
 export function formatClArgs(srcPath?: string, outExe?: string, objDir?: string): string;
 export function buildCmdLine(clArgs: string, vcvars?: string | null): string;
 export function isMainEntry(argv1: string | undefined, selfPath?: string, platform?: NodeJS.Platform): boolean;
+export function parseBuildNativeArgs(argv?: readonly string[]): { requireWin32: boolean; printClArgs: boolean };
 export function buildNative(options?: {
   requireWin32?: boolean;
   platform?: NodeJS.Platform;
