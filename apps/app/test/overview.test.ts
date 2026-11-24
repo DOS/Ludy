@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { WAITING_LINKS, allCounted, appsLayout, gapsFromYear, shellBadges, tasksNotListed, unreadNotices, waitingItems } from '../src/lib/overview.ts';
+import { WAITING_LINKS, allCounted, appsLayout, gapsFromYear, isDay1Empty, quickStartSteps, shellBadges, tasksNotListed, unreadNotices, waitingItems } from '../src/lib/overview.ts';
 
 describe('org overview', () => {
   it('lists what waits that the "Hôm nay cần bạn" list does not count, and leaves out counts of 0', () => {
@@ -84,5 +84,64 @@ describe('org overview', () => {
     // reviews at all, in either of the two ways it could (the inbox of reviews, or the review stage of the post list).
     const inbox = readFileSync(join(import.meta.dirname, '..', 'src', 'routes', 'inbox.tsx'), 'utf8');
     expect(inbox).not.toMatch(/reviewInbox|SocialReviews|stage:\s*['"]review['"]/);
+  });
+
+  it('builds up to 3 Day-1 quick-start steps gated strictly by enabled org modules and role (#4644)', () => {
+    expect(
+      quickStartSteps({ modules: ['finance', 'notes', 'sign', 'social', 'crm'], role: 'owner' }).map((s) => s.id),
+    ).toEqual(['uploadInvoice', 'configureApps', 'createNote']);
+
+    expect(
+      quickStartSteps({ modules: ['finance', 'sign'], role: 'admin' }).map((s) => s.id),
+    ).toEqual(['uploadInvoice', 'configureApps', 'createEnvelope']);
+
+    // Finance disabled: never recommends uploading invoices.
+    expect(
+      quickStartSteps({ modules: ['social', 'crm', 'sign'], role: 'owner' }).map((s) => s.id),
+    ).toEqual(['connectChannel', 'configureApps', 'createEnvelope']);
+
+    // Kernel only: falls back to task creation, app settings, and member invite.
+    expect(
+      quickStartSteps({ modules: ['kernel'], role: 'owner' }).map((s) => s.id),
+    ).toEqual(['createTask', 'configureApps', 'inviteTeam']);
+
+    // Member skips owner/admin settings and social channel-connect steps; viewer gets no write CTAs.
+    expect(
+      quickStartSteps({ modules: ['finance', 'notes'], role: 'member' }).map((s) => s.id),
+    ).toEqual(['uploadInvoice', 'createNote', 'createTask']);
+    expect(
+      quickStartSteps({ modules: ['kernel', 'social'], role: 'member' }).map((s) => s.id),
+    ).toEqual(['createTask']);
+    expect(
+      quickStartSteps({ modules: ['kernel', 'social', 'crm', 'sign'], role: 'member' }).map((s) => s.id),
+    ).toEqual(['addContact', 'createEnvelope', 'createDeal']);
+    expect(quickStartSteps({ modules: ['finance', 'notes'], role: 'viewer' })).toEqual([]);
+  });
+
+  it('detects Day-1 empty orgs only once reads settle with zero activity, waiting items, or tax dues (#4644)', () => {
+    const base = {
+      todayLoaded: true,
+      todayCount: 0,
+      overviewLoaded: true,
+      lastActivityAt: null,
+      taxDuesCount: 0,
+      pendingProposals: 0,
+      failedFiles: 0,
+      waitingLoaded: true,
+      waitingCount: 0,
+      sinceResolved: true,
+      sinceCount: 0,
+      hasError: false,
+    };
+    expect(isDay1Empty(base)).toBe(true);
+    expect(isDay1Empty({ ...base, todayLoaded: false })).toBe(false);
+    expect(isDay1Empty({ ...base, waitingLoaded: false })).toBe(false);
+    expect(isDay1Empty({ ...base, sinceResolved: false })).toBe(false);
+    expect(isDay1Empty({ ...base, hasError: true })).toBe(false);
+    expect(isDay1Empty({ ...base, lastActivityAt: '2026-11-23T09:00:00Z' })).toBe(false);
+    expect(isDay1Empty({ ...base, todayCount: 1 })).toBe(false);
+    expect(isDay1Empty({ ...base, taxDuesCount: 1 })).toBe(false);
+    expect(isDay1Empty({ ...base, waitingCount: 1 })).toBe(false);
+    expect(isDay1Empty({ ...base, sinceCount: 1 })).toBe(false);
   });
 });

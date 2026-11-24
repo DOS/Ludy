@@ -77,7 +77,7 @@ export type BoardRefusal =
   | 'editToDraft'
   // An approved or scheduled post was reviewed already; an edit sends it back.
   | 'alreadyApproved'
-  // Crove publishes at the scheduled time; nobody marks a post published by hand.
+  // Ludy publishes at the scheduled time; nobody marks a post published by hand.
   | 'toPublished'
   // Only a platform's refusal puts a post under Failed.
   | 'toFailed'

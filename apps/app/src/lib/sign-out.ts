@@ -1,5 +1,5 @@
 // One sign-out path for the SPA (issue #150). A Supabase sign-out leaves the access token valid until it expires, so
-// the current session is revoked in Crove first (an own revoke is immediate), then the Supabase session is ended.
+// the current session is revoked in Ludy first (an own revoke is immediate), then the Supabase session is ended.
 // The revoke is best effort: it never blocks or prevents the sign-out. No browser or API imports, so it is unit tested.
 
 export const REVOKE_TIMEOUT_MS = 3000;

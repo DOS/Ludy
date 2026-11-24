@@ -2413,7 +2413,7 @@ function ChannelEditor({
       {hasAdvanced && (!disabled || advancedUsed) && !settled && (
         <AdvancedOptions title={t('advanced.title', { channel })} filled={advancedUsed}>
       {isProvider(provider) && REPOST_PROVIDERS.has(provider) && postType !== 'story' && <RepostField settings={own.settings} disabled={disabled} onChange={(settings) => onChange({ ...own, settings })} />}
-      {/* A channel Crove cannot take a post down from shows the field only to clear a time set elsewhere (its issue says why). */}
+      {/* A channel Ludy cannot take a post down from shows the field only to clear a time set elsewhere (its issue says why). */}
       {((isProvider(provider) && REMOVE_READY.has(provider) && postType !== 'story') || own.settings.removeAt !== undefined) && (
         <RemoveAtField settings={own.settings} disabled={disabled} onApplyAll={onRemoveAtAll} onChange={(settings) => onChange({ ...own, settings })} />
       )}

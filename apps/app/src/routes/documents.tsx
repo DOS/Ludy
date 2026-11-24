@@ -45,7 +45,7 @@ function DocumentRow({ d, slug, notes }: { d: PurchaseDocument; slug: string; no
           )}
         </TableCell>
         <TableCell data-label={t('columns.status')}>
-          {/* Voided by reversing its entry (#165): Crove no longer counts it; the supplier's invoice is unchanged. */}
+          {/* Voided by reversing its entry (#165): Ludy no longer counts it; the supplier's invoice is unchanged. */}
           {d.voided ? (
             <Badge variant="destructive" title={t('voidReason', { reason: d.voided.reason })}>
               {t('status.voided')}

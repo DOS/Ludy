@@ -1,12 +1,12 @@
-// Posts a channel published outside Crove (#1054): the Metrics tab's switch that counts them, the chip each carries,
-// and its line in the published posts table (a link to the post on the platform, not to a Crove post).
+// Posts a channel published outside Ludy (#1054): the Metrics tab's switch that counts them, the chip each carries,
+// and its line in the published posts table (a link to the post on the platform, not to a Ludy post).
 import { useTranslations } from 'use-intl';
 import { Badge } from '@ludy/ui/components/badge';
 import { Checkbox } from '@ludy/ui/components/checkbox';
 import { cn } from '@ludy/ui/lib/utils';
 import { outsideUrl } from '../lib/social-external.ts';
 
-// label: the chip's text where the page must not name Crove (a client report, which may carry the agency's brand).
+// label: the chip's text where the page must not name Ludy (a client report, which may carry the agency's brand).
 export function OutsideChip({ label, className }: { label?: string; className?: string }) {
   const t = useTranslations('social.external');
   return (

@@ -397,6 +397,59 @@ export const en = {
         tasksLate: 'Your tasks past due',
       },
     },
+    quickstart: {
+      title: '{count, plural, one {Quick start} other {Quick start in # steps}}',
+      subtitle: 'Take one first step to bring live work onto your Home screen.',
+      stepLabel: 'Step {step}',
+      guideLink: 'Read the quick guide',
+      steps: {
+        uploadInvoice: {
+          title: 'Upload your first invoice',
+          description: 'Drop a PDF, photo, or XML file into your inbox so your AI coworker can read and check it for you.',
+          action: 'Upload invoice',
+        },
+        connectChannel: {
+          title: 'Connect a channel',
+          description: 'Link Facebook or Zalo OA to reply to customer messages and schedule posts.',
+          action: 'Connect channel',
+        },
+        addContact: {
+          title: 'Add your first customer',
+          description: 'Save contact details to keep track of sales conversations and quotes.',
+          action: 'Open Contacts',
+        },
+        createEnvelope: {
+          title: 'Send your first signing envelope',
+          description: 'Upload a PDF contract, place signing fields, and share the signing link.',
+          action: 'Open eSign',
+        },
+        configureApps: {
+          title: 'Set up your apps',
+          description: 'Turn modules on or off so your workspace matches what your business uses.',
+          action: 'Choose apps',
+        },
+        inviteTeam: {
+          title: 'Invite your team or bookkeeper',
+          description: 'Add teammates so they can review invoices, manage tasks, and track progress.',
+          action: 'Invite members',
+        },
+        createNote: {
+          title: 'Write a first note',
+          description: 'Keep a shared company note or start your personal to-do list.',
+          action: 'Create note',
+        },
+        createDeal: {
+          title: 'Track a first deal',
+          description: 'Create an open deal to follow your sales progress from lead to close.',
+          action: 'Open Deals',
+        },
+        createTask: {
+          title: 'Create your first task',
+          description: 'Assign or create an action item with a due date to track right here.',
+          action: 'Create task',
+        },
+      },
+    },
   },
   overview: {
     title: 'Overview',
@@ -404,6 +457,9 @@ export const en = {
     lastActivity: 'What waits for you, and the tax deadlines ahead. Last activity at {when}.',
     upload: 'Upload documents',
     loading: 'Counting what waits',
+    operationalStrip: 'Other waiting items and coworker updates',
+    showDetails: 'Show details',
+    hideDetails: 'Hide details',
     taxSubtitle: "This organization's returns, payments and reports due in the next 30 days, and overdue ones not yet marked done.",
     vatNext: 'The VAT return for {period} is due on',
     // One card per installed app (#1528).
@@ -414,6 +470,12 @@ export const en = {
       open: 'Open {app}',
       failed: 'Could not load this figure.',
       retry: 'Try again',
+      compact: {
+        vatDue: '{days, plural, one {#d} other {#d}} until VAT {period}',
+        vatOverdue: 'VAT {period} {days, plural, one {#d} other {#d}} overdue',
+        posts: '{count, plural, one {# post scheduled} other {# posts scheduled}}',
+        bookings: '{count, plural, one {# booking} other {# bookings}}',
+      },
       accounting: {
         vatDue: '{days, plural, one {day until} other {days until}} the VAT return for {period} is due',
         vatOverdue: '{days, plural, one {day overdue} other {days overdue}}: the VAT return for {period}',
@@ -16685,7 +16747,7 @@ export const en = {
       TAX_CODE_REQUIRED: 'Your organization has no tax code yet. Set it in Settings, then try again.',
       PERIOD_KIND_MISMATCH: 'Your organization files VAT by a different period kind, so this XML cannot be exported. Pick a period of the filing kind, or change the VAT filing period in Settings.',
       TAXPAYER_NAME_REQUIRED: 'Your organization has no name yet. Set it in Settings, then export again.',
-      // Crove Social and connected channels.
+      // Ludy Social and connected channels.
       POST_NOT_FOUND: 'This post was not found',
       POST_ARCHIVED: 'This post is archived; restore it before editing it, sending it for review or scheduling it',
       POST_ARCHIVE_IN_FLIGHT: 'A channel of the post is going out or waits for a person; settle it, then archive the post',

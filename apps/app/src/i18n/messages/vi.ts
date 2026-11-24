@@ -395,6 +395,59 @@ export const vi = {
         tasksLate: 'Việc của bạn quá hạn',
       },
     },
+    quickstart: {
+      title: '{count, plural, =1 {Bắt đầu nhanh} other {Bắt đầu nhanh trong # bước}}',
+      subtitle: 'Làm một việc đầu tiên để thấy dữ liệu chạy ngay trên Trang tổng quan.',
+      stepLabel: 'Bước {step}',
+      guideLink: 'Xem hướng dẫn nhanh',
+      steps: {
+        uploadInvoice: {
+          title: 'Tải hóa đơn đầu tiên',
+          description: 'Đẩy tệp PDF, ảnh chụp hoặc XML vào hộp duyệt để đồng nghiệp AI đọc và kiểm tra giúp bạn.',
+          action: 'Tải hóa đơn',
+        },
+        connectChannel: {
+          title: 'Kết nối kênh bán hàng',
+          description: 'Gắn Facebook hoặc Zalo OA để nhận tin nhắn khách hàng và lên lịch bài đăng.',
+          action: 'Kết nối kênh',
+        },
+        addContact: {
+          title: 'Thêm khách hàng đầu tiên',
+          description: 'Lưu thông tin liên hệ để theo dõi công việc bán hàng và báo giá.',
+          action: 'Mở Khách hàng',
+        },
+        createEnvelope: {
+          title: 'Gửi hồ sơ ký đầu tiên',
+          description: 'Tải lên hợp đồng PDF, đặt ô ký và gửi liên kết cho người nhận.',
+          action: 'Mở eSign',
+        },
+        configureApps: {
+          title: 'Thiết lập ứng dụng của công ty',
+          description: 'Bật hoặc tắt các phân hệ theo đúng nhu cầu của doanh nghiệp bạn.',
+          action: 'Chọn ứng dụng',
+        },
+        inviteTeam: {
+          title: 'Mời đồng đội hoặc kế toán',
+          description: 'Thêm thành viên để cùng duyệt chứng từ, chia việc và theo dõi tiến độ.',
+          action: 'Mời thành viên',
+        },
+        createNote: {
+          title: 'Ghi chú việc cần nhớ',
+          description: 'Tạo ghi chú dùng chung cho công ty hoặc danh sách việc cá nhân đầu tiên.',
+          action: 'Tạo ghi chú',
+        },
+        createDeal: {
+          title: 'Theo dõi cơ hội bán hàng',
+          description: 'Tạo deal đầu tiên để cập nhật tiến độ chốt đơn của đội ngũ.',
+          action: 'Mở Deal',
+        },
+        createTask: {
+          title: 'Tạo công việc đầu tiên',
+          description: 'Giao hoặc tự tạo một đầu việc có hạn hoàn thành để theo dõi ngay tại đây.',
+          action: 'Tạo công việc',
+        },
+      },
+    },
   },
   overview: {
     title: 'Tổng quan',
@@ -402,6 +455,9 @@ export const vi = {
     lastActivity: 'Những việc đang chờ bạn và các hạn thuế sắp tới. Hoạt động gần nhất lúc {when}.',
     upload: 'Tải chứng từ lên',
     loading: 'Đang đếm các việc đang chờ',
+    operationalStrip: 'Việc khác và hoạt động của đồng nghiệp AI',
+    showDetails: 'Xem chi tiết',
+    hideDetails: 'Thu gọn',
     taxSubtitle: 'Tờ khai, khoản nộp và báo cáo của tổ chức này đến hạn trong 30 ngày, cùng các việc đã quá hạn mà chưa đánh dấu xong.',
     vatNext: 'Tờ khai thuế GTGT {period} đến hạn ngày',
     // One card per installed app (#1528).
@@ -412,6 +468,12 @@ export const vi = {
       open: 'Mở {app}',
       failed: 'Chưa tải được số liệu.',
       retry: 'Thử lại',
+      compact: {
+        vatDue: '{days, plural, other {# ngày nữa}} hạn GTGT {period}',
+        vatOverdue: 'quá hạn GTGT {period} {days, plural, other {# ngày}}',
+        posts: '{count, plural, other {# bài chờ đăng}}',
+        bookings: '{count, plural, other {# lịch hẹn}}',
+      },
       accounting: {
         vatDue: '{days, plural, other {ngày nữa}} đến hạn tờ khai GTGT {period}',
         vatOverdue: '{days, plural, other {ngày}} quá hạn tờ khai GTGT {period}',
@@ -16685,7 +16747,7 @@ export const vi = {
       TAX_CODE_REQUIRED: 'Tổ chức chưa có mã số thuế. Nhập mã số thuế trong Cài đặt rồi thử lại.',
       PERIOD_KIND_MISMATCH: 'Tổ chức khai thuế GTGT theo kỳ khác nên không xuất được tờ khai XML này. Chọn kỳ đúng loại đã đăng ký, hoặc đổi kỳ khai thuế GTGT trong Cài đặt.',
       TAXPAYER_NAME_REQUIRED: 'Tổ chức chưa có tên. Nhập tên tổ chức trong Cài đặt rồi xuất lại.',
-      // Crove Social and connected channels.
+      // Ludy Social and connected channels.
       POST_NOT_FOUND: 'Không tìm thấy bài đăng này',
       POST_ARCHIVED: 'Bài này đã được lưu trữ; hãy khôi phục bài trước khi sửa, gửi duyệt hay lên lịch',
       POST_ARCHIVE_IN_FLIGHT: 'Bài có kênh đang đăng hoặc đang chờ người xử lý; hãy xử lý xong rồi lưu trữ',

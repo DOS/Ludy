@@ -26,7 +26,7 @@ const METRIC_COLUMNS = ['reach', 'reactions', 'comments', 'shares'] as const;
 
 // How published posts did (S8): totals over the window, then each published channel with its latest capture; with a
 // label chosen (#639), only the posts that carry it, on the screen and in the export. With the outside switch on
-// (#1054), the posts the channels published outside Crove count in the totals and show in the table with their chip;
+// (#1054), the posts the channels published outside Ludy count in the totals and show in the table with their chip;
 // they carry no label, so a label filter turns the switch off.
 export function SocialMetrics({ slug, names, labelId, action }: { slug: string; names: Map<string, string>; labelId: string | undefined; action?: ReactNode }) {
   const t = useTranslations('social');
@@ -60,7 +60,7 @@ export function SocialMetrics({ slug, names, labelId, action }: { slug: string; 
   const data = rows.data ?? [];
   const extra = counting ? (outsideRows.data ?? []) : [];
   const total = (name: string) => totals.data?.metrics[name] ?? [...data, ...extra].reduce((sum, r) => sum + (r.metrics[name] ?? 0), 0);
-  // Clicks on Crove's short links (#706), where a channel sends its links through them.
+  // Clicks on Ludy's short links (#706), where a channel sends its links through them.
   const clicks = totals.data ? totals.data.clicks : data.some((r) => r.clicks !== null) ? data.reduce((sum, r) => sum + (r.clicks ?? 0), 0) : null;
   const hasClicks = clicks !== null;
   // The same totals of the window just before (#947), for the change next to each.

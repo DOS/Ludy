@@ -392,6 +392,7 @@ suite('HR Stage 4B payroll, foreign worker work permit, and BHXH leave (#4301)',
       expect(row).not.toHaveProperty('work_permit_number_sealed');
     }
     const exportDump = JSON.stringify(exportedEmployees);
+    expect(exportDump).not.toContain('ludy:s1:');
     expect(exportDump).not.toContain('crove:s1:');
     expect(exportDump).not.toContain('GP2025-1111');
     expect(exportDump).not.toContain(PERMIT_RAW);

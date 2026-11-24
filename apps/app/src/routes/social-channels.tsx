@@ -76,7 +76,7 @@ function ReviewPolicy({ channel, required, reminders, shortLinks, fourEyes, clie
     onSettled: () => void queryClient.invalidateQueries({ queryKey: orpc.social.policies.list.key() }),
   });
   const remindOn = remind.isPending && remind.variables !== undefined ? remind.variables : reminders;
-  // Crove's short links with click counts (#706), off unless turned on.
+  // Ludy's short links with click counts (#706), off unless turned on.
   const shorten = useMutation({
     mutationFn: (on: boolean) => client.social.policies.setShortLinks({ connectionId: channel.id, shortLinks: on }),
     onSettled: () => void queryClient.invalidateQueries({ queryKey: orpc.social.policies.list.key() }),
