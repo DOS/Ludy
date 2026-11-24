@@ -138,9 +138,10 @@ describe('TeamsMeetingPlatform.list', () => {
       hasAudio: false,
       hasVideo: true,
       hasTranscript: true,
+      call: { platform: 'microsoft_teams', id: '19:meeting_aaaa@thread.v2' },
     });
     // A meeting someone else organized: its transcript is offered, its recording is not (only the organizer may download it).
-    expect(listed[1]).toMatchObject({ hasVideo: false, hasTranscript: true, title: 'Product review (organized by someone else)' });
+    expect(listed[1]).toMatchObject({ hasVideo: false, hasTranscript: true, title: 'Product review (organized by someone else)', call: { platform: 'microsoft_teams', id: '19:meeting_bbbb@thread.v2' } });
     // Not listed: a call with no online meeting, a cancelled one, one still running, one with two recordings and no transcript, one with nothing, one Graph does not know.
     expect(calls.every((c) => c.method === 'GET')).toBe(true);
     expect(calls.filter((c) => c.url.includes('/recordings')).map((c) => decodeURIComponent(c.url))).not.toContain(expect.stringContaining(IDS.BBBB));
@@ -209,6 +210,7 @@ describe('TeamsMeetingPlatform.list', () => {
       [OCC.S2, 'Weekly sync (second time)', true, true],
       [OCC.S1, 'Weekly sync (first time)', true, true],
     ]);
+    expect(series.every((m) => m.call?.platform === 'microsoft_teams' && m.call.id === '19:meeting_ssss@thread.v2')).toBe(true);
     expect(listed.some((m) => m.id === OCC.S3)).toBe(false);
     // One join address, one object: the lookup and the file lists were each asked once for the series.
     expect(calls.filter((c) => c.url.includes(`${IDS.SSSS}/recordings`))).toHaveLength(1);
@@ -246,6 +248,35 @@ describe('TeamsMeetingPlatform.list', () => {
     await adapter.list(CREDENTIAL, new Date('2020-01-01T00:00:00Z'));
     const first = new URL(calls[0]?.url ?? '');
     expect(first.searchParams.get('startDateTime')).toBe(new Date(NOW.getTime() - 60 * 86_400_000).toISOString());
+  });
+
+  it('extracts canonical call id from Teams /meet/<digits> join URLs', async () => {
+    const { adapter } = teams((url) => {
+      if (url.pathname === '/v1.0/me/calendarView') {
+        return {
+          json: {
+            value: [
+              {
+                subject: 'Short Teams',
+                start: { dateTime: '2026-11-17T02:00:00.0000000', timeZone: 'UTC' },
+                end: { dateTime: '2026-11-17T03:00:00.0000000', timeZone: 'UTC' },
+                isOnlineMeeting: true,
+                isOrganizer: false,
+                isCancelled: false,
+                onlineMeetingProvider: 'teamsForBusiness',
+                onlineMeeting: { joinUrl: 'https://teams.microsoft.com/meet/123456789012?p=secret' },
+              },
+            ],
+          },
+        };
+      }
+      if (url.pathname === '/v1.0/me/onlineMeetings') return { json: { value: [{ id: IDS.AAAA }] } };
+      if (url.pathname === `/v1.0/me/onlineMeetings/${IDS.AAAA}/transcripts`) return { json: fixture('transcripts-one') };
+      return { status: 404, json: {} };
+    });
+    const listed = await adapter.list(CREDENTIAL, SINCE);
+    expect(listed).toHaveLength(1);
+    expect(listed[0]?.call).toEqual({ platform: 'microsoft_teams', id: '123456789012' });
   });
 });
 

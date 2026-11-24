@@ -121,5 +121,6 @@ export const zMeetingPlatformListed = z.strictObject({
   hasAudio: z.boolean(),
   hasVideo: z.boolean(),
   hasTranscript: z.boolean(),
+  meetingKey: z.string().regex(/^[0-9a-f]{64}$/).nullable().optional(),
 });
 export type MeetingPlatformListed = z.infer<typeof zMeetingPlatformListed>;

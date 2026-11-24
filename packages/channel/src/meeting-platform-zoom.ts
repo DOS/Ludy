@@ -12,11 +12,12 @@
 //   the token cannot go to another host on the first request, and the job's per-hop allowlist (zoom.us and its subdomains) refuses a redirect anywhere else. A webhook's own `download_url` and
 //   `download_token` are never used (the webhook is only a doorbell, see the plan).
 // - Tokens live only in the credential the job opens (ADR-0025); an error carries a short code, never a token, the platform's response body or its words.
-import { MeetingPlatformError, MEETING_PLATFORM_LIST_MAX } from './meeting-platform.ts';
+import { MeetingPlatformError, MEETING_PLATFORM_LIST_MAX, normalizeMeetingPlatformCall } from './meeting-platform.ts';
 import type {
   MeetingPlatformAccount,
   MeetingPlatformAdapter,
   MeetingPlatformAuthorizeInput,
+  MeetingPlatformCall,
   MeetingPlatformCredential,
   MeetingPlatformDownload,
   MeetingPlatformFormat,
@@ -87,6 +88,11 @@ const sizeOf = (file: ZoomFile | undefined): number => (file && typeof file.file
 // A title the database can hold: no NUL, cut at TITLE_MAX UTF-16 units.
 const titleOf = (topic: unknown): string => text(topic).replaceAll('\u0000', '').slice(0, TITLE_MAX);
 
+const zoomCallOf = (value: unknown): MeetingPlatformCall | null => {
+  const raw = typeof value === 'number' && Number.isSafeInteger(value) ? String(value) : typeof value === 'string' ? value : '';
+  return raw === '' ? null : normalizeMeetingPlatformCall({ platform: 'zoom', id: raw });
+};
+
 // What the list shows of one meeting instance, or null when there is nothing a person could import (nothing finished, or only files of no use such as chat and timeline).
 function listedOf(meeting: Record<string, unknown>): MeetingPlatformListed | null {
   const uuid = text(meeting.uuid);
@@ -101,6 +107,7 @@ function listedOf(meeting: Record<string, unknown>): MeetingPlatformListed | nul
   const minutes = Number(meeting.duration);
   // The size of the file the job will fetch (audio when there is one, else the video), not of every file: the job refuses a declared size over its cap before any call.
   const size = audio ? sizeOf(audio) : sizeOf(video);
+  const call = zoomCallOf(meeting.id);
   return {
     id: uuid,
     title: titleOf(meeting.topic),
@@ -110,6 +117,7 @@ function listedOf(meeting: Record<string, unknown>): MeetingPlatformListed | nul
     hasAudio: audio !== undefined,
     hasVideo: video !== undefined,
     hasTranscript: transcript !== undefined,
+    ...(call ? { call } : {}),
   };
 }
 

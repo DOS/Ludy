@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Which call a join address names (ADR-0055 slice 1, #4123): the same call under every spelling of its address, and nothing guessed for an address that is not a meeting's.
 import { describe, expect, it } from 'vitest';
-import { CAPTURE_HEARTBEAT_SECONDS, CAPTURE_LOST_SECONDS, captureCallOf, zCaptureHeartbeat, zCaptureKind, zCaptureRunning, zCaptureStart } from '../src/index.ts';
+import { CAPTURE_HEARTBEAT_SECONDS, CAPTURE_LOST_SECONDS, captureCallOf, normalizeCaptureCall, zCaptureHeartbeat, zCaptureKind, zCaptureRunning, zCaptureStart } from '../src/index.ts';
 
 describe('captureCallOf', () => {
   it('reads a Google Meet code, in any case and with a query or a trailing slash', () => {
@@ -47,6 +47,16 @@ describe('captureCallOf', () => {
     ]) {
       expect(captureCallOf(url), url).toBeNull();
     }
+  });
+
+  it('validates and lowercases canonical platform call pairs', () => {
+    expect(normalizeCaptureCall({ platform: 'google_meet', id: ' ABC-defg-HIJ ' })).toEqual({ platform: 'google_meet', id: 'abc-defg-hij' });
+    expect(normalizeCaptureCall({ platform: 'zoom', id: '81234567890' })).toEqual({ platform: 'zoom', id: '81234567890' });
+    expect(normalizeCaptureCall({ platform: 'microsoft_teams', id: '19:meeting_ABC@thread.v2' })).toEqual({ platform: 'microsoft_teams', id: '19:meeting_abc@thread.v2' });
+    expect(normalizeCaptureCall({ platform: 'microsoft_teams', id: '123456789012' })).toEqual({ platform: 'microsoft_teams', id: '123456789012' });
+    expect(normalizeCaptureCall({ platform: 'zoom', id: '123' })).toBeNull();
+    expect(normalizeCaptureCall({ platform: 'google_meet', id: 'not-a-code' })).toBeNull();
+    expect(normalizeCaptureCall({ platform: 'sandbox', id: 'abc-defg-hij' })).toBeNull();
   });
 });
 

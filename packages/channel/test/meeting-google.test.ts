@@ -75,19 +75,59 @@ describe('GoogleMeetAdapter list', () => {
     const { adapter, seen } = adapterOver({
       conferenceRecords: { body: RECORDS },
       'conferenceRecords/aaa111/transcripts': { body: { transcripts: [{ name: 'conferenceRecords/aaa111/transcripts/ttt1', state: 'FILE_GENERATED', startTime: T(1), endTime: T(29) }] } },
+      'spaces/s1': { body: { name: 'spaces/s1', meetingCode: 'abc-defg-hij', meetingUri: 'https://meet.google.com/abc-defg-hij' } },
       // Still being written: not importable yet.
       'conferenceRecords/bbb222/transcripts': { body: { transcripts: [{ name: 'conferenceRecords/bbb222/transcripts/ttt2', state: 'STARTED' }] } },
     });
     expect(await adapter.list(CREDENTIAL, SINCE)).toEqual([
-      { id: 'conferenceRecords/aaa111/transcripts/ttt1', title: 'Google Meet', startedAt: T(0), lengthSeconds: 1800, sizeBytes: null, hasAudio: false, hasVideo: false, hasTranscript: true },
+      {
+        id: 'conferenceRecords/aaa111/transcripts/ttt1',
+        title: 'Google Meet',
+        startedAt: T(0),
+        lengthSeconds: 1800,
+        sizeBytes: null,
+        hasAudio: false,
+        hasVideo: false,
+        hasTranscript: true,
+        call: { platform: 'google_meet', id: 'abc-defg-hij' },
+      },
     ]);
     // The window goes to Google as a filter on the start time, 100 per page.
     const first = seen[0]!.url;
     expect(first.searchParams.get('filter')).toBe(`start_time>="${SINCE.toISOString()}"`);
     expect(first.searchParams.get('pageSize')).toBe('100');
-    // A conference that has not ended and a malformed name cost no transcript lookup.
+    // A conference that has not ended and a malformed name cost no transcript lookup, and unfinished conferences cost no space lookup.
     expect(seen.map((s) => s.url.pathname)).not.toContain('/v2/conferenceRecords/ccc333/transcripts');
+    expect(seen.map((s) => s.url.pathname)).not.toContain('/v2/spaces/s2');
+    expect(seen.map((s) => s.url.pathname)).not.toContain('/v2/spaces/s3');
     expect(seen.every((s) => s.url.hostname === 'meet.googleapis.com')).toBe(true);
+  });
+
+  it('caches space lookups, falls back to meetingUri, and skips 403/404 spaces without dropping the recording', async () => {
+    const shared = {
+      conferenceRecords: {
+        body: {
+          conferenceRecords: [
+            { name: 'conferenceRecords/r1', startTime: T(0), endTime: T(30), space: 'spaces/shared' },
+            { name: 'conferenceRecords/r2', startTime: T(-60), endTime: T(-30), space: 'spaces/shared' },
+            { name: 'conferenceRecords/r3', startTime: T(-120), endTime: T(-90), space: 'spaces/missing' },
+          ],
+        },
+      },
+      'conferenceRecords/r1/transcripts': { body: { transcripts: [{ name: 'conferenceRecords/r1/transcripts/t1', state: 'FILE_GENERATED' }] } },
+      'conferenceRecords/r2/transcripts': { body: { transcripts: [{ name: 'conferenceRecords/r2/transcripts/t2', state: 'FILE_GENERATED' }] } },
+      'conferenceRecords/r3/transcripts': { body: { transcripts: [{ name: 'conferenceRecords/r3/transcripts/t3', state: 'FILE_GENERATED' }] } },
+      'spaces/shared': { body: { name: 'spaces/shared', meetingUri: 'https://meet.google.com/XYZ-abcd-EFG' } },
+      'spaces/missing': { status: 404, body: { error: { status: 'NOT_FOUND' } } },
+    };
+    const { adapter, seen } = adapterOver(shared);
+    const listed = await adapter.list(CREDENTIAL, SINCE);
+    expect(listed.find((r) => r.id === 'conferenceRecords/r1/transcripts/t1')?.call).toEqual({ platform: 'google_meet', id: 'xyz-abcd-efg' });
+    expect(listed.find((r) => r.id === 'conferenceRecords/r2/transcripts/t2')?.call).toEqual({ platform: 'google_meet', id: 'xyz-abcd-efg' });
+    expect(listed.find((r) => r.id === 'conferenceRecords/r3/transcripts/t3')?.call).toBeUndefined();
+    expect(seen.filter((s) => s.url.pathname === '/v2/spaces/shared')).toHaveLength(1);
+    const unavailable = adapterOver({ ...shared, 'spaces/missing': { status: 500, body: {} } });
+    await expect(unavailable.adapter.list(CREDENTIAL, SINCE)).rejects.toMatchObject({ code: 'platform_unavailable' });
   });
 
   it('follows the page token of the conference list', async () => {

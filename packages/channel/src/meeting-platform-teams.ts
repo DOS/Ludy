@@ -14,7 +14,7 @@
 //   goes only there, and a redirect may go to `sharepoint.com` or its subdomains and nowhere else. Microsoft does not document a redirect for this call; the allowance is the documented OneDrive pattern.
 // - The transcript is read by the adapter itself (`text/vtt` with `<v Speaker>` voice tags): it is MICROSOFT's transcription, never Ludy's, and the result says so.
 // - Tokens live only in the credential the job opens (ADR-0025); an error carries a short code, never a token, Microsoft's response body or its words.
-import { MEETING_PLATFORM_LIST_MAX, MeetingPlatformConsentError, MeetingPlatformError } from './meeting-platform.ts';
+import { MEETING_PLATFORM_LIST_MAX, MeetingPlatformConsentError, MeetingPlatformError, meetingPlatformCallOf } from './meeting-platform.ts';
 import type {
   MeetingPlatformAccount,
   MeetingPlatformAdapter,
@@ -352,6 +352,8 @@ export class TeamsMeetingPlatform implements MeetingPlatformAdapter, MeetingPlat
         const hasVideo = madeDuring(recordings, occurrence).length === 1;
         const hasTranscript = madeDuring(transcripts, occurrence).length === 1;
         if (!hasVideo && !hasTranscript) continue;
+        const parsedCall = meetingPlatformCallOf(event.joinUrl);
+        const call = parsedCall?.platform === 'microsoft_teams' ? parsedCall : null;
         found[index] = {
           id: keyOf(meeting, event.start, event.end),
           title: event.title,
@@ -362,6 +364,7 @@ export class TeamsMeetingPlatform implements MeetingPlatformAdapter, MeetingPlat
           hasAudio: false,
           hasVideo,
           hasTranscript,
+          ...(call ? { call } : {}),
         };
       }
     };

@@ -8,8 +8,8 @@
 // One Google client: a token is refreshed by the calendar adapter's own refresh (`GoogleCalendarAdapter.refresh`, the same OAuth client and sealed-secret shape), passed in as `refresher`. This file only
 // calls `meet.googleapis.com`, through an allowlisted fetch (ADR-0025); an error message carries a short code and the HTTP status, never a token or a response body.
 import { revokeGoogleGrantBestEffort } from './google-oauth.ts';
-import { MEETING_PLATFORM_LIST_MAX, MeetingPlatformError } from './meeting-platform.ts';
-import type { MeetingPlatformAccount, MeetingPlatformAdapter, MeetingPlatformAuthorizeInput, MeetingPlatformCredential, MeetingPlatformDownload, MeetingPlatformFormat, MeetingPlatformListed, MeetingPlatformOAuth, MeetingPlatformTranscript, MeetingPlatformTranscriptEntry } from './meeting-platform.ts';
+import { MEETING_PLATFORM_LIST_MAX, MeetingPlatformError, meetingPlatformCallOf, normalizeMeetingPlatformCall } from './meeting-platform.ts';
+import type { MeetingPlatformAccount, MeetingPlatformAdapter, MeetingPlatformAuthorizeInput, MeetingPlatformCall, MeetingPlatformCredential, MeetingPlatformDownload, MeetingPlatformFormat, MeetingPlatformListed, MeetingPlatformOAuth, MeetingPlatformTranscript, MeetingPlatformTranscriptEntry } from './meeting-platform.ts';
 import { allowlistedFetch, type Fetch } from './oauth.ts';
 
 export const GOOGLE_MEET_HOSTS = ['meet.googleapis.com'] as const;
@@ -31,6 +31,7 @@ const ENTRY_TEXT_MAX = 4000;
 const NAME_MAX = 100;
 // Meet limits a conference to 24 hours: a line stamped later than that is bad data and is clamped, so no number downstream is enormous.
 const SECONDS_MAX = 24 * 3600;
+const SPACE_NAME = /^spaces\/[A-Za-z0-9_-]{1,128}$/;
 const TRANSCRIPT_NAME = /^conferenceRecords\/([A-Za-z0-9_-]{1,128})\/transcripts\/([A-Za-z0-9_-]{1,128})$/;
 // oxlint-disable-next-line no-control-regex
 const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g;
@@ -198,7 +199,7 @@ export class GoogleMeetAdapter implements MeetingPlatformAdapter, MeetingPlatfor
 
   // The conferences of the member (as organizer, per Google's own rule) that ended at or after `since` and have a transcript Google finished writing. The recording file is not offered (no audio path).
   async list(credential: MeetingPlatformCredential, since: Date, signal?: AbortSignal): Promise<MeetingPlatformListed[]> {
-    const records: { name: string; start: number; end: number }[] = [];
+    const records: { name: string; start: number; end: number; space: string | null }[] = [];
     let pageToken: string | null = null;
     for (let page = 0; page < RECORD_PAGES; page += 1) {
       const params: Record<string, string> = { pageSize: String(PAGE_SIZE), filter: `start_time>="${since.toISOString()}"` };
@@ -211,12 +212,36 @@ export class GoogleMeetAdapter implements MeetingPlatformAdapter, MeetingPlatfor
         const end = instant(record?.endTime);
         // A conference still running has no end time: it is listed once it is over.
         if (name === null || start === null || end === null || end < start || !/^conferenceRecords\/[A-Za-z0-9_-]{1,128}$/.test(name)) continue;
-        records.push({ name, start, end });
+        const space = text(record?.space);
+        records.push({ name, start, end, space: space !== null && SPACE_NAME.test(space) ? space : null });
       }
       pageToken = text(body.nextPageToken);
       if (!pageToken) break;
     }
     records.sort((a, b) => b.start - a.start);
+    const spaces = new Map<string, Promise<MeetingPlatformCall | null>>();
+    const spaceCall = (space: string): Promise<MeetingPlatformCall | null> => {
+      let cached = spaces.get(space);
+      if (cached === undefined) {
+        cached = (async () => {
+          const spaceBody = await this.get(space, {}, credential, signal, true);
+          if (spaceBody === null) return null;
+          const code = text(spaceBody.meetingCode);
+          if (code !== null) {
+            const byCode = normalizeMeetingPlatformCall({ platform: 'google_meet', id: code });
+            if (byCode !== null) return byCode;
+          }
+          const uri = text(spaceBody.meetingUri);
+          if (uri !== null) {
+            const byUri = meetingPlatformCallOf(uri);
+            if (byUri?.platform === 'google_meet') return byUri;
+          }
+          return null;
+        })();
+        spaces.set(space, cached);
+      }
+      return cached;
+    };
     const found: (MeetingPlatformListed | null)[] = Array.from({ length: records.length }, () => null);
     let next = 0;
     const worker = async (): Promise<void> => {
@@ -230,6 +255,7 @@ export class GoogleMeetAdapter implements MeetingPlatformAdapter, MeetingPlatfor
         const done = (Array.isArray(body.transcripts) ? body.transcripts : []).map(object).find((t) => t !== null && t.state === 'FILE_GENERATED' && TRANSCRIPT_NAME.test(text(t.name) ?? '') && (text(t.name) ?? '').startsWith(`${record.name}/transcripts/`));
         const name = text(done?.name);
         if (name === null) continue;
+        const call = record.space === null ? null : await spaceCall(record.space);
         found[index] = {
           id: name,
           title: 'Google Meet',
@@ -239,6 +265,7 @@ export class GoogleMeetAdapter implements MeetingPlatformAdapter, MeetingPlatfor
           hasAudio: false,
           hasVideo: false,
           hasTranscript: true,
+          ...(call ? { call } : {}),
         };
       }
     };
