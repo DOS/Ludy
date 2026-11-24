@@ -403,3 +403,26 @@ export function qrSvgPath(matrix: readonly (readonly boolean[])[], quietZone = 2
   }
   return { viewBox: `0 0 ${full} ${full}`, d: parts.join(''), size: full };
 }
+
+export const QR_MAX_UTF8_BYTES = 271;
+
+export type SafeQrSvgResult =
+  | { ok: true; viewBox: string; d: string; size: number; byteLength: number }
+  | { ok: false; reason: 'empty' | 'too_long'; byteLength: number; maxBytes: number };
+
+/** Encodes a QR SVG path without throwing when the payload is empty or exceeds 271 UTF-8 bytes. */
+export function safeQrSvgPath(text: string, quietZone = 2): SafeQrSvgResult {
+  const byteLength = new TextEncoder().encode(text).byteLength;
+  if (byteLength === 0) {
+    return { ok: false, reason: 'empty', byteLength: 0, maxBytes: QR_MAX_UTF8_BYTES };
+  }
+  if (byteLength > QR_MAX_UTF8_BYTES) {
+    return { ok: false, reason: 'too_long', byteLength, maxBytes: QR_MAX_UTF8_BYTES };
+  }
+  try {
+    const svg = qrSvgPath(encodeQrMatrix(text), quietZone);
+    return { ok: true, ...svg, byteLength };
+  } catch {
+    return { ok: false, reason: 'too_long', byteLength, maxBytes: QR_MAX_UTF8_BYTES };
+  }
+}

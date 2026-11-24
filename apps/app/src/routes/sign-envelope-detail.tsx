@@ -2,7 +2,7 @@
 // Envelope detail, pure-JS PDF field placer, Vy AI proposal overlays, send confirmation, and audit evidence (#3325).
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { useTranslations } from 'use-intl';
 import { Alert, AlertDescription, AlertTitle } from '@ludy/ui/components/alert';
 import { Badge } from '@ludy/ui/components/badge';
@@ -21,6 +21,8 @@ import { EnvelopePlaybookCard } from '../components/sign/envelope-playbook-card.
 import { PdfCanvasViewer } from '../components/sign/pdf-canvas-viewer.tsx';
 import { SenderSharedSummaryEditor } from '../components/sign/shared-summary-card.tsx';
 import { SignerPanel, type AddSignerFormInput } from '../components/sign/signer-panel.tsx';
+import { SignQrModal } from '../components/sign/sign-qr-modal.tsx';
+import { SignZaloHandoffPanel } from '../components/sign/sign-zalo-handoff-panel.tsx';
 import { VyClauseSheet, VyClauseTrigger } from '../components/sign/vy-clause-panel.tsx';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { ErrorText, isEmailAddress, ListSkeleton, PageHeader } from '../components/ui.tsx';
@@ -123,6 +125,138 @@ export function filterPendingProposalsForSigners(
   return proposals.filter((p) => assignableIds.has(p.signerId) && !dismissed.has(p.proposalId));
 }
 
+export function MintedZaloLinksCard({
+  mintedLinks,
+  signers,
+  onOpenQr,
+}: {
+  mintedLinks: ReadonlyArray<{ signerId: string; url: string }>;
+  signers: readonly Pick<SignSignerRecord, 'id' | 'name'>[];
+  onOpenQr: (target: { url: string; signerName: string }, trigger: HTMLButtonElement) => void;
+}) {
+  const t = useTranslations('sign');
+  if (mintedLinks.length === 0) return null;
+  return (
+    <Card data-testid="minted-zalo-links-card">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm">{t('actions.copyZalo')}</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {mintedLinks.map((entry) => {
+          const signerName = signers.find((s) => s.id === entry.signerId)?.name ?? entry.signerId;
+          return (
+            <div key={entry.signerId} className="flex flex-wrap items-center gap-2">
+              <Label htmlFor={`zalo-link-input-${entry.signerId}`} className="min-w-28 text-xs font-medium">
+                {signerName}
+              </Label>
+              <Input
+                id={`zalo-link-input-${entry.signerId}`}
+                readOnly
+                value={entry.url}
+                className="min-w-0 flex-1 font-mono text-xs"
+                data-testid={`zalo-link-input-${entry.signerId}`}
+              />
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="min-h-11 shrink-0"
+                onClick={(event) => onOpenQr({ url: entry.url, signerName }, event.currentTarget)}
+                data-testid={`zalo-link-qr-btn-${entry.signerId}`}
+              >
+                {t('qrHandoff.showQrButton')}
+              </Button>
+            </div>
+          );
+        })}
+      </CardContent>
+    </Card>
+  );
+}
+
+export function InPersonSessionBody({
+  session,
+  qrOpen,
+  onQrOpenChange,
+  qrTriggerRef,
+}: {
+  session: {
+    signerId: string;
+    signerName: string;
+    url: string;
+    expiresAt: string;
+  };
+  qrOpen: boolean;
+  onQrOpenChange: (open: boolean) => void;
+  qrTriggerRef: RefObject<HTMLButtonElement | null>;
+}) {
+  const t = useTranslations('sign');
+  const f = useFormat();
+  return (
+    <div className="space-y-3">
+      <div className="space-y-1.5">
+        <Label htmlFor="in-person-ceremony-url">{t('inPersonDialog.urlLabel')}</Label>
+        <Input
+          id="in-person-ceremony-url"
+          readOnly
+          value={session.url}
+          className="font-mono text-xs"
+          data-testid="in-person-ceremony-url-input"
+        />
+        <p className="text-xs text-muted-foreground">
+          {t('inPersonDialog.expiresAtHint', { time: f.dateTime(session.expiresAt) })}
+        </p>
+      </div>
+      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+        <Button
+          ref={qrTriggerRef}
+          type="button"
+          variant="secondary"
+          className="min-h-11 flex-1"
+          onClick={() => onQrOpenChange(true)}
+          data-testid="in-person-qr-btn"
+        >
+          {t('qrHandoff.inPersonButton')}
+        </Button>
+        <Button
+          type="button"
+          className="min-h-11 flex-1"
+          onClick={() => {
+            window.open(session.url, '_blank', 'noopener,noreferrer');
+          }}
+          data-testid="in-person-open-tab-btn"
+        >
+          {t('inPersonDialog.openIsolatedTabButton')}
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          className="min-h-11 flex-1"
+          onClick={async () => {
+            if (await copyTextToClipboard(session.url)) {
+              toast(t('inPersonDialog.copiedIncognitoToast'));
+            }
+          }}
+          data-testid="in-person-copy-incognito-btn"
+        >
+          {t('inPersonDialog.copyIncognitoButton')}
+        </Button>
+      </div>
+      <SignQrModal
+        open={qrOpen}
+        onOpenChange={onQrOpenChange}
+        title={t('qrHandoff.inPersonModalTitle')}
+        description={t('qrHandoff.inPersonModalDescription', { signer: session.signerName })}
+        url={session.url}
+        signerName={session.signerName}
+        inPerson
+        triggerRef={qrTriggerRef}
+        testId="in-person-qr-modal"
+      />
+    </div>
+  );
+}
+
 export function SignEnvelopeDetailPage() {
   const t = useTranslations('sign');
   const common = useTranslations('common');
@@ -159,6 +293,10 @@ export function SignEnvelopeDetailPage() {
   const [voidDialogOpen, setVoidDialogOpen] = useState(false);
   const [voidReason, setVoidReason] = useState('');
   const [mintedLinks, setMintedLinks] = useState<Array<{ signerId: string; url: string }>>([]);
+  const [qrModalTarget, setQrModalTarget] = useState<{ url: string; signerName: string } | null>(null);
+  const qrModalTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const [inPersonQrOpen, setInPersonQrOpen] = useState(false);
+  const inPersonQrTriggerRef = useRef<HTMLButtonElement | null>(null);
   const [correctTarget, setCorrectTarget] = useState<SignSignerRecord | null>(null);
   const [correctName, setCorrectName] = useState('');
   const [correctEmail, setCorrectEmail] = useState('');
@@ -181,6 +319,7 @@ export function SignEnvelopeDetailPage() {
     inPersonSignerIdRef.current = nextSignerId;
     setInPersonSignerId(nextSignerId);
     setInPersonSession(null);
+    setInPersonQrOpen(false);
   }, []);
 
   useEffect(() => {
@@ -272,6 +411,8 @@ export function SignEnvelopeDetailPage() {
     setAiAnalysisOverride(null);
     setDetectedPages(null);
     setPageNumber(1);
+    setQrModalTarget(null);
+    setInPersonQrOpen(false);
   }, [id]);
 
   useEffect(() => {
@@ -1097,32 +1238,14 @@ export function SignEnvelopeDetailPage() {
         </p>
       ) : null}
 
-      {mintedLinks.length > 0 ? (
-        <Card data-testid="minted-zalo-links-card">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm">{t('actions.copyZalo')}</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {mintedLinks.map((entry) => {
-              const signerName = signers.find((s) => s.id === entry.signerId)?.name ?? entry.signerId;
-              return (
-                <div key={entry.signerId} className="flex flex-wrap items-center gap-2">
-                  <Label htmlFor={`zalo-link-input-${entry.signerId}`} className="min-w-28 text-xs font-medium">
-                    {signerName}
-                  </Label>
-                  <Input
-                    id={`zalo-link-input-${entry.signerId}`}
-                    readOnly
-                    value={entry.url}
-                    className="min-w-0 flex-1 font-mono text-xs"
-                    data-testid={`zalo-link-input-${entry.signerId}`}
-                  />
-                </div>
-              );
-            })}
-          </CardContent>
-        </Card>
-      ) : null}
+      <MintedZaloLinksCard
+        mintedLinks={mintedLinks}
+        signers={signers}
+        onOpenQr={(target, trigger) => {
+          qrModalTriggerRef.current = trigger;
+          setQrModalTarget(target);
+        }}
+      />
 
       <div className="grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)_300px]">
         <div className="space-y-4">
@@ -1151,6 +1274,23 @@ export function SignEnvelopeDetailPage() {
                   }
                 : undefined
             }
+          />
+
+          <SignZaloHandoffPanel
+            envelope={{
+              id: envelope.id,
+              title: envelope.title,
+              status: envelope.status,
+              sourceKind: envelope.sourceKind,
+              sourceId: envelope.sourceId,
+              expiresAt: envelope.expiresAt,
+            }}
+            signers={signers}
+            canManageLinks={canManageLinks}
+            mintedLinks={mintedLinks}
+            onMintedLink={(signerId, url) => {
+              setMintedLinks((prev) => [...prev.filter((item) => item.signerId !== signerId), { signerId, url }]);
+            }}
           />
 
           {canEditDraft ? (
@@ -2010,46 +2150,12 @@ export function SignEnvelopeDetailPage() {
           </Alert>
 
           {inPersonSession ? (
-            <div className="space-y-3">
-              <div className="space-y-1.5">
-                <Label htmlFor="in-person-ceremony-url">{t('inPersonDialog.urlLabel')}</Label>
-                <Input
-                  id="in-person-ceremony-url"
-                  readOnly
-                  value={inPersonSession.url}
-                  className="font-mono text-xs"
-                  data-testid="in-person-ceremony-url-input"
-                />
-                <p className="text-xs text-muted-foreground">
-                  {t('inPersonDialog.expiresAtHint', { time: f.dateTime(inPersonSession.expiresAt) })}
-                </p>
-              </div>
-              <div className="flex flex-col gap-2 sm:flex-row">
-                <Button
-                  type="button"
-                  className="min-h-11 flex-1"
-                  onClick={() => {
-                    window.open(inPersonSession.url, '_blank', 'noopener,noreferrer');
-                  }}
-                  data-testid="in-person-open-tab-btn"
-                >
-                  {t('inPersonDialog.openIsolatedTabButton')}
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="min-h-11 flex-1"
-                  onClick={async () => {
-                    if (await copyTextToClipboard(inPersonSession.url)) {
-                      toast(t('inPersonDialog.copiedIncognitoToast'));
-                    }
-                  }}
-                  data-testid="in-person-copy-incognito-btn"
-                >
-                  {t('inPersonDialog.copyIncognitoButton')}
-                </Button>
-              </div>
-            </div>
+            <InPersonSessionBody
+              session={inPersonSession}
+              qrOpen={inPersonQrOpen}
+              onQrOpenChange={setInPersonQrOpen}
+              qrTriggerRef={inPersonQrTriggerRef}
+            />
           ) : (
             <DialogFooter>
               <Button
@@ -2080,6 +2186,19 @@ export function SignEnvelopeDetailPage() {
           )}
         </DialogContent>
       </Dialog>
+
+      <SignQrModal
+        open={qrModalTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setQrModalTarget(null);
+        }}
+        title={t('qrHandoff.signerModalTitle')}
+        description={t('qrHandoff.signerModalDescription')}
+        url={qrModalTarget?.url ?? ''}
+        signerName={qrModalTarget?.signerName}
+        triggerRef={qrModalTriggerRef}
+        testId="zalo-link-qr-modal"
+      />
     </div>
   );
 }

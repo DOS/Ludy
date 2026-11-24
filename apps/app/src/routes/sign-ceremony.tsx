@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Mobile-first public signing ceremony (/-/sign#<token>, zero query tokens, zero CAPTCHA, OTP gate, PNG signature pad) (#3325).
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { useTranslations } from 'use-intl';
 import { Badge } from '@ludy/ui/components/badge';
 import { Button } from '@ludy/ui/components/button';
@@ -13,6 +13,7 @@ import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-sel
 import { cn } from '@ludy/ui/lib/utils';
 import { PdfCanvasViewer } from '../components/sign/pdf-canvas-viewer.tsx';
 import { CounterpartySummaryBanner } from '../components/sign/shared-summary-card.tsx';
+import { SignQrModal } from '../components/sign/sign-qr-modal.tsx';
 import { SignaturePadModal } from '../components/sign/signature-pad-modal.tsx';
 import { StampPadModal } from '../components/sign/stamp-pad-modal.tsx';
 import { ErrorText, isEmailAddress, ListSkeleton, Logo, ScreenTitle } from '../components/ui.tsx';
@@ -30,6 +31,7 @@ import {
 } from '../lib/sign-api.ts';
 import { SIGN_ATTACHMENT_MAX_BYTES, isChoiceFieldType, type SignSignerRole } from '../lib/sign-fields.ts';
 import {
+  buildSigningUrl,
   forgetSignToken,
   hasInPersonQueryFlag,
   markInPersonCeremonyIsolated,
@@ -41,6 +43,115 @@ import {
 } from '../lib/sign-hash.ts';
 import { rawBase64ToPngDataUrl, stripPngDataUrlPrefix } from '../lib/sign-signature.ts';
 import { toast } from '../lib/toast.ts';
+
+export const CEREMONY_QR_POLL_INTERVAL_MS = 4_000;
+export const CEREMONY_QR_POLL_MAX_MS = 15 * 60 * 1000;
+
+export function canShowCeremonyQrHandoff(params: {
+  viewState: PublicSignViewState | null;
+  isInPerson: boolean;
+  hasToken: boolean;
+  viewError: string | null;
+}): boolean {
+  return params.hasToken && !params.viewError && !params.isInPerson && params.viewState?.state === 'ready';
+}
+
+export function isTerminalCeremonyViewState(view: PublicSignViewState): boolean {
+  return (
+    view.state === 'already_completed' ||
+    view.state === 'declined' ||
+    view.state === 'delegated' ||
+    view.state === 'voided' ||
+    view.state === 'expired'
+  );
+}
+
+/** Polls public ceremony status while the desktop QR modal stays open, pausing on hidden tabs and capping at 15 min. */
+export function startCeremonyQrPolling(params: {
+  token: string;
+  pollView: (token: string) => Promise<PublicSignViewState>;
+  onNonReadyState: (view: PublicSignViewState) => void;
+  onNotFound: () => void;
+  intervalMs?: number;
+  maxDurationMs?: number;
+  now?: () => number;
+  isHidden?: () => boolean;
+  setIntervalFn?: (fn: () => void, ms: number) => ReturnType<typeof setInterval>;
+  clearIntervalFn?: (id: ReturnType<typeof setInterval>) => void;
+  subscribeVisibility?: (listener: () => void) => () => void;
+}): () => void {
+  const intervalMs = params.intervalMs ?? CEREMONY_QR_POLL_INTERVAL_MS;
+  const maxDurationMs = params.maxDurationMs ?? CEREMONY_QR_POLL_MAX_MS;
+  const now = params.now ?? (() => Date.now());
+  const isHidden = params.isHidden ?? (() => typeof document !== 'undefined' && Boolean(document.hidden));
+  const setIntervalFn = params.setIntervalFn ?? ((fn, ms) => globalThis.setInterval(fn, ms));
+  const clearIntervalFn = params.clearIntervalFn ?? ((id) => globalThis.clearInterval(id));
+  const subscribeVisibility =
+    params.subscribeVisibility ??
+    ((listener) => {
+      if (typeof document === 'undefined' || typeof document.addEventListener !== 'function') {
+        return () => {};
+      }
+      document.addEventListener('visibilitychange', listener);
+      return () => document.removeEventListener('visibilitychange', listener);
+    });
+
+  let stopped = false;
+  let inFlight = false;
+  const startedAt = now();
+  let intervalId: ReturnType<typeof setInterval> | null = null;
+  let unsubVisibility: (() => void) | null = null;
+
+  const stop = () => {
+    if (stopped) return;
+    stopped = true;
+    if (intervalId !== null) {
+      clearIntervalFn(intervalId);
+      intervalId = null;
+    }
+    if (unsubVisibility) {
+      unsubVisibility();
+      unsubVisibility = null;
+    }
+  };
+
+  const pollOnce = async () => {
+    if (stopped || inFlight) return;
+    if (now() - startedAt >= maxDurationMs) {
+      stop();
+      return;
+    }
+    if (isHidden()) return;
+    inFlight = true;
+    try {
+      const nextView = await params.pollView(params.token);
+      if (stopped) return;
+      if (nextView.state !== 'ready') {
+        stop();
+        params.onNonReadyState(nextView);
+      }
+    } catch (error) {
+      if (stopped) return;
+      if (error instanceof PublicSignError && error.status === 404) {
+        stop();
+        params.onNotFound();
+      }
+    } finally {
+      inFlight = false;
+    }
+  };
+
+  intervalId = setIntervalFn(() => {
+    void pollOnce();
+  }, intervalMs);
+  unsubVisibility = subscribeVisibility(() => {
+    if (!stopped && !isHidden()) {
+      void pollOnce();
+    }
+  });
+
+  return stop;
+}
 
 export interface CeremonyFieldAnswer {
   signaturePngDataUrl?: string;
@@ -214,6 +325,7 @@ export function SignInPersonHandoffCard({
 
 export function SignCeremonyPage() {
   const t = useTranslations('sign.ceremony');
+  const tQr = useTranslations('sign.qrHandoff');
 
   const [inPersonMode, setInPersonMode] = useState<boolean>(() => {
     const inPerson = hasInPersonQueryFlag();
@@ -277,12 +389,15 @@ export function SignCeremonyPage() {
   const [delegateReason, setDelegateReason] = useState('');
   const [delegateError, setDelegateError] = useState<string | null>(null);
   const [delegating, setDelegating] = useState(false);
+  const [qrOpen, setQrOpen] = useState(false);
 
   const fieldCardRefs = useRef<Record<string, HTMLElement | null>>({});
+  const qrButtonRef = useRef<HTMLButtonElement | null>(null);
   const requestGenRef = useRef(0);
 
   const resetCeremonyTransientState = useCallback(() => {
     requestGenRef.current += 1;
+    setQrOpen(false);
     setViewState(null);
     setLoadingView(false);
     setViewError(null);
@@ -762,6 +877,44 @@ export function SignCeremonyPage() {
   };
 
   const isInPerson = Boolean(inPersonMode || (viewState && 'inPerson' in viewState && viewState.inPerson));
+  const qrHandoffEligible = canShowCeremonyQrHandoff({
+    viewState,
+    isInPerson,
+    hasToken: Boolean(token),
+    viewError,
+  });
+
+  useEffect(() => {
+    if (!qrOpen || !qrHandoffEligible || !token) return;
+    const pollEpoch = requestGenRef.current;
+    return startCeremonyQrPolling({
+      token,
+      pollView: publicSignApi.view,
+      onNonReadyState: (nextView) => {
+        if (requestGenRef.current !== pollEpoch) return;
+        setQrOpen(false);
+        setViewState(nextView);
+        if (isTerminalCeremonyViewState(nextView)) {
+          forgetSignToken();
+          setPdfBytes(null);
+        } else if (nextView.state === 'otp_required') {
+          setOtpSent(false);
+          setOtpCode('');
+          setPdfBytes(null);
+        }
+      },
+      onNotFound: () => {
+        if (requestGenRef.current !== pollEpoch) return;
+        setQrOpen(false);
+        forgetSignToken();
+        setPdfBytes(null);
+        setViewState(null);
+        setViewError(t('invalidHint'));
+      },
+    });
+  }, [qrOpen, qrHandoffEligible, token, t]);
+
+  const qrSigningUrl = qrHandoffEligible && token ? buildSigningUrl(token) : '';
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -961,6 +1114,8 @@ export function SignCeremonyPage() {
             onDelegateEmailChange={setDelegateEmail}
             onDelegateReasonChange={setDelegateReason}
             onDelegateSubmit={(event) => void handleDelegate(event)}
+            onOpenQr={qrHandoffEligible ? () => setQrOpen(true) : undefined}
+            qrButtonRef={qrButtonRef}
             savedSignatures={savedSignatures}
             savedStamps={savedStamps}
             canSaveSignatureProfile={Boolean(workspaceOrgSlug)}
@@ -979,6 +1134,19 @@ export function SignCeremonyPage() {
           />
         ) : null}
       </main>
+
+      {qrHandoffEligible && viewState?.state === 'ready' ? (
+        <SignQrModal
+          open={qrOpen}
+          onOpenChange={setQrOpen}
+          title={tQr('ceremonyModalTitle')}
+          description={tQr('ceremonyModalDescription')}
+          url={qrSigningUrl}
+          statusNotice={tQr('ceremonyPollingNotice')}
+          triggerRef={qrButtonRef}
+          testId="ceremony-qr-modal"
+        />
+      ) : null}
     </div>
   );
 }
@@ -1027,6 +1195,8 @@ export interface SignCeremonyReadyViewProps {
   onDelegateEmailChange?: (email: string) => void;
   onDelegateReasonChange?: (reason: string) => void;
   onDelegateSubmit?: (event: React.FormEvent<HTMLFormElement>) => void;
+  onOpenQr?: (() => void) | undefined;
+  qrButtonRef?: RefObject<HTMLButtonElement | null> | undefined;
   savedSignatures?: readonly SignMemberSignatureItem[];
   savedStamps?: readonly SignOrgStampItem[];
   canSaveSignatureProfile?: boolean;
@@ -1042,6 +1212,7 @@ export interface SignCeremonyReadyViewProps {
 export function SignCeremonyReadyView(props: SignCeremonyReadyViewProps) {
   const { viewState, answers } = props;
   const t = useTranslations('sign.ceremony');
+  const tQr = useTranslations('sign.qrHandoff');
   const tField = useTranslations('sign.fields');
   const common = useTranslations('common');
 
@@ -1082,6 +1253,19 @@ export function SignCeremonyReadyView(props: SignCeremonyReadyViewProps) {
           ) : null}
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {!isInPerson && props.onOpenQr ? (
+            <Button
+              ref={props.qrButtonRef}
+              type="button"
+              variant="outline"
+              size="sm"
+              className="min-h-11"
+              onClick={props.onOpenQr}
+              data-testid="ceremony-qr-handoff-btn"
+            >
+              {tQr('ceremonyButton')}
+            </Button>
+          ) : null}
           {incompleteRequired.length > 0 ? (
             <>
               <Badge variant="warning" data-testid="ceremony-remaining-badge">
