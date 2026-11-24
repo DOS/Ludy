@@ -11,7 +11,7 @@ import {
   type ProjectTimeEntry,
   type ProjectTimeSummaryResult,
 } from '@ludy/kernel-contract';
-import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useId, useReducer, useRef, useState, type FormEvent } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
 import { Alert, AlertDescription } from '@ludy/ui/components/alert';
 import { Badge } from '@ludy/ui/components/badge';
@@ -25,22 +25,39 @@ import { ProjectIcon } from '@ludy/ui/components/project-icon';
 import { Textarea } from '@ludy/ui/components/textarea';
 import { ConfirmDialog } from './confirm-dialog.tsx';
 import { DateInput } from './date-input.tsx';
-import { ErrorText, RowsSkeleton } from './ui.tsx';
+import { ErrorText, RowsSkeleton, focusFirstInvalid } from './ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { browserTimeZone } from '../lib/my-work.ts';
 import { PROJECT_WEEKLY_STATUS_QUERY_PREFIX } from '../lib/projects.ts';
 import {
+  EMPTY_PROJECT_TIME_FILTER,
+  beginTimeEntriesLoadMore,
+  buildStopAndSwitchTimerInput,
+  buildTimeEntrySubmitPayload,
+  closeMatchingTimeFormSession,
+  createPendingTimerSwitch,
+  createTimeEntriesPaginationState,
   createTimeEntryIdempotencyTracker,
   currentLocalDateTimeInput,
   formatDecimalHours,
   formatDecimalMoney,
   formatMinutesAsHours,
-  isValidHourlyRateInput,
   localDateTimeInputToIso,
+  mergeTimeSummaryEntries,
   previewBillableAmount,
+  resetTimeEntriesPagination,
+  resolveTimeEntriesLoadMoreError,
+  resolveTimeEntriesLoadMoreSuccess,
   saveTimeCsvFile,
+  timeSummaryPageSignature,
   toLocalDateTimeInput,
+  type PendingTimerSwitch,
+  type ProjectTimeFilterState,
+  type TimeEntriesPaginationState,
+  type TimeEntryFormDraft,
+  type TimeEntryValidationErrorKey,
+  type TimeFormSession,
 } from '../lib/projects-time.ts';
 import { taskTitleText } from '../lib/task-title.ts';
 
@@ -58,15 +75,201 @@ function isTimerConflictError(err: unknown): boolean {
   return false;
 }
 
-interface EntryFormState {
-  taskId: string;
+function RetryErrorBanner({
+  title,
+  error,
+  retryLabel,
+  testId,
+  retryTestId,
+  disabled,
+  onRetry,
+}: {
+  title: string;
+  error: unknown;
+  retryLabel: string;
+  testId: string;
+  retryTestId: string;
+  disabled?: boolean;
+  onRetry?: (() => void) | undefined;
+}) {
+  return (
+    <ErrorText>
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs" data-testid={testId}>
+        <div className="min-w-0 space-y-0.5">
+          <p className="font-medium">{title}</p>
+          <p>{errorMessage(error)}</p>
+        </div>
+        {onRetry && (
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-11 shrink-0 text-xs text-foreground"
+            disabled={disabled}
+            onClick={onRetry}
+            data-testid={retryTestId}
+          >
+            {retryLabel}
+          </Button>
+        )}
+      </div>
+    </ErrorText>
+  );
+}
+
+function TimerSwitchConflictBanner({
+  projectName,
+  startedAt,
+  targetLabel,
+  isPending,
+  alertTestId,
+  targetTestId,
+  confirmTestId,
+  onConfirm,
+  onDismiss,
+}: {
+  projectName: string;
   startedAt: string;
-  endedAt: string;
-  durationMinutes: string;
-  timingMode: 'duration' | 'endedAt';
-  billable: boolean;
-  hourlyRate: string;
-  note: string;
+  targetLabel: string | null;
+  isPending: boolean;
+  alertTestId: string;
+  targetTestId: string;
+  confirmTestId: string;
+  onConfirm: () => void;
+  onDismiss: () => void;
+}) {
+  const t = useTranslations('projects.time');
+  const f = useFormat();
+
+  return (
+    <Alert className="border-warning/40 bg-warning/10" data-testid={alertTestId}>
+      <AlertDescription className="space-y-2 text-xs text-foreground">
+        <p>
+          {t('switchTimerBanner', {
+            project: projectName,
+            time: f.dateTime(startedAt),
+          })}
+        </p>
+        {targetLabel && (
+          <p className="font-medium" data-testid={targetTestId}>
+            {t('switchTimerTarget', { target: targetLabel })}
+          </p>
+        )}
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            className="min-h-11"
+            loading={isPending}
+            onClick={onConfirm}
+            data-testid={confirmTestId}
+          >
+            {t('stopExistingAndStart')}
+          </Button>
+          <Button type="button" variant="outline" className="min-h-11" onClick={onDismiss}>
+            {t('keepExistingTimer')}
+          </Button>
+        </div>
+      </AlertDescription>
+    </Alert>
+  );
+}
+
+type PaginationAction =
+  | { type: 'RESET'; filterKey?: string }
+  | { type: 'BEGIN'; requestId: number }
+  | { type: 'RESOLVE_SUCCESS'; requestEpoch: number; requestId: number; entries: readonly ProjectTimeEntry[] }
+  | { type: 'RESOLVE_ERROR'; requestEpoch: number; requestId: number; error: unknown };
+
+function paginationReducer(state: TimeEntriesPaginationState, action: PaginationAction): TimeEntriesPaginationState {
+  switch (action.type) {
+    case 'RESET':
+      return resetTimeEntriesPagination(state, action.filterKey);
+    case 'BEGIN':
+      return beginTimeEntriesLoadMore(state, action.requestId);
+    case 'RESOLVE_SUCCESS':
+      return resolveTimeEntriesLoadMoreSuccess(state, action.requestEpoch, action.requestId, action.entries);
+    case 'RESOLVE_ERROR':
+      return resolveTimeEntriesLoadMoreError(state, action.requestEpoch, action.requestId, action.error);
+  }
+}
+
+function useTimeEntriesPagination(
+  filterKey: string,
+  summary: ProjectTimeSummaryResult | undefined,
+) {
+  const [pagination, dispatch] = useReducer(paginationReducer, filterKey, createTimeEntriesPaginationState);
+  const nextRequestIdRef = useRef(0);
+  const latestRequestIdRef = useRef(0);
+  const inFlightRef = useRef(false);
+  const mountedRef = useRef(true);
+  const prevFilterKeyRef = useRef(filterKey);
+  const pageOneSignature = timeSummaryPageSignature(summary);
+  const prevPageOneSigRef = useRef<string | null>(pageOneSignature);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (prevFilterKeyRef.current !== filterKey) {
+      prevFilterKeyRef.current = filterKey;
+      prevPageOneSigRef.current = pageOneSignature;
+      latestRequestIdRef.current = 0;
+      inFlightRef.current = false;
+      dispatch({ type: 'RESET', filterKey });
+      return;
+    }
+    if (pageOneSignature !== null) {
+      if (prevPageOneSigRef.current !== null && prevPageOneSigRef.current !== pageOneSignature) {
+        latestRequestIdRef.current = 0;
+        inFlightRef.current = false;
+        dispatch({ type: 'RESET', filterKey });
+      }
+      prevPageOneSigRef.current = pageOneSignature;
+    }
+  }, [filterKey, pageOneSignature]);
+
+  const reset = () => {
+    latestRequestIdRef.current = 0;
+    inFlightRef.current = false;
+    if (mountedRef.current) {
+      dispatch({ type: 'RESET', filterKey: prevFilterKeyRef.current });
+    }
+  };
+
+  const filterMatches = pagination.filterKey === filterKey;
+  const activeLoadingMore = filterMatches ? pagination.loadingMore : false;
+
+  const loadMore = async (fetchPage: (offset: number) => Promise<ProjectTimeSummaryResult>, offset: number) => {
+    if (!summary || !filterMatches || activeLoadingMore || inFlightRef.current) return;
+    const requestEpoch = pagination.epoch;
+    const requestId = ++nextRequestIdRef.current;
+    latestRequestIdRef.current = requestId;
+    inFlightRef.current = true;
+    dispatch({ type: 'BEGIN', requestId });
+    try {
+      const nextPage = await fetchPage(offset);
+      if (latestRequestIdRef.current === requestId) {
+        inFlightRef.current = false;
+      }
+      dispatch({ type: 'RESOLVE_SUCCESS', requestEpoch, requestId, entries: nextPage.entries });
+    } catch (err) {
+      if (latestRequestIdRef.current === requestId) {
+        inFlightRef.current = false;
+      }
+      dispatch({ type: 'RESOLVE_ERROR', requestEpoch, requestId, error: err });
+    }
+  };
+
+  return {
+    extraEntries: filterMatches ? pagination.extraEntries : [],
+    loadingMore: activeLoadingMore,
+    loadMoreError: filterMatches ? pagination.loadMoreError : null,
+    reset,
+    loadMore,
+  };
 }
 
 function addMinutesLocalInput(startedLocal: string, minutes: number): string {
@@ -86,7 +289,7 @@ function computeMinutesDelta(startedLocal: string, endedLocal: string): string {
   return String(Math.max(PROJECT_TIME_DURATION_MIN, Math.round(diffMs / 60_000)));
 }
 
-function initialFormState(entry: ProjectTimeEntry | null, fixedTaskId?: string): EntryFormState {
+function initialFormState(entry: ProjectTimeEntry | null, fixedTaskId?: string): TimeEntryFormDraft {
   if (entry) {
     return {
       taskId: entry.taskId ?? '',
@@ -117,6 +320,8 @@ function ProjectTimeEntryForm({
   fixedTaskId,
   projectTasks,
   editingEntry,
+  canWrite = true,
+  onSaved,
   onDone,
   onCancel,
 }: {
@@ -124,33 +329,54 @@ function ProjectTimeEntryForm({
   fixedTaskId?: string;
   projectTasks?: readonly ProjectTaskCard[];
   editingEntry: ProjectTimeEntry | null;
+  canWrite?: boolean;
+  onSaved?: () => void;
   onDone: () => void;
   onCancel: () => void;
 }) {
   const t = useTranslations('projects.time');
   const locale = useLocale() === 'en' ? 'en' : 'vi';
   const idPrefix = useId();
-  const [form, setForm] = useState<EntryFormState>(() => initialFormState(editingEntry, fixedTaskId));
-  const [validationError, setValidationError] = useState<string | null>(null);
+  const formRef = useRef<HTMLFormElement>(null);
+  const [form, setForm] = useState<TimeEntryFormDraft>(() => initialFormState(editingEntry, fixedTaskId));
+  const [validationError, setValidationError] = useState<{ key: TimeEntryValidationErrorKey; seq: number } | null>(null);
+  const validationSeqRef = useRef(0);
   const idempotencyTrackerRef = useRef(createTimeEntryIdempotencyTracker());
+  const mountedRef = useRef(true);
+  const activeSessionRef = useRef(0);
 
-  const updateForm = (updater: (prev: EntryFormState) => EntryFormState) => {
+  const updateForm = (updater: (prev: TimeEntryFormDraft) => TimeEntryFormDraft) => {
     idempotencyTrackerRef.current.rotate();
+    setValidationError(null);
     setForm(updater);
   };
 
   useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      activeSessionRef.current += 1;
+    };
+  }, []);
+
+  useEffect(() => {
+    activeSessionRef.current += 1;
     idempotencyTrackerRef.current.rotate();
     setForm(initialFormState(editingEntry, fixedTaskId));
     setValidationError(null);
-  }, [editingEntry, fixedTaskId]);
+  }, [projectId, editingEntry, fixedTaskId]);
+
+  useEffect(() => {
+    if (validationError) {
+      focusFirstInvalid(formRef.current);
+    }
+  }, [validationError]);
 
   const logTime = useMutation(
     orpc.projects.logTime.mutationOptions({
       onSuccess: () => {
-        idempotencyTrackerRef.current.rotate();
         refreshTimeQueries();
-        onDone();
+        onSaved?.();
       },
     }),
   );
@@ -158,9 +384,8 @@ function ProjectTimeEntryForm({
   const updateTime = useMutation(
     orpc.projects.updateTimeEntry.mutationOptions({
       onSuccess: () => {
-        idempotencyTrackerRef.current.rotate();
         refreshTimeQueries();
-        onDone();
+        onSaved?.();
       },
     }),
   );
@@ -184,98 +409,55 @@ function ProjectTimeEntryForm({
 
   const handleSubmit = (event: FormEvent) => {
     event.preventDefault();
+    if (!canWrite || submitting) return;
     setValidationError(null);
 
-    const startedIso = localDateTimeInputToIso(form.startedAt);
-    if (!startedIso) {
-      setValidationError(t('invalidStartRequired'));
+    const result = buildTimeEntrySubmitPayload(form, editingEntry, fixedTaskId);
+    if (!result.ok) {
+      setValidationError({ key: result.errorKey, seq: ++validationSeqRef.current });
       return;
     }
 
-    if (!isValidHourlyRateInput(form.hourlyRate)) {
-      setValidationError(t('invalidRateError'));
-      return;
-    }
+    const submittedSession = activeSessionRef.current;
+    const onSubmittedSessionSuccess = () => {
+      if (!mountedRef.current || activeSessionRef.current !== submittedSession) return;
+      idempotencyTrackerRef.current.rotate();
+      onDone();
+    };
 
-    const rateValue = form.hourlyRate.trim() === '' ? null : form.hourlyRate.trim();
-    const noteValue = form.note.trim() === '' ? null : form.note.trim();
-    const chosenTaskId = fixedTaskId ?? (form.taskId === '' ? null : form.taskId);
-
-    if (isEditingRunning && editingEntry) {
-      const startUnchanged = form.startedAt === toLocalDateTimeInput(editingEntry.startedAt);
-      updateTime.mutate({
-        projectId,
-        entryId: editingEntry.id,
-        taskId: chosenTaskId,
-        ...(startUnchanged ? {} : { startedAt: startedIso }),
-        billable: form.billable,
-        hourlyRate: rateValue,
-        note: noteValue,
-        idempotencyKey: idempotencyTrackerRef.current.current(),
-      });
-      return;
-    }
-
-    const endedIso = form.endedAt.trim() === '' ? undefined : localDateTimeInputToIso(form.endedAt) ?? undefined;
-    if (form.endedAt.trim() !== '' && (!endedIso || Date.parse(endedIso) < Date.parse(startedIso))) {
-      setValidationError(t('invalidRangeError'));
-      return;
-    }
-
-    const rawDuration = form.durationMinutes.trim();
-    let durationVal: number | undefined;
-    if (rawDuration !== '') {
-      const parsed = Number(rawDuration);
-      if (!Number.isInteger(parsed) || parsed < PROJECT_TIME_DURATION_MIN || parsed > PROJECT_TIME_DURATION_MAX) {
-        setValidationError(t('invalidDurationError'));
-        return;
-      }
-      durationVal = parsed;
-    }
-
-    if (durationVal === undefined && endedIso === undefined) {
-      setValidationError(t('invalidDurationError'));
-      return;
-    }
-
-    if (editingEntry) {
-      const startUnchanged = form.startedAt === toLocalDateTimeInput(editingEntry.startedAt);
-      const originalEndedLocal = editingEntry.endedAt ? toLocalDateTimeInput(editingEntry.endedAt) : '';
-      const originalDuration = editingEntry.durationMinutes === null ? '' : String(editingEntry.durationMinutes);
-      const timingUnchanged =
-        startUnchanged && form.endedAt === originalEndedLocal && form.durationMinutes === originalDuration;
-      const sendEndedOnly = !timingUnchanged && form.timingMode === 'endedAt' && endedIso !== undefined;
-      const sendDurationOnly = !timingUnchanged && !sendEndedOnly && durationVal !== undefined;
-
-      updateTime.mutate({
-        projectId,
-        entryId: editingEntry.id,
-        taskId: chosenTaskId,
-        ...(startUnchanged ? {} : { startedAt: startedIso }),
-        ...(sendEndedOnly ? { endedAt: endedIso } : {}),
-        ...(sendDurationOnly ? { durationMinutes: durationVal } : {}),
-        billable: form.billable,
-        hourlyRate: rateValue,
-        note: noteValue,
-        idempotencyKey: idempotencyTrackerRef.current.current(),
-      });
-    } else {
-      const sendEndedOnly = form.timingMode === 'endedAt' && endedIso !== undefined;
-      logTime.mutate({
-        projectId,
-        taskId: chosenTaskId,
-        startedAt: startedIso,
-        ...(sendEndedOnly ? { endedAt: endedIso } : { durationMinutes: durationVal }),
-        billable: form.billable,
-        hourlyRate: rateValue,
-        note: noteValue,
-        idempotencyKey: idempotencyTrackerRef.current.current(),
-      });
+    if (result.mode === 'update' && editingEntry) {
+      updateTime.mutate(
+        {
+          projectId,
+          entryId: editingEntry.id,
+          ...result.payload,
+          idempotencyKey: idempotencyTrackerRef.current.current(),
+        },
+        { onSuccess: onSubmittedSessionSuccess },
+      );
+    } else if (result.mode === 'create') {
+      logTime.mutate(
+        {
+          projectId,
+          ...result.payload,
+          idempotencyKey: idempotencyTrackerRef.current.current(),
+        },
+        { onSuccess: onSubmittedSessionSuccess },
+      );
     }
   };
 
+  const validationErrorId = `${idPrefix}-validation-error`;
+  const validationErrorKey = validationError?.key ?? null;
+  const startInvalid = validationErrorKey === 'invalidStartRequired';
+  const durationInvalid = validationErrorKey === 'invalidDurationError';
+  const endInvalid = validationErrorKey === 'invalidRangeError';
+  const rateInvalid = validationErrorKey === 'invalidRateError';
+
   return (
     <form
+      ref={formRef}
+      noValidate
       onSubmit={handleSubmit}
       className="space-y-3 rounded-lg border border-border bg-muted/20 p-3"
       data-testid="project-time-entry-form"
@@ -289,7 +471,7 @@ function ProjectTimeEntryForm({
             id={`${idPrefix}-task`}
             value={form.taskId}
             onChange={(e) => updateForm((prev) => ({ ...prev, taskId: e.target.value }))}
-            className="min-h-11 text-sm"
+            className="w-full text-sm [&>select]:min-h-11"
           >
             <NativeSelectOption value="">{t('projectGeneralOption')}</NativeSelectOption>
             {projectTasks.map((task) => (
@@ -310,12 +492,14 @@ function ProjectTimeEntryForm({
             id={`${idPrefix}-start`}
             type="datetime-local"
             value={form.startedAt}
+            aria-invalid={startInvalid || undefined}
+            aria-describedby={startInvalid ? validationErrorId : undefined}
             onChange={(e) => {
               const nextStarted = e.target.value;
               updateForm((prev) => {
                 if (isEditingRunning) return { ...prev, startedAt: nextStarted };
                 if (prev.timingMode === 'duration') {
-                  const mins = Number(prev.durationMinutes);
+                  const mins = prev.durationMinutes.trim() === '' ? Number.NaN : Number(prev.durationMinutes);
                   const nextEnded = Number.isInteger(mins) ? addMinutesLocalInput(nextStarted, mins) : prev.endedAt;
                   return { ...prev, startedAt: nextStarted, endedAt: nextEnded };
                 }
@@ -340,6 +524,8 @@ function ProjectTimeEntryForm({
                 max={PROJECT_TIME_DURATION_MAX}
                 step={1}
                 value={form.durationMinutes}
+                aria-invalid={durationInvalid || undefined}
+                aria-describedby={durationInvalid ? validationErrorId : undefined}
                 onChange={(e) => {
                   const nextMinutes = e.target.value;
                   updateForm((prev) => {
@@ -367,6 +553,8 @@ function ProjectTimeEntryForm({
                 id={`${idPrefix}-end`}
                 type="datetime-local"
                 value={form.endedAt}
+                aria-invalid={endInvalid || undefined}
+                aria-describedby={endInvalid ? validationErrorId : undefined}
                 onChange={(e) => {
                   const nextEnded = e.target.value;
                   updateForm((prev) => {
@@ -410,6 +598,8 @@ function ProjectTimeEntryForm({
             inputMode="decimal"
             value={form.hourlyRate}
             placeholder={t('hourlyRatePlaceholder')}
+            aria-invalid={rateInvalid || undefined}
+            aria-describedby={rateInvalid ? validationErrorId : undefined}
             onChange={(e) => updateForm((prev) => ({ ...prev, hourlyRate: e.target.value }))}
             className="min-h-11 text-xs tabular-nums"
           />
@@ -437,14 +627,14 @@ function ProjectTimeEntryForm({
         />
       </div>
 
-      {validationError && <ErrorText>{validationError}</ErrorText>}
+      {validationErrorKey && <ErrorText id={validationErrorId}>{t(validationErrorKey)}</ErrorText>}
       {mutationError && <ErrorText>{errorMessage(mutationError)}</ErrorText>}
 
       <div className="flex flex-wrap items-center justify-end gap-2">
         <Button type="button" variant="outline" className="min-h-11" onClick={onCancel}>
           {t('cancelBtn')}
         </Button>
-        <Button type="submit" className="min-h-11" loading={submitting}>
+        <Button type="submit" className="min-h-11" disabled={submitting || !canWrite} loading={submitting}>
           {submitting ? t('savingEntryBtn') : t('saveEntryBtn')}
         </Button>
       </div>
@@ -454,10 +644,12 @@ function ProjectTimeEntryForm({
 
 function TimeEntryRow({
   entry,
+  allowActions = true,
   onEdit,
   onDelete,
 }: {
   entry: ProjectTimeEntry;
+  allowActions?: boolean;
   onEdit: (entry: ProjectTimeEntry) => void;
   onDelete: (entry: ProjectTimeEntry) => void;
 }) {
@@ -508,7 +700,7 @@ function TimeEntryRow({
         {entry.note && <p className="text-xs text-foreground">{entry.note}</p>}
       </div>
 
-      {entry.canManage && (
+      {allowActions && entry.canManage && (
         <div className="flex shrink-0 items-center gap-2">
           <Button
             type="button"
@@ -539,6 +731,7 @@ function TimeEntryRow({
 export function TaskTimeTrackingPanel({
   projectId,
   taskId,
+  taskTitle,
   canWrite,
 }: {
   projectId: string;
@@ -549,18 +742,12 @@ export function TaskTimeTrackingPanel({
   const t = useTranslations('projects.time');
   const f = useFormat();
   const locale = useLocale() === 'en' ? 'en' : 'vi';
-  const [formOpen, setFormOpen] = useState(false);
-  const [editingEntry, setEditingEntry] = useState<ProjectTimeEntry | null>(null);
+  const nextFormSessionIdRef = useRef(0);
+  const [formSession, setFormSession] = useState<TimeFormSession | null>(null);
   const [deletingEntry, setDeletingEntry] = useState<ProjectTimeEntry | null>(null);
-  const [switchConflict, setSwitchConflict] = useState(false);
+  const [pendingSwitch, setPendingSwitch] = useState<PendingTimerSwitch | null>(null);
   const [clampedNotice, setClampedNotice] = useState(false);
-  const [extraEntries, setExtraEntries] = useState<ProjectTimeEntry[]>([]);
-  const [loadingMore, setLoadingMore] = useState(false);
   const timeZone = browserTimeZone();
-
-  useEffect(() => {
-    setExtraEntries([]);
-  }, [projectId, taskId]);
 
   const summaryQuery = useQuery(
     orpc.projects.timeSummary.queryOptions({
@@ -568,17 +755,45 @@ export function TaskTimeTrackingPanel({
     }),
   );
 
+  const data = summaryQuery.data;
+  const effectiveCanWrite = canWrite && (data?.canWrite ?? true);
+  const pagination = useTimeEntriesPagination(JSON.stringify([projectId, taskId, timeZone]), data);
+
+  useEffect(() => {
+    setFormSession(null);
+    setDeletingEntry(null);
+    setClampedNotice(false);
+  }, [projectId, taskId]);
+
+  useEffect(() => {
+    setPendingSwitch(null);
+  }, [projectId]);
+
+  useEffect(() => {
+    if (!effectiveCanWrite) {
+      setFormSession(null);
+      setDeletingEntry(null);
+      setPendingSwitch(null);
+    }
+  }, [effectiveCanWrite]);
+
   const startTimer = useMutation(
     orpc.projects.startTime.mutationOptions({
       onSuccess: () => {
-        setSwitchConflict(false);
+        setPendingSwitch(null);
         setClampedNotice(false);
-        setExtraEntries([]);
+        pagination.reset();
         refreshTimeQueries();
       },
-      onError: (err) => {
-        if (isTimerConflictError(err)) {
-          setSwitchConflict(true);
+      onError: (err, variables) => {
+        if (isTimerConflictError(err) && !variables.stopExisting) {
+          setPendingSwitch(
+            createPendingTimerSwitch(
+              variables.projectId,
+              variables.taskId ?? null,
+              variables.taskId === taskId ? (taskTitle ?? null) : null,
+            ),
+          );
           refreshTimeQueries();
         }
       },
@@ -588,9 +803,9 @@ export function TaskTimeTrackingPanel({
   const stopTimer = useMutation(
     orpc.projects.stopTime.mutationOptions({
       onSuccess: (res) => {
-        setSwitchConflict(false);
+        setPendingSwitch(null);
         setClampedNotice(res.clampedToMax);
-        setExtraEntries([]);
+        pagination.reset();
         refreshTimeQueries();
       },
     }),
@@ -600,40 +815,33 @@ export function TaskTimeTrackingPanel({
     orpc.projects.deleteTimeEntry.mutationOptions({
       onSuccess: () => {
         setDeletingEntry(null);
-        setExtraEntries([]);
+        pagination.reset();
         refreshTimeQueries();
       },
     }),
   );
 
-  const data = summaryQuery.data;
-  const effectiveCanWrite = canWrite && (data?.canWrite ?? true);
   const activeTimer = data?.activeTimer ?? null;
   const runningHere = activeTimer?.entry.taskId === taskId && activeTimer.entry.projectId === projectId;
   const runningElsewhere = activeTimer !== null && !runningHere;
-  const combinedEntries = data
-    ? [...data.entries, ...extraEntries.filter((e) => !data.entries.some((first) => first.id === e.id))]
-    : [];
+  const combinedEntries = data ? mergeTimeSummaryEntries(data.entries, pagination.extraEntries) : [];
   const hasMore = data ? combinedEntries.length < data.totalEntries : false;
 
-  const handleLoadMore = async () => {
-    if (!data || loadingMore) return;
-    setLoadingMore(true);
-    try {
-      const nextPage = await queryClient.fetchQuery(
-        orpc.projects.timeSummary.queryOptions({
-          input: { projectId, taskId, timeZone, limit: PROJECT_TIME_ENTRIES_PAGE_LIMIT, offset: combinedEntries.length },
-        }),
-      );
-      setExtraEntries((prev) => [...prev, ...nextPage.entries]);
-    } finally {
-      setLoadingMore(false);
-    }
-  };
+  const handleLoadMore = () =>
+    pagination.loadMore(
+      (offset) =>
+        queryClient.fetchQuery(
+          orpc.projects.timeSummary.queryOptions({
+            input: { projectId, taskId, timeZone, limit: PROJECT_TIME_ENTRIES_PAGE_LIMIT, offset },
+          }),
+        ),
+      combinedEntries.length,
+    );
 
   const handleStartClick = () => {
+    if (!effectiveCanWrite) return;
     if (runningElsewhere) {
-      setSwitchConflict(true);
+      setPendingSwitch(createPendingTimerSwitch(projectId, taskId, taskTitle ?? null));
       return;
     }
     startTimer.mutate({
@@ -645,12 +853,8 @@ export function TaskTimeTrackingPanel({
   };
 
   const handleStopAndSwitch = () => {
-    startTimer.mutate({
-      projectId,
-      taskId,
-      stopExisting: true,
-      idempotencyKey: crypto.randomUUID(),
-    });
+    if (!effectiveCanWrite || !pendingSwitch) return;
+    startTimer.mutate(buildStopAndSwitchTimerInput(pendingSwitch, crypto.randomUUID()));
   };
 
   return (
@@ -677,13 +881,14 @@ export function TaskTimeTrackingPanel({
                 variant="outline"
                 className="min-h-11 gap-1.5 border-destructive/40 text-destructive"
                 loading={stopTimer.isPending}
-                onClick={() =>
+                onClick={() => {
+                  if (!effectiveCanWrite) return;
                   stopTimer.mutate({
                     projectId,
                     entryId: activeTimer.entry.id,
                     idempotencyKey: crypto.randomUUID(),
-                  })
-                }
+                  });
+                }}
                 data-testid="task-timer-stop"
               >
                 <ProjectIcon name="square" className="size-3.5" />
@@ -707,12 +912,15 @@ export function TaskTimeTrackingPanel({
               variant="outline"
               className="min-h-11"
               onClick={() => {
-                setEditingEntry(null);
-                setFormOpen((v) => !v);
+                setFormSession((curr) =>
+                  curr !== null && curr.editingEntry === null
+                    ? null
+                    : { id: ++nextFormSessionIdRef.current, editingEntry: null },
+                );
               }}
               data-testid="task-time-log-toggle"
             >
-              {formOpen && !editingEntry ? t('hideFormBtn') : t('logManualBtn')}
+              {formSession !== null && formSession.editingEntry === null ? t('hideFormBtn') : t('logManualBtn')}
             </Button>
           </div>
         )}
@@ -728,36 +936,18 @@ export function TaskTimeTrackingPanel({
         </div>
       )}
 
-      {switchConflict && activeTimer && (
-        <Alert className="border-warning/40 bg-warning/10" data-testid="timer-switch-conflict-alert">
-          <AlertDescription className="space-y-2 text-xs text-foreground">
-            <p>
-              {t('switchTimerBanner', {
-                project: activeTimer.projectName,
-                time: f.dateTime(activeTimer.entry.startedAt),
-              })}
-            </p>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                className="min-h-11"
-                loading={startTimer.isPending}
-                onClick={handleStopAndSwitch}
-                data-testid="timer-stop-existing-and-start"
-              >
-                {t('stopExistingAndStart')}
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                className="min-h-11"
-                onClick={() => setSwitchConflict(false)}
-              >
-                {t('keepExistingTimer')}
-              </Button>
-            </div>
-          </AlertDescription>
-        </Alert>
+      {effectiveCanWrite && pendingSwitch && pendingSwitch.projectId === projectId && activeTimer && (
+        <TimerSwitchConflictBanner
+          projectName={activeTimer.projectName}
+          startedAt={activeTimer.entry.startedAt}
+          targetLabel={pendingSwitch.taskTitle}
+          isPending={startTimer.isPending}
+          alertTestId="timer-switch-conflict-alert"
+          targetTestId="task-timer-switch-target"
+          confirmTestId="timer-stop-existing-and-start"
+          onConfirm={handleStopAndSwitch}
+          onDismiss={() => setPendingSwitch(null)}
+        />
       )}
 
       {clampedNotice && (
@@ -770,20 +960,30 @@ export function TaskTimeTrackingPanel({
       {stopTimer.error && <ErrorText>{errorMessage(stopTimer.error)}</ErrorText>}
       {deleteEntry.error && <ErrorText>{errorMessage(deleteEntry.error)}</ErrorText>}
 
-      {(formOpen || editingEntry !== null) && (
+      {effectiveCanWrite && formSession !== null && (
         <ProjectTimeEntryForm
+          key={formSession.id}
           projectId={projectId}
           fixedTaskId={taskId}
-          editingEntry={editingEntry}
+          editingEntry={formSession.editingEntry}
+          canWrite={effectiveCanWrite}
+          onSaved={pagination.reset}
           onDone={() => {
-            setFormOpen(false);
-            setEditingEntry(null);
-            setExtraEntries([]);
+            const submittedSessionId = formSession.id;
+            setFormSession((curr) => closeMatchingTimeFormSession(curr, submittedSessionId));
           }}
-          onCancel={() => {
-            setFormOpen(false);
-            setEditingEntry(null);
-          }}
+          onCancel={() => setFormSession(null)}
+        />
+      )}
+
+      {summaryQuery.error && (
+        <RetryErrorBanner
+          title={t('summaryLoadError')}
+          error={summaryQuery.error}
+          retryLabel={t('retryLoadBtn')}
+          testId="task-time-summary-error"
+          retryTestId="task-time-summary-retry"
+          onRetry={() => void summaryQuery.refetch()}
         />
       )}
 
@@ -796,32 +996,50 @@ export function TaskTimeTrackingPanel({
               <TimeEntryRow
                 key={entry.id}
                 entry={entry}
+                allowActions={effectiveCanWrite}
                 onEdit={(target) => {
-                  setFormOpen(false);
-                  setEditingEntry(target);
+                  if (!effectiveCanWrite) return;
+                  setFormSession({ id: ++nextFormSessionIdRef.current, editingEntry: target });
                 }}
-                onDelete={setDeletingEntry}
+                onDelete={(target) => {
+                  if (!effectiveCanWrite) return;
+                  setDeletingEntry(target);
+                }}
               />
             ))}
           </ul>
+          {pagination.loadMoreError !== null && (
+            <RetryErrorBanner
+              title={t('loadMoreError')}
+              error={pagination.loadMoreError}
+              retryLabel={t('retryLoadBtn')}
+              testId="task-time-load-more-error"
+              retryTestId="task-time-load-more-retry"
+              disabled={pagination.loadingMore}
+              onRetry={() => void handleLoadMore()}
+            />
+          )}
           {hasMore && (
             <Button
               type="button"
               variant="outline"
               className="min-h-11 w-full text-xs"
-              loading={loadingMore}
+              loading={pagination.loadingMore}
               onClick={() => void handleLoadMore()}
+              data-testid="task-time-load-more"
             >
-              {loadingMore ? t('loadingEntries') : t('loadMoreEntries')}
+              {pagination.loadingMore ? t('loadingEntries') : t('loadMoreEntries')}
             </Button>
           )}
         </div>
-      ) : (
-        <p className="text-xs text-muted-foreground">{t('noTaskEntries')}</p>
-      )}
+      ) : data ? (
+        <p className="text-xs text-muted-foreground" data-testid="task-time-empty">
+          {t('noTaskEntries')}
+        </p>
+      ) : null}
 
       <ConfirmDialog
-        open={deletingEntry !== null}
+        open={effectiveCanWrite && deletingEntry !== null}
         onOpenChange={(next) => {
           if (!next) setDeletingEntry(null);
         }}
@@ -830,7 +1048,7 @@ export function TaskTimeTrackingPanel({
         confirm={t('deleteEntryBtn')}
         destructive
         onConfirm={() => {
-          if (!deletingEntry) return;
+          if (!effectiveCanWrite || !deletingEntry) return;
           deleteEntry.mutate({
             projectId,
             entryId: deletingEntry.id,
@@ -847,13 +1065,21 @@ export function ProjectTimeTab({
   projectId,
   canWrite,
   tasks,
+  tasksError,
+  onRetryTasks,
   members,
+  filters,
+  onFiltersChange,
 }: {
   slug?: string;
   projectId: string;
   canWrite: boolean;
   tasks: readonly ProjectTaskCard[];
+  tasksError?: unknown;
+  onRetryTasks?: (() => void) | undefined;
   members: ProjectBoard['members'];
+  filters?: ProjectTimeFilterState | undefined;
+  onFiltersChange?: ((next: ProjectTimeFilterState) => void) | undefined;
 }) {
   const t = useTranslations('projects.time');
   const f = useFormat();
@@ -861,18 +1087,21 @@ export function ProjectTimeTab({
   const idPrefix = useId();
   const timeZone = browserTimeZone();
 
-  const [from, setFrom] = useState('');
-  const [to, setTo] = useState('');
-  const [taskIdFilter, setTaskIdFilter] = useState('');
-  const [userIdFilter, setUserIdFilter] = useState('');
-  const [billableOnly, setBillableOnly] = useState(false);
+  const [internalFilters, setInternalFilters] = useState<ProjectTimeFilterState>(EMPTY_PROJECT_TIME_FILTER);
+  const activeFilters = filters ?? internalFilters;
+  const setFilters = (updater: (prev: ProjectTimeFilterState) => ProjectTimeFilterState) => {
+    if (filters && onFiltersChange) {
+      onFiltersChange(updater(filters));
+    } else {
+      setInternalFilters(updater);
+    }
+  };
+  const { from, to, taskId: taskIdFilter, userId: userIdFilter, billableOnly } = activeFilters;
 
-  const [extraEntries, setExtraEntries] = useState<ProjectTimeEntry[]>([]);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [formOpen, setFormOpen] = useState(false);
-  const [editingEntry, setEditingEntry] = useState<ProjectTimeEntry | null>(null);
+  const nextFormSessionIdRef = useRef(0);
+  const [formSession, setFormSession] = useState<TimeFormSession | null>(null);
   const [deletingEntry, setDeletingEntry] = useState<ProjectTimeEntry | null>(null);
-  const [switchConflict, setSwitchConflict] = useState(false);
+  const [pendingSwitch, setPendingSwitch] = useState<PendingTimerSwitch | null>(null);
   const [exportStatus, setExportStatus] = useState<{ count: number; truncated: boolean } | null>(null);
   const [clampedNotice, setClampedNotice] = useState(false);
 
@@ -886,27 +1115,55 @@ export function ProjectTimeTab({
     timeZone,
   };
 
-  useEffect(() => {
-    setExtraEntries([]);
-  }, [projectId, from, to, taskIdFilter, userIdFilter, billableOnly]);
-
   const summaryQuery = useQuery(
     orpc.projects.timeSummary.queryOptions({
       input: { ...filterInput, limit: PROJECT_TIME_ENTRIES_PAGE_LIMIT, offset: 0 },
     }),
   );
 
+  const summary: ProjectTimeSummaryResult | undefined = summaryQuery.data;
+  const effectiveCanWrite = canWrite && (summary?.canWrite ?? true);
+  const pagination = useTimeEntriesPagination(
+    JSON.stringify([projectId, from, to, taskIdFilter, userIdFilter, billableOnly, timeZone]),
+    summary,
+  );
+
+  useEffect(() => {
+    setFormSession(null);
+    setDeletingEntry(null);
+    setPendingSwitch(null);
+    setExportStatus(null);
+    setClampedNotice(false);
+  }, [projectId]);
+
+  useEffect(() => {
+    if (!effectiveCanWrite) {
+      setFormSession(null);
+      setDeletingEntry(null);
+      setPendingSwitch(null);
+    }
+  }, [effectiveCanWrite]);
+
+  const resolveTaskTitle = (targetTaskId: string | null): string | null => {
+    if (!targetTaskId) return null;
+    const found = tasks.find((item) => item.id === targetTaskId);
+    return found ? taskTitleText(found) : null;
+  };
+
   const startTimer = useMutation(
     orpc.projects.startTime.mutationOptions({
       onSuccess: () => {
-        setSwitchConflict(false);
+        setPendingSwitch(null);
         setClampedNotice(false);
-        setExtraEntries([]);
+        pagination.reset();
         refreshTimeQueries();
       },
-      onError: (err) => {
-        if (isTimerConflictError(err)) {
-          setSwitchConflict(true);
+      onError: (err, variables) => {
+        if (isTimerConflictError(err) && !variables.stopExisting) {
+          const requestedTaskId = variables.taskId ?? null;
+          setPendingSwitch(
+            createPendingTimerSwitch(variables.projectId, requestedTaskId, resolveTaskTitle(requestedTaskId)),
+          );
           refreshTimeQueries();
         }
       },
@@ -916,9 +1173,9 @@ export function ProjectTimeTab({
   const stopTimer = useMutation(
     orpc.projects.stopTime.mutationOptions({
       onSuccess: (res) => {
-        setSwitchConflict(false);
+        setPendingSwitch(null);
         setClampedNotice(res.clampedToMax);
-        setExtraEntries([]);
+        pagination.reset();
         refreshTimeQueries();
       },
     }),
@@ -928,7 +1185,7 @@ export function ProjectTimeTab({
     orpc.projects.deleteTimeEntry.mutationOptions({
       onSuccess: () => {
         setDeletingEntry(null);
-        setExtraEntries([]);
+        pagination.reset();
         refreshTimeQueries();
       },
     }),
@@ -943,33 +1200,23 @@ export function ProjectTimeTab({
     }),
   );
 
-  const summary: ProjectTimeSummaryResult | undefined = summaryQuery.data;
   const activeTimer = summary?.activeTimer ?? null;
   const runningInCurrentProject = activeTimer?.entry.projectId === projectId;
   const runningInOtherProject = activeTimer !== null && !runningInCurrentProject;
 
-  const combinedEntries = summary
-    ? [
-        ...summary.entries,
-        ...extraEntries.filter((e) => !summary.entries.some((first) => first.id === e.id)),
-      ]
-    : [];
+  const combinedEntries = summary ? mergeTimeSummaryEntries(summary.entries, pagination.extraEntries) : [];
   const hasMore = summary ? combinedEntries.length < summary.totalEntries : false;
 
-  const handleLoadMore = async () => {
-    if (!summary || loadingMore) return;
-    setLoadingMore(true);
-    try {
-      const nextPage = await queryClient.fetchQuery(
-        orpc.projects.timeSummary.queryOptions({
-          input: { ...filterInput, limit: PROJECT_TIME_ENTRIES_PAGE_LIMIT, offset: combinedEntries.length },
-        }),
-      );
-      setExtraEntries((prev) => [...prev, ...nextPage.entries]);
-    } finally {
-      setLoadingMore(false);
-    }
-  };
+  const handleLoadMore = () =>
+    pagination.loadMore(
+      (offset) =>
+        queryClient.fetchQuery(
+          orpc.projects.timeSummary.queryOptions({
+            input: { ...filterInput, limit: PROJECT_TIME_ENTRIES_PAGE_LIMIT, offset },
+          }),
+        ),
+      combinedEntries.length,
+    );
 
   return (
     <div className="space-y-4" data-testid="project-time-tab">
@@ -980,7 +1227,7 @@ export function ProjectTimeTab({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {canWrite && (
+          {effectiveCanWrite && (
             <>
               {runningInCurrentProject && activeTimer ? (
                 <Button
@@ -988,13 +1235,14 @@ export function ProjectTimeTab({
                   variant="outline"
                   className="min-h-11 gap-1.5 border-destructive/40 text-destructive"
                   loading={stopTimer.isPending}
-                  onClick={() =>
+                  onClick={() => {
+                    if (!effectiveCanWrite) return;
                     stopTimer.mutate({
                       projectId,
                       entryId: activeTimer.entry.id,
                       idempotencyKey: crypto.randomUUID(),
-                    })
-                  }
+                    });
+                  }}
                   data-testid="project-timer-stop"
                 >
                   <ProjectIcon name="square" className="size-3.5" />
@@ -1006,13 +1254,17 @@ export function ProjectTimeTab({
                   className="min-h-11 gap-1.5"
                   loading={startTimer.isPending}
                   onClick={() => {
+                    if (!effectiveCanWrite) return;
+                    const requestedTaskId = taskIdFilter || null;
                     if (runningInOtherProject) {
-                      setSwitchConflict(true);
+                      setPendingSwitch(
+                        createPendingTimerSwitch(projectId, requestedTaskId, resolveTaskTitle(requestedTaskId)),
+                      );
                       return;
                     }
                     startTimer.mutate({
                       projectId,
-                      taskId: taskIdFilter || null,
+                      taskId: requestedTaskId,
                       stopExisting: false,
                       idempotencyKey: crypto.randomUUID(),
                     });
@@ -1029,12 +1281,15 @@ export function ProjectTimeTab({
                 variant="outline"
                 className="min-h-11"
                 onClick={() => {
-                  setEditingEntry(null);
-                  setFormOpen((v) => !v);
+                  setFormSession((curr) =>
+                    curr !== null && curr.editingEntry === null
+                      ? null
+                      : { id: ++nextFormSessionIdRef.current, editingEntry: null },
+                  );
                 }}
                 data-testid="project-time-log-toggle"
               >
-                {formOpen && !editingEntry ? t('hideFormBtn') : t('logManualBtn')}
+                {formSession !== null && formSession.editingEntry === null ? t('hideFormBtn') : t('logManualBtn')}
               </Button>
             </>
           )}
@@ -1053,8 +1308,19 @@ export function ProjectTimeTab({
         </div>
       </div>
 
-      {!canWrite && (
+      {!effectiveCanWrite && (
         <p className="text-xs text-muted-foreground">{t('readOnlyHint')}</p>
+      )}
+
+      {tasksError !== undefined && tasksError !== null && (
+        <RetryErrorBanner
+          title={t('tasksLoadError')}
+          error={tasksError}
+          retryLabel={t('retryLoadBtn')}
+          testId="project-time-tasks-error"
+          retryTestId="project-time-tasks-retry"
+          onRetry={onRetryTasks}
+        />
       )}
 
       {activeTimer && (
@@ -1068,19 +1334,20 @@ export function ProjectTimeTab({
               {' · '}
               {t('runningSince', { time: f.dateTime(activeTimer.entry.startedAt) })}
             </span>
-            {canWrite && runningInCurrentProject && (
+            {effectiveCanWrite && runningInCurrentProject && (
               <Button
                 type="button"
                 variant="outline"
                 className="min-h-11"
                 loading={stopTimer.isPending}
-                onClick={() =>
+                onClick={() => {
+                  if (!effectiveCanWrite) return;
                   stopTimer.mutate({
                     projectId,
                     entryId: activeTimer.entry.id,
                     idempotencyKey: crypto.randomUUID(),
-                  })
-                }
+                  });
+                }}
               >
                 {t('stopTimer')}
               </Button>
@@ -1089,38 +1356,21 @@ export function ProjectTimeTab({
         </Alert>
       )}
 
-      {switchConflict && activeTimer && (
-        <Alert className="border-warning/40 bg-warning/10" data-testid="project-timer-conflict-alert">
-          <AlertDescription className="space-y-2 text-xs text-foreground">
-            <p>
-              {t('switchTimerBanner', {
-                project: activeTimer.projectName,
-                time: f.dateTime(activeTimer.entry.startedAt),
-              })}
-            </p>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                className="min-h-11"
-                loading={startTimer.isPending}
-                onClick={() =>
-                  startTimer.mutate({
-                    projectId,
-                    taskId: taskIdFilter || null,
-                    stopExisting: true,
-                    idempotencyKey: crypto.randomUUID(),
-                  })
-                }
-                data-testid="project-timer-stop-existing-and-start"
-              >
-                {t('stopExistingAndStart')}
-              </Button>
-              <Button type="button" variant="outline" className="min-h-11" onClick={() => setSwitchConflict(false)}>
-                {t('keepExistingTimer')}
-              </Button>
-            </div>
-          </AlertDescription>
-        </Alert>
+      {effectiveCanWrite && pendingSwitch && pendingSwitch.projectId === projectId && activeTimer && (
+        <TimerSwitchConflictBanner
+          projectName={activeTimer.projectName}
+          startedAt={activeTimer.entry.startedAt}
+          targetLabel={pendingSwitch.taskId === null ? t('projectGeneralOption') : pendingSwitch.taskTitle}
+          isPending={startTimer.isPending}
+          alertTestId="project-timer-conflict-alert"
+          targetTestId="project-timer-switch-target"
+          confirmTestId="project-timer-stop-existing-and-start"
+          onConfirm={() => {
+            if (!effectiveCanWrite || !pendingSwitch) return;
+            startTimer.mutate(buildStopAndSwitchTimerInput(pendingSwitch, crypto.randomUUID()));
+          }}
+          onDismiss={() => setPendingSwitch(null)}
+        />
       )}
 
       {clampedNotice && (
@@ -1144,20 +1394,19 @@ export function ProjectTimeTab({
       {deleteEntry.error && <ErrorText>{errorMessage(deleteEntry.error)}</ErrorText>}
       {exportCsv.error && <ErrorText>{errorMessage(exportCsv.error)}</ErrorText>}
 
-      {(formOpen || editingEntry !== null) && (
+      {effectiveCanWrite && formSession !== null && (
         <ProjectTimeEntryForm
+          key={formSession.id}
           projectId={projectId}
           projectTasks={tasks}
-          editingEntry={editingEntry}
+          editingEntry={formSession.editingEntry}
+          canWrite={effectiveCanWrite}
+          onSaved={pagination.reset}
           onDone={() => {
-            setFormOpen(false);
-            setEditingEntry(null);
-            setExtraEntries([]);
+            const submittedSessionId = formSession.id;
+            setFormSession((curr) => closeMatchingTimeFormSession(curr, submittedSessionId));
           }}
-          onCancel={() => {
-            setFormOpen(false);
-            setEditingEntry(null);
-          }}
+          onCancel={() => setFormSession(null)}
         />
       )}
 
@@ -1166,13 +1415,23 @@ export function ProjectTimeTab({
           <Label htmlFor={`${idPrefix}-from`} className="text-xs">
             {t('filterFrom')}
           </Label>
-          <DateInput id={`${idPrefix}-from`} value={from} onChange={setFrom} />
+          <DateInput
+            id={`${idPrefix}-from`}
+            value={from}
+            inputClassName="min-h-11"
+            onChange={(nextFrom) => setFilters((prev) => ({ ...prev, from: nextFrom }))}
+          />
         </div>
         <div className="space-y-1">
           <Label htmlFor={`${idPrefix}-to`} className="text-xs">
             {t('filterTo')}
           </Label>
-          <DateInput id={`${idPrefix}-to`} value={to} onChange={setTo} />
+          <DateInput
+            id={`${idPrefix}-to`}
+            value={to}
+            inputClassName="min-h-11"
+            onChange={(nextTo) => setFilters((prev) => ({ ...prev, to: nextTo }))}
+          />
         </div>
         <div className="space-y-1">
           <Label htmlFor={`${idPrefix}-task`} className="text-xs">
@@ -1181,8 +1440,8 @@ export function ProjectTimeTab({
           <NativeSelect
             id={`${idPrefix}-task`}
             value={taskIdFilter}
-            onChange={(e) => setTaskIdFilter(e.target.value)}
-            className="min-h-11 text-xs"
+            onChange={(e) => setFilters((prev) => ({ ...prev, taskId: e.target.value }))}
+            className="w-full text-xs [&>select]:min-h-11"
           >
             <NativeSelectOption value="">{t('filterAllTasks')}</NativeSelectOption>
             {tasks.map((task) => (
@@ -1199,8 +1458,8 @@ export function ProjectTimeTab({
           <NativeSelect
             id={`${idPrefix}-member`}
             value={userIdFilter}
-            onChange={(e) => setUserIdFilter(e.target.value)}
-            className="min-h-11 text-xs"
+            onChange={(e) => setFilters((prev) => ({ ...prev, userId: e.target.value }))}
+            className="w-full text-xs [&>select]:min-h-11"
           >
             <NativeSelectOption value="">{t('filterAllMembers')}</NativeSelectOption>
             {members.map((m) => (
@@ -1212,7 +1471,10 @@ export function ProjectTimeTab({
         </div>
         <div className="flex flex-wrap items-end justify-between gap-2">
           <label className="inline-flex min-h-11 cursor-pointer items-center gap-2 text-xs text-foreground">
-            <Checkbox checked={billableOnly} onCheckedChange={(c) => setBillableOnly(c === true)} />
+            <Checkbox
+              checked={billableOnly}
+              onCheckedChange={(c) => setFilters((prev) => ({ ...prev, billableOnly: c === true }))}
+            />
             <span>{t('filterBillableOnly')}</span>
           </label>
           {(from || to || taskIdFilter || userIdFilter || billableOnly) && (
@@ -1220,13 +1482,7 @@ export function ProjectTimeTab({
               type="button"
               variant="ghost"
               className="min-h-11 text-xs"
-              onClick={() => {
-                setFrom('');
-                setTo('');
-                setTaskIdFilter('');
-                setUserIdFilter('');
-                setBillableOnly(false);
-              }}
+              onClick={() => setFilters(() => EMPTY_PROJECT_TIME_FILTER)}
             >
               {t('clearFilters')}
             </Button>
@@ -1234,7 +1490,16 @@ export function ProjectTimeTab({
         </div>
       </div>
 
-      {summaryQuery.error && <ErrorText>{errorMessage(summaryQuery.error)}</ErrorText>}
+      {summaryQuery.error && (
+        <RetryErrorBanner
+          title={t('summaryLoadError')}
+          error={summaryQuery.error}
+          retryLabel={t('retryLoadBtn')}
+          testId="project-time-summary-error"
+          retryTestId="project-time-summary-retry"
+          onRetry={() => void summaryQuery.refetch()}
+        />
+      )}
 
       {summaryQuery.isPending && !summary ? (
         <RowsSkeleton rows={3} />
@@ -1326,14 +1591,30 @@ export function ProjectTimeTab({
                   <TimeEntryRow
                     key={entry.id}
                     entry={entry}
+                    allowActions={effectiveCanWrite}
                     onEdit={(target) => {
-                      setFormOpen(false);
-                      setEditingEntry(target);
+                      if (!effectiveCanWrite) return;
+                      setFormSession({ id: ++nextFormSessionIdRef.current, editingEntry: target });
                     }}
-                    onDelete={setDeletingEntry}
+                    onDelete={(target) => {
+                      if (!effectiveCanWrite) return;
+                      setDeletingEntry(target);
+                    }}
                   />
                 ))}
               </ul>
+            )}
+
+            {pagination.loadMoreError !== null && (
+              <RetryErrorBanner
+                title={t('loadMoreError')}
+                error={pagination.loadMoreError}
+                retryLabel={t('retryLoadBtn')}
+                testId="project-time-load-more-error"
+                retryTestId="project-time-load-more-retry"
+                disabled={pagination.loadingMore}
+                onRetry={() => void handleLoadMore()}
+              />
             )}
 
             {hasMore && (
@@ -1342,10 +1623,11 @@ export function ProjectTimeTab({
                   type="button"
                   variant="outline"
                   className="min-h-11"
-                  loading={loadingMore}
+                  loading={pagination.loadingMore}
                   onClick={() => void handleLoadMore()}
+                  data-testid="project-time-load-more"
                 >
-                  {loadingMore ? t('loadingEntries') : t('loadMoreEntries')}
+                  {pagination.loadingMore ? t('loadingEntries') : t('loadMoreEntries')}
                 </Button>
               </div>
             )}
@@ -1354,7 +1636,7 @@ export function ProjectTimeTab({
       ) : null}
 
       <ConfirmDialog
-        open={deletingEntry !== null}
+        open={effectiveCanWrite && deletingEntry !== null}
         onOpenChange={(next) => {
           if (!next) setDeletingEntry(null);
         }}
@@ -1363,7 +1645,7 @@ export function ProjectTimeTab({
         confirm={t('deleteEntryBtn')}
         destructive
         onConfirm={() => {
-          if (!deletingEntry) return;
+          if (!effectiveCanWrite || !deletingEntry) return;
           deleteEntry.mutate({
             projectId,
             entryId: deletingEntry.id,
