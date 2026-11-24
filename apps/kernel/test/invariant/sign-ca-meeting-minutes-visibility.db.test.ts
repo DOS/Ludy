@@ -522,6 +522,54 @@ suite('eSign CA PAdES meeting minutes reader isolation invariants (#4157, ADR-00
       }
     }
 
+    // Agent context sees zero meeting_minutes ca_signing_request rows and receives false from can_read_sign_file.
+    const agentRes = await adminPool!.query<{ id: string }>(
+      `INSERT INTO ludy_kernel.agent (org_id, template_key, display_name, created_by)
+       VALUES ($1::uuid, 'finance.chief_accountant', 'Sign Ca Mtg Probe Agent', $2::uuid)
+       RETURNING id`,
+      [org.orgId, owner.userId],
+    );
+    const agentId = agentRes.rows[0]!.id;
+    const defaultLe = await adminPool!.query<{ id: string }>(
+      'SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1::uuid AND is_default LIMIT 1',
+      [org.orgId],
+    );
+    await adminPool!.query(
+      `INSERT INTO ludy_kernel.position (org_id, title, module, role_key, holder_agent_id, le_scope)
+       VALUES ($1::uuid, 'Probe Seat', 'finance', 'finance.chief_accountant', $2::uuid, ARRAY[$3::text])`,
+      [org.orgId, agentId, defaultLe.rows[0]!.id],
+    );
+    const runRes = await adminPool!.query<{ id: string }>(
+      `INSERT INTO ludy_kernel.ai_run (org_id, agent_id, module, status, expires_at)
+       VALUES ($1::uuid, $2::uuid, 'finance', 'running', now() + interval '10 minutes')
+       RETURNING id`,
+      [org.orgId, agentId],
+    );
+    const runId = runRes.rows[0]!.id;
+    const workerClient = await workerPool!.connect();
+    try {
+      await workerClient.query('BEGIN');
+      await workerClient.query('SELECT ludy_kernel.enter_agent_context($1::uuid, $2::uuid, $3::uuid)', [
+        org.orgId,
+        agentId,
+        runId,
+      ]);
+      const agentCaRows = await workerClient.query<{ cnt: string }>(
+        'SELECT count(*)::text AS cnt FROM ludy_sign.ca_signing_request WHERE org_id = $1::uuid AND envelope_id = $2::uuid',
+        [org.orgId, mtgCa.envelopeId],
+      );
+      expect(Number(agentCaRows.rows[0]?.cnt ?? -1)).toBe(0);
+      const agentCanRead = await workerClient.query<{ ok: boolean }>(
+        'SELECT ludy_sign.can_read_sign_file($1::uuid) AS ok',
+        [mtgCa.padesFileId],
+      );
+      expect(agentCanRead.rows[0]?.ok).toBe(false);
+      await workerClient.query('ROLLBACK');
+    } finally {
+      await workerClient.query('ROLLBACK').catch(() => {});
+      workerClient.release();
+    }
+
     // Cross-org isolation on CA request + PAdES file.
     await expect(
       runtime.query('sign.ca.requests.by_envelope', { envelopeId: mtgCa.envelopeId }, { actor: asUser(otherOwner), orgId: otherOrg.orgId }),
@@ -597,5 +645,5 @@ suite('eSign CA PAdES meeting minutes reader isolation invariants (#4157, ADR-00
     );
     expect(exportedFileIds).toContain(standaloneCa.padesFileId);
     expect(exportedFileIds).not.toContain(mtgCa.padesFileId);
-  });
+  }, 60_000);
 });

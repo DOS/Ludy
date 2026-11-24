@@ -2369,8 +2369,12 @@ const KNOWN_FOREIGN_CURRENCY_CODES: readonly string[] = [
   'INR',
 ];
 
-const EXPLICIT_VND_RE = /(?<![\p{L}])(?:vnd|vnđ)(?![\p{L}])|đồng|₫/iu;
-const EXPLICIT_VND_UNIT_RE = /(?<![\p{L}])(?:vnd|vnđ|việt nam đồng|viet nam dong|vietnam dong)(?![\p{L}])|₫/iu;
+const EXPLICIT_VND_UNIT_RE =
+  /(?<![\p{L}])(?:vnd|vnđ|việt nam đồng|viet nam dong|vietnam dong)(?![\p{L}])|(?<=\d[ \t]*(?:(?:nghìn|ngàn|triệu|tỷ|tỉ)[ \t]+)?)đồng(?![\p{L}])|₫/u;
+
+function hasExplicitVnd(rawText: string): boolean {
+  return EXPLICIT_VND_UNIT_RE.test(normalizeBaseText(rawText));
+}
 
 function escapeRegexLiteral(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -2426,19 +2430,20 @@ function isAmountWithCurrencyInLocalSpan(
   } catch {
     return false;
   }
-  const clauses = normalizeContractText(rawQuote)
-    .split(/[\n;|/()]+|\s+(?:or|hoặc|tương đương)\s+/iu)
+  const baseQuote = normalizeBaseText(rawQuote);
+  const clauses = baseQuote
+    .split(/[\n;|/()]+|[ \t]+-[ \t]+|,\s+|\s+(?:or|and|và|hoặc|tương đương)\s+/u)
     .map((part) => part.trim())
     .filter((part) => part.length > 0);
-  const candidateClauses = clauses.length > 0 ? clauses : [normalizeContractText(rawQuote)];
+  const candidateClauses = clauses.length > 0 ? clauses : [baseQuote];
   for (const clause of candidateClauses) {
     if (!parseQuoteDecimalCandidates(clause).some((c) => c.equals(target))) {
       continue;
     }
     const clauseForeign = groundedForeignCurrencies(clause, candidateCurrency);
-    const clauseVnd = EXPLICIT_VND_UNIT_RE.test(clause);
+    const clauseVnd = hasExplicitVnd(clause);
     if (candidateCurrency === 'VND') {
-      if (clauseVnd || clauseForeign.size === 0) return true;
+      if (clauseVnd && clauseForeign.size === 0) return true;
     } else if (clauseForeign.has(candidateCurrency) && clauseForeign.size === 1 && !clauseVnd) {
       return true;
     }
@@ -2453,16 +2458,16 @@ function isCurrencyValidForContractValue(
   combinedSourceRaw: string,
 ): boolean {
   const quoteForeign = groundedForeignCurrencies(quoteExcerpt, candidateCurrency);
-  const quoteExplicitVnd = EXPLICIT_VND_RE.test(quoteExcerpt);
+  const quoteExplicitVnd = hasExplicitVnd(quoteExcerpt);
 
   if (candidateCurrency === 'VND') {
-    if (quoteExplicitVnd || quoteForeign.size === 0) return true;
+    if (quoteForeign.size === 0) return true;
     return isAmountWithCurrencyInLocalSpan(decStr, 'VND', quoteExcerpt);
   }
 
   if (quoteForeign.has(candidateCurrency)) {
     const hasCompetingForeign = Array.from(quoteForeign).some((code) => code !== candidateCurrency);
-    if (!hasCompetingForeign && !EXPLICIT_VND_UNIT_RE.test(quoteExcerpt)) {
+    if (!hasCompetingForeign && !quoteExplicitVnd) {
       return true;
     }
     return isAmountWithCurrencyInLocalSpan(decStr, candidateCurrency, quoteExcerpt);
@@ -2478,7 +2483,7 @@ function isCurrencyValidForContractValue(
   return (
     docForeign.has(candidateCurrency) &&
     docForeign.size === 1 &&
-    !EXPLICIT_VND_UNIT_RE.test(combinedSourceRaw)
+    !hasExplicitVnd(combinedSourceRaw)
   );
 }
 
@@ -2665,7 +2670,7 @@ export function checkSignObligationExtract(
     }
   } else if (candidateCurrency !== 'VND') {
     const docForeign = groundedForeignCurrencies(combinedSourceRaw, candidateCurrency);
-    if (docForeign.has(candidateCurrency) && docForeign.size === 1 && !EXPLICIT_VND_UNIT_RE.test(combinedSourceRaw)) {
+    if (docForeign.has(candidateCurrency) && docForeign.size === 1 && !hasExplicitVnd(combinedSourceRaw)) {
       currency = candidateCurrency;
     } else {
       droppedCount += 1;

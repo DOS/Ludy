@@ -357,7 +357,7 @@ describe('checkSignObligationExtract (#3821)', () => {
     expect(swappedLocalPair.proposal?.contractValue).toBeNull();
     expect(swappedLocalPair.proposal?.currency).toBe('VND');
 
-    // 4. Cited quote naming explicit USD rejects model defaulting currency back to VND.
+    // 4. Cited quote naming explicit USD (even containing "Hợp đồng") rejects model defaulting currency back to VND.
     const downgradedToVnd = checkSignObligationExtract(multiCurrencyReq, {
       counterpartyName: 'Công ty ABC',
       effectiveDate: null,
@@ -374,14 +374,74 @@ describe('checkSignObligationExtract (#3821)', () => {
     });
     expect(downgradedToVnd.proposal?.contractValue).toBeNull();
 
-    // 5. Vietnamese contract with "HỢP ĐỒNG" and single unambiguous foreign currency USD (no competing currency) succeeds.
+    const hopDongUsdDowngradedReq: SignObligationExtractRequest = {
+      envelopeTitle: 'Hợp đồng dịch vụ USD',
+      pageCount: 1,
+      pages: [
+        {
+          page: 1,
+          text: 'HỢP ĐỒNG DỊCH VỤ\nBên B: Công ty ABC\nGiá trị hợp đồng: 10.000 USD.\nQuy đổi: 10.000 USD / 250.000.000 VNĐ.',
+        },
+      ],
+    };
+    const hopDongUsdDowngraded = checkSignObligationExtract(hopDongUsdDowngradedReq, {
+      counterpartyName: 'Công ty ABC',
+      effectiveDate: null,
+      expiryDate: null,
+      renewalNoticeDays: null,
+      autoRenew: false,
+      contractValue: '10000',
+      currency: 'VND',
+      citations: [
+        { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+        { field: 'contractValue', pageNumber: 1, quoteExcerpt: 'Giá trị hợp đồng: 10.000 USD.' },
+      ],
+      obligations: [],
+    });
+    expect(hopDongUsdDowngraded.proposal?.contractValue).toBeNull();
+
+    // 4b. Dual-currency VND+USD quote rejects swapping USD amount to VND, while accepting exact VND amount.
+    const dualSwapToVnd = checkSignObligationExtract(hopDongUsdDowngradedReq, {
+      counterpartyName: 'Công ty ABC',
+      effectiveDate: null,
+      expiryDate: null,
+      renewalNoticeDays: null,
+      autoRenew: false,
+      contractValue: '10000',
+      currency: 'VND',
+      citations: [
+        { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+        { field: 'contractValue', pageNumber: 1, quoteExcerpt: 'Quy đổi: 10.000 USD / 250.000.000 VNĐ.' },
+      ],
+      obligations: [],
+    });
+    expect(dualSwapToVnd.proposal?.contractValue).toBeNull();
+
+    const dualExactVnd = checkSignObligationExtract(hopDongUsdDowngradedReq, {
+      counterpartyName: 'Công ty ABC',
+      effectiveDate: null,
+      expiryDate: null,
+      renewalNoticeDays: null,
+      autoRenew: false,
+      contractValue: '250000000',
+      currency: 'VND',
+      citations: [
+        { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+        { field: 'contractValue', pageNumber: 1, quoteExcerpt: 'Quy đổi: 10.000 USD / 250.000.000 VNĐ.' },
+      ],
+      obligations: [],
+    });
+    expect(dualExactVnd.proposal?.contractValue).toBe('250000000');
+    expect(dualExactVnd.proposal?.currency).toBe('VND');
+
+    // 5. Vietnamese contract with "HỢP ĐỒNG" / "hợp đồng" / "Đồng tiền" and single unambiguous foreign currency USD succeeds.
     const singleUsdReq: SignObligationExtractRequest = {
       envelopeTitle: 'Hợp đồng dịch vụ USD',
       pageCount: 1,
       pages: [
         {
           page: 1,
-          text: 'HỢP ĐỒNG DỊCH VỤ\nBên B: Công ty ABC\nGiá trị thanh toán: 10.000.\nĐồng tiền thanh toán: USD.',
+          text: 'HỢP ĐỒNG DỊCH VỤ\nBên B: Công ty ABC\nGiá trị hợp đồng: 10.000.\nĐồng tiền thanh toán: USD.',
         },
       ],
     };
@@ -395,7 +455,7 @@ describe('checkSignObligationExtract (#3821)', () => {
       currency: 'USD',
       citations: [
         { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
-        { field: 'contractValue', pageNumber: 1, quoteExcerpt: 'Giá trị thanh toán: 10.000.' },
+        { field: 'contractValue', pageNumber: 1, quoteExcerpt: 'Giá trị hợp đồng: 10.000.' },
       ],
       obligations: [],
     });
