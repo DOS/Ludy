@@ -568,7 +568,7 @@ suite('eSign Slice 4d in-person & public hub security invariants (#3820, #4278)'
       { actor: asOwner(), orgId },
     );
     await runtime.execute('sign.envelope.send', { envelopeId: mailEnv.envelopeId }, { actor: asOwner(), orgId });
-    await runtime.execute(
+    const startedInPersonMail = await runtime.execute<{ tokenId: string; token: string }>(
       'sign.signer.start_in_person',
       { envelopeId: mailEnv.envelopeId, signerId: emailSigner.signerId, expiresInMinutes: 30 },
       { actor: asOwner(), orgId },
@@ -580,6 +580,22 @@ suite('eSign Slice 4d in-person & public hub security invariants (#3820, #4278)'
       );
       return r.rows[0]!.id;
     });
+
+    const workerClient = await workerPool!.connect();
+    try {
+      await workerClient.query('BEGIN');
+      await workerClient.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [orgId]);
+      const issuedRow = await workerClient.query<{ issued: unknown }>(
+        `SELECT ludy_sign.public_mail_token_issue($1::uuid, $2::uuid, $3::uuid, now() + interval '7 days', now()) AS issued`,
+        [mailEnv.envelopeId, emailSigner.signerId, queuedMailId],
+      );
+      expect(issuedRow.rows[0]?.issued).toBeNull();
+      await workerClient.query('COMMIT');
+    } finally {
+      await workerClient.query('ROLLBACK').catch(() => {});
+      workerClient.release();
+    }
+
     const dispatched: OutboundMail[] = [];
     const spyMailer: MailProvider = {
       name: 'test_smtp',
@@ -603,6 +619,22 @@ suite('eSign Slice 4d in-person & public hub security invariants (#3820, #4278)'
       { orgId, messageId: queuedMailId },
     );
     expect(dispatched).toHaveLength(0);
+
+    await admin(async (c) => {
+      const tokCheck = await c.query<{
+        used_at: string | null;
+        revoked_at: string | null;
+        in_person_host_user_id: string | null;
+      }>('SELECT used_at, revoked_at, in_person_host_user_id FROM ludy_sign.signing_token WHERE org_id = $1 AND id = $2', [
+        orgId,
+        startedInPersonMail.tokenId,
+      ]);
+      expect(tokCheck.rows[0]).toEqual({
+        used_at: null,
+        revoked_at: null,
+        in_person_host_user_id: ownerUserId,
+      });
+    });
 
     // Event hash chain on declined envelope stays cryptographically valid.
     const rawEvents = await admin(async (c) => {
@@ -637,7 +669,11 @@ suite('eSign Slice 4d in-person & public hub security invariants (#3820, #4278)'
     const pageRes = await app.request(`${SIGN_PUBLIC_HUB_PAGE_PREFIX}/${orgSlug}`, { method: 'GET' });
     expect(pageRes.status).toBe(200);
     assertNoReferrerNoStore(pageRes);
-    expect(pageRes.headers.get('content-security-policy') ?? '').not.toContain(TURNSTILE_ORIGIN);
+    const csp = pageRes.headers.get('content-security-policy') ?? '';
+    expect(csp.length).toBeGreaterThan(0);
+    expect(csp).toContain('default-src');
+    expect(csp).toContain('script-src');
+    expect(csp).not.toContain(TURNSTILE_ORIGIN);
 
     expect((await app.request(`/api/sign/public-hub/${orgSlug}?token=leak`, { method: 'GET' })).status).toBe(400);
     expect(

@@ -535,5 +535,24 @@ describe('eSign Slice 4a helpers & UI (#3817)', () => {
     const dupProfile = await loadCeremonyWorkspaceProfiles('Cong ty Trung Ten');
     expect(dupProfile).toBeNull();
     expect(dupCalled).toEqual([]);
+
+    // 3. Unicode NFD vs NFC workspace names still match cleanly after normalization.
+    mockedAccessToken.mockResolvedValueOnce('tok-3');
+    mockedMeGet.mockResolvedValueOnce({
+      orgs: [{ slug: 'acme-nfd', name: 'Công ty Cổ phần Thành Công'.normalize('NFD') }],
+    });
+    const nfcCalled: string[] = [];
+    mockedClientForOrg.mockImplementation((slug: string) => {
+      nfcCalled.push(slug);
+      return {
+        sign: {
+          member_signature: { list: async () => ({ items: [] }) },
+          stamp: { list: async () => ({ items: [], canManage: true }) },
+        },
+      };
+    });
+    const nfcProfile = await loadCeremonyWorkspaceProfiles('Công ty Cổ phần Thành Công'.normalize('NFC'));
+    expect(nfcProfile?.orgSlug).toBe('acme-nfd');
+    expect(nfcCalled).toEqual(['acme-nfd']);
   });
 });

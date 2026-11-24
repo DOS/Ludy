@@ -893,7 +893,7 @@ export interface SignOrgStampItem {
 // Loads a signed-in workspace member's saved signatures and active org stamps on public /-/sign ceremony pages (#3817).
 // Returns null silently when the signer is unauthenticated or not a member of any workspace.
 function normalizeWorkspaceHint(name: string): string {
-  return name.trim().replace(/\s+/g, ' ').toLowerCase();
+  return name.normalize('NFC').trim().replace(/\s+/g, ' ').toLowerCase();
 }
 
 export async function loadCeremonyWorkspaceProfiles(orgNameHint?: string | null): Promise<{

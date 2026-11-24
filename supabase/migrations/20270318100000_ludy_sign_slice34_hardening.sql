@@ -10,6 +10,9 @@
 --      ludy_sign.public_submit immediately before atomic token consumption (#4278).
 --   5. Clear any pre-submit attachments on ludy_sign.field inside ludy_sign.public_delegate so
 --      delegates never inherit unsubmitted delegator supporting files (#4331).
+--   6. Reset per-recipient 20/h attachment upload allowance on signer_delegated in both
+--      ludy_sign.public_attachment_preflight and ludy_sign.public_record_attachment while keeping a
+--      bounded 60/h aggregate cap across delegations (#4393).
 
 SET LOCAL lock_timeout = '2s';
 
@@ -2232,6 +2235,9 @@ BEGIN
   ORDER BY o.id
   FOR UPDATE;
 
+  -- Re-sample wall-clock timestamp immediately before consuming token (#4278).
+  v_now := pg_catalog.date_trunc('milliseconds', pg_catalog.clock_timestamp());
+
   UPDATE ludy_sign.signing_token
   SET used_at = v_now
   WHERE org_id = v_lookup.org_id
@@ -2431,7 +2437,164 @@ REVOKE ALL ON FUNCTION ludy_sign.public_delegate(text, text, text, text, text, t
 GRANT EXECUTE ON FUNCTION ludy_sign.public_delegate(text, text, text, text, text, text, text) TO ludy_app;
 
 -- ---------------------------------------------------------------------------
--- 8. ludy_sign.public_record_attachment: optional host_user_id attribution (#4331)
+-- 8. ludy_sign.public_attachment_preflight: delegation-aware 20/h + 60/h cap
+-- ---------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION ludy_sign.public_attachment_preflight(
+  p_token_sha256 text,
+  p_field_id uuid
+) RETURNS jsonb
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+  v_now timestamptz := pg_catalog.now();
+  v_row record;
+  v_otp_verified boolean := false;
+  v_last_delegated_at timestamptz;
+  v_last_delegated_seq integer;
+  v_window_start timestamptz;
+  v_recent_uploads integer := 0;
+  v_hourly_uploads integer := 0;
+BEGIN
+  IF p_token_sha256 IS NULL OR p_token_sha256 !~ '^[0-9a-f]{64}$' THEN
+    RETURN NULL;
+  END IF;
+
+  SELECT
+    tok.id AS token_id,
+    tok.org_id,
+    tok.envelope_id,
+    tok.signer_id,
+    tok.expires_at AS token_expires_at,
+    tok.used_at AS token_used_at,
+    tok.revoked_at AS token_revoked_at,
+    e.status AS envelope_status,
+    e.expires_at AS envelope_expires_at,
+    s.signer_role,
+    s.require_email_otp,
+    s.status AS signer_status,
+    t.status AS tenant_status
+  INTO v_row
+  FROM ludy_sign.signing_token tok
+  JOIN ludy_sign.envelope e
+    ON e.org_id = tok.org_id
+   AND e.id = tok.envelope_id
+  JOIN ludy_sign.signer s
+    ON s.org_id = tok.org_id
+   AND s.id = tok.signer_id
+   AND s.envelope_id = tok.envelope_id
+  JOIN ludy_kernel.tenant t
+    ON t.org_id = tok.org_id
+  WHERE tok.token_sha256 = p_token_sha256;
+
+  IF NOT FOUND THEN
+    RETURN NULL;
+  END IF;
+
+  IF v_row.tenant_status IS DISTINCT FROM 'active'
+     OR NOT ludy_kernel.org_app_on(v_row.org_id, 'sign')
+     OR v_row.token_revoked_at IS NOT NULL
+     OR v_row.token_expires_at <= v_now
+     OR v_row.signer_role = 'cc'
+     OR v_row.signer_status IN ('waiting', 'voided', 'expired')
+     OR v_row.envelope_status IN ('draft', 'voided', 'expired')
+     OR (v_row.token_used_at IS NULL AND v_row.signer_status IN ('pending', 'viewed') AND v_row.envelope_expires_at IS NOT NULL AND v_row.envelope_expires_at <= v_now) THEN
+    RETURN NULL;
+  END IF;
+
+  IF v_row.token_used_at IS NOT NULL OR v_row.signer_status IN ('signed', 'declined') OR v_row.envelope_status NOT IN ('sent', 'in_progress') THEN
+    RETURN pg_catalog.jsonb_build_object(
+      'status', 'already_used',
+      'orgId', v_row.org_id
+    );
+  END IF;
+
+  v_otp_verified := ludy_sign.public_otp_verified_at_for_token(v_row.org_id, v_row.signer_id, v_row.token_id) IS NOT NULL;
+  IF v_row.require_email_otp AND NOT v_otp_verified THEN
+    RETURN pg_catalog.jsonb_build_object(
+      'status', 'error',
+      'orgId', v_row.org_id,
+      'code', 'SIGN_OTP_REQUIRED',
+      'httpStatus', 403,
+      'message', 'Email OTP verification is required before uploading attachments'
+    );
+  END IF;
+
+  IF p_field_id IS NULL OR NOT EXISTS (
+    SELECT 1
+    FROM ludy_sign.field f
+    WHERE f.org_id = v_row.org_id
+      AND f.envelope_id = v_row.envelope_id
+      AND f.signer_id = v_row.signer_id
+      AND f.id = p_field_id
+      AND f.field_type = 'attachment'
+  ) THEN
+    RETURN pg_catalog.jsonb_build_object(
+      'status', 'error',
+      'orgId', v_row.org_id,
+      'code', 'SIGN_INVALID_FIELD',
+      'httpStatus', 422,
+      'message', 'Submitted field is not an attachment field assigned to this signer'
+    );
+  END IF;
+
+  SELECT ev.occurred_at, ev.seq
+  INTO v_last_delegated_at, v_last_delegated_seq
+  FROM ludy_sign.signing_event ev
+  WHERE ev.org_id = v_row.org_id
+    AND ev.envelope_id = v_row.envelope_id
+    AND ev.signer_id = v_row.signer_id
+    AND ev.event_type = 'signer_delegated'
+  ORDER BY ev.seq DESC
+  LIMIT 1;
+
+  v_window_start := GREATEST(
+    v_now - interval '1 hour',
+    COALESCE(v_last_delegated_at, '-infinity'::timestamptz)
+  );
+
+  SELECT
+    pg_catalog.count(*) FILTER (
+      WHERE ev.occurred_at >= v_window_start
+        AND (v_last_delegated_seq IS NULL OR ev.seq > v_last_delegated_seq)
+    )::integer,
+    pg_catalog.count(*)::integer
+  INTO v_recent_uploads, v_hourly_uploads
+  FROM ludy_sign.signing_event ev
+  WHERE ev.org_id = v_row.org_id
+    AND ev.envelope_id = v_row.envelope_id
+    AND ev.signer_id = v_row.signer_id
+    AND ev.event_type = 'attachment_uploaded'
+    AND ev.occurred_at > v_now - interval '1 hour';
+
+  IF v_recent_uploads >= 20 OR v_hourly_uploads >= 60 THEN
+    RETURN pg_catalog.jsonb_build_object(
+      'status', 'error',
+      'orgId', v_row.org_id,
+      'code', 'SIGN_ATTACHMENT_RATE_LIMITED',
+      'httpStatus', 429,
+      'message', 'Too many attachment uploads; wait before trying again'
+    );
+  END IF;
+
+  RETURN pg_catalog.jsonb_build_object(
+    'status', 'ok',
+    'orgId', v_row.org_id,
+    'envelopeId', v_row.envelope_id,
+    'signerId', v_row.signer_id,
+    'fieldId', p_field_id
+  );
+END $$;
+
+REVOKE ALL ON FUNCTION ludy_sign.public_attachment_preflight(text, uuid)
+  FROM PUBLIC, ludy_tenant, ludy_app, ludy_worker, ludy_definer_tenant;
+GRANT EXECUTE ON FUNCTION ludy_sign.public_attachment_preflight(text, uuid) TO ludy_app;
+
+-- ---------------------------------------------------------------------------
+-- 9. ludy_sign.public_record_attachment: optional host_user_id + delegation cap reset (#4331, #4393)
 -- ---------------------------------------------------------------------------
 
 CREATE OR REPLACE FUNCTION ludy_sign.public_record_attachment(
@@ -2461,7 +2624,11 @@ DECLARE
   v_existing_file record;
   v_file_id uuid;
   v_otp_verified boolean := false;
+  v_last_delegated_at timestamptz;
+  v_last_delegated_seq integer;
+  v_window_start timestamptz;
   v_recent_uploads integer := 0;
+  v_hourly_uploads integer := 0;
   v_clean_filename text := pg_catalog.left(NULLIF(pg_catalog.btrim(pg_catalog.regexp_replace(COALESCE(p_filename, ''), '[[:cntrl:]]+', ' ', 'g')), ''), 255);
   v_expected_key text;
   v_ip_hash text;
@@ -2585,8 +2752,28 @@ BEGIN
     );
   END IF;
 
-  SELECT pg_catalog.count(*)::integer
-  INTO v_recent_uploads
+  SELECT ev.occurred_at, ev.seq
+  INTO v_last_delegated_at, v_last_delegated_seq
+  FROM ludy_sign.signing_event ev
+  WHERE ev.org_id = v_lookup.org_id
+    AND ev.envelope_id = v_env.id
+    AND ev.signer_id = v_signer.id
+    AND ev.event_type = 'signer_delegated'
+  ORDER BY ev.seq DESC
+  LIMIT 1;
+
+  v_window_start := GREATEST(
+    v_now - interval '1 hour',
+    COALESCE(v_last_delegated_at, '-infinity'::timestamptz)
+  );
+
+  SELECT
+    pg_catalog.count(*) FILTER (
+      WHERE ev.occurred_at >= v_window_start
+        AND (v_last_delegated_seq IS NULL OR ev.seq > v_last_delegated_seq)
+    )::integer,
+    pg_catalog.count(*)::integer
+  INTO v_recent_uploads, v_hourly_uploads
   FROM ludy_sign.signing_event ev
   WHERE ev.org_id = v_lookup.org_id
     AND ev.envelope_id = v_env.id
@@ -2594,7 +2781,7 @@ BEGIN
     AND ev.event_type = 'attachment_uploaded'
     AND ev.occurred_at > v_now - interval '1 hour';
 
-  IF v_recent_uploads >= 20 THEN
+  IF v_recent_uploads >= 20 OR v_hourly_uploads >= 60 THEN
     RETURN pg_catalog.jsonb_build_object(
       'status', 'error',
       'code', 'SIGN_ATTACHMENT_RATE_LIMITED',
