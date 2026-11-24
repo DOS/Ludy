@@ -25,13 +25,31 @@ export function hasInvisibleFormat(text: string): boolean {
   return STEALTH_CONTROL_RE.test(text) || /\p{Cf}/u.test(text) || EXTRA_INVISIBLE_FORMAT_RE.test(text);
 }
 
+/** Strips stealth controls, Unicode format characters, and invisible filler/private-use/surrogate code points (preserving tab, LF, CR). */
+export function stripInvisibleFormat(text: string): string {
+  return stripStealthControls(text).replace(EXTRA_INVISIBLE_FORMAT_GLOBAL_RE, '');
+}
+
 /** Strips stealth, invisible, format, filler, private-use, unassigned, and surrogate chars, collapses whitespace to one line, and bounds by code point. */
 export function plainLine(value: string, max: number): string {
-  const cleaned = stripStealthControls(value)
-    .replace(EXTRA_INVISIBLE_FORMAT_GLOBAL_RE, '')
+  const cleaned = stripInvisibleFormat(value)
     .replace(/[\p{Cc}\p{Zl}\p{Zp}\s]+/gu, ' ')
     .trim();
   return Array.from(cleaned).slice(0, max).join('').trim();
+}
+
+/** Escapes embedded prompt fence runs (`<<<` or `>>>`) so untrusted data cannot break out of prompt delimiters. */
+export function escapePromptFences(value: string): string {
+  return value.replace(/<{3,}|>{3,}/g, (run) => run.split('').join(' '));
+}
+
+const RAW_UNICODE_MINUS_RE = /[\u2212\uFF0D\uFE63]/u;
+const NEGATIVE_SIGN_RE = /\u2212|(?<![\p{L}\p{N}])[-\u2013]\d/u;
+
+/** Checks whether text contains a negative number sign (Unicode minus, fullwidth/small minus, en-dash, or hyphen before a digit). */
+export function hasNegativeNumberSign(text: string): boolean {
+  const stripped = stripStealthControls(text);
+  return RAW_UNICODE_MINUS_RE.test(stripped) || NEGATIVE_SIGN_RE.test(stripped.normalize('NFKC'));
 }
 
 const BOUNDARY_WORD_CHAR_RE = /[\p{L}\p{M}\p{N}]/u;
@@ -40,6 +58,59 @@ const PRECEDING_NFKC_CONNECTOR_RE = /(?:[\p{L}\p{M}\p{N}_.]|(?:@|\(at\)|\[\.\]|\
 const FOLLOWING_NFKC_CONNECTOR_RE = /^(?:[\p{L}\p{M}\p{N}_]|\.(?=[\p{L}\p{M}\p{N}])|\s+dot(?=\s)|\s*(?:\[\.\]|\(dot\)|@|\(at\)))/iu;
 const PRECEDING_ASCII_HYPHEN_RE = /-$/u;
 const FOLLOWING_ASCII_HYPHEN_RE = /^-/u;
+const LITERAL_CONTACT_WORD_RE = /^(?:dot|at)$/iu;
+const STANDALONE_CONNECTOR_TOKEN_RE = /^(?:[({[<]\s*(?:dot|at|\.)\s*[)}\]>]|[.@])$/iu;
+const AT_CONNECTOR_TOKEN_RE = /^(?:\(\s*at\s*\)|@)$/iu;
+const PRECEDING_WRAPPER_OPEN_RE = /[({[<]\s*$/u;
+const FOLLOWING_WRAPPER_CLOSE_RE = /^\s*[)}\]>]/u;
+const PRECEDING_WORD_SPACE_RE = /[\p{L}\p{M}\p{N}_.-]\s+$/u;
+const FOLLOWING_WORD_SPACE_RE = /^\s+[\p{L}\p{M}\p{N}_.-]/u;
+const STARTS_WITH_BRACKETED_CONNECTOR_RE = /^[({[<]\s*(?:dot|at|\.)\s*[)}\]>]/iu;
+const ENDS_WITH_BRACKETED_CONNECTOR_RE = /[({[<]\s*(?:dot|at|\.)\s*[)}\]>]$/iu;
+const STARTS_WITH_CONNECTOR_WORD_RE = /^(?:dot|at)\s/iu;
+const ENDS_WITH_CONNECTOR_WORD_RE = /\s(?:dot|at)$/iu;
+const PRECEDING_WORD_OPT_SPACE_RE = /[\p{L}\p{M}\p{N}_.-]\s*$/u;
+const FOLLOWING_WORD_OPT_SPACE_RE = /^\s*[\p{L}\p{M}\p{N}_.-]/u;
+
+function isGuardedConnectorMatch(match: string, before: string, after: string): boolean {
+  const matchNfkc = match.normalize('NFKC').toLowerCase();
+  const beforeNfkc = before.normalize('NFKC');
+  const afterNfkc = after.normalize('NFKC');
+
+  if (LITERAL_CONTACT_WORD_RE.test(matchNfkc)) {
+    if (PRECEDING_WRAPPER_OPEN_RE.test(beforeNfkc) && FOLLOWING_WRAPPER_CLOSE_RE.test(afterNfkc)) {
+      return true;
+    }
+    if (PRECEDING_WORD_SPACE_RE.test(beforeNfkc) && FOLLOWING_WORD_SPACE_RE.test(afterNfkc)) {
+      return true;
+    }
+  }
+
+  if (STANDALONE_CONNECTOR_TOKEN_RE.test(matchNfkc)) {
+    if (
+      PRECEDING_WORD_OPT_SPACE_RE.test(beforeNfkc) ||
+      FOLLOWING_WORD_OPT_SPACE_RE.test(afterNfkc) ||
+      AT_CONNECTOR_TOKEN_RE.test(matchNfkc)
+    ) {
+      return true;
+    }
+  }
+
+  if (STARTS_WITH_BRACKETED_CONNECTOR_RE.test(matchNfkc) && PRECEDING_WORD_OPT_SPACE_RE.test(beforeNfkc)) {
+    return true;
+  }
+  if (ENDS_WITH_BRACKETED_CONNECTOR_RE.test(matchNfkc) && FOLLOWING_WORD_OPT_SPACE_RE.test(afterNfkc)) {
+    return true;
+  }
+  if (STARTS_WITH_CONNECTOR_WORD_RE.test(matchNfkc) && PRECEDING_WORD_SPACE_RE.test(beforeNfkc)) {
+    return true;
+  }
+  if (ENDS_WITH_CONNECTOR_WORD_RE.test(matchNfkc) && FOLLOWING_WORD_SPACE_RE.test(afterNfkc)) {
+    return true;
+  }
+
+  return false;
+}
 
 /** Strips longest trusted phrases first on token boundaries so short trusted words cannot split adversarial domains, handles, or hyphenated tokens. */
 export function stripTrustedPhrases(text: string, trustedTexts: readonly string[]): string {
@@ -57,13 +128,14 @@ export function stripTrustedPhrases(text: string, trustedTexts: readonly string[
     const startsWord = BOUNDARY_WORD_CHAR_RE.test(chars[0] ?? '');
     const endsWord = BOUNDARY_WORD_CHAR_RE.test(chars[chars.length - 1] ?? '');
     out = out.replace(new RegExp(escaped, 'gu'), (match, offset: number, full: string) => {
+      const before = full.slice(Math.max(0, offset - 32), offset);
+      const after = full.slice(offset + match.length, offset + match.length + 32);
+      if (isGuardedConnectorMatch(match, before, after)) return match;
       if (checkStart) {
-        const before = full.slice(Math.max(0, offset - 32), offset);
         if (PRECEDING_NFKC_CONNECTOR_RE.test(before.normalize('NFKC'))) return match;
         if (startsWord && PRECEDING_ASCII_HYPHEN_RE.test(before)) return match;
       }
       if (checkEnd) {
-        const after = full.slice(offset + match.length, offset + match.length + 32);
         if (FOLLOWING_NFKC_CONNECTOR_RE.test(after.normalize('NFKC'))) return match;
         if (endsWord && FOLLOWING_ASCII_HYPHEN_RE.test(after)) return match;
       }

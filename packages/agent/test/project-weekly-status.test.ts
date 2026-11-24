@@ -614,4 +614,61 @@ describe('projects.weekly_status agent checks (#2597)', () => {
       }),
     ).toEqual({ kind: 'none', code: 'FORMAT' });
   });
+
+  it('guards literal "dot" and "at" trusted names against obfuscated contact connectors while keeping clean prose working (#4637)', () => {
+    const dotFacts = sampleFacts({
+      projectName: 'dot',
+      columns: [{ id: 'col-1', name: 'at', taskStatus: 'todo', wipLimit: null, taskCount: 1 }],
+      tasks: {
+        ...sampleFacts().tasks,
+        doneThisWeek: [{ title: 'DOT', tainted: false, status: 'done', dueDay: '2026-11-12', commentCount: 0, latestComment: null }],
+      },
+    });
+
+    for (const badConnector of [
+      'Kiểm tra evil(dot)invalid ngay.',
+      'Kiểm tra evil dot invalid ngay.',
+      'Kiểm tra evil\uFF08dot\uFF09com ngay.',
+      'Xem (dot)invalid để xử lý.',
+      'Kiểm tra evil(at)invalid ngay.',
+      'Kiểm tra evil\uFF08at\uFF09invalid ngay.',
+      'Kiểm tra evil(DOT)invalid ngay.',
+      'Kiểm tra evil DOT invalid ngay.',
+    ]) {
+      expect(
+        checkProjectWeeklyStatus(dotFacts, {
+          sentences: [
+            'Tuần này dự án hoàn thành 2 việc.',
+            badConnector,
+            'Tuần tới có 2 việc đến hạn.',
+          ],
+        }),
+        badConnector,
+      ).toEqual({ kind: 'none', code: 'LINK' });
+    }
+
+    // Also guard literal connector tokens like "(dot)" / "(at)" when used as trusted names.
+    const parenConnectorFacts = sampleFacts({ projectName: '(dot)', columns: [{ id: 'c1', name: '(at)', taskStatus: 'todo', wipLimit: null, taskCount: 1 }] });
+    expect(
+      checkProjectWeeklyStatus(parenConnectorFacts, {
+        sentences: ['Hoàn thành 2 việc.', 'Xem evil(dot)invalid ngay.', 'Tuần tới có 2 việc.'],
+      }),
+    ).toEqual({ kind: 'none', code: 'LINK' });
+    expect(
+      checkProjectWeeklyStatus(parenConnectorFacts, {
+        sentences: ['Hoàn thành 2 việc.', 'Xem evil(at)invalid ngay.', 'Tuần tới có 2 việc.'],
+      }),
+    ).toEqual({ kind: 'none', code: 'LINK' });
+
+    // Clean prose mentioning literal "dot" or "at" projects/columns still passes.
+    expect(
+      checkProjectWeeklyStatus(dotFacts, {
+        sentences: [
+          'Hoàn thành 2 việc cho dự án dot.',
+          'Dự án dot: có 1 việc quá hạn cần xem.',
+          'Cột at hiện có 1 việc chờ và tuần tới có 2 việc.',
+        ],
+      }).kind,
+    ).toBe('summary');
+  });
 });
