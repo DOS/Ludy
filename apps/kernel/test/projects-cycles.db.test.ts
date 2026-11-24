@@ -1288,4 +1288,157 @@ suite('Projects v2 Cycles & Story Points on PostgreSQL (#4361)', () => {
       await admin.end();
     }
   });
+
+  it('allows direct project delete cascade under ludy_tenant while preserving task removal history on intact projects (#4678)', async () => {
+    const delOwner = await newPerson('del-guard-owner');
+    const delMember = await newPerson('del-guard-member');
+    const delOrg = await createOrg(rt, asUser(delOwner.userId), 'Delete Guard Org');
+
+    const inv = await rt.execute<{ acceptPath: string }>(
+      'kernel.member.invite.create',
+      { email: delMember.email, role: 'member' },
+      { actor: asMfa(delOwner.userId), orgId: delOrg.orgId, idempotencyKey: randomUUID() },
+    );
+    await rt.executeOrgless(
+      'kernel.member.invite.accept',
+      { token: inv.acceptPath.split('#')[1] },
+      { actor: asUser(delMember.userId) },
+    );
+
+    const { projectId: orgProjectId } = await exec<{ projectId: string }>(
+      delOwner.userId,
+      delOrg.orgId,
+      'projects.project.create',
+      { name: 'Dự án kiểm tra xóa trực tiếp' },
+    );
+    await exec(delOwner.userId, delOrg.orgId, 'projects.project.update', {
+      projectId: orgProjectId,
+      cyclesEnabled: true,
+      pointsEnabled: true,
+    });
+    const { cycle: orgCycle } = await exec<ProjectCycleMutateResult>(
+      delOwner.userId,
+      delOrg.orgId,
+      'projects.cycle.create',
+      { projectId: orgProjectId, name: 'Cycle xóa dự án' },
+    );
+    await exec(delOwner.userId, delOrg.orgId, 'projects.cycle.start', {
+      projectId: orgProjectId,
+      cycleId: orgCycle.id,
+    });
+
+    const { taskId: tRemove } = await exec<{ taskId: string }>(delOwner.userId, delOrg.orgId, 'projects.task.create', {
+      projectId: orgProjectId,
+      title: 'Việc bị gỡ khỏi dự án còn nguyên',
+      assigneePositionId: null,
+      cycleId: orgCycle.id,
+      storyPoints: 3,
+    });
+    const { taskId: tCascade } = await exec<{ taskId: string }>(delOwner.userId, delOrg.orgId, 'projects.task.create', {
+      projectId: orgProjectId,
+      title: 'Việc còn trong chu kỳ khi xóa dự án',
+      assigneePositionId: null,
+      cycleId: orgCycle.id,
+      storyPoints: 5,
+    });
+
+    // Removing a task while the parent project remains intact must still close the open history row.
+    await exec(delOwner.userId, delOrg.orgId, 'projects.task.remove', {
+      projectId: orgProjectId,
+      taskId: tRemove,
+    });
+
+    const admin = new pg.Client({ connectionString: adminUrl });
+    await admin.connect();
+    try {
+      const { rows: removedRows } = await admin.query<{
+        left_at: Date | null;
+        left_reason: string | null;
+      }>(
+        `SELECT left_at, left_reason
+           FROM ludy_projects.project_cycle_task_history
+          WHERE org_id = $1 AND project_id = $2 AND cycle_id = $3 AND task_id = $4`,
+        [delOrg.orgId, orgProjectId, orgCycle.id, tRemove],
+      );
+      expect(removedRows).toHaveLength(1);
+      expect(removedRows[0]?.left_reason).toBe('removed_from_project');
+      expect(removedRows[0]?.left_at).not.toBeNull();
+
+      const { rows: openRows } = await admin.query<{ left_at: Date | null }>(
+        `SELECT left_at
+           FROM ludy_projects.project_cycle_task_history
+          WHERE org_id = $1 AND project_id = $2 AND cycle_id = $3 AND task_id = $4`,
+        [delOrg.orgId, orgProjectId, orgCycle.id, tCascade],
+      );
+      expect(openRows).toHaveLength(1);
+      expect(openRows[0]?.left_at).toBeNull();
+
+      // Also verify direct delete of a private project as an org owner (private-bypass actor, non-member).
+      const { projectId: privateProjectId } = await exec<{ projectId: string }>(
+        delMember.userId,
+        delOrg.orgId,
+        'projects.project.create',
+        { name: 'Dự án riêng tư của thành viên', visibility: 'private' },
+      );
+      await exec(delMember.userId, delOrg.orgId, 'projects.project.update', {
+        projectId: privateProjectId,
+        cyclesEnabled: true,
+        pointsEnabled: true,
+      });
+      const { cycle: privateCycle } = await exec<ProjectCycleMutateResult>(
+        delMember.userId,
+        delOrg.orgId,
+        'projects.cycle.create',
+        { projectId: privateProjectId, name: 'Cycle riêng tư' },
+      );
+      await exec(delMember.userId, delOrg.orgId, 'projects.cycle.start', {
+        projectId: privateProjectId,
+        cycleId: privateCycle.id,
+      });
+      await exec(delMember.userId, delOrg.orgId, 'projects.task.create', {
+        projectId: privateProjectId,
+        title: 'Việc trong dự án riêng tư',
+        assigneePositionId: null,
+        cycleId: privateCycle.id,
+        storyPoints: 8,
+      });
+
+      const tenantClient = await pool.connect();
+      try {
+        for (const targetProjectId of [orgProjectId, privateProjectId]) {
+          await tenantClient.query('BEGIN');
+          await tenantClient.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [
+            delOrg.orgId,
+            contextToken(delOwner.userId, delOrg.orgId),
+          ]);
+          const delRes = await tenantClient.query(
+            'DELETE FROM ludy_projects.project WHERE org_id = $1 AND id = $2',
+            [delOrg.orgId, targetProjectId],
+          );
+          expect(delRes.rowCount).toBe(1);
+          await tenantClient.query('COMMIT');
+        }
+      } catch (err) {
+        await tenantClient.query('ROLLBACK').catch(() => undefined);
+        throw err;
+      } finally {
+        tenantClient.release();
+      }
+
+      const { rows: remaining } = await admin.query<{
+        projects: string;
+        project_tasks: string;
+        histories: string;
+      }>(
+        `SELECT
+           (SELECT count(*)::text FROM ludy_projects.project WHERE org_id = $1 AND id = ANY($2::uuid[])) AS projects,
+           (SELECT count(*)::text FROM ludy_projects.project_task WHERE org_id = $1 AND project_id = ANY($2::uuid[])) AS project_tasks,
+           (SELECT count(*)::text FROM ludy_projects.project_cycle_task_history WHERE org_id = $1 AND project_id = ANY($2::uuid[])) AS histories`,
+        [delOrg.orgId, [orgProjectId, privateProjectId]],
+      );
+      expect(remaining[0]).toEqual({ projects: '0', project_tasks: '0', histories: '0' });
+    } finally {
+      await admin.end();
+    }
+  });
 });
