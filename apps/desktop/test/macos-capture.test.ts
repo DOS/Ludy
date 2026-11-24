@@ -116,6 +116,10 @@ describe('macOS ps meeting app detection', () => {
 
     expect(classifyMacMeetingProcess(102, '/Applications/zoom.us.app/Contents/Frameworks/CptHost.app/Contents/MacOS/CptHost')).toBeNull();
     expect(classifyMacMeetingProcess(-1, '/Applications/Slack.app/Contents/MacOS/Slack')).toBeNull();
+    expect(classifyMacMeetingProcess(901, '/usr/local/bin/constructor')).toBeNull();
+    expect(classifyMacMeetingProcess(902, '__proto__')).toBeNull();
+    expect(classifyMacMeetingProcess(903, '/Applications/toString')).toBeNull();
+    expect(selectMacMeetingApps('  901 /usr/local/bin/constructor\n  902 __proto__\n  903 toString')).toEqual([]);
 
     let seenPsArgs: { file: string; args: readonly string[] } | null = null;
     const apps = await listMacMeetingApps({
@@ -271,6 +275,81 @@ describe('macOS Core Audio capture gating, silent-permission warning, and win32 
       expect(oldOutcome.error).toContain('macOS 14.2');
       expect(views.at(-1)?.systemFallbackRequired).toBe(false);
       expect(meetingsCreated).toBe(0);
+
+      const newViews: ConsentWindowViewState[] = [];
+      let createdOnNewMac = 0;
+      const newMacHarness = makeBridgeHarness();
+      const newMacController = createCaptureController({
+        capture: createDesktopCaptureModule({
+          isPackaged: false,
+          resourcesPath: '',
+          platform: 'darwin',
+          darwinRelease: '23.2.0',
+          bridge: newMacHarness.bridge,
+        }),
+        recordingStore: createDiskRecordingStore(root),
+        fetch: async (url) => {
+          if (String(url).endsWith('/api/rpc/meetings/create')) {
+            createdOnNewMac += 1;
+            return new Response(JSON.stringify({ json: { meetingId: 'mtg-mac-23-2' } }), { status: 200 });
+          }
+          return new Response(JSON.stringify({ json: { open: true } }), { status: 200 });
+        },
+        listWindows: async () => [],
+        getSession: () => ({ ludyUrl: 'https://ludy.example.vn', token: 'crx_t', uploads: 'direct', meetingsEnabled: true, agendaEnabled: false }),
+        onTrayState: () => undefined,
+        ui: {
+          updateConsentState: (s) => newViews.push(s),
+          showPill: () => undefined,
+          updatePill: () => undefined,
+          hidePill: () => undefined,
+          closeConsent: () => undefined,
+        },
+      });
+
+      const enPrompt = await newMacController.startCapture({
+        title: 'Mac 14.2 English Consent',
+        consentMethod: 'told_at_start',
+        consentAgreed: true,
+        noticeLanguage: 'en',
+        liveNotes: false,
+        source: 'system-audio-and-microphone',
+        targetPid: 201,
+      });
+      expect(enPrompt.ok).toBe(false);
+      expect(enPrompt.systemFallbackRequired).toBe(true);
+      expect(enPrompt.error).toContain('Per-app audio capture is not supported on macOS yet');
+      expect(newViews.at(-1)?.systemFallbackRequired).toBe(true);
+
+      const viPrompt = await newMacController.startCapture({
+        title: 'Mac 14.2 Vietnamese Consent',
+        consentMethod: 'told_at_start',
+        consentAgreed: true,
+        noticeLanguage: 'vi',
+        liveNotes: false,
+        source: 'system-audio-and-microphone',
+        targetPid: 201,
+      });
+      expect(viPrompt.ok).toBe(false);
+      expect(viPrompt.systemFallbackRequired).toBe(true);
+      expect(viPrompt.error).toContain('Trên macOS, Ludy chưa tách riêng âm thanh từng ứng dụng');
+      expect(createdOnNewMac).toBe(0);
+      expect(newMacHarness.counts().armed).toBe(0);
+
+      const confirmed = await newMacController.startCapture({
+        title: 'Mac 14.2 Confirmed System Capture',
+        consentMethod: 'told_at_start',
+        consentAgreed: true,
+        noticeLanguage: 'vi',
+        liveNotes: false,
+        source: 'system-audio-and-microphone',
+        targetPid: 201,
+        allowSystemFallback: true,
+      });
+      expect(confirmed).toEqual({ ok: true, meetingId: 'mtg-mac-23-2' });
+      expect(createdOnNewMac).toBe(1);
+      expect(newMacHarness.counts().armed).toBe(1);
+      await newMacController.stopCapture('user');
     } finally {
       await rm(root, { recursive: true, force: true });
     }

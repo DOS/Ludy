@@ -3525,7 +3525,7 @@ export function createHttpApp(deps: HttpDeps) {
         throw new DomainError('FORBIDDEN', 403, 'Mã của tiện ích Ludy không được dùng cho việc này', { rule: 'extension_scope' });
       }
       assertNoteUploadOrigin(c);
-      if (!runtime.installed('notes') || !(await runtime.appOn(orgId, 'notes', { fresh: true }).catch(() => true))) {
+      if (!runtime.installed('notes') || !(await requireAppOn(orgId, 'notes'))) {
         throw new DomainError('NOT_FOUND', 404, 'Mô-đun Ghi chú chưa được bật');
       }
       const attachment = await handleNoteAttachmentUpload({
@@ -3551,7 +3551,7 @@ export function createHttpApp(deps: HttpDeps) {
         throw new DomainError('FORBIDDEN', 403, 'Mã của tiện ích Ludy không được dùng cho việc này', { rule: 'extension_scope' });
       }
       const orgId = await resolveOrg(runtime, user, readOrgHeader(c));
-      if (!runtime.installed('notes') || !(await runtime.appOn(orgId, 'notes', { fresh: true }).catch(() => true))) {
+      if (!runtime.installed('notes') || !(await requireAppOn(orgId, 'notes'))) {
         throw new DomainError('NOTE_ATTACHMENT_NOT_FOUND', 404, 'Không tìm thấy tệp đính kèm này');
       }
       return await handleNoteAttachmentDownload({
@@ -3577,7 +3577,7 @@ export function createHttpApp(deps: HttpDeps) {
         throw new DomainError('FORBIDDEN', 403, 'Mã của tiện ích Ludy không được dùng cho việc này', { rule: 'extension_scope' });
       }
       assertNoteUploadOrigin(c);
-      if (!runtime.installed('notes') || !(await runtime.appOn(orgId, 'notes', { fresh: true }).catch(() => true))) {
+      if (!runtime.installed('notes') || !(await requireAppOn(orgId, 'notes'))) {
         throw new DomainError('NOT_FOUND', 404, 'Mô-đun Ghi chú chưa được bật');
       }
       const result = await handleEnexImportUpload({
@@ -3603,7 +3603,7 @@ export function createHttpApp(deps: HttpDeps) {
         throw new DomainError('FORBIDDEN', 403, 'Mã của tiện ích Ludy không được dùng cho việc này', { rule: 'extension_scope' });
       }
       assertNoteUploadOrigin(c);
-      if (!runtime.installed('notes') || !(await runtime.appOn(orgId, 'notes', { fresh: true }).catch(() => true))) {
+      if (!runtime.installed('notes') || !(await requireAppOn(orgId, 'notes'))) {
         throw new DomainError('NOT_FOUND', 404, 'Mô-đun Ghi chú chưa được bật');
       }
       const result = await handleTodoistImportUpload({
@@ -3638,7 +3638,7 @@ export function createHttpApp(deps: HttpDeps) {
         throw new DomainError('FORBIDDEN', 403, 'Mã của tiện ích Ludy không được dùng cho việc này', { rule: 'extension_scope' });
       }
       assertNoteUploadOrigin(c);
-      if (!runtime.installed('hr') || !(await runtime.appOn(orgId, 'hr', { fresh: true }).catch(() => true))) {
+      if (!runtime.installed('hr') || !(await requireAppOn(orgId, 'hr'))) {
         throw new DomainError('NOT_FOUND', 404, 'Mô-đun Nhân sự chưa được bật');
       }
       const actor = actorOf(user);
@@ -3666,7 +3666,7 @@ export function createHttpApp(deps: HttpDeps) {
         throw new DomainError('FORBIDDEN', 403, 'Mã của tiện ích Ludy không được dùng cho việc này', { rule: 'extension_scope' });
       }
       const orgId = await resolveOrg(runtime, user, readOrgHeader(c));
-      if (!runtime.installed('hr') || !(await runtime.appOn(orgId, 'hr', { fresh: true }).catch(() => true))) {
+      if (!runtime.installed('hr') || !(await requireAppOn(orgId, 'hr'))) {
         throw new DomainError('NOT_FOUND', 404, 'Mô-đun Nhân sự chưa được bật');
       }
       const actor = actorOf(user);

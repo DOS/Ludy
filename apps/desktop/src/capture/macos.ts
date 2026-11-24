@@ -32,22 +32,22 @@ export function isMacOsCoreAudioSupported(release: string): boolean {
   return parsed.major > MIN_DARWIN_MAJOR || (parsed.major === MIN_DARWIN_MAJOR && parsed.minor >= MIN_DARWIN_MINOR);
 }
 
-const MAC_MEETING_APPS: Readonly<Record<string, { client: MeetingClientKind; appName: string }>> = {
-  'zoom.us': { client: 'zoom', appName: 'Zoom' },
-  msteams: { client: 'teams', appName: 'Microsoft Teams' },
-  'microsoft teams': { client: 'teams', appName: 'Microsoft Teams' },
-  'microsoft teams (work or school)': { client: 'teams', appName: 'Microsoft Teams' },
-  teams: { client: 'teams', appName: 'Microsoft Teams' },
-  zalo: { client: 'zalo', appName: 'Zalo' },
-  slack: { client: 'slack', appName: 'Slack' },
-};
+const MAC_MEETING_APPS = new Map<string, { client: MeetingClientKind; appName: string }>([
+  ['zoom.us', { client: 'zoom', appName: 'Zoom' }],
+  ['msteams', { client: 'teams', appName: 'Microsoft Teams' }],
+  ['microsoft teams', { client: 'teams', appName: 'Microsoft Teams' }],
+  ['microsoft teams (work or school)', { client: 'teams', appName: 'Microsoft Teams' }],
+  ['teams', { client: 'teams', appName: 'Microsoft Teams' }],
+  ['zalo', { client: 'zalo', appName: 'Zalo' }],
+  ['slack', { client: 'slack', appName: 'Slack' }],
+]);
 
 export function classifyMacMeetingProcess(pid: number, comm: string): OfferedWindow | null {
   if (!Number.isInteger(pid) || pid <= 0) return null;
   const trimmed = comm.trim();
   if (!trimmed || trimmed.includes('/Contents/Frameworks/')) return null;
   const basename = trimmed.replace(/^.*\//, '').toLowerCase();
-  const match = MAC_MEETING_APPS[basename];
+  const match = MAC_MEETING_APPS.get(basename);
   if (!match) return null;
   return {
     hwnd: `mac:${pid}`,
