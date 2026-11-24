@@ -225,6 +225,26 @@ export const projectUpdate = defineCommand({
             'Không thể gắn dự án riêng tư vào bảng lộ trình công khai',
           );
         }
+        // row is already locked FOR UPDATE above; roadmap.item.convert_to_task, projects.triage.accept,
+        // and roadmap_item_privacy_guard_tr all lock project FOR SHARE before setting linked_task_id.
+        const linkedRoadmapItem = await ctx.trx
+          .selectFrom('ludy_projects.roadmap_item as ri')
+          .innerJoin('ludy_projects.project_task as pt', (join) =>
+            join.onRef('pt.org_id', '=', 'ri.org_id').onRef('pt.task_id', '=', 'ri.linked_task_id'),
+          )
+          .select('ri.id')
+          .where('ri.org_id', '=', ctx.orgId)
+          .where('pt.project_id', '=', row.id)
+          .where('ri.linked_task_id', 'is not', null)
+          .limit(1)
+          .executeTakeFirst();
+        if (linkedRoadmapItem) {
+          throw new DomainError(
+            'ROADMAP_PRIVATE_PROJECT_FORBIDDEN',
+            422,
+            'Không thể chuyển dự án có việc liên kết với lộ trình công khai sang chế độ riêng tư',
+          );
+        }
         await ensurePrivateMembers(ctx.trx, ctx.orgId, row.id, [row.owner_user_id], ctx.now);
         await stopRunningProjectTimers(ctx, row.id, {
           kind: 'excluded_on_private',
