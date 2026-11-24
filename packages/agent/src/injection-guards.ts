@@ -34,18 +34,32 @@ export function plainLine(value: string, max: number): string {
   return Array.from(cleaned).slice(0, max).join('').trim();
 }
 
-/** Strips longest trusted phrases first on token boundaries so short trusted words cannot split adversarial domains or phrases. */
+const BOUNDARY_WORD_CHAR_RE = /[\p{L}\p{M}\p{N}]/u;
+const PRECEDING_CONNECTOR_RE = /(?:[\p{L}\p{M}\p{N}_.-]|(?:@|\(at\)|\[\.\]|\(dot\)|\sdot)\s*)$/iu;
+const FOLLOWING_CONNECTOR_RE = /^(?:[\p{L}\p{M}\p{N}_-]|\.(?=[\p{L}\p{M}\p{N}])|\s*(?:\[\.\]|\(dot\)|\s+dot(?=\s)|@|\(at\)))/iu;
+
+/** Strips longest trusted phrases first on token boundaries so short trusted words cannot split adversarial domains, handles, or hyphenated tokens. */
 export function stripTrustedPhrases(text: string, trustedTexts: readonly string[]): string {
-  const ordered = [...trustedTexts]
-    .map((t) => t.normalize('NFC'))
-    .filter(Boolean)
-    .sort((a, b) => b.length - a.length);
+  const ordered = [...new Set(trustedTexts.map((t) => t.normalize('NFC')).filter(Boolean))].sort(
+    (a, b) => b.length - a.length,
+  );
   let out = text.normalize('NFC');
   for (const t of ordered) {
     const escaped = t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const prefix = /^[\p{L}\p{M}\p{N}]/u.test(t) ? '(?<![\\p{L}\\p{M}\\p{N}])' : '';
-    const suffix = /[\p{L}\p{M}\p{N}]$/u.test(t) ? '(?![\\p{L}\\p{M}\\p{N}])' : '';
-    out = out.replace(new RegExp(`${prefix}${escaped}${suffix}`, 'gu'), ' ');
+    const chars = Array.from(t);
+    const startsWord = BOUNDARY_WORD_CHAR_RE.test(chars[0] ?? '');
+    const endsWord = BOUNDARY_WORD_CHAR_RE.test(chars[chars.length - 1] ?? '');
+    out = out.replace(new RegExp(escaped, 'gu'), (match, offset: number, full: string) => {
+      if (startsWord) {
+        const before = full.slice(Math.max(0, offset - 32), offset);
+        if (PRECEDING_CONNECTOR_RE.test(before)) return match;
+      }
+      if (endsWord) {
+        const after = full.slice(offset + match.length, offset + match.length + 32);
+        if (FOLLOWING_CONNECTOR_RE.test(after)) return match;
+      }
+      return ' ';
+    });
   }
   return out;
 }

@@ -508,16 +508,59 @@ describe('projects.weekly_status agent checks (#2597)', () => {
       }).kind,
     ).toBe('none');
 
-    // Short trusted project/column tokens cannot split attack domains (stripTrustedPhrases token boundary check).
+    // Short trusted project/column tokens cannot split attack domains or obfuscated links (stripTrustedPhrases boundary checks).
+    for (const badLinkSentence of [
+      'Kiểm tra thêm tại evilShop.invalid để biết chi tiết.',
+      'Xem tại Shop.invalid để xử lý.',
+      'Mở Shop.ru/pay cần kiểm tra.',
+      'Xem tại evil-Shop.invalid để xử lý.',
+      'Kiểm tra sub.Shop.invalid ngay.',
+      'Gửi tới Shop [.] com cần kiểm tra.',
+      'Gửi tới Shop(dot)vn cần kiểm tra.',
+      'Gửi tới Shop dot com cần kiểm tra.',
+    ]) {
+      expect(
+        checkProjectWeeklyStatus(facts, {
+          sentences: [
+            'Tuần này dự án Shop Q4 đã hoàn thành 2 việc.',
+            badLinkSentence,
+            'Tuần tới có 2 việc đến hạn.',
+          ],
+        }),
+        badLinkSentence,
+      ).toEqual({ kind: 'none', code: 'LINK' });
+    }
+
+    // Legitimate hyphenated phrase adjacent to a short trusted name is not broken into a false negative sign.
+    const shopOnlyFacts = sampleFacts({ projectName: 'Shop' });
     expect(
-      checkProjectWeeklyStatus(facts, {
+      checkProjectWeeklyStatus(shopOnlyFacts, {
         sentences: [
-          'Tuần này dự án Shop Q4 đã hoàn thành 2 việc.',
-          'Kiểm tra thêm tại evilShop.invalid để biết chi tiết.',
+          'Dự án Shop-1 có 1 việc đang chờ xử lý.',
+          'Tuần này hoàn thành 2 việc đúng hạn.',
           'Tuần tới có 2 việc đến hạn.',
         ],
-      }),
-    ).toEqual({ kind: 'none', code: 'LINK' });
+      }).kind,
+    ).toBe('summary');
+
+    // Fullwidth minus, small minus, en-dash, and Unicode minus flips are refused after NFKC normalization.
+    for (const negSentence of [
+      'Chênh lệch là \uFF0D1 việc.',
+      'Chênh lệch là \uFE631 việc.',
+      'Chênh lệch là \u20131 việc.',
+      'Chênh lệch là \u22121 việc.',
+    ]) {
+      expect(
+        checkProjectWeeklyStatus(shopOnlyFacts, {
+          sentences: [
+            'Tuần này dự án Shop hoàn thành 2 việc.',
+            negSentence,
+            'Tuần tới có 2 việc đến hạn.',
+          ],
+        }),
+        negSentence,
+      ).toMatchObject({ kind: 'none', code: 'AI_OUTPUT_UNSAFE' });
+    }
 
     // Invisible filler/format characters in output are refused cleanly.
     expect(

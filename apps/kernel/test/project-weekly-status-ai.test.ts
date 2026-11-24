@@ -151,7 +151,7 @@ describe('projectWeeklyStatusAi (#2597)', () => {
   it('strips invisible/bidi/control characters before facts reach Vy, propagates tainted on tasks and bottlenecks, and refuses echoed taint (#4424)', async () => {
     const tag = (s: string) => [...s].map((c) => String.fromCodePoint(0xe0000 + c.charCodeAt(0))).join('');
     let capturedFacts: ProjectWeeklyStatusFacts | null = null;
-    const rawTaintedTitle = `Hợp\u202E đồng 88\u200B xem https://evil.invalid/pay ${tag('override')}`;
+    const rawTaintedTitle = `Hợp\u202E đồng\u3164 88\u200B\u2800 xem\u034F https://evil.invalid/pay ${tag('override')}`;
     const rawTaintedBottleneck = `Chặn\u202E tiến độ 77\u200B tại https://evil.invalid/block`;
     const source = sourceFixture({
       project: { id: '11111111-1111-4111-8111-111111111111', name: 'Mùa\u200B cao\u202E điểm', status: 'active' },

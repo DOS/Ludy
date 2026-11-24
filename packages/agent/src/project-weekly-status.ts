@@ -11,7 +11,6 @@ import {
   hasObfuscatedContactOrLink,
   hasProjectWrittenCountWords,
   hasPromptMarkupLeak,
-  hasStealthControls,
   hasUngroundedMoneyOrScaleWords,
   plainLine,
   stripTrustedPhrases,
@@ -25,6 +24,7 @@ export const PROJECT_WEEKLY_STATUS_SENTENCE_MAX = 400;
 export const PROJECT_WEEKLY_STATUS_BUCKET_TASKS_MAX = 10;
 export const PROJECT_WEEKLY_STATUS_TITLE_CHARS = 160;
 export const PROJECT_WEEKLY_STATUS_COMMENT_CHARS = 160;
+export const PROJECT_WEEKLY_STATUS_COLUMN_CHARS = 80;
 export const PROJECT_WEEKLY_STATUS_DAYS = 7;
 
 export interface ProjectWeeklyStatusTaskFact {
@@ -100,8 +100,7 @@ export type ProjectWeeklyStatusResult =
 const LANGUAGE = { vi: 'Vietnamese', en: 'English' } as const;
 const oneLine = plainLine;
 const fenced = (value: string) => value.replace(/<{3,}|>{3,}/g, (run) => run.split('').join(' '));
-const INVISIBLE_FORMAT = /\p{Cf}/u;
-const NEGATIVE_SIGN_RE = /\u2212|(?<![\p{L}\p{N}])-\d/u;
+const NEGATIVE_SIGN_RE = /\u2212|(?<![\p{L}\p{N}])[-\u2013]\d/u;
 const isAsciiSpace = (ch: string | undefined): boolean => ch === ' ' || ch === '\t';
 
 /** Linear O(n) check for Markdown blocks or list/heading prefixes without any backtracking regex. */
@@ -337,7 +336,7 @@ function buildAllowedSummaryInput(facts: ProjectWeeklyStatusFacts): {
   }
 
   for (const col of facts.columns ?? []) {
-    const colName = oneLine(col.name, 80);
+    const colName = oneLine(col.name, PROJECT_WEEKLY_STATUS_COLUMN_CHARS);
     if (colName) {
       channels.push(colName);
       trustedTexts.push(colName);
@@ -416,7 +415,7 @@ export function checkProjectWeeklyStatus(
   const maxRawLength = PROJECT_WEEKLY_STATUS_SENTENCES_MAX * PROJECT_WEEKLY_STATUS_SENTENCE_MAX;
   for (const item of rawList) {
     if (item.length > maxRawLength) return { kind: 'none', code: 'TOO_LONG' };
-    if (INVISIBLE_FORMAT.test(item) || hasStealthControls(item) || hasInvisibleFormat(item) || hasPromptMarkupLeak(item)) {
+    if (hasInvisibleFormat(item) || hasPromptMarkupLeak(item)) {
       return { kind: 'none', code: 'FORMAT' };
     }
     if (hasMarkdownNoise(item)) return { kind: 'none', code: 'FORMAT' };
@@ -429,7 +428,7 @@ export function checkProjectWeeklyStatus(
   }
 
   for (const s of sentences) {
-    if (INVISIBLE_FORMAT.test(s) || hasStealthControls(s) || hasInvisibleFormat(s) || hasPromptMarkupLeak(s)) {
+    if (hasInvisibleFormat(s) || hasPromptMarkupLeak(s)) {
       return { kind: 'none', code: 'FORMAT' };
     }
     if (hasMarkdownNoise(s)) return { kind: 'none', code: 'FORMAT' };
@@ -449,7 +448,7 @@ export function checkProjectWeeklyStatus(
   const outside = summaryNumbersOutside(joined, summaryInput);
   if (
     outside.length > 0 ||
-    NEGATIVE_SIGN_RE.test(untrustedRemainder) ||
+    NEGATIVE_SIGN_RE.test(untrustedRemainder.normalize('NFKC')) ||
     hasUngroundedMoneyOrScaleWords(untrustedRemainder) ||
     hasProjectWrittenCountWords(untrustedRemainder)
   ) {

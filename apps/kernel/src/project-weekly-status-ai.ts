@@ -5,6 +5,7 @@
 // and task lists even when Vy's summary is off, paused, budget-exhausted, refused or failed. Nothing is stored or sent.
 import {
   AiBudgetExhaustedError,
+  PROJECT_WEEKLY_STATUS_COLUMN_CHARS,
   PROJECT_WEEKLY_STATUS_COMMENT_CHARS,
   PROJECT_WEEKLY_STATUS_TITLE_CHARS,
   type InboxReader,
@@ -21,8 +22,6 @@ import {
 import type { ProjectWeeklyStatusSource } from '@ludy/mod-projects';
 import type { DraftBudget } from './ai-draft-limit.ts';
 
-const PROJECT_WEEKLY_STATUS_COLUMN_CHARS = 80;
-
 export interface ProjectWeeklyStatusAi {
   reader: Pick<InboxReader, 'projectWeeklyStatus'> | null;
   budget: DraftBudget;
@@ -38,7 +37,7 @@ export function projectWeeklyStatusAi(
 function toTaskFacts(tasks: readonly ProjectWeeklyStatusTask[]): ProjectWeeklyStatusTaskFact[] {
   return tasks.map((task) => ({
     title: plainLine(task.title, PROJECT_WEEKLY_STATUS_TITLE_CHARS),
-    tainted: Boolean(task.tainted),
+    tainted: task.tainted !== false,
     status: task.status,
     dueDay: task.due ? vietnamToday(new Date(task.due)) : null,
     commentCount: task.commentCount,
@@ -94,7 +93,7 @@ async function generateSummary(
       ? {
           bottlenecks: bottlenecks.map((item) => ({
             title: plainLine(item.title, PROJECT_WEEKLY_STATUS_TITLE_CHARS),
-            tainted: Boolean(item.tainted),
+            tainted: item.tainted !== false,
             status: item.status,
             dueDay: item.due ? vietnamToday(new Date(item.due)) : null,
             blockedCount: item.blockedCount,
