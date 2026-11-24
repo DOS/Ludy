@@ -4,6 +4,7 @@ import { apiUrl, serverOrigin } from './api-base.ts';
 import { ClientError } from './errors.ts';
 import { withInviteToken } from './invite.ts';
 import { HOSTED_STORAGE_KEY, completeHostedLogin, readHostedCallback, type HostedCallback, type HostedFailure, type HostedLoginConfig } from './hosted-login.ts';
+import { isInPersonCeremonyIsolated, subscribeToCeremonyIsolation } from './sign-hash.ts';
 import { readMigratedItem, type StorageLike } from './storage-migrate.ts';
 
 export interface PublicConfig {
@@ -56,6 +57,14 @@ export interface PublicConfig {
 let config: PublicConfig | null = null;
 type Client = InstanceType<typeof AuthClient>;
 let client: Client | null = null;
+let clientIsolated = false;
+
+// In-person counter ceremony tabs must not read or mutate shared workspace tokens in localStorage (#4278, #4394).
+const ISOLATED_CEREMONY_STORAGE = {
+  getItem: (_key: string): string | null => null,
+  setItem: (_key: string, _value: string): void => {},
+  removeItem: (_key: string): void => {},
+};
 
 export async function loadConfig(): Promise<PublicConfig> {
   if (config) return config;
@@ -86,6 +95,7 @@ function migrateAuthPair(store: StorageLike, key: string, legacyKey: string): vo
 }
 
 export function migrateAuthStorage(storage?: StorageLike): void {
+  if (!storage && isInPersonCeremonyIsolated()) return;
   try {
     const store = storage ?? (typeof window === 'undefined' ? undefined : window.localStorage);
     if (!store) return;
@@ -108,32 +118,54 @@ export function migrateAuthStorage(storage?: StorageLike): void {
   }
 }
 
+function disposeAuthClient(target: Client | null): void {
+  if (target && 'dispose' in target && typeof target.dispose === 'function') {
+    void target.dispose();
+  }
+}
+
+subscribeToCeremonyIsolation(() => {
+  if (client && !clientIsolated) {
+    const prev = client;
+    client = null;
+    clientIsolated = true;
+    disposeAuthClient(prev);
+  }
+});
+
 export function auth(): Client {
-  if (client) return client;
+  const isolated = isInPersonCeremonyIsolated();
+  if (client && clientIsolated === isolated) return client;
+  disposeAuthClient(client);
+  client = null;
+  clientIsolated = isolated;
   const { authUrl, authAnonKey } = getConfig();
-  migrateAuthStorage();
+  if (!isolated) migrateAuthStorage();
   client = new AuthClient({
     url: authUrl,
     headers: authAnonKey ? { apikey: authAnonKey, Authorization: `Bearer ${authAnonKey}` } : {},
     storageKey: AUTH_STORAGE_KEY,
+    ...(isolated ? { storage: ISOLATED_CEREMONY_STORAGE } : {}),
     // A sign-up from an accept link carries the invite token for the proxy's sign-up policy (#563).
     fetch: withInviteToken((input, init) => fetch(input, init), new URL(authUrl, serverOrigin()).origin),
     // Email links (confirmation, recovery) come back with a one-time code that only this browser can exchange.
     flowType: 'pkce',
-    autoRefreshToken: true,
-    persistSession: true,
-    detectSessionInUrl: true,
+    autoRefreshToken: !isolated,
+    persistSession: !isolated,
+    detectSessionInUrl: !isolated,
   });
   return client;
 }
 
 export async function accessToken(): Promise<string | null> {
+  if (isInPersonCeremonyIsolated()) return null;
   const { data } = await auth().getSession();
   return data.session?.access_token ?? null;
 }
 
 // True when the session is signed in with a password only but the user has a verified second factor.
 export async function needsSecondFactor(): Promise<boolean> {
+  if (isInPersonCeremonyIsolated()) return false;
   const { data } = await auth().mfa.getAuthenticatorAssuranceLevel();
   return data?.currentLevel === 'aal1' && data.nextLevel === 'aal2';
 }
@@ -144,6 +176,7 @@ export async function needsSecondFactor(): Promise<boolean> {
 // refuses with MFA_REQUIRED, which opens /mfa again, page load after page load. For the same reason a failed answer
 // throws (the router shows its error page) instead of counting as "no factor".
 export async function needsSecondFactorNow(client: Pick<Client, 'mfa'> = auth()): Promise<boolean> {
+  if (isInPersonCeremonyIsolated()) return false;
   const { data, error } = await client.mfa.getAuthenticatorAssuranceLevel();
   if (error) throw error;
   if (data?.currentLevel !== 'aal1') return false;
@@ -274,6 +307,7 @@ let callbackNotice: CallbackNotice | null = null;
 let capturedHosted: HostedCallback | null = null;
 
 export function captureHostedCallback(): void {
+  if (isInPersonCeremonyIsolated()) return;
   const callback = readHostedCallback(window.location);
   if (!callback) return;
   capturedHosted = callback;
@@ -291,6 +325,7 @@ export function discardHostedLogin(): void {
 }
 
 export async function settleCallback(): Promise<void> {
+  if (isInPersonCeremonyIsolated()) return;
   captureHostedCallback();
   const hosted = capturedHosted;
   capturedHosted = null;

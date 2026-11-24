@@ -801,6 +801,94 @@ describe('os.sign RPC handlers (#3325)', () => {
     const oversizedPdf = new Uint8Array(SIGN_ATTACHMENT_MAX_BYTES + 1);
     oversizedPdf.set(validPdf, 0);
     expect(verifySignAttachmentBytes(oversizedPdf)).toBeNull();
+
+    // Android Motion Photo JPEGs (and Samsung MotionPhoto_Data trailers) append an MP4 track after EOI (#4331, #4394).
+    const mp4Box = (type: string, body: Uint8Array): Uint8Array => {
+      const out = new Uint8Array(8 + body.byteLength);
+      const size = out.byteLength;
+      out[0] = (size >>> 24) & 0xff;
+      out[1] = (size >>> 16) & 0xff;
+      out[2] = (size >>> 8) & 0xff;
+      out[3] = size & 0xff;
+      out.set(new TextEncoder().encode(type), 4);
+      out.set(body, 8);
+      return out;
+    };
+    const concatBytes = (...parts: Uint8Array[]): Uint8Array => {
+      const total = parts.reduce((acc, p) => acc + p.byteLength, 0);
+      const out = new Uint8Array(total);
+      let off = 0;
+      for (const p of parts) {
+        out.set(p, off);
+        off += p.byteLength;
+      }
+      return out;
+    };
+    const makeMotionPhotoMp4 = (opts?: { handler?: string; majorBrand?: string; omitMoov?: boolean }) => {
+      const brand = opts?.majorBrand ?? 'mp42';
+      const handler = opts?.handler ?? 'vide';
+      const ftyp = mp4Box(
+        'ftyp',
+        new TextEncoder().encode(`${brand}\u0000\u0000\u0000\u0000mp42isom`),
+      );
+      const hdlrBody = new Uint8Array(12);
+      hdlrBody.set(new TextEncoder().encode(handler), 8);
+      const hdlr = mp4Box('hdlr', hdlrBody);
+      const mdia = mp4Box('mdia', hdlr);
+      const trak = mp4Box('trak', mdia);
+      const moov = mp4Box('moov', trak);
+      const mdat = mp4Box('mdat', new Uint8Array([0x00, 0x00, 0x00, 0x01]));
+      return opts?.omitMoov ? concatBytes(ftyp, mdat) : concatBytes(ftyp, mdat, moov);
+    };
+
+    const validMotionMp4 = makeMotionPhotoMp4();
+    const androidMotionPhoto = concatBytes(validJpeg, validMotionMp4);
+    const samsungMotionPhoto = concatBytes(validJpeg, new TextEncoder().encode('MotionPhoto_Data'), validMotionMp4);
+    const zeroPaddedJpeg = concatBytes(validJpeg, new Uint8Array(16));
+    expect(verifySignAttachmentBytes(androidMotionPhoto)).toBe('image/jpeg');
+    expect(verifySignAttachmentBytes(samsungMotionPhoto)).toBe('image/jpeg');
+    expect(verifySignAttachmentBytes(zeroPaddedJpeg)).toBe('image/jpeg');
+
+    // Reject polyglot/corrupt trailers after EOI and EXIF-thumbnail EOI masquerading as frame EOI.
+    expect(
+      verifySignAttachmentBytes(concatBytes(validJpeg, new TextEncoder().encode('<script>alert(1)</script>'))),
+    ).toBeNull();
+    expect(
+      verifySignAttachmentBytes(concatBytes(validJpeg, new Uint8Array([0x50, 0x4b, 0x03, 0x04]))),
+    ).toBeNull();
+    expect(
+      verifySignAttachmentBytes(concatBytes(androidMotionPhoto, new TextEncoder().encode('<svg/>'))),
+    ).toBeNull();
+    expect(
+      verifySignAttachmentBytes(concatBytes(validJpeg, makeMotionPhotoMp4({ handler: 'soun' }))),
+    ).toBeNull();
+    expect(
+      verifySignAttachmentBytes(concatBytes(validJpeg, makeMotionPhotoMp4({ omitMoov: true }))),
+    ).toBeNull();
+    expect(
+      verifySignAttachmentBytes(concatBytes(validJpeg, makeMotionPhotoMp4({ majorBrand: 'M4A ' }))),
+    ).toBeNull();
+
+    // Truncated JPEG whose APP1 EXIF segment embeds FF D9 near the tail must be rejected.
+    const fakeExifPayload = new Uint8Array([
+      0x45, 0x78, 0x69, 0x66, 0x00, 0x00, 0xff, 0xd8, 0xff, 0xd9, 0x00, 0x00, 0x00, 0x00,
+    ]);
+    const truncatedExifJpeg = new Uint8Array([
+      0xff, 0xd8, 0xff, 0xc0, 0x00, 0x0b, 0x08, 0x00, 0x01, 0x00, 0x01, 0x01, 0x01, 0x11, 0x00,
+      0xff, 0xe1, 0x00, fakeExifPayload.byteLength + 2, ...fakeExifPayload,
+    ]);
+    expect(verifySignAttachmentBytes(truncatedExifJpeg)).toBeNull();
+
+    // Progressive multi-scan JPEG (SOF2 + DHT + two SOS scans + EOI) is accepted (#4331, #4394).
+    const progressiveJpeg = new Uint8Array([
+      0xff, 0xd8,
+      0xff, 0xc2, 0x00, 0x0b, 0x08, 0x00, 0x01, 0x00, 0x01, 0x01, 0x01, 0x11, 0x00,
+      0xff, 0xda, 0x00, 0x08, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x12, 0xff, 0x00, 0x34,
+      0xff, 0xc4, 0x00, 0x04, 0x10, 0x00,
+      0xff, 0xda, 0x00, 0x08, 0x01, 0x01, 0x00, 0x01, 0x3f, 0x00, 0x56,
+      0xff, 0xd9,
+    ]);
+    expect(verifySignAttachmentBytes(progressiveJpeg)).toBe('image/jpeg');
   });
 
   it('wires os.sign.vault.search and os.sign.vault.ask with AI-off parity and metered AI-on citations (#4439)', async () => {

@@ -8144,9 +8144,13 @@ async function appendAuditCertificatePages(
 
   const signerCards: Array<{
     readonly titleLines: readonly string[];
+    readonly continuedTitleLines: readonly string[];
     readonly detailLines: readonly string[];
     readonly cardH: number;
   }> = [];
+
+  const measureSignerCardHeight = (titleCount: number, detailCount: number): number =>
+    Math.round(16 * vScale) + titleCount * signerTitleStep + detailCount * signerDetailStep + Math.round(6 * vScale);
 
   for (let i = 0; i < certificate.signers.length; i++) {
     const signer = certificate.signers[i];
@@ -8156,6 +8160,12 @@ async function appendAuditCertificatePages(
     const roleLabel = collapseSingleLineText(signer.roleLabel);
     const titleText = `${i + 1}. ${signerName} (${roleLabel})`;
     const titleLines = await fonts.wrapLines(titleText, 'bold', signerTitleSize, innerTextW);
+    const continuedTitleLines = await fonts.wrapLines(
+      `${titleText} (Tiếp theo / Continued)`,
+      'bold',
+      signerTitleSize,
+      innerTextW,
+    );
     const emailDisplay = signer.maskedEmail ? collapseSingleLineText(signer.maskedEmail) : 'N/A';
     const deliveryDisplay = signer.deliveryMode === 'email' ? 'Email' : 'Link';
     const sigKindSuffix = signer.signatureKind
@@ -8206,13 +8216,25 @@ async function appendAuditCertificatePages(
       );
     }
 
-    const cardH = Math.round(16 * vScale) + titleLines.length * signerTitleStep + detailLines.length * signerDetailStep + Math.round(6 * vScale);
-    signerCards.push({ titleLines, detailLines, cardH });
+    const cardH = measureSignerCardHeight(titleLines.length, detailLines.length);
+    signerCards.push({ titleLines, continuedTitleLines, detailLines, cardH });
   }
 
-  const firstCardH = signerCards[0]?.cardH ?? 0;
-  if (state.cursorY - signerHeadingGap - firstCardH < bottomLimit) {
-    state = await startPage(true);
+  const continuedHeaderH = Math.round(52 * vScale);
+  const continuedPageStartY = pageH - continuedHeaderH - Math.round(22 * vScale);
+  const freshPageAvailH = continuedPageStartY - bottomLimit;
+
+  const firstCard = signerCards[0];
+  if (firstCard) {
+    const firstFitsSinglePage = firstCard.cardH <= freshPageAvailH;
+    const minFirstSliceH = measureSignerCardHeight(
+      firstCard.titleLines.length,
+      Math.min(1, firstCard.detailLines.length),
+    );
+    const minNeededForHeading = firstFitsSinglePage ? firstCard.cardH : minFirstSliceH;
+    if (state.cursorY - signerHeadingGap - minNeededForHeading < bottomLimit) {
+      state = await startPage(true);
+    }
   }
 
   await fonts.drawText(state.page, `DANH SÁCH NGƯỜI KÝ / SIGNERS (${certificate.signers.length})`, {
@@ -8224,35 +8246,33 @@ async function appendAuditCertificatePages(
   });
   state.cursorY -= signerHeadingGap;
 
-  for (const card of signerCards) {
-    const { titleLines, detailLines, cardH } = card;
-    if (state.cursorY - cardH < bottomLimit) {
-      state = await startPage(true);
-    }
-    if (state.cursorY - cardH < bottomLimit) {
-      throw new PdfSignError('Thông tin người ký vượt quá kích thước trang chứng nhận');
-    }
-
-    state.page.drawRectangle({
+  const drawSignerCardSlice = async (
+    page: PDFPage,
+    topY: number,
+    titleLines: readonly string[],
+    detailLines: readonly string[],
+    sliceH: number,
+  ): Promise<void> => {
+    page.drawRectangle({
       x: marginX,
-      y: state.cursorY - cardH,
+      y: topY - sliceH,
       width: contentW,
-      height: cardH,
+      height: sliceH,
       color: COLOR_WHITE,
       borderColor: COLOR_BORDER,
       borderWidth: 0.75,
     });
-    state.page.drawRectangle({
+    page.drawRectangle({
       x: marginX,
-      y: state.cursorY - cardH,
+      y: topY - sliceH,
       width: 3,
-      height: cardH,
+      height: sliceH,
       color: COLOR_ACCENT,
     });
 
-    let y = state.cursorY - cardTopPad;
+    let y = topY - cardTopPad;
     for (const line of titleLines) {
-      await fonts.drawText(state.page, line, {
+      await fonts.drawText(page, line, {
         weight: 'bold',
         sizePt: signerTitleSize,
         color: COLOR_INK,
@@ -8263,7 +8283,7 @@ async function appendAuditCertificatePages(
     }
     y -= Math.max(1, Math.round(2 * vScale));
     for (const line of detailLines) {
-      await fonts.drawText(state.page, line, {
+      await fonts.drawText(page, line, {
         weight: 'regular',
         sizePt: signerDetailSize,
         color: COLOR_MUTED,
@@ -8272,8 +8292,53 @@ async function appendAuditCertificatePages(
       });
       y -= signerDetailStep;
     }
+  };
 
-    state.cursorY -= cardH + cardGap;
+  for (const card of signerCards) {
+    let remainingDetails = card.detailLines;
+    let isContinuation = false;
+
+    while (remainingDetails.length > 0 || !isContinuation) {
+      const activeTitleLines = isContinuation ? card.continuedTitleLines : card.titleLines;
+      const fullSliceH = measureSignerCardHeight(activeTitleLines.length, remainingDetails.length);
+      const availH = state.cursorY - bottomLimit;
+
+      if (fullSliceH <= availH) {
+        await drawSignerCardSlice(state.page, state.cursorY, activeTitleLines, remainingDetails, fullSliceH);
+        state.cursorY -= fullSliceH + cardGap;
+        break;
+      }
+
+      if (!isContinuation && fullSliceH <= freshPageAvailH) {
+        state = await startPage(true);
+        continue;
+      }
+
+      const baseOverheadH = measureSignerCardHeight(activeTitleLines.length, 0);
+      const minDetailBudget = remainingDetails.length > 0 ? 1 : 0;
+      let maxDetailsHere = Math.floor((availH - baseOverheadH) / signerDetailStep);
+
+      if (maxDetailsHere < minDetailBudget) {
+        state = await startPage(true);
+        const freshAvailH = state.cursorY - bottomLimit;
+        maxDetailsHere = Math.floor((freshAvailH - baseOverheadH) / signerDetailStep);
+        if (maxDetailsHere < minDetailBudget) {
+          throw new PdfSignError('Thông tin người ký vượt quá kích thước trang chứng nhận');
+        }
+      }
+
+      const takeCount = Math.min(remainingDetails.length, maxDetailsHere);
+      const sliceDetails = remainingDetails.slice(0, takeCount);
+      const sliceH = measureSignerCardHeight(activeTitleLines.length, sliceDetails.length);
+      await drawSignerCardSlice(state.page, state.cursorY, activeTitleLines, sliceDetails, sliceH);
+      state.cursorY -= sliceH + cardGap;
+      remainingDetails = remainingDetails.slice(takeCount);
+      isContinuation = true;
+
+      if (remainingDetails.length > 0) {
+        state = await startPage(true);
+      }
+    }
   }
 
   const footerMaxH = Math.max(18, Math.round(28 * vScale));

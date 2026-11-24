@@ -32,6 +32,7 @@ import { SIGN_ATTACHMENT_MAX_BYTES, isChoiceFieldType, type SignSignerRole } fro
 import {
   forgetSignToken,
   hasInPersonQueryFlag,
+  markInPersonCeremonyIsolated,
   pendingSignToken,
   readSignTokenFromHash,
   rememberSignToken,
@@ -48,6 +49,32 @@ export interface CeremonyFieldAnswer {
   valueText?: string;
   valueChecked?: boolean;
   attachment?: PublicSignFieldAttachment | null;
+}
+
+export function withPreservedCeremonyFieldValues(
+  prev: CeremonyFieldAnswer | undefined,
+  patch: CeremonyFieldAnswer,
+): CeremonyFieldAnswer {
+  return {
+    ...(prev?.valueText !== undefined ? { valueText: prev.valueText } : {}),
+    ...(prev?.valueChecked !== undefined ? { valueChecked: prev.valueChecked } : {}),
+    ...(prev?.attachment !== undefined ? { attachment: prev.attachment } : {}),
+    ...patch,
+  };
+}
+
+export function buildOtpRequiredViewState(input: {
+  orgName: string;
+  title: string;
+  inPerson?: boolean;
+}): Extract<PublicSignViewState, { state: 'otp_required' }> {
+  return {
+    state: 'otp_required',
+    orgName: input.orgName,
+    title: input.title,
+    maskedEmail: null,
+    ...(input.inPerson ? { inPerson: true } : {}),
+  };
 }
 
 type ReadySignView = Extract<PublicSignViewState, { state: 'ready' }>;
@@ -188,7 +215,11 @@ export function SignInPersonHandoffCard({
 export function SignCeremonyPage() {
   const t = useTranslations('sign.ceremony');
 
-  const [inPersonMode, setInPersonMode] = useState<boolean>(() => hasInPersonQueryFlag());
+  const [inPersonMode, setInPersonMode] = useState<boolean>(() => {
+    const inPerson = hasInPersonQueryFlag();
+    if (inPerson) markInPersonCeremonyIsolated();
+    return inPerson;
+  });
   const [token, setToken] = useState<string | null>(() => {
     const hadHash = typeof window !== 'undefined' && Boolean(window.location.hash);
     const fromHash = readSignTokenFromHash();
@@ -293,13 +324,17 @@ export function SignCeremonyPage() {
       if (next) {
         rememberSignToken(next);
         resetCeremonyTransientState();
-        setInPersonMode(hasInPersonQueryFlag());
+        const nextInPerson = hasInPersonQueryFlag();
+        if (nextInPerson) markInPersonCeremonyIsolated();
+        setInPersonMode(nextInPerson);
         setToken(next);
         setTokenEpoch((n) => n + 1);
       } else if (hadHash) {
         forgetSignToken();
         resetCeremonyTransientState();
-        setInPersonMode(hasInPersonQueryFlag());
+        const nextInPerson = hasInPersonQueryFlag();
+        if (nextInPerson) markInPersonCeremonyIsolated();
+        setInPersonMode(nextInPerson);
         setToken(null);
       }
     });
@@ -318,6 +353,7 @@ export function SignCeremonyPage() {
       const view = await publicSignApi.view(activeToken);
       if (requestGenRef.current !== requestId) return;
       if ('inPerson' in view && view.inPerson === true) {
+        markInPersonCeremonyIsolated();
         setInPersonMode(true);
       }
       setViewState(view);
@@ -492,7 +528,13 @@ export function SignCeremonyPage() {
         setOtpCode('');
         setOtpError(error.message || t('otpInvalid'));
         setPdfBytes(null);
-        setViewState({ state: 'otp_required', orgName: viewState.orgName, title: viewState.title, maskedEmail: null });
+        setViewState(
+          buildOtpRequiredViewState({
+            orgName: viewState.orgName,
+            title: viewState.title,
+            inPerson: Boolean(inPersonMode || viewState.inPerson),
+          }),
+        );
         toast(t('otpInvalid'), 'error');
       } else {
         const msg =
@@ -599,13 +641,13 @@ export function SignCeremonyPage() {
         setOtpCode('');
         setOtpError(error.message || t('otpInvalid'));
         setPdfBytes(null);
-        setViewState({
-          state: 'otp_required',
-          orgName: viewState.orgName,
-          title: viewState.title,
-          maskedEmail: null,
-          ...(inPersonMode || viewState.inPerson ? { inPerson: true } : {}),
-        });
+        setViewState(
+          buildOtpRequiredViewState({
+            orgName: viewState.orgName,
+            title: viewState.title,
+            inPerson: Boolean(inPersonMode || viewState.inPerson),
+          }),
+        );
         toast(t('otpInvalid'), 'error');
       } else {
         const msg = error instanceof Error ? error.message : t('invalidTitle');
@@ -647,13 +689,13 @@ export function SignCeremonyPage() {
         setOtpCode('');
         setOtpError(error.message || t('otpInvalid'));
         setPdfBytes(null);
-        setViewState({
-          state: 'otp_required',
-          orgName: viewState.orgName,
-          title: viewState.title,
-          maskedEmail: null,
-          ...(inPersonMode || viewState.inPerson ? { inPerson: true } : {}),
-        });
+        setViewState(
+          buildOtpRequiredViewState({
+            orgName: viewState.orgName,
+            title: viewState.title,
+            inPerson: Boolean(inPersonMode || viewState.inPerson),
+          }),
+        );
         toast(t('otpInvalid'), 'error');
       } else {
         setDeclineError(error instanceof Error ? error.message : t('invalidTitle'));
@@ -703,13 +745,13 @@ export function SignCeremonyPage() {
         setOtpCode('');
         setOtpError(error.message || t('otpInvalid'));
         setPdfBytes(null);
-        setViewState({
-          state: 'otp_required',
-          orgName: viewState.orgName,
-          title: viewState.title,
-          maskedEmail: null,
-          ...(inPersonMode || viewState.inPerson ? { inPerson: true } : {}),
-        });
+        setViewState(
+          buildOtpRequiredViewState({
+            orgName: viewState.orgName,
+            title: viewState.title,
+            inPerson: Boolean(inPersonMode || viewState.inPerson),
+          }),
+        );
         toast(t('otpInvalid'), 'error');
       } else {
         setDelegateError(error instanceof Error ? error.message : t('invalidTitle'));
@@ -1226,15 +1268,15 @@ export function SignCeremonyReadyView(props: SignCeremonyReadyViewProps) {
                                 ? viewState.fields.filter((f) => f.fieldType === 'initials')
                                 : [field];
                             for (const target of targets) {
-                              props.onUpdateAnswer(target.id, (prev) => ({
-                                ...(prev?.valueText !== undefined ? { valueText: prev.valueText } : {}),
-                                ...(prev?.valueChecked !== undefined ? { valueChecked: prev.valueChecked } : {}),
-                                signaturePngDataUrl: pngDataUrl,
-                                signatureKind: quickSavedSig.signatureKind === 'type' ? 'typed' : 'drawn',
-                                ...(quickSavedSig.signatureTypedText
-                                  ? { signatureTypedText: quickSavedSig.signatureTypedText }
-                                  : {}),
-                              }));
+                              props.onUpdateAnswer(target.id, (prev) =>
+                                withPreservedCeremonyFieldValues(prev, {
+                                  signaturePngDataUrl: pngDataUrl,
+                                  signatureKind: quickSavedSig.signatureKind === 'type' ? 'typed' : 'drawn',
+                                  ...(quickSavedSig.signatureTypedText
+                                    ? { signatureTypedText: quickSavedSig.signatureTypedText }
+                                    : {}),
+                                }),
+                              );
                             }
                           }}
                           data-testid={`ceremony-quick-saved-btn-${field.id}`}
@@ -1506,12 +1548,11 @@ export function SignCeremonyReadyView(props: SignCeremonyReadyViewProps) {
                 onOpenChange={(next) => !next && props.onOpenPad(null)}
                 onConfirm={({ pngDataUrl }) => {
                   if (!props.padFieldId) return;
-                  props.onUpdateAnswer(props.padFieldId, (prev) => ({
-                    ...(prev?.valueText !== undefined ? { valueText: prev.valueText } : {}),
-                    ...(prev?.valueChecked !== undefined ? { valueChecked: prev.valueChecked } : {}),
-                    ...(prev?.attachment !== undefined ? { attachment: prev.attachment } : {}),
-                    signaturePngDataUrl: pngDataUrl,
-                  }));
+                  props.onUpdateAnswer(props.padFieldId, (prev) =>
+                    withPreservedCeremonyFieldValues(prev, {
+                      signaturePngDataUrl: pngDataUrl,
+                    }),
+                  );
                 }}
               />
             );
@@ -1535,14 +1576,13 @@ export function SignCeremonyReadyView(props: SignCeremonyReadyViewProps) {
                     ? viewState.fields.filter((f) => f.fieldType === 'initials').map((f) => f.id)
                     : [props.padFieldId];
                 for (const targetFieldId of targets) {
-                  props.onUpdateAnswer(targetFieldId, (prev) => ({
-                    ...(prev?.valueText !== undefined ? { valueText: prev.valueText } : {}),
-                    ...(prev?.valueChecked !== undefined ? { valueChecked: prev.valueChecked } : {}),
-                    ...(prev?.attachment !== undefined ? { attachment: prev.attachment } : {}),
-                    signaturePngDataUrl: pngDataUrl,
-                    signatureKind: kind,
-                    ...(kind === 'typed' && typedText ? { signatureTypedText: typedText } : {}),
-                  }));
+                  props.onUpdateAnswer(targetFieldId, (prev) =>
+                    withPreservedCeremonyFieldValues(prev, {
+                      signaturePngDataUrl: pngDataUrl,
+                      signatureKind: kind,
+                      ...(kind === 'typed' && typedText ? { signatureTypedText: typedText } : {}),
+                    }),
+                  );
                 }
                 if (saveForNextTime && props.onSaveSignatureProfile) {
                   void props.onSaveSignatureProfile({

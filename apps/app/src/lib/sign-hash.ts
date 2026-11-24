@@ -3,18 +3,76 @@
 // The signing link carries its credential strictly in the URL fragment (#token) so the token
 // never travels in HTTP query strings, server access logs, or Referer headers.
 
-import { promoteMigratedItem, readLegacyAwareItem, removeMigratedItem, writeMigratedItem } from './storage-migrate.ts';
+import { promoteMigratedItem, readLegacyAwareItem, removeMigratedItem, writeMigratedItem, type StorageLike } from './storage-migrate.ts';
 
 export const SIGN_PAGE_PATH = '/-/sign';
 export const SIGN_DIRECT_PAGE_PATH = '/-/sign/d';
 export const SIGN_PUBLIC_HUB_PAGE_PREFIX = '/-/sign/p';
 export const SIGN_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+export const SIGN_IN_PERSON_ISOLATED_SESSION_KEY = 'ludy.sign.in_person.isolated';
 
 export function hasInPersonQueryFlag(search = typeof window !== 'undefined' ? window.location.search : ''): boolean {
   if (!search) return false;
   const params = new URLSearchParams(search.startsWith('?') ? search : `?${search}`);
   const flag = params.get('in_person');
   return flag === '1' || flag === 'true';
+}
+
+function getCeremonySessionStorage(): StorageLike | undefined {
+  if (typeof window === 'undefined') return undefined;
+  try {
+    return window.sessionStorage;
+  } catch {
+    return undefined;
+  }
+}
+
+export function isSignCeremonyPathname(pathname = typeof window !== 'undefined' ? window.location.pathname : ''): boolean {
+  return pathname === SIGN_PAGE_PATH || pathname === `${SIGN_PAGE_PATH}/`;
+}
+
+const ceremonyIsolationListeners = new Set<() => void>();
+
+export function subscribeToCeremonyIsolation(listener: () => void): () => void {
+  ceremonyIsolationListeners.add(listener);
+  return () => {
+    ceremonyIsolationListeners.delete(listener);
+  };
+}
+
+export function markInPersonCeremonyIsolated(storage?: StorageLike): void {
+  const store = storage ?? getCeremonySessionStorage();
+  if (store) {
+    try {
+      store.setItem(SIGN_IN_PERSON_ISOLATED_SESSION_KEY, '1');
+    } catch {
+      // Ignore storage quota or private browsing restrictions.
+    }
+  }
+  if (!storage) {
+    for (const listener of ceremonyIsolationListeners) {
+      listener();
+    }
+  }
+}
+
+export function isInPersonCeremonyIsolated(
+  storage?: StorageLike,
+  location: { pathname?: string; search?: string } | undefined = typeof window !== 'undefined' ? window.location : undefined,
+): boolean {
+  const store = storage ?? getCeremonySessionStorage();
+  try {
+    if (store?.getItem(SIGN_IN_PERSON_ISOLATED_SESSION_KEY) === '1') {
+      return true;
+    }
+  } catch {
+    // Fall through to URL inspection when storage is unavailable.
+  }
+  if (location && isSignCeremonyPathname(location.pathname ?? '') && hasInPersonQueryFlag(location.search ?? '')) {
+    markInPersonCeremonyIsolated(store);
+    return true;
+  }
+  return false;
 }
 
 export function readSignTokenFromHash(hash = typeof window !== 'undefined' ? window.location.hash : ''): string | null {

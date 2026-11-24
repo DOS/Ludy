@@ -16,6 +16,7 @@ import { clearRecentItems } from './lib/palette-recents.ts';
 import { forgetPushDevice } from './lib/push.ts';
 import { stopAndSave } from './lib/recording-controller.ts';
 import { auth, captureHostedCallback, discardHostedLogin, loadConfig, settleCallback } from './lib/auth.ts';
+import { isInPersonCeremonyIsolated } from './lib/sign-hash.ts';
 import './styles.css';
 
 // The hosted login's one-time code leaves the address bar before anything can fail or read it (lib/auth.ts).
@@ -48,7 +49,7 @@ async function start() {
   await settleCallback();
   const { router } = await import('./router.tsx');
   auth().onAuthStateChange((event: string) => {
-    if (event === 'SIGNED_OUT') {
+    if (event === 'SIGNED_OUT' && !isInPersonCeremonyIsolated()) {
       // Signed out here, in another tab or by expiry: a share waiting in this tab is not the next person's.
       forgetShare();
       clearRecentItems();

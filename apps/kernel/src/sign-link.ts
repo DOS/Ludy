@@ -33,7 +33,7 @@ import {
   sanitizeSignUserAgent,
   validateSignaturePngBase64,
 } from '@ludy/mod-sign';
-import { imageSize } from './media-probe.ts';
+import { hasVideoTrack, imageSize, sniffVideo } from './media-probe.ts';
 import { safeFilename, sniffType } from './sniff.ts';
 
 export const SIGN_VIEWS_PER_MINUTE = 60;
@@ -684,6 +684,139 @@ export async function runSignVerify(
   };
 }
 
+const JPEG_MAX_MARKERS = 10_000;
+const JPEG_MAX_ZERO_PADDING = 64;
+const MP4_MAX_TOP_BOXES = 256;
+const MOTION_PHOTO_DATA_PREFIX = new TextEncoder().encode('MotionPhoto_Data');
+
+function isAsciiFourcc(bytes: Uint8Array, at: number): boolean {
+  for (let i = 0; i < 4; i += 1) {
+    const c = bytes[at + i] ?? 0;
+    if (c < 0x20 || c > 0x7e) return false;
+  }
+  return true;
+}
+
+function readU32Be(bytes: Uint8Array, at: number): number {
+  return (
+    (((bytes[at] ?? 0) << 24) >>> 0) +
+    ((bytes[at + 1] ?? 0) << 16) +
+    ((bytes[at + 2] ?? 0) << 8) +
+    (bytes[at + 3] ?? 0)
+  );
+}
+
+function readU64Be(bytes: Uint8Array, at: number): number {
+  return readU32Be(bytes, at) * 2 ** 32 + readU32Be(bytes, at + 4);
+}
+
+function bytesEqualPrefix(bytes: Uint8Array, prefix: Uint8Array): boolean {
+  if (bytes.byteLength < prefix.byteLength) return false;
+  for (let i = 0; i < prefix.byteLength; i += 1) {
+    if (bytes[i] !== prefix[i]) return false;
+  }
+  return true;
+}
+
+function findJpegEndOfImageOffset(bytes: Uint8Array): number | null {
+  if (bytes.byteLength < 20 || bytes[0] !== 0xff || bytes[1] !== 0xd8) return null;
+  let at = 2;
+  let hasSof = false;
+  let hasSos = false;
+
+  for (let seen = 0; seen < JPEG_MAX_MARKERS && at < bytes.byteLength; seen += 1) {
+    if (bytes[at] !== 0xff) return null;
+    while (at < bytes.byteLength && bytes[at] === 0xff) at += 1;
+    if (at >= bytes.byteLength) return null;
+    const marker = bytes[at]!;
+    at += 1;
+
+    if (marker === 0x00 || marker === 0xd8) return null;
+    if (marker === 0xd9) {
+      return hasSof && hasSos ? at : null;
+    }
+    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
+      continue;
+    }
+
+    if (at + 2 > bytes.byteLength) return null;
+    const segLen = ((bytes[at]! << 8) | bytes[at + 1]!) >>> 0;
+    if (segLen < 2 || at + segLen > bytes.byteLength) return null;
+    at += segLen;
+
+    const isSof = marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
+    if (isSof) {
+      hasSof = true;
+      continue;
+    }
+    if (marker === 0xda) {
+      if (!hasSof) return null;
+      hasSos = true;
+      let foundNextMarker = false;
+      while (at + 1 < bytes.byteLength) {
+        if (bytes[at] !== 0xff) {
+          at += 1;
+          continue;
+        }
+        const markerPos = at;
+        let scanAt = at + 1;
+        while (scanAt < bytes.byteLength && bytes[scanAt] === 0xff) scanAt += 1;
+        if (scanAt >= bytes.byteLength) return null;
+        const nextByte = bytes[scanAt]!;
+        // FF 00 is byte-stuffed entropy data; FF D0..D7 are restart markers inside the scan.
+        if (nextByte === 0x00 || (nextByte >= 0xd0 && nextByte <= 0xd7)) {
+          at = scanAt + 1;
+          continue;
+        }
+        at = markerPos;
+        foundNextMarker = true;
+        break;
+      }
+      if (!foundNextMarker) return null;
+    }
+  }
+  return null;
+}
+
+function isValidMotionPhotoMp4Trailer(trailer: Uint8Array): boolean {
+  const mp4Bytes = bytesEqualPrefix(trailer, MOTION_PHOTO_DATA_PREFIX)
+    ? trailer.subarray(MOTION_PHOTO_DATA_PREFIX.byteLength)
+    : trailer;
+  if (sniffVideo(mp4Bytes) !== 'video/mp4') return false;
+
+  let at = 0;
+  let boxIndex = 0;
+  let sawMoov = false;
+  let sawMdat = false;
+
+  for (; boxIndex < MP4_MAX_TOP_BOXES && at < mp4Bytes.byteLength; boxIndex += 1) {
+    if (at + 8 > mp4Bytes.byteLength || !isAsciiFourcc(mp4Bytes, at + 4)) return false;
+    let size = readU32Be(mp4Bytes, at);
+    const type = String.fromCharCode(mp4Bytes[at + 4]!, mp4Bytes[at + 5]!, mp4Bytes[at + 6]!, mp4Bytes[at + 7]!);
+    let header = 8;
+    if (size === 1) {
+      if (at + 16 > mp4Bytes.byteLength) return false;
+      size = readU64Be(mp4Bytes, at + 8);
+      header = 16;
+    } else if (size === 0) {
+      return false;
+    }
+    if (size < header || at + size > mp4Bytes.byteLength || !Number.isSafeInteger(at + size)) return false;
+    if (boxIndex === 0 && type !== 'ftyp') return false;
+    if (type === 'moov') sawMoov = true;
+    if (type === 'mdat') sawMdat = true;
+    at += size;
+  }
+
+  return at === mp4Bytes.byteLength && sawMoov && sawMdat && hasVideoTrack(mp4Bytes);
+}
+
+function isAllowedJpegTrailer(trailer: Uint8Array): boolean {
+  if (trailer.byteLength === 0) return true;
+  if (trailer.byteLength <= JPEG_MAX_ZERO_PADDING && trailer.every((b) => b === 0)) return true;
+  return isValidMotionPhotoMp4Trailer(trailer);
+}
+
 export function verifySignAttachmentBytes(bytes: Uint8Array): SignAttachmentContentType | null {
   if (bytes.byteLength < 1 || bytes.byteLength > SIGN_ATTACHMENT_MAX_BYTES) return null;
   const detected = sniffType(bytes);
@@ -707,19 +840,13 @@ export function verifySignAttachmentBytes(bytes: Uint8Array): SignAttachmentCont
     return 'image/png';
   }
   if (detected === 'image/jpeg') {
-    if (bytes.byteLength < 20) return null;
     const size = imageSize(bytes, 'image/jpeg');
     if (!size || size.width > SIGN_ATTACHMENT_MAX_IMAGE_DIMENSION || size.height > SIGN_ATTACHMENT_MAX_IMAGE_DIMENSION) {
       return null;
     }
-    let hasEoi = false;
-    for (let i = Math.max(2, bytes.byteLength - 16); i + 1 < bytes.byteLength; i += 1) {
-      if (bytes[i] === 0xff && bytes[i + 1] === 0xd9) {
-        hasEoi = true;
-        break;
-      }
-    }
-    if (!hasEoi) return null;
+    const eoiEnd = findJpegEndOfImageOffset(bytes);
+    if (eoiEnd === null) return null;
+    if (!isAllowedJpegTrailer(bytes.subarray(eoiEnd))) return null;
     return 'image/jpeg';
   }
   return null;

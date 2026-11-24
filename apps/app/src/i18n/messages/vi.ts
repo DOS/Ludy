@@ -19930,7 +19930,7 @@ export const vi = {
     inPersonDialog: {
       title: 'Ký trực tiếp tại quầy',
       description: 'Tạo phiên ký một lần có hiệu lực ngắn (30 phút) trên thiết bị này cho {signer} và ghi nhận nhân viên phụ trách vào nhật ký kiểm toán.',
-      securityNotice: 'Thẻ ký mới mở độc lập không có lịch sử quay lại không gian làm việc. Để cách ly hoàn toàn trên thiết bị dùng chung tại quầy, hãy chép liên kết và mở trong cửa sổ ẩn danh.',
+      securityNotice: 'Thẻ ký trực tiếp mở độc lập, không có lịch sử quay lại và không dùng chung phiên đăng nhập với không gian làm việc. Trên thiết bị dùng chung tại quầy, hãy chép liên kết vào cửa sổ ẩn danh hoặc đăng xuất khỏi không gian làm việc trước.',
       urlLabel: 'Liên kết phiên ký trực tiếp một lần',
       expiresAtHint: 'Hết hạn lúc {time}',
       mintButton: 'Tạo phiên ký trực tiếp (30 phút)',

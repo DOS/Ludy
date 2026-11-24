@@ -124,11 +124,16 @@ import { SignPublicHubPage } from './routes/sign-public-hub.tsx';
 import { SignTemplatesPage } from './routes/sign-templates.tsx';
 import { SignVerifyPage } from './routes/sign-verify.tsx';
 import { SignSettingsPage } from './routes/sign-settings.tsx';
-import { SIGN_DIRECT_PAGE_PATH, SIGN_PAGE_PATH, SIGN_PUBLIC_HUB_PAGE_PREFIX } from './lib/sign-hash.ts';
+import {
+  isInPersonCeremonyIsolated,
+  SIGN_DIRECT_PAGE_PATH,
+  SIGN_PAGE_PATH,
+  SIGN_PUBLIC_HUB_PAGE_PREFIX,
+} from './lib/sign-hash.ts';
 import { PublicRoadmapPage } from './routes/public-roadmap.tsx';
 
 async function requireSession() {
-  if (!(await accessToken())) throw redirect({ to: '/login' });
+  if (isInPersonCeremonyIsolated() || !(await accessToken())) throw redirect({ to: '/login' });
 }
 
 // A user with a verified second factor finishes signing in on /mfa before seeing any data.
