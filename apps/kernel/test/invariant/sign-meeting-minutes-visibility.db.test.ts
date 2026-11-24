@@ -861,25 +861,41 @@ suite('eSign shared meeting minutes reader-scoped confidentiality invariants (#3
       activeProbeClient.release();
     }
 
-    // Permitted attendee CAN start an in-person session AND rotate link on active meeting_minutes envelope.
-    const inPersonStarted = await runtime.execute<{
-      hostUserId: string;
-      token: string;
-      ceremonyPath: string;
-    }>(
-      'sign.signer.start_in_person',
-      { envelopeId: recEnv.envelopeId, signerId: addedSigner.signerId },
-      { actor: asUser(attendeeId), orgId },
+    // A permitted attendee who is not the creator, owner or admin may start an in-person session and rotate a link on an active meeting_minutes envelope (#3811, ADR-0047), OR is refused with
+    // SIGN_FORBIDDEN (403), the later rule of #4530 (reading is wider than acting). Both outcomes are accepted here so the two-step change can land (this test first, then the code); a refusal must be
+    // that one error and nothing else, and whatever succeeds must still be the attendee's own. The public ceremony below runs on the link that exists afterwards.
+    const outcomeOf = async <T,>(run: () => Promise<T>): Promise<T | 'refused'> => {
+      try {
+        return await run();
+      } catch (error) {
+        if ((error as { code?: unknown }).code === 'SIGN_FORBIDDEN' && (error as { status?: unknown }).status === 403) return 'refused';
+        throw error;
+      }
+    };
+    const inPersonStarted = await outcomeOf(() =>
+      runtime.execute<{
+        hostUserId: string;
+        token: string;
+        ceremonyPath: string;
+      }>(
+        'sign.signer.start_in_person',
+        { envelopeId: recEnv.envelopeId, signerId: addedSigner.signerId },
+        { actor: asUser(attendeeId), orgId },
+      ),
     );
-    expect(inPersonStarted.hostUserId).toBe(attendeeId);
-    expect(inPersonStarted.ceremonyPath).toContain('?in_person=1#');
+    if (inPersonStarted !== 'refused') {
+      expect(inPersonStarted.hostUserId).toBe(attendeeId);
+      expect(inPersonStarted.ceremonyPath).toContain('?in_person=1#');
+    }
 
-    const rotated = await runtime.execute<{ token: string }>(
-      'sign.signer.create_link',
-      { envelopeId: recEnv.envelopeId, signerId: addedSigner.signerId },
-      { actor: asUser(attendeeId), orgId },
+    const rotated = await outcomeOf(() =>
+      runtime.execute<{ token: string }>(
+        'sign.signer.create_link',
+        { envelopeId: recEnv.envelopeId, signerId: addedSigner.signerId },
+        { actor: asUser(attendeeId), orgId },
+      ),
     );
-    const activeToken = rotated.token || rawSigningToken;
+    const activeToken = rotated === 'refused' ? rawSigningToken : rotated.token || rawSigningToken;
 
     // Public single-use token ceremony succeeds cleanly via crove_app orgless definers.
     const tokenSha = hashSigningToken(activeToken);
