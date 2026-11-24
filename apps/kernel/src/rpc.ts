@@ -75,12 +75,15 @@ import {
   type AttendanceAnomaliesPorts,
 } from './attendance-coworker-ai.ts';
 import { draftProbationSummary, hrProbationAi, type HrProbationPorts } from './hr-probation-ai.ts';
+import { askSelfHrPolicy, draftSelfHrRequest, hrSelfAi, type HrSelfAiPorts } from './hr-self-ai.ts';
 import type { HrAttendanceAnomaliesSnapshot } from '@ludy/kernel-contract';
 import type {
   HrInviteDraftContext,
   HrLaborCheckSnapshot,
   HrProbationBriefSource,
   HrRecruitingBriefSnapshot,
+  HrSelfAiStatusContext,
+  HrSelfPolicySearchContext,
 } from '@ludy/mod-hr';
 import { buildEngageInviteDraftResult } from '@ludy/mod-hr';
 import { einvoiceAi, suggestEInvoiceDraft } from './einvoice-ai.ts';
@@ -575,6 +578,16 @@ export function createRpcHandler(
       : null,
     suggestionBudget(),
   );
+  const selfHrAi = hrSelfAi(
+    conversationReader && (conversationReader.hrRequestDraft || conversationReader.hrPolicyQa)
+      ? {
+          ...(conversationReader.hrRequestDraft ? { hrRequestDraft: conversationReader.hrRequestDraft.bind(conversationReader) } : {}),
+          ...(conversationReader.hrPolicyQa ? { hrPolicyQa: conversationReader.hrPolicyQa.bind(conversationReader) } : {}),
+        }
+      : null,
+    suggestionBudget(),
+    suggestionBudget(),
+  );
   // The finance coworker's wording of a payment reminder (#2488): the same reader and model, a budget of its own. It reads no customer text (the model is told the
   // notice level, the language and the sender's name), so the org's switch for AI on its customers' messages does not apply.
   const reminderAi: ReminderAi = { reader: conversationReader?.reminderWords ? { reminderWords: conversationReader.reminderWords.bind(conversationReader) } : null, budget: suggestionBudget() };
@@ -827,6 +840,12 @@ export function createRpcHandler(
     read: (input) => runtime.query<HrProbationBriefSource>('hr.probation.brief.read', input, { actor, orgId }),
     isAiStopped: async () => (await runtime.query<{ aiStopped: boolean }>('hr.probation.ai_status', {}, { actor, orgId })).aiStopped,
     record: (input) => runtime.execute('hr.probation.brief.audit', input, { actor, orgId }),
+  });
+  const hrSelfAiPorts = (orgId: string, actor: UserActor): HrSelfAiPorts => ({
+    readDraftContext: () => runtime.query<HrSelfAiStatusContext>('hr.self.request_draft.context', {}, { actor, orgId }),
+    searchPolicyNotes: (input) => runtime.query<HrSelfPolicySearchContext>('hr.self.policy_qa.search', input, { actor, orgId }),
+    isAiStopped: async (includeNotes = false) =>
+      (await runtime.query<{ aiStopped: boolean }>('hr.self.ai_status', { includeNotes }, { actor, orgId })).aiStopped,
   });
   const hrQuery =
     (name: string) =>
@@ -1254,6 +1273,34 @@ export function createRpcHandler(
           submit: os.hr.self.businessTrips.submit.handler(hrCommand('hr.self.business_trip.submit')),
           cancel: os.hr.self.businessTrips.cancel.handler(hrCommand('hr.self.business_trip.cancel')),
         },
+        requestDraft: os.hr.self.requestDraft.handler(({ context, input }) =>
+          inHr(context, (orgId, actor) =>
+            draftSelfHrRequest(
+              selfHrAi,
+              hrSelfAiPorts(orgId, actor),
+              runtime,
+              orgId,
+              actor,
+              input,
+              aiMeter ? aiMeter(actor) : 'runtime',
+              aiPrice ? { price: aiPrice } : undefined,
+            ),
+          ),
+        ),
+        policyQa: os.hr.self.policyQa.handler(({ context, input }) =>
+          inHr(context, (orgId, actor) =>
+            askSelfHrPolicy(
+              selfHrAi,
+              hrSelfAiPorts(orgId, actor),
+              runtime,
+              orgId,
+              actor,
+              input,
+              aiMeter ? aiMeter(actor) : 'runtime',
+              aiPrice ? { price: aiPrice } : undefined,
+            ),
+          ),
+        ),
       },
       attendance: {
         list: os.hr.attendance.list.handler(hrQuery('hr.attendance.list')),
