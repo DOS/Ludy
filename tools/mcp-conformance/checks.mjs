@@ -146,13 +146,17 @@ export async function runConformance(options) {
   });
 
   await check('metadata.authorization-server', ['metadata.protected-resource'], async () => {
+    // The tool stays on the origin it was given: nothing is fetched from, or sent to, an address the instance's own documents name elsewhere.
+    if (state.issuer !== base) throw fail(`the issuer ${state.issuer} is not the address the instance was given (${base}): PUBLIC_URL is wrong or the proxy hides the real one (nothing is fetched from another address)`);
     const res = await request(`${state.issuer}/.well-known/oauth-authorization-server`);
     const doc = /** @type {any} */ (res.json);
     if (res.status !== 200 || !doc || typeof doc !== 'object') throw fail(`GET ${state.issuer}/.well-known/oauth-authorization-server answered ${res.status}, not a JSON document (RFC 8414)`);
     if (String(doc.issuer ?? '').replace(/\/+$/, '') !== state.issuer) throw fail(`issuer is ${JSON.stringify(doc.issuer)}, it must equal the authorization server address ${state.issuer} (RFC 8414, section 3.3)`);
-    if (state.issuer !== base) throw fail(`the issuer ${state.issuer} is not the address the instance was given (${base}): PUBLIC_URL is wrong or the proxy hides the real one`);
     for (const key of ['authorization_endpoint', 'token_endpoint', 'jwks_uri']) {
       if (typeof doc[key] !== 'string' || !URL.canParse(doc[key])) throw fail(`${key} is missing or not an address`);
+    }
+    for (const key of ['authorization_endpoint', 'token_endpoint', 'jwks_uri', 'registration_endpoint']) {
+      if (typeof doc[key] === 'string' && new URL(doc[key]).origin !== new URL(base).origin) throw fail(`${key} is ${doc[key]}, on another origin than the instance (${new URL(base).origin}); the endpoints of the authorization server must be on the issuer's origin`);
     }
     if (!Array.isArray(doc.code_challenge_methods_supported) || !doc.code_challenge_methods_supported.includes('S256')) throw fail('code_challenge_methods_supported must include S256');
     if (doc.code_challenge_methods_supported.includes('plain')) throw fail('code_challenge_methods_supported lists "plain"; only S256 is allowed (OAuth 2.1)');
@@ -221,6 +225,7 @@ export async function runConformance(options) {
           if (code) return { kind: 'code', code, state: next.searchParams.get('state'), iss: next.searchParams.get('iss') };
           throw fail(`the redirect to the client carried neither a code nor an error: ${next.search}`);
         }
+        if (next.origin !== new URL(base).origin) throw fail(`the authorization request was redirected to ${next.origin}, another origin than the instance; the tool does not follow it`);
         url = next.toString();
         continue;
       }
@@ -304,7 +309,9 @@ export async function runConformance(options) {
     const consentDoc = /** @type {any} */ (consent.json);
     if (consent.status !== 200 || typeof consentDoc?.redirectTo !== 'string') throw fail(`the consent answered ${consent.status} ${consent.text.slice(0, 160)}`);
     // The provider's resume address (`/oauth/authorize/<uid>`) leads back to the client with the code.
-    const resumed = await followResume(new URL(consentDoc.redirectTo, base).toString(), jar);
+    const resumeUrl = new URL(consentDoc.redirectTo, base);
+    if (resumeUrl.origin !== new URL(base).origin) throw fail(`the consent answered redirectTo ${resumeUrl.origin}, another origin than the instance; the tool does not follow it`);
+    const resumed = await followResume(resumeUrl.toString(), jar);
     if (resumed.state !== stateValue) throw fail('the redirect to the client lost the state parameter');
     if (resumed.iss !== null && resumed.iss.replace(/\/+$/, '') !== state.issuer) throw fail(`the redirect carries iss=${resumed.iss}, it must be the issuer ${state.issuer} (RFC 9207)`);
     const exchange = await request(state.as.token_endpoint, {
@@ -345,6 +352,7 @@ export async function runConformance(options) {
         if (!code) throw fail('the redirect to the client carries no code');
         return { kind: 'code', code, state: next.searchParams.get('state'), iss: next.searchParams.get('iss') };
       }
+      if (next.origin !== new URL(base).origin) throw fail(`the consent redirected to ${next.origin}, another origin than the instance; the tool does not follow it`);
       url = next.toString();
     }
     throw fail('the consent redirected more than 8 times');

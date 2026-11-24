@@ -56,6 +56,8 @@ describe('mcp conformance names the check a broken server fails', () => {
     ['a tool has no hints', ['readonly-missing'], ['tools.hints-present']],
     ['a read tool is also destructive', ['read-destructive'], ['tools.hints-present']],
     ['a proposal tool says it is read only', ['proposal-readonly'], ['tools.hints-match-tier']],
+    ['the protected resource names an authorization server on another origin', ['foreign-issuer'], ['metadata.authorization-server']],
+    ['an endpoint of the authorization server is on another origin', ['foreign-endpoint'], ['metadata.authorization-server']],
     ['an R2 tool executes instead of proposing', ['proposal-executes'], ['proposals.no-execution']],
   ];
   for (const [what, flaws, expected] of cases) {
@@ -67,6 +69,16 @@ describe('mcp conformance names the check a broken server fails', () => {
       expect(bad?.message.length).toBeGreaterThan(20);
     });
   }
+
+  it('stays on the origin it was given: a foreign issuer is never fetched, a foreign redirect is never followed', async () => {
+    const issuer = await fake(['foreign-issuer']);
+    const results = await runConformance({ url: issuer.url, token: FAKE_OWNER_TOKEN });
+    expect(results.find((r) => r.name === 'metadata.authorization-server')?.message).toContain('nothing is fetched from another address');
+    const redirected = await fake(['foreign-redirect']);
+    const second = await runConformance({ url: redirected.url, token: FAKE_OWNER_TOKEN });
+    expect(failed(second)).toEqual(['oauth.flow']);
+    expect(second.find((r) => r.name === 'oauth.flow')?.message).toContain('another origin');
+  });
 
   it('the executing R2 tool never gets its effect hidden: the message says what it answered', async () => {
     const server = await fake(['proposal-executes']);

@@ -4,7 +4,7 @@
 // a key made at start. Plain Node, no dependencies.
 //
 // Flaws: 'no-resource-metadata', 'wrong-resource', 'no-challenge-pointer', 'no-pkce', 'any-resource', 'wrong-audience', 'readonly-missing',
-// 'read-destructive', 'proposal-readonly', 'proposal-executes', 'no-proposal-tool'.
+// 'read-destructive', 'proposal-readonly', 'proposal-executes', 'no-proposal-tool', 'foreign-issuer', 'foreign-endpoint', 'foreign-redirect'.
 import { createHash, generateKeyPairSync, randomUUID, sign } from 'node:crypto';
 import { createServer } from 'node:http';
 
@@ -65,13 +65,13 @@ export async function startFakeServer(options = {}) {
 
       if (path === '/.well-known/oauth-protected-resource/mcp') {
         if (flaws.has('no-resource-metadata')) return json(res, 404, { error: 'not_found' });
-        return json(res, 200, { resource: flaws.has('wrong-resource') ? `${base}/elsewhere` : resource, authorization_servers: [base], scopes_supported: ['ludy.read', 'ludy.engage.write'], bearer_methods_supported: ['header'], resource_name: 'Fake' });
+        return json(res, 200, { resource: flaws.has('wrong-resource') ? `${base}/elsewhere` : resource, authorization_servers: [flaws.has('foreign-issuer') ? 'http://127.0.0.1:1' : base], scopes_supported: ['ludy.read', 'ludy.engage.write'], bearer_methods_supported: ['header'], resource_name: 'Fake' });
       }
       if (path === '/.well-known/oauth-authorization-server') {
         return json(res, 200, {
           issuer: base,
           authorization_endpoint: `${base}/oauth/authorize`,
-          token_endpoint: `${base}/oauth/token`,
+          token_endpoint: flaws.has('foreign-endpoint') ? 'http://127.0.0.1:1/oauth/token' : `${base}/oauth/token`,
           registration_endpoint: `${base}/oauth/register`,
           jwks_uri: `${base}/oauth/jwks`,
           response_types_supported: ['code'],
@@ -91,6 +91,7 @@ export async function startFakeServer(options = {}) {
         if (q.get('resource') !== resource && !flaws.has('any-resource')) return fail('invalid_target');
         const uid = randomUUID();
         interactions.set(uid, { redirectUri: q.get('redirect_uri') ?? '', state: q.get('state') ?? '', challenge: q.get('code_challenge'), resource: q.get('resource'), clientId: q.get('client_id') ?? '', scope: q.get('scope') ?? '' });
+        if (flaws.has('foreign-redirect')) return redirect(res, 'http://127.0.0.1:1/elsewhere');
         return redirect(res, `/oauth/interaction/${uid}`, { 'set-cookie': `_interaction=${uid}; Path=/oauth/interaction/${uid}; HttpOnly` });
       }
       const interaction = /^\/oauth\/interaction\/([^/]+)\/(details|consent)$/.exec(path);
