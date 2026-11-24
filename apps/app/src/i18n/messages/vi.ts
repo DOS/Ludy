@@ -11420,6 +11420,7 @@ export const vi = {
       sign_vault_qa: 'Trả lời câu hỏi kèm trích dẫn từ các hợp đồng được phép xem trong Kho hợp đồng',
       sign_playbook_check: 'Đối chiếu hợp đồng PDF theo sổ tay quy tắc SME và gợi ý câu chữ hiệu chỉnh có trích dẫn trang',
       sign_kyc_check: 'Đối chiếu chứng từ đính kèm người ký (CCCD, ĐKKD, ủy quyền) với thông tin hợp đồng',
+      sign_packet_consistency: 'Đối chiếu tính nhất quán thông tin giữa các tài liệu trong bộ hồ sơ ký',
       kernel_unattributed: 'Chưa gán tính năng (trước khi có đồng hồ)',
     },
   },

@@ -439,6 +439,24 @@ function createStubRuntime() {
         },
         usage: zeroUsage,
       }),
+      packetConsistency: async () => ({
+        output: {
+          summaryText: 'Bo ho so hop dong da duoc kiem tra tinh nhat quan, tong gia tri 10.000.000 VND tu ngay 2026-10-01.',
+          findings: [
+            {
+              kind: 'mismatched_total',
+              severity: 'info',
+              title: 'Kiem tra gia tri thanh toan',
+              explanation: 'Hop dong ghi ro tong gia tri thanh toan la 10.000.000 VND.',
+              docIndex: 1,
+              documentTitle: 'Hop dong chinh.pdf',
+              pageNumber: 1,
+              quoteExcerpt: 'Tong gia tri thanh toan la 10.000.000 VND.',
+            },
+          ],
+        },
+        usage: zeroUsage,
+      }),
     }),
     signAcceptance: new SignAcceptanceReader(STUB_CONFIG, async () => ({
       output: { bullets: [{ text: 'Ban giao ma nguon trang chu cho Du an Website.', taskIds: ['task-1'] }] },

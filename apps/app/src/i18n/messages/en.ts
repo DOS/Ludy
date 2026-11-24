@@ -11421,6 +11421,7 @@ export const en = {
       sign_vault_qa: 'Answering questions with verified citations across permitted contracts in the Contract Vault',
       sign_playbook_check: 'Checking a PDF contract against the SME playbook checklist with page-cited redline suggestions',
       sign_kyc_check: 'Comparing signer KYC attachments (citizen ID, enterprise registration, power of attorney) against contract details',
+      sign_packet_consistency: 'Checking consistency across documents in a multi-document signing packet',
       kernel_unattributed: 'Not attributed to a feature (before the meter)',
     },
   },
