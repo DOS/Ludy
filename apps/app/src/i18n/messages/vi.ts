@@ -696,7 +696,7 @@ export const vi = {
   notifications: {
     morningNotice: {
       title: 'Các cuộc họp hôm nay, vào buổi sáng',
-      hint: 'Mỗi ngày một lần, vào giờ bạn chọn, một thông báo trong ứng dụng và qua email cho biết hôm nay bạn có bao nhiêu cuộc họp, kèm đường dẫn để xem. Chỉ có số lượng và đường dẫn: không có tiêu đề hay tên. Ngày không có cuộc họp thì không gửi gì.',
+      hint: 'Mỗi ngày một lần, vào giờ bạn chọn, một thông báo trong ứng dụng và qua email cho biết hôm nay bạn có bao nhiêu cuộc họp kèm đường dẫn để xem, cùng thông báo đẩy nếu bạn bật trên thiết bị này. Chỉ có số lượng và đường dẫn (thông báo đẩy chỉ nêu loại việc), không tiêu đề, không tên. Ngày không có cuộc họp thì không gửi gì.',
       label: 'Báo cho tôi các cuộc họp trong ngày vào mỗi buổi sáng',
       at: 'Lúc',
       zone: 'Theo múi giờ của bạn: {zone}',
@@ -722,7 +722,7 @@ export const vi = {
     prefsTitle: 'Thông báo',
     // Browser push on this device (#1238, the kernel's since #3736): the one switch of every app's notices, shown here and on Social's notification settings.
     push: 'Thông báo đẩy trên thiết bị này',
-    pushHint: 'Khi có việc cần bạn xử lý ở bất kỳ ứng dụng nào của {brand} (ví dụ bài chờ duyệt, bài đăng lỗi, kênh cần kết nối lại, bản nháp biên bản đã sẵn sàng, bài được giao cho bạn), trình duyệt này hiện thông báo ngay cả khi bạn không mở {brand}. Thông báo chỉ nêu loại việc, không kèm nội dung.',
+    pushHint: 'Khi có việc cần bạn xử lý ở bất kỳ ứng dụng nào của {brand} (ví dụ bài chờ duyệt, bài đăng lỗi, kênh cần kết nối lại, bản nháp biên bản đã sẵn sàng, thông báo cuộc họp buổi sáng, bài được giao cho bạn), trình duyệt này hiện thông báo ngay cả khi bạn không mở {brand}. Thông báo chỉ nêu loại việc, không kèm nội dung.',
     pushUnsupported: 'Trình duyệt này chưa nhận được thông báo đẩy. Hãy mở {brand} bằng Chrome, Edge, Firefox hoặc Safari qua địa chỉ https.',
     pushDenied: 'Trình duyệt đang chặn thông báo từ {brand}. Hãy cho phép thông báo trong phần cài đặt trang web của trình duyệt rồi bật lại.',
     pushDevices: 'Các thiết bị đang nhận thông báo đẩy',
@@ -755,7 +755,7 @@ export const vi = {
       projects_weekly_status: 'Báo cáo tuần dự án được gửi qua email',
       meetings_series_open_items: 'Việc còn dở từ buổi họp trước của chuỗi cuộc họp',
       meetings_summary_ready: 'Bản nháp biên bản của cuộc họp tôi ghi đã sẵn sàng (gửi cả qua email và thông báo đẩy; tắt ở đây là tắt cả ba)',
-      meetings_morning: 'Các cuộc họp hôm nay của tôi, nếu tôi đã bật thông báo buổi sáng (gửi cả qua email; tắt ở đây là tắt cả hai)',
+      meetings_morning: 'Các cuộc họp hôm nay của tôi, nếu tôi đã bật thông báo buổi sáng (gửi cả qua email và thông báo đẩy; tắt ở đây là tắt cả ba)',
       kernel_channel_expired: 'Kết nối tài khoản quảng cáo hết hạn hoặc bị từ chối',
       kernel_ai_budget: 'Ngân sách AI sắp hết hoặc đã hết',
       kernel_conversation_new: 'Có hội thoại mới cần trả lời',
