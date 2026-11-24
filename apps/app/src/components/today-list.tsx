@@ -3,19 +3,21 @@
 // kernel.today, grouped by kind with flags first; each row links to the screen where the item is acted on. Nothing is
 // approved or sent from here: batch approval stays in the owning app's screen.
 import { useQuery } from '@tanstack/react-query';
-import { useState, type MouseEvent, type ReactNode } from 'react';
+import { useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import { Link, useRouter } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
 import { todayCoworkerKey, todayCount, type TodayCoworkers, type TodayItem, type TodaySeverity } from '@ludy/kernel-contract';
 import { Badge } from '@ludy/ui/components/badge';
-import { Button } from '@ludy/ui/components/button';
+import { Button, buttonVariants } from '@ludy/ui/components/button';
 import { Card } from '@ludy/ui/components/card';
 import { NavIcon } from '@ludy/ui/components/nav-icon';
 import { cn } from '@ludy/ui/lib/utils';
+import { CoworkerAttribution, ProposalSurface } from './proposal-surface.tsx';
 import { TodayBrief } from './today-brief.tsx';
-import { Empty, ErrorText, ListSkeleton } from './ui.tsx';
+import { Empty, ErrorText, ListSkeleton, PeekSheet } from './ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc } from '../lib/api.ts';
+import { useListPeekNav } from '../lib/list-peek-nav.ts';
 import { installedModules } from '../lib/org-modules.ts';
 import { SAFETY_POLL_MS, pollEvery, useStreamLive } from '../lib/stream-hook.ts';
 import { QUEUE_ROWS, TODAY_ICON, groupToday, limitGroups, proposalChips, queueRows, todayPath, todayTotal } from '../lib/today.ts';
@@ -48,11 +50,31 @@ function useTitle() {
 
 // The coworker's name goes first in the row's small print: who raised it (Ly for finance, Dy for CRM and conversations, Uy for Social and Ads,
 // Vy for the rest), by the name the org gave it now. A person still approves; the name only says who is asking (#3265).
-function TodayRow({ item, slug, coworkers }: { item: TodayItem; slug: string; coworkers: TodayCoworkers }) {
+function todayItemId(item: TodayItem): string {
+  return `${item.app}:${item.id}`;
+}
+
+function TodayRow({
+  item,
+  slug,
+  coworkers,
+  selected,
+  onInspect,
+  onRowClick,
+}: {
+  item: TodayItem;
+  slug: string;
+  coworkers: TodayCoworkers;
+  selected: boolean;
+  onInspect: (id: string) => void;
+  onRowClick: (id: string, event: MouseEvent<HTMLElement>) => void;
+}) {
   const t = useTranslations('today');
   const f = useFormat();
   const router = useRouter();
   const title = useTitle();
+  const itemKey = todayItemId(item);
+  const itemTitle = title(item);
   const path = todayPath(slug, item.href);
   // A plain click moves inside the app without a reload; a new tab, a copied link and the keyboard use the real href.
   const go = (event: MouseEvent<HTMLAnchorElement>) => {
@@ -62,34 +84,60 @@ function TodayRow({ item, slug, coworkers }: { item: TodayItem; slug: string; co
   };
   return (
     <li>
-      <a
-        href={path}
-        onClick={go}
-        className={cn('flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-muted/50 focus-visible:bg-muted/50', PHONE_TARGET)}
+      <div
+        data-peek-row={itemKey}
+        data-selected={selected ? 'true' : undefined}
+        onClick={(event) => onRowClick(itemKey, event)}
+        className={cn(
+          'flex cursor-pointer items-center gap-2 pr-3 transition-colors',
+          selected ? 'bg-primary/5 shadow-[inset_2px_0_0_var(--primary)]' : 'hover:bg-muted/50',
+        )}
       >
-        <NavIcon name={TODAY_ICON[item.kind]} className="text-muted-foreground" />
-        <span className="min-w-0 flex-1">
-          <span className="block text-foreground">{title(item)}</span>
-          <span className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-subtle-foreground">
-            <span data-testid="today-coworker">{t('from', { name: coworkers[todayCoworkerKey(item.app)] })}</span>
-            {item.severity && <Badge variant={SEVERITY_VARIANT[item.severity]}>{t(`severity.${item.severity}`)}</Badge>}
-            {item.count !== undefined && <span className="tabular-nums">{t('count', { count: item.count })}</span>}
-            {item.amount !== undefined && <span className="font-mono tabular-nums">{f.money(item.amount, item.currency)}</span>}
-            {item.dueAt !== undefined && <span className="tabular-nums">{t('due', { when: item.kind === 'message' ? f.dateTime(item.dueAt) : f.date(item.dueAt) })}</span>}
+        <a
+          href={path}
+          onClick={go}
+          className={cn('flex min-w-0 flex-1 items-center gap-3 px-4 py-2.5 text-sm focus-visible:bg-muted/50 focus-visible:outline-none', PHONE_TARGET)}
+        >
+          <NavIcon name={TODAY_ICON[item.kind]} className="text-muted-foreground" />
+          <span className="min-w-0 flex-1">
+            <span className="block text-foreground">{itemTitle}</span>
+            <span className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-subtle-foreground">
+              <span data-testid="today-coworker">{t('from', { name: coworkers[todayCoworkerKey(item.app)] })}</span>
+              {item.severity && <Badge variant={SEVERITY_VARIANT[item.severity]}>{t(`severity.${item.severity}`)}</Badge>}
+              {item.count !== undefined && <span className="tabular-nums">{t('count', { count: item.count })}</span>}
+              {item.amount !== undefined && <span className="font-mono tabular-nums">{f.money(item.amount, item.currency)}</span>}
+              {item.dueAt !== undefined && <span className="tabular-nums">{t('due', { when: item.kind === 'message' ? f.dateTime(item.dueAt) : f.date(item.dueAt) })}</span>}
+            </span>
           </span>
-        </span>
-        {/* The whole row is the link; on a phone the word would only squeeze the title. */}
-        <span className="hidden shrink-0 text-xs text-link sm:inline">{t('open')}</span>
-      </a>
+          {/* The whole row is the link; on a phone the word would only squeeze the title. */}
+          <span className="hidden shrink-0 text-xs text-link sm:inline">{t('open')}</span>
+        </a>
+        <Button
+          type="button"
+          size="xs"
+          variant="ghost"
+          data-peek-trigger={itemKey}
+          data-testid="today-peek-btn"
+          aria-label={t('peek.inspectItem', { title: itemTitle })}
+          onClick={() => onInspect(itemKey)}
+        >
+          {t('peek.inspect')}
+        </Button>
+      </div>
     </li>
   );
 }
 
 export function TodayList({ slug, emptyContent }: { slug: string; emptyContent?: ReactNode }) {
   const t = useTranslations('today');
+  const common = useTranslations('common');
+  const f = useFormat();
+  const router = useRouter();
+  const title = useTitle();
   const live = useStreamLive();
   const today = useQuery({ ...orpc.today.list.queryOptions(), refetchInterval: pollEvery(live, 60_000, SAFETY_POLL_MS) });
   const [all, setAll] = useState(false);
+  const listRef = useRef<HTMLDivElement>(null);
   const items = today.data?.items ?? [];
   // One count per thing (#3591): a flag about proposals already listed is a chip on them, not a row, and the number beside the title is the
   // same one the summary says.
@@ -98,6 +146,15 @@ export function TodayList({ slug, emptyContent }: { slug: string; emptyContent?:
   const groups = all ? allGroups : limitGroups(allGroups, QUEUE_ROWS);
   const chips = proposalChips(items);
   const total = todayCount(items);
+  const visibleItems = groups.flatMap((group) => group.items);
+  const peek = useListPeekNav({
+    items: visibleItems,
+    getId: todayItemId,
+    containerRef: listRef,
+    enabled: Boolean(today.data && visibleItems.length > 0),
+    resetKey: slug,
+  });
+  const activeItem = peek.activeItem;
 
   if (today.isPending) {
     return (
@@ -196,7 +253,7 @@ export function TodayList({ slug, emptyContent }: { slug: string; emptyContent?:
         >
           <TodayBrief slug={slug} items={items} name={today.data.coworkers.gm} />
         </div>
-        <div className="divide-y">
+        <div ref={listRef} className="divide-y">
           {groups.map((group) => (
             <div key={group.kind}>
               <div className="flex flex-wrap items-center gap-2 bg-muted/30 px-4 py-2">
@@ -214,7 +271,15 @@ export function TodayList({ slug, emptyContent }: { slug: string; emptyContent?:
               </div>
               <ul className="divide-y">
                 {group.items.map((item) => (
-                  <TodayRow key={`${item.app}:${item.id}`} item={item} slug={slug} coworkers={today.data.coworkers} />
+                  <TodayRow
+                    key={todayItemId(item)}
+                    item={item}
+                    slug={slug}
+                    coworkers={today.data.coworkers}
+                    selected={peek.selectedId === todayItemId(item)}
+                    onInspect={peek.openPeek}
+                    onRowClick={peek.onRowClick}
+                  />
                 ))}
               </ul>
             </div>
@@ -228,6 +293,98 @@ export function TodayList({ slug, emptyContent }: { slug: string; emptyContent?:
           </div>
         )}
       </Card>
+
+      {activeItem && today.data ? (
+        <PeekSheet
+          open={peek.open}
+          onClose={peek.closePeek}
+          peekId={peek.peekId}
+          data-testid="today-peek-sheet"
+          title={title(activeItem)}
+          description={t('from', { name: today.data.coworkers[todayCoworkerKey(activeItem.app)] })}
+          badges={
+            <>
+              <Badge variant="outline">{t(`kinds.${activeItem.kind}`)}</Badge>
+              {activeItem.severity ? (
+                <Badge variant={SEVERITY_VARIANT[activeItem.severity]}>{t(`severity.${activeItem.severity}`)}</Badge>
+              ) : null}
+            </>
+          }
+          positionLabel={common('peek.position', { index: String(peek.activeIndex + 1), total: String(peek.total) })}
+          canPrevious={peek.canPrevious}
+          canNext={peek.canNext}
+          onPrevious={() => peek.step(-1)}
+          onNext={() => peek.step(1)}
+          actions={
+            <a
+              href={todayPath(slug, activeItem.href)}
+              onClick={(event) => {
+                if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+                  return;
+                }
+                event.preventDefault();
+                const targetPath = todayPath(slug, activeItem.href);
+                peek.closePeek();
+                router.history.push(targetPath);
+              }}
+              className={buttonVariants({ size: 'sm', variant: 'default' })}
+              data-testid="today-peek-open-link"
+            >
+              {t('open')}
+            </a>
+          }
+        >
+          <div className="space-y-4">
+            <ProposalSurface proposed={activeItem.kind === 'proposal'} className="p-3">
+              <CoworkerAttribution
+                coworker={todayCoworkerKey(activeItem.app)}
+                name={today.data.coworkers[todayCoworkerKey(activeItem.app)]}
+              />
+            </ProposalSurface>
+
+            <dl className="grid gap-2 rounded-lg border border-border bg-card p-3 text-xs sm:grid-cols-2">
+              <div>
+                <dt className="text-subtle-foreground">{t('peek.kind')}</dt>
+                <dd className="font-medium text-foreground">{t(`kinds.${activeItem.kind}`)}</dd>
+              </div>
+              {activeItem.severity ? (
+                <div>
+                  <dt className="text-subtle-foreground">{t('peek.severity')}</dt>
+                  <dd className="font-medium text-foreground">{t(`severity.${activeItem.severity}`)}</dd>
+                </div>
+              ) : null}
+              {activeItem.count !== undefined ? (
+                <div>
+                  <dt className="text-subtle-foreground">{t('peek.count')}</dt>
+                  <dd className="font-mono tabular-nums text-foreground">{t('count', { count: activeItem.count })}</dd>
+                </div>
+              ) : null}
+              {activeItem.amount !== undefined ? (
+                <div>
+                  <dt className="text-subtle-foreground">{t('peek.amount')}</dt>
+                  <dd className="font-mono tabular-nums text-foreground">
+                    {f.money(activeItem.amount, activeItem.currency)}
+                  </dd>
+                </div>
+              ) : null}
+              {activeItem.dueAt !== undefined ? (
+                <div>
+                  <dt className="text-subtle-foreground">{t('peek.due')}</dt>
+                  <dd className="tabular-nums text-muted-foreground">
+                    {activeItem.kind === 'message' ? f.dateTime(activeItem.dueAt) : f.date(activeItem.dueAt)}
+                  </dd>
+                </div>
+              ) : null}
+              <div className="sm:col-span-2">
+                <dt className="text-subtle-foreground">{t('peek.destination')}</dt>
+                <dd className="font-mono break-all text-muted-foreground">{todayPath(slug, activeItem.href)}</dd>
+              </div>
+            </dl>
+
+            <p className="text-xs text-subtle-foreground">{t('peek.humanHint')}</p>
+          </div>
+        </PeekSheet>
+      ) : null}
     </section>
   );
 }

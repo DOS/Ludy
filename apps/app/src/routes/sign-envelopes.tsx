@@ -2,9 +2,10 @@
 // eSign envelopes list route (/o/$slug/sign/envelopes): upload PDF, filter status tabs, copy Zalo link, remind, download (#3325).
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from '@tanstack/react-router';
-import { useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import { MAX_UPLOAD_BYTES } from '@ludy/kernel-contract';
+import { COWORKER_ROSTER, MAX_UPLOAD_BYTES } from '@ludy/kernel-contract';
+import { Alert, AlertDescription } from '@ludy/ui/components/alert';
 import { Badge } from '@ludy/ui/components/badge';
 import { Button, buttonVariants } from '@ludy/ui/components/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@ludy/ui/components/dialog';
@@ -12,24 +13,29 @@ import { Input } from '@ludy/ui/components/input';
 import { Label } from '@ludy/ui/components/label';
 import { TableCell, TableRow } from '@ludy/ui/components/table';
 import { Tabs, TabsList, TabsTrigger } from '@ludy/ui/components/tabs';
+import { cn } from '@ludy/ui/lib/utils';
 import { ContractDrafterDialog } from '../components/sign/contract-drafter-dialog.tsx';
 import { ContractVaultBar } from '../components/sign/contract-vault-bar.tsx';
 import { VersionDiffDialog } from '../components/sign/version-diff-dialog.tsx';
 import { FormDialog } from '../components/form-dialog.tsx';
+import { CoworkerAttribution, ProposalSurface } from '../components/proposal-surface.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { useListPeekNav } from '../lib/list-peek-nav.ts';
 import {
+  canManageEnvelopeLinks,
   downloadSignFile,
   signApi,
   uploadSignPdf,
+  type SignAiAnalysis,
   type SignEnvelopeSummary,
   type SignObligationRenewalListItem,
 } from '../lib/sign-api.ts';
 import type { SignEnvelopeStatus } from '../lib/sign-fields.ts';
-import { buildSigningUrl, copyTextToClipboard } from '../lib/sign-hash.ts';
+import { buildInPersonSigningUrl, buildSigningUrl, copyTextToClipboard } from '../lib/sign-hash.ts';
 import { looksLikePdfBytes } from '../lib/sign-pdf.ts';
 import { toast } from '../lib/toast.ts';
-import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../components/ui.tsx';
+import { DataTable, Empty, ErrorText, PageHeader, PeekSheet, TableSkeleton } from '../components/ui.tsx';
 
 export type EnvelopeFilterTab = 'all' | 'actionNeeded' | 'waiting' | 'completed' | 'renewals' | 'closed';
 
@@ -206,6 +212,225 @@ export function CreateEnvelopeDialog({
   );
 }
 
+const SIGNER_ROLE_KEYS = {
+  signer: 'signer.roles.signer',
+  approver: 'signer.roles.approver',
+  cc: 'signer.roles.cc',
+} as const;
+
+const SIGNER_STATUS_KEYS = {
+  waiting: 'signer.statuses.waiting',
+  pending: 'signer.statuses.pending',
+  viewed: 'signer.statuses.viewed',
+  signed: 'signer.statuses.signed',
+  declined: 'signer.statuses.declined',
+  voided: 'signer.statuses.voided',
+  expired: 'signer.statuses.expired',
+} as const;
+
+type EnvelopeDetailPayload = Awaited<ReturnType<typeof signApi.getEnvelope>>;
+type EnvelopeObligationPayload = Awaited<ReturnType<typeof signApi.getObligation>>;
+
+function SignEnvelopePeekContent({
+  item,
+  detail,
+  detailLoading,
+  detailError,
+  renewalEntry,
+  obligationData,
+  aiAnalysis,
+  canStartInPerson,
+  inPersonPendingSignerId,
+  onStartInPerson,
+}: {
+  item: SignEnvelopeSummary;
+  detail: EnvelopeDetailPayload | null | undefined;
+  detailLoading: boolean;
+  detailError: unknown;
+  renewalEntry: SignObligationRenewalListItem | null;
+  obligationData: EnvelopeObligationPayload | null | undefined;
+  aiAnalysis: SignAiAnalysis | null | undefined;
+  canStartInPerson: boolean;
+  inPersonPendingSignerId: string | null;
+  onStartInPerson: (signerId: string) => void;
+}) {
+  const t = useTranslations('sign');
+  const f = useFormat();
+  const signers = detail?.signers ?? [];
+  const obligation = renewalEntry?.obligation ?? obligationData?.obligation ?? null;
+  const pendingObligationCount =
+    renewalEntry?.pendingObligationCount ??
+    (obligation ? obligation.obligations.filter((entry) => entry.status === 'pending').length : 0);
+  const nextObligationDueDate =
+    renewalEntry?.nextObligationDueDate ??
+    obligation?.obligations
+      .filter((entry) => entry.status === 'pending' && Boolean(entry.dueDate))
+      .map((entry) => entry.dueDate as string)
+      .sort()[0] ??
+    null;
+
+  const hasAiSummary = Boolean(
+    aiAnalysis &&
+      (aiAnalysis.status === 'completed' ||
+        aiAnalysis.summaryText ||
+        aiAnalysis.riskClauses.length > 0 ||
+        aiAnalysis.proposedFields.length > 0),
+  );
+  const isActive = item.status === 'sent' || item.status === 'in_progress';
+
+  return (
+    <div className="space-y-4">
+      <section className="space-y-2">
+        <h3 className="text-xs font-semibold text-muted-foreground">{t('peek.metaSection')}</h3>
+        <dl className="grid gap-2 rounded-lg border border-border bg-card p-3 text-xs sm:grid-cols-2">
+          <div>
+            <dt className="text-subtle-foreground">{t('routing.label')}</dt>
+            <dd className="font-medium text-foreground">{t(`routing.${item.routingMode}`)}</dd>
+          </div>
+          <div>
+            <dt className="text-subtle-foreground">{t('columns.createdAt')}</dt>
+            <dd className="tabular-nums text-muted-foreground">{f.dateTime(item.createdAt)}</dd>
+          </div>
+          {item.expiresAt ? (
+            <div>
+              <dt className="text-subtle-foreground">{t('peek.expiresAt')}</dt>
+              <dd className="tabular-nums text-muted-foreground">{f.dateTime(item.expiresAt)}</dd>
+            </div>
+          ) : null}
+          {item.certificateCode ? (
+            <div>
+              <dt className="text-subtle-foreground">{t('peek.certificateCode')}</dt>
+              <dd className="font-mono text-foreground">{item.certificateCode}</dd>
+            </div>
+          ) : null}
+        </dl>
+      </section>
+
+      <section className="space-y-2" data-testid="sign-peek-signers">
+        <h3 className="text-xs font-semibold text-muted-foreground">
+          {t('peek.signersSection', { count: String(signers.length || item.signerSummary.total) })}
+        </h3>
+        {detailLoading ? (
+          <p className="text-xs text-subtle-foreground">{t('peek.signersLoading')}</p>
+        ) : detailError ? (
+          <ErrorText>{errorMessage(detailError)}</ErrorText>
+        ) : signers.length === 0 ? (
+          <p className="text-xs text-subtle-foreground">{t('peek.noSigners')}</p>
+        ) : (
+          <ul className="divide-y divide-border rounded-lg border border-border bg-card">
+            {signers.map((signer) => {
+              const dueHere = signer.signerRole !== 'cc' && (signer.status === 'pending' || signer.status === 'viewed');
+              return (
+                <li key={signer.id} className="flex flex-wrap items-center justify-between gap-2 p-2.5 text-xs">
+                  <div className="min-w-0 flex-1 space-y-0.5">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="font-medium text-foreground">{signer.name}</span>
+                      <Badge variant="outline">
+                        {t(SIGNER_ROLE_KEYS[signer.signerRole as keyof typeof SIGNER_ROLE_KEYS] ?? 'signer.roles.signer')}
+                      </Badge>
+                      <Badge
+                        variant={
+                          signer.status === 'signed'
+                            ? 'success'
+                            : signer.status === 'declined' || signer.status === 'voided' || signer.status === 'expired'
+                              ? 'destructive'
+                              : signer.status === 'waiting'
+                                ? 'outline'
+                                : 'secondary'
+                        }
+                      >
+                        {t(SIGNER_STATUS_KEYS[signer.status as keyof typeof SIGNER_STATUS_KEYS] ?? 'signer.statuses.pending')}
+                      </Badge>
+                    </div>
+                    {signer.email ? <p className="truncate font-mono text-subtle-foreground">{signer.email}</p> : null}
+                  </div>
+                  {isActive && canStartInPerson && dueHere ? (
+                    <Button
+                      type="button"
+                      size="xs"
+                      variant="outline"
+                      loading={inPersonPendingSignerId === signer.id}
+                      disabled={inPersonPendingSignerId !== null}
+                      onClick={() => onStartInPerson(signer.id)}
+                      data-testid="sign-peek-signer-in-person"
+                    >
+                      {t('actions.startInPerson')}
+                    </Button>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
+
+      {obligation ? (
+        <section className="space-y-2" data-testid="sign-peek-obligations">
+          <h3 className="text-xs font-semibold text-muted-foreground">{t('peek.obligationsSection')}</h3>
+          <dl className="grid gap-2 rounded-lg border border-border bg-card p-3 text-xs sm:grid-cols-2">
+            {obligation.counterpartyName ? (
+              <div>
+                <dt className="text-subtle-foreground">{t('peek.counterparty')}</dt>
+                <dd className="font-medium text-foreground">{obligation.counterpartyName}</dd>
+              </div>
+            ) : null}
+            {obligation.contractValue !== null ? (
+              <div>
+                <dt className="text-subtle-foreground">{t('peek.contractValue')}</dt>
+                <dd className="font-mono tabular-nums text-foreground">
+                  {f.money(obligation.contractValue, obligation.currency)}
+                </dd>
+              </div>
+            ) : null}
+            {obligation.expiryDate ? (
+              <div>
+                <dt className="text-subtle-foreground">{t('peek.expiryDate')}</dt>
+                <dd className="tabular-nums text-muted-foreground">{f.date(obligation.expiryDate)}</dd>
+              </div>
+            ) : null}
+            {nextObligationDueDate || pendingObligationCount > 0 ? (
+              <div>
+                <dt className="text-subtle-foreground">{t('peek.nextObligation')}</dt>
+                <dd className="flex flex-wrap items-center gap-1.5 tabular-nums text-muted-foreground">
+                  {nextObligationDueDate ? <span>{f.date(nextObligationDueDate)}</span> : null}
+                  {pendingObligationCount > 0 ? (
+                    <Badge variant="secondary">{t('peek.pendingObligations', { count: String(pendingObligationCount) })}</Badge>
+                  ) : null}
+                </dd>
+              </div>
+            ) : null}
+          </dl>
+        </section>
+      ) : null}
+
+      <section className="space-y-2" data-testid="sign-peek-ai">
+        <h3 className="text-xs font-semibold text-muted-foreground">{t('peek.aiSection', { name: COWORKER_ROSTER.gm })}</h3>
+        <ProposalSurface proposed={hasAiSummary} className="space-y-2 p-3">
+          <CoworkerAttribution
+            coworker="gm"
+            badgeLabel={hasAiSummary ? t('obligations.statusProposed') : undefined}
+          />
+          {hasAiSummary && aiAnalysis ? (
+            <div className="space-y-1.5 text-xs">
+              {aiAnalysis.summaryText ? <p className="text-muted-foreground">{aiAnalysis.summaryText}</p> : null}
+              <div className="flex flex-wrap gap-1.5">
+                <Badge variant={aiAnalysis.riskClauses.length > 0 ? 'warning' : 'secondary'}>
+                  {t('peek.aiRiskClauses', { count: String(aiAnalysis.riskClauses.length) })}
+                </Badge>
+                <Badge variant="outline">
+                  {t('peek.aiProposedFields', { count: String(aiAnalysis.proposedFields.length) })}
+                </Badge>
+              </div>
+            </div>
+          ) : (
+            <p className="text-xs text-subtle-foreground">{t('peek.aiOff')}</p>
+          )}
+        </ProposalSurface>
+      </section>
+    </div>
+  );
+}
+
 export function SignEnvelopesPage() {
   const t = useTranslations('sign');
   const common = useTranslations('common');
@@ -218,6 +443,35 @@ export function SignEnvelopesPage() {
   const [diffOpen, setDiffOpen] = useState(false);
   const [drafterOpen, setDrafterOpen] = useState(false);
   const [sharedLinkDialog, setSharedLinkDialog] = useState<{ title: string; url: string } | null>(null);
+  const [pendingRowAction, setPendingRowAction] = useState<{ id: string; kind: 'zalo' | 'remind' | 'sealed' } | null>(null);
+  const [inPersonModal, setInPersonModal] = useState<{
+    envelopeId: string;
+    envelopeTitle: string;
+    signerId: string;
+    signerName: string;
+    session: { url: string; expiresAt: string } | null;
+  } | null>(null);
+  const inPersonReqRef = useRef(0);
+  const rowActionReqRef = useRef(0);
+  const listContainerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    inPersonReqRef.current += 1;
+    rowActionReqRef.current += 1;
+    setInPersonModal(null);
+    setSharedLinkDialog(null);
+    setCreateOpen(false);
+    setDiffOpen(false);
+    setDrafterOpen(false);
+    setPendingRowAction(null);
+  }, [slug]);
+
+  useEffect(() => {
+    return () => {
+      inPersonReqRef.current += 1;
+      rowActionReqRef.current += 1;
+    };
+  }, []);
 
   const hasMeQuery = Boolean((orpc as { me?: { get?: { queryOptions?: () => unknown } } }).me?.get?.queryOptions);
   const meQuery = useQuery(
@@ -225,9 +479,35 @@ export function SignEnvelopesPage() {
       ? orpc.me.get.queryOptions()
       : { queryKey: ['me', 'get', 'noop'], queryFn: async () => null, enabled: false },
   );
+  const hasOrgQuery = Boolean((orpc as { org?: { get?: { queryOptions?: () => unknown } } }).org?.get?.queryOptions);
+  const orgQuery = useQuery(
+    hasOrgQuery
+      ? orpc.org.get.queryOptions()
+      : { queryKey: ['org', 'get', 'noop'], queryFn: async () => null, enabled: false },
+  );
   const currentOrgInfo = meQuery.data?.orgs.find((o) => o.slug === slug);
   const defaultPartyAName = currentOrgInfo?.name ?? '';
-  const canAskVy = !meQuery.data || Boolean(currentOrgInfo?.role && currentOrgInfo.role !== 'viewer');
+  const roleHere = currentOrgInfo?.role ?? orgQuery.data?.role ?? null;
+  const currentUserId = meQuery.data?.userId ?? null;
+  const hasAuthRole = Boolean(meQuery.data || orgQuery.data);
+  const canWriteSign = hasAuthRole && Boolean(roleHere && roleHere !== 'viewer');
+  const canAskVy = canWriteSign;
+  const canManageEnvelope = (item: Pick<SignEnvelopeSummary, 'createdBy'>): boolean => {
+    if (meQuery.data) {
+      return canManageEnvelopeLinks({
+        role: roleHere,
+        userId: currentUserId,
+        createdBy: item.createdBy,
+      });
+    }
+    if (orgQuery.data) {
+      return orgQuery.data.role === 'owner' || orgQuery.data.role === 'admin';
+    }
+    return false;
+  };
+  // Meeting-minutes envelopes are read by all meeting readers, but only creators, owners, or admins may act on them (#4530).
+  const canActOnEnvelope = (item: Pick<SignEnvelopeSummary, 'createdBy' | 'sourceKind'>): boolean =>
+    canWriteSign && (item.sourceKind !== 'meeting_minutes' || canManageEnvelope(item));
   const isRenewalsTab = tab === 'renewals';
 
   const envelopesQuery = useQuery({
@@ -249,19 +529,26 @@ export function SignEnvelopesPage() {
     item: Pick<SignEnvelopeSummary, 'id' | 'title'>,
     signerId: string,
     copiedToast: string,
+    reqId: number,
   ) => {
     const minted = await signApi.createSignerLink(item.id, signerId);
+    if (rowActionReqRef.current !== reqId) return;
     const url = buildSigningUrl(minted.token);
     if (await copyTextToClipboard(url)) {
-      toast(copiedToast);
-    } else {
+      if (rowActionReqRef.current === reqId) toast(copiedToast);
+    } else if (rowActionReqRef.current === reqId) {
+      setInPersonModal(null);
       setSharedLinkDialog({ title: item.title, url });
     }
   };
 
   const handleCopyZaloLink = async (item: SignEnvelopeSummary) => {
+    const reqId = rowActionReqRef.current + 1;
+    rowActionReqRef.current = reqId;
+    setPendingRowAction({ id: item.id, kind: 'zalo' });
     try {
       const detail = await signApi.getEnvelope(item.id);
+      if (rowActionReqRef.current !== reqId) return;
       const activeSigners = getDueSigners(detail.signers);
       const dueSigner =
         activeSigners.find((s) => s.deliveryMode === 'link') ?? activeSigners[0];
@@ -269,15 +556,24 @@ export function SignEnvelopesPage() {
         toast(t('actions.noActiveSignerToast'));
         return;
       }
-      await copyOrShowSignerLink(item, dueSigner.id, t('actions.linkCopiedToast'));
+      await copyOrShowSignerLink(item, dueSigner.id, t('actions.linkCopiedToast'), reqId);
     } catch (error) {
-      toast(errorMessage(error), 'error');
+      if (rowActionReqRef.current === reqId) toast(errorMessage(error), 'error');
+    } finally {
+      if (rowActionReqRef.current === reqId) {
+        setPendingRowAction((prev) => (prev?.id === item.id && prev.kind === 'zalo' ? null : prev));
+      }
     }
   };
 
   const handleRemind = async (item: SignEnvelopeSummary) => {
+    if (!canActOnEnvelope(item)) return;
+    const reqId = rowActionReqRef.current + 1;
+    rowActionReqRef.current = reqId;
+    setPendingRowAction({ id: item.id, kind: 'remind' });
     try {
       const detail = await signApi.getEnvelope(item.id);
+      if (rowActionReqRef.current !== reqId) return;
       const dueSigners = getDueSigners(detail.signers);
       if (dueSigners.length === 0) {
         toast(t('actions.noActiveSignerToast'));
@@ -289,38 +585,171 @@ export function SignEnvelopesPage() {
           await signApi.remindEnvelope(item.id);
         } else {
           for (const signer of emailDue) {
+            if (rowActionReqRef.current !== reqId) return;
             await signApi.remindEnvelope(item.id, signer.id);
           }
         }
-        toast(t('actions.remindedToast'));
+        if (rowActionReqRef.current === reqId) toast(t('actions.remindedToast'));
         return;
       }
       const target = dueSigners.find((s) => s.deliveryMode === 'link') ?? dueSigners[0];
-      if (!target) {
+      if (!target || !canManageEnvelope(item)) {
         toast(t('actions.noActiveSignerToast'));
         return;
       }
-      await copyOrShowSignerLink(item, target.id, t('actions.remindUseLinkToast'));
+      await copyOrShowSignerLink(item, target.id, t('actions.remindUseLinkToast'), reqId);
     } catch (error) {
-      toast(errorMessage(error), 'error');
+      if (rowActionReqRef.current === reqId) toast(errorMessage(error), 'error');
+    } finally {
+      if (rowActionReqRef.current === reqId) {
+        setPendingRowAction((prev) => (prev?.id === item.id && prev.kind === 'remind' ? null : prev));
+      }
     }
   };
 
   const handleDownloadSealed = async (item: SignEnvelopeSummary) => {
+    const reqId = rowActionReqRef.current + 1;
+    rowActionReqRef.current = reqId;
+    setPendingRowAction({ id: item.id, kind: 'sealed' });
     try {
       const detail = await signApi.getEnvelope(item.id);
+      if (rowActionReqRef.current !== reqId) return;
       const fileId = detail.envelope.sealedFileId;
       if (!fileId) return;
       const blob = await downloadSignFile(fileId);
+      if (rowActionReqRef.current !== reqId) return;
       triggerBlobDownload(blob, `${item.certificateCode ?? item.id}-sealed.pdf`);
     } catch (error) {
-      toast(errorMessage(error), 'error');
+      if (rowActionReqRef.current === reqId) toast(errorMessage(error), 'error');
+    } finally {
+      if (rowActionReqRef.current === reqId) {
+        setPendingRowAction((prev) => (prev?.id === item.id && prev.kind === 'sealed' ? null : prev));
+      }
     }
   };
 
   const items = envelopesQuery.data?.items ?? [];
   const filtered = filterEnvelopesByTab(items, tab);
   const renewalItems: readonly SignObligationRenewalListItem[] = renewalsQuery.data?.items ?? [];
+  const visibleEnvelopes: readonly SignEnvelopeSummary[] = isRenewalsTab
+    ? renewalItems.map((entry) => entry.envelope)
+    : filtered;
+
+  const peek = useListPeekNav({
+    items: visibleEnvelopes,
+    getId: (item) => item.id,
+    containerRef: listContainerRef,
+    resetKey: `${slug}:${tab}`,
+  });
+  const activeEnvelope = peek.activeItem;
+  const activeRenewal = activeEnvelope
+    ? renewalItems.find((entry) => entry.envelope.id === activeEnvelope.id) ?? null
+    : null;
+
+  const peekDetailSupported = typeof signApi.getEnvelope === 'function';
+  const peekDetailQuery = useQuery({
+    queryKey: ['sign', 'envelope', slug, activeEnvelope?.id ?? 'none'],
+    queryFn: () => signApi.getEnvelope(activeEnvelope!.id),
+    enabled: Boolean(peek.open && activeEnvelope && peekDetailSupported),
+  });
+
+  const peekObligationSupported = typeof signApi.getObligation === 'function';
+  const peekObligationQuery = useQuery({
+    queryKey: ['sign', 'obligation', slug, activeEnvelope?.id ?? 'none'],
+    queryFn: async () => {
+      try {
+        return await signApi.getObligation(activeEnvelope!.id);
+      } catch {
+        return null;
+      }
+    },
+    enabled: Boolean(peek.open && activeEnvelope && !activeRenewal && peekObligationSupported),
+  });
+
+  const peekAiSupported = typeof signApi.getAiAnalysis === 'function';
+  const peekAiQuery = useQuery({
+    queryKey: ['sign', 'ai', slug, activeEnvelope?.id ?? 'none'],
+    queryFn: async () => {
+      try {
+        return await signApi.getAiAnalysis(activeEnvelope!.id);
+      } catch {
+        return null;
+      }
+    },
+    enabled: Boolean(peek.open && activeEnvelope && peekAiSupported),
+  });
+
+  const startInPersonMutation = useMutation({
+    mutationFn: async ({
+      envelopeId,
+      envelopeTitle,
+      signerId,
+      signerName,
+      reqId,
+    }: {
+      envelopeId: string;
+      envelopeTitle: string;
+      signerId: string;
+      signerName: string;
+      reqId: number;
+    }) => {
+      const res = await signApi.startInPersonSigning(envelopeId, signerId);
+      return {
+        reqId,
+        envelopeId,
+        envelopeTitle,
+        signerId,
+        signerName,
+        url: buildInPersonSigningUrl(res.token),
+        expiresAt: res.expiresAt,
+      };
+    },
+    onSuccess: async (res) => {
+      if (inPersonReqRef.current === res.reqId) {
+        setInPersonModal({
+          envelopeId: res.envelopeId,
+          envelopeTitle: res.envelopeTitle,
+          signerId: res.signerId,
+          signerName: res.signerName,
+          session: { url: res.url, expiresAt: res.expiresAt },
+        });
+        toast(t('inPersonDialog.startedToast'));
+      }
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['sign', 'envelopes'] }),
+        queryClient.invalidateQueries({ queryKey: ['sign', 'envelope', slug, res.envelopeId] }),
+        queryClient.invalidateQueries({ queryKey: ['sign', 'renewals', slug] }),
+      ]);
+    },
+    onError: (err, vars) => {
+      if (inPersonReqRef.current !== vars.reqId) return;
+      toast(errorMessage(err), 'error');
+    },
+  });
+
+  const handleStartInPerson = (envelope: SignEnvelopeSummary, signerId: string) => {
+    if (!canActOnEnvelope(envelope)) return;
+    const signerName = peekDetailQuery.data?.signers.find((s) => s.id === signerId)?.name ?? '';
+    inPersonReqRef.current += 1;
+    setSharedLinkDialog(null);
+    setInPersonModal({
+      envelopeId: envelope.id,
+      envelopeTitle: envelope.title,
+      signerId,
+      signerName,
+      session: null,
+    });
+  };
+
+  const peekSigners = peekDetailQuery.data?.signers ?? [];
+  const peekDueSigners = getDueSigners(peekSigners);
+  const firstDuePeekSigner = peekDueSigners[0] ?? null;
+  const activeEnvelopeIsActive = activeEnvelope
+    ? activeEnvelope.status === 'sent' || activeEnvelope.status === 'in_progress'
+    : false;
+  const activeEnvelopeIsSealed = activeEnvelope
+    ? activeEnvelope.status === 'completed' && activeEnvelope.sealStatus === 'sealed'
+    : false;
 
   return (
     <div className="space-y-5">
@@ -328,31 +757,33 @@ export function SignEnvelopesPage() {
         title={t('title')}
         subtitle={t('subtitle')}
         actions={
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setDiffOpen(true)}
-              data-testid="sign-open-version-diff-btn"
-            >
-              {t('diff.openButton')}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setDrafterOpen(true)}
-              data-testid="sign-open-drafter-btn"
-            >
-              {t('drafter.openButton')}
-            </Button>
-            <Button
-              type="button"
-              onClick={() => setCreateOpen(true)}
-              data-testid="sign-new-envelope-btn"
-            >
-              {t('createButton')}
-            </Button>
-          </div>
+          canWriteSign ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setDiffOpen(true)}
+                data-testid="sign-open-version-diff-btn"
+              >
+                {t('diff.openButton')}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setDrafterOpen(true)}
+                data-testid="sign-open-drafter-btn"
+              >
+                {t('drafter.openButton')}
+              </Button>
+              <Button
+                type="button"
+                onClick={() => setCreateOpen(true)}
+                data-testid="sign-new-envelope-btn"
+              >
+                {t('createButton')}
+              </Button>
+            </div>
+          ) : undefined
         }
       />
 
@@ -371,7 +802,8 @@ export function SignEnvelopesPage() {
         </TabsList>
       </Tabs>
 
-      {isRenewalsTab ? (
+      <div ref={listContainerRef}>
+        {isRenewalsTab ? (
         <>
           {renewalsQuery.isLoading ? <TableSkeleton columns={6} rows={4} /> : null}
           {renewalsQuery.isError ? <ErrorText>{errorMessage(renewalsQuery.error)}</ErrorText> : null}
@@ -397,6 +829,7 @@ export function SignEnvelopesPage() {
                 {renewalItems.map((entry) => {
                   const { envelope: item, obligation } = entry;
                   const isSealed = item.status === 'completed' && item.sealStatus === 'sealed';
+                  const selected = peek.selectedId === item.id;
                   const renewalBadge =
                     entry.daysUntilExpiry !== null ? (
                       entry.daysUntilExpiry < 0 ? (
@@ -415,7 +848,16 @@ export function SignEnvelopesPage() {
                     ) : null;
 
                   return (
-                    <TableRow key={item.id}>
+                    <TableRow
+                      key={item.id}
+                      data-peek-row={item.id}
+                      data-selected={selected ? 'true' : undefined}
+                      onClick={(event) => peek.onRowClick(item.id, event)}
+                      className={cn(
+                        'cursor-pointer',
+                        selected ? 'bg-primary/5 shadow-[inset_2px_0_0_var(--primary)]' : 'hover:bg-muted/40',
+                      )}
+                    >
                       <TableCell data-label={t('columns.title')}>
                         <span className="inline-flex flex-wrap items-center gap-1.5">
                           <Link
@@ -455,8 +897,26 @@ export function SignEnvelopesPage() {
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex flex-wrap justify-end gap-1.5 max-sm:justify-start">
+                          <Button
+                            type="button"
+                            size="xs"
+                            variant="ghost"
+                            data-peek-trigger={item.id}
+                            data-testid="sign-envelope-peek-btn"
+                            aria-label={t('peek.inspectOf', { title: item.title })}
+                            onClick={() => peek.openPeek(item.id)}
+                          >
+                            {t('peek.inspect')}
+                          </Button>
                           {isSealed ? (
-                            <Button type="button" size="sm" variant="outline" onClick={() => void handleDownloadSealed(item)}>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              loading={pendingRowAction?.id === item.id && pendingRowAction.kind === 'sealed'}
+                              disabled={pendingRowAction !== null}
+                              onClick={() => void handleDownloadSealed(item)}
+                            >
                               {t('actions.downloadSealed')}
                             </Button>
                           ) : null}
@@ -486,9 +946,11 @@ export function SignEnvelopesPage() {
               title={t('emptyTitle')}
               hint={t('emptyHint')}
               action={
-                <Button type="button" onClick={() => setCreateOpen(true)}>
-                  {t('createButton')}
-                </Button>
+                canWriteSign ? (
+                  <Button type="button" onClick={() => setCreateOpen(true)}>
+                    {t('createButton')}
+                  </Button>
+                ) : undefined
               }
             />
           ) : null}
@@ -508,8 +970,18 @@ export function SignEnvelopesPage() {
                 {filtered.map((item) => {
                   const isActive = item.status === 'sent' || item.status === 'in_progress';
                   const isSealed = item.status === 'completed' && item.sealStatus === 'sealed';
+                  const selected = peek.selectedId === item.id;
                   return (
-                    <TableRow key={item.id}>
+                    <TableRow
+                      key={item.id}
+                      data-peek-row={item.id}
+                      data-selected={selected ? 'true' : undefined}
+                      onClick={(event) => peek.onRowClick(item.id, event)}
+                      className={cn(
+                        'cursor-pointer',
+                        selected ? 'bg-primary/5 shadow-[inset_2px_0_0_var(--primary)]' : 'hover:bg-muted/40',
+                      )}
+                    >
                       <TableCell data-label={t('columns.title')}>
                         <span className="inline-flex flex-wrap items-center gap-1.5">
                           <Link
@@ -549,18 +1021,50 @@ export function SignEnvelopesPage() {
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex flex-wrap justify-end gap-1.5 max-sm:justify-start">
-                          {isActive ? (
-                            <>
-                              <Button type="button" size="sm" variant="outline" onClick={() => void handleCopyZaloLink(item)}>
-                                {t('actions.copyZalo')}
-                              </Button>
-                              <Button type="button" size="sm" variant="ghost" onClick={() => void handleRemind(item)}>
-                                {t('actions.remind')}
-                              </Button>
-                            </>
+                          <Button
+                            type="button"
+                            size="xs"
+                            variant="ghost"
+                            data-peek-trigger={item.id}
+                            data-testid="sign-envelope-peek-btn"
+                            aria-label={t('peek.inspectOf', { title: item.title })}
+                            onClick={() => peek.openPeek(item.id)}
+                          >
+                            {t('peek.inspect')}
+                          </Button>
+                          {isActive && canManageEnvelope(item) ? (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              loading={pendingRowAction?.id === item.id && pendingRowAction.kind === 'zalo'}
+                              disabled={pendingRowAction !== null}
+                              onClick={() => void handleCopyZaloLink(item)}
+                            >
+                              {t('actions.copyZalo')}
+                            </Button>
+                          ) : null}
+                          {isActive && canActOnEnvelope(item) ? (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              loading={pendingRowAction?.id === item.id && pendingRowAction.kind === 'remind'}
+                              disabled={pendingRowAction !== null}
+                              onClick={() => void handleRemind(item)}
+                            >
+                              {t('actions.remind')}
+                            </Button>
                           ) : null}
                           {isSealed ? (
-                            <Button type="button" size="sm" variant="outline" onClick={() => void handleDownloadSealed(item)}>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              loading={pendingRowAction?.id === item.id && pendingRowAction.kind === 'sealed'}
+                              disabled={pendingRowAction !== null}
+                              onClick={() => void handleDownloadSealed(item)}
+                            >
                               {t('actions.downloadSealed')}
                             </Button>
                           ) : null}
@@ -581,6 +1085,121 @@ export function SignEnvelopesPage() {
           ) : null}
         </>
       )}
+      </div>
+
+      {activeEnvelope ? (
+        <PeekSheet
+          open={peek.open}
+          onClose={peek.closePeek}
+          peekId={peek.peekId}
+          data-testid="sign-envelope-peek-sheet"
+          title={activeEnvelope.title}
+          description={`${t(`statuses.${activeEnvelope.status}`)} · ${t(`routing.${activeEnvelope.routingMode}`)}`}
+          badges={
+            <>
+              <Badge variant={ENVELOPE_BADGE_VARIANT[activeEnvelope.status]}>{t(`statuses.${activeEnvelope.status}`)}</Badge>
+              {activeEnvelope.signerSummary.total > 0 ? (
+                <Badge variant="secondary">
+                  {t('progress', {
+                    signed: String(activeEnvelope.signerSummary.signed),
+                    total: String(activeEnvelope.signerSummary.total),
+                  })}
+                </Badge>
+              ) : null}
+            </>
+          }
+          positionLabel={common('peek.position', { index: String(peek.activeIndex + 1), total: String(peek.total) })}
+          canPrevious={peek.canPrevious}
+          canNext={peek.canNext}
+          onPrevious={() => peek.step(-1)}
+          onNext={() => peek.step(1)}
+          actions={
+            <>
+              {activeEnvelopeIsActive && canManageEnvelope(activeEnvelope) ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  loading={pendingRowAction?.id === activeEnvelope.id && pendingRowAction.kind === 'zalo'}
+                  disabled={pendingRowAction !== null}
+                  onClick={() => void handleCopyZaloLink(activeEnvelope)}
+                  data-testid="sign-peek-copy-zalo"
+                >
+                  {t('actions.copyZalo')}
+                </Button>
+              ) : null}
+              {activeEnvelopeIsActive && canActOnEnvelope(activeEnvelope) ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  loading={pendingRowAction?.id === activeEnvelope.id && pendingRowAction.kind === 'remind'}
+                  disabled={pendingRowAction !== null}
+                  onClick={() => void handleRemind(activeEnvelope)}
+                  data-testid="sign-peek-remind"
+                >
+                  {t('actions.remind')}
+                </Button>
+              ) : null}
+              {activeEnvelopeIsActive && canActOnEnvelope(activeEnvelope) && firstDuePeekSigner ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  loading={
+                    startInPersonMutation.isPending &&
+                    startInPersonMutation.variables?.envelopeId === activeEnvelope.id &&
+                    startInPersonMutation.variables?.signerId === firstDuePeekSigner.id
+                  }
+                  disabled={startInPersonMutation.isPending}
+                  onClick={() => handleStartInPerson(activeEnvelope, firstDuePeekSigner.id)}
+                  data-testid="sign-peek-in-person"
+                >
+                  {t('actions.startInPerson')}
+                </Button>
+              ) : null}
+              {activeEnvelopeIsSealed ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  loading={pendingRowAction?.id === activeEnvelope.id && pendingRowAction.kind === 'sealed'}
+                  disabled={pendingRowAction !== null}
+                  onClick={() => void handleDownloadSealed(activeEnvelope)}
+                  data-testid="sign-peek-download-sealed"
+                >
+                  {t('actions.downloadSealed')}
+                </Button>
+              ) : null}
+              <Link
+                to="/o/$slug/sign/envelopes/$id"
+                params={{ slug, id: activeEnvelope.id }}
+                className={buttonVariants({ size: 'sm', variant: 'default' })}
+                data-testid="sign-peek-open-link"
+              >
+                {t('actions.open')}
+              </Link>
+            </>
+          }
+        >
+          <SignEnvelopePeekContent
+            item={activeEnvelope}
+            detail={peekDetailQuery.data}
+            detailLoading={peekDetailQuery.isLoading}
+            detailError={peekDetailQuery.isError ? peekDetailQuery.error : null}
+            renewalEntry={activeRenewal}
+            obligationData={peekObligationQuery.data}
+            aiAnalysis={peekAiQuery.data}
+            canStartInPerson={canActOnEnvelope(activeEnvelope)}
+            inPersonPendingSignerId={
+              startInPersonMutation.isPending && startInPersonMutation.variables?.envelopeId === activeEnvelope.id
+                ? startInPersonMutation.variables.signerId
+                : null
+            }
+            onStartInPerson={(signerId) => handleStartInPerson(activeEnvelope, signerId)}
+          />
+        </PeekSheet>
+      ) : null}
 
       {createOpen ? (
         <CreateEnvelopeDialog
@@ -595,13 +1214,105 @@ export function SignEnvelopesPage() {
         />
       ) : null}
 
-      <Dialog open={sharedLinkDialog !== null} onOpenChange={(next) => !next && setSharedLinkDialog(null)}>
-        <DialogContent className="sm:max-w-lg" closeLabel={common('close')}>
+      <Dialog
+        open={sharedLinkDialog !== null || inPersonModal !== null}
+        onOpenChange={(next) => {
+          if (!next) {
+            inPersonReqRef.current += 1;
+            setInPersonModal(null);
+            setSharedLinkDialog(null);
+          }
+        }}
+      >
+        <DialogContent
+          className="sm:max-w-lg"
+          closeLabel={common('close')}
+          data-testid={inPersonModal ? 'sign-peek-in-person-dialog' : undefined}
+        >
           <DialogHeader>
-            <DialogTitle>{sharedLinkDialog?.title}</DialogTitle>
-            <DialogDescription>{t('actions.linkCopiedToast')}</DialogDescription>
+            <DialogTitle>{inPersonModal ? t('inPersonDialog.title') : sharedLinkDialog?.title}</DialogTitle>
+            <DialogDescription>
+              {inPersonModal
+                ? t('inPersonDialog.description', {
+                    signer: inPersonModal.signerName || inPersonModal.envelopeTitle,
+                  })
+                : sharedLinkDialog
+                  ? t('actions.linkCopiedToast')
+                  : null}
+            </DialogDescription>
           </DialogHeader>
-          {sharedLinkDialog ? (
+          {inPersonModal ? (
+            <div className="space-y-3">
+              <Alert>
+                <AlertDescription>{t('inPersonDialog.securityNotice')}</AlertDescription>
+              </Alert>
+              {inPersonModal.session ? (
+                <>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="sign-peek-in-person-url">{t('inPersonDialog.urlLabel')}</Label>
+                    <Input
+                      id="sign-peek-in-person-url"
+                      readOnly
+                      value={inPersonModal.session.url}
+                      className="font-mono text-xs"
+                      onFocus={(e) => e.currentTarget.select()}
+                    />
+                    <p className="text-xs text-muted-foreground tabular-nums">
+                      {t('inPersonDialog.expiresAtHint', { time: f.dateTime(inPersonModal.session.expiresAt) })}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <a
+                      href={inPersonModal.session.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={buttonVariants({ size: 'sm', variant: 'default' })}
+                    >
+                      {t('inPersonDialog.openIsolatedTabButton')}
+                    </a>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={async () => {
+                        if (inPersonModal.session && (await copyTextToClipboard(inPersonModal.session.url))) {
+                          toast(t('inPersonDialog.copiedIncognitoToast'));
+                        } else if (typeof document !== 'undefined') {
+                          const inputEl = document.getElementById('sign-peek-in-person-url') as HTMLInputElement | null;
+                          inputEl?.focus();
+                          inputEl?.select();
+                        }
+                      }}
+                    >
+                      {t('inPersonDialog.copyIncognitoButton')}
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    loading={startInPersonMutation.isPending}
+                    onClick={() => {
+                      const reqId = inPersonReqRef.current + 1;
+                      inPersonReqRef.current = reqId;
+                      startInPersonMutation.mutate({
+                        envelopeId: inPersonModal.envelopeId,
+                        envelopeTitle: inPersonModal.envelopeTitle,
+                        signerId: inPersonModal.signerId,
+                        signerName: inPersonModal.signerName,
+                        reqId,
+                      });
+                    }}
+                    data-testid="sign-peek-in-person-mint-btn"
+                  >
+                    {t('inPersonDialog.mintButton')}
+                  </Button>
+                </div>
+              )}
+            </div>
+          ) : sharedLinkDialog ? (
             <div className="space-y-1.5">
               <Label htmlFor="shared-sign-link-url" className="sr-only">
                 {sharedLinkDialog.title}
@@ -616,7 +1327,15 @@ export function SignEnvelopesPage() {
             </div>
           ) : null}
           <DialogFooter>
-            <Button type="button" onClick={() => setSharedLinkDialog(null)}>
+            <Button
+              type="button"
+              variant={inPersonModal ? 'outline' : 'default'}
+              onClick={() => {
+                inPersonReqRef.current += 1;
+                setInPersonModal(null);
+                setSharedLinkDialog(null);
+              }}
+            >
               {common('close')}
             </Button>
           </DialogFooter>

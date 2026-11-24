@@ -27,6 +27,8 @@ import { ErrorText, isEmailAddress, ListSkeleton, PageHeader } from '../componen
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import {
+  canManageEnvelopeLinks,
+  canVoidEnvelope,
   downloadSignFile,
   downloadSignPdfBytes,
   normalizeAiAnalysis,
@@ -109,30 +111,7 @@ export function fromDatetimeLocalValue(raw: string): string | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
 }
 
-// Issuing or rotating a link is for the envelope's creator, an owner or an admin, whatever the kind (#4530: a meeting-minutes envelope is no longer an exception).
-export function canManageEnvelopeLinks(input: {
-  role: string | null | undefined;
-  userId: string | null | undefined;
-  createdBy: string | null | undefined;
-}): boolean {
-  if (!input.role) return false;
-  if (input.role === 'owner' || input.role === 'admin') return true;
-  if (input.role === 'member' && input.userId && input.createdBy === input.userId) return true;
-  return false;
-}
-
-export function canVoidEnvelope(input: {
-  role: string | null | undefined;
-  userId: string | null | undefined;
-  createdBy: string | null | undefined;
-}): boolean {
-  if (!input.role) return false;
-  if (input.role === 'owner' || input.role === 'admin') return true;
-  if (input.role === 'member') {
-    return Boolean(input.userId && input.createdBy === input.userId);
-  }
-  return false;
-}
+export { canManageEnvelopeLinks, canVoidEnvelope };
 
 export function filterPendingProposalsForSigners(
   proposals: readonly SignProposedField[],

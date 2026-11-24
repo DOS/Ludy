@@ -15,10 +15,13 @@ import { Card } from '@ludy/ui/components/card';
 import { Input } from '@ludy/ui/components/input';
 import { Label } from '@ludy/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
+import { cn } from '@ludy/ui/lib/utils';
 import { BankSelect } from './bank-select.tsx';
+import { HrApprovalPeekSheet } from './hr-approval-peek.tsx';
 import { ErrorText } from './ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { useListPeekNav } from '../lib/list-peek-nav.ts';
 
 const ONCE = { staleTime: Infinity, refetchOnWindowFocus: false, refetchOnReconnect: false } as const;
 const PHONE_TARGET = 'max-md:min-h-11';
@@ -366,7 +369,9 @@ export function HrSelfOvertimeCard({
   prefill?: HrOvertimeCardPrefill | null;
 } = {}) {
   const t = useTranslations('hrMy.overtime');
+  const th = useTranslations('hrEmployees');
   const f = useFormat();
+  const teamQueueRef = useRef<HTMLDivElement>(null);
   const today = vietnamToday();
   const [workDate, setWorkDate] = useState(prefill?.workDate ?? today);
   const [hours, setHours] = useState(prefill?.hours ?? '2');
@@ -442,6 +447,18 @@ export function HrSelfOvertimeCard({
   const requests = q.data?.requests ?? [];
   const teamPending = q.data?.teamPending ?? [];
   const monthApprovedHours = q.data?.monthApprovedHours ?? '0';
+  const teamPeek = useListPeekNav({
+    items: teamPending,
+    getId: (r) => r.id,
+    containerRef: teamQueueRef,
+    enabled: teamPending.length > 0,
+  });
+  const activeTeamOt = teamPeek.activeItem;
+
+  useEffect(() => {
+    approveL1.reset?.();
+    reject.reset?.();
+  }, [activeTeamOt?.id]);
 
   return (
     <>
@@ -628,16 +645,39 @@ export function HrSelfOvertimeCard({
           {(approveL1.error || reject.error) && (
             <ErrorText>{errorMessage(approveL1.error ?? reject.error)}</ErrorText>
           )}
-          <div className="mt-3 space-y-2">
+          <div ref={teamQueueRef} className="mt-3 space-y-2">
             {teamPending.map((r) => {
               const note = notes[r.id]?.trim() || undefined;
+              const selected = teamPeek.selectedId === r.id;
               return (
-                <div key={r.id} className="rounded-lg border p-3 text-sm">
+                <div
+                  key={r.id}
+                  data-peek-row={r.id}
+                  data-selected={selected ? 'true' : undefined}
+                  onClick={(event) => teamPeek.onRowClick(r.id, event)}
+                  className={cn(
+                    'cursor-pointer rounded-lg border p-3 text-sm transition-colors',
+                    selected ? 'border-primary/50 bg-primary/5' : 'hover:bg-muted/40',
+                  )}
+                >
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="font-medium text-foreground">
                       {r.employeeName} · {f.date(r.workDate)} · {t('hoursUnit', { hours: r.hours })}
                     </span>
-                    <Badge variant="warning">{t(`statuses.${r.status}`)}</Badge>
+                    <div className="flex items-center gap-2">
+                      <Badge variant="warning">{t(`statuses.${r.status}`)}</Badge>
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant="ghost"
+                        data-peek-trigger={r.id}
+                        data-testid="hr-my-ot-peek-btn"
+                        aria-label={th('peek.inspectOf', { name: r.employeeName })}
+                        onClick={() => teamPeek.openPeek(r.id)}
+                      >
+                        {th('peek.inspect')}
+                      </Button>
+                    </div>
                   </div>
                   <div className="mt-1 text-xs text-subtle-foreground">
                     {t(`dayTypes.${r.dayType}`)} {r.reason ? `· ${r.reason}` : ''}
@@ -656,6 +696,7 @@ export function HrSelfOvertimeCard({
                       size="sm"
                       className={PHONE_TARGET}
                       loading={approveL1.isPending && approveL1.variables?.requestId === r.id}
+                      disabled={approveL1.isPending || reject.isPending}
                       onClick={() => approveL1.mutate({ requestId: r.id, ...(note ? { note } : {}) })}
                       data-testid="hr-my-ot-approve-l1"
                     >
@@ -667,6 +708,7 @@ export function HrSelfOvertimeCard({
                       variant="outline"
                       className={PHONE_TARGET}
                       loading={reject.isPending && reject.variables?.requestId === r.id}
+                      disabled={approveL1.isPending || reject.isPending}
                       onClick={() => reject.mutate({ requestId: r.id, ...(note ? { note } : {}) })}
                       data-testid="hr-my-ot-reject"
                     >
@@ -677,6 +719,62 @@ export function HrSelfOvertimeCard({
               );
             })}
           </div>
+          {activeTeamOt ? (() => {
+            const note = notes[activeTeamOt.id]?.trim() || undefined;
+            return (
+              <HrApprovalPeekSheet
+                peek={teamPeek}
+                testId="hr-my-ot-peek-sheet"
+                title={activeTeamOt.employeeName}
+                description={`${f.date(activeTeamOt.workDate)} · ${t('hoursUnit', { hours: activeTeamOt.hours })}`}
+                badges={
+                  <>
+                    <Badge variant="outline">{t(`dayTypes.${activeTeamOt.dayType}`)}</Badge>
+                    <Badge variant="warning">{t(`statuses.${activeTeamOt.status}`)}</Badge>
+                  </>
+                }
+                fields={[
+                  { label: th('peek.employee'), value: activeTeamOt.employeeName },
+                  { label: th('peek.status'), value: t(`statuses.${activeTeamOt.status}`) },
+                  {
+                    label: t('hours'),
+                    value: `${f.date(activeTeamOt.workDate)} · ${t('hoursUnit', { hours: activeTeamOt.hours })}`,
+                    mono: true,
+                  },
+                  { label: t('dayType'), value: t(`dayTypes.${activeTeamOt.dayType}`) },
+                  ...(activeTeamOt.reason ? [{ label: th('peek.reason'), value: activeTeamOt.reason, span2: true }] : []),
+                ]}
+                noteSection={{
+                  id: `hr-my-ot-peek-note-${activeTeamOt.id}`,
+                  value: notes[activeTeamOt.id] ?? '',
+                  placeholder: t('notePlaceholder'),
+                  onChange: (next) => setNotes((prev) => ({ ...prev, [activeTeamOt.id]: next })),
+                  testId: 'hr-my-ot-peek-note',
+                }}
+                errorMessage={
+                  approveL1.error || reject.error ? errorMessage(approveL1.error ?? reject.error) : null
+                }
+                actions={[
+                  {
+                    label: t('reject'),
+                    variant: 'outline',
+                    disabled: approveL1.isPending || reject.isPending,
+                    loading: reject.isPending && reject.variables?.requestId === activeTeamOt.id,
+                    onClick: () => reject.mutate({ requestId: activeTeamOt.id, ...(note ? { note } : {}) }),
+                    testId: 'hr-my-ot-peek-reject',
+                  },
+                  {
+                    label: t('approveL1'),
+                    variant: 'default',
+                    disabled: approveL1.isPending || reject.isPending,
+                    loading: approveL1.isPending && approveL1.variables?.requestId === activeTeamOt.id,
+                    onClick: () => approveL1.mutate({ requestId: activeTeamOt.id, ...(note ? { note } : {}) }),
+                    testId: 'hr-my-ot-peek-approve-l1',
+                  },
+                ]}
+              />
+            );
+          })() : null}
         </Card>
       )}
     </>
