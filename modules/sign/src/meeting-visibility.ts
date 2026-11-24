@@ -68,12 +68,13 @@ export async function assertCanCreateMeetingMinutesEnvelope(
       'Meeting minutes must be shared before creating a signing envelope',
     );
   }
-  // A reader may read the minutes but not start a signature on someone else's minutes: only the recorder creates the envelope (#4532). The same function is the RLS insert path.
+  // A reader may read the minutes but not start a signature on someone else's minutes: only the recorder, an owner or an admin creates the envelope (#4532, owner decision on #4530). The same
+  // function is the RLS insert path.
   const { rows: creator } = await sql<{ allowed: boolean }>`
     SELECT ludy_sign.can_create_meeting_minutes_envelope(${ctx.orgId}::uuid, ${sourceId}::uuid) AS allowed
   `.execute(ctx.trx);
   if (!creator[0]?.allowed) {
-    throw new DomainError('SIGN_FORBIDDEN', 403, 'Only the meeting recorder can create a meeting-minutes signing envelope');
+    throw new DomainError('SIGN_FORBIDDEN', 403, 'Only the meeting recorder, an owner or an admin can create a meeting-minutes signing envelope');
   }
 }
 

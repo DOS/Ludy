@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // PostgreSQL 17 invariants for the server-side binding of a meeting-minutes eSign envelope to the minutes (#4532, review-followup of #4157; docs/plan/esign.md Slice 3a, ADR-0047):
-//   - Only the meeting's recorder creates a meeting-minutes envelope (sign.envelope.create, sign.template.instantiate and the RLS insert path): a reader of the shared minutes is refused (403) and
-//     a direct INSERT of one is refused by the meeting_minutes_insert policy.
+//   - Only the meeting's recorder, an org owner or an admin creates a meeting-minutes envelope (sign.envelope.create, sign.template.instantiate and the RLS insert path; owner decision on #4530):
+//     a plain reader of the shared minutes is refused (403) and a direct INSERT of one is refused by the meeting_minutes_insert policy.
 //   - source_revision (a sha256 of the published minutes) is the database's: whatever an insert says is replaced, a non-minutes envelope never has one, it cannot change afterwards.
 //   - sign.envelope.by_source says `stale` from that revision (the title is not read) and sign.envelope.send refuses a stale envelope with 409 SIGN_MINUTES_CHANGED.
 import { randomUUID } from 'node:crypto';
@@ -147,18 +147,15 @@ suite('eSign meeting minutes are bound to the minutes by the server (#4532)', ()
     await rootPool.end();
   });
 
-  it('lets only the recorder create it: a reader of the shared minutes is refused by the command and by the insert policy', async () => {
+  it('lets only the recorder, an owner or an admin create it: a plain reader of the shared minutes is refused by the command and by the insert policy', async () => {
     const meetingId = await sharedMeeting('Noi dung hop chinh thuc.');
     const attendeeFile = await ingestPdf(attendeeId, `att-${randomUUID()}`);
     const ownerFile = await ingestPdf(ownerId, `own-${randomUUID()}`);
 
-    // The attendee and the owner both read the shared minutes (they are not refused as strangers, 404) and are refused as creators (403).
-    for (const [userId, fileId] of [
-      [attendeeId, attendeeFile],
-      [ownerId, ownerFile],
-    ] as const) {
-      await expect(create(userId, meetingId, fileId)).rejects.toMatchObject({ code: 'SIGN_FORBIDDEN', status: 403 });
-    }
+    // The attendee reads the shared minutes (not refused as a stranger, 404) and is refused as a creator (403); the org owner, who reads the org-visible meeting, may create one.
+    await expect(create(attendeeId, meetingId, attendeeFile)).rejects.toMatchObject({ code: 'SIGN_FORBIDDEN', status: 403 });
+    const ownerMade = await create(ownerId, meetingId, ownerFile);
+    expect(await storedRevision(ownerMade.envelopeId)).toBe(await currentRevision(meetingId));
 
     // The same refusal on the direct INSERT path (RLS): an attendee's own row for the shared minutes is not allowed.
     const client = await appPool!.connect();

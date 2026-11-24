@@ -13,6 +13,7 @@ import { AgendaAttach } from '../components/meeting-agenda.tsx';
 import { ImportAutoClaim } from '../components/meeting-import-claim.tsx';
 import { MeetingLinks } from '../components/meeting-links.tsx';
 import { SendToTriageDialog } from '../components/send-to-triage-dialog.tsx';
+import { canCreateMeetingMinutesEnvelope } from '../components/meeting-minutes-sign-handoff.tsx';
 import { MeetingResults, memberLabel } from '../components/meeting-results.tsx';
 import { MeetingLive } from '../components/meeting-live.tsx';
 import { MeetingAdherence } from '../components/meeting-adherence.tsx';
@@ -519,7 +520,7 @@ export function MeetingDetailPage() {
                 recorderUserId: meeting.recorderUserId,
                 companyName: orgQuery.data.name,
                 orgMembers,
-                canEdit: orgQuery.data.role !== 'viewer',
+                canEdit: canCreateMeetingMinutesEnvelope(orgQuery.data.role, meeting.isRecorder),
               },
             }
           : {})}

@@ -5,8 +5,8 @@
 --    are not sent again); a meeting_minutes row always has one, any other source kind none.
 -- 2) ludy_sign.meeting_minutes_revision(meeting): the current revision for a reader of a meeting with shared minutes, NULL for anyone else (the same gate as
 --    check_meeting_minutes_source). The command layer compares it with the envelope's stored revision to report `stale` and to refuse sending a stale envelope.
--- 3) ludy_sign.can_create_meeting_minutes_envelope (same signature, so the RLS insert policy follows): only the meeting's recorder creates one. A plain reader reads the
---    minutes and cannot start a signature on someone else's minutes.
+-- 3) ludy_sign.can_create_meeting_minutes_envelope (same signature, so the RLS insert policy follows): only the meeting's recorder, an org owner or an admin creates one, and only if
+--    they can read the minutes (owner decision on #4530). A plain reader reads the minutes and cannot start a signature on someone else's minutes.
 -- Idempotent; applied files stay untouched.
 
 SET LOCAL lock_timeout = '2s';
@@ -141,10 +141,12 @@ CREATE TRIGGER envelope_minutes_revision BEFORE INSERT OR UPDATE OF source_revis
   FOR EACH ROW EXECUTE FUNCTION ludy_sign.envelope_minutes_revision();
 
 -- ---------------------------------------------------------------------------
--- 3. Only the recorder creates a meeting-minutes envelope
+-- 3. Only the recorder, an owner or an admin creates a meeting-minutes envelope
 -- ---------------------------------------------------------------------------
 
--- Same signature as the function of 20270209000000 (renamed with the schema), so the meeting_minutes_insert policy calls this one. A reader who is not the recorder gets false.
+-- Same signature as the function of 20270209000000 (renamed with the schema), so the meeting_minutes_insert policy calls this one. check_meeting_minutes_source = 2 still comes first: the
+-- caller must be a reader of the meeting with shared minutes (an owner or an admin of an attendees-only meeting they were not shared on gets false, as before). Then the recorder, an owner
+-- or an admin passes; a reader who is none of them gets false.
 -- migration-lint: cross-module reads ludy_meetings.meeting to tie the creator to the recorder (#4532).
 CREATE OR REPLACE FUNCTION ludy_sign.can_create_meeting_minutes_envelope(
   p_org_id uuid,
@@ -167,6 +169,11 @@ BEGIN
     WHERE m.org_id = p_org_id
       AND m.id = p_meeting_id
       AND m.recorder_user_id = ludy_kernel.ctx_user_id()
+  ) OR EXISTS (
+    SELECT 1 FROM ludy_kernel.tenant_member tm
+    WHERE tm.org_id = p_org_id
+      AND tm.user_id = ludy_kernel.ctx_user_id()
+      AND tm.role IN ('owner', 'admin')
   );
 END $$;
 

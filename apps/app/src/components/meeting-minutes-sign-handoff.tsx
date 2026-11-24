@@ -132,6 +132,13 @@ export function isMeetingMinutesEnvelopeStale(
   return envelope.stale === true;
 }
 
+// Who is offered the signature (#4532, owner decision on #4530): the recorder, an org owner or an admin; a viewer never. The server decides again (a plain reader is refused with 403, and an owner
+// or an admin who cannot read an attendees-only meeting never sees it). An unknown recorder state (undefined) counts as the recorder, as before.
+export function canCreateMeetingMinutesEnvelope(role: string | undefined, isRecorder: boolean | undefined): boolean {
+  if (role === 'viewer') return false;
+  return isRecorder !== false || role === 'owner' || role === 'admin';
+}
+
 export function canStartMeetingMinutesSignHandoff(
   results: Pick<MeetingResults, 'published' | 'items'> | null | undefined,
   envelope: Pick<SignEnvelopeBySourceItem, 'envelopeId' | 'status' | 'stale'> | null | undefined,
@@ -542,12 +549,8 @@ function MeetingMinutesSignHandoffView({
   const stale = isMeetingMinutesEnvelopeStale(source.results, envelope);
   const unfinishedEnvelopeId =
     externalUnfinishedId ?? resolveUnfinishedEnvelopeId(unfinished, attemptKey, envelope);
-  // Only the recorder starts a signature on the minutes (the server refuses anyone else, #4532).
   const showSendButton =
-    canEdit &&
-    source.meeting.isRecorder !== false &&
-    !envelopeLoading &&
-    canStartMeetingMinutesSignHandoff(source.results, envelope, unfinishedEnvelopeId);
+    canEdit && !envelopeLoading && canStartMeetingMinutesSignHandoff(source.results, envelope, unfinishedEnvelopeId);
   const showSealedDownload = !stale && canDownloadSealedMeetingMinutes(envelope);
   const statusText = envelope ? t(`sign.status.${envelope.status}`) : null;
   const activeError = handoff.error ?? downloadSealed.error;

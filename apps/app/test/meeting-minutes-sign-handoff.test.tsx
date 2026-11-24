@@ -154,6 +154,7 @@ vi.mock('../src/lib/api.ts', async () => {
 
 const {
   MeetingMinutesSignHandoff,
+  canCreateMeetingMinutesEnvelope,
   canDownloadSealedMeetingMinutes,
   canStartMeetingMinutesSignHandoff,
   createMeetingMinutesSignHandoffAttempt,
@@ -503,10 +504,14 @@ describe('Ludy Notes -> Ludy eSign shared meeting minutes handoff (#3811)', () =
     expect(canStartMeetingMinutesSignHandoff(SHARED_RESULTS, makeEnvelope('completed'))).toBe(false);
     expect(canStartMeetingMinutesSignHandoff(SHARED_RESULTS, makeEnvelope('completed', { stale: true }))).toBe(true);
 
-    // Only the recorder starts a signature on the minutes (the server refuses a reader who is not the recorder): no send button for a reader.
-    const readerSource = { ...source, meeting: { ...source.meeting, isRecorder: false } };
-    const readerHtml = renderWithProviders(<MeetingMinutesSignHandoff source={readerSource} envelope={makeEnvelope('declined')} />);
-    expect(readerHtml).not.toContain('data-testid="meeting-minutes-send-esign"');
+    // The recorder, an org owner or an admin is offered the signature, a plain reader and a viewer are not (the server refuses a reader with 403, #4532).
+    expect(canCreateMeetingMinutesEnvelope('member', true)).toBe(true);
+    expect(canCreateMeetingMinutesEnvelope('member', undefined)).toBe(true);
+    expect(canCreateMeetingMinutesEnvelope('owner', false)).toBe(true);
+    expect(canCreateMeetingMinutesEnvelope('admin', false)).toBe(true);
+    expect(canCreateMeetingMinutesEnvelope('member', false)).toBe(false);
+    expect(canCreateMeetingMinutesEnvelope('viewer', true)).toBe(false);
+    expect(canCreateMeetingMinutesEnvelope('viewer', false)).toBe(false);
   });
 
   it('prefills attendees + linked external party contacts, resumes mid-handoff retries idempotently, and guards org switch', async () => {

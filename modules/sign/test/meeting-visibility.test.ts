@@ -143,9 +143,8 @@ describe('meeting-visibility helpers and @ludy/mod-sign meeting minutes guards (
     sourceState = 2;
     await expect(assertCanCreateMeetingMinutesEnvelope(ownerCtx, 'meeting_minutes', MEETING_ID)).resolves.toBeUndefined();
 
-    // Only the recorder creates it (#4532): a reader of shared minutes who is not the recorder, an owner and an admin included, is refused with 403.
+    // Only the recorder, an owner or an admin creates it (#4532, owner decision on #4530): the database function answers false for a reader who is none of them, and the command refuses with 403.
     recorderAllowed = false;
-    await expect(assertCanCreateMeetingMinutesEnvelope(ownerCtx, 'meeting_minutes', MEETING_ID)).rejects.toMatchObject({ code: 'SIGN_FORBIDDEN', status: 403 });
     await expect(
       assertCanCreateMeetingMinutesEnvelope(makeUserCommandCtx(trx, ATTENDEE_ID, 'member'), 'meeting_minutes', MEETING_ID),
     ).rejects.toMatchObject({ code: 'SIGN_FORBIDDEN', status: 403 });
