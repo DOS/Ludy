@@ -634,7 +634,7 @@ export const vi = {
   notifications: {
     morningNotice: {
       title: 'Các cuộc họp hôm nay, vào buổi sáng',
-      hint: 'Mỗi ngày một lần, vào giờ bạn chọn, một thông báo trong ứng dụng và qua email cho biết hôm nay bạn có bao nhiêu cuộc họp kèm đường dẫn để xem, cùng thông báo đẩy nếu bạn bật trên thiết bị này. Không kèm tiêu đề hay tên. Ngày không có cuộc họp thì không gửi gì.',
+      hint: 'Mỗi ngày một lần, vào giờ bạn chọn, một thông báo trong ứng dụng và qua email cho biết hôm nay bạn có bao nhiêu cuộc họp kèm đường dẫn để xem, cùng thông báo đẩy nếu bạn bật trên thiết bị này. Chỉ có số lượng và đường dẫn (thông báo đẩy chỉ nêu loại việc), không tiêu đề, không tên. Ngày không có cuộc họp thì không gửi gì.',
       label: 'Báo cho tôi các cuộc họp trong ngày vào mỗi buổi sáng',
       at: 'Lúc',
       zone: 'Theo múi giờ của bạn: {zone}',

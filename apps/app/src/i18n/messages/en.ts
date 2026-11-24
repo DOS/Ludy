@@ -636,7 +636,7 @@ export const en = {
   notifications: {
     morningNotice: {
       title: "Today's meetings, in the morning",
-      hint: 'Once a day, at the time you choose, a notice in the app and by email with how many meetings you have today and a link to see them, plus a browser push if turned on for this device. No title or name is sent. Nothing is sent on a day with no meeting.',
+      hint: 'Once a day, at the time you choose, a notice in the app and by email with how many meetings you have today and a link to see them, plus a browser push if turned on for this device. Only a count and a link are sent (browser push names the kind only), no title or name. Nothing is sent on a day with no meeting.',
       label: "Tell me about the day's meetings every morning",
       at: 'At',
       zone: 'In your time zone: {zone}',
