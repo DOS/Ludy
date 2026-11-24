@@ -857,6 +857,7 @@ export const en = {
       bad_oauth_callback: 'Sign-in did not complete. Try again.',
       bad_oauth_state: 'Sign-in did not complete. Try again.',
       hosted_login_failed: 'Sign-in did not complete. Start again from the sign-in screen.',
+      oauth_login_failed: 'Sign-in did not complete. Start again from the sign-in screen.',
     },
   },
   legal: {

@@ -17,22 +17,23 @@ import { liveAuthUrl, type Config, type SessionCheckMode } from './config.ts';
 //        Supabase Auth does by default; a sign-out elsewhere destroys the refresh tokens at once, so access ends at
 //        the token's expiry. Crove's own revocation is immediate, and every R3 command is confirmed live.
 //   off: Crove's records only, no Auth at all (local URLs only).
-function sqlSource(mode: SessionCheckMode): SessionStatusSource {
+function sqlSource(mode: SessionCheckMode, acceptedOauthClient: string | null): SessionStatusSource {
   const upstream = mode === 'db';
   return {
     mode,
     liveCheckForR3: mode === 'jwt',
     async check(trx, actor, orgId) {
       const aal = actor.aal === 'aal2' ? 'aal2' : 'aal1';
-      await sql`SELECT ludy_kernel.session_check(${actor.userId}::uuid, ${actor.sessionId}::uuid, ${upstream}, ${orgId}::uuid, ${aal}::text)`.execute(
+      await sql`SELECT ludy_kernel.session_check(${actor.userId}::uuid, ${actor.sessionId}::uuid, ${upstream}, ${orgId}::uuid, ${aal}::text, ${acceptedOauthClient}::text)`.execute(
         trx,
       );
     },
   };
 }
 
-export function createSessionStatusSource(mode: SessionCheckMode): SessionStatusSource {
-  return sqlSource(mode);
+// acceptedOauthClient: AUTH_OAUTH_CLIENT_ID (issue #4704), the one OAuth client whose bound sessions the db check lets through.
+export function createSessionStatusSource(mode: SessionCheckMode, acceptedOauthClient: string | null = null): SessionStatusSource {
+  return sqlSource(mode, acceptedOauthClient);
 }
 
 export interface LiveCheckOptions {

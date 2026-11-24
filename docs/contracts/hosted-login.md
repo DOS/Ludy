@@ -2,6 +2,8 @@
 
 What an identity provider implements so that Ludy can send people to the provider's own sign-in page and get a standard Supabase Auth session back. It is written for whoever builds the provider's side (for the pilot: whoever runs the pilot's identity provider). Ludy's side is generic and names no provider: [Ludy's settings](#ludys-settings) are the only configuration.
 
+> **Status (2026-11-24, issue #4704):** no longer the Ludy Cloud path. The owner decided that Ludy Cloud signs in through the identity provider's standard OAuth App (`AUTH_SIGN_IN=oauth`, [ADR-0028](../adr/0028-identity-sessions-and-revocation.md), [the runbook](../runbooks/pilot-sign-in-remote-idp.md)). This contract and `AUTH_HOSTED_LOGIN_*` stay for a provider that already has such a page; removing them is a follow-up.
+
 This is an authorization-code flow with PKCE ([RFC 7636](https://www.rfc-editor.org/rfc/rfc7636), method S256), shaped like OAuth 2.0's but with no client secret, because Ludy's app is a browser app (a public client). It does **not** use Supabase Auth's OAuth 2.1 server: tokens that server issues to a client carry a `client_id`, and Ludy's kernel refuses them on purpose (ADR-0028). The session this flow returns is an ordinary Supabase Auth browser session.
 
 ## Why a code and a token endpoint

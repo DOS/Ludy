@@ -99,10 +99,21 @@ const OAUTH_CLIENT_AMR_PREFIX = 'oauth_provider/';
 export const oauthClientRefused = () =>
   new DomainError('OAUTH_CLIENT_TOKEN_REFUSED', 401, 'Mã truy cập này được cấp cho một ứng dụng bên thứ ba, không dùng để đăng nhập');
 
-// True when the token was issued to an OAuth client: any `client_id` claim (whatever its value), or an `amr` entry
-// (an object's `method`, or a bare string) from the OAuth server's authorization code grant.
-export function issuedToOAuthClient(claims: Record<string, unknown>): boolean {
-  if (Object.hasOwn(claims, 'client_id')) return true;
+// True when the token was issued to an OAuth client the kernel does not accept: any `client_id` claim (whatever its
+// value) other than `acceptedClientId`, or an `amr` entry (an object's `method`, or a bare string) from the OAuth
+// server's authorization code grant on a token that carries no `client_id`.
+//
+// `acceptedClientId` is the deployment's own OAuth App (AUTH_OAUTH_CLIENT_ID, issue #4704, ADR-0028 amendment
+// 2026-11-24): a token whose `client_id` is that UUID (any letter case) is the deployment's own sign-in. Unset (null or
+// undefined) nothing is accepted, as before. Only a string claim can match, so an array, a number or a null `client_id`
+// is refused whatever is configured. The `amr` test stays for every token without `client_id`: a token for the accepted
+// client's own session that lost `client_id` (an MFA verification on it, or a hook) is refused too, because nothing
+// then names the client.
+export function issuedToOAuthClient(claims: Record<string, unknown>, acceptedClientId: string | null | undefined = null): boolean {
+  if (Object.hasOwn(claims, 'client_id')) {
+    const { client_id: clientId } = claims;
+    return !(acceptedClientId && typeof clientId === 'string' && clientId.toLowerCase() === acceptedClientId.toLowerCase());
+  }
   const { amr } = claims;
   if (!Array.isArray(amr)) return false;
   return amr.some((entry) => {
@@ -116,10 +127,11 @@ export function issuedToOAuthClient(claims: Record<string, unknown>): boolean {
 const BEARER = /^bearer\s+(\S+)$/i;
 
 // The /auth/v1 proxy's test (issue #277): true when the Authorization header carries a JWT whose payload, decoded
-// WITHOUT verifying it, was issued to an OAuth client (`issuedToOAuthClient`). It only ever refuses: Supabase Auth
-// verifies every token it accepts, so a forged or altered token gains nothing from passing here. A header that is
-// not a bearer JWS with a JSON object payload is not one, and Supabase Auth rejects it itself. Never logs the token.
-export function bearerIssuedToOAuthClient(authorization: string | null | undefined): boolean {
+// WITHOUT verifying it, was issued to an OAuth client the deployment does not accept (`issuedToOAuthClient`). It only
+// ever refuses: Supabase Auth verifies every token it accepts, so a forged or altered token gains nothing from passing
+// here. A header that is not a bearer JWS with a JSON object payload is not one, and Supabase Auth rejects it itself.
+// Never logs the token.
+export function bearerIssuedToOAuthClient(authorization: string | null | undefined, acceptedClientId: string | null | undefined = null): boolean {
   const token = BEARER.exec(authorization?.trim() ?? '')?.[1];
   if (!token) return false;
   let claims: Record<string, unknown>;
@@ -128,7 +140,7 @@ export function bearerIssuedToOAuthClient(authorization: string | null | undefin
   } catch {
     return false;
   }
-  return issuedToOAuthClient(claims);
+  return issuedToOAuthClient(claims, acceptedClientId);
 }
 
 const BUNDLED_AUTH_ISSUERS: readonly [string, string] = ['ludy-auth', 'crove-auth'];
@@ -145,11 +157,13 @@ export function canonicalIdentityIssuer(configured: string, verifiedIssuer: stri
 }
 
 // Signature, algorithm family, issuer, audience and expiry, then the claims Crove relies on. Every failure is 401:
-// OAUTH_CLIENT_TOKEN_REFUSED for a token issued to an OAuth client, UNAUTHENTICATED otherwise.
+// OAUTH_CLIENT_TOKEN_REFUSED for a token issued to an OAuth client other than the deployment's own, UNAUTHENTICATED otherwise.
 export function createTokenVerifier(config: Config, keys: { jwks?: JWTVerifyGetKey } = {}) {
   const jwks = keys.jwks ?? (config.AUTH_JWKS_URL ? createRemoteJWKSet(new URL(config.AUTH_JWKS_URL), { cacheMaxAge: 10 * 60_000 }) : null);
   const emailAccess = createEmailAccess(config.AUTH_ALLOWED_EMAILS);
   const secret = config.AUTH_JWT_SECRET ? new TextEncoder().encode(config.AUTH_JWT_SECRET) : null;
+  // The one OAuth client whose tokens are accepted (AUTH_OAUTH_CLIENT_ID, issue #4704); null: none.
+  const oauthClientId = config.AUTH_OAUTH_CLIENT_ID ?? null;
   const options = {
     issuer: acceptedIssuers(config.AUTH_ISSUER),
     audience: config.AUTH_AUDIENCE,
@@ -168,7 +182,7 @@ export function createTokenVerifier(config: Config, keys: { jwks?: JWTVerifyGetK
       throw invalid();
     }
     // First after the signature, so the answer names the reason; nothing below (and no database work) runs for it.
-    if (issuedToOAuthClient(claims)) throw oauthClientRefused();
+    if (issuedToOAuthClient(claims, oauthClientId)) throw oauthClientRefused();
     const { sub, iss, email, role, session_id: sessionId } = claims;
     if (typeof sub !== 'string' || sub === '' || typeof iss !== 'string') throw invalid();
     if (role !== 'authenticated' || claims.is_anonymous === true) throw invalid();
@@ -253,6 +267,7 @@ export function createAuthenticator(
         name: verified.name,
         sessionId: verified.sessionId,
         upstream: config.AUTH_SESSION_CHECK === 'db',
+        acceptedOauthClient: config.AUTH_OAUTH_CLIENT_ID ?? null,
       }),
     );
     const user = { userId, email: verified.email, name: verified.name };

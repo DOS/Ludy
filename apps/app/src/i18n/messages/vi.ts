@@ -854,6 +854,7 @@ export const vi = {
       bad_oauth_callback: 'Chưa đăng nhập xong. Hãy thử lại.',
       bad_oauth_state: 'Chưa đăng nhập xong. Hãy thử lại.',
       hosted_login_failed: 'Chưa đăng nhập xong. Hãy bắt đầu lại từ màn hình đăng nhập.',
+      oauth_login_failed: 'Chưa đăng nhập xong. Hãy bắt đầu lại từ màn hình đăng nhập.',
     },
   },
   legal: {
