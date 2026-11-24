@@ -12,8 +12,8 @@ import { SignAiReader, type AiCall, type AiMeter } from '@ludy/agent';
 import { createDb, createPool, type Db } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import type { ExtractClient } from '@ludy/extract-contract';
-import { buildKernelCommands, kernelQueries } from '@ludy/kernel';
-import { todayCoworkerKey, vietnamToday, type TodayList } from '@ludy/kernel-contract';
+import { buildKernelCommands, createOrg, kernelQueries } from '@ludy/kernel';
+import { TODAY_ITEMS_MAX, todayCoworkerKey, vietnamToday, type TodayList } from '@ludy/kernel-contract';
 import { Runtime, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
 import { addDaysIso, signCommands, signQueries } from '@ludy/mod-sign';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
@@ -844,4 +844,103 @@ suite('eSign Slice 4e post-signature obligations, renewals, and Vy Home alerts (
     );
     expect(leftRows).toEqual([]);
   });
+
+  it('computes accurate SQL overflow count on sign.obligations.today past 500 simultaneous urgent envelopes (#4279)', async () => {
+    const bulkOrg = await createOrg(runtime, asUser(owner), 'Bulk Obligations Org');
+    await admin(async (c) => {
+      await c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1::uuid, $2::uuid, 'member')`, [
+        bulkOrg.orgId,
+        member.userId,
+      ]);
+    });
+    const pdfFileId = await uploadSignPdfFor(owner, 'bulk-obl-template', bulkOrg.slug);
+    const todayVn = vietnamToday(new Date());
+    const dueDateIso = addDaysIso(todayVn, 10);
+    const pendingDueIso = addDaysIso(todayVn, 3);
+
+    // Seed 505 completed standalone urgent confirmed obligations + 3 hr_contract urgent obligations created by owner.
+    // owner sees all 508 (overflow tail count = 508 - 19 = 489), whereas member sees only the 505 standalone ones (overflow = 505 - 19 = 486).
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      try {
+        for (let i = 0; i < 508; i += 1) {
+          const envId = randomUUID();
+          const sourceKind = i < 505 ? 'standalone' : 'hr_contract';
+          const sourceId = i < 505 ? null : randomUUID();
+          await c.query(
+            `INSERT INTO ludy_sign.envelope (
+               org_id, id, title, status, routing_mode, source_kind, source_id, source_file_id,
+               source_storage_key, source_generation, source_sha256, inspect_status, page_count,
+               completed_at, created_by
+             )
+             SELECT $1::uuid, $2::uuid, $3, 'completed', 'parallel', $4, $5::uuid, f.id,
+                    f.storage_key, f.generation, f.sha256, 'passed', 1, now(), $6::uuid
+             FROM ludy_kernel.file f
+             WHERE f.org_id = $1::uuid AND f.id = $7::uuid`,
+            [bulkOrg.orgId, envId, `Bulk Obl ${i + 1}`, sourceKind, sourceId, owner.userId, pdfFileId],
+          );
+          await c.query(
+            `INSERT INTO ludy_sign.envelope_obligation (
+               org_id, envelope_id, status, expiry_date, renewal_notice_days, auto_renew,
+               currency, obligations_json, confirmed_by, confirmed_at, created_by
+             ) VALUES (
+               $1::uuid, $2::uuid, 'confirmed', $3::date, 15, false, 'VND', $4::jsonb, $5::uuid, now(), $5::uuid
+             )`,
+            [
+              bulkOrg.orgId,
+              envId,
+              dueDateIso,
+              i < 505
+                ? '[]'
+                : JSON.stringify([
+                    {
+                      id: `obl-${i}`,
+                      title: 'Hidden HR Milestone',
+                      dueDate: pendingDueIso,
+                      status: 'pending',
+                      completedAt: null,
+                      pageNumber: 1,
+                      quoteExcerpt: null,
+                      proposedByAi: false,
+                    },
+                  ]),
+              owner.userId,
+            ],
+          );
+        }
+        await c.query('COMMIT');
+      } catch (err) {
+        await c.query('ROLLBACK');
+        throw err;
+      }
+    });
+
+    const ownerItems = await runtime.query<Array<{ id: string; count?: number; title: { key: string; params?: Record<string, unknown> } }>>(
+      'sign.obligations.today',
+      {},
+      { actor: asUser(owner), orgId: bulkOrg.orgId },
+    );
+    expect(ownerItems).toHaveLength(TODAY_ITEMS_MAX);
+    // 505 standalone renewals + 3 hr_contract renewals + 3 hr_contract pending items = 511 urgent TodayItems -> 511 - 199 = 312!
+    const expectedOwnerOverflow = 511 - (TODAY_ITEMS_MAX - 1);
+    expect(ownerItems[TODAY_ITEMS_MAX - 1]).toMatchObject({
+      id: 'obligations:more',
+      count: expectedOwnerOverflow,
+      title: { key: 'sign.obligationMore', params: { count: expectedOwnerOverflow } },
+    });
+
+    const memberItems = await runtime.query<Array<{ id: string; count?: number; title: { key: string; params?: Record<string, unknown> } }>>(
+      'sign.obligations.today',
+      {},
+      { actor: asUser(member), orgId: bulkOrg.orgId },
+    );
+    expect(memberItems).toHaveLength(TODAY_ITEMS_MAX);
+    // Plain member must NOT count hidden hr_contract obligations: 505 - 199 = 306!
+    const expectedMemberOverflow = 505 - (TODAY_ITEMS_MAX - 1);
+    expect(memberItems[TODAY_ITEMS_MAX - 1]).toMatchObject({
+      id: 'obligations:more',
+      count: expectedMemberOverflow,
+      title: { key: 'sign.obligationMore', params: { count: expectedMemberOverflow } },
+    });
+  }, 60_000);
 });

@@ -1673,4 +1673,102 @@ suite('eSign Slice 2a reusable templates, roles & direct signing links on Postgr
       expect(Number(left.rows[0]!.count), tbl).toBe(0);
     }
   });
+
+  it('clamps ludy_sign.public_direct_start token expires_at at 720 hours on legacy templates with >720h expires_in_hours (#4270)', async () => {
+    const tplFile = await ingestPdf(ownerA, orgA, 'legacy-tpl-8760h');
+    const tpl = await runtime.execute<{ templateId: string }>(
+      'sign.template.create',
+      { title: 'Legacy 365d Direct Template', sourceFileId: tplFile.fileId, routingMode: 'parallel' },
+      { actor: asUser(ownerA), orgId: orgA },
+    );
+    await workerRuntime.execute(
+      'sign.template.inspect_complete',
+      {
+        templateId: tpl.templateId,
+        outcome: 'passed',
+        pageCount: 1,
+        pageDimensions: [{ page: 1, widthPt: 595, heightPt: 842, rotation: 0 }],
+      },
+      { actor: asSystem('sign-worker'), orgId: orgA },
+    );
+    await runtime.execute(
+      'sign.template.roles_set',
+      {
+        templateId: tpl.templateId,
+        roles: [
+          {
+            roleKey: 'r1',
+            signerRole: 'signer',
+            roleLabel: 'Ben ky',
+            routingOrder: 1,
+            deliveryMode: 'link',
+            requireEmailOtp: false,
+          },
+        ],
+      },
+      { actor: asUser(ownerA), orgId: orgA },
+    );
+    await runtime.execute(
+      'sign.template.fields_set',
+      {
+        templateId: tpl.templateId,
+        fields: [
+          {
+            roleKey: 'r1',
+            fieldType: 'signature',
+            pageNumber: 1,
+            xNorm: 0.2,
+            yNorm: 0.7,
+            wNorm: 0.25,
+            hNorm: 0.08,
+            required: true,
+          },
+        ],
+      },
+      { actor: asUser(ownerA), orgId: orgA },
+    );
+    await runtime.execute('sign.template.update', { templateId: tpl.templateId, status: 'active' }, { actor: asUser(ownerA), orgId: orgA });
+
+    // Simulate a legacy template row carrying 8760h (365d) expires_in_hours and a direct link expiring in 1 year.
+    await adminPool!.query(
+      `UPDATE ludy_sign.template SET expires_in_hours = 8760 WHERE org_id = $1::uuid AND id = $2::uuid`,
+      [orgA, tpl.templateId],
+    );
+    const direct = await runtime.execute<{ token: string | null }>(
+      'sign.template.direct_link_set',
+      {
+        templateId: tpl.templateId,
+        enabled: true,
+        requireEmailOtp: false,
+        expiresAt: new Date(Date.now() + 365 * 24 * 3_600_000).toISOString(),
+      },
+      { actor: asUser(ownerA), orgId: orgA },
+    );
+
+    const started = await runtime.orgless(async (db) => {
+      const { rows } = await sql<{ v: { status: string; signingTokenId: string; envelopeId: string; expiresAt: string } }>`
+        SELECT ludy_sign.public_direct_start(
+          ${hashSigningToken(direct.token!)},
+          'Legacy Direct Caller',
+          NULL,
+          NULL,
+          ${hashSigningToken(generateRawSigningToken())},
+          NULL,
+          'ClampCheck/1.0'
+        ) AS v
+      `.execute(db);
+      return rows[0]!.v;
+    });
+    expect(started.status).toBe('ok');
+
+    const { rows: checkRows } = await adminPool!.query<{ diff_hours: number }>(
+      `SELECT EXTRACT(EPOCH FROM (st.expires_at - e.created_at)) / 3600.0 AS diff_hours
+       FROM ludy_sign.signing_token st
+       JOIN ludy_sign.envelope e ON e.org_id = st.org_id AND e.id = st.envelope_id
+       WHERE st.org_id = $1::uuid AND st.id = $2::uuid`,
+      [orgA, started.signingTokenId],
+    );
+    expect(Number(checkRows[0]!.diff_hours)).toBeGreaterThan(719);
+    expect(Number(checkRows[0]!.diff_hours)).toBeLessThanOrEqual(720);
+  });
 });

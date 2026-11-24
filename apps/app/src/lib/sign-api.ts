@@ -892,6 +892,10 @@ export interface SignOrgStampItem {
 
 // Loads a signed-in workspace member's saved signatures and active org stamps on public /-/sign ceremony pages (#3817).
 // Returns null silently when the signer is unauthenticated or not a member of any workspace.
+function normalizeWorkspaceHint(name: string): string {
+  return name.normalize('NFC').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
 export async function loadCeremonyWorkspaceProfiles(orgNameHint?: string | null): Promise<{
   orgSlug: string;
   signatures: SignMemberSignatureItem[];
@@ -903,44 +907,37 @@ export async function loadCeremonyWorkspaceProfiles(orgNameHint?: string | null)
     const me = await orglessClient.me.get();
     if (!me.orgs.length) return null;
 
-    const normalizedHint = orgNameHint?.trim().toLowerCase() ?? '';
+    const normalizedHint = orgNameHint ? normalizeWorkspaceHint(orgNameHint) : '';
     const currentSlug = getCurrentOrg();
-    const candidates: string[] = [];
-    const pushCandidate = (slug: string | null | undefined) => {
-      if (slug && !candidates.includes(slug)) candidates.push(slug);
-    };
+    let targetSlug: string | null = null;
 
     if (normalizedHint) {
-      for (const org of me.orgs) {
-        if (org.name.trim().toLowerCase() === normalizedHint) {
-          pushCandidate(org.slug);
-        }
+      const hintMatches = me.orgs.filter((org) => normalizeWorkspaceHint(org.name) === normalizedHint);
+      if (hintMatches.length === 1) {
+        targetSlug = hintMatches[0]!.slug;
+      } else if (hintMatches.length > 1 && currentSlug) {
+        targetSlug = hintMatches.find((org) => org.slug === currentSlug)?.slug ?? null;
       }
-    }
-    if (currentSlug && me.orgs.some((org) => org.slug === currentSlug)) {
-      pushCandidate(currentSlug);
-    }
-    for (const org of me.orgs) {
-      pushCandidate(org.slug);
+      // If the ceremony orgName does not uniquely match a workspace of the signed-in user (or matches none),
+      // never fall back to another workspace so stamps never cross organizations.
+    } else if (currentSlug && me.orgs.some((org) => org.slug === currentSlug)) {
+      targetSlug = currentSlug;
+    } else if (me.orgs.length === 1) {
+      targetSlug = me.orgs[0]!.slug;
     }
 
-    for (const slug of candidates) {
-      try {
-        const scoped = clientForOrg(slug);
-        const [sigRes, stampRes] = await Promise.all([
-          scoped.sign.member_signature.list({}),
-          scoped.sign.stamp.list({ status: 'active' }),
-        ]);
-        return {
-          orgSlug: slug,
-          signatures: sigRes.items,
-          stamps: stampRes.items,
-        };
-      } catch {
-        continue;
-      }
-    }
-    return null;
+    if (!targetSlug) return null;
+
+    const scoped = clientForOrg(targetSlug);
+    const [sigRes, stampRes] = await Promise.all([
+      scoped.sign.member_signature.list({}),
+      scoped.sign.stamp.list({ status: 'active' }),
+    ]);
+    return {
+      orgSlug: targetSlug,
+      signatures: sigRes.items,
+      stamps: stampRes.items,
+    };
   } catch {
     return null;
   }
