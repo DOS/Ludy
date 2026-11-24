@@ -38,6 +38,7 @@ export * from './labor-coworker.ts';
 export * from './recruiting-coworker.ts';
 export * from './attendance-coworker.ts';
 export * from './hr-probation.ts';
+export * from './hr-self.ts';
 export * from './meter.ts';
 export * from './proofread.ts';
 export * from './scheduling.ts';

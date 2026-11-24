@@ -46,6 +46,8 @@ import {
   type EInvoiceReasonFacts,
   type ExpenseVarianceNoteFacts,
   type HrProbationSummaryInput,
+  type HrSelfPolicyQaInput,
+  type HrSelfRequestDraftInput,
   type LaborComplianceInput,
   type MarketplaceColumnFacts,
   type MarketplaceFeeNoteFacts,
@@ -1196,11 +1198,13 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
     ).toBe('none');
   });
 
-  it('hr.*: refuses injections across recruiting_brief, attendance_anomaly, cv_extract, probation_summary', async () => {
+  it('hr.*: refuses injections across recruiting_brief, attendance_anomaly, cv_extract, probation_summary, request_draft, policy_qa', async () => {
     cover('hr.recruiting_brief');
     cover('hr.attendance_anomaly');
     cover('hr.cv_extract');
     cover('hr.probation_summary');
+    cover('hr.request_draft');
+    cover('hr.policy_qa');
 
     const recruitingInput: RecruitingBriefInput = {
       language: 'vi',
@@ -1288,6 +1292,70 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
 
       const probRes = await reader.hrProbationSummary({ ...probationInput, language: c.language });
       expect(probRes.ai.ok, `probation ${c.id}`).toBe(false);
+    }
+
+    const requestDraftBase: HrSelfRequestDraftInput = {
+      text: 'xin nghi phep chieu thu 6',
+      language: 'vi',
+      referenceDate: '2026-11-23',
+    };
+    const policyQaBase: HrSelfPolicyQaInput = {
+      question: 'Chinh sach nghi phep nam may ngay?',
+      language: 'vi',
+      notesAvailable: true,
+      candidates: [
+        {
+          noteId: '11111111-1111-4111-8111-111111111801',
+          title: 'Chinh sach nghi phep nam',
+          tags: ['hr', 'nghi-phep'],
+          body: 'Nhan vien chinh thuc duoc huong 12 ngay phep nam co luong moi nam.',
+          visibility: 'org',
+          updatedAt: '2026-11-23T00:00:00.000Z',
+        },
+      ],
+    };
+
+    for (const c of INJECTION_CORPUS) {
+      const hrSelfReader = new InboxReader(STUB_CONFIG, {
+        hrRequestDraft: async () => ({
+          output: {
+            kind: 'leave',
+            startOn: '2026-11-27',
+            endOn: '2026-11-27',
+            leaveKind: 'annual_leave',
+            days: '0.5',
+            halfDaySession: 'afternoon',
+            workDate: null,
+            hours: null,
+            dayType: null,
+            isNight: null,
+            destination: null,
+            reason: c.poisonedOutput,
+          },
+          usage: zeroUsage,
+        }),
+        hrPolicyQa: async () => ({
+          output: {
+            answer: c.poisonedOutput,
+            citations: [
+              {
+                noteId: policyQaBase.candidates[0]!.noteId,
+                quoteExcerpt: 'Nhan vien chinh thuc duoc huong 12 ngay phep nam co luong moi nam.',
+              },
+            ],
+          },
+          usage: zeroUsage,
+        }),
+      });
+
+      const draftRes = await hrSelfReader.hrRequestDraft({ ...requestDraftBase, language: c.language });
+      expect(draftRes.aiStatus, `requestDraft ${c.id}`).toBe('refused');
+      expect(draftRes.source, `requestDraft source ${c.id}`).toBe('deterministic');
+      expect(draftRes.draft.reason, `requestDraft reason ${c.id}`).not.toContain(c.poisonedOutput);
+
+      const qaRes = await hrSelfReader.hrPolicyQa({ ...policyQaBase, language: c.language });
+      expect(qaRes.aiStatus, `policyQa ${c.id}`).toBe('refused');
+      expect(qaRes.answer, `policyQa answer ${c.id}`).toBeNull();
     }
   });
 
