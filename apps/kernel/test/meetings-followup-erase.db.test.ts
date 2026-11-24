@@ -225,6 +225,42 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
     for (const l of lines) expect(messages).toContain((JSON.parse(l) as { message_id: string }).message_id);
   });
 
+  // The suppression list (#4584): a hard bounce or a complaint of a follow-up mail suppresses the address and names that mail in source_message_id. The mail is left out of the export (#4533), so the pointer goes; the row stays.
+  it('keeps a suppression row of a follow-up mail in the org export but without its pointer at the mail, and keeps the pointer at every other mail', async () => {
+    const m = await seedSent({});
+    const other = (await sqlAdmin<{ id: string }>(
+      "INSERT INTO ludy_kernel.mail_message (org_id, stream, source, source_id, template_key, to_address, to_hash, subject, payload, message_id_header, status) VALUES ($1, 'transactional', 'finance.payment_reminder.notice1', $2, 'x.y', 'a@b.test', repeat('c', 64), 's', '{\"keep\":true}', '<export-suppression@y.test>', 'queued') RETURNING id",
+      [orgId, m],
+    )).rows[0]!.id;
+    const followup = (await sqlAdmin<{ id: string }>("SELECT id FROM ludy_kernel.mail_message WHERE org_id = $1 AND source = 'meetings.followup' AND source_id = $2 LIMIT 1", [orgId, m])).rows[0]?.id;
+    expect(followup).toBeDefined();
+    const suppress = async (hash: string, reason: string, sourceMessageId: string | null) =>
+      (await sqlAdmin<{ id: string }>(
+        "INSERT INTO ludy_kernel.mail_suppression (org_id, to_hash, scope, reason, source_message_id) VALUES ($1, repeat($2, 64), 'all', $3, $4) RETURNING id",
+        [orgId, hash, reason, sourceMessageId],
+      )).rows[0]!.id;
+    const ofFollowup = await suppress('d', 'hard_bounce', followup!);
+    const ofOther = await suppress('e', 'complaint', other);
+    const ofNothing = await suppress('f', 'manual', null);
+    const dump = async (table: string) => {
+      const lines: string[] = [];
+      await worker.stream('kernel.org.export.snapshot', { table }, { actor: SYSTEM, orgId }, async (raw) => {
+        lines.push(...(raw as { lines: string[] }).lines);
+      });
+      return lines.map((l) => JSON.parse(l) as Record<string, unknown>);
+    };
+    const rows = await dump('kernel.mail_suppression');
+    const byId = new Map(rows.map((r) => [r.id as string, r]));
+    // The row is there, with its hash and reason, and the key is present with null (not missing).
+    expect(byId.get(ofFollowup)).toMatchObject({ to_hash: 'd'.repeat(64), reason: 'hard_bounce', source_message_id: null });
+    expect(Object.keys(byId.get(ofFollowup)!)).toContain('source_message_id');
+    expect(byId.get(ofOther)).toMatchObject({ reason: 'complaint', source_message_id: other });
+    expect(byId.get(ofNothing)).toMatchObject({ reason: 'manual', source_message_id: null });
+    // Every pointer left in the snapshot names a mail the snapshot holds.
+    const messageIds = new Set((await dump('kernel.mail_message')).map((r) => r.id as string));
+    for (const r of rows) if (r.source_message_id !== null) expect(messageIds.has(r.source_message_id as string), String(r.id)).toBe(true);
+  });
+
   // The erasure of a mention (#3020, ADR-0047 point 7): kernel.personal_data.erase redacts the meeting's rows, and the copy in its follow-up mails goes with them.
   describe('kernel.personal_data.erase', () => {
     const MENTION = 'khach.hang@erase.test';

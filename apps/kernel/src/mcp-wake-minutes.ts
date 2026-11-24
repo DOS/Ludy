@@ -34,7 +34,7 @@ interface MinutesWakeDeps {
 interface MinutesWakeResult {
   // Meetings was off for the org when the job ran: nothing was looked at.
   off: boolean;
-  // The event was older than 24 hours: dropped and audited, nothing stored.
+  // The event was older than 24 hours, or its meeting is no longer open to the org (narrowed, deleted or past its text period, #4536): dropped and audited, nothing stored.
   dropped: boolean;
   // Deliveries newly stored, and of those the ones handed to the queue now.
   stored: number;

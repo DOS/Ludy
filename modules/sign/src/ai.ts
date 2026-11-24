@@ -20,7 +20,7 @@ import {
 import { sql } from 'kysely';
 import { z } from 'zod';
 import { assertCanAccessEnvelopeRow } from './hr-visibility.ts';
-import { assertCanAccessMeetingMinutesEnvelopeRow } from './meeting-visibility.ts';
+import { assertCanAccessMeetingMinutesEnvelopeRow, assertCanActOnMeetingMinutesEnvelope } from './meeting-visibility.ts';
 import { signManifest } from './manifest.ts';
 
 const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
@@ -1342,6 +1342,8 @@ async function recordAiAnalysisRow(
   }
   assertCanAccessEnvelopeRow(ctx, env, 'Signing envelope not found');
   await assertCanAccessMeetingMinutesEnvelopeRow(ctx, env, 'Signing envelope not found');
+  // A reader of the meeting reads a minutes envelope but does not run AI analysis on a document it does not own (#4558): that path is the member's own (`requireDraft`), never the system's.
+  if (options.requireDraft && ctx.actor.type === 'user') assertCanActOnMeetingMinutesEnvelope(ctx, env, ctx.actor.userId);
   if (options.requireDraft && env.status !== 'draft') {
     throw new DomainError('SIGN_ENVELOPE_NOT_DRAFT', 409, 'AI field proposals can only be saved for draft envelopes');
   }
