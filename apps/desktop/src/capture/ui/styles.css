@@ -1,0 +1,228 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+/* System-theme accessible stylesheet for Ludy Desktop Consent Window and Recording Pill. */
+:root {
+  color-scheme: light dark;
+  --bg: Canvas;
+  --fg: CanvasText;
+  --surface: Field;
+  --border: GrayText;
+  --accent: #0f52ba;
+  --accent-fg: #ffffff;
+  --danger: #b91c1c;
+  --danger-bg: #fef2f2;
+  --warning: #92400e;
+  --warning-bg: #fffbeb;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --accent: #3b82f6;
+    --danger: #f87171;
+    --danger-bg: #450a0a;
+    --warning: #fbbf24;
+    --warning-bg: #451a03;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+main {
+  padding: 16px 20px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+h1 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+label,
+.field-label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+input[type='text'],
+input[type='url'],
+select,
+textarea {
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--fg);
+  font: inherit;
+}
+
+.hint {
+  margin: 4px 0 0;
+  font-size: 12px;
+  opacity: 0.85;
+}
+
+.notice-box {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.notice-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.notice-text {
+  margin: 0;
+  font-size: 13px;
+}
+
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.check-row input[type='checkbox'] {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
+button {
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0 16px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: ButtonFace;
+  color: ButtonText;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+}
+
+button.stop {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #ffffff;
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.alert {
+  padding: 10px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--danger);
+  background: var(--danger-bg);
+  color: var(--danger);
+  font-weight: 500;
+}
+
+.warning-box {
+  padding: 10px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--warning);
+  background: var(--warning-bg);
+  color: var(--warning);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.hidden {
+  display: none;
+}
+
+.pill-shell {
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  height: 100vh;
+  justify-content: center;
+}
+
+.pill-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.pill-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.rec-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: #dc2626;
+  flex-shrink: 0;
+}
+
+.pill-title {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pill-clock {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.pill-warning {
+  font-size: 12px;
+  color: var(--warning);
+}

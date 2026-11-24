@@ -8,6 +8,7 @@ export interface DesktopToken {
   token: string;
   tokenId: string;
   orgId: string;
+  scopes: string[];
   expiresAt: string;
 }
 
@@ -46,5 +47,6 @@ export async function exchangeCode(fetchImpl: FetchLike, ludyUrl: string, code: 
   if (typeof token !== 'string' || !TOKEN_FORMAT.test(token) || typeof body?.tokenId !== 'string' || typeof body.orgId !== 'string' || typeof body.expiresAt !== 'string') {
     throw new ExchangeError('unexpected');
   }
-  return { token, tokenId: body.tokenId, orgId: body.orgId, expiresAt: body.expiresAt };
+  const scopes = Array.isArray(body.scopes) ? body.scopes.filter((s): s is string => typeof s === 'string') : [];
+  return { token, tokenId: body.tokenId, orgId: body.orgId, scopes, expiresAt: body.expiresAt };
 }

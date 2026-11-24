@@ -1,0 +1,86 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <title>Ghi cuộc họp - Ludy Desktop</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main>
+      <h1 id="heading" tabindex="-1">Bắt đầu ghi cuộc họp</h1>
+      <form id="consent-form" novalidate>
+        <div>
+          <label for="window-select">Ứng dụng cuộc họp</label>
+          <select id="window-select" name="windowSelect"></select>
+          <p class="hint">Ludy tách âm thanh riêng ứng dụng được chọn trên Windows 10/11 mới; chỉ dùng micro nếu chọn Ghi âm trực tiếp.</p>
+        </div>
+
+        <div id="agenda-wrap" class="hidden">
+          <label for="agenda-select">Sự kiện lịch sắp tới (nếu có)</label>
+          <select id="agenda-select" name="agendaId"></select>
+        </div>
+
+        <div>
+          <label for="title-input">Tên cuộc họp</label>
+          <input id="title-input" name="title" type="text" required maxlength="200" placeholder="Ví dụ: Họp đồng bộ tuần" />
+        </div>
+
+        <div>
+          <label for="join-url-input">Liên kết tham gia cuộc họp (tùy chọn)</label>
+          <input id="join-url-input" name="joinUrl" type="url" placeholder="https://meet.google.com/... hoặc zoom.us/j/..." />
+          <p class="hint">Zalo PC và Slack huddle không có liên kết chuẩn: có thể bỏ trống, hệ thống vẫn kiểm tra trùng theo phiên họp.</p>
+        </div>
+
+        <div>
+          <label for="consent-method">Cách đã báo cho người tham gia</label>
+          <select id="consent-method" name="consentMethod">
+            <option value="told_at_start">Đã nói trực tiếp khi bắt đầu cuộc họp</option>
+            <option value="in_call_chat">Đã dán thông báo vào khung chat cuộc họp</option>
+            <option value="in_invite">Đã ghi trong thư mời cuộc họp</option>
+            <option value="in_writing">Đã thông báo trước bằng văn bản</option>
+          </select>
+        </div>
+
+        <div class="notice-box">
+          <div class="notice-header">
+            <span class="field-label">Thông báo đọc / dán vào chat (bản nháp chờ luật sư #2585)</span>
+            <div style="display:flex;gap:6px;">
+              <button type="button" id="lang-toggle">English</button>
+              <button type="button" id="copy-notice">Sao chép thông báo</button>
+            </div>
+          </div>
+          <p id="notice-text" class="notice-text"></p>
+          <span id="copy-status" class="hint" aria-live="polite"></span>
+        </div>
+
+        <label class="check-row" for="consent-agreed">
+          <input id="consent-agreed" type="checkbox" />
+          <span>Tôi xác nhận đã thông báo và người tham gia đồng ý ghi âm.</span>
+        </label>
+
+        <label class="check-row" for="live-notes">
+          <input id="live-notes" type="checkbox" />
+          <span>Gửi đoạn âm thanh trực tiếp 15 giây (Ghi chú trực tiếp)</span>
+        </label>
+
+        <div id="fallback-box" class="warning-box hidden" role="alert">
+          <span id="fallback-text"></span>
+          <label class="check-row" for="fallback-confirm">
+            <input id="fallback-confirm" type="checkbox" />
+            <span>Tôi hiểu và đồng ý ghi toàn bộ âm thanh phát ra trên máy tính này.</span>
+          </label>
+        </div>
+
+        <div id="error-box" class="alert hidden" role="alert" aria-live="polite"></div>
+
+        <div class="actions">
+          <button type="button" id="refresh-btn">Làm mới</button>
+          <button type="button" id="cancel-btn">Hủy</button>
+          <button type="submit" id="submit-btn" class="primary">Bắt đầu ghi âm</button>
+        </div>
+      </form>
+    </main>
+    <script type="module" src="./consent-ui.js"></script>
+  </body>
+</html>

@@ -1,0 +1,23 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <title>Đang ghi âm - Ludy Desktop</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="pill-shell" aria-label="Thanh trạng thái đang ghi cuộc họp">
+      <div class="pill-bar">
+        <div class="pill-meta">
+          <span class="rec-dot" aria-hidden="true"></span>
+          <span id="pill-title" class="pill-title">Đang ghi cuộc họp</span>
+          <span id="pill-clock" class="pill-clock" aria-live="off">00:00</span>
+        </div>
+        <button id="pill-stop" class="stop" type="button" aria-label="Dừng ghi âm và lưu cuộc họp">Dừng ghi</button>
+      </div>
+      <div id="pill-warning" class="pill-warning hidden" role="status" aria-live="polite"></div>
+    </main>
+    <script type="module" src="./pill-ui.js"></script>
+  </body>
+</html>

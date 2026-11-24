@@ -16,8 +16,8 @@
       "ignoreDependencies": ["tailwindcss"]
     },
     "apps/desktop": {
-      // Electron runs src/main.ts (the build script strips its types into the app folder); the scripts run from package.json and CI.
-      "entry": ["src/main.ts", "scripts/*.mjs"]
+      // Electron runs src/main.ts and src/capture/preload.cjs (the build script prepares the app folder); the scripts run from package.json and CI.
+      "entry": ["src/main.ts", "src/capture/preload.cjs", "scripts/*.mjs"]
     },
     "apps/extension": {
       // The manifest names these as the extension's pages and worker; the scripts run from package.json and CI. The
