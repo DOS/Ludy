@@ -4385,6 +4385,7 @@ export const en = {
       captureRunning: '{kind} has been recording this meeting since {time}. Use that recording, or stop it before recording again.',
       captureKindExtension: 'The Ludy extension',
       captureKindApp: 'The Ludy app',
+      captureKindDesktop: 'Ludy Desktop',
       uploadedPartial: 'Uploaded what was recorded. The end of the meeting is missing because this device ran out of room.',
       uploadFailed: 'The recording could not be uploaded; it is still on this device and you can retry below.',
       recoverTitle: 'Recordings not uploaded yet',

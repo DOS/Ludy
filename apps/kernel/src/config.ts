@@ -649,6 +649,8 @@ const schema = z.object({
   // The recorder's Vy summarizing a meeting (#2580, M6): off unless MEETINGS_SUMMARY=on (it also needs the deployment's AI provider and Vy turned on for members). The same switch lets a member's Vy translate the summary they read (#3184).
   // The module works with it off: the recorder types a summary and items by hand, and no button asks Vy.
   MEETINGS_SUMMARY: z.enum(['on', 'off']).default('off'),
+  // Ludy Desktop recording (ADR-0055 slice 3, #4516): off until #2585 legal answers are recorded. With this off, desktop tokens stay at no scope and reach /api/extension/me alone.
+  MEETINGS_DESKTOP_CAPTURE: z.enum(['on', 'off']).default('off'),
   // The languages besides vi and en a member's Vy may translate a meeting INTO (E3, #3186): a comma-separated list from zh, ja, ko, empty (none) by default. Each is a separate switch because each needs a
   // native reader's check of its quality before a deployment offers it; it works only where MEETINGS_SUMMARY is on. An unknown name stops the boot, so a typo never silently leaves a language off.
   MEETINGS_TRANSLATION_LANGUAGES: optional.transform((value, ctx): readonly TranslationFlaggedTarget[] => {

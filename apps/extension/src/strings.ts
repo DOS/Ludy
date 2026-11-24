@@ -102,8 +102,8 @@ const VI = {
   recordingTitle: 'Ludy đang ghi',
   lostTitle: 'Ghi âm đã dừng',
   lostLine: 'Ghi âm đã dừng lúc {time}.',
-  // Who holds a call that is already being captured (ADR-0055 slice 1, #4123): the kind of client, never a person.
-  captureKinds: { extension: 'Tiện ích Ludy', app: 'Ứng dụng Ludy' },
+  // Who holds a call that is already being captured (ADR-0055 slice 1, #4123; desktop added in slice 3, #4516): the kind of client, never a person.
+  captureKinds: { extension: 'Tiện ích Ludy', app: 'Ứng dụng Ludy', desktop: 'Ứng dụng Ludy Desktop' },
   lostUploaded: 'Phần đã ghi đã được tải lên.',
   lostKept: 'Phần đã ghi còn trên máy này, bạn có thể tải lên lại bên dưới.',
   lostDismiss: 'Đã hiểu',
@@ -244,7 +244,7 @@ export const ENGLISH: Strings = {
   recordingTitle: 'Ludy is recording',
   lostTitle: 'Recording stopped',
   lostLine: 'Recording stopped at {time}.',
-  captureKinds: { extension: 'The Ludy extension', app: 'The Ludy app' },
+  captureKinds: { extension: 'The Ludy extension', app: 'The Ludy app', desktop: 'Ludy Desktop' },
   lostUploaded: 'What was recorded has been uploaded.',
   lostKept: 'What was recorded is still on this device, you can upload it again below.',
   lostDismiss: 'Got it',

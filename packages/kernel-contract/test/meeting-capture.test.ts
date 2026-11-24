@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Which call a join address names (ADR-0055 slice 1, #4123): the same call under every spelling of its address, and nothing guessed for an address that is not a meeting's.
 import { describe, expect, it } from 'vitest';
-import { CAPTURE_HEARTBEAT_SECONDS, CAPTURE_LOST_SECONDS, captureCallOf, zCaptureHeartbeat, zCaptureRunning, zCaptureStart } from '../src/index.ts';
+import { CAPTURE_HEARTBEAT_SECONDS, CAPTURE_LOST_SECONDS, captureCallOf, zCaptureHeartbeat, zCaptureKind, zCaptureRunning, zCaptureStart } from '../src/index.ts';
 
 describe('captureCallOf', () => {
   it('reads a Google Meet code, in any case and with a query or a trailing slash', () => {
@@ -66,7 +66,9 @@ describe('the capture shapes', () => {
     expect(() => zCaptureHeartbeat.parse({})).toThrow();
     expect(zCaptureHeartbeat.parse({ meetingId: '0195f2b0-0000-7000-8000-000000000001', end: true })).toEqual({ meetingId: '0195f2b0-0000-7000-8000-000000000001', end: true });
     expect(() => zCaptureHeartbeat.parse({ meetingId: '0195f2b0-0000-7000-8000-000000000001', end: 'yes' })).toThrow();
+    expect(zCaptureKind.options).toEqual(['extension', 'app', 'desktop']);
     expect(zCaptureRunning.parse({ kind: 'extension', since: '2027-01-20T07:02:00.000Z' })).toEqual({ kind: 'extension', since: '2027-01-20T07:02:00.000Z' });
+    expect(zCaptureRunning.parse({ kind: 'desktop', since: '2027-01-20T07:02:00.000Z' })).toEqual({ kind: 'desktop', since: '2027-01-20T07:02:00.000Z' });
     expect(() => zCaptureRunning.parse({ kind: 'extension', since: 'x', userId: 'u' })).toThrow();
     expect(() => zCaptureRunning.parse({ kind: 'bot', since: 'x' })).toThrow();
   });

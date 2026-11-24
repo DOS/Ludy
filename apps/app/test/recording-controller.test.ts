@@ -23,7 +23,7 @@ vi.mock('../src/lib/api.ts', () => ({
 const toasts = vi.hoisted(() => [] as Array<{ message: string; tone: string }>);
 vi.mock('../src/lib/toast.ts', () => ({ toast: (message: string, tone: string) => void toasts.push({ message, tone }) }));
 
-const { getRecorderSnapshot, pauseOrResume, recordingLeftItsOrg, resetRecorderForTests, setRecorderNavigator, startRecording, stop, stopAndSave, subscribeRecorder } = await import('../src/lib/recording-controller.ts');
+const { getRecorderSnapshot, pauseOrResume, recordingLeftItsOrg, resetRecorderForTests, setRecorderNavigator, setRecorderTranslator, startRecording, stop, stopAndSave, subscribeRecorder } = await import('../src/lib/recording-controller.ts');
 const { getLocalRecording } = await import('../src/lib/recording-indicator.ts');
 
 function memoryStore(): ChunkStore {
@@ -356,6 +356,19 @@ describe('the capture of a call', () => {
     expect(snapshot.error).not.toContain('This meeting is already being recorded');
     expect(FakeRecorder.last).toBeNull();
     expect(api.heartbeat).not.toHaveBeenCalled();
+    // Desktop capture conflicts name Ludy Desktop via record.captureKindDesktop.
+    setRecorderTranslator((key, params) => (params ? `${key}:${JSON.stringify(params)}` : key));
+    try {
+      api.create.mockImplementationOnce(async () =>
+        Promise.reject(Object.assign(new Error('This meeting is already being recorded'), { code: 'CAPTURE_ALREADY_RUNNING', status: 409, data: { kind: 'desktop', since: '2027-01-20T07:02:00.000Z' } })),
+      );
+      await startRecording(input(memoryStore()));
+      expect(getRecorderSnapshot().phase).toBe('idle');
+      expect(getRecorderSnapshot().error).toContain('record.captureRunning');
+      expect(getRecorderSnapshot().error).toContain('record.captureKindDesktop');
+    } finally {
+      setRecorderTranslator((key) => key);
+    }
     // Any other refusal keeps its own message.
     api.create.mockImplementationOnce(async () => Promise.reject(Object.assign(new Error('boom'), { code: 'INTERNAL' })));
     await startRecording(input(memoryStore()));

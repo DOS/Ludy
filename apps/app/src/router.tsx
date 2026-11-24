@@ -224,7 +224,7 @@ const indexRoute = createRoute({
     // An invite opened before signing in (or signing up) is answered first.
     if (pendingInvite()) throw redirect({ to: '/-/invite' });
     // So is the Ludy extension's sign-in (#2582), opened in a window before the member signed in.
-    if (pendingConnect(getConfig().extensionIds ?? [])) throw redirect({ to: CONNECT_PATH });
+    if (pendingConnect(getConfig().extensionIds ?? [], Date.now(), { desktopCapture: Boolean(getConfig().meetingsDesktopCapture) })) throw redirect({ to: CONNECT_PATH });
     // So is an MCP client's consent page (#2975), opened before the person signed in.
     const waitingConsent = pendingInteraction();
     if (waitingConsent) throw redirect({ to: '/oauth/interaction/$uid', params: { uid: waitingConsent } });
@@ -344,7 +344,7 @@ const extensionConnectRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: CONNECT_PATH,
   beforeLoad: async () => {
-    const request = parseConnectRequest(window.location.search, getConfig().extensionIds ?? []);
+    const request = parseConnectRequest(window.location.search, getConfig().extensionIds ?? [], { desktopCapture: Boolean(getConfig().meetingsDesktopCapture) });
     if (request) rememberConnect(request);
     if (window.location.search) window.history.replaceState(window.history.state, '', window.location.pathname);
     await requireAuth();

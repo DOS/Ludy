@@ -4384,6 +4384,7 @@ export const vi = {
       captureRunning: '{kind} đang ghi cuộc họp này từ {time}. Hãy dùng bản ghi đó, hoặc dừng nó trước khi ghi lại.',
       captureKindExtension: 'Tiện ích Ludy',
       captureKindApp: 'Ứng dụng Ludy',
+      captureKindDesktop: 'Ứng dụng Ludy Desktop',
       uploadedPartial: 'Đã tải phần ghi được lên. Phần cuối cuộc họp bị thiếu vì máy hết chỗ lưu.',
       uploadFailed: 'Chưa tải được bản ghi lên; bản ghi vẫn nằm trên máy này và bạn có thể tải lại bên dưới.',
       recoverTitle: 'Bản ghi chưa tải lên',

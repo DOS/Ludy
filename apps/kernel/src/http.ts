@@ -949,6 +949,8 @@ export function createHttpApp(deps: HttpDeps) {
       brandName: config.BRAND_NAME,
       // The Ludy extension ids that may sign in (EXTENSION_IDS, #2740); the connect page refuses any other.
       extensionIds: allowedExtensionIds,
+      // Ludy Desktop recording (ADR-0055 slice 3, #4516): off until #2585 legal answers are recorded.
+      meetingsDesktopCapture: config.MEETINGS_DESKTOP_CAPTURE === 'on',
       // The terms and privacy notice linked at sign-up and invite acceptance (#688); null hides each link.
       termsUrl: config.TERMS_URL ?? null,
       privacyUrl: config.PRIVACY_URL ?? null,
@@ -2905,7 +2907,7 @@ export function createHttpApp(deps: HttpDeps) {
       // The client gets the token only once this row is written. When it fails, the token row already exists and nobody
       // holds it: void it (its own system audit row follows) before answering, so no usable row is left behind (#2740).
       // Notes-only tokens audit through notes.extension.exchanged because kernel.extension.token.exchanged requires 'meetings' (#3560).
-      // A desktop token holds no scope and no scoped command can audit it: the exchange definer wrote its audit row in the same transaction (#4515).
+      // A desktop exchange is audited in the same transaction by the exchange definer (kernel.extension.desktop.exchanged, #4515; even when it holds the meetings capture scope, #4516).
       const exchangeAuditCommand = scopes.includes('meetings') ? 'kernel.extension.token.exchanged' : 'notes.extension.exchanged';
       try {
         if (extensionId !== DESKTOP_CLIENT_ID) {
@@ -2922,7 +2924,8 @@ export function createHttpApp(deps: HttpDeps) {
         if (!voided) logEvent('error', 'extension exchange failed and its clean-up did not void the token row', { tokenId: done.exchange.tokenId, orgId: done.exchange.orgId });
         throw error;
       }
-      return c.json({ token: done.token, tokenId: done.exchange.tokenId, orgId: done.exchange.orgId, scopes: done.exchange.scopes, expiresAt: done.exchange.expiresAt });
+      const returnedScopes = extensionId === DESKTOP_CLIENT_ID && config.MEETINGS_DESKTOP_CAPTURE !== 'on' ? [] : done.exchange.scopes;
+      return c.json({ token: done.token, tokenId: done.exchange.tokenId, orgId: done.exchange.orgId, scopes: returnedScopes, expiresAt: done.exchange.expiresAt });
     } catch (error) {
       return problem(c, error);
     }
@@ -2951,9 +2954,14 @@ export function createHttpApp(deps: HttpDeps) {
     }
     // A Ludy extension token (issue #2582) reaches only the routes its scopes open, listed in auth-extension.ts: refused
     // here, before any handler, body read or database call, on every other route. The raw path is the one checked, so
-    // nothing a router decodes later can name a route the list does not.
+    // nothing a router decodes later can name a route the list does not. When MEETINGS_DESKTOP_CAPTURE is off, desktop tokens stay at [].
     if (user.extension) {
-      const refusal = refuseOutsideScopes(user.extension.scopes, c.req.method, new URL(c.req.url).pathname);
+      const extension =
+        user.extension.client === 'desktop' && config.MEETINGS_DESKTOP_CAPTURE !== 'on' && user.extension.scopes.length > 0
+          ? { ...user.extension, scopes: [] as const }
+          : user.extension;
+      if (extension !== user.extension) user = { ...user, extension };
+      const refusal = refuseOutsideScopes(extension.scopes, c.req.method, new URL(c.req.url).pathname, extension.client ?? 'extension');
       if (refusal) return problem(c, refusal);
     }
     // A token's requests count against its own budget, so a stolen token cannot use up its member's.
@@ -3055,9 +3063,12 @@ export function createHttpApp(deps: HttpDeps) {
       const parsed = zExtensionAuthorize.safeParse(await c.req.json().catch(() => null));
       if (!parsed.success) throw new DomainError('INVALID', 422, 'Yêu cầu kết nối tiện ích không hợp lệ');
       const input = parsed.data;
-      // Only an extension this deployment lists may receive a code (EXTENSION_IDS, #2740); the app checks the same list. Ludy Desktop (#4515)
-      // is the one client that is not an extension: DESKTOP_CLIENT_ID is always allowed, and it must ask for no scope (the contract and the database refuse any).
+      // Only an extension this deployment lists may receive a code (EXTENSION_IDS, #2740); the app checks the same list. Ludy Desktop (#4515/#4516)
+      // is the one client that is not an extension: DESKTOP_CLIENT_ID is always allowed, and non-empty scopes require MEETINGS_DESKTOP_CAPTURE=on.
       if (input.extensionId !== DESKTOP_CLIENT_ID && !allowedExtensionIds.includes(input.extensionId)) throw new DomainError('FORBIDDEN', 403, 'Tiện ích này không được phép kết nối với Ludy', { rule: 'extension_id' });
+      if (input.extensionId === DESKTOP_CLIENT_ID && input.scopes.length > 0 && config.MEETINGS_DESKTOP_CAPTURE !== 'on') {
+        throw new DomainError('FORBIDDEN', 403, 'Ghi âm cuộc họp từ Ludy Desktop chưa được bật trên máy chủ này', { rule: 'desktop_capture_off' });
+      }
       // Only features this deployment runs: a scope of a module that is left out is not offered.
       if (input.scopes.includes('meetings') && !runtime.installed('meetings')) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Cuộc họp chưa được bật');
       if (input.scopes.includes('notes') && !runtime.installed('notes')) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Ghi chú chưa được bật');
@@ -3086,16 +3097,17 @@ export function createHttpApp(deps: HttpDeps) {
     if (!extension) return problem(c, new DomainError('FORBIDDEN', 403, 'Đường này chỉ dành cho tiện ích Ludy', { rule: 'extension_only' }));
     const meetingsOn = runtime.installed('meetings') && (await runtime.appOn(extension.orgId, 'meetings', { fresh: true }).catch(() => true));
     const notesOn = runtime.installed('notes') && (await runtime.appOn(extension.orgId, 'notes', { fresh: true }).catch(() => true));
+    const desktopCaptureOn = extension.client !== 'desktop' || config.MEETINGS_DESKTOP_CAPTURE === 'on';
     return c.json({
       tokenId: extension.tokenId,
       orgId: extension.orgId,
-      scopes: extension.scopes,
+      scopes: desktopCaptureOn ? extension.scopes : [],
       client: extension.client ?? 'extension',
       expiresAt: extension.expiresAt,
       features: {
-        meetings: extension.scopes.includes('meetings') && meetingsOn,
-        agenda: extension.scopes.includes('agenda') && meetingsOn,
-        notes: extension.scopes.includes('notes') && notesOn,
+        meetings: desktopCaptureOn && extension.scopes.includes('meetings') && meetingsOn,
+        agenda: desktopCaptureOn && extension.scopes.includes('agenda') && meetingsOn,
+        notes: extension.client !== 'desktop' && extension.scopes.includes('notes') && notesOn,
       },
     });
   });
