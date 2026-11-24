@@ -1441,4 +1441,129 @@ suite('Projects v2 Cycles & Story Points on PostgreSQL (#4361)', () => {
       await admin.end();
     }
   });
+
+  it('distinguishes cycle close carryover from post-close set_cycle reassignment and guards project DELETE (#4689, #4678)', async () => {
+    const pOwner = await newPerson('postclose-owner');
+    const org = await createOrg(rt, asUser(pOwner.userId), 'Post-Close History Org');
+
+    const { projectId } = await exec<{ projectId: string }>(pOwner.userId, org.orgId, 'projects.project.create', {
+      name: 'Dự án kiểm tra post-close left_reason',
+      visibility: 'org',
+    });
+    await exec(pOwner.userId, org.orgId, 'projects.project.update', {
+      projectId,
+      cyclesEnabled: true,
+      pointsEnabled: true,
+    });
+
+    const { cycle: cycle1 } = await exec<ProjectCycleMutateResult>(pOwner.userId, org.orgId, 'projects.cycle.create', {
+      projectId,
+      name: 'Chu kỳ 1',
+    });
+    const { cycle: cycle2 } = await exec<ProjectCycleMutateResult>(pOwner.userId, org.orgId, 'projects.cycle.create', {
+      projectId,
+      name: 'Chu kỳ 2',
+    });
+    await exec(pOwner.userId, org.orgId, 'projects.cycle.start', { projectId, cycleId: cycle1.id });
+
+    const { taskId: openTaskId } = await exec<{ taskId: string }>(pOwner.userId, org.orgId, 'projects.task.create', {
+      projectId,
+      title: 'Việc mở carry over',
+      assigneePositionId: null,
+      status: 'in_progress',
+      cycleId: cycle1.id,
+      storyPoints: 5,
+    });
+    const { taskId: doneTaskId } = await exec<{ taskId: string }>(pOwner.userId, org.orgId, 'projects.task.create', {
+      projectId,
+      title: 'Việc đã xong chuyển sau khi đóng',
+      assigneePositionId: null,
+      status: 'done',
+      cycleId: cycle1.id,
+      storyPoints: 3,
+    });
+
+    const closed = await exec<ProjectCycleCompleteResult>(pOwner.userId, org.orgId, 'projects.cycle.complete', {
+      projectId,
+      cycleId: cycle1.id,
+      carryover: { mode: 'cycle', targetCycleId: cycle2.id },
+    });
+    expect(closed.carriedOverCount).toBe(1);
+
+    // Move doneTaskId out of completed cycle1 via projects.task.set_cycle AFTER cycle1 is closed:
+    // left_reason must be 'reassigned' (not 'carryover'), while openTaskId stays 'carryover'.
+    await exec(pOwner.userId, org.orgId, 'projects.task.set_cycle', {
+      projectId,
+      taskId: doneTaskId,
+      cycleId: cycle2.id,
+    });
+
+    const admin = new pg.Client({ connectionString: adminUrl });
+    await admin.connect();
+    try {
+      const { rows: histRows } = await admin.query<{ task_id: string; left_reason: string | null }>(
+        `SELECT task_id, left_reason
+           FROM ludy_projects.project_cycle_task_history
+          WHERE org_id = $1 AND project_id = $2 AND cycle_id = $3
+          ORDER BY task_id`,
+        [org.orgId, projectId, cycle1.id],
+      );
+      expect(histRows.find((r) => r.task_id === openTaskId)?.left_reason).toBe('carryover');
+      expect(histRows.find((r) => r.task_id === doneTaskId)?.left_reason).toBe('reassigned');
+
+      // Moving doneTaskId again into backlog from cycle2 (active/upcoming) also records 'reassigned'.
+      await exec(pOwner.userId, org.orgId, 'projects.task.set_cycle', {
+        projectId,
+        taskId: doneTaskId,
+        cycleId: null,
+      });
+      const { rows: cycle2Hist } = await admin.query<{ left_reason: string | null }>(
+        `SELECT left_reason
+           FROM ludy_projects.project_cycle_task_history
+          WHERE org_id = $1 AND project_id = $2 AND cycle_id = $3 AND task_id = $4`,
+        [org.orgId, projectId, cycle2.id, doneTaskId],
+      );
+      expect(cycle2Hist[0]?.left_reason).toBe('reassigned');
+    } finally {
+      await admin.end();
+    }
+
+    // #4678 DELETE guard: deleting a project under system + ludy_tenant cascades project_task cleanly.
+    const delProj = await exec<{ projectId: string }>(pOwner.userId, org.orgId, 'projects.project.create', {
+      name: 'Dự án kiểm tra DELETE cascade',
+      visibility: 'private',
+    });
+    await exec(pOwner.userId, org.orgId, 'projects.project.update', {
+      projectId: delProj.projectId,
+      cyclesEnabled: true,
+    });
+    const { cycle: delCycle } = await exec<ProjectCycleMutateResult>(pOwner.userId, org.orgId, 'projects.cycle.create', {
+      projectId: delProj.projectId,
+      name: 'Cycle xóa',
+    });
+    await exec(pOwner.userId, org.orgId, 'projects.task.create', {
+      projectId: delProj.projectId,
+      title: 'Việc trong dự án bị xóa',
+      assigneePositionId: null,
+      cycleId: delCycle.id,
+    });
+
+    const sysClient = await workerPool.connect();
+    try {
+      await sysClient.query('BEGIN');
+      await sysClient.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [org.orgId]);
+      await sysClient.query('SET LOCAL ROLE ludy_tenant');
+      const deleted = await sysClient.query<{ id: string }>(
+        'DELETE FROM ludy_projects.project WHERE org_id = $1 AND id = $2 RETURNING id',
+        [org.orgId, delProj.projectId],
+      );
+      expect(deleted.rows.map((r) => r.id)).toEqual([delProj.projectId]);
+      await sysClient.query('COMMIT');
+    } catch (err) {
+      await sysClient.query('ROLLBACK').catch(() => undefined);
+      throw err;
+    } finally {
+      sysClient.release();
+    }
+  });
 });

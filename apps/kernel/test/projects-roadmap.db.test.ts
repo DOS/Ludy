@@ -1281,6 +1281,7 @@ suite('Projects Public Roadmap Slice 1 (#4399)', () => {
           orgId,
           restrictedProj.projectId,
         ]);
+        await c.query('SAVEPOINT sp_roadmap_item_guard');
         await expect(
           c.query(`UPDATE ludy_projects.roadmap_item SET linked_task_id = $3 WHERE org_id = $1 AND id = $2`, [
             orgId,
@@ -1291,6 +1292,68 @@ suite('Projects Public Roadmap Slice 1 (#4399)', () => {
           code: '23514',
           message: expect.stringContaining('ROADMAP_PRIVATE_PROJECT_FORBIDDEN'),
         });
+        await c.query('ROLLBACK TO SAVEPOINT sp_roadmap_item_guard');
+
+        // Companion privacy triggers (#4689): roadmap_board_guard_tr and project_task_roadmap_privacy_guard_tr
+        // fail closed when visibility IS DISTINCT FROM 'org'.
+        await c.query('SAVEPOINT sp_board_guard');
+        await expect(
+          c.query(
+            `INSERT INTO ludy_projects.roadmap_board (org_id, slug, title, enabled, project_id, created_by)
+             VALUES ($1, $2, 'Restricted Board Guard', false, $3, $4)`,
+            [orgId, `restricted-board-${randomUUID().slice(0, 8)}`, restrictedProj.projectId, ownerUserId],
+          ),
+        ).rejects.toMatchObject({
+          code: '23514',
+          message: expect.stringContaining('ROADMAP_PRIVATE_PROJECT_FORBIDDEN'),
+        });
+        await c.query('ROLLBACK TO SAVEPOINT sp_board_guard');
+
+        await c.query('SAVEPOINT sp_task_guard');
+        await expect(
+          c.query(`UPDATE ludy_projects.project_task SET project_id = $3 WHERE org_id = $1 AND task_id = $2`, [
+            orgId,
+            raceTask2.taskId,
+            restrictedProj.projectId,
+          ]),
+        ).rejects.toMatchObject({
+          code: '23514',
+          message: expect.stringContaining('ROADMAP_PRIVATE_PROJECT_FORBIDDEN'),
+        });
+        await c.query('ROLLBACK TO SAVEPOINT sp_task_guard');
+      } finally {
+        await c.query('ROLLBACK').catch(() => {});
+      }
+    });
+
+    // Companion project_roadmap_privacy_guard_tr (#4689): blocks org -> non-org transition on board-linked and task-linked projects.
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      try {
+        await c.query(`ALTER TABLE ludy_projects.project DROP CONSTRAINT project_visibility_check`);
+        await c.query('SAVEPOINT sp_proj_board_guard');
+        await expect(
+          c.query(`UPDATE ludy_projects.project SET visibility = 'restricted' WHERE org_id = $1 AND id = $2`, [
+            orgId,
+            linkedPublicProj.projectId,
+          ]),
+        ).rejects.toMatchObject({
+          code: '23514',
+          message: expect.stringContaining('ROADMAP_PRIVATE_PROJECT_FORBIDDEN'),
+        });
+        await c.query('ROLLBACK TO SAVEPOINT sp_proj_board_guard');
+
+        await c.query('SAVEPOINT sp_proj_task_guard');
+        await expect(
+          c.query(`UPDATE ludy_projects.project SET visibility = 'restricted' WHERE org_id = $1 AND id = $2`, [
+            orgId,
+            taskLinkedProj.projectId,
+          ]),
+        ).rejects.toMatchObject({
+          code: '23514',
+          message: expect.stringContaining('ROADMAP_PRIVATE_PROJECT_FORBIDDEN'),
+        });
+        await c.query('ROLLBACK TO SAVEPOINT sp_proj_task_guard');
       } finally {
         await c.query('ROLLBACK').catch(() => {});
       }
@@ -1387,6 +1450,79 @@ suite('Projects Public Roadmap Slice 1 (#4399)', () => {
         [orgId, pdplEmail],
       );
       expect(rows[0]).toEqual({ o: '0', s: '0' });
+    });
+
+    // PDPL erase with linked roadmap_item -> roadmap_board -> project + weekly status mail (#4689):
+    // mail_message drop still sees unredacted project.name before roadmap_item, roadmap_board, and project redact.
+    const linkedPdplEmail = 'pdpl-linked-order@example.test';
+    const linkedPdplProj = await runtime.execute<{ projectId: string }>(
+      'projects.project.create',
+      { name: `Du an lien ket ${linkedPdplEmail}` },
+      { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+    );
+    await runtime.execute(
+      'projects.member.add',
+      { projectId: linkedPdplProj.projectId, userId: memberUserId },
+      { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+    );
+    await runtime.execute(
+      'projects.weekly_status.send_mail',
+      {
+        projectId: linkedPdplProj.projectId,
+        subject: 'Bao cao tuan dinh ky',
+        summary: 'Tien do on dinh.',
+        language: 'vi',
+        tainted: false,
+        confirmed: true,
+      },
+      { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+    );
+    const linkedPdplBoard = await runtime.execute<{ board: { id: string } }>(
+      'projects.roadmap.board.create',
+      {
+        title: `Bang ${linkedPdplEmail}`,
+        slug: 'pdpl-linked-board',
+        enabled: true,
+        projectId: linkedPdplProj.projectId,
+      },
+      { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+    );
+    const linkedPdplItem = await runtime.execute<{ item: { id: string } }>(
+      'projects.roadmap.item.create',
+      {
+        boardId: linkedPdplBoard.board.id,
+        publicTitle: `De xuat ${linkedPdplEmail}`,
+        publicSummary: `Mo ta ${linkedPdplEmail}`,
+        moderationStatus: 'published',
+      },
+      { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+    );
+    await runtime.execute(
+      'projects.roadmap.item.convert_to_task',
+      { itemId: linkedPdplItem.item.id, projectId: linkedPdplProj.projectId },
+      { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+    );
+    const linkedErased = await runtime.execute<{ erased: Array<{ column: string; rows: number }> }>(
+      'kernel.personal_data.erase',
+      { value: linkedPdplEmail },
+      { actor: asOwnerMfa(), orgId, idempotencyKey: randomUUID() },
+    );
+    expect(linkedErased.erased).toEqual(
+      expect.arrayContaining([
+        { column: 'ludy_kernel.mail_message.payload', rows: 1 },
+        { column: 'ludy_projects.roadmap_item.public_title', rows: 1 },
+        { column: 'ludy_projects.roadmap_item.public_summary', rows: 1 },
+        { column: 'ludy_projects.roadmap_board.title', rows: 1 },
+        { column: 'ludy_projects.project.name', rows: 1 },
+      ]),
+    );
+    await admin(async (c) => {
+      const { rows: mailRows } = await c.query<{ payload: unknown; subject: string | null }>(
+        `SELECT payload, subject FROM ludy_kernel.mail_message
+          WHERE org_id = $1 AND source = 'projects.weekly_status.send_mail' AND source_id = $2`,
+        [orgId, linkedPdplProj.projectId],
+      );
+      expect(mailRows[0]).toEqual({ payload: null, subject: null });
     });
 
     // Nightly keeping sweep cleans expired OTPs (> 24h old) even while org_app_on('projects') = false!
