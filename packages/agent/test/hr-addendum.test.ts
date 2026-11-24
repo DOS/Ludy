@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Unit tests for Ly's contract addendum completeness check (hr.addendum_check, #4528 Stage 6C).
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   AI_FEATURES,
   AiBudgetExhaustedError,
+  AiMeterMissingError,
   InboxReader,
+  PayrollPromptLeakError,
   evaluateAddendumCompleteness,
   reviewAddendumDraft,
   withAiScope,
@@ -178,5 +180,54 @@ describe('hr.addendum_check (#4528 Stage 6C)', () => {
     expect(overBudget.reason).toBe('budget_exhausted');
     expect(overBudget.readyToIssue).toBe(true);
     expect(overBudget.lyNote).toBeNull();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('propagates AiMeterMissingError, PayrollPromptLeakError, and non-rate-limit admit errors, and maps 429 to rate_limited (#4613)', async () => {
+    const unmeteredReader = new InboxReader(CONFIG);
+    await expect(unmeteredReader.hrAddendumCheck(sampleInput())).rejects.toBeInstanceOf(AiMeterMissingError);
+
+    class FakeStoppedError extends Error {
+      constructor() {
+        super('stopped');
+        this.name = 'HrAddendumAiStoppedError';
+      }
+    }
+
+    await expect(
+      reviewAddendumDraft(sampleInput(), {
+        generate: async () => {
+          throw new FakeStoppedError();
+        },
+      }),
+    ).rejects.toBeInstanceOf(FakeStoppedError);
+
+    await expect(
+      reviewAddendumDraft(sampleInput({ contractType: 'Nguyễn Văn An' }), {
+        forbidden: ['Nguyễn Văn An'],
+        generate: async () => ({ output: { note: 'unused' } }),
+      }),
+    ).rejects.toBeInstanceOf(PayrollPromptLeakError);
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(JSON.stringify({ error: { message: 'Too many requests' } }), {
+          status: 429,
+          headers: { 'content-type': 'application/json', 'retry-after': '10' },
+        }),
+      ),
+    );
+    const rateLimitedReader = new InboxReader(CONFIG);
+    const okMeter: AiMeter = { admit: async () => {}, record: async () => {} };
+    const rateLimited = await withAiScope({ orgId: 'org-1', meter: okMeter }, () =>
+      rateLimitedReader.hrAddendumCheck(sampleInput()),
+    );
+    expect(rateLimited.reason).toBe('rate_limited');
+    expect(rateLimited.readyToIssue).toBe(true);
+    expect(rateLimited.lyNote).toBeNull();
   });
 });

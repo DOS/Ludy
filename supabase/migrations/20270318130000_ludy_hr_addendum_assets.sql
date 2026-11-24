@@ -382,16 +382,3 @@ CREATE POLICY hr_asset_write_update ON ludy_hr.employee_asset_handover AS RESTRI
          AND tm.role IN ('owner', 'admin')
     )
   );
-
-DROP POLICY IF EXISTS hr_asset_write_delete ON ludy_hr.employee_asset_handover;
-CREATE POLICY hr_asset_write_delete ON ludy_hr.employee_asset_handover AS RESTRICTIVE FOR DELETE TO ludy_tenant
-  USING (
-    (SELECT ludy_kernel.ctx_actor_type()) = 'user'
-    AND EXISTS (
-      SELECT 1
-        FROM ludy_kernel.tenant_member tm
-       WHERE tm.org_id = employee_asset_handover.org_id
-         AND tm.user_id = (SELECT ludy_kernel.ctx_user_id())
-         AND tm.role IN ('owner', 'admin')
-    )
-  );

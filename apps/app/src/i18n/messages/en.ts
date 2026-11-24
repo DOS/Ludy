@@ -2383,6 +2383,7 @@ export const en = {
         ai_off: 'AI off (deterministic checks)',
         kill_switch: 'AI paused by kill switch (deterministic)',
         budget_exhausted: 'AI budget reached (deterministic)',
+        rate_limited: 'AI rate limit reached (deterministic)',
         unavailable: 'AI temporarily unavailable (deterministic)',
         leak_refused: 'AI output blocked by guardrail (deterministic)',
       },

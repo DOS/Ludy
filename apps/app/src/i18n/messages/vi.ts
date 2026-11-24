@@ -2381,6 +2381,7 @@ export const vi = {
         ai_off: 'AI đang tắt (quy tắc xác định)',
         kill_switch: 'AI đang tạm khóa (quy tắc xác định)',
         budget_exhausted: 'Hết hạn mức AI (quy tắc xác định)',
+        rate_limited: 'Vượt giới hạn tần suất AI (quy tắc xác định)',
         unavailable: 'AI tạm gián đoạn (quy tắc xác định)',
         leak_refused: 'AI bị chặn do vượt rào kiểm soát (quy tắc xác định)',
       },

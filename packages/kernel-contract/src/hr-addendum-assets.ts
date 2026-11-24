@@ -146,9 +146,21 @@ export const zHrAddendumCheckFinding = z.object({
 });
 export type HrAddendumCheckFinding = z.infer<typeof zHrAddendumCheckFinding>;
 
+export const HR_ADDENDUM_AI_REASONS = [
+  'ok',
+  'skipped',
+  'ai_off',
+  'kill_switch',
+  'budget_exhausted',
+  'rate_limited',
+  'unavailable',
+  'leak_refused',
+] as const;
+export type HrAddendumAiReason = (typeof HR_ADDENDUM_AI_REASONS)[number];
+
 export const zHrAddendumAiState = z.object({
   ok: z.boolean(),
-  reason: z.enum(['ok', 'skipped', 'ai_off', 'kill_switch', 'budget_exhausted', 'unavailable', 'leak_refused']),
+  reason: z.enum(HR_ADDENDUM_AI_REASONS),
 });
 export type HrAddendumAiState = z.infer<typeof zHrAddendumAiState>;
 
@@ -167,7 +179,7 @@ export const zHrAddendumCheckAudit = z.strictObject({
   employmentId: zId,
   readyToIssue: z.boolean(),
   findingsCount: z.number().int().nonnegative(),
-  aiReason: z.enum(['ok', 'skipped', 'ai_off', 'kill_switch', 'budget_exhausted', 'unavailable', 'leak_refused']),
+  aiReason: z.enum(HR_ADDENDUM_AI_REASONS),
 });
 export type HrAddendumCheckAudit = z.infer<typeof zHrAddendumCheckAudit>;
 

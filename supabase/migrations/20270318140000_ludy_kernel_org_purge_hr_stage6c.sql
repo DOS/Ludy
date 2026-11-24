@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
 -- The org purge deletes ludy_hr.contract_addendum ahead of ludy_hr.payroll_employment
 -- and ludy_hr.employee_asset_handover ahead of ludy_hr.payroll_employee (HR Stage 6C, #4528).
--- Restates ludy_kernel.org_purge post-20270317220000; nothing else changes.
+-- Restates ludy_kernel.org_purge post-20270317240000; nothing else changes.
 SET LOCAL lock_timeout = '2s';
 
 CREATE OR REPLACE FUNCTION ludy_kernel.org_purge(p_min_days integer)
@@ -51,7 +51,7 @@ DECLARE
     'ludy_ads.ad_flag_setting', 'ludy_ads.ad_campaign_request', 'ludy_ads.ad_campaign_draft', 'ludy_ads.ad_spend_cap', 'ludy_ads.ad_org_setting', 'ludy_ads.ad_sync_run', 'ludy_ads.ad_spend_day', 'ludy_ads.ad_account',
     'ludy_kernel.today_mail', 'ludy_kernel.saved_view', 'ludy_notes.link', 'ludy_notes.todo', 'ludy_notes.todo_list', 'ludy_notes.attachment', 'ludy_notes.note_version', 'ludy_notes.note', 'ludy_notes.notebook', 'ludy_notes.note_template',
     'ludy_projects.roadmap_signal', 'ludy_projects.roadmap_announcement', 'ludy_projects.roadmap_vote', 'ludy_projects.roadmap_subscriber', 'ludy_projects.roadmap_otp', 'ludy_projects.roadmap_item', 'ludy_projects.roadmap_board',
-    'ludy_projects.time_entry', 'ludy_projects.task_dependency', 'ludy_projects.project_task', 'ludy_projects.project_column', 'ludy_projects.project_cycle', 'ludy_projects.project_member', 'ludy_projects.project',
+    'ludy_projects.project_triage_item', 'ludy_projects.time_entry', 'ludy_projects.task_dependency', 'ludy_projects.project_task', 'ludy_projects.project_column', 'ludy_projects.project_cycle', 'ludy_projects.project_member', 'ludy_projects.project',
     'ludy_kernel.activity', 'ludy_kernel.agent_wakeup', 'ludy_kernel.extraction',
     'ludy_kernel.inbound_message', 'ludy_kernel.push_subscription', 'ludy_kernel.notification', 'ludy_kernel.notification_mute', 'ludy_kernel.inbox_item',
     'ludy_kernel.mail_event', 'ludy_kernel.mail_suppression', 'ludy_kernel.mail_message',

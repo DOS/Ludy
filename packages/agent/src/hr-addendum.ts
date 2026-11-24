@@ -41,6 +41,7 @@ export type AddendumCheckAiReason =
   | 'ai_off'
   | 'kill_switch'
   | 'budget_exhausted'
+  | 'rate_limited'
   | 'unavailable'
   | 'leak_refused';
 
@@ -365,6 +366,7 @@ function staticPromptSkeleton(language: 'vi' | 'en'): string {
 
 export function createHrAddendumCheckGenerator(config: AiConfig): HrAddendumCheckGenerator {
   const timeoutMs = config.timeoutMs ?? 60_000;
+  const retries = config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries };
   return async ({ system, prompt }) => {
     const { output, usage } = await metered('hr.addendum_check', () =>
       generateText({
@@ -373,6 +375,7 @@ export function createHrAddendumCheckGenerator(config: AiConfig): HrAddendumChec
         system,
         prompt,
         abortSignal: AbortSignal.timeout(timeoutMs),
+        ...retries,
       }),
     );
     return {
@@ -452,7 +455,7 @@ export async function reviewAddendumDraft(
       reason: 'ok',
       usage: usage ?? null,
     };
-  } catch (error) {
+  } catch (error: unknown) {
     if (error instanceof AiBudgetExhaustedError) {
       return {
         readyToIssue: evalOut.readyToIssue,
@@ -462,13 +465,16 @@ export async function reviewAddendumDraft(
         usage: null,
       };
     }
-    classifyAiError(error);
-    return {
-      readyToIssue: evalOut.readyToIssue,
-      findings: evalOut.findings,
-      lyNote: null,
-      reason: 'unavailable',
-      usage: null,
-    };
+    const info = classifyAiError(error);
+    if (info.kind === 'rate_limit') {
+      return {
+        readyToIssue: evalOut.readyToIssue,
+        findings: evalOut.findings,
+        lyNote: null,
+        reason: 'rate_limited',
+        usage: null,
+      };
+    }
+    throw error;
   }
 }

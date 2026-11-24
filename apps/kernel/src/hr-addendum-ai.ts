@@ -32,9 +32,10 @@ export interface HrAddendumPorts {
   record: (input: HrAddendumCheckAudit) => Promise<{ ok: true }>;
 }
 
-class HrAddendumAiStoppedError extends Error {
+export class HrAddendumAiStoppedError extends Error {
   constructor() {
     super('HR addendum AI is stopped by kill switch');
+    this.name = 'HrAddendumAiStoppedError';
   }
 }
 
@@ -80,7 +81,9 @@ export async function checkAddendumDraft(
         findingsCount: evalOut.findings.length,
         aiReason: reason,
       })
-      .catch(() => {});
+      .catch((error: unknown) => {
+        console.error('[hr-addendum-ai] check audit write failed', error instanceof Error ? error.name : typeof error);
+      });
     return {
       employeeId: source.employeeId,
       employmentId: source.employmentId,
@@ -95,8 +98,9 @@ export async function checkAddendumDraft(
     return finish('skipped', null, true);
   }
 
-  const ask = ai.reader?.hrAddendumCheck;
-  if (!ask) {
+  const reader = ai.reader;
+  const check = reader?.hrAddendumCheck;
+  if (!reader || !check) {
     return finish('ai_off', null, false);
   }
   if (await ports.isAiStopped()) {
@@ -105,24 +109,34 @@ export async function checkAddendumDraft(
 
   const ticket = ai.budget.take(orgId, actor.userId);
   if (!ticket.allowed) {
-    return finish('budget_exhausted', null, false);
+    return finish('rate_limited', null, false);
   }
 
   const baseMeter =
     meter === 'runtime' ? memberMeter(runtime as Runtime, actor, meterOptions ?? {}) : meter;
   const guardedMeter: AiMeter = {
     admit: async (call) => {
-      if (await ports.isAiStopped()) {
-        throw new HrAddendumAiStoppedError();
+      try {
+        if (await ports.isAiStopped()) {
+          throw new HrAddendumAiStoppedError();
+        }
+        const admitted = await baseMeter.admit(call);
+        if (await ports.isAiStopped()) {
+          throw new HrAddendumAiStoppedError();
+        }
+        return admitted;
+      } catch (error: unknown) {
+        ticket.refund?.();
+        throw error;
       }
-      return baseMeter.admit(call);
     },
     record: (call, usage) => baseMeter.record(call, usage),
   };
 
   try {
     const out = await withAiScope({ orgId, meter: guardedMeter }, () =>
-      ask(
+      check.call(
+        reader,
         {
           language,
           contractType: source.contractType,
@@ -145,25 +159,31 @@ export async function checkAddendumDraft(
       return finish(out.reason, null, false);
     }
     return finish('ok', out.lyNote, true);
-  } catch (error) {
+  } catch (error: unknown) {
     if (error instanceof HrAddendumAiStoppedError) {
       return finish('kill_switch', null, false);
     }
     if (error instanceof PayrollPromptLeakError) {
+      ticket.refund?.();
       return finish('leak_refused', null, false);
     }
     if (error instanceof AiBudgetExhaustedError) {
       return finish('budget_exhausted', null, false);
     }
     if (error instanceof AiMeterMissingError) {
+      ticket.refund?.();
       throw error;
     }
     if (error instanceof DomainError && (error.status === 401 || error.status === 403 || error.status === 404)) {
       throw error;
     }
-    if (error instanceof DomainError && (error.code === 'AI_BUDGET_EXHAUSTED' || error.status === 429)) {
+    if (error instanceof DomainError && error.code === 'AI_BUDGET_EXHAUSTED') {
       return finish('budget_exhausted', null, false);
     }
+    if (error instanceof DomainError && (error.code === 'RATE_LIMITED' || error.status === 429)) {
+      return finish('rate_limited', null, false);
+    }
+    console.error('[hr-addendum-ai] check failed', error instanceof Error ? error.name : typeof error);
     return finish('unavailable', null, false);
   } finally {
     ticket.release();
