@@ -14,7 +14,7 @@ import { LOST_KEY, readLost, RECORDING_KEY, tabAddress, type LostState, type Rec
 import { captureActiveTab, CLIP_BODY_MAX, CLIP_TITLE_MAX, NOTES_SCOPE, parseTagsInput, WEB_CLIPPER_PERMISSIONS } from './page-capture.ts';
 import { formatClock, createIndexedDbChunkStore, noticeToCopy, otherNoticeLanguage, RECORDING_NOTICE, type RecordingMeta, type RecordingNoticeLanguage } from '@ludy/meeting-recorder';
 import { reportEnded, uploadSaved } from './capture-run.ts';
-import { createPopupConcurrency } from './popup-guards.ts';
+import { createActiveTabTracker, createPopupConcurrency } from './popup-guards.ts';
 
 const root = document.getElementById('root') as HTMLElement;
 const area = chrome.storage.local;
@@ -49,7 +49,7 @@ const notesExcludedOrgs = new Set<string>();
 let strictOrg = false;
 const CONFIG_DISCOVERY_TIMEOUT_MS = 3_000;
 const captureDrafts = createCaptureDraftStore();
-let activeTabJustGranted = false;
+const activeTab = createActiveTabTracker();
 const concurrency = createPopupConcurrency();
 
 function clearTicker(): void {
@@ -97,7 +97,7 @@ function toggleNoticeLanguage(): void {
 
 async function render(): Promise<void> {
   await concurrency.runRender(clearTicker, async (pass) => {
-    const state = await loadState(area);
+    const [state] = await Promise.all([loadState(area), activeTab.captureBaseline(chrome.permissions)]);
     if (!pass.isCurrent()) return null;
     const { changed } = captureDrafts.syncState(state);
     if (changed && notice !== T.signingIn) notice = '';
@@ -418,23 +418,24 @@ async function notesView(state: State, orgId: string, token: string): Promise<No
 
 async function toggleWebClipper(enable: boolean, address: string, orgId: string): Promise<void> {
   notice = '';
+  await activeTab.captureBaseline(chrome.permissions);
   const scopeState = captureDrafts.get(address, orgId);
   scopeState.status = '';
   if (enable) {
-    const hadActiveTab = await chrome.permissions.contains({ permissions: ['activeTab'] }).catch(() => false);
     // Only asks Chrome for activeTab + scripting on this explicit toggle click.
     const granted = await chrome.permissions.request({ permissions: [...WEB_CLIPPER_PERMISSIONS] }).catch(() => false);
-    activeTabJustGranted = granted && !hadActiveTab;
+    activeTab.onWebClipperToggled(true, granted);
     const latest = await loadState(area);
     await saveState(area, withFeature(latest, 'clipper', granted));
     if (!granted) notice = T.clipperPermissionDenied;
   } else {
-    activeTabJustGranted = false;
-    const latest = await loadState(area);
-    const remove = permissionsToRemove('clipper', latest.enabled);
+    const current = await loadState(area);
+    const remove = permissionsToRemove('clipper', current.enabled);
     if (remove.length > 0) await chrome.permissions.remove({ permissions: remove }).catch(() => false);
+    await activeTab.onPermissionsRemoved(remove, chrome.permissions);
+    activeTab.onWebClipperToggled(false, false);
     scopeState.draft.sourceUrl = null;
-    await saveState(area, withFeature(latest, 'clipper', false));
+    await saveState(area, withFeature(await loadState(area), 'clipper', false));
   }
   await render();
 }
@@ -452,7 +453,7 @@ async function clipCurrentPage(state: State, orgId: string, token: string, actio
       tabs: chrome.tabs,
       scripting: chrome.scripting,
       clicked: true,
-      activeTabJustGranted,
+      activeTabJustGranted: activeTab.isJustGranted(),
     });
     if (!op.isLive()) return;
     if (!captured.ok) {
@@ -469,7 +470,7 @@ async function clipCurrentPage(state: State, orgId: string, token: string, actio
       }
       return;
     }
-    activeTabJustGranted = false;
+    activeTab.onCaptureSucceeded();
     if (action === 'fill') {
       scope.draft.kind = 'note';
       scope.draft.title = captured.clip.title;
@@ -683,9 +684,12 @@ async function dismissLost(): Promise<void> {
 
 async function turnOn(): Promise<void> {
   notice = '';
+  await activeTab.captureBaseline(chrome.permissions);
   const feature = FEATURES.find((f) => f.id === 'meetings')!;
   // The browser asks for tab capture, offscreen, and activeTab (to read the active meeting tab URL on click) on this click, and nothing is asked before it.
-  if (!(await chrome.permissions.request({ permissions: [...feature.permissions] }))) {
+  const granted = await chrome.permissions.request({ permissions: [...feature.permissions] }).catch(() => false);
+  activeTab.onMeetingsEnabled(granted);
+  if (!granted) {
     notice = T.permissionDenied;
   } else {
     await saveState(area, withFeature(await loadState(area), 'meetings', true));
@@ -697,10 +701,13 @@ async function turnOn(): Promise<void> {
 }
 
 async function turnOff(): Promise<void> {
-  const latest = await loadState(area);
-  const remove = permissionsToRemove('meetings', latest.enabled);
-  if (remove.length > 0) await chrome.permissions.remove({ permissions: remove });
-  await saveState(area, withFeature(latest, 'meetings', false));
+  notice = '';
+  await activeTab.captureBaseline(chrome.permissions);
+  const current = await loadState(area);
+  const remove = permissionsToRemove('meetings', current.enabled);
+  if (remove.length > 0) await chrome.permissions.remove({ permissions: remove }).catch(() => false);
+  await activeTab.onPermissionsRemoved(remove, chrome.permissions);
+  await saveState(area, withFeature(await loadState(area), 'meetings', false));
   await render();
 }
 
