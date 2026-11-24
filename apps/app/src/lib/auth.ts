@@ -125,12 +125,12 @@ export function migrateAuthStorage(storage?: StorageLike): void {
 function disposeAuthClient(target: Client | null): void {
   if (!target || !('dispose' in target) || typeof target.dispose !== 'function') return;
   const dispose = () => {
-    void target.dispose();
+    void Promise.resolve(target.dispose()).catch(() => {});
   };
   dispose();
   const initPromise = (target as unknown as { initializePromise?: Promise<unknown> | null }).initializePromise;
   if (initPromise) {
-    void Promise.resolve(initPromise).finally(dispose);
+    void Promise.resolve(initPromise).then(dispose, dispose);
   }
 }
 

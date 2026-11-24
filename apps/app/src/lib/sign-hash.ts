@@ -70,6 +70,9 @@ export function isInPersonCeremonyIsolated(
   const store = storage ?? getCeremonySessionStorage();
   try {
     if (store?.getItem(SIGN_IN_PERSON_ISOLATED_SESSION_KEY) === '1') {
+      if (!storage) {
+        inPersonCeremonyIsolatedInMemory = true;
+      }
       return true;
     }
   } catch {
