@@ -73,10 +73,11 @@ describe('ZoomMeetingPlatform.list', () => {
       hasAudio: true,
       hasVideo: true,
       hasTranscript: true,
+      call: { platform: 'zoom', id: '81000000001' },
     });
     // A video-only recording, and one with a transcript only, say what they have.
-    expect(listed[1]).toMatchObject({ hasAudio: false, hasVideo: true, hasTranscript: false, sizeBytes: 20_000_000 });
-    expect(listed[2]).toMatchObject({ hasAudio: false, hasVideo: false, hasTranscript: true, sizeBytes: null });
+    expect(listed[1]).toMatchObject({ hasAudio: false, hasVideo: true, hasTranscript: false, sizeBytes: 20_000_000, call: { platform: 'zoom', id: '81000000002' } });
+    expect(listed[2]).toMatchObject({ hasAudio: false, hasVideo: false, hasTranscript: true, sizeBytes: null, call: { platform: 'zoom', id: '81000000003' } });
     // Not listed: a recording Zoom is still processing, one with only a chat and a timeline, and one before the window.
     const ids = listed.map((r) => r.id);
     for (const gone of ['DDDDDDDDDDDDDDDDDDDDDD==', 'EEEEEEEEEEEEEEEEEEEEEE==', 'FFFFFFFFFFFFFFFFFFFFFF==']) expect(ids).not.toContain(gone);
@@ -181,6 +182,24 @@ describe('ZoomMeetingPlatform.list', () => {
     expect(listed[0]?.title).toHaveLength(200);
     expect(listed[0]?.title.startsWith('ab')).toBe(true);
     expect(listed[0]?.lengthSeconds).toBeNull();
+    expect(listed[0]?.call).toBeUndefined();
+  });
+
+  it('omits call when Zoom omits or returns a malformed numeric meeting id', async () => {
+    const files = [{ id: 'f', file_type: 'M4A', file_size: 10, recording_type: 'audio_only', status: 'completed', download_url: 'https://us02web.zoom.us/rec/download/x' }];
+    const { adapter } = zoom([
+      {
+        json: {
+          meetings: [
+            { uuid: 'str-id', id: '91000000001', topic: 'String ID', start_time: '2026-11-17T01:00:00Z', duration: 10, recording_files: files },
+            { uuid: 'bad-id', id: 'short-123', topic: 'Bad ID', start_time: '2026-11-16T01:00:00Z', duration: 10, recording_files: files },
+          ],
+        },
+      },
+    ]);
+    const listed = await adapter.list(CREDENTIAL, SINCE);
+    expect(listed.find((r) => r.id === 'str-id')?.call).toEqual({ platform: 'zoom', id: '91000000001' });
+    expect(listed.find((r) => r.id === 'bad-id')?.call).toBeUndefined();
   });
 });
 

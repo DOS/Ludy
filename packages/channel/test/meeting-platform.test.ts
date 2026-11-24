@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The meeting platform adapter interface and its offline sandbox (meetings integrations C1, #3173); no network.
 import { describe, expect, it } from 'vitest';
-import { MeetingPlatformError, SandboxMeetingPlatform, meetingPlatformAdapters, minimalMp4, silentWav, type MeetingPlatformCredential } from '../src/index.ts';
+import { MeetingPlatformError, SandboxMeetingPlatform, meetingPlatformAdapters, meetingPlatformCallOf, minimalMp4, normalizeMeetingPlatformCall, silentWav, type MeetingPlatformCredential } from '../src/index.ts';
 
 const CREDENTIAL: MeetingPlatformCredential = { accessToken: 'sandbox-token-not-real-0001', refreshToken: 'sandbox-refresh-not-real-0001' };
 const NOW = new Date('2026-11-15T12:00:00Z');
@@ -139,6 +139,20 @@ describe('SandboxMeetingPlatform', () => {
       expect(message).not.toContain(CREDENTIAL.accessToken);
       expect(message).not.toContain(CREDENTIAL.refreshToken ?? 'x');
     }
+  });
+
+  it('extracts canonical call identities from sandbox join addresses without emitting raw URLs', async () => {
+    const sandbox = new SandboxMeetingPlatform({ seed: false });
+    sandbox.add(rec('meet', 1, { joinUrl: 'https://meet.google.com/ABC-defg-HIJ?authuser=1' }));
+    sandbox.add(rec('zoom', 2, { call: { platform: 'zoom', id: '81000000001' } }));
+    sandbox.add(rec('bad', 3, { joinUrl: 'https://example.com/secret?token=123' }));
+    const listed = await sandbox.list(CREDENTIAL, new Date(0));
+    expect(listed.find((r) => r.id === 'meet')?.call).toEqual({ platform: 'google_meet', id: 'abc-defg-hij' });
+    expect(listed.find((r) => r.id === 'zoom')?.call).toEqual({ platform: 'zoom', id: '81000000001' });
+    expect(listed.find((r) => r.id === 'bad')?.call).toBeUndefined();
+    expect(JSON.stringify(listed)).not.toContain('secret');
+    expect(meetingPlatformCallOf('https://teams.microsoft.com/meet/123456789012?p=secret')).toEqual({ platform: 'microsoft_teams', id: '123456789012' });
+    expect(normalizeMeetingPlatformCall({ platform: 'zoom', id: '123' })).toBeNull();
   });
 });
 

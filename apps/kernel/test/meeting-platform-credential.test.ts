@@ -3,7 +3,8 @@
 // transaction) is tested against PostgreSQL in meeting-platform-refresh.db.test.ts; here the decisions of the caller: when it asks for a renewal, what it does with each answer, and that nothing is
 // asked of a credential that is not due.
 import { describe, expect, it } from 'vitest';
-import { MeetingPlatformError, SandboxMeetingPlatform, type MeetingPlatformAdapter } from '@ludy/channel';
+import { MeetingPlatformError, SandboxMeetingPlatform, meetingPlatformCallOf, normalizeMeetingPlatformCall, type MeetingPlatformAdapter } from '@ludy/channel';
+import { captureCallOf, normalizeCaptureCall } from '@ludy/kernel-contract';
 import { REFRESH_HORIZON_MS, freshCredential, parseCredential, withinTimeout, type RefreshOutcome } from '../src/meeting-platform-credential.ts';
 
 const NOW = new Date('2026-11-18T12:00:00Z');
@@ -143,5 +144,36 @@ describe('freshCredential', () => {
   it('lets an error of the command through (a lock that timed out, a database error): the caller retries, and the old token is not used blindly', async () => {
     const { deps } = harness({ accessToken: 'a', refreshToken: 'r', expiresAt: iso(60_000) }, [new Error('lock timeout')]);
     await expect(freshCredential(deps, ORG, CONNECTION, refresher)).rejects.toThrow('lock timeout');
+  });
+});
+
+describe('meetingPlatformCallOf parity with captureCallOf', () => {
+  it('agrees with @ludy/kernel-contract captureCallOf and normalizeCaptureCall on every address and raw id', () => {
+    const thread = '19:meeting_Nzk1YTQzMjMtMGFhZS00ZDQ1LThhYzMtNzU3MDIxYzFmNmVk@thread.v2';
+    for (const url of [
+      'https://meet.google.com/abc-defg-hij',
+      'https://meet.google.com/ABC-defg-HIJ/?authuser=1',
+      'https://us02web.zoom.us/j/81234567890?pwd=secret',
+      'https://congty.zoom.us/wc/join/81234567890',
+      `https://teams.microsoft.com/l/meetup-join/${encodeURIComponent(thread)}/0?context=%7b%22Tid%22%3a%221%22%7d`,
+      'https://teams.microsoft.com/meet/123456789012?p=abc',
+      'https://meet.google.com/landing',
+      'https://meet.google.com.evil.example/abc-defg-hij',
+      'http://zoom.us/j/81234567890',
+      'https://zoom.us/j/123',
+      'not a url',
+    ]) {
+      expect(meetingPlatformCallOf(url), url).toEqual(captureCallOf(url));
+    }
+    for (const call of [
+      { platform: 'google_meet', id: 'ABC-defg-HIJ' },
+      { platform: 'zoom', id: '81234567890' },
+      { platform: 'microsoft_teams', id: thread },
+      { platform: 'microsoft_teams', id: '123456789012' },
+      { platform: 'zoom', id: '123' },
+      { platform: 'sandbox', id: 'abc-defg-hij' },
+    ]) {
+      expect(normalizeMeetingPlatformCall(call), JSON.stringify(call)).toEqual(normalizeCaptureCall(call));
+    }
   });
 });

@@ -11,7 +11,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { createDb, createPool } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, setMeetingPlatformVideoImport, upsertIdentity } from '@ludy/kernel';
+import { captureCallKey, createOrg, kernelCommands, kernelQueries, setMeetingPlatformVideoImport, upsertIdentity } from '@ludy/kernel';
 import { meetingsQueries } from '@ludy/mod-meetings';
 import { vietnamToday, type MeetingPlatformConnectionView, type MeetingPlatformRecordingView } from '@ludy/kernel-contract';
 import { DomainError, Runtime, defineCommand, defineQuery } from '@ludy/kernel-runtime';
@@ -871,5 +871,146 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     await replace(o, c.connectionId, [listed('rec-viewer', { startedAt: at(900).toISOString(), lengthSeconds: 1800 })]);
     const viewerList = await mine(o, o.lan);
     expect(viewerList[0]?.matchedMeeting).toBeNull();
+  });
+
+  it('validates meetingKey cleanly and matches open or ended capture sessions for members without a calendar (#4572)', async () => {
+    const o = await org();
+    const o2 = await org();
+    const c = await connect(o, o.lan);
+    const keyZoom = captureCallKey(o.orgId, { platform: 'zoom', id: '81000000001' }) as string;
+    const keyMeet = captureCallKey(o.orgId, { platform: 'google_meet', id: 'abc-defg-hij' }) as string;
+    const keyTeams = captureCallKey(o.orgId, { platform: 'microsoft_teams', id: '19:meeting_aaaa@thread.v2' }) as string;
+    const keyHidden = captureCallKey(o.orgId, { platform: 'zoom', id: '81000000099' }) as string;
+    const keyOtherOrg = captureCallKey(o2.orgId, { platform: 'zoom', id: '81000000001' }) as string;
+    const keyFallback = captureCallKey(o.orgId, { platform: 'google_meet', id: 'zzz-yyyy-xxx' }) as string;
+
+    // Raw join URLs and invalid hashes are refused both at command validation and inside SQL replacement.
+    expect(await refuses(replace(o, c.connectionId, [listed('bad-url', { meetingKey: 'https://meet.google.com/abc-defg-hij' })]))).toBe('VALIDATION');
+    expect(await refuses(replace(o, c.connectionId, [listed('bad-upper', { meetingKey: keyZoom.toUpperCase() })]))).toBe('VALIDATION');
+    expect(await refuses(o.sys('test.mp.raw_replace', { connectionId: c.connectionId, rows: [{ id: 'bad-sql', startedAt: new Date().toISOString(), meetingKey: 'https://zoom.us/j/81000000001' }] }))).not.toBeNull();
+    expect(await refuses(o.sys('test.mp.raw_replace', { connectionId: c.connectionId, rows: [{ id: 'bad-type', startedAt: new Date().toISOString(), meetingKey: 123 }] }))).not.toBeNull();
+
+    const t0 = new Date(Math.floor(Date.now() / 60_000) * 60_000 - 24 * 3_600_000);
+    const at = (mins: number) => new Date(t0.getTime() + mins * MIN);
+    const insertCaptured = async (
+      targetOrgId: string,
+      recorder: string,
+      opts: {
+        startedAt: Date;
+        endedAt: Date | null;
+        visibility?: 'attendees' | 'org';
+        readers?: string[];
+        retentionDate?: string;
+        meetingKey: string;
+        captureEndedReason?: 'media' | 'stopped' | 'lost' | null;
+      },
+    ): Promise<string> => {
+      const mId = (
+        await sqlAdmin<{ id: string }>(
+          `INSERT INTO ludy_meetings.meeting
+             (org_id, recorder_user_id, visibility, title, started_at, ended_at, consent_method, consent_confirmed_by, consent_notice_version, audio_retention_date, text_retention_date)
+           VALUES ($1, $2, $3, 'Họp có capture', $4, $5, 'told_at_start', $2, '2026-11-v1', current_date + 7, $6::date)
+           RETURNING id`,
+          [targetOrgId, recorder, opts.visibility ?? 'attendees', opts.startedAt, opts.endedAt, opts.retentionDate ?? '2099-01-01'],
+        )
+      ).rows[0]?.id as string;
+      for (const readerId of opts.readers ?? []) {
+        await sqlAdmin('INSERT INTO ludy_meetings.meeting_reader (org_id, meeting_id, user_id) VALUES ($1, $2, $3)', [targetOrgId, mId, readerId]);
+      }
+      await sqlAdmin(
+        `INSERT INTO ludy_meetings.capture_session (org_id, meeting_id, recorder_user_id, kind, meeting_key, started_at, ended_at, ended_reason)
+         VALUES ($1, $2, $3, 'extension', $4, $5, $6, $7)`,
+        [targetOrgId, mId, recorder, opts.meetingKey, opts.startedAt, opts.captureEndedReason ? opts.startedAt : null, opts.captureEndedReason ?? null],
+      );
+      return mId;
+    };
+
+    // 1. Open capture on coworker's org meeting matches without any calendar event, even beside another overlapping org meeting!
+    const mOpenOrg = await insertCaptured(o.orgId, o.nam, { startedAt: at(0), endedAt: at(30), visibility: 'org', meetingKey: keyZoom, captureEndedReason: null });
+    await sqlAdmin(
+      `INSERT INTO ludy_meetings.meeting (org_id, recorder_user_id, visibility, title, started_at, ended_at, consent_method, consent_confirmed_by, consent_notice_version, audio_retention_date, text_retention_date)
+       VALUES ($1, $2, 'org', 'Họp khác trùng giờ', $3, $4, 'told_at_start', $2, '2026-11-v1', current_date + 7, '2099-01-01')`,
+      [o.orgId, o.owner, at(2), at(28)],
+    );
+    // 2. Ended capture on meeting where lan is explicitly in meeting_reader matches without any calendar event.
+    const mEndedReader = await insertCaptured(o.orgId, o.nam, { startedAt: at(180), endedAt: at(210), visibility: 'attendees', readers: [o.lan], meetingKey: keyMeet, captureEndedReason: 'stopped' });
+    // 3. Hidden attendees meeting (lan is neither recorder nor reader) -> no match & no leak.
+    await insertCaptured(o.orgId, o.nam, { startedAt: at(360), endedAt: at(390), visibility: 'attendees', meetingKey: keyHidden, captureEndedReason: 'media' });
+    // 4. Other org's capture of the exact same external Zoom ID uses a distinct org-salted hash -> no match.
+    await insertCaptured(o2.orgId, o2.nam, { startedAt: at(0), endedAt: at(30), visibility: 'org', meetingKey: keyOtherOrg, captureEndedReason: null });
+    // 5. Expired text retention -> suppressed even with matching meeting_key.
+    const mExpiredKey = captureCallKey(o.orgId, { platform: 'zoom', id: '81000000777' }) as string;
+    await insertCaptured(o.orgId, o.lan, { startedAt: at(540), endedAt: at(570), visibility: 'attendees', meetingKey: mExpiredKey, captureEndedReason: 'stopped', retentionDate: vietnamToday() });
+    // 6. Recurring room (`keyTeams`): an old occurrence outside 15m window does NOT block next occurrence; matching occurrence DOES match.
+    await insertCaptured(o.orgId, o.nam, { startedAt: at(-7 * 24 * 60), endedAt: at(-7 * 24 * 60 + 30), visibility: 'org', meetingKey: keyTeams, captureEndedReason: 'media' });
+    const mCurrentSeries = await insertCaptured(o.orgId, o.nam, { startedAt: at(720), endedAt: at(750), visibility: 'org', meetingKey: keyTeams, captureEndedReason: 'media' });
+    // 7. Ambiguous key within same 15m window -> null (never guesses).
+    const keyAmbig = captureCallKey(o.orgId, { platform: 'zoom', id: '81000000888' }) as string;
+    await insertCaptured(o.orgId, o.lan, { startedAt: at(900), endedAt: at(910), visibility: 'attendees', meetingKey: keyAmbig, captureEndedReason: 'stopped' });
+    await insertCaptured(o.orgId, o.nam, { startedAt: at(915), endedAt: at(930), visibility: 'org', meetingKey: keyAmbig, captureEndedReason: 'stopped' });
+    // 8. Unmatched key (`keyFallback`) still falls back to linked calendar event when calendar has one.
+    const mLinked = (
+      await sqlAdmin<{ id: string }>(
+        `INSERT INTO ludy_meetings.meeting (org_id, recorder_user_id, visibility, title, started_at, ended_at, consent_method, consent_confirmed_by, consent_notice_version, audio_retention_date, text_retention_date)
+         VALUES ($1, $2, 'attendees', 'Họp lịch fallback', $3, $4, 'told_at_start', $2, '2026-11-v1', current_date + 7, '2099-01-01')
+         RETURNING id`,
+        [o.orgId, o.lan, at(1080), at(1110)],
+      )
+    ).rows[0]?.id as string;
+    await agendaEvent(o.orgId, o.lan, at(1080), at(1110), mLinked);
+
+    // Note: no calendar events were inserted for windows 0, 180, 360, 540, 720, 900, 1260!
+    await replace(o, c.connectionId, [
+      listed('k-open-org', { startedAt: at(0).toISOString(), lengthSeconds: 1800, meetingKey: keyZoom }),
+      listed('k-ended-reader', { startedAt: at(180).toISOString(), lengthSeconds: 1800, meetingKey: keyMeet }),
+      listed('k-hidden', { startedAt: at(360).toISOString(), lengthSeconds: 1800, meetingKey: keyHidden }),
+      listed('k-expired', { startedAt: at(540).toISOString(), lengthSeconds: 1800, meetingKey: mExpiredKey }),
+      listed('k-series-old-only', { startedAt: at(1260).toISOString(), lengthSeconds: 1800, meetingKey: keyTeams }),
+      listed('k-series-current', { startedAt: at(720).toISOString(), lengthSeconds: 1800, meetingKey: keyTeams }),
+      listed('k-ambig', { startedAt: at(900).toISOString(), lengthSeconds: 1800, meetingKey: keyAmbig }),
+      listed('k-fallback', { startedAt: at(1080).toISOString(), lengthSeconds: 1800, meetingKey: keyFallback }),
+    ]);
+
+    const rows = await mine(o, o.lan);
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    const viewOf = async (ext: string) => {
+      const r = await rowOf(ext, c.connectionId);
+      return r ? byId.get(r.id) : undefined;
+    };
+
+    expect((await viewOf('k-open-org'))?.matchedMeeting).toEqual({ meetingId: mOpenOrg });
+    expect((await viewOf('k-ended-reader'))?.matchedMeeting).toEqual({ meetingId: mEndedReader });
+    expect((await viewOf('k-hidden'))?.matchedMeeting).toBeNull();
+    expect((await viewOf('k-expired'))?.matchedMeeting).toBeNull();
+    expect((await viewOf('k-series-old-only'))?.matchedMeeting).toBeNull();
+    expect((await viewOf('k-series-current'))?.matchedMeeting).toEqual({ meetingId: mCurrentSeries });
+    expect((await viewOf('k-ambig'))?.matchedMeeting).toBeNull();
+    expect((await viewOf('k-fallback'))?.matchedMeeting).toEqual({ meetingId: mLinked });
+
+    // Re-sync updates meeting_key on suggested rows cleanly.
+    await replace(o, c.connectionId, [listed('k-hidden', { startedAt: at(360).toISOString(), lengthSeconds: 1800, meetingKey: null })]);
+    const refreshedHidden = (await sqlAdmin<{ meeting_key: string | null }>('SELECT meeting_key FROM ludy_kernel.meeting_platform_recording WHERE connection_id = $1 AND external_id = $2', [c.connectionId, 'k-hidden'])).rows[0];
+    expect(refreshedHidden?.meeting_key).toBeNull();
+
+    // Direct DB definer contract: ludy_tenant execute only, pinned search_path, no PUBLIC exec, system actor returns empty.
+    const meta = (
+      await sqlAdmin<{
+        prosecdef: boolean;
+        proconfig: string[] | null;
+        pub: boolean;
+        rettype: string;
+      }>(
+        `SELECT p.prosecdef, p.proconfig, pg_catalog.has_function_privilege('public', p.oid, 'EXECUTE') AS pub,
+                pg_catalog.pg_get_function_result(p.oid) AS rettype
+         FROM pg_catalog.pg_proc p
+         WHERE p.oid = 'ludy_meetings.capture_session_match_keys(text[])'::pg_catalog.regprocedure`,
+      )
+    ).rows[0];
+    expect(meta).toEqual({
+      prosecdef: true,
+      proconfig: ['search_path=pg_catalog, pg_temp'],
+      pub: false,
+      rettype: 'TABLE(key_index integer, meeting_id uuid)',
+    });
   });
 });

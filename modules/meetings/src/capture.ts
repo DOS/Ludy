@@ -8,8 +8,8 @@
 // A capture is kept alive by the client's heartbeat (meetings.capture.heartbeat, every 30 seconds) and is over when it has not been heard from for 90 seconds, which the next start of the same call reads: no job
 // runs for it. It also ends when its media reaches the server or the recording is reported stopped (endCapture, called where the meeting's end time is set). The rule never destroys a recording: a client whose
 // capture was lost keeps recording and uploading, and its next heartbeat takes the call back when nothing else holds it. No model is called here.
-import { createHash } from 'node:crypto';
 import { sql } from 'kysely';
+import { captureCallKey } from '@ludy/kernel';
 import {
   captureCallOf,
   zCaptureHeartbeat,
@@ -36,7 +36,7 @@ export function captureKindOf(ctx: CommandContext): CaptureKind {
 // What identifies a call in this org: the hash of the org, the platform and the platform's meeting id. The org is part of it so one call in two orgs has two unrelated keys.
 export function captureKeyOf(orgId: string, joinUrl: string): string | null {
   const call = captureCallOf(joinUrl);
-  return call === null ? null : createHash('sha256').update(`${orgId}\n${call.platform}\n${call.id}`).digest('hex');
+  return call === null ? null : captureCallKey(orgId, call);
 }
 
 /**

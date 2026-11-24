@@ -8,7 +8,8 @@
 import { sql } from 'kysely';
 import type { Db } from '@ludy/db';
 import { MeetingPlatformError, type MeetingPlatformAdapter } from '@ludy/channel';
-import { MEETING_PLATFORM_LIST_DAYS, type MeetingPlatformProvider } from '@ludy/kernel-contract';
+import { captureCallKey } from '@ludy/kernel';
+import { MEETING_PLATFORM_LIST_DAYS, normalizeCaptureCall, type MeetingPlatformProvider } from '@ludy/kernel-contract';
 import { DomainError, type BlobStore, type CredentialBroker, type Runtime } from '@ludy/kernel-runtime';
 import { freshCredential } from './meeting-platform-credential.ts';
 import type { MeetingsImportJob } from './meetings-import.ts';
@@ -107,7 +108,14 @@ export async function runMeetingsImportSweep(deps: MeetingsImportSweepDeps): Pro
         const credential = await freshCredential(deps, row.org_id, row.connection_id, adapter);
         const since = new Date(now().getTime() - MEETING_PLATFORM_LIST_DAYS * 86_400_000);
         const listed = await adapter.list(credential, since);
-        await deps.runtime.execute('kernel.meeting_platform.recording_replace', { connectionId: row.connection_id, rows: listed.slice(0, 100) }, ctx);
+        const rows = listed.slice(0, 100).map(({ call, ...rest }) => {
+          const normalized = call ? normalizeCaptureCall(call) : null;
+          return {
+            ...rest,
+            meetingKey: normalized ? captureCallKey(row.org_id, normalized) : null,
+          };
+        });
+        await deps.runtime.execute('kernel.meeting_platform.recording_replace', { connectionId: row.connection_id, rows }, ctx);
         done.listed += 1;
       } catch (error) {
         done.failures += 1;

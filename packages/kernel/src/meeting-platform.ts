@@ -10,11 +10,13 @@
 // - The worker's sweep lists, downloads and expires through the system commands and queries below. The definers behind them check that the login is the worker; a system actor on another
 //   login is refused by the database, not by this file alone.
 // - The click that starts an import (meeting_platform_recording_begin) belongs to the command of the meetings module that creates the meeting in the same transaction.
+import { createHash } from 'node:crypto';
 import { sql } from 'kysely';
 import { z } from 'zod';
 import {
   AGENDA_OVERLAP_MINUTES,
   meetingOverlapWindow,
+  normalizeCaptureCall,
   vietnamToday,
   zId,
   zMeetingPlatformConnectionRef,
@@ -24,6 +26,7 @@ import {
   zMeetingPlatformListed,
   zMeetingPlatformProvider,
   zMeetingPlatformRecordingRef,
+  type CaptureCall,
   type MeetingPlatformConnectionView,
   type MeetingPlatformRecordingView,
 } from '@ludy/kernel-contract';
@@ -42,6 +45,12 @@ const zInstant = z.iso.datetime({ offset: true });
 const SYNC_PAGE_MAX = 1000;
 const IMPORT_PAGE_MAX = 200;
 const RECORDINGS_LIMIT = 50;
+
+// Canonical SHA-256 key identifying a call within one org (`sha256("${orgId}\n${platform}\n${id}")`), shared with live capture sessions (#4572).
+export function captureCallKey(orgId: string, call: CaptureCall): string | null {
+  const normalized = normalizeCaptureCall(call);
+  return normalized === null ? null : createHash('sha256').update(`${orgId}\n${normalized.platform}\n${normalized.id}`).digest('hex');
+}
 
 function requireUser(ctx: CommandContext): string {
   if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới kết nối được nền tảng họp');
@@ -552,33 +561,114 @@ export function setMeetingPlatformVideoImport(maxBytes: number | null): void {
 
 // Finds the Ludy meeting a suggested recording is already recorded as (#4123 Step 3, #4537), by the member's own calendar event (ADR-0055 3.4). A platform recording carries no join address, no meeting key and no
 // calendar event of its own (only the platform's id, a title, a start and a length), so the event is found by time: the member's events overlapping the recording within the B1 15-minute window. Exactly one
-// must, else there is no match (two events, as in back-to-back calls, or none, as for a member who reads no calendar, is not a call Ludy can name). A meeting then matches when it is that event's meeting (the
-// member's own link, `calendar_agenda.meeting_id`), or, when the event has no link yet, when it is the one visible meeting overlapping the recording whose own window overlaps that event and no other. A time
-// overlap alone never matches: a different call right before or after a recorded one used to hide Import.
-// Runs in the caller's transaction so PostgreSQL RLS (meeting_read) enforces org scope, role and reader visibility; zero or two-plus visible candidates return no match so hidden or ambiguous meetings are never exposed.
+function tallyUniqueCandidates(
+  candidates: ReadonlyArray<{ recording_id: string; meeting_id: string }>,
+): { matched: Map<string, string>; resolved: Set<string> } {
+  const counts = new Map<string, { first: string; count: number }>();
+  for (const cand of candidates) {
+    const entry = counts.get(cand.recording_id);
+    if (entry === undefined) counts.set(cand.recording_id, { first: cand.meeting_id, count: 1 });
+    else entry.count += 1;
+  }
+  const matched = new Map<string, string>();
+  const resolved = new Set<string>();
+  for (const [recId, entry] of counts) {
+    resolved.add(recId);
+    if (entry.count === 1) matched.set(recId, entry.first);
+  }
+  return { matched, resolved };
+}
+
+// Matches each suggested recording to an existing visible meeting in the member's org (#4123, #4537, #4572).
+// Precedence:
+//   1. Capture session `meeting_key` on an open or ended capture of a visible meeting whose window overlaps `meetingOverlapWindow` (so members without a connected calendar also see "already recorded", while recurring calls stay scoped to the matching occurrence).
+//   2. Member's own calendar event (`calendar_agenda`) overlapping strictly one event within 15 minutes -> linked `calendar_agenda.meeting_id` OR
+//   3. One visible meeting overlapping that calendar event and no other.
+// Runs in the caller's transaction so PostgreSQL RLS (`meeting_read` and `capture_session_match_keys`) enforces org scope, role and reader visibility; zero or two-plus visible candidates return no match so hidden or ambiguous meetings are never exposed.
 async function matchedMeetingsForSuggestions(
   ctx: QueryContext,
   userId: string,
-  rows: ReadonlyArray<{ id: string; status: string; started_at: Date; length_seconds: number | null }>,
+  rows: ReadonlyArray<{ id: string; status: string; started_at: Date; length_seconds: number | null; meeting_key: string | null }>,
 ): Promise<ReadonlyMap<string, string>> {
   const suggested = rows.filter((r) => r.status === 'suggested');
   if (suggested.length === 0 || !ctx.installed('meetings')) return new Map();
   if ((await offAppsOf(ctx.trx, ctx.orgId)).includes('meetings')) return new Map();
 
+  const today = vietnamToday();
+  const slack = sql`(${AGENDA_OVERLAP_MINUTES}::int * interval '1 minute')`;
+  // The meeting's own span, as the B1 rule reads it: its start to its end (or its start plus its length).
+  const meetingEnd = sql`GREATEST(m.started_at, COALESCE(m.ended_at, m.started_at + (GREATEST(COALESCE(m.length_seconds, 0), 0) * interval '1 second')))`;
+
+  const matched = new Map<string, string>();
+  const keyResolved = new Set<string>();
+
+  const keyed = suggested.filter((r) => r.meeting_key !== null);
+  if (keyed.length > 0) {
+    const uniqueKeys = Array.from(new Set(keyed.map((r) => r.meeting_key as string)));
+    const keyIndexByHex = new Map(uniqueKeys.map((k, idx) => [k, idx + 1]));
+    const keyedRecIds: string[] = [];
+    const keyedKeyIndices: number[] = [];
+    const keyedWinStarts: string[] = [];
+    const keyedWinEnds: string[] = [];
+    for (const r of keyed) {
+      const window = meetingOverlapWindow({ startedAt: r.started_at, lengthSeconds: r.length_seconds });
+      keyedRecIds.push(r.id);
+      keyedKeyIndices.push(keyIndexByHex.get(r.meeting_key as string) as number);
+      keyedWinStarts.push(window.windowStart.toISOString());
+      keyedWinEnds.push(window.windowEnd.toISOString());
+    }
+    const { rows: keyCandidates } = await sql<{ recording_id: string; meeting_id: string }>`
+      WITH key_cand AS (
+        SELECT k.key_index, k.meeting_id
+        FROM ludy_meetings.capture_session_match_keys(${uniqueKeys}::text[]) k
+      ),
+      rec AS (
+        SELECT * FROM ROWS FROM (
+          pg_catalog.unnest(${keyedRecIds}::uuid[]),
+          pg_catalog.unnest(${keyedKeyIndices}::int[]),
+          pg_catalog.unnest(${keyedWinStarts}::timestamptz[]),
+          pg_catalog.unnest(${keyedWinEnds}::timestamptz[])
+        ) AS r(id, key_index, win_start, win_end)
+      )
+      SELECT rec.id AS recording_id, cand.meeting_id
+      FROM rec
+      CROSS JOIN LATERAL (
+        SELECT m.id AS meeting_id
+        FROM key_cand kc
+        JOIN ludy_meetings.meeting m
+          ON m.org_id = ${ctx.orgId}::uuid
+         AND m.id = kc.meeting_id
+        WHERE kc.key_index = rec.key_index
+          AND m.started_at IS NOT NULL
+          AND (m.text_retention_date IS NULL OR m.text_retention_date > ${today}::date)
+          AND m.started_at < rec.win_end
+          AND ${meetingEnd} > rec.win_start
+          AND NOT EXISTS (
+            SELECT 1 FROM ludy_kernel.meeting_platform_recording pr
+            WHERE pr.org_id = m.org_id AND pr.meeting_id = m.id AND pr.status IN ('failed', 'dismissed')
+          )
+        ORDER BY m.started_at DESC
+        LIMIT 2
+      ) AS cand`.execute(ctx.trx);
+
+    const keyTallied = tallyUniqueCandidates(keyCandidates);
+    for (const recId of keyTallied.resolved) keyResolved.add(recId);
+    for (const [recId, meetingId] of keyTallied.matched) matched.set(recId, meetingId);
+  }
+
+  const remaining = suggested.filter((r) => !keyResolved.has(r.id));
+  if (remaining.length === 0) return matched;
+
   const recIds: string[] = [];
   const winStarts: string[] = [];
   const winEnds: string[] = [];
-  for (const r of suggested) {
+  for (const r of remaining) {
     const window = meetingOverlapWindow({ startedAt: r.started_at, lengthSeconds: r.length_seconds });
     recIds.push(r.id);
     winStarts.push(window.windowStart.toISOString());
     winEnds.push(window.windowEnd.toISOString());
   }
 
-  const today = vietnamToday();
-  const slack = sql`(${AGENDA_OVERLAP_MINUTES}::int * interval '1 minute')`;
-  // The meeting's own span, as the B1 rule reads it: its start to its end (or its start plus its length).
-  const meetingEnd = sql`GREATEST(m.started_at, COALESCE(m.ended_at, m.started_at + (GREATEST(COALESCE(m.length_seconds, 0), 0) * interval '1 second')))`;
   const { rows: candidates } = await sql<{ recording_id: string; meeting_id: string }>`
     WITH rec AS (
       SELECT * FROM ROWS FROM (
@@ -636,17 +726,8 @@ async function matchedMeetingsForSuggestions(
       LIMIT 2
     ) AS cand`.execute(ctx.trx);
 
-  const counts = new Map<string, { first: string; count: number }>();
-  for (const cand of candidates) {
-    const entry = counts.get(cand.recording_id);
-    if (entry === undefined) counts.set(cand.recording_id, { first: cand.meeting_id, count: 1 });
-    else entry.count += 1;
-  }
-
-  const matched = new Map<string, string>();
-  for (const [recId, entry] of counts) {
-    if (entry.count === 1) matched.set(recId, entry.first);
-  }
+  const calendarTallied = tallyUniqueCandidates(candidates);
+  for (const [recId, meetingId] of calendarTallied.matched) matched.set(recId, meetingId);
   return matched;
 }
 
@@ -662,7 +743,7 @@ export const meetingPlatformRecordings = defineQuery({
     let query = ctx.trx
       .selectFrom('ludy_kernel.meeting_platform_recording as r')
       .innerJoin('ludy_kernel.meeting_platform_connection as c', (join) => join.onRef('c.org_id', '=', 'r.org_id').onRef('c.id', '=', 'r.connection_id'))
-      .select(['r.id', 'r.connection_id', 'c.provider', 'r.title', 'r.started_at', 'r.length_seconds', 'r.size_bytes', 'r.has_audio', 'r.has_video', 'r.has_transcript', 'r.status', 'r.meeting_id', 'r.error_code'])
+      .select(['r.id', 'r.connection_id', 'c.provider', 'r.title', 'r.started_at', 'r.length_seconds', 'r.size_bytes', 'r.has_audio', 'r.has_video', 'r.has_transcript', 'r.status', 'r.meeting_id', 'r.error_code', 'r.meeting_key'])
       .where('r.org_id', '=', ctx.orgId)
       .where('r.user_id', '=', ctx.actor.userId)
       .where('r.status', '<>', 'dismissed');

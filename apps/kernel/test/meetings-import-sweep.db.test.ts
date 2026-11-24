@@ -12,6 +12,7 @@ import { z } from 'zod';
 import { createDb, createPool } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
 import type { MeetingPlatformRecordingView } from '@ludy/kernel-contract';
 import { MeetingPlatformError, SandboxMeetingPlatform, type MeetingPlatformAdapter } from '@ludy/channel';
 import { meetingPlatformBinding } from '@ludy/kernel-contract';
@@ -171,7 +172,10 @@ suite('the meetings import sweep and job on PostgreSQL (meetings integrations C1
     pools.push(appPool, workerPool);
     personDb = createDb(appPool);
     workerDbHandle = createDb(workerPool);
-    const defs = { commands: [...kernelCommands, begin, imported, rawReplace], queries: [...kernelQueries({ inboundDomain: null }), recordingRows, meetingsInstalled] };
+    const defs = {
+      commands: [...kernelCommands, ...meetingsCommands, begin, imported, rawReplace],
+      queries: [...kernelQueries({ inboundDomain: null }), ...meetingsQueries, recordingRows, meetingsInstalled],
+    };
     api = new Runtime(personDb, { manifests: TEST_MANIFESTS }).register(defs);
     worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register(defs);
   }, 300_000);
@@ -364,5 +368,46 @@ suite('the meetings import sweep and job on PostgreSQL (meetings integrations C1
     await o.exec(o.lan, 'test.mp.begin', { recordingId, meetingId: await meetingFor(o, o.lan), stagingKey: fresh });
     expect(await runMeetingsImport(deps, job, { retryCount: 0, retryLimit: 3 })).toBe('skipped');
     expect(await rowOf('sandbox-rec-audio', connectionId)).toMatchObject({ status: 'importing', staging_key: fresh });
+  });
+
+  it('stores sha256 meeting_key (never raw joinUrl) during sweep and matches capture_session without a connected calendar (#4572)', async () => {
+    const o = await org();
+    // Coworker records an org-visible meeting in Ludy with a Google Meet URL (creating capture_session.meeting_key).
+    const created = await o.exec<{ meetingId: string }>(o.nam, 'meetings.meeting.create', {
+      title: 'Họp có ghi sẵn',
+      consentMethod: 'told_at_start',
+      visibility: 'org',
+      language: 'vi',
+      keepVideo: false,
+      capture: { joinUrl: 'https://meet.google.com/abc-defg-hij' },
+    });
+    const sessionRow = (await sqlAdmin<{ meeting_key: string | null }>('SELECT meeting_key FROM ludy_meetings.capture_session WHERE meeting_id = $1', [created.meetingId])).rows[0];
+    expect(sessionRow?.meeting_key).toMatch(/^[0-9a-f]{64}$/);
+
+    // Member Lan has NO calendar connection at all (`calendar_agenda` is empty), only a platform connection whose sweep lists that same Meet call.
+    const connectionId = await connectSealed(o, o.lan);
+    const sandbox = new SandboxMeetingPlatform({ seed: false });
+    sandbox.add({
+      id: 'meet-call-rec',
+      title: 'Meet call',
+      startedAt: new Date(Date.now() - 120_000),
+      lengthSeconds: 1800,
+      hasAudio: true,
+      hasVideo: false,
+      hasTranscript: false,
+      joinUrl: 'https://meet.google.com/ABC-defg-HIJ/?authuser=2',
+    });
+    const run = sweepDeps(o, { adapters: { sandbox } });
+    await runMeetingsImportSweep(run.deps);
+
+    const dbRec = (await sqlAdmin<{ id: string; meeting_key: string | null }>(
+      "SELECT id, meeting_key FROM ludy_kernel.meeting_platform_recording WHERE connection_id = $1 AND external_id = 'meet-call-rec'",
+      [connectionId],
+    )).rows[0];
+    expect(dbRec?.meeting_key).toBe(sessionRow?.meeting_key);
+
+    const views = await mine(o, o.lan);
+    const matchedView = views.find((r) => r.id === dbRec?.id);
+    expect(matchedView?.matchedMeeting).toEqual({ meetingId: created.meetingId });
   });
 });

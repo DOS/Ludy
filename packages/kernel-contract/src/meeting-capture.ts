@@ -38,11 +38,39 @@ export type CaptureHeartbeatDone = z.infer<typeof zCaptureHeartbeatDone>;
 export const zCaptureRunning = z.strictObject({ kind: zCaptureKind, since: z.string() });
 export type CaptureRunning = z.infer<typeof zCaptureRunning>;
 
-export type CapturePlatform = 'google_meet' | 'zoom' | 'microsoft_teams';
+export const CAPTURE_PLATFORMS = ['google_meet', 'zoom', 'microsoft_teams'] as const;
+export type CapturePlatform = (typeof CAPTURE_PLATFORMS)[number];
+
+export interface CaptureCall {
+  platform: CapturePlatform;
+  id: string;
+}
+
+const GOOGLE_MEET_CODE = /^[a-z]{3}-[a-z]{4}-[a-z]{3}$/i;
+const ZOOM_MEETING_NUMBER = /^\d{9,11}$/;
+const TEAMS_THREAD_ID = /^19:meeting_[a-z0-9_-]+@thread\.(?:v2|skype)$/i;
+const TEAMS_MEET_NUMBER = /^\d{9,15}$/;
+
+// Validates and lowercases a `{ platform, id }` pair from either a join address (`captureCallOf`) or a recording platform adapter (`list`).
+// Kept byte-for-byte consistent with `captureCallOf` so `captureCallKey` yields the same hash regardless of source.
+export function normalizeCaptureCall(call: { platform: string; id: string }): CaptureCall | null {
+  const id = call.id.trim();
+  if (call.platform === 'google_meet') {
+    return GOOGLE_MEET_CODE.test(id) ? { platform: 'google_meet', id: id.toLowerCase() } : null;
+  }
+  if (call.platform === 'zoom') {
+    return ZOOM_MEETING_NUMBER.test(id) ? { platform: 'zoom', id } : null;
+  }
+  if (call.platform === 'microsoft_teams') {
+    if (TEAMS_THREAD_ID.test(id)) return { platform: 'microsoft_teams', id: id.toLowerCase() };
+    return TEAMS_MEET_NUMBER.test(id) ? { platform: 'microsoft_teams', id } : null;
+  }
+  return null;
+}
 
 // The call a join address names: the platform and the id the platform gives the meeting (a Meet code, a Zoom meeting number, a Teams thread). Null for any address this does not recognise (a calendar link, a
 // vanity address, another host), so a call is never taken for another by a guess. Pure: the server turns it into a key by hashing it with the org, and stores only the hash.
-export function captureCallOf(joinUrl: string): { platform: CapturePlatform; id: string } | null {
+export function captureCallOf(joinUrl: string): CaptureCall | null {
   let url: URL;
   try {
     url = new URL(joinUrl.trim());
@@ -53,25 +81,24 @@ export function captureCallOf(joinUrl: string): { platform: CapturePlatform; id:
   const host = url.hostname.toLowerCase();
   const path = url.pathname.replace(/\/+$/, '');
   if (host === 'meet.google.com') {
-    const m = /^\/([a-z]{3}-[a-z]{4}-[a-z]{3})$/i.exec(path);
-    return m ? { platform: 'google_meet', id: (m[1] as string).toLowerCase() } : null;
+    const m = /^\/([^/]+)$/.exec(path);
+    return m ? normalizeCaptureCall({ platform: 'google_meet', id: m[1] as string }) : null;
   }
   if (host === 'zoom.us' || host.endsWith('.zoom.us')) {
-    const m = /^\/(?:j|wc\/join)\/(\d{9,11})$/.exec(path);
-    return m ? { platform: 'zoom', id: m[1] as string } : null;
+    const m = /^\/(?:j|wc\/join)\/(\d+)$/.exec(path);
+    return m ? normalizeCaptureCall({ platform: 'zoom', id: m[1] as string }) : null;
   }
   if (host === 'teams.microsoft.com') {
     const thread = /^\/l\/meetup-join\/([^/]+)(?:\/|$)/.exec(path);
     if (thread) {
       try {
-        const id = decodeURIComponent(thread[1] as string).toLowerCase();
-        return /^19:meeting_[a-z0-9_-]+@thread\.(?:v2|skype)$/.test(id) ? { platform: 'microsoft_teams', id } : null;
+        return normalizeCaptureCall({ platform: 'microsoft_teams', id: decodeURIComponent(thread[1] as string) });
       } catch {
         return null;
       }
     }
-    const meet = /^\/meet\/(\d{9,15})$/.exec(path);
-    return meet ? { platform: 'microsoft_teams', id: meet[1] as string } : null;
+    const meet = /^\/meet\/(\d+)$/.exec(path);
+    return meet ? normalizeCaptureCall({ platform: 'microsoft_teams', id: meet[1] as string }) : null;
   }
   return null;
 }

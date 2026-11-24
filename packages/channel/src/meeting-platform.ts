@@ -33,6 +33,68 @@ export type MeetingPlatformErrorCode =
   | 'transcripts_disabled'
   | 'speakers_disabled';
 
+export type MeetingPlatformCallPlatform = 'google_meet' | 'zoom' | 'microsoft_teams';
+
+export interface MeetingPlatformCall {
+  platform: MeetingPlatformCallPlatform;
+  id: string;
+}
+
+const GOOGLE_MEET_CODE = /^[a-z]{3}-[a-z]{4}-[a-z]{3}$/i;
+const ZOOM_MEETING_NUMBER = /^\d{9,11}$/;
+const TEAMS_THREAD_ID = /^19:meeting_[a-z0-9_-]+@thread\.(?:v2|skype)$/i;
+const TEAMS_MEET_NUMBER = /^\d{9,15}$/;
+
+// Canonical call identifier validation & extraction matching `@ludy/kernel-contract`'s `captureCallOf`
+// (`packages/channel` does not depend on `@ludy/kernel-contract`; parity tests pin the two equal).
+export function normalizeMeetingPlatformCall(call: { platform: string; id: string }): MeetingPlatformCall | null {
+  const id = call.id.trim();
+  if (call.platform === 'google_meet') {
+    return GOOGLE_MEET_CODE.test(id) ? { platform: 'google_meet', id: id.toLowerCase() } : null;
+  }
+  if (call.platform === 'zoom') {
+    return ZOOM_MEETING_NUMBER.test(id) ? { platform: 'zoom', id } : null;
+  }
+  if (call.platform === 'microsoft_teams') {
+    if (TEAMS_THREAD_ID.test(id)) return { platform: 'microsoft_teams', id: id.toLowerCase() };
+    return TEAMS_MEET_NUMBER.test(id) ? { platform: 'microsoft_teams', id } : null;
+  }
+  return null;
+}
+
+export function meetingPlatformCallOf(joinUrl: string): MeetingPlatformCall | null {
+  let url: URL;
+  try {
+    url = new URL(joinUrl.trim());
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'https:' || url.username !== '' || url.password !== '') return null;
+  const host = url.hostname.toLowerCase();
+  const path = url.pathname.replace(/\/+$/, '');
+  if (host === 'meet.google.com') {
+    const m = /^\/([^/]+)$/.exec(path);
+    return m ? normalizeMeetingPlatformCall({ platform: 'google_meet', id: m[1] as string }) : null;
+  }
+  if (host === 'zoom.us' || host.endsWith('.zoom.us')) {
+    const m = /^\/(?:j|wc\/join)\/(\d+)$/.exec(path);
+    return m ? normalizeMeetingPlatformCall({ platform: 'zoom', id: m[1] as string }) : null;
+  }
+  if (host === 'teams.microsoft.com') {
+    const thread = /^\/l\/meetup-join\/([^/]+)(?:\/|$)/.exec(path);
+    if (thread) {
+      try {
+        return normalizeMeetingPlatformCall({ platform: 'microsoft_teams', id: decodeURIComponent(thread[1] as string) });
+      } catch {
+        return null;
+      }
+    }
+    const meet = /^\/meet\/(\d+)$/.exec(path);
+    return meet ? normalizeMeetingPlatformCall({ platform: 'microsoft_teams', id: meet[1] as string }) : null;
+  }
+  return null;
+}
+
 // What the adapter lists for one recording, as `zMeetingPlatformListed` of the contract reads it (`startedAt` an ISO instant with an offset).
 export interface MeetingPlatformListed {
   id: string;
@@ -43,6 +105,8 @@ export interface MeetingPlatformListed {
   hasAudio: boolean;
   hasVideo: boolean;
   hasTranscript: boolean;
+  // Canonical call identity (`platform` + `id`, never a raw join URL or password query) when the platform gives one.
+  call?: MeetingPlatformCall | null | undefined;
 }
 
 export interface MeetingPlatformCredential {
@@ -196,6 +260,8 @@ export interface SandboxMeetingRecording {
   video?: Uint8Array | undefined;
   // The platform's own transcript of the call (C2, #3174), for a recording that has one; the offline sandbox labels it like Google Meet's.
   transcript?: MeetingPlatformTranscriptEntry[] | undefined;
+  call?: MeetingPlatformCall | undefined;
+  joinUrl?: string | undefined;
 }
 
 export interface SandboxMeetingPlatformOptions {
@@ -226,16 +292,20 @@ export class SandboxMeetingPlatform implements MeetingPlatformAdapter {
       .filter((r) => r.startedAt.getTime() >= since.getTime())
       .sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime())
       .slice(0, MEETING_PLATFORM_LIST_MAX)
-      .map((r) => ({
-        id: r.id,
-        title: r.title.slice(0, 200),
-        startedAt: r.startedAt.toISOString(),
-        lengthSeconds: r.lengthSeconds,
-        sizeBytes: (r.audio?.byteLength ?? 0) + (r.video?.byteLength ?? 0) || null,
-        hasAudio: r.hasAudio,
-        hasVideo: r.hasVideo,
-        hasTranscript: r.hasTranscript,
-      }));
+      .map((r) => {
+        const call = r.call ? normalizeMeetingPlatformCall(r.call) : r.joinUrl ? meetingPlatformCallOf(r.joinUrl) : null;
+        return {
+          id: r.id,
+          title: r.title.slice(0, 200),
+          startedAt: r.startedAt.toISOString(),
+          lengthSeconds: r.lengthSeconds,
+          sizeBytes: (r.audio?.byteLength ?? 0) + (r.video?.byteLength ?? 0) || null,
+          hasAudio: r.hasAudio,
+          hasVideo: r.hasVideo,
+          hasTranscript: r.hasTranscript,
+          ...(call ? { call } : {}),
+        };
+      });
   }
 
   async transcript(_credential: MeetingPlatformCredential, recordingId: string, _signal?: AbortSignal): Promise<MeetingPlatformTranscript> {

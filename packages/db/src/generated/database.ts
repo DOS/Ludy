@@ -3133,6 +3133,7 @@ export interface KernelMeetingPlatformRecordingTable {
   error_code: ColumnType<string | null, NotGranted, NotGranted>;
   created_at: ColumnType<Date, NotGranted, NotGranted>;
   updated_at: ColumnType<Date, NotGranted, NotGranted>;
+  meeting_key: ColumnType<string | null, NotGranted, NotGranted>;
 }
 
 /** ludy_kernel.member_availability */
