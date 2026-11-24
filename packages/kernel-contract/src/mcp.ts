@@ -40,6 +40,10 @@ export type McpGrantView = z.infer<typeof zMcpGrantView>;
 export const zMcpMemberGrantsSet = z.strictObject({ enabled: z.boolean() });
 export const zMcpMemberGrantsView = z.strictObject({ enabled: z.boolean() });
 
+// The pairing code (#4591; ADR-0051 decision 2): an owner or admin names the connection and gets a single-use code, shown once, that an MCP client without OAuth trades for a token.
+export const zMcpPairingIssue = z.strictObject({ label: z.string().trim().min(1).max(120) });
+export const zMcpPairingIssued = z.strictObject({ code: z.string(), expiresAt: z.string() });
+
 export const zMcpGrantRevoke = z.strictObject({ grantId: zId });
 export const zMcpGrantRevoked = z.strictObject({ grantId: zId, revoked: z.literal(true) });
 

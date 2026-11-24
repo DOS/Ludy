@@ -833,6 +833,7 @@ export function createHttpApp(deps: HttpDeps) {
   if (deps.oauth) {
     mountOauthProvider(app, {
       oauth: deps.oauth,
+      runtime,
       clientKey: (c) => clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)),
       registerPerMinute: config.OAUTH_REGISTER_PER_MINUTE,
       registerGlobalPerMinute: config.OAUTH_REGISTER_GLOBAL_PER_MINUTE,

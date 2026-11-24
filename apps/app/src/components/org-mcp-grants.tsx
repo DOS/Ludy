@@ -8,6 +8,7 @@ import { useState } from 'react';
 import { useTranslations } from 'use-intl';
 import { Badge } from '@ludy/ui/components/badge';
 import { Button } from '@ludy/ui/components/button';
+import { Input } from '@ludy/ui/components/input';
 import { MCP_WRITE_SCOPE_IDS } from '@ludy/kernel-contract';
 import { Card } from '@ludy/ui/components/card';
 import { useFormat } from '../i18n/provider.tsx';
@@ -34,6 +35,91 @@ export interface GrantMember {
   userId: string;
   displayName: string | null;
   email: string;
+}
+
+// The pairing code (#4591; ADR-0051 decision 2): the fallback for an AI app that cannot sign in through OAuth. An owner or admin names the connection and gets a single-use code, shown once and valid for
+// 10 minutes; the app trades it at the redeem address for a token of a read-only company connection, which then appears in the list below like any other and is disconnected the same way. The kernel
+// makes the code and keeps only its hash; no AI takes part here.
+function PairingCode() {
+  const t = useTranslations('orgMcpGrants.pairing');
+  const f = useFormat();
+  const [open, setOpen] = useState(false);
+  const [label, setLabel] = useState('');
+  const [copied, setCopied] = useState(false);
+  const issue = useMutation(
+    orpc.mcp.pairing.issue.mutationOptions({
+      onError: () => void queryClient.invalidateQueries({ queryKey: orpc.mcp.key() }),
+    }),
+  );
+  const done = () => {
+    issue.reset();
+    setOpen(false);
+    setLabel('');
+    setCopied(false);
+    void queryClient.invalidateQueries({ queryKey: orpc.mcp.key() });
+  };
+  const copy = (code: string) => {
+    void navigator.clipboard?.writeText(code).then(
+      () => setCopied(true),
+      () => setCopied(false),
+    );
+  };
+  const origin = typeof window === 'undefined' ? '' : window.location.origin;
+  return (
+    <div className="space-y-2 rounded-lg border p-3 text-sm" data-testid="org-mcp-pairing">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="min-w-0">
+          <p className="font-medium text-foreground">{t('title')}</p>
+          <p className="text-xs text-subtle-foreground">{t('hint')}</p>
+        </div>
+        {!open && (
+          <Button size="sm" variant="outline" aria-expanded={false} onClick={() => setOpen(true)}>
+            {t('open')}
+          </Button>
+        )}
+      </div>
+      {open && !issue.data && (
+        <form
+          className="space-y-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (label.trim() !== '') issue.mutate({ label: label.trim() });
+          }}
+        >
+          <label className="block space-y-1">
+            <span className="text-foreground">{t('label')}</span>
+            <Input autoComplete="off" maxLength={120} placeholder={t('labelPlaceholder')} value={label} onChange={(e) => setLabel(e.target.value)} />
+          </label>
+          <p className="text-xs text-subtle-foreground">{t('scopeNote')}</p>
+          {issue.error && <ErrorText>{errorMessage(issue.error)}</ErrorText>}
+          <div className="flex flex-wrap gap-2">
+            <Button type="submit" size="sm" loading={issue.isPending} disabled={label.trim() === ''}>
+              {t('create')}
+            </Button>
+            <Button type="button" size="sm" variant="outline" onClick={done}>
+              {t('cancel')}
+            </Button>
+          </div>
+        </form>
+      )}
+      {issue.data && (
+        <div className="space-y-2" role="status" data-testid="org-mcp-pairing-code">
+          <p className="font-medium text-foreground">{t('codeOnce')}</p>
+          <code className="block break-all rounded bg-muted px-2 py-2 text-center text-lg font-semibold tracking-widest text-foreground">{issue.data.code}</code>
+          <p className="text-xs text-subtle-foreground">{t('expires', { at: f.dateTime(issue.data.expiresAt) })}</p>
+          <p className="text-xs text-subtle-foreground">{t('howTo', { url: `${origin}/oauth/pairing/redeem` })}</p>
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="outline" onClick={() => copy(issue.data.code)}>
+              {copied ? t('copied') : t('copy')}
+            </Button>
+            <Button size="sm" onClick={done}>
+              {t('done')}
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 // The org's switch for member-bound grants: an owner turns it on or off. Off by default. Turning it off ends every non-admin member's connection at its next request.
@@ -102,6 +188,7 @@ export function OrgMcpGrants({ members, viewerRole = 'admin' }: { members: reado
       <h2 className="text-base font-semibold text-foreground">{t('title')}</h2>
       <p className="text-sm text-muted-foreground">{t(canManage ? 'intro' : 'introOwn')}</p>
       {viewerRole === 'owner' && <MemberGrantsSwitch />}
+      {canManage && <PairingCode />}
       {grants.isPending && <RowsSkeleton rows={2} />}
       {grants.error && <ErrorText>{errorMessage(grants.error)}</ErrorText>}
       {grants.data && live.length === 0 && <p className="text-sm text-muted-foreground">{t('none')}</p>}
@@ -113,6 +200,7 @@ export function OrgMcpGrants({ members, viewerRole = 'admin' }: { members: reado
                 <span className="truncate font-medium">{r.clientName}</span>
                 <span className="truncate text-muted-foreground">{r.clientHost}</span>
                 {r.kind === 'member' && <Badge variant="outline">{t('memberKind')}</Badge>}
+                {r.clientId.startsWith('pairing:') && <Badge variant="outline">{t('pairingKind')}</Badge>}
                 {badgeKeys(r.scopes).map((key) => (
                   <Badge key={key}>{t(`scope.${key}`)}</Badge>
                 ))}
