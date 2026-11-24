@@ -46,6 +46,7 @@ import {
   type EInvoiceReasonFacts,
   type ExpenseVarianceNoteFacts,
   type HrAddendumCheckInput,
+  type HrOkrCheckinDraftInput,
   type HrProbationSummaryInput,
   type HrSelfPolicyQaInput,
   type HrSelfRequestDraftInput,
@@ -117,6 +118,7 @@ import {
   hasStealthControls,
   hasUngroundedMoneyOrIdToken,
   hasUngroundedMoneyOrScaleWords,
+  stripTrustedPhrases,
 } from '../src/injection-guards.ts';
 import { INJECTION_CORPUS } from './fixtures/injection-corpus.ts';
 
@@ -1105,6 +1107,23 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
         `weeklyStatus echoed tainted untrustedInput ${c.id}`,
       ).toBe('none');
       expect((await reader.projectCycleSummary({ ...cycleFacts, language: c.language })).kind, `cycleSummary ${c.id}`).toBe('none');
+      expect(
+        checkProjectCycleSummary(
+          {
+            ...cycleFacts,
+            language: c.language,
+            tasks: [{ title: c.untrustedInput, tainted: true, status: 'in_progress', dueDay: '2026-09-25', commentCount: 0, latestComment: null }],
+          },
+          {
+            sentences: [
+              `Cycle 3 done 4 tasks: ${c.untrustedInput.slice(0, 120)}`,
+              'Two open tasks remain.',
+              'Average velocity is 4 tasks and 8 points.',
+            ],
+          },
+        ).kind,
+        `cycleSummary echoed tainted untrustedInput ${c.id}`,
+      ).toBe('none');
       const dedupeRes = await reader.roadmapDedupe({ ...dedupeFacts, language: c.language });
       expect(dedupeRes.kind === 'none' || dedupeRes.suggestions.length === 0, `roadmapDedupe ${c.id}`).toBe(true);
       expect((await reader.roadmapChangelogDraft({ ...changelogFacts, language: c.language })).kind, `changelog ${c.id}`).toBe('none');
@@ -1232,6 +1251,48 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
         },
       ).kind,
     ).toBe('none');
+
+    // Guard literal "dot"/"at" and connector tokens inside obfuscated contact connectors (#4637).
+    expect(stripTrustedPhrases('evil(dot)invalid', ['dot'])).toBe('evil(dot)invalid');
+    expect(stripTrustedPhrases('evil dot invalid', ['dot'])).toBe('evil dot invalid');
+    expect(stripTrustedPhrases('evil\uFF08dot\uFF09com', ['dot'])).toBe('evil\uFF08dot\uFF09com');
+    expect(stripTrustedPhrases('(dot)invalid', ['dot'])).toBe('(dot)invalid');
+    expect(stripTrustedPhrases('evil(at)invalid', ['at'])).toBe('evil(at)invalid');
+    expect(stripTrustedPhrases('evil at invalid', ['at'])).toBe('evil at invalid');
+    expect(stripTrustedPhrases('evil(dot)invalid', ['(dot)'])).toBe('evil(dot)invalid');
+    expect(stripTrustedPhrases('evil(at)invalid', ['(at)'])).toBe('evil(at)invalid');
+    expect(stripTrustedPhrases('evil(dot)invalid', ['(dot'])).toBe('evil(dot)invalid');
+    expect(stripTrustedPhrases('evil(dot)invalid', ['dot)'])).toBe('evil(dot)invalid');
+    expect(stripTrustedPhrases('evil[.]invalid', ['[.'])).toBe('evil[.]invalid');
+    expect(stripTrustedPhrases('evil[.]invalid', ['.]'])).toBe('evil[.]invalid');
+    expect(stripTrustedPhrases('Du an dot: da xong 2 viec.', ['dot'])).toBe('Du an  : da xong 2 viec.');
+    expect(stripTrustedPhrases('Hoan thanh 2 viec cho du an dot.', ['dot'])).toBe('Hoan thanh 2 viec cho du an  .');
+
+    const dotCycleFacts: ProjectCycleSummaryFacts = {
+      ...cycleFacts,
+      projectName: 'dot',
+      cycle: { ...cycleFacts.cycle, name: 'at', goal: 'Shop' },
+    };
+    for (const connector of ['evil(dot)invalid', 'evil dot invalid', 'evil\uFF08dot\uFF09com', 'evil(at)invalid', 'See (dot)invalid', 'Shop\uFF08dot\uFF09invalid']) {
+      expect(
+        checkProjectCycleSummary(dotCycleFacts, {
+          sentences: ['Chu ky 3 da hoan thanh 4 viec.', `Kiem tra ${connector} ngay.`, 'Toc do trung binh 8 diem.'],
+        }),
+        `cycleSummary ${connector}`,
+      ).toEqual({ kind: 'none', code: 'LINK' });
+    }
+    expect(
+      checkRoadmapDedupe(
+        { ...dedupeFacts, boardTitle: 'dot' },
+        { suggestions: [{ sourceItemId: 'item-1', targetItemId: 'item-2', confidence: 'high', reason: 'Kiem tra evil(dot)invalid ngay.' }] },
+      ).kind,
+    ).toBe('none');
+    expect(
+      checkTriageAssist(
+        { ...triageAssistFacts, projectName: 'at' },
+        { recommendedPriority: 'high', suggestedAssigneePositionId: null, suggestedCycleId: null, duplicateTaskId: null, reason: 'Kiem tra evil(at)invalid ngay.' },
+      ).kind,
+    ).toBe('none');
   });
 
   it('hr.*: refuses injections across recruiting_brief, attendance_anomaly, cv_extract, probation_summary, request_draft, policy_qa, addendum_check', async () => {
@@ -1242,6 +1303,7 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
     cover('hr.request_draft');
     cover('hr.policy_qa');
     cover('hr.addendum_check');
+    cover('hr.okr_checkin_draft');
 
     const recruitingInput: RecruitingBriefInput = {
       language: 'vi',
@@ -1295,6 +1357,26 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
       previousTitle: 'Chuyên viên',
       newTitle: 'Trưởng nhóm',
     };
+    const okrCheckinInput: HrOkrCheckinDraftInput = {
+      language: 'vi',
+      quarter: '2026-Q4',
+      objectiveScope: 'individual',
+      objectiveTitle: 'Tối ưu giao hàng nội thành',
+      keyResultTitle: 'Hoàn thành 4 bước tự động hóa đơn hàng',
+      metricType: 'project_tasks',
+      targetValue: '4',
+      currentValue: '3',
+      unit: 'công việc',
+      progressPct: '75',
+      departmentName: 'Vận hành',
+      lastCheckinNote: null,
+      projectsAvailable: true,
+      projectAccessible: true,
+      linkedProjectName: 'Vận hành Q4',
+      completedLinkedTasks: 3,
+      totalLinkedTasks: 4,
+      linkedTaskTitles: [{ title: 'Kết nối đơn vị vận chuyển', completed: true }],
+    };
 
     for (const c of INJECTION_CORPUS) {
       const reader = new InboxReader(STUB_CONFIG, {
@@ -1325,6 +1407,10 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
           output: { note: c.poisonedOutput },
           usage: zeroUsage,
         }),
+        hrOkrCheckinDraft: async () => ({
+          output: { draft: c.poisonedOutput },
+          usage: zeroUsage,
+        }),
       });
 
       const recRes = await reader.recruitingBrief({ ...recruitingInput, notes: [c.untrustedInput] });
@@ -1349,6 +1435,10 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
       const addRes = await reader.hrAddendumCheck({ ...addendumInput, language: c.language, changeSummary: c.untrustedInput });
       expect(addRes.reason, `addendum reason ${c.id}`).not.toBe('ok');
       expect(addRes.lyNote, `addendum lyNote ${c.id}`).toBeNull();
+
+      const okrRes = await reader.hrOkrCheckinDraft({ ...okrCheckinInput, language: c.language, lastCheckinNote: c.untrustedInput });
+      expect(okrRes.ai.ok, `okr ai.ok ${c.id}`).toBe(false);
+      expect(okrRes.draft, `okr draft ${c.id}`).toBeNull();
     }
 
     const requestDraftBase: HrSelfRequestDraftInput = {

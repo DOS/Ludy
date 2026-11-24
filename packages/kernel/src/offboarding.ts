@@ -68,7 +68,7 @@ export const EXPORT_TABLES = {
   // are keyed by the deployment. The follow-up mails of a meeting (#4533, ADR-0047) are left out: each holds the meeting's summary, decisions and action items or a note about it (payload),
   // the subject the recorder typed and the recipients, and the meeting may be attendees-only, which the export leaves out. The mail log drops the payload 30 days after a mail reaches a final
   // status (mail_retention_purge), but keeps the address and the subject for 13 months, so the rows stay out for as long as they exist. The delivery events (#4577) follow their mail: an event is
-  // exported only when its mail is (a mail_event always has its message, by foreign key; the anti-join touches only the small follow-up set), so no event points at a message the snapshot does not hold.
+  // exported only when its mail is (a mail_event always has its message, by foreign key; the anti-join touches only the small follow-up set), so no event points at a message the snapshot does not hold. A suppression row (#4584) is kept whole except that its source_message_id is nulled when it names a follow-up mail (the scrub in the snapshot query below).
   'kernel.mail_message': { from: `(SELECT m.* FROM ludy_kernel.mail_message m WHERE m.source <> '${FOLLOWUP_MAIL_SOURCE}')`, omit: [] },
   'kernel.mail_suppression': { from: 'ludy_kernel.mail_suppression', omit: [] },
   'kernel.mail_event': { from: `(SELECT e.* FROM ludy_kernel.mail_event e WHERE NOT EXISTS (SELECT 1 FROM ludy_kernel.mail_message m WHERE m.org_id = e.org_id AND m.id = e.message_id AND m.source = '${FOLLOWUP_MAIL_SOURCE}'))`, omit: [] },
@@ -286,6 +286,8 @@ export const EXPORT_TABLES = {
   'projects.project': { from: 'ludy_projects.project', omit: [] },
   'projects.project_column': { from: 'ludy_projects.project_column', omit: [] },
   'projects.project_cycle': { from: 'ludy_projects.project_cycle', omit: [] },
+  'projects.project_cycle_snapshot': { from: 'ludy_projects.project_cycle_snapshot', omit: [] },
+  'projects.project_cycle_task_history': { from: 'ludy_projects.project_cycle_task_history', omit: [] },
   'projects.project_member': { from: 'ludy_projects.project_member', omit: [] },
   'projects.project_task': { from: 'ludy_projects.project_task', omit: [] },
   'projects.roadmap_board': { from: 'ludy_projects.roadmap_board', omit: [] },
@@ -302,7 +304,7 @@ export const EXPORT_TABLES = {
   },
   // eSign (#3323, #3526, #3554, #3811, #3821): envelopes, post-signature obligations, signers (omitting deployment-keyed signer_ip_hash), fields, AI analysis summaries, hash-chained signing events, reusable templates, and CA PAdES signing requests (omitting idempotency_key); credential-bearing ca_connection, signing_token, signing_otp, and template_direct_link tables stay out, and attendees-only meeting_minutes envelopes stay out under ADR-0047 point 7.
   'sign.envelope': {
-    from: '(SELECT e.* FROM ludy_sign.envelope e WHERE ludy_sign.is_exportable_envelope(e.org_id, e.source_kind, e.source_id))',
+    from: '(SELECT e.* FROM ludy_sign.envelope e WHERE ludy_sign.is_exportable_envelope_id(e.org_id, e.id))',
     omit: [],
   },
   'sign.envelope_obligation': {
@@ -499,12 +501,15 @@ export const exportSnapshot = defineQuery({
       // The worker process a system audit row names (detail.workerInstance, #1951) is the deployment's, never the org's:
       // a host or pod name, left out of the org's copy as the audit log leaves it out (auditDetailLine).
       // For projects.roadmap_signal (#4492, ADR-0047), omit quote_excerpt on attendees-only meetings not exported by meeting_export_rows().
+      // For kernel.mail_suppression (#4584), source_message_id is nulled when it names a follow-up mail, which kernel.mail_message leaves out of the snapshot (#4533): the row is kept (the address hash and why it is suppressed are the org's own), only the pointer at a mail the snapshot does not hold goes.
       const scrub =
         table === 'kernel.audit_event'
           ? sql`|| pg_catalog.jsonb_build_object('detail', CASE WHEN pg_catalog.jsonb_typeof(t.detail) = 'object' THEN t.detail - 'workerInstance' ELSE t.detail END)`
-          : table === 'projects.roadmap_signal'
-            ? sql`|| CASE WHEN t.source_type = 'meetings.meeting' AND NOT EXISTS (SELECT 1 FROM ludy_kernel.meeting_export_rows() m WHERE m.org_id = t.org_id AND m.id = t.source_id) THEN pg_catalog.jsonb_build_object('quote_excerpt', NULL) ELSE '{}'::jsonb END`
-            : sql``;
+          : table === 'kernel.mail_suppression'
+            ? sql`|| CASE WHEN t.source_message_id IS NOT NULL AND EXISTS (SELECT 1 FROM ludy_kernel.mail_message m WHERE m.org_id = t.org_id AND m.id = t.source_message_id AND m.source = ${FOLLOWUP_MAIL_SOURCE}) THEN pg_catalog.jsonb_build_object('source_message_id', NULL) ELSE '{}'::jsonb END`
+            : table === 'projects.roadmap_signal'
+              ? sql`|| CASE WHEN t.source_type = 'meetings.meeting' AND NOT EXISTS (SELECT 1 FROM ludy_kernel.meeting_export_rows() m WHERE m.org_id = t.org_id AND m.id = t.source_id) THEN pg_catalog.jsonb_build_object('quote_excerpt', NULL) ELSE '{}'::jsonb END`
+              : sql``;
       // spec.from is one of the constant names above, never input.
       await sql`
         DECLARE crove_org_export NO SCROLL CURSOR FOR
@@ -554,6 +559,8 @@ export const OWNER_RUN_EXPORT_TABLES = {
   'hr.business_trip_request': { from: 'ludy_hr.business_trip_request', omit: [] },
   'hr.contract_addendum': { from: 'ludy_hr.contract_addendum', omit: [] },
   'hr.employee_asset_handover': { from: 'ludy_hr.employee_asset_handover', omit: [] },
+  'hr.okr_objective': { from: 'ludy_hr.okr_objective', omit: [] },
+  'hr.okr_key_result': { from: 'ludy_hr.okr_key_result', omit: [] },
   // Lightweight recruiting openings and candidates (#3425), readable by owners and admins only.
   'hr.job_opening': { from: 'ludy_hr.job_opening', omit: [] },
   'hr.candidate': { from: 'ludy_hr.candidate', omit: [] },

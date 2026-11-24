@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Projects Triage Inbox (#4493, ADR-0058): collects internal and external signals into ludy_projects.project_triage_item
-// with canonical lock ordering (triage item FOR UPDATE -> kernel.task.create_from_triage (position) -> project FOR SHARE),
+// with canonical lock ordering (triage item FOR UPDATE -> roadmap_item FOR UPDATE -> kernel.task.create_from_triage (position) -> project FOR SHARE),
 // #2604 private-project isolation, cross-module read verification via ctxQueryFn, and Vy AI assist source assembly.
 import { sql } from 'kysely';
 import { z } from 'zod';
@@ -136,7 +136,7 @@ function triageAlreadyResolved(): DomainError {
 }
 
 async function lockTriageItem(trx: CommandContext['trx'], orgId: string, itemId: string) {
-  // Lock ludy_projects.project_triage_item alone first so canonical `triage_item -> position -> project` lock order stays intact.
+  // Lock ludy_projects.project_triage_item alone first so canonical `triage_item -> roadmap_item -> position -> project` lock order stays intact.
   const locked = await trx
     .selectFrom('ludy_projects.project_triage_item')
     .select([
@@ -718,7 +718,19 @@ export const projectTriageAccept = defineCommand({
           : (item.source_type as 'kernel.conversation' | 'meetings.meeting');
     const sourceRefId = item.source_id ?? item.id;
 
-    // Canonical lock order: kernel.task.create_from_triage locks ludy_kernel.position BEFORE we lock ludy_projects.project.
+    // Canonical lock order (#4631): lock source roadmap_item FOR UPDATE (when applicable) BEFORE
+    // kernel.task.create_from_triage locks ludy_kernel.position and BEFORE we lock ludy_projects.project FOR SHARE,
+    // matching roadmapItemConvertToTask and roadmap_item_privacy_guard_tr (`roadmap_item -> project_task -> project`).
+    if (item.source_type === 'roadmap.item' && item.source_id !== null) {
+      await ctx.trx
+        .selectFrom('ludy_projects.roadmap_item')
+        .select('id')
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', item.source_id)
+        .forUpdate()
+        .executeTakeFirst();
+    }
+
     const created = await ctx.run<{ taskId: string }>('kernel.task.create_from_triage', {
       sourceType: sourceRefType,
       sourceId: sourceRefId,

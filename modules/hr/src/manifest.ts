@@ -47,6 +47,15 @@ export const hrManifest = defineModule({
         ['org_id', 'id', 'legal_entity_id', 'employee_id', 'department_id', 'month', 'start_on', 'end_on', 'kind', 'days', 'status', 'l1_approver_user_id', 'l1_acted_at', 'final_acted_by', 'final_acted_at', 'payroll_leave_entry_id', 'created_by', 'created_at', 'updated_at'],
         { reason: 'pii', decision_note: 'pii' },
       ),
+      // Lightweight quarterly OKR key results linked optionally to Ludy Cong tac project tasks (#4529 Stage 6D); last_checkin_note cleared on employee erasure.
+      okr_key_result: columns(
+        ['org_id', 'id', 'legal_entity_id', 'objective_id', 'title', 'metric_type', 'target_value', 'current_value', 'unit', 'linked_project_id', 'linked_task_ids', 'progress_pct', 'last_checkin_at', 'last_checkin_by', 'created_by', 'created_at', 'updated_at'],
+        { last_checkin_note: 'pii' },
+      ),
+      // Lightweight quarterly OKR objectives in a Company -> Department -> Individual tree (#4529 Stage 6D).
+      okr_objective: columns(
+        ['org_id', 'id', 'legal_entity_id', 'quarter', 'scope', 'title', 'owner_employee_id', 'department_id', 'parent_objective_id', 'status', 'created_by', 'created_at', 'updated_at'],
+      ),
       // Employee self-service onboarding checklist and HR-reviewed PII updates (#4448 Stage 5B).
       onboarding_submission: columns(
         ['org_id', 'id', 'legal_entity_id', 'employee_id', 'status', 'contact_confirmed', 'id_confirmed', 'bank_confirmed', 'handbook_confirmed', 'reviewed_by', 'reviewed_at', 'created_by', 'created_at', 'updated_at'],
@@ -151,6 +160,8 @@ export const hrManifest = defineModule({
     { type: 'hr.employee_asset_handover', table: 'employee_asset_handover', legalEntityScoped: true, audit: 'command' },
     { type: 'hr.job_opening', table: 'job_opening', legalEntityScoped: true, audit: 'command' },
     { type: 'hr.leave_request', table: 'leave_request', legalEntityScoped: true, audit: 'command' },
+    { type: 'hr.okr_key_result', table: 'okr_key_result', legalEntityScoped: true, audit: 'command' },
+    { type: 'hr.okr_objective', table: 'okr_objective', legalEntityScoped: true, audit: 'command' },
     { type: 'hr.onboarding_submission', table: 'onboarding_submission', legalEntityScoped: true, audit: 'command' },
     { type: 'hr.overtime_request', table: 'overtime_request', legalEntityScoped: true, audit: 'command' },
     // Retro pay and offset deduction payroll adjustment items (#4527 Stage 6B).

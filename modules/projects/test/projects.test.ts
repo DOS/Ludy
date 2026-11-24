@@ -14,6 +14,8 @@ describe('@ludy/mod-projects (#2591)', () => {
       'project',
       'project_column',
       'project_cycle',
+      'project_cycle_snapshot',
+      'project_cycle_task_history',
       'project_member',
       'project_task',
       'project_triage_item',
@@ -57,6 +59,10 @@ describe('@ludy/mod-projects (#2591)', () => {
     expect(projectsManifest.tables.ludy_projects.project_cycle.name).toBe('pii');
     expect(projectsManifest.tables.ludy_projects.project_cycle.goal).toBe('pii');
     expect(projectsManifest.tables.ludy_projects.project_cycle.status).toBe('internal');
+    expect(projectsManifest.tables.ludy_projects.project_cycle_snapshot.task_status).toBe('internal');
+    expect(projectsManifest.tables.ludy_projects.project_cycle_snapshot.story_points).toBe('internal');
+    expect(projectsManifest.tables.ludy_projects.project_cycle_task_history.left_reason).toBe('internal');
+    expect(projectsManifest.tables.ludy_projects.project_cycle_task_history.story_points).toBe('internal');
     expect(projectsManifest.tables.ludy_projects.project_member.user_id).toBe('internal');
     expect(projectsManifest.tables.ludy_projects.project_task.task_id).toBe('internal');
     expect(projectsManifest.tables.ludy_projects.project_task.start_on).toBe('internal');

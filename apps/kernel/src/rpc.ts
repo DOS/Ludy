@@ -77,11 +77,13 @@ import {
 import { draftProbationSummary, hrProbationAi, type HrProbationPorts } from './hr-probation-ai.ts';
 import { askSelfHrPolicy, draftSelfHrRequest, hrSelfAi, type HrSelfAiPorts } from './hr-self-ai.ts';
 import { checkAddendumDraft, hrAddendumAi, type HrAddendumPorts } from './hr-addendum-ai.ts';
+import { draftOkrCheckinSummary, hrOkrAi, type HrOkrPorts } from './hr-okr-ai.ts';
 import type { HrAttendanceAnomaliesSnapshot } from '@ludy/kernel-contract';
 import type {
   HrAddendumCheckSource,
   HrInviteDraftContext,
   HrLaborCheckSnapshot,
+  HrOkrDraftSource,
   HrProbationBriefSource,
   HrRecruitingBriefSnapshot,
   HrSelfAiStatusContext,
@@ -597,6 +599,12 @@ export function createRpcHandler(
       : null,
     suggestionBudget(),
   );
+  const okrAi = hrOkrAi(
+    conversationReader?.hrOkrCheckinDraft
+      ? { hrOkrCheckinDraft: conversationReader.hrOkrCheckinDraft.bind(conversationReader) }
+      : null,
+    suggestionBudget(),
+  );
   // The finance coworker's wording of a payment reminder (#2488): the same reader and model, a budget of its own. It reads no customer text (the model is told the
   // notice level, the language and the sender's name), so the org's switch for AI on its customers' messages does not apply.
   const reminderAi: ReminderAi = { reader: conversationReader?.reminderWords ? { reminderWords: conversationReader.reminderWords.bind(conversationReader) } : null, budget: suggestionBudget() };
@@ -864,6 +872,11 @@ export function createRpcHandler(
     read: (input) => runtime.query<HrAddendumCheckSource>('hr.addendum.check.read', input, { actor, orgId }),
     isAiStopped: async () => (await runtime.query<{ aiStopped: boolean }>('hr.addendum.ai_status', {}, { actor, orgId })).aiStopped,
     record: (input) => runtime.execute('hr.addendum.check.audit', input, { actor, orgId }),
+  });
+  const hrOkrPorts = (orgId: string, actor: UserActor): HrOkrPorts => ({
+    read: (input) => runtime.query<HrOkrDraftSource>('hr.okr.draft.read', input, { actor, orgId }),
+    isAiStopped: async () => (await runtime.query<{ aiStopped: boolean }>('hr.okr.ai_status', {}, { actor, orgId })).aiStopped,
+    record: (input) => runtime.execute('hr.okr.draft.audit', input, { actor, orgId }),
   });
   const hrQuery =
     (name: string) =>
@@ -1407,6 +1420,37 @@ export function createRpcHandler(
         list: os.hr.assets.list.handler(hrQuery('hr.assets.list')),
         assign: os.hr.assets.assign.handler(hrCommand('hr.assets.assign')),
         updateStatus: os.hr.assets.updateStatus.handler(hrCommand('hr.assets.update_status')),
+      },
+      okr: {
+        tree: os.hr.okr.tree.handler(hrQuery('hr.okr.tree')),
+        projectOptions: os.hr.okr.projectOptions.handler(hrQuery('hr.okr.project_options')),
+        projectTasks: os.hr.okr.projectTasks.handler(hrQuery('hr.okr.project_tasks')),
+        draftCheckin: os.hr.okr.draftCheckin.handler(({ context, input }) =>
+          inHr(context, (orgId, actor) =>
+            draftOkrCheckinSummary(
+              okrAi,
+              hrOkrPorts(orgId, actor),
+              runtime,
+              orgId,
+              actor,
+              input,
+              aiMeter ? aiMeter(actor) : 'runtime',
+              aiPrice ? { price: aiPrice } : undefined,
+            ),
+          ),
+        ),
+        objective: {
+          create: os.hr.okr.objective.create.handler(hrCommand('hr.okr.objective.create')),
+          update: os.hr.okr.objective.update.handler(hrCommand('hr.okr.objective.update')),
+          updateStatus: os.hr.okr.objective.updateStatus.handler(hrCommand('hr.okr.objective.set_status')),
+        },
+        kr: {
+          add: os.hr.okr.kr.add.handler(hrCommand('hr.okr.kr.add')),
+          update: os.hr.okr.kr.update.handler(hrCommand('hr.okr.kr.update')),
+          remove: os.hr.okr.kr.remove.handler(hrCommand('hr.okr.kr.remove')),
+          checkin: os.hr.okr.kr.checkin.handler(hrCommand('hr.okr.kr.checkin')),
+          syncProjects: os.hr.okr.kr.syncProjects.handler(hrCommand('hr.okr.kr.sync_projects')),
+        },
       },
       leaveRequests: {
         list: os.hr.leaveRequests.list.handler(hrQuery('hr.leave_request.list')),

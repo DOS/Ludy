@@ -490,4 +490,69 @@ describe('eSign Slice 4a helpers & UI (#3817)', () => {
     expect(profile?.orgSlug).toBe('acme-a');
     expect(calledSlugs).toEqual(['acme-a']);
   });
+
+  it('returns null when orgNameHint matches no org or is ambiguous across duplicate workspace names (#4281)', async () => {
+    // 1. External sender org ("Doi tac ben ngoai") is not in me.orgs -> never fall back to current/other workspace.
+    mockedAccessToken.mockResolvedValueOnce('tok-1');
+    mockedMeGet.mockResolvedValueOnce({
+      orgs: [
+        { slug: 'acme-b', name: 'Cong ty B' },
+        { slug: 'acme-a', name: 'Cong ty A' },
+      ],
+    });
+    const externalCalled: string[] = [];
+    mockedClientForOrg.mockImplementation((slug: string) => {
+      externalCalled.push(slug);
+      return {
+        sign: {
+          member_signature: { list: async () => ({ items: [] }) },
+          stamp: { list: async () => ({ items: [], canManage: true }) },
+        },
+      };
+    });
+    const externalProfile = await loadCeremonyWorkspaceProfiles('Doi tac ben ngoai');
+    expect(externalProfile).toBeNull();
+    expect(externalCalled).toEqual([]);
+
+    // 2. Duplicate workspace display names without a matching getCurrentOrg() -> returns null rather than guessing.
+    mockedAccessToken.mockResolvedValueOnce('tok-2');
+    mockedMeGet.mockResolvedValueOnce({
+      orgs: [
+        { slug: 'acme-1', name: 'Cong ty Trung Ten' },
+        { slug: 'acme-2', name: 'Cong ty  trung   ten' },
+      ],
+    });
+    const dupCalled: string[] = [];
+    mockedClientForOrg.mockImplementation((slug: string) => {
+      dupCalled.push(slug);
+      return {
+        sign: {
+          member_signature: { list: async () => ({ items: [] }) },
+          stamp: { list: async () => ({ items: [], canManage: true }) },
+        },
+      };
+    });
+    const dupProfile = await loadCeremonyWorkspaceProfiles('Cong ty Trung Ten');
+    expect(dupProfile).toBeNull();
+    expect(dupCalled).toEqual([]);
+
+    // 3. Unicode NFD vs NFC workspace names still match cleanly after normalization.
+    mockedAccessToken.mockResolvedValueOnce('tok-3');
+    mockedMeGet.mockResolvedValueOnce({
+      orgs: [{ slug: 'acme-nfd', name: 'Công ty Cổ phần Thành Công'.normalize('NFD') }],
+    });
+    const nfcCalled: string[] = [];
+    mockedClientForOrg.mockImplementation((slug: string) => {
+      nfcCalled.push(slug);
+      return {
+        sign: {
+          member_signature: { list: async () => ({ items: [] }) },
+          stamp: { list: async () => ({ items: [], canManage: true }) },
+        },
+      };
+    });
+    const nfcProfile = await loadCeremonyWorkspaceProfiles('Công ty Cổ phần Thành Công'.normalize('NFC'));
+    expect(nfcProfile?.orgSlug).toBe('acme-nfd');
+    expect(nfcCalled).toEqual(['acme-nfd']);
+  });
 });

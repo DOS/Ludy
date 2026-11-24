@@ -106,6 +106,11 @@ function userOf(actor: QueryContext['actor']): string {
   return actor.userId;
 }
 
+export async function hasWholeOrgScope(trx: QueryContext['trx']): Promise<boolean> {
+  const { rows } = await sql<{ whole: boolean }>`SELECT ('*' = ANY ((ludy_kernel.ctx_le_scope())::text[])) AS whole`.execute(trx);
+  return rows[0]?.whole === true;
+}
+
 const notFound = () => new DomainError('NOTE_NOT_FOUND', 404, 'Không tìm thấy ghi chú này');
 const notebookNotFound = () => new DomainError('NOTEBOOK_NOT_FOUND', 404, 'Không tìm thấy sổ tay này');
 const sharedNotePrivateNotebook = () =>
@@ -904,9 +909,9 @@ async function loadTemplateForChange(ctx: CommandContext, templateId: string, ch
   return loadTemplate(ctx, templateId, true);
 }
 
-function assertMayManageTemplate(ctx: CommandContext, row: TemplateRow, userId: string): void {
+function assertMayManageTemplate(ctx: CommandContext, row: TemplateRow, userId: string, wholeOrg: boolean): void {
   if (row.author_user_id === userId) return;
-  if (row.visibility === 'org' && ctx.role !== null && MANAGERS.includes(ctx.role)) return;
+  if (row.visibility === 'org' && wholeOrg && ctx.role !== null && MANAGERS.includes(ctx.role)) return;
   throw new DomainError('NOTE_TEMPLATE_AUTHOR_ONLY', 403, 'Chỉ người tạo mẫu, hoặc chủ sở hữu và quản trị viên với mẫu dùng chung, mới sửa hoặc xóa được mẫu này');
 }
 
@@ -938,6 +943,9 @@ export const noteTemplateCreate = defineCommand({
   access: WRITERS,
   handler: async (ctx, input): Promise<NoteTemplateWritten> => {
     const userId = userOf(ctx.actor);
+    if (input.visibility === 'org' && !(await hasWholeOrgScope(ctx.trx))) {
+      throw new DomainError('FORBIDDEN', 403, 'Thành viên giới hạn theo pháp nhân không tạo được mẫu ghi chú dùng chung');
+    }
     const row = await ctx.trx
       .insertInto('ludy_notes.note_template')
       .values({
@@ -973,10 +981,14 @@ export const noteTemplateUpdate = defineCommand({
   target: templateTarget,
   handler: async (ctx, input): Promise<NoteTemplateWritten> => {
     const userId = userOf(ctx.actor);
+    const wholeOrg = await hasWholeOrgScope(ctx.trx);
     const before = await loadTemplateForChange(ctx, input.templateId, (row) => {
-      assertMayManageTemplate(ctx, row, userId);
+      assertMayManageTemplate(ctx, row, userId, wholeOrg);
       if (row.author_user_id !== userId && input.visibility !== 'org') {
         throw new DomainError('NOTE_TEMPLATE_AUTHOR_ONLY', 403, 'Chỉ người tạo mẫu mới chuyển được mẫu dùng chung về riêng tư');
+      }
+      if (input.visibility === 'org' && !wholeOrg) {
+        throw new DomainError('FORBIDDEN', 403, 'Thành viên giới hạn theo pháp nhân không chia sẻ được mẫu ghi chú dùng chung');
       }
     });
     if (before.revision !== input.revision) {
@@ -1026,7 +1038,8 @@ export const noteTemplateDelete = defineCommand({
   target: templateTarget,
   handler: async (ctx, input): Promise<NoteTemplateDeleted> => {
     const userId = userOf(ctx.actor);
-    const before = await loadTemplateForChange(ctx, input.templateId, (row) => assertMayManageTemplate(ctx, row, userId));
+    const wholeOrg = await hasWholeOrgScope(ctx.trx);
+    const before = await loadTemplateForChange(ctx, input.templateId, (row) => assertMayManageTemplate(ctx, row, userId, wholeOrg));
     await ctx.trx.deleteFrom('ludy_notes.note_template').where('org_id', '=', ctx.orgId).where('id', '=', input.templateId).execute();
     ctx.audit({ templateId: input.templateId, visibility: before.visibility, authorUserId: before.author_user_id });
     return { templateId: input.templateId };

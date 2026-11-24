@@ -340,7 +340,10 @@ export const orgStampCreate = defineCommand({
           throw new DomainError('SIGN_STAMP_FILE_NOT_FOUND', 404, 'Stamp image file was not found');
         }
       }
+      // Reject eSign document/evidence/attachment sources (including unattached non-owner sign_document uploads
+      // that remain hidden from org exports and owner kernel.file.get) after 404 confidentiality gating.
       if (
+        (fileRow.source !== 'upload' && fileRow.source !== 'social') ||
         fileRow.content_type !== 'image/png' ||
         Number(fileRow.size_bytes) > SIGN_SIGNATURE_PNG_MAX_BYTES ||
         fileRow.sha256 !== imageSha256

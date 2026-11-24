@@ -545,6 +545,8 @@ export const projectTaskRemove = defineCommand({
   access: WRITERS,
   writes: [
     tableWrite(TABLES, 'ludy_projects', 'project_task', ['org_id', 'project_id', 'task_id']),
+    // Removing a task from a project closes any open cycle membership interval via trigger on project_task.
+    tableWrite(TABLES, 'ludy_projects', 'project_cycle_task_history', ['left_at', 'left_reason']),
     // Removing a task from a project cascades ON DELETE CASCADE to ludy_projects.task_dependency.
     tableWrite(TABLES, 'ludy_projects', 'task_dependency', ['org_id', 'project_id', 'id']),
     // Removing a task from a project clears task_id via ON DELETE SET NULL (task_id) on ludy_projects.time_entry.

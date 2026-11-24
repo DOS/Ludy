@@ -146,7 +146,6 @@ export interface SignResolvedToken {
   tokenUsed: boolean;
   tokenExpiresAt: string;
   inPerson?: boolean;
-  inPersonHostUserId?: string | null;
   envelopeStatus: string;
   signerStatus: string;
   signerRole: string;

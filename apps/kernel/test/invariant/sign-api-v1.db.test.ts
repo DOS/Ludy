@@ -414,6 +414,13 @@ suite('eSign Slice 5c `/api/v1/sign/*` and scoped API key invariants (#4441)', (
 
     orgA = await createOrg(runtime, asUser(owner), 'Cong ty Sign API A');
     orgB = await createOrg(runtime, asUser(foreignOwner), 'Cong ty Sign API B');
+    // #4703: once the org setting "Ký biên bản họp" exists it is off by default and the server refuses to create a minutes envelope while it is off. These cases create them, so the org turns it
+    // on; before the setting's column exists the update finds no column (42703) and is skipped.
+    for (const id of [orgA.orgId, orgB.orgId]) {
+      await admin((c) => c.query('UPDATE ludy_kernel.tenant SET meeting_minutes_esign = true WHERE org_id = $1::uuid', [id])).catch((error: { code?: string }) => {
+        if (error.code !== '42703') throw error;
+      });
+    }
 
     await admin((c) =>
       c.query(

@@ -2,6 +2,7 @@
 // The extension token's credential format, its route list and the edge's scope check (#2582, ADR-0047 point 10).
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
+import type { ExtensionClient } from '@ludy/kernel-contract';
 import { DomainError } from '@ludy/kernel-runtime';
 import {
   EXTENSION_ROUTES,
@@ -68,9 +69,12 @@ describe('the routes an extension token may reach', () => {
       'POST /api/rpc/notes/todos/quickCapture notes write=true',
     ]);
     expect(EXTENSION_ROUTES.every((r) => r.why.length > 20)).toBe(true);
-    const checked = authorizeExtensionRoute(['notes'], 'POST', '/api/rpc/notes/clip');
+    const checked = authorizeExtensionRoute(['notes'], 'POST', '/api/rpc/notes/clip', 'extension');
     expect(checked.ok).toBe(true);
     if (checked.ok) expect(checked.route.write).toBe(true);
+    const desktopNotes = authorizeExtensionRoute(['notes'], 'POST', '/api/rpc/notes/clip', 'desktop');
+    expect(desktopNotes.ok).toBe(false);
+    if (!desktopNotes.ok) expect(desktopNotes.error).toMatchObject({ status: 403, details: { rule: 'extension_scope' } });
   });
 
   it('matches a listed method and path exactly, with one UUID for an id', () => {
@@ -100,19 +104,19 @@ describe('the routes an extension token may reach', () => {
   });
 
   it('refuses outside the token\'s scopes with a 403 that names the rule, and passes nothing else', () => {
-    const refused = refuseOutsideScopes(['meetings'], 'GET', `/api/meetings/${ID}/audio`);
+    const refused = refuseOutsideScopes(['meetings'], 'GET', `/api/meetings/${ID}/audio`, 'extension');
     expect(refused).toBeInstanceOf(DomainError);
     expect(refused).toMatchObject({ code: 'FORBIDDEN', status: 403, details: { rule: 'extension_scope' } });
-    expect(refuseOutsideScopes(['meetings'], 'POST', '/api/rpc/meetings/create')).toBeNull();
-    expect(refuseOutsideScopes(['notes'], 'POST', '/api/rpc/notes/clip')).toBeNull();
-    expect(refuseOutsideScopes(['notes'], 'POST', '/api/rpc/notes/todos/quickCapture')).toBeNull();
-    expect(refuseOutsideScopes(['notes'], 'POST', '/api/rpc/meetings/create')).toMatchObject({ status: 403 });
-    expect(refuseOutsideScopes(['meetings'], 'POST', '/api/rpc/notes/clip')).toMatchObject({ status: 403 });
-    expect(refuseOutsideScopes(['notes'], 'POST', '/api/rpc/notes/list')).toMatchObject({ status: 403 });
-    expect(refuseOutsideScopes(['other'], 'POST', '/api/rpc/meetings/create')).toMatchObject({ status: 403 });
-    expect(refuseOutsideScopes([], 'POST', '/api/rpc/meetings/create')).toMatchObject({ status: 403 });
+    expect(refuseOutsideScopes(['meetings'], 'POST', '/api/rpc/meetings/create', 'extension')).toBeNull();
+    expect(refuseOutsideScopes(['notes'], 'POST', '/api/rpc/notes/clip', 'extension')).toBeNull();
+    expect(refuseOutsideScopes(['notes'], 'POST', '/api/rpc/notes/todos/quickCapture', 'extension')).toBeNull();
+    expect(refuseOutsideScopes(['notes'], 'POST', '/api/rpc/meetings/create', 'extension')).toMatchObject({ status: 403 });
+    expect(refuseOutsideScopes(['meetings'], 'POST', '/api/rpc/notes/clip', 'extension')).toMatchObject({ status: 403 });
+    expect(refuseOutsideScopes(['notes'], 'POST', '/api/rpc/notes/list', 'extension')).toMatchObject({ status: 403 });
+    expect(refuseOutsideScopes(['other'], 'POST', '/api/rpc/meetings/create', 'extension')).toMatchObject({ status: 403 });
+    expect(refuseOutsideScopes([], 'POST', '/api/rpc/meetings/create', 'extension')).toMatchObject({ status: 403 });
     // A route open to any token still needs a token that is valid, which authenticate() has settled before this runs.
-    expect(refuseOutsideScopes([], 'GET', '/api/extension/me')).toBeNull();
+    expect(refuseOutsideScopes([], 'GET', '/api/extension/me', 'extension')).toBeNull();
     // Ludy Desktop tokens share the meetings and agenda routes when scoped, and never reach notes or ungranted routes.
     expect(refuseOutsideScopes([], 'GET', '/api/extension/me', 'desktop')).toBeNull();
     expect(refuseOutsideScopes([], 'POST', '/api/rpc/meetings/create', 'desktop')).toMatchObject({ status: 403 });
@@ -130,5 +134,31 @@ describe('the routes an extension token may reach', () => {
     expect(refuseOutsideScopes(['meetings', 'agenda'], 'POST', '/api/rpc/meetings/agenda/next', 'desktop')).toBeNull();
     expect(refuseOutsideScopes(['meetings'], 'GET', `/api/meetings/${ID}/audio`, 'desktop')).toMatchObject({ status: 403 });
     expect(refuseOutsideScopes(['notes'], 'POST', '/api/rpc/notes/clip', 'desktop')).toMatchObject({ status: 403 });
+  });
+
+  it('fails closed at runtime when client is not an allowed ExtensionClient (#4690)', () => {
+    const invalidClients = [
+      undefined as unknown as ExtensionClient,
+      'other' as unknown as ExtensionClient,
+      '' as unknown as ExtensionClient,
+    ];
+    const cases = [
+      { scopes: ['notes'], method: 'POST', path: '/api/rpc/notes/clip' },
+      { scopes: ['meetings'], method: 'POST', path: '/api/rpc/meetings/create' },
+      { scopes: [], method: 'GET', path: '/api/extension/me' },
+    ] as const;
+    for (const invalidClient of invalidClients) {
+      for (const { scopes, method, path } of cases) {
+        const checked = authorizeExtensionRoute(scopes, method, path, invalidClient);
+        expect(checked.ok, `${String(invalidClient)} ${method} ${path}`).toBe(false);
+        if (!checked.ok) {
+          expect(checked.error).toBeInstanceOf(DomainError);
+          expect(checked.error).toMatchObject({ code: 'FORBIDDEN', status: 403, details: { rule: 'extension_scope' } });
+        }
+        const refused = refuseOutsideScopes(scopes, method, path, invalidClient);
+        expect(refused, `${String(invalidClient)} ${method} ${path}`).toBeInstanceOf(DomainError);
+        expect(refused).toMatchObject({ code: 'FORBIDDEN', status: 403, details: { rule: 'extension_scope' } });
+      }
+    }
   });
 });

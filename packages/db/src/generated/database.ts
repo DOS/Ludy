@@ -126,6 +126,8 @@ export interface LudyHrSchema {
   'ludy_hr.employee_asset_handover': HrEmployeeAssetHandoverTable;
   'ludy_hr.job_opening': HrJobOpeningTable;
   'ludy_hr.leave_request': HrLeaveRequestTable;
+  'ludy_hr.okr_key_result': HrOkrKeyResultTable;
+  'ludy_hr.okr_objective': HrOkrObjectiveTable;
   'ludy_hr.onboarding_submission': HrOnboardingSubmissionTable;
   'ludy_hr.overtime_request': HrOvertimeRequestTable;
   'ludy_hr.payroll_adjustment_item': HrPayrollAdjustmentItemTable;
@@ -257,6 +259,8 @@ export interface LudyProjectsSchema {
   'ludy_projects.project': ProjectsProjectTable;
   'ludy_projects.project_column': ProjectsProjectColumnTable;
   'ludy_projects.project_cycle': ProjectsProjectCycleTable;
+  'ludy_projects.project_cycle_snapshot': ProjectsProjectCycleSnapshotTable;
+  'ludy_projects.project_cycle_task_history': ProjectsProjectCycleTaskHistoryTable;
   'ludy_projects.project_member': ProjectsProjectMemberTable;
   'ludy_projects.project_task': ProjectsProjectTaskTable;
   'ludy_projects.project_triage_item': ProjectsProjectTriageItemTable;
@@ -2176,6 +2180,45 @@ export interface HrLeaveRequestTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
+/** ludy_hr.okr_key_result */
+export interface HrOkrKeyResultTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  objective_id: ColumnType<string, string, NotGranted>;
+  title: string;
+  metric_type: string;
+  target_value: string;
+  current_value: Generated<string>;
+  unit: string | null;
+  linked_project_id: string | null;
+  linked_task_ids: Generated<string[]>;
+  progress_pct: Generated<string>;
+  last_checkin_note: string | null;
+  last_checkin_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  last_checkin_by: string | null;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_hr.okr_objective */
+export interface HrOkrObjectiveTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  quarter: string;
+  scope: string;
+  title: string;
+  owner_employee_id: string | null;
+  department_id: string | null;
+  parent_objective_id: string | null;
+  status: Generated<string>;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
 /** ludy_hr.onboarding_submission */
 export interface HrOnboardingSubmissionTable {
   org_id: ColumnType<string, string, NotGranted>;
@@ -3493,6 +3536,7 @@ export interface KernelTaskTable {
   legal_entity_id: string | null;
   pending_draft: ColumnType<unknown, string | null | undefined, string | null>;
   checklist: ColumnType<unknown, string | undefined, string>;
+  done_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
 /** ludy_kernel.tax_obligation_done */
@@ -4036,6 +4080,21 @@ export interface ProjectsProjectColumnTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
+/** ludy_projects.project_cycle_snapshot */
+export interface ProjectsProjectCycleSnapshotTable {
+  org_id: string;
+  id: Generated<string>;
+  project_id: string;
+  cycle_id: string;
+  task_id: string;
+  task_status: string;
+  story_points: number | null;
+  task_created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  task_done_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  carried_over: Generated<boolean>;
+  captured_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
 /** ludy_projects.project_cycle */
 export interface ProjectsProjectCycleTable {
   org_id: string;
@@ -4052,6 +4111,19 @@ export interface ProjectsProjectCycleTable {
   created_by: string | null;
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_projects.project_cycle_task_history */
+export interface ProjectsProjectCycleTaskHistoryTable {
+  org_id: string;
+  id: Generated<string>;
+  project_id: string;
+  cycle_id: string;
+  task_id: string;
+  story_points: number | null;
+  joined_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  left_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  left_reason: string | null;
 }
 
 /** ludy_projects.project_member */
@@ -4358,6 +4430,7 @@ export interface SignEnvelopeTable {
   allow_delegation: Generated<boolean>;
   retained_org_visible: boolean | null;
   retained_reader_ids: string[] | null;
+  source_revision: string | null;
 }
 
 /** ludy_sign.field */

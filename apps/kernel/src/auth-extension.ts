@@ -217,13 +217,14 @@ export function matchExtensionRoute(method: string, rawPath: string): ExtensionR
 
 const EXTENSION_SCOPE_ERROR = () => new DomainError('FORBIDDEN', 403, 'Mã của tiện ích Ludy không được dùng cho việc này', { rule: 'extension_scope' });
 
-// Checks the request against EXTENSION_ROUTES and the token's scopes (and desktop tokens never reach notes routes, #4516), returning the matched route when allowed.
+// Checks the request against EXTENSION_ROUTES and the token's scopes (failing closed unless client is 'extension' or 'desktop', and desktop tokens never reach notes routes, #4516, #4690), returning the matched route when allowed.
 export function authorizeExtensionRoute(
   scopes: readonly string[],
   method: string,
   rawPath: string,
-  client: ExtensionClient = 'extension',
+  client: ExtensionClient,
 ): { ok: true; route: ExtensionRoute } | { ok: false; error: DomainError } {
+  if (client !== 'extension' && client !== 'desktop') return { ok: false, error: EXTENSION_SCOPE_ERROR() };
   const route = matchExtensionRoute(method, rawPath);
   if (route && (route.scope === null || (scopes.includes(route.scope) && (client !== 'desktop' || route.scope !== 'notes')))) {
     return { ok: true, route };
@@ -237,7 +238,7 @@ export function refuseOutsideScopes(
   scopes: readonly string[],
   method: string,
   rawPath: string,
-  client: ExtensionClient = 'extension',
+  client: ExtensionClient,
 ): DomainError | null {
   const checked = authorizeExtensionRoute(scopes, method, rawPath, client);
   return checked.ok ? null : checked.error;

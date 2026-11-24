@@ -195,6 +195,13 @@ suite('eSign shared meeting minutes reader-scoped confidentiality invariants (#3
 
     orgId = (await createOrg(runtime, asUser(ownerId), 'Cong ty TNHH Cuoc Hop A')).orgId;
     otherOrgId = (await createOrg(runtime, asUser(otherOwnerId), 'Cong ty TNHH Cuoc Hop B')).orgId;
+    // #4703: once the org setting "Ký biên bản họp" exists it is off by default and the server refuses to create a minutes envelope while it is off. These cases create them, so the org turns it
+    // on; before the setting's column exists the update finds no column (42703) and is skipped.
+    for (const id of [orgId, otherOrgId]) {
+      await adminPool.query('UPDATE ludy_kernel.tenant SET meeting_minutes_esign = true WHERE org_id = $1::uuid', [id]).catch((error: { code?: string }) => {
+        if (error.code !== '42703') throw error;
+      });
+    }
 
     await adminPool.query(
       `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES
@@ -492,17 +499,36 @@ suite('eSign shared meeting minutes reader-scoped confidentiality invariants (#3
       { actor: asUser(recorderId), orgId },
     );
 
-    const attTplEnv = await runtime.execute<{ envelopeId: string }>(
-      'sign.template.instantiate',
-      {
-        templateId: tpl.templateId,
-        title: 'Bien ban xac nhan cua Attendee',
-        sourceKind: 'meeting_minutes',
-        sourceId: attendeesMeetingId,
-        recipients: [{ roleKey: 'attendee', name: 'Attendee', email: 'attendee@mtg-inv.test', deliveryMode: 'email' }],
-      },
-      { actor: asUser(attendeeId), orgId },
+    // An attendee who is not the recorder is a reader of the shared minutes and still cannot start a signature on them (#4532): sign.template.instantiate is refused with SIGN_FORBIDDEN (403), the
+    // rule sign.envelope.create follows too (the recorder's own create above succeeds). The rest of the test needs an unsigned envelope whose creator is the attendee (it loses access with the
+    // reader scope), such as an earlier version of the rule allowed, so that envelope is inserted directly.
+    await expect(
+      runtime.execute(
+        'sign.template.instantiate',
+        {
+          templateId: tpl.templateId,
+          title: 'Bien ban xac nhan cua Attendee',
+          sourceKind: 'meeting_minutes',
+          sourceId: attendeesMeetingId,
+          recipients: [{ roleKey: 'attendee', name: 'Attendee', email: 'attendee@mtg-inv.test', deliveryMode: 'email' }],
+        },
+        { actor: asUser(attendeeId), orgId },
+      ),
+    ).rejects.toMatchObject({ code: 'SIGN_FORBIDDEN', status: 403 });
+    const attTplEnvId = randomUUID();
+    const inserted = await adminPool!.query(
+      `INSERT INTO crove_sign.envelope (
+         org_id, id, title, status, routing_mode, source_kind, source_id,
+         source_file_id, source_storage_key, source_generation, source_sha256,
+         inspect_status, created_by
+       )
+       SELECT $1::uuid, $2::uuid, 'Bien ban xac nhan cua Attendee', 'draft', 'parallel', 'meeting_minutes', $3::uuid,
+              f.id, f.storage_key, f.generation, f.sha256, 'pending', $4::uuid
+       FROM crove_kernel.file f WHERE f.org_id = $1::uuid AND f.id = $5::uuid`,
+      [orgId, attTplEnvId, attendeesMeetingId, attendeeId, tplPdf],
     );
+    expect(inserted.rowCount).toBe(1);
+    const attTplEnv = { envelopeId: attTplEnvId };
 
     const addedSigner = await runtime.execute<{ signerId: string }>(
       'sign.signer.add',
@@ -751,6 +777,23 @@ suite('eSign shared meeting minutes reader-scoped confidentiality invariants (#3
     );
     expect(tplFileRead.id).toBe(tplPdf);
 
+    // #4530: a permitted attendee READS the recorder's draft but does not change or send it: 403 SIGN_FORBIDDEN (not 404, the attendee reads the envelope), before the draft is checked at all.
+    // Only the envelope's creator, an owner or an admin acts on a meeting-minutes envelope, like a standalone one.
+    const attendeeDraftAttempts: Array<[string, Record<string, unknown>]> = [
+      ['sign.envelope.update', { envelopeId: recEnv.envelopeId, title: 'Tamper by attendee' }],
+      ['sign.signer.add', { envelopeId: recEnv.envelopeId, roleLabel: 'Spy', name: 'Spy', deliveryMode: 'link' }],
+      ['sign.signer.remove', { envelopeId: recEnv.envelopeId, signerId: addedSigner.signerId }],
+      ['sign.signer.reorder', { envelopeId: recEnv.envelopeId, orders: [{ signerId: addedSigner.signerId, routingOrder: 1 }] }],
+      ['sign.field.set', { envelopeId: recEnv.envelopeId, fields: [] }],
+      ['sign.envelope.send', { envelopeId: recEnv.envelopeId }],
+      // #4558: acknowledging a decline and saving AI field proposals (the org's AI spend) are the creator's, an owner's or an admin's too, checked before the status or the document hash.
+      ['sign.envelope.acknowledge_decline', { envelopeId: recEnv.envelopeId }],
+      ['sign.envelope.propose_fields', { envelopeId: recEnv.envelopeId, sourceSha256: recPdfSha }],
+    ];
+    for (const [command, input] of attendeeDraftAttempts) {
+      await expect(runtime.execute(command, input, { actor: asUser(attendeeId), orgId }), `attendee ${command}`).rejects.toMatchObject({ code: 'SIGN_FORBIDDEN', status: 403 });
+    }
+
     // 5. Send envelope, verify active-envelope mutations (create_link, remind, void) return 404 to non-reader owner/admin,
     // complete public signing ceremony + worker sealing, and verify sealed/certificate file downloads!
     const sent = await runtime.execute<{
@@ -861,7 +904,15 @@ suite('eSign shared meeting minutes reader-scoped confidentiality invariants (#3
       activeProbeClient.release();
     }
 
-    // Permitted attendee CAN start an in-person session AND rotate link on active meeting_minutes envelope.
+    // #4530: a permitted attendee who is not the creator, an owner or an admin can NOT start an in-person session (it mints a one-time signing token, the same power as create_link), remind the signers
+    // (it mails them) or issue or rotate a signing link: 403 SIGN_FORBIDDEN (the attendee reads the envelope, so not 404). The recorder, who created the envelope, can start the session.
+    // (This replaces the earlier "permitted attendee CAN start an in-person session" case.)
+    await expect(
+      runtime.execute('sign.signer.start_in_person', { envelopeId: recEnv.envelopeId, signerId: addedSigner.signerId }, { actor: asUser(attendeeId), orgId }),
+    ).rejects.toMatchObject({ code: 'SIGN_FORBIDDEN', status: 403 });
+    await expect(
+      runtime.execute('sign.envelope.remind', { envelopeId: recEnv.envelopeId, signerId: addedSigner.signerId }, { actor: asUser(attendeeId), orgId }),
+    ).rejects.toMatchObject({ code: 'SIGN_FORBIDDEN', status: 403 });
     const inPersonStarted = await runtime.execute<{
       hostUserId: string;
       token: string;
@@ -869,15 +920,18 @@ suite('eSign shared meeting minutes reader-scoped confidentiality invariants (#3
     }>(
       'sign.signer.start_in_person',
       { envelopeId: recEnv.envelopeId, signerId: addedSigner.signerId },
-      { actor: asUser(attendeeId), orgId },
+      { actor: asUser(recorderId), orgId },
     );
-    expect(inPersonStarted.hostUserId).toBe(attendeeId);
+    expect(inPersonStarted.hostUserId).toBe(recorderId);
     expect(inPersonStarted.ceremonyPath).toContain('?in_person=1#');
 
+    await expect(
+      runtime.execute('sign.signer.create_link', { envelopeId: recEnv.envelopeId, signerId: addedSigner.signerId }, { actor: asUser(attendeeId), orgId }),
+    ).rejects.toMatchObject({ code: 'SIGN_FORBIDDEN', status: 403 });
     const rotated = await runtime.execute<{ token: string }>(
       'sign.signer.create_link',
       { envelopeId: recEnv.envelopeId, signerId: addedSigner.signerId },
-      { actor: asUser(attendeeId), orgId },
+      { actor: asUser(recorderId), orgId },
     );
     const activeToken = rotated.token || rawSigningToken;
 

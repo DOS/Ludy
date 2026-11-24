@@ -123,8 +123,6 @@ const PENDING_TABLES = new Set<string>([
   'crove_finance.stock_move',
   'crove_finance.stock_period',
   'crove_finance.stock_period_item',
-  'crove_hr.okr_key_result',
-  'crove_hr.okr_objective',
   'crove_kernel.agent_grant',
   'crove_kernel.agent_wake_delivery',
   'crove_kernel.agent_wake_signal_seen',
@@ -785,6 +783,31 @@ const projectsProjectRow = (o: { id: string; owner: string }) => ({
   owner_user_id: o.owner,
   status: 'active',
 });
+const projectsCycleRow = (o: { id: string }, projectId: string) => ({
+  org_id: o.id,
+  id: randomUUID(),
+  project_id: projectId,
+  number: projectCycleSeq++,
+  name: 'Sprint 1',
+  status: 'upcoming',
+  starts_on: '2026-11-23',
+  ends_on: '2026-12-06',
+});
+const projectsCycleTaskSetup = (o: { id: string; owner: string }) => {
+  const project = projectsProjectRow(o);
+  const cycle = projectsCycleRow(o, project.id);
+  const task = { org_id: o.id, id: randomUUID(), title: 'RLS matrix task', source: 'human', created_by_type: 'user' };
+  return {
+    project,
+    cycle,
+    task,
+    setup: [
+      { table: 'crove_projects.project', values: project },
+      { table: 'crove_projects.project_cycle', values: cycle },
+      { table: 'crove_kernel.task', values: task },
+    ],
+  };
+};
 const projectsRoadmapBoardRow = (o: { id: string; owner: string }) => ({
   org_id: o.id,
   id: randomUUID(),
@@ -3745,15 +3768,40 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       const project = projectsProjectRow(o);
       return {
         setup: [{ table: 'crove_projects.project', values: project }],
+        row: projectsCycleRow(o, project.id),
+      };
+    },
+  },
+  // Projects cycles (#4431, step 0): close-time task status and carryover snapshot; lands in PENDING_TABLES before its migration.
+  'crove_projects.project_cycle_snapshot': {
+    make: (o) => {
+      const { project, cycle, task, setup } = projectsCycleTaskSetup(o);
+      return {
+        setup,
         row: {
           org_id: o.id,
           id: randomUUID(),
           project_id: project.id,
-          number: projectCycleSeq++,
-          name: 'Sprint 1',
-          status: 'upcoming',
-          starts_on: '2026-11-23',
-          ends_on: '2026-12-06',
+          cycle_id: cycle.id,
+          task_id: task.id,
+          task_status: 'done',
+          carried_over: 'false',
+        },
+      };
+    },
+  },
+  // Projects cycles (#4431, step 0): historical cycle-task membership intervals; lands in PENDING_TABLES before its migration.
+  'crove_projects.project_cycle_task_history': {
+    make: (o) => {
+      const { project, cycle, task, setup } = projectsCycleTaskSetup(o);
+      return {
+        setup,
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          project_id: project.id,
+          cycle_id: cycle.id,
+          task_id: task.id,
         },
       };
     },

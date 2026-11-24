@@ -1,17 +1,20 @@
 // App-level building blocks composed from the @ludy/ui design system. Screens import primitives (Button, Input,
 // Card, Badge, ...) from @ludy/ui directly and these composites from here.
 import { Alert } from '@ludy/ui/components/alert';
+import { Button } from '@ludy/ui/components/button';
 import { Empty as EmptyRoot, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from '@ludy/ui/components/empty';
 import { Label } from '@ludy/ui/components/label';
+import { Sheet, SheetBody, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from '@ludy/ui/components/sheet';
 import { Skeleton } from '@ludy/ui/components/skeleton';
 import { Spinner as SpinnerIcon } from '@ludy/ui/components/spinner';
 import { Table, TableBody, TableFooter, TableHead, TableHeader, TableRow } from '@ludy/ui/components/table';
 import { cn } from '@ludy/ui/lib/utils';
-import { useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useId, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { flushSync } from 'react-dom';
 import { useTranslations } from 'use-intl';
 import { brandName } from '../i18n/brand.ts';
 import { takeOrgLeftNotice } from '../lib/api.ts';
+import { SM_UP, useMediaQuery } from '../lib/media.ts';
 import { useScrollRoom } from '../lib/scroll-room.ts';
 import { useScreenTitle } from '../lib/screen-title.ts';
 
@@ -428,5 +431,158 @@ export function Logo() {
       </svg>
       {brandName()}
     </span>
+  );
+}
+
+export interface PhoneActionBarProps {
+  children: ReactNode;
+  className?: string | undefined;
+  placement?: 'fixed' | 'sticky' | undefined;
+  scrollContainer?: RefObject<HTMLElement | null> | undefined;
+  'data-testid'?: string | undefined;
+  'aria-label'?: string | undefined;
+}
+
+// Thumb-zone action bar fixed or sticky to the bottom on phones (< 640px, sm:hidden). A control focused by the
+// keyboard stops above it (#1575, WCAG 2.4.11) and interactive links/buttons keep >= 44px touch height.
+export function PhoneActionBar({
+  children,
+  className,
+  placement = 'fixed',
+  scrollContainer,
+  'data-testid': testId = 'phone-action-bar',
+  'aria-label': ariaLabel,
+}: PhoneActionBarProps) {
+  const bar = useRef<HTMLDivElement>(null);
+  useScrollRoom(bar, 'bottom', scrollContainer);
+  return (
+    <div
+      ref={bar}
+      data-testid={testId}
+      aria-label={ariaLabel}
+      className={cn(
+        placement === 'sticky' ? 'sticky bottom-0 z-20 mt-auto shrink-0' : 'fixed inset-x-0 bottom-0 z-20',
+        'flex flex-wrap items-center justify-end gap-2 border-t border-border bg-sidebar px-4 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] sm:hidden',
+        '[&_button]:max-md:min-h-11 [&_a]:max-md:inline-flex [&_a]:max-md:min-h-11 [&_a]:max-md:items-center',
+        className,
+      )}
+    >
+      {children}
+    </div>
+  );
+}
+
+export interface PeekSheetProps {
+  open: boolean;
+  onClose: () => void;
+  peekId: string;
+  title: ReactNode;
+  description?: ReactNode | undefined;
+  badges?: ReactNode | undefined;
+  closeLabel?: string | undefined;
+  positionLabel?: string | undefined;
+  canPrevious?: boolean | undefined;
+  canNext?: boolean | undefined;
+  previousLabel?: string | undefined;
+  nextLabel?: string | undefined;
+  onPrevious?: (() => void) | undefined;
+  onNext?: (() => void) | undefined;
+  actions?: ReactNode | undefined;
+  children: ReactNode;
+  'data-testid'?: string | undefined;
+  className?: string | undefined;
+}
+
+// Right-hand inspection drawer for list rows (#4645): full screen on phones with primary actions in PhoneActionBar,
+// column on desktop with SheetFooter, and K/J stepping controls in the header.
+export function PeekSheet({
+  open,
+  onClose,
+  peekId,
+  title,
+  description,
+  badges,
+  closeLabel,
+  positionLabel,
+  canPrevious = false,
+  canNext = false,
+  previousLabel,
+  nextLabel,
+  onPrevious,
+  onNext,
+  actions,
+  children,
+  'data-testid': testId = 'peek-sheet',
+  className,
+}: PeekSheetProps) {
+  const t = useTranslations('common');
+  const wide = useMediaQuery(SM_UP);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  if (!open) return null;
+  const resolvedClose = closeLabel ?? t('close');
+  const resolvedPrevious = previousLabel ?? t('peek.previous');
+  const resolvedNext = nextLabel ?? t('peek.next');
+  return (
+    <Sheet open onOpenChange={(next) => !next && onClose()}>
+      <SheetContent
+        closeLabel={resolvedClose}
+        data-peek-sheet={peekId}
+        data-testid={testId}
+        className={cn('sm:max-w-lg', className)}
+      >
+        <SheetHeader>
+          {(badges || onPrevious || onNext || positionLabel) && (
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              {badges ? <div className="flex flex-wrap items-center gap-1.5">{badges}</div> : <span />}
+              {(onPrevious || onNext || positionLabel) && (
+                <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                  {positionLabel && <span className="mr-1 tabular-nums">{positionLabel}</span>}
+                  {onPrevious && (
+                    <Button
+                      type="button"
+                      size="xs"
+                      variant="ghost"
+                      disabled={!canPrevious}
+                      onClick={onPrevious}
+                      aria-label={resolvedPrevious}
+                      data-testid="peek-prev-btn"
+                    >
+                      {resolvedPrevious}
+                    </Button>
+                  )}
+                  {onNext && (
+                    <Button
+                      type="button"
+                      size="xs"
+                      variant="ghost"
+                      disabled={!canNext}
+                      onClick={onNext}
+                      aria-label={resolvedNext}
+                      data-testid="peek-next-btn"
+                    >
+                      {resolvedNext}
+                    </Button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+          <SheetTitle>{title}</SheetTitle>
+          {description ? <SheetDescription>{description}</SheetDescription> : null}
+        </SheetHeader>
+        <SheetBody ref={bodyRef} className="space-y-4">
+          {children}
+        </SheetBody>
+        {actions ? (
+          wide ? (
+            <SheetFooter className="flex-row flex-wrap items-center justify-end gap-2">{actions}</SheetFooter>
+          ) : (
+            <PhoneActionBar placement="sticky" scrollContainer={bodyRef}>
+              {actions}
+            </PhoneActionBar>
+          )
+        ) : null}
+      </SheetContent>
+    </Sheet>
   );
 }

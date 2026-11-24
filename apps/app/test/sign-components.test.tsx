@@ -558,9 +558,18 @@ describe('SignerPanel and Envelope list filters (#3325)', () => {
     expect(filterEnvelopesByTab(items, 'completed').map((i) => i.id)).toEqual(['c']);
     expect(filterEnvelopesByTab(items, 'closed').map((i) => i.id)).toEqual(['v']);
 
-    const listHtml = renderVi(<SignEnvelopesPage />);
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    qc.setQueryData(['me', 'get'], {
+      userId: 'u-owner',
+      orgs: [{ orgId: 'o1', slug: routerState.slug, name: 'Acme', role: 'owner' }],
+    });
+    const listHtml = renderVi(<SignEnvelopesPage />, qc);
     expect(listHtml).toContain('Ký kết tài liệu');
     expect(listHtml).toContain('Tạo hồ sơ ký');
+
+    const pendingAuthListHtml = renderVi(<SignEnvelopesPage />);
+    expect(pendingAuthListHtml).toContain('Ký kết tài liệu');
+    expect(pendingAuthListHtml).not.toContain('Tạo hồ sơ ký');
   });
 
   it('pushes server status filters before limit=100 for status tabs', async () => {
@@ -2019,23 +2028,8 @@ describe('Envelope link rotation, void, and in-person RBAC (#3428 L3, #4270)', (
     expect(canManageEnvelopeLinks({ role: 'owner', userId: otherMemberId, createdBy: creatorId })).toBe(true);
     expect(canManageEnvelopeLinks({ role: 'admin', userId: otherMemberId, createdBy: creatorId })).toBe(true);
     expect(canManageEnvelopeLinks({ role: 'member', userId: creatorId, createdBy: creatorId })).toBe(true);
+    // A meeting-minutes envelope is no exception any more (#4530): a member who is not its creator does not manage its links (nor does the minutes kind change that).
     expect(canManageEnvelopeLinks({ role: 'member', userId: otherMemberId, createdBy: creatorId })).toBe(false);
-    expect(
-      canManageEnvelopeLinks({
-        role: 'member',
-        userId: otherMemberId,
-        createdBy: creatorId,
-        sourceKind: 'meeting_minutes',
-      }),
-    ).toBe(true);
-    expect(
-      canManageEnvelopeLinks({
-        role: 'viewer',
-        userId: creatorId,
-        createdBy: creatorId,
-        sourceKind: 'meeting_minutes',
-      }),
-    ).toBe(false);
     expect(canManageEnvelopeLinks({ role: 'viewer', userId: creatorId, createdBy: creatorId })).toBe(false);
     expect(canManageEnvelopeLinks({ role: null, userId: creatorId, createdBy: creatorId })).toBe(false);
 
@@ -2125,10 +2119,11 @@ describe('Envelope link rotation, void, and in-person RBAC (#3428 L3, #4270)', (
       <SignEnvelopeDetailPage />,
       makeSentClient('member', otherMemberId, 'meeting_minutes'),
     );
+    // A reader of the meeting who is not the envelope's creator, an owner or an admin sees it but is offered no link, reminder or in-person action (#4530); the server refuses them with 403 as well.
     expect(meetingMinutesMemberHtml).not.toContain('Hủy hồ sơ');
-    expect(meetingMinutesMemberHtml).toContain('Chép link Zalo');
-    expect(meetingMinutesMemberHtml).toContain('Nhắc ký');
-    expect(meetingMinutesMemberHtml).toContain('Ký trực tiếp tại quầy');
+    expect(meetingMinutesMemberHtml).not.toContain('Chép link Zalo');
+    expect(meetingMinutesMemberHtml).not.toContain('Nhắc ký');
+    expect(meetingMinutesMemberHtml).not.toContain('Ký trực tiếp tại quầy');
 
     const viewerHtml = renderVi(<SignEnvelopeDetailPage />, makeSentClient('viewer', creatorId));
     expect(viewerHtml).not.toContain('Hủy hồ sơ');
