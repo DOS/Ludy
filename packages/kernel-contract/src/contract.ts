@@ -615,6 +615,8 @@ import {
   zMeetingConsentPolicy,
   zMeetingConsentPolicyGet,
   zMeetingExtensionStatus,
+  zMeetingMinutesEsign,
+  zMeetingMinutesEsignGet,
   zMeetingRecordingStopped,
   zMeetingRecordingStoppedDone,
   zMeetingRecordingNow,
@@ -1869,6 +1871,11 @@ export const contract = {
     consentPolicy: {
       get: oc.input(zMeetingConsentPolicyGet).output(zMeetingConsentPolicy),
       set: oc.input(zMeetingConsentPolicy).output(zMeetingConsentPolicy),
+    },
+    // "Ký biên bản họp" (#4703): whether minutes may be sent for eSign; off by default, every member reads it, an owner or admin changes it.
+    minutesEsign: {
+      get: oc.input(zMeetingMinutesEsignGet).output(zMeetingMinutesEsign),
+      set: oc.input(zMeetingMinutesEsign).output(zMeetingMinutesEsign),
     },
     // A member's own webhook for the minutes they publish (A6, #3164): the card reads `get`, `set` makes or changes it (the secret comes back once, when it is made), `rotateSecret`, `clear` and
     // `test` (a `ping` with no meeting data). The owner's `switch` (off by default) gates all of it; nothing is sent while it is off.

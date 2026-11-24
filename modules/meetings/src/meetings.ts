@@ -43,6 +43,7 @@ import { liveAssembleCommands, liveAssembleQueries } from './live-assemble.ts';
 import { lockMeetingMedia, recordSealedMedia } from './media-record.ts';
 import { createMeetingRow } from './meeting-core.ts';
 import { importCommands } from './import.ts';
+import { meetingMinutesEsignGet, meetingMinutesEsignSet } from './minutes-esign.ts';
 import { dropFollowupPayloads } from './followup-erase.ts';
 import { followupCommands, followupQueries } from './followup.ts';
 import {
@@ -1110,6 +1111,7 @@ export const meetingsCommands = [
   meetingMediaKeyReseal,
   meetingSettingsSet,
   meetingConsentPolicySet,
+  meetingMinutesEsignSet,
   meetingRetentionShred,
   meetingShredReplay,
   meetingMediaDiscard,
@@ -1163,6 +1165,7 @@ export const meetingsQueries = [
   meetingMediaMeta,
   meetingSettingsGet,
   meetingConsentPolicyGet,
+  meetingMinutesEsignGet,
   meetingMediaOrphanKeys,
   transcriptGet,
   ...redactQueries,

@@ -431,6 +431,12 @@ export const zMeetingConsentPolicyGet = z.strictObject({});
 export const zMeetingConsentPolicy = z.strictObject({ policy: zMeetingConsentPolicyValue });
 export type MeetingConsentPolicyState = z.infer<typeof zMeetingConsentPolicy>;
 
+// The org setting "Ký biên bản họp" (Meetings, #4703): off by default. While it is off the server refuses to create a meeting_minutes eSign envelope (SIGN_MINUTES_SIGNING_OFF); envelopes made
+// earlier stay readable and a signed one downloadable. Every member reads it (the minutes page shows the handoff only while it is on); an owner or admin changes it.
+export const zMeetingMinutesEsignGet = z.strictObject({});
+export const zMeetingMinutesEsign = z.strictObject({ enabled: z.boolean() });
+export type MeetingMinutesEsignState = z.infer<typeof zMeetingMinutesEsign>;
+
 // System commands of the nightly retention and the shred replay (worker only).
 export const zMeetingRetentionShred = z.strictObject({
   meetingId: zId,

@@ -47,6 +47,11 @@ export async function assertCanCreateMeetingMinutesEnvelope(
   if (ctx.actor.type !== 'user') {
     throw new DomainError('SIGN_FORBIDDEN', 403, 'Only authenticated members can create meeting minutes envelopes');
   }
+  // The org setting "Ký biên bản họp" (#4703) is off by default: no new minutes envelope while it is off, whatever the UI shows. Envelopes made earlier are untouched (nothing else reads it).
+  const setting = await ctx.trx.selectFrom('ludy_kernel.tenant').select(['meeting_minutes_esign']).where('org_id', '=', ctx.orgId).executeTakeFirst();
+  if (setting?.meeting_minutes_esign !== true) {
+    throw new DomainError('SIGN_MINUTES_SIGNING_OFF', 409, 'Signing meeting minutes is turned off for this organization');
+  }
   if (!sourceId) {
     throw new DomainError('SIGN_INVALID_SOURCE', 422, 'Meeting minutes envelopes require sourceId');
   }

@@ -4601,6 +4601,17 @@ export const vi = {
       adminOnly: 'Chỉ chủ sở hữu hoặc quản trị viên mới đổi được.',
       strictNote: 'Tổ chức của bạn chỉ nhận thông báo bằng văn bản, nên không có lựa chọn "nói ở đầu cuộc họp".',
     },
+    // "Ký biên bản họp" (#4703): có cho gửi biên bản đã đăng đi ký hay không; mặc định tắt, chủ sở hữu hoặc quản trị viên đổi.
+    minutesEsign: {
+      title: 'Ký biên bản họp',
+      hint: 'Khi bật, người ghi có thể gửi biên bản đã đăng đi ký bằng nút "Gửi ký" ở trang biên bản; mỗi hồ sơ vẫn do một người bấm gửi. Khi tắt, không tạo thêm hồ sơ ký mới từ biên bản. Hồ sơ đã tạo vẫn xem được và hồ sơ đã ký vẫn tải về được.',
+      stateOn: 'Đang bật',
+      stateOff: 'Đang tắt',
+      turnOn: 'Bật',
+      turnOff: 'Tắt',
+      saved: 'Đã lưu cài đặt.',
+      adminOnly: 'Chỉ chủ sở hữu hoặc quản trị viên mới đổi được.',
+    },
     // "Gửi biên bản tới địa chỉ của tôi" (A6, #3164): webhook riêng của từng thành viên cho biên bản họ công bố.
     hook: {
       title: 'Gửi biên bản tới địa chỉ của tôi',
@@ -17392,6 +17403,7 @@ export const vi = {
       SIGN_ATTACHMENT_REQUIRED: 'Vui lòng tải lên đầy đủ các tệp đính kèm bắt buộc trước khi hoàn tất',
       SIGN_INVALID_FIELD_OPTION: 'Lựa chọn không hợp lệ hoặc danh sách lựa chọn chưa đúng định dạng',
       SIGN_MINUTES_NOT_SHARED: 'Biên bản cuộc họp cần được chia sẻ trước khi tạo hồ sơ ký kết',
+      SIGN_MINUTES_SIGNING_OFF: 'Tổ chức của bạn đang tắt tính năng ký biên bản họp. Chủ sở hữu hoặc quản trị viên có thể bật trong phần cài đặt cuộc họp.',
       SIGN_PRIVATE_PROJECT_ACCEPTANCE_FORBIDDEN: 'Dự án riêng tư không lập biên bản nghiệm thu chia sẻ qua eSign',
       SIGN_SOURCE_NOT_FOUND: 'Không tìm thấy bản ghi nguồn tương ứng hoặc bạn không có quyền truy cập',
       SIGN_OBLIGATION_DATE_ORDER: 'Ngày hết hạn phải trùng hoặc sau ngày hiệu lực',

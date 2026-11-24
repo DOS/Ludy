@@ -18,6 +18,7 @@ import { DateInput } from './date-input.tsx';
 import { ErrorText } from './ui.tsx';
 import { MeetingFollowup } from './meeting-followup.tsx';
 import { MeetingMinutesSignHandoff, type MeetingSignMemberInfo } from './meeting-minutes-sign-handoff.tsx';
+import { useMinutesEsign } from './minutes-esign.tsx';
 import { DraftRedactionDialog, RedactionNudge, useRedactCandidatesQuery } from './meeting-redaction.tsx';
 import { MeetingZalo } from './meeting-zalo.tsx';
 import { MeetingChatPost } from './meeting-chat.tsx';
@@ -582,6 +583,7 @@ export function MeetingResults({
   redaction?: MeetingRedactionControl;
 }) {
   const t = useTranslations('meetings.results');
+  const minutesEsignOn = useMinutesEsign();
   const query = useQuery({ ...orpc.meetings.results.get.queryOptions({ input: { meetingId } }), ...READ_ONCE });
   const [localRedactOpen, setLocalRedactOpen] = useState(false);
   const [localLastRedacted, setLocalLastRedacted] = useState<TranscriptRedacted | null>(null);
@@ -657,7 +659,8 @@ export function MeetingResults({
           </section>
         )}
         {canSaveAsNote && <SaveSummaryAsNote key={meetingId} meetingId={meetingId} visibility={visibility} slug={slug} />}
-        {signInfo && (published !== null || items.some((i) => i.stage === 'published')) && (
+        {/* Ký biên bản họp (#4703): the handoff shows only while the org setting is on; the server refuses a new minutes envelope while it is off. */}
+        {signInfo && minutesEsignOn && (published !== null || items.some((i) => i.stage === 'published')) && (
           <MeetingMinutesSignHandoff
             source={{
               meeting: {
