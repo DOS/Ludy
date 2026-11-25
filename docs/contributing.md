@@ -5,7 +5,7 @@ The detail behind the short rules in [AGENTS.md](../AGENTS.md). AGENTS.md stays 
 
 ## Commands
 
-On the owner's machine, which many agents share, the root `pnpm typecheck`, `pnpm test`, `pnpm test:db` and `pnpm test:e2e` refuse a full run (`tools/local-guard.mjs`; AGENTS.md, "Local resources"). Give them the files you touched (`pnpm test:db apps/kernel/test/x.db.test.ts`), or typecheck one package (`pnpm --filter @ludy/app typecheck`). CI (`CI=true`) runs the full suites; `LUDY_FULL_LOCAL=1` lifts the stop for a person on their own machine.
+On the owner's machine, which many agents share (AGENTS.md, "Local resources", [owner order 2026-11-26](https://github.com/DOS/Ludy/issues/1210#issuecomment-7171329671)), agents must not run `tsc`, `tsgo`, `pnpm typecheck`, `pnpm --filter <package> typecheck`, `vitest`, `pnpm test`, `pnpm test:db`, `*.db.test.ts` or Playwright (`pnpm test:e2e`) locally, even for a single package or file. `tools/local-guard.mjs` blocks the root `typecheck`, `test`, `test:db` and `test:e2e` scripts locally; run only fast low-CPU checks locally (`pnpm lint`, `pnpm docs:check`, `node tools/ci/spdx-header.mjs`, `node tools/ci/pii-scan.mjs`) and push to CI (`CI=true`) for typecheck and test suites. `LUDY_FULL_LOCAL=1` lifts the guard strictly for a human developer on their own personal machine (never set by agents).
 
 ### Typecheck covers the tests
 
