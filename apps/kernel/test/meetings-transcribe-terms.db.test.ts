@@ -286,19 +286,22 @@ suite('the term list of a transcription run (#3499)', () => {
   it('names only the parties the recorder\'s entity scope reaches: a recorder limited to one branch gets the parties linked to it, the whole-org recorder gets them all (#3532)', async () => {
     const linkTo = (partyId: string, entity: string) => admin((c) => c.query(`INSERT INTO ludy_kernel.record_le (org_id, record_type, record_id, legal_entity_id, created_by) VALUES ($1, 'kernel.party', $2, $3, $4)`, [orgId, partyId, entity, users.owner]));
     const companyA = await party('Công ty Nhánh Một');
-    await party('Ngô Nhánh Một', { kind: 'person', companyId: companyA });
+    const personA = await party('Ngô Nhánh Một', { kind: 'person', companyId: companyA });
+    // A second person of the same company, linked to no branch: each party is scoped by its own link, so this one is not named.
+    await party('Lý Chưa Gắn', { kind: 'person', companyId: companyA });
     const companyB = await party('Công ty Nhánh Hai');
     await party('Đỗ Nhánh Hai', { kind: 'person', companyId: companyB });
     const unlinked = await party('Công ty Chưa Gắn Nhánh');
     await linkTo(companyA, branchA);
+    await linkTo(personA, branchA);
     await linkTo(companyB, branchB);
     // The branch recorder: the party linked to its branch with its person, nothing of the party of the other branch nor of the one linked to none.
     const scoped = await transcribe('scoped', await seedMeeting('scoped', { parties: [companyA, companyB, unlinked] }));
     expect(scoped.requests[0]!.fields.prompt).toBe('Ngô Nhánh Một, Công ty Nhánh Một, Trần Hạn Chế');
-    for (const never of ['Nhánh Hai', 'Chưa Gắn']) expect(JSON.stringify(scoped.requests.map((r) => r.fields))).not.toContain(never);
+    for (const never of ['Nhánh Hai', 'Chưa Gắn', 'Lý Chưa']) expect(JSON.stringify(scoped.requests.map((r) => r.fields))).not.toContain(never);
     // A recorder with the whole-org scope is as before: every linked party and its people.
     const whole = await transcribe('recorder', await seedMeeting('recorder', { parties: [companyA, companyB, unlinked] }));
-    for (const name of ['Công ty Nhánh Một', 'Ngô Nhánh Một', 'Công ty Nhánh Hai', 'Đỗ Nhánh Hai', 'Công ty Chưa Gắn Nhánh']) expect(whole.requests[0]!.fields.prompt).toContain(name);
+    for (const name of ['Công ty Nhánh Một', 'Ngô Nhánh Một', 'Công ty Nhánh Hai', 'Đỗ Nhánh Hai', 'Công ty Chưa Gắn Nhánh', 'Lý Chưa Gắn']) expect(whole.requests[0]!.fields.prompt).toContain(name);
   }, 120_000);
 
   it('sends no names and no prompt field when there is nothing to name: the request is what it was', async () => {

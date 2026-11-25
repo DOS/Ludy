@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
 -- The recorder's entity scope in the transcription term list (#3532, review of #3501): ludy_meetings.terms_for_member_vy is a SECURITY DEFINER that reads ludy_kernel.party (the meeting's linked party and
--- that party's company or people) and so bypasses RLS. This restates it from 20270106100000 with ONE change: a party is named only when the recorder's entity scope reaches it, as the other party-reading definers do
--- (an actor scoped to legal entities sees an org-wide record only if it is linked in record_le, plan section 4.6). The scope is read as enter_context gives it to the member's own user context: the whole org for an
+-- that party's company or people) and so bypasses RLS. This restates it from 20270106100000 with ONE change: a party is named only when the recorder's entity scope reaches it, the way the plan scopes a party
+-- (plan section 4.6 and 20261103010000_crove_kernel_record_le.sql: an actor scoped to legal entities sees an org-wide record only if it is linked in record_le; each party is scoped by its own link). The scope is read as enter_context gives it to the member's own user context: the whole org for an
 -- owner or admin, a member with an org-wide role assignment or one with no assignment at all; otherwise the entities the assignments name. Nothing changes for a recorder with the whole-org scope, which is every
 -- recorder today without an entity-limited assignment. Names and the door (audio_for_member_vy) are as before; grants unchanged (worker login only). Idempotent; applied files stay untouched.
 SET LOCAL lock_timeout = '2s';
@@ -66,7 +66,7 @@ BEGIN
     SELECT k.name, 2, k.name
     FROM linked
     JOIN ludy_kernel.party k ON k.org_id = v_org AND k.id = linked.party_id
-    WHERE true AND (v_whole OR EXISTS (SELECT 1 FROM ludy_kernel.record_le rl WHERE rl.org_id = v_org AND rl.record_type = 'kernel.party' AND rl.record_id = k.id AND rl.legal_entity_id = ANY (v_entities)))
+    WHERE (v_whole OR EXISTS (SELECT 1 FROM ludy_kernel.record_le rl WHERE rl.org_id = v_org AND rl.record_type = 'kernel.party' AND rl.record_id = k.id AND rl.legal_entity_id = ANY (v_entities)))
     UNION ALL
     -- A company's people (a person whose company it is, never a duplicate), or a person's company.
     SELECT c.name, 3, c.name
@@ -76,7 +76,7 @@ BEGIN
       (k.kind = 'organization' AND c.kind = 'person' AND c.company_id = k.id)
       OR (k.kind = 'person' AND c.kind = 'organization' AND c.id = k.company_id)
     )
-    WHERE true AND (v_whole OR EXISTS (SELECT 1 FROM ludy_kernel.record_le rl WHERE rl.org_id = v_org AND rl.record_type = 'kernel.party' AND rl.record_id = k.id AND rl.legal_entity_id = ANY (v_entities))) AND (v_whole OR EXISTS (SELECT 1 FROM ludy_kernel.record_le rl WHERE rl.org_id = v_org AND rl.record_type = 'kernel.party' AND rl.record_id = c.id AND rl.legal_entity_id = ANY (v_entities)))
+    WHERE (v_whole OR EXISTS (SELECT 1 FROM ludy_kernel.record_le rl WHERE rl.org_id = v_org AND rl.record_type = 'kernel.party' AND rl.record_id = k.id AND rl.legal_entity_id = ANY (v_entities))) AND (v_whole OR EXISTS (SELECT 1 FROM ludy_kernel.record_le rl WHERE rl.org_id = v_org AND rl.record_type = 'kernel.party' AND rl.record_id = c.id AND rl.legal_entity_id = ANY (v_entities)))
   )
   -- 'Đã xóa theo yêu cầu' is ERASED_PARTY_NAME (packages/kernel/src/personal-data.ts), the name an erased party keeps: not a name to spell.
   SELECT n.term FROM names n WHERE n.term IS NOT NULL AND n.term <> 'Đã xóa theo yêu cầu' ORDER BY n.rank, n.sort_key LIMIT 200;
