@@ -1705,8 +1705,20 @@ class PdfPaginator {
     this.cursorY -= delta;
   }
 
-  ensureAtLeast1Page(): void {
+  finalizePages(): void {
     if (this.pdfDoc.getPageCount() === 0) {
+      // Skip the first pending break before any content page; allocate any intentional blank pages between trailing breaks.
+      const extraBlankPages = Math.max(0, this.pendingBreaks - 1);
+      this.allocatePage();
+      for (let i = 0; i < extraBlankPages; i++) {
+        this.allocatePage();
+      }
+      return;
+    }
+    // Omit any blank page after the final EOF break while preserving blank pages between consecutive trailing breaks.
+    const trailingBlankPages = Math.max(0, this.pendingBreaks - 1);
+    this.pendingBreaks = 0;
+    for (let i = 0; i < trailingBlankPages; i++) {
       this.allocatePage();
     }
   }
@@ -2032,7 +2044,7 @@ export async function convertDocxToPdf(bytes: Uint8Array): Promise<DocxToPdfResu
     await paginator.drawParagraph(layout);
   }
 
-  paginator.ensureAtLeast1Page();
+  paginator.finalizePages();
 
   const pdfBytes = await pdfDoc.save({ useObjectStreams: true, updateFieldAppearances: false });
   if (pdfBytes.byteLength > EXTRACT_LIMITS.maxFileBytes) {

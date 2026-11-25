@@ -455,6 +455,20 @@ describe('docx_to_pdf conversion (#4721)', () => {
       expect(leadingDoubleRes.pageCount).toBe(2);
       expect(drawn.find((d) => d.text === 'Đầu trang 2')?.y).toBeCloseTo(p1!.y, 3);
 
+      // Trailing double explicit break after content preserves 1 blank page between breaks while dropping the extra page after the final break.
+      drawn.length = 0;
+      const trailingDoubleBreakDocx = buildDocx({
+        'word/document.xml': [
+          '<?xml version="1.0" encoding="UTF-8"?>',
+          '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">',
+          '<w:body>',
+          '<w:p><w:r><w:t>Trang cuối</w:t><w:br w:type="page"/><w:br w:type="page"/></w:r></w:p>',
+          '</w:body></w:document>',
+        ].join(''),
+      });
+      const trailingDoubleRes = await convertDocxToPdf(trailingDoubleBreakDocx);
+      expect(trailingDoubleRes.pageCount).toBe(2);
+
       // Plain empty <w:p/> without a page break still preserves intentional vertical spacer height.
       drawn.length = 0;
       const spacerDocx = buildDocx({

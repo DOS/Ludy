@@ -63,7 +63,9 @@ const { SIGN_DOCX_MAX_BYTES, SIGN_DOCX_MIME, SIGN_UPLOAD_ACCEPT, convertSignDocx
 );
 const { orpc, queryClient } = await import('../src/lib/api.ts');
 const { ensureSignedOutListener } = await import('../src/lib/ceremony-boot.ts');
-const { CreateEnvelopeDialog, handleEnvelopeCreatedWithWarnings } = await import('../src/routes/sign-envelopes.tsx');
+const { CreateEnvelopeDialog, handleEnvelopeCreatedWithWarnings, openCreatedDocxNoticeEnvelope } = await import(
+  '../src/routes/sign-envelopes.tsx'
+);
 const { SignEnvelopeDetailPage } = await import('../src/routes/sign-envelope-detail.tsx');
 const { CreateTemplateForm } = await import('../src/routes/sign-templates.tsx');
 
@@ -332,6 +334,8 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
     expect(setCreateOpen).toHaveBeenCalledWith(false);
     expect(setCreatedDocxNotice).toHaveBeenCalledWith({
       envelopeId: envDetailId,
+      slug: 'acme',
+      orgId,
       warnings: ['images_skipped', 'footnotes_skipped'],
     });
     expect(invalidateEnvelopes).toHaveBeenCalledTimes(1);
@@ -571,7 +575,67 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
     expect(unpersistedNav).not.toHaveBeenCalled();
     expect(setCreatedDocxNotice).toHaveBeenCalledWith({
       envelopeId: envDetailId,
+      slug: 'acme',
+      orgId: null,
       warnings: ['images_skipped'],
     });
+
+    // Clicking "Open envelope" while me.get is still down stays on list page; once me.get recovers, it persists before navigating.
+    const unpersistedNotice = {
+      envelopeId: envDetailId,
+      slug: 'acme',
+      orgId: null,
+      warnings: ['images_skipped'] as const,
+    };
+    expect(
+      await openCreatedDocxNoticeEnvelope({
+        notice: unpersistedNotice,
+        userId: null,
+        resolveUserScope: async () => {
+          throw new Error('still offline');
+        },
+        setCreatedDocxNotice,
+        navigateToEnvelope: unpersistedNav,
+      }),
+    ).toBe(false);
+    expect(unpersistedNav).not.toHaveBeenCalled();
+
+    const recoveredOrder: string[] = [];
+    expect(
+      await openCreatedDocxNoticeEnvelope({
+        notice: unpersistedNotice,
+        userId: null,
+        resolveUserScope: async () => {
+          recoveredOrder.push('resolve');
+          return { orgId, userId: userAId };
+        },
+        setCreatedDocxNotice,
+        navigateToEnvelope: async (navSlug, navId) => {
+          recoveredOrder.push(`nav:${navSlug}:${navId}:${readCreatedDocxWarnings(envDetailId, scopeUserA).join(',')}`);
+        },
+      }),
+    ).toBe(true);
+    expect(recoveredOrder).toEqual(['resolve', `nav:acme:${envDetailId}:images_skipped`]);
+    clearCreatedDocxWarnings(envDetailId, scopeUserA);
+
+    // If org context changed while resolveUserScope was in flight, stale notice/navigation is suppressed.
+    setCreatedDocxNotice.mockClear();
+    const staleNav = vi.fn(async () => {});
+    await handleEnvelopeCreatedWithWarnings({
+      envelopeId: envDetailId,
+      warnings: ['images_skipped'],
+      slug: 'acme',
+      orgId: null,
+      userId: null,
+      resolveUserScope: async () => ({ orgId, userId: userAId }),
+      isCurrentContext: () => false,
+      setCreateOpen,
+      setCreatedDocxNotice,
+      invalidateEnvelopes,
+      navigateToEnvelope: staleNav,
+    });
+    expect(setCreatedDocxNotice).not.toHaveBeenCalled();
+    expect(staleNav).not.toHaveBeenCalled();
+    clearCreatedDocxWarnings(envDetailId, scopeUserA);
   });
 });
