@@ -270,6 +270,15 @@ export interface SignProposedObligationItem {
   proposedByAi: true;
 }
 
+export interface SignObligationDepositProposal {
+  amount: string;
+  currency: 'VND';
+  dueDays: number | null;
+  pageNumber: number;
+  quoteExcerpt: string;
+  proposedByAi: true;
+}
+
 export interface SignObligationProposal {
   counterpartyName: string | null;
   effectiveDate: string | null;
@@ -280,6 +289,7 @@ export interface SignObligationProposal {
   currency: string;
   citations: SignObligationCitation[];
   obligations: SignProposedObligationItem[];
+  depositProposal?: SignObligationDepositProposal | null;
   proposedByAi: true;
 }
 
@@ -303,6 +313,13 @@ export interface SignObligationModelItem {
   quoteExcerpt: string;
 }
 
+export interface SignObligationDepositModelProposal {
+  amount: string;
+  dueDays: number | null;
+  pageNumber: number | null;
+  quoteExcerpt: string;
+}
+
 export interface SignObligationExtractModelOutput {
   counterpartyName: string | null;
   effectiveDate: string | null;
@@ -313,6 +330,7 @@ export interface SignObligationExtractModelOutput {
   currency: string | null;
   citations: SignObligationModelCitation[];
   obligations: SignObligationModelItem[];
+  depositProposal?: SignObligationDepositModelProposal | null;
 }
 
 export interface SignVaultQaSnippetInput {
@@ -637,6 +655,14 @@ const zObligationExtractModelOutput = z.strictObject({
       quoteExcerpt: z.string(),
     }),
   ),
+  depositProposal: z
+    .strictObject({
+      amount: z.string(),
+      dueDays: z.number().nullable(),
+      pageNumber: z.number().nullable(),
+      quoteExcerpt: z.string(),
+    })
+    .nullable(),
 });
 
 const zVaultQaModelOutput = z.strictObject({
@@ -2706,6 +2732,7 @@ export function signObligationExtractInstructions(): string {
     '- Every item in `obligations` MUST include `pageNumber` (1..pageCount) and an exact verbatim `quoteExcerpt` copied directly from that page.',
     '- Format `effectiveDate`, `expiryDate`, and each obligation `dueDate` as ISO `YYYY-MM-DD` ONLY when the exact calendar date is stated in the cited quote; otherwise return `null`.',
     '- Format `contractValue` as a plain ungrouped decimal string (for example `"24000000"` or `"1500.50"`), never floating-point math, and only when the exact total value is printed in the cited quote; otherwise return `null`.',
+    '- If the contract explicitly states a VND advance payment or security deposit (`đặt cọc`, `tạm ứng`, `cọc`, `deposit`, `advance payment`), set `depositProposal` with plain VND decimal `amount`, optional `dueDays` (integer 0..365 ONLY if printed in the quote, else `null`), `pageNumber`, and verbatim `quoteExcerpt`; otherwise return `null`.',
     '- Return a 3-letter uppercase ISO 4217 `currency` (`"VND"`, `"USD"`, etc.) matching the document, or `"VND"` when unspecified.',
     '- Never invent numbers, dates, amounts, URLs, domains, or email addresses that do not appear in the contract text.',
   ].join('\n');
@@ -2938,6 +2965,60 @@ export function checkSignObligationExtract(
     });
   }
 
+  let depositProposal: SignObligationDepositProposal | null = null;
+  if (raw.depositProposal && typeof raw.depositProposal === 'object') {
+    const depQuoteRaw =
+      typeof raw.depositProposal.quoteExcerpt === 'string' ? stripFormatControl(raw.depositProposal.quoteExcerpt).trim() : '';
+    const depNormQuote = normalizeContractText(depQuoteRaw);
+    const depPage =
+      depNormQuote.length >= 4
+        ? resolveQuotePage(raw.depositProposal.pageNumber, depNormQuote, request.pageCount, pageNormMap)
+        : null;
+    const depAmountDec =
+      typeof raw.depositProposal.amount === 'string' ? normalizeDecimalAmount(raw.depositProposal.amount) : null;
+    const depQuoteForeign = groundedForeignCurrencies(depQuoteRaw);
+    const depHasExplicitVnd = hasExplicitVnd(depQuoteRaw);
+    const depDocForeign = groundedForeignCurrencies(combinedSourceRaw);
+    const depVndValid =
+      depQuoteForeign.size === 0
+        ? depHasExplicitVnd || depDocForeign.size === 0
+        : isAmountWithCurrencyInLocalSpan(depAmountDec ?? '', 'VND', depQuoteRaw);
+
+    let depDueDays: number | null = null;
+    let depDueValid = true;
+    if (raw.depositProposal.dueDays !== null && raw.depositProposal.dueDays !== undefined) {
+      if (
+        typeof raw.depositProposal.dueDays === 'number' &&
+        isNoticeDaysGroundedInQuote(raw.depositProposal.dueDays, depQuoteRaw)
+      ) {
+        depDueDays = raw.depositProposal.dueDays;
+      } else {
+        depDueValid = false;
+      }
+    }
+
+    if (
+      depPage !== null &&
+      depAmountDec !== null &&
+      new Decimal(depAmountDec).gt(0) &&
+      isAmountGroundedInQuote(depAmountDec, depQuoteRaw) &&
+      isCurrencyGroundedInText('VND', depQuoteRaw) &&
+      depVndValid &&
+      depDueValid
+    ) {
+      depositProposal = {
+        amount: depAmountDec,
+        currency: 'VND',
+        dueDays: depDueDays,
+        pageNumber: depPage,
+        quoteExcerpt: cut(depQuoteRaw, 600),
+        proposedByAi: true,
+      };
+    } else {
+      droppedCount += 1;
+    }
+  }
+
   const hasAny =
     counterpartyName !== null ||
     effectiveDate !== null ||
@@ -2945,7 +3026,8 @@ export function checkSignObligationExtract(
     renewalNoticeDays !== null ||
     autoRenew ||
     contractValue !== null ||
-    obligations.length > 0;
+    obligations.length > 0 ||
+    depositProposal !== null;
 
   if (!hasAny) {
     return {
@@ -2969,6 +3051,7 @@ export function checkSignObligationExtract(
       currency,
       citations: keptCitations,
       obligations,
+      ...(depositProposal ? { depositProposal } : {}),
       proposedByAi: true,
     },
     droppedCount,

@@ -285,3 +285,21 @@ export {
   type McpSignTemplateRow,
   type McpSignTemplatesResult,
 } from './mcp.ts';
+export {
+  buildVietQrEmvcoPayload,
+  computeEmvcoCrc16,
+  depositMatchCandidates,
+  depositProfileClear,
+  depositProfileGet,
+  depositProfileUpsert,
+  envelopeDepositClear,
+  envelopeDepositSet,
+  formatDepositProfile,
+  formatEnvelopeDeposit,
+  freezeEnvelopeDepositSnapshot,
+  parseDepositAmountDecimal,
+  signDepositCommands,
+  signDepositQueries,
+  trimDepositDecimalString,
+  type SignDepositMatchCandidate,
+} from './deposit.ts';

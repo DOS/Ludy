@@ -415,6 +415,31 @@ export function EnvelopeObligationsCard({
               </ul>
             ) : null}
 
+            {proposal.depositProposal ? (
+              <div className="rounded border bg-card px-2 py-1.5" data-testid="sign-obligation-proposed-deposit">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-medium text-foreground">
+                    {t('depositProposalLabel', {
+                      amount: f.money(proposal.depositProposal.amount),
+                    })}
+                    {proposal.depositProposal.dueDays !== null
+                      ? ` (${t('depositProposalDueDays', { days: String(proposal.depositProposal.dueDays) })})`
+                      : ''}
+                  </span>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="h-6 px-2 text-xs text-link"
+                    onClick={() => onJumpToPage(proposal.depositProposal!.pageNumber)}
+                  >
+                    {t('jumpToPage', { page: String(proposal.depositProposal.pageNumber) })}
+                  </Button>
+                </div>
+                <p className="mt-0.5 italic text-muted-foreground">&ldquo;{proposal.depositProposal.quoteExcerpt}&rdquo;</p>
+              </div>
+            ) : null}
+
             <div className="flex flex-wrap gap-2">
               <Button
                 type="button"

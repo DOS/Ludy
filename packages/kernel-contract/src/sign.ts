@@ -34,6 +34,12 @@ export const SIGN_DELEGATE_REASON_MAX = 500;
 export const SIGN_MAX_DELEGATIONS = 2;
 export const SIGN_SIGNATURE_TYPED_TEXT_MAX = 200;
 export const SIGN_PUBLIC_FIELDS_MAX = 500;
+export const SIGN_DEPOSIT_MEMO_TOKEN_PATTERN = /^CK-[A-Z0-9]{6,12}$/;
+export const SIGN_DEPOSIT_PROOF_MAX_BYTES = 2 * 1024 * 1024;
+export const SIGN_DEPOSIT_PROOF_CONTENT_TYPES = ['image/png', 'image/jpeg'] as const;
+export type SignDepositProofContentType = (typeof SIGN_DEPOSIT_PROOF_CONTENT_TYPES)[number];
+export const SIGN_DEPOSIT_DUE_DAYS_MAX = 365;
+export const SIGN_DEPOSIT_NOTE_MAX = 300;
 
 export const zSignToken = z.string().regex(SIGN_TOKEN_PATTERN, 'Invalid signing token');
 export const zSignTemplateRoleKey = z.string().regex(SIGN_TEMPLATE_ROLE_KEY_PATTERN, 'Invalid template role key');
@@ -154,6 +160,24 @@ export interface SignPublicDocument {
   sourceSha256: string;
 }
 
+export interface SignPublicDepositSummary {
+  amount: string;
+  currency: 'VND';
+  memoToken: string;
+  dueDays: number | null;
+  note: string | null;
+  bankCode: string;
+  bankName: string;
+  accountNumber: string;
+  accountHolder: string;
+  hasQrPng: boolean;
+  emvcoPayload: string | null;
+  signerNoticeAt: string | null;
+  signerNoticeNote: string | null;
+  signerProofFilename: string | null;
+  signerProofSha256: string | null;
+}
+
 export type SignPublicView =
   | {
       state: 'otp_required';
@@ -161,6 +185,13 @@ export type SignPublicView =
       title: string;
       maskedEmail: string | null;
       inPerson?: boolean;
+    }
+  | {
+      state: 'already_completed';
+      title: string;
+      status: 'sent' | 'in_progress' | 'completed';
+      signerRole: 'signer' | 'approver';
+      deposit: SignPublicDepositSummary | null;
     }
   | {
       state: 'ready';
@@ -205,6 +236,7 @@ export interface SignPublicSubmitResult {
   completed: boolean;
   inPerson?: boolean;
   signedAt: string;
+  deposit?: SignPublicDepositSummary | null;
 }
 
 export interface SignPublicDeclineResult {
@@ -408,6 +440,7 @@ export const SIGN_EVENT_TYPES = [
   'signer_viewed',
   'signer_otp_verified',
   'attachment_uploaded',
+  'deposit_notice_recorded',
   'signer_signed',
   'in_person_signed',
   'signer_declined',
@@ -691,6 +724,136 @@ export const zSignEnvelopeDocumentSummary = z.strictObject({
 });
 export type SignEnvelopeDocumentSummary = z.infer<typeof zSignEnvelopeDocumentSummary>;
 
+export const zSignContractDecimal = z.string().regex(/^\d+(\.\d{1,4})?$/, 'Non-negative decimal string (up to 4 decimal places)');
+
+export const zSignDepositProfile = z.strictObject({
+  id: zId,
+  bankCode: z.string(),
+  bankName: z.string(),
+  accountNumber: z.string(),
+  accountHolder: z.string(),
+  financeBankAccount: z.string().nullable(),
+  hasQrPng: z.boolean(),
+  vietqrFileId: zId.nullable(),
+  isDefault: z.boolean(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type SignDepositProfileContract = z.infer<typeof zSignDepositProfile>;
+
+export const zSignDepositProfileGetResult = z.strictObject({
+  profile: zSignDepositProfile.nullable(),
+  canEdit: z.boolean(),
+});
+export type SignDepositProfileGetResult = z.infer<typeof zSignDepositProfileGetResult>;
+
+export const zSignDepositProfileUpsertInput = z
+  .strictObject({
+    id: zId.optional(),
+    bankCode: z.string().trim().min(1).max(32),
+    bankName: z.string().trim().min(1).max(200).optional(),
+    accountNumber: z.string().trim().min(4).max(34),
+    accountHolder: z.string().trim().min(1).max(200),
+    financeBankAccount: z.string().trim().regex(/^[0-9]{3,16}$/).nullable().optional(),
+    vietqrFileId: zId.nullable().optional(),
+    vietqrPngBase64: z.string().min(1).max(SIGN_SIGNATURE_PNG_BASE64_MAX).optional(),
+    clearVietqr: z.boolean().optional(),
+    isDefault: z.boolean().optional(),
+  })
+  .superRefine((v, ctx) => {
+    if (
+      v.accountNumber.includes('\u0000') ||
+      v.accountHolder.includes('\u0000') ||
+      v.bankCode.includes('\u0000') ||
+      Boolean(v.bankName?.includes('\u0000'))
+    ) {
+      ctx.addIssue({ code: 'custom', path: ['accountNumber'], message: 'NUL characters are not permitted' });
+    }
+    if (v.vietqrFileId !== undefined && v.vietqrFileId !== null && v.vietqrPngBase64 !== undefined) {
+      ctx.addIssue({ code: 'custom', path: ['vietqrPngBase64'], message: 'Provide either vietqrFileId or vietqrPngBase64, not both' });
+    }
+    if (v.clearVietqr && (v.vietqrFileId !== undefined && v.vietqrFileId !== null || v.vietqrPngBase64 !== undefined)) {
+      ctx.addIssue({ code: 'custom', path: ['clearVietqr'], message: 'clearVietqr cannot be combined with a new VietQR PNG' });
+    }
+  });
+export type SignDepositProfileUpsertInput = z.infer<typeof zSignDepositProfileUpsertInput>;
+
+export const zSignDepositProfileClearResult = z.strictObject({
+  cleared: z.boolean(),
+});
+
+export const zSignEnvelopeDepositRecord = z.strictObject({
+  id: zId,
+  orgId: zId,
+  envelopeId: zId,
+  amount: zSignContractDecimal,
+  currency: z.literal('VND'),
+  memoToken: z.string().regex(SIGN_DEPOSIT_MEMO_TOKEN_PATTERN),
+  dueDays: z.number().int().min(0).max(SIGN_DEPOSIT_DUE_DAYS_MAX).nullable(),
+  depositProfileId: zId.nullable(),
+  note: z.string().nullable(),
+  snapshotFrozenAt: z.string().nullable(),
+  snapshotBankCode: z.string().nullable(),
+  snapshotBankName: z.string().nullable(),
+  snapshotAccountNumber: z.string().nullable(),
+  snapshotAccountHolder: z.string().nullable(),
+  snapshotFinanceBankAccount: z.string().nullable(),
+  snapshotVietqrFileId: zId.nullable(),
+  snapshotEmvcoPayload: z.string().nullable(),
+  signerNoticeAt: z.string().nullable(),
+  signerNoticeNote: z.string().nullable(),
+  signerProofFileId: zId.nullable(),
+  signerProofFilename: z.string().nullable(),
+  signerProofSha256: z.string().nullable(),
+  createdBy: zId.nullable(),
+  updatedBy: zId.nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type SignEnvelopeDepositRecordContract = z.infer<typeof zSignEnvelopeDepositRecord>;
+
+export const zSignEnvelopeDepositSetInput = z.strictObject({
+  envelopeId: zId,
+  amount: z.string().trim().min(1).max(40),
+  dueDays: z.number().int().min(0).max(SIGN_DEPOSIT_DUE_DAYS_MAX).nullable().optional(),
+  depositProfileId: zId.optional(),
+  memoToken: z.string().trim().toUpperCase().regex(SIGN_DEPOSIT_MEMO_TOKEN_PATTERN).optional(),
+  note: z.string().trim().max(SIGN_DEPOSIT_NOTE_MAX).nullable().optional(),
+});
+export type SignEnvelopeDepositSetInput = z.infer<typeof zSignEnvelopeDepositSetInput>;
+
+export const zSignEnvelopeDepositClearInput = z.strictObject({
+  envelopeId: zId,
+});
+export type SignEnvelopeDepositClearInput = z.infer<typeof zSignEnvelopeDepositClearInput>;
+
+export const zSignEnvelopeDepositClearResult = z.strictObject({
+  cleared: z.boolean(),
+});
+
+export const zSignPublicDepositSummary = z.strictObject({
+  amount: z.string(),
+  currency: z.literal('VND'),
+  memoToken: z.string(),
+  dueDays: z.number().int().min(0).max(SIGN_DEPOSIT_DUE_DAYS_MAX).nullable(),
+  note: z.string().nullable(),
+  bankCode: z.string(),
+  bankName: z.string(),
+  accountNumber: z.string(),
+  accountHolder: z.string(),
+  hasQrPng: z.boolean(),
+  emvcoPayload: z.string().nullable(),
+  signerNoticeAt: z.string().nullable(),
+  signerNoticeNote: z.string().nullable(),
+  signerProofFilename: z.string().nullable(),
+  signerProofSha256: z.string().nullable(),
+});
+
+export const zSignPublicDepositNoticeResult = z.strictObject({
+  deposit: zSignPublicDepositSummary,
+});
+export type SignPublicDepositNoticeResult = z.infer<typeof zSignPublicDepositNoticeResult>;
+
 export const zSignEnvelopeDetail = z.strictObject({
   envelope: z.strictObject({
     id: zId,
@@ -795,6 +958,7 @@ export const zSignEnvelopeDetail = z.strictObject({
     }),
   ),
   documents: z.array(zSignEnvelopeDocumentSummary).optional(),
+  deposit: zSignEnvelopeDepositRecord.nullable().optional(),
 });
 
 export const zSignEnvelopeEventsResult = z.strictObject({
@@ -1836,8 +2000,17 @@ export const zSignObligationAiOutcome = z.enum(SIGN_OBLIGATION_AI_OUTCOMES);
 export type SignObligationAiOutcome = z.infer<typeof zSignObligationAiOutcome>;
 
 export const zSignObligationDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'ISO calendar date YYYY-MM-DD');
-export const zSignContractDecimal = z.string().regex(/^\d+(\.\d{1,4})?$/, 'Non-negative decimal string (up to 4 decimal places)');
 export const zSignCurrencyCode = z.string().regex(/^[A-Z]{3}$/, 'ISO 4217 3-letter currency code');
+
+export const zSignDepositProposal = z.strictObject({
+  amount: zSignContractDecimal,
+  currency: z.literal('VND'),
+  dueDays: z.number().int().min(0).max(365).nullable(),
+  pageNumber: z.number().int().min(1).max(SIGN_MAX_PAGES),
+  quoteExcerpt: z.string().min(1).max(1000),
+  proposedByAi: z.literal(true),
+});
+export type SignDepositProposalContract = z.infer<typeof zSignDepositProposal>;
 
 export const zSignObligationCitation = z.strictObject({
   field: zSignObligationCitationField,
@@ -1878,6 +2051,7 @@ export const zSignObligationProposal = z.strictObject({
   currency: zSignCurrencyCode,
   citations: z.array(zSignObligationCitation),
   obligations: z.array(zSignProposedObligationItem),
+  depositProposal: zSignDepositProposal.nullable().optional(),
   proposedByAi: z.literal(true),
 });
 export type SignObligationProposalContract = z.infer<typeof zSignObligationProposal>;

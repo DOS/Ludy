@@ -30,6 +30,8 @@ import {
   type BankOpenLines,
   type BankPayrollCandidate,
   type BankPayrollMatch,
+  type BankSignDepositCandidate,
+  type BankSignDepositMatch,
   type HrRunPaymentAmounts,
   type PayrollPaymentKind,
   type VoucherType,
@@ -468,6 +470,83 @@ export const bankPayrollMatch = defineQuery({
     }
     // The description's words first, then the newest month.
     candidates.sort((a, b) => Number(b.reason === 'amount_note') - Number(a.reason === 'amount_note') || (a.month < b.month ? 1 : a.month > b.month ? -1 : 0));
+    return { bankLineId: line.id, date: line.date, candidates };
+  },
+});
+
+interface SignDepositCandidateRow {
+  envelopeId: string;
+  title: string;
+  completedAt: string;
+  amount: string;
+  currency: 'VND';
+  memoToken: string;
+  financeBankAccount: string | null;
+  signerName: string | null;
+  signerNoticeAt: string | null;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function containsWholeMemoToken(haystack: string, memoToken: string): boolean {
+  const token = memoToken.trim();
+  if (!token) return false;
+  const re = new RegExp(`(?<![A-Za-z0-9])${escapeRegExp(token)}(?![A-Za-z0-9])`, 'i');
+  return re.test(haystack);
+}
+
+// Completed non-confidential eSign envelopes whose frozen VietQR deposit amount equals an open money-in bank line
+// AND whose CK-<CODE> memo token matches case-insensitively as a whole token in description/reference (#4723).
+// Read-only prefill hint for Báo Có; zero auto-posting.
+export const bankSignDepositMatch = defineQuery({
+  name: 'finance.bank.sign_deposit_match',
+  input: z.object({ bankLineId: zId }),
+  access: REQUESTERS,
+  handler: async (ctx, input): Promise<BankSignDepositMatch> => {
+    const line = await findBankLine(ctx, input.bankLineId);
+    if (!line) throw new DomainError('BANK_LINE_NOT_FOUND', 404, 'Không tìm thấy dòng sao kê; hãy tải lại trang ngân hàng');
+    const none: BankSignDepositMatch = { bankLineId: line.id, date: line.date, candidates: [] };
+    const lineAmount = new Decimal(line.amount);
+    if (lineAmount.lte(0)) return none;
+    if (((await bankLineStates(ctx, [line.id])).get(line.id)?.status ?? 'open') !== 'open') return none;
+
+    const result = await ctx.query<SignDepositCandidateRow[]>('sign.deposit.match_candidates', {});
+    if (result.status !== 'ok') {
+      return none;
+    }
+
+    const haystack = [line.description ?? '', line.reference ?? ''].filter(Boolean).join(' ');
+    const candidates: BankSignDepositCandidate[] = [];
+    for (const c of result.value) {
+      if (c.currency !== 'VND') continue;
+      if (c.financeBankAccount && c.financeBankAccount !== line.bankAccount) continue;
+      let candAmount: ReturnType<typeof Decimal.abs>;
+      try {
+        candAmount = new Decimal(c.amount);
+      } catch {
+        continue;
+      }
+      if (!candAmount.eq(lineAmount)) continue;
+      if (!containsWholeMemoToken(haystack, c.memoToken)) continue;
+      candidates.push({
+        envelopeId: c.envelopeId,
+        title: c.title,
+        completedAt: c.completedAt,
+        amount: lineAmount.toFixed(),
+        currency: 'VND',
+        memoToken: c.memoToken,
+        financeBankAccount: c.financeBankAccount,
+        signerName: c.signerName,
+        signerNoticeAt: c.signerNoticeAt,
+        reason: 'amount_memo',
+        voucherType: 'bank_credit',
+        suggestedDebitAccount: line.bankAccount,
+        suggestedCreditAccount: defaultCounterAccount('bank_credit'),
+      });
+    }
+
     return { bankLineId: line.id, date: line.date, candidates };
   },
 });

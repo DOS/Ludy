@@ -1,12 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Typed eSign API client aligned with #3323 core commands/queries, #3324 public ceremony routes, and #3351 Vy AI (#3325).
 import {
+  SIGN_DEPOSIT_DUE_DAYS_MAX,
+  SIGN_DEPOSIT_MEMO_TOKEN_PATTERN,
+  SIGN_DEPOSIT_NOTE_MAX,
+  SIGN_DEPOSIT_PROOF_MAX_BYTES,
   SIGN_MAX_PACKET_DOCS,
   SIGN_MAX_PAGES,
   SIGN_WEBHOOK_EVENT_TYPES,
   type SignApiKeyRecord,
   type SignApiKeyScope,
   type SignContractDraftVariables,
+  type SignDepositProfileContract,
+  type SignDepositProfileUpsertInput,
   type SignDiffCompareInput,
   type SignDiffCompareResult,
   type SignDocxConvertCompletedResult,
@@ -15,6 +21,8 @@ import {
   type SignDrafterProposeInput,
   type SignDrafterProposeResult,
   type SignDrafterRenderPdfResult,
+  type SignEnvelopeDepositRecordContract,
+  type SignEnvelopeDepositSetInput,
   type SignEnvelopeDocumentSummary,
   type SignEnvelopeObligationRecordContract,
   type SignKycAttachmentSlotContract,
@@ -30,6 +38,8 @@ import {
   type SignPlaybookRulesListResult,
   type SignPlaybookSeverityContract,
   type SignPlaybookVerdictContract,
+  type SignPublicDepositNoticeResult,
+  type SignPublicDepositSummary,
   type SignPublicDocument,
   type SignSharedKeyTerm,
   type SignSharedSummary,
@@ -66,10 +76,20 @@ import type {
   SignSignerStatus,
 } from './sign-fields.ts';
 
-export { SIGN_MAX_PACKET_DOCS, SIGN_MAX_PAGES, SIGN_WEBHOOK_EVENT_TYPES };
+export {
+  SIGN_DEPOSIT_DUE_DAYS_MAX,
+  SIGN_DEPOSIT_MEMO_TOKEN_PATTERN,
+  SIGN_DEPOSIT_NOTE_MAX,
+  SIGN_DEPOSIT_PROOF_MAX_BYTES,
+  SIGN_MAX_PACKET_DOCS,
+  SIGN_MAX_PAGES,
+  SIGN_WEBHOOK_EVENT_TYPES,
+};
 export const SIGN_PACKET_MAX_BYTES = 25 * 1024 * 1024;
 export type {
   SignContractDraftVariables,
+  SignDepositProfileContract,
+  SignDepositProfileUpsertInput,
   SignDiffCompareInput,
   SignDiffCompareResult,
   SignDocxConvertCompletedResult,
@@ -77,9 +97,13 @@ export type {
   SignDrafterProposeInput,
   SignDrafterProposeResult,
   SignDrafterRenderPdfResult,
+  SignEnvelopeDepositRecordContract,
+  SignEnvelopeDepositSetInput,
   SignEnvelopeDocumentSummary,
   SignPacketConsistencyCheckInput,
   SignPacketConsistencyCheckResult,
+  SignPublicDepositNoticeResult,
+  SignPublicDepositSummary,
   SignPublicDocument,
   SignSharedKeyTerm,
   SignSharedSummary,
@@ -428,7 +452,15 @@ export type PublicSignViewState =
       order: number;
     }
   | {
-      state: 'already_completed' | 'declined' | 'expired' | 'voided';
+      state: 'already_completed';
+      title: string;
+      status: string;
+      signerRole?: SignSignerRole;
+      inPerson?: boolean;
+      deposit?: SignPublicDepositSummary | null;
+    }
+  | {
+      state: 'declined' | 'expired' | 'voided';
       title: string;
       status: string;
       signerRole?: SignSignerRole;
@@ -931,6 +963,14 @@ export const signApi = {
   }) => client.sign.api_keys.create(input),
   revokeApiKey: (apiKeyId: string) =>
     client.sign.api_keys.revoke({ apiKeyId, idempotencyKey: crypto.randomUUID() }),
+  getDepositProfile: () => client.sign.depositProfile.get({}),
+  upsertDepositProfile: (input: SignDepositProfileUpsertInput) =>
+    client.sign.depositProfile.upsert(input),
+  clearDepositProfile: () => client.sign.depositProfile.clear({}),
+  setEnvelopeDeposit: (input: SignEnvelopeDepositSetInput) =>
+    client.sign.deposit.set(input),
+  clearEnvelopeDeposit: (envelopeId: string) =>
+    client.sign.deposit.clear({ envelopeId }),
 };
 
 export type {
@@ -1300,6 +1340,39 @@ function normalizePublicSharedSummary(raw: unknown): SignSharedSummary | null {
   return { summaryText, keyTerms };
 }
 
+function normalizePublicDepositSummary(raw: unknown): SignPublicDepositSummary | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = raw as Record<string, unknown>;
+  if (
+    typeof obj.amount !== 'string' ||
+    obj.currency !== 'VND' ||
+    typeof obj.memoToken !== 'string' ||
+    typeof obj.bankCode !== 'string' ||
+    typeof obj.bankName !== 'string' ||
+    typeof obj.accountNumber !== 'string' ||
+    typeof obj.accountHolder !== 'string'
+  ) {
+    return null;
+  }
+  return {
+    amount: obj.amount,
+    currency: 'VND',
+    memoToken: obj.memoToken,
+    dueDays: typeof obj.dueDays === 'number' && Number.isInteger(obj.dueDays) ? obj.dueDays : null,
+    note: typeof obj.note === 'string' ? obj.note : null,
+    bankCode: obj.bankCode,
+    bankName: obj.bankName,
+    accountNumber: obj.accountNumber,
+    accountHolder: obj.accountHolder,
+    hasQrPng: Boolean(obj.hasQrPng),
+    emvcoPayload: typeof obj.emvcoPayload === 'string' ? obj.emvcoPayload : null,
+    signerNoticeAt: typeof obj.signerNoticeAt === 'string' ? obj.signerNoticeAt : null,
+    signerNoticeNote: typeof obj.signerNoticeNote === 'string' ? obj.signerNoticeNote : null,
+    signerProofFilename: typeof obj.signerProofFilename === 'string' ? obj.signerProofFilename : null,
+    signerProofSha256: typeof obj.signerProofSha256 === 'string' ? obj.signerProofSha256 : null,
+  };
+}
+
 // Public signing ceremony endpoints: token sits exclusively inside JSON POST bodies.
 export const publicSignApi = {
   view: async (token: string): Promise<PublicSignViewState> => {
@@ -1353,6 +1426,16 @@ export const publicSignApi = {
         ...(sharedSummary ? { sharedSummary } : {}),
       };
     }
+    if (raw.state === 'already_completed') {
+      return {
+        state: 'already_completed',
+        title: String(raw.title ?? ''),
+        status: String(raw.status ?? 'completed'),
+        ...(raw.signerRole === 'approver' || raw.signerRole === 'signer' ? { signerRole: raw.signerRole } : {}),
+        ...(raw.inPerson === true ? { inPerson: true } : {}),
+        deposit: normalizePublicDepositSummary(raw.deposit),
+      };
+    }
     return raw as unknown as PublicSignViewState;
   },
 
@@ -1392,7 +1475,47 @@ export const publicSignApi = {
       completed: boolean;
       signedAt: string;
       inPerson?: boolean;
+      deposit?: SignPublicDepositSummary | null;
     }>('/api/sign/submit', input),
+
+  depositQr: async (token: string): Promise<Blob> => {
+    const response = await postPublicResponse('/api/sign/deposit-qr', { token });
+    if (!response.ok) {
+      const data = (await response.json().catch(() => ({}))) as { code?: string; message?: string };
+      throw new PublicSignError(response.status, data.code ?? 'SIGN_DEPOSIT_QR_UNAVAILABLE', data.message);
+    }
+    return response.blob();
+  },
+
+  depositNotice: async (input: {
+    token: string;
+    note?: string | null;
+    file?: File | null;
+  }): Promise<SignPublicDepositNoticeResult> => {
+    if (input.file) {
+      const form = new FormData();
+      form.set('token', input.token);
+      if (input.note && input.note.trim().length > 0) {
+        form.set('note', input.note.trim());
+      }
+      form.set('file', input.file, input.file.name || 'transfer-receipt');
+      const response = await fetch(apiUrl('/api/sign/deposit-notice'), {
+        method: 'POST',
+        body: form,
+        credentials: 'omit',
+        referrerPolicy: 'no-referrer',
+      });
+      if (!response.ok) {
+        const data = (await response.json().catch(() => ({}))) as { code?: string; message?: string };
+        throw new PublicSignError(response.status, data.code ?? 'SIGN_DEPOSIT_NOTICE_FAILED', data.message);
+      }
+      return (await response.json()) as SignPublicDepositNoticeResult;
+    }
+    return postPublicJson<SignPublicDepositNoticeResult>('/api/sign/deposit-notice', {
+      token: input.token,
+      ...(input.note && input.note.trim().length > 0 ? { note: input.note.trim() } : {}),
+    });
+  },
 
   decline: (input: { token: string; reason: string }) =>
     postPublicJson<{ signerId: string; signerStatus: 'declined'; envelopeStatus: 'declined'; declinedAt: string }>(

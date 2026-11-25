@@ -7,9 +7,9 @@ import { TingeeError, sandboxBankFeed, type BankFeedProvider } from '@ludy/bank-
 import { RateLimiter } from './rate-limit.ts';
 import { sandboxAdPlatform, sandboxWriteLogin, type AdPlatform } from '@ludy/ad-platform';
 import { EInvoiceProviderError, SANDBOX_EINVOICE_SECRET, type ConnectionState, type EInvoiceProvider } from '@ludy/einvoice';
-import { assertSignCaProviderAllowed } from '@ludy/mod-sign';
+import { assertSignCaProviderAllowed, validateSignaturePngBase64 } from '@ludy/mod-sign';
 import { SANDBOX_CA_SECRET, createSandboxCaAdapter } from '@ludy/sign';
-import type { SignApiKeyListResult, SignApiKeyRecord, SignCaConnectionRecord, SignCaSettingsResult, SignWebhookDeleteResult, SignWebhookDeliveriesResult, SignWebhookListResult, SignWebhookPingResult, SignWebhookRecord } from '@ludy/kernel-contract';
+import type { SignApiKeyListResult, SignApiKeyRecord, SignCaConnectionRecord, SignCaSettingsResult, SignDepositProfileContract, SignWebhookDeleteResult, SignWebhookDeliveriesResult, SignWebhookListResult, SignWebhookPingResult, SignWebhookRecord } from '@ludy/kernel-contract';
 import type { McpWakeView, MeetingHookView, QuoteLinkCreated } from '@ludy/kernel-contract';
 import { makePairingCode } from './mcp-endpoint.ts';
 import { assertWakeHostPublic, makeWakeSecret, type WakeResolve } from './mcp-wake-setup.ts';
@@ -17,7 +17,7 @@ import { adLaunchCapable } from './ads-launch-capable.ts';
 import { markableDetail, markableListed } from './conversation-sender-mark.ts';
 import { makeHookSecret } from './meeting-hook-setup.ts';
 import { makeSignWebhookSecret } from './sign-hook.ts';
-import type { BankLineVoucher, MarketplaceColumnsStatus, AdAccountView, AdsChange, AdsChangeRequest, ConversationDetail, ConversationListed, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceCorrectionRate, MisaAmisConnection, EInvoiceReasonSource, StockSurplusSource, EInvoiceSeriesTemplate, ChatPreview, CashForecast, FinanceExpenseVariance, FinanceOverview, MonthClose, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceBalance, MarketplaceConnection, MarketplaceFacts, SupplierPayableList, PaymentReminderDraft, TodayList, VatLateSource, WeeklyFigures } from '@ludy/kernel-contract';
+import type { BankLineVoucher, MarketplaceColumnsStatus, AdAccountView, AdsChange, AdsChangeRequest, ConversationDetail, ConversationListed, BankPayrollMatch, BankSignDepositMatch, ConversationEvent, EInvoiceConnection, EInvoiceCorrectionRate, MisaAmisConnection, EInvoiceReasonSource, StockSurplusSource, EInvoiceSeriesTemplate, ChatPreview, CashForecast, FinanceExpenseVariance, FinanceOverview, MonthClose, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceBalance, MarketplaceConnection, MarketplaceFacts, SupplierPayableList, PaymentReminderDraft, TodayList, VatLateSource, WeeklyFigures } from '@ludy/kernel-contract';
 import { briefAnswer } from './today-brief.ts';
 import { weeklyAnswer } from './today-weekly.ts';
 import { type CalendarAdapter, type MeetingPlatformAdapter, BlueskyError, ConnectorError, MeetingPlatformConsentError, MeetingPlatformError, hasOAuth, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWhatsApp, connectWordPress, discordLogin, mastodonLogin, telegramLogin, whatsappLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, sandboxNoticeBody, type OAuthConnector } from '@ludy/channel';
@@ -134,7 +134,8 @@ import { explainMisaCheckLine, misaCheckLineAi } from './finance-misa-check-line
 import { misaAmisPreview } from './misa-amis-preview.ts';
 import { bankCandidatesLineAi, explainBankCandidatesLine } from './finance-bank-candidates-line-ai.ts';
 import { explainPayrollMatch, payrollMatchAi } from './finance-payroll-match-ai.ts';
-import { DomainError, egressFetch, sha256Hex, type CredentialBroker, type Runtime, type UserActor } from '@ludy/kernel-runtime';
+import { explainSignDepositMatch, signDepositMatchAi } from './finance-sign-deposit-match-ai.ts';
+import { DomainError, egressFetch, fileKey, putFile, sha256Hex, type BlobStore, type CredentialBroker, type Runtime, type UserActor } from '@ludy/kernel-runtime';
 import { DraftBudget } from './ai-draft-limit.ts';
 import { BlueskyLoginBudget } from './bluesky-login-limit.ts';
 import { ChatAlertSaveBudget, ChatAlertTestBudget, requestChatAlertTest, saveChatAlert } from './chat-alert-save.ts';
@@ -488,6 +489,8 @@ export function createRpcHandler(
   aiPrice?: { inputPerMTok: string; outputPerMTok: string },
   // Vy's eSign field placement and risky clause review (#3351): unset runs manual signing with AI off.
   signAiReader: SignAi['reader'] = null,
+  // Optional BlobStore for inline base64 image ingest (e.g., eSign VietQR deposit profile PNG #4723).
+  store?: BlobStore,
 ) {
   const os = implement(contract).$context<RpcContext>();
   // Connecting a Tingee account makes one signed read call from this server's address, and Tingee allows 20 calls in 10 seconds per address (#2045): an org may try a few times a minute, and the whole
@@ -538,6 +541,8 @@ export function createRpcHandler(
   const financeExpenseVarianceAi = expenseVarianceAi(conversationReader?.expenseVarianceNotes ? { expenseVarianceNotes: conversationReader.expenseVarianceNotes.bind(conversationReader) } : null, suggestionBudget());
   // The finance coworker's one line on why a bank line may be a payroll payment (#2532): the same reader and model, a budget of its own; told the kind, month, amount and date only.
   const financePayrollMatchAi = payrollMatchAi(conversationReader?.payrollMatchSentence ? { payrollMatchSentence: conversationReader.payrollMatchSentence.bind(conversationReader) } : null, suggestionBudget());
+  // The accounting coworker's one sentence on why a money-in bank line may match a completed eSign deposit request (#4723): non-PII facts only.
+  const financeSignDepositMatchAi = signDepositMatchAi(conversationReader?.signDepositMatchSentence ? { signDepositMatchSentence: conversationReader.signDepositMatchSentence.bind(conversationReader) } : null, suggestionBudget());
   const financeMarketplaceLineAi = marketplaceLineAi(conversationReader?.marketplaceLineSentence ? { marketplaceLineSentence: conversationReader.marketplaceLineSentence.bind(conversationReader) } : null, suggestionBudget());
   // The finance coworker's notes under the Sàn table (#3711 slice 7): the same reader and model, a budget of its own; told the fees, their age and whether it is past the cycle, per numbered row, and no platform name.
   const financeMarketplaceFeeNoteAi = marketplaceFeeNoteAi(conversationReader?.marketplaceFeeNotes ? { marketplaceFeeNotes: conversationReader.marketplaceFeeNotes.bind(conversationReader) } : null, suggestionBudget());
@@ -4558,6 +4563,9 @@ export function createRpcHandler(
       supplierMatch: os.bank.supplierMatch.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => runtime.query('finance.bank.supplier_match', input, { actor, orgId })),
       ),
+      signDepositMatch: os.bank.signDepositMatch.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => runtime.query('finance.bank.sign_deposit_match', input, { actor, orgId })),
+      ),
       // The candidates are read again here in the owner's or admin's own transaction, so the facts the model is told come from the books and the line, never from the caller.
       payrollExplain: os.bank.payrollExplain.handler(({ context, input }) =>
         inFinance(context, async (orgId, actor) => {
@@ -4565,6 +4573,14 @@ export function createRpcHandler(
           const match = await runtime.query<BankPayrollMatch>('finance.bank.payroll_match', { bankLineId }, { actor, orgId });
           const candidate = match.candidates.find((c) => c.runId.toLowerCase() === runId.toLowerCase() && c.kind === kind) ?? null;
           return explainPayrollMatch(financePayrollMatchAi, orgId, actor.userId, candidate, match.date, lang ?? 'vi');
+        }),
+      ),
+      signDepositExplain: os.bank.signDepositExplain.handler(({ context, input }) =>
+        inFinance(context, async (orgId, actor) => {
+          const { lang, envelopeId, bankLineId } = input;
+          const match = await runtime.query<BankSignDepositMatch>('finance.bank.sign_deposit_match', { bankLineId }, { actor, orgId });
+          const candidate = match.candidates.find((c) => c.envelopeId.toLowerCase() === envelopeId.toLowerCase()) ?? null;
+          return explainSignDepositMatch(financeSignDepositMatchAi, orgId, actor.userId, candidate, match.date, lang ?? 'vi');
         }),
       ),
       // The line and its candidates are read again here in the caller's own transaction, so the facts the model is told come from the matcher and the books, never from the caller; the sentence is a read and picks nothing.
@@ -5709,6 +5725,49 @@ export function createRpcHandler(
             });
           }),
         ),
+      },
+      depositProfile: {
+        get: os.sign.depositProfile.get.handler(signQuery('sign.deposit_profile.get')),
+        upsert: os.sign.depositProfile.upsert.handler(({ context, input }) =>
+          inSign(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới cấu hình được tài khoản VietQR ký kết');
+            const { vietqrPngBase64, ...rest } = input;
+            if (vietqrPngBase64 !== undefined) {
+              const validated = validateSignaturePngBase64(vietqrPngBase64);
+              if (!store) {
+                throw new DomainError('SIGN_DEPOSIT_QR_FILE_INVALID', 503, 'Chưa cấu hình kho lưu trữ tệp cho ảnh VietQR');
+              }
+              const bytes = new Uint8Array(Buffer.from(validated.base64, 'base64'));
+              const sha256 = sha256Hex(bytes);
+              const storageKey = fileKey(orgId, sha256);
+              const generation = await putFile(store, storageKey, bytes, 'image/png', sha256);
+              const ingested = await runtime.execute<{ fileId: string }>(
+                'kernel.file.ingest',
+                {
+                  filename: 'vietqr.png',
+                  contentType: 'image/png',
+                  sizeBytes: bytes.byteLength,
+                  sha256,
+                  storageKey,
+                  generation,
+                  source: 'sign_deposit_qr',
+                },
+                { actor, orgId },
+              );
+              return runtime.execute<SignDepositProfileContract>(
+                'sign.deposit_profile.upsert',
+                { ...rest, vietqrFileId: ingested.fileId },
+                { actor, orgId },
+              );
+            }
+            return runtime.execute<SignDepositProfileContract>('sign.deposit_profile.upsert', rest, { actor, orgId });
+          }),
+        ),
+        clear: os.sign.depositProfile.clear.handler(signNoIdempotencyCommand('sign.deposit_profile.clear')),
+      },
+      deposit: {
+        set: os.sign.deposit.set.handler(signNoIdempotencyCommand('sign.envelope.deposit.set')),
+        clear: os.sign.deposit.clear.handler(signNoIdempotencyCommand('sign.envelope.deposit.clear')),
       },
     },
   });

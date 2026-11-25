@@ -22,13 +22,14 @@ import {
   type SignSharedSummary,
 } from '@ludy/kernel-contract';
 import { DomainError, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
+import { ENVELOPE_DEPOSIT_FREEZE_WRITE, freezeEnvelopeDepositSnapshot } from './deposit.ts';
 import { appendSigningEvent } from './events.ts';
 import { signManifest } from './manifest.ts';
 import { generateRawSigningToken, hashSigningToken } from './sealing.ts';
 import { SIGN_INVITE_MAIL_SOURCE, SIGN_INVITE_MAIL_TEMPLATE, queueSignInviteEmail } from './sign-mail.ts';
 import { WEBHOOK_DELIVERY_ENQUEUE_WRITE, enqueueSignWebhookEvent } from './webhooks.ts';
 
-export { WEBHOOK_DELIVERY_ENQUEUE_WRITE };
+export { ENVELOPE_DEPOSIT_FREEZE_WRITE, WEBHOOK_DELIVERY_ENQUEUE_WRITE };
 
 export const SIGN_WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 export const SIGN_READERS: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -503,6 +504,7 @@ export async function sendDraftEnvelope(
     envelope: {
       id: string;
       title: string;
+      source_kind?: string | undefined;
       routing_mode: string;
       inspect_status: string;
       page_count: number | null;
@@ -637,6 +639,12 @@ export async function sendDraftEnvelope(
   const dueNow = row.routing_mode === 'parallel' ? sortedActive : sortedActive.filter((s) => s.routing_order === minOrder);
   const dueIds = dueNow.map((s) => s.id);
 
+  const depositFreeze = await freezeEnvelopeDepositSnapshot(ctx, {
+    envelopeId: row.id,
+    sourceKind: row.source_kind,
+    userId: input.userId,
+  });
+
   const nextVersion = row.version + 1;
   await ctx.trx
     .updateTable('ludy_sign.envelope')
@@ -726,7 +734,17 @@ export async function sendDraftEnvelope(
     status: 'sent',
     occurredAt: ctx.now,
   });
-  ctx.audit({ envelopeId: row.id, routingMode: row.routing_mode, mintedCount: links.length });
+  ctx.audit({
+    envelopeId: row.id,
+    routingMode: row.routing_mode,
+    mintedCount: links.length,
+    ...(depositFreeze.frozen
+      ? {
+          depositMemoToken: depositFreeze.memoToken,
+          depositAmount: depositFreeze.amount,
+        }
+      : {}),
+  });
   return {
     envelopeId: row.id,
     status: 'sent' as const,

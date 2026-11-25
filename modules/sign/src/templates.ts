@@ -36,6 +36,7 @@ import {
 import { signManifest } from './manifest.ts';
 import { generateRawSigningToken, hashSigningToken } from './sealing.ts';
 import {
+  ENVELOPE_DEPOSIT_FREEZE_WRITE,
   MAIL_MESSAGE_WRITE,
   SIGNING_EVENT_WRITE,
   SIGNING_OTP_INVALIDATE_WRITE,
@@ -1676,6 +1677,7 @@ export const templateInstantiate = defineCommand({
     SIGNING_EVENT_WRITE,
     MAIL_MESSAGE_WRITE,
     WEBHOOK_DELIVERY_ENQUEUE_WRITE,
+    ENVELOPE_DEPOSIT_FREEZE_WRITE,
   ],
   handler: async (ctx, input) => {
     const userId = userIdOf(ctx);
@@ -1947,6 +1949,7 @@ export const templateInstantiate = defineCommand({
         envelope: {
           id: env.id,
           title: env.title,
+          source_kind: sourceKind,
           routing_mode: env.routing_mode,
           inspect_status: effectiveInspectStatus,
           page_count: effectivePageCount,

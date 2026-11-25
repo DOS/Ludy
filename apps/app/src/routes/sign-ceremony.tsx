@@ -13,6 +13,7 @@ import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-sel
 import { cn } from '@ludy/ui/lib/utils';
 import { PdfCanvasViewer } from '../components/sign/pdf-canvas-viewer.tsx';
 import { SignPacketTabs } from '../components/sign/sign-packet-tabs.tsx';
+import { SignCeremonyDepositCard } from '../components/sign/sign-ceremony-deposit-card.tsx';
 import { CounterpartySummaryBanner } from '../components/sign/shared-summary-card.tsx';
 import { SignQrModal } from '../components/sign/sign-qr-modal.tsx';
 import { SignaturePadModal } from '../components/sign/signature-pad-modal.tsx';
@@ -522,8 +523,10 @@ export function SignCeremonyPage() {
         setInPersonMode(true);
       }
       setViewState(view);
+      const keepDepositToken =
+        view.state === 'already_completed' && Boolean(view.deposit) && !(view.inPerson === true);
       if (
-        view.state === 'already_completed' ||
+        (view.state === 'already_completed' && !keepDepositToken) ||
         view.state === 'declined' ||
         view.state === 'delegated' ||
         view.state === 'voided' ||
@@ -869,7 +872,10 @@ export function SignCeremonyPage() {
       if (wasInPerson) {
         setInPersonMode(true);
       }
-      forgetSignToken();
+      const keepDepositToken = !wasInPerson && Boolean(submitRes.deposit);
+      if (!keepDepositToken) {
+        forgetSignToken();
+      }
       toast(t(isApproverCeremony ? 'approverSubmitSuccessToast' : 'submitSuccessToast'));
       setViewState({
         state: 'already_completed',
@@ -877,6 +883,7 @@ export function SignCeremonyPage() {
         status: 'completed',
         signerRole: isApproverCeremony ? 'approver' : 'signer',
         ...(wasInPerson ? { inPerson: true } : {}),
+        ...(keepDepositToken ? { deposit: submitRes.deposit ?? null } : {}),
       });
       setPdfBytes(null);
     } catch (error) {
@@ -1100,14 +1107,19 @@ export function SignCeremonyPage() {
             signerRole={viewState.signerRole}
           />
         ) : viewState?.state === 'already_completed' ? (
-          <Card data-testid="sign-ceremony-completed">
-            <CardHeader>
-              <CardTitle>{t(viewState.signerRole === 'approver' ? 'approverCompletedTitle' : 'completedTitle')}</CardTitle>
-              <CardDescription>
-                {t(viewState.signerRole === 'approver' ? 'approverCompletedHint' : 'completedHint')}
-              </CardDescription>
-            </CardHeader>
-          </Card>
+          <>
+            <Card data-testid="sign-ceremony-completed">
+              <CardHeader>
+                <CardTitle>{t(viewState.signerRole === 'approver' ? 'approverCompletedTitle' : 'completedTitle')}</CardTitle>
+                <CardDescription>
+                  {t(viewState.signerRole === 'approver' ? 'approverCompletedHint' : 'completedHint')}
+                </CardDescription>
+              </CardHeader>
+            </Card>
+            {viewState.deposit && token ? (
+              <SignCeremonyDepositCard token={token} deposit={viewState.deposit} />
+            ) : null}
+          </>
         ) : viewState?.state === 'declined' ? (
           <Card data-testid="sign-ceremony-declined">
             <CardHeader>
