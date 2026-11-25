@@ -37,12 +37,13 @@ interface CachedFinalizedDraft {
   expiresAt: number;
   kind: CvSandboxKind;
   draft: Awaited<ReturnType<typeof buildCvExtractDraft>>;
-  auditRecorded: boolean;
+  auditedUsers: Set<string>;
 }
 
 interface RuntimeFinalizeCache {
   entries: Map<string, CachedFinalizedDraft>;
   inflight: Map<string, Promise<HrCvExtractResponse>>;
+  auditInflight: Map<string, Promise<void>>;
 }
 
 const finalizeCacheByRuntime = new WeakMap<Runtime, RuntimeFinalizeCache>();
@@ -50,10 +51,51 @@ const finalizeCacheByRuntime = new WeakMap<Runtime, RuntimeFinalizeCache>();
 function getRuntimeFinalizeCache(runtime: Runtime): RuntimeFinalizeCache {
   let state = finalizeCacheByRuntime.get(runtime);
   if (!state) {
-    state = { entries: new Map(), inflight: new Map() };
+    state = { entries: new Map(), inflight: new Map(), auditInflight: new Map() };
     finalizeCacheByRuntime.set(runtime, state);
   }
   return state;
+}
+
+async function ensureCvExtractAuditRecorded(
+  state: RuntimeFinalizeCache,
+  userCacheKey: string,
+  deps: {
+    runtime: Runtime;
+    orgId: string;
+    actor: UserActor;
+    context: HrCvExtractContext;
+  },
+  entry: CachedFinalizedDraft,
+): Promise<void> {
+  if (entry.auditedUsers.has(deps.actor.userId)) return;
+  const inflightAudit = state.auditInflight.get(userCacheKey);
+  if (inflightAudit) {
+    await inflightAudit;
+    return;
+  }
+  const runAudit = (async () => {
+    await deps.runtime.execute(
+      'hr.recruiting.cv_extract.audit',
+      {
+        jobId: deps.context.jobId,
+        openingId: deps.context.openingId,
+        kind: entry.kind,
+        extractedChars: entry.draft.extractedChars,
+        aiReason: entry.draft.ai.reason,
+      },
+      { actor: deps.actor, orgId: deps.orgId },
+    );
+    entry.auditedUsers.add(deps.actor.userId);
+  })();
+  state.auditInflight.set(userCacheKey, runAudit);
+  try {
+    await runAudit;
+  } finally {
+    if (state.auditInflight.get(userCacheKey) === runAudit) {
+      state.auditInflight.delete(userCacheKey);
+    }
+  }
 }
 
 function pruneExpiredCacheEntries(entries: Map<string, CachedFinalizedDraft>, now: number): void {
@@ -197,7 +239,7 @@ async function finalizeExtractedResult(deps: {
     return entry;
   };
   const cached = lookupEntry(sharedCacheKey) ?? lookupEntry(userCacheKey);
-  if (cached && cached.auditRecorded) {
+  if (cached && cached.auditedUsers.has(deps.actor.userId)) {
     return structuredClone({
       status: 'ready',
       jobId: deps.context.jobId,
@@ -213,7 +255,15 @@ async function finalizeExtractedResult(deps: {
   if (sharedInflight) {
     const sharedRes = await sharedInflight;
     if (!(sharedRes.status === 'ready' && sharedRes.draft.ai.reason === 'rate_limited')) {
+      const sharedEntry = lookupEntry(sharedCacheKey);
+      if (sharedEntry) {
+        await ensureCvExtractAuditRecorded(state, userCacheKey, deps, sharedEntry);
+      }
       return structuredClone(sharedRes);
+    }
+    const retryInflight = state.inflight.get(userCacheKey);
+    if (retryInflight) {
+      return structuredClone(await retryInflight);
     }
   }
 
@@ -281,25 +331,12 @@ async function finalizeExtractedResult(deps: {
         expiresAt: Date.now() + ttlMs,
         kind: parsed.kind,
         draft,
-        auditRecorded: false,
+        auditedUsers: new Set<string>(),
       };
       state.entries.set(targetKey, entry);
     }
 
-    if (!entry.auditRecorded) {
-      await deps.runtime.execute(
-        'hr.recruiting.cv_extract.audit',
-        {
-          jobId: deps.context.jobId,
-          openingId: deps.context.openingId,
-          kind: entry.kind,
-          extractedChars: entry.draft.extractedChars,
-          aiReason: entry.draft.ai.reason,
-        },
-        { actor: deps.actor, orgId: deps.orgId },
-      );
-      entry.auditRecorded = true;
-    }
+    await ensureCvExtractAuditRecorded(state, userCacheKey, deps, entry);
 
     return {
       status: 'ready',
@@ -379,20 +416,20 @@ export async function handleHrCvExtractUpload(deps: {
   let context = requested;
   while (Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
-    context = await deps.runtime.query<HrCvExtractContext>(
-      'hr.recruiting.cv_extract.context',
-      {
-        jobId,
-        ...(upload.legalEntityId !== undefined ? { legalEntityId: upload.legalEntityId } : {}),
-        ...(upload.openingId !== undefined ? { openingId: upload.openingId } : {}),
-      },
-      { actor, orgId: deps.orgId },
-    );
-    if (context.failedCode) {
-      throw new DomainError(context.failedCode, 422, 'Không đọc được nội dung tệp CV');
-    }
-    if (context.resultKey && context.resultSha256) {
-      try {
+    try {
+      context = await deps.runtime.query<HrCvExtractContext>(
+        'hr.recruiting.cv_extract.context',
+        {
+          jobId,
+          ...(upload.legalEntityId !== undefined ? { legalEntityId: upload.legalEntityId } : {}),
+          ...(upload.openingId !== undefined ? { openingId: upload.openingId } : {}),
+        },
+        { actor, orgId: deps.orgId },
+      );
+      if (context.failedCode) {
+        throw new DomainError(context.failedCode, 422, 'Không đọc được nội dung tệp CV');
+      }
+      if (context.resultKey && context.resultSha256) {
         return await finalizeExtractedResult({
           runtime: deps.runtime,
           store: deps.store,
@@ -406,15 +443,15 @@ export async function handleHrCvExtractUpload(deps: {
           cvAi: deps.cvAi,
           runInAiScope: deps.runInAiScope,
         });
-      } catch (error) {
-        if (error instanceof DomainError && error.status < 500) {
-          throw error;
-        }
-        return {
-          status: 'pending',
-          jobId,
-        };
       }
+    } catch (error) {
+      if (error instanceof DomainError && error.status < 500) {
+        throw error;
+      }
+      return {
+        status: 'pending',
+        jobId,
+      };
     }
   }
 
