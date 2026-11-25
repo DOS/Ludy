@@ -46,7 +46,8 @@ export const trackerAlertSet = defineCommand({
     const userId = userOf(ctx.actor);
     // A row is added or removed, never edited (no UPDATE for a login role): turning it on again replaces the row, so the language of the mail is the one chosen last.
     await ctx.trx.deleteFrom('ludy_meetings.tracker_alert').where('org_id', '=', ctx.orgId).where('user_id', '=', userId).execute();
-    if (input.on) await ctx.trx.insertInto('ludy_meetings.tracker_alert').values({ org_id: ctx.orgId, user_id: userId, language: input.language }).execute();
+    // Two calls at once by the same member both delete and then insert: the second finds the row there and leaves it (the unique key), instead of failing.
+    if (input.on) await ctx.trx.insertInto('ludy_meetings.tracker_alert').values({ org_id: ctx.orgId, user_id: userId, language: input.language }).onConflict((oc) => oc.columns(['org_id', 'user_id']).doNothing()).execute();
     // A flag only: no id of a person beyond the actor the audit row already names.
     ctx.audit({ on: input.on });
     return { on: input.on };

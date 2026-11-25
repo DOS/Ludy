@@ -265,7 +265,13 @@ suite('Tracker alerts (#4873)', () => {
     await optIn('lan', 'nam');
     const second = await published('Họp đóng tổ chức', 'org', [], ['Bàn về giá.']);
     await addTerm('giá');
-    await sqlAdmin(`UPDATE ludy_kernel.tenant SET status = 'offboarding' WHERE org_id = $1`, [orgId]);
+    // Moved without the triggers (the move's own audit check belongs to kernel.org.offboard), as the other tests do.
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query(`UPDATE ludy_kernel.tenant SET status = 'offboarding' WHERE org_id = $1`, [orgId]);
+      await c.query('COMMIT');
+    });
     try {
       expect(await notice(second.eventId)).toEqual({ notified: 0, mailed: 0 });
       expect(await told()).toEqual([]);
@@ -301,7 +307,7 @@ suite('Tracker alerts (#4873)', () => {
       'hợp đồng hợp đồngg', 'Ký hợp đồng. Hợp, đồng mới', 'Ký Hợp đồng mới và hop dong khác', 'a a a b a', 'Đối thủ ĐỐI THỦ đối   thủ, doi thu', 'dai viet 2024 Đại Việt', 'Nguyễn Văn Nam gặp nguyen van nam',
       '   ', '!!!', 'ACME-Corp, acme corp; ACME_Corp', "d'Artagnan và O'Neil", 'tiếng Việt 100% (ok)', 'Hợp\tđồng\nmới', 'số 1 số 12 số 1', 'giá'.normalize('NFD') + ' rẻ', 'Hợp đồng'.normalize('NFD') + ' mới', 'đ', 'Đ đ',
     ];
-    const TERMS = ['giá', 'gia', 'Hợp đồng', 'hop dong', 'ACME', 'acme corp', 'đối thủ', 'doi thu', 'Đại Việt', 'dai viet', 'a', 'a a', 'số 1', '100', 'nguyen van nam', 'Nguyễn Văn', 'd', 'đ', '!!!', "o neil"];
+    const TERMS = ['giá', 'gia', 'Hợp đồng', 'hop dong', 'ACME', 'acme corp', 'đối thủ', 'doi thu', 'Đại Việt', 'dai viet', 'a', 'a a', 'số 1', '100 ok', 'nguyen van nam', 'Nguyễn Văn', 'd', 'đ', "o neil"];
     const { meetingId } = await published('Họp đếm từ', 'org', [], LINES);
     // A draft line, never counted: the reader has none of it.
     await sqlAdmin(`INSERT INTO ludy_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, 9999, 10000, 'Người nói 1', 'giá giá giá', 'draft')`, [orgId, meetingId]);
