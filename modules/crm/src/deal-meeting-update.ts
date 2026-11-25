@@ -13,6 +13,9 @@ import type { MemberRole } from '@ludy/db';
 import { DomainError, defineCommand } from '@ludy/kernel-runtime';
 import { closeNextSteps } from './next-steps.ts';
 
+interface MeetingRead {
+  isRecorder: boolean;
+}
 interface LinkRead {
   kind: string;
   targetId: string;
@@ -48,6 +51,12 @@ export const dealMeetingUpdateApply = defineCommand({
     const links = await ctx.query<LinkRead[]>('meetings.link.list', { meetingId: input.meetingId });
     if (links.status !== 'ok' || !links.value.some((l) => l.kind === 'deal' && l.targetId === deal.id)) {
       throw new DomainError('MEETING_NOT_LINKED', 409, 'Cuộc họp này không liên kết với cơ hội này');
+    }
+
+    // Only the recorder of that meeting speaks for it (the meetings command checks this too; the command is registered, so any other way in is checked here as well).
+    const meeting = await ctx.query<MeetingRead>('meetings.meeting.get', { meetingId: input.meetingId });
+    if (meeting.status !== 'ok' || !meeting.value.isRecorder) {
+      throw new DomainError('FORBIDDEN', 403, 'Chỉ người ghi cuộc họp mới cập nhật được cơ hội từ cuộc họp này');
     }
 
     // The next step is a human task (tainted, its source the meeting). A note alone becomes a task too, with fixed words for a title, so the note has a record to live on.

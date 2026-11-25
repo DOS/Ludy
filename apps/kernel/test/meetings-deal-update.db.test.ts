@@ -311,6 +311,8 @@ suite('the recorder\'s Vy updating the deal a meeting is linked to (#4766)', () 
     expect(await refuses(confirm(meetingId, deal.id, key, {}, randomUUID(), 'viewer'))).not.toBeNull();
     // The CRM command has no route of its own and the viewer is not an editor of deals.
     expect(await refuses(exec('viewer', 'crm.deal.meeting_update.apply', { dealId: deal.id, meetingId, nextStep: null, note: NOTE, due: null }))).not.toBeNull();
+    // A member who is an editor of deals and reads the meeting but did not record it cannot write through the CRM command either (the check is in the command, not only in the meetings one).
+    expect(await refuses(exec('other', 'crm.deal.meeting_update.apply', { dealId: deal.id, meetingId, nextStep: null, note: NOTE, due: null }))).not.toBeNull();
     expect(await tasksOf(meetingId)).toHaveLength(0);
     expect(await activityOf(partyId)).toHaveLength(0);
     // The published minutes change: a proposal made for the old text is refused.
