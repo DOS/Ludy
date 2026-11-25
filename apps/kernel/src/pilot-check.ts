@@ -359,7 +359,7 @@ export function checkEnv(env: Env): CheckResult[] {
   }
   const rawSmtpFrom = value(env, 'SMTP_FROM');
   if (!ownProvider && rawSmtpFrom && (rawSmtpFrom.includes('<') || rawSmtpFrom.includes('>'))) {
-    auth.push('SMTP_FROM must be a bare email address (for example noreply@ludy.vn): bundled Supabase Auth already adds GOTRUE_SMTP_SENDER_NAME (BRAND_NAME)');
+    auth.push('SMTP_FROM must be a bare email address (for example noreply@example.com): bundled Supabase Auth already adds GOTRUE_SMTP_SENDER_NAME (BRAND_NAME)');
   }
   const stepUp = value(env, 'AUTH_STEP_UP');
   if (stepUp !== undefined && stepUp !== 'required') auth.push(`AUTH_STEP_UP=${stepUp}: approvals and member changes must need MFA; set AUTH_STEP_UP=required`);
