@@ -27,7 +27,7 @@ interface StoredDocxWarningNotice {
 }
 
 const fallbackDocxNotices = new Map<string, StoredDocxWarningNotice>();
-let fallbackAuthoritative = false;
+const fallbackDismissedIds = new Set<string>();
 
 function sanitizeDocxWarnings(raw: readonly unknown[]): SignDocxToPdfWarning[] {
   const seen = new Set<SignDocxToPdfWarning>();
@@ -60,14 +60,10 @@ function readFallbackDocxNotices(now: number): StoredDocxWarningNotice[] {
   return valid;
 }
 
-function readStoredDocxNotices(now: number): StoredDocxWarningNotice[] {
-  const storage = getDocxNoticeStorage();
-  if (!storage || fallbackAuthoritative) {
-    return readFallbackDocxNotices(now);
-  }
+function readRawStorageNotices(storage: Storage, now: number): StoredDocxWarningNotice[] {
   try {
     const raw = storage.getItem(ENVELOPE_DOCX_WARNINGS_STORAGE_KEY);
-    if (!raw) return readFallbackDocxNotices(now);
+    if (!raw) return [];
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) return [];
     const byId = new Map<string, StoredDocxWarningNotice>();
@@ -82,41 +78,39 @@ function readStoredDocxNotices(now: number): StoredDocxWarningNotice[] {
       if (warnings.length === 0) continue;
       byId.set(rec.envelopeId, { envelopeId: rec.envelopeId, warnings, createdAt: rec.createdAt });
     }
-    for (const fb of readFallbackDocxNotices(now)) {
-      byId.set(fb.envelopeId, fb);
-    }
     return [...byId.values()];
   } catch {
-    return readFallbackDocxNotices(now);
+    return [];
   }
 }
 
-function writeStoredDocxNotices(entries: readonly StoredDocxWarningNotice[]): void {
-  const bounded = entries.slice(-MAX_STORED_DOCX_NOTICES);
+function readStoredDocxNotices(now: number): StoredDocxWarningNotice[] {
+  const byId = new Map<string, StoredDocxWarningNotice>();
   const storage = getDocxNoticeStorage();
-  if (!storage) {
-    fallbackAuthoritative = true;
-    fallbackDocxNotices.clear();
-    for (const entry of bounded) fallbackDocxNotices.set(entry.envelopeId, entry);
-    return;
+  if (storage) {
+    for (const entry of readRawStorageNotices(storage, now)) {
+      if (!fallbackDismissedIds.has(entry.envelopeId)) {
+        byId.set(entry.envelopeId, entry);
+      }
+    }
   }
+  for (const fb of readFallbackDocxNotices(now)) {
+    byId.set(fb.envelopeId, fb);
+  }
+  return [...byId.values()];
+}
+
+function tryPersistDocxNotices(storage: Storage, entries: readonly StoredDocxWarningNotice[]): boolean {
+  const bounded = entries.slice(-MAX_STORED_DOCX_NOTICES);
   try {
     if (bounded.length === 0) {
       storage.removeItem(ENVELOPE_DOCX_WARNINGS_STORAGE_KEY);
     } else {
       storage.setItem(ENVELOPE_DOCX_WARNINGS_STORAGE_KEY, JSON.stringify(bounded));
     }
-    fallbackAuthoritative = false;
-    fallbackDocxNotices.clear();
+    return true;
   } catch {
-    fallbackAuthoritative = true;
-    try {
-      storage.removeItem(ENVELOPE_DOCX_WARNINGS_STORAGE_KEY);
-    } catch {
-      // Ignore cleanup failures when storage is read-only or restricted.
-    }
-    fallbackDocxNotices.clear();
-    for (const entry of bounded) fallbackDocxNotices.set(entry.envelopeId, entry);
+    return false;
   }
 }
 
@@ -128,11 +122,29 @@ export function saveCreatedDocxWarnings(
 ): void {
   if (!envelopeId) return;
   const clean = sanitizeDocxWarnings(warnings);
-  const next = readStoredDocxNotices(now).filter((entry) => entry.envelopeId !== envelopeId);
-  if (clean.length > 0) {
-    next.push({ envelopeId, warnings: clean, createdAt: now });
+  if (clean.length === 0) {
+    clearCreatedDocxWarnings(envelopeId, now);
+    return;
   }
-  writeStoredDocxNotices(next);
+  const nextEntry: StoredDocxWarningNotice = { envelopeId, warnings: clean, createdAt: now };
+  const merged = readStoredDocxNotices(now).filter((entry) => entry.envelopeId !== envelopeId);
+  merged.push(nextEntry);
+  const storage = getDocxNoticeStorage();
+  if (storage && tryPersistDocxNotices(storage, merged)) {
+    fallbackDocxNotices.clear();
+    fallbackDismissedIds.clear();
+    return;
+  }
+  // Preserve existing sessionStorage records intact if setItem throws (e.g. QuotaExceededError);
+  // store only the unpersisted update in bounded memory for this tab.
+  fallbackDismissedIds.delete(envelopeId);
+  fallbackDocxNotices.delete(envelopeId);
+  fallbackDocxNotices.set(envelopeId, nextEntry);
+  while (fallbackDocxNotices.size > MAX_STORED_DOCX_NOTICES) {
+    const oldestKey = fallbackDocxNotices.keys().next().value;
+    if (oldestKey === undefined) break;
+    fallbackDocxNotices.delete(oldestKey);
+  }
 }
 
 /** Reads persisted post-creation .docx warnings for an envelope without consuming them so they survive until dismissed. */
@@ -147,8 +159,25 @@ export function readCreatedDocxWarnings(envelopeId: string, now = Date.now()): S
 export function clearCreatedDocxWarnings(envelopeId: string, now = Date.now()): void {
   if (!envelopeId) return;
   fallbackDocxNotices.delete(envelopeId);
-  const remaining = readStoredDocxNotices(now).filter((entry) => entry.envelopeId !== envelopeId);
-  writeStoredDocxNotices(remaining);
+  const storage = getDocxNoticeStorage();
+  if (!storage) {
+    fallbackDismissedIds.add(envelopeId);
+    return;
+  }
+  const remainingMerged = readStoredDocxNotices(now).filter((entry) => entry.envelopeId !== envelopeId);
+  if (tryPersistDocxNotices(storage, remainingMerged)) {
+    fallbackDocxNotices.clear();
+    fallbackDismissedIds.clear();
+    return;
+  }
+  // Shrink storage separately so dismissing an already-persisted entry still survives reloads under write quota pressure.
+  const rawStorage = readRawStorageNotices(storage, now);
+  const remainingStorage = rawStorage.filter((entry) => entry.envelopeId !== envelopeId);
+  if (tryPersistDocxNotices(storage, remainingStorage)) {
+    fallbackDismissedIds.delete(envelopeId);
+  } else if (rawStorage.some((entry) => entry.envelopeId === envelopeId)) {
+    fallbackDismissedIds.add(envelopeId);
+  }
 }
 
 export type SignFileCheckResult =

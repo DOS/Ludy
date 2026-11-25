@@ -391,6 +391,22 @@ describe('docx_to_pdf conversion (#4721)', () => {
       expect(doubleBreakRes.pageCount).toBe(3);
       expect(drawn.find((d) => d.text === 'Sau ngắt đôi')?.y).toBeCloseTo(p1!.y, 3);
 
+      // Section nextPage followed by w:pageBreakBefore both ask only for a fresh page, so no middle blank page is added.
+      drawn.length = 0;
+      const sectAndPageBreakBeforeDocx = buildDocx({
+        'word/document.xml': [
+          '<?xml version="1.0" encoding="UTF-8"?>',
+          '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">',
+          '<w:body>',
+          '<w:p><w:pPr><w:sectPr><w:type w:val="nextPage"/></w:sectPr></w:pPr><w:r><w:t>Trang A</w:t></w:r></w:p>',
+          '<w:p><w:pPr><w:pageBreakBefore/></w:pPr><w:r><w:t>Trang B</w:t></w:r></w:p>',
+          '</w:body></w:document>',
+        ].join(''),
+      });
+      const sectBreakBeforeRes = await convertDocxToPdf(sectAndPageBreakBeforeDocx);
+      expect(sectBreakBeforeRes.pageCount).toBe(2);
+      expect(drawn.find((d) => d.text === 'Trang B')?.y).toBeCloseTo(p1!.y, 3);
+
       // Plain empty <w:p/> without a page break still preserves intentional vertical spacer height.
       drawn.length = 0;
       const spacerDocx = buildDocx({

@@ -1671,6 +1671,12 @@ class PdfPaginator {
     }
   }
 
+  ensureNewPage(): void {
+    if (this.page && this.pendingBreaks === 0 && this.cursorY < A4_HEIGHT - MARGIN_TOP) {
+      this.pendingBreaks = 1;
+    }
+  }
+
   remainingHeight(): number {
     if (!this.page || this.pendingBreaks > 0) return USABLE_PAGE_HEIGHT;
     return Math.max(0, this.cursorY - MARGIN_BOTTOM);
@@ -2004,7 +2010,7 @@ export async function convertDocxToPdf(bytes: Uint8Array): Promise<DocxToPdfResu
       continue;
     }
     if (block.pageBreakBefore) {
-      paginator.requestPageBreak();
+      paginator.ensureNewPage();
     }
     const layout = await wrapParagraphLayout(fonts, block, CONTENT_WIDTH);
     await paginator.drawParagraph(layout);

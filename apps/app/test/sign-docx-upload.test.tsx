@@ -401,18 +401,31 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
     expect(readCreatedDocxWarnings(envDetailId)).toEqual([]);
     expect(setCreatedDocxNotice).toHaveBeenLastCalledWith(null);
 
-    // When sessionStorage.setItem throws QuotaExceededError while getItem still works, in-memory fallback stays authoritative for reads and clears.
+    // When sessionStorage.setItem throws QuotaExceededError on adding a second envelope, existing persisted notices stay intact in sessionStorage and fallback holds the new entry.
+    const existingEnvelopeId = '01900000-0000-7000-8000-0000000000e1';
     const quotaStore = new Map<string, string>();
+    let rejectQuotaWrites = false;
     vi.stubGlobal('window', {
       sessionStorage: {
         getItem: (k: string) => quotaStore.get(k) ?? null,
-        setItem: () => {
-          throw new DOMException('Quota exceeded', 'QuotaExceededError');
+        setItem: (k: string, v: string) => {
+          if (rejectQuotaWrites) {
+            throw new DOMException('Quota exceeded', 'QuotaExceededError');
+          }
+          quotaStore.set(k, v);
         },
         removeItem: (k: string) => void quotaStore.delete(k),
       },
     });
+    saveCreatedDocxWarnings(existingEnvelopeId, ['headers_footers_simplified']);
+    const persistedSnapshotBeforeQuota = quotaStore.get('ludy.sign.created_docx_warnings');
+    expect(persistedSnapshotBeforeQuota).toBeDefined();
+
+    rejectQuotaWrites = true;
     saveCreatedDocxWarnings(envDetailId, ['images_skipped', 'complex_columns_simplified']);
+    // Pre-existing record in sessionStorage was not erased by QuotaExceededError on adding a second notice.
+    expect(quotaStore.get('ludy.sign.created_docx_warnings')).toBe(persistedSnapshotBeforeQuota);
+    expect(readCreatedDocxWarnings(existingEnvelopeId)).toEqual(['headers_footers_simplified']);
     expect(readCreatedDocxWarnings(envDetailId)).toEqual(['images_skipped', 'complex_columns_simplified']);
     const quotaDetailHtml = renderToStaticMarkup(
       <QueryClientProvider client={queryClient}>
@@ -424,5 +437,9 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
     expect(quotaDetailHtml).toContain('data-testid="sign-docx-warning-banner"');
     clearCreatedDocxWarnings(envDetailId);
     expect(readCreatedDocxWarnings(envDetailId)).toEqual([]);
+    expect(readCreatedDocxWarnings(existingEnvelopeId)).toEqual(['headers_footers_simplified']);
+    rejectQuotaWrites = false;
+    clearCreatedDocxWarnings(existingEnvelopeId);
+    expect(readCreatedDocxWarnings(existingEnvelopeId)).toEqual([]);
   });
 });

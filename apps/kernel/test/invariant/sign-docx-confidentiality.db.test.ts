@@ -449,10 +449,10 @@ suite('eSign .docx cross-user polling and unattached file confidentiality invari
     for (const attacker of [o.owner, o.admin, o.member2]) {
       await expect(
         rt.execute('sign.envelope.create', { title: 'Stolen envelope', sourceFileId: fileId }, { actor: asUser(attacker), orgId: o.orgId }),
-      ).rejects.toThrow();
+      ).rejects.toMatchObject({ code: 'SIGN_FILE_NOT_FOUND', status: 404 });
       await expect(
         rt.execute('sign.template.create', { title: 'Stolen template', sourceFileId: fileId }, { actor: asUser(attacker), orgId: o.orgId }),
-      ).rejects.toThrow();
+      ).rejects.toMatchObject({ code: 'SIGN_FILE_NOT_FOUND', status: 404 });
     }
 
     // 7. Even after uploader attaches fileId to a shared org template, another user cannot forge sourceDocxSha256 provenance.
