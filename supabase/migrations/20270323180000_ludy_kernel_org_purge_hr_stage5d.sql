@@ -4,25 +4,6 @@
 -- and deleting append-only ludy_hr.candidate_stage_transition under the purge guard ahead of ludy_hr.candidate.
 SET LOCAL lock_timeout = '2s';
 
-ALTER TABLE ludy_kernel.file DROP CONSTRAINT IF EXISTS file_source_check;
-ALTER TABLE ludy_kernel.file
-  ADD CONSTRAINT file_source_check CHECK (
-    source IN (
-      'upload',
-      'email',
-      'social',
-      'import',
-      'meeting_audio',
-      'meeting_video',
-      'sign_document',
-      'sign_sealed',
-      'sign_certificate',
-      'sign_attachment',
-      'sign_deposit_qr',
-      'agreement'
-    )
-  );
-
 CREATE OR REPLACE FUNCTION ludy_kernel.org_purge(p_min_days integer)
  RETURNS TABLE(outcome text, counts jsonb, blob_keys text[])
  LANGUAGE plpgsql
