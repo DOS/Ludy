@@ -21,7 +21,7 @@ import {
   type TranslationTarget,
 } from '@ludy/kernel-contract';
 import { DomainError, defineCommand, defineQuery } from '@ludy/kernel-runtime';
-import { hasEmail, hasLink, hasPhone, recorderMeeting } from './results.ts';
+import { hasEmail, hasLink, phoneSpans, recorderMeeting } from './results.ts';
 import { readTranslationSource } from './translate-run.ts';
 import { ROLES, lockMeeting, openMeeting, userOf } from './transcript.ts';
 
@@ -29,9 +29,27 @@ import { ROLES, lockMeeting, openMeeting, userOf } from './transcript.ts';
 const VERSION_BYTES_MAX = 300_000;
 const notPublished = () => new DomainError('MINUTES_NOT_PUBLISHED', 409, 'The minutes are not published, so there is nothing to put a second version beside');
 
-// One way to reach someone, by kind: an original that holds one kind (a Vietnamese amount such as 1.250.000 reads as a phone-like run) must not let another kind through.
-const hasEmailIn = (text: string): boolean => text.toLowerCase().split(/\s+/).some((token) => hasEmail(token));
-const contactKinds = (text: string): readonly boolean[] => [hasLink(text.toLowerCase()), hasPhone(text), hasEmailIn(text)];
+// The ways to reach someone that a text writes, each one named, not only the kinds: a version may hold an address, a link or a phone number only if THE ORIGINAL holds that very one. A kind-by-kind check
+// ("the original has an address, so any address may be written") would let the recorder put another person's address or number into a version, where the personal-data erasure (which finds a person in
+// the original's rows, never in a version) could not reach it. Tokens are compared in lower case with the punctuation at their edges taken off; a phone number by its digits alone (so "1.250.000" and
+// "1 250 000" are the same, "0912 345 678" built from digit runs the original has apart is not).
+const EDGE = /^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu;
+interface Contacts {
+  links: Set<string>;
+  emails: Set<string>;
+  phones: Set<string>;
+}
+function contactsOf(text: string): Contacts {
+  const links = new Set<string>();
+  const emails = new Set<string>();
+  for (const raw of text.toLowerCase().split(/\s+/u)) {
+    const token = raw.replace(EDGE, '');
+    if (token === '') continue;
+    if (hasLink(token)) links.add(token);
+    if (hasEmail(token)) emails.add(token);
+  }
+  return { links, emails, phones: new Set(phoneSpans(text).map((span) => span.replace(/\D/gu, ''))) };
+}
 
 // The digit runs of a text, thousands separators and leading zeros set aside ("1.500.000" and "1,500,000" are the same three runs).
 function digitRuns(text: string): Set<string> {
@@ -44,8 +62,9 @@ function digitRuns(text: string): Set<string> {
 export function versionTextProblem(original: string, text: string): 'INVENTED_NUMBER' | 'CONTACT_ADDED' | null {
   const known = digitRuns(original);
   for (const run of digitRuns(text)) if (!known.has(run)) return 'INVENTED_NUMBER';
-  const had = contactKinds(original);
-  if (contactKinds(text).some((found, i) => found && !had[i])) return 'CONTACT_ADDED';
+  const had = contactsOf(original);
+  const now = contactsOf(text);
+  for (const kind of ['links', 'emails', 'phones'] as const) for (const one of now[kind]) if (!had[kind].has(one)) return 'CONTACT_ADDED';
   return null;
 }
 

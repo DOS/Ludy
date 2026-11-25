@@ -458,7 +458,8 @@ export const PERSONAL_DATA_COLUMNS = {
     reason: "A machine translation of a meeting's summary, which may name or describe a person: read by the member who asked alone, deleted with the meeting (its recorder, an owner, the retention job or the org purge), with the summary it translated, and 30 days after the member who asked was removed (the former-member purge of their Vy data), and dropped, not redacted, by an erasure that touches the meeting",
   },
   // The second-language version of a meeting's published minutes (Meetings, issue #4777): the text the recorder reviewed, edited and published beside the original, read by every reader of the
-  // meeting. It holds no figure, link, address or phone number its original does not hold (the publish command checks), so the finder reads the person's value in the original and a
+  // meeting. It holds no figure, link, address or phone number that its original does not hold ITSELF, each one by name (the publish command checks the very address, link, digits of a number and digit
+  // run, not only the kind: an original with one address does not let another be written), so the finder reads the person's value in the original and a
   // redaction of the original reaches the version by the database: it DROPS the version (never redacts it: a name cannot be located reliably in another language) the moment the published
   // summary, a decision or an action item title changes, is replaced or is unpublished, and it goes with the meeting (the recorder, an owner, the retention job or the org purge).
   'ludy_meetings.minutes_version.body': {

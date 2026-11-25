@@ -57,8 +57,9 @@ export function hasEmail(token: string): boolean {
   }
   return false;
 }
-// A phone-like run: digits with spaces, dots and dashes between them, nine characters or more from the first digit to the last.
-export function hasPhone(text: string): boolean {
+// The phone-like runs of a text: digits with spaces, dots and dashes between them, nine characters or more from the first digit to the last, each as written.
+export function phoneSpans(text: string): string[] {
+  const spans: string[] = [];
   let start = -1;
   let last = -1;
   for (let i = 0; i <= text.length; i += 1) {
@@ -68,13 +69,14 @@ export function hasPhone(text: string): boolean {
       if (start < 0) start = i;
       last = i;
     } else if (!(c === ' ' || c === '\t' || c === '\n' || c === '.' || c === '-')) {
-      if (start >= 0 && last - start + 1 >= 9) return true;
+      if (start >= 0 && last - start + 1 >= 9) spans.push(text.slice(start, last + 1));
       start = -1;
       last = -1;
     }
   }
-  return false;
+  return spans;
 }
+export const hasPhone = (text: string): boolean => phoneSpans(text).length > 0;
 export function itemFlags(title: string): ItemFlag[] {
   const lower = title.toLowerCase();
   const found = hasLink(lower) || hasPhone(title) || lower.split(/\s+/).some((token) => hasEmail(token));

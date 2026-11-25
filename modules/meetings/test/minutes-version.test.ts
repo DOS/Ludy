@@ -28,6 +28,25 @@ describe('versionTextProblem', () => {
     expect(versionTextProblem('Chốt báo giá 1.250.000', 'Quote of 1,250,000. See https://evil.example')).toBe('CONTACT_ADDED');
     expect(versionTextProblem('Chốt báo giá 1.250.000', 'Quote of 1,250,000')).toBeNull();
   });
+
+  it('allows only the very address, link and number the original writes: another one of a kind the original holds is refused (the erasure finds a person in the original, never in a version)', () => {
+    const original = 'Gửi tới alice@company.vn, xem https://company.vn/bao-gia hoặc gọi 0912 345 678';
+    // The same ones, in any case and with other punctuation or spacing, are the original's own.
+    expect(versionTextProblem(original, 'Send to (Alice@Company.vn), see https://company.vn/bao-gia, or call 0912-345-678.')).toBeNull();
+    // Another address, link or number of a kind the original already holds is refused.
+    expect(versionTextProblem(original, 'Send to bob@victim.vn')).toBe('CONTACT_ADDED');
+    expect(versionTextProblem(original, 'See https://victim.vn/bao-gia')).toBe('CONTACT_ADDED');
+    expect(versionTextProblem(original, 'Call 0987 654 321')).toBe('INVENTED_NUMBER');
+    // A number built from digit runs the original writes apart is not the original's number.
+    expect(versionTextProblem('Mã 0912 và 345 và 678, gọi 0912 345 678', 'Call 0912 678 345')).toBe('CONTACT_ADDED');
+    // A figure written with other separators is the same figure.
+    expect(versionTextProblem('Chốt báo giá 1.250.000', 'Quote of 1 250 000')).toBeNull();
+  });
+
+  it('keeps a figure in the statement it was written in: swapped figures between two statements are each refused (the check is per segment, against that segment\'s own original)', () => {
+    expect(versionTextProblem('Chốt báo giá 1.250.000', 'Quote of 1,300,000')).toBe('INVENTED_NUMBER');
+    expect(versionTextProblem('Giữ giá cũ 1.300.000', 'Keep the old price of 1,250,000')).toBe('INVENTED_NUMBER');
+  });
 });
 
 describe('zMinutesVersionSegment', () => {
