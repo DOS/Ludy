@@ -4,10 +4,10 @@ A journal entry can gain lines only in the transaction that created it (External
 
 ## How the rule knows the creating transaction
 
-- A `BEFORE INSERT` trigger on `crove_finance.journal_entry` stamps two columns the caller cannot set:
+- A `BEFORE INSERT` trigger on `ludy_finance.journal_entry` stamps two columns the caller cannot set:
   - `created_xact_id`: the `xid8` of the transaction (`pg_current_xact_id()`, the top-level transaction, so savepoints do not matter);
   - `created_xact_start`: the start time of that transaction (`now()`).
-- A `BEFORE INSERT` trigger on `crove_finance.journal_line` refuses the line unless both match the current transaction.
+- A `BEFORE INSERT` trigger on `ludy_finance.journal_line` refuses the line unless both match the current transaction.
 - Entries posted before `created_xact_start` existed have `NULL` there and can never gain lines. That is expected; do not fill it in.
 
 ## The `xid8` limit
@@ -25,11 +25,11 @@ The comparison on `created_xact_start` holds only while the new cluster's clock 
 
 ## After a logical restore, before reopening writes
 
-1. Connect as the migration runner or a superuser (the `crove_*` login roles see only one org).
+1. Connect as the migration runner or a superuser (the `ludy_*` login roles see only one org).
 2. Check that no restored stamp lies in the future of the new cluster:
 
    ```sql
-   SELECT count(*) FROM crove_finance.journal_entry WHERE created_xact_start >= now();
+   SELECT count(*) FROM ludy_finance.journal_entry WHERE created_xact_start >= now();
    ```
 
    It must be `0`. Otherwise the new cluster's clock is behind the old one: fix the clock (NTP) and run the check again. Do not reopen writes until it is `0`.

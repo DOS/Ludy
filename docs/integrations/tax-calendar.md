@@ -16,15 +16,15 @@ A member marks an obligation done for a period, and it leaves the list.
   - `confirmed`, false until the partner's accountant (#61) confirms the line.
 
   A change of the law is a change of this table. Unit tests: `packages/kernel-contract/test/tax-calendar.test.ts`.
-- **What an org chose:** `crove_kernel.tax_profile`, one row per org. Owners and admins set it in Settings, "Lịch thuế" (`kernel.tax_profile.save`, R1, audited). It holds:
+- **What an org chose:** `ludy_kernel.tax_profile`, one row per org. Owners and admins set it in Settings, "Lịch thuế" (`kernel.tax_profile.save`, R1, audited). It holds:
   - the obligations that apply;
   - the PIT withholding frequency;
   - the last month of the fiscal year.
 
   The VAT return follows the VAT filing period chosen just above it (#318).
-- **Done marks:** `crove_kernel.tax_obligation_done`, at most one per obligation and period. Owners, admins and members mark an obligation done or take the mark back (`kernel.tax_obligation.done` and `.undo`, R1, audited). A period of another frequency is refused (`TAX_PERIOD_MISMATCH`).
+- **Done marks:** `ludy_kernel.tax_obligation_done`, at most one per obligation and period. Owners, admins and members mark an obligation done or take the mark back (`kernel.tax_obligation.done` and `.undo`, R1, audited). A period of another frequency is refused (`TAX_PERIOD_MISMATCH`).
 - **Who sees the button (#1917):** each due row of `kernel.org.overview` lists its open legal entities with `canMark`, the server's answer to whether the reader may mark it done there. It applies the same rule as the mark: owners, admins and members for most obligations, and, for the VAT return with finance on, the filers of that entity. The Overview and the multi-client home show the button only where `canMark` is true. `kernel.tax_obligation.done` and `.undo` apply the same rule, so with finance on they refuse the VAT return to a member who is not a filer (`FORBIDDEN`).
-- **The VAT return with finance on (#1400):** its mark goes through `finance.vat.return_mark` (owners and admins, and a chief accountant for the entity, #1508), which records the return as filed with [22], [25] and [43] (Crove's own working when marked from the calendar) and writes the same done mark in the same transaction, so the next period's [22] starts from that [43]. See [htkk-01gtgt-xml.md](htkk-01gtgt-xml.md).
+- **The VAT return with finance on (#1400):** its mark goes through `finance.vat.return_mark` (owners and admins, and a chief accountant for the entity, #1508), which records the return as filed with [22], [25] and [43] (Ludy's own working when marked from the calendar) and writes the same done mark in the same transaction, so the next period's [22] starts from that [43]. See [htkk-01gtgt-xml.md](htkk-01gtgt-xml.md).
 - **What the screen lists:** `kernel.org.overview` `taxDues`, read in each org's own context (`packages/kernel/src/tax-calendar.ts`). It holds:
   - what is due from today to 30 days ahead;
   - what is overdue and not marked done, back to the day the org first saved its calendar and at most a year.

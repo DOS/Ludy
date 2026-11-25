@@ -6,7 +6,7 @@ What it is: an organization owner or admin configures up to 20 HTTPS receiver en
 
 ## Access control and confidentiality boundary
 
-- **Owners and admins only.** Only workspace owners and admins (`owner`, `admin`, never an MCP token) can list, create, update, rotate secrets for, ping, or delete eSign webhook endpoints, or view delivery logs; `create`, `update`, `rotate_secret`, and `ping` also require fresh MFA step-up when `aal2` is active, whereas `list`, `deliveries`, and `delete` never block reading state or stopping exposure. Both `crove_sign.webhook` and `crove_sign.webhook_delivery` are definer-only `MACHINERY` tables with zero direct login-role grants; `ludy_app` cannot execute `crove_sign.webhook_target` or read `secret_envelope`.
+- **Owners and admins only.** Only workspace owners and admins (`owner`, `admin`, never an MCP token) can list, create, update, rotate secrets for, ping, or delete eSign webhook endpoints, or view delivery logs; `create`, `update`, `rotate_secret`, and `ping` also require fresh MFA step-up when `aal2` is active, whereas `list`, `deliveries`, and `delete` never block reading state or stopping exposure. Both `ludy_sign.webhook` and `ludy_sign.webhook_delivery` are definer-only `MACHINERY` tables with zero direct login-role grants; `ludy_app` cannot execute `ludy_sign.webhook_target` or read `secret_envelope`.
 - **Automatic exclusion of confidential envelopes.** Envelopes with `source_kind = 'hr_contract'` (HR labor contracts) or `source_kind = 'meeting_minutes'` (restricted meeting minutes) never enqueue webhook deliveries at the SQL layer and are dropped by the delivery worker as defense in depth before opening any secret or making any network call.
 - **Per-org app gate.** When Ludy eSign (`sign`) is turned off for an organization, the minute sweep skips handing over queued deliveries and in-flight worker jobs drop unsent rows via `sign.hook.record` (`runsWhenOff`).
 
@@ -14,11 +14,11 @@ What it is: an organization owner or admin configures up to 20 HTTPS receiver en
 
 Every request is `POST <url>` with `Content-Type: application/json` and three headers:
 
-- `Ludy-Event-Id`: the `crove_sign.webhook_delivery.id` UUID, stable across retries for idempotent receiver deduplication.
+- `Ludy-Event-Id`: the `ludy_sign.webhook_delivery.id` UUID, stable across retries for idempotent receiver deduplication.
 - `Ludy-Timestamp`: Unix epoch seconds (`String(Math.floor(now / 1000))`), refreshed on each retry attempt.
 - `Ludy-Signature`: `v1=<hex>` (or `v1=<new_hex>,v1=<previous_hex>` during a 24-hour secret rotation window), where each `<hex>` is `HMAC-SHA256(secret, "${timestamp}.${rawBody}")`.
 
-The JSON body keys are serialized in canonical order (`signWebhookBody`) and enforced by a database `CHECK` constraint (`crove_sign.webhook_payload_ok`):
+The JSON body keys are serialized in canonical order (`signWebhookBody`) and enforced by a database `CHECK` constraint (`ludy_sign.webhook_payload_ok`):
 
 - Lifecycle events (`sign.envelope.sent`, `sign.signer.signed`, `sign.envelope.completed`, `sign.envelope.declined`, `sign.envelope.expired`):
   - Always present: `eventId`, `eventType`, `occurredAt`, `orgId`, `envelopeId`, `status` (`sent` | `in_progress` | `completed` | `declined` | `expired`).
@@ -43,4 +43,4 @@ Secrets (`whsec_<base64url>`, 32 random bytes, paired with a non-secret `whk_<8 
 - `sign-hook-sweep` runs every minute (`egress: 'none'`) to hand unqueued or stale (`> 3 minutes`) deliveries to `sign-hook-deliver` (`egress: ['tenant_url']`, `stately` singleton per delivery) and expire rows older than 8 hours.
 - Each delivery attempt enforces HTTPS on port 443 to a public IP via `egressFetch` (DNS re-resolved and pinned per attempt, redirects not followed, 10s timeout, response body capped at 4 KB and ignored). Non-`2xx` responses or network errors retry up to 8 additional times from 30 seconds with exponential backoff.
 - If an endpoint fails continuously for **7 days**, Ludy sets `enabled = false` and `paused_reason = 'failing'`. After fixing the receiver, an owner or admin edits and re-enables the endpoint to clear the failure state.
-- Settled delivery log rows older than 30 days are pruned automatically, and organization offboarding (`ludy_kernel.org_purge`) deletes both `crove_sign.webhook_delivery` and `crove_sign.webhook`.
+- Settled delivery log rows older than 30 days are pruned automatically, and organization offboarding (`ludy_kernel.org_purge`) deletes both `ludy_sign.webhook_delivery` and `ludy_sign.webhook`.

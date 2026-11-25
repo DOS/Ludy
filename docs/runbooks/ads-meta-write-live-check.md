@@ -25,9 +25,9 @@ Environment variables required in `.env`:
 
 ## What is verified in code before you start
 
-- Every create call (`campaigns`, `adsets`, `adcreatives`, `ads`) sends `status=PAUSED` and carries the launch's deterministic tag (`[ludy:<10-hex>]`) in its name; `ACTIVE` is sent only by the separate activation adapter (`meta-activate.ts`) after every object of the plan is recorded and the database guard (`crove_ads.launch_guard`) checks the executed `ads.campaign.launch` proposal, the plan hash, the switches, and the flight dates.
+- Every create call (`campaigns`, `adsets`, `adcreatives`, `ads`) sends `status=PAUSED` and carries the launch's deterministic tag (`[ludy:<10-hex>]`) in its name; `ACTIVE` is sent only by the separate activation adapter (`meta-activate.ts`) after every object of the plan is recorded and the database guard (`ludy_ads.launch_guard`) checks the executed `ads.campaign.launch` proposal, the plan hash, the switches, and the flight dates.
 - Spend caps are checked at submission (`ads.campaign.prepare_launch`), at approval (`ads.campaign.launch`), before every create step (`ads.launch.begin`), and before every activation step (`ads.activate.begin`) under the org's lock (`lockedSetting`).
-- Stopping a started launch (`ads.launch.stop`, `ads.pause_all`, `ads.write.disable`, `ads.account.disable_write`, `ads.account.disconnect`) commits immediately in Ludy with the commitment held to at least today in the account's time zone, and queues `ads-pause` to pause every created object (campaign first, found by tag as well as by `crove_ads.ad_object`). On a switch-off, the pause runs before the sealed token copy is revoked at Meta (`DELETE /me/permissions`).
+- Stopping a started launch (`ads.launch.stop`, `ads.pause_all`, `ads.write.disable`, `ads.account.disable_write`, `ads.account.disconnect`) commits immediately in Ludy with the commitment held to at least today in the account's time zone, and queues `ads-pause` to pause every created object (campaign first, found by tag as well as by `ludy_ads.ad_object`). On a switch-off, the pause runs before the sealed token copy is revoked at Meta (`DELETE /me/permissions`).
 
 ## Steps
 

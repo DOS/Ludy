@@ -22,7 +22,7 @@ The client secret goes from the Google Cloud Console OAuth client page into the 
 **Alternative, pending the owner's decision: the deployment's own `PUBLIC_URL`** (for example the pilot instance on its public address). Read "the deployment's `PUBLIC_URL`" wherever the steps below say `http://localhost:8080`. It needs more:
 
 - `PUBLIC_URL` is https, and the Google OAuth web client lists `<APP_URL>/channels/oauth/google_ads/callback` as an Authorized redirect URI.
-- The module list includes `ads` (`CROVE_MODULES`).
+- The module list includes `ads` (`LUDY_MODULES`).
 - `ADS_SANDBOX=false`: the server refuses `ADS_SANDBOX=true` on a public address when the Ads module runs.
 - A credential key is set (`CREDENTIAL_KEY`), as for any connected channel.
 

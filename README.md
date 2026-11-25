@@ -165,15 +165,15 @@ Later, not scheduled: two-way external calendars and meeting links for bookings,
 
 | Feature | Variables |
 |---|---|
-| Modules | `CROVE_MODULES`: comma-separated modules to run, such as `finance` (default: every module; `kernel` is always on). A module left out registers no commands, routes, jobs or menus; migrations still apply to every schema. Give the `api` and `worker` roles and the prober the same value (ADR-0031; the prober counts those modules' queued jobs, #1894) |
+| Modules | `LUDY_MODULES`: comma-separated modules to run, such as `finance` (default: every module; `kernel` is always on). A module left out registers no commands, routes, jobs or menus; migrations still apply to every schema. Give the `api` and `worker` roles and the prober the same value (ADR-0031; the prober counts those modules' queued jobs, #1894) |
 | AI for PDFs and photos | `AI_BASE_URL`, `AI_API_KEY`, `AI_MODEL` (any OpenAI-compatible endpoint: OpenAI, Ollama, vLLM, ...) |
-| Product name users see | `BRAND_NAME`: the name the app, the browser tab title, the installed app (the PWA manifest, #1691), mails (sender name and texts), the authenticator app entry, the status and bio pages, the calendar feed, chat alerts, Zalo articles without an author, exported files and their names show, 1 to 40 characters of letters, digits, spaces and `. , & ' + _ ! ( ) -`. Unset keeps "Ludy"; any other character stops the boot. Code, schemas, logs and the AGPL source notice keep "Crove". Browsers read it from `/api/config` |
+| Product name users see | `BRAND_NAME`: the name the app, the browser tab title, the installed app (the PWA manifest, #1691), mails (sender name and texts), the authenticator app entry, the status and bio pages, the calendar feed, chat alerts, Zalo articles without an author, exported files and their names show, 1 to 40 characters of letters, digits, spaces and `. , & ' + _ ! ( ) -`. Unset keeps "Ludy"; any other character stops the boot. Code, schemas, logs and the AGPL source notice keep "Ludy". Browsers read it from `/api/config` |
 | Browser extension ids | `EXTENSION_IDS`: the Ludy extension ids (32 letters a to p each, separated by commas or spaces) that may sign in, checked by the app and by `/api/extension/authorize`. Unset keeps the Chrome Web Store build's id (any other extension is refused); a server that sets it uses only that list, so list your own unpacked extension's id (and the store id, to keep the store build) to connect it to a self-hosted install. Browsers read the list from `/api/config` |
 | Feedback and support link | `SUPPORT_URL`: where the app's "Góp ý / Hỗ trợ" link goes, an `https:` page (a chat group, a help desk) or a `mailto:` address. Unset hides the link; any other scheme stops the boot. Browsers read it from `/api/config` |
 | Terms and privacy notice | `TERMS_URL`, `PRIVACY_URL`: `https:` pages the sign-up and invite screens link to ("Khi tiếp tục, bạn đồng ý với..."). Unset hides each link; any other scheme stops the boot. Drafts to adapt, not yet reviewed by a lawyer: [docs/legal/](docs/legal/README.md) |
 | Onboarding by tax code | `TAX_CODE_LOOKUP_URL`: an https URL template with `{taxCode}` (for example `https://api.vietqr.io/v2/business/{taxCode}`, which answers in the shape the kernel reads). With it, the new-organization form looks up a client's tax code and fills in the name and address; unset hides the button, since the lookup sends the tax codes users type to that provider. Answers are cached in the process for a day |
 | Tax portal sync | `TAX_PORTAL_SYNC=true` turns on "Lấy danh sách từ cổng thuế" on the reconciliation screen: the accountant types the client's hoadondientu.gdt.gov.vn password and solves the portal's CAPTCHA, and Ludy fetches the period's purchase list and invoice XML. Off by default: it logs in to a government portal on a client's behalf, with the client's consent. The password is never stored and the CAPTCHA is never solved by software. Needs the credential key. See [docs/integrations/tax-portal-sync.md](docs/integrations/tax-portal-sync.md) |
-| Inbound email | `INBOUND_DOMAIN`, `INBOUND_SECRET`; your mail worker POSTs raw MIME to `/api/inbound/email` with `Authorization: Bearer <INBOUND_SECRET>` and the envelope recipient in `X-Crove-Recipient`. [`tools/inbound-mail/worker.js`](tools/inbound-mail/worker.js) is a ready worker for Cloudflare Email Routing (setup: [provision-pilot.md](docs/runbooks/provision-pilot.md), "Inbound email"; rotating the secret without losing mail: [secret-rotation.md](docs/runbooks/secret-rotation.md)) |
+| Inbound email | `INBOUND_DOMAIN`, `INBOUND_SECRET`; your mail worker POSTs raw MIME to `/api/inbound/email` with `Authorization: Bearer <INBOUND_SECRET>` and the envelope recipient in `X-Ludy-Recipient`. [`tools/inbound-mail/worker.js`](tools/inbound-mail/worker.js) is a ready worker for Cloudflare Email Routing (setup: [provision-pilot.md](docs/runbooks/provision-pilot.md), "Inbound email"; rotating the secret without losing mail: [secret-rotation.md](docs/runbooks/secret-rotation.md)) |
 | Bot check on the booking page | `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET` (both or neither): with them the public booking page (crm module) shows Cloudflare Turnstile and the kernel checks each booking request's token with Cloudflare's siteverify before recording it; the app's CSP then lets `https://challenges.cloudflare.com` in for Turnstile's script and frame. Unset, nothing changes. Browsers read the site key from `/api/config` |
 | Org exports (offboarding) | `EXPORT_ENCRYPTION_KEY` (32 random bytes, `openssl rand -base64 32`; required on a public URL) seals exports at rest with AES-256-GCM; `EXPORT_RETENTION_DAYS` (35 to 90, default 35) before the worker deletes them; `EXPORT_ENCRYPTION_KEY_PREVIOUS` to read exports sealed before a key rotation. Give the bucket a lifecycle rule for noncurrent versions under `export/` and `inbound/` too |
 | Email delivery | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`, `AUTH_AUTOCONFIRM=false`. Supabase Auth and Ludy's member invites use the same server; port 465 is implicit TLS, other ports with credentials require STARTTLS. Without `SMTP_HOST` Ludy sends no invite mail and the inviter passes the one-time link on |
@@ -194,7 +194,7 @@ See [`.env.example`](./.env.example) for the full list.
 <details>
 <summary>The prober, its checks and how alerts reach your phone</summary>
 
-The image's `prober` role checks that background work is moving and alerts you when it is not. It connects as `crove_prober`, a login that can only call `crove_kernel.health()` (aggregate ages and counts, no tenant data), `crove_kernel.archive_health()` (the WORM archive's two ages, #1997), `crove_kernel.prober_alert_gate()` (the alert state below) and core functions such as `pg_notification_queue_usage()`, and alerts when:
+The image's `prober` role checks that background work is moving and alerts you when it is not. It connects as `ludy_prober`, a login that can only call `ludy_kernel.health()` (aggregate ages and counts, no tenant data), `ludy_kernel.archive_health()` (the WORM archive's two ages, #1997), `ludy_kernel.prober_alert_gate()` (the alert state below) and core functions such as `pg_notification_queue_usage()`, and alerts when:
 
 | Check | Default limit | Variable |
 |---|---|---|
@@ -209,16 +209,16 @@ The image's `prober` role checks that background work is moving and alerts you w
 | The WORM archive's lag: the oldest audit event not yet in a batch (a journal entry's audit row is never younger) (it normally stays near `ARCHIVE_LAG_SECONDS`, 600 s) | the larger of 3600 s and `ARCHIVE_LAG_SECONDS` plus 900 s (`0`: off) | `PROBER_MAX_ARCHIVE_LAG_SECONDS` |
 | The database's WAL archiving (#2120, only while `archive_mode` is on): a finished WAL segment has waited longer than this to reach the backup bucket, or `archive_command` keeps failing; point-in-time recovery then stops at the last pushed segment (docs/runbooks/backup-and-restore.md, "Point in time recovery") | 600 s, or 20 finished segments waiting (`0`: off) | `PROBER_MAX_WAL_ARCHIVE_AGE_SECONDS`, `PROBER_MAX_WAL_PENDING_SEGMENTS` |
 | AI document readings whose every attempt failed (the AI provider refused or did not answer, the parser sandbox was down) within `PROBER_EXTRACTION_WINDOW_SECONDS` (default 3600 s); a document that cannot be read, or that the AI refuses (a request it rejects, an answer that never fits), never counts | more than 2 (`0`: off) | `PROBER_MAX_EXTRACTION_FAILURES` |
-| Supabase Auth's `/health` does not answer 2xx in a row, asked where signing in reaches it: `PROBER_AUTH_URL`, else `PUBLIC_AUTH_URL`, else `PUBLIC_URL/auth/v1` (Compose: the kernel's proxy, `http://crove:8080/auth/v1`; the split layout: `http://api:8080/auth/v1`). Hosted Supabase needs `PUBLIC_AUTH_ANON_KEY`. With one probe a run (cron), one miss alerts; so does the first probe after a `--every` loop starts, so a restart during an outage keeps the alert open | 2 misses (`0`: off), 10 s each | `PROBER_AUTH_MISSES`, `PROBER_AUTH_TIMEOUT_SECONDS` |
+| Supabase Auth's `/health` does not answer 2xx in a row, asked where signing in reaches it: `PROBER_AUTH_URL`, else `PUBLIC_AUTH_URL`, else `PUBLIC_URL/auth/v1` (Compose: the kernel's proxy, `http://ludy:8080/auth/v1`; the split layout: `http://api:8080/auth/v1`). Hosted Supabase needs `PUBLIC_AUTH_ANON_KEY`. With one probe a run (cron), one miss alerts; so does the first probe after a `--every` loop starts, so a restart during an outage keeps the alert open | 2 misses (`0`: off), 10 s each | `PROBER_AUTH_MISSES`, `PROBER_AUTH_TIMEOUT_SECONDS` |
 
 Every probe logs what fails, but it notifies only on news:
 
-- **New problem:** `[Crove] ALERT on <instance>: ...` with one line per failing check.
+- **New problem:** `[Ludy] ALERT on <instance>: ...` with one line per failing check.
 - **Changed problem** (another set of checks fails): an alert at once, naming the checks that failed before.
-- **Still failing:** `[Crove] STILL FAILING on <instance> for 1 h 5 min: ...` every `ALERT_REPEAT_MINUTES` (default 60; 0 turns repeats off) while the same checks keep failing. Values such as a growing backlog do not make a new problem.
-- **Resolved:** `[Crove] RESOLVED on <instance>: ...` once every check passes again.
+- **Still failing:** `[Ludy] STILL FAILING on <instance> for 1 h 5 min: ...` every `ALERT_REPEAT_MINUTES` (default 60; 0 turns repeats off) while the same checks keep failing. Values such as a growing backlog do not make a new problem.
+- **Resolved:** `[Ludy] RESOLVED on <instance>: ...` once every check passes again.
 
-The state lives in the database (`crove_kernel.prober_alert_state`, one row), so it survives restarts and is shared by every prober on the same database: a prober holds the row while it delivers, a second one probing at that moment sends nothing, and an alert that could not be delivered stays due for the next probe. The one problem the database cannot record is the database itself being unreachable: a long-running prober (`--every`, the Compose profile) de-duplicates that outage in memory and says when the database answers again, while a cron run alerts on every run until it does.
+The state lives in the database (`ludy_kernel.prober_alert_state`, one row), so it survives restarts and is shared by every prober on the same database: a prober holds the row while it delivers, a second one probing at that moment sends nothing, and an alert that could not be delivered stays due for the next probe. The one problem the database cannot record is the database itself being unreachable: a long-running prober (`--every`, the Compose profile) de-duplicates that outage in memory and says when the database answers again, while a cron run alerts on every run until it does.
 
 Alerts go to `ALERT_WEBHOOK_URL`; without it they are printed to stdout. The request shape follows `ALERT_WEBHOOK_FORMAT` (default `auto`, which picks it from the webhook host):
 
@@ -227,14 +227,14 @@ Alerts go to `ALERT_WEBHOOK_URL`; without it they are printed to stdout. The req
 | `slack` | a Slack incoming webhook, `https://hooks.slack.com/services/...` | `{"text", "mrkdwn": false}`, with `&`, `<` and `>` escaped |
 | `discord` | a Discord channel webhook, `https://discord.com/api/webhooks/<id>/<token>` | `{"content", "allowed_mentions": {"parse": []}}`: Markdown escaped, no pings, at most 2000 characters |
 | `telegram` | `https://api.telegram.org/bot<token>/sendMessage`, plus `ALERT_TELEGRAM_CHAT_ID` (numeric id, negative for groups and channels, or `@channelname`) | `{"chat_id", "text", "link_preview_options": {"is_disabled": true}}`, plain text (no `parse_mode`) |
-| `generic` | anything else (Mattermost, Google Chat, your own receiver) | `{"text", "content", "crove"}`, where `crove` holds `kind` (`alert`, `resolved`, `test`; `usage` for the weekly usage summary below, with its counts in `week` and `previous`), `state` (`new`, `changed`, `repeat`), `severity`, `since`, the findings and the `health()` row |
+| `generic` | anything else (Mattermost, Google Chat, your own receiver) | `{"text", "content", "ludy"}`, where `ludy` holds `kind` (`alert`, `resolved`, `test`; `usage` for the weekly usage summary below, with its counts in `week` and `previous`), `state` (`new`, `changed`, `repeat`), `severity`, `since`, the findings and the `health()` row |
 
 Name the deployment with `ALERT_INSTANCE` (default: the host of `PUBLIC_URL`). Exit codes report health whether or not a notification went out: 0 healthy, 1 a limit was exceeded, 2 the check could not run, 3 a due notification could not be delivered (it is printed instead, with the vendor's short reason such as `no_text` or `Bad Request: chat not found`). Use an `https` webhook: these URLs carry their secret (the Telegram bot token, the Slack and Discord path), and the prober logs only their host.
 
-Set `CROVE_PROBER_DB_PASSWORD` (applied by `migrate`) and `ALERT_WEBHOOK_URL` in `.env`, then pick one way to run it:
+Set `LUDY_PROBER_DB_PASSWORD` (applied by `migrate`) and `ALERT_WEBHOOK_URL` in `.env`, then pick one way to run it:
 
 ```bash
-# Check the alert path end to end: you should receive "[Crove] Test alert from ..."
+# Check the alert path end to end: you should receive "[Ludy] Test alert from ..."
 pnpm alert:test                                   # from a checkout, reads .env
 docker compose run --rm prober prober --test-alert   # or through the image
 
@@ -242,10 +242,10 @@ docker compose run --rm prober prober --test-alert   # or through the image
 docker compose --profile prober up -d
 
 # Or cron on the host: one check every 5 minutes; a failed job counts for 360 s, so each one alerts once (twice at most)
-*/5 * * * * cd /path/to/Crove && docker compose run --rm -e PROBER_DEAD_LETTER_WINDOW_SECONDS=360 prober prober >> /var/log/crove-prober.log 2>&1
+*/5 * * * * cd /path/to/Ludy && docker compose run --rm -e PROBER_DEAD_LETTER_WINDOW_SECONDS=360 prober prober >> /var/log/ludy-prober.log 2>&1
 ```
 
-Without Compose, run `node apps/kernel/src/main.ts prober` from any scheduler with `PROBER_DATABASE_URL=postgres://crove_prober:<password>@<host>:5432/<db>`, and `CROVE_MODULES` set to the API's and the worker's value (unset means every module, so a module left out would raise `job_age` for its leftover queued jobs; #1894). The prober cannot report its own absence or a whole-host outage: for those, add an outside uptime check on `/healthz` and set `PROBER_HEARTBEAT_URL` to an outside heartbeat monitor (a dead man's switch), which the prober pings after each probe that read the database and delivered every alert it owed, so the monitor pages when the pings stop. Setting up all three for the owner's phone, step by step: [docs/runbooks/alerts.md](./docs/runbooks/alerts.md). Replacing the database login passwords, `INBOUND_SECRET` or the secrets in the webhook and heartbeat URLs: [docs/runbooks/secret-rotation.md](./docs/runbooks/secret-rotation.md).
+Without Compose, run `node apps/kernel/src/main.ts prober` from any scheduler with `PROBER_DATABASE_URL=postgres://ludy_prober:<password>@<host>:5432/<db>`, and `LUDY_MODULES` set to the API's and the worker's value (unset means every module, so a module left out would raise `job_age` for its leftover queued jobs; #1894). The prober cannot report its own absence or a whole-host outage: for those, add an outside uptime check on `/healthz` and set `PROBER_HEARTBEAT_URL` to an outside heartbeat monitor (a dead man's switch), which the prober pings after each probe that read the database and delivered every alert it owed, so the monitor pages when the pings stop. Setting up all three for the owner's phone, step by step: [docs/runbooks/alerts.md](./docs/runbooks/alerts.md). Replacing the database login passwords, `INBOUND_SECRET` or the secrets in the webhook and heartbeat URLs: [docs/runbooks/secret-rotation.md](./docs/runbooks/secret-rotation.md).
 
 **Worker alerts.** The worker sends two kinds of alert of its own, to the same `ALERT_WEBHOOK_URL` (set it on the worker too, as `docker-compose.yml` does; without it they go to the worker's log only):
 
@@ -261,7 +261,7 @@ Without Compose, run `node apps/kernel/src/main.ts prober` from any scheduler wi
 <details>
 <summary>The weekly numbers that measure the pilot</summary>
 
-The image's `usage-report` role prints the counts that measure the MVP goal ([backlog review](./docs/plan/backlog-review-2026-10-17.md), section 3), per ISO week from Monday 00:00 in `--time-zone` (default `Asia/Ho_Chi_Minh`). It is for the operator of the deployment, not a tenant screen: it connects as `crove_reporter`, a login that can only call `crove_kernel.usage_weekly()`, which returns counts and no tenant content (no file names, titles, amounts, emails or user ids). With `--by-org` it adds one row per org that was active that week, by org id and name.
+The image's `usage-report` role prints the counts that measure the MVP goal ([backlog review](./docs/plan/backlog-review-2026-10-17.md), section 3), per ISO week from Monday 00:00 in `--time-zone` (default `Asia/Ho_Chi_Minh`). It is for the operator of the deployment, not a tenant screen: it connects as `ludy_reporter`, a login that can only call `ludy_kernel.usage_weekly()`, which returns counts and no tenant content (no file names, titles, amounts, emails or user ids). With `--by-org` it adds one row per org that was active that week, by org id and name.
 
 | Column | What it counts that week |
 |---|---|
@@ -272,7 +272,7 @@ The image's `usage-report` role prints the counts that measure the MVP goal ([ba
 | `median_upload_to_approval_h` | median hours from a document's upload or arrival to the approval of its proposal |
 | `journal_exports`, `org_exports` | Excel journal downloads (each download counts, also of the same range) and full org exports |
 
-Set `CROVE_REPORTER_DB_PASSWORD` (applied by `migrate`) in `.env`, then:
+Set `LUDY_REPORTER_DB_PASSWORD` (applied by `migrate`) in `.env`, then:
 
 ```bash
 docker compose run --rm usage usage-report                      # the last 8 weeks, deployment totals
@@ -281,9 +281,9 @@ pnpm usage:report --weeks 4                                     # from a checkou
 docker compose run --rm usage usage-report --post               # also post last week's summary to ALERT_WEBHOOK_URL
 ```
 
-Options: `--weeks <1-104>` (default 8, the current week included), `--by-org`, `--csv` (RFC 4180; an org name a spreadsheet would read as a formula gets a leading `'`), `--time-zone <name>`, `--post`. Exit codes: 0 printed (and posted), 2 the report could not run, 3 printed but the summary could not be posted. Without Compose, run `node apps/kernel/src/main.ts usage-report` with `REPORTER_DATABASE_URL=postgres://crove_reporter:<password>@<host>:5432/<db>`; it refuses a superuser or BYPASSRLS login.
+Options: `--weeks <1-104>` (default 8, the current week included), `--by-org`, `--csv` (RFC 4180; an org name a spreadsheet would read as a formula gets a leading `'`), `--time-zone <name>`, `--post`. Exit codes: 0 printed (and posted), 2 the report could not run, 3 printed but the summary could not be posted. Without Compose, run `node apps/kernel/src/main.ts usage-report` with `REPORTER_DATABASE_URL=postgres://ludy_reporter:<password>@<host>:5432/<db>`; it refuses a superuser or BYPASSRLS login.
 
-`--post` sends a summary of the last complete week, with the week before for comparison, to the prober's alert webhook (`ALERT_WEBHOOK_URL`, in the same format, see "Monitoring and alerts"): deployment totals only, never an org id or name, whatever `--by-org` says. The report still connects as `crove_reporter`; the prober's login reads no usage. Without `ALERT_WEBHOOK_URL`, or with invalid webhook settings, it fails with exit 2 before reading anything. It logs the webhook by host only, and prints the report to stdout as usual, so `--csv --post > usage.csv` still writes a clean file. It needs `--weeks 3` or more. A Monday cron job for it: [docs/runbooks/alerts.md](./docs/runbooks/alerts.md), "Weekly usage summary".
+`--post` sends a summary of the last complete week, with the week before for comparison, to the prober's alert webhook (`ALERT_WEBHOOK_URL`, in the same format, see "Monitoring and alerts"): deployment totals only, never an org id or name, whatever `--by-org` says. The report still connects as `ludy_reporter`; the prober's login reads no usage. Without `ALERT_WEBHOOK_URL`, or with invalid webhook settings, it fails with exit 2 before reading anything. It logs the webhook by host only, and prints the report to stdout as usual, so `--csv --post > usage.csv` still writes a clean file. It needs `--weeks 3` or more. A Monday cron job for it: [docs/runbooks/alerts.md](./docs/runbooks/alerts.md), "Weekly usage summary".
 
 </details>
 
@@ -292,7 +292,7 @@ Options: `--weeks <1-104>` (default 8, the current week included), `--by-org`, `
 Before real users put real data in a deployment, run the preflight from a checkout holding the deployment's `.env`:
 
 ```bash
-pnpm pilot:check -- --url https://crove.example.com
+pnpm pilot:check -- --url https://ludy.example.com
 ```
 
 It fails on any secret left at a shipped sample value, a public URL that is not https, `TRUSTED_PROXY_HOPS` not counting the reverse proxy, `AUTH_AUTOCONFIRM` not `false`, MFA step-up off, sign-up open to anyone (`AUTH_DISABLE_SIGNUP` not `true` and `AUTH_SIGNUP_POLICY` neither `invite_only` nor `allowlist`) alerts that reach nobody (`ALERT_WEBHOOK_URL` unset or not https) and backups that never leave the server (`BACKUP_S3_ENDPOINT` unset, not https or the files bucket itself), and with `--url` probes the certificate, plain http, a sign-up for a random address no policy admits (it must be refused) and the confirmation setting the running Supabase Auth reports. It lists what only a person can confirm (the outside uptime check and a test alert on the phone, sandbox running, RLS matrix green, backups tested). Exit codes: 0 ready, 1 a check failed, 2 bad arguments. The full checklist and how to open sign-up for a pilot's accounts: [docs/runbooks/pilot-readiness.md](./docs/runbooks/pilot-readiness.md).
@@ -307,8 +307,8 @@ docker compose up -d db auth auth-grants mailpit   # or point .env at your own P
 pnpm db:migrate
 pnpm dev                                # kernel on :8080, web app on :5173
 pnpm test                               # unit tests
-CROVE_TEST_ADMIN_URL=postgres://postgres:...@localhost:5432/postgres pnpm test:db
-CROVE_TEST_S3_URL=http://<key>:<secret>@localhost:9000/crove-test pnpm test   # also runs the S3 tests (e.g. MinIO)
+LUDY_TEST_ADMIN_URL=postgres://postgres:...@localhost:5432/postgres pnpm test:db
+LUDY_TEST_S3_URL=http://<key>:<secret>@localhost:9000/ludy-test pnpm test   # also runs the S3 tests (e.g. MinIO)
 ```
 
 Layout:
@@ -359,4 +359,4 @@ Ludy was called Crove until October 2026. Workspace packages use `@ludy/*`; rema
 
 ## License
 
-AGPL-3.0-only, see [`LICENSE`](./LICENSE). © Crove / DOS. See also [`CONTRIBUTING.md`](./CONTRIBUTING.md), [`SECURITY.md`](./SECURITY.md), [`TRADEMARKS.md`](./TRADEMARKS.md) and the draft [`CLA.md`](./CLA.md).
+AGPL-3.0-only, see [`LICENSE`](./LICENSE). © Ludy / DOS. See also [`CONTRIBUTING.md`](./CONTRIBUTING.md), [`SECURITY.md`](./SECURITY.md), [`TRADEMARKS.md`](./TRADEMARKS.md) and the draft [`CLA.md`](./CLA.md).

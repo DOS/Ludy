@@ -1,6 +1,6 @@
 # MISA SME import templates (issues #317, #657, #1398)
 
-Firms keep their system of record (decision D10). For firms on MISA SME, Crove exports vouchers as Excel files in
+Firms keep their system of record (decision D10). For firms on MISA SME, Ludy exports vouchers as Excel files in
 the layout of MISA SME's own import templates, so the accountant imports them with **Tệp > Nhập khẩu từ Excel**
 instead of typing them again.
 
@@ -11,7 +11,7 @@ instead of typing them again.
   (`GET /api/export/misa/goods-purchases.xlsx?from=&to=`). The invoice lines debited to 152, 153 or 156 (or a
   sub-account of one), one row per line, with the org's MISA item and warehouse codes (Settings, below).
 - **Sales vouchers:** Journal screen, button "Xuất chứng từ bán hàng cho MISA" (`GET /api/export/misa/sales.xlsx?from=&to=`,
-  #313). The recorded sales e-invoices (`finance.vouchers.sales`), one row per invoice line, posted as Crove posts
+  #313). The recorded sales e-invoices (`finance.vouchers.sales`), one row per invoice line, posted as Ludy posts
   them: Nợ 131, Có each line's revenue account, Có 3331.
 - **Cash receipts and payments (phiếu thu, phiếu chi):** "Thu chi" screen, buttons "Xuất phiếu thu cho MISA" and
   "Xuất phiếu chi cho MISA" (`GET /api/export/misa/receipts.xlsx?from=&to=` and `payments.xlsx`, #657). The posted
@@ -51,9 +51,9 @@ matching an older MISA SME.NET copy (S6) column for column.
 
 ## Purchase vouchers: `Chung_tu_mua_dich_vu_chua_thanh_toan_VND.xls`
 
-Crove posts an approved purchase invoice as Nợ expense or asset accounts, Nợ 1331 or 1332, Có 331. In MISA that is a
+Ludy posts an approved purchase invoice as Nợ expense or asset accounts, Nợ 1331 or 1332, Có 331. In MISA that is a
 **Chứng từ mua dịch vụ, chưa thanh toán** (a purchase not paid yet, not received into a warehouse). The `_VND`
-variant is the one without currency and exchange rate columns; Crove records VND purchases only.
+variant is the one without currency and exchange rate columns; Ludy records VND purchases only.
 
 Sheet `Chứng từ mua dịch vụ`, headers in row 1, 33 columns. **Confirmed** against a copy of the template file itself
 (S9), which has the same 33 headers in the same order as the listing (S7). Headers marked "also in S6" are spelled the
@@ -61,7 +61,7 @@ same in the older SME.NET templates.
 
 Since #1398 this file holds only the lines **not** on a stock account; the goods template below takes the others.
 
-| Header | Crove fills | Header status |
+| Header | Ludy fills | Header status |
 |---|---|---|
 | Hiển thị trên sổ | blank (both books, per S6 notes) | also in S6 |
 | Phương thức thanh toán | blank (meaning "not paid" is unconfirmed for this template) | also in S6 |
@@ -87,7 +87,7 @@ Since #1398 this file holds only the lines **not** on a stock account; the goods
 | Tỷ lệ tính thuế (Thuế suất KHAC) | the rate, only with KHAC | also in S6 |
 | Tiền thuế GTGT | the line's share of the invoice VAT (below) | also in S6 |
 | TK thuế GTGT | 1331, or 1332 for a fixed asset line (211) | also in S6 |
-| Mẫu số HĐ | blank (Crove does not store the invoice form number) | S7 only |
+| Mẫu số HĐ | blank (Ludy does not store the invoice form number) | S7 only |
 | Ký hiệu HĐ | invoice series | S7 only |
 | Số hóa đơn | invoice number (MISA allows 25 characters; never cut: a cut number could make two invoices look the same, so a longer one is left for MISA to flag) | also in S6 |
 | Ngày hóa đơn | invoice date | also in S6 |
@@ -103,12 +103,12 @@ Left out on purpose: voided purchase documents (their entry was reversed, #165) 
 
 A purchase line debited to a stock account (152 materials, 153 tools, 156 goods, or a sub-account of one) is goods
 received into a warehouse. In MISA that is a **Chứng từ mua hàng hóa**, type "Mua hàng trong nước nhập kho", not paid
-yet, with its invoice. Crove posts such a line Nợ 152/153/156, Nợ 1331, Có 331, which is this voucher.
+yet, with its invoice. Ludy posts such a line Nợ 152/153/156, Nợ 1331, Có 331, which is this voucher.
 
 Sheet `Chứng từ mua hàng nhập kho`, headers in row 1, 44 columns. **From the template file itself** (S9); the value
 codes below are the file's own input notes.
 
-| Header | Crove fills | MISA's note (S9) |
+| Header | Ludy fills | MISA's note (S9) |
 |---|---|---|
 | Hiển thị trên sổ | blank | blank or 2: both books |
 | Hình thức mua hàng | blank | blank or 0: bought in Vietnam; 1: import |
@@ -117,7 +117,7 @@ codes below are the file's own input notes.
 | Ngày hạch toán (*), Ngày chứng từ (*) | journal entry date | |
 | Số phiếu nhập (*) | `CRMH` + last 12 hex digits of the journal entry id (16 characters) | max 20 |
 | Số chứng từ thanh toán | blank | max 20 |
-| Mẫu số HĐ | blank (Crove does not store it) | max 25 |
+| Mẫu số HĐ | blank (Ludy does not store it) | max 25 |
 | Ký hiệu HĐ | invoice series | max 20 |
 | Số hóa đơn | invoice number, never cut (as in the services file) | max 25 |
 | Ngày hóa đơn | invoice date | |
@@ -144,8 +144,8 @@ codes below are the file's own input notes.
 There is no address or tax code column for the vendor in this template: MISA takes them from its vendor catalog.
 
 **Item and warehouse codes.** `Mã hàng (*)` is required and must exist in the firm's MISA catalog; `Kho` names a
-warehouse of it. Each org keeps a small map from stock account to the two codes (`crove_finance.misa_goods_code`,
-Settings > "Mã hàng và mã kho cho MISA"; owners and admins edit it, every member sees it). For a line, Crove takes the
+warehouse of it. Each org keeps a small map from stock account to the two codes (`ludy_finance.misa_goods_code`,
+Settings > "Mã hàng và mã kho cho MISA"; owners and admins edit it, every member sees it). For a line, Ludy takes the
 codes of its own account, else those of its nearest ancestor that has codes, following the chart's parent chain (not
 the code text: `152.AB` does not take the codes of its sibling `152.A`), else these defaults:
 
@@ -177,13 +177,13 @@ entries, as in the services file.
 Sheet `Chứng từ bán hàng`, headers in row 1, 49 columns. **Confirmed**: the same 49 headers, in the same order, in
 the MISA SME.NET file (S6) and in the MISA SME 2026 listing (S7). Value codes come from the file's own cell notes (S6).
 
-| Header | Crove fills |
+| Header | Ludy fills |
 |---|---|
 | Hiển thị trên sổ, Hình thức bán hàng, Phương thức thanh toán | blank: both books, domestic sale, not collected yet (S6 notes) |
 | Kiêm phiếu xuất kho | 0: no warehouse issue (blank would mean 1) |
 | XK vào khu phi thuế quan và các TH được coi như XK | blank |
 | Lập kèm hóa đơn | 1 |
-| Đã lập hóa đơn | 1: the e-invoice is already issued (by Crove's provider, #313) |
+| Đã lập hóa đơn | 1: the e-invoice is already issued (by Ludy's provider, #313) |
 | Ngày hạch toán (*), Ngày chứng từ (*) | journal entry date |
 | Số chứng từ (*) | `CRBH` + last 12 hex digits of the journal entry id |
 | Số phiếu xuất, Lý do xuất | blank |
@@ -218,11 +218,11 @@ files `Phieu_thu_VND.xls` and `Phieu_chi_VND.xls` (S9, read on 2026-11-02), whic
 and the same sheet names. The value codes and length limits still come from the S6 notes alone. Check the headers
 against the partner's own template all the same (open question 9).
 
-| Header | Crove fills |
+| Header | Ludy fills |
 |---|---|
 | Hiển thị trên sổ | blank: both books |
 | Ngày hạch toán (*), Ngày chứng từ (*) | voucher date |
-| Số chứng từ (*) | `CR` + the two letters of Crove's voucher code + the series' period + the code's number: `CRPT202600001`, `CRPC202600001` (the firm's MISA numbers its own vouchers PT00001, PC00001 ...). The series restarts every year (#1401), and MISA groups rows by this number, so the year is in it (#2346): `CRPT202700001` is another voucher than `CRPT202600001`. A monthly series gives `CRPT20271000001`, a series that never resets `CRPT00001` |
+| Số chứng từ (*) | `CR` + the two letters of Ludy's voucher code + the series' period + the code's number: `CRPT202600001`, `CRPC202600001` (the firm's MISA numbers its own vouchers PT00001, PC00001 ...). The series restarts every year (#1401), and MISA groups rows by this number, so the year is in it (#2346): `CRPT202700001` is another voucher than `CRPT202600001`. A monthly series gives `CRPT20271000001`, a series that never resets `CRPT00001` |
 | Mã đối tượng, Đối tượng | blank (MISA catalog codes) |
 | Tên đối tượng (max 128), Địa chỉ (max 255) | the voucher's party, when it has one |
 | Lý do nộp / Lý do chi | blank: MISA reads 13 (Thu khác) / 23 (Chi khác) |
@@ -243,14 +243,14 @@ The exports record an audit row like the others, with `format: 'misa_sme_cash_re
 MISA's deposit templates for the giấy báo Có (Tiền gửi > Thu tiền) and the giấy báo Nợ (Tiền gửi > Chi tiền). **Every
 header below is unconfirmed: it has one source**, the header row of the two MISA SME 2026 files in S9, which the S7
 listing does not repeat. Only headers (facts) were taken; the value codes and length limits of the files' input notes
-were not read, so the limits Crove applies (128 for a name, 255 for an address or a reason) are those of the same fields
+were not read, so the limits Ludy applies (128 for a name, 255 for an address or a reason) are those of the same fields
 in the cash templates (S6) and are unconfirmed for these files. The headers are written exactly as the files spell them,
 including the trailing space of `Diễn giải lý do thu `, since MISA matches columns by header name (S2). Check them
 against the partner's own downloaded templates first (open question 12).
 
 **Báo Có**, sheet `Chứng từ thu tiền`, 25 columns, voucher number `CRBC202600001`:
 
-| Header | Crove fills |
+| Header | Ludy fills |
 |---|---|
 | Hiển thị trên sổ | blank: both books |
 | Ngày hạch toán (*), Ngày chứng từ (*) | voucher date |
@@ -270,7 +270,7 @@ The template has no "Người nộp" column, so the payer named on the voucher i
 
 **Báo Nợ**, sheet `Chứng từ Chi tiền gửi`, 47 columns, voucher number `CRBN202600001`:
 
-| Header | Crove fills |
+| Header | Ludy fills |
 |---|---|
 | Hiển thị trên sổ, Phương thức thanh toán | blank: both books; the payment method is a MISA code |
 | Ngày hạch toán (*), Ngày chứng từ (*) | voucher date |
@@ -302,9 +302,9 @@ before the file is sent. A voucher whose entry was reversed is left out, as for 
   exact decimal as text, as in the journal export. VND amounts are whole numbers in practice.
 - **VAT rate codes:** from the S6 notes ("Nhập 0: 0%, Nhập 5: 5%, Nhập 8: 8%, Nhập 10: 10%, Nhập KCT, Nhập KKKNT,
   Nhập KHAC: Thuế suất khác", with the ratio in "Tỷ lệ tính thuế (Thuế suất KHAC)", above 0 up to 100). Invoice
-  rates `10%`, `KCT`, `KHAC:5.26%` map to `10`, `KCT`, `KHAC` + `5.26`. A rate Crove cannot read is left blank;
+  rates `10%`, `KCT`, `KHAC:5.26%` map to `10`, `KCT`, `KHAC` + `5.26`. A rate Ludy cannot read is left blank;
   per the S6 "Phiếu chi" note MISA then assumes **10%**, so such rows need a look before importing.
-- **VAT per line:** Crove stores the invoice VAT per document, not per line. The export gives each line its amount
+- **VAT per line:** Ludy stores the invoice VAT per document, not per line. The export gives each line its amount
   times its rate, rounded to whole VND, and puts the rounding difference on the largest taxed line, so the lines
   add up to the invoice VAT exactly. For purchases, VAT is first split between 1331 and 1332 with the rule the
   journal uses, so MISA posts the same VAT accounts and amounts.
@@ -315,7 +315,7 @@ before the file is sent. A voucher whose entry was reversed is left out, as for 
 
 ## Importing in MISA SME (for the accountant)
 
-1. In Crove, Journal screen: pick the date range, click "Xuất chứng từ mua dịch vụ cho MISA".
+1. In Ludy, Journal screen: pick the date range, click "Xuất chứng từ mua dịch vụ cho MISA".
 2. In the file, fill **Mã dịch vụ (*)** with the service code the firm uses in MISA (one code down the column is
    enough for most firms), and check any row whose "% thuế GTGT" is blank.
 3. In MISA SME: Tệp > Nhập khẩu từ Excel > Chứng từ > Mua hàng > Chứng từ mua dịch vụ; choose the file, sheet
@@ -338,11 +338,11 @@ before the file is sent. A voucher whose entry was reversed is left out, as for 
 
 1. **Template check:** compare the partner's own downloaded templates (Tải tệp mẫu) with the purchase headers above
    (services and goods, both read from copies of the MISA SME 2026 files, S9). Does the firm record goods into stock
-   (152, 153, 156) as "Mua hàng trong nước nhập kho", as Crove now exports them (#1398)?
+   (152, 153, 156) as "Mua hàng trong nước nhập kho", as Ludy now exports them (#1398)?
 2. **Catalog codes:** `Mã dịch vụ (*)` and `Mã hàng (*)` are required and must exist in MISA. Is one generic
-   service code per firm acceptable? For goods, Crove keeps one item and warehouse code per stock account (Settings,
+   service code per firm acceptable? For goods, Ludy keeps one item and warehouse code per stock account (Settings,
    defaults `NVL`/`KNVL`, `CCDC`/`KCCDC`, `HH`/`KHH`): does the firm want per-vendor or per-item codes instead? Should
-   Crove fill `Mã nhà cung cấp` / `Mã khách hàng` (for example with the tax code, if the firm codes partners that way)?
+   Ludy fill `Mã nhà cung cấp` / `Mã khách hàng` (for example with the tax code, if the firm codes partners that way)?
 3. **Payable object:** MISA may require a vendor object on account 331 when posting. If so, vendor codes (question 2)
    become required.
 4. **Payment method:** does a blank "Phương thức thanh toán" mean "not paid" in this template, as in the sales one?
@@ -361,13 +361,13 @@ before the file is sent. A voucher whose entry was reversed is left out, as for 
     number), and does the input VAT listing (bảng kê mua vào) show the invoice correctly on two lines?
 12. **Bank templates (#657):** compare the 25 and 47 headers of the deposit templates (Tiền gửi > Thu tiền / Chi tiền >
     Nhập từ Excel > Tải tệp mẫu) with the partner's own downloads: they come from one source (S9), the trailing space of
-    "Diễn giải lý do thu " included. The limits Crove applies (20 for Số chứng từ, 128 for a name, 255 for an address or a
+    "Diễn giải lý do thu " included. The limits Ludy applies (20 for Số chứng từ, 128 for a name, 255 for an address or a
     reason) are those of the cash templates (S6), unconfirmed for these files. Questions for the partner's accountant:
     - What does a blank "Lý do thu" mean on a báo Có, and a blank "Nội dung thanh toán" or "Phương thức thanh toán" on a
       báo Nợ? The cash templates read a blank reason as 13 / 23 (S6); nothing says so for these.
     - Does MISA need the bank account columns ("Nộp vào TK", "Tài khoản chi") filled to post, and with what: the account
-      number, or its catalog code? Crove keeps the account numbers of each 112x account (Settings), so it could fill the
+      number, or its catalog code? Ludy keeps the account numbers of each 112x account (Settings), so it could fill the
       column when an account has exactly one number.
-    - Does MISA keep "Người lĩnh tiền" on a payment that is not a cash cheque (an Ủy nhiệm chi)? Crove fills it from the
+    - Does MISA keep "Người lĩnh tiền" on a payment that is not a cash cheque (an Ủy nhiệm chi)? Ludy fills it from the
       payee named on the voucher.
     - Does a báo Có with several lines import as one voucher, as the cash ones do?

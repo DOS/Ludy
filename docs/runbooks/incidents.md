@@ -6,7 +6,7 @@ How alerts reach the owner's phone (the prober, the outside uptime check on `/he
 
 ## Before you start
 
-All commands run on the server in the stack directory (`/opt/crove`). Service names are those of the all-in-one layout: `crove` runs the API and the worker together. In the split layout (`compose.host.yml` with `api` and `worker`), use `api` for the web side and `worker` for background work.
+All commands run on the server in the stack directory (`/opt/ludy`). Service names are those of the all-in-one layout: `crove` runs the API and the worker together. In the split layout (`compose.host.yml` with `api` and `worker`), use `api` for the web side and `worker` for background work.
 
 | What | Command |
 |---|---|
@@ -36,18 +36,18 @@ The queries in this runbook only read. The one write is the dead-letter retry in
 
 **Alert.** From the prober, one or both of:
 
-- `heartbeat`: `last worker heartbeat was N s ago (limit 120 s): the worker is down`, or `no worker heartbeat recorded: the worker has never started`. The worker records a heartbeat every 30 s (`crove_kernel.worker_heartbeat`); the limit is `PROBER_MAX_HEARTBEAT_AGE_SECONDS`.
-- `job_age`: `oldest queued job has waited N s (limit 900 s, M queued): workers are stuck or too few`. The limit is `PROBER_MAX_JOB_AGE_SECONDS`. The queues of the modules the deployment runs always count: the prober's `CROVE_MODULES`, which must be the API's and the worker's value (compose passes the same one; unset means every module) (#1894). A module the deployment leaves out counts only while a worker of the last 7 days works it (#1877, #1887): it keeps its queued jobs for when it is installed again, and they do not raise this alert once the workers that ran it have stopped cleanly (a stopping worker records no modules). A worker that died without a clean stop keeps its modules counted for 7 days, so a dead replica's queues still raise this alert while other replicas keep beating. If such a worker is gone for good and its module was left out on purpose, the alert clears once its heartbeat row is 7 days old, or at once when the database owner deletes the row (`crove_kernel.worker_heartbeat`, by `instance`). So when the only replica that runs a module stops cleanly and its replacement never beats (it fails on start), that module's queued jobs still raise this alert, as long as the module is in the prober's `CROVE_MODULES`. While a worker of an older release is running, every queue counts.
+- `heartbeat`: `last worker heartbeat was N s ago (limit 120 s): the worker is down`, or `no worker heartbeat recorded: the worker has never started`. The worker records a heartbeat every 30 s (`ludy_kernel.worker_heartbeat`); the limit is `PROBER_MAX_HEARTBEAT_AGE_SECONDS`.
+- `job_age`: `oldest queued job has waited N s (limit 900 s, M queued): workers are stuck or too few`. The limit is `PROBER_MAX_JOB_AGE_SECONDS`. The queues of the modules the deployment runs always count: the prober's `LUDY_MODULES`, which must be the API's and the worker's value (compose passes the same one; unset means every module) (#1894). A module the deployment leaves out counts only while a worker of the last 7 days works it (#1877, #1887): it keeps its queued jobs for when it is installed again, and they do not raise this alert once the workers that ran it have stopped cleanly (a stopping worker records no modules). A worker that died without a clean stop keeps its modules counted for 7 days, so a dead replica's queues still raise this alert while other replicas keep beating. If such a worker is gone for good and its module was left out on purpose, the alert clears once its heartbeat row is 7 days old, or at once when the database owner deletes the row (`ludy_kernel.worker_heartbeat`, by `instance`). So when the only replica that runs a module stops cleanly and its replacement never beats (it fails on start), that module's queued jobs still raise this alert, as long as the module is in the prober's `LUDY_MODULES`. While a worker of an older release is running, every queue counts.
 
-When the database cannot be read, the prober alerts `probe: the prober could not read crove_kernel.health(): ...` instead, and the heartbeat monitor pages once the pings stop: go to "The database" below.
+When the database cannot be read, the prober alerts `probe: the prober could not read ludy_kernel.health(): ...` instead, and the heartbeat monitor pages once the pings stop: go to "The database" below.
 
 **Checks.**
 
 ```bash
 docker compose ps                                  # is crove (or worker) running, restarting, unhealthy?
 docker compose logs --tail 200 crove | grep -E '\[(worker|heartbeat|pg-boss|relay|extract)\]'
-docker compose exec db psql -U postgres -c "SELECT instance, beat_at, now() - beat_at AS age FROM crove_kernel.worker_heartbeat ORDER BY beat_at DESC;"
-docker compose exec db psql -U postgres -c "SELECT name, state, count(*), min(start_after) AS oldest FROM crove_jobs.job WHERE state IN ('created', 'retry', 'active') GROUP BY 1, 2 ORDER BY 1, 2;"
+docker compose exec db psql -U postgres -c "SELECT instance, beat_at, now() - beat_at AS age FROM ludy_kernel.worker_heartbeat ORDER BY beat_at DESC;"
+docker compose exec db psql -U postgres -c "SELECT name, state, count(*), min(start_after) AS oldest FROM ludy_jobs.job WHERE state IN ('created', 'retry', 'active') GROUP BY 1, 2 ORDER BY 1, 2;"
 ```
 
 - No `[worker] started` line since the last restart, or the container restarts in a loop: read the lines before the crash (a missing setting, a refused database login).
@@ -63,7 +63,7 @@ docker compose restart crove                       # or: docker compose restart 
 
 A restart is safe: jobs are in the database, and a job that was running is picked up again after its timeout. When `crove-extract` is the one stuck, `docker compose restart crove-extract`.
 
-**Confirm.** The heartbeat query shows an age under 30 s, the job counts fall, `docker compose run --rm prober prober` exits 0, and the prober sends `[Crove] RESOLVED on <instance>`.
+**Confirm.** The heartbeat query shows an age under 30 s, the job counts fall, `docker compose run --rm prober prober` exits 0, and the prober sends `[Ludy] RESOLVED on <instance>`.
 
 **Who to tell.** SEV1 when uploads stopped for users: the owner at once. Tell the design partner what was delayed; nothing is lost, files waiting are read once the worker runs.
 
@@ -77,7 +77,7 @@ docker compose logs --tail 200 db
 df -h /var/lib/docker                              # a full disk stops PostgreSQL
 ```
 
-Restart it with `docker compose restart db`, then the app (`docker compose restart crove`). When the disk is full, free space first (old images: `docker image prune`; old release directories are kept to `CROVE_KEEP_RELEASES`). When the data is damaged or lost, restore: [backup-and-restore.md](backup-and-restore.md). Always SEV1.
+Restart it with `docker compose restart db`, then the app (`docker compose restart crove`). When the disk is full, free space first (old images: `docker image prune`; old release directories are kept to `LUDY_KEEP_RELEASES`). When the data is damaged or lost, restore: [backup-and-restore.md](backup-and-restore.md). Always SEV1.
 
 ## 2. Outbox lag
 
@@ -93,17 +93,17 @@ The limit for both ages is `PROBER_MAX_OUTBOX_AGE_SECONDS`.
 
 First check `pnpm ops:kill-switch status` (§7): while a `relay:<event type>` switch is engaged, the events it holds keep this alert firing by design, and the relay is not stuck.
 
-The relay runs inside the worker: it listens for new events (`LISTEN crove_outbox`, plus a check every second), claims up to 100 at a time from `crove_kernel.outbox_pending` (and mail from `crove_kernel.inbound_pending`), and hands them to the job queue. A relay that stops is almost always a worker that stopped (section 1).
+The relay runs inside the worker: it listens for new events (`LISTEN ludy_outbox`, plus a check every second), claims up to 100 at a time from `ludy_kernel.outbox_pending` (and mail from `ludy_kernel.inbound_pending`), and hands them to the job queue. A relay that stops is almost always a worker that stopped (section 1).
 
-**Back-pressure.** Before the prober's limit, the worker steps in by itself (#894): every 10 s it reads the age of the oldest pending event, and while it is over `OUTBOX_LAG_PAUSE_SECONDS` (default 30 s) the worker stops fetching agent, bulk mail, archive and retention jobs, so the relay and the work people wait for get the database. It logs `[alert] back-pressure on: outbox lag N s ...` with the paused queues, and posts the same line to `ALERT_WEBHOOK_URL` as `[Crove] Worker on <instance>: back-pressure on ...` when the webhook is set on the worker. Once the lag is back under half the setting, the paused jobs run again (`back-pressure off`). Nothing is lost while paused: the jobs wait in the queue. A pause that keeps coming back means the relay cannot keep up: look for one org producing a flood of events (`SELECT e.org_id, e.type, count(*) FROM crove_kernel.outbox_pending p JOIN crove_kernel.outbox_event e ON e.org_id = p.org_id AND e.id = p.event_id GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 10;`).
+**Back-pressure.** Before the prober's limit, the worker steps in by itself (#894): every 10 s it reads the age of the oldest pending event, and while it is over `OUTBOX_LAG_PAUSE_SECONDS` (default 30 s) the worker stops fetching agent, bulk mail, archive and retention jobs, so the relay and the work people wait for get the database. It logs `[alert] back-pressure on: outbox lag N s ...` with the paused queues, and posts the same line to `ALERT_WEBHOOK_URL` as `[Ludy] Worker on <instance>: back-pressure on ...` when the webhook is set on the worker. Once the lag is back under half the setting, the paused jobs run again (`back-pressure off`). Nothing is lost while paused: the jobs wait in the queue. A pause that keeps coming back means the relay cannot keep up: look for one org producing a flood of events (`SELECT e.org_id, e.type, count(*) FROM ludy_kernel.outbox_pending p JOIN ludy_kernel.outbox_event e ON e.org_id = p.org_id AND e.id = p.event_id GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 10;`).
 
 **Checks.**
 
 ```bash
 docker compose logs --tail 200 crove | grep '\[relay\]'      # "[relay] listen connection lost", or the error of a failing batch
-docker compose exec db psql -U postgres -c "SELECT count(*), min(e.created_at) AS oldest FROM crove_kernel.outbox_pending p JOIN crove_kernel.outbox_event e ON e.org_id = p.org_id AND e.id = p.event_id;"
-docker compose exec db psql -U postgres -c "SELECT p.seq, e.type, e.created_at, p.attempts, p.last_error FROM crove_kernel.outbox_pending p JOIN crove_kernel.outbox_event e ON e.org_id = p.org_id AND e.id = p.event_id ORDER BY p.seq LIMIT 20;"
-docker compose exec db psql -U postgres -c "SELECT count(*), min(received_at) FROM crove_kernel.inbound_pending;"
+docker compose exec db psql -U postgres -c "SELECT count(*), min(e.created_at) AS oldest FROM ludy_kernel.outbox_pending p JOIN ludy_kernel.outbox_event e ON e.org_id = p.org_id AND e.id = p.event_id;"
+docker compose exec db psql -U postgres -c "SELECT p.seq, e.type, e.created_at, p.attempts, p.last_error FROM ludy_kernel.outbox_pending p JOIN ludy_kernel.outbox_event e ON e.org_id = p.org_id AND e.id = p.event_id ORDER BY p.seq LIMIT 20;"
+docker compose exec db psql -U postgres -c "SELECT count(*), min(received_at) FROM ludy_kernel.inbound_pending;"
 ```
 
 For `notify_queue`, look for a session that stopped reading, usually one left idle in a transaction:
@@ -126,7 +126,7 @@ Since #1720 a failed job of an org also shows in that org's Inbox, for its owner
 
 **Alert.** `dead_letters`: `N job(s) failed after their last retry in the last W s (limit 0): see the worker log`. The limit is `PROBER_MAX_DEAD_LETTERS` (default 0: every failed job alerts once); the window is `PROBER_DEAD_LETTER_WINDOW_SECONDS` (default: the probe interval plus 60 s).
 
-Some jobs never end up here, because they record their own failure instead: a document that could not be read is marked failed in the app with a message for the user (section 6), mail for an unknown address is dropped (`[inbound] ... dropped: <code>`), and a few jobs end with an `ALERT` line instead: `[signout] ALERT ... revoked in Crove only`, `[org-export] ALERT export of org ... failed after N attempts`, `[year-archive] ALERT ...`. Since #1993 such a line also reaches the alert webhook (`ALERT_WEBHOOK_URL`), once an hour per kind and process, as do the retention, evidence-hold and integrity `ALERT` lines; without a webhook it is in the log only. Search the log for `ALERT` too.
+Some jobs never end up here, because they record their own failure instead: a document that could not be read is marked failed in the app with a message for the user (section 6), mail for an unknown address is dropped (`[inbound] ... dropped: <code>`), and a few jobs end with an `ALERT` line instead: `[signout] ALERT ... revoked in Ludy only`, `[org-export] ALERT export of org ... failed after N attempts`, `[year-archive] ALERT ...`. Since #1993 such a line also reaches the alert webhook (`ALERT_WEBHOOK_URL`), once an hour per kind and process, as do the retention, evidence-hold and integrity `ALERT` lines; without a webhook it is in the log only. Search the log for `ALERT` too.
 
 A failed `kernel-archive-write` or `kernel-archive-verify` job belongs to the WORM archive of audit events and journal entries. A `kernel-archive-verify` failure with `ARCHIVE_MISMATCH` in its error is a possible tampering, SEV1: follow [worm-archive.md](worm-archive.md), not the retry below.
 
@@ -135,7 +135,7 @@ A failed `finance-period-balance-verify` job (`PERIOD_BALANCE_MISMATCH` in its e
 **Checks.**
 
 ```bash
-docker compose exec db psql -U postgres -c "SELECT id, name, retry_count, completed_on, left(output::text, 300) AS error FROM crove_jobs.job WHERE state = 'failed' ORDER BY completed_on DESC LIMIT 50;"
+docker compose exec db psql -U postgres -c "SELECT id, name, retry_count, completed_on, left(output::text, 300) AS error FROM ludy_jobs.job WHERE state = 'failed' ORDER BY completed_on DESC LIMIT 50;"
 docker compose logs --tail 500 crove | grep -E 'ALERT|\[pg-boss\]'
 ```
 
@@ -147,12 +147,12 @@ The job's `name` says what failed and `output` holds the error.
 - **Retry it** when the work still matters. The repository has no retry tool yet; this is the same statement pg-boss's own `retry` runs, for one job name and the ids from the query above:
 
   ```bash
-  docker compose exec db psql -U postgres -c "UPDATE crove_jobs.job SET state = 'retry', retry_limit = retry_limit + 1, completed_on = NULL, start_after = GREATEST(start_after, now()) WHERE name = '<job name>' AND id = ANY('{<id>,<id>}'::uuid[]) AND state = 'failed';"
+  docker compose exec db psql -U postgres -c "UPDATE ludy_jobs.job SET state = 'retry', retry_limit = retry_limit + 1, completed_on = NULL, start_after = GREATEST(start_after, now()) WHERE name = '<job name>' AND id = ANY('{<id>,<id>}'::uuid[]) AND state = 'failed';"
   ```
 
   Only jobs whose handlers are safe to run twice should be retried this way; every Ludy job is meant to be (idempotency keys and singleton keys), but read the error first.
 
-**Confirm.** The job's state moves to `completed` (`SELECT state FROM crove_jobs.job WHERE id = '<id>';`), and the next probes send `RESOLVED` once the window has passed.
+**Confirm.** The job's state moves to `completed` (`SELECT state FROM ludy_jobs.job WHERE id = '<id>';`), and the next probes send `RESOLVED` once the window has passed.
 
 **Who to tell.** SEV2. The owner the same day, with the job name and the error. When it was a sign-out (`[signout] ALERT`), the user it was for: their session is closed in Ludy but may still be open in Supabase Auth.
 
@@ -160,7 +160,7 @@ The job's `name` says what failed and `output` holds the error.
 
 **Symptom.** Nobody can sign in, sign up or recover a password; the sign-in page answers "Dịch vụ đăng nhập không phản hồi" (the proxy's 503 `AUTH_UNAVAILABLE`). People already signed in keep working until their access token expires (at most 15 minutes in the compose stack, `GOTRUE_JWT_EXP=900`), because the token cannot be refreshed; then they are signed out. Approvals and other R3 actions need a fresh second factor, which needs Supabase Auth, so they fail too.
 
-**Alert.** The prober asks Supabase Auth's `/health` on every probe, the way signing in reaches it (the kernel's `/auth/v1` proxy, or `PUBLIC_AUTH_URL` when Auth is hosted elsewhere), and pages after `PROBER_AUTH_MISSES` (default 2) failed answers in a row (one, on the first probe after the prober starts, so a restart during an outage keeps the alert open): `[Crove] ALERT ... Supabase Auth did not answer its health check 2 time(s) in a row (HTTP 503): nobody can sign in`, then `RESOLVED` once it answers again (#1994). The status page shows "Đăng nhập" as down. Under Compose the check goes through the API's `/auth/v1` proxy, so an `auth` alert with `connection failed` may also mean the API itself is down: look at the outside uptime check on `/healthz` (alerts.md, section 2). The deploy's smoke test checks it too (`/auth/v1/health answers (Supabase Auth through the proxy)`). A database outage also takes Auth down: check section 1, "The database".
+**Alert.** The prober asks Supabase Auth's `/health` on every probe, the way signing in reaches it (the kernel's `/auth/v1` proxy, or `PUBLIC_AUTH_URL` when Auth is hosted elsewhere), and pages after `PROBER_AUTH_MISSES` (default 2) failed answers in a row (one, on the first probe after the prober starts, so a restart during an outage keeps the alert open): `[Ludy] ALERT ... Supabase Auth did not answer its health check 2 time(s) in a row (HTTP 503): nobody can sign in`, then `RESOLVED` once it answers again (#1994). The status page shows "Đăng nhập" as down. Under Compose the check goes through the API's `/auth/v1` proxy, so an `auth` alert with `connection failed` may also mean the API itself is down: look at the outside uptime check on `/healthz` (alerts.md, section 2). The deploy's smoke test checks it too (`/auth/v1/health answers (Supabase Auth through the proxy)`). A database outage also takes Auth down: check section 1, "The database".
 
 **Checks.**
 
@@ -220,7 +220,7 @@ Do it right after the key was revoked at the provider; until then a revoked key 
 
 **Symptom.** PDFs and photos are no longer read: after a few minutes the file shows "Không đọc được chứng từ sau nhiều lần thử; hãy kiểm tra cấu hình AI hoặc gửi tệp XML". E-invoice XML files keep working: they need no AI.
 
-**Alert.** The prober counts the readings whose every attempt failed (the AI provider refused or did not answer, or the parser sandbox was down) and pages when more than `PROBER_MAX_EXTRACTION_FAILURES` (default 2) happen within `PROBER_EXTRACTION_WINDOW_SECONDS` (default 3600 s): `[Crove] ALERT ... 3 document reading(s) failed every attempt in the last 3600 s ...`, then `RESOLVED` once the failures in the window drop back to the limit (#1998). `RESOLVED` therefore means the old failures aged out of the window, not that the provider is back: with no uploads since, check the provider before closing the incident. With few uploads (no more than the limit in a window) an outage never pages: the uploaders are told on each failed file. A document that cannot be read (not an invoice, a scanned PDF, an unsupported format, AI switched off) or that the AI refuses itself (a request it rejects, such as an image over its size limit, or an answer that never fits the invoice) never pages: its uploader is told. The AI provider may also email the account holder when credits run out.
+**Alert.** The prober counts the readings whose every attempt failed (the AI provider refused or did not answer, or the parser sandbox was down) and pages when more than `PROBER_MAX_EXTRACTION_FAILURES` (default 2) happen within `PROBER_EXTRACTION_WINDOW_SECONDS` (default 3600 s): `[Ludy] ALERT ... 3 document reading(s) failed every attempt in the last 3600 s ...`, then `RESOLVED` once the failures in the window drop back to the limit (#1998). `RESOLVED` therefore means the old failures aged out of the window, not that the provider is back: with no uploads since, check the provider before closing the incident. With few uploads (no more than the limit in a window) an outage never pages: the uploaders are told on each failed file. A document that cannot be read (not an invoice, a scanned PDF, an unsupported format, AI switched off) or that the AI refuses itself (a request it rejects, such as an image over its size limit, or an answer that never fits the invoice) never pages: its uploader is told. The AI provider may also email the account holder when credits run out.
 
 **Checks.**
 
@@ -244,7 +244,7 @@ A rate limit (HTTP 429) or a server error is retried (3 attempts with backoff); 
   - `ai` stops AI document reading and every agent of every org, in the database too: an agent context is refused with `KILL_SWITCH_ON`.
   - `mail` holds the mail queue. Mail stays queued and goes out once released. Invite mail, which a person sends directly, is not held.
   - `relay:<event type>` (#1696), for example `relay:kernel.org.export_requested`, holds the outbox events of that one type in every org: the worker's relay leaves them in the outbox and keeps relaying every other type, so the jobs that type starts (an export, a publish, a booking mail) stop while the rest of the app runs. Releasing it sends the held events, oldest first, within a second; nothing is lost or sent twice. The key is the event type exactly as the outbox stores it (lowercase words joined by dots), one type per switch.
-  - Every change keeps its time, who and why (the switch's own append-only history, its audit trail), and no `crove_*` login role can flip it.
+  - Every change keeps its time, who and why (the switch's own append-only history, its audit trail), and no `ludy_*` login role can flip it.
 
 **When to use it.** An agent posts, sends or proposes things it should not, or spends more than expected.
 
@@ -283,7 +283,7 @@ Every deployment switch is released after each test and after the file, pass or 
 | To stop | Setting |
 |---|---|
 | All AI calls | empty `AI_BASE_URL` and `AI_API_KEY` |
-| A module (for example Social) | `CROVE_MODULES` without it (the same value for the API, the worker and the prober) |
+| A module (for example Social) | `LUDY_MODULES` without it (the same value for the API, the worker and the prober) |
 | New accounts | `AUTH_DISABLE_SIGNUP=true` |
 | Posting to one platform | empty its `CHANNEL_*` credentials |
 | All background work | `docker compose stop crove` stops the whole app; in the split layout `docker compose stop worker` stops background work only |

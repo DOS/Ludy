@@ -36,7 +36,7 @@ This measures the recorder's Vy transcription. Vy itself is not changed by it, a
 
 The recordings and references never go into the repository, a pull request, an issue or a CI log. GitHub is public.
 
-1. Put them in one folder outside your checkout of this repository, for example `/srv/crove-transcribe-eval/`. Subfolders are fine.
+1. Put them in one folder outside your checkout of this repository, for example `/srv/ludy-transcribe-eval/`. Subfolders are fine.
 2. Next to each recording, put a text file with the same name and the extension `.txt`: `hop-01.ogg` and `hop-01.txt`.
 3. Accepted recordings: `.ogg`, `.webm`, `.m4a`, `.mp3`.
 4. The reference is plain text. To score the speakers, start each speaker's turn with their name in square brackets: `[Lan] Xin chào cả nhà [Minh] Chào chị Lan`. The label stays for the words that follow until the next one. A reference with no brackets is scored for words only.
@@ -50,7 +50,7 @@ The eval refuses to start when a recording has no reference or a reference has n
 On the private machine, in a checkout of this repository (`pnpm install` once):
 
 ```sh
-TRANSCRIBE_EVAL_DIR=/srv/crove-transcribe-eval \
+TRANSCRIBE_EVAL_DIR=/srv/ludy-transcribe-eval \
 TRANSCRIBE_BASE_URL=<the provider's base URL> TRANSCRIBE_MODEL=<the model> \
 TRANSCRIBE_API_MODE=<audio_transcriptions or chat_input_audio> TRANSCRIBE_API_KEY=<the key, if any> \
 pnpm ai:eval:transcribe

@@ -12,7 +12,7 @@ A leak is also a security incident: contain it with this runbook, then follow [i
 
 ## Before you start
 
-- Work on the server in the stack directory (`/opt/crove`), as in [incidents.md](incidents.md). Service names are those of the all-in-one layout (`crove`); in the split layout, `api` and `worker` take the same settings, and `docker compose up -d` restarts both.
+- Work on the server in the stack directory (`/opt/ludy`), as in [incidents.md](incidents.md). Service names are those of the all-in-one layout (`crove`); in the split layout, `api` and `worker` take the same settings, and `docker compose up -d` restarts both.
 - Generate every new value on the server with `openssl rand -hex 32`: 64 characters with no `$`, which docker compose would expand, and no quote, which the SQL below would break on.
 - Put the new value in `.env` with this shell function, so it never appears in a command's arguments (which other users of the server can list with `ps`) or in the shell history. It replaces the line `NAME=...` (which must exist, as it does in a `.env` made from `.env.example`) and keeps the file's owner and mode:
 
@@ -27,10 +27,10 @@ A leak is also a security incident: contain it with this runbook, then follow [i
 
 | Setting | Login role | Used by |
 |---|---|---|
-| `CROVE_APP_DB_PASSWORD` | `crove_app` | the app (`crove`, or `api` and `worker`), `migrate`, `auth-grants` |
-| `CROVE_WORKER_DB_PASSWORD` | `crove_worker` | the worker (`crove`, or `worker`) |
-| `CROVE_PROBER_DB_PASSWORD` | `crove_prober` | the prober |
-| `CROVE_REPORTER_DB_PASSWORD` | `crove_reporter` | the weekly usage report (`usage`) |
+| `LUDY_APP_DB_PASSWORD` | `ludy_app` | the app (`crove`, or `api` and `worker`), `migrate`, `auth-grants` |
+| `LUDY_WORKER_DB_PASSWORD` | `ludy_worker` | the worker (`crove`, or `worker`) |
+| `LUDY_PROBER_DB_PASSWORD` | `ludy_prober` | the prober |
+| `LUDY_REPORTER_DB_PASSWORD` | `ludy_reporter` | the weekly usage report (`usage`) |
 | `AUTH_DB_PASSWORD` | `supabase_auth_admin` | Supabase Auth (`auth`) |
 | `POSTGRES_PASSWORD` | `postgres` | `migrate` and `auth-grants` (`ADMIN_DATABASE_URL`), `pnpm ops:kill-switch` |
 
@@ -38,15 +38,15 @@ How it works: `migrate` sets the password of the first five roles from `.env` on
 
 Connections from inside the `db` container over its socket or `127.0.0.1` need no password (the image's `pg_hba.conf` trusts them). The `psql` commands in [incidents.md](incidents.md) and the backup script use them, so they keep working whatever you change here.
 
-### 1.1 The `crove_*` roles and Supabase Auth
+### 1.1 The `ludy_*` roles and Supabase Auth
 
 1. Replace the values you rotate (one, several or all five) in `.env`, for example:
 
    ```bash
-   rotate CROVE_APP_DB_PASSWORD
-   rotate CROVE_WORKER_DB_PASSWORD
-   rotate CROVE_PROBER_DB_PASSWORD
-   rotate CROVE_REPORTER_DB_PASSWORD
+   rotate LUDY_APP_DB_PASSWORD
+   rotate LUDY_WORKER_DB_PASSWORD
+   rotate LUDY_PROBER_DB_PASSWORD
+   rotate LUDY_REPORTER_DB_PASSWORD
    rotate AUTH_DB_PASSWORD
    ```
 
@@ -62,9 +62,9 @@ Connections from inside the `db` container over its socket or `127.0.0.1` need n
 4. Check:
 
    ```bash
-   curl -s http://127.0.0.1:${PORT:-8080}/readyz            # {"ready":true}: crove_app works
-   docker compose run --rm prober prober                     # exit 0, "[prober] ok: ...": crove_prober works, and the worker's heartbeat is recent
-   docker compose run --rm usage usage-report > /dev/null && echo ok   # crove_reporter works
+   curl -s http://127.0.0.1:${PORT:-8080}/readyz            # {"ready":true}: ludy_app works
+   docker compose run --rm prober prober                     # exit 0, "[prober] ok: ...": ludy_prober works, and the worker's heartbeat is recent
+   docker compose run --rm usage usage-report > /dev/null && echo ok   # ludy_reporter works
    curl -s http://127.0.0.1:${PORT:-8080}/auth/v1/health     # Supabase Auth is back; then sign in once in the app
    docker compose logs --since 10m | grep -c 'password authentication failed'   # 0
    ```
@@ -72,10 +72,10 @@ Connections from inside the `db` container over its socket or `127.0.0.1` need n
    To test one role's new password by hand, over the network (`-h db`) so the password is checked, with the value read from `.env` on stdin:
 
    ```bash
-   grep '^CROVE_APP_DB_PASSWORD=' .env | cut -d= -f2- | docker compose exec -T db sh -c 'read -r PGPASSWORD; export PGPASSWORD; psql -h db -U crove_app -d postgres -Atc "SELECT current_user"'
+   grep '^LUDY_APP_DB_PASSWORD=' .env | cut -d= -f2- | docker compose exec -T db sh -c 'read -r PGPASSWORD; export PGPASSWORD; psql -h db -U ludy_app -d postgres -Atc "SELECT current_user"'
    ```
 
-   It prints `crove_app`; with the old value it fails with `password authentication failed for user "crove_app"`.
+   It prints `ludy_app`; with the old value it fails with `password authentication failed for user "ludy_app"`.
 5. Remove the old values from the secret store.
 
 **Going back.** Put the old values back in `.env` and run `docker compose up -d` again: `migrate` sets them like any other.
@@ -131,10 +131,10 @@ The kernel refuses a previous value that is shorter than 32 characters, equal to
    ```
 2. Apply it: `docker compose up -d`. The kernel now accepts both values, and the worker still sends the old one.
 3. Check: `curl -s http://127.0.0.1:${PORT:-8080}/readyz` answers `{"ready":true}`. `pnpm pilot:check` lists `INBOUND_SECRET_PREVIOUS is set` as a manual item: that is expected until step 6.
-4. In the Cloudflare dashboard, **Workers & Pages**, `crove-inbound-mail`, **Settings**, **Variables and Secrets**: edit `INBOUND_SECRET` (type Secret), paste the new value and **Deploy**. With wrangler: `wrangler secret put INBOUND_SECRET`. Both values are accepted, so no message is refused, whenever the deploy takes effect.
+4. In the Cloudflare dashboard, **Workers & Pages**, `ludy-inbound-mail`, **Settings**, **Variables and Secrets**: edit `INBOUND_SECRET` (type Secret), paste the new value and **Deploy**. With wrangler: `wrangler secret put INBOUND_SECRET`. Both values are accepted, so no message is refused, whenever the deploy takes effect.
 5. Check:
    - Send a message with an e-invoice XML attached to an org's "Địa chỉ nhận hóa đơn qua email" (its **Settings**): it shows in that org's **Inbox** within a minute, and `docker compose logs --since 5m crove | grep '\[inbound\]'` shows it.
-   - The worker's **Logs** show no `Crove did not accept the message: 401 UNAUTHENTICATED`.
+   - The worker's **Logs** show no `Ludy did not accept the message: 401 UNAUTHENTICATED`.
 6. Retire the old value: remove its line from `.env`, run `docker compose up -d`, and remove the old value from the secret store:
 
    ```bash
@@ -179,7 +179,7 @@ Whoever holds the webhook can post into the alert chat (or, for Telegram, act as
 4. Check:
 
    ```bash
-   docker compose run --rm prober prober --test-alert   # exit 0; the phone shows "[Crove] Test alert from <instance>"
+   docker compose run --rm prober prober --test-alert   # exit 0; the phone shows "[Ludy] Test alert from <instance>"
    docker compose run --rm prober prober                # "[prober] heartbeat sent to heartbeat monitor at <host>"; the new check shows the ping
    # the worker has the new webhook too: the two hashes match
    grep '^ALERT_WEBHOOK_URL=' .env | cut -d= -f2- | sed -e "s/^[\"']//" -e "s/[\"']\$//" | tr -d '\n' | sha256sum | cut -c1-12

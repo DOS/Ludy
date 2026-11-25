@@ -1,9 +1,9 @@
 # HTKK XML of the TT133 year-end financial statements (issue #920)
 
 A company under the TT133 accounting regime files its year-end financial statements with GDT's HTKK software and the
-eTax portal by the end of the third month after the year ends. Instead of retyping Crove's B01-DNN, B02-DNN and trial
+eTax portal by the end of the third month after the year ends. Instead of retyping Ludy's B01-DNN, B02-DNN and trial
 balance into HTKK, the accountant downloads them as the XML file HTKK itself produces for the set "Bộ báo cáo tài chính
-(B01a - DNN)", completes what Crove does not hold (notes, signers, the tax office), then files it.
+(B01a - DNN)", completes what Ludy does not hold (notes, signers, the tax office), then files it.
 
 - **Where:** "Sổ sách" screen, tab "Báo cáo tài chính", with a year picked: section "Báo cáo tài chính năm ... cho
   HTKK", button "Xuất XML cho HTKK" (`GET /api/export/statements-htkk.xml?year=2026`). The section first lists what the
@@ -23,12 +23,12 @@ balance into HTKK, the accountant downloads them as the XML file HTKK itself pro
 | Fact | Status | Source |
 |---|---|---|
 | The TT133 set in HTKK is "Bộ báo cáo tài chính (B01a - DNN)(TT133/2016/TT-BTC)": form code `683`, XML version `2.3.2`, file `133_B01A_DNN_BCTC`, valid from 01/01/2017 with no end date | Confirmed in HTKK's menu (S1) | S1 `HTKK/Project/Menu.xml` |
-| The same menu has B01b-DNN (`684`, the alternative statement for small companies), B01-DNNKLT (`685`, not going concern) and B01-DNSN (`686`, micro companies). Crove writes B01a, the going-concern form its B01 builder follows | Confirmed (S1) | S1 |
-| The set's sheets: B01a in the main part (`CTieuTKhaiChinh`), B02 (`PLuc/PL_KQHDSXKD`), the cash flow statement by the direct and the indirect method (`PL_LCTTTT`, `PL_LCTTGT`) and F01 (`PL_CDTK`) as appendices | Confirmed (S1); the menu writes the B02 node `PL_KQHDXSKD`, the schema and the template `PL_KQHDSXKD`; Crove follows the schema | S1 menu, schema and templates |
-| Every appendix is optional in the schema (`minOccurs="0"`). Crove writes B02 and F01 and leaves out the cash flow statement, which TT133 does not make compulsory for small and medium companies | Schema: confirmed. That B03-DNN is optional: unconfirmed, to ask the accountant | S1 schema |
+| The same menu has B01b-DNN (`684`, the alternative statement for small companies), B01-DNNKLT (`685`, not going concern) and B01-DNSN (`686`, micro companies). Ludy writes B01a, the going-concern form its B01 builder follows | Confirmed (S1) | S1 |
+| The set's sheets: B01a in the main part (`CTieuTKhaiChinh`), B02 (`PLuc/PL_KQHDSXKD`), the cash flow statement by the direct and the indirect method (`PL_LCTTTT`, `PL_LCTTGT`) and F01 (`PL_CDTK`) as appendices | Confirmed (S1); the menu writes the B02 node `PL_KQHDXSKD`, the schema and the template `PL_KQHDSXKD`; Ludy follows the schema | S1 menu, schema and templates |
+| Every appendix is optional in the schema (`minOccurs="0"`). Ludy writes B02 and F01 and leaves out the cash flow statement, which TT133 does not make compulsory for small and medium companies | Schema: confirmed. That B03-DNN is optional: unconfirmed, to ask the accountant | S1 schema |
 | GDT's viewer (iTaxViewer) lists form 683 version 2.3.2 with the B02, cash flow and F01 appendices | Confirmed (S2) | S2 `DMucTKhai.xml` |
 | HTKK's notices up to 5.8.1 (2026-10-16) do not change form 683 | Inferred: the 01/GTGT research (htkk-01gtgt-xml.md) read those notices and none names the TT133 statements | gdt.gov.vn, read for #332 |
-| How HTKK writes the period of this form: Crove writes `kieuKy` `Y`, `kyKKhai` `2026` and the year's first and last day, as `TKhaiThue.xsd` documents a year. HTKK's template leaves the period empty with `kieuKy` `D`, and the viewer catalogue marks the form `kieuKyKKhai="M"` | **Unconfirmed**: both pass the schema; question 1 below | S1 template, S2 catalogue |
+| How HTKK writes the period of this form: Ludy writes `kieuKy` `Y`, `kyKKhai` `2026` and the year's first and last day, as `TKhaiThue.xsd` documents a year. HTKK's template leaves the period empty with `kieuKy` `D`, and the viewer catalogue marks the form `kieuKyKKhai="M"` | **Unconfirmed**: both pass the schema; question 1 below | S1 template, S2 catalogue |
 
 ## Sources of the layout
 
@@ -47,7 +47,7 @@ Sources read on 2026-10-21.
 
 Root `HSoThueDTu` in GDT's namespace, `HSoKhaiThue id="ID_1"`, then:
 
-- **`TTinChung`** (envelope), as for 01/GTGT: `TTinDVu` names Crove (`maDVu` `CROVE`); `maTKhai` 683, the form's title
+- **`TTinChung`** (envelope), as for 01/GTGT: `TTinDVu` names Ludy (`maDVu` `LUDY`); `maTKhai` 683, the form's title
   and legal basis, `pbanTKhaiXML` 2.3.2, `loaiTKhai` `C` (first filing; supplementary ones are out of scope), `soLan`
   0; the period (above); `ngayLapTKhai` and `ngayKy` the day of the download in Vietnam time. `NNT`: tax code, name and
   the address as one line in `dchiNNT` when the org has one. The tax office, signer, address parts and contacts are
@@ -112,5 +112,5 @@ Values:
 4. Do any of your clients file B01b-DNN (`684`) or the micro form B01-DNSN (`686`) instead of B01a?
 5. Is `bctcDaKiemToan` `0` (not audited) right for your clients, and does eTax need the preparer, chief accountant and
    legal representative filled before it takes the file?
-6. F01 shows 131 and 331 with both sides per party, as Crove's trial balance does. Is that what you file, or the net
+6. F01 shows 131 and 331 with both sides per party, as Ludy's trial balance does. Is that what you file, or the net
    balance of each account?

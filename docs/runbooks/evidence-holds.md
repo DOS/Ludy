@@ -6,7 +6,7 @@ Accounting Law 88/2015, Art. 41 keeps the documents behind the books for at leas
 
 | | |
 |---|---|
-| Which files | The original file of every invoice posted to the journal (purchases and sales: `crove_finance.purchase_document.source_file_id` of a document with a journal entry). Files never posted (a proposal still waiting or rejected, an email attachment that was not an invoice, Social images) keep the bucket's default. Ludy stores no filed tax return file yet; when it does, it joins this list. |
+| Which files | The original file of every invoice posted to the journal (purchases and sales: `ludy_finance.purchase_document.source_file_id` of a document with a journal entry). Files never posted (a proposal still waiting or rejected, an email attachment that was not an invoice, Social images) keep the bucket's default. Ludy stores no filed tax return file yet; when it does, it joins this list. |
 | From when | The time the entry was posted (the journal entry's `created_at`). A file posted again (an invoice recorded again after a reversal voided its first document) is held from its latest posting. |
 | How long | `EVIDENCE_LOCK_DAYS` (default 3650, 10 years), rounded up to the whole second. |
 | How | An S3 Object Lock retention in **GOVERNANCE** mode on the exact object version the file row records (owner decision on #1009): an operator with `s3:BypassGovernanceRetention` can still lift it, for a court order or a mistake. A version that already has a longer retention, or a COMPLIANCE one, keeps it. |
@@ -20,12 +20,12 @@ The accountant (#61) is asked to confirm which files need 10 years and whether t
 
 Posting writes nothing for the hold: the posting commits as before, and S3 is never called inside a database transaction. Every 5 minutes the worker:
 
-1. reads up to 100 posted files whose hold is missing or shorter than the period (`crove_kernel.evidence_hold_due`, worker only);
+1. reads up to 100 posted files whose hold is missing or shorter than the period (`ludy_kernel.evidence_hold_due`, worker only);
 2. checks once that the bucket has Object Lock (`GetObjectLockConfiguration`);
 3. for each file, reads the version's retention and sets a longer one (`GetObjectRetention`, `PutObjectRetention`); a file row without a recorded version (from before ADR-0013) holds the current version, and only after its bytes match the recorded sha256;
 4. records the outcome on the file row with the system command `kernel.file.hold.record` (audited): `held_until` on success, or `hold_error` and `hold_attempts` on failure.
 
-A failed file is tried again after 5 minutes, then 10, 20 and so on, at least once a day. `held_until` is set only by the system and never goes back to null or to an earlier time (`crove_kernel.file_guard`).
+A failed file is tried again after 5 minutes, then 10, 20 and so on, at least once a day. `held_until` is set only by the system and never goes back to null or to an earlier time (`ludy_kernel.file_guard`).
 
 ## Settings and bucket
 
@@ -50,7 +50,7 @@ As staff, the files still waiting and the failures:
 
 ```sql
 SELECT f.org_id, f.id, f.held_until, f.hold_attempts, f.hold_error, f.hold_attempted_at
-  FROM crove_kernel.file f
+  FROM ludy_kernel.file f
  WHERE f.hold_error IS NOT NULL
  ORDER BY f.hold_attempted_at DESC
  LIMIT 50;

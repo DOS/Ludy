@@ -22,7 +22,7 @@ The app secret goes from the Meta app's settings page into the `.env` file of th
 **Alternative, pending the owner's decision: the deployment's own `PUBLIC_URL`** (for example the pilot instance on its public address). Read "the deployment's `PUBLIC_URL`" wherever the steps below say `http://localhost:8080`. It needs more:
 
 - `PUBLIC_URL` is https, and the Meta app lists `<APP_URL>/channels/oauth/meta_ads/callback` as a valid OAuth redirect URI.
-- The module list includes `ads` (`CROVE_MODULES`; the pilot runs `finance` only, so it must be changed first, and Social's routes stay out unless asked for).
+- The module list includes `ads` (`LUDY_MODULES`; the pilot runs `finance` only, so it must be changed first, and Social's routes stay out unless asked for).
 - `ADS_SANDBOX=false`: the server refuses `ADS_SANDBOX=true` on a public address when the Ads module runs.
 - A credential key is set (`CREDENTIAL_KEY`), as for any connected channel.
 - It then reads a real customer-facing instance's books beside real ad spend: nothing here writes to the books or to Meta, but record that decision.
