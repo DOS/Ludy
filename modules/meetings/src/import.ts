@@ -28,6 +28,9 @@ export function setMeetingVideoImport(enabled: boolean): void {
 // What a recording without a title is called, until the member renames the meeting.
 const UNTITLED: Record<MeetingLanguage, string> = { vi: 'Cuộc họp đã nhập', en: 'Imported meeting' };
 
+// The refusal of the second entry of one meeting (the definer's, and the command's own check before it).
+const PAIR_TAKEN_WORDS = 'Cuộc họp này đã được nhập (hoặc đang được nhập) từ mục còn lại của nó, nên không nhập thêm lần nữa';
+
 // The definers' own words, as the member reads them.
 function importError(error: unknown): never {
   const message = (error as { message?: unknown } | null)?.message;
@@ -38,6 +41,8 @@ function importError(error: unknown): never {
       throw new DomainError('MEETING_PLATFORM_STATE', 409, 'Bản ghi này đã được nhập hoặc đang được nhập');
     case 'MEETING_PLATFORM_NO_AUDIO':
       throw new DomainError('MEETING_PLATFORM_NO_AUDIO', 422, 'Nền tảng không có tệp âm thanh hay video cho bản ghi này');
+    case 'MEETING_PLATFORM_PAIR_TAKEN':
+      throw new DomainError('MEETING_PLATFORM_PAIR_TAKEN', 409, PAIR_TAKEN_WORDS);
     case 'MEETING_PLATFORM_FORBIDDEN':
       throw new DomainError('FORBIDDEN', 403, 'Bạn không nhập được bản ghi trong tổ chức này');
     default:
@@ -126,13 +131,15 @@ export const meetingImportStart = defineCommand({
     if (recording.status !== 'suggested' && recording.status !== 'failed') {
       throw new DomainError('MEETING_PLATFORM_STATE', 409, 'Bản ghi này đã được nhập hoặc đang được nhập');
     }
-    // One meeting offered as two suggestions (a video and a transcript, ADR-0055): once one is on its way or done, the other is refused, so one member's two entries of a call do not both become meetings. This is a check in this command, not a guard in the database function that begins the row (a later step moves it there); two members importing the same call each get their own meeting, as before. The pair is serialized by an advisory lock
-    // first, so a double click on the two buttons has one winner: the second start waits, then sees the first's status.
+    // One meeting offered as two suggestions (a video and a transcript, ADR-0055): once one is on its way or done, the other is refused, so one member's two entries of a call do not both become meetings. The database
+    // function that begins the row makes the same check under the same pair lock (#4943), so it holds for every caller; this copy refuses early, before a meeting is made, and goes in the step after that one. Two members
+    // importing the same call each get their own meeting, as before. The pair is serialized by a transaction advisory lock on its base key first (the tenant role may not lock rows it cannot update): a double click on the
+    // two buttons has one winner, the second start waits, then sees the first's status.
     const [keyA, keyB] = platformPairKeys(recording.external_id);
     const pair = await readPair(ctx.trx, ctx.orgId, userId, recording.connection_id, keyA, [keyA, keyB]);
     // Only a sibling that is merely suggested, failed or skipped leaves this row free: any other status (importing, staged, claimed while its bytes are taken, imported) means the call is taken.
     if (pair.some((row) => row.id !== input.recordingId && row.status !== 'suggested' && row.status !== 'failed' && row.status !== 'dismissed')) {
-      throw new DomainError('MEETING_PLATFORM_PAIR_TAKEN', 409, 'Cuộc họp này đã được nhập (hoặc đang được nhập) từ mục còn lại của nó, nên không nhập thêm lần nữa');
+      throw new DomainError('MEETING_PLATFORM_PAIR_TAKEN', 409, PAIR_TAKEN_WORDS);
     }
     // No audio file, no way to take the audio out of a video file and no transcript the platform's provider can hand over (C2, #3174: a recording with only a transcript): refused here, before a meeting is made for it.
     const transcriptOnly = !recording.has_audio && !recording.has_video && recording.has_transcript && hasTranscriptPath(recording.provider);
