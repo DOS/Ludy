@@ -11,7 +11,7 @@ const COPY = {
     meetings: (n: number, cut: boolean) => `${cut ? 'Ít nhất ' : ''}${n} cuộc họp có kết quả đã công bố`,
     decisions: (n: number, cut: boolean) => `${cut ? 'Ít nhất ' : ''}${n} quyết định đã công bố`,
     open: (n: number, od: number, cut: boolean) => `${cut ? 'Ít nhất ' : ''}${n} việc còn mở${od > 0 ? `, ${od} việc đã quá hạn` : ''}`,
-    tracked: (n: number) => `Từ khóa theo dõi của tổ chức xuất hiện ${n}${n >= WEEKLY_TRACKED_MAX ? '+' : ''} lần`,
+    tracked: (n: number, cut: boolean) => `Từ khóa theo dõi của tổ chức xuất hiện ${cut ? 'ít nhất ' : ''}${n}${n >= WEEKLY_TRACKED_MAX ? '+' : ''} lần`,
     open_link: 'Xem tuần này',
     footer: (brand: string, org: string) => `Thư này do ${brand} gửi theo lựa chọn của bạn ở ${org}. Tắt thông báo này trong phần thông báo của Cài đặt.`,
   },
@@ -20,7 +20,7 @@ const COPY = {
     meetings: (n: number, cut: boolean) => `${cut ? 'At least ' : ''}${n} ${n === 1 ? 'meeting' : 'meetings'} with a published result`,
     decisions: (n: number, cut: boolean) => `${cut ? 'At least ' : ''}${n} ${n === 1 ? 'decision' : 'decisions'} published`,
     open: (n: number, od: number, cut: boolean) => `${cut ? 'At least ' : ''}${n} open action ${n === 1 ? 'item' : 'items'}${od > 0 ? `, ${od} overdue` : ''}`,
-    tracked: (n: number) => `The organization's tracked words came up ${n}${n >= WEEKLY_TRACKED_MAX ? '+' : ''} ${n === 1 ? 'time' : 'times'}`,
+    tracked: (n: number, cut: boolean) => `The organization's tracked words came up ${cut ? 'at least ' : ''}${n}${n >= WEEKLY_TRACKED_MAX ? '+' : ''} ${n === 1 ? 'time' : 'times'}`,
     open_link: 'See this week',
     footer: (brand: string, org: string) => `${brand} sent this because you asked for it in ${org}. Turn this notice off in the notification settings.`,
   },
@@ -33,7 +33,7 @@ export function weeklyLines(mail: WeeklyMail): string[] {
   const t = COPY[mail.lang];
   const lines = [t.meetings(mail.meetings, mail.cut), t.decisions(mail.decisions, mail.cut), t.open(mail.open, mail.overdue, mail.cut)];
   // The tracked-word line only when the org keeps tracked words and some came up (#5019): a number, never a word.
-  return mail.tracked === undefined ? lines : [...lines, t.tracked(mail.tracked)];
+  return mail.tracked === undefined ? lines : [...lines, t.tracked(mail.tracked, mail.cut)];
 }
 
 export const weeklyMailTemplate: MailTemplate = {

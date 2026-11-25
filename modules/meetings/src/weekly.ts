@@ -103,7 +103,7 @@ export const weeklyNotice = defineCommand({
     // Nothing due any more (a week with nothing to show, turned off, muted, left, told already): the handler writes nothing and calls no ctx.audit; the runtime still records its own ok audit row of the command (no day, no count).
     if (!due) return { notified: false, mailed: false };
     // The numbers are parsed against the card's own limits before anything is written, so a definer that ever returned more would roll the dispatch back instead of storing a number the mail refuses.
-    // The tracked-word number is left out when the org keeps no tracked word (null) and when none came up (0): a line is not shown as 0.
+    // The tracked-word number (the definer computes it for this one-member call only, never for the sweep's listing) is left out when the org keeps no tracked word (null) and when none came up (0): a line is not shown as 0.
     const counts = zWeeklyCounts.parse({ meetings: due.meetings, decisions: due.decisions, open: due.open_items, overdue: due.overdue, cut: due.cut, ...(due.tracked !== null && due.tracked > 0 ? { tracked: due.tracked } : {}) });
     const sent = await notifyMembers(ctx, {
       kind: WEEKLY_KIND,

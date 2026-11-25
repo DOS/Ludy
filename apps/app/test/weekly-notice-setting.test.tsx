@@ -100,6 +100,10 @@ describe('the weekly notice text in the app (#4967)', () => {
     expect(text('en', { ...base, tracked: 999, trackedMore: 'yes' })).toContain('tracked words came up 999+ times.');
     expect(text('vi', { ...base, tracked: 12, trackedMore: 'no' })).toContain('2 việc quá hạn, từ khóa theo dõi xuất hiện 12 lần. Mở trang Cuộc họp');
     expect(text('vi', { ...base, tracked: 999, trackedMore: 'yes' })).toContain('từ khóa theo dõi xuất hiện 999+ lần.');
+    expect(text('en', { ...base, cut: 'yes', tracked: 12, trackedMore: 'no' })).toContain('tracked words came up at least 12 times.');
+    expect(text('en', { ...base, cut: 'yes', tracked: 1, trackedMore: 'no' })).toContain('tracked words came up at least 1 time.');
+    expect(text('en', { ...base, cut: 'yes', tracked: 999, trackedMore: 'yes' })).toContain('tracked words came up at least 999+ times.');
+    expect(text('vi', { ...base, cut: 'yes', tracked: 12, trackedMore: 'no' })).toContain('từ khóa theo dõi xuất hiện ít nhất 12 lần.');
     expect(text('vi', { ...base, tracked: 0, trackedMore: 'no' })).not.toContain('từ khóa');
     expect(text('en', { ...base, tracked: 0, trackedMore: 'no' })).not.toContain('tracked words');
   });
