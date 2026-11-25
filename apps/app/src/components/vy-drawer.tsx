@@ -10,6 +10,7 @@ import { Sheet, SheetBody, SheetContent, SheetDescription, SheetHeader, SheetTit
 import { Skeleton } from '@ludy/ui/components/skeleton';
 import { cn } from '@ludy/ui/lib/utils';
 import type { Role } from '../lib/members.ts';
+import { countMatchingTodayForPrompt, matchHomeVyTargets } from '../lib/home-vy.ts';
 import { resolveVyDrawerStatus } from '../lib/vy.ts';
 import { AiMeter } from './ai-meter.tsx';
 import { CoworkerAttribution, ProposalSurface } from './proposal-surface.tsx';
@@ -29,6 +30,8 @@ export function VyDrawerBody({
   todayError = null,
   role,
   modules,
+  prompt = null,
+  canApproveFinance = false,
 }: {
   slug: string;
   open: boolean;
@@ -43,13 +46,20 @@ export function VyDrawerBody({
   todayError?: string | null | undefined;
   role: Role | undefined;
   modules: readonly string[];
+  prompt?: string | null | undefined;
+  canApproveFinance?: boolean | undefined;
 }) {
   const t = useTranslations('nav.vyDrawer');
+  const tv = useTranslations('overview.vy.chips');
   const status = resolveVyDrawerStatus({ canUseVy, permissionsLoaded, meter: aiMeter });
   const totalToday = todayCount(todayItems);
   const notesOn = modules.includes('notes');
   const financeOn = modules.includes('finance');
   const canWrite = role === 'owner' || role === 'admin' || role === 'member';
+  const matchedTargets = prompt ? matchHomeVyTargets(prompt, { modules, role, canApproveFinance }) : [];
+  const promptMatchCount = prompt
+    ? countMatchingTodayForPrompt(prompt, todayItems, { modules, role, canApproveFinance })
+    : 0;
 
   const linkClass = cn(
     buttonVariants({ variant: 'outline', size: 'sm' }),
@@ -58,6 +68,33 @@ export function VyDrawerBody({
 
   return (
     <SheetBody className="space-y-4">
+      {prompt && (
+        <ProposalSurface proposed={false} className="space-y-2 p-3" data-testid="vy-drawer-prompt">
+          <h3 className="text-xs font-medium text-subtle-foreground">{t('promptHeading')}</h3>
+          <p className="text-sm font-medium text-foreground">{prompt}</p>
+          {!todayLoading && !todayError && (
+            <p className="text-xs text-foreground" data-testid="vy-drawer-prompt-summary">
+              {promptMatchCount > 0 ? t('promptMatches', { count: promptMatchCount }) : t('promptMatchesEmpty')}
+            </p>
+          )}
+          <p className="text-xs text-muted-foreground">{t('promptHint')}</p>
+          {matchedTargets.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 pt-1">
+              {matchedTargets.map((chip) => (
+                <Link
+                  key={chip.id}
+                  to={chip.to}
+                  params={{ slug }}
+                  onClick={onClose}
+                  className={buttonVariants({ variant: 'outline', size: 'xs' })}
+                >
+                  {tv(chip.id)}
+                </Link>
+              ))}
+            </div>
+          )}
+        </ProposalSurface>
+      )}
       <ProposalSurface proposed={false} className="space-y-2 p-3" data-testid="vy-drawer-status">
         {status === 'noPermission' ? (
           <p className="text-sm text-muted-foreground" data-testid="vy-drawer-no-permission">
@@ -154,6 +191,8 @@ export function VyDrawer({
   todayError = null,
   role,
   modules,
+  prompt = null,
+  canApproveFinance = false,
 }: {
   slug: string;
   open: boolean;
@@ -168,6 +207,8 @@ export function VyDrawer({
   todayError?: string | null | undefined;
   role: Role | undefined;
   modules: readonly string[];
+  prompt?: string | null | undefined;
+  canApproveFinance?: boolean | undefined;
 }) {
   const t = useTranslations('nav.vyDrawer');
   const tc = useTranslations('common');
@@ -195,6 +236,8 @@ export function VyDrawer({
           todayError={todayError}
           role={role}
           modules={modules}
+          prompt={prompt}
+          canApproveFinance={canApproveFinance}
         />
       </SheetContent>
     </Sheet>

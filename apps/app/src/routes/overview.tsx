@@ -1,12 +1,13 @@
-// The org's overview (issue #1249, compressed action-first layout #4644, fixed create actions and the day-1 start card #4783):
-// Row 0: 3 to 4 fixed create actions named by the job (lib/home-actions.ts), for the apps that are on,
-// Row 1: "Hôm nay cần bạn" hero card with TodayBrief inside it, then the day-1 "Bắt đầu" card until the first invoice is approved or it is closed,
-// Row 2: compact operational strip merging waiting counts and SinceYesterday coworker recaps (hidden when empty),
-// Row 3: tax deadlines in the next 30 days beside "Tuần này" in a 2-column grid at lg (plus compact sales number gaps),
-// Row 4: quiet clickable app status links replacing tall duplicate cards.
+// The org's overview (issue #1249, compressed action-first layout #4644, Role x Enabled-App modular Home #4923 Phase 4 / #4928):
+// - Anchored top zone: plain PageHeader with Tùy chỉnh toggle (create actions live in Global Top Bar `+`),
+//   "Hôm nay cần bạn" hero queue + compact inline Vy prompt bar, Day-1 start card until first approved invoice or dismissal,
+//   and compact operational strip (waiting counts + SinceYesterday, hidden when empty).
+// - Role x Enabled-App modular summary blocks in persisted order (collapsed to one quiet line when empty),
+//   inline Tùy chỉnh reorder/visibility editor synced to PostgreSQL via Runtime.execute(),
+// - Quiet clickable app status links and OrgNotesPanel below.
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
-import type { TaxDueView } from '@ludy/kernel-contract';
+import { useEffect, useRef, useState } from 'react';
+import { COWORKER_ROSTER, type HomeBlockId, type HomeLayoutSaveInput, type TaxDueView } from '@ludy/kernel-contract';
 import { Link, useParams } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
 import { Button, buttonVariants } from '@ludy/ui/components/button';
@@ -14,21 +15,37 @@ import { NavIcon, type NavIconName } from '@ludy/ui/components/nav-icon';
 import { TableCell, TableRow } from '@ludy/ui/components/table';
 import { cn } from '@ludy/ui/lib/utils';
 import { Day1QuickStart } from '../components/day1-quickstart.tsx';
-import { HomeActions } from '../components/home-actions.tsx';
+import {
+  CollapsedHomeBlock,
+  EngagePipelineBlock,
+  EsignPendingBlock,
+  FinanceApprovalsBlock,
+  HrPendingBlock,
+  TeamworkMyWorkBlock,
+} from '../components/home-blocks.tsx';
+import { HomeCustomizePanel } from '../components/home-customize-panel.tsx';
+import { HomeVyBar } from '../components/home-vy-bar.tsx';
 import { OrgNotesPanel } from '../components/notes-panel.tsx';
 import { SalesNumberGaps } from '../components/sales-number-gaps.tsx';
 import { SinceYesterday, useSinceYesterday } from '../components/since-yesterday.tsx';
 import { TodayList } from '../components/today-list.tsx';
-import { TodayWeekly } from '../components/today-weekly.tsx';
+import { weeklyTiles } from '../components/today-weekly.tsx';
 import { DueWhen, TONE_CLASS, usePeriodLabel } from '../components/tax-due.tsx';
 import { useChosenEntity, useLegalEntity } from '../components/entity-switcher.tsx';
 import { CardSkeleton, DataTable, Empty, ErrorText, PageHeader, Spinner } from '../components/ui.tsx';
-import { useFormat } from '../i18n/provider.tsx';
-import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
-import { OPEN_TASK_STATUSES } from '../lib/agents.ts';
+import { useFormat, useLocaleSetting } from '../i18n/provider.tsx';
+import { client, clientForOrg, errorMessage, getCurrentOrg, orpc, queryClient } from '../lib/api.ts';
+import { OPEN_TASK_STATUSES, agentPermissions } from '../lib/agents.ts';
 import { installedApps, type AppId } from '../lib/apps.ts';
 import { deadlineTone } from '../lib/clients.ts';
-import { homeActions, readStartCardState, showStartCard, writeStartCardState, type StartCardState } from '../lib/home-actions.ts';
+import { readStartCardState, showStartCard, writeStartCardState, type StartCardState } from '../lib/home-actions.ts';
+import {
+  buildFallbackHomeLayout,
+  eligibleHomeBlocks,
+  toHomeLayoutDraft,
+  visibleHomeBlocks,
+} from '../lib/home-layout.ts';
+import { useOrgPermissions } from '../lib/permissions.ts';
 import {
   WAITING_LINKS,
   allCounted,
@@ -41,12 +58,13 @@ import {
   type WaitingKey,
 } from '../lib/overview.ts';
 import { SAFETY_POLL_MS, pollEvery, useStreamLive } from '../lib/stream-hook.ts';
+import { briefDay } from '../lib/today-brief.ts';
+import { weeklyAutoShown, weeklyCacheKey } from '../lib/today-weekly.ts';
 import { PHONE_TARGET } from '../lib/touch-target.ts';
 import { entityToMark, markableEntities } from '../lib/tax-calendar.ts';
 import { queueRows } from '../lib/today.ts';
 import { useWorkNotifications } from './notifications.tsx';
 import { installedModules, useModulesVersion } from '../lib/org-modules.ts';
-
 
 // The icon of each waiting item; where it opens is WAITING_LINKS (lib/overview.ts).
 const TARGET = {
@@ -79,12 +97,16 @@ function AppCards({
   vatLoaded,
   manager,
   hrMember,
+  canReadBookings,
+  weekWindow,
 }: {
   slug: string;
   vat: { period: string; daysLeft: number } | null;
   vatLoaded: boolean;
   manager: boolean;
   hrMember: boolean;
+  canReadBookings: boolean;
+  weekWindow: { from: string; to: string };
 }) {
   const t = useTranslations('overview.apps');
   const tc = useTranslations('overview.apps.compact');
@@ -96,12 +118,11 @@ function AppCards({
   // bookings, which need them, so it shows only where one of the two runs.
   const apps = installedApps(modules).filter((a) => (a.id !== 'engage' || modules.includes('social') || modules.includes('crm')) && (a.id !== 'hr' || hrMember));
   const has = (module: string) => modules.includes(module);
-  // The next 7 days from the start of this hour: the query key holds within the hour and moves on with the clock, so a
-  // tab left open does not count last week's posts.
-  const hour = Math.floor(Date.now() / HOUR_MS) * HOUR_MS;
-  const week = { from: new Date(hour).toISOString(), to: new Date(hour + WEEK_MS).toISOString() };
-  const posts = useQuery({ ...orpc.social.posts.list.queryOptions({ input: { ...week, limit: LIST_CAP } }), enabled: has('social') });
-  const bookings = useQuery({ ...orpc.crm.bookings.list.queryOptions({ input: { scope: 'mine', period: 'upcoming' } }), enabled: has('crm') });
+  const posts = useQuery({ ...orpc.social.posts.list.queryOptions({ input: { ...weekWindow, limit: LIST_CAP } }), enabled: has('social') });
+  const bookings = useQuery({
+    ...orpc.crm.bookings.list.queryOptions({ input: { scope: 'mine', period: 'upcoming' } }),
+    enabled: has('crm') && canReadBookings,
+  });
   if (apps.length === 0) return null;
 
   type StatusChip = { key: string; label: string; pending?: boolean; retry?: () => void };
@@ -129,7 +150,7 @@ function AppCards({
         if (scheduled > 0) out.push({ key: 'posts', label: tc('posts', { count: scheduled }).replace(/\b\d+\b/, counted(scheduled, posts.data.length)) });
       }
     }
-    if (has('crm')) {
+    if (has('crm') && canReadBookings) {
       if (bookings.isError) out.push({ key: 'bookings', label: t('failed'), retry: () => void bookings.refetch() });
       else if (!bookings.data) out.push({ key: 'bookings', label: '', pending: true });
       else {
@@ -253,17 +274,37 @@ export function OverviewPage() {
   const tcl = useTranslations('clients');
   const tg = useTranslations('salesGaps');
   const f = useFormat();
+  const { locale } = useLocaleSetting();
   const periodLabel = usePeriodLabel();
   const { slug } = useParams({ strict: false }) as { slug: string };
   useModulesVersion(); // the apps of the org can change while this screen is open
   const modules = installedModules();
   const financeOn = modules.includes('finance');
   const notesOn = modules.includes('notes');
+  const crmOn = modules.includes('crm');
+  const socialOn = modules.includes('social');
   const live = useStreamLive();
   const every = pollEvery(live, 60_000, SAFETY_POLL_MS);
 
   const me = useQuery(orpc.me.get.queryOptions());
-  const role = me.data?.orgs.find((o) => o.slug === slug)?.role;
+  const meOrg = me.data?.orgs.find((o) => o.slug === slug);
+  const hasOrgMembership = Boolean(meOrg);
+  const orgPermissions = useOrgPermissions(hasOrgMembership);
+  const role = meOrg?.role ?? orgPermissions.role;
+  const canViewAiBudgets = agentPermissions(role).budgets;
+
+  const aiMeter = useQuery({
+    ...orpc.ai.meter.queryOptions({ input: {} }),
+    enabled: hasOrgMembership,
+    refetchInterval: every,
+    staleTime: 15_000,
+  });
+  const homeLayout = useQuery({
+    ...orpc.overview.homeLayout.get.queryOptions(),
+    enabled: hasOrgMembership,
+    refetchInterval: every,
+  });
+
   const overview = useQuery({ ...orpc.org.overview.queryOptions(), refetchInterval: every });
   const work = useWorkNotifications();
   const tasks = useQuery({ ...orpc.tasks.list.queryOptions({ input: { mine: true, status: [...OPEN_TASK_STATUSES] } }), refetchInterval: every });
@@ -273,6 +314,47 @@ export function OverviewPage() {
   // Each entity marks its own tax dues (#1553); with several, the rows say which are still open.
   const entity = useChosenEntity();
   const books = useLegalEntity(slug);
+
+  const [customizing, setCustomizing] = useState(false);
+  const [customizeSessionKey, setCustomizeSessionKey] = useState(0);
+  const [layoutAnnouncement, setLayoutAnnouncement] = useState('');
+  const customizeBtnRef = useRef<HTMLButtonElement>(null);
+  const activeSlugRef = useRef(slug);
+
+  const homeLayoutQueryKey = orpc.overview.homeLayout.get.queryOptions().queryKey;
+  const saveLayout = useMutation({
+    mutationFn: ({ slug: requestSlug, input }: { slug: string; input: HomeLayoutSaveInput }) =>
+      clientForOrg(requestSlug).overview.homeLayout.save(input),
+    onSuccess: (saved, variables) => {
+      const current = getCurrentOrg();
+      if (activeSlugRef.current !== variables.slug || (current !== null && current !== variables.slug)) return;
+      queryClient.setQueryData(homeLayoutQueryKey, saved);
+      void queryClient.invalidateQueries({ queryKey: orpc.overview.homeLayout.get.key() });
+      setCustomizing(false);
+      setLayoutAnnouncement(
+        'reset' in variables.input && variables.input.reset
+          ? t('customize.resetAnnouncement')
+          : t('customize.savedAnnouncement'),
+      );
+      if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(() => customizeBtnRef.current?.focus({ preventScroll: true }));
+      }
+    },
+  });
+
+  const { reset: resetSaveLayout } = saveLayout;
+  useEffect(() => {
+    activeSlugRef.current = slug;
+    setCustomizing(false);
+    setLayoutAnnouncement('');
+    resetSaveLayout();
+  }, [slug, resetSaveLayout]);
+
+  useEffect(() => {
+    if (customizing && (!hasOrgMembership || homeLayout.isError)) {
+      setCustomizing(false);
+    }
+  }, [customizing, hasOrgMembership, homeLayout.isError]);
 
   // One count per thing (#3591): the proposals, the posts to review and the statement lines are in "Hôm nay cần bạn"; this list keeps the rest,
   // and the notices and tasks it counts are the ones that list does not.
@@ -337,7 +419,6 @@ export function OverviewPage() {
     writeStartCardState(slug, 'dismissed');
     setStored('dismissed');
   };
-  const createActions = homeActions(modules, role);
 
   // The choice is a button where the gap is (#3591), not a link in a sentence.
   const chooseVat = canChooseVat ? (
@@ -347,19 +428,250 @@ export function OverviewPage() {
   ) : undefined;
 
   const hasOperationalStrip = waiting.length > 0 || Boolean(failed) || sinceItems.length > 0;
+  const gmName = today.data?.coworkers.gm ?? COWORKER_ROSTER.gm;
+  const todayItems = today.data?.items ?? [];
+  const financeProposalsForCaller = today.isSuccess
+    ? todayItems
+        .filter((item) => item.app === 'finance' && item.kind === 'proposal')
+        .reduce((sum, item) => sum + (item.count ?? 1), 0)
+    : undefined;
+  const hrPendingLeaveCount = today.isSuccess
+    ? todayItems
+        .filter((item) => item.app === 'hr' && item.id === 'leave-approvals')
+        .reduce((sum, item) => sum + (item.count ?? 0), 0)
+    : 0;
+
+  // Next 7 days from the start of this hour, shared between EngagePipelineBlock and AppCards so an hour roll avoids duplicate queries.
+  const hour = Math.floor(Date.now() / HOUR_MS) * HOUR_MS;
+  const weekWindow = { from: new Date(hour).toISOString(), to: new Date(hour + WEEK_MS).toISOString() };
+
+  const isAdmin = role === 'owner' || role === 'admin';
+  const isMemberOrAbove = isAdmin || role === 'member';
+  const canCustomize = hasOrgMembership && homeLayout.isSuccess;
+  // Server `homeLayout.get` is authoritative for `roleKeys` (`external_accountant`, `finance.viewer`) and non-proposal finance permissions.
+  const awaitingServerLayout = hasOrgMembership && !homeLayout.data && !homeLayout.isError && !isAdmin;
+  const fallbackLayout = buildFallbackHomeLayout({ modules, role, permissions: orgPermissions.permissions });
+  const activeLayout = homeLayout.data ?? (homeLayout.isError && !isAdmin ? { customized: false, blocks: [], defaults: [] } : fallbackLayout);
+  const eligibleBlocks = eligibleHomeBlocks(activeLayout, modules, role);
+  const visibleBlocks = visibleHomeBlocks(eligibleBlocks);
+  const teamworkBlockActive = visibleBlocks.some((b) => b.id === 'teamwork_my_work');
+
+  const canShowWeekly = role !== undefined && role !== 'viewer';
+  const weeklyLanguage = locale === 'en' ? 'en' : 'vi';
+  const weeklyKey = weeklyCacheKey(slug, briefDay(), weeklyLanguage);
+  const weeklyProbe = useQuery({
+    queryKey: ['today', 'weekly', weeklyKey],
+    queryFn: () => client.today.weekly({ language: weeklyLanguage }),
+    enabled: canShowWeekly && showWeekly && weeklyAutoShown() && teamworkBlockActive && !awaitingServerLayout,
+    staleTime: (query) => (query.state.data?.final ? 60 * 60 * 1000 : 30 * 1000),
+    refetchOnWindowFocus: false,
+    retry: false,
+  });
+  const hasWeeklySummary =
+    canShowWeekly &&
+    showWeekly &&
+    (!weeklyAutoShown() ||
+      (!weeklyProbe.isError &&
+        (weeklyProbe.isPending || (weeklyProbe.data ? weeklyTiles(weeklyProbe.data.figures).length > 0 : false))));
+
+  const openCustomize = () => {
+    if (!canCustomize) return;
+    setLayoutAnnouncement('');
+    saveLayout.reset();
+    setCustomizeSessionKey((n) => n + 1);
+    setCustomizing(true);
+  };
+  const closeCustomize = () => {
+    saveLayout.reset();
+    setCustomizing(false);
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => customizeBtnRef.current?.focus({ preventScroll: true }));
+    }
+  };
+  const toggleCustomize = () => {
+    if (customizing) closeCustomize();
+    else openCustomize();
+  };
+
+  const renderFinanceTaxBlock = () => {
+    const canCollapseEmpty = Boolean(overview.data) && dues.length === 0 && (!noFilingPeriod || !canChooseVat);
+    if (canCollapseEmpty) {
+      return (
+        <div key="finance_tax_deadlines" className="space-y-4">
+          <CollapsedHomeBlock
+            blockId="finance_tax_deadlines"
+            slug={slug}
+            to="/o/$slug/vat"
+            icon="vat"
+            emptyLine={t('blocks.finance_tax_deadlines.emptyLine')}
+            openLink={t('blocks.finance_tax_deadlines.openLink')}
+            headingId="overview-tax"
+            headingTitle={tt('title')}
+          />
+          {financeOn && (
+            <SalesNumberGaps
+              quiet
+              compact
+              detailsLabel={t('showDetails')}
+              hideDetailsLabel={t('hideDetails')}
+              fromYear={gapsFromYear(new Date())}
+              legalEntityId={entity.legalEntityId}
+              enabled={entity.ready}
+              action={
+                <Link to="/o/$slug/vat" params={{ slug }} className={cn('text-xs text-link underline', PHONE_TARGET)}>
+                  {tg('open')}
+                </Link>
+              }
+            />
+          )}
+        </div>
+      );
+    }
+
+    return (
+      <section key="finance_tax_deadlines" className="min-w-0 space-y-4" aria-labelledby="overview-tax" data-testid="home-block-finance_tax_deadlines">
+        <div>
+          <h2 id="overview-tax" className="text-sm font-semibold">
+            {tt('title')}
+          </h2>
+          <p className="mt-1 mb-3 text-xs text-subtle-foreground">{t('taxSubtitle')}</p>
+          {vat && !vatListed && (
+            <p className="mb-3 text-sm">
+              {t('vatNext', { period: periodLabel(vat.period) })}{' '}
+              <span className={cn('font-medium tabular-nums', TONE_CLASS[deadlineTone(vat.daysLeft)])}>{f.date(vat.dueDate)}</span>{' '}
+              <span className="text-subtle-foreground">({tt('daysLeft', { days: vat.daysLeft })})</span>
+            </p>
+          )}
+          {noFilingPeriod && dues.length > 0 && (
+            <p className="mb-3 flex flex-wrap items-center gap-3 text-sm text-subtle-foreground">
+              {tcl('noFilingPeriod')}
+              {chooseVat}
+            </p>
+          )}
+          {overview.isPending ? (
+            <CardSkeleton />
+          ) : (
+            overview.data &&
+            (dues.length === 0 ? (
+              <Empty compact title={tt('empty')} hint={noFilingPeriod ? tcl('noFilingPeriod') : tt('emptyHint')} action={noFilingPeriod ? chooseVat : undefined} />
+            ) : (
+              <DataTable stacked fit head={[tt('columns.due'), tt('columns.obligation'), tt('columns.period'), '']}>
+                {dues.map((d) => (
+                  <DueRow key={`${d.obligation}:${d.period}`} due={d} severalEntities={books.entities.length > 1} chosen={books.entityId} />
+                ))}
+              </DataTable>
+            ))
+          )}
+          <p className="mt-2 text-xs text-subtle-foreground">{tt('unconfirmed')}</p>
+        </div>
+
+        {financeOn && (
+          <SalesNumberGaps
+            quiet
+            compact
+            detailsLabel={t('showDetails')}
+            hideDetailsLabel={t('hideDetails')}
+            fromYear={gapsFromYear(new Date())}
+            legalEntityId={entity.legalEntityId}
+            enabled={entity.ready}
+            action={
+              <Link to="/o/$slug/vat" params={{ slug }} className={cn('text-xs text-link underline', PHONE_TARGET)}>
+                {tg('open')}
+              </Link>
+            }
+          />
+        )}
+      </section>
+    );
+  };
+
+  const renderBlock = (id: HomeBlockId) => {
+    switch (id) {
+      case 'finance_tax_deadlines':
+        return renderFinanceTaxBlock();
+      case 'finance_approvals':
+        return (
+          <FinanceApprovalsBlock
+            key={id}
+            slug={slug}
+            isPending={today.isPending || overview.isPending}
+            error={today.error ?? overview.error}
+            pendingProposals={financeProposalsForCaller}
+            failedFiles={overview.data?.failedFiles}
+          />
+        );
+      case 'teamwork_my_work':
+        return (
+          <TeamworkMyWorkBlock
+            key={id}
+            slug={slug}
+            role={role}
+            notesOn={notesOn}
+            tasksPending={tasks.isPending}
+            tasksError={tasks.error}
+            openTaskCount={tasks.data?.length ?? 0}
+            showWeekly={showWeekly}
+            hasWeeklySummary={hasWeeklySummary}
+          />
+        );
+      case 'engage_pipeline':
+        return <EngagePipelineBlock key={id} slug={slug} crmOn={crmOn} socialOn={socialOn} weekWindow={weekWindow} enabled />;
+      case 'hr_pending':
+        return (
+          <HrPendingBlock
+            key={id}
+            slug={slug}
+            role={role}
+            enabled
+            isPending={today.isPending}
+            error={today.error}
+            pendingLeaveCount={hrPendingLeaveCount}
+          />
+        );
+      case 'esign_pending':
+        return <EsignPendingBlock key={id} slug={slug} enabled />;
+    }
+  };
 
   return (
     <div>
+      <div role="status" aria-live="polite" className="sr-only" data-testid="home-customize-status">
+        {layoutAnnouncement}
+      </div>
+
       <PageHeader
         title={t('title')}
         subtitle={overview.data?.lastActivityAt ? t('lastActivity', { when: f.dateTime(overview.data.lastActivityAt) }) : t('subtitle')}
+        actions={
+          <Button
+            ref={customizeBtnRef}
+            type="button"
+            variant={customizing ? 'secondary' : 'outline'}
+            size="sm"
+            disabled={!canCustomize}
+            aria-expanded={customizing}
+            data-testid="home-customize-btn"
+            onClick={toggleCustomize}
+          >
+            {t('customize.button')}
+          </Button>
+        }
       />
 
-      {/* Row 0: the fixed create actions, named by the job (#4783). */}
-      <HomeActions slug={slug} actions={createActions} />
-
-      {/* Row 1: the action queue with the coworker's brief inside the same card (#2383, #4644), then the day-1 start card (#4783). */}
+      {/* Row 1: Anchored "Hôm nay cần bạn" queue + compact inline Vy prompt bar (#2383, #4644, #4928), then Day-1 start card (#4783). */}
       <TodayList slug={slug} />
+      <HomeVyBar
+        key={slug}
+        slug={slug}
+        gmName={gmName}
+        canUseVy={orgPermissions.canUseVy}
+        permissionsLoaded={orgPermissions.permissionsLoaded}
+        canApproveFinance={orgPermissions.canApproveFinance}
+        canViewAiBudgets={canViewAiBudgets}
+        aiMeter={aiMeter.data}
+        role={role}
+        modules={modules}
+      />
       {startCard && <Day1QuickStart slug={slug} steps={quickStart} financeOn={financeOn} onDismiss={dismissStart} />}
 
       {/* Row 2: Compact operational strip combining Waiting counts + SinceYesterday coworker updates; hidden when empty (#4644). */}
@@ -397,82 +709,62 @@ export function OverviewPage() {
         </section>
       )}
 
-      {/* Row 3: Tax obligations (next 30 days) and "Tuần này" side-by-side at lg (#4644). */}
-      <div
-        data-testid="overview-row-3"
-        className={cn(
-          'mt-6 grid gap-6 lg:items-start',
-          showWeekly && 'lg:grid-cols-2 [&:not(:has([data-weekly-slot]))]:lg:grid-cols-1',
-        )}
-      >
-        <section className="min-w-0" aria-labelledby="overview-tax">
-          <h2 id="overview-tax" className="text-sm font-semibold">
-            {tt('title')}
-          </h2>
-          <p className="mt-1 mb-3 text-xs text-subtle-foreground">{t('taxSubtitle')}</p>
-          {vat && !vatListed && (
-            <p className="mb-3 text-sm">
-              {t('vatNext', { period: periodLabel(vat.period) })}{' '}
-              <span className={cn('font-medium tabular-nums', TONE_CLASS[deadlineTone(vat.daysLeft)])}>{f.date(vat.dueDate)}</span>{' '}
-              <span className="text-subtle-foreground">({tt('daysLeft', { days: vat.daysLeft })})</span>
-            </p>
-          )}
-          {noFilingPeriod && dues.length > 0 && (
-            <p className="mb-3 flex flex-wrap items-center gap-3 text-sm text-subtle-foreground">
-              {tcl('noFilingPeriod')}
-              {chooseVat}
-            </p>
-          )}
-          {overview.isPending ? (
-            <CardSkeleton />
-          ) : (
-            overview.data &&
-            (dues.length === 0 ? (
-              <Empty compact title={tt('empty')} hint={noFilingPeriod ? tcl('noFilingPeriod') : tt('emptyHint')} action={noFilingPeriod ? chooseVat : undefined} />
-            ) : (
-              <DataTable stacked fit head={[tt('columns.due'), tt('columns.obligation'), tt('columns.period'), '']}>
-                {dues.map((d) => (
-                  <DueRow key={`${d.obligation}:${d.period}`} due={d} severalEntities={books.entities.length > 1} chosen={books.entityId} />
-                ))}
-              </DataTable>
-            ))
-          )}
-          <p className="mt-2 text-xs text-subtle-foreground">{tt('unconfirmed')}</p>
-        </section>
+      {hasOrgMembership && homeLayout.isError && (
+        <div
+          role="alert"
+          data-testid="home-layout-error"
+          className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border bg-card px-4 py-3 text-sm"
+        >
+          <ErrorText>{`${t('customize.loadError')} ${errorMessage(homeLayout.error)}`}</ErrorText>
+          <Button type="button" variant="outline" size="sm" onClick={() => void homeLayout.refetch()}>
+            {t('customize.retry')}
+          </Button>
+        </div>
+      )}
 
-        {showWeekly && (
-          <div className="min-w-0">
-            <TodayWeekly slug={slug} />
-          </div>
-        )}
-      </div>
-
-      {/* Compact sales invoice number gaps when present (#2140, #4644). */}
-      {financeOn && (
-        <SalesNumberGaps
-          className="mt-6"
-          quiet
-          compact
-          detailsLabel={t('showDetails')}
-          hideDetailsLabel={t('hideDetails')}
-          fromYear={gapsFromYear(new Date())}
-          legalEntityId={entity.legalEntityId}
-          enabled={entity.ready}
-          action={
-            <Link to="/o/$slug/vat" params={{ slug }} className={cn('text-xs text-link underline', PHONE_TARGET)}>
-              {tg('open')}
-            </Link>
-          }
+      {/* Inline Tùy chỉnh mode (#4928): reorder & visibility toggle persisted in PostgreSQL. */}
+      {customizing && canCustomize && (
+        <HomeCustomizePanel
+          key={customizeSessionKey}
+          initialBlocks={toHomeLayoutDraft(eligibleBlocks)}
+          isPending={saveLayout.isPending}
+          error={saveLayout.error}
+          onSave={(blocks) => saveLayout.mutate({ slug, input: { blocks } })}
+          onReset={() => saveLayout.mutate({ slug, input: { reset: true } })}
+          onCancel={closeCustomize}
         />
       )}
+
+      {/* Row 3: Role x Enabled-App modular summary blocks in persisted order (#4928). */}
+      {awaitingServerLayout ? (
+        <div data-testid="overview-modular-blocks-loading" className="mt-6">
+          <CardSkeleton />
+        </div>
+      ) : visibleBlocks.length > 0 ? (
+        <div data-testid="overview-modular-blocks" className="mt-6 space-y-6">
+          {visibleBlocks.map((block) => renderBlock(block.id))}
+        </div>
+      ) : eligibleBlocks.length > 0 ? (
+        <div
+          data-testid="home-all-blocks-hidden"
+          className="mt-6 flex flex-wrap items-center justify-between gap-2 rounded-xl border bg-card px-4 py-3 text-sm text-muted-foreground"
+        >
+          <span>{t('layout.allHidden')}</span>
+          <Button type="button" variant="outline" size="sm" disabled={!canCustomize} onClick={openCustomize}>
+            {t('customize.button')}
+          </Button>
+        </div>
+      ) : null}
 
       {/* Row 4: Quiet compact app status links (#4644). */}
       <AppCards
         slug={slug}
         vat={vat}
         vatLoaded={overview.isSuccess}
-        manager={role === 'owner' || role === 'admin'}
-        hrMember={role === 'owner' || role === 'admin' || role === 'member'}
+        manager={isAdmin}
+        hrMember={isMemberOrAbove}
+        canReadBookings={isMemberOrAbove}
+        weekWindow={weekWindow}
       />
 
       {/* The org's notes (#1671): in a client company's org, notes about the client. */}
