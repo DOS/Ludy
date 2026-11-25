@@ -534,6 +534,7 @@ describe('Overlay consolidation across Projects, eSign, and Meetings (#4522)', (
       keepVideo: false,
       liveNotes: false,
       summaryTemplate: 'general',
+      place: null,
       audioRetentionDate: '2026-12-23',
       textRetentionDate: null,
       hasAudio: true,
