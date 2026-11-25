@@ -13,6 +13,7 @@ import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-sel
 import { cn } from '@ludy/ui/lib/utils';
 import { PdfCanvasViewer } from '../components/sign/pdf-canvas-viewer.tsx';
 import { SignPacketTabs } from '../components/sign/sign-packet-tabs.tsx';
+import { SignCeremonyDepositCard } from '../components/sign/sign-ceremony-deposit-card.tsx';
 import { CounterpartySummaryBanner } from '../components/sign/shared-summary-card.tsx';
 import { SignQrModal } from '../components/sign/sign-qr-modal.tsx';
 import { SignaturePadModal } from '../components/sign/signature-pad-modal.tsx';
@@ -65,6 +66,28 @@ export function isTerminalCeremonyViewState(view: PublicSignViewState): boolean 
     view.state === 'voided' ||
     view.state === 'expired'
   );
+}
+
+export async function submitCeremonyWithGenerationGuard<T>(params: {
+  getGeneration: () => number;
+  runSubmit: () => Promise<T>;
+  onSuccess: (result: T) => void;
+  onError: (error: unknown) => void;
+  onSettled: () => void;
+}): Promise<void> {
+  const submitGeneration = params.getGeneration();
+  try {
+    const result = await params.runSubmit();
+    if (params.getGeneration() !== submitGeneration) return;
+    params.onSuccess(result);
+  } catch (error) {
+    if (params.getGeneration() !== submitGeneration) return;
+    params.onError(error);
+  } finally {
+    if (params.getGeneration() === submitGeneration) {
+      params.onSettled();
+    }
+  }
 }
 
 /** Polls public ceremony status while the desktop QR modal stays open, pausing on hidden tabs and capping at 15 min. */
@@ -465,6 +488,7 @@ export function SignCeremonyPage() {
     setOtpCode('');
     setOtpError(null);
     setSubmitError(null);
+    setSubmitting(false);
     setDeclineOpen(false);
     setDeclineReason('');
     setDeclineError(null);
@@ -508,6 +532,7 @@ export function SignCeremonyPage() {
   const loadView = useCallback(async (activeToken: string) => {
     const requestId = ++requestGenRef.current;
     setLoadingView(true);
+    setSubmitting(false);
     setViewError(null);
     setPdfError(null);
     setPdfBytes(null);
@@ -522,8 +547,10 @@ export function SignCeremonyPage() {
         setInPersonMode(true);
       }
       setViewState(view);
+      const keepDepositToken =
+        view.state === 'already_completed' && Boolean(view.deposit) && !(view.inPerson === true);
       if (
-        view.state === 'already_completed' ||
+        (view.state === 'already_completed' && !keepDepositToken) ||
         view.state === 'declined' ||
         view.state === 'delegated' ||
         view.state === 'voided' ||
@@ -857,50 +884,60 @@ export function SignCeremonyPage() {
     }
     setSubmitting(true);
     setSubmitError(null);
-    try {
-      const submitRes = await publicSignApi.submit(
-        buildSignSubmitPayload({
-          token,
-          fields: viewState.fields,
-          answers,
-        }),
-      );
-      const wasInPerson = Boolean(inPersonMode || viewState.inPerson || submitRes.inPerson);
-      if (wasInPerson) {
-        setInPersonMode(true);
-      }
-      forgetSignToken();
-      toast(t(isApproverCeremony ? 'approverSubmitSuccessToast' : 'submitSuccessToast'));
-      setViewState({
-        state: 'already_completed',
-        title: viewState.title,
-        status: 'completed',
-        signerRole: isApproverCeremony ? 'approver' : 'signer',
-        ...(wasInPerson ? { inPerson: true } : {}),
-      });
-      setPdfBytes(null);
-    } catch (error) {
-      if (isOtpRequiredError(error)) {
-        setOtpSent(false);
-        setOtpCode('');
-        setOtpError(error.message || t('otpInvalid'));
-        setPdfBytes(null);
-        setViewState(
-          buildOtpRequiredViewState({
-            orgName: viewState.orgName,
-            title: viewState.title,
-            inPerson: Boolean(inPersonMode || viewState.inPerson),
+    await submitCeremonyWithGenerationGuard({
+      getGeneration: () => requestGenRef.current,
+      runSubmit: () =>
+        publicSignApi.submit(
+          buildSignSubmitPayload({
+            token,
+            fields: viewState.fields,
+            answers,
           }),
-        );
-        toast(t('otpInvalid'), 'error');
-      } else {
-        const msg = error instanceof Error ? error.message : t('invalidTitle');
-        setSubmitError(msg);
-        toast(msg, 'error');
-      }
-    } finally {
-      setSubmitting(false);
-    }
+        ),
+      onSuccess: (submitRes) => {
+        const wasInPerson = Boolean(inPersonMode || viewState.inPerson || submitRes.inPerson);
+        if (wasInPerson) {
+          setInPersonMode(true);
+        }
+        const keepDepositToken = !wasInPerson && Boolean(submitRes.deposit);
+        if (!keepDepositToken) {
+          forgetSignToken();
+        }
+        toast(t(isApproverCeremony ? 'approverSubmitSuccessToast' : 'submitSuccessToast'));
+        setViewState({
+          state: 'already_completed',
+          title: viewState.title,
+          status: 'completed',
+          signerRole: isApproverCeremony ? 'approver' : 'signer',
+          ...(wasInPerson ? { inPerson: true } : {}),
+          ...(keepDepositToken ? { deposit: submitRes.deposit ?? null } : {}),
+        });
+        setPdfBytes(null);
+      },
+      onError: (error) => {
+        if (isOtpRequiredError(error)) {
+          setOtpSent(false);
+          setOtpCode('');
+          setOtpError(error.message || t('otpInvalid'));
+          setPdfBytes(null);
+          setViewState(
+            buildOtpRequiredViewState({
+              orgName: viewState.orgName,
+              title: viewState.title,
+              inPerson: Boolean(inPersonMode || viewState.inPerson),
+            }),
+          );
+          toast(t('otpInvalid'), 'error');
+        } else {
+          const msg = error instanceof Error ? error.message : t('invalidTitle');
+          setSubmitError(msg);
+          toast(msg, 'error');
+        }
+      },
+      onSettled: () => {
+        setSubmitting(false);
+      },
+    });
   };
 
   const handleDecline = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -1100,14 +1137,19 @@ export function SignCeremonyPage() {
             signerRole={viewState.signerRole}
           />
         ) : viewState?.state === 'already_completed' ? (
-          <Card data-testid="sign-ceremony-completed">
-            <CardHeader>
-              <CardTitle>{t(viewState.signerRole === 'approver' ? 'approverCompletedTitle' : 'completedTitle')}</CardTitle>
-              <CardDescription>
-                {t(viewState.signerRole === 'approver' ? 'approverCompletedHint' : 'completedHint')}
-              </CardDescription>
-            </CardHeader>
-          </Card>
+          <>
+            <Card data-testid="sign-ceremony-completed">
+              <CardHeader>
+                <CardTitle>{t(viewState.signerRole === 'approver' ? 'approverCompletedTitle' : 'completedTitle')}</CardTitle>
+                <CardDescription>
+                  {t(viewState.signerRole === 'approver' ? 'approverCompletedHint' : 'completedHint')}
+                </CardDescription>
+              </CardHeader>
+            </Card>
+            {viewState.deposit && token ? (
+              <SignCeremonyDepositCard token={token} deposit={viewState.deposit} />
+            ) : null}
+          </>
         ) : viewState?.state === 'declined' ? (
           <Card data-testid="sign-ceremony-declined">
             <CardHeader>

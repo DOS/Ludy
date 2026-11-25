@@ -16,12 +16,14 @@ import {
   vietnamToday,
   zId,
   zSignCurrencyCode,
+  zSignDepositProposal,
   zSignObligationCompleteItemInput,
   zSignObligationDate,
   zSignObligationDismissInput,
   zSignObligationRenewalsListInput,
   zSignObligationUpsertInput,
   zTodayItems,
+  type SignDepositProposalContract,
   type SignEnvelopeObligationRecordContract,
   type SignObligationCitationContract,
   type SignObligationItemContract,
@@ -501,6 +503,7 @@ const zObligationProposeCommandInput = z.strictObject({
     currency: zSignCurrencyCode.default('VND'),
     citations: z.array(zIncomingProposalCitation).max(20).default([]),
     obligations: z.array(zIncomingProposedObligation).max(20).default([]),
+    depositProposal: zSignDepositProposal.nullable().optional(),
     proposedByAi: z.boolean().optional(),
   }),
   extractedPages: z.array(zExtractedPage).max(SIGN_MAX_PAGES).optional(),
@@ -620,6 +623,42 @@ function sanitizeIncomingProposal(
     });
   }
 
+  let depositProposal: SignDepositProposalContract | undefined;
+  if (raw.depositProposal && raw.depositProposal.currency === 'VND') {
+    const depPage = raw.depositProposal.pageNumber;
+    const depQuote = cleanLine(raw.depositProposal.quoteExcerpt, 1000);
+    const depNorm = normalizeSearchText(depQuote);
+    if (
+      depPage >= 1 &&
+      depPage <= maxPage &&
+      depNorm.length >= 4 &&
+      (!pageNormMap || (pageNormMap.get(depPage) ?? '').includes(depNorm))
+    ) {
+      try {
+        const depAmount = parseContractValueDecimal(raw.depositProposal.amount);
+        const depDueDays =
+          raw.depositProposal.dueDays !== null &&
+          Number.isInteger(raw.depositProposal.dueDays) &&
+          raw.depositProposal.dueDays >= 0 &&
+          raw.depositProposal.dueDays <= 365
+            ? raw.depositProposal.dueDays
+            : null;
+        if (depAmount !== null && new Decimal(depAmount).gt(0)) {
+          depositProposal = {
+            amount: depAmount,
+            currency: 'VND',
+            dueDays: depDueDays,
+            pageNumber: depPage,
+            quoteExcerpt: depQuote,
+            proposedByAi: true,
+          };
+        }
+      } catch {
+        depositProposal = undefined;
+      }
+    }
+  }
+
   return {
     counterpartyName,
     effectiveDate,
@@ -630,6 +669,7 @@ function sanitizeIncomingProposal(
     currency: raw.currency,
     citations: keptCitations,
     obligations,
+    ...(depositProposal ? { depositProposal } : {}),
     proposedByAi: true,
   };
 }

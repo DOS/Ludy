@@ -881,6 +881,7 @@ describe('SignAiReader.extractObligations meter & zero-tools enforcement (#3821)
                 { field: 'contractValue', pageNumber: 1, quoteExcerpt: 'Tổng giá trị thanh toán là 24.000.000 VND' },
               ],
               obligations: [],
+              depositProposal: null,
             }),
           ),
           { status: 200, headers: { 'content-type': 'application/json' } },
