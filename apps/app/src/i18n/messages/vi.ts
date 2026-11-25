@@ -5822,7 +5822,7 @@ export const vi = {
       },
       acceptClean: 'Tạo {count} việc rõ ràng',
       publish: 'Chia sẻ cho người dự họp',
-      publishNote: 'Chia sẻ sẽ cho mọi người đọc được cuộc họp này thấy bản tóm tắt và các việc. Bản ghi lời nói được chia sẻ riêng.',
+      publishNote: 'Chia sẻ sẽ cho mọi người đọc được cuộc họp này thấy bản tóm tắt, các việc và bản ghi lời nói.',
       vy: {
         title: 'Vy tóm tắt cuộc họp này',
         desc: 'Vy đọc bản ghi lời nói và đề xuất bản tóm tắt, các quyết định và việc cần làm, chỉ cho riêng bạn. Việc này tính vào ngân sách AI của bạn và mất tối đa một phút. Không có gì được chia sẻ cho đến khi bạn đã đọc và quyết định.',
@@ -5913,6 +5913,7 @@ export const vi = {
         stale: 'Bản dịch này cũ so với biên bản gốc; hãy dịch lại.',
       },
       reviewNote: 'Một phần bản nháp này do Vy viết và bạn chưa đánh dấu là đã đọc. Hãy đọc, sửa chỗ sai, rồi xác nhận để có thể chia sẻ.',
+      reviewNoteTranscript: 'Bản ghi lời nói ({count} dòng) do máy chép và bạn chưa đánh dấu là đã đọc. Chia sẻ sẽ cho người đọc cuộc họp thấy bản ghi này, nên hãy xem lại bản ghi trước khi xác nhận.',
       reviewed: 'Tôi đã đọc',
       saveAsNote: 'Lưu thành ghi chú chung',
       saveAsNoteConfirmTitle: 'Lưu bản tóm tắt thành ghi chú dùng chung?',
@@ -17063,6 +17064,7 @@ export const vi = {
       CHAPTER_ANCHOR_LOST: 'Bản ghi lời nói đã thay đổi sau khi bạn lưu mục lục, nên có mục không còn bắt đầu ở một dòng của bản ghi. Hãy lưu lại mục lục rồi chia sẻ.',
       NO_CLEAN_ITEMS: 'Không có việc nào rõ ràng: hãy tự chọn người, ngày và vị trí cho từng việc.',
       DRAFT_NOT_REVIEWED: 'Còn mục do Vy gợi ý chưa được bạn xem lại. Hãy đọc và xác nhận trước khi chia sẻ.',
+      STALE_TRANSCRIPT_REVIEW: 'Bản ghi lời nói đã thay đổi từ lúc bạn mở màn hình này. Hãy xem lại các dòng mới rồi xác nhận lại.',
       DRAFT_SUMMARY_EXISTS: 'Bạn đã có bản tóm tắt nháp. Hãy chia sẻ hoặc lưu đè lên nó, rồi mới chép bản của Vy.',
       SUMMARY_BUSY: 'Vy đang bận tóm tắt. Hãy thử lại sau vài phút.',
       SUMMARY_ALREADY_COPIED: 'Bản tóm tắt này đã được chép vào bản nháp của bạn.',
@@ -19918,7 +19920,7 @@ export const vi = {
       },
       result: {
         get: 'Xem tóm tắt và việc cần làm của cuộc họp',
-        publish: 'Chia sẻ tóm tắt và việc cần làm với người dự họp',
+        publish: 'Chia sẻ tóm tắt, việc cần làm và bản ghi lời nói với người dự họp',
       },
       title: {
         start: 'Nhờ Vy gợi ý tên cho một cuộc họp',
