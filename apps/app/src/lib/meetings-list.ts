@@ -64,7 +64,7 @@ export function labelsByMeetingOf(meetings: readonly MeetingListItem[]): Map<str
 }
 
 /** The most label choices the filter offers. */
-export const LABEL_CHOICES_MAX = 200;
+const LABEL_CHOICES_MAX = 200;
 
 /**
  * The choices of the label filter and how many of the listed meetings carry each, the most used first (#4966). The same label whatever the case is one choice (the first spelling met). They come from the
