@@ -40,6 +40,7 @@ describe.skipIf(!hasCompose)('compose.pilot.yml', { timeout: 60_000 }, () => {
   beforeAll(() => {
     dir = mkdtempSync(join(tmpdir(), 'crove-pilot-compose-'));
     copyFileSync(join(repo, 'docker-compose.yml'), join(dir, 'docker-compose.yml'));
+    copyFileSync(join(repo, 'docker-compose.split.yml'), join(dir, 'docker-compose.split.yml'));
     copyFileSync(join(repo, 'tools/deploy/compose.pilot.yml'), join(dir, 'compose.pilot.yml'));
     // The release pins the images in a generated override, as deploy.sh writes it.
     writeFileSync(join(dir, 'docker-compose.override.yml'), [
@@ -256,5 +257,35 @@ describe.skipIf(!hasCompose)('compose.pilot.yml', { timeout: 60_000 }, () => {
     const prober = config(['docker-compose.yml', 'compose.pilot.yml'], {}, ['prober'])['prober'];
     expect(prober?.environment?.['PROBER_AUTH_URL']).toBe('http://api:8080/auth/v1');
     expect(config(['docker-compose.yml', 'compose.pilot.yml'], { PROBER_AUTH_URL: 'https://auth.example/auth/v1' }, ['prober'])['prober']?.environment?.['PROBER_AUTH_URL']).toBe('https://auth.example/auth/v1');
+  });
+
+  it('wires the five Ludy-branded Vietnamese auth mail templates and subjects to the ludy API alias (#3577)', () => {
+    for (const [files, httpService] of [
+      [['docker-compose.yml'], 'crove'],
+      [['docker-compose.yml', 'compose.pilot.yml'], 'api'],
+      [['docker-compose.yml', 'docker-compose.split.yml'], 'api'],
+    ] as const) {
+      const services = config([...files]);
+      const auth = services['auth'];
+      expect(services[httpService]?.networks?.['default']).toEqual({ aliases: ['ludy'] });
+      expect(auth?.environment?.['GOTRUE_MAILER_TEMPLATES_CONFIRMATION']).toBe('http://ludy:8080/auth-templates/confirmation.html');
+      expect(auth?.environment?.['GOTRUE_MAILER_TEMPLATES_RECOVERY']).toBe('http://ludy:8080/auth-templates/recovery.html');
+      expect(auth?.environment?.['GOTRUE_MAILER_TEMPLATES_MAGIC_LINK']).toBe('http://ludy:8080/auth-templates/magic_link.html');
+      expect(auth?.environment?.['GOTRUE_MAILER_TEMPLATES_INVITE']).toBe('http://ludy:8080/auth-templates/invite.html');
+      expect(auth?.environment?.['GOTRUE_MAILER_TEMPLATES_EMAIL_CHANGE']).toBe('http://ludy:8080/auth-templates/email_change.html');
+      expect(auth?.environment?.['GOTRUE_MAILER_SUBJECTS_CONFIRMATION']).toBe('Xác nhận địa chỉ email - Ludy');
+      expect(auth?.environment?.['GOTRUE_MAILER_SUBJECTS_RECOVERY']).toBe('Đặt lại mật khẩu - Ludy');
+      expect(auth?.environment?.['GOTRUE_MAILER_SUBJECTS_MAGIC_LINK']).toBe('Liên kết đăng nhập - Ludy');
+      expect(auth?.environment?.['GOTRUE_MAILER_SUBJECTS_INVITE']).toBe('Lời mời tạo tài khoản - Ludy');
+      expect(auth?.environment?.['GOTRUE_MAILER_SUBJECTS_EMAIL_CHANGE']).toBe('Xác nhận đổi email - Ludy');
+    }
+    const branded = config(['docker-compose.yml'], { BRAND_NAME: 'Acme VN' })['auth'];
+    expect(branded?.environment?.['GOTRUE_MAILER_SUBJECTS_CONFIRMATION']).toBe('Xác nhận địa chỉ email - Acme VN');
+    const custom = config(['docker-compose.yml'], {
+      AUTH_MAILER_TEMPLATES_CONFIRMATION: 'https://mail.example.com/confirm.html',
+      AUTH_MAILER_SUBJECTS_CONFIRMATION: 'Custom Confirm',
+    })['auth'];
+    expect(custom?.environment?.['GOTRUE_MAILER_TEMPLATES_CONFIRMATION']).toBe('https://mail.example.com/confirm.html');
+    expect(custom?.environment?.['GOTRUE_MAILER_SUBJECTS_CONFIRMATION']).toBe('Custom Confirm');
   });
 });

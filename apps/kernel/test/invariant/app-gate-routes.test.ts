@@ -26,6 +26,7 @@ const CLASSES: Record<string, { app: string; gate: Gate; why: string }> = {
   '/version': { app: 'kernel', gate: 'kernel', why: 'build id' },
   '/api/config': { app: 'kernel', gate: 'kernel', why: 'SPA config' },
   '/status': { app: 'kernel', gate: 'kernel', why: 'status page' },
+  '/auth-templates/:name': { app: 'kernel', gate: 'kernel', why: 'GoTrue auth email templates' },
   '/auth/v1/*': { app: 'kernel', gate: 'kernel', why: 'sign-in proxy' },
   '/webhooks/mail/:provider': { app: 'kernel', gate: 'kernel', why: 'mail delivery events' },
   '/api/inbound/email': { app: 'kernel', gate: 'kernel', why: 'inbound mail' },
@@ -98,8 +99,6 @@ const CLASSES: Record<string, { app: string; gate: Gate; why: string }> = {
   '/api/sign/deposit-notice': { app: 'sign', gate: 'sql', why: 'crove_sign.public_record_deposit_notice checks org_app_on + entitlement -> 404 (#4723)' },
   // #4822 (meetings, minutes link for outsiders): step 0 pre-registration; the PR that adds the route moves it from 'pending' to 'sql' (ludy_meetings.minutes_link_view gates org_app_on and the org's switch, opaque 404).
   '/api/minutes/view': { app: 'meetings', gate: 'pending', why: '#4822 (published minutes link pre-registration; gated in SQL via the minutes_link_view definer + org_app_on + the org switch -> 404)' },
-  // #3577 (GoTrue Vietnamese email templates): Step 0 pre-registration; #3577 moves this route from 'pending' to app: 'kernel', gate: 'kernel'.
-  '/auth-templates/:name': { app: 'auth', gate: 'pending', why: '#3577 (Step 0 pre-registration for GoTrue auth email templates; moves to app kernel / gate kernel when #3577 lands)' },
 };
 
 // The paths of the two lists of route-coverage.test.ts: a key at the start of a line inside `const PUBLIC` or `const PENDING`. A line at the key indent that
