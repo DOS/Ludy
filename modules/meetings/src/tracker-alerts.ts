@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Alerts when a tracked keyword comes up in the minutes of a new meeting (#4873, builds on the keyword trackers of #4818). The contract is packages/kernel-contract/src/meeting-tracker-alerts.ts.
+// Alerts when a tracked keyword comes up in the transcript of a new meeting (#4873, builds on the keyword trackers of #4818). The contract is packages/kernel-contract/src/meeting-tracker-alerts.ts.
 //
 // meetings.tracker.alert_set     a member turns their own alert on or off (off by default: no row, no alert); never another member's
 // meetings.tracker.alert_get     whether the caller's alert is on
 // meetings.tracker.alert         the recorder's publish, emitted by meetings.result.publish (emitTrackerAlert below) in the same transaction: the meeting's id and language only, no text
 // meetings.tracker.alert_notice  the worker's dispatch of that event, in the system's context (the API's role cannot write a notification for a person): it asks the worker-only definer
 //                                ludy_meetings.tracker_alert_input for the opted-in members who read the meeting NOW (the reader rule is decided per recipient in the database, an owner or an admin has no extra
-//                                right), the org's tracked words and the published minutes text, counts the words in code (the same counting as the Trackers card), and writes one notice per member and meeting
+//                                right), the org's tracked words and the published transcript lines, counts the words in code (the same counting as the Trackers card), and writes one notice per member and meeting
 //                                (key `tracker:<meeting>`, so a second publish or a replay tells nobody twice). The notice holds the ids of the words and their counts and nothing else: no word, no title, no
 //                                text; the app writes the words from the live term list. A mail with a fixed line and the link is queued only when the in-app notice was written, so the one switch of the
 //                                notification settings (kind meetings.tracker_alert) covers the in-app line, the mail and the push. No model call.
@@ -30,7 +30,7 @@ import { DomainError, defineCommand, defineQuery, type CommandContext } from '@l
 import { countNeedle, lineWords, needleOf } from './tracker-count.ts';
 import { ROLES, userOf } from './transcript.ts';
 
-const SUBJECT = { vi: 'Từ khóa bạn theo dõi có trong biên bản một cuộc họp mới', en: 'A word you track is in the minutes of a new meeting' } as const;
+const SUBJECT = { vi: 'Từ khóa bạn theo dõi có trong bản ghi một cuộc họp mới', en: 'A word you track is in the transcript of a new meeting' } as const;
 
 export const trackerAlertSet = defineCommand({
   name: 'meetings.tracker.alert_set',

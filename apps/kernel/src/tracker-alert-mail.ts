@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The "a tracked word is in the minutes of a new meeting" mail (#4873, template meetings.tracker_alert): a fixed line, how many tracked words came up and the link that opens the meeting, nothing else. No
+// The "a tracked word is in the transcript of a new meeting" mail (#4873, template meetings.tracker_alert): a fixed line, how many tracked words came up and the link that opens the meeting, nothing else. No
 // word (it can be a competitor's name), title or sentence is in the merge data (meetings.tracker.alert_notice stores none), so none can be in the mail, and none is left to erase; the merge data is parsed
 // strictly, so a stored extra key is refused rather than rendered.
 import { zTrackerAlertMail } from '@ludy/kernel-contract';
@@ -7,12 +7,12 @@ import type { MailTemplate } from './mail-queue.ts';
 
 const COPY = {
   vi: {
-    lead: (words: number) => `Có ${words} từ khóa bạn theo dõi trong biên bản vừa được chia sẻ của một cuộc họp.`,
+    lead: (words: number) => `Có ${words} từ khóa bạn theo dõi trong bản ghi vừa được chia sẻ của một cuộc họp.`,
     open: 'Mở cuộc họp',
     footer: (brand: string, org: string) => `Thư này do ${brand} gửi cho thành viên đã bật báo từ khóa theo dõi của ${org}. Tắt thông báo này trong phần thông báo của Cài đặt.`,
   },
   en: {
-    lead: (words: number) => `${words === 1 ? '1 word' : `${words} words`} you track came up in the minutes just shared for a meeting.`,
+    lead: (words: number) => `${words === 1 ? '1 word' : `${words} words`} you track came up in the transcript just shared for a meeting.`,
     open: 'Open the meeting',
     footer: (brand: string, org: string) => `${brand} sent this to a member of ${org} who turned on tracked-word alerts. Turn this notice off in the notification settings.`,
   },

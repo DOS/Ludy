@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Alerts when a tracked keyword comes up in the minutes of a new meeting (#4873, builds on the keyword trackers of #4818). A member opts in (off by default); when a recorder publishes the minutes of a meeting
-// the member reads, the worker counts the org's tracked words in the published minutes text, in code, and writes one notice per meeting that lists the words that came up and how often. The notice holds term
-// ids and counts only: no word, no title, no text of the minutes (the app writes the words from the live term list when it shows the notice, so a deleted term disappears and no competitor's name is copied
+// Alerts when a tracked keyword comes up in a new meeting (#4873, builds on the keyword trackers of #4818). A member opts in (off by default); when a recorder publishes the minutes of a meeting
+// the member reads, the worker counts the org's tracked words in the published transcript lines, in code, and writes one notice per meeting that lists the words that came up and how often. The notice holds term
+// ids and counts only: no word, no title, no text of the transcript (the app writes the words from the live term list when it shows the notice, so a deleted term disappears and no competitor's name is copied
 // into a row a purge would have to chase). No model call.
 //
 // This file holds the shapes and the names both sides use. No database or network access here.

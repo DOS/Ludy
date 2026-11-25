@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Alerts when a tracked keyword comes up in the minutes of a new meeting (#4873) on a real database: the switch is a member's own (off by default, a viewer cannot turn it on); publishing a summary stores one
+// Alerts when a tracked keyword comes up in a new meeting (#4873) on a real database: the switch is a member's own (off by default, a viewer cannot turn it on); publishing a summary stores one
 // event with the meeting's id and language only; the worker's dispatch tells exactly the members who opted in AND read the meeting now (the recorder is not told about their own publish, an owner or admin who is
-// not a reader is not told, a member of an attendees-only meeting who is not one of its readers is not told, a member who muted the kind is not told), once per meeting however often the event is dispatched; the
-// notice holds term ids and counts and no word, title or text, nor does its mail; no word in the minutes, a meeting past its text period and a meeting deleted since tell nobody; and the definer that serves the
-// dispatch refuses a call for another org or with no context. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
+// not a reader is not told, a member of an attendees-only meeting who is not one of its readers is not told, a member limited to one legal entity is not told of an org-shared meeting, a member who muted the
+// kind is not told), once per meeting however often the event is dispatched; the notice holds term ids and counts and no word, title or text, nor does its mail; no word in the published transcript lines, a
+// meeting past its text period and a meeting deleted since tell nobody; and the definer that serves the dispatch refuses a call for another org or with no context. Set LUDY_TEST_ADMIN_URL (or
+// CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -41,7 +42,7 @@ suite('Tracker alerts (#4873)', () => {
   let runtime: Runtime;
   let worker: Runtime;
   const users: Record<string, string> = {};
-  const NAMES: Record<string, string> = { owner: 'Chủ Công Ty', adm: 'Quản Trị Viên', rec: 'Phạm Quang Minh', lan: 'Trần Thị Lan', nam: 'Nguyễn Văn Nam', out: 'Bạn Không Đọc', vwr: 'Người Xem', boss2: 'Chủ Hai' };
+  const NAMES: Record<string, string> = { owner: 'Chủ Công Ty', adm: 'Quản Trị Viên', rec: 'Phạm Quang Minh', lan: 'Trần Thị Lan', nam: 'Nguyễn Văn Nam', out: 'Bạn Không Đọc', vwr: 'Người Xem', boss2: 'Chủ Hai', scp: 'Thành Viên Chi Nhánh' };
   const asUser = (who: string, org = orgId) => ({ actor: { type: 'user' as const, userId: users[who] as string, aal: 'aal1' as const }, orgId: org });
   const run = <T>(command: string, who: string, input: unknown) => runtime.execute<T>(command, input, asUser(who));
   const ask = <T>(query: string, who: string, input: unknown) => runtime.query<T>(query, input, asUser(who));
@@ -63,11 +64,13 @@ suite('Tracker alerts (#4873)', () => {
     await sqlAdmin('DELETE FROM ludy_meetings.tracker_term WHERE org_id = $1', [orgId]);
     await sqlAdmin('DELETE FROM ludy_kernel.notification WHERE org_id = $1', [orgId]);
     await sqlAdmin('DELETE FROM ludy_kernel.notification_mute WHERE org_id = $1', [orgId]);
+    await sqlAdmin('DELETE FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = $2', [orgId, TRACKER_ALERT_EVENT]);
     await sqlAdmin('DELETE FROM ludy_kernel.mail_message WHERE org_id = $1 AND template_key = $2', [orgId, 'meetings.tracker_alert']);
   };
   const optIn = (...who: string[]) => Promise.all(who.map((w) => run<TrackerAlertState>('meetings.tracker.alert_set', w, { on: true })));
-  // A meeting recorded by `rec`, shared with the org or with the listed readers only, whose recorder saved a summary and decisions and published them.
-  async function published(title: string, visibility: 'org' | 'attendees', readers: string[], summary: string, decisions: string[] = []): Promise<{ meetingId: string; eventId: string }> {
+  // A meeting recorded by `rec`, shared with the org or with the listed readers only, whose transcript lines are published (what a reader reads; the lines are seeded, as the Trackers card's tests do) and whose
+  // summary the recorder saved and published, which stores the alert's event.
+  async function published(title: string, visibility: 'org' | 'attendees', readers: string[], lines: string[], stage: 'published' | 'draft' = 'published'): Promise<{ meetingId: string; eventId: string }> {
     const meetingId = randomUUID();
     await sqlAdmin(
       `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
@@ -75,7 +78,10 @@ suite('Tracker alerts (#4873)', () => {
       [orgId, meetingId, users.rec, title, visibility],
     );
     for (const reader of readers) await sqlAdmin('INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)', [orgId, randomUUID(), meetingId, users[reader]]);
-    await run('meetings.summary.save', 'rec', { meetingId, summary, decisions });
+    for (const [n, text] of lines.entries()) {
+      await sqlAdmin(`INSERT INTO ludy_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, $3::numeric, $3::numeric + 5, 'Người nói 1', $4, $5::text)`, [orgId, meetingId, n * 10, text, stage]);
+    }
+    await run('meetings.summary.save', 'rec', { meetingId, summary: 'Tóm tắt không có từ khóa', decisions: [] });
     await run('meetings.result.publish', 'rec', { meetingId, confirmed: true });
     const events = await sqlAdmin<{ id: string; payload: Record<string, unknown> }>('SELECT id, payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = $2 ORDER BY created_at DESC, id DESC', [orgId, TRACKER_ALERT_EVENT]);
     const event = events.rows.find((e) => e.payload.meetingId === meetingId);
@@ -83,7 +89,7 @@ suite('Tracker alerts (#4873)', () => {
     return { meetingId, eventId: (event as { id: string }).id };
   }
   const notices = () =>
-    sqlAdmin<{ user_id: string; key: string; subject_id: string; detail: Record<string, string> }>('SELECT user_id, key, subject_id, detail FROM ludy_kernel.notification WHERE org_id = $1 AND kind = $2', [orgId, TRACKER_ALERT_KIND]).then((r) => r.rows);
+    sqlAdmin<{ user_id: string; dedupe_key: string; subject_id: string; detail: Record<string, string> }>('SELECT user_id, dedupe_key, subject_id, detail FROM ludy_kernel.notification WHERE org_id = $1 AND kind = $2', [orgId, TRACKER_ALERT_KIND]).then((r) => r.rows);
   const told = async () => (await notices()).map((n) => Object.keys(users).find((k) => users[k] === n.user_id)).sort();
   const mails = () =>
     sqlAdmin<{ to_address: string; payload: Record<string, unknown>; subject: string }>('SELECT to_address, payload, subject FROM ludy_kernel.mail_message WHERE org_id = $1 AND template_key = $2', [orgId, 'meetings.tracker_alert']).then((r) => r.rows);
@@ -114,7 +120,11 @@ suite('Tracker alerts (#4873)', () => {
     for (const key of Object.keys(NAMES)) users[key] = await upsertIdentity(db, { issuer: 'tka', subject: key, email: `${key}@tka.test`, name: NAMES[key] as string });
     orgId = (await createOrg(runtime, asUser('owner').actor, 'Công ty Báo Từ Khóa')).orgId;
     otherOrgId = (await createOrg(runtime, asUser('boss2').actor, 'Công ty Khác')).orgId;
-    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member'), ($1, $6, 'admin'), ($1, $7, 'viewer')`, [orgId, users.rec, users.lan, users.nam, users.out, users.adm, users.vwr]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member'), ($1, $6, 'admin'), ($1, $7, 'viewer'), ($1, $8, 'member')`, [orgId, users.rec, users.lan, users.nam, users.out, users.adm, users.vwr, users.scp]);
+    // A member whose only role assignment names one branch: their context is scoped to it, so a meeting shared with the whole org is not theirs to read.
+    const branch = randomUUID();
+    await sqlAdmin(`INSERT INTO ludy_kernel.legal_entity (org_id, id, name, kind, created_by) VALUES ($1, $2, 'Chi nhánh', 'branch', $3)`, [orgId, branch, users.owner]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.role_assignment (org_id, id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, $3, 'external_accountant', $4, $5)`, [orgId, randomUUID(), users.scp, branch, users.owner]);
   }, 300_000);
 
   afterAll(async () => {
@@ -145,7 +155,7 @@ suite('Tracker alerts (#4873)', () => {
   it('stores one event for a publish of a summary, with the meeting\'s id and language and no word', async () => {
     await clear();
     await addTerm('giá');
-    const { meetingId, eventId } = await published('Họp bí mật BÍ-MẬT-4873', 'attendees', ['lan'], 'Khách hỏi giá, tóm tắt BÍ-MẬT-4873', ['Quyết định BÍ-MẬT-4873']);
+    const { meetingId, eventId } = await published('Họp bí mật BÍ-MẬT-4873', 'attendees', ['lan'], ['Khách hỏi giá BÍ-MẬT-4873']);
     const row = (await sqlAdmin<{ payload: Record<string, unknown> }>('SELECT payload FROM ludy_kernel.outbox_event WHERE id = $1', [eventId])).rows[0];
     expect(row?.payload).toEqual({ meetingId, language: 'vi' });
     expect(JSON.stringify(row?.payload)).not.toContain('BÍ-MẬT');
@@ -158,13 +168,13 @@ suite('Tracker alerts (#4873)', () => {
     await addTerm('Đại Việt');
     // lan is a reader and opted in; nam is a reader and did not; out opted in and is no reader; adm opted in and is an admin with no reader row; rec opted in and recorded it.
     await optIn('lan', 'out', 'adm', 'rec');
-    const { meetingId, eventId } = await published('Họp bán hàng', 'attendees', ['lan', 'nam'], 'Khách hỏi giá, giá cao; ký hợp đồng.', ['Giảm giá 5%', 'Gửi hợp đồng mẫu']);
+    const { meetingId, eventId } = await published('Họp bán hàng', 'attendees', ['lan', 'nam'], ['Khách hỏi giá, giá cao.', 'Giảm giá 5%.', 'Ký hợp đồng.', 'Gửi hợp đồng mẫu.']);
     expect(await notice(eventId)).toEqual({ notified: 1, mailed: 1 });
     expect(await told()).toEqual(['lan']);
     const [only] = await notices();
-    expect(only?.key).toBe(`tracker:${meetingId}`);
+    expect(only?.dedupe_key).toBe(`tracker:${meetingId}`);
     expect(only?.subject_id).toBe(meetingId);
-    // Ids and counts only: giá 4 times (summary 2, decision 1, ... "Giảm giá" is the word giá), hợp đồng 2 times; no word, no title, no text in the row.
+    // Ids and counts only: giá 3 times (two in the first line, one in "Giảm giá"), hợp đồng 2 times; no word, no title, no text in the row.
     const listed = parseTrackerAlertTerms(only?.detail);
     const wordOf = new Map((await sqlAdmin<{ id: string; term: string }>('SELECT id, term FROM ludy_meetings.tracker_term WHERE org_id = $1', [orgId])).rows.map((r) => [r.id, r.term]));
     expect(listed.map((w) => [wordOf.get(w.termId), w.count])).toEqual([['giá', 3], ['hợp đồng', 2]]);
@@ -180,46 +190,54 @@ suite('Tracker alerts (#4873)', () => {
     for (const leak of ['giá', 'hợp đồng', 'Họp bán hàng']) expect(JSON.stringify(mail), leak).not.toContain(leak);
     // The same event again, and a second publish of the same meeting, tell nobody twice.
     expect(await notice(eventId)).toEqual({ notified: 0, mailed: 0 });
-    await run('meetings.summary.save', 'rec', { meetingId, summary: 'Lại nói về giá', decisions: [] });
+    await run('meetings.summary.save', 'rec', { meetingId, summary: 'Tóm tắt lần hai', decisions: [] });
     await run('meetings.result.publish', 'rec', { meetingId, confirmed: true });
     for (const e of (await sqlAdmin<{ id: string }>('SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = $2', [orgId, TRACKER_ALERT_EVENT])).rows) await notice(e.id);
     expect(await told()).toEqual(['lan']);
     expect(await mails()).toHaveLength(1);
   });
 
-  it('tells every opted-in member of a meeting shared with the org (the recorder excepted), and a reader added to an attendees-only meeting', async () => {
+  it('tells every opted-in member of a meeting shared with the org whose scope is the whole org (the recorder and a member limited to one branch excepted), and a reader added to an attendees-only meeting', async () => {
     await clear();
     await addTerm('giá');
-    await optIn('lan', 'out', 'adm', 'rec', 'nam');
-    const shared = await published('Họp cả công ty', 'org', [], 'Bàn về giá mới.');
+    await optIn('lan', 'out', 'adm', 'rec', 'nam', 'scp');
+    const shared = await published('Họp cả công ty', 'org', [], ['Bàn về giá mới.']);
     expect(await notice(shared.eventId)).toEqual({ notified: 4, mailed: 4 });
     expect(await told()).toEqual(['adm', 'lan', 'nam', 'out']);
     // An attendees-only meeting whose reader list later gains `out`: told when the event is dispatched, as the reader rule stands then.
-    const closed = await published('Họp kín', 'attendees', ['lan'], 'Nói về giá.');
+    const closed = await published('Họp kín', 'attendees', ['lan'], ['Nói về giá.']);
     await sqlAdmin('INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)', [orgId, randomUUID(), closed.meetingId, users.out]);
     await notice(closed.eventId);
     const got = (await notices()).filter((n) => n.subject_id === closed.meetingId).map((n) => Object.keys(users).find((k) => users[k] === n.user_id));
     expect(got.sort()).toEqual(['lan', 'out']);
   });
 
-  it('tells nobody when no tracked word is in the minutes, when none is tracked, when the kind is muted, or when the text period has ended', async () => {
+  it('tells nobody when no tracked word is in the published lines, when none is tracked, when the kind is muted, when the lines are drafts, or when the meeting is past its text period or gone', async () => {
     await clear();
     await optIn('lan');
-    const none = await published('Họp không có từ', 'org', [], 'Nói chuyện thời tiết.');
-    expect(await notice(none.eventId)).toEqual({ notified: 0, mailed: 0 });
     // No word tracked at all.
-    const bare = await published('Họp không theo dõi', 'org', [], 'Bàn về giá.');
+    const bare = await published('Họp không theo dõi', 'org', [], ['Bàn về giá.']);
     expect(await notice(bare.eventId)).toEqual({ notified: 0, mailed: 0 });
     await addTerm('giá');
+    // A word is tracked, and the lines do not hold it.
+    const none = await published('Họp không có từ', 'org', [], ['Nói chuyện thời tiết.']);
+    expect(await notice(none.eventId)).toEqual({ notified: 0, mailed: 0 });
+    // Draft lines are the recorder's alone: a reader has none to count.
+    const draft = await published('Họp còn bản nháp', 'org', [], ['Bàn về giá.'], 'draft');
+    expect(await notice(draft.eventId)).toEqual({ notified: 0, mailed: 0 });
     // A member who muted the kind gets neither the notice nor the mail.
     await run('kernel.notification.mute', 'lan', { kind: TRACKER_ALERT_KIND, muted: true });
-    const muted = await published('Họp tắt tiếng', 'org', [], 'Bàn về giá.');
+    const muted = await published('Họp tắt tiếng', 'org', [], ['Bàn về giá.']);
     expect(await notice(muted.eventId)).toEqual({ notified: 0, mailed: 0 });
     await run('kernel.notification.mute', 'lan', { kind: TRACKER_ALERT_KIND, muted: false });
     // The text period reached before the dispatch: nothing is read.
-    const aged = await published('Họp hết hạn', 'org', [], 'Bàn về giá.');
-    await sqlAdmin('UPDATE ludy_meetings.meeting SET text_retention_date = current_date - 1 WHERE org_id = $1 AND id = $2', [orgId, aged.meetingId]).catch(() => undefined);
-    await sqlAdmin('DELETE FROM ludy_meetings.meeting WHERE org_id = $1 AND id = $2', [orgId, (await published('Họp bị xóa', 'org', [], 'Bàn về giá.')).meetingId]);
+    const aged = await published('Họp hết hạn', 'org', [], ['Bàn về giá.']);
+    await sqlAdmin('UPDATE ludy_meetings.meeting SET text_retention_date = current_date - 1 WHERE org_id = $1 AND id = $2', [orgId, aged.meetingId]);
+    expect(await notice(aged.eventId)).toEqual({ notified: 0, mailed: 0 });
+    // The meeting is gone before the dispatch.
+    const gone = await published('Họp bị xóa', 'org', [], ['Bàn về giá.']);
+    await sqlAdmin('DELETE FROM ludy_meetings.meeting WHERE org_id = $1 AND id = $2', [orgId, gone.meetingId]);
+    expect(await notice(gone.eventId)).toEqual({ notified: 0, mailed: 0 });
     expect(await told()).toEqual([]);
     expect(await mails()).toEqual([]);
   });
@@ -228,7 +246,7 @@ suite('Tracker alerts (#4873)', () => {
     await clear();
     await addTerm('giá');
     await optIn('lan');
-    const { meetingId } = await published('Họp thử', 'org', [], 'Bàn về giá.');
+    const { meetingId } = await published('Họp thử', 'org', [], ['Bàn về giá.']);
     const own = (await worker.execute<{ recipients: string[]; terms: unknown[]; texts: string[] } | null>('test.tracker_alert_input_probe', { org: orgId, meeting: meetingId }, system())) as { recipients: string[]; terms: unknown[]; texts: string[] };
     expect(own.recipients).toEqual([users.lan]);
     expect(own.terms).toHaveLength(1);

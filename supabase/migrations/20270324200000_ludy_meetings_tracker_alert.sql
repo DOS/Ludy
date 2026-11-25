@@ -1,14 +1,14 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
--- Alerts when a tracked keyword comes up in the minutes of a new meeting (#4873, builds on the keyword trackers of #4818). A member who turns it on is told, once per meeting, which tracked words are in the
--- minutes the recorder just published for them to read, and how often: counted by code, with no model and no text in the notice.
+-- Alerts when a tracked keyword comes up in a new meeting (#4873, builds on the keyword trackers of #4818). A member who turns it on is told, once per meeting, which tracked words are in the
+-- transcript lines the recorder published for them to read, and how often: counted by code, with no model and no text in the notice.
 --
 -- ludy_meetings.tracker_alert: one row per member who opted in (no row, no alert; off by default). Private to its member: the row policy shows and changes a member's own row only, in a user context; an
 --   owner, an admin, another member, an agent context and the system context read none of it (the worker reads it through the definer below). It holds no word, no meeting and no text.
 -- ludy_meetings.tracker_alert_input(org, meeting, now): the worker-only definer the alert's dispatch asks. The system context cannot read meeting rows or terms, and the reader rule must be decided for each
---   recipient, not for the caller, so this is the one place that does both. It answers NULL unless the meeting still exists, Meetings is on for the org and its text period has not ended (as minutes_wake_open
---   reads it); otherwise one jsonb of the three things the dispatch counts with: `recipients` (the opted-in members who are an active owner, admin or member of the org with an enabled account, are not the
---   recorder, and read the meeting now: it is shared with the org, or they are one of its readers), `terms` (the org's tracked words, at most 20) and `texts` (the PUBLISHED minutes a reader may read: the summary, the decisions, the action item
---   titles and the chapter titles). The terms and the texts are returned only when at least one recipient exists. Nothing of it is stored or logged by the dispatch, and none of it enters the notice.
+--   recipient, not for the caller, so this is the one place that does both (the meeting_read policy, as enter_context sets the member's scope: a meeting shared with the org needs the all-entities scope). It answers NULL unless the meeting still exists, Meetings is on for the org and its text period has not ended (as minutes_wake_open
+--   reads it); otherwise one jsonb of the three things the dispatch counts with: `recipients` (the opted-in members of an active org who are an owner, admin or member with an enabled account, are not the
+--   recorder, and read the meeting now: it is shared with the org and their scope is the whole org, or they are one of its readers), `terms` (the org's tracked words, at most 20) and `texts` (the PUBLISHED transcript lines a
+--   reader may read, in time order, at most 20000). The terms and the texts are returned only when at least one recipient exists. Nothing of it is stored or logged by the dispatch, and none of it enters the notice.
 --   Like minutes_wake_open it holds the caller to the system context of the same org (ctx_org_id() is set, the actor is 'system' and p_org is that org), or it raises NO_CONTEXT (42501). Worker's login alone.
 -- Idempotent; applied files stay untouched.
 SET LOCAL lock_timeout = '2s';
@@ -59,10 +59,19 @@ BEGIN
     WHERE a.org_id = v_org
       -- The recorder published it; they are not told about their own publish.
       AND mt.recorder_user_id IS DISTINCT FROM a.user_id
-      AND EXISTS (SELECT 1 FROM ludy_kernel.tenant_member m WHERE m.org_id = a.org_id AND m.user_id = a.user_id AND m.role IN ('owner', 'admin', 'member'))
+      AND EXISTS (
+        SELECT 1 FROM ludy_kernel.tenant_member m
+        JOIN ludy_kernel.tenant t ON t.org_id = m.org_id AND t.status = 'active'
+        WHERE m.org_id = a.org_id AND m.user_id = a.user_id AND m.role IN ('owner', 'admin', 'member')
+      )
       AND EXISTS (SELECT 1 FROM ludy_kernel.user_account u WHERE u.id = a.user_id AND u.disabled_at IS NULL)
-      -- The reader rule, for this member: the meeting is shared with the org (every user context carries the all-entities scope), or they are one of its readers (an owner or admin has no extra right, ADR-0047).
-      AND (mt.visibility = 'org' OR EXISTS (SELECT 1 FROM ludy_meetings.meeting_reader rd WHERE rd.org_id = a.org_id AND rd.meeting_id = p_meeting AND rd.user_id = a.user_id))
+      -- The reader rule, for this member: the meeting is shared with the org and their context carries the all-entities scope (enter_context: an owner or admin, a member with an org-wide role or with no role assignment
+      -- at all; one whose assignments all name a legal entity is scoped to those and reads no org-shared meeting), or they are one of its readers (an owner or admin has no extra right, ADR-0047).
+      AND ((mt.visibility = 'org' AND (
+            EXISTS (SELECT 1 FROM ludy_kernel.tenant_member sm WHERE sm.org_id = a.org_id AND sm.user_id = a.user_id AND sm.role IN ('owner', 'admin'))
+            OR EXISTS (SELECT 1 FROM ludy_kernel.role_assignment ra WHERE ra.org_id = a.org_id AND ra.user_id = a.user_id AND ra.legal_entity_id IS NULL)
+            OR NOT EXISTS (SELECT 1 FROM ludy_kernel.role_assignment ra WHERE ra.org_id = a.org_id AND ra.user_id = a.user_id)
+          )) OR EXISTS (SELECT 1 FROM ludy_meetings.meeting_reader rd WHERE rd.org_id = a.org_id AND rd.meeting_id = p_meeting AND rd.user_id = a.user_id))
     ORDER BY a.user_id
     LIMIT 500
   ) r;
@@ -71,17 +80,13 @@ BEGIN
   END IF;
   SELECT COALESCE(pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('id', t.id, 'term', t.term) ORDER BY t.id), '[]'::jsonb) INTO v_terms
   FROM (SELECT id, term FROM ludy_meetings.tracker_term WHERE org_id = v_org ORDER BY id LIMIT 20) t;
-  SELECT COALESCE(pg_catalog.jsonb_agg(x.body), '[]'::jsonb) INTO v_texts
+  SELECT COALESCE(pg_catalog.jsonb_agg(x.body ORDER BY x.start_seconds, x.id), '[]'::jsonb) INTO v_texts
   FROM (
-    SELECT r.summary AS body FROM ludy_meetings.meeting_result r WHERE r.org_id = v_org AND r.meeting_id = p_meeting AND r.stage = 'published'
-    UNION ALL
-    SELECT d.value AS body
-    FROM ludy_meetings.meeting_result r, pg_catalog.jsonb_array_elements_text(CASE WHEN pg_catalog.jsonb_typeof(r.decisions) = 'array' THEN r.decisions ELSE '[]'::jsonb END) AS d(value)
-    WHERE r.org_id = v_org AND r.meeting_id = p_meeting AND r.stage = 'published'
-    UNION ALL
-    (SELECT i.title AS body FROM ludy_meetings.action_item i WHERE i.org_id = v_org AND i.meeting_id = p_meeting AND i.stage = 'published' ORDER BY i.id LIMIT 200)
-    UNION ALL
-    (SELECT c.title AS body FROM ludy_meetings.meeting_chapter c WHERE c.org_id = v_org AND c.meeting_id = p_meeting AND c.stage = 'published' ORDER BY c.start_seconds, c.id LIMIT 200)
+    SELECT g.text AS body, g.start_seconds, g.id
+    FROM ludy_meetings.transcript_segment g
+    WHERE g.org_id = v_org AND g.meeting_id = p_meeting AND g.stage = 'published'
+    ORDER BY g.start_seconds, g.id
+    LIMIT 20000
   ) x;
   RETURN pg_catalog.jsonb_build_object('recipients', v_recipients, 'terms', v_terms, 'texts', v_texts);
 END $$;

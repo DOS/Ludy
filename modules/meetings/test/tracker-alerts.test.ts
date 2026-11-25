@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The counting of tracked words in the published minutes text for the alert (#4873): the same counting as the Trackers card, the busiest words first, at most five, none for a word that does not come up.
+// The counting of tracked words in the published transcript lines for the alert (#4873): the same counting as the Trackers card, the busiest words first, at most five, none for a word that does not come up.
 import { describe, expect, it } from 'vitest';
 import { encodeTrackerAlertTerms, parseTrackerAlertTerms, TRACKER_ALERT_TERMS_MAX } from '@ludy/kernel-contract';
 import { countTrackerHits } from '../src/tracker-alerts.ts';
