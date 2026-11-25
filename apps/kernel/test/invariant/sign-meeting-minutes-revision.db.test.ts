@@ -216,13 +216,14 @@ suite('eSign meeting minutes are bound to the minutes by the server (#4532)', ()
       return id;
     };
     // A client-supplied value is replaced for a meeting-minutes row and dropped for any other row.
+    expect(revision).toMatch(/^[0-9a-f]{64}$/);
     expect(await storedRevision(await insert('meeting_minutes', meetingId))).toBe(revision);
     expect(await storedRevision(await insert('standalone', null))).toBeNull();
 
     const made = await create(recorderId, meetingId, await ingestPdf(recorderId, `mine-${randomUUID()}`));
     await expect(
       adminPool!.query(`UPDATE crove_sign.envelope SET source_revision = repeat('0', 64) WHERE org_id = $1::uuid AND id = $2::uuid`, [orgId, made.envelopeId]),
-    ).rejects.toThrow(/ENVELOPE_IMMUTABLE/);
+    ).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(/ENVELOPE_IMMUTABLE/) });
     expect(await storedRevision(made.envelopeId)).toBe(revision);
   });
 
@@ -347,8 +348,49 @@ suite('eSign meeting minutes are bound to the minutes by the server (#4532)', ()
       (await adminPool!.query<{ n: string }>('SELECT count(*)::text AS n FROM crove_sign.envelope WHERE org_id = $1::uuid', [otherOrgId])).rows[0]?.n,
     ).toBe('0');
 
+    // 4. Contextless INSERT from unprivileged app role (without enter_user_context) targeting orgId or otherOrgId:
+    //    must be rejected by RLS and must short-circuit NEW.source_revision to 'legacy' BEFORE RLS runs (#4755).
+    const probeContextlessAppInsert = async (
+      targetOrgId: string,
+      targetMeetingId: string,
+      actorUserId: string,
+      forgedRevision?: string,
+    ) => {
+      const client = await appPool!.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query('SAVEPOINT sp_contextless');
+        const extraCol = forgedRevision === undefined ? '' : ', source_revision';
+        const extraVal = forgedRevision === undefined ? '' : ', $6';
+        const params =
+          forgedRevision === undefined
+            ? [targetOrgId, targetMeetingId, ownerFile, 'a'.repeat(64), actorUserId]
+            : [targetOrgId, targetMeetingId, ownerFile, 'a'.repeat(64), actorUserId, forgedRevision];
+        await expect(
+          client.query(
+            `INSERT INTO crove_sign.envelope (
+               org_id, title, status, routing_mode, source_kind, source_id,
+               source_file_id, source_storage_key, source_generation, source_sha256,
+               inspect_status, created_by${extraCol}
+             ) VALUES (
+               $1::uuid, 'Contextless Probe', 'draft', 'parallel', 'meeting_minutes', $2::uuid,
+               $3::uuid, 'k', 'content:1', $4, 'pending', $5::uuid${extraVal}
+             )`,
+            params,
+          ),
+        ).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(/row-level security policy/) });
+        await client.query('ROLLBACK TO SAVEPOINT sp_contextless');
+      } finally {
+        await client.query('ROLLBACK').catch(() => {});
+        client.release();
+      }
+    };
+
+    await probeContextlessAppInsert(orgId, attendeesMeetingId, ownerId);
+    await probeContextlessAppInsert(otherOrgId, otherMeetingId, ownerId);
+
     // Verify BEFORE INSERT trigger order: install an alphabetical later trigger (`z_assert_legacy_on_cross_org`) that fails if
-    // `envelope_minutes_revision` did NOT short-circuit cross-org `NEW.source_revision` to `'legacy'` before RLS ran.
+    // `envelope_minutes_revision` did NOT short-circuit cross-org or contextless `NEW.source_revision` to `'legacy'` before RLS ran.
     await adminPool!.query(
       `CREATE FUNCTION crove_sign.z_assert_legacy_on_cross_org() RETURNS trigger
        LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
@@ -364,12 +406,17 @@ suite('eSign meeting minutes are bound to the minutes by the server (#4532)', ()
         'CREATE TRIGGER z_assert_legacy_on_cross_org BEFORE INSERT ON crove_sign.envelope FOR EACH ROW EXECUTE FUNCTION crove_sign.z_assert_legacy_on_cross_org()',
       );
       await probeCrossOrgInsert();
+      await probeContextlessAppInsert(orgId, attendeesMeetingId, ownerId);
+      await probeContextlessAppInsert(otherOrgId, otherMeetingId, ownerId);
+      await probeContextlessAppInsert(orgId, attendeesMeetingId, ownerId, 'f'.repeat(64));
+      await probeContextlessAppInsert(otherOrgId, otherMeetingId, ownerId, 'f'.repeat(64));
     } finally {
       await adminPool!.query('DROP TRIGGER IF EXISTS z_assert_legacy_on_cross_org ON crove_sign.envelope');
       await adminPool!.query('DROP FUNCTION IF EXISTS crove_sign.z_assert_legacy_on_cross_org()');
     }
 
-    // No-context admin insert targeting otherOrgId / otherMeetingId still computes the real minutes revision.
+    // No-context admin insert targeting otherOrgId / otherMeetingId still computes the real minutes revision,
+    // non-meeting_minutes still gets NULL, and UPDATE OF source_revision still rejects with ENVELOPE_IMMUTABLE (42501).
     const adminRowId = randomUUID();
     const otherFileId = await ingestPdf(otherOwnerId, `admin-other-${randomUUID()}`, otherOrgId);
     await adminPool!.query(
@@ -386,6 +433,28 @@ suite('eSign meeting minutes are bound to the minutes by the server (#4532)', ()
     const adminStored = (
       await adminPool!.query<{ r: string | null }>('SELECT source_revision AS r FROM crove_sign.envelope WHERE org_id = $1::uuid AND id = $2::uuid', [otherOrgId, adminRowId])
     ).rows[0]?.r;
+    expect(adminStored).toMatch(/^[0-9a-f]{64}$/);
     expect(adminStored).toBe(otherRev);
+
+    const standaloneRowId = randomUUID();
+    await adminPool!.query(
+      `INSERT INTO crove_sign.envelope (
+         org_id, id, title, status, routing_mode, source_kind, source_id,
+         source_file_id, source_storage_key, source_generation, source_sha256,
+         inspect_status, created_by, source_revision
+       )
+       SELECT $1::uuid, $2::uuid, 'Admin Standalone', 'draft', 'parallel', 'standalone', NULL,
+              f.id, f.storage_key, f.generation, f.sha256, 'pending', $3::uuid, repeat('f', 64)
+       FROM crove_kernel.file f WHERE f.org_id = $1::uuid AND f.id = $4::uuid`,
+      [otherOrgId, standaloneRowId, otherOwnerId, otherFileId],
+    );
+    const standaloneStored = (
+      await adminPool!.query<{ r: string | null }>('SELECT source_revision AS r FROM crove_sign.envelope WHERE org_id = $1::uuid AND id = $2::uuid', [otherOrgId, standaloneRowId])
+    ).rows[0]?.r;
+    expect(standaloneStored).toBeNull();
+
+    await expect(
+      adminPool!.query(`UPDATE crove_sign.envelope SET source_revision = repeat('0', 64) WHERE org_id = $1::uuid AND id = $2::uuid`, [otherOrgId, adminRowId]),
+    ).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(/ENVELOPE_IMMUTABLE/) });
   });
 });
