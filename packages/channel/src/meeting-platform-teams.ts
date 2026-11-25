@@ -369,12 +369,16 @@ export class TeamsMeetingPlatform implements MeetingPlatformAdapter, MeetingPlat
         if (!hasVideo && !hasTranscript) continue;
         const parsedCall = meetingPlatformCallOf(event.joinUrl);
         const call = parsedCall?.platform === 'microsoft_teams' ? parsedCall : null;
+        // What was recorded: the recording's own span, else the transcript's, else the calendar slot (a two hour slot may hold forty minutes). The start and the length come from the SAME file, so
+        // they stay one interval (a call that began late is not placed at the slot's start), which is what the "already recorded" match and the imported meeting's end read.
+        const spanFile = [hasVideo ? videos[0] : undefined, hasTranscript ? transcriptFiles[0] : undefined].find((file) => lengthOf(file) !== null);
+        const length = lengthOf(spanFile);
         found[index] = {
+          // The id stays the occurrence's (meeting, slot start, slot end): the sweep keys its rows on it.
           id: keyOf(meeting, event.start, event.end),
           title: event.title,
-          startedAt: new Date(event.start).toISOString(),
-          // The length of what was recorded, not of the calendar slot (a two hour slot may hold forty minutes): the recording's own span, else the transcript's, else the slot.
-          lengthSeconds: lengthOf(hasVideo ? videos[0] : undefined) ?? lengthOf(hasTranscript ? transcriptFiles[0] : undefined) ?? Math.round((event.end - event.start) / 1000),
+          startedAt: new Date(spanFile && length !== null ? Date.parse(text(spanFile.createdDateTime)) : event.start).toISOString(),
+          lengthSeconds: length ?? Math.round((event.end - event.start) / 1000),
           sizeBytes: null,
           // A Teams recording is one MP4 with the sound in it; there is no audio-only file.
           hasAudio: false,

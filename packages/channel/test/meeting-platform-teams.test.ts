@@ -132,7 +132,8 @@ describe('TeamsMeetingPlatform.list', () => {
     expect(listed[0]).toEqual({
       id: OCC.A,
       title: 'Họp tuần (Teams)',
-      startedAt: '2026-11-17T02:00:00.000Z',
+      // The recording began at 02:05 and ran 50 minutes inside the 02:00 to 03:00 slot; the id keeps the slot.
+      startedAt: '2026-11-17T02:05:00.000Z',
       lengthSeconds: 3000,
       sizeBytes: null,
       hasAudio: false,
@@ -149,10 +150,13 @@ describe('TeamsMeetingPlatform.list', () => {
 
   it('gives a row the length of what was recorded, not of the calendar slot: the recording, else the transcript, else the slot', async () => {
     const aaaa = `/v1.0/me/onlineMeetings/${IDS.AAAA}`;
-    // A two hour slot of 01:00 to 03:00 would be 7200 seconds; the recording ran 40 minutes inside it.
+    // The slot is 02:00 to 03:00 (3600 seconds); the recording ran 40 minutes inside it.
     const recording = (extra: Record<string, unknown>) => ({ json: { value: [{ id: RECORDING_ID, createdDateTime: '2026-11-17T02:10:00Z', recordingContentUrl: 'https://graph.microsoft.com/v1.0/$metadata#recording', ...extra }] } });
     const lengthOfA = async (overrides: Record<string, Answer>) => (await teams(graph(overrides)).adapter.list(CREDENTIAL, SINCE)).find((m) => m.id === OCC.A)?.lengthSeconds;
     expect(await lengthOfA({ [`${aaaa}/recordings`]: recording({ endDateTime: '2026-11-17T02:50:00Z' }) })).toBe(2400);
+    // The start follows the same file as the length: a call that began 40 minutes after the slot started is placed where it began, so the two stay one interval, and the id stays the slot's.
+    const late = (await teams(graph({ [`${aaaa}/recordings`]: recording({ createdDateTime: '2026-11-17T02:40:00Z', endDateTime: '2026-11-17T03:00:00Z' }) })).adapter.list(CREDENTIAL, SINCE)).find((m) => m.id === OCC.A);
+    expect(late).toMatchObject({ startedAt: '2026-11-17T02:40:00.000Z', lengthSeconds: 1200 });
     // No end on the recording: the transcript's own span (02:05 to 02:55) is next.
     expect(await lengthOfA({ [`${aaaa}/recordings`]: recording({}) })).toBe(3000);
     // An end before the start, or a span of more than a day, is no length: the transcript's span again.
