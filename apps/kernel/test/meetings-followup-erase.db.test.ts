@@ -199,8 +199,10 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
   it('shows a follow-up mail found by its address as id, address, status and time only, and shows the mail of every other source whole', async () => {
     const SECRET = `Bi-mat-cuoc-hop-${randomUUID()}`;
     const m = await seedSent({ summary: SECRET, subject: `Cam on ${SECRET}` });
-    const address = `tim-thay-${randomUUID()}@erase.test`;
-    const followup = (await sqlAdmin<{ id: string }>("UPDATE ludy_kernel.mail_message SET to_address = $3 WHERE org_id = $1 AND source = 'meetings.followup' AND source_id = $2 RETURNING id", [orgId, m, address])).rows[0]!.id;
+    // The address of a mail is written once (mail_message_guard), so the follow-up mail is found by the address it was sent to.
+    const sent = (await sqlAdmin<{ id: string; to_address: string }>("SELECT id, to_address FROM ludy_kernel.mail_message WHERE org_id = $1 AND source = 'meetings.followup' AND source_id = $2 LIMIT 1", [orgId, m])).rows[0]!;
+    const followup = sent.id;
+    const address = sent.to_address;
     const other = (await sqlAdmin<{ id: string }>(
       "INSERT INTO ludy_kernel.mail_message (org_id, stream, source, source_id, template_key, to_address, to_hash, subject, payload, message_id_header, status) VALUES ($1, 'transactional', 'finance.payment_reminder.notice1', $2, 'x.y', $3, repeat('a', 64), 'Nhac thanh toan', '{\"keep\":true}', $4, 'queued') RETURNING id",
       [orgId, randomUUID(), address, `<finder-${randomUUID()}@y.test>`],
