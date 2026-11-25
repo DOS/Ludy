@@ -27,6 +27,8 @@ Recorded from the owner's answers in the Claude PO chat (popups), quoted as give
 | Q9 AGPL on stores | (PO decision, owner informed) | The question is added to the lawyer's list in #62. Until answered, the store build contains only code owned by the project owner |
 | Q4 platforms, Q6 push, Q8 milestone | not asked separately | **PO default, owner may change:** both platforms from one Expo codebase, Android internal track and TestFlight first; native push only for Crove Cloud through a relay in the private layer, self-hosters keep PWA push; Phase 1 in M3, Phase 2a in M3 when a worker is free, else right after the pilot exit |
 
+Issues (DOS/Ludy, all on the Crove board): Phase 1 #4879; Phase 2a skeleton and sign-in #4880, approvals #4881, Engage inbox #4882, native push #4883 (M3, after #4879); desktop D2 #4884 and D4 macOS #4885 (M3), D3 #4886 (Icebox); Icebox epics 2b #4887, 2c #4888, Phase 3 #4889, Phase 4 #4890. AGPL-on-stores question: comment on #62.
+
 Section 8 question 5 (spending) is moot: no purchase. The cost lines in section 3.5 and the Vietnamese summary describe what the owner already holds.
 
 ## 1. Jobs, not apps
