@@ -43,7 +43,7 @@ import { RETENTION_CRON, RETENTION_TZ, expireExports, runRetention, sweepInbound
 import { pruneMarketplaceColumnChecks, runMarketplacePurge, runMarketplaceRetention } from './marketplace-retention.ts';
 import { runMeetingsTranscribe, type MeetingsTranscribeDeps, type MeetingsTranscribeJob } from './meetings-transcribe.ts';
 import { runMeetingsLiveNotes, type MeetingsLiveNotesDeps, type MeetingsLiveNotesJob } from './meetings-live-notes.ts';
-import { createShredRefSync, replayShreds, runMeetingsRetention, sweepMeetingMedia } from './meetings-retention.ts';
+import { createShredRefSync, pruneStaleCalendarAgenda, replayShreds, runMeetingsRetention, sweepMeetingMedia } from './meetings-retention.ts';
 import { CRM_DEAL_STALE_CRON, CRM_IMPORT_EXPIRE_CRON, raiseCrmNextSteps, sweepCrmImports } from './crm-worker.ts';
 import { MEMBER_VY_SWEEP_CRON, MEMBER_VY_SWEEP_EXPIRE_SECONDS, MEMBER_VY_SWEEP_TZ, sweepMemberVyFormerMembers, sweepMemberVyResults } from './member-vy-worker.ts';
 import { WAKE_JOB_EXPIRE_SECONDS, WAKE_RETRY_DELAY_SECONDS, WAKE_RETRY_LIMIT, runWakeDelivery, type WakeJob } from './mcp-wake.ts';
@@ -1269,6 +1269,9 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       if (deps.runtime.installed('meetings')) {
         await runMeetingsRetention({ runtime: deps.runtime, workerDb: deps.workerDb }).catch((error: unknown) => {
           opsAlert('[meetings-retention] ALERT the nightly shred failed; the error is in the worker log', error);
+        });
+        await pruneStaleCalendarAgenda({ workerDb: deps.workerDb }).catch((error: unknown) => {
+          opsAlert('[meetings-retention] ALERT the nightly calendar agenda prune failed; the error is in the worker log', error);
         });
       }
       // The original file and the per-order amounts of marketplace reports decided 90 days ago (#2516, ADR-0045 point 8). The database lists only decided reports of the two
