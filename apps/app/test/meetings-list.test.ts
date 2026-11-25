@@ -7,6 +7,7 @@ import {
   filterAndSortMeetings,
   formatMeetingDuration,
   hasActiveMeetingFilter,
+  hasLabel,
 } from '../src/lib/meetings-list.ts';
 
 function meeting(over: Partial<MeetingSummary> = {}): MeetingSummary {
@@ -102,6 +103,22 @@ describe('meetings-list helpers (#4477)', () => {
     ]);
   });
 
+  it('filters by a label of the meeting, whatever the case, and keeps every meeting with no label chosen (#4955)', () => {
+    const labels = new Map<string, readonly string[]>([
+      ['00000000-0000-4000-8000-000000000001', ['Khách Hoa Sen', 'Họp tuần']],
+      ['00000000-0000-4000-8000-000000000003', ['khách hoa sen']],
+    ]);
+    const ids = (label: string) => filterAndSortMeetings(sample, { ...EMPTY_MEETING_FILTER, label }, 'started_desc', labels).map((m) => m.id);
+    expect(ids('KHÁCH HOA SEN').sort()).toEqual(['00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000003']);
+    expect(ids('Họp tuần')).toEqual(['00000000-0000-4000-8000-000000000001']);
+    expect(ids('Không có')).toEqual([]);
+    expect(ids('')).toHaveLength(sample.length);
+    // With no labels read yet, a chosen label shows nothing rather than every meeting.
+    expect(filterAndSortMeetings(sample, { ...EMPTY_MEETING_FILTER, label: 'Họp tuần' }, 'started_desc')).toEqual([]);
+    expect(hasLabel(labels, '00000000-0000-4000-8000-000000000003', 'Khách Hoa Sen')).toBe(true);
+    expect(hasLabel(labels, '00000000-0000-4000-8000-000000000002', 'Khách Hoa Sen')).toBe(false);
+  });
+
   it('sorts across all 4 modes without mutating input', () => {
     const before = sample.map((m) => m.id);
     expect(filterAndSortMeetings(sample, EMPTY_MEETING_FILTER, 'started_desc').map((m) => m.id)).toEqual([
@@ -139,8 +156,10 @@ describe('meetings-list helpers (#4477)', () => {
         visibility: 'org',
         media: 'transcript',
         platform: 'meet',
+        label: '',
       }),
     ).toBe(4);
+    expect(countActiveMeetingFilters({ ...EMPTY_MEETING_FILTER, label: 'Khách Hoa Sen' })).toBe(1);
   });
 
   it('formats meeting duration across seconds, minutes, hours, and empty values', () => {

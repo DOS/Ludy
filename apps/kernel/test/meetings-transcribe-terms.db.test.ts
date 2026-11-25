@@ -49,6 +49,8 @@ suite('the term list of a transcription run (#3499)', () => {
   let orgId = '';
   let app: Runtime;
   let worker: Runtime;
+  let branchA = '';
+  let branchB = '';
   const users: Record<string, string> = {};
   const store = new MemoryStore();
   const broker = {
@@ -194,21 +196,32 @@ suite('the term list of a transcription run (#3499)', () => {
       noname: null,
       outsider: 'Người Ngoài Cuộc',
       plain: null,
+      scoped: 'Trần Hạn Chế',
     };
     for (const [key, name] of Object.entries(names)) {
       users[key] = await upsertIdentity(createDb(appPool), { issuer: 'terms', subject: key, email: `${key}@terms.test`, name });
     }
     orgId = (await createOrg(app, { type: 'user', userId: users.owner as string, aal: 'aal1' }, 'Terms')).orgId;
     await admin((c) =>
-      c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member'), ($1, $6, 'member')`, [
+      c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member'), ($1, $6, 'member'), ($1, $7, 'member')`, [
         orgId,
         users.recorder,
         users.lan,
         users.noname,
         users.outsider,
         users.plain,
+        users.scoped,
       ]),
     );
+    // A recorder whose only role assignment names the branch A: their entity scope is that branch, so a party is theirs to name only when it is linked to it (#3532).
+    branchA = randomUUID();
+    branchB = randomUUID();
+    await admin(async (c) => {
+      for (const [id, name] of [[branchA, 'Chi nhánh A'], [branchB, 'Chi nhánh B']] as const) {
+        await c.query(`INSERT INTO ludy_kernel.legal_entity (org_id, id, name, kind, created_by) VALUES ($1, $2, $3, 'branch', $4)`, [orgId, id, name, users.owner]);
+      }
+      await c.query(`INSERT INTO ludy_kernel.role_assignment (org_id, id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, $3, 'external_accountant', $4, $5)`, [orgId, randomUUID(), users.scoped, branchA, users.owner]);
+    });
   }, 300_000);
 
   afterAll(async () => {
@@ -268,6 +281,27 @@ suite('the term list of a transcription run (#3499)', () => {
     const none = await transcribe('recorder', unlinked);
     expect(none.requests[0]!.fields.prompt).toBe('Hoàng Văn Ghi');
     expect(JSON.stringify(none.requests[0]!.fields)).not.toContain('Hoa Sen');
+  }, 120_000);
+
+  it('names only the parties the recorder\'s entity scope reaches: a recorder limited to one branch gets the parties linked to it, the whole-org recorder gets them all (#3532)', async () => {
+    const linkTo = (partyId: string, entity: string) => admin((c) => c.query(`INSERT INTO ludy_kernel.record_le (org_id, record_type, record_id, legal_entity_id, created_by) VALUES ($1, 'kernel.party', $2, $3, $4)`, [orgId, partyId, entity, users.owner]));
+    const companyA = await party('Công ty Nhánh Một');
+    const personA = await party('Ngô Nhánh Một', { kind: 'person', companyId: companyA });
+    // A second person of the same company, linked to no branch: each party is scoped by its own link, so this one is not named.
+    await party('Lý Chưa Gắn', { kind: 'person', companyId: companyA });
+    const companyB = await party('Công ty Nhánh Hai');
+    await party('Đỗ Nhánh Hai', { kind: 'person', companyId: companyB });
+    const unlinked = await party('Công ty Chưa Gắn Nhánh');
+    await linkTo(companyA, branchA);
+    await linkTo(personA, branchA);
+    await linkTo(companyB, branchB);
+    // The branch recorder: the party linked to its branch with its person, nothing of the party of the other branch nor of the one linked to none.
+    const scoped = await transcribe('scoped', await seedMeeting('scoped', { parties: [companyA, companyB, unlinked] }));
+    expect(scoped.requests[0]!.fields.prompt).toBe('Ngô Nhánh Một, Công ty Nhánh Một, Trần Hạn Chế');
+    for (const never of ['Nhánh Hai', 'Chưa Gắn', 'Lý Chưa']) expect(JSON.stringify(scoped.requests.map((r) => r.fields))).not.toContain(never);
+    // A recorder with the whole-org scope is as before: every linked party and its people.
+    const whole = await transcribe('recorder', await seedMeeting('recorder', { parties: [companyA, companyB, unlinked] }));
+    for (const name of ['Công ty Nhánh Một', 'Ngô Nhánh Một', 'Công ty Nhánh Hai', 'Đỗ Nhánh Hai', 'Công ty Chưa Gắn Nhánh', 'Lý Chưa Gắn']) expect(whole.requests[0]!.fields.prompt).toContain(name);
   }, 120_000);
 
   it('sends no names and no prompt field when there is nothing to name: the request is what it was', async () => {

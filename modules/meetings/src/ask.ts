@@ -3,8 +3,8 @@
 // section 4.2, ADR-0049 stage A): the lines the member's own search finds, the box's status and the start of the run. The model call and the checks of the answer are in apps/kernel
 // and packages/agent. Nothing here stores a question or an answer, and no table is written: the run's own bookkeeping (the kernel's run and its counts-only result row) is the only trace.
 //
-// The lines are found with the search of L2 (meetings.search), through the same helper, in the member's own transaction: the definer keeps the lines the member reads (the recorder every
-// stage of their own meeting, any other reader the published lines of a meeting they read, an owner or admin who is no reader nothing, a meeting past its text date none) and the rows are read
+// The lines are found with the search of L2 (meetings.search), through the same helper, in the member's own transaction: the definer keeps the lines the member reads (the recorder one
+// stage of their own meeting, the working draft while a draft line exists in it and the published lines otherwise (#4940), any other reader the published lines of a meeting they read, an owner or admin who is no reader nothing, a meeting past its text date none) and the rows are read
 // under row security, which decides again for each. No new door to a meeting's text exists. The search wants every word, so the question is cut to its significant words in code and asked in a few
 // passes (all the words, then the strongest ones alone); the lines are ranked by how many words they hold and cut to at most 40 lines from at most 8 meetings.
 import { randomUUID } from 'node:crypto';
