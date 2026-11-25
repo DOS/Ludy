@@ -34,10 +34,11 @@ describe('the transcript export buttons', () => {
     expect(html).toContain('data-testid="transcript-export-srt"');
     expect(html).toContain('Text (.txt)');
     expect(html).toContain('Captions (.srt)');
+    expect(html).toContain('Word (.docx)');
+    expect(html).toContain('data-testid="transcript-export-docx"');
     expect(html).toContain('role="group"');
     expect(html).toContain('aria-label="Download the transcript"');
     expect(html).toContain('No AI.');
-    expect(html).not.toContain('docx');
   });
 
   it('says the same in Vietnamese, and each button is 44 px tall on a phone', () => {
@@ -45,9 +46,10 @@ describe('the transcript export buttons', () => {
     expect(html).toContain('Tải bản ghi lời về');
     expect(html).toContain('Văn bản (.txt)');
     expect(html).toContain('Phụ đề (.srt)');
+    expect(html).toContain('Word (.docx)');
     expect(html).toContain('Không dùng AI.');
     // The small button is 44 px tall below the md breakpoint (the Button's own rule).
-    expect(html.match(/max-md:min-h-11/gu)).toHaveLength(2);
+    expect(html.match(/max-md:min-h-11/gu)).toHaveLength(3);
   });
 });
 
