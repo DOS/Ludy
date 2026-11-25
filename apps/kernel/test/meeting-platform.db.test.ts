@@ -448,7 +448,7 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     const o = await org();
     const c = await connect(o, o.lan);
     const T = '~transcript';
-    await replace(o, c.connectionId, ['P', 'Q', 'R', 'S', 'W'].flatMap((k) => [listed(k), listed(`${k}${T}`, { hasAudio: false, hasTranscript: true })]));
+    await replace(o, c.connectionId, ['P', 'Q', 'R', 'S', 'W', 'Z'].flatMap((k) => [listed(k), listed(`${k}${T}`, { hasAudio: false, hasTranscript: true })]));
     const begun = async (key: string) => {
       const recordingId = await idOf(key, c.connectionId);
       const k = stagingKey();
@@ -472,8 +472,12 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     }
     await mv('P', "status = 'imported', staging_key = NULL, meeting_id = $3", [meeting]);
     expect(await tryBegin(`P${T}`)).toBe('MEETING_PLATFORM_PAIR_TAKEN');
-    // A plain key is its own pair: the rows of another meeting are not held by the first's.
+    // A plain key is its own pair: while R is on its way, its own transcript row is refused and a different plain key (Z, with its own pair) begins, and so does an unrelated row's pair.
     await begun('R');
+    expect(await tryBegin(`R${T}`)).toBe('MEETING_PLATFORM_PAIR_TAKEN');
+    expect(await tryBegin('Z')).toBeNull();
+    expect(await rowOf('Z', c.connectionId)).toMatchObject({ status: 'importing' });
+    expect(await tryBegin(`Z${T}`)).toBe('MEETING_PLATFORM_PAIR_TAKEN');
     expect(await rowOf('S', c.connectionId)).toMatchObject({ status: 'suggested' });
     // A sibling that is only skipped or failed leaves the row free: dismissed, then a failed try (the worker's), then the row can be begun.
     await o.exec(o.lan, 'kernel.meeting_platform.recording.dismiss', { recordingId: await idOf(`S${T}`, c.connectionId) });
