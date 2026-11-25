@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Project templates (#2607): 3 built-in SME starter templates plus custom org templates.
+// Project templates (#2607, #4908): 5 built-in starter templates plus custom org templates.
 import { z } from 'zod';
 import {
   DEFAULT_TIME_ZONE,
@@ -29,6 +29,7 @@ import {
   type ProjectVisibility,
 } from '@ludy/kernel-contract';
 import { DomainError, defineCommand, defineQuery } from '@ludy/kernel-runtime';
+import { insertProjectColumns, resolveTaskColumnId, type DefaultColumnSpec } from './columns.ts';
 import { projectsManifest } from './manifest.ts';
 import { addLocalDays, daysBetweenLocalDates } from './recurring.ts';
 import {
@@ -49,11 +50,149 @@ const PROJECT = TABLES.ludy_projects.project;
 
 interface StarterLocalizedTemplate {
   key: BuiltinProjectTemplateKey;
+  defaultColumns?: ReadonlyArray<DefaultColumnSpec>;
   vi: { name: string; description: string; tasks: ProjectTemplateTaskItem[] };
   en: { name: string; description: string; tasks: ProjectTemplateTaskItem[] };
 }
 
 const STARTER_TEMPLATES: readonly StarterLocalizedTemplate[] = [
+  {
+    key: 'software-project',
+    defaultColumns: [
+      { taskStatus: 'todo', color: 'neutral', vi: 'Cần làm (Backlog)', en: 'Backlog' },
+      { taskStatus: 'in_progress', color: 'primary', vi: 'Đang phát triển', en: 'In progress' },
+      { taskStatus: 'waiting', color: 'warning', vi: 'Đang chờ / Bị chặn', en: 'Blocked / Waiting' },
+      { taskStatus: 'in_review', color: 'proposal', vi: 'Kiểm thử / Review', en: 'QA / In review' },
+      { taskStatus: 'done', color: 'success', vi: 'Đã xong', en: 'Done' },
+    ],
+    vi: {
+      name: 'Dự án phần mềm',
+      description: 'Quy trình phát triển phần mềm theo sprint: chốt phạm vi, thiết kế, lập trình, kiểm thử QA và phát hành.',
+      tasks: [
+        {
+          title: 'Chốt phạm vi sprint và ưu tiên backlog',
+          description: 'Rà soát mục tiêu, chia nhỏ đầu việc và thống nhất tiêu chí hoàn thành trước khi bắt đầu.',
+          dueOffsetDays: 1,
+        },
+        {
+          title: 'Viết tài liệu thiết kế kỹ thuật và giao diện',
+          description: 'Chốt luồng xử lý, cấu trúc dữ liệu, API và bản nháp màn hình liên quan.',
+          dueOffsetDays: 3,
+        },
+        {
+          title: 'Phát triển tính năng và viết kiểm thử đơn vị',
+          description: 'Triển khai mã nguồn theo phạm vi đã chốt kèm bài kiểm thử tự động.',
+          dueOffsetDays: 7,
+        },
+        {
+          title: 'Rà soát mã nguồn và kiểm thử QA trên môi trường thử',
+          description: 'Chạy kiểm thử tích hợp, kiểm tra lỗi biên và xác nhận lại toàn bộ tiêu chí.',
+          dueOffsetDays: 9,
+        },
+        {
+          title: 'Kiểm tra danh sách phát hành và triển khai',
+          description: 'Rà soát thay đổi cấu hình, sao lưu cần thiết, phát hành và theo dõi sau khi lên.',
+          dueOffsetDays: 10,
+        },
+      ],
+    },
+    en: {
+      name: 'Software project',
+      description: 'Sprint-ready software delivery template from backlog scoping and design spec to QA and release.',
+      tasks: [
+        {
+          title: 'Scope sprint backlog and acceptance criteria',
+          description: 'Review priorities, break down work items, and align on definition of done before kickoff.',
+          dueOffsetDays: 1,
+        },
+        {
+          title: 'Draft technical design and UI specification',
+          description: 'Document data flow, API contracts, edge cases, and screen states.',
+          dueOffsetDays: 3,
+        },
+        {
+          title: 'Implement core changes and unit tests',
+          description: 'Build the scoped feature increment with automated test coverage.',
+          dueOffsetDays: 7,
+        },
+        {
+          title: 'Run code review and QA verification',
+          description: 'Verify integration tests, staging checks, and regression criteria.',
+          dueOffsetDays: 9,
+        },
+        {
+          title: 'Complete release checklist and ship',
+          description: 'Verify rollout checks, deploy to production, and monitor post-release health.',
+          dueOffsetDays: 10,
+        },
+      ],
+    },
+  },
+  {
+    key: 'marketing-project',
+    vi: {
+      name: 'Dự án Marketing',
+      description: 'Quy trình triển khai chiến dịch marketing từ bản tóm tắt, sáng tạo nội dung đến đo lường và tổng kết.',
+      tasks: [
+        {
+          title: 'Lập bản tóm tắt chiến dịch và chân dung khách hàng',
+          description: 'Xác định mục tiêu, thông điệp cốt lõi, tệp khách hàng mục tiêu và ngân sách dự kiến.',
+          dueOffsetDays: 1,
+        },
+        {
+          title: 'Sản xuất nội dung, hình ảnh và tài liệu truyền thông',
+          description: 'Hoàn thiện bài viết, thiết kế hình ảnh, video và trang đích cho từng kênh.',
+          dueOffsetDays: 4,
+        },
+        {
+          title: 'Kiểm tra kênh phân phối và phát hành chiến dịch',
+          description: 'Thiết lập lịch đăng bài, đường dẫn theo dõi và chạy chiến dịch trên các kênh đã chọn.',
+          dueOffsetDays: 6,
+        },
+        {
+          title: 'Theo dõi chỉ số và tối ưu hiệu suất hàng ngày',
+          description: 'Giám sát lượt tiếp cận, chi phí chuyển đổi và điều chỉnh nội dung hoặc ngân sách kịp thời.',
+          dueOffsetDays: 10,
+        },
+        {
+          title: 'Tổng kết kết quả chiến dịch và rút kinh nghiệm',
+          description: 'Đối chiếu KPI thực tế với mục tiêu, tổng hợp bài học và lưu lại tài sản dùng lại.',
+          dueOffsetDays: 14,
+        },
+      ],
+    },
+    en: {
+      name: 'Marketing project',
+      description: 'End-to-end marketing execution template from campaign brief and assets to launch tracking and review.',
+      tasks: [
+        {
+          title: 'Finalize campaign brief and target audience',
+          description: 'Define campaign goals, core positioning, audience segments, and planned budget.',
+          dueOffsetDays: 1,
+        },
+        {
+          title: 'Produce creative assets and campaign copy',
+          description: 'Prepare ad copy, visuals, landing page updates, and review approvals.',
+          dueOffsetDays: 4,
+        },
+        {
+          title: 'Launch across distribution channels',
+          description: 'Verify tracking links, schedule posts, and publish campaigns on target channels.',
+          dueOffsetDays: 6,
+        },
+        {
+          title: 'Monitor channel metrics and optimize performance',
+          description: 'Track reach, conversion rates, and spend pacing to tune underperforming creatives.',
+          dueOffsetDays: 10,
+        },
+        {
+          title: 'Run post-campaign performance review',
+          description: 'Compare final KPIs against goals, document learnings, and archive reusable assets.',
+          dueOffsetDays: 14,
+        },
+      ],
+    },
+  },
   {
     key: 'monthly-close',
     vi: {
@@ -235,6 +374,15 @@ export function starterProjectTemplates(language: 'vi' | 'en' = 'vi'): ProjectTe
       status: 'active',
       tasks: localized.tasks.map((t) => ({ ...t })),
       taskCount: localized.tasks.length,
+      ...(entry.defaultColumns
+        ? {
+            defaultColumns: entry.defaultColumns.map((col) => ({
+              name: language === 'en' ? col.en : col.vi,
+              taskStatus: col.taskStatus,
+              color: col.color,
+            })),
+          }
+        : {}),
       canManage: false,
       createdAt: null,
       updatedAt: null,
@@ -511,15 +659,18 @@ export const projectCreateFromTemplate = defineCommand({
     let templateName: string;
     let templateDescription: string | null;
     let templateItems: ProjectTemplateTaskItem[];
+    let starterColumnSpecs: ReadonlyArray<DefaultColumnSpec> | undefined;
 
     if (input.builtinKey !== undefined) {
+      const entry = STARTER_TEMPLATES.find((t) => t.key === input.builtinKey);
       const starter = starterProjectTemplates(language).find((t) => t.builtinKey === input.builtinKey);
-      if (!starter) {
+      if (!starter || !entry) {
         throw new DomainError('PROJECT_TEMPLATE_NOT_FOUND', 404, 'Không tìm thấy mẫu dự án này');
       }
       templateName = starter.name;
       templateDescription = starter.description;
       templateItems = starter.tasks;
+      starterColumnSpecs = entry.defaultColumns;
     } else {
       const row = await ctx.trx
         .selectFrom('ludy_projects.project')
@@ -604,6 +755,12 @@ export const projectCreateFromTemplate = defineCommand({
         .execute();
     }
 
+    const createdColumns =
+      starterColumnSpecs && starterColumnSpecs.length > 0
+        ? await insertProjectColumns(ctx, created.id, starterColumnSpecs, language)
+        : [];
+    const defaultTodoColumnId = resolveTaskColumnId(createdColumns, null, 'todo');
+
     if (taskIds.length > 0) {
       const keys = spreadKeys(taskIds.length);
       await ctx.trx
@@ -613,6 +770,7 @@ export const projectCreateFromTemplate = defineCommand({
             org_id: ctx.orgId,
             project_id: created.id,
             task_id: taskId,
+            column_id: defaultTodoColumnId,
             sort_key: keys[i] ?? null,
             added_by: userId,
             created_at: ctx.now,
@@ -629,6 +787,7 @@ export const projectCreateFromTemplate = defineCommand({
       builtinKey: input.builtinKey ?? null,
       visibility,
       taskCount: taskIds.length,
+      ...(createdColumns.length > 0 ? { columnCount: createdColumns.length } : {}),
     });
     await ctx.emit('projects.project.created', { projectId: created.id, ownerUserId });
     await ctx.activity('projects.project', created.id, 'projects.project.created', 'Tạo dự án từ mẫu');

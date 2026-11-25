@@ -33,7 +33,13 @@ export const PROJECT_CYCLE_VELOCITY_LIMIT = 12;
 export const PROJECT_TASK_STORY_POINTS_MIN = 0;
 export const PROJECT_TASK_STORY_POINTS_MAX = 100;
 
-export const BUILTIN_PROJECT_TEMPLATE_KEYS = ['monthly-close', 'client-onboarding', 'campaign-launch'] as const;
+export const BUILTIN_PROJECT_TEMPLATE_KEYS = [
+  'software-project',
+  'marketing-project',
+  'monthly-close',
+  'client-onboarding',
+  'campaign-launch',
+] as const;
 export type BuiltinProjectTemplateKey = (typeof BUILTIN_PROJECT_TEMPLATE_KEYS)[number];
 export const zBuiltinProjectTemplateKey = z.enum(BUILTIN_PROJECT_TEMPLATE_KEYS);
 
@@ -842,7 +848,14 @@ export const zProjectTasksFromSourceConfirmResult = z.strictObject({
 });
 export type ProjectTasksFromSourceConfirmResult = z.infer<typeof zProjectTasksFromSourceConfirmResult>;
 
-// Project templates and recurring project tasks (#2607).
+// Project templates and recurring project tasks (#2607, #4908).
+export const zProjectTemplateColumnSpec = z.object({
+  name: zProjectColumnName,
+  taskStatus: zProjectColumnStatus,
+  color: zProjectColumnColor,
+});
+export type ProjectTemplateColumnSpec = z.infer<typeof zProjectTemplateColumnSpec>;
+
 export const zProjectTemplateTaskInputItem = z.strictObject({
   title: z.string().trim().min(1).max(PROJECT_TASK_TITLE_MAX),
   description: z.string().trim().max(PROJECT_TEMPLATE_TASK_DESCRIPTION_MAX).nullable().optional(),
@@ -862,6 +875,7 @@ export const zProjectTemplateSummary = z.object({
   status: zProjectStatus,
   tasks: z.array(zProjectTemplateTaskItem),
   taskCount: z.number().int().nonnegative(),
+  defaultColumns: z.array(zProjectTemplateColumnSpec).optional(),
   canManage: z.boolean(),
   createdAt: z.string().nullable(),
   updatedAt: z.string().nullable(),
