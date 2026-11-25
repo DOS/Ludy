@@ -359,4 +359,62 @@ suite("the member's Vy answering across meetings (A3, #3161)", () => {
     expect(rows.length).toBe(before + 1);
     expect(rows[rows.length - 1]?.body).toMatch(/^\{"v":1,"lines":\d+,"sentences":\d+,"sources":\d+,"dropped":\d+\}$/);
   });
+
+  // Ask about ONE meeting (#4815): the same run and rules, limited to that meeting.
+  const askThis = (who: string, meetingId: string, question: string, over: Partial<MeetingAskDeps> = {}) => runMeetingAsk(deps(over), orgId, asUser(who), question, meetingId);
+
+  it('asking about one meeting sends only the lines of that meeting, the sources are of it, and the lines go in the order of the transcript', async () => {
+    const a = await meeting('recorder', 'Họp A một mình', 'attendees', ['attendee'], '2026-11-12T05:31:00Z');
+    const b = await meeting('recorder', 'Họp B khác', 'attendees', ['attendee'], '2026-11-13T05:31:00Z');
+    await line(a, 'Onemeetingx chốt giá 5 triệu cho khách A', 'published', 90);
+    await line(a, 'Lời chào đầu buổi', 'published', 5);
+    await line(a, 'Onemeetingx giao hàng thứ sáu', 'published', 30);
+    await line(b, 'Onemeetingx giá khác 7 triệu ở họp B', 'published', 10);
+    const out = await askThis('attendee', a, 'Onemeetingx chốt giá bao nhiêu?', { model: answering((lines) => [{ text: 'Chốt giá 5 triệu.', cites: [lines[1]?.n] }]) });
+    expect(out).toMatchObject({ state: 'answered', errorCode: null });
+    expect(modelCalls).toBe(1);
+    // Only the lines of A that hold a word of the question, by time (not the greeting, not B).
+    expect(lastData?.lines.map((l) => l.text)).toEqual(['Onemeetingx giao hàng thứ sáu', 'Onemeetingx chốt giá 5 triệu cho khách A']);
+    expect(JSON.stringify(lastData)).not.toContain('họp B');
+    expect(out.sources.every((s) => s.meetingId === a)).toBe(true);
+    // The question box across meetings still reaches both.
+    await ask('attendee', 'Onemeetingx chốt giá bao nhiêu?', { model: answering((lines) => [{ text: 'Có.', cites: [lines[0]?.n] }]) });
+    expect((lastData?.lines ?? []).map((l) => l.meeting).sort()).toEqual(['Họp A một mình', 'Họp A một mình', 'Họp B khác']);
+  });
+
+  it('asking about one meeting holds the reader rule: a reader meets the published lines only, the recorder their draft when nothing is published, a non-reader nothing', async () => {
+    const m = await meeting('recorder', 'Họp có nháp một mình', 'attendees', ['attendee']);
+    await line(m, 'Scopedraft chiết khấu bản nháp 7% phần trăm', 'draft', 1);
+    const pick = answering((lines) => lines.map((l) => ({ text: `Có dòng ${l.n}.`, cites: [l.n] })));
+    // Only a draft exists: the recorder reads it, the attendee reads nothing, and nobody else does.
+    expect(await askThis('attendee', m, 'Scopedraft là gì?', { model: pick })).toMatchObject({ state: 'none' });
+    expect(modelCalls).toBe(0);
+    expect(await askThis('outsider', m, 'Scopedraft là gì?', { model: pick })).toMatchObject({ state: 'none' });
+    expect(modelCalls).toBe(0);
+    await askThis('recorder', m, 'Scopedraft là gì?', { model: pick });
+    expect(lastData?.lines.map((l) => l.text)).toEqual(['Scopedraft chiết khấu bản nháp 7% phần trăm']);
+    // Once a published line exists a reader reads it, and the draft beside it is not what they are given.
+    await line(m, 'Scopedraft chiết khấu chính thức 9% phần trăm', 'published', 2);
+    await askThis('attendee', m, 'Scopedraft là gì?', { model: pick });
+    expect(lastData?.lines.map((l) => l.text)).toEqual(['Scopedraft chiết khấu chính thức 9% phần trăm']);
+  });
+
+  it('asking about one meeting with words no line holds is "none": no run and no model call', async () => {
+    const m = await meeting('recorder', 'Họp không có từ đó', 'attendees', ['attendee']);
+    await line(m, 'Chúng ta bàn về lịch giao hàng tuần sau', 'published', 1);
+    const runsBefore = (await resultRows()).length;
+    expect(await askThis('attendee', m, 'Zzzunmatchedword là gì?')).toEqual({ state: 'none', errorCode: null, sentences: [], sources: [], hits: [], dropped: 0 });
+    expect(modelCalls).toBe(0);
+    expect((await resultRows()).length).toBe(runsBefore);
+  });
+
+  it('the plain list of one meeting (no model) is the same lines as the box would send, and a non-reader gets none', async () => {
+    const m = await meeting('recorder', 'Họp danh sách đơn giản', 'attendees', ['attendee']);
+    await line(m, 'Plainlist chốt giá 3 triệu', 'published', 12);
+    const other = await meeting('recorder', 'Họp khác đơn giản', 'attendees', ['attendee']);
+    await line(other, 'Plainlist ở họp khác', 'published', 1);
+    const read = (who: string) => runtime.query<{ lines: Array<{ meetingId: string; text: string }> }>('meetings.ask.lines', { question: 'Plainlist là gì?', meetingId: m }, { actor: asUser(who), orgId });
+    expect((await read('attendee')).lines.map((l) => l.text)).toEqual(['Plainlist chốt giá 3 triệu']);
+    expect((await read('outsider')).lines).toEqual([]);
+  });
 });

@@ -697,7 +697,7 @@ import {
   zMinutesTemplateUpdate,
   zMinutesTemplates,
 } from './meeting-minutes-templates.ts';
-import { zAskAnswer, zAskEmpty, zAskInput, zAskStatus } from './meeting-ask.ts';
+import { zAskAnswer, zAskEmpty, zAskInput, zAskLines, zAskStatus } from './meeting-ask.ts';
 import { zBriefAnswer, zBriefEmpty, zBriefFacts, zBriefStatus, zBriefTarget } from './meeting-brief.ts';
 import { zMeetingRename, zMeetingRenamed, zTitleAnswer } from './meeting-title.ts';
 import { zCommitmentsAnswer } from './meeting-commitments.ts';
@@ -1909,6 +1909,8 @@ export const contract = {
     ask: {
       status: oc.input(zAskEmpty).output(zAskStatus),
       ask: oc.input(zAskInput).output(zAskAnswer),
+      // The lines a question's search finds (with `meetingId`, in that meeting only): the plain list the box shows when Vy cannot be asked. No model.
+      lines: oc.input(zAskInput).output(zAskLines),
     },
     // Vy's brief before a meeting (#3543): `facts` are read by code as the member (the decisions of the previous meeting of the series if they read it, the open items, the linked customer's open deals) and work with AI
     // off; `status` is the button (may Vy be used now, the cost of one brief), `write` the click that has the member's own Vy write two or three sentences from those facts. Nothing is stored or sent.

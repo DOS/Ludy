@@ -4381,6 +4381,16 @@ export const vi = {
       },
       chip: '{title}, {date}, {time}',
     },
+    askThis: {
+      label: 'Hỏi về cuộc họp này',
+      placeholder: 'Ví dụ: Khách A chốt giá bao nhiêu?',
+      hint: 'Vy chỉ đọc các dòng bản ghi lời nói của cuộc họp này mà bạn được đọc (tối đa 40 dòng), gửi tới nhà cung cấp AI của hệ thống. Câu trả lời chỉ mình bạn thấy và không được lưu.',
+      submitSearch: 'Tìm trong bản ghi này',
+      plainNote: 'Không có Vy, ô này tìm trong bản ghi của cuộc họp này những dòng có các từ chính của câu hỏi.',
+      none: 'Không thấy gì trong bản ghi của cuộc họp này',
+      private: 'Chỉ mình bạn thấy câu trả lời này và nó không được lưu. Bấm vào thời điểm dưới mỗi câu để mở đúng dòng bản ghi và kiểm tra, nhất là số liệu và tên riêng.',
+      open: 'Mở bản ghi ở {time}',
+    },
     // "Tuần này" trên trang Cuộc họp (#3949): những việc đã chốt và việc còn dở của các cuộc họp người dùng được đọc, và vài câu của Vy khi bấm.
     // Thời gian họp trong tuần (#4770): tính bằng code từ các cuộc họp người xem đọc được, không dùng AI.
     load: {
