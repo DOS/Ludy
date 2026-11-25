@@ -324,7 +324,7 @@ import {
   zHrEmploymentAdd,
   zHrWritten,
 } from './hr.ts';
-import { zPayrollSettlement, zPayrollSettlementRef, zHrCoworkerAsk, zHrCoworkerExplained, zHrCoworkerFlagged, zHrCoworkerPayslipAsk, zHrCoworkerPrepared, zHrLineAdjust, zHrLineInputsSet, zHrPayrollDiffExplainAsk, zHrPayrollDiffExplained, zHrPayrollPreviewDiff, zHrPayrollPreviewDiffAsk, zHrPayslip, zHrPaymentRequest, zHrPostingRequest, zHrPayslipRef, zHrRunApplyThirteenthMonth, zHrRunApprove, zHrRunImportTimekeeping, zHrRunList, zHrRunOpen, zHrRunRecalculate, zHrRunRef, zHrRunSheet, zHrRunSummary, zHrRunThirteenthMonthPreview, zHrRunWritten, zHrThirteenthMonthPreviewResult } from './hr-payroll.ts';
+import { zPayrollSettlement, zPayrollSettlementRef, zHrCoworkerAsk, zHrCoworkerExplained, zHrCoworkerFlagged, zHrCoworkerPayslipAsk, zHrCoworkerPrepared, zHrLineAdjust, zHrLineInputsSet, zHrPayrollDiffExplainAsk, zHrPayrollDiffExplained, zHrPayrollPreviewDiff, zHrPayrollPreviewDiffAsk, zHrPayslip, zHrPaymentRequest, zHrPostingRequest, zHrPayslipRef, zHrRunApplyThirteenthMonth, zHrRunApprove, zHrRunImportTimekeeping, zHrRunList, zHrRunOpen, zHrRunRecalculate, zHrRunRef, zHrRunSheet, zHrRunSummary, zHrRunSyncStage6b, zHrRunThirteenthMonthPreview, zHrRunWritten, zHrThirteenthMonthPreviewResult } from './hr-payroll.ts';
 import { zHrBankTemplate, zHrBankTemplateCreate, zHrBankTemplateEdit, zHrBankTemplateList, zHrBankTemplateRef, zHrBankTemplateWritten } from './hr-bank-template.ts';
 import {
   zHrLeaveBalanceAsk,
@@ -1652,7 +1652,7 @@ export const contract = {
         applyThirteenthMonth: oc.input(zHrRunApplyThirteenthMonth).output(zHrRunWritten),
         syncLeave: oc.input(zHrRunRef).output(zHrRunWritten),
         syncOvertime: oc.input(zHrRunRef).output(zHrRunWritten),
-        syncStage6b: oc.input(zHrRunRef).output(zHrRunWritten),
+        syncStage6b: oc.input(zHrRunSyncStage6b).output(zHrRunWritten),
         approve: oc.input(zHrRunApprove).output(zHrRunWritten),
       },
       adjustments: {

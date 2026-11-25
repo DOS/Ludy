@@ -29,6 +29,7 @@ import {
   isoTimestamp,
   loadActiveEmployeeStatus,
   loadDepartmentNameMap,
+  loadLockedPayrollMonths,
   loadManagedDepartmentSet,
   normalizeStage6bMoney,
   requireStage6bRole,
@@ -57,6 +58,7 @@ interface RawAdvanceRow {
   final_acted_at: Date | string | null;
   decision_note: string | null;
   payroll_run_id: string | null;
+  payroll_run_locked?: boolean;
   created_by: string | null;
   created_at: Date | string;
   updated_at: Date | string;
@@ -98,6 +100,7 @@ function mapAdvanceView(
     canApproveL1: row.status === 'pending_l1' && (!isSelf || ctx.soleOwnerOpc) && (isActiveDeptMgr || isOwnerOrAdmin),
     canApproveFinal: row.status === 'pending_final' && isOwnerOrAdmin && (!isSelf || ctx.soleOwnerOpc),
     canCancel: isPending && (ctx.callerEmployeeId === row.employee_id || isOwnerOrAdmin),
+    payrollRunLocked: Boolean(row.payroll_run_locked),
   };
 }
 
@@ -213,6 +216,9 @@ export const selfSalaryAdvanceList = defineQuery({
     const managedDepts = await loadManagedDepartmentSet(ctx.trx, ctx.orgId, callerUserId);
     const managedDeptIds = new Set(managedDepts.map((d) => d.id));
 
+    const lockedMonths = emp ? await loadLockedPayrollMonths(ctx.trx, ctx.orgId, emp.legal_entity_id) : [];
+    const lockedMonthSet = new Set(lockedMonths);
+
     let items: HrAdvanceRequestView[] = [];
     if (emp) {
       let q = ctx.trx
@@ -232,7 +238,7 @@ export const selfSalaryAdvanceList = defineQuery({
 
       items = ownRows.map((row) =>
         mapAdvanceView(
-          { ...row, employee_name: emp.display_name },
+          { ...row, employee_name: emp.display_name, payroll_run_locked: lockedMonthSet.has(row.month) },
           { callerUserId, callerRole: role, callerEmployeeId: emp.id, managedDeptIds, soleOwnerOpc },
         ),
       );
@@ -248,7 +254,8 @@ export const selfSalaryAdvanceList = defineQuery({
           sql<string | null>`ludy_hr.hr_stage6b_request_employee_name(r.org_id, 'salary_advance', r.id)`.as('employee_name'),
           'r.department_id', 'd.name as department_name', 'r.month', 'r.amount', 'r.reason', 'r.status',
           'r.l1_approver_user_id', 'r.l1_acted_at', 'r.final_acted_by', 'r.final_acted_at',
-          'r.decision_note', 'r.payroll_run_id', 'r.created_by', 'r.created_at', 'r.updated_at',
+          'r.decision_note', 'r.payroll_run_id',
+          'r.created_by', 'r.created_at', 'r.updated_at',
         ])
         .where('r.org_id', '=', ctx.orgId)
         .where('r.status', '=', 'pending_l1')
@@ -256,8 +263,18 @@ export const selfSalaryAdvanceList = defineQuery({
       if (emp) l1q = l1q.where('r.employee_id', '!=', emp.id);
       if (input.month) l1q = l1q.where('r.month', '=', input.month);
       const l1Rows = await l1q.orderBy('r.created_at', 'asc').limit(input.limit).execute();
+      const lockedMonthsByEntity = new Map<string, ReadonlySet<string>>();
+      if (emp) lockedMonthsByEntity.set(emp.legal_entity_id, lockedMonthSet);
+      for (const leId of new Set(l1Rows.map((row) => row.legal_entity_id))) {
+        if (!lockedMonthsByEntity.has(leId)) {
+          lockedMonthsByEntity.set(leId, new Set(await loadLockedPayrollMonths(ctx.trx, ctx.orgId, leId)));
+        }
+      }
       l1Queue = l1Rows.map((row) =>
-        mapAdvanceView(row, { callerUserId, callerRole: role, callerEmployeeId: emp?.id ?? null, managedDeptIds, soleOwnerOpc }),
+        mapAdvanceView(
+          { ...row, payroll_run_locked: lockedMonthsByEntity.get(row.legal_entity_id)?.has(row.month) ?? false },
+          { callerUserId, callerRole: role, callerEmployeeId: emp?.id ?? null, managedDeptIds, soleOwnerOpc },
+        ),
       );
     }
 
@@ -265,6 +282,7 @@ export const selfSalaryAdvanceList = defineQuery({
       employeeId: emp?.id ?? null,
       employeeName: emp?.display_name ?? null,
       departmentId: emp?.department_id ?? null,
+      lockedMonths,
       items,
       l1Queue,
     };
@@ -288,11 +306,20 @@ export const salaryAdvanceList = defineQuery({
       .selectFrom('ludy_hr.salary_advance_request as r')
       .leftJoin('ludy_hr.payroll_employee as e', (j) => j.onRef('e.org_id', '=', 'r.org_id').onRef('e.id', '=', 'r.employee_id'))
       .leftJoin('ludy_hr.department as d', (j) => j.onRef('d.org_id', '=', 'r.org_id').onRef('d.id', '=', 'r.department_id'))
+      .leftJoin('ludy_hr.payroll_run as pr', (j) =>
+        j
+          .onRef('pr.org_id', '=', 'r.org_id')
+          .onRef('pr.legal_entity_id', '=', 'r.legal_entity_id')
+          .onRef('pr.month', '=', 'r.month')
+          .on('pr.status', '!=', 'draft'),
+      )
       .select([
         'r.id', 'r.legal_entity_id', 'r.employee_id', 'e.display_name as employee_name',
         'r.department_id', 'd.name as department_name', 'r.month', 'r.amount', 'r.reason', 'r.status',
         'r.l1_approver_user_id', 'r.l1_acted_at', 'r.final_acted_by', 'r.final_acted_at',
-        'r.decision_note', 'r.payroll_run_id', 'r.created_by', 'r.created_at', 'r.updated_at',
+        'r.decision_note', 'r.payroll_run_id',
+        sql<boolean>`pr.id IS NOT NULL`.as('payroll_run_locked'),
+        'r.created_by', 'r.created_at', 'r.updated_at',
       ])
       .where('r.org_id', '=', ctx.orgId);
     if (input.legalEntityId) q = q.where('r.legal_entity_id', '=', input.legalEntityId);
@@ -454,12 +481,15 @@ export const salaryAdvanceApproveFinal = defineCommand({
       .executeTakeFirst();
     if (!updated) throw invalidAdvanceState('Trạng thái đơn tạm ứng đã thay đổi, vui lòng thử lại');
 
-    const payrollSynced = await syncEmployeeDraftPayrollStage6b(
+    const syncRes = await syncEmployeeDraftPayrollStage6b(
       ctx,
       existing.legal_entity_id,
       existing.month,
       existing.employee_id,
     );
+    const skippedByManualOverride = syncRes.skippedFields.includes('advance');
+    const payrollSynced = !skippedByManualOverride && syncRes.syncedFields.includes('advance');
+    const payrollSyncSkippedReason = skippedByManualOverride ? ('manual_override' as const) : undefined;
 
     ctx.audit({
       requestId: input.requestId,
@@ -468,8 +498,14 @@ export const salaryAdvanceApproveFinal = defineCommand({
       status: 'approved',
       selfApproved,
       payrollSynced,
+      ...(payrollSyncSkippedReason ? { payrollSyncSkippedReason } : {}),
     });
-    return { requestId: input.requestId, status: 'approved', payrollSynced };
+    return {
+      requestId: input.requestId,
+      status: 'approved',
+      payrollSynced,
+      ...(payrollSyncSkippedReason ? { payrollSyncSkippedReason } : {}),
+    };
   },
 });
 

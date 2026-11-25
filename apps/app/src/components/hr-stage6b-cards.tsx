@@ -262,6 +262,7 @@ export function HrSelfAdvanceTripCards({ linked }: { linked: boolean }) {
 
   const handleSubmitAdvance = (e: FormEvent) => {
     e.preventDefault();
+    if (isAdvMonthLocked) return;
     submitAdvance.mutate();
   };
 
@@ -272,6 +273,9 @@ export function HrSelfAdvanceTripCards({ linked }: { linked: boolean }) {
 
   const advances = advList.data?.items ?? [];
   const advL1Queue = advList.data?.l1Queue ?? [];
+  const lockedMonths = new Set(advList.data?.lockedMonths ?? []);
+  const advMonthTrimmed = advMonth.trim();
+  const isAdvMonthLocked = /^\d{4}-(0[1-9]|1[0-2])$/.test(advMonthTrimmed) && lockedMonths.has(advMonthTrimmed);
   const trips = tripList.data?.items ?? [];
   const tripL1Queue = tripList.data?.l1Queue ?? [];
 
@@ -316,6 +320,7 @@ export function HrSelfAdvanceTripCards({ linked }: { linked: boolean }) {
                 value={advMonth}
                 onChange={(e) => setAdvMonth(e.target.value)}
                 placeholder="YYYY-MM"
+                aria-describedby={isAdvMonthLocked ? 'adv-month-locked-notice' : undefined}
                 className={PHONE_TARGET}
                 data-testid="hr-self-advance-month"
               />
@@ -343,12 +348,22 @@ export function HrSelfAdvanceTripCards({ linked }: { linked: boolean }) {
                 data-testid="hr-self-advance-reason"
               />
             </div>
+            {isAdvMonthLocked && (
+              <p
+                id="adv-month-locked-notice"
+                role="status"
+                className="sm:col-span-3 rounded-md border border-warning/40 bg-warning/10 p-3 text-xs font-medium text-warning"
+                data-testid="hr-self-advance-month-locked"
+              >
+                {t('advanceMonthLockedNotice', { month: advMonthTrimmed })}
+              </p>
+            )}
             <div className="sm:col-span-3 flex flex-wrap items-center gap-3">
               <Button
                 type="submit"
                 size="sm"
                 loading={submitAdvance.isPending}
-                disabled={advReason.trim() === '' || advAmount.trim() === ''}
+                disabled={advReason.trim() === '' || advAmount.trim() === '' || isAdvMonthLocked}
                 className={PHONE_TARGET}
                 data-testid="hr-self-advance-submit"
               >
@@ -385,6 +400,11 @@ export function HrSelfAdvanceTripCards({ linked }: { linked: boolean }) {
                     {item.decisionNote && (
                       <p className="text-xs text-muted-foreground">{t('decisionNotePrefix', { note: item.decisionNote })}</p>
                     )}
+                    {item.payrollRunLocked === true && (item.status === 'pending_l1' || item.status === 'pending_final') && (
+                      <p className="text-xs font-medium text-warning" data-testid="hr-self-advance-item-locked">
+                        {t('runLockedNotice', { month: item.month })}
+                      </p>
+                    )}
                   </div>
                   <div className="flex items-center gap-2">
                     <Badge variant={STATUS_BADGE[item.status]}>{t(`statuses.${item.status}`)}</Badge>
@@ -412,110 +432,124 @@ export function HrSelfAdvanceTripCards({ linked }: { linked: boolean }) {
         {advL1Queue.length > 0 && (
           <div ref={advL1Ref} className="mt-6 space-y-2 border-t pt-4">
             <h3 className="text-sm font-medium">{t('advanceTeamTitle')}</h3>
-            {advL1Queue.map((item) => (
-              <ApprovalQueueRow
-                key={item.id}
-                id={item.id}
-                testId="hr-self-advance-l1-item"
-                title={
-                  <>
-                    {item.employeeName} | {item.month} | <span className="tabular-nums">{f.money(item.amount, 'VND')}</span>
-                  </>
-                }
-                subtitle={item.reason ?? item.departmentName ?? ''}
-                status={item.status}
-                statusLabel={t(`statuses.${item.status}`)}
-                noteValue={advNotes[item.id] ?? ''}
-                notePlaceholder={t('notePlaceholder')}
-                onNoteChange={(val) => setAdvNotes((prev) => ({ ...prev, [item.id]: val }))}
-                canApproveL1={item.canApproveL1}
-                canApproveFinal={false}
-                busy={advL1Decide.isPending}
-                l1Loading={advL1Decide.isPending && advL1Decide.variables?.requestId === item.id && advL1Decide.variables.approve}
-                rejectLoading={advL1Decide.isPending && advL1Decide.variables?.requestId === item.id && !advL1Decide.variables.approve}
-                l1Label={t('approveL1')}
-                finalLabel={t('approveFinal')}
-                rejectLabel={t('reject')}
-                selected={advL1Peek.selectedId === item.id}
-                inspectLabel={th('peek.inspect')}
-                inspectAriaLabel={th('peek.inspectOf', { name: item.employeeName })}
-                onInspect={() => advL1Peek.openPeek(item.id)}
-                onRowClick={(event) => advL1Peek.onRowClick(item.id, event)}
-                onApproveL1={() =>
-                  advL1Decide.mutate({ requestId: item.id, approve: true, ...optionalNote(advNotes, item.id) })
-                }
-                onApproveFinal={() => undefined}
-                onReject={() =>
-                  advL1Decide.mutate({ requestId: item.id, approve: false, ...optionalNote(advNotes, item.id) })
-                }
-              />
-            ))}
+            {advL1Queue.map((item) => {
+              const runLocked = item.payrollRunLocked === true;
+              return (
+                <ApprovalQueueRow
+                  key={item.id}
+                  id={item.id}
+                  testId="hr-self-advance-l1-item"
+                  title={
+                    <>
+                      {item.employeeName} | {item.month} | <span className="tabular-nums">{f.money(item.amount, 'VND')}</span>
+                    </>
+                  }
+                  subtitle={item.reason ?? item.departmentName ?? ''}
+                  status={item.status}
+                  statusLabel={t(`statuses.${item.status}`)}
+                  noteValue={advNotes[item.id] ?? ''}
+                  notePlaceholder={t('notePlaceholder')}
+                  onNoteChange={(val) => setAdvNotes((prev) => ({ ...prev, [item.id]: val }))}
+                  canApproveL1={item.canApproveL1 && !runLocked}
+                  canApproveFinal={false}
+                  lockedNotice={runLocked ? t('runLockedNotice', { month: item.month }) : undefined}
+                  busy={advL1Decide.isPending}
+                  l1Loading={advL1Decide.isPending && advL1Decide.variables?.requestId === item.id && advL1Decide.variables.approve}
+                  rejectLoading={advL1Decide.isPending && advL1Decide.variables?.requestId === item.id && !advL1Decide.variables.approve}
+                  l1Label={t('approveL1')}
+                  finalLabel={t('approveFinal')}
+                  rejectLabel={t('reject')}
+                  selected={advL1Peek.selectedId === item.id}
+                  inspectLabel={th('peek.inspect')}
+                  inspectAriaLabel={th('peek.inspectOf', { name: item.employeeName })}
+                  onInspect={() => advL1Peek.openPeek(item.id)}
+                  onRowClick={(event) => advL1Peek.onRowClick(item.id, event)}
+                  onApproveL1={() =>
+                    advL1Decide.mutate({ requestId: item.id, approve: true, ...optionalNote(advNotes, item.id) })
+                  }
+                  onApproveFinal={() => undefined}
+                  onReject={() =>
+                    advL1Decide.mutate({ requestId: item.id, approve: false, ...optionalNote(advNotes, item.id) })
+                  }
+                />
+              );
+            })}
             {advL1Decide.error && <ErrorText>{errorMessage(advL1Decide.error)}</ErrorText>}
-            {activeSelfAdvance ? (
-              <HrApprovalPeekSheet
-                peek={advL1Peek}
-                testId="hr-self-advance-peek-sheet"
-                title={activeSelfAdvance.employeeName}
-                description={`${activeSelfAdvance.month} · ${f.money(activeSelfAdvance.amount, 'VND')}`}
-                badges={<Badge variant={STATUS_BADGE[activeSelfAdvance.status]}>{t(`statuses.${activeSelfAdvance.status}`)}</Badge>}
-                fields={[
-                  { label: th('peek.employee'), value: activeSelfAdvance.employeeName },
-                  ...(activeSelfAdvance.departmentName
-                    ? [{ label: th('peek.department'), value: activeSelfAdvance.departmentName }]
-                    : []),
-                  { label: th('peek.status'), value: t(`statuses.${activeSelfAdvance.status}`) },
-                  { label: t('advanceAmountLabel'), value: f.money(activeSelfAdvance.amount, 'VND'), mono: true },
-                  { label: t('advanceMonthLabel'), value: activeSelfAdvance.month, mono: true },
-                  ...(activeSelfAdvance.reason ? [{ label: th('peek.reason'), value: activeSelfAdvance.reason, span2: true }] : []),
-                ]}
-                noteSection={{
-                  id: `hr-self-advance-peek-note-${activeSelfAdvance.id}`,
-                  value: advNotes[activeSelfAdvance.id] ?? '',
-                  placeholder: t('notePlaceholder'),
-                  onChange: (val) => setAdvNotes((prev) => ({ ...prev, [activeSelfAdvance.id]: val })),
-                  testId: 'hr-self-advance-peek-note',
-                }}
-                errorMessage={advL1Decide.error ? errorMessage(advL1Decide.error) : null}
-                actions={[
-                  {
-                    label: t('reject'),
-                    variant: 'outline',
-                    disabled: advL1Decide.isPending,
-                    loading:
-                      advL1Decide.isPending &&
-                      advL1Decide.variables?.requestId === activeSelfAdvance.id &&
-                      !advL1Decide.variables.approve,
-                    onClick: () =>
-                      advL1Decide.mutate({
-                        requestId: activeSelfAdvance.id,
-                        approve: false,
-                        ...optionalNote(advNotes, activeSelfAdvance.id),
-                      }),
-                    testId: 'hr-self-advance-peek-reject',
-                  },
-                  ...(activeSelfAdvance.canApproveL1
-                    ? [
-                        {
-                          label: t('approveL1'),
-                          variant: 'default' as const,
-                          disabled: advL1Decide.isPending,
-                          loading:
-                            advL1Decide.isPending &&
-                            advL1Decide.variables?.requestId === activeSelfAdvance.id &&
-                            advL1Decide.variables.approve,
-                          onClick: () =>
-                            advL1Decide.mutate({
-                              requestId: activeSelfAdvance.id,
-                              approve: true,
-                              ...optionalNote(advNotes, activeSelfAdvance.id),
-                            }),
-                          testId: 'hr-self-advance-peek-approve-l1',
-                        },
-                      ]
-                    : []),
-                ]}
-              />
-            ) : null}
+            {activeSelfAdvance ? (() => {
+              const activeSelfRunLocked = activeSelfAdvance.payrollRunLocked === true;
+              return (
+                <HrApprovalPeekSheet
+                  peek={advL1Peek}
+                  testId="hr-self-advance-peek-sheet"
+                  title={activeSelfAdvance.employeeName}
+                  description={`${activeSelfAdvance.month} · ${f.money(activeSelfAdvance.amount, 'VND')}`}
+                  badges={<Badge variant={STATUS_BADGE[activeSelfAdvance.status]}>{t(`statuses.${activeSelfAdvance.status}`)}</Badge>}
+                  fields={[
+                    { label: th('peek.employee'), value: activeSelfAdvance.employeeName },
+                    ...(activeSelfAdvance.departmentName
+                      ? [{ label: th('peek.department'), value: activeSelfAdvance.departmentName }]
+                      : []),
+                    { label: th('peek.status'), value: t(`statuses.${activeSelfAdvance.status}`) },
+                    { label: t('advanceAmountLabel'), value: f.money(activeSelfAdvance.amount, 'VND'), mono: true },
+                    { label: t('advanceMonthLabel'), value: activeSelfAdvance.month, mono: true },
+                    ...(activeSelfAdvance.reason ? [{ label: th('peek.reason'), value: activeSelfAdvance.reason, span2: true }] : []),
+                  ]}
+                  extraContent={
+                    activeSelfRunLocked ? (
+                      <p className="text-xs font-medium text-warning" data-testid="hr-self-advance-peek-locked">
+                        {t('runLockedNotice', { month: activeSelfAdvance.month })}
+                      </p>
+                    ) : null
+                  }
+                  noteSection={{
+                    id: `hr-self-advance-peek-note-${activeSelfAdvance.id}`,
+                    value: advNotes[activeSelfAdvance.id] ?? '',
+                    placeholder: t('notePlaceholder'),
+                    onChange: (val) => setAdvNotes((prev) => ({ ...prev, [activeSelfAdvance.id]: val })),
+                    testId: 'hr-self-advance-peek-note',
+                  }}
+                  errorMessage={advL1Decide.error ? errorMessage(advL1Decide.error) : null}
+                  actions={[
+                    {
+                      label: t('reject'),
+                      variant: 'outline',
+                      disabled: advL1Decide.isPending,
+                      loading:
+                        advL1Decide.isPending &&
+                        advL1Decide.variables?.requestId === activeSelfAdvance.id &&
+                        !advL1Decide.variables.approve,
+                      onClick: () =>
+                        advL1Decide.mutate({
+                          requestId: activeSelfAdvance.id,
+                          approve: false,
+                          ...optionalNote(advNotes, activeSelfAdvance.id),
+                        }),
+                      testId: 'hr-self-advance-peek-reject',
+                    },
+                    ...(activeSelfAdvance.canApproveL1 && !activeSelfRunLocked
+                      ? [
+                          {
+                            label: t('approveL1'),
+                            variant: 'default' as const,
+                            disabled: advL1Decide.isPending,
+                            loading:
+                              advL1Decide.isPending &&
+                              advL1Decide.variables?.requestId === activeSelfAdvance.id &&
+                              advL1Decide.variables.approve,
+                            onClick: () =>
+                              advL1Decide.mutate({
+                                requestId: activeSelfAdvance.id,
+                                approve: true,
+                                ...optionalNote(advNotes, activeSelfAdvance.id),
+                              }),
+                            testId: 'hr-self-advance-peek-approve-l1',
+                          },
+                        ]
+                      : []),
+                  ]}
+                />
+              );
+            })() : null}
           </div>
         )}
       </Card>
@@ -774,7 +808,7 @@ export function HrStage6bApprovalQueues(props: { entities?: readonly { id: strin
   const [legalEntityId, setLegalEntityId] = useState('');
   const [advNotes, setAdvNotes] = useState<Record<string, string>>({});
   const [tripNotes, setTripNotes] = useState<Record<string, string>>({});
-  const [advSyncNotice, setAdvSyncNotice] = useState<'synced' | 'awaiting' | null>(null);
+  const [advSyncNotice, setAdvSyncNotice] = useState<'synced' | 'manual_override' | 'awaiting' | null>(null);
   const advQueueRef = useRef<HTMLDivElement>(null);
   const tripQueueRef = useRef<HTMLDivElement>(null);
   const entities = props.entities ?? [];
@@ -817,7 +851,9 @@ export function HrStage6bApprovalQueues(props: { entities?: readonly { id: strin
     },
     onSuccess: async (res, vars) => {
       if (vars.action === 'final') {
-        setAdvSyncNotice(res.payrollSynced ? 'synced' : 'awaiting');
+        if (res.payrollSynced) setAdvSyncNotice('synced');
+        else if (res.payrollSyncSkippedReason === 'manual_override') setAdvSyncNotice('manual_override');
+        else setAdvSyncNotice('awaiting');
       } else {
         setAdvSyncNotice(null);
       }
@@ -907,8 +943,20 @@ export function HrStage6bApprovalQueues(props: { entities?: readonly { id: strin
           </div>
           {advList.error && <ErrorText>{errorMessage(advList.error)}</ErrorText>}
           {advSyncNotice && (
-            <p className="mb-3 text-xs text-muted-foreground" data-testid="hr-advance-sync-notice">
-              {advSyncNotice === 'synced' ? t('approvedSyncedRun') : t('approvedAwaitingRun')}
+            <p
+              role="status"
+              className={
+                advSyncNotice === 'manual_override'
+                  ? 'mb-3 rounded-md border border-warning/40 bg-warning/10 p-2.5 text-xs font-medium text-warning'
+                  : 'mb-3 text-xs text-muted-foreground'
+              }
+              data-testid="hr-advance-sync-notice"
+            >
+              {advSyncNotice === 'synced'
+                ? t('approvedSyncedRun')
+                : advSyncNotice === 'manual_override'
+                  ? t('approvedManualOverride')
+                  : t('approvedAwaitingRun')}
             </p>
           )}
           {pendingAdvances.length === 0 ? (
@@ -916,7 +964,7 @@ export function HrStage6bApprovalQueues(props: { entities?: readonly { id: strin
           ) : (
             <div ref={advQueueRef} className="space-y-3">
               {pendingAdvances.map((item) => {
-                const runLocked = lockedRunMonths.has(`${item.legalEntityId}:${item.month}`);
+                const runLocked = item.payrollRunLocked === true || lockedRunMonths.has(`${item.legalEntityId}:${item.month}`);
                 return (
                   <ApprovalQueueRow
                     key={item.id}
@@ -964,7 +1012,7 @@ export function HrStage6bApprovalQueues(props: { entities?: readonly { id: strin
           )}
           {advDecide.error && <ErrorText>{errorMessage(advDecide.error)}</ErrorText>}
           {activeAdvance ? (() => {
-            const runLocked = lockedRunMonths.has(`${activeAdvance.legalEntityId}:${activeAdvance.month}`);
+            const runLocked = activeAdvance.payrollRunLocked === true || lockedRunMonths.has(`${activeAdvance.legalEntityId}:${activeAdvance.month}`);
             return (
               <HrApprovalPeekSheet
                 peek={advPeek}
@@ -1200,7 +1248,7 @@ export function HrPayrollAdjustmentsPanel(props: {
   const [kind, setKind] = useState<HrPayrollAdjustmentKind>('retro_pay');
   const [amount, setAmount] = useState('500000');
   const [reason, setReason] = useState('');
-  const [syncNotice, setSyncNotice] = useState<'synced' | 'awaiting' | null>(null);
+  const [syncNotice, setSyncNotice] = useState<'synced' | 'manual_override' | 'awaiting' | null>(null);
 
   const list = useQuery({
     ...orpc.hr.payroll.adjustments.list.queryOptions({
@@ -1233,7 +1281,9 @@ export function HrPayrollAdjustmentsPanel(props: {
     },
     onSuccess: async (res, vars) => {
       if (vars.action === 'approve') {
-        setSyncNotice(res.payrollSynced ? 'synced' : 'awaiting');
+        if (res.payrollSynced) setSyncNotice('synced');
+        else if (res.payrollSyncSkippedReason === 'manual_override') setSyncNotice('manual_override');
+        else setSyncNotice('awaiting');
       } else {
         setSyncNotice(null);
       }
@@ -1341,8 +1391,20 @@ export function HrPayrollAdjustmentsPanel(props: {
         </p>
       )}
       {syncNotice && (
-        <p className="mb-3 text-xs text-muted-foreground" data-testid="hr-adj-sync-notice">
-          {syncNotice === 'synced' ? t('approvedSynced') : t('approvedAwaitingSync')}
+        <p
+          role="status"
+          className={
+            syncNotice === 'manual_override'
+              ? 'mb-3 rounded-md border border-warning/40 bg-warning/10 p-2.5 text-xs font-medium text-warning'
+              : 'mb-3 text-xs text-muted-foreground'
+          }
+          data-testid="hr-adj-sync-notice"
+        >
+          {syncNotice === 'synced'
+            ? t('approvedSynced')
+            : syncNotice === 'manual_override'
+              ? t('approvedManualOverride')
+              : t('approvedAwaitingSync')}
         </p>
       )}
       {items.length === 0 ? (
