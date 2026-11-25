@@ -12,7 +12,7 @@ import { EgressError, LocalDiskStore, type EgressStream } from '@ludy/kernel-run
 import { MEDIA_LIMITS, MediaClientError, type JoinPartSource } from '@ludy/media-contract/extract';
 import { ZOOM_PARTS_MAX } from '@ludy/channel';
 import { createMediaAudioExtractor } from '../src/meetings-extract.ts';
-import { runMeetingsImport, type MeetingsImportDeps, type MeetingsImportJob } from '../src/meetings-import.ts';
+import { joinPartsBudget, runMeetingsImport, type MeetingsImportDeps, type MeetingsImportJob } from '../src/meetings-import.ts';
 
 const KEY = `staging/${'c'.repeat(64)}`;
 const OPUS = new Uint8Array([79, 103, 103, 83, 1, 2, 3]);
@@ -76,7 +76,7 @@ interface Run {
   calls: { prepareParts: number; prepareDownload: number; opened: number; maxOpen: number };
 }
 
-function setup(options: { parts: PartSpec[]; format?: 'audio' | 'video'; joinAnswer?: () => Promise<{ audio: Uint8Array; durationSeconds: number }>; extractor?: 'join' | 'no-join' | 'none' }): Run {
+function setup(options: { parts: PartSpec[]; mediaInputBytes?: number; format?: 'audio' | 'video'; joinAnswer?: () => Promise<{ audio: Uint8Array; durationSeconds: number }>; extractor?: 'join' | 'no-join' | 'none' }): Run {
   const executed: string[] = [];
   const joined: Uint8Array[][] = [];
   const calls = { prepareParts: 0, prepareDownload: 0, opened: 0, maxOpen: 0 };
@@ -154,6 +154,7 @@ function setup(options: { parts: PartSpec[]; format?: 'audio' | 'video'; joinAns
     adapters: { sandbox: adapter },
     extractor,
     stream,
+    mediaInputBytes: options.mediaInputBytes,
   } as unknown as MeetingsImportDeps;
   return { deps, executed, joined, calls };
 }
@@ -272,6 +273,44 @@ describe('a recording in several parts', () => {
     expect(await runMeetingsImport(run.deps, job(), attempt)).toBe('failed');
     expect(run.executed).toEqual([failedWith('invalid_media')]);
     expect(await files(dir)).toEqual([]);
+  });
+
+  it('bounds the parts together by what the sandbox takes in one request (half its input limit, less the frame), refusing a recording over it before any part is opened', async () => {
+    const MiB = 1024 * 1024;
+    // The formula: half of the smaller of the format's cap and the sandbox's input limit, less 4 bytes of count and 8 a part.
+    expect(joinPartsBudget('video', undefined, 2)).toBe(1024 * MiB - (4 + 16));
+    expect(joinPartsBudget('audio', undefined, 3)).toBe(150 * MiB - (4 + 24));
+    expect(joinPartsBudget('video', 100 * MiB, 2)).toBe(50 * MiB - (4 + 16));
+    expect(joinPartsBudget('audio', 100 * MiB, 8)).toBe(50 * MiB - (4 + 64));
+    // Two video parts of 600 MiB are 1.2 GiB: under the video cap (2 GiB) but over what /join-audio takes (1 GiB), so refused with no connection.
+    const video = setup({ format: 'video', parts: [{ bytes: mp4(2000, 1), listed: 600 * MiB }, { bytes: mp4(2000, 2), listed: 600 * MiB }] });
+    expect(await runMeetingsImport(video.deps, job({ hasAudio: false, hasVideo: true }), attempt)).toBe('failed');
+    expect(video.executed).toEqual([failedWith('too_large')]);
+    expect(video.calls.opened).toBe(0);
+    // Audio: 70 MiB each fits (140 MiB under 150), 80 MiB each does not (160 MiB).
+    const fits = setup({ parts: [{ bytes: mp4(2000, 1), declared: 2000, listed: 70 * MiB }, { bytes: mp4(2000, 2), declared: 2000, listed: 70 * MiB }] });
+    expect(await runMeetingsImport(fits.deps, job(), attempt)).toBe('staged');
+    await store.delete(KEY);
+    const over = setup({ parts: [{ bytes: mp4(2000, 1), listed: 80 * MiB }, { bytes: mp4(2000, 2), listed: 80 * MiB }] });
+    expect(await runMeetingsImport(over.deps, job(), attempt)).toBe('failed');
+    expect(over.calls.opened).toBe(0);
+    // A sandbox started with a smaller MEDIA_MAX_INPUT_BYTES: 10 MiB takes 5 MiB of parts.
+    const small = setup({ mediaInputBytes: 10 * MiB, parts: [{ bytes: mp4(2000, 1), listed: 3 * MiB }, { bytes: mp4(2000, 2), listed: 3 * MiB }] });
+    expect(await runMeetingsImport(small.deps, job(), attempt)).toBe('failed');
+    expect(small.executed).toEqual([failedWith('too_large')]);
+    expect(small.calls.opened).toBe(0);
+  });
+
+  it('fails at once, with no retry, when the sandbox has no /join-audio (a 404), so the parts are not downloaded again and again', async () => {
+    const parts = [{ bytes: mp4(1500, 1), declared: 1500 }, { bytes: mp4(1500, 2), declared: 1500 }];
+    const run = setup({ parts, joinAnswer: async () => Promise.reject(new MediaClientError('internal_error', 404, 'crove-media request failed')) });
+    // Not thrown (a throw is the queue's retry): recorded as a final failure the member can read.
+    expect(await runMeetingsImport(run.deps, job(), { retryCount: 0, retryLimit: 3 })).toBe('failed');
+    expect(run.executed).toEqual([failedWith('no_audio')]);
+    expect(await files(dir)).toEqual([]);
+    // Another server error of the sandbox is still the retried kind.
+    const down = setup({ parts, joinAnswer: async () => Promise.reject(new MediaClientError('internal_error', 502, 'bad gateway')) });
+    await expect(runMeetingsImport(down.deps, job(), { retryCount: 0, retryLimit: 3 })).rejects.toThrow(/not staged/);
   });
 
   it('takes a recording of one file the old way: the parts step answers with none and the one download is fetched, not joined', async () => {

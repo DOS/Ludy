@@ -42,6 +42,8 @@ function refusal(error: unknown): DomainError {
   return unavailable();
 }
 
+export const MEDIA_JOIN_UNAVAILABLE = 'MEDIA_JOIN_UNAVAILABLE';
+
 export function createMediaAudioExtractor(client: MediaExtractClient & Partial<MediaJoinClient>, options: { timeoutMs?: number } = {}): MediaAudioExtractor {
   const timeoutMs = options.timeoutMs ?? EXTRACT_TIMEOUT_MS;
   // A hard deadline over the whole call, whatever the client does: when it passes, the call is aborted (which closes the source).
@@ -74,7 +76,18 @@ export function createMediaAudioExtractor(client: MediaExtractClient & Partial<M
   return {
     configured: true,
     extract: (source) => guarded((signal) => client.extractAudio(source, signal)),
-    ...(joinAudio ? { join: (parts: readonly JoinPartSource[]) => guarded((signal) => joinAudio(parts, signal)) } : {}),
+    // A crove-media with no /join-audio answers 404: the same on every try, so it is a final refusal (MEDIA_JOIN_UNAVAILABLE), not the retried "unavailable" that would download every part again each time.
+    ...(joinAudio
+      ? {
+          join: (parts: readonly JoinPartSource[]) =>
+            guarded((signal) =>
+              joinAudio(parts, signal).catch((error: unknown) => {
+                if (error instanceof MediaClientError && error.status === 404) throw new DomainError(MEDIA_JOIN_UNAVAILABLE, 503, 'The media service cannot join the parts of a recording');
+                throw error;
+              }),
+            ),
+        }
+      : {}),
   };
 }
 

@@ -35,7 +35,8 @@ import type { MeetingPlatformAdapter, MeetingPlatformDownload, MeetingPlatformTr
 import { MeetingPlatformError } from '@ludy/channel';
 import { DomainError, EgressError, guardedStream, type BlobStore, type CredentialBroker, type EgressStream, type EgressStreamOptions, type Runtime } from '@ludy/kernel-runtime';
 import { freshCredential } from './meeting-platform-credential.ts';
-import { extractAudioFromVideo, joinAudioFromParts, type MediaAudioExtractor } from './meetings-extract.ts';
+import { MEDIA_JOIN_FRAME, MEDIA_LIMITS } from '@ludy/media-contract/extract';
+import { extractAudioFromVideo, joinAudioFromParts, MEDIA_JOIN_UNAVAILABLE, type MediaAudioExtractor } from './meetings-extract.ts';
 import { MEDIA_PROBE_FAILED, MEDIA_PROBE_UNAVAILABLE, MEDIA_TOO_LONG } from './meetings-measure.ts';
 
 const ACTOR = { type: 'system' as const, component: 'meetings.import' };
@@ -65,6 +66,8 @@ export interface MeetingsImportJob {
 }
 
 export interface MeetingsImportDeps {
+  // The most bytes crove-media takes in one request (its own MEDIA_MAX_INPUT_BYTES, config.MEDIA_MAX_INPUT_BYTES); unset: the sandbox's default, the video limit. Bounds a join's parts (see joinPartsBudget).
+  mediaInputBytes?: number | undefined;
   runtime: Runtime;
   broker: CredentialBroker;
   store: BlobStore;
@@ -94,6 +97,8 @@ function classify(error: unknown): { code: MeetingPlatformErrorCode; retry: bool
     // The video path: what sealing the download and the sandbox's extraction say (apps/kernel/src/media-seal.ts, meetings-extract.ts). A file the sandbox cannot read, without audio or too long will not
     // improve on a second try; a sandbox that is down or busy may, and a body that ended short is the platform's connection.
     if (error.code === 'NO_AUDIO_TRACK') return { code: 'no_audio', retry: false };
+    // A sandbox that has no /join-audio (an older crove-media): the same answer on every try, so the recording fails at once, as one the sandbox cannot join (deploy crove-media before the kernel).
+    if (error.code === MEDIA_JOIN_UNAVAILABLE) return { code: 'no_audio', retry: false };
     if (error.code === 'FILE_TOO_LARGE') return { code: 'too_large', retry: false };
     if (error.code === 'INVALID_MEDIA_CONTAINER' || error.code === MEDIA_PROBE_FAILED) return { code: 'invalid_media', retry: false };
     if (error.code === MEDIA_TOO_LONG) return { code: 'too_long', retry: false };
@@ -250,13 +255,20 @@ async function audioOfVideo(deps: MeetingsImportDeps, job: MeetingsImportJob, do
   }
 }
 
+// The most bytes the parts of one join may add up to. /join-audio takes at most half of the sandbox's input limit as ONE framed body (its scratch holds the body and one part), so the budget is that half, bounded by the
+// format's own cap, minus the frame the parts travel in (a count, then a length per part). A recording over it is refused before a part is opened, not after it was all downloaded and sealed.
+export function joinPartsBudget(format: 'audio' | 'video', mediaInputBytes: number | undefined, count: number): number {
+  const formatCap = format === 'video' ? MEETING_PLATFORM_VIDEO_MAX_BYTES : MEETING_PLATFORM_IMPORT_MAX_BYTES;
+  return Math.max(0, Math.floor(Math.min(formatCap, mediaInputBytes ?? MEDIA_LIMITS.maxVideoBytes) / 2) - (MEDIA_JOIN_FRAME.countBytes + MEDIA_JOIN_FRAME.lengthBytes * count));
+}
+
 // The audio of a recording the platform made in several parts (Zoom, #3175): every part is fetched through the guard in order and sealed as it arrives (the parts together counted against the cap of their
 // format), crove-media reads them back in one framed call and returns ONE Opus, and the sealed parts are deleted when the call ends. A part that fails fails the whole import, so a partial recording is never
 // staged. Each part must declare its length (its response, else the size the platform listed for that file); one that does not is refused as the platform's answer. A sandbox that cannot join, or none, is `no_audio`.
 async function audioOfParts(deps: MeetingsImportDeps, job: MeetingsImportJob, parts: readonly MeetingPlatformDownload[], format: 'audio' | 'video', signal?: AbortSignal): Promise<Uint8Array> {
   const extractor = deps.extractor;
   if (!extractor?.configured || !extractor.join) throw new MeetingPlatformError('no_audio');
-  const cap = format === 'video' ? MEETING_PLATFORM_VIDEO_MAX_BYTES : MEETING_PLATFORM_IMPORT_MAX_BYTES;
+  const cap = joinPartsBudget(format, deps.mediaInputBytes, parts.length);
   // The sizes the platform listed, added up, over the cap: refused before any file is opened.
   const listed = parts.map((part) => part.sizeBytes ?? null);
   if (listed.every((n): n is number => n !== null) && listed.reduce((sum, n) => sum + n, 0) > cap) throw new MeetingPlatformError('too_large');
