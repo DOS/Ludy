@@ -235,7 +235,7 @@ describe('TeamsMeetingPlatform.list', () => {
     expect(await codeOf(teams(graph({ '/v1.0/me/calendarView': { text: 'not json at all' } })).adapter.list(CREDENTIAL, SINCE))).toBe('platform_unavailable');
   });
 
-  it('follows the next page of the recordings and the transcripts of a meeting, so a long series is read whole, refuses a link that leaves Graph or the path, and stops at five pages', async () => {
+  it('follows the next page of the recordings and the transcripts of a meeting, so a long series is read whole, and never offers or imports a meeting whose list it could not read whole', async () => {
     const base = `https://graph.microsoft.com/v1.0/me/onlineMeetings/${IDS.SSSS}`;
     const split = (kind: 'recordings' | 'transcripts', first: number, link: string = `${base}/${kind}?page=2`) => {
       const all = (fixture(`${kind}-series`).value as unknown[]) ?? [];
@@ -262,19 +262,28 @@ describe('TeamsMeetingPlatform.list', () => {
     expect(calls.filter((c) => c.url.includes(`${IDS.SSSS}/recordings`))).toHaveLength(2);
     expect((await adapter.prepareDownload(CREDENTIAL, OCC.S2, 'video')).url).toBe(`${base}/recordings/22222222-bc6e-4fd8-96c7-e01264e9b6f2/content`);
     expect(await codeOf(adapter.prepareDownload(CREDENTIAL, OCC.S3, 'video'))).toBe('platform_refused');
-    // A next page that leaves Graph, the path or https fails the call, and nothing is sent to it.
-    for (const link of ['https://evil.example/x', 'https://login.microsoftonline.com/v1.0/me/onlineMeetings', `${base}/transcripts?page=2`, `http://graph.microsoft.com/v1.0/me/onlineMeetings/${IDS.SSSS}/recordings?page=2`, 'not a url']) {
+    // A next page that leaves Graph, the path or https is never followed (nothing is sent to it) and the meeting offers no video (its transcripts are a separate list), so one odd link does not break the member's whole list; a read of it is refused.
+    for (const link of ['https://evil.example/x', 'https://login.microsoftonline.com/v1.0/me/onlineMeetings', `${base}/transcripts?page=2`, `http://graph.microsoft.com/v1.0/me/onlineMeetings/${IDS.SSSS}/recordings?page=2`, `https://graph.microsoft.com:8443/v1.0/me/onlineMeetings/${IDS.SSSS}/recordings?page=2`, `https://user:pw@graph.microsoft.com/v1.0/me/onlineMeetings/${IDS.SSSS}/recordings?page=2`, 'not a url']) {
       const odd = teams((url) => split('recordings', 1, link)(url) ?? graph()(url));
-      expect(await codeOf(odd.adapter.list(CREDENTIAL, SINCE)), link).toBe('platform_unavailable');
-      expect(odd.calls.some((c) => c.url.includes('evil.example') || c.url.includes('login.microsoftonline.com')), link).toBe(false);
+      const shown = await odd.adapter.list(CREDENTIAL, SINCE);
+      expect(shown.map((m) => [m.id, m.hasVideo]), link).toEqual([[OCC.A, true], [OCC.B, false], [OCC.S2, false], [OCC.S1, false]]);
+      expect(odd.calls.some((c) => c.url.includes('evil.example') || c.url.includes('login.microsoftonline.com') || c.url.includes(':8443') || c.url.includes('user:pw')), link).toBe(false);
+      expect(await codeOf(odd.adapter.prepareDownload(CREDENTIAL, OCC.S1, 'video')), link).toBe('platform_unavailable');
     }
-    // A link that never ends is read five pages and no further.
+    // A later page that is refused or gone leaves the meeting out of the list too (the files seen so far may be only part), and a read of it is refused.
+    for (const status of [403, 404]) {
+      const gone = teams((url) => (url.pathname.endsWith(`${IDS.SSSS}/recordings`) && url.searchParams.has('page') ? { status, json: fixture('error-forbidden') } : (split('recordings', 1)(url) ?? graph()(url))));
+      expect((await gone.adapter.list(CREDENTIAL, SINCE)).filter((m) => m.hasVideo).map((m) => m.id), String(status)).toEqual([OCC.A]);
+      expect(['platform_refused', 'platform_unavailable', 'recording_gone']).toContain(await codeOf(gone.adapter.prepareDownload(CREDENTIAL, OCC.S1, 'video')));
+    }
+    // A link that never ends is read five pages and no further, and the meeting offers no video.
     const endless = teams((url) => {
       if (url.pathname !== `/v1.0/me/onlineMeetings/${IDS.SSSS}/recordings`) return graph()(url);
       return { json: { value: [], '@odata.nextLink': `${base}/recordings?page=${(Number(url.searchParams.get('page') ?? '1') + 1).toString()}` } };
     });
-    await endless.adapter.list(CREDENTIAL, SINCE);
+    expect((await endless.adapter.list(CREDENTIAL, SINCE)).some((m) => m.id.startsWith(`${IDS.SSSS}~`) && m.hasVideo)).toBe(false);
     expect(endless.calls.filter((c) => new URL(c.url).pathname.endsWith(`${IDS.SSSS}/recordings`))).toHaveLength(5);
+    expect(await codeOf(endless.adapter.prepareDownload(CREDENTIAL, OCC.S1, 'video'))).toBe('platform_unavailable');
   });
 
   it('lists each occurrence of a recurring series on its own, with the files made during it, and imports the right ones', async () => {

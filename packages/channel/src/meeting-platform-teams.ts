@@ -35,9 +35,9 @@ export const TEAMS_LOGIN_HOST = 'login.microsoftonline.com';
 export const TEAMS_HOSTS = [TEAMS_GRAPH_HOST, TEAMS_LOGIN_HOST] as const;
 // A recording's bytes may be handed over by a redirect to the organizer's OneDrive or the channel's SharePoint; nothing else is allowed.
 export const TEAMS_DOWNLOAD_SUFFIX = 'sharepoint.com';
-// The delegated permissions of the app, in the order the consent dialog shows them. Two of them need a tenant administrator (docs/runbooks/meetings-teams.md).
-// The Graph permissions the listing and the import need (the others are for sign-in and the refresh token).
+// The Graph permissions the listing and the import need (the others of TEAMS_SCOPES are for sign-in and the refresh token).
 export const TEAMS_GRAPH_SCOPES = ['Calendars.ReadBasic', 'OnlineMeetings.Read', 'OnlineMeetingRecording.Read.All', 'OnlineMeetingTranscript.Read.All'] as const;
+// The delegated permissions of the app, in the order the consent dialog shows them. Two of them need a tenant administrator (docs/runbooks/meetings-teams.md).
 export const TEAMS_SCOPES = ['openid', 'profile', 'offline_access', 'Calendars.ReadBasic', 'OnlineMeetings.Read', 'OnlineMeetingRecording.Read.All', 'OnlineMeetingTranscript.Read.All'] as const;
 
 const GRAPH = `https://${TEAMS_GRAPH_HOST}/v1.0`;
@@ -307,18 +307,33 @@ export class TeamsMeetingPlatform implements MeetingPlatformAdapter, MeetingPlat
     return body;
   }
 
-  // The recordings or transcripts of one online meeting, every page up to FILE_PAGES, as one `{ value }`. With `skipMissing`, a 403 or 404 on the first page is `null` (as jsonOrNull); a refusal later keeps the pages read.
+  // The recordings or transcripts of one online meeting, every page up to FILE_PAGES, as one `{ value }`. A result that is not the whole list (a page refused or gone after the first, a next link
+  // that is not Graph's own, more pages than the cap) is never returned as if it were: with `skipMissing` (the list) it is `null`, so the meeting is not offered (an occurrence with several
+  // recordings must not look like one); without it (a download or a transcript read) it is a refusal.
   private async files(path: string, credential: MeetingPlatformCredential, signal: AbortSignal | undefined, skipMissing: boolean): Promise<Json | null> {
     const first = `${GRAPH}${path}`;
     const expected = new URL(first).pathname;
     const value: Json[] = [];
     let url: string | null = first;
-    for (let page = 0; url !== null && page < FILE_PAGES; page += 1) {
+    for (let page = 0; url !== null; page += 1) {
+      if (page >= FILE_PAGES) {
+        if (skipMissing) return null;
+        throw new MeetingPlatformError('platform_unavailable');
+      }
       const body: Json | null = skipMissing ? await this.jsonOrNull(url, credential, signal) : await this.json(url, credential, signal);
-      if (body === null) return page === 0 ? null : { value };
+      if (body === null) return null;
       value.push(...list(body.value));
       const next = text(body['@odata.nextLink']);
-      url = next === '' ? null : nextFilesPage(next, expected);
+      if (next === '') {
+        url = null;
+        continue;
+      }
+      try {
+        url = nextFilesPage(next, expected);
+      } catch (error) {
+        if (skipMissing) return null;
+        throw error;
+      }
     }
     return { value };
   }
