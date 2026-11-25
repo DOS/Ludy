@@ -38,6 +38,7 @@ suite('replacing the draft transcript holds the meeting row (#3916)', () => {
   };
   const lines = (...seconds: number[]) => seconds.map((s) => ({ startSeconds: s, endSeconds: s + 5, speakerLabel: 'Hà', text: `Dòng ${s}` }));
   const seconds = async (meetingId: string) => (await sqlAdmin<{ s: number }>(`SELECT start_seconds::int AS s FROM ludy_meetings.transcript_segment WHERE meeting_id = $1 ORDER BY start_seconds`, [meetingId])).rows.map((r) => r.s);
+  const staged = async (meetingId: string) => (await sqlAdmin<{ s: number; stage: string }>(`SELECT start_seconds::int AS s, stage FROM ludy_meetings.transcript_segment WHERE meeting_id = $1 ORDER BY stage, start_seconds`, [meetingId])).rows;
 
   async function seedMeeting(): Promise<string> {
     const meetingId = randomUUID();
@@ -143,10 +144,16 @@ suite('replacing the draft transcript holds the meeting row (#3916)', () => {
     expect(results.filter((r) => r !== 'ok' && !/^[A-Z][A-Z_]+$/.test(r)), JSON.stringify(results)).toEqual([]);
     expect(results.filter((r) => r === '40P01' || r === '40001')).toEqual([]);
     expect(results.filter((r) => r === 'ok').length).toBeGreaterThan(0);
-    // The lines are one of the replacements whole, never a mix of two.
-    const final = await seconds(meetingId);
-    expect(final).toHaveLength(3);
-    expect(final[0]).toBe(0);
-    expect(final[1]! - 10).toBe(final[2]! - 20);
+    // The lines of each stage are one of the replacements whole, never a mix of two. A publish (#4899) moves a whole draft to published and replaces the published lines whole, so the meeting holds
+    // a draft set, a published set or both (a replacement after a publish), and a set is always three lines of one replacement.
+    const final = await staged(meetingId);
+    expect(final.length).toBeGreaterThanOrEqual(3);
+    for (const stage of ['draft', 'published']) {
+      const set = final.filter((r) => r.stage === stage).map((r) => r.s);
+      if (set.length === 0) continue;
+      expect(set, stage).toHaveLength(3);
+      expect(set[0]).toBe(0);
+      expect(set[1]! - 10).toBe(set[2]! - 20);
+    }
   });
 });

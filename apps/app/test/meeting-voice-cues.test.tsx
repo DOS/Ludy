@@ -106,6 +106,7 @@ describe('what a click did, in words', () => {
 describe('an item drafted from a cue', () => {
   const results = (flags: Array<'contact_in_title' | 'asked_aloud'>): MeetingResults => ({
     meetingId: 'm1',
+    transcriptUnread: 0,
     isRecorder: true,
     draft: null,
     published: null,

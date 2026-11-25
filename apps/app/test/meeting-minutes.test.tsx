@@ -47,7 +47,7 @@ const item = (over: Partial<ActionItemView>): ActionItemView => ({
   ...over,
 });
 const result = (stage: 'draft' | 'published', summary: string, decisions = ['Giữ giá cũ']) => ({ id: `r-${stage}`, feature: 'manual' as const, stage, summary, decisions, tainted: false });
-const results = (over: Partial<MeetingResults>): MeetingResults => ({ meetingId: 'm1', isRecorder: false, draft: null, published: null, items: [], ...over });
+const results = (over: Partial<MeetingResults>): MeetingResults => ({ meetingId: 'm1', isRecorder: false, draft: null, published: null, items: [], transcriptUnread: 0, ...over });
 
 describe('the facts of the page', () => {
   it('writes the day and the time in Vietnam time whatever the browser zone is, and a due date as dd/mm/yyyy', () => {

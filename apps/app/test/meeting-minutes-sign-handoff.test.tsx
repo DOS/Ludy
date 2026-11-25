@@ -196,6 +196,7 @@ const makeAction = (stage: 'draft' | 'published', title = 'Gửi báo giá chín
 
 const SHARED_RESULTS: ResultsData = {
   meetingId: MEETING_ID,
+  transcriptUnread: 0,
   isRecorder: true,
   draft: null,
   published: {
@@ -211,6 +212,7 @@ const SHARED_RESULTS: ResultsData = {
 
 const UNSHARED_DRAFT_RESULTS: ResultsData = {
   meetingId: MEETING_ID,
+  transcriptUnread: 0,
   isRecorder: true,
   draft: {
     id: '01900000-0000-7000-8000-000000000802',

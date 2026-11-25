@@ -5546,7 +5546,7 @@ export const en = {
       },
       acceptClean: 'Make {count} clear tasks',
       publish: 'Share with the attendees',
-      publishNote: 'Sharing shows the summary and the items to everyone who can read this meeting. The transcript is shared separately.',
+      publishNote: 'Sharing shows the summary, the items and the transcript to everyone who can read this meeting.',
       vy: {
         title: 'Vy summarizes this meeting',
         desc: 'Vy reads the transcript and proposes a summary, the decisions and the action items, for you only. It uses your AI budget and takes up to a minute. Nothing is shared until you have read it and decide.',
@@ -5615,6 +5615,7 @@ export const en = {
         },
       },
       reviewNote: 'Some of this draft was written by Vy and you have not marked it as read. Read it, correct what is wrong, then confirm to be able to share it.',
+      reviewNoteTranscript: 'The transcript ({count} lines) was written by a machine and you have not marked it as read. Sharing lets the readers of the meeting see it, so look it over before you confirm.',
       reviewed: 'I have read it',
       saveAsNote: 'Save as shared note',
       saveAsNoteConfirmTitle: 'Save this summary as a shared note?',
@@ -19559,7 +19560,7 @@ export const en = {
       },
       result: {
         get: 'Read the summary and the action items of a meeting',
-        publish: 'Share the summary and the action items with the meeting\'s attendees',
+        publish: 'Share the summary, the action items and the transcript with the meeting\'s attendees',
       },
       title: {
         start: 'Ask Vy to suggest a title for a meeting',

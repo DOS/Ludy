@@ -5544,7 +5544,7 @@ export const vi = {
       },
       acceptClean: 'Tạo {count} việc rõ ràng',
       publish: 'Chia sẻ cho người dự họp',
-      publishNote: 'Chia sẻ sẽ cho mọi người đọc được cuộc họp này thấy bản tóm tắt và các việc. Bản ghi lời nói được chia sẻ riêng.',
+      publishNote: 'Chia sẻ sẽ cho mọi người đọc được cuộc họp này thấy bản tóm tắt, các việc và bản ghi lời nói.',
       vy: {
         title: 'Vy tóm tắt cuộc họp này',
         desc: 'Vy đọc bản ghi lời nói và đề xuất bản tóm tắt, các quyết định và việc cần làm, chỉ cho riêng bạn. Việc này tính vào ngân sách AI của bạn và mất tối đa một phút. Không có gì được chia sẻ cho đến khi bạn đã đọc và quyết định.',
@@ -5613,6 +5613,7 @@ export const vi = {
         },
       },
       reviewNote: 'Một phần bản nháp này do Vy viết và bạn chưa đánh dấu là đã đọc. Hãy đọc, sửa chỗ sai, rồi xác nhận để có thể chia sẻ.',
+      reviewNoteTranscript: 'Bản ghi lời nói ({count} dòng) do máy chép và bạn chưa đánh dấu là đã đọc. Chia sẻ sẽ cho người đọc cuộc họp thấy bản ghi này, nên hãy xem lại bản ghi trước khi xác nhận.',
       reviewed: 'Tôi đã đọc',
       saveAsNote: 'Lưu thành ghi chú chung',
       saveAsNoteConfirmTitle: 'Lưu bản tóm tắt thành ghi chú dùng chung?',
@@ -19559,7 +19560,7 @@ export const vi = {
       },
       result: {
         get: 'Xem tóm tắt và việc cần làm của cuộc họp',
-        publish: 'Chia sẻ tóm tắt và việc cần làm với người dự họp',
+        publish: 'Chia sẻ tóm tắt, việc cần làm và bản ghi lời nói với người dự họp',
       },
       title: {
         start: 'Nhờ Vy gợi ý tên cho một cuộc họp',

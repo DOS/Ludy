@@ -144,7 +144,7 @@ describe('the template settings card', () => {
 
 const published = { id: 'r-pub', feature: 'manual' as const, stage: 'published' as const, summary: 'Chốt báo giá.', decisions: ['Giữ giá cũ'], tainted: false };
 const draft = { ...published, id: 'r-draft', stage: 'draft' as const };
-const results = (over: Partial<Results>): Results => ({ meetingId: 'm1', isRecorder: true, draft: null, published: null, items: [], ...over });
+const results = (over: Partial<Results>): Results => ({ meetingId: 'm1', isRecorder: true, draft: null, published: null, items: [], transcriptUnread: 0, ...over });
 
 describe('the results panel', () => {
   beforeEach(() => client.current.clear());

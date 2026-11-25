@@ -161,11 +161,14 @@ export const transcriptGet = defineQuery({
       .orderBy('id')
       .execute();
     const stage: Transcript['stage'] = rows.length === 0 ? 'none' : rows.some((r) => r.stage === 'draft') ? 'draft' : 'published';
+    // The recorder reads their working draft while one exists (a re-transcription after a publish, #4899): the lines published before it stay for the readers until the next publish replaces them, and are not
+    // listed again beside the draft that will replace them. A reader reads published lines only, so nothing changes for them.
+    const shown = stage === 'draft' ? rows.filter((r) => r.stage === 'draft') : rows;
     return {
       meetingId: input.meetingId,
       isRecorder: meeting.recorder_user_id === userId,
       stage,
-      segments: rows.map((r) => ({
+      segments: shown.map((r) => ({
         id: r.id,
         startSeconds: Number(r.start_seconds),
         endSeconds: Number(r.end_seconds),

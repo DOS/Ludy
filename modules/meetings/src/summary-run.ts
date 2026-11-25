@@ -79,7 +79,13 @@ export const draftReview = defineCommand({
     userOf(ctx.actor);
     const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
     if (meeting.recorder_user_id !== userOf(ctx.actor)) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can review its draft');
-    const { rows } = await sql<{ n: number }>`SELECT ludy_meetings.draft_review(${ctx.orgId}::uuid, ${input.meetingId}::uuid, ${sql.val(input.ids)}::uuid[]) AS n`.execute(ctx.trx);
+    // The draft transcript lines a machine wrote (#4899) are read in the same click: too many to name one by one, so they are found here, in this recorder's own meeting (a draft is theirs alone under
+    // row security), and handed to the same database function as the ids the screen named. A line another tab copied after this one loaded is read too: it is the same transcript the recorder is looking at.
+    const lines = input.transcript
+      ? (await ctx.trx.selectFrom('ludy_meetings.transcript_segment').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').where('tainted', '=', true).execute()).map((r) => r.id)
+      : [];
+    const ids = [...new Set([...input.ids, ...lines])];
+    const { rows } = await sql<{ n: number }>`SELECT ludy_meetings.draft_review(${ctx.orgId}::uuid, ${input.meetingId}::uuid, ${sql.val(ids)}::uuid[]) AS n`.execute(ctx.trx);
     const cleared = rows[0]?.n ?? 0;
     ctx.audit({ meetingId: input.meetingId, count: cleared });
     return zDraftReviewed.parse({ meetingId: input.meetingId, cleared });

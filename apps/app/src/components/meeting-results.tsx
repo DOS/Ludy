@@ -614,10 +614,12 @@ export function MeetingResults({
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: orpc.meetings.results.key() });
       await queryClient.invalidateQueries({ queryKey: orpc.meetings.transcript.redactCandidates.key() });
+      // The transcript lines are shared with the summary (#4899): the transcript card and the lists that read them read again.
+      await queryClient.invalidateQueries({ queryKey: orpc.meetings.transcript.key() });
       setFocusPublished(true);
     },
   });
-  const review = useMutation({ mutationFn: (ids: string[]) => orpc.meetings.results.review.call({ meetingId, confirmed: true, ids }), onSuccess: refresh });
+  const review = useMutation({ mutationFn: (read: { ids: string[]; transcript: boolean }) => orpc.meetings.results.review.call({ meetingId, confirmed: true, ids: read.ids, transcript: read.transcript }), onSuccess: refresh });
   const acceptClean = useMutation({ mutationFn: () => orpc.meetings.actionItems.acceptClean.call({ meetingId, confirmed: true }), onSuccess: refresh });
   if (query.isPending) return null;
   if (query.error) return <ErrorText>{errorMessage(query.error)}</ErrorText>;
@@ -638,7 +640,9 @@ export function MeetingResults({
   // What Vy wrote and the recorder has not read: the draft is not shared until they confirm it (or rewrite it).
   // The rows on the screen that Vy wrote: the review names exactly these, so a row copied in another tab after this one loaded keeps its mark.
   const unreadIds = [...(draft?.tainted ? [draft.id] : []), ...items.filter((i) => i.stage === 'draft' && i.tainted).map((i) => i.id)];
-  const unread = unreadIds.length > 0;
+  // The transcript lines a machine wrote and the recorder has not read (#4899): too many to name, so the review names the transcript itself, and the server finds the lines in this recorder's own meeting.
+  const unreadLines = data.transcriptUnread;
+  const unread = unreadIds.length > 0 || unreadLines > 0;
   const cleanCount = items.filter((i) => i.clean).length;
   const effectiveRedactedEpoch = redaction ? redaction.redactedEpoch : localRedactedEpoch;
   return (
@@ -764,9 +768,10 @@ export function MeetingResults({
             <p className="text-xs text-muted-foreground">{t('publishNote')}</p>
             {unread && (
               <div className="space-y-2" data-testid="vy-review">
-                <p className="text-sm">{t('reviewNote')}</p>
+                {unreadIds.length > 0 && <p className="text-sm">{t('reviewNote')}</p>}
+                {unreadLines > 0 && <p className="text-sm">{t('reviewNoteTranscript', { count: String(unreadLines) })}</p>}
                 {review.error && <ErrorText>{errorMessage(review.error)}</ErrorText>}
-                <Button size="sm" variant="outline" loading={review.isPending} onClick={() => review.mutate(unreadIds)}>
+                <Button size="sm" variant="outline" loading={review.isPending} onClick={() => review.mutate({ ids: unreadIds, transcript: unreadLines > 0 })}>
                   {t('reviewed')}
                 </Button>
               </div>

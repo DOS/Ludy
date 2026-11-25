@@ -167,9 +167,9 @@ describe('the button on the meeting page', () => {
     );
   };
   it('is the recorder\'s alone, works for published or reviewed/manual unpublished draft, and stays hidden for unreviewed tainted draft', () => {
-    expect(render({ meetingId: 'm1', isRecorder: true, draft: null, published, items: [] })).toContain(en.meetings.followup.open);
-    expect(render({ meetingId: 'm1', isRecorder: false, draft: null, published, items: [] })).not.toContain(en.meetings.followup.open);
-    expect(render({ meetingId: 'm1', isRecorder: true, draft: { ...published, stage: 'draft', tainted: false }, published: null, items: [] })).toContain(en.meetings.followup.open);
-    expect(render({ meetingId: 'm1', isRecorder: true, draft: { ...published, stage: 'draft', tainted: true }, published: null, items: [] })).not.toContain(en.meetings.followup.open);
+    expect(render({ meetingId: 'm1', transcriptUnread: 0, isRecorder: true, draft: null, published, items: [] })).toContain(en.meetings.followup.open);
+    expect(render({ meetingId: 'm1', transcriptUnread: 0, isRecorder: false, draft: null, published, items: [] })).not.toContain(en.meetings.followup.open);
+    expect(render({ meetingId: 'm1', transcriptUnread: 0, isRecorder: true, draft: { ...published, stage: 'draft', tainted: false }, published: null, items: [] })).toContain(en.meetings.followup.open);
+    expect(render({ meetingId: 'm1', transcriptUnread: 0, isRecorder: true, draft: { ...published, stage: 'draft', tainted: true }, published: null, items: [] })).not.toContain(en.meetings.followup.open);
   });
 });
