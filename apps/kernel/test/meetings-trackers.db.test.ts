@@ -99,7 +99,7 @@ suite('Keyword trackers (#4818)', () => {
     await expect(add('rec', 'hợp đồng')).rejects.toMatchObject({ code: 'FORBIDDEN' });
     await expect(add('owner', 'GIÁ')).rejects.toMatchObject({ code: 'TRACKER_TERM_TAKEN' });
     // A term is judged by the glossary's rules: an address, a run of digits and a word with no letter are refused.
-    for (const bad of ['gui@mail.com', 'www.doithu.vn', '0912345678', '!!!']) await expect(add('owner', bad), bad).rejects.toThrow();
+    for (const bad of ['gui@example.com', 'www.doithu.vn', '0912345678', '!!!']) await expect(add('owner', bad), bad).rejects.toThrow();
     for (const who of ['owner', 'adm', 'rec', 'lan', 'other']) expect(await terms(who), who).toEqual(['giá', 'Đối thủ Đại Việt'].sort());
     await expect(remove('lan', giaTerm.termId)).rejects.toMatchObject({ code: 'FORBIDDEN' });
     expect(await remove('adm', giaTerm.termId)).toEqual({ termId: giaTerm.termId });
