@@ -73,6 +73,10 @@ const ALLOWED: Record<string, Record<string, string>> = {
   },
   // Not classified before the labels of a meeting (ludy_meetings.meeting_label.label, personal data since #4964) made the name `label` one; none of these facts carries a meeting label.
   'packages/kernel/src/conversations.ts': { 'label <- input.intent': 'the intent a conversation was set to, a closed set of codes (ludy_kernel.conversation.intent), written under the key label' },
+  // Not classified before the place of a meeting (ludy_meetings.meeting.place, personal data since #5013) made the name `place` one; these facts carry where a card or a column was moved, the word before or after, never the place of a meeting.
+  'modules/notes/src/todos.ts': { 'place <- input.place': 'where a to-do was moved relative to its anchor, the word before or after (a closed set)' },
+  'modules/projects/src/columns.ts': { 'place <- input.place': 'where a column or task was moved relative to its anchor, the word before or after (a closed set)' },
+  'modules/projects/src/projects.ts': { 'place <- input.place': 'where a task was moved relative to its anchor, the word before or after (a closed set)' },
   'packages/kernel/src/mcp.ts': { 'label <- input.label': 'the label of an MCP pairing the member typed for their own device (ludy_kernel.mcp_pairing, internal), never a meeting label' },
   'modules/social/src/review-checklist.ts': {
     'label <- s.label': 'the text of an item of the review checklist of the org (ludy_social.review_check.label, internal)',
