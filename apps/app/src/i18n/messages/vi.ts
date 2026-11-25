@@ -392,6 +392,8 @@ export const vi = {
       aiBadge: '{gm} viết',
       byVy: '{gm}, tổng quản của các đồng nghiệp AI, viết từ số liệu của danh sách bên dưới; mọi con số đã được đối chiếu với danh sách. Bạn xem và duyệt từng việc ở màn của nó.',
       byTemplate: 'Tóm tắt tự động từ số liệu của danh sách bên dưới.',
+      // AI tắt hoặc hết ngân sách tháng (#4783): một câu cố định từ chính số việc của danh sách, không do AI viết.
+      fixed: '{count, plural, other {Hôm nay có # việc cần bạn xem, ở danh sách bên dưới.}}',
     },
     // "Tuần này" dưới danh sách (#3257): 7 ngày qua, số liệu do chính các ứng dụng tính và những câu của Vy viết trên đó.
     weekly: {
@@ -416,7 +418,18 @@ export const vi = {
       subtitle: 'Làm một việc đầu tiên để thấy dữ liệu chạy ngay trên Trang tổng quan.',
       stepLabel: 'Bước {step}',
       guideLink: 'Xem hướng dẫn nhanh',
+      dismiss: 'Ẩn thẻ này',
       steps: {
+        vatPeriod: {
+          title: 'Chọn kỳ khai thuế GTGT',
+          description: 'Chọn khai theo tháng hay theo quý để Ludy nhắc đúng hạn tờ khai.',
+          action: 'Chọn kỳ khai',
+        },
+        twoFactor: {
+          title: 'Bật xác thực hai lớp',
+          description: 'Duyệt chi và ghi sổ cần xác thực hai lớp; bật trước để không bị vướng khi cần duyệt.',
+          action: 'Mở bảo mật',
+        },
         uploadInvoice: {
           title: 'Tải hóa đơn đầu tiên',
           description: 'Đẩy tệp PDF, ảnh chụp hoặc XML vào hộp duyệt để đồng nghiệp AI đọc và kiểm tra giúp bạn.',
@@ -469,7 +482,16 @@ export const vi = {
     title: 'Tổng quan',
     subtitle: 'Những việc đang chờ bạn ở tổ chức này và các hạn thuế sắp tới.',
     lastActivity: 'Những việc đang chờ bạn và các hạn thuế sắp tới. Hoạt động gần nhất lúc {when}.',
-    upload: 'Tải chứng từ lên',
+    // Các nút tạo nhanh đặt tên theo việc (#4783); danh sách ở lib/home-actions.ts.
+    actions: {
+      label: 'Tạo nhanh',
+      items: {
+        uploadInvoice: 'Tải hóa đơn',
+        recordExpense: 'Ghi khoản chi',
+        createSalesInvoice: 'Tạo hóa đơn bán',
+        addCustomer: 'Thêm khách',
+      },
+    },
     loading: 'Đang đếm các việc đang chờ',
     operationalStrip: 'Việc khác và hoạt động của đồng nghiệp AI',
     showDetails: 'Xem chi tiết',
