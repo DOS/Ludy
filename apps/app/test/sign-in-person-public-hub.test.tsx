@@ -9,7 +9,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { catalog } from '../src/i18n/runtime.ts';
-import type { SignSignerRecord, SignTemplateDetail } from '../src/lib/sign-api.ts';
+import type { SignMemberSignatureItem, SignOrgStampItem, SignSignerRecord, SignTemplateDetail } from '../src/lib/sign-api.ts';
 import {
   buildInPersonSigningUrl,
   buildPublicHubUrl,
@@ -47,7 +47,11 @@ vi.mock('../src/lib/api.ts', async () => {
   };
 });
 
-const { SignInPersonHandoffCard, SignCeremonyPage, SignCeremonyReadyView } = await import('../src/routes/sign-ceremony.tsx');
+const { SignInPersonHandoffCard, SignCeremonyPage, SignCeremonyReadyView, bindCeremonyWorkspaceProfileSync } = await import(
+  '../src/routes/sign-ceremony.tsx'
+);
+const { ensureCeremonyStorageSignedOutListener, subscribeCeremonySignedOut } = await import('../src/lib/ceremony-boot.ts');
+const { AUTH_STORAGE_KEY } = await import('../src/lib/auth.ts');
 const { SignerPanel } = await import('../src/components/sign/signer-panel.tsx');
 const { DirectLinkCard } = await import('../src/routes/sign-templates.tsx');
 const { SignPublicHubDirectory, SignPublicHubPage } = await import('../src/routes/sign-public-hub.tsx');
@@ -416,5 +420,199 @@ describe('eSign Slice 4d in-person ceremony and public template hub UI (#3820)',
     // Empty slug renders unavailable state once hydrated or loading skeleton on SSR.
     const loadingHtml = renderWithLocale(<SignPublicHubPage orgSlug="cong-ty-sao-mai" />, 'vi');
     expect(loadingHtml).not.toContain('/o/');
+  });
+
+  it('clears savedSignatures/workspaceOrgSlug and ignores in-flight profile loads on cross-tab sign-out (#4682)', async () => {
+    const fieldId = '01900000-0000-7000-8000-000000000401';
+    const sigPngBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+    const loadedProfile = {
+      orgSlug: 'cong-ty-sao-mai',
+      signatures: [
+        {
+          id: '01900000-0000-7000-8000-000000000402',
+          kind: 'signature' as const,
+          signatureKind: 'draw' as const,
+          signatureTypedText: null,
+          signaturePngBase64: sigPngBase64,
+          imageSha256: '0'.repeat(64),
+          widthPx: 1,
+          heightPx: 1,
+          createdAt: '2026-11-20T00:00:00Z',
+          updatedAt: '2026-11-20T00:00:00Z',
+        },
+      ],
+      stamps: [],
+    };
+
+    let state: {
+      workspaceOrgSlug: string | null;
+      savedSignatures: SignMemberSignatureItem[];
+      savedStamps: SignOrgStampItem[];
+    } = {
+      workspaceOrgSlug: loadedProfile.orgSlug,
+      savedSignatures: loadedProfile.signatures,
+      savedStamps: [],
+    };
+
+    let resolveInFlight!: (v: typeof loadedProfile | null) => void;
+    const storageListeners = new Set<(event: StorageEvent) => void>();
+    const syncer = bindCeremonyWorkspaceProfileSync({
+      subscribeSignedOut: subscribeCeremonySignedOut,
+      loadProfiles: () =>
+        new Promise((resolve) => {
+          resolveInFlight = resolve;
+        }),
+      onState: (next) => {
+        state = next;
+      },
+    });
+
+    ensureCeremonyStorageSignedOutListener({
+      isIsolated: () => false,
+      addStorageListener: (cb) => {
+        storageListeners.add(cb);
+      },
+      onSignedOutCleanup: () => {},
+    });
+
+    const readyProps = {
+      viewState: {
+        state: 'ready' as const,
+        orgName: 'Cong ty Sao Mai',
+        title: 'Hop dong',
+        message: null,
+        signerName: 'Nguyen Van A',
+        roleLabel: 'Nguoi ky',
+        signerRole: 'signer' as const,
+        inPerson: false,
+        expiresAt: '2027-02-04T00:00:00.000Z',
+        pageCount: 1,
+        pageDimensions: [],
+        requireEmailOtp: false,
+        otpVerified: false,
+        allowDelegation: false,
+        delegationCount: 0,
+        delegatedFromName: null,
+        fields: [
+          {
+            id: fieldId,
+            signerId: '01900000-0000-7000-8000-000000000403',
+            fieldType: 'signature' as const,
+            pageNumber: 1,
+            xNorm: 0.1,
+            yNorm: 0.7,
+            wNorm: 0.25,
+            hNorm: 0.1,
+            label: 'Chu ky',
+            required: true,
+            options: null,
+            textValue: null,
+            dateValue: null,
+            attachmentFilename: null,
+            attachmentContentType: null,
+            attachmentSizeBytes: null,
+            attachmentSha256: null,
+            filledAt: null,
+          },
+        ],
+        sharedSummary: null,
+      },
+      inPerson: false,
+      answers: {},
+      pdfBytes: null,
+      loadingPdf: false,
+      pdfError: null,
+      viewerRenderError: null,
+      pageNumber: 1,
+      scale: 1,
+      consentChecked: false,
+      canSubmit: false,
+      submitting: false,
+      submitError: null,
+      declineOpen: false,
+      declineReason: '',
+      declining: false,
+      declineError: null,
+      padFieldId: null,
+      onPageChange: () => {},
+      onScaleChange: () => {},
+      onRenderStatusChange: () => {},
+      onJumpToNext: () => {},
+      onOpenPad: () => {},
+      onUpdateAnswer: () => {},
+      onConsentChange: () => {},
+      onSubmit: () => {},
+      onDeclineOpenChange: () => {},
+      onDeclineReasonChange: () => {},
+      onDeclineSubmit: () => {},
+      onDelegateOpenChange: () => {},
+    };
+
+    try {
+      // Before sign-out, quick saved signature button is rendered.
+      const beforeHtml = renderWithLocale(
+        <SignCeremonyReadyView
+          {...readyProps}
+          savedSignatures={state.savedSignatures}
+          savedStamps={state.savedStamps}
+          canSaveSignatureProfile={Boolean(state.workspaceOrgSlug)}
+        />,
+        'vi',
+      );
+      expect(beforeHtml).toContain(`data-testid="ceremony-quick-saved-btn-${fieldId}"`);
+
+      // Simulate React <StrictMode> double mount: mount1 disposes -> mount2 recreates fresh syncer and loads cleanly.
+      const firstMount = bindCeremonyWorkspaceProfileSync({
+        subscribeSignedOut: subscribeCeremonySignedOut,
+        loadProfiles: async () => loadedProfile,
+        onState: (next) => {
+          state = next;
+        },
+      });
+      const stopFirst = firstMount.sync({ readyOrgName: 'Cong ty Sao Mai', isInPersonReady: false });
+      stopFirst();
+      firstMount.dispose();
+      const secondMount = bindCeremonyWorkspaceProfileSync({
+        subscribeSignedOut: subscribeCeremonySignedOut,
+        loadProfiles: async () => loadedProfile,
+        onState: (next) => {
+          state = next;
+        },
+      });
+      secondMount.sync({ readyOrgName: 'Cong ty Sao Mai', isInPersonReady: false });
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(state.workspaceOrgSlug).toBe('cong-ty-sao-mai');
+      expect(state.savedSignatures).toHaveLength(1);
+
+      // Trigger an in-flight reload, then simulate cross-tab sign-out via AUTH_STORAGE_KEY removal.
+      syncer.sync({ readyOrgName: 'Cong ty Sao Mai', isInPersonReady: false });
+      for (const cb of storageListeners) {
+        cb({ key: AUTH_STORAGE_KEY, newValue: null } as unknown as StorageEvent);
+      }
+      expect(state.workspaceOrgSlug).toBeNull();
+      expect(state.savedSignatures).toEqual([]);
+      expect(state.savedStamps).toEqual([]);
+
+      // Even if the in-flight loadCeremonyWorkspaceProfiles promise resolves late, state stays empty.
+      resolveInFlight(loadedProfile);
+      await Promise.resolve();
+      expect(state.workspaceOrgSlug).toBeNull();
+      expect(state.savedSignatures).toEqual([]);
+
+      const afterHtml = renderWithLocale(
+        <SignCeremonyReadyView
+          {...readyProps}
+          savedSignatures={state.savedSignatures}
+          savedStamps={state.savedStamps}
+          canSaveSignatureProfile={Boolean(state.workspaceOrgSlug)}
+        />,
+        'vi',
+      );
+      expect(afterHtml).not.toContain(`data-testid="ceremony-quick-saved-btn-${fieldId}"`);
+      secondMount.dispose();
+    } finally {
+      syncer.dispose();
+    }
   });
 });

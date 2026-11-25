@@ -32,6 +32,7 @@ import {
   type SignOrgStampItem,
 } from '../lib/sign-api.ts';
 import { SIGN_ATTACHMENT_MAX_BYTES, isChoiceFieldType, type SignSignerRole } from '../lib/sign-fields.ts';
+import { subscribeCeremonySignedOut } from '../lib/ceremony-boot.ts';
 import {
   buildSigningUrl,
   forgetSignToken,
@@ -48,6 +49,79 @@ import { toast } from '../lib/toast.ts';
 
 export const CEREMONY_QR_POLL_INTERVAL_MS = 4_000;
 export const CEREMONY_QR_POLL_MAX_MS = 15 * 60 * 1000;
+
+export interface CeremonyWorkspaceProfileState {
+  workspaceOrgSlug: string | null;
+  savedSignatures: SignMemberSignatureItem[];
+  savedStamps: SignOrgStampItem[];
+}
+
+export function bindCeremonyWorkspaceProfileSync(deps: {
+  onState: (next: CeremonyWorkspaceProfileState) => void;
+  subscribeSignedOut?: (cb: () => void) => () => void;
+  loadProfiles?: (orgName: string) => Promise<{
+    orgSlug: string;
+    signatures: SignMemberSignatureItem[];
+    stamps: SignOrgStampItem[];
+  } | null>;
+}) {
+  let generation = 0;
+  let unsubscribed = false;
+  const subscribe = deps.subscribeSignedOut ?? subscribeCeremonySignedOut;
+  const load = deps.loadProfiles ?? ((orgName: string) => loadCeremonyWorkspaceProfiles(orgName));
+
+  const reset = () => {
+    generation += 1;
+    deps.onState({ workspaceOrgSlug: null, savedSignatures: [], savedStamps: [] });
+  };
+
+  const stopSignedOut = subscribe(() => {
+    if (!unsubscribed) reset();
+  });
+
+  const sync = (params: { readyOrgName: string | null; isInPersonReady: boolean }): (() => void) => {
+    const gen = ++generation;
+    let cancelled = false;
+    if (!params.readyOrgName || params.isInPersonReady) {
+      deps.onState({ workspaceOrgSlug: null, savedSignatures: [], savedStamps: [] });
+      return () => {
+        cancelled = true;
+      };
+    }
+    void load(params.readyOrgName).then((profile) => {
+      if (cancelled || unsubscribed || generation !== gen) return;
+      if (!profile) {
+        deps.onState({ workspaceOrgSlug: null, savedSignatures: [], savedStamps: [] });
+        return;
+      }
+      deps.onState({
+        workspaceOrgSlug: profile.orgSlug,
+        savedSignatures: profile.signatures,
+        savedStamps: profile.stamps,
+      });
+    });
+    return () => {
+      cancelled = true;
+      if (generation === gen) generation += 1;
+    };
+  };
+
+  const reloadIfStillCurrent = async (orgName: string, onSignatures: (sigs: SignMemberSignatureItem[]) => void) => {
+    const genAtStart = generation;
+    const reloaded = await load(orgName);
+    if (!unsubscribed && generation === genAtStart && reloaded) {
+      onSignatures(reloaded.signatures);
+    }
+  };
+
+  const dispose = () => {
+    unsubscribed = true;
+    generation += 1;
+    stopSignedOut();
+  };
+
+  return { sync, reset, reloadIfStillCurrent, dispose };
+}
 
 export function canShowCeremonyQrHandoff(params: {
   viewState: PublicSignViewState | null;
@@ -398,6 +472,8 @@ export function SignCeremonyPage() {
     if (inPerson) markInPersonCeremonyIsolated();
     return inPerson;
   });
+  const inPersonModeRef = useRef(inPersonMode);
+  inPersonModeRef.current = inPersonMode;
   const [token, setToken] = useState<string | null>(() => {
     const hadHash = typeof window !== 'undefined' && Boolean(window.location.hash);
     const fromHash = readSignTokenFromHash();
@@ -515,6 +591,7 @@ export function SignCeremonyPage() {
         resetCeremonyTransientState();
         const nextInPerson = hasInPersonQueryFlag();
         if (nextInPerson) markInPersonCeremonyIsolated();
+        inPersonModeRef.current = nextInPerson;
         setInPersonMode(nextInPerson);
         setToken(next);
         setTokenEpoch((n) => n + 1);
@@ -523,6 +600,7 @@ export function SignCeremonyPage() {
         resetCeremonyTransientState();
         const nextInPerson = hasInPersonQueryFlag();
         if (nextInPerson) markInPersonCeremonyIsolated();
+        inPersonModeRef.current = nextInPerson;
         setInPersonMode(nextInPerson);
         setToken(null);
       }
@@ -544,6 +622,7 @@ export function SignCeremonyPage() {
       if (requestGenRef.current !== requestId) return;
       if ('inPerson' in view && view.inPerson === true) {
         markInPersonCeremonyIsolated();
+        inPersonModeRef.current = true;
         setInPersonMode(true);
       }
       setViewState(view);
@@ -599,7 +678,7 @@ export function SignCeremonyPage() {
               buildOtpRequiredViewState({
                 orgName: view.orgName,
                 title: view.title,
-                inPerson: Boolean(inPersonMode || view.inPerson),
+                inPerson: Boolean(inPersonModeRef.current || hasInPersonQueryFlag() || view.inPerson),
               }),
             );
           } else {
@@ -634,31 +713,28 @@ export function SignCeremonyPage() {
     void loadView(token);
   }, [token, tokenEpoch, loadView]);
 
+  const profileSyncRef = useRef<ReturnType<typeof bindCeremonyWorkspaceProfileSync> | null>(null);
   const readyOrgName = viewState?.state === 'ready' ? viewState.orgName : null;
   const isInPersonReady = Boolean(inPersonMode || (viewState?.state === 'ready' && viewState.inPerson));
+
   useEffect(() => {
-    // Never load or offer the host's personal saved signatures or workspace stamps during an in-person ceremony (#3820).
-    if (!readyOrgName || isInPersonReady) {
-      setWorkspaceOrgSlug(null);
-      setSavedSignatures([]);
-      setSavedStamps([]);
-      return;
-    }
-    let cancelled = false;
-    void loadCeremonyWorkspaceProfiles(readyOrgName).then((profile) => {
-      if (cancelled) return;
-      if (!profile) {
-        setWorkspaceOrgSlug(null);
-        setSavedSignatures([]);
-        setSavedStamps([]);
-        return;
-      }
-      setWorkspaceOrgSlug(profile.orgSlug);
-      setSavedSignatures(profile.signatures);
-      setSavedStamps(profile.stamps);
+    // Create, subscribe, and dispose inside useEffect so SSR never leaks module listeners and React <StrictMode> remounts cleanly.
+    const syncer = bindCeremonyWorkspaceProfileSync({
+      onState: (next) => {
+        setWorkspaceOrgSlug(next.workspaceOrgSlug);
+        setSavedSignatures(next.savedSignatures);
+        setSavedStamps(next.savedStamps);
+      },
     });
+    profileSyncRef.current = syncer;
+    // Never load or offer the host's personal saved signatures or workspace stamps during an in-person ceremony (#3820).
+    const stopSync = syncer.sync({ readyOrgName, isInPersonReady });
     return () => {
-      cancelled = true;
+      stopSync();
+      syncer.dispose();
+      if (profileSyncRef.current === syncer) {
+        profileSyncRef.current = null;
+      }
     };
   }, [readyOrgName, isInPersonReady, tokenEpoch]);
 
@@ -1307,10 +1383,7 @@ export function SignCeremonyPage() {
               if (!workspaceOrgSlug) return;
               const ok = await saveCeremonyMemberSignature(workspaceOrgSlug, input);
               if (!ok) return;
-              const reloaded = await loadCeremonyWorkspaceProfiles(viewState.orgName);
-              if (reloaded) {
-                setSavedSignatures(reloaded.signatures);
-              }
+              await profileSyncRef.current?.reloadIfStillCurrent(viewState.orgName, setSavedSignatures);
             }}
             setFieldCardRef={(fieldId, el) => {
               fieldCardRefs.current[fieldId] = el;

@@ -653,6 +653,35 @@ function body(bytes: Uint8Array): ArrayBuffer {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }
 
+// Keep PDF read pool slots held until the buffered Response stream is fully delivered or canceled (#4682).
+function releaseOnResponseClose(bytes: Uint8Array, release: () => void): ReadableStream<Uint8Array> {
+  let released = false;
+  const finish = () => {
+    if (!released) {
+      released = true;
+      release();
+    }
+  };
+  let sent = false;
+  return new ReadableStream<Uint8Array>(
+    {
+      pull(controller) {
+        if (!sent) {
+          sent = true;
+          controller.enqueue(bytes);
+          return;
+        }
+        controller.close();
+        finish();
+      },
+      cancel() {
+        finish();
+      },
+    },
+    { highWaterMark: 0 },
+  );
+}
+
 // The shape Supabase Auth uses for its own email limit, so the SPA (auth-js) reads the same error code.
 function emailRateLimited(retryAfterSeconds: number): Response {
   const error = { code: 429, error_code: 'over_email_send_rate_limit', msg: 'Đã gửi quá nhiều email; vui lòng thử lại sau' };
@@ -1781,6 +1810,29 @@ export function createHttpApp(deps: HttpDeps) {
     const signPdfLimit = deps.signLimits?.pdfs ?? new RateLimiter({ perMinute: SIGN_PDFS_PER_MINUTE });
     const signTokenPdfLimit = deps.signLimits?.tokenPdfs ?? new RateLimiter({ perMinute: SIGN_TOKEN_PDFS_PER_MINUTE });
     const signPdfReads = deps.signLimits?.pdfReads ?? new ConcurrencyLimiter({ total: SIGN_PDF_READS_MAX, perKey: SIGN_PDF_READS_MAX });
+    // Shared per-process PDF memory ceiling (SIGN_PDF_READS_MAX * 25 MiB = 200 MiB) across public links
+    // and /api/v1/sign/* so separate pools cannot double peak buffered PDF memory to 400 MiB (#4682).
+    const signProcessPdfPool = new ConcurrencyLimiter({ total: SIGN_PDF_READS_MAX, perKey: SIGN_PDF_READS_MAX });
+    const usePublicSignPdfPool = !deps.signLimits?.pdfReads;
+    const useApiV1PdfPool = !deps.signApiV1Limits?.pdfReads;
+    const tryAcquireSignPdfSlot = (
+      limiter: ConcurrencyLimiter,
+      key: string,
+      useProcessPool: boolean,
+    ): (() => void) | null => {
+      const releaseLimiter = limiter.tryAcquire(key);
+      if (!releaseLimiter) return null;
+      if (!useProcessPool) return releaseLimiter;
+      const releasePool = signProcessPdfPool.tryAcquire('process');
+      if (!releasePool) {
+        releaseLimiter();
+        return null;
+      }
+      return () => {
+        releasePool();
+        releaseLimiter();
+      };
+    };
     const signOtpReqLimit = deps.signLimits?.otpRequest ?? new RateLimiter({ perMinute: SIGN_OTP_REQUESTS_PER_MINUTE });
     const signTokenOtpReqLimit = deps.signLimits?.tokenOtpRequest ?? new RateLimiter({ perMinute: SIGN_TOKEN_OTP_REQUESTS_PER_MINUTE });
     const signOtpVerifyLimit = deps.signLimits?.otpVerify ?? new RateLimiter({ perMinute: SIGN_OTP_VERIFIES_PER_MINUTE });
@@ -1855,16 +1907,20 @@ export function createHttpApp(deps: HttpDeps) {
         if (lookup.status === 'otp_required') {
           return c.json({ code: 'OTP_REQUIRED', message: 'Email OTP verification is required before viewing document' }, 403);
         }
-        const release = signPdfReads.tryAcquire('sign-pdf');
+        const release = tryAcquireSignPdfSlot(signPdfReads, 'sign-pdf', usePublicSignPdfPool);
         if (!release) {
           c.header('retry-after', '2');
           return c.json({ code: 'SIGN_PDF_BUSY', message: 'Máy chủ đang bận, hãy thử lại sau vài giây' }, 503);
         }
+        let passedToStream = false;
         try {
           const bytes = await readPublicPdfBytes(store, lookup.source);
-          return new Response(body(bytes), {
+          const stream = releaseOnResponseClose(bytes, release);
+          passedToStream = true;
+          return new Response(stream, {
             headers: {
               'content-type': 'application/pdf',
+              'content-length': String(bytes.byteLength),
               'content-disposition': 'inline; filename="document.pdf"',
               'cache-control': 'no-store',
               'referrer-policy': 'no-referrer',
@@ -1873,7 +1929,7 @@ export function createHttpApp(deps: HttpDeps) {
             },
           });
         } finally {
-          release();
+          if (!passedToStream) release();
         }
       } catch (error) {
         return problem(c, error);
@@ -2034,17 +2090,21 @@ export function createHttpApp(deps: HttpDeps) {
         if (lookup.status === 'otp_required') {
           return c.json({ code: 'OTP_REQUIRED', message: 'Email OTP verification is required before viewing deposit QR' }, 403);
         }
-        const release = signPdfReads.tryAcquire('sign-deposit-qr');
+        const release = tryAcquireSignPdfSlot(signPdfReads, 'sign-deposit-qr', usePublicSignPdfPool);
         if (!release) {
           c.header('retry-after', '2');
           return c.json({ code: 'SIGN_PDF_BUSY', message: 'Máy chủ đang bận, hãy thử lại sau vài giây' }, 503);
         }
+        let passedToStream = false;
         try {
           const bytes = await readPublicDepositQrBytes(store, lookup.source);
           if (!bytes) return signOpaqueNotFound(c);
-          return new Response(body(bytes), {
+          const stream = releaseOnResponseClose(bytes, release);
+          passedToStream = true;
+          return new Response(stream, {
             headers: {
               'content-type': 'image/png',
+              'content-length': String(bytes.byteLength),
               'cache-control': 'no-store',
               'referrer-policy': 'no-referrer',
               'x-content-type-options': 'nosniff',
@@ -2052,7 +2112,7 @@ export function createHttpApp(deps: HttpDeps) {
             },
           });
         } finally {
-          release();
+          if (!passedToStream) release();
         }
       } catch (error) {
         return problem(c, error);
@@ -2170,16 +2230,20 @@ export function createHttpApp(deps: HttpDeps) {
         if (lookup.status === 'otp_required') {
           return c.json({ code: 'OTP_REQUIRED', message: 'Email OTP verification is required before viewing document' }, 403);
         }
-        const release = signPdfReads.tryAcquire('sign-pdf');
+        const release = tryAcquireSignPdfSlot(signPdfReads, 'sign-pdf', usePublicSignPdfPool);
         if (!release) {
           c.header('retry-after', '2');
           return c.json({ code: 'SIGN_PDF_BUSY', message: 'Máy chủ đang bận, hãy thử lại sau vài giây' }, 503);
         }
+        let passedToStream = false;
         try {
           const bytes = await readPublicPdfBytes(store, lookup.source);
-          return new Response(body(bytes), {
+          const stream = releaseOnResponseClose(bytes, release);
+          passedToStream = true;
+          return new Response(stream, {
             headers: {
               'content-type': 'application/pdf',
+              'content-length': String(bytes.byteLength),
               'content-disposition': 'inline; filename="document.pdf"',
               'cache-control': 'no-store',
               'referrer-policy': 'no-referrer',
@@ -2188,7 +2252,7 @@ export function createHttpApp(deps: HttpDeps) {
             },
           });
         } finally {
-          release();
+          if (!passedToStream) release();
         }
       } catch (error) {
         return problem(c, error);
@@ -2265,16 +2329,20 @@ export function createHttpApp(deps: HttpDeps) {
           if (lookup.status === 'otp_required') {
             return c.json({ code: 'OTP_REQUIRED', message: 'Email OTP verification is required before viewing document' }, 403);
           }
-          const release = signPdfReads.tryAcquire('sign-pdf');
+          const release = tryAcquireSignPdfSlot(signPdfReads, 'sign-pdf', usePublicSignPdfPool);
           if (!release) {
             c.header('retry-after', '2');
             return c.json({ code: 'SIGN_PDF_BUSY', message: 'Máy chủ đang bận, hãy thử lại sau vài giây' }, 503);
           }
+          let passedToStream = false;
           try {
             const bytes = await readPublicPdfBytes(store, lookup.source);
-            return new Response(body(bytes), {
+            const stream = releaseOnResponseClose(bytes, release);
+            passedToStream = true;
+            return new Response(stream, {
               headers: {
                 'content-type': 'application/pdf',
+                'content-length': String(bytes.byteLength),
                 'content-disposition': 'inline; filename="document.pdf"',
                 'cache-control': 'no-store',
                 'referrer-policy': 'no-referrer',
@@ -2283,7 +2351,7 @@ export function createHttpApp(deps: HttpDeps) {
               },
             });
           } finally {
-            release();
+            if (!passedToStream) release();
           }
         }
 
@@ -2358,6 +2426,7 @@ export function createHttpApp(deps: HttpDeps) {
           c.req.header('authorization'),
           { status: c.req.query('status'), limit: c.req.query('limit') },
           (hash) => signApiV1KeyReadLimit.take(hash),
+          (hash) => signApiV1KeyReadLimit.peek(hash),
         );
         if (res.status !== 'ok') return replySignApiV1NonOk(c, res);
         return c.json(res.data);
@@ -2374,6 +2443,7 @@ export function createHttpApp(deps: HttpDeps) {
           c.req.header('authorization'),
           c.req.param('id'),
           (hash) => signApiV1KeyReadLimit.take(hash),
+          (hash) => signApiV1KeyReadLimit.peek(hash),
         );
         if (res.status !== 'ok') return replySignApiV1NonOk(c, res);
         return c.json(res.data);
@@ -2391,18 +2461,24 @@ export function createHttpApp(deps: HttpDeps) {
           c.req.param('id'),
           'sealed',
           (hash) => signApiV1KeyReadLimit.take(hash),
+          (hash) => signApiV1KeyReadLimit.peek(hash),
         );
         if (lookup.status !== 'ok') return replySignApiV1NonOk(c, lookup);
-        const release = signApiV1PdfReads.tryAcquire(lookup.data.orgId);
+        const release = tryAcquireSignPdfSlot(signApiV1PdfReads, lookup.data.orgId, useApiV1PdfPool);
         if (!release) {
           c.header('retry-after', '2');
           return c.json({ code: 'SIGN_PDF_BUSY', message: 'Server is busy, please retry shortly' }, 503);
         }
+        let passedToStream = false;
         try {
           const bytes = await readSignApiV1ArtifactBytes(store, lookup.data);
-          return new Response(body(bytes), {
+          // Hono turns HEAD into GET with null response body without pulling/canceling stream, so only wrap GET (#4682).
+          const stream = c.req.method === 'HEAD' ? null : releaseOnResponseClose(bytes, release);
+          if (stream) passedToStream = true;
+          return new Response(stream, {
             headers: {
               'content-type': 'application/pdf',
+              'content-length': String(bytes.byteLength),
               'content-disposition': `attachment; filename="sealed-${lookup.data.envelopeId}.pdf"`,
               'x-content-sha256': lookup.data.sha256,
               'cache-control': 'no-store',
@@ -2412,7 +2488,7 @@ export function createHttpApp(deps: HttpDeps) {
             },
           });
         } finally {
-          release();
+          if (!passedToStream) release();
         }
       } catch (error) {
         return problem(c, error);
@@ -2428,18 +2504,23 @@ export function createHttpApp(deps: HttpDeps) {
           c.req.param('id'),
           'certificate',
           (hash) => signApiV1KeyReadLimit.take(hash),
+          (hash) => signApiV1KeyReadLimit.peek(hash),
         );
         if (lookup.status !== 'ok') return replySignApiV1NonOk(c, lookup);
-        const release = signApiV1PdfReads.tryAcquire(lookup.data.orgId);
+        const release = tryAcquireSignPdfSlot(signApiV1PdfReads, lookup.data.orgId, useApiV1PdfPool);
         if (!release) {
           c.header('retry-after', '2');
           return c.json({ code: 'SIGN_PDF_BUSY', message: 'Server is busy, please retry shortly' }, 503);
         }
+        let passedToStream = false;
         try {
           const bytes = await readSignApiV1ArtifactBytes(store, lookup.data);
-          return new Response(body(bytes), {
+          const stream = c.req.method === 'HEAD' ? null : releaseOnResponseClose(bytes, release);
+          if (stream) passedToStream = true;
+          return new Response(stream, {
             headers: {
               'content-type': 'application/json; charset=utf-8',
+              'content-length': String(bytes.byteLength),
               'content-disposition': `attachment; filename="certificate-${lookup.data.envelopeId}.json"`,
               'x-content-sha256': lookup.data.sha256,
               'cache-control': 'no-store',
@@ -2449,7 +2530,7 @@ export function createHttpApp(deps: HttpDeps) {
             },
           });
         } finally {
-          release();
+          if (!passedToStream) release();
         }
       } catch (error) {
         return problem(c, error);
@@ -2464,6 +2545,7 @@ export function createHttpApp(deps: HttpDeps) {
           c.req.header('authorization'),
           { limit: c.req.query('limit') },
           (hash) => signApiV1KeyReadLimit.take(hash),
+          (hash) => signApiV1KeyReadLimit.peek(hash),
         );
         if (res.status !== 'ok') return replySignApiV1NonOk(c, res);
         return c.json(res.data);
@@ -2483,6 +2565,7 @@ export function createHttpApp(deps: HttpDeps) {
           appUrl(config),
           signMeta(c),
           (hash) => signApiV1KeyDraftLimit.take(hash),
+          (hash) => signApiV1KeyDraftLimit.peek(hash),
         );
         if (res.status !== 'ok') return replySignApiV1NonOk(c, res);
         return c.json(res.data, 201);

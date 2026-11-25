@@ -402,7 +402,7 @@ export function EnvelopeObligationsCard({
             data-testid="sign-obligation-proposal-banner"
           >
             <div className="space-y-1">
-              <div className="flex flex-wrap items-center justify-between gap-1.5">
+              <div className="flex flex-wrap items-center justify-between gap-1.5 max-md:gap-2">
                 <span className="font-semibold text-foreground">{t('proposalTitle')}</span>
                 <Badge variant="warning">{t('statusProposed')}</Badge>
               </div>
@@ -419,7 +419,7 @@ export function EnvelopeObligationsCard({
                         type="button"
                         size="sm"
                         variant="ghost"
-                        className="h-6 px-2 text-xs text-link"
+                        className="md:h-6 px-2 text-xs text-link"
                         onClick={() => onJumpToPage(cite.pageNumber)}
                       >
                         {t('jumpToPage', { page: String(cite.pageNumber) })}
@@ -441,7 +441,7 @@ export function EnvelopeObligationsCard({
                         type="button"
                         size="sm"
                         variant="ghost"
-                        className="h-6 px-2 text-xs text-link"
+                        className="md:h-6 px-2 text-xs text-link"
                         onClick={() => onJumpToPage(item.pageNumber)}
                       >
                         {t('jumpToPage', { page: String(item.pageNumber) })}
@@ -469,7 +469,7 @@ export function EnvelopeObligationsCard({
                     type="button"
                     size="sm"
                     variant="ghost"
-                    className="h-6 px-2 text-xs text-link"
+                    className="md:h-6 px-2 text-xs text-link"
                     onClick={() => onJumpToPage(proposal.depositProposal!.pageNumber)}
                   >
                     {t('jumpToPage', { page: String(proposal.depositProposal.pageNumber) })}
@@ -643,17 +643,17 @@ export function EnvelopeObligationsCard({
                     const canToggleDirectly = row.serverId !== null && savedItemIds.has(row.serverId) && !dirty;
                     return (
                       <li key={row.localId} className="space-y-2 rounded-md border bg-card p-2">
-                        <div className="flex flex-wrap items-center justify-between gap-1.5">
+                        <div className="flex flex-wrap items-center justify-between gap-1.5 max-md:gap-2">
                           <Badge variant={row.status === 'completed' ? 'success' : 'secondary'}>
                             {row.status === 'completed' ? t('itemCompletedBadge') : t('itemPendingBadge')}
                           </Badge>
-                          <div className="flex flex-wrap items-center gap-1">
+                          <div className="flex flex-wrap items-center gap-1 max-md:gap-2">
                             {row.pageNumber !== null ? (
                               <Button
                                 type="button"
                                 size="sm"
                                 variant="ghost"
-                                className="h-6 px-2 text-xs text-link"
+                                className="md:h-6 px-2 text-xs text-link"
                                 onClick={() => onJumpToPage(row.pageNumber!)}
                               >
                                 {t('jumpToPage', { page: String(row.pageNumber) })}

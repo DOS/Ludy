@@ -404,6 +404,46 @@ describe('EnvelopeObligationsCard and Renewals tab (#3821)', () => {
     expect(htmlDepositOnly).not.toContain('5,000,000 VND');
     expect(htmlDepositOnly).not.toContain('5.000.000 VND');
 
+    // Mobile touch-target guarantees for size="sm" action buttons (#4682): 44px mobile min-height and 8px mobile spacing.
+    const jumpHtml = renderEn(
+      <EnvelopeObligationsCard
+        envelopeId={depositOnlyRecord.envelopeId}
+        sourceFileId="01900000-0000-7000-8000-000000000020"
+        pdfBytes={null}
+        onJumpToPage={() => {}}
+      />,
+      (() => {
+        const c = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+        c.setQueryData(['sign', 'obligation', depositOnlyRecord.envelopeId], {
+          canEdit: true,
+          obligation: {
+            ...depositOnlyRecord,
+            obligations: [
+              {
+                id: 'item-1',
+                title: 'Thanh toán đợt 1',
+                dueDate: '2026-12-01',
+                status: 'pending',
+                pageNumber: 2,
+                quoteExcerpt: 'Thanh toán đợt 1',
+                proposedByAi: false,
+              },
+            ],
+          },
+        });
+        return c;
+      })(),
+    );
+    expect(jumpHtml).toContain('max-md:min-h-11');
+    expect(jumpHtml).toContain('md:h-6');
+    expect(jumpHtml).toContain('max-md:gap-2');
+    const buttonTags = jumpHtml.match(/<button\b[^>]*>/g) ?? [];
+    expect(buttonTags.length).toBeGreaterThanOrEqual(4);
+    for (const tag of buttonTags) {
+      expect(tag).toContain('max-md:min-h-11');
+      expect(tag).not.toMatch(/\sh-6(?:\s|")/);
+    }
+
     expect(
       resolveProposalLoadIntoForm(depositOnlyRecord.proposal!, {
         contractValue: '1500',

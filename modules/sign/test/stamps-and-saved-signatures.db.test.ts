@@ -331,66 +331,7 @@ suite('eSign Slice 4a stamps & saved member signatures on PostgreSQL 17 (#3817)'
       ),
     ).rejects.toMatchObject({ code: 'SIGN_INVALID_SIGNATURE_PNG', status: 422 });
 
-    // #4281: Non-owner / confidential sign_document edge cases in orgStampCreate:
-    //   1) Member's unattached sign_document PNG is unreadable to owner/admin -> 404 SIGN_STAMP_FILE_NOT_FOUND (zero oracle).
-    //   2) Non-owner admin's own unattached sign_document PNG -> 422 SIGN_INVALID_SIGNATURE_PNG (so private
-    //      sign_document uploads never get linked to shared/exported org_stamp.file_id).
-    //   3) Matching PNG uploaded under source = 'upload' succeeds cleanly.
-    const stampPngBytes = Uint8Array.from(Buffer.from(VALID_STAMP_PNG, 'base64'));
-    const stampPngSha = sha256Hex(stampPngBytes);
-    const memberSignDocPng = await runtime.execute<{ fileId: string }>(
-      'kernel.file.ingest',
-      {
-        filename: 'member-private.png',
-        contentType: 'image/png',
-        sizeBytes: stampPngBytes.byteLength,
-        sha256: stampPngSha,
-        storageKey: fileKey(orgA, stampPngSha),
-        generation: contentGeneration(stampPngSha),
-        source: 'sign_document',
-      },
-      { actor: asUser(memberA), orgId: orgA },
-    );
-    await expect(
-      runtime.execute(
-        'sign.stamp.create',
-        {
-          name: 'Dau tham chieu file cua member',
-          stampKind: 'company',
-          fileId: memberSignDocPng.fileId,
-          stampPngBase64: VALID_STAMP_PNG,
-        },
-        { actor: asUser(ownerA), orgId: orgA },
-      ),
-    ).rejects.toMatchObject({ code: 'SIGN_STAMP_FILE_NOT_FOUND', status: 404 });
-
-    const adminSignDocPngBytes = Uint8Array.from(Buffer.from(VALID_SIG_PNG, 'base64'));
-    const adminSignDocPngSha = sha256Hex(adminSignDocPngBytes);
-    const adminSignDocPng = await runtime.execute<{ fileId: string }>(
-      'kernel.file.ingest',
-      {
-        filename: 'admin-sign-doc.png',
-        contentType: 'image/png',
-        sizeBytes: adminSignDocPngBytes.byteLength,
-        sha256: adminSignDocPngSha,
-        storageKey: fileKey(orgA, adminSignDocPngSha),
-        generation: contentGeneration(adminSignDocPngSha),
-        source: 'sign_document',
-      },
-      { actor: asUser(adminA), orgId: orgA },
-    );
-    await expect(
-      runtime.execute(
-        'sign.stamp.create',
-        {
-          name: 'Dau gan sign_document cua admin',
-          stampKind: 'company',
-          fileId: adminSignDocPng.fileId,
-          stampPngBase64: VALID_SIG_PNG,
-        },
-        { actor: asUser(adminA), orgId: orgA },
-      ),
-    ).rejects.toMatchObject({ code: 'SIGN_INVALID_SIGNATURE_PNG', status: 422 });
+    // Matching PNG uploaded under source = 'upload' succeeds cleanly (confidential sign_document isolation is verified in test/invariant/).
 
     const uploadStampBytes = Uint8Array.from(Buffer.from(makePngBase64(130, 90, 95), 'base64'));
     const uploadStampSha = sha256Hex(uploadStampBytes);

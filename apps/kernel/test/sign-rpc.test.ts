@@ -863,6 +863,135 @@ describe('os.sign RPC handlers (#3325)', () => {
     expect(verifySignAttachmentBytes(paddedSamsungMotionPhoto)).toBe('image/jpeg');
     expect(verifySignAttachmentBytes(zeroPaddedJpeg)).toBe('image/jpeg');
 
+    // Samsung Galaxy SEF (SEFH/SEFT) Motion Photo trailer + optional companion metadata (#4682).
+    const makeSamsungSefTrailer = (
+      chunks: ReadonlyArray<{ readonly typeWord: number; readonly key: string; readonly payload: Uint8Array }>,
+      opts?: { readonly overrideSefSize?: number; readonly overrideVersion?: number; readonly preChunkPad?: Uint8Array },
+    ): Uint8Array => {
+      const le32 = (val: number): Uint8Array => {
+        const b = new Uint8Array(4);
+        new DataView(b.buffer).setUint32(0, val, true);
+        return b;
+      };
+      const enc = new TextEncoder();
+      const builtChunks: Uint8Array[] = [];
+      let totalDataBytes = 0;
+      for (const c of chunks) {
+        const keyBytes = enc.encode(c.key);
+        const rawChunk = concatBytes(le32(c.typeWord), le32(keyBytes.byteLength), keyBytes, c.payload);
+        builtChunks.push(rawChunk);
+        totalDataBytes += rawChunk.byteLength;
+      }
+      const sefhPos = totalDataBytes;
+      const dirParts: Uint8Array[] = [enc.encode('SEFH'), le32(opts?.overrideVersion ?? 101), le32(chunks.length)];
+      let cursor = 0;
+      for (let i = 0; i < chunks.length; i += 1) {
+        const rawChunk = builtChunks[i]!;
+        dirParts.push(le32(chunks[i]!.typeWord), le32(sefhPos - cursor), le32(rawChunk.byteLength));
+        cursor += rawChunk.byteLength;
+      }
+      const sefDir = concatBytes(...dirParts);
+      const declaredSize = opts?.overrideSefSize ?? sefDir.byteLength;
+      return concatBytes(
+        opts?.preChunkPad ?? new Uint8Array(0),
+        ...builtChunks,
+        sefDir,
+        le32(declaredSize),
+        enc.encode('SEFT'),
+      );
+    };
+    const samsungSefTrailer = makeSamsungSefTrailer([
+      { typeWord: 0x0a30_0000, key: 'MotionPhoto_Data', payload: validMotionMp4 },
+      { typeWord: 0x0a41_0000, key: 'Image_UTC_Data', payload: new TextEncoder().encode('1732520000000') },
+    ]);
+    expect(verifySignAttachmentBytes(concatBytes(validJpeg, samsungSefTrailer))).toBe('image/jpeg');
+    expect(verifySignAttachmentBytes(concatBytes(validJpeg, new Uint8Array(16), samsungSefTrailer))).toBe('image/jpeg');
+
+    // Reject tampered/polyglot/metadata-only Samsung SEFT trailers (#4682).
+    expect(
+      verifySignAttachmentBytes(
+        concatBytes(
+          validJpeg,
+          makeSamsungSefTrailer([{ typeWord: 0x0a41_0000, key: 'Image_UTC_Data', payload: new TextEncoder().encode('12345') }]),
+        ),
+      ),
+    ).toBeNull();
+    expect(
+      verifySignAttachmentBytes(
+        concatBytes(
+          validJpeg,
+          makeSamsungSefTrailer([
+            { typeWord: 0x0a30_0000, key: 'MotionPhoto_Data', payload: validMotionMp4 },
+            { typeWord: 0x0a41_0000, key: 'Image_UTC_Data', payload: new TextEncoder().encode('<script>alert(1)</script>') },
+          ]),
+        ),
+      ),
+    ).toBeNull();
+    expect(
+      verifySignAttachmentBytes(
+        concatBytes(
+          validJpeg,
+          makeSamsungSefTrailer(
+            [{ typeWord: 0x0a30_0000, key: 'MotionPhoto_Data', payload: validMotionMp4 }],
+            { overrideSefSize: 20 },
+          ),
+        ),
+      ),
+    ).toBeNull();
+    expect(
+      verifySignAttachmentBytes(
+        concatBytes(
+          validJpeg,
+          makeSamsungSefTrailer(
+            [{ typeWord: 0x0a30_0000, key: 'MotionPhoto_Data', payload: validMotionMp4 }],
+            { preChunkPad: new TextEncoder().encode('<svg/>') },
+          ),
+        ),
+      ),
+    ).toBeNull();
+    // Reject unrecognized SEF entry names, mismatched typeWord, non-timestamp Image_UTC_Data, and wrong MotionPhoto typeWord.
+    expect(
+      verifySignAttachmentBytes(
+        concatBytes(
+          validJpeg,
+          makeSamsungSefTrailer([
+            { typeWord: 0x0a30_0000, key: 'MotionPhoto_Data', payload: validMotionMp4 },
+            { typeWord: 0x0a41_0000, key: 'Unknown_Arbitrary_Tag', payload: new TextEncoder().encode('hello') },
+          ]),
+        ),
+      ),
+    ).toBeNull();
+    expect(
+      verifySignAttachmentBytes(
+        concatBytes(
+          validJpeg,
+          makeSamsungSefTrailer([
+            { typeWord: 0x0a30_0000, key: 'MotionPhoto_Data', payload: validMotionMp4 },
+            { typeWord: 0x0001_0000, key: 'Image_UTC_Data', payload: new TextEncoder().encode('1732520000000') },
+          ]),
+        ),
+      ),
+    ).toBeNull();
+    expect(
+      verifySignAttachmentBytes(
+        concatBytes(
+          validJpeg,
+          makeSamsungSefTrailer([
+            { typeWord: 0x0a30_0000, key: 'MotionPhoto_Data', payload: validMotionMp4 },
+            { typeWord: 0x0a41_0000, key: 'Image_UTC_Data', payload: new TextEncoder().encode('not-epoch-ts') },
+          ]),
+        ),
+      ),
+    ).toBeNull();
+    expect(
+      verifySignAttachmentBytes(
+        concatBytes(
+          validJpeg,
+          makeSamsungSefTrailer([{ typeWord: 0x0a41_0000, key: 'MotionPhoto_Data', payload: validMotionMp4 }]),
+        ),
+      ),
+    ).toBeNull();
+
     // Reject > 64 zero bytes before Motion Photo MP4 and trailing garbage after padded Motion Photo MP4 (#4394).
     expect(verifySignAttachmentBytes(concatBytes(validJpeg, new Uint8Array(65), validMotionMp4))).toBeNull();
     expect(verifySignAttachmentBytes(concatBytes(validJpeg, new Uint8Array(65)))).toBeNull();

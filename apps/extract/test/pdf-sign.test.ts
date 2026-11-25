@@ -941,6 +941,45 @@ describe('pdf_seal', () => {
       expect(back.pageTexts[2] ?? '').toContain('1. 1 Nguyễn Thị Quỳnh');
     }
     expect(back.pageTexts[back.pageTexts.length - 1]).toContain('50. 50 Nguyễn Thị Quỳnh');
+
+    // Tall first signer card whose height sits in (freshPageAvailH - signerHeadingGap, freshPageAvailH] never leaves an orphan SIGNERS heading on page 2 (#4682).
+    const tallAttachments = Array.from({ length: 14 }, (_, idx) => ({
+      label: `Tệp đính kèm pháp lý bắt buộc ${idx + 1}`,
+      filename: `ho_so_phap_ly_doanh_nghiep_${idx + 1}.pdf`,
+      sha256: `${String(idx + 1).padStart(2, '0')}`.repeat(32),
+    }));
+    const orphanEdgeSealed = await parse(
+      'pdf_seal',
+      encodePdfSealInput({
+        pdfBase64: Buffer.from(pdfBytes).toString('base64'),
+        fields: [],
+        certificate: makeCertificate({
+          envelopeTitle: 'Hợp đồng kiểm tra phân trang đầu trang chứng nhận ký kết điện tử',
+          signers: [
+            {
+              name: '1 Nguyễn Văn Kiểm Tra Phân Trang',
+              roleLabel: 'Bên ký',
+              maskedEmail: 't***@example.vn',
+              deliveryMode: 'email',
+              otpStatus: 'verified',
+              signatureKind: 'draw',
+              signedAtIso: '2026-11-15T10:30:00.000Z',
+              ipHashPrefix: 'deadbeef1234cafe',
+              attachments: tallAttachments,
+            },
+          ],
+        }),
+      }),
+    );
+    expect(orphanEdgeSealed.ok).toBe(true);
+    if (orphanEdgeSealed.ok && orphanEdgeSealed.kind === 'pdf_seal') {
+      const orphanBack = await readPdfBack(new Uint8Array(Buffer.from(orphanEdgeSealed.sealedPdfBase64, 'base64')));
+      for (const pageText of orphanBack.pageTexts.slice(1)) {
+        if (pageText.includes('DANH SÁCH NGƯỜI KÝ')) {
+          expect(pageText).toContain('1. 1 Nguyễn Văn Kiểm Tra Phân Trang');
+        }
+      }
+    }
   }, 20_000);
 
   it('skips Hidden/NoView widgets, normalizes /Fie#6cds keys, scales BBox to Rect, and rejects horizontal text overflow', async () => {
@@ -7562,6 +7601,164 @@ describe('pdf_seal', () => {
     await assertRejectedBoth(
       new Uint8Array(Buffer.from(baseStr.replace('/Type /XRef', '/Type /XRe#66'), 'latin1')),
     );
+
+    // 7g. Forbidden payload (/OpenAction /JavaScript) inside hybrid /XRefStm -> /ObjStm member fails closed while clean control passes (#4682).
+    const buildHybridObjStmRefPdf = (includeForbiddenJs: boolean): Uint8Array => {
+      const contentRaw = deflateSync(Buffer.from('BT\n/F1 12 Tf\n40 750 Td\n(BAD_HYBRID) Tj\nET\n', 'latin1'));
+      const offsets = new Map<number, number>();
+      let out = '%PDF-1.7\n%\xe2\xe3\xcf\xd3\n';
+      const push = (num: number, body: string): number => {
+        const off = out.length;
+        offsets.set(num, off);
+        out += `${num} 0 obj\n${body}\nendobj\n`;
+        return off;
+      };
+      push(1, `<< /Type /Catalog /Pages 2 0 R${includeForbiddenJs ? ' /OpenAction 7 0 R' : ''} >>`);
+      push(2, '<< /Type /Pages /Kids [3 0 R] /Count 1 >>');
+      push(3, '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>');
+      push(4, `<< /Filter /FlateDecode /Length ${contentRaw.byteLength} >>\nstream\n${contentRaw.toString('latin1')}\nendstream`);
+      const items = [
+        { num: 5, body: '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>' },
+        {
+          num: 7,
+          body: includeForbiddenJs ? '<< /Type /Action /S /JavaScript /JS (app.alert(1)) >>' : '<< /Producer (Clean) >>',
+        },
+        { num: 8, body: '<< /Producer (Word) /Title (HybridRef) >>' },
+      ];
+      const off6 = push(6, makeObjStm(items, true));
+      const xrefStmOff = out.length;
+      const rows = encodeXrefRows([
+        { kind: 2, objStmNum: 6, index: 0 },
+        { kind: 1, offset: off6, gen: 0 },
+        { kind: 2, objStmNum: 6, index: 1 },
+        { kind: 2, objStmNum: 6, index: 2 },
+        { kind: 1, offset: xrefStmOff, gen: 0 },
+      ]);
+      const payload = deflateSync(encodePngUp(rows, 7));
+      out += `9 0 obj\n<< /Type /XRef /Size 10 /Index [5 5] /W [1 4 2] /Root 1 0 R /Info 8 0 R /Filter /FlateDecode /DecodeParms << /Predictor 12 /Columns 7 >> /Length ${payload.byteLength} >>\nstream\n${payload.toString('latin1')}\nendstream\nendobj\n`;
+      const classicOff = out.length;
+      out += `xref\n0 5\n${fmtEntry(0, 65535, 'f')}${fmtEntry(offsets.get(1)!, 0, 'n')}${fmtEntry(offsets.get(2)!, 0, 'n')}${fmtEntry(offsets.get(3)!, 0, 'n')}${fmtEntry(offsets.get(4)!, 0, 'n')}trailer\n<< /Size 10 /Root 1 0 R /Info 8 0 R /XRefStm ${xrefStmOff} >>\nstartxref\n${classicOff}\n%%EOF\n`;
+      return new Uint8Array(Buffer.from(out, 'latin1'));
+    };
+    const cleanHybridControl = buildHybridObjStmRefPdf(false);
+    expect(await parse('pdf_inspect', cleanHybridControl)).toMatchObject({ ok: true, pageCount: 1 });
+    expect(
+      await parse(
+        'pdf_seal',
+        encodePdfSealInput({
+          pdfBase64: Buffer.from(cleanHybridControl).toString('base64'),
+          fields: [],
+          certificate: makeCertificate(),
+        }),
+      ),
+    ).toMatchObject({ ok: true });
+    await assertRejectedBoth(buildHybridObjStmRefPdf(true));
+
+    // 7h. Mismatched /Info in /XRefStm, unindexed shadowed /Type /XRef stream, whitespace-aliased cycle, non-monotonic /ObjStm offsets, and gen > 0 /ObjStm fail closed (#4682).
+    await assertRejectedBoth(
+      buildWordStyleHybridPdf({
+        compressFontInObjStm: true,
+        includeXrefRoot: false,
+        xrefStmDictExtra: '/Root 1 0 R /Info 2 0 R ',
+      }).bytes,
+    );
+    const shadowedDecoyXref =
+      `${decoyXrefObjStr}11 0 obj\n<< /Title (Harmless Override) >>\nendobj\n`;
+    await assertRejectedBoth(
+      buildWordStyleHybridPdf({
+        compressFontInObjStm: true,
+        extraBodyAfterObjects: shadowedDecoyXref,
+      }).bytes,
+    );
+
+    const buildWsAliasedHybrid = (): Uint8Array => {
+      const contentRaw = deflateSync(Buffer.from('BT\n/F1 12 Tf\n40 750 Td\n(WS_ALIAS) Tj\nET\n', 'latin1'));
+      const offsets = new Map<number, number>();
+      let out = '%PDF-1.7\n%\xe2\xe3\xcf\xd3\n';
+      const push = (num: number, body: string): number => {
+        const off = out.length;
+        offsets.set(num, off);
+        out += `${num} 0 obj\n${body}\nendobj\n`;
+        return off;
+      };
+      push(1, '<< /Type /Catalog /Pages 2 0 R >>');
+      push(2, '<< /Type /Pages /Kids [3 0 R] /Count 1 >>');
+      push(3, '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>');
+      push(4, `<< /Filter /FlateDecode /Length ${contentRaw.byteLength} >>\nstream\n${contentRaw.toString('latin1')}\nendstream`);
+      push(5, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
+      const wsStart = out.length;
+      out += ' ';
+      const classicStart = out.length;
+      out += `xref\n0 6\n${fmtEntry(0, 65535, 'f')}${fmtEntry(offsets.get(1)!, 0, 'n')}${fmtEntry(offsets.get(2)!, 0, 'n')}${fmtEntry(offsets.get(3)!, 0, 'n')}${fmtEntry(offsets.get(4)!, 0, 'n')}${fmtEntry(offsets.get(5)!, 0, 'n')}trailer\n<< /Size 6 /Root 1 0 R /Prev ${wsStart} >>\nstartxref\n${classicStart}\n%%EOF\n`;
+      return new Uint8Array(Buffer.from(out, 'latin1'));
+    };
+    await assertRejectedBoth(buildWsAliasedHybrid());
+
+    const buildBadObjStmOffsetsPdf = (): Uint8Array => {
+      const header = '7 20 8 0 ';
+      const bodies = '<< /A 1 >>         \n<< /B 2 >>\n';
+      const stmRaw = Buffer.from(`${header}${bodies}`, 'latin1');
+      const compressed = deflateSync(stmRaw);
+      let out = '%PDF-1.5\n%\xe2\xe3\xcf\xd3\n';
+      const offsets = new Map<number, number>();
+      const push = (num: number, body: string): number => {
+        const off = out.length;
+        offsets.set(num, off);
+        out += `${num} 0 obj\n${body}\nendobj\n`;
+        return off;
+      };
+      push(1, '<< /Type /Catalog /Pages 2 0 R >>');
+      push(2, '<< /Type /Pages /Kids [3 0 R] /Count 1 >>');
+      push(3, '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] >>');
+      const off6 = push(6, `<< /Type /ObjStm /N 2 /First ${header.length} /Filter /FlateDecode /Length ${compressed.byteLength} >>\nstream\n${compressed.toString('latin1')}\nendstream`);
+      const xrefOff = out.length;
+      const rows = encodeXrefRows([
+        { kind: 0, nextFree: 0, gen: 65535 },
+        { kind: 1, offset: offsets.get(1)!, gen: 0 },
+        { kind: 1, offset: offsets.get(2)!, gen: 0 },
+        { kind: 1, offset: offsets.get(3)!, gen: 0 },
+        { kind: 0, nextFree: 0, gen: 65535 },
+        { kind: 0, nextFree: 0, gen: 65535 },
+        { kind: 1, offset: off6, gen: 0 },
+        { kind: 2, objStmNum: 6, index: 0 },
+        { kind: 2, objStmNum: 6, index: 1 },
+        { kind: 1, offset: xrefOff, gen: 0 },
+      ]);
+      out += `9 0 obj\n<< /Type /XRef /Size 10 /W [1 4 2] /Root 1 0 R /Length ${rows.byteLength} >>\nstream\n${Buffer.from(rows).toString('latin1')}\nendstream\nendobj\nstartxref\n${xrefOff}\n%%EOF\n`;
+      return new Uint8Array(Buffer.from(out, 'latin1'));
+    };
+    await assertRejectedBoth(buildBadObjStmOffsetsPdf());
+
+    const buildNonZeroGenObjStmPdf = (): Uint8Array => {
+      const stmBody = makeObjStm([{ num: 7, body: '<< /Nums [] >>' }], true);
+      let out = '%PDF-1.5\n%\xe2\xe3\xcf\xd3\n';
+      const offsets = new Map<number, number>();
+      const push = (num: number, body: string, gen = 0): number => {
+        const off = out.length;
+        offsets.set(num, off);
+        out += `${num} ${gen} obj\n${body}\nendobj\n`;
+        return off;
+      };
+      push(1, '<< /Type /Catalog /Pages 2 0 R >>');
+      push(2, '<< /Type /Pages /Kids [3 0 R] /Count 1 >>');
+      push(3, '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] >>');
+      const off6 = push(6, stmBody, 1);
+      const xrefOff = out.length;
+      const rows = encodeXrefRows([
+        { kind: 0, nextFree: 0, gen: 65535 },
+        { kind: 1, offset: offsets.get(1)!, gen: 0 },
+        { kind: 1, offset: offsets.get(2)!, gen: 0 },
+        { kind: 1, offset: offsets.get(3)!, gen: 0 },
+        { kind: 0, nextFree: 0, gen: 65535 },
+        { kind: 0, nextFree: 0, gen: 65535 },
+        { kind: 1, offset: off6, gen: 1 },
+        { kind: 2, objStmNum: 6, index: 0 },
+        { kind: 1, offset: xrefOff, gen: 0 },
+      ]);
+      out += `8 0 obj\n<< /Type /XRef /Size 9 /W [1 4 2] /Root 1 0 R /Length ${rows.byteLength} >>\nstream\n${Buffer.from(rows).toString('latin1')}\nendstream\nendobj\nstartxref\n${xrefOff}\n%%EOF\n`;
+      return new Uint8Array(Buffer.from(out, 'latin1'));
+    };
+    await assertRejectedBoth(buildNonZeroGenObjStmPdf());
   });
 });
 

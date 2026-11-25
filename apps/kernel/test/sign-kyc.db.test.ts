@@ -26,7 +26,7 @@ import { createHttpApp } from '../src/http.ts';
 import { orgPurgeCommand, runOrgPurge } from '../src/org-purge.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { proposeEnvelopeKycCheck, signAi } from '../src/sign-ai.ts';
-import { runSignPdfInspectJob, runSignPdfSealJob, sweepSignPendingKycWork } from '../src/sign-worker.ts';
+import { SIGN_ACTOR, runSignPdfInspectJob, runSignPdfSealJob, sweepSignPendingKycWork } from '../src/sign-worker.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
@@ -1356,6 +1356,91 @@ suite('eSign Slice 5e signer KYC attachment verification check (#4443)', () => {
     );
     expect(afterTimeoutRow.rows[0]?.status).toBe('needs_review');
     expect(afterTimeoutRow.rows[0]?.findings_json?.inspectState).toBe('failed');
+
+    // Simulating kernel.org.apps_changed re-enable (#4682): bumpUpdatedAtOnRequeue resets updated_at so the
+    // immediate next periodic sweep does not time out a long-paused pending check.
+    const beforeReenableMs = Date.now();
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query(
+        `UPDATE ludy_sign.kyc_check SET status = 'pending', updated_at = now() - interval '45 minutes' WHERE org_id = $1 AND field_id = $2`,
+        [org.orgId, staleFieldId],
+      );
+      await c.query('COMMIT');
+    });
+    const appEnableRequeued: Array<{ orgId: string; envelopeId: string; fieldId: string }> = [];
+    const appEnableRes = await sweepSignPendingKycWork({
+      workerDb,
+      runtime: workerRuntime,
+      orgId: org.orgId,
+      olderThan: new Date(),
+      timeoutBefore: new Date(0),
+      bumpUpdatedAtOnRequeue: true,
+      enqueueKycInspect: async (oId, envId, fId) => {
+        appEnableRequeued.push({ orgId: oId, envelopeId: envId, fieldId: fId });
+      },
+    });
+    expect(appEnableRes).toEqual({ requeued: 1, timedOut: 0 });
+    expect(appEnableRequeued).toEqual([{ orgId: org.orgId, envelopeId: sweepSetup.envelopeId, fieldId: staleFieldId }]);
+
+    const touchedRow = await admin((c) =>
+      c.query<{ status: string; updated_at: Date }>(
+        `SELECT status, updated_at FROM ludy_sign.kyc_check WHERE org_id = $1 AND field_id = $2`,
+        [org.orgId, staleFieldId],
+      ),
+    );
+    expect(touchedRow.rows[0]?.status).toBe('pending');
+    expect(new Date(touchedRow.rows[0]!.updated_at).getTime()).toBeGreaterThanOrEqual(beforeReenableMs - 5_000);
+
+    const followUpSweep = await sweepSignPendingKycWork({
+      workerDb,
+      runtime: workerRuntime,
+      orgId: org.orgId,
+      olderThan: new Date(Date.now() - 60_000),
+      timeoutBefore: new Date(Date.now() - 30 * 60_000),
+      enqueueKycInspect: async () => {},
+    });
+    expect(followUpSweep).toEqual({ requeued: 0, timedOut: 0 });
+
+    const touchedId = touchedRow.rows[0] ? (
+      await admin((c) =>
+        c.query<{ id: string; file_id: string; file_sha256: string }>(
+          `SELECT id, file_id, file_sha256 FROM ludy_sign.kyc_check WHERE org_id = $1 AND field_id = $2`,
+          [org.orgId, staleFieldId],
+        ),
+      )
+    ).rows[0]! : null;
+    expect(touchedId).not.toBeNull();
+
+    // Non-system users cannot invoke sign.kyc.touch_pending.
+    await expect(
+      runtime.execute('sign.kyc.touch_pending', { ids: [touchedId!.id] }, { actor: asUser(owner), orgId: org.orgId }),
+    ).rejects.toMatchObject({ status: 403 });
+
+    // Stale timeout sweep reading old updated_at before concurrent touch_pending cannot overwrite renewed check.
+    const preRenewTimeoutCutoff = new Date(beforeReenableMs - 10_000).toISOString();
+    const staleTimeoutRes = await workerRuntime.execute<unknown>(
+      'sign.kyc.inspect_complete',
+      {
+        envelopeId: sweepSetup.envelopeId,
+        fieldId: staleFieldId,
+        fileId: touchedId!.file_id,
+        fileSha256: touchedId!.file_sha256,
+        outcome: 'failed',
+        error: 'Stale timeout from overlapping sweep',
+        expectedUpdatedAtBefore: preRenewTimeoutCutoff,
+      },
+      { actor: SIGN_ACTOR, orgId: org.orgId },
+    );
+    expect(staleTimeoutRes).toBeNull();
+    const stillPending = await admin((c) =>
+      c.query<{ status: string }>(
+        `SELECT status FROM ludy_sign.kyc_check WHERE org_id = $1 AND field_id = $2`,
+        [org.orgId, staleFieldId],
+      ),
+    );
+    expect(stillPending.rows[0]?.status).toBe('pending');
 
     // Verify kyc_check_pending_recovery_idx, worker-only role check, cursor/cutoff validation,
     // and exclusion of disabled-sign and non-active tenants (#4510, B1).

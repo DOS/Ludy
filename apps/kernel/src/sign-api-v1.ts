@@ -145,6 +145,7 @@ async function authenticateApiKey(
   authHeader: string | undefined,
   requiredScope: SignApiKeyScope,
   limitKey?: SignTokenLimiterFn,
+  peekLimitKey?: SignTokenLimiterFn,
 ): Promise<
   | { status: 'unauthorized' }
   | { status: 'not_found' }
@@ -154,6 +155,13 @@ async function authenticateApiKey(
 > {
   const keySha256 = parseSignApiKeyBearer(authHeader);
   if (!keySha256) return { status: 'unauthorized' };
+
+  // Short-circuit already-throttled keys before hitting Postgres or billing entitlements;
+  // RateLimiter.peek never inserts unknown keys into buckets, preserving unknown-key spray isolation.
+  const preDecision = peekLimitKey?.(keySha256);
+  if (preDecision && !preDecision.allowed) {
+    return { status: 'rate_limited', retryAfterSeconds: preDecision.retryAfterSeconds };
+  }
 
   const row = await runtime.orgless(async (db) => {
     const { rows } = await sql<{ auth: RawAuthResult | null }>`
@@ -205,8 +213,9 @@ export async function runSignApiV1EnvelopesList(
   authHeader: string | undefined,
   query: { status?: string | undefined; limit?: string | undefined },
   limitKey?: SignTokenLimiterFn,
+  peekLimitKey?: SignTokenLimiterFn,
 ): Promise<SignApiV1Outcome<{ items: unknown[] }>> {
-  const auth = await authenticateApiKey(runtime, billing, authHeader, 'sign:read', limitKey);
+  const auth = await authenticateApiKey(runtime, billing, authHeader, 'sign:read', limitKey, peekLimitKey);
   if (auth.status !== 'ok') return auth;
 
   let statusFilter: string | null = null;
@@ -240,8 +249,9 @@ export async function runSignApiV1EnvelopeGet(
   authHeader: string | undefined,
   envelopeId: string,
   limitKey?: SignTokenLimiterFn,
+  peekLimitKey?: SignTokenLimiterFn,
 ): Promise<SignApiV1Outcome<{ envelope: Record<string, unknown> }>> {
-  const auth = await authenticateApiKey(runtime, billing, authHeader, 'sign:read', limitKey);
+  const auth = await authenticateApiKey(runtime, billing, authHeader, 'sign:read', limitKey, peekLimitKey);
   if (auth.status !== 'ok') return auth;
   if (!UUID_RE.test(envelopeId)) return { status: 'not_found' };
 
@@ -270,8 +280,9 @@ export async function resolveSignApiV1FileSource(
   envelopeId: string,
   kind: 'sealed' | 'certificate',
   limitKey?: SignTokenLimiterFn,
+  peekLimitKey?: SignTokenLimiterFn,
 ): Promise<SignApiV1Outcome<SignApiV1FileSource>> {
-  const auth = await authenticateApiKey(runtime, billing, authHeader, 'sign:read', limitKey);
+  const auth = await authenticateApiKey(runtime, billing, authHeader, 'sign:read', limitKey, peekLimitKey);
   if (auth.status !== 'ok') return auth;
   if (!UUID_RE.test(envelopeId)) return { status: 'not_found' };
 
@@ -318,8 +329,9 @@ export async function runSignApiV1TemplatesList(
   authHeader: string | undefined,
   query: { limit?: string | undefined },
   limitKey?: SignTokenLimiterFn,
+  peekLimitKey?: SignTokenLimiterFn,
 ): Promise<SignApiV1Outcome<{ items: unknown[] }>> {
-  const auth = await authenticateApiKey(runtime, billing, authHeader, 'sign:read', limitKey);
+  const auth = await authenticateApiKey(runtime, billing, authHeader, 'sign:read', limitKey, peekLimitKey);
   if (auth.status !== 'ok') return auth;
   const limit = parseLimitParam(query.limit);
 
@@ -346,8 +358,9 @@ export async function runSignApiV1FromTemplate(
   baseAppUrl: string,
   meta: SignRequestMeta,
   limitKey?: SignTokenLimiterFn,
+  peekLimitKey?: SignTokenLimiterFn,
 ): Promise<SignApiV1Outcome<{ id: string; status: 'draft'; reviewUrl: string }>> {
-  const auth = await authenticateApiKey(runtime, billing, authHeader, 'sign:draft', limitKey);
+  const auth = await authenticateApiKey(runtime, billing, authHeader, 'sign:draft', limitKey, peekLimitKey);
   if (auth.status !== 'ok') return auth;
 
   const parsed = zSignApiV1FromTemplateInput.safeParse(rawBody);

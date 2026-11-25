@@ -838,6 +838,320 @@ describe('checkSignObligationExtract (#3821)', () => {
       expect(edgeRes.proposal?.contractValue).toBe('250000000');
       expect(edgeRes.proposal?.currency).toBe('VND');
     }
+
+    // 13. #4682 (Items 6-9 from #4633): "ALL 24/7" ratio lookahead, "HKD" ("Hộ kinh doanh") prose guard,
+    //     ISO-qualified "$" (SGD $100 / AUD $100) exclusion from USD, sentence boundary splitting,
+    //     and binding target amount to nearby currency token ("100 EUR / USD 200 for 100 users.").
+    for (const textBlock of [
+      'Hỗ trợ khách hàng ALL 24/7.\nBên B: Công ty ABC\nGiá trị hợp đồng: 250.000.000.',
+      'Bên B: HKD Nguyễn Văn A\nGiá trị hợp đồng: 250.000.000.',
+    ]) {
+      const vnReq: SignObligationExtractRequest = {
+        envelopeTitle: 'Hợp đồng dịch vụ',
+        pageCount: 1,
+        pages: [{ page: 1, text: textBlock }],
+      };
+      const vnKeep = checkSignObligationExtract(vnReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '250000000',
+        currency: 'VND',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: textBlock.includes('HKD') ? 'Bên B: HKD Nguyễn Văn A' : 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: 'Giá trị hợp đồng: 250.000.000.' },
+        ],
+        obligations: [],
+      });
+      expect(vnKeep.proposal?.contractValue).toBe('250000000');
+      expect(vnKeep.proposal?.currency).toBe('VND');
+    }
+
+    // Amount-adjacent HKD / HK$ still grounds HKD and blocks VND downgrade.
+    const hkdExplicitReq: SignObligationExtractRequest = {
+      envelopeTitle: 'Hong Kong Supply',
+      pageCount: 1,
+      pages: [{ page: 1, text: 'Bên B: Công ty ABC\nGiá trị hợp đồng: 50,000 HKD.' }],
+    };
+    expect(
+      checkSignObligationExtract(hkdExplicitReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '50000',
+        currency: 'HKD',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: 'Giá trị hợp đồng: 50,000 HKD.' },
+        ],
+        obligations: [],
+      }).proposal?.currency,
+    ).toBe('HKD');
+
+    // P9Mu: SGD $100 / AUD $100 must not emit USD evidence.
+    for (const [isoDollarQuote, expectedIso] of [
+      ['Total: SGD $100.', 'SGD'],
+      ['Total: AUD $100.', 'AUD'],
+    ] as const) {
+      const isoDollarReq: SignObligationExtractRequest = {
+        envelopeTitle: `${expectedIso} Contract`,
+        pageCount: 1,
+        pages: [{ page: 1, text: `Bên B: Công ty ABC\n${isoDollarQuote}` }],
+      };
+      expect(
+        checkSignObligationExtract(isoDollarReq, {
+          counterpartyName: 'Công ty ABC',
+          effectiveDate: null,
+          expiryDate: null,
+          renewalNoticeDays: null,
+          autoRenew: false,
+          contractValue: '100',
+          currency: 'USD',
+          citations: [
+            { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+            { field: 'contractValue', pageNumber: 1, quoteExcerpt: isoDollarQuote },
+          ],
+          obligations: [],
+        }).proposal?.contractValue,
+      ).toBeNull();
+      const isoOk = checkSignObligationExtract(isoDollarReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '100',
+        currency: expectedIso,
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: isoDollarQuote },
+        ],
+        obligations: [],
+      });
+      expect(isoOk.proposal?.contractValue).toBe('100');
+      expect(isoOk.proposal?.currency).toBe(expectedIso);
+    }
+
+    // P9M7: sentence-boundary splitting separates "Total: 100 USD. Equivalent: 90 EUR." while keeping "100.50 U.S. dollars." intact.
+    const sentenceSplitReq: SignObligationExtractRequest = {
+      envelopeTitle: 'Multi-Sentence Fee',
+      pageCount: 1,
+      pages: [
+        {
+          page: 1,
+          text: 'Bên B: Công ty ABC\nTotal: 100 USD. Equivalent: 90 EUR.\nFee: 100.50 U.S. dollars.',
+        },
+      ],
+    };
+    expect(
+      checkSignObligationExtract(sentenceSplitReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '100',
+        currency: 'USD',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: 'Total: 100 USD. Equivalent: 90 EUR.' },
+        ],
+        obligations: [],
+      }).proposal?.contractValue,
+    ).toBe('100');
+    expect(
+      checkSignObligationExtract(sentenceSplitReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '100.5',
+        currency: 'USD',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: 'Fee: 100.50 U.S. dollars.' },
+        ],
+        obligations: [],
+      }).proposal?.contractValue,
+    ).toBe('100.5');
+
+    // P9M-: target amount must bind to nearby currency token, not unrelated quantities ("100 users").
+    const userCountReq: SignObligationExtractRequest = {
+      envelopeTitle: 'Seat Licensing',
+      pageCount: 1,
+      pages: [
+        {
+          page: 1,
+          text: 'Bên B: Công ty ABC\nFee: 100 EUR / USD 200 for 100 users.',
+        },
+      ],
+    };
+    expect(
+      checkSignObligationExtract(userCountReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '100',
+        currency: 'USD',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: '100 EUR / USD 200 for 100 users.' },
+        ],
+        obligations: [],
+      }).proposal?.contractValue,
+    ).toBeNull();
+    expect(
+      checkSignObligationExtract(userCountReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '200',
+        currency: 'USD',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: '100 EUR / USD 200 for 100 users.' },
+        ],
+        obligations: [],
+      }).proposal?.contractValue,
+    ).toBe('200');
+
+    // Lowercase "50,000 hkd." grounds HKD (rejecting VND downgrade and accepting HKD) while bare "HKD" in
+    // "HKD Nguyen Van A" remains treated as a Vietnamese acronym ("Ho kinh doanh").
+    const hkdLowerReq: SignObligationExtractRequest = {
+      envelopeTitle: 'Service Fee',
+      pageCount: 1,
+      pages: [
+        {
+          page: 1,
+          text: 'Bên B: Công ty ABC\nTotal: 50,000 hkd.',
+        },
+      ],
+    };
+    expect(
+      checkSignObligationExtract(hkdLowerReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '50000',
+        currency: 'VND',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: 'Total: 50,000 hkd.' },
+        ],
+        obligations: [],
+      }).proposal?.contractValue,
+    ).toBeNull();
+    expect(
+      checkSignObligationExtract(hkdLowerReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '50000',
+        currency: 'HKD',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: 'Total: 50,000 hkd.' },
+        ],
+        obligations: [],
+      }).proposal,
+    ).toMatchObject({ contractValue: '50000', currency: 'HKD' });
+
+    const hoKinhDoanhReq: SignObligationExtractRequest = {
+      envelopeTitle: 'Hợp đồng mua bán',
+      pageCount: 1,
+      pages: [
+        {
+          page: 1,
+          text: 'Bên B: HKD Nguyễn Văn A\nTổng giá trị thanh toán: 50.000.000',
+        },
+      ],
+    };
+    expect(
+      checkSignObligationExtract(hoKinhDoanhReq, {
+        counterpartyName: 'HKD Nguyễn Văn A',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '50000000',
+        currency: 'HKD',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: HKD Nguyễn Văn A' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: 'Tổng giá trị thanh toán: 50.000.000' },
+        ],
+        obligations: [],
+      }).proposal?.contractValue,
+    ).toBeNull();
+
+    // Ambiguous formatting on a single number token ("1,500" = 1.5 | 1500) in non-adjacent prose is accepted
+    // when it is the clause's only numeric token, and competing currency clauses still reject cross-currency swap.
+    const equivReq: SignObligationExtractRequest = {
+      envelopeTitle: 'Master Agreement',
+      pageCount: 1,
+      pages: [
+        {
+          page: 1,
+          text: 'Party B: Công ty ABC\nContract value in USD is 1,500; equivalent: 1,300 EUR.',
+        },
+      ],
+    };
+    expect(
+      checkSignObligationExtract(equivReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '1500',
+        currency: 'USD',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Party B: Công ty ABC' },
+          {
+            field: 'contractValue',
+            pageNumber: 1,
+            quoteExcerpt: 'Contract value in USD is 1,500; equivalent: 1,300 EUR.',
+          },
+        ],
+        obligations: [],
+      }).proposal,
+    ).toMatchObject({ contractValue: '1500', currency: 'USD' });
+    expect(
+      checkSignObligationExtract(equivReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '1300',
+        currency: 'USD',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Party B: Công ty ABC' },
+          {
+            field: 'contractValue',
+            pageNumber: 1,
+            quoteExcerpt: 'Contract value in USD is 1,500; equivalent: 1,300 EUR.',
+          },
+        ],
+        obligations: [],
+      }).proposal?.contractValue,
+    ).toBeNull();
+
+    // Title Case ISO-qualified dollar prefixes ("Sgd $100") must not ground USD.
+    expect(isCurrencyGroundedInText('USD', 'Fee: Sgd $100')).toBe(false);
+    expect(isCurrencyGroundedInText('SGD', 'Fee: Sgd $100')).toBe(true);
   });
 });
 

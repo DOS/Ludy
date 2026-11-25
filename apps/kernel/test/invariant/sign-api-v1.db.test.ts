@@ -20,7 +20,7 @@ import { fileURLToPath } from 'node:url';
 import { deflateSync } from 'node:zlib';
 import { SignJWT } from 'jose';
 import pg from 'pg';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createDb, type Db } from '@ludy/db';
 import { migrate } from '@ludy/db/migrate';
 import type { ExtractClient } from '@ludy/extract-contract';
@@ -42,6 +42,7 @@ import { orgPurgeCommand, runOrgPurge } from '../../src/org-purge.ts';
 import { ConcurrencyLimiter } from '../../src/concurrency.ts';
 import { RateLimiter } from '../../src/rate-limit.ts';
 import { createSessionStatusSource } from '../../src/sessions.ts';
+import { runSignApiV1EnvelopesList } from '../../src/sign-api-v1.ts';
 import { runSignPdfSealJob } from '../../src/sign-worker.ts';
 import {
   createDbClient,
@@ -1277,6 +1278,18 @@ suite('eSign Slice 5c `/api/v1/sign/*` and scoped API key invariants (#4441)', (
     const first = await apiGet('/api/v1/sign/envelopes', `Bearer ${fullScopeSecret}`, appTightRate);
     expect(first.status).toBe(200);
     expect(tightKeyReadLimit.size).toBe(1);
+    const orglessSpy = vi.fn(runtime.orgless);
+    const peekOut = await runSignApiV1EnvelopesList(
+      { orgless: orglessSpy } as unknown as Runtime,
+      { entitlements: async () => ['full'] },
+      `Bearer ${fullScopeSecret}`,
+      {},
+      (hash) => tightKeyReadLimit.take(hash),
+      (hash) => tightKeyReadLimit.peek(hash),
+    );
+    expect(peekOut.status).toBe('rate_limited');
+    expect(orglessSpy).not.toHaveBeenCalled();
+
     const second = await apiGet('/api/v1/sign/envelopes', `Bearer ${fullScopeSecret}`, appTightRate);
     expect(second.status).toBe(429);
     expect(Number(second.headers.get('retry-after'))).toBeGreaterThanOrEqual(1);
@@ -1443,14 +1456,222 @@ suite('eSign Slice 5c `/api/v1/sign/*` and scoped API key invariants (#4441)', (
       );
       expect(orgBConcurrent.status).toBe(200);
       expect(orgBConcurrent.headers.get('content-type')).toContain('application/pdf');
+      await orgBConcurrent.arrayBuffer();
 
       releaseOrgABlobs();
       const finished = await Promise.all(heldDownloads);
-      for (const r of finished) expect(r.status).toBe(200);
+      for (const r of finished) {
+        expect(r.status).toBe(200);
+        await r.arrayBuffer();
+      }
     } finally {
       store.beforeGet = null;
       releaseOrgABlobs();
     }
+
+    // Combined process PDF pool ceiling (#4682): public /api/sign/pdf + /api/v1/sign/*/sealed share SIGN_PDF_READS_MAX (8).
+    const pubDoc = await ingestPdf(orgA.orgId, adminUser, 'pub-pool-doc');
+    const pubEnvId = (
+      await runtime.execute<{ envelopeId: string }>(
+        'sign.envelope.create',
+        { title: 'Hop dong cong khai pool', sourceFileId: pubDoc.fileId, routingMode: 'parallel' },
+        { actor: asUser(adminUser), orgId: orgA.orgId },
+      )
+    ).envelopeId;
+    await workerRuntime.execute(
+      'sign.envelope.inspect_complete',
+      {
+        envelopeId: pubEnvId,
+        outcome: 'passed',
+        pageCount: 1,
+        pageDimensions: [{ page: 1, widthPt: 595, heightPt: 842, rotation: 0 }],
+      },
+      { actor: asSystem, orgId: orgA.orgId },
+    );
+    const pubSigner = await runtime.execute<{ signerId: string }>(
+      'sign.signer.add',
+      {
+        envelopeId: pubEnvId,
+        routingOrder: 1,
+        signerRole: 'signer',
+        roleLabel: 'Ben A',
+        name: 'Signer Pool',
+        email: 'signer-pool@sign-v1.test',
+        deliveryMode: 'link',
+        requireEmailOtp: false,
+      },
+      { actor: asUser(adminUser), orgId: orgA.orgId },
+    );
+    await runtime.execute(
+      'sign.field.set',
+      {
+        envelopeId: pubEnvId,
+        fields: [
+          {
+            signerId: pubSigner.signerId,
+            fieldType: 'signature',
+            pageNumber: 1,
+            xNorm: 0.15,
+            yNorm: 0.7,
+            wNorm: 0.25,
+            hNorm: 0.1,
+            required: true,
+          },
+        ],
+      },
+      { actor: asUser(adminUser), orgId: orgA.orgId },
+    );
+    const pubSent = await runtime.execute<{ links: Array<{ token: string }> }>(
+      'sign.envelope.send',
+      { envelopeId: pubEnvId },
+      { actor: asUser(adminUser), orgId: orgA.orgId },
+    );
+    const pubToken = pubSent.links[0]!.token;
+    const pubStorageKey = fileKey(orgA.orgId, pubDoc.sha256);
+
+    let releasePoolBlobs!: () => void;
+    const poolBlobsHeld = new Promise<void>((resolve) => {
+      releasePoolBlobs = resolve;
+    });
+    let poolEntered = 0;
+    let notifyEightEntered!: () => void;
+    const eightEntered = new Promise<void>((resolve) => {
+      notifyEightEntered = resolve;
+    });
+    store.beforeGet = async (key: string) => {
+      if (key === sealedOrgARow.sealed_storage_key || key === pubStorageKey) {
+        poolEntered += 1;
+        if (poolEntered === 8) notifyEightEntered();
+        await poolBlobsHeld;
+      }
+    };
+    try {
+      const pubHeld = Array.from({ length: 4 }, (_, idx) =>
+        appDefaultPdfLimits.request('/api/sign/pdf', {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-forwarded-for': `198.51.100.${110 + idx}`,
+          },
+          body: JSON.stringify({ token: pubToken }),
+        }),
+      );
+      const v1Held = Array.from({ length: 4 }, (_, idx) =>
+        apiGet(
+          `/api/v1/sign/envelopes/${ids.completedEnv}/sealed`,
+          `Bearer ${readOnlySecret}`,
+          appDefaultPdfLimits,
+          `198.51.100.${120 + idx}`,
+        ),
+      );
+      await eightEntered;
+
+      const ninthOrgB = await apiGet(
+        `/api/v1/sign/envelopes/${orgBSealedEnv}/sealed`,
+        `Bearer ${orgBReadSecret}`,
+        appDefaultPdfLimits,
+        '198.51.100.199',
+      );
+      expect(ninthOrgB.status).toBe(503);
+      await expect(ninthOrgB.json()).resolves.toMatchObject({ code: 'SIGN_PDF_BUSY' });
+
+      releasePoolBlobs();
+      for (const r of await Promise.all([...pubHeld, ...v1Held])) {
+        expect(r.status).toBe(200);
+        await r.arrayBuffer();
+      }
+    } finally {
+      store.beforeGet = null;
+      releasePoolBlobs();
+    }
+
+    // Response-body lifetime check (#4682): unread 200 PDF responses continue holding process pool slots
+    // until consumed (.arrayBuffer()) or canceled (.body.cancel()).
+    const unreadHeld: Response[] = [];
+    try {
+      for (let idx = 0; idx < 4; idx += 1) {
+        const pubRes = await appDefaultPdfLimits.request('/api/sign/pdf', {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-forwarded-for': `198.51.100.${130 + idx}`,
+          },
+          body: JSON.stringify({ token: pubToken }),
+        });
+        expect(pubRes.status).toBe(200);
+        unreadHeld.push(pubRes);
+
+        const v1Res = await apiGet(
+          `/api/v1/sign/envelopes/${ids.completedEnv}/sealed`,
+          `Bearer ${readOnlySecret}`,
+          appDefaultPdfLimits,
+          `198.51.100.${140 + idx}`,
+        );
+        expect(v1Res.status).toBe(200);
+        unreadHeld.push(v1Res);
+      }
+
+      const saturatedUnread = await apiGet(
+        `/api/v1/sign/envelopes/${orgBSealedEnv}/sealed`,
+        `Bearer ${orgBReadSecret}`,
+        appDefaultPdfLimits,
+        '198.51.100.200',
+      );
+      expect(saturatedUnread.status).toBe(503);
+      await expect(saturatedUnread.json()).resolves.toMatchObject({ code: 'SIGN_PDF_BUSY' });
+
+      // Canceling one unread public PDF response frees its process slot immediately.
+      await unreadHeld[0]!.body?.cancel();
+      const afterCancel = await apiGet(
+        `/api/v1/sign/envelopes/${orgBSealedEnv}/sealed`,
+        `Bearer ${orgBReadSecret}`,
+        appDefaultPdfLimits,
+        '198.51.100.201',
+      );
+      expect(afterCancel.status).toBe(200);
+      await afterCancel.arrayBuffer();
+
+      // Consuming one unread v1 sealed response also frees a slot immediately.
+      await unreadHeld[1]!.arrayBuffer();
+      const afterConsume = await apiGet(
+        `/api/v1/sign/envelopes/${orgBSealedEnv}/sealed`,
+        `Bearer ${orgBReadSecret}`,
+        appDefaultPdfLimits,
+        '198.51.100.202',
+      );
+      expect(afterConsume.status).toBe(200);
+      await afterConsume.arrayBuffer();
+    } finally {
+      await Promise.all(unreadHeld.map((r) => r.body?.cancel().catch(() => {})));
+    }
+
+    // HEAD requests on /sealed and /certificate must release PDF pool slots immediately (Hono drops inner body on HEAD).
+    for (let i = 0; i < 10; i += 1) {
+      const headSealed = await appDefaultPdfLimits.request(`/api/v1/sign/envelopes/${ids.completedEnv}/sealed`, {
+        method: 'HEAD',
+        headers: {
+          authorization: `Bearer ${readOnlySecret}`,
+          'x-forwarded-for': `198.51.100.${210 + i}`,
+        },
+      });
+      expect(headSealed.status).toBe(200);
+      const headCert = await appDefaultPdfLimits.request(`/api/v1/sign/envelopes/${ids.completedEnv}/certificate`, {
+        method: 'HEAD',
+        headers: {
+          authorization: `Bearer ${readOnlySecret}`,
+          'x-forwarded-for': `198.51.100.${220 + i}`,
+        },
+      });
+      expect(headCert.status).toBe(200);
+    }
+    const postHeadGet = await apiGet(
+      `/api/v1/sign/envelopes/${orgBSealedEnv}/sealed`,
+      `Bearer ${orgBReadSecret}`,
+      appDefaultPdfLimits,
+      '198.51.100.240',
+    );
+    expect(postHeadGet.status).toBe(200);
+    await postHeadGet.arrayBuffer();
 
     // Revoking fullScopeKeyId via RPC cuts access immediately.
     const revRes = await rpc('sign/api_keys/revoke', owner, { apiKeyId: fullScopeKeyId });

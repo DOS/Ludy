@@ -1641,6 +1641,10 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
             `[sign-work-recovery] re-queued inspect=${recovered.inspect} seal=${recovered.seal} ca=${recovered.caReconcile}`,
           );
         }
+      } catch (error) {
+        failure ??= error;
+      }
+      try {
         const kycRecovered = await sweepSignPendingKycWork({
           workerDb: deps.workerDb,
           runtime: deps.runtime,
@@ -3345,6 +3349,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                   sizeBytes: Number(row.payload.sizeBytes),
                 });
               }
+              let signDocxRecoveryError: unknown;
               if (sign && row.type === 'kernel.org.apps_changed' && row.payload.module === 'sign' && row.payload.enabled === true) {
                 await sweepSignPendingWork({
                   workerDb: deps.workerDb,
@@ -3355,31 +3360,40 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                   enqueueSeal: (orgId, envelopeId) => enqueueSignSeal(boss, orgId, envelopeId),
                   enqueueTemplateInspect: (orgId, templateId) => enqueueSignTemplateInspect(boss, orgId, templateId),
                   enqueueCaReconcile: (orgId, requestId) => enqueueSignCaReconcile(boss, orgId, requestId),
-                });
+                }).catch((error: unknown) => console.error('[relay] sign pending work on apps_changed', error));
                 await sweepSignPendingKycWork({
                   workerDb: deps.workerDb,
                   runtime: deps.runtime,
                   appOn: (orgId) => deps.runtime.appOn(orgId, 'sign', { fresh: true }),
                   orgId: row.org_id,
                   olderThan: new Date(),
-                  // Re-enabling sign after downtime should re-queue paused checks once instead of immediately timing them out.
+                  // Re-enabling sign after downtime re-queues paused checks and bumps updated_at so the next cron does not immediately time them out.
                   timeoutBefore: new Date(0),
+                  bumpUpdatedAtOnRequeue: true,
                   enqueueKycInspect: (orgId, envelopeId, fieldId) =>
                     enqueueSignKycAttachmentInspect(boss, orgId, envelopeId, fieldId),
-                });
-                const pendingDocx = await deps.runtime.query<Array<Omit<SignDocxConvertJob, 'orgId' | 'targetKind'>>>(
+                }).catch((error: unknown) => console.error('[relay] sign pending kyc on apps_changed', error));
+                await deps.runtime.query<Array<Omit<SignDocxConvertJob, 'orgId' | 'targetKind'>>>(
                   'sign.docx_convert.pending',
                   {},
                   { actor: { type: 'system', component: 'sign.docx_convert' }, orgId: row.org_id },
-                );
-                for (const item of pendingDocx) {
-                  await enqueueSignDocxConvert(boss, row.org_id, item);
-                }
+                )
+                  .then((pendingDocx) =>
+                    Promise.all(pendingDocx.map((item) => enqueueSignDocxConvert(boss, row.org_id, item))),
+                  )
+                  .catch((error: unknown) => {
+                    // sign.docx_convert_queued is not parked while sign is off, so preserve failure to retry after releaseHeldOfOrg.
+                    signDocxRecoveryError = error;
+                    console.error('[relay] sign pending docx on apps_changed', error);
+                  });
               }
               // An app switched on (ADR-0053, C3b): the events parked while it was off go back on the outbox now, not when the held sweep comes round. A failure here is the sweep's to
               // retry, so it never fails the relay step.
               if (row.type === 'kernel.org.apps_changed' && row.payload.enabled === true) {
                 await releaseHeldOfOrg(deps.workerDb, (orgId, app) => deps.runtime.appOn(orgId, app, { fresh: true }), row.org_id).catch((error: unknown) => console.error('[relay] held release on apps_changed', error));
+              }
+              if (signDocxRecoveryError !== undefined) {
+                throw signDocxRecoveryError;
               }
               // A bank feed connected, or an account of one mapped (ADR-0039, #2044): its sync lists the accounts and
               // pulls the mapped ones.
