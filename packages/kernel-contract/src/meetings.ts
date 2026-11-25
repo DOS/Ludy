@@ -4,7 +4,7 @@ import { zMeetingPlatform } from './meeting-agenda.ts';
 import { zCaptureStart } from './meeting-capture.ts';
 import { zMinutesTemplateCopy } from './meeting-minutes-templates.ts';
 import { SECTIONS_MAX, zBuiltInSummaryTemplate, zMeetingSummaryTemplate, zSectionEntry } from './meeting-templates.ts';
-import { MEETING_LABELS_MAX, MEETING_LABEL_LENGTH_MAX, zLabelValue } from './meeting-labels.ts';
+import { MEETING_LABELS_MAX, zLabelValue } from './meeting-labels.ts';
 import { zId } from './schemas.ts';
 
 // `in_call_chat`: the recorder pasted the recording notice in the call's chat (Meetings A1, #3159).
@@ -544,7 +544,7 @@ export const zMeetingSearchInput = z.strictObject({
   limit: z.number().int().min(1).max(MEETING_SEARCH_PAGE_MAX).default(20),
   offset: z.number().int().min(0).max(MEETING_SEARCH_HITS_MAX).default(0),
   // Only the lines of the meetings that carry this label (#4965), the same label whatever the case: the command keeps the page to the labelled meetings, from the hits the search can reach (the first 200), so a page is never cut after it was read.
-  label: z.string().trim().min(1).max(MEETING_LABEL_LENGTH_MAX * 2).optional(),
+  label: z.string().trim().pipe(zLabelValue).optional(),
 });
 export type MeetingSearchInput = z.infer<typeof zMeetingSearchInput>;
 export const zMeetingSearchHit = z.strictObject({
