@@ -353,13 +353,14 @@ suite('Tracker alerts (#4873)', () => {
     const termId = (await sqlAdmin<{ id: string }>('SELECT id FROM ludy_meetings.tracker_term WHERE org_id = $1', [orgId])).rows[0]!.id;
     expect(await worker.execute('test.tracker_alert_recipients_probe', { org: orgId, meeting: meetingId, after: null, limit: 10 }, system())).toEqual([{ user_id: users.lan, english: false }]);
     expect(await worker.execute('test.tracker_alert_hits_probe', { org: orgId, meeting: meetingId }, system())).toEqual([{ term_id: termId, hits: 1 }]);
+    // Each call is started when its turn comes: started together, the later ones would reject before anything handles them, and the run would end with an unhandled rejection.
     for (const call of [
-      worker.execute('test.tracker_alert_recipients_probe', { org: otherOrgId, meeting: meetingId, after: null, limit: 10 }, system()),
-      worker.execute('test.tracker_alert_recipients_probe', { org: orgId, meeting: meetingId, after: null, limit: 10 }, system(otherOrgId)),
-      worker.execute('test.tracker_alert_hits_probe', { org: otherOrgId, meeting: meetingId }, system()),
-      worker.execute('test.tracker_alert_hits_probe', { org: orgId, meeting: meetingId }, system(otherOrgId)),
+      () => worker.execute('test.tracker_alert_recipients_probe', { org: otherOrgId, meeting: meetingId, after: null, limit: 10 }, system()),
+      () => worker.execute('test.tracker_alert_recipients_probe', { org: orgId, meeting: meetingId, after: null, limit: 10 }, system(otherOrgId)),
+      () => worker.execute('test.tracker_alert_hits_probe', { org: otherOrgId, meeting: meetingId }, system()),
+      () => worker.execute('test.tracker_alert_hits_probe', { org: orgId, meeting: meetingId }, system(otherOrgId)),
     ]) {
-      const error = await call.then(
+      const error = await call().then(
         () => null,
         (e: unknown) => e,
       );
