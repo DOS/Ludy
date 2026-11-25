@@ -232,6 +232,8 @@ const EXPECTED_REFUSAL_ERRORS = new Set([
   'ProofreadChangedError',
   'SummaryFigureError',
   'PayrollPromptLeakError',
+  'OpenPointsError',
+  'TemplateSuggestError',
 ]);
 
 export function hasLeakedInjectionPayload(serializedOutput: string, trusted: readonly string[] = []): boolean {

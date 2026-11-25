@@ -83,7 +83,8 @@ export function checkTemplateSuggestion(raw: string, segments: readonly SummaryS
   const text = typeof root.reason === 'string' ? foldTitleText(root.reason) : '';
   const second = typeof root.second === 'number' && Number.isInteger(root.second) ? root.second : null;
   const figures = second === null ? undefined : figuresAt.get(second);
-  const transcriptHasMoneyScaleWords = hasUngroundedMoneyOrScaleWords(segments.map((s) => s.text).join('\n'));
+  // A scale word (million, billion...) in the reason is allowed only when the CITED line has one, not any line of the transcript.
+  const citedHasScaleWords = second === null ? false : hasUngroundedMoneyOrScaleWords(segments.filter((s) => Math.max(0, Math.floor(s.startSeconds)) === second).map((s) => s.text).join('\n'));
   if (
     template === null ||
     second === null ||
@@ -96,7 +97,7 @@ export function checkTemplateSuggestion(raw: string, segments: readonly SummaryS
     hasPromptMarkupLeak(String(root.reason)) ||
     hasPromptMarkupLeak(text) ||
     hasAutonomousActionDirective(text) ||
-    (!transcriptHasMoneyScaleWords && hasUngroundedMoneyOrScaleWords(text)) ||
+    (!citedHasScaleWords && hasUngroundedMoneyOrScaleWords(text)) ||
     text.includes('@') ||
     /\p{Nd}{8}/u.test(text.normalize('NFKC')) ||
     numbersIn(text).some((n) => !figures.has(n))

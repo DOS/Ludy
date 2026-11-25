@@ -573,6 +573,7 @@ export const KERNEL_ERROR_CODES = [
   'COMMITMENTS_BUSY',
   // Vy suggesting the minutes template of a meeting (#4772).
   'TEMPLATE_SUGGEST_BUSY',
+  'TEMPLATE_SUGGEST_NOT_NEEDED',
   // Vy listing what a meeting left open (#4768).
   'OPEN_POINTS_BUSY',
   'MEETING_TITLE_EMPTY',

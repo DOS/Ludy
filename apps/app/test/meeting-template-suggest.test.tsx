@@ -65,7 +65,7 @@ describe('who sees the card', () => {
   });
   it('words every reason and joins several', () => {
     const html = gate(suggestion({ template: 'one_on_one', reasons: ['title', 'people'] }), null, {}, 'en');
-    expect(html).toContain('Because the title names this kind of meeting; there are only two people.');
+    expect(html).toContain('Because the title names this kind of meeting; the recorder and the one other person who can read the meeting are the only two people.');
     for (const reason of ['series', 'deal', 'title', 'people'] as const) {
       expect(en.meetings.templateSuggest.reasons[reason]).not.toBe('');
       expect(viMessages.meetings.templateSuggest.reasons[reason]).not.toBe('');

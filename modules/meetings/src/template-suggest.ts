@@ -85,24 +85,32 @@ export const templateSuggest = defineQuery({
     const userId = userOf(ctx.actor);
     const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
     if (meeting.recorder_user_id !== userId) return notApplicable(input.meetingId);
-    const row = await ctx.trx
-      .selectFrom('ludy_meetings.meeting')
-      .select(['title', 'summary_template', 'series_id', sql<Date>`coalesce(started_at, created_at)`.as('at')])
-      .where('org_id', '=', ctx.orgId)
-      .where('id', '=', input.meetingId)
-      .executeTakeFirstOrThrow();
-    if (row.summary_template !== 'general') return notApplicable(input.meetingId);
-    const segment = await ctx.trx.selectFrom('ludy_meetings.transcript_segment').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).limit(1).executeTakeFirst();
-    if (!segment) return notApplicable(input.meetingId);
-    const answer = suggestTemplateFrom({
-      seriesTemplate: await seriesTemplateOf(ctx.trx, ctx.orgId, input.meetingId, row.series_id, row.at),
-      hasDeal: (await ctx.trx.selectFrom('ludy_meetings.meeting_link').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('deal_id', 'is not', null).limit(1).executeTakeFirst()) !== undefined,
-      title: row.title,
-      people: await peopleOf(ctx.trx, ctx.orgId, input.meetingId, meeting.recorder_user_id),
-    });
+    const answer = await codeAnswerOf(ctx.trx, ctx.orgId, input.meetingId, meeting.recorder_user_id);
+    if (answer === null) return notApplicable(input.meetingId);
     return zTemplateSuggestion.parse({ meetingId: input.meetingId, ...answer });
   },
 });
+
+// Code's own answer for a meeting the caller records: null when it does not apply (a template other than the general summary, or no transcript), else the vote. Shared by the query and the
+// start of Vy's run, so the two cannot disagree about when Vy is needed.
+async function codeAnswerOf(trx: Trx, orgId: string, meetingId: string, recorderId: string) {
+  const row = await trx
+    .selectFrom('ludy_meetings.meeting')
+    .select(['title', 'summary_template', 'series_id', sql<Date>`coalesce(started_at, created_at)`.as('at')])
+    .where('org_id', '=', orgId)
+    .where('id', '=', meetingId)
+    .executeTakeFirstOrThrow();
+  if (row.summary_template !== 'general') return null;
+  const segment = await trx.selectFrom('ludy_meetings.transcript_segment').select('id').where('org_id', '=', orgId).where('meeting_id', '=', meetingId).limit(1).executeTakeFirst();
+  if (!segment) return null;
+  const answer = suggestTemplateFrom({
+    seriesTemplate: await seriesTemplateOf(trx, orgId, meetingId, row.series_id, row.at),
+    hasDeal: (await trx.selectFrom('ludy_meetings.meeting_link').select('id').where('org_id', '=', orgId).where('meeting_id', '=', meetingId).where('deal_id', 'is not', null).limit(1).executeTakeFirst()) !== undefined,
+    title: row.title,
+    people: await peopleOf(trx, orgId, meetingId, recorderId),
+  });
+  return answer;
+}
 
 // The built-in template the previous meeting of the series (the latest earlier one this caller reads) is on, when it is one of the four.
 async function seriesTemplateOf(trx: Trx, orgId: string, meetingId: string, seriesId: string | null, at: Date): Promise<SuggestableTemplate | null> {
@@ -146,6 +154,9 @@ export const templateSuggestStart = defineCommand({
     if (live.status !== 'ok' || live.value.live) throw new DomainError('TRANSCRIBE_RUNNING', 409, 'This meeting is still being transcribed; wait for it to finish');
     const any = await ctx.trx.selectFrom('ludy_meetings.transcript_segment').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).limit(1).executeTakeFirst();
     if (!any) throw new DomainError('TRANSCRIPT_EMPTY', 422, 'There is no transcript to read yet');
+    // Vy is for when code cannot tell: a meeting that already has a suggestion (or is not on the general summary) spends nothing here.
+    const code = await codeAnswerOf(ctx.trx, ctx.orgId, input.meetingId, meeting.recorder_user_id);
+    if (code === null || code.state === 'suggested') throw new DomainError('TEMPLATE_SUGGEST_NOT_NEEDED', 409, 'Code already suggests a template for this meeting, or the meeting is not on the general summary');
     const started = await ctx.run<{ runId: string }>('kernel.member_vy.run.start', { feature: TEMPLATE_SUGGEST_FEATURE, subjectType: TEMPLATE_SUGGEST_FEATURE, subjectId: randomUUID() });
     // The answer rests on the transcript of the recording: it is in use from here on (#3187), under the media lock a replacement takes.
     await markAudioUsed(ctx, input.meetingId);
