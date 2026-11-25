@@ -186,6 +186,7 @@ export interface LudyKernelSchema {
   'ludy_kernel.meeting_platform_connection': KernelMeetingPlatformConnectionTable;
   'ludy_kernel.meeting_platform_recording': KernelMeetingPlatformRecordingTable;
   'ludy_kernel.member_availability': KernelMemberAvailabilityTable;
+  'ludy_kernel.member_home_layout': KernelMemberHomeLayoutTable;
   'ludy_kernel.member_invite': KernelMemberInviteTable;
   'ludy_kernel.member_permission_override': KernelMemberPermissionOverrideTable;
   'ludy_kernel.member_vy_memory': KernelMemberVyMemoryTable;
@@ -3167,6 +3168,15 @@ export interface KernelMemberAvailabilityTable {
   user_id: ColumnType<string, string, NotGranted>;
   status: Generated<string>;
   until: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_kernel.member_home_layout */
+export interface KernelMemberHomeLayoutTable {
+  id: ColumnType<string, string | undefined, NotGranted>;
+  org_id: ColumnType<string, string, NotGranted>;
+  user_id: ColumnType<string, string, NotGranted>;
+  layout_json: ColumnType<unknown, string, string>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 

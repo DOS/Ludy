@@ -658,7 +658,7 @@ suite('meetings module database integration tests (#2576)', () => {
     expect(playbackRes.status).toBe(404);
   });
 
-  it('7. CROVE_MODULES without meetings returns 404 on playback and upload purpose', async () => {
+  it('7. LUDY_MODULES without meetings returns 404 on playback and upload purpose', async () => {
     const disabledRes = await appWithoutMeetings.request(`/api/meetings/${randomUUID()}/audio`, {
       method: 'GET',
       headers: {

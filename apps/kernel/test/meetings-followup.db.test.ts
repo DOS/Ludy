@@ -71,7 +71,7 @@ suite('the follow-up email of a meeting (#2590)', () => {
   };
   const mails = (meetingId: string) =>
     sqlAdmin<{ to_address: string; status: string; source: string; source_id: string; template_key: string; payload: Record<string, unknown> }>(
-      "SELECT to_address, status, source, source_id, template_key, payload FROM ludy_kernel.mail_message WHERE org_id = $1 AND source_id = $2 AND source = 'meetings.followup' ORDER BY created_at, id",
+      "SELECT to_address, status, source, source_id, template_key, payload FROM ludy_kernel.mail_message WHERE org_id = $1 AND source_id = $2 AND source = 'meetings.followup' ORDER BY created_at, to_address, id",
       [orgId, meetingId],
     ).then((r) => r.rows);
 

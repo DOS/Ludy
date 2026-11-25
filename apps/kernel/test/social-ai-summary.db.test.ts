@@ -97,7 +97,7 @@ suite('AI summary of a period, and the rate and goals it repeats (#1237, #1164, 
     const slug = options.slug === undefined ? org.slug : options.slug;
     const response = await apps[options.app ?? 'on'].request(`/api/rpc/${path}`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...(slug ? { 'x-crove-org': slug } : {}) },
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...(slug ? { 'x-ludy-org': slug } : {}) },
       body: JSON.stringify(input === undefined ? {} : { json: input }),
     });
     const body = (await response.json().catch(() => null)) as ({ json?: unknown } & Record<string, unknown>) | null;

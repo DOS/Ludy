@@ -54,13 +54,13 @@ export * from './engage-wake.ts';
 export * from './mail-address.ts';
 export * from './signals.ts';
 export * from './today.ts';
+export * from './home-layout.ts';
 export * from './coworkers.ts';
 export * from './sign.ts';
 export * from './projects-roadmap.ts';
 export * from './projects-triage.ts';
 
 export const ORG_HEADER = 'x-ludy-org';
-export const LEGACY_ORG_HEADER = 'x-crove-org';
 export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 // When the store takes presigned uploads, files of at most this size still go through the kernel (POST /api/files):
 // bulk intake (#314) sends a batch of 200 e-invoice XML files that way instead of opening 200 upload grants. The
@@ -121,7 +121,8 @@ export type UploadPurpose = (typeof UPLOAD_PURPOSES)[number];
 // filters by are the new ones; the app then reads kernel.org.apps again.
 // crm_deal and crm_party (#3293, crm.md section 5): a deal, or a party's contact details, changed; the deal board, the deals list and the contact panels read again. The id only,
 // as every hint. The names use an underscore, not the dot of the entity types (crm.deal), because the channel payload carries no dot (social_post is the same).
-export const STREAM_HINT_TYPES = ['proposal', 'file', 'extraction', 'journal_entry', 'document', 'social_post', 'social_notification', 'notification', 'note', 'todo', 'org_apps', 'crm_deal', 'crm_party'] as const;
+// home_layout (#4925): a member's own Global Home layout changed (recipient-scoped to that user only); their other sessions re-fetch overview.homeLayout.get.
+export const STREAM_HINT_TYPES = ['proposal', 'file', 'extraction', 'journal_entry', 'document', 'social_post', 'social_notification', 'notification', 'note', 'todo', 'org_apps', 'crm_deal', 'crm_party', 'home_layout'] as const;
 // The id a crm_deal or crm_party hint carries when a transaction changed more than 20 deals or contacts of the org (#3423: a contact import, the org purge, a member's removal): it names no row, and a stream
 // reads it as "many changed" and re-reads every view of that type, whichever row an open panel is about. The database sends it (ludy_kernel.stream_hint_bounded).
 export const STREAM_HINT_MANY_ID = '00000000-0000-0000-0000-000000000000';
