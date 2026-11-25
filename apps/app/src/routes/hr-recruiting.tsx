@@ -373,6 +373,7 @@ export function CandidateForm({
   const [agreedWage, setAgreedWage] = useState(candidate?.agreedWage ?? '');
   const [plannedStartOn, setPlannedStartOn] = useState(candidate?.plannedStartOn ?? '');
   const [notes, setNotes] = useState(candidate?.notes ?? cvDraft?.notes ?? '');
+  const [aiSummaryText, setAiSummaryText] = useState(cvDraft?.aiSummary ?? '');
 
   const expectedOk = expectedWage.trim() === '' || WAGE_RE.test(expectedWage.trim());
   const agreedOk = agreedWage.trim() === '' || WAGE_RE.test(agreedWage.trim());
@@ -506,6 +507,44 @@ export function CandidateForm({
           <Label htmlFor="hr-cand-notes">{t('fields.notes')}</Label>
           <Textarea id="hr-cand-notes" rows={2} maxLength={2000} value={notes} onChange={(e) => setNotes(e.target.value)} />
         </div>
+        {!candidate && cvDraft?.aiSummary && (
+          <div
+            className="space-y-2 rounded-md border border-dashed border-proposal/70 bg-proposal/10 p-3 text-xs sm:col-span-2 lg:col-span-3"
+            data-testid="hr-cv-ai-summary-proposal"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Label htmlFor="hr-cand-ai-summary" className="text-xs font-medium text-foreground">
+                  {t('cvExtract.aiSummaryLabel')}
+                </Label>
+                <Badge variant="proposal">{t('cvExtract.proposalBadge')}</Badge>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="max-md:min-h-11"
+                onClick={() => {
+                  const cleaned = aiSummaryText.trim();
+                  if (!cleaned) return;
+                  setNotes((prev) => (prev.trim() ? `${prev.trim()}\n${cleaned}`.slice(0, 2000) : cleaned.slice(0, 2000)));
+                }}
+                data-testid="hr-cv-ai-summary-copy"
+              >
+                {t('cvExtract.aiSummaryCopyButton')}
+              </Button>
+            </div>
+            <p className="text-muted-foreground">{t('cvExtract.aiSummaryHint')}</p>
+            <Textarea
+              id="hr-cand-ai-summary"
+              rows={2}
+              maxLength={600}
+              value={aiSummaryText}
+              onChange={(e) => setAiSummaryText(e.target.value)}
+              data-testid="hr-cv-ai-summary-input"
+            />
+          </div>
+        )}
       </div>
       {save.error && <ErrorText>{errorMessage(save.error)}</ErrorText>}
       <div className="mt-4 flex gap-2">

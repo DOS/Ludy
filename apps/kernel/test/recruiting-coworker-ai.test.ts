@@ -187,6 +187,7 @@ describe('generateRecruitingBrief (#3447 Items 6 & 7)', () => {
       yearsExperience: 4,
       matchedSkills: ['Excel'],
       notes: '4 năm Excel',
+      aiSummary: null,
       textPreview: 'Nguyễn Văn An',
       extractedChars: 42,
       sourceKind: 'pdf_text' as const,
@@ -262,6 +263,7 @@ describe('generateRecruitingBrief (#3447 Items 6 & 7)', () => {
       yearsExperience: null,
       matchedSkills: [],
       notes: 'Tóm tắt CV.',
+      aiSummary: null,
       textPreview: 'Nguyễn Văn An',
       extractedChars: 55,
       sourceKind: 'pdf_text' as const,
@@ -366,6 +368,7 @@ describe('generateRecruitingBrief (#3447 Items 6 & 7)', () => {
       yearsExperience: 3,
       matchedSkills: [...(input.requiredSkills ?? [])],
       notes: `Matched ${input.openingTitle ?? ''}`,
+      aiSummary: null,
       textPreview: 'Nguyễn Văn An',
       extractedChars: 64,
       sourceKind: 'pdf_text' as const,
@@ -393,7 +396,7 @@ describe('generateRecruitingBrief (#3447 Items 6 & 7)', () => {
 
     // Same skills reordered -> hits cache without another AI call.
     currentSkills = ['SQL', 'Excel'];
-    await handleHrCvExtractPoll({
+    const reordered = await handleHrCvExtractPoll({
       runtime: fakeRuntime,
       store,
       user: { userId: USER_ID, sessionId: 's1', mfaAt: 1, extension: false } as unknown as Parameters<typeof handleHrCvExtractPoll>[0]['user'],
@@ -402,6 +405,10 @@ describe('generateRecruitingBrief (#3447 Items 6 & 7)', () => {
       cvAi,
       runInAiScope: <T>(fn: () => Promise<T>) => fn(),
     });
+    expect(reordered.status).toBe('ready');
+    if (reordered.status === 'ready') {
+      expect(reordered.draft.ai).toEqual({ ok: true, reason: 'ok' });
+    }
     expect(cvExtract).toHaveBeenCalledTimes(1);
 
     // Opening changes to Python -> USER_ID hits perUserPerMinute=1 rate_limited, then otherUserId polls same jobId and gets its own AI call.
@@ -567,6 +574,7 @@ describe('generateRecruitingBrief (#3447 Items 6 & 7)', () => {
       yearsExperience: null,
       matchedSkills: ['Excel'],
       notes: 'Tóm tắt CV.',
+      aiSummary: null,
       textPreview: 'Nguyễn Văn An',
       extractedChars: 35,
       sourceKind: 'pdf_text' as const,
@@ -610,5 +618,247 @@ describe('generateRecruitingBrief (#3447 Items 6 & 7)', () => {
     if (resA.status === 'ready') expect(resA.draft.ai).toEqual({ ok: false, reason: 'rate_limited' });
     if (resB.status === 'ready') expect(resB.draft.ai).toEqual({ ok: true, reason: 'ok' });
     expect(cvExtract).toHaveBeenCalledTimes(1);
+  });
+
+  it('audits Manager B on shared-cache hits without repeating AI and rechecks per-user inflight after shared rate_limited (#4487)', async () => {
+    const jobId = '00000000-0000-7000-8000-000000000104';
+    const userB = '00000000-0000-7000-8000-000000000097';
+    const blobBytes = new TextEncoder().encode(
+      JSON.stringify({ jobId, ok: true, kind: 'pdf_text', text: 'Nguyễn Văn An\n0912345678\nExcel' }),
+    );
+    const resultSha256 = sha256Hex(blobBytes);
+    const resultKey = hrCvBlobKey(ORG_ID, resultSha256);
+    const store = { get: vi.fn(async () => blobBytes) } as unknown as BlobStore;
+
+    const auditedActors: string[] = [];
+    const fakeRuntime = {
+      query: vi.fn(async () => ({
+        jobId,
+        legalEntityId: '00000000-0000-7000-8000-000000000010',
+        openingId: null,
+        openingTitle: null,
+        requiredSkills: ['Excel'],
+        storageKey: resultKey,
+        resultKey,
+        resultSha256,
+        failedCode: null,
+        useAi: true,
+      })),
+      execute: vi.fn(async (_cmd: string, _in: unknown, opts: { actor?: { userId?: string } }) => {
+        auditedActors.push(opts?.actor?.userId ?? 'unknown');
+        return { ok: true };
+      }),
+    } as unknown as Runtime;
+
+    const cvExtract = vi.fn(async () => ({
+      displayName: 'Nguyễn Văn An',
+      email: null,
+      phone: '0912345678',
+      yearsExperience: null,
+      matchedSkills: ['Excel'],
+      notes: '4 năm Excel',
+      aiSummary: null,
+      textPreview: 'Nguyễn Văn An',
+      extractedChars: 35,
+      sourceKind: 'pdf_text' as const,
+      ai: { ok: true, reason: 'ok' as const },
+      tainted: true as const,
+      draftKind: 'proposal' as const,
+      autoSaved: false as const,
+      autonomousDecision: 'none' as const,
+    }));
+
+    const cvAi = { aiEnabled: true, reader: { cvExtract }, budget: new DraftBudget({ perUserPerMinute: 5, perOrgPerMinute: 10 }) };
+    await handleHrCvExtractPoll({
+      runtime: fakeRuntime,
+      store,
+      user: { userId: USER_ID, sessionId: 'sa', mfaAt: 1, extension: false } as unknown as Parameters<typeof handleHrCvExtractPoll>[0]['user'],
+      orgId: ORG_ID,
+      jobId,
+      cvAi,
+      runInAiScope: <T>(fn: () => Promise<T>) => fn(),
+    });
+    // Manager A repeat poll does not emit a second audit row.
+    await handleHrCvExtractPoll({
+      runtime: fakeRuntime,
+      store,
+      user: { userId: USER_ID, sessionId: 'sa', mfaAt: 1, extension: false } as unknown as Parameters<typeof handleHrCvExtractPoll>[0]['user'],
+      orgId: ORG_ID,
+      jobId,
+      cvAi,
+      runInAiScope: <T>(fn: () => Promise<T>) => fn(),
+    });
+    // Manager B hitting Manager A's cached draft gets Manager B's own audit row with zero new AI calls.
+    await handleHrCvExtractPoll({
+      runtime: fakeRuntime,
+      store,
+      user: { userId: userB, sessionId: 'sb', mfaAt: 1, extension: false } as unknown as Parameters<typeof handleHrCvExtractPoll>[0]['user'],
+      orgId: ORG_ID,
+      jobId,
+      cvAi,
+      runInAiScope: <T>(fn: () => Promise<T>) => fn(),
+    });
+    expect(cvExtract).toHaveBeenCalledTimes(1);
+    expect(auditedActors).toEqual([USER_ID, userB]);
+
+    // Inline upload returns pending when cvExtractContextQuery transiently errors after job admission.
+    const pdfBytes = new TextEncoder().encode('%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF');
+    const form = new FormData();
+    form.append('file', new File([pdfBytes], 'cv.pdf', { type: 'application/pdf' }));
+    const req = new Request('http://localhost/api/hr/recruiting/cv-extract', { method: 'POST', body: form });
+    const inlineRuntime = {
+      query: vi.fn(async (name: string) => {
+        if (name === 'hr.recruiting.cv_extract.authorize') return { legalEntityId: 'e1', openingId: null };
+        throw new Error('transient DB error in context poll');
+      }),
+      execute: vi.fn(async () => ({
+        jobId: '00000000-0000-7000-8000-000000000998',
+        legalEntityId: 'e1',
+        openingId: null,
+        openingTitle: null,
+        requiredSkills: [],
+        storageKey: resultKey,
+        resultKey: null,
+        resultSha256: null,
+        failedCode: null,
+        useAi: true,
+      })),
+    } as unknown as Runtime;
+    const inlinePending = await handleHrCvExtractUpload({
+      runtime: inlineRuntime,
+      store: { put: vi.fn(async () => undefined), get: vi.fn(async () => blobBytes) } as unknown as BlobStore,
+      user: { userId: USER_ID, sessionId: 's1', mfaAt: 1, extension: false } as unknown as Parameters<typeof handleHrCvExtractUpload>[0]['user'],
+      orgId: ORG_ID,
+      req,
+      cvAi: { aiEnabled: false, reader: null, budget: new DraftBudget({ perUserPerMinute: 5, perOrgPerMinute: 10 }) },
+      waitMs: 500,
+      runInAiScope: <T>(fn: () => Promise<T>) => fn(),
+    });
+    expect(inlinePending.status).toBe('pending');
+  });
+
+  it('deduplicates concurrent userB polls via retryInflight after sharedInflight resolves rate_limited (#4487)', async () => {
+    const jobId = '00000000-0000-7000-8000-000000000105';
+    const userA = '00000000-0000-7000-8000-000000000091';
+    const userB = '00000000-0000-7000-8000-000000000092';
+    const blobBytes = new TextEncoder().encode(
+      JSON.stringify({ jobId, ok: true, kind: 'pdf_text', text: 'Nguyễn Văn An\n0912345678\nExcel' }),
+    );
+    const resultSha256 = sha256Hex(blobBytes);
+    const resultKey = hrCvBlobKey(ORG_ID, resultSha256);
+    const store = { get: vi.fn(async () => blobBytes) } as unknown as BlobStore;
+    const fakeRuntime = {
+      query: vi.fn(async () => ({
+        jobId,
+        legalEntityId: '00000000-0000-7000-8000-000000000010',
+        openingId: null,
+        openingTitle: null,
+        requiredSkills: ['Excel'],
+        storageKey: resultKey,
+        resultKey,
+        resultSha256,
+        failedCode: null,
+        useAi: true,
+      })),
+      execute: vi.fn(async () => ({ ok: true })),
+    } as unknown as Runtime;
+
+    let releaseA!: () => void;
+    const gateA = new Promise<void>((resolve) => {
+      releaseA = resolve;
+    });
+    let releaseB!: () => void;
+    const gateB = new Promise<void>((resolve) => {
+      releaseB = resolve;
+    });
+    let callCount = 0;
+    const cvExtract = vi.fn(async () => {
+      callCount += 1;
+      if (callCount === 1) {
+        await gateA;
+        return {
+          displayName: 'Nguyễn Văn An',
+          email: null,
+          phone: '0912345678',
+          yearsExperience: null,
+          matchedSkills: ['Excel'],
+          notes: 'Kỹ năng khớp: Excel',
+          aiSummary: null,
+          textPreview: 'Nguyễn Văn An',
+          extractedChars: 30,
+          sourceKind: 'pdf_text' as const,
+          ai: { ok: false, reason: 'rate_limited' as const },
+          tainted: true as const,
+          draftKind: 'proposal' as const,
+          autoSaved: false as const,
+          autonomousDecision: 'none' as const,
+        };
+      }
+      await gateB;
+      return {
+        displayName: 'Nguyễn Văn An',
+        email: null,
+        phone: '0912345678',
+        yearsExperience: null,
+        matchedSkills: ['Excel'],
+        notes: 'Kỹ năng khớp: Excel',
+        aiSummary: null,
+        textPreview: 'Nguyễn Văn An',
+        extractedChars: 30,
+        sourceKind: 'pdf_text' as const,
+        ai: { ok: true, reason: 'ok' as const },
+        tainted: true as const,
+        draftKind: 'proposal' as const,
+        autoSaved: false as const,
+        autonomousDecision: 'none' as const,
+      };
+    });
+    const cvAi = {
+      aiEnabled: true,
+      reader: { cvExtract } as unknown as Parameters<typeof handleHrCvExtractPoll>[0]['cvAi']['reader'],
+      budget: new DraftBudget({ perUserPerMinute: 10, perOrgPerMinute: 20 }),
+    };
+
+    const reqA = handleHrCvExtractPoll({
+      runtime: fakeRuntime,
+      store,
+      user: { userId: userA, sessionId: 'sa', mfaAt: 1, extension: false } as unknown as Parameters<typeof handleHrCvExtractPoll>[0]['user'],
+      orgId: ORG_ID,
+      jobId,
+      cvAi,
+      runInAiScope: <T>(fn: () => Promise<T>) => fn(),
+    });
+    await vi.waitFor(() => {
+      expect(cvExtract).toHaveBeenCalledTimes(1);
+    });
+    const reqB1 = handleHrCvExtractPoll({
+      runtime: fakeRuntime,
+      store,
+      user: { userId: userB, sessionId: 'sb1', mfaAt: 1, extension: false } as unknown as Parameters<typeof handleHrCvExtractPoll>[0]['user'],
+      orgId: ORG_ID,
+      jobId,
+      cvAi,
+      runInAiScope: <T>(fn: () => Promise<T>) => fn(),
+    });
+    const reqB2 = handleHrCvExtractPoll({
+      runtime: fakeRuntime,
+      store,
+      user: { userId: userB, sessionId: 'sb2', mfaAt: 1, extension: false } as unknown as Parameters<typeof handleHrCvExtractPoll>[0]['user'],
+      orgId: ORG_ID,
+      jobId,
+      cvAi,
+      runInAiScope: <T>(fn: () => Promise<T>) => fn(),
+    });
+    releaseA();
+    await vi.waitFor(() => {
+      expect(cvExtract).toHaveBeenCalledTimes(2);
+    });
+    releaseB();
+
+    const [resA, resB1, resB2] = await Promise.all([reqA, reqB1, reqB2]);
+    expect(resA.status === 'ready' && resA.draft.ai.reason).toBe('rate_limited');
+    expect(resB1.status === 'ready' && resB1.draft.ai.reason).toBe('ok');
+    expect(resB2.status === 'ready' && resB2.draft.ai.reason).toBe('ok');
+    expect(cvExtract).toHaveBeenCalledTimes(2);
   });
 });

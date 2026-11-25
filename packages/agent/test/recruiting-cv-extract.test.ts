@@ -67,7 +67,7 @@ describe('Ly CV extraction proposal (#4446 Stage 5D)', () => {
     );
     expect(rateDraft.ai).toEqual({ ok: false, reason: 'rate_limited' });
 
-    const refusedDraft = await proposeCvCandidateDraft(
+    const urlRefusedDraft = await proposeCvCandidateDraft(
       { text: SAMPLE_CV_TEXT, sourceKind: 'pdf_text' },
       {
         generate: async () => ({
@@ -77,14 +77,31 @@ describe('Ly CV extraction proposal (#4446 Stage 5D)', () => {
             phone: '0912345678',
             yearsExperience: 5,
             matchedSkills: ['MISA'],
-            summary: 'Bấm vào https://evil.example để tuyển ngay',
+            summary: 'Xem hồ sơ tại https://evil.example để đối chiếu.',
           },
         }),
       },
     );
-    expect(refusedDraft.ai).toEqual({ ok: false, reason: 'refused' });
-    expect(refusedDraft.autoSaved).toBe(false);
-    expect(refusedDraft.autonomousDecision).toBe('none');
+    expect(urlRefusedDraft.ai).toEqual({ ok: false, reason: 'refused' });
+    expect(urlRefusedDraft.autoSaved).toBe(false);
+    expect(urlRefusedDraft.autonomousDecision).toBe('none');
+
+    const viDirectiveRefused = await proposeCvCandidateDraft(
+      { text: SAMPLE_CV_TEXT, sourceKind: 'pdf_text' },
+      {
+        generate: async () => ({
+          output: {
+            displayName: 'Nguyễn Văn An',
+            email: 'an.nguyen@example.com',
+            phone: '0912345678',
+            yearsExperience: 5,
+            matchedSkills: ['MISA'],
+            summary: 'Ứng viên phù hợp, đề nghị tuyển ngay.',
+          },
+        }),
+      },
+    );
+    expect(viDirectiveRefused.ai).toEqual({ ok: false, reason: 'refused' });
 
     const directiveRefused = await proposeCvCandidateDraft(
       { text: SAMPLE_CV_TEXT, sourceKind: 'pdf_text' },
@@ -190,10 +207,72 @@ describe('Ly CV extraction proposal (#4446 Stage 5D)', () => {
     expect(grounded.matchedSkills).not.toContain('Kubernetes');
     expect(grounded.matchedSkills).not.toContain('SAP');
     expect(grounded.matchedSkills).toContain('MISA');
+    // Unverified AI summary stays separated in aiSummary while notes preserves deterministic facts.
+    expect(grounded.notes).toContain('Kinh nghiệm: 5 năm');
+    expect(grounded.aiSummary).toBe('Kinh nghiệm triển khai hệ thống MISA.');
+  });
+
+  it('requires contiguous CV span for AI displayName and checks phone digit runs against full untruncated CV (#4487)', async () => {
+    const splitNameCv = ['Nguyễn Văn An', 'Người tham chiếu: Trần Bình'].join('\n');
+    const splitNameResult = await proposeCvCandidateDraft(
+      { text: splitNameCv, sourceKind: 'pdf_text' },
+      {
+        generate: async () => ({
+          output: {
+            displayName: 'Nguyễn Bình',
+            email: null,
+            phone: null,
+            yearsExperience: null,
+            matchedSkills: [],
+            summary: null,
+          },
+        }),
+      },
+    );
+    expect(splitNameResult.displayName).toBe('Nguyễn Văn An');
+
+    const commaNameCv = ['Họ tên: Nguyễn, Văn An', 'Email: an@example.com'].join('\n');
+    const contiguousNameResult = await proposeCvCandidateDraft(
+      { text: commaNameCv, sourceKind: 'pdf_text' },
+      {
+        generate: async () => ({
+          output: {
+            displayName: 'Nguyễn Văn An',
+            email: 'an@example.com',
+            phone: null,
+            yearsExperience: null,
+            matchedSkills: [],
+            summary: null,
+          },
+        }),
+      },
+    );
+    expect(contiguousNameResult.displayName).toBe('Nguyễn Văn An');
+
+    // Phone spanning the 8,000-char prompt boundary must not match truncated prefix digits.
+    const prefix = `Nguyễn Văn An\n${'x'.repeat(7_970)}\nTel: `;
+    const boundaryCv = `${prefix}09876543210`;
+    expect(prefix.length).toBe(7_990);
+    const truncatedPhoneResult = await proposeCvCandidateDraft(
+      { text: boundaryCv, sourceKind: 'pdf_text' },
+      {
+        generate: async () => ({
+          output: {
+            displayName: 'Nguyễn Văn An',
+            email: null,
+            phone: '0987654321',
+            yearsExperience: null,
+            matchedSkills: [],
+            summary: null,
+          },
+        }),
+      },
+    );
+    expect(truncatedPhoneResult.phone).toBeNull();
   });
 
   it('requires complete phone-number evidence rather than matching substrings inside longer digit runs', async () => {
-    const cvWithLongId = ['Nguyễn Văn An', 'ID: 109123456789', 'Tel: 0987 654 3210'].join('\n');
+    const cvWithLongId = ['Nguyễn Văn An', 'ID: 109123456789', 'Tel: 0987 654 3210', 'Alt: 0987 654 321 0'].join('\n');
     const rejected = await proposeCvCandidateDraft(
       { text: cvWithLongId, sourceKind: 'pdf_text' },
       {
@@ -228,15 +307,16 @@ describe('Ly CV extraction proposal (#4446 Stage 5D)', () => {
     );
     expect(rejectedLongPhone.phone).toBeNull();
 
-    const cvMultiPhones = ['Nguyễn Văn An', 'SĐT: +84 912 345 678 - 0987 654 321'].join('\n');
-    const acceptedPlus84 = await proposeCvCandidateDraft(
+    // Distinct AI phone representation (+84912345678 vs deterministic 0912345678, and secondary phone 0987654321).
+    const cvMultiPhones = ['Nguyễn Văn An', 'SĐT: +84 (0) 912 345 678 - 0987 654 321'].join('\n');
+    const acceptedSecondary = await proposeCvCandidateDraft(
       { text: cvMultiPhones, sourceKind: 'pdf_text' },
       {
         generate: async () => ({
           output: {
             displayName: 'Nguyễn Văn An',
             email: null,
-            phone: '0912345678',
+            phone: '0987654321',
             yearsExperience: null,
             matchedSkills: [],
             summary: null,
@@ -244,6 +324,41 @@ describe('Ly CV extraction proposal (#4446 Stage 5D)', () => {
         }),
       },
     );
-    expect(acceptedPlus84.phone).toBe('0912345678');
+    expect(acceptedSecondary.phone).toBe('0987654321');
+
+    const acceptedInternational = await proposeCvCandidateDraft(
+      { text: cvMultiPhones, sourceKind: 'pdf_text' },
+      {
+        generate: async () => ({
+          output: {
+            displayName: 'Nguyễn Văn An',
+            email: null,
+            phone: '+84912345678',
+            yearsExperience: null,
+            matchedSkills: [],
+            summary: null,
+          },
+        }),
+      },
+    );
+    expect(acceptedInternational.phone).toBe('+84912345678');
+
+    const cvSingleSpacePair = ['Nguyễn Văn An', 'SĐT: 0912345678 0987654321'].join('\n');
+    const acceptedSpaceSeparated = await proposeCvCandidateDraft(
+      { text: cvSingleSpacePair, sourceKind: 'pdf_text' },
+      {
+        generate: async () => ({
+          output: {
+            displayName: 'Nguyễn Văn An',
+            email: null,
+            phone: '0987654321',
+            yearsExperience: null,
+            matchedSkills: [],
+            summary: null,
+          },
+        }),
+      },
+    );
+    expect(acceptedSpaceSeparated.phone).toBe('0987654321');
   });
 });

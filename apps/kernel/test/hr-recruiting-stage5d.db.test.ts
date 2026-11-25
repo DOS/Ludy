@@ -485,9 +485,9 @@ suite('HR Stage 5D: candidate source/hired_at, funnel BI analytics, crove-extrac
       fromStage: 'applied',
       toStage: 'screening',
       enteredFromCount: 4,
-      reachedToCount: 2,
-      conversionPct: '50.0',
-      dropOffPct: '50.0',
+      reachedToCount: 1,
+      conversionPct: '25.0',
+      dropOffPct: '75.0',
     });
 
     const zaloMetric = analytics.sources.find((s) => s.source === 'zalo_oa');
@@ -665,6 +665,9 @@ suite('HR Stage 5D: candidate source/hired_at, funnel BI analytics, crove-extrac
     expect(docxReady.body.draft.yearsExperience).toBe(6);
     expect(docxReady.body.draft.matchedSkills).toEqual(expect.arrayContaining(['Thuế GTGT', 'MISA AMIS', 'Excel']));
     expect(docxReady.body.draft.autoSaved).toBe(false);
+    expect(docxReady.body.draft.aiSummary).toBe('Ứng viên có 6 năm kinh nghiệm kế toán thuế và MISA AMIS.');
+    expect(docxReady.body.draft.notes).toContain('Kinh nghiệm: 6 năm');
+    expect(docxReady.body.draft.notes).not.toContain('Ứng viên có 6 năm kinh nghiệm kế toán thuế và MISA AMIS.');
 
     // Check meter usage recorded for hr.cv_extract and NO raw PII/text in audit_event
     const usageRows = await withAdmin((c) =>
@@ -698,6 +701,9 @@ suite('HR Stage 5D: candidate source/hired_at, funnel BI analytics, crove-extrac
       httpAiOn.pollCv(o.owner, docxReady.body.jobId, `?openingId=${opening.openingId}&lang=vi`),
     ]);
     expect(docxRepeatPolls.map((r) => r.status)).toEqual([200, 200]);
+    // Second manager hitting shared cache emits their own audit row without repeating AI or org_usage metering.
+    const adminSharedPoll = await httpAiOn.pollCv(o.admin, docxReady.body.jobId, `?openingId=${opening.openingId}&lang=vi`);
+    expect(adminSharedPoll.status).toBe(200);
     expect(cvExtractSpy).toHaveBeenCalledTimes(1);
     const repeatUsageRows = await withAdmin((c) =>
       c.query<{ count: string }>(
@@ -706,7 +712,7 @@ suite('HR Stage 5D: candidate source/hired_at, funnel BI analytics, crove-extrac
       ),
     );
     expect(Number(repeatUsageRows.rows[0]?.count ?? 0)).toBe(1);
-    const auditCounts = await withAdmin((c) =>
+    const auditRows = await withAdmin((c) =>
       c.query<{ job_id: string; count: string }>(
         `SELECT detail ->> 'jobId' AS job_id, pg_catalog.count(*)::text AS count
          FROM ludy_kernel.audit_event
@@ -715,7 +721,9 @@ suite('HR Stage 5D: candidate source/hired_at, funnel BI analytics, crove-extrac
         [o.orgId],
       ),
     );
-    expect(auditCounts.rows.map((r) => Number(r.count))).toEqual([1, 1]);
+    const countsByJob = new Map(auditRows.rows.map((r) => [r.job_id, Number(r.count)]));
+    expect(countsByJob.get(pdfJobId)).toBe(1);
+    expect(countsByJob.get(docxReady.body.jobId)).toBe(2);
     expect((await httpAiOff.pollCv(o.admin, pdfJobId, `?openingId=${randomUUID()}`)).status).toBe(422);
     expect((await httpAiOff.pollCv(o.admin, pdfJobId, '?openingId=not-a-uuid')).status).toBe(422);
 
@@ -810,5 +818,109 @@ suite('HR Stage 5D: candidate source/hired_at, funnel BI analytics, crove-extrac
     await o.exec(o.admin, 'hr.recruiting.candidate.move_stage', { candidateId: cand.candidateId, toStage: 'rejected' });
     await o.exec(o.owner, 'hr.recruiting.candidate.erase', { candidateId: cand.candidateId }, asMfa(o.owner));
     expect((await http.postRpc(o.owner, 'hr/recruiting/inviteDraft', { candidateId: cand.candidateId, channel: 'zalo_oa' })).status).toBe(409);
+  });
+
+  it('attributes rejected-from-later-stage and skipped-stage flows accurately from candidate_stage_transition (#4487)', async () => {
+    const o = await org({ owner: 'Chủ Doanh Nghiệp', admin: 'Quản Lý Tuyển Dụng' });
+    const opening = await o.exec<HrOpeningWritten>(o.owner, 'hr.recruiting.opening.add', {
+      title: 'Kỹ sư hệ thống',
+      contractType: 'indefinite',
+      region: 'I',
+    });
+
+    // Candidate 1: applied -> screening -> interview -> rejected (dropped at interview -> offer)
+    const cLaterReject = await o.exec<HrCandidateWritten>(o.admin, 'hr.recruiting.candidate.add', {
+      openingId: opening.openingId,
+      displayName: 'Ứng viên Rớt Ở Interview',
+      source: 'direct',
+    });
+    await o.exec(o.admin, 'hr.recruiting.candidate.move_stage', { candidateId: cLaterReject.candidateId, toStage: 'screening' });
+    await o.exec(o.admin, 'hr.recruiting.candidate.move_stage', { candidateId: cLaterReject.candidateId, toStage: 'interview' });
+    await o.exec(o.admin, 'hr.recruiting.candidate.move_stage', { candidateId: cLaterReject.candidateId, toStage: 'rejected' });
+
+    // Candidate 2: applied -> interview (schedule_interview skipping screening) -> offer -> hired
+    const cSkippedScreen = await o.exec<HrCandidateWritten>(o.admin, 'hr.recruiting.candidate.add', {
+      openingId: opening.openingId,
+      displayName: 'Ứng viên Bỏ Qua Screening',
+      source: 'referral',
+    });
+    await o.exec(o.admin, 'hr.recruiting.candidate.schedule_interview', {
+      candidateId: cSkippedScreen.candidateId,
+      interviewerUserId: o.owner,
+      startsAt: '2026-12-03T02:00:00.000Z',
+      endsAt: '2026-12-03T03:00:00.000Z',
+    });
+    await o.exec(o.admin, 'hr.recruiting.candidate.move_stage', { candidateId: cSkippedScreen.candidateId, toStage: 'offer' });
+    await o.exec(o.admin, 'hr.recruiting.candidate.hire', {
+      candidateId: cSkippedScreen.candidateId,
+      effectiveFrom: '2026-12-10',
+      baseWage: '18000000',
+    });
+
+    const analytics = await o.query<HrRecruitingAnalyticsResult>(o.admin, 'hr.recruiting.analytics', {
+      openingId: opening.openingId,
+    });
+    expect(analytics.totalCandidates).toBe(2);
+    expect(analytics.hiredCount).toBe(1);
+    expect(analytics.rejectedCount).toBe(1);
+
+    // applied -> screening: both entered applied (2), only cLaterReject entered screening (1 -> 50.0%).
+    expect(analytics.funnel.find((f) => f.fromStage === 'applied' && f.toStage === 'screening')).toEqual({
+      fromStage: 'applied',
+      toStage: 'screening',
+      enteredFromCount: 2,
+      reachedToCount: 1,
+      conversionPct: '50.0',
+      dropOffPct: '50.0',
+    });
+    // screening -> interview: only cLaterReject entered screening (1), and then entered interview (1 -> 100.0%).
+    expect(analytics.funnel.find((f) => f.fromStage === 'screening' && f.toStage === 'interview')).toEqual({
+      fromStage: 'screening',
+      toStage: 'interview',
+      enteredFromCount: 1,
+      reachedToCount: 1,
+      conversionPct: '100.0',
+      dropOffPct: '0.0',
+    });
+    // interview -> offer: both entered interview (2), only cSkippedScreen reached offer (1 -> 50.0%).
+    expect(analytics.funnel.find((f) => f.fromStage === 'interview' && f.toStage === 'offer')).toEqual({
+      fromStage: 'interview',
+      toStage: 'offer',
+      enteredFromCount: 2,
+      reachedToCount: 1,
+      conversionPct: '50.0',
+      dropOffPct: '50.0',
+    });
+    // offer -> hired: only cSkippedScreen entered offer (1) and got hired (1 -> 100.0%).
+    expect(analytics.funnel.find((f) => f.fromStage === 'offer' && f.toStage === 'hired')).toEqual({
+      fromStage: 'offer',
+      toStage: 'hired',
+      enteredFromCount: 1,
+      reachedToCount: 1,
+      conversionPct: '100.0',
+      dropOffPct: '0.0',
+    });
+
+    const transitionRows = await withAdmin((c) =>
+      c.query<{ candidate_id: string; from_stage: string | null; to_stage: string }>(
+        `SELECT candidate_id::text, from_stage, to_stage
+         FROM ludy_hr.candidate_stage_transition
+         WHERE org_id = $1
+         ORDER BY occurred_at ASC, seq ASC`,
+        [o.orgId],
+      ),
+    );
+    expect(transitionRows.rows.filter((r) => r.candidate_id === cLaterReject.candidateId).map((r) => [r.from_stage, r.to_stage])).toEqual([
+      [null, 'applied'],
+      ['applied', 'screening'],
+      ['screening', 'interview'],
+      ['interview', 'rejected'],
+    ]);
+    expect(transitionRows.rows.filter((r) => r.candidate_id === cSkippedScreen.candidateId).map((r) => [r.from_stage, r.to_stage])).toEqual([
+      [null, 'applied'],
+      ['applied', 'interview'],
+      ['interview', 'offer'],
+      ['offer', 'hired'],
+    ]);
   });
 });

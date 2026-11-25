@@ -1244,6 +1244,15 @@ export type HrCandidateTable = Refine<
   },
   'legal_entity_id'
 >;
+export type HrCandidateStageTransitionTable = Refine<
+  G.HrCandidateStageTransitionTable,
+  {
+    legal_entity_id: LegalEntityColumn;
+    from_stage: ColumnType<(typeof HR_CANDIDATE_STAGES)[number] | null, (typeof HR_CANDIDATE_STAGES)[number] | null, G.NotGranted>;
+    to_stage: ColumnType<(typeof HR_CANDIDATE_STAGES)[number], (typeof HR_CANDIDATE_STAGES)[number], G.NotGranted>;
+  },
+  'legal_entity_id'
+>;
 // A bank template (#2532): the entity is filled by the trigger b_legal_entity (the one the writer names or the org's default); the layout is a JSON object checked by the database.
 export type HrPayrollBankTemplateTable = Refine<G.HrPayrollBankTemplateTable, { legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
 export type HrPayrollEmployeeTable = Refine<G.HrPayrollEmployeeTable, { status: Generated<(typeof HR_EMPLOYEE_STATUSES)[number]> }>;
@@ -1891,6 +1900,7 @@ type Refined = Tables<{
   'ludy_hr.attendance_qr_config': HrAttendanceQrConfigTable;
   'ludy_hr.business_trip_request': HrBusinessTripRequestTable;
   'ludy_hr.candidate': HrCandidateTable;
+  'ludy_hr.candidate_stage_transition': HrCandidateStageTransitionTable;
   'ludy_hr.contract_addendum': HrContractAddendumTable;
   'ludy_hr.department': HrDepartmentTable;
   'ludy_hr.employee_asset_handover': HrEmployeeAssetHandoverTable;

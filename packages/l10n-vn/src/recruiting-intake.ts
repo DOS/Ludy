@@ -147,10 +147,11 @@ function extractEmail(text: string): string | null {
 }
 
 function extractVnPhone(text: string): string | null {
-  // Match +84 / 84 / 0 VN phone numbers on a single line (never crossing newlines) with word boundary after the final digit.
-  const candidates = text.matchAll(/(?<![\d])(?:\+?84|0)(?:[ \t.\-()]*\d){8,10}(?!\d)/g);
+  // Match +84 / +84 (0) / 84 / 0 VN phone numbers on a single line (never crossing newlines) with word boundary after the final digit.
+  const candidates = text.matchAll(/(?<![\d])(?:\+?84(?:[ \t]*\(0\))?|0)(?:[ \t.\-()]*\d){8,10}(?!\d)/g);
   for (const m of candidates) {
-    const digits = m[0].replace(/\D/g, '');
+    const raw = m[0].replace(/^(\+?84)[ \t]*\(0\)/, '$1');
+    const digits = raw.replace(/\D/g, '');
     let normalized = digits;
     if (normalized.startsWith('84') && normalized.length >= 10 && normalized.length <= 12) {
       normalized = `0${normalized.slice(2)}`;
@@ -173,6 +174,7 @@ function extractDisplayName(lines: readonly string[], email: string | null): str
     if (candidate.includes('@') || /https?:\/\//i.test(candidate)) continue;
     const digitCount = (candidate.match(/\d/g) ?? []).length;
     if (digitCount > 0) continue;
+    if (classifyExperienceSectionLine(rawLine) !== null || classifyExperienceSectionLine(candidate) !== null) continue;
     const folded = foldDiacritics(candidate).replace(/[^a-z\s]/g, ' ').replace(/\s+/g, ' ').trim();
     if (!folded || HEADING_SKIP.has(folded)) continue;
     const words = candidate.split(/\s+/).filter(Boolean);
@@ -302,8 +304,10 @@ function extractYearsExperience(text: string): number | null {
 
     for (const m of line.matchAll(rangePattern)) {
       const startYear = Number.parseInt(m[1] ?? '', 10);
+      if (startYear > currentYear) continue;
       const endRaw = (m[2] ?? '').toLowerCase();
-      const endYear = /^\d{4}$/.test(endRaw) ? Number.parseInt(endRaw, 10) : currentYear;
+      const parsedEndYear = /^\d{4}$/.test(endRaw) ? Number.parseInt(endRaw, 10) : currentYear;
+      const endYear = Math.min(parsedEndYear, currentYear);
       if (startYear <= endYear && endYear - startYear <= 45) {
         intervals.push([startYear, endYear]);
       }
@@ -334,6 +338,29 @@ function extractYearsExperience(text: string): number | null {
   return null;
 }
 
+function isSkillAlnumAscii(ch: string): boolean {
+  return (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9');
+}
+
+function isPunctSkillEdge(ch: string): boolean {
+  return isSkillAlnumAscii(ch) || ch === '+' || ch === '#' || ch === '_';
+}
+
+function containsSkillToken(normalizedText: string, needle: string): boolean {
+  if (!needle) return false;
+  const isPlainAlnum = /^[a-z0-9\s]+$/.test(needle);
+  const checkEdge = isPlainAlnum ? isSkillAlnumAscii : isPunctSkillEdge;
+  let idx = normalizedText.indexOf(needle);
+  while (idx !== -1) {
+    const beforeOk = idx === 0 || !checkEdge(normalizedText.charAt(idx - 1));
+    const afterPos = idx + needle.length;
+    const afterOk = afterPos >= normalizedText.length || !checkEdge(normalizedText.charAt(afterPos));
+    if (beforeOk && afterOk) return true;
+    idx = normalizedText.indexOf(needle, idx + 1);
+  }
+  return false;
+}
+
 function matchCvSkills(text: string, openingRequiredSkills: readonly string[]): string[] {
   const normalizedText = foldDiacritics(text);
   const pool: string[] = [];
@@ -349,11 +376,7 @@ function matchCvSkills(text: string, openingRequiredSkills: readonly string[]): 
   const matched: string[] = [];
   for (const skill of pool) {
     const needle = foldDiacritics(skill);
-    const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const pattern = /^[a-z0-9\s]+$/i.test(needle)
-      ? new RegExp(`(?:^|[^a-z0-9])${escaped}(?:$|[^a-z0-9])`, 'i')
-      : new RegExp(escaped, 'i');
-    if (pattern.test(normalizedText)) {
+    if (containsSkillToken(normalizedText, needle)) {
       matched.push(skill);
       if (matched.length >= 20) break;
     }
@@ -383,7 +406,6 @@ export function extractCvFieldsDeterministically(
   const notesParts: string[] = [];
   if (yearsExperience !== null) notesParts.push(`Kinh nghiệm: ${yearsExperience} năm`);
   if (matchedSkills.length > 0) notesParts.push(`Kỹ năng khớp: ${matchedSkills.join(', ')}`);
-  if (previewSource) notesParts.push(`Tóm tắt CV: ${previewSource.slice(0, 280)}`);
   const notes = notesParts.length > 0 ? notesParts.join(' · ').slice(0, 1200) : null;
   return {
     displayName,
@@ -417,26 +439,27 @@ function formatSlotLine(slot: EngageInviteSlotInput, lang: 'vi' | 'en'): string 
     return `${slot.start} - ${slot.end}`;
   }
   const locale = lang === 'en' ? 'en-US' : 'vi-VN';
-  const datePart = new Intl.DateTimeFormat(locale, {
+  const dateFormatter = new Intl.DateTimeFormat(locale, {
     timeZone: 'Asia/Ho_Chi_Minh',
     weekday: 'short',
     day: '2-digit',
     month: '2-digit',
     year: 'numeric',
-  }).format(startDate);
-  const startTime = new Intl.DateTimeFormat(locale, {
+  });
+  const timeFormatter = new Intl.DateTimeFormat(locale, {
     timeZone: 'Asia/Ho_Chi_Minh',
     hour: '2-digit',
     minute: '2-digit',
     hour12: false,
-  }).format(startDate);
-  const endTime = new Intl.DateTimeFormat(locale, {
-    timeZone: 'Asia/Ho_Chi_Minh',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).format(endDate);
-  return `${datePart} (${startTime} - ${endTime})`;
+  });
+  const startDatePart = dateFormatter.format(startDate);
+  const endDatePart = dateFormatter.format(endDate);
+  const startTime = timeFormatter.format(startDate);
+  const endTime = timeFormatter.format(endDate);
+  if (endDatePart !== startDatePart) {
+    return `${startDatePart} (${startTime}) - ${endDatePart} (${endTime})`;
+  }
+  return `${startDatePart} (${startTime} - ${endTime})`;
 }
 
 /**
