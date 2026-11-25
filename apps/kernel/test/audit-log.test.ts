@@ -23,6 +23,10 @@ describe('audit detail', () => {
     // The worker process a system row names is never shown to the org (#1951).
     expect(auditDetailLine({ workerInstance: 'crove-worker:host-a' })).toBeNull();
     expect(auditDetailLine('{"workerInstance":"crove-worker:host-a","rows":3}')).toBe('rows=3');
+    // Legacy meetings.morning.notice rows had detail.count; keep it hidden on read (#5018) while other commands keep count.
+    expect(auditDetailLine({ day: '2026-11-25', count: 4, mailed: true, workerInstance: 'pod-1' }, 'meetings.morning.notice')).toBe('day=2026-11-25; mailed=true');
+    expect(auditDetailLine({ day: '2026-11-25', count: 4 }, 'other.command')).toBe('day=2026-11-25; count=4');
+    expect(auditDetailLine({ count: 4, workerInstance: 'pod-1' }, 'meetings.morning.notice')).toBeNull();
     expect(auditDetailLine({ list: Array.from({ length: 12 }, (_, i) => i) })).toBe('list=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, … (12)]');
     expect([...(auditDetailLine({ text: 'x'.repeat(5000) }) ?? '')].length).toBeLessThanOrEqual(206);
     const long = auditDetailLine(Object.fromEntries(Array.from({ length: 50 }, (_, i) => [`k${i}`, 'y'.repeat(100)])));

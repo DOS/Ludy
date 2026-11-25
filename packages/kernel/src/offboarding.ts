@@ -9,18 +9,29 @@
 import { sql } from 'kysely';
 import { z } from 'zod';
 import type { MemberRole } from '@ludy/db';
-import { FOLLOWUP_MAIL_SOURCE, WEEKLY_MAIL_SOURCE } from '@ludy/kernel-contract';
+import { FOLLOWUP_MAIL_SOURCE, MORNING_MAIL_SOURCE, SUMMARY_READY_MAIL_SOURCE, WEEKLY_MAIL_SOURCE } from '@ludy/kernel-contract';
 import { DomainError, defineCommand, defineQuery, exportKey, GENERATION_PATTERN, type QueryContext } from '@ludy/kernel-runtime';
 
 const OWNERS: readonly MemberRole[] = ['owner'];
+const MAIL_SOURCE_NAME = /^[a-z0-9._]+$/;
 
 /**
- * The mail of what a meeting holds, left out of what an owner or admin may read about the mail log: the follow-up mails of a meeting (#4533) carry its summary, decisions and action items (payload) and
- * the subject the recorder typed, and the meeting may be attendees-only. A source of this list is out of the owner's org export (the mail log, its delivery events and the pointers of the suppression
- * list: the queries below) and out of the personal-data finder's rows, where the row shows only its id, address, status and time (findPersonalData). A new mail whose payload counts or quotes a meeting
- * adds its source here. Constant names, never input: the export queries take them as text.
+ * Mail sources left out of what an owner or admin may read about the mail log (#4533, #4967, #5018):
+ * - meetings.followup: carries the meeting summary, decisions, action items (payload), recorder-typed subject and source_id = meetingId (attendees-only meetings stay out of exports and owner/admin finder reads).
+ * - meetings.weekly: carries a member's own weekly counts of the attendees-only meetings, published decisions and open action items they read (#4967).
+ * - meetings.summary_ready: carries source_id = meetingId and payload.path (/o/<slug>/meetings/<meetingId>) paired with the recorder's address, even for attendees-only or deleted meetings omitted from meeting_export_rows(); audit rows (meetings.summary.ready, meetings.summary.ready_notice) keep ids only per ADR-0047 point 2.
+ * - meetings.morning: carries a member's private daily calendar event count (payload.count from per-member calendar_agenda) paired with their address; meetings.morning.notice also keeps count out of its audit row.
+ * A source of this list is out of the owner's org export (the mail log, its delivery events and suppression pointers) and out of the personal-data finder's full rows, where it shows id, to_address, status and created_at only. Constant identifiers matching ^[a-z0-9._]+$ only, because export subqueries interpolate them as SQL string literals.
  */
-export const MAIL_SOURCES_LEFT_OUT: readonly string[] = [FOLLOWUP_MAIL_SOURCE, WEEKLY_MAIL_SOURCE];
+export const MAIL_SOURCES_LEFT_OUT: readonly string[] = Object.freeze([
+  FOLLOWUP_MAIL_SOURCE,
+  WEEKLY_MAIL_SOURCE,
+  SUMMARY_READY_MAIL_SOURCE,
+  MORNING_MAIL_SOURCE,
+]);
+if (MAIL_SOURCES_LEFT_OUT.length === 0 || MAIL_SOURCES_LEFT_OUT.some((source) => !MAIL_SOURCE_NAME.test(source))) {
+  throw new Error('MAIL_SOURCES_LEFT_OUT must be non-empty and match /^[a-z0-9._]+$/');
+}
 const LEFT_OUT_LIST = MAIL_SOURCES_LEFT_OUT.map((source) => `'${source}'`).join(', ');
 
 // The tables an export contains, with the columns left out. Machinery (idempotency keys, outbox, session records,
@@ -74,10 +85,9 @@ export const EXPORT_TABLES = {
   'kernel.saved_reply': { from: 'ludy_kernel.saved_reply', omit: [] },
   'kernel.conversation_note': { from: 'ludy_kernel.conversation_note', omit: [] },
   // Outbound mail (#538): the mail log, its delivery events (#539) and the org's suppression list. The address hashes
-  // are keyed by the deployment. The follow-up mails of a meeting (#4533, ADR-0047) are left out: each holds the meeting's summary, decisions and action items or a note about it (payload),
-  // the subject the recorder typed and the recipients, and the meeting may be attendees-only, which the export leaves out. The mail log drops the payload 30 days after a mail reaches a final
-  // status (mail_retention_purge), but keeps the address and the subject for 13 months, so the rows stay out for as long as they exist. The weekly meetings notice's mail (#4967, source meetings.weekly) is left out too: its payload holds the member's own counts of the attendees-only meetings and decisions they read, which the owner who exports must not learn. The delivery events (#4577) follow their mail: an event is
-  // exported only when its mail is (a mail_event always has its message, by foreign key; the anti-join touches only the small follow-up set), so no event points at a message the snapshot does not hold. A suppression row (#4584) is kept whole except that its source_message_id is nulled when it names a follow-up mail (the scrub in the snapshot query below).
+  // are keyed by the deployment. Left-out meeting mails (MAIL_SOURCES_LEFT_OUT, #4533, #4967, #5018) stay out: follow-up mails hold the meeting's summary/decisions/items and recorder-typed subject, weekly mails hold the member's own counts of attendees-only meetings and decisions they read, summary-ready mails link an address to an attendees-only or deleted meeting, and morning mails hold a member's private daily calendar count. The mail log drops the payload 30 days after a mail reaches a final
+  // status (mail_retention_purge), but keeps the address and the subject for 13 months, so the rows stay out for as long as they exist. The delivery events (#4577) follow their mail: an event is
+  // exported only when its mail is (a mail_event always has its message, by foreign key; the anti-join touches only the small meeting-mail set), so no event points at a message the snapshot does not hold. A suppression row (#4584) is kept whole except that its source_message_id is nulled when it names a left-out mail (the scrub in the snapshot query below).
   'kernel.mail_message': { from: `(SELECT m.* FROM ludy_kernel.mail_message m WHERE m.source NOT IN (${LEFT_OUT_LIST}))`, omit: [] },
   'kernel.mail_suppression': { from: 'ludy_kernel.mail_suppression', omit: [] },
   'kernel.mail_event': { from: `(SELECT e.* FROM ludy_kernel.mail_event e WHERE NOT EXISTS (SELECT 1 FROM ludy_kernel.mail_message m WHERE m.org_id = e.org_id AND m.id = e.message_id AND m.source IN (${LEFT_OUT_LIST})))`, omit: [] },
@@ -526,11 +536,12 @@ export const exportSnapshot = defineQuery({
       const omit = spec.omit as readonly string[];
       // The worker process a system audit row names (detail.workerInstance, #1951) is the deployment's, never the org's:
       // a host or pod name, left out of the org's copy as the audit log leaves it out (auditDetailLine).
+      // Legacy meetings.morning.notice audit rows written before #5018 carried detail.count (a member's private calendar count): strip count here as well as in auditDetailLine without mutating audit_event.
       // For projects.roadmap_signal (#4492, ADR-0047), omit quote_excerpt on attendees-only meetings not exported by meeting_export_rows().
-      // For kernel.mail_suppression (#4584), source_message_id is nulled when it names a follow-up mail, which kernel.mail_message leaves out of the snapshot (#4533): the row is kept (the address hash and why it is suppressed are the org's own), only the pointer at a mail the snapshot does not hold goes.
+      // For kernel.mail_suppression (#4584), source_message_id is nulled when it names a left-out mail (MAIL_SOURCES_LEFT_OUT), which kernel.mail_message leaves out of the snapshot (#4533, #5018): the row is kept (the address hash and why it is suppressed are the org's own), only the pointer at a mail the snapshot does not hold goes.
       const scrub =
         table === 'kernel.audit_event'
-          ? sql`|| pg_catalog.jsonb_build_object('detail', CASE WHEN pg_catalog.jsonb_typeof(t.detail) = 'object' THEN t.detail - 'workerInstance' ELSE t.detail END)`
+          ? sql`|| pg_catalog.jsonb_build_object('detail', CASE WHEN pg_catalog.jsonb_typeof(t.detail) = 'object' THEN CASE WHEN t.command = 'meetings.morning.notice' THEN (t.detail - 'workerInstance') - 'count' ELSE t.detail - 'workerInstance' END ELSE t.detail END)`
           : table === 'kernel.mail_suppression'
             ? sql`|| CASE WHEN t.source_message_id IS NOT NULL AND EXISTS (SELECT 1 FROM ludy_kernel.mail_message m WHERE m.org_id = t.org_id AND m.id = t.source_message_id AND m.source IN (${sql.join(MAIL_SOURCES_LEFT_OUT)})) THEN pg_catalog.jsonb_build_object('source_message_id', NULL) ELSE '{}'::jsonb END`
             : table === 'projects.roadmap_signal'
