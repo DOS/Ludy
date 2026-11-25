@@ -2,7 +2,12 @@
 // Member-scoped Vy inbox organizer for Notes (Notes v2 E5b, #3563, ADR-0049): proposes notebooks and #tags for unfiled
 // notes without modifying notes on generation. Every move or tag change waits for explicit 1-click user confirmation.
 import { useMutation, useQuery } from '@tanstack/react-query';
-import type { NotebookSummary, NoteOrganizeResult } from '@ludy/kernel-contract';
+import {
+  NOTE_TAGS_MAX,
+  NOTE_TAG_MAX,
+  type NotebookSummary,
+  type NoteOrganizeResult,
+} from '@ludy/kernel-contract';
 import { Badge } from '@ludy/ui/components/badge';
 import { Button } from '@ludy/ui/components/button';
 import { Input } from '@ludy/ui/components/input';
@@ -34,6 +39,31 @@ interface OrganizeRowDraft {
   edited: boolean;
   applied: boolean;
   error: string | null;
+}
+
+/** Strips leading `#` markers from manual comma-separated organizer tags while leaving `parseTags` behavior intact elsewhere. */
+export function parseOrganizerTags(input: string): string[] {
+  return parseTags(
+    input
+      .split(',')
+      .map((part) => part.trim().replace(/^#+/, ''))
+      .join(','),
+  );
+}
+
+export function buildOrganizeDrafts(data: NoteOrganizeResult | null): Record<string, OrganizeRowDraft> {
+  if (!data || data.state !== 'ready') return {};
+  const next: Record<string, OrganizeRowDraft> = {};
+  for (const item of data.suggestions) {
+    next[item.noteId] = {
+      notebookId: item.notebookId ?? '',
+      tagsInput: item.tags.join(', '),
+      edited: false,
+      applied: false,
+      error: null,
+    };
+  }
+  return next;
 }
 
 export function NotesVyOrganizerTrigger({
@@ -98,28 +128,18 @@ export function NotesVyOrganizerPanel({
   const statusReady = status.isSuccess && meter.isSuccess;
 
   const [result, setResult] = useState<NoteOrganizeResult | null>(initialResult);
-  const [drafts, setDrafts] = useState<Record<string, OrganizeRowDraft>>({});
+  const [drafts, setDrafts] = useState<Record<string, OrganizeRowDraft>>(() => buildOrganizeDrafts(initialResult));
   const lastTriggerRef = useRef(initialResult !== null);
 
   const syncDrafts = (data: NoteOrganizeResult) => {
-    const next: Record<string, OrganizeRowDraft> = {};
-    for (const item of data.suggestions) {
-      next[item.noteId] = {
-        notebookId: item.notebookId ?? '',
-        tagsInput: item.tags.join(', '),
-        edited: false,
-        applied: false,
-        error: null,
-      };
-    }
-    setDrafts(next);
+    setDrafts(buildOrganizeDrafts(data));
   };
 
   const organizeMutation = useMutation({
     mutationFn: () => api.notes.organize({ language: locale }),
     onSuccess: (data) => {
       setResult(data);
-      if (data.state === 'ready') syncDrafts(data);
+      syncDrafts(data);
     },
   });
 
@@ -143,8 +163,15 @@ export function NotesVyOrganizerPanel({
 
   const applySuggestion = async (item: NoteOrganizeResult['suggestions'][number], draft: OrganizeRowDraft) => {
     const nextNotebookId = draft.notebookId || undefined;
-    const addedTags = item.canEditTags ? parseTags(draft.tagsInput) : [];
-    const mergedTags = item.canEditTags ? parseTags([...item.existingTags, ...addedTags].join(',')) : undefined;
+    const addedTags = item.canEditTags ? parseOrganizerTags(draft.tagsInput) : [];
+    const mergedTags = item.canEditTags
+      ? [
+          ...new Set([
+            ...item.existingTags.map((tag) => tag.trim().toLowerCase().slice(0, NOTE_TAG_MAX)).filter(Boolean),
+            ...addedTags,
+          ]),
+        ].slice(0, NOTE_TAGS_MAX)
+      : undefined;
     const hasTagChange = item.canEditTags && addedTags.length > 0;
     if (!nextNotebookId && !hasTagChange) return false;
     await api.notes.update({
@@ -242,7 +269,7 @@ export function NotesVyOrganizerPanel({
     ? result.suggestions.filter((s) => {
         const draft = drafts[s.noteId];
         if (!draft || draft.applied) return false;
-        return Boolean(draft.notebookId) || (s.canEditTags && parseTags(draft.tagsInput).length > 0);
+        return Boolean(draft.notebookId) || (s.canEditTags && parseOrganizerTags(draft.tagsInput).length > 0);
       }).length
     : 0;
 
@@ -310,7 +337,7 @@ export function NotesVyOrganizerPanel({
                       const compatibleNotebooks = notebooks.filter(
                         (nb) => item.visibility !== 'org' || nb.visibility === 'org',
                       );
-                      const parsedAddedTags = item.canEditTags ? parseTags(draft.tagsInput) : [];
+                      const parsedAddedTags = item.canEditTags ? parseOrganizerTags(draft.tagsInput) : [];
                       const canApply = Boolean(draft.notebookId) || parsedAddedTags.length > 0;
                       return (
                         <ProposalSurface

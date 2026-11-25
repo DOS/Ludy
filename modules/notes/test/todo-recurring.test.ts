@@ -60,6 +60,27 @@ describe('todo recurrence schemas (#3557)', () => {
 
     const parsed = zTodoReschedule.parse({ todoIds: [ID_1, ID_2, ID_1], dueOn: '2026-11-20' });
     expect(parsed).toEqual({ todoIds: [ID_1, ID_2], dueOn: '2026-11-20' });
+    expect(
+      zTodoReschedule.parse({
+        todoIds: [ID_1.toUpperCase(), ID_1],
+        dueOn: '2026-11-20',
+        expectedRevision: 2,
+      }),
+    ).toEqual({ todoIds: [ID_1], dueOn: '2026-11-20', expectedRevision: 2 });
+    expect(
+      zTodoReschedule.safeParse({
+        todoIds: [ID_1, ID_2],
+        dueOn: '2026-11-20',
+        expectedRevision: 1,
+      }).success,
+    ).toBe(false);
+    expect(
+      zTodoReschedule.safeParse({
+        todoIds: [ID_1],
+        dueOn: '2026-11-20',
+        expectedRevision: 0,
+      }).success,
+    ).toBe(false);
     expect(zTodoReschedule.safeParse({ todoIds: [], dueOn: '2026-11-20' }).success).toBe(false);
     expect(
       zTodoReschedule.safeParse({

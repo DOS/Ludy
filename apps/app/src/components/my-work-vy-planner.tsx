@@ -44,6 +44,35 @@ interface RescheduleRowDraft {
 
 const PRIORITIES: readonly TodoPriority[] = [1, 2, 3, 4];
 
+export function buildFocusDrafts(plan: TodoPlanResult | null): Record<string, FocusRowDraft> {
+  if (!plan || plan.state !== 'ready') return {};
+  const nextFocus: Record<string, FocusRowDraft> = {};
+  for (const item of plan.focus) {
+    nextFocus[item.todoId] = {
+      priority: item.priority,
+      dueOn: item.dueOn && item.dueOn >= plan.today ? item.dueOn : plan.today,
+      edited: false,
+      applied: false,
+      error: null,
+    };
+  }
+  return nextFocus;
+}
+
+export function buildRescheduleDrafts(plan: TodoPlanResult | null): Record<string, RescheduleRowDraft> {
+  if (!plan || plan.state !== 'ready') return {};
+  const nextReschedules: Record<string, RescheduleRowDraft> = {};
+  for (const item of plan.reschedules) {
+    nextReschedules[item.todoId] = {
+      dueOn: item.dueOn,
+      edited: false,
+      applied: false,
+      error: null,
+    };
+  }
+  return nextReschedules;
+}
+
 export function MyWorkVyPlannerTrigger({
   slug,
   open,
@@ -117,39 +146,20 @@ export function MyWorkVyPlannerPanel({
   const statusReady = status.isSuccess && meter.isSuccess;
 
   const [result, setResult] = useState<TodoPlanResult | null>(initialResult);
-  const [focusDrafts, setFocusDrafts] = useState<Record<string, FocusRowDraft>>({});
-  const [rescheduleDrafts, setRescheduleDrafts] = useState<Record<string, RescheduleRowDraft>>({});
+  const [focusDrafts, setFocusDrafts] = useState<Record<string, FocusRowDraft>>(() => buildFocusDrafts(initialResult));
+  const [rescheduleDrafts, setRescheduleDrafts] = useState<Record<string, RescheduleRowDraft>>(() => buildRescheduleDrafts(initialResult));
   const lastTriggerRef = useRef(initialResult !== null);
 
   const syncDrafts = (plan: TodoPlanResult) => {
-    const nextFocus: Record<string, FocusRowDraft> = {};
-    for (const item of plan.focus) {
-      nextFocus[item.todoId] = {
-        priority: item.priority,
-        dueOn: item.dueOn && item.dueOn >= plan.today ? item.dueOn : plan.today,
-        edited: false,
-        applied: false,
-        error: null,
-      };
-    }
-    const nextReschedules: Record<string, RescheduleRowDraft> = {};
-    for (const item of plan.reschedules) {
-      nextReschedules[item.todoId] = {
-        dueOn: item.dueOn,
-        edited: false,
-        applied: false,
-        error: null,
-      };
-    }
-    setFocusDrafts(nextFocus);
-    setRescheduleDrafts(nextReschedules);
+    setFocusDrafts(buildFocusDrafts(plan));
+    setRescheduleDrafts(buildRescheduleDrafts(plan));
   };
 
   const planMutation = useMutation({
     mutationFn: () => api.notes.todoPlan({ timeZone: viewerTz, language: locale }),
     onSuccess: (data) => {
       setResult(data);
-      if (data.state === 'ready') syncDrafts(data);
+      syncDrafts(data);
     },
   });
 
@@ -181,6 +191,9 @@ export function MyWorkVyPlannerPanel({
         error: null,
       };
       const nextDueOn = draft.dueOn || null;
+      if (nextDueOn !== null && result && nextDueOn < result.today) {
+        throw Object.assign(new Error('TODO_NOT_CHANGEABLE'), { code: 'TODO_NOT_CHANGEABLE' });
+      }
       const dateChanged = nextDueOn !== item.dueOn;
       const priorityChanged = draft.priority !== item.priority;
 
@@ -188,7 +201,11 @@ export function MyWorkVyPlannerPanel({
         return item.todoId;
       }
       if (!priorityChanged && nextDueOn !== null) {
-        await api.notes.todos.reschedule({ todoIds: [item.todoId], dueOn: nextDueOn });
+        await api.notes.todos.reschedule({
+          todoIds: [item.todoId],
+          dueOn: nextDueOn,
+          expectedRevision: item.revision,
+        });
         return item.todoId;
       }
 
@@ -243,7 +260,11 @@ export function MyWorkVyPlannerPanel({
       if (!dueOn || (result && dueOn < result.today)) {
         throw Object.assign(new Error('TODO_NOT_CHANGEABLE'), { code: 'TODO_NOT_CHANGEABLE' });
       }
-      await api.notes.todos.reschedule({ todoIds: [item.todoId], dueOn });
+      await api.notes.todos.reschedule({
+        todoIds: [item.todoId],
+        dueOn,
+        expectedRevision: item.revision,
+      });
       return { todoId: item.todoId, dueOn };
     },
     onSuccess: ({ todoId, dueOn }) => {
@@ -266,25 +287,22 @@ export function MyWorkVyPlannerPanel({
   const applyAllReschedules = useMutation({
     mutationFn: async () => {
       if (!result) return { appliedIds: [] as string[], errors: new Map<string, string>() };
-      const byDate = new Map<string, string[]>();
+      const appliedIds: string[] = [];
+      const errors = new Map<string, string>();
       for (const item of result.reschedules) {
         const draft = rescheduleDrafts[item.todoId];
         if (draft?.applied) continue;
         const targetDate = draft ? draft.dueOn : item.dueOn;
         if (!targetDate || targetDate < result.today) continue;
-        const list = byDate.get(targetDate) ?? [];
-        list.push(item.todoId);
-        byDate.set(targetDate, list);
-      }
-      const appliedIds: string[] = [];
-      const errors = new Map<string, string>();
-      for (const [dueOn, todoIds] of byDate) {
         try {
-          const res = await api.notes.todos.reschedule({ todoIds, dueOn });
+          const res = await api.notes.todos.reschedule({
+            todoIds: [item.todoId],
+            dueOn: targetDate,
+            expectedRevision: item.revision,
+          });
           appliedIds.push(...res.todoIds);
         } catch (err) {
-          const msg = tv(`errors.${noteVyErrorKey(errorCodeOf(err))}`);
-          for (const id of todoIds) errors.set(id, msg);
+          errors.set(item.todoId, tv(`errors.${noteVyErrorKey(errorCodeOf(err))}`));
         }
       }
       return { appliedIds, errors };
@@ -405,6 +423,7 @@ export function MyWorkVyPlannerPanel({
                               error: null,
                             };
                             const showProposal = !draft.edited && !draft.applied;
+                            const isPastDate = draft.dueOn !== '' && draft.dueOn < result.today;
                             return (
                               <ProposalSurface
                                 as="li"
@@ -464,7 +483,7 @@ export function MyWorkVyPlannerPanel({
                                     size="sm"
                                     variant={draft.applied ? 'outline' : 'default'}
                                     className="ml-auto max-md:min-h-11"
-                                    disabled={draft.applied || applyFocus.isPending}
+                                    disabled={draft.applied || isPastDate || applyFocus.isPending}
                                     loading={applyFocus.isPending && applyFocus.variables?.todoId === item.todoId}
                                     onClick={() => applyFocus.mutate(item)}
                                     data-testid={`my-work-vy-focus-apply-${item.todoId}`}
@@ -489,7 +508,7 @@ export function MyWorkVyPlannerPanel({
                             size="sm"
                             className="max-md:min-h-11"
                             loading={applyAllReschedules.isPending}
-                            disabled={applyAllReschedules.isPending}
+                            disabled={applyAllReschedules.isPending || applyOneReschedule.isPending}
                             onClick={() => applyAllReschedules.mutate()}
                             data-testid="my-work-vy-reschedule-apply-all"
                           >

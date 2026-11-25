@@ -270,6 +270,15 @@ export interface SignProposedObligationItem {
   proposedByAi: true;
 }
 
+export interface SignObligationDepositProposal {
+  amount: string;
+  currency: 'VND';
+  dueDays: number | null;
+  pageNumber: number;
+  quoteExcerpt: string;
+  proposedByAi: true;
+}
+
 export interface SignObligationProposal {
   counterpartyName: string | null;
   effectiveDate: string | null;
@@ -280,6 +289,7 @@ export interface SignObligationProposal {
   currency: string;
   citations: SignObligationCitation[];
   obligations: SignProposedObligationItem[];
+  depositProposal?: SignObligationDepositProposal | null;
   proposedByAi: true;
 }
 
@@ -303,6 +313,13 @@ export interface SignObligationModelItem {
   quoteExcerpt: string;
 }
 
+export interface SignObligationDepositModelProposal {
+  amount: string;
+  dueDays: number | null;
+  pageNumber: number | null;
+  quoteExcerpt: string;
+}
+
 export interface SignObligationExtractModelOutput {
   counterpartyName: string | null;
   effectiveDate: string | null;
@@ -313,6 +330,7 @@ export interface SignObligationExtractModelOutput {
   currency: string | null;
   citations: SignObligationModelCitation[];
   obligations: SignObligationModelItem[];
+  depositProposal?: SignObligationDepositModelProposal | null;
 }
 
 export interface SignVaultQaSnippetInput {
@@ -637,6 +655,14 @@ const zObligationExtractModelOutput = z.strictObject({
       quoteExcerpt: z.string(),
     }),
   ),
+  depositProposal: z
+    .strictObject({
+      amount: z.string(),
+      dueDays: z.number().nullable(),
+      pageNumber: z.number().nullable(),
+      quoteExcerpt: z.string(),
+    })
+    .nullable(),
 });
 
 const zVaultQaModelOutput = z.strictObject({
@@ -2352,6 +2378,51 @@ function resolveQuotePage(
   return null;
 }
 
+function hasNumericBoundaryQuoteMatch(pageNorm: string, normQuote: string): boolean {
+  if (normQuote.length === 0) return false;
+  const startsWithDigit = /^\d/.test(normQuote);
+  const endsWithDigit = /\d$/.test(normQuote);
+  let fromIdx = 0;
+  while (fromIdx <= pageNorm.length - normQuote.length) {
+    const idx = pageNorm.indexOf(normQuote, fromIdx);
+    if (idx < 0) return false;
+    const end = idx + normQuote.length;
+    const leftInvalid =
+      startsWithDigit &&
+      ((idx > 0 && /\d/.test(pageNorm[idx - 1]!)) ||
+        (idx > 1 && (pageNorm[idx - 1] === '.' || pageNorm[idx - 1] === ',') && /\d/.test(pageNorm[idx - 2]!)));
+    const rightInvalid =
+      endsWithDigit &&
+      ((end < pageNorm.length && /\d/.test(pageNorm[end]!)) ||
+        (end + 1 < pageNorm.length && (pageNorm[end] === '.' || pageNorm[end] === ',') && /\d/.test(pageNorm[end + 1]!)));
+    if (!leftInvalid && !rightInvalid) {
+      return true;
+    }
+    fromIdx = idx + 1;
+  }
+  return false;
+}
+
+function resolveDepositQuotePage(
+  pageNumber: number | null | undefined,
+  normQuote: string,
+  pageCount: number,
+  pageNormMap: ReadonlyMap<number, string>,
+): number | null {
+  if (normQuote.length < 4) return null;
+  if (pageNumber !== null && pageNumber !== undefined) {
+    if (!Number.isInteger(pageNumber) || pageNumber < 1 || pageNumber > pageCount) {
+      return null;
+    }
+    const pageNorm = pageNormMap.get(pageNumber) ?? '';
+    return hasNumericBoundaryQuoteMatch(pageNorm, normQuote) ? pageNumber : null;
+  }
+  for (const [pageNo, pageNorm] of pageNormMap) {
+    if (hasNumericBoundaryQuoteMatch(pageNorm, normQuote)) return pageNo;
+  }
+  return null;
+}
+
 function normalizeDecimalAmount(raw: string | null | undefined): string | null {
   if (typeof raw !== 'string') return null;
   const cleaned = stripFormatControl(raw).trim().replace(/\s+/g, '');
@@ -2525,7 +2596,7 @@ const AMOUNT_BEFORE_ISO_RE = /(?<![\p{L}\p{N}.,/])\d+(?:[.,]\d+)* ?([A-Z]{3})(?!
 const ISO_BEFORE_AMOUNT_RE = /(?<![\p{L}])([A-Z]{3}) ?:? ?\d+(?:[.,]\d+)*(?![\p{L}\p{N}]|[.,]\d| ?%)/gu;
 
 const EXPLICIT_VND_UNIT_RE =
-  /(?<![\p{L}])(?:vnd|vnđ|việt nam đồng|viet nam dong|vietnam dong)(?![\p{L}])|(?<=\d(?: ?(?:nghìn|ngàn|triệu|tỷ|tỉ) ))đồng(?![\p{L}])(?! (?:tiền|ý|hồ|thời|nhất|loạt|lòng|bộ|chí)(?![\p{L}]))|(?<=\d ?)đồng(?![\p{L}])(?! (?:tiền|ý|hồ|thời|nhất|loạt|lòng|bộ|chí)(?![\p{L}]))|(?<=\d ?)đ(?![\p{L}])|₫/u;
+  /(?<![\p{L}])(?:vnd|vnđ|việt nam đồng|viet nam dong|vietnam dong)(?![\p{L}])|(?<=\d(?: ?(?:nghìn|ngàn|nghin|ngan|triệu|trieu|tr|tỷ|ty|tỉ|ti|k|m|mn|bn|thousand|million|billion) ))đồng(?![\p{L}])(?! (?:tiền|ý|hồ|thời|nhất|loạt|lòng|bộ|chí)(?![\p{L}]))|(?<=\d ?)đồng(?![\p{L}])(?! (?:tiền|ý|hồ|thời|nhất|loạt|lòng|bộ|chí)(?![\p{L}]))|(?<=\d ?)đ(?![\p{L}])|₫/u;
 
 function hasExplicitVnd(rawText: string): boolean {
   return EXPLICIT_VND_UNIT_RE.test(normalizeContractText(rawText));
@@ -2618,6 +2689,7 @@ function isAmountWithCurrencyInLocalSpan(
   decStr: string,
   candidateCurrency: string,
   rawQuote: string,
+  allowWordScale = false,
 ): boolean {
   let target: DecimalValue;
   try {
@@ -2632,7 +2704,10 @@ function isAmountWithCurrencyInLocalSpan(
     .filter((part) => part.length > 0);
   const candidateClauses = clauses.length > 0 ? clauses : [preservedQuote];
   for (const clause of candidateClauses) {
-    if (!parseQuoteDecimalCandidates(clause).some((c) => c.equals(target))) {
+    const clauseMatches = allowWordScale
+      ? isDepositAmountWithoutDurationOrPercentCollision(decStr, clause)
+      : parseQuoteDecimalCandidates(clause).some((c) => c.equals(target));
+    if (!clauseMatches) {
       continue;
     }
     const clauseForeign = groundedForeignCurrencies(clause);
@@ -2706,6 +2781,7 @@ export function signObligationExtractInstructions(): string {
     '- Every item in `obligations` MUST include `pageNumber` (1..pageCount) and an exact verbatim `quoteExcerpt` copied directly from that page.',
     '- Format `effectiveDate`, `expiryDate`, and each obligation `dueDate` as ISO `YYYY-MM-DD` ONLY when the exact calendar date is stated in the cited quote; otherwise return `null`.',
     '- Format `contractValue` as a plain ungrouped decimal string (for example `"24000000"` or `"1500.50"`), never floating-point math, and only when the exact total value is printed in the cited quote; otherwise return `null`.',
+    '- If the contract explicitly states a VND advance payment or security deposit (`đặt cọc`, `tạm ứng`, `cọc`, `deposit`, `advance payment`), set `depositProposal` with plain VND decimal `amount`, optional `dueDays` (integer 0..365 ONLY if printed in the quote, else `null`), `pageNumber`, and verbatim `quoteExcerpt`; otherwise return `null`.',
     '- Return a 3-letter uppercase ISO 4217 `currency` (`"VND"`, `"USD"`, etc.) matching the document, or `"VND"` when unspecified.',
     '- Never invent numbers, dates, amounts, URLs, domains, or email addresses that do not appear in the contract text.',
   ].join('\n');
@@ -2720,6 +2796,69 @@ export function signObligationExtractPrompt(request: SignObligationExtractReques
     'Extracted PDF page text (untrusted data):',
     formatBoundedPages(pages),
   ].join('\n');
+}
+
+const DEPOSIT_DURATION_OR_PERCENT_AFTER_RE =
+  /^(?:\s*%|\s*(?:ngày|ngay|days?|tuần|tuan|weeks?|tháng|thang|months?|năm|nam|years?)(?![\p{L}\p{N}]))/iu;
+
+const DEPOSIT_WORD_SCALE_MAP: Record<string, number> = {
+  k: 1e3,
+  nghìn: 1e3,
+  ngàn: 1e3,
+  nghin: 1e3,
+  ngan: 1e3,
+  thousand: 1e3,
+  tr: 1e6,
+  m: 1e6,
+  mn: 1e6,
+  triệu: 1e6,
+  trieu: 1e6,
+  million: 1e6,
+  tỷ: 1e9,
+  ty: 1e9,
+  tỉ: 1e9,
+  ti: 1e9,
+  bn: 1e9,
+  billion: 1e9,
+};
+
+function candidateTokenDecimalValues(rawNumToken: string, scale: number): InstanceType<typeof Decimal>[] {
+  const decimals: InstanceType<typeof Decimal>[] = [];
+  for (const parsed of parseQuoteDecimalCandidates(rawNumToken)) {
+    decimals.push(parsed.mul(scale));
+  }
+  if (decimals.length > 0) return decimals;
+  for (const cand of canonicalizeNumericToken(rawNumToken)) {
+    const d = normalizeDecimalAmount(cand);
+    if (d) decimals.push(new Decimal(d).mul(scale));
+  }
+  return decimals;
+}
+
+function isDepositAmountWithoutDurationOrPercentCollision(canonicalDecimalStr: string, rawQuote: string): boolean {
+  let target: InstanceType<typeof Decimal>;
+  try {
+    target = new Decimal(canonicalDecimalStr);
+  } catch {
+    return false;
+  }
+  if (!target.isInteger() || target.lte(0)) return false;
+
+  const norm = normalizeContractText(rawQuote);
+  const tokenRe =
+    /(?<![\p{L}\p{N}.,/])(\d+(?:[.,]\d+)*)(?:\s*(tỷ|ty|tỉ|ti|triệu|trieu|nghìn|ngàn|nghin|ngan|million|billion|thousand|mn|bn|tr|m|k)(?![\p{L}\p{N}]))?/giu;
+  for (const m of norm.matchAll(tokenRe)) {
+    const numStr = m[1]!;
+    const scaleWord = m[2]?.toLowerCase();
+    const scale = scaleWord ? (DEPOSIT_WORD_SCALE_MAP[scaleWord] ?? 1) : 1;
+    const after = norm.slice((m.index ?? 0) + m[0].length);
+    if (!scaleWord && /^\/\d/.test(after)) continue;
+    if (DEPOSIT_DURATION_OR_PERCENT_AFTER_RE.test(after)) continue;
+    for (const val of candidateTokenDecimalValues(numStr, scale)) {
+      if (val.eq(target)) return true;
+    }
+  }
+  return false;
 }
 
 export function checkSignObligationExtract(
@@ -2938,6 +3077,60 @@ export function checkSignObligationExtract(
     });
   }
 
+  let depositProposal: SignObligationDepositProposal | null = null;
+  if (raw.depositProposal && typeof raw.depositProposal === 'object') {
+    const depQuoteRaw =
+      typeof raw.depositProposal.quoteExcerpt === 'string' ? stripFormatControl(raw.depositProposal.quoteExcerpt).trim() : '';
+    const depNormQuote = normalizeContractText(depQuoteRaw);
+    const depPage =
+      depNormQuote.length >= 4
+        ? resolveDepositQuotePage(raw.depositProposal.pageNumber, depNormQuote, request.pageCount, pageNormMap)
+        : null;
+    const depAmountDec =
+      typeof raw.depositProposal.amount === 'string' ? normalizeDecimalAmount(raw.depositProposal.amount) : null;
+    const depQuoteForeign = groundedForeignCurrencies(depQuoteRaw);
+    const depHasExplicitVnd = hasExplicitVnd(depQuoteRaw);
+    const depDocForeign = groundedForeignCurrencies(combinedSourceRaw);
+    const depVndValid = depHasExplicitVnd
+      ? depAmountDec !== null && isAmountWithCurrencyInLocalSpan(depAmountDec, 'VND', depQuoteRaw, true)
+      : depQuoteForeign.size === 0 && depDocForeign.size === 0;
+
+    let depDueDays: number | null = null;
+    let depDueValid = true;
+    if (raw.depositProposal.dueDays !== null && raw.depositProposal.dueDays !== undefined) {
+      if (
+        typeof raw.depositProposal.dueDays === 'number' &&
+        isNoticeDaysGroundedInQuote(raw.depositProposal.dueDays, depQuoteRaw)
+      ) {
+        depDueDays = raw.depositProposal.dueDays;
+      } else {
+        depDueValid = false;
+      }
+    }
+
+    if (
+      depPage !== null &&
+      depAmountDec !== null &&
+      new Decimal(depAmountDec).isInteger() &&
+      new Decimal(depAmountDec).gt(0) &&
+      isDepositAmountWithoutDurationOrPercentCollision(depAmountDec, depQuoteRaw) &&
+      isCurrencyGroundedInText('VND', depQuoteRaw) &&
+      depVndValid &&
+      depDueValid
+    ) {
+      depositProposal = {
+        amount: depAmountDec,
+        currency: 'VND',
+        dueDays: depDueDays,
+        pageNumber: depPage,
+        quoteExcerpt: cut(depQuoteRaw, 600),
+        proposedByAi: true,
+      };
+    } else {
+      droppedCount += 1;
+    }
+  }
+
   const hasAny =
     counterpartyName !== null ||
     effectiveDate !== null ||
@@ -2945,7 +3138,8 @@ export function checkSignObligationExtract(
     renewalNoticeDays !== null ||
     autoRenew ||
     contractValue !== null ||
-    obligations.length > 0;
+    obligations.length > 0 ||
+    depositProposal !== null;
 
   if (!hasAny) {
     return {
@@ -2969,6 +3163,7 @@ export function checkSignObligationExtract(
       currency,
       citations: keptCitations,
       obligations,
+      ...(depositProposal ? { depositProposal } : {}),
       proposedByAi: true,
     },
     droppedCount,
