@@ -23,8 +23,11 @@ import type {
   MeetingPlatformFormat,
   MeetingPlatformListed,
   MeetingPlatformOAuth,
+  MeetingPlatformTranscript,
+  MeetingPlatformTranscriptEntry,
 } from './meeting-platform.ts';
 import { zoomAccountKey } from './meeting-platform-zoom-webhook.ts';
+import { parseTeamsVtt } from './meeting-platform-teams.ts';
 import { allowlistedFetch, type Fetch } from './oauth.ts';
 
 export const ZOOM_API_HOST = 'api.zoom.us';
@@ -40,6 +43,10 @@ const PAGE_SIZE = 100;
 // A list never reads more than this many pages, whatever Zoom says. Zoom documents no order for the pages, so with more than 500 meetings in the window some could be left out; the answer is sorted and cut afterwards.
 const MAX_PAGES = 5;
 const TITLE_MAX = 200;
+// A transcript file larger than this is refused before it is read (a real one is a few hundred KB; the Teams adapter's cap is the same).
+export const ZOOM_TRANSCRIPT_MAX_BYTES = 8 * 1024 * 1024;
+// The speaker a Zoom transcript line names is the text before the first colon, if it is short; a longer prefix is part of what was said.
+const SPEAKER_PREFIX_MAX = 80;
 
 export interface ZoomAppConfig {
   clientId: string;
@@ -82,8 +89,41 @@ const videoOf = (files: ZoomFile[]) => {
   const kind = VIDEO_KINDS.find((k) => mp4s.some((f) => text(f.recording_type) === k));
   return kind ? only(mp4s.filter((f) => text(f.recording_type) === kind)) : only(mp4s);
 };
-const transcriptOf = (files: ZoomFile[]) => completed(files).find((f) => text(f.recording_type) === 'audio_transcript' || text(f.file_type).toUpperCase() === 'TRANSCRIPT');
+const isTranscript = (f: ZoomFile) => text(f.recording_type) === 'audio_transcript' || text(f.file_type).toUpperCase() === 'TRANSCRIPT';
+// The one finished transcript file, or undefined: two of them are two parts of one call, and half a transcript is not offered as a whole.
+const transcriptOf = (files: ZoomFile[]) => only(completed(files).filter(isTranscript));
+// A kind of audio or video file that Zoom made in several segments (the host stopped and started the recording). Such a recording has more of the call than any one file, so it is never offered by its transcript alone.
+const segmented = (files: ZoomFile[]) => {
+  const counts = new Map<string, number>();
+  for (const f of completed(files)) {
+    if (isTranscript(f) || !['MP4', 'M4A'].includes(text(f.file_type).toUpperCase())) continue;
+    counts.set(text(f.recording_type), (counts.get(text(f.recording_type)) ?? 0) + 1);
+  }
+  return [...counts.values()].some((n) => n > 1);
+};
 const sizeOf = (file: ZoomFile | undefined): number => (file && typeof file.file_size === 'number' && Number.isFinite(file.file_size) && file.file_size > 0 ? Math.floor(file.file_size) : 0);
+
+/**
+ * The lines of Zoom's transcript file (WebVTT, `audio_transcript`): each cue reads `Speaker Name: what was said`. Zoom's own transcription, never Ludy's. The cue and time reading is the Teams reader's
+ * (linear scans, tags dropped, entities decoded, bounded); what is Zoom's here is the speaker, taken from the text before the first colon when that is short and has no digit-only or sentence shape. A cue with no such
+ * prefix has no speaker. [Unverified until the first live run (#3178): that a Zoom VTT names its speakers this way.]
+ */
+export function parseZoomVtt(vtt: string): { entries: MeetingPlatformTranscriptEntry[]; truncated: boolean } {
+  const { entries, truncated } = parseTeamsVtt(vtt);
+  return {
+    truncated,
+    entries: entries.map((entry) => {
+      if (entry.speaker !== null) return entry;
+      const colon = entry.text.indexOf(': ');
+      if (colon < 1 || colon > SPEAKER_PREFIX_MAX) return entry;
+      const name = entry.text.slice(0, colon).trim();
+      const said = entry.text.slice(colon + 2).trim();
+      // A prefix that is a figure ("10:30", "3: ...") or ends a sentence is not a name.
+      if (name === '' || said === '' || /^[\d\s.,]+$/u.test(name) || /[.!?]$/u.test(name)) return entry;
+      return { ...entry, speaker: name, text: said };
+    }),
+  };
+}
 
 // A title the database can hold: no NUL, cut at TITLE_MAX UTF-16 units.
 const titleOf = (topic: unknown): string => text(topic).replaceAll('\u0000', '').slice(0, TITLE_MAX);
@@ -104,6 +144,8 @@ function listedOf(meeting: Record<string, unknown>): MeetingPlatformListed | nul
   const video = videoOf(files);
   const transcript = transcriptOf(files);
   if (!audio && !video && !transcript) return null;
+  // Segments of the call's audio or video that cannot be joined yet (a later step) are not made up for by a transcript of one part of it, or of the whole: the recording waits for the join.
+  if (!audio && !video && segmented(files)) return null;
   const minutes = Number(meeting.duration);
   // The size of the file the job will fetch (audio when there is one, else the video), not of every file: the job refuses a declared size over its cap before any call.
   const size = audio ? sizeOf(audio) : sizeOf(video);
@@ -225,6 +267,36 @@ export class ZoomMeetingPlatform implements MeetingPlatformAdapter, MeetingPlatf
       hosts: [target.host],
       hostSuffixes: [ZOOM_DOWNLOAD_SUFFIX],
     };
+  }
+
+  // The transcript file of one recording, described the way a recording's file is (a fresh address at click time, the member's token as the bearer, the first host exact, redirects only inside zoom.us). Only a single
+  // finished transcript file is taken: two of them are two parts of one call, and reading one would hand over half of it with no sign.
+  async transcriptFile(credential: MeetingPlatformCredential, recordingId: string, signal?: AbortSignal): Promise<MeetingPlatformDownload> {
+    if (recordingId === '' || recordingId === '.' || recordingId === '..') throw new MeetingPlatformError('recording_gone');
+    const body = await this.get(`https://${ZOOM_API_HOST}/v2/meetings/${meetingPathId(recordingId)}/recordings`, credential, signal);
+    const transcripts = completed(filesOf(body)).filter(isTranscript);
+    const file = only(transcripts);
+    if (!file) throw new MeetingPlatformError('no_transcript', transcripts.length > 1 ? 'the recording has several transcript files' : 'the recording has no transcript file');
+    if (sizeOf(file) > ZOOM_TRANSCRIPT_MAX_BYTES) throw new MeetingPlatformError('too_large');
+    const target = zoomDownloadUrl(file.download_url);
+    if (!target) throw new MeetingPlatformError('platform_refused', 'the transcript file is not on a Zoom host');
+    return {
+      url: target.url,
+      headers: { authorization: `Bearer ${credential.accessToken}` },
+      format: 'transcript',
+      contentType: 'text/vtt',
+      sizeBytes: sizeOf(file) > 0 ? sizeOf(file) : null,
+      hosts: [target.host],
+      hostSuffixes: [ZOOM_DOWNLOAD_SUFFIX],
+    };
+  }
+
+  // Zoom's transcript from the file's bytes. No line at all is `no_transcript`.
+  parseTranscript(bytes: Uint8Array): MeetingPlatformTranscript {
+    if (bytes.byteLength > ZOOM_TRANSCRIPT_MAX_BYTES) throw new MeetingPlatformError('too_large');
+    const { entries, truncated } = parseZoomVtt(new TextDecoder('utf-8').decode(bytes));
+    if (entries.length === 0) throw new MeetingPlatformError('no_transcript');
+    return { source: 'zoom', language: null, truncated, entries };
   }
 
   // The Zoom authorize address. The permissions are the ones the Marketplace app declares, not a parameter of the request, so there is no `scope` here (docs/runbooks/meetings-zoom.md lists them).

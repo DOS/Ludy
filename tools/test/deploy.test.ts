@@ -2289,3 +2289,20 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     });
   });
 });
+
+describe('deploy shellcheck coverage (#3286)', () => {
+  it('lists tools/deploy/deploy.sh and every stub in tools/test/deploy-stubs in ci.yml shellcheck', () => {
+    const ci = readFileSync(join(repo, '.github/workflows/ci.yml'), 'utf8').replaceAll('\r\n', '\n');
+    const match = /- name: Shell scripts \(shellcheck\)\n\s+run:\s*(.+)/.exec(ci);
+    expect(match, 'Shell scripts (shellcheck) step must exist in .github/workflows/ci.yml').not.toBeNull();
+    const args = (match?.[1] ?? '').trim().split(/\s+/);
+    expect(args[0]).toBe('shellcheck');
+    const stubs = readdirSync(join(import.meta.dirname, 'deploy-stubs'), { withFileTypes: true })
+      .filter((entry) => entry.isFile() && !entry.name.startsWith('.'))
+      .map((entry) => `tools/test/deploy-stubs/${entry.name}`);
+    expect(stubs.length).toBeGreaterThan(0);
+    for (const file of ['tools/deploy/deploy.sh', ...stubs]) {
+      expect(args, `${file} must be checked by shellcheck in ci.yml`).toContain(file);
+    }
+  });
+});

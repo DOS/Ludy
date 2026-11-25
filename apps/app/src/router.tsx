@@ -114,6 +114,7 @@ import { VouchersPage } from './routes/vouchers.tsx';
 import { PublishHoldBanner } from './components/social-publish-hold.tsx';
 import { RecordingChip } from './components/recording-chip.tsx';
 import { RecordingHost } from './components/recording-host.tsx';
+import { Toaster } from './components/toaster.tsx';
 import { VersionBanner } from './components/version-banner.tsx';
 import { FixedAssetsPage } from './routes/fixed-assets.tsx';
 import { SignCeremonyPage } from './routes/sign-ceremony.tsx';
@@ -220,6 +221,7 @@ const rootRoute = createRootRoute({
       {/* The recording bar and the recorder's host (#3197): a recording can run on any screen, so they live above the org layout. */}
       <RecordingChip />
       <RecordingHost />
+      <Toaster />
     </>
   ),
   errorComponent: ErrorPage,

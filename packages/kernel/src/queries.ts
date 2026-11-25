@@ -607,9 +607,9 @@ export const fileGet = defineQuery({
       .where('id', '=', input.id)
       .executeTakeFirst();
     if (!file) throw new DomainError('NOT_FOUND', 404, 'Không tìm thấy tệp');
-    // Confidential eSign artifacts (such as source_kind = 'hr_contract' PDFs, certificates, and signer attachments, #3553/#3818) are gated by
+    // Confidential eSign artifacts (such as source_kind = 'hr_contract' PDFs, certificates, signer attachments, and deposit QR images, #3553/#3818/#4723) are gated by
     // ludy_sign.can_read_sign_file so unauthorized workspace members receive the same 404 as a missing file.
-    if (file.source === 'sign_document' || file.source === 'sign_sealed' || file.source === 'sign_certificate' || file.source === 'sign_attachment') {
+    if (file.source === 'sign_document' || file.source === 'sign_sealed' || file.source === 'sign_certificate' || file.source === 'sign_attachment' || file.source === 'sign_deposit_qr') {
       const { rows } = await sql<{ allowed: boolean }>`SELECT ludy_sign.can_read_sign_file(${file.id}::uuid) AS allowed`.execute(ctx.trx);
       if (!rows[0]?.allowed) throw new DomainError('NOT_FOUND', 404, 'Không tìm thấy tệp');
     }

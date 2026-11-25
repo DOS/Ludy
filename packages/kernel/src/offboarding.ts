@@ -303,9 +303,14 @@ export const EXPORT_TABLES = {
     omit: [],
   },
   // eSign (#3323, #3526, #3554, #3811, #3821): envelopes, post-signature obligations, signers (omitting deployment-keyed signer_ip_hash), fields, AI analysis summaries, hash-chained signing events, reusable templates, and CA PAdES signing requests (omitting idempotency_key); credential-bearing ca_connection, signing_token, signing_otp, and template_direct_link tables stay out, and attendees-only meeting_minutes envelopes stay out under ADR-0047 point 7.
+  'sign.deposit_profile': { from: 'ludy_sign.deposit_profile', omit: [] },
   'sign.envelope': {
     from: '(SELECT e.* FROM ludy_sign.envelope e WHERE ludy_sign.is_exportable_envelope_id(e.org_id, e.id))',
     omit: [],
+  },
+  'sign.envelope_deposit': {
+    from: '(SELECT d.* FROM ludy_sign.envelope_deposit d WHERE ludy_sign.is_exportable_envelope_id(d.org_id, d.envelope_id))',
+    omit: ['signer_ip_hash'],
   },
   'sign.envelope_document': {
     from: '(SELECT ed.* FROM ludy_sign.envelope_document ed WHERE ludy_sign.is_exportable_envelope_id(ed.org_id, ed.envelope_id))',

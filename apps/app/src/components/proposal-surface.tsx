@@ -4,10 +4,12 @@
 // deterministic fallback outputs render as solid cards so proposed vs committed states stay visually distinct.
 import type { ComponentPropsWithoutRef, ReactNode } from 'react';
 import { useTranslations } from 'use-intl';
-import { COWORKER_ROSTER, type CoworkerKey } from '@ludy/kernel-contract';
+import type { CoworkerKey } from '@ludy/kernel-contract';
 import { Badge } from '@ludy/ui/components/badge';
 import { NavIcon } from '@ludy/ui/components/nav-icon';
 import { cn } from '@ludy/ui/lib/utils';
+import { useCoworkerNames } from '../lib/coworker-names.ts';
+import type { ProposalSourceTag } from '../lib/proposal-source.ts';
 
 export type ProposalCoworkerKey = Exclude<CoworkerKey, 'system'>;
 
@@ -61,7 +63,7 @@ export function ProposalSurface({
 export interface CoworkerAttributionProps {
   /** Roster key for a Ludy AI coworker ('gm' for Vy; 'finance', 'sales', 'marketing' for app coworkers). */
   coworker?: ProposalCoworkerKey | null | undefined;
-  /** Optional display name override (for org-renamed coworkers or external AI agents/apps). */
+  /** Optional display name override (for external AI agents/apps, or a name the caller already holds). Without it a roster key shows the org's current name for that coworker. */
   name?: string | null | undefined;
   /** Optional explicit role text. Pass null to omit role display. */
   role?: string | null | undefined;
@@ -77,6 +79,8 @@ export interface CoworkerAttributionProps {
   badgeTestId?: string | undefined;
   /** Plain-language provenance explanation (e.g. learned rule, bank match, template notice). */
   source?: string | null | undefined;
+  /** How it came to be, in one short tag (rule, exact match, same as last time, AI). Only from what the proposal recorded; omit when it recorded none. */
+  tag?: ProposalSourceTag | null | undefined;
   sourceTestId?: string | undefined;
   /** Show the AI coworker icon mark. Defaults to true when coworker, name, or badge is shown. */
   showIcon?: boolean | undefined;
@@ -99,6 +103,7 @@ export function CoworkerAttribution({
   badgeVariant = 'proposal',
   badgeTestId,
   source,
+  tag,
   sourceTestId,
   showIcon,
   showRole = true,
@@ -106,7 +111,8 @@ export function CoworkerAttribution({
   className,
 }: CoworkerAttributionProps) {
   const t = useTranslations('proposalSurface');
-  const displayName = name?.trim() || (coworker ? COWORKER_ROSTER[coworker] : null);
+  const orgNames = useCoworkerNames();
+  const displayName = name?.trim() || (coworker ? orgNames[coworker] : null);
   const resolvedRole = role === null ? null : (role ?? (coworker ? t(`roles.${coworker}`) : null));
   const primaryIdentity = label?.trim() || displayName;
   const iconVisible = showIcon ?? Boolean(coworker || name || badgeLabel);
@@ -136,7 +142,16 @@ export function CoworkerAttribution({
             </span>
           )}
         </div>
-        {aside ? <div className="flex shrink-0 flex-wrap items-center gap-1.5">{aside}</div> : null}
+        {tag || aside ? (
+          <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+            {tag ? (
+              <Badge variant="outline" data-testid="proposal-source-tag" data-source-tag={tag}>
+                {t(`sourceTags.${tag}`)}
+              </Badge>
+            ) : null}
+            {aside}
+          </div>
+        ) : null}
       </div>
       {source ? (
         <p className="text-xs text-muted-foreground" data-testid={sourceTestId}>

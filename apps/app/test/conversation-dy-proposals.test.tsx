@@ -12,7 +12,7 @@ import { DISMISSED_THREADS_MAX, dismissContactMatch, dismissedContactMatches } f
 const state: { matches: { ai: string; candidates: { partyId: string; name: string; reason: 'email' | 'phone' | 'name' }[] } | undefined } = { matches: undefined };
 vi.mock('../src/lib/api.ts', () => ({
   client: {},
-  orpc: { conversations: { key: () => ['conversations'], get: { queryOptions: () => ({ queryKey: ['get'] }) } }, crm: { contacts: { conversations: { key: () => [] } }, deals: { conversations: { key: () => [] } } } },
+  orpc: { chart: { get: { queryOptions: () => ({ queryKey: ['chart'] }) }, templates: { queryOptions: () => ({ queryKey: ['chart', 'templates'] }) } }, conversations: { key: () => ['conversations'], get: { queryOptions: () => ({ queryKey: ['get'] }) } }, crm: { contacts: { conversations: { key: () => [] } }, deals: { conversations: { key: () => [] } } } },
   queryClient: { invalidateQueries: () => undefined },
   errorMessage: (e: unknown) => String(e),
   isStepUpRequired: () => false,

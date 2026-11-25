@@ -797,6 +797,46 @@ export const PERSONAL_DATA_COLUMNS = {
     privateRows: 'always',
     reason: "A member's own saved signature or initials PNG image, readable and deletable by that member alone and removed when the member leaves the org",
   },
+  'ludy_sign.deposit_profile.bank_code': {
+    kind: 'other',
+    handling: 'keep_org',
+    reason: "Organization's own VietQR deposit bank code configured in eSign settings; deleted with the profile or org",
+  },
+  'ludy_sign.deposit_profile.account_number': {
+    kind: 'account_number',
+    handling: 'keep_org',
+    reason: "Organization's own bank account number configured to receive eSign post-sign deposits; deleted with the profile or org",
+  },
+  'ludy_sign.deposit_profile.account_holder': {
+    kind: 'name',
+    handling: 'keep_org',
+    reason: "Organization's own bank account holder name configured to receive eSign post-sign deposits; deleted with the profile or org",
+  },
+  'ludy_sign.envelope_deposit.snapshot_bank_code': {
+    kind: 'other',
+    handling: 'keep_record',
+    reason: 'Immutable send-time bank code snapshot shown to signer on an executed eSign deposit request; purged on org deletion',
+  },
+  'ludy_sign.envelope_deposit.snapshot_account_number': {
+    kind: 'account_number',
+    handling: 'keep_record',
+    reason: 'Immutable send-time receiving bank account number snapshot on an executed eSign deposit request; purged on org deletion',
+  },
+  'ludy_sign.envelope_deposit.snapshot_account_holder': {
+    kind: 'name',
+    handling: 'keep_record',
+    reason: 'Immutable send-time receiving account holder snapshot on an executed eSign deposit request; purged on org deletion',
+  },
+  'ludy_sign.envelope_deposit.snapshot_emvco_payload': {
+    kind: 'other',
+    handling: 'keep_record',
+    reason: 'Immutable send-time EMVCo VietQR payload snapshot containing receiving bank account details; purged on org deletion',
+  },
+  'ludy_sign.envelope_deposit.signer_ip_hash': {
+    kind: 'other',
+    handling: 'hashed',
+    reason: 'Keyed SHA-256 hash of signer IP address recorded on post-sign deposit transfer notice without storing raw IP',
+  },
 } as const satisfies Record<string, PersonalDataColumn>;
 
 export type PersonalDataColumnKey = keyof typeof PERSONAL_DATA_COLUMNS;

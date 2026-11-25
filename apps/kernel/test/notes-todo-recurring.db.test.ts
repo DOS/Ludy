@@ -840,4 +840,88 @@ suite('personal to-do recurrence and reschedule on PostgreSQL (#3557)', () => {
     expect(vnDay3.dueOn).toBe('2026-03-09');
     expect(vnDay3.dueTime).toBe('02:30');
   });
+
+  it('enforces optional expectedRevision on notes.todo.reschedule while preserving legacy callers (#4322)', async () => {
+    const o = await setupOrg();
+    const created = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', {
+      title: 'Kiem tra doi chieu cong no',
+      dueOn: '2026-10-01',
+      timeZone: 'Asia/Ho_Chi_Minh',
+    });
+    expect(created.revision).toBe(1);
+
+    // Matching expectedRevision succeeds and increments revision to 2.
+    const first = await o.exec<TodoRescheduled>(o.mine, 'notes.todo.reschedule', {
+      todoIds: [created.todoId],
+      dueOn: FUTURE_RESCHEDULE_DAY,
+      expectedRevision: 1,
+    });
+    expect(first).toEqual({ updated: 1, todoIds: [created.todoId] });
+    const afterFirst = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: created.todoId });
+    expect(afterFirst.revision).toBe(2);
+    expect(afterFirst.dueOn).toBe(FUTURE_RESCHEDULE_DAY);
+
+    // Stale expectedRevision rejects with 409 TODO_REVISION_CONFLICT without mutating the row.
+    await expect(
+      o.exec(o.mine, 'notes.todo.reschedule', {
+        todoIds: [created.todoId],
+        dueOn: FUTURE_RESCHEDULE_NEXT,
+        expectedRevision: 1,
+      }),
+    ).rejects.toMatchObject({
+      code: 'TODO_REVISION_CONFLICT',
+      status: 409,
+    });
+    const afterConflict = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: created.todoId });
+    expect(afterConflict.revision).toBe(2);
+    expect(afterConflict.dueOn).toBe(FUTURE_RESCHEDULE_DAY);
+
+    // Legacy caller omitting expectedRevision continues succeeding.
+    await expect(
+      o.exec<TodoRescheduled>(o.mine, 'notes.todo.reschedule', {
+        todoIds: [created.todoId],
+        dueOn: FUTURE_RESCHEDULE_NEXT,
+      }),
+    ).resolves.toEqual({ updated: 1, todoIds: [created.todoId] });
+    const afterLegacy = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: created.todoId });
+    expect(afterLegacy.revision).toBe(3);
+    expect(afterLegacy.dueOn).toBe(FUTURE_RESCHEDULE_NEXT);
+
+    // Another member, owner, or admin still receives 404 TODO_NOT_FOUND (no revision/existence oracle).
+    for (const stranger of [o.owner, o.admin, o.other]) {
+      await expect(
+        o.exec(stranger, 'notes.todo.reschedule', {
+          todoIds: [created.todoId],
+          dueOn: FUTURE_RESCHEDULE_DAY,
+          expectedRevision: 3,
+        }),
+      ).rejects.toMatchObject({
+        code: 'TODO_NOT_FOUND',
+        status: 404,
+      });
+    }
+
+    // Completed todo rejects stale expectedRevision as conflict and matching expectedRevision as not changeable.
+    await o.exec(o.mine, 'notes.todo.complete', { todoId: created.todoId });
+    await expect(
+      o.exec(o.mine, 'notes.todo.reschedule', {
+        todoIds: [created.todoId],
+        dueOn: FUTURE_RESCHEDULE_DAY,
+        expectedRevision: 3,
+      }),
+    ).rejects.toMatchObject({
+      code: 'TODO_REVISION_CONFLICT',
+      status: 409,
+    });
+    await expect(
+      o.exec(o.mine, 'notes.todo.reschedule', {
+        todoIds: [created.todoId],
+        dueOn: FUTURE_RESCHEDULE_DAY,
+        expectedRevision: 4,
+      }),
+    ).rejects.toMatchObject({
+      code: 'TODO_NOT_CHANGEABLE',
+      status: 409,
+    });
+  });
 });

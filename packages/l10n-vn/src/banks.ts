@@ -14,6 +14,8 @@ export interface VnBank {
   shortName: string;
   /** The full name in Vietnamese. */
   name: string;
+  /** Verified 6-digit NAPAS BIN for offline EMVCo VietQR payload generation (populated via #2535). */
+  readonly napasBin?: string;
 }
 
 /** Where the list comes from and how far to trust it. */
