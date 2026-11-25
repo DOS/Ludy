@@ -142,7 +142,7 @@ BEGIN
 
   -- Column ACLs first so table-level REVOKE never clears attacl independently.
   FOR r IN
-    SELECT DISTINCT n.nspname AS schema_name, c.relname, att.attname, gr.rolname AS grantee, src.rolname AS grantor_name, a.privilege_type
+    SELECT DISTINCT n.nspname AS schema_name, c.relname, att.attname, gr.rolname AS grantee, a.privilege_type
     FROM pg_catalog.pg_attribute att
     JOIN pg_catalog.pg_class c ON c.oid = att.attrelid
     JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
@@ -153,18 +153,18 @@ BEGIN
       AND att.attnum > 0 AND NOT att.attisdropped
       AND a.grantee <> c.relowner
       AND gr.rolname = ANY (v_legacy_roles)
-      AND (v_is_super OR src.rolname = current_user OR pg_catalog.pg_has_role(current_user, a.grantor, 'USAGE'))
-    ORDER BY n.nspname, c.relname, att.attname, gr.rolname, src.rolname, a.privilege_type
+      AND (v_is_super OR src.rolname = current_user OR (a.grantor = c.relowner AND pg_catalog.pg_has_role(current_user, c.relowner, 'USAGE')))
+    ORDER BY n.nspname, c.relname, att.attname, gr.rolname, a.privilege_type
   LOOP
     EXECUTE pg_catalog.format(
-      'REVOKE %s (%I) ON %I.%I FROM %I GRANTED BY %I',
-      r.privilege_type, r.attname, r.schema_name, r.relname, r.grantee, r.grantor_name
+      'REVOKE %s (%I) ON %I.%I FROM %I',
+      r.privilege_type, r.attname, r.schema_name, r.relname, r.grantee
     );
   END LOOP;
 
   -- Table, view, materialized view, and foreign table ACLs.
   FOR r IN
-    SELECT DISTINCT n.nspname AS schema_name, c.relname, gr.rolname AS grantee, src.rolname AS grantor_name, a.privilege_type
+    SELECT DISTINCT n.nspname AS schema_name, c.relname, gr.rolname AS grantee, a.privilege_type
     FROM pg_catalog.pg_class c
     JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
     CROSS JOIN LATERAL pg_catalog.aclexplode(c.relacl) a
@@ -174,18 +174,18 @@ BEGIN
       AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
       AND a.grantee <> c.relowner
       AND gr.rolname = ANY (v_legacy_roles)
-      AND (v_is_super OR src.rolname = current_user OR pg_catalog.pg_has_role(current_user, a.grantor, 'USAGE'))
-    ORDER BY n.nspname, c.relname, gr.rolname, src.rolname, a.privilege_type
+      AND (v_is_super OR src.rolname = current_user OR (a.grantor = c.relowner AND pg_catalog.pg_has_role(current_user, c.relowner, 'USAGE')))
+    ORDER BY n.nspname, c.relname, gr.rolname, a.privilege_type
   LOOP
     EXECUTE pg_catalog.format(
-      'REVOKE %s ON TABLE %I.%I FROM %I GRANTED BY %I',
-      r.privilege_type, r.schema_name, r.relname, r.grantee, r.grantor_name
+      'REVOKE %s ON TABLE %I.%I FROM %I',
+      r.privilege_type, r.schema_name, r.relname, r.grantee
     );
   END LOOP;
 
   -- Sequence ACLs.
   FOR r IN
-    SELECT DISTINCT n.nspname AS schema_name, c.relname, gr.rolname AS grantee, src.rolname AS grantor_name, a.privilege_type
+    SELECT DISTINCT n.nspname AS schema_name, c.relname, gr.rolname AS grantee, a.privilege_type
     FROM pg_catalog.pg_class c
     JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
     CROSS JOIN LATERAL pg_catalog.aclexplode(c.relacl) a
@@ -195,12 +195,12 @@ BEGIN
       AND c.relkind = 'S'
       AND a.grantee <> c.relowner
       AND gr.rolname = ANY (v_legacy_roles)
-      AND (v_is_super OR src.rolname = current_user OR pg_catalog.pg_has_role(current_user, a.grantor, 'USAGE'))
-    ORDER BY n.nspname, c.relname, gr.rolname, src.rolname, a.privilege_type
+      AND (v_is_super OR src.rolname = current_user OR (a.grantor = c.relowner AND pg_catalog.pg_has_role(current_user, c.relowner, 'USAGE')))
+    ORDER BY n.nspname, c.relname, gr.rolname, a.privilege_type
   LOOP
     EXECUTE pg_catalog.format(
-      'REVOKE %s ON SEQUENCE %I.%I FROM %I GRANTED BY %I',
-      r.privilege_type, r.schema_name, r.relname, r.grantee, r.grantor_name
+      'REVOKE %s ON SEQUENCE %I.%I FROM %I',
+      r.privilege_type, r.schema_name, r.relname, r.grantee
     );
   END LOOP;
 
@@ -208,7 +208,6 @@ BEGIN
   FOR r IN
     SELECT DISTINCT p.oid::pg_catalog.regprocedure::text AS fn_sig,
            gr.rolname AS grantee,
-           src.rolname AS grantor_name,
            a.privilege_type
     FROM pg_catalog.pg_proc p
     JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
@@ -218,18 +217,18 @@ BEGIN
     WHERE n.nspname LIKE 'ludy\_%'
       AND a.grantee <> p.proowner
       AND gr.rolname = ANY (v_legacy_roles)
-      AND (v_is_super OR src.rolname = current_user OR pg_catalog.pg_has_role(current_user, a.grantor, 'USAGE'))
-    ORDER BY p.oid::pg_catalog.regprocedure::text, gr.rolname, src.rolname, a.privilege_type
+      AND (v_is_super OR src.rolname = current_user OR (a.grantor = p.proowner AND pg_catalog.pg_has_role(current_user, p.proowner, 'USAGE')))
+    ORDER BY p.oid::pg_catalog.regprocedure::text, gr.rolname, a.privilege_type
   LOOP
     EXECUTE pg_catalog.format(
-      'REVOKE %s ON ROUTINE %s FROM %I GRANTED BY %I',
-      r.privilege_type, r.fn_sig, r.grantee, r.grantor_name
+      'REVOKE %s ON ROUTINE %s FROM %I',
+      r.privilege_type, r.fn_sig, r.grantee
     );
   END LOOP;
 
   -- Type and domain ACLs.
   FOR r IN
-    SELECT DISTINCT n.nspname AS schema_name, t.typname, gr.rolname AS grantee, src.rolname AS grantor_name, a.privilege_type
+    SELECT DISTINCT n.nspname AS schema_name, t.typname, gr.rolname AS grantee, a.privilege_type
     FROM pg_catalog.pg_type t
     JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
     CROSS JOIN LATERAL pg_catalog.aclexplode(t.typacl) a
@@ -239,18 +238,18 @@ BEGIN
       AND t.typacl IS NOT NULL
       AND a.grantee <> t.typowner
       AND gr.rolname = ANY (v_legacy_roles)
-      AND (v_is_super OR src.rolname = current_user OR pg_catalog.pg_has_role(current_user, a.grantor, 'USAGE'))
-    ORDER BY n.nspname, t.typname, gr.rolname, src.rolname, a.privilege_type
+      AND (v_is_super OR src.rolname = current_user OR (a.grantor = t.typowner AND pg_catalog.pg_has_role(current_user, t.typowner, 'USAGE')))
+    ORDER BY n.nspname, t.typname, gr.rolname, a.privilege_type
   LOOP
     EXECUTE pg_catalog.format(
-      'REVOKE %s ON TYPE %I.%I FROM %I GRANTED BY %I',
-      r.privilege_type, r.schema_name, r.typname, r.grantee, r.grantor_name
+      'REVOKE %s ON TYPE %I.%I FROM %I',
+      r.privilege_type, r.schema_name, r.typname, r.grantee
     );
   END LOOP;
 
   -- Schema ACLs last.
   FOR r IN
-    SELECT DISTINCT n.nspname AS schema_name, gr.rolname AS grantee, src.rolname AS grantor_name, a.privilege_type
+    SELECT DISTINCT n.nspname AS schema_name, gr.rolname AS grantee, a.privilege_type
     FROM pg_catalog.pg_namespace n
     CROSS JOIN LATERAL pg_catalog.aclexplode(n.nspacl) a
     JOIN pg_catalog.pg_roles gr ON gr.oid = a.grantee
@@ -258,12 +257,12 @@ BEGIN
     WHERE n.nspname LIKE 'ludy\_%'
       AND a.grantee <> n.nspowner
       AND gr.rolname = ANY (v_legacy_roles)
-      AND (v_is_super OR src.rolname = current_user OR pg_catalog.pg_has_role(current_user, a.grantor, 'USAGE'))
-    ORDER BY n.nspname, gr.rolname, src.rolname, a.privilege_type
+      AND (v_is_super OR src.rolname = current_user OR (a.grantor = n.nspowner AND pg_catalog.pg_has_role(current_user, n.nspowner, 'USAGE')))
+    ORDER BY n.nspname, gr.rolname, a.privilege_type
   LOOP
     EXECUTE pg_catalog.format(
-      'REVOKE %s ON SCHEMA %I FROM %I GRANTED BY %I',
-      r.privilege_type, r.schema_name, r.grantee, r.grantor_name
+      'REVOKE %s ON SCHEMA %I FROM %I',
+      r.privilege_type, r.schema_name, r.grantee
     );
   END LOOP;
 

@@ -132,6 +132,7 @@ suite('legacy crove_* role and crove.* GUC contraction (#3972)', () => {
         await teardown.query(`DROP DATABASE IF EXISTS ${extraDb}`);
       }
       await dropRoleCleanly(teardown, `${dbName}_limited`);
+      await dropRoleCleanly(teardown, `${dbName}_grantor_b`).catch(() => {});
     } finally {
       await teardown.end();
     }
@@ -519,10 +520,20 @@ suite('legacy crove_* role and crove.* GUC contraction (#3972)', () => {
         await c.query('GRANT SELECT ON ludy_kernel.tenant TO crove_app');
         await c.query('RESET ROLE');
 
+        // Raw Stage 7 SQL (without migrate()'s SET LOCAL ROLE pre-pass) fails closed for both unrelated
+        // roles and superusers because PG 17 forbids GRANTED BY with another grantor on object ACLs.
         await c.query('SAVEPOINT sp_revoke_other');
         await c.query(`SET LOCAL ROLE ${otherRole}`);
         await expect(c.query(contractionSql)).rejects.toThrow(/direct privileges still grant to legacy crove_\* roles/);
         await c.query('ROLLBACK TO SAVEPOINT sp_revoke_other');
+
+        await c.query('SAVEPOINT sp_revoke_raw_super');
+        await expect(c.query(contractionSql)).rejects.toThrow(/direct privileges still grant to legacy crove_\* roles/);
+        await c.query('ROLLBACK TO SAVEPOINT sp_revoke_raw_super');
+
+        await c.query(`SET LOCAL ROLE ${grantorRole}`);
+        await c.query('REVOKE SELECT ON TABLE ludy_kernel.tenant FROM crove_app');
+        await c.query('RESET ROLE');
 
         await c.query(contractionSql);
         expect(await hardeningViolations(c)).toEqual([]);
@@ -533,6 +544,7 @@ suite('legacy crove_* role and crove.* GUC contraction (#3972)', () => {
 
       await c.query('BEGIN');
       try {
+        await c.query('CREATE SCHEMA IF NOT EXISTS auth');
         await c.query('GRANT USAGE ON SCHEMA auth TO crove_auth_reader');
         const ownedAuthViolations = await hardeningViolations(c);
         expect(ownedAuthViolations.some((v) => /legacy role crove_auth_reader still holds .* on auth/.test(v))).toBe(true);
@@ -626,11 +638,88 @@ suite('legacy crove_* role and crove.* GUC contraction (#3972)', () => {
         expect(await hardeningViolations(c)).toEqual([]);
       });
 
+      const secondGrantor = `${dbName}_grantor_b`;
+      const secondClient = new pg.Client({ connectionString: dbBUrl });
+      await secondClient.connect();
+      try {
+        await secondClient.query(
+          `DO $$ BEGIN
+             IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'supabase_auth_admin') THEN
+               CREATE ROLE supabase_auth_admin LOGIN NOINHERIT CREATEROLE;
+             END IF;
+           END $$;
+           CREATE SCHEMA IF NOT EXISTS auth AUTHORIZATION supabase_auth_admin;
+           ALTER SCHEMA auth OWNER TO supabase_auth_admin;
+           CREATE TABLE IF NOT EXISTS auth.sessions (id uuid, user_id uuid, not_after timestamptz);
+           ALTER TABLE auth.sessions OWNER TO supabase_auth_admin;
+           ALTER TABLE auth.sessions ENABLE ROW LEVEL SECURITY;
+           CREATE TABLE IF NOT EXISTS auth.users (id uuid, banned_until timestamptz, deleted_at timestamptz, email_confirmed_at timestamptz);
+           ALTER TABLE auth.users OWNER TO supabase_auth_admin;
+           ALTER TABLE auth.users ENABLE ROW LEVEL SECURITY;
+           CREATE TABLE IF NOT EXISTS auth.mfa_factors (user_id uuid, status text);
+           ALTER TABLE auth.mfa_factors OWNER TO supabase_auth_admin;
+           ALTER TABLE auth.mfa_factors ENABLE ROW LEVEL SECURITY;
+           GRANT USAGE ON SCHEMA auth TO crove_auth_reader;
+           GRANT SELECT (id, user_id, not_after) ON auth.sessions TO crove_auth_reader;
+           GRANT SELECT (id, banned_until, deleted_at, email_confirmed_at) ON auth.users TO crove_auth_reader;
+           GRANT SELECT (user_id, status) ON auth.mfa_factors TO crove_auth_reader;
+           DROP POLICY IF EXISTS crove_auth_reader_select ON auth.sessions;
+           CREATE POLICY crove_auth_reader_select ON auth.sessions AS PERMISSIVE FOR SELECT TO crove_auth_reader USING (true);
+           DROP POLICY IF EXISTS crove_auth_reader_select ON auth.users;
+           CREATE POLICY crove_auth_reader_select ON auth.users AS PERMISSIVE FOR SELECT TO crove_auth_reader USING (true);
+           DROP POLICY IF EXISTS crove_auth_reader_select ON auth.mfa_factors;
+           CREATE POLICY crove_auth_reader_select ON auth.mfa_factors AS PERMISSIVE FOR SELECT TO crove_auth_reader USING (true);
+           CREATE ROLE ${secondGrantor} NOLOGIN;
+           GRANT USAGE ON SCHEMA ludy_kernel TO ${secondGrantor};
+           GRANT SELECT ON ludy_kernel.tenant TO ${secondGrantor} WITH GRANT OPTION;`,
+        );
+        await secondClient.query('BEGIN');
+        try {
+          await secondClient.query(`SET LOCAL ROLE ${secondGrantor}`);
+          await secondClient.query('GRANT SELECT ON ludy_kernel.tenant TO crove_app');
+          await secondClient.query('COMMIT');
+        } catch (error) {
+          await secondClient.query('ROLLBACK');
+          throw error;
+        }
+      } finally {
+        await secondClient.end();
+      }
+
       await migrate({ adminUrl: dbBUrl, dir: MIGRATIONS });
       const bClient = new pg.Client({ connectionString: dbBUrl });
       await bClient.connect();
       try {
         expect(await hardeningViolations(bClient)).toEqual([]);
+        const { rows: leftoverAuth } = await bClient.query<{ item: string }>(
+          `SELECT pg_catalog.format('policy auth.%s.%s', c.relname, p.polname) AS item
+           FROM pg_catalog.pg_policy p
+           JOIN pg_catalog.pg_class c ON c.oid = p.polrelid
+           JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+           WHERE n.nspname = 'auth' AND c.relname IN ('sessions', 'users', 'mfa_factors') AND p.polname = 'crove_auth_reader_select'
+           UNION ALL
+           SELECT pg_catalog.format('col auth.%s.%s', c.relname, att.attname)
+           FROM pg_catalog.pg_attribute att
+           JOIN pg_catalog.pg_class c ON c.oid = att.attrelid
+           JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+           CROSS JOIN LATERAL pg_catalog.aclexplode(att.attacl) a
+           JOIN pg_catalog.pg_roles gr ON gr.oid = a.grantee
+           WHERE n.nspname = 'auth' AND c.relname IN ('sessions', 'users', 'mfa_factors') AND att.attnum > 0 AND NOT att.attisdropped AND a.grantee <> c.relowner AND gr.rolname = 'crove_auth_reader'
+           UNION ALL
+           SELECT pg_catalog.format('tbl auth.%s', c.relname)
+           FROM pg_catalog.pg_class c
+           JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+           CROSS JOIN LATERAL pg_catalog.aclexplode(c.relacl) a
+           JOIN pg_catalog.pg_roles gr ON gr.oid = a.grantee
+           WHERE n.nspname = 'auth' AND c.relname IN ('sessions', 'users', 'mfa_factors') AND a.grantee <> c.relowner AND gr.rolname = 'crove_auth_reader'
+           UNION ALL
+           SELECT 'schema auth'
+           FROM pg_catalog.pg_namespace n
+           CROSS JOIN LATERAL pg_catalog.aclexplode(n.nspacl) a
+           JOIN pg_catalog.pg_roles gr ON gr.oid = a.grantee
+           WHERE n.nspname = 'auth' AND a.grantee <> n.nspowner AND gr.rolname = 'crove_auth_reader'`,
+        );
+        expect(leftoverAuth).toEqual([]);
       } finally {
         await bClient.end();
       }
@@ -644,6 +733,7 @@ suite('legacy crove_* role and crove.* GUC contraction (#3972)', () => {
           [secondDb],
         );
         await teardown.query(`DROP DATABASE IF EXISTS ${secondDb}`);
+        await dropRoleCleanly(teardown, `${dbName}_grantor_b`).catch(() => {});
       } finally {
         await teardown.end();
       }
