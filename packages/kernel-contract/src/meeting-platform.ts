@@ -14,7 +14,7 @@ export const MEETING_PLATFORM_TRANSCRIPT_PROVIDERS = ['sandbox', 'google_meet', 
 export type MeetingPlatformTranscriptProvider = (typeof MEETING_PLATFORM_TRANSCRIPT_PROVIDERS)[number];
 
 // A platform that offers one meeting as two suggestions (its video, and its transcript alone: Microsoft Teams) gives the transcript's suggestion the video's key plus this suffix. The two are one
-// meeting (ADR-0055), so the start of one is refused once the other is importing, staged, claimed or imported (the same member's rows of one connection; the check is in the start command). `~` is outside the characters of a platform id.
+// meeting (ADR-0055), so the start of one is refused once the other is importing, staged, claimed or imported (the same member's rows of one connection; the check is in the database function that begins the row, `ludy_kernel.meeting_platform_recording_begin`, which uses this rule in SQL). `~` is outside the characters of a platform id.
 export const PLATFORM_TRANSCRIPT_KEY_SUFFIX = '~transcript';
 // The keys of the pair a platform recording belongs to: its own key without the suffix, and with it.
 export function platformPairKeys(externalId: string): [string, string] {
