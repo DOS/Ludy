@@ -176,6 +176,10 @@ export const KERNEL_ERROR_CODES = [
   'MEETING_NOT_LINKED',
   'MEETING_NO_DEAL',
   'STALE_DEAL_UPDATE',
+  // The link to the published minutes for people outside the org (#4822).
+  'MINUTES_LINK_OFF',
+  'MINUTES_LINK_LIMIT',
+  'MINUTES_LINK_NOT_FOUND',
   'DEAL_DELETE_FORBIDDEN',
   'DEAL_HAS_QUOTES',
   'QUOTE_NOT_FOUND',
@@ -593,6 +597,8 @@ export const KERNEL_ERROR_CODES = [
   'TEMPLATE_SUGGEST_NOT_NEEDED',
   // Vy listing what a meeting left open (#4768).
   'OPEN_POINTS_BUSY',
+  // Sales call insights (#4920).
+  'SALES_INSIGHT_BUSY',
   'MEETING_TITLE_EMPTY',
   'MEETING_TITLE_TOO_LONG',
   // The weekly digest across meetings (#3949).

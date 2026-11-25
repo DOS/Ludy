@@ -1,4 +1,4 @@
-import { ROADMAP_PAGE_PREFIX } from '@ludy/kernel-contract';
+import { MINUTES_PAGE_PATH, ROADMAP_PAGE_PREFIX } from '@ludy/kernel-contract';
 import { Outlet, createRootRoute, createRoute, createRouter, notFound, redirect, type ErrorComponentProps } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
 import { Button } from '@ludy/ui/components/button';
@@ -55,6 +55,7 @@ import { SocialFeedsPage } from './routes/social-feeds.tsx';
 import { OCCASION_IDS } from './lib/social-occasions.ts';
 import { SocialReviewPage } from './routes/social-review.tsx';
 import { QuoteDocumentPage } from './routes/quote-document.tsx';
+import { MinutesPublicPage } from './routes/minutes-page.tsx';
 import { SocialReportPage } from './routes/social-report.tsx';
 import { BookingPage } from './routes/booking-page.tsx';
 import { SocialPlanPrintPage } from './routes/social-plan-print.tsx';
@@ -296,6 +297,14 @@ const quoteDocumentRoute = createRoute({
   path: '/-/quote',
   beforeLoad: ({ matches }) => requireInstalledOutside(matches),
   component: QuoteDocumentPage,
+});
+
+// The shared minutes page of the meetings module (#4822): /-/minutes#<token>, no account. The API answers 404 without meetings, or when the link is not live.
+const minutesPageRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: MINUTES_PAGE_PATH,
+  beforeLoad: ({ matches }) => requireInstalledOutside(matches),
+  component: MinutesPublicPage,
 });
 
 // Public signing ceremony (#3325): /-/sign#<token>, no account. Token stays strictly in the URL hash fragment.
@@ -805,6 +814,7 @@ const routeTree = rootRoute.addChildren([
   bookingRoute,
   reportRoute,
   quoteDocumentRoute,
+  minutesPageRoute,
   signCeremonyRoute,
   signDirectRoute,
   signPublicHubRoute,

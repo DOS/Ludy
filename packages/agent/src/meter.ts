@@ -137,6 +137,8 @@ export const AI_FEATURES = {
   'meetings.followup_note': 'meetings',
   // The recorder's Vy proposing the update of a deal after a meeting linked to it (#4766): one call over the published minutes, the recorder waiting for it, through their own meter.
   'meetings.deal_update': 'meetings',
+  // The recorder's Vy extracting sales call insights (concerns, buying signals, agreed next steps) from the transcript of a meeting linked to an open deal (#4920): one call, the recorder waiting for it, through their own meter.
+  'meetings.sales_insight': 'meetings',
   // Vy's weekly status of one project (projects P6, #2597): transient 3 to 5 plain sentences from deterministic counts and task titles/comments only, never reading notes.
   'projects.weekly_status': 'projects',
   // Vy's cycle summary for one project sprint/cycle (#4361): transient 3 to 5 plain sentences from deterministic cycle metrics and task titles/comments only, never reading notes.

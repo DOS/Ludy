@@ -23,6 +23,7 @@ import { useMinutesEsign } from './minutes-esign.tsx';
 import { DraftRedactionDialog, RedactionNudge, useRedactCandidatesQuery } from './meeting-redaction.tsx';
 import { MeetingZalo } from './meeting-zalo.tsx';
 import { MeetingChatPost } from './meeting-chat.tsx';
+import { MinutesLinkPanel } from './minutes-link.tsx';
 import { MeetingTranslation } from './meeting-translation.tsx';
 import { MinutesVersionPublisher, MinutesVersionSwitch } from './meeting-minutes-version.tsx';
 import { MeetingVoiceCues } from './meeting-voice-cues.tsx';
@@ -396,6 +397,7 @@ export function SpeakerSuggestions({ meetingId, runId }: { meetingId: string; ru
     onSuccess: () => {
       void list.refetch();
       void queryClient.invalidateQueries({ queryKey: orpc.meetings.transcript.key() });
+      void queryClient.invalidateQueries({ queryKey: orpc.meetings.speakingStyle.key() });
     },
   });
   const suggestions = list.data?.suggestions ?? [];
@@ -706,6 +708,8 @@ export function MeetingResults({
           <MeetingZalo meetingId={meetingId} title={title} summary={published?.summary ?? null} decisions={published?.decisions ?? []} items={items.filter((i) => i.stage === 'published')} />
         )}
         {isRecorder && (published || items.some((i) => i.stage === 'published')) && <MeetingChatPost meetingId={meetingId} />}
+        {/* "Chia sẻ biên bản" (#4822): a read-only link to the published minutes for people outside the org, only for the recorder and only once something is published. */}
+        {isRecorder && (published !== null || items.some((i) => i.stage === 'published')) && <MinutesLinkPanel key={`link-${meetingId}`} meetingId={meetingId} slug={slug} />}
         {isRecorder && <TemplatePicker meetingId={meetingId} template={template} copy={minutesTemplate} />}
         {/* Cues spoken to Vy in the meeting (#4807): the recorder's click drafts a marked item for each, found by code */}
         {isRecorder && <MeetingVoiceCues key={`cues-${meetingId}`} meetingId={meetingId} />}

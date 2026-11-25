@@ -1,6 +1,9 @@
 import { oc } from '@orpc/contract';
+import { zMinutesLinkCreate, zMinutesLinkCreated, zMinutesLinkItems, zMinutesLinkList, zMinutesLinkRevoke, zMinutesLinkRevoked, zMinutesLinkSwitch, zMinutesLinkSwitchGet } from './meeting-minutes-link.ts';
 import { z } from 'zod';
+import { zSpeakingStyle, zSpeakingStyleInput } from './meeting-speaking-style.ts';
 import { zTranscriptExport, zTranscriptExportInput } from './meeting-transcript-export.ts';
+import { zSalesInsightAnswer, zSalesInsightStatus } from './meeting-sales-insight.ts';
 import { ORG_KINDS } from './apps.ts';
 import { zChapters, zChaptersCopied, zChaptersCopy, zChaptersSave, zChaptersSaved } from './meeting-chapters.ts';
 import {
@@ -1932,6 +1935,16 @@ export const contract = {
     minutesDocx: {
       download: oc.input(zMinutesDocxInput).output(zMinutesDocx),
     },
+    // The link to the published minutes for people outside the org (#4822): the recorder makes it (the token comes back once), lists and revokes; an owner or admin switches the feature (off by default).
+    minutesLink: {
+      switch: {
+        get: oc.input(zMinutesLinkSwitchGet).output(zMinutesLinkSwitch),
+        set: oc.input(zMinutesLinkSwitch).output(zMinutesLinkSwitch),
+      },
+      create: oc.input(zMinutesLinkCreate).output(zMinutesLinkCreated),
+      revoke: oc.input(zMinutesLinkRevoke).output(zMinutesLinkRevoked),
+      list: oc.input(zMinutesLinkList).output(zMinutesLinkItems),
+    },
     // A member's own webhook for the minutes they publish (A6, #3164): the card reads `get`, `set` makes or changes it (the secret comes back once, when it is made), `rotateSecret`, `clear` and
     // `test` (a `ping` with no meeting data). The owner's `switch` (off by default) gates all of it; nothing is sent while it is off.
     hook: {
@@ -1944,6 +1957,8 @@ export const contract = {
     },
     // Search across the transcript lines the caller reads (L2, #2589): plain folded text search, no model call.
     search: oc.input(zMeetingSearchInput).output(zMeetingSearchResult),
+    // How each speaker spoke (#4919): pace, filler words and the longest stretch without a pause, counted by code from the lines the caller reads. Counts and words of a fixed list only.
+    speakingStyle: { get: oc.input(zSpeakingStyleInput).output(zSpeakingStyle) },
     // Ask across meetings (A3, #3161): the member's own Vy answers a question from the lines the member's own search finds, each sentence with a citation to a transcript line; nothing is stored or sent.
     // `status` is the box (may Vy be asked now, the cost of one question), `ask` is the click.
     ask: {
@@ -1987,6 +2002,12 @@ export const contract = {
     openPoints: {
       status: oc.input(zSummaryRef).output(zSummaryStatus),
       list: oc.input(zSummaryRef).output(zOpenPointsAnswer),
+    },
+    // Sales call insights for a meeting linked to an open deal (#4920, L26): `status` feeds the button (recorder + linked open deal + transcript), `analyze` runs the recorder's own Vy once to extract
+    // customer concerns, buying signals and agreed next steps citing existing transcript line IDs, plus code-computed customer talk-time share from mapped speakers. Results stay tainted and ephemeral.
+    salesInsight: {
+      status: oc.input(zSummaryRef).output(zSalesInsightStatus),
+      analyze: oc.input(zSummaryRef).output(zSalesInsightAnswer),
     },
     // This week's decisions and what is still open, across the meetings the member reads (#3949): `facts` are read by code as the member (published decisions and open action items of the meetings that started in the
     // last 7, 14 or 30 days) and work with AI off; `status` is the button (may Vy be used now, the cost of one recap), `recap` the click that has the member's own Vy write two or three sentences from those facts. Nothing

@@ -38,7 +38,7 @@ vi.mock('@tanstack/react-router', async (importOriginal) => {
   };
 });
 
-const { MeetingPlatforms } = await import('../src/components/meeting-platforms.tsx');
+const { MeetingPlatforms, DisconnectAsk } = await import('../src/components/meeting-platforms.tsx');
 const { PlatformRecordings, ImportForm } = await import('../src/components/meeting-recordings.tsx');
 const { MEETINGS_TEAMS_GUIDE } = await import('../src/lib/meeting-platform.ts');
 const { AdminConsent } = await import('../src/routes/meeting-platform-oauth.tsx');
@@ -100,6 +100,22 @@ const failQuery = (key: string[], message: string) => {
 const disabledSubmit = (html: string) => /<button[^>]*data-testid="meeting-import-submit"[^>]*>/.exec(html)?.[0] ?? '';
 
 describe('MeetingPlatforms (Settings)', () => {
+  it('tells a Teams member, before the disconnect, that Microsoft cannot cancel the access from outside and where to remove the app; the other platforms get no such line', () => {
+    const teamsEn = renderToStaticMarkup(wrap(<DisconnectAsk provider="microsoft_teams" name="Microsoft Teams: An" />));
+    expect(teamsEn).toContain(en.meetings.platform.settings.disconnectTeams.slice(0, 40));
+    expect(teamsEn).toContain('myapps.microsoft.com');
+    expect(teamsEn).toContain('90');
+    const teamsVi = renderToStaticMarkup(wrap(<DisconnectAsk provider="microsoft_teams" name="Microsoft Teams: An" />, 'vi'));
+    expect(teamsVi).toContain('myapps.microsoft.com');
+    expect(teamsVi).toContain('90 ngày');
+    expect(teamsVi).toContain('quản trị viên');
+    for (const provider of ['google_meet', 'zoom', 'sandbox']) {
+      const html = renderToStaticMarkup(wrap(<DisconnectAsk provider={provider} name="X" />));
+      expect(html, provider).toContain('meeting-platform-disconnect-ask');
+      expect(html, provider).not.toContain('meeting-platform-disconnect-teams');
+    }
+  });
+
   it('lists the connection with its provider, account, status and last listing, and a refresh and a disconnect button', () => {
     reset();
     client.current.setQueryData(KEYS.connections, [connection()]);

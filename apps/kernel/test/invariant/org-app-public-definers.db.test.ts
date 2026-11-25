@@ -2,7 +2,7 @@
 // Invariant suite (Decision 7), so main's copy guards a later restatement of these functions. The public definers of Social and CRM carry the app check
 // (ADR-0053, slice c C2): each function that finds the org of a public link, slug or feed asks crove_kernel.org_app_on for its app, so an off app answers like an
 // address that never existed (the Finance one drops the bank feed notice). The behaviour of the shared lookups is in the social and CRM suites; this pins that none
-// of the thirteen lost the check in a later migration. Set CROVE_TEST_ADMIN_URL to a superuser URL.
+// of those listed here lost the check in a later migration. Set CROVE_TEST_ADMIN_URL to a superuser URL.
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -29,6 +29,7 @@ const CHECKED: ReadonlyArray<readonly [string, string]> = [
   ['crove_crm.quote_link_view(text)', 'crm'],
   ['crove_crm.quote_link_logo(text)', 'crm'],
   ['crove_crm.public_page_org(text,text)', 'crm'],
+  ['crove_meetings.minutes_link_view(text)', 'meetings'],
   ['crove_finance.bank_feed_notice_claim(integer)', 'finance'],
   ['crove_finance.misa_amis_callback_claim(integer)', 'finance'],
   ['crove_finance.bank_feed_hook_lookup(text,text)', 'finance'],
