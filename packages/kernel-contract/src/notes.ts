@@ -2,7 +2,7 @@
 // shared with the org, linked to records. The inputs its commands and queries take and the views they return; the app
 // reads the same types.
 import { z } from 'zod';
-import { DEFAULT_TIME_ZONE, zTimeZone, zonedDate, zonedInstant, zoneOffsetMs } from './calendar.ts';
+import { DEFAULT_TIME_ZONE, isTimeZone, zTimeZone, zonedDate, zonedInstant, zoneOffsetMs } from './calendar.ts';
 import { zId } from './schemas.ts';
 
 export const NOTE_VISIBILITIES = ['private', 'org'] as const;
@@ -544,7 +544,8 @@ export type TodoStep = z.infer<typeof zTodoStep>;
 const zChecklist = z.array(zTodoStep).max(TODO_STEPS_MAX);
 const zDay = z.iso.date();
 // A time of day, 24-hour HH:mm, on the due day in the to-do's time zone.
-const zTime = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
+const TODO_TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+const zTime = z.string().regex(TODO_TIME_RE);
 const dueTimeNeedsDay = (v: { dueOn: string | null; dueTime: string | null }) => v.dueTime === null || v.dueOn !== null;
 const DUE_TIME_NEEDS_DAY = { message: 'A due time needs a due day', path: ['dueTime'] };
 
@@ -806,6 +807,7 @@ export const zMyWork = z.object({
 });
 export type MyWork = z.infer<typeof zMyWork>;
 
+const MINUTE_MS = 60_000;
 const DAY_MS = 86_400_000;
 
 function parseLocalDateParts(date: string): [number, number, number] {
@@ -925,43 +927,101 @@ export function todoLocalTime(at: Date, timeZone: string): string {
   return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
 }
 
+/** True when `date` (`YYYY-MM-DD`) contains a forward UTC-offset transition (DST spring-forward) in `timeZone`. */
+export function isSpringForwardDate(date: string, timeZone: string): boolean {
+  const tz = isTimeZone(timeZone) ? timeZone : DEFAULT_TIME_ZONE;
+  const startOfDay = zonedInstant(tz, date, 0) - MINUTE_MS;
+  const endOfDay = zonedInstant(tz, date, 23 * 60 + 59);
+  return zoneOffsetMs(tz, endOfDay) > zoneOffsetMs(tz, startOfDay);
+}
+
 /**
- * Shifts a to-do's `dueOn`, `dueAt`, and `remindAt` to `nextDueOn` in `current.timeZone`:
- * - preserves wall-clock `dueAt` time of day if `dueAt` was set;
+ * Infers the intended `HH:mm` wall-clock time for `current` when `current.dueOn` sits on a spring-forward
+ * DST transition day and an earlier occurrence in the same series establishes a pre-gap wall time that maps
+ * onto `current.dueAt`. Returns null when no gap shift occurred.
+ */
+export function recoverSpringForwardDueTime(
+  current: { dueOn: string; dueAt: Date; timeZone: string },
+  priorOccurrences: ReadonlyArray<{ dueOn: string | null; dueAt: Date | null; timeZone: string }>,
+): string | null {
+  const tz = isTimeZone(current.timeZone) ? current.timeZone : DEFAULT_TIME_ZONE;
+  if (!isSpringForwardDate(current.dueOn, tz)) return null;
+  const actualLocal = todoLocalTime(current.dueAt, tz);
+  const currentMinuteEpoch = Math.floor(current.dueAt.getTime() / MINUTE_MS);
+  for (const prev of priorOccurrences) {
+    if (prev.dueOn === null || prev.dueAt === null) continue;
+    const prevTz = isTimeZone(prev.timeZone) ? prev.timeZone : DEFAULT_TIME_ZONE;
+    if (prevTz !== tz) continue;
+    const prevLocal = todoLocalTime(prev.dueAt, tz);
+    if (prevLocal === actualLocal) {
+      if (!isSpringForwardDate(prev.dueOn, tz)) return null;
+      continue;
+    }
+    return Math.floor(todoDueInstant(current.dueOn, prevLocal, tz).getTime() / MINUTE_MS) === currentMinuteEpoch ? prevLocal : null;
+  }
+  return null;
+}
+
+function resolveShiftDueTime(
+  current: { dueOn: string | null; dueAt: Date | null; dueTime?: string | null },
+  timeZone: string,
+): string | null {
+  if (current.dueAt === null) return null;
+  const actualLocal = todoLocalTime(current.dueAt, timeZone);
+  if (typeof current.dueTime === 'string' && TODO_TIME_RE.test(current.dueTime)) {
+    if (current.dueTime === actualLocal) return current.dueTime;
+    if (
+      current.dueOn !== null &&
+      Math.floor(todoDueInstant(current.dueOn, current.dueTime, timeZone).getTime() / MINUTE_MS) ===
+        Math.floor(current.dueAt.getTime() / MINUTE_MS)
+    ) {
+      return current.dueTime;
+    }
+  }
+  return actualLocal;
+}
+
+/**
+ * Shifts a to-do's `dueOn`, `dueAt`, `dueTime`, and `remindAt` to `nextDueOn` in `current.timeZone`:
+ * - preserves wall-clock `dueTime` (including pre-gap times shifted across a DST spring-forward gap) if `dueAt` was set;
  * - keeps automatic reminders automatic on the new day/time, shifts custom reminders by the same lead duration
  *   before the due instant (or local midnight if no time was set), or preserves local clock if previously dateless.
  */
 export function shiftTodoSchedule(
-  current: { dueOn: string | null; dueAt: Date | null; timeZone: string; remindAt: Date | null },
+  current: { dueOn: string | null; dueAt: Date | null; dueTime?: string | null; timeZone: string; remindAt: Date | null },
   nextDueOn: string,
-): { dueOn: string; dueAt: Date | null; remindAt: Date | null } {
-  const nextDueAt =
-    current.dueAt !== null ? todoDueInstant(nextDueOn, todoLocalTime(current.dueAt, current.timeZone), current.timeZone) : null;
+): { dueOn: string; dueAt: Date | null; dueTime: string | null; remindAt: Date | null } {
+  const tz = isTimeZone(current.timeZone) ? current.timeZone : DEFAULT_TIME_ZONE;
+  const dueTime = resolveShiftDueTime(current, tz);
+  const nextDueAt = dueTime !== null ? todoDueInstant(nextDueOn, dueTime, tz) : null;
   if (current.remindAt === null) {
-    return { dueOn: nextDueOn, dueAt: nextDueAt, remindAt: null };
+    return { dueOn: nextDueOn, dueAt: nextDueAt, dueTime, remindAt: null };
   }
-  const autoBefore = todoAutoReminder({ dueOn: current.dueOn, dueAt: current.dueAt, timeZone: current.timeZone });
+  const autoBefore = todoAutoReminder({ dueOn: current.dueOn, dueAt: current.dueAt, timeZone: tz });
   if (autoBefore !== null && current.remindAt.getTime() === autoBefore.getTime()) {
     return {
       dueOn: nextDueOn,
       dueAt: nextDueAt,
-      remindAt: todoAutoReminder({ dueOn: nextDueOn, dueAt: nextDueAt, timeZone: current.timeZone }),
+      dueTime,
+      remindAt: todoAutoReminder({ dueOn: nextDueOn, dueAt: nextDueAt, timeZone: tz }),
     };
   }
   if (current.dueOn !== null) {
-    const beforeAnchor = current.dueAt ?? todoDueInstant(current.dueOn, '00:00', current.timeZone);
-    const nextAnchor = nextDueAt ?? todoDueInstant(nextDueOn, '00:00', current.timeZone);
+    const beforeAnchor = current.dueAt ?? todoDueInstant(current.dueOn, '00:00', tz);
+    const nextAnchor = nextDueAt ?? todoDueInstant(nextDueOn, '00:00', tz);
     const leadMs = beforeAnchor.getTime() - current.remindAt.getTime();
     return {
       dueOn: nextDueOn,
       dueAt: nextDueAt,
+      dueTime,
       remindAt: new Date(nextAnchor.getTime() - leadMs),
     };
   }
   return {
     dueOn: nextDueOn,
     dueAt: nextDueAt,
-    remindAt: todoDueInstant(nextDueOn, todoLocalTime(current.remindAt, current.timeZone), current.timeZone),
+    dueTime,
+    remindAt: todoDueInstant(nextDueOn, todoLocalTime(current.remindAt, tz), tz),
   };
 }
 
