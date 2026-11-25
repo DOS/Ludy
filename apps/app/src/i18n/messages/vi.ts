@@ -5539,6 +5539,7 @@ export const vi = {
       aiOffCardDesc: 'Cuộc họp này chỉ lưu trữ tệp âm thanh và video được mã hóa. Tính năng bóc băng và tóm tắt AI chưa được kích hoạt cho cuộc họp này.',
       audioPlayerTitle: 'Bản ghi âm (Đã giải mã)',
       playbackSpeed: 'Tốc độ phát',
+      seekedTo: 'Đã chuyển bản ghi đến {time}.',
       videoPlayerTitle: 'Bản ghi video (Đã giải mã)',
       consentRecord: 'Hồ sơ xác nhận đồng ý ghi âm',
       readersTitle: 'Người xem cuộc họp ({count})',

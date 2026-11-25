@@ -32,7 +32,7 @@ import {
   useRedactCandidatesQuery,
 } from '../components/meeting-redaction.tsx';
 import { MeetingTalkTime } from '../components/meeting-talk-time.tsx';
-import { MeetingTranscript } from '../components/meeting-transcript.tsx';
+import { MeetingTranscript, clock } from '../components/meeting-transcript.tsx';
 import { PlaybackSpeed } from '../components/playback-speed.tsx';
 import type { TranscriptRedacted } from '@ludy/kernel-contract';
 import { RecordNotesPanel, notesInstalled } from '../components/notes-panel.tsx';
@@ -110,7 +110,10 @@ export function MeetingDetailPage() {
     seekPlayers([audioRef.current, videoRef.current], second);
   };
   // A click on the time of a transcript line (#4816): the players that are loaded go to its start; nothing is marked or started.
-  const seekTo = (second: number) => void seekPlayers([audioRef.current, videoRef.current], second);
+  // The players sit above the transcript, so a short notice says that the click did something.
+  const seekTo = (second: number) => {
+    if (seekPlayers([audioRef.current, videoRef.current], second)) toast(t('detail.seekedTo', { time: clock(second) }), 'success');
+  };
   const videoPlayer = useRef<VideoTicketPlayer | null>(null);
 
   const meetingQuery = useQuery(

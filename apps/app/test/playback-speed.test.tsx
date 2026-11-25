@@ -35,7 +35,7 @@ describe('PlaybackSpeed', () => {
     for (const label of ['1x', '1.25x', '1.5x', '2x']) expect(html).toContain(`>${label}</button>`);
     const vi = render(1.5, 'vi');
     expect(vi).toContain(`aria-label="${viMessages.meetings.detail.playbackSpeed}"`);
-    expect(viMessages.meetings.transcript.seekTo).toContain('{time}');
-    expect(en.meetings.transcript.seekTo).toContain('{time}');
+    expect(viMessages.meetings.detail.seekedTo).toContain('{time}');
+    expect(en.meetings.detail.seekedTo).toContain('{time}');
   });
 });

@@ -5542,6 +5542,7 @@ export const en = {
       aiOffCardDesc: 'This meeting only stores encrypted audio and video files. AI transcription and summarization are not enabled for this meeting.',
       audioPlayerTitle: 'Audio recording (Decrypted)',
       playbackSpeed: 'Playback speed',
+      seekedTo: 'Recording moved to {time}.',
       videoPlayerTitle: 'Video recording (Decrypted)',
       consentRecord: 'Recording consent record',
       readersTitle: 'Meeting readers ({count})',

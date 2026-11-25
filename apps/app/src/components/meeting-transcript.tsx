@@ -74,7 +74,7 @@ function Line({ segment, editable, focused, focusToken, translation, onSeek }: {
       <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
         {onSeek ? (
           // The time of a line goes to the start of the line in the recording (#4816); it only moves the player, playing stays the person's own click.
-          <button type="button" className="rounded px-1 font-mono underline-offset-2 hover:underline focus-visible:outline-2 max-md:min-h-11" aria-label={t('seekTo', { time: clock(segment.startSeconds) })} onClick={() => onSeek(segment.startSeconds)} data-testid="transcript-seek">
+          <button type="button" className="rounded px-1 font-mono underline-offset-2 hover:underline focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none max-md:min-h-11" aria-label={t('seekTo', { time: clock(segment.startSeconds) })} onClick={() => onSeek(segment.startSeconds)} data-testid="transcript-seek">
             {clock(segment.startSeconds)}
           </button>
         ) : (
