@@ -1064,8 +1064,8 @@ export const TRANSLATION_SEGMENTS_MAX = 1 + RESULT_DECISIONS_MAX + ITEMS_PER_MEE
 export const TRANSLATION_SEGMENT_TEXT_MAX = 12_000;
 const zTranslationStage = z.enum(TRANSLATION_STAGES);
 // 'summary', 'decision:<index>' or 'item:<id>': what a segment translates.
-const zTranslationKey = z.string().regex(/^(?:summary|decision:\d{1,3}|item:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/);
-const zTranslationHash = z.string().regex(/^[0-9a-f]{64}$/);
+export const zTranslationKey = z.string().regex(/^(?:summary|decision:\d{1,3}|item:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/);
+export const zTranslationHash = z.string().regex(/^[0-9a-f]{64}$/);
 export const zTranslationSegment = z.strictObject({
   key: zTranslationKey,
   // '' for a refused segment: the original shows, with a fixed word.
