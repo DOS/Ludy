@@ -71,6 +71,7 @@ function Line({ segment, editable, focused, focusToken, translation, onSeek, mar
     onSuccess: () => {
       setEditing(false);
       void queryClient.invalidateQueries({ queryKey: orpc.meetings.transcript.key() });
+      void queryClient.invalidateQueries({ queryKey: orpc.meetings.speakingStyle.key() });
       // The tracked words are counted from the lines (#4818).
       void queryClient.invalidateQueries({ queryKey: orpc.meetings.tracker.hits.key() });
     },
@@ -204,6 +205,7 @@ function VyTranscribe({ meetingId, hasDraft }: { meetingId: string; hasDraft: bo
   });
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: orpc.meetings.transcript.key() });
+    void queryClient.invalidateQueries({ queryKey: orpc.meetings.speakingStyle.key() });
   };
   const start = useMutation({ mutationFn: () => orpc.meetings.transcript.start.call({ meetingId }), onSuccess: refresh });
   // Stops the recorder's own run (#3033), so a lost job does not hold their slot until it expires.

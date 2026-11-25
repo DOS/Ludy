@@ -273,6 +273,7 @@ describe('meetings commands and queries construction', () => {
       'meetings.mcp.search',
       'meetings.mcp.visible_ids',
       'meetings.transcript.download',
+      'meetings.speaking_style.get',
     ]);
 
     expect(meetingList.name).toBe('meetings.meeting.list');

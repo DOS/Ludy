@@ -177,6 +177,7 @@ export * from './meeting-commitments.ts';
 export * from './meeting-voice-cue.ts';
 export * from './meeting-open-points.ts';
 export * from './invisible-chars.ts';
+export * from './meeting-speaking-style.ts';
 export * from './meeting-transcript-export.ts';
 export * from './meeting-glossary.ts';
 export * from './meeting-minutes-templates.ts';

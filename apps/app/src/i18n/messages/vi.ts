@@ -5321,6 +5321,18 @@ export const vi = {
       line: 'Thời gian nói: {list}',
       lineMore: 'Thời gian nói: {list} và {count, number} người khác',
     },
+    speakingStyle: {
+      title: 'Cách nói',
+      desc: 'Tính từ các dòng bản ghi lời bạn đang đọc: tốc độ nói, từ đệm và đoạn nói liền dài nhất của từng người. Không dùng AI.',
+      speaker: 'Người nói',
+      pace: 'Tốc độ (từ/phút)',
+      paceNone: '-',
+      fillers: 'Từ đệm',
+      topFillers: 'Hay dùng nhất',
+      none: '-',
+      stretch: 'Nói liền dài nhất',
+      note: 'Từ đệm tính theo một danh sách cố định (ờ, à, ừm, kiểu như, thì là, um, uh, you know). Đây chỉ là số liệu về bản ghi, không phải đánh giá một người; tốc độ chỉ hiện khi người đó nói đủ lâu.',
+    },
     trackers: {
       title: 'Từ khóa theo dõi',
       desc: 'Những từ và cụm từ tổ chức của bạn theo dõi, và số lần chúng được nhắc trong cuộc họp này. Bấm vào giờ để đến đó.',

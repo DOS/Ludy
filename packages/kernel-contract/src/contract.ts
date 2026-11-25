@@ -1,5 +1,6 @@
 import { oc } from '@orpc/contract';
 import { z } from 'zod';
+import { zSpeakingStyle, zSpeakingStyleInput } from './meeting-speaking-style.ts';
 import { zTranscriptExport, zTranscriptExportInput } from './meeting-transcript-export.ts';
 import { ORG_KINDS } from './apps.ts';
 import { zChapters, zChaptersCopied, zChaptersCopy, zChaptersSave, zChaptersSaved } from './meeting-chapters.ts';
@@ -1944,6 +1945,8 @@ export const contract = {
     },
     // Search across the transcript lines the caller reads (L2, #2589): plain folded text search, no model call.
     search: oc.input(zMeetingSearchInput).output(zMeetingSearchResult),
+    // How each speaker spoke (#4919): pace, filler words and the longest stretch without a pause, counted by code from the lines the caller reads. Counts and words of a fixed list only.
+    speakingStyle: { get: oc.input(zSpeakingStyleInput).output(zSpeakingStyle) },
     // Ask across meetings (A3, #3161): the member's own Vy answers a question from the lines the member's own search finds, each sentence with a citation to a transcript line; nothing is stored or sent.
     // `status` is the box (may Vy be asked now, the cost of one question), `ask` is the click.
     ask: {
