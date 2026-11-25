@@ -27,6 +27,7 @@ suite('eSign meeting minutes are bound to the minutes by the server (#4532)', ()
   const dbName = `crove_test_sign_mtg_rev_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminPool: Pool | undefined;
   let appPool: Pool | undefined;
+  let appDb: ReturnType<typeof createDb>;
   let runtime: Runtime;
 
   let orgId = '';
@@ -36,7 +37,7 @@ suite('eSign meeting minutes are bound to the minutes by the server (#4532)', ()
 
   const asUser = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal1' as const });
 
-  async function ingestPdf(userId: string, tag: string): Promise<string> {
+  async function ingestPdf(userId: string, tag: string, targetOrgId = orgId): Promise<string> {
     const bytes = Uint8Array.from(Buffer.from(`%PDF-1.4\n% mtg-rev-${tag}\n1 0 obj\n<< /Type /Catalog >>\nendobj\ntrailer\n<<>>\n%%EOF\n`, 'utf8'));
     const sha256 = sha256Hex(bytes);
     const { fileId } = await runtime.execute<{ fileId: string }>(
@@ -46,11 +47,11 @@ suite('eSign meeting minutes are bound to the minutes by the server (#4532)', ()
         contentType: 'application/pdf',
         sizeBytes: bytes.byteLength,
         sha256,
-        storageKey: fileKey(orgId, sha256),
+        storageKey: fileKey(targetOrgId, sha256),
         generation: contentGeneration(sha256),
         source: 'sign_document',
       },
-      { actor: asUser(userId), orgId },
+      { actor: asUser(userId), orgId: targetOrgId },
     );
     return fileId;
   }
@@ -121,7 +122,7 @@ suite('eSign meeting minutes are bound to the minutes by the server (#4532)', ()
 
     adminPool = createDbPool({ connectionString: adminUrl, max: 2 }, ids);
     appPool = createDbPool({ connectionString: loginUrl.toString(), max: 4 }, ids);
-    const appDb = createDb(appPool);
+    appDb = createDb(appPool);
 
     runtime = new Runtime(appDb, { manifests: TEST_MANIFESTS })
       .register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) })
@@ -242,5 +243,149 @@ suite('eSign meeting minutes are bound to the minutes by the server (#4532)', ()
     const second = await create(recorderId, meetingId, await ingestPdf(recorderId, `second-${randomUUID()}`));
     expect((await bySource(attendeeId, meetingId)).map((i) => [i.envelopeId, i.stale])).toEqual([[second.envelopeId, false]]);
     expect(await storedRevision(second.envelopeId)).toBe(await currentRevision(meetingId));
+  });
+
+  it('returns NULL from meeting_minutes_revision for unshared owners and cross-org callers, and guards forged cross-org BEFORE INSERT trigger lookups (#4726)', async () => {
+    // 1. Attendees-only meeting in orgId: recorder & attendee can read the minutes, but the org owner is NOT a reader.
+    const { meetingId: attendeesMeetingId } = await runtime.execute<{ meetingId: string }>(
+      'meetings.meeting.create',
+      {
+        title: `Hop Rieng ${randomUUID().slice(0, 8)}`,
+        language: 'vi',
+        visibility: 'attendees',
+        keepVideo: false,
+        liveNotes: false,
+        summaryTemplate: 'general',
+        consentMethod: 'told_at_start',
+        readerUserIds: [attendeeId],
+      },
+      { actor: asUser(recorderId), orgId },
+    );
+    await publishSummary(attendeesMeetingId, 'Bien ban cuoc hop noi bo rieng tu.');
+    const expectedAttendeesRev = await currentRevision(attendeesMeetingId);
+    expect(expectedAttendeesRev).toMatch(/^[0-9a-f]{64}$/);
+
+    // 2. Second org with an org-visible published meeting.
+    const otherOwnerId = await upsertIdentity(appDb, {
+      issuer: 'mtg-rev',
+      subject: `other-owner-${randomUUID().slice(0, 8)}`,
+      email: `other-owner-${randomUUID().slice(0, 8)}@mtg-rev.test`,
+      name: 'Other Owner',
+    });
+    const otherOrgId = (await createOrg(runtime, asUser(otherOwnerId), 'Cong ty Khac')).orgId;
+    await adminPool!.query('UPDATE crove_kernel.tenant SET meeting_minutes_esign = true WHERE org_id = $1::uuid', [otherOrgId]).catch((error: { code?: string }) => {
+      if (error.code !== '42703') throw error;
+    });
+    const { meetingId: otherMeetingId } = await runtime.execute<{ meetingId: string }>(
+      'meetings.meeting.create',
+      {
+        title: `Hop Org Khac ${randomUUID().slice(0, 8)}`,
+        language: 'vi',
+        visibility: 'org',
+        keepVideo: false,
+        liveNotes: false,
+        summaryTemplate: 'general',
+        consentMethod: 'told_at_start',
+      },
+      { actor: asUser(otherOwnerId), orgId: otherOrgId },
+    );
+    await runtime.execute('meetings.summary.save', { meetingId: otherMeetingId, summary: 'Bi mat org B', decisions: ['Quyet dinh B'] }, { actor: asUser(otherOwnerId), orgId: otherOrgId });
+    await runtime.execute('meetings.result.publish', { meetingId: otherMeetingId, confirmed: true }, { actor: asUser(otherOwnerId), orgId: otherOrgId });
+    const otherRev = (await adminPool!.query<{ r: string | null }>('SELECT crove_sign.meeting_minutes_revision_raw($1::uuid, $2::uuid) AS r', [otherOrgId, otherMeetingId])).rows[0]!.r;
+    expect(otherRev).toMatch(/^[0-9a-f]{64}$/);
+
+    const queryRevisionAs = async (userId: string, targetMeetingId: string): Promise<string | null> => {
+      const client = await appPool!.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(userId, orgId)]);
+        const { rows } = await client.query<{ r: string | null }>('SELECT crove_sign.meeting_minutes_revision($1::uuid) AS r', [targetMeetingId]);
+        return rows[0]?.r ?? null;
+      } finally {
+        await client.query('ROLLBACK').catch(() => {});
+        client.release();
+      }
+    };
+
+    // Authorized recorder reads current revision; unshared org owner and cross-org callers receive NULL.
+    expect(await queryRevisionAs(recorderId, attendeesMeetingId)).toBe(expectedAttendeesRev);
+    expect(await queryRevisionAs(ownerId, attendeesMeetingId)).toBeNull();
+    expect(await queryRevisionAs(ownerId, otherMeetingId)).toBeNull();
+    expect(await queryRevisionAs(recorderId, otherMeetingId)).toBeNull();
+
+    // 3. Forged cross-org INSERT from orgId's owner targeting otherOrgId / otherMeetingId:
+    //    must be rejected by RLS and must short-circuit source_revision to 'legacy' BEFORE RLS runs (never hashing otherOrg's minutes).
+    const ownerFile = await ingestPdf(ownerId, `cross-org-${randomUUID()}`);
+    const probeCrossOrgInsert = async () => {
+      const client = await appPool!.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(ownerId, orgId)]);
+        await client.query('SAVEPOINT sp_cross_org');
+        await expect(
+          client.query(
+            `INSERT INTO crove_sign.envelope (
+               org_id, title, status, routing_mode, source_kind, source_id,
+               source_file_id, source_storage_key, source_generation, source_sha256,
+               inspect_status, created_by
+             )
+             SELECT $1::uuid, 'Forged Cross Org', 'draft', 'parallel', 'meeting_minutes', $2::uuid,
+                    f.id, f.storage_key, f.generation, f.sha256, 'pending', $3::uuid
+             FROM crove_kernel.file f WHERE f.org_id = $4::uuid AND f.id = $5::uuid`,
+            [otherOrgId, otherMeetingId, ownerId, orgId, ownerFile],
+          ),
+        ).rejects.toThrow(/row-level security policy/);
+        await client.query('ROLLBACK TO SAVEPOINT sp_cross_org');
+      } finally {
+        await client.query('ROLLBACK').catch(() => {});
+        client.release();
+      }
+    };
+
+    await probeCrossOrgInsert();
+    expect(
+      (await adminPool!.query<{ n: string }>('SELECT count(*)::text AS n FROM crove_sign.envelope WHERE org_id = $1::uuid', [otherOrgId])).rows[0]?.n,
+    ).toBe('0');
+
+    // Verify BEFORE INSERT trigger order: install an alphabetical later trigger (`z_assert_legacy_on_cross_org`) that fails if
+    // `envelope_minutes_revision` did NOT short-circuit cross-org `NEW.source_revision` to `'legacy'` before RLS ran.
+    await adminPool!.query(
+      `CREATE FUNCTION crove_sign.z_assert_legacy_on_cross_org() RETURNS trigger
+       LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
+       BEGIN
+         IF NEW.source_revision IS DISTINCT FROM 'legacy' THEN
+           RAISE EXCEPTION 'CROSS_ORG_HASH_COMPUTED:%', NEW.source_revision;
+         END IF;
+         RETURN NEW;
+       END $$`,
+    );
+    try {
+      await adminPool!.query(
+        'CREATE TRIGGER z_assert_legacy_on_cross_org BEFORE INSERT ON crove_sign.envelope FOR EACH ROW EXECUTE FUNCTION crove_sign.z_assert_legacy_on_cross_org()',
+      );
+      await probeCrossOrgInsert();
+    } finally {
+      await adminPool!.query('DROP TRIGGER IF EXISTS z_assert_legacy_on_cross_org ON crove_sign.envelope');
+      await adminPool!.query('DROP FUNCTION IF EXISTS crove_sign.z_assert_legacy_on_cross_org()');
+    }
+
+    // No-context admin insert targeting otherOrgId / otherMeetingId still computes the real minutes revision.
+    const adminRowId = randomUUID();
+    const otherFileId = await ingestPdf(otherOwnerId, `admin-other-${randomUUID()}`, otherOrgId);
+    await adminPool!.query(
+      `INSERT INTO crove_sign.envelope (
+         org_id, id, title, status, routing_mode, source_kind, source_id,
+         source_file_id, source_storage_key, source_generation, source_sha256,
+         inspect_status, created_by
+       )
+       SELECT $1::uuid, $2::uuid, 'Admin Insert', 'draft', 'parallel', 'meeting_minutes', $3::uuid,
+              f.id, f.storage_key, f.generation, f.sha256, 'pending', $4::uuid
+       FROM crove_kernel.file f WHERE f.org_id = $1::uuid AND f.id = $5::uuid`,
+      [otherOrgId, adminRowId, otherMeetingId, otherOwnerId, otherFileId],
+    );
+    const adminStored = (
+      await adminPool!.query<{ r: string | null }>('SELECT source_revision AS r FROM crove_sign.envelope WHERE org_id = $1::uuid AND id = $2::uuid', [otherOrgId, adminRowId])
+    ).rows[0]?.r;
+    expect(adminStored).toBe(otherRev);
   });
 });
