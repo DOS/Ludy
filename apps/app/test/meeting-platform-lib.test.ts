@@ -19,6 +19,7 @@ const row = (over: Partial<MeetingPlatformRecordingView> = {}): MeetingPlatformR
   hasVideo: false,
   hasTranscript: false,
   videoImportMaxBytes: null,
+  picked: false,
   status: 'suggested',
   meetingId: null,
   errorCode: null,

@@ -12,9 +12,16 @@
 //   VITE_HOSTED_LOGIN_ORIGIN the origin of the hosted login's token endpoint (AUTH_HOSTED_LOGIN_TOKEN_URL) the browser calls
 //   VITE_STORAGE_ORIGIN   the bucket's public origin when files go to and from it by presigned URL (S3_PUBLIC_ENDPOINT)
 //   VITE_TURNSTILE        true when the booking page shows Cloudflare Turnstile (TURNSTILE_SITE_KEY)
+//   VITE_GOOGLE_PICKER    true when the meetings page lets a member pick a Google Meet recording in Google Picker (MEETINGS_GOOGLE_PICKER_API_KEY, ADR-0025 amendment of 2026-11-25)
 import type { Plugin } from 'vite';
 
 export const TURNSTILE_ORIGIN = 'https://challenges.cloudflare.com';
+// Google Picker and Google Identity Services (#3174): the same lists as the kernel's policy (a test keeps them equal).
+export const GOOGLE_PICKER_SCRIPT_SRC = ['https://apis.google.com', 'https://accounts.google.com/gsi/client'] as const;
+export const GOOGLE_PICKER_FRAME_SRC = ['https://docs.google.com', 'https://accounts.google.com/gsi/'] as const;
+export const GOOGLE_PICKER_CONNECT_SRC = ['https://accounts.google.com/gsi/'] as const;
+export const GOOGLE_PICKER_STYLE_SRC = ['https://accounts.google.com/gsi/style'] as const;
+export const GOOGLE_PICKER_TRUSTED_TYPES = ['ludy-google', 'goog#html', 'gapi#gapi'] as const;
 
 // Directives that name no origin: sent as a header by the static host. The trusted-types allowlist is in the meta policy
 // (it depends on Turnstile); the header only turns the requirement on.
@@ -32,6 +39,7 @@ export interface CspOrigins {
   storageOrigin?: string | undefined;
   hostedLoginOrigin?: string | undefined;
   turnstile?: boolean | undefined;
+  googlePicker?: boolean | undefined;
 }
 
 function originOf(name: string, raw: string): string {
@@ -52,14 +60,14 @@ export function metaCsp(origins: CspOrigins): string {
   const connect = ["'self'", ...new Set([origins.authOrigin ?? origins.apiOrigin, origins.apiOrigin, ...(origins.storageOrigin ? [origins.storageOrigin] : []), ...(origins.hostedLoginOrigin ? [origins.hostedLoginOrigin] : [])])];
   return [
     "default-src 'self'",
-    origins.turnstile ? `script-src 'self' ${TURNSTILE_ORIGIN}` : "script-src 'self'",
-    "style-src 'self'",
+    `script-src 'self'${origins.turnstile ? ` ${TURNSTILE_ORIGIN}` : ''}${origins.googlePicker ? ` ${GOOGLE_PICKER_SCRIPT_SRC.join(' ')}` : ''}`,
+    origins.googlePicker ? `style-src 'self' ${GOOGLE_PICKER_STYLE_SRC.join(' ')}` : "style-src 'self'",
     "img-src 'self' blob: data:",
     // Audio plays from a blob URL, and a meeting's video from the API's stream route by ticket (#2703).
     `media-src 'self' blob: ${origins.apiOrigin}`,
-    `connect-src ${connect.join(' ')}`,
-    ...(origins.turnstile ? [`frame-src ${TURNSTILE_ORIGIN}`] : []),
-    origins.turnstile ? 'trusted-types ludy-sw ludy-turnstile' : 'trusted-types ludy-sw',
+    `connect-src ${[...connect, ...(origins.googlePicker ? GOOGLE_PICKER_CONNECT_SRC : [])].join(' ')}`,
+    ...(origins.turnstile || origins.googlePicker ? [`frame-src ${[...(origins.turnstile ? [TURNSTILE_ORIGIN] : []), ...(origins.googlePicker ? GOOGLE_PICKER_FRAME_SRC : [])].join(' ')}`] : []),
+    `trusted-types ludy-sw${origins.turnstile ? ' ludy-turnstile' : ''}${origins.googlePicker ? ` ${GOOGLE_PICKER_TRUSTED_TYPES.join(' ')}` : ''}`,
   ].join('; ');
 }
 
@@ -76,6 +84,7 @@ export function cspOriginsFromEnv(env: Record<string, string | undefined>): CspO
     storageOrigin: storage === '' ? undefined : originOf('VITE_STORAGE_ORIGIN', storage),
     hostedLoginOrigin: hosted === '' ? undefined : originOf('VITE_HOSTED_LOGIN_ORIGIN', hosted),
     turnstile: (env['VITE_TURNSTILE'] ?? '').trim() === 'true',
+    googlePicker: (env['VITE_GOOGLE_PICKER'] ?? '').trim() === 'true',
   };
 }
 

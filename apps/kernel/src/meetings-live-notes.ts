@@ -11,8 +11,7 @@
 //   5. kernel.member_vy.run.finish closes the run.
 // It writes no meeting table: the recorder's own tick copies the result into the preview (meetings.live.tick). A piece that is gone (the final recording landed
 // and the sweep took its file) is skipped, not an error: the live notes end cleanly and the batch transcript takes over. The job is never retried by the queue.
-import { aiCost, transcribeChunks, withAiScope, type AiCall, type AiMeter, type AiUsage, type TranscribeConfig, type TranscribeInput } from '@ludy/agent';
-import { AiBudgetExhaustedError } from '@ludy/agent';
+import { transcribeChunks, withAiScope, type TranscribeConfig, type TranscribeInput } from '@ludy/agent';
 import {
   DomainError,
   decryptBlobBuffer,
@@ -27,6 +26,7 @@ import {
 } from '@ludy/kernel-runtime';
 import { LIVE_LINE_TEXT_MAX, LIVE_WINDOW_PIECES, zLiveResult } from '@ludy/kernel-contract';
 import { TRANSCRIPT_RESULT_MAX, liveContainerHeader, livePieceFile } from '@ludy/mod-meetings';
+import { memberVyRunMeter } from './ai-meter.ts';
 import { failureCode } from './meetings-transcribe.ts';
 import type { MediaMeasurer } from './meetings-measure.ts';
 
@@ -69,38 +69,6 @@ interface OpenPiece {
 interface OpenWindow {
   language: string;
   pieces: OpenPiece[];
-}
-
-// The meter of one window: admission enters the member's context again (a spent budget or a switch refuses there), and the record is the system's row for the
-// run's agent. The same shape as the transcription run's meter.
-class WindowMeter implements AiMeter {
-  private readonly deps: MeetingsLiveNotesDeps;
-  private readonly vy: MemberVyRuntime;
-  private readonly job: MeetingsLiveNotesJob;
-
-  constructor(deps: MeetingsLiveNotesDeps, vy: MemberVyRuntime, job: MeetingsLiveNotesJob) {
-    this.deps = deps;
-    this.vy = vy;
-    this.job = job;
-  }
-
-  async admit(call: AiCall): Promise<void> {
-    const projected = call.expected ? aiCost([call.expected], this.deps.price) : '0';
-    try {
-      await this.vy.query('kernel.member_vy.run.check', /^0+(?:\.0+)?$/.test(projected) ? {} : { projectedCost: projected });
-    } catch (error: unknown) {
-      if (error instanceof DomainError && error.code === 'BUDGET_EXHAUSTED') throw new AiBudgetExhaustedError('module', null);
-      throw error;
-    }
-  }
-
-  async record(call: AiCall, usage: AiUsage): Promise<void> {
-    await this.deps.runtime.execute(
-      'kernel.ai.usage.record',
-      { feature: call.feature, module: call.module, agentId: this.job.agentId, inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, cost: aiCost([usage], this.deps.price) },
-      { actor: SYSTEM, orgId: this.job.orgId },
-    );
-  }
 }
 
 // One piece, fetched and decrypted under its own key. The door is opened again for every piece, so the whole gate is re-checked before each one.
@@ -170,7 +138,12 @@ export async function runMeetingsLiveNotes(deps: MeetingsLiveNotesDeps, job: Mee
       meetingId: job.meetingId,
       live: { afterSeq: job.afterSeq, limit: Math.min(Math.max(job.pieces, 1), LIVE_WINDOW_PIECES) },
     });
-    const scope = { orgId: job.orgId, agentId: job.agentId, memberRunId: job.runId, meter: new WindowMeter(deps, vy, job) };
+    const scope = {
+      orgId: job.orgId,
+      agentId: job.agentId,
+      memberRunId: job.runId,
+      meter: memberVyRunMeter({ runtime: deps.runtime, vy, actor: SYSTEM, orgId: job.orgId, agentId: job.agentId, price: deps.price }),
+    };
     const lines: Array<[number, number, number, string]> = [];
     // The header of the first piece, read when the first later piece needs it.
     const header: { value: Uint8Array | null | undefined } = { value: undefined };

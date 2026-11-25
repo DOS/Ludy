@@ -1,9 +1,73 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
--- The org purge deletes the tracker alert opt-ins of the org too (#4873): ludy_meetings.tracker_alert is a tenant table of Meetings, a member's own opt-in row (no word, no meeting, no text).
--- It refers to no meeting and no file, so its place in the list is free.
--- This replaces ludy_kernel.org_purge with the previous version (the latest on main when this was written: 20270324250100_ludy_kernel_org_purge_minutes_version.sql) plus that one table in the first list; nothing else changes.
+-- Hard-cap AI budget concurrency reservations (issue #3979, audit SEC-07). Idempotent; applied files stay untouched.
+--
+-- ludy_kernel.ai_budget_reservation  short-lived holds created inside Runtime.execute() under an org-scoped advisory
+--                                    transaction lock before an external AI provider call begins, released when
+--                                    record() commits org_usage, released immediately when a provider call fails,
+--                                    and swept on expiry (15 minute TTL) so concurrent calls cannot slip past a
+--                                    hard_stop monthly budget together.
+-- ludy_kernel.ai_budget_reserved     active (unexpired) reserved amount for a budget scope ('org', 'module', 'agent').
+-- ludy_kernel.ai_budget_exhausted    restated to include active reservations alongside committed ai_budget_spent.
+-- ludy_kernel.org_purge              restated from 20270324250100 with ludy_kernel.ai_budget_reservation added.
 SET LOCAL lock_timeout = '2s';
 
+CREATE TABLE IF NOT EXISTS ludy_kernel.ai_budget_reservation (
+  org_id uuid NOT NULL REFERENCES ludy_kernel.tenant (org_id) ON DELETE CASCADE,
+  id uuid NOT NULL DEFAULT ludy_kernel.uuid_v7(),
+  module text NOT NULL CHECK (module ~ '^[a-z][a-z0-9_]*$'),
+  agent_id uuid,
+  actor_user_id uuid,
+  feature text NOT NULL CHECK (feature ~ '^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$' AND pg_catalog.length(feature) <= 60),
+  amount numeric(18, 6) NOT NULL CHECK (amount >= 0 AND amount < 'Infinity'::numeric AND amount <> 'NaN'::numeric),
+  expires_at timestamptz NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT pg_catalog.now(),
+  PRIMARY KEY (org_id, id)
+);
+
+CREATE INDEX IF NOT EXISTS ai_budget_reservation_org_expiry_idx
+  ON ludy_kernel.ai_budget_reservation (org_id, expires_at);
+CREATE INDEX IF NOT EXISTS ai_budget_reservation_scope_idx
+  ON ludy_kernel.ai_budget_reservation (org_id, module, agent_id, expires_at);
+
+SELECT ludy_kernel.apply_tenant_rls('ludy_kernel.ai_budget_reservation');
+-- Reservations are created on admit and deleted on record, release or expiry; never edited in place.
+REVOKE UPDATE ON ludy_kernel.ai_budget_reservation FROM ludy_tenant;
+
+-- In-flight unexpired reservations covering a budget's scope ('org', 'module', 'agent').
+CREATE OR REPLACE FUNCTION ludy_kernel.ai_budget_reserved(p_org uuid, p_scope text, p_target text) RETURNS numeric
+LANGUAGE sql STABLE SET search_path = pg_catalog, pg_temp AS $$
+  SELECT COALESCE(pg_catalog.sum(r.amount), 0)
+  FROM ludy_kernel.ai_budget_reservation r
+  WHERE r.org_id = p_org
+    AND r.expires_at > pg_catalog.now()
+    AND (
+      p_scope = 'org'
+      OR (p_scope = 'module' AND r.module = p_target)
+      OR (p_scope = 'agent' AND r.agent_id::text = p_target)
+    )
+$$;
+
+REVOKE ALL ON FUNCTION ludy_kernel.ai_budget_reserved(uuid, text, text)
+  FROM PUBLIC, ludy_tenant, ludy_app, ludy_worker, ludy_definer_tenant;
+GRANT EXECUTE ON FUNCTION ludy_kernel.ai_budget_reserved(uuid, text, text) TO ludy_tenant;
+
+-- Hard-stop check including both committed monthly spend and live in-flight reservations.
+CREATE OR REPLACE FUNCTION ludy_kernel.ai_budget_exhausted(p_org uuid, p_module text, p_agent uuid) RETURNS boolean
+LANGUAGE sql STABLE SET search_path = pg_catalog, pg_temp AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM ludy_kernel.budget_policy b
+    WHERE b.org_id = p_org AND b.hard_stop
+      AND (b.scope = 'org' OR (b.scope = 'module' AND b.target = p_module) OR (b.scope = 'agent' AND b.target = p_agent::text))
+      AND ludy_kernel.ai_budget_spent(p_org, b.scope, b.target)
+        + ludy_kernel.ai_budget_reserved(p_org, b.scope, b.target) >= b.monthly_limit)
+$$;
+
+REVOKE ALL ON FUNCTION ludy_kernel.ai_budget_exhausted(uuid, text, uuid)
+  FROM PUBLIC, ludy_tenant, ludy_app, ludy_worker, ludy_definer_tenant;
+GRANT EXECUTE ON FUNCTION ludy_kernel.ai_budget_exhausted(uuid, text, uuid) TO ludy_tenant;
+
+-- Restate ludy_kernel.org_purge from 20270324250100_ludy_kernel_org_purge_minutes_version
+-- with ludy_kernel.ai_budget_reservation added to v_kernel_first (issue #3979).
 CREATE OR REPLACE FUNCTION ludy_kernel.org_purge(p_min_days integer)
  RETURNS TABLE(outcome text, counts jsonb, blob_keys text[])
  LANGUAGE plpgsql
@@ -46,7 +110,7 @@ DECLARE
     'ludy_kernel.member_vy_memory', 'ludy_kernel.member_vy_result',
     'ludy_hr.candidate', 'ludy_hr.job_opening',
     'ludy_hr.payroll_bank_template', 'ludy_hr.payroll_dependent', 'ludy_hr.attendance_log', 'ludy_hr.attendance_qr_config', 'ludy_hr.onboarding_submission', 'ludy_hr.overtime_request', 'ludy_hr.probation_review', 'ludy_hr.leave_request', 'ludy_hr.payroll_leave_entry', 'ludy_hr.employee_asset_handover', 'ludy_hr.okr_key_result', 'ludy_hr.okr_objective', 'ludy_hr.payroll_employee', 'ludy_hr.department',
-    'ludy_meetings.tracker_alert', 'ludy_meetings.tracker_term', 'ludy_meetings.glossary_term', 'ludy_meetings.minutes_template', 'ludy_meetings.chat_post_body', 'ludy_meetings.chat_post', 'ludy_meetings.chat_channel_target', 'ludy_meetings.chat_channel', 'ludy_meetings.morning_notice', 'ludy_meetings.calendar_agenda', 'ludy_meetings.capture_session', 'ludy_meetings.hook_delivery', 'ludy_meetings.member_hook', 'ludy_meetings.minutes_version', 'ludy_meetings.translation', 'ludy_meetings.meeting_note', 'ludy_meetings.media_key', 'ludy_meetings.action_item', 'ludy_meetings.meeting_result', 'ludy_meetings.transcript_segment', 'ludy_meetings.live_line', 'ludy_meetings.live_chunk', 'ludy_meetings.audio_segment', 'ludy_meetings.meeting_video', 'ludy_meetings.meeting_reader', 'ludy_meetings.meeting',
+    'ludy_meetings.tracker_term', 'ludy_meetings.glossary_term', 'ludy_meetings.minutes_template', 'ludy_meetings.chat_post_body', 'ludy_meetings.chat_post', 'ludy_meetings.chat_channel_target', 'ludy_meetings.chat_channel', 'ludy_meetings.morning_notice', 'ludy_meetings.calendar_agenda', 'ludy_meetings.capture_session', 'ludy_meetings.hook_delivery', 'ludy_meetings.member_hook', 'ludy_meetings.minutes_version', 'ludy_meetings.translation', 'ludy_meetings.meeting_note', 'ludy_meetings.media_key', 'ludy_meetings.action_item', 'ludy_meetings.meeting_result', 'ludy_meetings.transcript_segment', 'ludy_meetings.live_line', 'ludy_meetings.live_chunk', 'ludy_meetings.audio_segment', 'ludy_meetings.meeting_video', 'ludy_meetings.meeting_reader', 'ludy_meetings.meeting',
     'ludy_kernel.saved_reply', 'ludy_kernel.conversation_setting', 'ludy_kernel.member_availability', 'ludy_kernel.conversation_composing', 'ludy_kernel.conversation_draft', 'ludy_kernel.conversation_note', 'ludy_kernel.conversation_read', 'ludy_kernel.conversation_attachment', 'ludy_kernel.conversation_message', 'ludy_kernel.conversation', 'ludy_kernel.conversation_identity', 'ludy_kernel.channel_access',
     'ludy_ads.ad_flag_setting', 'ludy_ads.ad_campaign_request', 'ludy_ads.ad_campaign_draft', 'ludy_ads.ad_spend_cap', 'ludy_ads.ad_org_setting', 'ludy_ads.ad_sync_run', 'ludy_ads.ad_spend_day', 'ludy_ads.ad_account',
     'ludy_kernel.today_mail', 'ludy_kernel.saved_view', 'ludy_notes.link', 'ludy_notes.todo', 'ludy_notes.todo_list', 'ludy_notes.attachment', 'ludy_notes.note_version', 'ludy_notes.note', 'ludy_notes.notebook', 'ludy_notes.note_template',
@@ -60,7 +124,7 @@ DECLARE
     'ludy_kernel.idempotency_key', 'ludy_kernel.extension_token', 'ludy_kernel.extension_auth_code', 'ludy_kernel.agent_wake_delivery', 'ludy_kernel.agent_wake_signal_seen', 'ludy_kernel.agent_grant_wake', 'ludy_kernel.agent_grant', 'ludy_kernel.oauth_state', 'ludy_kernel.outbox_pending', 'ludy_kernel.outbox_held',
     'ludy_kernel.proposal_policy', 'ludy_kernel.refusal_tally', 'ludy_kernel.tax_obligation_done',
     'ludy_kernel.tax_profile', 'ludy_kernel.usage_deferral', 'ludy_kernel.file_upload', 'ludy_kernel.record_le',
-    'ludy_kernel.budget_policy', 'ludy_kernel.kill_switch', 'ludy_kernel.credential', 'ludy_kernel.subject_key', 'ludy_kernel.calendar_credential',
+    'ludy_kernel.ai_budget_reservation', 'ludy_kernel.budget_policy', 'ludy_kernel.kill_switch', 'ludy_kernel.credential', 'ludy_kernel.subject_key', 'ludy_kernel.calendar_credential',
     'ludy_finance.vendor_account_rule', 'ludy_finance.categorization_rule', 'ludy_finance.stock_alias', 'ludy_finance.marketplace_column_profile', 'ludy_finance.marketplace_party', 'ludy_finance.einvoice_connection', 'ludy_finance.marketplace_hook_notice', 'ludy_finance.marketplace_hook', 'ludy_finance.marketplace_connection_file', 'ludy_finance.marketplace_vat_rate', 'ludy_finance.marketplace_connection', 'ludy_finance.marketplace_column_check', 'ludy_finance.misa_amis_match', 'ludy_finance.misa_amis_match_check', 'ludy_finance.misa_amis_push', 'ludy_finance.misa_amis_connection', 'ludy_finance.einvoice_series', 'ludy_finance.bank_party_rule', 'ludy_finance.customer_collection', 'ludy_finance.collection_setting', 'ludy_finance.bank_account_number', 'ludy_finance.bank_feed_webhook_notice', 'ludy_finance.bank_feed_hook', 'ludy_finance.bank_feed_account', 'ludy_finance.bank_feed_listed_account', 'ludy_crm.booking_feed', 'ludy_crm.booking', 'ludy_kernel.availability_rule',
     'ludy_kernel.calendar_event_link', 'ludy_kernel.calendar_event', 'ludy_kernel.calendar_connection', 'ludy_kernel.meeting_platform_recording', 'ludy_kernel.meeting_platform_credential', 'ludy_kernel.meeting_platform_connection', 'ludy_crm.sales_order_delivery', 'ludy_crm.sales_order_line', 'ludy_crm.sales_order', 'ludy_crm.quote_link', 'ludy_crm.quote_line', 'ludy_crm.quote', 'ludy_crm.quote_setting', 'ludy_crm.deal_next_step', 'ludy_crm.deal_setting', 'ludy_crm.deal', 'ludy_crm.pipeline_stage', 'ludy_crm.import_row', 'ludy_crm.import_batch', 'ludy_crm.event_type'];
   v_social text[] := ARRAY[

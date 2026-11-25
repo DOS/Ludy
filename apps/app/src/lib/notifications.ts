@@ -1,5 +1,9 @@
 // In-app notifications of the kernel, finance, notes, projects and meetings (#671): the kinds the settings list, what an item opens, and how
 // a VAT period reads. Social's are apart (lib/social-notifications.ts, #637). No React imports, so it is unit tested.
+import { z } from 'zod';
+import { FORMAT_LOCALE, type Locale } from '../i18n/locale.ts';
+import { steppedIndex } from './review.ts';
+import { readSearch, type Defined } from './search.ts';
 
 // The kinds a member can turn off, by module, in the order the settings list them.
 export const NOTIFICATION_KINDS = {
@@ -158,4 +162,168 @@ export function periodParts(period: string): { kind: 'month' | 'quarter'; label:
   const quarter = /^(\d{4})-Q([1-4])$/.exec(period);
   if (quarter) return { kind: 'quarter', label: `${quarter[2]}/${quarter[1]}` };
   return null;
+}
+
+export const NOTIFICATION_FILTERS = ['all', 'unread'] as const;
+export type NotificationFilter = (typeof NOTIFICATION_FILTERS)[number];
+
+export const NOTIFICATION_APP_FILTERS = ['teamwork', 'finance', 'engage', 'hr', 'sign', 'ai', 'kernel'] as const;
+export type NotificationAppFilter = (typeof NOTIFICATION_APP_FILTERS)[number];
+
+const zNotificationsSearch = z.object({
+  selected: z.string().trim().min(1).max(128).regex(/^(group:)?[a-zA-Z0-9_-]+$/).optional().catch(undefined),
+  filter: z.enum(NOTIFICATION_FILTERS).optional().catch(undefined),
+  app: z.enum(NOTIFICATION_APP_FILTERS).optional().catch(undefined),
+  todayMail: z.literal('off').optional().catch(undefined),
+});
+export type NotificationsSearch = Defined<z.output<typeof zNotificationsSearch>>;
+
+/** Validate /o/$slug/notifications URL search params, preserving legacy ?todayMail=off redirects. */
+export function parseNotificationsSearch(search: Record<string, unknown>): NotificationsSearch {
+  const selected = typeof search.selected === 'number' && Number.isSafeInteger(search.selected) ? String(search.selected) : search.selected;
+  return readSearch(zNotificationsSearch, { ...search, selected });
+}
+
+const FINANCE_KERNEL_KINDS = new Set(['kernel.approval_waiting', 'kernel.file_unreadable', 'kernel.original_flagged']);
+const TEAMWORK_KERNEL_KINDS = new Set(['kernel.task_assigned', 'kernel.task_rerouted']);
+const ENGAGE_KERNEL_KINDS = new Set(['kernel.conversation_new', 'kernel.channel_expired']);
+const AI_KERNEL_KINDS = new Set(['kernel.ai_budget', 'kernel.mcp_engage_reads']);
+
+/** Map a notification kind to its primary Ludy App (or 'kernel' for org-wide core notices). */
+export function notificationApp(kind: string): NotificationAppFilter {
+  if (kind.startsWith('finance.') || FINANCE_KERNEL_KINDS.has(kind)) return 'finance';
+  if (kind.startsWith('notes.') || kind.startsWith('projects.') || kind.startsWith('meetings.') || TEAMWORK_KERNEL_KINDS.has(kind)) return 'teamwork';
+  if (kind.startsWith('social.') || kind.startsWith('crm.') || kind.startsWith('ads.') || ENGAGE_KERNEL_KINDS.has(kind)) return 'engage';
+  if (kind.startsWith('hr.')) return 'hr';
+  if (kind.startsWith('sign.')) return 'sign';
+  if (AI_KERNEL_KINDS.has(kind)) return 'ai';
+  return 'kernel';
+}
+
+const APP_FILTER_ORDER: readonly NotificationAppFilter[] = ['finance', 'teamwork', 'engage', 'hr', 'sign', 'ai', 'kernel'];
+
+/** Distinct notification apps present in the feed (plus any currently active URL filter), in canonical order. */
+export function notificationAppsIn(items: readonly { kind: string }[], activeApp?: NotificationAppFilter): NotificationAppFilter[] {
+  const present = new Set(items.map((item) => notificationApp(item.kind)));
+  if (activeApp) present.add(activeApp);
+  return APP_FILTER_ORDER.filter((app) => present.has(app));
+}
+
+/** Filter notification items by read status and optional app filter while preserving newest-first order. */
+export function filterNotifications<T extends { kind: string; read: boolean }>(
+  items: readonly T[],
+  options: { filter?: NotificationFilter | undefined; app?: NotificationAppFilter | undefined },
+): T[] {
+  return items.filter((item) => {
+    if (options.filter === 'unread' && item.read) return false;
+    if (options.app && notificationApp(item.kind) !== options.app) return false;
+    return true;
+  });
+}
+
+/** Stable selection identifier for a rendered notification feed row (single item id or `group:<firstId>`). */
+export function notificationRowId<T extends { id: string }>(row: NotificationRow<T>): string {
+  return row.type === 'group' ? `group:${row.items[0]!.id}` : row.item.id;
+}
+
+/**
+ * Resolve which notification row or single item should show in the detail pane.
+ * Falls back to `allItems` for single-item selections so marking an item read under `filter=unread` keeps
+ * the open detail view intact; auto-selects the first row on desktop when nothing is explicitly selected.
+ */
+export function resolveNotificationSelection<T extends { id: string; kind: string; read: boolean }>(
+  rows: readonly NotificationRow<T>[],
+  allItems: readonly T[],
+  selected: string | undefined,
+  autoSelectFirst: boolean,
+): NotificationRow<T> | null {
+  if (selected) {
+    const exact = rows.find((row) => notificationRowId(row) === selected);
+    if (exact) return exact;
+    const isGroupKey = selected.startsWith('group:');
+    const itemId = isGroupKey ? selected.slice('group:'.length) : selected;
+    const itemRow = rows.find((row) => row.type === 'one' && row.item.id === itemId);
+    if (itemRow) return itemRow;
+    if (!isGroupKey) {
+      const fromAll = allItems.find((item) => item.id === itemId);
+      if (fromAll) return { type: 'one', item: fromAll };
+    }
+  }
+  return autoSelectFirst ? (rows[0] ?? null) : null;
+}
+
+export function stepNotificationRowIndex(currentIndex: number, total: number, delta: 1 | -1): number | null {
+  return steppedIndex(currentIndex, total, delta);
+}
+
+export interface NotificationKeyLike {
+  key: string;
+  metaKey: boolean;
+  ctrlKey: boolean;
+  altKey: boolean;
+  repeat?: boolean;
+  defaultPrevented?: boolean;
+  isComposing?: boolean;
+}
+
+/** Decide feed step direction for J/K (anywhere unblocked) and ArrowDown/ArrowUp (inside feed or plain page focus). */
+export function notificationFeedStepFromKey(
+  event: NotificationKeyLike,
+  context: { blocked: boolean; insideFeed: boolean; plainPageFocus: boolean },
+): 1 | -1 | null {
+  if (event.metaKey || event.ctrlKey || event.altKey || event.repeat || event.defaultPrevented || event.isComposing) {
+    return null;
+  }
+  if (context.blocked) return null;
+  const lower = event.key.toLowerCase();
+  if (lower === 'j') return 1;
+  if (lower === 'k') return -1;
+  if (event.key === 'ArrowDown' && (context.insideFeed || context.plainPageFocus)) return 1;
+  if (event.key === 'ArrowUp' && (context.insideFeed || context.plainPageFocus)) return -1;
+  return null;
+}
+
+const relativeFormats = new Map<Locale, Intl.RelativeTimeFormat>();
+
+function relativeFormat(locale: Locale): Intl.RelativeTimeFormat {
+  let rtf = relativeFormats.get(locale);
+  if (!rtf) {
+    rtf = new Intl.RelativeTimeFormat(FORMAT_LOCALE[locale], { numeric: 'auto' });
+    relativeFormats.set(locale, rtf);
+  }
+  return rtf;
+}
+
+/** Format a notification timestamp as locale-aware relative time (with absolute time placed in tooltip/detail). */
+export function formatRelativeNotificationTime(iso: string, locale: Locale, nowMs: number = Date.now()): string {
+  const ms = Date.parse(iso);
+  if (Number.isNaN(ms)) return '';
+  const diffSec = Math.round((ms - nowMs) / 1000);
+  const absSec = Math.abs(diffSec);
+  const rtf = relativeFormat(locale);
+  if (absSec < 60) return rtf.format(diffSec, 'second');
+  const diffMin = Math.round(diffSec / 60);
+  if (Math.abs(diffMin) < 60) return rtf.format(diffMin, 'minute');
+  const diffHours = Math.round(diffSec / 3600);
+  if (Math.abs(diffHours) < 24) return rtf.format(diffHours, 'hour');
+  const diffDays = Math.round(diffSec / 86_400);
+  if (Math.abs(diffDays) < 30) return rtf.format(diffDays, 'day');
+  const diffMonths = Math.round(diffSec / (86_400 * 30));
+  if (Math.abs(diffMonths) < 12) return rtf.format(diffMonths, 'month');
+  return rtf.format(Math.round(diffSec / (86_400 * 365)), 'year');
+}
+
+/** Return focus to the triggering feed row (or the first remaining feed row) after closing the mobile detail Sheet. */
+export function restoreNotificationRowFocus(
+  root: { querySelector: (selector: string) => { focus: () => void; isConnected?: boolean; tabIndex?: number } | null } | null | undefined,
+  rowId: string | null,
+  blocked: boolean,
+): boolean {
+  if (!root || blocked) return false;
+  const safeId = rowId ? (typeof CSS !== 'undefined' && typeof CSS.escape === 'function' ? CSS.escape(rowId) : rowId.replace(/["\\]/g, '\\$&')) : null;
+  const exact = safeId ? root.querySelector(`[data-notification-row="${safeId}"]`) : null;
+  const target = exact && exact.isConnected !== false ? exact : root.querySelector('[data-notification-row]');
+  if (!target || target.isConnected === false || (target.tabIndex !== undefined && target.tabIndex < 0)) return false;
+  target.focus();
+  return true;
 }
