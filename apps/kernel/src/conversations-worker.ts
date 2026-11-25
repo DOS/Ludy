@@ -425,7 +425,9 @@ export async function reconcileTelegramDisplacements(deps: { workerDb: Db; runti
     SELECT org_id, connection_id, chat_bot_id, chat_changed_at FROM ludy_kernel.telegram_chat_displace_due(100::int)`.execute(deps.workerDb);
   let checked = 0;
   for (const row of rows) {
-    await withBotWebhookLock(deps.workerDb, `bot:${row.chat_bot_id}`, async () => {
+    const lockKey = botLockKeyOfId(row.chat_bot_id);
+    if (!lockKey) continue;
+    await withBotWebhookLock(deps.workerDb, lockKey, async () => {
       const work = await deps.runtime.query<TelegramChatWork>(
         'kernel.channel.telegram_chat_work',
         { connectionId: row.connection_id, action: 'enable', rekey: true },

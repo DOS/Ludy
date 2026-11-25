@@ -345,7 +345,7 @@ BEGIN
   PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('crove.conversation_inbound_enqueue', 0));
   IF (SELECT pg_catalog.count(*) FROM (SELECT 1 FROM ludy_kernel.conversation_inbound_pending p WHERE p.provider = 'telegram_chat' AND p.bucket_key = v_bucket LIMIT 1001) s) >= 1000
      OR (SELECT pg_catalog.count(*) FROM (SELECT 1 FROM ludy_kernel.conversation_inbound_pending p WHERE p.provider = 'telegram_chat' LIMIT 10001) s) >= 10000
-     OR (SELECT pg_catalog.count(*) FROM (SELECT 1 FROM ludy_kernel.conversation_inbound_pending LIMIT 50001) s) > 50000 THEN
+     OR (SELECT pg_catalog.count(*) FROM (SELECT 1 FROM ludy_kernel.conversation_inbound_pending LIMIT 50001) s) >= 50000 THEN
     RAISE EXCEPTION 'CONVERSATION_BACKLOG' USING ERRCODE = '53400';
   END IF;
 
