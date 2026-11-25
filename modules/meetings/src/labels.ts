@@ -186,14 +186,13 @@ export const labelInUse = defineQuery({
           ON l.org_id = ${ctx.orgId}::uuid AND l.meeting_id = r.id
       )
       SELECT
-        (pg_catalog.array_agg(s.label ORDER BY s.first_ord ASC))[1] AS label,
+        s.label,
         pg_catalog.count(*)::int AS uses,
         pg_catalog.min(s.first_ord)::int AS first_ord
       FROM seen s
-      GROUP BY pg_catalog.lower(s.label)
-      ORDER BY pg_catalog.count(*) DESC, pg_catalog.min(s.first_ord) ASC`.execute(ctx.trx);
-    // Fold any non-ASCII case pairs the database locale may not collapse (e.g. C/C.UTF-8 on Vietnamese letters),
-    // keeping the earliest-seen spelling and appearance order to match labelKey() and labelsInUse().
+      GROUP BY s.label`.execute(ctx.trx);
+    // Fold case variants in JS with labelKey() so every PostgreSQL locale (C, C.UTF-8, en_US, tr_TR) groups identically
+    // to labelsInUse(), keeping the earliest-seen spelling and appearance order.
     const byKey = new Map<string, { label: string; count: number; firstOrd: number }>();
     for (const r of rows) {
       const key = labelKey(r.label);
