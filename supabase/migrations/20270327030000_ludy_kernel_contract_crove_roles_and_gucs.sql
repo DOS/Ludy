@@ -2,8 +2,11 @@
 -- Stage 7 (#3972, ADR-0054): revoke cluster-wide crove_* -> ludy_* role memberships, clear passwords on
 -- legacy crove_* login roles, revoke direct privileges on ludy_* objects, and remove legacy crove.* GUC and
 -- crove_* ddl_watch fallbacks once Phase 3 cutover is complete. Requires all databases and services sharing
--- the PostgreSQL cluster to run on ludy_* logins before applying. Legacy crove_* role definitions and
--- crove_prober/crove_reporter LOGIN attributes remain in place so immutable pre-cutover migrations still replay.
+-- the PostgreSQL cluster to run on ludy_* logins before applying. All migrator, restore, and
+-- provisioning runners on multi-database clusters must already be upgraded to carry the
+-- 20270315090000 Stage 7 replay guard before running this migration. Legacy crove_* role
+-- definitions and crove_prober/crove_reporter LOGIN attributes remain in place so immutable
+-- pre-cutover migrations still replay.
 
 -- ---------------------------------------------------------------------------
 -- 1. Revoke ludy_* role transition memberships (by exact grantor), clear
@@ -24,6 +27,8 @@ DECLARE
   v_remaining_acls text;
   v_default_acls text;
   v_owned text;
+  v_pass integer;
+  v_progress boolean;
   r record;
   v_ludy_roles constant text[] := ARRAY[
     'ludy_tenant',
@@ -88,17 +93,31 @@ BEGIN
       v_active_sessions;
   END IF;
 
-  FOR r IN
-    SELECT tgt.rolname AS target_role, mem.rolname AS member_role, gr.rolname AS grantor_role
-    FROM pg_catalog.pg_auth_members am
-    JOIN pg_catalog.pg_roles tgt ON tgt.oid = am.roleid
-    JOIN pg_catalog.pg_roles mem ON mem.oid = am.member
-    JOIN pg_catalog.pg_roles gr ON gr.oid = am.grantor
-    WHERE mem.rolname = ANY (v_legacy_roles)
-      AND tgt.rolname = ANY (v_ludy_roles)
-    ORDER BY tgt.rolname, mem.rolname, gr.rolname
+  v_pass := 0;
   LOOP
-    EXECUTE pg_catalog.format('REVOKE %I FROM %I GRANTED BY %I', r.target_role, r.member_role, r.grantor_role);
+    v_pass := v_pass + 1;
+    v_progress := false;
+    FOR r IN
+      SELECT tgt.rolname AS target_role, mem.rolname AS member_role, gr.rolname AS grantor_role
+      FROM pg_catalog.pg_auth_members am
+      JOIN pg_catalog.pg_roles tgt ON tgt.oid = am.roleid
+      JOIN pg_catalog.pg_roles mem ON mem.oid = am.member
+      JOIN pg_catalog.pg_roles gr ON gr.oid = am.grantor
+      WHERE mem.rolname = ANY (v_legacy_roles)
+        AND tgt.rolname = ANY (v_ludy_roles)
+      ORDER BY am.admin_option ASC, tgt.rolname, mem.rolname, gr.rolname
+    LOOP
+      BEGIN
+        EXECUTE pg_catalog.format('REVOKE %I FROM %I GRANTED BY %I', r.target_role, r.member_role, r.grantor_role);
+        v_progress := true;
+      EXCEPTION
+        WHEN insufficient_privilege
+          OR dependent_objects_still_exist
+          OR dependent_privilege_descriptors_still_exist THEN
+          NULL;
+      END;
+    END LOOP;
+    EXIT WHEN NOT v_progress OR v_pass >= 16;
   END LOOP;
 
   SELECT pg_catalog.string_agg(
@@ -397,7 +416,7 @@ BEGIN
     JOIN pg_catalog.pg_roles gr ON gr.oid = a.grantee
     WHERE (n.nspname LIKE 'ludy\_%' OR (NOT v_shared AND d.defaclnamespace = 0))
       AND gr.rolname = ANY (v_legacy_roles)
-      AND (v_is_super OR ow.rolname = current_user OR pg_catalog.pg_has_role(current_user, ow.oid, 'SET'))
+      AND (v_is_super OR ow.rolname = current_user OR pg_catalog.pg_has_role(current_user, ow.oid, 'USAGE'))
     ORDER BY ow.rolname, n.nspname NULLS FIRST, obj_kind, gr.rolname
   LOOP
     IF r.obj_kind IS NOT NULL THEN
@@ -482,6 +501,31 @@ BEGIN
       )
       AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_type elem WHERE elem.typarray = t.oid)
       AND ow.rolname = ANY (v_legacy_roles)
+    UNION ALL
+    SELECT pg_catalog.format(
+             '%s %s (owner %s)',
+             addr.type,
+             pg_catalog.array_to_string(addr.object_names, '.')
+               || CASE WHEN pg_catalog.cardinality(addr.object_args) > 0
+                       THEN '(' || pg_catalog.array_to_string(addr.object_args, ', ') || ')'
+                       ELSE ''
+                  END,
+             ow.rolname
+           )
+    FROM pg_catalog.pg_shdepend d
+    JOIN pg_catalog.pg_roles ow ON ow.oid = d.refobjid
+    CROSS JOIN LATERAL pg_catalog.pg_identify_object_as_address(d.classid, d.objid, d.objsubid) addr
+    WHERE d.dbid = (SELECT oid FROM pg_catalog.pg_database WHERE datname = pg_catalog.current_database())
+      AND d.refclassid = 'pg_catalog.pg_authid'::pg_catalog.regclass
+      AND d.deptype = 'o'
+      AND d.classid NOT IN (
+        'pg_catalog.pg_namespace'::pg_catalog.regclass,
+        'pg_catalog.pg_class'::pg_catalog.regclass,
+        'pg_catalog.pg_proc'::pg_catalog.regclass,
+        'pg_catalog.pg_type'::pg_catalog.regclass
+      )
+      AND ow.rolname = ANY (v_legacy_roles)
+      AND addr.object_names[1] LIKE 'ludy\_%'
   ) owned_rows;
   IF v_owned IS NOT NULL THEN
     RAISE EXCEPTION

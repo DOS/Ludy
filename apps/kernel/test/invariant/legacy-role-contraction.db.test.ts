@@ -567,11 +567,13 @@ suite('legacy crove_* role and crove.* GUC contraction (#3972)', () => {
             `CREATE FUNCTION ${ownedSchema}.legacy_fn() RETURNS integer LANGUAGE sql SET search_path = pg_catalog, pg_temp AS $$ SELECT 1 $$; ` +
             `ALTER FUNCTION ${ownedSchema}.legacy_fn() OWNER TO crove_definer_tenant; ` +
             `CREATE TYPE ${ownedSchema}.legacy_enum AS ENUM ('a'); ` +
-            `ALTER TYPE ${ownedSchema}.legacy_enum OWNER TO crove_definer_tenant`,
+            `ALTER TYPE ${ownedSchema}.legacy_enum OWNER TO crove_definer_tenant; ` +
+            `CREATE COLLATION ${ownedSchema}.legacy_coll FROM "C"; ` +
+            `ALTER COLLATION ${ownedSchema}.legacy_coll OWNER TO crove_definer_tenant`,
         );
         for (const shared of [false, true]) {
           const violations = await hardeningViolations(c, shared ? { shared: true } : undefined);
-          for (const kind of ['schema', 'relation', 'sequence', 'routine', 'type']) {
+          for (const kind of ['schema', 'relation', 'sequence', 'routine', 'type', 'collation']) {
             expect(
               violations.some((v) => new RegExp(`legacy role crove_definer_tenant still owns ${kind} .* in ${ownedSchema}`).test(v)),
             ).toBe(true);

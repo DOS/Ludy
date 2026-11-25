@@ -204,12 +204,14 @@ function isConcurrentCatalogUpdateError(error: unknown): boolean {
 // Revokes direct privileges on ludy_* objects bestowed by another grantor (e.g., via WITH GRANT OPTION)
 // by switching to the grantor role via SET LOCAL ROLE so PostgreSQL 17's object-level REVOKE removes them
 // before 20270327030000's fail-closed ACL verification runs. Each object class drains leaf-first across
-// bounded passes without using CASCADE so non-legacy dependents are never stripped silently.
-async function revokeDelegatedLegacyObjectGrants(client: pg.ClientBase): Promise<void> {
+// bounded passes without using CASCADE so non-legacy dependents are never stripped silently. Also drains
+// pg_default_acl entries owned by roles where the runner only holds SET (not USAGE).
+async function revokeDelegatedLegacyObjectGrants(client: pg.ClientBase, shared: boolean): Promise<void> {
   await client.query(`DO $$
     DECLARE
       v_orig_role text := current_user;
       v_is_super boolean;
+      v_shared constant boolean := ${shared ? 'true' : 'false'};
       v_pass integer;
       v_progress boolean;
       v_legacy_roles constant text[] := ARRAY[
@@ -448,6 +450,55 @@ async function revokeDelegatedLegacyObjectGrants(client: pg.ClientBase): Promise
         END LOOP;
         EXIT WHEN NOT v_progress OR v_pass >= 16;
       END LOOP;
+
+      IF NOT v_is_super THEN
+        FOR r IN
+          SELECT DISTINCT
+            ow.rolname AS owner_role,
+            n.nspname AS schema_name,
+            CASE d.defaclobjtype
+              WHEN 'r' THEN 'TABLES'
+              WHEN 'S' THEN 'SEQUENCES'
+              WHEN 'f' THEN 'FUNCTIONS'
+              WHEN 'T' THEN 'TYPES'
+              WHEN 'n' THEN 'SCHEMAS'
+            END AS obj_kind,
+            gr.rolname AS grantee_role
+          FROM pg_catalog.pg_default_acl d
+          LEFT JOIN pg_catalog.pg_namespace n ON n.oid = d.defaclnamespace
+          JOIN pg_catalog.pg_roles ow ON ow.oid = d.defaclrole
+          CROSS JOIN LATERAL pg_catalog.aclexplode(d.defaclacl) a
+          JOIN pg_catalog.pg_roles gr ON gr.oid = a.grantee
+          WHERE d.defaclobjtype IN ('r', 'S', 'f', 'T', 'n')
+            AND (n.nspname LIKE 'ludy\\_%' OR (NOT v_shared AND d.defaclnamespace = 0))
+            AND gr.rolname = ANY (v_legacy_roles)
+            AND ow.rolname <> v_orig_role
+            AND NOT pg_catalog.pg_has_role(v_orig_role, ow.oid, 'USAGE')
+            AND pg_catalog.pg_has_role(v_orig_role, ow.oid, 'SET')
+          ORDER BY ow.rolname, n.nspname NULLS FIRST, obj_kind, gr.rolname
+        LOOP
+          BEGIN
+            EXECUTE pg_catalog.format('SET LOCAL ROLE %I', r.owner_role);
+            IF r.schema_name IS NULL THEN
+              EXECUTE pg_catalog.format(
+                'ALTER DEFAULT PRIVILEGES FOR ROLE %I REVOKE ALL ON %s FROM %I',
+                r.owner_role, r.obj_kind, r.grantee_role
+              );
+            ELSE
+              EXECUTE pg_catalog.format(
+                'ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA %I REVOKE ALL ON %s FROM %I',
+                r.owner_role, r.schema_name, r.obj_kind, r.grantee_role
+              );
+            END IF;
+          EXCEPTION
+            WHEN insufficient_privilege THEN
+              NULL;
+          END;
+          IF current_user <> v_orig_role THEN
+            EXECUTE pg_catalog.format('SET LOCAL ROLE %I', v_orig_role);
+          END IF;
+        END LOOP;
+      END IF;
     END $$`);
 }
 
@@ -1031,7 +1082,7 @@ export async function migrate(options: MigrateOptions): Promise<string[]> {
             }
           } else if (file.name.endsWith('_ludy_kernel_contract_crove_roles_and_gucs.sql')) {
             await lockClusterStage7Role(client, { lockWaitMs: options.lockWaitMs });
-            await revokeDelegatedLegacyObjectGrants(client);
+            await revokeDelegatedLegacyObjectGrants(client, shared);
           }
           await client.query(variant?.sql ?? file.sql);
           if (!shared && file.name.endsWith('_ludy_kernel_contract_crove_roles_and_gucs.sql')) {
@@ -1843,7 +1894,25 @@ async function listHardeningViolations(client: pg.ClientBase, shared: boolean): 
   let legacyDefaultAcls: Array<{ owner: string; schema: string | null; kind: string; grantee: string }> = [];
   let legacyOwnedObjects: Array<{ schema: string; owner: string; kind: string; object: string }> = [];
   let legacyAuthGrants: Array<{ kind: string; object: string }> = [];
+  let legacyActiveSessions: Array<{ pid: number; role: string; database: string | null; application: string | null }> = [];
   if (contracted) {
+    const { rows: activeSessions } = await client.query<{
+      pid: number;
+      role: string;
+      database: string | null;
+      application: string | null;
+    }>(
+      `SELECT a.pid,
+              a.usename::text AS role,
+              a.datname::text AS database,
+              NULLIF(a.application_name, '')::text AS application
+       FROM pg_catalog.pg_stat_activity a
+       WHERE a.pid <> pg_catalog.pg_backend_pid()
+         AND a.usename = ANY ($1::text[])
+       ORDER BY a.datname::text COLLATE "C" NULLS FIRST, a.usename::text COLLATE "C", a.pid`,
+      [LEGACY_CROVE_ROLES],
+    );
+    legacyActiveSessions = activeSessions;
     const { rows: markerRows } = await client.query<{ missing: boolean }>(
       `SELECT NOT EXISTS (
          SELECT 1 FROM pg_catalog.pg_roles r
@@ -2006,6 +2075,27 @@ async function listHardeningViolations(client: pg.ClientBase, shared: boolean): 
              OR EXISTS (SELECT 1 FROM pg_catalog.pg_class rc WHERE rc.oid = t.typrelid AND rc.relkind = 'c')
            )
            AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_type elem WHERE elem.typarray = t.oid)
+         UNION ALL
+         SELECT addr.object_names[1]::text,
+                d.refobjid,
+                addr.type::text,
+                pg_catalog.array_to_string(addr.object_names, '.')
+                  || CASE WHEN pg_catalog.cardinality(addr.object_args) > 0
+                          THEN '(' || pg_catalog.array_to_string(addr.object_args, ', ') || ')'
+                          ELSE ''
+                     END
+         FROM pg_catalog.pg_shdepend d
+         CROSS JOIN LATERAL pg_catalog.pg_identify_object_as_address(d.classid, d.objid, d.objsubid) addr
+         WHERE d.dbid = (SELECT oid FROM pg_catalog.pg_database WHERE datname = pg_catalog.current_database())
+           AND d.refclassid = 'pg_catalog.pg_authid'::pg_catalog.regclass
+           AND d.deptype = 'o'
+           AND d.classid NOT IN (
+             'pg_catalog.pg_namespace'::pg_catalog.regclass,
+             'pg_catalog.pg_class'::pg_catalog.regclass,
+             'pg_catalog.pg_proc'::pg_catalog.regclass,
+             'pg_catalog.pg_type'::pg_catalog.regclass
+           )
+           AND addr.object_names[1] LIKE 'ludy\\_%'
        ) x
        JOIN pg_catalog.pg_roles ow ON ow.oid = x.owner_oid
        WHERE ow.rolname = ANY ($1::text[])
@@ -2063,6 +2153,11 @@ async function listHardeningViolations(client: pg.ClientBase, shared: boolean): 
   const { rows: dbRows } = await client.query<{ name: string }>('SELECT pg_catalog.quote_ident(pg_catalog.current_database()) AS name');
   const dbName = dbRows[0]?.name ?? 'current_database';
   return [
+    ...legacyActiveSessions.map(
+      (s) =>
+        `legacy role ${s.role} still has an active PostgreSQL session (pid ${s.pid} on ${s.database ?? '<no database>'}${s.application ? `, ${s.application}` : ''}) after Stage 7 contraction; ` +
+        `fix: disconnect that service and switch it to the corresponding ludy_* role`,
+    ),
     ...(legacyClusterMarkerMissing
       ? [
           `cluster Stage 7 contraction marker is missing from crove_tenant after Stage 7 contraction; ` +
