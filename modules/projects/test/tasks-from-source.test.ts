@@ -57,6 +57,7 @@ function emptyResults(overrides: Partial<MeetingResults> = {}): MeetingResults {
     draft: null,
     published: null,
     items: [],
+    transcriptUnread: 0,
     ...overrides,
   };
 }

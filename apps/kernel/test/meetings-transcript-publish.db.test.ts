@@ -206,6 +206,22 @@ suite('the recorder publishes the transcript lines with the minutes (#4899)', ()
     expect((await stored(meetingId, 'published')).length).toBe(2);
   });
 
+  it('refuses a chapter saved against a line that the publish replaces, and keeps everything as it was (the anchors are checked against the lines the publish shares)', async () => {
+    const meetingId = await seedMeeting('Họp mục lục', THREE);
+    expect(await publish('recorder', meetingId)).toMatchObject({ lines: 3 });
+    // A re-transcription: the draft lines start at 0, 12 and 25. A chapter at 10 still matches the line shared before (the save sees every line), but not the line that will replace it.
+    await store('recorder', meetingId, [{ at: 0, said: 'Một' }, { at: 12, said: 'Hai' }, { at: 25, said: 'Ba' }]);
+    await exec('recorder', 'meetings.chapters.save', { meetingId, chapters: [{ title: 'Báo giá', startSeconds: 10 }] });
+    expect(await refuses(publish('recorder', meetingId))).toBe('CHAPTER_ANCHOR_LOST');
+    // Nothing of the publish is kept: the readers still read the lines shared before, and the draft is still the recorder's.
+    expect((await get('reader', meetingId)).segments.map((s) => s.text)).toEqual(THREE.map((l) => l.said));
+    expect((await stored(meetingId, 'draft')).map((r) => r.text)).toEqual(['Một', 'Hai', 'Ba']);
+    // Saved again at a second a draft line starts at, the same publish goes through and the chapter points at a line the readers read.
+    await exec('recorder', 'meetings.chapters.save', { meetingId, chapters: [{ title: 'Báo giá', startSeconds: 12 }] });
+    expect(await publish('recorder', meetingId)).toMatchObject({ chapters: 1, lines: 3 });
+    expect((await get('reader', meetingId)).segments.map((s) => s.startSeconds)).toEqual([0, 12, 25]);
+  });
+
   it('shares the summary, the items and the lines in one publish, and counts each', async () => {
     const meetingId = await seedMeeting('Họp đủ phần', THREE);
     await exec('recorder', 'meetings.summary.save', { meetingId, summary: 'Chốt báo giá cho khách A.', decisions: ['Giữ giá cũ'] });

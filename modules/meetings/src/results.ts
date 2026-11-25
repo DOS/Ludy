@@ -345,6 +345,16 @@ export const resultPublish = defineCommand({
       .where('status', '=', 'suggested')
       .returning(['id', 'title', 'who_drafted', 'when_parsed'])
       .execute();
+    // The draft transcript lines (#4899) replace the lines published before them, as the summary and the chapters do: a reader reads the transcript only once the recorder has shared it (ADR-0047 point 3).
+    // The tenant role may not set a line's stage nor delete a published line, so the database function does the move (the recorder's user context, the draft lines locked first, the whole publish refused
+    // while a line is still the model's and unread); the chapters below are checked against the lines as they stand after the move (the lines this publish shares), so a chapter saved against a line that this publish replaces is refused, not left pointing at nothing.
+    let lines = 0;
+    try {
+      lines = (await sql<{ n: number }>`SELECT ludy_meetings.transcript_publish(${ctx.orgId}::uuid, ${input.meetingId}::uuid) AS n`.execute(ctx.trx)).rows[0]?.n ?? 0;
+    } catch (error: unknown) {
+      if (error instanceof Error && error.message.includes('MEETINGS_DRAFT_NOT_REVIEWED')) throw new DomainError('DRAFT_NOT_REVIEWED', 409, 'Read the draft Vy wrote before sharing it');
+      throw error;
+    }
     // The draft chapters (#3844) replace the chapters published before them, as the summary does.
     const draftChapters = await ctx.trx.selectFrom('ludy_meetings.meeting_chapter').select(['id', 'start_seconds']).where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').forUpdate().execute();
     let chapters = 0;
@@ -364,16 +374,6 @@ export const resultPublish = defineCommand({
         .returning('id')
         .execute();
       chapters = flipped.length;
-    }
-    // The draft transcript lines (#4899) replace the lines published before them, as the summary and the chapters do: a reader reads the transcript only once the recorder has shared it (ADR-0047 point 3).
-    // The tenant role may not set a line's stage nor delete a published line, so the database function does the move (the recorder's user context, the draft lines locked first, the whole publish refused
-    // while a line is still the model's and unread); the chapters above were checked against every line of the meeting, so the move changes none of their anchors.
-    let lines = 0;
-    try {
-      lines = (await sql<{ n: number }>`SELECT ludy_meetings.transcript_publish(${ctx.orgId}::uuid, ${input.meetingId}::uuid) AS n`.execute(ctx.trx)).rows[0]?.n ?? 0;
-    } catch (error: unknown) {
-      if (error instanceof Error && error.message.includes('MEETINGS_DRAFT_NOT_REVIEWED')) throw new DomainError('DRAFT_NOT_REVIEWED', 409, 'Read the draft Vy wrote before sharing it');
-      throw error;
     }
     if (results === 0 && items.length === 0 && chapters === 0 && lines === 0) throw new DomainError('NOTHING_TO_PUBLISH', 409, 'There is no draft to share');
     // The recorder's own webhook (A6, #3164): when they have one that stands, the event for this publish is stored in this same transaction, and nowhere else. No model, no other reader.
@@ -528,15 +528,18 @@ export const meetingResultGet = defineQuery({
       }
     }
     const seats = await seatsOf(ctx.trx, ctx.orgId, [...items.flatMap((i) => (i.who_parsed ? [i.who_parsed] : [])), ...[...suggestions.values()].map((s) => s.userId)]);
-    // The draft transcript lines a machine wrote that the recorder has not read (#4899): a count, never a line. A reader sees no draft line, so the count is zero for them.
-    const unreadLines = await ctx.trx
-      .selectFrom('ludy_meetings.transcript_segment')
-      .select(sql<string>`count(*)::text`.as('n'))
-      .where('org_id', '=', ctx.orgId)
-      .where('meeting_id', '=', input.meetingId)
-      .where('stage', '=', 'draft')
-      .where('tainted', '=', true)
-      .executeTakeFirstOrThrow();
+    // The draft transcript lines a machine wrote that the recorder has not read (#4899): a count, never a line. Only the recorder has a draft to read, so the count is not even asked for anyone else (row security would test every line of the meeting for it).
+    const unreadLines =
+      meeting.recorder_user_id === userId
+        ? await ctx.trx
+            .selectFrom('ludy_meetings.transcript_segment')
+            .select(sql<string>`count(*)::text`.as('n'))
+            .where('org_id', '=', ctx.orgId)
+            .where('meeting_id', '=', input.meetingId)
+            .where('stage', '=', 'draft')
+            .where('tainted', '=', true)
+            .executeTakeFirstOrThrow()
+        : { n: '0' };
     const view = (stage: 'draft' | 'published') => {
       const r = results.find((x) => x.stage === stage);
       return r ? { id: r.id, feature: r.feature as 'manual' | 'meetings.summary', stage, summary: r.summary, decisions: Array.isArray(r.decisions) ? (r.decisions as string[]) : [], tainted: r.tainted } : null;
