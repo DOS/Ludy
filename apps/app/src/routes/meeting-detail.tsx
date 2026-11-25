@@ -22,6 +22,7 @@ import { MeetingSeries } from '../components/meeting-series.tsx';
 import { MeetingTitleSuggest } from '../components/meeting-title.tsx';
 import { MeetingChapters } from '../components/meeting-chapters.tsx';
 import { MeetingCommitments } from '../components/meeting-commitments.tsx';
+import { MeetingOpenPoints } from '../components/meeting-open-points.tsx';
 import { MeetingNotes } from '../components/meeting-notes.tsx';
 import {
   DraftRedactionDialog,
@@ -465,6 +466,8 @@ export function MeetingDetailPage() {
       <MeetingChapters key={`chapters-${id}`} meetingId={id} isRecorder={meeting.isRecorder} onJump={jumpTo} redactedEpoch={redactedEpoch} />
       {/* What each speaker said they would do or decided (#3954): the recorder's own Vy on a click, each line opens the transcript where it was said, nothing is saved */}
       <MeetingCommitments key={`commitments-${id}-${redactedEpoch}`} meetingId={id} isRecorder={meeting.isRecorder} hasTranscript={hasTranscript} onJump={jumpTo} />
+      {/* What the meeting left open (#4768): the recorder's own Vy on a click, questions not heard answered and decisions raised and not taken, each opens the transcript where it was said; kept in state only, so a redaction (the epoch) clears it */}
+      <MeetingOpenPoints key={`open-points-${id}-${redactedEpoch}`} meetingId={id} isRecorder={meeting.isRecorder} hasTranscript={hasTranscript} onJump={jumpTo} />
       {/* The transcript: the recorder's draft, or what was shared with the meeting */}
       <MeetingTranscript
         key={`transcript-${id}`}

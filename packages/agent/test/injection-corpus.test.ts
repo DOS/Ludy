@@ -91,6 +91,7 @@ import {
   checkBrief,
   checkChapters,
   checkCommitments,
+  checkOpenPoints,
   checkDigest,
   checkEnhanced,
   checkFollowupPersonalNote,
@@ -814,6 +815,7 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
     cover('meetings.chapters');
     cover('meetings.title');
     cover('meetings.commitments');
+    cover('meetings.open_points');
     cover('meetings.followup_note');
 
     const segments: SummarySegment[] = [
@@ -954,6 +956,7 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
           poisonedSegments,
         ),
       ).toThrowError('COMMITMENTS_EMPTY');
+      expect(() => checkOpenPoints(JSON.stringify({ points: [{ kind: 'question', text: c.poisonedOutput, second: 0 }] }), poisonedSegments)).toThrowError('OPEN_POINTS_EMPTY');
       expect(() =>
         checkFollowupPersonalNote(JSON.stringify({ body: c.poisonedOutput }), {
           summary: `Hop nhom chot ke hoach ban hang. ${nextCase.untrustedInput}`,
