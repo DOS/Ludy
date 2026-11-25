@@ -2,13 +2,14 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useNavigate } from '@tanstack/react-router';
 import { useRef, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import { normalizeTaxCode } from '@ludy/kernel-contract';
+import { normalizeTaxCode, type OrgKind } from '@ludy/kernel-contract';
 import { Button } from '@ludy/ui/components/button';
 import { Card } from '@ludy/ui/components/card';
 import { Input } from '@ludy/ui/components/input';
 import { Label } from '@ludy/ui/components/label';
 import { NavIcon } from '@ludy/ui/components/nav-icon';
 import { ErrorText, Field, FieldError, Logo, OrgLeftNotice, ScreenTitle, fieldControl, focusFirstInvalid, isEmailAddress, useFieldErrors } from '../components/ui.tsx';
+import { DEFAULT_ORG_KIND, OrgKindPicker } from '../components/org-kind-picker.tsx';
 import { SupportLink } from '../components/support-link.tsx';
 import { client, clientForOrg, errorMessage, orglessClient, orpc, queryClient } from '../lib/api.ts';
 import { getConfig } from '../lib/auth.ts';
@@ -28,6 +29,8 @@ export function OnboardingPage() {
   const [name, setName] = useState('');
   const [address, setAddress] = useState('');
   const [contact, setContact] = useState('');
+  // The type of the company (ADR-0053 amendment, #4802): "Một mình tôi" unless the owner says there is staff.
+  const [kind, setKind] = useState<OrgKind>(DEFAULT_ORG_KIND);
   // Each field's problem sits under it (#1515): checked on leaving the field and on submit.
   const fields = useFieldErrors<'taxCode' | 'name' | 'contact'>((field) => {
     if (field === 'taxCode') return taxCode.trim() && !normalizeTaxCode(taxCode) ? t('taxCodeInvalid') : null;
@@ -49,9 +52,11 @@ export function OnboardingPage() {
   // One idempotency key per name: a retried submit returns the org the first one created instead of a second.
   const attempt = useRef<{ name: string; key: string } | null>(null);
   const create = useMutation({
-    mutationFn: async (input: { name: string; taxCode: string | null; address: string | null; contact: string | null }) => {
-      if (attempt.current?.name !== input.name) attempt.current = { name: input.name, key: crypto.randomUUID() };
-      const org = await client.org.create({ name: input.name, idempotencyKey: attempt.current.key });
+    mutationFn: async (input: { name: string; kind: OrgKind; taxCode: string | null; address: string | null; contact: string | null }) => {
+      // The type is part of the request, so a retry that changed it is a new one.
+      const attemptName = `${input.kind}:${input.name}`;
+      if (attempt.current?.name !== attemptName) attempt.current = { name: attemptName, key: crypto.randomUUID() };
+      const org = await client.org.create({ name: input.name, kind: input.kind, idempotencyKey: attempt.current.key });
       const inOrg = clientForOrg(org.slug);
       if (input.taxCode) await inOrg.org.setTaxCode({ taxCode: input.taxCode });
       if (input.address) await inOrg.org.setAddress({ address: input.address });
@@ -78,7 +83,7 @@ export function OnboardingPage() {
     }
     const code = taxCode.trim() ? normalizeTaxCode(taxCode) : null;
     // The server trims the name, so the key follows the trimmed name.
-    create.mutate({ name: name.trim(), taxCode: code, address: address.trim() || null, contact: contact.trim() || null });
+    create.mutate({ name: name.trim(), kind, taxCode: code, address: address.trim() || null, contact: contact.trim() || null });
   }
 
   return (
@@ -168,6 +173,7 @@ export function OnboardingPage() {
               />
             )}
           </Field>
+          <OrgKindPicker value={kind} onChange={setKind} />
           {create.error && <ErrorText>{errorMessage(create.error)}</ErrorText>}
           <Button type="submit" size="lg" className="w-full" loading={create.isPending}>
             {t('create')}
