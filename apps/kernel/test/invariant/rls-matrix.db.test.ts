@@ -133,7 +133,6 @@ const PENDING_TABLES = new Set<string>([
   'crove_meetings.live_line',
   'crove_meetings.meeting_highlight',
   'crove_meetings.meeting_link',
-  'crove_meetings.minutes_link',
   'crove_meetings.minutes_version',
   'crove_meetings.tracker_term',
   'crove_notes.link',
