@@ -5,7 +5,7 @@
 // the next capture; a muted member hears nothing, Social mail off keeps the mail only, and a member limited to some
 // channels (#1081) hears only of posts on theirs. The metrics sweep runs the check only while a post waits to be
 // weighed, so later captures add no command or audit row. The worker's check and dispatch are run here by hand. Set
-// CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -18,12 +18,12 @@ import { CredentialVault, Runtime, parseVaultKey } from '@ludy/kernel-runtime';
 import { socialCommands, socialQueries, sweepMetrics, type NotificationItem, type OutperformState } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('social posts doing much better than usual on PostgreSQL (#1132)', () => {
-  const dbName = `crove_test_social_outperforming_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_outperforming_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

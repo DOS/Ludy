@@ -2,7 +2,7 @@
 // The wake-up webhook of an MCP grant through the API (ADR-0051 decision 4, issue #3024, step a): the secret is made and sealed by the API and shown once, to the
 // person who set the wake-up or rotated its secret, and never by a read; a receiver whose name does not resolve, or resolves to anything but public addresses, is refused
 // before the command runs; a deployment without a credential key answers 503; a member who is not an owner or admin reads and changes nothing.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
@@ -19,7 +19,7 @@ import { createHttpApp } from '../src/http.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-mcp-wake-0123456789';
 const ISSUER = 'crove-auth';
@@ -41,7 +41,7 @@ const resolve = async (host: string): Promise<{ address: string }[]> => {
 };
 
 suite('the wake-up webhook of an MCP grant through the API (#3024)', () => {
-  const dbName = `crove_test_mcp_wake_api_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_mcp_wake_api_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

@@ -1,7 +1,7 @@
 // Duplicate parties on PostgreSQL 17 (#887): the hints, marking a duplicate and undoing it, who may, the one-level rule
 // (in the commands and in the table's trigger), and what a mark changes: the vendor list and search show the kept party
 // with its duplicate's documents, and the payables report adds the duplicate's balance into it. Nothing is deleted:
-// the journal lines keep their own party. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// the journal lines keep their own party. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -14,7 +14,7 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -22,7 +22,7 @@ const suite = ADMIN ? describe : describe.skip;
 const KEPT_TAX_CODE = '0309876546';
 
 suite('duplicate parties (#887)', () => {
-  const dbName = `crove_test_party_dup_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_party_dup_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

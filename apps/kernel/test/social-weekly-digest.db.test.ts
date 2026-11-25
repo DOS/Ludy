@@ -2,7 +2,7 @@
 // even when two sweeps run at once; nobody who turned it off or turned Social mail off, and no viewer, gets one; a
 // member limited to some channels reads only those; the review part goes only to those who may approve; an org whose
 // time zone PostgreSQL does not know falls back to Asia/Ho_Chi_Minh and stops no other org; nothing goes out before
-// Monday 08:00 local; and only the worker login runs the scan. The sweep is run here by hand. Set CROVE_TEST_ADMIN_URL
+// Monday 08:00 local; and only the worker login runs the scan. The sweep is run here by hand. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL)
 // to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -16,7 +16,7 @@ import { socialCommands, socialQueries, sweepDigests } from '@ludy/mod-social';
 import { renderDigestMail } from '../src/digest-mail.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const HCM = 'Asia/Ho_Chi_Minh';
 const suite = ADMIN ? describe : describe.skip;
@@ -53,7 +53,7 @@ interface DigestPayload {
 }
 
 suite('social weekly digest on PostgreSQL (#1104)', () => {
-  const dbName = `crove_test_social_digest_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_digest_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

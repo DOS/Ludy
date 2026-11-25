@@ -1,7 +1,7 @@
 // Detective security alerts on PostgreSQL 17 (issue #996): one user acting in many orgs, a refusal spike and an owner
 // or admin grant each alert once, then stay quiet until the repeat interval; a quiet deployment alerts nothing; the
 // posted message holds ids and counts only. Who may read the signals is in test/invariant/security-signals.db.test.ts.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -13,13 +13,13 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { sweepSecuritySignals, type SecurityThresholds } from '../src/security-signals.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const THRESHOLDS: SecurityThresholds = { windowSeconds: 300, orgThreshold: 2, refusalThreshold: 50, repeatSeconds: 3600 };
 
 suite('detective security alerts on PostgreSQL (#996)', () => {
-  const dbName = `crove_test_secsig_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_secsig_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

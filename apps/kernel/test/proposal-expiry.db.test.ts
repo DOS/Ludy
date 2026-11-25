@@ -2,7 +2,7 @@
 // sweep moving a pending proposal past it to 'expired' (audited, an activity entry and nothing else, no mail) only once
 // its owners were told and had the escalation window, expired proposals never approved, the scan and the command for
 // the worker alone, an expiry racing a rejection, and the author asking for an expired proposal again, from a request
-// or from a file's reading, once, by nobody else. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own
+// or from a file's reading, once, by nobody else. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own
 // database.
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -19,7 +19,7 @@ import { Runtime, fileKey, sha256Hex, type BlobStore } from '@ludy/kernel-runtim
 import { extractAndPropose, financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const FIXTURE = readFileSync(new URL('../../extract/test/fixtures/einvoice-basic.xml', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
@@ -55,7 +55,7 @@ type Detail = {
 };
 
 suite('proposal expiry on PostgreSQL (#876)', () => {
-  const dbName = `crove_test_proposal_expiry_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_proposal_expiry_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

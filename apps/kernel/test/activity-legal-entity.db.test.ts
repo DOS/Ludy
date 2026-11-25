@@ -3,7 +3,7 @@
 // migration included, and a member limited to another entity reads none of them, in the proposal timeline or in the
 // database, while the org-level rows (a party's, the org's settings) stay visible to every member. A proposal's rows
 // take the proposal's entity (#1538).
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { copyFileSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -21,13 +21,13 @@ import { TEST_MANIFESTS } from './manifests.ts';
 import { enterUser } from './context-token.ts';
 import { createPreCutoverClient, createPreCutoverPool } from './pre-cutover-db.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const THIS_VERSION = '20261103120000';
 const suite = ADMIN ? describe : describe.skip;
 
 suite('activity per legal entity on PostgreSQL (#1716)', () => {
-  const dbName = `crove_test_activity_le_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_activity_le_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appUrl = '';
   let before = '';

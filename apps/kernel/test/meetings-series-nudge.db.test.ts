@@ -15,14 +15,14 @@ import { meetingsCommands, meetingsQueries, vnDay } from '@ludy/mod-meetings';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
 import { runMeetingsSeriesNudgeSweep } from '../src/meetings-series-nudge.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SYSTEM = { type: 'system' as const, component: 'test.series-nudge' };
 const KIND = 'meetings.series_open_items';
 const suite = ADMIN ? describe : describe.skip;
 
 suite('the series nudge (#3542)', () => {
-  const dbName = `crove_test_nudge_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_nudge_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let workerDb: ReturnType<typeof createDb>;

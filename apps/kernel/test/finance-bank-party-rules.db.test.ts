@@ -3,7 +3,7 @@
 // line whose party a person chose by hand teaches a rule when it is approved, the next statement's matcher suggests that party
 // with the reason `learned`, a suggestion the person took teaches nothing, two parties on one key are never a clean line, the
 // rule lives only in its org, is removed by owners and admins, and holds no readable text of the line.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
@@ -21,7 +21,7 @@ import { createHttpApp } from '../src/http.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-bank-party-rules-2402';
 const ISSUER = 'crove-auth';
@@ -52,7 +52,7 @@ const account = (name: string): Account => ({ subject: randomUUID(), email: `${n
 const suite = ADMIN ? describe : describe.skip;
 
 suite('learned bank line rules (#2402)', () => {
-  const dbName = `crove_test_bank_party_rules_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_bank_party_rules_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

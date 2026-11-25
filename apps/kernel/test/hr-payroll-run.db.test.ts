@@ -6,7 +6,7 @@
 // - a correction is an adjustment line in a later run; a payslip is a view of the stored line;
 // - owners and admins only, in the commands and in the database; no audit row carries a name or an amount;
 // - the owner's org export carries the payroll tables through the owner-run path (#2676), with no plain number, an audit row naming each table, the refusals, and the download route.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; the run creates and drops its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { inflateRawSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
@@ -77,7 +77,7 @@ const setRuleStatus = (status: 'confirmed' | 'commentary') => {
   for (const row of PAYROLL_RULES) (row as { status: string }).status = status;
 };
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -87,7 +87,7 @@ const NAMES = ['Nguyễn Thị Hằng Canary', 'Trần Văn Hai Canary', 'Lê Th
 const WAGES = ['15000000', '9000000', '30000000'];
 
 suite('HR monthly pay run on PostgreSQL (#2531)', () => {
-  const dbName = `crove_test_hrrun_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_hrrun_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

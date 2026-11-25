@@ -3,7 +3,7 @@
 // command; the next invoice of the vendor is proposed by that rule per line (a month in the description does not
 // matter) and the line says which rule chose it; vendor rules come before the vendor default, which comes before rules
 // for every vendor; Settings lists rules with provenance, owners and admins add keyword rules and remove any rule, and
-// nothing crosses orgs. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// nothing crosses orgs. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -23,7 +23,7 @@ import { createSessionStatusSource } from '../src/sessions.ts';
 import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const FIXTURE = readFileSync(new URL('../../extract/test/fixtures/einvoice-basic.xml', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-account-rules-0123456789';
@@ -63,7 +63,7 @@ interface Line {
 const suite = ADMIN ? describe : describe.skip;
 
 suite('learned account rules with provenance (#1399)', () => {
-  const dbName = `crove_test_account_rules_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_account_rules_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

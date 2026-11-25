@@ -3,7 +3,7 @@
 // admin puts one approved or scheduled channel into exactly one of them (social.variant.schedule with slotAt), refused
 // with SLOT_TAKEN, SLOT_NOT_IN_QUEUE, SLOT_KEPT_FOR_LABEL, SCHEDULE_IN_PAST or a takedown misfit with nothing changed; a
 // post put there is queued like any other, so the queue's next free slots and its shuffle treat it as such.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -15,7 +15,7 @@ import { CredentialVault, Runtime, parseVaultKey } from '@ludy/kernel-runtime';
 import { socialCommands, socialQueries, type PostView } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const HCM = 'Asia/Ho_Chi_Minh';
@@ -27,7 +27,7 @@ type Scheduled = { postId: string; scheduled: { variantId: string; at: string }[
 type Row = { status: string; queue_slot_at: Date | null; scheduled_at: Date | null };
 
 suite('social open queue slots on PostgreSQL (#1158)', () => {
-  const dbName = `crove_test_social_queue_slots_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_queue_slots_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appPool: pg.Pool;
   let appDb: Db;

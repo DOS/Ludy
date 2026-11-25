@@ -3,7 +3,7 @@
 // removed by nobody. A channel whose adapter cannot remove, a post that went out after its takedown time and one
 // already asked for are never picked; the commands refuse a takedown less than five minutes after the post goes out.
 // A planned ask whose job never recorded an answer is told to the owners and admins by its watch (#937).
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -16,7 +16,7 @@ import { CredentialVault, Runtime, parseVaultKey } from '@ludy/kernel-runtime';
 import { removeWindowMs, runPublishJob, runRemoveJob, runRemoveWatch, socialCommands, socialQueries, sweepRemovals, type NotificationItem, type PostView, type Provider } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -26,7 +26,7 @@ type Org = { orgId: string; owner: string };
 const inVietnam = (ms: number) => `${new Date(ms + 7 * 3_600_000).toISOString().slice(0, 19)}+07:00`;
 
 suite('taking a post down at a set time on PostgreSQL (#861)', () => {
-  const dbName = `crove_test_social_remove_at_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_remove_at_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appPool: pg.Pool;
   let workerPool: pg.Pool;

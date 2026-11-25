@@ -2,7 +2,7 @@
 // only read it; a 'block' word refuses submit, approval and scheduling with 422 BANNED_WORDS, also written without
 // diacritics; a 'warn' word goes through and shows on the post view for review; a word limited to some channels holds
 // only there; evergreen and recurring copies with a blocked word stay drafts; another org sees nothing of the list.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -15,13 +15,13 @@ import { socialCommands, socialQueries, type BannedWordView, type PostView } fro
 import { styleSelection, styleText } from '@ludy/mod-social/contract';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const HOUR = 3_600_000;
 
 suite('social banned words on PostgreSQL (#1055)', () => {
-  const dbName = `crove_test_social_banned_words_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_banned_words_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appPool: pg.Pool;
   let workerPool: pg.Pool;

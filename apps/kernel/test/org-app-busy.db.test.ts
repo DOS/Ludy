@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Switching an app off is refused while its work is open (ADR-0053 section 4, slice c C3a), on PostgreSQL 17: kernel.org.set_app asks the app's busy probe under the
 // tenant row, a recording of the extension keeps Meetings on, an activation begun at the platform keeps Ads on, and turning an app on, or off when it already is,
-// is never refused. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// is never refused. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -14,13 +14,13 @@ import { meetingsBusy } from '@ludy/mod-meetings';
 import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const SHIPPED = ['kernel', 'finance', 'social', 'crm', 'ads', 'meetings', 'notes'];
 
 suite('switching an app off while its work is open (ADR-0053, C3a)', () => {
-  const dbName = `crove_test_appbusy_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_appbusy_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

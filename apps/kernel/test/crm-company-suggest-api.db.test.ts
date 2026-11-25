@@ -2,7 +2,7 @@
 // The sales coworker's company suggestion through the API (#2438, PR 3) on PostgreSQL 17, with a recorded model: the deterministic companies come first whatever the
 // model does, the model orders only the names that carry the word of the person's domain and is shown only the person's name, that word and those names, the org's
 // switch for AI on its customers' words keeps every name from the model while it is off (and the answer says so), a deployment with no model answers off, a viewer is
-// refused, and a flood of calls is answered busy, never as an error. Nothing is stored. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// refused, and a flood of calls is answered busy, never as an error. Nothing is stored. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
@@ -21,7 +21,7 @@ import { createHttpApp } from '../src/http.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-company-suggest-0123456';
 const ISSUER = 'crove-auth';
@@ -36,7 +36,7 @@ interface Account {
 const account = (name: string): Account => ({ subject: randomUUID(), email: `${name}@suggest.test`, session: randomUUID(), userId: '' });
 
 suite('the company a person may work at, through the API (#2438, PR 3)', () => {
-  const dbName = `crove_test_company_suggest_api_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_company_suggest_api_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

@@ -1,6 +1,6 @@
 // In-app notifications of Crove Social on PostgreSQL 17 (#637): who each event tells, never the person who acted, the
 // kinds a member turns off, reading and marking only one's own, a client's answer through a review link, and pruning.
-// The worker's dispatch is run here by hand for each new outbox event. Set CROVE_TEST_ADMIN_URL to a superuser URL;
+// The worker's dispatch is run here by hand for each new outbox event. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL;
 // each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -17,12 +17,12 @@ import { MAIL_TEMPLATES } from '../src/mail-templates.ts';
 import { runMailJob, sweepMail, type MailJob } from '../src/mail-queue.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('social notification mail on PostgreSQL (#579)', () => {
-  const dbName = `crove_test_social_notify_mail_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_notify_mail_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

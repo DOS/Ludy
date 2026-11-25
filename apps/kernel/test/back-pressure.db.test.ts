@@ -1,6 +1,6 @@
 // Back-pressure (#894, plan §4.9) against a real PostgreSQL 17: the worker reads the outbox lag, and a lag over the
 // threshold stops pg-boss fetching a paused queue until the outbox has caught up. The privilege checks are in the
-// invariant suite (test/invariant/outbox-lag.db.test.ts). Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates
+// invariant suite (test/invariant/outbox-lag.db.test.ts). Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; the run creates
 // and drops its own database.
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -14,13 +14,13 @@ import { PausableWork, checkBackPressure, outboxLagSeconds } from '../src/back-p
 import { JOB_SCHEMA, QUEUES } from '../src/jobs-schema.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 
 const suite = ADMIN ? describe : describe.skip;
 
 suite('back-pressure on PostgreSQL (#894)', () => {
-  const dbName = `crove_test_backpressure_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_backpressure_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let workerPool: pg.Pool;
   let workerDb: Db;

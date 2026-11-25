@@ -1,7 +1,7 @@
 // Crove Social reposts and evergreen posts on PostgreSQL 17 (Social plan S9, issue #393): a repost copies a published
 // post for the channels it went out on, an evergreen post gets one repost per period sent to review, never a second
 // while one is open, and a post whose channels are gone stops being evergreen.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -14,7 +14,7 @@ import { CredentialVault, Runtime, parseVaultKey } from '@ludy/kernel-runtime';
 import { runPublishJob, socialCommands, socialQueries, sweepEvergreen, type PostView } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -36,7 +36,7 @@ class Platform implements Publisher {
 }
 
 suite('social reposts and evergreen posts on PostgreSQL (S9)', () => {
-  const dbName = `crove_test_social_evergreen_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_evergreen_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appPool: pg.Pool;
   let workerPool: pg.Pool;

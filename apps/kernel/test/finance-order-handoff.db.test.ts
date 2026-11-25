@@ -2,7 +2,7 @@
 // The Kế toán side of the quote hand-off (#2818, ADR-0050 points 3 and 4) on a real PostgreSQL 17: an e-invoice draft from the facts of a sales order (whole lines, re-checked, the
 // source kept on each line, one invoice per order line, a deleted draft frees its lines, a discounted line refused), the stock move of a delivered order line (keyed and
 // idempotent on (order, line), a return is a reversal, a service moves nothing), and that issuing and delivering one line moves stock once, in either order.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -18,7 +18,7 @@ import { extractAndPropose, financeCommands, financeQueries } from '@ludy/mod-fi
 import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const FIXTURE = readFileSync(new URL('../../extract/test/fixtures/einvoice-basic.xml', import.meta.url)).toString('utf8');
 const suite = ADMIN ? describe : describe.skip;
@@ -123,7 +123,7 @@ function handoffOf(legalEntityId: string, specs: HandoffLine[], options: { buyer
 const today = () => new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
 
 suite('invoice draft and stock move from a sales order (#2818)', () => {
-  const dbName = `crove_test_order_handoff_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_order_handoff_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

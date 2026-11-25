@@ -37,7 +37,7 @@ import { runOrgExport } from '../src/org-export.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 type Task = z.infer<typeof zTask>;
 type TaskDetail = z.infer<typeof zTaskDetail>;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
@@ -63,7 +63,7 @@ class MemoryStore implements BlobStore {
 }
 
 suite('projects (#2606): task checklist flows on PostgreSQL 17', () => {
-  const dbName = `crove_test_checklist_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_checklist_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let db: Db;

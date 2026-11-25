@@ -2,7 +2,7 @@
 // becomes ideas within the idea table's lengths, in the org's or a channel's brand voice, with the theme fenced as
 // data; a viewer, a server without AI, a channel-limited member naming another channel and a spent budget are refused
 // before the model is asked. An idea kept from the AI is marked as such, the mark cannot be cleared, and a draft made
-// from it is tainted. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// from it is tainted. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
@@ -21,7 +21,7 @@ import { socialDrafter } from '../src/kernel.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-ai-ideas-0123456789';
 const ISSUER = 'crove-auth';
@@ -35,7 +35,7 @@ interface Account {
 }
 
 suite('AI post ideas through the API (#1181)', () => {
-  const dbName = `crove_test_social_ai_ideas_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_ai_ideas_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

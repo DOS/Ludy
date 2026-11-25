@@ -4,7 +4,7 @@
 // (one pending proposal, revision 2 from the XML, the XML's uploader among its authors, both files showing it), reading the
 // PDF again does not put the weaker reading back, the posting names the XML as its source file and happens once; and the
 // cases that stay as they were: a PDF proposal already posted, one in another legal entity, one rejected, and the same XML
-// twice. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// twice. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -20,7 +20,7 @@ import type { ParsedInvoice } from '@ludy/l10n-vn';
 import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const FIXTURE = readFileSync(new URL('../../extract/test/fixtures/einvoice-basic.xml', import.meta.url), 'utf8');
 const PARSED = JSON.parse(readFileSync(new URL('../../../packages/l10n-vn/test/fixtures/einvoice-basic.parsed.json', import.meta.url), 'utf8')) as ParsedInvoice;
@@ -55,7 +55,7 @@ interface Row {
 }
 
 suite('the original XML after the PDF on PostgreSQL (#2269)', () => {
-  const dbName = `crove_test_xml_after_pdf_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_xml_after_pdf_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

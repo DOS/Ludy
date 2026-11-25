@@ -3,7 +3,7 @@
 // (ludy_social_metrics_totals), `ads.mcp.spend` (ludy_ads_spend), `ads.mcp.flags` (ludy_ads_flags) and `ads.mcp.today` (ludy_ads_today). All five are R0 reads for the consenting owner or admin of a
 // company grant; this test pins what the projections add on top of the screens' loaders: the exact keys, that every text is one plain line, that nothing beyond the privacy review leaves (the full
 // text of a post, an unpublished or another org's post, the connection of an ad account), the filters and their hard maximums, and who may read (a person who is only a member or a viewer is refused
-// even on a member-bound grant; a browser session and a grant without the scope are refused). Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// even on a member-bound grant; a browser session and a grant without the scope are refused). Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -16,7 +16,7 @@ import { adsCommands, adsQueries } from '@ludy/mod-ads';
 import { MCP_EXCERPT_MAX, socialCommands, socialQueries } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const CANARY = 'BÍ MẬT-3860';
@@ -108,7 +108,7 @@ const isoDay = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
 const addDays = (iso: string, days: number): string => isoDay(Date.parse(`${iso}T00:00:00Z`) + days * DAY);
 
 suite('the results MCP reads: Social metrics and Ads spend, flags and today (#3860)', () => {
-  const dbName = `crove_test_engage_mcp_results_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_engage_mcp_results_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let runtime: Runtime;

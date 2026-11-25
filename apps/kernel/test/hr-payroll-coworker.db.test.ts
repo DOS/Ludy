@@ -61,14 +61,14 @@ const setRuleStatus = (status: 'confirmed' | 'commentary') => {
   for (const row of PAYROLL_RULES) (row as { status: string }).status = status;
 };
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 const FINDING = /^- ([AS]\d+) \(([a-z_]+)\): (.+)$/gmu;
 
 suite('HR payroll coworker hardening on PostgreSQL 17 (#2815)', () => {
-  const dbName = `crove_test_hrcoworker_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_hrcoworker_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appUrl = '';
   let pool: pg.Pool;

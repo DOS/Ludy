@@ -3,7 +3,7 @@
 // booking that has a deal (the deal, its open next step, its latest sent quote with the exact total, the customer's latest words) under the booking's own reader rule and the member's own row-level
 // security: a member who may not read the conversation (a private email) gets the brief without its messages, a booking the member does not host is not found, a viewer is refused; it writes and audits
 // nothing. The API side then asks the model outside any transaction: with AI off no call is made and the facts stand alone; while the org keeps customers' words from the model it is given none;
-// words with a figure the facts do not hold are refused. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// words with a figure the facts do not hold are refused. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -20,7 +20,7 @@ import { DraftBudget } from '../src/ai-draft-limit.ts';
 import { meetingBriefAi, prepareMeetingBrief } from '../src/crm-meeting-brief-ai.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const VN = 'Asia/Ho_Chi_Minh';
@@ -37,7 +37,7 @@ function bookableDay(offset = 3): string {
 const at = (date: string, minute: number) => new Date(zonedInstant(VN, date, minute)).toISOString();
 
 suite('the meeting brief of a booking linked to a deal on PostgreSQL (#3115)', () => {
-  const dbName = `crove_test_crm_meeting_brief_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_crm_meeting_brief_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appPool: pg.Pool;
   let workerPool: pg.Pool;

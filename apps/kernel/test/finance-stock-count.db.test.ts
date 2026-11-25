@@ -3,7 +3,7 @@
 // confirm it through kernel.proposal.request, an owner or an admin approves, and approving posts one voucher (a shortage within the norm to 632, beyond it to 1381, a surplus to 3381) and writes
 // one adjustment move per item that differs, with its value, in one transaction. Refused: a day not come or in a closed month, an item with no cost, a proposal the books changed since, a
 // second confirmation. The database keeps a count from being confirmed without its voucher, an adjustment from a count that is not confirmed, and a move out of a closed month.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -16,7 +16,7 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -27,7 +27,7 @@ interface Row {
 }
 
 suite('the count of stock (#2513, part b)', () => {
-  const dbName = `crove_test_stockcount_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_stockcount_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

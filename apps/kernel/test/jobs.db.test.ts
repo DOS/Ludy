@@ -1,4 +1,4 @@
-// The ludy_jobs schema comes only from committed migrations (External-tenant gate T6). Set CROVE_TEST_ADMIN_URL
+// The ludy_jobs schema comes only from committed migrations (External-tenant gate T6). Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL)
 // to a superuser URL; each test creates and drops its own database.
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -10,7 +10,7 @@ import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { JOB_SCHEMA, MAIL_QUEUES, QUEUES, SOCIAL_PUBLISH_QUEUES, pgBossSchemaVersion } from '../src/jobs-schema.ts';
 import { rewriteHistoricalCoreSql } from './pre-cutover-db.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const created: string[] = [];
@@ -26,7 +26,7 @@ async function withClient<T>(url: string, fn: (client: pg.Client) => Promise<T>)
 }
 
 async function createDatabase(): Promise<string> {
-  const name = `crove_test_jobs_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const name = `ludy_test_jobs_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   await withClient(ADMIN as string, (admin) => admin.query(`CREATE DATABASE ${name}`));
   created.push(name);
   const url = new URL(ADMIN as string);

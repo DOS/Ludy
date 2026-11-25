@@ -2,7 +2,7 @@
 // The crm module's quotes (#2693, docs/plan/crm-quotes.md step Q1) on PostgreSQL 17: a draft made from a deal in one click, its lines and the totals the
 // shared rule computes (checked against SQL and against an e-invoice draft's line domains), who may write, that nothing here can move a quote out of
 // `draft` (the commands and the database both hold the line, tried as the runtime's own login in an org context), the revision of a sent quote, that a
-// deal with a quote is kept, cross-org isolation, and that audit rows and the timeline never hold a price or a line text. Set CROVE_TEST_ADMIN_URL to a
+// deal with a quote is kept, cross-org isolation, and that audit rows and the timeline never hold a price or a line text. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a
 // superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -18,14 +18,14 @@ import { crmCommands, crmQueries, renderQuotePdf, type QuoteDocument } from '@lu
 import { enterUser } from './context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 const item = (over: Record<string, unknown> = {}): Record<string, unknown> & { kind: 'item' } => ({ kind: 'item', description: 'Gói kế toán năm', unit: 'gói', quantity: '2', unitPrice: '1500000', vatRate: '10%', ...over });
 
 suite('crm quotes on PostgreSQL (#2693)', () => {
-  const dbName = `crove_test_crm_quotes_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_crm_quotes_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

@@ -2,7 +2,7 @@
 // with the vendored pg-boss schema and its queues as the migrations create them: the queues that dedupe on the key
 // (stately: agent wake-ups, publishing, mail) and a singletonSeconds slot (team chat alerts). A raw key, as some sends
 // had before, lets one org's job swallow another's; the same org's second job is still deduped. Set
-// CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its database.
+// LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; the run creates and drops its database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -12,12 +12,12 @@ import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { jobKey } from '../src/job-keys.ts';
 import { JOB_SCHEMA, MAIL_QUEUES, QUEUES, socialPublishQueue } from '../src/jobs-schema.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('job keys across orgs (#1694)', () => {
-  const dbName = `crove_test_job_keys_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_job_keys_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let pool: pg.Pool;
   let boss: PgBoss;
 

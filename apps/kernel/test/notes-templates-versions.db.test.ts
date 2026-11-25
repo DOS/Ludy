@@ -5,7 +5,7 @@
 // never clears taint; snapshots read through their note (private ones by the author alone); templates are private or
 // shared like notes; the org export carries shared templates and a count of private ones; the PDPL erasure leaves no
 // erased value in shared notes' snapshots or shared templates, and removes a private note's snapshots that name it
-// once its author was told. Set CROVE_TEST_ADMIN_URL to a superuser URL; the run makes its own database.
+// once its author was told. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; the run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -19,13 +19,13 @@ import { notesCommands, notesQueries } from '@ludy/mod-notes';
 import { enterUser } from './context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SYSTEM = { type: 'system' as const, component: 'notes' };
 const suite = ADMIN ? describe : describe.skip;
 
 suite('note templates and version history on PostgreSQL (#3562)', () => {
-  const dbName = `crove_test_notes_e3_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_notes_e3_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appUrl = '';
   const pools: pg.Pool[] = [];

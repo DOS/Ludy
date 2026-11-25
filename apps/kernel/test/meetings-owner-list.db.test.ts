@@ -20,7 +20,7 @@ import { createSessionStatusSource } from '../src/sessions.ts';
 import { contextToken } from './context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-meetings-owner-list-secret-0123456789';
 const ISSUER = 'crove-auth-meetings-owner-list';
@@ -46,7 +46,7 @@ interface ListAnswer {
 }
 
 suite('the owner compliance list of meetings (#2703)', () => {
-  const dbName = `crove_test_meetings_owner_list_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_meetings_owner_list_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appUrl = '';
   let pool: pg.Pool;

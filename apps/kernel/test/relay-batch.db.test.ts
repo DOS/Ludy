@@ -1,7 +1,7 @@
 // The relay's batches on PostgreSQL 17 with the vendored pg-boss schema (#1705): the outbox claim and the jobs it sends
 // commit or roll back together (relayBatch, what the worker's relay runs). When one send of a batch fails, the claim
 // rolls back with the jobs already sent, and the batch relayed again queues each job once, on a standard queue too,
-// whose singleton key dedupes nothing. A per-type relay kill switch still holds its rows. Set CROVE_TEST_ADMIN_URL to
+// whose singleton key dedupes nothing. A per-type relay kill switch still holds its rows. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to
 // a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -18,7 +18,7 @@ import { jobKey } from '../src/job-keys.ts';
 import { relayBatch, type JobSender, type OutboxRow } from '../src/worker.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -28,7 +28,7 @@ const HELD = 'test.relay.batch_held';
 const STANDARD = QUEUES.notify;
 
 suite('relay batches send on the claim transaction (#1705)', () => {
-  const dbName = `crove_test_relay_batch_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_relay_batch_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appPool: pg.Pool;
   let workerPool: pg.Pool;

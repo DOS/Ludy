@@ -3,7 +3,7 @@
 // that has chats on is connected by an owner to their own Telegram account, and Telegram says so in a `business_connection` update. The route parks it,
 // the worker records the account on the connection, and from then on the customer chats of that account come into Hộp thư as threads of their own
 // (beside a bot chat with the same id), answered for 24 hours after the customer's last message, through `sendMessage` with the business connection id,
-// and only when a person presses Send. An unknown or disabled business connection stores nothing. Set CROVE_TEST_ADMIN_URL to a superuser URL; each
+// and only when a person presses Send. An unknown or disabled business connection stores nothing. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each
 // run makes its own database.
 //
 // Telegram lets any Premium user connect a bot that has Business Mode on, so an account Telegram reports is not the org's own until an owner or admin
@@ -23,7 +23,7 @@ import { runConversationIntake, runConversationJob, runTelegramChatHook } from '
 import { createHttpApp } from '../src/http.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const SECRET = 'test-only-jwt-secret-for-telegram-business-0123456789-abcdef';
@@ -60,7 +60,7 @@ interface Org {
 }
 
 suite('Telegram Business mode on PostgreSQL (#3191)', () => {
-  const dbName = `crove_test_telegram_business_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_telegram_business_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let app: ReturnType<typeof createHttpApp>;

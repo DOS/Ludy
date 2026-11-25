@@ -5,7 +5,7 @@
 // 3) Blocking owner removal (PROJECT_OWNER_CANNOT_REMOVE 409) + set_owner auto-membership + dynamic access revocation + notification title omission.
 // 4) projects.weekly_status.share_note on a private project creates a private note (author-only).
 // 5) Module-off notes.record.panel isolation + org export and purgeOrg on private projects.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -31,7 +31,7 @@ import { createSessionStatusSource } from '../src/sessions.ts';
 import { enterUser } from './context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const DAY = 24 * 60 * 60 * 1000;
 const SYSTEM = { type: 'system' as const, component: 'kernel.worker' };
@@ -54,7 +54,7 @@ class MemoryStore implements BlobStore {
 }
 
 suite('projects v2 private project workflows on PostgreSQL (#2604)', () => {
-  const dbName = `crove_test_proj_flows_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_proj_flows_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

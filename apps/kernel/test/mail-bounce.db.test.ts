@@ -1,7 +1,7 @@
 // Bounces of plain SMTP mail, Email E2 step 3 (#539), on a real PostgreSQL 17 with the real parser process: each
 // mail's VERP token, a bounce report to bounce+<token>@INBOUND_DOMAIN parsed in crove-extract and recorded as the
 // mail's delivery event (a hard bounce suppresses the address), and reports with an altered token, about another
-// mail or that are not reports dropped. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its
+// mail or that are not reports dropped. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its
 // own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -18,7 +18,7 @@ import { acceptInboundEmail, processInboundEmail } from '../src/inbound.ts';
 import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const DOMAIN = 'in.test';
 
@@ -93,7 +93,7 @@ const report = (token: string, status: string, options: { action?: string; messa
   );
 
 suite('bounces of SMTP mail (#539)', () => {
-  const dbName = `crove_test_mail_bounce_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_mail_bounce_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

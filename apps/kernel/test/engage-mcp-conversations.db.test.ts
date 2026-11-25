@@ -3,7 +3,7 @@
 // Who reads what is the database's (the sealed contexts of #3858 slice b); this test pins what the projection adds on top: the exact keys of a thread and of a message, that every customer text is
 // plain and marked tainted, that a removed message leaves no text, that internal notes, drafts and read marks never leave, the paging and its hard maximum, and that a company grant sees the whole org
 // while a member-bound grant sees only what its member may read (a viewer or a plain member the comment threads, a desk agent the private messages and email too, a member limited to a channel that channel
-// only), a thread it may not read answering not found like one that does not exist. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// only), a thread it may not read answering not found like one that does not exist. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -14,7 +14,7 @@ import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/
 import { DomainError, Runtime, type UserActor } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const CANARY = 'BÍ MẬT-3860';
@@ -53,7 +53,7 @@ interface Detail {
 }
 
 suite('the Hộp thư MCP reads (#3860)', () => {
-  const dbName = `crove_test_engage_mcp_conv_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_engage_mcp_conv_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let runtime: Runtime;

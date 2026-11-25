@@ -2,7 +2,7 @@
 // The yearly rule of the household tax (#3710 slice 3, research 2026-11-18 B1 and B2) on PostgreSQL 17, on the REAL seeded law rows (the other household files set the threshold and the PIT cut to 0 to test their
 // own subjects with small revenues): nothing is owed up to the threshold of 1 billion VND; above it VAT on all the revenue and PIT only on the part above; the VAT cut of Decree 174 only on the household's yes; the PIT
 // cut of Decree 398 up to its ceiling; the household's pick of the trade that takes the deduction (asked, never defaulted); a period is the year-to-date tax at its last day less the year-to-date tax before it; the
-// threshold counts the whole year's revenue, entries before the household's first profile included. Covers S2a, S2b and the 01/CNKD. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// threshold counts the whole year's revenue, entries before the household's first profile included. Covers S2a, S2b and the 01/CNKD. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -15,12 +15,12 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('the yearly rule of the household tax (#3710 slice 3)', () => {
-  const dbName = `crove_test_household_s2a_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_household_s2a_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

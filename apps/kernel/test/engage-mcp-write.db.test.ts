@@ -2,7 +2,7 @@
 // The R1 write tools of the Engage coworkers (#3861, E2 of #3857) as the runtime runs them for a company grant that holds `ludy.engage.write` (and `ludy.ads.draft` for the ads draft): the twins of the app's
 // Hộp thư and CRM commands. Each does what a person's click does, in the grant's sealed write context, and this file pins what that looks like: the rows that change, who they name, that a contact the
 // agent adds is `external`, that the audit row names the grant, the client and the agent, and that every refusal holds (a grant without the scope, a member-bound grant, another org's rows, a person's
-// command the grant has no twin of). The database's own bounds, row by row, are in test/invariant/mcp-engage-write.db.test.ts. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// command the grant has no twin of). The database's own bounds, row by row, are in test/invariant/mcp-engage-write.db.test.ts. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -16,14 +16,14 @@ import { adsCommands, adsQueries } from '@ludy/mod-ads';
 import { crmCommands, crmQueries } from '@ludy/mod-crm';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const ENGAGE = 'ludy.engage.write';
 const ADS = 'ludy.ads.draft';
 
 suite('the Engage R1 write tools (#3861)', () => {
-  const dbName = `crove_test_engage_mcp_write_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_engage_mcp_write_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let runtime: Runtime;

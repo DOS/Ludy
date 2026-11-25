@@ -3,7 +3,7 @@
 // key, so CREDENTIAL_KEY_PREVIOUS can go and a value sealed before the rotation still opens. Only wrapped data keys move (the rows that hold sealed values are untouched); a key
 // under an unknown key id is reported and left as it is; a subject shredded between the read and the write changes nothing; the definers answer the worker login alone, and the write
 // only in the system context of the org; the audit row names key ids and counts, never the bytes.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; the run creates and drops its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -16,14 +16,14 @@ import { CredentialVault, Runtime, SUBJECT_WRAP_INFO, SubjectVault, defineComman
 import { resealSubjectKeys, unopenableSubjectKeysLog } from '../src/subject-key-reseal.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const PLACE = 'crove_hr.payroll_employee.national_id_sealed';
 const VALUE = '079 123 456 789';
 
 suite('the reseal pass for subject keys on PostgreSQL (#2643)', () => {
-  const dbName = `crove_test_reseal_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_reseal_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

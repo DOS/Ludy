@@ -1,5 +1,5 @@
 // Per-user rate limit on org creation (External-tenant gate T4, issue #94) on a real PostgreSQL 17. Set
-// CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its own database.
+// LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; the run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { sql } from 'kysely';
@@ -12,14 +12,14 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { toORPCError } from '../src/rpc.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const DAY_S = 24 * 60 * 60;
 
 const suite = ADMIN ? describe : describe.skip;
 
 suite('org creation rate limit on PostgreSQL (T4, #94)', () => {
-  const dbName = `crove_test_orglimit_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_orglimit_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

@@ -3,7 +3,7 @@
 // duplicate rules (tax code, then email, then phone key, inside the file too, a row naming two parties a conflict), the
 // commit creating exactly the new rows once, filling only empty fields on request, the parties judged again at commit,
 // staged rows deleted on commit, cancel and after 7 days, nothing but counts in the audit row, and who may run it. Set
-// CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -16,7 +16,7 @@ import { crmCommands, crmQueries } from '@ludy/mod-crm';
 import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -24,7 +24,7 @@ const suite = ADMIN ? describe : describe.skip;
 const row = (over: Partial<ImportRowInput> = {}): ImportRowInput => ({ kind: null, name: 'Nguyễn Văn An', taxCode: null, email: null, phone: null, address: null, ...over });
 
 suite('contact import on PostgreSQL (CRM K5, #2229)', () => {
-  const dbName = `crove_test_crm_import_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_crm_import_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

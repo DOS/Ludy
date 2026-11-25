@@ -30,7 +30,7 @@ import { createSessionStatusSource } from '../src/sessions.ts';
 import { runSignPdfInspectJob, runSignPdfSealJob } from '../src/sign-worker.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-sign-3822-0123456789abcdef';
 const ISSUER = 'crove-auth';
@@ -72,7 +72,7 @@ const TINY_PNG_BASE64 =
 const suite = ADMIN ? describe : describe.skip;
 
 suite('eSign Slice 4f on PostgreSQL 17 + crove-extract (#3822)', () => {
-  const dbName = `crove_test_sign_4f_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_sign_4f_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appUrl = '';
   let workerUrl = '';

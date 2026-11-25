@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The Hộp thư twins an AI coworker asks with (epic #3857, E4, issue #3863; ADR-0051 decision 10): a reply, a private reply and hiding a comment. For each: the call leaves one pending, tainted proposal and
 // sends nothing; a rejection sends nothing, ever; an approval runs the original command once, as the approver, with every check it has (here the reply window) judged then; an approval the agent claims
-// counts for nothing. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// counts for nothing. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { upsertIdentity } from '@ludy/kernel';

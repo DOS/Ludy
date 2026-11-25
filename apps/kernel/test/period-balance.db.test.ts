@@ -2,7 +2,7 @@
 // backfill migration gives every entry posted before the deltas existed its deltas, once, however often it runs; the
 // worker job resolves while the deltas match the journal lines and fails with references, not amounts, when they do
 // not. The database rules are in test/invariant/period-balance.db.test.ts.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; the run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -18,14 +18,14 @@ import { TEST_MANIFESTS } from './manifests.ts';
 import { contextToken } from './context-token.ts';
 import { rewriteHistoricalCoreSql } from './pre-cutover-db.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const BACKFILL = rewriteHistoricalCoreSql(readFileSync(new URL('../../../supabase/migrations/20261101160100_crove_finance_period_balance_backfill.sql', import.meta.url), 'utf8'));
 
 const suite = ADMIN ? describe : describe.skip;
 
 suite('period balance reconciliation (#1284)', () => {
-  const dbName = `crove_test_period_reconcile_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_period_reconcile_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appUrl = '';
   let pool: pg.Pool;

@@ -2,7 +2,7 @@
 // A late sales invoice is declared in the period of its sale (#3535, the accountant's answer to #2506 question 4), on PostgreSQL 17 with the offline provider: the draft keeps the sale
 // date apart from the invoice date; a sale older than the next working day is not issued without the person's reason, which goes to the audit; the issued invoice is counted in the
 // VAT working of the period of its sale, not of its issue date; and when that period is locked or its return filed it is a supplementary item of that period and in no main total of
-// either. Another org's draft with the same symbol and number changes nothing. Set CROVE_TEST_ADMIN_URL to a superuser URL.
+// either. Another org's draft with the same symbol and number changes nothing. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -19,7 +19,7 @@ import { runEInvoiceIssue } from '../src/einvoice-issue-job.ts';
 import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -63,7 +63,7 @@ const prevMonth = (() => {
 const SALE_DATE = `${prevMonth}-15`;
 
 suite('a late sales invoice is declared in the period of its sale (#3535)', () => {
-  const dbName = `crove_test_late_sale_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_late_sale_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

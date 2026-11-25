@@ -5,7 +5,7 @@
 // batches and the rows the archive holds beyond it, the restore check raises every series above the archived numbers
 // (one audited command each, a lost series created again with its archived key), and the next numbers allocated in the
 // copy lie above every archived one. The reseed definer is the worker's alone, in a system context, and never lowers a
-// number, and a series it made keeps its doc type's reset. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes
+// number, and a series it made keeps its doc type's reset. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes
 // its own databases.
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -24,7 +24,7 @@ import { LocalArchiveStore, restoreReport, verifyArchive, writeArchive } from '.
 import { contextToken } from './context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const OPERATOR = { type: 'system' as const, component: 'operator' };
 
@@ -32,8 +32,8 @@ const suite = ADMIN ? describe : describe.skip;
 
 suite('restore report and series reseed on PostgreSQL (#2007)', () => {
   const stamp = `${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
-  const dbName = `crove_test_restore_${stamp}`;
-  const copyName = `crove_test_restored_${stamp}`;
+  const dbName = `ludy_test_restore_${stamp}`;
+  const copyName = `ludy_test_restored_${stamp}`;
   let dir = '';
   let store: LocalArchiveStore;
   let orgId = '';

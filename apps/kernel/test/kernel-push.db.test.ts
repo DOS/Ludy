@@ -2,7 +2,7 @@
 // Browser push for the kernel's notifications on PostgreSQL 17 (#3736): a notice of a pushed kind (meetings.summary_ready) reaches the devices a member subscribed once for every app, through
 // kernel.push.pending (what an event's dispatch wrote) and kernel.push.targets (system); the one mute switch, a read or old notice, a disabled account, a member who left and a kind that is not pushed
 // get nothing; the line and path carry no text of the subject. The subscriptions themselves (limits, ownership, answers recorded) are covered with Social's in social-push.db.test.ts. The sender is a fake
-// that records each request. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// that records each request. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { createECDH, randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -16,7 +16,7 @@ import { createPushSender, generateVapidKeys, loadVapidKeys, runPushJob, type Pu
 import { TEST_MANIFESTS } from './manifests.ts';
 import { contextToken } from './context-token.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -28,7 +28,7 @@ function browserKeys() {
 const endpoint = () => `https://push.example.com/send/${randomUUID()}`;
 
 suite('kernel browser push on PostgreSQL (#3736)', () => {
-  const dbName = `crove_test_kernel_push_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_kernel_push_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appUrl = '';
   let pool: pg.Pool;

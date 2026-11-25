@@ -3,7 +3,7 @@
 // tests the wake-up of their own grant and of nothing else; an owner or admin sees only the receiver's host of another member's grant and cannot touch it; the receiver's address
 // follows the same rules as any other; a secret is in no audit row and no answer; the rates hold; a member-bound grant gets no signal; and delivery stops with the grant's standing.
 // The rules that must hold before this one existed are in test/invariant/mcp-wake-member.db.test.ts.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -15,12 +15,12 @@ import { CredentialVault, DomainError, Runtime, parseVaultKey, type UserActor } 
 import { makeWakeSecret } from '../src/mcp-wake-setup.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('the wake-up of a member-bound MCP grant (#2975, slice 3, step 3c-2)', () => {
-  const dbName = `crove_test_mcp_wake_member_db_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_mcp_wake_member_db_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let workerUrl = '';
   const pools: pg.Pool[] = [];

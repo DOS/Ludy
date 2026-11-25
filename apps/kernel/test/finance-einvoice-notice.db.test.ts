@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The notice of an error only in the non-core content of an issued sales e-invoice (#2504, plan einvoice-issue.md section 8): the buyer's name or address, or the amount in words. No new
 // invoice is made. The error is recorded with the text that is right and two steps the seller does outside Ludy (tell the buyer; file the form 04/SS-HĐĐT, a working answer of #2506), each
-// ticked once by a person. Nothing is sent. Set CROVE_TEST_ADMIN_URL to a superuser URL.
+// ticked once by a person. Nothing is sent. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -18,7 +18,7 @@ import { runEInvoiceIssue } from '../src/einvoice-issue-job.ts';
 import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -59,7 +59,7 @@ interface DraftRow {
 }
 
 suite('the notice of an error in the non-core content of an issued sales e-invoice (#2504)', () => {
-  const dbName = `crove_test_einvoice_notice_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_einvoice_notice_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

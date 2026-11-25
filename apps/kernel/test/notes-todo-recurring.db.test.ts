@@ -21,7 +21,7 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { notesCommands, notesQueries } from '@ludy/mod-notes';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -37,7 +37,7 @@ const FUTURE_RESCHEDULE_DAY = `${FUTURE_YEAR}-12-10`;
 const FUTURE_RESCHEDULE_NEXT = `${FUTURE_YEAR}-12-11`;
 
 suite('personal to-do recurrence and reschedule on PostgreSQL (#3557)', () => {
-  const dbName = `crove_test_notes_todo_rec_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_notes_todo_rec_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let app: Runtime;

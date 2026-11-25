@@ -2,7 +2,7 @@
 // Marketplace order reports as files (#2515, ADR-0045 points 4, 5 and 7), on a real PostgreSQL 17 and the real parsing sandbox: a Shopee report is read and STAGED with nothing stored, a
 // member confirms it and the orders are stored once (a stage only moves forward, a re-upload is idempotent), the lines that name a stock item move stock at shipment and again on a return,
 // a file that is no report or has rows the profile cannot read stores nothing, and no buyer data of the report appears in any stored row. The files are made in code with made-up buyers.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -17,7 +17,7 @@ import { buildXlsx, type XlsxCell } from '../../extract/test/xlsx-fixture.ts';
 import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -44,7 +44,7 @@ class MemoryStore implements BlobStore {
 }
 
 suite('marketplace order reports (#2515)', () => {
-  const dbName = `crove_test_marketplace_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_marketplace_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

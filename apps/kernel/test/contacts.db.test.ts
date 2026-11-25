@@ -2,7 +2,7 @@
 // Contacts of the CRM on PostgreSQL 17 (CRM slice 1, step K4, #2228): a person or a company added by hand, a duplicate tax
 // code refused with the existing party named, search without Vietnamese marks ("nguyen" finds "Nguyễn") and through the
 // phone key, the TypeScript and SQL phone keys agreeing on every case of one table, filters and sorts as a saved view
-// stores them, cursor paging that lists every contact once, and the isolation of orgs and roles. Set CROVE_TEST_ADMIN_URL
+// stores them, cursor paging that lists every contact once, and the isolation of orgs and roles. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL)
 // to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -17,12 +17,12 @@ import { Runtime } from '@ludy/kernel-runtime';
 
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('contacts on PostgreSQL (CRM K4, #2228)', () => {
-  const dbName = `crove_test_contacts_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_contacts_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

@@ -6,7 +6,7 @@
 // - the entry is built again at approval: a stored proposal that differs from the settlement is refused; a settlement posts once; a reversal or a reversed settlement, a closed period and a chart
 //   with no map are refused;
 // - the shipped set of commands (the map and the rows of the sales, payout and fee paths are `commentary`) refuses both the request and the approval with 409 until the accountant confirms the map (#2520).
-// The tests that post use a command set made with a confirmed copy of the map; the shipped map is never changed. Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its own database.
+// The tests that post use a command set made with a confirmed copy of the map; the shipped map is never changed. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; the run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -18,7 +18,7 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { MARKETPLACE_POSTING_MAPS, createMarketplaceSettlementCommands, financeCommands, financeQueries, type MarketplacePostingMap } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -41,7 +41,7 @@ interface SeedLine {
 }
 
 suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
-  const dbName = `crove_test_mkt_record_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_mkt_record_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let rt: Runtime;

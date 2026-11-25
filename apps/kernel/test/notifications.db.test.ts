@@ -5,7 +5,7 @@
 // not locked tells the owners and admins once. Never the person who acted, never a kind the member turned off, never
 // twice for one event, and each member reads and marks only their own. The worker routes the events to the
 // dispatches; here the test runs the dispatch commands itself, as the worker's job does.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -22,7 +22,7 @@ import { extractAndPropose, financeCommands, financeQueries, recordExtractionFai
 import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const FIXTURE = readFileSync(new URL('../../extract/test/fixtures/einvoice-basic.xml', import.meta.url), 'utf8');
 const SYSTEM = { type: 'system' as const, component: 'test.notify' };
@@ -46,7 +46,7 @@ class MemoryStore implements BlobStore {
 const suite = ADMIN ? describe : describe.skip;
 
 suite('in-app notifications of the kernel and finance (#671)', () => {
-  const dbName = `crove_test_notify_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_notify_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

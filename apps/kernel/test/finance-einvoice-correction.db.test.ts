@@ -3,7 +3,7 @@
 // and goes through the same approval and job, the job calling `adjust` or `replace` with the original's reference read from its stored row; the intake links the new invoice (#916), an
 // adjustment leaves the original in force and posts the difference, a replacement voids it in the transaction that posts the new one, a rejected replacement leaves it untouched. Refused:
 // a correction of an invoice not issued, of one already replaced, of a second method after the first, a second open correction, no reason code, a business buyer with no signed agreement.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -20,7 +20,7 @@ import { runEInvoiceIssue } from '../src/einvoice-issue-job.ts';
 import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -61,7 +61,7 @@ interface DraftRow {
 }
 
 suite('adjusting and replacing an issued sales e-invoice (#2504)', () => {
-  const dbName = `crove_test_einvoice_correct_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_einvoice_correct_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

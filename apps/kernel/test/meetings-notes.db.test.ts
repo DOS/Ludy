@@ -18,14 +18,14 @@ import { DraftBudget } from '../src/ai-draft-limit.ts';
 import { runMeetingSummary, runNotesEnhance, type MeetingSummaryDeps } from '../src/member-vy-ports.ts';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 const NOTES = 'báo giá khách A\nNam gửi trước thứ sáu\nhỏi lại chiết khấu';
 
 suite('the recorder\'s rough notes and Vy\'s expansion of them (A5, #3163)', () => {
-  const dbName = `crove_test_notes_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_notes_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let orgId = '';

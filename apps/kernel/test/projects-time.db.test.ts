@@ -5,7 +5,7 @@
 // 3) Permissions (own entry, project owner/org owner/admin, viewer 403, agent actor 403) + template & archived project rejection.
 // 4) Cascade retention: projects.task.remove -> ON DELETE SET NULL (task_id), member removal -> ON DELETE SET NULL (user_id).
 // 5) CSV formula-injection neutralization & ludy- filename, le_scope isolation in summary/export/weekly_status_source, PDPL find/erase, export + org_purge.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -38,7 +38,7 @@ import { orgPurgeCommand, purgeOrg } from '../src/org-purge.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const ISSUER = 'crove-auth';
 const DAY = 24 * 60 * 60 * 1000;
@@ -61,7 +61,7 @@ class MemoryStore implements BlobStore {
 }
 
 suite('projects lean time tracking & billable hours on PG17 (#2600)', () => {
-  const dbName = `crove_test_proj_time_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_proj_time_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

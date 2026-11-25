@@ -2,7 +2,7 @@
 // adds, edits, completes, reorders and deletes their to-dos; another member, an owner and an admin read none of them
 // and change none; a to-do due today in its own time zone lists under Hôm nay; checklist steps save; the audit rows
 // keep markers, not text; the system empties the trash and a former member's to-dos;
-// owners and admins get only how many each member has. Set CROVE_TEST_ADMIN_URL to a superuser URL; the run makes its
+// owners and admins get only how many each member has. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; the run makes its
 // own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -16,7 +16,7 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { notesCommands, notesQueries } from '@ludy/mod-notes';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SYSTEM = { type: 'system' as const, component: 'notes' };
 const TITLE = 'Gọi khách xin sao kê tháng 10';
@@ -28,7 +28,7 @@ const WEST = 'Pacific/Pago_Pago';
 const suite = ADMIN ? describe : describe.skip;
 
 suite('personal to-dos on PostgreSQL (#1673)', () => {
-  const dbName = `crove_test_notes_todos_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_notes_todos_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let app: Runtime;

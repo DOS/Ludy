@@ -1,6 +1,6 @@
 // The Social media library on PostgreSQL 17 (Social plan S9, issue #395): the org's post images only, newest first and
 // paged, searchable by name with wildcards taken literally, each with the posts that show it, and nothing of another
-// org. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// org. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -12,12 +12,12 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { socialCommands, socialQueries, type LibraryItem, type LibraryUse } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('social media library on PostgreSQL (S9)', () => {
-  const dbName = `crove_test_social_library_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_library_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

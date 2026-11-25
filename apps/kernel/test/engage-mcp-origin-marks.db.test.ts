@@ -2,7 +2,7 @@
 // The origin and taint marks of what a connected coworker writes (#4149, found in the security review of #3861; ADR-0051 decision 8): a note, a deal, a quote (and its lines) and a timeline row made or changed by
 // an Engage twin in the grant's sealed write context carry `actor_origin = 'mcp'` and (where the row holds text) `tainted`, set by the database from the sealed context and never by a caller, while the same rows made
 // by a person are unmarked. The taint is never lowered, a person's row an app only moves is not tainted, the tenant role cannot write the columns, and the views the app reads (a thread's notes, a deal, a quote, a contact's timeline)
-// carry them. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// carry them. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -17,13 +17,13 @@ import { crmCommands, crmQueries } from '@ludy/mod-crm';
 import { contextToken } from './context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const ENGAGE = 'ludy.engage.write';
 
 suite('the origin and taint marks of what a connected coworker writes (#4149)', () => {
-  const dbName = `crove_test_engage_mcp_marks_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_engage_mcp_marks_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let runtime: Runtime;

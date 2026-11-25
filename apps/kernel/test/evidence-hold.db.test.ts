@@ -3,7 +3,7 @@
 // records it. A file that is not posted is never held; a hold the store refuses is recorded with its reason, never
 // touches the posting, and is tried again after a backoff; a bucket without Object Lock or a store without holds gets
 // nothing recorded per file; a longer period lengthens a hold and a shorter one never shortens it.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -19,7 +19,7 @@ import { holdErrorText, runEvidenceHolds, type EvidenceHoldState } from '../src/
 import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const FIXTURE = readFileSync(new URL('../../extract/test/fixtures/einvoice-basic.xml', import.meta.url)).toString('utf8');
 const DAY = 86_400_000;
@@ -59,7 +59,7 @@ class HoldingStore implements BlobStore {
 const suite = ADMIN ? describe : describe.skip;
 
 suite('retention holds on evidence files (#1009)', () => {
-  const dbName = `crove_test_holds_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_holds_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

@@ -3,7 +3,7 @@
 // reads (B01-DNN's 110, 131 and 311 at the period's last day, B02-DNN's 50 for the period) for the same entity and dates, the comparison must read the period of
 // the same length right before, the six months and the expense mix must match the books, a new org reads as empty, and a viewer reads it too while another org
 // sees nothing of it. The rules themselves are unit-tested in modules/finance/test/overview.test.ts.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -17,14 +17,14 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const TODAY = '2026-11-04';
 type FinancialStatements = z.infer<typeof zFinancialStatements>;
 
 suite('the Kế toán Tổng quan (#2631)', () => {
-  const dbName = `crove_test_overview_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_overview_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

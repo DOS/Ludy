@@ -3,7 +3,7 @@
 // and ludy_finance.post_journal_entry() refusing an amount with more decimals than the org's book currency uses
 // (AMOUNT_SCALE, 22023), where numeric(20,4) would have kept or rounded it silently. Also the read-only query that
 // lists rows posted before the rule which break it (the migration's header carries the same query).
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; the run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -16,7 +16,7 @@ import { CURRENCY_MINOR_UNITS } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 import { contextToken } from './context-token.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const ROLES = ['ludy_app', 'ludy_worker', 'ludy_tenant', 'ludy_definer_tenant'];
 
@@ -48,7 +48,7 @@ const pair = (amount: string): Line[] => [
 const suite = ADMIN ? describe : describe.skip;
 
 suite('currency amount scale (#1282)', () => {
-  const dbName = `crove_test_currency_scale_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_currency_scale_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appUrl = '';
   let pool: pg.Pool;

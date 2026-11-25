@@ -27,7 +27,7 @@ import { createHttpApp, type HttpDeps } from '../src/http.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-meetings-secret-0123456789-abcdef';
 const ISSUER = 'crove-auth-meetings';
@@ -77,7 +77,7 @@ class TestBlobStore implements BlobStore {
 }
 
 suite('the meeting transcript (#2578, M4a)', () => {
-  const dbName = `crove_test_transcript_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_transcript_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let store: TestBlobStore;

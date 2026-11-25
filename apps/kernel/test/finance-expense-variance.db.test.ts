@@ -3,7 +3,7 @@
 // regimes (an entity with no books row keeps TT133 and splits 64xx at 4 digits; an entity under TT99 keeps 641 and 642 as one line each), leave out revenue and the year-end closing entries, name the supplier or
 // voucher behind each line, refuse a month that has not ended, give a member scoped to another entity the same refusal as the overview, never count another entity's postings, and write nothing.
 // The rules themselves are unit-tested in modules/finance/test/expense-variance.test.ts.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database (CI only: a run without it is skipped, not passed).
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database (CI only: a run without it is skipped, not passed).
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -17,14 +17,14 @@ import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 import { contextToken } from './context-token.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 // The month of the report: it and the three before it are long past, whatever day the suite runs.
 const MONTH = '2026-07';
 
 suite('expense variance of the Kế toán Tổng quan (#4392)', () => {
-  const dbName = `crove_test_expense_variance_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_expense_variance_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appPool: pg.Pool;
   let kyselyPool: pg.Pool;

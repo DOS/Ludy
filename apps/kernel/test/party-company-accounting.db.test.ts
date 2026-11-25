@@ -2,7 +2,7 @@
 // The company a person works at (#2438) against the books on PostgreSQL 17: `party` is shared with the accounting, so with `company_id` set the accounting's
 // customer and vendor reads answer the same shape, an invoice's party is still found by its tax code (no second party, the link untouched), a party that books
 // point at keeps its kind while a fresh one can change it, and a company the writer cannot see is refused by the command (so the legal-entity policy to come on
-// `party`, #1538, needs no change in the link). Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// `party`, #1538, needs no change in the link). Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -16,7 +16,7 @@ import { crmCommands, crmQueries } from '@ludy/mod-crm';
 import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -25,7 +25,7 @@ const CUSTOMER_TAX_CODE = '0309876546';
 const VENDOR_TAX_CODE = '0305551110';
 
 suite('the company of a person and the accounting (#2438)', () => {
-  const dbName = `crove_test_party_company_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_party_company_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

@@ -2,7 +2,7 @@
 // Widening ludy_meetings.glossary_term_ok and enforcing NFKC address checks (#4137 points 2b and 3) on PostgreSQL 17:
 // builds the database as it stood right before 20270201180000, inserts rows that the old CHECK allowed (including the four widened invisible ranges, colliding cleaned terms, lone U+FFA0,
 // address smuggling via U+FFA0, and NFKC look-alikes), runs the migration (twice for idempotency), and verifies scrubbing, constraint validation, rejection of every widened edge and look-alike,
-// and acceptance of adjacent non-invisible characters and valid dotted terms. Set CROVE_TEST_ADMIN_URL to a superuser URL.
+// and acceptance of adjacent non-invisible characters and valid dotted terms. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL.
 import { copyFileSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
@@ -18,7 +18,7 @@ import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
 import { createPreCutoverClient, createPreCutoverPool, rewriteHistoricalCoreSql } from './pre-cutover-db.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const VERSION = '20270201180000';
 const suite = ADMIN ? describe : describe.skip;
@@ -44,7 +44,7 @@ const LOOK_ALIKES = [
 const ch = (point: number) => String.fromCodePoint(point);
 
 suite('glossary_term_ok widening and NFKC address check (#4137 points 2b and 3)', () => {
-  const dbName = `crove_test_glossary_widen_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_glossary_widen_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let before = '';
   let upgraded = false;

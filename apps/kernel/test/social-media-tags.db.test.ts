@@ -1,7 +1,7 @@
 // Tags on the Social media library on PostgreSQL 17 (issue #904): members tag library files and take tags off, each
 // tag once per file whatever its case and at most 20 per file; the library filters by one tag together with the name
 // search and the cursor; the org's tags are listed with counts; another org sees and tags nothing; tags go with their
-// file. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// file. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -13,12 +13,12 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { MAX_TAGS_PER_FILE, socialCommands, socialQueries, type LibraryItem, type MediaTagCount } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('social media library tags on PostgreSQL (#904)', () => {
-  const dbName = `crove_test_social_media_tags_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_media_tags_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

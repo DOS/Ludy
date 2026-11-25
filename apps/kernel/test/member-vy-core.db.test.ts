@@ -2,7 +2,7 @@
 // The database core of Vy working for one member (ADR-0049 stage A slice 1, issue #2755): the expiry and the removal
 // purge of a member's results and memory, the counts an owner sees before removing a member, and the template that no
 // owner installs into the chart. The invariants of who reads what are in test/invariant/member-vy-private.db.test.ts.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -14,12 +14,12 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
 import { contextToken } from './invariant/fixtures/context-token.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('member Vy database core (ADR-0049 stage A slice 1)', () => {
-  const dbName = `crove_test_member_vy_core_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_member_vy_core_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appUrl = '';
   let workerUrl = '';

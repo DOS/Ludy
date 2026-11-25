@@ -4,7 +4,7 @@
 //   approving posts one voucher that names the run; the entry balances and equals the run's totals, one line per account;
 // - a TT133 entity posts unemployment insurance to 3385 and never 3386, a TT99 entity to 3386 and never 3385, and each function has its own expense account;
 // - a run that is not approved, one with a posting open or done, and one that does not exist are refused; a member cannot ask; the voucher of a run is unique in the database.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; the run creates and drops its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -37,7 +37,7 @@ const setMapStatus = (status: 'confirmed' | 'commentary') => {
   }
 };
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -49,7 +49,7 @@ const TEAM: { name: string; wage: string; payFunction?: string }[] = [
 ];
 
 suite('the posting of a pay run on PostgreSQL (#2532)', () => {
-  const dbName = `crove_test_hrposting_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_hrposting_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let rt: Runtime;

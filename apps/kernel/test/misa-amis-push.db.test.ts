@@ -4,7 +4,7 @@
 // again, with one more attempt; nothing erases a row), the worker's commands (the next step, the ledger call committed BEFORE a send, a batch with no answer turning ambiguous and never being sent again,
 // results recorded only along the graph), tenancy, and that no voucher body, name or secret is stored. The vouchers come from a stand-in for `finance.vouchers.cash` (the real loaders are covered by
 // their own tests); everything else is the real commands and the real migrations.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
@@ -23,7 +23,7 @@ import { createSessionStatusSource } from '../src/sessions.ts';
 import { contextToken } from './invariant/fixtures/context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -69,7 +69,7 @@ const cash = (sourceId: string, code: string, overrides: Partial<CashVoucher> = 
 const ASK = { kind: 'cash_payment' as const, from: '2026-10-01', to: '2026-10-31' };
 
 suite('MISA AMIS push (#3902)', () => {
-  const dbName = `crove_test_misa_amis_push_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_misa_amis_push_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

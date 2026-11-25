@@ -2,7 +2,7 @@
 // exact under concurrency (ludy_kernel.invite_mail_gate counts under a lock per org and one per recipient), a busy
 // lock answers 429 instead of parking a connection, and one address gets at most the configured number of invites
 // from all orgs together, except an org's first invite of it, which other orgs cannot block. That the cap reveals nothing about accounts is in test/invariant/invites.db.test.ts. Set
-// CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { sql, type Transaction } from 'kysely';
@@ -16,7 +16,7 @@ import { toORPCError } from '../src/rpc.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 import { contextToken } from './context-token.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 // The per-recipient cap of the configured runtime below.
 const TIGHT = 6;
@@ -29,7 +29,7 @@ interface Created {
 }
 
 suite('invite mail limits on PostgreSQL (#185)', () => {
-  const dbName = `crove_test_invite_limits_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_invite_limits_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

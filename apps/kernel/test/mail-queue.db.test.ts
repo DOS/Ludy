@@ -3,7 +3,7 @@
 // left ambiguous, sent again only by a mailer that dedupes and never for marketing; a send lost with its worker
 // recorded as ambiguous; mail off, a missing template and a refused recipient recorded as failures; the retention
 // purge of addresses, subjects and merge data; and the commands and definers kept to the worker. Set
-// CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -17,7 +17,7 @@ import { createLogProvider, type MailProvider, type OutboundMail, type SendResul
 import { MAIL_BULK_QUEUE, MAIL_SEND_QUEUE, purgeMail, runMailJob, sweepMail, type MailJob, type MailTemplates } from '../src/mail-queue.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -63,7 +63,7 @@ function scripted(answers: SendResult[], safety: MailProvider['sendRetrySafety']
 }
 
 suite('queued mail (#548)', () => {
-  const dbName = `crove_test_mail_queue_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_mail_queue_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

@@ -3,7 +3,7 @@
 // an inbox draft the creator posts becomes a post and loses its SENT_TO_APP note; a SELF_ONLY post is never asked about;
 // the asking stops after 7 days; a refused token marks the connection expired; the scan is the worker's alone and lists
 // nothing of an inactive org or channel. Only status reads go out: no publish and no new call on the ledger. Set
-// CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -16,7 +16,7 @@ import { TikTokPublisher, type Fetch } from '@ludy/channel';
 import { publishCallKey, socialCommands, socialQueries, sweepLateIds, sweepMetrics } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const APP = { clientKey: 'awtestclientkey01', clientSecret: 'test-tiktok-secret-not-real', videoList: true };
@@ -52,7 +52,7 @@ interface Row {
 }
 
 suite('TikTok late post ids (#1475)', () => {
-  const dbName = `crove_test_social_late_ids_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_late_ids_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appPool: pg.Pool;
   let workerPool: pg.Pool;

@@ -2,7 +2,7 @@
 // issued before the migration (a 'never' series that continues them), the yearly reset by default (31 December, then
 // 1 January starts at 1), the monthly reset, the policy setter and the void command with their permissions, the
 // series query, and a switch of the reset from a future 1 January (#1595). The invariants (gapless under parallel
-// posts, voids, direct writes, scope) are in test/invariant/numbering.db.test.ts. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// posts, voids, direct writes, scope) are in test/invariant/numbering.db.test.ts. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { copyFileSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -18,7 +18,7 @@ import { TEST_MANIFESTS } from './manifests.ts';
 import { enterUser } from './context-token.ts';
 import { createPreCutoverClient, createPreCutoverPool } from './pre-cutover-db.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const THIS_VERSION = '20261103030000';
 const suite = ADMIN ? describe : describe.skip;
@@ -28,7 +28,7 @@ const LINES = JSON.stringify([
 ]);
 
 suite('gapless numbering on PostgreSQL (#1401)', () => {
-  const dbName = `crove_test_numbering_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_numbering_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appUrl = '';
   let before = '';

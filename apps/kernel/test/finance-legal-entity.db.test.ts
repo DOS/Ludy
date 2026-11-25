@@ -4,7 +4,7 @@
 // After it: new rows take their parent's entity or the default one, a mismatch or a change is refused, a member limited
 // to one entity reads and writes only that entity's books, rules are unique per entity, and the nightly comparison
 // reports a delta whose entity is not its entry's.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; the run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { copyFileSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -23,7 +23,7 @@ import { TEST_MANIFESTS } from './manifests.ts';
 import { enterUser } from './context-token.ts';
 import { createPreCutoverClient, createPreCutoverPool } from './pre-cutover-db.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const THIS_VERSION = '20261102140000';
 // Entries posted before the migration, two lines and two deltas each.
@@ -52,7 +52,7 @@ const RLS_DENIED = /new row violates row-level security policy/;
 const suite = ADMIN ? describe : describe.skip;
 
 suite('finance books per legal entity (#1280)', () => {
-  const dbName = `crove_test_finance_le_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_finance_le_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

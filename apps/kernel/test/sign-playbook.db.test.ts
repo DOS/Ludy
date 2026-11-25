@@ -37,7 +37,7 @@ import { evaluateEnvelopePlaybook, signAi } from '../src/sign-ai.ts';
 import { runSignPdfInspectJob } from '../src/sign-worker.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const TEST_JWT_KEY = 'unit-test-'.repeat(5);
 const ISSUER = 'crove-auth';
@@ -93,7 +93,7 @@ const mockExtract: ExtractClient = {
 const suite = ADMIN ? describe : describe.skip;
 
 suite('eSign Slice 5d SME contract playbook checklist and cited redline suggestions (#4442)', () => {
-  const dbName = `crove_test_sign_pbk_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_sign_pbk_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appUrl = '';
   let workerUrl = '';

@@ -2,7 +2,7 @@
 // The outbox guard's one-release allowance (#1970, dropped by #1980): what the previous release emits, which a rollback
 // may bring back, still passes the database while ctx.emit refuses it: its CRM cancel title and its session revoke's
 // subject. An ordinary test, not the invariant suite: the invariant (test/invariant/event-payload.db.test.ts) holds the
-// refusals and the parity of the two rules, and #1980 removes this file with the allowance. Set CROVE_TEST_ADMIN_URL to
+// refusals and the parity of the two rules, and #1980 removes this file with the allowance. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to
 // a superuser URL; each run creates and drops its own database.
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -10,14 +10,14 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { migrate } from '@ludy/db/migrate';
 import { eventPayloadProblem } from '@ludy/kernel-runtime';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const ID = '0193a3f4-5b6c-7d8e-9f01-23456789abcd';
 
 const suite = ADMIN ? describe : describe.skip;
 
 suite("the outbox guard's one-release allowance for the previous release (#1970)", () => {
-  const dbName = `crove_test_evlegacy_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_evlegacy_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
 
   async function withClient<T>(url: string, fn: (c: pg.Client) => Promise<T>): Promise<T> {

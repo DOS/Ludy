@@ -2,7 +2,7 @@
 // invites, in front of a fake Supabase Auth that records what reaches it. Each mode admits exactly the sign-ups it
 // should, every refusal is the same response and never reaches Supabase Auth, and sign-in and password recovery keep
 // working. A sign-up for an invited address needs the invite's token from the accept link (#563), which never
-// reaches Supabase Auth. Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its own database.
+// reaches Supabase Auth. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; the run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -18,7 +18,7 @@ import type { InviteChecks } from '../src/auth-signup-policy.ts';
 import { createHttpApp } from '../src/http.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const REFUSED = { code: 403, error_code: 'signup_not_allowed', msg: 'Email này chưa được phép đăng ký tài khoản' };
 
@@ -27,7 +27,7 @@ const suite = ADMIN ? describe : describe.skip;
 type App = ReturnType<typeof createHttpApp>;
 
 suite('sign-up policy through the /auth/v1 proxy (#350)', () => {
-  const dbName = `crove_test_signuppolicy_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_signuppolicy_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let runtime: Runtime;

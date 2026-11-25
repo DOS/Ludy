@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The org export carries each member's Vy as counts only (#2822, ADR-0049): per member the number of private results and memory entries, never a body, in the export table
 // kernel.member_vy_private_count, which the worker's system context reads through ludy_kernel.member_vy_private_counts(). No other export table carries a Vy body either.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -12,7 +12,7 @@ import { createOrg, EXPORT_TABLES, EXPORT_TABLE_NAMES, kernelCommands, kernelQue
 import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const SYSTEM = { type: 'system' as const, component: 'test.member-vy-export' };
@@ -21,7 +21,7 @@ const RESULT_BODY = 'Tóm tắt riêng: khách A đòi giảm giá 12 phần tr�
 const MEMORY_BODY = 'Luôn gọi khách B là chị Lan';
 
 suite('the org export carries Vy as counts only (#2822)', () => {
-  const dbName = `crove_test_member_vy_export_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_member_vy_export_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let orgId = '';

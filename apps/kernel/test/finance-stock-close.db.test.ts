@@ -2,7 +2,7 @@
 // The tables and guards of the stock month close (#2513, ADR-0045 point 2), on a real PostgreSQL 17: a closed month is append-only, is closed in order and only once it is over, keeps
 // every move out of it, and is the authority of the reports: its own report reads what the close stored and the month after it opens with its closing balance.
 // The command that closes a month (and posts its cost) is tested in finance-stock-close-command.db.test.ts; here the rows a close leaves are written by the database owner.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -14,7 +14,7 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -33,7 +33,7 @@ interface Row {
 }
 
 suite('the stock month close: tables, guards and reports (#2513)', () => {
-  const dbName = `crove_test_stockclose_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_stockclose_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

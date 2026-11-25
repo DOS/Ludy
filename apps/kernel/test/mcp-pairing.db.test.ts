@@ -28,7 +28,7 @@ import { createOauthServer } from '../src/oauth-server.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-mcp-secret-0123456789-abcdefghij';
 const ISSUER = 'crove-auth-mcp';
@@ -64,7 +64,7 @@ const freePort = () =>
   });
 
 suite('the pairing code of the MCP endpoint (#4591)', () => {
-  const dbName = `crove_test_mcp_pairing_http_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_mcp_pairing_http_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let server: Server;

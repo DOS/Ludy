@@ -3,7 +3,7 @@
 // of or shortening a running ad, and cancelling a waiting change that would raise spend (#4181). Only what STOPS or REDUCES spend has a twin. For each: the call leaves one pending, tainted proposal and changes nothing; a rejection changes nothing, ever; an approval runs the
 // original command once, as the approver, with every check it has judged then, on what stands then; a proposal the original refuses stays pending. The fixture is the live launch the invariants of the changes of a
 // running ad build (apps/kernel/test/invariant/ads-manage.db.test.ts), copied here: a launch of 100 000 a day that began three days ago and ends in ten, with its campaign, ad set and one ad recorded.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';

@@ -3,7 +3,7 @@
 // kind recorded in the same transaction, else the one a missing-invoice mail's payload names, else the org's default
 // entity; other org-level rows stay as they are.
 // The constraint activity_entity_named is then validated, with the tax obligation and party link kinds, so an UPDATE of
-// an old row passes. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// an old row passes. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { copyFileSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -19,14 +19,14 @@ import { TEST_MANIFESTS } from './manifests.ts';
 import { enterUser } from './context-token.ts';
 import { createPreCutoverClient, createPreCutoverPool } from './pre-cutover-db.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 // #1792's constraint: the rows below are written as the code wrote them before it.
 const BEFORE_VERSION = '20261104130000';
 const suite = ADMIN ? describe : describe.skip;
 
 suite('activity entity backfill on PostgreSQL (#1805)', () => {
-  const dbName = `crove_test_activity_backfill_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_activity_backfill_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appUrl = '';
   let before = '';

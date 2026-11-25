@@ -1,7 +1,7 @@
 // Weekly usage report (issue #311) on a real PostgreSQL 17: ludy_kernel.usage_weekly() over seeded audit rows, files
 // and proposals of two orgs across three weeks, read as ludy_reporter through the CLI's reader; the journal export's
 // audit row written by the real command; and no tenant content in the result. Privileges (who may execute it) are in
-// test/invariant/usage-report.db.test.ts. Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its
+// test/invariant/usage-report.db.test.ts. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; the run creates and drops its
 // own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -15,7 +15,7 @@ import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { formatUsage, readUsage, runUsageReport, type UsageRow } from '../src/usage-report.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const TZ = 'Asia/Ho_Chi_Minh';
 // Content that must never come out of the report.
@@ -24,7 +24,7 @@ const SECRET = 'secret-usage-311';
 const suite = ADMIN ? describe : describe.skip;
 
 suite('weekly usage report (#311)', () => {
-  const dbName = `crove_test_usage_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_usage_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let reporterUrl = '';
   let appPool: pg.Pool;

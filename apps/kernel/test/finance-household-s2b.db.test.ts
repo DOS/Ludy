@@ -2,7 +2,7 @@
 // The S2b-HKD revenue book of a household business on the income method (#2517 slice 2c, plan stock-and-marketplaces.md sections 8.5 and 12 row 6), on PostgreSQL 17: a view of the ledger's account 511
 // whose total ties to the ledger, each entry shared between the household's business lines by what it is built from (a sale document's lines by their stock item's trade; anything else is unassigned; a
 // reversal follows the entry it undoes; one trade takes everything), VAT per line (no PIT: on the income method it comes from income) by the percentages in force on the period's last day, the label while a row behind the figures is `commentary`,
-// and the cases the book refuses. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// and the cases the book refuses. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -15,12 +15,12 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('the S2b-HKD revenue book of a household business (#2517 slice 2c)', () => {
-  const dbName = `crove_test_household_s2b_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_household_s2b_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

@@ -3,7 +3,7 @@
 // line is proposed unclassified (a placeholder account, a warning check naming it) instead of the old silent 6422, the
 // Inbox list counts the lines so its "Chưa phân loại" filter lists exactly those proposals, approving one is refused
 // until a reviewer picks the account, and once picked the line is classified and its rule is learned like any chosen
-// account (#1399). Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// account (#1399). Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -23,7 +23,7 @@ import { createSessionStatusSource } from '../src/sessions.ts';
 import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const FIXTURE = readFileSync(new URL('../../extract/test/fixtures/einvoice-basic.xml', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-unclassified-0123456789';
@@ -69,7 +69,7 @@ interface Check {
 const suite = ADMIN ? describe : describe.skip;
 
 suite('unclassified invoice lines (#2091)', () => {
-  const dbName = `crove_test_unclassified_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_unclassified_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

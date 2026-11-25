@@ -1,7 +1,7 @@
 // Member invite flows (issue #35) against a real PostgreSQL 17, through the HTTP API: what the inviter sees and what
 // is recorded, the pending list, replacing and revoking, the invitee's preview and acceptance. The security
 // properties (consent, email binding, single use, expiry, cross-org, database privileges) are in
-// test/invariant/invites.db.test.ts. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own
+// test/invariant/invites.db.test.ts. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own
 // database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -18,7 +18,7 @@ import { createHttpApp } from '../src/http.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-invites-0123456789';
 const ISSUER = 'crove-auth';
@@ -34,7 +34,7 @@ interface Account {
 }
 
 suite('member invite flows on PostgreSQL', () => {
-  const dbName = `crove_test_invite_flows_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_invite_flows_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

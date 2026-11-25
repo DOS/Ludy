@@ -2,7 +2,7 @@
 // org's sales invoices with their tax code, receivable on 131 (a receipt and a voided sale included) and latest invoice,
 // searched by name and tax code, a page at a time; vendors left out; a customer edited through the party editor (#887)
 // and its duplicates counted under it; and nothing of one org read or changed from another.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -22,7 +22,7 @@ import { createSessionStatusSource } from '../src/sessions.ts';
 import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const FIXTURE = readFileSync(new URL('../../extract/test/fixtures/einvoice-basic.xml', import.meta.url)).toString('utf8');
 const SECRET = 'test-only-jwt-secret-for-customers-0123456789';
@@ -72,7 +72,7 @@ interface CustomerRow {
 const suite = ADMIN ? describe : describe.skip;
 
 suite('customers (#670)', () => {
-  const dbName = `crove_test_customers_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_customers_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

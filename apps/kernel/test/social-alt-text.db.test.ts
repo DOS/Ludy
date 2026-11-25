@@ -2,7 +2,7 @@
 // image, within the chosen channels' strictest limit; a viewer, a server without AI or without a vision model, a file
 // that is not the org's own Social image, a channel of another org, a channel outside a limited member's (#1175), an
 // object larger than its file row records (#1126) and a spent budget are refused before the model is asked; and the
-// route writes nothing. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// route writes nothing. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -24,7 +24,7 @@ import { socialDrafter } from '../src/kernel.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-alt-text-0123456789';
 const ISSUER = 'crove-auth';
@@ -38,7 +38,7 @@ interface Account {
 }
 
 suite('AI alt text suggestions through the API (#1121)', () => {
-  const dbName = `crove_test_social_alt_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_alt_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

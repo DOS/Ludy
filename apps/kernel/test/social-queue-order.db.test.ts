@@ -3,7 +3,7 @@
 // posts in review, held by the publishing hold, set for a time of their own or waiting out a rate limit stay put. Owners
 // and admins only; each move is written while the post still holds the time read (#956), and two reorders at once
 // leave a consistent queue. The post's timeline shows each move.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -15,7 +15,7 @@ import { CredentialVault, Runtime, parseVaultKey } from '@ludy/kernel-runtime';
 import { socialCommands, socialQueries, type ActivityItem, type PostView } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const HCM = 'Asia/Ho_Chi_Minh';
@@ -25,7 +25,7 @@ type Reorder = { queueId: string; moved: { variantId: string; postId: string; fr
 type Row = { id: string; post_id: string; status: string; queue_slot_at: Date | null; scheduled_at: Date | null; error_retry_at: Date | null };
 
 suite('social queue reordering on PostgreSQL (#1020)', () => {
-  const dbName = `crove_test_social_queue_order_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_queue_order_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appPool: pg.Pool;
   let appDb: Db;

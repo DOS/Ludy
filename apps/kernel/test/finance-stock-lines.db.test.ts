@@ -2,7 +2,7 @@
 // Stock from the lines of a posted document (#2512, ADR-0045 point 4), on a real PostgreSQL 17: a goods line that matches an item (by code, then by a taught name with its
 // factor) makes a move when the document is approved, the others wait in the "Chưa gán hàng" list, a person assigns one (the move and the taught name), a sale takes stock
 // out, a voided document takes its stock back, and the entry is the same with or without items.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -17,7 +17,7 @@ import { extractAndPropose, financeCommands, financeQueries } from '@ludy/mod-fi
 import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const FIXTURE = readFileSync(new URL('../../extract/test/fixtures/einvoice-basic.xml', import.meta.url)).toString('utf8');
 const suite = ADMIN ? describe : describe.skip;
@@ -63,7 +63,7 @@ interface Move {
 }
 
 suite('stock from document lines (#2512)', () => {
-  const dbName = `crove_test_stocklines_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_stocklines_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

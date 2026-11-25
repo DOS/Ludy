@@ -6,7 +6,7 @@
 // Erasing (owners, R3): the contact fields go, a party nothing in the books names loses its name and tax code too, a
 // party in the books keeps them, the mail recipient goes but its hash stays, a report schedule loses the address (and
 // goes when nobody is left), and the audit row holds counts only.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -20,12 +20,12 @@ import { enterUser } from './context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 import { PII_TEXT_CASES } from './pii-text-cases.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('finding a person in the org (#923)', () => {
-  const dbName = `crove_test_pdpl_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_pdpl_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

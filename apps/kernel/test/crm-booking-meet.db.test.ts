@@ -2,7 +2,7 @@
 // A Google Meet per booking (C7, #1375) on PostgreSQL 17: only a host whose own Google connection can write to their calendar picks it, for a one-host type; a
 // booking of such a type is confirmed pending with its event asking for a conference and its mails held back; the write-back job (with a recorded adapter) makes
 // the Meet and the booking learns the link, or that there is none, and only then its confirmation mails are queued; a booking still pending is settled as failed
-// by the delayed job; a host who cannot make a Meet gets the booking confirmed at once with the fixed link. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run
+// by the delayed job; a host who cannot make a Meet gets the booking confirmed at once with the fixed link. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run
 // makes its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -20,7 +20,7 @@ import { bookingRequest } from '../src/booking-page.ts';
 import { runCalendarWriteBack } from '../src/calendar-sync.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const VN = 'Asia/Ho_Chi_Minh';
@@ -38,7 +38,7 @@ function bookableDay(offset = 3): string {
 const at = (date: string, minute: number) => new Date(zonedInstant(VN, date, minute)).toISOString();
 
 suite('a Google Meet per booking on PostgreSQL (C7, #1375)', () => {
-  const dbName = `crove_test_crm_booking_meet_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_crm_booking_meet_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appPool: pg.Pool;
   let workerPool: pg.Pool;

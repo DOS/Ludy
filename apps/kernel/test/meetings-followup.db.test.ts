@@ -2,7 +2,7 @@
 // The follow-up email after a meeting (L3, #2590, ADR-0047) on PostgreSQL 17: the recorder's draft from the published summary, and the send that queues one mail per
 // recipient. The send checks every text the same way whatever its origin, flags an address outside the meeting until the recorder ticks it, asks a tick to send again, refuses
 // a draft the published result has moved past, caps the sends per meeting per day, runs once per idempotency key, and audits counts and ids only.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -15,12 +15,12 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('the follow-up email of a meeting (#2590)', () => {
-  const dbName = `crove_test_followup_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_followup_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let runtime: Runtime;

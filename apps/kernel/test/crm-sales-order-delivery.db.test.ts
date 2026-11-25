@@ -2,7 +2,7 @@
 // The delivery of a sales order line (#2697, ADR-0050 point 4, docs/plan/crm-quotes.md step Q4b) on PostgreSQL 17: a person marks a goods line delivered and the record says so once;
 // a second mark, a service line, a missing line, a future date and a date before the order are refused; a delivery is taken back by a reversing row, and a line taken back is not
 // delivered again; an order with a live delivery is not cancelled (by the command, and by the database when a member goes around it); a cancelled order takes none; the append-only
-// table, its keys and its policy hold as the runtime's own login; cross-org isolation; and audit rows hold ids only. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// table, its keys and its policy hold as the runtime's own login; cross-org isolation; and audit rows hold ids only. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -26,7 +26,7 @@ import { crmCommands, crmQueries } from '@ludy/mod-crm';
 import { enterUser } from './context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -34,7 +34,7 @@ const item = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
 const REASON = 'Khách đổi ý vì giá';
 
 suite('crm sales order delivery on PostgreSQL (#2697)', () => {
-  const dbName = `crove_test_crm_sales_order_delivery_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_crm_sales_order_delivery_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

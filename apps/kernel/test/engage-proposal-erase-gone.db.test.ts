@@ -4,7 +4,7 @@
 // - one audit row per proposal blanked, with ids and the state before and nothing of the text, and the note a person typed when rejecting is replaced;
 // - only an owner, an admin or the system may call it;
 // - the taint keys of deleted quote lines are recorded for a person's save and not at all in the system context (the org purge).
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';

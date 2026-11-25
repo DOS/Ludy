@@ -22,7 +22,7 @@ import { createSessionStatusSource } from '../src/sessions.ts';
 import { fakeMediaMeasurer } from './fake-media.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-notes-importers-secret-0123456789-abcdef';
 const ISSUER = 'crove-auth-notes-importers';
@@ -66,7 +66,7 @@ const tinyPdf = () => new TextEncoder().encode('%PDF-1.4\n1 0 obj\n<<>>\nendobj\
 const challengeOf = (verifier: string) => createHash('sha256').update(verifier).digest('base64url');
 
 suite('Notes v2 E5a (#3564): Evernote (.enex) and Todoist (.csv) importers on PostgreSQL 17', () => {
-  const dbName = `crove_test_notes_import_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_notes_import_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let runtime: Runtime;

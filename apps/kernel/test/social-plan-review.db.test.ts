@@ -1,7 +1,7 @@
 // One client review link for a content plan (#902) on PostgreSQL 17: owners and admins make it from picked posts or a
 // date range on chosen channels, frozen into a set of posts; the public page lists them in schedule order, an answer
 // settles its post alone through the client approval step (#770), revocation, expiry and the member-revoke rule (#625)
-// hold, another org's posts never join, and a post cancelled since shows as gone. Set CROVE_TEST_ADMIN_URL to a
+// hold, another org's posts never join, and a post cancelled since shows as gone. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a
 // superuser URL; each run makes its own database.
 import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -15,13 +15,13 @@ import { reviewTokenHash, socialCommands, socialQueries, type PostView, type Rev
 import { reviewAnswer } from '../src/review-link.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const DAY = 86_400_000;
 
 suite('social plan review links on PostgreSQL (#902)', () => {
-  const dbName = `crove_test_social_plan_review_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_plan_review_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

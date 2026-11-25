@@ -2,7 +2,7 @@
 // link to a finance or crm record is checked through that module's own get query in the writer's context, and shown to
 // each reader as they may open the record now. A voucher of entity A shows to a member of A and as unavailable
 // ("Bản ghi không mở được") to a member limited to B; with finance off the notes still load and its links show as
-// unavailable; a private note's audit rows never name the record. Set CROVE_TEST_ADMIN_URL to a superuser URL; the run
+// unavailable; a private note's audit rows never name the record. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; the run
 // makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -18,12 +18,12 @@ import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { notesCommands, notesQueries } from '@ludy/mod-notes';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('notes linked to documents, vouchers and bookings on PostgreSQL (#1672)', () => {
-  const dbName = `crove_test_notes_links_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_notes_links_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;
