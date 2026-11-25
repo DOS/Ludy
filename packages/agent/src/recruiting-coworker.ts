@@ -917,6 +917,7 @@ export interface CvExtractProposal {
   yearsExperience: number | null;
   matchedSkills: string[];
   notes: string | null;
+  aiSummary: string | null;
   textPreview: string | null;
   extractedChars: number;
   sourceKind: 'pdf_text' | 'docx_text';
@@ -948,8 +949,8 @@ export interface ProposeCvCandidateDraftOptions {
 const UNTRUSTED_CV_FENCE_TAG_RE = /\[\/?\s*UNTRUSTED_CV\s*\]/giu;
 const HAS_UNTRUSTED_CV_FENCE_TAG_RE = /\[\/?\s*UNTRUSTED_CV\s*\]/iu;
 
-/** Sanitizes untrusted CV text from crove-extract before passing to Ly so delimiter breaks, NFKC lookalikes, invisible format chars, and control bytes are removed. */
-export function sanitizeCvTextForPrompt(rawText: string): string {
+/** Sanitizes full untrusted CV text from crove-extract before grounding or prompt slicing. */
+function sanitizeCvTextFull(rawText: string): string {
   const cleaned = rawText
     .normalize('NFKC')
     .replace(/\p{Cf}/gu, '')
@@ -960,8 +961,12 @@ export function sanitizeCvTextForPrompt(rawText: string): string {
     .replace(UNTRUSTED_FENCE_TAG_RE, ' ')
     .replace(/\r\n?/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
-    .trim()
-    .slice(0, CV_EXTRACT_PROMPT_MAX_CHARS);
+    .trim();
+}
+
+/** Sanitizes untrusted CV text from crove-extract before passing to Ly so delimiter breaks, NFKC lookalikes, invisible format chars, and control bytes are removed. */
+export function sanitizeCvTextForPrompt(rawText: string): string {
+  return sanitizeCvTextFull(rawText).slice(0, CV_EXTRACT_PROMPT_MAX_CHARS);
 }
 
 /** Creates the metered OpenAI-compatible generator for structured CV draft extraction (`hr.cv_extract`). */
@@ -1018,7 +1023,7 @@ function foldCvEvidence(value: string): string {
     .toLowerCase();
 }
 
-function isPhoneGroundedInCv(cleanedPhone: string, cvText: string): boolean {
+function isPhoneGroundedInCv(cleanedPhone: string, fullCvText: string): boolean {
   const digits = cleanedPhone.replace(/\D/g, '');
   if (digits.length < 9) return false;
   const variants = new Set<string>([digits]);
@@ -1027,32 +1032,74 @@ function isPhoneGroundedInCv(cleanedPhone: string, cvText: string): boolean {
   } else if (digits.startsWith('0') && digits.length >= 10) {
     variants.add(`84${digits.slice(1)}`);
   }
-  const splitBoundaries = cvText
+  const splitBoundaries = fullCvText
     .replace(/\t| {2,}/g, '|')
-    .replace(/ [-–—] /g, '|')
+    .replace(/ [-\u2013\u2014] /g, '|')
     .replace(/[^0-9+()\-.\t ]+/g, '|');
   const chunks = splitBoundaries.split('|');
   for (const chunk of chunks) {
-    const chunkDigits = chunk.replace(/\D/g, '');
-    if (chunkDigits.length < 9) continue;
-    if (variants.has(chunkDigits)) return true;
+    const normalizedChunk = chunk.trim().replace(/(\+?84)[ \t]*\(0\)/g, '$1');
+    const chunkDigits = normalizedChunk.replace(/\D/g, '');
+    if (chunkDigits.length >= 9 && variants.has(chunkDigits)) {
+      return true;
+    }
+    if (/[ \t]/.test(normalizedChunk)) {
+      const tokens = normalizedChunk.split(/[ \t]+/).filter(Boolean);
+      const digitTokens = tokens.map((tok) => tok.replace(/\D/g, '')).filter((d) => d.length > 0);
+      if (
+        digitTokens.length >= 2 &&
+        digitTokens.every((d) => d.length >= 9 && d.length <= 15) &&
+        digitTokens.some((d) => variants.has(d))
+      ) {
+        return true;
+      }
+    }
   }
   return false;
 }
 
-function isDisplayNameGroundedInCv(displayName: string, foldedCv: string): boolean {
-  const tokens = foldCvEvidence(displayName)
-    .split(/[^a-z0-9]+/)
-    .filter((token) => token.length >= 2);
-  if (tokens.length === 0) return false;
-  return tokens.every((token) => foldedCv.includes(token));
+function normalizeCvEvidenceSpan(value: string): string {
+  return foldCvEvidence(value)
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function isDisplayNameGroundedInCv(displayName: string, normalizedFoldedCv: string): boolean {
+  const normalizedName = normalizeCvEvidenceSpan(displayName);
+  if (!normalizedName) return false;
+  const tokens = normalizedName.split(' ').filter(Boolean);
+  if (tokens.length === 0 || !tokens.some((token) => token.length >= 2)) return false;
+  return ` ${normalizedFoldedCv} `.includes(` ${normalizedName} `);
+}
+
+function hasStandaloneIntegerToken(text: string, value: number): boolean {
+  const needle = String(value);
+  let pos = text.indexOf(needle);
+  while (pos !== -1) {
+    const prev = pos === 0 ? '' : text.charAt(pos - 1);
+    const next = pos + needle.length >= text.length ? '' : text.charAt(pos + needle.length);
+    const prevIsDigit = prev >= '0' && prev <= '9';
+    const nextIsDigit = next >= '0' && next <= '9';
+    if (!prevIsDigit && !nextIsDigit) return true;
+    pos = text.indexOf(needle, pos + 1);
+  }
+  return false;
 }
 
 function validateCvAiOutput(
   out: CvExtractAiOut | null,
   fallback: ReturnType<typeof extractCvFieldsDeterministically>,
   cvText: string,
-): { displayName: string | null; email: string | null; phone: string | null; yearsExperience: number | null; matchedSkills: string[]; notes: string | null } | null {
+  fullCvText: string,
+): {
+  displayName: string | null;
+  email: string | null;
+  phone: string | null;
+  yearsExperience: number | null;
+  matchedSkills: string[];
+  notes: string | null;
+  aiSummary: string | null;
+} | null {
   if (!out) return null;
   const rawSummary = out.summary?.trim() || null;
   let summary: string | null = null;
@@ -1063,6 +1110,7 @@ function validateCvAiOutput(
   }
   const lowerCv = cvText.toLowerCase();
   const foldedCv = foldCvEvidence(cvText);
+  const normalizedFoldedCv = normalizeCvEvidenceSpan(cvText);
 
   const emailCandidate = out.email?.trim() ?? '';
   const emailLower = emailCandidate.toLowerCase();
@@ -1079,13 +1127,13 @@ function validateCvAiOutput(
     out.displayName && out.displayName.trim().length >= 2 ? isSafeCvTextField(out.displayName, 200) : null;
   const displayName =
     safeDisplayName &&
-    (safeDisplayName.toLowerCase() === fallback.displayName?.toLowerCase() || isDisplayNameGroundedInCv(safeDisplayName, foldedCv))
+    (safeDisplayName.toLowerCase() === fallback.displayName?.toLowerCase() || isDisplayNameGroundedInCv(safeDisplayName, normalizedFoldedCv))
       ? safeDisplayName
       : fallback.displayName;
 
   const cleanedPhone = (out.phone ?? '').replace(/[\s().-]/g, '');
   const phone =
-    /^\+?\d{9,15}$/.test(cleanedPhone) && isPhoneGroundedInCv(cleanedPhone, cvText)
+    /^\+?\d{9,15}$/.test(cleanedPhone) && isPhoneGroundedInCv(cleanedPhone, fullCvText)
       ? cleanedPhone
       : fallback.phone;
 
@@ -1094,7 +1142,7 @@ function validateCvAiOutput(
     Number.isInteger(out.yearsExperience) &&
     out.yearsExperience >= 0 &&
     out.yearsExperience <= 80 &&
-    (out.yearsExperience === fallback.yearsExperience || new RegExp(`(?:^|\\D)${out.yearsExperience}(?!\\d)`).test(cvText));
+    (out.yearsExperience === fallback.yearsExperience || hasStandaloneIntegerToken(fullCvText, out.yearsExperience));
   const yearsExperience = yearsNumberGrounded ? out.yearsExperience : fallback.yearsExperience;
 
   const fallbackSkillKeys = new Set(fallback.matchedSkills.map((skill) => foldCvEvidence(skill)));
@@ -1127,7 +1175,8 @@ function validateCvAiOutput(
     phone,
     yearsExperience,
     matchedSkills,
-    notes: summary ? summary.slice(0, 1200) : fallback.notes,
+    notes: fallback.notes,
+    aiSummary: summary ? summary.slice(0, 600) : null,
   };
 }
 
@@ -1147,6 +1196,7 @@ export async function proposeCvCandidateDraft(
     yearsExperience: deterministic.yearsExperience,
     matchedSkills: deterministic.matchedSkills,
     notes: deterministic.notes,
+    aiSummary: null,
     textPreview: deterministic.textPreview,
     extractedChars: input.text.length,
     sourceKind: input.sourceKind,
@@ -1163,7 +1213,8 @@ export async function proposeCvCandidateDraft(
   if (!options.generate) {
     return baseDraft('ai_off', false);
   }
-  const safeCvText = sanitizeCvTextForPrompt(input.text);
+  const fullSafeCvText = sanitizeCvTextFull(input.text);
+  const safeCvText = fullSafeCvText.slice(0, CV_EXTRACT_PROMPT_MAX_CHARS);
   if (safeCvText.length === 0) {
     return baseDraft('ai_off', false);
   }
@@ -1222,7 +1273,7 @@ export async function proposeCvCandidateDraft(
   }
   if (generated.usage) options.onUsage?.(generated.usage);
 
-  const verified = validateCvAiOutput(generated.output, deterministic, safeCvText);
+  const verified = validateCvAiOutput(generated.output, deterministic, safeCvText, fullSafeCvText);
   if (!verified) {
     return baseDraft('refused', false);
   }
@@ -1234,6 +1285,7 @@ export async function proposeCvCandidateDraft(
     yearsExperience: verified.yearsExperience,
     matchedSkills: verified.matchedSkills,
     notes: verified.notes,
+    aiSummary: verified.aiSummary,
     textPreview: deterministic.textPreview,
     extractedChars: input.text.length,
     sourceKind: input.sourceKind,

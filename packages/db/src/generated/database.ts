@@ -121,6 +121,7 @@ export interface LudyHrSchema {
   'ludy_hr.attendance_qr_config': HrAttendanceQrConfigTable;
   'ludy_hr.business_trip_request': HrBusinessTripRequestTable;
   'ludy_hr.candidate': HrCandidateTable;
+  'ludy_hr.candidate_stage_transition': HrCandidateStageTransitionTable;
   'ludy_hr.contract_addendum': HrContractAddendumTable;
   'ludy_hr.department': HrDepartmentTable;
   'ludy_hr.employee_asset_handover': HrEmployeeAssetHandoverTable;
@@ -2057,6 +2058,20 @@ export interface HrBusinessTripRequestTable {
   created_by: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_hr.candidate_stage_transition */
+export interface HrCandidateStageTransitionTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  seq: ColumnType<string, never, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  candidate_id: ColumnType<string, string, NotGranted>;
+  from_stage: ColumnType<string | null, string | null, NotGranted>;
+  to_stage: ColumnType<string, string, NotGranted>;
+  occurred_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
 /** ludy_hr.candidate */
