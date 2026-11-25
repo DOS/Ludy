@@ -26,6 +26,7 @@ const PUBLIC: Record<string, string> = {
   '/version': 'the build id and the migrations missing from the ledger, for the deploy smoke test (#892); no tenant data',
   '/api/config': 'what the SPA needs before sign-in (auth URL, public links); no tenant data',
   '/status': 'the public status page (#678): one line per service, nothing about an org',
+  '/auth-templates/:name': 'Ludy-branded GoTrue email templates (#3577): strict allowlist of the five static HTML auth templates for the bundled auth container, zero dynamic file reads and zero tenant data',
   '/auth/v1/*': 'the proxy to Supabase Auth, where sign-up and sign-in happen; it applies its own per-client limits',
   '/webhooks/mail/:provider': "the mail provider's delivery events, checked by the provider's signature",
   '/api/inbound/email': 'the inbound mail relay, checked by INBOUND_SECRET (constant-time)',

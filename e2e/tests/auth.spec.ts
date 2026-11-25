@@ -16,7 +16,7 @@ test('the confirmation link signs the new user in, and a used link shows why it 
   await expect(page).toHaveURL(/\/login$/);
   // Help is in the same place as in the app, before anyone is signed in (DESIGN.md §7, 3.2.6; #1516).
   await expect(page.getByRole('link', { name: 'Góp ý / Hỗ trợ' })).toHaveAttribute('href', 'mailto:support@e2e.test');
-  await page.goto(await authLink(email, /confirm/i));
+  await page.goto(await authLink(email, /Xác nhận địa chỉ email/i));
   await expect(page).toHaveURL(/\/login$/);
   await expect(page.getByRole('alert')).toContainText('Liên kết đã hết hạn hoặc đã được dùng');
 
@@ -62,7 +62,7 @@ test('password recovery sets a new password through the emailed link', async ({ 
   await page.getByRole('button', { name: 'Quên mật khẩu' }).click();
   await expect(page.getByText('thư đặt lại mật khẩu đã được gửi')).toBeVisible();
 
-  await page.goto(await authLink(email, /reset/i));
+  await page.goto(await authLink(email, /Đặt lại mật khẩu/i));
   await expect(page).toHaveURL(/\/reset-password$/);
   await page.getByLabel('Mật khẩu mới', { exact: true }).fill(newPassword);
   await page.getByLabel('Nhập lại mật khẩu mới').fill(newPassword);
@@ -121,7 +121,7 @@ test('a user enrolls TOTP; sign-in and password recovery then ask for the code (
   await page.getByLabel('Email').fill(email);
   await page.getByRole('button', { name: 'Quên mật khẩu' }).click();
   await expect(page.getByText('thư đặt lại mật khẩu đã được gửi')).toBeVisible();
-  await page.goto(await authLink(email, /reset/i));
+  await page.goto(await authLink(email, /Đặt lại mật khẩu/i));
   await expect(page).toHaveURL(/\/reset-password$/);
   await expect(page.getByText('Nhập mã trước khi đặt mật khẩu mới')).toBeVisible();
   await expect(page.getByLabel('Mật khẩu mới', { exact: true })).toHaveCount(0);
