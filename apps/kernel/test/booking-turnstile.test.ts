@@ -2,6 +2,7 @@
 // the SPA's CSP lets Turnstile's script and frame in, and a booking request is refused unless its token checks out with
 // Cloudflare. Without them nothing changes. Polls of a request are never checked.
 import type pg from 'pg';
+import { PostgresQueryCompiler } from 'kysely';
 import { describe, expect, it, vi } from 'vitest';
 import type { BlobStore, Runtime } from '@ludy/kernel-runtime';
 import { loadConfig } from '../src/config.ts';
@@ -12,11 +13,27 @@ const base = { DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: 'x'.repe
 const KEYS = { TURNSTILE_SITE_KEY: '0x4AAAAAAAtest', TURNSTILE_SECRET: '0x4AAAAAAAsecret' };
 const REQUEST = { startsAt: '2026-11-02T02:00:00.000Z', name: 'Nguyễn Văn Khách', email: 'khach@example.test', timeZone: 'Asia/Ho_Chi_Minh' };
 
+const compiler = new PostgresQueryCompiler();
+const ORG_ID = '00000000-0000-0000-0000-000000000001';
+
 function app(env: Record<string, string>, turnstile?: TurnstileVerifier | null) {
-  const orgless = vi.fn(async () => 'booking-id');
+  const fakeDb = {
+    getExecutor: () => ({
+      compileQuery: (node: Parameters<PostgresQueryCompiler['compileQuery']>[0], queryId: Parameters<PostgresQueryCompiler['compileQuery']>[1]) => compiler.compileQuery(node, queryId),
+      executeQuery: async (compiled: { sql: string }) => {
+        if (compiled.sql.includes('public_page_org')) return { rows: [{ org_id: ORG_ID }] };
+        if (compiled.sql.includes('booking_status')) {
+          return { rows: [{ status: { status: 'pending', refusal: null, startsAt: REQUEST.startsAt, endsAt: '2026-11-02T02:30:00.000Z', timeZone: REQUEST.timeZone } }] };
+        }
+        return { rows: [{ id: 'booking-id' }] };
+      },
+      transformQuery: (node: unknown) => node,
+    }),
+  };
+  const orgless = vi.fn(async <O>(fn: (db: unknown) => Promise<O>) => fn(fakeDb));
   const http = createHttpApp({
     config: loadConfig({ ...base, ...env }),
-    runtime: { installed: () => true, modules: () => ['kernel', 'crm'], orgless } as unknown as Runtime,
+    runtime: { installed: () => true, modules: () => ['kernel', 'crm'], appOn: async () => true, orgless } as unknown as Runtime,
     store: {} as BlobStore,
     authenticate: async () => {
       throw new Error('not used');
@@ -70,7 +87,7 @@ describe('Turnstile on the booking form (#1353)', () => {
     const { post, orgless } = app({});
     const res = await post(REQUEST);
     expect(res.status).toBe(202);
-    expect(orgless).toHaveBeenCalledTimes(1);
+    expect(orgless).toHaveBeenCalledTimes(2);
   });
 
   it('refuses a request without a good token before recording anything, and records one with a good token', async () => {
@@ -84,7 +101,7 @@ describe('Turnstile on the booking form (#1353)', () => {
     expect(orgless).not.toHaveBeenCalled();
     const ok = await post({ ...REQUEST, turnstile: 'good' });
     expect(ok.status).toBe(202);
-    expect(orgless).toHaveBeenCalledTimes(1);
+    expect(orgless).toHaveBeenCalledTimes(2);
     expect(verify).toHaveBeenLastCalledWith('good', null);
     // A poll of a request carries the request token only and is not checked.
     verify.mockClear();

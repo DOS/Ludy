@@ -140,6 +140,10 @@ const KERNEL_MODULE_REFERENCES: Record<string, { modules: readonly string[]; why
   'apps/kernel/src/sign-hook.ts': { modules: ['sign'], why: 'the minute sweep of queued eSign outbound webhooks (#4440): the worker-only ludy_sign.webhook_open definer lists queued deliveries, worked and scheduled only when sign is installed (worker.ts)' },
   'apps/kernel/src/sign-worker.ts': { modules: ['sign'], why: 'the eSign PDF inspect/seal workers and sweeps, worked and scheduled only when sign is installed (worker.ts)' },
   'apps/kernel/src/period-balance.ts': { modules: ['finance'], why: 'the period balance reconciliation, worked and scheduled only when finance is installed (worker.ts)' },
+  'apps/kernel/src/public-page-gate.ts': {
+    modules: ['crm', 'social'],
+    why: 'orgless public-page entitlement gate (#3393, ADR-0053): calls ludy_social.public_page_org only from social public routes (mounted only when social is installed) and ludy_crm.public_page_org only from crm public routes (mounted only when crm is installed)',
+  },
   'apps/kernel/src/quote-link.ts': { modules: ['crm'], why: 'the public quote page route (the definer crove_crm.quote_link_view), registered only when crm is installed (http.ts)' },
   'apps/kernel/src/report-link.ts': { modules: ['social'], why: 'public report link routes, registered only when social is installed (http.ts)' },
   'apps/kernel/src/review-link.ts': { modules: ['social'], why: 'public review link routes, registered only when social is installed (http.ts)' },
