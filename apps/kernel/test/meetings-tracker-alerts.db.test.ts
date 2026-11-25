@@ -307,7 +307,7 @@ suite('Tracker alerts (#4873)', () => {
       'hợp đồng hợp đồngg', 'Ký hợp đồng. Hợp, đồng mới', 'Ký Hợp đồng mới và hop dong khác', 'a a a b a', 'Đối thủ ĐỐI THỦ đối   thủ, doi thu', 'dai viet 2024 Đại Việt', 'Nguyễn Văn Nam gặp nguyen van nam',
       '   ', '!!!', 'ACME-Corp, acme corp; ACME_Corp', "d'Artagnan và O'Neil", 'tiếng Việt 100% (ok)', 'Hợp\tđồng\nmới', 'số 1 số 12 số 1', 'giá'.normalize('NFD') + ' rẻ', 'Hợp đồng'.normalize('NFD') + ' mới', 'đ', 'Đ đ',
     ];
-    const TERMS = ['giá', 'gia', 'Hợp đồng', 'hop dong', 'ACME', 'acme corp', 'đối thủ', 'doi thu', 'Đại Việt', 'dai viet', 'a', 'a a', 'số 1', '100 ok', 'nguyen van nam', 'Nguyễn Văn', 'd', 'đ', "o neil"];
+    const TERMS = ['giá', 'gia', 'Hợp đồng', 'hop dong', 'ACME', 'acme corp', 'đối thủ', 'doi thu', 'Đại Việt', 'dai viet', 'a', 'a a', 'số 1', '100 ok', 'nguyen van nam', 'Nguyễn Văn', 'd', 'đ', "o neil", 'giá % _ \\ . * ( [', 'a.*', '[giá'];
     const { meetingId } = await published('Họp đếm từ', 'org', [], LINES);
     // A draft line, never counted: the reader has none of it.
     await sqlAdmin(`INSERT INTO ludy_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, 9999, 10000, 'Người nói 1', 'giá giá giá', 'draft')`, [orgId, meetingId]);
@@ -325,6 +325,24 @@ suite('Tracker alerts (#4873)', () => {
     // The answer is ids and numbers: no word, no line.
     expect(JSON.stringify([...inSql])).not.toMatch(/Khách|hợp đồng|ACME/);
   }, 60_000);
+
+  it('writes the same audit detail whether or not a tracked word was found: the event and the meeting, nothing else', async () => {
+    await clear();
+    await addTerm('giá');
+    await optIn('lan');
+    const withHit = await published('Họp có từ khóa', 'org', [], ['Bàn về giá hôm nay.']);
+    const withoutHit = await published('Họp không có từ khóa', 'org', [], ['Chào mọi người, hẹn gặp lại.']);
+    expect(await notice(withHit.eventId)).toEqual({ notified: 1, mailed: 1 });
+    expect(await notice(withoutHit.eventId)).toEqual({ notified: 0, mailed: 0 });
+    for (const [label, { meetingId, eventId }] of [['with a hit', withHit], ['without a hit', withoutHit]] as const) {
+      const rows = await sqlAdmin<{ detail: Record<string, unknown> }>(
+        "SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.tracker.alert_notice' AND detail ->> 'meetingId' = $2",
+        [orgId, meetingId],
+      );
+      // An owner or admin who is not a reader of an attendees-only meeting reads this log: a count of words, recipients or notices would tell them what is in it.
+      expect(rows.rows.map((r) => r.detail), label).toEqual([{ eventId, meetingId }]);
+    }
+  });
 
   it('returns the recipients a page at a time in id order, and the page is clamped', async () => {
     await clear();

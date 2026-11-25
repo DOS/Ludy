@@ -123,7 +123,7 @@ BEGIN
     WHERE pg_catalog.btrim(q.words) <> ''
   ),
   -- The published lines in the two spellings, a space at each end (tracker-count.ts lineWords). Only these rows are read, and only to count: nothing of them is returned.
-  published_lines AS (
+  published_lines AS MATERIALIZED (
     SELECT ' ' || pg_catalog.btrim(pg_catalog.regexp_replace(pg_catalog.lower(normalize(g.text, NFC) COLLATE pg_catalog."pg_c_utf8"), '[^[:alnum:]]+', ' ', 'g')) || ' ' AS strict,
            ' ' || pg_catalog.btrim(pg_catalog.regexp_replace(
                     pg_catalog.lower(pg_catalog.translate(pg_catalog.regexp_replace(normalize(g.text, NFD) COLLATE pg_catalog."pg_c_utf8", '[\u0300-\u036f\u1ab0-\u1aff\u1dc0-\u1dff\u20d0-\u20ff\ufe20-\ufe2f]+', '', 'g'), 'đĐ', 'dd')),
