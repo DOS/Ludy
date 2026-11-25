@@ -36,6 +36,23 @@ export function canRemoveDepositProfileQr(params: {
   return Boolean((params.savedFileId && !params.clearStoredQr) || params.pendingPngBase64);
 }
 
+export function normalizeDepositDestination(
+  bankCode: string,
+  accountNumber: string,
+): { bankCode: string; accountNumber: string } {
+  return {
+    bankCode: bankCode.trim().toUpperCase(),
+    accountNumber: accountNumber.replace(/\s+/g, '').trim(),
+  };
+}
+
+export function didDepositDestinationChange(
+  prev: { bankCode: string; accountNumber: string },
+  next: { bankCode: string; accountNumber: string },
+): boolean {
+  return prev.bankCode !== next.bankCode || prev.accountNumber !== next.accountNumber;
+}
+
 function ProfileFormBody({
   profile,
   canEdit,
@@ -49,6 +66,7 @@ function ProfileFormBody({
   const idPrefix = useId();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const selectionGenRef = useRef(0);
+  const readingTargetRef = useRef<{ bankCode: string; accountNumber: string } | null>(null);
   const prevSlugRef = useRef(slug);
 
   const [dirty, setDirty] = useState(false);
@@ -59,20 +77,26 @@ function ProfileFormBody({
   const [accountHolder, setAccountHolder] = useState(profile?.accountHolder ?? '');
   const [financeBankAccount, setFinanceBankAccount] = useState(profile?.financeBankAccount ?? '');
   const [pendingPngBase64, setPendingPngBase64] = useState<string | null>(null);
+  const [pendingPngTarget, setPendingPngTarget] = useState<{ bankCode: string; accountNumber: string } | null>(null);
   const [clearStoredQr, setClearStoredQr] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
-  const [confirmClearOpen, setConfirmClearOpen] = useState(false);
+  const [confirmClearProfileId, setConfirmClearProfileId] = useState<string | null>(null);
   const [savedQrUrl, setSavedQrUrl] = useState<string | null>(null);
 
   useEffect(() => {
+    const slugChanged = prevSlugRef.current !== slug;
     const shouldSync = shouldSyncDepositProfileForm({
       prevSlug: prevSlugRef.current,
       slug,
       dirty,
     });
     prevSlugRef.current = slug;
+    if (slugChanged) {
+      setConfirmClearProfileId(null);
+    }
     if (!shouldSync) return;
     selectionGenRef.current += 1;
+    readingTargetRef.current = null;
     setReadingPng(false);
     setDirty(false);
     setBankCode(profile?.bankCode ?? '');
@@ -81,6 +105,7 @@ function ProfileFormBody({
     setAccountHolder(profile?.accountHolder ?? '');
     setFinanceBankAccount(profile?.financeBankAccount ?? '');
     setPendingPngBase64(null);
+    setPendingPngTarget(null);
     setClearStoredQr(false);
     setLocalError(null);
   }, [profile, slug, dirty]);
@@ -134,10 +159,12 @@ function ProfileFormBody({
     },
     onSuccess: async () => {
       selectionGenRef.current += 1;
+      readingTargetRef.current = null;
       setReadingPng(false);
       setDirty(false);
       toast(t('savedToast'));
       setPendingPngBase64(null);
+      setPendingPngTarget(null);
       setClearStoredQr(false);
       await invalidateProfile();
     },
@@ -145,28 +172,60 @@ function ProfileFormBody({
   });
 
   const clearMutation = useMutation({
-    mutationFn: () => signApi.clearDepositProfile(),
+    mutationFn: (expectedId: string) => signApi.clearDepositProfile({ expectedId }),
     onSuccess: async () => {
       selectionGenRef.current += 1;
+      readingTargetRef.current = null;
       setReadingPng(false);
       setDirty(false);
       toast(t('clearedToast'));
-      setConfirmClearOpen(false);
+      setPendingPngBase64(null);
+      setPendingPngTarget(null);
+      setClearStoredQr(false);
+      setConfirmClearProfileId(null);
       await invalidateProfile();
     },
-    onError: (err) => toast(errorMessage(err), 'error'),
+    onError: (err) => {
+      const code = typeof err === 'object' && err !== null && 'code' in err ? (err as { code?: unknown }).code : null;
+      if (code === 'SIGN_DEPOSIT_PROFILE_CHANGED') {
+        setConfirmClearProfileId(null);
+        void invalidateProfile();
+      }
+      toast(errorMessage(err), 'error');
+    },
   });
+
+  const resetQrSelectionIfDestinationChanged = (
+    nextBankCode: string,
+    nextAccountNumber: string,
+    clearNonDestinationError: boolean,
+  ) => {
+    const nextTarget = normalizeDepositDestination(nextBankCode, nextAccountNumber);
+    const activeTarget = pendingPngBase64 ? pendingPngTarget : readingPng ? readingTargetRef.current : null;
+    if (activeTarget && didDepositDestinationChange(activeTarget, nextTarget)) {
+      selectionGenRef.current += 1;
+      readingTargetRef.current = null;
+      setReadingPng(false);
+      setPendingPngBase64(null);
+      setPendingPngTarget(null);
+      setLocalError(t('qrClearedOnDestinationChange'));
+      return;
+    }
+    if (clearNonDestinationError) {
+      setLocalError(null);
+    }
+  };
 
   const handleBankChange = (nextCode: string) => {
     setDirty(true);
     setBankCode(nextCode);
-    setLocalError(null);
     const found = bankByCode(nextCode);
     if (found) {
       setBankName(found.name);
     } else if (!nextCode) {
       setBankName('');
     }
+    resetQrSelectionIfDestinationChanged(nextCode, accountNumber, true);
   };
 
   const handleFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -174,6 +233,8 @@ function ProfileFormBody({
     event.target.value = '';
     if (!file) return;
     const pickGen = ++selectionGenRef.current;
+    const selectedTarget = normalizeDepositDestination(bankCode, accountNumber);
+    readingTargetRef.current = selectedTarget;
     setLocalError(null);
     setReadingPng(true);
     try {
@@ -182,12 +243,14 @@ function ProfileFormBody({
       const b64 = stripPngDataUrlPrefix(dataUrl);
       setDirty(true);
       setPendingPngBase64(b64);
+      setPendingPngTarget(selectedTarget);
       setClearStoredQr(false);
     } catch {
       if (selectionGenRef.current !== pickGen) return;
       setLocalError(t('invalidQrPng'));
     } finally {
       if (selectionGenRef.current === pickGen) {
+        readingTargetRef.current = null;
         setReadingPng(false);
       }
     }
@@ -311,8 +374,10 @@ function ProfileFormBody({
               autoComplete="off"
               disabled={upsertMutation.isPending}
               onChange={(e) => {
+                const nextAccountNumber = e.target.value;
                 setDirty(true);
-                setAccountNumber(e.target.value);
+                setAccountNumber(nextAccountNumber);
+                resetQrSelectionIfDestinationChanged(bankCode, nextAccountNumber, false);
               }}
               data-testid="sign-deposit-account-number"
             />
@@ -397,9 +462,11 @@ function ProfileFormBody({
                   disabled={upsertMutation.isPending}
                   onClick={() => {
                     selectionGenRef.current += 1;
+                    readingTargetRef.current = null;
                     setReadingPng(false);
                     setDirty(true);
                     setPendingPngBase64(null);
+                    setPendingPngTarget(null);
                     setClearStoredQr(true);
                   }}
                   data-testid="sign-deposit-qr-clear-btn"
@@ -449,7 +516,7 @@ function ProfileFormBody({
               variant="outline"
               className="max-md:min-h-11"
               disabled={readingPng || upsertMutation.isPending || clearMutation.isPending}
-              onClick={() => setConfirmClearOpen(true)}
+              onClick={() => setConfirmClearProfileId(profile.id)}
               data-testid="sign-deposit-profile-clear-btn"
             >
               {t('clearButton')}
@@ -459,15 +526,18 @@ function ProfileFormBody({
       </form>
 
       <ConfirmDialog
-        open={confirmClearOpen}
-        onOpenChange={setConfirmClearOpen}
+        open={confirmClearProfileId !== null}
+        onOpenChange={(open) => {
+          if (!open) setConfirmClearProfileId(null);
+        }}
         title={t('clearConfirmTitle')}
         description={t('clearConfirmBody')}
         confirm={t('clearConfirmAction')}
         disabled={clearMutation.isPending}
         destructive
         onConfirm={() => {
-          clearMutation.mutate();
+          if (!confirmClearProfileId) return;
+          clearMutation.mutate(confirmClearProfileId);
         }}
       />
     </>
@@ -490,10 +560,13 @@ export function SignDepositProfileSettingsCard({ slug }: { slug: string | null }
       <CardContent>
         {query.isPending ? (
           <ListSkeleton rows={3} />
+        ) : query.data ? (
+          <div className="space-y-3">
+            {query.error ? <ErrorText>{errorMessage(query.error)}</ErrorText> : null}
+            <ProfileFormBody profile={query.data.profile} canEdit={query.data.canEdit} slug={slug} />
+          </div>
         ) : query.error ? (
           <ErrorText>{errorMessage(query.error)}</ErrorText>
-        ) : query.data ? (
-          <ProfileFormBody profile={query.data.profile} canEdit={query.data.canEdit} slug={slug} />
         ) : null}
       </CardContent>
     </Card>

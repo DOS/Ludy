@@ -320,6 +320,69 @@ describe('Vy depositProposal extraction checks (#4723)', () => {
       expect(unscaled.proposal?.depositProposal, item.quote).toBeUndefined();
     }
   });
+
+  it('enforces numeric boundaries on deposit quote matching so substring digits (5000000 inside 15000000 or 000.000 inside 15.000.000) fail (#4723)', () => {
+    const boundaryCases = [
+      {
+        name: 'rejects substring digits 5000000 inside 15000000',
+        text: 'Party B: ABC Co\nDeposit: 15000000 VND.',
+        quote: '5000000 VND.',
+        amount: '5000000',
+        expectedAccepted: false,
+      },
+      {
+        name: 'rejects grouping-prefix truncation 000.000 inside 15.000.000',
+        text: 'Ben B: ABC Co\nDat coc 15.000.000 VND.',
+        quote: '000.000 VND.',
+        amount: '000',
+        expectedAccepted: false,
+      },
+      {
+        name: 'accepts exact boundary 5000000 VND',
+        text: 'Party B: ABC Co\nDeposit: 5000000 VND.',
+        quote: '5000000 VND',
+        amount: '5000000',
+        expectedAccepted: true,
+      },
+      {
+        name: 'accepts exact boundary occurrence later on page containing 15000000 VND',
+        text: 'Party B: ABC Co\nTotal: 15000000 VND.\nDeposit: 5000000 VND.',
+        quote: '5000000 VND',
+        amount: '5000000',
+        expectedAccepted: true,
+      },
+    ] as const;
+
+    for (const tc of boundaryCases) {
+      const req: SignObligationExtractRequest = {
+        envelopeTitle: tc.name,
+        pageCount: 1,
+        pages: [{ page: 1, text: tc.text }],
+      };
+      const res = checkSignObligationExtract(req, {
+        counterpartyName: 'ABC Co',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: null,
+        currency: 'VND',
+        citations: [{ field: 'counterpartyName', pageNumber: 1, quoteExcerpt: tc.text.split('\n')[0]! }],
+        obligations: [],
+        depositProposal: {
+          amount: tc.amount,
+          dueDays: null,
+          pageNumber: 1,
+          quoteExcerpt: tc.quote,
+        },
+      });
+      if (tc.expectedAccepted) {
+        expect(res.proposal?.depositProposal?.amount, tc.name).toBe(tc.amount);
+      } else {
+        expect(res.proposal?.depositProposal, tc.name).toBeUndefined();
+      }
+    }
+  });
 });
 
 describe('checkSignDepositMatchSentence (#4723)', () => {

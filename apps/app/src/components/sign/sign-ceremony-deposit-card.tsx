@@ -308,72 +308,72 @@ export function SignCeremonyDepositCard({ token, deposit: initialDeposit }: Sign
               ) : null}
             </AlertDescription>
           </Alert>
-        ) : null}
+        ) : (
+          <form onSubmit={(e) => void handleNoticeSubmit(e)} className="space-y-3 border-t border-border pt-3" data-testid="sign-ceremony-deposit-notice-form">
+            <div className="space-y-1">
+              <Label htmlFor={`${idPrefix}-note`} className="text-xs">
+                {t('noticeNoteLabel')}
+              </Label>
+              <Input
+                id={`${idPrefix}-note`}
+                className="max-md:min-h-11"
+                value={noticeNote}
+                maxLength={SIGN_DEPOSIT_NOTE_MAX}
+                placeholder={t('noticeNotePlaceholder')}
+                disabled={submittingNotice}
+                onChange={(e) => setNoticeNote(e.target.value)}
+                data-testid="sign-ceremony-deposit-note-input"
+              />
+            </div>
 
-        <form onSubmit={(e) => void handleNoticeSubmit(e)} className="space-y-3 border-t border-border pt-3" data-testid="sign-ceremony-deposit-notice-form">
-          <div className="space-y-1">
-            <Label htmlFor={`${idPrefix}-note`} className="text-xs">
-              {t('noticeNoteLabel')}
-            </Label>
-            <Input
-              id={`${idPrefix}-note`}
-              className="max-md:min-h-11"
-              value={noticeNote}
-              maxLength={SIGN_DEPOSIT_NOTE_MAX}
-              placeholder={t('noticeNotePlaceholder')}
-              disabled={submittingNotice}
-              onChange={(e) => setNoticeNote(e.target.value)}
-              data-testid="sign-ceremony-deposit-note-input"
-            />
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <input
-              ref={fileInputRef}
-              id={`${idPrefix}-proof`}
-              type="file"
-              accept="image/png,image/jpeg,.png,.jpg,.jpeg"
-              className="sr-only"
-              onChange={handleProofPick}
-              data-testid="sign-ceremony-deposit-proof-input"
-            />
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="max-md:min-h-11"
-              disabled={submittingNotice}
-              onClick={() => fileInputRef.current?.click()}
-              data-testid="sign-ceremony-deposit-proof-btn"
-            >
-              {noticeFile ? noticeFile.name : t('attachProofButton')}
-            </Button>
-            {noticeFile ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                ref={fileInputRef}
+                id={`${idPrefix}-proof`}
+                type="file"
+                accept="image/png,image/jpeg,.png,.jpg,.jpeg"
+                className="sr-only"
+                onChange={handleProofPick}
+                data-testid="sign-ceremony-deposit-proof-input"
+              />
               <Button
                 type="button"
-                variant="ghost"
+                variant="outline"
                 size="sm"
                 className="max-md:min-h-11"
                 disabled={submittingNotice}
-                onClick={() => setNoticeFile(null)}
+                onClick={() => fileInputRef.current?.click()}
+                data-testid="sign-ceremony-deposit-proof-btn"
               >
-                {t('removeProofButton')}
+                {noticeFile ? noticeFile.name : t('attachProofButton')}
               </Button>
-            ) : null}
-          </div>
-          <p className="text-xs text-muted-foreground">{t('proofHint')}</p>
+              {noticeFile ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="max-md:min-h-11"
+                  disabled={submittingNotice}
+                  onClick={() => setNoticeFile(null)}
+                >
+                  {t('removeProofButton')}
+                </Button>
+              ) : null}
+            </div>
+            <p className="text-xs text-muted-foreground">{t('proofHint')}</p>
 
-          {noticeError ? <ErrorText>{noticeError}</ErrorText> : null}
+            {noticeError ? <ErrorText>{noticeError}</ErrorText> : null}
 
-          <Button
-            type="submit"
-            className="w-full max-md:min-h-11"
-            loading={submittingNotice}
-            data-testid="sign-ceremony-deposit-notice-submit"
-          >
-            {deposit.signerNoticeAt ? t('updateNoticeButton') : t('submitNoticeButton')}
-          </Button>
-        </form>
+            <Button
+              type="submit"
+              className="w-full max-md:min-h-11"
+              loading={submittingNotice}
+              data-testid="sign-ceremony-deposit-notice-submit"
+            >
+              {t('submitNoticeButton')}
+            </Button>
+          </form>
+        )}
         <div role="status" aria-live="polite" className="sr-only" data-testid="sign-ceremony-deposit-copy-status">
           {copyStatus}
         </div>

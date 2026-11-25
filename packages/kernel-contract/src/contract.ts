@@ -919,6 +919,7 @@ import {
   zSignCaSettingsResult,
   zSignCaSigningRequestRecord,
   zSignDepositProfile,
+  zSignDepositProfileClearInput,
   zSignDepositProfileClearResult,
   zSignDepositProfileGetResult,
   zSignDepositProfileUpsertInput,
@@ -4167,7 +4168,7 @@ export const contract = {
     depositProfile: {
       get: oc.output(zSignDepositProfileGetResult),
       upsert: oc.input(zSignDepositProfileUpsertInput).output(zSignDepositProfile),
-      clear: oc.input(z.strictObject({})).output(zSignDepositProfileClearResult),
+      clear: oc.input(zSignDepositProfileClearInput).output(zSignDepositProfileClearResult),
     },
     deposit: {
       set: oc.input(zSignEnvelopeDepositSetInput).output(zSignEnvelopeDepositRecord),

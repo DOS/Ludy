@@ -11,6 +11,7 @@ import {
   type SignApiKeyRecord,
   type SignApiKeyScope,
   type SignContractDraftVariables,
+  type SignDepositProfileClearInput,
   type SignDepositProfileContract,
   type SignDepositProfileUpsertInput,
   type SignDiffCompareInput,
@@ -966,7 +967,8 @@ export const signApi = {
   getDepositProfile: () => client.sign.depositProfile.get({}),
   upsertDepositProfile: (input: SignDepositProfileUpsertInput) =>
     client.sign.depositProfile.upsert(input),
-  clearDepositProfile: () => client.sign.depositProfile.clear({}),
+  clearDepositProfile: (input?: SignDepositProfileClearInput) =>
+    client.sign.depositProfile.clear(input ?? {}),
   setEnvelopeDeposit: (input: SignEnvelopeDepositSetInput) =>
     client.sign.deposit.set(input),
   clearEnvelopeDeposit: (envelopeId: string) =>

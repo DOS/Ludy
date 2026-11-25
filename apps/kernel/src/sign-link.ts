@@ -3,6 +3,7 @@
 // Reads tokens strictly from JSON POST bodies, checks org_app_on + billing entitlements inside orgless
 // SECURITY DEFINER resolution (returning an identical opaque 404 across invalid/expired/waiting/MODULE_OFF),
 // and enforces per-IP + per-token-hash rate limits plus bounded PDF read concurrency without CAPTCHA (#203).
+import { inflateSync } from 'node:zlib';
 import { sql } from 'kysely';
 import { EXTRACT_LIMITS } from '@ludy/extract-contract';
 import { DEFAULT_MESSAGE_ID_DOMAIN } from '@ludy/kernel';
@@ -36,9 +37,13 @@ import {
 } from '@ludy/kernel-contract';
 import { DomainError, entitledTo, fileKey, putFile, readVerified, sha256Hex, type BlobStore, type ErrorStatus, type Runtime } from '@ludy/kernel-runtime';
 import {
+  expectedPngIdatByteLength,
   normalizeSignPageDimensions,
   parseSharedSummary,
+  pngCrc32,
   sanitizeSignUserAgent,
+  validPngColorAndDepth,
+  validatePngScanlines,
   validateSignaturePngBase64,
 } from '@ludy/mod-sign';
 import { hasVideoTrack, imageSize, sniffVideo } from './media-probe.ts';
@@ -1411,12 +1416,139 @@ function parsePublicDepositSummary(raw: unknown): SignPublicDepositSummary | nul
   };
 }
 
+const PNG_MAGIC = Uint8Array.of(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a);
+const PNG_DEPOSIT_PROOF_MAX_DECOMPRESSED = 48 * 1024 * 1024;
+const PNG_ALLOWED_ANCILLARY_CHUNKS = new Set([
+  'iCCP',
+  'pHYs',
+  'sRGB',
+  'gAMA',
+  'cHRM',
+  'eXIf',
+  'tEXt',
+  'iTXt',
+  'zTXt',
+  'tRNS',
+  'bKGD',
+  'tIME',
+  'sBIT',
+]);
+
+function hasValidPngImageData(bytes: Uint8Array): boolean {
+  if (bytes.byteLength < 45) return false;
+  for (let i = 0; i < PNG_MAGIC.length; i += 1) {
+    if (bytes[i] !== PNG_MAGIC[i]) return false;
+  }
+  const buf = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let offset = PNG_MAGIC.length;
+  let chunkIndex = 0;
+  let width = 0;
+  let height = 0;
+  let bitDepth = 0;
+  let colorType = 0;
+  let interlace = 0;
+  let sawPlte = false;
+  let plteEntries = 0;
+  let sawIdat = false;
+  let totalIdat = 0;
+  let sawIend = false;
+  let lastChunkType = '';
+  const idatChunks: Buffer[] = [];
+
+  while (offset < buf.byteLength) {
+    if (sawIend) return false;
+    if (offset + 12 > buf.byteLength) return false;
+    const length = buf.readUInt32BE(offset);
+    if (length > buf.byteLength - (offset + 12)) return false;
+    const typeStart = offset + 4;
+    const dataStart = offset + 8;
+    const dataEnd = dataStart + length;
+    const crcOffset = dataEnd;
+    for (let i = typeStart; i < dataStart; i += 1) {
+      const byte = buf[i]!;
+      if (!((byte >= 0x41 && byte <= 0x5a) || (byte >= 0x61 && byte <= 0x7a))) {
+        return false;
+      }
+    }
+    const chunkType = buf.subarray(typeStart, dataStart).toString('latin1');
+    const expectedCrc = buf.readUInt32BE(crcOffset);
+    if (expectedCrc !== pngCrc32(buf, typeStart, dataEnd)) {
+      return false;
+    }
+
+    if (chunkIndex === 0) {
+      if (chunkType !== 'IHDR' || length !== 13) return false;
+      width = buf.readUInt32BE(dataStart);
+      height = buf.readUInt32BE(dataStart + 4);
+      bitDepth = buf[dataStart + 8]!;
+      colorType = buf[dataStart + 9]!;
+      const compression = buf[dataStart + 10]!;
+      const filter = buf[dataStart + 11]!;
+      interlace = buf[dataStart + 12]!;
+      if (
+        width < 1 ||
+        width > SIGN_ATTACHMENT_MAX_IMAGE_DIMENSION ||
+        height < 1 ||
+        height > SIGN_ATTACHMENT_MAX_IMAGE_DIMENSION ||
+        !validPngColorAndDepth(colorType, bitDepth) ||
+        compression !== 0 ||
+        filter !== 0 ||
+        (interlace !== 0 && interlace !== 1)
+      ) {
+        return false;
+      }
+    } else if (chunkType === 'IHDR') {
+      return false;
+    } else if (chunkType === 'PLTE') {
+      if (colorType === 0 || colorType === 4 || sawIdat || sawPlte || length < 3 || length > 256 * 3 || length % 3 !== 0) {
+        return false;
+      }
+      sawPlte = true;
+      plteEntries = length / 3;
+    } else if (chunkType === 'IDAT') {
+      if (sawIdat && lastChunkType !== 'IDAT') return false;
+      sawIdat = true;
+      if (length > 0) {
+        idatChunks.push(buf.subarray(dataStart, dataEnd));
+        totalIdat += length;
+      }
+    } else if (chunkType === 'IEND') {
+      if (length !== 0) return false;
+      sawIend = true;
+    } else if (!PNG_ALLOWED_ANCILLARY_CHUNKS.has(chunkType)) {
+      return false;
+    }
+
+    lastChunkType = chunkType;
+    offset = crcOffset + 4;
+    chunkIndex += 1;
+  }
+
+  if (!sawIend || offset !== buf.byteLength || totalIdat <= 0) return false;
+  if (colorType === 3 && (!sawPlte || plteEntries > 2 ** bitDepth)) return false;
+
+  const expectedBytes = expectedPngIdatByteLength(width, height, colorType, bitDepth, interlace);
+  if (expectedBytes <= 0 || expectedBytes > PNG_DEPOSIT_PROOF_MAX_DECOMPRESSED) return false;
+
+  let inflated: Buffer;
+  try {
+    inflated = inflateSync(Buffer.concat(idatChunks), { maxOutputLength: expectedBytes });
+  } catch {
+    return false;
+  }
+  if (inflated.byteLength !== expectedBytes) return false;
+  return validatePngScanlines(inflated, width, height, colorType, bitDepth, interlace);
+}
+
 export function verifySignDepositProofBytes(bytes: Uint8Array): SignDepositProofContentType | null {
   if (bytes.byteLength < 1 || bytes.byteLength > SIGN_DEPOSIT_PROOF_MAX_BYTES) {
     return null;
   }
   const detected = verifySignAttachmentBytes(bytes);
-  if (detected === 'image/png' || detected === 'image/jpeg') {
+  if (detected === 'image/png') {
+    return hasValidPngImageData(bytes) ? detected : null;
+  }
+  if (detected === 'image/jpeg') {
     return detected;
   }
   return null;
@@ -1533,7 +1665,7 @@ export async function runSignDepositNotice(
 
   type SqlNoticePreflightRow =
     | { status: 'not_found' }
-    | { status: 'ok'; orgId: string; otpRequired: boolean };
+    | { status: 'ok'; orgId: string; otpRequired: boolean; alreadyNoticed?: boolean; deposit?: unknown };
 
   const preflight = await runtime.orgless(async (db) => {
     const { rows } = await sql<{ result: SqlNoticePreflightRow }>`
@@ -1550,6 +1682,12 @@ export async function runSignDepositNotice(
   }
   if (preflight.otpRequired) {
     throw new DomainError('SIGN_OTP_REQUIRED', 403, 'Email OTP verification is required before reporting transfer');
+  }
+  if (preflight.alreadyNoticed) {
+    const deposit = parsePublicDepositSummary(preflight.deposit);
+    if (deposit) {
+      return { status: 'ok', result: { deposit } };
+    }
   }
 
   let cleanNote: string | null = null;

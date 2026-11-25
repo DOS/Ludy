@@ -715,6 +715,7 @@ BEGIN
 
   IF TG_OP = 'UPDATE'
      AND OLD.snapshot_frozen_at IS NOT NULL
+     AND OLD.signer_notice_at IS NULL
      AND pg_catalog.current_setting('ludy.sign_deposit_notice', true) = OLD.envelope_id::text THEN
     IF (pg_catalog.to_jsonb(OLD) - ARRAY[
           'signer_notice_at', 'signer_notice_note', 'signer_proof_file_id',
@@ -2795,6 +2796,7 @@ AS $$
 DECLARE
   v_now timestamptz := pg_catalog.date_trunc('milliseconds', pg_catalog.clock_timestamp());
   v_row record;
+  v_otp_required boolean := false;
 BEGIN
   IF p_token_sha256 IS NULL OR p_token_sha256 !~ '^[0-9a-f]{64}$' THEN
     RETURN pg_catalog.jsonb_build_object('status', 'not_found');
@@ -2813,7 +2815,9 @@ BEGIN
     s.status AS signer_status,
     s.require_email_otp,
     t.status AS tenant_status,
-    ed.snapshot_frozen_at
+    ed.envelope_id,
+    ed.snapshot_frozen_at,
+    ed.signer_notice_at
   INTO v_row
   FROM ludy_sign.signing_token tok
   JOIN ludy_sign.envelope e
@@ -2840,13 +2844,21 @@ BEGIN
     RETURN pg_catalog.jsonb_build_object('status', 'not_found');
   END IF;
 
+  v_otp_required := (
+    v_row.require_email_otp
+    AND ludy_sign.public_otp_verified_at_for_token(v_row.org_id, v_row.signer_id, v_row.token_id) IS NULL
+  );
+
   RETURN pg_catalog.jsonb_build_object(
     'status', 'ok',
     'orgId', v_row.org_id,
-    'otpRequired', (
-      v_row.require_email_otp
-      AND ludy_sign.public_otp_verified_at_for_token(v_row.org_id, v_row.signer_id, v_row.token_id) IS NULL
-    )
+    'otpRequired', v_otp_required,
+    'alreadyNoticed', (v_row.signer_notice_at IS NOT NULL),
+    'deposit', CASE
+      WHEN NOT v_otp_required AND v_row.signer_notice_at IS NOT NULL
+        THEN ludy_sign.deposit_public_summary_json(v_row.org_id, v_row.envelope_id)
+      ELSE NULL
+    END
   );
 END $$;
 
@@ -2956,6 +2968,14 @@ BEGIN
     );
   END IF;
 
+  IF v_deposit_row.signer_notice_at IS NOT NULL THEN
+    RETURN pg_catalog.jsonb_build_object(
+      'status', 'ok',
+      'orgId', v_lookup.org_id,
+      'deposit', ludy_sign.deposit_public_summary_json(v_lookup.org_id, v_env.id)
+    );
+  END IF;
+
   IF p_note IS NOT NULL THEN
     v_clean_note := NULLIF(pg_catalog.left(pg_catalog.btrim(pg_catalog.regexp_replace(p_note, '[[:cntrl:]]+', ' ', 'g')), 300), '');
   END IF;
@@ -3053,15 +3073,12 @@ BEGIN
   PERFORM pg_catalog.set_config('ludy.sign_deposit_notice', v_env.id::text, true);
   BEGIN
     UPDATE ludy_sign.envelope_deposit ed
-    SET signer_notice_at = COALESCE(ed.signer_notice_at, v_now),
-        signer_notice_note = CASE
-          WHEN v_clean_note IS NOT NULL THEN v_clean_note
-          ELSE ed.signer_notice_note
-        END,
-        signer_proof_file_id = COALESCE(v_proof_file_id, ed.signer_proof_file_id),
-        signer_proof_filename = COALESCE(v_clean_filename, ed.signer_proof_filename),
-        signer_proof_sha256 = COALESCE(p_proof_sha256, ed.signer_proof_sha256),
-        signer_ip_hash = COALESCE(v_ip_hash, ed.signer_ip_hash),
+    SET signer_notice_at = v_now,
+        signer_notice_note = v_clean_note,
+        signer_proof_file_id = v_proof_file_id,
+        signer_proof_filename = v_clean_filename,
+        signer_proof_sha256 = p_proof_sha256,
+        signer_ip_hash = v_ip_hash,
         updated_at = v_now
     WHERE ed.org_id = v_lookup.org_id
       AND ed.envelope_id = v_env.id;

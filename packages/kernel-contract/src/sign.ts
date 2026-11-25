@@ -779,6 +779,11 @@ export const zSignDepositProfileUpsertInput = z
   });
 export type SignDepositProfileUpsertInput = z.infer<typeof zSignDepositProfileUpsertInput>;
 
+export const zSignDepositProfileClearInput = z.strictObject({
+  expectedId: zId.optional(),
+});
+export type SignDepositProfileClearInput = z.infer<typeof zSignDepositProfileClearInput>;
+
 export const zSignDepositProfileClearResult = z.strictObject({
   cleared: z.boolean(),
 });

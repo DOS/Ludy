@@ -12,6 +12,7 @@ import {
   auditValue,
   normalizeAccountCode,
   tableWrite,
+  zSignDepositProfileClearInput,
   zSignDepositProfileUpsertInput,
   zSignEnvelopeDepositClearInput,
   zSignEnvelopeDepositSetInput,
@@ -678,15 +679,18 @@ export const depositProfileUpsert = defineCommand({
  */
 export const depositProfileClear = defineCommand({
   name: 'sign.deposit_profile.clear',
-  input: z.strictObject({}),
+  input: zSignDepositProfileClearInput,
   risk: 'R2',
   sideEffect: 'internal',
   access: ADMIN_ROLES,
   writes: [DEPOSIT_PROFILE_WRITE, ENVELOPE_DEPOSIT_PROFILE_REF_CLEAR_WRITE],
-  handler: async (ctx): Promise<{ cleared: boolean }> => {
+  handler: async (ctx, input): Promise<{ cleared: boolean }> => {
     if (ctx.actor.type !== 'user') {
       throw new DomainError('SIGN_FORBIDDEN', 403, 'Only an org owner or admin can clear the deposit profile');
     }
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`sign.deposit_profile:${ctx.orgId}`}, 0))`.execute(
+      ctx.trx,
+    );
     const existing = await ctx.trx
       .selectFrom('ludy_sign.deposit_profile')
       .select(['id', 'bank_code'])
@@ -698,6 +702,14 @@ export const depositProfileClear = defineCommand({
     if (!existing) {
       ctx.audit({ cleared: false });
       return { cleared: false };
+    }
+
+    if (input.expectedId && existing.id !== input.expectedId) {
+      throw new DomainError(
+        'SIGN_DEPOSIT_PROFILE_CHANGED',
+        409,
+        'Deposit profile was updated by another administrator; refresh and review before clearing',
+      );
     }
 
     const userId = actorUserId(ctx);
@@ -730,6 +742,7 @@ export const depositProfileClear = defineCommand({
           updated_at: ctx.now,
         })
         .where('org_id', '=', ctx.orgId)
+        .where('envelope_id', 'in', envelopeIds)
         .where('deposit_profile_id', '=', existing.id)
         .where('snapshot_frozen_at', 'is', null)
         .execute();
@@ -764,6 +777,10 @@ export const envelopeDepositSet = defineCommand({
   access: MEMBER_ROLES,
   writes: [ENVELOPE_DEPOSIT_CONFIG_WRITE],
   handler: async (ctx, input): Promise<SignEnvelopeDepositRecordContract> => {
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`sign.deposit_profile:${ctx.orgId}`}, 0))`.execute(
+      ctx.trx,
+    );
+
     const env = await ctx.trx
       .selectFrom('ludy_sign.envelope')
       .select(['id', 'status', 'source_kind', 'title'])

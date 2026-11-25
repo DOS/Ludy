@@ -19,7 +19,7 @@ import { normalizeStatementAmount, SIGN_DEPOSIT_PROOF_MAX_BYTES, type BankSignDe
 import { Runtime, fileKey, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
 import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
-import { signCommands, signQueries } from '@ludy/mod-sign';
+import { pngCrc32, signCommands, signQueries } from '@ludy/mod-sign';
 import { createAuthenticator } from '../src/auth.ts';
 import { AVAILABLE_MODULES, loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
@@ -39,6 +39,28 @@ const TINY_PNG_BYTES = Uint8Array.from(Buffer.from(TINY_PNG_BASE64, 'base64'));
 const PROOF_PNG_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC';
 const PROOF_PNG_BYTES = Uint8Array.from(Buffer.from(PROOF_PNG_BASE64, 'base64'));
+
+function buildNoIdatPng(): Uint8Array<ArrayBuffer> {
+  const magic = Uint8Array.of(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a);
+  const chunk = (type: string, data: Uint8Array): Uint8Array => {
+    const out = Buffer.alloc(12 + data.byteLength);
+    out.writeUInt32BE(data.byteLength, 0);
+    out.write(type, 4, 4, 'latin1');
+    Buffer.from(data).copy(out, 8);
+    out.writeUInt32BE(pngCrc32(out, 4, 8 + data.byteLength), 8 + data.byteLength);
+    return out;
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(1, 0);
+  ihdr.writeUInt32BE(1, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 2;
+  const merged = Buffer.concat([magic, chunk('IHDR', ihdr), chunk('IEND', new Uint8Array(0))]);
+  const out = new Uint8Array(new ArrayBuffer(merged.byteLength));
+  out.set(merged);
+  return out;
+}
+const NO_IDAT_PNG_BYTES = buildNoIdatPng();
 
 class MemoryStore implements BlobStore {
   readonly blobs = new Map<string, Uint8Array>();
@@ -631,6 +653,10 @@ suite('eSign Slice 6d post-sign VietQR deposit & accounting bridge (#4723)', () 
       { envelopeId: draftEnvId },
       { actor: asUser(member), orgId: org.orgId },
     );
+    const detailRightAfterSend = await rpc('sign/envelope/get', member, { envelopeId: draftEnvId });
+    expect(detailRightAfterSend.status).toBe(200);
+    const snapshotFrozenAt = (detailRightAfterSend.body.deposit as { snapshotFrozenAt: string | null }).snapshotFrozenAt;
+    expect(typeof snapshotFrozenAt === 'string' && snapshotFrozenAt.length > 0 && !Number.isNaN(Date.parse(snapshotFrozenAt))).toBe(true);
     const sentNoDep = await runtime.execute<{ links: Array<{ token: string }> }>(
       'sign.envelope.send',
       { envelopeId: noDepositEnvId },
@@ -703,7 +729,7 @@ suite('eSign Slice 6d post-sign VietQR deposit & accounting bridge (#4723)', () 
     const detailAfterClear = await rpc('sign/envelope/get', member, { envelopeId: draftEnvId });
     expect(detailAfterClear.status).toBe(200);
     const frozen = detailAfterClear.body.deposit as Record<string, unknown>;
-    expect(frozen.snapshotFrozenAt).not.toBeNull();
+    expect(frozen.snapshotFrozenAt).toBe(snapshotFrozenAt);
     expect(frozen.snapshotAccountNumber).toBe('0999888777');
     expect(frozen.snapshotAccountHolder).toBe('CONG TY FROZEN TEST');
     expect(frozen.snapshotFinanceBankAccount).toBe('1121');
@@ -885,6 +911,15 @@ suite('eSign Slice 6d post-sign VietQR deposit & accounting bridge (#4723)', () 
     });
     expect(invalidTokenJsonRes.status).toBe(404);
 
+    // Reject structurally invalid PNG (IHDR + IEND without IDAT chunk) with 415 UNSUPPORTED_TYPE and zero blobs stored
+    const noIdatForm = new FormData();
+    noIdatForm.set('token', depToken);
+    noIdatForm.set('file', new File([NO_IDAT_PNG_BYTES], 'no-idat.png', { type: 'image/png' }));
+    const noIdatRes = await app.request('/api/sign/deposit-notice', { method: 'POST', body: noIdatForm });
+    expect(noIdatRes.status).toBe(415);
+    expect(((await noIdatRes.json()) as { code?: string }).code).toBe('UNSUPPORTED_TYPE');
+    expect(store.blobs.size).toBe(blobsBeforeBadNotice);
+
     // Reusing an upload-sourced hash under sign_attachment fails cleanly with 409 FILE_SOURCE_CONFLICT
     const conflictForm = new FormData();
     conflictForm.set('token', depToken);
@@ -899,10 +934,22 @@ suite('eSign Slice 6d post-sign VietQR deposit & accounting bridge (#4723)', () 
     okForm.set('file', new File([PROOF_PNG_BYTES], 'bien-lai.png', { type: 'image/png' }));
     const okNoticeRes = await app.request('/api/sign/deposit-notice', { method: 'POST', body: okForm });
     expect(okNoticeRes.status).toBe(200);
-    const noticeBody = (await okNoticeRes.json()) as { deposit: { signerNoticeAt: string | null; signerNoticeNote: string | null; signerProofFilename: string | null } };
-    expect(noticeBody.deposit.signerNoticeAt).not.toBeNull();
+    const noticeBody = (await okNoticeRes.json()) as { deposit: { signerNoticeAt: string | null; signerNoticeNote: string | null; signerProofFilename: string | null; signerProofSha256: string | null } };
+    expect(typeof noticeBody.deposit.signerNoticeAt === 'string' && noticeBody.deposit.signerNoticeAt.length > 0 && !Number.isNaN(Date.parse(noticeBody.deposit.signerNoticeAt))).toBe(true);
     expect(noticeBody.deposit.signerNoticeNote).toBe('Da chuyen khoan luc 14h20');
     expect(noticeBody.deposit.signerProofFilename).toBe('bien-lai.png');
+
+    // Record-once immutability: a second submission on the same token returns original notice unchanged with zero new blobs written
+    const blobsAfterFirstNotice = store.blobs.size;
+    const secondForm = new FormData();
+    secondForm.set('token', depToken);
+    secondForm.set('note', 'Thu ghi de lan 2');
+    secondForm.set('file', new File([TINY_PNG_BYTES], 'second-attempt.png', { type: 'image/png' }));
+    const secondNoticeRes = await app.request('/api/sign/deposit-notice', { method: 'POST', body: secondForm });
+    expect(secondNoticeRes.status).toBe(200);
+    const secondNoticeBody = (await secondNoticeRes.json()) as { deposit: typeof noticeBody.deposit };
+    expect(secondNoticeBody.deposit).toEqual(noticeBody.deposit);
+    expect(store.blobs.size).toBe(blobsAfterFirstNotice);
 
     // Authorized workspace member can download the receipt image via /api/files/:id
     const detailAfterNotice = await rpc('sign/envelope/get', member, { envelopeId: draftEnvId });
@@ -974,7 +1021,7 @@ suite('eSign Slice 6d post-sign VietQR deposit & accounting bridge (#4723)', () 
       voucherType: 'bank_credit',
       suggestedCreditAccount: '131',
     });
-    expect(candsMemo[0]!.signerNoticeAt).not.toBeNull();
+    expect(candsMemo[0]!.signerNoticeAt).toBe(noticeBody.deposit.signerNoticeAt);
 
     // Word-boundary guard: substring inside an alphanumeric sequence must not match even when exact amount matches
     const matchAmtOnly = await rpc('bank/signDepositMatch', member, { bankLineId: inAmountOnlyLine!.id });
@@ -1190,8 +1237,16 @@ suite('eSign Slice 6d post-sign VietQR deposit & accounting bridge (#4723)', () 
     expect(memoConflictTry.status).toBe(409);
     expect(memoConflictTry.body.code).toBe('SIGN_DEPOSIT_MEMO_CONFLICT');
 
+    // Clearing with stale expectedId rejects with 409 SIGN_DEPOSIT_PROFILE_CHANGED and preserves active default
+    const staleClearTry = await rpc('sign/depositProfile/clear', owner, { expectedId: p1Id });
+    expect(staleClearTry.status).toBe(409);
+    expect(staleClearTry.body.code).toBe('SIGN_DEPOSIT_PROFILE_CHANGED');
+    const getAfterStaleClear = await rpc('sign/depositProfile/get', owner, {});
+    expect(getAfterStaleClear.status).toBe(200);
+    expect((getAfterStaleClear.body.profile as { id: string } | null)?.id).toBe(p2Inserted.id);
+
     // depositProfileClear detaches unfrozen draft deposits pointing to the removed default profile
-    const clearDefaultWithDraft = await rpc('sign/depositProfile/clear', owner, {});
+    const clearDefaultWithDraft = await rpc('sign/depositProfile/clear', owner, { expectedId: p2Inserted.id });
     expect(clearDefaultWithDraft.status).toBe(200);
     expect(clearDefaultWithDraft.body.cleared).toBe(true);
     await admin(async (db) => {

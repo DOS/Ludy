@@ -6,9 +6,9 @@
 import { readFileSync } from 'node:fs';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { IntlProvider } from 'use-intl';
 import { describe, expect, it, vi } from 'vitest';
-import { catalog } from '../src/i18n/runtime.ts';
+import { I18nProvider } from '../src/i18n/provider.tsx';
+import { activeLocale, catalog, setActiveLocale } from '../src/i18n/runtime.ts';
 import { PublicSignError } from '../src/lib/sign-api.ts';
 
 const testState = vi.hoisted(() => ({
@@ -64,19 +64,25 @@ const { SignDepositConfigCard, shouldSyncDepositConfigForm, signEnvelopeDetailQu
 const {
   SignDepositProfileSettingsCard,
   canRemoveDepositProfileQr,
+  didDepositDestinationChange,
+  normalizeDepositDestination,
   shouldSyncDepositProfileForm,
 } = await import('../src/components/sign/sign-deposit-profile-card.tsx');
 const { BankSignDepositLine } = await import('../src/components/bank-sign-deposit-line.tsx');
 const { submitCeremonyWithGenerationGuard } = await import('../src/routes/sign-ceremony.tsx');
 
 function wrap(node: React.ReactElement, locale: 'vi' | 'en' = 'vi', qc = testState.qc) {
-  return renderToStaticMarkup(
-    <QueryClientProvider client={qc}>
-      <IntlProvider locale={locale} messages={catalog(locale)} timeZone="Asia/Ho_Chi_Minh">
-        {node}
-      </IntlProvider>
-    </QueryClientProvider>,
-  );
+  const prevLocale = activeLocale();
+  setActiveLocale(locale);
+  try {
+    return renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <I18nProvider>{node}</I18nProvider>
+      </QueryClientProvider>,
+    );
+  } finally {
+    setActiveLocale(prevLocale);
+  }
 }
 
 describe('eSign Slice 6d deposit UI components (#4723)', () => {
@@ -148,6 +154,7 @@ describe('eSign Slice 6d deposit UI components (#4723)', () => {
     expect(html).toContain('CK-XYZ123');
     expect(html).toContain('Vietcombank');
     expect(html).toContain('0123456789');
+    expect(html).toContain('₫5,000,000');
     expect(html).not.toContain('₫ VND');
     expect(html).not.toContain('5,000,000 VND');
     expect(html).not.toContain('5.000.000 VND');
@@ -210,6 +217,7 @@ describe('eSign Slice 6d deposit UI components (#4723)', () => {
     );
     expect(manualOnly).toContain('sign-ceremony-deposit-manual-notice');
     expect(manualOnly).toContain('sign-ceremony-deposit-noticed');
+    expect(manualOnly).not.toContain('sign-ceremony-deposit-notice-form');
     expect(manualOnly).toContain('CK-MAN789');
     expect(manualOnly).toContain('proof.jpg');
   });
@@ -485,6 +493,45 @@ describe('eSign Slice 6d deposit UI components (#4723)', () => {
       qc,
     );
     expect(readonlyDraftHtml).toContain('CK-DRAFT1');
+    expect(readonlyDraftHtml).toMatch(/5\.000\.000[\s\u00a0]₫/);
     expect(readonlyDraftHtml).not.toContain('₫ VND');
+
+    // Destination normalization and change detection for clearing mismatched pending QR PNGs
+    const normalizedBase = normalizeDepositDestination(' vcb ', ' 0123 456 789 ');
+    expect(normalizedBase).toEqual({ bankCode: 'VCB', accountNumber: '0123456789' });
+    expect(
+      didDepositDestinationChange(normalizedBase, normalizeDepositDestination('VCB', '0123456789')),
+    ).toBe(false);
+    expect(
+      didDepositDestinationChange(normalizedBase, normalizeDepositDestination('TCB', '0123456789')),
+    ).toBe(true);
+    expect(
+      didDepositDestinationChange(normalizedBase, normalizeDepositDestination('VCB', '0999888777')),
+    ).toBe(true);
+
+    // Keeps ProfileFormBody mounted alongside inline error when cached data exists and background refetch errored
+    const bgErrorQc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    bgErrorQc.setQueryData(['sign', 'deposit-profile', 'demo'], {
+      canEdit: true,
+      profile: {
+        id: '01900000-0000-7000-8000-000000000050',
+        orgId: '01900000-0000-7000-8000-000000000001',
+        bankCode: 'VCB',
+        bankName: 'Vietcombank',
+        accountNumber: '0123456789',
+        accountHolder: 'CONG TY TNHH TEST',
+        financeBankAccount: '1121.VCB',
+        vietqrFileId: null,
+        hasQrPng: false,
+        isDefault: true,
+        createdAt: '2026-11-24T09:00:00.000Z',
+        updatedAt: '2026-11-24T09:00:00.000Z',
+      },
+    });
+    const bgQuery = bgErrorQc.getQueryCache().find({ queryKey: ['sign', 'deposit-profile', 'demo'] });
+    bgQuery?.setState({ status: 'error', error: new Error('Background refetch timeout'), fetchStatus: 'idle' });
+    const bgErrorHtml = wrap(<SignDepositProfileSettingsCard slug="demo" />, 'vi', bgErrorQc);
+    expect(bgErrorHtml).toContain('Background refetch timeout');
+    expect(bgErrorHtml).toContain('data-testid="sign-deposit-profile-form"');
   });
 });

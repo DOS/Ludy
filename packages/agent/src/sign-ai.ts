@@ -2378,6 +2378,51 @@ function resolveQuotePage(
   return null;
 }
 
+function hasNumericBoundaryQuoteMatch(pageNorm: string, normQuote: string): boolean {
+  if (normQuote.length === 0) return false;
+  const startsWithDigit = /^\d/.test(normQuote);
+  const endsWithDigit = /\d$/.test(normQuote);
+  let fromIdx = 0;
+  while (fromIdx <= pageNorm.length - normQuote.length) {
+    const idx = pageNorm.indexOf(normQuote, fromIdx);
+    if (idx < 0) return false;
+    const end = idx + normQuote.length;
+    const leftInvalid =
+      startsWithDigit &&
+      ((idx > 0 && /\d/.test(pageNorm[idx - 1]!)) ||
+        (idx > 1 && (pageNorm[idx - 1] === '.' || pageNorm[idx - 1] === ',') && /\d/.test(pageNorm[idx - 2]!)));
+    const rightInvalid =
+      endsWithDigit &&
+      ((end < pageNorm.length && /\d/.test(pageNorm[end]!)) ||
+        (end + 1 < pageNorm.length && (pageNorm[end] === '.' || pageNorm[end] === ',') && /\d/.test(pageNorm[end + 1]!)));
+    if (!leftInvalid && !rightInvalid) {
+      return true;
+    }
+    fromIdx = idx + 1;
+  }
+  return false;
+}
+
+function resolveDepositQuotePage(
+  pageNumber: number | null | undefined,
+  normQuote: string,
+  pageCount: number,
+  pageNormMap: ReadonlyMap<number, string>,
+): number | null {
+  if (normQuote.length < 4) return null;
+  if (pageNumber !== null && pageNumber !== undefined) {
+    if (!Number.isInteger(pageNumber) || pageNumber < 1 || pageNumber > pageCount) {
+      return null;
+    }
+    const pageNorm = pageNormMap.get(pageNumber) ?? '';
+    return hasNumericBoundaryQuoteMatch(pageNorm, normQuote) ? pageNumber : null;
+  }
+  for (const [pageNo, pageNorm] of pageNormMap) {
+    if (hasNumericBoundaryQuoteMatch(pageNorm, normQuote)) return pageNo;
+  }
+  return null;
+}
+
 function normalizeDecimalAmount(raw: string | null | undefined): string | null {
   if (typeof raw !== 'string') return null;
   const cleaned = stripFormatControl(raw).trim().replace(/\s+/g, '');
@@ -3039,7 +3084,7 @@ export function checkSignObligationExtract(
     const depNormQuote = normalizeContractText(depQuoteRaw);
     const depPage =
       depNormQuote.length >= 4
-        ? resolveQuotePage(raw.depositProposal.pageNumber, depNormQuote, request.pageCount, pageNormMap)
+        ? resolveDepositQuotePage(raw.depositProposal.pageNumber, depNormQuote, request.pageCount, pageNormMap)
         : null;
     const depAmountDec =
       typeof raw.depositProposal.amount === 'string' ? normalizeDecimalAmount(raw.depositProposal.amount) : null;
