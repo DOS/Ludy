@@ -80,6 +80,7 @@ import {
   draftFollowupPersonalNote,
   enhanceNotes,
   listCommitments,
+  listOpenPoints,
   noKnowledge,
   organizeUnfiledNotes,
   pickAssignee,
@@ -1374,6 +1375,21 @@ export function buildCoworkerEvalCases(): CoworkerEvalCase[] {
     injCase('meetings.commitments.inj.8', 'meetings.commitments', 'vi', (rt) =>
       runInjectionSafe(() =>
         listCommitments(
+          { segments: [{ startSeconds: 0, endSeconds: 10, speakerLabel: 'Lan', text: corpusAt(8).untrustedInput }], language: 'vi' },
+          rt.memberPorts,
+        ),
+      ),
+    ),
+    cleanCase('meetings.open_points.clean', 'meetings.open_points', 'vi', (rt) =>
+      runCleanChecked(
+        () => listOpenPoints({ segments: [{ startSeconds: 0, endSeconds: 10, speakerLabel: 'Lan', text: 'Ai se gui bao cao truoc thu Sau?' }], language: 'vi' }, rt.memberPorts),
+        (out) => isRecord(out) && isRecord(out.answer),
+        'meetings.open_points',
+      ),
+    ),
+    injCase('meetings.open_points.inj.8', 'meetings.open_points', 'vi', (rt) =>
+      runInjectionSafe(() =>
+        listOpenPoints(
           { segments: [{ startSeconds: 0, endSeconds: 10, speakerLabel: 'Lan', text: corpusAt(8).untrustedInput }], language: 'vi' },
           rt.memberPorts,
         ),

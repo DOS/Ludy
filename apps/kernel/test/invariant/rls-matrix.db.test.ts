@@ -123,6 +123,7 @@ const PENDING_TABLES = new Set<string>([
   'crove_finance.stock_move',
   'crove_finance.stock_period',
   'crove_finance.stock_period_item',
+  'crove_hr.candidate_stage_transition',
   'crove_kernel.agent_grant',
   'crove_kernel.agent_wake_delivery',
   'crove_kernel.agent_wake_signal_seen',
@@ -178,6 +179,7 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   ['crove_hr.attendance_qr_config', () => 'false'], // HR, as above.
   ['crove_hr.business_trip_request', () => 'false'], // HR, as above.
   ['crove_hr.candidate', () => 'false'], // HR is for owners and admins in a user context (ADR-0046); an agent context reads none.
+  ['crove_hr.candidate_stage_transition', () => 'false'], // HR, as above.
   ['crove_hr.contract_addendum', () => 'false'], // HR, as above.
   ['crove_hr.department', () => 'false'], // HR, as above.
   ['crove_hr.employee_asset_handover', () => 'false'], // HR, as above.
@@ -308,6 +310,7 @@ const AUTHOR_ONLY = new Map<string, string>([
   ['crove_hr.attendance_qr_config', 'false'],
   ['crove_hr.business_trip_request', 'false'],
   ['crove_hr.candidate', 'false'],
+  ['crove_hr.candidate_stage_transition', 'false'],
   ['crove_hr.contract_addendum', 'false'],
   ['crove_hr.department', 'false'],
   ['crove_hr.employee_asset_handover', 'false'],
@@ -447,6 +450,8 @@ const APPEND_ONLY = new Set<string>([
   'crove_finance.marketplace_vat_rate',
   // #3113 S1: a change of a supplier's bank account is a new row; the history is never edited or deleted.
   'crove_finance.supplier_bank_account_change',
+  // #4487 (Stage 5D): append-only candidate stage-entry history for funnel BI (SELECT and INSERT only; no runtime role holds UPDATE or DELETE).
+  'crove_hr.candidate_stage_transition',
   // #3330 / #3323 (eSign): hash-chained signing ledger per envelope (SELECT and INSERT only; no runtime role holds UPDATE or DELETE).
   'crove_sign.signing_event',
 ]);
@@ -2310,6 +2315,16 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   'crove_hr.candidate': {
     update: { set: 'display_name = display_name' },
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), display_name: 'RLS matrix candidate' } }),
+  },
+  // #4487 (Stage 5D): append-only candidate stage-entry transition history for funnel BI attribution (owners and admins only, AUTHOR_ONLY, APPEND_ONLY).
+  'crove_hr.candidate_stage_transition': {
+    make: (o) => {
+      const candidate = randomUUID();
+      return {
+        setup: [{ table: 'crove_hr.candidate', values: { org_id: o.id, id: candidate, display_name: 'RLS matrix candidate' } }],
+        row: { org_id: o.id, id: randomUUID(), candidate_id: candidate, to_stage: 'applied' },
+      };
+    },
   },
   // #4528 (Stage 6C): employment contract addendum (owners and admins in a user context; system and agent contexts read and write none).
   'crove_hr.contract_addendum': {
