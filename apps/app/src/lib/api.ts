@@ -1,11 +1,9 @@
-import { createORPCClient } from '@orpc/client';
-import { RPCLink } from '@orpc/client/fetch';
-import type { ContractRouterClient } from '@orpc/contract';
+import { createLudyClient, type LudyClient } from '@ludy/client';
 import { createTanstackQueryUtils } from '@orpc/tanstack-query';
 import { MutationCache, QueryCache, QueryClient } from '@tanstack/react-query';
 import type { RecordingStopReason } from '@ludy/meeting-recorder';
 import { mediaUploadQuery, needsAudioExtraction } from './meeting-upload.ts';
-import { DIRECT_UPLOAD_MAX_BYTES, ENEX_MAX_FILE_BYTES, HR_CV_MAX_BYTES, MAX_IMPORT_BYTES, MAX_MEETING_AUDIO_BYTES, MAX_MEETING_VIDEO_BYTES, MAX_SOCIAL_VIDEO_BYTES, MAX_UPLOAD_BYTES, NOTE_ATTACHMENT_MAX_BYTES, TODOIST_CSV_MAX_BYTES, type contract, type EnexImportResult, type HrCvExtractDraft, type HrCvExtractResponse, type NoteAttachment, type TodoistImportResult, type UploadPurpose } from '@ludy/kernel-contract';
+import { DIRECT_UPLOAD_MAX_BYTES, ENEX_MAX_FILE_BYTES, HR_CV_MAX_BYTES, MAX_IMPORT_BYTES, MAX_MEETING_AUDIO_BYTES, MAX_MEETING_VIDEO_BYTES, MAX_SOCIAL_VIDEO_BYTES, MAX_UPLOAD_BYTES, NOTE_ATTACHMENT_MAX_BYTES, TODOIST_CSV_MAX_BYTES, type EnexImportResult, type HrCvExtractDraft, type HrCvExtractResponse, type NoteAttachment, type TodoistImportResult, type UploadPurpose } from '@ludy/kernel-contract';
 import { activeLocale, translator } from '../i18n/runtime.ts';
 import { apiUrl, serverOrigin } from './api-base.ts';
 import { accessToken, afterMfaRefusal, auth, getConfig, secondFactorStillOwed } from './auth.ts';
@@ -38,18 +36,15 @@ async function headers(orgSlug: string | null = currentOrg): Promise<Record<stri
   return requestHeaders(await accessToken(), orgSlug);
 }
 
-const link = new RPCLink({ url: `${serverOrigin()}/api/rpc`, headers: () => headers() });
-
-export const client: ContractRouterClient<typeof contract> = createORPCClient(link);
+export const client: LudyClient = createLudyClient({ origin: serverOrigin(), headers: () => headers() });
 export const orpc = createTanstackQueryUtils(client);
 
 // The same API without the org header, whatever page this is: the user's own sign-out revoke (issue #247).
-const orglessLink = new RPCLink({ url: `${serverOrigin()}/api/rpc`, headers: async () => requestHeaders(await accessToken(), null) });
-export const orglessClient: ContractRouterClient<typeof contract> = createORPCClient(orglessLink);
+export const orglessClient: LudyClient = createLudyClient({ origin: serverOrigin(), headers: async () => requestHeaders(await accessToken(), null) });
 
 // The API for one org named here rather than by the page: onboarding sets up the org it has just created (issue #324).
-export function clientForOrg(slug: string): ContractRouterClient<typeof contract> {
-  return createORPCClient(new RPCLink({ url: `${serverOrigin()}/api/rpc`, headers: async () => requestHeaders(await accessToken(), slug) }));
+export function clientForOrg(slug: string): LudyClient {
+  return createLudyClient({ origin: serverOrigin(), headers: async () => requestHeaders(await accessToken(), slug) });
 }
 
 export { ClientError, isStepUpRequired, isUnauthenticated } from './errors.ts';
