@@ -35,7 +35,7 @@ const PROJECT_COLUMN = TABLES.ludy_projects.project_column;
 
 const projectTarget = (input: { projectId: string }) => ({ type: 'projects.project', id: input.projectId });
 
-interface DefaultColumnSpec {
+export interface DefaultColumnSpec {
   taskStatus: BoardTaskStatus;
   color: ProjectColumnColor;
   vi: string;
@@ -49,6 +49,37 @@ const DEFAULT_COLUMNS: ReadonlyArray<DefaultColumnSpec> = [
   { taskStatus: 'in_review', color: 'proposal', vi: 'Chờ duyệt', en: 'In review' },
   { taskStatus: 'done', color: 'success', vi: 'Xong', en: 'Done' },
 ];
+
+export async function insertProjectColumns(
+  ctx: CommandContext,
+  projectId: string,
+  specs: ReadonlyArray<DefaultColumnSpec>,
+  language: 'vi' | 'en',
+): Promise<ProjectColumn[]> {
+  if (specs.length === 0) return [];
+  const keys = spreadKeys(specs.length);
+  const inserted = await ctx.trx
+    .insertInto('ludy_projects.project_column')
+    .values(
+      specs.map((spec, index) => ({
+        org_id: ctx.orgId,
+        project_id: projectId,
+        name: language === 'en' ? spec.en : spec.vi,
+        task_status: spec.taskStatus,
+        color: spec.color,
+        wip_limit: null,
+        sort_key: keys[index] as string,
+        created_at: ctx.now,
+        updated_at: ctx.now,
+      })),
+    )
+    .returning(['id', 'project_id', 'name', 'task_status', 'color', 'wip_limit', 'sort_key', 'created_at', 'updated_at'])
+    .execute();
+
+  return inserted
+    .map((r) => toColumnView(r))
+    .sort((a, b) => (a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : a.id.localeCompare(b.id)));
+}
 
 export interface ProjectOrderRow {
   task_id: string;
@@ -308,26 +339,7 @@ export const projectColumnInitDefaults = defineCommand({
       return { projectId: project.id, columns: existing, initialized: false };
     }
 
-    const keys = spreadKeys(DEFAULT_COLUMNS.length);
-    const inserted = await ctx.trx
-      .insertInto('ludy_projects.project_column')
-      .values(
-        DEFAULT_COLUMNS.map((spec, index) => ({
-          org_id: ctx.orgId,
-          project_id: project.id,
-          name: input.language === 'en' ? spec.en : spec.vi,
-          task_status: spec.taskStatus,
-          color: spec.color,
-          wip_limit: null,
-          sort_key: keys[index] as string,
-          created_at: ctx.now,
-          updated_at: ctx.now,
-        })),
-      )
-      .returning(['id', 'project_id', 'name', 'task_status', 'color', 'wip_limit', 'sort_key', 'created_at', 'updated_at'])
-      .execute();
-
-    const columns = inserted.map((r) => toColumnView(r)).sort((a, b) => (a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : a.id.localeCompare(b.id)));
+    const columns = await insertProjectColumns(ctx, project.id, DEFAULT_COLUMNS, input.language);
     const statuses = columns.map((c) => c.taskStatus);
     const columnIds = columns.map((c) => c.id);
 

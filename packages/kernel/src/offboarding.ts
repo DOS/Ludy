@@ -16,7 +16,7 @@ const OWNERS: readonly MemberRole[] = ['owner'];
 
 /**
  * The mail of what a meeting holds, left out of what an owner or admin may read about the mail log: the follow-up mails of a meeting (#4533) carry its summary, decisions and action items (payload) and
- * the subject the recorder typed, and the meeting may be attendees-only; the weekly notice's mail (#4967) holds a member's own counts of the meetings they read, which an owner must not learn either. A source of this list is out of the owner's org export (the mail log, its delivery events and the pointers of the suppression
+ * the subject the recorder typed, and the meeting may be attendees-only. A source of this list is out of the owner's org export (the mail log, its delivery events and the pointers of the suppression
  * list: the queries below) and out of the personal-data finder's rows, where the row shows only its id, address, status and time (findPersonalData). A new mail whose payload counts or quotes a meeting
  * adds its source here. Constant names, never input: the export queries take them as text.
  */
