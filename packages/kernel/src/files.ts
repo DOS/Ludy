@@ -17,9 +17,9 @@ export const zIngestFile = z.object({
   // social: an image or video for a Social post (#372, #409), stored like any file but never sent to extraction.
   // import: a spreadsheet for a module's import (#465), also never sent to extraction.
   // meeting_audio, meeting_video: encrypted meeting media (issue #2576, ADR-0047), never sent to extraction.
-  // sign_document, sign_sealed, sign_certificate, sign_attachment: eSign PDFs, canonical certificate JSON, and verified signer supporting attachments (#3323, #3818), never sent to Finance extraction.
+  // sign_document, sign_sealed, sign_certificate, sign_attachment, sign_deposit_qr: eSign PDFs, canonical certificate JSON, verified signer supporting attachments, and org VietQR bank assets (#3323, #3818, #4723), never sent to Finance extraction.
   // agreement: the signed agreement of an e-invoice correction (#2504), an evidence file, never sent to extraction.
-  source: z.enum(['upload', 'email', 'social', 'import', 'meeting_audio', 'meeting_video', 'sign_document', 'sign_sealed', 'sign_certificate', 'sign_attachment', 'agreement']),
+  source: z.enum(['upload', 'email', 'social', 'import', 'meeting_audio', 'meeting_video', 'sign_document', 'sign_sealed', 'sign_certificate', 'sign_attachment', 'sign_deposit_qr', 'agreement']),
   // A video's duration, read by the server from the file (#409).
   durationMs: z.number().int().min(0).max(86_400_000).optional(),
   // An image's size as shown, read by the server from its header (#636); both or neither.
@@ -37,7 +37,7 @@ export type IngestFile = z.infer<typeof zIngestFile>;
 
 // Sources whose files are accounting documents, read by the extraction job.
 const isDocumentSource = (source: string) => source === 'upload' || source === 'email';
-const SIGN_FILE_SOURCES: readonly IngestFile['source'][] = ['sign_document', 'sign_sealed', 'sign_certificate', 'sign_attachment'];
+const SIGN_FILE_SOURCES: readonly IngestFile['source'][] = ['sign_document', 'sign_sealed', 'sign_certificate', 'sign_attachment', 'sign_deposit_qr'];
 // Sources whose files are kept apart from every other use of the same bytes: eSign artifacts, and the signed agreement of an invoice correction (#2504), which is an evidence file and
 // must never be an Inbox document (nor a document an agreement).
 const ISOLATED_FILE_SOURCES: readonly IngestFile['source'][] = [...SIGN_FILE_SOURCES, 'agreement'];
@@ -57,6 +57,20 @@ export async function ingestFileRow(ctx: CommandContext, input: IngestFile, crea
   // Generated eSign evidence and public ceremony attachments can only be recorded by system actors.
   if ((input.source === 'sign_sealed' || input.source === 'sign_certificate' || input.source === 'sign_attachment') && ctx.actor.type !== 'system') {
     throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới ghi nhận được tài liệu đã niêm phong, chứng nhận ký hoặc tệp đính kèm người ký');
+  }
+  if (input.source === 'sign_deposit_qr' && ctx.actor.type !== 'system') {
+    if (ctx.actor.type !== 'user') {
+      throw new DomainError('FORBIDDEN', 403, 'Chỉ chủ sở hữu hoặc quản trị viên mới tải lên ảnh VietQR cấu hình ký kết');
+    }
+    const memberRow = await ctx.trx
+      .selectFrom('ludy_kernel.tenant_member')
+      .select('role')
+      .where('org_id', '=', ctx.orgId)
+      .where('user_id', '=', ctx.actor.userId)
+      .executeTakeFirst();
+    if (!memberRow || (memberRow.role !== 'owner' && memberRow.role !== 'admin')) {
+      throw new DomainError('FORBIDDEN', 403, 'Chỉ chủ sở hữu hoặc quản trị viên mới tải lên ảnh VietQR cấu hình ký kết');
+    }
   }
   // The link to a mail is the receive path's alone: a member could otherwise name any mail of the org as the source of
   // their upload, and the Inbox would show that mail's sender next to it.

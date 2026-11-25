@@ -105,6 +105,13 @@ import { checkEInvoiceRate, einvoiceRateInstructions, einvoiceRatePrompt, type E
 import { checkStockSurplusNote, stockSurplusInstructions, stockSurplusPrompt, type StockSurplusFacts, type StockSurplusResult } from './stock-surplus-note.ts';
 import { checkMarketplaceLineSentence, marketplaceLineInstructions, marketplaceLinePrompt, type MarketplaceLineFacts, type MarketplaceLineResult } from './marketplace-line.ts';
 import { checkPayrollMatchSentence, payrollMatchInstructions, payrollMatchPrompt, type PayrollMatchFacts, type PayrollMatchResult } from './payroll-match.ts';
+import {
+  checkSignDepositMatchSentence,
+  signDepositMatchInstructions,
+  signDepositMatchPrompt,
+  type SignDepositMatchFacts,
+  type SignDepositMatchResult,
+} from './sign-deposit-match.ts';
 import { checkVatLateSentence, vatLateInstructions, vatLatePrompt, vatLateQuiet, type VatLateFacts, type VatLateSentenceResult } from './vat-late.ts';
 import { checkMonthCloseNote, monthCloseInstructions, monthClosePrompt, monthCloseQuiet, type MonthCloseFacts, type MonthCloseNoteResult } from './month-close.ts';
 import { ExpenseVarianceCoworker } from './expense-variance-coworker.ts';
@@ -276,6 +283,9 @@ export type VatLateGenerator = (args: { system: string; prompt: string }) => Pro
 const zPayrollMatchOut = z.object({
   sentence: z.string().describe('One plain sentence on why the bank line may be this payroll payment, citing only the facts given, each number and date written exactly as given'),
 });
+const zSignDepositMatchOut = z.object({
+  sentence: z.string().describe('One plain sentence on why the money-in bank line may match the signed deposit request, citing only the given date, amount, CK-* token and notice state, without claiming anything was paid or posted'),
+});
 const zMarketplaceLineOut = z.object({
   sentence: z.string().describe('One plain sentence on what is waiting on the marketplace screen, citing only the figures given, each number written exactly as given'),
 });
@@ -322,6 +332,7 @@ export type EInvoiceReasonGenerator = (args: { system: string; prompt: string })
 export type EInvoiceRateGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zEInvoiceRateOut> | null; usage?: AiUsage }>;
 export type MarketplaceLineGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zMarketplaceLineOut> | null; usage?: AiUsage }>;
 export type PayrollMatchGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zPayrollMatchOut> | null; usage?: AiUsage }>;
+export type SignDepositMatchGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zSignDepositMatchOut> | null; usage?: AiUsage }>;
 export type MonthCloseGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zMonthCloseOut> | null; usage?: AiUsage }>;
 export type OverviewGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zOverviewOut> | null; usage?: AiUsage }>;
 export type CashForecastGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zCashForecastOut> | null; usage?: AiUsage }>;
@@ -428,6 +439,7 @@ export class InboxReader {
   private readonly generateCashForecast: CashForecastGenerator;
   private readonly generateVatLate: VatLateGenerator;
   private readonly generatePayrollMatch: PayrollMatchGenerator;
+  private readonly generateSignDepositMatch: SignDepositMatchGenerator;
   private readonly generateMarketplaceLine: MarketplaceLineGenerator;
   private readonly generateSupplierPayableLine: SupplierPayableLineGenerator;
   private readonly generateBankCandidatesLine: BankCandidatesLineGenerator;
@@ -463,7 +475,7 @@ export class InboxReader {
   private readonly expenseVariance: ExpenseVarianceCoworker;
 
   // The generators replace the model calls in tests; by default both go to the deployment's OpenAI-compatible endpoint, through the AI meter.
-  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; followup?: FollowupGenerator; crmFollowup?: CrmFollowupGenerator; meetingBrief?: MeetingBriefGenerator; overview?: OverviewGenerator; monthClose?: MonthCloseGenerator; cashForecast?: CashForecastGenerator; vatLate?: VatLateGenerator; payrollMatch?: PayrollMatchGenerator; einvoiceReason?: EInvoiceReasonGenerator; einvoiceRate?: EInvoiceRateGenerator; marketplaceLine?: MarketplaceLineGenerator; supplierPayableLine?: SupplierPayableLineGenerator; bankCandidatesLine?: BankCandidatesLineGenerator; misaCheckLine?: MisaCheckLineGenerator; misaAmisBlockerNotes?: MisaAmisBlockerNotesGenerator; marketplaceFeeNotes?: MarketplaceFeeNotesGenerator; marketplaceProposalNote?: MarketplaceProposalNoteGenerator; marketplaceColumns?: MarketplaceColumnsGenerator; stockSurplus?: StockSurplusGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; projectWeeklyStatus?: ProjectWeeklyStatusGenerator; projectCycleSummary?: ProjectCycleSummaryGenerator; roadmapDedupe?: RoadmapDedupeGenerator; roadmapChangelogDraft?: RoadmapChangelogDraftGenerator; roadmapSignalMatch?: RoadmapSignalMatchGenerator; projectTriageAssist?: ProjectTriageAssistGenerator; laborCheck?: LaborComplianceGenerator; recruitingBrief?: RecruitingBriefGenerator; attendanceAnomalies?: AttendanceAnomalyGenerator; cvExtract?: CvExtractGenerator; hrProbationSummary?: HrProbationSummaryGenerator; hrRequestDraft?: HrSelfRequestDraftGenerator; hrPolicyQa?: HrSelfPolicyQaGenerator; hrAddendumCheck?: HrAddendumCheckGenerator; hrOkrCheckinDraft?: HrOkrCheckinDraftGenerator; signAcceptanceDraft?: SignAcceptanceDraftGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
+  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; followup?: FollowupGenerator; crmFollowup?: CrmFollowupGenerator; meetingBrief?: MeetingBriefGenerator; overview?: OverviewGenerator; monthClose?: MonthCloseGenerator; cashForecast?: CashForecastGenerator; vatLate?: VatLateGenerator; payrollMatch?: PayrollMatchGenerator; signDepositMatch?: SignDepositMatchGenerator; einvoiceReason?: EInvoiceReasonGenerator; einvoiceRate?: EInvoiceRateGenerator; marketplaceLine?: MarketplaceLineGenerator; supplierPayableLine?: SupplierPayableLineGenerator; misaCheckLine?: MisaCheckLineGenerator; misaAmisBlockerNotes?: MisaAmisBlockerNotesGenerator; marketplaceFeeNotes?: MarketplaceFeeNotesGenerator; marketplaceProposalNote?: MarketplaceProposalNoteGenerator; marketplaceColumns?: MarketplaceColumnsGenerator; bankCandidatesLine?: BankCandidatesLineGenerator; stockSurplus?: StockSurplusGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; projectWeeklyStatus?: ProjectWeeklyStatusGenerator; projectCycleSummary?: ProjectCycleSummaryGenerator; roadmapDedupe?: RoadmapDedupeGenerator; roadmapChangelogDraft?: RoadmapChangelogDraftGenerator; roadmapSignalMatch?: RoadmapSignalMatchGenerator; projectTriageAssist?: ProjectTriageAssistGenerator; laborCheck?: LaborComplianceGenerator; recruitingBrief?: RecruitingBriefGenerator; attendanceAnomalies?: AttendanceAnomalyGenerator; cvExtract?: CvExtractGenerator; hrProbationSummary?: HrProbationSummaryGenerator; hrRequestDraft?: HrSelfRequestDraftGenerator; hrPolicyQa?: HrSelfPolicyQaGenerator; hrAddendumCheck?: HrAddendumCheckGenerator; hrOkrCheckinDraft?: HrOkrCheckinDraftGenerator; signAcceptanceDraft?: SignAcceptanceDraftGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
     this.payroll = new PayrollCoworker(config, generators.payroll);
     this.expenseVariance = new ExpenseVarianceCoworker(config);
     this.generateLaborCheck = generators.laborCheck ?? createLaborComplianceGenerator(config);
@@ -658,6 +670,14 @@ export class InboxReader {
       (async ({ system, prompt }) => {
         const { output, usage } = await metered('finance.bank_match_explain', () =>
           generateText({ model: chatModel(config), output: Output.object({ schema: zPayrollMatchOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
+        );
+        return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
+      });
+    this.generateSignDepositMatch =
+      generators.signDepositMatch ??
+      (async ({ system, prompt }) => {
+        const { output, usage } = await metered('finance.bank_match_explain', () =>
+          generateText({ model: chatModel(config), output: Output.object({ schema: zSignDepositMatchOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
         );
         return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
       });
@@ -1037,6 +1057,13 @@ export class InboxReader {
     const { output, usage } = await this.generatePayrollMatch({ system: payrollMatchInstructions(facts.language), prompt: payrollMatchPrompt(facts) });
     if (usage) onUsage?.(usage);
     return checkPayrollMatchSentence(facts, output);
+  }
+
+  /** The accounting coworker's one sentence on why an open money-in bank line may match a completed eSign VietQR deposit request (#4723). Metered under finance.bank_match_explain. */
+  async signDepositMatchSentence(facts: SignDepositMatchFacts, onUsage?: (usage: AiUsage) => void): Promise<SignDepositMatchResult> {
+    const { output, usage } = await this.generateSignDepositMatch({ system: signDepositMatchInstructions(facts.language), prompt: signDepositMatchPrompt(facts) });
+    if (usage) onUsage?.(usage);
+    return checkSignDepositMatchSentence(facts, output);
   }
 
   /** The item each line is most likely about (#2514), in the order given: the index of the item in `items` and a one-line reason, or null for no suggestion. At most STOCK_MATCH_LINES_MAX lines

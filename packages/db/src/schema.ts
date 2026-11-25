@@ -216,7 +216,7 @@ export type PartyTable = Refine<
 // keeps UPDATE only to lock the row (SELECT ... FOR UPDATE), so no column has an update type here.
 // social: an image uploaded for a Social post (#372); import: a spreadsheet for a module's import (#465). Neither is
 // extracted or shown in the Inbox. meeting_audio and meeting_video: encrypted meeting recordings (#2576).
-export const FILE_SOURCES = ['upload', 'email', 'social', 'import', 'meeting_audio', 'meeting_video', 'sign_document', 'sign_sealed', 'sign_certificate', 'sign_attachment', 'agreement'] as const;
+export const FILE_SOURCES = ['upload', 'email', 'social', 'import', 'meeting_audio', 'meeting_video', 'sign_document', 'sign_sealed', 'sign_certificate', 'sign_attachment', 'sign_deposit_qr', 'agreement'] as const;
 type Frozen<T> = ColumnType<SelectType<T>, InsertType<T>, G.NotGranted>;
 export type FileTable = Refine<
   G.KernelFileTable,
@@ -1711,6 +1711,7 @@ export const SIGN_EVENT_TYPES = [
   'signer_viewed',
   'signer_otp_verified',
   'attachment_uploaded',
+  'deposit_notice_recorded',
   'signer_signed',
   'in_person_signed',
   'signer_declined',
@@ -1757,6 +1758,8 @@ export const SIGN_KYC_CHECK_STATUSES = ['pending', 'matched', 'mismatch', 'needs
 export type SignKycCheckStatus = (typeof SIGN_KYC_CHECK_STATUSES)[number];
 export const SIGN_KYC_CHECK_MODES = ['deterministic', 'ai', 'manual'] as const;
 export type SignKycCheckMode = (typeof SIGN_KYC_CHECK_MODES)[number];
+export const SIGN_DEPOSIT_CURRENCIES = ['VND'] as const;
+export type SignDepositCurrency = (typeof SIGN_DEPOSIT_CURRENCIES)[number];
 
 export type SignEnvelopeTable = Refine<
   G.SignEnvelopeTable,
@@ -1819,6 +1822,10 @@ export type SignCaSigningRequestTable = Refine<
     retry_safety: Generated<SignCaRetrySafety>;
     sub_filter: SignCaSubFilter | null;
   }
+>;
+export type SignEnvelopeDepositTable = Refine<
+  G.SignEnvelopeDepositTable,
+  { currency: Generated<SignDepositCurrency> }
 >;
 export type SignEnvelopeObligationTable = Refine<
   G.SignEnvelopeObligationTable,
@@ -1929,7 +1936,9 @@ type Refined = Tables<{
   'ludy_projects.roadmap_signal': ProjectsRoadmapSignalTable;
   'ludy_sign.ai_analysis': SignAiAnalysisTable;
   'ludy_sign.ca_signing_request': SignCaSigningRequestTable;
+  'ludy_sign.deposit_profile': G.SignDepositProfileTable;
   'ludy_sign.envelope': SignEnvelopeTable;
+  'ludy_sign.envelope_deposit': SignEnvelopeDepositTable;
   'ludy_sign.envelope_document': SignEnvelopeDocumentTable;
   'ludy_sign.envelope_obligation': SignEnvelopeObligationTable;
   'ludy_sign.field': SignFieldTable;

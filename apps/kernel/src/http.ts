@@ -25,6 +25,7 @@ import {
   ORG_HEADER,
   LEGACY_ORG_HEADER,
   ROADMAP_VOTER_HEADER,
+  SIGN_DEPOSIT_PROOF_MAX_BYTES,
   SIGN_DIRECT_PAGE_PATH,
   SIGN_PAGE_PATH,
   SIGN_PUBLIC_HUB_PAGE_PREFIX,
@@ -257,6 +258,9 @@ import {
   SIGN_ATTACHMENT_UPLOADS_MAX,
   SIGN_ATTACHMENTS_PER_MINUTE,
   SIGN_DELEGATES_PER_MINUTE,
+  SIGN_DEPOSIT_NOTICE_PER_MINUTE,
+  SIGN_DEPOSIT_NOTICE_UPLOADS_MAX,
+  SIGN_DEPOSIT_QR_PER_MINUTE,
   SIGN_OTP_REQUESTS_PER_MINUTE,
   SIGN_OTP_VERIFIES_PER_MINUTE,
   SIGN_PDF_READS_MAX,
@@ -264,6 +268,8 @@ import {
   SIGN_SUBMITS_PER_MINUTE,
   SIGN_TOKEN_ATTACHMENTS_PER_MINUTE,
   SIGN_TOKEN_DELEGATES_PER_MINUTE,
+  SIGN_TOKEN_DEPOSIT_NOTICE_PER_MINUTE,
+  SIGN_TOKEN_DEPOSIT_QR_PER_MINUTE,
   SIGN_TOKEN_OTP_REQUESTS_PER_MINUTE,
   SIGN_TOKEN_OTP_VERIFIES_PER_MINUTE,
   SIGN_TOKEN_PDFS_PER_MINUTE,
@@ -271,11 +277,14 @@ import {
   SIGN_TOKEN_VIEWS_PER_MINUTE,
   SIGN_VERIFY_PER_MINUTE,
   SIGN_VIEWS_PER_MINUTE,
+  readPublicDepositQrBytes,
   readPublicPdfBytes,
+  resolvePublicDepositQr,
   resolvePublicPdf,
   runSignAttachmentUpload,
   runSignDecline,
   runSignDelegate,
+  runSignDepositNotice,
   runSignOtpRequest,
   runSignOtpVerify,
   runSignSubmit,
@@ -464,6 +473,11 @@ export interface HttpDeps {
     attachment: RateLimiter;
     tokenAttachment: RateLimiter;
     attachmentUploads: ConcurrencyLimiter;
+    depositQr: RateLimiter;
+    tokenDepositQr: RateLimiter;
+    depositNotice: RateLimiter;
+    tokenDepositNotice: RateLimiter;
+    depositNoticeUploads: ConcurrencyLimiter;
     verify: RateLimiter;
   }>;
   // Per-client and per-token/email rate limiters for public direct signing routes (#3551).
@@ -829,7 +843,7 @@ export function createHttpApp(deps: HttpDeps) {
   const app = new Hono<{ Variables: { user: AuthUser } }>();
   // One drafts budget (#386) for the API: a person's own drafts and the MCP draft tool of an AI app take their turns from the same counters and the same one-at-a-time rule.
   const drafts = new DraftBudget();
-  const rpc = createRpcHandler(runtime, deps.mailer ? createInviteMailSender(deps.mailer, appUrl(config), {}, config.INBOUND_DOMAIN && config.INBOUND_SECRET ? config.INBOUND_DOMAIN : null, config.BRAND_NAME) : undefined, deps.channels, deps.socialWriter, deps.taxLookup, drafts, undefined, deps.portalSync, deps.bookingReader, deps.aiMeter, deps.aiEnabled, deps.conversationReader, deps.summaryModel ?? null, deps.aiPrice, deps.signAi ?? null);
+  const rpc = createRpcHandler(runtime, deps.mailer ? createInviteMailSender(deps.mailer, appUrl(config), {}, config.INBOUND_DOMAIN && config.INBOUND_SECRET ? config.INBOUND_DOMAIN : null, config.BRAND_NAME) : undefined, deps.channels, deps.socialWriter, deps.taxLookup, drafts, undefined, deps.portalSync, deps.bookingReader, deps.aiMeter, deps.aiEnabled, deps.conversationReader, deps.summaryModel ?? null, deps.aiPrice, deps.signAi ?? null, store);
   const perMinute = config.API_RATE_LIMIT_PER_MINUTE;
   const limiter = deps.rateLimiter !== undefined ? deps.rateLimiter : perMinute > 0 ? new RateLimiter({ perMinute }) : null;
 
@@ -1730,6 +1744,11 @@ export function createHttpApp(deps: HttpDeps) {
     const signAttachmentLimit = deps.signLimits?.attachment ?? new RateLimiter({ perMinute: SIGN_ATTACHMENTS_PER_MINUTE });
     const signTokenAttachmentLimit = deps.signLimits?.tokenAttachment ?? new RateLimiter({ perMinute: SIGN_TOKEN_ATTACHMENTS_PER_MINUTE });
     const signAttachmentUploads = deps.signLimits?.attachmentUploads ?? new ConcurrencyLimiter({ total: SIGN_ATTACHMENT_UPLOADS_MAX, perKey: SIGN_ATTACHMENT_UPLOADS_MAX });
+    const signDepositQrLimit = deps.signLimits?.depositQr ?? new RateLimiter({ perMinute: SIGN_DEPOSIT_QR_PER_MINUTE });
+    const signTokenDepositQrLimit = deps.signLimits?.tokenDepositQr ?? new RateLimiter({ perMinute: SIGN_TOKEN_DEPOSIT_QR_PER_MINUTE });
+    const signDepositNoticeLimit = deps.signLimits?.depositNotice ?? new RateLimiter({ perMinute: SIGN_DEPOSIT_NOTICE_PER_MINUTE });
+    const signTokenDepositNoticeLimit = deps.signLimits?.tokenDepositNotice ?? new RateLimiter({ perMinute: SIGN_TOKEN_DEPOSIT_NOTICE_PER_MINUTE });
+    const signDepositNoticeUploads = deps.signLimits?.depositNoticeUploads ?? new ConcurrencyLimiter({ total: SIGN_DEPOSIT_NOTICE_UPLOADS_MAX, perKey: SIGN_DEPOSIT_NOTICE_UPLOADS_MAX });
     const signVerifyLimit = deps.signLimits?.verify ?? new RateLimiter({ perMinute: SIGN_VERIFY_PER_MINUTE });
 
     const setSignSecurityHeaders = (c: Context) => {
@@ -1949,6 +1968,124 @@ export function createHttpApp(deps: HttpDeps) {
       try {
         const verified = await runSignVerify(runtime, signBilling, await c.req.json().catch(() => null));
         return verified ? c.json(verified) : signOpaqueNotFound(c);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.post('/api/sign/deposit-qr', signEdgeGuard(signDepositQrLimit), signBodyLimit(2048), async (c) => {
+      try {
+        const lookup = await resolvePublicDepositQr(
+          runtime,
+          signBilling,
+          await c.req.json().catch(() => null),
+          (hash) => signTokenDepositQrLimit.take(hash),
+        );
+        if (lookup.status === 'not_found') return signOpaqueNotFound(c);
+        if (lookup.status === 'rate_limited') return signRateLimited(c, lookup.retryAfterSeconds);
+        if (lookup.status === 'otp_required') {
+          return c.json({ code: 'OTP_REQUIRED', message: 'Email OTP verification is required before viewing deposit QR' }, 403);
+        }
+        const release = signPdfReads.tryAcquire('sign-deposit-qr');
+        if (!release) {
+          c.header('retry-after', '2');
+          return c.json({ code: 'SIGN_PDF_BUSY', message: 'Máy chủ đang bận, hãy thử lại sau vài giây' }, 503);
+        }
+        try {
+          const bytes = await readPublicDepositQrBytes(store, lookup.source);
+          if (!bytes) return signOpaqueNotFound(c);
+          return new Response(body(bytes), {
+            headers: {
+              'content-type': 'image/png',
+              'cache-control': 'no-store',
+              'referrer-policy': 'no-referrer',
+              'x-content-type-options': 'nosniff',
+              'content-security-policy': "default-src 'none'; sandbox",
+            },
+          });
+        } finally {
+          release();
+        }
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    const signDepositNoticeSlot: MiddlewareHandler = async (c, next) => {
+      const release = signDepositNoticeUploads.tryAcquire('sign-deposit-notice');
+      if (!release) {
+        c.header('retry-after', '2');
+        return c.json({ code: 'SIGN_ATTACHMENT_BUSY', message: 'Máy chủ đang xử lý nhiều yêu cầu, hãy thử lại sau vài giây' }, 503);
+      }
+      try {
+        await next();
+      } finally {
+        release();
+      }
+    };
+
+    app.post('/api/sign/deposit-notice', signEdgeGuard(signDepositNoticeLimit), signDepositNoticeSlot, signBodyLimit(SIGN_DEPOSIT_PROOF_MAX_BYTES + 1024 * 1024), async (c) => {
+      try {
+        const ct = (c.req.header('content-type') ?? '').toLowerCase();
+        let token: unknown = null;
+        let note: unknown = null;
+        let filename: unknown = null;
+        let bytes: Uint8Array | null = null;
+        let oversize = false;
+        let invalidEncoding = false;
+        let emptyFile = false;
+        if (ct.includes('multipart/form-data')) {
+          const form = await c.req.parseBody().catch(() => null);
+          if (!form) return signOpaqueNotFound(c);
+          token = form.token;
+          note = form.note ?? null;
+          const file = form.file;
+          if (file instanceof File) {
+            filename = file.name;
+            if (file.size === 0) {
+              emptyFile = true;
+            } else if (file.size > SIGN_DEPOSIT_PROOF_MAX_BYTES) {
+              oversize = true;
+            } else {
+              bytes = new Uint8Array(await file.arrayBuffer());
+            }
+          } else if (file !== undefined && file !== null && file !== '') {
+            invalidEncoding = true;
+          }
+        } else {
+          const json = await c.req.json().catch(() => null);
+          if (!json || typeof json !== 'object') return signOpaqueNotFound(c);
+          const payload = json as Record<string, unknown>;
+          token = payload.token;
+          note = payload.note ?? null;
+          filename = payload.filename;
+          if (typeof payload.contentBase64 === 'string') {
+            const cleanBase64 = payload.contentBase64.replace(/\s+/g, '');
+            const maxBase64Chars = Math.ceil((SIGN_DEPOSIT_PROOF_MAX_BYTES * 4) / 3) + 16;
+            if (cleanBase64.length === 0) {
+              emptyFile = true;
+            } else if (cleanBase64.length > maxBase64Chars) {
+              oversize = true;
+            } else if (cleanBase64.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(cleanBase64)) {
+              invalidEncoding = true;
+            } else {
+              bytes = new Uint8Array(Buffer.from(cleanBase64, 'base64'));
+            }
+          } else if (payload.contentBase64 !== undefined && payload.contentBase64 !== null) {
+            invalidEncoding = true;
+          }
+        }
+        const res = await runSignDepositNotice(
+          runtime,
+          store,
+          signBilling,
+          { token, note, filename, bytes, oversize, invalidEncoding, emptyFile },
+          signMeta(c),
+          (hash) => signTokenDepositNoticeLimit.take(hash),
+        );
+        if (res.status === 'not_found') return signOpaqueNotFound(c);
+        if (res.status === 'rate_limited') return signRateLimited(c, res.retryAfterSeconds);
+        return c.json(res.result);
       } catch (error) {
         return problem(c, error);
       }

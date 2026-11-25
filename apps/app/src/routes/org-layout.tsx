@@ -8,7 +8,6 @@ import { PhoneHeader } from '../components/phone-header.tsx';
 import { CommandPalette, type PaletteEntry } from '../components/command-palette.tsx';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
 import { ScreenTabs } from '../components/screen-tabs.tsx';
-import { Toaster } from '../components/toaster.tsx';
 import { QuickCaptureDialog } from '../components/todo-quick-add.tsx';
 import { OrgLeftNotice } from '../components/ui.tsx';
 import { useFormat, useLocaleSetting } from '../i18n/provider.tsx';
@@ -517,7 +516,6 @@ export function OrgLayout() {
           <ScreenTabs slug={slug} installed={NAV} badges={tabBadges} />
           {me.isSuccess && !org ? <p className="text-sm text-destructive">{t('notMember')}</p> : <Outlet />}
         </main>
-        <Toaster />
         <CommandPalette
           entries={paletteEntries}
           found={foundEntries}

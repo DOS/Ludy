@@ -206,6 +206,66 @@ export const SIGN_EVENT_TABLE = columns(
   },
 );
 
+export const SIGN_DEPOSIT_PROFILE_TABLE = columns(
+  [
+    'org_id',
+    'id',
+    'bank_name',
+    'finance_bank_account',
+    'vietqr_file_id',
+    'vietqr_storage_key',
+    'vietqr_generation',
+    'vietqr_sha256',
+    'is_default',
+    'created_by',
+    'updated_by',
+    'created_at',
+    'updated_at',
+  ],
+  {
+    bank_code: 'payment',
+    account_number: 'payment',
+    account_holder: 'pii',
+  },
+);
+
+export const SIGN_ENVELOPE_DEPOSIT_TABLE = columns(
+  [
+    'org_id',
+    'id',
+    'envelope_id',
+    'amount',
+    'currency',
+    'memo_token',
+    'due_days',
+    'deposit_profile_id',
+    'note',
+    'snapshot_frozen_at',
+    'snapshot_bank_name',
+    'snapshot_finance_bank_account',
+    'snapshot_vietqr_file_id',
+    'snapshot_vietqr_storage_key',
+    'snapshot_vietqr_generation',
+    'snapshot_vietqr_sha256',
+    'signer_notice_at',
+    'signer_notice_note',
+    'signer_proof_file_id',
+    'signer_proof_filename',
+    'signer_proof_sha256',
+    'created_by',
+    'updated_by',
+    'created_at',
+    'updated_at',
+  ],
+  {
+    snapshot_bank_code: 'payment',
+    snapshot_account_number: 'payment',
+    snapshot_account_holder: 'pii',
+    snapshot_emvco_payload: 'payment',
+    signer_ip_hash: 'sensitive',
+  },
+);
+
 export const signManifest = defineModule({
   id: 'sign',
   dependsOn: ['kernel'],
@@ -285,7 +345,9 @@ export const signManifest = defineModule({
         'created_at',
         'updated_at',
       ]),
+      deposit_profile: SIGN_DEPOSIT_PROFILE_TABLE,
       envelope: SIGN_ENVELOPE_TABLE,
+      envelope_deposit: SIGN_ENVELOPE_DEPOSIT_TABLE,
       envelope_document: SIGN_ENVELOPE_DOCUMENT_TABLE,
       envelope_obligation: columns(
         [
@@ -504,7 +566,9 @@ export const signManifest = defineModule({
     { type: 'sign.api_key', table: 'api_key', legalEntityScoped: false, audit: 'command' },
     { type: 'sign.ca_connection', table: 'ca_connection', legalEntityScoped: false, audit: 'command' },
     { type: 'sign.ca_signing_request', table: 'ca_signing_request', legalEntityScoped: false, audit: 'command' },
+    { type: 'sign.deposit_profile', table: 'deposit_profile', legalEntityScoped: false, audit: 'command' },
     { type: 'sign.envelope', table: 'envelope', legalEntityScoped: false, audit: 'command' },
+    { type: 'sign.envelope_deposit', table: 'envelope_deposit', legalEntityScoped: false, audit: 'command' },
     { type: 'sign.envelope_obligation', table: 'envelope_obligation', legalEntityScoped: false, audit: 'command' },
     { type: 'sign.kyc_check', table: 'kyc_check', legalEntityScoped: false, audit: 'command' },
     { type: 'sign.member_signature', table: 'member_signature', legalEntityScoped: false, audit: 'command' },
