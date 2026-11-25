@@ -3,10 +3,13 @@
 // Runs isolated media operations in temporary directories with strict timeouts,
 // signal-based aborts, protocol restrictions, safe container allowlists, and clean error mapping.
 import { execFile } from 'node:child_process';
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { createReadStream, createWriteStream, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { open } from 'node:fs/promises';
+import { pipeline } from 'node:stream/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  MEDIA_JOIN_FRAME,
   MEDIA_LIMITS,
   MEDIA_TIMING,
   type MediaErrorCode,
@@ -561,3 +564,80 @@ export async function processMediaFile(
   };
 }
 
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------
+// Joining the parts of one recording (#3175): a call recorded in several segments arrives as ONE framed body (packages/media-contract/src/join.ts), is cut into one file per part here, and is joined with
+// ffmpeg's `concat` FILTER (not the concat demuxer, which reads file lists and is refused as dangerous above) into one mono Opus, so the answer has the shape and the caps of normalize.
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------
+
+const JOIN_COUNT_BYTES = MEDIA_JOIN_FRAME.countBytes;
+const JOIN_LENGTH_BYTES = MEDIA_JOIN_FRAME.lengthBytes;
+
+/**
+ * Cuts a framed body (count, then length and bytes of each part) into `part-<i>.bin` files in `dir`, and returns their paths in order. The frame lengths are checked against the size of the
+ * file as they are read, so a length that runs past the end, a count outside 1 to the maximum, a part of no bytes and any byte after the last part are all `bad_request`: nothing is guessed.
+ */
+export async function splitJoinFrames(framedPath: string, dir: string): Promise<string[]> {
+  const total = statSync(framedPath).size;
+  const handle = await open(framedPath, 'r');
+  const bad = (what: string) => new MediaExecutionError('bad_request', `The parts of the join are not framed correctly (${what})`);
+  try {
+    const read = async (at: number, bytes: number): Promise<Buffer> => {
+      if (at + bytes > total) throw bad('the body ends inside a frame');
+      const out = Buffer.alloc(bytes);
+      const { bytesRead } = await handle.read(out, 0, bytes, at);
+      if (bytesRead !== bytes) throw bad('the body ends inside a frame');
+      return out;
+    };
+    const count = (await read(0, JOIN_COUNT_BYTES)).readUInt32BE(0);
+    if (count < 1 || count > MEDIA_LIMITS.maxJoinParts) throw bad(`${count} parts`);
+    let at = JOIN_COUNT_BYTES;
+    const paths: string[] = [];
+    for (let i = 0; i < count; i++) {
+      const length = Number((await read(at, JOIN_LENGTH_BYTES)).readBigUInt64BE(0));
+      at += JOIN_LENGTH_BYTES;
+      if (!Number.isSafeInteger(length) || length < 1 || at + length > total) throw bad(`part ${i + 1}`);
+      const path = join(dir, `part-${i}.bin`);
+      await pipeline(createReadStream(framedPath, { start: at, end: at + length - 1 }), createWriteStream(path, { mode: 0o600 }));
+      paths.push(path);
+      at += length;
+    }
+    if (at !== total) throw bad('bytes after the last part');
+    return paths;
+  } finally {
+    await handle.close().catch(() => undefined);
+  }
+}
+
+export async function joinAudioFiles(framedPath: string, dir: string, outputPath: string, options?: NormalizeOptions): Promise<MediaNormalizeResult> {
+  const parts = await splitJoinFrames(framedPath, dir);
+  // The framed body is no longer needed once it is cut: the disk of a request holds each byte once more than the body, not twice.
+  rmSync(framedPath, { force: true });
+  // Each part must hold audio and be a container the sandbox allows (probeFile), and the length of the whole is what the parts really hold (measureFile decodes), against the same duration cap as one recording.
+  let seconds = 0;
+  for (const part of parts) {
+    const measured = await measureFile(part, options);
+    if (!measured.hasAudio) throw new MediaExecutionError('no_audio_stream', 'A part of the recording contains no audio stream to join');
+    seconds += measured.durationSeconds;
+    if (seconds > MEDIA_LIMITS.maxDurationSeconds + 60) {
+      throw new MediaExecutionError('too_large', `The parts add up to more than the maximum allowed duration (${MEDIA_LIMITS.maxDurationSeconds}s)`);
+    }
+  }
+  const bitrateKbps = options?.bitrateKbps ?? MEDIA_LIMITS.defaultOpusBitrateKbps;
+  // Every part to the same rate and one channel first (the concat filter wants the same format on all inputs), then joined in order. Only our own temp file names reach ffmpeg.
+  const labels = parts.map((_, i) => `[a${i}]`);
+  const graph = [
+    ...parts.map((_, i) => `[${i}:a:0]aresample=${MEDIA_LIMITS.defaultOpusSampleRate},aformat=sample_fmts=fltp:channel_layouts=mono[a${i}]`),
+    `${labels.join('')}concat=n=${parts.length}:v=0:a=1[out]`,
+  ].join(';');
+  const args = ['-y', '-v', 'error', ...parts.flatMap((part) => ['-i', part]), '-filter_complex', graph, '-map', '[out]', '-c:a', 'libopus', '-b:a', `${bitrateKbps}k`, '-ac', '1', '-ar', String(MEDIA_LIMITS.defaultOpusSampleRate), outputPath];
+  await runCommand('ffmpeg', args, options);
+  const outProbe = await probeFile(outputPath, options);
+  return {
+    durationSeconds: outProbe.durationSeconds > 0 ? outProbe.durationSeconds : seconds,
+    format: 'opus',
+    channels: 1,
+    sampleRate: 48000,
+    bitrateKbps,
+    audioBase64: readFileSync(outputPath).toString('base64'),
+  };
+}

@@ -20,6 +20,7 @@ import {
 } from './types.ts';
 import {
   createTempDir,
+  joinAudioFiles,
   MediaExecutionError,
   measureFile,
   normalizeAudioFile,
@@ -313,6 +314,13 @@ export function createMediaApp(options: MediaAppOptions = {}): Hono {
   app.post('/normalize', (c) => normalizeHandler(c, maxAudioBytes));
 
   app.post('/extract-audio', (c) => normalizeHandler(c, maxInputBytes));
+
+  // The parts of one recording in one framed body (packages/media-contract/src/join.ts), joined in order into one mono Opus (#3175). Capped like /extract-audio (a Zoom segment may be a video file),
+  // its parts are checked while they are cut, and the answer is the normalize result.
+  app.post('/join-audio', (c) => {
+    const bitrateKbps = parseBitrate(c.req.query('bitrate_kbps'));
+    return handleOperation(c, maxInputBytes, async (inputPath, dir, signal) => joinAudioFiles(inputPath, dir, join(dir, 'joined.opus'), { signal, bitrateKbps, timeoutMs: processTimeoutMs }));
+  });
 
   app.post('/split', (c) => {
     const maxSegmentSeconds = parseSegmentSeconds(c.req.query('max_segment_seconds'));
