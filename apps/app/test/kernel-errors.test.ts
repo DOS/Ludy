@@ -134,6 +134,8 @@ const NOT_SHOWN: Record<string, string> = {
   STAGED_UPLOAD_REQUIRED: 'meetings',
   // A playback stream whose file changed under it (#2579): the player's request fails and the page reloads the meeting.
   MEDIA_REPLACED: 'meetings',
+  // The public minutes link (#4822): POST /api/minutes/view answers 404 for a token that is wrong, revoked or expired; the viewer page reads that as its own "link not valid" state, in its own words, and shows no kernel error.
+  MINUTES_LINK_INVALID: 'public minutes viewer',
 };
 
 function sources(dir: string): string[] {
