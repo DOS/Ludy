@@ -4,7 +4,7 @@
 // and hardeningViolations fail-closed detection on PostgreSQL 17.
 // Self-contained under apps/kernel/test/invariant/ (AGENTS.md Protected paths).
 // Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; the run creates and drops its own database.
-import { copyFileSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -368,6 +368,58 @@ suite('legacy crove_* role and crove.* GUC contraction (#3972)', () => {
     });
   });
 
+  it('flags un-expired legacy logins and legacy crove_* ownership of ludy_* objects after Stage 7 contraction', async () => {
+    const contractionFile = readdirSync(MIGRATIONS).find((f) => f.endsWith(CONTRACTION_SUFFIX));
+    expect(contractionFile).toBeTruthy();
+    const contractionSql = readFileSync(join(MIGRATIONS, contractionFile as string), 'utf8');
+
+    await withAdmin(async (c) => {
+      await c.query('BEGIN');
+      try {
+        await c.query("ALTER ROLE crove_app VALID UNTIL 'infinity'");
+        for (const shared of [false, true]) {
+          const violations = await hardeningViolations(c, shared ? { shared: true } : undefined);
+          expect(
+            violations.some((v) => /legacy login role crove_app does not have an expired VALID UNTIL after Stage 7 contraction/.test(v)),
+          ).toBe(true);
+        }
+      } finally {
+        await c.query('ROLLBACK');
+      }
+      expect(await hardeningViolations(c)).toEqual([]);
+
+      const ownedSchema = 'ludy_t3972_owned';
+      await c.query('BEGIN');
+      try {
+        await c.query(
+          `CREATE SCHEMA ${ownedSchema} AUTHORIZATION crove_definer_tenant; ` +
+            `CREATE TABLE ${ownedSchema}.legacy_tbl (id integer); ` +
+            `ALTER TABLE ${ownedSchema}.legacy_tbl OWNER TO crove_definer_tenant; ` +
+            `CREATE SEQUENCE ${ownedSchema}.legacy_seq; ` +
+            `ALTER SEQUENCE ${ownedSchema}.legacy_seq OWNER TO crove_definer_tenant; ` +
+            `CREATE FUNCTION ${ownedSchema}.legacy_fn() RETURNS integer LANGUAGE sql SET search_path = pg_catalog, pg_temp AS $$ SELECT 1 $$; ` +
+            `ALTER FUNCTION ${ownedSchema}.legacy_fn() OWNER TO crove_definer_tenant; ` +
+            `CREATE TYPE ${ownedSchema}.legacy_enum AS ENUM ('a'); ` +
+            `ALTER TYPE ${ownedSchema}.legacy_enum OWNER TO crove_definer_tenant`,
+        );
+        for (const shared of [false, true]) {
+          const violations = await hardeningViolations(c, shared ? { shared: true } : undefined);
+          for (const kind of ['schema', 'relation', 'sequence', 'routine', 'type']) {
+            expect(
+              violations.some((v) => new RegExp(`legacy role crove_definer_tenant still owns ${kind} .* in ${ownedSchema}`).test(v)),
+            ).toBe(true);
+          }
+        }
+        await c.query('SAVEPOINT sp_owned');
+        await expect(c.query(contractionSql)).rejects.toThrow(/legacy crove_\* role still owns ludy_\* objects/);
+        await c.query('ROLLBACK TO SAVEPOINT sp_owned');
+      } finally {
+        await c.query('ROLLBACK');
+      }
+      expect(await hardeningViolations(c)).toEqual([]);
+    });
+  });
+
   it('never commits cluster-wide transitional crove_* -> ludy_* grants when migrating a second DB stops midway', async () => {
     const secondDb = `${dbName}_second`;
     const dbBUrl = dbUrlFor(ADMIN as string, secondDb);
@@ -395,6 +447,7 @@ suite('legacy crove_* role and crove.* GUC contraction (#3972)', () => {
     }
 
     try {
+      await withAdmin((c) => c.query("ALTER ROLE crove_reporter WITH PASSWORD NULL VALID UNTIL 'infinity'"));
       await expect(migrate({ adminUrl: dbBUrl, dir: abortDir })).rejects.toThrow(/SIMULATED_MID_UPGRADE_ABORT/);
 
       await withAdmin(async (c) => {
@@ -416,6 +469,12 @@ suite('legacy crove_* role and crove.* GUC contraction (#3972)', () => {
           [[...LEGACY_ROLES], [...CANONICAL_LUDY_ROLES]],
         );
         expect(effective).toEqual([]);
+
+        const drifted = await hardeningViolations(c);
+        expect(
+          drifted.some((v) => /legacy login role crove_reporter does not have an expired VALID UNTIL after Stage 7 contraction/.test(v)),
+        ).toBe(true);
+        await c.query("ALTER ROLE crove_reporter WITH PASSWORD NULL VALID UNTIL '-infinity'");
         expect(await hardeningViolations(c)).toEqual([]);
       });
 
@@ -428,6 +487,7 @@ suite('legacy crove_* role and crove.* GUC contraction (#3972)', () => {
         await bClient.end();
       }
     } finally {
+      await withAdmin((c) => c.query("ALTER ROLE crove_reporter WITH PASSWORD NULL VALID UNTIL '-infinity'")).catch(() => {});
       rmSync(abortDir, { recursive: true, force: true });
       const teardown = new pg.Client({ connectionString: ADMIN });
       await teardown.connect();

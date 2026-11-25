@@ -15,6 +15,7 @@ DO $$
 DECLARE
   v_login text;
   v_remaining text;
+  v_owned text;
   r record;
   v_ludy_roles constant text[] := ARRAY[
     'ludy_tenant',
@@ -187,6 +188,49 @@ BEGIN
   LOOP
     EXECUTE pg_catalog.format('REVOKE %s ON SCHEMA %I FROM %I', r.privilege_type, r.schema_name, r.grantee);
   END LOOP;
+
+  -- Verify no legacy crove_* role owns any ludy_* schema or object (login roles own nothing; owners keep implicit ACLs).
+  SELECT pg_catalog.string_agg(owned_desc, ', ' ORDER BY owned_desc)
+  INTO v_owned
+  FROM (
+    SELECT pg_catalog.format('schema %s (owner %s)', n.nspname, ow.rolname) AS owned_desc
+    FROM pg_catalog.pg_namespace n
+    JOIN pg_catalog.pg_roles ow ON ow.oid = n.nspowner
+    WHERE n.nspname LIKE 'ludy\_%'
+      AND ow.rolname = ANY (v_legacy_roles)
+    UNION ALL
+    SELECT pg_catalog.format('%s %I.%I (owner %s)', CASE WHEN c.relkind = 'S' THEN 'sequence' ELSE 'relation' END, n.nspname, c.relname, ow.rolname)
+    FROM pg_catalog.pg_class c
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    JOIN pg_catalog.pg_roles ow ON ow.oid = c.relowner
+    WHERE n.nspname LIKE 'ludy\_%'
+      AND c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')
+      AND ow.rolname = ANY (v_legacy_roles)
+    UNION ALL
+    SELECT pg_catalog.format('routine %s (owner %s)', p.oid::pg_catalog.regprocedure::text, ow.rolname)
+    FROM pg_catalog.pg_proc p
+    JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+    JOIN pg_catalog.pg_roles ow ON ow.oid = p.proowner
+    WHERE n.nspname LIKE 'ludy\_%'
+      AND ow.rolname = ANY (v_legacy_roles)
+    UNION ALL
+    SELECT pg_catalog.format('type %I.%I (owner %s)', n.nspname, t.typname, ow.rolname)
+    FROM pg_catalog.pg_type t
+    JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
+    JOIN pg_catalog.pg_roles ow ON ow.oid = t.typowner
+    WHERE n.nspname LIKE 'ludy\_%'
+      AND (
+        t.typrelid = 0
+        OR EXISTS (SELECT 1 FROM pg_catalog.pg_class rc WHERE rc.oid = t.typrelid AND rc.relkind = 'c')
+      )
+      AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_type elem WHERE elem.typarray = t.oid)
+      AND ow.rolname = ANY (v_legacy_roles)
+  ) owned_rows;
+  IF v_owned IS NOT NULL THEN
+    RAISE EXCEPTION
+      'stage 7 contraction failed: legacy crove_* role still owns ludy_* objects (%): reassign ownership to a canonical ludy_* or database owner role before retrying',
+      v_owned;
+  END IF;
 END $$;
 
 -- ---------------------------------------------------------------------------

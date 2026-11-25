@@ -170,7 +170,7 @@ export function createPreCutoverClient(config: (string | pg.ClientConfig) & { se
     client = wrapQueryTarget(new pg.Client(next));
   }
   if (sessionRole) {
-    const authSql = `SET SESSION AUTHORIZATION ${pg.escapeIdentifier(sessionRole)}`;
+    const authSql = `SET SESSION AUTHORIZATION ${pg.escapeIdentifier(sessionRole)}; SET search_path = pg_catalog, pg_temp`;
     const origConnect = client.connect.bind(client) as (...args: unknown[]) => unknown;
     (client as unknown as { connect: (...args: unknown[]) => unknown }).connect = (...args: unknown[]) => {
       if (typeof args[0] === 'function') {
@@ -179,7 +179,7 @@ export function createPreCutoverClient(config: (string | pg.ClientConfig) & { se
           if (err) return cb(err);
           void client.query(authSql).then(
             () => cb(undefined),
-            (authErr: unknown) => cb(authErr as Error),
+            (authErr: unknown) => cb(authErr instanceof Error ? authErr : new Error(String(authErr))),
           );
         });
       }
@@ -194,11 +194,15 @@ export function createPreCutoverPool(opts: PreCutoverPoolOptions): pg.Pool {
   const { sessionRole, ...poolOpts } = opts;
   const connectionString = sessionRole ? poolOpts.connectionString : preCutoverUrl(poolOpts.connectionString);
   const pool = wrapQueryTarget(createPool({ ...poolOpts, connectionString }));
-  const authSql = sessionRole ? `SET SESSION AUTHORIZATION ${pg.escapeIdentifier(sessionRole)}` : null;
+  const authSql = sessionRole ? `SET SESSION AUTHORIZATION ${pg.escapeIdentifier(sessionRole)}; SET search_path = pg_catalog, pg_temp` : null;
   const initClient = async (client: pg.PoolClient) => {
-    if (authSql && !SESSION_INIT.has(client)) {
-      await client.query(authSql);
-      SESSION_INIT.add(client);
+    if (authSql) {
+      if (!SESSION_INIT.has(client)) {
+        await client.query(authSql);
+        SESSION_INIT.add(client);
+      } else {
+        await client.query('SET search_path = pg_catalog, pg_temp');
+      }
     }
     return wrapQueryTarget(client);
   };
@@ -211,8 +215,9 @@ export function createPreCutoverPool(opts: PreCutoverPoolOptions): pg.Pool {
         void initClient(client).then(
           (wrapped) => cb(err, wrapped, done),
           (initErr: unknown) => {
-            done(initErr);
-            cb(initErr as Error, undefined as unknown as pg.PoolClient, done);
+            const failure = initErr instanceof Error ? initErr : new Error(String(initErr));
+            done(failure);
+            cb(failure, undefined as unknown as pg.PoolClient, () => {});
           },
         );
       });
@@ -222,8 +227,9 @@ export function createPreCutoverPool(opts: PreCutoverPoolOptions): pg.Pool {
       try {
         return await initClient(client);
       } catch (initErr) {
-        client.release(initErr as Error);
-        throw initErr;
+        const failure = initErr instanceof Error ? initErr : new Error(String(initErr));
+        client.release(failure);
+        throw failure;
       }
     });
   };

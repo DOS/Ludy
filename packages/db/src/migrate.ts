@@ -60,7 +60,6 @@ const LEGACY_LOGIN_ROLES: readonly string[] = [
 ];
 
 const CORE_CUTOVER_MIGRATION = '20270315090000_ludy_kernel_rebrand_core_schemas_roles_gucs.sql';
-const STAGE7_CONTRACTION_SUFFIX = '_ludy_kernel_contract_crove_roles_and_gucs.sql';
 
 export const LUDY_ROLES: readonly string[] = [...CANONICAL_LUDY_ROLES, ...LEGACY_CROVE_ROLES];
 
@@ -78,11 +77,10 @@ async function isDatabaseStage7Contracted(client: pg.ClientBase): Promise<boolea
 async function isClusterStage7Contracted(client: pg.ClientBase): Promise<boolean> {
   const { rows } = await client.query<{ contracted: boolean }>(
     `SELECT EXISTS (
-       SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = ANY ($1::text[])
-     ) AND NOT EXISTS (
        SELECT 1 FROM pg_catalog.pg_roles
        WHERE rolname = ANY ($1::text[])
-         AND (rolvaliduntil IS NULL OR rolvaliduntil > '1970-01-01 00:00:00+00'::timestamptz)
+         AND rolvaliduntil IS NOT NULL
+         AND rolvaliduntil <= '1970-01-01 00:00:00+00'::timestamptz
      ) AS contracted`,
     [LEGACY_LOGIN_ROLES],
   );
@@ -400,7 +398,6 @@ export async function migrate(options: MigrateOptions): Promise<string[]> {
       `SELECT version, sha256 FROM ${meta}.schema_migrations`,
     );
     const ledger = new Map(rows.map((r) => [r.version, r.sha256]));
-    const hasContractionMigration = files.some((f) => f.name.endsWith(STAGE7_CONTRACTION_SUFFIX));
     for (const file of files) {
       const known = ledger.get(file.version);
       const variantOf = variants.get(file.name);
@@ -452,11 +449,11 @@ export async function migrate(options: MigrateOptions): Promise<string[]> {
             END IF;
           END $$;`);
         }
-        if (file.name === CORE_CUTOVER_MIGRATION && (hasContractionMigration || (await isClusterStage7Contracted(client)))) {
+        if (file.name === CORE_CUTOVER_MIGRATION && (await isClusterStage7Contracted(client))) {
           // Immutable 20270315090000 grants cluster-wide transitional ludy_* memberships to legacy crove_* roles.
-          // Once Stage 7 contraction is present in this run or already active on the cluster, revoke those
-          // transitional grants before COMMIT so replaying 20270315090000 for a new database never re-exposes
-          // legacy roles on existing databases (even if a later migration aborts midway).
+          // Once Stage 7 contraction is already active on the cluster, revoke those transitional grants before COMMIT
+          // so replaying 20270315090000 for a new database never re-exposes legacy roles on existing databases (while
+          // leaving uncontracted clusters untouched until Stage 7 itself commits).
           await client.query(`DO $$
             DECLARE
               r record;
@@ -1228,6 +1225,8 @@ async function listHardeningViolations(client: pg.ClientBase, shared: boolean): 
   let legacyMemberships: Array<{ member: string; target: string; grantor: string }> = [];
   let legacyIndirectMemberships: Array<{ member: string; target: string; via: string | null }> = [];
   let legacyObjectPrivileges: Array<{ schema: string; role: string; kind: string }> = [];
+  let legacyLiveLogins: Array<{ role: string; valid_until: string | null }> = [];
+  let legacyOwnedObjects: Array<{ schema: string; owner: string; kind: string; object: string }> = [];
   if (contracted) {
     const { rows } = await client.query<{ member: string; target: string; grantor: string }>(
       `SELECT mem.rolname::text AS member, tgt.rolname::text AS target, gr.rolname::text AS grantor
@@ -1271,6 +1270,15 @@ async function listHardeningViolations(client: pg.ClientBase, shared: boolean): 
       [LEGACY_CROVE_ROLES, CANONICAL_LUDY_ROLES],
     );
     legacyIndirectMemberships = indirect;
+    const { rows: liveLogins } = await client.query<{ role: string; valid_until: string | null }>(
+      `SELECT r.rolname::text AS role, r.rolvaliduntil::text AS valid_until
+       FROM pg_catalog.pg_roles r
+       WHERE r.rolname = ANY ($1::text[])
+         AND (r.rolvaliduntil IS NULL OR r.rolvaliduntil > '1970-01-01 00:00:00+00'::timestamptz)
+       ORDER BY r.rolname::text COLLATE "C"`,
+      [LEGACY_LOGIN_ROLES],
+    );
+    legacyLiveLogins = liveLogins;
     const { rows: directObjectAcls } = await client.query<{ schema: string; role: string; kind: string }>(
       `SELECT DISTINCT x.schema, gr.rolname::text AS role, x.kind
        FROM (
@@ -1310,6 +1318,39 @@ async function listHardeningViolations(client: pg.ClientBase, shared: boolean): 
       [LEGACY_CROVE_ROLES],
     );
     legacyObjectPrivileges = directObjectAcls;
+    const { rows: ownedObjects } = await client.query<{ schema: string; owner: string; kind: string; object: string }>(
+      `SELECT DISTINCT x.schema, ow.rolname::text AS owner, x.kind, x.object
+       FROM (
+         SELECT n.nspname::text AS schema, n.nspowner AS owner_oid, 'schema'::text AS kind, n.nspname::text AS object
+         FROM pg_catalog.pg_namespace n
+         WHERE n.nspname LIKE 'ludy\\_%'
+         UNION ALL
+         SELECT n.nspname::text, c.relowner, CASE WHEN c.relkind = 'S' THEN 'sequence'::text ELSE 'relation'::text END, pg_catalog.format('%I.%I', n.nspname, c.relname)
+         FROM pg_catalog.pg_class c
+         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+         WHERE n.nspname LIKE 'ludy\\_%' AND c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')
+         UNION ALL
+         SELECT n.nspname::text, p.proowner, 'routine'::text, p.oid::pg_catalog.regprocedure::text
+         FROM pg_catalog.pg_proc p
+         JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+         WHERE n.nspname LIKE 'ludy\\_%'
+         UNION ALL
+         SELECT n.nspname::text, t.typowner, 'type'::text, pg_catalog.format('%I.%I', n.nspname, t.typname)
+         FROM pg_catalog.pg_type t
+         JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
+         WHERE n.nspname LIKE 'ludy\\_%'
+           AND (
+             t.typrelid = 0
+             OR EXISTS (SELECT 1 FROM pg_catalog.pg_class rc WHERE rc.oid = t.typrelid AND rc.relkind = 'c')
+           )
+           AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_type elem WHERE elem.typarray = t.oid)
+       ) x
+       JOIN pg_catalog.pg_roles ow ON ow.oid = x.owner_oid
+       WHERE ow.rolname = ANY ($1::text[])
+       ORDER BY 1, 2, 3, 4`,
+      [LEGACY_CROVE_ROLES],
+    );
+    legacyOwnedObjects = ownedObjects;
   }
   const { rows: dbRows } = await client.query<{ name: string }>('SELECT pg_catalog.quote_ident(pg_catalog.current_database()) AS name');
   const dbName = dbRows[0]?.name ?? 'current_database';
@@ -1325,10 +1366,20 @@ async function listHardeningViolations(client: pg.ClientBase, shared: boolean): 
         `${m.via ? ` via ${m.via}` : ''} after Stage 7 contraction; ` +
         `fix: revoke the intermediate role grant${m.via ? ` (REVOKE ${m.via.split(', ').map(quoteIdent).join(', ')} FROM ${quoteIdent(m.member)})` : ''} so ${m.member} cannot act as ${m.target}`,
     ),
+    ...legacyLiveLogins.map(
+      (r) =>
+        `legacy login role ${r.role} does not have an expired VALID UNTIL after Stage 7 contraction (rolvaliduntil=${r.valid_until ?? 'NULL'}); ` +
+        `fix as the role owner or superuser: ALTER ROLE ${quoteIdent(r.role)} WITH PASSWORD NULL VALID UNTIL '-infinity'`,
+    ),
     ...legacyObjectPrivileges.map(
       (p) =>
         `legacy role ${p.role} still holds direct ${p.kind} privileges in ${p.schema} after Stage 7 contraction; ` +
         `fix: revoke ${p.kind} privileges in ${quoteIdent(p.schema)} from ${quoteIdent(p.role)}`,
+    ),
+    ...legacyOwnedObjects.map(
+      (o) =>
+        `legacy role ${o.owner} still owns ${o.kind} ${o.object} in ${o.schema} after Stage 7 contraction; ` +
+        `fix: reassign ownership of ${o.kind} ${o.object} away from ${quoteIdent(o.owner)}`,
     ),
     ...functions.map((f) => {
       const alter = `ALTER ${f.kind === 'p' ? 'PROCEDURE' : 'FUNCTION'} ${f.fn}`;
