@@ -12618,6 +12618,8 @@ export const vi = {
       saveDesc: 'Lưu danh sách công việc bạn xem được (tối đa 50 việc) thành mẫu dùng lại cho cả công ty.',
       builtinSection: 'Mẫu có sẵn cho doanh nghiệp',
       customSection: 'Mẫu của công ty',
+      pickerLabel: 'Chọn mẫu dự án',
+      columnsPreviewTitle: 'Cột bảng mặc định',
       customEmpty: 'Chưa có mẫu riêng nào. Mở một dự án và chọn Lưu làm mẫu để tạo.',
       taskCount: '{count, number} việc',
       dueOffset: 'Ngày +{days, number}',

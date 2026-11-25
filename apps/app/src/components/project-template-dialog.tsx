@@ -1,8 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Dialogs to create a project from a starter or org template, or save an existing project as a template (#2607).
+// Dialogs to create a project from a starter or org template, or save an existing project as a template (#2607, #4908).
 import { useMutation, useQuery } from '@tanstack/react-query';
-import type { BuiltinProjectTemplateKey, ProjectTemplateSummary, ProjectVisibility } from '@ludy/kernel-contract';
-import { useEffect, useState, type FormEvent } from 'react';
+import {
+  BUILTIN_PROJECT_TEMPLATE_KEYS,
+  type BuiltinProjectTemplateKey,
+  type ProjectTemplateSummary,
+  type ProjectVisibility,
+} from '@ludy/kernel-contract';
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import { useTranslations } from 'use-intl';
 import { Badge } from '@ludy/ui/components/badge';
 import { Button } from '@ludy/ui/components/button';
@@ -18,6 +23,18 @@ import { ErrorText, FieldError, RowsSkeleton, fieldControl } from './ui.tsx';
 import { useLocaleSetting } from '../i18n/provider.tsx';
 import { errorMessage, orpc } from '../lib/api.ts';
 import { browserTimeZone } from '../lib/my-work.ts';
+import { COLUMN_COLOR_DOT_CLASS } from '../lib/projects.ts';
+
+export const DEFAULT_BUILTIN_PROJECT_TEMPLATE_KEY: BuiltinProjectTemplateKey = BUILTIN_PROJECT_TEMPLATE_KEYS[0];
+
+export function nextTemplateRadioIndex(currentIndex: number, key: string, total: number): number | null {
+  if (total <= 0) return null;
+  if (key === 'ArrowRight' || key === 'ArrowDown') return (currentIndex + 1) % total;
+  if (key === 'ArrowLeft' || key === 'ArrowUp') return (currentIndex - 1 + total) % total;
+  if (key === 'Home') return 0;
+  if (key === 'End') return total - 1;
+  return null;
+}
 
 function localTodayInZone(timeZone: string): string {
   const parts = new Intl.DateTimeFormat('en-CA', {
@@ -55,7 +72,7 @@ export function ProjectTemplateDialog(props: ProjectTemplateDialogProps) {
   const language: 'vi' | 'en' = locale === 'en' ? 'en' : 'vi';
   const tz = browserTimeZone();
 
-  const [selectedId, setSelectedId] = useState<string>('monthly-close');
+  const [selectedId, setSelectedId] = useState<string>(DEFAULT_BUILTIN_PROJECT_TEMPLATE_KEY);
   const [name, setName] = useState('');
   const [nameEdited, setNameEdited] = useState(false);
   const [description, setDescription] = useState('');
@@ -65,6 +82,7 @@ export function ProjectTemplateDialog(props: ProjectTemplateDialogProps) {
   const [nameError, setNameError] = useState(false);
   const [templateError, setTemplateError] = useState(false);
   const [idemKey, setIdemKey] = useState(() => crypto.randomUUID());
+  const radioGroupRef = useRef<HTMLDivElement>(null);
 
   const listQuery = useQuery({
     ...orpc.projects.listTemplates.queryOptions({ input: { language } }),
@@ -78,6 +96,7 @@ export function ProjectTemplateDialog(props: ProjectTemplateDialogProps) {
   const templates = listQuery.data?.templates ?? [];
   const builtins = templates.filter((item) => item.source === 'builtin');
   const customs = templates.filter((item) => item.source === 'custom');
+  const allTemplates = [...builtins, ...customs];
   const selectedTemplate: ProjectTemplateSummary | undefined =
     templates.find((item) => item.id === selectedId) ?? templates[0];
 
@@ -96,7 +115,7 @@ export function ProjectTemplateDialog(props: ProjectTemplateDialogProps) {
       setDescEdited(false);
       createTemplate.reset();
     } else {
-      setSelectedId('monthly-close');
+      setSelectedId(DEFAULT_BUILTIN_PROJECT_TEMPLATE_KEY);
       setNameEdited(false);
       setDescEdited(false);
       setStartDate(localTodayInZone(tz));
@@ -120,6 +139,16 @@ export function ProjectTemplateDialog(props: ProjectTemplateDialogProps) {
     setTemplateError(false);
     if (!nameEdited) setName(template.name);
     if (!descEdited) setDescription(template.description ?? '');
+  };
+
+  const handleRadioKeyDown = (event: KeyboardEvent<HTMLButtonElement>, currentIndex: number) => {
+    const nextIndex = nextTemplateRadioIndex(currentIndex, event.key, allTemplates.length);
+    if (nextIndex === null) return;
+    event.preventDefault();
+    const target = allTemplates[nextIndex];
+    if (!target) return;
+    handleSelectTemplate(target);
+    radioGroupRef.current?.querySelector<HTMLButtonElement>(`[data-template-radio-index="${nextIndex}"]`)?.focus();
   };
 
   const handleSubmit = (e: FormEvent<HTMLFormElement>) => {
@@ -212,102 +241,117 @@ export function ProjectTemplateDialog(props: ProjectTemplateDialogProps) {
                 <ErrorText>{errorMessage(listQuery.error)}</ErrorText>
               ) : (
                 <>
-                  <div className="space-y-2">
-                    <p className="text-xs font-medium text-muted-foreground">{t('templates.builtinSection')}</p>
-                    <div className="grid gap-2 sm:grid-cols-3" role="radiogroup" aria-label={t('templates.builtinSection')}>
-                      {builtins.map((tpl) => {
-                        const chosen = selectedTemplate?.id === tpl.id;
-                        return (
-                          <button
-                            key={tpl.id}
-                            type="button"
-                            role="radio"
-                            aria-checked={chosen}
-                            data-testid={`template-option-${tpl.id}`}
-                            onClick={() => handleSelectTemplate(tpl)}
-                            className={`flex flex-col items-start gap-1 rounded-lg border p-3 text-left transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none ${
-                              chosen ? 'border-primary bg-primary/5 ring-1 ring-primary' : 'border-border hover:bg-muted/40'
-                            }`}
-                          >
-                            <span className="text-sm font-medium text-foreground">{tpl.name}</span>
-                            <span className="text-xs text-muted-foreground">
-                              {t('templates.taskCount', { count: tpl.taskCount })}
-                            </span>
-                          </button>
-                        );
-                      })}
+                  <div ref={radioGroupRef} role="radiogroup" aria-label={t('templates.pickerLabel')} className="space-y-3">
+                    <div className="space-y-2" role="group" aria-labelledby="template-builtin-heading">
+                      <p id="template-builtin-heading" className="text-xs font-medium text-muted-foreground">
+                        {t('templates.builtinSection')}
+                      </p>
+                      <div className="grid gap-2 sm:grid-cols-3">
+                        {builtins.map((tpl, idx) => {
+                          const chosen = selectedTemplate?.id === tpl.id;
+                          const focusable = chosen || (!selectedTemplate && idx === 0);
+                          return (
+                            <button
+                              key={tpl.id}
+                              type="button"
+                              role="radio"
+                              aria-checked={chosen}
+                              tabIndex={focusable ? 0 : -1}
+                              data-template-radio-index={idx}
+                              data-testid={`template-option-${tpl.id}`}
+                              onClick={() => handleSelectTemplate(tpl)}
+                              onKeyDown={(e) => handleRadioKeyDown(e, idx)}
+                              className={`flex min-h-11 flex-col items-start justify-center gap-1 rounded-lg border p-3 text-left transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none ${
+                                chosen ? 'border-primary bg-primary/5 ring-1 ring-primary' : 'border-border hover:bg-muted/40'
+                              }`}
+                            >
+                              <span className="text-sm font-medium text-foreground">{tpl.name}</span>
+                              <span className="text-xs text-muted-foreground">
+                                {t('templates.taskCount', { count: tpl.taskCount })}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="space-y-2" role="group" aria-labelledby="template-custom-heading">
+                      <p id="template-custom-heading" className="text-xs font-medium text-muted-foreground">
+                        {t('templates.customSection')}
+                      </p>
+                      {customs.length === 0 ? (
+                        <p className="rounded-lg border border-dashed border-border px-3 py-2.5 text-xs text-muted-foreground">
+                          {t('templates.customEmpty')}
+                        </p>
+                      ) : (
+                        <ul className="max-h-40 divide-y overflow-y-auto rounded-lg border">
+                          {customs.map((tpl, idx) => {
+                            const flatIndex = builtins.length + idx;
+                            const chosen = selectedTemplate?.id === tpl.id;
+                            const focusable = chosen || (!selectedTemplate && flatIndex === 0);
+                            return (
+                              <li
+                                key={tpl.id}
+                                className={`flex items-center justify-between gap-2 px-3 py-1.5 ${
+                                  chosen ? 'bg-primary/5' : ''
+                                }`}
+                              >
+                                <button
+                                  type="button"
+                                  role="radio"
+                                  aria-checked={chosen}
+                                  tabIndex={focusable ? 0 : -1}
+                                  data-template-radio-index={flatIndex}
+                                  data-testid={`template-option-${tpl.id}`}
+                                  onClick={() => handleSelectTemplate(tpl)}
+                                  onKeyDown={(e) => handleRadioKeyDown(e, flatIndex)}
+                                  className="flex min-h-11 min-w-0 flex-1 flex-col justify-center rounded-md py-1 text-left focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                                >
+                                  <p className="truncate text-sm font-medium text-foreground">{tpl.name}</p>
+                                  <p className="text-xs text-muted-foreground">
+                                    {t('templates.taskCount', { count: tpl.taskCount })}
+                                  </p>
+                                </button>
+                                {tpl.canManage && (
+                                  <ConfirmDialog
+                                    destructive
+                                    title={t('templates.archiveConfirmTitle')}
+                                    description={t('templates.archiveConfirmDesc')}
+                                    confirm={t('templates.archiveConfirmBtn')}
+                                    onConfirm={() =>
+                                      archiveTemplate.mutate(
+                                        { templateId: tpl.id, idempotencyKey: crypto.randomUUID() },
+                                        {
+                                          onSuccess: () => {
+                                            refreshProjectQueries();
+                                            if (selectedId === tpl.id) setSelectedId(DEFAULT_BUILTIN_PROJECT_TEMPLATE_KEY);
+                                          },
+                                        },
+                                      )
+                                    }
+                                    render={
+                                      <Button
+                                        type="button"
+                                        size="icon-sm"
+                                        variant="ghost"
+                                        loading={archiveTemplate.isPending}
+                                        aria-label={t('templates.archiveBtn')}
+                                      />
+                                    }
+                                  >
+                                    <ProjectIcon name="archive" className="size-3.5" />
+                                  </ConfirmDialog>
+                                )}
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      )}
                     </div>
                   </div>
 
-                  <div className="space-y-2">
-                    <p className="text-xs font-medium text-muted-foreground">{t('templates.customSection')}</p>
-                    {customs.length === 0 ? (
-                      <p className="rounded-lg border border-dashed border-border px-3 py-2.5 text-xs text-muted-foreground">
-                        {t('templates.customEmpty')}
-                      </p>
-                    ) : (
-                      <ul className="max-h-40 divide-y overflow-y-auto rounded-lg border">
-                        {customs.map((tpl) => {
-                          const chosen = selectedTemplate?.id === tpl.id;
-                          return (
-                            <li
-                              key={tpl.id}
-                              className={`flex items-center justify-between gap-2 px-3 py-2 ${
-                                chosen ? 'bg-primary/5' : ''
-                              }`}
-                            >
-                              <button
-                                type="button"
-                                role="radio"
-                                aria-checked={chosen}
-                                data-testid={`template-option-${tpl.id}`}
-                                onClick={() => handleSelectTemplate(tpl)}
-                                className="min-w-0 flex-1 text-left focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-                              >
-                                <p className="truncate text-sm font-medium text-foreground">{tpl.name}</p>
-                                <p className="text-xs text-muted-foreground">
-                                  {t('templates.taskCount', { count: tpl.taskCount })}
-                                </p>
-                              </button>
-                              {tpl.canManage && (
-                                <ConfirmDialog
-                                  destructive
-                                  title={t('templates.archiveConfirmTitle')}
-                                  description={t('templates.archiveConfirmDesc')}
-                                  confirm={t('templates.archiveConfirmBtn')}
-                                  onConfirm={() =>
-                                    archiveTemplate.mutate(
-                                      { templateId: tpl.id, idempotencyKey: crypto.randomUUID() },
-                                      {
-                                        onSuccess: () => {
-                                          refreshProjectQueries();
-                                          if (selectedId === tpl.id) setSelectedId('monthly-close');
-                                        },
-                                      },
-                                    )
-                                  }
-                                  render={
-                                    <Button
-                                      type="button"
-                                      size="sm"
-                                      variant="ghost"
-                                      loading={archiveTemplate.isPending}
-                                      aria-label={t('templates.archiveBtn')}
-                                    />
-                                  }
-                                >
-                                  <ProjectIcon name="archive" className="size-3.5" />
-                                </ConfirmDialog>
-                              )}
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    )}
-                  </div>
-
                   {selectedTemplate && (
-                    <div className="space-y-1.5 rounded-lg border border-border bg-muted/30 p-3">
+                    <div className="space-y-2 rounded-lg border border-border bg-muted/30 p-3">
                       <div className="flex items-center justify-between gap-2">
                         <p className="text-xs font-medium text-foreground">{t('templates.previewTitle')}</p>
                         <Badge variant="outline" className="h-5 px-1.5 text-[11px] tabular-nums">
@@ -329,6 +373,22 @@ export function ProjectTemplateDialog(props: ProjectTemplateDialogProps) {
                             </li>
                           ))}
                         </ul>
+                      )}
+                      {selectedTemplate.defaultColumns && selectedTemplate.defaultColumns.length > 0 && (
+                        <div className="space-y-1.5 border-t border-border/60 pt-2" data-testid="template-preview-columns">
+                          <p className="text-xs font-medium text-foreground">{t('templates.columnsPreviewTitle')}</p>
+                          <div className="flex flex-wrap gap-1.5">
+                            {selectedTemplate.defaultColumns.map((col, idx) => (
+                              <Badge key={`${col.taskStatus}-${idx}`} variant="outline" className="gap-1.5 px-2 py-0.5 text-[11px]">
+                                <span
+                                  aria-hidden="true"
+                                  className={`size-2 rounded-full ${COLUMN_COLOR_DOT_CLASS[col.color]}`}
+                                />
+                                <span>{col.name}</span>
+                              </Badge>
+                            ))}
+                          </div>
+                        </div>
                       )}
                     </div>
                   )}

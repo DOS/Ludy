@@ -12618,6 +12618,8 @@ export const en = {
       saveDesc: 'Save visible tasks in this project (up to 50) as a reusable organization template.',
       builtinSection: 'Starter templates',
       customSection: 'Organization templates',
+      pickerLabel: 'Choose a project template',
+      columnsPreviewTitle: 'Default board columns',
       customEmpty: 'No custom templates yet. Open any project and click Save as template.',
       taskCount: '{count, number} tasks',
       dueOffset: 'Day +{days, number}',
