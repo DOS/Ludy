@@ -2551,6 +2551,7 @@ export interface KernelAiBudgetReservationTable {
   id: ColumnType<string, string | undefined, NotGranted>;
   module: ColumnType<string, string, NotGranted>;
   agent_id: ColumnType<string | null, string | null, NotGranted>;
+  actor_user_id: ColumnType<string | null, string | null, NotGranted>;
   feature: ColumnType<string, string, NotGranted>;
   amount: ColumnType<string, string, NotGranted>;
   expires_at: ColumnType<Date, Date | string, NotGranted>;

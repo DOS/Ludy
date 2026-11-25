@@ -527,10 +527,20 @@ suite('the AI budget meter on PostgreSQL (#2382)', () => {
     expect(
       await rt.execute('kernel.ai.budget.release_member', { reservationId: held.reservationId }, { actor: asUser(memOrg.owner), orgId: memOrg.orgId }),
     ).toEqual({ released: false });
+    // Same-org user cannot release or settle a system hold via release_member / record_member.
+    expect(
+      await rt.execute('kernel.ai.budget.release_member', { reservationId: held.reservationId }, { actor: asUser(openOrg.owner), orgId: openOrg.orgId }),
+    ).toEqual({ released: false });
+    await rt.execute(
+      'kernel.ai.usage.record_member',
+      { feature: 'social.draft', module: 'social', agentId: null, inputTokens: 1, outputTokens: 1, cost: '0', reservationId: held.reservationId },
+      { actor: asUser(openOrg.owner), orgId: openOrg.orgId },
+    );
+    expect(await admin((c) => c.query('SELECT 1 FROM ludy_kernel.ai_budget_reservation WHERE org_id = $1 AND id = $2', [openOrg.orgId, held.reservationId]).then((r) => r.rowCount))).toBe(1);
     expect(
       await worker.execute('kernel.ai.budget.release', { reservationId: held.reservationId }, { actor: system, orgId: openOrg.orgId }),
     ).toEqual({ released: true });
-    // reserve_member refuses defaultMonthlyBudget via strict input check.
+    // reserve_member refuses defaultMonthlyBudget and refuses non-null agentId via strict input schema.
     await expect(
       rt.execute(
         'kernel.ai.budget.reserve_member',
@@ -538,5 +548,24 @@ suite('the AI budget meter on PostgreSQL (#2382)', () => {
         { actor: asUser(openOrg.owner), orgId: openOrg.orgId },
       ),
     ).rejects.toMatchObject({ code: 'VALIDATION' });
+    await expect(
+      rt.execute(
+        'kernel.ai.budget.reserve_member',
+        { module: 'social', agentId: randomUUID(), feature: 'social.draft', projectedCost: '0' },
+        { actor: asUser(openOrg.owner), orgId: openOrg.orgId },
+      ),
+    ).rejects.toMatchObject({ code: 'VALIDATION' });
+    // B2: PostgreSQL CHECK rejects NaN and Infinity numeric reservation amounts.
+    for (const badAmount of ['NaN', 'Infinity']) {
+      await expect(
+        admin((c) =>
+          c.query(
+            `INSERT INTO ludy_kernel.ai_budget_reservation (org_id, id, module, agent_id, feature, amount, expires_at)
+             VALUES ($1, $2, 'social', NULL, 'social.draft', $3::numeric, pg_catalog.now() + pg_catalog.make_interval(mins => 1))`,
+            [openOrg.orgId, randomUUID(), badAmount],
+          ),
+        ),
+      ).rejects.toThrow(/check constraint|ai_budget_reservation_amount_check|numeric field overflow/);
+    }
   });
 });

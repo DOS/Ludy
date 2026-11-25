@@ -16,8 +16,9 @@ CREATE TABLE IF NOT EXISTS ludy_kernel.ai_budget_reservation (
   id uuid NOT NULL DEFAULT ludy_kernel.uuid_v7(),
   module text NOT NULL CHECK (module ~ '^[a-z][a-z0-9_]*$'),
   agent_id uuid,
+  actor_user_id uuid,
   feature text NOT NULL CHECK (feature ~ '^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$' AND pg_catalog.length(feature) <= 60),
-  amount numeric(18, 6) NOT NULL CHECK (amount >= 0),
+  amount numeric(18, 6) NOT NULL CHECK (amount >= 0 AND amount < 'Infinity'::numeric AND amount <> 'NaN'::numeric),
   expires_at timestamptz NOT NULL,
   created_at timestamptz NOT NULL DEFAULT pg_catalog.now(),
   PRIMARY KEY (org_id, id)

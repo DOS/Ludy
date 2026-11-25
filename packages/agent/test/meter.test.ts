@@ -165,6 +165,28 @@ describe('metered', () => {
         }),
       ),
     ).rejects.toThrow('original error');
+    const brokenOnUsage: AiMeter = {
+      admit: async () => 'res-789',
+      record: async (_call, _usage, reservationId) => {
+        events.push(`record:${reservationId ?? 'none'}`);
+      },
+      release: async (_call, reservationId) => {
+        events.push(`release:${reservationId}`);
+      },
+    };
+    events.length = 0;
+    await expect(
+      withAiScope({ orgId: 'org-1', meter: brokenOnUsage }, () =>
+        metered(
+          'social.draft',
+          async () => answer,
+          () => {
+            throw new Error('onUsage boom');
+          },
+        ),
+      ),
+    ).resolves.toBe(answer);
+    expect(events).toEqual(['record:res-789']);
   });
 });
 

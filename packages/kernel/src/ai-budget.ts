@@ -18,6 +18,7 @@
 import { sql } from "kysely";
 import { z } from "zod";
 import {
+  DomainError,
   defineCommand,
   defineQuery,
   type CommandContext,
@@ -67,6 +68,7 @@ export async function reserveAiBudget(
     orgId: string;
     module: string;
     agentId: string | null;
+    actorUserId: string | null;
     feature: string;
     projectedCost: string;
     defaultMonthlyBudget?: string | undefined;
@@ -141,6 +143,7 @@ export async function reserveAiBudget(
       org_id: params.orgId,
       module: params.module,
       agent_id: params.agentId,
+      actor_user_id: params.actorUserId,
       feature: params.feature,
       amount: params.projectedCost,
       expires_at: sql<Date>`pg_catalog.now() + pg_catalog.make_interval(mins => 10)`,
@@ -151,25 +154,44 @@ export async function reserveAiBudget(
   return { allowed: true, reservationId: inserted.id };
 }
 
-// Deletes one reservation hold inside the caller's org (and matching agent when scoped).
+// Deletes one reservation hold scoped to the caller's org, actor ownership, and optional agent scope.
 export async function deleteAiBudgetReservation(
   trx: CommandContext["trx"],
   orgId: string,
   reservationId: string,
-  agentId?: string | null,
+  scope: { actorUserId: string | null; agentId?: string | null },
 ): Promise<boolean> {
   let query = trx
     .deleteFrom("ludy_kernel.ai_budget_reservation")
     .where("org_id", "=", orgId)
     .where("id", "=", reservationId);
-  if (agentId !== undefined) {
+  query =
+    scope.actorUserId === null
+      ? query.where("actor_user_id", "is", null)
+      : query.where("actor_user_id", "=", scope.actorUserId);
+  if (scope.agentId !== undefined) {
     query =
-      agentId === null
+      scope.agentId === null
         ? query.where("agent_id", "is", null)
-        : query.where("agent_id", "=", agentId);
+        : query.where("agent_id", "=", scope.agentId);
   }
   const deleted = await query.returning("id").executeTakeFirst();
   return deleted !== undefined;
+}
+
+function reservationScope(
+  ctx: Pick<CommandContext, "actor">,
+  access: readonly MemberRole[] | "system",
+): { actorUserId: string | null; agentId?: null } {
+  if (access === "system") return { actorUserId: null };
+  if (ctx.actor.type !== "user") {
+    throw new DomainError(
+      "FORBIDDEN",
+      403,
+      "Chỉ người dùng mới thực hiện được việc này",
+    );
+  }
+  return { actorUserId: ctx.actor.userId, agentId: null };
 }
 
 // Whether the org may start a model call for a module (and an agent): no hard-stop budget that covers it is spent or reserved.
@@ -228,7 +250,7 @@ const zReserveSystemInput = z.strictObject({
 
 const zReserveMemberInput = z.strictObject({
   module: zModule,
-  agentId: zAgentId.nullable(),
+  agentId: z.null(),
   feature: zFeature,
   projectedCost: zAmount,
 });
@@ -247,10 +269,13 @@ const reserveCommand = (
       ctx,
       input: z.infer<typeof zReserveSystemInput>,
     ): Promise<AiBudgetReserve> => {
+      const scope = reservationScope(ctx, access);
+      const agentId = access === "system" ? input.agentId : null;
       const result = await reserveAiBudget(ctx.trx, {
         orgId: ctx.orgId,
         module: input.module,
-        agentId: input.agentId,
+        agentId,
+        actorUserId: scope.actorUserId,
         feature: input.feature,
         projectedCost: input.projectedCost,
         defaultMonthlyBudget:
@@ -260,7 +285,7 @@ const reserveCommand = (
       ctx.audit({
         feature: input.feature,
         module: input.module,
-        agent: input.agentId,
+        agent: agentId,
         projectedCost: input.projectedCost,
         allowed: result.allowed,
         ...(result.allowed
@@ -291,10 +316,12 @@ const releaseCommand = (
     sideEffect: "internal",
     access,
     handler: async (ctx, input): Promise<{ released: boolean }> => {
+      const scope = reservationScope(ctx, access);
       const released = await deleteAiBudgetReservation(
         ctx.trx,
         ctx.orgId,
         input.reservationId,
+        scope,
       );
       ctx.audit({
         reservationId: input.reservationId,
@@ -412,7 +439,13 @@ const recordCommand = (
         })
         .execute();
       if (input.reservationId) {
-        await deleteAiBudgetReservation(ctx.trx, ctx.orgId, input.reservationId);
+        const scope = reservationScope(ctx, access);
+        await deleteAiBudgetReservation(
+          ctx.trx,
+          ctx.orgId,
+          input.reservationId,
+          scope,
+        );
       }
       ctx.audit({
         feature: input.feature,

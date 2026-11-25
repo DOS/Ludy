@@ -599,25 +599,33 @@ export const memberVyMeterCheck = defineQuery({
 
 export const memberVyMeterReserve = defineCommand({
   name: 'kernel.member_vy.meter.reserve',
-  input: z.object({ feature: z.enum(FEATURE_KEYS), projectedCost: PROJECTED_COST.optional() }),
+  input: z.strictObject({ feature: z.enum(FEATURE_KEYS), projectedCost: PROJECTED_COST.optional() }),
   risk: 'R1',
   sideEffect: 'internal',
   access: MEMBER_ROLES,
   handler: async (ctx, input): Promise<AiBudgetReserve> => {
     const userId = requireUser(ctx);
     if (!(await mayUseVy(ctx))) throw new DomainError('VY_NOT_ALLOWED', 403, 'Bạn chưa được phép làm việc với Vy');
+    const agent = await ctx.trx
+      .selectFrom('ludy_kernel.agent')
+      .select(['id', 'status'])
+      .where('org_id', '=', ctx.orgId)
+      .where('kind', '=', 'member_vy')
+      .where('member_user_id', '=', userId)
+      .executeTakeFirst();
+    if (!agent || agent.status !== 'active') throw new DomainError('VY_NOT_ALLOWED', 403, 'Bạn chưa được phép làm việc với Vy');
     const module = MEMBER_VY_FEATURES[input.feature].module;
-    const agentId = await ownAgent(ctx, userId);
-    const { blocked } = await checkMemberVyKillSwitches(ctx, module, agentId);
+    const { blocked } = await checkMemberVyKillSwitches(ctx, module, agent.id);
     if (blocked) {
-      ctx.audit({ feature: input.feature, module, agent: agentId, allowed: false, scope: blocked.scope });
+      ctx.audit({ feature: input.feature, module, agent: agent.id, allowed: false, scope: blocked.scope });
       return blocked;
     }
     const projected = input.projectedCost === undefined || ZERO_COST.test(input.projectedCost) ? '0' : input.projectedCost;
     const result = await reserveAiBudget(ctx.trx, {
       orgId: ctx.orgId,
       module,
-      agentId,
+      agentId: agent.id,
+      actorUserId: userId,
       feature: input.feature,
       projectedCost: projected,
       allowDefaultSeed: false,
@@ -625,7 +633,7 @@ export const memberVyMeterReserve = defineCommand({
     ctx.audit({
       feature: input.feature,
       module,
-      agent: agentId,
+      agent: agent.id,
       projectedCost: projected,
       allowed: result.allowed,
       ...(result.allowed ? { reservationId: result.reservationId } : { scope: result.scope }),
@@ -656,7 +664,7 @@ export const memberVyMeterRecord = defineCommand({
       .values({ org_id: ctx.orgId, metric: 'ai_cost', amount: input.cost, feature: input.feature, module, agent_id: agentId, input_tokens: input.inputTokens, output_tokens: input.outputTokens })
       .execute();
     if (input.reservationId) {
-      await deleteAiBudgetReservation(ctx.trx, ctx.orgId, input.reservationId, agentId);
+      await deleteAiBudgetReservation(ctx.trx, ctx.orgId, input.reservationId, { actorUserId: userId, agentId });
     }
     ctx.audit({ feature: input.feature, module, agent: agentId, inputTokens: input.inputTokens, outputTokens: input.outputTokens, cost: input.cost });
     return { recorded: true };
@@ -665,14 +673,19 @@ export const memberVyMeterRecord = defineCommand({
 
 export const memberVyMeterRelease = defineCommand({
   name: 'kernel.member_vy.meter.release',
-  input: z.object({ reservationId: zId }),
+  input: z.strictObject({ reservationId: zId }),
   risk: 'R1',
   sideEffect: 'internal',
   access: MEMBER_ROLES,
   handler: async (ctx, input): Promise<{ released: boolean }> => {
     const userId = requireUser(ctx);
+    if (!(await mayUseVy(ctx))) throw new DomainError('VY_NOT_ALLOWED', 403, 'Bạn chưa được phép làm việc với Vy');
     const agentId = await ownAgent(ctx, userId);
-    const released = await deleteAiBudgetReservation(ctx.trx, ctx.orgId, input.reservationId, agentId);
+    if (!agentId) {
+      ctx.audit({ agent: null, reservationId: input.reservationId, released: false });
+      return { released: false };
+    }
+    const released = await deleteAiBudgetReservation(ctx.trx, ctx.orgId, input.reservationId, { actorUserId: userId, agentId });
     ctx.audit({ agent: agentId, reservationId: input.reservationId, released });
     return { released };
   },

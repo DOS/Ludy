@@ -304,11 +304,15 @@ export async function metered<R extends { usage: { inputTokens: number | undefin
   let recorded = false;
   const settle = async (used: AiUsage) => {
     recorded = true;
-    onUsage?.(used);
     try {
       await meter.record(info, used, reservationId);
     } catch (error: unknown) {
       console.error(`[ai-meter] could not record a ${feature} call`, error instanceof Error ? error.name : typeof error);
+    }
+    try {
+      onUsage?.(used);
+    } catch (error: unknown) {
+      console.error(`[ai-meter] onUsage failed for a ${feature} call`, error instanceof Error ? error.name : typeof error);
     }
   };
   const release = async () => {

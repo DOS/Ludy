@@ -18828,6 +18828,10 @@ export const en = {
           check_member: 'Check the AI budget before a model call',
           ensure_default: 'Give the server default AI budget',
           notify: 'Tell the owners the AI budget is nearly or fully used',
+          release: 'Release an AI budget reservation',
+          release_member: 'Release an AI budget reservation',
+          reserve: 'Reserve AI budget before a model call',
+          reserve_member: 'Reserve AI budget before a model call',
         },
         meter: {
           status: 'See where the AI budget stands',
@@ -19124,6 +19128,8 @@ export const en = {
         meter: {
           check: 'Check the AI budget and kill switches before Vy works for you',
           record: 'Record a run of Vy working for you in the usage ledger',
+          release: 'Release an AI budget reservation when Vy stops a call',
+          reserve: 'Check switches and reserve AI budget before Vy works for you',
         },
         result: {
           get: 'See a result Vy made for you',
