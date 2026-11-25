@@ -71,19 +71,24 @@ export async function signIn(page: Page, email: string, password = PASSWORD): Pr
   await page.getByRole('button', { name: 'Đăng nhập' }).click();
 }
 
-// The app's own sign-out control: inside an org, open the bottom account popover first; elsewhere (onboarding, /mfa,
-// /clients), click the visible sign-out button directly.
+// The app's own sign-out control. Where it is depends on the screen, and the screen is told by the address: inside an
+// org (/o/<slug>/...) it is behind the sidebar's account popover, and on the screens outside an org (onboarding, /mfa,
+// /clients) it is a button on the page itself.
+// The path is taken from the address, not from whichever control happens to be visible at that moment. On a route change
+// the address is the new one while the old screen is still drawn: right after the code is accepted on /mfa the URL is
+// already the org overview, yet the /mfa screen and its own sign-out button stay up for a moment. A click aimed at that
+// button is lost when the screen is replaced, and inside an org no page-level sign-out button exists to resolve again, so
+// the click would wait out the whole test timeout (#4906). Each path then waits for the control of its own screen, which
+// the click does by itself (visible, enabled and stable), so no sleep and no retry is needed.
 export async function signOut(page: Page): Promise<void> {
-  const sidebar = page.getByRole('complementary');
-  const account = sidebar.getByRole('button', { name: /^Tài khoản:/ });
-  const direct = page.getByRole('button', { name: 'Đăng xuất', exact: true });
-  await expect(account.or(direct).first()).toBeVisible();
-  if (await account.isVisible()) {
-    await account.click();
+  const insideOrg = /^\/o\/[^/]+(\/|$)/.test(new URL(page.url()).pathname);
+  if (insideOrg) {
+    const sidebar = page.getByRole('complementary');
+    await sidebar.getByRole('button', { name: /^Tài khoản:/ }).click();
     await sidebar.getByRole('button', { name: 'Đăng xuất', exact: true }).click();
     return;
   }
-  await direct.click();
+  await page.getByRole('button', { name: 'Đăng xuất', exact: true }).click();
 }
 
 export async function createOrg(page: Page, name: string): Promise<string> {
