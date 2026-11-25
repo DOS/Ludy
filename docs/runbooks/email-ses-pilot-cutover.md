@@ -76,6 +76,7 @@ Generate one programmatic access key pair (`SES_ACCESS_KEY_ID` and `SES_SECRET_A
 1. In **Amazon SNS** (`ap-southeast-1`), create a **Standard** topic named `ludy-pilot-ses-events`. Record its ARN (`SES_SNS_TOPIC_ARN=arn:aws:sns:ap-southeast-1:<aws-account-id>:ludy-pilot-ses-events`).
    - Keep the topic access policy restricted so only Amazon SES in your AWS account (`aws:SourceAccount` = `<aws-account-id>`) can publish to it.
    - Do **not** subscribe the HTTPS endpoint yet until step 5 brings `/webhooks/mail/ses` online.
+   - Note: Amazon SNS Standard topics default to `SignatureVersion` `1` (`RSA-SHA1`, supported by Ludy); you may optionally switch the topic's delivery policy attribute `SignatureVersion` to `2` (`RSA-SHA256`).
 2. In **Amazon SES** (`ap-southeast-1`) -> **Configuration sets**, create `ludy-pilot` (`SES_CONFIGURATION_SET=ludy-pilot`).
 3. Inside `ludy-pilot`, add an **Event destination**:
    - Destination type: **Amazon SNS**

@@ -34,6 +34,8 @@ export interface PilotArgs {
 
 export type Env = Readonly<Record<string, string | undefined>>;
 
+const SES_SMTP_PORTS = new Set(['25', '465', '587', '2465', '2587']);
+
 // Secrets every pilot deployment sets, with the sample values shipped in .env.example and the fallbacks
 // docker-compose.yml and docker-compose.split.yml use when a variable is unset. pilot-check.test.ts keeps these lists
 // in step with those files.
@@ -354,8 +356,16 @@ export function checkEnv(env: Env): CheckResult[] {
         : `SMTP_HOST is ${smtpHost ?? 'unset (docker compose then uses the local Mailpit)'}: with confirmations on, set a real SMTP server or nobody can confirm an email`,
     );
   }
-  if (!ownProvider && smtpHost && /^email-smtp\.[a-z0-9-]+\.amazonaws\.com$/i.test(smtpHost) && (!value(env, 'SMTP_USER') || !value(env, 'SMTP_PASS'))) {
-    auth.push(`SMTP_HOST=${smtpHost} uses Amazon SES SMTP for bundled Supabase Auth, so SMTP_USER and SMTP_PASS (from SES SMTP credentials) must both be set`);
+  if (!ownProvider && smtpHost && /^email-smtp\.[a-z0-9-]+\.amazonaws\.com$/i.test(smtpHost)) {
+    if (!value(env, 'SMTP_USER') || !value(env, 'SMTP_PASS')) {
+      auth.push(`SMTP_HOST=${smtpHost} uses Amazon SES SMTP for bundled Supabase Auth, so SMTP_USER and SMTP_PASS (from SES SMTP credentials) must both be set`);
+    }
+    const smtpPort = value(env, 'SMTP_PORT');
+    if (!smtpPort || !SES_SMTP_PORTS.has(smtpPort)) {
+      auth.push(
+        `SMTP_HOST=${smtpHost} uses Amazon SES SMTP for bundled Supabase Auth, so SMTP_PORT must be explicitly set to a valid SES SMTP port (25, 465, 587, 2465, or 2587; docker compose defaults to 1025)`,
+      );
+    }
   }
   const rawSmtpFrom = value(env, 'SMTP_FROM');
   if (!ownProvider && rawSmtpFrom && (rawSmtpFrom.includes('<') || rawSmtpFrom.includes('>'))) {
@@ -392,7 +402,15 @@ export function checkEnv(env: Env): CheckResult[] {
         }
       }
     }
-    add('Outbound mail', sesProblems, `MAIL_PROVIDER=ses (${sesRegion ?? '?'})${snsTopicArn ? ' with SNS delivery webhooks' : ''}`);
+    add(
+      'Outbound mail',
+      sesProblems,
+      snsTopicArn
+        ? configurationSet
+          ? `MAIL_PROVIDER=ses (${sesRegion ?? '?'}) with SNS delivery webhooks (configuration set ${configurationSet})`
+          : `MAIL_PROVIDER=ses (${sesRegion ?? '?'}) with SES_SNS_TOPIC_ARN configured (set SES_CONFIGURATION_SET unless a default configuration set is assigned on the verified SES identity)`
+        : `MAIL_PROVIDER=ses (${sesRegion ?? '?'})`,
+    );
   } else if (mailProvider === 'resend') {
     const resendProblems: (string | null)[] = [];
     if (!value(env, 'RESEND_API_KEY')) resendProblems.push('MAIL_PROVIDER=resend needs RESEND_API_KEY');
@@ -674,13 +692,14 @@ export function checkEnv(env: Env): CheckResult[] {
           ? 'confirm the files bucket has Object Lock enabled and the worker log shows no "[evidence-hold] ALERT" (docs/runbooks/evidence-holds.md)'
           : 'posted invoice files get no retention hold (STORAGE is not s3, or EVIDENCE_LOCK_DAYS=0): confirm the owner accepts that (docs/runbooks/evidence-holds.md)',
     },
-    ...(mailProvider === 'ses' && !value(env, 'SES_SNS_TOPIC_ARN')
+    ...(mailProvider === 'ses' && (!value(env, 'SES_SNS_TOPIC_ARN') || !value(env, 'SES_CONFIGURATION_SET'))
       ? [
           {
             item: 'Outbound mail',
             status: 'manual' as const,
-            message:
-              'SES_SNS_TOPIC_ARN is unset: bounce and complaint webhooks (/webhooks/mail/ses) are off, so hard bounces and complaints will not update mail_suppression automatically; configure an SNS topic and SES Configuration Set (docs/runbooks/email-ses-pilot-cutover.md)',
+            message: !value(env, 'SES_SNS_TOPIC_ARN')
+              ? 'SES_SNS_TOPIC_ARN is unset: bounce and complaint webhooks (/webhooks/mail/ses) are off, so hard bounces and complaints will not update mail_suppression automatically; configure an SNS topic and SES Configuration Set (docs/runbooks/email-ses-pilot-cutover.md)'
+              : 'SES_SNS_TOPIC_ARN is set without SES_CONFIGURATION_SET: set SES_CONFIGURATION_SET to your event-publishing configuration set or confirm a default configuration set is assigned on the verified Amazon SES identity so bounce and complaint events are published to SNS (docs/runbooks/email-ses-pilot-cutover.md)',
           },
         ]
       : []),

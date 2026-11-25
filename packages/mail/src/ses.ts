@@ -20,8 +20,10 @@ export const SES_REGION_PATTERN = /^[a-z]{2}(?:-[a-z]+)+-\d+$/;
 export const SES_CONFIGURATION_SET_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 export const SES_SNS_TOPIC_ARN_PATTERN = /^arn:aws[a-z-]*:sns:[a-z0-9-]+:\d{12}:[^\s:]+$/;
 
-const SNS_CERT_PATH_PATTERN = /^\/SimpleNotificationService-[a-f0-9]+\.pem$/;
-const SNS_TOLERANCE_MS = 15 * 60_000;
+const SNS_CERT_PATH_PATTERN = /^\/SimpleNotificationService-[a-f0-9]{16,128}\.pem$/;
+// AWS SNS delivery retries can arrive up to an hour after signing; bound future clock skew separately at 5 minutes.
+const SNS_MAX_PAST_AGE_MS = 60 * 60_000;
+const SNS_MAX_FUTURE_SKEW_MS = 5 * 60_000;
 const SNS_CERT_MAX_BYTES = 32 * 1024;
 const SNS_CERT_CACHE_MAX = 16;
 const SNS_CERT_INFLIGHT_MAX = 4;
@@ -40,12 +42,40 @@ const AUTH_ERROR_TYPES = new Set([
   'ExpiredTokenException',
 ]);
 
-const RECORDED_EVENTS: Record<string, MailEventKind | 'bounce'> = {
-  Delivery: 'delivered',
-  DeliveryDelay: 'deferred',
-  Complaint: 'complaint',
-  Bounce: 'bounce',
-};
+const RECORDED_EVENTS = new Map<string, MailEventKind | 'bounce'>([
+  ['Delivery', 'delivered'],
+  ['DeliveryDelay', 'deferred'],
+  ['Complaint', 'complaint'],
+  ['Bounce', 'bounce'],
+]);
+
+const SES_BOUNCE_TYPES = new Set(['Undetermined', 'Permanent', 'Transient']);
+const SES_BOUNCE_SUBTYPES = new Set([
+  'Undetermined',
+  'General',
+  'NoEmail',
+  'Suppressed',
+  'OnAccountSuppressionList',
+  'MailboxFull',
+  'MessageTooLarge',
+  'ContentRejected',
+  'AttachmentRejected',
+  'CustomTimeoutBeta',
+]);
+const SES_COMPLAINT_FEEDBACK_TYPES = new Set(['abuse', 'auth-failure', 'fraud', 'not-spam', 'other', 'virus']);
+const SES_COMPLAINT_SUBTYPES = new Set(['OnAccountSuppressionList']);
+const SES_DELAY_TYPES = new Set([
+  'InternalFailure',
+  'General',
+  'MailboxFull',
+  'SpamDetected',
+  'RecipientServerError',
+  'IPFailure',
+  'TransientCommunicationFailure',
+  'BYOIPHostNameLookupUnavailable',
+  'Undetermined',
+  'SendingDeferral',
+]);
 
 export interface SesOptions {
   region: string;
@@ -302,11 +332,16 @@ function validateSnsUrl(raw: string, region: string, kind: 'cert' | 'subscribe',
   return url;
 }
 
+async function cancelResponseBody(response: Response): Promise<void> {
+  await response.body?.cancel().catch(() => undefined);
+}
+
 async function readBoundedBytes(response: Response, maxBytes: number): Promise<Buffer> {
   const lengthHeader = response.headers.get('content-length');
   if (lengthHeader !== null) {
     const declared = Number(lengthHeader);
     if (Number.isFinite(declared) && declared > maxBytes) {
+      await cancelResponseBody(response);
       throw new WebhookRejected('signature');
     }
   }
@@ -394,9 +429,11 @@ async function fetchUncachedCert(key: string, fetchImpl: typeof fetch): Promise<
     throw new Error('SNS certificate fetch failed');
   }
   if (response.status >= 500) {
+    await cancelResponseBody(response);
     throw new Error('SNS certificate fetch failed');
   }
   if (!response.ok) {
+    await cancelResponseBody(response);
     throw new WebhookRejected('signature');
   }
   const pem = await readBoundedBytes(response, SNS_CERT_MAX_BYTES);
@@ -436,7 +473,7 @@ async function loadSigningCert(certUrl: URL, fetchImpl: typeof fetch, cache: Map
     return cert;
   }
   if (state.inFlight.size >= SNS_CERT_INFLIGHT_MAX) {
-    throw new WebhookRejected('signature');
+    throw new WebhookRejected('capacity');
   }
   const work = (async () => {
     try {
@@ -514,7 +551,8 @@ function parseSnsEnvelope(rawBody: string, expectedTopicArn: string, now: number
     throw new WebhookRejected('malformed');
   }
   const ts = Date.parse(timestamp);
-  if (Number.isNaN(ts) || Math.abs(now - ts) > SNS_TOLERANCE_MS) {
+  const ageMs = now - ts;
+  if (Number.isNaN(ts) || ageMs > SNS_MAX_PAST_AGE_MS || ageMs < -SNS_MAX_FUTURE_SKEW_MS) {
     throw new WebhookRejected('stale');
   }
   if (type === 'SubscriptionConfirmation' || type === 'UnsubscribeConfirmation') {
@@ -591,8 +629,8 @@ function verifySnsSignature(envelope: SnsEnvelope, cert: X509Certificate): void 
   }
 }
 
-function bounded(value: unknown, max = 64): string | undefined {
-  return typeof value === 'string' && value.length > 0 ? value.slice(0, max) : undefined;
+function allowlisted(value: unknown, allowed: ReadonlySet<string>): string | undefined {
+  return typeof value === 'string' && allowed.has(value) ? value : undefined;
 }
 
 interface SesMessagePayload {
@@ -618,7 +656,7 @@ function parseSesNotification(envelope: SnsEnvelope, now: number): MailEvent[] {
   const payload = raw as SesMessagePayload;
   const rawType = typeof payload.eventType === 'string' ? payload.eventType : typeof payload.notificationType === 'string' ? payload.notificationType : null;
   if (rawType === null) throw new WebhookRejected('malformed');
-  const mapped = RECORDED_EVENTS[rawType];
+  const mapped = RECORDED_EVENTS.get(rawType);
   if (!mapped) return [];
 
   const messageId = payload.mail?.messageId;
@@ -641,19 +679,19 @@ function parseSesNotification(envelope: SnsEnvelope, now: number): MailEvent[] {
   const detail: Record<string, string> = {};
   let kind: MailEventKind;
   if (mapped === 'bounce') {
-    const bounceType = bounded(payload.bounce?.bounceType);
-    const bounceSubType = bounded(payload.bounce?.bounceSubType);
+    const bounceType = allowlisted(payload.bounce?.bounceType, SES_BOUNCE_TYPES);
+    const bounceSubType = allowlisted(payload.bounce?.bounceSubType, SES_BOUNCE_SUBTYPES);
     if (bounceType) detail.bounceType = bounceType;
     if (bounceSubType) detail.bounceSubType = bounceSubType;
     kind = bounceType === 'Permanent' ? 'bounce_hard' : 'bounce_soft';
   } else if (mapped === 'complaint') {
-    const feedbackType = bounded(payload.complaint?.complaintFeedbackType);
-    const complaintSubType = bounded(payload.complaint?.complaintSubType);
+    const feedbackType = allowlisted(payload.complaint?.complaintFeedbackType, SES_COMPLAINT_FEEDBACK_TYPES);
+    const complaintSubType = allowlisted(payload.complaint?.complaintSubType, SES_COMPLAINT_SUBTYPES);
     if (feedbackType) detail.feedbackType = feedbackType;
     if (complaintSubType) detail.complaintSubType = complaintSubType;
     kind = mapped;
   } else if (mapped === 'deferred') {
-    const delayType = bounded(payload.deliveryDelay?.delayType);
+    const delayType = allowlisted(payload.deliveryDelay?.delayType, SES_DELAY_TYPES);
     if (delayType) detail.delayType = delayType;
     kind = mapped;
   } else {
@@ -700,6 +738,7 @@ export async function parseSesWebhook(options: SesWebhookOptions, request: Webho
     } catch {
       throw new Error('SNS subscription confirmation failed');
     }
+    await cancelResponseBody(response);
     if (response.status >= 500) {
       throw new Error('SNS subscription confirmation failed');
     }

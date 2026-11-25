@@ -1151,7 +1151,8 @@ export function createHttpApp(deps: HttpDeps) {
   }
 
   // Delivery events from the mail provider (#539, #4960), when it has signed webhooks (Resend with RESEND_WEBHOOK_SECRET, Amazon SES with SES_SNS_TOPIC_ARN).
-  // Outside /api: the provider authenticates with its signature, not a session. Unknown providers and throttled probes are refused before bodyLimit.
+  // Outside /api: the provider authenticates with its signature, not a session. Unknown providers and throttled probes are refused before bodyLimit;
+  // reserve atomically with take() ahead of bodyLimit and refund on verified 200/202 deliveries or transient 503 capacity so concurrent invalid bursts cannot bypass peek().
   const mailer = deps.mailer;
   if (mailer?.parseWebhook) {
     const mailLimit = deps.mailWebhookLimit ?? new RateLimiter({ perMinute: MAIL_WEBHOOKS_PER_MINUTE });
@@ -1159,31 +1160,32 @@ export function createHttpApp(deps: HttpDeps) {
       '/webhooks/mail/:provider',
       async (c, next) => {
         if (c.req.param('provider') !== mailer.name) return c.json({ code: 'NOT_FOUND' }, 404);
-        const peek = mailLimit.peek(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
-        if (!peek.allowed) {
+        const decision = mailLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
+        if (!decision.allowed) {
           warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
-          c.header('retry-after', String(peek.retryAfterSeconds));
-          return c.json({ code: 'RATE_LIMITED', retryAfterSeconds: peek.retryAfterSeconds }, 429);
+          c.header('retry-after', String(decision.retryAfterSeconds));
+          return c.json({ code: 'RATE_LIMITED', retryAfterSeconds: decision.retryAfterSeconds }, 429);
         }
         await next();
       },
       bodyLimit({ maxSize: MAX_MAIL_WEBHOOK_BYTES }),
       async (c) => {
+        const bucket = clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS));
         try {
           const headers: Record<string, string | undefined> = {};
           c.req.raw.headers.forEach((value, name) => {
             headers[name.toLowerCase()] = value;
           });
           const outcome = await acceptMailWebhook(runtime, mailer, { headers, body: await c.req.text() });
+          if (outcome.status === 503) {
+            mailLimit.refund(bucket);
+            c.header('retry-after', String(outcome.retryAfterSeconds));
+            return c.json({ code: outcome.code }, 503);
+          }
           if (outcome.status === 401 || outcome.status === 400) {
-            const decision = mailLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
-            if (!decision.allowed) {
-              warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
-              c.header('retry-after', String(decision.retryAfterSeconds));
-              return c.json({ code: 'RATE_LIMITED', retryAfterSeconds: decision.retryAfterSeconds }, 429);
-            }
             return c.json({ code: outcome.code }, outcome.status);
           }
+          mailLimit.refund(bucket);
           return c.json({ queued: outcome.queued }, outcome.status);
         } catch (error) {
           return problem(c, error);

@@ -70,8 +70,8 @@ export interface WebhookRequest {
 }
 
 export class WebhookRejected extends Error {
-  readonly reason: 'signature' | 'stale' | 'malformed';
-  constructor(reason: 'signature' | 'stale' | 'malformed') {
+  readonly reason: 'signature' | 'stale' | 'malformed' | 'capacity';
+  constructor(reason: 'signature' | 'stale' | 'malformed' | 'capacity') {
     super(`webhook rejected: ${reason}`);
     this.name = 'WebhookRejected';
     this.reason = reason;

@@ -118,8 +118,17 @@ function fakeFetch(handler: (url: string, init: RequestInit) => Response | Promi
   return { calls, fetchImpl };
 }
 
-describe('SES SNS webhook verification invariants', () => {
-  it('enables parseWebhook only when snsTopicArn is configured and refuses cross-region topic ARNs', () => {
+describe('SES security, SSRF, and SNS webhook verification invariants (#4960)', () => {
+  it('enforces region, endpoint, configurationSet, ARN cross-checks, and MIME/PII safety invariants', async () => {
+    for (const bad of ['', 'local', 'ap-southeast-1.evil.com', 'ap-southeast-1/foo', 'AP-SOUTHEAST-1', 'us_east_1']) {
+      expect(() => createSesProvider({ region: bad, accessKeyId: 'k', secretAccessKey: 's', from: 'noreply@example.com' }), bad).toThrow(/region/);
+    }
+    expect(() =>
+      createSesProvider({ region: REGION, accessKeyId: 'k', secretAccessKey: 's', from: 'noreply@example.com', configurationSet: 'bad set!' }),
+    ).toThrow(/configuration set/);
+    expect(() =>
+      createSesProvider({ region: REGION, accessKeyId: 'k', secretAccessKey: 's', from: 'noreply@example.com', snsTopicArn: 'arn:aws:s3:::bucket' }),
+    ).toThrow(/ARN/);
     expect(createSesProvider({ region: REGION, accessKeyId: 'k', secretAccessKey: 's', from: 'noreply@example.com' }).parseWebhook).toBeUndefined();
     expect(() =>
       createSesProvider({
@@ -130,6 +139,77 @@ describe('SES SNS webhook verification invariants', () => {
         snsTopicArn: 'arn:aws:sns:us-east-1:123456789012:topic',
       }),
     ).toThrow(/region/);
+
+    // Endpoint confinement, header injection sanitization, and error PII scrubbing.
+    const { calls, fetchImpl } = fakeFetch(() =>
+      Response.json(
+        { message: 'Recipient address rejected: khach@example.test', __type: 'MessageRejected' },
+        { status: 400, headers: { 'x-amzn-errortype': 'MessageRejected' } },
+      ),
+    );
+    const provider = createSesProvider({
+      region: REGION,
+      accessKeyId: 'AKIAEXAMPLE123456',
+      secretAccessKey: 'secret-example-key',
+      from: 'Ludy <noreply@mail.example.com>',
+      snsTopicArn: TOPIC_ARN,
+      fetch: fetchImpl,
+      now: () => NOW,
+    });
+    const res = await provider.send({
+      to: 'khach@example.test',
+      subject: 'Hóa đơn',
+      text: 'Nội dung',
+      html: '<p>Nội dung</p>',
+      fromName: 'Công ty "ABC"\r\nBcc: victim@example.test',
+    });
+    expect(res).toEqual({ status: 'rejected', error: 'invalid_recipient', code: 'SES_400_MessageRejected' });
+    expect(JSON.stringify(res)).not.toContain('khach@example.test');
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url).toBe(`https://email.${REGION}.amazonaws.com/v2/email/outbound-emails`);
+    expect(calls[0]?.init.redirect).toBe('manual');
+    const sentPayload = JSON.parse(String(calls[0]?.init.body)) as { FromEmailAddress: string; Content: { Raw: { Data: string } } };
+    expect(sentPayload.FromEmailAddress).not.toContain('\n');
+    expect(sentPayload.FromEmailAddress).not.toContain('Bcc:');
+    const rawMime = Buffer.from(sentPayload.Content.Raw.Data, 'base64').toString('utf8');
+    expect(rawMime).not.toMatch(/^Bcc:/im);
+
+    // Webhook PII non-leakage on Delivery, Bounce, and Complaint payloads.
+    const piiProvider = createSesProvider({
+      region: REGION,
+      accessKeyId: 'k',
+      secretAccessKey: 's',
+      from: 'noreply@example.com',
+      snsTopicArn: TOPIC_ARN,
+      fetch: fakeFetch(() => new Response(DEFAULT_CERT.pem, { status: 200 })).fetchImpl,
+    });
+    const piiPayloads = [
+      {
+        eventType: 'Delivery',
+        mail: { messageId: 'm-del', destination: ['khach@example.test'] },
+        delivery: { recipients: ['khach@example.test'], smtpResponse: '250 OK khach@example.test' },
+      },
+      {
+        notificationType: 'Bounce',
+        mail: { messageId: 'm-bnc' },
+        bounce: {
+          bounceType: 'Permanent',
+          bounceSubType: 'General',
+          bouncedRecipients: [{ emailAddress: 'khach@example.test', diagnosticCode: '550 5.1.1 khach@example.test' }],
+        },
+      },
+      {
+        notificationType: 'Complaint',
+        mail: { messageId: 'm-cmp' },
+        complaint: { complaintFeedbackType: 'abuse', complainedRecipients: [{ emailAddress: 'khach@example.test' }] },
+      },
+    ];
+    for (const payload of piiPayloads) {
+      const events = await piiProvider.parseWebhook?.(makeNotification(payload), NOW);
+      expect(JSON.stringify(events)).not.toContain('khach@example.test');
+      expect(JSON.stringify(events)).not.toContain('250 OK');
+      expect(JSON.stringify(events)).not.toContain('550 5.1.1');
+    }
   });
 
   it('rejects TopicArn mismatches, bad SignatureVersion, stale timestamps, and SSRF SigningCertURLs before any fetch', async () => {
@@ -147,22 +227,29 @@ describe('SES SNS webhook verification invariants', () => {
     expect(await reasonOf({ headers: {}, body: JSON.stringify({ Type: 'UnknownType' }) })).toBe('malformed');
     expect(await reasonOf(makeNotification({ eventType: 'Delivery', mail: { messageId: 'm1' } }, { TopicArn: `arn:aws:sns:${REGION}:123456789012:other` }))).toBe('signature');
     expect(await reasonOf(makeNotification({ eventType: 'Delivery', mail: { messageId: 'm1' } }, {}, DEFAULT_CERT.privateKey, '3' as '2'))).toBe('signature');
-    expect(await reasonOf(makeNotification({ eventType: 'Delivery', mail: { messageId: 'm1' } }, { Timestamp: new Date(NOW - 16 * 60_000).toISOString() }))).toBe('stale');
-    expect(await reasonOf(makeNotification({ eventType: 'Delivery', mail: { messageId: 'm1' } }, { Timestamp: new Date(NOW + 16 * 60_000).toISOString() }))).toBe('stale');
 
+    // Past messages up to 1h old remain valid (SNS retry window); > 1h past or > 5m future are stale.
+    expect(await reasonOf(makeNotification({ eventType: 'Delivery', mail: { messageId: 'm1' } }, { Timestamp: new Date(NOW - 30 * 60_000).toISOString() }))).toBe('accepted');
+    expect(await reasonOf(makeNotification({ eventType: 'Delivery', mail: { messageId: 'm1' } }, { Timestamp: new Date(NOW - 61 * 60_000).toISOString() }))).toBe('stale');
+    expect(await reasonOf(makeNotification({ eventType: 'Delivery', mail: { messageId: 'm1' } }, { Timestamp: new Date(NOW + 6 * 60_000).toISOString() }))).toBe('stale');
+    calls.length = 0;
+
+    const hex32 = '0123456789abcdef0123456789abcdef';
     const badCertUrls = [
-      `http://sns.${REGION}.amazonaws.com/SimpleNotificationService-abc123.pem`,
-      'https://sns.us-east-1.amazonaws.com/SimpleNotificationService-abc123.pem',
-      'https://evil.example.com/SimpleNotificationService-abc123.pem',
-      `https://sns.${REGION}.amazonaws.com:8443/SimpleNotificationService-abc123.pem`,
-      `https://user:pass@sns.${REGION}.amazonaws.com/SimpleNotificationService-abc123.pem`,
-      `https://sns.${REGION}.amazonaws.com/SimpleNotificationService-abc123.pem?x=1`,
-      `https://sns.${REGION}.amazonaws.com/SimpleNotificationService-abc123.pem#frag`,
-      `https://sns.${REGION}.amazonaws.com/foo/../SimpleNotificationService-abc123.pem`,
+      `http://sns.${REGION}.amazonaws.com/SimpleNotificationService-${hex32}.pem`,
+      `https://sns.us-east-1.amazonaws.com/SimpleNotificationService-${hex32}.pem`,
+      `https://evil.example.com/SimpleNotificationService-${hex32}.pem`,
+      `https://sns.${REGION}.amazonaws.com:8443/SimpleNotificationService-${hex32}.pem`,
+      `https://user:pass@sns.${REGION}.amazonaws.com/SimpleNotificationService-${hex32}.pem`,
+      `https://sns.${REGION}.amazonaws.com/SimpleNotificationService-${hex32}.pem?x=1`,
+      `https://sns.${REGION}.amazonaws.com/SimpleNotificationService-${hex32}.pem#frag`,
+      `https://sns.${REGION}.amazonaws.com/foo/../SimpleNotificationService-${hex32}.pem`,
       `https://sns.${REGION}.amazonaws.com/SimpleNotificationService-%2e%2e.pem`,
-      `https://sns.${REGION}.amazonaws.com/SimpleNotificationService-abc123.pem\\evil`,
+      `https://sns.${REGION}.amazonaws.com/SimpleNotificationService-${hex32}.pem\\evil`,
       `https://sns.${REGION}.amazonaws.com/other.pem`,
-      `https://sns.${REGION}.amazonaws.com/SimpleNotificationService-ZZZZ.pem`,
+      `https://sns.${REGION}.amazonaws.com/SimpleNotificationService-abc123.pem`,
+      `https://sns.${REGION}.amazonaws.com/SimpleNotificationService-${'a'.repeat(129)}.pem`,
+      `https://sns.${REGION}.amazonaws.com/SimpleNotificationService-${'Z'.repeat(32)}.pem`,
     ];
     for (const SigningCertURL of badCertUrls) {
       expect(await reasonOf(makeNotification({ eventType: 'Delivery', mail: { messageId: 'm1' } }, { SigningCertURL })), SigningCertURL).toBe('signature');
@@ -170,7 +257,7 @@ describe('SES SNS webhook verification invariants', () => {
     expect(calls).toHaveLength(0);
   });
 
-  it('rejects tampered signatures, wrong keys, expired or non-RSA certs, oversized PEMs, and malformed message payloads', async () => {
+  it('rejects tampered signatures, wrong keys, expired or non-RSA certs, oversized PEMs, and malformed payloads, and ignores prototype/unknown detail values', async () => {
     const otherCert = makeTestCert();
     const expiredCert = makeTestCert({ notBefore: new Date(NOW - 7_200_000), notAfter: new Date(NOW - 1_000) });
     const ecCert = makeTestCert({ kind: 'ec' });
@@ -207,19 +294,65 @@ describe('SES SNS webhook verification invariants', () => {
       parseSesWebhook({ region: REGION, snsTopicArn: TOPIC_ARN, fetch: fakeFetch(() => new Response(oversized, { status: 200 })).fetchImpl }, validReq, NOW),
     ).rejects.toMatchObject({ reason: 'signature' });
 
-    await expect(
-      parseSesWebhook({ region: REGION, snsTopicArn: TOPIC_ARN, fetch: fakeFetch(() => new Response(DEFAULT_CERT.pem)).fetchImpl }, makeNotification({ eventType: 'Delivery', mail: {} }), NOW),
-    ).rejects.toMatchObject({ reason: 'malformed' });
+    // Declared Content-Length over 32 KiB cancels the unconsumed response stream immediately.
+    let declaredCancelled = false;
+    const declaredBody = new ReadableStream({
+      cancel() {
+        declaredCancelled = true;
+      },
+    });
     await expect(
       parseSesWebhook(
-        { region: REGION, snsTopicArn: TOPIC_ARN, fetch: fakeFetch(() => new Response(DEFAULT_CERT.pem)).fetchImpl },
-        makeNotification({ eventType: 'Delivery', mail: { messageId: 'x'.repeat(256) } }),
+        {
+          region: REGION,
+          snsTopicArn: TOPIC_ARN,
+          fetch: fakeFetch(() => new Response(declaredBody, { status: 200, headers: { 'content-length': String(33 * 1024) } })).fetchImpl,
+        },
+        validReq,
         NOW,
       ),
+    ).rejects.toMatchObject({ reason: 'signature' });
+    expect(declaredCancelled).toBe(true);
+
+    // Non-OK cert fetch responses cancel their unconsumed body streams cleanly.
+    let nonOkCancelled = false;
+    const nonOkBody = new ReadableStream({
+      cancel() {
+        nonOkCancelled = true;
+      },
+    });
+    await expect(
+      parseSesWebhook({ region: REGION, snsTopicArn: TOPIC_ARN, fetch: fakeFetch(() => new Response(nonOkBody, { status: 403 })).fetchImpl }, validReq, NOW),
+    ).rejects.toMatchObject({ reason: 'signature' });
+    expect(nonOkCancelled).toBe(true);
+
+    const certFetch = fakeFetch(() => new Response(DEFAULT_CERT.pem)).fetchImpl;
+    await expect(
+      parseSesWebhook({ region: REGION, snsTopicArn: TOPIC_ARN, fetch: certFetch }, makeNotification({ eventType: 'Delivery', mail: {} }), NOW),
     ).rejects.toMatchObject({ reason: 'malformed' });
+    await expect(
+      parseSesWebhook({ region: REGION, snsTopicArn: TOPIC_ARN, fetch: certFetch }, makeNotification({ eventType: 'Delivery', mail: { messageId: 'x'.repeat(256) } }), NOW),
+    ).rejects.toMatchObject({ reason: 'malformed' });
+
+    // Prototype property names do not match RECORDED_EVENTS, and unrecognized detail values are omitted cleanly.
+    for (const protoKey of ['__proto__', 'constructor', 'toString']) {
+      expect(
+        await parseSesWebhook({ region: REGION, snsTopicArn: TOPIC_ARN, fetch: certFetch }, makeNotification({ eventType: protoKey, mail: { messageId: 'm1' } }), NOW),
+      ).toEqual([]);
+    }
+    const weirdDetail = await parseSesWebhook(
+      { region: REGION, snsTopicArn: TOPIC_ARN, fetch: certFetch },
+      makeNotification({
+        eventType: 'Bounce',
+        mail: { messageId: 'm-weird' },
+        bounce: { bounceType: 'UnexpectedType', bounceSubType: 'attacker@evil.test' },
+      }),
+      NOW,
+    );
+    expect(weirdDetail).toEqual([expect.objectContaining({ kind: 'bounce_soft', detail: {} })]);
   });
 
-  it('coalesces concurrent cert fetches, caps unauthenticated parallel fetches, and negative-caches failed cert URLs', async () => {
+  it('coalesces concurrent cert fetches, rejects excess concurrent fetches as capacity (503), and negative-caches failed cert URLs', async () => {
     let releaseCert!: () => void;
     const gate = new Promise<void>((resolve) => {
       releaseCert = resolve;
@@ -237,7 +370,7 @@ describe('SES SNS webhook verification invariants', () => {
     await burst;
     expect(sameUrlCalls).toHaveLength(1);
 
-    // Distinct uncached cert URLs beyond the in-flight concurrency cap (4) fail closed without starting extra fetches.
+    // Distinct uncached cert URLs beyond the in-flight concurrency cap (4) fail with capacity (503) so AWS SNS retries.
     const pendingResolvers: Array<() => void> = [];
     const distinctFetch = fakeFetch(
       () =>
@@ -250,7 +383,7 @@ describe('SES SNS webhook verification invariants', () => {
     const inFlightReqs = Array.from({ length: 4 }, (_, i) => distinctProvider.parseWebhook?.(makeNotification({ eventType: 'Send' }, { SigningCertURL: certUrl(i + 1) }), NOW));
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(distinctFetch.calls).toHaveLength(4);
-    await expect(distinctProvider.parseWebhook?.(makeNotification({ eventType: 'Send' }, { SigningCertURL: certUrl(99) }), NOW)).rejects.toMatchObject({ reason: 'signature' });
+    await expect(distinctProvider.parseWebhook?.(makeNotification({ eventType: 'Send' }, { SigningCertURL: certUrl(99) }), NOW)).rejects.toMatchObject({ reason: 'capacity' });
     expect(distinctFetch.calls).toHaveLength(4);
     for (const resolve of pendingResolvers) resolve();
     await Promise.all(inFlightReqs);
@@ -263,10 +396,20 @@ describe('SES SNS webhook verification invariants', () => {
     expect(badProbe.calls).toHaveLength(1);
   });
 
-  it('requires verified SubscriptionConfirmation SubscribeURL on exact / with matching Action, TopicArn, and Token', async () => {
+  it('requires verified SubscriptionConfirmation SubscribeURL on exact / with matching Action, TopicArn, and Token, cancelling response bodies', async () => {
+    let subCancelled = false;
     const { calls, fetchImpl } = fakeFetch((url) => {
       if (url === CERT_URL) return new Response(DEFAULT_CERT.pem, { status: 200 });
-      if (url === SUBSCRIBE_URL) return new Response('<ConfirmSubscriptionResponse/>', { status: 200 });
+      if (url === SUBSCRIBE_URL) {
+        return new Response(
+          new ReadableStream({
+            cancel() {
+              subCancelled = true;
+            },
+          }),
+          { status: 200 },
+        );
+      }
       return new Response('bad', { status: 400 });
     });
     const confirm = signSnsEnvelope({
@@ -280,6 +423,7 @@ describe('SES SNS webhook verification invariants', () => {
       SigningCertURL: CERT_URL,
     });
     expect(await parseSesWebhook({ region: REGION, snsTopicArn: TOPIC_ARN, fetch: fetchImpl }, confirm, NOW)).toEqual([]);
+    expect(subCancelled).toBe(true);
     expect(calls.map((c) => [c.url, c.init.redirect])).toEqual([
       [CERT_URL, 'manual'],
       [SUBSCRIBE_URL, 'manual'],
