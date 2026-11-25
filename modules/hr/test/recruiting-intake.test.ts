@@ -15,6 +15,7 @@ import type { Database } from '@ludy/db';
 import type { CommandContext, QueryContext } from '@ludy/kernel-runtime';
 import {
   buildCvExtractDraft,
+  cvExtractCompleteCommand,
   cvExtractContextQuery,
   cvExtractRequestCommand,
   inferSuggestedSource,
@@ -190,5 +191,110 @@ describe('modules/hr recruiting-intake Stage 5D (#4446)', () => {
     await expect(
       cvExtractContextQuery.handler(qCtx, { jobId, openingId: otherOpeningId }),
     ).rejects.toMatchObject({ code: 'HR_CANDIDATE_WRONG_ENTITY', status: 422 });
+  });
+
+  it('prevents a late ok:false dead-letter completion from overriding an earlier ok:true completion (#4487)', async () => {
+    const orgId = '00000000-0000-7000-8000-000000000010';
+    const entityId = '00000000-0000-7000-8000-000000000011';
+    const jobId = '00000000-0000-7000-8000-000000000099';
+    const inputSha = 'a'.repeat(64);
+    const resultSha = 'b'.repeat(64);
+
+    const completeAudits: Array<Record<string, unknown>> = [];
+    const makeTrx = (withPriorSuccess: boolean) => {
+      const conn: DatabaseConnection = {
+        executeQuery: async <R>(q: CompiledQuery): Promise<QueryResult<R>> => {
+          const text = q.sql;
+          if (text.includes('detail ->> \'ok\' = \'true\'')) {
+            return { rows: withPriorSuccess ? [{ id: '1' }] : [] } as unknown as QueryResult<R>;
+          }
+          if (text.includes('ludy_kernel.audit_event')) {
+            return {
+              rows: [
+                // Simulate a stale failure row arriving newest first alongside an older ok:true row.
+                {
+                  command: 'hr.recruiting.cv_extract.complete',
+                  input_sha256: null,
+                  legal_entity_id: null,
+                  opening_id: null,
+                  use_ai: null,
+                  result_sha256: null,
+                  complete_ok: 'false',
+                  complete_error_code: 'HR_CV_EXTRACT_FAILED',
+                },
+                {
+                  command: 'hr.recruiting.cv_extract.complete',
+                  input_sha256: null,
+                  legal_entity_id: null,
+                  opening_id: null,
+                  use_ai: null,
+                  result_sha256: resultSha,
+                  complete_ok: 'true',
+                  complete_error_code: null,
+                },
+                {
+                  command: 'hr.recruiting.cv_extract.request',
+                  input_sha256: inputSha,
+                  legal_entity_id: entityId,
+                  opening_id: null,
+                  use_ai: 'true',
+                  result_sha256: null,
+                  complete_ok: null,
+                  complete_error_code: null,
+                },
+              ],
+            } as unknown as QueryResult<R>;
+          }
+          if (text.includes('legal_entity')) {
+            return { rows: [{ id: entityId }] } as unknown as QueryResult<R>;
+          }
+          return { rows: [] } as unknown as QueryResult<R>;
+        },
+        streamQuery: (() => {
+          throw new Error('streamQuery not implemented');
+        }) as DatabaseConnection['streamQuery'],
+      };
+      const driver: Driver = {
+        init: async () => {},
+        acquireConnection: async () => conn,
+        beginTransaction: async () => {},
+        commitTransaction: async () => {},
+        rollbackTransaction: async () => {},
+        releaseConnection: async () => {},
+        destroy: async () => {},
+      };
+      return new Kysely<Database>({
+        dialect: {
+          createAdapter: () => new PostgresAdapter(),
+          createDriver: () => driver,
+          createIntrospector: (inst) => new PostgresIntrospector(inst),
+          createQueryCompiler: () => new PostgresQueryCompiler(),
+        },
+      }) as unknown as Transaction<Database>;
+    };
+
+    await cvExtractCompleteCommand.handler(
+      {
+        trx: makeTrx(true),
+        orgId,
+        actor: { type: 'system', component: 'hr.cv_extract' },
+        emit: () => {},
+        audit: (detail: Record<string, unknown>) => completeAudits.push(detail),
+      } as unknown as CommandContext,
+      { jobId, ok: false, resultSha256: null, errorCode: 'HR_CV_EXTRACT_FAILED' },
+    );
+    expect(completeAudits).toEqual([{ jobId, skippedLateFailure: true }]);
+
+    const resolved = await cvExtractContextQuery.handler(
+      {
+        trx: makeTrx(true),
+        orgId,
+        actor: { type: 'user', userId: 'u1', aal: 'aal1', sessionId: 's1' },
+        role: 'admin',
+      } as unknown as QueryContext,
+      { jobId },
+    );
+    expect(resolved.resultSha256).toBe(resultSha);
+    expect(resolved.failedCode).toBeNull();
   });
 });

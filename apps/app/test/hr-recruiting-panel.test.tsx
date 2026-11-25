@@ -89,6 +89,7 @@ const {
 const { I18nProvider } = await import('../src/i18n/provider.tsx');
 const { setActiveLocale } = await import('../src/i18n/runtime.ts');
 const {
+  applyInviteChannelChange,
   applyInviteInterviewerChange,
   buildInviteSelectionKey,
   shouldAcceptInviteDraftResponse,
@@ -498,6 +499,7 @@ describe('HR recruiting UI (#3425)', () => {
       matchedSkills: ['MISA', 'Excel'],
       suggestedSource: 'zalo_oa',
       notes: 'Tóm tắt CV: 5 năm kinh nghiệm',
+      aiSummary: null,
       sourceKind: 'pdf_text',
       extractedChars: 340,
       textPreview: 'Trần Bảo Ngọc',
@@ -519,6 +521,19 @@ describe('HR recruiting UI (#3425)', () => {
     const noOpeningVi = wrap(<CandidateForm cvDraft={noOpeningDraft} defaultOpeningId={OPENING_ID} openings={[sampleOpening]} onClose={() => undefined} />, 'vi');
     expect(noOpeningVi).toMatch(/<option\b[^>]*(?:\bvalue=""[^>]*\bselected\b|\bselected\b[^>]*\bvalue="")/);
     expect(noOpeningVi).not.toMatch(new RegExp(`<option\\b[^>]*\\bvalue="${OPENING_ID}"[^>]*\\bselected\\b`));
+
+    // Unverified AI summary prose renders inside its own explicitly labeled proposal block without replacing deterministic notes.
+    const aiSummaryDraft: HrCvExtractDraft = {
+      ...sampleCvDraft,
+      aiSummary: 'Ly đề xuất: ứng viên từng triển khai MISA.',
+    };
+    const withAiSummaryVi = wrap(<CandidateForm cvDraft={aiSummaryDraft} openings={[sampleOpening]} onClose={() => undefined} />, 'vi');
+    expect(withAiSummaryVi).toContain('hr-cv-ai-summary-proposal');
+    expect(withAiSummaryVi).toContain('hr-cv-ai-summary-input');
+    expect(withAiSummaryVi).toContain('hr-cv-ai-summary-copy');
+    expect(withAiSummaryVi).toContain(viMessages.hrRecruiting.cvExtract.aiSummaryLabel);
+    expect(withAiSummaryVi).toContain('Ly đề xuất: ứng viên từng triển khai MISA.');
+    expect(withAiSummaryVi).toContain('Tóm tắt CV: 5 năm kinh nghiệm');
 
     const analyticsSample: HrRecruitingAnalyticsResult = {
       legalEntityId: ENTITY_ID,
@@ -590,6 +605,28 @@ describe('HR recruiting UI (#3425)', () => {
     expect(switched).toEqual({
       changed: true,
       interviewerUserId: MEMBER_USER_ID,
+      draft: null,
+      messageText: '',
+      copied: false,
+    });
+
+    // Changing channel also clears stale draft/message/copied while keeping manual edits when unchanged.
+    const channelUnchanged = applyInviteChannelChange(
+      { channel: 'zalo_oa', draft: inviteDraftSample, messageText: 'Manual edit kept', copied: true },
+      'zalo_oa',
+    );
+    expect(channelUnchanged.changed).toBe(false);
+    expect(channelUnchanged.draft).toBe(inviteDraftSample);
+    expect(channelUnchanged.messageText).toBe('Manual edit kept');
+    expect(channelUnchanged.copied).toBe(true);
+
+    const channelSwitched = applyInviteChannelChange(
+      { channel: 'zalo_oa', draft: inviteDraftSample, messageText: 'Manual edit kept', copied: true },
+      'facebook',
+    );
+    expect(channelSwitched).toEqual({
+      changed: true,
+      channel: 'facebook',
       draft: null,
       messageText: '',
       copied: false,

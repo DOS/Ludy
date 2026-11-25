@@ -1,6 +1,7 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
--- Issue #4967: restate ludy_kernel.org_purge from 20270326270100_ludy_kernel_org_purge_meeting_label (the newest body on main, which carries meeting_label, member_home_layout, minutes_link, sign_deposit, tracker_term,
--- minutes_version and ai_budget_reservation) with ONE change: delete ludy_meetings.weekly_notice (the opt-in rows of the weekly meetings notice, one private row per member) next to ludy_meetings.morning_notice.
+-- Issue #4967: restate ludy_kernel.org_purge from 20270327050000_ludy_kernel_org_purge_hr_stage5d (the newest body on main, which carries candidate_stage_transition, meeting_label, member_home_layout,
+-- minutes_link, sign_deposit, tracker_term, minutes_version and ai_budget_reservation) with ONE change: delete ludy_meetings.weekly_notice (the opt-in rows of the weekly meetings notice, one private row per
+-- member) next to ludy_meetings.morning_notice.
 SET LOCAL lock_timeout = '2s';
 
 CREATE OR REPLACE FUNCTION ludy_kernel.org_purge(p_min_days integer)
@@ -119,6 +120,9 @@ BEGIN
   DELETE FROM ludy_finance.einvoice_draft d WHERE d.org_id = v_org;
   GET DIAGNOSTICS v_n = ROW_COUNT;
   v_deleted := v_deleted || pg_catalog.jsonb_build_object('ludy_finance.einvoice_draft', v_n);
+  DELETE FROM ludy_hr.candidate_stage_transition cst WHERE cst.org_id = v_org;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  v_deleted := v_deleted || pg_catalog.jsonb_build_object('ludy_hr.candidate_stage_transition', v_n);
   DELETE FROM ludy_hr.salary_advance_request r WHERE r.org_id = v_org;
   GET DIAGNOSTICS v_n = ROW_COUNT;
   v_deleted := v_deleted || pg_catalog.jsonb_build_object('ludy_hr.salary_advance_request', v_n);

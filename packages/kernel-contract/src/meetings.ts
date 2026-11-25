@@ -543,6 +543,8 @@ export const zMeetingSearchInput = z.strictObject({
   q: z.string().trim().min(2).max(MEETING_SEARCH_QUERY_MAX),
   limit: z.number().int().min(1).max(MEETING_SEARCH_PAGE_MAX).default(20),
   offset: z.number().int().min(0).max(MEETING_SEARCH_HITS_MAX).default(0),
+  // Only the lines of the meetings that carry this label (#4965), the same label whatever the case: the command keeps the page to the labelled meetings, from the hits the search can reach (the first 200), so a page is never cut after it was read.
+  label: z.string().trim().min(1).max(MEETING_LABEL_LENGTH_MAX).optional(),
 });
 export type MeetingSearchInput = z.infer<typeof zMeetingSearchInput>;
 export const zMeetingSearchHit = z.strictObject({

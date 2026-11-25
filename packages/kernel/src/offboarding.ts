@@ -587,9 +587,10 @@ export const OWNER_RUN_EXPORT_TABLES = {
   'hr.employee_asset_handover': { from: 'ludy_hr.employee_asset_handover', omit: [] },
   'hr.okr_objective': { from: 'ludy_hr.okr_objective', omit: [] },
   'hr.okr_key_result': { from: 'ludy_hr.okr_key_result', omit: [] },
-  // Lightweight recruiting openings and candidates (#3425), readable by owners and admins only.
+  // Lightweight recruiting openings and candidates (#3425, #4487), readable by owners and admins only.
   'hr.job_opening': { from: 'ludy_hr.job_opening', omit: [] },
   'hr.candidate': { from: 'ludy_hr.candidate', omit: [] },
+  'hr.candidate_stage_transition': { from: 'ludy_hr.candidate_stage_transition', omit: [] },
   // The glossary the org keeps for Vy's spelling (#4043): plain text an owner or admin wrote (no personal data by its rules). Its owner_admin policy shows the system actor nothing, so the snapshot would
   // export an empty table: the owner's own session reads it here.
   'meetings.glossary_term': { from: 'ludy_meetings.glossary_term', omit: [] },

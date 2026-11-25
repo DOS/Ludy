@@ -114,9 +114,47 @@ export const recruitingAnalyticsQuery = defineQuery({
       };
     });
 
-    const reachedScreeningPlus = screeningCount + interviewCount + offerCount + hiredCount;
-    const reachedInterviewPlus = interviewCount + offerCount + hiredCount;
-    const reachedOfferPlus = offerCount + hiredCount;
+    const funnelStepsRes = await sql<{
+      from_stage: string;
+      to_stage: string;
+      entered_count: number;
+      reached_count: number;
+    }>`
+      WITH cohort AS (
+        SELECT c.org_id, c.legal_entity_id, c.id
+        FROM ludy_hr.candidate c
+        WHERE ${commonFilters(false)}
+      ),
+      steps(ord, from_stage, to_stage) AS (
+        VALUES
+          (1, 'applied'::text, 'screening'::text),
+          (2, 'screening'::text, 'interview'::text),
+          (3, 'interview'::text, 'offer'::text),
+          (4, 'offer'::text, 'hired'::text)
+      )
+      SELECT
+        s.from_stage,
+        s.to_stage,
+        pg_catalog.count(DISTINCT t_from.candidate_id)::int AS entered_count,
+        pg_catalog.count(DISTINCT CASE WHEN EXISTS (
+          SELECT 1
+          FROM ludy_hr.candidate_stage_transition t_to
+          WHERE t_to.org_id = t_from.org_id
+            AND t_to.legal_entity_id = t_from.legal_entity_id
+            AND t_to.candidate_id = t_from.candidate_id
+            AND t_to.to_stage = s.to_stage
+            AND (t_to.occurred_at, t_to.seq) > (t_from.occurred_at, t_from.seq)
+        ) THEN t_from.candidate_id END)::int AS reached_count
+      FROM steps s
+      LEFT JOIN cohort c ON true
+      LEFT JOIN ludy_hr.candidate_stage_transition t_from
+        ON t_from.org_id = c.org_id
+       AND t_from.legal_entity_id = c.legal_entity_id
+       AND t_from.candidate_id = c.id
+       AND t_from.to_stage = s.from_stage
+      GROUP BY s.ord, s.from_stage, s.to_stage
+      ORDER BY s.ord
+    `.execute(ctx.trx);
 
     const step = (
       fromStage: HrRecruitingConversionStep['fromStage'],
@@ -139,12 +177,14 @@ export const recruitingAnalyticsQuery = defineQuery({
       };
     };
 
-    const funnel: HrRecruitingConversionStep[] = [
-      step('applied', 'screening', totalCandidates, reachedScreeningPlus),
-      step('screening', 'interview', reachedScreeningPlus, reachedInterviewPlus),
-      step('interview', 'offer', reachedInterviewPlus, reachedOfferPlus),
-      step('offer', 'hired', reachedOfferPlus, hiredCount),
-    ];
+    const funnel: HrRecruitingConversionStep[] = funnelStepsRes.rows.map((row) =>
+      step(
+        row.from_stage as HrRecruitingConversionStep['fromStage'],
+        row.to_stage as HrRecruitingConversionStep['toStage'],
+        Number(row.entered_count),
+        Number(row.reached_count),
+      ),
+    );
 
     const tthRes = await sql<{ sample_size: number; avg_days: string | null; median_days: string | null }>`
       SELECT

@@ -54,14 +54,35 @@ export function CvIntakePanel({
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [openingId, setOpeningId] = useState(defaultOpeningId ?? '');
   const openOptions = openings.filter((o) => o.status === 'open');
+  const extractAbortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    return () => {
+      extractAbortRef.current?.abort();
+      extractAbortRef.current = null;
+    };
+  }, []);
+
+  const handleClose = () => {
+    extractAbortRef.current?.abort();
+    extractAbortRef.current = null;
+    onClose();
+  };
 
   const extract = useMutation({
     mutationFn: () => {
       if (!selectedFile) throw new Error('missing file');
+      extractAbortRef.current?.abort();
+      const controller = new AbortController();
+      extractAbortRef.current = controller;
       return extractRecruitingCv(selectedFile, {
         ...(openingId ? { openingId } : {}),
         lang: locale,
+        signal: controller.signal,
       });
+    },
+    onSettled: () => {
+      extractAbortRef.current = null;
     },
   });
 
@@ -75,7 +96,7 @@ export function CvIntakePanel({
           </div>
           <p className="mt-1 text-xs text-muted-foreground">{t('cvExtract.subtitle')}</p>
         </div>
-        <Button variant="ghost" size="sm" className="max-md:min-h-11" onClick={onClose}>
+        <Button variant="ghost" size="sm" className="max-md:min-h-11" onClick={handleClose}>
           {t('close')}
         </Button>
       </div>
@@ -87,6 +108,7 @@ export function CvIntakePanel({
             type="file"
             className="max-md:min-h-11"
             accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            disabled={extract.isPending}
             onChange={(e) => setSelectedFile(e.target.files?.[0] ?? null)}
             data-testid="hr-cv-file-input"
           />
@@ -97,6 +119,7 @@ export function CvIntakePanel({
             id="hr-cv-opening"
             className="max-md:[&_select]:min-h-11"
             value={openingId}
+            disabled={extract.isPending}
             onChange={(e) => setOpeningId(e.target.value)}
             data-testid="hr-cv-opening-select"
           >
@@ -114,13 +137,13 @@ export function CvIntakePanel({
         <Button
           className="max-md:min-h-11"
           loading={extract.isPending}
-          disabled={!selectedFile}
+          disabled={!selectedFile || extract.isPending}
           onClick={() => extract.mutate(undefined, { onSuccess: (draft) => onDraftReady(draft) })}
           data-testid="hr-cv-extract-submit"
         >
           {extract.isPending ? t('cvExtract.extracting') : t('cvExtract.extractButton')}
         </Button>
-        <Button variant="ghost" className="max-md:min-h-11" onClick={onClose}>
+        <Button variant="ghost" className="max-md:min-h-11" onClick={handleClose}>
           {t('cancel')}
         </Button>
       </div>
@@ -282,20 +305,36 @@ export function buildInviteSelectionKey(
   return `${contextKey}|${channel}|${interviewerUserId}|${locale}`;
 }
 
+function resetInviteStateOnSelectionChange<K extends string, V, T>(
+  currentValue: V,
+  nextValue: V,
+  fieldKey: K,
+  state: { draft: T | null; messageText: string; copied: boolean },
+): { changed: boolean; draft: T | null; messageText: string; copied: boolean } & Record<K, V> {
+  if (nextValue === currentValue) {
+    return { changed: false, ...state, [fieldKey]: currentValue } as { changed: boolean; draft: T | null; messageText: string; copied: boolean } & Record<K, V>;
+  }
+  return {
+    changed: true,
+    [fieldKey]: nextValue,
+    draft: null,
+    messageText: '',
+    copied: false,
+  } as { changed: boolean; draft: T | null; messageText: string; copied: boolean } & Record<K, V>;
+}
+
+export function applyInviteChannelChange<T>(
+  state: { channel: HrEngageChannel; draft: T | null; messageText: string; copied: boolean },
+  nextChannel: HrEngageChannel,
+): { changed: boolean; channel: HrEngageChannel; draft: T | null; messageText: string; copied: boolean } {
+  return resetInviteStateOnSelectionChange(state.channel, nextChannel, 'channel', state);
+}
+
 export function applyInviteInterviewerChange<T>(
   state: { interviewerUserId: string; draft: T | null; messageText: string; copied: boolean },
   nextInterviewerUserId: string,
 ): { changed: boolean; interviewerUserId: string; draft: T | null; messageText: string; copied: boolean } {
-  if (nextInterviewerUserId === state.interviewerUserId) {
-    return { changed: false, ...state };
-  }
-  return {
-    changed: true,
-    interviewerUserId: nextInterviewerUserId,
-    draft: null,
-    messageText: '',
-    copied: false,
-  };
+  return resetInviteStateOnSelectionChange(state.interviewerUserId, nextInterviewerUserId, 'interviewerUserId', state);
 }
 
 export function shouldAcceptInviteDraftResponse(
@@ -377,11 +416,15 @@ export function EngageInvitePanel({
   });
 
   const handleChannelChange = (nextChannel: HrEngageChannel) => {
-    setChannel(nextChannel);
-    if (nextChannel !== channel) {
-      requestSeqRef.current += 1;
-      selectionKeyRef.current = buildInviteSelectionKey(contextKey, nextChannel, interviewerUserId, locale);
-    }
+    const next = applyInviteChannelChange({ channel, draft, messageText, copied }, nextChannel);
+    if (!next.changed) return;
+    setChannel(next.channel);
+    setDraft(next.draft);
+    setMessageText(next.messageText);
+    setCopied(next.copied);
+    generate.reset();
+    requestSeqRef.current += 1;
+    selectionKeyRef.current = buildInviteSelectionKey(contextKey, nextChannel, interviewerUserId, locale);
   };
 
   const handleInterviewerChange = (nextInterviewerId: string) => {
