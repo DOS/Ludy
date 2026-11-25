@@ -1,35 +1,39 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Headroom of the database handle (#5026). These are type-level checks: `pnpm typecheck` enforces them; the test run only executes the
-// trivial assertions below. Kysely's Transaction<DB> extends Kysely<DB>, but TypeScript compares the two structurally, and the generic
-// $omitTables, $pickTables and withTables of the subclass pair every table name with every other: N tables make N * N unions, which passes
-// the compiler's 100000 limit at 317 tables (TS2590). `Db` therefore names both classes, so a transaction is identical to a union member and
-// nothing is compared. A schema of 400 tables, far past the old limit, must keep typechecking when a transaction is passed as the handle.
+// WIP experiment for #5026 (never merged in this form): at which schema size does passing a Transaction as the union handle, and as the plain Kysely, hit TS2590.
 import type { Kysely, Transaction } from 'kysely';
-import { describe, expect, expectTypeOf, it } from 'vitest';
-import type { Db } from '../src/index.ts';
-import type { Database } from '../src/schema.ts';
+import { describe, expect, it } from 'vitest';
 
 type Digit = '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9';
-// The names t000 to t399.
-type TableName = `t${'0' | '1' | '2' | '3'}${Digit}${Digit}`;
-type Wide = { [N in TableName]: { id: string; name: string } };
-type WideDb = Kysely<Wide> | Transaction<Wide>;
+type Row = { id: string; name: string };
+type N300 = `t${'0' | '1' | '2'}${Digit}${Digit}`;
+type N330 = N300 | `t3${'0' | '1' | '2'}${Digit}`;
+type N350 = N300 | `t3${'0' | '1' | '2' | '3' | '4'}${Digit}`;
+type N400 = `t${'0' | '1' | '2' | '3'}${Digit}${Digit}`;
+type W300 = { [N in N300]: Row };
+type W330 = { [N in N330]: Row };
+type W350 = { [N in N350]: Row };
+type W400 = { [N in N400]: Row };
 
-function takesWide(_db: WideDb): void {}
+// A: the union handle, smallest first.
+declare function unionTakes300(db: Kysely<W300> | Transaction<W300>): void;
+declare function unionTakes330(db: Kysely<W330> | Transaction<W330>): void;
+declare function unionTakes350(db: Kysely<W350> | Transaction<W350>): void;
+declare function unionTakes400(db: Kysely<W400> | Transaction<W400>): void;
+// B: the plain Kysely handle (the structural comparison), controls.
+declare function plainTakes300(db: Kysely<W300>): void;
+declare function plainTakes330(db: Kysely<W330>): void;
 
-// Compiled, never run: a command's transaction and the pool's handle both pass as the handle, and queries still type.
-function compileOnly(tx: Transaction<Wide>, pool: Kysely<Wide>, handle: WideDb) {
-  takesWide(tx);
-  takesWide(pool);
-  return [tx.selectFrom('t399').select('id'), handle.selectFrom('t000').selectAll()] as const;
+export function experiments(t300: Transaction<W300>, t330: Transaction<W330>, t350: Transaction<W350>, t400: Transaction<W400>) {
+  unionTakes300(t300);
+  unionTakes330(t330);
+  unionTakes350(t350);
+  unionTakes400(t400);
+  plainTakes300(t300);
+  plainTakes330(t330);
 }
 
-describe('the database handle', () => {
-  it('takes a Transaction at 400 tables (the union form has headroom)', () => {
-    expect(typeof compileOnly).toBe('function');
-  });
-
-  it('is the union of the pool handle and the transaction, so no structural comparison runs', () => {
-    expectTypeOf<Db>().toEqualTypeOf<Kysely<Database> | Transaction<Database>>();
+describe('experiment', () => {
+  it('compiles', () => {
+    expect(typeof experiments).toBe('function');
   });
 });
