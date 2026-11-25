@@ -39,7 +39,7 @@ The app and the API must be the same build, or a bundle may call a route its API
   - **Dedicated single-repo GitHub App:** To push `release` across `.github/workflows/*` changes with least privilege:
     1. Create a dedicated GitHub App in the repository owner's account or organization with repository permissions **`Contents: Read and write`** and **`Workflows: Read and write`** ONLY (no other repository or organization permissions), and install it **only on this repository**.
     2. Store `RELEASE_BRANCH_APP_CLIENT_ID` (environment variable) and `RELEASE_BRANCH_APP_PRIVATE_KEY` (environment secret) in the GitHub **`release` environment ONLY** (never at repository or organization level).
-    3. Keep the `release` environment's deployment branches/tags restricted to `main` only, and do **not** grant the App bypass privileges on `main`'s branch protection or rulesets.
+    3. Keep the `release` environment's deployment branches/tags restricted to `main` only, and do **not** grant the App bypass privileges on `main`'s branch protection or rulesets, or on the `v*` tag ruleset.
     4. Allow this App (and `github-actions[bot]` if keeping the fallback) to force-push `refs/heads/release` in the `release` branch ruleset.
   - **Fallback behavior:** If both `RELEASE_BRANCH_APP_CLIENT_ID` and `RELEASE_BRANCH_APP_PRIVATE_KEY` are unset, `release-branch.yml` falls back to `GITHUB_TOKEN` (which works for releases whose commit range touches no `.github/workflows/*` files, and fails with setup instructions if a workflow diff is present). Setting only one of the two fails the run before minting or pushing.
 
@@ -65,7 +65,7 @@ The repository names no deployment's address. Set these in the static host's pro
 
 - **`TRUSTED_PROXY_HOPS`** counts the proxies that append to `X-Forwarded-For`. Behind Google's external Application Load Balancer, Cloud Run sees two (the balancer and Google's front end), so set `2`; with `1` or `0` every client shares one address, and so one rate-limit and email budget ([pilot-readiness.md](pilot-readiness.md)). `pnpm pilot:check --url` shows the effect on a real request.
 - **`APP_URL` goes to every process that builds a link: the API and the worker** (mail and chat alerts are sent by the worker). `CORS_ALLOWED_ORIGINS` is the API's alone.
-- **Protection rules must still let the workflow push.** The branch rule or ruleset on `release` must allow the dedicated release-branch GitHub App (and `github-actions[bot]` for fallback / non-workflow releases) to force-push `refs/heads/release`, without giving that App bypass privileges on `main`'s branch protection or rulesets. The tag rule on `v*` must limit who creates tags without blocking the maintainers who run the release. After setting both, run `release-branch` once and check that `release` moved.
+- **Protection rules must still let the workflow push.** The branch rule or ruleset on `release` must allow the dedicated release-branch GitHub App (and `github-actions[bot]` for fallback / non-workflow releases) to force-push `refs/heads/release`, without giving that App bypass privileges on `main`'s branch protection or rulesets, or on the `v*` tag ruleset. The tag rule on `v*` must limit who creates tags without blocking the maintainers who run the release. After setting both, run `release-branch` once and check that `release` moved.
 
 ## Checks
 

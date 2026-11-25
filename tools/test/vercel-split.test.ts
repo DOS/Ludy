@@ -2,7 +2,7 @@
 // The Vercel side of a split deployment (#2261): the app's headers match what the kernel serves with the app, production
 // builds only a release, and the workflow that moves the release branch runs on tags of main only.
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -235,10 +235,23 @@ describe('.github/workflows/release-branch.yml', () => {
     expect(mint).toContain('skip-token-revoke: false');
   });
 
-  it('passes git tokens via ephemeral GIT_CONFIG_COUNT extraheader env vars, never CLI args or URLs', () => {
+  it('passes git tokens via ephemeral GIT_CONFIG_COUNT extraheader env vars, never CLI args or URLs, with fail-closed push auth', () => {
     const fetchRun = extractStepRun('The tag is a release on main');
+    const pushStep = stepBlock('Point release at the tagged commit');
     const pushRun = extractStepRun('Point release at the tagged commit');
+
+    expect(pushStep).toContain('USE_APP: ${{ steps.push-auth.outputs.use_app }}');
+    expect(pushStep).toContain('APP_TOKEN: ${{ steps.app-token.outputs.token }}');
+    expect(pushStep).toContain("FALLBACK_TOKEN: ${{ steps.push-auth.outputs.use_app != 'true' && github.token || '' }}");
+    expect(pushStep).not.toContain('steps.app-token.outputs.token || github.token');
+    expect(workflow).toContain('::add-mask::');
+    expect(workflow).toContain('mktemp');
+    expect(workflow).toContain('^[0-9a-f]{40}$');
+    expect(pushRun).toContain('mktemp "$RUNNER_TEMP/release-push.XXXXXX"');
+    expect(pushRun).toContain('^[0-9a-f]{40}$');
+
     for (const script of [fetchRun, pushRun]) {
+      expect(script).toContain('::add-mask::');
       expect(script).toContain('GIT_TERMINAL_PROMPT=0');
       expect(script).toContain('GIT_CONFIG_COUNT=2');
       expect(script).toContain('GIT_CONFIG_KEY_0="http.${GITHUB_SERVER_URL}/.extraheader"');
@@ -337,6 +350,7 @@ describe('.github/workflows/release-branch.yml', () => {
         env: {
           ...process.env,
           PATH: `${binDir}${delimiter}${process.env.PATH ?? ''}`,
+          GITHUB_ACTIONS: 'true',
           GITHUB_OUTPUT: outFile,
           GITHUB_SERVER_URL: 'https://github.com',
           GH_TOKEN: token,
@@ -346,15 +360,17 @@ describe('.github/workflows/release-branch.yml', () => {
       expect(res.status).toBe(0);
       expect(readFileSync(outFile, 'utf8').trim()).toBe('sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
       const expectedBasic = Buffer.from(`x-access-token:${token}`).toString('base64');
+      expect(res.stdout).toContain(`::add-mask::${expectedBasic}`);
       const lines = readFileSync(gitLog, 'utf8').trim().split('\n');
       expect(lines[0]).toContain('ARGS:fetch --no-tags origin main refs/tags/v0.3.12:refs/tags/v0.3.12');
       expect(lines[0]).toContain(`COUNT:2 PROMPT:0 K0:http.https://github.com/.extraheader V0: K1:http.https://github.com/.extraheader V1:AUTHORIZATION: basic ${expectedBasic}`);
       expect(lines[0]).not.toContain(token);
     });
 
-    it('guides operators when github-token fallback hits workflows permission rejection and uses ephemeral auth for github-app', () => {
+    it('fails closed on invalid auth state or SHA, detects backticked or plain workflows permission errors, and masks base64 auth', () => {
       const script = extractStepRun('Point release at the tagged commit');
-      const setupGitStub = (mode: 'ok' | 'workflows-denied' | 'other-denied') => {
+      type PushStubMode = 'ok' | 'workflows-denied-plain' | 'workflows-denied-backticked' | 'other-denied';
+      const setupGitStub = (mode: PushStubMode) => {
         const dir = mkdtempSync(join(tmpdir(), 'ludy-release-push-'));
         tempDirs.push(dir);
         const binDir = join(dir, 'bin');
@@ -367,11 +383,13 @@ describe('.github/workflows/release-branch.yml', () => {
         writeFileSync(gitLog, '');
         const stubPath = join(binDir, 'git');
         const pushBody =
-          mode === 'workflows-denied'
+          mode === 'workflows-denied-plain'
             ? '  echo "! [remote rejected] 2222222 -> release (refusing to allow a GitHub App to create or update workflow .github/workflows/ci.yml without workflows permission)" >&2\n  exit 1'
-            : mode === 'other-denied'
-              ? '  echo "! [remote rejected] 2222222 -> release (protected branch hook declined)" >&2\n  exit 1'
-              : '  echo "To https://github.com/DOS/Ludy.git" >&2\n  exit 0';
+            : mode === 'workflows-denied-backticked'
+              ? "  echo '! [remote rejected] 2222222 -> release (refusing to allow a GitHub App to create or update workflow `.github/workflows/ci.yml` without `workflows` permission)' >&2\n  exit 1"
+              : mode === 'other-denied'
+                ? '  echo "! [remote rejected] 2222222 -> release (protected branch hook declined)" >&2\n  exit 1'
+                : '  echo "To https://github.com/DOS/Ludy.git" >&2\n  exit 0';
         writeFileSync(
           stubPath,
           [
@@ -393,94 +411,126 @@ describe('.github/workflows/release-branch.yml', () => {
         return { dir, binDir, runnerTemp, summary, gitLog };
       };
 
-      const denied = setupGitStub('workflows-denied');
-      const deniedRes = spawnSync('bash', ['-c', script], {
-        encoding: 'utf8',
-        env: {
-          ...process.env,
-          PATH: `${denied.binDir}${delimiter}${process.env.PATH ?? ''}`,
-          RUNNER_TEMP: denied.runnerTemp,
-          GITHUB_STEP_SUMMARY: denied.summary,
-          GITHUB_SERVER_URL: 'https://github.com',
-          TAG: 'v0.3.11',
-          SHA: '2222222222222222222222222222222222222222',
-          PUSH_TOKEN: 'ghs_test_default_token',
-          AUTH_MODE: 'github-token',
-        },
-      });
-      expect(deniedRes.status).toBe(1);
-      expect(deniedRes.stderr).toContain('without workflows permission');
-      expect(deniedRes.stdout).toContain('::error::');
-      expect(deniedRes.stdout).toContain('RELEASE_BRANCH_APP_CLIENT_ID');
-      expect(deniedRes.stdout).toContain('RELEASE_BRANCH_APP_PRIVATE_KEY');
-      expect(deniedRes.stdout).toContain('docs/runbooks/split-app-api.md');
-      expect(existsSync(join(denied.runnerTemp, 'release-push.err'))).toBe(false);
+      const runPush = (
+        mode: PushStubMode,
+        overrides: Partial<Record<'TAG' | 'SHA' | 'USE_APP' | 'APP_TOKEN' | 'FALLBACK_TOKEN' | 'GITHUB_ACTIONS', string>>,
+      ) => {
+        const ctx = setupGitStub(mode);
+        const res = spawnSync('bash', ['-c', script], {
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            PATH: `${ctx.binDir}${delimiter}${process.env.PATH ?? ''}`,
+            RUNNER_TEMP: ctx.runnerTemp,
+            GITHUB_STEP_SUMMARY: ctx.summary,
+            GITHUB_SERVER_URL: 'https://github.com',
+            GITHUB_ACTIONS: overrides.GITHUB_ACTIONS ?? 'true',
+            TAG: overrides.TAG ?? 'v0.3.11',
+            SHA: overrides.SHA ?? '2222222222222222222222222222222222222222',
+            USE_APP: overrides.USE_APP ?? 'false',
+            APP_TOKEN: overrides.APP_TOKEN ?? '',
+            FALLBACK_TOKEN: overrides.FALLBACK_TOKEN ?? '',
+          },
+        });
+        return {
+          ...res,
+          summary: readFileSync(ctx.summary, 'utf8'),
+          gitLog: readFileSync(ctx.gitLog, 'utf8'),
+          tempLeftovers: readdirSync(ctx.runnerTemp),
+        };
+      };
 
-      const otherDenied = setupGitStub('other-denied');
-      const otherRes = spawnSync('bash', ['-c', script], {
-        encoding: 'utf8',
-        env: {
-          ...process.env,
-          PATH: `${otherDenied.binDir}${delimiter}${process.env.PATH ?? ''}`,
-          RUNNER_TEMP: otherDenied.runnerTemp,
-          GITHUB_STEP_SUMMARY: otherDenied.summary,
-          GITHUB_SERVER_URL: 'https://github.com',
-          TAG: 'v0.3.11',
-          SHA: '2222222222222222222222222222222222222222',
-          PUSH_TOKEN: 'ghs_test_default_token',
-          AUTH_MODE: 'github-token',
-        },
+      // Blocking #1: USE_APP=true with empty APP_TOKEN must refuse to fall back to FALLBACK_TOKEN and never call git.
+      const emptyAppToken = runPush('ok', {
+        USE_APP: 'true',
+        APP_TOKEN: '',
+        FALLBACK_TOKEN: 'ghs_should_never_be_used',
+      });
+      expect(emptyAppToken.status).toBe(1);
+      expect(emptyAppToken.stdout).toContain('refusing to fall back to GITHUB_TOKEN');
+      expect(emptyAppToken.gitLog).toBe('');
+      expect(emptyAppToken.tempLeftovers).toEqual([]);
+
+      // Unexpected or empty USE_APP must fail closed before calling git.
+      for (const badState of ['', 'maybe']) {
+        const badStateRes = runPush('ok', {
+          USE_APP: badState,
+          APP_TOKEN: 'ghs_unused',
+          FALLBACK_TOKEN: 'ghs_unused',
+        });
+        expect(badStateRes.status).toBe(1);
+        expect(badStateRes.stdout).toContain('unexpected push-auth state');
+        expect(badStateRes.gitLog).toBe('');
+        expect(badStateRes.tempLeftovers).toEqual([]);
+      }
+
+      // Invalid $SHA must fail closed before calling git.
+      for (const badSha of ['', 'not-a-sha', '2222222', 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA']) {
+        const badShaRes = runPush('ok', {
+          SHA: badSha,
+          USE_APP: 'false',
+          FALLBACK_TOKEN: 'ghs_test_default_token',
+        });
+        expect(badShaRes.status).toBe(1);
+        expect(badShaRes.stdout).toContain('unexpected release commit SHA');
+        expect(badShaRes.gitLog).toBe('');
+        expect(badShaRes.tempLeftovers).toEqual([]);
+      }
+
+      // Blocking #2: both plain and backticked GitHub rejections emit setup error guidance in github-token mode.
+      for (const deniedMode of ['workflows-denied-plain', 'workflows-denied-backticked'] as const) {
+        const deniedRes = runPush(deniedMode, {
+          USE_APP: 'false',
+          FALLBACK_TOKEN: 'ghs_test_default_token',
+        });
+        expect(deniedRes.status).toBe(1);
+        expect(deniedRes.stderr).toContain('permission');
+        expect(deniedRes.stdout).toContain('::error::');
+        expect(deniedRes.stdout).toContain('RELEASE_BRANCH_APP_CLIENT_ID');
+        expect(deniedRes.stdout).toContain('RELEASE_BRANCH_APP_PRIVATE_KEY');
+        expect(deniedRes.stdout).toContain('docs/runbooks/split-app-api.md');
+        expect(deniedRes.tempLeftovers).toEqual([]);
+      }
+
+      // Non-workflows rejection must not emit app setup hint.
+      const otherRes = runPush('other-denied', {
+        USE_APP: 'false',
+        FALLBACK_TOKEN: 'ghs_test_default_token',
       });
       expect(otherRes.status).toBe(1);
       expect(otherRes.stderr).toContain('protected branch hook declined');
       expect(otherRes.stdout).not.toContain('RELEASE_BRANCH_APP_CLIENT_ID');
-      expect(existsSync(join(otherDenied.runnerTemp, 'release-push.err'))).toBe(false);
+      expect(otherRes.tempLeftovers).toEqual([]);
 
-      const fallbackOk = setupGitStub('ok');
-      const fallbackRes = spawnSync('bash', ['-c', script], {
-        encoding: 'utf8',
-        env: {
-          ...process.env,
-          PATH: `${fallbackOk.binDir}${delimiter}${process.env.PATH ?? ''}`,
-          RUNNER_TEMP: fallbackOk.runnerTemp,
-          GITHUB_STEP_SUMMARY: fallbackOk.summary,
-          GITHUB_SERVER_URL: 'https://github.com',
-          TAG: 'v0.3.11',
-          SHA: '2222222222222222222222222222222222222222',
-          PUSH_TOKEN: 'ghs_test_default_token',
-          AUTH_MODE: 'github-token',
-        },
+      // Fallback success when USE_APP=false.
+      const fallbackRes = runPush('ok', {
+        USE_APP: 'false',
+        FALLBACK_TOKEN: 'ghs_test_default_token',
       });
       expect(fallbackRes.status).toBe(0);
-      expect(readFileSync(fallbackOk.summary, 'utf8').trim()).toBe(
+      expect(fallbackRes.summary.trim()).toBe(
         'release: 1111111111111111111111111111111111111111 -> 2222222222222222222222222222222222222222 (v0.3.11) via github-token',
       );
-      expect(existsSync(join(fallbackOk.runnerTemp, 'release-push.err'))).toBe(false);
+      expect(fallbackRes.tempLeftovers).toEqual([]);
 
-      const appOk = setupGitStub('ok');
+      // GitHub App success with GITHUB_ACTIONS=true verifies ::add-mask:: without polluting $before in summary.
       const token = 'ghs_test_app_token_secret';
-      const appRes = spawnSync('bash', ['-c', script], {
-        encoding: 'utf8',
-        env: {
-          ...process.env,
-          PATH: `${appOk.binDir}${delimiter}${process.env.PATH ?? ''}`,
-          RUNNER_TEMP: appOk.runnerTemp,
-          GITHUB_STEP_SUMMARY: appOk.summary,
-          GITHUB_SERVER_URL: 'https://github.com',
-          TAG: 'v0.3.12',
-          SHA: '2222222222222222222222222222222222222222',
-          PUSH_TOKEN: token,
-          AUTH_MODE: 'github-app',
-        },
+      const appRes = runPush('ok', {
+        TAG: 'v0.3.12',
+        USE_APP: 'true',
+        APP_TOKEN: token,
+        FALLBACK_TOKEN: '',
+        GITHUB_ACTIONS: 'true',
       });
       expect(appRes.status).toBe(0);
       expect(appRes.stderr).toContain('To https://github.com/DOS/Ludy.git');
-      expect(existsSync(join(appOk.runnerTemp, 'release-push.err'))).toBe(false);
-      expect(readFileSync(appOk.summary, 'utf8').trim()).toBe(
+      expect(appRes.tempLeftovers).toEqual([]);
+      const expectedBasic = Buffer.from(`x-access-token:${token}`).toString('base64');
+      expect(appRes.stdout).toContain(`::add-mask::${expectedBasic}`);
+      expect(appRes.summary.trim()).toBe(
         'release: 1111111111111111111111111111111111111111 -> 2222222222222222222222222222222222222222 (v0.3.12) via github-app',
       );
-      const expectedBasic = Buffer.from(`x-access-token:${token}`).toString('base64');
-      const invocations = readFileSync(appOk.gitLog, 'utf8').trim().split('\n');
+      const invocations = appRes.gitLog.trim().split('\n');
       expect(invocations).toHaveLength(2);
       for (const line of invocations) {
         expect(line).toContain('COUNT:2 PROMPT:0 K0:http.https://github.com/.extraheader V0: K1:http.https://github.com/.extraheader');
