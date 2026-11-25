@@ -127,7 +127,7 @@ const PENDING_TABLES = new Set<string>([
   'crove_kernel.agent_grant',
   'crove_kernel.agent_wake_delivery',
   'crove_kernel.agent_wake_signal_seen',
-  'crove_kernel.ai_budget_reservation',
+  'crove_kernel.member_home_layout',
   'crove_kernel.member_permission_override',
   'crove_kernel.member_vy_memory',
   'crove_kernel.member_vy_result',
@@ -214,6 +214,7 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   ['crove_kernel.inbox_item', () => 'false'], // Per member.
   ['crove_kernel.meeting_platform_connection', () => 'false'], // A member's own connection to a meeting platform (meetings integrations C1, #3173).
   ['crove_kernel.meeting_platform_recording', () => 'false'], // A member's own suggested and imported platform recordings, read by that member, a user (C1, #3173).
+  ['crove_kernel.member_home_layout', () => 'false'], // A member's own Global Home layout preference (#4925); read by that member in a user context, never by an agent context.
   ['crove_kernel.member_permission_override', () => 'false'], // Read by the member and the admins in a user context.
   ['crove_kernel.member_vy_memory', (m) => `t.member_user_id OPERATOR(pg_catalog.=) '${m}'::uuid`], // Catalog 'read': its own member's entries (the matrix seeds none for it).
   ['crove_kernel.member_vy_result', (m) => `t.member_user_id OPERATOR(pg_catalog.=) '${m}'::uuid`], // Its own member's results (the matrix seeds none for it).
@@ -2750,7 +2751,7 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   },
   // #3979: short-lived in-flight AI budget reservation holds created during concurrent admission under an org lock.
   // Written and deleted by tenant/worker runtime commands (never edited in place: REVOKE UPDATE); agent_write_guard
-  // blocks org-chart and member_vy agent contexts. Its factory lands before the table (PENDING_TABLES, step 0).
+  // blocks org-chart and member_vy agent contexts.
   'crove_kernel.ai_budget_reservation': {
     make: (o) => ({
       row: { org_id: o.id, id: randomUUID(), module: 'social', feature: 'social.draft', amount: '0.001000', expires_at: '2099-01-01T00:00:00Z' },
@@ -3149,6 +3150,19 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
     update: { set: 'status = status' },
     noInsertControl: 'one row per member (UNIQUE (org_id, user_id)); a member writes their own, through its command (conversations-inbox.db.test.ts tests it)',
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), user_id: o.owner, status: 'available' } }),
+  },
+  // A member's own Global Home layout preference (#4923, #4925, step 0): one row per member (unique on (org_id, user_id)), under a restrictive
+  // own-member policy (and system context); agents read and write none. Its factory lands before the table (PENDING_TABLES).
+  'crove_kernel.member_home_layout': {
+    update: { set: 'layout_json = layout_json' },
+    noInsertControl: 'one row per member (unique on (org_id, user_id)); a member writes their own through kernel.member.home_layout.save (tested in Step 1)',
+    make: (o) => ({
+      row: {
+        org_id: o.id,
+        user_id: o.owner,
+        layout_json: JSON.stringify({ v: 1, blocks: [{ id: 'teamwork_my_work', visible: true }] }),
+      },
+    }),
   },
   // Pending member invites (issue #35). An open invite per (org, email), so every row gets its own address. Token
   // hash and expiry take their defaults (an unusable random hash, seven days). Tenant roles may update only status,

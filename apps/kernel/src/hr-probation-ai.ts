@@ -13,7 +13,7 @@ import type { HrProbationDraftAsk, HrProbationDraftResult } from '@ludy/kernel-c
 import { DomainError, type Actor, type Runtime } from '@ludy/kernel-runtime';
 import type { HrProbationBriefSource } from '@ludy/mod-hr';
 import type { DraftBudget } from './ai-draft-limit.ts';
-import { memberMeter, type MeterOptions } from './ai-meter.ts';
+import { guardAiMeter, memberMeter, type MeterOptions } from './ai-meter.ts';
 
 export interface HrProbationAi {
   reader: Partial<Pick<InboxReader, 'hrProbationSummary'>> | null;
@@ -97,15 +97,10 @@ export async function draftProbationSummary(
   const baseMeter =
     meter === 'runtime' ? memberMeter(runtime as Runtime, actor, meterOptions ?? {}) : meter;
 
-  const guardedMeter: AiMeter = {
-    admit: async (call) => {
-      if (await ports.isAiStopped()) {
-        throw new HrProbationAiStoppedError();
-      }
-      return baseMeter.admit(call);
-    },
-    record: (call, usage) => baseMeter.record(call, usage),
-  };
+  const guardedMeter = guardAiMeter(baseMeter, {
+    isStopped: () => ports.isAiStopped(),
+    stoppedError: () => new HrProbationAiStoppedError(),
+  });
 
   try {
     const out = await withAiScope({ orgId, meter: guardedMeter }, () =>

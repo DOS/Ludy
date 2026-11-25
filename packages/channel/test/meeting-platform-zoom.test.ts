@@ -134,7 +134,7 @@ describe('ZoomMeetingPlatform.list', () => {
     }
   });
 
-  it('does not offer a kind of file that Zoom made in several segments (a host who stopped and started recording): importing one would hand over part of the meeting', async () => {
+  it('does not offer a kind of file that Zoom made in several segments when their order is not known (a host who stopped and started recording): joining them could scramble the meeting', async () => {
     const file = (id: string, type: string, kind: string, size: number) => ({ id, file_type: type, file_size: size, recording_type: kind, status: 'completed', download_url: `https://us02web.zoom.us/rec/download/${id}` });
     const meeting = (uuid: string, files: unknown[]) => ({ uuid, topic: uuid, start_time: '2026-11-17T01:00:00Z', duration: 10, recording_files: files });
     const { adapter } = zoom([
@@ -502,5 +502,81 @@ describe('the Zoom adapter\'s hosts and registration', () => {
     expect(Object.keys(on)).toEqual(['zoom']);
     expect(on.zoom).toBeInstanceOf(ZoomMeetingPlatform);
     expect(on.zoom?.provider).toBe('zoom');
+  });
+});
+
+describe('a recording made in several segments is offered as one, in the order it was recorded (#3175)', () => {
+  const part = (id: string, start: string | undefined, size: number | undefined, kind = 'audio_only', type = 'M4A') => ({
+    id,
+    file_type: type,
+    ...(size === undefined ? {} : { file_size: size }),
+    recording_type: kind,
+    ...(start === undefined ? {} : { recording_start: start }),
+    status: 'completed',
+    download_url: `https://us02web.zoom.us/rec/download/${id}`,
+  });
+  const meeting = (files: unknown[]) => ({ uuid: 'U1', id: 123456789, topic: 'Họp nhiều phần', start_time: '2026-11-17T01:00:00Z', duration: 60, recording_files: files });
+  const listed = async (files: unknown[]) => (await zoom([{ json: { meetings: [meeting(files)] } }]).adapter.list(CREDENTIAL, SINCE))[0];
+
+  it('offers audio parts that each say when they started, with the size of all of them together', async () => {
+    const entry = await listed([part('a2', '2026-11-17T01:30:00Z', 20), part('a1', '2026-11-17T01:00:00Z', 10), part('a3', '2026-11-17T01:45:00Z', 5)]);
+    expect(entry).toMatchObject({ hasAudio: true, hasVideo: false, sizeBytes: 35 });
+    // A transcript beside them does not make them a transcript-only recording, and the parts are offered by their audio.
+    expect(await listed([part('a1', '2026-11-17T01:00:00Z', 10), part('a2', '2026-11-17T01:30:00Z', 10), part('t', undefined, 3, 'audio_transcript', 'TRANSCRIPT')])).toMatchObject({ hasAudio: true, hasTranscript: true, sizeBytes: 20 });
+  });
+
+  it('does not know the total size when one part has none, and offers video parts when there is no audio', async () => {
+    expect(await listed([part('a1', '2026-11-17T01:00:00Z', 10), part('a2', '2026-11-17T01:30:00Z', undefined)])).toMatchObject({ hasAudio: true, sizeBytes: null });
+    expect(await listed([part('v1', '2026-11-17T01:00:00Z', 100, 'shared_screen_with_speaker_view', 'MP4'), part('v2', '2026-11-17T01:30:00Z', 200, 'shared_screen_with_speaker_view', 'MP4')])).toMatchObject({ hasAudio: false, hasVideo: true, sizeBytes: 300 });
+  });
+
+  it('does not offer parts whose order is not known, that are the same file twice, or that are more than eight', async () => {
+    expect(await listed([part('a1', '2026-11-17T01:00:00Z', 10), part('a2', undefined, 10)])).toBeUndefined();
+    expect(await listed([part('a1', '2026-11-17T01:00:00Z', 10), part('a2', 'not a date', 10)])).toBeUndefined();
+    expect(await listed([part('a1', '2026-11-17T01:00:00Z', 10), part('a1', '2026-11-17T01:30:00Z', 10)])).toBeUndefined();
+    const many = Array.from({ length: 9 }, (_, i) => part(`a${i}`, `2026-11-17T01:${String(i).padStart(2, '0')}:00Z`, 1));
+    expect(await listed(many)).toBeUndefined();
+    expect(await listed(many.slice(0, 8))).toMatchObject({ hasAudio: true, sizeBytes: 8 });
+  });
+
+  it('does not join two views of one stretch: files that began together, files of a kind outside the known ones, or files of different kinds', async () => {
+    expect(await listed([part('a1', '2026-11-17T01:00:00Z', 10), part('a2', '2026-11-17T01:00:00Z', 10)])).toBeUndefined();
+    expect(await listed([part('v1', '2026-11-17T01:00:00Z', 10, 'speaker_view', 'MP4'), part('v2', '2026-11-17T01:30:00Z', 10, 'sign_interpretation', 'MP4')])).toBeUndefined();
+    expect(await listed([part('v1', '2026-11-17T01:00:00Z', 10, 'speaker_view', 'MP4'), part('v2', '2026-11-17T01:30:00Z', 10, 'speaker_view', 'MP4')])).toBeUndefined();
+    // One file of a kind we do not know is still the recording.
+    expect(await listed([part('v1', '2026-11-17T01:00:00Z', 10, 'speaker_view', 'MP4')])).toMatchObject({ hasVideo: true, sizeBytes: 10 });
+  });
+
+  it('does not offer a kind while one of its segments is still processing', async () => {
+    const pending = { ...part('a2', '2026-11-17T01:30:00Z', 10), status: 'processing' };
+    expect(await listed([part('a1', '2026-11-17T01:00:00Z', 10), pending])).toBeUndefined();
+    expect(await listed([part('a1', '2026-11-17T01:00:00Z', 10), part('a2', '2026-11-17T01:30:00Z', 10)])).toMatchObject({ hasAudio: true, sizeBytes: 20 });
+  });
+
+  it('describes the parts for the job in recording order, each as a single file is described, and none for a recording of one file', async () => {
+    const files = [part('a2', '2026-11-17T01:30:00Z', 20), part('a1', '2026-11-17T01:00:00Z', 10)];
+    const { adapter, calls } = zoom([{ json: { recording_files: files } }]);
+    const parts = await adapter.prepareParts(CREDENTIAL, 'U1', 'audio');
+    expect(calls).toHaveLength(1);
+    expect(parts.map((p) => [p.url, p.sizeBytes, p.contentType, p.format])).toEqual([
+      ['https://us02web.zoom.us/rec/download/a1', 10, 'audio/mp4', 'audio'],
+      ['https://us02web.zoom.us/rec/download/a2', 20, 'audio/mp4', 'audio'],
+    ]);
+    for (const p of parts) expect(p).toMatchObject({ headers: { authorization: `Bearer ${CREDENTIAL.accessToken}` }, hosts: ['us02web.zoom.us'], hostSuffixes: [ZOOM_DOWNLOAD_SUFFIX] });
+    expect(await zoom([{ json: { recording_files: [part('a1', '2026-11-17T01:00:00Z', 10)] } }]).adapter.prepareParts(CREDENTIAL, 'U1', 'audio')).toEqual([]);
+    expect(await zoom([{ json: { recording_files: [part('a1', '2026-11-17T01:00:00Z', 10), part('a2', '2026-11-17T01:30:00Z', 10)] } }]).adapter.prepareParts(CREDENTIAL, 'U1', 'video')).toEqual([]);
+    const video = [part('v2', '2026-11-17T01:30:00Z', 2, 'active_speaker', 'MP4'), part('v1', '2026-11-17T01:00:00Z', 1, 'active_speaker', 'MP4')];
+    const videoParts = await zoom([{ json: { recording_files: video } }]).adapter.prepareParts(CREDENTIAL, 'U1', 'video');
+    expect(videoParts.map((p) => [p.url.split('/').pop(), p.contentType])).toEqual([['v1', 'video/mp4'], ['v2', 'video/mp4']]);
+  });
+
+  it('refuses the whole list when one part is off Zoom\'s hosts, an id that climbs the path, with no call, and leaves a single file to prepareDownload', async () => {
+    const bad = { ...part('a2', '2026-11-17T01:30:00Z', 10), download_url: 'https://evil.example/rec/a2' };
+    expect(await codeOf(zoom([{ json: { recording_files: [part('a1', '2026-11-17T01:00:00Z', 10), bad] } }]).adapter.prepareParts(CREDENTIAL, 'U1', 'audio'))).toBe('platform_refused');
+    const t = zoom([{ json: {} }]);
+    expect(await codeOf(t.adapter.prepareParts(CREDENTIAL, '..', 'audio'))).toBe('recording_gone');
+    expect(t.calls).toHaveLength(0);
+    // prepareDownload still answers one file only: parts are the job's other step.
+    expect(await codeOf(zoom([{ json: { recording_files: [part('a1', '2026-11-17T01:00:00Z', 10), part('a2', '2026-11-17T01:30:00Z', 10)] } }]).adapter.prepareDownload(CREDENTIAL, 'U1', 'audio'))).toBe('no_audio');
   });
 });

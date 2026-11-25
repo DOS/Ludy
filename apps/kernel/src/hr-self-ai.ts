@@ -25,7 +25,7 @@ import {
 import { DomainError, type Actor, type Runtime } from '@ludy/kernel-runtime';
 import type { HrSelfAiStatusContext, HrSelfPolicySearchContext } from '@ludy/mod-hr';
 import type { DraftBudget } from './ai-draft-limit.ts';
-import { memberMeter, type MeterOptions } from './ai-meter.ts';
+import { guardAiMeter, memberMeter, type MeterOptions } from './ai-meter.ts';
 
 export interface HrSelfAi {
   reader: Partial<Pick<InboxReader, 'hrRequestDraft' | 'hrPolicyQa'>> | null;
@@ -68,24 +68,12 @@ function buildGuardedMeter(
   }
   const baseMeter =
     meter === 'runtime' ? memberMeter(runtime as Runtime, actor, meterOptions ?? {}) : meter;
-  return {
-    admit: async (call) => {
-      try {
-        if (await isAiStopped(includeNotes)) {
-          throw new HrSelfAiStoppedError();
-        }
-        const admitted = await baseMeter.admit(call);
-        if (await isAiStopped(includeNotes)) {
-          throw new HrSelfAiStoppedError();
-        }
-        return admitted;
-      } catch (error: unknown) {
-        onAdmitRejected?.();
-        throw error;
-      }
-    },
-    record: (call, usage) => baseMeter.record(call, usage),
-  };
+  return guardAiMeter(baseMeter, {
+    isStopped: () => isAiStopped(includeNotes),
+    stoppedError: () => new HrSelfAiStoppedError(),
+    checkStoppedAfterAdmit: true,
+    ...(onAdmitRejected ? { onAdmitRejected } : {}),
+  });
 }
 
 export async function draftSelfHrRequest(

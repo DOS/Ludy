@@ -6,6 +6,9 @@
 // CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
 import pg from 'pg';
@@ -16,8 +19,10 @@ import { createDb, createPool } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { kernelCommands, kernelQueries } from '@ludy/kernel';
 import { meetingPlatformBinding, type MeetingPlatformRecordingView } from '@ludy/kernel-contract';
-import { ZoomMeetingPlatform, type Fetch } from '@ludy/channel';
-import { CredentialVault, DomainError, Runtime, defineCommand, defineQuery, parseVaultKey, type BlobStore, type EgressStream } from '@ludy/kernel-runtime';
+import { ZoomMeetingPlatform, minimalMp4, type Fetch } from '@ludy/channel';
+import { CredentialVault, DomainError, LocalDiskStore, Runtime, defineCommand, defineQuery, parseVaultKey, type BlobStore, type EgressStream } from '@ludy/kernel-runtime';
+import type { JoinPartSource } from '@ludy/media-contract/extract';
+import { createMediaAudioExtractor } from '../src/meetings-extract.ts';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
@@ -46,6 +51,22 @@ const FIXTURE_NOW = new Date('2026-11-18T12:00:00Z');
 const AUDIO_UUID = 'AAAAAAAAAAAAAAAAAAAAAA==';
 const VIDEO_UUID = '/BBBB//BBBBBBBBBBBBBBB==';
 const TRANSCRIPT_UUID = 'CCCCCCCCCCCCCCCCCCCCCC==';
+// A call the host stopped and started: one audio file per segment (listed out of order on purpose), the way Zoom lists one recording made in parts. Added to the recorded list here, in code, so the shared fixtures other tests count stay as they are.
+const PARTS_UUID = 'GGGGGGGGGGGGGGGGGGGGGG==';
+const partFile = (id: string, start: string, size: number, download: string) => ({ id, file_type: 'M4A', file_extension: 'M4A', file_size: size, recording_type: 'audio_only', status: 'completed', recording_start: start, download_url: download });
+const PARTS_MEETING = {
+  uuid: PARTS_UUID,
+  id: 81000000007,
+  host_id: 'hostid-test-0001',
+  topic: 'Họp bị dừng giữa chừng (2 phần)',
+  start_time: '2026-11-16T12:00:00Z',
+  duration: 50,
+  recording_files: [
+    partFile('p-two', '2026-11-16T12:30:00Z', 3_000_000, 'https://us02web.zoom.us/rec/download/p-two-listed'),
+    partFile('p-one', '2026-11-16T12:00:00Z', 5_000_000, 'https://us02web.zoom.us/rec/download/p-one-listed'),
+  ],
+};
+const PARTS_FRESH = { ...PARTS_MEETING, recording_files: PARTS_MEETING.recording_files.map((f) => ({ ...f, download_url: f.download_url.replace('-listed', '-fresh') })) };
 
 // The member's click ("Nhập") belongs to the meetings module's command; the test stands in for it with the same definer call, as the sandbox test does.
 const meetingsInstalled = defineQuery({ name: 'meetings.test_installed', input: z.object({}), access: ['owner'], handler: async () => 'on' });
@@ -77,7 +98,11 @@ function zoom() {
       return new Response(JSON.stringify({ access_token: ACCESS, refresh_token: 'zoom-refresh-not-real-0001', expires_in: 3599, scope: 'cloud_recording:read:list_user_recordings user:read:user' }), { status: 200 });
     }
     if (url === 'https://api.zoom.us/v2/users/me') return new Response(JSON.stringify({ id: HOST, display_name: 'Linh Nguyen', email: 'linh.zoom@example.test' }), { status: 200 });
-    if (url.startsWith('https://api.zoom.us/v2/users/me/recordings?')) return new Response(fixture('recordings-list.json'), { status: 200 });
+    if (url.startsWith('https://api.zoom.us/v2/users/me/recordings?')) {
+      const list = JSON.parse(fixture('recordings-list.json')) as { meetings: unknown[]; total_records: number };
+      return new Response(JSON.stringify({ ...list, total_records: list.total_records + 1, meetings: [...list.meetings, PARTS_MEETING] }), { status: 200 });
+    }
+    if (url === `https://api.zoom.us/v2/meetings/${encodeURIComponent(PARTS_UUID)}/recordings`) return new Response(JSON.stringify(PARTS_FRESH), { status: 200 });
     if (url === `https://api.zoom.us/v2/meetings/${encodeURIComponent(AUDIO_UUID)}/recordings`) return new Response(fixture('meeting-recordings.json'), { status: 200 });
     return new Response('{}', { status: 404 });
   };
@@ -229,9 +254,10 @@ suite('a Zoom cloud recording from the connect to the staged bytes (meetings int
     const rows = await recordings();
     const byId = new Map((await sqlAdmin<{ id: string; external_id: string }>('SELECT id, external_id FROM ludy_kernel.meeting_platform_recording WHERE connection_id = $1', [connectionId])).rows.map((r) => [r.id, r.external_id]));
     const shown = rows.map((r) => [byId.get(r.id), r.status, r.hasAudio, r.hasVideo, r.hasTranscript]);
-    // Newest first. The one still processing (DDDD), the one with only chat and timeline files (EEEE) and the one older than 14 days (FFFF) are not offered.
+    // Newest first. The one still processing (DDDD), the one with only chat and timeline files (EEEE) and the one older than 14 days (FFFF) are not offered; the call made in two parts (GGGG) is one suggestion.
     expect(shown).toEqual([
       [AUDIO_UUID, 'suggested', true, true, true],
+      [PARTS_UUID, 'suggested', true, false, false],
       [VIDEO_UUID, 'suggested', false, true, false],
       [TRANSCRIPT_UUID, 'suggested', false, false, true],
     ]);
@@ -264,9 +290,9 @@ suite('a Zoom cloud recording from the connect to the staged bytes (meetings int
     expect(await syncedAt()).not.toBeNull();
     expect((await notice(HOST, 'recording.transcript_completed')).status).toBe(200);
     expect(await syncedAt()).toBeNull();
-    // The listing is idempotent: the same three suggestions, not six.
+    // The listing is idempotent: the same four suggestions, not eight.
     await sweep();
-    expect(await recordings()).toHaveLength(3);
+    expect(await recordings()).toHaveLength(4);
   });
 
   it('begins a recording, hands it to the job, and stages the audio Zoom\'s API named, fetched with the member\'s sealed token from the first host only', async () => {
@@ -298,4 +324,70 @@ suite('a Zoom cloud recording from the connect to the staged bytes (meetings int
     expect(opened).toHaveLength(1);
     expect((await recordings()).find((r) => r.id === videoId)).toMatchObject({ status: 'failed', errorCode: 'no_audio' });
   });
+
+  it('imports a call made in two parts as ONE audio: the parts are fetched in recording order with the member\'s token, one connection at a time, joined by the sandbox, and only the joined audio is staged', async () => {
+    const partsId = await idOf(PARTS_UUID);
+    // The list showed the call as one recording with the size of both parts.
+    const row = (await sqlAdmin<{ size_bytes: string | null }>('SELECT size_bytes FROM ludy_kernel.meeting_platform_recording WHERE id = $1', [partsId])).rows[0];
+    expect(Number(row?.size_bytes)).toBe(8_000_000);
+    const key = `staging/${randomBytes(32).toString('hex')}`;
+    await clicker.execute('test.mp.begin', { recordingId: partsId, meetingId: await meetingFor(), stagingKey: key }, { actor: { type: 'user', userId: member.userId, aal: 'aal1' }, orgId: org.orgId });
+    await sweep();
+    const job = sent.find((j) => j.orgId === org.orgId && j.externalId === PARTS_UUID);
+    expect(job).toMatchObject({ id: partsId, connectionId, provider: 'zoom', externalId: PARTS_UUID, hasAudio: true, stagingKey: key });
+
+    const dir = await mkdtemp(join(tmpdir(), 'ludy-zoom-parts-flow-'));
+    try {
+      const disk = new LocalDiskStore(dir);
+      const bytesOf = (n: number, size: number) => new Uint8Array(size).fill(n);
+      const bodies: Record<string, Uint8Array> = { 'p-one-fresh': bytesOf(1, 5000), 'p-two-fresh': bytesOf(2, 3000) };
+      let open = 0;
+      let maxOpen = 0;
+      const opened: Array<{ url: string; headers: unknown; firstHosts: readonly string[] | undefined }> = [];
+      // The two files are MP4/M4A: the container check wants the box header of one, then each part's own filler byte.
+      for (const [name, byte] of [['p-one-fresh', 1], ['p-two-fresh', 2]] as const) {
+        const body = bodies[name] as Uint8Array;
+        body.fill(byte);
+        body.set(minimalMp4());
+      }
+      const stream = (async (url: string, init: { headers?: unknown }, options: { firstHosts?: readonly string[] }) => {
+        opened.push({ url, headers: init.headers, firstHosts: options.firstHosts });
+        const body = bodies[url.split('/').pop() as string] as Uint8Array;
+        open += 1;
+        maxOpen = Math.max(maxOpen, open);
+        return { url, status: 200, headers: { 'content-length': String(body.byteLength) }, body: (async function* () { try { yield body; } finally { open -= 1; } })(), destroy: () => { open = Math.max(0, open - 1); } } as EgressStream;
+      }) as never;
+      const joined: number[][] = [];
+      const OPUS = new Uint8Array([79, 103, 103, 83, 9, 9, 9]);
+      const extractor = createMediaAudioExtractor({
+        extractAudio: async () => ({ audio: OPUS, durationSeconds: 1 }),
+        joinAudio: async (parts: readonly JoinPartSource[]) => {
+          for (const part of parts) {
+            const chunks: Uint8Array[] = [];
+            for await (const piece of part.source) chunks.push(piece);
+            const whole = Buffer.concat(chunks);
+            expect(whole.byteLength).toBe(part.length);
+            joined.push([whole[100] as number, whole.byteLength]);
+          }
+          return { audio: OPUS, durationSeconds: 2400 };
+        },
+      });
+      const deps = { runtime: worker, broker: vault, store: disk, adapters: { zoom: adapter }, extractor, stream } as never;
+      expect(await runMeetingsImport(deps, job as MeetingsImportJob, { retryCount: 0, retryLimit: 3 })).toBe('staged');
+      // The fresh addresses of Zoom's API (not the listed ones), in the order the call was recorded (p-one began first although it was listed second), each with the member's token and its exact first host.
+      expect(opened).toEqual([
+        { url: 'https://us02web.zoom.us/rec/download/p-one-fresh', headers: { authorization: `Bearer ${ACCESS}` }, firstHosts: ['us02web.zoom.us'] },
+        { url: 'https://us02web.zoom.us/rec/download/p-two-fresh', headers: { authorization: `Bearer ${ACCESS}` }, firstHosts: ['us02web.zoom.us'] },
+      ]);
+      expect(maxOpen).toBe(1);
+      // The sandbox got the parts in that order with their real lengths.
+      expect(joined).toEqual([[1, 5000], [2, 3000]]);
+      // Only the joined audio was staged, and no sealed part is left behind.
+      expect([...((await disk.get(key)) as Uint8Array)]).toEqual([...OPUS]);
+      expect((await recordings()).find((r) => r.id === partsId)?.status).toBe('staged');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
 });
