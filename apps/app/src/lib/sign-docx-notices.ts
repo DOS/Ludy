@@ -44,6 +44,12 @@ const fallbackDismissedNotices = new Map<string, number>();
 const pendingUnpersistedDocxNotices = new Map<string, StoredPendingCreatedDocxNotice>();
 const knownStorageNoticeKeys = new Set<string>();
 let pendingSignOutClear = false;
+let docxNoticeAuthEpoch = 0;
+
+/** Monotonic counter incremented on every sign-out cleanup so late in-flight creates cannot restore stale notices (#4729). */
+export function getDocxNoticeAuthEpoch(): number {
+  return docxNoticeAuthEpoch;
+}
 
 function normalizeScope(scope?: CreatedDocxWarningScope): NormalizedScope | null {
   const org = typeof scope?.org === 'string' ? scope.org.trim() : '';
@@ -67,13 +73,17 @@ export function sanitizeDocxWarnings(raw: readonly unknown[]): SignDocxToPdfWarn
   return [...seen];
 }
 
-function getDocxNoticeStorage(): Storage | null {
-  if (typeof window === 'undefined') return null;
+function tryAccessSessionStorage(): { available: boolean; storage: Storage | null } {
+  if (typeof window === 'undefined') return { available: true, storage: null };
   try {
-    return window.sessionStorage ?? null;
+    return { available: true, storage: window.sessionStorage ?? null };
   } catch {
-    return null;
+    return { available: false, storage: null };
   }
+}
+
+function getDocxNoticeStorage(): Storage | null {
+  return tryAccessSessionStorage().storage;
 }
 
 function isFreshNotice(now: number, timestamp: number): boolean {
@@ -335,6 +345,7 @@ export function clearCreatedDocxWarnings(
 
 /** Drops all persisted and in-memory .docx warnings when signing out of the workspace (#4729). */
 export function clearAllCreatedDocxWarnings(): void {
+  docxNoticeAuthEpoch += 1;
   fallbackDocxNotices.clear();
   fallbackDismissedNotices.clear();
   pendingUnpersistedDocxNotices.clear();
@@ -415,13 +426,43 @@ export function clearPendingDocxListNotices(filter?: {
   return [...pendingUnpersistedDocxNotices.values()].map(stripTimestamp);
 }
 
-/** Returns true only when this tab holds any local persisted or pending .docx notice candidate for the envelope (#4729). */
-export function hasLocalDocxNoticeCandidate(envelopeId: string, slug: string, now = Date.now()): boolean {
-  if (!envelopeId) return false;
+/** Probes local pending/memory/sessionStorage state, distinguishing empty readable storage from transient storage errors (#4729). */
+export function probeLocalDocxNoticeCandidate(
+  envelopeId: string,
+  slug: string,
+  now = Date.now(),
+): 'present' | 'none' | 'storage_error' {
+  if (!envelopeId) return 'none';
   if (slug && readPendingDocxListNotice(envelopeId, slug, now)) {
-    return true;
+    return 'present';
   }
-  return readStoredDocxNotices(now).some((entry) => entry.envelopeId === envelopeId);
+  if (readFallbackDocxNotices(now).some((entry) => entry.envelopeId === envelopeId)) {
+    return 'present';
+  }
+  if (pendingSignOutClear) {
+    void flushPendingSignOutClear();
+    return 'none';
+  }
+  const { available, storage } = tryAccessSessionStorage();
+  if (!available) {
+    return 'storage_error';
+  }
+  if (!storage) {
+    return 'none';
+  }
+  const rawResult = readRawStorageResult(storage, now);
+  if (!rawResult.ok) {
+    return 'storage_error';
+  }
+  const hasEntry = rawResult.entries.some(
+    (entry) => entry.envelopeId === envelopeId && !fallbackDismissedNotices.has(noticeKey(entry.envelopeId, entry)),
+  );
+  return hasEntry ? 'present' : 'none';
+}
+
+/** Returns true when this tab holds a candidate or sessionStorage access failed transiently (#4729). */
+export function hasLocalDocxNoticeCandidate(envelopeId: string, slug: string, now = Date.now()): boolean {
+  return probeLocalDocxNoticeCandidate(envelopeId, slug, now) !== 'none';
 }
 
 /** Reads a single unpersisted pending .docx notice by envelope ID and workspace slug (#4729). */

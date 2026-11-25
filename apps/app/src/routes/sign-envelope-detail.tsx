@@ -25,6 +25,7 @@ import {
   clearAllCreatedDocxWarnings,
   clearPendingDocxListNotices,
   hasLocalDocxNoticeCandidate,
+  probeLocalDocxNoticeCandidate,
   readPendingDocxListNotice,
   removePendingDocxListNotice,
   sanitizeDocxWarnings,
@@ -116,7 +117,10 @@ export async function resolveDetailDocxWarnings(deps: {
 }): Promise<ResolveDetailDocxWarningsResult> {
   if (!deps.envelopeId || !deps.slug) return { status: 'none' };
   const usesLiveStore = deps.pendingNotice === undefined;
-  if (usesLiveStore && !hasLocalDocxNoticeCandidate(deps.envelopeId, deps.slug)) {
+  const initialProbe = usesLiveStore
+    ? probeLocalDocxNoticeCandidate(deps.envelopeId, deps.slug)
+    : 'present';
+  if (initialProbe === 'none') {
     return { status: 'none' };
   }
   if (deps.isStillValid && !deps.isStillValid()) return { status: 'none' };
@@ -190,7 +194,12 @@ export async function resolveDetailDocxWarnings(deps: {
   const candidateNotice = usesLiveStore
     ? readPendingDocxListNotice(deps.envelopeId, deps.slug)
     : deps.pendingNotice;
-  if (!candidateNotice) return { status: 'none' };
+  if (!candidateNotice) {
+    if (usesLiveStore && probeLocalDocxNoticeCandidate(deps.envelopeId, deps.slug) === 'storage_error') {
+      return { status: 'retryable_error' };
+    }
+    return { status: 'none' };
+  }
   if (candidateNotice.envelopeId !== deps.envelopeId || candidateNotice.slug !== deps.slug) {
     return { status: 'none' };
   }
@@ -743,32 +752,37 @@ export function SignEnvelopeDetailPage() {
       },
       resolveUserScope: (expectedSessionId) => fetchUserScopeForSession(slug, expectedSessionId),
       isStillValid: () => !cancelled && detailDocxNoticeReqRef.current === reqId,
-    }).then((result) => {
-      verifying = false;
-      if (cancelled || detailDocxNoticeReqRef.current !== reqId) {
-        return;
-      }
-      if (result.status === 'retryable_error') {
+    })
+      .then((result) => {
+        verifying = false;
+        if (cancelled || detailDocxNoticeReqRef.current !== reqId) {
+          return;
+        }
+        if (result.status === 'retryable_error') {
+          activeVerifiedScopeKey = null;
+          scheduleRetry();
+          return;
+        }
+        detailDocxRetryCountRef.current = 0;
+        if (result.status === 'none') {
+          return;
+        }
+        if (currentUserId && result.userId !== currentUserId) {
+          activeVerifiedScopeKey = null;
+          void queryClient.invalidateQueries({ queryKey: orpc.me.get.queryKey() });
+          setDocxWarningsState({ key: noticeScopeKey, scope: null, warnings: [] });
+          return;
+        }
+        setDocxWarningsState({
+          key: noticeScopeKey,
+          scope: { org: result.org, userId: result.userId },
+          warnings: result.warnings,
+        });
+      })
+      .catch(() => {
+        verifying = false;
         activeVerifiedScopeKey = null;
-        scheduleRetry();
-        return;
-      }
-      detailDocxRetryCountRef.current = 0;
-      if (result.status === 'none') {
-        return;
-      }
-      if (currentUserId && result.userId !== currentUserId) {
-        activeVerifiedScopeKey = null;
-        void queryClient.invalidateQueries({ queryKey: orpc.me.get.queryKey() });
-        setDocxWarningsState({ key: noticeScopeKey, scope: null, warnings: [] });
-        return;
-      }
-      setDocxWarningsState({
-        key: noticeScopeKey,
-        scope: { org: result.org, userId: result.userId },
-        warnings: result.warnings,
       });
-    });
     return () => {
       cancelled = true;
       if (retryTimer !== null) clearTimeout(retryTimer);

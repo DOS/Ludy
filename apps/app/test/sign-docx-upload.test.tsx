@@ -73,8 +73,10 @@ const {
 } = await import('../src/lib/sign-api.ts');
 const {
   clearPendingDocxListNotices,
+  getDocxNoticeAuthEpoch,
   hasLocalDocxNoticeCandidate,
   listPendingDocxListNotices,
+  probeLocalDocxNoticeCandidate,
   readPendingDocxListNotice,
   removePendingDocxListNotice,
   upsertPendingDocxListNotice,
@@ -874,6 +876,19 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
     ).toBe(false);
     expect(noDeleteSpy).not.toHaveBeenCalled();
 
+    // Even when orgId is populated and sessionId is null, resolveUserScope() returning null aborts safely without trusting stale cache.
+    expect(
+      await openCreatedDocxNoticeEnvelope({
+        notice: { ...unpersistedNotice, orgId: ORG_A_ID, sessionId: null },
+        currentUserId: USER_B_ID,
+        resolveUserScope: async () => null,
+        setCreatedDocxNotice: noDeleteSpy,
+        navigateToEnvelope: unverifiedNav,
+      }),
+    ).toBe(false);
+    expect(noDeleteSpy).not.toHaveBeenCalled();
+    expect(readCreatedDocxWarnings(envDetailId, SCOPE_USER_A)).toEqual([]);
+
     expect(
       await openCreatedDocxNoticeEnvelope({
         notice: { ...unpersistedNotice, userId: null },
@@ -1170,6 +1185,7 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
       orgId: null,
       userId: null,
       sessionId: 'sess-a',
+      authEpoch: getDocxNoticeAuthEpoch(),
       reqId: 9,
     });
 
@@ -1607,5 +1623,96 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
     expect(readPendingDocxListNotice(SECOND_ENV_ID, 'acme')).toBeNull();
     expect(readPendingDocxListNotice(sameUserNewSessionNotice.envelopeId, 'acme')?.sessionId).toBe('sess-a2');
     clearPendingDocxListNotices();
+
+    // Sign-out during an in-flight submit increments authEpoch and prevents post-sign-out create response from restoring warnings or title.
+    const preSignOutCtx = await captureEnvelopeSubmitContext({
+      slug: 'acme',
+      reqId: 42,
+      includeUserScope: true,
+      readSessionId: async () => 'sess-a',
+      resolveScope: async () => ({ orgId: ORG_A_ID, userId: USER_A_ID, sessionId: 'sess-a' }),
+    });
+    expect(preSignOutCtx.authEpoch).toBe(getDocxNoticeAuthEpoch());
+    clearAllCreatedDocxWarnings();
+    const uploadAfterSignOutSpy = vi.fn(async () => ({ fileId: 'unused' }));
+    const signOutSubmitResult = await submitCreateEnvelopeFromDialog({
+      title: 'Post-signout queued upload',
+      file: makeTestFile(new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d]), 'q.pdf', 'application/pdf'),
+      converted: null,
+      orgSlug: 'acme',
+      resolveSubmitContext: async () => preSignOutCtx,
+      readSessionId: async () => 'sess-a',
+      isMounted: () => true,
+      getLiveOrgSlug: () => 'acme',
+      docxRequiredMessage: 'PDF required',
+      uploadPdf: uploadAfterSignOutSpy,
+      createEnvelope: async () => ({ envelopeId: 'unused' }),
+    });
+    expect(signOutSubmitResult).toEqual({ cancelled: true });
+    expect(uploadAfterSignOutSpy).not.toHaveBeenCalled();
+
+    await handleEnvelopeCreatedWithWarnings({
+      envelopeId: SECOND_ENV_ID,
+      envelopeTitle: 'Late post-signout title',
+      warnings: ['images_skipped'],
+      slug: 'acme',
+      orgId: null,
+      userId: USER_A_ID,
+      sessionId: 'sess-a',
+      authEpoch: preSignOutCtx.authEpoch,
+      resolveCurrentSessionId: async () => 'sess-a',
+      setCreateOpen,
+      setCreatedDocxNotice,
+      invalidateEnvelopes,
+      navigateToEnvelope: navSpy,
+    });
+    expect(readPendingDocxListNotice(SECOND_ENV_ID, 'acme')).toBeNull();
+    expect(readCreatedDocxWarnings(SECOND_ENV_ID, SCOPE_USER_A)).toEqual([]);
+
+    // Transient sessionStorage SecurityError on detail open returns retryable_error and recovers cleanly once storage is readable.
+    const flakyDetailStore = new Map<string, string>();
+    let rejectDetailRead = false;
+    vi.stubGlobal('window', {
+      location: { pathname: `/o/acme/sign/envelopes/${envDetailId}`, hash: '' },
+      sessionStorage: {
+        getItem: (k: string) => {
+          if (rejectDetailRead) throw new DOMException('Blocked', 'SecurityError');
+          return flakyDetailStore.get(k) ?? null;
+        },
+        setItem: (k: string, v: string) => void flakyDetailStore.set(k, v),
+        removeItem: (k: string) => void flakyDetailStore.delete(k),
+      },
+    });
+    saveCreatedDocxWarnings(envDetailId, ['headers_footers_simplified'], SCOPE_USER_A);
+    rejectDetailRead = true;
+    expect(probeLocalDocxNoticeCandidate(envDetailId, 'acme')).toBe('storage_error');
+    expect(hasLocalDocxNoticeCandidate(envDetailId, 'acme')).toBe(true);
+    expect(
+      await resolveDetailDocxWarnings({
+        envelopeId: envDetailId,
+        slug: 'acme',
+        noticeOrg: ORG_A_ID,
+        currentUserId: USER_A_ID,
+        resolveCurrentSessionId: async () => 'sess-a',
+        resolveUserScope: async () => ({ orgId: ORG_A_ID, userId: USER_A_ID, sessionId: 'sess-a' }),
+      }),
+    ).toEqual({ status: 'retryable_error' });
+    rejectDetailRead = false;
+    expect(
+      await resolveDetailDocxWarnings({
+        envelopeId: envDetailId,
+        slug: 'acme',
+        noticeOrg: ORG_A_ID,
+        currentUserId: USER_A_ID,
+        resolveCurrentSessionId: async () => 'sess-a',
+        resolveUserScope: async () => ({ orgId: ORG_A_ID, userId: USER_A_ID, sessionId: 'sess-a' }),
+      }),
+    ).toEqual({
+      status: 'resolved',
+      warnings: ['headers_footers_simplified'],
+      org: ORG_A_ID,
+      userId: USER_A_ID,
+    });
+    clearCreatedDocxWarnings(envDetailId, SCOPE_USER_A);
   });
 });

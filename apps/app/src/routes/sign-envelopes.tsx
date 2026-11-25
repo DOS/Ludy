@@ -27,6 +27,7 @@ import {
   clearAllCreatedDocxWarnings,
   clearCreatedDocxWarnings,
   clearPendingDocxListNotices,
+  getDocxNoticeAuthEpoch,
   listPendingDocxListNotices,
   removePendingDocxListNotice,
   sanitizeDocxWarnings,
@@ -144,6 +145,7 @@ export interface CreatedEnvelopeSubmitContext {
   orgId: string | null;
   userId: string | null;
   sessionId: string | null;
+  authEpoch?: number | undefined;
   sessionChanged?: boolean | undefined;
   sessionUnverified?: boolean | undefined;
   reqId: number;
@@ -229,6 +231,7 @@ export async function captureEnvelopeSubmitContext(deps: {
     expectedSessionId?: string | null,
   ) => Promise<{ orgId: string | null; userId: string | null; sessionId: string | null } | null>;
 }): Promise<CreatedEnvelopeSubmitContext> {
+  const authEpoch = getDocxNoticeAuthEpoch();
   let sessionId: string | null;
   try {
     sessionId = await deps.readSessionId();
@@ -238,6 +241,7 @@ export async function captureEnvelopeSubmitContext(deps: {
       orgId: null,
       userId: null,
       sessionId: null,
+      authEpoch,
       sessionUnverified: true,
       reqId: deps.reqId,
     };
@@ -259,16 +263,22 @@ export async function captureEnvelopeSubmitContext(deps: {
       orgId: null,
       userId: null,
       sessionId,
+      authEpoch,
       sessionUnverified: true,
       reqId: deps.reqId,
     };
   }
-  if (sessionAfter !== sessionId || (liveScope?.sessionId != null && liveScope.sessionId !== sessionId)) {
+  if (
+    getDocxNoticeAuthEpoch() !== authEpoch ||
+    sessionAfter !== sessionId ||
+    (liveScope?.sessionId != null && liveScope.sessionId !== sessionId)
+  ) {
     return {
       slug: deps.slug,
       orgId: null,
       userId: null,
       sessionId,
+      authEpoch,
       sessionChanged: true,
       reqId: deps.reqId,
     };
@@ -278,6 +288,7 @@ export async function captureEnvelopeSubmitContext(deps: {
     orgId: liveScope?.orgId ?? null,
     userId: liveScope?.userId ?? null,
     sessionId: liveScope?.sessionId ?? sessionId,
+    authEpoch,
     reqId: deps.reqId,
   };
 }
@@ -293,7 +304,7 @@ function mergeFetchedUserScope(input: {
   fetched: { orgId?: string | null | undefined; userId?: string | null | undefined } | null;
 }): ResolvedScopeDecision {
   if (!input.fetched) {
-    return { kind: 'ok', orgId: input.currentOrgId, userId: input.expectedUserId };
+    return { kind: 'unverified' };
   }
   const fetchedUserId = input.fetched.userId ?? null;
   if (input.expectedUserId) {
@@ -353,6 +364,7 @@ export async function handleEnvelopeCreatedWithWarnings(deps: {
   orgId?: string | null | undefined;
   userId?: string | null | undefined;
   sessionId?: string | null | undefined;
+  authEpoch?: number | undefined;
   resolveCurrentSessionId?: (() => Promise<string | null>) | undefined;
   resolveUserScope?: (() => Promise<{ orgId?: string | null | undefined; userId?: string | null | undefined; sessionId?: string | null | undefined } | null>) | undefined;
   isCurrentContext?: (() => boolean) | undefined;
@@ -363,7 +375,10 @@ export async function handleEnvelopeCreatedWithWarnings(deps: {
   invalidateEnvelopes: () => Promise<unknown>;
   navigateToEnvelope: (slug: string, envelopeId: string) => Promise<unknown>;
 }): Promise<void> {
-  const isStillCurrent = (): boolean => !deps.isCurrentContext || deps.isCurrentContext();
+  const hasSignedOutSinceSubmit = (): boolean =>
+    deps.authEpoch !== undefined && getDocxNoticeAuthEpoch() !== deps.authEpoch;
+  const isStillCurrent = (): boolean =>
+    !hasSignedOutSinceSubmit() && (!deps.isCurrentContext || deps.isCurrentContext());
   if (isStillCurrent()) {
     deps.setCreateOpen(false);
   }
@@ -442,12 +457,17 @@ export async function handleEnvelopeCreatedWithWarnings(deps: {
     }
   };
 
+  if (hasSignedOutSinceSubmit()) {
+    await clearOnMismatch();
+    return;
+  }
+
   const initialSessionState = await checkLiveSessionState({
     expectedSessionId: submitSessionId,
     noticeHasUserId: Boolean(deps.userId),
     resolveCurrentSessionId: deps.resolveCurrentSessionId,
   });
-  if (initialSessionState === 'mismatch') {
+  if (hasSignedOutSinceSubmit() || initialSessionState === 'mismatch') {
     await clearOnMismatch();
     return;
   }
@@ -470,7 +490,7 @@ export async function handleEnvelopeCreatedWithWarnings(deps: {
         currentOrgId: resolvedOrgId,
         fetched,
       });
-      if (decision.kind === 'mismatch') {
+      if (hasSignedOutSinceSubmit() || decision.kind === 'mismatch') {
         await clearOnMismatch();
         return;
       }
@@ -486,7 +506,7 @@ export async function handleEnvelopeCreatedWithWarnings(deps: {
     }
   }
 
-  if (deps.userId && resolvedUserId && deps.userId !== resolvedUserId) {
+  if (hasSignedOutSinceSubmit() || (deps.userId && resolvedUserId && deps.userId !== resolvedUserId)) {
     await clearOnMismatch();
     return;
   }
@@ -496,7 +516,7 @@ export async function handleEnvelopeCreatedWithWarnings(deps: {
     noticeHasUserId: Boolean(deps.userId),
     resolveCurrentSessionId: deps.resolveCurrentSessionId,
   });
-  if (finalSessionState === 'mismatch') {
+  if (hasSignedOutSinceSubmit() || finalSessionState === 'mismatch') {
     await clearOnMismatch();
     return;
   }
@@ -687,6 +707,7 @@ export async function submitCreateEnvelopeFromDialog(deps: {
   const readLiveOrg = deps.getLiveOrgSlug ?? getCurrentOrg;
   const isSessionConsistent = async (ctx: CreatedEnvelopeSubmitContext | null): Promise<'match' | 'changed' | 'unverified'> => {
     if (ctx?.sessionChanged) return 'changed';
+    if (ctx?.authEpoch !== undefined && getDocxNoticeAuthEpoch() !== ctx.authEpoch) return 'changed';
     if (ctx?.sessionUnverified) return 'unverified';
     if (ctx && deps.readSessionId) {
       let liveSessionId: string | null;
@@ -695,6 +716,7 @@ export async function submitCreateEnvelopeFromDialog(deps: {
       } catch {
         return 'unverified';
       }
+      if (ctx.authEpoch !== undefined && getDocxNoticeAuthEpoch() !== ctx.authEpoch) return 'changed';
       if (liveSessionId !== ctx.sessionId) return 'changed';
     }
     return 'match';
@@ -836,6 +858,7 @@ export function CreateEnvelopeDialog({
   const [formError, setFormError] = useState<string | null>(null);
   const [docxStatus, setDocxStatus] = useState<DocxConversionStatus>('idle');
   const [docxResult, setDocxResult] = useState<SignDocxConvertCompletedResult | null>(null);
+  const [capturingContext, setCapturingContext] = useState(false);
   const pickTokenRef = useRef(0);
   const mountedRef = useRef(true);
 
@@ -853,20 +876,16 @@ export function CreateEnvelopeDialog({
       file: File;
       converted: SignDocxConvertCompletedResult | null;
       pinnedOrgSlug: string | undefined;
-      resolveSubmitContext:
-        | ((options?: { needsUserScope?: boolean }) => CreatedEnvelopeSubmitContext | Promise<CreatedEnvelopeSubmitContext>)
-        | undefined;
+      preCapturedContext?: CreatedEnvelopeSubmitContext | null | undefined;
       isSubmitContextCurrent: ((ctx: CreatedEnvelopeSubmitContext) => boolean) | undefined;
     }) => {
-      const needsUserScope = Boolean(input.converted && input.converted.warnings.length > 0);
       return submitCreateEnvelopeFromDialog({
         title: input.title,
         file: input.file,
         converted: input.converted,
         orgSlug: input.pinnedOrgSlug,
-        resolveSubmitContext: input.resolveSubmitContext
-          ? () => input.resolveSubmitContext!({ needsUserScope })
-          : undefined,
+        resolveSubmitContext:
+          input.preCapturedContext !== undefined ? () => input.preCapturedContext! : undefined,
         readSessionId: async () => (await readVerifiedSession()).sessionId,
         isMounted: () => mountedRef.current,
         isSubmitContextCurrent: input.isSubmitContextCurrent,
@@ -930,9 +949,9 @@ export function CreateEnvelopeDialog({
     }
   };
 
-  const handleCreateSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const handleCreateSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (inspectingFile || createMutation.isPending || docxStatus === 'converting') return;
+    if (capturingContext || inspectingFile || createMutation.isPending || docxStatus === 'converting') return;
     setFormError(null);
     if (!selectedFile) {
       setFormError(t('pdfRequired'));
@@ -945,12 +964,35 @@ export function CreateEnvelopeDialog({
       return;
     }
     const cleanTitle = title.trim() || selectedFile.name.replace(/\.(pdf|docx)$/i, '') || selectedFile.name;
+    const needsUserScope = Boolean(docxResult && docxResult.warnings.length > 0);
+    let preCapturedContext: CreatedEnvelopeSubmitContext | null | undefined;
+    if (captureContext) {
+      setCapturingContext(true);
+      try {
+        preCapturedContext = await captureContext({ needsUserScope });
+      } catch {
+        if (mountedRef.current) setFormError(t('docxCreateIdentityPending'));
+        return;
+      } finally {
+        if (mountedRef.current) setCapturingContext(false);
+      }
+      if (!mountedRef.current || (isContextValid && !isContextValid(preCapturedContext))) {
+        return;
+      }
+      if (preCapturedContext.sessionChanged) {
+        return;
+      }
+      if (preCapturedContext.sessionUnverified) {
+        setFormError(t('docxCreateIdentityPending'));
+        return;
+      }
+    }
     createMutation.mutate({
       title: cleanTitle,
       file: selectedFile,
       converted: docxResult,
       pinnedOrgSlug: orgSlug || undefined,
-      resolveSubmitContext: captureContext,
+      preCapturedContext,
       isSubmitContextCurrent: isContextValid,
     });
   };
@@ -960,8 +1002,8 @@ export function CreateEnvelopeDialog({
       testId="sign-create-dialog"
       title={t('createTitle')}
       description={t('createHint')}
-      busy={createMutation.isPending}
-      submitDisabled={inspectingFile || docxStatus === 'converting' || docxStatus === 'error'}
+      busy={capturingContext || createMutation.isPending}
+      submitDisabled={capturingContext || inspectingFile || docxStatus === 'converting' || docxStatus === 'error'}
       dirty={title.trim() !== '' || selectedFile !== null}
       submitLabel={t('createSubmit')}
       submitTestId="sign-create-submit-btn"
@@ -2366,7 +2408,10 @@ export function SignEnvelopesPage() {
               resolveScope: resolveScopeForSlug,
             })
           }
-          isContextValid={(ctx) => isSameActiveOrgContext(ctx.slug, ctx.reqId)}
+          isContextValid={(ctx) =>
+            isSameActiveOrgContext(ctx.slug, ctx.reqId) &&
+            (ctx.authEpoch === undefined || getDocxNoticeAuthEpoch() === ctx.authEpoch)
+          }
           onClose={() => setCreateOpen(false)}
           onCreated={async (envelopeId, warnings = [], submitContext, envelopeTitle) => {
             const targetSlug = submitContext?.slug ?? slug;
@@ -2374,6 +2419,7 @@ export function SignEnvelopesPage() {
             const targetUserId = submitContext ? submitContext.userId : null;
             const targetSessionId = submitContext?.sessionId ?? null;
             const targetReqId = submitContext?.reqId ?? docxNoticeReqRef.current;
+            const targetAuthEpoch = submitContext?.authEpoch;
             await handleEnvelopeCreatedWithWarnings({
               envelopeId,
               envelopeTitle,
@@ -2382,12 +2428,15 @@ export function SignEnvelopesPage() {
               orgId: targetOrgId,
               userId: targetUserId,
               sessionId: targetSessionId,
+              authEpoch: targetAuthEpoch,
               resolveCurrentSessionId: readCurrentSessionIdStrict,
               resolveUserScope:
                 targetUserId && targetOrgId
                   ? undefined
                   : () => resolveScopeForSlug(targetSlug, targetSessionId),
-              isCurrentContext: () => isSameActiveOrgContext(targetSlug, targetReqId),
+              isCurrentContext: () =>
+                isSameActiveOrgContext(targetSlug, targetReqId) &&
+                (targetAuthEpoch === undefined || getDocxNoticeAuthEpoch() === targetAuthEpoch),
               hasOtherPendingNotice: () =>
                 pendingDocxNoticesRef.current.some((n) => n.envelopeId !== envelopeId),
               onPendingNoticeAction: syncPendingNoticeAction,

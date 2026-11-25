@@ -79,6 +79,11 @@ describe('eSign .docx upload rate-limit and burst capacity invariants (#4729)', 
   });
 
   it('refuses rate-limited actors 429 before reading body stream or writing BlobStore and refuses burst overflow past max keys', async () => {
+    const EXPECTED_MAX_PER_MINUTE = 20;
+    const EXPECTED_MAX_KEYS = 4_096;
+    expect(SIGN_DOCX_PER_MINUTE).toBeLessThanOrEqual(EXPECTED_MAX_PER_MINUTE);
+    expect(SIGN_DOCX_RATE_LIMIT_MAX_KEYS).toBeLessThanOrEqual(EXPECTED_MAX_KEYS);
+
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-11-26T00:00:00.000Z'));
 
