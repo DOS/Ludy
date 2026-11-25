@@ -19179,6 +19179,9 @@ export const vi = {
         start: 'Nhờ Vy viết vài câu về những việc đã chốt và việc còn dở của tuần',
         status: 'Xem Vy có viết được bản tóm tắt tuần không',
       },
+      load: {
+        week: 'Xem mỗi người họp bao nhiêu trong một tuần và những cuộc họp lặp lại có thể bớt, từ các cuộc họp bạn được đọc',
+      },
       assignee: {
         facts: 'Xem tên được nhắc cho một việc cần làm và những người có thể nhận việc',
         start: 'Nhờ Vy xem một việc cần làm là của ai, theo tên được nhắc trong cuộc họp',

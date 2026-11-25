@@ -19180,6 +19180,9 @@ export const en = {
         start: "Ask Vy to write a few sentences on the week's decisions and open items",
         status: 'See whether Vy can write the weekly recap',
       },
+      load: {
+        week: 'See how much of a week each person spends in meetings and the recurring meetings that may be worth trimming, from the meetings you read',
+      },
       assignee: {
         facts: 'See the name said for an action item and the people it may be given to',
         start: 'Ask Vy who an action item belongs to, from the name said in the meeting',
