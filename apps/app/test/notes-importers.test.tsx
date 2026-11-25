@@ -6,6 +6,8 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_TIME_ZONE } from '@ludy/kernel-contract';
+import { vi as viMessages } from '../src/i18n/messages/vi.ts';
+import { en as enMessages } from '../src/i18n/messages/en.ts';
 import { catalog } from '../src/i18n/runtime.ts';
 
 const testState = vi.hoisted(() => ({
@@ -66,8 +68,9 @@ vi.mock('@tanstack/react-router', async (importOriginal) => {
   };
 });
 
-const { NotesPage } = await import('../src/routes/notes.tsx');
-const { MyWorkPage } = await import('../src/routes/my-work.tsx');
+const { NotesPage, resolveEnexPostImportSearch } = await import('../src/routes/notes.tsx');
+const { MyWorkPage, collectTodosForImportPreview } = await import('../src/routes/my-work.tsx');
+const { resolveNoteImportParseError } = await import('../src/components/note-import-dialog.tsx');
 
 function renderInLocale(locale: 'vi' | 'en', node: ReactNode) {
   return renderToStaticMarkup(
@@ -105,5 +108,64 @@ describe('Notes v2 E5a (#3564) import buttons and role gating', () => {
     testState.client.setQueryData(['me', 'get', {}], { orgs: [{ slug: 'demo-org', role: 'viewer' }] });
     expect(renderInLocale('vi', <NotesPage />)).not.toContain('data-testid="notes-import-enex-btn"');
     expect(renderInLocale('vi', <MyWorkPage />)).not.toContain('data-testid="my-work-import-csv-btn"');
+  });
+
+  it('maps client NOTE_TOO_LONG to generic 100,000-char importer copy instead of Vy copy', () => {
+    const viMsg = resolveNoteImportParseError(
+      { code: 'NOTE_TOO_LONG', detail: 'Converted note body exceeds 100,000 characters' },
+      {
+        invalidSizeLimit: viMessages.notes.import.invalidSizeLimit,
+        noteTooLong: viMessages.notes.import.noteTooLong,
+        kernelError: (code) => viMessages.kernelErrors.codes[code],
+      },
+    );
+    expect(viMsg).toBe(viMessages.notes.import.noteTooLong);
+    expect(viMsg).toContain('100.000');
+    expect(viMsg).not.toContain('Vy');
+    expect(viMsg).not.toMatch(/[\u2013\u2014]/);
+
+    const enMsg = resolveNoteImportParseError(
+      { code: 'NOTE_TOO_LONG', detail: 'Converted note body exceeds 100,000 characters' },
+      {
+        invalidSizeLimit: enMessages.notes.import.invalidSizeLimit,
+        noteTooLong: enMessages.notes.import.noteTooLong,
+        kernelError: (code) => enMessages.kernelErrors.codes[code],
+      },
+    );
+    expect(enMsg).toBe(enMessages.notes.import.noteTooLong);
+    expect(enMsg).toContain('100,000');
+    expect(enMsg).not.toContain('Vy');
+    expect(enMsg).not.toMatch(/[\u2013\u2014]/);
+  });
+
+  it('preserves chosen targetNotebookId navigation and collects unfiltered todos with listId', () => {
+    expect(
+      resolveEnexPostImportSearch({ noteIds: ['n-1'], notebookIds: ['nb-1'] }, 'nb-1'),
+    ).toEqual({ list: 'mine', notebook: 'nb-1', note: 'n-1' });
+    expect(
+      resolveEnexPostImportSearch({ noteIds: ['n-1', 'n-2'], notebookIds: ['nb-1'] }, 'nb-1'),
+    ).toEqual({ list: 'mine', notebook: 'nb-1' });
+    expect(
+      resolveEnexPostImportSearch({ noteIds: [], notebookIds: [] }, 'nb-1'),
+    ).toEqual({ list: 'mine', notebook: 'nb-1' });
+    expect(
+      resolveEnexPostImportSearch({ noteIds: ['n-1', 'n-2'], notebookIds: ['nb-1', 'nb-2'] }, null),
+    ).toEqual({ list: 'mine' });
+
+    const collected = collectTodosForImportPreview(
+      [
+        { id: 't1', title: 'Open task', listId: 'list-1' },
+        { id: 't2', title: 'Inbox task', listId: null },
+      ],
+      [
+        { id: 't2', title: 'Inbox task', listId: null },
+        { id: 't3', title: 'Done task', listId: 'list-2' },
+      ],
+    );
+    expect(collected).toEqual([
+      { title: 'Open task', listId: 'list-1' },
+      { title: 'Inbox task', listId: null },
+      { title: 'Done task', listId: 'list-2' },
+    ]);
   });
 });
