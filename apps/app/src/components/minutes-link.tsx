@@ -148,7 +148,7 @@ export function MinutesLinkView({ slug, enabled, items, canEnable, made, copy, c
             <div className="flex flex-wrap gap-2">
               <Input id="minutes-link-url" ref={urlRef} readOnly value={made.url} className="min-w-0 flex-1" autoComplete="off" spellCheck={false} onFocus={(e) => e.target.select()} data-testid="minutes-link-url" />
               <Button size="sm" variant="outline" className="min-h-11 sm:min-h-0" onClick={onCopy} data-testid="minutes-link-copy">
-                {copy === 'copied' ? t('copied') : t('copy')}
+                {t('copy')}
               </Button>
             </div>
             {/* Always in the page, so a screen reader reads the words when they appear. */}
@@ -215,6 +215,8 @@ export function MinutesLinkPanel({ meetingId, slug }: { meetingId: string; slug?
   const t = useTranslations('meetings.minutesLink');
   const refresh = () => queryClient.invalidateQueries({ queryKey: orpc.meetings.minutesLink.list.key() });
   const create = useMutation({
+    // The answer holds the one-time address: the cache keeps nothing of it once nobody observes the mutation.
+    gcTime: 0,
     mutationFn: () => orpc.meetings.minutesLink.create.call({ meetingId }),
     onSuccess: async (r) => {
       // The only time the address exists on this screen: built from the path the command answered, kept in this component only.
@@ -229,6 +231,8 @@ export function MinutesLinkPanel({ meetingId, slug }: { meetingId: string; slug?
     mutationFn: (linkId: string) => orpc.meetings.minutesLink.revoke.call({ meetingId, linkId }),
     onSuccess: async () => {
       toast(t('revoked'), 'success');
+      // A refusal of an earlier create (ten live links) no longer stands once a link is ended.
+      create.reset();
       await refresh();
     },
   });
@@ -265,6 +269,7 @@ export function MinutesLinkPanel({ meetingId, slug }: { meetingId: string; slug?
         }).then((ok) => setCopy(ok ? 'copied' : 'failed'));
       }}
       onDismiss={() => {
+        create.reset();
         setMade(null);
         setCopy('idle');
       }}

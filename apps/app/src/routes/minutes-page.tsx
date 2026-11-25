@@ -148,19 +148,30 @@ export function MinutesPageView({ view, onRetry }: { view: MinutesView; onRetry?
 export function MinutesPublicPage() {
   // The token follows the address: a hash-only change in this tab shows the other minutes (the query is keyed by the token).
   const token = useSyncExternalStore(subscribeToHash, minutesTokenOfHash, minutesTokenOfHash);
-  const query = useQuery({ queryKey: ['minutes-page', token], queryFn: () => loadMinutesPage(token as string), enabled: token !== null, retry: false });
+  // Every request counts as an open of the link on the recorder's list, so the page asks once per token and never again on its own (no refetch on focus or on reconnect).
+  const query = useQuery({
+    queryKey: ['minutes-page', token],
+    queryFn: () => loadMinutesPage(token as string),
+    enabled: token !== null,
+    retry: false,
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  });
   usePrintInLight();
   // Search engines keep the page out of their index while it is open; the tag is taken out when the page goes.
   useEffect(() => addNoindexMeta(document), []);
   const view = minutesViewOf(token, query);
-  return <MinutesPageView view={view} onRetry={() => void query.refetch()} />;
+  return <MinutesPageView view={view} onRetry={query.isFetching ? undefined : () => void query.refetch()} />;
 }
 
 // The state of the query as one of the views; a missing or malformed token is the same refusal as a link the server does not know.
-export function minutesViewOf(token: string | null, query: { isLoading: boolean; error: unknown; data: MinutesPage | null | undefined }): MinutesView {
+export function minutesViewOf(token: string | null, query: { isLoading: boolean; isFetching?: boolean; error: unknown; data: MinutesPage | null | undefined }): MinutesView {
   if (token === null) return { kind: 'invalid' };
-  if (query.error) return query.error instanceof ApiError && query.error.status === 429 ? { kind: 'rateLimited' } : { kind: 'error' };
-  if (query.isLoading) return { kind: 'loading' };
+  // Minutes already on screen stay on screen: a failed request after them (a network blip, a 429) does not replace them.
   if (query.data) return { kind: 'ok', page: query.data };
+  // A retry in flight shows the wait, not the earlier error.
+  if (query.isLoading || query.isFetching) return { kind: 'loading' };
+  if (query.error) return query.error instanceof ApiError && query.error.status === 429 ? { kind: 'rateLimited' } : { kind: 'error' };
   return query.data === null ? { kind: 'invalid' } : { kind: 'loading' };
 }

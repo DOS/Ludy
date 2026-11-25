@@ -168,6 +168,9 @@ describe('the shared minutes page (#4822)', () => {
     expect(minutesViewOf(TOKEN, { isLoading: true, error: null, data: undefined })).toEqual({ kind: 'loading' });
     expect(minutesViewOf(TOKEN, { isLoading: false, error: null, data: null })).toEqual({ kind: 'invalid' });
     expect(minutesViewOf(TOKEN, { isLoading: false, error: null, data: page() })).toEqual({ kind: 'ok', page: page() });
+    // Minutes already shown stay shown when a later request fails; a retry in flight shows the wait, not the earlier error.
+    expect(minutesViewOf(TOKEN, { isLoading: false, error: new Error('network'), data: page() })).toEqual({ kind: 'ok', page: page() });
+    expect(minutesViewOf(TOKEN, { isLoading: false, isFetching: true, error: new Error('network'), data: undefined })).toEqual({ kind: 'loading' });
   });
 
   it('follows the token of the hash: the cache is keyed by it, so another link shows other minutes', () => {
