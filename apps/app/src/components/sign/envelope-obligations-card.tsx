@@ -481,7 +481,7 @@ export function EnvelopeObligationsCard({
               </div>
             ) : null}
 
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-1.5 max-md:gap-2">
               {hasObligationProposalFields ? (
                 <Button
                   type="button"
