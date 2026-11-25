@@ -25,6 +25,7 @@ import {
   parseSharedSummary,
   sanitizeSignUserAgent,
 } from '@ludy/mod-sign';
+import { clientBucket } from './auth-email-limit.ts';
 import {
   signIpHash,
   type SignBilling,
@@ -121,8 +122,9 @@ function templateScopeOf(orgSlug: string, templateId: string): string {
   return `hub:${orgSlug.toLowerCase()}:${templateId.toLowerCase()}`;
 }
 
-function templateBucketOf(ip: string | null | undefined, orgSlug: string, templateId: string): string {
-  const ipKey = signIpHash(ip ?? null) ?? 'anonymous';
+// Normalize IPv6 (/64) and IPv4-mapped IPv6 before hashing so interface-ID rotation cannot split the per-template bucket (#4636).
+export function templateBucketOf(ip: string | null | undefined, orgSlug: string, templateId: string): string {
+  const ipKey = signIpHash(clientBucket(ip ?? null)) ?? 'anonymous';
   return `${templateScopeOf(orgSlug, templateId)}:${ipKey}`;
 }
 
