@@ -868,7 +868,11 @@ export type PersonalDataColumnKey = keyof typeof PERSONAL_DATA_COLUMNS;
 // (#1874). Empty since notes step N9 registered the notes' text (#1678); a column a module classifies as pii before the
 // finder can reach it waits here. apps/kernel/test/personal-data.test.ts asks every pii column of ludy_notes to be in
 // one list or the other.
-export const PERSONAL_DATA_PENDING: Readonly<Record<string, string>> = {};
+export const PERSONAL_DATA_PENDING: Readonly<Record<string, string>> = {
+  // The place of a meeting (#5013): free text the recorder types for the biên bản, which may name a person or an address. The meetings finder and erasure are definers that read the text columns by name;
+  // restating them for one more column is a change of its own (#5014). Until then it is deleted with the meeting, which a personal-data request is answered with (R3 owner delete).
+  'ludy_meetings.meeting.place': 'the meetings personal_* definers read it like the title, #5014',
+};
 
 // Columns that hold a value sealed under its subject's key (ADR-0017, #2640; `<schema>.<table>.<column>`, the place ctx.seal takes). An erasure
 // deletes the subject's key (ludy_kernel.subject_key_shred), so the value stays in its row, byte for byte, and can no longer be opened: handling

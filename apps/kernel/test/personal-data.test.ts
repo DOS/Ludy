@@ -68,7 +68,13 @@ describe('personal-data registry: notes (#1874)', () => {
 
   it('lists as waiting only columns the manifests classify, and none that is also registered', () => {
     const pending = Object.keys(PERSONAL_DATA_PENDING);
-    expect(pending.filter((key) => !classified.includes(key))).toEqual([]);
+    // The notes' columns, and the meetings' (the place of a meeting waits for the definers of #5014, see PERSONAL_DATA_PENDING).
+    const meetingsClassified = Object.entries(meetingsManifest.tables.ludy_meetings).flatMap(([table, cols]) =>
+      Object.entries(cols as Record<string, string>)
+        .filter(([, cls]) => cls !== 'internal')
+        .map(([column]) => `ludy_meetings.${table}.${column}`),
+    );
+    expect(pending.filter((key) => !classified.includes(key) && !meetingsClassified.includes(key))).toEqual([]);
     expect(pending.filter((key) => key in PERSONAL_DATA_COLUMNS)).toEqual([]);
   });
 });

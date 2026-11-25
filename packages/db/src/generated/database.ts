@@ -3903,6 +3903,7 @@ export interface MeetingsMeetingTable {
   live_notes: ColumnType<boolean, boolean | undefined, NotGranted>;
   recording_stop_reason: string | null;
   summary_template: Generated<string>;
+  place: string | null;
   audio_used_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   series_id: string | null;
   minutes_template_name: string | null;

@@ -712,6 +712,7 @@ import { zMinutesDocx, zMinutesDocxInput } from './meeting-minutes-docx.ts';
 import { zAskAnswer, zAskEmpty, zAskInput, zAskLines, zAskMeetingLinesInput, zAskStatus } from './meeting-ask.ts';
 import { zBriefAnswer, zBriefEmpty, zBriefFacts, zBriefStatus, zBriefTarget } from './meeting-brief.ts';
 import { zMeetingRename, zMeetingRenamed, zTitleAnswer } from './meeting-title.ts';
+import { zMeetingPlaceSet, zMeetingSetPlace } from './meeting-place.ts';
 import { zCommitmentsAnswer } from './meeting-commitments.ts';
 import { zTemplateSuggestion, zTemplateVyAnswer } from './meeting-template-suggest.ts';
 import { zVoiceCueDraft, zVoiceCueDrafted } from './meeting-voice-cue.ts';
@@ -1860,6 +1861,8 @@ export const contract = {
     recordingNow: oc.input(zMeetingRecordingNowInput).output(zMeetingRecordingNow),
     // The recorder's own new title for a meeting (#3947): a pick from Vy's suggestions or a title they typed; audited, ids only.
     rename: oc.input(zMeetingRename).output(zMeetingRenamed),
+    // The recorder's place for the meeting, printed on the biên bản (#5013): one line, or null to clear; the recorder only; audited, ids only.
+    setPlace: oc.input(zMeetingSetPlace).output(zMeetingPlaceSet),
     delete: oc.input(zMeetingRef).output(zMeetingDeleted),
     ownerDelete: oc.input(zMeetingRef).output(zMeetingDeleted),
     // The owner's compliance list (#2703): every meeting of the org as metadata only, no title or text, a page at a time; audited per call.

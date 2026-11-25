@@ -112,6 +112,7 @@ describe('meetings commands and queries construction', () => {
       'meetings.chapters.start',
       'meetings.title.start',
       'meetings.meeting.rename',
+      'meetings.meeting.set_place',
       'meetings.commitments.start',
       'meetings.template_suggest.start',
       'meetings.open_points.start',

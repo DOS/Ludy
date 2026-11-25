@@ -48,14 +48,15 @@ const MEETING = {
   recorderUserId: 'u-rec',
   readers: [],
   summaryTemplate: 'general',
+  place: null as string | null,
   minutesTemplate: null,
   isRecorder: true,
 };
 const published = { id: 'r1', feature: 'manual' as const, stage: 'published' as const, summary: 'Đã giao hàng.', decisions: ['Giữ giá cũ'], tainted: false };
 const results = (over: Partial<MeetingResults>): MeetingResults => ({ meetingId: 'm1', isRecorder: true, draft: null, published: null, items: [], transcriptDraft: 0, transcriptUnread: 0, transcriptUnreadKey: '', ...over });
 
-const page = (res: MeetingResults, locale: 'en' | 'vi' = 'en') => {
-  client.current.setQueryData(['meetings', 'get'], MEETING);
+const page = (res: MeetingResults, locale: 'en' | 'vi' = 'en', meeting: typeof MEETING = MEETING) => {
+  client.current.setQueryData(['meetings', 'get'], meeting);
   client.current.setQueryData(['meetings', 'results', 'get'], res);
   client.current.setQueryData(['org', 'get'], { name: 'Công ty A', role: 'owner', members: [{ userId: 'u-rec', displayName: 'Anh Nam', email: 'nam@example.com' }] });
   return renderToStaticMarkup(
@@ -92,6 +93,40 @@ describe('the button', () => {
     expect(page(results({ published }), 'vi')).toContain(viMessages.meetings.minutes.docx);
     expect(en.kernelErrors.codes.MINUTES_NOT_PUBLISHED).toBeTruthy();
     expect(viMessages.kernelErrors.codes.MINUTES_NOT_PUBLISHED).toBeTruthy();
+  });
+});
+
+// The place the recorder saved for the meeting (#5013): the page's field starts from it, the recorder is told it is saved once and the readers see it, and a reader is told it is for printing only.
+describe('the place of the meeting', () => {
+  const field = (html: string) => /<input[^>]*id="minutes-place"[^>]*>/.exec(html)?.[0] ?? '';
+  const sheetPlace = (html: string) => /data-testid="minutes-place">([^<]*)</.exec(html)?.[1];
+
+  it('fills the field and the sheet from the saved place, and the recorder has no save button until the text changes', () => {
+    const html = page(results({ published }), 'en', { ...MEETING, place: 'Phòng họp tầng 3' });
+    expect(field(html)).toContain('value="Phòng họp tầng 3"');
+    expect(sheetPlace(html)).toBe('Phòng họp tầng 3');
+    expect(html).toContain(en.meetings.minutes.placeHintRecorder);
+    expect(html).not.toContain(en.meetings.minutes.placeSave);
+  });
+
+  it('prints the dots when no place is saved', () => {
+    const html = page(results({ published }));
+    expect(field(html)).toContain('value=""');
+    expect(sheetPlace(html)).toContain('……');
+  });
+
+  it('shows a reader the saved place, tells them it is for printing only, and gives them no save button', () => {
+    const html = page(results({ published }), 'en', { ...MEETING, place: 'Văn phòng Đà Nẵng', isRecorder: false });
+    expect(sheetPlace(html)).toBe('Văn phòng Đà Nẵng');
+    expect(html).toContain(en.meetings.minutes.placeHint);
+    expect(html).not.toContain(en.meetings.minutes.placeHintRecorder);
+    expect(html).not.toContain(en.meetings.minutes.placeSave);
+  });
+
+  it('has Vietnamese words for the hints and the button', () => {
+    expect(viMessages.meetings.minutes.placeHintRecorder.length).toBeGreaterThan(10);
+    expect(viMessages.meetings.minutes.placeSave).toBeTruthy();
+    expect(page(results({ published }), 'vi', { ...MEETING, place: 'Hà Nội' })).toContain(viMessages.meetings.minutes.placeHintRecorder);
   });
 });
 

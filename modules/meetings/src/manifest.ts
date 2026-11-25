@@ -103,7 +103,7 @@ export const meetingsManifest = defineModule({
           'created_at',
           'updated_at',
         ],
-        { title: 'pii' },
+        { title: 'pii', place: 'pii' },
       ),
       // The chapters (table of contents) of a meeting (#3844): a title and the second of the transcript line it starts at; a draft the recorder reads, published for the readers. A title is plain text, personal data.
       meeting_chapter: columns(['org_id', 'id', 'meeting_id', 'stage', 'position', 'start_seconds', 'tainted', 'source_run_id', 'created_at', 'updated_at'], { title: 'pii' }),
