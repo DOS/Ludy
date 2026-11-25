@@ -27,6 +27,8 @@ export const zAskEmpty = z.strictObject({});
 // `meetingId` limits the question to one meeting (#4815, the box on a meeting's page): the same run, meter and checks, over the lines of that meeting the member reads. Absent, the question is across meetings.
 export const zAskInput = z.strictObject({ question: z.string().trim().min(ASK_QUESTION_MIN).max(ASK_QUESTION_MAX), meetingId: zId.optional() });
 export type AskInput = z.infer<typeof zAskInput>;
+// The plain list of one meeting's lines (no model): `meetingId` is required, so the route is one bounded read of a meeting the caller reads, never the cross-meeting search without the question box's budget.
+export const zAskMeetingLinesInput = zAskInput.required({ meetingId: true });
 
 // Whether Vy may be asked now, and why not: the deployment's switch is off (`off`), the member may not work with Vy (`forbidden`), a kill switch of the org, the module or the operator holds AI (`paused`), or this month's budget of the org or
 // the meetings module is spent (`budget`). `estimate` is the cost of one question; null cost when the deployment sets no price. The amount left is not here: only an owner or an admin reads the

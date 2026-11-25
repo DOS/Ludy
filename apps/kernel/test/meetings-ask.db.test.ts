@@ -417,4 +417,24 @@ suite("the member's Vy answering across meetings (A3, #3161)", () => {
     expect((await read('attendee')).lines.map((l) => l.text)).toEqual(['Plainlist chốt giá 3 triệu']);
     expect((await read('outsider')).lines).toEqual([]);
   });
+
+  it('asking about one meeting: a question with no usable word gets lines spread over the whole meeting, the recorder with both stages gets the published lines, and a meeting past its text date gives none', async () => {
+    const m = await meeting('recorder', 'Họp dài', 'attendees', ['attendee']);
+    for (let i = 0; i < 100; i += 1) await line(m, `Dòng số ${i} của buổi họp dài`, 'published', i * 10);
+    await line(m, 'Dòng nháp của người ghi', 'draft', 5);
+    const pick = answering((lines) => [{ text: 'Có dòng.', cites: [lines[0]?.n] }]);
+    // Only stop words: no usable word.
+    await askThis('recorder', m, 'Ai nói gì vậy nhỉ?', { model: pick });
+    const texts = lastData?.lines.map((l) => l.text) ?? [];
+    expect(texts).toHaveLength(40);
+    expect(texts).not.toContain('Dòng nháp của người ghi');
+    // Spread over the meeting: the last line given is from its last part, not the first minutes.
+    expect(texts[39]).toBe('Dòng số 97 của buổi họp dài');
+    expect(texts[0]).toBe('Dòng số 0 của buổi họp dài');
+    const expired = await meeting('recorder', 'Họp hết hạn một mình', 'attendees', ['attendee'], '2026-10-01T03:00:00Z', 'current_date - 1');
+    await line(expired, 'Expiredone chiết khấu cũ 3% phần trăm', 'published', 3);
+    modelCalls = 0;
+    expect(await askThis('attendee', expired, 'Expiredone là gì?')).toMatchObject({ state: 'none' });
+    expect(modelCalls).toBe(0);
+  });
 });

@@ -60,9 +60,12 @@ const MEETING_LINES_READ_MAX = 4000;
  * The lines of ONE meeting for a question about it (#4815): the lines the caller reads, read under row security as for the search (the recorder reads their own draft lines and every published one,
  * a reader only the published lines of a meeting they read, an owner or admin who is no reader none, and a meeting past its text date none; a meeting the caller cannot read is "no lines", not an error).
  * The published lines when there are any (the stage a reader reads), else the draft. With words in the question only the lines holding at least one of them are given (none: no line, so nothing to
- * answer from); a question with no usable word (a general one) gets the first lines. At most ASK_LINES_MAX lines, those holding the most words first, handed over in the order of the transcript.
+ * answer from); a question with no usable word (a general one) gets lines spread evenly over the meeting. At most ASK_LINES_MAX lines, those holding the most words first, handed over in the order of the transcript.
  */
 export async function linesOfMeeting(trx: QueryContext['trx'], orgId: string, meetingId: string, words: readonly string[]): Promise<MeetingSearchHit[]> {
+  // The stage first (a small read), so the cap below counts only the lines that are given: the published lines when the caller reads any, else the draft.
+  const published = await trx.selectFrom('ludy_meetings.transcript_segment').select('id').where('org_id', '=', orgId).where('meeting_id', '=', meetingId).where('stage', '=', 'published').limit(1).executeTakeFirst();
+  const stage: TranscriptStage = published ? 'published' : 'draft';
   const rows = await trx
     .selectFrom('ludy_meetings.transcript_segment as s')
     .innerJoin('ludy_meetings.meeting as m', (join) => join.onRef('m.org_id', '=', 's.org_id').onRef('m.id', '=', 's.meeting_id'))
@@ -78,14 +81,13 @@ export async function linesOfMeeting(trx: QueryContext['trx'], orgId: string, me
     ])
     .where('s.org_id', '=', orgId)
     .where('s.meeting_id', '=', meetingId)
+    .where('s.stage', '=', stage)
     .where((eb) => eb.or([eb('m.text_retention_date', 'is', null), eb('m.text_retention_date', '>', vnDay(new Date()))]))
     .orderBy('s.start_seconds')
     .orderBy('s.id')
     .limit(MEETING_LINES_READ_MAX)
     .execute();
-  const stage = rows.some((r) => r.stage === 'published') ? 'published' : 'draft';
   const hits: MeetingSearchHit[] = rows
-    .filter((r) => r.stage === stage)
     .map((r) => ({
       meetingId: r.meeting_id,
       meetingTitle: r.title,
@@ -96,8 +98,12 @@ export async function linesOfMeeting(trx: QueryContext['trx'], orgId: string, me
       text: r.text,
       stage: r.stage as TranscriptStage,
     }));
-  const candidates = words.length === 0 ? hits : hits.filter((h) => askRank(h.text, words) > 0);
-  return pickLines(candidates, words).sort((a, b) => a.startSeconds - b.startSeconds);
+  // A question with no usable word (a general one: "tóm tắt cuộc họp") gets lines spread evenly over the whole meeting, not only its first minutes.
+  if (words.length === 0) {
+    if (hits.length <= ASK_LINES_MAX) return hits;
+    return Array.from({ length: ASK_LINES_MAX }, (_, i) => hits[Math.floor((i * hits.length) / ASK_LINES_MAX)] as MeetingSearchHit);
+  }
+  return pickLines(hits.filter((h) => askRank(h.text, words) > 0), words).sort((a, b) => a.startSeconds - b.startSeconds);
 }
 
 // The lines a question's search finds, as the member reads them: a sensitive read (the question is hashed into its audit row, never kept), run when the member asks.
@@ -106,6 +112,7 @@ export const askLines = defineQuery({
   input: zAskInput,
   access: ROLES,
   sensitive: true,
+  target: (input) => (input.meetingId ? { type: 'meetings.meeting', id: input.meetingId } : null),
   handler: async (ctx, input): Promise<AskLines> => {
     userOf(ctx.actor);
     const words = askKeywords(input.question);
