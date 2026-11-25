@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Authenticated oRPC wiring tests for os.sign (#3325): module gate, noIdempotency commands, and Vy AI analyze/get routing.
+import { EventEmitter } from 'node:events';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type pg from 'pg';
+import { Hono } from 'hono';
 import { SignAiReader } from '@ludy/agent';
 import type { BlobStore, Runtime } from '@ludy/kernel-runtime';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import type { AuthUser } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
-import { createHttpApp } from '../src/http.ts';
+import { createHttpApp, releaseOnResponseClose } from '../src/http.ts';
 import { SIGN_ATTACHMENT_MAX_BYTES, verifySignAttachmentBytes } from '../src/sign-link.ts';
 
 const ORG_ID = '01900000-0000-7000-8000-000000000010';
@@ -1295,6 +1297,176 @@ describe('os.sign RPC handlers (#3325)', () => {
           quoteExcerpt: 'Confidentiality applies for 24 months.',
         },
       ],
+    });
+  });
+
+  describe('releaseOnResponseClose PDF slot lifecycle (#4682)', () => {
+    it('holds slot across pull() #1 and pull() #2 when outgoing is attached and releases strictly once on finish or close', async () => {
+      vi.useFakeTimers();
+      try {
+        const bytes = new Uint8Array([1, 2, 3, 4]);
+        const releaseFinish = vi.fn();
+        const outgoingFinish = new EventEmitter();
+        const app = new Hono();
+        app.get('/pdf', (c) => new Response(releaseOnResponseClose(bytes, releaseFinish, c)));
+
+        const res = await app.request('/pdf', undefined, { outgoing: outgoingFinish });
+        expect(res.status).toBe(200);
+        const reader = res.body!.getReader();
+        const first = await reader.read();
+        expect(first.done).toBe(false);
+        expect(first.value).toEqual(bytes);
+        expect(releaseFinish).not.toHaveBeenCalled();
+
+        // Simulates @hono/node-server eager maxReadCount = 2 read before outgoing.writeHead/write.
+        const second = await reader.read();
+        expect(second.done).toBe(true);
+        expect(releaseFinish).not.toHaveBeenCalled();
+        expect(outgoingFinish.listenerCount('finish')).toBe(1);
+        expect(outgoingFinish.listenerCount('close')).toBe(1);
+
+        outgoingFinish.emit('finish');
+        expect(releaseFinish).toHaveBeenCalledTimes(1);
+        expect(outgoingFinish.listenerCount('finish')).toBe(0);
+        expect(outgoingFinish.listenerCount('close')).toBe(0);
+
+        // Subsequent close event and advancing beyond the 5-minute lease timer must not double-release.
+        outgoingFinish.emit('close');
+        vi.advanceTimersByTime(10 * 60_000);
+        expect(releaseFinish).toHaveBeenCalledTimes(1);
+
+        // Also test close-first ordering, plus minimal once/off stubs and abort signal.
+        const releaseClose = vi.fn();
+        const closeListeners = new Map<string, () => void>();
+        const minimalOutgoing = {
+          once(evt: string, fn: () => void) {
+            closeListeners.set(evt, fn);
+          },
+          off(evt: string, fn: () => void) {
+            if (closeListeners.get(evt) === fn) closeListeners.delete(evt);
+          },
+        };
+        const abortController = new AbortController();
+        const minimalContext = {
+          env: { outgoing: minimalOutgoing },
+          req: { raw: { signal: abortController.signal } },
+        } as unknown as Parameters<typeof releaseOnResponseClose>[2];
+        const stream2 = releaseOnResponseClose(bytes, releaseClose, minimalContext);
+        const r2 = stream2.getReader();
+        expect((await r2.read()).done).toBe(false);
+        expect((await r2.read()).done).toBe(true);
+        expect(releaseClose).not.toHaveBeenCalled();
+
+        closeListeners.get('close')?.();
+        closeListeners.get('finish')?.();
+        abortController.abort();
+        vi.advanceTimersByTime(10 * 60_000);
+        expect(releaseClose).toHaveBeenCalledTimes(1);
+        expect(closeListeners.size).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('releases stalled outgoing/unread streams automatically via the 5-minute lease timer without double-releasing', async () => {
+      vi.useFakeTimers();
+      try {
+        const bytes = new Uint8Array([9, 8, 7]);
+        const releaseStalled = vi.fn();
+        const outgoing = new EventEmitter();
+        const abortController = new AbortController();
+        const ctx = {
+          env: { outgoing },
+          req: { raw: { signal: abortController.signal } },
+        } as unknown as Parameters<typeof releaseOnResponseClose>[2];
+
+        const stream = releaseOnResponseClose(bytes, releaseStalled, ctx);
+        const reader = stream.getReader();
+        expect((await reader.read()).done).toBe(false);
+        expect((await reader.read()).done).toBe(true);
+
+        vi.advanceTimersByTime(5 * 60_000 - 1);
+        expect(releaseStalled).not.toHaveBeenCalled();
+
+        vi.advanceTimersByTime(1);
+        expect(releaseStalled).toHaveBeenCalledTimes(1);
+        expect(outgoing.listenerCount('finish')).toBe(0);
+        expect(outgoing.listenerCount('close')).toBe(0);
+
+        // Late close, finish, and abort after lease expiry must remain no-ops.
+        outgoing.emit('close');
+        outgoing.emit('finish');
+        abortController.abort();
+        expect(releaseStalled).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('handles in-memory streams, cancel, abort signals, EventTarget, and pre-finished/pre-aborted contexts safely', async () => {
+      vi.useFakeTimers();
+      try {
+        const bytes = new Uint8Array([5, 6]);
+
+        // Without outgoing: pull() #2 releases once and cancels timer.
+        const releaseMem = vi.fn();
+        const memStream = releaseOnResponseClose(bytes, releaseMem);
+        const memReader = memStream.getReader();
+        expect((await memReader.read()).done).toBe(false);
+        expect(releaseMem).not.toHaveBeenCalled();
+        expect((await memReader.read()).done).toBe(true);
+        expect(releaseMem).toHaveBeenCalledTimes(1);
+        await memStream.cancel().catch(() => {});
+        vi.advanceTimersByTime(10 * 60_000);
+        expect(releaseMem).toHaveBeenCalledTimes(1);
+
+        // Without outgoing: unread stream cancelled explicitly releases once.
+        const releaseCancel = vi.fn();
+        const cancelStream = releaseOnResponseClose(bytes, releaseCancel);
+        await cancelStream.cancel();
+        expect(releaseCancel).toHaveBeenCalledTimes(1);
+        vi.advanceTimersByTime(10 * 60_000);
+        expect(releaseCancel).toHaveBeenCalledTimes(1);
+
+        // EventTarget outgoing + abort signal.
+        const releaseTarget = vi.fn();
+        const target = new EventTarget();
+        const abortTarget = new AbortController();
+        const targetCtx = {
+          env: { outgoing: target },
+          req: { raw: { signal: abortTarget.signal } },
+        } as unknown as Parameters<typeof releaseOnResponseClose>[2];
+        const targetStream = releaseOnResponseClose(bytes, releaseTarget, targetCtx);
+        const targetReader = targetStream.getReader();
+        expect((await targetReader.read()).done).toBe(false);
+        expect((await targetReader.read()).done).toBe(true);
+        expect(releaseTarget).not.toHaveBeenCalled();
+        abortTarget.abort();
+        target.dispatchEvent(new Event('finish'));
+        expect(releaseTarget).toHaveBeenCalledTimes(1);
+
+        // Pre-aborted signal and pre-finished outgoing release immediately once.
+        const preAborted = new AbortController();
+        preAborted.abort();
+        const releasePreAborted = vi.fn();
+        releaseOnResponseClose(bytes, releasePreAborted, {
+          env: { outgoing: new EventEmitter() },
+          req: { raw: { signal: preAborted.signal } },
+        } as unknown as Parameters<typeof releaseOnResponseClose>[2]);
+        expect(releasePreAborted).toHaveBeenCalledTimes(1);
+
+        const releasePreFinished = vi.fn();
+        const finishedEmitter = Object.assign(new EventEmitter(), { writableFinished: true });
+        releaseOnResponseClose(bytes, releasePreFinished, {
+          env: { outgoing: finishedEmitter },
+          req: { raw: new AbortController().signal },
+        } as unknown as Parameters<typeof releaseOnResponseClose>[2]);
+        expect(releasePreFinished).toHaveBeenCalledTimes(1);
+        expect(finishedEmitter.listenerCount('finish')).toBe(0);
+        expect(finishedEmitter.listenerCount('close')).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 });

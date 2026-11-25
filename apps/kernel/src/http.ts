@@ -653,15 +653,94 @@ function body(bytes: Uint8Array): ArrayBuffer {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }
 
-// Keep PDF read pool slots held until the buffered Response stream is fully delivered or canceled (#4682).
-function releaseOnResponseClose(bytes: Uint8Array, release: () => void): ReadableStream<Uint8Array> {
+const PDF_STREAM_LEASE_MS = 5 * 60_000;
+
+interface OutgoingResponseTarget {
+  readonly writableFinished?: boolean;
+  readonly closed?: boolean;
+  readonly destroyed?: boolean;
+  on?: (event: string, listener: () => void) => unknown;
+  once?: (event: string, listener: () => void) => unknown;
+  off?: (event: string, listener: () => void) => unknown;
+  removeListener?: (event: string, listener: () => void) => unknown;
+  addEventListener?: (event: string, listener: () => void) => unknown;
+  removeEventListener?: (event: string, listener: () => void) => unknown;
+}
+
+// Keep PDF read pool slots held until Node finishes flushing or closes the socket (or until the in-memory Web
+// stream finishes/cancels when no Node outgoing response is attached), bounded by a 5-minute lease timer (#4682).
+export function releaseOnResponseClose(bytes: Uint8Array, release: () => void, c?: Context): ReadableStream<Uint8Array> {
   let released = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let detachListeners: (() => void) | undefined;
+
   const finish = () => {
-    if (!released) {
-      released = true;
-      release();
+    if (released) return;
+    released = true;
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      timer = undefined;
     }
+    detachListeners?.();
+    detachListeners = undefined;
+    release();
   };
+
+  const outgoing = (c?.env as { outgoing?: OutgoingResponseTarget } | undefined)?.outgoing;
+  const signal = c?.req?.raw?.signal;
+  let hasOutgoing = false;
+
+  if (signal?.aborted || outgoing?.writableFinished || outgoing?.closed || outgoing?.destroyed) {
+    finish();
+  } else {
+    const cleanups: Array<() => void> = [];
+    detachListeners = () => {
+      for (const cleanup of cleanups) cleanup();
+    };
+
+    if (outgoing && typeof outgoing === 'object') {
+      const attach =
+        typeof outgoing.on === 'function'
+          ? (evt: 'finish' | 'close') => outgoing.on!(evt, finish)
+          : typeof outgoing.once === 'function'
+            ? (evt: 'finish' | 'close') => outgoing.once!(evt, finish)
+            : typeof outgoing.addEventListener === 'function'
+              ? (evt: 'finish' | 'close') => outgoing.addEventListener!(evt, finish)
+              : null;
+      if (attach) {
+        hasOutgoing = true;
+        cleanups.push(() => {
+          const detach =
+            typeof outgoing.off === 'function'
+              ? (evt: 'finish' | 'close') => outgoing.off!(evt, finish)
+              : typeof outgoing.removeListener === 'function'
+                ? (evt: 'finish' | 'close') => outgoing.removeListener!(evt, finish)
+                : typeof outgoing.removeEventListener === 'function'
+                  ? (evt: 'finish' | 'close') => outgoing.removeEventListener!(evt, finish)
+                  : null;
+          if (detach) {
+            detach('finish');
+            detach('close');
+          }
+        });
+        attach('finish');
+        if (!released) attach('close');
+      }
+    }
+
+    if (signal && !released) {
+      cleanups.push(() => {
+        signal.removeEventListener('abort', finish);
+      });
+      signal.addEventListener('abort', finish, { once: true });
+    }
+
+    if (!released) {
+      timer = setTimeout(finish, PDF_STREAM_LEASE_MS);
+      timer.unref?.();
+    }
+  }
+
   let sent = false;
   return new ReadableStream<Uint8Array>(
     {
@@ -672,7 +751,9 @@ function releaseOnResponseClose(bytes: Uint8Array, release: () => void): Readabl
           return;
         }
         controller.close();
-        finish();
+        if (!hasOutgoing) {
+          finish();
+        }
       },
       cancel() {
         finish();
@@ -1915,7 +1996,7 @@ export function createHttpApp(deps: HttpDeps) {
         let passedToStream = false;
         try {
           const bytes = await readPublicPdfBytes(store, lookup.source);
-          const stream = releaseOnResponseClose(bytes, release);
+          const stream = releaseOnResponseClose(bytes, release, c);
           passedToStream = true;
           return new Response(stream, {
             headers: {
@@ -2099,7 +2180,7 @@ export function createHttpApp(deps: HttpDeps) {
         try {
           const bytes = await readPublicDepositQrBytes(store, lookup.source);
           if (!bytes) return signOpaqueNotFound(c);
-          const stream = releaseOnResponseClose(bytes, release);
+          const stream = releaseOnResponseClose(bytes, release, c);
           passedToStream = true;
           return new Response(stream, {
             headers: {
@@ -2238,7 +2319,7 @@ export function createHttpApp(deps: HttpDeps) {
         let passedToStream = false;
         try {
           const bytes = await readPublicPdfBytes(store, lookup.source);
-          const stream = releaseOnResponseClose(bytes, release);
+          const stream = releaseOnResponseClose(bytes, release, c);
           passedToStream = true;
           return new Response(stream, {
             headers: {
@@ -2337,7 +2418,7 @@ export function createHttpApp(deps: HttpDeps) {
           let passedToStream = false;
           try {
             const bytes = await readPublicPdfBytes(store, lookup.source);
-            const stream = releaseOnResponseClose(bytes, release);
+            const stream = releaseOnResponseClose(bytes, release, c);
             passedToStream = true;
             return new Response(stream, {
               headers: {
@@ -2473,7 +2554,7 @@ export function createHttpApp(deps: HttpDeps) {
         try {
           const bytes = await readSignApiV1ArtifactBytes(store, lookup.data);
           // Hono turns HEAD into GET with null response body without pulling/canceling stream, so only wrap GET (#4682).
-          const stream = c.req.method === 'HEAD' ? null : releaseOnResponseClose(bytes, release);
+          const stream = c.req.method === 'HEAD' ? null : releaseOnResponseClose(bytes, release, c);
           if (stream) passedToStream = true;
           return new Response(stream, {
             headers: {
@@ -2515,7 +2596,7 @@ export function createHttpApp(deps: HttpDeps) {
         let passedToStream = false;
         try {
           const bytes = await readSignApiV1ArtifactBytes(store, lookup.data);
-          const stream = c.req.method === 'HEAD' ? null : releaseOnResponseClose(bytes, release);
+          const stream = c.req.method === 'HEAD' ? null : releaseOnResponseClose(bytes, release, c);
           if (stream) passedToStream = true;
           return new Response(stream, {
             headers: {
