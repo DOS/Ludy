@@ -133,7 +133,7 @@ const PENDING_TABLES = new Set<string>([
   'crove_meetings.live_line',
   'crove_meetings.meeting_link',
   'crove_meetings.minutes_link',
-  'crove_meetings.minutes_version',
+  'crove_meetings.tracker_alert',
   'crove_notes.link',
   'crove_notes.note',
 ]);
@@ -240,6 +240,7 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   ['crove_meetings.minutes_link', () => 'false'], // The recorder's own links to the published minutes, read by the recorder (and owners and admins), users (#4822); an agent context reads none.
   ['crove_meetings.minutes_version', () => 'false'], // The recorder's published second-language version of the minutes, read by the meeting's readers, users (#4777).
   ['crove_meetings.morning_notice', () => 'false'], // A member's own opt-in to the morning notice of the day's meetings, read by that member, a user (#3955).
+  ['crove_meetings.tracker_alert', () => 'false'], // A member's own opt-in to the alert when a tracked keyword comes up in a new meeting, read by that member, a user (meetings tracker alerts, #4873); an agent context reads none.
   ['crove_meetings.tracker_term', () => 'false'], // The org's tracked keywords, read by the members of the org, users (meetings trackers, #4818); an agent context reads none.
   ['crove_meetings.transcript_segment', () => 'false'], // As above (transcript segments, ADR-0047).
   ['crove_meetings.translation', () => 'false'], // A machine translation, read by the member who asked for it, a user (meetings integrations E1, #3184).
@@ -379,6 +380,8 @@ const AUTHOR_ONLY = new Map<string, string>([
   ['crove_meetings.minutes_version', 'false'],
   // A member's own morning notice setting (#3955): the member's alone; worker system context reads and writes nothing (its one reader is a definer).
   ['crove_meetings.morning_notice', 'false'],
+  // A member's own opt-in to tracker alerts (#4873): the member's alone, users only; worker system context reads and writes nothing (its one reader is a definer).
+  ['crove_meetings.tracker_alert', 'false'],
   // The org's tracked keywords (meetings trackers, #4818): read by the members, written by an owner or admin, users only; worker system context reads and writes nothing.
   ['crove_meetings.tracker_term', 'false'],
   // Meeting transcript segments (ADR-0047 point 2): worker system context reads and writes nothing.
@@ -3716,6 +3719,13 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
     noInsertControl: 'one row per member (UNIQUE (org_id, user_id)); a member inserts their own, through meetings.morning.set (meetings-morning.db.test.ts tests it)',
     make: (o) => ({
       row: { org_id: o.id, id: randomUUID(), user_id: o.owner, send_minute: 420, time_zone: 'Asia/Ho_Chi_Minh', language: 'vi' },
+    }),
+  },
+  // #4873 (meetings tracker alerts): a member's own opt-in to be told when a tracked keyword comes up in a meeting they may read, one row per member. Read, inserted and deleted by that member alone, all in a
+  // user context; the system context and an agent context read none. No UPDATE for a login role. Its factory lands before the table (PENDING_TABLES).
+  'crove_meetings.tracker_alert': {
+    make: (o) => ({
+      row: { org_id: o.id, id: randomUUID(), user_id: o.owner },
     }),
   },
   // #4818 (meetings trackers): a keyword or phrase the org tracks across its meetings, at most 20 an org. Read by every member of the org and written and deleted by an owner or an admin (the factory's

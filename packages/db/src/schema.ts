@@ -1508,6 +1508,9 @@ export type MeetingsTranslationTable = Refine<
   }
 >;
 
+// The recorder's published second-language version of a meeting's minutes (#4777): the language it is in (the targets of a translation).
+export type MeetingsMinutesVersionTable = Refine<G.MeetingsMinutesVersionTable, { language: TranslationTargetLanguage }>;
+
 // The org's channels for minutes (meetings integrations B4, #3168): which service the webhook belongs to, and how far one click's post got.
 export const MEETING_CHAT_KINDS = ['slack', 'teams'] as const;
 export type MeetingChatKind = (typeof MEETING_CHAT_KINDS)[number];
@@ -1913,6 +1916,7 @@ type Refined = Tables<{
   'ludy_meetings.meeting': MeetingsMeetingTable;
   'ludy_meetings.meeting_chapter': MeetingsMeetingChapterTable;
   'ludy_meetings.meeting_result': MeetingsMeetingResultTable;
+  'ludy_meetings.minutes_version': MeetingsMinutesVersionTable;
   'ludy_meetings.transcript_segment': MeetingsTranscriptSegmentTable;
   'ludy_meetings.translation': MeetingsTranslationTable;
   'ludy_notes.attachment': NotesAttachmentTable;

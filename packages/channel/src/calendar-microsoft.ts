@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Microsoft Outlook calendar through Microsoft Graph (Meetings B3, issue #3167), the same shape as the Google adapter: the member connects their own account through the Microsoft identity
+// Microsoft Outlook calendar through Microsoft Graph (Meetings B3, issue #3167; #3267), the same shape as the Google adapter: the member connects their own account through the Microsoft identity
 // platform (OAuth 2.0 authorization code with PKCE, delegated permissions), the kernel seals the tokens, the worker renews them and reads the member's own primary calendar.
 //
 // It uses an app registration the operator makes for it: CALENDAR_MICROSOFT_CLIENT_ID and CALENDAR_MICROSOFT_CLIENT_SECRET (and CALENDAR_MICROSOFT_TENANT, `common` when not given).
@@ -7,7 +7,9 @@
 // Permissions. One delegated calendar permission, MICROSOFT_CALENDAR_READ_SCOPE, asked for at the connect, plus openid, profile, email and offline_access (a refresh token and the account's
 // address from the ID token). Microsoft has no permission that reads busy times without event details, so the connect carries the title-level grant from the start; what Ludy reads and keeps is
 // gated by its own code and the member's switch: the busy read selects start, end and showAs only, and titles, join addresses and invitee counts are fetched only for a connection whose switch
-// is on (the caller of `events`). No description, attachment or invitee address is ever kept.
+// is on (the caller of `events`). When `onlineMeeting.joinUrl` is missing, `location.displayName` is checked solely in memory for an allowlisted Zoom, Google Meet or Teams https join URL and
+// is never kept as text (no room name or street address is kept). No `body`, `bodyPreview`, organizer or attachment is ever asked for, and no raw location text, description, attachment or
+// invitee address is ever kept.
 //
 // Not offered here: writing events (the booking write-back is Google's) and revoking a grant (Microsoft has no token revocation endpoint for this; a disconnect removes the connection and the
 // member removes the app's access in their Microsoft account, which the screen says).
@@ -136,10 +138,51 @@ const EVENTS_MAX = 300;
 const PAGE = 250;
 const EVENTS_PAGES = 2;
 const BUSY_PAGES = 12;
-// The fields asked for. The event reads select no body, no location, no organizer and no attachment; the attendees are asked for only to be counted and are never kept. The busy read
-// selects times and the availability flag alone.
-const EVENT_FIELDS = 'id,subject,seriesMasterId,start,end,isAllDay,isCancelled,onlineMeeting,responseStatus,attendees';
+// The fields asked for. The event reads select `location` solely to extract an allowlisted Zoom, Google Meet or Teams join link from `location.displayName` in memory when `onlineMeeting.joinUrl` is absent (raw location text, room names and street addresses are never kept); no `body`, `bodyPreview`, organizer or attachment is ever asked for, and the attendees are asked for only to be counted and are never kept. The busy read selects times and the availability flag alone.
+const EVENT_FIELDS = 'id,subject,seriesMasterId,start,end,isAllDay,isCancelled,location,onlineMeeting,responseStatus,attendees';
 const BUSY_FIELDS = 'start,end,showAs,isCancelled';
+
+// Trailing punctuation stripped from https:// URL candidates in free-form `location.displayName` text.
+const TRAILING_URL_PUNCTUATION = new Set(['>', ')', ']', ',', '.', ';', '"', "'", '”', '’', '!', ':']);
+
+// Replaces ASCII control and zero-width/format characters with spaces so they separate URL tokens cleanly and never stick onto URLs.
+function sanitizeLocationText(text: string): string {
+  let out = '';
+  for (let i = 0; i < text.length; i += 1) {
+    const code = text.charCodeAt(i);
+    const invisible =
+      code <= 0x1f ||
+      (code >= 0x7f && code <= 0x9f) ||
+      (code >= 0x200b && code <= 0x200f) ||
+      (code >= 0x2028 && code <= 0x202e) ||
+      code === 0x2060 ||
+      (code >= 0x2066 && code <= 0x2069) ||
+      code === 0xfeff;
+    out += invisible ? ' ' : text.charAt(i);
+  }
+  return out.trim();
+}
+
+function trimTrailingPunctuation(candidate: string): string {
+  let end = candidate.length;
+  while (end > 0 && TRAILING_URL_PUNCTUATION.has(candidate.charAt(end - 1))) end -= 1;
+  return end === candidate.length ? candidate : candidate.slice(0, end);
+}
+
+// Reads ONLY `location.displayName` in memory and returns the first valid allowlisted https Zoom, Google Meet or Teams join URL, or null; raw location text, street addresses, room names and non-allowlisted hosts are never returned.
+export function joinUrlFromLocation(location: unknown): string | null {
+  if (location === null || typeof location !== 'object' || Array.isArray(location)) return null;
+  const displayName = (location as { displayName?: unknown }).displayName;
+  if (typeof displayName !== 'string') return null;
+  const clean = sanitizeLocationText(displayName);
+  if (clean === '') return null;
+  for (const match of clean.matchAll(/https:\/\/\S+/gi)) {
+    const candidate = trimTrailingPunctuation(match[0]);
+    const joinUrl = joinUrlOf(candidate);
+    if (joinUrl !== null && joinUrl.length <= 500) return joinUrl;
+  }
+  return null;
+}
 
 // Graph writes a time as "2026-11-14T09:00:00.0000000" in the zone asked for (UTC, by the Prefer header), with no offset: read as UTC.
 function graphInstant(value: unknown): number {
@@ -166,7 +209,7 @@ export function agendaEventOfGraph(event: Record<string, unknown>): CalendarAgen
     endsAt: new Date(endMs).toISOString(),
     // Asked in UTC, so the event's own zone is not known; the field is only a label and the screens show the instant in the member's own zone.
     timeZone: 'UTC',
-    joinUrl: joinUrlOf(meeting?.joinUrl),
+    joinUrl: joinUrlOf(meeting?.joinUrl) ?? joinUrlFromLocation(event.location),
     invitees: Math.min(attendees, 1000),
     series: seriesOf(event.seriesMasterId),
   };

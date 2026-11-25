@@ -25,6 +25,7 @@ import {
   zMeetingPlatformErrorCode,
   zMeetingPlatformListed,
   zMeetingPlatformProvider,
+  zMeetingPlatformRecordingPick,
   zMeetingPlatformRecordingRef,
   type CaptureCall,
   type MeetingPlatformConnectionView,
@@ -280,6 +281,25 @@ export const meetingPlatformRecordingDismiss = defineCommand({
   },
 });
 
+// The member picked the recording's file in Google Picker (#3174, ADR-0025 amendment): the Drive file id is kept on their own row, nothing else of the pick. A recording that needs no pick, is not the member's, or
+// is past the point of importing is not found. The id is checked by the worker's import job against the id Meet gave, so a wrong id fails the import (`pick_mismatch`), never reads another file.
+export const meetingPlatformRecordingPick = defineCommand({
+  name: 'kernel.meeting_platform.recording.pick',
+  input: zMeetingPlatformRecordingPick,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: EDITORS,
+  target: (input) => ({ type: 'kernel.meeting_platform_recording', id: input.recordingId }),
+  handler: async (ctx, input) => {
+    // A person picks, in their own browser: never an agent acting for one.
+    if (ctx.actor.type !== 'user' || ctx.actor.mcp) throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới chọn được tệp ghi hình');
+    await sql`SELECT ludy_kernel.meeting_platform_recording_pick(${input.recordingId}::uuid, ${input.fileId}::text)`.execute(ctx.trx).catch(platformError);
+    // The id of the recording only: a Drive file id names a file in a member's Drive, and an audit row never holds one.
+    ctx.audit({ recording_id: input.recordingId });
+    return { recordingId: input.recordingId, picked: true as const };
+  },
+});
+
 // The member's request takes the bytes the worker staged: the row must be theirs and staged; it becomes claimed and the staging key comes back for the sealing (the same route as an upload).
 export const meetingPlatformImportClaim = defineCommand({
   name: 'kernel.meeting_platform.import.claim',
@@ -500,6 +520,18 @@ export const meetingPlatformImportHolds = defineQuery({
     requireSystem(ctx.actor);
     const { rows } = await sql<{ holds: 'importing' | 'staged' | 'claimed' | 'none' }>`SELECT ludy_kernel.meeting_platform_import_holds(${input.recordingId}::uuid, ${input.stagingKey}) AS holds`.execute(ctx.trx).catch(platformError);
     return rows[0]?.holds ?? 'none';
+  },
+});
+
+// The Drive file id the member picked for a recording that is importing under exactly this staging key, for the job that compares it with the id Meet gave; null when none was picked or the row moved on.
+export const meetingPlatformImportPick = defineQuery({
+  name: 'kernel.meeting_platform.import_pick',
+  input: z.strictObject({ recordingId: zId, stagingKey: zStagingKey }),
+  access: 'system',
+  handler: async (ctx, input): Promise<string | null> => {
+    requireSystem(ctx.actor);
+    const { rows } = await sql<{ picked: string | null }>`SELECT ludy_kernel.meeting_platform_import_pick(${input.recordingId}::uuid, ${input.stagingKey}) AS picked`.execute(ctx.trx).catch(platformError);
+    return rows[0]?.picked ?? null;
   },
 });
 
@@ -743,7 +775,7 @@ export const meetingPlatformRecordings = defineQuery({
     let query = ctx.trx
       .selectFrom('ludy_kernel.meeting_platform_recording as r')
       .innerJoin('ludy_kernel.meeting_platform_connection as c', (join) => join.onRef('c.org_id', '=', 'r.org_id').onRef('c.id', '=', 'r.connection_id'))
-      .select(['r.id', 'r.connection_id', 'c.provider', 'r.title', 'r.started_at', 'r.length_seconds', 'r.size_bytes', 'r.has_audio', 'r.has_video', 'r.has_transcript', 'r.status', 'r.meeting_id', 'r.error_code', 'r.meeting_key'])
+      .select(['r.id', 'r.connection_id', 'c.provider', 'r.title', 'r.started_at', 'r.length_seconds', 'r.size_bytes', 'r.has_audio', 'r.has_video', 'r.has_transcript', 'r.status', 'r.meeting_id', 'r.error_code', 'r.picked_file_id', 'r.meeting_key'])
       .where('r.org_id', '=', ctx.orgId)
       .where('r.user_id', '=', ctx.actor.userId)
       .where('r.status', '<>', 'dismissed');
@@ -768,6 +800,7 @@ export const meetingPlatformRecordings = defineQuery({
         status: r.status,
         meetingId: r.meeting_id,
         errorCode: r.error_code,
+        picked: r.picked_file_id !== null,
         matchedMeeting: matchedId === undefined ? null : { meetingId: matchedId },
       };
     });
@@ -781,6 +814,7 @@ export const meetingPlatformCommands = [
   meetingPlatformDisconnect,
   meetingPlatformRefresh,
   meetingPlatformRecordingDismiss,
+  meetingPlatformRecordingPick,
   meetingPlatformImportClaim,
   meetingPlatformImportClaimFailed,
   meetingPlatformRecordingReplace,
@@ -789,4 +823,4 @@ export const meetingPlatformCommands = [
   meetingPlatformImportFailed,
   meetingPlatformSweep,
 ];
-export const meetingPlatformQueries = [meetingPlatformConnections, meetingPlatformRecordings, meetingPlatformCredential, meetingPlatformImportHolds, meetingPlatformSyncDue, meetingPlatformImportOpen];
+export const meetingPlatformQueries = [meetingPlatformConnections, meetingPlatformRecordings, meetingPlatformCredential, meetingPlatformImportHolds, meetingPlatformSyncDue, meetingPlatformImportOpen, meetingPlatformImportPick];
