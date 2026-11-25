@@ -16,6 +16,9 @@
 // - A recording with only the platform's own transcript (C2, #3174: no audio file, no video file) is not downloaded at all: the adapter reads the transcript through its own API hosts, the job bounds every line
 //   again (the text is tainted) and stages the lines as JSON under the same staging key, with the same lifecycle (claim, sweep, deletion) as staged audio. The member's own request claims it and writes it as
 //   the recorder's draft (POST /api/meetings/:id/transcript-import); no audio is kept and no model is called.
+// - Zoom's own transcript (C3, #3175, gap 2) is a FILE on Zoom's download hosts, not an API answer. The adapter describes it (`transcriptFile`) and the job fetches it exactly as it fetches a recording, through the
+//   egress guard (public addresses, the adapter's first host, the member's token to that host only) but under the transcript file's own small cap (TRANSCRIPT_FILE_MAX_BYTES), then the adapter reads the bytes
+//   (`parseTranscript`) and the same bounding and staging as above follow. An adapter with `transcript` (Meet, Teams) never reaches this branch.
 // - A transient failure (the platform or the network) throws so the queue retries; the last try, and every permanent failure, is recorded on the row as a short code, never the platform's message.
 import {
   MEETING_PLATFORM_IMPORT_MAX_BYTES,
@@ -37,6 +40,8 @@ import { MEDIA_PROBE_FAILED, MEDIA_PROBE_UNAVAILABLE, MEDIA_TOO_LONG } from './m
 
 const ACTOR = { type: 'system' as const, component: 'meetings.import' };
 const codeOf = (error: unknown) => (error instanceof DomainError ? error.code : error instanceof Error ? error.name : 'error');
+// A transcript FILE (Zoom's WebVTT) is read whole into memory: a real one is a few hundred KB, this is far above that and far below an audio file.
+export const TRANSCRIPT_FILE_MAX_BYTES = 8 * 1024 * 1024;
 // One download, redirects and the body included.
 const DOWNLOAD_TIMEOUT_MS = 20 * 60_000;
 // The queue tries a transient failure this many more times (a minute apart, doubling), and a job may run this long.
@@ -161,13 +166,13 @@ async function openDownload(deps: MeetingsImportDeps, download: MeetingPlatformD
   }
 }
 
-// The platform's file, in memory, counted against the cap as it arrives.
-async function fetchBytes(deps: MeetingsImportDeps, download: MeetingPlatformDownload, signal?: AbortSignal): Promise<Uint8Array> {
+// The platform's file, in memory, counted against the cap as it arrives (the audio cap, or the transcript's own).
+async function fetchBytes(deps: MeetingsImportDeps, download: MeetingPlatformDownload, signal?: AbortSignal, cap: number = MEETING_PLATFORM_IMPORT_MAX_BYTES): Promise<Uint8Array> {
   if (download.inline) {
-    if (download.inline.bytes.byteLength > MEETING_PLATFORM_IMPORT_MAX_BYTES) throw new MeetingPlatformError('too_large');
+    if (download.inline.bytes.byteLength > cap) throw new MeetingPlatformError('too_large');
     return download.inline.bytes;
   }
-  const { response, declared, release } = await openDownload(deps, download, MEETING_PLATFORM_IMPORT_MAX_BYTES, signal);
+  const { response, declared, release } = await openDownload(deps, download, cap, signal);
   try {
     // With the size declared, one buffer is filled as the pieces arrive (peak: the file); without it the pieces are joined at the end (peak: twice the file).
     if (declared !== null) {
@@ -187,7 +192,7 @@ async function fetchBytes(deps: MeetingsImportDeps, download: MeetingPlatformDow
     for await (const chunk of response.body) {
       if (signal?.aborted) throw new MeetingPlatformError('platform_unavailable');
       total += chunk.byteLength;
-      if (total > MEETING_PLATFORM_IMPORT_MAX_BYTES) throw new MeetingPlatformError('too_large');
+      if (total > cap) throw new MeetingPlatformError('too_large');
       chunks.push(chunk);
     }
     const out = new Uint8Array(total);
@@ -289,7 +294,7 @@ export async function runMeetingsImport(deps: MeetingsImportDeps, job: MeetingsI
     const adapter = deps.adapters[job.provider];
     if (!adapter) return await fail('platform_unavailable');
     // A recording with neither an audio nor a video file is the transcript's (C2, #3174; the command lets only such a row begin when its provider has a transcript path, and the adapter must have one too).
-    const transcriptOnly = !job.hasAudio && !job.hasVideo && adapter.transcript !== undefined;
+    const transcriptOnly = !job.hasAudio && !job.hasVideo && (adapter.transcript !== undefined || (adapter.transcriptFile !== undefined && adapter.parseTranscript !== undefined));
     // A size the platform declared over the cap of the file it will be fetched as (the audio cap when there is nothing to fetch), then no audio file to take and no way to extract one: refused before any network call.
     const format = job.hasAudio ? 'audio' : job.hasVideo && deps.extractor?.configured ? 'video' : null;
     if (!transcriptOnly) {
@@ -301,6 +306,10 @@ export async function runMeetingsImport(deps: MeetingsImportDeps, job: MeetingsI
     let bytes: Uint8Array;
     if (transcriptOnly && adapter.transcript) {
       bytes = stageTranscript(await adapter.transcript(credential, job.externalId, attempt.signal));
+    } else if (transcriptOnly && adapter.transcriptFile && adapter.parseTranscript) {
+      // A transcript file: fetched under the transcript's cap through the guard, read by the adapter, bounded again here like any platform text.
+      const download = await adapter.transcriptFile(credential, job.externalId, attempt.signal);
+      bytes = stageTranscript(adapter.parseTranscript(await fetchBytes(deps, download, attempt.signal, TRANSCRIPT_FILE_MAX_BYTES)));
     } else {
       const download = await adapter.prepareDownload(credential, job.externalId, format as 'audio' | 'video', attempt.signal);
       bytes = download.format === 'video' ? await audioOfVideo(deps, job, download, attempt.signal) : await fetchBytes(deps, download, attempt.signal);

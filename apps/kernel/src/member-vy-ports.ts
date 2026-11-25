@@ -1304,7 +1304,7 @@ export async function askStatusOf(deps: Pick<MeetingAskDeps, 'runtime' | 'price'
   return status.enabled ? { ...status, estimate: askEstimate(deps.price) } : status;
 }
 
-export async function runMeetingAsk(deps: MeetingAskDeps, orgId: string, actor: UserActor, question: string): Promise<AskAnswer> {
+export async function runMeetingAsk(deps: MeetingAskDeps, orgId: string, actor: UserActor, question: string, meetingId?: string): Promise<AskAnswer> {
   const as = { actor, orgId };
   const timeoutMs = deps.timeoutMs ?? SUMMARY_TIMEOUT_MS;
   const model = deps.model;
@@ -1321,7 +1321,7 @@ export async function runMeetingAsk(deps: MeetingAskDeps, orgId: string, actor: 
   if (!ticket.allowed) throw new DomainError('ASK_BUSY', 429, 'Vy is busy; try again in a few minutes', { retryAfterSeconds: ticket.retryAfterSeconds });
   try {
     // 2. The lines the member's own search finds.
-    const { lines } = await deps.runtime.query<AskLines>('meetings.ask.lines', { question }, as);
+    const { lines } = await deps.runtime.query<AskLines>('meetings.ask.lines', { question, ...(meetingId ? { meetingId } : {}) }, as);
     if (lines.length === 0) return { state: 'none', errorCode: null, sentences: [], sources: [], hits: [], dropped: 0 };
     const hits = lines.slice(0, ASK_HITS_MAX);
     // 3. The checks come first: the switch, vy.use, the kill switches (the member's own Vy's included) and the budget. A refusal here has made no run, and the member still has the lines their

@@ -1783,6 +1783,7 @@ export function createRpcHandler(
       search: os.meetings.search.handler(meetingsQuery('meetings.search')),
       transcript: {
         get: os.meetings.transcript.get.handler(meetingsQuery('meetings.transcript.get')),
+        download: os.meetings.transcript.download.handler(meetingsQuery('meetings.transcript.download')),
         draftStore: os.meetings.transcript.draftStore.handler(meetingsCommand('meetings.transcript.draft_store')),
         correct: os.meetings.transcript.correct.handler(meetingsCommand('meetings.transcript.correct')),
         start: os.meetings.transcript.start.handler(meetingsCommand('meetings.transcript.start')),
@@ -1885,8 +1886,9 @@ export function createRpcHandler(
       ask: {
         status: os.meetings.ask.status.handler(({ context }) => inMeetings(context, (orgId, actor) => askStatusOf({ runtime, price: aiPrice, model: summaryModel, meter: aiMeter ?? (() => null) }, orgId, actor))),
         ask: os.meetings.ask.ask.handler(({ context, input }) =>
-          inMeetings(context, (orgId, actor) => runMeetingAsk({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: asks, price: aiPrice }, orgId, actor, input.question)),
+          inMeetings(context, (orgId, actor) => runMeetingAsk({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: asks, price: aiPrice }, orgId, actor, input.question, input.meetingId)),
         ),
+        lines: os.meetings.ask.lines.handler(meetingsQuery('meetings.ask.lines')),
       },
       // Vy's brief before a meeting (#3543): the facts are read as the member (no model); the click has the member's own Vy write two or three sentences from them, each citing facts, and a sentence whose figure no
       // cited fact writes is refused; nothing is stored or sent. See member-vy-ports.ts.

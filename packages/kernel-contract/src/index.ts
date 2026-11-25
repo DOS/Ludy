@@ -175,6 +175,7 @@ export * from './meeting-title.ts';
 export * from './meeting-commitments.ts';
 export * from './meeting-open-points.ts';
 export * from './invisible-chars.ts';
+export * from './meeting-transcript-export.ts';
 export * from './meeting-glossary.ts';
 export * from './meeting-minutes-templates.ts';
 export * from './meeting-templates.ts';

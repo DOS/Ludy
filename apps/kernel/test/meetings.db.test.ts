@@ -1931,19 +1931,20 @@ suite('meetings module database integration tests (#2576)', () => {
     const insert = (source: string, tainted: boolean) =>
       admin((c) => c.query(`INSERT INTO ludy_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, text, source, tainted) VALUES ($1, $2, 0, 1, 'x', $3, $4)`, [orgId, meetingId, source, tainted]));
     await expect(insert('microsoft_teams', false)).rejects.toThrow(/MEETINGS_TAINT_FORBIDDEN/);
-    await expect(insert('zoom', true)).rejects.toThrow(/transcript_segment_source_check/);
+    await expect(insert('zoom', false)).rejects.toThrow(/MEETINGS_TAINT_FORBIDDEN/);
+    await expect(insert('another_platform', true)).rejects.toThrow(/transcript_segment_source_check/);
     await expect(admin((c) => c.query(`UPDATE ludy_meetings.transcript_segment SET source = 'google_meet' WHERE meeting_id = $1`, [meetingId]))).rejects.toThrow(/MEETINGS_TAINT_FORBIDDEN/);
-    // A provider with no transcript path (Zoom) is refused and writes nothing: it is never labelled as another platform's.
+    // Zoom's transcript (#3175) is labelled Zoom's, by the provider of the connection it came through and never by the caller: the lines are tainted, the audit names the source and holds no line.
     const zoomMeeting = String((await rpc('meetings/create', 'recorder', { title: 'Họp Zoom', visibility: 'attendees', keepVideo: false, consentMethod: 'told_at_start' })).body.meetingId);
     const zoomRecording = await suggest('recorder', { hasAudio: false, hasTranscript: true, provider: 'zoom' });
     await admin((c) =>
       c.query(`UPDATE ludy_kernel.meeting_platform_recording SET status = 'claimed', meeting_id = $2, staging_key = $3, length_seconds = 600 WHERE id = $1`, [zoomRecording, zoomMeeting, `staging/${randomBytes(32).toString('hex')}`]),
     );
-    expect(await refusedWith(runtime.execute('meetings.import.take_transcript', { meetingId: zoomMeeting, segments }, { actor: asUser('recorder'), orgId }))).toBe('IMPORT_NOT_CLAIMED');
-    expect(await admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM ludy_meetings.transcript_segment WHERE meeting_id = $1', [zoomMeeting])).rows[0]?.n))).toBe(0);
+    await runtime.execute('meetings.import.take_transcript', { meetingId: zoomMeeting, segments }, { actor: asUser('recorder'), orgId });
+    expect(await admin(async (c) => (await c.query<{ source: string; tainted: boolean }>('SELECT source, tainted FROM ludy_meetings.transcript_segment WHERE meeting_id = $1', [zoomMeeting])).rows.map((r) => [r.source, r.tainted]))).toEqual(segments.map(() => ['zoom', true]));
   });
 
-  it('34e. C2: a transcript-only recording begins when its provider has a transcript path (Zoom has none), and the import route takes the staged lines as the recorder\'s draft and deletes them (#3174)', async () => {
+  it('34e. C2: a transcript-only recording begins when its provider has a transcript path (Zoom\'s is a file), and the import route takes the staged lines as the recorder\'s draft and deletes them (#3174)', async () => {
     const postTranscript = async (who: string, meetingId: string, body: unknown) => {
       const response = await app.request(`/api/meetings/${meetingId}/transcript-import`, {
         method: 'POST',
@@ -1962,12 +1963,10 @@ suite('meetings module database integration tests (#2576)', () => {
       const { meetingId } = await startImport('recorder', { recordingId, language: 'vi', visibility: 'attendees' });
       return { recordingId, meetingId };
     };
-    // A provider with no transcript path is refused before a meeting is made.
+    // Zoom has a transcript path since #3175 (its transcript is a file the job fetches): a transcript-only Zoom recording begins like any other and waits for the job.
     const zoomOnly = await suggest('recorder', { hasAudio: false, hasTranscript: true, provider: 'zoom' });
-    const meetingsBefore = await meetingCount();
-    expect(await refusedWith(startImport('recorder', { recordingId: zoomOnly, language: 'vi', visibility: 'attendees' }))).toBe('MEETING_PLATFORM_NO_AUDIO');
-    expect(await meetingCount()).toBe(meetingsBefore);
-    expect((await recordingRow(zoomOnly)).status).toBe('suggested');
+    await startImport('recorder', { recordingId: zoomOnly, language: 'vi', visibility: 'attendees' });
+    expect((await recordingRow(zoomOnly)).status).toBe('importing');
 
     // The sandbox (a transcript-only recording) begins; the worker stages the lines; the member's request takes them.
     const first = await begin();
