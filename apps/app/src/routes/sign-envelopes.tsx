@@ -133,6 +133,7 @@ export interface CreatedEnvelopeSubmitContext {
   orgId: string | null;
   userId: string | null;
   sessionId: string | null;
+  sessionChanged?: boolean | undefined;
   reqId: number;
 }
 
@@ -157,24 +158,30 @@ export async function captureEnvelopeSubmitContext(deps: {
   ) => Promise<{ orgId: string | null; userId: string | null; sessionId: string | null } | null>;
 }): Promise<CreatedEnvelopeSubmitContext> {
   const sessionId = await deps.readSessionId();
+  let liveScope: { orgId: string | null; userId: string | null; sessionId: string | null } | null = null;
   try {
-    const liveScope = await deps.resolveScope(deps.slug, sessionId);
-    return {
-      slug: deps.slug,
-      orgId: liveScope?.orgId ?? null,
-      userId: liveScope?.userId ?? null,
-      sessionId: liveScope?.sessionId ?? sessionId,
-      reqId: deps.reqId,
-    };
+    liveScope = await deps.resolveScope(deps.slug, sessionId);
   } catch {
+    liveScope = null;
+  }
+  const sessionAfter = await deps.readSessionId().catch(() => null);
+  if (sessionId && sessionAfter !== sessionId) {
     return {
       slug: deps.slug,
       orgId: null,
       userId: null,
       sessionId,
+      sessionChanged: true,
       reqId: deps.reqId,
     };
   }
+  return {
+    slug: deps.slug,
+    orgId: liveScope?.orgId ?? null,
+    userId: liveScope?.userId ?? null,
+    sessionId: liveScope?.sessionId ?? sessionId,
+    reqId: deps.reqId,
+  };
 }
 
 type ResolvedScopeDecision =
@@ -509,10 +516,12 @@ export async function submitCreateEnvelopeFromDialog(deps: {
   converted: SignDocxConvertCompletedResult | null;
   orgSlug?: string | undefined;
   resolveSubmitContext?: (() => CreatedEnvelopeSubmitContext | Promise<CreatedEnvelopeSubmitContext>) | undefined;
+  readSessionId?: (() => Promise<string | null>) | undefined;
   isMounted?: (() => boolean) | undefined;
   isSubmitContextCurrent?: ((ctx: CreatedEnvelopeSubmitContext) => boolean) | undefined;
   getLiveOrgSlug?: (() => string | null) | undefined;
   docxRequiredMessage: string;
+  verifyIdentityErrorMessage?: string | undefined;
   uploadPdf: (file: File, orgSlug?: string | null) => Promise<{ fileId: string }>;
   createEnvelope: (
     input: {
@@ -525,10 +534,19 @@ export async function submitCreateEnvelopeFromDialog(deps: {
   ) => Promise<{ envelopeId: string }>;
 }): Promise<CreateEnvelopeMutationOutcome> {
   const readLiveOrg = deps.getLiveOrgSlug ?? getCurrentOrg;
+  const isSessionConsistent = async (ctx: CreatedEnvelopeSubmitContext | null): Promise<boolean> => {
+    if (ctx?.sessionChanged) return false;
+    if (ctx?.sessionId && deps.readSessionId) {
+      const liveSessionId = await deps.readSessionId().catch(() => null);
+      if (liveSessionId !== ctx.sessionId) return false;
+    }
+    return true;
+  };
   const isActiveFor = (ctx: CreatedEnvelopeSubmitContext | null, fallbackSlug: string | undefined): boolean => {
     if (deps.isMounted && !deps.isMounted()) return false;
     const liveOrg = typeof readLiveOrg === 'function' ? readLiveOrg() : null;
     if (ctx) {
+      if (ctx.sessionChanged) return false;
       if (deps.isSubmitContextCurrent && !deps.isSubmitContextCurrent(ctx)) return false;
       if (liveOrg !== null && ctx.slug && liveOrg !== ctx.slug) return false;
       return true;
@@ -539,8 +557,17 @@ export async function submitCreateEnvelopeFromDialog(deps: {
 
   const submitContext = deps.resolveSubmitContext ? await deps.resolveSubmitContext() : null;
   const pinnedOrgSlug = submitContext?.slug || deps.orgSlug || undefined;
-  if (!isActiveFor(submitContext, pinnedOrgSlug)) {
+  if (!isActiveFor(submitContext, pinnedOrgSlug) || !(await isSessionConsistent(submitContext))) {
     return { cancelled: true };
+  }
+  if (
+    submitContext !== null &&
+    deps.converted &&
+    deps.converted.warnings.length > 0 &&
+    !submitContext.userId &&
+    !submitContext.sessionId
+  ) {
+    throw new Error(deps.verifyIdentityErrorMessage ?? deps.docxRequiredMessage);
   }
   if (deps.converted) {
     return {
@@ -562,7 +589,7 @@ export async function submitCreateEnvelopeFromDialog(deps: {
     throw new Error(deps.docxRequiredMessage);
   }
   const uploaded = await deps.uploadPdf(deps.file, pinnedOrgSlug);
-  if (!isActiveFor(submitContext, pinnedOrgSlug)) {
+  if (!isActiveFor(submitContext, pinnedOrgSlug) || !(await isSessionConsistent(submitContext))) {
     return { cancelled: true };
   }
   return {
@@ -630,9 +657,11 @@ export function CreateEnvelopeDialog({
         converted: input.converted,
         orgSlug: input.pinnedOrgSlug,
         resolveSubmitContext: input.resolveSubmitContext,
+        readSessionId: () => accessToken().then((tok) => sessionIdFromToken(tok)).catch(() => null),
         isMounted: () => mountedRef.current,
         isSubmitContextCurrent: input.isSubmitContextCurrent,
         docxRequiredMessage: t('pdfRequired'),
+        verifyIdentityErrorMessage: t('docxWarningOpenPending'),
         uploadPdf: (file, targetSlug) => uploadSignPdf(file, targetSlug),
         createEnvelope: (payload, targetSlug) => signApi.createEnvelope(payload, targetSlug),
       }),

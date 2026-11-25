@@ -1101,5 +1101,101 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
       sessionId: 'sess-b',
       reqId: 4,
     });
+
+    // Session switch during me.get in captureEnvelopeSubmitContext marks sessionChanged so upload/create aborts before sending.
+    let sessionCall = 0;
+    const swappedCapture = await captureEnvelopeSubmitContext({
+      slug: 'acme',
+      reqId: 5,
+      readSessionId: async () => (sessionCall++ === 0 ? 'sess-a' : 'sess-b'),
+      resolveScope: async () => null,
+    });
+    expect(swappedCapture.sessionChanged).toBe(true);
+
+    uploadCalls.length = 0;
+    createCalls.length = 0;
+    const abortedOnSessionSwap = await submitCreateEnvelopeFromDialog({
+      title: 'Hop dong session swapped',
+      file: samplePdf,
+      converted: null,
+      orgSlug: 'acme',
+      resolveSubmitContext: async () => swappedCapture,
+      isMounted: () => true,
+      getLiveOrgSlug: () => 'acme',
+      docxRequiredMessage: 'PDF required',
+      uploadPdf: async (file, slugArg) => {
+        uploadCalls.push({ name: file.name, orgSlug: slugArg });
+        return { fileId: 'should-not-upload' };
+      },
+      createEnvelope: async (input, slugArg) => {
+        createCalls.push({ sourceFileId: input.sourceFileId, orgSlug: slugArg });
+        return { envelopeId: 'should-not-create' };
+      },
+    });
+    expect(abortedOnSessionSwap).toEqual({ cancelled: true });
+    expect(uploadCalls).toEqual([]);
+    expect(createCalls).toEqual([]);
+
+    // Submitting a converted .docx that has warnings fails before createEnvelope when neither userId nor sessionId can be proved.
+    const docxWithWarningsFile = makeTestFile(new Uint8Array([0x50, 0x4b, 0x03, 0x04]), 'hd.docx', SIGN_DOCX_MIME);
+    createCalls.length = 0;
+    await expect(
+      submitCreateEnvelopeFromDialog({
+        title: 'Hop dong canh bao',
+        file: docxWithWarningsFile,
+        converted: {
+          status: 'completed',
+          fileId: 'file-docx-1',
+          sourceDocxSha256: 'd'.repeat(64),
+          filename: 'hd.pdf',
+          pageCount: 1,
+          warnings: ['images_skipped'],
+        },
+        orgSlug: 'acme',
+        resolveSubmitContext: async () => ({
+          slug: 'acme',
+          orgId: null,
+          userId: null,
+          sessionId: null,
+          reqId: 6,
+        }),
+        isMounted: () => true,
+        getLiveOrgSlug: () => 'acme',
+        docxRequiredMessage: 'PDF required',
+        verifyIdentityErrorMessage: 'Retry identity verification',
+        uploadPdf: async () => ({ fileId: 'unused' }),
+        createEnvelope: async (input, slugArg) => {
+          createCalls.push({ sourceFileId: input.sourceFileId, orgSlug: slugArg });
+          return { envelopeId: 'should-not-create' };
+        },
+      }),
+    ).rejects.toThrow('Retry identity verification');
+    expect(createCalls).toEqual([]);
+
+    // Dismissing while sessionStorage getItem and setItem both throw SecurityError still remembers the dismissal across storage recovery.
+    const throwingStoreMap = new Map<string, string>();
+    let blockStorageAccess = false;
+    const securityFlakyStorage = {
+      getItem: (k: string) => {
+        if (blockStorageAccess) throw new DOMException('Denied', 'SecurityError');
+        return throwingStoreMap.get(k) ?? null;
+      },
+      setItem: (k: string, v: string) => {
+        if (blockStorageAccess) throw new DOMException('Denied', 'SecurityError');
+        throwingStoreMap.set(k, v);
+      },
+      removeItem: (k: string) => {
+        if (blockStorageAccess) throw new DOMException('Denied', 'SecurityError');
+        throwingStoreMap.delete(k);
+      },
+    };
+    vi.stubGlobal('window', { location: { pathname: '/o/acme/sign/envelopes', hash: '' }, sessionStorage: securityFlakyStorage });
+    saveCreatedDocxWarnings(envDetailId, ['images_skipped'], scopeUserA);
+    expect(throwingStoreMap.has('ludy.sign.created_docx_warnings')).toBe(true);
+    blockStorageAccess = true;
+    clearCreatedDocxWarnings(envDetailId, scopeUserA);
+    blockStorageAccess = false;
+    expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual([]);
+    expect(throwingStoreMap.has('ludy.sign.created_docx_warnings')).toBe(false);
   });
 });

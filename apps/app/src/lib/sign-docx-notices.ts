@@ -96,12 +96,15 @@ function readFallbackDocxNotices(now: number): StoredDocxWarningNotice[] {
   return valid;
 }
 
-function readRawStorageNotices(storage: Storage, now: number): StoredDocxWarningNotice[] {
+function readRawStorageResult(
+  storage: Storage,
+  now: number,
+): { ok: true; entries: StoredDocxWarningNotice[] } | { ok: false; entries: StoredDocxWarningNotice[] } {
   try {
     const raw = storage.getItem(ENVELOPE_DOCX_WARNINGS_STORAGE_KEY);
-    if (!raw) return [];
+    if (!raw) return { ok: true, entries: [] };
     const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) return [];
+    if (!Array.isArray(parsed)) return { ok: true, entries: [] };
     const byKey = new Map<string, StoredDocxWarningNotice>();
     for (const item of parsed) {
       if (!item || typeof item !== 'object') continue;
@@ -132,9 +135,9 @@ function readRawStorageNotices(storage: Storage, now: number): StoredDocxWarning
         createdAt: rec.createdAt,
       });
     }
-    return [...byKey.values()];
+    return { ok: true, entries: [...byKey.values()] };
   } catch {
-    return [];
+    return { ok: false, entries: [] };
   }
 }
 
@@ -153,11 +156,17 @@ function flushPendingSignOutClear(): Storage | null {
   return storage;
 }
 
-function readMergedEntriesWithStorage(storage: Storage | null, now: number): StoredDocxWarningNotice[] {
+function readMergedEntriesWithStorage(
+  storage: Storage | null,
+  now: number,
+): { storageReadable: boolean; merged: StoredDocxWarningNotice[] } {
   pruneFallbackDismissed(now);
   const byKey = new Map<string, StoredDocxWarningNotice>();
+  let storageReadable = false;
   if (storage) {
-    for (const entry of readRawStorageNotices(storage, now)) {
+    const rawResult = readRawStorageResult(storage, now);
+    storageReadable = rawResult.ok;
+    for (const entry of rawResult.entries) {
       const key = noticeKey(entry.envelopeId, entry);
       if (!fallbackDismissedNotices.has(key)) {
         byKey.set(key, entry);
@@ -167,13 +176,13 @@ function readMergedEntriesWithStorage(storage: Storage | null, now: number): Sto
   for (const fb of readFallbackDocxNotices(now)) {
     byKey.set(noticeKey(fb.envelopeId, fb), fb);
   }
-  return [...byKey.values()];
+  return { storageReadable, merged: [...byKey.values()] };
 }
 
 function readStoredDocxNotices(now: number): StoredDocxWarningNotice[] {
   const storage = flushPendingSignOutClear();
-  const merged = readMergedEntriesWithStorage(storage, now);
-  if (storage && (fallbackDocxNotices.size > 0 || fallbackDismissedNotices.size > 0)) {
+  const { storageReadable, merged } = readMergedEntriesWithStorage(storage, now);
+  if (storage && storageReadable && (fallbackDocxNotices.size > 0 || fallbackDismissedNotices.size > 0)) {
     if (tryPersistDocxNotices(storage, merged)) {
       fallbackDocxNotices.clear();
       fallbackDismissedNotices.clear();
@@ -273,17 +282,21 @@ export function clearCreatedDocxWarnings(
     return;
   }
 
-  const remainingMerged = readStoredDocxNotices(now).filter((entry) => noticeKey(entry.envelopeId, entry) !== key);
-  if (tryPersistDocxNotices(storage, remainingMerged)) {
+  const { storageReadable, merged } = readMergedEntriesWithStorage(storage, now);
+  const remainingMerged = merged.filter((entry) => noticeKey(entry.envelopeId, entry) !== key);
+  if (storageReadable && tryPersistDocxNotices(storage, remainingMerged)) {
     fallbackDocxNotices.clear();
     fallbackDismissedNotices.clear();
     return;
   }
-  const rawStorage = readRawStorageNotices(storage, now);
-  const remainingStorage = rawStorage.filter((entry) => noticeKey(entry.envelopeId, entry) !== key);
-  if (tryPersistDocxNotices(storage, remainingStorage)) {
+  const rawResult = readRawStorageResult(storage, now);
+  const remainingStorage = rawResult.entries.filter((entry) => noticeKey(entry.envelopeId, entry) !== key);
+  if (rawResult.ok && tryPersistDocxNotices(storage, remainingStorage)) {
     fallbackDismissedNotices.delete(key);
-  } else if (rawStorage.some((entry) => noticeKey(entry.envelopeId, entry) === key)) {
+  } else if (
+    knownStorageNoticeKeys.has(key) ||
+    (rawResult.ok && rawResult.entries.some((entry) => noticeKey(entry.envelopeId, entry) === key))
+  ) {
     markFallbackDismissed(key, now);
   }
 }
