@@ -516,7 +516,6 @@ export function AccountPopover({
         <PopoverTrigger
           data-testid="account-menu-trigger"
           title={isTopBar || isCompact ? compactLabel : undefined}
-          aria-label={isCompact ? `${t('account')}: ${compactLabel}` : undefined}
           className={
             isTopBar
               ? 'group/account inline-flex h-8 max-w-52 items-center gap-1.5 rounded-lg px-2 text-left outline-none hover:bg-sidebar-accent focus-visible:ring-3 focus-visible:ring-ring/50 data-popup-open:bg-sidebar-accent'
@@ -541,9 +540,12 @@ export function AccountPopover({
               />
             </>
           ) : isCompact ? (
-            <span aria-hidden="true" className="grid size-7 shrink-0 place-items-center rounded-full bg-primary/15 text-xs font-semibold text-primary">
-              {initial}
-            </span>
+            <>
+              <span className="sr-only">{`${t('account')}: ${compactLabel}`}</span>
+              <span aria-hidden="true" className="grid size-7 shrink-0 place-items-center rounded-full bg-primary/15 text-xs font-semibold text-primary">
+                {initial}
+              </span>
+            </>
           ) : (
             <>
               <span className="sr-only">{t('account')}: </span>

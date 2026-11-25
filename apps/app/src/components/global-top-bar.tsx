@@ -195,12 +195,12 @@ export function GlobalTopBar({
           to="/o/$slug/notifications"
           params={{ slug }}
           activeOptions={{ exact: true }}
-          aria-label={t('bell')}
           title={unreadNotices ? `${t('bell')} (${unreadNotices})` : t('bell')}
           aria-current={notificationsSelected ? 'page' : undefined}
           data-testid="topbar-notifications-link"
           className={iconLinkClass(notificationsSelected)}
         >
+          <span className="sr-only">{unreadNotices ? `${t('bell')} (${unreadNotices})` : t('bell')}</span>
           <NavIcon name="alerts" className="size-4" />
           {unreadNotices && (
             <span

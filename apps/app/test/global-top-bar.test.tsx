@@ -192,10 +192,12 @@ describe('GlobalTopBar and VyDrawerBody SSR', () => {
       expect(html).toContain('data-testid="topbar-notifications-badge"');
       expect(html).toContain('href="/o/acme/ai-usage"');
       expect(html).toContain('Ngân sách AI tháng này: 42%');
-      // Controls with visible text avoid mismatched aria-label overrides (WCAG 2.5.3).
+      // Controls with visible text (or decorative visible badge counts) avoid mismatched aria-label overrides (WCAG 2.5.3).
       expect(html).not.toMatch(/data-testid="topbar-search-btn"[^>]*aria-label=/);
       expect(html).not.toMatch(/data-testid="topbar-vy-btn"[^>]*aria-label=/);
       expect(html).not.toMatch(/data-testid="topbar-ai-meter"[^>]*aria-label=/);
+      expect(html).not.toMatch(/aria-label=[^>]*data-testid="topbar-notifications-link"|data-testid="topbar-notifications-link"[^>]*aria-label=/);
+      expect(html).toContain('<span class="sr-only">Thông báo (3)</span>');
       expect(html).toContain('<span class="sr-only">Hỏi Vy</span>');
     }
   });
@@ -224,6 +226,8 @@ describe('GlobalTopBar and VyDrawerBody SSR', () => {
     );
     expect(memberHtml).toContain('data-vy-allowed="false"');
     expect(memberHtml).not.toContain('data-testid="shell-quick-capture-btn"');
+    expect(memberHtml).not.toMatch(/aria-label=[^>]*data-testid="topbar-notifications-link"|data-testid="topbar-notifications-link"[^>]*aria-label=/);
+    expect(memberHtml).toContain('<span class="sr-only">Alerts</span>');
     expect(memberHtml).toContain('data-testid="topbar-ai-meter"');
     expect(memberHtml).not.toContain('href="/o/acme/ai-usage"');
     const meterSpan = memberHtml.match(/<span[^>]*data-testid="topbar-ai-meter"[^>]*>.*?<\/span><\/span>/s)?.[0]
