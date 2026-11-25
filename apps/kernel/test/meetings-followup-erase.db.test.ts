@@ -10,7 +10,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
-import type { FollowupDraft, PersonalDataErasure } from '@ludy/kernel-contract';
+import type { FollowupDraft, PersonalDataErasure, PersonalDataResult } from '@ludy/kernel-contract';
 import { Runtime } from '@ludy/kernel-runtime';
 import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
@@ -192,6 +192,31 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
     expect(rows.map((r) => r.id)).toContain(other);
     expect(rows.filter((r) => r.source === 'meetings.followup')).toEqual([]);
     expect(lines.join('\n')).not.toContain(SECRET);
+  });
+
+  // The personal-data finder (kernel.personal_data.find, owners and admins): a follow-up mail is found by its address, but the row shown holds only its id, address, status and time, not the payload, the subject
+  // or the meeting id that name a meeting an owner or admin may not read (an attendees-only meeting). A mail of any other source is shown whole, as before.
+  it('shows a follow-up mail found by its address as id, address, status and time only, and shows the mail of every other source whole', async () => {
+    const SECRET = `Bi-mat-cuoc-hop-${randomUUID()}`;
+    const m = await seedSent({ summary: SECRET, subject: `Cam on ${SECRET}` });
+    const address = `tim-thay-${randomUUID()}@erase.test`;
+    const followup = (await sqlAdmin<{ id: string }>("UPDATE ludy_kernel.mail_message SET to_address = $3 WHERE org_id = $1 AND source = 'meetings.followup' AND source_id = $2 RETURNING id", [orgId, m, address])).rows[0]!.id;
+    const other = (await sqlAdmin<{ id: string }>(
+      "INSERT INTO ludy_kernel.mail_message (org_id, stream, source, source_id, template_key, to_address, to_hash, subject, payload, message_id_header, status) VALUES ($1, 'transactional', 'finance.payment_reminder.notice1', $2, 'x.y', $3, repeat('a', 64), 'Nhac thanh toan', '{\"keep\":true}', $4, 'queued') RETURNING id",
+      [orgId, randomUUID(), address, `<finder-${randomUUID()}@y.test>`],
+    )).rows[0]!.id;
+    const found = await runtime.execute<PersonalDataResult>('kernel.personal_data.find', { value: address }, { actor: asUser('owner'), orgId, idempotencyKey: randomUUID() });
+    const mails = found.matches.filter((x) => x.column === 'ludy_kernel.mail_message.to_address');
+    const ofFollowup = mails.find((x) => x.rowId === followup);
+    const ofOther = mails.find((x) => x.rowId === other);
+    // Findable and erasable still.
+    expect(ofFollowup).toMatchObject({ handling: 'erase' });
+    expect(Object.keys(ofFollowup!.row).sort()).toEqual(['created_at', 'id', 'status', 'to_address']);
+    expect(ofFollowup!.row).toMatchObject({ id: followup, to_address: address, status: 'queued' });
+    expect(JSON.stringify(found)).not.toContain(SECRET);
+    expect(JSON.stringify(found)).not.toContain(m);
+    // The other mail keeps its whole row.
+    expect(ofOther!.row).toMatchObject({ id: other, subject: 'Nhac thanh toan', payload: { keep: true } });
   });
 
   // The delivery events of the mail log (#4577) follow their mail: an event of a left-out follow-up mail is left out too, so no exported event points at a message the snapshot does not hold.
