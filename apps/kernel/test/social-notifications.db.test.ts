@@ -1,4 +1,4 @@
-// In-app notifications of Crove Social on PostgreSQL 17 (#637): who each event tells, never the person who acted, the
+// In-app notifications of Ludy Social on PostgreSQL 17 (#637): who each event tells, never the person who acted, the
 // kinds a member turns off, reading and marking only one's own, a client's answer through a review link, and pruning.
 // The worker's dispatch is run here by hand for each new outbox event. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL;
 // each run makes its own database.

@@ -40,7 +40,7 @@ const S3_URL = process.env.LUDY_TEST_S3_URL ?? process.env.CROVE_TEST_S3_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const FIXTURE = new Uint8Array(readFileSync(new URL('../../extract/test/fixtures/einvoice-basic.xml', import.meta.url)));
 const SECRET = 'test-only-jwt-secret-for-uploads-0123456789';
-const ISSUER = 'crove-auth';
+const ISSUER = 'ludy-auth';
 
 // A versioned bucket in memory: every write is a new version, create-only through put like S3BlobStore, and a
 // staged upload is whatever the test "browser" last posted to the staging key.
@@ -100,7 +100,7 @@ interface Backend {
   store: () => Promise<BlobStore>;
   // What the browser does with the presigned form; returns the HTTP status (204 on success).
   post: (form: PresignedUpload, bytes: Uint8Array) => Promise<number>;
-  // A write to a key outside Crove, by someone with bucket access; returns the version id.
+  // A write to a key outside Ludy, by someone with bucket access; returns the version id.
   overwrite: (key: string, bytes: Uint8Array) => Promise<string | undefined>;
   // Reads what a presigned download URL serves.
   follow: ((url: string) => Promise<Uint8Array>) | null;
@@ -202,7 +202,7 @@ suite.each(backends)('staged uploads on PostgreSQL and $name (issue #109)', (bac
       headers: {
         authorization: `Bearer ${await token(name)}`,
         'content-type': 'application/json',
-        ...(init.org === null ? {} : { 'x-crove-org': init.org ?? slug }),
+        ...(init.org === null ? {} : { 'x-ludy-org': init.org ?? slug }),
       },
       ...(init.method === 'GET' ? {} : { body: JSON.stringify(init.json ?? {}) }),
     });
@@ -212,7 +212,7 @@ suite.each(backends)('staged uploads on PostgreSQL and $name (issue #109)', (bac
   async function rpc(path: string, name: string, input: unknown, org: string | null, mfa = false) {
     const response = await app.request(`/api/rpc/${path}`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${await token(name, mfa)}`, 'content-type': 'application/json', ...(org ? { 'x-crove-org': org } : {}) },
+      headers: { authorization: `Bearer ${await token(name, mfa)}`, 'content-type': 'application/json', ...(org ? { 'x-ludy-org': org } : {}) },
       body: JSON.stringify(input === undefined ? {} : { json: input }),
     });
     const body = (await response.json()) as { json?: Record<string, unknown> };

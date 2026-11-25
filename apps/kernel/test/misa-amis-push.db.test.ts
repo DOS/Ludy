@@ -28,7 +28,7 @@ const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.
 const suite = ADMIN ? describe : describe.skip;
 
 const SECRET = 'test-only-jwt-secret-for-misa-amis-push-0123456789';
-const ISSUER = 'crove-auth';
+const ISSUER = 'ludy-auth';
 const PARTY = 'Công ty TNHH Planted Party';
 
 class MemoryStore implements BlobStore {

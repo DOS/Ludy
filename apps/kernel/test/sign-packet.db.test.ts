@@ -21,7 +21,7 @@ import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { createExtractApp } from '@ludy/extract';
 import { createExtractClient, type ExtractClient } from '@ludy/extract-contract';
 import { buildKernelCommands, kernelQueries } from '@ludy/kernel';
-import type { SignPacketConsistencyCheckResult, zSignEnvelopeDetail } from '@ludy/kernel-contract';
+import { zSignEnvelopeDetail, type SignPacketConsistencyCheckResult } from '@ludy/kernel-contract';
 import {
   Runtime,
   contentGeneration,
@@ -417,6 +417,14 @@ suite('eSign Slice 6c multi-document signing packet on PostgreSQL 17 (#4722)', (
     );
     const envelopeId = created.envelopeId;
 
+    const pendingSingle = zSignEnvelopeDetail.parse(
+      await runtime.query<SignEnvelopeDetail>('sign.envelope.get', { envelopeId }, { actor: asUser(member), orgId: org.orgId }),
+    );
+    expect(pendingSingle.envelope.inspectStatus).toBe('pending');
+    expect(pendingSingle.envelope.pageDimensions).toBeNull();
+    expect(pendingSingle.documents).toHaveLength(1);
+    expect(pendingSingle.documents![0]!.pageDimensions).toBeNull();
+
     await runSignPdfInspectJob({ workerDb, runtime: workerRuntime, store, extract: realExtract }, { orgId: org.orgId, envelopeId });
 
     const signerRes = await runtime.execute<{ signerId: string }>(
@@ -463,6 +471,14 @@ suite('eSign Slice 6c multi-document signing packet on PostgreSQL 17 (#4722)', (
       { actor: asUser(member), orgId: org.orgId },
     );
     expect(added2.docIndex).toBe(2);
+
+    const pendingMulti = zSignEnvelopeDetail.parse(
+      await runtime.query<SignEnvelopeDetail>('sign.envelope.get', { envelopeId }, { actor: asUser(member), orgId: org.orgId }),
+    );
+    expect(pendingMulti.documents).toHaveLength(2);
+    expect(pendingMulti.documents![0]!.pageDimensions).toHaveLength(2);
+    expect(pendingMulti.documents![1]!.inspectStatus).toBe('pending');
+    expect(pendingMulti.documents![1]!.pageDimensions).toBeNull();
 
     await runSignPdfInspectJob(
       { workerDb, runtime: workerRuntime, store, extract: realExtract },

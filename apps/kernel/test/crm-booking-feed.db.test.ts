@@ -128,7 +128,7 @@ suite('crm booking feed on PostgreSQL (#1382)', () => {
     const config = loadConfig({
       DATABASE_URL: login('ludy_app', 'test-app-pw'),
       AUTH_JWT_SECRET: 'test-only-jwt-secret-for-booking-feed-0123',
-      AUTH_ISSUER: 'crove-auth',
+      AUTH_ISSUER: 'ludy-auth',
       AUTH_SESSION_CHECK: 'off',
       MIGRATIONS_DIR: MIGRATIONS,
       WEB_DIST: '/nonexistent',

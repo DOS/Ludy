@@ -57,7 +57,7 @@ import { TEST_MANIFESTS } from './manifests.ts';
 const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SIGNING_PHRASE = 'x'.repeat(32);
-const ISSUER = 'crove-auth';
+const ISSUER = 'ludy-auth';
 const SYSTEM = { type: 'system' as const, component: 'conversations' };
 const WORKER_SYSTEM = { type: 'system' as const, component: 'worker' };
 const CANARY_QUOTE = 'CANARY_PRIVATE_CUSTOMER_QUOTE_8842';
@@ -136,7 +136,7 @@ describe.skipIf(!ADMIN)('Projects #4492: Omnichannel Roadmap Signals (PG17)', ()
       headers: {
         authorization: `Bearer ${await tokenFor(p)}`,
         'content-type': 'application/json',
-        'x-crove-org': orgSlug,
+        'x-ludy-org': orgSlug,
       },
       body: JSON.stringify(input === undefined ? {} : { json: input }),
     });

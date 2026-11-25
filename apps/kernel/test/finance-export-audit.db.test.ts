@@ -24,7 +24,7 @@ import { TEST_MANIFESTS } from './manifests.ts';
 const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-export-audit-0123456789';
-const ISSUER = 'crove-auth';
+const ISSUER = 'ludy-auth';
 const EXPORT_COMMANDS = ['finance.journal.export', 'finance.vat.export', 'finance.ledger.export', 'finance.statements.export', 'finance.fixed_asset.export', 'finance.stock.export', 'finance.household.export'];
 const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
@@ -137,7 +137,7 @@ suite('finance exports: no audit row, no download (#365)', () => {
     // The HTKK XML needs the org's tax code; without it the route refuses before the export command runs.
     const taxCode = await app.request('/api/rpc/org/setTaxCode', {
       method: 'POST',
-      headers: { authorization: `Bearer ${await token()}`, 'content-type': 'application/json', 'x-crove-org': slug },
+      headers: { authorization: `Bearer ${await token()}`, 'content-type': 'application/json', 'x-ludy-org': slug },
       body: JSON.stringify({ json: { taxCode: '0309876546' } }),
     });
     expect(taxCode.status).toBe(200);
@@ -166,7 +166,7 @@ suite('finance exports: no audit row, no download (#365)', () => {
     ['the stock report', '/api/export/stock.xlsx?month=2026-09', 'finance.stock.export'],
   ])('answers an error, not a file, for %s', async (_name, path, command) => {
     reached.length = 0;
-    const response = await app.request(path, { headers: { authorization: `Bearer ${await token()}`, 'x-crove-org': slug } });
+    const response = await app.request(path, { headers: { authorization: `Bearer ${await token()}`, 'x-ludy-org': slug } });
     expect(reached).toEqual([command]);
     expect(response.status).toBe(500);
     expect(response.headers.get('content-type')).not.toBe(XLSX);
@@ -177,7 +177,7 @@ suite('finance exports: no audit row, no download (#365)', () => {
 
   it('answers an error, not a file, for the household sales book', async () => {
     reached.length = 0;
-    const response = await app.request(`/api/export/household-s1a.xlsx?legalEntityId=${household}&period=2026-09`, { headers: { authorization: `Bearer ${await token()}`, 'x-crove-org': slug } });
+    const response = await app.request(`/api/export/household-s1a.xlsx?legalEntityId=${household}&period=2026-09`, { headers: { authorization: `Bearer ${await token()}`, 'x-ludy-org': slug } });
     expect(reached).toEqual(['finance.household.export']);
     expect(response.status).toBe(500);
     expect(response.headers.get('content-type')).not.toBe(XLSX);
@@ -187,7 +187,7 @@ suite('finance exports: no audit row, no download (#365)', () => {
 
   it('answers an error, not a file, for the 01/CNKD worksheet when the audit row cannot be written', async () => {
     reached.length = 0;
-    const response = await app.request(`/api/export/household-cnkd.xlsx?legalEntityId=${percentageHousehold}&year=2026&quarter=4`, { headers: { authorization: `Bearer ${await token()}`, 'x-crove-org': slug } });
+    const response = await app.request(`/api/export/household-cnkd.xlsx?legalEntityId=${percentageHousehold}&year=2026&quarter=4`, { headers: { authorization: `Bearer ${await token()}`, 'x-ludy-org': slug } });
     expect(reached).toEqual(['finance.household.export']);
     expect(response.status).toBe(500);
     expect(response.headers.get('content-type')).not.toBe(XLSX);
@@ -197,7 +197,7 @@ suite('finance exports: no audit row, no download (#365)', () => {
 
   it('does not refuse the 01/CNKD worksheet while a row behind it is unconfirmed (its figures are labelled): the audit write is reached before any file (#2518)', async () => {
     reached.length = 0;
-    const response = await app.request(`/api/export/household-cnkd.xlsx?legalEntityId=${percentageHousehold}&year=2026&quarter=3`, { headers: { authorization: `Bearer ${await token()}`, 'x-crove-org': slug } });
+    const response = await app.request(`/api/export/household-cnkd.xlsx?legalEntityId=${percentageHousehold}&year=2026&quarter=3`, { headers: { authorization: `Bearer ${await token()}`, 'x-ludy-org': slug } });
     expect(reached).toEqual(['finance.household.export']);
     expect(response.status).toBe(500);
     expect(response.headers.get('content-type')).not.toBe(XLSX);

@@ -125,7 +125,7 @@ suite('the meeting transcript (#2578, M4a)', () => {
       headers: {
         authorization: `Bearer ${await token(name, mfa)}`,
         'content-type': 'application/json',
-        ...(org ? { 'x-crove-org': org } : {}),
+        ...(org ? { 'x-ludy-org': org } : {}),
       },
       body: JSON.stringify(input === undefined ? {} : { json: input }),
     });

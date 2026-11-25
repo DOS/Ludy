@@ -10,7 +10,7 @@
 // released); 'relay:<event type>' (#1696) holds the outbox events of that type in every org while the relay sends
 // every other type, and sends the held ones, in order, once released. It writes through
 // ludy_kernel.global_kill_switch_set, which only the database owner may run, so it needs the admin URL the migrations
-// use; no Crove login can flip it. Every change is a row of the switch's append-only history, with when, who and why:
+// use; no Ludy login can flip it. Every change is a row of the switch's append-only history, with when, who and why:
 // that row is its audit trail.
 //
 // The e2e rehearsal (e2e/tests/kill-switches.spec.ts, Phase 1 exit criterion 8) runs the same steps through runSwitch

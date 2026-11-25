@@ -42,7 +42,7 @@ import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
-const ISSUER = 'crove-auth';
+const ISSUER = 'ludy-auth';
 const DAY = 24 * 60 * 60 * 1000;
 const SYSTEM = { type: 'system' as const, component: 'test' };
 const suite = ADMIN ? describe : describe.skip;

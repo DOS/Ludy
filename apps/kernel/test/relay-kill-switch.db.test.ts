@@ -408,7 +408,7 @@ suite('a kill switch per relay type on PostgreSQL (#1696)', () => {
         expect((await c.query(`SELECT ludy_kernel.global_kill_switch_on('relay:a.b') AS on`)).rows[0]).toEqual({ on: false });
       });
     }
-    // No Crove role may read the held types or flip a switch; the claim stays the worker's alone.
+    // No Ludy role may read the held types or flip a switch; the claim stays the worker's alone.
     const roles = ['ludy_app', 'ludy_worker', 'ludy_tenant', 'ludy_definer_tenant', 'ludy_auth_reader', 'ludy_prober', 'ludy_reporter'];
     const matrix = await admin(async (c) => {
       const fns = ['ludy_kernel.relay_held_types()', 'ludy_kernel.global_kill_switch_set(text,boolean,text,text)', 'ludy_kernel.outbox_claim(integer)'];

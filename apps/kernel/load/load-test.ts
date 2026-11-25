@@ -1,6 +1,6 @@
 // The Phase 1 load test (plan §13 Phase 1 exit criterion 7, §7.2, issue #998). It creates its own database on a
 // PostgreSQL server it reaches as a superuser, migrates it, seeds one org with many parties, measures and drops the
-// database. It needs no Crove deployment and touches no other database.
+// database. It needs no Ludy deployment and touches no other database.
 //
 //   node apps/kernel/load/load-test.ts --admin-url <postgres URL> [--parties 100000] [--commands 2000]
 //        [--concurrency 8] [--queries 30] [--rate 60] [--seconds 30] [--pause-seconds 30] [--check-seconds 10] [--keep]
@@ -244,7 +244,7 @@ export function judge(result: LoadResult): LoadVerdict[] {
 }
 
 export function formatReport(result: LoadResult, verdicts: readonly LoadVerdict[]): string {
-  const lines = [`Crove load test: ${result.parties} parties in one org`, ''];
+  const lines = [`Ludy load test: ${result.parties} parties in one org`, ''];
   lines.push('Commands (Runtime.execute, session check on):');
   for (const c of result.commands) {
     lines.push(`  ${c.name.padEnd(24)} n=${c.count} failed=${c.failed} p50=${ms(c.p50)} p95=${ms(c.p95)} p99=${ms(c.p99)}`);
@@ -570,7 +570,7 @@ const login = (adminUrl: string, user: string, password: string) => {
 };
 
 export async function runLoad(args: LoadArgs, log: (line: string) => void = console.log): Promise<LoadResult> {
-  const dbName = `crove_load_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_load_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   const root = new pg.Client({ connectionString: args.adminUrl });
   await root.connect();
   await root.query(`CREATE DATABASE ${dbName}`);

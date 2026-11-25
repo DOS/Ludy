@@ -17,7 +17,7 @@ Left out on purpose: the timestamping root and the timestamping CAs (they sign t
 
 | Certificate | Valid | Where it comes from | Confidence |
 |---|---|---|---|
-| `CN=TỔNG CỤC THUẾ, O=BỘ TÀI CHÍNH` | 2021-11-17 to 2026-11-16 | The tax authority's signature on a genuine VAT e-invoice of 2024-01-16, from a public repository's history (the invoice is not copied here) | High. Crove's own verifier reports that invoice as `tax_authority_untrusted` without this certificate, and as `verified` with it. The seller's signature on the same invoice chains to the national root above. |
+| `CN=TỔNG CỤC THUẾ, O=BỘ TÀI CHÍNH` | 2021-11-17 to 2026-11-16 | The tax authority's signature on a genuine VAT e-invoice of 2024-01-16, from a public repository's history (the invoice is not copied here) | High. Ludy's own verifier reports that invoice as `tax_authority_untrusted` without this certificate, and as `verified` with it. The seller's signature on the same invoice chains to the national root above. |
 | `CN=CỤC THUẾ, O=BỘ TÀI CHÍNH` | 2025-03-13 to 2030-03-12 | The trusted signer store of the tax authority's iTaxViewer 2.7.3, as copied in a public repository | Medium-high. It is the successor after Tổng cục Thuế became Cục Thuế (March 2025), with the same issuer and the same key identifier of that issuer as the first. It has not yet been seen on an invoice. |
 
 The tax authority rotates its certificate: an older `Tổng cục Thuế` certificate (2017 to 2027, the old Ministry of Finance CA) exists too, but no invoice signed with it was found, so it is not pinned. An invoice keeps verifying after its certificate expires, because the certificate must be valid when the invoice was signed, not today.

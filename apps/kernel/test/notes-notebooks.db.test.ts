@@ -599,4 +599,212 @@ suite('Notes v2 E1 (#3559): notebooks, 2-level stacks, checkbox updates, [[Note]
     expect(keyOf(beforeList, x1.notebookId)).toBe('V');
     expect(keyOf(beforeList, x2.notebookId)).toBe('V');
   });
+
+  it('enforces pre-load notebook -> note lock order and 23514/42501 error mapping in notes.note.update (#4211)', async () => {
+    const privNb = await runtime.execute<NotebookWritten>(
+      'notes.notebook.create',
+      { name: 'So rieng khoa dong bo', visibility: 'private' },
+      { actor: asUser(users.alice), orgId },
+    );
+    const sharedNote = await runtime.execute<NoteWritten>(
+      'notes.note.create',
+      { title: 'Ghi chu chung', visibility: 'org' },
+      { actor: asUser(users.alice), orgId },
+    );
+    const privNote = await runtime.execute<NoteWritten>(
+      'notes.note.create',
+      { title: 'Ghi chu rieng', visibility: 'private' },
+      { actor: asUser(users.alice), orgId },
+    );
+
+    // Moving a shared note into a private notebook via notes.note.update answers 422 NOTES_SHARED_NOTE_PRIVATE_NOTEBOOK.
+    const sharedIntoPriv = await catchDomain(() =>
+      runtime.execute(
+        'notes.note.update',
+        { noteId: sharedNote.noteId, revision: sharedNote.revision, notebookId: privNb.notebookId },
+        { actor: asUser(users.alice), orgId },
+      ),
+    );
+    expect(sharedIntoPriv).toMatchObject({ code: 'NOTES_SHARED_NOTE_PRIVATE_NOTEBOOK', status: 422 });
+
+    // Probing another member's private notebook via notes.note.update answers 404 NOTEBOOK_NOT_FOUND identically to missing UUID.
+    const bobPrivNote = await runtime.execute<NoteWritten>(
+      'notes.note.create',
+      { title: 'Ghi chu rieng cua Bob', visibility: 'private' },
+      { actor: asUser(users.bob), orgId },
+    );
+    const probeReal = await catchDomain(() =>
+      runtime.execute(
+        'notes.note.update',
+        { noteId: bobPrivNote.noteId, revision: bobPrivNote.revision, notebookId: privNb.notebookId },
+        { actor: asUser(users.bob), orgId },
+      ),
+    );
+    const probeFake = await catchDomain(() =>
+      runtime.execute(
+        'notes.note.update',
+        { noteId: bobPrivNote.noteId, revision: bobPrivNote.revision, notebookId: randomUUID() },
+        { actor: asUser(users.bob), orgId },
+      ),
+    );
+    expect(probeReal).toEqual(probeFake);
+    expect(probeReal).toMatchObject({ code: 'NOTEBOOK_NOT_FOUND', status: 404 });
+
+    // Concurrent note.update (assigning private notebook) + note.set_visibility ('org') never deadlocks or leaks raw PG errors.
+    const results = await Promise.allSettled([
+      runtime.execute<NoteWritten>(
+        'notes.note.update',
+        { noteId: privNote.noteId, revision: privNote.revision, notebookId: privNb.notebookId },
+        { actor: asUser(users.alice), orgId },
+      ),
+      runtime.execute<NoteWritten>(
+        'notes.note.set_visibility',
+        { noteId: privNote.noteId, visibility: 'org' },
+        { actor: asUser(users.alice), orgId },
+      ),
+    ]);
+    const rejections = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+    for (const r of rejections) {
+      expect(r.reason).toBeInstanceOf(DomainError);
+      expect([409, 422]).toContain((r.reason as DomainError).status);
+    }
+    const finalNote = await runtime.query<Note>('notes.note.get', { noteId: privNote.noteId }, { actor: asUser(users.alice), orgId });
+    expect(finalNote.visibility === 'org' && finalNote.notebookId === privNb.notebookId).toBe(false);
+  });
+
+  it('rebalances >80 fractional subdivisions around non-editable shared notebooks with sibling locking and zero deadlock on PG17 (#4211)', async () => {
+    const sharedLeft = await runtime.execute<NotebookWritten>(
+      'notes.notebook.create',
+      { name: 'Dung chung Trai', visibility: 'org' },
+      { actor: asUser(users.owner), orgId },
+    );
+    const sharedRight = await runtime.execute<NotebookWritten>(
+      'notes.notebook.create',
+      { name: 'Dung chung Phai', visibility: 'org' },
+      { actor: asUser(users.owner), orgId },
+    );
+    const bobA = await runtime.execute<NotebookWritten>(
+      'notes.notebook.create',
+      { name: 'Bob A', visibility: 'private' },
+      { actor: asUser(users.bob), orgId },
+    );
+    const bobB = await runtime.execute<NotebookWritten>(
+      'notes.notebook.create',
+      { name: 'Bob B', visibility: 'private' },
+      { actor: asUser(users.bob), orgId },
+    );
+    const bobC = await runtime.execute<NotebookWritten>(
+      'notes.notebook.create',
+      { name: 'Bob C', visibility: 'private' },
+      { actor: asUser(users.bob), orgId },
+    );
+    const bobOutside = await runtime.execute<NotebookWritten>(
+      'notes.notebook.create',
+      { name: 'Bob Ngoai', visibility: 'private' },
+      { actor: asUser(users.bob), orgId },
+    );
+
+    // Seed 80-character keys for Bob's notebooks tightly packed between non-editable shared notebooks ('B' and 'V').
+    await admin(async (c) => {
+      const deepPrefix = `C${'0'.repeat(78)}`;
+      await c.query(`UPDATE ludy_notes.notebook SET sort_key = 'B' WHERE org_id = $1 AND id = $2`, [orgId, sharedLeft.notebookId]);
+      await c.query(`UPDATE ludy_notes.notebook SET sort_key = $3 WHERE org_id = $1 AND id = $2`, [orgId, bobA.notebookId, `${deepPrefix}1`]);
+      await c.query(`UPDATE ludy_notes.notebook SET sort_key = $3 WHERE org_id = $1 AND id = $2`, [orgId, bobB.notebookId, `${deepPrefix}2`]);
+      await c.query(`UPDATE ludy_notes.notebook SET sort_key = $3 WHERE org_id = $1 AND id = $2`, [orgId, bobC.notebookId, `${deepPrefix}3`]);
+      await c.query(`UPDATE ludy_notes.notebook SET sort_key = 'V' WHERE org_id = $1 AND id = $2`, [orgId, sharedRight.notebookId]);
+      await c.query(`UPDATE ludy_notes.notebook SET sort_key = 'l' WHERE org_id = $1 AND id = $2`, [orgId, bobOutside.notebookId]);
+    });
+
+    // Trigger concurrent reorders that cross >80 subdivisions and lock sibling rows without deadlocking.
+    const [resC, resA] = await Promise.all([
+      runtime.execute<NotebookWritten>(
+        'notes.notebook.update',
+        { notebookId: bobC.notebookId, revision: bobC.revision, reorder: { place: 'before', anchorId: bobB.notebookId } },
+        { actor: asUser(users.bob), orgId },
+      ),
+      runtime.execute<NotebookWritten>(
+        'notes.notebook.update',
+        { notebookId: bobA.notebookId, revision: bobA.revision, reorder: { place: 'after', anchorId: bobB.notebookId } },
+        { actor: asUser(users.bob), orgId },
+      ),
+    ]);
+    expect(resC.revision).toBe(2);
+    expect(resA.revision).toBe(2);
+
+    const listed = await runtime.query<NotebooksResponse>('notes.notebook.list', {}, { actor: asUser(users.bob), orgId });
+    const byId = new Map(listed.notebooks.map((b) => [b.id, b]));
+    // Non-editable shared notebooks and unrelated clean notebook keep their exact keys.
+    expect(byId.get(sharedLeft.notebookId)?.sortKey).toBe('B');
+    expect(byId.get(sharedRight.notebookId)?.sortKey).toBe('V');
+    expect(byId.get(bobOutside.notebookId)?.sortKey).toBe('l');
+
+    // Rebalanced editable notebooks shrank to short keys and stay strictly inside ('B', 'V').
+    for (const id of [bobA.notebookId, bobB.notebookId, bobC.notebookId]) {
+      const k = byId.get(id)!.sortKey;
+      expect(k.length).toBeLessThan(10);
+      expect(k > 'B' && k < 'V').toBe(true);
+    }
+    const idx = (id: string) => listed.notebooks.findIndex((b) => b.id === id);
+    expect(idx(sharedLeft.notebookId)).toBeLessThan(idx(bobC.notebookId));
+    expect(idx(bobC.notebookId)).toBeLessThan(idx(bobB.notebookId));
+    expect(idx(bobB.notebookId)).toBeLessThan(idx(bobA.notebookId));
+    expect(idx(bobA.notebookId)).toBeLessThan(idx(sharedRight.notebookId));
+  });
+
+  it('notebookCreate respects non-editable shared org notebooks when >80-char sort_key triggers rebalance on PG17 (#4211)', async () => {
+    const sharedOrg = await runtime.execute<NotebookWritten>(
+      'notes.notebook.create',
+      { name: 'Dung chung Dai', visibility: 'org' },
+      { actor: asUser(users.owner), orgId },
+    );
+    const bobBefore = await runtime.execute<NotebookWritten>(
+      'notes.notebook.create',
+      { name: 'Bob Truoc', visibility: 'private' },
+      { actor: asUser(users.bob), orgId },
+    );
+
+    const deepSharedKey = 'z'.repeat(80);
+    await admin(async (c) => {
+      await c.query(`UPDATE ludy_notes.notebook SET sort_key = '5' WHERE org_id = $1 AND id = $2`, [orgId, bobBefore.notebookId]);
+      await c.query(`UPDATE ludy_notes.notebook SET sort_key = $3 WHERE org_id = $1 AND id = $2`, [orgId, sharedOrg.notebookId, deepSharedKey]);
+    });
+
+    // Bob cannot edit sharedOrg; creating a notebook must leave sharedOrg untouched and place the new notebook after it.
+    const createdAfterShared = await runtime.execute<NotebookWritten>(
+      'notes.notebook.create',
+      { name: 'Bob Sau Dung Chung', visibility: 'private' },
+      { actor: asUser(users.bob), orgId },
+    );
+    const list1 = await runtime.query<NotebooksResponse>('notes.notebook.list', {}, { actor: asUser(users.bob), orgId });
+    const byId1 = new Map(list1.notebooks.map((b) => [b.id, b]));
+    expect(byId1.get(sharedOrg.notebookId)?.sortKey).toBe(deepSharedKey);
+    expect(byId1.get(sharedOrg.notebookId)?.revision).toBe(1);
+    expect(byId1.get(bobBefore.notebookId)?.sortKey).toBe('5');
+    expect(byId1.get(createdAfterShared.notebookId)!.sortKey > deepSharedKey).toBe(true);
+
+    // When Bob's own trailing notebook reaches >=80 chars after a short sharedOrg ('V'), rebalance shrinks Bob's run > 'V'.
+    await admin(async (c) => {
+      await c.query(`UPDATE ludy_notes.notebook SET sort_key = 'V' WHERE org_id = $1 AND id = $2`, [orgId, sharedOrg.notebookId]);
+      await c.query(`UPDATE ludy_notes.notebook SET sort_key = $3 WHERE org_id = $1 AND id = $2`, [
+        orgId,
+        createdAfterShared.notebookId,
+        deepSharedKey,
+      ]);
+    });
+    const createdCompacted = await runtime.execute<NotebookWritten>(
+      'notes.notebook.create',
+      { name: 'Bob Rut Gon', visibility: 'private' },
+      { actor: asUser(users.bob), orgId },
+    );
+    const list2 = await runtime.query<NotebooksResponse>('notes.notebook.list', {}, { actor: asUser(users.bob), orgId });
+    const byId2 = new Map(list2.notebooks.map((b) => [b.id, b]));
+    expect(byId2.get(sharedOrg.notebookId)?.sortKey).toBe('V');
+    expect(byId2.get(bobBefore.notebookId)?.sortKey).toBe('5');
+    const compactedPrev = byId2.get(createdAfterShared.notebookId)!.sortKey;
+    const compactedNew = byId2.get(createdCompacted.notebookId)!.sortKey;
+    expect(compactedPrev.length).toBeLessThan(10);
+    expect(compactedNew.length).toBeLessThan(10);
+    expect(compactedPrev > 'V').toBe(true);
+    expect(compactedNew > compactedPrev).toBe(true);
+  });
 });

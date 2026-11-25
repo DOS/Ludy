@@ -310,7 +310,7 @@ class Xrpc {
     const named = answer.didDoc ? pdsOf(answer.didDoc, answer.did) : null;
     const listed = answer.didDoc?.service?.some((x) => x.id === '#atproto_pds' || x.id === `${answer.did}#atproto_pds`);
     // A PDS named in a form Ludy does not call (another port, a path, an address): refused, not guessed.
-    if (listed && !named) throw new BlueskyError(400, 'UnsupportedPds', 'the account names a PDS Crove cannot call');
+    if (listed && !named) throw new BlueskyError(400, 'UnsupportedPds', 'the account names a PDS Ludy cannot call');
     const pds = named ?? own?.pds ?? ENTRYWAY;
     const host = new URL(pds).hostname;
     // A PDS outside Bluesky is called only when the resolved identity named it, never on a session's word alone.

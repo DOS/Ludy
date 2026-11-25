@@ -1,4 +1,4 @@
-// Crove Social text variations on PostgreSQL 17 (issue #1260): an evergreen post's reposts and a series' copies take
+// Ludy Social text variations on PostgreSQL 17 (issue #1260): an evergreen post's reposts and a series' copies take
 // the post's text variations in turn, wrapping around, with the cursor moved in the copy's transaction; a copy on X
 // passes over a variation the account sent in the last 30 days while another is left, and the duplicate check, the
 // banned words and the approval see the variation sent. Only members of the org who write posts set them, on an

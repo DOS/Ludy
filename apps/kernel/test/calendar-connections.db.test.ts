@@ -161,7 +161,7 @@ suite('outside calendars on PostgreSQL (#2123)', () => {
     expect(JSON.parse(open(o.orgId, c.account))).toEqual({ accessToken: 'access-1', refreshToken: 'refresh-1' });
     expect(() => open(randomUUID(), c.account)).toThrow();
     expect(() => open(o.orgId, 'someone-else@gmail.test')).toThrow();
-    // No Crove login role holds a grant on the credential table, and the audit trail holds no token.
+    // No Ludy login role holds a grant on the credential table, and the audit trail holds no token.
     const grants = await admin((cl) =>
       cl.query<{ role: string }>(
         `SELECT r AS role FROM unnest(ARRAY['ludy_app', 'ludy_worker', 'ludy_tenant', 'ludy_definer_tenant']) r

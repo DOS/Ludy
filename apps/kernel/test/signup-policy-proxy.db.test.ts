@@ -63,7 +63,7 @@ suite('sign-up policy through the /auth/v1 proxy (#350)', () => {
     const config = loadConfig({
       DATABASE_URL: 'postgres://unused@localhost/unused',
       AUTH_JWT_SECRET: 'x'.repeat(32),
-      AUTH_ISSUER: 'crove-auth',
+      AUTH_ISSUER: 'ludy-auth',
       AUTH_UPSTREAM_URL: upstreamUrl,
       AUTH_AUTOCONFIRM: 'false',
       AUTH_EMAIL_CLIENT_LIMIT_PER_HOUR: '1000',

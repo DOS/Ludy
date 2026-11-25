@@ -33,7 +33,7 @@ import { TEST_MANIFESTS } from './manifests.ts';
 const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-missing-invoices-669-0123456789';
-const ISSUER = 'crove-auth';
+const ISSUER = 'ludy-auth';
 const BUYER = '0309876546';
 const INBOUND = 'in.crove.test';
 const ACTOR = { type: 'system' as const, component: 'finance.missing_invoices' };
@@ -121,7 +121,7 @@ suite('missing invoice requests (#669)', () => {
   async function rpc(path: string, who: Account, input: unknown, slug: string | null = org.slug) {
     const response = await app.request(`/api/rpc/${path}`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${await tokenFor(who)}`, 'content-type': 'application/json', ...(slug ? { 'x-crove-org': slug } : {}) },
+      headers: { authorization: `Bearer ${await tokenFor(who)}`, 'content-type': 'application/json', ...(slug ? { 'x-ludy-org': slug } : {}) },
       body: JSON.stringify(input === undefined ? {} : { json: input }),
     });
     const body = (await response.json().catch(() => null)) as ({ json?: unknown } & Record<string, unknown>) | null;
@@ -145,7 +145,7 @@ suite('missing invoice requests (#669)', () => {
     const form = new FormData();
     form.append('file', new File([Buffer.from(portalListXlsx(invoices))], `ds-${period}.xlsx`));
     form.append('purpose', 'import');
-    const uploaded = await app.request('/api/files', { method: 'POST', headers: { authorization: `Bearer ${await tokenFor(owner)}`, 'x-crove-org': org.slug }, body: form });
+    const uploaded = await app.request('/api/files', { method: 'POST', headers: { authorization: `Bearer ${await tokenFor(owner)}`, 'x-ludy-org': org.slug }, body: form });
     expect(uploaded.status).toBe(200);
     const fileId = ((await uploaded.json()) as any).files[0].fileId as string;
     const imported = await rpc('portalList/import', owner, { period, fileId });
@@ -210,7 +210,7 @@ suite('missing invoice requests (#669)', () => {
     ] as const) {
       const invite = await app.request('/api/rpc/org/invite', {
         method: 'POST',
-        headers: { authorization: `Bearer ${await tokenFor(owner, { mfa: true })}`, 'content-type': 'application/json', 'x-crove-org': org.slug },
+        headers: { authorization: `Bearer ${await tokenFor(owner, { mfa: true })}`, 'content-type': 'application/json', 'x-ludy-org': org.slug },
         body: JSON.stringify({ json: { email: who.email, role } }),
       });
       const body = ((await invite.json()) as any).json;

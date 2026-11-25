@@ -1,4 +1,4 @@
-// Link preview cards of Crove Social on PostgreSQL 17 (#641): a request is cached per org and URL, queued for the
+// Link preview cards of Ludy Social on PostgreSQL 17 (#641): a request is cached per org and URL, queued for the
 // worker once, read through crove-extract (the real parser process) and recorded; failures say why; fresh answers
 // are reused for a day; an org's requests are capped per minute. The page fetch is a stub here (the egress guard has
 // its own tests). Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.

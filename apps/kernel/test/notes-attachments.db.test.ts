@@ -127,7 +127,7 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
       .setIssuedAt()
       .setExpirationTime('15m')
       .sign(new TextEncoder().encode(SECRET));
-  const authHeaders = async (o: Org, who: Person) => ({ authorization: `Bearer ${await token(who)}`, 'x-crove-org': o.slug });
+  const authHeaders = async (o: Org, who: Person) => ({ authorization: `Bearer ${await token(who)}`, 'x-ludy-org': o.slug });
 
   const createNote = async (o: Org, who: Person, visibility: 'private' | 'org', title = 'Ghi chú họp') =>
     (await rt.execute<NoteWritten>('notes.note.create', { title, body: 'Nội dung', visibility }, { actor: asUser(who.id), orgId: o.orgId })).noteId;
@@ -381,7 +381,7 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
        VALUES ($1, $2, $3, $4, 'Clipper', ARRAY['notes'], now(), now() + interval '7 days', $3)`,
       [o.orgId, tokenId, o.author.id, hashExtensionSecret(extToken.value)],
     );
-    const extHeaders = { authorization: `Bearer ${extToken.value}`, 'x-crove-org': o.slug };
+    const extHeaders = { authorization: `Bearer ${extToken.value}`, 'x-ludy-org': o.slug };
     const form = new FormData();
     form.append('file', new Blob([new Uint8Array(png())], { type: 'image/png' }), 'ext.png');
     const up = await app.request(`/api/notes/${noteId}/attachments`, { method: 'POST', body: form, headers: extHeaders });

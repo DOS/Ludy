@@ -40,14 +40,14 @@ class MemoryStore implements BlobStore {
 }
 
 describe('the abuse-limit mail (#675)', () => {
-  const input = (payload: Record<string, unknown>) => ({ subject: null, payload, publicUrl: 'https://crove.example/' }) as Parameters<typeof renderUsageDeferredMail>[0];
+  const input = (payload: Record<string, unknown>) => ({ subject: null, payload, publicUrl: 'https://ludy.example/' }) as Parameters<typeof renderUsageDeferredMail>[0];
 
   it('names the limit, says nothing is lost and links the Inbox', async () => {
     const mail = await renderUsageDeferredMail(input({ metric: 'extraction_pages', org: 'Công ty <A>', retryAt: '2026-10-21T07:05:00.000Z', path: '/o/cong-ty-a/inbox' }));
     expect(mail?.text).toContain('số trang đọc chứng từ');
     expect(mail?.text).toContain('14:05 ngày 21/10/2026');
     expect(mail?.text).toContain('không bị mất');
-    expect(mail?.text).toContain('https://crove.example/o/cong-ty-a/inbox');
+    expect(mail?.text).toContain('https://ludy.example/o/cong-ty-a/inbox');
     expect(mail?.html).toContain('Công ty &lt;A&gt;');
   });
 

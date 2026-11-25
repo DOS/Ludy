@@ -93,7 +93,7 @@ suite('queued mail (#548)', () => {
   const actor = (userId: string): UserActor => ({ type: 'user', userId, aal: 'aal1', sessionId: randomUUID(), mfaAt: null });
   const queue = async (to: string, stream: 'system' | 'transactional' | 'marketing' = 'transactional', template?: string, org = orgId) =>
     String((await runtime.execute<{ id: string }>('kernel.mail_test.queue', { to, stream, ...(template ? { template } : {}) }, { actor: owner, orgId: org })).id);
-  const deps = (mailer: MailProvider) => ({ runtime: workerRuntime, mailer, templates: TEMPLATES, publicUrl: 'https://crove.example', bounceDomain: 'in.crove.example', sleep: async () => {} });
+  const deps = (mailer: MailProvider) => ({ runtime: workerRuntime, mailer, templates: TEMPLATES, publicUrl: 'https://ludy.example', bounceDomain: 'in.ludy.example', sleep: async () => {} });
   const row = (id: string) =>
     admin(
       async (c) =>
@@ -183,9 +183,9 @@ suite('queued mail (#548)', () => {
 
     expect(await runMailJob(deps(mailer), { orgId, messageId: invoice })).toEqual({ action: 'recorded', outcome: 'sent', code: null });
     expect(sent).toHaveLength(1);
-    expect(sent[0]).toMatchObject({ to: 'khach@example.vn', subject: 'Báo cáo tuần', text: 'Tiếp cận 1200\nhttps://crove.example' });
+    expect(sent[0]).toMatchObject({ to: 'khach@example.vn', subject: 'Báo cáo tuần', text: 'Tiếp cận 1200\nhttps://ludy.example' });
     expect(sent[0]?.messageId).toMatch(/^<[0-9a-f-]{36}@ludy\.invalid>$/);
-    expect(sent[0]?.returnPath).toMatch(/^bounce\+[^@]+@in\.crove\.example$/);
+    expect(sent[0]?.returnPath).toMatch(/^bounce\+[^@]+@in\.ludy\.example$/);
     expect(await row(invoice)).toMatchObject({ status: 'sent', attempts: 1, provider_message_id: 'em_1', error_code: null });
     expect(await calls(invoice)).toEqual([{ key: `mail:${invoice}:1`, state: 'succeeded', error_kind: null }]);
     // A second job for the same mail (a retried job, a duplicate) sends nothing, and the sweep no longer finds it.

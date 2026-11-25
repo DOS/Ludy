@@ -105,7 +105,7 @@ suite('Ludy Desktop token over HTTP (#4515, ADR-0055 slice 2 & slice 3 #4516)', 
       .sign(new TextEncoder().encode(SECRET));
   }
 
-  const asBrowser = async (name: string, org: string | null = slug, mfa = false) => ({ authorization: `Bearer ${await jwt(name, mfa)}`, 'content-type': 'application/json', ...(org ? { 'x-crove-org': org } : {}) });
+  const asBrowser = async (name: string, org: string | null = slug, mfa = false) => ({ authorization: `Bearer ${await jwt(name, mfa)}`, 'content-type': 'application/json', ...(org ? { 'x-ludy-org': org } : {}) });
   const asToken = (token: string) => ({ authorization: `Bearer ${token}`, 'content-type': 'application/json' });
 
   async function rpc(path: string, headers: Record<string, string>, input: unknown, targetApp = app) {

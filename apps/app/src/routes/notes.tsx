@@ -27,7 +27,7 @@ import { Textarea } from '@ludy/ui/components/textarea';
 import { NoteAttachments, useNoteAttachmentUploader } from '../components/note-attachments.tsx';
 import { NoteImportDialog } from '../components/note-import-dialog.tsx';
 import { NoteLinks, RecordLinkAdder } from '../components/note-links.tsx';
-import { NoteBacklinks, NoteNotebookPicker, NoteWikiAutocomplete, NotebooksSidebar } from '../components/note-notebooks.tsx';
+import { NoteBacklinks, NoteNotebookPicker, NoteWikiAutocomplete, NotebooksSidebar, wikiComboboxAriaProps } from '../components/note-notebooks.tsx';
 import { NoteTaskProposals } from '../components/note-task-proposals.tsx';
 import { NewFromTemplateButton, NoteVersionHistoryButton, SaveAsTemplateButton } from '../components/note-templates-history.tsx';
 import { NoteVyPanel } from '../components/note-vy-panel.tsx';
@@ -492,9 +492,12 @@ function Editor({
                 rows={14}
                 maxLength={NOTE_BODY_MAX}
                 disabled={locked}
-                aria-controls={wikiOpen !== null ? wikiListboxId : undefined}
-                aria-expanded={wikiOpen !== null ? true : undefined}
-                aria-activedescendant={wikiOpen !== null && wikiFiltered.length > 0 ? `${wikiListboxId}-opt-${safeWikiIndex}` : undefined}
+                {...wikiComboboxAriaProps({
+                  open: wikiOpen !== null,
+                  listboxId: wikiListboxId,
+                  activeIndex: safeWikiIndex,
+                  matchCount: wikiFiltered.length,
+                })}
                 onPaste={attachmentUploader.onEditorPaste}
                 onChange={(e) => {
                   const nextPos = e.target.selectionStart ?? e.target.value.length;

@@ -1,4 +1,4 @@
-// Crove Social posts on PostgreSQL 17 (Social plan S3, issue #233): compose for several channels, inherit and override
+// Ludy Social posts on PostgreSQL 17 (Social plan S3, issue #233): compose for several channels, inherit and override
 // content, review per variant on the exact revision seen, schedule at a time or in a queue, cancel, and the rules that
 // keep history and in-flight variants safe. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { createHash, randomUUID } from 'node:crypto';
@@ -518,7 +518,7 @@ suite('social posts on PostgreSQL (S3)', () => {
     // One cancelled through the command, one published by the publisher (not frozen yet).
     await exec(o, o.owner, 'social.variant.cancel', { variantIds: [va.id] });
     await admin((c) => c.query("UPDATE ludy_social.post_variant SET status = 'published', published_at = now() WHERE id = $1", [vb.id]));
-    await exec(o, o.member, 'social.post.update', { postId: post.id, revision: post.revision, body: 'Mới', title: 'Tiêu đề mới', linkUrl: 'https://crove.example/moi' });
+    await exec(o, o.member, 'social.post.update', { postId: post.id, revision: post.revision, body: 'Mới', title: 'Tiêu đề mới', linkUrl: 'https://ludy.example/moi' });
     const view = await get(o, o.owner, post.id);
     for (const v of view.variants) expect(v.effective).toEqual({ body: 'Gốc', title: null, linkUrl: null });
   });

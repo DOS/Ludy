@@ -126,7 +126,7 @@ suite('projects P6 share_note & send_mail (#2609)', () => {
       headers: {
         authorization: `Bearer ${await tokenFor(person)}`,
         'content-type': 'application/json',
-        ...(orgSlug ? { 'x-crove-org': orgSlug } : {}),
+        ...(orgSlug ? { 'x-ludy-org': orgSlug } : {}),
       },
       body: JSON.stringify(input === undefined ? {} : { json: input }),
     });

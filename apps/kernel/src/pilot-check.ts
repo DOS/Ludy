@@ -403,8 +403,8 @@ export function checkEnv(env: Env): CheckResult[] {
     signup === 'true'
       ? 'AUTH_DISABLE_SIGNUP=true: Supabase Auth creates no new accounts'
       : ownProvider && allowed && !restricted
-        ? 'AUTH_ALLOWED_EMAILS: Crove refuses every address that is not listed'
-        : `AUTH_SIGNUP_POLICY=${policy}: Crove forwards only sign-ups it admits`,
+        ? 'AUTH_ALLOWED_EMAILS: Ludy refuses every address that is not listed'
+        : `AUTH_SIGNUP_POLICY=${policy}: Ludy forwards only sign-ups it admits`,
   );
 
   // Alerts (M1-9, issue #309): the prober posts to a channel the owner reads, and it runs.
@@ -813,7 +813,7 @@ async function probeSignup(authUrl: string, reportedPolicy: string | null, fetch
   const code = typeof answer?.error_code === 'string' ? answer.error_code : null;
   const got = `${response.status}${code ? ` ${code}` : ''}`;
   if (response.status === 403 && code === 'signup_not_allowed') {
-    return { item, status: 'pass', message: `the running Crove refused a sign-up for a random address no policy admits (403 signup_not_allowed${reportedPolicy ? `, policy ${reportedPolicy}` : ''})` };
+    return { item, status: 'pass', message: `the running Ludy refused a sign-up for a random address no policy admits (403 signup_not_allowed${reportedPolicy ? `, policy ${reportedPolicy}` : ''})` };
   }
   if (code === 'signup_disabled') return { item, status: 'pass', message: `the running Supabase Auth refuses new sign-ups (${got})` };
   if (response.ok) {

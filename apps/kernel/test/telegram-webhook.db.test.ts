@@ -27,7 +27,7 @@ const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_UR
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const SECRET = 'test-only-jwt-secret-for-telegram-0123456789-abcdefghij';
-const ISSUER = 'crove-auth';
+const ISSUER = 'ludy-auth';
 const BASE = '/api/channels/telegram/webhook';
 // Two bots of two orgs on one deployment: the token's number before the colon is the bot's id.
 const TOKEN_A = '111111111:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw1';

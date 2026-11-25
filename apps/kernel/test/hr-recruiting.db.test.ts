@@ -132,7 +132,7 @@ suite('HR lightweight recruiting, calendar interview, 1-click hire, and Ly brief
     const postBrief = async (token: string, input: unknown, slug = o.slug) => {
       const res = await app.request('/api/rpc/hr/recruiting/brief', {
         method: 'POST',
-        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', 'x-crove-org': slug },
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', 'x-ludy-org': slug },
         body: JSON.stringify({ json: input }),
       });
       const raw = (await res.json().catch(() => null)) as ({ json?: HrRecruitingBriefResult } & Record<string, unknown>) | null;

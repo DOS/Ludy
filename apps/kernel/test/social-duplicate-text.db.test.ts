@@ -117,9 +117,9 @@ suite('social duplicate text on PostgreSQL (#1156)', () => {
   it("warns in review when a copy on X has last week's text, and one word changed clears it", async () => {
     const o = await org();
     const text = 'Ưu đãi cuối tuần: giảm 20% mọi món';
-    const last = await post(o, [o.x], `${text} https://crove.vn/uu-dai`);
+    const last = await post(o, [o.x], `${text} https://ludy.example/uu-dai`);
     await published(o, last, o.x, 7);
-    const copy = await post(o, [o.x, o.other], `${text}\n\nhttps://crove.vn/uu-dai-tuan-nay`);
+    const copy = await post(o, [o.x, o.other], `${text}\n\nhttps://ludy.example/uu-dai-tuan-nay`);
     await exec(o, o.owner, 'social.post.submit', { postId: copy });
     const view = await get(o, copy);
     const x = on(view, o.x);

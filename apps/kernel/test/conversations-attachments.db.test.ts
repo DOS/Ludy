@@ -175,7 +175,7 @@ suite('customers’ images as files bound to their message on PostgreSQL (CV5c, 
   const emailOf = async (userId: string) => ((await rows<{ email: string; subject: string }>('SELECT email, subject FROM ludy_kernel.user_account WHERE id = $1', [userId]))[0] as { email: string; subject: string });
   async function bytesRoute(o: Org, user: string | null, attachmentId: string) {
     const who = user ? await emailOf(user) : null;
-    const response = await app.request(`/api/conversations/attachments/${attachmentId}`, { headers: who ? { authorization: `Bearer ${await token(o, who)}`, 'x-crove-org': o.slug } : {} });
+    const response = await app.request(`/api/conversations/attachments/${attachmentId}`, { headers: who ? { authorization: `Bearer ${await token(o, who)}`, 'x-ludy-org': o.slug } : {} });
     return { status: response.status, headers: response.headers, bytes: Buffer.from(await response.arrayBuffer()) };
   }
 

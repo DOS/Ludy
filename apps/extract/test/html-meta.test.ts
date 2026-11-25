@@ -14,10 +14,10 @@ describe('readHtmlMeta', () => {
     expect(
       readHtmlMeta(
         page(
-          '<title>Tiêu đề trang</title><meta name="description" content="Mô tả HTML"><meta name="twitter:title" content="Twitter"><meta property="og:title" content="Khai trương cửa hàng"><meta property="og:description" content="Giảm 20% tuần đầu"><meta property="og:site_name" content="Crove Shop">',
+          '<title>Tiêu đề trang</title><meta name="description" content="Mô tả HTML"><meta name="twitter:title" content="Twitter"><meta property="og:title" content="Khai trương cửa hàng"><meta property="og:description" content="Giảm 20% tuần đầu"><meta property="og:site_name" content="Ludy Shop">',
         ),
       ),
-    ).toEqual({ title: 'Khai trương cửa hàng', description: 'Giảm 20% tuần đầu', siteName: 'Crove Shop', text: 'body' });
+    ).toEqual({ title: 'Khai trương cửa hàng', description: 'Giảm 20% tuần đầu', siteName: 'Ludy Shop', text: 'body' });
     expect(readHtmlMeta(page('<title>Chỉ có tiêu đề</title><meta name=description content=Ngắn>'))).toEqual({ title: 'Chỉ có tiêu đề', description: 'Ngắn', siteName: null, text: 'body' });
     expect(readHtmlMeta(page("<meta name='twitter:title' content='Từ Twitter'>"))).toMatchObject({ title: 'Từ Twitter' });
     expect(readHtmlMeta(page('<title>A < B và <b>đậm</b></title>'))).toMatchObject({ title: 'A < B và <b>đậm</b>' });

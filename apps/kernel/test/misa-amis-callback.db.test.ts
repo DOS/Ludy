@@ -28,7 +28,7 @@ const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.
 const suite = ADMIN ? describe : describe.skip;
 
 const SECRET = 'test-only-jwt-secret-for-misa-amis-callback-0123456789';
-const ISSUER = 'crove-auth';
+const ISSUER = 'ludy-auth';
 const CLIENT = 'misa-client-id-0001';
 const ASP_CLIENT = 'misa-asp-client-id-0001';
 const PATH = '/api/webhooks/misa-amis';

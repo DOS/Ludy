@@ -259,7 +259,7 @@ suite('HR Stage 5D: candidate source/hired_at, funnel BI analytics, crove-extrac
       for (const [k, v] of Object.entries(fields)) form.append(k, v);
       const res = await app.request('/api/hr/recruiting/cv-extract', {
         method: 'POST',
-        headers: { authorization: `Bearer ${token}`, 'x-crove-org': slug },
+        headers: { authorization: `Bearer ${token}`, 'x-ludy-org': slug },
         body: form,
       });
       const body = (await res.json().catch(() => null)) as HrCvExtractResponse & Record<string, unknown>;
@@ -268,7 +268,7 @@ suite('HR Stage 5D: candidate source/hired_at, funnel BI analytics, crove-extrac
 
     const pollCv = async (token: string, jobId: string, query = '', slug = o.slug) => {
       const res = await app.request(`/api/hr/recruiting/cv-extract/${jobId}${query}`, {
-        headers: { authorization: `Bearer ${token}`, 'x-crove-org': slug },
+        headers: { authorization: `Bearer ${token}`, 'x-ludy-org': slug },
       });
       const body = (await res.json().catch(() => null)) as HrCvExtractResponse & Record<string, unknown>;
       return { status: res.status, body };
@@ -277,7 +277,7 @@ suite('HR Stage 5D: candidate source/hired_at, funnel BI analytics, crove-extrac
     const postRpc = async <T>(token: string, path: string, input: unknown, slug = o.slug) => {
       const res = await app.request(`/api/rpc/${path}`, {
         method: 'POST',
-        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', 'x-crove-org': slug },
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', 'x-ludy-org': slug },
         body: JSON.stringify({ json: input }),
       });
       const raw = (await res.json().catch(() => null)) as ({ json?: T } & Record<string, unknown>) | null;

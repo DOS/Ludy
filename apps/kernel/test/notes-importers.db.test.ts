@@ -107,12 +107,12 @@ suite('Notes v2 E5a (#3564): Evernote (.enex) and Todoist (.csv) importers on Po
   const asJsonHeaders = async (name: string, targetSlug: string | null = slug, mfa = false) => ({
     authorization: `Bearer ${await jwt(name, mfa)}`,
     'content-type': 'application/json',
-    ...(targetSlug ? { 'x-crove-org': targetSlug } : {}),
+    ...(targetSlug ? { 'x-ludy-org': targetSlug } : {}),
   });
 
   const asAuthHeaders = async (name: string, targetSlug: string | null = slug) => ({
     authorization: `Bearer ${await jwt(name, false)}`,
-    ...(targetSlug ? { 'x-crove-org': targetSlug } : {}),
+    ...(targetSlug ? { 'x-ludy-org': targetSlug } : {}),
   });
 
   async function rpc(path: string, headers: Record<string, string>, input: unknown) {
@@ -508,7 +508,7 @@ suite('Notes v2 E5a (#3564): Evernote (.enex) and Todoist (.csv) importers on Po
     extEnexForm.append('file', new Blob([simpleEnex], { type: 'application/xml' }), 'a.enex');
     const extEnex = await app.request('/api/notes/import/enex', {
       method: 'POST',
-      headers: { authorization: `Bearer ${extToken}`, 'x-crove-org': slug },
+      headers: { authorization: `Bearer ${extToken}`, 'x-ludy-org': slug },
       body: extEnexForm,
     });
     expect(extEnex.status).toBe(403);
@@ -517,7 +517,7 @@ suite('Notes v2 E5a (#3564): Evernote (.enex) and Todoist (.csv) importers on Po
     extCsvForm.append('file', new Blob([simpleCsv], { type: 'text/csv' }), 'a.csv');
     const extCsv = await app.request('/api/notes/import/todoist', {
       method: 'POST',
-      headers: { authorization: `Bearer ${extToken}`, 'x-crove-org': slug },
+      headers: { authorization: `Bearer ${extToken}`, 'x-ludy-org': slug },
       body: extCsvForm,
     });
     expect(extCsv.status).toBe(403);

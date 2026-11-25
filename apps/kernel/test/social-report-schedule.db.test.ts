@@ -78,7 +78,7 @@ suite('scheduled client report mail on PostgreSQL (#704)', () => {
   async function deliver(mailer: MailProvider) {
     const jobs: MailJob[] = [];
     await sweepMail({ send: async (_q, data) => jobs.push(data) }, workerDb, worker, mailer);
-    for (const job of jobs) await runMailJob({ runtime: worker, mailer, templates: MAIL_TEMPLATES, publicUrl: 'https://crove.example', bounceDomain: null }, job);
+    for (const job of jobs) await runMailJob({ runtime: worker, mailer, templates: MAIL_TEMPLATES, publicUrl: 'https://ludy.example', bounceDomain: null }, job);
     return jobs.length;
   }
 

@@ -166,7 +166,7 @@ export class GoogleBusinessConnector implements OAuthConnector {
     if (typeof answer.access_token !== 'string' || !answer.access_token) throw new ConnectorError('provider', 'Google answered without an access token');
     if (typeof answer.refresh_token !== 'string' || !answer.refresh_token) throw new ConnectorError('provider', 'Google answered without a refresh token');
     const granted = typeof answer.scope === 'string' ? answer.scope.split(' ').filter(Boolean) : [];
-    if (!GOOGLE_BUSINESS_SCOPES.every((s) => granted.includes(s))) throw new ConnectorError('denied', 'Google did not grant the Business Profile permission Crove needs', 'MISSING_PERMISSION');
+    if (!GOOGLE_BUSINESS_SCOPES.every((s) => granted.includes(s))) throw new ConnectorError('denied', 'Google did not grant the Business Profile permission Ludy needs', 'MISSING_PERMISSION');
     const token = answer.access_token;
     const accounts = await this.client.call<{ accounts?: { name?: unknown }[] }>('GET', `https://mybusinessaccountmanagement.googleapis.com/v1/accounts?pageSize=20`, token).catch((error: unknown) => {
       throw connectorError(error);
