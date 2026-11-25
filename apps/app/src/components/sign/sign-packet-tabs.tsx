@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Accessible document tabs shared by multi-document Prepare and Ceremony screens (#4722, Slice 6c).
-import type { KeyboardEvent } from 'react';
+import { useId, type KeyboardEvent } from 'react';
 import { useTranslations } from 'use-intl';
 import { Badge } from '@ludy/ui/components/badge';
 import { cn } from '@ludy/ui/lib/utils';
@@ -22,10 +22,21 @@ export interface SignPacketTabsProps {
   activeKey: string;
   onSelect: (key: string) => void;
   ariaLabel?: string;
+  idPrefix?: string | undefined;
+  panelId?: string | undefined;
 }
 
-export function SignPacketTabs({ items, activeKey, onSelect, ariaLabel }: SignPacketTabsProps) {
+export function SignPacketTabs({
+  items,
+  activeKey,
+  onSelect,
+  ariaLabel,
+  idPrefix,
+  panelId,
+}: SignPacketTabsProps) {
   const t = useTranslations('sign.packet');
+  const fallbackPrefix = useId();
+  const resolvedPrefix = idPrefix ?? fallbackPrefix;
 
   if (items.length <= 1) return null;
 
@@ -63,9 +74,11 @@ export function SignPacketTabs({ items, activeKey, onSelect, ariaLabel }: SignPa
         return (
           <button
             key={item.key}
+            id={`${resolvedPrefix}-tab-${item.key}`}
             type="button"
             role="tab"
             aria-selected={active}
+            aria-controls={panelId}
             tabIndex={active ? 0 : -1}
             data-tab-index={idx}
             data-testid={`sign-packet-tab-${item.docIndex}`}

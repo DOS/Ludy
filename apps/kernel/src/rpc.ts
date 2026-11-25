@@ -4665,6 +4665,9 @@ export function createRpcHandler(
       signDepositMatch: os.bank.signDepositMatch.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => runtime.query('finance.bank.sign_deposit_match', input, { actor, orgId })),
       ),
+      signDepositMatches: os.bank.signDepositMatches.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => runtime.query('finance.bank.sign_deposit_matches', input, { actor, orgId })),
+      ),
       // The candidates are read again here in the owner's or admin's own transaction, so the facts the model is told come from the books and the line, never from the caller.
       payrollExplain: os.bank.payrollExplain.handler(({ context, input }) =>
         inFinance(context, async (orgId, actor) => {
@@ -5400,6 +5403,7 @@ export function createRpcHandler(
               orgId,
               actor,
               envelopeId: input.envelopeId,
+              ...(input.expectedSourceSha256 ? { expectedSourceSha256: input.expectedSourceSha256 } : {}),
               ...(input.pages ? { pages: input.pages } : {}),
               meter: 'runtime',
               ...(aiPrice ? { meterOptions: { price: aiPrice } } : {}),

@@ -119,6 +119,7 @@ export interface ProposeEnvelopeAnalysisParams {
   orgId: string;
   actor: UserActor | SystemActor;
   envelopeId: string;
+  expectedSourceSha256?: string;
   pages?: readonly SignAiPageInput[];
   inspectPages?: (source: SignAiSource) => Promise<readonly SignAiPageInput[]>;
   meter: AiMeter | 'runtime';
@@ -181,6 +182,16 @@ export async function proposeEnvelopeAnalysis(params: ProposeEnvelopeAnalysisPar
     throw new DomainError('FORBIDDEN', 403, 'Only workspace members or system workers can run eSign AI analysis');
   }
   const source = await runtime.query<SignAiSource>('sign.ai_analysis.source', { envelopeId }, { actor, orgId });
+  if (
+    params.expectedSourceSha256 &&
+    params.expectedSourceSha256.toLowerCase() !== source.sourceSha256.toLowerCase()
+  ) {
+    throw new DomainError(
+      'SIGN_PRIMARY_DOC_CHANGED',
+      409,
+      'Primary envelope document changed before analysis ran; refresh and try again.',
+    );
+  }
 
   const safeExisting = async (): Promise<SignAiAnalysisRecord | null> => {
     try {

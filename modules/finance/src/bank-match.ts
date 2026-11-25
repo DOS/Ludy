@@ -12,6 +12,7 @@
 import { sql } from 'kysely';
 import { z } from 'zod';
 import {
+  BANK_SIGN_DEPOSIT_BATCH_MAX,
   MARKETPLACE_PAYOUT_COMMAND,
   PAYROLL_PAYMENT_COMMAND,
   SUPPLIER_PAYMENT_SETTLE_COMMAND,
@@ -32,6 +33,7 @@ import {
   type BankPayrollMatch,
   type BankSignDepositCandidate,
   type BankSignDepositMatch,
+  type BankSignDepositMatches,
   type HrRunPaymentAmounts,
   type PayrollPaymentKind,
   type VoucherType,
@@ -497,6 +499,43 @@ function containsWholeMemoToken(haystack: string, memoToken: string): boolean {
   return re.test(haystack);
 }
 
+function matchSignDepositCandidatesForLine(
+  line: StoredBankLine,
+  depositRows: readonly SignDepositCandidateRow[],
+): BankSignDepositCandidate[] {
+  const lineAmount = new Decimal(line.amount);
+  const haystack = [line.description ?? '', line.reference ?? ''].filter(Boolean).join(' ');
+  const candidates: BankSignDepositCandidate[] = [];
+  for (const c of depositRows) {
+    if (c.currency !== 'VND') continue;
+    if (c.financeBankAccount && c.financeBankAccount !== line.bankAccount) continue;
+    let candAmount: ReturnType<typeof Decimal.abs>;
+    try {
+      candAmount = new Decimal(c.amount);
+    } catch {
+      continue;
+    }
+    if (!candAmount.eq(lineAmount)) continue;
+    if (!containsWholeMemoToken(haystack, c.memoToken)) continue;
+    candidates.push({
+      envelopeId: c.envelopeId,
+      title: c.title,
+      completedAt: c.completedAt,
+      amount: lineAmount.toFixed(),
+      currency: 'VND',
+      memoToken: c.memoToken,
+      financeBankAccount: c.financeBankAccount,
+      signerName: c.signerName,
+      signerNoticeAt: c.signerNoticeAt,
+      reason: 'amount_memo',
+      voucherType: 'bank_credit',
+      suggestedDebitAccount: line.bankAccount,
+      suggestedCreditAccount: defaultCounterAccount('bank_credit'),
+    });
+  }
+  return candidates;
+}
+
 // Completed non-confidential eSign envelopes whose frozen VietQR deposit amount equals an open money-in bank line
 // AND whose CK-<CODE> memo token matches case-insensitively as a whole token in description/reference (#4723).
 // Read-only prefill hint for Báo Có; zero auto-posting.
@@ -517,36 +556,61 @@ export const bankSignDepositMatch = defineQuery({
       return none;
     }
 
-    const haystack = [line.description ?? '', line.reference ?? ''].filter(Boolean).join(' ');
-    const candidates: BankSignDepositCandidate[] = [];
-    for (const c of result.value) {
-      if (c.currency !== 'VND') continue;
-      if (c.financeBankAccount && c.financeBankAccount !== line.bankAccount) continue;
-      let candAmount: ReturnType<typeof Decimal.abs>;
-      try {
-        candAmount = new Decimal(c.amount);
-      } catch {
-        continue;
-      }
-      if (!candAmount.eq(lineAmount)) continue;
-      if (!containsWholeMemoToken(haystack, c.memoToken)) continue;
-      candidates.push({
-        envelopeId: c.envelopeId,
-        title: c.title,
-        completedAt: c.completedAt,
-        amount: lineAmount.toFixed(),
-        currency: 'VND',
-        memoToken: c.memoToken,
-        financeBankAccount: c.financeBankAccount,
-        signerName: c.signerName,
-        signerNoticeAt: c.signerNoticeAt,
-        reason: 'amount_memo',
-        voucherType: 'bank_credit',
-        suggestedDebitAccount: line.bankAccount,
-        suggestedCreditAccount: defaultCounterAccount('bank_credit'),
-      });
+    return {
+      bankLineId: line.id,
+      date: line.date,
+      candidates: matchSignDepositCandidatesForLine(line, result.value),
+    };
+  },
+});
+
+// Batched lookup across up to 50 money-in bank lines in one query round-trip (#4837).
+export const bankSignDepositMatches = defineQuery({
+  name: 'finance.bank.sign_deposit_matches',
+  input: z.strictObject({ bankLineIds: z.array(zId).max(BANK_SIGN_DEPOSIT_BATCH_MAX) }),
+  access: REQUESTERS,
+  handler: async (ctx, input): Promise<BankSignDepositMatches> => {
+    const orderedUniqueIds: string[] = [];
+    const seen = new Set<string>();
+    for (const id of input.bankLineIds) {
+      const normalized = id.toLowerCase();
+      if (seen.has(normalized)) continue;
+      seen.add(normalized);
+      orderedUniqueIds.push(id);
+    }
+    if (orderedUniqueIds.length === 0) {
+      return { matches: [] };
     }
 
-    return { bankLineId: line.id, date: line.date, candidates };
+    const lines = await findBankLines(ctx, orderedUniqueIds);
+    const byId = new Map(lines.map((line) => [line.id.toLowerCase(), line]));
+    const inflowIds = lines
+      .filter((line) => new Decimal(line.amount).gt(0))
+      .map((line) => line.id);
+
+    const states = inflowIds.length > 0 ? await bankLineStates(ctx, inflowIds) : new Map();
+    const openInflowIds = inflowIds.filter((id) => (states.get(id)?.status ?? 'open') === 'open');
+    const candidateRows =
+      openInflowIds.length > 0
+        ? await ctx.query<SignDepositCandidateRow[]>('sign.deposit.match_candidates', {})
+        : null;
+    const deposits = candidateRows?.status === 'ok' ? candidateRows.value : [];
+    const openSet = new Set(openInflowIds.map((id) => id.toLowerCase()));
+
+    const matches: BankSignDepositMatch[] = [];
+    for (const id of orderedUniqueIds) {
+      const line = byId.get(id.toLowerCase());
+      if (!line) continue;
+      if (!openSet.has(line.id.toLowerCase()) || deposits.length === 0) {
+        matches.push({ bankLineId: line.id, date: line.date, candidates: [] });
+        continue;
+      }
+      matches.push({
+        bankLineId: line.id,
+        date: line.date,
+        candidates: matchSignDepositCandidatesForLine(line, deposits),
+      });
+    }
+    return { matches };
   },
 });

@@ -228,9 +228,10 @@ describe('kernel error codes', () => {
     expect([...kernelRules()].filter((rule) => !Object.hasOwn(KERNEL_ERROR_RULES, rule)).sort()).toEqual([]);
   });
 
-  it('uses localized Vietnamese messages instead of options.server for Slice 6d deposit error codes', () => {
+  it('uses localized Vietnamese messages instead of options.server for Slice 6c and 6d sign error codes', () => {
     const tVi = translatorFor('vi');
-    const slice6dCodes = [
+    const slice6Codes = [
+      'SIGN_PRIMARY_DOC_CHANGED',
       'SIGN_CONFIDENTIAL_DEPOSIT_FORBIDDEN',
       'SIGN_DEPOSIT_EMVCO_INVALID',
       'SIGN_DEPOSIT_FROZEN',
@@ -245,7 +246,7 @@ describe('kernel error codes', () => {
       'SIGN_INVALID_BANK_CODE',
     ] as const;
 
-    for (const code of slice6dCodes) {
+    for (const code of slice6Codes) {
       const msg = kernelErrorMessage(code, null, tVi, { server: `Raw English error for ${code}` });
       expect(msg).toBe(vi.kernelErrors.codes[code]);
       expect(msg).not.toContain('Raw English error');
