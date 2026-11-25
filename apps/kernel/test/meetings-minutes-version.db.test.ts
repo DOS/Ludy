@@ -211,7 +211,7 @@ suite('the second-language version of the published minutes (#4777)', () => {
       { original: 'Ref 09123456789. Items 912, 345, 678, 9.', version: 'Ref 0912 345 678  9.', probes: [{ kind: 'digits', value: '0912345678' }], accepted: false },
       { original: 'Ref 09123456789. Items 912, 345, 678, 9.', version: 'Ref 0912 345 678\n9.', probes: [{ kind: 'digits', value: '0912345678' }], accepted: false },
       { original: 'Gửi tới alice@example.com', version: 'Send to <Alice@Example.com>, please', probes: [{ kind: 'email', value: 'alice@example.com' }], accepted: true },
-      { original: 'Mã 028, 382 và 9123', version: 'Call (028) 382-9123', probes: [{ kind: 'digits', value: '0283829123' }], accepted: false },
+      { original: 'Mã 028, 382 và 9125', version: 'Call (028) 382-9125', probes: [{ kind: 'digits', value: '0283829125' }], accepted: false },
       { original: 'Mã 0912, 345 và 678', version: 'Call 0912 345 678', probes: [{ kind: 'digits', value: '0912345678' }], accepted: false },
       { original: 'Mã 0912, 345 và 678', version: 'Call 0912\r\n345\r\n678', probes: [{ kind: 'digits', value: '0912345678' }], accepted: false },
       { original: 'Số 1234567', version: 'Account 01234567', probes: [{ kind: 'digits', value: '01234567' }], accepted: false },
