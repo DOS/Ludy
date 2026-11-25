@@ -5694,6 +5694,30 @@ export const vi = {
         TRACKER_TERM_NOT_FOUND: 'Từ này không còn được theo dõi.',
       },
     },
+    labels: {
+      title: 'Nhãn',
+      none: 'Chưa có nhãn nào.',
+      add: 'Thêm nhãn',
+      addButton: 'Thêm',
+      remove: 'Bỏ nhãn {label}',
+      hint: 'Một dòng chữ ngắn, tối đa {max} ký tự, để gom các cuộc họp lại (ví dụ một khách hàng hay một dự án). Đừng ghi tên người, địa chỉ email hay số điện thoại vào đây.',
+      full: 'Cuộc họp này đã có {max} nhãn, nhiều nhất có thể. Bỏ một nhãn để thêm nhãn khác.',
+      problem: {
+        empty: 'Hãy gõ chữ cho nhãn.',
+        too_long: 'Một nhãn dài tối đa {max} ký tự.',
+        control: 'Một nhãn chỉ là một dòng chữ thường.',
+        address: 'Nhãn không phải chỗ để ghi địa chỉ email.',
+        digits: 'Nhãn không phải chỗ để ghi số điện thoại, số định danh hay một dãy số dài.',
+      },
+      errors: {
+        MEETING_LABEL_INVALID: 'Không dùng được dòng chữ này làm nhãn.',
+        MEETING_LABEL_LIMIT: 'Một cuộc họp có tối đa 5 nhãn. Hãy bỏ một nhãn trước.',
+        MEETING_LABEL_NOT_FOUND: 'Nhãn này đã không còn.',
+      },
+      filter: 'Nhãn',
+      filterAll: 'Mọi nhãn',
+      filterChip: 'Nhãn: {value}',
+    },
     highlights: {
       title: 'Đoạn nổi bật',
       desc: 'Những dòng của bản ghi lời nói mà mọi người đã đánh dấu. Ai đọc được cuộc họp này đều thấy. Bấm vào giờ để đến đó.',
@@ -19873,6 +19897,12 @@ export const vi = {
         list: 'Xem các từ khóa mà tổ chức theo dõi',
         remove: 'Bỏ theo dõi một từ hoặc cụm từ',
         week: 'Xem các từ khóa theo dõi được nhắc bao nhiêu lần trong các cuộc họp của một tuần',
+      },
+      label: {
+        add: 'Gắn nhãn cho một cuộc họp',
+        index: 'Xem các nhãn trong những cuộc họp bạn đọc được',
+        list: 'Xem các nhãn của một cuộc họp',
+        remove: 'Bỏ nhãn khỏi một cuộc họp',
       },
       highlight: {
         add: 'Đánh dấu nổi bật một dòng hoặc một đoạn của bản ghi cuộc họp',
