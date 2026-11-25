@@ -1248,6 +1248,150 @@ describe('checkSignObligationExtract (#3821)', () => {
         obligations: [],
       }).proposal,
     ).toMatchObject({ contractValue: '200', currency: 'USD' });
+
+    // [5] Collapse newline between ISO dollar qualifier and '$' ("SGD\n$100").
+    const splitDollarLineReq: SignObligationExtractRequest = {
+      envelopeTitle: 'Wrapped Dollar Prefix',
+      pageCount: 1,
+      pages: [
+        {
+          page: 1,
+          text: 'Bên B: Công ty ABC\nSGD\n$100; equivalent: USD 75.',
+        },
+      ],
+    };
+    expect(
+      checkSignObligationExtract(splitDollarLineReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '100',
+        currency: 'USD',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: 'SGD\n$100; equivalent: USD 75.' },
+        ],
+        obligations: [],
+      }).proposal?.contractValue,
+    ).toBeNull();
+    expect(
+      checkSignObligationExtract(splitDollarLineReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '100',
+        currency: 'SGD',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: 'SGD\n$100; equivalent: USD 75.' },
+        ],
+        obligations: [],
+      }).proposal,
+    ).toMatchObject({ contractValue: '100', currency: 'SGD' });
+
+    // [6] Exclude percentage and ratio numbers from non-adjacent fallback ("Discount rate in USD: 10%.").
+    const nonAdjPercentReq: SignObligationExtractRequest = {
+      envelopeTitle: 'Discount Term',
+      pageCount: 1,
+      pages: [
+        {
+          page: 1,
+          text: 'Bên B: Công ty ABC\nTotal: 200 EUR. Discount rate in USD: 10%.',
+        },
+      ],
+    };
+    expect(
+      checkSignObligationExtract(nonAdjPercentReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '10',
+        currency: 'USD',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: 'Total: 200 EUR. Discount rate in USD: 10%.' },
+        ],
+        obligations: [],
+      }).proposal?.contractValue,
+    ).toBeNull();
+
+    // [7] Direct matching without toLowerCase() avoids UTF-16 offset shift after Turkish dotted 'İ'.
+    const istanbulReq: SignObligationExtractRequest = {
+      envelopeTitle: 'Istanbul Quote',
+      pageCount: 1,
+      pages: [
+        {
+          page: 1,
+          text: 'Bên B: Công ty ABC\nİstanbul: US$100; equivalent: 90 EUR.',
+        },
+      ],
+    };
+    expect(
+      checkSignObligationExtract(istanbulReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '100',
+        currency: 'USD',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: 'İstanbul: US$100; equivalent: 90 EUR.' },
+        ],
+        obligations: [],
+      }).proposal,
+    ).toMatchObject({ contractValue: '100', currency: 'USD' });
+
+    // [8] Prefix currency symbols ("Tier 2 $100") bind right-side amount first instead of preceding tier index.
+    const prefixSymbolTierReq: SignObligationExtractRequest = {
+      envelopeTitle: 'Tier Pricing',
+      pageCount: 1,
+      pages: [
+        {
+          page: 1,
+          text: 'Bên B: Công ty ABC\nTier 2 $100; equivalent: 90 EUR.',
+        },
+      ],
+    };
+    expect(
+      checkSignObligationExtract(prefixSymbolTierReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '2',
+        currency: 'USD',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: 'Tier 2 $100; equivalent: 90 EUR.' },
+        ],
+        obligations: [],
+      }).proposal?.contractValue,
+    ).toBeNull();
+    expect(
+      checkSignObligationExtract(prefixSymbolTierReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '100',
+        currency: 'USD',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: 'Tier 2 $100; equivalent: 90 EUR.' },
+        ],
+        obligations: [],
+      }).proposal,
+    ).toMatchObject({ contractValue: '100', currency: 'USD' });
   });
 });
 

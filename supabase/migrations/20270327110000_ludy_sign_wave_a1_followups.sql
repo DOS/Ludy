@@ -57,8 +57,12 @@ AS $$
 DECLARE
   v_org uuid := ludy_kernel.ctx_org_id();
   v_locked_envelope_ids uuid[] := ARRAY[]::uuid[];
+  v_new_envelope_ids uuid[];
   v_field_ids uuid[];
   v_file_ids uuid[];
+  v_all_file_ids uuid[] := ARRAY[]::uuid[];
+  v_deleted_count integer := 0;
+  v_unlinked_count integer := 0;
   v_rows integer := 0;
   v_attachments integer := 0;
   v_unsealed_attachments integer := 0;
@@ -71,78 +75,87 @@ BEGIN
   END IF;
   PERFORM ludy_kernel.text_mention_pattern(p_kind, p_value);
 
-  -- Canonical lock order: acquire FOR SHARE on matching parent envelopes before deleting kyc_check or updating field.
-  SELECT COALESCE(pg_catalog.array_agg(locked.id ORDER BY locked.id ASC), ARRAY[]::uuid[])
-  INTO v_locked_envelope_ids
-  FROM (
-    SELECT e.id
-    FROM ludy_sign.envelope e
-    WHERE e.org_id = v_org
-      AND e.id IN (
-        SELECT k.envelope_id
-        FROM ludy_sign.kyc_check k
-        WHERE k.org_id = v_org
-          AND ludy_kernel.text_mentions(k.findings_json::text, p_kind, p_value)
-      )
-    ORDER BY e.id ASC
-    FOR SHARE
-  ) locked;
+  -- Canonical lock order: loop until no unlocked parent envelopes remain, locking FOR SHARE before deleting kyc_check or updating field.
+  LOOP
+    SELECT COALESCE(pg_catalog.array_agg(locked.id ORDER BY locked.id ASC), ARRAY[]::uuid[])
+    INTO v_new_envelope_ids
+    FROM (
+      SELECT e.id
+      FROM ludy_sign.envelope e
+      WHERE e.org_id = v_org
+        AND NOT (e.id = ANY (v_locked_envelope_ids))
+        AND e.id IN (
+          SELECT k.envelope_id
+          FROM ludy_sign.kyc_check k
+          WHERE k.org_id = v_org
+            AND ludy_kernel.text_mentions(k.findings_json::text, p_kind, p_value)
+        )
+      ORDER BY e.id ASC
+      FOR SHARE
+    ) locked;
 
-  IF pg_catalog.cardinality(v_locked_envelope_ids) = 0 THEN
-    RETURN pg_catalog.jsonb_build_object(
-      'rows', 0,
-      'attachments', 0,
-      'unsealedAttachments', 0
-    );
-  END IF;
+    EXIT WHEN pg_catalog.cardinality(v_new_envelope_ids) = 0;
 
-  WITH gone AS (
-    DELETE FROM ludy_sign.kyc_check k
-     WHERE k.org_id = v_org
-       AND k.envelope_id = ANY (v_locked_envelope_ids)
-       AND ludy_kernel.text_mentions(k.findings_json::text, p_kind, p_value)
-    RETURNING k.field_id, k.file_id
-  )
-  SELECT
-    pg_catalog.count(*)::integer,
-    pg_catalog.count(DISTINCT file_id)::integer,
-    COALESCE(pg_catalog.array_agg(DISTINCT field_id), ARRAY[]::uuid[]),
-    COALESCE(pg_catalog.array_agg(DISTINCT file_id), ARRAY[]::uuid[])
-  INTO v_rows, v_attachments, v_field_ids, v_file_ids
-  FROM gone;
+    v_locked_envelope_ids := v_locked_envelope_ids || v_new_envelope_ids;
 
-  -- On unsealed envelopes (draft, voided, expired, or declined with sealed_file_id IS NULL), also unlink
-  -- the erased check's attachment reference on field so can_read_sign_file immediately blocks further reads.
-  IF pg_catalog.cardinality(v_field_ids) > 0 THEN
-    PERFORM pg_catalog.set_config('ludy.sign_kyc_erase', v_org::text, true);
-
-    WITH unlinked AS (
-      UPDATE ludy_sign.field f
-         SET attachment_file_id = NULL,
-             attachment_filename = NULL,
-             attachment_content_type = NULL,
-             attachment_size_bytes = NULL,
-             attachment_sha256 = NULL,
-             filled_at = NULL,
-             updated_at = pg_catalog.now()
-        FROM ludy_sign.envelope e
-       WHERE f.org_id = v_org
-         AND f.envelope_id = ANY (v_locked_envelope_ids)
-         AND f.id = ANY (v_field_ids)
-         AND f.field_type = 'attachment'
-         AND f.attachment_file_id = ANY (v_file_ids)
-         AND e.org_id = f.org_id
-         AND e.id = f.envelope_id
-         AND e.status IN ('draft', 'voided', 'expired', 'declined')
-         AND e.sealed_file_id IS NULL
-      RETURNING f.id
+    WITH gone AS (
+      DELETE FROM ludy_sign.kyc_check k
+       WHERE k.org_id = v_org
+         AND k.envelope_id = ANY (v_new_envelope_ids)
+         AND ludy_kernel.text_mentions(k.findings_json::text, p_kind, p_value)
+      RETURNING k.field_id, k.file_id
     )
-    SELECT pg_catalog.count(*)::integer
-    INTO v_unsealed_attachments
-    FROM unlinked;
+    SELECT
+      pg_catalog.count(*)::integer,
+      COALESCE(pg_catalog.array_agg(DISTINCT field_id), ARRAY[]::uuid[]),
+      COALESCE(pg_catalog.array_agg(DISTINCT file_id), ARRAY[]::uuid[])
+    INTO v_deleted_count, v_field_ids, v_file_ids
+    FROM gone;
 
-    PERFORM pg_catalog.set_config('ludy.sign_kyc_erase', '', true);
-  END IF;
+    v_rows := v_rows + v_deleted_count;
+    v_all_file_ids := v_all_file_ids || v_file_ids;
+
+    -- On unsealed envelopes (draft, voided, expired, or declined with sealed_file_id IS NULL), also unlink
+    -- the erased check's attachment reference on field so can_read_sign_file immediately blocks further reads.
+    IF pg_catalog.cardinality(v_field_ids) > 0 THEN
+      PERFORM pg_catalog.set_config('ludy.sign_kyc_erase', v_org::text, true);
+
+      WITH unlinked AS (
+        UPDATE ludy_sign.field f
+           SET attachment_file_id = NULL,
+               attachment_filename = NULL,
+               attachment_content_type = NULL,
+               attachment_size_bytes = NULL,
+               attachment_sha256 = NULL,
+               filled_at = NULL,
+               updated_at = pg_catalog.now()
+          FROM ludy_sign.envelope e
+         WHERE f.org_id = v_org
+           AND f.envelope_id = ANY (v_new_envelope_ids)
+           AND f.id = ANY (v_field_ids)
+           AND f.field_type = 'attachment'
+           AND f.attachment_file_id = ANY (v_file_ids)
+           AND e.org_id = f.org_id
+           AND e.id = f.envelope_id
+           AND e.status IN ('draft', 'voided', 'expired', 'declined')
+           AND e.sealed_file_id IS NULL
+        RETURNING f.id
+      )
+      SELECT pg_catalog.count(*)::integer
+      INTO v_unlinked_count
+      FROM unlinked;
+
+      v_unsealed_attachments := v_unsealed_attachments + v_unlinked_count;
+
+      PERFORM pg_catalog.set_config('ludy.sign_kyc_erase', '', true);
+    END IF;
+  END LOOP;
+
+  v_attachments := (
+    SELECT pg_catalog.count(DISTINCT f_id)::integer
+    FROM pg_catalog.unnest(v_all_file_ids) AS f_id
+    WHERE f_id IS NOT NULL
+  );
 
   RETURN pg_catalog.jsonb_build_object(
     'rows', v_rows,

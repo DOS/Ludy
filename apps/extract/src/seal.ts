@@ -2274,6 +2274,7 @@ function parseAndMergeHybridXrefStream(params: {
   readonly trailerDict: PDFDict;
   readonly rootRef: PDFRef;
   readonly infoRef: PDFRef | null;
+  readonly infoSeen: boolean;
   readonly xrefStmRaw: PDFObject;
   readonly expectedPrevXrefStmOffset: number | null;
   readonly visitedOffsets: Set<number>;
@@ -2289,6 +2290,7 @@ function parseAndMergeHybridXrefStream(params: {
     trailerDict,
     rootRef,
     infoRef,
+    infoSeen,
     xrefStmRaw,
     expectedPrevXrefStmOffset,
     visitedOffsets,
@@ -2338,8 +2340,8 @@ function parseAndMergeHybridXrefStream(params: {
   const stmInfoRaw = getRawDictEntryByDecodedName(stmResult.dict, 'Info', nameEscapes)?.raw;
   if (stmInfoRaw !== undefined && stmInfoRaw !== PDFNull) {
     const trailerInfoRaw = getRawDictEntryByDecodedName(trailerDict, 'Info', nameEscapes)?.raw;
-    const normalizedTrailerInfoRaw = trailerInfoRaw === PDFNull ? undefined : trailerInfoRaw;
-    const expectedSectionInfo = normalizedTrailerInfoRaw ?? infoRef;
+    const expectedSectionInfo =
+      trailerInfoRaw === PDFNull ? undefined : (trailerInfoRaw ?? (infoSeen ? infoRef : null));
     if (
       !(stmInfoRaw instanceof PDFRef) ||
       !(expectedSectionInfo instanceof PDFRef) ||
@@ -2408,6 +2410,7 @@ function parseActiveXrefChain(
   const xrefSections: XrefStreamSectionInfo[] = [];
   let rootRef: PDFRef | null = null;
   let infoRef: PDFRef | null = null;
+  let infoSeen = false;
   let tailSize = 0;
   let currentOffset: number | null = startXrefOffset;
   let expectedPrevXrefStmOffset: number | null = null;
@@ -2464,12 +2467,19 @@ function parseActiveXrefChain(
       throw new PdfSignError('Không xác định được gốc /Root của tài liệu PDF');
     }
     const infoEntry = getRawDictEntryByDecodedName(trailerDict, 'Info', nameEscapes);
-    if (infoEntry !== undefined && infoEntry.raw !== PDFNull) {
-      if (!(infoEntry.raw instanceof PDFRef)) {
-        throw new PdfSignError('Trailer PDF chứa tham chiếu /Info không hợp lệ');
-      }
-      if (infoRef === null) {
-        infoRef = infoEntry.raw;
+    if (infoEntry !== undefined) {
+      if (infoEntry.raw === PDFNull) {
+        if (!infoSeen) {
+          infoSeen = true;
+        }
+      } else {
+        if (!(infoEntry.raw instanceof PDFRef)) {
+          throw new PdfSignError('Trailer PDF chứa tham chiếu /Info không hợp lệ');
+        }
+        if (!infoSeen) {
+          infoSeen = true;
+          infoRef = infoEntry.raw;
+        }
       }
     }
 
@@ -2492,6 +2502,7 @@ function parseActiveXrefChain(
         trailerDict,
         rootRef,
         infoRef,
+        infoSeen,
         xrefStmRaw: xrefStmEntry.raw,
         expectedPrevXrefStmOffset,
         visitedOffsets,
@@ -3090,8 +3101,13 @@ function verifyPdfCrossReferenceConsistency(
             }
           }
         }
-        if (streamTypeName === 'ObjStm' && !decodedObjStmCache.has(objNum)) {
-          decodedObjStmCache.set(objNum, decodeObjectStreamEntries(directParsed, nameEscapes));
+        if (streamTypeName === 'ObjStm') {
+          if (entry.gen !== 0) {
+            throw new PdfSignError('Luồng đối tượng /ObjStm tham chiếu không hợp lệ');
+          }
+          if (!decodedObjStmCache.has(objNum)) {
+            decodedObjStmCache.set(objNum, decodeObjectStreamEntries(directParsed, nameEscapes));
+          }
         }
       }
     } else {

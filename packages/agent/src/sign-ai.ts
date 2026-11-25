@@ -2458,11 +2458,22 @@ function parseTokenDecimalCandidates(rawToken: string): DecimalValue[] {
   return out;
 }
 
-function extractNumericTokenCandidateGroups(rawQuote: string): DecimalValue[][] {
+function extractNumericTokenCandidateGroups(
+  rawQuote: string,
+  options?: { readonly excludePercentAndRatio?: boolean },
+): DecimalValue[][] {
   const norm = normalizeBaseText(rawQuote);
   const groups: DecimalValue[][] = [];
   for (const m of norm.matchAll(/\d[\d.,]*/g)) {
-    const candidates = parseTokenDecimalCandidates(m[0] ?? '');
+    const tok = m[0] ?? '';
+    if (options?.excludePercentAndRatio && m.index !== undefined) {
+      const before = norm.slice(0, m.index);
+      const after = norm.slice(m.index + tok.length);
+      if (/^(?:[ \t]*%|\/\d)/.test(after) || /\d\/$/.test(before)) {
+        continue;
+      }
+    }
+    const candidates = parseTokenDecimalCandidates(tok);
     if (candidates.length > 0) groups.push(candidates);
   }
   return groups;
@@ -2828,7 +2839,11 @@ function splitSentenceClausesPreservingAbbreviations(text: string): string[] {
 }
 
 function splitCurrencyClauses(preservedQuote: string): string[] {
-  const rawChunks = preservedQuote
+  const collapsedDollarBreaks = preservedQuote.replace(
+    /\b(AUD|CAD|HKD|NZD|SGD|TWD|USD|US)[ \t]*[\r\n]+[ \t]*(?=\$)/gi,
+    '$1 ',
+  );
+  const rawChunks = collapsedDollarBreaks
     .split(/(?:[\r\n;|()]+|(?<!\d)\/|\/(?!\d))+|[ \t]+-[ \t]+|,\s+|\s+(?:or|and|và|hoặc|tương đương)\s+/iu)
     .map((part) => part.trim())
     .filter((part) => part.length > 0);
@@ -2844,9 +2859,11 @@ function findCurrencySpansInClause(
   candidateCurrency: string,
 ): Array<{ start: number; end: number }> {
   const spans: Array<{ start: number; end: number }> = [];
-  const clauseLower = clauseLineWise.toLowerCase();
-  const addRegexMatches = (src: string, re: RegExp) => {
-    const flags = re.flags.includes('g') ? re.flags : `${re.flags}g`;
+  const addRegexMatches = (src: string, re: RegExp, caseInsensitive = false) => {
+    let flags = re.flags;
+    if (!flags.includes('g')) flags += 'g';
+    if (!flags.includes('u')) flags += 'u';
+    if (caseInsensitive && !flags.includes('i')) flags += 'i';
     const cloned = new RegExp(re.source, flags);
     for (const m of src.matchAll(cloned)) {
       if (m.index !== undefined && m[0].length > 0) {
@@ -2856,7 +2873,7 @@ function findCurrencySpansInClause(
   };
 
   if (candidateCurrency === 'VND') {
-    addRegexMatches(clauseLower, EXPLICIT_VND_UNIT_RE);
+    addRegexMatches(clauseLineWise, EXPLICIT_VND_UNIT_RE, true);
     return spans;
   }
 
@@ -2866,13 +2883,14 @@ function findCurrencySpansInClause(
   const markers = CURRENCY_MARKER_RES_BY_CODE[candidateCurrency];
   if (markers) {
     for (const marker of markers) {
-      addRegexMatches(clauseLower, marker);
+      addRegexMatches(clauseLineWise, marker, true);
     }
   }
   if (CASE_INSENSITIVE_MAJOR_ISO_CODES.has(candidateCurrency)) {
     addRegexMatches(
-      clauseLower,
-      new RegExp(`(?<![\\p{L}])${candidateCurrency.toLowerCase()}(?![\\p{L}])`, 'gu'),
+      clauseLineWise,
+      new RegExp(`(?<![\\p{L}])${candidateCurrency}(?![\\p{L}])`, 'giu'),
+      true,
     );
   } else if (KNOWN_STRICT_UPPER_FOREIGN_CODES.includes(candidateCurrency)) {
     addRegexMatches(clauseLineWise, new RegExp(`(?<![\\p{L}])${candidateCurrency}(?![\\p{L}])`, 'gu'));
@@ -2905,29 +2923,42 @@ function extractBoundDecimalsForSpans(
   allowWordScale: boolean,
 ): InstanceType<typeof Decimal>[] {
   const out: InstanceType<typeof Decimal>[] = [];
+  const tryBindLeft = (leftSlice: string): boolean => {
+    const leftMatch = (allowWordScale ? LEFT_BOUND_SCALED_NUM_RE : LEFT_BOUND_PLAIN_NUM_RE).exec(leftSlice);
+    if (!leftMatch) return false;
+    const scaleWord = allowWordScale ? leftMatch[2]?.toLowerCase() : undefined;
+    const scale = scaleWord ? (DEPOSIT_WORD_SCALE_MAP[scaleWord] ?? 1) : 1;
+    out.push(...candidateTokenDecimalValues(leftMatch[1]!, scale));
+    return true;
+  };
+  const tryBindRight = (rightSlice: string): boolean => {
+    const rightMatch = (allowWordScale ? RIGHT_BOUND_SCALED_NUM_RE : RIGHT_BOUND_PLAIN_NUM_RE).exec(rightSlice);
+    if (!rightMatch) return false;
+    const afterRight = rightSlice.slice(rightMatch[0].length);
+    const scaleWord = allowWordScale ? rightMatch[2]?.toLowerCase() : undefined;
+    const blockedByDurationOrRatio =
+      allowWordScale &&
+      ((!scaleWord && /^\/\d/.test(afterRight)) || DEPOSIT_DURATION_OR_PERCENT_AFTER_RE.test(afterRight));
+    if (blockedByDurationOrRatio) return false;
+    const scale = scaleWord ? (DEPOSIT_WORD_SCALE_MAP[scaleWord] ?? 1) : 1;
+    out.push(...candidateTokenDecimalValues(rightMatch[1]!, scale));
+    return true;
+  };
+
   for (const span of spans) {
     const leftSlice = clauseLineWise.slice(0, span.start);
-    const leftMatch = (allowWordScale ? LEFT_BOUND_SCALED_NUM_RE : LEFT_BOUND_PLAIN_NUM_RE).exec(leftSlice);
-    if (leftMatch) {
-      const scaleWord = allowWordScale ? leftMatch[2]?.toLowerCase() : undefined;
-      const scale = scaleWord ? (DEPOSIT_WORD_SCALE_MAP[scaleWord] ?? 1) : 1;
-      out.push(...candidateTokenDecimalValues(leftMatch[1]!, scale));
-      continue;
-    }
-
     const rightSlice = clauseLineWise.slice(span.end);
-    const rightMatch = (allowWordScale ? RIGHT_BOUND_SCALED_NUM_RE : RIGHT_BOUND_PLAIN_NUM_RE).exec(rightSlice);
-    if (rightMatch) {
-      const afterRight = rightSlice.slice(rightMatch[0].length);
-      const scaleWord = allowWordScale ? rightMatch[2]?.toLowerCase() : undefined;
-      const blockedByDurationOrRatio =
-        allowWordScale &&
-        ((!scaleWord && /^\/\d/.test(afterRight)) || DEPOSIT_DURATION_OR_PERCENT_AFTER_RE.test(afterRight));
-      if (!blockedByDurationOrRatio) {
-        const scale = scaleWord ? (DEPOSIT_WORD_SCALE_MAP[scaleWord] ?? 1) : 1;
-        out.push(...candidateTokenDecimalValues(rightMatch[1]!, scale));
+    const tokenText = clauseLineWise.slice(span.start, span.end);
+    const isPrefixSymbol = /[$€£¥₫₩₹₽฿]$/u.test(tokenText);
+    if (isPrefixSymbol && /^\s*\d/.test(rightSlice)) {
+      if (tryBindRight(rightSlice)) {
+        continue;
       }
     }
+    if (tryBindLeft(leftSlice)) {
+      continue;
+    }
+    tryBindRight(rightSlice);
   }
   return out;
 }
@@ -2974,7 +3005,7 @@ function isAmountWithCurrencyInLocalSpan(
     // Non-adjacent fallback ("Contract value in USD is 1,500"): accept only when every numeric token in the clause
     // has at least one valid parsed decimal equal to target (allowing single ambiguous "1,500" = 1.5 | 1500 tokens).
     if (!allowWordScale) {
-      const tokenGroups = extractNumericTokenCandidateGroups(clauseLineWise);
+      const tokenGroups = extractNumericTokenCandidateGroups(clauseLineWise, { excludePercentAndRatio: true });
       if (tokenGroups.length > 0 && tokenGroups.every((group) => group.some((n) => n.equals(target)))) {
         return true;
       }

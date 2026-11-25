@@ -7606,8 +7606,8 @@ describe('pdf_seal', () => {
       new Uint8Array(Buffer.from(baseStr.replace('/Type /XRef', '/Type /XRe#66'), 'latin1')),
     );
 
-    // 7g. Forbidden payload (/OpenAction /JavaScript) inside hybrid /XRefStm -> /ObjStm member fails closed while clean control passes (#4682).
-    const buildHybridObjStmRefPdf = (includeForbiddenJs: boolean): Uint8Array => {
+    // 7g. Forbidden payload (/AA /JavaScript) inside hybrid /XRefStm -> /ObjStm compressed member fails closed with identical Catalog while clean control passes (#4682).
+    const buildHybridObjStmRefPdf = (includeForbiddenPayload: boolean): Uint8Array => {
       const contentRaw = deflateSync(Buffer.from('BT\n/F1 12 Tf\n40 750 Td\n(BAD_HYBRID) Tj\nET\n', 'latin1'));
       const offsets = new Map<number, number>();
       let out = '%PDF-1.7\n%\xe2\xe3\xcf\xd3\n';
@@ -7617,7 +7617,7 @@ describe('pdf_seal', () => {
         out += `${num} 0 obj\n${body}\nendobj\n`;
         return off;
       };
-      push(1, `<< /Type /Catalog /Pages 2 0 R${includeForbiddenJs ? ' /OpenAction 7 0 R' : ''} >>`);
+      push(1, '<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 7 0 R >>');
       push(2, '<< /Type /Pages /Kids [3 0 R] /Count 1 >>');
       push(3, '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>');
       push(4, `<< /Filter /FlateDecode /Length ${contentRaw.byteLength} >>\nstream\n${contentRaw.toString('latin1')}\nendstream`);
@@ -7625,7 +7625,9 @@ describe('pdf_seal', () => {
         { num: 5, body: '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>' },
         {
           num: 7,
-          body: includeForbiddenJs ? '<< /Type /Action /S /JavaScript /JS (app.alert(1)) >>' : '<< /Producer (Clean) >>',
+          body: includeForbiddenPayload
+            ? '<< /Type /StructTreeRoot /K [] /AA << /O << /Type /Action /S /JavaScript /JS (app.alert(1)) >> >> >>'
+            : '<< /Type /StructTreeRoot /K [] >>',
         },
         { num: 8, body: '<< /Producer (Word) /Title (HybridRef) >>' },
       ];
@@ -7656,7 +7658,7 @@ describe('pdf_seal', () => {
         }),
       ),
     ).toMatchObject({ ok: true });
-    await assertRejectedBoth(buildHybridObjStmRefPdf(true));
+    await assertRejectedBoth(buildHybridObjStmRefPdf(true), 'Tệp PDF chứa thành phần không an toàn: /AA');
 
     // 7h. Mismatched /Info in /XRefStm, unindexed shadowed /Type /XRef stream, whitespace-aliased cycle, non-monotonic /ObjStm offsets, and gen > 0 /ObjStm fail closed (#4682).
     await assertRejectedBoth(
@@ -7788,7 +7790,36 @@ describe('pdf_seal', () => {
     };
     await assertRejectedBoth(buildNonZeroGenObjStmPdf());
 
-    // 7i. Explicit /Info null is treated as omitted across classic trailers and hybrid /XRefStm, while mismatched /Info in /XRefStm fails.
+    const buildEmptyNonZeroGenObjStmPdf = (): Uint8Array => {
+      const stmBody = '<< /Type /ObjStm /N 0 /First 1 /Length 1 >>\nstream\n \nendstream';
+      let out = '%PDF-1.5\n%\xe2\xe3\xcf\xd3\n';
+      const offsets = new Map<number, number>();
+      const push = (num: number, body: string, gen = 0): number => {
+        const off = out.length;
+        offsets.set(num, off);
+        out += `${num} ${gen} obj\n${body}\nendobj\n`;
+        return off;
+      };
+      push(1, '<< /Type /Catalog /Pages 2 0 R >>');
+      push(2, '<< /Type /Pages /Kids [3 0 R] /Count 1 >>');
+      push(3, '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] >>');
+      const off5 = push(5, stmBody, 1);
+      const xrefOff = out.length;
+      const rows = encodeXrefRows([
+        { kind: 0, nextFree: 0, gen: 65535 },
+        { kind: 1, offset: offsets.get(1)!, gen: 0 },
+        { kind: 1, offset: offsets.get(2)!, gen: 0 },
+        { kind: 1, offset: offsets.get(3)!, gen: 0 },
+        { kind: 0, nextFree: 0, gen: 65535 },
+        { kind: 1, offset: off5, gen: 1 },
+        { kind: 1, offset: xrefOff, gen: 0 },
+      ]);
+      out += `6 0 obj\n<< /Type /XRef /Size 7 /W [1 4 2] /Root 1 0 R /Length ${rows.byteLength} >>\nstream\n${Buffer.from(rows).toString('latin1')}\nendstream\nendobj\nstartxref\n${xrefOff}\n%%EOF\n`;
+      return new Uint8Array(Buffer.from(out, 'latin1'));
+    };
+    await assertRejectedBoth(buildEmptyNonZeroGenObjStmPdf(), 'Luồng đối tượng /ObjStm tham chiếu không hợp lệ');
+
+    // 7i. Explicit /Info null clears prior /Info across incremental updates and is treated as omitted across classic trailers and hybrid /XRefStm, while mismatched /Info in /XRefStm fails.
     const buildHybridNullInfoPdf = (stmInfoClause: string): Uint8Array => {
       const contentRaw = deflateSync(Buffer.from('BT\n/F1 12 Tf\n40 750 Td\n(NULL_INFO) Tj\nET\n', 'latin1'));
       const offsets = new Map<number, number>();
@@ -7828,7 +7859,43 @@ describe('pdf_seal', () => {
         }),
       ),
     ).toMatchObject({ ok: true });
-    await assertRejectedBoth(buildHybridNullInfoPdf('/Info 2 0 R '));
+    await assertRejectedBoth(
+      buildHybridNullInfoPdf('/Info 2 0 R '),
+      'Thông tin /Info trong luồng /XRefStm không khớp với trailer tham chiếu',
+    );
+
+    const buildIncrementalClearedInfoPdf = (): Uint8Array => {
+      let out = '%PDF-1.7\n%\xe2\xe3\xcf\xd3\n';
+      const baseOffsets = new Map<number, number>();
+      const push = (num: number, body: string): number => {
+        const off = out.length;
+        baseOffsets.set(num, off);
+        out += `${num} 0 obj\n${body}\nendobj\n`;
+        return off;
+      };
+      push(1, '<< /Type /Catalog /Pages 2 0 R >>');
+      push(2, '<< /Type /Pages /Kids [3 0 R] /Count 1 >>');
+      push(3, '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Resources << /Font << /F1 4 0 R >> >> >>');
+      push(4, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
+      push(5, '<< /Producer (OldProducer) >>');
+      const prevXrefOff = out.length;
+      out += `xref\n0 6\n${fmtEntry(0, 65535, 'f')}${fmtEntry(baseOffsets.get(1)!, 0, 'n')}${fmtEntry(baseOffsets.get(2)!, 0, 'n')}${fmtEntry(baseOffsets.get(3)!, 0, 'n')}${fmtEntry(baseOffsets.get(4)!, 0, 'n')}${fmtEntry(baseOffsets.get(5)!, 0, 'n')}trailer\n<< /Size 6 /Root 1 0 R /Info 5 0 R >>\nstartxref\n${prevXrefOff}\n%%EOF\n`;
+      const incXrefOff = out.length;
+      out += `xref\n1 1\n${fmtEntry(baseOffsets.get(1)!, 0, 'n')}trailer\n<< /Size 6 /Root 1 0 R /Info null /Prev ${prevXrefOff} >>\nstartxref\n${incXrefOff}\n%%EOF\n`;
+      return new Uint8Array(Buffer.from(out, 'latin1'));
+    };
+    const incClearedInfoBytes = buildIncrementalClearedInfoPdf();
+    expect(await parse('pdf_inspect', incClearedInfoBytes)).toMatchObject({ ok: true, pageCount: 1 });
+    expect(
+      await parse(
+        'pdf_seal',
+        encodePdfSealInput({
+          pdfBase64: Buffer.from(incClearedInfoBytes).toString('base64'),
+          fields: [],
+          certificate: makeCertificate(),
+        }),
+      ),
+    ).toMatchObject({ ok: true });
 
     // 7j. /Type /XRef inside an array or non-/Type dictionary value inside an /XObject stream never triggers false inactive-xref rejection.
     const xobjDoc = await PDFDocument.create();
