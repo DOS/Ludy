@@ -1,7 +1,27 @@
 // The kernel's and finance's in-app notifications in the app (#671): the kinds the settings list, what an item opens
 // and how a VAT period reads.
 import { describe, expect, it } from 'vitest';
-import { GROUPABLE_KINDS, groupNotifications, groupSubjectCount, isKnownKind, kindKey, notificationKinds, notificationTarget, periodParts, unreadIdChunks } from '../src/lib/notifications.ts';
+import {
+  GROUPABLE_KINDS,
+  filterNotifications,
+  formatRelativeNotificationTime,
+  groupNotifications,
+  groupSubjectCount,
+  isKnownKind,
+  kindKey,
+  notificationApp,
+  notificationAppsIn,
+  notificationFeedStepFromKey,
+  notificationKinds,
+  notificationRowId,
+  notificationTarget,
+  parseNotificationsSearch,
+  periodParts,
+  resolveNotificationSelection,
+  restoreNotificationRowFocus,
+  stepNotificationRowIndex,
+  unreadIdChunks,
+} from '../src/lib/notifications.ts';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi } from '../src/i18n/messages/vi.ts';
 
@@ -121,5 +141,142 @@ describe('groupNotifications', () => {
     // 250 items, 50 of them read: 200 unread, two chunks of 100.
     expect(unreadIdChunks(items).map((c) => c.length)).toEqual([100, 100]);
     expect(unreadIdChunks([{ id: 'a', read: true }])).toEqual([]);
+  });
+});
+
+describe('parseNotificationsSearch', () => {
+  it('validates selected, filter, app, and todayMail=off while stripping invalid params', () => {
+    expect(
+      parseNotificationsSearch({
+        selected: '00000000-0000-4000-8000-000000000001',
+        filter: 'unread',
+        app: 'finance',
+        todayMail: 'off',
+      }),
+    ).toEqual({
+      selected: '00000000-0000-4000-8000-000000000001',
+      filter: 'unread',
+      app: 'finance',
+      todayMail: 'off',
+    });
+    expect(parseNotificationsSearch({ selected: 'group:00000000-0000-4000-8000-000000000001', filter: 'all', app: 'teamwork' })).toEqual({
+      selected: 'group:00000000-0000-4000-8000-000000000001',
+      filter: 'all',
+      app: 'teamwork',
+    });
+    expect(parseNotificationsSearch({ selected: 42, filter: 'invalid', app: 'bogus', todayMail: 'on', extra: 'x' })).toEqual({
+      selected: '42',
+    });
+    expect(parseNotificationsSearch({ selected: '<script>alert(1)</script>' })).toEqual({});
+  });
+});
+
+describe('app mapping, filtering, and master-detail selection', () => {
+  const item = (id: string, kind: string, read = false) => ({ id, kind, read });
+
+  it('maps notification kinds to canonical Ludy apps and discovers active apps in order', () => {
+    expect(notificationApp('kernel.approval_waiting')).toBe('finance');
+    expect(notificationApp('finance.bank_attention')).toBe('finance');
+    expect(notificationApp('kernel.task_assigned')).toBe('teamwork');
+    expect(notificationApp('meetings.summary_ready')).toBe('teamwork');
+    expect(notificationApp('kernel.conversation_new')).toBe('engage');
+    expect(notificationApp('kernel.channel_expired')).toBe('engage');
+    expect(notificationApp('kernel.ai_budget')).toBe('ai');
+    expect(notificationApp('kernel.personal_data_notice')).toBe('kernel');
+    expect(notificationApp('hr.leave_requested')).toBe('hr');
+    expect(notificationApp('sign.envelope_signed')).toBe('sign');
+
+    const mixed = [
+      item('1', 'kernel.ai_budget'),
+      item('2', 'kernel.conversation_new'),
+      item('3', 'kernel.task_assigned'),
+      item('4', 'finance.bank_attention'),
+    ];
+    expect(notificationAppsIn(mixed)).toEqual(['finance', 'teamwork', 'engage', 'ai']);
+    expect(notificationAppsIn([item('1', 'finance.bank_attention')], 'hr')).toEqual(['finance', 'hr']);
+  });
+
+  it('filters by unread status and app without breaking newest-first order', () => {
+    const items = [
+      item('1', 'kernel.approval_waiting', false),
+      item('2', 'kernel.approval_waiting', true),
+      item('3', 'kernel.task_assigned', false),
+      item('4', 'kernel.conversation_new', true),
+    ];
+    expect(filterNotifications(items, { filter: 'unread' }).map((n) => n.id)).toEqual(['1', '3']);
+    expect(filterNotifications(items, { app: 'finance' }).map((n) => n.id)).toEqual(['1', '2']);
+    expect(filterNotifications(items, { filter: 'unread', app: 'teamwork' }).map((n) => n.id)).toEqual(['3']);
+  });
+
+  it('resolves selection for desktop auto-select, mobile closed default, grouped runs, and single items marked read', () => {
+    const items = [
+      item('a1', 'kernel.approval_waiting', false),
+      item('a2', 'kernel.approval_waiting', false),
+      item('b1', 'finance.bank_attention', false),
+      item('c1', 'kernel.task_assigned', true),
+    ];
+    const rows = groupNotifications(items);
+    expect(notificationRowId(rows[0]!)).toBe('group:a1');
+
+    // Desktop auto-selects first visible row when selected is omitted; mobile leaves closed.
+    expect(notificationRowId(resolveNotificationSelection(rows, items, undefined, true)!)).toBe('group:a1');
+    expect(resolveNotificationSelection(rows, items, undefined, false)).toBeNull();
+
+    // Selecting an item inside an unread group shows that specific item.
+    const deepLinked = resolveNotificationSelection(rows, items, 'a2', true);
+    expect(deepLinked?.type).toBe('one');
+    expect(deepLinked?.type === 'one' && deepLinked.item.id).toBe('a2');
+
+    // Under filter=unread, an item that just got marked read stays visible in the detail pane if selected.
+    const unreadItems = filterNotifications(items, { filter: 'unread' });
+    const unreadRows = groupNotifications(unreadItems);
+    const readWhileViewing = resolveNotificationSelection(unreadRows, items, 'c1', true);
+    expect(readWhileViewing?.type).toBe('one');
+    expect(readWhileViewing?.type === 'one' && readWhileViewing.item.id).toBe('c1');
+
+    // A stale group selection in unread mode falls back cleanly to the first visible row on desktop.
+    const afterGroupMarkedRead = resolveNotificationSelection(groupNotifications([items[2]!]), items, 'group:a1', true);
+    expect(notificationRowId(afterGroupMarkedRead!)).toBe('b1');
+  });
+});
+
+describe('keyboard row navigation, focus restoration, and relative time', () => {
+  it('supports J/K anywhere unblocked and ArrowUp/ArrowDown only inside feed or plain page focus', () => {
+    const base = { metaKey: false, ctrlKey: false, altKey: false, repeat: false, defaultPrevented: false, isComposing: false };
+    expect(notificationFeedStepFromKey({ ...base, key: 'j' }, { blocked: false, insideFeed: false, plainPageFocus: false })).toBe(1);
+    expect(notificationFeedStepFromKey({ ...base, key: 'K' }, { blocked: false, insideFeed: false, plainPageFocus: false })).toBe(-1);
+    expect(notificationFeedStepFromKey({ ...base, key: 'ArrowDown' }, { blocked: false, insideFeed: true, plainPageFocus: false })).toBe(1);
+    expect(notificationFeedStepFromKey({ ...base, key: 'ArrowUp' }, { blocked: false, insideFeed: false, plainPageFocus: true })).toBe(-1);
+    // Arrow keys inside SegmentedControl or detail pane buttons must not be hijacked.
+    expect(notificationFeedStepFromKey({ ...base, key: 'ArrowDown' }, { blocked: false, insideFeed: false, plainPageFocus: false })).toBeNull();
+    // Inputs, dialogs, sheets, modifiers, repeats, and defaultPrevented block shortcuts.
+    expect(notificationFeedStepFromKey({ ...base, key: 'j' }, { blocked: true, insideFeed: true, plainPageFocus: false })).toBeNull();
+    expect(notificationFeedStepFromKey({ ...base, key: 'j', metaKey: true }, { blocked: false, insideFeed: true, plainPageFocus: false })).toBeNull();
+    expect(notificationFeedStepFromKey({ ...base, key: 'j', defaultPrevented: true }, { blocked: false, insideFeed: true, plainPageFocus: false })).toBeNull();
+    expect(stepNotificationRowIndex(-1, 3, 1)).toBe(0);
+    expect(stepNotificationRowIndex(0, 3, 1)).toBe(1);
+    expect(stepNotificationRowIndex(1, 3, -1)).toBe(0);
+  });
+
+  it('restores focus to the triggering feed row unless blocked or missing', () => {
+    let focused = false;
+    const row = { focus: () => { focused = true; }, isConnected: true, tabIndex: 0 };
+    const root = { querySelector: (sel: string) => (sel === '[data-notification-row="n1"]' ? row : null) };
+    expect(restoreNotificationRowFocus(root, 'n1', true)).toBe(false);
+    expect(focused).toBe(false);
+    expect(restoreNotificationRowFocus(root, 'n1', false)).toBe(true);
+    expect(focused).toBe(true);
+    expect(restoreNotificationRowFocus(root, 'missing', false)).toBe(false);
+  });
+
+  it('formats relative timestamps cleanly in both vi and en without em dashes', () => {
+    const now = Date.parse('2026-11-25T10:00:00.000Z');
+    const twoMinsAgo = '2026-11-25T09:58:00.000Z';
+    const viText = formatRelativeNotificationTime(twoMinsAgo, 'vi', now);
+    const enText = formatRelativeNotificationTime(twoMinsAgo, 'en', now);
+    expect(viText).toBeTruthy();
+    expect(enText).toBeTruthy();
+    expect(viText).not.toMatch(/[\u2013\u2014]/);
+    expect(enText).not.toMatch(/[\u2013\u2014]/);
   });
 });
