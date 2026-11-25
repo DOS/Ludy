@@ -592,6 +592,8 @@ export const KERNEL_ERROR_CODES = [
   // The weekly digest across meetings (#3949).
   'DIGEST_OFF',
   'DIGEST_BUSY',
+  // The published minutes as a Word file (#4774).
+  'MINUTES_NOT_PUBLISHED',
   // Vy naming who an action item belongs to (#3921).
   'ASSIGNEE_OFF',
   'ASSIGNEE_BUSY',
