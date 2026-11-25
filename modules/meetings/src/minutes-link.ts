@@ -74,6 +74,8 @@ export const meetingMinutesLinkCreate = defineCommand({
   risk: 'R2',
   sideEffect: 'internal',
   access: WRITERS,
+  // The answer holds the token, which is shown once and kept nowhere: never stored with an idempotency key.
+  noIdempotency: true,
   target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
   handler: async (ctx, input): Promise<MinutesLinkCreated> => {
     const userId = userOf(ctx.actor);
@@ -136,14 +138,15 @@ export const meetingMinutesLinkRevoke = defineCommand({
     }
     // Revoking twice is the same answer; only the first writes.
     if (link.revoked_at === null) {
-      await ctx.trx.updateTable('ludy_meetings.minutes_link').set({ revoked_at: ctx.now, revoked_by: userId }).where('org_id', '=', ctx.orgId).where('id', '=', link.id).where('revoked_at', 'is', null).execute();
-      ctx.audit({ meetingId: input.meetingId, linkId: link.id });
+      const result = await ctx.trx.updateTable('ludy_meetings.minutes_link').set({ revoked_at: ctx.now, revoked_by: userId }).where('org_id', '=', ctx.orgId).where('id', '=', link.id).where('revoked_at', 'is', null).executeTakeFirst();
+      // Two revokes at once both read it live; only the one that wrote is audited.
+      if (Number(result.numUpdatedRows) > 0) ctx.audit({ meetingId: input.meetingId, linkId: link.id });
     }
     return { linkId: link.id, revoked: true };
   },
 });
 
-// The recorder's own list: the meeting must be theirs to record. A reader of the meeting who is not the recorder gets 403, not an empty list that would hide a link.
+// The recorder's list of a meeting's links, and an owner's or admin's (to end a link whose recorder left). Another reader of the meeting gets 403, not an empty list that would hide a link.
 export const meetingMinutesLinkList = defineQuery({
   name: 'meetings.minutes_link.list',
   input: zMinutesLinkList,
@@ -151,8 +154,16 @@ export const meetingMinutesLinkList = defineQuery({
   handler: async (ctx, input): Promise<MinutesLinkItems> => {
     const userId = userOf(ctx.actor);
     const enabled = await readMinutesLinkSwitch(ctx.trx, ctx.orgId);
-    const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
-    if (meeting.recorder_user_id !== userId) throw new DomainError('FORBIDDEN', 403, 'Chỉ người ghi cuộc họp mới xem được các liên kết biên bản');
+    // The meeting row may be hidden from an owner or admin who is not a reader of it, so it is read as plain data (like revoke) and an owner or admin is judged by their role.
+    const meeting = await ctx.trx.selectFrom('ludy_meetings.meeting').select('recorder_user_id').where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).executeTakeFirst();
+    if (meeting?.recorder_user_id !== userId) {
+      // An owner or admin sees the links too, so they can end one (the recorder may have left the org).
+      const member = await ctx.trx.selectFrom('ludy_kernel.tenant_member').select('role').where('org_id', '=', ctx.orgId).where('user_id', '=', userId).executeTakeFirst();
+      if (member?.role !== 'owner' && member?.role !== 'admin') {
+        if (!meeting) throw new DomainError('MEETING_NOT_FOUND', 404, 'Không tìm thấy cuộc họp này');
+        throw new DomainError('FORBIDDEN', 403, 'Chỉ người ghi cuộc họp, chủ sở hữu hoặc quản trị viên mới xem được các liên kết biên bản');
+      }
+    }
     const rows = await ctx.trx
       .selectFrom('ludy_meetings.minutes_link')
       .select(['id', 'created_at', 'expires_at', 'revoked_at', 'views', 'first_viewed_at'])

@@ -37,8 +37,15 @@ BEGIN
   IF v_result.id IS NULL THEN
     RETURN;
   END IF;
-  SELECT m.* INTO v_meeting FROM ludy_meetings.meeting m WHERE m.org_id = v_link.org_id AND m.id = v_link.meeting_id;
+  -- A meeting past its text retention date is gone for the org's own members and so for the link; the nightly shred removes the rows later.
+  SELECT m.* INTO v_meeting FROM ludy_meetings.meeting m
+  WHERE m.org_id = v_link.org_id AND m.id = v_link.meeting_id
+    AND m.text_retention_date > (pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date;
   IF v_meeting.id IS NULL THEN
+    RETURN;
+  END IF;
+  -- The person who made the link must still be a member of the org: a link of someone who left goes with them.
+  IF NOT EXISTS (SELECT 1 FROM ludy_kernel.tenant_member tm WHERE tm.org_id = v_link.org_id AND tm.user_id = v_link.created_by) THEN
     RETURN;
   END IF;
   UPDATE ludy_meetings.minutes_link SET views = views + 1, first_viewed_at = COALESCE(first_viewed_at, pg_catalog.now())

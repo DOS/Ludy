@@ -42,12 +42,12 @@ suite('the minutes link for people outside the org (#4822)', () => {
   const sqlAdmin = <R extends pg.QueryResultRow = pg.QueryResultRow>(text: string, params: unknown[] = []) => admin((c) => c.query<R>(text, params));
   const setSwitch = (enabled: boolean) => exec('owner', 'meetings.minutes_link.switch.set', { enabled });
 
-  async function meeting(title: string): Promise<string> {
+  async function meeting(title: string, recorder = 'rec'): Promise<string> {
     const id = randomUUID();
     await sqlAdmin(
       `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
        VALUES ($1, $2, $4, 'vi', now() - interval '2 hours', now() - interval '1 hour', 3600, $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date + 20, current_date + 365)`,
-      [orgId, id, users.rec, title],
+      [orgId, id, users[recorder], title],
     );
     return id;
   }
@@ -56,8 +56,8 @@ suite('the minutes link for people outside the org (#4822)', () => {
   const item = (meetingId: string, title: string, stage: 'draft' | 'published') =>
     sqlAdmin(`INSERT INTO ludy_meetings.action_item (org_id, meeting_id, title, who_drafted, when_drafted, stage, transcript_seconds) VALUES ($1, $2, $3, 'Lan', 'thứ sáu', $4, 10)`, [orgId, meetingId, title, stage]);
   // A meeting with published minutes, a draft beside them, and a transcript line that must never come out.
-  async function published(title = 'Họp với khách'): Promise<string> {
-    const id = await meeting(title);
+  async function published(title = 'Họp với khách', recorder = 'rec'): Promise<string> {
+    const id = await meeting(title, recorder);
     await result(id, 'published', 'Tóm tắt đã xuất bản', ['Chốt giá', 'Gửi hợp đồng']);
     await item(id, 'Gửi báo giá', 'published');
     await item(id, 'VIỆC NHÁP BÍ MẬT', 'draft');
@@ -84,9 +84,9 @@ suite('the minutes link for people outside the org (#4822)', () => {
     pools.push(appPool);
     const db = createDb(appPool);
     runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...meetingsCommands], queries: [...kernelQueries({ inboundDomain: null }), ...meetingsQueries] });
-    for (const key of ['owner', 'rec', 'other']) users[key] = await upsertIdentity(db, { issuer: 'mlink', subject: key, email: `${key}@mlink.test`, name: key });
+    for (const key of ['owner', 'rec', 'other', 'gone']) users[key] = await upsertIdentity(db, { issuer: 'mlink', subject: key, email: `${key}@mlink.test`, name: key });
     orgId = (await createOrg(runtime, asUser('owner'), 'Công ty Chia Sẻ')).orgId;
-    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member')`, [orgId, users.rec, users.other]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member')`, [orgId, users.rec, users.other, users.gone]);
   }, 300_000);
 
   afterAll(async () => {
@@ -188,6 +188,26 @@ suite('the minutes link for people outside the org (#4822)', () => {
     expect(await exec('rec', 'meetings.minutes_link.revoke', { meetingId: id, linkId: a.linkId })).toEqual({ linkId: a.linkId, revoked: true });
     expect(await exec('owner', 'meetings.minutes_link.revoke', { meetingId: id, linkId: b.linkId })).toEqual({ linkId: b.linkId, revoked: true });
     expect(await refuses(sqlAdmin(`INSERT INTO ludy_meetings.minutes_link (org_id, meeting_id, token_sha256, expires_at, created_by, created_at) VALUES ($1, $2, $3, now() + interval '31 days', $4, now())`, [orgId, id, 'a'.repeat(64), users.rec]))).not.toBeNull();
+  });
+
+  it('stops serving a meeting past its text retention date and a link whose maker left the org, and lets an owner list the links to end one', async () => {
+    await setSwitch(true);
+    const id = await published();
+    const link = await makeLink(id);
+    expect(await view(link.token)).not.toBeNull();
+    // An owner who did not record the meeting lists its links (to end one) and a plain member who did not record it cannot.
+    const listed = await exec<{ items: Array<{ id: string }> }>('owner', 'meetings.minutes_link.list', { meetingId: id });
+    expect(listed.items.map((i) => i.id)).toContain(link.linkId);
+    expect(await refuses(exec('other', 'meetings.minutes_link.list', { meetingId: id }))).toBe('FORBIDDEN');
+    // Retention: the meeting's text period has ended, so the page is gone before the nightly shred runs.
+    await sqlAdmin(`UPDATE ludy_meetings.meeting SET text_retention_date = current_date - 2 WHERE org_id = $1 AND id = $2`, [orgId, id]);
+    expect(await view(link.token)).toBeNull();
+    // The maker left the org: their link goes with them.
+    const mine = await published('Họp của người đã rời', 'gone');
+    const goneLink = await makeLink(mine, 'gone');
+    expect(await view(goneLink.token)).not.toBeNull();
+    await sqlAdmin('DELETE FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [orgId, users.gone]);
+    expect(await view(goneLink.token)).toBeNull();
   });
 
   it('lets the API login run the definer and no other role', async () => {

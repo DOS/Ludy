@@ -75,11 +75,18 @@ SELECT ludy_kernel.apply_tenant_rls('ludy_meetings.minutes_link');
 REVOKE UPDATE, DELETE ON ludy_meetings.minutes_link FROM ludy_tenant;
 GRANT UPDATE (revoked_at, revoked_by) ON ludy_meetings.minutes_link TO ludy_tenant;
 -- A member makes a link in their own name (the command checks that they recorded the meeting, that the published minutes exist and that the org setting is on) and revokes one.
+-- Only the org's own members (and the system context) read a link row: an agent context, the member-mode Vy included, reads none (the rls-matrix pins it).
+DROP POLICY IF EXISTS minutes_link_read ON ludy_meetings.minutes_link;
+CREATE POLICY minutes_link_read ON ludy_meetings.minutes_link AS RESTRICTIVE FOR SELECT TO ludy_tenant
+  USING ((SELECT ludy_kernel.ctx_actor_type()) = 'system'
+    OR ((SELECT ludy_kernel.ctx_actor_type()) = 'user'
+      AND EXISTS (SELECT 1 FROM ludy_kernel.tenant_member m WHERE m.org_id = minutes_link.org_id AND m.user_id = (SELECT ludy_kernel.ctx_user_id()) AND m.role IN ('owner', 'admin', 'member'))));
 DROP POLICY IF EXISTS minutes_link_insert ON ludy_meetings.minutes_link;
 CREATE POLICY minutes_link_insert ON ludy_meetings.minutes_link AS RESTRICTIVE FOR INSERT TO ludy_tenant
   WITH CHECK ((SELECT ludy_kernel.ctx_actor_type()) = 'system'
     OR (EXISTS (SELECT 1 FROM ludy_kernel.tenant_member m WHERE m.org_id = minutes_link.org_id AND m.user_id = (SELECT ludy_kernel.ctx_user_id()) AND m.role IN ('owner', 'admin', 'member'))
       AND minutes_link.created_by = (SELECT ludy_kernel.ctx_user_id())
+      AND ludy_meetings.is_meeting_recorder(minutes_link.org_id, minutes_link.meeting_id)
       AND minutes_link.created_at BETWEEN pg_catalog.now() - pg_catalog.make_interval(mins => 1) AND pg_catalog.now() + pg_catalog.make_interval(mins => 1)
       AND minutes_link.revoked_at IS NULL AND minutes_link.first_viewed_at IS NULL AND minutes_link.views = 0));
 DROP POLICY IF EXISTS minutes_link_update ON ludy_meetings.minutes_link;
