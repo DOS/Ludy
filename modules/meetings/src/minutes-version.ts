@@ -33,15 +33,17 @@ const notPublished = () => new DomainError('MINUTES_NOT_PUBLISHED', 409, 'The mi
 // an account: 8 digits or more) only if THE ORIGINAL holds that very one. A kind-by-kind check ("the original has an address, so any address may be written") would let the recorder put another
 // person's address or number into a version, where the personal-data erasure (which finds a person in the original's rows, never in a version: personal-data.ts) could not reach it. So the rule
 // is the database's own matching (ludy_kernel.text_mention_pattern), taken from the safe side: whatever that pattern could find in a version, it also finds in the original.
-//   - Both texts are folded to NFKC first (a full-width "＠" or "０９１２" is the same character as its plain form for a reader).
-//   - Address: a word of the text (cut at white space, in lower case) that holds an "@" is an address, and the version may hold only a word the original holds. Only wrappers are taken off its
-//     edges (an opening bracket or quote before; a closing bracket, quote or sentence punctuation after): the characters an address's local part may hold, and what the database's pattern
-//     refuses next to an address (letters, digits, "_", "-", a dot before another letter), stay, so "_alice@example.com" is not "alice@example.com".
+//   - The checks run twice, on the texts as stored (the database reads them so: a compatibility character such as a superscript digit or a decomposed letter is what it is) and on their NFKC fold
+//     (a full-width "＠" or "０９１２" reads as its plain form for a person). Upper case is folded for ASCII letters only (the database folds the rest by its locale, which is not safe to assume).
+//   - Address: a word of the text (cut at white space) that holds an "@" is an address, and the version may hold only a word the original holds. Only wrappers are taken off its edges (an opening
+//     bracket or quote before; a closing bracket, quote or sentence punctuation after): the characters an address's local part may hold, and what the database's pattern refuses beside an address
+//     (letters, digits, "_", "-", a dot before another letter), stay, so "_alice@example.com" is not "alice@example.com".
 //   - Link: the same, for a word that holds "http://", "https://" or "www.".
-//   - Number: a span is the digits of a text with up to three separators between two of them (space, tab, line break, no-break spaces, ".", "(", ")", "-", and "," between two digits: 1.250.000.000
-//     and 1,250,000,000 are one span of the same digits); a span of 8 digits or more is what the database's probe finds (leading zeros count: 01234567 is not 1234567). The version may hold only
-//     the very spans the original holds, compared by their digits ("0912 345 678" = "0912-345-678"; Vietnam's "+84 912 345 678" is another run of digits than "0912 345 678", so a recorder writes the number as the original does), so a number built from digit runs the original writes apart is refused.
-// Linear scans only, no regular expression over the whole text that could backtrack: a version holds up to VERSION_BYTES_MAX bytes.
+//   - Number: every run of 8 to 20 digits that the pattern can find, as it finds them: digits with up to three separators between two of them (space, tab, line break, no-break spaces, ".", "(",
+//     ")", "-"), not glued to a digit before or after, nor one a single space, dot or dash away. Each is compared by its digits (leading zeros count: 01234567 is not 1234567), so "0912 345 678" and
+//     "0912-345-678" are one number and a number built from digit runs the original writes apart is another. The original also counts a number written with commas straight between its digits
+//     (1,250,000,000), which the pattern does not read: a version may write those very digits with dots or spaces, since the original already holds them.
+// Linear scans only (a segment is at most TRANSLATION_SEGMENT_TEXT_MAX characters, each digit starts at most 13 windows).
 const OPENERS = '([{<"«“‘';
 const CLOSERS = ['.', ',', ';', ':', '!', '?', ')', ']', '}', '>', '"', "'", '»', '”', '’'];
 function trimWrappers(word: string): string {
@@ -51,30 +53,44 @@ function trimWrappers(word: string): string {
   while (to > from && CLOSERS.includes(word[to - 1] as string)) to -= 1;
   return word.slice(from, to);
 }
-const SEPARATORS = ' \t\n\r   ﻿.()-';
+const asciiLower = (text: string): string => text.replace(/[A-Z]+/gu, (run) => run.toLowerCase());
+
+const INLINE = '    ﻿';
+const SEPARATORS = ` \t\n\r   ﻿.()-`;
 const NUMBER_DIGITS_MIN = 8;
+const NUMBER_DIGITS_MAX = 20;
 const isDigit = (c: string | undefined): boolean => c !== undefined && c >= '0' && c <= '9';
-function numberSpans(text: string): Set<string> {
-  const spans = new Set<string>();
-  let digits = '';
-  let gap = 0;
-  const flush = () => {
-    if (digits.length >= NUMBER_DIGITS_MIN) spans.add(digits);
-    digits = '';
-    gap = 0;
+// A phone number written with Vietnam's +84 in place of the leading 0 is the number the pattern finds both ways.
+const canonicalDigits = (digits: string): string => (/^84\d{9,10}$/u.test(digits) ? `0${digits.slice(2)}` : digits);
+// The numbers of 8 to 20 digits that ludy_kernel.text_mention_pattern('digits', n) could find in the text, by their digits. commas: a comma straight between two digits parts them like a separator.
+function numbersOf(text: string, commas: boolean): Set<string> {
+  const at: number[] = [];
+  for (let i = 0; i < text.length; i += 1) if (isDigit(text[i])) at.push(i);
+  const numbers = new Set<string>();
+  const near = (c: string | undefined): boolean => c !== undefined && (INLINE.includes(c) || c === '.' || c === '-');
+  const gapHolds = (from: number, to: number): boolean => {
+    if (to - from - 1 > 3) return false;
+    for (let j = from + 1; j < to; j += 1) {
+      const c = text[j] as string;
+      if (!(SEPARATORS.includes(c) || (commas && c === ',' && isDigit(text[j - 1]) && isDigit(text[j + 1])))) return false;
+    }
+    return true;
   };
-  for (let i = 0; i < text.length; i += 1) {
-    const c = text[i] as string;
-    if (isDigit(c)) {
-      if (digits !== '' && gap > 3) flush();
-      digits += c;
-      gap = 0;
-    } else if (digits !== '' && (SEPARATORS.includes(c) || (c === ',' && isDigit(text[i - 1]) && isDigit(text[i + 1])))) {
-      gap += 1;
-    } else flush();
+  for (let a = 0; a < at.length; a += 1) {
+    const first = at[a] as number;
+    // Not glued to a digit before, nor one a single space, dot or dash away.
+    if (isDigit(text[first - 1]) || (near(text[first - 1]) && isDigit(text[first - 2]))) continue;
+    let digits = text[first] as string;
+    let b = a;
+    for (;;) {
+      const last = at[b] as number;
+      if (digits.length >= NUMBER_DIGITS_MIN && !(isDigit(text[last + 1]) || (near(text[last + 1]) && isDigit(text[last + 2])))) numbers.add(canonicalDigits(digits));
+      if (b + 1 >= at.length || digits.length >= NUMBER_DIGITS_MAX || !gapHolds(last, at[b + 1] as number)) break;
+      b += 1;
+      digits += text[at[b] as number] as string;
+    }
   }
-  flush();
-  return spans;
+  return numbers;
 }
 
 interface Contacts {
@@ -82,16 +98,19 @@ interface Contacts {
   emails: Set<string>;
   numbers: Set<string>;
 }
-function contactsOf(text: string): Contacts {
+// original: the texts the numbers of which count with commas too (a version is held to the original, never the other way).
+function contactsOf(text: string, original: boolean): Contacts {
   const links = new Set<string>();
   const emails = new Set<string>();
-  for (const raw of text.toLowerCase().split(/\s+/u)) {
+  for (const raw of asciiLower(text).split(/\s+/u)) {
     const word = trimWrappers(raw);
     if (word === '') continue;
     if (hasLink(word)) links.add(word);
     if (word.includes('@')) emails.add(word);
   }
-  return { links, emails, numbers: numberSpans(text) };
+  const numbers = numbersOf(text, false);
+  if (original) for (const one of numbersOf(text, true)) numbers.add(one);
+  return { links, emails, numbers };
 }
 
 // The digit runs of a text, thousands separators and leading zeros of a short figure set aside ("1.500.000" and "1,500,000" are the same three runs). A run of 8 digits or more keeps its zeros.
@@ -101,16 +120,18 @@ function digitRuns(text: string): Set<string> {
   return runs;
 }
 
-/** What code finds wrong with a segment's reviewed text against the original it is beside: a figure, link, address or number that identifies someone that the original does not hold. Null when nothing. */
-export function versionTextProblem(original: string, text: string): 'INVENTED_NUMBER' | 'CONTACT_ADDED' | null {
-  const was = original.normalize('NFKC');
-  const now = text.normalize('NFKC');
+function problemOf(was: string, now: string): 'INVENTED_NUMBER' | 'CONTACT_ADDED' | null {
   const known = digitRuns(was);
   for (const run of digitRuns(now)) if (!known.has(run)) return 'INVENTED_NUMBER';
-  const had = contactsOf(was);
-  const has = contactsOf(now);
+  const had = contactsOf(was, true);
+  const has = contactsOf(now, false);
   for (const kind of ['links', 'emails', 'numbers'] as const) for (const one of has[kind]) if (!had[kind].has(one)) return 'CONTACT_ADDED';
   return null;
+}
+
+/** What code finds wrong with a segment's reviewed text against the original it is beside: a figure, link, address or number that identifies someone that the original does not hold. Null when nothing. */
+export function versionTextProblem(original: string, text: string): 'INVENTED_NUMBER' | 'CONTACT_ADDED' | null {
+  return problemOf(original, text) ?? problemOf(original.normalize('NFKC'), text.normalize('NFKC'));
 }
 
 export const minutesVersionPublish = defineCommand({

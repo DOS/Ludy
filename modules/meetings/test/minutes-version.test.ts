@@ -87,10 +87,44 @@ describe('versionTextProblem: what the database pattern could find in a version,
     expect(versionTextProblem('Quote of 1,250,000 agreed.', 'Chốt báo giá 1.250.000.')).toBeNull();
     expect(versionTextProblem('Giá 1,250,000,000 đồng', 'Price 1.250.000.000 dong')).toBeNull();
     expect(versionTextProblem('Gọi (028) 3829 1234', 'Call 028 3829 1234')).toBeNull();
-    expect(versionTextProblem('Gọi 028 3829 1234', 'Call (028) 3829-1234')).toBeNull();
+    // Brackets around the area code of a number the original writes without them make a sub-number the pattern finds (3829-1234: a space after a bracket does not glue it to the digits before): refused, the recorder writes the number as the original does.
+    expect(versionTextProblem('Gọi 028 3829 1234', 'Call (028) 3829-1234')).toBe('CONTACT_ADDED');
     // Another number is refused, and so is Vietnam's +84 in place of the leading 0 (a different run of digits: the recorder writes the number as the original does).
     expect(versionTextProblem('Gọi 0912 345 678', 'Call 0912 345 679')).toBe('INVENTED_NUMBER');
     expect(versionTextProblem('Gọi 0912 345 678', 'Call +84 912 345 678')).toBe('INVENTED_NUMBER');
+  });
+
+  it('finds a number inside a longer written one, where the pattern does (a tab, a line break, a bracket or two separators part two numbers)', () => {
+    const original = 'Ref 09123456789. Items 912, 345, 678, 9.';
+    expect(versionTextProblem(original, 'Ref 0912 345 678  9.')).toBe('CONTACT_ADDED');
+    expect(versionTextProblem(original, 'Ref 0912 345 678\n9.')).toBe('CONTACT_ADDED');
+    expect(versionTextProblem(original, 'Ref 0912 345 678\t9.')).toBe('CONTACT_ADDED');
+    expect(versionTextProblem(original, 'Ref 09123456789.')).toBeNull();
+  });
+
+  it('reads the texts as stored too: what the database sees is not their NFKC fold', () => {
+    // Full-width digits and letters, a compatibility letter or digit and a decomposed letter in the original are not what the pattern finds once a version writes them plain.
+    expect(versionTextProblem('Mã \uff10\uff19\uff11\uff12\uff13\uff14\uff15\uff16\uff17\uff18', 'Mã 0912345678')).not.toBeNull();
+    expect(versionTextProblem('Gửi \uff41lice@example.com', 'Gửi alice@example.com')).not.toBeNull();
+    expect(versionTextProblem('aalice@example.com', '\u00aaalice@example.com')).not.toBeNull();
+    expect(versionTextProblem('Mã 20912345678', 'Mã \u00b20912345678')).not.toBeNull();
+    expect(versionTextProblem('nguye\u0302\u0303n@example.com', 'nguy\u1ec5n@example.com')).not.toBeNull();
+    expect(versionTextProblem('\u0130@x.com', 'i\u0307@x.com')).not.toBeNull();
+    // Written the same in both, they are the original's own.
+    expect(versionTextProblem('Mã \uff10\uff19\uff11\uff12\uff13\uff14\uff15\uff16\uff17\uff18', 'Code \uff10\uff19\uff11\uff12\uff13\uff14\uff15\uff16\uff17\uff18')).toBeNull();
+  });
+
+  it('accepts digits the original writes with commas, in any of the forms the pattern reads, and not a list of numbers joined into one', () => {
+    expect(versionTextProblem('Số 1,250,000,000', 'Số 1 250 000 000')).toBeNull();
+    expect(versionTextProblem('Số 0912,345,678', 'Số (0912) 345 678')).toBeNull();
+    // A comma and a space between two numbers of a list is not a separator inside one number.
+    expect(versionTextProblem('Số 1234, 5678', 'Account 1234 5678')).toBe('CONTACT_ADDED');
+  });
+
+  it('refuses what is known to be too strict, and says so here: a date written in another order, a range with a hyphen, a figure the original has not', () => {
+    expect(versionTextProblem('Ngày 25-11-2026', 'On 2026-11-25')).toBe('CONTACT_ADDED');
+    expect(versionTextProblem('1.250.000\u20132.500.000', '1.250.000 - 2.500.000')).toBe('CONTACT_ADDED');
+    expect(versionTextProblem('Quý III', 'Q3')).toBe('INVENTED_NUMBER');
   });
 
   it('is linear: a long run of punctuation or digits is checked at once', () => {

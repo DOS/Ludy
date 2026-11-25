@@ -198,14 +198,18 @@ suite('the second-language version of the published minutes (#4777)', () => {
 
   // The erasure finds a person in the original's rows only (a version is dropped with the original's redaction, never read): so a text may be accepted as a version only if every value the database's own
   // matching (ludy_kernel.text_mentions, the finder's and the erasure's one) finds in it is found in the original too. The code check (versionTextProblem) is held to that here, on the real function.
-  // One deliberate exception, not in the table: a large amount the original writes with commas (1,250,000,000) and the version with dots (1.250.000.000). The database reads dots as the separators of a
-  // number and commas not, so it finds those digits only in the version; but they are the original's own digits, so the version holds nothing the original does not, and refusing it would refuse every
+  // One deliberate exception, not in the table: a large amount the original writes with commas (1,250,000,000) and the version with dots or spaces (1.250.000.000). The database reads dots and spaces as the separators of
+  // a number and commas not, so it finds those digits only in the version; but they are the original's own digits, so the version holds nothing the original does not, and refusing it would refuse every
   // English amount of 100 million or more that a Vietnamese reader writes with dots.
   it('what the personal-data matching finds in an accepted version it finds in the original; what it finds only in the version is refused', async () => {
     type Probe = { kind: 'digits' | 'email'; value: string };
     const cases: Array<{ original: string; version: string; probes: Probe[]; accepted: boolean }> = [
-      { original: 'Gọi (028) 3829 1234', version: 'Call 028 3829 1234', probes: [{ kind: 'digits', value: '02838291234' }], accepted: true },
-      { original: 'Gọi 028 3829 1234', version: 'Call (028) 3829-1234', probes: [{ kind: 'digits', value: '02838291234' }], accepted: true },
+      { original: 'Gọi (028) 3829 1234', version: 'Call 028 3829 1234', probes: [{ kind: 'digits', value: '38291234' }, { kind: 'digits', value: '02838291234' }], accepted: true },
+      // Brackets around the area code make a sub-number (3829-1234) that a single space after a bracket does not glue to the digits before.
+      { original: 'Gọi 028 3829 1234', version: 'Call (028) 3829-1234', probes: [{ kind: 'digits', value: '38291234' }], accepted: false },
+      // A longer number written beside a shorter one: two separators, a line break or a tab part them for the pattern.
+      { original: 'Ref 09123456789. Items 912, 345, 678, 9.', version: 'Ref 0912 345 678  9.', probes: [{ kind: 'digits', value: '0912345678' }], accepted: false },
+      { original: 'Ref 09123456789. Items 912, 345, 678, 9.', version: 'Ref 0912 345 678\n9.', probes: [{ kind: 'digits', value: '0912345678' }], accepted: false },
       { original: 'Gửi tới alice@example.com', version: 'Send to <Alice@Example.com>, please', probes: [{ kind: 'email', value: 'alice@example.com' }], accepted: true },
       { original: 'Mã 028, 382 và 9123', version: 'Call (028) 382-9123', probes: [{ kind: 'digits', value: '0283829123' }], accepted: false },
       { original: 'Mã 0912, 345 và 678', version: 'Call 0912 345 678', probes: [{ kind: 'digits', value: '0912345678' }], accepted: false },

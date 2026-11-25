@@ -459,9 +459,9 @@ export const PERSONAL_DATA_COLUMNS = {
   },
   // The second-language version of a meeting's published minutes (Meetings, issue #4777): the text the recorder reviewed, edited and published beside the original, read by every reader of the
   // meeting. It holds no figure, link, address or number that identifies someone (8 digits or more) that its original does not hold ITSELF, each one by name: the publish command (versionTextProblem,
-  // modules/meetings/src/minutes-version.ts) holds the text to the database's own matching (text_mention_pattern, here the probe's), from the safe side: both texts folded to NFKC, an address is a whole word
-  // with an "@" (the characters the pattern refuses beside an address stay part of it), a number is a span of digits with up to three of the pattern's separators between them, compared by its digits with
-  // leading zeros, and what the pattern finds in a version it finds in the original (a db test holds the code to the real function). So the finder reads the person's value in the original and a
+  // modules/meetings/src/minutes-version.ts) holds the text to the database's own matching (text_mention_pattern, here the probe's), from the safe side: on the texts as stored and on their NFKC fold, an address is a
+  // whole word with an "@" (the characters the pattern refuses beside an address stay part of it) and a number is each run of 8 to 20 digits the pattern can find, with its own boundary rules and
+  // leading zeros kept, so what the pattern finds in a version it finds in the original (a db test holds the code to the real function). So the finder reads the person's value in the original and a
   // redaction of the original reaches the version by the database: it DROPS the version (never redacts it: a name cannot be located reliably in another language) the moment the published
   // summary, a decision or an action item title changes, is replaced or is unpublished, and it goes with the meeting (the recorder, an owner, the retention job or the org purge).
   'ludy_meetings.minutes_version.body': {
