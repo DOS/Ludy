@@ -5732,7 +5732,7 @@ export const en = {
       add: 'Add the label {label}',
       dismiss: 'None of these',
       found: '{count, plural, one {# label suggestion} other {# label suggestions}}',
-      dropped: '{count} of Vy\'s suggestions were left out because they did not pass the checks.',
+      dropped: '{count, plural, one {# of Vy\'s suggestions was left out because it did not pass the checks.} other {# of Vy\'s suggestions were left out because they did not pass the checks.}}',
       none: 'No suggestion this time. You can try again or type a label.',
       added: 'The label was added.',
       failed: 'Vy could not suggest labels.',

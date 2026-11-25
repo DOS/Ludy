@@ -46,6 +46,7 @@ export function MeetingLabelSuggest({ meetingId, isRecorder }: { meetingId: stri
   // A pick or "none of these" removes the chip or the list that held the focus (WCAG 2.4.3): it goes to the control that is still there, the button that asked once the list is gone.
   const runRef = useRef<HTMLButtonElement>(null);
   const dismissRef = useRef<HTMLButtonElement>(null);
+  const doneRef = useRef<HTMLParagraphElement>(null);
   const hadChips = useRef(0);
   const busy = suggest.isPending || add.isPending;
   useEffect(() => {
@@ -55,8 +56,21 @@ export function MeetingLabelSuggest({ meetingId, isRecorder }: { meetingId: stri
     if (shown.length > 0) dismissRef.current?.focus();
     else runRef.current?.focus();
   }, [shown.length, busy]);
+  // The pick that fills the meeting removes the whole panel: the focus then goes to a short status line that says it was added, so it is neither lost to the page nor left unannounced (WCAG 2.4.3, 4.1.3).
+  const full = !!labels.data && labels.data.labels.length >= MEETING_LABELS_MAX;
+  const filledByPick = full && taken.length > 0;
+  useEffect(() => {
+    if (filledByPick) doneRef.current?.focus();
+  }, [filledByPick]);
   // The recorder alone, only when this system lets Vy work and the meeting has room for a label: otherwise no button and no word about it.
-  if (!isRecorder || !status.data?.enabled || !labels.data || labels.data.labels.length >= MEETING_LABELS_MAX) return null;
+  if (!isRecorder || !status.data?.enabled || !labels.data) return null;
+  if (full) {
+    return filledByPick ? (
+      <p ref={doneRef} tabIndex={-1} role="status" className="text-xs" data-testid="label-suggest-added">
+        {t('added')}
+      </p>
+    ) : null;
+  }
   return (
     <div className="space-y-2" data-testid="label-suggest">
       <div className="flex flex-wrap items-center gap-2">
@@ -118,7 +132,7 @@ export function LabelSuggestResult({
           {labelChips(shown, picking, onPick, (label) => t('add', { label }))}
         </ul>
       )}
-      {answer.dropped > 0 && <p className="text-xs text-muted-foreground">{t('dropped', { count: String(answer.dropped) })}</p>}
+      {answer.dropped > 0 && <p className="text-xs text-muted-foreground">{t('dropped', { count: answer.dropped })}</p>}
       <Button ref={dismissRef} type="button" size="sm" variant="ghost" className="min-h-11" disabled={picking !== null} onClick={onDismiss} data-testid="label-suggest-dismiss">
         {t('dismiss')}
       </Button>

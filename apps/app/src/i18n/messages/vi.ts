@@ -5730,7 +5730,7 @@ export const vi = {
       add: 'Gắn nhãn {label}',
       dismiss: 'Không chọn nhãn nào',
       found: 'Có {count, plural, other {# gợi ý nhãn}}',
-      dropped: 'Đã bỏ {count} gợi ý của Vy vì không qua được các bước kiểm tra.',
+      dropped: 'Đã bỏ {count, number} gợi ý của Vy vì không qua được các bước kiểm tra.',
       none: 'Lần này chưa có gợi ý. Bạn có thể thử lại hoặc tự gõ nhãn.',
       added: 'Đã gắn nhãn.',
       failed: 'Vy chưa gợi ý được nhãn.',
