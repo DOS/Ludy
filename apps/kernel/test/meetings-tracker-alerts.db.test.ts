@@ -14,7 +14,7 @@ import { z } from 'zod';
 import { createDb, createPool } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
-import { TRACKER_ALERT_EVENT, TRACKER_ALERT_KIND, parseTrackerAlertTerms, type TrackerAlertState } from '@ludy/kernel-contract';
+import { TRACKER_ALERT_EVENT, TRACKER_ALERT_KIND, parseTrackerAlertTerms, type PersonalDataResult, type TrackerAlertState } from '@ludy/kernel-contract';
 import { DomainError, Runtime, defineCommand } from '@ludy/kernel-runtime';
 import { countNeedle, lineWords, meetingsCommands, meetingsQueries, needleOf } from '@ludy/mod-meetings';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
@@ -398,6 +398,32 @@ suite('Tracker alerts (#4873)', () => {
     expect(suppressions.get(ofAlert)).toMatchObject({ reason: 'hard_bounce', source_message_id: null });
     expect(Object.keys(suppressions.get(ofAlert)!)).toContain('source_message_id');
     expect(suppressions.get(ofOther)).toMatchObject({ source_message_id: other });
+  });
+
+  // The personal-data finder (owners and admins, kernel.personal_data.find): the alert mail is found by its address but shown as its id, address, status and time only (MAIL_SOURCES_LEFT_OUT), because its payload counts the
+  // words found in a meeting that may be attendees-only. A mail of any other source with the same address is shown whole.
+  it('shows the alert mail found by its address as id, address, status and time only, and shows the mail of every other source whole', async () => {
+    await clear();
+    await addTerm('giá');
+    await optIn('lan');
+    const { eventId, meetingId } = await published('Họp tìm theo địa chỉ', 'org', [], ['Bàn về giá hôm nay.']);
+    expect(await notice(eventId)).toEqual({ notified: 1, mailed: 1 });
+    const alert = (await sqlAdmin<{ id: string; to_address: string }>("SELECT id, to_address FROM ludy_kernel.mail_message WHERE org_id = $1 AND source = 'meetings.tracker_alert' AND template_key = $2 LIMIT 1", [orgId, 'meetings.tracker_alert'])).rows[0]!;
+    // The address of a mail is written once, so the other mail is given the address the alert was sent to.
+    const other = (await sqlAdmin<{ id: string }>(
+      "INSERT INTO ludy_kernel.mail_message (org_id, stream, source, source_id, template_key, to_address, to_hash, subject, payload, message_id_header, status) VALUES ($1, 'transactional', 'finance.payment_reminder.notice1', $2, 'x.y', $3, repeat('a', 64), 'Nhac thanh toan', '{\"keep\":true}', $4, 'queued') RETURNING id",
+      [orgId, randomUUID(), alert.to_address, `<finder-alert-${randomUUID()}@y.test>`],
+    )).rows[0]!.id;
+    const found = await runtime.execute<PersonalDataResult>('kernel.personal_data.find', { value: alert.to_address }, { ...asUser('owner'), idempotencyKey: randomUUID() });
+    const mails = found.matches.filter((x) => x.column === 'ludy_kernel.mail_message.to_address');
+    const ofAlert = mails.find((x) => x.rowId === alert.id);
+    const ofOther = mails.find((x) => x.rowId === other);
+    // Findable and erasable still, but nothing of the payload, the subject or the meeting.
+    expect(ofAlert).toMatchObject({ handling: 'erase' });
+    expect(Object.keys(ofAlert!.row).sort()).toEqual(['created_at', 'id', 'status', 'to_address']);
+    expect(ofAlert!.row).toMatchObject({ id: alert.id, to_address: alert.to_address });
+    expect(JSON.stringify(found)).not.toContain(meetingId);
+    expect(ofOther!.row).toMatchObject({ id: other, subject: 'Nhac thanh toan', payload: { keep: true } });
   });
 
   it('returns the recipients a page at a time in id order, and the page is clamped', async () => {

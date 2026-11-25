@@ -14,9 +14,13 @@ import { DomainError, defineCommand, defineQuery, exportKey, GENERATION_PATTERN,
 
 const OWNERS: readonly MemberRole[] = ['owner'];
 
-// The mail of a meeting's text or of what a meeting holds is left out of the owner's copy of the mail log, its delivery events and the pointers of the suppression list: the follow-up mails of a meeting (#4533)
-// and the tracked-word alert (#4873), whose payload counts the words found in a meeting that may be attendees-only, which the export leaves out. Constant names, never input: they go into the queries below as text.
-const MAIL_SOURCES_LEFT_OUT: readonly string[] = [FOLLOWUP_MAIL_SOURCE, TRACKER_ALERT_MAIL_SOURCE];
+/**
+ * The mail of what a meeting holds, left out of what an owner or admin may read about the mail log: the follow-up mails of a meeting (#4533) carry its summary, decisions and action items (payload) and
+ * the subject the recorder typed, the tracked-word alert (#4873) counts the words found in a meeting, and the meeting may be attendees-only. A source of this list is out of the owner's org export (the mail log, its delivery events and the pointers of the suppression
+ * list: the queries below) and out of the personal-data finder's rows, where the row shows only its id, address, status and time (findPersonalData). A new mail whose payload counts or quotes a meeting
+ * adds its source here. Constant names, never input: the export queries take them as text.
+ */
+export const MAIL_SOURCES_LEFT_OUT: readonly string[] = [FOLLOWUP_MAIL_SOURCE, TRACKER_ALERT_MAIL_SOURCE];
 const LEFT_OUT_LIST = MAIL_SOURCES_LEFT_OUT.map((source) => `'${source}'`).join(', ');
 
 // The tables an export contains, with the columns left out. Machinery (idempotency keys, outbox, session records,
