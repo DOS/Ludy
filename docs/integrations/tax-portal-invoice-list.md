@@ -1,9 +1,9 @@
 # Tax portal invoice list: purchases (issue #465) and sales (issue #2141)
 
 The tax authority's e-invoice portal ([hoadondientu.gdt.gov.vn](https://hoadondientu.gdt.gov.vn)) has no buyer API,
-and an unattended login needs software CAPTCHA solving, which Crove does not do (spike #322, option 1). The
-accountant can export the month's purchase invoices to Excel, though. Crove imports that file per client (org) and
-VAT period and shows which invoices the tax authority has that Crove lacks, and the other way round.
+and an unattended login needs software CAPTCHA solving, which Ludy does not do (spike #322, option 1). The
+accountant can export the month's purchase invoices to Excel, though. Ludy imports that file per client (org) and
+VAT period and shows which invoices the tax authority has that Ludy lacks, and the other way round.
 
 - **Screen:** "Đối chiếu cổng thuế" (`/o/<org>/portal-invoices`). Pick the month or quarter, upload the `.xlsx`.
 - **API:** upload with `POST /api/files` (or the staged upload) with `purpose=import`, then `portalList.import`
@@ -56,7 +56,7 @@ books a missing sale as any other, from its XML in the Inbox.
   tax code" on sales. The customer's tax code (`buyer_tax_code` on the row) and the customer's name from the recorded
   sale are shown.
 - **Flags:** "missing" (on the portal, not in the books), "amount_mismatch" (another total, VAT or currency; one dong
-  of rounding is allowed), "void_in_crove" (cancelled or replaced on the portal but still booked), "not_on_portal"
+  of rounding is allowed), "void_in_ludy" (cancelled or replaced on the portal but still booked), "not_on_portal"
   (booked in the period, on none of the lists). A sale on two lists of the period counts once, so importing the same
   list again (a second file with the same invoices) flags nothing new; the very same file is refused.
 - **Notifications:** reading a sales list tells the importer and the owners and admins when sales are missing or
@@ -94,7 +94,7 @@ an inference. A populated export from the design partner would settle the open p
 
 The purchase and the sales export have the same columns.
 
-| Col | Header | Crove field | Status |
+| Col | Header | Ludy field | Status |
 |---|---|---|---|
 | A | STT | not read | Confirmed (A, C, F) |
 | B | Ký hiệu mẫu số | `template` | Confirmed (A, C, D, E, F) |
@@ -121,7 +121,7 @@ The purchase and the sales export have the same columns.
 STT, Ký hiệu mẫu số, Ký hiệu hóa đơn, Số hóa đơn, Ngày lập, MST người bán/MST người xuất hàng, Tên người bán/Tên
 người xuất hàng, **Địa chỉ người bán**, MST người mua/MST người nhận hàng, Tên người mua/Tên người nhận hàng,
 **Căn cước công dân**, Tổng tiền chưa thuế, Tổng tiền thuế, Tổng tiền chiết khấu thương mại, Tổng tiền thanh toán,
-Trạng thái hóa đơn, Kết quả kiểm tra hóa đơn. No fee, currency or exchange rate column (Crove then takes VND).
+Trạng thái hóa đơn, Kết quả kiểm tra hóa đơn. No fee, currency or exchange rate column (Ludy then takes VND).
 Confirmed by A only (files 014 and 016); D says the two layouts differ and merges them by header.
 
 ### Values
@@ -137,7 +137,7 @@ Confirmed by A only (files 014 and 016); D says the two layouts differ and merge
 | Kết quả kiểm tra wording: "Đã cấp mã hóa đơn", "Cục Thuế đã nhận không mã", "Cục Thuế đã nhận hóa đơn có mã khởi tạo từ máy tính tiền"; older files say "Tổng cục Thuế" | Unconfirmed for today's export | D, C, third-party tools |
 | No column names the invoice a replacement or adjustment refers to | Confirmed | A |
 
-## How Crove reads it
+## How Ludy reads it
 
 The reader is `apps/extract/src/portal-list.ts`, on top of a small `.xlsx` reader (`apps/extract/src/xlsx.ts`), and
 runs only in the parsing sandbox like every untrusted file:
@@ -172,24 +172,24 @@ code would hide a purchase); a list with none left is recorded as failed, as the
 list (the accountant picked the wrong client). An answer with an impossible date (an issue date or the file's own
 range) or a row number given twice is refused with the reason, before anything is written.
 
-## How Crove compares
+## How Ludy compares
 
 `modules/finance/src/domain/portal-reconcile.ts`, for the period's lists (done, not removed) against the org's
 purchase documents (not voided) and the purchase proposals waiting in the Inbox:
 
 - **Same invoice:** the seller's tax code, the series and the number match (numbers without leading zeros, series in
   upper case, a template digit written into the series split off), and the templates do not contradict each other
-  (either side may lack one). A Crove invoice without a seller tax code matches on series and number when exactly
+  (either side may lack one). A Ludy invoice without a seller tax code matches on series and number when exactly
   one portal invoice has them.
 - **Amounts are a check:** total, VAT and currency, with one dong of rounding allowed. A difference is reported as
   "Số tiền không khớp", not as a missing invoice.
-- **Status:** "đã bị thay thế" and "đã bị hủy" no longer count. Absent from Crove is right; present in Crove (booked or
+- **Status:** "đã bị thay thế" and "đã bị hủy" no longer count. Absent from Ludy is right; present in Ludy (booked or
   waiting) is reported so the accountant reverses or rejects it. An adjusted invoice still counts; the replacement
   and the adjustment are invoices of their own. An unknown status counts like a valid invoice.
 - **Duplicates:** an invoice on several lists of the period counts once, by the same rule as a match (a row without a
-  template joins the invoice its key names); a later cancellation wins. A second copy in Crove of a matched invoice is
+  template joins the invoice its key names); a later cancellation wins. A second copy in Ludy of a matched invoice is
   reported as not on the portal and marked as a duplicate.
-- **Period:** Crove's invoices dated in the period that match nothing are reported as not on the portal. With no
+- **Period:** Ludy's invoices dated in the period that match nothing are reported as not on the portal. With no
   list for a period nothing is compared. A portal row dated outside the period is matched and marked.
 
 ## Not confirmed
@@ -204,6 +204,6 @@ purchase documents (not voided) and the purchase proposals waiting in the Inbox:
   export was found. A file with other headers is refused with the missing columns named (see "Unknown layout fails clearly"). Ask
   the partner's accountant for one real sales export per tab (#61).
 - Foreign-currency invoices: C reports that the amounts are sometimes in the original currency and sometimes already
-  in VND. Crove compares in the currency the row names, so such an invoice may show as an amount mismatch.
+  in VND. Ludy compares in the currency the row names, so such an invoice may show as an amount mismatch.
 
 Ask the partner's accountant for one real export per tab (#61) to settle these.

@@ -53,7 +53,7 @@ docker compose logs --no-log-prefix worker | jq -cR 'fromjson? | select(.queue =
 docker compose logs --no-log-prefix worker | jq -cR 'fromjson? | select(.jobId == "<job id>")'
 ```
 
-The job id is the one in `crove_jobs.job` (`SELECT id, name, state FROM crove_jobs.job WHERE name = 'finance-file-extract' ORDER BY created_on DESC LIMIT 10`). A job triggered by a request does not carry that request's id: find the request by its time and org, and the job by its org and queue.
+The job id is the one in `ludy_jobs.job` (`SELECT id, name, state FROM ludy_jobs.job WHERE name = 'finance-file-extract' ORDER BY created_on DESC LIMIT 10`). A job triggered by a request does not carry that request's id: find the request by its time and org, and the job by its org and queue.
 
 ## 4. The slowest queries
 

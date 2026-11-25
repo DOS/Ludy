@@ -21,9 +21,9 @@ Secrets (the two app secrets, the S3 keys) go from the platform's page into the 
 
 Why not the other places:
 
-- **The pilot instance** runs `CROVE_MODULES=finance` (#2118): Social's routes, publish queues and worker do not exist there, and a design partner's books live in its database. Nothing here touches it, and Social is never switched on there for a test.
+- **The pilot instance** runs `LUDY_MODULES=finance` (#2118): Social's routes, publish queues and worker do not exist there, and a design partner's books live in its database. Nothing here touches it, and Social is never switched on there for a test.
 - **A public https test deployment** would have to pass the server's public-deployment checks (https `PUBLIC_URL`, a random JWT secret, no `AUTH_AUTOCONFIRM`, split api and worker roles, an export key; `pilot-readiness.md` section 1). That is the pilot layout again, with a second host and a tunnel to pay attention to. It stays the fallback for Zalo only (part B, step B2).
-- **A local stack** keeps `PUBLIC_URL` on `localhost`, so those checks do not apply, `AUTH_AUTOCONFIRM` stays on (no mail setup), and `CROVE_MODULES` stays empty, which runs every module including Social with its workers. The OAuth redirect is the browser of the person at the keyboard going to the registered address, not a call from the platform to the server, so a local address can work.
+- **A local stack** keeps `PUBLIC_URL` on `localhost`, so those checks do not apply, `AUTH_AUTOCONFIRM` stays on (no mail setup), and `LUDY_MODULES` stays empty, which runs every module including Social with its workers. The OAuth redirect is the browser of the person at the keyboard going to the registered address, not a call from the platform to the server, so a local address can work.
 
 Facebook needs nothing public: Ludy sends a photo to Facebook as an upload. Zalo is different: Zalo fetches every article image itself from a public https URL, so part B needs a small private S3 bucket (step B1).
 
@@ -90,7 +90,7 @@ Gaps found while reading, and what became of them:
 cp .env.example .env
 ```
 
-Edit `.env` (it is git-ignored): set `CHANNEL_META_APP_ID` and `CHANNEL_META_APP_SECRET`; leave `PUBLIC_URL`, `CROVE_MODULES` and `STORAGE` as they are (empty, empty, `local`). `CHANNEL_SANDBOX=true` stays: the sandbox channel is a handy control.
+Edit `.env` (it is git-ignored): set `CHANNEL_META_APP_ID` and `CHANNEL_META_APP_SECRET`; leave `PUBLIC_URL`, `LUDY_MODULES` and `STORAGE` as they are (empty, empty, `local`). `CHANNEL_SANDBOX=true` stays: the sandbox channel is a handy control.
 
 ```bash
 docker compose -p social-check up --build -d
@@ -207,13 +207,13 @@ Same as B6 with a second image: the first is the cover, the second follows the t
 Zalo's access token lasts about 25 hours, and each refresh returns a new refresh token while the old one dies. The worker refreshes a token that expires within 6 hours, scanning every 10 minutes, so the first natural refresh comes about 19 hours after connecting. To see it now, **[PO]** moves that connection's expiry on the throwaway database of this stack (never on any other):
 
 ```bash
-docker compose -p social-check exec db psql -U postgres -d postgres -c "UPDATE crove_kernel.channel_connection SET expires_at = now() + interval '30 minutes' WHERE provider = 'zalo_oa' AND status = 'active'"
+docker compose -p social-check exec db psql -U postgres -d postgres -c "UPDATE ludy_kernel.channel_connection SET expires_at = now() + interval '30 minutes' WHERE provider = 'zalo_oa' AND status = 'active'"
 ```
 
 Wait 10 to 15 minutes (the sweep interval), then read the connection back:
 
 ```bash
-docker compose -p social-check exec db psql -U postgres -d postgres -c "SELECT status, expires_at FROM crove_kernel.channel_connection WHERE provider = 'zalo_oa'"
+docker compose -p social-check exec db psql -U postgres -d postgres -c "SELECT status, expires_at FROM ludy_kernel.channel_connection WHERE provider = 'zalo_oa'"
 ```
 
 Then publish one more article (B6 again).
@@ -253,7 +253,7 @@ Then **[PO]** writes each difference into `docs/plan/social.md` sections 4 and 6
 - **The connect button is missing.** The app id and secret of that platform are both set in `.env`, the stack was restarted with `up -d`, and the signed-in user is an owner or admin. "Chưa cấu hình khóa mã hóa thông tin kết nối (CREDENTIAL_KEY)" means no credential key: the compose default creates `.data/credential.key` on its volume, so this appears only when `CREDENTIAL_KEY_FILE` was changed.
 - **"Lượt kết nối này không hợp lệ".** The attempt is single use and lasts 10 minutes, and it is bound to the signed-in member: start again from the Kênh page in the same tab, signed in as the same person.
 - **"Không tìm thấy lượt kết nối này trên trình duyệt".** The attempt is remembered in that browser tab (`sessionStorage`): do not open the dialog link in another browser or a private window.
-- **A post stays "Đã lên lịch".** The worker role of the stack runs (`docker compose -p social-check ps`), `CROVE_MODULES` is empty (a list without `social` runs no publishing), and the channel is active. A channel marked "Cần kết nối lại" pauses its posts until it is reconnected.
+- **A post stays "Đã lên lịch".** The worker role of the stack runs (`docker compose -p social-check ps`), `LUDY_MODULES` is empty (a list without `social` runs no publishing), and the channel is active. A channel marked "Cần kết nối lại" pauses its posts until it is reconnected.
 - **A post stays "Cần xử lý".** The pipeline did not know whether the platform posted. Look at the Page or the OA first. Only then use the retry or "resolve" buttons: a blind retry is how a double post happens.
 - **Reading the stack's logs without leaking:** `docker compose -p social-check logs api worker`. Lines name the provider, an error name and a code, never a token; if one ever does, stop and tell the PO.
 

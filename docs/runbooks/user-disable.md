@@ -4,9 +4,9 @@ How the deployment operator blocks a user account in Ludy, and unblocks it (issu
 
 ## What it does
 
-- Sets `crove_kernel.user_account.disabled_at` (or clears it), through `crove_kernel.user_set_disabled`, which only the worker login role may run.
+- Sets `ludy_kernel.user_account.disabled_at` (or clears it), through `ludy_kernel.user_set_disabled`, which only the worker login role may run.
 - From the next request on, a blocked account is refused with 403 `USER_DISABLED`: every API call, sign-in through the session check, org creation, invite acceptance and the event stream. Its sessions do not need revoking first. Channel credentials and chat alerts that act for the account stop with it.
-- Keeps the reason on the account, in `crove_kernel.user_account.status_reason`; the latest run's reason replaces the one before.
+- Keeps the reason on the account, in `ludy_kernel.user_account.status_reason`; the latest run's reason replaces the one before.
 - Each org the user belongs to gets an audit row `kernel.user.status_note` (system actor `operator`). The row holds whether the account was blocked or unblocked, whether that changed anything, and the reason's code (`--code`: `security`, `abuse`, `request`, `offboarding` or `other`, the default). Neither the reason's words nor the email are written there: an audit row can never be erased, and the words are about a person (#1949, ADR-0017). An account in no org is blocked all the same.
 - A second run changes nothing and is noted as unchanged.
 

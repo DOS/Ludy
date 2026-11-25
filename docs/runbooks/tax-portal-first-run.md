@@ -30,8 +30,8 @@ The password and the CAPTCHA are typed by the owner in Ludy's own screen, in the
 
 - The client talks to one fixed origin, `https://hoadondientu.gdt.gov.vn/api`, through the egress guard: public addresses only, https only, no redirects, no cookies, one deadline per request, a byte cap per answer (ADR-0036, decision 7).
 - The password goes in exactly one request (`login`) and is dropped; it is never in the database, a log, a job payload, an audit row, an error message or a trace. The portal's session token lives only inside an envelope sealed with the deployment's credential key and held by the browser for 20 minutes (database and end-to-end tests against the fake portal in `e2e/fake-tax-portal`).
-- No login is retried by software. After 3 logins that did not succeed since the last good one, Crove stops logging in for the company for a day (`PORTAL_PASSWORD_GUARD`), before the portal locks the account; a refused CAPTCHA alone does not count.
-- Each portal call is recorded in `crove_kernel.external_call` (target `gdt_einvoice`) with who, which step and the outcome class, never a password, a CAPTCHA answer, a token or a response body. That table is the main evidence of this run.
+- No login is retried by software. After 3 logins that did not succeed since the last good one, Ludy stops logging in for the company for a day (`PORTAL_PASSWORD_GUARD`), before the portal locks the account; a refused CAPTCHA alone does not count.
+- Each portal call is recorded in `ludy_kernel.external_call` (target `gdt_einvoice`) with who, which step and the outcome class, never a password, a CAPTCHA answer, a token or a response body. That table is the main evidence of this run.
 - **Not verified in code, and what this run is for:** that the real portal still has these paths and shapes, the words of its refusals, how long a token lasts, how it pages, and whether it blocks this connection.
 
 ## Before you start
@@ -75,28 +75,28 @@ The owner types the company's real portal password, then types **deliberately wr
 
 ### 6. The real run **[PERSON]**, with **[PO]** watching the clock
 
-**[PO]** notes the time. **[PERSON]** clicks **Đổi mã khác** for a fresh CAPTCHA, types the company's real portal password and the CAPTCHA within about a minute (a CAPTCHA key is accepted once within about 2 minutes), ticks the consent box and clicks **Đăng nhập và lấy danh sách**. Crove then logs in, fetches the month's purchase list (the three kinds, page by page), files it as the period's list, and downloads the XML of the invoices that have a tax authority code and that Crove lacks, a few at a time. **Keep the page open until it says it is done.** Do not close it, and do not start a second sync. **[CHECK]** the screen ends with "Đã lấy N hóa đơn từ cổng thuế" and then the XML summary line; the reconciliation below updates within seconds. Any error is shown in words; the table "When something goes wrong" lists them. **Rollback:** the sync only adds a synced list and Inbox items to the throwaway stack; running it again replaces the list; the stack goes in step 11.
+**[PO]** notes the time. **[PERSON]** clicks **Đổi mã khác** for a fresh CAPTCHA, types the company's real portal password and the CAPTCHA within about a minute (a CAPTCHA key is accepted once within about 2 minutes), ticks the consent box and clicks **Đăng nhập và lấy danh sách**. Ludy then logs in, fetches the month's purchase list (the three kinds, page by page), files it as the period's list, and downloads the XML of the invoices that have a tax authority code and that Ludy lacks, a few at a time. **Keep the page open until it says it is done.** Do not close it, and do not start a second sync. **[CHECK]** the screen ends with "Đã lấy N hóa đơn từ cổng thuế" and then the XML summary line; the reconciliation below updates within seconds. Any error is shown in words; the table "When something goes wrong" lists them. **Rollback:** the sync only adds a synced list and Inbox items to the throwaway stack; running it again replaces the list; the stack goes in step 11.
 
 ### 7. Read the evidence **[PO]**
 
 Without reading any invoice data, list the calls of the run:
 
 ```bash
-docker compose exec db psql -U postgres -d postgres -c "SELECT step, state, error_kind, error_code, calls, started_at, finished_at FROM crove_kernel.external_call WHERE target = 'gdt_einvoice' ORDER BY started_at"
+docker compose exec db psql -U postgres -d postgres -c "SELECT step, state, error_kind, error_code, calls, started_at, finished_at FROM ludy_kernel.external_call WHERE target = 'gdt_einvoice' ORDER BY started_at"
 ```
 
-This holds steps `captcha`, `login`, `list` and `xml`, the outcome class of each in `error_code` (`WRONG_CAPTCHA`, `WRONG_PASSWORD`, `RATE_LIMITED`, `BLOCKED`, `BAD_ANSWER` and the like; empty when the call succeeded), how many requests each made, and the times. From it write the findings **Endpoints**, **Login errors**, **Token lifetime** (the time from the login to the last successful call of the same run: a lower bound, since Crove drops its own envelope at 20 minutes) and **Hosting** in the table. A `SESSION_EXPIRED` before 20 minutes after the login is the evidence that the token is shorter; its time is the answer. **Rollback:** the query only reads.
+This holds steps `captcha`, `login`, `list` and `xml`, the outcome class of each in `error_code` (`WRONG_CAPTCHA`, `WRONG_PASSWORD`, `RATE_LIMITED`, `BLOCKED`, `BAD_ANSWER` and the like; empty when the call succeeded), how many requests each made, and the times. From it write the findings **Endpoints**, **Login errors**, **Token lifetime** (the time from the login to the last successful call of the same run: a lower bound, since Ludy drops its own envelope at 20 minutes) and **Hosting** in the table. A `SESSION_EXPIRED` before 20 minutes after the login is the evidence that the token is shorter; its time is the answer. **Rollback:** the query only reads.
 
 ### 8. Compare with the portal **[PERSON]**
 
-Open the portal's own list for the same month by hand (the owner's own login in another browser tab) and compare with Crove's reconciliation, by counts, never by copying values into chat or the issue:
+Open the portal's own list for the same month by hand (the owner's own login in another browser tab) and compare with Ludy's reconciliation, by counts, never by copying values into chat or the issue:
 
 - the number of invoices of each kind (with code, without code, cash register): equal or by how many it differs;
-- three invoices of the owner's choice: the invoice date Crove shows equals the portal's (finding: date handling; the portal's instant is read in Vietnam's time zone), and the amounts are equal;
-- the total Crove fetched against the portal's own Excel export for the same month, if the owner exports it;
+- three invoices of the owner's choice: the invoice date Ludy shows equals the portal's (finding: date handling; the portal's instant is read in Vietnam's time zone), and the amounts are equal;
+- the total Ludy fetched against the portal's own Excel export for the same month, if the owner exports it;
 - whether a month with more than 50 invoices was fetched whole (paging: `size`, `page`, `total`).
 
-**[CHECK]** the reconciliation shows each fetched invoice as present on the portal, and the invoices Crove downloaded as XML waiting in the Inbox ("Chứng từ chờ duyệt"). The XML count is the number of invoices with a code that Crove lacked; the owner compares it with the portal's count of invoices with a code minus those already in the stack (none, in a fresh stack). **Rollback:** reading only.
+**[CHECK]** the reconciliation shows each fetched invoice as present on the portal, and the invoices Ludy downloaded as XML waiting in the Inbox ("Chứng từ chờ duyệt"). The XML count is the number of invoices with a code that Ludy lacked; the owner compares it with the portal's count of invoices with a code minus those already in the stack (none, in a fresh stack). **Rollback:** reading only.
 
 ### 9. A late CAPTCHA, optional **[PERSON]**
 
@@ -104,7 +104,7 @@ To check that a CAPTCHA key is accepted for about 2 minutes and not much longer:
 
 ### 10. A wrong password, optional, once, last **[PERSON]**
 
-Only if the owner agrees, and only after everything else: log in with the company's tax code and a **deliberately wrong** password that is not a variant of the real one, a fresh CAPTCHA typed correctly. **[CHECK]** the screen shows the wording for a wrong password (`PORTAL_WRONG_PASSWORD`). Record the portal's words and status. **Do this at most once:** the portal locks an account after a number of wrong passwords that nobody has measured, and Crove's guard stops at 3 failed logins since the last good one. A locked account is not provoked on purpose: if the owner already knows how the portal words it, record that; the portal's block page is recorded only if it is met. If this step ran, the guard's count is now 1 and the next good login clears it; the owner logs in to the portal by hand once to be sure the account still works. **Rollback:** a good login on the portal (by hand) clears the portal's own count.
+Only if the owner agrees, and only after everything else: log in with the company's tax code and a **deliberately wrong** password that is not a variant of the real one, a fresh CAPTCHA typed correctly. **[CHECK]** the screen shows the wording for a wrong password (`PORTAL_WRONG_PASSWORD`). Record the portal's words and status. **Do this at most once:** the portal locks an account after a number of wrong passwords that nobody has measured, and Ludy's guard stops at 3 failed logins since the last good one. A locked account is not provoked on purpose: if the owner already knows how the portal words it, record that; the portal's block page is recorded only if it is met. If this step ran, the guard's count is now 1 and the next good login clears it; the owner logs in to the portal by hand once to be sure the account still works. **Rollback:** a good login on the portal (by hand) clears the portal's own count.
 
 ### 11. Clean up **[PO]**
 
@@ -123,12 +123,12 @@ Record in issue #1100, as a comment, without any tax code, account, name, invoic
 | Endpoints: `/captcha`, `/security-taxpayer/authenticate`, `/query/invoices/purchase`, `/sco-query/invoices/purchase`, `/query/invoices/export-xml` under `https://hoadondientu.gdt.gov.vn/api` on 443 | steps 4, 6, 7: each step reached the portal and was understood; a `BAD_ANSWER` names the step that failed | |
 | A request header the client does not send ("a new request identifier", September 2026) | a refusal of the first request with a non-block outcome; if the first call fails, say which step and the outcome class | |
 | CAPTCHA format | step 4: an SVG image, legible; step 6: a key accepted once within about 2 minutes; step 9 if run: a key after 3 minutes | |
-| Login error: wrong CAPTCHA | step 5: the wording shown, the status, and which Crove code | |
-| Login error: wrong password (once, optional) | step 10: the wording shown, the status, and which Crove code | |
+| Login error: wrong CAPTCHA | step 5: the wording shown, the status, and which Ludy code | |
+| Login error: wrong password (once, optional) | step 10: the wording shown, the status, and which Ludy code | |
 | Login error: locked account | only if already known to the owner; never provoked | |
 | Login error: the WAF or block page | only if met: the outcome class (`BLOCKED`) and what the screen said | |
 | Token lifetime | step 7: minutes from the login to the last good call; a `SESSION_EXPIRED` and its time | |
-| List paging: `size`, `page`, `total` (or `datas` against `data`) | step 8: a month fetched whole; the number of invoices Crove shows against the portal | |
+| List paging: `size`, `page`, `total` (or `datas` against `data`) | step 8: a month fetched whole; the number of invoices Ludy shows against the portal | |
 | The `ttxly` 5, 6 and 8 filters each return the right invoices | step 8: the count of each kind equal to the portal's | |
 | The cash register endpoint needs a `ttxly` filter | step 7: the `list` calls of the cash register endpoint and their outcome | |
 | `tdlap` as an instant or a date; dates match the portal screen | step 8: three invoices, the dates equal or not | |
@@ -145,12 +145,12 @@ When a point turns out wrong, the client (`apps/kernel/src/tax-portal.ts`) and t
 |---|---|
 | `PORTAL_SYNC_DISABLED` | `/api/config` does not say `taxPortalSync`: step 2. |
 | `PORTAL_WRONG_CAPTCHA` | the characters were wrong or the image is older than about 2 minutes: **Đổi mã khác** and try again, once more at most. It does not count for the guard. |
-| `PORTAL_WRONG_PASSWORD` | the portal did not accept the password. **Stop and ask the owner**; do not retry in a loop. After 3 failed logins Crove stops (`PORTAL_PASSWORD_GUARD`) for a day, before the portal locks the account. |
+| `PORTAL_WRONG_PASSWORD` | the portal did not accept the password. **Stop and ask the owner**; do not retry in a loop. After 3 failed logins Ludy stops (`PORTAL_PASSWORD_GUARD`) for a day, before the portal locks the account. |
 | `PORTAL_ACCOUNT_LOCKED` | the account is locked: the owner unlocks it on the portal by hand. Stop the run. |
 | `PORTAL_PASSWORD_GUARD` | 3 failed logins since the last good one: wait a day, or log in by hand first and check the account. |
 | `PORTAL_BLOCKED`, `PORTAL_RATE_LIMITED` | the portal blocks or limits this connection: stop, record the time and which step (finding: hosting), and use the Excel import instead ([tax-portal-invoice-list.md](../integrations/tax-portal-invoice-list.md)). |
 | `PORTAL_UNAVAILABLE` | the portal does not answer: try later. |
-| `PORTAL_BAD_ANSWER` | the portal answered in a shape Crove cannot read: record the step from step 7; this is the main thing the run looks for. |
+| `PORTAL_BAD_ANSWER` | the portal answered in a shape Ludy cannot read: record the step from step 7; this is the main thing the run looks for. |
 | `PORTAL_SESSION_EXPIRED` | the session ended: record the minutes since the login (step 7) and log in again. |
 | `PORTAL_STEP_TIMEOUT` | a step took longer than `TAX_PORTAL_STEP_SECONDS` (90): click again; an XML batch goes on from where it stopped. |
 | `PORTAL_LIST_TOO_LARGE`, `PORTAL_LIST_UNUSABLE` | the month is too large for one fetch, or the list is not this company's: pick a smaller month or check the tax code in Settings. |

@@ -1,7 +1,7 @@
 # HTKK XML of the VAT return 01/GTGT (issue #332)
 
 The firm files the monthly or quarterly VAT return (form 01/GTGT, credit method) with GDT's HTKK software and the
-eTax portal. Instead of typing the figures of Crove's VAT working (#316) into HTKK again, the accountant downloads
+eTax portal. Instead of typing the figures of Ludy's VAT working (#316) into HTKK again, the accountant downloads
 them as the XML file HTKK itself produces for that form, checks and completes it, then files it on eTax.
 
 - **Where:** "Tờ khai GTGT" screen, button "Xuất XML cho HTKK" (`GET /api/export/vat-01gtgt.xml?period=2026-09` or
@@ -27,8 +27,8 @@ them as the XML file HTKK itself produces for that form, checks and completes it
 | GDT's HTKK releases 5.7.2 to 5.8.1 (2026-07-10 to 2026-10-16) upgrade other forms to Circular 89 (corporate income tax, foreign contractor, fees, 06/TNCN, ...) but not 01/GTGT; 5.7.5 was read only through a third-party summary | Confirmed for the notices read on gdt.gov.vn | [GDT: Hỗ trợ kê khai](https://gdt.gov.vn/wps/portal/home/hotrokekhai) |
 | The 01/GTGT XML HTKK writes today: form code `842`, XML version `2.8.3`, the Circular 80 form | Confirmed for HTKK 5.6.1 (03/2026) and a return GDT sent back for Q4/2025 (01/2026); inferred still current in 5.8.1, since no notice changes it | S1, S3 below |
 
-So Crove writes the **Circular 80 form, XML version 2.8.3**, the one HTKK writes today, for every period. [32b] and
-[34a] do not exist in that version; Crove has no data for them anyway (`form01Indicators` reports none). When GDT
+So Ludy writes the **Circular 80 form, XML version 2.8.3**, the one HTKK writes today, for every period. [32b] and
+[34a] do not exist in that version; Ludy has no data for them anyway (`form01Indicators` reports none). When GDT
 releases the Circular 89 XML, `HTKK_01GTGT` and the element list change; that is a new task.
 
 ## Sources of the layout
@@ -52,14 +52,14 @@ Sources read on 2026-10-19.
 
 Root `HSoThueDTu` in GDT's namespace, `HSoKhaiThue id="ID_1"`, then:
 
-- **`TTinChung`** (envelope): `TTinDVu` names Crove (`maDVu` `CROVE`), not HTKK. `TKhaiThue`: `maTKhai` 842, the form's
+- **`TTinChung`** (envelope): `TTinDVu` names Ludy (`maDVu` `LUDY`), not HTKK. `TKhaiThue`: `maTKhai` 842, the form's
   title and legal basis, `pbanTKhaiXML` 2.8.3, `loaiTKhai` `C` (first return; supplementary returns are out of
   scope), `soLan` 0. `KyKKhaiThue`: a month is `kieuKy` `M`, `kyKKhai` `MM/YYYY` (as the schema notes say); a quarter is
   `kieuKy` `Q`, `kyKKhai` `Q/YYYY` with its first and last month (as S3); the first and last day as `DD/MM/YYYY`.
   `ngayLapTKhai` and `ngayKy` are the day of the download in Vietnam time, `YYYY-MM-DD` (`ngayKy` is an `xs:date`).
   The tax office, the signer and the line of business are empty. `NNT`: the org's tax code, name and, when it is set
   in Settings (#324), its address in `dchiNNT` as one line (#692). The address parts (`phuongXa`, district, province)
-  and the contacts stay empty: Crove holds the address as one line and no contacts. No `DLyThue` (tax agent) block.
+  and the contacts stay empty: Ludy holds the address as one line and no contacts. No `DLyThue` (tax agent) block.
 - **`CTieuTKhaiChinh`**: `ma_NganhNghe` `00` (ordinary business), `tieuMucHachToan` `1701` (domestic VAT), an empty
   `Header` ([09] to [11c]), then every indicator from [21] to [43], all numbers (the schema types them `xs:long`,
   `xs:nonNegativeInteger` for [22], [40a], [40] and [41], and `xs:boolean` for [21]; an empty number would fail it).
@@ -69,10 +69,10 @@ Root `HSoThueDTu` in GDT's namespace, `HSoKhaiThue id="ID_1"`, then:
 |---|---|
 | [21] no activity in the period | `0` (not ticked); the accountant ticks it |
 | [22] VAT carried forward from the previous period | The [43] of the return filed for the period before (#1400, below); 0 with a warning when none is marked filed. The accountant may edit it on the VAT screen (`?carried=<whole dong>`) |
-| [23], [24] purchases and their VAT | Crove: all purchase invoices of the period |
-| [23a], [24a] of which imports | 0 (import declarations are not in Crove) |
+| [23], [24] purchases and their VAT | Ludy: all purchase invoices of the period |
+| [23a], [24a] of which imports | 0 (import declarations are not in Ludy) |
 | [25] deductible input VAT | **0** by default; the accountant enters it. Optionally [24] (all input VAT), chosen per download with "Ghi chỉ tiêu [25] bằng [24]" on the VAT screen (`?deductInput=1`, recorded in the export's audit row); the accountant then reduces it by what may not be deducted (#692) |
-| [26] to [35] sales | Crove: `form01Indicators` (8% sales in [32] and [33] with 10%) |
+| [26] to [35] sales | Ludy: `form01Indicators` (8% sales in [32] and [33] with 10%) |
 | [36] = [35] - [25] | worked out, so equal to [35] while [25] is 0 |
 | [37], [38], [39a], [40b], [42] | 0 |
 | [40a], [41] | worked out from x = [36] - [22] + [37] - [38] - [39a]: [40a] = x when x >= 0, else [41] = -x |
@@ -84,12 +84,12 @@ values so the file obeys the form's formulas exactly. An amount beyond HTKK's 14
 ## Indicator [22] and the filed return (#1400)
 
 [22] of a return is the previous return's [43] (VAT still deductible, carried to the next period): a rule of the form
-itself (S2, row formulas). Crove keeps what was filed, so the next return can start from it.
+itself (S2, row formulas). Ludy keeps what was filed, so the next return can start from it.
 
-- **The filed record:** `crove_finance.vat_return_filed`, one appended row per mark, the latest row of a period its
+- **The filed record:** `ludy_finance.vat_return_filed`, one appended row per mark, the latest row of a period its
   state: `filed` with [22], [25] and [43] as filed (whole dong) and their source, or `withdrawn`. `entered`: typed or
   confirmed by the accountant on the VAT screen ("Đánh dấu đã nộp tờ khai"). `computed`: marked done from the tax
-  calendar, so Crove's own working ([22] from the return before, [25] the suggested deduction of #917, [43] by the
+  calendar, so Ludy's own working ([22] from the return before, [25] the suggested deduction of #917, [43] by the
   formulas of the file); the screen then says the figures were not taken from the filed return.
 - **The done mark hangs on it:** `finance.vat.return_mark` (owners and admins, and a chief accountant for the return's legal entity through `finance.vat.file`, #1508; R1, audited without the figures) appends
   the row and runs `kernel.tax_obligation.done` for `vat_return` in the same transaction; done false appends a
@@ -101,7 +101,7 @@ itself (S2, row formulas). Crove keeps what was filed, so the next return can st
   legal entity (#1923); no role updates or deletes a row. The record is kept with the books (the org purge never deletes it).
 - **Which return is the previous one:** the month, and the quarter when that month ends one, that end the day before
   the period starts; the same kind first. So 2026-07 looks for 2026-06, then 2026-Q2; 2026-Q3 looks for 2026-Q2, then
-  2026-06 (an org that changed its filing period, #318). Crove's reading, for the accountant to confirm (question 8).
+  2026-06 (an org that changed its filing period, #318). Ludy's reading, for the accountant to confirm (question 8).
 - **Where it shows:** `finance.vat.period` returns `carryForward` (the amount, the return it came from, the periods
   looked for) and `filed`; the VAT screen prefills [22] and says where it comes from, and the XML takes it unless the
   accountant edited it. The export's audit row records `carry_forward` (`previous`, `edited` or `none`), never the
@@ -125,18 +125,18 @@ itself (S2, row formulas). Crove keeps what was filed, so the next return can st
 
 1. Is form code 842, XML version 2.8.3 (Circular 80) what your HTKK 5.8.x writes for 01/GTGT of a period from 07/2026,
    and does eTax accept it for those periods? Or has your HTKK moved to a Circular 89 version (with [32b] and [34a])?
-2. How do you load the file: through HTKK, or by uploading it on eTax directly? Does either refuse `maDVu` `CROVE`
+2. How do you load the file: through HTKK, or by uploading it on eTax directly? Does either refuse `maDVu` `LUDY`
    (the software name) or the empty `ttinNhaCCapDVu`?
 3. Month periods: HTKK writes `kyKKhai` as `09/2026` or `9/2026`?
-4. [25] is 0 in the file by default, so the payable VAT ([36], [40]) counts no deduction until you enter it. Crove
+4. [25] is 0 in the file by default, so the payable VAT ([36], [40]) counts no deduction until you enter it. Ludy
    can already write [24] (all input VAT) in [25] when you tick the option before downloading (#692). Should that be
    the default?
-5. Which of [21], [23a]/[24a], [37], [38], [39a], [40b], [42] do your clients use, and from where should Crove
+5. Which of [21], [23a]/[24a], [37], [38], [39a], [40b], [42] do your clients use, and from where should Ludy
    take them later (import declarations for [23a]/[24a])? [22] now comes from the previous return marked filed (#1400).
 6. Does the file need the tax office (`maCQTNoiNop`) and the signer filled before HTKK or eTax takes it? The address is
    now written from Settings as one line in `dchiNNT` (#692); do HTKK or eTax also need the ward, district and
    province codes?
 7. Do you need the reduced-rate appendix (Decree 174/2025) in the same file, or do you prepare it in HTKK?
 8. [22] (#1400): when a client changes its filing period between two returns (monthly to quarterly or back), is [22]
-   of the first return of the new kind the [43] of the last return of the old kind, as Crove assumes? And when a
+   of the first return of the new kind the [43] of the last return of the old kind, as Ludy assumes? And when a
    supplementary return changes a period's [43], should the next [22] follow it?

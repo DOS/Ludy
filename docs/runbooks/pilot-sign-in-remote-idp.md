@@ -52,14 +52,14 @@ The owner's account at the provider is new here and empty. Which path depends on
 
 - **Nothing to keep in the pilot** (only test or smoke data): the owner signs in at the provider (step 6, item 5) and creates a fresh org. Nothing else to do.
 - **An org with data to keep**: the account that owns it must become the owner's provider identity. There is no Ludy command for that, and an invite cannot make an owner (it grants `admin`, `member` or `viewer`; only an owner promotes), so the old owner's account would be stuck behind a sign-in that no longer exists. The way that keeps every membership, role and audit row is to give the **existing** account row the new identity, once, **before** the owner's first DOS sign-in. It rewrites an account's identity key in the production database, so it needs the owner's separate, explicit approval, and the Platform PO runs it, never a code session:
-  1. Inputs: the old owner's account (its email in `crove_kernel.user_account`, the old `issuer` and `subject` read from the row) and input 11. The old pilot sign-in of that account stops working at the `UPDATE`; the API still names the bundled Supabase Auth until step 5, and nobody can reach the provider's identity here before that, so the check below cannot race a sign-in.
+  1. Inputs: the old owner's account (its email in `ludy_kernel.user_account`, the old `issuer` and `subject` read from the row) and input 11. The old pilot sign-in of that account stops working at the `UPDATE`; the API still names the bundled Supabase Auth until step 5, and nobody can reach the provider's identity here before that, so the check below cannot race a sign-in.
   2. On the database host, as the admin login, in one transaction (save the first `SELECT`'s output privately before the `UPDATE`: the rollback needs the old `issuer` and `subject`; the `UPDATE` writes no audit row, so the Platform PO also notes the change, with the account id and the time but no address, on #2704), check first that exactly one row matches and that no account exists for the new identity (an account created by an earlier sign-in would collide on `UNIQUE (issuer, subject)`; if one exists, stop and ask the Platform PO: it can only be an account made by an earlier sign-in, and removing it is a separate approval):
 
      ```sql
      BEGIN;
-     SELECT id, email, issuer, subject FROM crove_kernel.user_account WHERE lower(email) = lower('<old owner email>');  -- one row
-     SELECT count(*) FROM crove_kernel.user_account WHERE issuer = '<provider issuer>' AND subject = '<provider sub>';          -- 0
-     UPDATE crove_kernel.user_account SET issuer = '<provider issuer>', subject = '<provider sub>', email = '<provider email>'
+     SELECT id, email, issuer, subject FROM ludy_kernel.user_account WHERE lower(email) = lower('<old owner email>');  -- one row
+     SELECT count(*) FROM ludy_kernel.user_account WHERE issuer = '<provider issuer>' AND subject = '<provider sub>';          -- 0
+     UPDATE ludy_kernel.user_account SET issuer = '<provider issuer>', subject = '<provider sub>', email = '<provider email>'
        WHERE id = '<id from the first SELECT>' AND issuer = '<old issuer>' AND subject = '<old subject>';             -- UPDATE 1
      COMMIT;
      ```

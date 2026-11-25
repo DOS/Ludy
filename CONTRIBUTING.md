@@ -16,7 +16,7 @@ docker compose up -d db auth auth-grants mailpit   # or point .env at your own P
 pnpm db:migrate
 pnpm dev                                            # kernel on :8080, web app on :5173
 pnpm lint && pnpm typecheck && pnpm test            # unit tests
-CROVE_TEST_ADMIN_URL=postgres://postgres:...@localhost:5432/postgres pnpm test:db
+LUDY_TEST_ADMIN_URL=postgres://postgres:...@localhost:5432/postgres pnpm test:db
 ```
 
 `docker compose up --build` runs the full stack on http://localhost:8080 with no external service. See the [README](./README.md) for configuration.
@@ -27,7 +27,7 @@ CROVE_TEST_ADMIN_URL=postgres://postgres:...@localhost:5432/postgres pnpm test:d
 
 - **One write path.** Every state change is a command executed through `Runtime.execute()`. No other code writes tenant tables.
 - **Schema only via migrations** in `supabase/migrations/<14-digit UTC>_crove_<module>_<desc>.sql`: idempotent, never edit an applied file, never DDL at runtime, every function sets `search_path = pg_catalog, pg_temp`.
-- **Tenancy:** every tenant table has `org_id`, `PRIMARY KEY (org_id, id)` and RLS via `crove_kernel.apply_tenant_rls`.
+- **Tenancy:** every tenant table has `org_id`, `PRIMARY KEY (org_id, id)` and RLS via `ludy_kernel.apply_tenant_rls`.
 - **Money** is NUMERIC in SQL and a decimal string elsewhere; arithmetic through `decimal.js`. Never JS numbers for amounts.
 - **AI** calls only in `packages/agent`, through an OpenAI-compatible endpoint. AI output is tainted: deterministic checks decide, humans approve.
 - **Public repo:** no secrets, project refs, internal URLs or real customer data. gitleaks and the G1 scan run in CI and in the pre-commit hook.

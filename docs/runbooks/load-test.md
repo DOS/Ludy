@@ -4,13 +4,13 @@ Plan §13, Phase 1 exit criterion 7 asks for a load test with 100k parties in on
 
 ## Running it
 
-It needs a PostgreSQL 17 server and a superuser URL for it. The same server the database tests use works (`CROVE_TEST_ADMIN_URL`).
+It needs a PostgreSQL 17 server and a superuser URL for it. The same server the database tests use works (`LUDY_TEST_ADMIN_URL`).
 
 ```sh
-node apps/kernel/load/load-test.ts --admin-url "$CROVE_TEST_ADMIN_URL"
+node apps/kernel/load/load-test.ts --admin-url "$LUDY_TEST_ADMIN_URL"
 ```
 
-Point it at a server that is not production. The run creates a database named `crove_load_<time>`, migrates it, measures, and drops it (`--keep` leaves it for a look afterwards).
+Point it at a server that is not production. The run creates a database named `ludy_load_<time>`, migrates it, measures, and drops it (`--keep` leaves it for a look afterwards).
 
 | Flag | Default | What it sets |
 |---|---|---|
@@ -29,10 +29,10 @@ Exit codes: 0 every target met, 1 a target missed, 2 the run failed.
 
 - **R1 commands** through `Runtime.execute` with the session status check on, as the API runs them: `kernel.party.update` on the seeded parties and `kernel.file.ingest`. Target: p95 < 150 ms.
 - **List and search queries** over the parties: `finance.vendors.list` (all, and with a search term), `finance.customers.list`, `finance.search`. The plan sets no target; the report shows p95.
-- **Outbox lag.** One relay loop claims events as the worker does (`crove_kernel.outbox_claim`, 100 at a time) while `kernel.file.ingest` runs at `--rate` per second. The lag runs from the event's emit to its claim, both by the database clock: an event id is a UUIDv7 whose first 48 bits are its emit time. Target: p95 < 2 s.
+- **Outbox lag.** One relay loop claims events as the worker does (`ludy_kernel.outbox_claim`, 100 at a time) while `kernel.file.ingest` runs at `--rate` per second. The lag runs from the event's emit to its claim, both by the database clock: an event id is a UUIDv7 whose first 48 bits are its emit time. Target: p95 < 2 s.
 - **Relay capacity.** A backlog of events is drained by the one relay as fast as it can. Target: at least 50 events per second.
 - **Context guard cost** (plan §4.5 item 1, gate row T10). While the commands run, a second connection counts `pg_locks` every 100 ms. The guard reads `pg_locks` on every context entry, and #105 measured that at about 13 µs plus about 0.27 µs per lock held server-wide, so the report gives the cost those lock counts imply. No target: the plan asks for the re-check.
-- **Back-pressure** (plan §4.9, built in #894, measured since #1717). pg-boss runs on the throwaway database as the worker login, with the worker's own `PausableWork` and `checkBackPressure` (`apps/kernel/src/back-pressure.ts`) checking every `--check-seconds`. One queue of each kind the worker pauses is worked (agent dispatch, bulk mail, archive write, retention), plus `kernel-notify`, which a person waits for. The relay then stops while `kernel.file.ingest` keeps running at `--rate`, so the outbox lag climbs past `--pause-seconds`. Once the queues pause, one job goes to each; after 4 s (longer than pg-boss's 2 s polling) the relay runs again, the lag falls, and the check resumes the queues. The lag is read every 100 ms and by each check. It is `crove_kernel.outbox_lag_seconds()`, which since #1714 ages only the rows the relay may claim; no relay switch is engaged in the run, so it ages every pending row. Targets: the queues pause within one check plus 1 s of the lag passing the threshold and hold all four jobs; they resume within one check plus 1 s of the lag falling to half the threshold and run all four; `kernel-notify` runs during the pause and the commands keep p95 < 150 ms with no failure. `load-test.db.test.ts` runs this at a 2 s threshold checked every second and fails when back-pressure does not engage.
+- **Back-pressure** (plan §4.9, built in #894, measured since #1717). pg-boss runs on the throwaway database as the worker login, with the worker's own `PausableWork` and `checkBackPressure` (`apps/kernel/src/back-pressure.ts`) checking every `--check-seconds`. One queue of each kind the worker pauses is worked (agent dispatch, bulk mail, archive write, retention), plus `kernel-notify`, which a person waits for. The relay then stops while `kernel.file.ingest` keeps running at `--rate`, so the outbox lag climbs past `--pause-seconds`. Once the queues pause, one job goes to each; after 4 s (longer than pg-boss's 2 s polling) the relay runs again, the lag falls, and the check resumes the queues. The lag is read every 100 ms and by each check. It is `ludy_kernel.outbox_lag_seconds()`, which since #1714 ages only the rows the relay may claim; no relay switch is engaged in the run, so it ages every pending row. Targets: the queues pause within one check plus 1 s of the lag passing the threshold and hold all four jobs; they resume within one check plus 1 s of the lag falling to half the threshold and run all four; `kernel-notify` runs during the pause and the commands keep p95 < 150 ms with no failure. `load-test.db.test.ts` runs this at a 2 s threshold checked every second and fails when back-pressure does not engage.
 
 The relay here claims and drops. The worker also hands each claimed event to its job queue, so the numbers are the database's share of the lag and of the throughput.
 

@@ -24,15 +24,15 @@ Until an environment has its secrets, a run still builds and pushes the release 
 
 ## What a deploy does
 
-The workflow builds `ghcr.io/<owner>/<repo>` (the kernel image, `Dockerfile`, with the release commit as its `CROVE_BUILD`) and `ghcr.io/<owner>/<repo>-extract` (`apps/extract/Dockerfile`) and `ghcr.io/<owner>/<repo>-media` (`apps/media/Dockerfile`, the sandbox that measures meeting recordings, #2988) from the release commit, tags them with the release name and passes them on **by digest**, so the host runs exactly what was built. It uploads `deploy.sh` and the release's `docker-compose.yml` to the host and runs, in this order:
+The workflow builds `ghcr.io/<owner>/<repo>` (the kernel image, `Dockerfile`, with the release commit as its `LUDY_BUILD`) and `ghcr.io/<owner>/<repo>-extract` (`apps/extract/Dockerfile`) and `ghcr.io/<owner>/<repo>-media` (`apps/media/Dockerfile`, the sandbox that measures meeting recordings, #2988) from the release commit, tags them with the release name and passes them on **by digest**, so the host runs exactly what was built. It uploads `deploy.sh` and the release's `docker-compose.yml` to the host and runs, in this order:
 
 1. Pull the three images by digest (a rollback to a release staged before `crove-media` was published has no media image to pull and pins none). The registry login uses the run's read-only token, sent over stdin into a throwaway Docker config that is deleted right after the pull: no credential stays on the host.
 2. Check that the compose files load with the env file (`docker compose config`). Nothing has changed yet.
 3. Start the database, then two production steps on the host ([below](#production-steps-in-the-deploy-the-context-token-key-and-the-plain-idempotency-rows)): make the context token key when the env file has none, and print the count of plain idempotency rows. Then run `migrate` with the new image (the migrations, the context token key, then the DDL watch's event triggers, [alerts.md](alerts.md)). If it fails, the services are left as they were and the run exits 1: the old release keeps running.
 4. Start Supabase Auth (it applies its own migrations before it is healthy) and run `auth-grants`.
 5. Start the other services (`crove-extract`, `crove-media`, Mailpit, anything from `compose.host.yml`).
-6. Roll the app. With separate `worker` and `api` services, the **worker first**: it must still be running after `CROVE_WORKER_SETTLE` seconds (15), then the API. With the all-in-one `crove` service (the default `docker-compose.yml`, for a laptop), that one container; the pilot runs the separate services ([The pilot layout](#the-pilot-layout)). Toward an older build (usually a rollback, or the recovery after a failed deploy; also a deploy of an older tag), the **API first**, then the worker, still checked the same way, so a newer API does not serve beside an older worker (plan §3.5; its `/readyz` waits while a live worker runs an older build, #1952, #1965). Older is by the build time the image carries (`CROVE_BUILD_TIME`, recorded as `BUILD_EPOCH` in the release's `release.env`); between releases without one (images from before #1952), by when each was deployed. So a second rollback, back to the newer build, rolls the worker first again.
-7. Wait for `/readyz` (`CROVE_READY_TIMEOUT`, 300 seconds): it answers 200 only when every migration in the image is in the ledger and the session check can read Supabase Auth's tables.
+6. Roll the app. With separate `worker` and `api` services, the **worker first**: it must still be running after `LUDY_WORKER_SETTLE` seconds (15), then the API. With the all-in-one `crove` service (the default `docker-compose.yml`, for a laptop), that one container; the pilot runs the separate services ([The pilot layout](#the-pilot-layout)). Toward an older build (usually a rollback, or the recovery after a failed deploy; also a deploy of an older tag), the **API first**, then the worker, still checked the same way, so a newer API does not serve beside an older worker (plan §3.5; its `/readyz` waits while a live worker runs an older build, #1952, #1965). Older is by the build time the image carries (`LUDY_BUILD_TIME`, recorded as `BUILD_EPOCH` in the release's `release.env`); between releases without one (images from before #1952), by when each was deployed. So a second rollback, back to the newer build, rolls the worker first again.
+7. Wait for `/readyz` (`LUDY_READY_TIMEOUT`, 300 seconds): it answers 200 only when every migration in the image is in the ledger and the session check can read Supabase Auth's tables.
 8. Start the prober (when its profile is on), then run the smoke test on the loopback port.
 9. On success, record the release as current. On a failure in steps 4 to 8, deploy the release that ran before again (same steps without the migration), run the smoke test on it, and exit 1.
 
@@ -46,16 +46,16 @@ Two security changes wait for a step on the pilot host (#3282, owner decision 20
 
 **The context token key** ([context-token-key.md](context-token-key.md) section 1 is the same step by hand).
 
-- If the env file (`.env`, or `DEPLOY_ENV_FILE`) has no non-empty `CROVE_CONTEXT_TOKEN_KEY`, the deploy makes one with `openssl rand -base64 32` and writes it into that line (or adds the line). It reads the file like a dotenv file: the last assignment wins, `export` and spaces around `=` (or the colon form) are fine, `""`, `''` (with or without a comment after them), an empty value and a value that is only a comment are empty, a commented-out line and `CROVE_CONTEXT_TOKEN_KEY_FILE` are no assignment. A value it cannot judge counts as a key.
+- If the env file (`.env`, or `DEPLOY_ENV_FILE`) has no non-empty `LUDY_CONTEXT_TOKEN_KEY`, the deploy makes one with `openssl rand -base64 32` and writes it into that line (or adds the line). It reads the file like a dotenv file: the last assignment wins, `export` and spaces around `=` (or the colon form) are fine, `""`, `''` (with or without a comment after them), an empty value and a value that is only a comment are empty, a commented-out line and `LUDY_CONTEXT_TOKEN_KEY_FILE` are no assignment. A value it cannot judge counts as a key.
 - **An existing key is never replaced.** A deploy with a key logs `context token key present` and changes nothing. Rotation stays a manual step ([context-token-key.md](context-token-key.md) section 2).
-- The key is never printed, logged or passed as a command argument, and no other process gets it in its environment: it is held in one shell variable, written with the shell's own `printf` into a temporary copy of the env file (mode 600, in `.deploy/`, removed on every exit) and from there into the env file itself with `cat >`, which keeps the file's inode, owner and mode. The new copy is checked first (every line of the old file, the key line, nothing cut short by a full disk) and the old file is kept in a second mode 600 copy, put back if the overwrite fails. A `CROVE_CONTEXT_TOKEN_KEY` in the SSH session's environment is ignored: the env file is the one source. The log says only `context token key generated`, and then names the person step below.
+- The key is never printed, logged or passed as a command argument, and no other process gets it in its environment: it is held in one shell variable, written with the shell's own `printf` into a temporary copy of the env file (mode 600, in `.deploy/`, removed on every exit) and from there into the env file itself with `cat >`, which keeps the file's inode, owner and mode. The new copy is checked first (every line of the old file, the key line, nothing cut short by a full disk) and the old file is kept in a second mode 600 copy, put back if the overwrite fails. A `LUDY_CONTEXT_TOKEN_KEY` in the SSH session's environment is ignored: the env file is the one source. The log says only `context token key generated`, and then names the person step below.
 - Before anything is pulled, a deploy whose env file has no key stops with exit 2 if `openssl` is missing or the deploy user cannot write the file. A key that cannot be made or written later stops the deploy before `migrate` (exit 1, the services untouched; the env file is as it was, or, if its rewrite failed halfway, the file is put back from the copy; only if that fails too, or the deploy is stopped by a signal during the overwrite, do both copies stay in `.deploy/` and the log names them).
 - `migrate` then installs the key (its log says `context token key installed`; a later deploy says `context token key unchanged`), and the app's boot check confirms that the database holds the same key. A rollback (`deploy.sh rollback`, or the recovery after a failed deploy) leaves the key in the env file: with the release from before step 2 it is harmless, as [context-token-key.md](context-token-key.md) explains.
 - **Person step, after the first deploy that logs `context token key generated`** (the owner, or whoever holds the secret store): copy the value from the env file on the host into the secret store. Open the file in an editor; do not `cat` it into a shared terminal or a ticket. Until it is in the secret store, a restore of the host has no copy of it. Check the deploy log: it must show `context token key generated` once, then `context token key present` on every later deploy.
 
 **The plain idempotency rows** (#1750; the count that #1882 waits for).
 
-- The deploy prints `plain idempotency rows: <n>`: the result of the read-only `SELECT count(*) FROM crove_kernel.idempotency_key WHERE NOT starts_with(request_sha256, 'k1:')`. It runs as the database superuser inside the `db` container (the table is under row-level security, so only a role that bypasses it counts every org), in a session that is read only and has a 30 second statement timeout. It changes nothing.
+- The deploy prints `plain idempotency rows: <n>`: the result of the read-only `SELECT count(*) FROM ludy_kernel.idempotency_key WHERE NOT starts_with(request_sha256, 'k1:')`. It runs as the database superuser inside the `db` container (the table is under row-level security, so only a role that bypasses it counts every org), in a session that is read only and has a 30 second statement timeout. It changes nothing.
 - **It never fails the deploy.** A count that did not run (the table is not there yet on a new host, the database refused, the answer was not a number) logs `plain idempotency rows: unknown (the count did not run; the deploy goes on)` with the start of the error, and the deploy goes on. The count is taken before this release's `migrate`, so it is the state the previous release left.
 - Reading it: idempotency rows live 7 days, so the count falls to 0 within a week of a release that keys every row (#1742). **#1882 merges only after a deploy log shows `plain idempotency rows: 0`**; a number above 0 means the retention purge has not removed the old rows yet: do not merge, and deploy again later. Only `deploy` prints the count, a rollback does not; to get a fresh one, deploy the release that runs again.
 - Nothing to roll back: the count changes nothing.
@@ -80,7 +80,7 @@ Opt-in. A pilot that signs in at a remote identity provider (Supabase Auth, [pil
 - Removes every assignment of those names and of `AUTH_SIGNUP_POLICY`, `AUTH_SIGNUP_ALLOWED_DOMAINS` and `PROBER_AUTH_URL`. The optional settings the environment does not define leave the file too: the environment is the truth.
 - Leaves every other line alone, `AUTH_JWT_SECRET` and comments included. It writes into the file itself (the inode, owner and mode stay), after the migration and right before the services are recreated, so the worker, the API and the prober start with the new settings.
 - Before writing, it keeps a dated copy next to the file (`<env file>.bak-<UTC time>-<random>`, mode 600; it holds the old secrets, so clean it up when it is no longer needed). A deploy that finds the file already holding exactly these settings writes nothing and makes no copy.
-- Keeps the newest `CROVE_KEEP_ENV_BACKUPS` (default 5) dated copies and the one a rollback needs (so up to one more), and removes the rest. Files next to the env file named `<env file>.bak-<UTC time>Z-<random>` are taken for these copies: do not name a copy of your own that way.
+- Keeps the newest `LUDY_KEEP_ENV_BACKUPS` (default 5) dated copies and the one a rollback needs (so up to one more), and removes the rest. Files next to the env file named `<env file>.bak-<UTC time>Z-<random>` are taken for these copies: do not name a copy of your own that way.
 - Before anything is pulled it also checks that the env file and its directory are writable by the deploy user (exit 2 if not), and that the provider answers: `AUTH_JWKS_URL` returns 200 with a JSON Web Key Set that holds at least one EC or RSA key, and `PUBLIC_AUTH_URL/health`, asked with the publishable key (in a header file, not as a command line argument), returns 200 with GoTrue's own answer (the page of this API, from an Auth URL that is the API's address by mistake, is refused). The probe speaks https only, follows no redirect and ignores the host's `~/.curlrc` (`curl -q`). Well-formed but wrong values (the project URL without `/auth/v1`, a typo in the keys path) stop the deploy there with exit 1 and nothing changed, instead of booting and locking everyone out. The settings file the workflow uploads (`<dir>/.deploy/incoming/<run>/auth-settings.env`, a regular file that is not a link) is removed from the host as soon as it has been read, valid or not; a file anywhere else, a link or a path with `..` named with `--auth-settings` is only read, and the env file or the compose file is refused.
 
 **Checks before the host is touched.** The workflow and `deploy.sh` (again, on the host) refuse the deploy, with exit 2 and the name of the setting (never its value), unless: every address is `https` with a host name (no IP address, `localhost` or `*.localhost`), a plain path and no query, fragment or user; the issuer and the JWKS address have the same origin (`:443` counts as the default port); the publishable key is 16 to 2048 characters of letters, digits, `.`, `-` and `_`; every provider id is `[a-z][a-z0-9_]{0,31}` (at most 12; commas or spaces between them); every allowed entry is an address or `@domain` (at most 200 entries of at most 254 characters; commas or spaces between them, like the kernel); the two hosted-login addresses come together; and the button's words are at most 40 characters (the kernel's limit) with no quote, backslash, `$`, backtick, `#`, `=` or other character a shell or a dotenv file could act on. A value with a line break, or a name this list does not have, is refused too, so a value cannot add a line of its own. The settings are never given to a process as an argument, on the runner or on the host (the file is checked with shell builtins only), with one exception: the probe passes the two public addresses `AUTH_JWKS_URL` and `PUBLIC_AUTH_URL` to curl, and the publishable key goes in a header file. The allowed addresses (the secret) never leave the file and the shell: the file is mode 600 in the release's private incoming directory, which the run removes at its end, and the host deletes it as soon as it has been read, valid or not (the uploaded file only). Because the log of a worker that refuses a bad entry would name it, and a deploy log may be public, a deploy whose env file sets `AUTH_ALLOWED_EMAILS` does not print the worker's log when it fails to stay up (read it on the host).
@@ -91,24 +91,24 @@ Opt-in. A pilot that signs in at a remote identity provider (Supabase Auth, [pil
 
 ## Module settings in the deploy (#3531)
 
-Opt-in. Because no agent has an SSH shell on the pilot host, the deploy workflow can also update `CROVE_MODULES` in the host's env file (used for enabling modules such as `sign` via [pilot-enable-sign.md](pilot-enable-sign.md), `hr` via [pilot-enable-hr.md](pilot-enable-hr.md), `projects` + `notes` via [pilot-enable-projects-notes.md](pilot-enable-projects-notes.md), and `meetings` via [pilot-enable-meetings.md](pilot-enable-meetings.md)). Without the opt-in the host env file's `CROVE_MODULES` line is never edited.
+Opt-in. Because no agent has an SSH shell on the pilot host, the deploy workflow can also update `LUDY_MODULES` in the host's env file (used for enabling modules such as `sign` via [pilot-enable-sign.md](pilot-enable-sign.md), `hr` via [pilot-enable-hr.md](pilot-enable-hr.md), `projects` + `notes` via [pilot-enable-projects-notes.md](pilot-enable-projects-notes.md), and `meetings` via [pilot-enable-meetings.md](pilot-enable-meetings.md)). Without the opt-in the host env file's `LUDY_MODULES` line is never edited.
 
 **Define both variables in the environment itself (`pilot`), never at repository or organization level**, so one environment's modules do not reach another environment:
 
 | Name | Kind | Value |
 |---|---|---|
 | `DEPLOY_MODULES_ENVIRONMENT` | variable | the opt-in: the name of the environment (`pilot`) |
-| `DEPLOY_LUDY_MODULES` (or legacy `DEPLOY_CROVE_MODULES`) | variable | comma-separated module names to write as `LUDY_MODULES` (for example `finance,crm,social,sign`) |
+| `DEPLOY_LUDY_MODULES` (or legacy `DEPLOY_LUDY_MODULES`) | variable | comma-separated module names to write as `LUDY_MODULES` (for example `finance,crm,social,sign`) |
 
 Prefer `DEPLOY_LUDY_MODULES`; `.github/workflows/deploy.yml` keeps reading `DEPLOY_CROVE_MODULES` as a fallback until the pilot cuts over per [brand-phase3-pilot-cutover.md](brand-phase3-pilot-cutover.md).
 
-If `DEPLOY_MODULES_ENVIRONMENT` does not equal the target environment, `DEPLOY_CROVE_MODULES` is ignored with a notice and the host env file is left untouched. If `DEPLOY_MODULES_ENVIRONMENT` matches the environment while `DEPLOY_CROVE_MODULES` is empty or multiline, the workflow fails fast before connecting to the host.
+If `DEPLOY_MODULES_ENVIRONMENT` does not equal the target environment, `DEPLOY_LUDY_MODULES` is ignored with a notice and the host env file is left untouched. If `DEPLOY_MODULES_ENVIRONMENT` matches the environment while `DEPLOY_LUDY_MODULES` is empty or multiline, the workflow fails fast before connecting to the host.
 
-**Validation and rewrite.** Before any image is pulled or pushed to the host, the workflow runs `bash tools/deploy/deploy.sh check-modules "$DEPLOY_CROVE_MODULES"`, and `deploy.sh deploy --modules <list>` validates it again on the host with shell builtins only: 1 to 10 comma-separated lowercase names from `AVAILABLE_MODULES` (`kernel`, `finance`, `social`, `ads`, `crm`, `notes`, `hr`, `meetings`, `projects`, `sign`), with no duplicates, spaces, quotes or shell metacharacters. On the host (after migrations succeed and right before rolling the services):
+**Validation and rewrite.** Before any image is pulled or pushed to the host, the workflow runs `bash tools/deploy/deploy.sh check-modules "$DEPLOY_LUDY_MODULES"`, and `deploy.sh deploy --modules <list>` validates it again on the host with shell builtins only: 1 to 10 comma-separated lowercase names from `AVAILABLE_MODULES` (`kernel`, `finance`, `social`, `ads`, `crm`, `notes`, `hr`, `meetings`, `projects`, `sign`), with no duplicates, spaces, quotes or shell metacharacters. On the host (after migrations succeed and right before rolling the services):
 
-- `deploy.sh` rewrites `CROVE_MODULES=<list>` into the env file (replacing the existing assignment, removing any duplicate `CROVE_MODULES` lines, or appending the line if absent), while keeping all other lines, comments, CRLF line endings, inode, owner and mode 600.
-- If the env file already holds the exact `CROVE_MODULES=<list>` line (with no duplicates), nothing is written and no backup is made.
-- When either `--auth-settings` or `--modules` changes the env file (or both are passed together), `deploy.sh` takes **one** dated pre-deploy backup (`<env file>.bak-<UTC time>-<random>`, mode 600), records the post-edit digest in `.deploy/env-backup`, and prunes older copies with `CROVE_KEEP_ENV_BACKUPS`.
+- `deploy.sh` rewrites `LUDY_MODULES=<list>` into the env file (replacing the existing assignment, removing any duplicate `LUDY_MODULES` lines, or appending the line if absent), while keeping all other lines, comments, CRLF line endings, inode, owner and mode 600.
+- If the env file already holds the exact `LUDY_MODULES=<list>` line (with no duplicates), nothing is written and no backup is made.
+- When either `--auth-settings` or `--modules` changes the env file (or both are passed together), `deploy.sh` takes **one** dated pre-deploy backup (`<env file>.bak-<UTC time>-<random>`, mode 600), records the post-edit digest in `.deploy/env-backup`, and prunes older copies with `LUDY_KEEP_ENV_BACKUPS`.
 
 **`/api/config` check and rollback.** When `--modules` is given (and on the workflow's public smoke test via `SMOKE_EXPECT_MODULES`), `deploy.sh smoke` inspects `/api/config`'s `"modules"` JSON array and demands the exact set `{kernel}` union the given modules (`kernel` is always active in the runtime). If `/api/config` reports any missing or extra module, the smoke check fails and triggers automatic rollback:
 
@@ -160,15 +160,15 @@ A rollback restores the **images and compose files** of the previous release. It
 
 The host is one Linux server with Docker Engine and the compose plugin **v2.24 or newer** (the deploy uses `!reset`), plus bash, curl and tar.
 
-1. Create a deploy user (for example `crove-deploy`) in the `docker` group. Membership of `docker` is equivalent to root on that machine, so this user and its key are as sensitive as root.
-2. Create an SSH key pair for the workflow (`ssh-keygen -t ed25519 -N '' -f deploy_key`). Put the public key in the deploy user's `~/.ssh/authorized_keys` with the `restrict` option (no port, agent or X11 forwarding, no terminal): `restrict ssh-ed25519 AAAA... crove-deploy`.
-3. Create the stack directory, owned by the deploy user, mode 700: `/opt/crove` by default (`DEPLOY_DIR`).
-4. Write the env file there as `.env` (or at `DEPLOY_ENV_FILE`), mode 600: start from `.env.example`, change every secret, and set at least `PUBLIC_URL` (the https address), `AUTH_AUTOCONFIRM=false` with a real SMTP server, `EXPORT_ENCRYPTION_KEY`, `BACKUP_ENCRYPTION_KEY`, `TRUSTED_PROXY_HOPS=1` behind the reverse proxy, `CROVE_MODULES=finance` and the `COMPOSE_FILE` of [The pilot layout](#the-pilot-layout). The pilot readiness checklist (M1-8, [pilot-readiness.md](pilot-readiness.md)) lists the rest, and `pnpm pilot:check` fails the settings it forbids.
-5. Optional: `compose.host.yml` in the same directory (for example, to drop Mailpit's loopback port, which the default compose file publishes for local use: `services: { mailpit: { ports: !reset [] } }`) for local changes the release files must not overwrite (a reverse proxy service, extra volumes; the split `api` and `worker` have a file of their own, below). Services it adds that run the Ludy images use `image: ${CROVE_IMAGE}` and `${CROVE_EXTRACT_IMAGE}`, which the deploy sets to the release's digests (and which a plain `docker compose` there does not know: export them from `releases/<current>/release.env`, `IMAGE=` and `EXTRACT_IMAGE=`, first). `COMPOSE_PROFILES=prober` in the env file turns the prober on.
+1. Create a deploy user (for example `ludy-deploy`) in the `docker` group. Membership of `docker` is equivalent to root on that machine, so this user and its key are as sensitive as root.
+2. Create an SSH key pair for the workflow (`ssh-keygen -t ed25519 -N '' -f deploy_key`). Put the public key in the deploy user's `~/.ssh/authorized_keys` with the `restrict` option (no port, agent or X11 forwarding, no terminal): `restrict ssh-ed25519 AAAA... ludy-deploy`.
+3. Create the stack directory, owned by the deploy user, mode 700: `/opt/ludy` by default (`DEPLOY_DIR`).
+4. Write the env file there as `.env` (or at `DEPLOY_ENV_FILE`), mode 600: start from `.env.example`, change every secret, and set at least `PUBLIC_URL` (the https address), `AUTH_AUTOCONFIRM=false` with a real SMTP server, `EXPORT_ENCRYPTION_KEY`, `BACKUP_ENCRYPTION_KEY`, `TRUSTED_PROXY_HOPS=1` behind the reverse proxy, `LUDY_MODULES=finance` and the `COMPOSE_FILE` of [The pilot layout](#the-pilot-layout). The pilot readiness checklist (M1-8, [pilot-readiness.md](pilot-readiness.md)) lists the rest, and `pnpm pilot:check` fails the settings it forbids.
+5. Optional: `compose.host.yml` in the same directory (for example, to drop Mailpit's loopback port, which the default compose file publishes for local use: `services: { mailpit: { ports: !reset [] } }`) for local changes the release files must not overwrite (a reverse proxy service, extra volumes; the split `api` and `worker` have a file of their own, below). Services it adds that run the Ludy images use `image: ${LUDY_IMAGE}` and `${LUDY_EXTRACT_IMAGE}`, which the deploy sets to the release's digests (and which a plain `docker compose` there does not know: export them from `releases/<current>/release.env`, `IMAGE=` and `EXTRACT_IMAGE=`, first). `COMPOSE_PROFILES=prober` in the env file turns the prober on.
 6. Put a TLS reverse proxy in front of `127.0.0.1:${PORT}` (the compose file publishes the port on loopback only). `tools/deploy/caddy/` holds one for this layout (a `compose.host.yml` and a `Caddyfile`); the whole server setup, from a fresh machine to the first deploy, is in [provision-pilot.md](provision-pilot.md).
 7. Read the host key for the workflow from a trusted session on the server (`ssh-keyscan -t ed25519 localhost` on the host itself, then replace `localhost` with the address the runner uses; for a port other than 22 the line starts with `[address]:port`). Do not take it from a scan over the network you are trying to protect.
 
-The first deploy creates `releases/`, `.deploy/` and the active compose files. After it, plain `docker compose` in the stack directory sees the same stack: `docker-compose.yml` is the running release's file and `docker-compose.override.yml` pins its images. With a `compose.host.yml`, add `COMPOSE_FILE=docker-compose.yml:docker-compose.override.yml:compose.host.yml` (with the pilot's `compose.pilot.yml`, [below](#the-pilot-layout), in the order given there) to the env file so that plain `docker compose` includes it too (the deploy passes the files itself). The nightly backup ([backup-and-restore.md](backup-and-restore.md)) runs `tools/backup` from a checkout with `CROVE_DIR` set to this directory.
+The first deploy creates `releases/`, `.deploy/` and the active compose files. After it, plain `docker compose` in the stack directory sees the same stack: `docker-compose.yml` is the running release's file and `docker-compose.override.yml` pins its images. With a `compose.host.yml`, add `COMPOSE_FILE=docker-compose.yml:docker-compose.override.yml:compose.host.yml` (with the pilot's `compose.pilot.yml`, [below](#the-pilot-layout), in the order given there) to the env file so that plain `docker compose` includes it too (the deploy passes the files itself). The nightly backup ([backup-and-restore.md](backup-and-restore.md)) runs `tools/backup` from a checkout with `LUDY_DIR` set to this directory.
 
 ## The pilot layout
 
@@ -177,27 +177,27 @@ The first deploy creates `releases/`, `.deploy/` and the active compose files. A
 | | Laptop (`docker compose up`) | Pilot |
 |---|---|---|
 | Processes | one `crove` container, role `all` | `api` (HTTP edge) and `worker` (outbox, jobs, archive, extraction), same image |
-| Database login of the API | `crove_app` and `crove_worker` | `crove_app` only: no `WORKER_DATABASE_URL`, no `EXTRACT_URL`, not on the `extract` network |
-| Modules | every module | `CROVE_MODULES=finance` (kernel is always on) |
+| Database login of the API | `ludy_app` and `ludy_worker` | `ludy_app` only: no `WORKER_DATABASE_URL`, no `EXTRACT_URL`, not on the `extract` network |
+| Modules | every module | `LUDY_MODULES=finance` (kernel is always on) |
 | Prober | asks `crove` | asks `api` |
 
-`tools/deploy/compose.pilot.yml` makes the pilot layout. It extends the release's `crove` service, so every setting of `docker-compose.yml` reaches both services and nothing is copied; it moves `crove` behind the `all-in-one` profile and defaults `CROVE_MODULES` to `finance` for the API, the worker and the prober. Nothing in `docker-compose.yml` changes, so the laptop layout needs no new setting.
+`tools/deploy/compose.pilot.yml` makes the pilot layout. It extends the release's `crove` service, so every setting of `docker-compose.yml` reaches both services and nothing is copied; it moves `crove` behind the `all-in-one` profile and defaults `LUDY_MODULES` to `finance` for the API, the worker and the prober. Nothing in `docker-compose.yml` changes, so the laptop layout needs no new setting.
 
 1. Nothing to copy: the file ships inside every release. The deploy workflow uploads `tools/deploy/compose.pilot.yml` next to the release's `docker-compose.yml`, and `deploy.sh` stages it in the release directory and makes it the host's active copy when it activates the release, so it is always the one that matches that release's `docker-compose.yml` (no host copy to keep in step, none to forget). Do not edit the host's copy: the next release replaces it, and `deploy.sh` says so in its log when the host's copy matches no release it staged (keep host settings in `compose.host.yml`). A release from before it existed (a rollback to one) keeps the host's copy.
-2. In the env file set `CROVE_MODULES=finance` and list the file right after `docker-compose.yml`, before the pins: `COMPOSE_FILE=docker-compose.yml:compose.pilot.yml:docker-compose.override.yml:compose.host.yml`. That line is the host's choice of layout: `deploy.sh` passes `compose.pilot.yml` to every compose call, and pins `api` and `worker`, exactly when `COMPOSE_FILE` lists it, in that order (the file extends the release's `crove`, so the release's image pins must come after it). Take it out of `COMPOSE_FILE` to go back to one container (see below); the copy on the host then stays, unused.
-   `deploy.sh` stops with exit 2, before it pulls anything, when `COMPOSE_FILE` names `compose.pilot.yml` and neither the release nor the host has the file; without that check a missing file would silently roll the all-in-one `crove`. The kernel guards the same line twice: it refuses to start the `all` role on a public `PUBLIC_URL` unless `CROVE_ALLOW_ALL_IN_ONE=true` (a deliberate opt-in for a self-hoster who accepts it; `pnpm pilot:check` fails it, and the laptop on `localhost` needs none), and it refuses to start the `api` role on a public `PUBLIC_URL` when `WORKER_DATABASE_URL` is set, so keeping the worker's login out of the API does not rest on how the container was composed (compose 2.24 or newer applying `!reset` under `extends`, a host file, an `env_file`).
+2. In the env file set `LUDY_MODULES=finance` and list the file right after `docker-compose.yml`, before the pins: `COMPOSE_FILE=docker-compose.yml:compose.pilot.yml:docker-compose.override.yml:compose.host.yml`. That line is the host's choice of layout: `deploy.sh` passes `compose.pilot.yml` to every compose call, and pins `api` and `worker`, exactly when `COMPOSE_FILE` lists it, in that order (the file extends the release's `crove`, so the release's image pins must come after it). Take it out of `COMPOSE_FILE` to go back to one container (see below); the copy on the host then stays, unused.
+   `deploy.sh` stops with exit 2, before it pulls anything, when `COMPOSE_FILE` names `compose.pilot.yml` and neither the release nor the host has the file; without that check a missing file would silently roll the all-in-one `crove`. The kernel guards the same line twice: it refuses to start the `all` role on a public `PUBLIC_URL` unless `LUDY_ALLOW_ALL_IN_ONE=true` (a deliberate opt-in for a self-hoster who accepts it; `pnpm pilot:check` fails it, and the laptop on `localhost` needs none), and it refuses to start the `api` role on a public `PUBLIC_URL` when `WORKER_DATABASE_URL` is set, so keeping the worker's login out of the API does not rest on how the container was composed (compose 2.24 or newer applying `!reset` under `extends`, a host file, an `env_file`).
 3. Never put `all-in-one` or `*` in `COMPOSE_PROFILES`: that starts `crove` beside them, and `pnpm pilot:check` fails it (the kernel refuses it on a public `PUBLIC_URL` too, without the opt-in above).
-4. On a host that already ran the all-in-one `crove` container, `deploy.sh` removes that container (`docker compose rm --stop --force crove`) before it rolls the worker and the API: left running, it would keep `127.0.0.1:${PORT}` so the new `api` could not bind it, and run the worker's jobs beside the new worker. The database volume is untouched. Do the same by hand (in `/opt/crove`) if you start the layout with plain `docker compose`.
-5. In the pilot layout `deploy.sh` pins the release's image for `api` and `worker` in the generated `docker-compose.override.yml`, as it does for `crove`, so a plain `docker compose` in `/opt/crove` (a manual `up`, `exec`, `logs`, the restore script) runs the deployed digest. The pins follow the layout at the moment a release is activated, whatever it was staged under: going back to one container takes them out of the active override (and out of a release staged with them), so a bare `api` or `worker` is never defined, nor rolled, from a leftover pin.
+4. On a host that already ran the all-in-one `crove` container, `deploy.sh` removes that container (`docker compose rm --stop --force crove`) before it rolls the worker and the API: left running, it would keep `127.0.0.1:${PORT}` so the new `api` could not bind it, and run the worker's jobs beside the new worker. The database volume is untouched. Do the same by hand (in `/opt/ludy`) if you start the layout with plain `docker compose`.
+5. In the pilot layout `deploy.sh` pins the release's image for `api` and `worker` in the generated `docker-compose.override.yml`, as it does for `crove`, so a plain `docker compose` in `/opt/ludy` (a manual `up`, `exec`, `logs`, the restore script) runs the deployed digest. The pins follow the layout at the moment a release is activated, whatever it was staged under: going back to one container takes them out of the active override (and out of a release staged with them), so a bare `api` or `worker` is never defined, nor rolled, from a leftover pin.
 6. Check, once, after the first deploy:
 
    ```bash
    docker compose ps --services                                    # api, worker, ... and no crove
    docker compose exec api printenv | cut -d= -f1 | grep -c '^WORKER_DATABASE_URL$'   # 0
-   docker compose exec worker printenv | cut -d= -f1 | grep -c '^CROVE_MODULES$'      # 1
+   docker compose exec worker printenv | cut -d= -f1 | grep -c '^LUDY_MODULES$'      # 1
    ```
 
-A deployment without docker compose (Kubernetes, systemd) runs the same two roles from the one image (`api` and `worker` as the container command) and gives the worker, and only the worker, `WORKER_DATABASE_URL`, `EXTRACT_URL` and the archive settings. It names the roles in `CROVE_ROLES=api,worker` so `pilot:check` can tell.
+A deployment without docker compose (Kubernetes, systemd) runs the same two roles from the one image (`api` and `worker` as the container command) and gives the worker, and only the worker, `WORKER_DATABASE_URL`, `EXTRACT_URL` and the archive settings. It names the roles in `LUDY_ROLES=api,worker` so `pilot:check` can tell.
 
 The nightly backup and a restore name `crove` by default; on this layout set `BACKUP_FILES_SERVICE=worker`, `BACKUP_NODE_SERVICE=worker` and `RESTORE_FILES_SERVICE=worker` ([backup-and-restore.md](backup-and-restore.md), "Set up").
 
@@ -205,7 +205,7 @@ CI boots this layout on every pull request (`ci.yml`, job "Split api and worker 
 
 What this layout trims, and what it does not (#2130). Besides the worker's database login and the sandbox, the API container does not get what only the worker reads: the WORM archive settings (`ARCHIVE_*`, as one group) and the `archive` volume, the per-org daily limits (`ORG_LIMIT_*`), the transcription key and mode, and a few worker knobs; the worker does not get the MCP endpoint's authorization server settings (`OAUTH_SERVER`, `OAUTH_JWKS`, `OAUTH_COOKIE_KEYS`, `MCP_ALLOWED_ORIGINS`). The exact lists are in `tools/deploy/compose.pilot.yml` and pinned by `tools/test/pilot-compose.test.ts`, which also boots both roles' configuration on what they are left with. The API **keeps** the S3 credentials, the channel app secrets and the credential key (and the `keys` volume): it reads them for uploads, webhook signatures, the connect flows and the channel broker, so taking them away would break those. Every other setting still reaches both containers, and a new one stays on both until it is sorted into one list in that test.
 
-Going back to one container (a laptop, a test) is taking `compose.pilot.yml` out of `COMPOSE_FILE` and deploying (or `deploy.sh rollback`): the pins leave with it, `crove` is the app again, and the database stays. Run `docker compose rm --stop --force api worker` first, in `/opt/crove` and **before** you take the file out of `COMPOSE_FILE`: once it is out, compose no longer knows `api` and `worker`, so the command cannot name them, and the two old containers keep the port. `deploy.sh` does not do this for you (it removes the old `crove` going the other way, because `crove` stays defined in the pilot layout; the two split services do not stay defined going back, and `deploy.sh` has not been run against a real host to automate it safely, #2162).
+Going back to one container (a laptop, a test) is taking `compose.pilot.yml` out of `COMPOSE_FILE` and deploying (or `deploy.sh rollback`): the pins leave with it, `crove` is the app again, and the database stays. Run `docker compose rm --stop --force api worker` first, in `/opt/ludy` and **before** you take the file out of `COMPOSE_FILE`: once it is out, compose no longer knows `api` and `worker`, so the command cannot name them, and the two old containers keep the port. `deploy.sh` does not do this for you (it removes the old `crove` going the other way, because `crove` stays defined in the pilot layout; the two split services do not stay defined going back, and `deploy.sh` has not been run against a real host to automate it safely, #2162).
 
 Two more settings keep a pilot safe by default and are checked by `pnpm pilot:check` on a public `PUBLIC_URL`: `BACKUP_ENCRYPTION_KEY` (the backup bucket never holds the books unsealed) and a price in `AI_PRICE_INPUT_PER_MTOK` or `AI_PRICE_OUTPUT_PER_MTOK` whenever `AI_API_KEY` is set (without one the AI cost cap `ORG_LIMIT_AI_COST_PER_DAY` and the monthly AI budget count nothing; `AI_DEFAULT_MONTHLY_BUDGET` gives every org without a budget of its own a monthly one in the same unit). The kernel itself also refuses to start on a public `PUBLIC_URL` when a database URL (`DATABASE_URL`, `WORKER_DATABASE_URL`, `ADMIN_DATABASE_URL`, `DATABASE_LISTEN_URL`) carries one of the passwords this repository ships in `.env.example` and the compose fallbacks.
 
@@ -220,17 +220,17 @@ Create the environment (`pilot`, later `beta`) under Settings, Environments. A r
 | Name | Kind | Required | Value |
 |---|---|---|---|
 | `DEPLOY_HOST` | secret | yes | the server's host name or IP address |
-| `DEPLOY_USER` | secret | yes | the deploy user, for example `crove-deploy` |
+| `DEPLOY_USER` | secret | yes | the deploy user, for example `ludy-deploy` |
 | `DEPLOY_SSH_KEY` | secret | yes | the private key from step 2 (the whole file) |
 | `DEPLOY_KNOWN_HOSTS` | secret | yes | the host key line(s) from step 7 |
 | `DEPLOY_PORT` | variable | no | SSH port, default `22` |
-| `DEPLOY_DIR` | variable | no | stack directory on the host, default `/opt/crove` |
+| `DEPLOY_DIR` | variable | no | stack directory on the host, default `/opt/ludy` |
 | `DEPLOY_ENV_FILE` | variable | no | env file on the host, default `<DEPLOY_DIR>/.env` |
-| `DEPLOY_PUBLIC_URL` | variable | no | the public origin, for example `https://crove.example.com`, for the smoke test through the proxy |
+| `DEPLOY_PUBLIC_URL` | variable | no | the public origin, for example `https://ludy.example.com`, for the smoke test through the proxy |
 | `DEPLOY_APP_URL` | variable | no | optional split web app origin, for example `https://app.example.com`; when set, a `pilot` tag deploy verifies its bundle `VITE_BUILD` matches `/version` after `release` moves |
 | `DEPLOY_REQUIRED_CHECKS` | variable | no | check runs that must be green on the commit, one per line |
 | `DEPLOY_IDP_ENVIRONMENT`, `DEPLOY_IDP_AUTH_*` and `DEPLOY_IDP_PUBLIC_AUTH_*` (variables), `DEPLOY_IDP_AUTH_ALLOWED_EMAILS` (secret) | variable and one secret | no | the pilot's remote identity provider (section "Identity provider settings in the deploy"); in the environment only, never at repository or organization level |
-| `DEPLOY_MODULES_ENVIRONMENT`, `DEPLOY_CROVE_MODULES` | variable | no | opt-in module list `CROVE_MODULES` for the host env file (section "Module settings in the deploy"); in the environment only, never at repository or organization level |
+| `DEPLOY_MODULES_ENVIRONMENT`, `DEPLOY_LUDY_MODULES` | variable | no | opt-in module list `LUDY_MODULES` for the host env file (section "Module settings in the deploy"); in the environment only, never at repository or organization level |
 | `SMOKE_EMAIL`, `SMOKE_PASSWORD` | secret | no | the smoke account (section "Smoke account"); without them the public smoke test does not sign in |
 | `SMOKE_ORG` | variable | with the two above | the smoke org's slug |
 
@@ -244,26 +244,26 @@ Some migrations tighten a rule on data that already exists. Before tagging the f
 
 From this migration on, `post_journal_entry()` refuses an amount with more decimals than the org's book currency uses (VND has none). An entry posted earlier with a fraction of a dong could then never be reversed or replaced, since its mirror carries the same fraction, and a purchase document with one could not be posted again. The check lists journal lines with more decimals than their org's book currency, and purchase documents and lines with fractional VND amounts (a purchase document's amounts are in VND, #918). It must return no rows:
 
-The check runs before the release's migrations, so `crove_kernel.currency` does not exist yet; every org books in VND until a command sets another `base_currency`, so the journal part uses the VND rule:
+The check runs before the release's migrations, so `ludy_kernel.currency` does not exist yet; every org books in VND until a command sets another `base_currency`, so the journal part uses the VND rule:
 
 ```sql
 BEGIN READ ONLY;
 SELECT 'journal_line' AS source, l.org_id, l.entry_id AS id, l.line_no, 'VND' AS currency, l.debit, l.credit
-FROM crove_finance.journal_line l
+FROM ludy_finance.journal_line l
 WHERE l.debit <> pg_catalog.round(l.debit, 0) OR l.credit <> pg_catalog.round(l.credit, 0)
 UNION ALL
 SELECT 'purchase_document', d.org_id, d.id, NULL, 'VND', d.subtotal, d.total
-FROM crove_finance.purchase_document d
+FROM ludy_finance.purchase_document d
 WHERE d.subtotal <> pg_catalog.round(d.subtotal, 0) OR d.vat_amount <> pg_catalog.round(d.vat_amount, 0)
    OR d.total <> pg_catalog.round(d.total, 0)
 UNION ALL
 SELECT 'purchase_line', p.org_id, p.document_id, p.line_no, 'VND', p.amount, p.vat_amount
-FROM crove_finance.purchase_line p
+FROM ludy_finance.purchase_line p
 WHERE p.amount <> pg_catalog.round(p.amount, 0) OR p.vat_amount <> pg_catalog.round(p.vat_amount, 0);
 ROLLBACK;
 ```
 
-After the migration has run, the journal part can use each org's book currency instead: select `t.base_currency AS currency` in place of `'VND' AS currency`, and use `JOIN crove_kernel.tenant t ON t.org_id = l.org_id LEFT JOIN crove_kernel.currency c ON c.code = t.base_currency WHERE c.code IS NULL OR l.debit <> pg_catalog.round(l.debit, c.minor_units) OR l.credit <> pg_catalog.round(l.credit, c.minor_units)`. That post-migration form is the one `apps/kernel/test/finance-currency-scale.db.test.ts` runs.
+After the migration has run, the journal part can use each org's book currency instead: select `t.base_currency AS currency` in place of `'VND' AS currency`, and use `JOIN ludy_kernel.tenant t ON t.org_id = l.org_id LEFT JOIN ludy_kernel.currency c ON c.code = t.base_currency WHERE c.code IS NULL OR l.debit <> pg_catalog.round(l.debit, c.minor_units) OR l.credit <> pg_catalog.round(l.credit, c.minor_units)`. That post-migration form is the one `apps/kernel/test/finance-currency-scale.db.test.ts` runs.
 
 ### Every org has a default legal entity (#1280, `20261102140000_crove_finance_legal_entity_scope.sql` and `20261102150000_crove_finance_legal_entity_books.sql`)
 
@@ -272,8 +272,8 @@ These migrations put every finance row, and every org's period lock row, in its 
 ```sql
 BEGIN READ ONLY;
 SELECT t.org_id, t.slug, t.status
-FROM crove_kernel.tenant t
-WHERE NOT EXISTS (SELECT 1 FROM crove_kernel.legal_entity e WHERE e.org_id = t.org_id AND e.is_default);
+FROM ludy_kernel.tenant t
+WHERE NOT EXISTS (SELECT 1 FROM ludy_kernel.legal_entity e WHERE e.org_id = t.org_id AND e.is_default);
 ROLLBACK;
 ```
 
@@ -281,17 +281,17 @@ Both migrations rewrite or alter the finance tables under ACCESS EXCLUSIVE locks
 
 ### No large relay hold pending (#1782, `20261104020000_crove_kernel_relay_hold_mark.sql`)
 
-This migration adds `outbox_pending.held_type` and builds an index on the pending queue. Its header says the index is built under a SHARE lock, but that is wrong: `ADD COLUMN` takes an ACCESS EXCLUSIVE lock on `crove_kernel.outbox_pending` and keeps it until the migration commits. So the index is built under that lock, and for that time everything that touches the pending queue waits: `crove_kernel.emit()` (every command that emits an event), the relay's claim and its back-pressure lag (`outbox_lag_seconds`), the prober's `crove_kernel.health()`, the org purge and `pnpm ops:kill-switch status`. The build takes about as long as an index on the queue's rows: well under a second for a few thousand, longer for a held backlog of hundreds of thousands. Before tagging the first release that contains it, check that no `relay:<event type>` kill switch is holding a large backlog (`pnpm ops:kill-switch status`, [incidents.md](incidents.md) §7), and release or let drain any that is. Where the column `crove_kernel.outbox_pending.held_type` already exists, the migration has run there and there is nothing to check. The pending queue should be short (a few thousand rows at most):
+This migration adds `outbox_pending.held_type` and builds an index on the pending queue. Its header says the index is built under a SHARE lock, but that is wrong: `ADD COLUMN` takes an ACCESS EXCLUSIVE lock on `ludy_kernel.outbox_pending` and keeps it until the migration commits. So the index is built under that lock, and for that time everything that touches the pending queue waits: `ludy_kernel.emit()` (every command that emits an event), the relay's claim and its back-pressure lag (`outbox_lag_seconds`), the prober's `ludy_kernel.health()`, the org purge and `pnpm ops:kill-switch status`. The build takes about as long as an index on the queue's rows: well under a second for a few thousand, longer for a held backlog of hundreds of thousands. Before tagging the first release that contains it, check that no `relay:<event type>` kill switch is holding a large backlog (`pnpm ops:kill-switch status`, [incidents.md](incidents.md) §7), and release or let drain any that is. Where the column `ludy_kernel.outbox_pending.held_type` already exists, the migration has run there and there is nothing to check. The pending queue should be short (a few thousand rows at most):
 
 ```sql
 BEGIN READ ONLY;
-SELECT pg_catalog.count(*) AS pending FROM crove_kernel.outbox_pending;
+SELECT pg_catalog.count(*) AS pending FROM ludy_kernel.outbox_pending;
 ROLLBACK;
 ```
 
 ### A purchase or sale document is posted once (#1928, `20261107110000_crove_finance_document_one_revision.sql` and `20261107120000_crove_finance_document_one_revision_validate.sql`)
 
-The first migration adds the CHECK `journal_entry_document_one_revision` to `crove_finance.journal_entry`: an entry whose source is a purchase or sale document (`source_type = 'finance.purchase_document'`, sales included) is revision 1. It is added `NOT VALID`, so it holds every new row at once. The second migration then validates it against the rows already there.
+The first migration adds the CHECK `journal_entry_document_one_revision` to `ludy_finance.journal_entry`: an entry whose source is a purchase or sale document (`source_type = 'finance.purchase_document'`, sales included) is revision 1. It is added `NOT VALID`, so it holds every new row at once. The second migration then validates it against the rows already there.
 
 - No code path has ever posted a document's revision 2, so the check should be empty.
 - A row it lists was written outside the posting path. Such a row would also count in the ledger while its document stays voided, out of the VAT working and the MISA exports.
@@ -301,7 +301,7 @@ Run it as the database owner. `journal_entry` is under tenant row-level security
 ```sql
 BEGIN READ ONLY;
 SELECT org_id, id, source_id AS document_id, source_revision, entry_date, created_at
-FROM crove_finance.journal_entry
+FROM ludy_finance.journal_entry
 WHERE source_type = 'finance.purchase_document' AND source_revision > 1
 ORDER BY org_id, created_at;
 ROLLBACK;
@@ -348,12 +348,12 @@ From GitHub: Actions, deploy, Run workflow from `main`, pick the environment and
 From a shell on the server, the same in one command:
 
 ```
-bash /opt/crove/.deploy/deploy.sh rollback --dir /opt/crove
+bash /opt/ludy/.deploy/deploy.sh rollback --dir /opt/ludy
 ```
 
 This one has no registry credentials, so it needs the previous images on the host: do not run `docker image prune -a` (or `docker system prune -a`) there, which removes them. Plain `docker image prune` (dangling images only) is safe.
 
-`bash /opt/crove/.deploy/deploy.sh status --dir /opt/crove` shows the current and previous releases and the last lines of `.deploy/history.log`. The host keeps the last 5 release directories (`CROVE_KEEP_RELEASES`); a rollback reaches only the one before the current. To go further back, run the workflow by hand from an older tag: it builds that tag again (new digests) and deploys it like any release, migrations included (they are already applied, so nothing changes in the schema).
+`bash /opt/ludy/.deploy/deploy.sh status --dir /opt/ludy` shows the current and previous releases and the last lines of `.deploy/history.log`. The host keeps the last 5 release directories (`LUDY_KEEP_RELEASES`); a rollback reaches only the one before the current. To go further back, run the workflow by hand from an older tag: it builds that tag again (new digests) and deploys it like any release, migrations included (they are already applied, so nothing changes in the schema).
 
 ## When a deploy fails
 

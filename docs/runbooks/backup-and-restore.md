@@ -16,9 +16,9 @@ These targets are for the pilot. The 24 h figure is the nightly runs alone; the 
 
 | State | Where | In the backup | Notes |
 |---|---|---|---|
-| The database: every `crove_*` schema, Supabase Auth's `auth` schema (users, password hashes, sessions, MFA factors), the `crove_jobs` queue (pg-boss), the migration ledger `crove_meta.schema_migrations` | `db-data` volume | `db.dump`, a `pg_dump --format=custom` of the whole database, made as the superuser so row level security hides nothing | The ledger stamps travel as they are; see [After a restore](#after-a-restore). |
-| Roles (`crove_app`, `crove_worker`, `crove_prober`, `supabase_auth_admin`, the definer roles), their memberships and settings | the cluster | `roles.sql` (`pg_dumpall --roles-only --no-role-passwords`) | No password hashes: `migrate` sets the passwords from `.env` after a restore. |
-| The context key (`crove_kernel.context_key`) | a table | **No.** Its rows are left out (`--exclude-table-data`) | Every restore must make a new key anyway ([context-key-rotation.md](context-key-rotation.md)); `restore.sh` does. A stolen backup therefore holds no key that works against the live database. |
+| The database: every `ludy_*` schema, Supabase Auth's `auth` schema (users, password hashes, sessions, MFA factors), the `ludy_jobs` queue (pg-boss), the migration ledger `ludy_meta.schema_migrations` | `db-data` volume | `db.dump`, a `pg_dump --format=custom` of the whole database, made as the superuser so row level security hides nothing | The ledger stamps travel as they are; see [After a restore](#after-a-restore). |
+| Roles (`ludy_app`, `ludy_worker`, `ludy_prober`, `supabase_auth_admin`, the definer roles), their memberships and settings | the cluster | `roles.sql` (`pg_dumpall --roles-only --no-role-passwords`) | No password hashes: `migrate` sets the passwords from `.env` after a restore. |
+| The context key (`ludy_kernel.context_key`) | a table | **No.** Its rows are left out (`--exclude-table-data`) | Every restore must make a new key anyway ([context-key-rotation.md](context-key-rotation.md)); `restore.sh` does. A stolen backup therefore holds no key that works against the live database. |
 | Files: uploaded invoices, inbound mail not yet filed, org exports | the `files` volume (`STORAGE=local`) or the bucket (`STORAGE=s3`, versioned) | `files/`: every blob, the current version of each object; not `staging/` (abandoned uploads) or temporary files. A backup that runs during an audio extraction can also copy a `tmp/` object (the temporary sealed video, up to 2 GB, unreadable without a key that lived in memory): it is harmless, the restore ignores it and the daily sweep removes the original | Org files are content addressed (`org/<org_id>/<sha256>`), and every file row records the blob's sha256, so the backup checks each one. |
 | The credential key (seals channel tokens) | the `keys` volume, or `CREDENTIAL_KEY` | **No** | Keep it apart from the database backups ([credential-key.md](credential-key.md)): the two together open every channel token. |
 | `.env`: passwords, `AUTH_JWT_SECRET`, `EXPORT_ENCRYPTION_KEY` (and `_PREVIOUS`), `BACKUP_ENCRYPTION_KEY` (and `_PREVIOUS`), `INBOUND_SECRET`, `CREDENTIAL_KEY`, S3 and SMTP keys | the server | **No** | Keep it in your secret store. Without `EXPORT_ENCRYPTION_KEY` the org exports in a restored bucket do not open; without `BACKUP_ENCRYPTION_KEY` the sealed runs in the backup bucket do not open. |
@@ -67,7 +67,7 @@ A run fails, and is kept as `<run id>.partial` until the next one deletes it, wh
    tools/backup/backup.sh
    ```
 
-5. Install a timer. systemd (`/etc/systemd/system/crove-backup.service` and `crove-backup.timer`):
+5. Install a timer. systemd (`/etc/systemd/system/ludy-backup.service` and `ludy-backup.timer`):
 
    ```ini
    [Unit]
@@ -76,8 +76,8 @@ A run fails, and is kept as `<run id>.partial` until the next one deletes it, wh
 
    [Service]
    Type=oneshot
-   WorkingDirectory=/opt/crove
-   ExecStart=/opt/crove/tools/backup/backup.sh
+   WorkingDirectory=/opt/ludy
+   ExecStart=/opt/ludy/tools/backup/backup.sh
    ```
 
    ```ini
@@ -93,8 +93,8 @@ A run fails, and is kept as `<run id>.partial` until the next one deletes it, wh
    WantedBy=timers.target
    ```
 
-   Then `systemctl daemon-reload && systemctl enable --now crove-backup.timer`; `systemctl list-timers crove-backup.timer` shows the next run. Or cron: `0 2 * * * cd /opt/crove && tools/backup/backup.sh >> /var/log/crove-backup.log 2>&1`.
-6. The heartbeat, so a backup that never runs pages someone: at the heartbeat monitor ([alerts.md](alerts.md), step 3), create a second check with period 1 day and grace 2 hours, and set its ping URL as `BACKUP_HEARTBEAT_URL` in `.env`. Every complete run ends with `prober --backup-ok`, which pings it (`[prober] backup heartbeat sent to ...` in the log). Test it once by disabling the timer for a day (`systemctl disable --now crove-backup.timer`): the phone gets the alert; enable it again.
+   Then `systemctl daemon-reload && systemctl enable --now ludy-backup.timer`; `systemctl list-timers ludy-backup.timer` shows the next run. Or cron: `0 2 * * * cd /opt/ludy && tools/backup/backup.sh >> /var/log/ludy-backup.log 2>&1`.
+6. The heartbeat, so a backup that never runs pages someone: at the heartbeat monitor ([alerts.md](alerts.md), step 3), create a second check with period 1 day and grace 2 hours, and set its ping URL as `BACKUP_HEARTBEAT_URL` in `.env`. Every complete run ends with `prober --backup-ok`, which pings it (`[prober] backup heartbeat sent to ...` in the log). Test it once by disabling the timer for a day (`systemctl disable --now ludy-backup.timer`): the phone gets the alert; enable it again.
 7. Test the alert: run it once with a bucket that does not exist, `BACKUP_S3_BUCKET=no-such-bucket tools/backup/backup.sh`. It must exit 1 and the alert must reach your channel.
 8. Store the credential key (`docker compose cp crove:/data/keys/credential.key .`, or your `CREDENTIAL_KEY`) and `.env` in your secret store, apart from the backups. Do it again after a key rotation.
 
@@ -102,7 +102,7 @@ Steps 2, 6, 7 and 8 need the owner: the secret store, the monitor account and th
 
 ## When a backup fails
 
-A failed run exits 1, writes `[backup] FAILED: <step> failed (exit <code>, backup.sh line <n>); run <id>, log <file>` to stderr and to its log, and runs `docker compose run --rm --no-deps prober prober --backup-failed "<reason>"`. That sends `[Crove] ALERT on <instance>: the backup failed.` with the reason to `ALERT_WEBHOOK_URL`, in the format the other alerts use (README, "Monitoring and alerts"); without a webhook it is printed. `BACKUP_ALERT=off` skips the alert. A missing setting (say `BACKUP_S3_BUCKET` with `BACKUP_S3_ENDPOINT` set) or a `.env` line the scripts cannot read as Compose does fails the same way before anything is dumped, and any other stop of the script (a shell error, a signal) is reported and alerted from its exit handler. A run whose copy in the bucket does not read back whole is deleted from the bucket, so `s3:latest` never picks it; blobs it uploaded stay until the next prune finds no run that lists them.
+A failed run exits 1, writes `[backup] FAILED: <step> failed (exit <code>, backup.sh line <n>); run <id>, log <file>` to stderr and to its log, and runs `docker compose run --rm --no-deps prober prober --backup-failed "<reason>"`. That sends `[Ludy] ALERT on <instance>: the backup failed.` with the reason to `ALERT_WEBHOOK_URL`, in the format the other alerts use (README, "Monitoring and alerts"); without a webhook it is printed. `BACKUP_ALERT=off` skips the alert. A missing setting (say `BACKUP_S3_BUCKET` with `BACKUP_S3_ENDPOINT` set) or a `.env` line the scripts cannot read as Compose does fails the same way before anything is dumped, and any other stop of the script (a shell error, a signal) is reported and alerted from its exit handler. A run whose copy in the bucket does not read back whole is deleted from the bucket, so `s3:latest` never picks it; blobs it uploaded stay until the next prune finds no run that lists them.
 
 Read the log, fix the cause, and run `tools/backup/backup.sh` again by hand. The next run deletes the `.partial` directory of the failed one.
 
@@ -110,7 +110,7 @@ A backup that never runs (the timer disabled, the server off) sends no alert of 
 
 ## Restore
 
-`tools/backup/restore.sh <run>` restores a run onto the compose stack named by the current directory's `.env`, `COMPOSE_PROJECT_NAME` and `COMPOSE_FILE`, and checks it. `<run>` is a run directory, `s3:<run id>` or `s3:latest` (the newest complete run in `BACKUP_S3_*`). It refuses a database that already holds Ludy data (`the target database already holds Crove`): restore into empty volumes only. It also refuses when its own `STORAGE` (or, with `s3`, `S3_BUCKET`) differs from what the target compose project resolves (`docker compose config`): the blobs would otherwise go where the target does not read them, for a scratch stack possibly the production bucket, bringing back erased blobs.
+`tools/backup/restore.sh <run>` restores a run onto the compose stack named by the current directory's `.env`, `COMPOSE_PROJECT_NAME` and `COMPOSE_FILE`, and checks it. `<run>` is a run directory, `s3:<run id>` or `s3:latest` (the newest complete run in `BACKUP_S3_*`). It refuses a database that already holds Ludy data (`the target database already holds Ludy`): restore into empty volumes only. It also refuses when its own `STORAGE` (or, with `s3`, `S3_BUCKET`) differs from what the target compose project resolves (`docker compose config`): the blobs would otherwise go where the target does not read them, for a scratch stack possibly the production bucket, bringing back erased blobs.
 
 It runs these steps and stops at the first failure with `[restore] FAILED: <reason>`:
 
@@ -155,7 +155,7 @@ unset COMPOSE_PROJECT_NAME COMPOSE_FILE
 - `restore.sh` has already run steps 2 and 3 of [ledger-after-restore.md](ledger-after-restore.md): no stamp in the future, and a new context key. It has also run the WORM archive check of step 4, with the number series raised above the archive.
 - What is left is the reconciliation: the entries and vouchers the report names as lost, and the e-invoice providers. Who decides and what to enter again is in [What the restore lost](ledger-after-restore.md#what-the-restore-lost).
 - Accounts, password hashes, MFA factors and sessions come back with the `auth` schema, so users sign in with their usual passwords. Sessions created after the backup are gone; a user whose session is gone signs in again.
-- The `crove_jobs` queue and the outbox come back as they were at backup time, and the worker picks them up. Work done after the backup (an extraction, a sent invite) is not in the restored database and may run again.
+- The `ludy_jobs` queue and the outbox come back as they were at backup time, and the worker picks them up. Work done after the backup (an extraction, a sent invite) is not in the restored database and may run again.
 - A restore brings back meetings a person deleted after the backup point, with their keys. The worker deletes them again when it starts, from the shred references in the archive store (`main.ts shred-replay` runs it on demand: [worm-archive.md](worm-archive.md#shred-references-for-deleted-meetings-2579)); a meeting whose audio, video or text date has passed since is shredded again by the next nightly run. `restore.sh` runs `shred-replay` itself before it starts the stack and fails the restore if it exits non-zero; a hand-made restore must run it before the API opens.
 - If the restored copy left your control (a laptop, another environment), rotate the context key there again; that copy and production must never share one.
 
@@ -165,7 +165,7 @@ The nightly runs lose up to a day. WAL archiving closes that gap (#2120): Postgr
 
 | Piece | Where |
 |---|---|
-| The database image: the stack's own PostgreSQL plus pgBackRest | `tools/wal/Dockerfile` (built as `crove-db:local`) |
+| The database image: the stack's own PostgreSQL plus pgBackRest | `tools/wal/Dockerfile` (built as `ludy-db:local`) |
 | The overlay that gives `db` the bucket's settings | `tools/backup/compose.wal.yml`, listed last in `COMPOSE_FILE` |
 | Set up, base backup, check, info, restore | `tools/backup/wal.sh` |
 | The proof | `tools/backup/wal-drill.mjs`, run by `drill.mjs` in CI |
@@ -180,18 +180,18 @@ The nightly runs lose up to a day. WAL archiving closes that gap (#2120): Postgr
 Names, never values: the bucket, its keys and `WAL_ENCRYPTION_KEY` come from the secret store; the host and bucket names are the ones of the backup bucket of this deployment.
 
 1. Make the encryption key, on the server, without printing it, and put it in the secret store apart from the bucket: `openssl rand -base64 32`. Make a key pair for the bucket **of its own**, scoped to the prefix `<BACKUP_S3_PREFIX>/wal/*` (list, get, put and delete there, nothing else), never the nightly job's `BACKUP_S3_*` pair: the database container's environment is readable by anyone who reaches the `postgres` user (or runs `COPY ... TO PROGRAM` as a superuser), and the nightly pair can delete every nightly run. Turn on versioning, or object lock, for the backup bucket too, so a deleted segment can come back. Add to `.env`: `WAL_ENCRYPTION_KEY`, `WAL_S3_ACCESS_KEY_ID`, `WAL_S3_SECRET_ACCESS_KEY`, `WAL_S3_ENDPOINT` (the host of `BACKUP_S3_ENDPOINT` without `https://`), and `WAL_S3_URI_STYLE=path` for a store without bucket host names. Check: `docker compose config >/dev/null` fails with the name of a missing setting and passes with all of them. Rollback: remove the lines.
-2. Build the database image from the checkout the deploy uses and list the overlay: `docker build -t crove-db:local /opt/crove-src/tools/wal`, copy `tools/backup/compose.wal.yml` next to `docker-compose.yml`, and append it to `COMPOSE_FILE` (`...:compose.wal.yml`). Check: `docker compose config | grep PGBACKREST_REPO1_PATH`. Rollback: take it out of `COMPOSE_FILE`; nothing has changed in the database yet.
+2. Build the database image from the checkout the deploy uses and list the overlay: `docker build -t ludy-db:local /opt/ludy-src/tools/wal`, copy `tools/backup/compose.wal.yml` next to `docker-compose.yml`, and append it to `COMPOSE_FILE` (`...:compose.wal.yml`). Check: `docker compose config | grep PGBACKREST_REPO1_PATH`. Rollback: take it out of `COMPOSE_FILE`; nothing has changed in the database yet.
 3. Take a nightly backup first, so the database has a restore point whatever happens next: `tools/backup/backup.sh`. Check: it ends `complete`.
 4. Recreate the database container on the new image and turn archiving on: `docker compose up -d db`, then `tools/backup/wal.sh setup`. The recreate and the one restart `setup` does (archive_mode takes a restart) are two short breaks without the database, a few seconds each: the app answers 503 meanwhile. `setup` sets `archive_mode`, `archive_command` and `archive_timeout`, creates the stanza, checks that a WAL segment reaches the bucket and takes the first full base backup. Never run it on a scratch or restored copy of the database: the copy has the same system id and would push into the production stanza. Check: `tools/backup/wal.sh info` lists one full backup and a WAL range; `docker compose exec db psql -U postgres -Atc "SELECT last_archived_wal, failed_count FROM pg_stat_archiver"` shows a segment and no failures; `docker compose run --rm prober prober` is healthy. Rollback: `docker compose exec db psql -U postgres -c "ALTER SYSTEM RESET archive_mode"` and `docker compose restart db`; the bucket keeps what it has.
-5. Schedule the base backups from cron on the server, next to the nightly run: a full one weekly and a differential one nightly, for example `30 2 * * 0 /opt/crove-src/tools/backup/wal.sh backup --type full` and `30 2 * * 1-6 /opt/crove-src/tools/backup/wal.sh backup --type diff` with `CROVE_DIR=/opt/crove`. A failed run alerts through the prober like a failed nightly run. Check: the next morning `wal.sh info` shows the new backup.
+5. Schedule the base backups from cron on the server, next to the nightly run: a full one weekly and a differential one nightly, for example `30 2 * * 0 /opt/ludy-src/tools/backup/wal.sh backup --type full` and `30 2 * * 1-6 /opt/ludy-src/tools/backup/wal.sh backup --type diff` with `LUDY_DIR=/opt/ludy`. A failed run alerts through the prober like a failed nightly run. Check: the next morning `wal.sh info` shows the new backup.
 6. Run `pnpm pilot:check`: the "WAL archiving" item is a manual line until you confirm the steps above.
-7. On the deploy host `deploy.sh` passes `compose.wal.yml` (in the stack directory, next to `compose.host.yml`) to every compose call when it is there, and stops with exit 2 before pulling anything when `COMPOSE_FILE` in `.env` names it and the file is missing, so a deploy never recreates `db` on the plain PostgreSQL image (which cannot push the WAL its volume tells it to). The image `crove-db:local` is built on the host and never pulled: after a change to `tools/wal/` (a pgBackRest update, a rebuild for security fixes) run `docker build -t crove-db:local /opt/crove-src/tools/wal` and then `docker compose up -d db` in a quiet minute; a deploy with the image missing fails at the start of the database step, before the migration. Check after the first deploy: `docker compose exec -u postgres db pgbackrest check`.
+7. On the deploy host `deploy.sh` passes `compose.wal.yml` (in the stack directory, next to `compose.host.yml`) to every compose call when it is there, and stops with exit 2 before pulling anything when `COMPOSE_FILE` in `.env` names it and the file is missing, so a deploy never recreates `db` on the plain PostgreSQL image (which cannot push the WAL its volume tells it to). The image `ludy-db:local` is built on the host and never pulled: after a change to `tools/wal/` (a pgBackRest update, a rebuild for security fixes) run `docker build -t ludy-db:local /opt/ludy-src/tools/wal` and then `docker compose up -d db` in a quiet minute; a deploy with the image missing fails at the start of the database step, before the migration. Check after the first deploy: `docker compose exec -u postgres db pgbackrest check`.
 
 ### Restore to a point in time
 
 When: a bad import, a wrong bulk action, an operator error, or the database lost (a new server). Decide the moment first: read it off the audit trail or the users' report, and take it a little before; the restore stops there and everything after is gone. `wal.sh info` shows the window (`wal archive min/max`): the earliest moment is the oldest base backup kept.
 
-1. Stop the application and look for a fresh server: `docker compose stop api worker` (or `crove`). On a new server install the stack, `.env` (with the WAL settings and the secrets from the secret store), the `crove-db` image and the overlay, and leave the `db-data` volume empty.
+1. Stop the application and look for a fresh server: `docker compose stop api worker` (or `crove`). On a new server install the stack, `.env` (with the WAL settings and the secrets from the secret store), the `ludy-db` image and the overlay, and leave the `db-data` volume empty.
 2. Restore, with the time and its time zone: `tools/backup/wal.sh restore --to "2026-10-31 08:40:00+00"` (`--latest` replays the whole archive). It first checks that the `db-data` volume is empty and stops with nothing touched if it is not (move what is there away first: `docker compose down`, then `docker volume rm <project>_db-data` only after you have a copy), then stops `db`, restores the newest base backup before that moment into the volume and writes the recovery settings. A time later than the end of the archive makes PostgreSQL stop with "recovery ended before configured recovery target was reached": read the end of the window from `wal.sh info` (`wal archive min/max`), and restore again to a time before it (or `--latest`) into a fresh volume.
 3. Start the database: `docker compose up -d db`. It replays the WAL up to the moment, opens and accepts connections; the log says `recovery stopping before commit` or `reached recovery target`. Check, in `psql`: `SELECT pg_is_in_recovery()` is `f`, and look for the rows you expect before the moment and none after.
 4. Archiving is off on the restored cluster (so a scratch copy never writes into the bucket it was restored from). For the real thing, once the data is right, start archiving again with `tools/backup/wal.sh setup`: the database is on a new timeline, so `setup` takes a fresh full base backup of it (and `wal.sh backup` does too when the newest backup is on an older timeline), which keeps a later `restore --latest` on the data that is live and not on a backup of the branch the restore left. Then start the application. Only this production database may push into its stanza: a restore from the nightly dump into a bucket prefix that already holds another cluster's archive is refused by `stanza-create` (system id mismatch); use a new `BACKUP_S3_PREFIX`, and after a PostgreSQL major upgrade run `pgbackrest stanza-upgrade` in the `db` container before `setup`.
@@ -217,7 +217,7 @@ A scratch restore next to production, to look at old data: use another compose p
 
 Once a month, and after any change to the backup scripts, the compose file or the storage settings:
 
-1. Check that the timer ran: `cat "$BACKUP_DIR/last-success"` shows last night's run, `systemctl list-timers crove-backup.timer` the next one, and the backup heartbeat check is green.
+1. Check that the timer ran: `cat "$BACKUP_DIR/last-success"` shows last night's run, `systemctl list-timers ludy-backup.timer` the next one, and the backup heartbeat check is green.
 2. Restore `s3:latest` onto a scratch stack (above). It must end with `restore of <run> passed`.
 3. Sign in on the scratch stack as yourself and open one invoice and the journal.
 4. Note the run id, the restore time and anything that failed in the operations log, then `docker compose down -v` the scratch stack.
@@ -238,7 +238,7 @@ Run on 2026-10-17 (issue #307) on a development workstation (Windows 11, Docker 
 | `--storage local`: the all-in-one stack, files on the volume | 46 to 73 s | 71 to 111 s | 73 to 114 s |
 | `--storage s3 --restore-storage local`: the monthly test, an S3 backup onto a scratch stack with `scratch.compose.yml` | 62 to 74 s | 83 to 85 s | 87 s |
 
-The steps of the s3 restore (2026-10-17): fetch and check 11 s, database 19 s, database checks 9 s, files (with 3 generations pointed at the new versions) 7 s, blob read-back 9 s, stack start 27 s. The data was small (a 580 KB dump, 89 tables, 258 rows, 3 blobs), so these times are mostly fixed costs: starting containers and Supabase Auth. The failing backup exited 1 within seconds and the prober printed `[Crove] ALERT on localhost:18181: the backup failed.` with the reason.
+The steps of the s3 restore (2026-10-17): fetch and check 11 s, database 19 s, database checks 9 s, files (with 3 generations pointed at the new versions) 7 s, blob read-back 9 s, stack start 27 s. The data was small (a 580 KB dump, 89 tables, 258 rows, 3 blobs), so these times are mostly fixed costs: starting containers and Supabase Auth. The failing backup exited 1 within seconds and the prober printed `[Ludy] ALERT on localhost:18181: the backup failed.` with the reason.
 
 On 2026-10-20 (issue #351) the s3 variant, sealed, with two backups (the second incremental), the refusals and the export check, passed twice on the same workstation while it ran several other stacks, so every step took two to four times longer than on 2026-10-17: backups 168 to 266 s (the incremental one uploaded 1 new blob and found 3 already there), the restore 238 to 247 s (fetch, open and check 91 to 93 s, database 31 to 36 s, database checks 15 to 16 s, files 28 to 32 s, blob read-back 18 to 19 s, stack start and export re-record 44 to 48 s), restore and API checks 246 to 255 s. The CI job gives the figures on a quiet machine.
 
@@ -250,4 +250,4 @@ node tools/backup/drill.mjs --storage local --seal off
 node tools/backup/drill.mjs --storage s3 --restore-storage local
 ```
 
-It needs Docker, bash and free ports 18181 and 18182 (`DRILL_SRC_PORT`, `DRILL_RESTORE_PORT`); `DRILL_PREFIX` (default `crove-drill`) names its compose projects, target and images, so two drills on one machine stay apart.
+It needs Docker, bash and free ports 18181 and 18182 (`DRILL_SRC_PORT`, `DRILL_RESTORE_PORT`); `DRILL_PREFIX` (default `ludy-drill`) names its compose projects, target and images, so two drills on one machine stay apart.

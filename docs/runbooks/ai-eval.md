@@ -27,7 +27,7 @@ Run it before a change of AI model, endpoint or prompt.
 
 The real documents never go into the repository, a pull request, an issue or a CI log. GitHub is public.
 
-1. Put them in one folder outside your checkout of this repository, for example `/srv/crove-eval/` on the pilot server. Subfolders are fine, for example `xml/`, `pdf/` and `photo/`.
+1. Put them in one folder outside your checkout of this repository, for example `/srv/ludy-eval/` on the pilot server. Subfolders are fine, for example `xml/`, `pdf/` and `photo/`.
 2. Next to each document, put a file with the same name ending in `.json` that holds its expected answer, for example `hd-0001.pdf` and `hd-0001.json`.
 3. Accepted documents: `.xml`, `.pdf`, `.jpg`, `.jpeg`, `.png`, `.webp`.
 
@@ -45,7 +45,7 @@ Amounts are plain digits, with no thousands separators: `1815000`, not `1.815.00
 On the private machine, in a checkout of this repository with Node 26 and pnpm (`pnpm install` once):
 
 ```sh
-AI_EVAL_DIR=/srv/crove-eval \
+AI_EVAL_DIR=/srv/ludy-eval \
 AI_BASE_URL=<the endpoint> AI_MODEL=<the model> AI_API_KEY=<the key, if any> \
 pnpm ai:eval:documents
 ```

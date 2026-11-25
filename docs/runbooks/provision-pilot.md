@@ -39,7 +39,7 @@ dpkg-reconfigure -f noninteractive unattended-upgrades     # security updates ev
 adduser --gecos '' admin && usermod -aG sudo admin
 install -d -m 700 -o admin -g admin /home/admin/.ssh
 install -m 600 -o admin -g admin "$(getent passwd "${SUDO_USER:-root}" | cut -d: -f6)/.ssh/authorized_keys" /home/admin/.ssh/authorized_keys
-printf 'PasswordAuthentication no\nKbdInteractiveAuthentication no\nPermitRootLogin no\n' > /etc/ssh/sshd_config.d/10-crove.conf
+printf 'PasswordAuthentication no\nKbdInteractiveAuthentication no\nPermitRootLogin no\n' > /etc/ssh/sshd_config.d/10-ludy.conf
 systemctl reload ssh                                       # log in as admin in a second session before closing this one
 
 # Only SSH and the reverse proxy are reachable from outside.
@@ -66,16 +66,16 @@ test -e /etc/docker/daemon.json || printf '{\n  "log-driver": "local"\n}\n' > /e
 systemctl restart docker
 ```
 
-Then the deploy user, its SSH key for the workflow, the stack directory `/opt/crove` and the host key: steps 1 to 3 and 7 of [deploy.md](deploy.md), "One-time setup of the host".
+Then the deploy user, its SSH key for the workflow, the stack directory `/opt/ludy` and the host key: steps 1 to 3 and 7 of [deploy.md](deploy.md), "One-time setup of the host".
 
 ## 4. The files bucket
 
 Create the bucket in the region of the server, private, with versioning on **before the first write** (ADR-0013: Ludy refuses a write that comes back without an object version) and **Object Lock enabled**, so that the worker can hold the original file of every posted invoice for 10 years (`EVIDENCE_LOCK_DAYS`, [evidence-holds.md](evidence-holds.md)). Do not set a default retention on the bucket: Ludy holds only posted files. Give Ludy its own access key, limited to this bucket:
 
-- on the objects: `s3:GetObject`, `s3:GetObjectVersion`, `s3:PutObject`, `s3:DeleteObject`, `s3:AbortMultipartUpload`, `s3:GetObjectRetention`, `s3:PutObjectRetention`, `s3:PutObjectTagging` (never `s3:BypassGovernanceRetention`; nothing else for tagging: no `s3:GetObjectTagging`, no `s3:DeleteObjectTagging`, no `s3:PutObjectVersionTagging`). `s3:PutObjectTagging` is for one thing: a retention delete (the marketplace originals, 90 days after the decision, ADR-0045 point 8) first tags the object `ludy-retention=expired`, so the rule `crove-retention-expired` below can remove the version the delete leaves. If the tag cannot be set, Ludy deletes nothing and the job retries on its next run (it alerts), so a missing permission stops that deletion instead of leaving a readable copy. Meeting media is written as a multipart upload to `staging/` and copied to its content address: `s3:PutObject` covers the parts and the copy, `s3:GetObject` the copy's source, and `s3:AbortMultipartUpload` the cleanup after a refused or failed write. Without it the cleanup fails silently and the incomplete upload stays until the lifecycle rule below removes it;
+- on the objects: `s3:GetObject`, `s3:GetObjectVersion`, `s3:PutObject`, `s3:DeleteObject`, `s3:AbortMultipartUpload`, `s3:GetObjectRetention`, `s3:PutObjectRetention`, `s3:PutObjectTagging` (never `s3:BypassGovernanceRetention`; nothing else for tagging: no `s3:GetObjectTagging`, no `s3:DeleteObjectTagging`, no `s3:PutObjectVersionTagging`). `s3:PutObjectTagging` is for one thing: a retention delete (the marketplace originals, 90 days after the decision, ADR-0045 point 8) first tags the object `ludy-retention=expired`, so the rule `ludy-retention-expired` below can remove the version the delete leaves. If the tag cannot be set, Ludy deletes nothing and the job retries on its next run (it alerts), so a missing permission stops that deletion instead of leaving a readable copy. Meeting media is written as a multipart upload to `staging/` and copied to its content address: `s3:PutObject` covers the parts and the copy, `s3:GetObject` the copy's source, and `s3:AbortMultipartUpload` the cleanup after a refused or failed write. Without it the cleanup fails silently and the incomplete upload stays until the lifecycle rule below removes it;
 - on the bucket: `s3:ListBucket`, `s3:ListBucketVersions`, `s3:GetBucketObjectLockConfiguration`. `s3:ListBucketVersions` also serves the WORM archive bucket when `ARCHIVE_STORE=s3` uses this key: its nightly verifier reads each key's versions (#2020, [worm-archive.md](worm-archive.md)), and fails with `AccessDenied` without it.
 
-Ludy never deletes object versions, so lifecycle rules free the space its deletes leave behind (the `conversation/` rule is what makes an erased customer's image leave the bucket, and the `notes/` rule a deleted or erased note attachment (#3561): without them the noncurrent version stays; the `ludy-retention=expired` tag rule does the same for the marketplace originals under `org/`, whose delete marker rule is separate because S3 allows `ExpiredObjectDeleteMarker` only without a tag filter), and one more removes abandoned browser uploads. The `AbortIncompleteMultipartUpload` action of the `crove-staging` rule below is **required**, not optional: a crash in the middle of a meeting upload leaves an incomplete multipart upload under `staging/`, which the daily staging sweep cannot see (listing objects never lists incomplete uploads) and only this rule removes. With the AWS CLI (any S3-compatible store: add `--endpoint-url https://<endpoint>`), as an account that may configure the bucket, not with Ludy's key:
+Ludy never deletes object versions, so lifecycle rules free the space its deletes leave behind (the `conversation/` rule is what makes an erased customer's image leave the bucket, and the `notes/` rule a deleted or erased note attachment (#3561): without them the noncurrent version stays; the `ludy-retention=expired` tag rule does the same for the marketplace originals under `org/`, whose delete marker rule is separate because S3 allows `ExpiredObjectDeleteMarker` only without a tag filter), and one more removes abandoned browser uploads. The `AbortIncompleteMultipartUpload` action of the `ludy-staging` rule below is **required**, not optional: a crash in the middle of a meeting upload leaves an incomplete multipart upload under `staging/`, which the daily staging sweep cannot see (listing objects never lists incomplete uploads) and only this rule removes. With the AWS CLI (any S3-compatible store: add `--endpoint-url https://<endpoint>`), as an account that may configure the bucket, not with Ludy's key:
 
 ```bash
 aws s3api put-bucket-versioning --bucket <bucket> --versioning-configuration Status=Enabled
@@ -85,26 +85,26 @@ aws s3api put-object-lock-configuration --bucket <bucket> --object-lock-configur
 cat > lifecycle.json <<'EOF'
 {
   "Rules": [
-    { "ID": "crove-staging", "Status": "Enabled", "Filter": { "Prefix": "staging/" },
+    { "ID": "ludy-staging", "Status": "Enabled", "Filter": { "Prefix": "staging/" },
       "Expiration": { "Days": 1 }, "NoncurrentVersionExpiration": { "NoncurrentDays": 1 },
       "AbortIncompleteMultipartUpload": { "DaysAfterInitiation": 1 } },
-    { "ID": "crove-staging-markers", "Status": "Enabled", "Filter": { "Prefix": "staging/" },
+    { "ID": "ludy-staging-markers", "Status": "Enabled", "Filter": { "Prefix": "staging/" },
       "Expiration": { "ExpiredObjectDeleteMarker": true } },
-    { "ID": "crove-tmp", "Status": "Enabled", "Filter": { "Prefix": "tmp/" },
+    { "ID": "ludy-tmp", "Status": "Enabled", "Filter": { "Prefix": "tmp/" },
       "Expiration": { "Days": 1 }, "NoncurrentVersionExpiration": { "NoncurrentDays": 1 } },
-    { "ID": "crove-tmp-markers", "Status": "Enabled", "Filter": { "Prefix": "tmp/" },
+    { "ID": "ludy-tmp-markers", "Status": "Enabled", "Filter": { "Prefix": "tmp/" },
       "Expiration": { "ExpiredObjectDeleteMarker": true } },
-    { "ID": "crove-inbound-deleted", "Status": "Enabled", "Filter": { "Prefix": "inbound/" },
+    { "ID": "ludy-inbound-deleted", "Status": "Enabled", "Filter": { "Prefix": "inbound/" },
       "NoncurrentVersionExpiration": { "NoncurrentDays": 7 }, "Expiration": { "ExpiredObjectDeleteMarker": true } },
-    { "ID": "crove-export-deleted", "Status": "Enabled", "Filter": { "Prefix": "export/" },
+    { "ID": "ludy-export-deleted", "Status": "Enabled", "Filter": { "Prefix": "export/" },
       "NoncurrentVersionExpiration": { "NoncurrentDays": 7 }, "Expiration": { "ExpiredObjectDeleteMarker": true } },
-    { "ID": "crove-conversation-deleted", "Status": "Enabled", "Filter": { "Prefix": "conversation/" },
+    { "ID": "ludy-conversation-deleted", "Status": "Enabled", "Filter": { "Prefix": "conversation/" },
       "NoncurrentVersionExpiration": { "NoncurrentDays": 1 }, "Expiration": { "ExpiredObjectDeleteMarker": true } },
-    { "ID": "crove-notes-deleted", "Status": "Enabled", "Filter": { "Prefix": "notes/" },
+    { "ID": "ludy-notes-deleted", "Status": "Enabled", "Filter": { "Prefix": "notes/" },
       "NoncurrentVersionExpiration": { "NoncurrentDays": 1 }, "Expiration": { "ExpiredObjectDeleteMarker": true } },
-    { "ID": "crove-retention-expired", "Status": "Enabled", "Filter": { "Tag": { "Key": "ludy-retention", "Value": "expired" } },
+    { "ID": "ludy-retention-expired", "Status": "Enabled", "Filter": { "Tag": { "Key": "ludy-retention", "Value": "expired" } },
       "NoncurrentVersionExpiration": { "NoncurrentDays": 1 } },
-    { "ID": "crove-org-markers", "Status": "Enabled", "Filter": { "Prefix": "org/" },
+    { "ID": "ludy-org-markers", "Status": "Enabled", "Filter": { "Prefix": "org/" },
       "Expiration": { "ExpiredObjectDeleteMarker": true } }
   ]
 }
@@ -121,19 +121,19 @@ aws s3api put-bucket-cors --bucket <bucket> --cors-configuration file://cors.jso
 | Prefix | What it holds | The rule |
 |---|---|---|
 | `org/` | documents and attachments, the evidence | none: Ludy never deletes them, and their versions are the record. The worker holds the original file of every posted invoice with Object Lock in GOVERNANCE mode for `EVIDENCE_LOCK_DAYS` from its posting (#1009, [evidence-holds.md](evidence-holds.md)) |
-| `org/` with the tag `ludy-retention=expired` | a marketplace original after its 90 days (#2789): Ludy tags the object, then deletes it | `crove-retention-expired`: the noncurrent version goes 1 day after the delete. An Object Lock hold on a version still wins until its retain-until date; a version Ludy never tagged is untouched. `crove-org-markers` removes a delete marker only when no version of the key is left; a retention run deletes twice, so a second marker can stay (a few bytes, harmless; do not add a noncurrent expiry on `org/` to clear it) |
+| `org/` with the tag `ludy-retention=expired` | a marketplace original after its 90 days (#2789): Ludy tags the object, then deletes it | `ludy-retention-expired`: the noncurrent version goes 1 day after the delete. An Object Lock hold on a version still wins until its retain-until date; a version Ludy never tagged is untouched. `ludy-org-markers` removes a delete marker only when no version of the key is left; a retention run deletes twice, so a second marker can stay (a few bytes, harmless; do not add a noncurrent expiry on `org/` to clear it) |
 | `staging/` | browser uploads before the server checks them (5 minutes) | expire after a day, with their old versions and delete markers |
-| `tmp/` | the temporary sealed video while its audio is extracted (#3337, #3341): `tmp/<org_id>/<sha256>`, encrypted with a key that lives only in memory, so a copy a crash left is unreadable | the worker's daily sweep deletes any object older than 6 hours (`TMP_BLOB_MAX_AGE_HOURS`); the lifecycle rule `crove-tmp` expires it after a day with its old versions and delete markers, as a second net |
+| `tmp/` | the temporary sealed video while its audio is extracted (#3337, #3341): `tmp/<org_id>/<sha256>`, encrypted with a key that lives only in memory, so a copy a crash left is unreadable | the worker's daily sweep deletes any object older than 6 hours (`TMP_BLOB_MAX_AGE_HOURS`); the lifecycle rule `ludy-tmp` expires it after a day with its old versions and delete markers, as a second net |
 | `inbound/` | raw inbound mail until it is filed (the worker deletes it after 30 days at most) | delete old versions 7 days after Ludy deleted the object |
 | `export/` | sealed org exports (`EXPORT_RETENTION_DAYS`, then the worker deletes them) | the same, 7 days |
-| `notes/` | files attached to a note (#3561): `notes/<org_id>/<attachment id>`, deleted by the worker when the attachment, its note, its author's private notes or the org go, or a personal data erasure takes it | `crove-notes-deleted`: the noncurrent version goes 1 day after Ludy deleted the object, with its delete marker |
+| `notes/` | files attached to a note (#3561): `notes/<org_id>/<attachment id>`, deleted by the worker when the attachment, its note, its author's private notes or the org go, or a personal data erasure takes it | `ludy-notes-deleted`: the noncurrent version goes 1 day after Ludy deleted the object, with its delete marker |
 
 **Applying the retention rules to a bucket that is already in use is a production step: the owner approves it, and the Platform PO runs it.** Checklist for that step:
 
 - [ ] **before the release that carries #2789 is deployed**, the access key has `s3:PutObjectTagging` on the objects (and nothing more for tagging), added by the account that owns the bucket policy. Without it every marketplace retention run fails closed: it deletes nothing, alerts, and retries the next night, so originals stay readable past 90 days until the permission is there;
-- [ ] `put-bucket-lifecycle-configuration` replaces the whole configuration: start from `get-bucket-lifecycle-configuration`, keep every existing rule, and add `crove-retention-expired` and `crove-org-markers` (and, from the release that carries #3341, `crove-tmp` and `crove-tmp-markers`);
+- [ ] `put-bucket-lifecycle-configuration` replaces the whole configuration: start from `get-bucket-lifecycle-configuration`, keep every existing rule, and add `ludy-retention-expired` and `ludy-org-markers` (and, from the release that carries #3341, `ludy-tmp` and `ludy-tmp-markers`);
 - [ ] a drill object: put a file under `org/`, delete it through a retention run, read `list-object-versions` and see the noncurrent version carry the tag `ludy-retention=expired` (`get-object-tagging --version-id`), and a day after the rule first runs see it gone, while a version under Object Lock is still there;
-- [ ] **originals deleted before this release** left their version untagged and noncurrent. Either accept that leftover, or tag it once, as an admin account (not Ludy's key): list the files with `SELECT storage_key FROM crove_kernel.file WHERE original_deleted_at IS NOT NULL`, and for each key whose current version is a delete marker (`list-object-versions --prefix <key>`), run `put-object-tagging --version-id <noncurrent version> --tagging 'TagSet=[{Key=ludy-retention,Value=expired}]'`. Never tag a version of a key that still has a live current object, and never a version under Object Lock you mean to keep (the lock still wins, so tagging one only lets it go at its retain-until date). The owner approves this step and the Platform PO runs it;
+- [ ] **originals deleted before this release** left their version untagged and noncurrent. Either accept that leftover, or tag it once, as an admin account (not Ludy's key): list the files with `SELECT storage_key FROM ludy_kernel.file WHERE original_deleted_at IS NOT NULL`, and for each key whose current version is a delete marker (`list-object-versions --prefix <key>`), run `put-object-tagging --version-id <noncurrent version> --tagging 'TagSet=[{Key=ludy-retention,Value=expired}]'`. Never tag a version of a key that still has a live current object, and never a version under Object Lock you mean to keep (the lock still wins, so tagging one only lets it go at its retain-until date). The owner approves this step and the Platform PO runs it;
 - [ ] know the limit: only the version that is current at the retention delete is tagged. An older noncurrent version of the same key (left by an earlier ordinary delete, such as the cleanup of a failed write) is not expired by the rule; the drill object must start from a key with one version;
 - [ ] the rule stays off any version without the tag: `org/` evidence is never tagged by Ludy, and no browser upload can set the tag (the upload form names no tagging field, and the copy to the content address replaces the tags).
 
@@ -161,16 +161,16 @@ Send one recovery email to an address at a large mail provider and check that it
 Invoices sent to `<org token>@<INBOUND_DOMAIN>` reach Ludy through a mail worker that posts each message, as raw MIME, to `https://<your domain>/api/inbound/email` with `INBOUND_SECRET` (#53). [`tools/inbound-mail/worker.js`](../../tools/inbound-mail/worker.js) is that worker for Cloudflare Email Routing, one file with no dependencies. About 10 minutes once the domain is on Cloudflare (#53):
 
 1. Pick `INBOUND_DOMAIN`. Email Routing takes over the MX records of the name it runs on, so if the domain already receives mail elsewhere (Google Workspace, Microsoft 365), use a subdomain such as `hoadon.<your domain>`.
-2. Generate the secret on the server and put it in `/opt/crove/.env` with the domain (section 7), then redeploy so the kernel picks them up:
+2. Generate the secret on the server and put it in `/opt/ludy/.env` with the domain (section 7), then redeploy so the kernel picks them up:
    ```bash
    openssl rand -hex 32        # INBOUND_SECRET, at least 32 characters; keep a copy in the owner's secret store
    ```
-3. In the Cloudflare dashboard, **Workers & Pages**, **Create**, **Create Worker**: name it `crove-inbound-mail`, deploy it, then **Edit code**, replace the sample with the whole content of `tools/inbound-mail/worker.js` and **Deploy**.
+3. In the Cloudflare dashboard, **Workers & Pages**, **Create**, **Create Worker**: name it `ludy-inbound-mail`, deploy it, then **Edit code**, replace the sample with the whole content of `tools/inbound-mail/worker.js` and **Deploy**.
 4. In the worker's **Settings**, **Variables and Secrets**, add:
    - `KERNEL_URL`, type Text: `https://<your domain>` (the `PUBLIC_URL`; the worker refuses plain http);
    - `INBOUND_SECRET`, type Secret: the value from step 2.
 5. On the zone of `INBOUND_DOMAIN`, **Email**, **Email Routing**: enable it (for a subdomain, add it under **Settings**, subdomains) and let Cloudflare add the MX and SPF records it proposes.
-6. **Routing rules**, **Catch-all address**: action **Send to a Worker**, destination `crove-inbound-mail`, status enabled. The catch-all is what takes every org's `<token>@` address, and the `bounce+<token>@` addresses Ludy's own mails use as their Return-Path (#539).
+6. **Routing rules**, **Catch-all address**: action **Send to a Worker**, destination `ludy-inbound-mail`, status enabled. The catch-all is what takes every org's `<token>@` address, and the `bounce+<token>@` addresses Ludy's own mails use as their Return-Path (#539).
 7. Check, from outside:
    ```bash
    dig +short MX <INBOUND_DOMAIN>     # Cloudflare's route*.mx.cloudflare.net servers
@@ -185,15 +185,15 @@ Point the pilot's host name at the server: an `A` record to its IPv4 address, an
 
 ## 7. The env file
 
-Write `/opt/crove/.env` (owner the deploy user, mode 600) from `.env.example`. Generate every secret on the server, for example `openssl rand -hex 32` (no `$` in it, which docker compose would expand), and keep a copy in the owner's secret store, never in git. The settings that differ from the defaults for the pilot:
+Write `/opt/ludy/.env` (owner the deploy user, mode 600) from `.env.example`. Generate every secret on the server, for example `openssl rand -hex 32` (no `$` in it, which docker compose would expand), and keep a copy in the owner's secret store, never in git. The settings that differ from the defaults for the pilot:
 
 | Setting | Value |
 |---|---|
 | `PUBLIC_URL` | `https://<your domain>` |
-| `CROVE_DOMAIN` | `<your domain>` (the reverse proxy's certificate) |
+| `LUDY_DOMAIN` | `<your domain>` (the reverse proxy's certificate) |
 | `TRUSTED_PROXY_HOPS` | `1` (the reverse proxy below) |
 | `COMPOSE_FILE` | `docker-compose.yml:compose.pilot.yml:docker-compose.override.yml:compose.host.yml` (the split API and worker, [deploy.md](deploy.md), "The pilot layout") |
-| `CROVE_MODULES` | `finance` (the pilot runs one module; empty would run every module, Social's public routes among them) |
+| `LUDY_MODULES` | `finance` (the pilot runs one module; empty would run every module, Social's public routes among them) |
 | `COMPOSE_PROFILES` | `prober` |
 | Every `*_PASSWORD`, `AUTH_JWT_SECRET`, `EXPORT_ENCRYPTION_KEY` (`openssl rand -base64 32`) | generated, never a sample value |
 | `AUTH_AUTOCONFIRM` | `false` |
@@ -213,13 +213,13 @@ The kernel refuses to start on a public `PUBLIC_URL` with unsafe settings: a sam
 `tools/deploy/caddy/` holds a reverse proxy for this layout: Caddy on ports 80 and 443 in front of the app on loopback. Copy both files into the stack directory from a checkout. The server needs one anyway, since the nightly backup runs from it ([backup-and-restore.md](backup-and-restore.md)):
 
 ```bash
-git clone --depth 1 --branch main https://github.com/DOS/Ludy.git /opt/crove-src   # or the release tag you deploy
-cp /opt/crove-src/tools/deploy/caddy/compose.host.yml /opt/crove-src/tools/deploy/caddy/Caddyfile /opt/crove/
+git clone --depth 1 --branch main https://github.com/DOS/Ludy.git /opt/ludy-src   # or the release tag you deploy
+cp /opt/ludy-src/tools/deploy/caddy/compose.host.yml /opt/ludy-src/tools/deploy/caddy/Caddyfile /opt/ludy/
 ```
 
 Or copy the two files from your own checkout with `scp`. The split API and worker (`compose.pilot.yml`, [deploy.md](deploy.md), "The pilot layout") need no copy: every release ships the file, and listing it in `COMPOSE_FILE` chooses the layout.
 
-- Caddy gets and renews a Let's Encrypt certificate for `CROVE_DOMAIN` and redirects plain http to https. The certificates live in the `caddy-data` volume; keep it, or every restart asks Let's Encrypt again (which rate-limits repeated requests for the same name).
+- Caddy gets and renews a Let's Encrypt certificate for `LUDY_DOMAIN` and redirects plain http to https. The certificates live in the `caddy-data` volume; keep it, or every restart asks Let's Encrypt again (which rate-limits repeated requests for the same name).
 - It runs on the host's network so it sees each client's real address, and it replaces any `X-Forwarded-For` a client sends with that address. With `TRUSTED_PROXY_HOPS=1` the kernel's per-client limits (sign-in, sign-up, recovery, email) then count each client separately. Behind a published port instead, Docker shows the proxy its bridge address for IPv6 clients, and every one of them would share one budget.
 - It does not compress responses: the app's event stream must reach the browser unbuffered. The kernel sets the security headers itself, HSTS among them.
 - Its admin API is off (on the host's network it would be open to every local process), so a changed `Caddyfile` takes effect with `docker compose restart caddy`.
@@ -231,7 +231,7 @@ Another proxy works too (nginx, a cloud load balancer): forward to `127.0.0.1:${
 
 Set up the `pilot` environment and its secrets on GitHub and push a `v*` tag ([deploy.md](deploy.md)). The deploy starts the database, migrates, starts Supabase Auth, the reverse proxy and the app, waits for `/readyz` and runs the smoke test; with `DEPLOY_PUBLIC_URL` set it runs the smoke test again through the reverse proxy.
 
-Afterwards, on the server, `docker compose ps` in `/opt/crove` lists every service running (`api` and `worker`, and no `crove`), and from outside:
+Afterwards, on the server, `docker compose ps` in `/opt/ludy` lists every service running (`api` and `worker`, and no `crove`), and from outside:
 
 ```bash
 curl -sI http://<your domain>/healthz        # 308 to https

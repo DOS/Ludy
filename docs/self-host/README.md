@@ -31,8 +31,8 @@ security updates, SSH keys only, a firewall, container log rotation) you can fol
 Run a release tag, not `main`:
 
 ```bash
-git clone https://github.com/DOS/Ludy.git /opt/crove
-cd /opt/crove
+git clone https://github.com/DOS/Ludy.git /opt/ludy
+cd /opt/ludy
 git tag --list 'v*' --sort=-v:refname | head -5      # the newest releases
 git checkout <tag>                                   # for example v0.3.0
 ```
@@ -46,8 +46,8 @@ features. Start from the example and replace every secret with a random value:
 
 ```bash
 cp .env.example .env && chmod 600 .env
-for key in POSTGRES_PASSWORD CROVE_APP_DB_PASSWORD CROVE_WORKER_DB_PASSWORD CROVE_PROBER_DB_PASSWORD \
-           CROVE_REPORTER_DB_PASSWORD AUTH_DB_PASSWORD AUTH_JWT_SECRET; do
+for key in POSTGRES_PASSWORD LUDY_APP_DB_PASSWORD LUDY_WORKER_DB_PASSWORD LUDY_PROBER_DB_PASSWORD \
+           LUDY_REPORTER_DB_PASSWORD AUTH_DB_PASSWORD AUTH_JWT_SECRET; do
   sed -i "s|^$key=.*|$key=$(openssl rand -hex 32)|" .env
 done
 sed -i "s|^EXPORT_ENCRYPTION_KEY=.*|EXPORT_ENCRYPTION_KEY=$(openssl rand -base64 32)|" .env
@@ -61,7 +61,7 @@ Then set, at least:
 | Setting | Value |
 |---|---|
 | `PUBLIC_URL` | `https://<your domain>`, the address users open |
-| `CROVE_DOMAIN` | `<your domain>`, for the TLS certificate (section 4) |
+| `LUDY_DOMAIN` | `<your domain>`, for the TLS certificate (section 4) |
 | `TRUSTED_PROXY_HOPS` | `1` behind the reverse proxy of section 4. With `0` every client shares the proxy's address, and one person's failed sign-ins lock out everyone |
 | `AUTH_AUTOCONFIRM` | `false`: users confirm their email (needs SMTP, section 5) |
 | `AUTH_STEP_UP` | `required` (the default): approvals and membership changes ask for a fresh two-factor code |
@@ -73,7 +73,7 @@ The kernel refuses to start on a public `PUBLIC_URL` with an unsafe setting (a s
 ## 4. TLS reverse proxy
 
 [`tools/deploy/caddy/`](../../tools/deploy/caddy/) holds a Caddy service for this layout: ports 80 and 443 on the host,
-a Let's Encrypt certificate for `CROVE_DOMAIN`, plain http redirected to https, and the client's address passed on in
+a Let's Encrypt certificate for `LUDY_DOMAIN`, plain http redirected to https, and the client's address passed on in
 `X-Forwarded-For` for `TRUSTED_PROXY_HOPS=1`. Copy both files next to `docker-compose.yml` and add them to the stack:
 
 ```bash
@@ -81,7 +81,7 @@ cp tools/deploy/caddy/compose.host.yml tools/deploy/caddy/Caddyfile .
 echo 'COMPOSE_FILE=docker-compose.yml:compose.host.yml' >> .env
 ```
 
-This keeps the one-container layout, which is fine for your own use. A deployment other people reach (a pilot) runs the API and the worker apart and only the finance module: add `tools/deploy/compose.pilot.yml` as well ([deploy.md](../runbooks/deploy.md), "The pilot layout"); `pnpm pilot:check` fails a public deployment without it. On a public `PUBLIC_URL` the kernel also refuses to start the one-container layout unless you set `CROVE_ALLOW_ALL_IN_ONE=true` in `.env`, which accepts that the API then runs on the worker's database login.
+This keeps the one-container layout, which is fine for your own use. A deployment other people reach (a pilot) runs the API and the worker apart and only the finance module: add `tools/deploy/compose.pilot.yml` as well ([deploy.md](../runbooks/deploy.md), "The pilot layout"); `pnpm pilot:check` fails a public deployment without it. On a public `PUBLIC_URL` the kernel also refuses to start the one-container layout unless you set `LUDY_ALLOW_ALL_IN_ONE=true` in `.env`, which accepts that the API then runs on the worker's database login.
 
 Point the domain's `A` record (and `AAAA` only if IPv6 reaches the server) at the server and wait until
 `dig +short <your domain>` answers with its address before the first start: Caddy asks for the certificate at once,
@@ -210,13 +210,13 @@ explains each line. The alert and backup lines are sections 9 and 10.
 ## 9. Monitoring
 
 The `prober` profile checks every few minutes that background work moves (the outbox, the job queue, the worker's
-heartbeat) and sends an alert when it does not: set `CROVE_PROBER_DB_PASSWORD` (done in section 3) and
+heartbeat) and sends an alert when it does not: set `LUDY_PROBER_DB_PASSWORD` (done in section 3) and
 `ALERT_WEBHOOK_URL` (a Slack, Discord or Telegram webhook, or your own), then:
 
 ```bash
 echo 'COMPOSE_PROFILES=prober' >> .env
 docker compose up -d
-docker compose run --rm prober prober --test-alert     # you should receive "[Crove] Test alert from ..."
+docker compose run --rm prober prober --test-alert     # you should receive "[Ludy] Test alert from ..."
 ```
 
 Add an outside uptime check on `https://<your domain>/healthz`, since the prober cannot report a whole-server outage.
@@ -237,7 +237,7 @@ tools/backup/backup.sh
 
 Run it nightly with a systemd timer or cron, and practise a restore before you rely on it:
 [backup-and-restore.md](../runbooks/backup-and-restore.md) has the timer, `tools/backup/restore.sh`, the restore drill
-and what to check after a restore. Set `CROVE_DIR` to this checkout when you run the scripts from elsewhere.
+and what to check after a restore. Set `LUDY_DIR` to this checkout when you run the scripts from elsewhere.
 
 Not in a backup, so keep them in your password manager: `.env` (database passwords, `AUTH_JWT_SECRET`,
 `EXPORT_ENCRYPTION_KEY`, `BACKUP_ENCRYPTION_KEY`) and the credential key of connected social channels

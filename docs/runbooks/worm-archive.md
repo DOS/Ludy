@@ -11,19 +11,19 @@ This runbook covers setting the archive up, reading its two alerts, and what to 
 
 - **Batches.** Every minute, the worker cuts the rows that are not yet archived into batches. The rows of one batch span at most 5 minutes. A row is archived no earlier than `ARCHIVE_LAG_SECONDS` (default 600) after it is written, so a transaction that is still open is not cut off. The code is `apps/kernel/src/worm.ts`.
 - **What a batch holds.** References and hashes only, each with the SHA-256 of a fixed set of columns. It also holds a batch hash and a chain hash, which folds in the previous batch. The one exception is the series highs of version 7 (below), which a restore must read back.
-  - Version 1 batches (#891): `audit:<id>` and `journal:<org>:<id>` (`crove_kernel.archive_row_hashes`, migration `20261023230000`).
-  - Version 2 batches (#977), written from migration `20261026230000` on: the same, plus `cash_voucher:<org>:<id>` (a PT, PC, BC or BN with its type, number, date, account and amount), `journal_voucher:<org>:<id>` (an NVK and its number) and `document_void:<org>:<document>` (a voided purchase document and its reversal entry), from `crove_kernel.archive_number_hashes`. A voucher keeps its number when its entry is reversed; the reversal is a journal entry that names the original.
+  - Version 1 batches (#891): `audit:<id>` and `journal:<org>:<id>` (`ludy_kernel.archive_row_hashes`, migration `20261023230000`).
+  - Version 2 batches (#977), written from migration `20261026230000` on: the same, plus `cash_voucher:<org>:<id>` (a PT, PC, BC or BN with its type, number, date, account and amount), `journal_voucher:<org>:<id>` (an NVK and its number) and `document_void:<org>:<document>` (a voided purchase document and its reversal entry), from `ludy_kernel.archive_number_hashes`. A voucher keeps its number when its entry is reversed; the reversal is a journal entry that names the original.
   - The first version 2 batch takes in every voucher and void made before it (its `numbersFrom` is the epoch); later batches take their own window. The verifier checks each batch with the version it was written with.
-  - Version 3 batches (#1489), written from migration `20261102220000` on: the same, plus the legal entity of each finance row (#1280), from `crove_kernel.archive_entity_hashes`: `entity:journal:<org>:<id>` (an entry's entity and each of its lines'), `entity:cash_voucher:<org>:<id>`, `entity:journal_voucher:<org>:<id>` and `entity:document_void:<org>:<document>`. The first version 3 batch takes in every row made before it (its `entitiesFrom` is the epoch); later batches take their own window.
-  - Version 4 batches (#1594, #1596), written from migration `20261103060000` on: the same, plus the gapless numbering (#1401), from `crove_kernel.archive_allocation_hashes`: `number:<org>:<id>` (an allocation: its legal entity, its series and the series' legal entity, number and the record it went to), `number_void:<org>:<id>` (a void, with its reason) and `voucher_number:<cash_voucher|journal_voucher>:<org>:<id>` (a voucher's number, number period and allocation). The first version 4 batch takes in every allocation, void and voucher made before it (its `allocationsFrom` is the epoch); later batches take their own window.
-  - Version 5 batches (#1623), written from migration `20261104140000` on: the same, plus `number_series:<org>:<id>` (a number series: its legal entity, doc type, period key and creation time, and the reset policy in force for its doc type, `yearly` when the doc type has no policy row), from `crove_kernel.archive_series_hashes`. A doc type's reset can change only before its first number, so a switched reset, or a policy row deleted or added for a doc type with numbers with a reset other than `yearly`, changes the row of each of its series. A legitimate change before the first number is an audit event, anchored since version 1. The first version 5 batch takes in every series made before it (its `seriesFrom` is the epoch); later batches take their own window.
-  - Version 6 batches (#1337), written from migration `20261107050000` on: the same, plus `revision:journal:<org>:<id>` (a journal entry's source type and id, its source revision and the hash of its posting request, #1283), from `crove_kernel.archive_revision_hashes`. Changing which revision an entry posts, or its payload hash, now fails the verification. The first version 6 batch takes in every entry made before it (its `revisionsFrom` is the epoch); later batches take their own window.
-  - Version 7 batches (#2007), written from migration `20261107140000` on: the same, plus `number_high:<org>:<series id>` for every number series that gave out a number in the window. It holds the series' legal entity, doc type and period key, and the highest number allocated in the window, from `crove_kernel.archive_series_highs`. The first version 7 batch takes them from the epoch (its `highsFrom`), so it holds the highest number of every series ever numbered; later batches take their own window.
+  - Version 3 batches (#1489), written from migration `20261102220000` on: the same, plus the legal entity of each finance row (#1280), from `ludy_kernel.archive_entity_hashes`: `entity:journal:<org>:<id>` (an entry's entity and each of its lines'), `entity:cash_voucher:<org>:<id>`, `entity:journal_voucher:<org>:<id>` and `entity:document_void:<org>:<document>`. The first version 3 batch takes in every row made before it (its `entitiesFrom` is the epoch); later batches take their own window.
+  - Version 4 batches (#1594, #1596), written from migration `20261103060000` on: the same, plus the gapless numbering (#1401), from `ludy_kernel.archive_allocation_hashes`: `number:<org>:<id>` (an allocation: its legal entity, its series and the series' legal entity, number and the record it went to), `number_void:<org>:<id>` (a void, with its reason) and `voucher_number:<cash_voucher|journal_voucher>:<org>:<id>` (a voucher's number, number period and allocation). The first version 4 batch takes in every allocation, void and voucher made before it (its `allocationsFrom` is the epoch); later batches take their own window.
+  - Version 5 batches (#1623), written from migration `20261104140000` on: the same, plus `number_series:<org>:<id>` (a number series: its legal entity, doc type, period key and creation time, and the reset policy in force for its doc type, `yearly` when the doc type has no policy row), from `ludy_kernel.archive_series_hashes`. A doc type's reset can change only before its first number, so a switched reset, or a policy row deleted or added for a doc type with numbers with a reset other than `yearly`, changes the row of each of its series. A legitimate change before the first number is an audit event, anchored since version 1. The first version 5 batch takes in every series made before it (its `seriesFrom` is the epoch); later batches take their own window.
+  - Version 6 batches (#1337), written from migration `20261107050000` on: the same, plus `revision:journal:<org>:<id>` (a journal entry's source type and id, its source revision and the hash of its posting request, #1283), from `ludy_kernel.archive_revision_hashes`. Changing which revision an entry posts, or its payload hash, now fails the verification. The first version 6 batch takes in every entry made before it (its `revisionsFrom` is the epoch); later batches take their own window.
+  - Version 7 batches (#2007), written from migration `20261107140000` on: the same, plus `number_high:<org>:<series id>` for every number series that gave out a number in the window. It holds the series' legal entity, doc type and period key, and the highest number allocated in the window, from `ludy_kernel.archive_series_highs`. The first version 7 batch takes them from the epoch (its `highsFrom`), so it holds the highest number of every series ever numbered; later batches take their own window.
     - **The exception to "hashes and references only".** The batch also holds these values in the clear, in its `highs` list. After a restore, they are what lets the series be raised above every number the archive holds ([After a restore](#after-a-restore)).
     - They are ids, a doc type, a period key and a number: no personal data.
     - Each value is checked against its row hash, which the chain covers. A value changed in the store fails the verification as `high_mismatch`.
-- **Where batches go.** Each batch is written once to `chain/v1/<sequence>.json` in the archive store, then recorded in `crove_kernel.archive_batch`.
-- **The nightly check.** At 03:10 Vietnam time the verifier reads the batches back from the store, checks the chain, and recomputes every row hash from the database. Each night it reads only the batches after the last run that passed (the checkpoint, the newest marker's batch and chain hash), chained from that hash; about monthly, when the newest full pass is 29 days old or more, and whenever a restore acknowledgement is in force, it reads every batch ([Incremental and full passes](#incremental-and-full-passes-2121)). The result goes to `crove_kernel.archive_verification`. A run that passes also writes a marker to the store, `verify/v1/<UTC time>.json`, which the prober reads from the store alone ([The verification heartbeat](#the-verification-heartbeat-2082)).
+- **Where batches go.** Each batch is written once to `chain/v1/<sequence>.json` in the archive store, then recorded in `ludy_kernel.archive_batch`.
+- **The nightly check.** At 03:10 Vietnam time the verifier reads the batches back from the store, checks the chain, and recomputes every row hash from the database. Each night it reads only the batches after the last run that passed (the checkpoint, the newest marker's batch and chain hash), chained from that hash; about monthly, when the newest full pass is 29 days old or more, and whenever a restore acknowledgement is in force, it reads every batch ([Incremental and full passes](#incremental-and-full-passes-2121)). The result goes to `ludy_kernel.archive_verification`. A run that passes also writes a marker to the store, `verify/v1/<UTC time>.json`, which the prober reads from the store alone ([The verification heartbeat](#the-verification-heartbeat-2082)).
 - **Markers.** A marker holds only when the run passed, how many batches the archive holds and the chain hash of the newest one: no tenant data. Like a batch it is written once (create-only); on `s3` it is locked for 400 days. Add a lifecycle rule for `verify/` that expires objects after 400 days; on a versioned Object Lock bucket an expiry only adds a delete marker, so the rule also needs `NoncurrentVersionExpiration` and the removal of expired delete markers. The worker holds no delete permission.
 - **How alerts reach you.** Both jobs fail loudly:
   - A batch write that keeps failing fails its job (`kernel-archive-write`) after its retries.
@@ -36,7 +36,7 @@ This runbook covers setting the archive up, reading its two alerts, and what to 
 The same store also keeps the outbox events that the daily retention run deletes from the database (plan §4.9, [org-offboarding.md](org-offboarding.md)):
 
 - **What:** one object per org and UTC day, `outbox/v1/<org_id>/<day>.jsonl`, one JSON line per event in time order, and `outbox/v1/<org_id>/<day>.manifest.json` with the row count, the first and last event and the object's SHA-256. Unlike the batches, these hold the events themselves (their payloads are ids and short codes).
-- **When:** once the whole day is more than 30 days old. The worker writes the object once, reads it back and compares the SHA-256, records the day in `crove_kernel.outbox_archive`, and only then deletes the day's events. The database refuses any other delete of an outbox event, and rolls a purge back if the day's events no longer match the archived count.
+- **When:** once the whole day is more than 30 days old. The worker writes the object once, reads it back and compares the SHA-256, records the day in `ludy_kernel.outbox_archive`, and only then deletes the day's events. The database refuses any other delete of an outbox event, and rolls a purge back if the day's events no longer match the archived count.
 - **How long:** on `s3`, each object is locked for 400 days (13 months and a margin, plan §7.9) instead of `ARCHIVE_RETENTION_DAYS`. Add a lifecycle rule that expires objects under `outbox/` after 400 days; the worker holds no delete permission. On `local`, the files stay until removed by hand.
 - **Reading an org's old events:** list `outbox/v1/<org_id>/` and read the day's object; the manifest's `sha256` must match it.
 
@@ -59,8 +59,8 @@ The same store keeps, for each meeting a person deleted before its retention dat
 For production, use `s3`.
 
 1. **Create the bucket with Object Lock.** It can only be turned on at creation:
-   - AWS: `aws s3api create-bucket --bucket crove-archive-prod --object-lock-enabled-for-bucket`.
-   - MinIO: `mc mb --with-lock local/crove-archive-prod`.
+   - AWS: `aws s3api create-bucket --bucket ludy-archive-prod --object-lock-enabled-for-bucket`.
+   - MinIO: `mc mb --with-lock local/ludy-archive-prod`.
 
    The worker checks for Object Lock and refuses to start without it.
 2. **Choose the lock mode in `ARCHIVE_LOCK_MODE`.**
@@ -81,7 +81,7 @@ The first batch covers everything written before the archive existed.
 The prober says `N job(s) failed after their last retry ...: see the worker log`. List the failed jobs:
 
 ```sh
-docker compose exec db psql -U postgres -c "SELECT name, completed_on, left(output::text, 400) AS error FROM crove_jobs.job WHERE state = 'failed' AND name LIKE 'kernel-archive-%' ORDER BY completed_on DESC LIMIT 10"
+docker compose exec db psql -U postgres -c "SELECT name, completed_on, left(output::text, 400) AS error FROM ludy_jobs.job WHERE state = 'failed' AND name LIKE 'kernel-archive-%' ORDER BY completed_on DESC LIMIT 10"
 ```
 
 - `kernel-archive-write`: rows are not being archived. Read the next section.
@@ -97,7 +97,7 @@ docker compose exec db psql -U postgres -c "SELECT name, completed_on, left(outp
 - How far behind is it?
 
   ```sh
-  docker compose exec db psql -U postgres -c "SELECT max(window_to) AS archived_up_to, now() - max(window_to) AS behind FROM crove_kernel.archive_batch"
+  docker compose exec db psql -U postgres -c "SELECT max(window_to) AS archived_up_to, now() - max(window_to) AS behind FROM ludy_kernel.archive_batch"
   ```
 
   Rows written before `archived_up_to` are anchored.
@@ -117,7 +117,7 @@ The failed `kernel-archive-verify` job's error starts with `ARCHIVE_MISMATCH` an
 **Read the findings.** They name codes and references only:
 
 ```sh
-docker compose exec db psql -U postgres -c "SELECT verified_at, ok, batches, rows_checked, problems FROM crove_kernel.archive_verification ORDER BY verified_at DESC LIMIT 3"
+docker compose exec db psql -U postgres -c "SELECT verified_at, ok, batches, rows_checked, problems FROM ludy_kernel.archive_verification ORDER BY verified_at DESC LIMIT 3"
 ```
 
 | Code | Meaning |
@@ -131,8 +131,8 @@ docker compose exec db psql -U postgres -c "SELECT verified_at, ok, batches, row
 | `high_mismatch` | A version 7 batch's series high in the clear does not match its row hash, or a high row has no clear values: the batch was edited in the store. The restore check does not trust that high. Treat it like `chain_broken`. |
 | `restore_ack_unreadable` | An object under `restores/v1/` does not parse as a restore acknowledgement, or its key does not match its own sequence (#2020). The restore check writes these objects create-only: one that does not read was written by something else. Treat it like `chain_broken`. Under COMPLIANCE Object Lock it cannot be removed, so the verification fails on it until its retention ends; record it in the incident, with who could write the store. |
 | `restore_ack_mismatch` | A restore the newest acknowledgement names, or the restore the check is asked to acknowledge, does not read as a restore (#2020). Either the database holds an archived row stamped at or after its backup point, or a row it lost is stamped more than an hour before that point. A restore loses everything from its backup point on, so this is a deletion, not a restore (or the backup point given was wrong). Nothing of that restore is excused, and the restore check acknowledges nothing. Check the backup point against the run's `meta.env`; otherwise treat it like `row_missing`: a SEV1 incident. |
-| `series_period_mismatch` | A `number_series:` row verifies as written, but its period key does not fit the reset of its doc type (`YYYY` for yearly, `YYYY-MM` for monthly, `-` for never; #1820, `crove_kernel.archive_series_misfits`). The doc type's reset was switched, a number given out, and the reset switched back before the archiver anchored the series. Numbering never does this since #1608 (20261103050000): the reset is locked once a doc type has numbers, and a reset change waits for a first number in flight. A series created before that fix, by a reset change racing the doc type's first number (#1607), shows the same way. |
-| `record_mismatch` | `crove_kernel.archive_batch` disagrees with the store. The store is the authority. |
+| `series_period_mismatch` | A `number_series:` row verifies as written, but its period key does not fit the reset of its doc type (`YYYY` for yearly, `YYYY-MM` for monthly, `-` for never; #1820, `ludy_kernel.archive_series_misfits`). The doc type's reset was switched, a number given out, and the reset switched back before the archiver anchored the series. Numbering never does this since #1608 (20261103050000): the reset is locked once a doc type has numbers, and a reset change waits for a first number in flight. A series created before that fix, by a reset change racing the doc type's first number (#1607), shows the same way. |
+| `record_mismatch` | `ludy_kernel.archive_batch` disagrees with the store. The store is the authority. |
 
 **What to do**
 
@@ -179,7 +179,7 @@ A restore brings the database back to its backup point. The archive store is not
       - **The restored database, read with no upper bound.** Before it acknowledges, the check reads the restored database for any archived row stamped at or after the backup point, however far ahead. A restore of that backup holds none, so it refuses on one (`restore_ack_mismatch`), and runs before anything else writes: before the export rebind, and before the stack starts. The only exceptions are the rows of its own reseed: its `kernel.number.reseed` audit events, and a series made again with its archived id. Then an old row edited and moved, with every row after it, past the newest batch is refused.
       - **A lost row never comes back.** The verifier fails a restore whose excused row shows up again under its own reference, in a batch after the acknowledgement's newest or among the rows not archived yet. Series rows and series highs are the exceptions, since they legitimately go on.
       - **Store and database access together: the real residual.** Anyone who holds both the database owner's access and the store's write key (the worker's) can stage a fake restore. They write the next acknowledgement straight to the store, with a restore interval and a point of their choosing; delete every row from that point on; and enter those rows again under new ids. Every check above then passes. The archive alone cannot tell that from a real restore followed by work entered again. **The control is an alert they cannot silence:**
-        - every verification run records how many rows it excused and the acknowledgement in force (`excused` and `restore_ack` in `crove_kernel.archive_verification`, for the record), and logs `excused N row(s) under restore acknowledgement #n`;
+        - every verification run records how many rows it excused and the acknowledgement in force (`excused` and `restore_ack` in `ludy_kernel.archive_verification`, for the record), and logs `excused N row(s) under restore acknowledgement #n`;
         - every run first posts `[archive] ALERT restore acknowledgement restores/v1/<n>.json, written <time>, is in the WORM archive`, from the store alone and before it reads the database, so a run the database owner stops, kills or locks has alerted already;
         - every run, passing or failing, then posts `[archive] ALERT restore acknowledgement #n, written <time>, excuses N row(s)` to the alert webhook, for `ARCHIVE_RESTORE_ALERT_DAYS` (14 by default) after the store wrote the acknowledgement. The count N comes from the database run; the first line does not need it;
         - each kind of alert is posted at most once per `SECURITY_ALERT_REPEAT_MINUTES` window per process, so it posts once a night;
@@ -236,26 +236,26 @@ The worker runs it every night. To run it now, queue one job. This is the row pg
 Either this, which plans the run like the nightly one:
 
 ```sh
-docker compose exec db psql -U postgres -c "INSERT INTO crove_jobs.job (name, data, policy, retry_limit, expire_seconds) VALUES ('kernel-archive-verify', '{}', 'standard', 0, 14400)"
+docker compose exec db psql -U postgres -c "INSERT INTO ludy_jobs.job (name, data, policy, retry_limit, expire_seconds) VALUES ('kernel-archive-verify', '{}', 'standard', 0, 14400)"
 ```
 
 or this, which reads every batch (run one of the two, not both: each queues a job):
 
 ```sh
-docker compose exec db psql -U postgres -c "INSERT INTO crove_jobs.job (name, data, policy, retry_limit, expire_seconds) VALUES ('kernel-archive-verify', '{\"full\": true}', 'standard', 0, 14400)"
+docker compose exec db psql -U postgres -c "INSERT INTO ludy_jobs.job (name, data, policy, retry_limit, expire_seconds) VALUES ('kernel-archive-verify', '{\"full\": true}', 'standard', 0, 14400)"
 ```
 
-The result appears in `crove_kernel.archive_verification` and in the worker log: `[archive] verified ...`, or `[archive] ALERT ARCHIVE_MISMATCH ...`.
+The result appears in `ludy_kernel.archive_verification` and in the worker log: `[archive] verified ...`, or `[archive] ALERT ARCHIVE_MISMATCH ...`.
 
 The prober watches both for you (#1997) and alerts like for a stuck worker:
 
-- `archive_verify`: the newest verification run that passed is older than `PROBER_MAX_ARCHIVE_VERIFY_AGE_SECONDS` (26 h by default; before the first, the first batch is). Either the worker or its schedule is not running (check the worker, incidents.md, section 1, then run the verifier by hand as above), or it runs and keeps failing: read the problems of its latest rows (`SELECT verified_at, ok, problems FROM crove_kernel.archive_verification ORDER BY verified_at DESC LIMIT 3`) and follow "Verification fails: the archive and the database disagree" above.
+- `archive_verify`: the newest verification run that passed is older than `PROBER_MAX_ARCHIVE_VERIFY_AGE_SECONDS` (26 h by default; before the first, the first batch is). Either the worker or its schedule is not running (check the worker, incidents.md, section 1, then run the verifier by hand as above), or it runs and keeps failing: read the problems of its latest rows (`SELECT verified_at, ok, problems FROM ludy_kernel.archive_verification ORDER BY verified_at DESC LIMIT 3`) and follow "Verification fails: the archive and the database disagree" above.
 - `archive_lag`: the oldest audit event not yet in a batch (journal entries go in the same windows) is older than `PROBER_MAX_ARCHIVE_LAG_SECONDS` (by default the larger of 3600 s and `ARCHIVE_LAG_SECONDS` plus 900 s; the archiver itself waits `ARCHIVE_LAG_SECONDS`, 600 s by default, on purpose, so keep the limit well above it). The archiver is stopped or its writes fail: look for `[archive]` lines in the worker log and for failed `kernel-archive-write` jobs, and check the store (the `archive` volume, or the bucket and its credentials).
 
 To look by hand:
 
 ```sh
-docker compose exec db psql -U postgres -c "SELECT max(verified_at) FROM crove_kernel.archive_verification"
+docker compose exec db psql -U postgres -c "SELECT max(verified_at) FROM ludy_kernel.archive_verification"
 ```
 
 ## The verification heartbeat (#2082)
@@ -273,7 +273,7 @@ docker compose exec db psql -U postgres -c "SELECT max(verified_at) FROM crove_k
   Settings the check cannot use disable only this check: `ARCHIVE_STORE=s3` without `ARCHIVE_S3_BUCKET`, half of the `PROBER_ARCHIVE_S3_*` pair, no `PROBER_ARCHIVE_S3_*` pair and no `PROBER_ARCHIVE_S3_DEFAULT_CHAIN=true` (the default credential chain is opt-in, #2098), a pair together with `PROBER_ARCHIVE_S3_DEFAULT_CHAIN=true`, the worker's `S3_ACCESS_KEY_ID` in the environment with no `PROBER_ARCHIVE_S3_*` pair (the opt-in does not lift it), a `PROBER_ARCHIVE_S3_ACCESS_KEY_ID` equal to the worker's `S3_ACCESS_KEY_ID`, or a malformed `ARCHIVE_STORE`, `PROBER_MAX_ARCHIVE_MARKER_AGE_SECONDS` or, with `ARCHIVE_STORE=s3`, `S3_ENDPOINT`, `S3_FORCE_PATH_STYLE` or `PROBER_ARCHIVE_S3_DEFAULT_CHAIN`. An empty `PROBER_MAX_ARCHIVE_MARKER_AGE_SECONDS=` is the default (26 h), not 0. The pilot preflight (`pnpm pilot:check`) reports a malformed setting too. The prober logs `[prober] ERROR verification marker check disabled (...)` at the start of its loop and reports `archive_marker` on every probe, naming the settings (never their values), until they are fixed. Its other checks run, and `prober --backup-failed`, `--backup-ok` and `--test-alert` never depend on them.
 
   With one probe a run (cron), every run alerts while the marker is stale, and no resolved notice follows: like the outage alert, the state lives in the process.
-- **Why the database owner cannot hide it.** The check reads only the store, and its alert state lives in the prober's process, never in the database (unlike the other checks, whose state the `crove_kernel.prober_alert_gate` row keeps). It alerts when the database cannot be read too. Writing a marker needs the store's write key, which the database does not hold.
+- **Why the database owner cannot hide it.** The check reads only the store, and its alert state lives in the prober's process, never in the database (unlike the other checks, whose state the `ludy_kernel.prober_alert_gate` row keeps). It alerts when the database cannot be read too. Writing a marker needs the store's write key, which the database does not hold.
 - **What it does not cover.**
   - Someone who holds the worker's store key (the host, on `local` the archive volume) can write a marker without a run. The marker check is against the database owner; against the host, `s3` with Object Lock still keeps every batch, and the restore acknowledgement alerts above stay.
   - On `local`, the claim holds only while the database server cannot write the archive directory. Under Compose the `db` container does not mount the `archive` volume. On a single host without containers, a PostgreSQL superuser can run programs as the database's OS user (`COPY ... TO PROGRAM`), so keep `ARCHIVE_DIR` out of that user's reach, or use `s3`.

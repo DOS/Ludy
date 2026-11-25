@@ -25,7 +25,7 @@ Who does what: the owner (or the people the owner asks) records, with consent. A
 Voices are personal data, and plan section 7 says everyone whose voice is recorded must be told, that consent must be clear and freely given, that silence is not consent and that it can be withdrawn. Readers are people, even though the characters are invented. So, before anyone records:
 
 1. Give each reader the consent text below and let them read it. They can say no, with no reason needed.
-2. Keep one signed or typed consent per reader (the name, the date, the scripts they read) **outside the repository and in a different folder from the recordings**, for example `/srv/crove-transcribe-eval-consents/`. Never inside the eval folder: the eval refuses a `.txt` that has no recording next to it (see section 5).
+2. Keep one signed or typed consent per reader (the name, the date, the scripts they read) **outside the repository and in a different folder from the recordings**, for example `/srv/ludy-transcribe-eval-consents/`. Never inside the eval folder: the eval refuses a `.txt` that has no recording next to it (see section 5).
 3. Keep each consent with its recording for as long as the recording exists. Without a consent on file, a recording is deleted.
 4. If a reader withdraws, delete their recordings and the references of those recordings, and tell the owner. Delete the eval's local diff folder (`TRANSCRIBE_EVAL_OUT`) too, since it holds transcript text.
 
@@ -79,27 +79,27 @@ Make the reference with these commands. Run them in the folder of the scripts, a
 # With speaker labels, so the eval can score the speakers (recommended):
 awk '/^## Script/{on=1;next} /^## /{on=0} on' 01-hop-ban-hang-tuan.md \
   | grep -v '^>' | sed -e 's/{[^}]*}//g' -e 's/  */ /g' -e '/^[[:space:]]*$/d' \
-  > /srv/crove-transcribe-eval/hop-01.txt
+  > /srv/ludy-transcribe-eval/hop-01.txt
 
 # Words only, no labels (the eval then scores words only):
 awk '/^## Script/{on=1;next} /^## /{on=0} on' 01-hop-ban-hang-tuan.md \
   | grep -v '^>' | sed -e 's/{[^}]*}//g' -e 's/^\[[^]]*\] *//' -e 's/  */ /g' -e '/^[[:space:]]*$/d' \
-  > /srv/crove-transcribe-eval/hop-01.txt
+  > /srv/ludy-transcribe-eval/hop-01.txt
 ```
 
 For a noisy take, copy the same reference to the noisy name (`hop-01-noisy.txt`). Then open the file, listen to the recording and change it to match what was said. Use the names of the characters as labels, as written in the script, and keep the same set of names for each take of one script. A file that was edited must be read once more from the top against the audio before it is used: a wrong reference makes a good provider look bad.
 
 ## 5. Where the files go
 
-As in step 1 of the [eval runbook](../meetings-transcribe-eval.md#1-where-the-recordings-go): one folder outside your checkout of this repository, for example `/srv/crove-transcribe-eval/`, with each recording and its reference side by side:
+As in step 1 of the [eval runbook](../meetings-transcribe-eval.md#1-where-the-recordings-go): one folder outside your checkout of this repository, for example `/srv/ludy-transcribe-eval/`, with each recording and its reference side by side:
 
 ```
-/srv/crove-transcribe-eval/
+/srv/ludy-transcribe-eval/
   hop-01.ogg        hop-01.txt
   hop-01-noisy.ogg  hop-01-noisy.txt
   hop-02.m4a        hop-02.txt
   ...
-/srv/crove-transcribe-eval-consents/    (a different folder, never inside the one above)
+/srv/ludy-transcribe-eval-consents/    (a different folder, never inside the one above)
   one consent per reader
 ```
 
