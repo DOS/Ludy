@@ -697,6 +697,7 @@ import {
   zMinutesTemplateUpdate,
   zMinutesTemplates,
 } from './meeting-minutes-templates.ts';
+import { zMinutesDocx, zMinutesDocxInput } from './meeting-minutes-docx.ts';
 import { zAskAnswer, zAskEmpty, zAskInput, zAskStatus } from './meeting-ask.ts';
 import { zBriefAnswer, zBriefEmpty, zBriefFacts, zBriefStatus, zBriefTarget } from './meeting-brief.ts';
 import { zMeetingRename, zMeetingRenamed, zTitleAnswer } from './meeting-title.ts';
@@ -1891,6 +1892,11 @@ export const contract = {
     minutesEsign: {
       get: oc.input(zMeetingMinutesEsignGet).output(zMeetingMinutesEsign),
       set: oc.input(zMeetingMinutesEsign).output(zMeetingMinutesEsign),
+    },
+    // The published biên bản as a Word file (#4774): built on the server from the published rows only, under the caller's own row security (the minutes page's reader rule); the file comes back in the answer.
+    // MINUTES_NOT_PUBLISHED (409) when nothing is shared yet.
+    minutesDocx: {
+      download: oc.input(zMinutesDocxInput).output(zMinutesDocx),
     },
     // A member's own webhook for the minutes they publish (A6, #3164): the card reads `get`, `set` makes or changes it (the secret comes back once, when it is made), `rotateSecret`, `clear` and
     // `test` (a `ping` with no meeting data). The owner's `switch` (off by default) gates all of it; nothing is sent while it is off.
