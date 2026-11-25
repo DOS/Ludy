@@ -25,7 +25,6 @@ import { throwImportFailure } from '@ludy/mod-notes';
 import { actorOf, type AuthUser } from './auth.ts';
 import {
   classifyNoteAttachment,
-  readBoundedStream,
   sanitizeNoteAttachmentFilename,
 } from './note-attachments.ts';
 
@@ -38,19 +37,90 @@ interface ParsedMultipartUpload {
   fields: Record<string, string>;
 }
 
-async function readBoundedImportStream(
+function createBoundedImportStream(
+  body: ReadableStream<Uint8Array> | null,
+  maxBytes: number,
+  onOverflow: () => DomainError,
+): ReadableStream<Uint8Array> | null {
+  if (!body) return null;
+  const reader = body.getReader();
+  let total = 0;
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) {
+            reader.releaseLock();
+            controller.close();
+            return;
+          }
+          if (!value || value.byteLength === 0) continue;
+          total += value.byteLength;
+          if (total > maxBytes) {
+            const err = onOverflow();
+            await reader.cancel(err).catch(() => undefined);
+            reader.releaseLock();
+            controller.error(err);
+            return;
+          }
+          controller.enqueue(value);
+          return;
+        }
+      } catch (error) {
+        reader.releaseLock();
+        controller.error(error);
+      }
+    },
+    async cancel(reason) {
+      try {
+        await reader.cancel(reason);
+      } finally {
+        reader.releaseLock();
+      }
+    },
+  });
+}
+
+async function decodeBoundedUtf8Stream(
   body: ReadableStream<Uint8Array> | null,
   maxBytes: number,
   tooLargeMessage: string,
-): Promise<Uint8Array> {
+): Promise<string> {
+  if (!body) throw new DomainError('NO_FILE', 400, 'Tệp nhập đang rỗng');
+  const reader = body.getReader();
+  const decoder = new TextDecoder('utf-8', { fatal: true });
+  const parts: string[] = [];
+  let total = 0;
   try {
-    return await readBoundedStream(body, maxBytes);
-  } catch (error) {
-    if (error instanceof DomainError && error.code === 'TOO_LARGE') {
-      throw new DomainError('TOO_LARGE', 413, tooLargeMessage);
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value || value.byteLength === 0) continue;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw new DomainError('TOO_LARGE', 413, tooLargeMessage);
+      }
+      try {
+        const piece = decoder.decode(value, { stream: true });
+        if (piece) parts.push(piece);
+      } catch {
+        await reader.cancel().catch(() => undefined);
+        throw new DomainError('NOTE_IMPORT_INVALID', 400, 'Tệp nhập không đúng mã hóa UTF-8 hợp lệ');
+      }
     }
-    throw error;
+  } finally {
+    reader.releaseLock();
   }
+  if (total === 0) throw new DomainError('NO_FILE', 400, 'Tệp nhập đang rỗng');
+  try {
+    const tail = decoder.decode();
+    if (tail) parts.push(tail);
+  } catch {
+    throw new DomainError('NOTE_IMPORT_INVALID', 400, 'Tệp nhập không đúng mã hóa UTF-8 hợp lệ');
+  }
+  return parts.join('');
 }
 
 async function readImportMultipart(
@@ -67,18 +137,21 @@ async function readImportMultipart(
   }
 
   const contentType = req.headers.get('content-type') ?? '';
-  let bytes: Uint8Array;
+  let text: string;
   let rawName = '';
   const fields: Record<string, string> = {};
 
   if (contentType.toLowerCase().includes('multipart/form-data')) {
-    const rawBody = await readBoundedImportStream(req.body, maxBytes + MULTIPART_OVERHEAD_BYTES, tooLargeMessage);
-    const copy = new Request(req.url, {
-      method: req.method,
-      headers: req.headers,
-      body: new Uint8Array(rawBody),
+    let overflowError: DomainError | null = null;
+    const boundedStream = createBoundedImportStream(req.body, maxBytes + MULTIPART_OVERHEAD_BYTES, () => {
+      overflowError = new DomainError('TOO_LARGE', 413, tooLargeMessage);
+      return overflowError;
     });
-    const form = await copy.formData().catch(() => {
+    if (!boundedStream) {
+      throw new DomainError('INVALID', 400, 'Dữ liệu biểu mẫu tải lên không hợp lệ');
+    }
+    const form = await new Response(boundedStream, { headers: req.headers }).formData().catch(() => {
+      if (overflowError) throw overflowError;
       throw new DomainError('INVALID', 400, 'Dữ liệu biểu mẫu tải lên không hợp lệ');
     });
     const files = form.getAll('file').filter((entry): entry is File => entry instanceof File);
@@ -87,27 +160,18 @@ async function readImportMultipart(
     const file = files[0] as File;
     if (file.size === 0) throw new DomainError('NO_FILE', 400, 'Tệp nhập đang rỗng');
     if (file.size > maxBytes) throw new DomainError('TOO_LARGE', 413, tooLargeMessage);
-    bytes = new Uint8Array(await file.arrayBuffer());
-    if (bytes.byteLength === 0) throw new DomainError('NO_FILE', 400, 'Tệp nhập đang rỗng');
-    if (bytes.byteLength > maxBytes) throw new DomainError('TOO_LARGE', 413, tooLargeMessage);
+    text = await decodeBoundedUtf8Stream(file.stream(), maxBytes, tooLargeMessage);
     rawName = file.name;
     for (const [key, val] of form.entries()) {
       if (typeof val === 'string') fields[key] = val;
     }
   } else {
-    bytes = await readBoundedImportStream(req.body, maxBytes, tooLargeMessage);
-    if (bytes.byteLength === 0) throw new DomainError('NO_FILE', 400, 'Tệp nhập đang rỗng');
+    text = await decodeBoundedUtf8Stream(req.body, maxBytes, tooLargeMessage);
     const url = new URL(req.url);
     rawName = url.searchParams.get('filename') ?? req.headers.get('x-file-name') ?? '';
     for (const [k, v] of url.searchParams.entries()) fields[k] = v;
   }
 
-  let text: string;
-  try {
-    text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-  } catch {
-    throw new DomainError('NOTE_IMPORT_INVALID', 400, 'Tệp nhập không đúng mã hóa UTF-8 hợp lệ');
-  }
   return { text, rawName, fields };
 }
 

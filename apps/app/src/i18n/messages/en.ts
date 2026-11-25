@@ -4144,6 +4144,7 @@ export const en = {
       invalidSizeLimit: 'The selected file exceeds the 50 MB limit.',
       invalidExtension: 'Please choose an Evernote .enex file.',
       invalidUtf8: 'The selected file is not valid UTF-8 text.',
+      noteTooLong: 'A note exceeds the 100,000-character limit after conversion.',
       previewHeading: 'Dry-run preview',
       summaryNotes: '{count, plural, one {# note} other {# notes}}',
       summaryAttachments: '{count, plural, one {# attachment} other {# attachments}}',

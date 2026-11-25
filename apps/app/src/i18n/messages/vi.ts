@@ -4141,6 +4141,7 @@ export const vi = {
       invalidSizeLimit: 'Tệp vừa chọn vượt quá giới hạn 50 MB.',
       invalidExtension: 'Hãy chọn đúng tệp Evernote có đuôi .enex.',
       invalidUtf8: 'Tệp không phải văn bản UTF-8 hợp lệ.',
+      noteTooLong: 'Nội dung ghi chú sau khi chuyển đổi vượt quá giới hạn 100.000 ký tự.',
       previewHeading: 'Xem trước trước khi nhập',
       summaryNotes: '{count, number} ghi chú',
       summaryAttachments: '{count, number} tệp đính kèm',
