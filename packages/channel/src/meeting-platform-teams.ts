@@ -71,7 +71,31 @@ export interface TeamsMeetingPlatformOptions {
   fetch?: Fetch | undefined;
   now?: (() => Date) | undefined;
   timeoutMs?: number | undefined;
+  // Tests: the wait before the one retry of a busy answer (429); it must end early when the signal aborts.
+  sleep?: ((ms: number, signal?: AbortSignal) => Promise<void>) | undefined;
 }
+
+// A 429 from Graph says when to come back in Retry-After (seconds, or a date). One retry is made when that is within this wait; a longer wait is the member's next pass, not this one's.
+const RETRY_MAX_WAIT_MS = 5_000;
+const RETRY_DEFAULT_WAIT_MS = 1_000;
+function retryWaitMs(header: string | null, nowMs: number): number {
+  const value = (header ?? '').trim();
+  if (value === '') return RETRY_DEFAULT_WAIT_MS;
+  if (/^\d{1,6}$/.test(value)) return Number(value) * 1000;
+  const at = Date.parse(value);
+  return Number.isNaN(at) ? RETRY_DEFAULT_WAIT_MS : Math.max(0, at - nowMs);
+}
+const abortableSleep = (ms: number, signal?: AbortSignal) =>
+  new Promise<void>((resolve) => {
+    if (signal?.aborted) return resolve();
+    const timer = setTimeout(done, ms);
+    function done() {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', done);
+      resolve();
+    }
+    signal?.addEventListener('abort', done, { once: true });
+  });
 
 type Json = Record<string, unknown>;
 const isRecord = (value: unknown): value is Json => typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -265,25 +289,35 @@ export class TeamsMeetingPlatform implements MeetingPlatformAdapter, MeetingPlat
   private readonly http: Fetch;
   private readonly now: () => Date;
   private readonly timeoutMs: number;
+  private readonly sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
 
   constructor(config: TeamsAppConfig, options: TeamsMeetingPlatformOptions = {}) {
     this.config = config;
     this.http = allowlistedFetch(TEAMS_HOSTS, options.fetch, options.timeoutMs);
     this.timeoutMs = options.timeoutMs ?? 15_000;
     this.now = options.now ?? (() => new Date());
+    this.sleep = options.sleep ?? abortableSleep;
   }
 
   // One Graph read. `status` and the parsed body come back whatever the status, so the caller decides; a network failure is `platform_unavailable`. The body is read only to find a code, never kept in an error.
+  // A busy answer (429) is retried once after the wait Graph names, when that is short; the second answer is the caller's.
   private async read(url: string, credential: MeetingPlatformCredential, signal?: AbortSignal, accept = 'application/json'): Promise<{ status: number; response: Response }> {
-    let response: Response;
-    try {
-      // The caller's signal replaces the transport's own timeout, so the request's timeout is joined to it here: one stalled Graph answer cannot hold a whole listing.
-      const bounded = signal ? AbortSignal.any([signal, AbortSignal.timeout(this.timeoutMs)]) : undefined;
-      response = await this.http(url, { method: 'GET', headers: { authorization: `Bearer ${credential.accessToken}`, accept, prefer: 'outlook.timezone="UTC"' }, ...(bounded ? { signal: bounded } : {}) });
-    } catch {
-      throw new MeetingPlatformError('platform_unavailable');
+    for (let attempt = 0; ; attempt += 1) {
+      let response: Response;
+      try {
+        // The caller's signal replaces the transport's own timeout, so the request's timeout is joined to it here: one stalled Graph answer cannot hold a whole listing.
+        const bounded = signal ? AbortSignal.any([signal, AbortSignal.timeout(this.timeoutMs)]) : undefined;
+        response = await this.http(url, { method: 'GET', headers: { authorization: `Bearer ${credential.accessToken}`, accept, prefer: 'outlook.timezone="UTC"' }, ...(bounded ? { signal: bounded } : {}) });
+      } catch {
+        throw new MeetingPlatformError('platform_unavailable');
+      }
+      if (response.status !== 429 || attempt > 0) return { status: response.status, response };
+      const wait = retryWaitMs(response.headers.get('retry-after'), this.now().getTime());
+      await response.body?.cancel().catch(() => undefined);
+      if (wait > RETRY_MAX_WAIT_MS || signal?.aborted) return { status: 429, response: new Response(null, { status: 429 }) };
+      await this.sleep(wait, signal);
+      if (signal?.aborted) return { status: 429, response: new Response(null, { status: 429 }) };
     }
-    return { status: response.status, response };
   }
 
   private async json(url: string, credential: MeetingPlatformCredential, signal?: AbortSignal): Promise<Json> {

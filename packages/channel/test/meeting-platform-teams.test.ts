@@ -70,9 +70,11 @@ function transport(route: (url: URL, call: Call) => Answer) {
   };
   return { fetchImpl, calls };
 }
+// The wait before a retry is recorded, never slept, so no test waits for real.
 const teams = (route: Parameters<typeof transport>[0]) => {
   const t = transport(route);
-  return { adapter: new TeamsMeetingPlatform(APP, { fetch: t.fetchImpl, now: () => NOW }), calls: t.calls };
+  const sleeps: number[] = [];
+  return { adapter: new TeamsMeetingPlatform(APP, { fetch: t.fetchImpl, now: () => NOW, sleep: async (ms) => void sleeps.push(ms) }), calls: t.calls, sleeps };
 };
 
 // The Graph of the fixtures: the calendar (two pages), the online meeting of each join address, and the files of each meeting.
@@ -223,6 +225,46 @@ describe('TeamsMeetingPlatform.list', () => {
     const evil = teams((url) => (url.pathname === '/v1.0/me/calendarView' ? { json: { ...fixture('calendar-view'), '@odata.nextLink': 'https://evil.example/v1.0/me/calendarView' } } : graph()(url)));
     expect(await codeOf(evil.adapter.list(CREDENTIAL, SINCE))).toBe('platform_unavailable');
     expect(evil.calls.some((c) => c.url.includes('evil.example'))).toBe(false);
+  });
+
+  it('retries a busy answer (429) once after the wait Graph names when it is short, and gives up when it is long or the second answer is busy too', async () => {
+    const calendar = (answers: Answer[]) => {
+      let n = 0;
+      return (url: URL): Answer => (url.pathname === '/v1.0/me/calendarView' ? (answers[Math.min(n++, answers.length - 1)] as Answer) : graph()(url));
+    };
+    const calendarCalls = (t: { calls: Call[] }) => t.calls.filter((c) => new URL(c.url).pathname === '/v1.0/me/calendarView' && !new URL(c.url).searchParams.has('page')).length;
+    // Busy once, then fine: the list is the same as without the 429, after the 2 seconds Graph named.
+    const once = teams(calendar([{ status: 429, json: {}, headers: { 'retry-after': '2' } }, { json: fixture('calendar-view') }]));
+    expect((await once.adapter.list(CREDENTIAL, SINCE)).map((m) => m.id)).toEqual([OCC.A, OCC.B, OCC.S2, OCC.S1]);
+    expect(once.sleeps).toEqual([2000]);
+    expect(calendarCalls(once)).toBe(2);
+    // No header: a short default wait. A date: the time left to it.
+    const bare = teams(calendar([{ status: 429, json: {} }, { json: fixture('calendar-view') }]));
+    await bare.adapter.list(CREDENTIAL, SINCE);
+    expect(bare.sleeps).toEqual([1000]);
+    const dated = teams(calendar([{ status: 429, json: {}, headers: { 'retry-after': new Date(NOW.getTime() + 3000).toUTCString() } }, { json: fixture('calendar-view') }]));
+    await dated.adapter.list(CREDENTIAL, SINCE);
+    expect(dated.sleeps).toEqual([3000]);
+    // Busy twice: one retry only, then the usual short code, with the connection untouched (not an expiry).
+    const twice = teams(calendar([{ status: 429, json: {}, headers: { 'retry-after': '1' } }]));
+    expect(await codeOf(twice.adapter.list(CREDENTIAL, SINCE))).toBe('platform_unavailable');
+    expect(calendarCalls(twice)).toBe(2);
+    expect(twice.sleeps).toEqual([1000]);
+    // A wait longer than the cap (or a nonsense header) is not waited for: the next pass is the retry.
+    const long = teams(calendar([{ status: 429, json: {}, headers: { 'retry-after': '120' } }, { json: fixture('calendar-view') }]));
+    expect(await codeOf(long.adapter.list(CREDENTIAL, SINCE))).toBe('platform_unavailable');
+    expect(long.sleeps).toEqual([]);
+    expect(calendarCalls(long)).toBe(1);
+    // The same for a look-up of one meeting and for a download description.
+    let lookups = 0;
+    const lookup = teams((url) => (url.pathname === '/v1.0/me/onlineMeetings' && lookups++ === 0 ? { status: 429, json: {}, headers: { 'retry-after': '1' } } : graph()(url)));
+    expect((await lookup.adapter.list(CREDENTIAL, SINCE)).map((m) => m.id)).toEqual([OCC.A, OCC.B, OCC.S2, OCC.S1]);
+    expect(lookup.sleeps).toEqual([1000]);
+    // An aborted pass does not retry.
+    const stop = new AbortController();
+    stop.abort();
+    const aborted = teams(calendar([{ status: 429, json: {} }, { json: fixture('calendar-view') }]));
+    expect(await codeOf(aborted.adapter.list(CREDENTIAL, SINCE, stop.signal))).toBe('platform_unavailable');
   });
 
   it('skips one meeting whose files are refused or gone, and fails the whole call for a token or a busy service', async () => {
