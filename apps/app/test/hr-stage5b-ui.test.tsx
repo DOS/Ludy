@@ -52,7 +52,7 @@ vi.mock('../src/lib/api.ts', async () => {
           overtime: { submit: vi.fn(), cancel: vi.fn() },
         },
         onboarding: { approve: vi.fn(), reject: vi.fn() },
-        overtimeRequests: { approveL1: vi.fn(), approveFinal: vi.fn(), reject: vi.fn() },
+        overtimeRequests: { approveL1: vi.fn(), approveFinal: vi.fn(), reject: vi.fn(), settings: { set: vi.fn() } },
         probation: { draftSummary: vi.fn(), decide: vi.fn() },
         payroll: {
           employees: { add: vi.fn(), edit: vi.fn(), end: vi.fn(), finalization: vi.fn(), erase: vi.fn() },
@@ -140,6 +140,7 @@ describe('HR Stage 5B UI & i18n (#4448)', () => {
       bankCode: 'VCB',
       hasIdentityNumber: true,
       hasBankAccount: true,
+      bankAccountMasked: '***6789',
       hasTaxCode: false,
       hasInsuranceNumber: false,
       note: 'Nhờ HR cập nhật',
@@ -190,12 +191,20 @@ describe('HR Stage 5B UI & i18n (#4448)', () => {
       finalActedAt: null,
       reason: 'Triển khai bản vá',
       decisionNote: null,
+      monthHoursTotal: '42',
+      exceedsMonthlyCap: true,
+      dayHoursTotal: '25',
+      exceedsDailyCap: true,
       createdAt: '2026-11-10T04:00:00.000Z',
     };
     const otTeam: HrOvertimeRequestView = {
       ...otSelf,
       id: '00000000-0000-7000-8000-000000000812',
       employeeName: 'Trần Thị B',
+      monthHoursTotal: '10',
+      exceedsMonthlyCap: false,
+      dayHoursTotal: '3.5',
+      exceedsDailyCap: false,
     };
     const otState: HrSelfOvertimeListResult = {
       requests: [otSelf],
@@ -209,11 +218,14 @@ describe('HR Stage 5B UI & i18n (#4448)', () => {
     expect(obHtml).toContain('<th scope="col"');
     expect(obHtml).toContain('min-h-[44px]');
     expect(obHtml).toContain('data-testid="hr-my-onboarding-cancel"');
+    expect(obHtml).toContain('data-testid="hr-my-ob-pending-notice"');
 
     const otHtml = wrap(<HrSelfOvertimeCard />, 'vi');
     expect(otHtml).toContain('data-testid="hr-my-overtime"');
     expect(otHtml).toContain('<th scope="col"');
     expect(otHtml).toContain('150%');
+    expect(otHtml).toContain('data-testid="hr-my-ot-monthly-badge"');
+    expect(otHtml).toContain('data-testid="hr-my-ot-daily-badge"');
     expect(otHtml).toContain('data-testid="hr-my-ot-team-queue"');
     expect(otHtml).toContain('data-testid="hr-my-ot-approve-l1"');
     expect(otHtml).toContain('max-md:min-h-11');
@@ -241,6 +253,7 @@ describe('HR Stage 5B UI & i18n (#4448)', () => {
       bankCode: 'VCB',
       hasIdentityNumber: true,
       hasBankAccount: true,
+      bankAccountMasked: '***6789',
       hasTaxCode: false,
       hasInsuranceNumber: false,
       note: 'Cập nhật hồ sơ',
@@ -271,24 +284,50 @@ describe('HR Stage 5B UI & i18n (#4448)', () => {
       finalActedAt: null,
       reason: 'Bảo trì máy chủ',
       decisionNote: null,
+      monthHoursTotal: '44',
+      exceedsMonthlyCap: true,
+      dayHoursTotal: '26',
+      exceedsDailyCap: true,
       createdAt: '2026-11-15T10:00:00.000Z',
+    };
+    const otRowPendingL1: HrOvertimeRequestView = {
+      ...otRow,
+      id: '00000000-0000-7000-8000-000000000822',
+      status: 'pending_l1',
+      exceedsMonthlyCap: false,
+      monthHoursTotal: '4',
+      exceedsDailyCap: false,
+      dayHoursTotal: '4',
     };
 
     cache.current.setQueryData(['hr', 'onboarding', 'list', { limit: 100 }], [obRow]);
     cache.current.setQueryData(['hr', 'overtimeRequests', 'list', { limit: 100 }], [otRow]);
+    cache.current.setQueryData(['hr', 'overtimeRequests', 'settings', 'get', {}], { requireL1: false });
 
     const obQueue = wrap(<HrOnboardingReviewQueue />, 'en');
     expect(obQueue).toContain('data-testid="hr-onboarding-queue"');
     expect(obQueue).toContain('data-testid="hr-onboarding-queue-approve"');
     expect(obQueue).toContain('ID number (sealed)');
+    expect(obQueue).toContain('Bank account: ***6789');
     expect(obQueue).toContain('max-md:min-h-11');
 
     const otQueue = wrap(<HrOvertimeReviewQueue />, 'en');
     expect(otQueue).toContain('data-testid="hr-overtime-queue"');
     expect(otQueue).toContain('data-testid="hr-overtime-commentary-badge"');
+    expect(otQueue).toContain('data-testid="hr-overtime-monthly-cap-badge"');
+    expect(otQueue).toContain('data-testid="hr-overtime-daily-cap-badge"');
+    expect(otQueue).toContain('data-testid="hr-overtime-require-l1-toggle"');
+    expect(otQueue).toContain('44 h');
+    expect(otQueue).toContain('26 h');
     expect(otQueue).toContain('200%');
     expect(otQueue).toContain('data-testid="hr-overtime-queue-approve-final"');
     expect(otQueue).toContain('max-md:min-h-11');
+
+    cache.current.setQueryData(['hr', 'overtimeRequests', 'list', { limit: 100 }], [otRowPendingL1]);
+    cache.current.setQueryData(['hr', 'overtimeRequests', 'settings', 'get', {}], { requireL1: true });
+    const strictOtQueue = wrap(<HrOvertimeReviewQueue />, 'en');
+    expect(strictOtQueue).toContain('aria-pressed="true"');
+    expect(strictOtQueue).toMatch(/disabled[^>]*data-testid="hr-overtime-queue-approve-final"|data-testid="hr-overtime-queue-approve-final"[^>]*disabled/);
 
     const sheet: HrRunSheet = {
       run: {
@@ -516,6 +555,26 @@ describe('HR Stage 5B UI & i18n (#4448)', () => {
         previewMatchesRange: true,
         extendedUntil: '',
         effectiveEnd: '2026-11-30',
+      }),
+    ).toBe(true);
+    expect(
+      canSubmitProbationDecision({
+        decision: 'extend',
+        rangeValid: true,
+        previewMatchesRange: true,
+        extendedUntil: '2026-12-05',
+        effectiveEnd: '2026-11-30',
+        probationEndOn: '2026-12-10',
+      }),
+    ).toBe(false);
+    expect(
+      canSubmitProbationDecision({
+        decision: 'extend',
+        rangeValid: true,
+        previewMatchesRange: true,
+        extendedUntil: '2026-12-15',
+        effectiveEnd: '2026-11-30',
+        probationEndOn: '2026-12-10',
       }),
     ).toBe(true);
     expect(probationScopeKey(EMP_ID, '2026-10-01', '2026-11-30')).not.toBe(

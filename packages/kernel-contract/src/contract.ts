@@ -1,6 +1,7 @@
 import { oc } from '@orpc/contract';
 import { z } from 'zod';
 import { zTranscriptExport, zTranscriptExportInput } from './meeting-transcript-export.ts';
+import { ORG_KINDS } from './apps.ts';
 import { zChapters, zChaptersCopied, zChaptersCopy, zChaptersSave, zChaptersSaved } from './meeting-chapters.ts';
 import {
   zBulkApproveItems,
@@ -383,6 +384,9 @@ import {
   zHrOvertimeList,
   zHrOvertimeRef,
   zHrOvertimeRequestView,
+  zHrOvertimeSettings,
+  zHrOvertimeSettingsGet,
+  zHrOvertimeSettingsSet,
   zHrSelfOvertimeList,
   zHrSelfOvertimeListResult,
   zHrSelfOvertimeSubmit,
@@ -708,6 +712,7 @@ import { zVoiceCueDraft, zVoiceCueDrafted } from './meeting-voice-cue.ts';
 import { zOpenPointsAnswer } from './meeting-open-points.ts';
 import { zDigestAnswer, zDigestAsk, zDigestFacts, zDigestStatus } from './meeting-digest.ts';
 import { zLoadWeek, zLoadWeekInput } from './meeting-load.ts';
+import { zTrackerAdd, zTrackerDone, zTrackerHits, zTrackerList, zTrackerMeetingInput, zTrackerRemove, zTrackerTerms, zTrackerWeek, zTrackerWeekInput } from './meeting-trackers.ts';
 import { zHighlightAdd, zHighlightAdded, zHighlightRemove, zHighlightRemoved, zHighlights } from './meeting-highlights.ts';
 import { zMeetingsTodayFacts } from './meeting-today.ts';
 import { zMorningEmpty, zMorningSet, zMorningState } from './meeting-morning.ts';
@@ -1109,8 +1114,9 @@ export const contract = {
     },
   },
   org: {
-    // A retry with the same idempotencyKey returns the org the first request created.
-    create: oc.input(z.object({ name: z.string().trim().min(1).max(200), idempotencyKey: zId })).output(zOrgSummary),
+    // A retry with the same idempotencyKey returns the org the first request created. `kind` (ORG_KINDS): 'solo' starts the org with only Tài chính, Cộng tác and Ludy AI on,
+    // 'team' (and no kind) with every app on (ADR-0053 amendment, #4802); the apps stay one switch each in Settings afterwards.
+    create: oc.input(z.object({ name: z.string().trim().min(1).max(200), idempotencyKey: zId, kind: z.enum(ORG_KINDS).optional() })).output(zOrgSummary),
     get: oc.output(zOrgDetail),
     // Every role (ADR-0053, #3313): the apps the org may switch, and for each whether the deployment runs it, the org holds
     // it and its owner or admin left it on. Owners and admins switch one with setApp (R2, audited); every app is on by default.
@@ -1570,6 +1576,10 @@ export const contract = {
       approveL1: oc.input(zHrOvertimeDecide).output(zHrOvertimeActionResult),
       approveFinal: oc.input(zHrOvertimeDecide).output(zHrOvertimeActionResult),
       reject: oc.input(zHrOvertimeDecide).output(zHrOvertimeActionResult),
+      settings: {
+        get: oc.input(zHrOvertimeSettingsGet).output(zHrOvertimeSettings),
+        set: oc.input(zHrOvertimeSettingsSet).output(zHrOvertimeSettings),
+      },
     },
     salaryAdvances: {
       list: oc.input(zHrAdvanceList).output(z.array(zHrAdvanceRequestView)),
@@ -1986,6 +1996,15 @@ export const contract = {
     // extra right to read, no text, no model call, nothing stored).
     load: {
       week: oc.input(zLoadWeekInput).output(zLoadWeek),
+    },
+    // Keyword trackers (#4818): `list` the org's tracked words for every member, `add` and `remove` for an owner or an admin, `hits` what one meeting says (counts and seconds, from the lines the caller reads)
+    // and `week` the hits across the meetings the caller reads in a week. Counted by code, nothing stored, no model call.
+    tracker: {
+      list: oc.input(zTrackerList).output(zTrackerTerms),
+      add: oc.input(zTrackerAdd).output(zTrackerDone),
+      remove: oc.input(zTrackerRemove).output(zTrackerDone),
+      hits: oc.input(zTrackerMeetingInput).output(zTrackerHits),
+      week: oc.input(zTrackerWeekInput).output(zTrackerWeek),
     },
     // Highlights on a transcript line or range (#4819): `list` the marks of a meeting the caller may read, `add` and `remove` the caller's own (the recorder removes any mark of their meeting). A mark
     // is an anchor in seconds and who made it, no text: the lines are read from the transcript.

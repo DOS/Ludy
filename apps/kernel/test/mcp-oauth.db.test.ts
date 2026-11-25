@@ -902,6 +902,7 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
   });
 
   it('limits registrations per address and in all, and the provider routes per address, with 429 and Retry-After', async () => {
+    await admin((client) => client.query('DELETE FROM ludy_kernel.mcp_rate_limit'));
     const s = await secondServer({ OAUTH_REGISTER_PER_MINUTE: '2', OAUTH_REGISTER_GLOBAL_PER_MINUTE: '50' });
     try {
       const register = () => fetch(`${s.url}/oauth/register`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ client_name: 'x', redirect_uris: ['http://127.0.0.1:39999/cb'], application_type: 'native', token_endpoint_auth_method: 'none' }) });
@@ -914,6 +915,7 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
       expect(limited.headers.get('x-content-type-options')).toBe('nosniff');
     } finally {
       s.close();
+      await admin((client) => client.query('DELETE FROM ludy_kernel.mcp_rate_limit'));
     }
   });
 
