@@ -14,10 +14,10 @@ const READY: Env = {
   PUBLIC_URL: 'https://crove.example.com',
   TRUSTED_PROXY_HOPS: '1',
   POSTGRES_PASSWORD: fake('pg'),
-  CROVE_APP_DB_PASSWORD: fake('app'),
-  CROVE_WORKER_DB_PASSWORD: fake('worker'),
-  CROVE_PROBER_DB_PASSWORD: fake('prober'),
-  CROVE_REPORTER_DB_PASSWORD: fake('reporter'),
+  LUDY_APP_DB_PASSWORD: fake('app'),
+  LUDY_WORKER_DB_PASSWORD: fake('worker'),
+  LUDY_PROBER_DB_PASSWORD: fake('prober'),
+  LUDY_REPORTER_DB_PASSWORD: fake('reporter'),
   AUTH_DB_PASSWORD: fake('auth'),
   AUTH_JWT_SECRET: fake('jwt', 40),
   EXPORT_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString('base64'),
@@ -29,7 +29,7 @@ const READY: Env = {
   PROBER_HEARTBEAT_URL: `https://hc.example.com/ping/${fake('check')}`,
   COMPOSE_PROFILES: 'prober',
   COMPOSE_FILE: 'docker-compose.yml:compose.pilot.yml:docker-compose.override.yml:compose.host.yml',
-  CROVE_MODULES: 'finance',
+  LUDY_MODULES: 'finance',
   LOG_FORMAT: 'json',
   BACKUP_S3_ENDPOINT: 'https://backups.storage.example',
   BACKUP_S3_BUCKET: 'crove-backups',
@@ -280,9 +280,8 @@ describe('pilot-check settings', () => {
       expect(failing({ ...READY, COMPOSE_PROFILES: 'all-in-one' })).toEqual([expect.stringMatching(/^Roles: COMPOSE_PROFILES includes all-in-one/)]);
       // The kernel's own opt-in is the same statement the other way round.
       for (const allow of ['true', 'TRUE']) expect(failing({ ...READY, LUDY_ALLOW_ALL_IN_ONE: allow }), allow).toEqual([expect.stringMatching(/^Roles: LUDY_ALLOW_ALL_IN_ONE is set: /)]);
-      for (const allow of ['true', 'TRUE']) expect(failing({ ...READY, CROVE_ALLOW_ALL_IN_ONE: allow }), allow).toEqual([expect.stringMatching(/^Roles: LUDY_ALLOW_ALL_IN_ONE is set: /)]);
       expect(failing({ ...READY, LUDY_ALLOW_ALL_IN_ONE: 'false' })).toEqual([]);
-      expect(failing({ ...READY, LUDY_ALLOW_ALL_IN_ONE: 'false', CROVE_ALLOW_ALL_IN_ONE: 'true' })).toEqual([expect.stringMatching(/^Roles: LUDY_ALLOW_ALL_IN_ONE and CROVE_ALLOW_ALL_IN_ONE are both set with conflicting values/)]);
+      expect(failing({ ...READY, CROVE_ALLOW_ALL_IN_ONE: 'true' })).toEqual([]);
       // `*` starts every profile.
       for (const profiles of ['*', 'prober,*']) expect(failing({ ...READY, COMPOSE_PROFILES: profiles }), profiles).toEqual([expect.stringMatching(/^Roles: COMPOSE_PROFILES includes all-in-one \(or \*\)/)]);
     });
@@ -295,26 +294,25 @@ describe('pilot-check settings', () => {
       expect(failing({ ...READY, COMPOSE_FILE: 'docker-compose.yml:my-compose.pilot.yml' })).toEqual([expect.stringContaining('Roles: COMPOSE_FILE does not list')]);
     });
 
-    it('takes the roles a deployment without docker compose names in LUDY_ROLES or CROVE_ROLES', () => {
+    it('takes the roles a deployment without docker compose names in LUDY_ROLES', () => {
       expect(failing({ ...READY, COMPOSE_FILE: undefined, LUDY_ROLES: 'api, worker' })).toEqual([]);
-      expect(failing({ ...READY, COMPOSE_FILE: undefined, CROVE_ROLES: 'api, worker' })).toEqual([]);
       expect(failing({ ...READY, COMPOSE_FILE: undefined, LUDY_ROLES: 'worker,api' })).toEqual([]);
-      expect(failing({ ...READY, COMPOSE_FILE: undefined, CROVE_ROLES: 'all' })).toEqual([expect.stringContaining('Roles: LUDY_ROLES includes all')]);
+      expect(failing({ ...READY, COMPOSE_FILE: undefined, CROVE_ROLES: 'all' })).toEqual([expect.stringContaining('Roles: COMPOSE_FILE and LUDY_ROLES are unset')]);
+      expect(failing({ ...READY, COMPOSE_FILE: undefined, LUDY_ROLES: 'all' })).toEqual([expect.stringContaining('Roles: LUDY_ROLES includes all')]);
       expect(failing({ ...READY, COMPOSE_FILE: undefined, LUDY_ROLES: 'api' })).toEqual([expect.stringContaining('Roles: LUDY_ROLES must name both api and worker')]);
-      expect(failing({ ...READY, COMPOSE_FILE: undefined, CROVE_ROLES: 'api,worker,all' })).toEqual([expect.stringContaining('LUDY_ROLES includes all')]);
-      expect(failing({ ...READY, COMPOSE_FILE: undefined, LUDY_ROLES: 'api,worker', CROVE_ROLES: 'api' })).toEqual([expect.stringContaining('LUDY_ROLES and CROVE_ROLES are both set with conflicting values')]);
+      expect(failing({ ...READY, COMPOSE_FILE: undefined, LUDY_ROLES: 'api,worker,all' })).toEqual([expect.stringContaining('LUDY_ROLES includes all')]);
       // A COMPOSE_FILE without the pilot file wins over the statement: docker compose would run all-in-one.
       expect(failing({ ...READY, COMPOSE_FILE: 'docker-compose.yml', LUDY_ROLES: 'api,worker' })).toEqual([expect.stringMatching(/^Roles: COMPOSE_FILE does not list compose\.pilot\.yml/)]);
     });
 
-    it('fails an empty, conflicting, or unknown LUDY_MODULES / CROVE_MODULES', () => {
+    it('fails an empty or unknown LUDY_MODULES and ignores retired CROVE_MODULES', () => {
       for (const modules of [undefined, '', '  ', ' , ']) {
-        expect(failing({ ...READY, CROVE_MODULES: undefined, LUDY_MODULES: modules }), String(modules)).toEqual([expect.stringMatching(/^Modules: LUDY_MODULES is empty: .*Social's public routes/)]);
+        expect(failing({ ...READY, LUDY_MODULES: modules }), String(modules)).toEqual([expect.stringMatching(/^Modules: LUDY_MODULES is empty: .*Social's public routes/)]);
       }
       // The prober refuses the same list on its own (Alerts), so look at the item.
-      expect(failing({ ...READY, CROVE_MODULES: undefined, LUDY_MODULES: 'finance,sosial' })).toContainEqual(expect.stringContaining('Modules: LUDY_MODULES names 1 module(s) this build does not ship'));
-      expect(failing({ ...READY, CROVE_MODULES: undefined, LUDY_MODULES: 'Finance, CRM' })).toEqual([]);
-      expect(failing({ ...READY, LUDY_MODULES: 'finance', CROVE_MODULES: 'crm' })).toContainEqual(expect.stringContaining('LUDY_MODULES and CROVE_MODULES are both set with conflicting values'));
+      expect(failing({ ...READY, LUDY_MODULES: 'finance,sosial' })).toContainEqual(expect.stringContaining('Modules: LUDY_MODULES names 1 module(s) this build does not ship'));
+      expect(failing({ ...READY, LUDY_MODULES: 'Finance, CRM' })).toEqual([]);
+      expect(failing({ ...READY, LUDY_MODULES: 'finance', CROVE_MODULES: 'bad-ignored' })).toEqual([]);
     });
 
     it('fails backups with no BACKUP_ENCRYPTION_KEY and drops the manual line it replaces', () => {
@@ -384,14 +382,14 @@ describe('pilot-check settings', () => {
 
     it('names the setting, never its value', () => {
       const secret = fake('never-print-this', 40);
-      const env = { ...READY, COMPOSE_FILE: secret, CROVE_MODULES: secret, AI_API_KEY: secret, CROVE_ROLES: secret, BACKUP_ENCRYPTION_KEY: undefined };
+      const env = { ...READY, COMPOSE_FILE: secret, LUDY_MODULES: secret, AI_API_KEY: secret, LUDY_ROLES: secret, BACKUP_ENCRYPTION_KEY: undefined };
       const messages = failures(checkEnv(env)).map((r) => stripped(r.message));
       expect(messages.length).toBeGreaterThanOrEqual(4);
       for (const message of messages) expect(message).not.toContain(secret);
     });
 
     it('checks none of this on a loopback or unset PUBLIC_URL, where TLS already fails', () => {
-      const local = { ...READY, PUBLIC_URL: 'http://localhost:8080', COMPOSE_FILE: undefined, CROVE_MODULES: undefined, AI_API_KEY: fake('ai'), BACKUP_ENCRYPTION_KEY: undefined };
+      const local = { ...READY, PUBLIC_URL: 'http://localhost:8080', COMPOSE_FILE: undefined, LUDY_MODULES: undefined, AI_API_KEY: fake('ai'), BACKUP_ENCRYPTION_KEY: undefined };
       const items = failures(checkEnv(local)).map((r) => r.item);
       expect(items).toEqual(['TLS']);
       expect(checkEnv(local).some((r) => r.item === 'Roles' || r.item === 'Modules' || r.item === 'AI cost cap')).toBe(false);
@@ -430,7 +428,7 @@ describe('pilot-check settings', () => {
   it('refuses sample, short and malformed secrets', () => {
     expect(failing({ ...READY, POSTGRES_PASSWORD: 'change-me-postgres' })).toEqual([expect.stringContaining('POSTGRES_PASSWORD still has a sample value')]);
     expect(failing({ ...READY, AUTH_DB_PASSWORD: 'my-own-Change-Me-pass' })).toEqual([expect.stringContaining('AUTH_DB_PASSWORD still has a sample value')]);
-    expect(failing({ ...READY, CROVE_APP_DB_PASSWORD: 'short' })).toEqual([expect.stringContaining('shorter than 16')]);
+    expect(failing({ ...READY, LUDY_APP_DB_PASSWORD: 'short' })).toEqual([expect.stringContaining('shorter than 16')]);
     expect(failing({ ...READY, AUTH_JWT_SECRET: 'x'.repeat(31) })).toEqual([expect.stringContaining('shorter than 32')]);
     expect(failing({ ...READY, EXPORT_ENCRYPTION_KEY: 'not-a-key' })).toEqual([expect.stringContaining('EXPORT_ENCRYPTION_KEY is not 32 bytes')]);
     expect(failing({ ...READY, INBOUND_DOMAIN: 'in.example.com' })).toEqual([expect.stringContaining('INBOUND_SECRET is unset')]);
@@ -769,7 +767,7 @@ describe('pilot-check CI of the deployed build (#1995)', () => {
     expect(await status({ [VERSION]: json({ build: SHA }), [CHECKS]: json({ message: 'Not Found' }, 404) })).toBe('manual');
     expect(await status({})).toBe('manual');
     // A source repository that is not owner/name is the operator's mistake.
-    for (const repo of ['not a repo', '../x', 'acme/..', 'acme/.']) expect(await status(routes(green), { CROVE_SOURCE_REPO: repo }), repo).toBe('fail');
+    for (const repo of ['not a repo', '../x', 'acme/..', 'acme/.']) expect(await status(routes(green), { LUDY_SOURCE_REPO: repo }), repo).toBe('fail');
     // More checks than one page: it cannot tell.
     expect(await status({ [VERSION]: json({ build: SHA }), [CHECKS]: json({ total_count: 140, check_runs: green }) })).toBe('manual');
   });
@@ -791,14 +789,14 @@ describe('pilot-check CI of the deployed build (#1995)', () => {
     }
   });
 
-  it('asks the fork CROVE_SOURCE_REPO names, with GITHUB_TOKEN when it is set', async () => {
+  it('asks the fork LUDY_SOURCE_REPO names, with GITHUB_TOKEN when it is set', async () => {
     const seen: Array<{ url: string; auth: string | null }> = [];
     const fork = `https://api.github.com/repos/acme/ludy/commits/${SHA}/check-runs?per_page=100`;
     const fetchFn: Fetch = async (input, init) => {
       seen.push({ url: input, auth: new Headers(init?.headers).get('authorization') });
       return input === VERSION ? Response.json({ build: SHA }) : Response.json({ check_runs: green });
     };
-    expect((await probeBuildChecks('https://crove.example.com', { CROVE_SOURCE_REPO: 'acme/ludy', GITHUB_TOKEN: 'ghp_test' }, fetchFn)).status).toBe('pass');
+    expect((await probeBuildChecks('https://crove.example.com', { LUDY_SOURCE_REPO: 'acme/ludy', GITHUB_TOKEN: 'ghp_test' }, fetchFn)).status).toBe('pass');
     // The token goes to GitHub only, never to the instance.
     expect(seen).toEqual([
       { url: VERSION, auth: null },
@@ -914,37 +912,24 @@ describe('pilot-check evidence holds (#1996)', () => {
   });
 });
 
-describe('LUDY_* / CROVE_* env dual-read and conflicts (#3967)', () => {
-  it('accepts primary LUDY_* or matching DB password pairs and fails closed on conflicts without leaking secrets', () => {
-    const primaryEnv: Env = {
+describe('retired CROVE_* fallback env vars are ignored (#3972)', () => {
+  it('fails when only retired CROVE_* DB passwords are set and ignores conflicting CROVE_* overrides', () => {
+    const legacyOnlyEnv: Env = {
       ...READY,
-      LUDY_APP_DB_PASSWORD: fake('app'),
-      LUDY_WORKER_DB_PASSWORD: fake('worker'),
-      LUDY_PROBER_DB_PASSWORD: fake('prober'),
-      LUDY_REPORTER_DB_PASSWORD: fake('reporter'),
+      CROVE_APP_DB_PASSWORD: fake('app'),
+      LUDY_APP_DB_PASSWORD: undefined,
       LUDY_ROLES: undefined,
-      CROVE_ROLES: undefined,
       LUDY_MODULES: 'finance',
-      CROVE_MODULES: undefined,
+      CROVE_MODULES: 'crm',
     };
-    delete (primaryEnv as Record<string, unknown>).CROVE_APP_DB_PASSWORD;
-    delete (primaryEnv as Record<string, unknown>).CROVE_WORKER_DB_PASSWORD;
-    delete (primaryEnv as Record<string, unknown>).CROVE_PROBER_DB_PASSWORD;
-    delete (primaryEnv as Record<string, unknown>).CROVE_REPORTER_DB_PASSWORD;
-    expect(failing(primaryEnv)).toEqual([]);
-
-    const conflictPw = fake('different-app-secret', 24);
-    const conflictMsgs = failing({ ...READY, LUDY_APP_DB_PASSWORD: conflictPw });
-    expect(conflictMsgs).toContainEqual(expect.stringMatching(/^Secrets: LUDY_APP_DB_PASSWORD and CROVE_APP_DB_PASSWORD are both set with conflicting values/));
-    for (const msg of conflictMsgs) {
-      expect(msg).not.toContain(conflictPw);
-      expect(msg).not.toContain(String(READY.CROVE_APP_DB_PASSWORD));
-    }
+    const msgs = failing(legacyOnlyEnv);
+    expect(msgs).toContainEqual(expect.stringMatching(/^Secrets: LUDY_APP_DB_PASSWORD is unset/));
+    expect(msgs.some((m) => m.startsWith('Modules:'))).toBe(false);
+    for (const msg of msgs) expect(msg).not.toContain(String(READY.LUDY_APP_DB_PASSWORD));
   });
 
-  it('fails closed in probeBuildChecks on conflicting LUDY_SOURCE_REPO and CROVE_SOURCE_REPO', async () => {
-    const result = await probeBuildChecks('https://ludy.example.com', { LUDY_SOURCE_REPO: 'DOS/Ludy', CROVE_SOURCE_REPO: 'other/repo' }, fakeFetch({}));
-    expect(result).toMatchObject({ item: 'RLS matrix', status: 'fail' });
-    expect(result.message).toMatch(/LUDY_SOURCE_REPO and CROVE_SOURCE_REPO are both set with conflicting values/);
+  it('ignores CROVE_SOURCE_REPO in probeBuildChecks when LUDY_SOURCE_REPO is unset', async () => {
+    const result = await probeBuildChecks('https://ludy.example.com', { CROVE_SOURCE_REPO: 'other/repo' }, fakeFetch({}));
+    expect(result).toMatchObject({ item: 'RLS matrix', status: 'manual' });
   });
 });

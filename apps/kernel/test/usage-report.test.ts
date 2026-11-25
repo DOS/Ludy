@@ -147,7 +147,8 @@ describe('usage report --post (#344)', () => {
     // A generic receiver gets the counts as data, without the org columns.
     const body = messageBody(summary!, 'generic');
     const expected = { kind: 'usage', severity: 'info', instance: 'books.example.test', at: AT.toISOString(), time_zone: 'Asia/Ho_Chi_Minh' };
-    expect(body).toMatchObject({ text: summary!.text, content: summary!.text, ludy: expected, crove: expected });
+    expect(body).toMatchObject({ text: summary!.text, content: summary!.text, ludy: expected });
+    expect(body.crove).toBeUndefined();
     const ludy = body.ludy as { week: Record<string, unknown>; previous: Record<string, unknown> };
     expect(ludy.week).toMatchObject({ iso_week: '2026-W42', active_users: 3 });
     expect(ludy.previous).toMatchObject({ iso_week: '2026-W41', active_users: 2 });

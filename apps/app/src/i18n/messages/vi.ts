@@ -5032,6 +5032,16 @@ export const vi = {
       draftTitle: 'Bản ghi lời (nháp)',
       draftNote: 'Chỉ bạn thấy bản nháp này. Hãy đọc lại và sửa dòng nào nghe sai; từ đây chưa chia sẻ gì cho người dự họp.',
       publishedNote: 'Bản ghi lời mà người ghi đã chia sẻ cho cuộc họp.',
+      // Tìm câu hỏi, con số và ngày (#4954).
+      filters: {
+        label: 'Tìm trong bản ghi lời',
+        question: 'Câu hỏi ({count})',
+        figure: 'Con số ({count})',
+        date: 'Hạn và ngày ({count})',
+        note: '{count, plural, other {# dòng có vẻ như vậy}}. Tìm theo quy tắc, không dùng AI, nên hãy đọc lại dòng đó.',
+        none: 'Không có dòng nào có vẻ như vậy.',
+        showInContext: 'Xem trong bản ghi lời',
+      },
       // Tải bản ghi lời về máy (#4817).
       export: {
         label: 'Tải bản ghi lời về',
