@@ -265,7 +265,7 @@ suite('HR payroll coworker hardening on PostgreSQL 17 (#2815)', () => {
         method: 'POST',
         headers: {
           authorization: `Bearer ${userId}`,
-          'x-crove-org': o.slug,
+          'x-ludy-org': o.slug,
           'content-type': 'application/json',
         },
         body: JSON.stringify({ json: body }),
@@ -511,7 +511,7 @@ suite('HR payroll coworker hardening on PostgreSQL 17 (#2815)', () => {
         method: 'POST',
         headers: {
           authorization: `Bearer ${userId}`,
-          'x-crove-org': o.slug,
+          'x-ludy-org': o.slug,
           'content-type': 'application/json',
         },
         body: JSON.stringify({ json: body }),

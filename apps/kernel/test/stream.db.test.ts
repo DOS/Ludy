@@ -80,7 +80,7 @@ suite('invalidation stream on PostgreSQL', () => {
   async function rpc(path: string, name: string, input: unknown, org: string | null, mfa = false) {
     const response = await app.request(`/api/rpc/${path}`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${await token(name, mfa)}`, 'content-type': 'application/json', ...(org ? { 'x-crove-org': org } : {}) },
+      headers: { authorization: `Bearer ${await token(name, mfa)}`, 'content-type': 'application/json', ...(org ? { 'x-ludy-org': org } : {}) },
       body: JSON.stringify(input === undefined ? {} : { json: input }),
     });
     const body = (await response.json()) as { json?: Record<string, unknown> };
@@ -98,7 +98,7 @@ suite('invalidation stream on PostgreSQL', () => {
   async function ticket(name: string, slug: string): Promise<{ status: number; ticket?: string; body: Record<string, unknown> }> {
     const response = await app.request('/api/stream/tickets', {
       method: 'POST',
-      headers: { authorization: `Bearer ${await token(name)}`, 'x-crove-org': slug },
+      headers: { authorization: `Bearer ${await token(name)}`, 'x-ludy-org': slug },
     });
     const body = (await response.json()) as Record<string, unknown>;
     return { status: response.status, body, ...(typeof body.ticket === 'string' ? { ticket: body.ticket } : {}) };

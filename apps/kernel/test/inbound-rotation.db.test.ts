@@ -198,7 +198,7 @@ suite('inbound address rotation on PostgreSQL', () => {
   const rotate = (idempotencyKey: string) =>
     httpApp().request('/api/rpc/org/rotateInbound', {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-crove-org': org.slug },
+      headers: { 'content-type': 'application/json', 'x-ludy-org': org.slug },
       body: JSON.stringify({ json: { idempotencyKey } }),
     });
   const mime = (token: string, number: string) =>

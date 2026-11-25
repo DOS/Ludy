@@ -103,7 +103,7 @@ suite('the pairing code of the MCP endpoint (#4591)', () => {
       .setExpirationTime('15m')
       .sign(new TextEncoder().encode(SECRET));
   }
-  const asBrowser = async (name: string, org: string | null = slug) => ({ authorization: `Bearer ${await jwt(name)}`, 'content-type': 'application/json', ...(org ? { 'x-crove-org': org } : {}) });
+  const asBrowser = async (name: string, org: string | null = slug) => ({ authorization: `Bearer ${await jwt(name)}`, 'content-type': 'application/json', ...(org ? { 'x-ludy-org': org } : {}) });
 
   async function rpc(path: string, headers: Record<string, string>, input: unknown) {
     const response = await fetch(`${base}/api/rpc/${path}`, { method: 'POST', headers, body: JSON.stringify(input === undefined ? {} : { json: input }) });
@@ -292,7 +292,7 @@ suite('the pairing code of the MCP endpoint (#4591)', () => {
     expect(invited.status).toBe(200);
     expect((await rpc('invites/accept', await asBrowser(member, null), { token: String(invited.body.acceptPath).split('#')[1] })).status).toBe(200);
     expect((await issueCode(member)).status).toBe(403);
-    const anonymous = await fetch(`${base}/api/rpc/mcp/pairing/issue`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-crove-org': slug }, body: JSON.stringify({ json: { label: 'x' } }) });
+    const anonymous = await fetch(`${base}/api/rpc/mcp/pairing/issue`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-ludy-org': slug }, body: JSON.stringify({ json: { label: 'x' } }) });
     expect(anonymous.status).toBe(401);
   });
 

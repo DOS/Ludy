@@ -146,7 +146,7 @@ suite('meetings module database integration tests (#2576)', () => {
       headers: {
         authorization: `Bearer ${await token(name, mfa)}`,
         'content-type': 'application/json',
-        ...(org ? { 'x-crove-org': org } : {}),
+        ...(org ? { 'x-ludy-org': org } : {}),
       },
       body: JSON.stringify(input === undefined ? {} : { json: input }),
     });
@@ -160,7 +160,7 @@ suite('meetings module database integration tests (#2576)', () => {
       headers: {
         authorization: `Bearer ${await token(name)}`,
         'content-type': 'application/json',
-        'x-crove-org': slug,
+        'x-ludy-org': slug,
       },
       body: JSON.stringify({ uploadId, kind }),
     });
@@ -461,7 +461,7 @@ suite('meetings module database integration tests (#2576)', () => {
       method: 'GET',
       headers: {
         authorization: `Bearer ${await token('recorder')}`,
-        'x-crove-org': slug,
+        'x-ludy-org': slug,
       },
     });
     expect(fullRes.status).toBe(200);
@@ -485,7 +485,7 @@ suite('meetings module database integration tests (#2576)', () => {
       method: 'GET',
       headers: {
         authorization: `Bearer ${await token('attendee')}`,
-        'x-crove-org': slug,
+        'x-ludy-org': slug,
         range: 'bytes=10-25',
       },
     });
@@ -508,7 +508,7 @@ suite('meetings module database integration tests (#2576)', () => {
       method: 'GET',
       headers: {
         authorization: `Bearer ${await token('attendee')}`,
-        'x-crove-org': slug,
+        'x-ludy-org': slug,
         range: 'bytes=-20',
       },
     });
@@ -523,7 +523,7 @@ suite('meetings module database integration tests (#2576)', () => {
       method: 'GET',
       headers: {
         authorization: `Bearer ${await token('attendee')}`,
-        'x-crove-org': slug,
+        'x-ludy-org': slug,
         range: 'bytes=999999-',
       },
     });
@@ -652,7 +652,7 @@ suite('meetings module database integration tests (#2576)', () => {
       method: 'GET',
       headers: {
         authorization: `Bearer ${await token('recorder')}`,
-        'x-crove-org': slug,
+        'x-ludy-org': slug,
       },
     });
     expect(playbackRes.status).toBe(404);
@@ -663,7 +663,7 @@ suite('meetings module database integration tests (#2576)', () => {
       method: 'GET',
       headers: {
         authorization: `Bearer ${await token('recorder')}`,
-        'x-crove-org': slug,
+        'x-ludy-org': slug,
       },
     });
     expect(disabledRes.status).toBe(404);
@@ -688,7 +688,7 @@ suite('meetings module database integration tests (#2576)', () => {
       method: 'POST',
       headers: {
         authorization: `Bearer ${await token('recorder')}`,
-        'x-crove-org': slug,
+        'x-ludy-org': slug,
         'content-type': 'application/json',
       },
       body: JSON.stringify({ purpose: 'meeting_audio', filename: 'audio.ogg' }),
@@ -702,7 +702,7 @@ suite('meetings module database integration tests (#2576)', () => {
       method: 'POST',
       headers: {
         authorization: `Bearer ${await token('recorder')}`,
-        'x-crove-org': slug,
+        'x-ludy-org': slug,
         'content-type': 'application/json',
       },
       body: JSON.stringify({ purpose: 'document', filename: 'sneaky.ogg' }),
@@ -734,7 +734,7 @@ suite('meetings module database integration tests (#2576)', () => {
       method: 'POST',
       headers: {
         authorization: `Bearer ${await token('recorder')}`,
-        'x-crove-org': slug,
+        'x-ludy-org': slug,
       },
       body: formData,
     });
@@ -747,7 +747,7 @@ suite('meetings module database integration tests (#2576)', () => {
       method: 'GET',
       headers: {
         authorization: `Bearer ${await token('recorder')}`,
-        'x-crove-org': slug,
+        'x-ludy-org': slug,
         range: 'bytes=10-40',
       },
     });
@@ -782,7 +782,7 @@ suite('meetings module database integration tests (#2576)', () => {
       const form = new FormData();
       form.append('kind', 'audio');
       form.append('file', new Blob([audio], { type: 'audio/ogg' }), 'a.ogg');
-      return app.request(`/api/meetings/${meetingId}/media`, { method: 'POST', headers: { authorization: `Bearer ${await token(name)}`, 'x-crove-org': slug }, body: form });
+      return app.request(`/api/meetings/${meetingId}/media`, { method: 'POST', headers: { authorization: `Bearer ${await token(name)}`, 'x-ludy-org': slug }, body: form });
     };
     // Only the recorder may upload.
     expect((await upload('otherMember')).status).toBeGreaterThanOrEqual(400);
@@ -797,11 +797,11 @@ suite('meetings module database integration tests (#2576)', () => {
 
     // A member who is not a reader gets nothing over HTTP, and neither does a viewer.
     for (const name of ['otherMember', 'viewer']) {
-      const res = await app.request(`/api/meetings/${meetingId}/audio`, { headers: { authorization: `Bearer ${await token(name)}`, 'x-crove-org': slug } });
+      const res = await app.request(`/api/meetings/${meetingId}/audio`, { headers: { authorization: `Bearer ${await token(name)}`, 'x-ludy-org': slug } });
       expect(res.status, name).toBeGreaterThanOrEqual(400);
       expect(Buffer.from(await res.arrayBuffer()).includes(marker.subarray(0, 24)), name).toBe(false);
     }
-    const ok = await app.request(`/api/meetings/${meetingId}/audio`, { headers: { authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug } });
+    const ok = await app.request(`/api/meetings/${meetingId}/audio`, { headers: { authorization: `Bearer ${await token('recorder')}`, 'x-ludy-org': slug } });
     expect(ok.status).toBe(200);
     expect(Buffer.from(await ok.arrayBuffer()).equals(audio)).toBe(true);
 
@@ -810,7 +810,7 @@ suite('meetings module database integration tests (#2576)', () => {
       await c.query('DELETE FROM ludy_meetings.media_key WHERE meeting_id = $1', [meetingId]);
     });
     expect(store.storage.size).toBeGreaterThan(0);
-    const shredded = await app.request(`/api/meetings/${meetingId}/audio`, { headers: { authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug } });
+    const shredded = await app.request(`/api/meetings/${meetingId}/audio`, { headers: { authorization: `Bearer ${await token('recorder')}`, 'x-ludy-org': slug } });
     expect(shredded.status).toBe(404);
   });
 
@@ -821,7 +821,7 @@ suite('meetings module database integration tests (#2576)', () => {
     const form = new FormData();
     form.append('kind', 'audio');
     form.append('file', new Blob([audio], { type: 'audio/ogg' }), 'a.ogg');
-    const up = await app.request(`/api/meetings/${meetingId}/media`, { method: 'POST', headers: { authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug }, body: form });
+    const up = await app.request(`/api/meetings/${meetingId}/media`, { method: 'POST', headers: { authorization: `Bearer ${await token('recorder')}`, 'x-ludy-org': slug }, body: form });
     expect(up.status).toBe(200);
 
     const workerUrl = new URL(adminUrl);
@@ -845,7 +845,7 @@ suite('meetings module database integration tests (#2576)', () => {
     } finally {
       await workerPool.end();
     }
-    const play = await app.request(`/api/meetings/${meetingId}/audio`, { headers: { authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug } });
+    const play = await app.request(`/api/meetings/${meetingId}/audio`, { headers: { authorization: `Bearer ${await token('recorder')}`, 'x-ludy-org': slug } });
     expect(play.status).toBe(200);
     expect(Buffer.from(await play.arrayBuffer()).equals(audio)).toBe(true);
   });
@@ -870,7 +870,7 @@ suite('meetings module database integration tests (#2576)', () => {
     form.append('kind', 'audio');
     form.append('lengthSeconds', '60');
     form.append('file', new Blob([audio], { type: 'audio/ogg' }), 'a.ogg');
-    const up = await measuring.request(`/api/meetings/${meetingId}/media`, { method: 'POST', headers: { authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug }, body: form });
+    const up = await measuring.request(`/api/meetings/${meetingId}/media`, { method: 'POST', headers: { authorization: `Bearer ${await token('recorder')}`, 'x-ludy-org': slug }, body: form });
     expect(up.status).toBe(200);
     // The sandbox was sent the plaintext, whole and in order, read back from the sealed blob.
     expect(Buffer.concat(seen).equals(audio)).toBe(true);
@@ -886,7 +886,7 @@ suite('meetings module database integration tests (#2576)', () => {
       const form = new FormData();
       form.append('kind', 'audio');
       form.append('file', new Blob([audio], { type: 'audio/ogg' }), 'a.ogg');
-      return target.request(`/api/meetings/${meetingId}/media`, { method: 'POST', headers: { authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug }, body: form });
+      return target.request(`/api/meetings/${meetingId}/media`, { method: 'POST', headers: { authorization: `Bearer ${await token('recorder')}`, 'x-ludy-org': slug }, body: form });
     };
     const objectsBefore = store.storage.size;
     const files = async () => admin(async (c) => Number((await c.query<{ n: string }>("SELECT count(*)::text AS n FROM ludy_kernel.file WHERE org_id = $1 AND source = 'meeting_audio'", [orgId])).rows[0]!.n));
@@ -926,7 +926,7 @@ suite('meetings module database integration tests (#2576)', () => {
     const cap = 2 * 1024 * 1024;
     const capped = createHttpApp({ ...deps, config: { ...deps.config, MEDIA_MAX_INPUT_BYTES: cap }, mediaMeasurer: fakeMediaMeasurer() });
     const big = Buffer.concat([Buffer.from([0x4f, 0x67, 0x67, 0x53, 0x00, 0x02]), Buffer.alloc(cap, 0x61)]);
-    const headers = async (extra: Record<string, string> = {}) => ({ authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug, ...extra });
+    const headers = async (extra: Record<string, string> = {}) => ({ authorization: `Bearer ${await token('recorder')}`, 'x-ludy-org': slug, ...extra });
     const objectsBefore = store.storage.size;
     // Multipart: refused by size, naming the cap in force, not the plan's 300 MB.
     const form = new FormData();
@@ -958,10 +958,10 @@ suite('meetings module database integration tests (#2576)', () => {
     const form = new FormData();
     form.append('kind', 'audio');
     form.append('file', new Blob([audio], { type: 'audio/ogg' }), 'long.ogg');
-    const up = await app.request(`/api/meetings/${meetingId}/media`, { method: 'POST', headers: { authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug }, body: form });
+    const up = await app.request(`/api/meetings/${meetingId}/media`, { method: 'POST', headers: { authorization: `Bearer ${await token('recorder')}`, 'x-ludy-org': slug }, body: form });
     expect(up.status).toBe(200);
 
-    const play = await app.request(`/api/meetings/${meetingId}/audio`, { headers: { authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug } });
+    const play = await app.request(`/api/meetings/${meetingId}/audio`, { headers: { authorization: `Bearer ${await token('recorder')}`, 'x-ludy-org': slug } });
     expect(play.status).toBe(200);
     expect(play.headers.get('content-length')).toBe(String(audio.length));
 
@@ -994,11 +994,11 @@ suite('meetings module database integration tests (#2576)', () => {
     const form = new FormData();
     form.append('kind', 'audio');
     form.append('file', new Blob([audio], { type: 'audio/ogg' }), 'bounded.ogg');
-    const up = await app.request(`/api/meetings/${meetingId}/media`, { method: 'POST', headers: { authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug }, body: form });
+    const up = await app.request(`/api/meetings/${meetingId}/media`, { method: 'POST', headers: { authorization: `Bearer ${await token('recorder')}`, 'x-ludy-org': slug }, body: form });
     expect(up.status).toBe(200);
 
     const before = store.ranges.length;
-    const play = await app.request(`/api/meetings/${meetingId}/audio`, { headers: { authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug } });
+    const play = await app.request(`/api/meetings/${meetingId}/audio`, { headers: { authorization: `Bearer ${await token('recorder')}`, 'x-ludy-org': slug } });
     expect(play.status).toBe(200);
     const reader = play.body!.getReader();
     const first = await reader.read();
@@ -1040,7 +1040,7 @@ suite('meetings module database integration tests (#2576)', () => {
       method: 'POST',
       headers: {
         authorization: `Bearer ${await token('recorder')}`,
-        'x-crove-org': slug,
+        'x-ludy-org': slug,
         'content-type': 'multipart/form-data; boundary=x',
         'content-length': String(400 * 1024 * 1024),
       },
@@ -1063,7 +1063,7 @@ suite('meetings module database integration tests (#2576)', () => {
       const form = new FormData();
       form.append('kind', kind);
       form.append('file', new Blob([new Uint8Array(bytes)], { type }), `m.${kind === 'video' ? 'mp4' : 'ogg'}`);
-      return busyApp.request(`/api/meetings/${meetingId}/media?kind=${kind}`, { method: 'POST', headers: { authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug }, body: form });
+      return busyApp.request(`/api/meetings/${meetingId}/media?kind=${kind}`, { method: 'POST', headers: { authorization: `Bearer ${await token('recorder')}`, 'x-ludy-org': slug }, body: form });
     };
     const mp4 = Buffer.concat([Buffer.from([0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70]), Buffer.from('isom-video-bytes'.repeat(10))]);
     const ogg = Buffer.concat([Buffer.from([0x4f, 0x67, 0x67, 0x53, 0x00, 0x02]), Buffer.from('slot-audio-bytes'.repeat(10))]);
@@ -1089,7 +1089,7 @@ suite('meetings module database integration tests (#2576)', () => {
       app.request(`/api/meetings/${meetingId}/media${query}`, {
         method: 'POST',
         // A client sends the length of the file it uploads; a bare Request does not add the header, so the test says it.
-        headers: { authorization: `Bearer ${await token(who)}`, 'x-crove-org': slug, 'content-type': type, 'content-length': String(body?.length ?? 0) },
+        headers: { authorization: `Bearer ${await token(who)}`, 'x-ludy-org': slug, 'content-type': type, 'content-length': String(body?.length ?? 0) },
         ...(body ? { body: new Uint8Array(body) } : {}),
       });
     const objectsBefore = store.storage.size;
@@ -1118,7 +1118,7 @@ suite('meetings module database integration tests (#2576)', () => {
     );
     const noLength = await app.request(`/api/meetings/${meetingId}/media?kind=audio`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug, 'content-type': 'audio/ogg', 'transfer-encoding': 'chunked' },
+      headers: { authorization: `Bearer ${await token('recorder')}`, 'x-ludy-org': slug, 'content-type': 'audio/ogg', 'transfer-encoding': 'chunked' },
       body: chunked,
       duplex: 'half',
     } as RequestInit);
@@ -1127,7 +1127,7 @@ suite('meetings module database integration tests (#2576)', () => {
     // A declared length over the audio cap is refused from the header alone.
     const huge = await app.request(`/api/meetings/${meetingId}/media?kind=audio`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug, 'content-type': 'audio/ogg', 'content-length': String(400 * 1024 * 1024) },
+      headers: { authorization: `Bearer ${await token('recorder')}`, 'x-ludy-org': slug, 'content-type': 'audio/ogg', 'content-length': String(400 * 1024 * 1024) },
       body: new ReadableStream<Uint8Array>({ pull: () => void (pulled = true) }, { highWaterMark: 0 }),
       duplex: 'half',
     } as RequestInit);
@@ -1138,7 +1138,7 @@ suite('meetings module database integration tests (#2576)', () => {
     // still ends in a "last" chunk, so the declared length is what tells a cut file from a whole one (Platform PO N1).
     const cut = await app.request(`/api/meetings/${meetingId}/media?kind=audio`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug, 'content-type': 'audio/ogg', 'content-length': String(ogg.length + 500) },
+      headers: { authorization: `Bearer ${await token('recorder')}`, 'x-ludy-org': slug, 'content-type': 'audio/ogg', 'content-length': String(ogg.length + 500) },
       body: new Uint8Array(ogg),
     });
     expect(cut.status).toBe(400);
@@ -1152,7 +1152,7 @@ suite('meetings module database integration tests (#2576)', () => {
     expect(Buffer.from(stored.bytes).includes(Buffer.from('raw body upload'))).toBe(false);
     expect(key.endsWith(`/${sha256Hex(stored.bytes)}`)).toBe(true);
 
-    const played = await app.request(`/api/meetings/${meetingId}/audio`, { headers: { authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug } });
+    const played = await app.request(`/api/meetings/${meetingId}/audio`, { headers: { authorization: `Bearer ${await token('recorder')}`, 'x-ludy-org': slug } });
     expect(played.status).toBe(200);
     expect(Buffer.from(await played.arrayBuffer()).equals(ogg)).toBe(true);
 
@@ -1191,7 +1191,7 @@ suite('meetings module database integration tests (#2576)', () => {
     expect(accepted.status).toBe(200);
     expect(store.opened.length).toBe(opened + 1);
     expect(store.staged.has(fine.stagingKey)).toBe(false);
-    const played = await app.request(`/api/meetings/${meetingId}/video`, { headers: { authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug } });
+    const played = await app.request(`/api/meetings/${meetingId}/video`, { headers: { authorization: `Bearer ${await token('recorder')}`, 'x-ludy-org': slug } });
     expect(Buffer.from(await played.arrayBuffer()).equals(mp4)).toBe(true);
   });
   it('17. a malformed Content-Length on a raw body is refused with 400, not left to fail later (#2780)', async () => {
@@ -1201,7 +1201,7 @@ suite('meetings module database integration tests (#2576)', () => {
     for (const length of ['abc', '-5', '1e3', '12 34', '']) {
       const res = await app.request(`/api/meetings/${meetingId}/media?kind=audio`, {
         method: 'POST',
-        headers: { authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug, 'content-type': 'audio/ogg', 'content-length': length },
+        headers: { authorization: `Bearer ${await token('recorder')}`, 'x-ludy-org': slug, 'content-type': 'audio/ogg', 'content-length': length },
         body: new Uint8Array(Buffer.from('OggS-not-reached')),
       });
       expect(res.status, `content-length "${length}"`).toBe(400);
@@ -1236,7 +1236,7 @@ suite('meetings module database integration tests (#2576)', () => {
     const before = store.storage.size;
     const res = await stallingApp.request(`/api/meetings/${meetingId}/media?kind=video`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug, 'content-type': 'video/mp4', 'content-length': String(mp4.length + 5000) },
+      headers: { authorization: `Bearer ${await token('recorder')}`, 'x-ludy-org': slug, 'content-type': 'video/mp4', 'content-length': String(mp4.length + 5000) },
       body,
       duplex: 'half',
     } as RequestInit);
@@ -1247,7 +1247,7 @@ suite('meetings module database integration tests (#2576)', () => {
     // The slot is free again: a whole upload of the same meeting now goes through.
     const again = await stallingApp.request(`/api/meetings/${meetingId}/media?kind=video`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug, 'content-type': 'video/mp4', 'content-length': String(mp4.length) },
+      headers: { authorization: `Bearer ${await token('recorder')}`, 'x-ludy-org': slug, 'content-type': 'video/mp4', 'content-length': String(mp4.length) },
       body: new Uint8Array(mp4),
     });
     expect(again.status).toBe(200);
@@ -1270,7 +1270,7 @@ suite('meetings module database integration tests (#2576)', () => {
     const opened = store.opened.length;
     const res = await keyless.request(`/api/meetings/${meetingId}/media`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${await token('recorder')}`, 'content-type': 'application/json', 'x-crove-org': slug },
+      headers: { authorization: `Bearer ${await token('recorder')}`, 'content-type': 'application/json', 'x-ludy-org': slug },
       body: JSON.stringify({ uploadId, kind: 'audio' }),
     });
     expect(res.status).toBe(503);
@@ -1305,7 +1305,7 @@ suite('meetings module database integration tests (#2576)', () => {
     });
     const res = await shared.request(`/api/meetings/${meetingId}/media`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${await token('recorder')}`, 'content-type': 'application/json', 'x-crove-org': slug },
+      headers: { authorization: `Bearer ${await token('recorder')}`, 'content-type': 'application/json', 'x-ludy-org': slug },
       body: JSON.stringify({ uploadId, kind: 'audio' }),
     });
     expect(res.status).toBe(200);
@@ -1320,7 +1320,7 @@ suite('meetings module database integration tests (#2576)', () => {
   const uploadRaw = async (meetingId: string, query: string, who = 'recorder') =>
     app.request(`/api/meetings/${meetingId}/media${query}`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${await token(who)}`, 'x-crove-org': slug, 'content-type': 'audio/ogg', 'content-length': String(OGG.length) },
+      headers: { authorization: `Bearer ${await token(who)}`, 'x-ludy-org': slug, 'content-type': 'audio/ogg', 'content-length': String(OGG.length) },
       body: new Uint8Array(OGG),
     });
 
@@ -1397,7 +1397,7 @@ suite('meetings module database integration tests (#2576)', () => {
     expect((await rpc('meetings/recordingNow', 'recorder', {})).body.recording).toMatchObject({ meetingId: videoId });
     const video = await app.request(`/api/meetings/${videoId}/media?kind=video`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug, 'content-type': 'video/webm', 'content-length': String(WEBM.length) },
+      headers: { authorization: `Bearer ${await token('recorder')}`, 'x-ludy-org': slug, 'content-type': 'video/webm', 'content-length': String(WEBM.length) },
       body: new Uint8Array(WEBM),
     });
     expect(video.status).toBe(200);
@@ -1492,7 +1492,7 @@ suite('meetings module database integration tests (#2576)', () => {
   const claimImport = async (who: string, meetingId: string, body: Record<string, unknown>) => {
     const response = await app.request(`/api/meetings/${meetingId}/media`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${await token(who)}`, 'content-type': 'application/json', 'x-crove-org': slug },
+      headers: { authorization: `Bearer ${await token(who)}`, 'content-type': 'application/json', 'x-ludy-org': slug },
       body: JSON.stringify(body),
     });
     return { status: response.status, body: (await response.json()) as Record<string, unknown> };
@@ -1947,7 +1947,7 @@ suite('meetings module database integration tests (#2576)', () => {
     const postTranscript = async (who: string, meetingId: string, body: unknown) => {
       const response = await app.request(`/api/meetings/${meetingId}/transcript-import`, {
         method: 'POST',
-        headers: { authorization: `Bearer ${await token(who)}`, 'content-type': 'application/json', 'x-crove-org': slug },
+        headers: { authorization: `Bearer ${await token(who)}`, 'content-type': 'application/json', 'x-ludy-org': slug },
         body: JSON.stringify(body),
       });
       return response.status;
@@ -2029,7 +2029,7 @@ suite('meetings module database integration tests (#2576)', () => {
     const postTranscript = async (meetingId: string, importId: string) => {
       const response = await app.request(`/api/meetings/${meetingId}/transcript-import`, {
         method: 'POST',
-        headers: { authorization: `Bearer ${await token('recorder')}`, 'content-type': 'application/json', 'x-crove-org': slug },
+        headers: { authorization: `Bearer ${await token('recorder')}`, 'content-type': 'application/json', 'x-ludy-org': slug },
         body: JSON.stringify({ importId }),
       });
       return response.status;
@@ -2058,7 +2058,7 @@ suite('meetings module database integration tests (#2576)', () => {
     const postTranscript = async (meetingId: string, importId: string) => {
       const response = await app.request(`/api/meetings/${meetingId}/transcript-import`, {
         method: 'POST',
-        headers: { authorization: `Bearer ${await token('recorder')}`, 'content-type': 'application/json', 'x-crove-org': slug },
+        headers: { authorization: `Bearer ${await token('recorder')}`, 'content-type': 'application/json', 'x-ludy-org': slug },
         body: JSON.stringify({ importId }),
       });
       return response.status;
@@ -2095,7 +2095,7 @@ suite('meetings module database integration tests (#2576)', () => {
   it('35. #3337: a video uploaded with extract=audio keeps only the extracted Opus, whatever the shape of the upload', async () => {
     const mp4 = Buffer.concat([Buffer.from([0x00, 0x00, 0x00, 0x18]), Buffer.from('ftypmp42'), Buffer.from('video frames '.repeat(300))]);
     const opus = Buffer.concat([Buffer.from([0x4f, 0x67, 0x67, 0x53, 0x00, 0x02]), Buffer.from('extracted opus '.repeat(20))]);
-    const headers = async (extra: Record<string, string> = {}) => ({ authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug, ...extra });
+    const headers = async (extra: Record<string, string> = {}) => ({ authorization: `Bearer ${await token('recorder')}`, 'x-ludy-org': slug, ...extra });
     const newMeeting = async (title: string) => String((await rpc('meetings/create', 'recorder', { title, visibility: 'attendees', keepVideo: true, consentMethod: 'told_at_start' })).body.meetingId);
     const count = async (table: 'audio_segment' | 'meeting_video', meetingId: string) =>
       admin(async (c) => Number((await c.query<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_meetings.${table} WHERE meeting_id = $1`, [meetingId])).rows[0]!.n));

@@ -65,7 +65,7 @@ suite('project board ordering and kernel.task saved views on PostgreSQL (#2610)'
 
   async function newPerson(tag: string) {
     const email = `${tag}-${randomUUID().slice(0, 8)}@projects.test`;
-    const userId = await upsertIdentity(db, { issuer: 'crove-auth', subject: randomUUID(), email, name: `User ${tag}` });
+    const userId = await upsertIdentity(db, { issuer: 'ludy-auth', subject: randomUUID(), email, name: `User ${tag}` });
     return { email, userId };
   }
 

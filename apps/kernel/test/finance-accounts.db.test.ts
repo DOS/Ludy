@@ -27,7 +27,7 @@ const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_UR
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const FIXTURE = readFileSync(new URL('../../extract/test/fixtures/einvoice-basic.xml', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-sub-accounts-0123456789';
-const ISSUER = 'crove-auth';
+const ISSUER = 'ludy-auth';
 const SELLER = 'CÔNG TY TNHH DỊCH VỤ MẪU';
 
 class MemoryStore implements BlobStore {
@@ -134,7 +134,7 @@ suite('chart of accounts: TT133 plus the org sub-accounts (#319)', () => {
   async function rpc(path: string, who: Account, input: unknown, slug: string | null = org.slug, options: { mfa?: boolean } = {}) {
     const response = await app.request(`/api/rpc/${path}`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${await tokenFor(who, options)}`, 'content-type': 'application/json', ...(slug ? { 'x-crove-org': slug } : {}) },
+      headers: { authorization: `Bearer ${await tokenFor(who, options)}`, 'content-type': 'application/json', ...(slug ? { 'x-ludy-org': slug } : {}) },
       body: JSON.stringify(input === undefined ? {} : { json: input }),
     });
     const body = (await response.json().catch(() => null)) as ({ json?: unknown } & Record<string, unknown>) | null;

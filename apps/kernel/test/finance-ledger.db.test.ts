@@ -26,7 +26,7 @@ const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_UR
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const FIXTURE = readFileSync(new URL('../../extract/test/fixtures/einvoice-basic.xml', import.meta.url), 'utf8');
 const SECRET = 'test-only-jwt-secret-for-ledger-reports-0123456789';
-const ISSUER = 'crove-auth';
+const ISSUER = 'ludy-auth';
 const SELLER = 'CÔNG TY TNHH DỊCH VỤ MẪU';
 const SELLER_TAX_CODE = '0101234564';
 
@@ -117,7 +117,7 @@ suite('ledger reports per month, quarter or year (#321)', () => {
   async function rpc(path: string, token: string, input: unknown, slug: string | null = org.slug) {
     const response = await app.request(`/api/rpc/${path}`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...(slug ? { 'x-crove-org': slug } : {}) },
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...(slug ? { 'x-ludy-org': slug } : {}) },
       body: JSON.stringify(input === undefined ? {} : { json: input }),
     });
     const body = (await response.json().catch(() => null)) as ({ json?: unknown } & Record<string, unknown>) | null;
@@ -148,7 +148,7 @@ suite('ledger reports per month, quarter or year (#321)', () => {
   }
 
   const exportFile = async (token: string, period: string, slug = org.slug) =>
-    app.request(`/api/export/ledger.xlsx?${new URLSearchParams({ period })}`, { headers: { authorization: `Bearer ${token}`, 'x-crove-org': slug } });
+    app.request(`/api/export/ledger.xlsx?${new URLSearchParams({ period })}`, { headers: { authorization: `Bearer ${token}`, 'x-ludy-org': slug } });
 
   const exportAudits = (orgId = org.orgId) =>
     admin(
@@ -387,7 +387,7 @@ suite('ledger reports per month, quarter or year (#321)', () => {
   // The DRAFT financial statements (issue #154) from the same entries; the mapping itself is unit-tested in
   // modules/finance/test/tt133-reports.test.ts.
   const statementsFile = async (token: string, period: string, slug = org.slug) =>
-    app.request(`/api/export/statements.xlsx?${new URLSearchParams({ period })}`, { headers: { authorization: `Bearer ${token}`, 'x-crove-org': slug } });
+    app.request(`/api/export/statements.xlsx?${new URLSearchParams({ period })}`, { headers: { authorization: `Bearer ${token}`, 'x-ludy-org': slug } });
   const statementAudits = (orgId = org.orgId) =>
     admin(
       async (c) =>
@@ -575,7 +575,7 @@ suite('ledger reports per month, quarter or year (#321)', () => {
   // The year's statements as HTKK XML (issue #920); the layout itself is unit-tested in
   // modules/finance/test/statements-htkk-xml.test.ts.
   const htkkFile = async (token: string, year: string, slug = org.slug) =>
-    app.request(`/api/export/statements-htkk.xml?${new URLSearchParams({ year })}`, { headers: { authorization: `Bearer ${token}`, 'x-crove-org': slug } });
+    app.request(`/api/export/statements-htkk.xml?${new URLSearchParams({ year })}`, { headers: { authorization: `Bearer ${token}`, 'x-ludy-org': slug } });
   const xmlValue = (xml: string, path: string) => {
     let rest = xml;
     for (const tag of path.split('/')) {

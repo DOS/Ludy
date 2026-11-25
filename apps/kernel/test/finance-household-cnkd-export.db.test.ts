@@ -21,7 +21,7 @@ import { TEST_MANIFESTS } from './manifests.ts';
 const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-cnkd-export-0123456789';
-const ISSUER = 'crove-auth';
+const ISSUER = 'ludy-auth';
 const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
 class MemoryStore implements BlobStore {
@@ -57,7 +57,7 @@ suite('the 01/CNKD worksheet download (#2518)', () => {
       .setIssuedAt()
       .setExpirationTime('15m')
       .sign(new TextEncoder().encode(SECRET));
-  const download = async (query: string) => app.request(`/api/export/household-cnkd.xlsx?${query}`, { headers: { authorization: `Bearer ${await token()}`, 'x-crove-org': slug } });
+  const download = async (query: string) => app.request(`/api/export/household-cnkd.xlsx?${query}`, { headers: { authorization: `Bearer ${await token()}`, 'x-ludy-org': slug } });
   async function admin<T>(fn: (client: pg.Client) => Promise<T>): Promise<T> {
     const client = new pg.Client({ connectionString: adminUrl });
     await client.connect();

@@ -1,4 +1,4 @@
-// Crove Social recurring posts on PostgreSQL 17 (issue #979): a series post set to repeat on weekdays at a local time
+// Ludy Social recurring posts on PostgreSQL 17 (issue #979): a series post set to repeat on weekdays at a local time
 // gets its next copy after the last one is done, planned for the occurrence in the post's time zone (across a DST
 // change) and sent to review; one copy at a time, none while the org's publishing is held, and the series stops at its
 // end. Only members of the org set it, and only the worker scans for due series.

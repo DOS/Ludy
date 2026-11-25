@@ -256,7 +256,7 @@ suite('white-label client reports on PostgreSQL (#1053)', () => {
     const mailer: MailProvider = { name: 'resend', enabled: true, sendRetrySafety: 'idempotent', send: async (mail) => (sent.push(mail), { status: 'accepted', providerMessageId: `em_${randomUUID()}` }) };
     const jobs: MailJob[] = [];
     await sweepMail({ send: async (_q, data) => jobs.push(data) }, createDb(workerPool), worker, mailer);
-    for (const job of jobs) await runMailJob({ runtime: worker, mailer, templates: MAIL_TEMPLATES, publicUrl: 'https://crove.example', bounceDomain: null }, job);
+    for (const job of jobs) await runMailJob({ runtime: worker, mailer, templates: MAIL_TEMPLATES, publicUrl: 'https://ludy.example', bounceDomain: null }, job);
     expect(sent).toHaveLength(1);
     const html = sent[0]?.html ?? '';
     expect(html).toContain('border-bottom:3px solid #0f766e">Sao Mai Agency</p>');

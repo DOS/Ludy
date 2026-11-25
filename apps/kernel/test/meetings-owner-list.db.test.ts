@@ -96,7 +96,7 @@ suite('the owner compliance list of meetings (#2703)', () => {
       headers: {
         authorization: `Bearer ${await token(name, mfa)}`,
         'content-type': 'application/json',
-        ...(org ? { 'x-crove-org': org } : {}),
+        ...(org ? { 'x-ludy-org': org } : {}),
       },
       body: JSON.stringify(input === undefined ? {} : { json: input }),
     });

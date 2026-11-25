@@ -30,7 +30,7 @@ import { TEST_MANIFESTS } from './manifests.ts';
 const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-projects-weekly-0123456789';
-const ISSUER = 'crove-auth';
+const ISSUER = 'ludy-auth';
 const suite = ADMIN ? describe : describe.skip;
 
 interface Account {
@@ -111,7 +111,7 @@ suite('projects.weeklyStatus on PostgreSQL 17 (#2597)', () => {
     const slug = options.slug === undefined ? org.slug : options.slug;
     const headers: Record<string, string> = { 'content-type': 'application/json' };
     if (who) headers.authorization = `Bearer ${await tokenFor(who)}`;
-    if (slug) headers['x-crove-org'] = slug;
+    if (slug) headers['x-ludy-org'] = slug;
     const response = await apps[options.app ?? 'on'].request(`/api/rpc/${path}`, {
       method: 'POST',
       headers,

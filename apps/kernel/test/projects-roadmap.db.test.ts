@@ -55,7 +55,7 @@ const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_UR
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const JWT_SIGNING_KEY = 'test-only-jwt-key-projects-roadmap-4399-0123456789';
 const CREDENTIAL_KEY_B64 = randomBytes(32).toString('base64');
-const ISSUER = 'crove-auth';
+const ISSUER = 'ludy-auth';
 const suite = ADMIN ? describe : describe.skip;
 
 class MemoryStore implements BlobStore {

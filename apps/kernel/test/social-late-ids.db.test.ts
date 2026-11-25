@@ -90,7 +90,7 @@ suite('TikTok late post ids (#1475)', () => {
     return connectionId;
   }
 
-  // A TikTok post Crove published some hours ago: known by its publish_id (a direct post whose id has not come), or a
+  // A TikTok post Ludy published some hours ago: known by its publish_id (a direct post whose id has not come), or a
   // draft in the creator's inbox (no post id, the SENT_TO_APP note, the publish_id on its publish call).
   async function published(o: Org, conn: string, kind: { inbox: true } | { privacy: string }, hoursAgo = 2) {
     const publishId = `v_pub_file~v2-1.${randomUUID().slice(0, 8)}`;

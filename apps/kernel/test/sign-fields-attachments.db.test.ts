@@ -34,7 +34,7 @@ import { TEST_MANIFESTS } from './manifests.ts';
 const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const JWT_TEST_KEY = 'x'.repeat(32);
-const ISSUER = 'crove-auth';
+const ISSUER = 'ludy-auth';
 
 const VALID_PNG_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
@@ -145,7 +145,7 @@ suite('eSign Slice 4b: choice fields & verified signer supporting attachments on
       headers: {
         authorization: `Bearer ${await tokenFor(who)}`,
         'content-type': 'application/json',
-        ...(slug ? { 'x-crove-org': slug } : {}),
+        ...(slug ? { 'x-ludy-org': slug } : {}),
       },
       body: JSON.stringify(input === undefined ? {} : { json: input }),
     });
@@ -289,7 +289,7 @@ suite('eSign Slice 4b: choice fields & verified signer supporting attachments on
         headers: {
           authorization: `Bearer ${await tokenFor(owner, { mfa: true })}`,
           'content-type': 'application/json',
-          'x-crove-org': org.slug,
+          'x-ludy-org': org.slug,
         },
         body: JSON.stringify({ json: { email: who.email, role } }),
       });
@@ -754,7 +754,7 @@ suite('eSign Slice 4b: choice fields & verified signer supporting attachments on
     const downloadRes = await app.request(`/api/files/${uploadedMeta.fileId}`, {
       headers: {
         authorization: `Bearer ${await tokenFor(member)}`,
-        'x-crove-org': org.slug,
+        'x-ludy-org': org.slug,
       },
     });
     expect(downloadRes.status).toBe(200);
@@ -767,7 +767,7 @@ suite('eSign Slice 4b: choice fields & verified signer supporting attachments on
     const supersededDownload = await app.request(`/api/files/${supersededPngMeta.fileId}`, {
       headers: {
         authorization: `Bearer ${await tokenFor(owner)}`,
-        'x-crove-org': org.slug,
+        'x-ludy-org': org.slug,
       },
     });
     expect(supersededDownload.status).toBe(404);
@@ -776,7 +776,7 @@ suite('eSign Slice 4b: choice fields & verified signer supporting attachments on
     const crossTenantDownload = await app.request(`/api/files/${uploadedMeta.fileId}`, {
       headers: {
         authorization: `Bearer ${await tokenFor(outsider)}`,
-        'x-crove-org': otherOrg.slug,
+        'x-ludy-org': otherOrg.slug,
       },
     });
     expect(crossTenantDownload.status).toBe(404);
@@ -1016,13 +1016,13 @@ suite('eSign Slice 4b: choice fields & verified signer supporting attachments on
     // HR confidentiality: owner and adminUser (creator) get 200; ordinary member and viewer get 404!
     for (const allowedWho of [owner, adminUser]) {
       const okRes = await app.request(`/api/files/${hrUploaded.fileId}`, {
-        headers: { authorization: `Bearer ${await tokenFor(allowedWho)}`, 'x-crove-org': org.slug },
+        headers: { authorization: `Bearer ${await tokenFor(allowedWho)}`, 'x-ludy-org': org.slug },
       });
       expect(okRes.status).toBe(200);
     }
     for (const deniedWho of [member, otherMember, viewer]) {
       const deniedRes = await app.request(`/api/files/${hrUploaded.fileId}`, {
-        headers: { authorization: `Bearer ${await tokenFor(deniedWho)}`, 'x-crove-org': org.slug },
+        headers: { authorization: `Bearer ${await tokenFor(deniedWho)}`, 'x-ludy-org': org.slug },
       });
       expect(deniedRes.status).toBe(404);
     }
@@ -1330,7 +1330,7 @@ suite('eSign Slice 4b: choice fields & verified signer supporting attachments on
     });
 
     const orphanedDownload = await app.request(`/api/files/${preDelFileId}`, {
-      headers: { authorization: `Bearer ${await tokenFor(owner)}`, 'x-crove-org': org.slug },
+      headers: { authorization: `Bearer ${await tokenFor(owner)}`, 'x-ludy-org': org.slug },
     });
     expect(orphanedDownload.status).toBe(404);
 

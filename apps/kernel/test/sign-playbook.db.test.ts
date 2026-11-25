@@ -40,7 +40,7 @@ import { TEST_MANIFESTS } from './manifests.ts';
 const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const TEST_JWT_KEY = 'unit-test-'.repeat(5);
-const ISSUER = 'crove-auth';
+const ISSUER = 'ludy-auth';
 
 class MemoryStore implements BlobStore {
   readonly blobs = new Map<string, Uint8Array>();
@@ -174,7 +174,7 @@ suite('eSign Slice 5d SME contract playbook checklist and cited redline suggesti
       headers: {
         authorization: `Bearer ${await tokenFor(who)}`,
         'content-type': 'application/json',
-        ...(slug ? { 'x-crove-org': slug } : {}),
+        ...(slug ? { 'x-ludy-org': slug } : {}),
       },
       body: JSON.stringify(input === undefined ? {} : { json: input }),
     });
@@ -188,7 +188,7 @@ suite('eSign Slice 5d SME contract playbook checklist and cited redline suggesti
     form.append('purpose', 'sign_document');
     const res = await appAiOff.request('/api/files', {
       method: 'POST',
-      headers: { authorization: `Bearer ${await tokenFor(who)}`, 'x-crove-org': slug },
+      headers: { authorization: `Bearer ${await tokenFor(who)}`, 'x-ludy-org': slug },
       body: form,
     });
     expect(res.status).toBe(200);
@@ -298,7 +298,7 @@ suite('eSign Slice 5d SME contract playbook checklist and cited redline suggesti
         headers: {
           authorization: `Bearer ${await tokenFor(owner, { mfa: true })}`,
           'content-type': 'application/json',
-          'x-crove-org': org.slug,
+          'x-ludy-org': org.slug,
         },
         body: JSON.stringify({ json: { email: who.email, role } }),
       });

@@ -42,7 +42,7 @@ import { TEST_MANIFESTS } from './manifests.ts';
 const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const JWT_SIGNING_KEY = 'test-only-jwt-key-sign-slice4d-3820-0123456789';
-const ISSUER = 'crove-auth';
+const ISSUER = 'ludy-auth';
 const suite = ADMIN ? describe : describe.skip;
 
 class MemoryStore implements BlobStore {

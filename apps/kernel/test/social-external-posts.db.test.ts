@@ -1,5 +1,5 @@
-// Posts published outside Crove on PostgreSQL 17 (#1054): the worker's sweep lists each channel's own recent posts
-// through its adapter and keeps the ones Crove did not publish, reads their counts through metrics(), marks a channel
+// Posts published outside Ludy on PostgreSQL 17 (#1054): the worker's sweep lists each channel's own recent posts
+// through its adapter and keeps the ones Ludy did not publish, reads their counts through metrics(), marks a channel
 // whose token is refused for reconnecting, and the Metrics tab and client report links count them only when asked, once
 // each, for their own org. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -92,7 +92,7 @@ suite('social posts published outside Crove (#1054)', () => {
     return connectionId;
   }
 
-  // A post Crove published on a channel some days ago, as the platform's id (and its address), with its latest counts.
+  // A post Ludy published on a channel some days ago, as the platform's id (and its address), with its latest counts.
   async function published(o: Org, conn: string, externalId: string, daysAgo: number, metrics: Record<string, number>, url: string | null = null) {
     const { postId } = await api.execute<{ postId: string }>('social.post.create', { body: `Bài của Crove ${externalId}`, channels: [{ connectionId: conn }] }, { actor: asUser(o.owner), orgId: o.orgId });
     await admin(async (c) => {
@@ -226,7 +226,7 @@ suite('social posts published outside Crove (#1054)', () => {
     await sweep(platform);
     expect(platform.measured.map((m) => m.externalId)).toEqual(['out-2']);
 
-    // A post that turns out to be Crove's (its variant got the id later) is counted once, as Crove's.
+    // A post that turns out to be Ludy's (its variant got the id later) is counted once, as Ludy's.
     await published(o, conn, 'out-2', 3, { reach: 7 });
     const once = await totals(o, { days: 30, includeExternal: true });
     expect(once).toMatchObject({ posts: 3, metrics: { reach: 157, reactions: 15 } });
@@ -312,16 +312,16 @@ suite('social posts published outside Crove (#1054)', () => {
   it("takes a listed post for Crove's by its page address (a Facebook video or Reel under another post id), and only a published variant as Crove's", async () => {
     const o = await org();
     const conn = await connect(o, 'acct-video');
-    // A video and a Reel Crove published: kept as <page>_<video> with the address Crove recorded.
+    // A video and a Reel Ludy published: kept as <page>_<video> with the address Ludy recorded.
     await published(o, conn, '111_777', 2, { reach: 300 }, 'https://www.facebook.com/111/videos/777');
     await published(o, conn, '111_888', 2, { reach: 200 }, 'https://www.facebook.com/reel/888');
-    // A variant that failed after an id was noted: not a post Crove counts, so not Crove's here either.
+    // A variant that failed after an id was noted: not a post Ludy counts, so not Ludy's here either.
     const failed = await published(o, conn, 'out-failed', 2, { reach: 1 });
     await admin((c) => c.query("UPDATE ludy_social.post_variant SET status = 'failed' WHERE post_id = $1", [failed]));
     const platform = new FakePlatform();
     platform.listings.set('acct-video', {
       posts: [
-        // Meta lists Crove's video and Reel under other post ids, on the Page's name and the mobile host.
+        // Meta lists Ludy's video and Reel under other post ids, on the Page's name and the mobile host.
         { externalId: '111_9001', text: 'Video của Crove', permalink: 'https://www.facebook.com/SomePage/videos/777/', publishedAt: ago(2) },
         { externalId: '111_9002', text: 'Reel của Crove', permalink: 'https://m.facebook.com/reel/888', publishedAt: ago(2) },
         { externalId: 'out-failed', text: 'Đăng lại tay', permalink: null, publishedAt: ago(2) },
@@ -332,7 +332,7 @@ suite('social posts published outside Crove (#1054)', () => {
     const kept = await admin(async (c) => (await c.query<{ external_post_id: string }>('SELECT external_post_id FROM ludy_social.external_post WHERE org_id = $1 ORDER BY 1', [o.orgId])).rows.map((r) => r.external_post_id));
     expect(kept).toEqual(['111_9003', 'out-failed']);
 
-    // One brought in before Crove recorded its own address is left out of every read, and never measured.
+    // One brought in before Ludy recorded its own address is left out of every read, and never measured.
     await admin((c) =>
       c.query("INSERT INTO ludy_social.external_post (org_id, channel_connection_id, external_post_id, permalink, published_at, metrics) VALUES ($1, $2, '111_9100', 'https://www.facebook.com/SomePage/videos/777/', now() - interval '2 days', '{\"reach\": 999}')", [o.orgId, conn]),
     );
@@ -391,7 +391,7 @@ suite('social posts published outside Crove (#1054)', () => {
     const onlyB = (await reportView(api, { token: await link({ includeExternal: true, connectionIds: [b] }) })) as ReportPage;
     expect(onlyB).toMatchObject({ posts: 1, totals: { reach: 30 } });
 
-    // A post that is also a variant's on the same channel shows once, as Crove's.
+    // A post that is also a variant's on the same channel shows once, as Ludy's.
     await published(o, b, 'out-b', 3, { reach: 31 });
     const again = (await reportView(api, { token: await link({ includeExternal: true, connectionIds: [b] }) })) as ReportPage;
     expect(again).toMatchObject({ posts: 1, totals: { reach: 31 } });
@@ -456,7 +456,7 @@ suite('social posts published outside Crove (#1054)', () => {
       { external_post_id: 'bbbbbbbbbb2', excerpt: 'Video bbbbbbbbbb2', permalink: 'https://www.youtube.com/watch?v=bbbbbbbbbb2' },
     ]);
 
-    // Off, the totals are Crove's alone; on, the four outside posts count once each, on their channels.
+    // Off, the totals are Ludy's alone; on, the four outside posts count once each, on their channels.
     expect(await totals(o, { days: 30 })).toEqual(before);
     const on = await totals(o, { days: 30, includeExternal: true });
     expect(on).toMatchObject({ posts: 7, metrics: { views: 265, reactions: 10 } });
@@ -477,9 +477,9 @@ suite('social posts published outside Crove (#1054)', () => {
     const tt = await connect(o, 'tt-open-listed', 'tiktok', { accessToken: 'act.listed', refreshToken: 'rft.listed' }, granted);
     const noList = await connect(o, 'tt-open-nolist', 'tiktok', { accessToken: 'act.nolist', refreshToken: 'rft.nolist' }, ['user.info.basic', 'video.publish']);
     const dead = await connect(o, 'tt-open-dead', 'tiktok', { accessToken: 'act.dead', refreshToken: 'rft.dead' }, granted);
-    // A video Crove published, with the numeric id the late-id sweep recorded (#1475).
+    // A video Ludy published, with the numeric id the late-id sweep recorded (#1475).
     await published(o, tt, '7430000000000000100', 2, { views: 100, reactions: 10 });
-    // One Crove published half an hour ago, public, still known by its publish_id while TikTok moderates it.
+    // One Ludy published half an hour ago, public, still known by its publish_id while TikTok moderates it.
     const pending = await published(o, tt, 'v_pub_file~v2-1.999', 0.02, {});
     await admin((c) => c.query(`UPDATE ludy_social.post_variant SET settings = '{"privacyLevel": "PUBLIC_TO_EVERYONE"}' WHERE post_id = $1`, [pending]));
     const before = await totals(o, { days: 30 });
@@ -512,7 +512,7 @@ suite('social posts published outside Crove (#1054)', () => {
 
     const done = await sweepExternalPosts({ runtime: worker, broker: vault, workerDb, publishers });
     expect(done).toMatchObject({ imported: 1, expired: 1, measured: 1 });
-    // Crove's own video is dropped by its id; the one created since a day before the pending post is held back.
+    // Ludy's own video is dropped by its id; the one created since a day before the pending post is held back.
     expect(await kept()).toEqual(['7430000000000000201']);
     const outsideRow = await admin(async (c) => (await c.query('SELECT excerpt, permalink, metrics FROM ludy_social.external_post WHERE external_post_id = $1', ['7430000000000000201'])).rows[0]);
     expect(outsideRow).toEqual({ excerpt: 'Đăng từ app tuần này', permalink: 'https://www.tiktok.com/@shop/video/7430000000000000201', metrics: { views: 50, reactions: 5, comments: 1, shares: 0 } });
@@ -523,11 +523,11 @@ suite('social posts published outside Crove (#1054)', () => {
     const status = await admin(async (c) => (await c.query<{ id: string; status: string }>('SELECT id, status FROM ludy_kernel.channel_connection WHERE org_id = $1', [o.orgId])).rows);
     expect(new Map(status.map((r) => [r.id, r.status]))).toEqual(new Map([[tt, 'active'], [noList, 'active'], [dead, 'expired']]));
 
-    // Off, the totals are Crove's alone; on, the outside video counts once.
+    // Off, the totals are Ludy's alone; on, the outside video counts once.
     expect(await totals(o, { days: 30 })).toEqual(before);
     expect(await totals(o, { days: 30, includeExternal: true })).toMatchObject({ posts: 3, metrics: { views: 150, reactions: 15 } });
 
-    // The pending post gets its public id: at the next bring-in its video is Crove's, and the held-back outside one
+    // The pending post gets its public id: at the next bring-in its video is Ludy's, and the held-back outside one
     // comes in.
     await admin((c) => c.query("UPDATE ludy_social.post_variant SET external_post_id = '7430000000000000300' WHERE post_id = $1", [pending]));
     await admin((c) => c.query("UPDATE ludy_social.external_import SET ran_at = now() - interval '7 hours' WHERE org_id = $1", [o.orgId]));

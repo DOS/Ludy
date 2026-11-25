@@ -418,14 +418,14 @@ suite('Notes N10: link notes to meetings and taint-until-edited guard (#1679)', 
 
     const badRes = await httpApp.request('/api/rpc/notes/fromMeetingSummary', {
       method: 'POST',
-      headers: { authorization: `Bearer ${jwt}`, 'content-type': 'application/json', 'x-crove-org': orgSlug },
+      headers: { authorization: `Bearer ${jwt}`, 'content-type': 'application/json', 'x-ludy-org': orgSlug },
       body: JSON.stringify({ json: { meetingId, body: 'spoofed text' } }),
     });
     expect(badRes.status).toBe(400);
 
     const okRes = await httpApp.request('/api/rpc/notes/fromMeetingSummary', {
       method: 'POST',
-      headers: { authorization: `Bearer ${jwt}`, 'content-type': 'application/json', 'x-crove-org': orgSlug },
+      headers: { authorization: `Bearer ${jwt}`, 'content-type': 'application/json', 'x-ludy-org': orgSlug },
       body: JSON.stringify({ json: { meetingId } }),
     });
     expect(okRes.status).toBe(200);

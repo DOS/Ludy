@@ -29,7 +29,7 @@ import { TEST_MANIFESTS } from './manifests.ts';
 const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-marketplace-chain-0123456789';
-const ISSUER = 'crove-auth';
+const ISSUER = 'ludy-auth';
 
 class MemoryStore implements BlobStore {
   private readonly blobs = new Map<string, Uint8Array>();

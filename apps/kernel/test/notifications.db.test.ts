@@ -251,7 +251,7 @@ suite('in-app notifications of the kernel and finance (#671)', () => {
     expect(await dispatch('finance.portal_list.recorded')).toBe(3);
     expect((await list(people.member)).items[0]).toMatchObject({ kind: 'finance.portal_attention', subjectId: failed, detail: { period: '2026-09', failed: 'true' } });
 
-    // A list with an invoice Crove does not have.
+    // A list with an invoice Ludy does not have.
     const done = await pendingList();
     await workerRuntime.execute(
       'finance.portal_list.record',

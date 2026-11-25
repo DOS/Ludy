@@ -57,7 +57,7 @@ import { TEST_MANIFESTS } from './manifests.ts';
 const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-sign-ca-3554-0123456789abcdef';
-const ISSUER = 'crove-auth';
+const ISSUER = 'ludy-auth';
 
 class MemoryStore implements BlobStore {
   readonly blobs = new Map<string, Uint8Array>();
@@ -156,7 +156,7 @@ suite('eSign Slice 2c PAdES worker + crove-extract + oRPC on PostgreSQL 17 (#355
       headers: {
         authorization: `Bearer ${await tokenFor(who)}`,
         'content-type': 'application/json',
-        ...(slug ? { 'x-crove-org': slug } : {}),
+        ...(slug ? { 'x-ludy-org': slug } : {}),
       },
       body: JSON.stringify(input === undefined ? {} : { json: input }),
     });
@@ -332,7 +332,7 @@ suite('eSign Slice 2c PAdES worker + crove-extract + oRPC on PostgreSQL 17 (#355
     form.append('purpose', 'sign_document');
     const uploadRes = await app.request('/api/files', {
       method: 'POST',
-      headers: { authorization: `Bearer ${await tokenFor(owner)}`, 'x-crove-org': org.slug },
+      headers: { authorization: `Bearer ${await tokenFor(owner)}`, 'x-ludy-org': org.slug },
       body: form,
     });
     expect(uploadRes.status).toBe(200);
@@ -519,7 +519,7 @@ suite('eSign Slice 2c PAdES worker + crove-extract + oRPC on PostgreSQL 17 (#355
     });
 
     const downloadRes = await app.request(`/api/files/${secondTick.padesFileId}`, {
-      headers: { authorization: `Bearer ${await tokenFor(owner)}`, 'x-crove-org': org.slug },
+      headers: { authorization: `Bearer ${await tokenFor(owner)}`, 'x-ludy-org': org.slug },
     });
     expect(downloadRes.status).toBe(200);
     const padesBuf = Buffer.from(await downloadRes.arrayBuffer());
@@ -548,7 +548,7 @@ suite('eSign Slice 2c PAdES worker + crove-extract + oRPC on PostgreSQL 17 (#355
       expect(readerList.body.items.map((item) => item.id)).toEqual([requestId]);
 
       const readerDownload = await app.request(`/api/files/${secondTick.padesFileId}`, {
-        headers: { authorization: `Bearer ${await tokenFor(reader)}`, 'x-crove-org': org.slug },
+        headers: { authorization: `Bearer ${await tokenFor(reader)}`, 'x-ludy-org': org.slug },
       });
       expect(readerDownload.status).toBe(200);
       const readerBytes = Buffer.from(await readerDownload.arrayBuffer());
@@ -696,7 +696,7 @@ suite('eSign Slice 2c PAdES worker + crove-extract + oRPC on PostgreSQL 17 (#355
       form.append('purpose', 'sign_document');
       const uploadRes = await app.request('/api/files', {
         method: 'POST',
-        headers: { authorization: `Bearer ${await tokenFor(creator)}`, 'x-crove-org': org.slug },
+        headers: { authorization: `Bearer ${await tokenFor(creator)}`, 'x-ludy-org': org.slug },
         body: form,
       });
       expect(uploadRes.status).toBe(200);
@@ -821,7 +821,7 @@ suite('eSign Slice 2c PAdES worker + crove-extract + oRPC on PostgreSQL 17 (#355
       expect(listRes.body.items.map((item) => item.id)).toEqual([ownerHr.requestId]);
 
       const dlRes = await app.request(`/api/files/${ownerHr.padesFileId}`, {
-        headers: { authorization: `Bearer ${await tokenFor(privileged)}`, 'x-crove-org': org.slug },
+        headers: { authorization: `Bearer ${await tokenFor(privileged)}`, 'x-ludy-org': org.slug },
       });
       expect(dlRes.status).toBe(200);
     }
@@ -835,12 +835,12 @@ suite('eSign Slice 2c PAdES worker + crove-extract + oRPC on PostgreSQL 17 (#355
     expect(creatorOwnList.body.items.map((item) => item.id)).toEqual([creatorHr.requestId]);
 
     const creatorOwnDl = await app.request(`/api/files/${creatorHr.padesFileId}`, {
-      headers: { authorization: `Bearer ${await tokenFor(demotedCreator)}`, 'x-crove-org': org.slug },
+      headers: { authorization: `Bearer ${await tokenFor(demotedCreator)}`, 'x-ludy-org': org.slug },
     });
     expect(creatorOwnDl.status).toBe(200);
 
     const creatorOtherDl = await app.request(`/api/files/${ownerHr.padesFileId}`, {
-      headers: { authorization: `Bearer ${await tokenFor(demotedCreator)}`, 'x-crove-org': org.slug },
+      headers: { authorization: `Bearer ${await tokenFor(demotedCreator)}`, 'x-ludy-org': org.slug },
     });
     expect(creatorOtherDl.status).toBe(404);
 
@@ -852,7 +852,7 @@ suite('eSign Slice 2c PAdES worker + crove-extract + oRPC on PostgreSQL 17 (#355
         expect(listRes.status).toBe(404);
 
         const dlRes = await app.request(`/api/files/${hrTarget.padesFileId}`, {
-          headers: { authorization: `Bearer ${await tokenFor(unauthorized)}`, 'x-crove-org': org.slug },
+          headers: { authorization: `Bearer ${await tokenFor(unauthorized)}`, 'x-ludy-org': org.slug },
         });
         expect(dlRes.status).toBe(404);
       }

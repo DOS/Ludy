@@ -1,4 +1,4 @@
-// In-app notifications of Crove Social on PostgreSQL 17 (#637): who each event tells, never the person who acted, the
+// In-app notifications of Ludy Social on PostgreSQL 17 (#637): who each event tells, never the person who acted, the
 // kinds a member turns off, reading and marking only one's own, a client's answer through a review link, and pruning.
 // The worker's dispatch is run here by hand for each new outbox event. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL;
 // each run makes its own database.
@@ -132,7 +132,7 @@ suite('social notification mail on PostgreSQL (#579)', () => {
   async function send(mailer: MailProvider) {
     const jobs: MailJob[] = [];
     await sweepMail({ send: async (_q, data) => jobs.push(data) }, workerDb, worker, mailer);
-    for (const job of jobs) await runMailJob({ runtime: worker, mailer, templates: MAIL_TEMPLATES, publicUrl: 'https://crove.example', bounceDomain: null }, job);
+    for (const job of jobs) await runMailJob({ runtime: worker, mailer, templates: MAIL_TEMPLATES, publicUrl: 'https://ludy.example', bounceDomain: null }, job);
   }
   function capturing(): { mailer: MailProvider; sent: OutboundMail[] } {
     const sent: OutboundMail[] = [];
@@ -163,8 +163,8 @@ suite('social notification mail on PostgreSQL (#579)', () => {
     expect(mail?.to).toBe(await emailOf(o.admin));
     expect(mail?.subject).toBe('Có bài chờ duyệt: Khai trương cửa hàng');
     expect(mail?.text).toContain('Có một bài đang chờ bạn duyệt.');
-    expect(mail?.text).toContain(`Mở bài viết: https://crove.example/o/${slug}/social/${postId}`);
-    expect(mail?.html).toContain(`href="https://crove.example/o/${slug}/social/${postId}"`);
+    expect(mail?.text).toContain(`Mở bài viết: https://ludy.example/o/${slug}/social/${postId}`);
+    expect(mail?.html).toContain(`href="https://ludy.example/o/${slug}/social/${postId}"`);
     expect((await mails(o))[0]?.status).toBe('sent');
   });
 

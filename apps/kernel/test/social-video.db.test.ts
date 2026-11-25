@@ -1,5 +1,5 @@
-// Video on Crove Social posts on PostgreSQL 17 (Social plan S9, issue #410): a post can carry a video uploaded for
-// posts, its duration (read by the server at upload) feeds the channel checks, a channel whose Crove adapter cannot
+// Video on Ludy Social posts on PostgreSQL 17 (Social plan S9, issue #410): a post can carry a video uploaded for
+// posts, its duration (read by the server at upload) feeds the channel checks, a channel whose Ludy adapter cannot
 // post video says so, and the library lists videos with their length.
 // Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { createHash, randomUUID } from 'node:crypto';

@@ -21,7 +21,7 @@ import { TEST_MANIFESTS } from './manifests.ts';
 const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-invites-0123456789';
-const ISSUER = 'crove-auth';
+const ISSUER = 'ludy-auth';
 
 const suite = ADMIN ? describe : describe.skip;
 
@@ -74,7 +74,7 @@ suite('member invite flows on PostgreSQL', () => {
   async function rpc(path: string, token: string, input: unknown, org: string | null) {
     const response = await app.request(`/api/rpc/${path}`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...(org ? { 'x-crove-org': org } : {}) },
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...(org ? { 'x-ludy-org': org } : {}) },
       body: JSON.stringify(input === undefined ? {} : { json: input }),
     });
     const body = (await response.json().catch(() => null)) as ({ json?: Record<string, unknown> } & Record<string, unknown>) | null;

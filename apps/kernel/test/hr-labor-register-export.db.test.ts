@@ -240,11 +240,11 @@ suite('HR labor register and 01/PLI exports on PostgreSQL (#3372)', () => {
       pool,
       aiEnabled: false,
     });
-    const getExport = (file: string, query: string, token: string, slug = o.slug) => app.request(`/api/payroll-export/${file}?${query}`, { headers: { authorization: `Bearer ${token}`, 'x-crove-org': slug } });
+    const getExport = (file: string, query: string, token: string, slug = o.slug) => app.request(`/api/payroll-export/${file}?${query}`, { headers: { authorization: `Bearer ${token}`, 'x-ludy-org': slug } });
     const postLaborCheck = async (token: string, input: unknown, slug = o.slug) => {
       const res = await app.request('/api/rpc/hr/payroll/laborCheck', {
         method: 'POST',
-        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', 'x-crove-org': slug },
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', 'x-ludy-org': slug },
         body: JSON.stringify({ json: input }),
       });
       const raw = (await res.json().catch(() => null)) as { json?: HrLaborCheckResult } & Record<string, unknown> | null;

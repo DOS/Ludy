@@ -24,7 +24,7 @@ const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_UR
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const FIXTURE = readFileSync(new URL('../../extract/test/fixtures/einvoice-basic.xml', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-bulk-approve-0123456789';
-const ISSUER = 'crove-auth';
+const ISSUER = 'ludy-auth';
 const suite = ADMIN ? describe : describe.skip;
 
 const extractApp = createExtractApp({ concurrency: 2 });
@@ -90,7 +90,7 @@ suite('bulk approval through the API (#315)', () => {
       headers: {
         authorization: `Bearer ${await tokenFor(who, options.mfaAge === undefined ? null : options.mfaAge)}`,
         'content-type': 'application/json',
-        ...(org ? { 'x-crove-org': org } : {}),
+        ...(org ? { 'x-ludy-org': org } : {}),
       },
       body: JSON.stringify(input === undefined ? {} : { json: input }),
     });

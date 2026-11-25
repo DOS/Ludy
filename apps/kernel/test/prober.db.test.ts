@@ -418,7 +418,7 @@ suite('prober on PostgreSQL', () => {
     const API = '2026-11-01T00:00:00+00:00';
     const ready = async (env: Record<string, string> = { CROVE_BUILD_TIME: API }, workerBuildCheck = true) => {
       const app = createHttpApp({
-        config: loadConfig({ DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: 'x'.repeat(32), AUTH_ISSUER: 'crove-auth', AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, ...env }),
+        config: loadConfig({ DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: 'x'.repeat(32), AUTH_ISSUER: 'ludy-auth', AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, ...env }),
         runtime: { installed: () => true, modules: () => ['kernel'] } as unknown as Runtime,
         store: {} as BlobStore,
         authenticate: async () => {

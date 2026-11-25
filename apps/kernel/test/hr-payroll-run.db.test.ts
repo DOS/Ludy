@@ -804,7 +804,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
       pool,
       aiEnabled: false,
     });
-    const get = (file: string, query: string, userId: string) => app.request(`/api/payroll-export/${file}?${query}`, { headers: { authorization: `Bearer ${userId}`, 'x-crove-org': o.slug } });
+    const get = (file: string, query: string, userId: string) => app.request(`/api/payroll-export/${file}?${query}`, { headers: { authorization: `Bearer ${userId}`, 'x-ludy-org': o.slug } });
     expect((await app.request('/api/payroll-export/kk.xlsx?period=2026-Q3')).status).toBe(401);
     for (const who of [o.member, o.viewer]) expect((await get('kk.xlsx', 'period=2026-Q3', who)).status).toBe(403);
     expect((await get('nothing.xlsx', 'period=2026-Q3', o.owner)).status).toBe(404);
@@ -843,7 +843,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     expect((await get('kk.xlsx', `period=2026-Q3&legalEntityId=${foreignEntity}`, o.owner)).status).toBe(422);
     expect(exports.inUse).toBe(0);
     // HEAD is refused before any read, so it leaves no row for a download that never happened.
-    expect((await app.request('/api/payroll-export/kk.xlsx?period=2026-Q3', { method: 'HEAD', headers: { authorization: `Bearer ${o.owner}`, 'x-crove-org': o.slug } })).status).toBe(405);
+    expect((await app.request('/api/payroll-export/kk.xlsx?period=2026-Q3', { method: 'HEAD', headers: { authorization: `Bearer ${o.owner}`, 'x-ludy-org': o.slug } })).status).toBe(405);
     expect(exports.inUse).toBe(0);
     // The screen's view and print come from the same audited read, recorded by the same row.
     const view = await get('kk.json', 'period=2026-Q3', o.owner);
@@ -1020,7 +1020,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
       pool,
       aiEnabled: false,
     });
-    const get = (table: string, userId: string, slug: string) => app.request(`/api/org-export/${table}`, { headers: { authorization: `Bearer ${userId}`, 'x-crove-org': slug } });
+    const get = (table: string, userId: string, slug: string) => app.request(`/api/org-export/${table}`, { headers: { authorization: `Bearer ${userId}`, 'x-ludy-org': slug } });
     // The org is not closing: the owner is refused with a clear code, a member and an admin and another org's owner are refused too.
     const active = await get('hr.payroll_employee', o.owner, o.slug);
     expect(active.status).toBe(409);

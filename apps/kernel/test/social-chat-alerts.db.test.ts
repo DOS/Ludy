@@ -27,7 +27,7 @@ const BOT_TOKEN = '123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw1';
 const CHAT_ID = '-4012345678';
 const HOOK = '1234567890123456789';
 const HOOK_TOKEN = `tok_${'A1b2C3d4'.repeat(8)}`;
-const PUBLIC_URL = 'https://crove.example';
+const PUBLIC_URL = 'https://ludy.example';
 
 type Answer = { status?: number; body: unknown };
 type Call = { host: string; path: string; json: Record<string, unknown> | null };

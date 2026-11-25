@@ -411,7 +411,7 @@ suite('org offboarding on PostgreSQL (#38)', () => {
       aiEnabled: false,
     });
     const get = (path: string, userId: string, slug: string) =>
-      app.request(path, { headers: { authorization: `Bearer ${userId}`, 'x-crove-org': slug } });
+      app.request(path, { headers: { authorization: `Bearer ${userId}`, 'x-ludy-org': slug } });
     const manifestResponse = await get('/api/org-export/manifest', owner.id, org.slug);
     expect(manifestResponse.status).toBe(200);
     expect(manifestResponse.headers.get('content-disposition')).toContain('attachment');
@@ -758,7 +758,7 @@ suite('org offboarding on PostgreSQL (#38)', () => {
       pool,
       aiEnabled: false,
     });
-    const response = await app.request('/api/org-export/kernel.party', { headers: { authorization: `Bearer ${owner.id}`, 'x-crove-org': org.slug } });
+    const response = await app.request('/api/org-export/kernel.party', { headers: { authorization: `Bearer ${owner.id}`, 'x-ludy-org': org.slug } });
     expect(response.status).toBe(200);
     expect(Number(response.headers.get('content-length'))).toBe(parties.reduce((n, p) => n + p.bytes, 0));
     const text = await response.text();
