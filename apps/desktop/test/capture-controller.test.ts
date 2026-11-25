@@ -78,9 +78,18 @@ describe('meeting window classification & join URL sanitization', () => {
       { hwnd: '0x6', pid: 106, exe: 'chrome.exe', title: 'Google Meet' },
       { hwnd: '0x7', pid: 107, exe: 'Zoom.exe', title: 'Default IME' },
       { hwnd: '0x8', pid: 101, exe: 'Zoom.exe', title: 'Zoom Toolbar Duplicate PID' },
+      { hwnd: '0x9', pid: 108, exe: 'ZOOM.EXE', title: 'Uppercase Zoom' },
+      { hwnd: '0xa', pid: 109, exe: 'constructor', title: 'Spoof' },
+      { hwnd: '0xb', pid: 110, exe: '__proto__', title: 'Spoof' },
+      { hwnd: '0xc', pid: 111, exe: 'toString', title: 'Spoof' },
+      { hwnd: '0xd', pid: 112, exe: 'valueOf', title: 'Spoof' },
     ];
     expect(classifyMeetingWindow(raw[5]!)).toBeNull();
     expect(classifyMeetingWindow(raw[6]!)).toBeNull();
+    expect(classifyMeetingWindow(raw[9]!)).toBeNull();
+    expect(classifyMeetingWindow(raw[10]!)).toBeNull();
+    expect(classifyMeetingWindow(raw[11]!)).toBeNull();
+    expect(classifyMeetingWindow(raw[12]!)).toBeNull();
     const offered = selectOfferedWindows(raw);
     expect(offered.map((w) => ({ pid: w.pid, client: w.client, appName: w.appName }))).toEqual([
       { pid: 101, client: 'zoom', appName: 'Zoom' },
@@ -88,6 +97,7 @@ describe('meeting window classification & join URL sanitization', () => {
       { pid: 103, client: 'teams', appName: 'Microsoft Teams' },
       { pid: 104, client: 'zalo', appName: 'Zalo PC' },
       { pid: 105, client: 'slack', appName: 'Slack' },
+      { pid: 108, client: 'zoom', appName: 'Zoom' },
     ]);
   });
 
