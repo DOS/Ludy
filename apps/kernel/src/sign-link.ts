@@ -1422,15 +1422,20 @@ export function verifySignDepositProofBytes(bytes: Uint8Array): SignDepositProof
   return null;
 }
 
+export type SignDepositQrSource = {
+  storageKey: string;
+  generation: string;
+  sha256: string;
+};
+
 export type SignDepositQrLookup =
   | { status: 'not_found' }
   | { status: 'rate_limited'; retryAfterSeconds: number }
   | { status: 'otp_required' }
-  | { status: 'ok'; bytes: Uint8Array };
+  | { status: 'ok'; source: SignDepositQrSource };
 
-export async function runSignDepositQr(
+export async function resolvePublicDepositQr(
   runtime: Runtime,
-  store: BlobStore,
   billing: SignBilling,
   body: unknown,
   limitToken?: SignTokenLimiterFn,
@@ -1463,9 +1468,23 @@ export async function runSignDepositQr(
   if (row.otpRequired) return { status: 'otp_required' };
   if (!row.storageKey || !row.generation || !row.sha256) return { status: 'not_found' };
 
+  return {
+    status: 'ok',
+    source: {
+      storageKey: row.storageKey,
+      generation: row.generation,
+      sha256: row.sha256,
+    },
+  };
+}
+
+export async function readPublicDepositQrBytes(
+  store: BlobStore,
+  source: SignDepositQrSource,
+): Promise<Uint8Array | null> {
   const bytes = await readVerified(
     store,
-    { key: row.storageKey, generation: row.generation, sha256: row.sha256 },
+    { key: source.storageKey, generation: source.generation, sha256: source.sha256 },
     SIGN_SIGNATURE_PNG_MAX_BYTES,
   );
   if (
@@ -1475,9 +1494,9 @@ export async function runSignDepositQr(
     bytes[2] !== 0x4e ||
     bytes[3] !== 0x47
   ) {
-    return { status: 'not_found' };
+    return null;
   }
-  return { status: 'ok', bytes };
+  return bytes;
 }
 
 export interface SignDepositNoticeInput {

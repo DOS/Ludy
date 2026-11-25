@@ -145,6 +145,7 @@ export function SignDepositConfigCard({
 
   const handleSave = (event: FormEvent) => {
     event.preventDefault();
+    if (saveMutation.isPending || clearMutation.isPending) return;
     setLocalError(null);
     const trimmedAmount = amountInput.trim();
     if (!WHOLE_VND_INPUT_RE.test(trimmedAmount) || isZeroAmount(trimmedAmount)) {
@@ -192,7 +193,7 @@ export function SignDepositConfigCard({
           <dl className="space-y-1.5">
             <div className="flex items-baseline justify-between gap-2">
               <dt className="text-muted-foreground">{t('amountLabel')}</dt>
-              <dd className="font-mono font-semibold text-foreground">{`${f.money(deposit.amount)} VND`}</dd>
+              <dd className="font-mono font-semibold text-foreground">{f.money(deposit.amount)}</dd>
             </div>
             <div className="flex items-center justify-between gap-2">
               <dt className="text-muted-foreground">{t('memoTokenLabel')}</dt>
@@ -267,7 +268,7 @@ export function SignDepositConfigCard({
     );
   }
 
-  const profileMissing = profileQuery.isSuccess && !profileQuery.data.profile;
+  const profileMissing = !deposit?.depositProfileId && profileQuery.isSuccess && !profileQuery.data.profile;
 
   return (
     <Card data-testid="sign-envelope-deposit-config-card">
@@ -280,7 +281,7 @@ export function SignDepositConfigCard({
           <dl className="space-y-1.5">
             <div className="flex items-baseline justify-between gap-2">
               <dt className="text-muted-foreground">{t('amountLabel')}</dt>
-              <dd className="font-mono font-semibold text-foreground">{`${f.money(deposit.amount)} VND`}</dd>
+              <dd className="font-mono font-semibold text-foreground">{f.money(deposit.amount)}</dd>
             </div>
             <div className="flex items-baseline justify-between gap-2">
               <dt className="text-muted-foreground">{t('memoTokenLabel')}</dt>
@@ -406,6 +407,7 @@ export function SignDepositConfigCard({
                   size="sm"
                   className="max-md:min-h-11"
                   loading={saveMutation.isPending}
+                  disabled={clearMutation.isPending}
                   data-testid="sign-deposit-save-btn"
                 >
                   {t('saveButton')}

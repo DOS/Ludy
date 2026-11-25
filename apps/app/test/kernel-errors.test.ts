@@ -6,7 +6,8 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi } from '../src/i18n/messages/vi.ts';
-import { KERNEL_ERROR_CODES, KERNEL_ERROR_RULES } from '../src/lib/kernel-errors.ts';
+import { translatorFor } from '../src/i18n/runtime.ts';
+import { KERNEL_ERROR_CODES, KERNEL_ERROR_RULES, kernelErrorMessage } from '../src/lib/kernel-errors.ts';
 
 const ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 
@@ -213,5 +214,28 @@ describe('kernel error codes', () => {
     expect(kernelRules()).toContain('org_create_busy');
     expect(kernelRules()).toContain('invite_recipient_per_day');
     expect([...kernelRules()].filter((rule) => !Object.hasOwn(KERNEL_ERROR_RULES, rule)).sort()).toEqual([]);
+  });
+
+  it('uses localized Vietnamese messages instead of options.server for Slice 6d deposit error codes', () => {
+    const tVi = translatorFor('vi');
+    const slice6dCodes = [
+      'SIGN_CONFIDENTIAL_DEPOSIT_FORBIDDEN',
+      'SIGN_DEPOSIT_EMVCO_INVALID',
+      'SIGN_DEPOSIT_FROZEN',
+      'SIGN_DEPOSIT_INVALID_AMOUNT',
+      'SIGN_DEPOSIT_MEMO_CONFLICT',
+      'SIGN_DEPOSIT_PROFILE_INCOMPLETE',
+      'SIGN_DEPOSIT_PROFILE_NOT_FOUND',
+      'SIGN_DEPOSIT_PROFILE_REQUIRED',
+      'SIGN_DEPOSIT_QR_FILE_INVALID',
+      'SIGN_INVALID_BANK_ACCOUNT',
+      'SIGN_INVALID_BANK_CODE',
+    ] as const;
+
+    for (const code of slice6dCodes) {
+      const msg = kernelErrorMessage(code, null, tVi, { server: `Raw English error for ${code}` });
+      expect(msg).toBe(vi.kernelErrors.codes[code]);
+      expect(msg).not.toContain('Raw English error');
+    }
   });
 });

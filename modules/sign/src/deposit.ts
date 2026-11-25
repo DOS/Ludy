@@ -701,18 +701,39 @@ export const depositProfileClear = defineCommand({
     }
 
     const userId = actorUserId(ctx);
-    // Detach only unfrozen draft deposits pointing to the removed profile; sent envelopes keep their immutable snapshot.
-    await ctx.trx
-      .updateTable('ludy_sign.envelope_deposit')
-      .set({
-        deposit_profile_id: null,
-        updated_by: userId,
-        updated_at: ctx.now,
-      })
+    const candidateRows = await ctx.trx
+      .selectFrom('ludy_sign.envelope_deposit')
+      .select('envelope_id')
       .where('org_id', '=', ctx.orgId)
       .where('deposit_profile_id', '=', existing.id)
       .where('snapshot_frozen_at', 'is', null)
       .execute();
+
+    if (candidateRows.length > 0) {
+      const envelopeIds = [...new Set(candidateRows.map((row) => row.envelope_id))].sort();
+      // Lock envelopes deterministically before mutating envelope_deposit to match sendDraftEnvelope's lock order.
+      await ctx.trx
+        .selectFrom('ludy_sign.envelope')
+        .select('id')
+        .where('org_id', '=', ctx.orgId)
+        .where('id', 'in', envelopeIds)
+        .orderBy('id', 'asc')
+        .forUpdate()
+        .execute();
+
+      // Detach only unfrozen draft deposits pointing to the removed profile; sent envelopes keep their immutable snapshot.
+      await ctx.trx
+        .updateTable('ludy_sign.envelope_deposit')
+        .set({
+          deposit_profile_id: null,
+          updated_by: userId,
+          updated_at: ctx.now,
+        })
+        .where('org_id', '=', ctx.orgId)
+        .where('deposit_profile_id', '=', existing.id)
+        .where('snapshot_frozen_at', 'is', null)
+        .execute();
+    }
 
     await ctx.trx
       .deleteFrom('ludy_sign.deposit_profile')
@@ -841,42 +862,50 @@ export const envelopeDepositSet = defineCommand({
     const finalNote = note !== undefined ? note : (existing?.note ?? null);
 
     let saved: EnvelopeDepositRow;
-    if (existing) {
-      saved = await ctx.trx
-        .updateTable('ludy_sign.envelope_deposit')
-        .set({
-          amount,
-          currency: 'VND',
-          memo_token: memoToken,
-          due_days: dueDays,
-          deposit_profile_id: profile.id,
-          note: finalNote,
-          updated_by: userId,
-          updated_at: ctx.now,
-        })
-        .where('org_id', '=', ctx.orgId)
-        .where('id', '=', existing.id)
-        .returningAll()
-        .executeTakeFirstOrThrow();
-    } else {
-      saved = await ctx.trx
-        .insertInto('ludy_sign.envelope_deposit')
-        .values({
-          org_id: ctx.orgId,
-          envelope_id: env.id,
-          amount,
-          currency: 'VND',
-          memo_token: memoToken,
-          due_days: dueDays,
-          deposit_profile_id: profile.id,
-          note: finalNote,
-          created_by: userId,
-          updated_by: userId,
-          created_at: ctx.now,
-          updated_at: ctx.now,
-        })
-        .returningAll()
-        .executeTakeFirstOrThrow();
+    try {
+      if (existing) {
+        saved = await ctx.trx
+          .updateTable('ludy_sign.envelope_deposit')
+          .set({
+            amount,
+            currency: 'VND',
+            memo_token: memoToken,
+            due_days: dueDays,
+            deposit_profile_id: profile.id,
+            note: finalNote,
+            updated_by: userId,
+            updated_at: ctx.now,
+          })
+          .where('org_id', '=', ctx.orgId)
+          .where('id', '=', existing.id)
+          .returningAll()
+          .executeTakeFirstOrThrow();
+      } else {
+        saved = await ctx.trx
+          .insertInto('ludy_sign.envelope_deposit')
+          .values({
+            org_id: ctx.orgId,
+            envelope_id: env.id,
+            amount,
+            currency: 'VND',
+            memo_token: memoToken,
+            due_days: dueDays,
+            deposit_profile_id: profile.id,
+            note: finalNote,
+            created_by: userId,
+            updated_by: userId,
+            created_at: ctx.now,
+            updated_at: ctx.now,
+          })
+          .returningAll()
+          .executeTakeFirstOrThrow();
+      }
+    } catch (error) {
+      const pgErr = typeof error === 'object' && error !== null ? (error as { code?: unknown; constraint?: unknown }) : null;
+      if (pgErr?.code === '23505' && pgErr?.constraint === 'envelope_deposit_memo_uq') {
+        throw new DomainError('SIGN_DEPOSIT_MEMO_CONFLICT', 409, 'Deposit memo token is already used by another envelope');
+      }
+      throw error;
     }
 
     ctx.audit({

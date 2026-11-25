@@ -2551,7 +2551,7 @@ const AMOUNT_BEFORE_ISO_RE = /(?<![\p{L}\p{N}.,/])\d+(?:[.,]\d+)* ?([A-Z]{3})(?!
 const ISO_BEFORE_AMOUNT_RE = /(?<![\p{L}])([A-Z]{3}) ?:? ?\d+(?:[.,]\d+)*(?![\p{L}\p{N}]|[.,]\d| ?%)/gu;
 
 const EXPLICIT_VND_UNIT_RE =
-  /(?<![\p{L}])(?:vnd|vnđ|việt nam đồng|viet nam dong|vietnam dong)(?![\p{L}])|(?<=\d(?: ?(?:nghìn|ngàn|triệu|tỷ|tỉ) ))đồng(?![\p{L}])(?! (?:tiền|ý|hồ|thời|nhất|loạt|lòng|bộ|chí)(?![\p{L}]))|(?<=\d ?)đồng(?![\p{L}])(?! (?:tiền|ý|hồ|thời|nhất|loạt|lòng|bộ|chí)(?![\p{L}]))|(?<=\d ?)đ(?![\p{L}])|₫/u;
+  /(?<![\p{L}])(?:vnd|vnđ|việt nam đồng|viet nam dong|vietnam dong)(?![\p{L}])|(?<=\d(?: ?(?:nghìn|ngàn|nghin|ngan|triệu|trieu|tr|tỷ|ty|tỉ|ti|k|m|mn|bn|thousand|million|billion) ))đồng(?![\p{L}])(?! (?:tiền|ý|hồ|thời|nhất|loạt|lòng|bộ|chí)(?![\p{L}]))|(?<=\d ?)đồng(?![\p{L}])(?! (?:tiền|ý|hồ|thời|nhất|loạt|lòng|bộ|chí)(?![\p{L}]))|(?<=\d ?)đ(?![\p{L}])|₫/u;
 
 function hasExplicitVnd(rawText: string): boolean {
   return EXPLICIT_VND_UNIT_RE.test(normalizeContractText(rawText));
@@ -2644,6 +2644,7 @@ function isAmountWithCurrencyInLocalSpan(
   decStr: string,
   candidateCurrency: string,
   rawQuote: string,
+  allowWordScale = false,
 ): boolean {
   let target: DecimalValue;
   try {
@@ -2658,7 +2659,10 @@ function isAmountWithCurrencyInLocalSpan(
     .filter((part) => part.length > 0);
   const candidateClauses = clauses.length > 0 ? clauses : [preservedQuote];
   for (const clause of candidateClauses) {
-    if (!parseQuoteDecimalCandidates(clause).some((c) => c.equals(target))) {
+    const clauseMatches = allowWordScale
+      ? isDepositAmountWithoutDurationOrPercentCollision(decStr, clause)
+      : parseQuoteDecimalCandidates(clause).some((c) => c.equals(target));
+    if (!clauseMatches) {
       continue;
     }
     const clauseForeign = groundedForeignCurrencies(clause);
@@ -2753,36 +2757,35 @@ const DEPOSIT_DURATION_OR_PERCENT_AFTER_RE =
   /^(?:\s*%|\s*(?:ngày|ngay|days?|tuần|tuan|weeks?|tháng|thang|months?|năm|nam|years?)(?![\p{L}\p{N}]))/iu;
 
 const DEPOSIT_WORD_SCALE_MAP: Record<string, number> = {
+  k: 1e3,
   nghìn: 1e3,
   ngàn: 1e3,
   nghin: 1e3,
   ngan: 1e3,
   thousand: 1e3,
+  tr: 1e6,
+  m: 1e6,
+  mn: 1e6,
   triệu: 1e6,
   trieu: 1e6,
   million: 1e6,
   tỷ: 1e9,
+  ty: 1e9,
   tỉ: 1e9,
+  ti: 1e9,
+  bn: 1e9,
   billion: 1e9,
 };
 
 function candidateTokenDecimalValues(rawNumToken: string, scale: number): InstanceType<typeof Decimal>[] {
-  const candidates = new Set<string>();
+  const decimals: InstanceType<typeof Decimal>[] = [];
+  for (const parsed of parseQuoteDecimalCandidates(rawNumToken)) {
+    decimals.push(parsed.mul(scale));
+  }
+  if (decimals.length > 0) return decimals;
   for (const cand of canonicalizeNumericToken(rawNumToken)) {
     const d = normalizeDecimalAmount(cand);
-    if (d) candidates.add(d);
-  }
-  if (GROUPED_DOT_INT_RE.test(rawNumToken)) {
-    const d = normalizeDecimalAmount(rawNumToken.replace(/\./g, ''));
-    if (d) candidates.add(d);
-  }
-  if (GROUPED_COMMA_INT_RE.test(rawNumToken)) {
-    const d = normalizeDecimalAmount(rawNumToken.replace(/,/g, ''));
-    if (d) candidates.add(d);
-  }
-  const decimals: InstanceType<typeof Decimal>[] = [];
-  for (const s of candidates) {
-    decimals.push(new Decimal(s).mul(scale));
+    if (d) decimals.push(new Decimal(d).mul(scale));
   }
   return decimals;
 }
@@ -2798,7 +2801,7 @@ function isDepositAmountWithoutDurationOrPercentCollision(canonicalDecimalStr: s
 
   const norm = normalizeContractText(rawQuote);
   const tokenRe =
-    /(?<![\p{L}\p{N}.,/])(\d+(?:[.,]\d+)*)(?:\s*(tỷ|tỉ|triệu|trieu|nghìn|ngàn|nghin|ngan|million|billion|thousand)(?![\p{L}\p{N}]))?/giu;
+    /(?<![\p{L}\p{N}.,/])(\d+(?:[.,]\d+)*)(?:\s*(tỷ|ty|tỉ|ti|triệu|trieu|nghìn|ngàn|nghin|ngan|million|billion|thousand|mn|bn|tr|m|k)(?![\p{L}\p{N}]))?/giu;
   for (const m of norm.matchAll(tokenRe)) {
     const numStr = m[1]!;
     const scaleWord = m[2]?.toLowerCase();
@@ -3044,7 +3047,7 @@ export function checkSignObligationExtract(
     const depHasExplicitVnd = hasExplicitVnd(depQuoteRaw);
     const depDocForeign = groundedForeignCurrencies(combinedSourceRaw);
     const depVndValid = depHasExplicitVnd
-      ? depAmountDec !== null && isAmountWithCurrencyInLocalSpan(depAmountDec, 'VND', depQuoteRaw)
+      ? depAmountDec !== null && isAmountWithCurrencyInLocalSpan(depAmountDec, 'VND', depQuoteRaw, true)
       : depQuoteForeign.size === 0 && depDocForeign.size === 0;
 
     let depDueDays: number | null = null;
@@ -3065,7 +3068,6 @@ export function checkSignObligationExtract(
       depAmountDec !== null &&
       new Decimal(depAmountDec).isInteger() &&
       new Decimal(depAmountDec).gt(0) &&
-      isAmountGroundedInQuote(depAmountDec, depQuoteRaw) &&
       isDepositAmountWithoutDurationOrPercentCollision(depAmountDec, depQuoteRaw) &&
       isCurrencyGroundedInText('VND', depQuoteRaw) &&
       depVndValid &&

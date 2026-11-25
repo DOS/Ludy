@@ -277,13 +277,14 @@ import {
   SIGN_TOKEN_VIEWS_PER_MINUTE,
   SIGN_VERIFY_PER_MINUTE,
   SIGN_VIEWS_PER_MINUTE,
+  readPublicDepositQrBytes,
   readPublicPdfBytes,
+  resolvePublicDepositQr,
   resolvePublicPdf,
   runSignAttachmentUpload,
   runSignDecline,
   runSignDelegate,
   runSignDepositNotice,
-  runSignDepositQr,
   runSignOtpRequest,
   runSignOtpVerify,
   runSignSubmit,
@@ -1973,37 +1974,40 @@ export function createHttpApp(deps: HttpDeps) {
     });
 
     app.post('/api/sign/deposit-qr', signEdgeGuard(signDepositQrLimit), signBodyLimit(2048), async (c) => {
-      const release = signPdfReads.tryAcquire('sign-deposit-qr');
-      if (!release) {
-        c.header('retry-after', '2');
-        return c.json({ code: 'SIGN_PDF_BUSY', message: 'Máy chủ đang bận, hãy thử lại sau vài giây' }, 503);
-      }
       try {
-        const res = await runSignDepositQr(
+        const lookup = await resolvePublicDepositQr(
           runtime,
-          store,
           signBilling,
           await c.req.json().catch(() => null),
           (hash) => signTokenDepositQrLimit.take(hash),
         );
-        if (res.status === 'not_found') return signOpaqueNotFound(c);
-        if (res.status === 'rate_limited') return signRateLimited(c, res.retryAfterSeconds);
-        if (res.status === 'otp_required') {
+        if (lookup.status === 'not_found') return signOpaqueNotFound(c);
+        if (lookup.status === 'rate_limited') return signRateLimited(c, lookup.retryAfterSeconds);
+        if (lookup.status === 'otp_required') {
           return c.json({ code: 'OTP_REQUIRED', message: 'Email OTP verification is required before viewing deposit QR' }, 403);
         }
-        return new Response(body(res.bytes), {
-          headers: {
-            'content-type': 'image/png',
-            'cache-control': 'no-store',
-            'referrer-policy': 'no-referrer',
-            'x-content-type-options': 'nosniff',
-            'content-security-policy': "default-src 'none'; sandbox",
-          },
-        });
+        const release = signPdfReads.tryAcquire('sign-deposit-qr');
+        if (!release) {
+          c.header('retry-after', '2');
+          return c.json({ code: 'SIGN_PDF_BUSY', message: 'Máy chủ đang bận, hãy thử lại sau vài giây' }, 503);
+        }
+        try {
+          const bytes = await readPublicDepositQrBytes(store, lookup.source);
+          if (!bytes) return signOpaqueNotFound(c);
+          return new Response(body(bytes), {
+            headers: {
+              'content-type': 'image/png',
+              'cache-control': 'no-store',
+              'referrer-policy': 'no-referrer',
+              'x-content-type-options': 'nosniff',
+              'content-security-policy': "default-src 'none'; sandbox",
+            },
+          });
+        } finally {
+          release();
+        }
       } catch (error) {
         return problem(c, error);
-      } finally {
-        release();
       }
     });
 
@@ -2045,6 +2049,8 @@ export function createHttpApp(deps: HttpDeps) {
             } else {
               bytes = new Uint8Array(await file.arrayBuffer());
             }
+          } else if (file !== undefined && file !== null && file !== '') {
+            invalidEncoding = true;
           }
         } else {
           const json = await c.req.json().catch(() => null);
@@ -2065,6 +2071,8 @@ export function createHttpApp(deps: HttpDeps) {
             } else {
               bytes = new Uint8Array(Buffer.from(cleanBase64, 'base64'));
             }
+          } else if (payload.contentBase64 !== undefined && payload.contentBase64 !== null) {
+            invalidEncoding = true;
           }
         }
         const res = await runSignDepositNotice(

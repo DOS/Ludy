@@ -222,6 +222,104 @@ describe('Vy depositProposal extraction checks (#4723)', () => {
     });
     expect(pctRes.proposal?.depositProposal).toBeUndefined();
   });
+
+  it('grounds scale-word deposit expressions (million/triệu/tr/m/k/ty) while rejecting unscaled base tokens (#4723)', () => {
+    const scaleCases = [
+      {
+        text: 'Party B: ABC Co\nDeposit: 5 million VND.',
+        counterparty: 'ABC Co',
+        counterpartyQuote: 'Party B: ABC Co',
+        quote: 'Deposit: 5 million VND.',
+        expectedAmount: '5000000',
+        rejectedUnscaled: '5',
+      },
+      {
+        text: 'Bên B: Công ty ABC\nĐặt cọc 5 triệu VNĐ',
+        counterparty: 'Công ty ABC',
+        counterpartyQuote: 'Bên B: Công ty ABC',
+        quote: 'Đặt cọc 5 triệu VNĐ',
+        expectedAmount: '5000000',
+        rejectedUnscaled: '5',
+      },
+      {
+        text: 'Bên B: Công ty ABC\nĐặt cọc 5tr VNĐ trước bàn giao.',
+        counterparty: 'Công ty ABC',
+        counterpartyQuote: 'Bên B: Công ty ABC',
+        quote: 'Đặt cọc 5tr VNĐ trước bàn giao.',
+        expectedAmount: '5000000',
+        rejectedUnscaled: '5',
+      },
+      {
+        text: 'Party B: ABC Co\nDeposit: 5m VND.',
+        counterparty: 'ABC Co',
+        counterpartyQuote: 'Party B: ABC Co',
+        quote: 'Deposit: 5m VND.',
+        expectedAmount: '5000000',
+        rejectedUnscaled: '5',
+      },
+      {
+        text: 'Bên B: Công ty ABC\nĐặt cọc 500k VNĐ.',
+        counterparty: 'Công ty ABC',
+        counterpartyQuote: 'Bên B: Công ty ABC',
+        quote: 'Đặt cọc 500k VNĐ.',
+        expectedAmount: '500000',
+        rejectedUnscaled: '500',
+      },
+      {
+        text: 'Bên B: Công ty ABC\nĐặt cọc 2 ty VND.',
+        counterparty: 'Công ty ABC',
+        counterpartyQuote: 'Bên B: Công ty ABC',
+        quote: 'Đặt cọc 2 ty VND.',
+        expectedAmount: '2000000000',
+        rejectedUnscaled: '2',
+      },
+    ] as const;
+
+    for (const item of scaleCases) {
+      const req: SignObligationExtractRequest = {
+        envelopeTitle: 'Scale deposit test',
+        pageCount: 1,
+        pages: [{ page: 1, text: item.text }],
+      };
+      const ok = checkSignObligationExtract(req, {
+        counterpartyName: item.counterparty,
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: null,
+        currency: 'VND',
+        citations: [{ field: 'counterpartyName', pageNumber: 1, quoteExcerpt: item.counterpartyQuote }],
+        obligations: [],
+        depositProposal: {
+          amount: item.expectedAmount,
+          dueDays: null,
+          pageNumber: 1,
+          quoteExcerpt: item.quote,
+        },
+      });
+      expect(ok.proposal?.depositProposal?.amount, item.quote).toBe(item.expectedAmount);
+
+      const unscaled = checkSignObligationExtract(req, {
+        counterpartyName: item.counterparty,
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: null,
+        currency: 'VND',
+        citations: [{ field: 'counterpartyName', pageNumber: 1, quoteExcerpt: item.counterpartyQuote }],
+        obligations: [],
+        depositProposal: {
+          amount: item.rejectedUnscaled,
+          dueDays: null,
+          pageNumber: 1,
+          quoteExcerpt: item.quote,
+        },
+      });
+      expect(unscaled.proposal?.depositProposal, item.quote).toBeUndefined();
+    }
+  });
 });
 
 describe('checkSignDepositMatchSentence (#4723)', () => {

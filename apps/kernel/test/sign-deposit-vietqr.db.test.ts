@@ -808,7 +808,14 @@ suite('eSign Slice 6d post-sign VietQR deposit & accounting bridge (#4723)', () 
     expect(reopenBody.state).toBe('already_completed');
     expect(reopenBody.deposit?.memoToken).toBe('CK-DEPOSIT1');
 
-    // POST /api/sign/deposit-qr returns frozen PNG with strict headers
+    // POST /api/sign/deposit-qr returns frozen PNG with strict headers (and opaque 404 on invalid token before slot lock)
+    const badQrRes = await app.request('/api/sign/deposit-qr', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token: noDepToken }),
+    });
+    expect(badQrRes.status).toBe(404);
+
     const qrRes = await app.request('/api/sign/deposit-qr', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -848,6 +855,35 @@ suite('eSign Slice 6d post-sign VietQR deposit & accounting bridge (#4723)', () 
     const bigProofRes = await app.request('/api/sign/deposit-notice', { method: 'POST', body: bigForm });
     expect(bigProofRes.status).toBe(413);
     expect(store.blobs.size).toBe(blobsBeforeBadNotice);
+
+    // Non-File multipart field and non-string JSON contentBase64 map to 415 UNSUPPORTED_TYPE (404 for unknown token)
+    const textFieldForm = new FormData();
+    textFieldForm.set('token', depToken);
+    textFieldForm.set('file', 'not-a-file-blob');
+    const textFieldRes = await app.request('/api/sign/deposit-notice', { method: 'POST', body: textFieldForm });
+    expect(textFieldRes.status).toBe(415);
+    expect((await textFieldRes.json() as { code?: string }).code).toBe('UNSUPPORTED_TYPE');
+
+    const badJsonB64Res = await app.request('/api/sign/deposit-notice', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token: depToken, contentBase64: 12345 }),
+    });
+    expect(badJsonB64Res.status).toBe(415);
+    expect((await badJsonB64Res.json() as { code?: string }).code).toBe('UNSUPPORTED_TYPE');
+
+    const invalidTokenForm = new FormData();
+    invalidTokenForm.set('token', noDepToken);
+    invalidTokenForm.set('file', 'not-a-file-blob');
+    const invalidTokenTextRes = await app.request('/api/sign/deposit-notice', { method: 'POST', body: invalidTokenForm });
+    expect(invalidTokenTextRes.status).toBe(404);
+
+    const invalidTokenJsonRes = await app.request('/api/sign/deposit-notice', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token: noDepToken, contentBase64: 12345 }),
+    });
+    expect(invalidTokenJsonRes.status).toBe(404);
 
     // Reusing an upload-sourced hash under sign_attachment fails cleanly with 409 FILE_SOURCE_CONFLICT
     const conflictForm = new FormData();
@@ -1143,6 +1179,28 @@ suite('eSign Slice 6d post-sign VietQR deposit & accounting bridge (#4723)', () 
     } finally {
       c.release();
     }
+
+    // Reusing an existing CK-* memo token on another envelope rejects with 409 SIGN_DEPOSIT_MEMO_CONFLICT
+    const memoConflictTry = await rpc('sign/deposit/set', owner, {
+      envelopeId: scaleEnvId,
+      amount: '1500000',
+      memoToken: 'CK-NONDEF1',
+      depositProfileId: p2Inserted.id,
+    });
+    expect(memoConflictTry.status).toBe(409);
+    expect(memoConflictTry.body.code).toBe('SIGN_DEPOSIT_MEMO_CONFLICT');
+
+    // depositProfileClear detaches unfrozen draft deposits pointing to the removed default profile
+    const clearDefaultWithDraft = await rpc('sign/depositProfile/clear', owner, {});
+    expect(clearDefaultWithDraft.status).toBe(200);
+    expect(clearDefaultWithDraft.body.cleared).toBe(true);
+    await admin(async (db) => {
+      const { rows } = await db.query<{ deposit_profile_id: string | null }>(
+        `SELECT deposit_profile_id FROM ludy_sign.envelope_deposit WHERE org_id = $1 AND envelope_id = $2`,
+        [org.orgId, subEnvId],
+      );
+      expect(rows[0]?.deposit_profile_id).toBeNull();
+    });
   });
 
   it('cleans up deposit_profile and envelope_deposit during ludy_kernel.org_purge', async () => {

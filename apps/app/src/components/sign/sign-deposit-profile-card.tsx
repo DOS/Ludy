@@ -20,6 +20,22 @@ import { downloadSignFile, signApi, type SignDepositProfileContract } from '../.
 import { rawBase64ToPngDataUrl, readPngFileAsDataUrl, stripPngDataUrlPrefix } from '../../lib/sign-signature.ts';
 import { toast } from '../../lib/toast.ts';
 
+export function shouldSyncDepositProfileForm(params: {
+  prevSlug: string | null;
+  slug: string | null;
+  dirty: boolean;
+}): boolean {
+  return params.prevSlug !== params.slug || !params.dirty;
+}
+
+export function canRemoveDepositProfileQr(params: {
+  savedFileId: string | null;
+  clearStoredQr: boolean;
+  pendingPngBase64: string | null;
+}): boolean {
+  return Boolean((params.savedFileId && !params.clearStoredQr) || params.pendingPngBase64);
+}
+
 function ProfileFormBody({
   profile,
   canEdit,
@@ -32,7 +48,11 @@ function ProfileFormBody({
   const t = useTranslations('sign.depositProfile');
   const idPrefix = useId();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const selectionGenRef = useRef(0);
+  const prevSlugRef = useRef(slug);
 
+  const [dirty, setDirty] = useState(false);
+  const [readingPng, setReadingPng] = useState(false);
   const [bankCode, setBankCode] = useState(profile?.bankCode ?? '');
   const [bankName, setBankName] = useState(profile?.bankName ?? '');
   const [accountNumber, setAccountNumber] = useState(profile?.accountNumber ?? '');
@@ -45,6 +65,16 @@ function ProfileFormBody({
   const [savedQrUrl, setSavedQrUrl] = useState<string | null>(null);
 
   useEffect(() => {
+    const shouldSync = shouldSyncDepositProfileForm({
+      prevSlug: prevSlugRef.current,
+      slug,
+      dirty,
+    });
+    prevSlugRef.current = slug;
+    if (!shouldSync) return;
+    selectionGenRef.current += 1;
+    setReadingPng(false);
+    setDirty(false);
     setBankCode(profile?.bankCode ?? '');
     setBankName(profile?.bankName ?? '');
     setAccountNumber(profile?.accountNumber ?? '');
@@ -53,7 +83,7 @@ function ProfileFormBody({
     setPendingPngBase64(null);
     setClearStoredQr(false);
     setLocalError(null);
-  }, [profile]);
+  }, [profile, slug, dirty]);
 
   const savedFileId = profile?.vietqrFileId ?? null;
   useEffect(() => {
@@ -103,6 +133,9 @@ function ProfileFormBody({
       });
     },
     onSuccess: async () => {
+      selectionGenRef.current += 1;
+      setReadingPng(false);
+      setDirty(false);
       toast(t('savedToast'));
       setPendingPngBase64(null);
       setClearStoredQr(false);
@@ -114,6 +147,9 @@ function ProfileFormBody({
   const clearMutation = useMutation({
     mutationFn: () => signApi.clearDepositProfile(),
     onSuccess: async () => {
+      selectionGenRef.current += 1;
+      setReadingPng(false);
+      setDirty(false);
       toast(t('clearedToast'));
       setConfirmClearOpen(false);
       await invalidateProfile();
@@ -122,6 +158,7 @@ function ProfileFormBody({
   });
 
   const handleBankChange = (nextCode: string) => {
+    setDirty(true);
     setBankCode(nextCode);
     setLocalError(null);
     const found = bankByCode(nextCode);
@@ -136,19 +173,29 @@ function ProfileFormBody({
     const file = event.target.files?.[0];
     event.target.value = '';
     if (!file) return;
+    const pickGen = ++selectionGenRef.current;
     setLocalError(null);
+    setReadingPng(true);
     try {
       const dataUrl = await readPngFileAsDataUrl(file);
+      if (selectionGenRef.current !== pickGen) return;
       const b64 = stripPngDataUrlPrefix(dataUrl);
+      setDirty(true);
       setPendingPngBase64(b64);
       setClearStoredQr(false);
     } catch {
+      if (selectionGenRef.current !== pickGen) return;
       setLocalError(t('invalidQrPng'));
+    } finally {
+      if (selectionGenRef.current === pickGen) {
+        setReadingPng(false);
+      }
     }
   };
 
   const handleSubmit = (event: FormEvent) => {
     event.preventDefault();
+    if (readingPng || upsertMutation.isPending || clearMutation.isPending) return;
     setLocalError(null);
     if (!bankCode) {
       setLocalError(t('bankRequired'));
@@ -172,6 +219,11 @@ function ProfileFormBody({
   };
 
   const previewDataUrl = pendingPngBase64 ? rawBase64ToPngDataUrl(pendingPngBase64) : savedQrUrl;
+  const canRemoveQr = canRemoveDepositProfileQr({
+    savedFileId,
+    clearStoredQr,
+    pendingPngBase64,
+  });
   const bankObj = bankCode ? bankByCode(bankCode) : undefined;
   const hasVerifiedBin = Boolean(bankObj?.napasBin);
 
@@ -240,7 +292,10 @@ function ProfileFormBody({
               value={bankName}
               maxLength={200}
               disabled={upsertMutation.isPending}
-              onChange={(e) => setBankName(e.target.value)}
+              onChange={(e) => {
+                setDirty(true);
+                setBankName(e.target.value);
+              }}
             />
           </div>
 
@@ -255,7 +310,10 @@ function ProfileFormBody({
               maxLength={34}
               autoComplete="off"
               disabled={upsertMutation.isPending}
-              onChange={(e) => setAccountNumber(e.target.value)}
+              onChange={(e) => {
+                setDirty(true);
+                setAccountNumber(e.target.value);
+              }}
               data-testid="sign-deposit-account-number"
             />
           </div>
@@ -270,7 +328,10 @@ function ProfileFormBody({
               value={accountHolder}
               maxLength={200}
               disabled={upsertMutation.isPending}
-              onChange={(e) => setAccountHolder(e.target.value)}
+              onChange={(e) => {
+                setDirty(true);
+                setAccountHolder(e.target.value);
+              }}
               data-testid="sign-deposit-account-holder"
             />
           </div>
@@ -283,10 +344,13 @@ function ProfileFormBody({
               id={`${idPrefix}-finance-account`}
               className="font-mono md:max-w-xs max-md:min-h-11"
               value={financeBankAccount}
-              maxLength={16}
+              maxLength={31}
               placeholder="1121"
               disabled={upsertMutation.isPending}
-              onChange={(e) => setFinanceBankAccount(e.target.value)}
+              onChange={(e) => {
+                setDirty(true);
+                setFinanceBankAccount(e.target.value);
+              }}
               data-testid="sign-deposit-finance-account"
             />
             <p className="text-xs text-muted-foreground">{t('financeBankAccountHint')}</p>
@@ -307,6 +371,8 @@ function ProfileFormBody({
                 id={`${idPrefix}-qr-png`}
                 type="file"
                 accept="image/png"
+                tabIndex={-1}
+                aria-hidden="true"
                 className="sr-only"
                 onChange={(e) => void handleFileChange(e)}
                 data-testid="sign-deposit-qr-file-input"
@@ -322,7 +388,7 @@ function ProfileFormBody({
               >
                 {t('uploadQrPng')}
               </Button>
-              {previewDataUrl ? (
+              {canRemoveQr ? (
                 <Button
                   type="button"
                   variant="ghost"
@@ -330,6 +396,9 @@ function ProfileFormBody({
                   className="max-md:min-h-11"
                   disabled={upsertMutation.isPending}
                   onClick={() => {
+                    selectionGenRef.current += 1;
+                    setReadingPng(false);
+                    setDirty(true);
                     setPendingPngBase64(null);
                     setClearStoredQr(true);
                   }}
@@ -369,6 +438,7 @@ function ProfileFormBody({
             type="submit"
             className="max-md:min-h-11"
             loading={upsertMutation.isPending}
+            disabled={readingPng || clearMutation.isPending}
             data-testid="sign-deposit-profile-save-btn"
           >
             {t('saveButton')}
@@ -378,7 +448,7 @@ function ProfileFormBody({
               type="button"
               variant="outline"
               className="max-md:min-h-11"
-              disabled={upsertMutation.isPending || clearMutation.isPending}
+              disabled={readingPng || upsertMutation.isPending || clearMutation.isPending}
               onClick={() => setConfirmClearOpen(true)}
               data-testid="sign-deposit-profile-clear-btn"
             >

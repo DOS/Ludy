@@ -61,6 +61,11 @@ const { SignCeremonyDepositCard, resolveNoticeErrorMessage } = await import(
 const { SignDepositConfigCard, shouldSyncDepositConfigForm, signEnvelopeDetailQueryKey } = await import(
   '../src/components/sign/sign-deposit-config-card.tsx'
 );
+const {
+  SignDepositProfileSettingsCard,
+  canRemoveDepositProfileQr,
+  shouldSyncDepositProfileForm,
+} = await import('../src/components/sign/sign-deposit-profile-card.tsx');
 const { BankSignDepositLine } = await import('../src/components/bank-sign-deposit-line.tsx');
 const { submitCeremonyWithGenerationGuard } = await import('../src/routes/sign-ceremony.tsx');
 
@@ -143,6 +148,9 @@ describe('eSign Slice 6d deposit UI components (#4723)', () => {
     expect(html).toContain('CK-XYZ123');
     expect(html).toContain('Vietcombank');
     expect(html).toContain('0123456789');
+    expect(html).not.toContain('₫ VND');
+    expect(html).not.toContain('5,000,000 VND');
+    expect(html).not.toContain('5.000.000 VND');
     expect(html).toContain('CONG TY TNHH TEST');
     expect(html).toContain('receipt.png');
     expect(html).toContain('Transfer reported');
@@ -320,7 +328,9 @@ describe('eSign Slice 6d deposit UI components (#4723)', () => {
     const tEn = (key: keyof typeof enMsgs) => enMsgs[key];
 
     const cases: Array<[number, string, keyof typeof viMsgs & keyof typeof enMsgs]> = [
+      [415, 'UNSUPPORTED_TYPE', 'invalidProofType'],
       [415, 'SIGN_INVALID_SIGNATURE_PNG', 'invalidProofType'],
+      [413, 'TOO_LARGE', 'proofTooLarge'],
       [413, 'SIGN_DEPOSIT_PROOF_TOO_LARGE', 'proofTooLarge'],
       [503, 'SIGN_ATTACHMENT_BUSY', 'noticeBusy'],
       [429, 'RATE_LIMITED', 'noticeRateLimited'],
@@ -400,5 +410,81 @@ describe('eSign Slice 6d deposit UI components (#4723)', () => {
     expect(onSuccessCalled).toBe(true);
     expect(onErrorCalled).toBe(false);
     expect(onSettledCalled).toBe(true);
+  });
+
+  it('hardens SignDepositProfileSettingsCard (maxLength 31, non-tabbable file input, QR remove state, dirty/slug sync) and avoids duplicate VND in readonly SignDepositConfigCard', () => {
+    expect(shouldSyncDepositProfileForm({ prevSlug: 'org-a', slug: 'org-a', dirty: true })).toBe(false);
+    expect(shouldSyncDepositProfileForm({ prevSlug: 'org-a', slug: 'org-a', dirty: false })).toBe(true);
+    expect(shouldSyncDepositProfileForm({ prevSlug: 'org-a', slug: 'org-b', dirty: true })).toBe(true);
+
+    expect(canRemoveDepositProfileQr({ savedFileId: 'f1', clearStoredQr: false, pendingPngBase64: null })).toBe(true);
+    expect(canRemoveDepositProfileQr({ savedFileId: 'f1', clearStoredQr: true, pendingPngBase64: null })).toBe(false);
+    expect(canRemoveDepositProfileQr({ savedFileId: null, clearStoredQr: true, pendingPngBase64: 'b64' })).toBe(true);
+
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    qc.setQueryData(['sign', 'deposit-profile', 'demo'], {
+      canEdit: true,
+      profile: {
+        id: '01900000-0000-7000-8000-000000000050',
+        orgId: '01900000-0000-7000-8000-000000000001',
+        bankCode: 'VCB',
+        bankName: 'Vietcombank',
+        accountNumber: '0123456789',
+        accountHolder: 'CONG TY TNHH TEST',
+        financeBankAccount: '1121.VCB',
+        vietqrFileId: '01900000-0000-7000-8000-000000000088',
+        hasQrPng: true,
+        isDefault: true,
+        createdAt: '2026-11-24T09:00:00.000Z',
+        updatedAt: '2026-11-24T09:00:00.000Z',
+      },
+    });
+    const profileHtml = wrap(<SignDepositProfileSettingsCard slug="demo" />, 'vi', qc);
+    expect(profileHtml.toLowerCase()).toContain('maxlength="31"');
+    expect(profileHtml.toLowerCase()).toContain('tabindex="-1"');
+    expect(profileHtml).toContain('aria-hidden="true"');
+    expect(profileHtml).toContain('data-testid="sign-deposit-qr-clear-btn"');
+
+    const readonlyDraftHtml = wrap(
+      <SignDepositConfigCard
+        slug="demo"
+        envelopeId="01900000-0000-7000-8000-000000000013"
+        envelopeStatus="draft"
+        sourceKind="standalone"
+        canEditDraft={false}
+        deposit={{
+          id: '01900000-0000-7000-8000-000000000100',
+          orgId: '01900000-0000-7000-8000-000000000001',
+          envelopeId: '01900000-0000-7000-8000-000000000013',
+          amount: '5000000',
+          currency: 'VND',
+          memoToken: 'CK-DRAFT1',
+          dueDays: null,
+          depositProfileId: '01900000-0000-7000-8000-000000000050',
+          note: null,
+          snapshotFrozenAt: null,
+          snapshotBankCode: null,
+          snapshotBankName: null,
+          snapshotAccountNumber: null,
+          snapshotAccountHolder: null,
+          snapshotFinanceBankAccount: null,
+          snapshotVietqrFileId: null,
+          snapshotEmvcoPayload: null,
+          signerNoticeAt: null,
+          signerNoticeNote: null,
+          signerProofFileId: null,
+          signerProofFilename: null,
+          signerProofSha256: null,
+          createdBy: '01900000-0000-7000-8000-000000000002',
+          updatedBy: '01900000-0000-7000-8000-000000000002',
+          createdAt: '2026-11-24T09:00:00.000Z',
+          updatedAt: '2026-11-24T09:00:00.000Z',
+        }}
+      />,
+      'vi',
+      qc,
+    );
+    expect(readonlyDraftHtml).toContain('CK-DRAFT1');
+    expect(readonlyDraftHtml).not.toContain('₫ VND');
   });
 });
