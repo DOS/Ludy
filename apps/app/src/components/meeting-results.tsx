@@ -23,6 +23,7 @@ import { useMinutesEsign } from './minutes-esign.tsx';
 import { DraftRedactionDialog, RedactionNudge, useRedactCandidatesQuery } from './meeting-redaction.tsx';
 import { MeetingZalo } from './meeting-zalo.tsx';
 import { MeetingChatPost } from './meeting-chat.tsx';
+import { MinutesLinkPanel } from './minutes-link.tsx';
 import { MeetingTranslation } from './meeting-translation.tsx';
 import { clock } from './meeting-transcript.tsx';
 import { TalkTimeLine } from './meeting-talk-time.tsx';
@@ -697,6 +698,8 @@ export function MeetingResults({
           <MeetingZalo meetingId={meetingId} title={title} summary={published?.summary ?? null} decisions={published?.decisions ?? []} items={items.filter((i) => i.stage === 'published')} />
         )}
         {isRecorder && (published || items.some((i) => i.stage === 'published')) && <MeetingChatPost meetingId={meetingId} />}
+        {/* "Chia sẻ biên bản" (#4822): a read-only link to the published minutes for people outside the org, only for the recorder and only once something is published. */}
+        {isRecorder && (published !== null || items.some((i) => i.stage === 'published')) && <MinutesLinkPanel key={`link-${meetingId}`} meetingId={meetingId} slug={slug} />}
         {isRecorder && <TemplatePicker meetingId={meetingId} template={template} copy={minutesTemplate} />}
         {isRecorder && <VySummary key={`vy-${effectiveRedactedEpoch}`} meetingId={meetingId} hasModelDraft={(draft?.tainted ?? false) || items.some((i) => i.stage === 'draft' && i.tainted)} />}
         {isRecorder && (
