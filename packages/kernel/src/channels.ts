@@ -652,7 +652,11 @@ export const channelTelegramChatWork = defineQuery({
       .where('id', '=', input.connectionId)
       .executeTakeFirst();
     if (!row || row.provider !== 'telegram' || row.status !== 'active') return { action: 'none' };
-    if (input.action === 'disable') return row.chat_state === 'disabling' ? { action: 'call' } : { action: 'none' };
+    if (input.action === 'disable') {
+      return row.chat_state === 'disabling'
+        ? { action: 'call', ...(row.chat_hook ? { hook: row.chat_hook, hookFp: hookFp(row.chat_hook) } : {}) }
+        : { action: 'none' };
+    }
     const hook = input.rekey
       ? row.chat_state === 'on' && row.chat_hook
         ? row.chat_hook
@@ -752,7 +756,7 @@ export const channelTelegramChatRekeyRecord = defineCommand({
     }
     await ctx.trx
       .updateTable('ludy_kernel.channel_connection')
-      .set({ chat_hook_key_id: input.hookKeyId, chat_hook_rekey_after: null, chat_displace_pending: true, ...(input.botId ? { chat_bot_id: input.botId } : {}) })
+      .set({ chat_hook_key_id: input.hookKeyId, chat_hook_rekey_after: null, chat_displace_pending: true, chat_changed_at: ctx.now, ...(input.botId ? { chat_bot_id: input.botId } : {}) })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
       .execute();
@@ -902,6 +906,8 @@ const zBusinessReport = zBusinessAccount.omit({ approved: true }).extend({
 const zBusinessOrderEntry = z.strictObject({
   updateId: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
   date: z.number().int().nonnegative().max(10_000_000_000).optional(),
+  seenAt: z.number().int().nonnegative().max(10_000_000_000).optional(),
+  removedAt: z.number().int().nonnegative().max(10_000_000_000).optional(),
 });
 type BusinessOrderEntry = z.infer<typeof zBusinessOrderEntry>;
 // A short fingerprint of an account's id for the screen to name it by (the id itself stays on the server).
@@ -929,6 +935,12 @@ function parseBusinessOrder(value: unknown): Record<string, BusinessOrderEntry> 
   return out;
 }
 const MAX_BUSINESS_ORDER_HISTORY = 32;
+// Telegram resets Update.update_id randomly after >= 7 days without updates; after 6 days treat smaller update_ids as a possible new sequence.
+const TELEGRAM_UPDATE_ID_RESET_SECS = 6 * 86_400;
+
+function businessOrderRecency(entry: BusinessOrderEntry): number {
+  return Math.max(entry.removedAt ?? 0, entry.seenAt ?? 0, entry.date ?? 0);
+}
 
 function pruneBusinessOrder(order: Record<string, BusinessOrderEntry>, accounts: readonly TelegramBusinessAccount[]): Record<string, BusinessOrderEntry> {
   const active = new Set(accounts.map((a) => businessRef(a.id)));
@@ -938,23 +950,31 @@ function pruneBusinessOrder(order: Record<string, BusinessOrderEntry>, accounts:
     if (active.has(k)) out[k] = v;
     else history.push([k, v]);
   }
+  history.sort(([, a], [, b]) => businessOrderRecency(a) - businessOrderRecency(b) || (a.updateId ?? 0) - (b.updateId ?? 0));
   for (const [k, v] of history.slice(-MAX_BUSINESS_ORDER_HISTORY)) {
     out[k] = v;
   }
   return out;
 }
 // Telegram's BusinessConnection.date is connection creation time and may stay unchanged across updates on the same id,
-// so Update.update_id is authoritative when both exist; date acts as fallback across connection ids or updateId-less readbacks.
+// so Update.update_id is authoritative within Telegram's 6-day sequence window; after >= 6 days without updates Telegram
+// can choose a random update_id (possibly lower), so non-exact-duplicate updates with non-older dates are allowed again.
 function isStaleBusinessUpdate(
   prev: BusinessOrderEntry | undefined,
   incomingUpdateId: number | undefined,
   incomingDate: number | undefined,
+  nowUnix: number,
   opts: { sameId: boolean; previouslyRemoved: boolean },
 ): boolean {
   if (!prev) return false;
-  if (incomingUpdateId !== undefined && prev.updateId !== undefined && incomingUpdateId <= prev.updateId) return true;
+  const elapsed = prev.seenAt !== undefined ? nowUnix - prev.seenAt : (prev.date !== undefined && incomingDate !== undefined ? incomingDate - prev.date : 0);
+  const updateIdSeqActive = elapsed < TELEGRAM_UPDATE_ID_RESET_SECS;
+  if (incomingUpdateId !== undefined && prev.updateId !== undefined) {
+    if (incomingUpdateId === prev.updateId) return true;
+    if (incomingUpdateId < prev.updateId && updateIdSeqActive) return true;
+  }
   if (incomingUpdateId === undefined && prev.updateId !== undefined && opts.sameId) return true;
-  if ((prev.updateId === undefined || !opts.sameId) && prev.date !== undefined && incomingDate !== undefined) {
+  if ((prev.updateId === undefined || !opts.sameId || !updateIdSeqActive) && prev.date !== undefined && incomingDate !== undefined) {
     return opts.previouslyRemoved ? incomingDate <= prev.date : incomingDate < prev.date;
   }
   return false;
@@ -989,6 +1009,7 @@ export const channelTelegramBusinessRecord = defineCommand({
     if (!row || row.provider !== 'telegram' || row.status !== 'active' || row.chat_state === 'off') return { applied: false };
     const accounts = parseBusinessAccounts(row.chat_business);
     const order = parseBusinessOrder(row.chat_business_order);
+    const nowUnix = Math.floor(ctx.now.getTime() / 1000);
     const { date: incomingDate, updateId: incomingUpdateId, ...reportFields } = input.account;
     const byId = accounts.findIndex((a) => a.id === reportFields.id);
     // Deduplicate unapproved entries by userId so a stranger disconnecting/reconnecting cannot fill multiple slots (#3150 item 7).
@@ -1001,30 +1022,33 @@ export const channelTelegramBusinessRecord = defineCommand({
       const existing = accounts[at] as TelegramBusinessAccount;
       const prev = order[businessRef(existing.id)];
       const prevByIncomingId = byId < 0 ? order[businessRef(reportFields.id)] : undefined;
-      // Reject stale out-of-order updates using Telegram Update.update_id (even when BusinessConnection.date is unchanged) with date fallback (#3150 item 6).
+      // Reject stale out-of-order updates using Telegram Update.update_id (within 6-day sequence window) with date fallback (#3150 item 6).
       if (
-        isStaleBusinessUpdate(prev, incomingUpdateId, incomingDate, { sameId: byId >= 0, previouslyRemoved: false }) ||
-        isStaleBusinessUpdate(prevByIncomingId, incomingUpdateId, incomingDate, { sameId: true, previouslyRemoved: true })
+        isStaleBusinessUpdate(prev, incomingUpdateId, incomingDate, nowUnix, { sameId: byId >= 0, previouslyRemoved: false }) ||
+        isStaleBusinessUpdate(prevByIncomingId, incomingUpdateId, incomingDate, nowUnix, { sameId: true, previouslyRemoved: true })
       ) {
         return { applied: false };
       }
       const nextUpdateId = incomingUpdateId ?? prev?.updateId;
       const nextDate = incomingDate ?? prev?.date;
       if (nextUpdateId !== undefined || nextDate !== undefined) {
-        entryOrder = { ...(nextUpdateId !== undefined ? { updateId: nextUpdateId } : {}), ...(nextDate !== undefined ? { date: nextDate } : {}) };
+        entryOrder = { ...(nextUpdateId !== undefined ? { updateId: nextUpdateId } : {}), ...(nextDate !== undefined ? { date: nextDate } : {}), seenAt: nowUnix };
       }
       // A known connection keeps what the org decided when its id and userId still match; a new connection id starts unapproved.
       const approved = byId >= 0 && existing.userId === reportFields.userId ? existing.approved : false;
+      if (byId < 0 && prev) {
+        order[businessRef(existing.id)] = { ...prev, removedAt: nowUnix };
+      }
       account = { ...reportFields, approved };
       next = accounts.map((a, i) => (i === at ? account : a));
     } else {
       const prevRemoved = order[businessRef(reportFields.id)];
-      if (isStaleBusinessUpdate(prevRemoved, incomingUpdateId, incomingDate, { sameId: true, previouslyRemoved: true })) {
+      if (isStaleBusinessUpdate(prevRemoved, incomingUpdateId, incomingDate, nowUnix, { sameId: true, previouslyRemoved: true })) {
         return { applied: false };
       }
       account = { ...reportFields, approved: false };
       if (incomingUpdateId !== undefined || incomingDate !== undefined) {
-        entryOrder = { ...(incomingUpdateId !== undefined ? { updateId: incomingUpdateId } : {}), ...(incomingDate !== undefined ? { date: incomingDate } : {}) };
+        entryOrder = { ...(incomingUpdateId !== undefined ? { updateId: incomingUpdateId } : {}), ...(incomingDate !== undefined ? { date: incomingDate } : {}), seenAt: nowUnix };
       }
       if (accounts.length < TELEGRAM_BUSINESS_ACCOUNTS_MAX) {
         next = [...accounts, account];
@@ -1032,6 +1056,10 @@ export const channelTelegramBusinessRecord = defineCommand({
         // Full: never evict approved accounts (even when disabled) or active unapproved accounts; only reuse an unapproved disconnected slot (#3150 item 7).
         const gone = accounts.findIndex((a) => !a.approved && !a.enabled);
         if (gone < 0) return { applied: false };
+        const evictedRef = businessRef((accounts[gone] as TelegramBusinessAccount).id);
+        if (order[evictedRef]) {
+          order[evictedRef] = { ...order[evictedRef], removedAt: nowUnix };
+        }
         next = [...accounts.filter((_, i) => i !== gone), account];
       }
     }
@@ -1084,8 +1112,7 @@ export const channelTelegramBusinessAllow = defineCommand({
       const dismissedRef = businessRef(existing.id);
       const dismissedOrder = rawOrder[dismissedRef];
       if (dismissedOrder) {
-        delete rawOrder[dismissedRef];
-        rawOrder[dismissedRef] = dismissedOrder;
+        rawOrder[dismissedRef] = { ...dismissedOrder, removedAt: Math.floor(ctx.now.getTime() / 1000) };
       }
       const nextOrder = pruneBusinessOrder(rawOrder, next);
       await ctx.trx

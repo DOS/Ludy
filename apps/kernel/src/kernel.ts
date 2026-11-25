@@ -118,7 +118,7 @@ import { webhookTarget, type WebhookTarget } from './alert.ts';
 import type { SecurityThresholds } from './security-signals.ts';
 import { orgPurgeCommand, runOrgPurge } from './org-purge.ts';
 import { replayShreds, runMeetingsRetention, sweepMeetingMedia } from './meetings-retention.ts';
-import { rekeyTelegramWebhooks as runTelegramWebhookRekey } from './conversations-worker.ts';
+import { countTelegramWebhookRekeyLeft, rekeyTelegramWebhooks as runTelegramWebhookRekey } from './conversations-worker.ts';
 import { runUserDisable } from './user-disable.ts';
 import { ConcurrencyLimiter, Semaphore } from './concurrency.ts';
 import { createOauthServer } from './oauth-server.ts';
@@ -1082,14 +1082,24 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
   async function rekeyTelegramWebhooks(): Promise<number> {
     const workerUrl = config.WORKER_DATABASE_URL;
     if (!workerUrl) throw new Error('WORKER_DATABASE_URL is required for telegram-webhook-rekey; run it in the worker container');
-    if (config.CHANNEL_TELEGRAM !== 'true' || !config.PUBLIC_URL?.startsWith('https://')) {
-      console.log('[telegram-webhook-rekey] skipped (Telegram channel disabled or PUBLIC_URL is not https)');
-      return 0;
+    if (config.CHANNEL_TELEGRAM === 'true' && !config.PUBLIC_URL?.startsWith('https://')) {
+      console.error('[telegram-webhook-rekey] skipped (PUBLIC_URL is not https); cannot verify Telegram webhooks');
+      return 1;
     }
     const { pool, db, runtime } = buildRuntime(workerUrl, 'ludy-telegram-rekey', config.WORKER_DATABASE_POOL_MAX, 'worker');
     try {
       await assertRlsEnforced(pool);
       await assertSystemContextAccess(pool, 'granted');
+      if (config.CHANNEL_TELEGRAM !== 'true') {
+        const currentKeyId = (resolved.broker as { keyId?: string }).keyId;
+        const left = await countTelegramWebhookRekeyLeft(db, currentKeyId);
+        if (left.leftActive > 0) {
+          console.error(`[telegram-webhook-rekey] skipped (Telegram channel disabled) while ${left.leftActive} active webhook(s) remain under an older key`);
+          return 1;
+        }
+        console.log('[telegram-webhook-rekey] skipped (Telegram channel disabled; 0 active webhooks under older keys)');
+        return 0;
+      }
       const publishers = channelPublishers(config);
       const outcome = await runTelegramWebhookRekey({
         runtime,

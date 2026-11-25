@@ -636,11 +636,12 @@ suite('Telegram Business mode on PostgreSQL (#3191)', () => {
     expect((await post(a.hook, connection({ enabled: true, date: t2, updateId: seq4 }))).status).toBe(200);
     await intake();
     expect((await accountsOf(a)).find((x) => x.id === CONN)).toMatchObject({ enabled: true, approved: true });
-    const [orderRow] = await rows<{ chat_business_order: Record<string, { updateId?: number; date?: number }> }>(
+    const [orderRow] = await rows<{ chat_business_order: Record<string, { updateId?: number; date?: number; seenAt?: number }> }>(
       'SELECT chat_business_order FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2',
       [a.orgId, a.connectionId],
     );
-    expect(Object.values(orderRow?.chat_business_order ?? {})).toEqual([{ updateId: seq4, date: t2 }]);
+    expect(Object.values(orderRow?.chat_business_order ?? {})).toMatchObject([{ updateId: seq4, date: t2 }]);
+    expect(typeof Object.values(orderRow?.chat_business_order ?? {})[0]?.seenAt).toBe('number');
     // Date fallback when updateId is omitted (e.g., getBusinessConnection readback on a stale date) is also rejected once date is tracked,
     // and an updateId-less readback cannot overwrite a sequenced Update on the same connection id.
     expect(
@@ -651,6 +652,15 @@ suite('Telegram Business mode on PostgreSQL (#3191)', () => {
       ),
     ).toEqual({ applied: false });
     expect((await accountsOf(a)).find((x) => x.id === CONN)).toMatchObject({ enabled: true, approved: true });
+
+    // After >= 6 days idle, Telegram resets update_id randomly (which can be lower than the previous one): valid disconnect is still honored.
+    const agedOrder = Object.fromEntries(
+      Object.entries(orderRow?.chat_business_order ?? {}).map(([k, v]) => [k, { ...v, seenAt: nowSec() - 7 * 86_400 }]),
+    );
+    await rows('UPDATE ludy_kernel.channel_connection SET chat_business_order = $1 WHERE org_id = $2 AND id = $3', [JSON.stringify(agedOrder), a.orgId, a.connectionId]);
+    expect((await post(a.hook, connection({ enabled: false, date: t2 + 7 * 86_400, updateId: 42 }))).status).toBe(200);
+    await intake();
+    expect((await accountsOf(a)).find((x) => x.id === CONN)).toMatchObject({ enabled: false, approved: true });
 
     // Only owners and admins see chatBusiness and its @username in kernel.channel.list; members and viewers see [].
     const adminId = (await upsertIdentity(createDb(pools[0] as pg.Pool), { issuer: 'test', subject: randomUUID(), email: `admin-vis-${randomUUID().slice(0, 8)}@telegram-business.test`, name: null })) as string;

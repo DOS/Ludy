@@ -159,7 +159,7 @@ export type ConversationChatHookResult =
   // `botId`: the bot's public number, kept on the connection so a second connection of the same bot is refused.
   | { kind: 'done'; botId: string | null }
   | { kind: 'failed'; retry: boolean; code: string };
-export type ConversationChatHookInfoResult = { kind: 'ok'; url: string; matchesHook?: boolean } | { kind: 'failed'; retry: boolean; code: string };
+export type ConversationChatHookInfoResult = { kind: 'ok'; url: string; matchesHook?: boolean; matchesHookPath?: boolean } | { kind: 'failed'; retry: boolean; code: string };
 
 // The bytes of an image the platform gave only by a reference (`mediaRef`, #3131), read with the connection's sealed credential inside the fetch job.
 export interface ConversationMediaInput {

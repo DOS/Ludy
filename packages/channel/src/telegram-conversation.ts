@@ -450,7 +450,15 @@ export class TelegramConversations implements ConversationAdapter {
       const info = await this.client.call<{ url?: unknown } | null>(s.botToken, 'getWebhookInfo', {});
       if (typeof info?.url !== 'string') return { kind: 'failed', retry: true, code: 'TG_WEBHOOK_INFO_SHAPE' };
       const matchesHook = input.hook !== undefined && input.baseUrl !== undefined ? info.url === telegramWebhookUrl(input.baseUrl, input.hook) : undefined;
-      return { kind: 'ok', url: info.url, ...(matchesHook !== undefined ? { matchesHook } : {}) };
+      let matchesHookPath: boolean | undefined;
+      if (input.hook !== undefined) {
+        try {
+          matchesHookPath = info.url !== '' && new URL(info.url).pathname === new URL(telegramWebhookUrl(input.baseUrl ?? 'https://placeholder.invalid', input.hook)).pathname;
+        } catch {
+          matchesHookPath = false;
+        }
+      }
+      return { kind: 'ok', url: info.url, ...(matchesHook !== undefined ? { matchesHook } : {}), ...(matchesHookPath !== undefined ? { matchesHookPath } : {}) };
     } catch (error) {
       return hookFailure(error);
     }

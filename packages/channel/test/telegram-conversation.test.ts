@@ -314,6 +314,7 @@ describe('turning the webhook on and off', () => {
     const hook = newTelegramHookId();
     const { fetchImpl } = bot([
       ok({ url: `https://ludy.example.com/api/channels/telegram/webhook/${hook}` }),
+      ok({ url: `https://old.example.com/api/channels/telegram/webhook/${hook}` }),
       ok({ url: '' }),
       ok({ something: 'bad' }),
       fail(502, `Bad Gateway ${TOKEN}`),
@@ -325,8 +326,20 @@ describe('turning the webhook on and off', () => {
       kind: 'ok',
       url: `https://ludy.example.com/api/channels/telegram/webhook/${hook}`,
       matchesHook: true,
+      matchesHookPath: true,
     });
-    expect(await adapter.chatHookInfo({ secret: SECRET, hook, baseUrl: 'https://ludy.example.com' })).toEqual({ kind: 'ok', url: '', matchesHook: false });
+    expect(await adapter.chatHookInfo({ secret: SECRET, hook, baseUrl: 'https://ludy.example.com' })).toEqual({
+      kind: 'ok',
+      url: `https://old.example.com/api/channels/telegram/webhook/${hook}`,
+      matchesHook: false,
+      matchesHookPath: true,
+    });
+    expect(await adapter.chatHookInfo({ secret: SECRET, hook, baseUrl: 'https://ludy.example.com' })).toEqual({
+      kind: 'ok',
+      url: '',
+      matchesHook: false,
+      matchesHookPath: false,
+    });
     expect(await adapter.chatHookInfo({ secret: SECRET })).toEqual({ kind: 'failed', retry: true, code: 'TG_WEBHOOK_INFO_SHAPE' });
     const failed = await adapter.chatHookInfo({ secret: SECRET });
     expect(failed).toEqual({ kind: 'failed', retry: true, code: 'TELEGRAM_502' });

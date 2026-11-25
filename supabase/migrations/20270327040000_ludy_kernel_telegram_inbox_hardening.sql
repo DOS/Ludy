@@ -279,7 +279,7 @@ REVOKE ALL ON FUNCTION ludy_kernel.telegram_chat_hook_rekey_counts()
   FROM PUBLIC, ludy_tenant, ludy_app, ludy_worker, ludy_definer_tenant;
 GRANT EXECUTE ON FUNCTION ludy_kernel.telegram_chat_hook_rekey_counts() TO ludy_worker;
 
--- Other orgs holding an active or enabling Telegram connection with the same bot id (#3150 item 2). Worker-only.
+-- Other orgs holding an active, enabling, or disabling Telegram connection with the same bot id (#3150 item 2). Worker-only.
 CREATE OR REPLACE FUNCTION ludy_kernel.telegram_chat_other_orgs_with_bot(
   p_bot_id text,
   p_exclude_org_id uuid
@@ -292,7 +292,7 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
   WHERE c.provider = 'telegram'
     AND c.status = 'active'
     AND c.chat_bot_id = p_bot_id
-    AND c.chat_state IN ('enabling', 'on')
+    AND c.chat_state IN ('enabling', 'on', 'disabling')
     AND c.org_id <> p_exclude_org_id
   ORDER BY c.org_id, c.id
 $$;
@@ -300,6 +300,30 @@ $$;
 REVOKE ALL ON FUNCTION ludy_kernel.telegram_chat_other_orgs_with_bot(text, uuid)
   FROM PUBLIC, ludy_tenant, ludy_app, ludy_worker, ludy_definer_tenant;
 GRANT EXECUTE ON FUNCTION ludy_kernel.telegram_chat_other_orgs_with_bot(text, uuid) TO ludy_worker;
+
+-- True when another active/offboarding org already owns this bot webhook live (`chat_state = 'on'`), so a concurrent disable
+-- skips deleteWebhook instead of deleting the new owner's webhook (#3150). Worker-only.
+CREATE OR REPLACE FUNCTION ludy_kernel.telegram_chat_other_org_holds_bot(
+  p_bot_id text,
+  p_exclude_org_id uuid
+)
+RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM ludy_kernel.channel_connection c
+    JOIN ludy_kernel.tenant t ON t.org_id = c.org_id AND t.status IN ('active', 'offboarding')
+    WHERE c.provider = 'telegram'
+      AND c.status = 'active'
+      AND c.chat_bot_id = p_bot_id
+      AND c.chat_state = 'on'
+      AND c.org_id <> p_exclude_org_id
+  )
+$$;
+
+REVOKE ALL ON FUNCTION ludy_kernel.telegram_chat_other_org_holds_bot(text, uuid)
+  FROM PUBLIC, ludy_tenant, ludy_app, ludy_worker, ludy_definer_tenant;
+GRANT EXECUTE ON FUNCTION ludy_kernel.telegram_chat_other_org_holds_bot(text, uuid) TO ludy_worker;
 
 -- Shared Telegram notice backlog fairness (#3150 item 3): hashed bucket_key keeps tenant IDs out of this control-plane
 -- table (ADR-0039) while enforcing a per-org cap of 1,000 notices within the 10,000 telegram_chat cap and 50,000 total.
