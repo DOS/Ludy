@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from 'vitest';
-import { HR_PAY_FUNCTIONS, zHrEmployeeInitialEmployment, zHrEmploymentTerms } from '@ludy/kernel-contract';
+import {
+  HR_PAY_FUNCTIONS,
+  zHrEmployeeInitialEmployment,
+  zHrEmploymentTerms,
+  zHrPayrollInputs,
+} from '@ludy/kernel-contract';
 import { PAYROLL_POSTING_MAPS, PAY_FUNCTIONS, money } from '@ludy/l10n-vn';
 import { splitOvertimeHours } from '../src/payroll-run.ts';
 
@@ -54,5 +59,24 @@ describe('the pay function of an employment (#2532)', () => {
     expect(splitOvertimeHours(money('1080'))).toEqual(['999.99', '80.01']);
     expect(splitOvertimeHours(money('1999.98'))).toEqual(['999.99', '999.99']);
     expect(() => splitOvertimeHours(money('-0.5'))).toThrow(/HR_OVERTIME_HOURS_OUT_OF_RANGE|âm/);
+  });
+
+  it('keeps zHrPayrollInputs overtime entries within .max(30) boundary cleanly (#4488)', () => {
+    const chunks30 = splitOvertimeHours(money('29999.7'));
+    expect(chunks30).toHaveLength(30);
+    const valid = zHrPayrollInputs.safeParse({
+      overtime: chunks30.map((hours) => ({ dayKind: 'normal_day' as const, night: false, hours })),
+    });
+    expect(valid.success).toBe(true);
+
+    const chunks31 = splitOvertimeHours(money('30000'));
+    expect(chunks31).toHaveLength(31);
+    const tooMany = zHrPayrollInputs.safeParse({
+      overtime: chunks31.map((hours) => ({ dayKind: 'normal_day' as const, night: false, hours })),
+    });
+    expect(tooMany.success).toBe(false);
+    if (!tooMany.success) {
+      expect(tooMany.error.issues.some((i) => i.path[0] === 'overtime')).toBe(true);
+    }
   });
 });

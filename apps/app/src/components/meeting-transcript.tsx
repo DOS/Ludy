@@ -71,6 +71,8 @@ function Line({ segment, editable, focused, focusToken, translation, onSeek, mar
     onSuccess: () => {
       setEditing(false);
       void queryClient.invalidateQueries({ queryKey: orpc.meetings.transcript.key() });
+      // The tracked words are counted from the lines (#4818).
+      void queryClient.invalidateQueries({ queryKey: orpc.meetings.tracker.hits.key() });
     },
   });
   const unchanged = text.trim() === segment.text && speaker.trim() === segment.speakerLabel;
