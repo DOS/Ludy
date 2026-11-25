@@ -376,7 +376,7 @@ describe('Supabase Auth sign-out job', () => {
       await expect(runSignOut({ signOut: async (t) => void calls.push(t) }, target, 0)).resolves.toBeUndefined();
       expect(calls).toEqual([target]);
       await expect(runSignOut(null, target, 0)).resolves.toBeUndefined();
-      expect(String(quiet[1]?.mock.calls[0]?.[0])).toMatch(/no Supabase Auth sign-out configured; revoked in Crove only/);
+      expect(String(quiet[1]?.mock.calls[0]?.[0])).toMatch(/no Supabase Auth sign-out configured; revoked in Ludy only/);
     } finally {
       for (const spy of quiet) spy.mockRestore();
     }

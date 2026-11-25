@@ -5718,7 +5718,7 @@ export function createHttpApp(deps: HttpDeps) {
       return c.html(indexHtml);
     });
   } else {
-    app.get('/', (c) => c.text('Crove API is running. Build apps/app to serve the web UI from this port.'));
+    app.get('/', (c) => c.text('Ludy API is running. Build apps/app to serve the web UI from this port.'));
   }
   return app;
 }
