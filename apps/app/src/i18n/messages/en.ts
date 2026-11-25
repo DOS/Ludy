@@ -17972,6 +17972,7 @@ export const en = {
       CHAT_BUSY: 'Message receiving is being turned off; try again in a few seconds',
       CHAT_IS_ON: "Turn off receiving customers' messages first, so the webhook at Telegram is removed, then disconnect this channel",
       BUSINESS_ACCOUNT_NOT_FOUND: 'This Telegram Business account was not found',
+      BUSINESS_ACCOUNT_APPROVED: 'Stop receiving chats for this Telegram Business account before dismissing it',
       BUSINESS_ACCOUNT_READ_ONLY: 'The bot has no right to reply for this Telegram Business account',
       BUSINESS_ACCOUNT_STOPPED: 'This Telegram Business account is not allowed, or is disconnected, so it cannot be answered',
       CHAT_NOT_SUPPORTED: "This channel does not receive customers' private messages",

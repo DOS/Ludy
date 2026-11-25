@@ -17972,6 +17972,7 @@ export const vi = {
       CHAT_BUSY: 'Đang tắt nhận tin nhắn, hãy thử lại sau ít giây',
       CHAT_IS_ON: 'Hãy tắt nhận tin nhắn của khách trước, để gỡ webhook ở Telegram, rồi mới ngắt kết nối kênh này',
       BUSINESS_ACCOUNT_NOT_FOUND: 'Không tìm thấy tài khoản Telegram Business này',
+      BUSINESS_ACCOUNT_APPROVED: 'Hãy ngừng nhận tin tài khoản Telegram Business này trước khi gỡ khỏi danh sách',
       BUSINESS_ACCOUNT_READ_ONLY: 'Bot chưa có quyền trả lời của tài khoản Telegram Business này',
       BUSINESS_ACCOUNT_STOPPED: 'Tài khoản Telegram Business này chưa được cho phép hoặc đã ngắt, nên chưa trả lời được',
       CHAT_NOT_SUPPORTED: 'Kênh này không nhận tin nhắn riêng của khách',

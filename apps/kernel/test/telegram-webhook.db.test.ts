@@ -982,5 +982,20 @@ suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
     expect(await reconcileTelegramDisplacements({ workerDb, runtime: worker, force: true })).toBeGreaterThanOrEqual(1);
     expect((await rows('SELECT chat_state, chat_error FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [loser.orgId, loser.connectionId]))[0]).toEqual({ chat_state: 'off', chat_error: 'BOT_TAKEN_OVER' });
     expect((await rows<{ chat_displace_pending: boolean }>('SELECT chat_displace_pending FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [winner.orgId, winner.connectionId]))[0]?.chat_displace_pending).toBe(false);
+
+    // Rekey respects takenAt when getWebhookInfo sees a stale mismatch concurrent with a newer re-enable (#3150).
+    await rows("UPDATE ludy_kernel.channel_connection SET chat_hook_key_id = $1 WHERE chat_state = 'on'", [vaultKey1.id]);
+    await rows("UPDATE ludy_kernel.channel_connection SET chat_hook_key_id = 'stale-key', chat_changed_at = now() - interval '10 seconds' WHERE org_id = $1 AND id = $2", [winner.orgId, winner.connectionId]);
+    const raceInfoFetch: Fetch = async (input) => {
+      const method = new URL(input).pathname.split('/').at(-1);
+      if (method === 'getWebhookInfo') {
+        await rows("UPDATE ludy_kernel.channel_connection SET chat_changed_at = now() + interval '5 seconds' WHERE org_id = $1 AND id = $2", [winner.orgId, winner.connectionId]);
+        return new Response(JSON.stringify({ ok: true, result: { url: `${APP_URL}/stale-other-hook` } }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      return new Response(JSON.stringify({ ok: true, result: true }), { status: 200, headers: { 'content-type': 'application/json' } });
+    };
+    const raceAdapter = new TelegramPublisher(undefined, new TelegramConversations({ fetch: raceInfoFetch })).conversations;
+    await rekeyTelegramWebhooks({ runtime: worker, broker: vault, workerDb, adapter: () => raceAdapter, baseUrl: APP_URL });
+    expect((await rows('SELECT chat_state, chat_error FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [winner.orgId, winner.connectionId]))[0]).toEqual({ chat_state: 'on', chat_error: null });
   });
 });

@@ -543,6 +543,39 @@ suite('Telegram Business mode on PostgreSQL (#3191)', () => {
     expect(await api.execute('kernel.channel.telegram_business_allow', { connectionId: b.connectionId, ref: x4Ref, allow: false, dismiss: true }, asOwner(b))).toEqual({ approved: false });
     expect((await record('x12', true, '12')).applied).toBe(true);
     expect((await accountsOf(b)).map((x) => x.id)).toContain('x12');
+    // Dismissing an account with recorded order keeps its watermark so parked older updates cannot resurrect it, while a newer update_id can.
+    expect(
+      await worker.execute<{ applied: boolean }>(
+        'kernel.channel.telegram_business_record',
+        { connectionId: b.connectionId, account: { id: 'x12', userId: '12', name: null, username: null, date: 200, updateId: 20, canReply: true, enabled: true } },
+        { actor: { type: 'system', component: 'test' }, orgId: b.orgId },
+      ),
+    ).toEqual({ applied: true });
+    const x12Ref = ((await api.query<Array<{ id: string; chatBusiness: Array<{ ref: string; username: string | null }> }>>('kernel.channel.list', {}, asOwner(b))).find((c) => c.id === b.connectionId)?.chatBusiness ?? []).at(-1)?.ref as string;
+    expect(await api.execute('kernel.channel.telegram_business_allow', { connectionId: b.connectionId, ref: x12Ref, allow: false, dismiss: true }, asOwner(b))).toEqual({ approved: false });
+    expect((await accountsOf(b)).map((x) => x.id)).not.toContain('x12');
+    expect(
+      await worker.execute<{ applied: boolean }>(
+        'kernel.channel.telegram_business_record',
+        { connectionId: b.connectionId, account: { id: 'x12', userId: '12', name: null, username: null, date: 250, updateId: 19, canReply: true, enabled: true } },
+        { actor: { type: 'system', component: 'test' }, orgId: b.orgId },
+      ),
+    ).toEqual({ applied: false });
+    expect(
+      await worker.execute<{ applied: boolean }>(
+        'kernel.channel.telegram_business_record',
+        { connectionId: b.connectionId, account: { id: 'x12', userId: '12', name: null, username: null, date: 200, canReply: true, enabled: true } },
+        { actor: { type: 'system', component: 'test' }, orgId: b.orgId },
+      ),
+    ).toEqual({ applied: false });
+    expect(
+      await worker.execute<{ applied: boolean }>(
+        'kernel.channel.telegram_business_record',
+        { connectionId: b.connectionId, account: { id: 'x12', userId: '12', name: null, username: null, date: 200, updateId: 21, canReply: true, enabled: true } },
+        { actor: { type: 'system', component: 'test' }, orgId: b.orgId },
+      ),
+    ).toEqual({ applied: true });
+    expect((await accountsOf(b)).map((x) => x.id)).toContain('x12');
     // Disconnecting forgets the accounts: chats turned off first, as for the hook.
     await api.execute('kernel.channel.telegram_chat_set', { connectionId: b.connectionId, on: false }, asOwner(b));
     expect(await runTelegramChatHook({ runtime: worker, broker: vault, adapter: (p: string) => (p === 'telegram' ? adapter : undefined), baseUrl: APP_URL }, { orgId: b.orgId, connectionId: b.connectionId, action: 'chat', on: false })).toBe('off');
