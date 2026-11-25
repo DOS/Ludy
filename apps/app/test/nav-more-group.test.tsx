@@ -59,7 +59,7 @@ const ALL_MODULES = ['kernel', 'finance', 'hr', 'social', 'crm', 'ads', 'notes',
 const apps = installedApps(ALL_MODULES);
 const owner = { manager: true, hrMember: true, showAiConnections: true };
 
-function shell(pathname: string, locale: 'vi' | 'en' = 'vi', mode: 'sidebar' | 'drawer' = 'sidebar', shown = apps): string {
+function shell(pathname: string, locale: 'vi' | 'en' = 'vi', mode: 'sidebar' | 'drawer' = 'sidebar', shown = apps, badges: Record<string, number> = {}): string {
   state.pathname = pathname;
   state.client.clear();
   setActiveLocale(locale);
@@ -71,7 +71,7 @@ function shell(pathname: string, locale: 'vi' | 'en' = 'vi', mode: 'sidebar' | '
             slug="acme"
             apps={shown}
             app={appOfPath(pathname)}
-            badges={{}}
+            badges={badges}
             orgs={[{ orgId: '1', slug: 'acme', name: 'Acme' }]}
             email="chu@example.com"
             onOpenPalette={() => undefined}
@@ -192,6 +192,13 @@ describe('the menu: a collapsed "Thêm" group at the foot, open on one of its sc
     const railOnly = shell('/o/acme/overview');
     expect(railOnly).not.toContain('<span>Thêm</span>');
     expect(railOnly).not.toContain('href="/o/acme/vat"');
+  });
+
+  it('puts a dot on the closed button when a folded item has a count, and none once it is open', () => {
+    const closed = shell('/o/acme/accounting', 'vi', 'sidebar', apps, { tax: 3 });
+    expect(closed).toMatch(/<span>Thêm<\/span><span class="ml-auto size-2 rounded-full bg-primary"/);
+    expect(shell('/o/acme/accounting')).not.toContain('ml-auto size-2');
+    expect(shell('/o/acme/vat', 'vi', 'sidebar', apps, { tax: 3 })).not.toContain('ml-auto size-2');
   });
 
   it('says "More" in English', () => {
