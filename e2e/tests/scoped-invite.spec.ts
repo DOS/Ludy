@@ -11,7 +11,7 @@ test('an owner invites an outside accountant for one legal entity', async ({ pag
   const owner = newEmail('scoped-owner');
   await signUp(page, owner);
   const slug = await createOrg(page, 'Công ty nhiều pháp nhân');
-  await page.getByRole('navigation').getByRole('link', { name: 'Cài đặt' }).click();
+  await page.getByRole('banner').getByRole('link', { name: 'Cài đặt', exact: true }).click();
 
   // Inviting is R3: turn on the second factor first (Security tab), so the code is fresh.
   await openSettingsTab(page, 'security');

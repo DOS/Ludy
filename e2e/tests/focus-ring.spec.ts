@@ -56,6 +56,7 @@ test('every control the keyboard reaches on every sidebar screen shows a focus r
   test.setTimeout(600_000);
   await signInNewUser(page, newEmail('focus-ring'));
   await createOrg(page, 'Công ty Vòng tiêu điểm');
+  const topBar = page.getByRole('banner');
   const sidebar = page.getByRole('complementary');
   const apps = sidebar.getByRole('list', { name: 'Ứng dụng' });
   const links = new Set<string>();
@@ -65,8 +66,12 @@ test('every control the keyboard reaches on every sidebar screen shows a focus r
   for (let i = 0; i < appCount; i++) {
     await apps.getByRole('link').nth(i).click();
     await page.waitForLoadState('networkidle');
-    const paths = await sidebar.getByRole('link').evaluateAll((anchors) => anchors.filter((a) => (a as HTMLAnchorElement).origin === location.origin).map((a) => (a as HTMLAnchorElement).pathname));
-    for (const path of paths) links.add(path);
+    for (const container of [topBar, sidebar]) {
+      const paths = await container
+        .getByRole('link')
+        .evaluateAll((anchors) => anchors.filter((a) => (a as HTMLAnchorElement).origin === location.origin).map((a) => (a as HTMLAnchorElement).pathname));
+      for (const path of paths) links.add(path);
+    }
   }
   expect(links.size).toBeGreaterThan(5);
 
