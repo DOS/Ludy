@@ -225,7 +225,7 @@ export const SIGN_DEPOSIT_PROFILE_TABLE = columns(
   {
     bank_code: 'payment',
     account_number: 'payment',
-    account_holder: 'payment',
+    account_holder: 'pii',
   },
 );
 
@@ -260,7 +260,7 @@ export const SIGN_ENVELOPE_DEPOSIT_TABLE = columns(
   {
     snapshot_bank_code: 'payment',
     snapshot_account_number: 'payment',
-    snapshot_account_holder: 'payment',
+    snapshot_account_holder: 'pii',
     snapshot_emvco_payload: 'payment',
     signer_ip_hash: 'sensitive',
   },
