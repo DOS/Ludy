@@ -24,6 +24,7 @@ import {
   saveCreatedDocxWarnings,
   type DocxConversionStatus,
 } from '../components/sign/docx-conversion-notice.tsx';
+import { sanitizeDocxWarnings } from '../lib/sign-docx-notices.ts';
 import { VersionDiffDialog } from '../components/sign/version-diff-dialog.tsx';
 import { FormDialog } from '../components/form-dialog.tsx';
 import { CoworkerAttribution, ProposalSurface } from '../components/proposal-surface.tsx';
@@ -120,17 +121,21 @@ export async function handleEnvelopeCreatedWithWarnings(deps: {
   envelopeId: string;
   warnings: readonly SignDocxToPdfWarning[];
   slug: string;
+  orgId?: string | null;
+  userId?: string | null;
   setCreateOpen: (open: boolean) => void;
   setCreatedDocxNotice: (notice: { envelopeId: string; warnings: readonly SignDocxToPdfWarning[] } | null) => void;
   invalidateEnvelopes: () => Promise<unknown>;
   navigateToEnvelope: (slug: string, envelopeId: string) => Promise<unknown>;
 }): Promise<void> {
   deps.setCreateOpen(false);
-  if (deps.warnings.length > 0) {
-    saveCreatedDocxWarnings(deps.envelopeId, deps.warnings);
-    deps.setCreatedDocxNotice({ envelopeId: deps.envelopeId, warnings: [...deps.warnings] });
+  const scope = { org: deps.orgId ?? (deps.slug || null), userId: deps.userId ?? null };
+  const cleanWarnings = sanitizeDocxWarnings(deps.warnings);
+  if (cleanWarnings.length > 0) {
+    saveCreatedDocxWarnings(deps.envelopeId, cleanWarnings, scope);
+    deps.setCreatedDocxNotice({ envelopeId: deps.envelopeId, warnings: cleanWarnings });
   } else {
-    clearCreatedDocxWarnings(deps.envelopeId);
+    clearCreatedDocxWarnings(deps.envelopeId, scope);
     deps.setCreatedDocxNotice(null);
   }
   await deps.invalidateEnvelopes();
@@ -884,7 +889,10 @@ export function SignEnvelopesPage() {
         <DocxWarningsAlert
           warnings={createdDocxNotice.warnings}
           onDismiss={() => {
-            clearCreatedDocxWarnings(createdDocxNotice.envelopeId);
+            clearCreatedDocxWarnings(createdDocxNotice.envelopeId, {
+              org: currentOrgInfo?.orgId ?? (slug || null),
+              userId: currentUserId,
+            });
             setCreatedDocxNotice(null);
           }}
         />
@@ -1311,6 +1319,8 @@ export function SignEnvelopesPage() {
               envelopeId,
               warnings,
               slug,
+              orgId: currentOrgInfo?.orgId ?? null,
+              userId: currentUserId,
               setCreateOpen,
               setCreatedDocxNotice,
               invalidateEnvelopes: () => queryClient.invalidateQueries({ queryKey: ['sign', 'envelopes'] }),

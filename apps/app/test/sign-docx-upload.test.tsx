@@ -51,6 +51,7 @@ vi.mock('@tanstack/react-router', async (importOriginal) => {
 const {
   DocxConversionNotice,
   DocxWarningsAlert,
+  clearAllCreatedDocxWarnings,
   clearCreatedDocxWarnings,
   inspectSelectedSignUploadFile,
   readCreatedDocxWarnings,
@@ -60,7 +61,8 @@ const { catalog } = await import('../src/i18n/runtime.ts');
 const { SIGN_DOCX_MAX_BYTES, SIGN_DOCX_MIME, SIGN_UPLOAD_ACCEPT, convertSignDocx } = await import(
   '../src/lib/sign-api.ts'
 );
-const { queryClient } = await import('../src/lib/api.ts');
+const { orpc, queryClient } = await import('../src/lib/api.ts');
+const { ensureSignedOutListener } = await import('../src/lib/ceremony-boot.ts');
 const { CreateEnvelopeDialog, handleEnvelopeCreatedWithWarnings } = await import('../src/routes/sign-envelopes.tsx');
 const { SignEnvelopeDetailPage } = await import('../src/routes/sign-envelope-detail.tsx');
 const { CreateTemplateForm } = await import('../src/routes/sign-templates.tsx');
@@ -71,6 +73,8 @@ function makeTestFile(bytes: Uint8Array, name: string, type = ''): File {
 
 describe('eSign .docx client upload and UI components (#4721)', () => {
   afterEach(() => {
+    clearAllCreatedDocxWarnings();
+    queryClient.clear();
     vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
@@ -282,14 +286,30 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
     expect(seenPollSignal?.aborted).toBe(true);
   });
 
-  it('persists dismissible DocxWarningsAlert across envelope creation navigation and clears on dismiss (#4729)', async () => {
+  it('persists dismissible DocxWarningsAlert across envelope creation navigation and clears on dismiss or sign-out (#4729)', async () => {
     const store = new Map<string, string>();
     vi.stubGlobal('window', {
+      location: { pathname: '/o/acme/sign/envelopes', hash: '' },
       sessionStorage: {
         getItem: (k: string) => store.get(k) ?? null,
         setItem: (k: string, v: string) => void store.set(k, v),
         removeItem: (k: string) => void store.delete(k),
       },
+    });
+
+    const orgId = '01900000-0000-7000-8000-0000000000a1';
+    const otherOrgId = '01900000-0000-7000-8000-0000000000a2';
+    const userAId = '01900000-0000-7000-8000-000000000088';
+    const userBId = '01900000-0000-7000-8000-000000000099';
+    const scopeUserA = { org: orgId, userId: userAId };
+    const scopeUserB = { org: orgId, userId: userBId };
+    const scopeOtherOrg = { org: otherOrgId, userId: userAId };
+
+    queryClient.setQueryData(orpc.me.get.queryKey(), {
+      userId: userAId,
+      email: 'a@example.com',
+      displayName: 'User A',
+      orgs: [{ orgId, slug: 'acme', name: 'Acme', role: 'owner' }],
     });
 
     const setCreateOpen = vi.fn();
@@ -301,6 +321,8 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
       envelopeId: envDetailId,
       warnings: ['images_skipped', 'footnotes_skipped'],
       slug: 'acme',
+      orgId,
+      userId: userAId,
       setCreateOpen,
       setCreatedDocxNotice,
       invalidateEnvelopes,
@@ -314,11 +336,16 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
     });
     expect(invalidateEnvelopes).toHaveBeenCalledTimes(1);
     expect(navigateToEnvelope).toHaveBeenCalledWith('acme', envDetailId);
-    expect(readCreatedDocxWarnings(envDetailId)).toEqual(['images_skipped', 'footnotes_skipped']);
+    expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual(['images_skipped', 'footnotes_skipped']);
     // Reading does not auto-consume so the banner persists across detail reloads until dismissed.
-    expect(readCreatedDocxWarnings(envDetailId)).toEqual(['images_skipped', 'footnotes_skipped']);
+    expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual(['images_skipped', 'footnotes_skipped']);
+    // Warnings are strictly isolated per user and org; another user or org cannot see or dismiss User A's banner.
+    expect(readCreatedDocxWarnings(envDetailId, scopeUserB)).toEqual([]);
+    expect(readCreatedDocxWarnings(envDetailId, scopeOtherOrg)).toEqual([]);
+    clearCreatedDocxWarnings(envDetailId, scopeUserB);
+    expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual(['images_skipped', 'footnotes_skipped']);
 
-    queryClient.setQueryData(['sign', 'envelope', envDetailId], {
+    const envelopeFixture = {
       envelope: {
         id: envDetailId,
         title: 'Hợp đồng từ Word',
@@ -355,13 +382,14 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
         voidReason: null,
         expiredAt: null,
         version: 1,
-        createdBy: '01900000-0000-7000-8000-000000000088',
+        createdBy: userAId,
         createdAt: '2026-11-25T00:00:00.000Z',
         updatedAt: '2026-11-25T00:00:00.000Z',
       },
       signers: [],
       fields: [],
-    });
+    };
+    queryClient.setQueryData(['sign', 'envelope', envDetailId], envelopeFixture);
 
     const detailHtml = renderToStaticMarkup(
       <QueryClientProvider client={queryClient}>
@@ -375,9 +403,55 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
     expect(detailHtml).toContain('min-h-11 min-w-11');
     expect(detailHtml).toContain('footnote/endnote');
 
-    // Dismissing clears persisted warnings so re-rendering SignEnvelopeDetailPage no longer shows the alert.
-    clearCreatedDocxWarnings(envDetailId);
-    expect(readCreatedDocxWarnings(envDetailId)).toEqual([]);
+    // Another signed-in user in the same org must not render User A's warning banner on SignEnvelopeDetailPage.
+    queryClient.setQueryData(orpc.me.get.queryKey(), {
+      userId: userBId,
+      email: 'b@example.com',
+      displayName: 'User B',
+      orgs: [{ orgId, slug: 'acme', name: 'Acme', role: 'owner' }],
+    });
+    const otherUserDetailHtml = renderToStaticMarkup(
+      <QueryClientProvider client={queryClient}>
+        <IntlProvider locale="vi" timeZone="Asia/Ho_Chi_Minh" messages={catalog('vi')}>
+          <SignEnvelopeDetailPage />
+        </IntlProvider>
+      </QueryClientProvider>,
+    );
+    expect(otherUserDetailHtml).not.toContain('data-testid="sign-docx-warning-banner"');
+
+    // Restore User A, then verify SIGNED_OUT clears persisted sessionStorage notices across the tab.
+    queryClient.setQueryData(orpc.me.get.queryKey(), {
+      userId: userAId,
+      email: 'a@example.com',
+      displayName: 'User A',
+      orgs: [{ orgId, slug: 'acme', name: 'Acme', role: 'owner' }],
+    });
+    let authStateCb: ((event: string) => void) | null = null;
+    ensureSignedOutListener({
+      isIsolated: () => false,
+      subscribeAuthState: (cb) => {
+        authStateCb = cb;
+      },
+      navigateToLogin: () => undefined,
+    });
+    expect(authStateCb).not.toBeNull();
+    authStateCb!('SIGNED_OUT');
+    expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual([]);
+    expect(store.has('ludy.sign.created_docx_warnings')).toBe(false);
+
+    // Re-seed User A auth + envelope cache after SIGNED_OUT queryClient.clear(), then test dismiss & quota preservation.
+    queryClient.setQueryData(orpc.me.get.queryKey(), {
+      userId: userAId,
+      email: 'a@example.com',
+      displayName: 'User A',
+      orgs: [{ orgId, slug: 'acme', name: 'Acme', role: 'owner' }],
+    });
+    queryClient.setQueryData(['sign', 'envelope', envDetailId], envelopeFixture);
+
+    // Re-seed and dismiss explicitly as User A.
+    saveCreatedDocxWarnings(envDetailId, ['images_skipped', 'footnotes_skipped'], scopeUserA);
+    clearCreatedDocxWarnings(envDetailId, scopeUserA);
+    expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual([]);
     const afterDismissHtml = renderToStaticMarkup(
       <QueryClientProvider client={queryClient}>
         <IntlProvider locale="vi" timeZone="Asia/Ho_Chi_Minh" messages={catalog('vi')}>
@@ -388,17 +462,19 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
     expect(afterDismissHtml).not.toContain('data-testid="sign-docx-warning-banner"');
 
     // Creating a clean envelope with zero warnings clears any prior stored notice.
-    saveCreatedDocxWarnings(envDetailId, ['images_skipped']);
+    saveCreatedDocxWarnings(envDetailId, ['images_skipped'], scopeUserA);
     await handleEnvelopeCreatedWithWarnings({
       envelopeId: envDetailId,
       warnings: [],
       slug: '',
+      orgId,
+      userId: userAId,
       setCreateOpen,
       setCreatedDocxNotice,
       invalidateEnvelopes,
       navigateToEnvelope,
     });
-    expect(readCreatedDocxWarnings(envDetailId)).toEqual([]);
+    expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual([]);
     expect(setCreatedDocxNotice).toHaveBeenLastCalledWith(null);
 
     // When sessionStorage.setItem throws QuotaExceededError on adding a second envelope, existing persisted notices stay intact in sessionStorage and fallback holds the new entry.
@@ -406,6 +482,7 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
     const quotaStore = new Map<string, string>();
     let rejectQuotaWrites = false;
     vi.stubGlobal('window', {
+      location: { pathname: '/o/acme/sign/envelopes', hash: '' },
       sessionStorage: {
         getItem: (k: string) => quotaStore.get(k) ?? null,
         setItem: (k: string, v: string) => {
@@ -417,16 +494,16 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
         removeItem: (k: string) => void quotaStore.delete(k),
       },
     });
-    saveCreatedDocxWarnings(existingEnvelopeId, ['headers_footers_simplified']);
+    saveCreatedDocxWarnings(existingEnvelopeId, ['headers_footers_simplified'], scopeUserA);
     const persistedSnapshotBeforeQuota = quotaStore.get('ludy.sign.created_docx_warnings');
     expect(persistedSnapshotBeforeQuota).toBeDefined();
 
     rejectQuotaWrites = true;
-    saveCreatedDocxWarnings(envDetailId, ['images_skipped', 'complex_columns_simplified']);
+    saveCreatedDocxWarnings(envDetailId, ['images_skipped', 'complex_columns_simplified'], scopeUserA);
     // Pre-existing record in sessionStorage was not erased by QuotaExceededError on adding a second notice.
     expect(quotaStore.get('ludy.sign.created_docx_warnings')).toBe(persistedSnapshotBeforeQuota);
-    expect(readCreatedDocxWarnings(existingEnvelopeId)).toEqual(['headers_footers_simplified']);
-    expect(readCreatedDocxWarnings(envDetailId)).toEqual(['images_skipped', 'complex_columns_simplified']);
+    expect(readCreatedDocxWarnings(existingEnvelopeId, scopeUserA)).toEqual(['headers_footers_simplified']);
+    expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual(['images_skipped', 'complex_columns_simplified']);
     const quotaDetailHtml = renderToStaticMarkup(
       <QueryClientProvider client={queryClient}>
         <IntlProvider locale="vi" timeZone="Asia/Ho_Chi_Minh" messages={catalog('vi')}>
@@ -435,11 +512,21 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
       </QueryClientProvider>,
     );
     expect(quotaDetailHtml).toContain('data-testid="sign-docx-warning-banner"');
-    clearCreatedDocxWarnings(envDetailId);
-    expect(readCreatedDocxWarnings(envDetailId)).toEqual([]);
-    expect(readCreatedDocxWarnings(existingEnvelopeId)).toEqual(['headers_footers_simplified']);
+    clearCreatedDocxWarnings(envDetailId, scopeUserA);
+    expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual([]);
+    expect(readCreatedDocxWarnings(existingEnvelopeId, scopeUserA)).toEqual(['headers_footers_simplified']);
     rejectQuotaWrites = false;
-    clearCreatedDocxWarnings(existingEnvelopeId);
-    expect(readCreatedDocxWarnings(existingEnvelopeId)).toEqual([]);
+    clearCreatedDocxWarnings(existingEnvelopeId, scopeUserA);
+    expect(readCreatedDocxWarnings(existingEnvelopeId, scopeUserA)).toEqual([]);
+
+    // When sessionStorage is unavailable (null/blocked), clearing clean PDFs never pollutes dismissed tracking or evicts real notices.
+    vi.stubGlobal('window', { location: { pathname: '/o/acme/sign/envelopes', hash: '' } });
+    saveCreatedDocxWarnings(envDetailId, ['images_skipped'], scopeUserA);
+    for (let i = 0; i < 30; i += 1) {
+      clearCreatedDocxWarnings(`01900000-0000-7000-8000-0000000001${String(i).padStart(2, '0')}`, scopeUserA);
+    }
+    expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual(['images_skipped']);
+    clearCreatedDocxWarnings(envDetailId, scopeUserA);
+    expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual([]);
   });
 });

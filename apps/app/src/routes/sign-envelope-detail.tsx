@@ -318,9 +318,6 @@ export function SignEnvelopeDetailPage() {
   const pendingActiveSignerIdRef = useRef<string | null>(null);
   const [dismissedProposalIds, setDismissedProposalIds] = useState<string[]>([]);
   const [aiAnalysisOverride, setAiAnalysisOverride] = useState<SignAiAnalysis | null>(null);
-  const [docxWarnings, setDocxWarnings] = useState<readonly SignDocxToPdfWarning[]>(() =>
-    id ? readCreatedDocxWarnings(id) : [],
-  );
 
   const [titleInput, setTitleInput] = useState('');
   const [subjectInput, setSubjectInput] = useState('');
@@ -432,6 +429,10 @@ export function SignEnvelopeDetailPage() {
   const isDraft = envelope?.status === 'draft';
   const roleHere = meQuery.data?.orgs.find((o) => o.slug === slug)?.role ?? orgQuery.data?.role;
   const currentUserId = meQuery.data?.userId ?? null;
+  const noticeOrg = meQuery.data?.orgs.find((o) => o.slug === slug)?.orgId ?? (slug || null);
+  const [docxWarnings, setDocxWarnings] = useState<readonly SignDocxToPdfWarning[]>(() =>
+    id ? readCreatedDocxWarnings(id, { org: noticeOrg, userId: currentUserId }) : [],
+  );
   const canManageLinks = meQuery.data
     ? canManageEnvelopeLinks({
         role: roleHere,
@@ -474,7 +475,6 @@ export function SignEnvelopeDetailPage() {
     setSelectedFieldId(null);
     setDismissedProposalIds([]);
     setAiAnalysisOverride(null);
-    setDocxWarnings(id ? readCreatedDocxWarnings(id) : []);
     setActiveDocKey('doc-1');
     setDetectedPages(null);
     setPageNumber(1);
@@ -482,6 +482,10 @@ export function SignEnvelopeDetailPage() {
     setQrModalTarget(null);
     setInPersonQrOpen(false);
   }, [id]);
+
+  useEffect(() => {
+    setDocxWarnings(id ? readCreatedDocxWarnings(id, { org: noticeOrg, userId: currentUserId }) : []);
+  }, [id, noticeOrg, currentUserId]);
 
   useEffect(() => {
     if (!detailQuery.data || fieldsDirty) return;
@@ -1369,7 +1373,7 @@ export function SignEnvelopeDetailPage() {
         <DocxWarningsAlert
           warnings={docxWarnings}
           onDismiss={() => {
-            if (id) clearCreatedDocxWarnings(id);
+            if (id) clearCreatedDocxWarnings(id, { org: noticeOrg, userId: currentUserId });
             setDocxWarnings([]);
           }}
         />

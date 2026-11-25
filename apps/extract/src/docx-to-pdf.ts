@@ -185,7 +185,6 @@ interface DocParagraph {
   indentLeftPt: number;
   indentRightPt: number;
   headingLevel: number | undefined;
-  pageBreakBefore: boolean;
 }
 
 interface TableCellEdgeBorders {
@@ -210,7 +209,11 @@ interface DocPageBreak {
   kind: 'page_break';
 }
 
-type DocBlock = DocParagraph | DocTable | DocPageBreak;
+interface DocPageBreakBefore {
+  kind: 'page_break_before';
+}
+
+type DocBlock = DocParagraph | DocTable | DocPageBreak | DocPageBreakBefore;
 
 interface RenderToken {
   text: string;
@@ -1184,6 +1187,10 @@ function extractParagraphBlocks(pNode: XmlElement, ctx: ExtractContext): DocBloc
   flushRuns(segments.length === 0 && !hasSectionBreak);
 
   const blocks: DocBlock[] = [];
+  // Apply paragraph-level w:pageBreakBefore before any leading inline w:br type="page" in the same paragraph.
+  if (pMeta.pageBreakBefore === true && segments.length > 0) {
+    blocks.push({ kind: 'page_break_before' });
+  }
   let isFirstParagraphSegment = true;
   for (const seg of segments) {
     if (seg.kind === 'page_break') {
@@ -1200,7 +1207,6 @@ function extractParagraphBlocks(pNode: XmlElement, ctx: ExtractContext): DocBloc
       indentLeftPt,
       indentRightPt,
       headingLevel,
-      pageBreakBefore: isFirstParagraphSegment && pMeta.pageBreakBefore === true,
     };
     blocks.push(pBlock);
     isFirstParagraphSegment = false;
@@ -2001,6 +2007,10 @@ export async function convertDocxToPdf(bytes: Uint8Array): Promise<DocxToPdfResu
   const paginator = new PdfPaginator(pdfDoc, fonts, warnings);
 
   for (const block of blocks) {
+    if (block.kind === 'page_break_before') {
+      paginator.ensureNewPage();
+      continue;
+    }
     if (block.kind === 'page_break') {
       paginator.requestPageBreak();
       continue;
@@ -2008,9 +2018,6 @@ export async function convertDocxToPdf(bytes: Uint8Array): Promise<DocxToPdfResu
     if (block.kind === 'table') {
       await paginator.drawTable(block);
       continue;
-    }
-    if (block.pageBreakBefore) {
-      paginator.ensureNewPage();
     }
     const layout = await wrapParagraphLayout(fonts, block, CONTENT_WIDTH);
     await paginator.drawParagraph(layout);
