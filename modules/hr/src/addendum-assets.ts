@@ -282,6 +282,7 @@ export const addendumCreate = defineCommand({
     const actorUserId = userOf(ctx.actor);
     await lockEmployeeErasure(ctx.trx, ctx.orgId, input.employeeId);
     const employee = await loadEmployee(ctx, input.employeeId);
+    requireActive(employee);
 
     const employment = await ctx.trx
       .selectFrom('ludy_hr.payroll_employment')

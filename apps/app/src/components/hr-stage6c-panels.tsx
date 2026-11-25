@@ -3,10 +3,11 @@
 // - HrAddendumPanel: contract addendum builder + Ly statutory check + PDF + eSign handoff
 // - HrCareerTimelinePanel: chronological employment, probation & issued addendum timeline
 // - HrAssetsPanel & HrSelfAssetsCard: asset issuance, return/lost_waived tracking & self-service view
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQueries, useQuery } from '@tanstack/react-query';
 import { useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
 import {
+  SIGN_BY_SOURCE_MAX,
   vietnamToday,
   type HrAddendumCheckResult,
   type HrAddendumView,
@@ -15,6 +16,7 @@ import {
   type HrEmployee,
   type HrSelfAssetView,
   type HrTimelineEvent,
+  type SignEnvelopeBySourceItem,
 } from '@ludy/kernel-contract';
 import { Badge } from '@ludy/ui/components/badge';
 import { Button } from '@ludy/ui/components/button';
@@ -24,6 +26,7 @@ import { Label } from '@ludy/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { Textarea } from '@ludy/ui/components/textarea';
 import { HrContractSignHandoff } from './hr-contract-sign-handoff.tsx';
+import { signEnvelopePollMs } from './quote-sign-handoff.tsx';
 import { ErrorText, TableSkeleton } from './ui.tsx';
 import { useFormat, useLocaleSetting } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
@@ -206,6 +209,36 @@ export function HrAddendumPanel({
   });
 
   const addendums: readonly HrAddendumView[] = listQ.data ?? [];
+  const signAddendumIdChunks: string[][] = [];
+  if (signEnabled && !employee.erased) {
+    const signIds = addendums
+      .filter((item) => item.status === 'issued' || item.status === 'voided')
+      .map((item) => item.id);
+    for (let i = 0; i < signIds.length; i += SIGN_BY_SOURCE_MAX) {
+      signAddendumIdChunks.push(signIds.slice(i, i + SIGN_BY_SOURCE_MAX));
+    }
+  }
+  const signEnvelopeQueries = useQueries({
+    queries: signAddendumIdChunks.map((sourceIds) => ({
+      ...orpc.sign.envelope.by_source.queryOptions({ input: { sourceKind: 'hr_contract', sourceIds } }),
+      enabled: signEnabled && !employee.erased && sourceIds.length > 0,
+      retry: false,
+      refetchInterval: (query: { state: { data: { items: SignEnvelopeBySourceItem[] } | undefined } }) =>
+        signEnabled ? signEnvelopePollMs(query.state.data?.items) : false,
+    })),
+  });
+  const signEnvelopeByAddendum = new Map<string, SignEnvelopeBySourceItem>();
+  const signChunkLoadingByAddendum = new Map<string, boolean>();
+  for (let i = 0; i < signAddendumIdChunks.length; i += 1) {
+    const sq = signEnvelopeQueries[i];
+    const chunkLoading = !sq || sq.isPending || sq.isError;
+    for (const id of signAddendumIdChunks[i]!) {
+      signChunkLoadingByAddendum.set(id, chunkLoading);
+    }
+    for (const env of sq?.data?.items ?? []) {
+      signEnvelopeByAddendum.set(env.sourceId, env);
+    }
+  }
   const active = employee.endedOn === null;
   const selectedEmployment =
     employee.employments.find((item) => item.id === employmentId) ?? latestEmployment;
@@ -419,6 +452,13 @@ export function HrAddendumPanel({
             {addendums.map((item) => {
               const matchedEmployment =
                 employee.employments.find((row) => row.id === item.employmentId) ?? selectedEmployment;
+              const rowEnvelope = signEnvelopeByAddendum.get(item.id) ?? null;
+              const rowEnvelopeLoading = signChunkLoadingByAddendum.get(item.id) ?? false;
+              const showSignHandoff =
+                signEnabled &&
+                !employee.erased &&
+                Boolean(matchedEmployment) &&
+                (item.status === 'issued' || (item.status === 'voided' && rowEnvelope !== null));
               return (
                 <div key={item.id} className="space-y-2 rounded-md border p-3 text-sm" data-testid="hr-addendum-row">
                   <div className="flex flex-wrap items-center justify-between gap-2">
@@ -453,7 +493,7 @@ export function HrAddendumPanel({
                           {t('issueBtn')}
                         </Button>
                       )}
-                      {signEnabled && matchedEmployment && item.status === 'issued' && (
+                      {showSignHandoff && matchedEmployment && (
                         <HrContractSignHandoff
                           source={{
                             employment: matchedEmployment,
@@ -474,8 +514,10 @@ export function HrAddendumPanel({
                               status: item.status,
                             },
                           }}
-                          canEdit={active}
+                          canEdit={active && item.status === 'issued'}
                           signEnabled={signEnabled}
+                          envelope={rowEnvelope}
+                          envelopeLoading={rowEnvelopeLoading}
                         />
                       )}
                       {item.status !== 'voided' && (

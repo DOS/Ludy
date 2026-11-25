@@ -613,6 +613,64 @@ suite('HR Stage 6C on PostgreSQL 17 (#4528)', () => {
       c.release();
     }
 
+    // Verify narrowed column-level GRANT UPDATE on ludy_hr.employee_asset_handover (#4654):
+    // asset_name and other identity columns are not UPDATE-granted to ludy_tenant, while mutable columns + SELECT/INSERT stay intact.
+    const { rows: [tblPrivs] } = await adminPool.query<{
+      can_select: boolean;
+      can_insert: boolean;
+      can_update: boolean;
+      can_delete: boolean;
+    }>(
+      `SELECT
+         pg_catalog.has_table_privilege('ludy_tenant', 'ludy_hr.employee_asset_handover', 'SELECT') AS can_select,
+         pg_catalog.has_table_privilege('ludy_tenant', 'ludy_hr.employee_asset_handover', 'INSERT') AS can_insert,
+         pg_catalog.has_table_privilege('ludy_tenant', 'ludy_hr.employee_asset_handover', 'UPDATE') AS can_update,
+         pg_catalog.has_table_privilege('ludy_tenant', 'ludy_hr.employee_asset_handover', 'DELETE') AS can_delete`,
+    );
+    expect(tblPrivs).toEqual({
+      can_select: true,
+      can_insert: true,
+      can_update: false,
+      can_delete: false,
+    });
+
+    const { rows: colPrivRows } = await adminPool.query<{ column_name: string; can_update: boolean }>(
+      `SELECT
+         a.attname AS column_name,
+         pg_catalog.has_column_privilege('ludy_tenant', 'ludy_hr.employee_asset_handover', a.attname, 'UPDATE') AS can_update
+       FROM pg_catalog.pg_attribute a
+       WHERE a.attrelid = 'ludy_hr.employee_asset_handover'::regclass
+         AND a.attnum > 0
+         AND NOT a.attisdropped
+       ORDER BY a.attname`,
+    );
+    const updatableCols = colPrivRows.filter((r) => r.can_update).map((r) => r.column_name);
+    expect(updatableCols).toEqual([
+      'cleared_by',
+      'notes',
+      'returned_on',
+      'serial_number',
+      'status',
+      'updated_at',
+    ]);
+    expect(colPrivRows.find((r) => r.column_name === 'asset_name')?.can_update).toBe(false);
+
+    // Runtime role attempting direct UPDATE on asset_name fails at privilege check (42501), before trigger.
+    const privClient = await appPool.connect();
+    try {
+      await privClient.query('BEGIN');
+      await enterUser(privClient, o.owner, o.orgId);
+      await expect(
+        privClient.query(
+          `UPDATE ludy_hr.employee_asset_handover SET asset_name = 'Tampered Laptop' WHERE org_id = $1 AND id = $2`,
+          [o.orgId, laptop.assetId],
+        ),
+      ).rejects.toMatchObject({ code: '42501' });
+      await privClient.query('ROLLBACK');
+    } finally {
+      privClient.release();
+    }
+
     // Cannot terminate while assets remain assigned without explicit override note!
     await expect(
       o.exec(o.owner, 'hr.payroll.employee.end', { employeeId: empId, endedOn: '2026-09-30' }),
@@ -635,6 +693,26 @@ suite('HR Stage 6C on PostgreSQL 17 (#4528)', () => {
       endedOn: '2026-09-30',
       assetOverrideNote: 'Nhân viên đang chuyển phát màn hình về văn phòng, đối trừ công nợ cuối tháng',
     });
+
+    // Strict server parity (#4654): creating a new addendum or assigning an asset for an ended employee is refused with HR_EMPLOYEE_ENDED (409).
+    await expect(
+      o.exec(o.admin, 'hr.addendum.create', {
+        employeeId: empId,
+        employmentId,
+        addendumNumber: 'PL-AFTER-END-01',
+        effectiveOn: '2026-10-01',
+        changeSummary: 'Phụ lục sau khi nhân viên đã nghỉ việc',
+      }),
+    ).rejects.toMatchObject({ code: 'HR_EMPLOYEE_ENDED', status: 409 });
+
+    await expect(
+      o.exec(o.admin, 'hr.assets.assign', {
+        employeeId: empId,
+        assetCode: 'TS-LATE-03',
+        assetName: 'Late Mouse',
+        handedOverOn: '2026-10-01',
+      }),
+    ).rejects.toMatchObject({ code: 'HR_EMPLOYEE_ENDED', status: 409 });
 
     // WORM audit_event records non-PII override marker only (never raw assetOverrideNote free text).
     const { rows: endAuditRows } = await adminPool.query<{ detail: Record<string, unknown> }>(
@@ -678,6 +756,17 @@ suite('HR Stage 6C on PostgreSQL 17 (#4528)', () => {
     );
     expect(erased.cleared).toContain('contract addendum summaries, titles and void reasons');
     expect(erased.cleared).toContain('asset handover serial numbers and notes');
+
+    // Erased employee still rejects hr.addendum.create with HR_EMPLOYEE_ERASED (409) ahead of requireActive.
+    await expect(
+      o.exec(o.admin, 'hr.addendum.create', {
+        employeeId: empId,
+        employmentId,
+        addendumNumber: 'PL-AFTER-ERASE-01',
+        effectiveOn: '2026-10-02',
+        changeSummary: 'Phụ lục sau khi nhân viên đã xóa hồ sơ',
+      }),
+    ).rejects.toMatchObject({ code: 'HR_EMPLOYEE_ERASED', status: 409 });
 
     const { rows: [addRow] } = await adminPool.query<{
       change_summary: string;
