@@ -72,7 +72,7 @@ suite('Tracker alerts (#4873)', () => {
     await sqlAdmin('DELETE FROM ludy_meetings.tracker_term WHERE org_id = $1', [orgId]);
     await sqlAdmin('DELETE FROM ludy_kernel.notification WHERE org_id = $1', [orgId]);
     await sqlAdmin('DELETE FROM ludy_kernel.notification_mute WHERE org_id = $1', [orgId]);
-    await sqlAdmin('DELETE FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = $2', [orgId, TRACKER_ALERT_EVENT]);
+    // The outbox is append-only: an earlier test's event stays, and each test finds its own by the meeting id (`published`) and hands that one to the worker.
     await sqlAdmin('DELETE FROM ludy_kernel.mail_message WHERE org_id = $1 AND template_key = $2', [orgId, 'meetings.tracker_alert']);
   };
   const optIn = (...who: string[]) => Promise.all(who.map((w) => run<TrackerAlertState>('meetings.tracker.alert_set', w, { on: true, language: 'vi' })));
@@ -200,7 +200,7 @@ suite('Tracker alerts (#4873)', () => {
     expect(await notice(eventId)).toEqual({ notified: 0, mailed: 0 });
     await run('meetings.summary.save', 'rec', { meetingId, summary: 'Tóm tắt lần hai', decisions: [] });
     await run('meetings.result.publish', 'rec', { meetingId, confirmed: true });
-    for (const e of (await sqlAdmin<{ id: string }>('SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = $2', [orgId, TRACKER_ALERT_EVENT])).rows) await notice(e.id);
+    for (const e of (await sqlAdmin<{ id: string }>(`SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = $2 AND payload->>'meetingId' = $3`, [orgId, TRACKER_ALERT_EVENT, meetingId])).rows) await notice(e.id);
     expect(await told()).toEqual(['lan']);
     expect(await mails()).toHaveLength(1);
   });
