@@ -162,6 +162,7 @@ describe('@ludy/mod-projects (#2591)', () => {
     ]);
     expect(projectsQueries.map((q) => q.name).sort()).toEqual([
       'projects.board',
+      'projects.board_snapshots',
       'projects.cycle.list',
       'projects.cycle.metrics',
       'projects.cycle_summary_source',

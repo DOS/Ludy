@@ -15,9 +15,11 @@ import { Input } from '@ludy/ui/components/input';
 import { Textarea } from '@ludy/ui/components/textarea';
 import { Empty, ErrorText } from './ui.tsx';
 import { DraftRedactionDialog, RedactionNudge, useRedactCandidatesQuery } from './meeting-redaction.tsx';
+import { MarkError, useLineMarks } from './meeting-line-marks.tsx';
 import { TranscriptTranslationPanel, TranslatedLine, useTranscriptParts } from './meeting-transcript-translation.tsx';
 import { TranscriptExport } from './meeting-transcript-export.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { covers, ownSingleAt } from '../lib/highlights.ts';
 import { platformTranscript } from '../lib/meeting-platform.ts';
 import { focusedSegment, type TranscriptFocus } from '../lib/transcript-focus.ts';
 
@@ -34,8 +36,17 @@ export function clock(seconds: number): string {
   return h > 0 ? `${h}:${two(m)}:${two(s)}` : `${m}:${two(s)}`;
 }
 
-function Line({ segment, editable, focused, focusToken, translation, onSeek }: { segment: TranscriptSegment; editable: boolean; focused: boolean; focusToken?: number | undefined; onSeek?: ((second: number) => void) | undefined; translation?: { part: Parameters<typeof TranslatedLine>[0]['part']; to: string } | undefined }) {
+// What a line's highlight button needs (#4819): whether a mark covers the line, whether the caller has a single-line mark on it, and the click (Shift extends to a range).
+interface LineMark {
+  covered: boolean;
+  pressed: boolean;
+  busy: boolean;
+  onClick: (shift: boolean) => void;
+}
+
+function Line({ segment, editable, focused, focusToken, translation, onSeek, mark }: { segment: TranscriptSegment; editable: boolean; focused: boolean; focusToken?: number | undefined; mark?: LineMark | undefined; onSeek?: ((second: number) => void) | undefined; translation?: { part: Parameters<typeof TranslatedLine>[0]['part']; to: string } | undefined }) {
   const t = useTranslations('meetings.transcript');
+  const th = useTranslations('meetings.highlights');
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(segment.text);
   const [speaker, setSpeaker] = useState(segment.speakerLabel);
@@ -71,7 +82,13 @@ function Line({ segment, editable, focused, focusToken, translation, onSeek }: {
   }, [focused, focusToken]);
 
   return (
-    <li ref={ref} className={focused ? 'space-y-1 rounded-md bg-warning/15 px-2 py-2 text-sm' : 'space-y-1 py-2 text-sm'} data-testid="transcript-line" {...(focused ? { 'aria-current': 'location' as const, 'data-focused': 'true' } : {})}>
+    <li
+      ref={ref}
+      className={focused ? 'space-y-1 rounded-md bg-warning/15 px-2 py-2 text-sm' : mark?.covered ? 'space-y-1 rounded-md bg-primary/10 px-2 py-2 text-sm' : 'space-y-1 py-2 text-sm'}
+      data-testid="transcript-line"
+      {...(focused ? { 'aria-current': 'location' as const, 'data-focused': 'true' } : {})}
+      {...(mark?.covered ? { 'data-highlighted': 'true' } : {})}
+    >
       <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
         {onSeek ? (
           // The time of a line goes to the start of the line in the recording (#4816); it only moves the player, playing stays the person's own click.
@@ -87,6 +104,21 @@ function Line({ segment, editable, focused, focusToken, translation, onSeek }: {
           <span className="font-medium text-foreground">{segment.speakerLabel}</span>
         )}
         {segment.corrected && <Badge variant="outline">{t('corrected')}</Badge>}
+        {mark && !editing && (
+          <Button
+            size="xs"
+            variant="ghost"
+            className="ml-auto"
+            data-testid="transcript-highlight"
+            aria-pressed={mark.pressed}
+            aria-label={mark.pressed ? th('unmarkLine', { time: clock(segment.startSeconds) }) : th('markLine', { time: clock(segment.startSeconds) })}
+            title={th('markHint')}
+            disabled={mark.busy}
+            onClick={(e) => mark.onClick(e.shiftKey)}
+          >
+            {mark.pressed ? th('marked') : th('mark')}
+          </Button>
+        )}
       </div>
       {editing ? (
         <div className="space-y-2">
@@ -272,6 +304,8 @@ export function MeetingTranscript({
   // The language the member picked to translate into (E3, #3186), shared by the panel and the lines under it; none until they pick.
   const [target, setTarget] = useState<TranslationTarget | undefined>(undefined);
   const translated = useTranscriptParts(meetingId, target);
+  // The highlights of this meeting and the click on a line's button (#4819).
+  const marks = useLineMarks(meetingId);
   if (query.isPending) return null;
   if (query.error) return <ErrorText>{errorMessage(query.error)}</ErrorText>;
   const transcript = query.data;
@@ -325,6 +359,7 @@ export function MeetingTranscript({
           />
         )}
         <TranscriptExport meetingId={meetingId} />
+        <MarkError error={marks.error} />
         {platform && (
           <p className="text-xs text-muted-foreground" data-testid="transcript-platform">
             {t('platformSource', { platform: tp(`provider.${platform.platform}`) })}
@@ -345,6 +380,17 @@ export function MeetingTranscript({
               editable={transcript.isRecorder}
               focused={segment.id === focusedId}
               focusToken={focusSecond?.token}
+              // Only a published line can be marked: the readers read published lines, and a mark on the recorder's draft would tell them where it is.
+              mark={
+                segment.stage === 'published'
+                  ? {
+                      covered: marks.highlights.some((h) => covers(h, segment.startSeconds)),
+                      pressed: ownSingleAt(marks.highlights, segment.startSeconds) !== undefined,
+                      busy: marks.busy,
+                      onClick: (shift) => marks.click(segment.startSeconds, shift),
+                    }
+                  : undefined
+              }
               onSeek={onSeek}
               translation={translated.parts.has(segment.id) ? { part: translated.parts.get(segment.id) as Parameters<typeof TranslatedLine>[0]['part'], to: translated.to } : undefined}
             />
