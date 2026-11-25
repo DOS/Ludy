@@ -1146,7 +1146,7 @@ export function createHttpApp(deps: HttpDeps) {
     });
   }
 
-  // Delivery events from the mail provider (#539), when it has signed webhooks (Resend with RESEND_WEBHOOK_SECRET).
+  // Delivery events from the mail provider (#539, #4960), when it has signed webhooks (Resend with RESEND_WEBHOOK_SECRET, Amazon SES with SES_SNS_TOPIC_ARN).
   // Outside /api: the provider authenticates with its signature, not a session. Any other provider name is a 404.
   const mailer = deps.mailer;
   if (mailer?.parseWebhook) {

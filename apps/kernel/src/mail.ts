@@ -1,11 +1,11 @@
 // Outbound mail (issue #129). The providers live in @ludy/mail (Email plan §3.9): SMTP, configured by SMTP_HOST,
 // SMTP_PORT, SMTP_USER, SMTP_PASS and SMTP_FROM (the settings the bundled Supabase Auth uses for its own mails;
-// Mailpit locally), or Resend with MAIL_PROVIDER=resend (#539). Without a provider, mail is off: send() logs one line
-// naming the subject and sends nothing. Ludy Cloud may plug its own provider.
+// Mailpit locally), Resend with MAIL_PROVIDER=resend (#539), or Amazon SES v2 with MAIL_PROVIDER=ses (#4960). Without a
+// provider, mail is off: send() logs one line naming the subject and sends nothing. Ludy Cloud may plug its own provider.
 //
 // Mail bodies may carry secrets (an invite's accept link), so nothing here logs a body, a recipient or an error
 // message: failures are reported by error code only.
-import { createLogProvider, createResendProvider, createSmtpProvider, describeMailError, type MailProvider, type OutboundMail, type SendResult } from '@ludy/mail';
+import { createLogProvider, createResendProvider, createSesProvider, createSmtpProvider, describeMailError, type MailProvider, type OutboundMail, type SendResult } from '@ludy/mail';
 import type { Config } from './config.ts';
 
 export { createLogProvider, describeMailError, type MailProvider, type OutboundMail } from '@ludy/mail';
@@ -20,11 +20,23 @@ export interface DeliveryResult {
   providerMessageId?: string;
 }
 
-type MailConfig = Pick<Config, 'MAIL_PROVIDER' | 'SMTP_HOST' | 'SMTP_PORT' | 'SMTP_USER' | 'SMTP_PASS' | 'SMTP_FROM' | 'RESEND_API_KEY' | 'RESEND_WEBHOOK_SECRET'> & Partial<Pick<Config, 'BRAND_NAME'>>;
+type MailConfig = Pick<Config, 'MAIL_PROVIDER' | 'SMTP_HOST' | 'SMTP_PORT' | 'SMTP_USER' | 'SMTP_PASS' | 'SMTP_FROM' | 'RESEND_API_KEY' | 'RESEND_WEBHOOK_SECRET'> &
+  Partial<Pick<Config, 'BRAND_NAME' | 'SES_REGION' | 'SES_ACCESS_KEY_ID' | 'SES_SECRET_ACCESS_KEY' | 'SES_CONFIGURATION_SET' | 'SES_SNS_TOPIC_ARN'>>;
 
 export function createMailer(config: MailConfig): MailProvider {
   if (config.MAIL_PROVIDER === 'resend' && config.RESEND_API_KEY && config.SMTP_FROM) {
     return createResendProvider({ apiKey: config.RESEND_API_KEY, from: config.SMTP_FROM, webhookSecret: config.RESEND_WEBHOOK_SECRET });
+  }
+  if (config.MAIL_PROVIDER === 'ses' && config.SES_REGION && config.SES_ACCESS_KEY_ID && config.SES_SECRET_ACCESS_KEY && config.SMTP_FROM) {
+    return createSesProvider({
+      region: config.SES_REGION,
+      accessKeyId: config.SES_ACCESS_KEY_ID,
+      secretAccessKey: config.SES_SECRET_ACCESS_KEY,
+      from: config.SMTP_FROM,
+      senderName: config.BRAND_NAME,
+      configurationSet: config.SES_CONFIGURATION_SET,
+      snsTopicArn: config.SES_SNS_TOPIC_ARN,
+    });
   }
   if (!config.SMTP_HOST || !config.SMTP_FROM) return createLogProvider();
   return createSmtpProvider({ host: config.SMTP_HOST, port: config.SMTP_PORT, user: config.SMTP_USER, pass: config.SMTP_PASS, from: config.SMTP_FROM, senderName: config.BRAND_NAME });
@@ -38,8 +50,9 @@ export function messageIdDomain(config: Pick<Config, 'SMTP_FROM' | 'PUBLIC_URL'>
   return new URL(config.PUBLIC_URL).hostname;
 }
 
-export function describeMailer(config: Pick<Config, 'MAIL_PROVIDER' | 'SMTP_HOST' | 'SMTP_PORT'>): string {
+export function describeMailer(config: Pick<Config, 'MAIL_PROVIDER' | 'SMTP_HOST' | 'SMTP_PORT'> & Partial<Pick<Config, 'SES_REGION'>>): string {
   if (config.MAIL_PROVIDER === 'resend') return 'Resend (api.resend.com)';
+  if (config.MAIL_PROVIDER === 'ses') return `Amazon SES (${config.SES_REGION ?? 'unconfigured'})`;
   return config.SMTP_HOST ? `SMTP at ${config.SMTP_HOST}:${config.SMTP_PORT}` : 'off (SMTP_HOST is not set; mails are logged, not sent)';
 }
 

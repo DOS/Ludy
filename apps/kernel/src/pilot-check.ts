@@ -9,6 +9,7 @@
 import { randomBytes } from 'node:crypto';
 import { ORG_HEADER } from '@ludy/kernel-contract';
 import { S3BlobStore, parseVaultKey, type S3Sender } from '@ludy/kernel-runtime';
+import { SES_REGION_PATTERN, SES_SNS_TOPIC_ARN_PATTERN } from '@ludy/mail';
 import { AVAILABLE_MODULES, SAMPLE_DB_PASSWORDS } from './config.ts';
 import { parseAllowedOrigins } from './cors.ts';
 import { parseExportKey } from './export-seal.ts';
@@ -309,7 +310,7 @@ export function checkEnv(env: Env): CheckResult[] {
     else if (inboundPrevious === value(env, 'INBOUND_SECRET')) secrets.push('INBOUND_SECRET_PREVIOUS is the same as INBOUND_SECRET');
   }
   // Optional secrets: only a shipped sample value is wrong.
-  for (const name of ['INBOUND_SECRET', 'S3_SECRET_ACCESS_KEY', 'SMTP_PASS', 'AI_API_KEY', 'TRANSCRIBE_API_KEY', 'CREDENTIAL_KEY', 'CREDENTIAL_KEY_PREVIOUS', 'CHANNEL_META_APP_SECRET', 'CHANNEL_META_APP_SECRET_PREVIOUS', 'MISA_AMIS_CLIENT_ID', 'MISA_ASP_CLIENT_ID', 'CHANNEL_INSTAGRAM_APP_SECRET', 'CHANNEL_META_WEBHOOK_VERIFY_TOKEN', 'CHANNEL_ZALO_APP_SECRET', 'CHANNEL_ZALO_OA_SECRET_KEY', 'CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS', 'CHANNEL_WHATSAPP_APP_SECRET', 'CHANNEL_WHATSAPP_APP_SECRET_PREVIOUS', 'CHANNEL_WHATSAPP_VERIFY_TOKEN', 'CHANNEL_THREADS_APP_SECRET', 'CHANNEL_LINKEDIN_CLIENT_SECRET', 'CHANNEL_LINKEDIN_PAGE_CLIENT_SECRET', 'CHANNEL_GOOGLE_CLIENT_SECRET', 'CHANNEL_TIKTOK_CLIENT_SECRET', 'CHANNEL_X_CLIENT_SECRET', 'CHANNEL_PINTEREST_APP_SECRET', 'MEDIA_PEXELS_API_KEY', 'VAPID_PRIVATE_KEY']) {
+  for (const name of ['INBOUND_SECRET', 'S3_SECRET_ACCESS_KEY', 'SMTP_PASS', 'RESEND_API_KEY', 'RESEND_WEBHOOK_SECRET', 'SES_SECRET_ACCESS_KEY', 'AI_API_KEY', 'TRANSCRIBE_API_KEY', 'CREDENTIAL_KEY', 'CREDENTIAL_KEY_PREVIOUS', 'CHANNEL_META_APP_SECRET', 'CHANNEL_META_APP_SECRET_PREVIOUS', 'MISA_AMIS_CLIENT_ID', 'MISA_ASP_CLIENT_ID', 'CHANNEL_INSTAGRAM_APP_SECRET', 'CHANNEL_META_WEBHOOK_VERIFY_TOKEN', 'CHANNEL_ZALO_APP_SECRET', 'CHANNEL_ZALO_OA_SECRET_KEY', 'CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS', 'CHANNEL_WHATSAPP_APP_SECRET', 'CHANNEL_WHATSAPP_APP_SECRET_PREVIOUS', 'CHANNEL_WHATSAPP_VERIFY_TOKEN', 'CHANNEL_THREADS_APP_SECRET', 'CHANNEL_LINKEDIN_CLIENT_SECRET', 'CHANNEL_LINKEDIN_PAGE_CLIENT_SECRET', 'CHANNEL_GOOGLE_CLIENT_SECRET', 'CHANNEL_TIKTOK_CLIENT_SECRET', 'CHANNEL_X_CLIENT_SECRET', 'CHANNEL_PINTEREST_APP_SECRET', 'MEDIA_PEXELS_API_KEY', 'VAPID_PRIVATE_KEY']) {
     if (name === 'INBOUND_SECRET' && value(env, 'INBOUND_DOMAIN')) continue;
     const secret = value(env, name);
     if (secret && (KNOWN_DEFAULTS.has(secret) || /change-?me/i.test(secret))) secrets.push(`${name} still has a sample value`);
@@ -331,6 +332,11 @@ export function checkEnv(env: Env): CheckResult[] {
   add('Secrets', secrets, 'the database passwords, AUTH_JWT_SECRET and EXPORT_ENCRYPTION_KEY are set, and no secret is a shipped sample value');
 
   // Email confirmation and MFA step-up. docker-compose.yml falls back to AUTH_AUTOCONFIRM=true, so it must be set.
+  // A provider of the deployment's own (no bundled Supabase Auth, #2704): sign-up there is not Ludy's to close; what Ludy can
+  // limit is who may use this deployment, AUTH_ALLOWED_EMAILS.
+  // The upstream line must be present and empty: an absent line is compose's default, the bundled Supabase Auth.
+  const ownProvider = env['AUTH_UPSTREAM_URL'] !== undefined && env['AUTH_UPSTREAM_URL'].trim() === '' && value(env, 'PUBLIC_AUTH_URL') !== undefined;
+  const mailProvider = value(env, 'MAIL_PROVIDER') ?? 'smtp';
   const auth: (string | null)[] = [];
   const autoconfirm = value(env, 'AUTH_AUTOCONFIRM');
   if (autoconfirm !== 'false') {
@@ -341,12 +347,49 @@ export function checkEnv(env: Env): CheckResult[] {
     );
   }
   const smtpHost = value(env, 'SMTP_HOST');
-  if (!smtpHost || ['smtp.example.com', 'mailpit', 'mailhog'].includes(smtpHost) || isLocalHost(smtpHost)) {
-    auth.push(`SMTP_HOST is ${smtpHost ?? 'unset (docker compose then uses the local Mailpit)'}: with confirmations on, set a real SMTP server or nobody can confirm an email`);
+  if ((!ownProvider || mailProvider === 'smtp') && (!smtpHost || ['smtp.example.com', 'mailpit', 'mailhog'].includes(smtpHost) || isLocalHost(smtpHost))) {
+    auth.push(
+      mailProvider === 'ses'
+        ? `SMTP_HOST is ${smtpHost ?? 'unset (docker compose then uses the local Mailpit)'}: bundled Supabase Auth still sends confirmation and recovery emails over SMTP even when MAIL_PROVIDER=ses; set SMTP_HOST to Amazon SES SMTP (for example email-smtp.${value(env, 'SES_REGION') ?? 'ap-southeast-1'}.amazonaws.com)`
+        : `SMTP_HOST is ${smtpHost ?? 'unset (docker compose then uses the local Mailpit)'}: with confirmations on, set a real SMTP server or nobody can confirm an email`,
+    );
   }
   const stepUp = value(env, 'AUTH_STEP_UP');
   if (stepUp !== undefined && stepUp !== 'required') auth.push(`AUTH_STEP_UP=${stepUp}: approvals and member changes must need MFA; set AUTH_STEP_UP=required`);
   add('Email confirmation and MFA step-up', auth, 'AUTH_AUTOCONFIRM=false with an SMTP server, and AUTH_STEP_UP=required');
+
+  // Outbound mail provider checks for HTTP providers (Resend / Amazon SES v2).
+  if (mailProvider === 'ses') {
+    const sesProblems: (string | null)[] = [];
+    const sesRegion = value(env, 'SES_REGION');
+    if (!sesRegion) sesProblems.push('MAIL_PROVIDER=ses needs SES_REGION (for example ap-southeast-1)');
+    else if (!SES_REGION_PATTERN.test(sesRegion)) sesProblems.push('SES_REGION is not a valid AWS region (for example ap-southeast-1)');
+    if (!value(env, 'SES_ACCESS_KEY_ID')) sesProblems.push('MAIL_PROVIDER=ses needs SES_ACCESS_KEY_ID');
+    if (!value(env, 'SES_SECRET_ACCESS_KEY')) sesProblems.push('MAIL_PROVIDER=ses needs SES_SECRET_ACCESS_KEY');
+    const smtpFrom = value(env, 'SMTP_FROM');
+    if (!smtpFrom || smtpFrom.endsWith('.local')) {
+      sesProblems.push('MAIL_PROVIDER=ses needs SMTP_FROM set to a sender address on a domain verified in Amazon SES');
+    }
+    const snsTopicArn = value(env, 'SES_SNS_TOPIC_ARN');
+    if (snsTopicArn) {
+      if (!SES_SNS_TOPIC_ARN_PATTERN.test(snsTopicArn)) {
+        sesProblems.push('SES_SNS_TOPIC_ARN is not a valid Amazon SNS topic ARN (arn:aws:sns:<region>:<account>:<topic>)');
+      } else if (sesRegion && SES_REGION_PATTERN.test(sesRegion)) {
+        const snsRegion = snsTopicArn.split(':')[3];
+        if (snsRegion && snsRegion !== sesRegion) {
+          sesProblems.push(`SES_SNS_TOPIC_ARN region (${snsRegion}) must match SES_REGION (${sesRegion})`);
+        }
+      }
+    }
+    add('Outbound mail', sesProblems, `MAIL_PROVIDER=ses (${sesRegion ?? '?'})${snsTopicArn ? ' with SNS delivery webhooks' : ''}`);
+  } else if (mailProvider === 'resend') {
+    const resendProblems: (string | null)[] = [];
+    if (!value(env, 'RESEND_API_KEY')) resendProblems.push('MAIL_PROVIDER=resend needs RESEND_API_KEY');
+    if (!value(env, 'SMTP_FROM')) resendProblems.push('MAIL_PROVIDER=resend needs SMTP_FROM on a domain verified at Resend');
+    add('Outbound mail', resendProblems, 'MAIL_PROVIDER=resend');
+  } else if (mailProvider !== 'smtp') {
+    add('Outbound mail', [`MAIL_PROVIDER=${mailProvider} is unknown (expected smtp, resend or ses)`], 'MAIL_PROVIDER=smtp');
+  }
 
   // Ads live launch (ADR-0043, #2296 W2-3): with ADS_LIVE_LAUNCH on the worker creates campaign objects at Meta (every one paused). That is for the owner's own live
   // check, not for a deployment others reach, until the activation, the pause on switch-off (W2-4) and the live-check runbook (W2-5) are built. The kernel's own
@@ -364,10 +407,6 @@ export function checkEnv(env: Env): CheckResult[] {
   const policy = value(env, 'AUTH_SIGNUP_POLICY');
   const domains = value(env, 'AUTH_SIGNUP_ALLOWED_DOMAINS');
   const restricted = policy === 'invite_only' || (policy === 'allowlist' && domains !== undefined);
-  // A provider of the deployment's own (no bundled Supabase Auth, #2704): sign-up there is not Ludy's to close; what Ludy can
-  // limit is who may use this deployment, AUTH_ALLOWED_EMAILS.
-  // The upstream line must be present and empty: an absent line is compose's default, the bundled Supabase Auth.
-  const ownProvider = env['AUTH_UPSTREAM_URL'] !== undefined && env['AUTH_UPSTREAM_URL'].trim() === '' && value(env, 'PUBLIC_AUTH_URL') !== undefined;
   // An empty parse (`, ,`) lists nobody: the kernel refuses it at boot, and this check does not count it as a limit.
   const allowed = parseAllowedEmails(value(env, 'AUTH_ALLOWED_EMAILS') ?? '').entries.length > 0;
   add(
@@ -624,6 +663,16 @@ export function checkEnv(env: Env): CheckResult[] {
           ? 'confirm the files bucket has Object Lock enabled and the worker log shows no "[evidence-hold] ALERT" (docs/runbooks/evidence-holds.md)'
           : 'posted invoice files get no retention hold (STORAGE is not s3, or EVIDENCE_LOCK_DAYS=0): confirm the owner accepts that (docs/runbooks/evidence-holds.md)',
     },
+    ...(mailProvider === 'ses' && !value(env, 'SES_SNS_TOPIC_ARN')
+      ? [
+          {
+            item: 'Outbound mail',
+            status: 'manual' as const,
+            message:
+              'SES_SNS_TOPIC_ARN is unset: bounce and complaint webhooks (/webhooks/mail/ses) are off, so hard bounces and complaints will not update mail_suppression automatically; configure an SNS topic and SES Configuration Set (docs/runbooks/email-ses-pilot-cutover.md)',
+          },
+        ]
+      : []),
     { item: 'Owner sign-off', status: 'manual', message: 'the owner records the sign-off in issue #308' },
   );
   return results;

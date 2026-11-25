@@ -13,8 +13,8 @@ import type { MailEvent, MailProvider, WebhookRequest } from '@ludy/mail';
 import { WebhookRejected } from '@ludy/mail';
 import type { Runtime } from '@ludy/kernel-runtime';
 
-// A webhook delivery carries one event; this bounds what the API reads before checking its signature.
-export const MAX_MAIL_WEBHOOK_BYTES = 256 * 1024;
+// A webhook delivery carries one event (or one SNS notification envelope); this bounds what the API reads before checking its signature.
+export const MAX_MAIL_WEBHOOK_BYTES = 512 * 1024;
 
 export type MailWebhookOutcome =
   | { status: 202; queued: number }
@@ -26,7 +26,7 @@ export async function acceptMailWebhook(runtime: Runtime, provider: MailProvider
   if (!provider.parseWebhook) throw new Error('the provider has no webhooks');
   let events: MailEvent[];
   try {
-    events = provider.parseWebhook(request, now);
+    events = await provider.parseWebhook(request, now);
   } catch (error) {
     if (!(error instanceof WebhookRejected)) throw error;
     return error.reason === 'malformed' ? { status: 400, code: 'WEBHOOK_MALFORMED' } : { status: 401, code: 'WEBHOOK_SIGNATURE' };
