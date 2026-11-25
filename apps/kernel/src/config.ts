@@ -2,7 +2,7 @@ import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { EXTRACT_TIMING } from '@ludy/extract-contract';
 import { misaBlockers } from '@ludy/einvoice';
-import { SES_REGION_PATTERN, SES_SNS_TOPIC_ARN_PATTERN } from '@ludy/mail';
+import { SES_CONFIGURATION_SET_PATTERN, SES_REGION_PATTERN, SES_SNS_TOPIC_ARN_PATTERN } from '@ludy/mail';
 import { MODULE_IDS, TRANSLATION_FLAGGED_TARGETS, zExtensionId, type ModuleId, type TranslationFlaggedTarget } from '@ludy/kernel-contract';
 import type { UsageLimits } from '@ludy/kernel';
 import { parseAllowedEmails } from './auth-access.ts';
@@ -723,7 +723,7 @@ const schema = z.object({
   SES_REGION: optional.pipe(z.string().regex(SES_REGION_PATTERN, 'SES_REGION is an AWS region such as ap-southeast-1').optional()),
   SES_ACCESS_KEY_ID: optional,
   SES_SECRET_ACCESS_KEY: optional,
-  SES_CONFIGURATION_SET: optional.pipe(z.string().regex(/^[A-Za-z0-9_-]{1,64}$/, 'SES_CONFIGURATION_SET is the configuration set name (letters, digits, - and _)').optional()),
+  SES_CONFIGURATION_SET: optional.pipe(z.string().regex(SES_CONFIGURATION_SET_PATTERN, 'SES_CONFIGURATION_SET is the configuration set name (letters, digits, - and _)').optional()),
   SES_SNS_TOPIC_ARN: optional.pipe(
     z.string().regex(SES_SNS_TOPIC_ARN_PATTERN, 'SES_SNS_TOPIC_ARN is the ARN of the Amazon SNS topic (arn:aws:sns:<region>:<account>:<topic>)').optional(),
   ),

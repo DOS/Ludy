@@ -17,12 +17,16 @@ import {
 } from './types.ts';
 
 export const SES_REGION_PATTERN = /^[a-z]{2}(?:-[a-z]+)+-\d+$/;
+export const SES_CONFIGURATION_SET_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 export const SES_SNS_TOPIC_ARN_PATTERN = /^arn:aws[a-z-]*:sns:[a-z0-9-]+:\d{12}:[^\s:]+$/;
 
 const SNS_CERT_PATH_PATTERN = /^\/SimpleNotificationService-[a-f0-9]+\.pem$/;
 const SNS_TOLERANCE_MS = 15 * 60_000;
 const SNS_CERT_MAX_BYTES = 32 * 1024;
 const SNS_CERT_CACHE_MAX = 16;
+const SNS_CERT_INFLIGHT_MAX = 4;
+const SNS_CERT_FAIL_CACHE_MAX = 64;
+const SNS_CERT_FAIL_TTL_MS = 60_000;
 const SNS_FETCH_TIMEOUT_MS = 5_000;
 const DEFAULT_SEND_TIMEOUT_MS = 10_000;
 const MAX_ID = 255;
@@ -78,6 +82,16 @@ function assertValidRegion(region: string): string {
     throw new Error('invalid SES region');
   }
   return region;
+}
+
+function assertValidTopicArn(snsTopicArn: string, region: string): void {
+  if (!SES_SNS_TOPIC_ARN_PATTERN.test(snsTopicArn)) {
+    throw new Error('invalid SES SNS topic ARN');
+  }
+  const arnRegion = snsTopicArn.split(':')[3];
+  if (arnRegion !== region) {
+    throw new Error('SES SNS topic ARN region must match SES region');
+  }
 }
 
 function sesEndpoint(region: string): URL {
@@ -141,7 +155,24 @@ function extractAddress(from: string): string {
   return stripControl(/<([^<>\s]+)>/.exec(from)?.[1] ?? from);
 }
 
-async function buildRawMime(mail: OutboundMail, options: Pick<SesOptions, 'from' | 'senderName'>): Promise<Buffer> {
+function extractCompiledFromHeader(raw: Buffer): string | undefined {
+  const text = raw.toString('utf8');
+  const headerEnd = text.indexOf('\r\n\r\n');
+  const headerBlock = headerEnd >= 0 ? text.slice(0, headerEnd) : text;
+  const unfolded = headerBlock.replace(/\r\n[ \t]+/g, ' ');
+  for (const line of unfolded.split('\r\n')) {
+    if (line.toLowerCase().startsWith('from:')) {
+      const value = line.slice(5).trim();
+      return value.length > 0 ? value : undefined;
+    }
+  }
+  return undefined;
+}
+
+async function buildRawMime(
+  mail: OutboundMail,
+  options: Pick<SesOptions, 'from' | 'senderName'>,
+): Promise<{ raw: Buffer; fromEmailAddress: string }> {
   const bareFrom = extractAddress(options.from);
   const defaultFrom = options.from.includes('<') ? cleanHeader(options.from) : { name: options.senderName ?? 'Ludy', address: bareFrom };
   const from = mail.fromName ? withDisplayName(options.from, mail.fromName) : defaultFrom;
@@ -168,7 +199,9 @@ async function buildRawMime(mail: OutboundMail, options: Pick<SesOptions, 'from'
     disableFileAccess: true,
     disableUrlAccess: true,
   });
-  return composer.compile().build();
+  const raw = await composer.compile().build();
+  const fromEmailAddress = extractCompiledFromHeader(raw) ?? bareFrom;
+  return { raw, fromEmailAddress };
 }
 
 function retryAfterMs(response: Response): number | undefined {
@@ -185,7 +218,9 @@ function normalizeSesErrorType(raw: string | null | undefined): string | undefin
 }
 
 function classifyMessageRejected(message: string): MailErrorKind {
-  if (/missing final '@domain'|illegal address|invalid (?:recipient|destination|to) address|domain contains|local address contains/i.test(message)) {
+  // Only suppress when SES explicitly indicates the destination/recipient address itself failed; generic address syntax
+  // errors (such as "Illegal address" or "Missing final '@domain'") can stem from From/Reply-To and stay bad_request.
+  if (/\b(?:invalid|malformed)\s+(?:recipient|destination|to)\s+address\b|\bdestination\s+address(?:es)?\s+(?:invalid|rejected)\b|\brecipient\s+address\s+rejected\b/i.test(message)) {
     return 'invalid_recipient';
   }
   if (/(?:account[- ]level )?suppression list|address(?: is)? blacklisted/i.test(message)) {
@@ -223,7 +258,14 @@ async function classifySesResponse(response: Response): Promise<SendResult> {
   return { status: 'rejected', error: 'bad_request', code };
 }
 
-function validateSnsUrl(raw: string, region: string, kind: 'cert' | 'subscribe'): URL {
+interface SnsSubscribeExpectation {
+  topicArn: string;
+  token: string;
+}
+
+function validateSnsUrl(raw: string, region: string, kind: 'cert'): URL;
+function validateSnsUrl(raw: string, region: string, kind: 'subscribe', expected: SnsSubscribeExpectation): URL;
+function validateSnsUrl(raw: string, region: string, kind: 'cert' | 'subscribe', expected?: SnsSubscribeExpectation): URL {
   if (raw.includes('..') || /%2e/i.test(raw) || raw.includes('\\')) {
     throw new WebhookRejected(kind === 'cert' ? 'signature' : 'malformed');
   }
@@ -241,7 +283,20 @@ function validateSnsUrl(raw: string, region: string, kind: 'cert' | 'subscribe')
     if (url.search !== '' || !SNS_CERT_PATH_PATTERN.test(url.pathname)) {
       throw new WebhookRejected('signature');
     }
-  } else if (!url.pathname.startsWith('/')) {
+    return url;
+  }
+  const actions = url.searchParams.getAll('Action');
+  const topics = url.searchParams.getAll('TopicArn');
+  const tokens = url.searchParams.getAll('Token');
+  if (
+    url.pathname !== '/' ||
+    actions.length !== 1 ||
+    actions[0] !== 'ConfirmSubscription' ||
+    topics.length !== 1 ||
+    topics[0] !== expected?.topicArn ||
+    tokens.length !== 1 ||
+    tokens[0] !== expected?.token
+  ) {
     throw new WebhookRejected('malformed');
   }
   return url;
@@ -256,7 +311,13 @@ async function readBoundedBytes(response: Response, maxBytes: number): Promise<B
     }
   }
   if (!response.body) {
-    const buf = Buffer.from(await response.arrayBuffer());
+    let ab: ArrayBuffer;
+    try {
+      ab = await response.arrayBuffer();
+    } catch {
+      throw new Error('SNS certificate fetch failed');
+    }
+    const buf = Buffer.from(ab);
     if (buf.byteLength > maxBytes) throw new WebhookRejected('signature');
     return buf;
   }
@@ -265,14 +326,19 @@ async function readBoundedBytes(response: Response, maxBytes: number): Promise<B
   let total = 0;
   try {
     for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      total += value.byteLength;
+      let step: Awaited<ReturnType<typeof reader.read>>;
+      try {
+        step = await reader.read();
+      } catch {
+        throw new Error('SNS certificate fetch failed');
+      }
+      if (step.done) break;
+      total += step.value.byteLength;
       if (total > maxBytes) {
         await reader.cancel().catch(() => undefined);
         throw new WebhookRejected('signature');
       }
-      chunks.push(value);
+      chunks.push(step.value);
     }
   } finally {
     reader.releaseLock();
@@ -291,20 +357,32 @@ function assertCertValidAt(cert: X509Certificate, now: number): void {
   }
 }
 
-async function loadSigningCert(certUrl: URL, fetchImpl: typeof fetch, cache: Map<string, X509Certificate>, now: number): Promise<X509Certificate> {
-  const key = certUrl.href;
-  const cached = cache.get(key);
-  if (cached) {
-    // Refresh LRU order.
-    cache.delete(key);
-    try {
-      assertCertValidAt(cached, now);
-      cache.set(key, cached);
-      return cached;
-    } catch {
-      throw new WebhookRejected('signature');
-    }
+interface CertFetchState {
+  inFlight: Map<string, Promise<X509Certificate>>;
+  failedUntil: Map<string, number>;
+}
+
+const CERT_FETCH_STATES = new WeakMap<Map<string, X509Certificate>, CertFetchState>();
+
+function certFetchStateFor(cache: Map<string, X509Certificate>): CertFetchState {
+  let state = CERT_FETCH_STATES.get(cache);
+  if (!state) {
+    state = { inFlight: new Map(), failedUntil: new Map() };
+    CERT_FETCH_STATES.set(cache, state);
   }
+  return state;
+}
+
+function recordFailedCert(state: CertFetchState, key: string, now: number): void {
+  state.failedUntil.delete(key);
+  if (state.failedUntil.size >= SNS_CERT_FAIL_CACHE_MAX) {
+    const oldest = state.failedUntil.keys().next().value;
+    if (oldest !== undefined) state.failedUntil.delete(oldest);
+  }
+  state.failedUntil.set(key, now + SNS_CERT_FAIL_TTL_MS);
+}
+
+async function fetchUncachedCert(key: string, fetchImpl: typeof fetch): Promise<X509Certificate> {
   let response: Response;
   try {
     response = await fetchImpl(key, {
@@ -322,19 +400,67 @@ async function loadSigningCert(certUrl: URL, fetchImpl: typeof fetch, cache: Map
     throw new WebhookRejected('signature');
   }
   const pem = await readBoundedBytes(response, SNS_CERT_MAX_BYTES);
-  let cert: X509Certificate;
   try {
-    cert = new X509Certificate(pem);
+    return new X509Certificate(pem);
   } catch {
     throw new WebhookRejected('signature');
   }
-  assertCertValidAt(cert, now);
-  if (cache.size >= SNS_CERT_CACHE_MAX) {
-    const oldest = cache.keys().next().value;
-    if (oldest !== undefined) cache.delete(oldest);
+}
+
+async function loadSigningCert(certUrl: URL, fetchImpl: typeof fetch, cache: Map<string, X509Certificate>, now: number): Promise<X509Certificate> {
+  const key = certUrl.href;
+  const cached = cache.get(key);
+  if (cached) {
+    // Refresh LRU order.
+    cache.delete(key);
+    try {
+      assertCertValidAt(cached, now);
+      cache.set(key, cached);
+      return cached;
+    } catch {
+      throw new WebhookRejected('signature');
+    }
   }
-  cache.set(key, cert);
-  return cert;
+  const state = certFetchStateFor(cache);
+  const failedExp = state.failedUntil.get(key);
+  if (failedExp !== undefined) {
+    if (now < failedExp) {
+      throw new WebhookRejected('signature');
+    }
+    state.failedUntil.delete(key);
+  }
+  const pending = state.inFlight.get(key);
+  if (pending) {
+    const cert = await pending;
+    assertCertValidAt(cert, now);
+    return cert;
+  }
+  if (state.inFlight.size >= SNS_CERT_INFLIGHT_MAX) {
+    throw new WebhookRejected('signature');
+  }
+  const work = (async () => {
+    try {
+      const cert = await fetchUncachedCert(key, fetchImpl);
+      assertCertValidAt(cert, now);
+      if (cache.size >= SNS_CERT_CACHE_MAX) {
+        const oldest = cache.keys().next().value;
+        if (oldest !== undefined) cache.delete(oldest);
+      }
+      cache.set(key, cert);
+      return cert;
+    } catch (error) {
+      if (error instanceof WebhookRejected) {
+        recordFailedCert(state, key, now);
+      }
+      throw error;
+    } finally {
+      state.inFlight.delete(key);
+    }
+  })();
+  // Prevent unhandled rejection when multiple coalesced callers inspect the shared promise.
+  work.catch(() => undefined);
+  state.inFlight.set(key, work);
+  return work;
 }
 
 type SnsEnvelopeType = 'Notification' | 'SubscriptionConfirmation' | 'UnsubscribeConfirmation';
@@ -548,9 +674,7 @@ function parseSesNotification(envelope: SnsEnvelope, now: number): MailEvent[] {
 /** Verifies an AWS SNS delivery webhook for Amazon SES and extracts MailEvent records. */
 export async function parseSesWebhook(options: SesWebhookOptions, request: WebhookRequest, now: number = Date.now()): Promise<MailEvent[]> {
   const region = assertValidRegion(options.region);
-  if (!SES_SNS_TOPIC_ARN_PATTERN.test(options.snsTopicArn)) {
-    throw new Error('invalid SES SNS topic ARN');
-  }
+  assertValidTopicArn(options.snsTopicArn, region);
   const fetchImpl = options.fetch ?? fetch;
   const cache = options.certCache ?? new Map<string, X509Certificate>();
   const envelope = parseSnsEnvelope(request.body, options.snsTopicArn, now);
@@ -562,7 +686,10 @@ export async function parseSesWebhook(options: SesWebhookOptions, request: Webho
     return [];
   }
   if (envelope.Type === 'SubscriptionConfirmation') {
-    const subscribeUrl = validateSnsUrl(envelope.SubscribeURL as string, region, 'subscribe');
+    const subscribeUrl = validateSnsUrl(envelope.SubscribeURL as string, region, 'subscribe', {
+      topicArn: envelope.TopicArn,
+      token: envelope.Token as string,
+    });
     let response: Response;
     try {
       response = await fetchImpl(subscribeUrl.href, {
@@ -586,13 +713,16 @@ export async function parseSesWebhook(options: SesWebhookOptions, request: Webho
 
 /** Creates an Amazon SES v2 outbound mail provider with optional verified SNS webhook support. */
 export function createSesProvider(options: SesOptions): MailProvider {
-  const url = sesEndpoint(options.region);
+  const region = assertValidRegion(options.region);
+  const url = sesEndpoint(region);
   const fetchImpl = options.fetch ?? fetch;
   const timeoutMs = options.timeoutMs ?? DEFAULT_SEND_TIMEOUT_MS;
-  const bareFrom = extractAddress(options.from);
   const certCache = new Map<string, X509Certificate>();
-  if (options.snsTopicArn !== undefined && !SES_SNS_TOPIC_ARN_PATTERN.test(options.snsTopicArn)) {
-    throw new Error('invalid SES SNS topic ARN');
+  if (options.configurationSet !== undefined && !SES_CONFIGURATION_SET_PATTERN.test(options.configurationSet)) {
+    throw new Error('invalid SES configuration set');
+  }
+  if (options.snsTopicArn !== undefined) {
+    assertValidTopicArn(options.snsTopicArn, region);
   }
 
   return {
@@ -600,18 +730,18 @@ export function createSesProvider(options: SesOptions): MailProvider {
     enabled: true,
     sendRetrySafety: 'never',
     async send(mail) {
-      let raw: Buffer;
+      let built: { raw: Buffer; fromEmailAddress: string };
       try {
-        raw = await buildRawMime(mail, options);
+        built = await buildRawMime(mail, options);
       } catch {
         return { status: 'rejected', error: 'bad_request', code: 'SES_MIME_ERROR' };
       }
       const payload = JSON.stringify({
-        FromEmailAddress: bareFrom,
+        FromEmailAddress: built.fromEmailAddress,
         ...(options.configurationSet ? { ConfigurationSetName: options.configurationSet } : {}),
         Content: {
           Raw: {
-            Data: raw.toString('base64'),
+            Data: built.raw.toString('base64'),
           },
         },
       });

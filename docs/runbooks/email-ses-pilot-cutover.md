@@ -26,11 +26,11 @@ In the AWS Console (region **Asia Pacific (Singapore) `ap-southeast-1`**) -> **A
 2. Publish the **3 DKIM `CNAME` records** SES provides in `ludy.vn` DNS (turn proxy off / DNS-only if using Cloudflare, so `CNAME` resolution reaches AWS DKIM keys).
 3. **Custom `MAIL FROM` domain (recommended vs default):**
    - **Option A (recommended, custom `MAIL FROM`):** Configure a dedicated unused subdomain such as `bounce.ludy.vn` with behavior on failure `USE_DEFAULT_VALUE`, and publish:
-     - `bounce.ludy.vn` `MX` `10 feedback-smtp.ap-southeast-1.amazonses.com`
+     - `bounce.ludy.vn` `MX` `10 feedback-smtp.ap-southeast-1.amazonaws.com`
      - `bounce.ludy.vn` `TXT` `"v=spf1 include:amazonses.com ~all"`
      Custom `MAIL FROM` aligns the envelope sender (`SPF`) with `ludy.vn` and avoids `via amazonses.com` labels in mail clients. Never use the root domain `ludy.vn` or your `INBOUND_DOMAIN` subdomain as `MAIL FROM` (their `MX` records must stay intact).
-   - **Option B (default `amazonses.com`):** Skip the custom `MAIL FROM` records; DMARC still passes via `DKIM` alignment on `ludy.vn`.
-4. **SPF on `ludy.vn`:** Ensure `ludy.vn` has a single `v=spf1` `TXT` record that includes `include:amazonses.com` (merge into any existing `v=spf1` record rather than adding a second `TXT` record).
+   - **Option B (default `amazonses.com`):** Skip the custom `MAIL FROM` records; DMARC still passes via `DKIM` alignment on `ludy.vn` (and SPF is checked against Amazon's `amazonses.com` return-path domain).
+4. **SPF note for root `ludy.vn`:** Under both Option A (`bounce.ludy.vn`) and Option B (`amazonses.com`), receiving servers evaluate SPF on the `MAIL FROM` domain rather than `ludy.vn`. Do **not** add `include:amazonses.com` to `ludy.vn`'s own `v=spf1` record unless another mail system uses `@ludy.vn` directly as its envelope return-path, preserving SPF DNS lookup headroom for existing senders on the root domain.
 5. **DMARC on `_dmarc.ludy.vn`:** If not already published, start with monitoring mode:
    - `_dmarc.ludy.vn` `TXT` `"v=DMARC1; p=none; rua=mailto:<dmarc-aggregate-mailbox>; adkim=r; aspf=r"`
    - Move to `p=quarantine` after confirming aggregate DMARC reports pass.
@@ -103,7 +103,7 @@ umask 077
 cp /opt/ludy/.env "/opt/ludy/.env.bak-$(date -u +%Y%m%dT%H%M%SZ)"
 ```
 
-2. Update the mail variables in `/opt/ludy/.env` (keep `SMTP_FROM` on a verified `ludy.vn` address, e.g. `Ludy <noreply@<verified-domain>>`):
+2. Update the mail variables in `/opt/ludy/.env`. Keep `SMTP_FROM` as a **bare email address** on the verified `ludy.vn` domain (for example `noreply@<verified-domain>`, never `Ludy <noreply@...>`), because `docker-compose.yml` sets `GOTRUE_SMTP_ADMIN_EMAIL=${SMTP_FROM}` alongside `GOTRUE_SMTP_SENDER_NAME=${BRAND_NAME:-Ludy}` (while Ludy's `ses` and `smtp` providers wrap the bare address with `BRAND_NAME` automatically):
 
 ```dotenv
 # Bundled Supabase Auth SMTP (SES SMTP credentials from section 4)
@@ -111,7 +111,7 @@ SMTP_HOST=email-smtp.ap-southeast-1.amazonaws.com
 SMTP_PORT=587
 SMTP_USER=<ses-smtp-username>
 SMTP_PASS=<ses-smtp-password>
-SMTP_FROM=Ludy <noreply@<verified-domain>>
+SMTP_FROM=noreply@<verified-domain>
 
 # Ludy kernel & module mail (SES v2 HTTP API + SNS webhooks)
 MAIL_PROVIDER=ses
@@ -160,24 +160,24 @@ pnpm pilot:check -- --url https://<PUBLIC_DOMAIN>
 
 Expected: `Outbound mail`, `Email confirmation and MFA step-up`, and `Secrets` all report `PASS`, and `0` checks report `FAIL`.
 
-## 6. Verify with Amazon SES Mailbox Simulator
+## 6. Verify with Amazon SES Mailbox Simulator (test VM before pilot cutover)
 
-Test both paths without emailing external mailboxes, using a dedicated internal test org (never a customer org, because the bounce simulator inserts a `mail_suppression` row for that org):
+Run end-to-end Mailbox Simulator tests on an **owner-approved test / staging VM** before cutting over the pilot host (never run bounce/complaint simulations against the pilot database, because simulated bounces insert `mail_message`, `mail_event`, and `mail_suppression` rows):
 
 1. **Delivered (`success@simulator.amazonses.com`):**
-   - Trigger a transactional mail (e.g. test invite in the internal test org) to `success@simulator.amazonses.com`.
+   - On the approved test environment, trigger a transactional mail to `success@simulator.amazonses.com`.
    - Confirm `ludy_kernel.mail_message` moves to `status = 'sent'` (with `provider = 'ses'` and `provider_message_id`), then after SNS delivers the `Delivery` notification, moves to `status = 'delivered'` with a `ludy_kernel.mail_event` row (`kind = 'delivered'`).
 2. **Hard bounce (`bounce@simulator.amazonses.com`):**
-   - Trigger a mail in the internal test org to `bounce@simulator.amazonses.com`.
+   - Trigger a mail on the test environment to `bounce@simulator.amazonses.com`.
    - Confirm `ludy_kernel.mail_event` records `kind = 'bounce_hard'`, `ludy_kernel.mail_message.status = 'bounced'`, and `ludy_kernel.mail_suppression` records `scope = 'all'`, `reason = 'hard_bounce'`.
    - Trigger a second mail to `bounce@simulator.amazonses.com` in the same test org and confirm `mail_message.status = 'suppressed'` (blocked locally without calling SES).
 3. **Complaint (`complaint@simulator.amazonses.com`):**
-   - Trigger a mail in the internal test org to `complaint@simulator.amazonses.com`.
+   - Trigger a mail on the test environment to `complaint@simulator.amazonses.com`.
    - Confirm `ludy_kernel.mail_event` records `kind = 'complaint'`, `ludy_kernel.mail_message.status = 'complained'`, and `ludy_kernel.mail_suppression` records `scope = 'marketing'`, `reason = 'complaint'`.
-4. **Supabase Auth SMTP check:**
-   - Send a password recovery or confirmation email to a controlled test mailbox and verify it arrives via `email-smtp.ap-southeast-1.amazonaws.com` with passing SPF, DKIM (`ludy.vn`), and DMARC headers.
-5. **Audit logs for zero PII leakage:**
-   - Check `docker compose logs api worker` around the tests and verify no recipient email address, subject, or invite token appears in any log line.
+4. **Pilot cutover operational checks (approved cutover window only):**
+   - Verify `/readyz`, container `[mail] Amazon SES (ap-southeast-1)` startup logs, SNS subscription status (`SubscriptionArn` confirmed), and `pnpm pilot:check -- --url https://<PUBLIC_DOMAIN>`.
+   - Send one real auth recovery/confirmation check to an operator-controlled mailbox and verify it arrives via `email-smtp.ap-southeast-1.amazonaws.com` with passing SPF, DKIM (`ludy.vn`), and DMARC headers.
+   - Check `docker compose logs api worker` around the cutover and verify no recipient email address, subject, or invite token appears in any log line.
 
 ## 7. Rollback to previous SMTP provider
 

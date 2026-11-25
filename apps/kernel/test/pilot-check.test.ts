@@ -446,6 +446,8 @@ describe('pilot-check settings', () => {
       SES_SECRET_ACCESS_KEY: fake('ses-secret', 32),
       SMTP_FROM: 'noreply@mail.example.com',
       SMTP_HOST: 'email-smtp.ap-southeast-1.amazonaws.com',
+      SMTP_USER: fake('ses-smtp-user'),
+      SMTP_PASS: fake('ses-smtp-pass', 32),
     };
     expect(failing(sesBase)).toEqual([]);
     expect(checkEnv(sesBase).find((r) => r.item === 'Outbound mail' && r.status === 'manual')?.message).toContain('SES_SNS_TOPIC_ARN is unset');
@@ -465,10 +467,31 @@ describe('pilot-check settings', () => {
       expect.stringContaining('SMTP_FROM'),
     ]);
     expect(failing({ ...sesBase, SES_REGION: 'bad-region' })).toEqual([expect.stringContaining('SES_REGION is not a valid AWS region')]);
+    expect(failing({ ...sesBase, SES_CONFIGURATION_SET: 'bad name!' })).toEqual([expect.stringContaining('SES_CONFIGURATION_SET is invalid')]);
     expect(failing({ ...sesBase, SES_SNS_TOPIC_ARN: 'arn:aws:sns:us-east-1:123456789012:topic' })).toEqual([expect.stringContaining('must match SES_REGION')]);
     expect(failing({ ...sesBase, SMTP_HOST: 'mailpit' })).toEqual([expect.stringContaining('bundled Supabase Auth still sends confirmation and recovery emails over SMTP')]);
-    // With a remote IdP (no bundled Supabase Auth), MAIL_PROVIDER=ses does not require SMTP_HOST.
-    expect(failing({ ...sesWithSns, SMTP_HOST: undefined, AUTH_DISABLE_SIGNUP: undefined, AUTH_UPSTREAM_URL: '', PUBLIC_AUTH_URL: 'https://idp.example.test/auth/v1', AUTH_ALLOWED_EMAILS: 'owner@example.test' })).toEqual([]);
+    expect(failing({ ...sesBase, SMTP_USER: undefined })).toEqual([expect.stringContaining('SMTP_USER and SMTP_PASS')]);
+    expect(failing({ ...sesBase, SMTP_PASS: undefined })).toEqual([expect.stringContaining('SMTP_USER and SMTP_PASS')]);
+    expect(failing({ ...sesBase, SMTP_FROM: 'Ludy <noreply@ludy.local>' })).toEqual([
+      expect.stringContaining('SMTP_FROM must be a bare email address'),
+      expect.stringContaining('SMTP_FROM set to a sender address'),
+    ]);
+    expect(failing({ ...sesBase, SMTP_FROM: 'Ludy <noreply@mail.example.com>' })).toEqual([
+      expect.stringContaining('SMTP_FROM must be a bare email address'),
+    ]);
+    // With a remote IdP (no bundled Supabase Auth), MAIL_PROVIDER=ses does not require SMTP_HOST or SES SMTP credentials.
+    expect(
+      failing({
+        ...sesWithSns,
+        SMTP_HOST: undefined,
+        SMTP_USER: undefined,
+        SMTP_PASS: undefined,
+        AUTH_DISABLE_SIGNUP: undefined,
+        AUTH_UPSTREAM_URL: '',
+        PUBLIC_AUTH_URL: 'https://idp.example.test/auth/v1',
+        AUTH_ALLOWED_EMAILS: 'owner@example.test',
+      }),
+    ).toEqual([]);
     expect(failing({ ...READY, MAIL_PROVIDER: 'postmark' })).toEqual([expect.stringContaining('MAIL_PROVIDER=postmark is unknown')]);
   });
 

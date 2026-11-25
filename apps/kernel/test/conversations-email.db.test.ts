@@ -471,6 +471,16 @@ suite('customer email in the Inbox on PostgreSQL (#2439)', () => {
     await deliver(o.address, raw({ to: o.address, messageId: '<q2@mau.test>', inReplyTo: mail?.message_id_header, subject: 'Re: Hỏi giá gạo', body: 'Cảm ơn, tôi lấy 10 ký.' }));
     expect((await threads(o)).length).toBe(1);
     expect((await threads(o))[0]).toMatchObject({ status: 'new', last_seq: 3 });
+
+    // Amazon SES replaces outbound MIME Message-ID with <providerMessageId@<region>.amazonses.com>;
+    // a client reply carrying only In-Reply-To with the SES Message-ID still joins the existing thread.
+    const secondReply = await exec<{ messageId: string }>(o, o.owner, 'kernel.conversation.reply', { conversationId: thread?.id, lastSeenSeq: 3, body: 'Dạ 250.000đ tổng cộng ạ.' });
+    const [sesMail] = await rows<{ id: string }>('SELECT id FROM ludy_kernel.mail_message WHERE org_id = $1 AND source_id = $2', [o.orgId, secondReply.messageId]);
+    const sesBegun = await sys<{ attempt: number }>(o, 'kernel.mail.queue.begin', { messageId: sesMail?.id, provider: 'ses', safety: 'never' });
+    await sys(o, 'kernel.mail.queue.record', { messageId: sesMail?.id, attempt: sesBegun.attempt, outcome: 'sent', providerMessageId: '010f019abc-ses-msg-id' });
+    await deliver(o.address, raw({ to: o.address, messageId: '<q3@mau.test>', inReplyTo: '<010f019abc-ses-msg-id@ap-southeast-1.amazonses.com>', subject: 'Re: Hỏi giá gạo', body: 'Chốt đơn giúp tôi.' }));
+    expect((await threads(o)).length).toBe(1);
+    expect((await threads(o))[0]).toMatchObject({ status: 'new', last_seq: 5 });
   });
 
   it('settles a failed or unknown send on the message, and a stopped address fails it at once', async () => {

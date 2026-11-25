@@ -9,7 +9,7 @@
 import { randomBytes } from 'node:crypto';
 import { ORG_HEADER } from '@ludy/kernel-contract';
 import { S3BlobStore, parseVaultKey, type S3Sender } from '@ludy/kernel-runtime';
-import { SES_REGION_PATTERN, SES_SNS_TOPIC_ARN_PATTERN } from '@ludy/mail';
+import { SES_CONFIGURATION_SET_PATTERN, SES_REGION_PATTERN, SES_SNS_TOPIC_ARN_PATTERN } from '@ludy/mail';
 import { AVAILABLE_MODULES, SAMPLE_DB_PASSWORDS } from './config.ts';
 import { parseAllowedOrigins } from './cors.ts';
 import { parseExportKey } from './export-seal.ts';
@@ -354,6 +354,13 @@ export function checkEnv(env: Env): CheckResult[] {
         : `SMTP_HOST is ${smtpHost ?? 'unset (docker compose then uses the local Mailpit)'}: with confirmations on, set a real SMTP server or nobody can confirm an email`,
     );
   }
+  if (!ownProvider && smtpHost && /^email-smtp\.[a-z0-9-]+\.amazonaws\.com$/i.test(smtpHost) && (!value(env, 'SMTP_USER') || !value(env, 'SMTP_PASS'))) {
+    auth.push(`SMTP_HOST=${smtpHost} uses Amazon SES SMTP for bundled Supabase Auth, so SMTP_USER and SMTP_PASS (from SES SMTP credentials) must both be set`);
+  }
+  const rawSmtpFrom = value(env, 'SMTP_FROM');
+  if (!ownProvider && rawSmtpFrom && (rawSmtpFrom.includes('<') || rawSmtpFrom.includes('>'))) {
+    auth.push('SMTP_FROM must be a bare email address (for example noreply@ludy.vn): bundled Supabase Auth already adds GOTRUE_SMTP_SENDER_NAME (BRAND_NAME)');
+  }
   const stepUp = value(env, 'AUTH_STEP_UP');
   if (stepUp !== undefined && stepUp !== 'required') auth.push(`AUTH_STEP_UP=${stepUp}: approvals and member changes must need MFA; set AUTH_STEP_UP=required`);
   add('Email confirmation and MFA step-up', auth, 'AUTH_AUTOCONFIRM=false with an SMTP server, and AUTH_STEP_UP=required');
@@ -366,9 +373,13 @@ export function checkEnv(env: Env): CheckResult[] {
     else if (!SES_REGION_PATTERN.test(sesRegion)) sesProblems.push('SES_REGION is not a valid AWS region (for example ap-southeast-1)');
     if (!value(env, 'SES_ACCESS_KEY_ID')) sesProblems.push('MAIL_PROVIDER=ses needs SES_ACCESS_KEY_ID');
     if (!value(env, 'SES_SECRET_ACCESS_KEY')) sesProblems.push('MAIL_PROVIDER=ses needs SES_SECRET_ACCESS_KEY');
-    const smtpFrom = value(env, 'SMTP_FROM');
-    if (!smtpFrom || smtpFrom.endsWith('.local')) {
+    const bareSmtpFrom = rawSmtpFrom ? (/<([^<>\s]+)>/.exec(rawSmtpFrom)?.[1] ?? rawSmtpFrom).trim().toLowerCase() : '';
+    if (!/^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/.test(bareSmtpFrom) || bareSmtpFrom.endsWith('.local')) {
       sesProblems.push('MAIL_PROVIDER=ses needs SMTP_FROM set to a sender address on a domain verified in Amazon SES');
+    }
+    const configurationSet = value(env, 'SES_CONFIGURATION_SET');
+    if (configurationSet && !SES_CONFIGURATION_SET_PATTERN.test(configurationSet)) {
+      sesProblems.push('SES_CONFIGURATION_SET is invalid (at most 64 letters, digits, - and _)');
     }
     const snsTopicArn = value(env, 'SES_SNS_TOPIC_ARN');
     if (snsTopicArn) {

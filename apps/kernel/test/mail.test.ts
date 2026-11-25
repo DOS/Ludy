@@ -1,13 +1,16 @@
 // Outbound mail (issue #129): the SMTP adapter against an in-process SMTP server, the log fallback, retries, the
 // invite template and the configuration guards.
 import { createServer, type AddressInfo, type Server, type Socket } from 'node:net';
+import type pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { loadConfig } from '../src/config.ts';
+import { createHttpApp } from '../src/http.ts';
 import { acceptUrl, createInviteMailSender, inviteMail, type InviteMailInput } from '../src/invite-mail.ts';
 import { classifySmtpError, createLogProvider, createSmtpProvider, WebhookRejected, type MailProvider, type OutboundMail, type SendResult } from '@ludy/mail';
 import { createMailer, deliver, describeMailError, describeMailer } from '../src/mail.ts';
 import { acceptMailWebhook } from '../src/mail-events.ts';
-import type { Runtime } from '@ludy/kernel-runtime';
+import { RateLimiter } from '../src/rate-limit.ts';
+import type { BlobStore, Runtime } from '@ludy/kernel-runtime';
 
 const TOKEN = 'T0kenT0kenT0kenT0kenT0kenT0kenT0kenT0kenT0k';
 const INVITE: InviteMailInput = {
@@ -480,5 +483,50 @@ describe('mail configuration', () => {
         req,
       ),
     ).toEqual({ status: 400, code: 'WEBHOOK_MALFORMED' });
+  });
+
+  it('rejects unknown mail webhook providers (404) and throttles refused probes before bodyLimit (#4960)', async () => {
+    let parseCalls = 0;
+    const app = createHttpApp({
+      config: loadConfig({ ...base, WEB_DIST: '/nonexistent' }),
+      runtime: { installed: () => true, modules: () => ['kernel'], orgless: async () => 1 } as unknown as Runtime,
+      store: {} as BlobStore,
+      authenticate: async () => {
+        throw new Error('should not authenticate webhook');
+      },
+      pool: {} as pg.Pool,
+      aiEnabled: false,
+      mailer: {
+        name: 'ses',
+        enabled: true,
+        sendRetrySafety: 'never',
+        send: async () => ({ status: 'accepted' }),
+        parseWebhook: async (req) => {
+          parseCalls += 1;
+          if (req.headers['x-bad'] === '1') throw new WebhookRejected('signature');
+          return [];
+        },
+      },
+      mailWebhookLimit: new RateLimiter({ perMinute: 2 }),
+    });
+
+    const wrongProvider = await app.request('/webhooks/mail/resend', { method: 'POST', body: '{}' });
+    expect(wrongProvider.status).toBe(404);
+    expect(parseCalls).toBe(0);
+
+    // Verified deliveries (200) do not spend the per-IP refusal budget.
+    for (let i = 0; i < 4; i++) {
+      expect((await app.request('/webhooks/mail/ses', { method: 'POST', body: '{}' })).status).toBe(200);
+    }
+    expect(parseCalls).toBe(4);
+
+    // Refused probes charge the per-IP limiter and are blocked with 429 before parseWebhook or bodyLimit.
+    expect((await app.request('/webhooks/mail/ses', { method: 'POST', headers: { 'x-bad': '1' }, body: '{}' })).status).toBe(401);
+    expect((await app.request('/webhooks/mail/ses', { method: 'POST', headers: { 'x-bad': '1' }, body: '{}' })).status).toBe(401);
+    expect(parseCalls).toBe(6);
+
+    const limited = await app.request('/webhooks/mail/ses', { method: 'POST', headers: { 'x-bad': '1' }, body: 'x'.repeat(1024 * 1024) });
+    expect(limited.status).toBe(429);
+    expect(parseCalls).toBe(6);
   });
 });
