@@ -571,6 +571,8 @@ export const KERNEL_ERROR_CODES = [
   // The recorder's Vy suggesting a meeting title and the rename (#3947).
   'TITLE_BUSY',
   'COMMITMENTS_BUSY',
+  // Vy listing what a meeting left open (#4768).
+  'OPEN_POINTS_BUSY',
   'MEETING_TITLE_EMPTY',
   'MEETING_TITLE_TOO_LONG',
   // The weekly digest across meetings (#3949).
