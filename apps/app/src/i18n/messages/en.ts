@@ -20475,6 +20475,7 @@ export const en = {
         otp_mail_data: 'Prepare a direct signing link OTP email message (system)',
       },
       docx_convert: {
+        authorize: 'Check permission to upload a Word (.docx) document for eSign',
         complete: 'Record sandbox .docx to PDF conversion result from worker',
         pending: 'Read pending .docx to PDF conversion requests for worker sweep recovery',
         request: 'Queue a sandboxed .docx to PDF conversion request',
@@ -20981,6 +20982,8 @@ export const en = {
     docxConverting: 'Converting Word (.docx) file to A4 PDF...',
     docxConvertedReady: 'Converted to A4 PDF ({pages} pages): {filename}',
     docxWarningBanner: 'Converted from .docx; please verify the PDF page layout before sending for signature.',
+    docxWarningOpenPending: 'Could not verify your account yet; keeping the conversion warning here so you can retry opening.',
+    docxCreateIdentityPending: 'Could not verify your account yet, so the draft was not created. Click Create draft again to retry.',
     docxEmpty: 'The Word (.docx) file is empty.',
     docxTooLarge: 'Word (.docx) file exceeds 10 MB.',
     docxInvalidType: 'Only Office Open XML (.docx) files are supported.',

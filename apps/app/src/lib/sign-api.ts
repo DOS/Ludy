@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Typed eSign API client aligned with #3323 core commands/queries, #3324 public ceremony routes, and #3351 Vy AI (#3325).
+import { createORPCClient } from '@orpc/client';
+import { RPCLink } from '@orpc/client/fetch';
+import type { ContractRouterClient } from '@orpc/contract';
 import {
   SIGN_DEPOSIT_DUE_DAYS_MAX,
   SIGN_DEPOSIT_MEMO_TOKEN_PATTERN,
@@ -8,6 +11,7 @@ import {
   SIGN_MAX_PACKET_DOCS,
   SIGN_MAX_PAGES,
   SIGN_WEBHOOK_EVENT_TYPES,
+  type contract,
   type SignApiKeyRecord,
   type SignApiKeyScope,
   type SignContractDraftVariables,
@@ -52,10 +56,11 @@ import {
   type SignWebhookRecord,
 } from '@ludy/kernel-contract';
 import { apiFetch, client, clientForOrg, fetchFile, getCurrentOrg, orglessClient, uploadFiles } from './api.ts';
-import { apiUrl } from './api-base.ts';
-import { accessToken } from './auth.ts';
+import { apiUrl, serverOrigin } from './api-base.ts';
+import * as authMod from './auth.ts';
 import {
   ClientError,
+  apiErrorFromResponse,
   isMfaRequired,
   isModuleOff,
   isOrgAccessRevoked,
@@ -65,6 +70,8 @@ import {
   retryWhileBusy,
 } from './errors.ts';
 import { isNetworkFailure } from './network-error.ts';
+import { requestHeaders } from './org-access.ts';
+import { sessionIdFromToken } from './sessions.ts';
 import type {
   SignDeliveryMode,
   SignDetectedTag,
@@ -486,9 +493,224 @@ export interface PublicCertificateVerifyResponse {
   eventCount?: number;
 }
 
-export async function uploadSignPdf(file: File, orgSlug?: string | null): Promise<{ fileId: string }> {
-  const result = await uploadFiles([file], 'sign_document', orgSlug);
-  const uploaded = result.files[0];
+export class SignSessionMismatchError extends Error {
+  constructor() {
+    super('SIGN_SESSION_MISMATCH');
+    this.name = 'SignSessionMismatchError';
+  }
+}
+
+export class SignSessionUnverifiedError extends Error {
+  constructor() {
+    super('SIGN_SESSION_UNVERIFIED');
+    this.name = 'SignSessionUnverifiedError';
+  }
+}
+
+export interface VerifiedSessionToken {
+  token: string;
+  sessionId: string | null;
+}
+
+type AuthSessionClient = {
+  getSession?: () => Promise<{
+    data?: { session?: { access_token?: string | null } | null };
+    error?: unknown;
+  }>;
+};
+
+async function readFallbackAccessToken(): Promise<string | null> {
+  if (typeof authMod.accessToken !== 'function') {
+    return null;
+  }
+  try {
+    return await authMod.accessToken();
+  } catch {
+    throw new SignSessionUnverifiedError();
+  }
+}
+
+export async function readVerifiedSession(): Promise<VerifiedSessionToken> {
+  let token: string | null = null;
+  let usedGetSession = false;
+  const authFn = (authMod as { auth?: unknown }).auth;
+  if (typeof authFn === 'function') {
+    let clientInstance: AuthSessionClient | null | undefined;
+    try {
+      clientInstance = (authFn as () => AuthSessionClient | null | undefined)();
+    } catch {
+      throw new SignSessionUnverifiedError();
+    }
+    if (clientInstance && typeof clientInstance.getSession === 'function') {
+      usedGetSession = true;
+      let res: {
+        data?: { session?: { access_token?: string | null } | null };
+        error?: unknown;
+      } | null;
+      try {
+        res = await clientInstance.getSession();
+      } catch {
+        throw new SignSessionUnverifiedError();
+      }
+      if (res?.error) {
+        throw new SignSessionUnverifiedError();
+      }
+      token = res?.data?.session?.access_token ?? null;
+    }
+  }
+  if (!usedGetSession) {
+    token = await readFallbackAccessToken();
+  }
+  if (!token) {
+    throw new SignSessionUnverifiedError();
+  }
+  return { token, sessionId: sessionIdFromToken(token) };
+}
+
+export function subscribeSignAuthStateChange(
+  onChange: (event: string, sessionId: string | null) => void,
+): () => void {
+  const authFn = (authMod as { auth?: unknown }).auth;
+  if (typeof authFn !== 'function') {
+    return () => {};
+  }
+  let clientInstance: {
+    onAuthStateChange?: (
+      cb: (event: string, session?: { access_token?: string | null } | null) => void,
+    ) => { data?: { subscription?: { unsubscribe?: () => void } } };
+  } | null;
+  try {
+    clientInstance = (authFn as () => typeof clientInstance)();
+  } catch {
+    return () => {};
+  }
+  if (!clientInstance || typeof clientInstance.onAuthStateChange !== 'function') {
+    return () => {};
+  }
+  const res = clientInstance.onAuthStateChange((event, session) => {
+    if (event === 'INITIAL_SESSION') return;
+    const nextSessionId = session?.access_token ? sessionIdFromToken(session.access_token) : null;
+    onChange(event, nextSessionId);
+  });
+  return () => {
+    try {
+      res?.data?.subscription?.unsubscribe?.();
+    } catch {
+      // Ignore cleanup failures from mocked or disposed auth clients.
+    }
+  };
+}
+
+async function resolvePinnedRequestHeaders(
+  orgSlug: string | null | undefined,
+  expectedSessionId?: string | null,
+): Promise<Record<string, string>> {
+  const { token, sessionId: liveSessionId } = await readVerifiedSession();
+  if (expectedSessionId !== undefined) {
+    if (expectedSessionId) {
+      if (!liveSessionId) {
+        throw new SignSessionUnverifiedError();
+      }
+      if (liveSessionId !== expectedSessionId) {
+        throw new SignSessionMismatchError();
+      }
+    } else if (liveSessionId !== null) {
+      throw new SignSessionMismatchError();
+    }
+  }
+  const resolvedOrg = orgSlug === undefined ? getCurrentOrg() : orgSlug;
+  return requestHeaders(token, resolvedOrg);
+}
+
+export async function fetchUserScopeForSession(
+  targetSlug: string,
+  expectedSessionId?: string | null,
+): Promise<{ orgId: string | null; userId: string | null; sessionId: string | null } | null> {
+  const before = await readVerifiedSession();
+  if (expectedSessionId && before.sessionId !== expectedSessionId) {
+    return null;
+  }
+  const rpcUrl = `${serverOrigin()}/api/rpc`;
+  const meClient = createORPCClient<ContractRouterClient<typeof contract>>(
+    new RPCLink({ url: rpcUrl, headers: () => requestHeaders(before.token, null) }),
+  );
+  const me = await meClient.me.get();
+  let orgId = me.orgs.find((o) => o.slug === targetSlug)?.orgId ?? null;
+  if (!orgId && targetSlug && (!getCurrentOrg() || getCurrentOrg() === targetSlug)) {
+    const orgClient = createORPCClient<ContractRouterClient<typeof contract>>(
+      new RPCLink({ url: rpcUrl, headers: () => requestHeaders(before.token, targetSlug) }),
+    );
+    const orgDetail = await orgClient.org.get();
+    orgId = orgDetail?.slug === targetSlug ? orgDetail.orgId : null;
+  }
+  const after = await readVerifiedSession();
+  if (after.sessionId !== before.sessionId || (expectedSessionId && after.sessionId !== expectedSessionId)) {
+    return null;
+  }
+  return {
+    userId: me.userId ?? null,
+    orgId,
+    sessionId: after.sessionId,
+  };
+}
+
+export async function uploadSignPdf(
+  file: File,
+  orgSlug?: string | null,
+  expectedSessionId?: string | null,
+): Promise<{ fileId: string }> {
+  if (expectedSessionId === undefined) {
+    const result = await uploadFiles([file], 'sign_document', orgSlug);
+    const uploaded = result.files[0];
+    if (!uploaded) throw new Error('UPLOAD_FAILED');
+    return { fileId: uploaded.fileId };
+  }
+  const resolvedOrg = orgSlug === undefined ? getCurrentOrg() : orgSlug;
+  const uploadsMode = typeof authMod.getConfig === 'function' ? authMod.getConfig().uploads : 'local';
+  if (uploadsMode === 'presigned') {
+    const grantHeaders = await resolvePinnedRequestHeaders(resolvedOrg, expectedSessionId);
+    const grantRes = await fetch(apiUrl('/api/files/uploads'), {
+      method: 'POST',
+      headers: { ...grantHeaders, 'content-type': 'application/json' },
+      body: JSON.stringify({ purpose: 'sign_document' }),
+    });
+    if (!grantRes.ok) throw await apiErrorFromResponse(grantRes);
+    const grant = (await grantRes.json()) as {
+      uploadId: string;
+      url: string;
+      fields: Record<string, string>;
+    };
+    await resolvePinnedRequestHeaders(resolvedOrg, expectedSessionId);
+    const bucketForm = new FormData();
+    for (const [name, value] of Object.entries(grant.fields)) bucketForm.append(name, value);
+    bucketForm.append('file', file);
+    const stored = await fetch(grant.url, { method: 'POST', body: bucketForm, credentials: 'omit' }).catch(() => null);
+    if (!stored?.ok) {
+      throw new ClientError('inbox.storageUploadFailed', (t) => t('inbox.storageUploadFailed', { name: file.name }));
+    }
+    const completed = await retryWhileBusy(async () => {
+      const completeHeaders = await resolvePinnedRequestHeaders(resolvedOrg, expectedSessionId);
+      const res = await fetch(apiUrl(`/api/files/uploads/${grant.uploadId}/complete`), {
+        method: 'POST',
+        headers: { ...completeHeaders, 'content-type': 'application/json' },
+        body: JSON.stringify({ filename: file.name, purpose: 'sign_document' }),
+      });
+      if (!res.ok) throw await apiErrorFromResponse(res);
+      return (await res.json()) as { fileId: string };
+    });
+    if (!completed.fileId) throw new Error('UPLOAD_FAILED');
+    return { fileId: completed.fileId };
+  }
+  const data = await retryWhileBusy(async () => {
+    const headers = await resolvePinnedRequestHeaders(resolvedOrg, expectedSessionId);
+    const form = new FormData();
+    form.append('purpose', 'sign_document');
+    form.append('file', file);
+    const res = await fetch(apiUrl('/api/files'), { method: 'POST', headers, body: form });
+    if (!res.ok) throw await apiErrorFromResponse(res);
+    return (await res.json()) as { files: Array<{ fileId: string }> };
+  });
+  const uploaded = data.files[0];
   if (!uploaded) throw new Error('UPLOAD_FAILED');
   return { fileId: uploaded.fileId };
 }
@@ -575,17 +797,39 @@ export const signApi = {
   getEnvelope: (envelopeId: string) => client.sign.envelope.get({ envelopeId }),
   getEnvelopeEvents: (envelopeId: string) => client.sign.envelope.events({ envelopeId }),
   verifyEnvelope: (envelopeId: string) => client.sign.envelope.verify({ envelopeId }),
-  createEnvelope: (input: {
-    title: string;
-    subject?: string;
-    message?: string;
-    routingMode: SignRoutingMode;
-    allowDelegation?: boolean;
-    sourceFileId: string;
-    sourceDocxSha256?: string;
-    expiresAt?: string | null;
-    autoRemindBeforeExpiry?: boolean;
-  }) => client.sign.envelope.create({ ...input, sourceKind: 'standalone', idempotencyKey: crypto.randomUUID() }),
+  createEnvelope: (
+    input: {
+      title: string;
+      subject?: string;
+      message?: string;
+      routingMode: SignRoutingMode;
+      allowDelegation?: boolean;
+      sourceFileId: string;
+      sourceDocxSha256?: string;
+      expiresAt?: string | null;
+      autoRemindBeforeExpiry?: boolean;
+    },
+    orgSlug?: string | null,
+    expectedSessionId?: string | null,
+  ) => {
+    const resolvedOrg = orgSlug === undefined ? getCurrentOrg() : orgSlug;
+    const scopedClient =
+      expectedSessionId !== undefined
+        ? createORPCClient<ContractRouterClient<typeof contract>>(
+            new RPCLink({
+              url: `${serverOrigin()}/api/rpc`,
+              headers: () => resolvePinnedRequestHeaders(resolvedOrg, expectedSessionId),
+            }),
+          )
+        : orgSlug && typeof clientForOrg === 'function'
+          ? clientForOrg(orgSlug)
+          : client;
+    return scopedClient.sign.envelope.create({
+      ...input,
+      sourceKind: 'standalone',
+      idempotencyKey: crypto.randomUUID(),
+    });
+  },
   updateEnvelope: (input: {
     envelopeId: string;
     expectedVersion?: number;
@@ -1094,7 +1338,7 @@ export async function loadCeremonyWorkspaceProfiles(orgNameHint?: string | null)
   stamps: SignOrgStampItem[];
 } | null> {
   try {
-    const tok = await accessToken();
+    const tok = await readFallbackAccessToken();
     if (!tok) return null;
     const me = await orglessClient.me.get();
     if (!me.orgs.length) return null;
