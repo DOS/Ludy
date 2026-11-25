@@ -1848,6 +1848,40 @@ suite('meetings module database integration tests (#2576)', () => {
     }
   });
 
+  it('34h. C2 Picker route (#3174): a Google Meet recording that is a video file only is picked before it is imported; the pick is the member\'s own, holds a Drive id and never reaches an audit row', async () => {
+    const PICK = '1AbCdEfGhIjKlMnOpQrStUvWxYz_-0123456789';
+    const pick = (who: string, input: Record<string, unknown>) => runtime.execute<{ recordingId: string; picked: true }>('kernel.meeting_platform.recording.pick', input, { actor: asUser(who), orgId });
+    const picked = (id: string) => admin(async (c) => (await c.query<{ picked_file_id: string | null; picked_at: string | null }>('SELECT picked_file_id, picked_at FROM ludy_kernel.meeting_platform_recording WHERE id = $1', [id])).rows[0]!);
+    const meet = await suggest('recorder', { provider: 'google_meet', hasAudio: false, hasVideo: true, hasTranscript: false });
+    const audio = await suggest('recorder', { hasAudio: true });
+    const transcript = await suggest('recorder', { provider: 'google_meet', hasAudio: false, hasVideo: false, hasTranscript: true });
+    setMeetingVideoImport(true);
+    try {
+      // No pick, no import: refused before a meeting is made, and the row stays suggested.
+      expect(await refusedWith(startImport('recorder', { recordingId: meet, language: 'vi', visibility: 'attendees' }))).toBe('MEETING_PLATFORM_PICK_REQUIRED');
+      expect(await recordingRow(meet)).toMatchObject({ status: 'suggested', meeting_id: null });
+      // Only the member's own row, and only one that needs a pick (not audio, not a transcript), and only a Drive id.
+      expect(await refusedWith(pick('owner', { recordingId: meet, fileId: PICK }))).toBe('MEETING_PLATFORM_NOT_FOUND');
+      expect(await refusedWith(pick('recorder', { recordingId: audio, fileId: PICK }))).toBe('MEETING_PLATFORM_NOT_FOUND');
+      expect(await refusedWith(pick('recorder', { recordingId: transcript, fileId: PICK }))).toBe('MEETING_PLATFORM_NOT_FOUND');
+      for (const fileId of ['short', '../../etc/passwd', `${PICK}?x=1`, 'a'.repeat(129)]) expect(await refusedWith(pick('recorder', { recordingId: meet, fileId })), fileId).not.toBeNull();
+      expect(await picked(meet)).toEqual({ picked_file_id: null, picked_at: null });
+      // The pick is kept on the row, and then the import starts.
+      expect(await pick('recorder', { recordingId: meet, fileId: PICK })).toEqual({ recordingId: meet, picked: true });
+      expect((await picked(meet)).picked_file_id).toBe(PICK);
+      const { meetingId } = await startImport('recorder', { recordingId: meet, language: 'vi', visibility: 'attendees' });
+      expect(await recordingRow(meet)).toMatchObject({ status: 'importing', meeting_id: meetingId });
+      // Once importing, a pick is refused: it can no longer change what the job reads.
+      expect(await refusedWith(pick('recorder', { recordingId: meet, fileId: `${PICK}X` }))).toBe('MEETING_PLATFORM_NOT_FOUND');
+      // The audit row names the recording, never the Drive file.
+      const audits = await admin(async (c) => (await c.query<{ detail: unknown }>(`SELECT detail FROM ludy_kernel.audit_event WHERE command = 'kernel.meeting_platform.recording.pick'`)).rows);
+      expect(audits.length).toBeGreaterThan(0);
+      expect(JSON.stringify(audits)).not.toContain(PICK);
+    } finally {
+      setMeetingVideoImport(false);
+    }
+  });
+
   it('34c. C2: take_transcript writes the claimed transcript-only recording as a tainted draft of Google\'s transcription, ends the meeting and marks the row imported; anyone else, or any other row, is refused and nothing is written (#3174)', async () => {
     const take = (who: string, input: Record<string, unknown>) =>
       runtime.execute<{ meetingId: string; stored: number }>('meetings.import.take_transcript', input, { actor: asUser(who), orgId });

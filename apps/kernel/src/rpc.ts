@@ -3196,6 +3196,7 @@ export function createRpcHandler(
       recordings: os.meetingPlatform.recordings.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.meeting_platform.recordings', {}, { actor, orgId }))),
       refresh: os.meetingPlatform.refresh.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.meeting_platform.refresh', input, { actor, orgId }))),
       dismiss: os.meetingPlatform.dismiss.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.meeting_platform.recording.dismiss', input, { actor, orgId }))),
+      pick: os.meetingPlatform.pick.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.meeting_platform.recording.pick', input, { actor, orgId }))),
       disconnect: os.meetingPlatform.disconnect.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.meeting_platform.disconnect', input, { actor, orgId }))),
       // A throwaway token is sealed for the sandbox account and dropped: the sandbox platform opens nothing, so the credential only has to exist. Connecting again is a reconnect of the same account.
       connectSandbox: os.meetingPlatform.connectSandbox.handler(({ context }) =>

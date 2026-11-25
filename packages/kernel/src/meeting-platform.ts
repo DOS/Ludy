@@ -25,6 +25,7 @@ import {
   zMeetingPlatformErrorCode,
   zMeetingPlatformListed,
   zMeetingPlatformProvider,
+  zMeetingPlatformRecordingPick,
   zMeetingPlatformRecordingRef,
   type CaptureCall,
   type MeetingPlatformConnectionView,
@@ -280,6 +281,24 @@ export const meetingPlatformRecordingDismiss = defineCommand({
   },
 });
 
+// The member picked the recording's file in Google Picker (#3174, ADR-0025 amendment): the Drive file id is kept on their own row, nothing else of the pick. A recording that needs no pick, is not the member's, or
+// is past the point of importing is not found. The id is checked by the worker's import job against the id Meet gave, so a wrong id fails the import (`pick_mismatch`), never reads another file.
+export const meetingPlatformRecordingPick = defineCommand({
+  name: 'kernel.meeting_platform.recording.pick',
+  input: zMeetingPlatformRecordingPick,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: EDITORS,
+  target: (input) => ({ type: 'kernel.meeting_platform_recording', id: input.recordingId }),
+  handler: async (ctx, input) => {
+    requireUser(ctx);
+    await sql`SELECT ludy_kernel.meeting_platform_recording_pick(${input.recordingId}::uuid, ${input.fileId}::text)`.execute(ctx.trx).catch(platformError);
+    // The id of the recording only: a Drive file id names a file in a member's Drive, and an audit row never holds one.
+    ctx.audit({ recording_id: input.recordingId });
+    return { recordingId: input.recordingId, picked: true as const };
+  },
+});
+
 // The member's request takes the bytes the worker staged: the row must be theirs and staged; it becomes claimed and the staging key comes back for the sealing (the same route as an upload).
 export const meetingPlatformImportClaim = defineCommand({
   name: 'kernel.meeting_platform.import.claim',
@@ -500,6 +519,18 @@ export const meetingPlatformImportHolds = defineQuery({
     requireSystem(ctx.actor);
     const { rows } = await sql<{ holds: 'importing' | 'staged' | 'claimed' | 'none' }>`SELECT ludy_kernel.meeting_platform_import_holds(${input.recordingId}::uuid, ${input.stagingKey}) AS holds`.execute(ctx.trx).catch(platformError);
     return rows[0]?.holds ?? 'none';
+  },
+});
+
+// The Drive file id the member picked for a recording that is importing under exactly this staging key, for the job that compares it with the id Meet gave; null when none was picked or the row moved on.
+export const meetingPlatformImportPick = defineQuery({
+  name: 'kernel.meeting_platform.import_pick',
+  input: z.strictObject({ recordingId: zId, stagingKey: zStagingKey }),
+  access: 'system',
+  handler: async (ctx, input): Promise<string | null> => {
+    requireSystem(ctx.actor);
+    const { rows } = await sql<{ picked: string | null }>`SELECT ludy_kernel.meeting_platform_import_pick(${input.recordingId}::uuid, ${input.stagingKey}) AS picked`.execute(ctx.trx).catch(platformError);
+    return rows[0]?.picked ?? null;
   },
 });
 
@@ -781,6 +812,7 @@ export const meetingPlatformCommands = [
   meetingPlatformDisconnect,
   meetingPlatformRefresh,
   meetingPlatformRecordingDismiss,
+  meetingPlatformRecordingPick,
   meetingPlatformImportClaim,
   meetingPlatformImportClaimFailed,
   meetingPlatformRecordingReplace,
@@ -789,4 +821,4 @@ export const meetingPlatformCommands = [
   meetingPlatformImportFailed,
   meetingPlatformSweep,
 ];
-export const meetingPlatformQueries = [meetingPlatformConnections, meetingPlatformRecordings, meetingPlatformCredential, meetingPlatformImportHolds, meetingPlatformSyncDue, meetingPlatformImportOpen];
+export const meetingPlatformQueries = [meetingPlatformConnections, meetingPlatformRecordings, meetingPlatformCredential, meetingPlatformImportHolds, meetingPlatformSyncDue, meetingPlatformImportOpen, meetingPlatformImportPick];
