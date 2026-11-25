@@ -874,6 +874,47 @@ describe('HomeVyBar & HomeCustomizePanel SSR (#4928)', () => {
     expect(drawerWithPrompt).toContain('data-testid="vy-drawer-prompt"');
     expect(drawerWithPrompt).toContain('data-testid="vy-drawer-prompt-summary"');
     expect(drawerWithPrompt).toContain('Tìm thấy 2 đầu việc liên quan trong Hôm nay cần bạn.');
+
+    // VyDrawerBody suppresses prompt card when caller lacks vy.use permission.
+    const drawerNoPerm = renderWithProviders(
+      'vi',
+      <VyDrawerBody
+        slug="acme"
+        open
+        onClose={() => undefined}
+        gmName="Vy"
+        canUseVy={false}
+        permissionsLoaded
+        canViewAiBudgets={false}
+        aiMeter={METER_READY}
+        todayItems={TODAY_ITEMS}
+        role="member"
+        modules={['kernel', 'finance']}
+        prompt="Tôi có bao nhiêu hóa đơn chờ duyệt?"
+      />,
+    );
+    expect(drawerNoPerm).toContain('data-testid="vy-drawer-no-permission"');
+    expect(drawerNoPerm).not.toContain('data-testid="vy-drawer-prompt"');
+
+    // EngagePipelineBlock formats LIST_CAP (200) scheduled posts as 200+ and stays gated off for viewer.
+    const twoHundredPosts = Array.from({ length: 200 }, () => ({ status: 'scheduled' }));
+    const cappedEngageHtml = renderOverview({
+      overview: ACTIVE_OVERVIEW,
+      posts: twoHundredPosts,
+    });
+    expect(cappedEngageHtml).toContain('200+ bài đăng đã lên lịch');
+
+    const viewerForcedEngageLayout: HomeLayoutView = {
+      customized: true,
+      blocks: [{ id: 'engage_pipeline', visible: true, moduleEnabled: true, permitted: true }],
+      defaults: [],
+    };
+    const viewerEngageHtml = renderOverview({
+      role: 'viewer',
+      overview: EMPTY_OVERVIEW,
+      homeLayout: viewerForcedEngageLayout,
+    });
+    expect(viewerEngageHtml).not.toContain('data-testid="home-block-engage_pipeline"');
   });
 
   it('renders HomeCustomizePanel with Switch, Move Up / Move Down bounds, drag handles, live region, Reset, Cancel, Save', () => {
@@ -911,5 +952,19 @@ describe('HomeVyBar & HomeCustomizePanel SSR (#4928)', () => {
     expect(html).toContain('data-testid="home-customize-save"');
     expect(html).toContain('data-testid="home-customize-error"');
     expect(html).not.toMatch(/shadow-(md|lg|xl|2xl)/);
+
+    const singleRowHtml = renderWithProviders(
+      'vi',
+      <HomeCustomizePanel
+        initialBlocks={[{ id: 'teamwork_my_work', visible: true }]}
+        isPending={false}
+        error={null}
+        onSave={() => undefined}
+        onReset={() => undefined}
+        onCancel={() => undefined}
+      />,
+    );
+    expect(singleRowHtml).toContain('draggable="false"');
+    expect(singleRowHtml).not.toContain('draggable="true"');
   });
 });

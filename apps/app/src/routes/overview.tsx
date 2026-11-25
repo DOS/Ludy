@@ -615,7 +615,7 @@ export function OverviewPage() {
           />
         );
       case 'engage_pipeline':
-        return <EngagePipelineBlock key={id} slug={slug} crmOn={crmOn} socialOn={socialOn} weekWindow={weekWindow} enabled />;
+        return <EngagePipelineBlock key={id} slug={slug} crmOn={crmOn} socialOn={socialOn} weekWindow={weekWindow} enabled={isMemberOrAbove} />;
       case 'hr_pending':
         return (
           <HrPendingBlock

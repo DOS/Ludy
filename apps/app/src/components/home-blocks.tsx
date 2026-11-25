@@ -17,6 +17,7 @@ import { CardSkeleton, ErrorText } from './ui.tsx';
 
 const LIST_CAP = 200;
 const SIGN_ESIGN_LIST_CAP = 100;
+const counted = (n: number, page: number) => (page >= LIST_CAP ? `${n}+` : String(n));
 
 export type HomeAppTarget =
   | '/o/$slug/vat'
@@ -337,7 +338,12 @@ export function EngagePipelineBlock({
             </h2>
             <p className="text-sm text-muted-foreground tabular-nums">
               {[
-                scheduledCount > 0 ? t('postsCount', { count: scheduledCount }) : null,
+                scheduledCount > 0
+                  ? t('postsCount', { count: scheduledCount }).replace(
+                      /\b\d+\b/,
+                      counted(scheduledCount, (posts.data ?? []).length),
+                    )
+                  : null,
                 unreadInboxCount > 0
                   ? t('inboxUnreadCount', { count: unreadInboxCount })
                   : newInboxCount > 0

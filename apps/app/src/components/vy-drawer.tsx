@@ -68,7 +68,7 @@ export function VyDrawerBody({
 
   return (
     <SheetBody className="space-y-4">
-      {prompt && (
+      {prompt && status !== 'noPermission' && (
         <ProposalSurface proposed={false} className="space-y-2 p-3" data-testid="vy-drawer-prompt">
           <h3 className="text-xs font-medium text-subtle-foreground">{t('promptHeading')}</h3>
           <p className="text-sm font-medium text-foreground">{prompt}</p>

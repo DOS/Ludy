@@ -2,7 +2,7 @@
 // Inline "Tùy chỉnh" editor for Global Home blocks (#4923 Phase 4, #4928):
 // per-block Switch, pointer drag-and-drop plus WCAG 2.5.7 accessible Move Up / Move Down buttons,
 // polite live-region announcements, Reset to role defaults, Cancel, and Save.
-import { useState, type DragEvent } from 'react';
+import { useRef, useState, type DragEvent } from 'react';
 import { useTranslations } from 'use-intl';
 import type { HomeBlockId, HomeLayoutBlock } from '@ludy/kernel-contract';
 import { Button } from '@ludy/ui/components/button';
@@ -13,6 +13,18 @@ import { cn } from '@ludy/ui/lib/utils';
 import { errorMessage } from '../lib/api.ts';
 import { moveHomeBlock, reorderHomeBlockById, toggleHomeBlockVisibility } from '../lib/home-layout.ts';
 import { ErrorText } from './ui.tsx';
+
+const DRAG_BLOCKED_SELECTOR = 'button, [role="switch"], input, a, label';
+
+function isDragBlockedTarget(target: EventTarget | null): boolean {
+  return target instanceof Element && Boolean(target.closest(DRAG_BLOCKED_SELECTOR));
+}
+
+function scheduleFocus(getElement: () => HTMLButtonElement | null | undefined): void {
+  const focusTarget = () => getElement()?.focus({ preventScroll: true });
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(focusTarget);
+  else focusTarget();
+}
 
 export function HomeCustomizePanel({
   initialBlocks,
@@ -35,6 +47,9 @@ export function HomeCustomizePanel({
   const [announcement, setAnnouncement] = useState('');
   const [draggingId, setDraggingId] = useState<HomeBlockId | null>(null);
   const [dragOverId, setDragOverId] = useState<HomeBlockId | null>(null);
+  const dragBlockedRef = useRef(false);
+  const moveUpRefs = useRef<Partial<Record<HomeBlockId, HTMLButtonElement | null>>>({});
+  const moveDownRefs = useRef<Partial<Record<HomeBlockId, HTMLButtonElement | null>>>({});
 
   const announceMove = (id: HomeBlockId, position: number, total: number) => {
     setAnnouncement(
@@ -54,16 +69,26 @@ export function HomeCustomizePanel({
     if (nextIndex < 0 || nextIndex >= next.length) return;
     setDraft(next);
     announceMove(moved.id, nextIndex + 1, next.length);
+    if (delta === -1 && nextIndex === 0) {
+      scheduleFocus(() => moveDownRefs.current[moved.id]);
+    } else if (delta === 1 && nextIndex === next.length - 1) {
+      scheduleFocus(() => moveUpRefs.current[moved.id]);
+    }
   };
 
   const handleDragStart = (id: HomeBlockId, event: DragEvent<HTMLLIElement>) => {
-    if (isPending) return;
+    if (isPending || draft.length <= 1 || dragBlockedRef.current) {
+      dragBlockedRef.current = false;
+      event.preventDefault();
+      return;
+    }
     setDraggingId(id);
     event.dataTransfer.effectAllowed = 'move';
     event.dataTransfer.setData('text/plain', id);
   };
 
   const handleDrop = (targetId: HomeBlockId, event: DragEvent<HTMLLIElement>) => {
+    if (isPending) return;
     event.preventDefault();
     const sourceId = (draggingId ?? (event.dataTransfer.getData('text/plain') as HomeBlockId | '')) || null;
     setDraggingId(null);
@@ -74,6 +99,8 @@ export function HomeCustomizePanel({
     setDraft(next);
     if (nextIndex >= 0) announceMove(sourceId, nextIndex + 1, next.length);
   };
+
+  const canDragRows = !isPending && draft.length > 1;
 
   return (
     <section
@@ -107,9 +134,19 @@ export function HomeCustomizePanel({
             return (
               <li
                 key={block.id}
-                draggable={!isPending}
+                draggable={canDragRows}
+                onPointerDown={(event) => {
+                  dragBlockedRef.current = isDragBlockedTarget(event.target);
+                }}
+                onPointerUp={() => {
+                  dragBlockedRef.current = false;
+                }}
+                onPointerCancel={() => {
+                  dragBlockedRef.current = false;
+                }}
                 onDragStart={(event) => handleDragStart(block.id, event)}
                 onDragOver={(event) => {
+                  if (isPending) return;
                   event.preventDefault();
                   if (dragOverId !== block.id) setDragOverId(block.id);
                 }}
@@ -120,6 +157,7 @@ export function HomeCustomizePanel({
                 }}
                 onDrop={(event) => handleDrop(block.id, event)}
                 onDragEnd={() => {
+                  dragBlockedRef.current = false;
                   setDraggingId(null);
                   setDragOverId(null);
                 }}
@@ -136,7 +174,10 @@ export function HomeCustomizePanel({
                     aria-hidden="true"
                     title={t('dragHandle', { title })}
                     data-testid={`home-customize-drag-${block.id}`}
-                    className="inline-flex shrink-0 cursor-grab items-center text-muted-foreground active:cursor-grabbing"
+                    className={cn(
+                      'inline-flex shrink-0 items-center text-muted-foreground',
+                      canDragRows ? 'cursor-grab active:cursor-grabbing' : 'opacity-40',
+                    )}
                   >
                     <ProjectIcon name="grip" className="size-4" />
                   </span>
@@ -150,6 +191,9 @@ export function HomeCustomizePanel({
 
                 <div className="flex shrink-0 items-center gap-1.5">
                   <Button
+                    ref={(el) => {
+                      moveUpRefs.current[block.id] = el;
+                    }}
                     type="button"
                     variant="outline"
                     size="icon-sm"
@@ -163,6 +207,9 @@ export function HomeCustomizePanel({
                     <ProjectIcon name="arrowUp" className="size-4" />
                   </Button>
                   <Button
+                    ref={(el) => {
+                      moveDownRefs.current[block.id] = el;
+                    }}
                     type="button"
                     variant="outline"
                     size="icon-sm"
