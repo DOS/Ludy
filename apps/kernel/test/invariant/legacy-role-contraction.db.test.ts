@@ -187,6 +187,12 @@ suite('legacy crove_* role and crove.* GUC contraction (#3972)', () => {
         { rolname: 'crove_worker', rolcanlogin: true, has_pw: false, expired: true },
       ]);
 
+      const { rows: clusterMarker } = await c.query<{ marker: string | null }>(
+        `SELECT pg_catalog.shobj_description(oid, 'pg_authid') AS marker
+         FROM pg_catalog.pg_roles WHERE rolname = 'crove_tenant'`,
+      );
+      expect(clusterMarker).toEqual([{ marker: 'ludy:stage7-contracted' }]);
+
       const { rows: memberships } = await c.query<{ legacy: string; ludy: string }>(
         `SELECT l.rolname AS ludy, c.rolname AS legacy
          FROM pg_catalog.pg_auth_members m
@@ -368,7 +374,7 @@ suite('legacy crove_* role and crove.* GUC contraction (#3972)', () => {
     });
   });
 
-  it('flags un-expired legacy logins and legacy crove_* ownership of ludy_* objects after Stage 7 contraction', async () => {
+  it('flags password/marker drift, default privileges, and legacy crove_* ownership of ludy_* objects after Stage 7 contraction', async () => {
     const contractionFile = readdirSync(MIGRATIONS).find((f) => f.endsWith(CONTRACTION_SUFFIX));
     expect(contractionFile).toBeTruthy();
     const contractionSql = readFileSync(join(MIGRATIONS, contractionFile as string), 'utf8');
@@ -383,6 +389,61 @@ suite('legacy crove_* role and crove.* GUC contraction (#3972)', () => {
             violations.some((v) => /legacy login role crove_app does not have an expired VALID UNTIL after Stage 7 contraction/.test(v)),
           ).toBe(true);
         }
+      } finally {
+        await c.query('ROLLBACK');
+      }
+      expect(await hardeningViolations(c)).toEqual([]);
+
+      await c.query('BEGIN');
+      try {
+        await c.query("ALTER ROLE crove_app PASSWORD 'stale-legacy-pw'");
+        for (const shared of [false, true]) {
+          const violations = await hardeningViolations(c, shared ? { shared: true } : undefined);
+          expect(
+            violations.some((v) => /legacy login role crove_app still has a password verifier in pg_authid after Stage 7 contraction/.test(v)),
+          ).toBe(true);
+        }
+      } finally {
+        await c.query('ROLLBACK');
+      }
+      expect(await hardeningViolations(c)).toEqual([]);
+
+      await c.query('BEGIN');
+      try {
+        await c.query('COMMENT ON ROLE crove_tenant IS NULL');
+        for (const shared of [false, true]) {
+          const violations = await hardeningViolations(c, shared ? { shared: true } : undefined);
+          expect(
+            violations.some((v) => /cluster Stage 7 contraction marker is missing from crove_tenant/.test(v)),
+          ).toBe(true);
+        }
+      } finally {
+        await c.query('ROLLBACK');
+      }
+      expect(await hardeningViolations(c)).toEqual([]);
+
+      const defAclRole = `${dbName}_defacl`;
+      await c.query('BEGIN');
+      try {
+        await c.query(
+          `CREATE ROLE ${defAclRole} NOLOGIN; ` +
+            `CREATE ROLE ${defAclRole}_nonmember LOGIN NOSUPERUSER; ` +
+            `ALTER DEFAULT PRIVILEGES FOR ROLE ${defAclRole} IN SCHEMA ludy_jobs GRANT SELECT ON TABLES TO crove_worker`,
+        );
+        for (const shared of [false, true]) {
+          const violations = await hardeningViolations(c, shared ? { shared: true } : undefined);
+          expect(
+            violations.some((v) =>
+              new RegExp(`legacy role crove_worker still holds default privileges on tables in ludy_jobs for role ${defAclRole}`).test(v),
+            ),
+          ).toBe(true);
+        }
+        await c.query('SAVEPOINT sp_defacl_denied');
+        await c.query(`SET LOCAL ROLE ${defAclRole}_nonmember`);
+        await expect(c.query(contractionSql)).rejects.toThrow(/default privileges still grant to legacy crove_\* roles/);
+        await c.query('ROLLBACK TO SAVEPOINT sp_defacl_denied');
+        await c.query(contractionSql);
+        expect((await hardeningViolations(c)).some((v) => /still holds default privileges/.test(v))).toBe(false);
       } finally {
         await c.query('ROLLBACK');
       }
@@ -447,7 +508,6 @@ suite('legacy crove_* role and crove.* GUC contraction (#3972)', () => {
     }
 
     try {
-      await withAdmin((c) => c.query("ALTER ROLE crove_reporter WITH PASSWORD NULL VALID UNTIL 'infinity'"));
       await expect(migrate({ adminUrl: dbBUrl, dir: abortDir })).rejects.toThrow(/SIMULATED_MID_UPGRADE_ABORT/);
 
       await withAdmin(async (c) => {
@@ -469,12 +529,6 @@ suite('legacy crove_* role and crove.* GUC contraction (#3972)', () => {
           [[...LEGACY_ROLES], [...CANONICAL_LUDY_ROLES]],
         );
         expect(effective).toEqual([]);
-
-        const drifted = await hardeningViolations(c);
-        expect(
-          drifted.some((v) => /legacy login role crove_reporter does not have an expired VALID UNTIL after Stage 7 contraction/.test(v)),
-        ).toBe(true);
-        await c.query("ALTER ROLE crove_reporter WITH PASSWORD NULL VALID UNTIL '-infinity'");
         expect(await hardeningViolations(c)).toEqual([]);
       });
 
@@ -487,7 +541,6 @@ suite('legacy crove_* role and crove.* GUC contraction (#3972)', () => {
         await bClient.end();
       }
     } finally {
-      await withAdmin((c) => c.query("ALTER ROLE crove_reporter WITH PASSWORD NULL VALID UNTIL '-infinity'")).catch(() => {});
       rmSync(abortDir, { recursive: true, force: true });
       const teardown = new pg.Client({ connectionString: ADMIN });
       await teardown.connect();
@@ -503,11 +556,14 @@ suite('legacy crove_* role and crove.* GUC contraction (#3972)', () => {
     }
   }, 180_000);
 
-  it('fails Stage 7 loudly instead of recording contraction when a non-superuser runner lacks ADMIN OPTION on crove_reporter', async () => {
+  it('fails Stage 7 loudly without mutating cluster roles when a non-superuser runner lacks ADMIN OPTION on crove_reporter, and passes once contracted', async () => {
     const nopermDb = `${dbName}_noperm`;
     const limitedRunner = `${dbName}_limited`;
     const limitedPassword = `limited-pw-${Date.now()}`;
     const limitedUrl = dbUrlFor(ADMIN as string, nopermDb, limitedRunner, limitedPassword);
+    const contractionFile = readdirSync(MIGRATIONS).find((f) => f.endsWith(CONTRACTION_SUFFIX));
+    expect(contractionFile).toBeTruthy();
+    const contractionSql = readFileSync(join(MIGRATIONS, contractionFile as string), 'utf8');
 
     const admin = new pg.Client({ connectionString: ADMIN });
     await admin.connect();
@@ -525,40 +581,43 @@ suite('legacy crove_* role and crove.* GUC contraction (#3972)', () => {
 
       await migrate({ adminUrl: limitedUrl, dir: preStageDir });
 
-      // Clear any pre-Stage-7 cluster grants from preStageDir before re-arming crove_reporter as un-invalidated.
-      const stray = await admin.query<{ target: string; member: string; grantor: string }>(
-        `SELECT tgt.rolname AS target, mem.rolname AS member, gr.rolname AS grantor
-         FROM pg_catalog.pg_auth_members am
-         JOIN pg_catalog.pg_roles tgt ON tgt.oid = am.roleid
-         JOIN pg_catalog.pg_roles mem ON mem.oid = am.member
-         JOIN pg_catalog.pg_roles gr ON gr.oid = am.grantor
-         WHERE mem.rolname = ANY ($1::text[]) AND tgt.rolname = ANY ($2::text[])`,
-        [[...LEGACY_ROLES], [...CANONICAL_LUDY_ROLES]],
-      );
-      for (const { target, member, grantor } of stray.rows) {
-        await admin.query(
-          `REVOKE ${pg.escapeIdentifier(target)} FROM ${pg.escapeIdentifier(member)} GRANTED BY ${pg.escapeIdentifier(grantor)}`,
-        );
-      }
-      await admin.query("ALTER ROLE crove_reporter WITH PASSWORD NULL VALID UNTIL 'infinity'");
-
-      await expect(migrate({ adminUrl: limitedUrl, dir: MIGRATIONS })).rejects.toThrow(
-        /stage 7 contraction failed: role .* cannot clear password on crove_reporter/,
-      );
-
       const checkDb = new pg.Client({ connectionString: dbUrlFor(ADMIN as string, nopermDb) });
       await checkDb.connect();
       try {
+        await checkDb.query('BEGIN');
+        try {
+          await checkDb.query("ALTER ROLE crove_reporter WITH PASSWORD NULL VALID UNTIL 'infinity'");
+          await checkDb.query('SAVEPOINT sp_no_admin');
+          await checkDb.query(`SET LOCAL ROLE ${pg.escapeIdentifier(limitedRunner)}`);
+          await expect(checkDb.query(contractionSql)).rejects.toThrow(
+            /stage 7 contraction failed: role .* cannot clear or verify cleared password on crove_reporter/,
+          );
+          await checkDb.query('ROLLBACK TO SAVEPOINT sp_no_admin');
+
+          await checkDb.query("ALTER ROLE crove_reporter WITH PASSWORD NULL VALID UNTIL '-infinity'");
+          await checkDb.query('COMMENT ON ROLE crove_tenant IS NULL');
+          await checkDb.query('SAVEPOINT sp_no_marker');
+          await checkDb.query(`SET LOCAL ROLE ${pg.escapeIdentifier(limitedRunner)}`);
+          await expect(checkDb.query(contractionSql)).rejects.toThrow(
+            /stage 7 contraction failed: role .* cannot clear or verify cleared password on crove_reporter/,
+          );
+          await checkDb.query('ROLLBACK TO SAVEPOINT sp_no_marker');
+        } finally {
+          await checkDb.query('ROLLBACK');
+        }
+
         const { rows } = await checkDb.query<{ count: string }>(
           'SELECT count(*)::text AS count FROM ludy_meta.schema_migrations WHERE name LIKE $1',
           [`%${CONTRACTION_SUFFIX.replaceAll('_', '\\_')}`],
         );
         expect(rows).toEqual([{ count: '0' }]);
+
+        await expect(migrate({ adminUrl: limitedUrl, dir: MIGRATIONS })).resolves.toEqual([contractionFile as string]);
+        expect(await hardeningViolations(checkDb)).toEqual([]);
       } finally {
         await checkDb.end();
       }
     } finally {
-      await admin.query("ALTER ROLE crove_reporter WITH PASSWORD NULL VALID UNTIL '-infinity'").catch(() => {});
       await admin.query(
         'SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()',
         [nopermDb],

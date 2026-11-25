@@ -15,6 +15,8 @@ DO $$
 DECLARE
   v_login text;
   v_remaining text;
+  v_is_super boolean;
+  v_default_acls text;
   v_owned text;
   r record;
   v_ludy_roles constant text[] := ARRAY[
@@ -72,9 +74,10 @@ BEGIN
   END IF;
 
   -- Invalidate passwords on legacy login roles while preserving LOGIN for historical migration replay.
-  -- Setting VALID UNTIL '-infinity' also leaves a cluster-wide marker readable via pg_roles so a
-  -- non-superuser runner without ADMIN OPTION on a pre-existing role can verify it was already
-  -- invalidated (and fail closed otherwise instead of recording Stage 7 with live legacy passwords).
+  -- Setting PASSWORD NULL VALID UNTIL '-infinity' plus the cluster Stage 7 marker lets a non-superuser
+  -- runner without ADMIN OPTION on a pre-existing role verify a privileged Stage 7 run already cleared
+  -- the password when pg_catalog.pg_authid is unreadable (while checking rolpassword IS NULL directly
+  -- whenever pg_authid is readable).
   FOREACH v_login IN ARRAY ARRAY['crove_app', 'crove_worker', 'crove_prober', 'crove_reporter'] LOOP
     IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = v_login) THEN
       IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = current_user AND rolsuper)
@@ -83,15 +86,30 @@ BEGIN
            AND pg_catalog.pg_has_role(current_user, v_login, 'MEMBER WITH ADMIN OPTION')
          ) THEN
         EXECUTE pg_catalog.format('ALTER ROLE %I WITH PASSWORD NULL VALID UNTIL ''-infinity''', v_login);
+      ELSIF pg_catalog.has_table_privilege(current_user, 'pg_catalog.pg_authid', 'SELECT') THEN
+        IF NOT EXISTS (
+          SELECT 1
+          FROM pg_catalog.pg_authid
+          WHERE rolname = v_login
+            AND rolpassword IS NULL
+            AND rolvaliduntil IS NOT NULL
+            AND rolvaliduntil <= '1970-01-01 00:00:00+00'::timestamptz
+        ) THEN
+          RAISE EXCEPTION
+            'stage 7 contraction failed: role % cannot clear or verify cleared password on % (requires superuser or CREATEROLE with ADMIN OPTION on %); run ALTER ROLE % WITH PASSWORD NULL VALID UNTIL ''-infinity'' as the role owner or superuser before retrying',
+            current_user, v_login, v_login, v_login;
+        END IF;
       ELSIF NOT EXISTS (
         SELECT 1
-        FROM pg_catalog.pg_roles
-        WHERE rolname = v_login
-          AND rolvaliduntil IS NOT NULL
-          AND rolvaliduntil <= '1970-01-01 00:00:00+00'::timestamptz
+        FROM pg_catalog.pg_roles ro
+        JOIN pg_catalog.pg_roles marker ON marker.rolname = 'crove_tenant'
+        WHERE ro.rolname = v_login
+          AND ro.rolvaliduntil IS NOT NULL
+          AND ro.rolvaliduntil <= '1970-01-01 00:00:00+00'::timestamptz
+          AND pg_catalog.shobj_description(marker.oid, 'pg_authid') = 'ludy:stage7-contracted'
       ) THEN
         RAISE EXCEPTION
-          'stage 7 contraction failed: role % cannot clear password on % (requires superuser or CREATEROLE with ADMIN OPTION on %); run ALTER ROLE % WITH PASSWORD NULL VALID UNTIL ''-infinity'' as the role owner or superuser before retrying',
+          'stage 7 contraction failed: role % cannot clear or verify cleared password on % (requires superuser or CREATEROLE with ADMIN OPTION on %); run ALTER ROLE % WITH PASSWORD NULL VALID UNTIL ''-infinity'' (or complete Stage 7 as superuser/role owner) before retrying',
           current_user, v_login, v_login, v_login;
       END IF;
     END IF;
@@ -188,6 +206,78 @@ BEGIN
   LOOP
     EXECUTE pg_catalog.format('REVOKE %s ON SCHEMA %I FROM %I', r.privilege_type, r.schema_name, r.grantee);
   END LOOP;
+
+  -- Default privilege entries (pg_default_acl) across ludy_* schemas and global defaults for every grantor.
+  SELECT COALESCE(ro.rolsuper, false) INTO v_is_super
+  FROM pg_catalog.pg_roles ro WHERE ro.rolname = current_user;
+  v_is_super := COALESCE(v_is_super, false);
+  FOR r IN
+    SELECT DISTINCT ow.rolname AS owner_role,
+           n.nspname AS schema_name,
+           CASE d.defaclobjtype
+             WHEN 'r' THEN 'TABLES'
+             WHEN 'S' THEN 'SEQUENCES'
+             WHEN 'f' THEN 'FUNCTIONS'
+             WHEN 'T' THEN 'TYPES'
+             WHEN 'n' THEN 'SCHEMAS'
+             ELSE NULL
+           END AS obj_kind,
+           gr.rolname AS grantee
+    FROM pg_catalog.pg_default_acl d
+    LEFT JOIN pg_catalog.pg_namespace n ON n.oid = d.defaclnamespace
+    JOIN pg_catalog.pg_roles ow ON ow.oid = d.defaclrole
+    CROSS JOIN LATERAL pg_catalog.aclexplode(d.defaclacl) a
+    JOIN pg_catalog.pg_roles gr ON gr.oid = a.grantee
+    WHERE (d.defaclnamespace = 0 OR n.nspname LIKE 'ludy\_%')
+      AND gr.rolname = ANY (v_legacy_roles)
+      AND (v_is_super OR ow.rolname = current_user OR pg_catalog.pg_has_role(current_user, ow.oid, 'SET'))
+    ORDER BY ow.rolname, n.nspname NULLS FIRST, obj_kind, gr.rolname
+  LOOP
+    IF r.obj_kind IS NOT NULL THEN
+      IF r.schema_name IS NOT NULL THEN
+        EXECUTE pg_catalog.format(
+          'ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA %I REVOKE ALL ON %s FROM %I',
+          r.owner_role, r.schema_name, r.obj_kind, r.grantee
+        );
+      ELSE
+        EXECUTE pg_catalog.format(
+          'ALTER DEFAULT PRIVILEGES FOR ROLE %I REVOKE ALL ON %s FROM %I',
+          r.owner_role, r.obj_kind, r.grantee
+        );
+      END IF;
+    END IF;
+  END LOOP;
+
+  SELECT pg_catalog.string_agg(desc_text, ', ' ORDER BY desc_text)
+  INTO v_default_acls
+  FROM (
+    SELECT DISTINCT pg_catalog.format(
+      '%s on %s in %s -> %s',
+      ow.rolname,
+      CASE d.defaclobjtype
+        WHEN 'r' THEN 'TABLES'
+        WHEN 'S' THEN 'SEQUENCES'
+        WHEN 'f' THEN 'FUNCTIONS'
+        WHEN 'T' THEN 'TYPES'
+        WHEN 'n' THEN 'SCHEMAS'
+        ELSE d.defaclobjtype::text
+      END,
+      COALESCE(n.nspname, 'all schemas'),
+      gr.rolname
+    ) AS desc_text
+    FROM pg_catalog.pg_default_acl d
+    LEFT JOIN pg_catalog.pg_namespace n ON n.oid = d.defaclnamespace
+    JOIN pg_catalog.pg_roles ow ON ow.oid = d.defaclrole
+    CROSS JOIN LATERAL pg_catalog.aclexplode(d.defaclacl) a
+    JOIN pg_catalog.pg_roles gr ON gr.oid = a.grantee
+    WHERE (d.defaclnamespace = 0 OR n.nspname LIKE 'ludy\_%')
+      AND gr.rolname = ANY (v_legacy_roles)
+  ) remaining_defaults;
+  IF v_default_acls IS NOT NULL THEN
+    RAISE EXCEPTION
+      'stage 7 contraction failed: default privileges still grant to legacy crove_* roles (%): revoke via ALTER DEFAULT PRIVILEGES FOR ROLE <owner> as the granting role or superuser before retrying',
+      v_default_acls;
+  END IF;
 
   -- Verify no legacy crove_* role owns any ludy_* schema or object (login roles own nothing; owners keep implicit ACLs).
   SELECT pg_catalog.string_agg(owned_desc, ', ' ORDER BY owned_desc)
@@ -717,6 +807,32 @@ BEGIN
     );
     IF v_new_def IS DISTINCT FROM v_def THEN
       EXECUTE v_new_def;
+    END IF;
+  END IF;
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- 4. Record an explicit cluster-wide Stage 7 marker inside this transaction so
+--    20270315090000 replays never misinterpret single-role expiration before
+--    Stage 7 commits or lose cluster contraction status after single-role drift.
+-- ---------------------------------------------------------------------------
+DO $$
+DECLARE
+  v_marker constant text := 'ludy:stage7-contracted';
+  v_role_oid oid;
+BEGIN
+  SELECT oid INTO v_role_oid FROM pg_catalog.pg_roles WHERE rolname = 'crove_tenant';
+  IF v_role_oid IS NOT NULL THEN
+    IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = current_user AND rolsuper)
+       OR (
+         EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = current_user AND rolcreaterole)
+         AND pg_catalog.pg_has_role(current_user, 'crove_tenant', 'MEMBER WITH ADMIN OPTION')
+       ) THEN
+      COMMENT ON ROLE crove_tenant IS 'ludy:stage7-contracted';
+    ELSIF pg_catalog.shobj_description(v_role_oid, 'pg_authid') IS DISTINCT FROM v_marker THEN
+      RAISE EXCEPTION
+        'stage 7 contraction failed: role % cannot record cluster Stage 7 marker on crove_tenant (requires superuser or CREATEROLE with ADMIN OPTION on crove_tenant); run COMMENT ON ROLE crove_tenant IS ''%'' as the role owner or superuser before retrying',
+        current_user, v_marker;
     END IF;
   END IF;
 END $$;

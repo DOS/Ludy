@@ -60,6 +60,7 @@ const LEGACY_LOGIN_ROLES: readonly string[] = [
 ];
 
 const CORE_CUTOVER_MIGRATION = '20270315090000_ludy_kernel_rebrand_core_schemas_roles_gucs.sql';
+const STAGE7_CLUSTER_MARKER = 'ludy:stage7-contracted';
 
 export const LUDY_ROLES: readonly string[] = [...CANONICAL_LUDY_ROLES, ...LEGACY_CROVE_ROLES];
 
@@ -77,12 +78,11 @@ async function isDatabaseStage7Contracted(client: pg.ClientBase): Promise<boolea
 async function isClusterStage7Contracted(client: pg.ClientBase): Promise<boolean> {
   const { rows } = await client.query<{ contracted: boolean }>(
     `SELECT EXISTS (
-       SELECT 1 FROM pg_catalog.pg_roles
-       WHERE rolname = ANY ($1::text[])
-         AND rolvaliduntil IS NOT NULL
-         AND rolvaliduntil <= '1970-01-01 00:00:00+00'::timestamptz
+       SELECT 1 FROM pg_catalog.pg_roles r
+       WHERE r.rolname = 'crove_tenant'
+         AND pg_catalog.shobj_description(r.oid, 'pg_authid') = $1
      ) AS contracted`,
-    [LEGACY_LOGIN_ROLES],
+    [STAGE7_CLUSTER_MARKER],
   );
   return rows[0]?.contracted === true;
 }
@@ -1226,8 +1226,20 @@ async function listHardeningViolations(client: pg.ClientBase, shared: boolean): 
   let legacyIndirectMemberships: Array<{ member: string; target: string; via: string | null }> = [];
   let legacyObjectPrivileges: Array<{ schema: string; role: string; kind: string }> = [];
   let legacyLiveLogins: Array<{ role: string; valid_until: string | null }> = [];
+  let legacyPasswordsPresent: Array<{ role: string }> = [];
+  let legacyClusterMarkerMissing = false;
+  let legacyDefaultAcls: Array<{ owner: string; schema: string | null; kind: string; grantee: string }> = [];
   let legacyOwnedObjects: Array<{ schema: string; owner: string; kind: string; object: string }> = [];
   if (contracted) {
+    const { rows: markerRows } = await client.query<{ missing: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1 FROM pg_catalog.pg_roles r
+         WHERE r.rolname = 'crove_tenant'
+           AND pg_catalog.shobj_description(r.oid, 'pg_authid') IS DISTINCT FROM $1
+       ) AS missing`,
+      [STAGE7_CLUSTER_MARKER],
+    );
+    legacyClusterMarkerMissing = markerRows[0]?.missing === true;
     const { rows } = await client.query<{ member: string; target: string; grantor: string }>(
       `SELECT mem.rolname::text AS member, tgt.rolname::text AS target, gr.rolname::text AS grantor
        FROM pg_catalog.pg_auth_members am
@@ -1279,6 +1291,43 @@ async function listHardeningViolations(client: pg.ClientBase, shared: boolean): 
       [LEGACY_LOGIN_ROLES],
     );
     legacyLiveLogins = liveLogins;
+    const { rows: authidReadable } = await client.query<{ ok: boolean }>(
+      "SELECT pg_catalog.has_table_privilege(current_user, 'pg_catalog.pg_authid', 'SELECT') AS ok",
+    );
+    if (authidReadable[0]?.ok === true) {
+      const { rows: pwRows } = await client.query<{ role: string }>(
+        `SELECT r.rolname::text AS role
+         FROM pg_catalog.pg_authid r
+         WHERE r.rolname = ANY ($1::text[])
+           AND r.rolpassword IS NOT NULL
+         ORDER BY r.rolname::text COLLATE "C"`,
+        [LEGACY_LOGIN_ROLES],
+      );
+      legacyPasswordsPresent = pwRows;
+    }
+    const { rows: defaultAclRows } = await client.query<{ owner: string; schema: string | null; kind: string; grantee: string }>(
+      `SELECT DISTINCT ow.rolname::text AS owner,
+              n.nspname::text AS schema,
+              CASE d.defaclobjtype
+                WHEN 'r' THEN 'tables'
+                WHEN 'S' THEN 'sequences'
+                WHEN 'f' THEN 'functions'
+                WHEN 'T' THEN 'types'
+                WHEN 'n' THEN 'schemas'
+                ELSE d.defaclobjtype::text
+              END AS kind,
+              gr.rolname::text AS grantee
+       FROM pg_catalog.pg_default_acl d
+       LEFT JOIN pg_catalog.pg_namespace n ON n.oid = d.defaclnamespace
+       JOIN pg_catalog.pg_roles ow ON ow.oid = d.defaclrole
+       CROSS JOIN LATERAL pg_catalog.aclexplode(d.defaclacl) a
+       JOIN pg_catalog.pg_roles gr ON gr.oid = a.grantee
+       WHERE (d.defaclnamespace = 0 OR n.nspname LIKE 'ludy\\_%')
+         AND gr.rolname = ANY ($1::text[])
+       ORDER BY 1, 2 NULLS FIRST, 3, 4`,
+      [LEGACY_CROVE_ROLES],
+    );
+    legacyDefaultAcls = defaultAclRows;
     const { rows: directObjectAcls } = await client.query<{ schema: string; role: string; kind: string }>(
       `SELECT DISTINCT x.schema, gr.rolname::text AS role, x.kind
        FROM (
@@ -1355,6 +1404,12 @@ async function listHardeningViolations(client: pg.ClientBase, shared: boolean): 
   const { rows: dbRows } = await client.query<{ name: string }>('SELECT pg_catalog.quote_ident(pg_catalog.current_database()) AS name');
   const dbName = dbRows[0]?.name ?? 'current_database';
   return [
+    ...(legacyClusterMarkerMissing
+      ? [
+          `cluster Stage 7 contraction marker is missing from crove_tenant after Stage 7 contraction; ` +
+            `fix as the role owner or superuser: COMMENT ON ROLE "crove_tenant" IS '${STAGE7_CLUSTER_MARKER}'`,
+        ]
+      : []),
     ...legacyMemberships.map(
       (m) =>
         `legacy role ${m.member} still holds membership in ${m.target} (granted by ${m.grantor}) after Stage 7 contraction; ` +
@@ -1370,6 +1425,16 @@ async function listHardeningViolations(client: pg.ClientBase, shared: boolean): 
       (r) =>
         `legacy login role ${r.role} does not have an expired VALID UNTIL after Stage 7 contraction (rolvaliduntil=${r.valid_until ?? 'NULL'}); ` +
         `fix as the role owner or superuser: ALTER ROLE ${quoteIdent(r.role)} WITH PASSWORD NULL VALID UNTIL '-infinity'`,
+    ),
+    ...legacyPasswordsPresent.map(
+      (r) =>
+        `legacy login role ${r.role} still has a password verifier in pg_authid after Stage 7 contraction; ` +
+        `fix as the role owner or superuser: ALTER ROLE ${quoteIdent(r.role)} WITH PASSWORD NULL VALID UNTIL '-infinity'`,
+    ),
+    ...legacyDefaultAcls.map(
+      (d) =>
+        `legacy role ${d.grantee} still holds default privileges on ${d.kind} in ${d.schema ?? 'all schemas'} for role ${d.owner} after Stage 7 contraction; ` +
+        `fix: ALTER DEFAULT PRIVILEGES FOR ROLE ${quoteIdent(d.owner)}${d.schema ? ` IN SCHEMA ${quoteIdent(d.schema)}` : ''} REVOKE ALL ON ${d.kind.toUpperCase()} FROM ${quoteIdent(d.grantee)}`,
     ),
     ...legacyObjectPrivileges.map(
       (p) =>
