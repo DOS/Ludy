@@ -1890,10 +1890,11 @@ export function createHttpApp(deps: HttpDeps) {
     const signTokenViewLimit = deps.signLimits?.tokenViews ?? new RateLimiter({ perMinute: SIGN_TOKEN_VIEWS_PER_MINUTE });
     const signPdfLimit = deps.signLimits?.pdfs ?? new RateLimiter({ perMinute: SIGN_PDFS_PER_MINUTE });
     const signTokenPdfLimit = deps.signLimits?.tokenPdfs ?? new RateLimiter({ perMinute: SIGN_TOKEN_PDFS_PER_MINUTE });
-    // Split 200 MiB PDF budget (SIGN_PDF_READS_MAX = 8 slots * 25 MiB) into two isolated 4-slot (100 MiB)
-    // pools so anonymous public slow readers (capped at 2 per IP / IPv6 /64) cannot starve /api/v1/sign/* (#4682).
+    // Cap combined in-process buffered PDF memory at SIGN_PDF_READS_MAX (8 slots * 25 MiB = 200 MiB) while
+    // limiting public PDF/QR routes to half (4 slots, max 2 per IP / IPv6 /64) so anonymous slow readers
+    // never starve the remaining 4 slots reserved for authenticated /api/v1/sign/* downloads (#4682).
     const publicPdfSlots = Math.max(2, Math.floor(SIGN_PDF_READS_MAX / 2));
-    const v1PdfSlots = Math.max(2, SIGN_PDF_READS_MAX - publicPdfSlots);
+    const signProcessPdfPool = new ConcurrencyLimiter({ total: SIGN_PDF_READS_MAX, perKey: SIGN_PDF_READS_MAX });
     const signPdfReads = deps.signLimits?.pdfReads ?? new ConcurrencyLimiter({ total: publicPdfSlots, perKey: publicPdfSlots });
     const signPublicPdfPool = new ConcurrencyLimiter({ total: publicPdfSlots, perKey: publicPdfSlots });
     const signPublicPdfPerIp = new ConcurrencyLimiter({ total: publicPdfSlots, perKey: 2 });
@@ -1911,8 +1912,15 @@ export function createHttpApp(deps: HttpDeps) {
         releaseLimiter();
         return null;
       }
-      const releasePool = signPublicPdfPool.tryAcquire('public-pdf-pool');
-      if (!releasePool) {
+      const releasePublicPool = signPublicPdfPool.tryAcquire('public-pdf-pool');
+      if (!releasePublicPool) {
+        releaseIp();
+        releaseLimiter();
+        return null;
+      }
+      const releaseProcessPool = signProcessPdfPool.tryAcquire('pdf-pool');
+      if (!releaseProcessPool) {
+        releasePublicPool();
         releaseIp();
         releaseLimiter();
         return null;
@@ -1921,7 +1929,8 @@ export function createHttpApp(deps: HttpDeps) {
       return () => {
         if (released) return;
         released = true;
-        releasePool();
+        releaseProcessPool();
+        releasePublicPool();
         releaseIp();
         releaseLimiter();
       };
@@ -2473,15 +2482,13 @@ export function createHttpApp(deps: HttpDeps) {
     const signApiV1IpLimit = deps.signApiV1Limits?.ip ?? new RateLimiter({ perMinute: SIGN_API_V1_IP_PER_MINUTE });
     const signApiV1KeyReadLimit = deps.signApiV1Limits?.keyRead ?? new RateLimiter({ perMinute: SIGN_API_V1_KEY_READ_PER_MINUTE });
     const signApiV1KeyDraftLimit = deps.signApiV1Limits?.keyDraft ?? new RateLimiter({ perMinute: SIGN_API_V1_KEY_DRAFT_PER_MINUTE });
-    const signApiV1PdfReads =
-      deps.signApiV1Limits?.pdfReads ?? new ConcurrencyLimiter({ total: v1PdfSlots, perKey: 2 });
-    const signApiV1PdfPool = new ConcurrencyLimiter({ total: v1PdfSlots, perKey: v1PdfSlots });
+    const signApiV1PdfReads = deps.signApiV1Limits?.pdfReads ?? new ConcurrencyLimiter({ total: SIGN_PDF_READS_MAX });
     const tryAcquireApiV1SignPdfSlot = (orgId: string): (() => void) | null => {
       const releaseLimiter = signApiV1PdfReads.tryAcquire(orgId);
       if (!releaseLimiter) return null;
       if (!useApiV1PdfPool) return releaseLimiter;
-      const releasePool = signApiV1PdfPool.tryAcquire('v1-pdf-pool');
-      if (!releasePool) {
+      const releaseProcessPool = signProcessPdfPool.tryAcquire('pdf-pool');
+      if (!releaseProcessPool) {
         releaseLimiter();
         return null;
       }
@@ -2489,7 +2496,7 @@ export function createHttpApp(deps: HttpDeps) {
       return () => {
         if (released) return;
         released = true;
-        releasePool();
+        releaseProcessPool();
         releaseLimiter();
       };
     };
