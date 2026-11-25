@@ -132,6 +132,7 @@ export const meetingsManifest = defineModule({
       // A member's own opt-in to the morning notice of the day's meetings (#3955): a time of day, their time zone and the language of the mail. One row per member, theirs alone; no title, name or text of a meeting is in it.
       morning_notice: columns(['org_id', 'id', 'user_id', 'send_minute', 'time_zone', 'language', 'created_at', 'updated_at']),
       // The words an org tracks across its meetings (#4818): a term an owner chose, plain text, like a glossary term; no meeting text.
+      tracker_alert: columns(['org_id', 'id', 'user_id', 'created_at']),
       tracker_term: columns(['org_id', 'id', 'term', 'created_by', 'created_at']),
       // The transcript (#2578): what was said, who it is attributed to, when. Text and speaker label are personal data.
       transcript_segment: columns(

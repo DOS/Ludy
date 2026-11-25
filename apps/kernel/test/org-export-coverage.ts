@@ -65,6 +65,7 @@ export const NOT_EXPORTED: Readonly<Record<string, string>> = {
   'ludy_meetings.action_item': "the meeting's recorder, or its readers once it is shared and published: the system context is refused by is_meeting_reader, so it is not exported; a definer export of the published rows of shared meetings is #3388",
   'ludy_meetings.audio_segment': "the meeting's readers only; is_meeting_reader refuses the system context; no export carries a recording (ADR-0047 point 7)",
   'ludy_meetings.meeting_chapter': "the meeting's recorder, or its readers once published: the system context is refused by the row policy (a user context only), so it is not exported; the titles are derived from the transcript, which is not exported either",
+  'ludy_meetings.tracker_alert': "a member's own opt-in to tracker alerts (no word, no meeting, no text), read by that member in a user context: the system context is refused by the row policy, so it is not exported",
   'ludy_meetings.tracker_term': "the words an owner or admin chose to follow across the org's meetings, read by the members of the org in a user context: the system context is refused by the row policy, so it is not exported",
   'ludy_meetings.meeting_highlight': "the meeting's recorder and its readers: the system context is refused by the row policy (a user context only), so it is not exported; a mark is two seconds over a transcript that is not exported either",
   'ludy_meetings.live_chunk': "the meeting's recorder only: a live transcript in progress",

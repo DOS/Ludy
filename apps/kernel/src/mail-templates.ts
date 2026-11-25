@@ -18,6 +18,7 @@ import { reportMailTemplate } from './report-mail.ts';
 import { signMailTemplates } from './sign-mail.ts';
 import { morningMailTemplate } from './morning-mail.ts';
 import { summaryReadyMailTemplate } from './summary-ready-mail.ts';
+import { trackerAlertMailTemplate } from './tracker-alert-mail.ts';
 import { todayMailTemplate } from './today-mail.ts';
 import { usageDeferredMailTemplate } from './usage-deferred-mail.ts';
 
@@ -48,6 +49,7 @@ export const MAIL_TEMPLATES: MailTemplates = {
   [FOLLOWUP_MAIL_TEMPLATE]: followupMailTemplate,
   // The recorder's "minutes draft ready" mail: a fixed line and the link, no title and no text of the draft (#3730).
   'meetings.summary_ready': summaryReadyMailTemplate,
+  'meetings.tracker_alert': trackerAlertMailTemplate,
   // The member's opt-in morning mail of the day's meetings: a fixed line with the count and the link to the meetings page, no title (#3955).
   'meetings.morning': morningMailTemplate,
   // A project's weekly status shared by email to project members (#2609).

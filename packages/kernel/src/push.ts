@@ -15,7 +15,7 @@
 import { createPublicKey } from 'node:crypto';
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { MORNING_KIND, SUMMARY_READY_EVENT, SUMMARY_READY_KIND, zId } from '@ludy/kernel-contract';
+import { MORNING_KIND, SUMMARY_READY_EVENT, SUMMARY_READY_KIND, TRACKER_ALERT_EVENT, TRACKER_ALERT_KIND, zId } from '@ludy/kernel-contract';
 import type { MemberRole } from '@ludy/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 
@@ -89,6 +89,8 @@ export interface PushKind {
 export const PUSH_KINDS: ReadonlyMap<string, PushKind> = new Map<string, PushKind>([
   // The minutes draft of a meeting the recorder ran is ready (#3730): opens the meeting.
   [SUMMARY_READY_KIND, { event: SUMMARY_READY_EVENT, line: 'Bản nháp biên bản đã sẵn sàng để bạn xem', path: (slug, s) => (s.type === 'meetings.meeting' && s.id ? `/o/${slug}/meetings/${s.id}` : `/o/${slug}/meetings`) }],
+  // A tracked word is in the minutes of a new meeting (#4873): fixed line only (no word, title or count), opening the meeting.
+  [TRACKER_ALERT_KIND, { event: TRACKER_ALERT_EVENT, line: 'Từ khóa bạn theo dõi có trong biên bản một cuộc họp mới', path: (slug, s) => (s.type === 'meetings.meeting' && s.id ? `/o/${slug}/meetings/${s.id}` : `/o/${slug}/meetings`) }],
   // The opt-in morning notice of the day's meetings (#3955, #4082): fixed line only (no title, name, time or count), opening the meetings page.
   [MORNING_KIND, { line: 'Hôm nay bạn có cuộc họp', path: (slug) => `/o/${slug}/meetings` }],
 ]);

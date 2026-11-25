@@ -2,6 +2,7 @@
 // goes to what it is about. The settings that turn kinds off for this member sit in Settings (NT-1, #3592), linked from here; a run of the same kind of notice is one row (NT-2).
 // Social's have their own screen (#637).
 import { useMutation, useQuery } from '@tanstack/react-query';
+import { parseTrackerAlertTerms } from '@ludy/kernel-contract';
 import { Link, useNavigate, useParams } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
 import { Button, buttonVariants } from '@ludy/ui/components/button';
@@ -28,8 +29,10 @@ export function useWorkNotifications(enabled = true) {
 
 const refresh = () => void queryClient.invalidateQueries({ queryKey: orpc.notifications.list.key() });
 
-function useLine() {
+function useLine(wantsTrackerWords: boolean) {
   const t = useTranslations('notifications');
+  // The words a tracker alert names are written from the live list of tracked words (the notice keeps ids and counts only), so a deleted word is simply left out (#4873).
+  const trackerList = useQuery({ ...orpc.meetings.tracker.list.queryOptions({ input: {} }), enabled: wantsTrackerWords, staleTime: 60_000 });
   const period = (key: string | undefined) => {
     const parts = key ? periodParts(key) : null;
     if (!parts) return key ?? '';
@@ -72,6 +75,13 @@ function useLine() {
         return t('text.summary_ready');
       case 'meetings.morning':
         return t('text.morning', { count: Number(n.detail.count ?? 0) });
+      case 'meetings.tracker_alert': {
+        const names = new Map((trackerList.data?.terms ?? []).map((w) => [w.id, w.term]));
+        const listed = parseTrackerAlertTerms(n.detail)
+          .flatMap((w) => (names.has(w.termId) ? [`${names.get(w.termId)} (${w.count})`] : []))
+          .join(', ');
+        return listed ? t('text.tracker_alert', { words: listed }) : t('text.tracker_alert_plain');
+      }
       case 'kernel.channel_expired':
         return t('text.channel_expired');
       case 'kernel.ai_budget':
@@ -96,8 +106,8 @@ export function NotificationsPage() {
   const t = useTranslations('notifications');
   const f = useFormat();
   const navigate = useNavigate();
-  const line = useLine();
   const list = useWorkNotifications();
+  const line = useLine((list.data?.items ?? []).some((n) => n.kind === 'meetings.tracker_alert'));
   const read = useMutation({
     mutationFn: (input: { ids: string[] } | { all: true }) => client.notifications.read(input),
     onSettled: refresh,

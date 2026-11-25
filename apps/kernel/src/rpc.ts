@@ -1971,6 +1971,8 @@ export function createRpcHandler(
         remove: os.meetings.tracker.remove.handler(meetingsCommand('meetings.tracker.remove')),
         hits: os.meetings.tracker.hits.handler(meetingsQuery('meetings.tracker.hits')),
         week: os.meetings.tracker.week.handler(meetingsQuery('meetings.tracker.week')),
+        alertGet: os.meetings.tracker.alertGet.handler(meetingsQuery('meetings.tracker.alert_get')),
+        alertSet: os.meetings.tracker.alertSet.handler(meetingsCommand('meetings.tracker.alert_set')),
       },
       // Highlights on a transcript line or range (#4819): the marks of a meeting, and the caller's own add and remove, under the caller's own row security; see modules/meetings/src/highlights.ts.
       highlight: {
