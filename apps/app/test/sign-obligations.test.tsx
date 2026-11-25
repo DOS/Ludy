@@ -47,8 +47,22 @@ vi.mock('@tanstack/react-router', async (importOriginal) => {
 
 vi.mock('../src/lib/api.ts', async () => {
   const { QueryClient: QC } = await import('@tanstack/react-query');
+  const node = (path: string[]): unknown =>
+    new Proxy(() => undefined, {
+      get: (_t, prop: string) => {
+        if (prop === 'queryOptions') {
+          return (options?: { input?: unknown }) => ({
+            queryKey: options?.input === undefined ? path : [...path, options.input],
+            queryFn: () => Promise.reject(new Error('not fetched')),
+          });
+        }
+        if (prop === 'mutationOptions') return () => ({ mutationFn: () => Promise.resolve({}) });
+        if (prop === 'key') return () => path;
+        return node([...path, prop]);
+      },
+    });
   return {
-    orpc: {},
+    orpc: node([]),
     queryClient: new QC(),
     client: {},
     errorMessage: (e: unknown) => String(e),
@@ -204,6 +218,8 @@ describe('EnvelopeObligationsCard and Renewals tab (#3821)', () => {
     );
 
     expect(htmlVi).toContain('sign-obligations-card');
+    expect(htmlVi).toContain('coworker-attribution');
+    expect(htmlVi).toContain('border-dashed border-proposal/60');
     expect(htmlVi).toContain('Đề xuất từ Vy');
     expect(htmlVi).toContain('sign-obligation-proposal-banner');
     expect(htmlVi).toContain('Trang 1');

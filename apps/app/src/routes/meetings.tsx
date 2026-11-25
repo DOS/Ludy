@@ -54,6 +54,8 @@ import {
   filterAndSortMeetings,
   formatMeetingDuration,
   hasActiveMeetingFilter,
+  labelChoicesOf,
+  labelsByMeetingOf,
   type MeetingListFilter,
   type MeetingMediaFilter,
   type MeetingSort,
@@ -459,11 +461,11 @@ export function MeetingsPage() {
     refetchOnWindowFocus: false,
   });
 
-  // The labels the recorders put on the meetings the person reads (#4955): the list shows them, filters by them, and the search keeps the hits of the labelled meetings.
-  const labelIndexQuery = useQuery({ ...orpc.meetings.label.index.queryOptions({ input: {} }), enabled: meetingsOn });
-  const labelsByMeeting = useMemo(() => new Map((labelIndexQuery.data?.meetings ?? []).map((m) => [m.meetingId, m.labels] as const)), [labelIndexQuery.data]);
-  const labelChoices = labelIndexQuery.data?.labels ?? [];
+  // The labels the recorders put on the meetings the person reads (#4955): each row of the list carries them (#4966), so the list shows them, filters by them, offers the choices of the meetings it holds, and
+  // the search keeps the hits of the labelled meetings among them.
   const allMeetings = meetingsQuery.data ?? [];
+  const labelsByMeeting = useMemo(() => labelsByMeetingOf(allMeetings), [allMeetings]);
+  const labelChoices = useMemo(() => labelChoicesOf(allMeetings), [allMeetings]);
   const filteredMeetings = useMemo(() => filterAndSortMeetings(allMeetings, filter, sort, labelsByMeeting), [allMeetings, filter, sort, labelsByMeeting]);
   const activeFilterCount = countActiveMeetingFilters(filter);
   const filterOrSearchActive = hasActiveMeetingFilter(filter);

@@ -2014,10 +2014,9 @@ export function createRpcHandler(
         add: os.meetings.highlight.add.handler(meetingsCommand('meetings.highlight.add')),
         remove: os.meetings.highlight.remove.handler(meetingsCommand('meetings.highlight.remove')),
       },
-      // Labels on a meeting (#4955): the labels of a meeting and across the readable meetings, and the recorder's add and remove, under the caller's own row security; see modules/meetings/src/labels.ts.
+      // Labels on a meeting (#4955): the labels of a meeting and the recorder's add and remove (the labels of the meetings on the list come with the list, #4966), under the caller's own row security; see modules/meetings/src/labels.ts.
       label: {
         list: os.meetings.label.list.handler(meetingsQuery('meetings.label.list')),
-        index: os.meetings.label.index.handler(meetingsQuery('meetings.label.index')),
         add: os.meetings.label.add.handler(meetingsCommand('meetings.label.add')),
         remove: os.meetings.label.remove.handler(meetingsCommand('meetings.label.remove')),
       },
@@ -4671,6 +4670,9 @@ export function createRpcHandler(
       signDepositMatch: os.bank.signDepositMatch.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => runtime.query('finance.bank.sign_deposit_match', input, { actor, orgId })),
       ),
+      signDepositMatches: os.bank.signDepositMatches.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => runtime.query('finance.bank.sign_deposit_matches', input, { actor, orgId })),
+      ),
       // The candidates are read again here in the owner's or admin's own transaction, so the facts the model is told come from the books and the line, never from the caller.
       payrollExplain: os.bank.payrollExplain.handler(({ context, input }) =>
         inFinance(context, async (orgId, actor) => {
@@ -5406,6 +5408,7 @@ export function createRpcHandler(
               orgId,
               actor,
               envelopeId: input.envelopeId,
+              ...(input.expectedSourceSha256 ? { expectedSourceSha256: input.expectedSourceSha256 } : {}),
               ...(input.pages ? { pages: input.pages } : {}),
               meter: 'runtime',
               ...(aiPrice ? { meterOptions: { price: aiPrice } } : {}),

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Client-side PNG signature generation for Draw (smoothed strokes) and Type (Be Vietnam Pro) tabs (#3325).
+import { SIGN_SIGNATURE_PNG_MAX_HEIGHT, SIGN_SIGNATURE_PNG_MAX_WIDTH } from '@ludy/kernel-contract';
 
 export interface SignaturePoint {
   readonly x: number;
@@ -259,14 +260,7 @@ export function stampTextToPngDataUrl(
   return isValidSignaturePngDataUrl(url) ? url : null;
 }
 
-export async function readPngFileAsDataUrl(file: File): Promise<string> {
-  if (file.type !== 'image/png') {
-    throw new Error('SIGN_INVALID_SIGNATURE_PNG');
-  }
-  if (file.size <= 0 || file.size > SIGNATURE_MAX_BYTES) {
-    throw new Error('SIGN_INVALID_SIGNATURE_PNG');
-  }
-  const bytes = new Uint8Array(await file.arrayBuffer());
+export function parsePngDimensions(bytes: Uint8Array): { width: number; height: number } | null {
   if (
     bytes.byteLength < 45 ||
     bytes.byteLength > SIGNATURE_MAX_BYTES ||
@@ -279,6 +273,43 @@ export async function readPngFileAsDataUrl(file: File): Promise<string> {
     bytes[6] !== 0x1a ||
     bytes[7] !== 0x0a
   ) {
+    return null;
+  }
+  const ihdrLen =
+    (((bytes[8] ?? 0) << 24) | ((bytes[9] ?? 0) << 16) | ((bytes[10] ?? 0) << 8) | (bytes[11] ?? 0)) >>> 0;
+  if (
+    ihdrLen !== 13 ||
+    bytes[12] !== 0x49 ||
+    bytes[13] !== 0x48 ||
+    bytes[14] !== 0x44 ||
+    bytes[15] !== 0x52
+  ) {
+    return null;
+  }
+  const width =
+    (((bytes[16] ?? 0) << 24) | ((bytes[17] ?? 0) << 16) | ((bytes[18] ?? 0) << 8) | (bytes[19] ?? 0)) >>> 0;
+  const height =
+    (((bytes[20] ?? 0) << 24) | ((bytes[21] ?? 0) << 16) | ((bytes[22] ?? 0) << 8) | (bytes[23] ?? 0)) >>> 0;
+  if (
+    width < 1 ||
+    height < 1 ||
+    width > SIGN_SIGNATURE_PNG_MAX_WIDTH ||
+    height > SIGN_SIGNATURE_PNG_MAX_HEIGHT
+  ) {
+    return null;
+  }
+  return { width, height };
+}
+
+export async function readPngFileAsDataUrl(file: File): Promise<string> {
+  if (file.type !== 'image/png') {
+    throw new Error('SIGN_INVALID_SIGNATURE_PNG');
+  }
+  if (file.size <= 0 || file.size > SIGNATURE_MAX_BYTES) {
+    throw new Error('SIGN_INVALID_SIGNATURE_PNG');
+  }
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  if (!parsePngDimensions(bytes)) {
     throw new Error('SIGN_INVALID_SIGNATURE_PNG');
   }
   let binary = '';

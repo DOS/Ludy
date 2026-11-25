@@ -249,7 +249,6 @@ describe('meetings commands and queries construction', () => {
       'meetings.tracker.week',
       'meetings.highlight.list',
       'meetings.label.list',
-      'meetings.label.index',
       'meetings.minutes_docx.download',
       'meetings.today.facts',
       'meetings.morning.get',

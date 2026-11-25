@@ -520,12 +520,21 @@ export const zBankSignDepositCandidate = z.strictObject({
   suggestedCreditAccount: z.string(),
 });
 export type BankSignDepositCandidate = z.infer<typeof zBankSignDepositCandidate>;
+export const BANK_SIGN_DEPOSIT_BATCH_MAX = 50;
 export const zBankSignDepositMatch = z.strictObject({
   bankLineId: zId,
   date: zLocalDate,
   candidates: z.array(zBankSignDepositCandidate),
 });
 export type BankSignDepositMatch = z.infer<typeof zBankSignDepositMatch>;
+export const zBankSignDepositMatchesInput = z.strictObject({
+  bankLineIds: z.array(zId).max(BANK_SIGN_DEPOSIT_BATCH_MAX),
+});
+export type BankSignDepositMatchesInput = z.infer<typeof zBankSignDepositMatchesInput>;
+export const zBankSignDepositMatches = z.strictObject({
+  matches: z.array(zBankSignDepositMatch),
+});
+export type BankSignDepositMatches = z.infer<typeof zBankSignDepositMatches>;
 
 export const zBankSignDepositExplainAsk = z.strictObject({
   bankLineId: zId,

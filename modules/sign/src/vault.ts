@@ -19,7 +19,7 @@ import { DomainError, defineQuery, type QueryContext } from '@ludy/kernel-runtim
 import { isValidCalendarDate, money, toMoney } from '@ludy/l10n-vn';
 import { applyEnvelopeVisibilityFilter, canAccessEnvelopeRow } from './hr-visibility.ts';
 import { applyMeetingMinutesVisibilityFilter } from './meeting-visibility.ts';
-import { parseSharedSummary } from './shared.ts';
+import { parseSharedSummary, resolvePrimaryEnvelopeDocMap } from './shared.ts';
 
 const READERS: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const SIGN_VAULT_SCAN_LIMIT = 200;
@@ -707,7 +707,7 @@ export const vaultSearch = defineQuery({
 
     const accessibleIds = accessibleEnvRows.map((r) => r.id);
 
-    const [obligationRows, analysisRows] = await Promise.all([
+    const [obligationRows, analysisRows, primaryDocByEnvelope] = await Promise.all([
       ctx.trx
         .selectFrom('ludy_sign.envelope_obligation')
         .select([
@@ -734,6 +734,7 @@ export const vaultSearch = defineQuery({
         .orderBy(sql`completed_at DESC NULLS LAST`)
         .orderBy('created_at', 'desc')
         .execute(),
+      resolvePrimaryEnvelopeDocMap(ctx.trx, ctx.orgId, accessibleIds),
     ]);
 
     const obligationByEnvelope = new Map<string, (typeof obligationRows)[number]>();
@@ -756,14 +757,17 @@ export const vaultSearch = defineQuery({
 
     const candidates: SignVaultCandidateInput[] = accessibleEnvRows.map((env) => {
       const obl = obligationByEnvelope.get(env.id) ?? null;
-      const analysis = analysisByKey.get(`${env.id}:${env.source_sha256}`) ?? null;
+      const primary = primaryDocByEnvelope.get(env.id);
+      const effectiveSourceSha256 = primary?.sourceSha256 ?? env.source_sha256;
+      const effectivePageCount = primary?.pageCount ?? env.page_count;
+      const analysis = analysisByKey.get(`${env.id}:${effectiveSourceSha256}`) ?? null;
       return {
         envelopeId: env.id,
         title: env.title,
         subject: env.subject,
         status: env.status,
         sourceKind: env.source_kind,
-        pageCount: env.page_count,
+        pageCount: effectivePageCount,
         completedAt: isoOrNull(env.completed_at),
         updatedAt: new Date(env.updated_at).toISOString(),
         sharedSummaryJson: env.shared_summary_json,

@@ -18,6 +18,9 @@ export interface PdfCanvasViewerProps {
   onSurfaceClick?: (pageNumber: number, xNorm: number, yNorm: number) => void;
   renderOverlay?: (pageNumber: number) => ReactNode;
   className?: string;
+  panelId?: string | undefined;
+  panelRole?: 'tabpanel' | undefined;
+  panelAriaLabelledBy?: string | undefined;
 }
 
 const MIN_SCALE = 0.6;
@@ -71,6 +74,9 @@ export function PdfCanvasViewer({
   onSurfaceClick,
   renderOverlay,
   className,
+  panelId,
+  panelRole,
+  panelAriaLabelledBy,
 }: PdfCanvasViewerProps) {
   const t = useTranslations('sign.fields');
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -187,7 +193,13 @@ export function PdfCanvasViewer({
   };
 
   return (
-    <div className={className} data-testid="pdf-canvas-viewer">
+    <div
+      id={panelId}
+      role={panelRole}
+      aria-labelledby={panelAriaLabelledBy}
+      className={className}
+      data-testid="pdf-canvas-viewer"
+    >
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-card px-3 py-2">
         <div className="flex items-center gap-1.5">
           <Button

@@ -24,7 +24,7 @@ vi.mock('../src/lib/api.ts', async () => {
   return { orpc: node([]), queryClient: client.current, errorMessage: String };
 });
 
-const { MeetingLabels } = await import('../src/components/meeting-labels.tsx');
+const { MeetingLabels, refreshLabels } = await import('../src/components/meeting-labels.tsx');
 
 const answer = (labels: string[]): Labels => ({ meetingId: 'm1', labels: labels.map((label, i) => ({ id: `0190b1c2-0000-7000-8000-00000000000${i}`, label })) });
 
@@ -86,5 +86,12 @@ describe('MeetingLabels', () => {
     expect(html).toContain('Đừng ghi tên người');
     expect(html).toContain('&lt;b&gt;Khách&lt;/b&gt;');
     expect(html).not.toContain('<b>Khách</b>');
+  });
+  it('refreshes the labels of the meeting and the rows of the meetings list after an add or a remove (#4966)', async () => {
+    const invalidate = vi.spyOn(client.current, 'invalidateQueries');
+    await refreshLabels();
+    const keys = invalidate.mock.calls.map(([filters]) => (filters as { queryKey: unknown }).queryKey);
+    expect(keys).toEqual([['meetings', 'label'], ['meetings', 'list']]);
+    invalidate.mockRestore();
   });
 });
