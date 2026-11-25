@@ -257,12 +257,14 @@ suite("the opt-in weekly notice of the week's meetings (#4967)", () => {
     expect(sent[0]?.payload).toEqual({ lang: 'vi', org: 'Công ty Tổng Kết Tuần', meetings: 2, decisions: 3, open: 3, overdue: 1, cut: false, path: expect.stringMatching(/^\/o\/[a-z0-9-]+\/meetings\?tool=digest$/) });
     // No title, no decision, no item: not in the notice, the mail's data, the mail rendered or the audit rows of the command.
     const rendered = await weeklyMailTemplate.render({ messageId: randomUUID(), subject: 'x', payload: zWeeklyMail.parse(sent[0]?.payload), publicUrl: 'https://ludy.test', inboundAddress: null, brand: 'Ludy', execute: async () => undefined as never });
-    const audit = (await sqlAdmin<{ detail: unknown }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.weekly.notice'`, [orgId])).rows;
+    const audit = (await sqlAdmin<{ detail: unknown; outcome: string }>(`SELECT detail, outcome FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.weekly.notice'`, [orgId])).rows;
     for (const text of [JSON.stringify(mine), JSON.stringify(sent), JSON.stringify(rendered), JSON.stringify(audit)]) expect(text).not.toMatch(CANARY);
     // The audit row names the Monday and nothing that varies (no number, not whether a mail was queued): an owner or admin reads the audit log and must not learn what a member reads.
     // (The runtime adds the acting component to every system audit row, and the worker process that ran it, `workerInstance`: the deployment's, not the member's; both are left out of the comparison, so the rest is exactly what the command wrote.)
-    expect(audit.length).toBeGreaterThan(0);
-    for (const row of audit) {
+    // (The command's refusal of a member who is not the system, tried in the test before, is also a row of this command: it names the refused session, not a Monday, so only the rows that ran are compared.)
+    const ran = audit.filter((row) => row.outcome === 'ok');
+    expect(ran.length).toBeGreaterThan(0);
+    for (const row of ran) {
       const { workerInstance: _worker, component: _component, ...rest } = (row.detail ?? {}) as Record<string, unknown>;
       expect(rest).toEqual({ day: AT_DAY });
     }
