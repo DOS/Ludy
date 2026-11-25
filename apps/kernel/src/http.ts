@@ -195,6 +195,7 @@ import { DraftBudget } from './ai-draft-limit.ts';
 import { mountMcp, mountOauthProvider } from './mcp-endpoint.ts';
 import type { OauthServer } from './oauth-server.ts';
 import { reviewAnswer, reviewFile, reviewMedia, reviewView, REVIEW_ANSWERS_PER_MINUTE, REVIEW_FILES_PER_MINUTE, REVIEW_VIEWS_PER_MINUTE } from './review-link.ts';
+import { minutesView, MINUTES_VIEWS_PER_MINUTE } from './minutes-link.ts';
 import { quoteLogo, quoteView, readLogoFile, QUOTE_LOGO_READS_MAX, QUOTE_VIEWS_PER_MINUTE } from './quote-link.ts';
 import { reportView, REPORT_VIEWS_PER_MINUTE } from './report-link.ts';
 import {
@@ -450,6 +451,8 @@ export interface HttpDeps {
   reportLimit?: RateLimiter;
   // The public quote page's budget per client (#2694). Unset: QUOTE_VIEWS_PER_MINUTE.
   quoteLimit?: RateLimiter;
+  // The public minutes page's budget per client (#4822), apart from the quote page's. Unset: MINUTES_VIEWS_PER_MINUTE.
+  minutesLimit?: RateLimiter;
   // The public quote page's logo budget per client (#2814), apart from the page's. Unset: QUOTE_VIEWS_PER_MINUTE.
   quoteLogoLimit?: RateLimiter;
   // How many logo reads (a stored file read whole into memory) run at once in this process, across every client (#2814). Unset: QUOTE_LOGO_READS_MAX.
@@ -1752,6 +1755,30 @@ export function createHttpApp(deps: HttpDeps) {
         return problem(c, error);
       } finally {
         release();
+      }
+    });
+  }
+
+  // The published minutes a link shares with a person outside the org (#4822, meetings module): the same edge as the quote page, with its own budget per client. The link's token is the only
+  // credential; it comes in the body, never the URL. A bad, revoked or expired token, a switch or an app that is off and minutes that are not published all get the one refusal. The answer is
+  // never cached, never sends a referrer and tells search engines to keep it out of their index.
+  if (runtime.installed('meetings')) {
+    const minutesLimit = deps.minutesLimit ?? new RateLimiter({ perMinute: MINUTES_VIEWS_PER_MINUTE });
+    app.post('/api/minutes/view', bodyLimit({ maxSize: 1024 }), async (c) => {
+      const decision = minutesLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
+      c.header('cache-control', 'no-store');
+      c.header('referrer-policy', 'no-referrer');
+      c.header('x-robots-tag', 'noindex, nofollow');
+      if (!decision.allowed) {
+        warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
+        c.header('retry-after', String(decision.retryAfterSeconds));
+        return c.json({ code: 'RATE_LIMITED', message: 'Bạn gửi quá nhiều yêu cầu, hãy thử lại sau', retryAfterSeconds: decision.retryAfterSeconds }, 429);
+      }
+      try {
+        const view = await minutesView(runtime, await c.req.json().catch(() => null));
+        return view ? c.json(view) : c.json({ code: 'MINUTES_LINK_INVALID', message: 'Liên kết biên bản không hợp lệ, đã bị thu hồi hoặc đã hết hạn' }, 404);
+      } catch (error) {
+        return problem(c, error);
       }
     });
   }

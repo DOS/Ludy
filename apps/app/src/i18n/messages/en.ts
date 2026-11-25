@@ -4376,6 +4376,7 @@ export const en = {
         disconnect: 'Disconnect',
         disconnectOf: 'Disconnect {name}',
         disconnectAsk: 'Disconnect {name}? Ludy will forget the access and delete the list of suggestions from this connection. Meetings already imported into Ludy stay; the original on the platform is not touched.',
+        disconnectTeams: 'Microsoft gives an app no way to cancel its own permission, so Ludy cannot end it at Microsoft. To end it, remove Ludy in your Microsoft account ("My Apps", myapps.microsoft.com), or ask your Microsoft 365 administrator if they allowed Ludy for your whole organization. Until then Microsoft keeps the permission, and a sign-in token already issued can stay usable for up to 90 days.',
         disconnectYes: 'Disconnect',
         disconnectNo: 'Keep it',
         connectSandbox: 'Connect the test platform',
@@ -5422,6 +5423,18 @@ export const en = {
       longest: 'Longest stretch',
       line: 'Talk time: {list}',
       lineMore: 'Talk time: {list} and {count, plural, one {# other} other {# others}}',
+    },
+    speakingStyle: {
+      title: 'How they spoke',
+      desc: 'Worked out from the transcript lines you can read: each speaker\'s pace, filler words and longest stretch without a pause. No AI.',
+      speaker: 'Speaker',
+      pace: 'Pace (words/min)',
+      paceNone: '-',
+      fillers: 'Filler words',
+      topFillers: 'Most used',
+      none: '-',
+      stretch: 'Longest stretch',
+      note: 'Filler words come from a fixed list (ờ, ờm, à, ừm, kiểu như, thì là, um, uhm, uh, you know). These are facts about the transcript, not a judgment of a person; a pace shows only once someone has talked long enough.',
     },
     trackers: {
       title: 'Tracked words',
@@ -16583,6 +16596,9 @@ export const en = {
       STALE_DEAL_UPDATE: 'The meeting minutes or the deal link changed since this was written. Check the text and save again.',
       DEAL_LOST_REASON_INVALID: 'A reason is only recorded when a deal moves to a lost stage.',
       DEAL_NEIGHBOUR_INVALID: 'The neighbouring deal is no longer in this stage; reload the page.',
+      MINUTES_LINK_OFF: 'Your organization has not turned on sharing minutes with people outside. An owner or admin can turn it on in the meeting settings.',
+      MINUTES_LINK_LIMIT: 'This meeting already has the most live links. Revoke one first.',
+      MINUTES_LINK_NOT_FOUND: 'This link was not found.',
       DEAL_DELETE_FORBIDDEN: 'You can only delete deals you created.',
       DEAL_HAS_QUOTES: 'This deal has a quote, so it cannot be deleted.',
       QUOTE_NOT_FOUND: 'This quote was not found.',
@@ -16933,7 +16949,7 @@ export const en = {
       MEETING_TITLE_TOO_LONG: 'A meeting title holds at most 200 characters.',
       DIGEST_OFF: 'Vy writing the weekly recap is not turned on on this system.',
       DIGEST_BUSY: 'Vy is busy writing recaps. Try again in a few minutes.',
-      MINUTES_NOT_PUBLISHED: 'The recorder has not shared the minutes yet, so there is no file to download and no original to put a translation beside.',
+      MINUTES_NOT_PUBLISHED: 'The recorder has not published the minutes yet, so there is no file to download, no link to share and no original to put a translation beside.',
       TRANSLATION_NOT_FOUND: 'There is no summary you can read to translate.',
       TRANSLATION_NOTHING: 'There is nothing to translate yet.',
       MINUTES_VERSION_STALE: 'The original minutes changed while you were reviewing the translation. Translate and review again.',
@@ -19685,6 +19701,15 @@ export const en = {
         get: 'Read whether meeting minutes can be sent for signing',
         set: 'Turn signing of meeting minutes on or off',
       },
+      minutes_link: {
+        create: 'Make a link to the published minutes for people outside',
+        revoke: 'Revoke a link to the published minutes',
+        list: 'See the links to the published minutes of a meeting',
+        switch: {
+          get: 'Read whether minutes can be shared with people outside',
+          set: 'Turn sharing minutes with people outside on or off',
+        },
+      },
       minutes_version: {
         get: 'Read the translated versions of published meeting minutes',
         publish: 'Publish a translated version of meeting minutes beside the original',
@@ -19793,6 +19818,9 @@ export const en = {
       speaker: {
         name: 'Name a speaker of the draft transcript after a person in the meeting',
         suggestions: 'See the speaker names Vy suggested after a summary',
+      },
+      speaking_style: {
+        get: 'See how each speaker spoke in a meeting: pace, filler words and longest stretch',
       },
       deal_update: {
         confirm: 'Save the recorder\'s update of the deal a meeting is linked to',

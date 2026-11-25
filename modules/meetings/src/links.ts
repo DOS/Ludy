@@ -23,6 +23,7 @@ import {
 } from '@ludy/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { vnDay } from './retention.ts';
+import { readingStage } from './reading-stage.ts';
 import { openMeeting } from './transcript.ts';
 
 const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
@@ -251,7 +252,9 @@ export const meetingLinkSuggest = defineQuery({
     const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
     if (meeting.recorder_user_id !== userId) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder gets suggestions');
     const none: MeetingLinkSuggested = { tainted: true, ai: 'off', parties: [], deals: [] };
-    const segments = await ctx.trx.selectFrom('ludy_meetings.transcript_segment').select('text').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).orderBy('start_seconds').orderBy('id').execute();
+    // One stage, the recorder's working draft while one exists, else the published lines (#4910): not the shared text and a newer draft of it read together.
+    const stage = await readingStage(ctx.trx, ctx.orgId, input.meetingId);
+    const segments = await ctx.trx.selectFrom('ludy_meetings.transcript_segment').select('text').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', stage).orderBy('start_seconds').orderBy('id').execute();
     const raw = segments.map((r) => r.text).join(' ').slice(0, TRANSCRIPT_SCAN_MAX);
     if (raw.trim() === '') return none;
     // One fold for the transcript and the names alike (the search's own, in SQL), so a name and the text are always read the same way.

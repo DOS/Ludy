@@ -4373,6 +4373,7 @@ export const vi = {
         disconnect: 'Ngắt kết nối',
         disconnectOf: 'Ngắt kết nối {name}',
         disconnectAsk: 'Ngắt kết nối {name}? Ludy sẽ quên quyền truy cập và xóa danh sách gợi ý của kết nối này. Các cuộc họp đã nhập vào Ludy vẫn còn; bản gốc trên nền tảng không bị động đến.',
+        disconnectTeams: 'Microsoft không cho ứng dụng tự hủy quyền của mình, nên Ludy không thể chấm dứt quyền này ở phía Microsoft. Để chấm dứt, bạn hãy gỡ Ludy trong tài khoản Microsoft ("My Apps", myapps.microsoft.com), hoặc nhờ quản trị viên Microsoft 365 nếu họ đã cho phép Ludy cho cả tổ chức. Trước khi gỡ, Microsoft vẫn giữ quyền này, và mã đăng nhập đã cấp có thể còn dùng được đến 90 ngày.',
         disconnectYes: 'Ngắt kết nối',
         disconnectNo: 'Giữ lại',
         connectSandbox: 'Kết nối bản thử',
@@ -5420,6 +5421,18 @@ export const vi = {
       longest: 'Đoạn dài nhất',
       line: 'Thời gian nói: {list}',
       lineMore: 'Thời gian nói: {list} và {count, number} người khác',
+    },
+    speakingStyle: {
+      title: 'Cách nói',
+      desc: 'Tính từ các dòng bản ghi lời bạn đang đọc: tốc độ nói, từ đệm và đoạn nói liền dài nhất của từng người. Không dùng AI.',
+      speaker: 'Người nói',
+      pace: 'Tốc độ (từ/phút)',
+      paceNone: '-',
+      fillers: 'Từ đệm',
+      topFillers: 'Hay dùng nhất',
+      none: '-',
+      stretch: 'Nói liền dài nhất',
+      note: 'Từ đệm tính theo một danh sách cố định (ờ, ờm, à, ừm, kiểu như, thì là, um, uhm, uh, you know). Đây chỉ là số liệu về bản ghi, không phải đánh giá một người; tốc độ chỉ hiện khi người đó nói đủ lâu.',
     },
     trackers: {
       title: 'Từ khóa theo dõi',
@@ -16583,6 +16596,9 @@ export const vi = {
       STALE_DEAL_UPDATE: 'Biên bản cuộc họp hoặc liên kết cơ hội đã thay đổi từ lúc bạn viết. Hãy kiểm tra lại nội dung rồi lưu lại.',
       DEAL_LOST_REASON_INVALID: 'Lý do chỉ ghi khi chuyển cơ hội sang giai đoạn thua',
       DEAL_NEIGHBOUR_INVALID: 'Cơ hội đứng cạnh không còn ở giai đoạn này; hãy tải lại trang',
+      MINUTES_LINK_OFF: 'Tổ chức chưa bật chia sẻ biên bản ra ngoài. Chủ sở hữu hoặc quản trị viên bật được trong phần cài đặt cuộc họp.',
+      MINUTES_LINK_LIMIT: 'Cuộc họp này đã có đủ số liên kết còn hạn. Hãy thu hồi bớt một liên kết.',
+      MINUTES_LINK_NOT_FOUND: 'Không tìm thấy liên kết này.',
       DEAL_DELETE_FORBIDDEN: 'Bạn chỉ xóa được cơ hội do chính mình tạo',
       DEAL_HAS_QUOTES: 'Cơ hội này đã có báo giá nên không xóa được',
       QUOTE_NOT_FOUND: 'Không tìm thấy báo giá này',
@@ -16931,7 +16947,7 @@ export const vi = {
       MEETING_TITLE_TOO_LONG: 'Tên cuộc họp dài tối đa 200 ký tự.',
       DIGEST_OFF: 'Hệ thống này chưa bật việc nhờ Vy tóm tắt tuần.',
       DIGEST_BUSY: 'Vy đang bận viết các bản tóm tắt. Hãy thử lại sau vài phút.',
-      MINUTES_NOT_PUBLISHED: 'Người ghi chưa chia sẻ biên bản, nên chưa có tệp để tải về và chưa có bản gốc để đặt bản dịch bên cạnh.',
+      MINUTES_NOT_PUBLISHED: 'Người ghi chưa xuất bản biên bản, nên chưa có tệp để tải về, chưa có liên kết để chia sẻ và chưa có bản gốc để đặt bản dịch bên cạnh.',
       ASSIGNEE_OFF: 'Hệ thống này chưa bật việc nhờ Vy xem một việc cần làm của ai.',
       ASSIGNEE_BUSY: 'Vy đang bận đọc tên. Hãy thử lại sau vài phút.',
       TRANSLATION_NOT_FOUND: 'Không có bản tóm tắt nào bạn đọc được để dịch.',
@@ -19685,6 +19701,15 @@ export const vi = {
         get: 'Xem biên bản họp có được gửi đi ký hay không',
         set: 'Bật hoặc tắt việc ký biên bản họp',
       },
+      minutes_link: {
+        create: 'Tạo liên kết tới biên bản đã xuất bản cho người ngoài',
+        revoke: 'Thu hồi liên kết tới biên bản đã xuất bản',
+        list: 'Xem các liên kết tới biên bản đã xuất bản của một cuộc họp',
+        switch: {
+          get: 'Xem tổ chức có cho chia sẻ biên bản ra ngoài hay không',
+          set: 'Bật hoặc tắt việc chia sẻ biên bản ra ngoài',
+        },
+      },
       minutes_version: {
         get: 'Xem các bản dịch của biên bản họp đã đăng',
         publish: 'Đăng bản dịch của biên bản họp bên cạnh bản gốc',
@@ -19793,6 +19818,9 @@ export const vi = {
       speaker: {
         name: 'Đặt tên người dự họp cho một người nói trong bản ghi lời nháp',
         suggestions: 'Xem tên người nói Vy gợi ý sau khi tóm tắt',
+      },
+      speaking_style: {
+        get: 'Xem cách nói của từng người trong cuộc họp: tốc độ, từ đệm và đoạn nói liền dài nhất',
       },
       deal_update: {
         confirm: 'Lưu phần cập nhật cơ hội của người ghi biên bản cuộc họp',

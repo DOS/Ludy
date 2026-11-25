@@ -81,6 +81,9 @@ describe('meetings commands and queries construction', () => {
       'meetings.settings.set',
       'meetings.consent_policy.set',
       'meetings.minutes_esign.set',
+      'meetings.minutes_link.switch.set',
+      'meetings.minutes_link.create',
+      'meetings.minutes_link.revoke',
       'meetings.retention.shred',
       'meetings.shred.replay',
       'meetings.media.discard',
@@ -195,6 +198,8 @@ describe('meetings commands and queries construction', () => {
       'meetings.settings.get',
       'meetings.consent_policy.get',
       'meetings.minutes_esign.get',
+      'meetings.minutes_link.switch.get',
+      'meetings.minutes_link.list',
       'meetings.media.orphan_keys',
       'meetings.transcript.get',
       'meetings.transcript.redact_candidates',
@@ -273,6 +278,7 @@ describe('meetings commands and queries construction', () => {
       'meetings.mcp.search',
       'meetings.mcp.visible_ids',
       'meetings.transcript.download',
+      'meetings.speaking_style.get',
     ]);
 
     expect(meetingList.name).toBe('meetings.meeting.list');

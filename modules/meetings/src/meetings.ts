@@ -26,6 +26,7 @@ import { summaryCommands, summaryQueries } from './summary.ts';
 import { summaryReadyCommands } from './summary-ready.ts';
 import { summaryRunCommands, summaryRunQueries } from './summary-run.ts';
 import { dropDraftTranslationsForMember, translateCommands } from './translate.ts';
+import { speakingStyleQueries } from './speaking-style.ts';
 import { transcriptExportQueries } from './transcript-export.ts';
 import { translateRunCommands, translateRunQueries } from './translate-run.ts';
 import { askRunCommands, askRunQueries } from './ask.ts';
@@ -53,6 +54,7 @@ import { lockMeetingMedia, recordSealedMedia } from './media-record.ts';
 import { createMeetingRow } from './meeting-core.ts';
 import { importCommands } from './import.ts';
 import { meetingMinutesEsignGet, meetingMinutesEsignSet } from './minutes-esign.ts';
+import { minutesLinkCommands, minutesLinkQueries } from './minutes-link.ts';
 import { dropFollowupPayloads } from './followup-erase.ts';
 import { dealUpdateCommands, dealUpdateQueries } from './deal-update.ts';
 import { followupCommands, followupQueries } from './followup.ts';
@@ -1122,6 +1124,7 @@ export const meetingsCommands = [
   meetingSettingsSet,
   meetingConsentPolicySet,
   meetingMinutesEsignSet,
+  ...minutesLinkCommands,
   meetingRetentionShred,
   meetingShredReplay,
   meetingMediaDiscard,
@@ -1183,6 +1186,7 @@ export const meetingsQueries = [
   meetingSettingsGet,
   meetingConsentPolicyGet,
   meetingMinutesEsignGet,
+  ...minutesLinkQueries,
   meetingMediaOrphanKeys,
   transcriptGet,
   ...redactQueries,
@@ -1224,4 +1228,5 @@ export const meetingsQueries = [
   ...hookQueries,
   ...mcpMeetingsQueries,
   ...transcriptExportQueries,
+  ...speakingStyleQueries,
 ];
