@@ -439,9 +439,16 @@ describe('Zoom\'s transcript file', () => {
     expect(await codeOf(one([file({ download_url: 'https://evil.example.test/rec/f' })]))).toBe('platform_refused');
     expect(await codeOf(one([file({ download_url: 'http://us02web.zoom.us/rec/f' })]))).toBe('platform_refused');
     expect(await codeOf(one([file({ download_url: 'https://notzoom.us/rec/f' })]))).toBe('platform_refused');
+    expect(await codeOf(one([file({ file_size: ZOOM_TRANSCRIPT_MAX_BYTES + 1 })]))).toBe('too_large');
     const { adapter, calls } = zoom([{ json: {} }]);
     for (const id of ['', '.', '..']) expect(await codeOf(adapter.transcriptFile(CREDENTIAL, id))).toBe('recording_gone');
     expect(calls).toEqual([]);
+  });
+
+  it('double-encodes a meeting uuid that starts with a slash or holds two, as the recording\'s own path does', async () => {
+    const { adapter, calls } = zoom([{ json: { recording_files: [file()] } }]);
+    await adapter.transcriptFile(CREDENTIAL, '/BBBB//BBBBBBBBBBBBBBB==');
+    expect(calls[0]?.url).toBe(`https://api.zoom.us/v2/meetings/${encodeURIComponent(encodeURIComponent('/BBBB//BBBBBBBBBBBBBBB=='))}/recordings`);
   });
 
   it('maps a Zoom status the way the list does: 401 expired, 404 gone, 429 busy', async () => {

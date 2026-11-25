@@ -89,7 +89,8 @@ const videoOf = (files: ZoomFile[]) => {
   const kind = VIDEO_KINDS.find((k) => mp4s.some((f) => text(f.recording_type) === k));
   return kind ? only(mp4s.filter((f) => text(f.recording_type) === kind)) : only(mp4s);
 };
-const transcriptOf = (files: ZoomFile[]) => completed(files).find((f) => text(f.recording_type) === 'audio_transcript' || text(f.file_type).toUpperCase() === 'TRANSCRIPT');
+const isTranscript = (f: ZoomFile) => text(f.recording_type) === 'audio_transcript' || text(f.file_type).toUpperCase() === 'TRANSCRIPT';
+const transcriptOf = (files: ZoomFile[]) => completed(files).find(isTranscript);
 const sizeOf = (file: ZoomFile | undefined): number => (file && typeof file.file_size === 'number' && Number.isFinite(file.file_size) && file.file_size > 0 ? Math.floor(file.file_size) : 0);
 
 /**
@@ -261,9 +262,10 @@ export class ZoomMeetingPlatform implements MeetingPlatformAdapter, MeetingPlatf
   async transcriptFile(credential: MeetingPlatformCredential, recordingId: string, signal?: AbortSignal): Promise<MeetingPlatformDownload> {
     if (recordingId === '' || recordingId === '.' || recordingId === '..') throw new MeetingPlatformError('recording_gone');
     const body = await this.get(`https://${ZOOM_API_HOST}/v2/meetings/${meetingPathId(recordingId)}/recordings`, credential, signal);
-    const transcripts = completed(filesOf(body)).filter((f) => text(f.recording_type) === 'audio_transcript' || text(f.file_type).toUpperCase() === 'TRANSCRIPT');
+    const transcripts = completed(filesOf(body)).filter(isTranscript);
     const file = only(transcripts);
     if (!file) throw new MeetingPlatformError('no_transcript', transcripts.length > 1 ? 'the recording has several transcript files' : 'the recording has no transcript file');
+    if (sizeOf(file) > ZOOM_TRANSCRIPT_MAX_BYTES) throw new MeetingPlatformError('too_large');
     const target = zoomDownloadUrl(file.download_url);
     if (!target) throw new MeetingPlatformError('platform_refused', 'the transcript file is not on a Zoom host');
     return {
