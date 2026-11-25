@@ -25,6 +25,7 @@ import { MeetingChatPost } from './meeting-chat.tsx';
 import { MeetingTranslation } from './meeting-translation.tsx';
 import { MinutesVersionPublisher, MinutesVersionSwitch } from './meeting-minutes-version.tsx';
 import { clock } from './meeting-transcript.tsx';
+import { TalkTimeLine } from './meeting-talk-time.tsx';
 import { notesInstalled } from './notes-panel.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 
@@ -661,6 +662,8 @@ export function MeetingResults({
             <MinutesVersionSwitch meetingId={meetingId} original={publishedOriginal}>
               <SummaryText summary={published.summary} decisions={published.decisions} template={template} copy={minutesTemplate} />
             </MinutesVersionSwitch>
+            {/* Who did the talking (#4765): one line worked out in code from the transcript the reader may read, no AI */}
+            <TalkTimeLine meetingId={meetingId} />
             <MeetingTranslation meetingId={meetingId} stage="published" original={publishedOriginal} />
             {isRecorder && <MinutesVersionPublisher meetingId={meetingId} original={publishedOriginal} />}
           </section>

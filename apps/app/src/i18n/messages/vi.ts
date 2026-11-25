@@ -5137,6 +5137,18 @@ export const vi = {
         TITLE_BUSY: 'Đang có một lần gợi ý chạy. Hãy đợi một lát.',
       },
     },
+    // Ai đã nói (#4765): tính bằng code từ chính các dòng bản ghi lời mà người xem được đọc, không gọi AI.
+    talkTime: {
+      title: 'Ai đã nói',
+      desc: 'Tính từ các dòng bản ghi lời bạn đang đọc: thời gian nói, số lượt và đoạn nói liền dài nhất của từng người. Không dùng AI.',
+      speaker: 'Người nói',
+      share: 'Phần thời gian nói',
+      time: 'Thời gian nói',
+      turns: 'Số lượt',
+      longest: 'Đoạn dài nhất',
+      line: 'Thời gian nói: {list}',
+      lineMore: 'Thời gian nói: {list} và {count, number} người khác',
+    },
     chapters: {
       title: 'Mục lục',
       readerNote: 'Các phần của cuộc họp, mỗi phần có giờ trong bản ghi lời nói. Bấm vào một phần để đến dòng đó.',
