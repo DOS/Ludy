@@ -432,10 +432,12 @@ export function channelConversationAdapters(config: WhatsAppConfig): Record<stri
 
 // The meeting platforms a deployment has (Meetings C1 to C4): the offline sandbox when the channel sandbox is on, Zoom only when the deployment has its own Zoom OAuth app, Teams only when it has its own
 // Microsoft Entra app, and Google Meet only when it has a Google OAuth client for it (all off by default).
-export function meetingPlatformsOf(config: Pick<Config, 'CHANNEL_SANDBOX' | 'ZOOM_OAUTH_CLIENT_ID' | 'ZOOM_OAUTH_CLIENT_SECRET' | 'TEAMS_OAUTH_CLIENT_ID' | 'TEAMS_OAUTH_CLIENT_SECRET' | 'MEETINGS_GOOGLE_CLIENT_ID' | 'MEETINGS_GOOGLE_CLIENT_SECRET'>) {
+export function meetingPlatformsOf(config: Pick<Config, 'CHANNEL_SANDBOX' | 'ZOOM_OAUTH_CLIENT_ID' | 'ZOOM_OAUTH_CLIENT_SECRET' | 'TEAMS_OAUTH_CLIENT_ID' | 'TEAMS_OAUTH_CLIENT_SECRET' | 'MEETINGS_GOOGLE_CLIENT_ID' | 'MEETINGS_GOOGLE_CLIENT_SECRET' | 'MEETINGS_GOOGLE_PICKER_API_KEY' | 'MEETINGS_GOOGLE_PICKER_APP_ID'>) {
   return meetingPlatformAdapters({
     sandbox: config.CHANNEL_SANDBOX === 'true',
     ...(config.MEETINGS_GOOGLE_CLIENT_ID && config.MEETINGS_GOOGLE_CLIENT_SECRET ? { google: { clientId: config.MEETINGS_GOOGLE_CLIENT_ID, clientSecret: config.MEETINGS_GOOGLE_CLIENT_SECRET } } : {}),
+    // The Picker route (#3174): the Google adapter also offers and reads a recording of a conference with no transcript, only where the operator set the Picker's key and app id.
+    googleRecordings: Boolean(config.MEETINGS_GOOGLE_PICKER_API_KEY && config.MEETINGS_GOOGLE_PICKER_APP_ID && config.MEETINGS_GOOGLE_CLIENT_ID),
     ...(config.ZOOM_OAUTH_CLIENT_ID && config.ZOOM_OAUTH_CLIENT_SECRET ? { zoom: { clientId: config.ZOOM_OAUTH_CLIENT_ID, clientSecret: config.ZOOM_OAUTH_CLIENT_SECRET } } : {}),
     ...(config.TEAMS_OAUTH_CLIENT_ID && config.TEAMS_OAUTH_CLIENT_SECRET ? { teams: { clientId: config.TEAMS_OAUTH_CLIENT_ID, clientSecret: config.TEAMS_OAUTH_CLIENT_SECRET } } : {}),
   });

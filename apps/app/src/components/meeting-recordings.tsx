@@ -6,7 +6,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { useState, type FormEvent } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
-import { IMPORT_CONSENT_NOTICE_VERSION, MEETING_SUMMARY_TEMPLATES, type MeetingLanguage, type MeetingPlatformRecordingView, type BuiltInSummaryTemplate, type MeetingVisibility } from '@ludy/kernel-contract';
+import { IMPORT_CONSENT_NOTICE_VERSION, MEETING_SUMMARY_TEMPLATES, meetingPlatformNeedsPick, type MeetingLanguage, type MeetingPlatformRecordingView, type BuiltInSummaryTemplate, type MeetingVisibility } from '@ludy/kernel-contract';
 import { IMPORT_NOTICE, noticeLanguageFor } from '@ludy/meeting-recorder';
 import { Badge } from '@ludy/ui/components/badge';
 import { Button } from '@ludy/ui/components/button';
@@ -17,6 +17,8 @@ import { Label } from '@ludy/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { getConfig } from '../lib/auth.ts';
+import { pickDriveFile } from '../lib/google-picker.ts';
 import { canRetry, canSubmitImport, errorKey, importBlock, isTranscriptImport, lengthParts, matchedSuggestion, pollMs } from '../lib/meeting-platform.ts';
 import { formatBytes } from '../lib/offboarding.ts';
 import { toast } from '../lib/toast.ts';
@@ -179,6 +181,27 @@ function RecordingRow({ row, slug, canImport, onImport }: { row: MeetingPlatform
     },
     onSuccess: () => refreshRecordings(),
   });
+  // Google Meet's Picker route (#3174): a recording that is a video file in the organizer's Drive is picked in Google Picker first, and only its file id goes to the API (the token Google gives the browser for the
+  // pick never does, apps/app/src/lib/google-picker.ts). Shown only where the deployment set the Picker's keys.
+  const picker = getConfig().googlePicker ?? null;
+  const needsPick = picker !== null && meetingPlatformNeedsPick(row.provider, row);
+  const [pickNote, setPickNote] = useState<'cancelled' | 'denied' | null>(null);
+  const pick = useMutation({
+    mutationFn: async () => {
+      const result = await pickDriveFile(picker as NonNullable<typeof picker>);
+      if (result.status === 'picked') await orpc.meetingPlatform.pick.call({ recordingId: row.id, fileId: result.fileId });
+      return result;
+    },
+    onSuccess: (result) => {
+      setPickNote(result.status === 'picked' ? null : result.status);
+      if (result.status === 'picked') refreshRecordings();
+    },
+  });
+  const pickButton = (label: string) => (
+    <Button type="button" size="sm" variant="outline" loading={pick.isPending} aria-label={t('pickOf', { title })} data-testid="meeting-recording-pick" onClick={() => pick.mutate()}>
+      {label}
+    </Button>
+  );
   const title = row.title === '' ? t('untitled') : row.title;
   const matched = matchedSuggestion(row);
   const block = importBlock(row);
@@ -234,10 +257,15 @@ function RecordingRow({ row, slug, canImport, onImport }: { row: MeetingPlatform
           )}
           {row.status === 'suggested' && matched === null && block === null && (
             <>
-              {canImport ? (
-                <Button type="button" size="sm" aria-label={t('importOf', { title })} data-testid="meeting-recording-import" onClick={() => onImport(row)}>
-                  {t('import')}
-                </Button>
+              {canImport && needsPick && !row.picked ? (
+                pickButton(t('pick'))
+              ) : canImport ? (
+                <>
+                  {needsPick && pickButton(t('pickAgain'))}
+                  <Button type="button" size="sm" aria-label={t('importOf', { title })} data-testid="meeting-recording-import" onClick={() => onImport(row)}>
+                    {t('import')}
+                  </Button>
+                </>
               ) : (
                 <span className="text-xs text-muted-foreground" data-testid="meeting-recording-viewer">
                   {t('viewerOnly')}
@@ -276,7 +304,8 @@ function RecordingRow({ row, slug, canImport, onImport }: { row: MeetingPlatform
                   {tp('settings.title')}
                 </Link>
               )}
-              {canImport && canRetry(row) && (
+              {canImport && needsPick && (row.errorCode === 'pick_missing' || row.errorCode === 'pick_mismatch') && pickButton(t('pickAgain'))}
+              {canImport && canRetry(row) && !(needsPick && (row.errorCode === 'pick_missing' || row.errorCode === 'pick_mismatch')) && (
                 <Button type="button" size="sm" variant="outline" aria-label={t('importOf', { title })} data-testid="meeting-recording-retry" onClick={() => onImport(row)}>
                   {t('retry')}
                 </Button>
@@ -293,6 +322,17 @@ function RecordingRow({ row, slug, canImport, onImport }: { row: MeetingPlatform
           {t('failed', { reason: tp(`errors.${errorKey(row.errorCode)}`) })}
         </p>
       )}
+      {needsPick && row.status === 'suggested' && (
+        <p className="text-xs text-subtle-foreground" data-testid="meeting-recording-pick-note">
+          {row.picked ? t('pickedNote') : t('pickNote')}
+        </p>
+      )}
+      {pickNote !== null && (
+        <p className="text-xs text-muted-foreground" role="status" data-testid="meeting-recording-pick-state">
+          {t(pickNote === 'cancelled' ? 'pickCancelled' : 'pickDenied')}
+        </p>
+      )}
+      {pick.error && <ErrorText>{errorMessage(pick.error)}</ErrorText>}
       {dismiss.error && <ErrorText>{errorMessage(dismiss.error)}</ErrorText>}
     </li>
   );
