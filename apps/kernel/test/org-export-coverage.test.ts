@@ -2,7 +2,7 @@
 // The reading behind the coverage check of offboarding.db.test.ts (#3201), without a database: which tables the export reads, and the messages on planted catalogs.
 import { describe, expect, it } from 'vitest';
 import { EXPORT_TABLES, MAIL_SOURCES_LEFT_OUT } from '@ludy/kernel';
-import { FOLLOWUP_MAIL_SOURCE, MORNING_MAIL_SOURCE, SUMMARY_READY_MAIL_SOURCE } from '@ludy/kernel-contract';
+import { FOLLOWUP_MAIL_SOURCE, MORNING_MAIL_SOURCE, SUMMARY_READY_MAIL_SOURCE, WEEKLY_MAIL_SOURCE } from '@ludy/kernel-contract';
 import { COVERED_SCHEMAS, exportCoverageProblems, exportedTables, omitProblems } from './org-export-coverage.ts';
 
 describe('the tables the owner export contains (#3201)', () => {
@@ -76,12 +76,13 @@ describe('omitted columns (#3367)', () => {
 });
 
 describe('MAIL_SOURCES_LEFT_OUT (#5018)', () => {
-  it('is non-empty, unique, contains only SQL-safe lowercase identifiers, and covers all meeting mail sources', () => {
+  it('is non-empty, frozen, unique, contains only SQL-safe lowercase identifiers, and covers all meeting mail sources', () => {
+    expect(Object.isFrozen(MAIL_SOURCES_LEFT_OUT)).toBe(true);
     expect(MAIL_SOURCES_LEFT_OUT.length).toBeGreaterThan(0);
     for (const source of MAIL_SOURCES_LEFT_OUT) {
       expect(source, source).toMatch(/^[a-z0-9._]+$/);
     }
     expect(new Set(MAIL_SOURCES_LEFT_OUT).size).toBe(MAIL_SOURCES_LEFT_OUT.length);
-    expect(MAIL_SOURCES_LEFT_OUT).toEqual(expect.arrayContaining([FOLLOWUP_MAIL_SOURCE, SUMMARY_READY_MAIL_SOURCE, MORNING_MAIL_SOURCE]));
+    expect(MAIL_SOURCES_LEFT_OUT).toEqual(expect.arrayContaining([FOLLOWUP_MAIL_SOURCE, WEEKLY_MAIL_SOURCE, SUMMARY_READY_MAIL_SOURCE, MORNING_MAIL_SOURCE]));
   });
 });
