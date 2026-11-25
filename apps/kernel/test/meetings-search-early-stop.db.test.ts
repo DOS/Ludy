@@ -243,4 +243,37 @@ suite('ludy_meetings.search_segment_ids reads the first page early and answers w
     expect(await asUser('owner', (c) => ids(c, 'search_segment_ids', 'xuất khẩu', 21, 0))).toEqual([]);
     expect(await asUser('admin', (c) => ids(c, 'search_segment_ids', 'xuất khẩu', 21, 0))).toEqual([]);
   }, 60_000);
+  // #4965: a label filter keeps the definer to the meetings that carry the label, before the page is filled, in the early way and in the old way (more than 40 labelled meetings visited without a full page).
+  it('keeps the answer to the meetings that carry a label, whatever the case, in the old way too, and answers with no label as it did', async () => {
+    // Every org-shared meeting of the recorder carries the label (90 of them), and the oldest meeting of all carries it with a rare word: more than 40 labelled meetings come first, so only the old way finds it.
+    await sqlAdmin(
+      `INSERT INTO ludy_meetings.meeting_label (org_id, meeting_id, label, created_by)
+       SELECT m.org_id, m.id, 'Nhãn chung', m.recorder_user_id FROM ludy_meetings.meeting m WHERE m.org_id = $1 AND m.visibility = 'org' AND m.recorder_user_id = $2`,
+      [orgId, users.recorder],
+    );
+    const [rare] = await meetings(1, 'recorder', 'org', [], () => '2019-01-01T03:00:00Z', () => ['Xuyên thấu mọi mặt trận']);
+    await sqlAdmin(`INSERT INTO ludy_meetings.meeting_label (org_id, meeting_id, label, created_by) VALUES ($1, $2, 'Nhãn chung', $3)`, [orgId, rare, users.recorder]);
+    const rareLine = (await sqlAdmin<{ id: string }>(`SELECT id FROM ludy_meetings.transcript_segment WHERE org_id = $1 AND meeting_id = $2`, [orgId, rare])).rows[0]?.id as string;
+    const filtered = (c: pg.Client, q: string, label: string | null, limit = 21, offset = 0) =>
+      c.query<{ id: string }>('SELECT id FROM ludy_meetings.search_segment_ids($1, $2, $3, $4)', [q, limit, offset, label]).then((r) => r.rows.map((x) => x.id));
+    await asUser('recorder', async (c) => {
+      // The old way: the rare word is beyond the 40 labelled meetings the early way visits; the label, in any case, still finds it, and a label nobody carries finds nothing.
+      expect(await filtered(c, 'xuyên thấu', 'nhãn chung')).toEqual([rareLine]);
+      expect(await filtered(c, 'xuyên thấu', '  NHÃN CHUNG  ')).toEqual([rareLine]);
+      expect(await filtered(c, 'xuyên thấu', 'Không ai gắn')).toEqual([]);
+      // The early way: a common word fills the page from the labelled meetings alone (the attendees-only meetings of the recorder carry no label, so none of their lines is there).
+      const common = await filtered(c, 'giá', 'Nhãn chung', 51, 0);
+      expect(common).toHaveLength(51);
+      const labelled = new Set((await sqlAdmin<{ id: string }>(`SELECT s.id FROM ludy_meetings.transcript_segment s JOIN ludy_meetings.meeting_label l ON l.org_id = s.org_id AND l.meeting_id = s.meeting_id WHERE s.org_id = $1 AND lower(l.label) = 'nhãn chung'`, [orgId])).rows.map((r) => r.id));
+      expect(common.every((id) => labelled.has(id))).toBe(true);
+      // No label: the call of three arguments and the call of four with NULL answer the same ids.
+      for (const q of ['giá', 'báo giá', 'chiết khấu', 'xuyên thấu']) {
+        expect(await ids(c, 'search_segment_ids', q, 21, 0), q).toEqual(await filtered(c, q, null));
+      }
+    });
+    // A label of no length, or of more than 40 characters, is refused; so is a caller who may not search, as for the call of three arguments.
+    await expect(asUser('recorder', (c) => filtered(c, 'giá', '   '))).rejects.toMatchObject({ code: '22023' });
+    await expect(asUser('recorder', (c) => filtered(c, 'giá', 'x'.repeat(41)))).rejects.toMatchObject({ code: '22023' });
+    await expect(asUser('viewer', (c) => filtered(c, 'giá', 'Nhãn chung'))).rejects.toMatchObject({ code: '42501' });
+  }, 120_000);
 });

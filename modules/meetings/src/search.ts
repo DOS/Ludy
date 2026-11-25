@@ -8,6 +8,7 @@
 import { sql } from 'kysely';
 import {
   MEETING_SEARCH_HITS_MAX,
+  cleanLabelText,
   zMeetingSearchInput,
   type MeetingSearchHit,
   type MeetingSearchResult,
@@ -24,8 +25,19 @@ type Trx = QueryContext['trx'];
  * decides again for every row. A line a row-security policy hides, or one of a meeting past its text date, is simply not there. Shared by the search and by the question box (A3, #3161), so both
  * see exactly the same lines and no other door to a meeting's text exists.
  */
-export async function findSearchHits(trx: Trx, orgId: string, q: string, size: number, offset: number): Promise<{ hits: MeetingSearchHit[]; hasMore: boolean }> {
-  const found = await sql<{ id: string }>`SELECT id FROM ludy_meetings.search_segment_ids(${q}, ${size + 1}, ${offset})`.execute(trx);
+export async function findSearchHits(
+  trx: Trx,
+  orgId: string,
+  q: string,
+  size: number,
+  offset: number,
+  label: string | null = null,
+): Promise<{ hits: MeetingSearchHit[]; hasMore: boolean }> {
+  // With a label (#4965) the definer looks only at the meetings that carry it, before it fills the page; with none it is the call it always was.
+  const found =
+    label === null
+      ? await sql<{ id: string }>`SELECT id FROM ludy_meetings.search_segment_ids(${q}, ${size + 1}, ${offset})`.execute(trx)
+      : await sql<{ id: string }>`SELECT id FROM ludy_meetings.search_segment_ids(${q}, ${size + 1}, ${offset}, ${label})`.execute(trx);
   const ids = found.rows.map((r) => r.id);
   if (ids.length === 0) return { hits: [], hasMore: false };
   const rows = await trx
@@ -75,7 +87,8 @@ export const meetingSearch = defineQuery({
     // At most MEETING_SEARCH_HITS_MAX hits can be paged: a page ends there, and `capped` says there were more.
     const size = Math.min(input.limit, MEETING_SEARCH_HITS_MAX - input.offset);
     if (size < 1) return { hits: [], hasMore: false, capped: true };
-    const { hits, hasMore } = await findSearchHits(ctx.trx, ctx.orgId, input.q, size, input.offset);
+    const label = input.label === undefined ? null : cleanLabelText(input.label);
+    const { hits, hasMore } = await findSearchHits(ctx.trx, ctx.orgId, input.q, size, input.offset, label === '' ? null : label);
     return { hits, hasMore, capped: hasMore && input.offset + size >= MEETING_SEARCH_HITS_MAX };
   },
 });

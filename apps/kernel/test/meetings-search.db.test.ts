@@ -168,6 +168,36 @@ suite('search across readable meetings (#2589, L2)', () => {
     await expect(search('viewer', 'onestagea')).rejects.toMatchObject({ status: 403 });
   });
 
+  it('keeps the page to the lines of the meetings that carry a label, whatever the case, and pages them on the server (#4965)', async () => {
+    // 45 newer meetings say the word and carry no label: they fill the first pages of the unfiltered search, and a filter applied after the page was read would find none of the three labelled ones below.
+    for (let g = 0; g < 45; g++) {
+      const id = await meeting('recorder', `Họp không nhãn ${g}`, 'org', [], orgId, `2026-12-${String(1 + (g % 28)).padStart(2, '0')}T0${g % 9}:00:00Z`);
+      await line(id, `Labelfilter dòng chung ${g}`, 'published', 1);
+    }
+    const l1 = await meeting('recorder', 'Họp nhãn một', 'org', [], orgId, '2026-01-05T03:00:00Z');
+    const l2 = await meeting('recorder', 'Họp nhãn hai', 'org', [], orgId, '2026-01-04T03:00:00Z');
+    const l3 = await meeting('recorder', 'Họp nhãn ba kín', 'attendees', ['attendee'], orgId, '2026-01-03T03:00:00Z');
+    for (const id of [l1, l2, l3]) await line(id, 'Labelfilter dòng của họp có nhãn', 'published', 1);
+    for (const id of [l1, l2, l3]) await sqlAdmin('INSERT INTO ludy_meetings.meeting_label (org_id, meeting_id, label, created_by) VALUES ($1, $2, $3, $4)', [orgId, id, 'Khách Hoa Sen', users.recorder]);
+    const meetingsOf = async (who: string, page: { limit?: number; offset?: number; label?: string }) => (await runtime.query<MeetingSearchResult>('meetings.search', { q: 'labelfilter', ...page }, { actor: asUser(who), orgId })).hits.map((h) => h.meetingTitle).sort();
+    // Without a label the first page is the five newest lines, none of them labelled.
+    const unfiltered = await meetingsOf('recorder', { limit: 5 });
+    expect(unfiltered).toHaveLength(5);
+    expect(unfiltered.every((t) => t.startsWith('Họp không nhãn'))).toBe(true);
+    // With the label (any case) the page holds the three labelled meetings, from the first page, and nothing more.
+    expect(await meetingsOf('recorder', { limit: 5, label: 'KHÁCH hoa sen' })).toEqual(['Họp nhãn ba kín', 'Họp nhãn hai', 'Họp nhãn một'].sort());
+    const paged = await runtime.query<MeetingSearchResult>('meetings.search', { q: 'labelfilter', limit: 2, label: 'khách hoa sen' }, { actor: asUser('recorder'), orgId });
+    expect(paged.hits).toHaveLength(2);
+    expect(paged.hasMore).toBe(true);
+    expect(await meetingsOf('recorder', { limit: 2, offset: 2, label: 'khách hoa sen' })).toHaveLength(1);
+    // Each reader finds only the labelled lines they read: an attendee all three, the org the two shared ones, an owner or admin who is no reader the two shared ones.
+    expect(await meetingsOf('attendee', { label: 'Khách Hoa Sen' })).toEqual(['Họp nhãn ba kín', 'Họp nhãn hai', 'Họp nhãn một'].sort());
+    for (const who of ['stranger', 'owner', 'admin']) expect(await meetingsOf(who, { label: 'Khách Hoa Sen' }), who).toEqual(['Họp nhãn hai', 'Họp nhãn một']);
+    // A label nobody carries finds nothing; a label that is too long is refused.
+    expect(await meetingsOf('recorder', { label: 'Không ai gắn' })).toEqual([]);
+    await expect(search('recorder', 'labelfilter', { limit: 5 }).then(() => runtime.query('meetings.search', { q: 'labelfilter', label: 'x'.repeat(41) }, { actor: asUser('recorder'), orgId }))).rejects.toBeDefined();
+  }, 120_000);
+
   it('keeps another org out, both ways', async () => {
     const foreign = await meeting('outsider', 'Họp org khác', 'org', [], otherOrgId);
     await line(foreign, 'Giá vàng hôm nay tăng mạnh', 'published', 3, otherOrgId);
