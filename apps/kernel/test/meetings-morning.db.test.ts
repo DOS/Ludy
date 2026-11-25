@@ -417,4 +417,35 @@ suite('the opt-in morning notice of the day\'s meetings (#3955)', () => {
     expect(warnings[0]).not.toContain('secret-endpoint-leak');
     expect(warnings[0]).not.toContain(SECRET_TITLE);
   });
+
+  it('strips count and workerInstance from legacy meetings.morning.notice audit rows on read and org export (#5018)', async () => {
+    const legacyId = (await sqlAdmin<{ id: string }>(
+      `INSERT INTO ludy_kernel.audit_event (org_id, actor_type, command, command_id, outcome, input_sha256, detail)
+       VALUES ($1, 'system', 'meetings.morning.notice', gen_random_uuid(), 'ok', repeat('0', 64), '{"day":"2026-11-20","count":9,"mailed":true,"workerInstance":"legacy-pod"}'::jsonb)
+       RETURNING id`,
+      [orgId],
+    )).rows[0]!.id;
+    const controlId = (await sqlAdmin<{ id: string }>(
+      `INSERT INTO ludy_kernel.audit_event (org_id, actor_type, command, command_id, outcome, input_sha256, detail)
+       VALUES ($1, 'user', 'meetings.meeting.delete', gen_random_uuid(), 'ok', repeat('0', 64), '{"count":3}'::jsonb)
+       RETURNING id`,
+      [orgId],
+    )).rows[0]!.id;
+
+    const morningPage = await runtime.query<{ items: Array<{ id: string; detail: string | null }> }>('kernel.audit.list', { command: 'meetings.morning.notice' }, { actor: asUser('owner'), orgId });
+    const legacyListed = morningPage.items.find((item) => item.id === legacyId);
+    expect(legacyListed?.detail).toBe('day=2026-11-20; mailed=true');
+    expect(legacyListed?.detail).not.toContain('count');
+    expect(legacyListed?.detail).not.toContain('workerInstance');
+
+    const controlPage = await runtime.query<{ items: Array<{ id: string; detail: string | null }> }>('kernel.audit.list', { command: 'meetings.meeting.delete' }, { actor: asUser('owner'), orgId });
+    expect(controlPage.items.find((item) => item.id === controlId)?.detail).toBe('count=3');
+
+    const exported: Array<{ id: string; detail: unknown }> = [];
+    await worker.stream('kernel.org.export.snapshot', { table: 'kernel.audit_event' }, { actor: SYSTEM, orgId }, async (raw) => {
+      for (const line of (raw as { lines: string[] }).lines) exported.push(JSON.parse(line) as { id: string; detail: unknown });
+    });
+    expect(exported.find((row) => row.id === legacyId)?.detail).toEqual({ day: '2026-11-20', mailed: true });
+    expect(exported.find((row) => row.id === controlId)?.detail).toEqual({ count: 3 });
+  });
 });

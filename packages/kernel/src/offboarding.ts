@@ -23,12 +23,12 @@ const MAIL_SOURCE_NAME = /^[a-z0-9._]+$/;
  * - meetings.morning: carries a member's private daily calendar event count (payload.count from per-member calendar_agenda) paired with their address; meetings.morning.notice also keeps count out of its audit row.
  * A source of this list is out of the owner's org export (the mail log, its delivery events and suppression pointers) and out of the personal-data finder's full rows, where it shows id, to_address, status and created_at only. Constant identifiers matching ^[a-z0-9._]+$ only, because export subqueries interpolate them as SQL string literals.
  */
-export const MAIL_SOURCES_LEFT_OUT: readonly string[] = [
+export const MAIL_SOURCES_LEFT_OUT: readonly string[] = Object.freeze([
   FOLLOWUP_MAIL_SOURCE,
   WEEKLY_MAIL_SOURCE,
   SUMMARY_READY_MAIL_SOURCE,
   MORNING_MAIL_SOURCE,
-];
+]);
 if (MAIL_SOURCES_LEFT_OUT.length === 0 || MAIL_SOURCES_LEFT_OUT.some((source) => !MAIL_SOURCE_NAME.test(source))) {
   throw new Error('MAIL_SOURCES_LEFT_OUT must be non-empty and match /^[a-z0-9._]+$/');
 }
@@ -536,11 +536,12 @@ export const exportSnapshot = defineQuery({
       const omit = spec.omit as readonly string[];
       // The worker process a system audit row names (detail.workerInstance, #1951) is the deployment's, never the org's:
       // a host or pod name, left out of the org's copy as the audit log leaves it out (auditDetailLine).
+      // Legacy meetings.morning.notice audit rows written before #5018 carried detail.count (a member's private calendar count): strip count here as well as in auditDetailLine without mutating audit_event.
       // For projects.roadmap_signal (#4492, ADR-0047), omit quote_excerpt on attendees-only meetings not exported by meeting_export_rows().
       // For kernel.mail_suppression (#4584), source_message_id is nulled when it names a left-out mail (MAIL_SOURCES_LEFT_OUT), which kernel.mail_message leaves out of the snapshot (#4533, #5018): the row is kept (the address hash and why it is suppressed are the org's own), only the pointer at a mail the snapshot does not hold goes.
       const scrub =
         table === 'kernel.audit_event'
-          ? sql`|| pg_catalog.jsonb_build_object('detail', CASE WHEN pg_catalog.jsonb_typeof(t.detail) = 'object' THEN t.detail - 'workerInstance' ELSE t.detail END)`
+          ? sql`|| pg_catalog.jsonb_build_object('detail', CASE WHEN pg_catalog.jsonb_typeof(t.detail) = 'object' THEN CASE WHEN t.command = 'meetings.morning.notice' THEN (t.detail - 'workerInstance') - 'count' ELSE t.detail - 'workerInstance' END ELSE t.detail END)`
           : table === 'kernel.mail_suppression'
             ? sql`|| CASE WHEN t.source_message_id IS NOT NULL AND EXISTS (SELECT 1 FROM ludy_kernel.mail_message m WHERE m.org_id = t.org_id AND m.id = t.source_message_id AND m.source IN (${sql.join(MAIL_SOURCES_LEFT_OUT)})) THEN pg_catalog.jsonb_build_object('source_message_id', NULL) ELSE '{}'::jsonb END`
             : table === 'projects.roadmap_signal'
