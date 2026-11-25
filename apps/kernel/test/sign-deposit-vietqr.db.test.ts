@@ -1089,7 +1089,10 @@ suite('eSign Slice 6d post-sign VietQR deposit & accounting bridge (#4723)', () 
       await c.query('BEGIN');
       await c.query('SET LOCAL session_replication_role = replica');
       await c.query(
-        `UPDATE ludy_sign.signer SET require_email_otp = true WHERE org_id = $1 AND envelope_id = $2`,
+        `UPDATE ludy_sign.signer
+         SET require_email_otp = true,
+             email = COALESCE(email, 'signer-a@example.com')
+         WHERE org_id = $1 AND envelope_id = $2`,
         [org.orgId, draftEnvId],
       );
       await c.query('COMMIT');
