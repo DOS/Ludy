@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The files of a transcript export (#4817): the plain text and the SRT, the times, the cleaning of untrusted text, and the file name.
+import { inflateRawSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
-import { cleanLine, clockText, exportableCount, srtTime, transcriptFilename, transcriptSrt, transcriptText } from '../src/transcript-export-file.ts';
+import { cleanLine, clockText, exportableCount, srtTime, transcriptDocx, transcriptFile, transcriptFilename, transcriptSrt, transcriptText } from '../src/transcript-export-file.ts';
 
 const line = (startSeconds: number, endSeconds: number, speakerLabel: string, text: string) => ({ startSeconds, endSeconds, speakerLabel, text });
 
@@ -77,5 +78,54 @@ describe('the file name', () => {
     expect(long.length).toBeLessThanOrEqual(128);
     expect(long).not.toMatch(/[\ud800-\udbff](?![\udc00-\udfff])/u);
     expect(long.endsWith(' - 2026-11-15.txt')).toBe(true);
+  });
+});
+
+// The parts of a .docx read back: the zip's central directory, each entry inflated (the writer of the minutes' own test reads its files the same way).
+function docxParts(bytes: Uint8Array): Map<string, string> {
+  const buf = Buffer.from(bytes);
+  const end = buf.length - 22;
+  expect(buf.readUInt32LE(end)).toBe(0x06054b50);
+  const out = new Map<string, string>();
+  let at = buf.readUInt32LE(end + 16);
+  for (let i = 0; i < buf.readUInt16LE(end + 10); i++) {
+    const packed = buf.readUInt32LE(at + 20);
+    const nameLength = buf.readUInt16LE(at + 28);
+    const local = buf.readUInt32LE(at + 42);
+    const start = local + 30 + buf.readUInt16LE(local + 26) + buf.readUInt16LE(local + 28);
+    out.set(buf.subarray(at + 46, at + 46 + nameLength).toString('utf8'), inflateRawSync(buf.subarray(start, start + packed)).toString('utf8'));
+    at += 46 + nameLength;
+  }
+  return out;
+}
+const wordTexts = (bytes: Uint8Array): string[] => [...(docxParts(bytes).get('word/document.xml') ?? '').matchAll(/<w:t xml:space="preserve">([^<]*)<\/w:t>/gu)].map((m) => (m[1] as string).replace(/&amp;/gu, '&').replace(/&lt;/gu, '<').replace(/&gt;/gu, '>').replace(/&apos;/gu, "'").replace(/&quot;/gu, '"'));
+
+describe('the Word file', () => {
+  const meta = { title: 'Họp giao ban', day: '2026-11-15' };
+
+  it('is a zip of the five parts of a .docx, with a heading, the title and day, and one paragraph a line in order', () => {
+    const bytes = transcriptDocx([line(5, 9, 'Minh', 'Chào mọi người'), line(754, 760, 'Hà', 'Khách A đồng ý 8%')], meta);
+    expect([...docxParts(bytes).keys()]).toEqual(['[Content_Types].xml', '_rels/.rels', 'word/document.xml', 'word/_rels/document.xml.rels', 'word/styles.xml']);
+    expect(wordTexts(bytes)).toEqual(['BẢN GHI LỜI CUỘC HỌP', 'Họp giao ban', 'Ngày 15/11/2026', '[00:00:05] Minh: ', 'Chào mọi người', '[00:12:34] Hà: ', 'Khách A đồng ý 8%']);
+  });
+
+  it('is the same bytes for the same input, and goes through transcriptFile for the docx format', () => {
+    const lines = [line(1, 2, 'Hà', 'a')];
+    expect(Buffer.from(transcriptDocx(lines, meta)).equals(Buffer.from(transcriptDocx(lines, meta)))).toBe(true);
+    expect(Buffer.from(transcriptFile('docx', lines, meta)).equals(Buffer.from(transcriptDocx(lines, meta)))).toBe(true);
+    expect(new TextDecoder().decode(transcriptFile('txt', lines, meta))).toBe('[00:00:01] Hà: a\n');
+  });
+
+  it('cannot carry markup, a hidden or bidirectional character or a break out of a line: the text is cleaned and escaped', () => {
+    const bytes = transcriptDocx([line(1, 3, 'Hà‮', '<w:p>&"x"</w:p>​\n\nhai'), line(4, 5, 'Nam', '​')], { title: 'Họp <script>', day: '2026-11-15' });
+    const xml = docxParts(bytes).get('word/document.xml') ?? '';
+    expect(xml).not.toMatch(/[‮​]/u);
+    expect(xml).not.toContain('<script>');
+    expect(xml).not.toContain('<w:p>&"x"');
+    expect(wordTexts(bytes)).toEqual(['BẢN GHI LỜI CUỘC HỌP', 'Họp <script>', 'Ngày 15/11/2026', '[00:00:01] Hà: ', '<w:p>&"x"</w:p> hai']);
+  });
+
+  it('names the file with the .docx extension', () => {
+    expect(transcriptFilename('Họp giao ban', '2026-11-15', 'docx')).toBe('Bản ghi - Họp giao ban - 2026-11-15.docx');
   });
 });

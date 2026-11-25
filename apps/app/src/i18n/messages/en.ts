@@ -4803,6 +4803,7 @@ export const en = {
         label: 'Download the transcript',
         txt: 'Text (.txt)',
         srt: 'Captions (.srt)',
+        docx: 'Word (.docx)',
         note: 'Made on the server from the lines you can read here. No AI.',
       },
       platformSource: 'The {platform} transcript: written by the platform, not by Ludy.',
