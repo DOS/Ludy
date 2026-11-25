@@ -498,11 +498,12 @@ function HrContractSignHandoffView({
   return (
     <>
       {envelope && statusText && (
+        // Explicit >=44px mobile touch target: Detail wraps HrContractSignHandoff in a flex div inside stacked DataTable, bypassing td > a.
         <Link
           to="/o/$slug/sign/envelopes/$id"
           params={{ slug, id: envelope.envelopeId }}
           aria-label={t('sign.openLabel', { title: envelope.title, status: statusText })}
-          className="inline-flex min-h-7 items-center rounded-4xl max-md:min-h-11 focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+          className="inline-flex min-h-7 min-w-7 items-center justify-center rounded-4xl max-md:min-h-11 max-md:min-w-11 focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
           data-testid="hr-contract-sign-status"
           data-status={envelope.status}
         >

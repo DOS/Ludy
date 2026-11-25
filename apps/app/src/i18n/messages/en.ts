@@ -4384,6 +4384,16 @@ export const en = {
       },
       chip: '{title}, {date}, {time}',
     },
+    askThis: {
+      label: 'Ask about this meeting',
+      placeholder: 'For example: What price did customer A agree to?',
+      hint: 'Vy reads only the transcript lines of this meeting that you can read (up to 40 lines), sent to the AI provider of this system. The answer is shown only to you and is not saved.',
+      submitSearch: 'Search this transcript',
+      plainNote: 'Without Vy, this box lists the lines of this meeting that hold the main words of your question.',
+      none: 'Nothing found in the transcript of this meeting',
+      private: 'Only you see this answer and it is not saved. Press the time under each sentence to open the transcript line and check it, especially figures and names.',
+      open: 'Open the transcript at {time}',
+    },
     // "This week" on the meetings page (#3949): the decisions and open items of the meetings the member reads, and Vy's few sentences on a click.
     // The week's meeting load (#4770): worked out in code from the meetings the viewer reads, no AI.
     load: {
