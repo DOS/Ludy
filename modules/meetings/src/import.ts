@@ -126,7 +126,7 @@ export const meetingImportStart = defineCommand({
     if (recording.status !== 'suggested' && recording.status !== 'failed') {
       throw new DomainError('MEETING_PLATFORM_STATE', 409, 'Bản ghi này đã được nhập hoặc đang được nhập');
     }
-    // One meeting offered as two suggestions (a video and a transcript, ADR-0055): once one is on its way or done, the other is refused, so a call never becomes two meetings. The pair is serialized by an advisory lock
+    // One meeting offered as two suggestions (a video and a transcript, ADR-0055): once one is on its way or done, the other is refused, so one member's two entries of a call do not both become meetings. This is a check in this command, not a guard in the database function that begins the row (a later step moves it there); two members importing the same call each get their own meeting, as before. The pair is serialized by an advisory lock
     // first, so a double click on the two buttons has one winner: the second start waits, then sees the first's status.
     const [keyA, keyB] = platformPairKeys(recording.external_id);
     const pair = await readPair(ctx.trx, ctx.orgId, userId, recording.connection_id, keyA, [keyA, keyB]);

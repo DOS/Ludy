@@ -4440,6 +4440,7 @@ export const vi = {
         openMatched: 'Mở cuộc họp',
         openMatchedOf: 'Mở cuộc họp cho {title}',
         failed: 'Không nhập được: {reason}',
+        pairTaken: 'Mục còn lại của cuộc họp này (video hoặc bản chép lời) đã được nhập hoặc đang được nhập.',
         viewerOnly: 'Chỉ thành viên mới nhập được bản ghi. Bạn đang ở quyền chỉ xem.',
       },
       errors: {

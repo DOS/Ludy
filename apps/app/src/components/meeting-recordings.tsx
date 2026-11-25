@@ -19,7 +19,7 @@ import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { getConfig } from '../lib/auth.ts';
 import { pickDriveFile } from '../lib/google-picker.ts';
-import { canRetry, canSubmitImport, errorKey, importBlock, isTranscriptImport, lengthParts, matchedSuggestion, pollMs } from '../lib/meeting-platform.ts';
+import { canRetry, canSubmitImport, errorKey, importBlock, isTranscriptImport, lengthParts, matchedSuggestion, pairTaken, pollMs } from '../lib/meeting-platform.ts';
 import { formatBytes } from '../lib/offboarding.ts';
 import { toast } from '../lib/toast.ts';
 import { useConsentPolicy } from './consent-policy.tsx';
@@ -166,7 +166,7 @@ function offers(row: MeetingPlatformRecordingView, words: { audio: string; video
   return items.length > 0 ? items.join(', ') : words.nothing;
 }
 
-function RecordingRow({ row, slug, canImport, onImport }: { row: MeetingPlatformRecordingView; slug: string; canImport: boolean; onImport: (row: MeetingPlatformRecordingView) => void }) {
+function RecordingRow({ row, slug, canImport, taken, onImport }: { row: MeetingPlatformRecordingView; slug: string; canImport: boolean; taken: boolean; onImport: (row: MeetingPlatformRecordingView) => void }) {
   const t = useTranslations('meetings.platform.recordings');
   const tp = useTranslations('meetings.platform');
   const f = useFormat();
@@ -270,7 +270,11 @@ function RecordingRow({ row, slug, canImport, onImport }: { row: MeetingPlatform
           )}
           {row.status === 'suggested' && matched === null && block === null && (
             <>
-              {canImport && needsPick && !row.picked ? (
+              {taken ? (
+                <span className="text-xs text-muted-foreground" role="status" data-testid="meeting-recording-pair-taken">
+                  {t('pairTaken')}
+                </span>
+              ) : canImport && needsPick && !row.picked ? (
                 pickButton(t('pick'))
               ) : canImport ? (
                 <>
@@ -317,8 +321,13 @@ function RecordingRow({ row, slug, canImport, onImport }: { row: MeetingPlatform
                   {tp('settings.title')}
                 </Link>
               )}
+              {taken && (
+                <span className="text-xs text-muted-foreground" role="status" data-testid="meeting-recording-pair-taken">
+                  {t('pairTaken')}
+                </span>
+              )}
               {canImport && needsPick && (row.errorCode === 'pick_missing' || row.errorCode === 'pick_mismatch') && pickButton(t('pickAgain'))}
-              {canImport && canRetry(row) && !(needsPick && (row.errorCode === 'pick_missing' || row.errorCode === 'pick_mismatch')) && (
+              {canImport && !taken && canRetry(row) && !(needsPick && (row.errorCode === 'pick_missing' || row.errorCode === 'pick_mismatch')) && (
                 <Button type="button" size="sm" variant="outline" aria-label={t('importOf', { title: labelTitle })} data-testid="meeting-recording-retry" onClick={() => onImport(row)}>
                   {t('retry')}
                 </Button>
@@ -384,7 +393,7 @@ export function PlatformRecordings({ slug }: { slug: string }) {
       {rows.length > 0 && (
         <ul className="divide-y rounded-lg border border-border bg-card">
           {rows.map((row) => (
-            <RecordingRow key={row.id} row={row} slug={slug} canImport={canImport} onImport={setTarget} />
+            <RecordingRow key={row.id} row={row} slug={slug} canImport={canImport} taken={pairTaken(rows, row)} onImport={setTarget} />
           ))}
         </ul>
       )}

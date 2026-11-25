@@ -4443,6 +4443,7 @@ export const en = {
         openMatched: 'Open meeting',
         openMatchedOf: 'Open meeting for {title}',
         failed: 'Could not import: {reason}',
+        pairTaken: 'The other entry of this meeting (video or transcript) is already imported or being imported.',
         viewerOnly: 'Only members can import recordings. Your role is view-only.',
       },
       errors: {

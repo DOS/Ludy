@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The two suggestions of one meeting (ADR-0055: an import never makes a second meeting for one call): the contract's rule for which keys form a pair, and its agreement with the Teams adapter that writes
+// The two suggestions of one meeting (ADR-0055: the start of one entry is refused while the other is on its way or imported): the contract's rule for which keys form a pair, and its agreement with the Teams adapter that writes
 // the transcript's key, so the start command's check (modules/meetings/src/import.ts) looks for the very key the adapter makes.
 import { describe, expect, it } from 'vitest';
 import { TEAMS_TRANSCRIPT_KEY_SUFFIX } from '@ludy/channel';
