@@ -91,8 +91,11 @@ export async function signOut(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'Đăng xuất', exact: true }).click();
 }
 
-export async function createOrg(page: Page, name: string): Promise<string> {
+// The screen offers "Một mình tôi" (only Tài chính, Cộng tác and Ludy AI on) by default (#4802); the specs that follow in an org use every app, so the helper
+// picks "Có nhân viên" unless a spec asks for the other.
+export async function createOrg(page: Page, name: string, kind: 'solo' | 'team' = 'team'): Promise<string> {
   await page.getByLabel('Tên công ty hoặc hộ kinh doanh').fill(name);
+  await page.getByRole('radio', { name: kind === 'team' ? /^Có nhân viên/ : /^Một mình tôi/ }).check();
   await page.getByRole('button', { name: 'Tạo tổ chức' }).click();
   await expect(page).toHaveURL(/\/o\/[^/]+\/overview$/);
   return new URL(page.url()).pathname.split('/')[2] ?? '';
