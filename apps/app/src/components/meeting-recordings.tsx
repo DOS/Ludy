@@ -4,7 +4,7 @@
 // platform's copy and transcribes the audio itself. The core works with AI off, and Ludy never joins or records a call. The list is the member's alone (the server's row security).
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
-import { useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
 import { IMPORT_CONSENT_NOTICE_VERSION, MEETING_SUMMARY_TEMPLATES, meetingPlatformNeedsPick, type MeetingLanguage, type MeetingPlatformRecordingView, type BuiltInSummaryTemplate, type MeetingVisibility } from '@ludy/kernel-contract';
 import { IMPORT_NOTICE, noticeLanguageFor } from '@ludy/meeting-recorder';
@@ -185,7 +185,15 @@ function RecordingRow({ row, slug, canImport, onImport }: { row: MeetingPlatform
   // pick never does, apps/app/src/lib/google-picker.ts). Shown only where the deployment set the Picker's keys.
   const picker = getConfig().googlePicker ?? null;
   const needsPick = picker !== null && meetingPlatformNeedsPick(row.provider, row);
-  const [pickNote, setPickNote] = useState<'cancelled' | 'denied' | null>(null);
+  // The Pick button gives way to Import once the row says it was picked: focus follows to Import, so a keyboard user does not land on the page's start.
+  const rowRef = useRef<HTMLLIElement>(null);
+  const refocus = useRef(false);
+  useEffect(() => {
+    if (!refocus.current || !row.picked) return;
+    refocus.current = false;
+    rowRef.current?.querySelector<HTMLElement>('[data-testid="meeting-recording-import"]')?.focus();
+  }, [row.picked]);
+  const [pickNote, setPickNote] = useState<'cancelled' | 'denied' | 'failed' | null>(null);
   const pick = useMutation({
     mutationFn: async () => {
       const result = await pickDriveFile(picker as NonNullable<typeof picker>);
@@ -194,11 +202,14 @@ function RecordingRow({ row, slug, canImport, onImport }: { row: MeetingPlatform
     },
     onSuccess: (result) => {
       setPickNote(result.status === 'picked' ? null : result.status);
-      if (result.status === 'picked') refreshRecordings();
+      if (result.status === 'picked') {
+        refocus.current = true;
+        refreshRecordings();
+      }
     },
   });
   const pickButton = (label: string) => (
-    <Button type="button" size="sm" variant="outline" loading={pick.isPending} aria-label={t('pickOf', { title })} data-testid="meeting-recording-pick" onClick={() => pick.mutate()}>
+    <Button type="button" size="sm" variant="outline" className="max-md:min-h-11 max-md:min-w-11" loading={pick.isPending} aria-label={t('pickOf', { title })} data-testid="meeting-recording-pick" onClick={() => pick.mutate()}>
       {label}
     </Button>
   );
@@ -213,7 +224,7 @@ function RecordingRow({ row, slug, canImport, onImport }: { row: MeetingPlatform
     </Button>
   );
   return (
-    <li className="space-y-2 p-3 text-sm" data-testid="meeting-recording" data-status={row.status}>
+    <li ref={rowRef} className="space-y-2 p-3 text-sm" data-testid="meeting-recording" data-status={row.status}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 space-y-1">
           <div className="flex flex-wrap items-center gap-2">
@@ -323,15 +334,14 @@ function RecordingRow({ row, slug, canImport, onImport }: { row: MeetingPlatform
         </p>
       )}
       {needsPick && row.status === 'suggested' && (
-        <p className="text-xs text-subtle-foreground" data-testid="meeting-recording-pick-note">
+        <p className="text-xs text-subtle-foreground" role="status" aria-live="polite" data-testid="meeting-recording-pick-note">
           {row.picked ? t('pickedNote') : t('pickNote')}
         </p>
       )}
-      {pickNote !== null && (
-        <p className="text-xs text-muted-foreground" role="status" data-testid="meeting-recording-pick-state">
-          {t(pickNote === 'cancelled' ? 'pickCancelled' : 'pickDenied')}
-        </p>
-      )}
+      {/* Always mounted, so a screen reader announces what fills it (a cancelled, refused or failed pick). The note above is mounted too and changes to "file chosen". */}
+      <p className="text-xs text-muted-foreground" role="status" aria-live="polite" data-testid="meeting-recording-pick-state">
+        {pickNote !== null ? t(pickNote === 'cancelled' ? 'pickCancelled' : pickNote === 'failed' ? 'pickFailed' : 'pickDenied') : ''}
+      </p>
       {pick.error && <ErrorText>{errorMessage(pick.error)}</ErrorText>}
       {dismiss.error && <ErrorText>{errorMessage(dismiss.error)}</ErrorText>}
     </li>

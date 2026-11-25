@@ -891,7 +891,10 @@ export function createHttpApp(deps: HttpDeps) {
       }
     });
   });
-  app.use('*', secureHeaders({ crossOriginResourcePolicy: 'same-site' }));
+  // Google Identity Services opens its consent window with window.open and reads the answer through window.opener, which Hono's default Cross-Origin-Opener-Policy `same-origin` cuts (#3174). Only a deployment that
+  // set the Picker's keys relaxes it, to `same-origin-allow-popups` (the page still cannot be reached by a window that opened it). secureHeaders writes its headers after the handler, so it has to be set here, not per page.
+  const googlePickerOn = Boolean(config.MEETINGS_GOOGLE_PICKER_API_KEY && config.MEETINGS_GOOGLE_PICKER_APP_ID);
+  app.use('*', secureHeaders({ crossOriginResourcePolicy: 'same-site', ...(googlePickerOn ? { crossOriginOpenerPolicy: 'same-origin-allow-popups' } : {}) }));
   // A web app on another origin (APP_URL, #2261) calls this API cross-origin: the allowlisted origins get CORS headers and
   // their preflights are answered here, before the rate limit and the session check (a preflight carries no token).
   app.use('*', corsMiddleware(config.CORS_ALLOWED_ORIGINS));
@@ -5841,7 +5844,7 @@ export function createHttpApp(deps: HttpDeps) {
     const authOriginUrl = publicAuthUrl(config);
     const directOrigin = store.direct ? directTransferOrigin(config) : null;
     const hostedOrigin = hostedLoginTokenOrigin(config);
-    const csp = contentSecurityPolicy(authOriginUrl, directOrigin, Boolean(config.TURNSTILE_SITE_KEY), null, hostedOrigin, null, Boolean(config.MEETINGS_GOOGLE_PICKER_API_KEY && config.MEETINGS_GOOGLE_PICKER_APP_ID));
+    const csp = contentSecurityPolicy(authOriginUrl, directOrigin, Boolean(config.TURNSTILE_SITE_KEY), null, hostedOrigin, null, googlePickerOn);
     const signCsp = contentSecurityPolicy(authOriginUrl, directOrigin, false, null, hostedOrigin);
     let indexHtml: string | null = null;
     app.get('*', async (c) => {

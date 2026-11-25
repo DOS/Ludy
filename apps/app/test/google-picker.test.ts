@@ -28,14 +28,15 @@ afterEach(() => {
 interface Rig {
   scripts: string[];
   policies: string[];
-  tokenRequests: Array<{ client_id: string; scope: string }>;
+  tokenRequests: Array<{ client_id: string; scope: string; include_granted_scopes: boolean }>;
+  disposed: number;
   built: Array<{ token: string; key: string; appId: string; mime: string }>;
   writes: string[];
 }
 
 // A page with Google's two scripts: appending a script installs the library it stands for, then fires onload.
-function rig(options: { tokenError?: boolean; action?: 'picked' | 'cancel'; docs?: Array<{ id?: string }>; trustedTypes?: boolean } = {}): Rig {
-  const state: Rig = { scripts: [], policies: [], tokenRequests: [], built: [], writes: [] };
+function rig(options: { tokenError?: boolean; tokenScope?: string; gapiLoad?: 'ok' | 'error' | 'timeout'; action?: 'picked' | 'cancel' | 'never'; docs?: Array<{ id?: string }>; trustedTypes?: boolean } = {}): Rig {
+  const state: Rig = { scripts: [], policies: [], tokenRequests: [], disposed: 0, built: [], writes: [] };
   const storage = new Proxy({}, { get: () => () => state.writes.push('storage read'), set: () => { state.writes.push('storage write'); return true; } });
   g.localStorage = storage;
   g.sessionStorage = storage;
@@ -60,11 +61,11 @@ function rig(options: { tokenError?: boolean; action?: 'picked' | 'cancel'; docs
             ...(g.google as G | undefined),
             accounts: {
               oauth2: {
-                initTokenClient: (config: { client_id: string; scope: string; callback: (response: { access_token?: string; error?: string }) => void; error_callback?: () => void }) => ({
+                initTokenClient: (config: { client_id: string; scope: string; include_granted_scopes: boolean; callback: (response: { access_token?: string; error?: string; scope?: string }) => void; error_callback?: () => void }) => ({
                   requestAccessToken: () => {
-                    state.tokenRequests.push({ client_id: config.client_id, scope: config.scope });
+                    state.tokenRequests.push({ client_id: config.client_id, scope: config.scope, include_granted_scopes: config.include_granted_scopes });
                     if (options.tokenError) config.error_callback?.();
-                    else config.callback({ access_token: TOKEN });
+                    else config.callback({ access_token: TOKEN, scope: options.tokenScope ?? GOOGLE_PICKER_SCOPE });
                   },
                 }),
               },
@@ -72,7 +73,9 @@ function rig(options: { tokenError?: boolean; action?: 'picked' | 'cancel'; docs
           };
         } else {
           g.gapi = {
-            load: (_api: string, callback: () => void) => {
+            load: (_api: string, loading: { callback: () => void; onerror: () => void; ontimeout: () => void; timeout: number }) => {
+              if (options.gapiLoad === 'error') return loading.onerror();
+              if (options.gapiLoad === 'timeout') return loading.ontimeout();
               g.google = {
                 ...(g.google as G | undefined),
                 picker: {
@@ -113,12 +116,15 @@ function rig(options: { tokenError?: boolean; action?: 'picked' | 'cancel'; docs
                     }
                     build() {
                       state.built.push({ token: this.token, key: this.key, appId: this.app, mime: this.view?.mime ?? '' });
-                      return { setVisible: () => this.callback?.({ action: options.action ?? 'picked', docs: options.docs ?? [{ id: FILE }] }) };
+                      return {
+                        setVisible: () => (options.action === 'never' ? undefined : this.callback?.({ action: options.action ?? 'picked', docs: options.docs ?? [{ id: FILE }] })),
+                        dispose: () => void (state.disposed += 1),
+                      };
                     }
                   },
                 },
               };
-              callback();
+              loading.callback();
             },
           };
         }
@@ -147,7 +153,8 @@ describe('pickDriveFile', () => {
     const page = rig();
     const result = await pickDriveFile(CONFIG);
     expect(result).toEqual({ status: 'picked', fileId: FILE });
-    expect(page.tokenRequests).toEqual([{ client_id: CONFIG.clientId, scope: 'https://www.googleapis.com/auth/drive.file' }]);
+    // Only that scope, and not the ones the member granted this client before (the Meet connect's).
+    expect(page.tokenRequests).toEqual([{ client_id: CONFIG.clientId, scope: 'https://www.googleapis.com/auth/drive.file', include_granted_scopes: false }]);
     expect(GOOGLE_PICKER_SCOPE).toBe('https://www.googleapis.com/auth/drive.file');
     expect(page.built).toEqual([{ token: TOKEN, key: CONFIG.apiKey, appId: CONFIG.appId, mime: 'video/mp4' }]);
     // Both scripts, through the policy, with their exact URLs, once each.
@@ -177,6 +184,53 @@ describe('pickDriveFile', () => {
     const denied = rig({ tokenError: true });
     expect(await pickDriveFile(CONFIG)).toEqual({ status: 'denied' });
     expect(denied.built).toEqual([]);
+  });
+
+  it('answers denied, and builds no Picker, for a token that carries any scope besides drive.file (the member unticked it, or Google added the earlier grants)', async () => {
+    for (const tokenScope of ['https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/meetings.space.readonly', 'https://www.googleapis.com/auth/meetings.space.readonly', '']) {
+      vi.resetModules();
+      pickDriveFile = (await import('../src/lib/google-picker.ts')).pickDriveFile;
+      const page = rig({ tokenScope });
+      expect(await pickDriveFile(CONFIG), tokenScope).toEqual({ status: 'denied' });
+      expect(page.built).toEqual([]);
+    }
+  });
+
+  it('answers failed, and lets the next pick try again, when Google\'s picker module does not load or does not answer in time', async () => {
+    for (const gapiLoad of ['error', 'timeout'] as const) {
+      vi.resetModules();
+      pickDriveFile = (await import('../src/lib/google-picker.ts')).pickDriveFile;
+      const page = rig({ gapiLoad });
+      expect(await pickDriveFile(CONFIG), gapiLoad).toEqual({ status: 'failed' });
+      expect(page.built).toEqual([]);
+      expect(page.tokenRequests).toEqual([]);
+    }
+  });
+
+  it('takes the Picker down once it has answered, and gives up on one nobody answers', async () => {
+    const answered = rig();
+    await pickDriveFile(CONFIG);
+    expect(answered.disposed).toBe(1);
+    vi.resetModules();
+    const lib = await import('../src/lib/google-picker.ts');
+    const silent = rig({ action: 'never' });
+    vi.useFakeTimers();
+    try {
+      const pending = lib.pickDriveFile(CONFIG);
+      await vi.advanceTimersByTimeAsync(lib.GOOGLE_PICK_TIMEOUT_MS + 1);
+      expect(await pending).toEqual({ status: 'failed' });
+      expect(silent.disposed).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('runs one pick at a time: a second call while one is open gets the same answer and opens no second Picker', async () => {
+    const page = rig();
+    const [a, b] = await Promise.all([pickDriveFile(CONFIG), pickDriveFile(CONFIG)]);
+    expect(a).toEqual(b);
+    expect(page.built).toHaveLength(1);
+    expect(page.tokenRequests).toHaveLength(1);
   });
 });
 

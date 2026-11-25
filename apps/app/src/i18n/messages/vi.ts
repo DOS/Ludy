@@ -4285,6 +4285,7 @@ export const vi = {
       pickedNote: 'Đã chọn tệp. Ludy chỉ đọc đúng tệp đó, và chỉ khi bạn bấm Nhập.',
       pickCancelled: 'Chưa chọn tệp nào.',
       pickDenied: 'Google chưa cho phép truy cập nên chưa chọn được tệp. Hãy thử lại và cho phép truy cập tệp.',
+      pickFailed: 'Không mở được cửa sổ của Google hoặc Google không trả lời. Hãy kiểm tra trình duyệt có cho phép trang này mở cửa sổ đó không, rồi thử lại.',
       importOf: 'Nhập bản ghi {title}',
         dismiss: 'Bỏ qua',
         dismissOf: 'Bỏ qua bản ghi {title}',

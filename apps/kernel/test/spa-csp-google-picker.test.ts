@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The SPA's Content-Security-Policy with Google Picker (#3174, ADR-0025 amendment of 2026-11-25): off, it is byte for byte what it was; on, it gains only the named Google hosts and Trusted Types policy names,
 // nothing wide (no wildcard, no `https:`, no `unsafe-*`), and the requirement of Trusted Types for scripts stays.
+import type pg from 'pg';
 import { describe, expect, it } from 'vitest';
-import { GOOGLE_PICKER_CONNECT_SRC, GOOGLE_PICKER_FRAME_SRC, GOOGLE_PICKER_SCRIPT_SRC, GOOGLE_PICKER_STYLE_SRC, GOOGLE_PICKER_TRUSTED_TYPES, contentSecurityPolicy } from '../src/http.ts';
+import type { BlobStore, Runtime } from '@ludy/kernel-runtime';
+import { loadConfig } from '../src/config.ts';
+import { GOOGLE_PICKER_CONNECT_SRC, GOOGLE_PICKER_FRAME_SRC, GOOGLE_PICKER_SCRIPT_SRC, GOOGLE_PICKER_STYLE_SRC, GOOGLE_PICKER_TRUSTED_TYPES, contentSecurityPolicy, createHttpApp } from '../src/http.ts';
 
 const directives = (csp: string) => new Map(csp.split(';').map((d) => d.trim().split(/\s+/)).map(([name, ...values]) => [name, values.join(' ')]));
 
@@ -45,5 +48,25 @@ describe('the SPA policy with Google Picker', () => {
 
   it('keeps the Sign page and the other policies without Google (the picker flag is the SPA\'s only)', () => {
     expect(contentSecurityPolicy('/auth/v1', null, false, null, null, null, false)).not.toMatch(/google/u);
+  });
+
+  // Hono's secureHeaders sends `Cross-Origin-Opener-Policy: same-origin` by default, which cuts the window.opener Google Identity Services reads its token answer through. Only a deployment with the Picker's keys relaxes it.
+  it('relaxes the opener policy to same-origin-allow-popups only when the Picker\'s keys are set', async () => {
+    const base = {
+      DATABASE_URL: 'postgres://localhost/x',
+      AUTH_JWT_SECRET: 'x'.repeat(32),
+      AUTH_ISSUER: 'ludy-auth',
+      WEB_DIST: '/nonexistent',
+      MEETINGS_GOOGLE_CLIENT_ID: '123456789012-abcdefgh12345678.apps.googleusercontent.com',
+      MEETINGS_GOOGLE_CLIENT_SECRET: 'test-only-not-real',
+    };
+    const headerOf = async (env: Record<string, string>) => {
+      const runtime = { installed: () => false, modules: () => [] } as unknown as Runtime;
+      const app = createHttpApp({ config: loadConfig({ ...base, ...env }), runtime, store: {} as BlobStore, authenticate: (async () => null) as never, pool: {} as pg.Pool, aiEnabled: false });
+      return (await app.request('/healthz')).headers.get('cross-origin-opener-policy');
+    };
+    // The Meet client alone (the Picker off) keeps Hono's default; the Picker's two values relax it.
+    expect(await headerOf({})).toBe('same-origin');
+    expect(await headerOf({ MEETINGS_GOOGLE_PICKER_API_KEY: 'AIzaSyFakeKeyForTestsOnly000000000000', MEETINGS_GOOGLE_PICKER_APP_ID: '123456789012' })).toBe('same-origin-allow-popups');
   });
 });

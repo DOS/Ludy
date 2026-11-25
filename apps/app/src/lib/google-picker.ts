@@ -38,6 +38,8 @@ interface TrustedTypesFactory {
 interface TokenResponse {
   access_token?: string;
   error?: string;
+  // The scopes the token carries, space separated.
+  scope?: string;
 }
 interface TokenClient {
   requestAccessToken(options?: { prompt?: string }): void;
@@ -55,10 +57,14 @@ interface PickerBuilderLike {
   setDeveloperKey(key: string): PickerBuilderLike;
   setAppId(appId: string): PickerBuilderLike;
   setCallback(callback: (response: PickerResponse) => void): PickerBuilderLike;
-  build(): { setVisible(visible: boolean): void };
+  build(): { setVisible(visible: boolean): void; dispose?(): void };
 }
 interface GoogleGlobals {
-  accounts?: { oauth2?: { initTokenClient(config: { client_id: string; scope: string; callback: (response: TokenResponse) => void; error_callback?: (error: unknown) => void }): TokenClient } };
+  accounts?: {
+    oauth2?: {
+      initTokenClient(config: { client_id: string; scope: string; include_granted_scopes: boolean; callback: (response: TokenResponse) => void; error_callback?: (error: unknown) => void }): TokenClient;
+    };
+  };
   picker?: {
     PickerBuilder: new () => PickerBuilderLike;
     DocsView: new (viewId?: string) => { setMimeTypes(types: string): unknown; setIncludeFolders(on: boolean): unknown };
@@ -67,7 +73,7 @@ interface GoogleGlobals {
   };
 }
 interface GapiLike {
-  load(api: string, callback: () => void): void;
+  load(api: string, config: { callback: () => void; onerror: () => void; timeout: number; ontimeout: () => void }): void;
 }
 
 let policy: ScriptUrlPolicy | null = null;
@@ -100,16 +106,47 @@ function loadScript(url: string, ready: () => boolean): Promise<void> {
 const googleOf = (): GoogleGlobals => (globalThis as { google?: GoogleGlobals }).google ?? {};
 const gapiOf = (): GapiLike | undefined => (globalThis as { gapi?: GapiLike }).gapi;
 
-export type GooglePickResult = { status: 'picked'; fileId: string } | { status: 'cancelled' } | { status: 'denied' };
+// `failed`: a Google script did not load or answer in time (blocked by the network, an extension or the policy); the member may try again. `denied`: Google did not give the one `drive.file` permission.
+export type GooglePickResult = { status: 'picked'; fileId: string } | { status: 'cancelled' } | { status: 'denied' } | { status: 'failed' };
+
+// How long the picker module may take to load, and how long the whole pick may stay open before it is given up (the member walked away): the row never stays busy for ever.
+export const GOOGLE_LOAD_TIMEOUT_MS = 15_000;
+export const GOOGLE_PICK_TIMEOUT_MS = 10 * 60_000;
+
+// True when the token the browser got carries `drive.file` and nothing else. The token client adds every scope the member already granted this client (the server's Meet connect holds one) unless told not to,
+// so the answer is checked as well as asked for: a token with another scope is dropped unused, and the member is told the permission was not given.
+export const tokenIsDriveFileOnly = (scope: unknown): boolean => {
+  if (typeof scope !== 'string') return false;
+  const scopes = scope.split(/\s+/u).filter((s) => s !== '');
+  return scopes.length === 1 && scopes[0] === GOOGLE_PICKER_SCOPE;
+};
+
+let inFlight: Promise<GooglePickResult> | null = null;
 
 /**
- * Opens Google Picker for one recording file and answers the Drive file id the member picked, or that they cancelled or did not grant access. The `drive.file` token it needs is requested from Google Identity
- * Services here, held in this function's scope only, and dropped when it returns.
+ * Opens Google Picker for one recording file and answers the Drive file id the member picked, or that they cancelled, did not grant access, or that Google's scripts failed. The `drive.file` token it needs is requested
+ * from Google Identity Services here, held in this call's scope only, and dropped (with the Picker) when it returns. One pick at a time: a second call while one is open gets the same answer.
  */
-export async function pickDriveFile(config: GooglePickerConfig): Promise<GooglePickResult> {
+export function pickDriveFile(config: GooglePickerConfig): Promise<GooglePickResult> {
+  inFlight ??= pick(config)
+    .catch((): GooglePickResult => ({ status: 'failed' }))
+    .finally(() => {
+      inFlight = null;
+    });
+  return inFlight;
+}
+
+async function pick(config: GooglePickerConfig): Promise<GooglePickResult> {
   await Promise.all([loadScript(GOOGLE_IDENTITY_SCRIPT, () => googleOf().accounts?.oauth2 !== undefined), loadScript(GOOGLE_API_SCRIPT, () => gapiOf() !== undefined)]);
-  await new Promise<void>((resolve) => (gapiOf() as GapiLike).load('picker', resolve));
-  const token = await new Promise<string | null>((resolve) => {
+  await new Promise<void>((resolve, reject) => {
+    (gapiOf() as GapiLike).load('picker', {
+      callback: resolve,
+      onerror: () => reject(new Error('google picker failed to load')),
+      timeout: GOOGLE_LOAD_TIMEOUT_MS,
+      ontimeout: () => reject(new Error('google picker timed out')),
+    });
+  });
+  let token: string | null = await new Promise<string | null>((resolve) => {
     const oauth2 = googleOf().accounts?.oauth2;
     if (!oauth2) {
       resolve(null);
@@ -118,32 +155,49 @@ export async function pickDriveFile(config: GooglePickerConfig): Promise<GoogleP
     const client = oauth2.initTokenClient({
       client_id: config.clientId,
       scope: GOOGLE_PICKER_SCOPE,
-      callback: (response) => resolve(typeof response.access_token === 'string' && response.error === undefined ? response.access_token : null),
+      // Only the one scope asked for, not every scope this member granted the client before.
+      include_granted_scopes: false,
+      callback: (response) => resolve(typeof response.access_token === 'string' && response.error === undefined && tokenIsDriveFileOnly(response.scope) ? response.access_token : null),
       error_callback: () => resolve(null),
     });
     client.requestAccessToken();
   });
   if (token === null) return { status: 'denied' };
   const picker = googleOf().picker;
-  if (!picker) return { status: 'denied' };
+  if (!picker) return { status: 'failed' };
   const view = new picker.DocsView(picker.ViewId.DOCS);
   view.setMimeTypes(GOOGLE_PICKER_MIME_TYPES);
   view.setIncludeFolders(true);
   return new Promise<GooglePickResult>((resolve) => {
-    new picker.PickerBuilder()
+    let built: { setVisible(visible: boolean): void; dispose?(): void } | null = null;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    // The one exit: the answer, the Picker taken down and the token dropped, whichever of the callback and the timer comes first.
+    const finish = (result: GooglePickResult) => {
+      clearTimeout(timer);
+      token = null;
+      try {
+        built?.dispose?.();
+      } catch {
+        // A Picker that is already gone is gone.
+      }
+      built = null;
+      resolve(result);
+    };
+    timer = setTimeout(() => finish({ status: 'failed' }), GOOGLE_PICK_TIMEOUT_MS);
+    built = new picker.PickerBuilder()
       .addView(view)
-      .setOAuthToken(token)
+      .setOAuthToken(token as string)
       .setDeveloperKey(config.apiKey)
       .setAppId(config.appId)
       .setCallback((response) => {
         if (response.action === picker.Action.PICKED) {
           const id = response.docs?.[0]?.id;
-          resolve(typeof id === 'string' && id !== '' ? { status: 'picked', fileId: id } : { status: 'cancelled' });
+          finish(typeof id === 'string' && id !== '' ? { status: 'picked', fileId: id } : { status: 'cancelled' });
         } else if (response.action === picker.Action.CANCEL) {
-          resolve({ status: 'cancelled' });
+          finish({ status: 'cancelled' });
         }
       })
-      .build()
-      .setVisible(true);
+      .build();
+    built.setVisible(true);
   });
 }

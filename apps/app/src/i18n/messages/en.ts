@@ -4289,6 +4289,7 @@ export const en = {
       pickedNote: 'File chosen. Ludy reads only that file, and only when you press Import.',
       pickCancelled: 'No file was chosen.',
       pickDenied: 'Google did not give access, so no file was chosen. Try again and allow access to the file.',
+      pickFailed: 'Google\'s window could not be opened or did not answer. Check that your browser lets this page open it, then try again.',
       importOf: 'Import the recording {title}',
         dismiss: 'Skip',
         dismissOf: 'Skip the recording {title}',
