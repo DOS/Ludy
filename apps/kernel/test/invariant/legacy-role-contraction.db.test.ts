@@ -75,6 +75,7 @@ suite('legacy crove_* role and crove.* GUC contraction (#3972)', () => {
   const legacyPassword = `legacy-pw-${Date.now()}`;
   let adminUrl = '';
   let preStageDir = '';
+  let stage7Dir = '';
 
   const withAdmin = async <T>(fn: (client: pg.Client) => Promise<T>): Promise<T> => {
     const client = new pg.Client({ connectionString: adminUrl });
@@ -107,27 +108,22 @@ suite('legacy crove_* role and crove.* GUC contraction (#3972)', () => {
       copyFileSync(join(MIGRATIONS, file), join(preStageDir, file));
     }
 
+    stage7Dir = mkdtempSync(join(tmpdir(), 'ludy-stage7-contraction-'));
+    for (const file of files.slice(0, contractionIndex + 1)) {
+      copyFileSync(join(MIGRATIONS, file), join(stage7Dir, file));
+    }
+
     await migrate({ adminUrl, dir: preStageDir });
     await migrate({ adminUrl, dir: MIGRATIONS });
   }, 180_000);
 
   afterAll(async () => {
     if (preStageDir) rmSync(preStageDir, { recursive: true, force: true });
+    if (stage7Dir) rmSync(stage7Dir, { recursive: true, force: true });
     if (!ADMIN) return;
     const teardown = new pg.Client({ connectionString: ADMIN });
     await teardown.connect();
     try {
-      for (const login of LEGACY_LOGINS) {
-        await teardown
-          .query(
-            `DO $$ BEGIN
-               IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${login}') THEN
-                 ALTER ROLE ${pg.escapeIdentifier(login)} WITH PASSWORD NULL VALID UNTIL '-infinity';
-               END IF;
-             END $$`,
-          )
-          .catch(() => {});
-      }
       for (const extraDb of [`${dbName}_second`, `${dbName}_noperm`, dbName]) {
         await teardown.query(
           'SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()',
@@ -661,7 +657,7 @@ suite('legacy crove_* role and crove.* GUC contraction (#3972)', () => {
         );
         expect(rows).toEqual([{ count: '0' }]);
 
-        await expect(migrate({ adminUrl: limitedUrl, dir: MIGRATIONS })).resolves.toEqual([contractionFile as string]);
+        await expect(migrate({ adminUrl: limitedUrl, dir: stage7Dir })).resolves.toEqual([contractionFile as string]);
         const limitedClient = new pg.Client({ connectionString: limitedUrl });
         await limitedClient.connect();
         try {

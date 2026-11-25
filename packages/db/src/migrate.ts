@@ -136,22 +136,28 @@ async function readCoreCutoverClusterState(client: pg.ClientBase): Promise<CoreC
 
 // Acquires a cluster-wide tuple lock on crove_tenant in pg_authid until COMMIT so concurrent
 // migrate() runs across databases serialize core cutover and Stage 7 catalog mutations.
-async function lockClusterStage7Role(client: pg.ClientBase): Promise<void> {
+async function lockClusterStage7Role(client: pg.ClientBase, options: { requireLock?: boolean } = {}): Promise<void> {
+  const failClause = options.requireLock
+    ? `
+        ELSE
+          RAISE EXCEPTION 'stage 7 concurrency guard failed: role % cannot acquire cluster lock on crove_tenant (requires superuser or CREATEROLE with ADMIN OPTION on crove_tenant)', current_user;`
+    : '';
   await client.query(`DO $$
     DECLARE
       v_is_super boolean;
       v_createrole boolean;
     BEGIN
-      SELECT COALESCE(rolsuper, false), COALESCE(rolcreaterole, false)
-      INTO v_is_super, v_createrole
-      FROM pg_catalog.pg_roles
-      WHERE rolname = current_user;
-      IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'crove_tenant')
-         AND (COALESCE(v_is_super, false)
-              OR (COALESCE(v_createrole, false)
-                  AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'crove_tenant' AND rolsuper)
-                  AND pg_catalog.pg_has_role(current_user, 'crove_tenant', 'MEMBER WITH ADMIN OPTION'))) THEN
-        EXECUTE pg_catalog.format('ALTER ROLE %I NOLOGIN', 'crove_tenant');
+      IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'crove_tenant') THEN
+        SELECT COALESCE(rolsuper, false), COALESCE(rolcreaterole, false)
+        INTO v_is_super, v_createrole
+        FROM pg_catalog.pg_roles
+        WHERE rolname = current_user;
+        IF COALESCE(v_is_super, false)
+           OR (COALESCE(v_createrole, false)
+               AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'crove_tenant' AND rolsuper)
+               AND pg_catalog.pg_has_role(current_user, 'crove_tenant', 'MEMBER WITH ADMIN OPTION')) THEN
+          EXECUTE pg_catalog.format('ALTER ROLE %I NOLOGIN', 'crove_tenant');${failClause}
+        END IF;
       END IF;
     END $$`);
 }
@@ -511,7 +517,7 @@ export async function migrate(options: MigrateOptions): Promise<string[]> {
         await client.query('BEGIN');
         try {
           if (file.name === CORE_CUTOVER_MIGRATION) {
-            await lockClusterStage7Role(client);
+            await lockClusterStage7Role(client, { requireLock: true });
             coreCutoverState = await readCoreCutoverClusterState(client);
             if (coreCutoverState === 'wiped-marker') {
               throw new Error(
@@ -633,28 +639,65 @@ export async function migrate(options: MigrateOptions): Promise<string[]> {
     // Re-clear any legacy crove_* login passwords on contracted clusters/DBs before hardening checks so runners
     // without SELECT on pg_catalog.pg_authid still leave no stale password verifiers for roles they manage.
     if (await isDatabaseStage7Contracted(client)) {
-      const { rows: clearSqlRows } = await client.query<{ sql: string }>(
-        `SELECT pg_catalog.format('ALTER ROLE %I WITH PASSWORD NULL VALID UNTIL ''-infinity''', r.rolname) AS sql
-         FROM pg_catalog.pg_roles r
-         CROSS JOIN (
-           SELECT COALESCE(rolsuper, false) AS is_super, COALESCE(rolcreaterole, false) AS is_createrole
-           FROM pg_catalog.pg_roles
-           WHERE rolname = current_user
-         ) cur
-         WHERE r.rolname = ANY ($1::text[])
-           AND (
-             cur.is_super
-             OR (
-               cur.is_createrole
-               AND NOT r.rolsuper
-               AND pg_catalog.pg_has_role(current_user, r.rolname, 'MEMBER WITH ADMIN OPTION')
-             )
-           )
-         ORDER BY r.rolname`,
-        [LEGACY_LOGIN_ROLES],
+      const { rows: privRows } = await client.query<{ ok: boolean }>(
+        "SELECT pg_catalog.has_table_privilege(current_user, 'pg_catalog.pg_authid', 'SELECT') AS ok",
       );
-      for (const row of clearSqlRows) {
-        await client.query(row.sql);
+      const canReadAuthid = privRows[0]?.ok === true;
+      const clearQuery = canReadAuthid
+        ? `SELECT pg_catalog.format('ALTER ROLE %I WITH PASSWORD NULL VALID UNTIL ''-infinity''', a.rolname) AS sql
+           FROM pg_catalog.pg_authid a
+           CROSS JOIN (
+             SELECT COALESCE(rolsuper, false) AS is_super, COALESCE(rolcreaterole, false) AS is_createrole
+             FROM pg_catalog.pg_roles
+             WHERE rolname = current_user
+           ) cur
+           WHERE a.rolname = ANY ($1::text[])
+             AND (a.rolpassword IS NOT NULL OR a.rolvaliduntil IS NULL OR a.rolvaliduntil > '1970-01-01 00:00:00+00'::timestamptz)
+             AND (
+               cur.is_super
+               OR (
+                 cur.is_createrole
+                 AND NOT a.rolsuper
+                 AND pg_catalog.pg_has_role(current_user, a.rolname, 'MEMBER WITH ADMIN OPTION')
+               )
+             )
+           ORDER BY a.rolname`
+        : `SELECT pg_catalog.format('ALTER ROLE %I WITH PASSWORD NULL VALID UNTIL ''-infinity''', r.rolname) AS sql
+           FROM pg_catalog.pg_roles r
+           CROSS JOIN (
+             SELECT COALESCE(rolsuper, false) AS is_super, COALESCE(rolcreaterole, false) AS is_createrole
+             FROM pg_catalog.pg_roles
+             WHERE rolname = current_user
+           ) cur
+           WHERE r.rolname = ANY ($1::text[])
+             AND (
+               cur.is_super
+               OR (
+                 cur.is_createrole
+                 AND NOT r.rolsuper
+                 AND pg_catalog.pg_has_role(current_user, r.rolname, 'MEMBER WITH ADMIN OPTION')
+               )
+             )
+           ORDER BY r.rolname`;
+      for (let attempt = 1; ; attempt++) {
+        const { rows: clearSqlRows } = await client.query<{ sql: string }>(clearQuery, [LEGACY_LOGIN_ROLES]);
+        if (clearSqlRows.length === 0) break;
+        await client.query('BEGIN');
+        try {
+          await lockClusterStage7Role(client);
+          const { rows: lockedClearSqlRows } = await client.query<{ sql: string }>(clearQuery, [LEGACY_LOGIN_ROLES]);
+          for (const row of lockedClearSqlRows) {
+            await client.query(row.sql);
+          }
+          await client.query('COMMIT');
+          break;
+        } catch (error) {
+          await client.query('ROLLBACK');
+          if (attempt < 3 && isConcurrentCatalogUpdateError(error)) {
+            continue;
+          }
+          throw error;
+        }
       }
     }
     // Fails the run (and so the deploy) when a function or a privilege reopens the pg_temp hijack. The
@@ -1773,24 +1816,51 @@ export async function setRolePasswords(adminUrl: string, passwords: Record<strin
   const client = new pg.Client({ connectionString: adminUrl, application_name: 'ludy-migrate' });
   await client.connect();
   try {
-    let legacyBlocked: boolean | undefined;
-    for (const [role, password] of Object.entries(passwords)) {
-      if (!password) continue;
-      if (LEGACY_CROVE_ROLES.includes(role)) {
-        legacyBlocked ??=
-          (await isDatabaseStage7Contracted(client)) ||
-          (await readCoreCutoverClusterState(client)) !== 'uncontracted';
-        if (legacyBlocked) {
-          throw new Error(`refusing to set a password on legacy role ${role} after Stage 7 contraction; use the canonical ludy_* role instead`);
-        }
+    const entries = Object.entries(passwords).filter((entry): entry is [string, string] => Boolean(entry[1]));
+    if (entries.length === 0) return;
+    for (const [role] of entries) {
+      if (shared && !LUDY_ROLES.includes(role)) {
+        throw new Error(`shared database: refusing to set the password of ${role}, which is not a Ludy role`);
       }
-      if (shared && !LUDY_ROLES.includes(role)) throw new Error(`shared database: refusing to set the password of ${role}, which is not a Ludy role`);
-      const { rows } = await client.query<{ sql: string }>('SELECT format($$ALTER ROLE %I PASSWORD %L$$, $1::text, $2::text) AS sql', [
-        role,
-        password,
-      ]);
-      const sql = rows[0]?.sql;
-      if (sql) await client.query(sql);
+    }
+    const applyAll = async (): Promise<void> => {
+      for (const [role, password] of entries) {
+        const { rows } = await client.query<{ sql: string }>('SELECT format($$ALTER ROLE %I PASSWORD %L$$, $1::text, $2::text) AS sql', [
+          role,
+          password,
+        ]);
+        const sql = rows[0]?.sql;
+        if (sql) await client.query(sql);
+      }
+    };
+    const firstLegacyRole = entries.find(([role]) => LEGACY_CROVE_ROLES.includes(role))?.[0];
+    if (!firstLegacyRole) {
+      await applyAll();
+      return;
+    }
+    const assertLegacyAllowed = async (): Promise<void> => {
+      if ((await isDatabaseStage7Contracted(client)) || (await readCoreCutoverClusterState(client)) !== 'uncontracted') {
+        throw new Error(
+          `refusing to set a password on legacy role ${firstLegacyRole} after Stage 7 contraction; use the canonical ludy_* role instead`,
+        );
+      }
+    };
+    for (let attempt = 1; ; attempt++) {
+      await client.query('BEGIN');
+      try {
+        await assertLegacyAllowed();
+        await lockClusterStage7Role(client, { requireLock: true });
+        await assertLegacyAllowed();
+        await applyAll();
+        await client.query('COMMIT');
+        break;
+      } catch (error) {
+        await client.query('ROLLBACK');
+        if (attempt < 3 && isConcurrentCatalogUpdateError(error)) {
+          continue;
+        }
+        throw error;
+      }
     }
   } finally {
     await client.end();
