@@ -9,6 +9,7 @@
 //   so a customer who writes "giá 100.000 đúng không?" does not make Vy confirm one;
 // - a link, a web address or an account handle that neither the business's messages nor the saved replies contain (a draft is the likeliest way to put a
 //   phishing address in front of a customer);
+// - any brace placeholder or stray brace other than `{tên}` (`{name}`, `{customer}`, `{{...}}`, `{`, `}`): `{tên}` is the one fill the box knows;
 // - an empty text, and a text longer than the channel takes.
 // A draft that fails is no draft (the person writes the reply, or asks again): nothing is cut or repaired, so a figure is never half-right. When Vy lacks a
 // fact it writes a bracket for the person to fill ("[giá]"), which the instructions ask for and the checks allow. A saved reply's `{tên}` (the contact's
@@ -49,8 +50,8 @@ export interface ReplyDraftRequest {
 
 export type ReplyDraftResult =
   | { kind: 'draft'; body: string }
-  // No draft, and why, as a short code (never the model's words): the model gave nothing, a figure or a link it was not given, or too long a text.
-  | { kind: 'none'; code: 'EMPTY' | 'FIGURES' | 'LINK' | 'TOO_LONG' };
+  // No draft, and why, as a short code (never the model's words): the model gave nothing, a figure or a link it was not given, a placeholder other than `{tên}`, or too long a text.
+  | { kind: 'none'; code: 'EMPTY' | 'FIGURES' | 'LINK' | 'PLACEHOLDER' | 'TOO_LONG' };
 
 const zReply = z.object({
   body: z.string().describe('The reply to send to the customer, plain text, ready to send except for the [brackets] that name a fact you were not given'),
@@ -165,6 +166,20 @@ export function draftLinksOutside(body: string, trusted: readonly string[]): str
   return [...new Set(linksIn(body).filter((l) => !known.has(l)))];
 }
 
+// Any brace placeholder or stray brace in a draft other than an exact `{tên}` placeholder (#3105): foreign placeholders (`{name}`, `{customer}`),
+// double/nested braces (`{{tên}}`, `{{foo}}`), fullwidth braces (`｛...｝`), or unclosed braces (`{`, `}`).
+// Disjoint `{` / `[^{}]` / `}` keeps the scan linear on long brace runs.
+const BRACE_TOKEN = /\{[^{}]{0,200}\}|[{}]/gu;
+
+/** Brace placeholders and stray braces in a draft other than `{tên}`, each once, in order. */
+export function draftPlaceholdersOutside(body: string): string[] {
+  const stripped = body.normalize('NFC').replaceAll('{tên}', '');
+  const folded = stripped.replace(/\p{Cf}/gu, '').normalize('NFKC');
+  if (!/[{}]/u.test(folded)) return [];
+  const found = [...folded.matchAll(BRACE_TOKEN)].map((m) => m[0]);
+  return [...new Set(found.length > 0 ? found : ['{'])];
+}
+
 export class ConversationWriter {
   private readonly generate: ReplyGenerator;
 
@@ -203,6 +218,7 @@ export class ConversationWriter {
     const customer = seen.filter((m) => m.from === 'customer').map((m) => cut(m.text, DRAFT_MESSAGE_CHARS));
     if (draftFiguresOutside(body, trusted, customer).length > 0) return { kind: 'none', code: 'FIGURES' };
     if (draftLinksOutside(body, trusted).length > 0) return { kind: 'none', code: 'LINK' };
+    if (draftPlaceholdersOutside(body).length > 0) return { kind: 'none', code: 'PLACEHOLDER' };
     if (hasPromptMarkupLeak(body) || hasObfuscatedContactOrLink(body, trusted, [...trusted, ...customer]) || hasAutonomousActionDirective(body)) {
       return { kind: 'none', code: 'LINK' };
     }
