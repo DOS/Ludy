@@ -11,6 +11,7 @@ import type {
   HrEmployee,
   HrSelfAssetView,
   HrTimelineResult,
+  SignEnvelopeBySourceItem,
 } from '@ludy/kernel-contract';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
@@ -22,11 +23,23 @@ vi.mock('../src/lib/auth.ts', () => ({
 }));
 
 vi.mock('@tanstack/react-router', () => ({
-  Link: ({ children, to, ...rest }: { children?: React.ReactNode; to?: string }) => (
-    <a href={to ?? '#'} {...rest}>
-      {children}
-    </a>
-  ),
+  Link: ({
+    children,
+    to,
+    params,
+    ...rest
+  }: {
+    children?: React.ReactNode;
+    to?: string;
+    params?: Record<string, string>;
+  }) => {
+    const href = (to ?? '#').replace(/\$(\w+)/g, (_m, k: string) => params?.[k] ?? '');
+    return (
+      <a href={href} {...rest}>
+        {children}
+      </a>
+    );
+  },
   useNavigate: () => vi.fn(),
   useParams: () => ({ slug: 'acme' }),
 }));
@@ -93,6 +106,10 @@ const TERM_ID = '00000000-0000-7000-8000-000000000902';
 const LE_ID = '00000000-0000-7000-8000-000000000903';
 const ADDENDUM_ISSUED_ID = '00000000-0000-7000-8000-000000000904';
 const ADDENDUM_DRAFT_ID = '00000000-0000-7000-8000-000000000905';
+const ADDENDUM_VOIDED_WITH_ENV_ID = '00000000-0000-7000-8000-000000000906';
+const ADDENDUM_VOIDED_NO_ENV_ID = '00000000-0000-7000-8000-000000000907';
+const ENV_VOIDED_ADDENDUM_ID = '00000000-0000-7000-8000-000000000908';
+const SEALED_FILE_ID = '00000000-0000-7000-8000-000000000909';
 
 function wrap(ui: React.ReactNode, locale: 'vi' | 'en' = 'vi'): string {
   setActiveLocale(locale);
@@ -228,6 +245,134 @@ describe('HR Stage 6C UI components (#4528)', () => {
     const htmlEn = wrap(<HrAddendumPanel employee={SAMPLE_EMPLOYEE} signEnabled={false} />, 'en');
     expect(htmlEn).toContain(en.hrEmployees.addendum.title);
     expect(htmlEn).not.toContain('data-testid="hr-contract-send-esign"');
+  });
+
+  it('shows a read-only eSign status badge link on voided addendum rows only when an envelope exists (#4654)', () => {
+    const voidedWithEnv: HrAddendumView = {
+      id: ADDENDUM_VOIDED_WITH_ENV_ID,
+      employeeId: EMP_ID,
+      employmentId: TERM_ID,
+      legalEntityId: LE_ID,
+      addendumNumber: 'PL-2026-V1',
+      effectiveOn: '2026-12-01',
+      changeSummary: 'Phụ lục đã phát hành có hồ sơ ký trước khi hủy.',
+      previousPayRate: '18000000',
+      newPayRate: '21000000',
+      previousTitle: null,
+      newTitle: null,
+      status: 'voided',
+      issuedAt: '2026-11-20T09:00:00.000Z',
+      voidedAt: '2026-11-21T09:00:00.000Z',
+      voidReason: 'Điều chỉnh lại ngày hiệu lực',
+      createdBy: EMP_ID,
+      createdAt: '2026-11-20T09:00:00.000Z',
+      updatedAt: '2026-11-21T09:00:00.000Z',
+    };
+    const voidedNoEnv: HrAddendumView = {
+      ...voidedWithEnv,
+      id: ADDENDUM_VOIDED_NO_ENV_ID,
+      addendumNumber: 'PL-2026-V2',
+      changeSummary: 'Phụ lục hủy từ nháp chưa từng gửi eSign.',
+      issuedAt: null,
+    };
+    const makeEnv = (
+      status: SignEnvelopeBySourceItem['status'],
+      overrides: Partial<SignEnvelopeBySourceItem> = {},
+    ): SignEnvelopeBySourceItem => ({
+      sourceId: ADDENDUM_VOIDED_WITH_ENV_ID,
+      envelopeId: ENV_VOIDED_ADDENDUM_ID,
+      title: 'Phụ lục HĐLĐ PL-2026-V1 - Nguyễn Thị Minh Ánh',
+      status,
+      sealStatus: status === 'completed' ? 'sealed' : null,
+      sealedFileId: status === 'completed' ? SEALED_FILE_ID : null,
+      certificateCode: status === 'completed' ? 'CS-PL01-ABCD' : null,
+      completedAt: status === 'completed' ? '2026-11-20T10:00:00.000Z' : null,
+      signerCount: 1,
+      signedCount: status === 'completed' ? 1 : 0,
+      createdAt: '2026-11-20T09:05:00.000Z',
+      updatedAt: '2026-11-20T10:00:00.000Z',
+      ...overrides,
+    });
+
+    // 1. Voided addendum with an active 'sent' envelope -> shows read-only link + badge, >=44px target, no send button.
+    cache.current.setQueryData(['hr', 'addendum', 'list', { employeeId: EMP_ID }], [voidedWithEnv, voidedNoEnv]);
+    cache.current.setQueryData(
+      [
+        'sign',
+        'envelope',
+        'by_source',
+        { sourceKind: 'hr_contract', sourceIds: [ADDENDUM_VOIDED_WITH_ENV_ID, ADDENDUM_VOIDED_NO_ENV_ID] },
+      ],
+      { items: [makeEnv('sent')] },
+    );
+    const htmlSentVi = wrap(<HrAddendumPanel employee={SAMPLE_EMPLOYEE} signEnabled={true} />, 'vi');
+    expect(htmlSentVi).toContain(`href="/o/acme/sign/envelopes/${ENV_VOIDED_ADDENDUM_ID}"`);
+    expect(htmlSentVi).toContain('data-testid="hr-contract-sign-status"');
+    expect(htmlSentVi).toContain('data-status="sent"');
+    expect(htmlSentVi).toContain('max-md:min-h-11');
+    expect(htmlSentVi).toContain('>Đang chờ ký<');
+    expect(htmlSentVi).not.toContain('data-testid="hr-contract-send-esign"');
+    expect(htmlSentVi).not.toContain('\u2014');
+    // Only the voided row that has an envelope renders a sign status link (not the voided row without one).
+    expect(htmlSentVi.match(/data-testid="hr-contract-sign-status"/g)).toHaveLength(1);
+
+    const htmlSentEn = wrap(<HrAddendumPanel employee={SAMPLE_EMPLOYEE} signEnabled={true} />, 'en');
+    expect(htmlSentEn).toContain('>Awaiting signature<');
+    expect(htmlSentEn).toContain('Open signing envelope:');
+    expect(htmlSentEn).not.toContain('data-testid="hr-contract-send-esign"');
+
+    // 2. Voided addendum with a retryable envelope ('declined' / 'voided') STILL must NOT offer a new eSign handoff.
+    for (const terminalStatus of ['declined', 'voided', 'expired'] as const) {
+      cache.current.setQueryData(
+        [
+          'sign',
+          'envelope',
+          'by_source',
+          { sourceKind: 'hr_contract', sourceIds: [ADDENDUM_VOIDED_WITH_ENV_ID, ADDENDUM_VOIDED_NO_ENV_ID] },
+        ],
+        { items: [makeEnv(terminalStatus)] },
+      );
+      const htmlTerminal = wrap(<HrAddendumPanel employee={SAMPLE_EMPLOYEE} signEnabled={true} />, 'vi');
+      expect(htmlTerminal).toContain(`data-status="${terminalStatus}"`);
+      expect(htmlTerminal).toContain(`href="/o/acme/sign/envelopes/${ENV_VOIDED_ADDENDUM_ID}"`);
+      expect(htmlTerminal).not.toContain('data-testid="hr-contract-send-esign"');
+    }
+
+    // 3. Voided addendum with a completed + sealed envelope -> read-only link + sealed download, no send button.
+    cache.current.setQueryData(
+      [
+        'sign',
+        'envelope',
+        'by_source',
+        { sourceKind: 'hr_contract', sourceIds: [ADDENDUM_VOIDED_WITH_ENV_ID, ADDENDUM_VOIDED_NO_ENV_ID] },
+      ],
+      { items: [makeEnv('completed')] },
+    );
+    const htmlCompleted = wrap(<HrAddendumPanel employee={SAMPLE_EMPLOYEE} signEnabled={true} />, 'vi');
+    expect(htmlCompleted).toContain('data-status="completed"');
+    expect(htmlCompleted).toContain('data-testid="hr-contract-download-sealed"');
+    expect(htmlCompleted).not.toContain('data-testid="hr-contract-send-esign"');
+
+    // 4. Voided addendum with NO envelope -> renders zero eSign badge/link/hint/send controls.
+    cache.current.setQueryData(['hr', 'addendum', 'list', { employeeId: EMP_ID }], [voidedNoEnv]);
+    cache.current.setQueryData(
+      ['sign', 'envelope', 'by_source', { sourceKind: 'hr_contract', sourceIds: [ADDENDUM_VOIDED_NO_ENV_ID] }],
+      { items: [] },
+    );
+    const htmlNoEnv = wrap(<HrAddendumPanel employee={SAMPLE_EMPLOYEE} signEnabled={true} />, 'vi');
+    expect(htmlNoEnv).not.toContain('data-testid="hr-contract-sign-status"');
+    expect(htmlNoEnv).not.toContain('data-testid="hr-contract-send-esign"');
+    expect(htmlNoEnv).not.toContain('data-testid="hr-contract-nd337-hint"');
+
+    // 5. signEnabled=false suppresses eSign badge/link even on voided addendum with an envelope in cache.
+    cache.current.setQueryData(['hr', 'addendum', 'list', { employeeId: EMP_ID }], [voidedWithEnv]);
+    cache.current.setQueryData(
+      ['sign', 'envelope', 'by_source', { sourceKind: 'hr_contract', sourceIds: [ADDENDUM_VOIDED_WITH_ENV_ID] }],
+      { items: [makeEnv('sent')] },
+    );
+    const htmlSignOff = wrap(<HrAddendumPanel employee={SAMPLE_EMPLOYEE} signEnabled={false} />, 'vi');
+    expect(htmlSignOff).not.toContain('data-testid="hr-contract-sign-status"');
+    expect(htmlSignOff).not.toContain('data-testid="hr-contract-send-esign"');
   });
 
   it('renders career timeline, manager assets checklist, self-service /hr/my assets, and unreturned termination warning', () => {

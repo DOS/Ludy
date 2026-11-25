@@ -2123,7 +2123,7 @@ export interface HrEmployeeAssetHandoverTable {
   legal_entity_id: ColumnType<string, string, NotGranted>;
   employee_id: ColumnType<string, string, NotGranted>;
   asset_code: ColumnType<string, string, NotGranted>;
-  asset_name: string;
+  asset_name: ColumnType<string, string, NotGranted>;
   serial_number: string | null;
   handed_over_on: ColumnType<string, string, NotGranted>;
   returned_on: string | null;
