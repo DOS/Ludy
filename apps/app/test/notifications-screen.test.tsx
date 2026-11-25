@@ -1,24 +1,93 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The bell's screen after #3592 (NT-1, NT-2), rendered on the server with the API's answers seeded in the cache: it holds the list, "Mark all as read" and a link to the
-// preferences; a run of the same kind is one row with a count; the preferences are a card of Settings. The AI coworker here: none acts, this is a layout and copy fix.
+// The bell's screen after #3592 (NT-1, NT-2) and Clarify-style 2-column master-detail (#4927), rendered on the server with
+// the API's answers seeded in the cache: it holds the filter bar, list, "Mark all as read" and a link to preferences;
+// a run of the same kind is one row with a count; desktop (>= lg) shows an inline detail pane while mobile (< lg) opens a Sheet.
 import { QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { IntlProvider } from 'use-intl';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { catalog } from '../src/i18n/runtime.ts';
-import { notificationKinds } from '../src/lib/notifications.ts';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { I18nProvider } from '../src/i18n/provider.tsx';
+import { catalog, setActiveLocale } from '../src/i18n/runtime.ts';
+import { hasBlockingOverlayForPeek, isPeekNavInputTarget } from '../src/lib/list-peek-nav.ts';
+import {
+  notificationFeedStepFromKey,
+  notificationKinds,
+  parseNotificationsSearch,
+  restoreNotificationRowFocus,
+} from '../src/lib/notifications.ts';
 
-const state = vi.hoisted(() => ({ qc: null as unknown as import('@tanstack/react-query').QueryClient, modules: ['kernel', 'finance'] as string[] }));
+const state = vi.hoisted(() => ({
+  qc: null as unknown as import('@tanstack/react-query').QueryClient,
+  modules: ['kernel', 'finance'] as string[],
+  search: {} as Record<string, unknown>,
+  desktop: false,
+  navigated: [] as Array<{ search?: unknown; replace?: boolean; resetScroll?: boolean }>,
+  readCalls: [] as Array<{ ids?: string[]; all?: boolean }>,
+}));
 
 vi.mock('@tanstack/react-router', async (importOriginal) => {
   const { createElement } = await import('react');
   return {
     ...(await importOriginal<object>()),
     useParams: () => ({ slug: 'hoa-mai' }),
-    useNavigate: () => () => undefined,
-    Link: ({ children, to, params, hash, className }: { children?: ReactNode; to: string; params?: Record<string, string>; hash?: string; className?: string }) =>
-      createElement('a', { href: to.replace(/\$(\w+)/g, (_m, name: string) => params?.[name] ?? '') + (hash ? `#${hash}` : ''), className }, children),
+    useSearch: () => state.search,
+    useNavigate: () => (opts: { search?: unknown; replace?: boolean; resetScroll?: boolean }) => {
+      state.navigated.push(opts);
+    },
+    Link: ({
+      children,
+      to,
+      params,
+      search,
+      hash,
+      className,
+      ...rest
+    }: {
+      children?: ReactNode;
+      to: string;
+      params?: Record<string, string>;
+      search?: Record<string, string>;
+      hash?: string;
+      className?: string;
+      [k: string]: unknown;
+    }) => {
+      const base = to.replace(/\$(\w+)/g, (_m, name: string) => params?.[name] ?? '');
+      const entries = search ? Object.entries(search).filter(([, v]) => v !== undefined && v !== '') : [];
+      const query = entries.length > 0 ? `?${new URLSearchParams(entries).toString()}` : '';
+      return createElement('a', { href: `${base}${query}${hash ? `#${hash}` : ''}`, className, ...rest }, children);
+    },
+  };
+});
+vi.mock('../src/lib/media.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/lib/media.ts')>();
+  return {
+    ...actual,
+    useMediaQuery: (query: string) => (query === '(min-width: 64rem)' ? state.desktop : actual.useMediaQuery(query)),
+  };
+});
+vi.mock('@ludy/ui/components/sheet', async () => {
+  const { createElement: h } = await import('react');
+  return {
+    Sheet: ({ open, children }: { open: boolean; children?: ReactNode }) => (open ? h('div', { 'data-slot': 'sheet' }, children) : null),
+    SheetContent: ({
+      children,
+      closeLabel,
+      ...rest
+    }: {
+      children?: ReactNode;
+      closeLabel: string;
+      [k: string]: unknown;
+    }) => h('section', { role: 'dialog', 'data-slot': 'sheet-content', 'data-close-label': closeLabel, ...rest }, children),
+    SheetHeader: ({ children, className }: { children?: ReactNode; className?: string }) =>
+      h('header', { 'data-slot': 'sheet-header', className }, children),
+    SheetTitle: ({ children, className }: { children?: ReactNode; className?: string }) =>
+      h('h2', { 'data-slot': 'sheet-title', className }, children),
+    SheetDescription: ({ children, className }: { children?: ReactNode; className?: string }) =>
+      h('p', { 'data-slot': 'sheet-description', className }, children),
+    SheetBody: ({ children, className }: { children?: ReactNode; className?: string }) =>
+      h('div', { 'data-slot': 'sheet-body', className }, children),
+    SheetFooter: ({ children, className }: { children?: ReactNode; className?: string }) =>
+      h('footer', { 'data-slot': 'sheet-footer', className }, children),
   };
 });
 vi.mock('../src/lib/org-modules.ts', async (importOriginal) => ({ ...(await importOriginal<object>()), installedModules: () => state.modules }));
@@ -34,7 +103,19 @@ vi.mock('../src/lib/api.ts', async () => {
         return node([...path, prop]);
       },
     });
-  return { orpc: node([]), client: {}, queryClient: state.qc, errorMessage: (e: unknown) => String(e) };
+  return {
+    orpc: node([]),
+    client: {
+      notifications: {
+        read: (input: { ids?: string[]; all?: boolean }) => {
+          state.readCalls.push(input);
+          return Promise.resolve({ read: 1 });
+        },
+      },
+    },
+    queryClient: state.qc,
+    errorMessage: (e: unknown) => String(e),
+  };
 });
 
 const { NotificationsPage } = await import('../src/routes/notifications.tsx');
@@ -43,25 +124,35 @@ const { NotificationPreferences } = await import('../src/routes/settings/notific
 type Item = { id: string; kind: string; subjectId: string | null; detail: Record<string, string>; tainted?: boolean; read: boolean; createdAt: string };
 const approvals = (count: number, read = false): Item[] =>
   Array.from({ length: count }, (_v, i) => ({ id: `00000000-0000-4000-8000-0000000000${String(i).padStart(2, '0')}`, kind: 'kernel.approval_waiting', subjectId: `00000000-0000-4000-9000-0000000000${String(i).padStart(2, '0')}`, detail: { title: `HĐ C26TFA-${1185 + i}` }, read, createdAt: '2026-11-18T08:00:00.000Z' }));
-const bank = (n: number): Item => ({ id: `00000000-0000-4000-a000-0000000000${n}`, kind: 'finance.bank_attention', subjectId: null, detail: { bankAccount: '1121', lines: '3' }, read: false, createdAt: '2026-11-18T07:00:00.000Z' });
+const bank = (n: number): Item => ({ id: `00000000-0000-4000-a000-00000000000${n}`, kind: 'finance.bank_attention', subjectId: null, detail: { bankAccount: '1121', lines: '3' }, read: false, createdAt: '2026-11-18T07:00:00.000Z' });
 
 function render(node: ReactNode, seed: { items?: Item[]; muted?: string[] }, locale: 'en' | 'vi' = 'en'): string {
   state.qc.clear();
   state.qc.setQueryData(['notifications', 'list', {}], { items: seed.items ?? [], unread: (seed.items ?? []).filter((n) => !n.read).length, unreadWork: 0, muted: seed.muted ?? [] });
   state.qc.setQueryData(['today', 'mail', 'get'], { enabled: false });
   vi.stubGlobal('window', { location: { search: '' } });
-  return renderToStaticMarkup(
-    <QueryClientProvider client={state.qc}>
-      <IntlProvider locale={locale} messages={catalog(locale)}>
-        {node}
-      </IntlProvider>
-    </QueryClientProvider>,
-  );
+  setActiveLocale(locale);
+  try {
+    return renderToStaticMarkup(
+      <QueryClientProvider client={state.qc}>
+        <I18nProvider>{node}</I18nProvider>
+      </QueryClientProvider>,
+    );
+  } finally {
+    setActiveLocale('vi');
+  }
 }
 const page = (seed: Parameters<typeof render>[1], locale: 'en' | 'vi' = 'en') => render(<NotificationsPage />, seed, locale);
 
 beforeEach(() => {
   state.modules = ['kernel', 'finance'];
+  state.search = {};
+  state.desktop = false;
+  state.navigated = [];
+  state.readCalls = [];
+});
+afterEach(() => {
+  vi.unstubAllGlobals();
 });
 
 describe('the Engage reads notice (#4069)', () => {
@@ -213,5 +304,208 @@ describe('the title of a task an AI coworker wrote (#4421)', () => {
     // A notice without the flag, or with it false, shows the title as it was typed.
     expect(html).toContain('Assigned to you: Việc\u202e của người');
     expect(html).toContain('Assigned to you: Việc\u202e người gõ');
+  });
+});
+
+describe('Clarify-style 2-column Notifications master-detail (#4927)', () => {
+  const richProposal = (read = false): Item => ({
+    id: '00000000-0000-4000-8000-000000000101',
+    kind: 'kernel.approval_waiting',
+    subjectId: '00000000-0000-4000-9000-000000000101',
+    detail: { title: 'HĐ 1C26TPT-00001284', amount: '32832000', rule: 'Bao bì' },
+    read,
+    createdAt: '2026-11-25T09:15:00.000Z',
+  });
+  const meetingSummary = (read = false): Item => ({
+    id: '00000000-0000-4000-8000-000000000102',
+    kind: 'meetings.summary_ready',
+    subjectId: '00000000-0000-4000-9000-000000000102',
+    detail: {},
+    read,
+    createdAt: '2026-11-25T08:40:00.000Z',
+  });
+  const portalNotice = (): Item => ({
+    id: '00000000-0000-4000-8000-000000000103',
+    kind: 'finance.portal_attention',
+    subjectId: '00000000-0000-4000-9000-000000000103',
+    detail: { period: '2026-11', direction: 'sale', missing: '2', amountMismatch: '1' },
+    read: true,
+    createdAt: '2026-11-24T14:20:00.000Z',
+  });
+
+  it('renders 2-column layout on desktop (>= lg) and auto-selects the first visible row without selected param', () => {
+    state.desktop = true;
+    const html = page({ items: [richProposal(), meetingSummary()] }, 'vi');
+    expect(html).toContain('data-testid="notifications-master-detail"');
+    expect(html).toContain('lg:grid-cols-[minmax(320px,400px)_minmax(0,1fr)]');
+    expect(html).toContain('data-testid="notifications-feed-pane"');
+    expect(html).toContain('data-testid="notification-detail-pane"');
+    expect(html).toContain('data-testid="notifications-shortcuts-hint"');
+    // First row is auto-selected (`aria-current="true"`) and its detail renders inline with formatted money and primary CTA.
+    expect(html.match(/aria-current="true"/g)).toHaveLength(1);
+    expect(html).toContain('data-testid="notification-detail-title"');
+    expect(html).toContain('32.832.000');
+    expect(html).toContain('href="/o/hoa-mai/inbox/00000000-0000-4000-9000-000000000101"');
+    expect(html).toContain('data-testid="notification-mark-read"');
+    expect(html).not.toContain('data-testid="notification-detail-sheet"');
+  });
+
+  it('syncs selected single item on desktop with CoworkerAttribution, money formatting in en, and no dead Mark unread button', () => {
+    state.desktop = true;
+    state.search = { selected: '00000000-0000-4000-8000-000000000102' };
+    const html = page({ items: [richProposal(), meetingSummary(true)] }, 'en');
+    expect(html).toContain('data-testid="coworker-attribution"');
+    expect(html).toContain('Vy');
+    expect(html).toContain('Minutes draft ready');
+    expect(html).toContain('href="/o/hoa-mai/meetings/00000000-0000-4000-9000-000000000102"');
+    // Read single notification hides Mark read and never renders a dead Mark unread button.
+    expect(html).not.toContain('data-testid="notification-mark-read"');
+    expect(html).not.toContain('Mark unread');
+
+    // English money format uses format.ts (`₫32,832,000`).
+    state.search = { selected: '00000000-0000-4000-8000-000000000101' };
+    const proposalEn = page({ items: [richProposal(), meetingSummary()] }, 'en');
+    expect(proposalEn).toContain('₫32,832,000');
+    expect(proposalEn).toContain('data-testid="notification-detail-metadata"');
+  });
+
+  it('uses SegmentedControl for All/Unread and shows optional app filter pills only when notifications span >1 app', () => {
+    state.desktop = true;
+    const singleAppHtml = page({ items: [richProposal()] }, 'vi');
+    expect(singleAppHtml).toContain('role="radiogroup"');
+    expect(singleAppHtml).toContain('data-testid="notifications-filter-all"');
+    expect(singleAppHtml).toContain('data-testid="notifications-filter-unread"');
+    expect(singleAppHtml).not.toContain('data-testid="notifications-app-filters"');
+
+    const multiAppHtml = page({ items: [richProposal(), meetingSummary(), portalNotice()] }, 'vi');
+    expect(multiAppHtml).toContain('data-testid="notifications-app-filters"');
+    expect(multiAppHtml).toContain('data-testid="notifications-app-finance"');
+    expect(multiAppHtml).toContain('data-testid="notifications-app-teamwork"');
+    expect(multiAppHtml).toContain('Tài chính');
+    expect(multiAppHtml).toContain('Cộng tác');
+  });
+
+  it('filters by unread and app search params and offers Show all when filtered feed is empty', () => {
+    state.desktop = true;
+    state.search = { filter: 'unread', app: 'teamwork' };
+    const filteredHtml = page({ items: [richProposal(false), meetingSummary(false), portalNotice()] }, 'vi');
+    expect(filteredHtml.match(/data-testid="notification-row"/g)).toHaveLength(1);
+    expect(filteredHtml).toContain('Bản nháp biên bản');
+    expect(filteredHtml).not.toContain('1C26TPT-00001284');
+
+    state.search = { filter: 'unread', app: 'engage' };
+    const emptyFiltered = page({ items: [richProposal(false)] }, 'en');
+    expect(emptyFiltered).toContain(catalog('en').notifications.filters.filteredEmpty);
+    expect(emptyFiltered).toContain(catalog('en').notifications.filters.showAll);
+  });
+
+  it('displays grouped unread runs in the desktop detail pane with item links and Mark group read', () => {
+    state.desktop = true;
+    const html = page({ items: approvals(3) }, 'en');
+    expect(html).toContain('data-testid="notification-group"');
+    expect(html).toContain('data-testid="notification-group-items"');
+    expect(html).toContain('HĐ C26TFA-1185');
+    expect(html).toContain('HĐ C26TFA-1186');
+    expect(html).toContain('HĐ C26TFA-1187');
+    expect(html).toContain('data-testid="notification-mark-group-read"');
+    expect(html).toContain('href="/o/hoa-mai/inbox"');
+    expect(html).toContain('href="/o/hoa-mai/inbox/00000000-0000-4000-9000-000000000000"');
+  });
+
+  it('opens detail inside @ludy/ui Sheet on mobile (< lg) with 44px touch targets and keeps Sheet closed when nothing is selected', () => {
+    state.desktop = false;
+    const closedHtml = page({ items: [richProposal()] }, 'vi');
+    expect(closedHtml).toContain('data-testid="notifications-mobile"');
+    expect(closedHtml).not.toContain('data-testid="notification-detail-sheet"');
+    expect(closedHtml).not.toContain('data-testid="notification-detail-pane"');
+
+    state.search = { selected: '00000000-0000-4000-8000-000000000101' };
+    const openHtml = page({ items: [richProposal()] }, 'vi');
+    expect(openHtml).toContain('data-testid="notification-detail-sheet"');
+    expect(openHtml).toContain('data-slot="sheet-header"');
+    expect(openHtml).toContain('data-slot="sheet-body"');
+    expect(openHtml).toContain('data-slot="sheet-footer"');
+    expect(openHtml).toContain(`data-close-label="${catalog('vi').common.close}"`);
+    expect(openHtml).toContain('max-md:min-h-11');
+  });
+
+  it('restores focus to the triggering feed row on mobile Sheet close and blocks J/K inside inputs/dialogs/sheets', () => {
+    const fakeTrigger = {
+      focused: false,
+      isConnected: true,
+      tabIndex: 0,
+      focus() {
+        this.focused = true;
+      },
+    };
+    const fakeFeed = {
+      querySelector: (selector: string) =>
+        selector === '[data-notification-row="00000000-0000-4000-8000-000000000101"]' ? fakeTrigger : null,
+    };
+    expect(restoreNotificationRowFocus(fakeFeed, '00000000-0000-4000-8000-000000000101', false)).toBe(true);
+    expect(fakeTrigger.focused).toBe(true);
+
+    // Input, textarea, select, and open dialog/sheet guards block J/K shortcuts.
+    const makeEl = (tag: string, attrs: Record<string, string> = {}) =>
+      ({
+        tagName: tag.toUpperCase(),
+        isContentEditable: false,
+        getAttribute: (name: string) => attrs[name] ?? null,
+        closest: (sel: string) =>
+          sel.split(',').some((tok) => {
+            const t = tok.trim();
+            if (t === tag.toLowerCase()) return true;
+            const m = t.match(/^\[([^=\]]+)(?:="([^"]*)")?\]$/);
+            return m ? (m[2] ? attrs[m[1]!] === m[2] : attrs[m[1]!] !== undefined) : false;
+          })
+            ? ({} as Element)
+            : null,
+      }) as unknown as Element;
+    expect(isPeekNavInputTarget(makeEl('input'))).toBe(true);
+    expect(isPeekNavInputTarget(makeEl('textarea'))).toBe(true);
+    expect(isPeekNavInputTarget(makeEl('select'))).toBe(true);
+    const openSheetDoc = {
+      querySelectorAll: () => [makeEl('section', { 'data-slot': 'sheet-content' })] as unknown as NodeListOf<Element>,
+    };
+    expect(hasBlockingOverlayForPeek('', openSheetDoc)).toBe(true);
+    expect(
+      notificationFeedStepFromKey(
+        { key: 'j', metaKey: false, ctrlKey: false, altKey: false },
+        { blocked: true, insideFeed: true, plainPageFocus: false },
+      ),
+    ).toBeNull();
+    expect(
+      notificationFeedStepFromKey(
+        { key: 'j', metaKey: false, ctrlKey: false, altKey: false },
+        { blocked: false, insideFeed: true, plainPageFocus: false },
+      ),
+    ).toBe(1);
+    expect(
+      notificationFeedStepFromKey(
+        { key: 'k', metaKey: false, ctrlKey: false, altKey: false },
+        { blocked: false, insideFeed: true, plainPageFocus: false },
+      ),
+    ).toBe(-1);
+  });
+
+  it('validates search params cleanly and renders zero forbidden elements (<select>, <details>, border+shadow, em dashes)', () => {
+    expect(parseNotificationsSearch({ selected: '00000000-0000-4000-8000-000000000101', filter: 'unread', app: 'finance' })).toEqual({
+      selected: '00000000-0000-4000-8000-000000000101',
+      filter: 'unread',
+      app: 'finance',
+    });
+    expect(parseNotificationsSearch({ filter: 'other', app: 'unknown', selected: '   ' })).toEqual({});
+
+    for (const desktop of [true, false]) {
+      for (const locale of ['vi', 'en'] as const) {
+        state.desktop = desktop;
+        state.search = desktop ? {} : { selected: '00000000-0000-4000-8000-000000000101' };
+        const html = page({ items: [richProposal(), meetingSummary(), portalNotice()] }, locale);
+        expect(html, `${desktop}-${locale}`).not.toContain('<select');
+        expect(html, `${desktop}-${locale}`).not.toContain('<details');
+        expect(html, `${desktop}-${locale}`).not.toMatch(/shadow-(md|lg|xl|2xl)/);
+        expect(html, `${desktop}-${locale}`).not.toMatch(/[\u2013\u2014]/);
+      }
+    }
   });
 });

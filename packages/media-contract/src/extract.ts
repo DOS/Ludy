@@ -2,11 +2,11 @@
 // The audio extraction call of crove-media (#3337): a recording that may carry a video track goes in, mono Opus comes out. It is its own
 // entry (`@ludy/media-contract/extract`) on purpose: the kernel's measure-only entry (measure.ts) stays narrow, with no call that returns
 // media, and only the one module that extracts audio from an uploaded video imports this one.
-import { MEDIA_LIMITS, MEDIA_TIMING, zMediaNormalizeResult } from './types.ts';
+import { MEDIA_JOIN_FRAME, MEDIA_LIMITS, MEDIA_TIMING, zMediaNormalizeResult } from './types.ts';
 import { createTransport, MediaClientError } from './transport.ts';
 import { framedParts, type JoinPartSource } from './join.ts';
 
-export { MEDIA_LIMITS, MEDIA_TIMING, MediaClientError };
+export { MEDIA_JOIN_FRAME, MEDIA_LIMITS, MEDIA_TIMING, MediaClientError };
 export { framedParts, type JoinPartSource };
 
 export interface MediaExtractClient {

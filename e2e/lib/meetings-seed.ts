@@ -16,6 +16,12 @@ export interface Segment {
 export interface SeedOptions {
   // How long ago the meeting started, in days (default: now).
   daysAgo?: number;
+  // Explicit start timestamp (ISO 8601), taking precedence over daysAgo when set.
+  startedAt?: string;
+  // Who can read the meeting ('attendees' by default, or 'org' for every active non-viewer member).
+  visibility?: 'attendees' | 'org';
+  // Optional attendee emails added to ludy_meetings.meeting_reader.
+  readers?: readonly string[];
   // The segments of the meeting (default: the three-line transcript of the fake model). A spec adds a line holding a scenario token to change what the model says for this meeting.
   segments?: readonly Segment[];
   // The series the meeting belongs to, so an event of the same series briefs from it.
@@ -25,12 +31,31 @@ export interface SeedOptions {
 /** A meeting the user recorded, ready, with a transcript. Returns its id. */
 export function seedMeeting(slug: string, email: string, title: string, options: SeedOptions = {}): string {
   const id = randomUUID();
+  const startedSql = options.startedAt ? `(:'started_at')::timestamptz` : `now() - (:'days' || ' days')::interval`;
   exec(
     `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date, series_id)
-     SELECT t.org_id, :'id'::uuid, :'title', 'vi', now() - (:'days' || ' days')::interval, now() - (:'days' || ' days')::interval + interval '30 minutes', 1800, u.id, 'attendees', 'ready', 'told_at_start', u.id, now(), '1.0', current_date + 30, current_date + 365, nullif(:'series', '')::uuid
+     SELECT t.org_id, :'id'::uuid, :'title', 'vi', ${startedSql}, ${startedSql} + interval '30 minutes', 1800, u.id, :'visibility', 'ready', 'told_at_start', u.id, now(), '1.0', current_date + 30, current_date + 365, nullif(:'series', '')::uuid
        FROM ludy_kernel.tenant t, ludy_kernel.user_account u WHERE t.slug = :'slug' AND lower(u.email) = lower(:'email')`,
-    { id, title, days: String(options.daysAgo ?? 0), series: options.seriesId ?? '', slug, email },
+    {
+      id,
+      title,
+      ...(options.startedAt ? { started_at: options.startedAt } : { days: String(options.daysAgo ?? 0) }),
+      visibility: options.visibility ?? 'attendees',
+      series: options.seriesId ?? '',
+      slug,
+      email,
+    },
   );
+  for (const readerEmail of options.readers ?? []) {
+    exec(
+      `INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id)
+       SELECT m.org_id, gen_random_uuid(), m.id, u.id
+         FROM ludy_meetings.meeting m, ludy_kernel.user_account u
+        WHERE m.id = :'id'::uuid AND lower(u.email) = lower(:'email')
+        ON CONFLICT (org_id, meeting_id, user_id) DO NOTHING`,
+      { id, email: readerEmail },
+    );
+  }
   const segments = (options.segments ?? TRANSCRIPT).map((s) => ({ from_s: s.from, to_s: s.to, who: s.who, said: s.said }));
   if (segments.length > 0) {
     exec(

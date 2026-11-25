@@ -14,6 +14,7 @@ import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/
 import { GOOGLE_CALENDAR_EVENTS_READ_SCOPE, MICROSOFT_CALENDAR_READ_SCOPE, type AgendaList, type AgendaNext, type AgendaSuggestion, type MeetingDetail, type MeetingSummary } from '@ludy/kernel-contract';
 import { Runtime, defineQuery } from '@ludy/kernel-runtime';
 import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
+import { CALENDAR_AGENDA_STALE_DAYS, pruneStaleCalendarAgenda } from '../src/meetings-retention.ts';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
 
 const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
@@ -42,6 +43,7 @@ suite("the member's own calendar meetings (B1, #3165)", () => {
   let orgId = '';
   let runtime: Runtime;
   let worker: Runtime;
+  let workerDb: ReturnType<typeof createDb>;
   const users: Record<string, string> = {};
   const asUser = (who: string) => ({ type: 'user' as const, userId: users[who] as string, aal: 'aal1' as const });
   const exec = <O = unknown>(who: string, name: string, input: unknown) => runtime.execute<O>(name, input, { actor: asUser(who), orgId });
@@ -124,7 +126,8 @@ suite("the member's own calendar meetings (B1, #3165)", () => {
     pools.push(appPool, workerPool);
     const registry = { commands: [...kernelCommands, ...meetingsCommands], queries: [...kernelQueries({ inboundDomain: null }), ...meetingsQueries, rowsQuery, systemRowsQuery] };
     runtime = new Runtime(createDb(appPool), { manifests: TEST_MANIFESTS }).register(registry);
-    worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register(registry);
+    workerDb = createDb(workerPool);
+    worker = new Runtime(workerDb, { manifests: TEST_MANIFESTS }).register(registry);
     for (const key of ['owner', 'admin', 'lan', 'nam', 'outsider']) users[key] = await upsertIdentity(createDb(appPool), { issuer: 'agenda', subject: key, email: `${key}@agenda.test`, name: key });
     orgId = (await createOrg(runtime, asUser('owner'), 'Công ty Lịch')).orgId;
     await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member')`, [orgId, users.admin, users.lan, users.nam]);
@@ -421,6 +424,186 @@ suite("the member's own calendar meetings (B1, #3165)", () => {
     expect(await cached(c)).toEqual([]);
     expect(await call('ludy_worker', 'test-worker-pw', 'system')).toBe('ok');
     expect((await cached(c)).map((r) => r.external_id)).toEqual(['hand']);
+  });
+
+  it('prunes stale unlinked rows of connections the sweep no longer visits while keeping recent and linked rows (#3246)', async () => {
+    expect(CALENDAR_AGENDA_STALE_DAYS).toBe(8);
+    const staleConn = await connection('lan');
+    const activeConn = await connection('nam');
+    await on('lan', staleConn);
+    await on('nam', activeConn);
+    await sweep(staleConn, [event('stale-expired', 30), event('linked-expired', 120)]);
+    await sweep(activeConn, [event('fresh-active', 30), event('linked-active', 120)]);
+
+    const mExpired = await meeting('lan', 120);
+    const mActive = await meeting('nam', 120);
+    const linkedExpiredId = (await sqlAdmin<{ id: string }>("SELECT id FROM ludy_meetings.calendar_agenda WHERE connection_id = $1 AND external_id = 'linked-expired'", [staleConn])).rows[0]?.id as string;
+    const linkedActiveId = (await sqlAdmin<{ id: string }>("SELECT id FROM ludy_meetings.calendar_agenda WHERE connection_id = $1 AND external_id = 'linked-active'", [activeConn])).rows[0]?.id as string;
+    await exec('lan', 'meetings.agenda.link', { agendaId: linkedExpiredId, meetingId: mExpired });
+    await exec('nam', 'meetings.agenda.link', { agendaId: linkedActiveId, meetingId: mActive });
+
+    // Simulate an expired connection the sweep no longer visits, plus a historical linked event on an active connection.
+    await sqlAdmin("UPDATE ludy_kernel.calendar_connection SET status = 'expired' WHERE id = $1", [staleConn]);
+    await sqlAdmin("UPDATE ludy_meetings.calendar_agenda SET updated_at = now() - interval '9 days' WHERE connection_id = $1 OR id = $2", [staleConn, linkedActiveId]);
+    await sqlAdmin("UPDATE ludy_meetings.calendar_agenda SET updated_at = now() - interval '2 days' WHERE connection_id = $1 AND external_id = 'fresh-active'", [activeConn]);
+
+    const logged: string[] = [];
+    const deleted = await pruneStaleCalendarAgenda({
+      workerDb,
+      log: { log: (line) => logged.push(line), error: () => undefined },
+    });
+    expect(deleted).toBe(1);
+    expect(logged).toEqual(['[meetings-retention] stale calendar_agenda=1']);
+    expect(logged.join('\n')).not.toMatch(/stale-expired|linked-expired|fresh-active|linked-active/);
+
+    // Stale unlinked row is gone; linked rows and recent rows stay.
+    expect((await cached(staleConn)).map((r) => r.external_id)).toEqual(['linked-expired']);
+    expect((await cached(activeConn)).map((r) => r.external_id).sort()).toEqual(['fresh-active', 'linked-active']);
+
+    // Once a stale event is unlinked, the next prune removes it too.
+    await exec('nam', 'meetings.agenda.link', { agendaId: linkedActiveId, meetingId: null });
+    expect(await pruneStaleCalendarAgenda({ workerDb, log: { log: () => undefined, error: () => undefined } })).toBe(1);
+    expect((await cached(activeConn)).map((r) => r.external_id)).toEqual(['fresh-active']);
+  });
+
+  it('restricts calendar_agenda_prune_stale to the worker login outside an org context and rejects bad cutoffs (#3246)', async () => {
+    const fn = 'ludy_meetings.calendar_agenda_prune_stale(timestamp with time zone)';
+    const meta = (
+      await sqlAdmin<{ prosecdef: boolean; proconfig: string[] | null; pub: boolean; app: boolean; tenant: boolean; worker: boolean }>(
+        `SELECT p.prosecdef, p.proconfig,
+                pg_catalog.has_function_privilege('public', p.oid, 'EXECUTE') AS pub,
+                pg_catalog.has_function_privilege('ludy_app', p.oid, 'EXECUTE') AS app,
+                pg_catalog.has_function_privilege('ludy_tenant', p.oid, 'EXECUTE') AS tenant,
+                pg_catalog.has_function_privilege('ludy_worker', p.oid, 'EXECUTE') AS worker
+         FROM pg_catalog.pg_proc p
+         WHERE p.oid = $1::regprocedure`,
+        [fn],
+      )
+    ).rows[0];
+    expect(meta).toEqual({
+      prosecdef: true,
+      proconfig: ['search_path=pg_catalog, pg_temp'],
+      pub: false,
+      app: false,
+      tenant: false,
+      worker: true,
+    });
+
+    const roleExecs = (
+      await sqlAdmin<{ rolname: string }>(
+        `SELECT r.rolname
+         FROM pg_catalog.pg_roles r
+         WHERE (r.rolname LIKE 'ludy\\_%' OR r.rolname LIKE 'crove\\_%')
+           AND r.rolname NOT LIKE '%\\_test\\_%'
+           AND r.rolname NOT LIKE 'ludy\\_test%'
+           AND r.rolname NOT LIKE 'crove\\_test%'
+           AND r.rolname <> 'ludy_migrate_test'
+           AND NOT r.rolsuper
+           AND pg_catalog.has_function_privilege(r.oid, $1::regprocedure, 'EXECUTE')
+         ORDER BY r.rolname`,
+        [fn],
+      )
+    ).rows.map((r) => r.rolname);
+    expect(roleExecs).toEqual(['crove_worker', 'ludy_worker']);
+
+    const callAs = async (user: string, password: string, cutoffExpr: string, withOrgContext = false) => {
+      const url = new URL(adminUrl);
+      url.username = user;
+      url.password = password;
+      const client = new pg.Client({ connectionString: url.toString() });
+      await client.connect();
+      try {
+        await client.query('BEGIN');
+        if (withOrgContext) await client.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [orgId]);
+        const res = await client.query<{ n: number }>(`SELECT ludy_meetings.calendar_agenda_prune_stale(${cutoffExpr}) AS n`);
+        await client.query('COMMIT');
+        return `ok:${res.rows[0]?.n ?? 0}`;
+      } catch (error: unknown) {
+        await client.query('ROLLBACK').catch(() => undefined);
+        return (error as { message?: string }).message?.split('\n')[0] ?? 'error';
+      } finally {
+        await client.end().catch(() => undefined);
+      }
+    };
+
+    expect(await callAs('ludy_app', 'test-app-pw', "now() - interval '8 days'")).toMatch(/permission denied/);
+    expect(await callAs('ludy_worker', 'test-worker-pw', "now() - interval '8 days'", true)).toMatch(/MEETINGS_WORKER_ONLY/);
+    expect(await callAs('ludy_worker', 'test-worker-pw', 'NULL')).toMatch(/AGENDA_PRUNE_CUTOFF/);
+    expect(await callAs('ludy_worker', 'test-worker-pw', "now() - interval '1 hour'")).toMatch(/AGENDA_PRUNE_CUTOFF/);
+    expect(await callAs('ludy_worker', 'test-worker-pw', "now() - interval '8 days'")).toBe('ok:0');
+  });
+
+  it('serializes an in-flight agenda_replace and switch-off via FOR SHARE so neither order leaks rows (#3246)', async () => {
+    const c = await connection('lan');
+    await on('lan', c);
+
+    // Direction 1: agenda_replace holds FOR SHARE with an uncommitted row while switch-off runs concurrently via Promise.all.
+    const workerUrl = new URL(adminUrl);
+    workerUrl.username = 'ludy_worker';
+    workerUrl.password = 'test-worker-pw';
+    const inFlight = new pg.Client({ connectionString: workerUrl.toString() });
+    await inFlight.connect();
+    try {
+      await inFlight.query('BEGIN');
+      await inFlight.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [orgId]);
+      const inserted = await inFlight.query<{ n: number }>(
+        'SELECT ludy_meetings.agenda_replace($1::uuid, $2::timestamptz, $3::jsonb) AS n',
+        [c, iso(-24 * 60), JSON.stringify([event('in-flight', 30)])],
+      );
+      expect(inserted.rows[0]?.n).toBe(1);
+
+      const switchOffPromise = off('lan', c);
+      const releaseAfterLock = (async () => {
+        let waiting = false;
+        for (let i = 0; i < 100 && !waiting; i += 1) {
+          const hit = await sqlAdmin(
+            "SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND query ILIKE '%calendar_connection%' AND query ILIKE '%for update%'",
+          );
+          waiting = (hit.rowCount ?? 0) > 0;
+          if (!waiting) await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+        expect(waiting).toBe(true);
+        await inFlight.query('COMMIT');
+      })();
+
+      const [offResult] = await Promise.all([switchOffPromise, releaseAfterLock]);
+      expect(offResult).toEqual({ connectionId: c, readEvents: false });
+    } finally {
+      await inFlight.end().catch(() => undefined);
+    }
+    expect(await cached(c)).toEqual([]);
+
+    // Direction 2: switch-off holds FOR UPDATE after disabling read_events while agenda_replace runs concurrently via Promise.all.
+    await on('lan', c);
+    await sweep(c, [event('before-off', 30)]);
+    const switcher = new pg.Client({ connectionString: adminUrl });
+    await switcher.connect();
+    try {
+      await switcher.query('BEGIN');
+      await switcher.query('SELECT 1 FROM ludy_kernel.calendar_connection WHERE org_id = $1 AND id = $2 FOR UPDATE', [orgId, c]);
+      await switcher.query('UPDATE ludy_kernel.calendar_connection SET read_events = false WHERE org_id = $1 AND id = $2', [orgId, c]);
+      await switcher.query('DELETE FROM ludy_meetings.calendar_agenda WHERE org_id = $1 AND connection_id = $2', [orgId, c]);
+
+      const replacePromise = sweep(c, [event('late-race', 30)]);
+      const commitAfterLock = (async () => {
+        let waiting = false;
+        for (let i = 0; i < 100 && !waiting; i += 1) {
+          const hit = await sqlAdmin(
+            "SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND query ILIKE '%agenda_replace%'",
+          );
+          waiting = (hit.rowCount ?? 0) > 0;
+          if (!waiting) await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+        expect(waiting).toBe(true);
+        await switcher.query('COMMIT');
+      })();
+
+      const [replaceResult] = await Promise.all([replacePromise, commitAfterLock]);
+      expect(replaceResult).toEqual({ connectionId: c, written: 0 });
+    } finally {
+      await switcher.end().catch(() => undefined);
+    }
+    expect(await cached(c)).toEqual([]);
   });
 
   // B2 (#3166): the extension's "Sắp họp" card reads the member's next events through a token that holds the `agenda` scope.

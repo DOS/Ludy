@@ -606,8 +606,14 @@ export async function extractAndPropose(
     return { proposalId: null, deferred: new Date(Math.min(Date.now() + AI_BUDGET_RECHECK_MS, Date.parse(monthStart))).toISOString() };
   };
   if (deps.meter && deps.extractor && needsModel(file) && !file.aiStopped) {
+    const preflightCall = { feature: 'finance.invoice_extract' as const, module: 'finance', orgId, agentId: null, memberRunId: null };
     try {
-      await deps.meter.admit({ feature: 'finance.invoice_extract', module: 'finance', orgId, agentId: null });
+      const preflightId = await deps.meter.admit(preflightCall);
+      if (typeof preflightId === 'string' && deps.meter.release) {
+        await deps.meter.release(preflightCall, preflightId).catch((error: unknown) => {
+          console.error('[extract] could not release preflight reservation', error instanceof Error ? error.name : typeof error);
+        });
+      }
     } catch (error) {
       if (error instanceof AiBudgetExhaustedError) return waitForBudget(error.retryAt);
       throw error;
