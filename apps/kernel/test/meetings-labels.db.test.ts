@@ -144,14 +144,14 @@ suite('Meeting labels (#4955)', () => {
     const bare = await meeting('Họp không nhãn', { readers: ['lan'] });
     const hidden = await meeting('Họp C của người khác', { readers: ['nam'] });
     const expired = await meeting('Họp D đã hết hạn', { readers: ['lan'], expired: true });
-    await put('rec', a, 'Chỉ ở chỉ mục');
-    await put('rec', b, 'chỉ ở chỉ mục');
+    await put('rec', a, 'Chỉ ở họp A');
+    await put('rec', b, 'chỉ ở họp A');
     await put('rec', b, 'Riêng họp B');
     await put('rec', hidden, 'Riêng của Nam');
     await sqlAdmin('INSERT INTO ludy_meetings.meeting_label (org_id, meeting_id, label, created_by) VALUES ($1, $2, $3, $4)', [orgId, expired, 'Đã hết hạn', users.rec]);
     const seen = await rows('lan');
-    expect(seen.find((m) => m.id === a)?.labels).toEqual(['Chỉ ở chỉ mục']);
-    expect(seen.find((m) => m.id === b)?.labels).toEqual(['chỉ ở chỉ mục', 'Riêng họp B']);
+    expect(seen.find((m) => m.id === a)?.labels).toEqual(['Chỉ ở họp A']);
+    expect(seen.find((m) => m.id === b)?.labels).toEqual(['chỉ ở họp A', 'Riêng họp B']);
     expect(seen.find((m) => m.id === bare)?.labels).toEqual([]);
     // Not the meeting nor its label when Lan does not read it, and not a meeting past its text date.
     expect(seen.find((m) => m.id === hidden)).toBeUndefined();
