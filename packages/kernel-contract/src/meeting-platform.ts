@@ -10,7 +10,7 @@ export type MeetingPlatformProvider = (typeof MEETING_PLATFORM_PROVIDERS)[number
 export const zMeetingPlatformProvider = z.enum(MEETING_PLATFORM_PROVIDERS);
 // The providers whose own transcript Ludy can import when a recording has nothing else (C2, #3174; the sandbox is the offline test platform). A provider is added here when its adapter reads a transcript, and the module's
 // table of whose transcription it is (modules/meetings/src/import.ts) must name it too: that table is typed on this list.
-export const MEETING_PLATFORM_TRANSCRIPT_PROVIDERS = ['sandbox', 'google_meet', 'microsoft_teams'] as const;
+export const MEETING_PLATFORM_TRANSCRIPT_PROVIDERS = ['sandbox', 'google_meet', 'microsoft_teams', 'zoom'] as const;
 export type MeetingPlatformTranscriptProvider = (typeof MEETING_PLATFORM_TRANSCRIPT_PROVIDERS)[number];
 
 // The names of the recording providers in the shared oauth_state table (a calendar's state is `google_calendar`; these never collide with it).

@@ -41,12 +41,12 @@ const segment = (id: string, startSeconds: number, text: string, over: Partial<T
   ...over,
 });
 
-function render(transcript: Transcript, locale: 'en' | 'vi' = 'en', platformCut = false) {
+function render(transcript: Transcript, locale: 'en' | 'vi' = 'en', platformCut = false, onSeek?: (second: number) => void) {
   client.current.setQueryData(['meetings', 'transcript', 'get'], transcript);
   return renderToStaticMarkup(
     <QueryClientProvider client={client.current}>
       <IntlProvider locale={locale} messages={catalog(locale)}>
-        <MeetingTranscript meetingId="m1" platformCut={platformCut} />
+        <MeetingTranscript meetingId="m1" platformCut={platformCut} {...(onSeek ? { onSeek } : {})} />
       </IntlProvider>
     </QueryClientProvider>,
   );
@@ -139,6 +139,24 @@ describe('MeetingTranscript', () => {
     const html = render(draft, 'vi');
     expect(html).toContain(viMessages.meetings.transcript.draftTitle);
     expect(html).toContain('Chỉ bạn thấy bản nháp này');
+  });
+});
+
+describe('the time of a line (#4816)', () => {
+  const transcript = (): Transcript => ({ meetingId: 'm1', isRecorder: false, stage: 'published', segments: [segment('s1', 65.4, 'Chào mọi người', { stage: 'published' }), segment('s2', 3725, 'Hẹn gặp lại', { stage: 'published' })] });
+
+  it('is a button that moves the recording to the start of the line when a recording is loaded, worded for the time', () => {
+    const html = render(transcript(), 'en', false, () => undefined);
+    expect(html.match(/data-testid="transcript-seek"/g)).toHaveLength(2);
+    expect(html).toContain(`aria-label="${en.meetings.transcript.seekTo.replace('{time}', '1:05')}"`);
+    expect(html).toContain(`aria-label="${en.meetings.transcript.seekTo.replace('{time}', '1:02:05')}"`);
+    expect(render(transcript(), 'vi', false, () => undefined)).toContain(`aria-label="${viMessages.meetings.transcript.seekTo.replace('{time}', '1:05')}"`);
+  });
+
+  it('is plain text when no recording is loaded', () => {
+    const html = render(transcript());
+    expect(html).not.toContain('data-testid="transcript-seek"');
+    expect(html).toContain('1:05');
   });
 });
 

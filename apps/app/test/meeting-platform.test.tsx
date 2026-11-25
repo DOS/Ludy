@@ -321,11 +321,16 @@ describe('PlatformRecordings (Meetings tab)', () => {
       expect(count(on, 'data-testid="meeting-recording-import"'), locale).toBe(1);
       expect(count(on, 'data-testid="meeting-recording-blocked"'), locale).toBe(0);
       expect(on).toContain(esc(messages.meetings.platform.recordings.transcriptKeepsText.replace('{platform}', 'Google Meet')));
-      client.current.setQueryData(KEYS.recordings, [recording({ provider: 'zoom', hasAudio: false, hasVideo: false, hasTranscript: true })]);
+      client.current.setQueryData(KEYS.recordings, [recording({ provider: 'another_platform' as never, hasAudio: false, hasVideo: false, hasTranscript: true })]);
       const off = renderToStaticMarkup(wrap(<PlatformRecordings slug="acme" />, locale));
       expect(count(off, 'data-testid="meeting-recording-import"'), locale).toBe(0);
       expect(off).toContain(esc(messages.meetings.platform.recordings.transcriptOnly));
       expect(off).not.toContain('data-testid="meeting-recording-transcript-note"');
+      // Zoom has a transcript path since #3175 (its transcript is a file): offered like Google Meet's, naming Zoom.
+      client.current.setQueryData(KEYS.recordings, [recording({ provider: 'zoom', hasAudio: false, hasVideo: false, hasTranscript: true })]);
+      const zoom = renderToStaticMarkup(wrap(<PlatformRecordings slug="acme" />, locale));
+      expect(count(zoom, 'data-testid="meeting-recording-import"'), locale).toBe(1);
+      expect(zoom).toContain(esc(messages.meetings.platform.recordings.transcriptKeepsText.replace('{platform}', 'Zoom')));
     }
   });
 
