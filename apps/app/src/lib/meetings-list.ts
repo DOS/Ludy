@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { labelKey, type MeetingPlatform, type MeetingStatus, type MeetingSummary, type MeetingVisibility } from '@ludy/kernel-contract';
+import { labelKey, type MeetingListItem, type MeetingPlatform, type MeetingStatus, type MeetingSummary, type MeetingVisibility } from '@ludy/kernel-contract';
 import { foldWord } from './search-fold.ts';
 
 export type MeetingMediaFilter = 'all' | 'audio' | 'video' | 'transcript';
@@ -58,13 +58,38 @@ export function hasLabel(labelsByMeeting: ReadonlyMap<string, readonly string[]>
   return (labelsByMeeting.get(meetingId) ?? []).some((l) => labelKey(l) === key);
 }
 
+/** The labels of the meetings on the list, by meeting id (#4966): each row of the list carries the labels of its meeting. */
+export function labelsByMeetingOf(meetings: readonly MeetingListItem[]): Map<string, readonly string[]> {
+  return new Map(meetings.map((m) => [m.id, m.labels] as const));
+}
+
+/** The most label choices the filter offers. */
+const LABEL_CHOICES_MAX = 200;
+
+/**
+ * The choices of the label filter and how many of the listed meetings carry each, the most used first (#4966). The same label whatever the case is one choice (the first spelling met). They come from the
+ * meetings on the list, the ones the filter can match, so a choice never lists nothing.
+ */
+export function labelChoicesOf(meetings: readonly MeetingListItem[]): Array<{ label: string; count: number }> {
+  const counts = new Map<string, { label: string; count: number }>();
+  for (const m of meetings) {
+    for (const label of m.labels) {
+      const key = labelKey(label);
+      const seen = counts.get(key);
+      if (seen) seen.count += 1;
+      else counts.set(key, { label, count: 1 });
+    }
+  }
+  return [...counts.values()].sort((a, b) => b.count - a.count || a.label.localeCompare(b.label)).slice(0, LABEL_CHOICES_MAX);
+}
+
 /** Filters meetings client-side by title, status, visibility, media, platform and label, then applies the chosen sort. */
-export function filterAndSortMeetings(
-  meetings: readonly MeetingSummary[],
+export function filterAndSortMeetings<T extends MeetingSummary>(
+  meetings: readonly T[],
   filter: MeetingListFilter,
   sort: MeetingSort,
   labelsByMeeting: ReadonlyMap<string, readonly string[]> = new Map(),
-): MeetingSummary[] {
+): T[] {
   const rawQuery = filter.search.trim().toLocaleLowerCase();
   const foldedQuery = foldWord(filter.search.trim());
   const filtered = meetings.filter((m) => {

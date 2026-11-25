@@ -6,10 +6,11 @@
 import { readFileSync } from 'node:fs';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { I18nProvider } from '../src/i18n/provider.tsx';
 import { activeLocale, catalog, setActiveLocale } from '../src/i18n/runtime.ts';
-import { PublicSignError } from '../src/lib/sign-api.ts';
+import { publicSignApi, PublicSignError } from '../src/lib/sign-api.ts';
+import { parsePngDimensions, readPngFileAsDataUrl } from '../src/lib/sign-signature.ts';
 
 const testState = vi.hoisted(() => ({
   qc: null as unknown as QueryClient,
@@ -70,6 +71,11 @@ const {
 } = await import('../src/components/sign/sign-deposit-profile-card.tsx');
 const { BankSignDepositLine } = await import('../src/components/bank-sign-deposit-line.tsx');
 const { submitCeremonyWithGenerationGuard } = await import('../src/routes/sign-ceremony.tsx');
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 function wrap(node: React.ReactElement, locale: 'vi' | 'en' = 'vi', qc = testState.qc) {
   const prevLocale = activeLocale();
@@ -190,6 +196,8 @@ describe('eSign Slice 6d deposit UI components (#4723)', () => {
     );
     expect(withEmvco).toContain('sign-ceremony-deposit-qr-svg');
     expect(withEmvco).toContain('CK-QRS456');
+    expect(withEmvco).toContain('₫5,000,000');
+    expect(withEmvco).not.toContain('5.000.000 VND');
     expect(withEmvco).toContain('Non-blocking after signing');
 
     const manualOnly = wrap(
@@ -219,6 +227,8 @@ describe('eSign Slice 6d deposit UI components (#4723)', () => {
     expect(manualOnly).toContain('sign-ceremony-deposit-noticed');
     expect(manualOnly).not.toContain('sign-ceremony-deposit-notice-form');
     expect(manualOnly).toContain('CK-MAN789');
+    expect(manualOnly).toMatch(/2\.500\.000[\s\u00a0]₫/);
+    expect(manualOnly).not.toContain('2.500.000 VND');
     expect(manualOnly).toContain('proof.jpg');
   });
 
@@ -535,5 +545,100 @@ describe('eSign Slice 6d deposit UI components (#4723)', () => {
     const bgErrorHtml = wrap(<SignDepositProfileSettingsCard slug="demo" />, 'vi', bgErrorQc);
     expect(bgErrorHtml).toContain('Background refetch timeout');
     expect(bgErrorHtml).toContain('data-testid="sign-deposit-profile-form"');
+
+    // Hidden QR file input must not be target of <Label htmlFor> when tabIndex=-1 & aria-hidden=true (#4837 item 18).
+    const hiddenInputTagMatch = bgErrorHtml.match(
+      /<input[^>]*data-testid="sign-deposit-qr-file-input"[^>]*>/,
+    );
+    const hiddenInputIdMatch = hiddenInputTagMatch?.[0]?.match(/\sid="([^"]+)"/);
+    expect(hiddenInputIdMatch?.[1]).toBeTruthy();
+    expect(bgErrorHtml).not.toContain(`for="${hiddenInputIdMatch![1]!}"`);
+    const uploadBtnTag = bgErrorHtml.match(/<button[^>]*data-testid="sign-deposit-qr-upload-btn"[^>]*>/)?.[0] ?? '';
+    expect(uploadBtnTag).toContain('aria-describedby=');
+  });
+
+  it('handles HTTP 413 plain-text multipart responses as proofTooLarge without shared-core http changes (#4837 item 12)', async () => {
+    const viMsgs = catalog('vi').sign.ceremonyDeposit;
+    const enMsgs = catalog('en').sign.ceremonyDeposit;
+    const raw413 = new PublicSignError(413, 'SIGN_DEPOSIT_NOTICE_FAILED', 'Payload Too Large');
+    expect(resolveNoticeErrorMessage(raw413, (k) => viMsgs[k])).toBe(viMsgs.proofTooLarge);
+    expect(resolveNoticeErrorMessage(raw413, (k) => enMsgs[k])).toBe(enMsgs.proofTooLarge);
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('Payload Too Large', { status: 413 })),
+    );
+    const file = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'big.png', { type: 'image/png' });
+    await expect(
+      publicSignApi.depositNotice({ token: 'tok-413', file }),
+    ).rejects.toMatchObject({ status: 413, code: 'TOO_LARGE' });
+  });
+
+  it('pre-validates VietQR PNG pixel dimensions against SIGN_SIGNATURE_PNG_MAX_* before upload (#4837 item 14)', async () => {
+    const makePngBytes = (width: number, height: number): Uint8Array<ArrayBuffer> => {
+      const buf = new ArrayBuffer(64);
+      const out = new Uint8Array(buf);
+      out.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
+      const view = new DataView(buf);
+      view.setUint32(8, 13, false);
+      out.set([0x49, 0x48, 0x44, 0x52], 12);
+      view.setUint32(16, width, false);
+      view.setUint32(20, height, false);
+      return out;
+    };
+
+    expect(parsePngDimensions(makePngBytes(2000, 1000))).toEqual({ width: 2000, height: 1000 });
+    expect(parsePngDimensions(makePngBytes(2001, 500))).toBeNull();
+    expect(parsePngDimensions(makePngBytes(500, 1001))).toBeNull();
+
+    const oversizedFile = new File([makePngBytes(2001, 500)], 'wide.png', { type: 'image/png' });
+    await expect(readPngFileAsDataUrl(oversizedFile)).rejects.toThrow('SIGN_INVALID_SIGNATURE_PNG');
+
+    const okFile = new File([makePngBytes(400, 400)], 'ok.png', { type: 'image/png' });
+    const dataUrl = await readPngFileAsDataUrl(okFile);
+    expect(dataUrl.startsWith('data:image/png;base64,')).toBe(true);
+  });
+
+  it('renders BankSignDepositLine with batched prefetched candidates without firing per-line fetch (#4837 item 8)', () => {
+    const emptyQc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const html = wrap(
+      <BankSignDepositLine
+        line={{
+          id: '01900000-0000-7000-8000-000000000399',
+          importId: '01900000-0000-7000-8000-000000000398',
+          date: '2026-11-24',
+          reference: 'FT-BAT999',
+          description: 'CK-BAT999 Thanh toan dat coc',
+          amount: '5000000',
+          balance: '10000000',
+          ambiguous: false,
+          state: { status: 'open' },
+        }}
+        candidates={[
+          {
+            envelopeId: '01900000-0000-7000-8000-000000000499',
+            title: 'Hop dong batched',
+            completedAt: '2026-11-24T08:00:00.000Z',
+            amount: '5000000',
+            currency: 'VND',
+            memoToken: 'CK-BAT999',
+            financeBankAccount: '1121.VCB',
+            signerName: 'Tran B',
+            signerNoticeAt: null,
+            reason: 'amount_memo',
+            voucherType: 'bank_credit',
+            suggestedDebitAccount: '1121.VCB',
+            suggestedCreditAccount: '131',
+          },
+        ]}
+        onPrepareProposal={vi.fn()}
+      />,
+      'vi',
+      emptyQc,
+    );
+    expect(html).toContain('Hop dong batched');
+    expect(html).toContain('CK-BAT999');
+    expect(html).toContain('Tạo đề xuất Báo Có');
+    expect(emptyQc.getQueryCache().getAll().some((q) => q.state.fetchStatus === 'fetching')).toBe(false);
   });
 });

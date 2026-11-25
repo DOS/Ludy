@@ -634,7 +634,7 @@ import {
   zMeetingSearchInput,
   zMeetingSearchResult,
   zMeetingSettingsSet,
-  zMeetingSummary,
+  zMeetingListItem,
   zTranscript,
   zTranscriptCorrect,
   zTranscriptCorrected,
@@ -720,7 +720,7 @@ import { zDigestAnswer, zDigestAsk, zDigestFacts, zDigestStatus } from './meetin
 import { zLoadWeek, zLoadWeekInput } from './meeting-load.ts';
 import { zTrackerAdd, zTrackerDone, zTrackerHits, zTrackerList, zTrackerMeetingInput, zTrackerRemove, zTrackerTerms, zTrackerWeek, zTrackerWeekInput } from './meeting-trackers.ts';
 import { zHighlightAdd, zHighlightAdded, zHighlightRemove, zHighlightRemoved, zHighlights } from './meeting-highlights.ts';
-import { zLabelAdd, zLabelAdded, zLabelIndex, zLabelIndexInput, zLabelRemove, zLabelRemoved, zMeetingLabels } from './meeting-labels.ts';
+import { zLabelAdd, zLabelAdded, zLabelRemove, zLabelRemoved, zMeetingLabels } from './meeting-labels.ts';
 import { zMeetingsTodayFacts } from './meeting-today.ts';
 import { zMorningEmpty, zMorningSet, zMorningState } from './meeting-morning.ts';
 import { zAssigneeAnswer, zAssigneeAsk, zAssigneeStatus } from './meeting-assignee.ts';
@@ -918,7 +918,7 @@ import { zAdsBoostDraftCall, zAdsBoostDrafted, zAdsBoostOptions, zAdsBoostStates
 import { zAdsBudgetLowerCall, zAdsManageCancelCall, zAdsManageChanged, zAdsManageStateView, zAdsManageSuggestion, zAdsObjectCall, zAdsScheduleShortenCall } from './ads-manage.ts';
 import { zAdsCampaignDraftDiscardCall, zAdsCampaignDraftSaveCall, zAdsCampaignDraftView, zAdsCampaignRequestAsked, zAdsCampaignRequestCall, zAdsCampaignRequestView, zAdsLaunchCancelCall, zAdsLaunchRetryCall, zAdsLaunchStopCall } from './ads-campaign.ts';
 import { zHouseholdCnkd, zHouseholdCnkdGet, zHouseholdProfileGet, zHouseholdS1a, zHouseholdS1aGet, zHouseholdS2a, zHouseholdS2aGet, zHouseholdS2b, zHouseholdS2bGet, zHouseholdS2c, zHouseholdS2cGet, zHouseholdS2d, zHouseholdS2dGet, zHouseholdS2e, zHouseholdS2eGet, zHouseholdProfileSet, zHouseholdProfileView, zHouseholdRules, zHouseholdRulesGet } from './household.ts';
-import { zBankCandidatesLine, zBankCandidatesLineAsk, zBankAccountNumberSet, zBankAccountNumberView, zBankFeedAccountView, zBankFeedConnectTingee, zBankFeedConnectionView, zBankFeedHookCreated, zBankFeedHookSet, zBankFeedHookStatus, zBankFeedMap, zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankMatchGroups, zBankMatched, zBankOpenLines, zBankPayrollExplainAsk, zBankPayrollExplanation, zBankPayrollMatch, zBankPlatformLines, zBankSignDepositExplainAsk, zBankSignDepositExplanation, zBankSignDepositMatch, zBankStatementImport, zStatementLines } from './bank-statement.ts';
+import { zBankCandidatesLine, zBankCandidatesLineAsk, zBankAccountNumberSet, zBankAccountNumberView, zBankFeedAccountView, zBankFeedConnectTingee, zBankFeedConnectionView, zBankFeedHookCreated, zBankFeedHookSet, zBankFeedHookStatus, zBankFeedMap, zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankMatchGroups, zBankMatched, zBankOpenLines, zBankPayrollExplainAsk, zBankPayrollExplanation, zBankPayrollMatch, zBankPlatformLines, zBankSignDepositExplainAsk, zBankSignDepositExplanation, zBankSignDepositMatch, zBankSignDepositMatches, zBankSignDepositMatchesInput, zBankStatementImport, zStatementLines } from './bank-statement.ts';
 import { zTimeline } from './timeline.ts';
 import { zMisaCode, zMisaGoodsCode } from './misa-goods.ts';
 import { zAuditCursor, zAuditExport, zAuditFilter, zAuditPage } from './audit.ts';
@@ -1841,7 +1841,7 @@ export const contract = {
   },
   // AI Meeting Notes (issue #2576, ADR-0047, meetings plan M2).
   meetings: {
-    list: oc.input(zMeetingListInput).output(z.array(zMeetingSummary)),
+    list: oc.input(zMeetingListInput).output(z.array(zMeetingListItem)),
     get: oc.input(zMeetingRef).output(zMeetingDetail),
     create: oc.input(zMeetingCreate).output(zMeetingCreated),
     // The click on "Nhập" for a recording a meeting platform finished (C1, #3173): makes the meeting with its consent record and starts the download. The app then claims the staged bytes through the media route.
@@ -2047,10 +2047,9 @@ export const contract = {
       add: oc.input(zHighlightAdd).output(zHighlightAdded),
       remove: oc.input(zHighlightRemove).output(zHighlightRemoved),
     },
-    // Labels on a meeting (#4955): `list` the labels of one meeting the caller may read, `index` the labels across the meetings the caller reads (for the list's filter), and the recorder's `add` and `remove`.
+    // Labels on a meeting (#4955): `list` the labels of one meeting the caller may read, and the recorder's `add` and `remove`. The labels of the meetings on the list come with the list itself (#4966).
     label: {
       list: oc.input(zMeetingRef).output(zMeetingLabels),
-      index: oc.input(zLabelIndexInput).output(zLabelIndex),
       add: oc.input(zLabelAdd).output(zLabelAdded),
       remove: oc.input(zLabelRemove).output(zLabelRemoved),
     },
@@ -3696,6 +3695,8 @@ export const contract = {
     supplierMatch: oc.input(z.object({ bankLineId: zId })).output(zBankSupplierMatch),
     // Completed non-confidential eSign envelopes whose frozen deposit amount and CK-<CODE> memo match an open money-in bank line (#4723). Read-only prefill hint, zero auto-posting.
     signDepositMatch: oc.input(z.object({ bankLineId: zId })).output(zBankSignDepositMatch),
+    // Batched lookup of post-sign VietQR deposit matches across up to 50 open money-in bank lines (#4837).
+    signDepositMatches: oc.input(zBankSignDepositMatchesInput).output(zBankSignDepositMatches),
     // The coworker's one line on why a line may be one of those payments (#2532): code decided, the model only words it; no text when AI is off, busy, over budget or refused.
     payrollExplain: oc.input(zBankPayrollExplainAsk).output(zBankPayrollExplanation),
     // The coworker's one sentence on why a money-in bank line matches a signed envelope deposit (#4723), from non-PII facts only.

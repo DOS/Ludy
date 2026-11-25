@@ -10,7 +10,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
-  MeetingSummary,
+  MeetingListItem,
   ProjectBoard,
   ProjectCycle,
   ProjectDetail,
@@ -521,7 +521,7 @@ describe('Overlay consolidation across Projects, eSign, and Meetings (#4522)', (
     expect(html).toContain('max-md:min-h-11');
     assertNoNestedForms(html);
 
-    const meetingSummary: MeetingSummary = {
+    const meetingSummary: MeetingListItem = {
       id: 'm1',
       title: 'Họp giao ban',
       language: 'vi',
@@ -543,6 +543,7 @@ describe('Overlay consolidation across Projects, eSign, and Meetings (#4522)', (
       readersCount: 2,
       createdAt: '2026-11-23T02:00:00.000Z',
       updatedAt: '2026-11-23T02:30:00.000Z',
+      labels: [],
     };
     queryClientState.current.setQueryData(['meetings', 'list', { limit: 200 }], [meetingSummary]);
     const pageHtml = renderLocale(<MeetingsPage />, 'vi');

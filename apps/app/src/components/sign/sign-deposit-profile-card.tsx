@@ -425,10 +425,12 @@ function ProfileFormBody({
         <div className="space-y-2 rounded-lg border border-border bg-muted/20 p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
-              <Label htmlFor={`${idPrefix}-qr-png`} className="text-xs font-medium">
+              <p id={`${idPrefix}-qr-png-label`} className="text-xs font-medium text-foreground">
                 {t('qrPngLabel')}
-              </Label>
-              <p className="text-xs text-muted-foreground">{t('qrPngHint')}</p>
+              </p>
+              <p id={`${idPrefix}-qr-png-hint`} className="text-xs text-muted-foreground">
+                {t('qrPngHint')}
+              </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <input
@@ -448,6 +450,7 @@ function ProfileFormBody({
                 size="sm"
                 className="max-md:min-h-11"
                 disabled={upsertMutation.isPending}
+                aria-describedby={`${idPrefix}-qr-png-label ${idPrefix}-qr-png-hint`}
                 onClick={() => fileInputRef.current?.click()}
                 data-testid="sign-deposit-qr-upload-btn"
               >

@@ -15,8 +15,13 @@ import { createDb, createPool, type Db } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import type { ExtractClient } from '@ludy/extract-contract';
 import { buildKernelCommands, kernelQueries } from '@ludy/kernel';
-import { normalizeStatementAmount, SIGN_DEPOSIT_PROOF_MAX_BYTES, type BankSignDepositMatch } from '@ludy/kernel-contract';
-import { Runtime, fileKey, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
+import { normalizeStatementAmount, SIGN_DEPOSIT_PROOF_MAX_BYTES, type BankSignDepositMatch, type BankSignDepositMatches } from '@ludy/kernel-contract';
+import {
+  Runtime,
+  fileKey,
+  sha256Hex,
+  type BlobStore,
+} from '@ludy/kernel-runtime';
 import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
 import { pngCrc32, signCommands, signQueries } from '@ludy/mod-sign';
@@ -25,6 +30,7 @@ import { AVAILABLE_MODULES, loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
 import { orgPurgeCommand, runOrgPurge } from '../src/org-purge.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
+import { runSignAttachmentUpload, runSignDepositNotice } from '../src/sign-link.ts';
 import { runSignPdfInspectJob } from '../src/sign-worker.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
@@ -61,6 +67,26 @@ function buildNoIdatPng(): Uint8Array<ArrayBuffer> {
   return out;
 }
 const NO_IDAT_PNG_BYTES = buildNoIdatPng();
+
+function makeTaggedPng(tag: string): Uint8Array<ArrayBuffer> {
+  const payload = Buffer.from(`Comment\u0000${tag}`, 'latin1');
+  const len = Buffer.alloc(4);
+  len.writeUInt32BE(payload.byteLength, 0);
+  const typeAndData = Buffer.concat([Buffer.from('tEXt', 'latin1'), payload]);
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(pngCrc32(typeAndData, 0, typeAndData.byteLength), 0);
+  const iendOffset = TINY_PNG_BYTES.byteLength - 12;
+  const merged = Buffer.concat([
+    Buffer.from(TINY_PNG_BYTES.subarray(0, iendOffset)),
+    len,
+    typeAndData,
+    crc,
+    Buffer.from(TINY_PNG_BYTES.subarray(iendOffset)),
+  ]);
+  const out = new Uint8Array(new ArrayBuffer(merged.byteLength));
+  out.set(merged);
+  return out;
+}
 
 class MemoryStore implements BlobStore {
   readonly blobs = new Map<string, Uint8Array>();
@@ -382,6 +408,37 @@ suite('eSign Slice 6d post-sign VietQR deposit & accounting bridge (#4723)', () 
     });
     expect(viewerQrDownload.status).toBe(404);
 
+    // Strict 'sign_deposit_qr' source enforcement: files ingested under 'upload' are rejected (#4837 item 10)
+    const uploadPngBytes = Buffer.concat([TINY_PNG_BYTES, Buffer.from('upload-src')]);
+    const uploadPngSha = sha256Hex(uploadPngBytes);
+    const uploadPngKey = fileKey(org.orgId, uploadPngSha);
+    const uploadPngGen = await store.put(uploadPngKey, uploadPngBytes);
+    const uploadPngFile = await runtime.execute<{ fileId: string }>(
+      'kernel.file.ingest',
+      {
+        filename: 'generic-upload.png',
+        contentType: 'image/png',
+        sizeBytes: uploadPngBytes.byteLength,
+        sha256: uploadPngSha,
+        storageKey: uploadPngKey,
+        generation: uploadPngGen,
+        source: 'upload',
+      },
+      { actor: asUser(owner), orgId: org.orgId },
+    );
+    await expect(
+      runtime.execute(
+        'sign.deposit_profile.upsert',
+        {
+          bankCode: 'vcb',
+          accountNumber: '0123456789',
+          accountHolder: 'CONG TY TNHH TEST DEPOSIT',
+          vietqrFileId: uploadPngFile.fileId,
+        },
+        { actor: asUser(owner), orgId: org.orgId },
+      ),
+    ).rejects.toMatchObject({ code: 'SIGN_DEPOSIT_QR_FILE_INVALID' });
+
     // Owner cannot link another member's private unattached sign_document PNG via vietqrFileId (opaque 404)
     const privateBytes = Buffer.concat([TINY_PNG_BYTES, Buffer.from('priv')]);
     const privateSha = sha256Hex(privateBytes);
@@ -477,73 +534,8 @@ suite('eSign Slice 6d post-sign VietQR deposit & accounting bridge (#4723)', () 
       });
       expect(cmdTry.status, `${envId}: ${JSON.stringify(cmdTry.body)}`).toBe(403);
       expect(cmdTry.body.code).toBe('SIGN_CONFIDENTIAL_DEPOSIT_FORBIDDEN');
-
-      // Direct admin SQL trigger blocks confidential envelope_deposit inserts too
-      await admin(async (c) => {
-        await expect(
-          c.query(
-            `INSERT INTO ludy_sign.envelope_deposit (org_id, id, envelope_id, amount, currency, memo_token, created_by)
-             VALUES ($1, $2, $3, 5000000, 'VND', 'CK-SQLBLK1', $4)`,
-            [org.orgId, randomUUID(), envId, owner.userId],
-          ),
-        ).rejects.toThrow(/SIGN_CONFIDENTIAL_DEPOSIT_FORBIDDEN/);
-      });
     }
-
-    // Tenant SQL triggers block spoofed storage keys and confidential files on deposit_profile
-    const hrFileRow = await admin(async (c) => {
-      const { rows } = await c.query<{
-        id: string;
-        storage_key: string;
-        generation: string;
-        sha256: string;
-      }>(
-        `SELECT f.id, f.storage_key, f.generation, f.sha256
-         FROM ludy_sign.envelope e
-         JOIN ludy_kernel.file f ON f.org_id = e.org_id AND f.id = e.source_file_id
-         WHERE e.org_id = $1 AND e.id = $2`,
-        [org.orgId, hrEnvId],
-      );
-      return rows[0]!;
-    });
-    const qrRow = await admin(async (c) => {
-      const { rows } = await c.query<{ id: string; storage_key: string; generation: string; sha256: string }>(
-        `SELECT f.id, f.storage_key, f.generation, f.sha256
-         FROM ludy_sign.deposit_profile dp
-         JOIN ludy_kernel.file f ON f.org_id = dp.org_id AND f.id = dp.vietqr_file_id
-         WHERE dp.org_id = $1 LIMIT 1`,
-        [org.orgId],
-      );
-      return rows[0]!;
-    });
-    const spoofClient = await pool.connect();
-    try {
-      await spoofClient.query('BEGIN');
-      await spoofClient.query('SELECT ludy_kernel.enter_context($1::uuid, $2::uuid)', [owner.userId, org.orgId]);
-      await expect(
-        spoofClient.query(
-          `UPDATE ludy_sign.deposit_profile
-           SET vietqr_file_id = $1, vietqr_storage_key = 'org/other/evil.png', vietqr_generation = $2, vietqr_sha256 = $3
-           WHERE org_id = $4`,
-          [qrRow.id, qrRow.generation, qrRow.sha256, org.orgId],
-        ),
-      ).rejects.toThrow(/SIGN_DEPOSIT_QR_FILE_INVALID/);
-      await spoofClient.query('ROLLBACK');
-
-      await spoofClient.query('BEGIN');
-      await spoofClient.query('SELECT ludy_kernel.enter_context($1::uuid, $2::uuid)', [owner.userId, org.orgId]);
-      await expect(
-        spoofClient.query(
-          `UPDATE ludy_sign.deposit_profile
-           SET vietqr_file_id = $1, vietqr_storage_key = $2, vietqr_generation = $3, vietqr_sha256 = $4
-           WHERE org_id = $5`,
-          [hrFileRow.id, hrFileRow.storage_key, hrFileRow.generation, hrFileRow.sha256, org.orgId],
-        ),
-      ).rejects.toThrow(/SIGN_DEPOSIT_QR_FILE_INVALID|SIGN_INVALID_SIGNATURE_PNG|SIGN_CONFIDENTIAL_DEPOSIT_FORBIDDEN/);
-      await spoofClient.query('ROLLBACK');
-    } finally {
-      spoofClient.release();
-    }
+    // Direct-SQL confidential trigger and deposit_profile guard checks live in test/invariant/sign-deposit-vietqr-security.db.test.ts (#4837).
   });
 
   it('freezes immutable snapshot on send, supports public QR/notice/reopen & MODULE_OFF 404, and bridges Ludy Accounting without auto-posting', async () => {
@@ -592,50 +584,6 @@ suite('eSign Slice 6d post-sign VietQR deposit & accounting bridge (#4723)', () 
     });
 
     // Member SQL callers cannot pre-freeze snapshot_* or inject signer_proof_file_id on draft envelope_deposit (BLOCK-2)
-    const draftSpoofClient = await pool.connect();
-    try {
-      const profileQr = await admin(async (c) => {
-        const { rows } = await c.query<{ vietqr_file_id: string; vietqr_generation: string; vietqr_sha256: string }>(
-          `SELECT vietqr_file_id, vietqr_generation, vietqr_sha256 FROM ludy_sign.deposit_profile WHERE org_id = $1 LIMIT 1`,
-          [org.orgId],
-        );
-        return rows[0]!;
-      });
-      await draftSpoofClient.query('BEGIN');
-      await draftSpoofClient.query('SELECT ludy_kernel.enter_context($1::uuid, $2::uuid)', [member.userId, org.orgId]);
-      await expect(
-        draftSpoofClient.query(
-          `UPDATE ludy_sign.envelope_deposit
-           SET snapshot_frozen_at = now(),
-               snapshot_bank_code = 'VCB',
-               snapshot_bank_name = 'Vietcombank',
-               snapshot_account_number = '0999888777',
-               snapshot_account_holder = 'SPOOF',
-               snapshot_vietqr_file_id = $1,
-               snapshot_vietqr_storage_key = 'other-org/files/spoof',
-               snapshot_vietqr_generation = $2,
-               snapshot_vietqr_sha256 = $3
-           WHERE org_id = $4 AND envelope_id = $5`,
-          [profileQr.vietqr_file_id, profileQr.vietqr_generation, profileQr.vietqr_sha256, org.orgId, draftEnvId],
-        ),
-      ).rejects.toThrow(/SIGN_DEPOSIT_SYSTEM_ONLY/);
-      await draftSpoofClient.query('ROLLBACK');
-
-      await draftSpoofClient.query('BEGIN');
-      await draftSpoofClient.query('SELECT ludy_kernel.enter_context($1::uuid, $2::uuid)', [member.userId, org.orgId]);
-      await expect(
-        draftSpoofClient.query(
-          `UPDATE ludy_sign.envelope_deposit
-           SET signer_proof_file_id = $1, signer_proof_filename = 'spoof.png', signer_proof_sha256 = $2
-           WHERE org_id = $3 AND envelope_id = $4`,
-          [profileQr.vietqr_file_id, profileQr.vietqr_sha256, org.orgId, draftEnvId],
-        ),
-      ).rejects.toThrow(/SIGN_DEPOSIT_SYSTEM_ONLY/);
-      await draftSpoofClient.query('ROLLBACK');
-    } finally {
-      draftSpoofClient.release();
-    }
-
     // Add approvers & send both envelopes
     await runtime.execute(
       'sign.signer.add',
@@ -665,62 +613,6 @@ suite('eSign Slice 6d post-sign VietQR deposit & accounting bridge (#4723)', () 
     const depToken = sentWithDep.links[0]!.token;
     const noDepToken = sentNoDep.links[0]!.token;
 
-    // Prepare a draft envelope with a deposit before clearing the org profile so BLOCKER-1 SQL tests
-    // have an active deposit_profile when checking draft pre-freeze and non-system EMVCo payload rejection
-    const draftPreFreezeEnvId = await createInspectedDraft(owner, { title: 'Draft Pre-Freeze Guard Env' });
-    const setPreFreeze = await rpc('sign/deposit/set', owner, {
-      envelopeId: draftPreFreezeEnvId,
-      amount: '1500000',
-      memoToken: 'CK-PREFRZ1',
-    });
-    expect(setPreFreeze.status, JSON.stringify(setPreFreeze.body)).toBe(200);
-
-    const preClearClient = await pool.connect();
-    try {
-      await preClearClient.query('BEGIN');
-      await preClearClient.query('SELECT ludy_kernel.enter_context($1::uuid, $2::uuid)', [member.userId, org.orgId]);
-      await expect(
-        preClearClient.query(
-          `SELECT ludy_sign.freeze_envelope_deposit_snapshot($1::uuid, $2::uuid, NULL, $3::uuid, now())`,
-          [org.orgId, draftPreFreezeEnvId, member.userId],
-        ),
-      ).rejects.toThrow(/SIGN_DEPOSIT_FROZEN/);
-      await preClearClient.query('ROLLBACK');
-
-      await admin(async (c) => {
-        await c.query(
-          `UPDATE ludy_sign.envelope SET status = 'sent', sent_at = now() WHERE org_id = $1 AND id = $2`,
-          [org.orgId, draftPreFreezeEnvId],
-        );
-      });
-      await preClearClient.query('BEGIN');
-      await preClearClient.query('SELECT ludy_kernel.enter_context($1::uuid, $2::uuid)', [member.userId, org.orgId]);
-      const forgedEmvco =
-        '00020101021238540010A00000072701240006970436011001234567890208QRIBFTTA53037045802VN62130809CK-PREFRZ16304ABCD';
-      const emvcoRes = await preClearClient.query<{ freeze_envelope_deposit_snapshot: { frozen?: boolean; error?: string } }>(
-        `SELECT ludy_sign.freeze_envelope_deposit_snapshot($1::uuid, $2::uuid, $3, $4::uuid, now()) AS freeze_envelope_deposit_snapshot`,
-        [org.orgId, draftPreFreezeEnvId, forgedEmvco, member.userId],
-      );
-      expect(emvcoRes.rows[0]?.freeze_envelope_deposit_snapshot).toEqual({
-        frozen: false,
-        error: 'SIGN_DEPOSIT_EMVCO_INVALID',
-      });
-      const afterEmvco = await preClearClient.query<{ snapshot_emvco_payload: string | null }>(
-        `SELECT snapshot_emvco_payload FROM ludy_sign.envelope_deposit WHERE org_id = $1 AND envelope_id = $2`,
-        [org.orgId, draftPreFreezeEnvId],
-      );
-      expect(afterEmvco.rows[0]?.snapshot_emvco_payload).toBeNull();
-      await preClearClient.query('ROLLBACK');
-    } finally {
-      preClearClient.release();
-      await admin(async (c) => {
-        await c.query(`DELETE FROM ludy_sign.envelope_deposit WHERE org_id = $1 AND envelope_id = $2`, [
-          org.orgId,
-          draftPreFreezeEnvId,
-        ]);
-      });
-    }
-
     // Verify snapshot frozen cleanly; clearing org profile must NOT mutate sent envelope snapshot!
     const clearProfile = await rpc('sign/depositProfile/clear', owner, {});
     expect(clearProfile.status).toBe(200);
@@ -735,68 +627,13 @@ suite('eSign Slice 6d post-sign VietQR deposit & accounting bridge (#4723)', () 
     expect(frozen.snapshotFinanceBankAccount).toBe('1121');
     expect(typeof frozen.snapshotVietqrFileId).toBe('string');
 
-    // Post-send edits rejected at command and SQL trigger layers
+    // Post-send edits rejected at command layer (SQL trigger invariants live in test/invariant/sign-deposit-vietqr-security.db.test.ts)
     const postSendEdit = await rpc('sign/deposit/set', member, {
       envelopeId: draftEnvId,
       amount: '9999999',
     });
     expect(postSendEdit.status).toBe(409);
     expect(postSendEdit.body.code).toBe('SIGN_ENVELOPE_NOT_DRAFT');
-
-    const guardClient = await pool.connect();
-    try {
-      await guardClient.query('BEGIN');
-      await guardClient.query('SELECT ludy_kernel.enter_context($1::uuid, $2::uuid)', [member.userId, org.orgId]);
-      await expect(
-        guardClient.query(
-          `UPDATE ludy_sign.envelope_deposit SET amount = 9999999 WHERE org_id = $1 AND envelope_id = $2`,
-          [org.orgId, draftEnvId],
-        ),
-      ).rejects.toThrow(/SIGN_DEPOSIT_FROZEN/);
-      await guardClient.query('ROLLBACK');
-
-      // Direct freeze definer call on sent already-frozen envelope must fail (BLOCK-1 / BLOCK-2)
-      await guardClient.query('BEGIN');
-      await guardClient.query('SELECT ludy_kernel.enter_context($1::uuid, $2::uuid)', [member.userId, org.orgId]);
-      await expect(
-        guardClient.query(
-          `SELECT ludy_sign.freeze_envelope_deposit_snapshot($1::uuid, $2::uuid, NULL, $3::uuid, now())`,
-          [org.orgId, draftEnvId, member.userId],
-        ),
-      ).rejects.toThrow(/SIGN_DEPOSIT_FROZEN/);
-      await guardClient.query('ROLLBACK');
-
-      // ludy_tenant cannot bypass envelope_deposit_guard by setting ludy.sign_deposit_notice GUC (BLOCK-1)
-      const spoofFileId = await uploadSignPdfFor(member, 'spoof-notice-bypass');
-      await guardClient.query('BEGIN');
-      await guardClient.query('SELECT ludy_kernel.enter_context($1::uuid, $2::uuid)', [member.userId, org.orgId]);
-      await guardClient.query(`SELECT pg_catalog.set_config('ludy.sign_deposit_notice', $1, true)`, [draftEnvId]);
-      await expect(
-        guardClient.query(
-          `UPDATE ludy_sign.envelope_deposit
-           SET signer_proof_file_id = $1,
-               signer_proof_filename = 'bypass.png',
-               signer_proof_sha256 = $2
-           WHERE org_id = $3 AND envelope_id = $4`,
-          [spoofFileId, 'a'.repeat(64), org.orgId, draftEnvId],
-        ),
-      ).rejects.toThrow(/SIGN_DEPOSIT_SYSTEM_ONLY/);
-      await guardClient.query('ROLLBACK');
-
-      // ludy_tenant cannot bypass envelope_deposit_guard by setting ludy.sign_meeting_cleanup GUC (BLOCK-1)
-      await guardClient.query('BEGIN');
-      await guardClient.query('SELECT ludy_kernel.enter_context($1::uuid, $2::uuid)', [member.userId, org.orgId]);
-      await guardClient.query(`SELECT pg_catalog.set_config('ludy.sign_meeting_cleanup', $1, true)`, [org.orgId]);
-      await expect(
-        guardClient.query(
-          `DELETE FROM ludy_sign.envelope_deposit WHERE org_id = $1 AND envelope_id = $2`,
-          [org.orgId, draftEnvId],
-        ),
-      ).rejects.toThrow(/SIGN_DEPOSIT_FROZEN/);
-      await guardClient.query('ROLLBACK');
-    } finally {
-      guardClient.release();
-    }
 
     // Signer submits both envelopes -> completes immediately without requiring any transfer first
     const submitNoDep = await app.request('/api/sign/submit', {
@@ -1033,6 +870,19 @@ suite('eSign Slice 6d post-sign VietQR deposit & accounting bridge (#4723)', () 
     expect(matchOut.status).toBe(200);
     expect((matchOut.body as unknown as BankSignDepositMatch).candidates).toEqual([]);
 
+    // Batched lookup returns exact matches across multiple open money-in lines in one RPC call (#4837 item 8)
+    const batchedRes = await rpc('bank/signDepositMatches', member, {
+      bankLineIds: [inMemoLine!.id, inAmountOnlyLine!.id, outLine!.id],
+    });
+    expect(batchedRes.status).toBe(200);
+    const batched = batchedRes.body as unknown as BankSignDepositMatches;
+    expect(batched.matches).toHaveLength(3);
+    expect(batched.matches[0]?.bankLineId).toBe(inMemoLine!.id);
+    expect(batched.matches[0]?.candidates).toHaveLength(1);
+    expect(batched.matches[0]?.candidates[0]?.envelopeId).toBe(draftEnvId);
+    expect(batched.matches[1]?.candidates).toEqual([]);
+    expect(batched.matches[2]?.candidates).toEqual([]);
+
     // Explain with AI off returns clean state without crashing
     const explainOff = await rpc('bank/signDepositExplain', member, {
       bankLineId: inMemoLine!.id,
@@ -1082,44 +932,6 @@ suite('eSign Slice 6d post-sign VietQR deposit & accounting bridge (#4723)', () 
         { actor: asUser(owner), orgId: org.orgId },
       );
     }
-
-    // B1 OTP gate check: unverified OTP signer on an already-noticed deposit gets otpRequired=true without alreadyNoticed/deposit,
-    // and /api/sign/deposit-notice rejects with 403 SIGN_OTP_REQUIRED before revealing noticed state or storing blobs.
-    await admin(async (c) => {
-      await c.query('BEGIN');
-      await c.query('SET LOCAL session_replication_role = replica');
-      await c.query(
-        `UPDATE ludy_sign.signer
-         SET require_email_otp = true,
-             email = COALESCE(email, 'signer-a@example.com')
-         WHERE org_id = $1 AND envelope_id = $2`,
-        [org.orgId, draftEnvId],
-      );
-      await c.query('COMMIT');
-    });
-    const depTokenHash = sha256Hex(depToken);
-    const otpPreflight = await admin(async (c) => {
-      const { rows } = await c.query<{ result: Record<string, unknown> }>(
-        `SELECT ludy_sign.public_deposit_notice_preflight($1) AS result`,
-        [depTokenHash],
-      );
-      return rows[0]!.result;
-    });
-    expect(otpPreflight).toEqual({
-      status: 'ok',
-      orgId: org.orgId,
-      otpRequired: true,
-    });
-    expect('alreadyNoticed' in otpPreflight).toBe(false);
-    expect('deposit' in otpPreflight).toBe(false);
-
-    const otpNoticeRes = await app.request('/api/sign/deposit-notice', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ token: depToken, note: 'otp unverified probe' }),
-    });
-    expect(otpNoticeRes.status).toBe(403);
-    expect(((await otpNoticeRes.json()) as { code?: string }).code).toBe('SIGN_OTP_REQUIRED');
   });
 
   it('normalizes subaccount codes (1121.VCB), clears QR on bank change, preserves/demotes non-default profiles, and enforces integer VND numeric scale', async () => {
@@ -1236,36 +1048,8 @@ suite('eSign Slice 6d post-sign VietQR deposit & accounting bridge (#4723)', () 
       expect(map.get(p2Inserted.id)).toBe(true);
     });
 
-    // numeric column without fixed (20,4) scale rejects 100.00001 while accepting 100.0000
-    const scaleEnvId = await createInspectedDraft(owner, { title: 'Numeric Scale Check Env' });
-    const c = await pool.connect();
-    try {
-      await c.query('BEGIN');
-      await c.query('SELECT ludy_kernel.enter_context($1::uuid, $2::uuid)', [owner.userId, org.orgId]);
-      await expect(
-        c.query(
-          `INSERT INTO ludy_sign.envelope_deposit (org_id, envelope_id, amount, currency, memo_token, deposit_profile_id, created_by, updated_by)
-           VALUES ($1, $2, 100.00001, 'VND', 'CK-SCALE1', $3, $4, $4)`,
-          [org.orgId, scaleEnvId, p2Inserted.id, owner.userId],
-        ),
-      ).rejects.toThrow(/envelope_deposit_vnd_integer_ck/);
-      await c.query('ROLLBACK');
-
-      await c.query('BEGIN');
-      await c.query('SELECT ludy_kernel.enter_context($1::uuid, $2::uuid)', [owner.userId, org.orgId]);
-      await expect(
-        c.query(
-          `INSERT INTO ludy_sign.envelope_deposit (org_id, envelope_id, amount, currency, memo_token, deposit_profile_id, created_by, updated_by)
-           VALUES ($1, $2, 100.0000, 'VND', 'CK-SCALE2', $3, $4, $4)`,
-          [org.orgId, scaleEnvId, p2Inserted.id, owner.userId],
-        ),
-      ).resolves.toBeDefined();
-      await c.query('ROLLBACK');
-    } finally {
-      c.release();
-    }
-
     // Reusing an existing CK-* memo token on another envelope rejects with 409 SIGN_DEPOSIT_MEMO_CONFLICT
+    const scaleEnvId = await createInspectedDraft(owner, { title: 'Memo Conflict Check Env' });
     const memoConflictTry = await rpc('sign/deposit/set', owner, {
       envelopeId: scaleEnvId,
       amount: '1500000',
@@ -1353,5 +1137,247 @@ suite('eSign Slice 6d post-sign VietQR deposit & accounting bridge (#4723)', () 
       expect(depProfile.rows[0]!.n).toBe(0);
       expect(envDeposit.rows[0]!.n).toBe(0);
     });
+  });
+
+  it('blocks /api/sign/deposit-notice with 403 SIGN_OTP_REQUIRED even after signer_notice_at is set and preserves active shared blobs on FILE_SOURCE_CONFLICT', async () => {
+    const profileUpsert = await rpc('sign/depositProfile/upsert', owner, {
+      bankCode: 'vcb',
+      accountNumber: '0123456789',
+      accountHolder: 'CONG TY CONFLICT CHECK',
+    });
+    expect(profileUpsert.status).toBe(200);
+
+    const envId = await createInspectedDraft(owner, { title: 'Conflict Preserve Env' });
+    await runtime.execute(
+      'sign.envelope.deposit.set',
+      { envelopeId: envId, amount: '3000000', memoToken: 'CK-CONFL01' },
+      { actor: asUser(owner), orgId: org.orgId },
+    );
+    const signer = await runtime.execute<{ signerId: string }>(
+      'sign.signer.add',
+      {
+        envelopeId: envId,
+        signerRole: 'signer',
+        name: 'Nguyen Conflict',
+        email: 'conflict-otp@example.com',
+        deliveryMode: 'link',
+        requireEmailOtp: false,
+      },
+      { actor: asUser(owner), orgId: org.orgId },
+    );
+    await runtime.execute(
+      'sign.field.set',
+      {
+        envelopeId: envId,
+        fields: [
+          {
+            signerId: signer.signerId,
+            fieldType: 'signature',
+            pageNumber: 1,
+            xNorm: 0.1,
+            yNorm: 0.7,
+            wNorm: 0.25,
+            hNorm: 0.08,
+            required: true,
+            label: 'Signature',
+          },
+          {
+            signerId: signer.signerId,
+            fieldType: 'attachment',
+            pageNumber: 1,
+            xNorm: 0.1,
+            yNorm: 0.2,
+            wNorm: 0.3,
+            hNorm: 0.08,
+            required: false,
+            label: 'Receipt attachment',
+          },
+        ],
+      },
+      { actor: asUser(owner), orgId: org.orgId },
+    );
+    const detail = await rpc('sign/envelope/get', owner, { envelopeId: envId });
+    const fieldsList = detail.body.fields as Array<{ id: string; fieldType: string }>;
+    const attachmentFieldId = fieldsList.find((f) => f.fieldType === 'attachment')!.id;
+
+    const sent = await runtime.execute<{ links: Array<{ token: string }> }>(
+      'sign.envelope.send',
+      { envelopeId: envId },
+      { actor: asUser(owner), orgId: org.orgId },
+    );
+    const token = sent.links[0]!.token;
+    const billing = { entitlements: async () => ['full'] };
+
+    // Existing file collision on FILE_SOURCE_CONFLICT (sign_document with same sha256) MUST preserve existing blob.
+    const sharedBytes = makeTaggedPng('shared-active-blob-conflict');
+    const sharedSha = sha256Hex(sharedBytes);
+    const sharedKey = fileKey(org.orgId, sharedSha);
+    const sharedGen = await store.put(sharedKey, sharedBytes);
+    await runtime.execute(
+      'kernel.file.ingest',
+      {
+        filename: 'active-sign-doc.png',
+        contentType: 'image/png',
+        sizeBytes: sharedBytes.byteLength,
+        sha256: sharedSha,
+        storageKey: sharedKey,
+        generation: sharedGen,
+        source: 'sign_document',
+      },
+      { actor: asUser(owner), orgId: org.orgId },
+    );
+
+    await expect(
+      runSignAttachmentUpload(
+        runtime,
+        store,
+        billing,
+        { token, fieldId: attachmentFieldId, filename: 'conflict.png', bytes: sharedBytes },
+        { ip: '198.51.100.51', userAgent: 'Vitest/Conflict' },
+      ),
+    ).rejects.toMatchObject({ code: 'FILE_SOURCE_CONFLICT' });
+    expect(store.blobs.has(sharedKey)).toBe(true);
+
+    const submitRes = await app.request('/api/sign/submit', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        token,
+        consentAccepted: true,
+        fields: [
+          {
+            fieldId: fieldsList.find((f) => f.fieldType === 'signature')!.id,
+            signaturePngBase64: Buffer.from(TINY_PNG_BYTES).toString('base64'),
+          },
+        ],
+      }),
+    });
+    expect(submitRes.status).toBe(200);
+
+    await expect(
+      runSignDepositNotice(
+        runtime,
+        store,
+        billing,
+        { token, note: 'conflict proof', filename: 'shared.png', bytes: sharedBytes },
+        { ip: '198.51.100.53', userAgent: 'Vitest/Conflict' },
+      ),
+    ).rejects.toMatchObject({ code: 'FILE_SOURCE_CONFLICT' });
+    expect(store.blobs.has(sharedKey)).toBe(true);
+
+    // HTTP OTP 403 gate check on /api/sign/deposit-notice (even when signer_notice_at IS NOT NULL).
+    const preNoticeAt = new Date('2026-11-25T10:00:00.000Z');
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query(
+        `UPDATE ludy_sign.signer SET require_email_otp = true WHERE org_id = $1 AND id = $2`,
+        [org.orgId, signer.signerId],
+      );
+      await c.query(
+        `UPDATE ludy_sign.envelope_deposit
+         SET signer_notice_at = $2, signer_notice_note = 'Prior notice'
+         WHERE org_id = $1 AND envelope_id = $3`,
+        [org.orgId, preNoticeAt, envId],
+      );
+      await c.query('COMMIT');
+    });
+    const httpOtpNotice = await app.request('/api/sign/deposit-notice', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token, note: 'should be blocked by OTP gate' }),
+    });
+    expect(httpOtpNotice.status).toBe(403);
+    expect(((await httpOtpNotice.json()) as { code?: string }).code).toBe('SIGN_OTP_REQUIRED');
+  });
+
+  it('preserves pre-migration upload-sourced VietQR profiles and frozen snapshots on send & public download (#4837 review)', async () => {
+    const legacyQrBytes = makeTaggedPng('legacy-upload-qr');
+    const legacyQrSha = sha256Hex(legacyQrBytes);
+    const legacyQrKey = fileKey(org.orgId, legacyQrSha);
+    const legacyQrGen = await store.put(legacyQrKey, legacyQrBytes);
+    const legacyIngest = await runtime.execute<{ fileId: string }>(
+      'kernel.file.ingest',
+      {
+        filename: 'legacy-qr.png',
+        contentType: 'image/png',
+        sizeBytes: legacyQrBytes.byteLength,
+        sha256: legacyQrSha,
+        storageKey: legacyQrKey,
+        generation: legacyQrGen,
+        source: 'upload',
+      },
+      { actor: asUser(owner), orgId: org.orgId },
+    );
+
+    // New upsert referencing an 'upload' file is strictly rejected (#4837 item 10).
+    const rejectedNew = await rpc('sign/depositProfile/upsert', owner, {
+      bankCode: 'vcb',
+      accountNumber: '1122334455',
+      accountHolder: 'CONG TY NEW UPLOAD REJECT',
+      vietqrFileId: legacyIngest.fileId,
+      isDefault: false,
+    });
+    expect(rejectedNew.status).toBe(422);
+
+    // Pre-existing deposit_profile saved with 'upload' before migration upgrades cleanly and freezes on send.
+    const legacyProfileId = randomUUID();
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query(
+        `INSERT INTO ludy_sign.deposit_profile (
+           org_id, id, bank_code, bank_name, account_number, account_holder,
+           vietqr_file_id, vietqr_storage_key, vietqr_generation, vietqr_sha256,
+           is_default, created_by, updated_by
+         ) VALUES ($1, $2, 'VCB', 'Vietcombank', '9988776655', 'CONG TY LEGACY QR', $3, $4, $5, $6, false, $7, $7)`,
+        [org.orgId, legacyProfileId, legacyIngest.fileId, legacyQrKey, legacyQrGen, legacyQrSha, owner.userId],
+      );
+      await c.query('COMMIT');
+    });
+
+    // Updating a non-destination field on the legacy profile preserves its pre-migration QR cleanly.
+    const legacyProfileEdit = await rpc('sign/depositProfile/upsert', owner, {
+      id: legacyProfileId,
+      bankCode: 'vcb',
+      accountNumber: '9988776655',
+      accountHolder: 'CONG TY LEGACY QR UPDATED',
+      vietqrFileId: legacyIngest.fileId,
+      isDefault: false,
+    });
+    expect(legacyProfileEdit.status).toBe(200);
+    expect((legacyProfileEdit.body as { vietqrFileId: string | null }).vietqrFileId).toBe(legacyIngest.fileId);
+
+    const legacyEnvId = await createInspectedDraft(owner, { title: 'Legacy QR Freeze Env' });
+    await runtime.execute(
+      'sign.envelope.deposit.set',
+      { envelopeId: legacyEnvId, amount: '2000000', memoToken: 'CK-LEGACY1', depositProfileId: legacyProfileId },
+      { actor: asUser(owner), orgId: org.orgId },
+    );
+    await runtime.execute(
+      'sign.signer.add',
+      { envelopeId: legacyEnvId, signerRole: 'approver', name: 'Legacy Signer', deliveryMode: 'link', requireEmailOtp: false },
+      { actor: asUser(owner), orgId: org.orgId },
+    );
+    const legacySent = await runtime.execute<{ links: Array<{ token: string }> }>(
+      'sign.envelope.send',
+      { envelopeId: legacyEnvId },
+      { actor: asUser(owner), orgId: org.orgId },
+    );
+    const legacyToken = legacySent.links[0]!.token;
+    const legacySubmit = await app.request('/api/sign/submit', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token: legacyToken, consentAccepted: true, fields: [] }),
+    });
+    expect(legacySubmit.status).toBe(200);
+
+    const legacyQrRes = await app.request('/api/sign/deposit-qr', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token: legacyToken }),
+    });
+    expect(legacyQrRes.status).toBe(200);
+    expect(legacyQrRes.headers.get('content-type')).toBe('image/png');
   });
 });
