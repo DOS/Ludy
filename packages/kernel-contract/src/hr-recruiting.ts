@@ -478,6 +478,7 @@ export const zHrCvExtractDraft = z.strictObject({
   matchedSkills: z.array(z.string()),
   suggestedSource: zHrCandidateSource,
   notes: z.string().nullable(),
+  aiSummary: z.string().nullable(),
   sourceKind: z.enum(['pdf_text', 'docx_text']),
   extractedChars: z.number().int().nonnegative(),
   textPreview: z.string().nullable(),

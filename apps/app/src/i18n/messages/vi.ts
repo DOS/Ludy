@@ -2096,6 +2096,9 @@ export const vi = {
       emptyFile: 'Tệp CV đang chọn bị rỗng.',
       fileTooLarge: 'Tệp CV vượt quá giới hạn 10 MB.',
       timedOut: 'Hệ thống đang xử lý CV hơi lâu, vui lòng thử lại sau ít giây.',
+      aiSummaryLabel: 'Đề xuất tóm tắt của Ly',
+      aiSummaryHint: 'Nội dung này do Ly gợi ý từ CV và chưa được xác thực đối chiếu; giữ tách biệt khỏi Ghi chú mặc định cho tới khi bạn chủ động sao chép.',
+      aiSummaryCopyButton: 'Chép vào ghi chú',
       status: {
         ok: 'Ly đã trích xuất và gợi ý các trường hồ sơ.',
         ai_off: 'AI đang tắt; đã trích xuất tự động các trường cơ bản từ văn bản CV.',

@@ -308,6 +308,49 @@ async function cancelLinkedInterviewEvent(
   return cancelLockedInterviewEvent(ctx, cancelledByUserId, event);
 }
 
+const CANDIDATE_STAGE_TRANSITION_INSERT_COLUMNS = [
+  'org_id',
+  'legal_entity_id',
+  'candidate_id',
+  'from_stage',
+  'to_stage',
+  'occurred_at',
+  'created_by',
+  'created_at',
+] as const;
+
+const CANDIDATE_STAGE_TRANSITION_WRITE = tableWrite(
+  hrManifest.tables,
+  'ludy_hr',
+  'candidate_stage_transition',
+  CANDIDATE_STAGE_TRANSITION_INSERT_COLUMNS,
+);
+
+async function recordCandidateStageTransition(
+  ctx: CommandContext,
+  params: {
+    legalEntityId: string;
+    candidateId: string;
+    fromStage: HrCandidateStage | null;
+    toStage: HrCandidateStage;
+    createdBy: string;
+  },
+): Promise<void> {
+  await ctx.trx
+    .insertInto('ludy_hr.candidate_stage_transition')
+    .values({
+      org_id: ctx.orgId,
+      legal_entity_id: params.legalEntityId,
+      candidate_id: params.candidateId,
+      from_stage: params.fromStage,
+      to_stage: params.toStage,
+      occurred_at: ctx.now,
+      created_by: params.createdBy,
+      created_at: ctx.now,
+    })
+    .execute();
+}
+
 async function lockOpening(ctx: CommandContext, openingId: string) {
   const row = await ctx.trx
     .selectFrom('ludy_hr.job_opening')
@@ -982,7 +1025,10 @@ export const candidateAdd = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: MANAGERS,
-  writes: [tableWrite(hrManifest.tables, 'ludy_hr', 'candidate', CANDIDATE_INSERT_COLUMNS)],
+  writes: [
+    tableWrite(hrManifest.tables, 'ludy_hr', 'candidate', CANDIDATE_INSERT_COLUMNS),
+    CANDIDATE_STAGE_TRANSITION_WRITE,
+  ],
   handler: async (ctx, input): Promise<HrCandidateWritten> => {
     const userId = userOf(ctx.actor);
     let legalEntityId: string;
@@ -1016,6 +1062,13 @@ export const candidateAdd = defineCommand({
       })
       .returning(['id', 'legal_entity_id', 'stage'])
       .executeTakeFirstOrThrow();
+    await recordCandidateStageTransition(ctx, {
+      legalEntityId: row.legal_entity_id,
+      candidateId: row.id,
+      fromStage: null,
+      toStage: 'applied',
+      createdBy: userId,
+    });
     ctx.audit({
       candidateId: row.id,
       legalEntityId: row.legal_entity_id,
@@ -1135,6 +1188,7 @@ export const candidateMoveStage = defineCommand({
       'interview_ends_at',
       'updated_at',
     ]),
+    CANDIDATE_STAGE_TRANSITION_WRITE,
   ],
   handler: async (ctx, input): Promise<HrCandidateWritten> => {
     const userId = userOf(ctx.actor);
@@ -1169,6 +1223,13 @@ export const candidateMoveStage = defineCommand({
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', existing.id)
       .execute();
+    await recordCandidateStageTransition(ctx, {
+      legalEntityId: existing.legal_entity_id,
+      candidateId: existing.id,
+      fromStage: existing.stage,
+      toStage: input.toStage,
+      createdBy: userId,
+    });
     ctx.audit({
       candidateId: existing.id,
       legalEntityId: existing.legal_entity_id,
@@ -1191,6 +1252,7 @@ export const candidateScheduleInterview = defineCommand({
   writes: [
     tableWrite(kernelManifest.tables, 'ludy_kernel', 'calendar_event', CALENDAR_EVENT_COLUMNS),
     tableWrite(hrManifest.tables, 'ludy_hr', 'candidate', ['interview_event_id', 'interview_starts_at', 'interview_ends_at', 'stage', 'updated_at']),
+    CANDIDATE_STAGE_TRANSITION_WRITE,
   ],
   handler: async (ctx, input): Promise<HrCandidateInterviewScheduled> => {
     const actorUserId = userOf(ctx.actor);
@@ -1285,6 +1347,16 @@ export const candidateScheduleInterview = defineCommand({
       .where('id', '=', existing.id)
       .execute();
 
+    if (nextStage !== existing.stage) {
+      await recordCandidateStageTransition(ctx, {
+        legalEntityId: existing.legal_entity_id,
+        candidateId: existing.id,
+        fromStage: existing.stage,
+        toStage: nextStage,
+        createdBy: actorUserId,
+      });
+    }
+
     ctx.audit({
       candidateId: existing.id,
       legalEntityId: existing.legal_entity_id,
@@ -1375,6 +1447,7 @@ export const candidateHire = defineCommand({
     tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_employee', CANDIDATE_HIRE_EMPLOYEE_COLUMNS),
     tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_employment', EMPLOYMENT_COLUMNS),
     tableWrite(hrManifest.tables, 'ludy_hr', 'candidate', ['stage', 'agreed_wage', 'planned_start_on', 'hired_employee_id', 'hired_at', 'updated_at']),
+    CANDIDATE_STAGE_TRANSITION_WRITE,
   ],
   handler: async (ctx, input): Promise<HrCandidateHireResult> => {
     const userId = userOf(ctx.actor);
@@ -1487,6 +1560,14 @@ export const candidateHire = defineCommand({
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', existing.id)
       .execute();
+
+    await recordCandidateStageTransition(ctx, {
+      legalEntityId: existing.legal_entity_id,
+      candidateId: existing.id,
+      fromStage: existing.stage,
+      toStage: 'hired',
+      createdBy: userId,
+    });
 
     ctx.audit({
       candidateId: existing.id,

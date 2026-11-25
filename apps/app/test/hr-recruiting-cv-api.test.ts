@@ -28,6 +28,7 @@ const SAMPLE_DRAFT: HrCvExtractDraft = {
   matchedSkills: ['Excel'],
   suggestedSource: 'direct',
   notes: 'Tóm tắt CV',
+  aiSummary: null,
   sourceKind: 'pdf_text',
   extractedChars: 120,
   textPreview: 'Nguyễn Văn An',
@@ -140,5 +141,44 @@ describe('extractRecruitingCv GET poll retries (#4446)', () => {
       await rejection;
       expect(pollCalls).toBe(1);
     }
+  });
+
+  it('aborts hung GET polls at the remaining 20s deadline via AbortSignal (#4487)', async () => {
+    const pollSignals: AbortSignal[] = [];
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/api/hr/recruiting/cv-extract')) {
+        return new Response(JSON.stringify({ status: 'pending', jobId: JOB_ID }), {
+          status: 202,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      const signal = init?.signal;
+      expect(signal).toBeDefined();
+      if (signal) pollSignals.push(signal);
+      return await new Promise<Response>((_resolve, reject) => {
+        if (signal?.aborted) {
+          reject(signal.reason ?? new DOMException('Aborted', 'AbortError'));
+          return;
+        }
+        signal?.addEventListener('abort', () => {
+          reject(signal.reason ?? new DOMException('Aborted', 'AbortError'));
+        });
+      });
+    }) as unknown as typeof fetch;
+
+    const file = new File([new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d])], 'cv.pdf', { type: 'application/pdf' });
+    const settled = extractRecruitingCv(file).then(
+      () => ({ ok: true as const }),
+      (error: unknown) => ({ ok: false as const, error }),
+    );
+    await vi.advanceTimersByTimeAsync(21_000);
+    const result = await settled;
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toMatchObject({ name: 'ClientError', message: 'hrRecruiting.cvExtract.timedOut' });
+    }
+    expect(pollSignals).toHaveLength(1);
+    expect(pollSignals[0]!.aborted).toBe(true);
   });
 });
