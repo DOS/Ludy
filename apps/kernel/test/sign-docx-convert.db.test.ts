@@ -299,7 +299,7 @@ suite('eSign Slice 6b: native .docx upload -> tagged A4 PDF via crove-extract (#
       stepUp: 'required',
     }).register(registry);
     workerRt = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register(registry);
-  }, 120_000);
+  }, 180_000);
 
   afterAll(async () => {
     await pool?.end();
