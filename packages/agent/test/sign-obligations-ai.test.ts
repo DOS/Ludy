@@ -1792,6 +1792,30 @@ describe('checkSignObligationExtract (#3821)', () => {
         ],
         rejected: [{ value: '100', currency: 'USD' }],
       },
+      {
+        title: 'Assigned Rate Unit With Colon Separator',
+        quote: 'USD/month: 100; equivalent: 90 EUR.',
+        accepted: [{ value: '100', currency: 'USD' }],
+        rejected: [{ value: '90', currency: 'USD' }],
+      },
+      {
+        title: 'Assigned Rate Units With Equals Separator',
+        quote: 'EUR/year = 1,200; USD/year = 1,300.',
+        accepted: [
+          { value: '1200', currency: 'EUR' },
+          { value: '1300', currency: 'USD' },
+        ],
+        rejected: [{ value: '1300', currency: 'EUR' }],
+      },
+      {
+        title: 'Vietnamese Assigned Rate Unit With Colon Separator',
+        quote: 'VND/tháng: 5.000.000; tương đương: 200 USD.',
+        accepted: [
+          { value: '5000000', currency: 'VND' },
+          { value: '200', currency: 'USD' },
+        ],
+        rejected: [{ value: '200', currency: 'VND' }],
+      },
     ];
     for (const testCase of slashRateCrossCases) {
       const req: SignObligationExtractRequest = {

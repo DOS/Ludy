@@ -2844,8 +2844,9 @@ function splitCurrencyClauses(preservedQuote: string): string[] {
     '$1 ',
   );
   const separatedRateSuffixes = collapsedDollarBreaks.replace(
-    /(?<=[\p{L}\p{N}$€£¥₫₩₹₽฿₱₺])\/(year|yr|month|mo|quarter|qtr|week|wk|day|hour|hr|user|seat|unit|năm|nam|tháng|thang|quý|quy|tuần|tuan|ngày|ngay|giờ|gio|người|nguoi)(?![\p{L}\p{N}])(?![ \t]*[:=-])/giu,
-    ' per $1; ',
+    /(?<=[\p{L}\p{N}$€£¥₫₩₹₽฿₱₺])\/(year|yr|month|mo|quarter|qtr|week|wk|day|hour|hr|user|seat|unit|năm|nam|tháng|thang|quý|quy|tuần|tuan|ngày|ngay|giờ|gio|người|nguoi)(?![\p{L}\p{N}])([ \t]*[:=])?/giu,
+    (_match: string, unit: string, assignSep?: string) =>
+      assignSep ? ` per ${unit}${assignSep}` : ` per ${unit}; `,
   );
   const rawChunks = separatedRateSuffixes
     .split(/(?:[\r\n;|()]+|(?<!\d)\/|\/(?!\d))+|[ \t]+-[ \t]+|,\s+|\s+(?:or|and|và|hoặc|tương đương)\s+/iu)
