@@ -18893,6 +18893,10 @@ export const vi = {
           check_member: 'Kiểm tra ngân sách AI trước khi gọi mô hình',
           ensure_default: 'Gán ngân sách AI mặc định của máy chủ',
           notify: 'Báo ngân sách AI sắp hết hoặc đã hết',
+          release: 'Giải phóng phần giữ chỗ ngân sách AI',
+          release_member: 'Giải phóng phần giữ chỗ ngân sách AI',
+          reserve: 'Giữ chỗ ngân sách AI trước khi gọi mô hình',
+          reserve_member: 'Giữ chỗ ngân sách AI trước khi gọi mô hình',
         },
         meter: {
           status: 'Xem mức dùng ngân sách AI',
@@ -19191,6 +19195,8 @@ export const vi = {
         meter: {
           check: 'Kiểm tra ngân sách và công tắc dừng AI trước khi Vy làm việc cho bạn',
           record: 'Ghi một lượt Vy làm việc cho bạn vào sổ dùng',
+          release: 'Giải phóng phần giữ chỗ ngân sách AI khi Vy dừng lượt gọi',
+          reserve: 'Kiểm tra và giữ chỗ ngân sách AI trước khi Vy làm việc cho bạn',
         },
         result: {
           get: 'Xem kết quả Vy làm cho bạn',

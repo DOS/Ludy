@@ -265,6 +265,11 @@ function createSignTestApp(options: { signInstalled: boolean; signAi?: SignAiRea
     }),
     execute: vi.fn(async (name: string, input: unknown, opts: unknown) => {
       executed.push({ name, input, opts });
+      if (name === 'kernel.ai.budget.reserve_member') {
+        return { allowed: true, reservationId: '00000000-0000-7000-8000-000000000101' };
+      }
+      if (name === 'kernel.ai.usage.record_member') return { recorded: true };
+      if (name === 'kernel.ai.budget.release_member') return { released: true };
       if (name === 'sign.envelope.create') {
         return { envelopeId: ENVELOPE_ID, status: 'draft', inspectStatus: 'pending', version: 1 };
       }
