@@ -40,7 +40,7 @@ import type { Config } from './config.ts';
 import { logEvent, runWithLogContext } from './log.ts';
 import { handleMcp, RPC_INTERNAL, type McpHeaders, type ToolDescriptor } from './mcp-protocol.ts';
 import { ACCESS_TOKEN_SECONDS, MCP_DRAFT_SCOPE, MCP_OFFERED_SCOPES, MCP_SCOPE, type AccessTokenClaims, type OauthServer } from './oauth-server.ts';
-import { RateLimiter } from './rate-limit.ts';
+import type { RateLimitDecision } from './rate-limit.ts';
 
 const MAX_MCP_BODY_BYTES = 64 * 1024;
 const MAX_CONSENT_BODY_BYTES = 2 * 1024;
@@ -74,6 +74,56 @@ const makePairingToken = (): string => `${PAIRING_TOKEN_PREFIX}${randomBytes(32)
 const zPairingRedeem = z.object({ code: z.string().max(64) });
 const zPairingTokenPayload = z.object({ grantId: z.uuid(), orgId: z.uuid(), userId: z.uuid(), clientId: z.string().min(1).max(512), scopes: z.array(z.string()) });
 
+export type McpRateBucket =
+  | 'oauth_addr'
+  | 'oauth_register_addr'
+  | 'oauth_register_global'
+  | 'oauth_pairing_addr'
+  | 'mcp_addr'
+  | 'mcp_grant'
+  | 'mcp_refusal_audit';
+
+export interface McpRateLimiter {
+  take(bucket: McpRateBucket, key: string, limit: number, windowSeconds: number): Promise<RateLimitDecision>;
+}
+
+export function createDbMcpRateLimiter(runtime: Pick<Runtime, 'orgless'>): McpRateLimiter {
+  return {
+    async take(bucket, key, limit, windowSeconds) {
+      const keyHash = sha256(key).toString('hex');
+      const { rows } = await runtime.orgless((db) =>
+        sql<{ allowed: boolean; retry_after_seconds: number | null }>`
+          SELECT allowed, retry_after_seconds
+          FROM ludy_kernel.mcp_rate_limit_take(${bucket}::text, ${keyHash}::text, ${limit}::integer, ${windowSeconds}::integer)
+        `.execute(db),
+      );
+      const row = rows[0];
+      if (!row) throw new Error('MCP_RATE_LIMIT_EMPTY_RESULT');
+      return {
+        allowed: row.allowed,
+        retryAfterSeconds: row.allowed ? 0 : Math.max(1, row.retry_after_seconds ?? 1),
+      };
+    },
+  };
+}
+
+type RateLimitCheck = { ok: true; decision: RateLimitDecision } | { ok: false };
+
+async function takeRateLimit(
+  rateLimit: McpRateLimiter,
+  bucket: McpRateBucket,
+  key: string,
+  limit: number,
+  windowSeconds: number,
+): Promise<RateLimitCheck> {
+  try {
+    return { ok: true, decision: await rateLimit.take(bucket, key, limit, windowSeconds) };
+  } catch (error) {
+    logEvent('error', 'mcp rate limit failed', { bucket, error: toDomainError(error).code });
+    return { ok: false };
+  }
+}
+
 export interface McpDeps {
   config: Config;
   runtime: Runtime;
@@ -83,6 +133,8 @@ export interface McpDeps {
   clientKey: (c: Context) => string;
   serverVersion: string;
   now?: () => number;
+  // Shared DB-backed rate limiter by default; tests without Postgres may pass an explicit limiter.
+  rateLimit?: McpRateLimiter;
   // The drafts budget (#386) the one write tool takes before its command runs, as a person's own draft does; one per process unless a test passes its own.
   draftBudget?: DraftBudget;
   // The writes budget of a grant (E2, #3861): a few writes a minute for every Engage write tool; one per process unless a test passes its own.
@@ -105,9 +157,17 @@ function bearerOf(c: Context): string | null {
 
 const noStore = (c: Context) => c.header('cache-control', 'no-store');
 
+const RATE_LIMIT_REFUSED_BODY = { error: 'too_many_requests', error_description: 'Too many requests, try again later' } as const;
+const RATE_LIMIT_UNAVAILABLE_BODY = { error: 'temporarily_unavailable', error_description: 'Service temporarily unavailable, try again later' } as const;
+
 const tooManyRequests = (c: Context, retryAfterSeconds: number) => {
   c.header('retry-after', String(retryAfterSeconds));
-  return c.json({ error: 'too_many_requests', error_description: 'Too many requests, try again later' }, 429);
+  return c.json(RATE_LIMIT_REFUSED_BODY, 429);
+};
+
+const rateLimitUnavailable = (c: Context) => {
+  c.header('retry-after', '1');
+  return c.json(RATE_LIMIT_UNAVAILABLE_BODY, 503);
 };
 
 // What the edge's global chain gives every other route, replicated for the provider's routes (which are mounted before that chain, see below):
@@ -144,15 +204,11 @@ function routePatternOf(path: string): string {
 // (/oauth/interaction/...) are not the provider's: they go on to the routes of mountMcp, and the page itself to the SPA.
 export function mountOauthProvider(
   app: Hono<any>,
-  deps: Pick<McpDeps, 'oauth' | 'runtime' | 'clientKey' | 'now'> & { registerPerMinute: number; registerGlobalPerMinute: number; allowedOrigins: readonly string[] },
+  deps: Pick<McpDeps, 'oauth' | 'runtime' | 'clientKey' | 'now' | 'rateLimit'> & { registerPerMinute: number; registerGlobalPerMinute: number; allowedOrigins: readonly string[] },
 ): void {
   const callback = deps.oauth.provider.callback();
-  const addressLimiter = new RateLimiter({ perMinute: 300, ...(deps.now ? { now: deps.now } : {}) });
-  const registerLimiter = new RateLimiter({ perMinute: deps.registerPerMinute, ...(deps.now ? { now: deps.now } : {}) });
-  const registerGlobalLimiter = new RateLimiter({ perMinute: deps.registerGlobalPerMinute, ...(deps.now ? { now: deps.now } : {}) });
-  // The pairing redeem (#4591): 10 attempts a minute per address, on top of the 300 a minute every /oauth/* route has. No budget is shared between addresses: a shared ceiling would let a caller with a few
-  // addresses block pairing for every org. The code is about 59 bits and lives 10 minutes, so 10 guesses a minute per address is nothing against 2^59.
-  const pairingAddressLimiter = new RateLimiter({ perMinute: 10, ...(deps.now ? { now: deps.now } : {}) });
+  // All four OAuth/pairing limiters share DB buckets across API replicas (#3978); tests without Postgres may inject `deps.rateLimit`.
+  const rateLimit = deps.rateLimit ?? createDbMcpRateLimiter(deps.runtime);
 
   // The headers of every answer of these routes, ours and the provider's, set before either writes.
   const decorate = (c: Context, requestId: string) => {
@@ -165,7 +221,7 @@ export function mountOauthProvider(
       c.header('vary', 'Origin');
     }
   };
-  const refuse = (c: Context, requestId: string, status: 413 | 429, body: Record<string, string>, retryAfterSeconds?: number) => {
+  const refuse = (c: Context, requestId: string, status: 413 | 429 | 503, body: Record<string, string>, retryAfterSeconds?: number) => {
     decorate(c, requestId);
     if (retryAfterSeconds !== undefined) c.header('retry-after', String(retryAfterSeconds));
     return c.json(body, status);
@@ -221,13 +277,16 @@ export function mountOauthProvider(
     if (path.startsWith('/oauth/interaction/')) return next();
     const requestId = randomUUID();
     const bucket = deps.clientKey(c);
-    const decision = addressLimiter.take(bucket);
-    if (!decision.allowed) return refuse(c, requestId, 429, { error: 'too_many_requests', error_description: 'Too many requests, try again later' }, decision.retryAfterSeconds);
+    const address = await takeRateLimit(rateLimit, 'oauth_addr', bucket, 300, 60);
+    if (!address.ok) return refuse(c, requestId, 503, RATE_LIMIT_UNAVAILABLE_BODY, 1);
+    if (!address.decision.allowed) return refuse(c, requestId, 429, RATE_LIMIT_REFUSED_BODY, address.decision.retryAfterSeconds);
     if (path === '/oauth/register' && c.req.method === 'POST') {
-      const mine = registerLimiter.take(bucket);
-      if (!mine.allowed) return refuse(c, requestId, 429, { error: 'too_many_requests', error_description: 'Too many requests, try again later' }, mine.retryAfterSeconds);
-      const all = registerGlobalLimiter.take('all');
-      if (!all.allowed) return refuse(c, requestId, 429, { error: 'too_many_requests', error_description: 'Too many requests, try again later' }, all.retryAfterSeconds);
+      const mine = await takeRateLimit(rateLimit, 'oauth_register_addr', bucket, deps.registerPerMinute, 60);
+      if (!mine.ok) return refuse(c, requestId, 503, RATE_LIMIT_UNAVAILABLE_BODY, 1);
+      if (!mine.decision.allowed) return refuse(c, requestId, 429, RATE_LIMIT_REFUSED_BODY, mine.decision.retryAfterSeconds);
+      const all = await takeRateLimit(rateLimit, 'oauth_register_global', 'all', deps.registerGlobalPerMinute, 60);
+      if (!all.ok) return refuse(c, requestId, 503, RATE_LIMIT_UNAVAILABLE_BODY, 1);
+      if (!all.decision.allowed) return refuse(c, requestId, 429, RATE_LIMIT_REFUSED_BODY, all.decision.retryAfterSeconds);
     }
     if (path === PAIRING_REDEEM_PATH && c.req.method === 'POST') return redeemPairing(c, requestId);
     return delegate(c);
@@ -237,14 +296,17 @@ export function mountOauthProvider(
   // code leaves no grant behind. The answer is JSON and never cached; the body is read up to 1 KB.
   async function redeemPairing(c: Context, requestId: string) {
     const started = Date.now();
-    const finish = (status: 200 | 400 | 413 | 429 | 500, body: Record<string, unknown>, retryAfterSeconds?: number) => {
+    const finish = (status: 200 | 400 | 413 | 429 | 500 | 503, body: Record<string, unknown>, retryAfterSeconds?: number) => {
       decorate(c, requestId);
       if (retryAfterSeconds !== undefined) c.header('retry-after', String(retryAfterSeconds));
       logRequest('POST', PAIRING_REDEEM_PATH, status, started);
       return c.json(body, status);
     };
-    const mine = pairingAddressLimiter.take(deps.clientKey(c));
-    if (!mine.allowed) return finish(429, { error: 'too_many_requests', error_description: 'Too many requests, try again later' }, mine.retryAfterSeconds);
+    // The pairing redeem (#4591): 10 attempts a minute per address, on top of the 300 a minute every /oauth/* route has. No budget is shared between addresses: a shared ceiling would let a caller with a few
+    // addresses block pairing for every org. The code is about 59 bits and lives 10 minutes, so 10 guesses a minute per address is nothing against 2^59.
+    const mine = await takeRateLimit(rateLimit, 'oauth_pairing_addr', deps.clientKey(c), 10, 60);
+    if (!mine.ok) return finish(503, RATE_LIMIT_UNAVAILABLE_BODY, 1);
+    if (!mine.decision.allowed) return finish(429, RATE_LIMIT_REFUSED_BODY, mine.decision.retryAfterSeconds);
     const text = await readLimited(c.req.raw, MAX_PAIRING_BODY_BYTES);
     if (text === null) return finish(413, { error: 'invalid_request', error_description: 'Request body too large' });
     const refusal = () => finish(400, { error: 'invalid_grant', error_description: 'The pairing code is not valid' });
@@ -302,10 +364,8 @@ export function mountMcp(app: Hono<any>, deps: McpDeps): void {
   const { config, runtime, oauth } = deps;
   const allowedOrigins = (config.MCP_ALLOWED_ORIGINS ?? '').split(',').map((o) => o.trim()).filter((o) => o.length > 0);
   const resourceMetadata = wellKnownResource(config);
-  const grantLimiter = new RateLimiter({ perMinute: config.MCP_GRANT_PER_MINUTE, ...(deps.now ? { now: deps.now } : {}) });
-  // Refusals audited per grant are bounded too, so a flood of 429s does not become a flood of audit rows.
-  const mcpAddressLimiter = new RateLimiter({ perMinute: 300, ...(deps.now ? { now: deps.now } : {}) });
-  const refusalAuditLimiter = new RateLimiter({ perMinute: 6, ...(deps.now ? { now: deps.now } : {}) });
+  // Shared DB-backed rate limits across API replicas (#3978); tests without Postgres may inject `deps.rateLimit`.
+  const rateLimit = deps.rateLimit ?? createDbMcpRateLimiter(runtime);
   const inFlight = new Map<string, number>();
   const draftBudget = deps.draftBudget ?? new DraftBudget(deps.now ? { now: deps.now } : {});
   const writeBudget = deps.writeBudget ?? new McpWriteBudget({ perGrantPerMinute: config.MCP_GRANT_WRITES_PER_MINUTE, ...(deps.now ? { now: deps.now } : {}) });
@@ -480,8 +540,9 @@ export function mountMcp(app: Hono<any>, deps: McpDeps): void {
     if (origin !== undefined && !allowedOrigins.includes(origin)) {
       return c.json({ jsonrpc: '2.0', id: null, error: { code: -32000, message: 'Origin not allowed' } }, 403);
     }
-    const address = mcpAddressLimiter.take(deps.clientKey(c));
-    if (!address.allowed) return tooMany(c, address.retryAfterSeconds);
+    const address = await takeRateLimit(rateLimit, 'mcp_addr', deps.clientKey(c), 300, 60);
+    if (!address.ok) return rateLimitUnavailable(c);
+    if (!address.decision.allowed) return tooMany(c, address.decision.retryAfterSeconds);
     const token = bearerOf(c);
     if (token === null) return challenge(c, null);
     // An opaque pairing token (#4591) or an access token of the authorization server: either way the same claims, then the same grant checks below.
@@ -535,11 +596,14 @@ export function mountMcp(app: Hono<any>, deps: McpDeps): void {
       return out[0]?.rows_left ?? 0;
     };
     // The grant's own budget and concurrency, checked before any query runs.
-    const rate = grantLimiter.take(claims.grantId);
+    const rate = await takeRateLimit(rateLimit, 'mcp_grant', claims.grantId, config.MCP_GRANT_PER_MINUTE, 60);
+    if (!rate.ok) return rateLimitUnavailable(c);
     const running = inFlight.get(claims.grantId) ?? 0;
-    if (!rate.allowed || running >= config.MCP_GRANT_CONCURRENCY) {
-      if (refusalAuditLimiter.take(claims.grantId).allowed) await writeCallAudit('-', requestId, 'rate_limited').catch(() => undefined);
-      return tooMany(c, rate.allowed ? 1 : rate.retryAfterSeconds);
+    if (!rate.decision.allowed || running >= config.MCP_GRANT_CONCURRENCY) {
+      // Refusals audited per grant are bounded in DB across replicas so a flood of 429s does not flood audit_event.
+      const refusalAudit = await takeRateLimit(rateLimit, 'mcp_refusal_audit', claims.grantId, 6, 60);
+      if (refusalAudit.ok && refusalAudit.decision.allowed) await writeCallAudit('-', requestId, 'rate_limited').catch(() => undefined);
+      return tooMany(c, rate.decision.allowed ? 1 : rate.decision.retryAfterSeconds);
     }
     inFlight.set(claims.grantId, running + 1);
     try {
