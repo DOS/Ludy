@@ -72,6 +72,7 @@ describe('meeting label text (#4955)', () => {
       keepVideo: false,
       liveNotes: false,
       summaryTemplate: 'general',
+      place: null,
       audioRetentionDate: '2026-12-23',
       textRetentionDate: null,
       hasAudio: true,
