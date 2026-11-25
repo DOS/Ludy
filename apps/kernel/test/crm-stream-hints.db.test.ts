@@ -476,6 +476,47 @@ suite('stream hints of deals and contacts (#3293)', () => {
     expect(seeded).toEqual([`${orgId} crm_party ${STREAM_HINT_MANY_ID}`]);
   });
 
+  it('bounds multi-org single-statement writes cleanly in one GUC pass (#3423)', async () => {
+    const orgs = await Promise.all(Array.from({ length: 30 }, () => org()));
+    let singleRowPayloads: Array<{ org_id: string; id: string }> = [];
+    let gucMapRaw = '';
+    const multiPayloads = await hintsOf(async (c) => {
+      await c.query('BEGIN');
+      singleRowPayloads = (
+        await c.query<{ org_id: string; id: string }>(
+          `INSERT INTO ludy_kernel.party (org_id, kind, name)
+           SELECT o, 'person', 'Đa công ty ' || i
+           FROM unnest($1::uuid[]) WITH ORDINALITY AS t(o, i)
+           RETURNING org_id, id`,
+          [orgs],
+        )
+      ).rows;
+      gucMapRaw = (await c.query<{ val: string }>(`SELECT pg_catalog.current_setting('ludy.stream_hint_counts', true) AS val`)).rows[0]!.val;
+      await c.query('COMMIT');
+    });
+
+    const gucMap = JSON.parse(gucMapRaw) as Record<string, unknown>;
+    expect(Object.keys(gucMap)).toHaveLength(30);
+    for (const row of singleRowPayloads) {
+      expect(multiPayloads).toContain(`${row.org_id} crm_party ${row.id}`);
+      expect(gucMap[`crm_party:${row.org_id}`]).toEqual([row.id]);
+    }
+
+    const three = orgs.slice(0, 3);
+    const bulkMulti = await hintsOf((c) =>
+      c.query(
+        `INSERT INTO ludy_kernel.party (org_id, kind, name)
+         SELECT o, 'person', 'Lô ' || i
+         FROM unnest($1::uuid[]) AS o, generate_series(1, 25) AS i`,
+        [three],
+      ),
+    );
+    expect(bulkMulti).toHaveLength(63);
+    for (const o of three) {
+      bounded(bulkMulti.filter((p) => p.startsWith(`${o} crm_party `)), o, 'crm_party');
+    }
+  });
+
   it('bounds crm_deal hints on member removal (owner_user_id SET NULL) and bulk deal updates, while keeping single deal edits exact (#3423)', async () => {
     const { orgId, owner } = await orgWithOwner();
     const tag = randomUUID().slice(0, 8);
@@ -515,7 +556,7 @@ suite('stream hints of deals and contacts (#3293)', () => {
         (
           await c.query<{ fn: string; role: string }>(
             `SELECT f.fn, r.rolname AS role
-               FROM unnest(ARRAY['ludy_kernel.stream_hint_bounded(text, uuid, uuid)', 'ludy_kernel.party_stream_hint_insert()', 'ludy_kernel.party_stream_hint_update()', 'ludy_crm.deal_stream_hint()']) AS f(fn),
+               FROM unnest(ARRAY['ludy_kernel.stream_hint_bounded_batch(text, uuid[], uuid[])', 'ludy_kernel.stream_hint_bounded(text, uuid, uuid)', 'ludy_kernel.party_stream_hint_insert()', 'ludy_kernel.party_stream_hint_update()', 'ludy_crm.deal_stream_hint()']) AS f(fn),
                     pg_catalog.pg_roles r
               WHERE r.rolname = ANY (ARRAY['ludy_tenant', 'ludy_app', 'ludy_worker', 'ludy_definer_tenant', 'ludy_definer_einvoice', 'ludy_auth_reader', 'ludy_prober', 'ludy_reporter', 'crove_tenant', 'crove_app', 'crove_worker', 'crove_definer_tenant', 'crove_prober'])
                 AND pg_catalog.has_function_privilege(r.oid, f.fn, 'EXECUTE')`,
@@ -527,7 +568,7 @@ suite('stream hints of deals and contacts (#3293)', () => {
       async (c) =>
         (
           await c.query<{ fn: string }>(
-            `SELECT f.fn FROM unnest(ARRAY['ludy_kernel.stream_hint_bounded(text, uuid, uuid)', 'ludy_kernel.party_stream_hint_insert()', 'ludy_kernel.party_stream_hint_update()', 'ludy_crm.deal_stream_hint()']) AS f(fn)
+            `SELECT f.fn FROM unnest(ARRAY['ludy_kernel.stream_hint_bounded_batch(text, uuid[], uuid[])', 'ludy_kernel.stream_hint_bounded(text, uuid, uuid)', 'ludy_kernel.party_stream_hint_insert()', 'ludy_kernel.party_stream_hint_update()', 'ludy_crm.deal_stream_hint()']) AS f(fn)
              WHERE pg_catalog.has_function_privilege('public', f.fn, 'EXECUTE')`,
           )
         ).rows,
@@ -567,7 +608,26 @@ suite('stream hints of deals and contacts (#3293)', () => {
         }
       }),
     ).rejects.toMatchObject({ code: '42501' });
+    await expect(
+      admin(async (c) => {
+        await c.query('BEGIN');
+        try {
+          await c.query('SET LOCAL ROLE ludy_tenant');
+          await c.query(`SELECT ludy_kernel.stream_hint_bounded_batch('crm_party', ARRAY[$1::uuid], ARRAY[$1::uuid])`, [orgId]);
+        } finally {
+          await c.query('ROLLBACK');
+        }
+      }),
+    ).rejects.toMatchObject({ code: '42501' });
     await expect(admin((c) => c.query(`SELECT ludy_kernel.stream_hint_bounded('unknown', $1::uuid, $1::uuid)`, [orgId]))).rejects.toMatchObject({ code: '22023' });
+    await expect(
+      admin((c) => c.query(`SELECT ludy_kernel.stream_hint_bounded_batch('crm_party', ARRAY[$1::uuid, $1::uuid], ARRAY[$1::uuid])`, [orgId])),
+    ).rejects.toMatchObject({ code: '22023' });
+    await expect(
+      admin((c) => c.query(`SELECT ludy_kernel.stream_hint_bounded_batch('crm_party', ARRAY[ARRAY[$1::uuid]], ARRAY[ARRAY[$1::uuid]])`, [orgId])),
+    ).rejects.toMatchObject({ code: '22023' });
+    await admin((c) => c.query(`SELECT ludy_kernel.stream_hint_bounded_batch('crm_party', ARRAY[]::uuid[], ARRAY[]::uuid[])`));
+    await admin((c) => c.query(`SELECT ludy_kernel.stream_hint_bounded_batch('crm_party', NULL, NULL)`));
   });
 
   it('reaches only the streams of the org the row belongs to (including nil bulk sentinel)', async () => {
