@@ -29,6 +29,7 @@ import { translateRunCommands, translateRunQueries } from './translate-run.ts';
 import { askRunCommands, askRunQueries } from './ask.ts';
 import { briefCommands, briefQueries } from './brief.ts';
 import { digestCommands, digestQueries } from './digest.ts';
+import { highlightsCommands, highlightsQueries } from './highlights.ts';
 import { loadQueries } from './load.ts';
 import { todayQueries } from './today.ts';
 import { morningCommands, morningQueries } from './morning.ts';
@@ -1127,6 +1128,7 @@ export const meetingsCommands = [
   ...resultCommands,
   ...notesCommands,
   ...chaptersCommands,
+  ...highlightsCommands,
   ...chaptersRunCommands,
   ...titleCommands,
   ...commitmentsCommands,
@@ -1196,6 +1198,7 @@ export const meetingsQueries = [
   ...briefQueries,
   ...digestQueries,
   ...loadQueries,
+  ...highlightsQueries,
   ...todayQueries,
   ...morningQueries,
   ...assigneeQueries,

@@ -1951,6 +1951,12 @@ export function createRpcHandler(
       load: {
         week: os.meetings.load.week.handler(meetingsQuery('meetings.load.week')),
       },
+      // Highlights on a transcript line or range (#4819): the marks of a meeting, and the caller's own add and remove, under the caller's own row security; see modules/meetings/src/highlights.ts.
+      highlight: {
+        list: os.meetings.highlight.list.handler(meetingsQuery('meetings.highlight.list')),
+        add: os.meetings.highlight.add.handler(meetingsCommand('meetings.highlight.add')),
+        remove: os.meetings.highlight.remove.handler(meetingsCommand('meetings.highlight.remove')),
+      },
       // The Today view (#3955): the member's own agenda for today with the facts of each event's brief, read as the member in one call (no model, nothing in the background); see modules/meetings/src/today.ts.
       today: {
         facts: os.meetings.today.facts.handler(meetingsQuery('meetings.today.facts')),
