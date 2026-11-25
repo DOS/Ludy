@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The removal of a meeting cancels the recorder's Vy runs bound to it (#3951): a title run (#3947), a commitments run (#3954) and a follow-up note run (#4475, #4534) and a deal update run (#4766) in flight at a deletion are cancelled with the code MEETING_REMOVED, one
+// The removal of a meeting cancels the recorder's Vy runs bound to it (#3951): a title run (#3947), a commitments run (#3954) and a follow-up note run (#4475, #4534) a deal update run (#4766) and a label suggestion run (#5010) in flight at a deletion are cancelled with the code MEETING_REMOVED, one
 // audit row each names the run, the meeting and the feature (ids only), and their private result row is deleted with the meeting. Another meeting of the same recorder is unaffected.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -155,6 +155,23 @@ suite('a meeting\'s removal and the Vy runs bound to it (#3951)', () => {
     expect(rows[0]?.detail).toEqual({ runId: update.runId, meetingId, feature: 'meetings.deal_update', reason: 'MEETING_REMOVED' });
     // The recorder's other meeting still stands, and a deal update run of its own starts and stays live.
     const second = await runStart('recorder', 'meetings.deal_update', other);
+    expect(await runRow(second.runId)).toMatchObject({ status: 'running' });
+    expect(await results(other)).toBe(1);
+  });
+  it('cancels a label suggestion run in flight when the meeting is removed, audits it by ids, and deletes its private result row (#5010)', async () => {
+    const meetingId = await seedMeeting('recorder');
+    const other = await seedMeeting('recorder');
+    const suggestion = await runStart('recorder', 'meetings.label_suggest', meetingId);
+    expect(await results(meetingId)).toBe(1);
+    await sqlAdmin(`DELETE FROM ludy_meetings.meeting WHERE org_id = $1 AND id = $2`, [orgId, meetingId]);
+    expect(await results(meetingId)).toBe(0);
+    expect(await runRow(suggestion.runId)).toMatchObject({ status: 'cancelled', error: 'MEETING_REMOVED' });
+    const rows = await audits('meetings.label_suggest', meetingId);
+    expect(rows).toHaveLength(1);
+    // Ids and the reason only: no title, no label.
+    expect(rows[0]?.detail).toEqual({ runId: suggestion.runId, meetingId, feature: 'meetings.label_suggest', reason: 'MEETING_REMOVED' });
+    // The recorder's other meeting still stands, and a label suggestion run of its own starts and stays live.
+    const second = await runStart('recorder', 'meetings.label_suggest', other);
     expect(await runRow(second.runId)).toMatchObject({ status: 'running' });
     expect(await results(other)).toBe(1);
   });
