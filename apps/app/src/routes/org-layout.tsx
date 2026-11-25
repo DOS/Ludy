@@ -2,17 +2,20 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Outlet, useLocation, useNavigate, useParams, useRouter, useRouterState } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
+import { COWORKER_ROSTER } from '@ludy/kernel-contract';
 import { cn } from '@ludy/ui/lib/utils';
 import { NavDrawer, ShellNav } from '../components/app-nav.tsx';
+import { GlobalTopBar } from '../components/global-top-bar.tsx';
 import { PhoneHeader } from '../components/phone-header.tsx';
 import { CommandPalette, type PaletteEntry } from '../components/command-palette.tsx';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
 import { ScreenTabs } from '../components/screen-tabs.tsx';
 import { QuickCaptureDialog } from '../components/todo-quick-add.tsx';
 import { OrgLeftNotice } from '../components/ui.tsx';
+import { VyDrawer } from '../components/vy-drawer.tsx';
 import { useFormat, useLocaleSetting } from '../i18n/provider.tsx';
 import { agentPermissions, aiConnectionsVisible } from '../lib/agents.ts';
-import { orpc } from '../lib/api.ts';
+import { orpc, errorMessage } from '../lib/api.ts';
 import { ALL_NAV, NAV_KEYWORDS, SETTINGS_ITEMS, appOfPath, installedApps, isShellItemHidden, visibleApps } from '../lib/apps.ts';
 import { getConfig } from '../lib/auth.ts';
 import { effectiveModules, installedItems } from '../lib/modules.ts';
@@ -29,6 +32,7 @@ import {
   useRecentItems,
 } from '../lib/palette-recents.ts';
 import { hasOpenModalDialog, isQuickCaptureShortcut } from '../lib/quick-add.ts';
+import { buildQuickCreateItems } from '../lib/quick-create.ts';
 import { currentScreenName, subscribeScreenName } from '../lib/screen-title.ts';
 import { documentNumber } from '../lib/search.ts';
 import { proposalName } from '../lib/review.ts';
@@ -39,6 +43,7 @@ import { useRouteFocus } from '../lib/route-focus.ts';
 import { useScrollRoom } from '../lib/scroll-room.ts';
 import { SAFETY_POLL_MS, pollEvery, useInvalidationStream, useStreamLive } from '../lib/stream-hook.ts';
 import { unreadLabel } from '../lib/social-notifications.ts';
+import { canUseVy as hasVyPermission } from '../lib/vy.ts';
 import { useNotifications } from './social-notifications.tsx';
 import { useWorkNotifications } from './notifications.tsx';
 
@@ -70,11 +75,11 @@ export function OrgLayout() {
   const resolvedPathname = useRouterState({ select: (s) => (s.resolvedLocation ?? s.location).pathname });
   const screenApp = appOfPath(pathname);
   const [menuOpen, setMenuOpen] = useState(false);
-  // The phone's header sticks to the top: a control the keyboard focuses stops below it, never under it (#1575).
-  const phoneHeader = useRef<HTMLElement>(null);
+  // The active top header sticks to the top: a control the keyboard focuses stops below it, never under it (#1575, #4926).
+  const topChrome = useRef<HTMLDivElement>(null);
   const main = useRef<HTMLElement>(null);
   const screenName = useRouteFocus(main);
-  useScrollRoom(phoneHeader, 'top');
+  useScrollRoom(topChrome, 'top');
   const { slug } = useParams({ strict: false }) as { slug: string };
   const navigate = useNavigate();
   // A change of the apps runs the router's guards and renders the screen again (router.invalidate): a screen of an app that was just switched off goes to the overview, as one opened
@@ -139,15 +144,36 @@ export function OrgLayout() {
   const [theme, setTheme] = useThemeSetting();
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);
+  const [vyDrawerOpen, setVyDrawerOpen] = useState(false);
   const [userCollapsed, setUserCollapsed] = useSidebarCollapsed();
+  const secondarySidebarRef = useRef<HTMLDivElement>(null);
+  const sidebarToggleRef = useRef<HTMLButtonElement>(null);
   const hasSecondary = hasSecondaryNav(screenApp, apps, pathname);
   const sidebarCollapsed = !hasSecondary || userCollapsed;
+  useEffect(() => {
+    setVyDrawerOpen(false);
+  }, [slug]);
   // The org's search (#673): parties, documents and journal entries for what is typed in the palette, where finance runs;
   // and the notes the member may read, where notes runs (#1675).
   const financeOn = NAV.some((n) => n.module === 'finance');
   const notesOn = installedModules().includes('notes');
   const canQuickCapture = notesOn && me.isSuccess && Boolean(org) && roleHere !== 'viewer';
   const canCreateTeamTask = me.isSuccess && Boolean(org) && agentPermissions(roleHere).tasks;
+  const orgDetail = useQuery({ ...orpc.org.get.queryOptions(), enabled: Boolean(org) });
+  const aiMeter = useQuery({
+    ...orpc.ai.meter.queryOptions({ input: {} }),
+    enabled: Boolean(org),
+    refetchInterval: pollEvery(live, 60_000, SAFETY_POLL_MS),
+    staleTime: 15_000,
+  });
+  const vyToday = useQuery({ ...orpc.today.list.queryOptions(), enabled: vyDrawerOpen && Boolean(org) });
+  const canUseVy = hasVyPermission(orgDetail.data?.permissions);
+  const canViewAiBudgets = agentPermissions(roleHere).budgets;
+  const gmName = vyToday.data?.coworkers.gm ?? COWORKER_ROSTER.gm;
+  const quickCreateItems = useMemo(
+    () => buildQuickCreateItems({ modules: installedModules(), role: roleHere, canCreateTeamTask, canQuickCapture }),
+    [modulesVersion, roleHere, canCreateTeamTask, canQuickCapture], // oxlint-disable-line react-hooks/exhaustive-deps
+  );
   const orgIdHere = org?.orgId;
   const userIdHere = me.data?.userId;
   const recentScope = useMemo(
@@ -240,21 +266,29 @@ export function OrgLayout() {
         setQuickCaptureOpen(true);
         return;
       }
+      const activeElement = typeof document !== 'undefined' ? document.activeElement : null;
       if (
         isSidebarToggleShortcut(event, {
           hasSecondary,
-          modalOpen: paletteOpen || quickCaptureOpen || menuOpen || hasOpenModalDialog(typeof document !== 'undefined' ? document : null),
+          modalOpen: paletteOpen || quickCaptureOpen || menuOpen || vyDrawerOpen || hasOpenModalDialog(typeof document !== 'undefined' ? document : null),
           isDesktop: typeof window === 'undefined' || !window.matchMedia ? true : window.matchMedia('(min-width: 768px)').matches,
-          activeElement: typeof document !== 'undefined' ? document.activeElement : null,
+          activeElement,
         })
       ) {
         event.preventDefault();
+        const collapsingFromSecondary =
+          !sidebarCollapsed &&
+          Boolean(activeElement) &&
+          Boolean(secondarySidebarRef.current?.contains(activeElement));
         setUserCollapsed((prev) => !prev);
+        if (collapsingFromSecondary) {
+          requestAnimationFrame(() => sidebarToggleRef.current?.focus({ preventScroll: true }));
+        }
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [notesOn, me.isSuccess, org, roleHere, hasSecondary, paletteOpen, quickCaptureOpen, menuOpen, setUserCollapsed]);
+  }, [notesOn, me.isSuccess, org, roleHere, hasSecondary, sidebarCollapsed, paletteOpen, quickCaptureOpen, menuOpen, vyDrawerOpen, setUserCollapsed]);
 
   const recentEntries = useMemo<PaletteEntry[]>(
     () =>
@@ -455,17 +489,13 @@ export function OrgLayout() {
       orgs={me.data?.orgs ?? []}
       email={me.data?.email}
       mode={mode}
-      {...(mode === 'sidebar'
-        ? {
-            secondaryCollapsed: sidebarCollapsed,
-            onToggleSecondary: hasSecondary ? () => setUserCollapsed((prev) => !prev) : undefined,
-          }
-        : {})}
+      {...(mode === 'sidebar' ? { secondaryCollapsed: sidebarCollapsed, secondaryRef: secondarySidebarRef } : {})}
       onOpenPalette={() => {
         onNavigate?.();
         setPaletteOpen(true);
       }}
       paletteKeys={paletteKeys}
+      quickCreateItems={quickCreateItems}
       onOpenQuickCapture={
         canQuickCapture
           ? () => {
@@ -479,8 +509,8 @@ export function OrgLayout() {
   );
 
   return (
-    <div className="flex min-h-full bg-background">
-      {/* The first stop of the keyboard (WCAG 2.4.1, #2115): fixed, so the sticky phone header never covers it. */}
+    <div className="flex min-h-full flex-col bg-background">
+      {/* The first stop of the keyboard (WCAG 2.4.1, #2115): fixed, so the sticky top bar / phone header never covers it. */}
       <a
         href="#main-content"
         onClick={(e) => {
@@ -495,36 +525,84 @@ export function OrgLayout() {
       <div role="status" aria-live="polite" data-route-announcer className="sr-only">
         <span key={screenName.seq}>{screenName.name}</span>
       </div>
-      <aside
-        data-testid="desktop-sidebar"
-        data-collapsed={sidebarCollapsed ? 'true' : 'false'}
-        className={cn(
-          'sticky top-0 hidden h-screen shrink-0 border-r bg-sidebar md:flex print:hidden',
-          sidebarCollapsed ? 'w-16' : 'w-72',
-        )}
-      >
-        {shellNav({ mode: 'sidebar' })}
-      </aside>
-      <div className="min-w-0 flex-1">
-        <PhoneHeader headerRef={phoneHeader} orgName={org?.name} attention={menuBadges.inbox !== null} onOpenMenu={() => setMenuOpen(true)} onOpenPalette={() => setPaletteOpen(true)} />
-        <NavDrawer open={menuOpen} onOpenChange={setMenuOpen}>
-          {shellNav({ mode: 'drawer', onNavigate: () => setMenuOpen(false) })}
-        </NavDrawer>
-        {/* Focusable from code only: where the focus goes when the toast that held it leaves (#2026). */}
-        <main ref={main} id="main-content" tabIndex={-1} className="mx-auto w-full max-w-6xl px-4 py-6 outline-none md:px-8 md:py-8 print:max-w-none print:p-0">
-          <OrgLeftNotice />
-          <ScreenTabs slug={slug} installed={NAV} badges={tabBadges} />
-          {me.isSuccess && !org ? <p className="text-sm text-destructive">{t('notMember')}</p> : <Outlet />}
-        </main>
-        <CommandPalette
-          entries={paletteEntries}
-          found={foundEntries}
-          search={searchState}
-          onQueryChange={setPaletteQuery}
-          open={paletteOpen}
-          onOpenChange={setPaletteOpen}
+      <div ref={topChrome} className="sticky top-0 z-30 print:hidden">
+        <GlobalTopBar
+          slug={slug}
+          pathname={pathname}
+          hasSecondary={hasSecondary}
+          secondaryCollapsed={sidebarCollapsed}
+          onToggleSecondary={hasSecondary ? () => setUserCollapsed((prev) => !prev) : undefined}
+          toggleRef={sidebarToggleRef}
+          onOpenPalette={() => setPaletteOpen(true)}
+          paletteKeys={paletteKeys}
+          quickCreateItems={quickCreateItems}
+          onOpenQuickCapture={canQuickCapture ? () => setQuickCaptureOpen(true) : undefined}
+          vyOpen={vyDrawerOpen}
+          onOpenVy={() => setVyDrawerOpen(true)}
+          canUseVy={canUseVy}
+          gmName={gmName}
+          unreadNotices={workUnread}
+          aiMeter={aiMeter.data}
+          canViewAiBudgets={canViewAiBudgets}
+          orgs={me.data?.orgs ?? []}
+          email={me.data?.email}
         />
-        {canQuickCapture && <QuickCaptureDialog slug={slug} open={quickCaptureOpen} onOpenChange={setQuickCaptureOpen} />}
+        <PhoneHeader
+          slug={slug}
+          orgName={org?.name}
+          attention={menuBadges.inbox !== null}
+          onOpenMenu={() => setMenuOpen(true)}
+          onOpenPalette={() => setPaletteOpen(true)}
+          quickCreateItems={quickCreateItems}
+          onOpenQuickCapture={canQuickCapture ? () => setQuickCaptureOpen(true) : undefined}
+        />
+      </div>
+      <div className="flex min-h-0 min-w-0 flex-1">
+        <aside
+          data-testid="desktop-sidebar"
+          data-collapsed={sidebarCollapsed ? 'true' : 'false'}
+          className={cn(
+            'sticky top-12 hidden h-[calc(100dvh-3rem)] shrink-0 border-r bg-sidebar md:flex print:hidden',
+            sidebarCollapsed ? 'w-16' : 'w-72',
+          )}
+        >
+          {shellNav({ mode: 'sidebar' })}
+        </aside>
+        <div className="min-w-0 flex-1">
+          <NavDrawer open={menuOpen} onOpenChange={setMenuOpen}>
+            {shellNav({ mode: 'drawer', onNavigate: () => setMenuOpen(false) })}
+          </NavDrawer>
+          {/* Focusable from code only: where the focus goes when the toast that held it leaves (#2026). */}
+          <main ref={main} id="main-content" tabIndex={-1} className="mx-auto w-full max-w-6xl px-4 py-6 outline-none md:px-8 md:py-8 print:max-w-none print:p-0">
+            <OrgLeftNotice />
+            <ScreenTabs slug={slug} installed={NAV} badges={tabBadges} />
+            {me.isSuccess && !org ? <p className="text-sm text-destructive">{t('notMember')}</p> : <Outlet />}
+          </main>
+          <CommandPalette
+            entries={paletteEntries}
+            found={foundEntries}
+            search={searchState}
+            onQueryChange={setPaletteQuery}
+            open={paletteOpen}
+            onOpenChange={setPaletteOpen}
+          />
+          {canQuickCapture && <QuickCaptureDialog slug={slug} open={quickCaptureOpen} onOpenChange={setQuickCaptureOpen} />}
+          <VyDrawer
+            slug={slug}
+            open={vyDrawerOpen}
+            onOpenChange={setVyDrawerOpen}
+            gmName={gmName}
+            canUseVy={canUseVy}
+            permissionsLoaded={orgDetail.isSuccess}
+            canViewAiBudgets={canViewAiBudgets}
+            aiMeter={aiMeter.data}
+            todayItems={vyToday.data?.items ?? []}
+            todayLoading={vyToday.isPending}
+            todayError={vyToday.isError ? errorMessage(vyToday.error) : null}
+            role={roleHere}
+            modules={installedModules()}
+          />
+        </div>
       </div>
     </div>
   );
