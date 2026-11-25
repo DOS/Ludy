@@ -33,6 +33,7 @@ import {
 } from '../components/meeting-redaction.tsx';
 import { MeetingTalkTime } from '../components/meeting-talk-time.tsx';
 import { MeetingTranscript } from '../components/meeting-transcript.tsx';
+import { PlaybackSpeed } from '../components/playback-speed.tsx';
 import type { TranscriptRedacted } from '@ludy/kernel-contract';
 import { RecordNotesPanel, notesInstalled } from '../components/notes-panel.tsx';
 import { RoadmapSignalModal } from '../components/roadmap-signal-modal.tsx';
@@ -42,6 +43,7 @@ import { Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx
 import { useFormat } from '../i18n/provider.tsx';
 import { apiFetch, errorMessage, fetchVideoTicket, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
 import { installedModules } from '../lib/org-modules.ts';
+import { applyRate, readStoredRate, seekPlayers, storeRate, type PlaybackRate } from '../lib/playback.ts';
 import { toast } from '../lib/toast.ts';
 import type { TranscriptFocus } from '../lib/transcript-focus.ts';
 import { createVideoTicketPlayer, videoStreamUrl, type VideoTicketPlayer } from '../lib/video-ticket.ts';
@@ -94,11 +96,21 @@ export function MeetingDetailPage() {
     setJump(undefined);
     setRoadmapSignalOpen(false);
   }, [id]);
+  // The speed of the recording player (#4816), remembered in this browser; a browser resets it when a source loads, so it is applied again then.
+  const [rate, setRate] = useState<PlaybackRate>(() => readStoredRate());
+  const pickRate = (next: PlaybackRate) => {
+    setRate(next);
+    storeRate(next);
+  };
+  useEffect(() => {
+    applyRate(rate, [audioRef.current, videoRef.current]);
+  }, [rate, audioUrl, videoUrl]);
   const jumpTo = (second: number, speaker?: string) => {
     setJump((j) => ({ second, speaker, token: (j?.token ?? 0) + 1 }));
-    if (audioRef.current) audioRef.current.currentTime = second;
-    if (videoRef.current) videoRef.current.currentTime = second;
+    seekPlayers([audioRef.current, videoRef.current], second);
   };
+  // A click on the time of a transcript line (#4816): the players that are loaded go to its start; nothing is marked or started.
+  const seekTo = (second: number) => void seekPlayers([audioRef.current, videoRef.current], second);
   const videoPlayer = useRef<VideoTicketPlayer | null>(null);
 
   const meetingQuery = useQuery(
@@ -424,7 +436,12 @@ export function MeetingDetailPage() {
             <CardContent>
               {audioLoading && <div role="status" className="text-xs text-muted-foreground">{t('detail.loadingMedia')}</div>}
               {audioError && <ErrorText>{audioError}</ErrorText>}
-              {audioUrl && <audio ref={audioRef} controls aria-label={t('detail.audioPlayerTitle')} className="w-full" src={audioUrl} />}
+              {audioUrl && (
+                <div className="space-y-2">
+                  <audio ref={audioRef} controls aria-label={t('detail.audioPlayerTitle')} className="w-full" src={audioUrl} onLoadedMetadata={() => applyRate(rate, [audioRef.current])} />
+                  <PlaybackSpeed rate={rate} onChange={pickRate} />
+                </div>
+              )}
             </CardContent>
           </Card>
         )}
@@ -445,10 +462,14 @@ export function MeetingDetailPage() {
                   preload="metadata"
                   className="w-full max-h-96 rounded-lg bg-muted"
                   src={videoUrl}
-                  onLoadedMetadata={() => videoPlayer.current?.mediaLoaded()}
+                  onLoadedMetadata={() => {
+                    applyRate(rate, [videoRef.current]);
+                    videoPlayer.current?.mediaLoaded();
+                  }}
                   onError={() => videoPlayer.current?.mediaError()}
                 />
               )}
+              {videoUrl && <PlaybackSpeed rate={rate} onChange={pickRate} />}
             </CardContent>
           </Card>
         )}
@@ -478,6 +499,7 @@ export function MeetingDetailPage() {
         meetingId={id}
         {...(seg ? { focusSegmentId: seg } : {})}
         focusSecond={jump}
+        {...(audioUrl || videoUrl ? { onSeek: seekTo } : {})}
         platformCut={meeting.platformTranscriptCut}
         redaction={{
           queryEnabled: canHaveDraftRedactions,
