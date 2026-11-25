@@ -300,21 +300,10 @@ export function countNoteParts(body: string): { paragraphs: number; bullets: num
 }
 
 /**
- * Deterministic post-checks for a model-generated personal note.
- * Rejects unparsable/empty/overlong output, any link/email/phone/8+-digit contact detail,
- * any currency sign absent from source facts, and any figure or date not grounded in source facts.
+ * The checks every model-written plain text shares (the follow-up note and the deal update): no link, address, phone or long digit run, no currency sign, spelled-out scale or
+ * date, and no figure that the source text does not write too. Throws FOLLOWUP_NOTE_REFUSED; nothing is stripped or repaired.
  */
-export function checkFollowupPersonalNote(raw: string, facts: FollowupNoteFacts): MeetingFollowupNoteAnswer {
-  const parsed = jsonObject(raw);
-  if (typeof parsed.body !== 'string') throw new FollowupNoteError('FOLLOWUP_NOTE_UNPARSABLE');
-  if (hasStealthControls(parsed.body) || hasPromptMarkupLeak(parsed.body)) {
-    throw new FollowupNoteError('FOLLOWUP_NOTE_REFUSED');
-  }
-  const body = cleanFollowupNoteBody(parsed.body);
-  const length = Array.from(body).length;
-  if (body === '' || length < FOLLOWUP_NOTE_LIMITS.bodyMinChars) throw new FollowupNoteError('FOLLOWUP_NOTE_EMPTY');
-  if (length > FOLLOWUP_NOTE_LIMITS.bodyMaxChars) throw new FollowupNoteError('FOLLOWUP_NOTE_REFUSED');
-
+export function assertGroundedPlainText(body: string, source: string): void {
   // Contact, link, URL, email, and phone / 8+-digit contact checks (never strip/repair silently).
   if (
     ADDRESS_RE.test(body) ||
@@ -327,7 +316,6 @@ export function checkFollowupPersonalNote(raw: string, facts: FollowupNoteFacts)
   }
 
   // Exact figure & date grounding against source meeting facts (#1237 rule).
-  const source = sourceTextOf(facts);
   if (!hasUngroundedMoneyOrScaleWords(source) && hasUngroundedMoneyOrScaleWords(body)) {
     throw new FollowupNoteError('FOLLOWUP_NOTE_REFUSED');
   }
@@ -352,6 +340,25 @@ export function checkFollowupPersonalNote(raw: string, facts: FollowupNoteFacts)
     const merged = token.replace(/[.,]/g, '').replace(/^0+(?=\d)/, '');
     if (!sourceDigits.has(merged)) throw new FollowupNoteError('FOLLOWUP_NOTE_REFUSED');
   }
+}
+
+/**
+ * Deterministic post-checks for a model-generated personal note.
+ * Rejects unparsable/empty/overlong output, any link/email/phone/8+-digit contact detail,
+ * any currency sign absent from source facts, and any figure or date not grounded in source facts.
+ */
+export function checkFollowupPersonalNote(raw: string, facts: FollowupNoteFacts): MeetingFollowupNoteAnswer {
+  const parsed = jsonObject(raw);
+  if (typeof parsed.body !== 'string') throw new FollowupNoteError('FOLLOWUP_NOTE_UNPARSABLE');
+  if (hasStealthControls(parsed.body) || hasPromptMarkupLeak(parsed.body)) {
+    throw new FollowupNoteError('FOLLOWUP_NOTE_REFUSED');
+  }
+  const body = cleanFollowupNoteBody(parsed.body);
+  const length = Array.from(body).length;
+  if (body === '' || length < FOLLOWUP_NOTE_LIMITS.bodyMinChars) throw new FollowupNoteError('FOLLOWUP_NOTE_EMPTY');
+  if (length > FOLLOWUP_NOTE_LIMITS.bodyMaxChars) throw new FollowupNoteError('FOLLOWUP_NOTE_REFUSED');
+
+  assertGroundedPlainText(body, sourceTextOf(facts));
 
   const counts = countNoteParts(body);
   return { body, paragraphs: counts.paragraphs, bullets: counts.bullets, dropped: 0 };

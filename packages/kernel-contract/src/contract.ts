@@ -886,6 +886,7 @@ import {
   zProjectTriageReopenInput,
   zProjectTriageSnoozeInput,
 } from './projects-triage.ts';
+import { zDealUpdateAnswer, zDealUpdateAsk, zDealUpdateConfirmCall, zDealUpdateConfirmed, zDealUpdateStatus } from './meeting-deal-update.ts';
 import { zFollowupDraft, zFollowupDraftAsk, zFollowupNoteAnswer, zFollowupNoteAsk, zFollowupNoteStatus, zFollowupSendCall, zFollowupSent, zFollowupWording, zFollowupWordingAsk } from './meeting-followup.ts';
 import { zChatChannelList, zChatChannelRemove, zChatChannelRemoved, zChatChannelSaveCall, zChatChannelSaved, zChatEmpty, zChatPostCall, zChatPosted, zChatPreview, zChatStatus, zChatStatusInput } from './meeting-chat.ts';
 import { zExtensionOrgToken, zExtensionToken, zExtensionTokenRevoke, zExtensionTokenRevoked, zExtensionTokenRevokedMember } from './extension.ts';
@@ -1846,6 +1847,13 @@ export const contract = {
       noteStatus: oc.input(zMeetingRef).output(zFollowupNoteStatus),
       note: oc.input(zFollowupNoteAsk).output(zFollowupNoteAnswer),
       send: oc.input(zFollowupSendCall).output(zFollowupSent),
+    },
+    // Vy proposing the update of the deal a meeting is linked to (#4766): the recorder of a meeting with published minutes asks their own Vy for the deal's next step and a short note, reads and
+    // edits them, and confirms; nothing is written before `confirm` (R1: a task, a line of the contact's timeline, the stale-deal reminder closed).
+    dealUpdate: {
+      status: oc.input(zMeetingRef).output(zDealUpdateStatus),
+      propose: oc.input(zDealUpdateAsk).output(zDealUpdateAnswer),
+      confirm: oc.input(zDealUpdateConfirmCall).output(zDealUpdateConfirmed),
     },
     // Approved minutes posted to a Slack or Microsoft Teams channel (B4, #3168): an owner or admin pastes a webhook address (sealed, never shown again); the recorder of a meeting with a published result reads the
     // exact message (`preview`), picks a channel and presses "Gửi" (`post`, R2: queues the post, which the worker's job sends through the egress guard; no model).

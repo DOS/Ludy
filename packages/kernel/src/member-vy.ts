@@ -57,6 +57,7 @@ export const MEMBER_VY_FEATURES = {
   'meetings.commitments': { module: 'meetings', expiryMinutes: 30 },
   // The recorder's Vy drafting a personal-note follow-up email from the meeting's summary, decisions and action items (#4292): one model call, the member waiting for it, the text edited before send and never stored in vy_result (counts only).
   'meetings.followup_note': { module: 'meetings', expiryMinutes: 30 },
+  'meetings.deal_update': { module: 'meetings', expiryMinutes: 30 },
   'projects.tasks_from_note': { module: 'projects', expiryMinutes: 30 },
   'projects.tasks_from_source': { module: 'projects', expiryMinutes: 30 },
 } as const;

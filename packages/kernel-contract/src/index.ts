@@ -176,6 +176,7 @@ export * from './meeting-glossary.ts';
 export * from './meeting-minutes-templates.ts';
 export * from './meeting-templates.ts';
 export * from './meetings.ts';
+export * from './meeting-deal-update.ts';
 export * from './meeting-followup.ts';
 export * from './meeting-hook.ts';
 export * from './meeting-hook-body.ts';

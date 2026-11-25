@@ -100,6 +100,8 @@ function createStubRuntime() {
         text = JSON.stringify({
           body: 'Cam on ban da tham gia buoi trao doi ke hoach ban hang.\n\nLan se gui tai lieu ke hoach trong tuan sau.',
         });
+      } else if (feature === 'meetings.deal_update') {
+        text = JSON.stringify({ nextStep: { text: 'Gui tai lieu ke hoach cho Lan.', item: 1 }, note: 'Hai ben thong nhat chot ke hoach ban hang.' });
       } else if (feature === 'notes.summary') {
         text = JSON.stringify({
           summary: 'Theo doi phan hoi cua khach hang moi va chuan bi tai lieu san pham.',

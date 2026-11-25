@@ -45,6 +45,7 @@ import { createMeetingRow } from './meeting-core.ts';
 import { importCommands } from './import.ts';
 import { meetingMinutesEsignGet, meetingMinutesEsignSet } from './minutes-esign.ts';
 import { dropFollowupPayloads } from './followup-erase.ts';
+import { dealUpdateCommands, dealUpdateQueries } from './deal-update.ts';
 import { followupCommands, followupQueries } from './followup.ts';
 import {
   dayText,
@@ -1145,6 +1146,7 @@ export const meetingsCommands = [
   ...chatCommands,
   ...linkCommands,
   ...followupCommands,
+  ...dealUpdateCommands,
   ...liveCommands,
   ...captureCommands,
   ...liveAssembleCommands,
@@ -1194,6 +1196,7 @@ export const meetingsQueries = [
   ...chatQueries,
   ...linkQueries,
   ...followupQueries,
+  ...dealUpdateQueries,
   ...liveRunQueries,
   ...liveAssembleQueries,
   ...hookQueries,

@@ -64,6 +64,7 @@ export * from './adherence-model.ts';
 export * from './chapters-model.ts';
 export * from './title-model.ts';
 export * from './commitments-model.ts';
+export * from './deal-update-model.ts';
 export * from './followup-note-model.ts';
 export * from './tasks-from-note-model.ts';
 export * from './note-ai-model.ts';

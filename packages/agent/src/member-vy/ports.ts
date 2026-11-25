@@ -50,6 +50,7 @@ export type ModelFeature =
   | 'meetings.title'
   | 'meetings.commitments'
   | 'meetings.followup_note'
+  | 'meetings.deal_update'
   | 'projects.tasks_from_note'
   | 'projects.tasks_from_source'
   | 'notes.summary'

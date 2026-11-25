@@ -36,6 +36,8 @@ export const MEMBER_VY_FEATURE_TABLE = {
   'meetings.commitments': { module: 'meetings', expiryMinutes: 30 },
   // The recorder's Vy drafting a personal-note follow-up email from the meeting's summary, decisions and action items (#4292): one model call, the member waiting for it, edited before send and never stored in vy_result (counts only).
   'meetings.followup_note': { module: 'meetings', expiryMinutes: 30 },
+  // The recorder's Vy proposing the next step and a note for the deal a meeting is linked to, from the published minutes (#4766): one model call, the recorder waiting for it; the proposal is edited and confirmed by the recorder and the run's result row holds counts only.
+  'meetings.deal_update': { module: 'meetings', expiryMinutes: 30 },
   // The member's Vy writing the few sentences of the weekly digest across the meetings the member reads (#3949): one model call over at most 60 short facts the member's own reads found, the member waiting for it.
   // Its own key, so it never cuts off a transcription, a summary, a translation, a question, a brief or live notes (#3029); the run's result row holds counts only.
   'meetings.digest': { module: 'meetings', expiryMinutes: 30 },

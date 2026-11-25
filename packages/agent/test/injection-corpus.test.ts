@@ -815,6 +815,7 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
     cover('meetings.title');
     cover('meetings.commitments');
     cover('meetings.followup_note');
+    cover('meetings.deal_update');
 
     const segments: SummarySegment[] = [
       { startSeconds: 0, endSeconds: 10, speakerLabel: 'Lan', text: 'Hom nay hop ve ke hoach ban hang thang 10.' },
