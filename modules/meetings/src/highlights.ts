@@ -3,8 +3,8 @@
 // mark on the meeting page. A highlight is an anchor (the start second of the first and of the last line) and the member who made it; it holds no text, so what a reader sees under it is the
 // transcript they read now (a redacted line shows redacted, a line the recorder replaced shows what is there now), and the marks go with the meeting (the text retention shred, a delete, the org
 // purge) because the row cascades. Who may read, add and remove is decided by the row policies of ludy_meetings.meeting_highlight (user context only; the recorder and the readers read and add for
-// themselves; the author or the recorder removes; nobody edits), and these commands check it again. Each anchor must be the start second of a line the caller reads: a reader reads published lines,
-// the recorder every line. One member has at most 50 marks in a meeting, and marking the same range twice is one mark. An audit row carries the meeting id and the two seconds, never a line.
+// themselves; the author or the recorder removes; nobody edits), and these commands check it again. Each anchor must be the start second of a published line (a reader reads published lines only, and a mark on the recorder's
+// draft would tell them where it is). One member has at most 50 marks in a meeting, and marking the same range twice is one mark. An audit row carries the meeting id and the two seconds, never a line.
 import {
   HIGHLIGHTS_PER_MEMBER_MAX,
   zHighlightAdd,
@@ -21,7 +21,7 @@ import {
 import { DomainError, defineCommand, defineQuery } from '@ludy/kernel-runtime';
 import { sql } from 'kysely';
 import { cleanName } from './speaker.ts';
-import { ROLES, missingAnchors, openMeeting, userOf } from './transcript.ts';
+import { ROLES, openMeeting, userOf } from './transcript.ts';
 
 export const highlightAdd = defineCommand({
   name: 'meetings.highlight.add',
@@ -39,9 +39,17 @@ export const highlightAdd = defineCommand({
     const mine = () => base().select(['id', 'start_seconds', 'end_seconds']);
     const again = await mine().where('start_seconds', '=', input.startSeconds).where('end_seconds', '=', input.endSeconds).executeTakeFirst();
     if (again) return zHighlightAdded.parse({ meetingId: input.meetingId, highlightId: again.id, created: false });
-    // Both ends must be the start (to the whole second) of a line the caller reads: the transcript's row security decides which lines those are.
-    const missing = await missingAnchors(ctx, input.meetingId, [input.startSeconds, input.endSeconds]);
-    if (missing.length > 0) throw new DomainError('HIGHLIGHT_NOT_ANCHORED', 422, 'A highlight must start and end at a line of the transcript');
+    // Both ends must be the start (to the whole second) of a PUBLISHED line: the readers of the meeting read published lines only, so a mark on a draft line would tell them where the recorder's draft
+    // lines are, and a re-transcription would leave it pointing at nothing. The transcript's row security still decides which lines the caller reads.
+    const found = await sql<{ second: number }>`
+      SELECT DISTINCT pg_catalog.floor(s.start_seconds)::int AS second
+        FROM ludy_meetings.transcript_segment s
+       WHERE s.org_id = ${ctx.orgId}::uuid AND s.meeting_id = ${input.meetingId}::uuid AND s.stage = 'published'
+         AND pg_catalog.floor(s.start_seconds)::int = ANY(${sql.val([input.startSeconds, input.endSeconds])}::int[])`.execute(ctx.trx);
+    const anchored = new Set(found.rows.map((r) => r.second));
+    if (![input.startSeconds, input.endSeconds].every((second) => anchored.has(second))) throw new DomainError('HIGHLIGHT_NOT_ANCHORED', 422, 'A highlight must start and end at a published line of the transcript');
+    // One member's adds in one meeting are one after the other, so two tabs cannot both pass the count below at 49.
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`highlight:${input.meetingId}:${userId}`}, 0))`.execute(ctx.trx);
     const have = await base().select(sql<number>`pg_catalog.count(*)::int`.as('n')).executeTakeFirstOrThrow();
     if (have.n >= HIGHLIGHTS_PER_MEMBER_MAX) throw new DomainError('HIGHLIGHT_LIMIT', 422, `A member can have at most ${HIGHLIGHTS_PER_MEMBER_MAX} highlights in one meeting`);
     const row = await ctx.trx

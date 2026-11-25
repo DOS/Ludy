@@ -368,12 +368,17 @@ export function MeetingTranscript({
               editable={transcript.isRecorder}
               focused={segment.id === focusedId}
               focusToken={focusSecond?.token}
-              mark={{
-                covered: marks.highlights.some((h) => covers(h, segment.startSeconds)),
-                pressed: ownSingleAt(marks.highlights, segment.startSeconds) !== undefined,
-                busy: marks.busy,
-                onClick: (shift) => marks.click(segment.startSeconds, shift),
-              }}
+              // Only a published line can be marked: the readers read published lines, and a mark on the recorder's draft would tell them where it is.
+              mark={
+                segment.stage === 'published'
+                  ? {
+                      covered: marks.highlights.some((h) => covers(h, segment.startSeconds)),
+                      pressed: ownSingleAt(marks.highlights, segment.startSeconds) !== undefined,
+                      busy: marks.busy,
+                      onClick: (shift) => marks.click(segment.startSeconds, shift),
+                    }
+                  : undefined
+              }
               translation={translated.parts.has(segment.id) ? { part: translated.parts.get(segment.id) as Parameters<typeof TranslatedLine>[0]['part'], to: translated.to } : undefined}
             />
           ))}

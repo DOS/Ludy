@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Highlights on a transcript line or range (#4819) on a real database: the recorder and a reader mark a line or a range of lines at a second where a line they read starts; the meeting's readers
-// read every mark, in the order of the transcript; one member's identical marks are one mark and one member has at most 50 in a meeting; only the author or the recorder removes a mark; a member who
+// read every mark, in the order of the transcript, and only a published line can be marked; one member's identical marks are one mark and one member has at most 50 in a meeting; only the author or the recorder removes a mark; a member who
 // cannot read the meeting finds no meeting; the marks go with the meeting; the table holds no text, and the audit rows hold seconds, never a line.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -113,13 +113,14 @@ suite('Highlights (#4819)', () => {
     expect(own.highlights.find((h) => h.id === range.highlightId)).toMatchObject({ mine: false, markedBy: NAMES.rec });
   });
 
-  it('refuses a second that no line the caller reads starts at: a reader reads published lines, the recorder every line', async () => {
+  it('refuses a second that no published line starts at, for a reader and for the recorder', async () => {
     const id = await fiveLines('Họp kiểm tra điểm neo');
     await expect(mark('lan', id, 25)).rejects.toMatchObject({ code: 'HIGHLIGHT_NOT_ANCHORED' });
     await expect(mark('lan', id, 10, 99)).rejects.toMatchObject({ code: 'HIGHLIGHT_NOT_ANCHORED' });
-    // The last line is a draft: a reader does not read it, the recorder does.
+    // The last line is a draft: a reader does not read it, and not even the recorder marks it (a mark on it would tell the readers where the draft is).
     await expect(mark('lan', id, 50)).rejects.toMatchObject({ code: 'HIGHLIGHT_NOT_ANCHORED' });
-    expect((await mark('rec', id, 50)).created).toBe(true);
+    await expect(mark('rec', id, 50)).rejects.toMatchObject({ code: 'HIGHLIGHT_NOT_ANCHORED' });
+    expect((await mark('rec', id, 40)).created).toBe(true);
     // An end before the start is refused by the shape.
     await expect(runtime.execute('meetings.highlight.add', { meetingId: id, startSeconds: 40, endSeconds: 10 }, { actor: asUser('rec'), orgId })).rejects.toThrow();
   });

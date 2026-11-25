@@ -13,7 +13,7 @@
 --   insert  the recorder or a reader, for themselves only (created_by is the caller).
 --   delete  the member who marked it, or the recorder of the meeting.
 --   update  nobody: a mark is added or removed, never edited (no UPDATE grant for the login role).
--- The command checks the same again, and caps the marks of one member in one meeting.
+-- The command checks the same again, only accepts a second at which a PUBLISHED line starts (the readers read published lines only, so a mark on the recorder's draft would tell them where it is), and caps the marks of one member in one meeting.
 SET LOCAL lock_timeout = '2s';
 
 CREATE TABLE IF NOT EXISTS ludy_meetings.meeting_highlight (

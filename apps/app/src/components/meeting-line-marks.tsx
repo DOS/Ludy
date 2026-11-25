@@ -45,14 +45,19 @@ export function useLineMarks(meetingId: string) {
     if (busy) return;
     setError(null);
     const from = last.current;
-    last.current = Math.floor(startSeconds);
     if (shift && from !== null) {
+      last.current = Math.floor(startSeconds);
       add.mutate(rangeBetween(from, startSeconds));
       return;
     }
     const own = ownSingleAt(highlights, startSeconds);
-    if (own) remove.mutate(own.id);
-    else add.mutate(rangeBetween(startSeconds, startSeconds));
+    if (own) {
+      // Taking a mark away is not a place to start a range from.
+      remove.mutate(own.id);
+    } else {
+      last.current = Math.floor(startSeconds);
+      add.mutate(rangeBetween(startSeconds, startSeconds));
+    }
   };
   return { highlights, busy, error, click };
 }

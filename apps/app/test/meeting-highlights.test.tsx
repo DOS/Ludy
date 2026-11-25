@@ -136,6 +136,16 @@ describe('the highlights card', () => {
   });
 });
 
+describe('the transcript lines of a draft', () => {
+  it('has no highlight button on a line that is not published', () => {
+    const draft: Transcript = { ...TRANSCRIPT, isRecorder: true, stage: 'draft', segments: [{ ...segment('Lan', 10, 'Nháp'), stage: 'draft' as const }, segment('Hùng', 20, 'Đã đăng')] };
+    client.current.setQueryData(TRANSCRIPT_KEY, draft);
+    client.current.setQueryData(LIST_KEY, marks([]));
+    const lines = wrap(<MeetingTranscript meetingId="m1" />).split('data-testid="transcript-line"').slice(1);
+    expect(lines.map((l) => l.includes('data-testid="transcript-highlight"'))).toEqual([false, true]);
+  });
+});
+
 describe('the transcript lines', () => {
   const transcript = (data: Transcript, list: Highlights) => {
     client.current.setQueryData(TRANSCRIPT_KEY, data);
