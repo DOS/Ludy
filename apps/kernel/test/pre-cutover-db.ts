@@ -143,33 +143,89 @@ function wrapQueryTarget<T extends object & { query: (...args: unknown[]) => unk
   return target;
 }
 
+/** Options for creating a pre-cutover `pg.Client` or `pg.Pool` with optional session role impersonation. */
+export interface PreCutoverPoolOptions extends PoolOptions {
+  /** Impersonates `crove_app` or `crove_worker` via `SET SESSION AUTHORIZATION` on each connection instead of password login (survives Stage 7 cluster-wide password expiration). */
+  sessionRole?: 'crove_app' | 'crove_worker';
+}
+
+const SESSION_INIT = new WeakSet<object>();
+
 /** Creates a `pg.Client` connected to a pre-cutover database that rewrites outbound `ludy_*` core SQL to `crove_*`. */
-export function createPreCutoverClient(config: string | pg.ClientConfig): pg.Client {
+export function createPreCutoverClient(config: (string | pg.ClientConfig) & { sessionRole?: 'crove_app' | 'crove_worker' }): pg.Client {
+  let client: pg.Client;
+  let sessionRole: 'crove_app' | 'crove_worker' | undefined;
   if (typeof config === 'string') {
-    return wrapQueryTarget(new pg.Client(preCutoverUrl(config)));
+    client = wrapQueryTarget(new pg.Client(preCutoverUrl(config)));
+  } else {
+    sessionRole = config.sessionRole;
+    const { sessionRole: _role, ...rest } = config;
+    const next: pg.ClientConfig = sessionRole
+      ? rest
+      : {
+          ...rest,
+          ...(typeof rest.connectionString === 'string' ? { connectionString: preCutoverUrl(rest.connectionString) } : {}),
+          ...(typeof rest.user === 'string' ? { user: preCutoverRole(rest.user) } : {}),
+        };
+    client = wrapQueryTarget(new pg.Client(next));
   }
-  const next: pg.ClientConfig = {
-    ...config,
-    ...(typeof config.connectionString === 'string' ? { connectionString: preCutoverUrl(config.connectionString) } : {}),
-    ...(typeof config.user === 'string' ? { user: preCutoverRole(config.user) } : {}),
-  };
-  return wrapQueryTarget(new pg.Client(next));
+  if (sessionRole) {
+    const authSql = `SET SESSION AUTHORIZATION ${pg.escapeIdentifier(sessionRole)}`;
+    const origConnect = client.connect.bind(client) as (...args: unknown[]) => unknown;
+    (client as unknown as { connect: (...args: unknown[]) => unknown }).connect = (...args: unknown[]) => {
+      if (typeof args[0] === 'function') {
+        const cb = args[0] as (err?: Error) => void;
+        return origConnect((err?: Error) => {
+          if (err) return cb(err);
+          void client.query(authSql).then(
+            () => cb(undefined),
+            (authErr: unknown) => cb(authErr as Error),
+          );
+        });
+      }
+      return (origConnect(...args) as Promise<void>).then(() => client.query(authSql).then(() => undefined));
+    };
+  }
+  return client;
 }
 
 /** Creates a pooled `@ludy/db` client connected to a pre-cutover database that rewrites outbound `ludy_*` core SQL to `crove_*`. */
-export function createPreCutoverPool(opts: PoolOptions): pg.Pool {
-  const pool = wrapQueryTarget(createPool({ ...opts, connectionString: preCutoverUrl(opts.connectionString) }));
+export function createPreCutoverPool(opts: PreCutoverPoolOptions): pg.Pool {
+  const { sessionRole, ...poolOpts } = opts;
+  const connectionString = sessionRole ? poolOpts.connectionString : preCutoverUrl(poolOpts.connectionString);
+  const pool = wrapQueryTarget(createPool({ ...poolOpts, connectionString }));
+  const authSql = sessionRole ? `SET SESSION AUTHORIZATION ${pg.escapeIdentifier(sessionRole)}` : null;
+  const initClient = async (client: pg.PoolClient) => {
+    if (authSql && !SESSION_INIT.has(client)) {
+      await client.query(authSql);
+      SESSION_INIT.add(client);
+    }
+    return wrapQueryTarget(client);
+  };
   const origConnect = pool.connect.bind(pool) as (...args: unknown[]) => unknown;
   (pool as unknown as { connect: (...args: unknown[]) => unknown }).connect = (...args: unknown[]) => {
     if (typeof args[0] === 'function') {
       const cb = args[0] as (err: Error, client: pg.PoolClient, done: (release?: unknown) => void) => void;
       return origConnect((err: Error, client: pg.PoolClient, done: (release?: unknown) => void) => {
-        if (client) wrapQueryTarget(client);
-        cb(err, client, done);
+        if (err || !client) return cb(err, client, done);
+        void initClient(client).then(
+          (wrapped) => cb(err, wrapped, done),
+          (initErr: unknown) => {
+            done(initErr);
+            cb(initErr as Error, undefined as unknown as pg.PoolClient, done);
+          },
+        );
       });
     }
     const p = origConnect(...args) as Promise<pg.PoolClient>;
-    return p.then((client) => wrapQueryTarget(client));
+    return p.then(async (client) => {
+      try {
+        return await initClient(client);
+      } catch (initErr) {
+        client.release(initErr as Error);
+        throw initErr;
+      }
+    });
   };
   return pool;
 }

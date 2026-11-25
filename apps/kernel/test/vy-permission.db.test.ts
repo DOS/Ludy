@@ -63,7 +63,7 @@ suite('vy.use (ADR-0049 decision 10)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw', crove_app: 'test-app-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const url = new URL(adminUrl);
     url.username = 'ludy_app';
     url.password = 'test-app-pw';
@@ -219,22 +219,19 @@ suite('vy.use (ADR-0049 decision 10)', () => {
       for (const [who, about] of [[users.member, users.viewer], [users.viewer, users.member], [users.member, users.owner]] as const) {
         await expect(askAs(switched(who), appUrl, about), 'a role-switched member asking about someone else').rejects.toMatchObject({ code: '42501' });
       }
-      // Legacy crove_app + SET LOCAL ROLE crove_tenant stays guarded during the #3970 -> #3972 rollout window.
-      const legacyAppUrl = (() => {
-        const url = new URL(adminUrl);
-        url.username = 'crove_app';
-        url.password = 'test-app-pw';
-        return url.toString();
-      })();
-      const switchedLegacy = (who: string) => async (c: pg.Client) => {
+      // Legacy crove_app and crove_tenant lost ludy_* runtime access after Stage 7 contraction (#3972).
+      const switchedLegacy = (who: string, role: 'crove_app' | 'crove_tenant') => async (c: pg.Client) => {
         await asUserCtx(who)(c);
-        await c.query('SET LOCAL ROLE crove_tenant');
+        await c.query(`SET LOCAL ROLE ${role}`);
       };
-      expect(await askAs(switchedLegacy(users.member), legacyAppUrl, users.member), 'legacy role-switched member about themselves').toBe(false);
-      expect(await askAs(switchedLegacy(users.owner), legacyAppUrl, users.member), 'legacy role-switched owner about a denied member').toBe(false);
-      for (const [who, about] of [[users.member, users.viewer], [users.viewer, users.member], [users.member, users.owner]] as const) {
-        await expect(askAs(switchedLegacy(who), legacyAppUrl, about), 'legacy role-switched member asking about someone else').rejects.toMatchObject({ code: '42501' });
-      }
+      await expect(
+        askAs(switchedLegacy(users.member, 'crove_app'), adminUrl, users.member),
+        'legacy crove_app is refused ludy_* access after Stage 7 contraction',
+      ).rejects.toMatchObject({ code: '42501' });
+      await expect(
+        askAs(switchedLegacy(users.member, 'crove_tenant'), adminUrl, users.member),
+        'legacy crove_tenant is refused ludy_* access after Stage 7 contraction',
+      ).rejects.toMatchObject({ code: '42501' });
       await expect(askAs(async () => {}, appUrl, users.member), 'no context').rejects.toMatchObject({ code: '42501' });
     } finally {
       await set(users.owner, users.member, null);

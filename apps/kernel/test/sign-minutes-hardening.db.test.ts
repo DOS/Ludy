@@ -568,7 +568,7 @@ suite('eSign meeting_minutes hardening & offboarding export follow-ups (#4641)',
       expect.arrayContaining(['ludy_app', 'ludy_worker', 'ludy_tenant', 'ludy_definer_tenant', 'ludy_auth_reader']),
     );
 
-    const tenantAllowed = new Set(['ludy_app', 'ludy_worker', 'ludy_tenant', 'ludy_definer_tenant', 'crove_app', 'crove_worker', 'crove_tenant', 'crove_definer_tenant']);
+    const tenantAllowed = new Set(['ludy_app', 'ludy_worker', 'ludy_tenant', 'ludy_definer_tenant']);
     for (const spec of fnSpecs) {
       const { rows: privRows } = await adminPool!.query<{ rolname: string; can_exec: boolean }>(
         `SELECT r.rolname,

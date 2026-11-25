@@ -28,7 +28,7 @@ const FILE_PATTERN = /^(\d{14})_(?:crove|ludy)_[a-z0-9]+_[a-z0-9_]+\.sql$/;
 // Ludy's own roles, by name (#2284): the roles the migrations create (both canonical ludy_* and legacy crove_* transition
 // aliases until #3972 drops the aliases). A shared database may hold another system's role named `ludy_something` or
 // `crove_something`; only these are trusted as Ludy's.
-export const LUDY_ROLES: readonly string[] = [
+const CANONICAL_LUDY_ROLES: readonly string[] = [
   'ludy_tenant',
   'ludy_app',
   'ludy_worker',
@@ -38,6 +38,9 @@ export const LUDY_ROLES: readonly string[] = [
   'ludy_definer_tenant',
   'ludy_definer_system',
   'ludy_definer_einvoice',
+];
+
+const LEGACY_CROVE_ROLES: readonly string[] = [
   'crove_tenant',
   'crove_app',
   'crove_worker',
@@ -48,6 +51,43 @@ export const LUDY_ROLES: readonly string[] = [
   'crove_definer_system',
   'crove_definer_einvoice',
 ];
+
+const LEGACY_LOGIN_ROLES: readonly string[] = [
+  'crove_app',
+  'crove_worker',
+  'crove_prober',
+  'crove_reporter',
+];
+
+const CORE_CUTOVER_MIGRATION = '20270315090000_ludy_kernel_rebrand_core_schemas_roles_gucs.sql';
+const STAGE7_CONTRACTION_SUFFIX = '_ludy_kernel_contract_crove_roles_and_gucs.sql';
+
+export const LUDY_ROLES: readonly string[] = [...CANONICAL_LUDY_ROLES, ...LEGACY_CROVE_ROLES];
+
+async function isDatabaseStage7Contracted(client: pg.ClientBase): Promise<boolean> {
+  const { rows: metaTable } = await client.query<{ ok: boolean }>(
+    "SELECT pg_catalog.to_regclass('ludy_meta.schema_migrations') IS NOT NULL AS ok",
+  );
+  if (!metaTable[0]?.ok) return false;
+  const { rows } = await client.query<{ ok: boolean }>(
+    "SELECT EXISTS (SELECT 1 FROM ludy_meta.schema_migrations WHERE name LIKE '%\\_ludy\\_kernel\\_contract\\_crove\\_roles\\_and\\_gucs.sql') AS ok",
+  );
+  return rows[0]?.ok === true;
+}
+
+async function isClusterStage7Contracted(client: pg.ClientBase): Promise<boolean> {
+  const { rows } = await client.query<{ contracted: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = ANY ($1::text[])
+     ) AND NOT EXISTS (
+       SELECT 1 FROM pg_catalog.pg_roles
+       WHERE rolname = ANY ($1::text[])
+         AND (rolvaliduntil IS NULL OR rolvaliduntil > '1970-01-01 00:00:00+00'::timestamptz)
+     ) AS contracted`,
+    [LEGACY_LOGIN_ROLES],
+  );
+  return rows[0]?.contracted === true;
+}
 
 async function resolveMetaSchema(client: pg.ClientBase): Promise<'ludy_meta' | 'crove_meta'> {
   const { rows } = await client.query<{ ok: boolean }>("SELECT pg_catalog.to_regnamespace('ludy_meta') IS NOT NULL AS ok");
@@ -265,8 +305,10 @@ const FOREIGN_PRIVILEGES_SQL = `
     AND r.rolname <> current_user AND NOT r.rolsuper
   ORDER BY 1, 2`;
 
-async function foreignPrivileges(client: pg.ClientBase): Promise<Array<{ schema: string; role: string }>> {
-  const { rows } = await client.query<{ schema: string; role: string }>(FOREIGN_PRIVILEGES_SQL, [LUDY_ROLES]);
+async function foreignPrivileges(client: pg.ClientBase, contracted?: boolean): Promise<Array<{ schema: string; role: string }>> {
+  const stage7Done = contracted ?? (await isDatabaseStage7Contracted(client));
+  const trustedRoles = stage7Done ? CANONICAL_LUDY_ROLES : LUDY_ROLES;
+  const { rows } = await client.query<{ schema: string; role: string }>(FOREIGN_PRIVILEGES_SQL, [trustedRoles]);
   return rows;
 }
 
@@ -358,6 +400,7 @@ export async function migrate(options: MigrateOptions): Promise<string[]> {
       `SELECT version, sha256 FROM ${meta}.schema_migrations`,
     );
     const ledger = new Map(rows.map((r) => [r.version, r.sha256]));
+    const hasContractionMigration = files.some((f) => f.name.endsWith(STAGE7_CONTRACTION_SUFFIX));
     for (const file of files) {
       const known = ledger.get(file.version);
       const variantOf = variants.get(file.name);
@@ -408,6 +451,52 @@ export async function migrate(options: MigrateOptions): Promise<string[]> {
               END LOOP;
             END IF;
           END $$;`);
+        }
+        if (file.name === CORE_CUTOVER_MIGRATION && (hasContractionMigration || (await isClusterStage7Contracted(client)))) {
+          // Immutable 20270315090000 grants cluster-wide transitional ludy_* memberships to legacy crove_* roles.
+          // Once Stage 7 contraction is present in this run or already active on the cluster, revoke those
+          // transitional grants before COMMIT so replaying 20270315090000 for a new database never re-exposes
+          // legacy roles on existing databases (even if a later migration aborts midway).
+          await client.query(`DO $$
+            DECLARE
+              r record;
+              v_is_super boolean;
+              v_legacy_roles constant text[] := ARRAY[
+                'crove_tenant', 'crove_app', 'crove_worker', 'crove_prober', 'crove_reporter',
+                'crove_auth_reader', 'crove_definer_tenant', 'crove_definer_einvoice', 'crove_definer_system'
+              ];
+              v_ludy_roles constant text[] := ARRAY[
+                'ludy_tenant', 'ludy_app', 'ludy_worker', 'ludy_prober', 'ludy_reporter',
+                'ludy_auth_reader', 'ludy_definer_tenant', 'ludy_definer_einvoice', 'ludy_definer_system'
+              ];
+            BEGIN
+              SELECT COALESCE(ro.rolsuper, false) INTO v_is_super
+              FROM pg_catalog.pg_roles ro WHERE ro.rolname = current_user;
+              v_is_super := COALESCE(v_is_super, false);
+              FOR r IN
+                SELECT tgt.rolname AS target_role, mem.rolname AS member_role, gr.rolname AS grantor_role
+                FROM pg_catalog.pg_auth_members am
+                JOIN pg_catalog.pg_roles tgt ON tgt.oid = am.roleid
+                JOIN pg_catalog.pg_roles mem ON mem.oid = am.member
+                JOIN pg_catalog.pg_roles gr ON gr.oid = am.grantor
+                WHERE mem.rolname = ANY (v_legacy_roles)
+                  AND tgt.rolname = ANY (v_ludy_roles)
+                  AND (v_is_super OR gr.rolname = current_user)
+                ORDER BY tgt.rolname, mem.rolname, gr.rolname
+              LOOP
+                EXECUTE pg_catalog.format('REVOKE %I FROM %I GRANTED BY %I', r.target_role, r.member_role, r.grantor_role);
+              END LOOP;
+              IF EXISTS (
+                SELECT 1
+                FROM pg_catalog.pg_auth_members am
+                JOIN pg_catalog.pg_roles tgt ON tgt.oid = am.roleid
+                JOIN pg_catalog.pg_roles mem ON mem.oid = am.member
+                WHERE mem.rolname = ANY (v_legacy_roles)
+                  AND tgt.rolname = ANY (v_ludy_roles)
+              ) THEN
+                RAISE EXCEPTION 'stage 7 replay guard failed: legacy crove_* role still holds ludy_* membership before COMMIT';
+              END IF;
+            END $$;`);
         }
         // Re-resolve after running the migration so the #3970 schema rename writes its own ledger row into ludy_meta.
         meta = await resolveMetaSchema(client);
@@ -1119,7 +1208,8 @@ async function listHardeningViolations(client: pg.ClientBase, shared: boolean): 
        )
      ORDER BY 1, 2`,
   );
-  const foreign = shared ? await foreignPrivileges(client) : [];
+  const contracted = await isDatabaseStage7Contracted(client);
+  const foreign = shared ? await foreignPrivileges(client, contracted) : [];
   // The membership rule without its TEMPORARY condition: in a shared database every role holds TEMPORARY, so what must
   // still be refused is a role that is not Ludy's, not a superuser and not the runner acting as a Ludy role (a membership,
   // SET, or ADMIN OPTION, directly or through other roles): it would carry that role's rights into the definer owners.
@@ -1135,9 +1225,111 @@ async function listHardeningViolations(client: pg.ClientBase, shared: boolean): 
         [LUDY_ROLES],
       )
     : { rows: [] as Array<{ rolname: string; via: string }> };
+  let legacyMemberships: Array<{ member: string; target: string; grantor: string }> = [];
+  let legacyIndirectMemberships: Array<{ member: string; target: string; via: string | null }> = [];
+  let legacyObjectPrivileges: Array<{ schema: string; role: string; kind: string }> = [];
+  if (contracted) {
+    const { rows } = await client.query<{ member: string; target: string; grantor: string }>(
+      `SELECT mem.rolname::text AS member, tgt.rolname::text AS target, gr.rolname::text AS grantor
+       FROM pg_catalog.pg_auth_members am
+       JOIN pg_catalog.pg_roles mem ON mem.oid = am.member
+       JOIN pg_catalog.pg_roles tgt ON tgt.oid = am.roleid
+       JOIN pg_catalog.pg_roles gr ON gr.oid = am.grantor
+       WHERE mem.rolname = ANY ($1::text[])
+         AND tgt.rolname = ANY ($2::text[])
+       ORDER BY tgt.rolname::text COLLATE "C", mem.rolname::text COLLATE "C", gr.rolname::text COLLATE "C"`,
+      [LEGACY_CROVE_ROLES, CANONICAL_LUDY_ROLES],
+    );
+    legacyMemberships = rows;
+    const { rows: indirect } = await client.query<{ member: string; target: string; via: string | null }>(
+      `SELECT mem.rolname::text AS member,
+              tgt.rolname::text AS target,
+              (SELECT pg_catalog.string_agg(DISTINCT g.rolname::text COLLATE "C", ', ' ORDER BY g.rolname::text COLLATE "C")
+               FROM pg_catalog.pg_auth_members am
+               JOIN pg_catalog.pg_roles g ON g.oid = am.roleid
+               WHERE am.member = mem.oid
+                 AND am.roleid <> tgt.oid
+                 AND (
+                   pg_catalog.pg_has_role(am.roleid, tgt.oid, 'MEMBER')
+                   OR pg_catalog.pg_has_role(am.roleid, tgt.oid, 'USAGE')
+                   OR pg_catalog.pg_has_role(am.roleid, tgt.oid, 'SET')
+                 )) AS via
+       FROM pg_catalog.pg_roles mem
+       CROSS JOIN pg_catalog.pg_roles tgt
+       WHERE mem.rolname = ANY ($1::text[])
+         AND tgt.rolname = ANY ($2::text[])
+         AND (
+           pg_catalog.pg_has_role(mem.oid, tgt.oid, 'MEMBER')
+           OR pg_catalog.pg_has_role(mem.oid, tgt.oid, 'USAGE')
+           OR pg_catalog.pg_has_role(mem.oid, tgt.oid, 'SET')
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM pg_catalog.pg_auth_members direct
+           WHERE direct.member = mem.oid AND direct.roleid = tgt.oid
+         )
+       ORDER BY tgt.rolname::text COLLATE "C", mem.rolname::text COLLATE "C"`,
+      [LEGACY_CROVE_ROLES, CANONICAL_LUDY_ROLES],
+    );
+    legacyIndirectMemberships = indirect;
+    const { rows: directObjectAcls } = await client.query<{ schema: string; role: string; kind: string }>(
+      `SELECT DISTINCT x.schema, gr.rolname::text AS role, x.kind
+       FROM (
+         SELECT n.nspname::text AS schema, a.grantee, 'schema'::text AS kind
+         FROM pg_catalog.pg_namespace n
+         CROSS JOIN LATERAL pg_catalog.aclexplode(n.nspacl) a
+         WHERE n.nspname LIKE 'ludy\\_%'
+         UNION ALL
+         SELECT n.nspname::text, a.grantee, 'relation'::text
+         FROM pg_catalog.pg_class c
+         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+         CROSS JOIN LATERAL pg_catalog.aclexplode(c.relacl) a
+         WHERE n.nspname LIKE 'ludy\\_%' AND c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')
+         UNION ALL
+         SELECT n.nspname::text, a.grantee, 'column'::text
+         FROM pg_catalog.pg_attribute att
+         JOIN pg_catalog.pg_class c ON c.oid = att.attrelid
+         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+         CROSS JOIN LATERAL pg_catalog.aclexplode(att.attacl) a
+         WHERE n.nspname LIKE 'ludy\\_%' AND att.attnum > 0 AND NOT att.attisdropped AND att.attacl IS NOT NULL
+         UNION ALL
+         SELECT n.nspname::text, a.grantee, 'routine'::text
+         FROM pg_catalog.pg_proc p
+         JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+         CROSS JOIN LATERAL pg_catalog.aclexplode(p.proacl) a
+         WHERE n.nspname LIKE 'ludy\\_%' AND a.grantee <> p.proowner
+         UNION ALL
+         SELECT n.nspname::text, a.grantee, 'type'::text
+         FROM pg_catalog.pg_type t
+         JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
+         CROSS JOIN LATERAL pg_catalog.aclexplode(t.typacl) a
+         WHERE n.nspname LIKE 'ludy\\_%' AND t.typacl IS NOT NULL AND a.grantee <> t.typowner
+       ) x
+       JOIN pg_catalog.pg_roles gr ON gr.oid = x.grantee
+       WHERE gr.rolname = ANY ($1::text[])
+       ORDER BY 1, 2, 3`,
+      [LEGACY_CROVE_ROLES],
+    );
+    legacyObjectPrivileges = directObjectAcls;
+  }
   const { rows: dbRows } = await client.query<{ name: string }>('SELECT pg_catalog.quote_ident(pg_catalog.current_database()) AS name');
   const dbName = dbRows[0]?.name ?? 'current_database';
   return [
+    ...legacyMemberships.map(
+      (m) =>
+        `legacy role ${m.member} still holds membership in ${m.target} (granted by ${m.grantor}) after Stage 7 contraction; ` +
+        `fix: REVOKE ${quoteIdent(m.target)} FROM ${quoteIdent(m.member)} GRANTED BY ${quoteIdent(m.grantor)}`,
+    ),
+    ...legacyIndirectMemberships.map(
+      (m) =>
+        `legacy role ${m.member} still holds indirect membership in ${m.target}` +
+        `${m.via ? ` via ${m.via}` : ''} after Stage 7 contraction; ` +
+        `fix: revoke the intermediate role grant${m.via ? ` (REVOKE ${m.via.split(', ').map(quoteIdent).join(', ')} FROM ${quoteIdent(m.member)})` : ''} so ${m.member} cannot act as ${m.target}`,
+    ),
+    ...legacyObjectPrivileges.map(
+      (p) =>
+        `legacy role ${p.role} still holds direct ${p.kind} privileges in ${p.schema} after Stage 7 contraction; ` +
+        `fix: revoke ${p.kind} privileges in ${quoteIdent(p.schema)} from ${quoteIdent(p.role)}`,
+    ),
     ...functions.map((f) => {
       const alter = `ALTER ${f.kind === 'p' ? 'PROCEDURE' : 'FUNCTION'} ${f.fn}`;
       const fix = `${f.extra ? `${alter} RESET ALL; ` : ''}${alter} SET search_path = pg_catalog, pg_temp`;

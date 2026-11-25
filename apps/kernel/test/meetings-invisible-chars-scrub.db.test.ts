@@ -67,11 +67,7 @@ suite('widening the invisible-character class of the minutes templates and the c
     before = mkdtempSync(join(tmpdir(), 'crove-invisible-before-'));
     for (const name of readdirSync(MIGRATIONS).filter((n) => n.endsWith('.sql') && n.slice(0, 14) < VERSION)) copyFileSync(join(MIGRATIONS, name), join(before, name));
     await migrate({ adminUrl, dir: before });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
-    const app = new URL(adminUrl);
-    app.username = 'crove_app';
-    app.password = 'test-app-pw';
-    pool = createPreCutoverPool({ connectionString: app.toString(), max: 2 });
+    pool = createPreCutoverPool({ connectionString: adminUrl, sessionRole: 'crove_app', max: 2 });
     const db = createDb(pool);
     const rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) });
     userId = await upsertIdentity(db, { issuer: 'test', subject: randomUUID(), email: 'owner@invisible.test', name: null });
