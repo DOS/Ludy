@@ -5331,7 +5331,7 @@ export const vi = {
       topFillers: 'Hay dùng nhất',
       none: '-',
       stretch: 'Nói liền dài nhất',
-      note: 'Từ đệm tính theo một danh sách cố định (ờ, à, ừm, kiểu như, thì là, um, uh, you know). Đây chỉ là số liệu về bản ghi, không phải đánh giá một người; tốc độ chỉ hiện khi người đó nói đủ lâu.',
+      note: 'Từ đệm tính theo một danh sách cố định (ờ, ờm, à, ừm, kiểu như, thì là, um, uhm, uh, you know). Đây chỉ là số liệu về bản ghi, không phải đánh giá một người; tốc độ chỉ hiện khi người đó nói đủ lâu.',
     },
     trackers: {
       title: 'Từ khóa theo dõi',

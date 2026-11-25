@@ -5333,7 +5333,7 @@ export const en = {
       topFillers: 'Most used',
       none: '-',
       stretch: 'Longest stretch',
-      note: 'Filler words come from a fixed list (ờ, à, ừm, kiểu như, thì là, um, uh, you know). These are facts about the transcript, not a judgment of a person; a pace shows only once someone has talked long enough.',
+      note: 'Filler words come from a fixed list (ờ, ờm, à, ừm, kiểu như, thì là, um, uhm, uh, you know). These are facts about the transcript, not a judgment of a person; a pace shows only once someone has talked long enough.',
     },
     trackers: {
       title: 'Tracked words',

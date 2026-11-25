@@ -89,7 +89,9 @@ export function speakingStyle(lines: readonly StyleLine[]): SpeakerStyle[] {
   // The same order the transcript is shown in; the sort is stable, so equal starts keep the order they came in.
   const ordered = lines.filter(counts).sort((a, b) => a.startSeconds - b.startSeconds);
   const spans = new Map<string, Span[]>();
-  const words = new Map<string, string[]>();
+  const words = new Map<string, number>();
+  // The fillers are found line by line: a phrase never runs from the end of one line into the start of the next.
+  const fillerCounts = new Map<string, Map<string, number>>();
   const longest = new Map<string, number>();
   // The stretch of the speaker whose line came last (another speaker's line ends it).
   let run: { speaker: string; start: number; end: number } | null = null;
@@ -101,9 +103,11 @@ export function speakingStyle(lines: readonly StyleLine[]): SpeakerStyle[] {
     const own = spans.get(line.speakerLabel);
     if (own) own.push([line.startSeconds, line.endSeconds]);
     else spans.set(line.speakerLabel, [[line.startSeconds, line.endSeconds]]);
-    const said = words.get(line.speakerLabel);
-    if (said) said.push(...wordsOf(line.text));
-    else words.set(line.speakerLabel, wordsOf(line.text));
+    const lineWords = wordsOf(line.text);
+    words.set(line.speakerLabel, (words.get(line.speakerLabel) ?? 0) + lineWords.length);
+    const mine = fillerCounts.get(line.speakerLabel) ?? new Map<string, number>();
+    for (const [filler, n] of fillersIn(lineWords)) mine.set(filler, (mine.get(filler) ?? 0) + n);
+    fillerCounts.set(line.speakerLabel, mine);
     if (run && run.speaker === line.speakerLabel && line.startSeconds - run.end < PAUSE_SECONDS) {
       run.end = Math.max(run.end, line.endSeconds);
     } else {
@@ -114,9 +118,9 @@ export function speakingStyle(lines: readonly StyleLine[]): SpeakerStyle[] {
   closeRun();
 
   const out = [...spans].map(([speaker, own]): SpeakerStyle => {
-    const said = words.get(speaker) ?? [];
+    const total = words.get(speaker) ?? 0;
     const seconds = covered(own);
-    const found = fillersIn(said);
+    const found = fillerCounts.get(speaker) ?? new Map<string, number>();
     let fillerWords = 0;
     for (const [filler, n] of found) fillerWords += n * wordsOf(filler).length;
     const top = [...found]
@@ -126,10 +130,10 @@ export function speakingStyle(lines: readonly StyleLine[]): SpeakerStyle[] {
     return {
       speaker,
       seconds: round1(seconds),
-      words: said.length,
-      wordsPerMinute: seconds >= PACE_MIN_SECONDS ? Math.round(said.length / (seconds / 60)) : null,
+      words: total,
+      wordsPerMinute: seconds >= PACE_MIN_SECONDS ? Math.round(total / (seconds / 60)) : null,
       fillerWords,
-      fillerShare: said.length === 0 ? 0 : fillerWords / said.length,
+      fillerShare: total === 0 ? 0 : fillerWords / total,
       fillerTop: top,
       longestStretchSeconds: round1(longest.get(speaker) ?? 0),
     };

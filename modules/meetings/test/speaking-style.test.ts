@@ -116,6 +116,13 @@ describe('speakingStyle', () => {
     expect(style([line('Lan', 0, 5, 'a b'), line('Lan', 6.5, 9, 'c')], 'Lan')?.longestStretchSeconds).toBe(9);
   });
 
+  it('finds a filler phrase inside one line only: the end of one line and the start of the next are not a phrase', () => {
+    const lan = style([line('Lan', 0, 5, 'chúng ta làm kiểu'), line('Lan', 20, 25, 'như thế này, ờ')], 'Lan');
+    expect(lan?.fillerWords).toBe(1);
+    expect(lan?.fillerTop).toEqual([{ word: 'ờ', count: 1 }]);
+    expect(lan?.words).toBe(8);
+  });
+
   it('counts overlapping lines of one speaker once in the talk time', () => {
     const lan = style([line('Lan', 0, 10, 'một hai'), line('Lan', 5, 15, 'ba bốn')], 'Lan');
     expect(lan?.seconds).toBe(15);
