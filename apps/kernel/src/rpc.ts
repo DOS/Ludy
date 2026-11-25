@@ -1919,6 +1919,10 @@ export function createRpcHandler(
           inMeetings(context, (orgId, actor) => runMeetingTitle({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: summaries }, orgId, actor, input.meetingId)),
         ),
       },
+      // Spoken cues to Vy (#4807): the recorder's click drafts a marked action item for each cue found in the transcript, by code; see modules/meetings/src/voice-cue.ts.
+      voiceCue: {
+        draft: os.meetings.voiceCue.draft.handler(meetingsCommand('meetings.voice_cue.draft')),
+      },
       // What each speaker committed to or decided (#3954): `status` feeds the button, `list` runs the recorder's own Vy once and returns the checked lines, grouped by speaker, to the browser; nothing is stored,
       // published or made a task. See member-vy-ports.ts.
       commitments: {
