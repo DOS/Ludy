@@ -22,6 +22,7 @@ import { MeetingSeries } from '../components/meeting-series.tsx';
 import { MeetingTitleSuggest } from '../components/meeting-title.tsx';
 import { MeetingChapters } from '../components/meeting-chapters.tsx';
 import { MeetingCommitments } from '../components/meeting-commitments.tsx';
+import { MeetingTemplateSuggest } from '../components/meeting-template-suggest.tsx';
 import { MeetingOpenPoints } from '../components/meeting-open-points.tsx';
 import { MeetingNotes } from '../components/meeting-notes.tsx';
 import {
@@ -382,6 +383,8 @@ export function MeetingDetailPage() {
       <RecordingStoppedNote meeting={meeting} />
       {/* The recorder's own Vy offers up to three titles on a click (#3947); a pick renames the meeting, nothing changes before it */}
       <MeetingTitleSuggest key={`title-${id}-${redactedEpoch}`} meetingId={id} isRecorder={meeting.isRecorder} hasTranscript={hasTranscript} />
+      {/* The minutes template suggested from the meeting itself (#4772): code first, Vy on a click only when code cannot tell; one click takes it, nothing changes before it */}
+      <MeetingTemplateSuggest key={`template-suggest-${id}-${redactedEpoch}`} meetingId={id} isRecorder={meeting.isRecorder} hasTranscript={hasTranscript} template={meeting.summaryTemplate} onJump={jumpTo} />
       {meeting.isRecorder && ((!hasTranscriptDraft && !hasResultsDraft) || doneOrigin === 'detail') && (
         <RedactionNudge
           count={!hasTranscriptDraft && !hasResultsDraft ? (redactCandidatesQuery.data?.candidates.length ?? 0) : 0}

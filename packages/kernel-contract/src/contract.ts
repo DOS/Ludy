@@ -701,6 +701,7 @@ import { zAskAnswer, zAskEmpty, zAskInput, zAskStatus } from './meeting-ask.ts';
 import { zBriefAnswer, zBriefEmpty, zBriefFacts, zBriefStatus, zBriefTarget } from './meeting-brief.ts';
 import { zMeetingRename, zMeetingRenamed, zTitleAnswer } from './meeting-title.ts';
 import { zCommitmentsAnswer } from './meeting-commitments.ts';
+import { zTemplateSuggestion, zTemplateVyAnswer } from './meeting-template-suggest.ts';
 import { zOpenPointsAnswer } from './meeting-open-points.ts';
 import { zDigestAnswer, zDigestAsk, zDigestFacts, zDigestStatus } from './meeting-digest.ts';
 import { zLoadWeek, zLoadWeekInput } from './meeting-load.ts';
@@ -1927,6 +1928,13 @@ export const contract = {
     commitments: {
       status: oc.input(zSummaryRef).output(zSummaryStatus),
       list: oc.input(zSummaryRef).output(zCommitmentsAnswer),
+    },
+    // Suggesting the minutes template from the meeting itself (#4772): `suggest` is code's answer (the series, a linked deal, words in the title, the number of people; no model), `status` is the button of Vy's fallback (the
+    // same answer as the chapters') and `vy` the click that has the recorder's own Vy read the transcript when code cannot tell. Nothing is stored; the recorder accepts with the existing `setTemplate`.
+    templateSuggest: {
+      suggest: oc.input(zSummaryRef).output(zTemplateSuggestion),
+      status: oc.input(zSummaryRef).output(zSummaryStatus),
+      vy: oc.input(zSummaryRef).output(zTemplateVyAnswer),
     },
     // What a meeting left open (#4768): `status` is the button (the same answer as the chapters'), `list` the click that has the recorder's own Vy list, from the transcript, the questions asked and not answered and the
     // topics where a decision was raised and not taken, each with the second of the line it rests on. The lines go back to the browser and are stored nowhere; nothing is published or made a task from here.
