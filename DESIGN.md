@@ -656,6 +656,7 @@ Approve, edit and reject have equal visual access (reject is not hidden in a men
 ### 5.6 AI coworker presence and attribution
 
 - Unify all non-inbox AI surfaces (`TodayBrief`, `TodayWeekly`, `DraftPanel`, `NoteVyPanel`, `MyWorkVyPlannerPanel`, `NotesVyOrganizerPanel`, `VyClausePanel`, `FinanceOverview` explanation) on one consistent `<CoworkerAttribution>` header (teal-key/avatar mark, coworker name from 1.1 such as Vy/Ly/Dy/Uy, and plain-language provenance) plus a `<ProposalSurface>` dashed container (`border-dashed border-proposal/60`) whenever content is unapproved or AI-drafted.
+- The header names a coworker by the org's current name for it (`useCoworkerNames`, the display name of the org-chart agent, the roster's default otherwise), never a fixed one, and says "trợ lý" only for Vy (1.1). A short source tag sits beside it, one of "Theo quy tắc", "Khớp chính xác", "Giống lần trước", "AI đề xuất" (benchmark lesson L7, #4782), set only from what the proposal recorded (a learned rule, an exact tax-code or invoice match, a counter account used before, a model or agent origin) and never from model text; a surface that recorded none shows no tag. "Hoãn" (snooze) joins Duyệt, Sửa and Từ chối, with equal weight, only where the queue already has a server-side snooze.
 - Ambient AI slots silently omit or fall back to deterministic copy when AI is off; on-demand AI triggers keep core workflows usable without AI.
 
 ## 6. Marketing site (`apps/web`)

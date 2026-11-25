@@ -11,6 +11,8 @@ import { orpc } from './api.ts';
 type NamedCoworkerKey = Exclude<CoworkerKey, 'system'>;
 export type CoworkerNames = Readonly<Record<NamedCoworkerKey, string>>;
 
+const NAMES_STALE_MS = 5 * 60 * 1000;
+
 export const DEFAULT_COWORKER_NAMES: CoworkerNames = {
   gm: COWORKER_ROSTER.gm,
   finance: COWORKER_ROSTER.finance,
@@ -40,8 +42,9 @@ export function coworkerNamesFrom(
 // The two reads are every role's and shared with the AI agents screens, so a screen that already showed one asks nothing new.
 // Until they answer, or when they fail, the roster's names stand.
 export function useCoworkerNames(): CoworkerNames {
-  const chart = useQuery(orpc.chart.get.queryOptions());
-  const templates = useQuery(orpc.chart.templates.queryOptions());
+  // A rename happens on the AI agents screen, which refreshes every query; five minutes is as stale as a name may be elsewhere.
+  const chart = useQuery({ ...orpc.chart.get.queryOptions(), staleTime: NAMES_STALE_MS });
+  const templates = useQuery({ ...orpc.chart.templates.queryOptions(), staleTime: NAMES_STALE_MS });
   const agents = chart.data?.agents;
   const templateList = templates.data;
   return useMemo(() => {

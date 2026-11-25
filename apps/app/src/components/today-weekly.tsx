@@ -97,11 +97,11 @@ export function TodayWeekly({ slug }: { slug: string }) {
     <section data-weekly-slot="" aria-label={t('title')}>
       <ProposalSurface proposed={isAi} className="p-4" data-testid="today-weekly">
         <CoworkerAttribution
-          coworker="gm"
-          name={gmName}
+          coworker={isAi ? 'gm' : undefined}
+          name={isAi ? gmName : undefined}
           title={t('title')}
           titleAs="h2"
-          label={today('from', { name: gmName })}
+          label={isAi ? today('from', { name: gmName }) : undefined}
           showIcon={isAi}
           showRole={false}
           tag={isAi ? 'ai' : null}
