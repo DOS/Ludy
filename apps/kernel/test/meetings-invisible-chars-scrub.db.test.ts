@@ -2,7 +2,7 @@
 // The widening of the invisible-character class (Meetings #4137, point 2) on PostgreSQL 17: the database is made as it was before 20270122120000, rows that hold the four ranges the class missed
 // (U+180B to U+180D, U+206A to U+206F, U+FFA0, U+1D173 to U+1D17A) are written as the old CHECKs allowed them, then the migration runs. The rows come out clean (a title that would be empty is a dash, a
 // name that would equal another active template's takes the last eight characters of its id, the meeting's copy of a template has its hash made again), the CHECKs refuse each new range at both
-// edges, and what lies just outside the class still passes. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// edges, and what lies just outside the class still passes. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { copyFileSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
@@ -17,7 +17,7 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
 import { createPreCutoverClient, createPreCutoverPool } from './pre-cutover-db.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const VERSION = '20270122120000';
 const suite = ADMIN ? describe : describe.skip;
@@ -28,7 +28,7 @@ const OUTSIDE = [0x2070, 0xffa1, 0x1d172, 0x1d17b, 0xfe0f];
 const ch = (point: number) => String.fromCodePoint(point);
 
 suite('widening the invisible-character class of the minutes templates and the chapter titles (#4137)', () => {
-  const dbName = `crove_test_invisible_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_invisible_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let before = '';
   let upgraded = false;

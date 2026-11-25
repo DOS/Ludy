@@ -134,7 +134,7 @@ describe('countText', () => {
     // Curly quotes are in the ranges that count one; the ellipsis (U+2026) is not.
     expect(countText('“a”…', 'weighted')).toBe(5);
     expect(countText(`xem https://example.com/${'a'.repeat(200)}`, 'weighted')).toBe(4 + 23);
-    expect(countText('ghé crove.vn/gia nhé', 'weighted')).toBe(4 + 23 + 4);
+    expect(countText('ghé ludy.vn/gia nhé', 'weighted')).toBe(4 + 23 + 4);
     // A full stop after a link is text; © and ® count one; a keycap is one emoji.
     expect(countText('xem https://a.com/x.', 'weighted')).toBe(4 + 23 + 1);
     expect(countText('© ®', 'weighted')).toBe(3);
@@ -1121,7 +1121,7 @@ describe('contentHash and approvalCovers', () => {
     provider: 'facebook_page',
     body: 'Khuyến mãi tháng 10',
     title: null,
-    linkUrl: 'https://crove.example/sale',
+    linkUrl: 'https://ludy.example/sale',
     media: [{ fileId: 'f-1', generation: 's3:v1', altText: null }],
     settings: { a: 1, b: { c: true } },
   };

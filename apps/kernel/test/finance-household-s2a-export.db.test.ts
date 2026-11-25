@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The S2a-HKD book's Excel download (#2517 slice 2a) through the HTTP route a user calls, on PostgreSQL 17: a household on the percentage method gets the file while its rows are still `commentary` (the
 // cells carry the provisional label; the workbook unit tests cover them) and one audit row (the entity, the book, the period, the number of entries); a household that keeps S1a only, an entity that is not
-// a household and a period that is not one are refused and write no audit row. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// a household and a period that is not one are refused and write no audit row. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
@@ -17,7 +17,7 @@ import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-s2a-export-0123456789';
 const ISSUER = 'crove-auth';
@@ -36,7 +36,7 @@ class MemoryStore implements BlobStore {
 const suite = ADMIN ? describe : describe.skip;
 
 suite('the S2a-HKD book download (#2517 slice 2a)', () => {
-  const dbName = `crove_test_s2a_export_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_s2a_export_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let app: ReturnType<typeof createHttpApp>;

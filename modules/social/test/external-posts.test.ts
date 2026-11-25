@@ -1,4 +1,4 @@
-// The excerpt kept of a post published outside Crove (#1054): one line, no control, zero-width or direction marks, at
+// The excerpt kept of a post published outside Ludy (#1054): one line, no control, zero-width or direction marks, at
 // most 500 characters as PostgreSQL counts them, never half an emoji.
 import { describe, expect, it } from 'vitest';
 import { EXTERNAL_EXCERPT_MAX, EXTERNAL_POST_ID, excerptOf } from '../src/external-posts.ts';

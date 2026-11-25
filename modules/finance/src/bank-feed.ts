@@ -444,7 +444,7 @@ export const bankFeedHookKeyHash = (key: string) => createHash('sha256').update(
 export const bankFeedHookSet = defineCommand({
   name: 'finance.bank_feed.hook_set',
   input: zBankFeedHookSet,
-  // A row of Crove that makes an address valid or stops the old one; it posts nothing, reaches no provider and moves no money. The key leaves only in the answer to the owner or admin: callers send no idempotency
+  // A row of Ludy that makes an address valid or stops the old one; it posts nothing, reaches no provider and moves no money. The key leaves only in the answer to the owner or admin: callers send no idempotency
   // key, so no replay hands it out again, and the audit row keeps the input and a flag, never the key.
   risk: 'R1',
   sideEffect: 'internal',

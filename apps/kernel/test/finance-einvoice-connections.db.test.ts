@@ -21,7 +21,7 @@ import { createSessionStatusSource } from '../src/sessions.ts';
 import { enterUser } from './context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-einvoice-connections-0123456789';
 const ISSUER = 'crove-auth';
@@ -59,7 +59,7 @@ const PLANTED = `planted-secret-${randomBytes(6).toString('hex')}`;
 const suite = ADMIN ? describe : describe.skip;
 
 suite('e-invoice provider connections (#2501)', () => {
-  const dbName = `crove_test_einvoice_conn_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_einvoice_conn_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

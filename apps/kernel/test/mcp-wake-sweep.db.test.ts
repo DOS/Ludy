@@ -2,7 +2,7 @@
 // The sweep and the delivery job of the wake-up webhook against a real database (ADR-0051 decision 4, issue #3024): what is stored, what is handed to the queue and when, how a
 // signal fires (when its key first appears, and again only after it went away), how a schedule moves on, how a lost hand-over is made good and a stuck delivery ends, how a
 // delivery's outcome is recorded, and how seven days of failing pause the wake-up. A local server stands in for the receiver.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -22,12 +22,12 @@ import { financeQueries } from '@ludy/mod-finance';
 import type { WakeItem } from '../src/mcp-wake-body.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('the wake-up sweep and delivery (#3024, step b)', () => {
-  const dbName = `crove_test_mcp_wake_sweep_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_mcp_wake_sweep_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let runtime: Runtime;

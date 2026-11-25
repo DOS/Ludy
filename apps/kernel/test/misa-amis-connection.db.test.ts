@@ -2,7 +2,7 @@
 // An entity's connection to MISA AMIS Kế toán (#3875, S2 of #3854), on a real PostgreSQL 17 through the HTTP API: the connector is offered only when the deployment holds the integrator's ClientID,
 // connect (the access code sealed at the edge, no secret in any answer, audit row or stored row), who may do what, one connection per entity (a second connect is the same connection), the
 // opaque code AMIS is told (random, unique, never in an answer), disconnect (the sealed code dropped with the connection), and the database's own guards.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
@@ -22,7 +22,7 @@ import { createSessionStatusSource } from '../src/sessions.ts';
 import { contextToken } from './invariant/fixtures/context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-misa-amis-connections-0123456789';
 const ISSUER = 'crove-auth';
@@ -58,7 +58,7 @@ const suite = ADMIN ? describe : describe.skip;
 
 suite('MISA AMIS connections (#3875)', () => {
   afterEach(() => vi.restoreAllMocks());
-  const dbName = `crove_test_misa_amis_conn_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_misa_amis_conn_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

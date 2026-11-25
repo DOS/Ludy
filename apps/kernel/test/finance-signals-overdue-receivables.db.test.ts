@@ -2,7 +2,7 @@
 // `finance.signals.overdue_receivables`, Accounting's side of rule 2 (Vy V5, #2969), on PostgreSQL 17: for the parties it is asked about, the oldest due date among their overdue sales
 // invoices, the overdue total and the count, by the numbers of the payment reminders screen (the 131 balance laid over the invoices newest first, 30 day terms unless the customer has its
 // own); due today is not overdue; a paid customer is not listed; a customer who owes in several entities is summed; a party and its duplicates are one customer; the read REFUSES a caller whose
-// books are only in part in view, so a party that is not listed owes nothing late. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// books are only in part in view, so a party that is not listed owes nothing late. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -15,7 +15,7 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { addDays, financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const TODAY = vietnamToday();
@@ -24,7 +24,7 @@ const dated = (late: number) => addDays(TODAY, -(30 + late));
 const SECRET_NAME = 'Công ty bí mật của chị Lan';
 
 suite('finance.signals.overdue_receivables on PostgreSQL (#2969)', () => {
-  const dbName = `crove_test_finance_overdue_signals_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_finance_overdue_signals_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

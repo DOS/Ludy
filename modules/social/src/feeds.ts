@@ -212,7 +212,7 @@ async function draftFrom(ctx: CommandContext, feed: FeedRow, item: Item): Promis
       title: null,
       link_url: item.link,
       origin: 'human',
-      // Text that came from outside Crove: every channel waits for a person's approval of it.
+      // Text that came from outside Ludy: every channel waits for a person's approval of it.
       tainted: true,
       actor_origin: 'system',
       author_user_id: feed.created_by,

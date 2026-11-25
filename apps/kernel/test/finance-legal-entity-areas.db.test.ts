@@ -4,7 +4,7 @@
 // statements, the vouchers, search and the exports read one entity; opening balances, fixed assets and depreciation,
 // bank lines, purchase invoices (a revision moves a proposal to an entity), the VAT working and the learned rules are
 // kept per entity; the year-end closing closes one entity's year; and each entity's VAT return carries its own tax
-// calendar done mark. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// calendar done mark. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -26,7 +26,7 @@ import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 import { contextToken } from './context-token.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const FIXTURE = readFileSync(new URL('../../extract/test/fixtures/einvoice-basic.xml', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-legal-entity-areas-0123456789';
@@ -62,7 +62,7 @@ interface TrialBalanceView {
 const suite = ADMIN ? describe : describe.skip;
 
 suite('finance books per legal entity, part 2b (#1280)', () => {
-  const dbName = `crove_test_le_areas_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_le_areas_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appUrl = '';
   let pool: pg.Pool;

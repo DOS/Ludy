@@ -1,7 +1,7 @@
 // Posts published outside Crove on PostgreSQL 17 (#1054): the worker's sweep lists each channel's own recent posts
 // through its adapter and keeps the ones Crove did not publish, reads their counts through metrics(), marks a channel
 // whose token is refused for reconnecting, and the Metrics tab and client report links count them only when asked, once
-// each, for their own org. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// each, for their own org. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -15,7 +15,7 @@ import { socialCommands, socialQueries, sweepExternalPosts, type ExternalPostRow
 import { reportView, type ReportPage } from '../src/report-link.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const DAY = 86_400_000;
@@ -52,7 +52,7 @@ interface WindowTotals extends Totals {
 type Org = { orgId: string; owner: string; viewer: string };
 
 suite('social posts published outside Crove (#1054)', () => {
-  const dbName = `crove_test_social_external_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_external_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appPool: pg.Pool;
   let workerPool: pg.Pool;

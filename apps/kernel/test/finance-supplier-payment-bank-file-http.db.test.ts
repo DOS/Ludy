@@ -4,7 +4,7 @@
 // - before a byte is sent the payment is marked (exported_at, exported_by, export_count): a second request is refused with the payment's id and the time of the first file, until reexport=1 confirms it;
 // - two requests racing for the same payment get one file and one refusal;
 // - no second factor, HEAD, a wrong file name, no ids, an unknown payment and a payment of another org each refuse with no file.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; the run creates and drops its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
@@ -20,7 +20,7 @@ import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-supplier-file-0123456789abcdef';
 const ISSUER = 'crove-auth';
@@ -58,7 +58,7 @@ const expectNoAmount = (value: unknown, amounts: readonly string[]) => {
 };
 
 suite('the bank file of supplier payments over HTTP (#3113 S3b-2)', () => {
-  const dbName = `crove_test_supplier_file_http_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_supplier_file_http_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let rt: Runtime;

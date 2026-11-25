@@ -2,7 +2,7 @@
 // the adapter gives on the day's snapshot, a refused token marks a Google Business connection expired and a quota
 // waits; the Metrics tab and the client report take each day from the latest snapshot that holds it, so a day Google
 // corrected counts once; the column's shape check; and a report link shows only its own channels' figures, of its own
-// org, in its own periods. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// org, in its own periods. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -16,7 +16,7 @@ import { socialCommands, socialQueries, sweepAccounts, utcDay, type AccountTrend
 import { reportView, type ReportPage } from '../src/report-link.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -42,7 +42,7 @@ type Figures = { calls: number; directions: number; websiteClicks: number; views
 const fig = (calls: number, directions: number, websiteClicks: number, views: number): Figures => ({ calls, directions, websiteClicks, views });
 
 suite('Google Business performance on PostgreSQL (#1477)', () => {
-  const dbName = `crove_test_social_gbp_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_gbp_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appPool: pg.Pool;
   let workerPool: pg.Pool;

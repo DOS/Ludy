@@ -3,7 +3,7 @@
 // from the stock moves (Dr 632 / Cr the stock account), an owner or an admin approves it, and approving posts the voucher and stores the month and its items in one transaction. A month with
 // no cost closes at once with no entry. Refused: a month not over, one closed already, one after a month that still holds moves, an item below zero, a proposal the moves changed since.
 // The database keeps a month from existing without its voucher and from taking a move dated in it, whatever the source of the move.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -15,7 +15,7 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -29,7 +29,7 @@ interface Row {
 }
 
 suite('the stock month close command (#2513)', () => {
-  const dbName = `crove_test_stockclosecmd_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_stockclosecmd_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

@@ -1,10 +1,10 @@
-// Reconciling the tax portal's purchase-invoice list with what Crove holds (issue #465). Pure functions: the portal
-// rows of the period's imported lists on one side; on the other, the purchase documents Crove recorded and the
+// Reconciling the tax portal's purchase-invoice list with what Ludy holds (issue #465). Pure functions: the portal
+// rows of the period's imported lists on one side; on the other, the purchase documents Ludy recorded and the
 // purchase proposals still waiting in the Inbox. Amounts are decimal strings, compared through decimal.js.
 //
 // An invoice is the same on both sides when the seller's tax code, the series (ký hiệu hóa đơn) and the number match,
 // and the template (ký hiệu mẫu số) does not contradict them (either side may lack it: AI-read invoices often do). A
-// Crove invoice without a seller tax code matches on series and number when exactly one portal invoice has them.
+// Ludy invoice without a seller tax code matches on series and number when exactly one portal invoice has them.
 // The amount is a check, not part of the key: a match with a different total (or VAT, or currency) is reported.
 //
 // The same function compares the sales list (#2141, the portal's "bán ra" export) with the org's recorded sales: the
@@ -15,16 +15,16 @@
 // total or VAT. Nothing here writes to the books.
 //
 // Status on the portal (Trạng thái hóa đơn):
-// - original, replacement, adjustment, adjusted, unknown: the invoice counts; missing from Crove means "upload it".
+// - original, replacement, adjustment, adjusted, unknown: the invoice counts; missing from Ludy means "upload it".
 //   An adjusted invoice still counts (the adjustment is a separate invoice).
-// - replaced, cancelled: the invoice no longer counts. Missing from Crove is right; present in Crove means the books
+// - replaced, cancelled: the invoice no longer counts. Missing from Ludy is right; present in Ludy means the books
 //   hold an invoice the tax authority no longer accepts (reverse it, or reject the proposal).
 //
 // Late invoices (#478, #560): the portal lists an invoice by its invoice date, the VAT working counts a purchase in the
 // period of its posting date. They differ for an invoice approved after its own month was locked and posted in a later
 // open month. The match stays by invoice date (that is what the portal's list holds), and the reconciliation says where
 // the VAT working declares it: in its own period the item is flagged declaredInLaterPeriod (with the posting date on
-// the Crove side), and in the period it was posted in it is reported as declared_late, so both periods agree with the
+// the Ludy side), and in the period it was posted in it is reported as declared_late, so both periods agree with the
 // VAT working instead of one of them silently disagreeing.
 import { PORTAL_INVOICE_STATUSES, RECONCILE_DIFFERENCES, RECONCILE_OUTCOMES, type PortalInvoiceStatus, type ReconcileDifference, type ReconcileOutcome } from '@ludy/kernel-contract';
 import { approxEqual, normalizeNumber, normalizeSeries, type Money } from '@ludy/l10n-vn';
@@ -75,13 +75,13 @@ export interface LudyInvoice {
 }
 
 // The outcomes (RECONCILE_OUTCOMES, shared with the API contract):
-// - matched: on both sides, amounts agree. in_inbox: the same, but Crove's copy waits in the Inbox.
+// - matched: on both sides, amounts agree. in_inbox: the same, but Ludy's copy waits in the Inbox.
 // - amount_mismatch: on both sides with a different total, VAT or currency.
-// - missing: a counting invoice on the portal that Crove lacks: upload its XML.
-// - void_in_crove: replaced or cancelled on the portal but held by Crove (booked or waiting): reverse it or reject it.
-// - void: replaced or cancelled on the portal and absent from Crove, as it should be.
-// - not_on_portal: in Crove for the period but on none of the period's lists.
-// - declared_late: a Crove document dated before the period and posted in it (its month was locked), on none of the
+// - missing: a counting invoice on the portal that Ludy lacks: upload its XML.
+// - void_in_ludy: replaced or cancelled on the portal but held by Ludy (booked or waiting): reverse it or reject it.
+// - void: replaced or cancelled on the portal and absent from Ludy, as it should be.
+// - not_on_portal: in Ludy for the period but on none of the period's lists.
+// - declared_late: a Ludy document dated before the period and posted in it (its month was locked), on none of the
 //   period's lists: the VAT working declares it in this period, while the portal lists it in its own. Nothing to do.
 
 export interface ReconcileItem {
@@ -89,15 +89,15 @@ export interface ReconcileItem {
   portal: PortalRow | null;
   ludy: LudyInvoice | null;
   differences: ReconcileDifference[];
-  // Matched on series and number alone (the Crove invoice has no seller tax code).
+  // Matched on series and number alone (the Ludy invoice has no seller tax code).
   withoutTaxCode: boolean;
   // A portal invoice dated outside the period it was imported for.
   outsidePeriod: boolean;
   // Further rows of the same invoice on the period's lists (the same list exported twice, or two overlapping lists).
   duplicateRows: number;
-  // A second copy in Crove of an invoice already matched to a portal row (not_on_portal only): reject or reverse it.
+  // A second copy in Ludy of an invoice already matched to a portal row (not_on_portal only): reject or reverse it.
   duplicateInLudy: boolean;
-  // The Crove document is dated in (or before) the period but posted after it: the VAT working declares it in the
+  // The Ludy document is dated in (or before) the period but posted after it: the VAT working declares it in the
   // period of its posting date, not in this one.
   declaredInLaterPeriod: boolean;
 }
@@ -242,8 +242,8 @@ export function reconcilePortalList(rows: readonly PortalRow[], ludy: readonly L
         ? (byLooseKey.get(looseKey) ?? []).filter((c) => !used.has(c.invoice) && templatesAgree(c.template, p.template))
         : [];
     const candidates = exact.length > 0 ? exact : loose;
-    // One Crove invoice answers the portal row, a recorded document before a proposal. Any other candidate is a second
-    // copy of the same invoice in Crove (a pending proposal of a booked invoice, or the invoice booked twice): it is not
+    // One Ludy invoice answers the portal row, a recorded document before a proposal. Any other candidate is a second
+    // copy of the same invoice in Ludy (a pending proposal of a booked invoice, or the invoice booked twice): it is not
     // used here, so it is reported below as not on the portal and marked as a duplicate.
     const match = candidates.find((c) => c.invoice.kind === 'document') ?? candidates[0];
     const ludy = match?.invoice ?? null;

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The VAT method and rate of an entity's marketplace sales (#4303 S3a, parent #2520), on PostgreSQL: dated rows, append-only (a wrong row is corrected by a later entry, for any date outside a locked period), refused inside a locked period, set by owners and
 // admins and read by every role, all or none, the pair of method and rate kept by the database, the row in force on a date (greatest date on or before it, the latest entry of that date) or none (the sales posting holds a month back on none), and the audit row.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -15,12 +15,12 @@ import { Runtime, defineQuery } from '@ludy/kernel-runtime';
 import { financeCommands, financeQueries, marketplaceVatRateAt } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('marketplace VAT rate of an entity (#4303 S3a)', () => {
-  const dbName = `crove_test_mkt_vat_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_mkt_vat_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

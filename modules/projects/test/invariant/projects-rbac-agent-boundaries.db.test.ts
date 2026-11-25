@@ -4,7 +4,7 @@
 //   2) projects.board & projects.*: cross-org isolation, viewer read-only RBAC, private-project isolation, le_scope + hiddenByEntityCount, archive lock
 //   3) ctx.agent boundary across projects commands/queries and direct SQL writes to ludy_projects.* tables
 //   4) kernel.task.list / kernel.task.get: caller le_scope, cross-org isolation, and ctx.agent taint/position/saved-view filter boundaries
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -20,7 +20,7 @@ interface QueryClient {
   query: Pool['query'];
 }
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -33,7 +33,7 @@ interface TaskListRow {
 }
 
 suite('projects RBAC, le_scope, archive-guard, and ctx.agent invariants (#3445)', () => {
-  const dbName = `crove_test_proj_inv_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_proj_inv_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminPool: Pool | undefined;
   let appPool: Pool | undefined;
   let workerPool: Pool | undefined;

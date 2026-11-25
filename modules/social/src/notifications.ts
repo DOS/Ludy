@@ -546,7 +546,7 @@ async function dispatchEvent(ctx: CommandContext, eventId: string, only?: string
 export const notificationDispatch = defineCommand({
   name: 'social.notification.dispatch',
   input: z.object({ eventId: zId }),
-  // Queues mail through the kernel pipeline in its transaction: a send, an effect outside Crove (#1578).
+  // Queues mail through the kernel pipeline in its transaction: a send, an effect outside Ludy (#1578).
   risk: 'R2',
   sideEffect: 'external',
   access: 'system',

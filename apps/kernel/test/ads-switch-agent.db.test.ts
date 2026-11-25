@@ -5,7 +5,7 @@
 // command's role check (the SQL is run directly in the agent's context); and none of the commands of running ads runs for it.
 // The agent is installed from a template and given a run the way apps/kernel/test/invariant/agents.db.test.ts does it. The open
 // state the test needs is made as a signed-in owner's context makes it, in SQL (what a proposal's effect will do), since the
-// guard fires for every role. Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its own database.
+// guard fires for every role. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; the run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -18,7 +18,7 @@ import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { adsCommands, adsQueries } from '@ludy/mod-ads';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const TEMPLATE = 'finance.chief_accountant';
 const SYSTEM = { type: 'system' as const, component: 'kernel.agent' };
@@ -26,7 +26,7 @@ const SYSTEM = { type: 'system' as const, component: 'kernel.agent' };
 const suite = ADMIN ? describe : describe.skip;
 
 suite('a live agent run and the switches of running ads (ADR-0043, #2294)', () => {
-  const dbName = `crove_test_ads_agent_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_ads_agent_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let workerUrl = '';
   let appUrl = '';
@@ -73,7 +73,7 @@ suite('a live agent run and the switches of running ads (ADR-0043, #2294)', () =
     await c.connect();
     try {
       await c.query('BEGIN');
-      const token = mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', { userId: owner, orgId, sessionId: null, aal: 'aal1', mfaAt: null });
+      const token = mintContextToken(process.env.LUDY_CONTEXT_TOKEN_KEY ?? process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', { userId: owner, orgId, sessionId: null, aal: 'aal1', mfaAt: null });
       await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, token]);
       await c.query(sqlText, params);
       await c.query('COMMIT');

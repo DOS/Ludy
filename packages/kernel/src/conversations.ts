@@ -883,7 +883,7 @@ async function ingestEvent(
   if (again) return 'duplicates';
 
   // The org's own message seen from the platform's inbox: a reply of ours still being sent takes the platform's id, else it
-  // is a message written outside Crove.
+  // is a message written outside Ludy.
   if (event.direction === 'out') {
     const ours = await ctx.trx
       .selectFrom('ludy_kernel.conversation_message')
@@ -1353,7 +1353,7 @@ const refuseUnfilledPlaceholder = (body: string): void => {
 export const conversationReply = defineCommand({
   name: 'kernel.conversation.reply',
   input: zConversationReply,
-  // Visible to the customer, through a platform call the worker makes after this commits (an effect outside Crove).
+  // Visible to the customer, through a platform call the worker makes after this commits (an effect outside Ludy).
   risk: 'R2',
   sideEffect: 'external',
   access: WRITERS,
@@ -1697,7 +1697,7 @@ async function staleCall(ctx: CommandContext, key: string): Promise<boolean> {
 export const conversationReplyBegin = defineCommand({
   name: 'kernel.conversation.reply_begin',
   input: z.strictObject({ messageId: zId }),
-  // Commits the call as started; the worker then makes it, an effect outside Crove.
+  // Commits the call as started; the worker then makes it, an effect outside Ludy.
   risk: 'R2',
   sideEffect: 'external',
   access: 'system',

@@ -291,7 +291,7 @@ function PlaylistsField({ ids, onChange, disabled, connectionId }: { ids: readon
 }
 
 // YouTube (#905): who can watch, whether the video is made for kids (YouTube requires the answer; absent is no, as for
-// every video Crove posted before), its category from YouTube's fixed list, and its tags.
+// every video Ludy posted before), its category from YouTube's fixed list, and its tags.
 function YouTubeSettings({ connectionId, settings, onChange, disabled }: { connectionId: string | null; settings: Record<string, unknown>; onChange: (settings: Record<string, unknown>) => void; disabled: boolean }) {
   const t = useTranslations('social');
   const locale = useLocale();
@@ -651,7 +651,7 @@ const discordThreadIdFrom = (text: string): string => {
   return link ? (link[1] as string) : trimmed;
 };
 
-// Discord (#1103): Crove cannot read a webhook's channel type, so the person posting marks a forum (or media) channel's
+// Discord (#1103): Ludy cannot read a webhook's channel type, so the person posting marks a forum (or media) channel's
 // webhook. A forum post takes a name (the post's title or the text's first line unless given) and up to 5 of the
 // forum's tags, by id; otherwise the post can go into an existing thread. Only what is set is stored, so a variant left
 // as it was keeps its content hash and posts as before.
@@ -853,7 +853,7 @@ function TikTokDisclosureField({ settings, photo, disabled, onChange }: { settin
 }
 
 // The settings a channel asks the person posting to choose (TikTok's posting rules), or that it offers (YouTube).
-// inboxOffered: the channel's connection was granted video.upload, which Crove asks for only where the deployment turns
+// inboxOffered: the channel's connection was granted video.upload, which Ludy asks for only where the deployment turns
 // TikTok's inbox mode on (CHANNEL_TIKTOK_INBOX, #903). pinAllowed: the Telegram bot may pin in the channel, as read at
 // connect (#982). reel: the post goes out as an Instagram Reel (#1019). photo: the post is photos only (TikTok's
 // disclosure label names a photo or a video, #1078). threadNameDefault: a Discord forum post's name when none is given
@@ -1452,7 +1452,7 @@ function RepostField({ settings, disabled, onChange }: { settings: Record<string
   );
 }
 
-// The time the post comes down by itself (#861), on the channels Crove can take a post down from. onApplyAll: the same
+// The time the post comes down by itself (#861), on the channels Ludy can take a post down from. onApplyAll: the same
 // time for every channel of the post that can (absent with a single channel).
 function RemoveAtField({ settings, disabled, onChange, onApplyAll }: { settings: Record<string, unknown>; disabled: boolean; onChange: (settings: Record<string, unknown>) => void; onApplyAll?: ((removeAt: string) => void) | undefined }) {
   const t = useTranslations('social');

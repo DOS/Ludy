@@ -34,7 +34,7 @@ export const LINKEDIN_PAGE_SCOPES = ['w_organization_social', 'r_organization_ad
 // Asked for too when the deployment's app has LinkedIn's member post analytics (#797, CHANNEL_LINKEDIN_ANALYTICS);
 // never required, so a member who declines still connects.
 export const LINKEDIN_ANALYTICS_SCOPE = 'r_member_postAnalytics';
-// What memberCreatorPostAnalytics counts, one call each, and the name Crove keeps it under.
+// What memberCreatorPostAnalytics counts, one call each, and the name Ludy keeps it under.
 const LINKEDIN_METRICS = [
   ['IMPRESSION', 'impressions'],
   ['MEMBERS_REACHED', 'reach'],
@@ -63,7 +63,7 @@ const NAME_BATCH = 50;
 const DEFAULT_LIFETIME_SECONDS = 60 * 86_400;
 // LinkedIn shows at most 20 images in a post.
 const MAX_IMAGES = 20;
-// Documents (#1119): LinkedIn takes PDF, PPT, PPTX, DOC and DOCX of at most 100 MB and 300 pages (Documents API); Crove's
+// Documents (#1119): LinkedIn takes PDF, PPT, PPTX, DOC and DOCX of at most 100 MB and 300 pages (Documents API); Ludy's
 // library stores PDFs only, so a document post is one PDF.
 export const LINKEDIN_DOCUMENT_TYPES: readonly string[] = ['application/pdf'];
 export const LINKEDIN_DOCUMENT_MAX_BYTES = 100 * 1024 * 1024;
@@ -336,12 +336,12 @@ const isCarded = (input: { settings: Readonly<Record<string, unknown>>; content:
   return card !== null && linkCardRefusal(card, input.content) === null;
 };
 
-// Who sees a LinkedIn post (#983), in `settings.visibility` (the field Mastodon's visibility uses), with Crove's names
+// Who sees a LinkedIn post (#983), in `settings.visibility` (the field Mastodon's visibility uses), with Ludy's names
 // mapped to the Posts API's visibility: public (the default, PUBLIC as before: anyone, on or off LinkedIn), connections
 // (CONNECTIONS, the author's 1st-degree network) or loggedIn (LOGGED_IN, signed-in members only). LinkedIn's fourth
 // value, CONTAINER, is for posts inside a group. A member's post takes every value. A company page has no 1st-degree
 // network, so a page's post (#1077) keeps to PUBLIC or LOGGED_IN: the docs do not say LinkedIn refuses CONNECTIONS
-// there, so Crove does not send it. 'invalid' for any other value.
+// there, so Ludy does not send it. 'invalid' for any other value.
 const VISIBILITY: Readonly<Record<string, 'PUBLIC' | 'CONNECTIONS' | 'LOGGED_IN'>> = { public: 'PUBLIC', connections: 'CONNECTIONS', loggedIn: 'LOGGED_IN' };
 export function linkedinVisibilityOf(settings: Readonly<Record<string, unknown>>): 'PUBLIC' | 'CONNECTIONS' | 'LOGGED_IN' | 'invalid' {
   const value = settings.visibility;

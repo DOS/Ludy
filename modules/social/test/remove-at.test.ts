@@ -26,7 +26,7 @@ describe('a post taken down at a set time (#861)', () => {
     expect(removeAtOf({ removeAt: '2028-02-29T10:00:00Z' })).toBe('2028-02-29T10:00:00.000Z');
   });
 
-  it('takes a time on the channels Crove can take a post down from, and names the field otherwise', () => {
+  it('takes a time on the channels Ludy can take a post down from, and names the field otherwise', () => {
     for (const provider of REMOVE_READY) expect(issues(provider, { removeAt: '2026-10-21T22:00:00+07:00' })).toEqual([]);
     expect(issues('bluesky', { removeAt: '22:00' })).toEqual([['REMOVE_AT_INVALID', 'settings.removeAt']]);
     // A channel outside REMOVE_READY is refused whatever the value, as reposts are.

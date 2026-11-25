@@ -156,7 +156,7 @@ export const todayMailSend = defineCommand({
   // upstream: the deployment's Supabase Auth keeps its own record of each email (AUTH_SESSION_CHECK=db), so a member's address must
   // be confirmed there too. Only the system context runs this, so the worker's own word for it is trusted.
   input: z.strictObject({ upstream: z.boolean().optional() }),
-  // Queues mail through the kernel pipeline in its transaction: a send, an effect outside Crove (#1578).
+  // Queues mail through the kernel pipeline in its transaction: a send, an effect outside Ludy (#1578).
   risk: 'R2',
   sideEffect: 'external',
   access: 'system',

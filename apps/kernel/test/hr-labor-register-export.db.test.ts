@@ -7,7 +7,7 @@
 // - erased employee masked as `[Đã xóa theo yêu cầu]` without calling `subjectVault.open`, audit row logged (`months: []`, no PII);
 // - POST /api/rpc/hr/payroll/laborCheck works WITHOUT 5-minute MFA, returns deterministic counts & findings with AI off, never calls `subjectVault.open`,
 //   refuses `member`/`viewer` with 403, and logs sensitive read + `hr.payroll.labor_check.audit` (`{ kind, checked }` only, no PII).
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; the suite creates and drops its own disposable database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; the suite creates and drops its own disposable database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { inflateRawSync } from 'node:zlib';
@@ -72,7 +72,7 @@ const setRuleStatus = (status: 'confirmed' | 'commentary') => {
   for (const row of PAYROLL_RULES) (row as { status: string }).status = status;
 };
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -96,7 +96,7 @@ const DUNG_INSURANCE = '9988776655';
 const DUNG_ADDRESS = '99 Đường Xóa Dữ Liệu';
 
 suite('HR labor register and 01/PLI exports on PostgreSQL (#3372)', () => {
-  const dbName = `crove_test_labor_reg_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_labor_reg_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appUrl = '';
   let pool: pg.Pool;

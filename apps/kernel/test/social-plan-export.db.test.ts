@@ -1,7 +1,7 @@
 // The content plan export (#978) on PostgreSQL 17: members and above export the channel posts of a range as a CSV
 // file, one row per channel post with its time in the zone asked for, filtered by channel and label, capped at 500
 // rows with a truncated flag, audited with counts only; another org's posts never join; and the file stripped to the
-// import's columns goes back through the app's own import as the same drafts. Set CROVE_TEST_ADMIN_URL to a superuser
+// import's columns goes back through the app's own import as the same drafts. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser
 // URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -16,7 +16,7 @@ import { parseCsv } from '../../app/src/lib/bank-statement.ts';
 import { importRows } from '../../app/src/lib/social-import.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const DAY = 86_400_000;
@@ -25,7 +25,7 @@ const HOUR = 3_600_000;
 type Export = { filename: string; csv: string | null; rows: PlanRow[] | null; truncated: boolean };
 
 suite('social content plan export on PostgreSQL (#978)', () => {
-  const dbName = `crove_test_social_plan_export_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_plan_export_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

@@ -2,7 +2,7 @@
 // LISTEN connection and tickets. The security rules (org isolation, single-use tickets, closing on removal and revoke,
 // the EXECUTE matrix, the redeem cap) are in test/invariant/stream.db.test.ts (#281); this file keeps the product
 // flows: rolled-back writes send nothing, the per-user caps, the ticket outcomes, and the listener's self-probe.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its database.
 import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join as joinPath } from 'node:path';
@@ -23,7 +23,7 @@ import { createSessionStatusSource } from '../src/sessions.ts';
 import { StreamHub, createDbTicketStore, createPgNotificationSource, newTicket } from '../src/stream.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'stream-test-secret-0123456789-abcdefghij';
 const ISSUER = 'http://localhost:9999';
@@ -38,7 +38,7 @@ interface SseEvent {
 }
 
 suite('invalidation stream on PostgreSQL', () => {
-  const dbName = `crove_test_stream_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_stream_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let runtime: Runtime;

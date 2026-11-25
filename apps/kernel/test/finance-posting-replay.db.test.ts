@@ -4,7 +4,7 @@
 // { replayed: true } with the same entry and nothing written. A replay of an entry no longer in force (its source
 // re-posted as a later revision, or the entry reversed) is refused (POSTING_SUPERSEDED). postNewEntry, the path of every
 // command that posts a source it just made, refuses any replay (ALREADY_POSTED). The revision rules themselves are in
-// finance-source-revision.db.test.ts. Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its own
+// finance-source-revision.db.test.ts. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; the run creates and drops its own
 // database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -18,7 +18,7 @@ import { Runtime, defineCommand } from '@ludy/kernel-runtime';
 import { postJournalEntry, postNewEntry } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 
 const LINES = [
@@ -77,7 +77,7 @@ const postNew = defineCommand({
 const suite = ADMIN ? describe : describe.skip;
 
 suite('the posting path tells a replay from a new posting (#1925)', () => {
-  const dbName = `crove_test_posting_replay_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_posting_replay_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let runtime: Runtime;

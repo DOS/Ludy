@@ -58,7 +58,7 @@ describe('period summary figures (#1237)', () => {
     expect(byLabel.get('Posts published, this period')?.value).toBe(12);
     expect(byLabel.get('Posts published, change from the previous period (up)')).toEqual({ label: 'Posts published, change from the previous period (up)', value: 20, percent: true });
     expect(byLabel.get('Reach (people reached), change from the previous period (down)')?.value).toBe(5.8);
-    // Engagement adds the platforms' counts; Crove's own link clicks are a count of their own.
+    // Engagement adds the platforms' counts; Ludy's own link clicks are a count of their own.
     expect(byLabel.get('Engagement (reactions, comments, shares, saves and clicks counted by the platforms), this period')?.value).toBe(340);
     expect(byLabel.get("Clicks on the posts' short links, this period")?.value).toBe(25);
     expect(byLabel.has("Clicks on the posts' short links, previous period")).toBe(false);

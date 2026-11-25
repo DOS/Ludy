@@ -1,4 +1,4 @@
-// Crove Social home: what goes out next (an agenda by day), what waits for review, drafts, and what went out.
+// Ludy Social home: what goes out next (an agenda by day), what waits for review, drafts, and what went out.
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
 import { Link, Navigate, useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';

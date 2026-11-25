@@ -1,6 +1,6 @@
 // The calendar core (#1313) on PostgreSQL 17: a member's working hours and events, who reads and changes them, free
 // slots that a busy event or a public holiday takes away, and the database's own rules (no two active bookings of a
-// member overlap, events bounded and ordered). Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own
+// member overlap, events bounded and ordered). Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own
 // database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -13,7 +13,7 @@ import { isVietnamHoliday, vietnamHolidays, weekdayOf, zonedDate, zonedInstant, 
 import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const VN = 'Asia/Ho_Chi_Minh';
@@ -39,7 +39,7 @@ const dayRange = (date: string) => ({ from: new Date(zonedInstant(VN, date, 0)).
 const at = (date: string, minute: number) => new Date(zonedInstant(VN, date, minute)).toISOString();
 
 suite('calendar core on PostgreSQL (#1313)', () => {
-  const dbName = `crove_test_calendar_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_calendar_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

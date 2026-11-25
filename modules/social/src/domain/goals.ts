@@ -15,7 +15,7 @@ export const GOAL_TARGET_MAX = 1_000_000_000_000;
 // The zone goals are counted in until an owner or admin sets one.
 export const GOAL_DEFAULT_TIME_ZONE = 'Asia/Ho_Chi_Minh';
 // A goal's engagement adds up the counts the client report and the report mail call engagement: reactions, comments,
-// shares, saves and the platform's own clicks (not Crove's short link clicks, which may count the same people).
+// shares, saves and the platform's own clicks (not Ludy's short link clicks, which may count the same people).
 export const GOAL_ENGAGEMENT_COUNTS = ['reactions', 'comments', 'shares', 'saves', 'clicks'] as const;
 
 export type GoalStatus = 'met' | 'missed' | 'on_track' | 'behind' | 'no_data';

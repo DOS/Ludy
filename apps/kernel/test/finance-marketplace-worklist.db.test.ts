@@ -7,7 +7,7 @@
 //   is posted; a settlement with a deduction nobody can classify is not offered, one with money to classify is offered with those lines (#4303 S4);
 // - the invoices to clear: a platform's posted fee invoice while fees wait on 1388, with what a clearing would take; gone once cleared, and another supplier's or a reversed invoice is not offered;
 // - the facts count the posted settlements without a payout, and no more once the payout is posted.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; the run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -19,7 +19,7 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { MARKETPLACE_POSTING_MAPS, createMarketplaceFeeClearingCommands, createMarketplacePayoutCommands, createMarketplaceSettlementCommands, createMarketplaceWorklist, financeCommands, financeQueries, type MarketplacePostingMap } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -47,7 +47,7 @@ interface SeedLine {
 const netOf = (l: SeedLine) => Number(l.sales) - Number(l.discount ?? 0) - Number(l.refund ?? 0) - Number(l.commission ?? 0) - Number(l.service ?? 0) - Number(l.payment ?? 0) - Number(l.shipping ?? 0) - Number(l.tax ?? 0) + Number(l.other ?? 0);
 
 suite("the Sàn screen's work list on PostgreSQL (#2516)", () => {
-  const dbName = `crove_test_mkt_work_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_mkt_work_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let rt: Runtime;

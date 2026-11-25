@@ -2,7 +2,7 @@
 // Conversation retention, erasure and Meta's data deletion on PostgreSQL 17 (CV6, #2305): how long threads are kept and who sets it,
 // the nightly purge of what is past it (per org, in batches, nothing of a message in the audit row), erasing one customer (R3,
 // owners and admins), the one Meta callback that fans out to the Ads and the conversation sides under one code, and the export
-// listing the conversation tables. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// listing the conversation tables. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -22,7 +22,7 @@ import { createHttpApp } from '../src/http.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const SECRET = 'meta-pages-app-secret-for-the-test';
@@ -44,7 +44,7 @@ class MemoryStore implements BlobStore {
 }
 
 suite('conversation retention, erasure and the Meta deletion callback on PostgreSQL (CV6, #2305)', () => {
-  const dbName = `crove_test_conversations_cv6_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_conversations_cv6_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appUrl = '';
   let pool: pg.Pool;

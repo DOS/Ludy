@@ -4,7 +4,7 @@
 // fetched twice for a list), a second sync of the same answer, the sealed values bound to the user, org and period, the
 // roles, the guard after repeated wrong passwords, the feature switch, and the password, the CAPTCHA answer and the
 // portal's token nowhere in the database or the stored files.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
@@ -28,7 +28,7 @@ import { TEST_MANIFESTS } from './manifests.ts';
 // What the person reads for PORTAL_LIST_TOO_LARGE, whatever cap stopped the list (#1938).
 const TOO_LARGE = 'Danh sách của kỳ này quá lớn để lấy một lần; hãy xuất danh sách Excel từ cổng thuế rồi tải lên';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-portal-sync-0123456789';
 const ISSUER = 'crove-auth';
@@ -68,7 +68,7 @@ const NO_SANDBOX: ExtractClient = {
 const suite = ADMIN ? describe : describe.skip;
 
 suite('assisted tax portal sync (#325)', () => {
-  const dbName = `crove_test_portal_sync_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_portal_sync_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

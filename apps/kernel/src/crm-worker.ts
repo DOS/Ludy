@@ -2,7 +2,7 @@
 // The worker's part of the crm module's contact import (issue #2251, docs/plan/crm.md step K5b): the daily sweep of staged
 // import rows past their 7 days. A commit, a cancel and the next import command of an org already clear what they
 // find; this pass reaches the orgs that never import again. startWorker() works and schedules it only when the crm module is
-// installed (Runtime.installed('crm'), CROVE_MODULES). The definer lists org ids; the deletion runs as the crm.import.expire
+// installed (Runtime.installed('crm'), LUDY_MODULES). The definer lists org ids; the deletion runs as the crm.import.expire
 // command in each org's system context. Logs carry ids and codes only.
 import { sql } from 'kysely';
 import type { Db } from '@ludy/db';

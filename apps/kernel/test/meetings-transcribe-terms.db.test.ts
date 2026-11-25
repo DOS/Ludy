@@ -16,7 +16,7 @@ import { runMeetingsTranscribe, type MeetingsTranscribeDeps } from '../src/meeti
 import { fakeMediaMeasurer } from './fake-media.ts';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -43,7 +43,7 @@ interface Received {
 }
 
 suite('the term list of a transcription run (#3499)', () => {
-  const dbName = `crove_test_terms_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_terms_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let orgId = '';

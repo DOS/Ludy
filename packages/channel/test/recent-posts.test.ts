@@ -481,11 +481,11 @@ describe('TikTokPublisher.listRecentPosts', () => {
     expect(JSON.parse(calls[0]?.body ?? '{}')).toEqual({ max_count: 20 });
   });
 
-  it("gives a video the id publish records for it, so a video Crove published is Crove's", async () => {
+  it("gives a video the id publish records for it, so a video Ludy published is Ludy's", async () => {
     // The late-id sweep records the public id status/fetch gives (#1475); the listing gives the same string.
     const { fetchImpl } = routes({
       [status]: [{ body: '{"data":{"status":"PUBLISH_COMPLETE","publicaly_available_post_id":[7430000000000000777]},"error":{"code":"ok"}}' }],
-      [list]: [{ body: `{"data":{"videos":[{"id":7430000000000000777,"create_time":${seconds(DAY)},"title":"Bài của Crove"}],"cursor":1,"has_more":false},"error":{"code":"ok"}}` }],
+      [list]: [{ body: `{"data":{"videos":[{"id":7430000000000000777,"create_time":${seconds(DAY)},"title":"Bài của Ludy"}],"cursor":1,"has_more":false},"error":{"code":"ok"}}` }],
     });
     const publisher = new TikTokPublisher(app, fetchImpl);
     const late = await publisher.lateId({ externalAccountId: input.externalAccountId, secret, externalRef: 'v_pub_file~v2-1.123', scopes: ['video.publish'] });

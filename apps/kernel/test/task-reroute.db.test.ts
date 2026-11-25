@@ -6,7 +6,7 @@
 // activity row that takes the task's entity, an event the notification dispatch turns into a notice for whoever has it
 // now, and the moves in the command's audit row. Org-level tasks and tasks the holder still reads stay. The database
 // moves them set-based (ludy_kernel.task_reroute), for an owner's context only.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; the run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -19,13 +19,13 @@ import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 import { enterUser } from './context-token.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SYSTEM = { type: 'system' as const, component: 'kernel.notification' };
 const suite = ADMIN ? describe : describe.skip;
 
 suite('tasks a chart or role change would strand (#1799)', () => {
-  const dbName = `crove_test_task_reroute_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_task_reroute_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let app: Runtime;

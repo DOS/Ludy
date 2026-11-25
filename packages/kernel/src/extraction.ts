@@ -101,7 +101,7 @@ export async function voidedProposals(ctx: QueryContext, proposalIds: readonly s
   return new Set(found.status === 'ok' ? found.value : []);
 }
 
-// An executed proposal whose recorded purchase document was voided (above). The invoice is no longer in Crove's
+// An executed proposal whose recorded purchase document was voided (above). The invoice is no longer in Ludy's
 // books, so its file may be read again into a new proposal and recorded anew; any other executed proposal ends the
 // file's reading for good.
 export async function executedButVoided(ctx: QueryContext, proposal: { id: string; status: string } | undefined): Promise<boolean> {

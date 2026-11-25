@@ -1,5 +1,5 @@
 // Internal comments and the activity of a Social post on PostgreSQL 17 (issue #582): who may comment and edit, the
-// edit window, and the timeline from comments, decisions and audited commands. Set CROVE_TEST_ADMIN_URL to a superuser
+// edit window, and the timeline from comments, decisions and audited commands. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser
 // URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -12,12 +12,12 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { socialCommands, socialQueries, type ActivityItem, type PostView } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('social post comments and activity on PostgreSQL (#582)', () => {
-  const dbName = `crove_test_social_activity_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_activity_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

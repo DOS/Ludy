@@ -1,5 +1,5 @@
 // The tax portal's purchase-invoice list (issue #465): an .xlsx the accountant exports from hoadondientu.gdt.gov.vn,
-// imported per VAT period and reconciled with the purchase documents and pending proposals Crove holds. The rules
+// imported per VAT period and reconciled with the purchase documents and pending proposals Ludy holds. The rules
 // are in @ludy/mod-finance (domain/portal-reconcile.ts); these are the shapes the API and the SPA share.
 import { z } from 'zod';
 import { zId, zLocalDate, zMoney, zVatPeriod } from './schemas.ts';
@@ -16,7 +16,7 @@ export type PortalListDirection = (typeof PORTAL_LIST_DIRECTIONS)[number];
 export const PORTAL_LIST_STATUSES = ['pending', 'done', 'failed'] as const;
 export type PortalListStatus = (typeof PORTAL_LIST_STATUSES)[number];
 
-// declared_late (#560): a Crove document of an earlier invoice date, posted in this period after its own month was
+// declared_late (#560): a Ludy document of an earlier invoice date, posted in this period after its own month was
 // locked (#478). The VAT working declares it here; the portal lists it under its invoice date, in an earlier period.
 export const RECONCILE_OUTCOMES = ['matched', 'in_inbox', 'amount_mismatch', 'missing', 'void_in_ludy', 'void', 'not_on_portal', 'declared_late'] as const;
 export type ReconcileOutcome = (typeof RECONCILE_OUTCOMES)[number];
@@ -105,8 +105,8 @@ export const zReconcileItem = z.object({
   outsidePeriod: z.boolean(),
   duplicateRows: z.number().int().nonnegative(),
   duplicateInLudy: z.boolean(),
-  // The Crove document is dated in (or, matched to a row of this period's lists, before) this period but posted after
-  // it (#478): the VAT working declares it in the period of its posting date (crove.postingDate), flagged declared_late
+  // The Ludy document is dated in (or, matched to a row of this period's lists, before) this period but posted after
+  // it (#478): the VAT working declares it in the period of its posting date (ludy.postingDate), flagged declared_late
   // there, not in this one (#560).
   declaredInLaterPeriod: z.boolean(),
 });

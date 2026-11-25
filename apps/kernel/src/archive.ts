@@ -89,7 +89,7 @@ async function mapLimited<T, R>(items: readonly T[], limit: number, fn: (item: T
   return results;
 }
 
-// An entry's bytes and type when it is a document Crove files, or why it is not. The sandbox's answer is untrusted, so
+// An entry's bytes and type when it is a document Ludy files, or why it is not. The sandbox's answer is untrusted, so
 // the size is checked again and the content, not the name, decides the type, as for an upload; an archive inside the
 // archive is never opened.
 function entryDocument(entry: ArchiveEntry): { content: Uint8Array; contentType: string } | { reason: ArchiveEntryReason } {

@@ -3,7 +3,7 @@
 // failed audit write would, and each route must answer an error instead of a file: the journal, the MISA exports, the
 // VAT working and its HTKK XML (finance.vat.export), the ledger reports (finance.ledger.export), the financial
 // statements, also as HTKK XML (#920), and the register of fixed assets (#919). On a real PostgreSQL 17; the commands
-// themselves are covered by the export tests of each report. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run
+// themselves are covered by the export tests of each report. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run
 // creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -21,7 +21,7 @@ import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-export-audit-0123456789';
 const ISSUER = 'crove-auth';
@@ -59,7 +59,7 @@ const failing = (name: string) =>
 const suite = ADMIN ? describe : describe.skip;
 
 suite('finance exports: no audit row, no download (#365)', () => {
-  const dbName = `crove_test_export_audit_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_export_audit_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let app: ReturnType<typeof createHttpApp>;

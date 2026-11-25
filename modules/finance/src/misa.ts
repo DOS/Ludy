@@ -1,5 +1,5 @@
 // Vouchers in the Excel import templates of MISA SME (issue #317). The firm keeps its system of record (decision
-// D10); Crove hands it purchase and sales vouchers, and cash and bank receipts and payments (#657), in the layout MISA's
+// D10); Ludy hands it purchase and sales vouchers, and cash and bank receipts and payments (#657), in the layout MISA's
 // "Tệp > Nhập khẩu từ Excel" reads. Purchase lines on a stock account (152, 153, 156) go to the goods purchase
 // template with the org's MISA item and warehouse codes; the other lines to the services template (#1398).
 //
@@ -10,7 +10,7 @@
 //
 // A voucher with several invoice lines is several rows: the voucher columns repeat and the line columns change
 // (MISA's rule for multi-line vouchers). Cells that name a MISA catalog entry (vendor, customer, item, unit,
-// employee codes) are left blank: Crove cannot know the firm's codes, and an unknown code makes MISA refuse the row.
+// employee codes) are left blank: Ludy cannot know the firm's codes, and an unknown code makes MISA refuse the row.
 //
 // Values follow the same safety rules as the journal export (export.ts): amounts are exact (`decimalCell`) and
 // text is written as inert string cells.
@@ -87,7 +87,7 @@ export interface SalesVoucher {
   customer: VoucherParty;
   /** Debit account of the sale, 131 when not paid at once. */
   receivableAccount: string;
-  /** Output VAT account, 3331 in the TT133 chart Crove uses. */
+  /** Output VAT account, 3331 in the TT133 chart Ludy uses. */
   vatAccount: string;
   vatAmount: string;
   lines: Array<VoucherLine & { revenueAccount: string }>;
@@ -102,7 +102,7 @@ export interface CashVoucher {
   /** The cash voucher's id (see PurchaseVoucher.sourceId). */
   sourceId: string;
   type: VoucherType;
-  /** Crove's voucher code, PT00001, PC00001, BC00001 or BN00001. */
+  /** Ludy's voucher code, PT00001, PC00001, BC00001 or BN00001. */
   code: string;
   /**
    * The key of the number series' period the code was taken in (#1401): `2026` for a yearly reset (the default),
@@ -127,7 +127,7 @@ export interface CashVoucher {
 export type MisaVatCode = '0' | '5' | '8' | '10' | 'KCT' | 'KKKNT' | 'KHAC';
 
 export interface MisaVatRate {
-  /** null: the invoice gave no rate Crove understands; the cell stays blank and must be checked. */
+  /** null: the invoice gave no rate Ludy understands; the cell stays blank and must be checked. */
   code: MisaVatCode | null;
   /** "Tỷ lệ tính thuế (Thuế suất KHAC)", only with KHAC. */
   otherRate: string | null;
@@ -208,7 +208,7 @@ export type PurchaseRow = MisaRow<PurchaseVoucher, PurchaseVoucher['lines'][numb
 export type SalesRow = MisaRow<SalesVoucher, SalesVoucher['lines'][number]>;
 
 /**
- * "Số chứng từ (*)", at most 20 characters. Crove has no voucher numbering, so the number comes from the journal
+ * "Số chứng từ (*)", at most 20 characters. Ludy has no voucher numbering, so the number comes from the journal
  * entry: a prefix and the last 12 hex digits of its id (the random part of a UUIDv7). The same entry always gets
  * the same number, so importing a period twice does not create a second voucher under a new number.
  */
@@ -312,7 +312,7 @@ export interface CashRow {
 }
 
 /**
- * Cash and bank vouchers keep Crove's own number behind this prefix: the firm's MISA numbers its own vouchers PT00001,
+ * Cash and bank vouchers keep Ludy's own number behind this prefix: the firm's MISA numbers its own vouchers PT00001,
  * PC00001 ..., so the bare code could collide with one of them. Same number on every export.
  */
 export const CASH_VOUCHER_PREFIX = 'CR';
@@ -384,7 +384,7 @@ function vatCode(vat: MisaVatRate): MisaValue {
 
 /**
  * MISA SME "Chứng từ mua dịch vụ" (Mua hàng > Chứng từ mua dịch vụ), template
- * Chung_tu_mua_dich_vu_chua_thanh_toan_VND.xls: a purchase not paid yet, in VND. Crove posts purchases as
+ * Chung_tu_mua_dich_vu_chua_thanh_toan_VND.xls: a purchase not paid yet, in VND. Ludy posts purchases as
  * Nợ expense or asset accounts, Nợ 1331/1332, Có 331, which is this voucher. Lines on a stock account (152, 153, 156)
  * are received into a warehouse instead, in the goods purchase template below (#1398).
  */
@@ -416,7 +416,7 @@ export const MISA_SME_PURCHASE_SERVICE: MisaTemplate<PurchaseRow> = {
     { header: 'Tỷ lệ tính thuế (Thuế suất KHAC)', cell: (r) => decimal(r.vat.otherRate) },
     { header: 'Tiền thuế GTGT', cell: (r) => fixed(r.vatAmount) },
     { header: 'TK thuế GTGT', cell: (r) => text(r.vatAccount) },
-    { header: 'Mẫu số HĐ', cell: blank }, // not stored by Crove (KHMSHDon)
+    { header: 'Mẫu số HĐ', cell: blank }, // not stored by Ludy (KHMSHDon)
     { header: 'Ký hiệu HĐ', cell: (r) => text(r.voucher.invoice.series) },
     // Never cut (MISA allows 25 characters): a cut number could make two invoices look the same.
     { header: 'Số hóa đơn', cell: (r) => text(r.voucher.invoice.number) },
@@ -432,7 +432,7 @@ export const MISA_SME_PURCHASE_SERVICE: MisaTemplate<PurchaseRow> = {
 /**
  * MISA SME "Chứng từ mua hàng nhập kho" (Mua hàng > Chứng từ mua hàng hóa, Mua hàng trong nước nhập kho), template
  * Mua_hang_qua_kho_VND.xls (#1398): goods bought in Vietnam, received into a warehouse, not paid yet, in VND, with
- * their invoice. Crove posts a stock line Nợ 152/153/156, Nợ 1331, Có 331, which is this voucher. Headers and value
+ * their invoice. Ludy posts a stock line Nợ 152/153/156, Nợ 1331, Có 331, which is this voucher. Headers and value
  * codes come from the template file of MISA SME 2026 itself (its 44 headers in row 1 and its input note per column;
  * source S9 in docs/integrations/misa-sme-import.md). The import tax columns are for "Mua nhập khẩu" and stay blank.
  */
@@ -448,7 +448,7 @@ export const MISA_SME_PURCHASE_GOODS: MisaTemplate<GoodsPurchaseRow> = {
     { header: 'Ngày chứng từ (*)', cell: (r) => date(r.voucher.entryDate) },
     { header: 'Số phiếu nhập (*)', maxLength: 20, cell: (r) => text(r.voucherNo) },
     { header: 'Số chứng từ thanh toán', cell: blank }, // not paid yet
-    { header: 'Mẫu số HĐ', cell: blank }, // not stored by Crove (KHMSHDon)
+    { header: 'Mẫu số HĐ', cell: blank }, // not stored by Ludy (KHMSHDon)
     { header: 'Ký hiệu HĐ', maxLength: 20, cell: (r) => text(r.voucher.invoice.series) },
     // Never cut (MISA allows 25 characters): a cut number could make two invoices look the same.
     { header: 'Số hóa đơn', cell: (r) => text(r.voucher.invoice.number) },
@@ -491,7 +491,7 @@ export const MISA_SME_PURCHASE_GOODS: MisaTemplate<GoodsPurchaseRow> = {
 
 /**
  * MISA SME "Chứng từ bán hàng" (Bán hàng > Chứng từ bán hàng), template Ban_hang_VND.xls: a domestic sale in VND,
- * not collected yet, with its invoice already issued (the e-invoice comes from Crove's provider, issue #313), no
+ * not collected yet, with its invoice already issued (the e-invoice comes from Ludy's provider, issue #313), no
  * warehouse issue.
  */
 export const MISA_SME_SALES: MisaTemplate<SalesRow> = {

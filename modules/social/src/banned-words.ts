@@ -12,7 +12,7 @@
 // Every check has a budget (BANNED_OPS_MAX; a command over many posts shares one BANNED_COMMAND_OPS_MAX across them):
 // past it a command refuses (BANNED_WORDS_TOO_COMPLEX), an import row or a copy stays a draft, an automatic approval
 // leaves the channel in review, and a view says too_complex.
-// Matching is the pure domain/banned-words.ts, the same in the app. Crove ships no list of its own.
+// Matching is the pure domain/banned-words.ts, the same in the app. Ludy ships no list of its own.
 import { sql } from 'kysely';
 import { z } from 'zod';
 import { zId } from '@ludy/kernel-contract';

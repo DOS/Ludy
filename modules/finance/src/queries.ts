@@ -453,7 +453,7 @@ interface VoucherSource {
 }
 
 // The recorded documents of one direction whose journal entry falls in the date range, oldest first, with their lines.
-// A voided document (its entry reversed, #165) is left out: it is no longer in Crove's books. Of one legal entity (#1280).
+// A voided document (its entry reversed, #165) is left out: it is no longer in Ludy's books. Of one legal entity (#1280).
 async function loadVouchers(
   ctx: QueryContext,
   direction: DocumentDirection,

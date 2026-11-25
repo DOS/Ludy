@@ -1,7 +1,7 @@
 // Staged presigned uploads and generation-pinned downloads (plan §7.6, ADR-0013, issue #109) through the HTTP API,
 // against a real PostgreSQL 17. Every case runs on an in-memory versioned store with presigned transfers, and on an
 // S3-compatible server when CROVE_TEST_S3_URL is set (http://<access key>:<secret>@<host>:<port>/<bucket>; CI:
-// MinIO), where the browser's POST and GET go to the server itself. Set CROVE_TEST_ADMIN_URL to a superuser URL.
+// MinIO), where the browser's POST and GET go to the server itself. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL.
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -35,7 +35,7 @@ import { createHttpApp, type HttpDeps } from '../src/http.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const S3_URL = process.env.LUDY_TEST_S3_URL ?? process.env.CROVE_TEST_S3_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const FIXTURE = new Uint8Array(readFileSync(new URL('../../extract/test/fixtures/einvoice-basic.xml', import.meta.url)));
@@ -158,7 +158,7 @@ if (S3_URL) {
 const suite = ADMIN ? describe : describe.skip;
 
 suite.each(backends)('staged uploads on PostgreSQL and $name (issue #109)', (backend) => {
-  const dbName = `crove_test_upload_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_upload_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let store: BlobStore;

@@ -2,7 +2,7 @@
 // Connecting Microsoft Teams end to end through the HTTP rpc (meetings integrations C4, #3176, step B): `meetingPlatform/providers`, `connectStart` and `connectFinish` against a REAL database and a Teams
 // adapter whose transport is a stub (no Microsoft host is ever called). The state is single use and the member's own, the PKCE verifier reaches the token endpoint and matches the challenge of the dialog,
 // the tokens are sealed for the member's tenant and user in the shape the sweep and the refresh open, a tenant that needs its administrator is told so plainly and nothing is stored, and nothing the
-// platform returned is ever in an answer. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// platform returned is ever in an answer. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
@@ -22,7 +22,7 @@ import { parseCredential } from '../src/meeting-platform-credential.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-meeting-teams-0123456789';
 const ISSUER = 'crove-auth';
@@ -55,7 +55,7 @@ function teamsStub() {
 }
 
 suite('Microsoft Teams connect through the HTTP rpc (meetings integrations C4, #3176)', () => {
-  const dbName = `crove_test_mp_teams_connect_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_mp_teams_connect_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let apps: Record<'teams' | 'noTeams' | 'noKey', ReturnType<typeof createHttpApp>>;

@@ -30,12 +30,12 @@ const setRuleStatus = (status: 'confirmed' | 'commentary') => {
   for (const row of PAYROLL_RULES) (row as { status: string }).status = status;
 };
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('HR annual leave ledger, unpaid-leave sync, and Ly anomaly (#3394)', () => {
-  const dbName = `crove_test_hrleave_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_hrleave_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let rt: Runtime;

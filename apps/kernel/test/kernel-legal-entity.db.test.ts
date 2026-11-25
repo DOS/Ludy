@@ -1,7 +1,7 @@
 // The kernel projections per legal entity (#1280 part 3) on PostgreSQL 17: extractions and notifications written
 // before the migration move to the org's default entity, the entity never changes, and a member limited to one entity
 // sees and writes only that entity's rows, in the notification list as in raw SQL. Proposals are scoped by #1538
-// (proposal-legal-entity.db.test.ts). Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// (proposal-legal-entity.db.test.ts). Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { copyFileSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -17,13 +17,13 @@ import { TEST_MANIFESTS } from './manifests.ts';
 import { enterUser } from './context-token.ts';
 import { createPreCutoverClient, createPreCutoverPool } from './pre-cutover-db.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const THIS_VERSION = '20261102230000';
 const suite = ADMIN ? describe : describe.skip;
 
 suite('kernel projections per legal entity on PostgreSQL (#1280 part 3)', () => {
-  const dbName = `crove_test_kernel_le_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_kernel_le_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appUrl = '';
   let before = '';

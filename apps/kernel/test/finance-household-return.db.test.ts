@@ -2,7 +2,7 @@
 // The 01/CNKD return worksheet of a household business (#2518, plan stock-and-marketplaces.md sections 8.5 and 12 row 7), on PostgreSQL 17: one quarter of the ledger's account 511 split by trade, VAT and
 // PIT by the percentages in force on the quarter's last day (each rounded to a whole dong), the tax the platforms already withheld from the stored settlements (a reversed one left out), the draft state
 // while a row behind it is still `commentary` (the Excel ask is refused then), and the cases the worksheet refuses (no profile, group 1, the income method, a profile that changes inside the quarter, a
-// split that does not fit). Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// split that does not fit). Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -15,12 +15,12 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('the 01/CNKD return worksheet of a household business (#2518)', () => {
-  const dbName = `crove_test_household_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_household_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

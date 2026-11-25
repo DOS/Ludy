@@ -22,7 +22,7 @@ import { RateLimiter } from '../src/rate-limit.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-notes-clipper-secret-0123456789-abcdef';
 const ISSUER = 'crove-auth-notes-ext';
@@ -51,7 +51,7 @@ const EXT_ID = 'a'.repeat(32);
 const challengeOf = (verifier: string) => createHash('sha256').update(verifier).digest('base64url');
 
 suite('Notes v2 E4 (#3560): extension notes scope, Quick Capture & Web Clipper over HTTP + PostgreSQL 17', () => {
-  const dbName = `crove_test_notes_ext_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_notes_ext_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: ReturnType<typeof createDb>;

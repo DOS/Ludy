@@ -3,7 +3,7 @@
 // read its message and by nobody else (the table, the command and the bytes route), fetched through the egress guard from the platform's
 // media hosts only, stored under a blob key of its own, and deleted with its message by every path (the erasure of a customer, the retention
 // purge, the erasure of a connection, a platform removal, the expiry of its address), the store holding no object afterwards. No address and no
-// byte of an image reaches an audit row, an event or a job. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// byte of an image reaches an audit row, an event or a job. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -25,7 +25,7 @@ import { dueConversationAttachments, purgeExpiredConversations, requestConversat
 import { contextToken } from './context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const SYSTEM = { type: 'system' as const, component: 'conversations' };
@@ -61,7 +61,7 @@ const png = (extra = 0): Buffer => {
 };
 
 suite('customers’ images as files bound to their message on PostgreSQL (CV5c, #2357)', () => {
-  const dbName = `crove_test_conversations_images_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_conversations_images_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appUrl = '';
   let pool: pg.Pool;

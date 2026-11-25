@@ -458,7 +458,7 @@ const zReply = z
 export const reviewReply = defineCommand({
   name: 'social.review.reply',
   input: z.strictObject({ feedbackId: zId, body: zReply.nullable() }),
-  // The client sees the reply on the review link's page at once: an effect outside Crove (#1578).
+  // The client sees the reply on the review link's page at once: an effect outside Ludy (#1578).
   risk: 'R2',
   sideEffect: 'external',
   access: MEMBERS,

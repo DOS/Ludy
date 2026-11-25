@@ -2,7 +2,7 @@
 // The module and coworker switches at the write and proposal entries of an MCP grant (#4155), as product flows. The refusals themselves, each audited as the grant's, and the EXECUTE matrix of the check are the
 // security line and live in test/invariant/mcp-grant-switches.db.test.ts. This file pins what a person sees around them: a released switch lets the very next call of each entry through (a module's switch and
 // an agent switch naming the grant), and so does an app the org switched back on, a switch of another module does not touch a call, a Hộp thư proposal is judged on the kernel and not on another module, and a person's own command is untouched.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DomainError, type UserActor } from '@ludy/kernel-runtime';

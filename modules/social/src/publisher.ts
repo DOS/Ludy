@@ -201,7 +201,7 @@ async function provide(deps: PublishDeps, orgId: string, publisher: Publisher, w
         const refusal = publisher.refusal?.(work.settings);
         if (refusal) return fromPublish({ kind: 'rejected', error: 'bad_request', code: refusal });
         // A permission the variant needs that its connection was not granted (#903: a TikTok connection made before
-        // Crove asked for video.upload): nothing is sent, and the variant waits paused for a reconnect.
+        // Ludy asked for video.upload): nothing is sent, and the variant waits paused for a reconnect.
         const scope = isProvider(publisher.provider) ? scopeNeeded(publisher.provider, work.settings) : null;
         if (scope && !work.scopes.includes(scope)) return { kind: 'blocked', code: 'CHANNEL_SCOPE_MISSING' };
         const result = await withTimeout(timeout, () =>

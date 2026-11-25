@@ -4,7 +4,7 @@
 // grants (both tables are definer-only; the API puts, the worker claims), the claim (deletes as it hands out and returns the bytes), the ten-minute sweep, ten refused pushes stopping a hook, the body found nowhere
 // but its own row (no outbox, audit or job row ever holds it), and that the org purge names both tables. The owner's side (set, status) and the erasure need a sealed context, so they are tested with the command that
 // calls them (S3); here the API login is shown to be refused them without one.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
@@ -21,7 +21,7 @@ import { createHttpApp } from '../src/http.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-marketplace-hook-0123456789';
 const ISSUER = 'crove-auth';
@@ -58,7 +58,7 @@ const BODY = Buffer.concat([Buffer.from(`{"shop_id":"7495540735365777507","note"
 const HEADER = 'a'.repeat(64);
 
 suite('Marketplace push hook (#4316)', () => {
-  const dbName = `crove_test_marketplace_hook_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_marketplace_hook_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

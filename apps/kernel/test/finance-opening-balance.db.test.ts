@@ -3,7 +3,7 @@
 // replacing an entry by reversing it first, the date rule against other entries, two posts at once, and another org's
 // entries staying out of the check. The posting guard keeps the opening entry first for every writer (#366): another
 // entry dated on or before it is refused, and an import and a posting in flight wait for each other. The pure rules are in modules/finance/test/opening-balance.test.ts.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
@@ -21,7 +21,7 @@ import { createHttpApp } from '../src/http.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-opening-balances-0123456789';
 const ISSUER = 'crove-auth';
@@ -52,7 +52,7 @@ interface Account {
 const suite = ADMIN ? describe : describe.skip;
 
 suite('opening balances from Excel (#320)', () => {
-  const dbName = `crove_test_opening_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_opening_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

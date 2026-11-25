@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The chain grant -> proposal -> approver -> action of an Engage twin, and the authority it runs under (epic #3857, E4, issue #3863; Platform PO conditions of 2026-11-19): the catalog holds exactly the 16 twins
 // with their scope and kind; a grant's call runs nothing of the twin; the nested original's audit row names the approver as its actor and the proposal as its cause, never the grant; and a person who may not approve
-// (a member, a viewer, an owner demoted after the ask) is refused and nothing runs. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// (a member, a viewer, an owner demoted after the ask) is refused and nothing runs. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ENGAGE_PROPOSALS, type ConversationEvent } from '@ludy/kernel-contract';

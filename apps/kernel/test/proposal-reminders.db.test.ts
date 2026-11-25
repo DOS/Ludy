@@ -1,7 +1,7 @@
 // Proposal reminders and escalation on PostgreSQL 17 (#676): an org's policy (owners and admins set it, escalation
 // after the reminder), the worker's sweep reminding the people who may approve a pending proposal once and telling the
 // owners once, four-eyes respected, decided proposals and orgs without a policy left alone, and the scan only the
-// worker may run. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// worker may run. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -12,12 +12,12 @@ import { createOrg, kernelCommands, kernelQueries, sweepProposalNudges, upsertId
 import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('proposal reminders on PostgreSQL (#676)', () => {
-  const dbName = `crove_test_proposal_remind_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_proposal_remind_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

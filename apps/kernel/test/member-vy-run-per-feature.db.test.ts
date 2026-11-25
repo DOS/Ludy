@@ -2,7 +2,7 @@
 // One live Vy run per member per feature (#3029, ADR-0049 decision 1 amended 2026-11-12, owner decision of the same day): another use of Vy no longer cancels a transcription that is
 // still running; a second start of the SAME feature still supersedes the first; every live run of a member ends together on a deny of vy.use, a kill switch and a removal; the budget
 // counts every run; and a race between two starts of one feature leaves one run and a clear code (VY_RUN_BUSY). The database rules (the two partial unique indexes and the two binds)
-// are pinned in test/invariant/member-vy-run-feature.db.test.ts. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// are pinned in test/invariant/member-vy-run-feature.db.test.ts. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -13,13 +13,13 @@ import { MEMBER_VY_FEATURES, createOrg, kernelCommands, kernelQueries, upsertIde
 import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const FEATURES = Object.keys(MEMBER_VY_FEATURES);
 
 suite('one live Vy run per member per feature (#3029)', () => {
-  const dbName = `crove_test_vy_per_feature_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_vy_per_feature_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let orgId = '';

@@ -1,7 +1,7 @@
 // Client report links of Crove Social on PostgreSQL 17 (#643): who makes and revokes them, the report a token opens
 // (the period, the chosen channels, totals, per channel, the best posts), and that nothing else of the org is reachable
 // through it. The public side runs as the API login role with no org context, as the HTTP edge does. Set
-// CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -17,7 +17,7 @@ import { reportView, type ReportPage } from '../src/report-link.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 import { rewriteHistoricalCoreSql } from './pre-cutover-db.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -36,7 +36,7 @@ const WITHOUT_RATES = (page: string) =>
   `((${page}) - 'rateBases' || pg_catalog.jsonb_build_object('previous', ((${page}) -> 'previous') - 'rateBases', 'channels', (SELECT coalesce(pg_catalog.jsonb_agg((x.c - 'rateBases') || pg_catalog.jsonb_build_object('previous', (x.c -> 'previous') - 'rateBases') ORDER BY x.n), '[]'::jsonb) FROM pg_catalog.jsonb_array_elements((${page}) -> 'channels') WITH ORDINALITY x(c, n))))`;
 
 suite('social report links on PostgreSQL (#643)', () => {
-  const dbName = `crove_test_social_report_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_report_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

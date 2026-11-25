@@ -20,7 +20,7 @@ import { createHttpApp } from '../src/http.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const FIXTURE = readFileSync(new URL('../../extract/test/fixtures/einvoice-basic.xml', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-bulk-approve-0123456789';
@@ -55,7 +55,7 @@ interface Account {
 }
 
 suite('bulk approval through the API (#315)', () => {
-  const dbName = `crove_test_bulk_api_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_bulk_api_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let pool: pg.Pool;
   let workerPool: pg.Pool;
   let app: ReturnType<typeof createHttpApp>;

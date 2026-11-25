@@ -16,7 +16,7 @@ describe('LocalDiskStore streamed write', () => {
   const filesIn = async () => readdir(join(root, 'org', orgId)).catch(() => [] as string[]);
 
   beforeAll(async () => {
-    root = await mkdtemp(join(tmpdir(), 'crove-staged-write-'));
+    root = await mkdtemp(join(tmpdir(), 'ludy-staged-write-'));
     store = new LocalDiskStore(root);
   });
   afterAll(async () => {

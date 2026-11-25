@@ -1241,6 +1241,7 @@ export const KERNEL_ERROR_CODES = [
   'INVALID_TARGET',
   'TASK_NOT_FOUND',
   'TASK_CHECKED_OUT',
+  'TASK_STALE_REVISION',
   'OUTSIDE_LEGAL_ENTITY',
   // Ludy Social and connected channels.
   'POST_NOT_FOUND',

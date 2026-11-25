@@ -459,7 +459,7 @@ export const vouchersList = defineQuery({
 
 // The cash or bank vouchers of one type for the MISA SME export (GET /api/export/misa/receipts.xlsx, payments.xlsx,
 // bank-receipts.xlsx and bank-payments.xlsx, #657), oldest first, with their lines as posted: every line of the
-// voucher's entry but the cash or bank line. A voucher whose entry was reversed is left out: it is no longer in Crove's
+// voucher's entry but the cash or bank line. A voucher whose entry was reversed is left out: it is no longer in Ludy's
 // books. At most `limit` vouchers.
 export const cashVouchers = defineQuery({
   name: 'finance.vouchers.cash',

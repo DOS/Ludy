@@ -5,7 +5,7 @@
 // twice counts it once, and a member context cannot raise an item itself. Failures of one queue on one day count on
 // one open item, and one after it was dismissed raises a new one (#1747). The daily prune removes items dismissed 30
 // days ago and any raised 90 days ago, in their own org only.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -22,14 +22,14 @@ import { JOB_SCHEMA, QUEUES } from '../src/jobs-schema.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 import { contextToken } from './context-token.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 // What a failing job carried and threw: none of it may reach an Inbox item.
 const SECRET = 'payload-text-that-must-not-leak';
 
 suite('dead letters raise an Inbox item in their own org (#1720)', () => {
-  const dbName = `crove_test_dlq_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_dlq_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

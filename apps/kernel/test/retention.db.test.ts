@@ -1,6 +1,6 @@
 // Retention purges (issue #38, plan §4.9) on a real PostgreSQL 17: only expired rows of the TTL tables go, never an
 // audit, outbox or ledger row. Who may run it is an invariant (test/invariant/offboarding.db.test.ts).
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; the run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { sql } from 'kysely';
@@ -13,13 +13,13 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { runRetention } from '../src/retention.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 
 const suite = ADMIN ? describe : describe.skip;
 
 suite('retention purges on PostgreSQL (#38)', () => {
-  const dbName = `crove_test_retention_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_retention_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

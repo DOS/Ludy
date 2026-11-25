@@ -1,7 +1,7 @@
 // Labels and the assignee on many Social posts at once on PostgreSQL 17 (#1057): one transaction per command, the
 // posts locked in id order, viewers refused, the assignee a member when some post gets them anew (#1062), each post
 // left out with its reason (a post outside a limited member's channels as not_allowed, #1099), the assignee told once
-// per bulk assignment (#1062), and an entry on each post's timeline. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes
+// per bulk assignment (#1062), and an entry on each post's timeline. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes
 // its own database. The worker's dispatch is run here by hand for each new outbox event.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -14,12 +14,12 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { socialCommands, socialQueries, type ActivityItem, type BulkEditResult, type NotificationItem, type PostView } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('social bulk labels and assignment on PostgreSQL (#1057)', () => {
-  const dbName = `crove_test_social_bulk_edit_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_bulk_edit_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

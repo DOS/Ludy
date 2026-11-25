@@ -3,7 +3,7 @@
 // decision (2026-11-11) an AI app sees the customer data the consenting owner or admin sees (names, email, phone, address, tax code, invoice lines' descriptions); the test
 // pins the exact keys each answer has, that every text is one plain line, and that nothing beyond them leaks (a journal entry's text, a line's unit or account, the
 // source file). A grant sees only its own org, only what its owner or admin sees, and a client's arguments are checked before anything runs.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -15,7 +15,7 @@ import { DomainError, Runtime, type UserActor } from '@ludy/kernel-runtime';
 import { MCP_LINES_PER_INVOICE, financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -27,7 +27,7 @@ const INVOICE_KEYS = ['currency', 'direction', 'id', 'issueDate', 'lineCount', '
 const HIDDEN = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
 
 suite('the MCP data reads (#2975, slice 1b)', () => {
-  const dbName = `crove_test_mcp_data_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_mcp_data_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let runtime: Runtime;

@@ -3,7 +3,7 @@
 // member: the proposals waiting for the caller's own decision grouped by vendor with exact totals, the flags (failed
 // checks, originals), the staged bank statement and the bank lines with no voucher, the VAT deadline only for an org
 // that set its filing period, what a viewer and a member limited to one legal entity do not get, another org's
-// nothing, and a read of 1,000 pending proposals within a bound. Set CROVE_TEST_ADMIN_URL to a superuser URL; each
+// nothing, and a read of 1,000 pending proposals within a bound. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each
 // run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -21,7 +21,7 @@ import type { ParsedInvoice } from '@ludy/l10n-vn';
 import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const PARSED = JSON.parse(readFileSync(new URL('../../../packages/l10n-vn/test/fixtures/einvoice-basic.parsed.json', import.meta.url), 'utf8')) as ParsedInvoice;
 // The last day of a VAT period key ("2026-11" or "2026-Q4"), as YYYY-MM-DD.
@@ -51,7 +51,7 @@ class MemoryStore implements BlobStore {
 }
 
 suite('finance.today: what needs the member in Accounting (#2388)', () => {
-  const dbName = `crove_test_fin_today_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_fin_today_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

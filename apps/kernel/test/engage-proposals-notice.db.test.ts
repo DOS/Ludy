@@ -2,7 +2,7 @@
 // The notice of an AI coworker's proposal (epic #3857, E5, issue #4180; ADR-0051 decision 10, owner decision 2026-11-19, "Cho làm, việc lớn chờ duyệt"): the worker's pass tells the people who may approve a pending
 // proposal of an MCP grant, once, with the notification the Inbox and the bell already use. Who is told (owners and admins, the person who connected the app held back by four-eyes where another approver
 // exists, nobody who is a member or a viewer), one per proposal whatever the passes, none for a refused call (the cap), none left over for a decided proposal, and no text of the call in it.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';

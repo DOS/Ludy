@@ -2,7 +2,7 @@
 // The stale-deal rule and the next steps it raises, on PostgreSQL 17 (#2381, docs/plan/crm.md): an open deal nobody changed for N days, or past its
 // expected close, gets one next step for its owner; running the rule again raises nothing; an edit, a move or a close closes it; done and snooze, one at
 // a time or twenty at once, leave one audit row with ids only; a viewer marks nothing; the org's N is the owners' and admins'; the Home read answers
-// the member's own items and no text a person typed. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// the member's own items and no text a person typed. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -17,7 +17,7 @@ import { raiseCrmNextSteps } from '../src/crm-worker.ts';
 import { contextToken } from './context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const SYSTEM = { type: 'system' as const, component: 'crm.deal_stale' };
@@ -39,7 +39,7 @@ interface StepRow {
 }
 
 suite('stale deals and their next steps on PostgreSQL (#2381)', () => {
-  const dbName = `crove_test_crm_stale_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_crm_stale_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appUrl = '';
   let workerUrl = '';

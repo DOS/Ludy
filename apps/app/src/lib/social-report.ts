@@ -1,7 +1,7 @@
 // Client report links (#643): the period a report covers, from the dates a person picks in their own time zone, and
 // the counts a report shows, in order.
 
-// linkClicks: the clicks on Crove's short links (#724), shown only when a post went out with one. The Story counts
+// linkClicks: the clicks on Ludy's short links (#724), shown only when a post went out with one. The Story counts
 // (#1082) show when the report has them.
 export const REPORT_METRICS = ['impressions', 'reach', 'views', 'reactions', 'comments', 'shares', 'saves', 'clicks', 'linkClicks', 'replies', 'tapsForward', 'tapsBack', 'exits', 'nextStory', 'follows', 'profileVisits'] as const;
 

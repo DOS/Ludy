@@ -1,6 +1,6 @@
-// A minimal XML writer for the files Crove generates (the HTKK VAT return of issue #332): an element tree serialized
+// A minimal XML writer for the files Ludy generates (the HTKK VAT return of issue #332): an element tree serialized
 // with every text value escaped, so no input can open a tag, an entity or a CDATA section. Element names come from
-// Crove's own code, never from data, and are checked anyway. Pure functions, no dependency.
+// Ludy's own code, never from data, and are checked anyway. Pure functions, no dependency.
 
 export interface XmlElement {
   name: string;

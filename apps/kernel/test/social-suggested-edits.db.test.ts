@@ -2,7 +2,7 @@
 // and suggests others; the author accepts through the ordinary edit (a new revision, content hash and version, the
 // channel back in review) or skips it. Outdated suggestions are refused, never applied; channel limits (#1081) hold for
 // suggesting and accepting; viewers do neither; a channel that went out takes no suggestion. The table's CHECKs, the
-// one column ludy_tenant may update, and the comment's events. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run
+// one column ludy_tenant may update, and the comment's events. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run
 // makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -16,12 +16,12 @@ import { socialCommands, socialQueries, textHash, type ActivityItem, type PostVi
 import { mentionToken } from '@ludy/mod-social/contract';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('suggested edits on PostgreSQL (#1236)', () => {
-  const dbName = `crove_test_social_suggestions_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_suggestions_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

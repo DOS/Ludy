@@ -2,7 +2,7 @@
 // The runtime's wiring of a member-bound MCP grant (ADR-0051 decision 2; design note on #2975, slice 3, step 3b-2): a grant of kind 'member' enters the
 // sealed member context afresh on every request, reads only the queries that declare `mcp`, never what is owner or admin only, never a command, and
 // every way it can stop answers the client with the one generic "grant not valid" while the specific reason goes to the security event.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -13,12 +13,12 @@ import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/
 import { DomainError, Runtime, type UserActor } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('the runtime wiring of a member-bound MCP grant (#2975, slice 3, step 3b-2)', () => {
-  const dbName = `crove_test_mcp_member_rt_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_mcp_member_rt_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let runtime: Runtime;

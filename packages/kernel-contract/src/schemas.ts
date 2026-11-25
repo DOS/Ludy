@@ -308,7 +308,7 @@ export const zMe = z.object({
 
 // The per-org toggleable modules (ADR-0053, #3313; wire/table names keep `org.apps` / `apps_off` for compatibility):
 // `id` is a wire string (`ModuleId` names the canonical shipped set, not a closed schema constraint so custom or legacy
-// module IDs remain compatible). Each entry reports deployment availability (CROVE_MODULES), org entitlement,
+// module IDs remain compatible). Each entry reports deployment availability (LUDY_MODULES), org entitlement,
 // org switch state, and effective availability. Settings groups canonical switchable modules under their parent Apps.
 export const zOrgApp = z.object({ id: z.string(), deployment: z.boolean(), entitled: z.boolean(), enabled: z.boolean(), effective: z.boolean() });
 export const zOrgApps = z.object({ apps: z.array(zOrgApp), version: z.number().int().positive(), canChange: z.boolean() });
@@ -503,7 +503,7 @@ export const OAUTH_AD_PROVIDERS = ['meta_ads', 'google_ads', 'metawrite_ads'] as
 export const zOAuthProvider = z.enum([...OAUTH_CHANNEL_PROVIDERS, ...OAUTH_AD_PROVIDERS]);
 export const zOAuthState = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
 
-// A Supabase Auth session as Crove tracks it (ADR-0028).
+// A Supabase Auth session as Ludy tracks it (ADR-0028).
 export const zSession = z.object({
   sessionId: zId,
   status: z.enum(['active', 'revoked']),
@@ -993,7 +993,7 @@ export const zPurchaseDocument = z.object({
   total: zMoney,
   journalEntryId: zId.nullable(),
   sourceFileId: zId.nullable(),
-  // Voided by reversing its journal entry (#165): Crove's record no longer counts; the supplier's invoice is untouched.
+  // Voided by reversing its journal entry (#165): Ludy's record no longer counts; the supplier's invoice is untouched.
   voided: z.object({ reversalEntryId: zId, reason: z.string(), voidedAt: z.string() }).nullable(),
   // The voided document of the same invoice that this one replaces, when the invoice was recorded again.
   replacesDocumentId: zId.nullable(),
@@ -1165,7 +1165,7 @@ export const zVatInvoice = z.object({
   correction: zVatCorrection.nullable().default(null),
 });
 const zVatSide = z.object({
-  // false: Crove has no source for this side yet (sales invoices); documents and totals are empty.
+  // false: Ludy has no source for this side yet (sales invoices); documents and totals are empty.
   available: z.boolean(),
   documents: z.array(zVatInvoice),
   totals: z.object({ byRate: z.array(zRateAmounts), taxable: zMoney, vat: zMoney, documents: z.number().int().nonnegative() }),
@@ -1202,7 +1202,7 @@ export const zVatPaymentChecks = z.object({
   suggested25: zMoney,
 });
 // The VAT return of a period marked filed (#1400), with [22], [25] and [43] as filed, in whole dong. source: 'entered'
-// (typed or confirmed by the accountant on the VAT screen) or 'computed' (marked done from the tax calendar: Crove's
+// (typed or confirmed by the accountant on the VAT screen) or 'computed' (marked done from the tax calendar: Ludy's
 // working, [22] carried from the return before and [25] the suggested deduction).
 export const VAT_RETURN_SOURCES = ['entered', 'computed'] as const;
 export const zVatWholeDong = z.string().regex(/^\d{1,14}$/, 'whole dong, at most 14 digits');
@@ -1492,7 +1492,7 @@ export const zAgentTemplate = z.object({
   maxRisk: zAgentRisk,
   dailyRunCap: z.number().int(),
   jobDescription: z.unknown(),
-  // false: this deployment does not enable the template's module (CROVE_MODULES), so installing it answers MODULE_DISABLED.
+  // false: this deployment does not enable the template's module (LUDY_MODULES), so installing it answers MODULE_DISABLED.
   moduleEnabled: z.boolean(),
 });
 
@@ -1589,6 +1589,7 @@ export const zTask = z.object({
   createdByType: z.string(),
   due: z.string().nullable(),
   checklist: z.array(zTaskChecklistStepView),
+  revision: z.number().int().positive().optional(),
   createdAt: z.string(),
 });
 
@@ -1600,7 +1601,7 @@ export const zTaskDetail = z.object({
 });
 
 // ---------------------------------------------------------------------------------------------------------------------
-// Crove Social (Social plan §3.3). The commands in @ludy/mod-social check every input again, strictly: time zones
+// Ludy Social (Social plan §3.3). The commands in @ludy/mod-social check every input again, strictly: time zones
 // (IANA names), channel rules and the choice of a time or the queue are checked there, not here.
 // ---------------------------------------------------------------------------------------------------------------------
 
@@ -2506,7 +2507,7 @@ export const zSocialMetricsRow = z.object({
   clicks: z.number().int().nullable(),
 });
 
-// A post a channel published outside Crove (#1054), brought in for its counts; url is its https page on the platform.
+// A post a channel published outside Ludy (#1054), brought in for its counts; url is its https page on the platform.
 export const zSocialExternalPost = z.object({
   id: zId,
   connectionId: zId,
@@ -2592,7 +2593,7 @@ export const zSocialQueueOpenSlots = z.object({
 
 // The sections of a client report (#1259), on a link and a schedule: the ones it shows, in the order the page shows
 // them, each once; null (or left out) for every section as before. comparison (the period before), stories (the Story
-// counts) and clicks (the clicks on Crove's short links) have no place of their own. The best posts are 3 to 20 long.
+// counts) and clicks (the clicks on Ludy's short links) have no place of their own. The best posts are 3 to 20 long.
 export const SOCIAL_REPORT_SECTIONS = ['note', 'goals', 'totals', 'comparison', 'channels', 'top', 'reels', 'stories', 'audience', 'clicks'] as const;
 export type SocialReportSection = (typeof SOCIAL_REPORT_SECTIONS)[number];
 export const zSocialReportSections = z
@@ -2616,7 +2617,7 @@ export const zSocialReportLink = z.object({
   createdAt: z.string(),
   expiresAt: z.string(),
   revokedAt: z.string().nullable(),
-  // Whether the report counts the posts published outside Crove (#1054).
+  // Whether the report counts the posts published outside Ludy (#1054).
   includeExternal: z.boolean(),
   // The label whose posts alone the report counts (#1159), or null for every post; whether it shows who follows the
   // channels (#1155).

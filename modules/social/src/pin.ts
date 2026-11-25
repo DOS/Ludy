@@ -72,7 +72,7 @@ const requireSystem = (ctx: CommandContext) => {
 export const pinBegin = defineCommand({
   name: 'social.pin.begin',
   input: z.strictObject({ variantId: zId, provider: z.string().min(1).max(32) }),
-  // Commits the provider call as started; the worker then makes it, an effect outside Crove (#1578).
+  // Commits the provider call as started; the worker then makes it, an effect outside Ludy (#1578).
   risk: 'R2',
   sideEffect: 'external',
   access: 'system',

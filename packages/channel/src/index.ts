@@ -274,9 +274,9 @@ export interface AccountMetricsInput {
 // performance (#1477): a Google Business Profile location's figures per day (performance.ts); absent elsewhere.
 export type AccountMetricsResult = { followers: number | null; reach?: number | null; audience?: Audience | null; performance?: DailyPerformance } | { refused: 'token_expired' | 'permission' } | null;
 
-// The posts an account published itself, outside Crove (#1054), so the Metrics tab and the client report can count
+// The posts an account published itself, outside Ludy (#1054), so the Metrics tab and the client report can count
 // every post of the account when asked. since: how far back, clamped to RECENT_POSTS_MAX_DAYS before now. null: no
-// answer worth keeping; refused: the token or the permission was refused. The caller drops the posts Crove published.
+// answer worth keeping; refused: the token or the permission was refused. The caller drops the posts Ludy published.
 // The bounds and helpers are in recent.ts.
 export interface RecentPostsInput {
   externalAccountId: string;
@@ -432,7 +432,7 @@ export interface Publisher {
   lateId?(input: LateIdInput): Promise<LateIdResult>;
   // Providers that report an account's followers (#645), read once a day.
   accountMetrics?(input: AccountMetricsInput): Promise<AccountMetricsResult>;
-  // Providers that list the account's own recent posts (#1054), so posts published outside Crove can be counted.
+  // Providers that list the account's own recent posts (#1054), so posts published outside Ludy can be counted.
   listRecentPosts?(input: RecentPostsInput): Promise<RecentPostsResult>;
   // Providers whose comments and private messages the org answers (#2303): the replies and hides of the conversation core.
   readonly conversations?: ConversationAdapter;

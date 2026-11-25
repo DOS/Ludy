@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// System worker command backing ADR-0034 mail_data hydration for Crove eSign Slice 2a A1 (#3551).
+// System worker command backing ADR-0034 mail_data hydration for Ludy eSign Slice 2a A1 (#3551).
 // Public unauthenticated HTTP mutations on /api/sign/direct/* run via runtime.orgless() + ludy_sign.public_direct_*
 // SECURITY DEFINER SQL procedures (matching #3432) because ludy_app is blocked from calling ludy_kernel.enter_system_context.
 import { sql } from 'kysely';

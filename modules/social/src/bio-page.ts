@@ -45,7 +45,7 @@ function requireUser(ctx: CommandContext): string {
 export const bioSave = defineCommand({
   name: 'social.bio.save',
   input: zBioSave,
-  // Changes what the public page shows at once: visible to customers, an effect outside Crove (#1578).
+  // Changes what the public page shows at once: visible to customers, an effect outside Ludy (#1578).
   risk: 'R2',
   sideEffect: 'external',
   access: ADMINS,

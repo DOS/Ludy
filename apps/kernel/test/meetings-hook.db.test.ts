@@ -15,7 +15,7 @@ import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
 import { runMeetingHookSweep } from '../src/meeting-hook-sweep.ts';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -23,7 +23,7 @@ const CREDENTIAL = { keyId: 'k1', envelope: 'AAAAAAAAAAAAAAAAAAAAAAAA', hint: 'w
 const URL1 = 'https://hooks.example.com/ludy-minutes';
 
 suite("a member's minutes webhook (A6, #3164)", () => {
-  const dbName = `crove_test_hook_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_hook_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let orgId = '';

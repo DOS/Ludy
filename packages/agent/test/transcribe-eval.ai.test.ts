@@ -30,7 +30,7 @@ describe.skipIf(!provider)('transcription eval', () => {
   const results: FileResult[] = [];
   let sandbox: RunningSandbox | null = null;
   const outDir = process.env.TRANSCRIBE_EVAL_OUT?.trim() || null;
-  const diffDir = outDir ?? (privateDir ? mkdtempSync(join(tmpdir(), 'crove-transcribe-eval-')) : null);
+  const diffDir = outDir ?? (privateDir ? mkdtempSync(join(tmpdir(), 'ludy-transcribe-eval-')) : null);
 
   afterAll(async () => {
     await sandbox?.stop();

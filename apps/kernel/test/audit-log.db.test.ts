@@ -1,5 +1,5 @@
 // The org's audit log for owners and admins on PostgreSQL 17 (issue #672): who may read it, the filters, the pages, the
-// org boundary, what a row's detail shows, and the CSV export with its own audit row. Set CROVE_TEST_ADMIN_URL to a
+// org boundary, what a row's detail shows, and the CSV export with its own audit row. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a
 // superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -12,12 +12,12 @@ import { AUDIT_EXPORT_LIMIT, AUDIT_PAGE_SIZE, type AuditEntry, type AuditExport,
 import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('audit log for owners and admins on PostgreSQL (#672)', () => {
-  const dbName = `crove_test_audit_log_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_audit_log_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

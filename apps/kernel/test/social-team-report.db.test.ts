@@ -3,7 +3,7 @@
 // median time from submission to decision; for client review links the exact median time to the first answer. A
 // member who left shows as left without a name, viewers and members are refused, another org's work never counts.
 // The commands run as they would; the test then moves their times into September as the database owner, with
-// triggers off, since append-only rows keep the time they were written. Set CROVE_TEST_ADMIN_URL to a superuser URL;
+// triggers off, since append-only rows keep the time they were written. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL;
 // each run makes its own database.
 import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -16,7 +16,7 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { socialCommands, socialQueries, type PostView, type TeamMemberRow, type TeamReport } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const HOUR = 3600;
@@ -27,7 +27,7 @@ const TO = '2026-10-01T00:00:00.000Z';
 const at = (day: string, time: string) => `2026-${day}T${time}:00.000Z`;
 
 suite('social team report on PostgreSQL (#1058)', () => {
-  const dbName = `crove_test_social_team_report_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_team_report_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

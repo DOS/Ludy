@@ -4,7 +4,7 @@
 // - an entity keeps several templates, one per bank, unique on (org, entity, name);
 // - the layout must hold the six columns once each, a header on each, and a content text whose only brace form is `{month}`;
 // - only the name, the layout and the stamp change: a template never moves to another entity.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; the run creates and drops its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -18,7 +18,7 @@ import { CredentialVault, Runtime, SUBJECT_WRAP_INFO, SubjectVault, defineComman
 import { hrCommands, hrManifest, hrQueries } from '@ludy/mod-hr';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -33,7 +33,7 @@ const COLUMNS = [
 const layout = (over: Record<string, unknown> = {}) => ({ columns: COLUMNS, content: 'Luong thang {month}', ...over });
 
 suite('HR bank template on PostgreSQL (#2532)', () => {
-  const dbName = `crove_test_hr_bank_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_hr_bank_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let rt: Runtime;

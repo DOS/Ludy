@@ -1,5 +1,5 @@
 // Asking a client company for its missing purchase invoices (issue #669). The tax portal's purchase list (#465) shows,
-// per VAT period, the invoices the tax authority has that Crove lacks ('missing'). From that list the accountant sends
+// per VAT period, the invoices the tax authority has that Ludy lacks ('missing'). From that list the accountant sends
 // the company one email listing them, and may turn on a monthly reminder:
 // - finance.missing_invoices.request (owners, admins, members; R2 since #1577, as it sends mail) queues one mail for a period's missing invoices to
 //   the org's contact email (kernel.mail.contact.queue: the kernel mail pipeline, with its log row and suppression
@@ -11,7 +11,7 @@
 // - finance.missing_invoices.status (every role): the contact email, the reminder and the mails sent so far.
 // The mail asks the company to reply, or to forward the seller's mail, to the org's inbound address (its Reply-To), so
 // the invoices land in the Inbox like any other mail with an invoice (renderMissingInvoiceMail below, run by the
-// worker). The client company is the org itself: Crove keeps one org per company the firm keeps books for.
+// worker). The client company is the org itself: Ludy keeps one org per company the firm keeps books for.
 import { sql } from 'kysely';
 import { z } from 'zod';
 import { zId, zVatPeriod } from '@ludy/kernel-contract';
@@ -77,7 +77,7 @@ export function periodLabel(period: string): string {
   return `tháng ${Number(part)}/${year}`;
 }
 
-// The invoices of a period the portal lists and Crove lacks, in the reconciliation's order.
+// The invoices of a period the portal lists and Ludy lacks, in the reconciliation's order.
 async function missingIn(ctx: QueryContext, period: string, legalEntityId: string): Promise<Item[]> {
   const { reconciliation } = await reconcilePeriod(ctx, period, legalEntityId);
   return reconciliation.items.flatMap((i) =>
@@ -183,7 +183,7 @@ export const missingInvoicesRequest = defineCommand({
   name: 'finance.missing_invoices.request',
   // The purchase list of one legal entity (#1280): legalEntityId as in zLegalEntityChoice.
   input: z.object({ period: zVatPeriod, legalEntityId: zId.optional() }),
-  // Queues a mail to the company through kernel.mail.contact.queue in its transaction: a send, an effect outside Crove
+  // Queues a mail to the company through kernel.mail.contact.queue in its transaction: a send, an effect outside Ludy
   // (#1577).
   risk: 'R2',
   sideEffect: 'external',

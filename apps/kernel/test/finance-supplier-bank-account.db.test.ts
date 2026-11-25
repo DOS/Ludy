@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // A supplier's bank accounts and the history of their changes (#3113 S1) on a real PostgreSQL: the number and the holder are sealed under the supplier's own key and never appear in the clear (a row,
 // an audit fact, an answer); a change needs a fresh second factor and an owner or an admin, retires the old account and writes one history row; the keyed hash tells "the same account"; the signal read
-// of rule 3 lists the suppliers changed in the last 30 days; the erasure shreds the key, so a sealed number can never be opened again. Set CROVE_TEST_ADMIN_URL to a superuser URL.
+// of rule 3 lists the suppliers changed in the last 30 days; the erasure shreds the key, so a sealed number can never be opened again. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -14,7 +14,7 @@ import { CredentialVault, Runtime, SUBJECT_WRAP_INFO, SubjectVault, defineQuery,
 import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -27,7 +27,7 @@ const HOLDER = 'Nguyen Van Canary';
 const PLACE = 'crove_finance.supplier_bank_account.number_sealed';
 
 suite('a supplier\'s bank accounts (#3113 S1)', () => {
-  const dbName = `crove_test_supplier_bank_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_supplier_bank_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

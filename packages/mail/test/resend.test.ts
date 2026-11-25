@@ -36,7 +36,7 @@ const event = (type: string, data: Record<string, unknown> = {}) =>
 describe('Resend send', () => {
   it('posts the mail to api.resend.com with the key derived from its Message-ID', async () => {
     const { calls, fetchImpl } = fakeFetch(() => Response.json({ id: 'em_123' }));
-    const provider = createResendProvider({ apiKey: 're_test', from: 'Crove <noreply@mail.example.com>', fetch: fetchImpl });
+    const provider = createResendProvider({ apiKey: 're_test', from: 'Ludy <noreply@mail.example.com>', fetch: fetchImpl });
     expect(provider).toMatchObject({ name: 'resend', enabled: true, sendRetrySafety: 'idempotent' });
     expect(await provider.send(MAIL)).toEqual({ status: 'accepted', providerMessageId: 'em_123' });
     expect(calls).toHaveLength(1);
@@ -47,7 +47,7 @@ describe('Resend send', () => {
     expect(headers.authorization).toBe('Bearer re_test');
     expect(headers['idempotency-key']).toBe('crove:0192f0aa-0000-7000-8000-000000000001@mail.example.com');
     expect(JSON.parse(String(call?.init.body))).toEqual({
-      from: 'Crove <noreply@mail.example.com>',
+      from: 'Ludy <noreply@mail.example.com>',
       to: ['khach@example.test'],
       subject: 'Chủ đề',
       text: 'link',

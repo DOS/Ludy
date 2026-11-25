@@ -3,7 +3,7 @@
 // it off or picked a time; the worker's sweep sends one notification per reminder, at its time, never for a done,
 // cancelled or deleted to-do, and none of it holds the to-do's text; a member limited to a branch still sees theirs;
 // "hoa don" finds "hóa đơn" in the caller's own notes and to-dos and in shared notes, never in another member's private
-// ones. Set CROVE_TEST_ADMIN_URL to a superuser URL; the run makes its own database.
+// ones. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; the run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -17,7 +17,7 @@ import { notesCommands, notesQueries } from '@ludy/mod-notes';
 import { sweepNotesReminders } from '../src/notes-worker.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const TITLE = 'Gọi khách xin sao kê tháng 10';
 const DETAILS = 'Hỏi kế toán trưởng bên khách';
@@ -28,7 +28,7 @@ const suite = ADMIN ? describe : describe.skip;
 const dayAhead = (n: number) => new Date(Date.now() + 7 * 3_600_000 + n * 86_400_000).toISOString().slice(0, 10);
 
 suite('to-do reminders and search on PostgreSQL (#1675)', () => {
-  const dbName = `crove_test_notes_reminders_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_notes_reminders_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let app: Runtime;

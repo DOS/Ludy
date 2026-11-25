@@ -14,8 +14,8 @@ describe('support link', () => {
   });
 
   it('opens an https: page in a new tab and hands a mailto: address to the mail app', () => {
-    expect(supportLink('https://chat.example.com/g/crove-pilot')).toEqual({ href: 'https://chat.example.com/g/crove-pilot', external: true });
-    expect(supportLink('mailto:support@example.com?subject=Crove')).toEqual({ href: 'mailto:support@example.com?subject=Crove', external: false });
+    expect(supportLink('https://chat.example.com/g/ludy-pilot')).toEqual({ href: 'https://chat.example.com/g/ludy-pilot', external: true });
+    expect(supportLink('mailto:support@example.com?subject=Ludy')).toEqual({ href: 'mailto:support@example.com?subject=Ludy', external: false });
   });
 
   it('hides any other scheme, a mailto: without an address and a value that is not a URL', () => {

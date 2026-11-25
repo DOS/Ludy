@@ -37,7 +37,7 @@ import {
 
 type Pool = ReturnType<typeof createPool>;
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -84,7 +84,7 @@ function makePngBase64(width = 160, height = 60): string {
 const VALID_PNG_BASE64 = makePngBase64();
 
 suite('eSign Slice 2a reusable templates, roles & direct signing links on PostgreSQL 17 (#3526)', () => {
-  const dbName = `crove_test_sign_tpl_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_sign_tpl_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let adminPool: Pool | undefined;
   let appPool: Pool | undefined;
@@ -672,7 +672,7 @@ suite('eSign Slice 2a reusable templates, roles & direct signing links on Postgr
       await c.query('BEGIN');
       await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [
         orgA,
-        mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', {
+        mintContextToken(process.env.LUDY_CONTEXT_TOKEN_KEY ?? process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', {
           userId: ownerA,
           orgId: orgA,
           sessionId: null,
@@ -858,7 +858,7 @@ suite('eSign Slice 2a reusable templates, roles & direct signing links on Postgr
         await c.query('BEGIN');
         await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [
           orgA,
-          mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', {
+          mintContextToken(process.env.LUDY_CONTEXT_TOKEN_KEY ?? process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', {
             userId: ownerA,
             orgId: orgA,
             sessionId: null,
@@ -941,7 +941,7 @@ suite('eSign Slice 2a reusable templates, roles & direct signing links on Postgr
       await inheritBypassClient.query('BEGIN');
       await inheritBypassClient.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [
         orgA,
-        mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', {
+        mintContextToken(process.env.LUDY_CONTEXT_TOKEN_KEY ?? process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', {
           userId: ownerA,
           orgId: orgA,
           sessionId: null,
@@ -1003,7 +1003,7 @@ suite('eSign Slice 2a reusable templates, roles & direct signing links on Postgr
       await trigClient.query('BEGIN');
       await trigClient.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [
         orgA,
-        mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', {
+        mintContextToken(process.env.LUDY_CONTEXT_TOKEN_KEY ?? process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', {
           userId: ownerA,
           orgId: orgA,
           sessionId: null,
@@ -1238,7 +1238,7 @@ suite('eSign Slice 2a reusable templates, roles & direct signing links on Postgr
     // Direct tenant UPDATE of detected_tags_json on template or envelope is blocked by guard triggers.
     const client = await appPool!.connect();
     try {
-      const token = mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', {
+      const token = mintContextToken(process.env.LUDY_CONTEXT_TOKEN_KEY ?? process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', {
         userId: ownerA,
         orgId: orgA,
         sessionId: null,

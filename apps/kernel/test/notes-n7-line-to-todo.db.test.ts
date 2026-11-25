@@ -7,7 +7,7 @@
 // 3) When a shared source note becomes private or moves to trash, the to-do stays intact and returns
 //    { id, title: null, available: false } without leaking the title; restoring brings it back; purging trash sets
 //    source_note_id to NULL via ON DELETE SET NULL while keeping the to-do intact.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -20,13 +20,13 @@ import { Runtime, mintContextToken } from '@ludy/kernel-runtime';
 import { notesCommands, notesQueries } from '@ludy/mod-notes';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SYSTEM = { type: 'system' as const, component: 'notes' };
 const suite = ADMIN ? describe : describe.skip;
 
 suite('Notes N7: turn a note line into a private to-do on PostgreSQL 17 (#1676)', () => {
-  const dbName = `crove_test_notes_n7_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_notes_n7_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appUrl = '';
   const pools: pg.Pool[] = [];
@@ -47,7 +47,7 @@ suite('Notes N7: turn a note line into a private to-do on PostgreSQL 17 (#1676)'
   }
 
   async function inUserSql<T>(orgId: string, userId: string, fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const token = mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', {
+    const token = mintContextToken(process.env.LUDY_CONTEXT_TOKEN_KEY ?? process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', {
       userId,
       orgId,
       sessionId: null,

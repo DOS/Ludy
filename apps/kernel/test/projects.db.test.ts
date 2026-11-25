@@ -7,7 +7,7 @@
 // 5) Org export includes ludy_projects tables; PDPL erase redacts project PII; org_purge removes projects before tasks.
 // 6) Omitting projects from CROVE_MODULES returns 404 on /api/rpc/projects/* while kernel tasks work unchanged.
 // 7) Member removal clears owner_user_id and lets org owners manage; archived/duplicate/role guards hold.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
@@ -43,7 +43,7 @@ import { orgPurgeCommand, purgeOrg } from '../src/org-purge.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-projects-p2-0123456789';
 const ISSUER = 'crove-auth';
@@ -67,7 +67,7 @@ class MemoryStore implements BlobStore {
 }
 
 suite('projects module on PostgreSQL (#2591)', () => {
-  const dbName = `crove_test_projects_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_projects_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let workerUrl = '';
   let pool: pg.Pool;

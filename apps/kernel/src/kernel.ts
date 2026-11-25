@@ -1,6 +1,6 @@
 // The composition root (plan Decision 12, ADR-0030). createKernel takes the configuration and one adapter per port
 // and starts the server roles; it builds no adapter itself. main.ts wires the open-source defaults from
-// configuration (defaultAdapters); a Crove Cloud entrypoint wires its own adapters into the same factory.
+// configuration (defaultAdapters); a Ludy Cloud entrypoint wires its own adapters into the same factory.
 import { hostname } from 'node:os';
 import { serve } from '@hono/node-server';
 import type { Server } from 'node:http';
@@ -158,14 +158,14 @@ export interface IdentityPort {
   readonly sessions: SessionStatusSource;
   // The API's request authenticator, bound to the API role's database.
   authenticator(db: Db): Authenticate;
-  // Upstream sign-out after a Crove-side revoke; null keeps revocation in Crove only.
+  // Upstream sign-out after a Ludy-side revoke; null keeps revocation in Ludy only.
   readonly revoker: SessionRevoker | null;
 }
 
 export type { CredentialBroker } from '@ludy/kernel-runtime';
 export { noCredentialBroker } from './credentials.ts';
 
-// A connector to an outside system (e-invoice issuing, banks). The core ships none; Crove Cloud adds its own.
+// A connector to an outside system (e-invoice issuing, banks). The core ships none; Ludy Cloud adds its own.
 export interface Connector {
   readonly id: string;
 }
@@ -229,7 +229,7 @@ export type ServerRole = 'api' | 'worker' | 'all';
 
 export interface Kernel {
   readonly config: Config;
-  // The modules this deployment registers (CROVE_MODULES; kernel always).
+  // The modules this deployment registers (LUDY_MODULES; kernel always).
   readonly modules: readonly ModuleId[];
   readonly adapters: Readonly<ResolvedAdapters>;
   // Starts the role's servers and resolves to a function that stops them in reverse order.
@@ -279,7 +279,7 @@ export function summaryEnabled(config: Pick<Config, 'MEETINGS_SUMMARY'>): boolea
   return config.MEETINGS_SUMMARY === 'on';
 }
 
-// The commands and queries of the modules CROVE_MODULES enables (plan Decision 12, ADR-0031). A module left out has
+// The commands and queries of the modules LUDY_MODULES enables (plan Decision 12, ADR-0031). A module left out has
 // none registered, so its commands answer COMMAND_NOT_FOUND, a ctx.query into it answers not_installed (with the
 // absentModules buildRuntime passes), and the
 // routes and jobs that ask Runtime.installed() are not registered either.
@@ -380,7 +380,7 @@ function subjectVaultOf(config: Config): SubjectVault | null {
 // leave the gate without one (it would hold every app for every org); self-host's port grants `full`.
 export function serverRuntime(cells: CellResolver, config: Config, options: Omit<RuntimeOptions, 'absentModules' | 'manifests' | 'entitlements'> & { billing?: Billing }): Runtime {
   const { billing, ...runtimeOptions } = options;
-  // Modules this build ships that CROVE_MODULES leaves out (ADR-0031).
+  // Modules this build ships that LUDY_MODULES leaves out (ADR-0031).
   const absentModules = AVAILABLE_MODULES.filter((module) => !config.LUDY_MODULES.includes(module));
   const runtime = new Runtime(cells, {
     // The key of the sensitive-read audit hash: derived from the credential key (environment or key file, never the database), none without one.

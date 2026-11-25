@@ -1265,7 +1265,7 @@ export const personalDataFind = defineCommand({
 export const MEETING_TEXT_SKIPPED_REASON = 'The meeting text of this organization was too large to search in time, so it was not searched: search again, or ask support, before relying on this erasure for meeting text';
 export const UNTOLD_MEETING_REASON =
   'Text of a meeting the owner cannot read, where no notice covers its recorder and its text as it is now (not sent, the recorder not told 24 hours ago, or the text changed since): send the notice, wait 24 hours, then erase again; the recorder or an owner can also delete the meeting';
-// The statuses of a mail that has left Crove or may have (the mail table's own set): handed to the worker (sending), outcome unknown (ambiguous), or sent on to its recipient (sent,
+// The statuses of a mail that has left Ludy or may have (the mail table's own set): handed to the worker (sending), outcome unknown (ambiguous), or sent on to its recipient (sent,
 // delivered, bounced, complained). Its copies in the recipients' mailboxes cannot be taken back; a queued, failed or suppressed mail never reached one.
 const DELIVERED_MAIL_STATUSES: readonly string[] = ['sending', 'ambiguous', 'sent', 'delivered', 'bounced', 'complained'];
 export const FOLLOWUP_MAIL_HIDDEN_REASON =
@@ -1460,7 +1460,7 @@ export const personalDataNotify = defineCommand({
 // (`erase` in the registry):
 // - on every party the value matches (by email, phone or tax code): its email, phone and address; a party that no
 //   recorded invoice, voucher or journal line names also loses its tax code and its name (a placeholder);
-// - the sender of forwarded mails and the recipient of mails Crove sent (the keyed hash stays, so a suppression holds);
+// - the sender of forwarded mails and the recipient of mails Ludy sent (the keyed hash stays, so a suppression holds);
 // - the org's contact email;
 // - the visitor's name, email, phone and note on bookings from a public booking page;
 // - the address in Social report schedules (a schedule left with nobody to mail is deleted);

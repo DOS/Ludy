@@ -38,12 +38,12 @@ import {
 
 type Pool = ReturnType<typeof createPool>;
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('eSign Slice 2c Vietnam CA settings, #62 gate, and reconcile_only state machine on PostgreSQL 17 (#3554)', () => {
-  const dbName = `crove_test_sign_ca_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_sign_ca_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let adminPool: Pool | undefined;
   let appPool: Pool | undefined;
@@ -165,7 +165,7 @@ suite('eSign Slice 2c Vietnam CA settings, #62 gate, and reconcile_only state ma
     const valid1x1Png =
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
     const submitRes = await appPool!.query<{ result: { status: string } }>(
-      `SELECT ludy_sign.public_submit($1, true, 'type', 'Nguyen Van B', $2::jsonb, $3, 'TestAgent/1.0', 'crove.test') AS result`,
+      `SELECT ludy_sign.public_submit($1, true, 'type', 'Nguyen Van B', $2::jsonb, $3, 'TestAgent/1.0', 'ludy.test') AS result`,
       [
         hashSigningToken(sent.links[0]!.token),
         JSON.stringify([

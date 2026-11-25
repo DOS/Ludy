@@ -48,7 +48,7 @@ export function captureKey(at: Date): string {
 export const metricsRecord = defineCommand({
   name: 'social.metrics.record',
   input: z.strictObject({ variantId: zId, captureKey: z.string().min(1).max(100), metrics: zMetrics, extra: zExtra.optional() }),
-  // Writes what the platform reported into Crove: internal, so R1 (#1578).
+  // Writes what the platform reported into Ludy: internal, so R1 (#1578).
   risk: 'R1',
   sideEffect: 'internal',
   access: 'system',
@@ -168,8 +168,8 @@ export interface WindowTotals extends MetricsTotals {
 // The window's totals (#397), summed in SQL over every published channel, not only the rows the summary lists: the
 // last real answer of each, and the clicks on its short links (null when no channel sent links through them); also
 // per channel. previous (#947): the same for the window of the same length just before, so a screen can show the
-// change (currentAndPrevious). includeExternal (#1054): the posts each channel published outside Crove count too, in
-// both windows; they carry no label, so a label filter leaves them out. Without it the totals are Crove's posts alone.
+// change (currentAndPrevious). includeExternal (#1054): the posts each channel published outside Ludy count too, in
+// both windows; they carry no label, so a label filter leaves them out. Without it the totals are Ludy's posts alone.
 export const metricsTotals = defineQuery({
   name: 'social.metrics.totals',
   input: z.object({ days: z.number().int().min(1).max(365).optional(), labelId: zId.optional(), includeExternal: z.boolean().optional() }),
@@ -197,7 +197,7 @@ export function currentAndPrevious(current: WindowTotals, previous: WindowTotals
 // The posts a total counts, by when they went out: the days-long window that ends `before` days ago (0: now,
 // open-ended), as the Metrics tab picks it; or [start, end), a period (the goals of a month, a report's period).
 export type Span = { days: number; before: number } | { start: Date; end: Date };
-// labelId: only Crove's posts with that label; external (#1054): with the channels' posts published outside Crove (they
+// labelId: only Ludy's posts with that label; external (#1054): with the channels' posts published outside Ludy (they
 // carry no label, so never under one); scope (#1081): the channels the caller may use; connectionIds: only these.
 export interface SpanFilter {
   labelId?: string | undefined;
@@ -220,8 +220,8 @@ export function channelKept(filter: SpanFilter, column: string): RawBuilder<bool
   return sql<boolean>`${connectionInScope(filter.scope ?? null, column)} ${ids}`;
 }
 
-// The totals of the variants published in the span, with the channels' posts published outside Crove in the same span
-// when the filter says so (their latest real counts, no clicks), leaving out the ones that are Crove's own
+// The totals of the variants published in the span, with the channels' posts published outside Ludy in the same span
+// when the filter says so (their latest real counts, no clicks), leaving out the ones that are Ludy's own
 // (ludy_social.external_post_is_crove).
 export async function spanTotals(trx: Trx, orgId: string, span: Span, filter: SpanFilter = {}): Promise<WindowTotals> {
   const labelled = filter.labelId
@@ -239,15 +239,15 @@ export async function spanTotals(trx: Trx, orgId: string, span: Span, filter: Sp
 
 /**
  * The totals of the variants published in [start, end), as the window totals add them up: the goals of a month
- * (#1056) count with these, Crove's posts only (and so do the client report's goals, #1075). Short link clicks up to
+ * (#1056) count with these, Ludy's posts only (and so do the client report's goals, #1075). Short link clicks up to
  * the end only, on the days (UTC) whose midday is before it.
  */
 export function periodTotals(trx: Trx, orgId: string, start: Date, end: Date): Promise<WindowTotals> {
   return spanTotals(trx, orgId, { start, end });
 }
 
-// outsidePublished (#1054): when given, the channels' posts published outside Crove whose time it takes (as e) count
-// too, with their latest real counts and no clicks; without it the SQL is Crove's posts alone, as before.
+// outsidePublished (#1054): when given, the channels' posts published outside Ludy whose time it takes (as e) count
+// too, with their latest real counts and no clicks; without it the SQL is Ludy's posts alone, as before.
 async function totalsWhere(trx: Trx, orgId: string, published: RawBuilder<unknown>, clickedBy: RawBuilder<unknown>, outsidePublished?: RawBuilder<unknown>): Promise<WindowTotals> {
   const outside = outsidePublished
     ? sql`, x AS (

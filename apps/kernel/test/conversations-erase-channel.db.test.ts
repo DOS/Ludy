@@ -3,7 +3,7 @@
 // `kernel.conversation.erase_channel` (R3, owners and admins, never the system or an agent), which runs the erase path Meta's data deletion
 // callback uses; the counts the confirmation names; what it keeps (another channel, another org, the identities still named); the image rows
 // and their blob keys; an erase that is run again; and a notice in flight at the same time as the disconnect.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -18,12 +18,12 @@ import { runConversationIntake } from '../src/conversations-worker.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('deleting a disconnected channel\'s conversations too on PostgreSQL (#3299)', () => {
-  const dbName = `crove_test_conversations_erase_channel_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_conversations_erase_channel_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appUrl = '';
   let pool: pg.Pool;

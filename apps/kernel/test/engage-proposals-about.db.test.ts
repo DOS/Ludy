@@ -2,7 +2,7 @@
 // What the Inbox card of an AI coworker's Engage proposal says it is ABOUT (epic #3857, E4, issue #3863): not ids, but what the approver approves, read from the real records as the approver: a booking's guest,
 // meeting type and current time; a quote's number, state, total, customer and the customer's own email beside the address the AI proposes; a post's title and channels; an ad launch's campaign, account, state and
 // budget. Only owners and admins get the card; an id the database does not know gives no lines and no error. The fixtures (a bookable event type, a sent-ready quote, a post, a live launch) are the ones of the
-// CRM, Social and Ads twin tests, copied. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// CRM, Social and Ads twin tests, copied. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';

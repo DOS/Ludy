@@ -21,7 +21,7 @@ import { FACEBOOK_SIGNATURE_HEADER, FACEBOOK_WEBHOOK_PATH } from '../src/faceboo
 import { createHttpApp } from '../src/http.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -36,7 +36,7 @@ const SCOPES = ['threads_basic', 'threads_content_publish', 'threads_manage_repl
 const sign = (body: string, secret: string) => `sha256=${createHmac('sha256', secret).update(new TextEncoder().encode(body)).digest('hex')}`;
 
 suite('Threads replies on PostgreSQL (#3133)', () => {
-  const dbName = `crove_test_threads_conv_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_threads_conv_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

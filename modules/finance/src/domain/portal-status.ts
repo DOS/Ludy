@@ -1,7 +1,7 @@
 // The status the tax portal shows for an invoice ("Trạng thái hóa đơn"), read into PORTAL_INVOICE_STATUSES (#465).
 // The portal writes it in words ("Hóa đơn mới", "Hóa đơn đã bị thay thế"); its own lookup API numbers the same six
 // states 1 to 6, which some exports and tools show instead. Diacritics, case and spacing do not matter, so a label
-// retyped or saved by another tool still reads. Anything else is 'unknown' and counts like a valid invoice (Crove
+// retyped or saved by another tool still reads. Anything else is 'unknown' and counts like a valid invoice (Ludy
 // would rather ask for an XML too many than miss one).
 import type { PortalInvoiceStatus } from '@ludy/kernel-contract';
 

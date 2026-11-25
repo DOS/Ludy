@@ -1,4 +1,4 @@
-// Integration tests against a real S3-compatible server (CI: MinIO). Set CROVE_TEST_S3_URL to
+// Integration tests against a real S3-compatible server (CI: MinIO). Set LUDY_TEST_S3_URL (or CROVE_TEST_S3_URL) to
 // http://<access key>:<secret>@<host>:<port>/<bucket>; the bucket is created if missing, with versioning enabled
 // (evidence buckets need it, ADR-0013).
 import { createHash, randomUUID } from 'node:crypto';
@@ -47,7 +47,7 @@ function optionsFrom(url: string): S3StoreOptions {
   return {
     endpoint: parsed.origin,
     region: 'us-east-1',
-    bucket: parsed.pathname.replace(/^\//, '') || 'crove-test',
+    bucket: parsed.pathname.replace(/^\//, '') || 'ludy-test',
     accessKeyId: decodeURIComponent(parsed.username),
     secretAccessKey: decodeURIComponent(parsed.password),
     forcePathStyle: true,
@@ -171,7 +171,7 @@ describe.skipIf(!URL_ENV)('S3BlobStore against a real S3-compatible server', () 
   });
 
   // Red-team S25: an object is replaced after the file row recorded it (and a proposal was approved on it), by
-  // anyone with write access to the bucket, bypassing Crove's create-only writes.
+  // anyone with write access to the bucket, bypassing Ludy's create-only writes.
   it('reads the recorded version after the key is overwritten, and fails closed on the current bytes or a deleted version', async () => {
     const store = S3BlobStore.connect(options);
     const original = encode(`<HDon>${randomUUID()}</HDon>`);
@@ -193,7 +193,7 @@ describe.skipIf(!URL_ENV)('S3BlobStore against a real S3-compatible server', () 
   });
 
   it('fails closed on an unversioned bucket, unless versioning is explicitly off', async () => {
-    const bucket = `crove-unversioned-${randomUUID().slice(0, 8)}`;
+    const bucket = `ludy-unversioned-${randomUUID().slice(0, 8)}`;
     await client.send(new CreateBucketCommand({ Bucket: bucket }));
     const bytes = encode(`<HDon>${randomUUID()}</HDon>`);
     const key = fileKey(orgId, sha256Hex(bytes));
@@ -204,7 +204,7 @@ describe.skipIf(!URL_ENV)('S3BlobStore against a real S3-compatible server', () 
   // Evidence holds (issue #1009): a bucket created with Object Lock (which turns versioning on), as an evidence bucket
   // with holds must be. The holds here last a day; the CI server is thrown away after the run.
   it('holds the recorded version of an evidence file in GOVERNANCE mode, which a plain client cannot delete', async () => {
-    const bucket = `crove-locked-${randomUUID().slice(0, 8)}`;
+    const bucket = `ludy-locked-${randomUUID().slice(0, 8)}`;
     await client.send(new CreateBucketCommand({ Bucket: bucket, ObjectLockEnabledForBucket: true }));
     const store = S3BlobStore.connect({ ...options, bucket });
     await expect(store.holds.available()).resolves.toBe(true);
@@ -245,7 +245,7 @@ describe.skipIf(!URL_ENV)('S3BlobStore against a real S3-compatible server', () 
   // A retention delete (#2789) on the Object Lock bucket: the tag and the marker go on, and the held version stays: readable by its version id, with the same retain-until date,
   // and its version delete still refused. The lifecycle expiry itself runs in days on the server's clock, so the drill of docs/runbooks/provision-pilot.md checks it.
   it('leaves a held version untouched when a retention delete tags and deletes the object (#2789)', async () => {
-    const bucket = `crove-locked-${randomUUID().slice(0, 8)}`;
+    const bucket = `ludy-locked-${randomUUID().slice(0, 8)}`;
     await client.send(new CreateBucketCommand({ Bucket: bucket, ObjectLockEnabledForBucket: true }));
     const store = S3BlobStore.connect({ ...options, bucket });
     const original = encode(`<HDon>${randomUUID()}</HDon>`);

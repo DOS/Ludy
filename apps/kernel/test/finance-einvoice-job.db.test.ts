@@ -2,7 +2,7 @@
 // The issue job of a sales e-invoice (#2502, ADR-0044 points 3 to 5), on PostgreSQL 17 with the offline provider: an approved draft is sent (the call committed to the ledger first),
 // issued, its signed XML and PDF stored as evidence naming the draft's entity, and the XML read through the ordinary intake into a sale of that entity; a pending invoice is asked
 // about until it answers or the day ends; a rejection sends the draft back with a new key; a lost answer is asked about by the key before anything is sent again; a seller's tax
-// code that changed, a draft with no connection and a draft whose figures no longer match stop before any call. Set CROVE_TEST_ADMIN_URL to a superuser URL.
+// code that changed, a draft with no connection and a draft whose figures no longer match stop before any call. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -19,7 +19,7 @@ import { runEInvoiceIssue } from '../src/einvoice-issue-job.ts';
 import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -61,7 +61,7 @@ interface DraftRow {
 }
 
 suite('the issue job of a sales e-invoice (#2502)', () => {
-  const dbName = `crove_test_einvoice_job_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_einvoice_job_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

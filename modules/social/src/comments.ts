@@ -87,7 +87,7 @@ export const commentBegin = defineCommand({
   name: 'social.comment.begin',
   // retry: a person asked again, after the call with this key (null: no call was made).
   input: z.strictObject({ variantId: zId, provider: z.string().min(1).max(32), retry: z.strictObject({ after: z.string().min(1).max(300).nullable() }).optional() }),
-  // Commits the provider call as started; the worker then makes it, an effect outside Crove (#1578).
+  // Commits the provider call as started; the worker then makes it, an effect outside Ludy (#1578).
   risk: 'R2',
   sideEffect: 'external',
   access: 'system',
@@ -169,7 +169,7 @@ export const commentRecord = defineCommand({
 export const commentRetry = defineCommand({
   name: 'social.comment.retry',
   input: z.strictObject({ variantId: zId }),
-  // The worker posts the comment from its event: an effect outside Crove (#1653).
+  // The worker posts the comment from its event: an effect outside Ludy (#1653).
   risk: 'R2',
   sideEffect: 'external',
   access: ADMINS,

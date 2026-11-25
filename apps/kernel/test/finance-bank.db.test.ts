@@ -5,7 +5,7 @@
 // boundary are checked. A bank feed's lines (ADR-0039, #2044) go through the same path: finance.bank.ingest, a system
 // command, stores what is new, and a transaction the feed and a statement file both report is one line. The rules
 // themselves are unit-tested in modules/finance/test/bank-statement.test.ts.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
@@ -26,7 +26,7 @@ import { RateLimiter } from '../src/rate-limit.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-bank-statements-0123456789';
 const ISSUER = 'crove-auth';
@@ -61,7 +61,7 @@ const TINGEE_SECRET = 'tingee-secret-token-for-the-test-0123456789';
 const TINGEE_VA = '8888000001';
 
 suite('bank statement import (#326)', () => {
-  const dbName = `crove_test_bank_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_bank_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let app: ReturnType<typeof createHttpApp>;

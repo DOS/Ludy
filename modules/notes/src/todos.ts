@@ -17,10 +17,12 @@ import {
   auditValue,
   countTaskChecklistSteps,
   formatQuickCaptureDetails,
+  isSpringForwardDate,
   keyBetween,
   nextTodoOccurrenceDate,
   normalizeTodoRecurrence,
   parseTodoRecurrence,
+  recoverSpringForwardDueTime,
   shiftTodoSchedule,
   spreadKeys,
   taskStanding,
@@ -326,6 +328,53 @@ const passedAt = (at: Date | null, now: Date): Date | null => (at !== null && at
 
 // A to-do back in the list (reopened, restored) whose reminder time passed meanwhile is not reminded late.
 const reminderPassed = (now: Date) => sql<Date | null>`CASE WHEN remind_at <= ${now}::timestamptz AND reminded_at IS NULL THEN ${now}::timestamptz ELSE reminded_at END`;
+
+interface SeriesTimeRow {
+  id: string;
+  due_on: string | null;
+  due_at: Date | string | null;
+  time_zone: string;
+  created_at: Date | string;
+}
+
+function priorSeriesOccurrences(
+  current: { id: string; created_at: Date | string },
+  rows: ReadonlyArray<SeriesTimeRow>,
+): Array<{ dueOn: string | null; dueAt: Date | null; timeZone: string }> {
+  const currentCreatedMs = new Date(current.created_at).getTime();
+  return rows
+    .filter((r) => {
+      if (r.id === current.id) return false;
+      const createdMs = new Date(r.created_at).getTime();
+      return createdMs < currentCreatedMs || (createdMs === currentCreatedMs && r.id < current.id);
+    })
+    .sort((a, b) => {
+      const diff = new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      return diff !== 0 ? diff : b.id < a.id ? -1 : b.id > a.id ? 1 : 0;
+    })
+    .map((r) => ({ dueOn: r.due_on, dueAt: r.due_at === null ? null : new Date(r.due_at), timeZone: r.time_zone }));
+}
+
+async function resolveSeriesDueTime(
+  ctx: Pick<CommandContext, 'trx' | 'orgId'>,
+  current: { id: string; due_on: string | null; due_at: Date | string | null; time_zone: string; series_id: string | null; created_at: Date | string },
+  activeSiblings: ReadonlyArray<SeriesTimeRow>,
+): Promise<string | null> {
+  if (current.due_on === null || current.due_at === null || current.series_id === null) return null;
+  if (!isSpringForwardDate(current.due_on, current.time_zone)) return null;
+  const trashedSiblings = await ctx.trx
+    .selectFrom('ludy_notes.todo')
+    .select(['id', 'due_on', 'due_at', 'time_zone', 'created_at'])
+    .where('org_id', '=', ctx.orgId)
+    .where('series_id', '=', current.series_id)
+    .where('id', '<>', current.id)
+    .where('deleted_at', 'is not', null)
+    .execute();
+  return recoverSpringForwardDueTime(
+    { dueOn: current.due_on, dueAt: new Date(current.due_at), timeZone: current.time_zone },
+    priorSeriesOccurrences(current, [...activeSiblings, ...trashedSiblings]),
+  );
+}
 
 // How a reminder is told in the audit: its kind and time, never the to-do's text.
 const reminderKind = (reminder: TodoReminder) => (typeof reminder === 'string' ? reminder : 'custom');
@@ -757,7 +806,7 @@ export const todoComplete = defineCommand({
       const beforeCreatedAt = new Date(before.created_at).getTime();
       const siblings = await ctx.trx
         .selectFrom('ludy_notes.todo')
-        .select(['id', 'due_on', 'created_at'])
+        .select(['id', 'due_on', 'due_at', 'time_zone', 'created_at'])
         .where('org_id', '=', ctx.orgId)
         .where('series_id', '=', seriesId)
         .where('id', '<>', before.id)
@@ -797,10 +846,12 @@ export const todoComplete = defineCommand({
             stepRule.freq === 'monthly' && stepRule.byMonthDay === undefined && anchorDay > candidateDay
               ? { ...stepRule, byMonthDay: anchorDay }
               : stepRule;
+          const dueTime = await resolveSeriesDueTime(ctx, { ...before, series_id: seriesId }, siblings);
           const shifted = shiftTodoSchedule(
             {
               dueOn: before.due_on,
               dueAt: before.due_at === null ? null : new Date(before.due_at),
+              dueTime,
               timeZone: before.time_zone,
               remindAt: before.remind_at === null ? null : new Date(before.remind_at),
             },
@@ -1001,9 +1052,11 @@ export const todoReopen = defineCommand({
 
     let restoredSiblings = 0;
     if (restoredRule !== null && before.series_id !== null && before.recurrence === null) {
-      // If stopSeries cleared an active open sibling in the same transaction, restore each untouched sibling's own rule.
+      // If stopSeries cleared an active open sibling in the same transaction, restore each matching sibling's own rule.
+      // Explicit restoreSiblings entries remain eligible after non-revision link touches (touchTodo on sibling or target),
+      // while callers omitting restoreSiblings match against before.done_at (the stopSeries transaction timestamp).
       const restoreById = new Map((input.restoreSiblings ?? []).map((entry) => [entry.todoId.toLowerCase(), normalizeTodoRecurrence(entry.recurrence)]));
-      const beforeUpdatedMs = new Date(before.updated_at).getTime();
+      const stoppedAtMs = before.done_at !== null ? new Date(before.done_at).getTime() : new Date(before.updated_at).getTime();
       const candidateSiblings = prelockedRows.filter(
         (r) =>
           r.series_id === before.series_id &&
@@ -1012,7 +1065,9 @@ export const todoReopen = defineCommand({
           r.status === 'open' &&
           r.deleted_at === null &&
           r.recurrence === null &&
-          new Date(r.updated_at).getTime() === beforeUpdatedMs,
+          (restoreById.has(r.id)
+            ? new Date(r.updated_at).getTime() >= stoppedAtMs
+            : input.restoreSiblings === undefined && new Date(r.updated_at).getTime() === stoppedAtMs),
       );
       const anchorDay = before.due_on !== null ? Number(before.due_on.split('-')[2]) : null;
       for (const sib of candidateSiblings) {
@@ -1073,7 +1128,7 @@ export const todoReschedule = defineCommand({
     }
     const rows = await ctx.trx
       .selectFrom('ludy_notes.todo')
-      .select(['id', 'status', 'due_on', 'due_at', 'time_zone', 'remind_at', 'revision', 'deleted_at'])
+      .select(['id', 'status', 'due_on', 'due_at', 'time_zone', 'remind_at', 'revision', 'deleted_at', 'series_id', 'created_at'])
       .where('org_id', '=', ctx.orgId)
       .where('id', 'in', input.todoIds)
       .orderBy('id')
@@ -1084,11 +1139,41 @@ export const todoReschedule = defineCommand({
       assertNotInTrash(row);
       if (row.status !== 'open') throw new DomainError('TODO_NOT_CHANGEABLE', 409, 'Chỉ đổi lịch được việc chưa xong');
     }
+    const springSeriesIds = [
+      ...new Set(
+        rows
+          .filter((r) => r.series_id !== null && r.due_on !== null && r.due_at !== null && isSpringForwardDate(r.due_on, r.time_zone))
+          .map((r) => r.series_id as string),
+      ),
+    ];
+    const seriesSiblingsById = new Map<string, SeriesTimeRow[]>();
+    if (springSeriesIds.length > 0) {
+      const fetched = await ctx.trx
+        .selectFrom('ludy_notes.todo')
+        .select(['id', 'series_id', 'due_on', 'due_at', 'time_zone', 'created_at'])
+        .where('org_id', '=', ctx.orgId)
+        .where('series_id', 'in', springSeriesIds)
+        .execute();
+      for (const item of fetched) {
+        if (item.series_id === null) continue;
+        const list = seriesSiblingsById.get(item.series_id) ?? [];
+        list.push(item);
+        seriesSiblingsById.set(item.series_id, list);
+      }
+    }
     for (const row of rows) {
+      const dueTime =
+        row.series_id !== null && row.due_on !== null && row.due_at !== null && isSpringForwardDate(row.due_on, row.time_zone)
+          ? recoverSpringForwardDueTime(
+              { dueOn: row.due_on, dueAt: new Date(row.due_at), timeZone: row.time_zone },
+              priorSeriesOccurrences(row, seriesSiblingsById.get(row.series_id) ?? []),
+            )
+          : null;
       const shifted = shiftTodoSchedule(
         {
           dueOn: row.due_on,
           dueAt: row.due_at === null ? null : new Date(row.due_at),
+          dueTime,
           timeZone: row.time_zone,
           remindAt: row.remind_at === null ? null : new Date(row.remind_at),
         },

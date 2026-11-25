@@ -3,7 +3,7 @@
 // files bucket for its Object Lock when evidence holds are on, and, with --url, probes the running instance. It fails loudly on anything the pilot readiness checklist forbids and lists
 // the items only a person can confirm (docs/runbooks/pilot-readiness.md).
 //
-//   pilot-check [--url https://crove.example.com]
+//   pilot-check [--url https://ludy.example.com]
 //
 // Exit codes: 0 every automatic check passed, 1 a check failed, 2 the check could not run (bad arguments).
 import { randomBytes } from 'node:crypto';
@@ -144,7 +144,7 @@ function list(raw: string | undefined, separator: RegExp): string[] {
 // Whether the API and the worker run as separate processes. The all-in-one role (`all`) gives the HTTP edge the worker's
 // database login, which enters the system context of every org, and every secret. The deployment's compose files tell
 // (COMPOSE_FILE lists compose.pilot.yml, COMPOSE_PROFILES does not start the all-in-one service); a deployment without
-// docker compose names its roles in CROVE_ROLES. Names settings only, never a value.
+// docker compose names its roles in LUDY_ROLES. Names settings only, never a value.
 function rolesProblem(env: Env): string | null {
   // The kernel's own opt-in to run the all role on a public URL (config.ts assertSplitRoles).
   const allowAll = checkEnvPair(env, 'LUDY_ALLOW_ALL_IN_ONE', 'CROVE_ALLOW_ALL_IN_ONE');
@@ -387,7 +387,7 @@ export function checkEnv(env: Env): CheckResult[] {
   const policy = value(env, 'AUTH_SIGNUP_POLICY');
   const domains = value(env, 'AUTH_SIGNUP_ALLOWED_DOMAINS');
   const restricted = policy === 'invite_only' || (policy === 'allowlist' && domains !== undefined);
-  // A provider of the deployment's own (no bundled Supabase Auth, #2704): sign-up there is not Crove's to close; what Crove can
+  // A provider of the deployment's own (no bundled Supabase Auth, #2704): sign-up there is not Ludy's to close; what Ludy can
   // limit is who may use this deployment, AUTH_ALLOWED_EMAILS.
   // The upstream line must be present and empty: an absent line is compose's default, the bundled Supabase Auth.
   const ownProvider = env['AUTH_UPSTREAM_URL'] !== undefined && env['AUTH_UPSTREAM_URL'].trim() === '' && value(env, 'PUBLIC_AUTH_URL') !== undefined;
@@ -785,7 +785,7 @@ export async function probeDeployment(origin: string, fetchFn: Fetch = fetch): P
 // The sign-up probe (#564): what the running instance does with a sign-up nobody may make, rather than what
 // /api/config and /settings say about it. It signs up a random address at a reserved domain that never resolves
 // (RFC 2606 .invalid), which no allowlist holds and no invite names, and sends no password:
-//   - Crove's proxy enforcing invite_only or allowlist refuses it before Supabase Auth (403 signup_not_allowed). It
+//   - Ludy's proxy enforcing invite_only or allowlist refuses it before Supabase Auth (403 signup_not_allowed). It
 //     creates nothing and sends nothing; it uses one slot of this client's email budget for the hour.
 //   - Supabase Auth with sign-up closed refuses it (signup_disabled).
 //   - Otherwise it reaches Supabase Auth, which refuses a sign-up without a password before it creates or mails
@@ -858,7 +858,7 @@ export function formatResults(unordered: readonly CheckResult[]): string {
   return lines.join('\n');
 }
 
-// The source repository whose CI ran the commit a deployment reports (#1995): DOS/Ludy unless CROVE_SOURCE_REPO names a
+// The source repository whose CI ran the commit a deployment reports (#1995): DOS/Ludy unless LUDY_SOURCE_REPO names a
 // fork, as owner/name.
 export const DEFAULT_SOURCE_REPO = 'DOS/Ludy';
 // The checks of the ci workflow that hold the RLS matrix and the rest of the database tests (T8), and the gate that

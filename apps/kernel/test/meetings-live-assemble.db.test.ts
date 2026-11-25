@@ -26,7 +26,7 @@ import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 import { rewriteHistoricalCoreSql } from './pre-cutover-db.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-meetings-assemble-secret-0123456789-abcdef';
 const ISSUER = 'crove-auth-meetings-assemble';
@@ -57,7 +57,7 @@ class MemoryStore implements BlobStore {
 }
 
 suite('meetings live pieces assembled on PostgreSQL (#3126)', () => {
-  const dbName = `crove_test_meetings_assemble_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_meetings_assemble_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

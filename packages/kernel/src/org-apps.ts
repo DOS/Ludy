@@ -26,7 +26,7 @@ export function appEffective(input: { module: string; deployment: readonly strin
 export interface OrgAppsOptions {
   // The modules this build ships (AVAILABLE_MODULES), kernel included or not.
   readonly shipped: readonly string[];
-  // The modules this deployment runs (CROVE_MODULES, ADR-0031).
+  // The modules this deployment runs (LUDY_MODULES, ADR-0031).
   readonly deployment: readonly string[];
   // The org's entitlements, the `billing` port's answer (plan Decision 10).
   readonly entitlements: (orgId: string) => Promise<readonly string[]>;

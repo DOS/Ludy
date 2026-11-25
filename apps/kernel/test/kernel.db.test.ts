@@ -1,4 +1,4 @@
-// Integration tests against a real PostgreSQL 17. Set CROVE_TEST_ADMIN_URL to a superuser URL
+// Integration tests against a real PostgreSQL 17. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL
 // (CI uses a service container); each run creates and drops its own database.
 // Security, tenancy, authorization and ledger invariants live in test/invariant/ (the invariant suite,
 // which CI runs from the base branch on protected-path PRs). This file keeps the product flows.
@@ -21,7 +21,7 @@ import { startWorker } from '../src/worker.ts';
 import { startExtractService } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const FIXTURE = readFileSync(new URL('../../extract/test/fixtures/einvoice-basic.xml', import.meta.url));
 
@@ -48,7 +48,7 @@ class MemoryStore implements BlobStore {
 const suite = ADMIN ? describe : describe.skip;
 
 suite('kernel on PostgreSQL', () => {
-  const dbName = `crove_test_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl: string;
   let appUrl: string;
   let workerUrl: string;

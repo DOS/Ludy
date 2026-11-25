@@ -1,6 +1,6 @@
 // Legal entities (#1278) on PostgreSQL 17: the default entity every org gets with it and the backfill for older orgs,
 // who lists, adds and changes entities, the default entity's tax code kept equal to the org's, and the database's own
-// rules (one default, its tax code the org's, a tax code once per org, no parent cycle, no delete). Set CROVE_TEST_ADMIN_URL to
+// rules (one default, its tax code the org's, a tax code once per org, no parent cycle, no delete). Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to
 // a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -16,14 +16,14 @@ import { TEST_MANIFESTS } from './manifests.ts';
 import { contextToken } from './context-token.ts';
 import { rewriteHistoricalCoreSql } from './pre-cutover-db.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const MIGRATION = rewriteHistoricalCoreSql(readFileSync(new URL('../../../supabase/migrations/20261030001000_crove_kernel_legal_entity.sql', import.meta.url), 'utf8'));
 const SYNC_MIGRATION = rewriteHistoricalCoreSql(readFileSync(new URL('../../../supabase/migrations/20261101110000_crove_kernel_default_entity_tax_sync.sql', import.meta.url), 'utf8'));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('legal entities on PostgreSQL (#1278)', () => {
-  const dbName = `crove_test_legal_entity_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_legal_entity_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

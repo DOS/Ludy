@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The built-in memory port of Vy (ADR-0049 decision 9, issue #2783) runs the same feature as the fake provider of packages/agent/test: a member's
-// own rows through the member's own commands, nobody else's, and forget deletes them. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run
+// own rows through the member's own commands, nobody else's, and forget deletes them. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run
 // makes its own database.
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -13,12 +13,12 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { builtInMemory } from '../src/member-vy-ports.ts';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('the built-in memory port of member Vy', () => {
-  const dbName = `crove_test_member_vy_ports_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_member_vy_ports_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let orgId = '';

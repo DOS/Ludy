@@ -2,7 +2,7 @@
 // The copy of a meeting's text in its follow-up mails goes with the meeting (#3016, ADR-0047 point 7) on PostgreSQL 17: the recorder's delete, the owner's compliance delete, the
 // text retention purge and the archive replay each drop the payload of the follow-up mails of that meeting (and nothing else: the mail row, its status and its counts stay, another
 // meeting's mails and a mail of another source are untouched), a meeting not yet due keeps its mails' payloads, and the audit row holds a count only.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -15,13 +15,13 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const SYSTEM = { type: 'system' as const, component: 'test.followup-erase' };
 
 suite('follow-up mails and the erasure of a meeting (#3016)', () => {
-  const dbName = `crove_test_followup_erase_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_followup_erase_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let runtime: Runtime;

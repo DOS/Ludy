@@ -3,8 +3,8 @@
 // variant that went out at least 24 hours ago, while the variant still waits to be weighed (social.metrics.target's
 // outperformCheck, from pendingWeigh below). The check weighs the variant's 24-hour capture: its first capture with
 // counts taken at least OUTPERFORM_AFTER_HOURS after it went out. It sets that capture against the latest counts of the
-// channel's last OUTPERFORM_HISTORY published Crove variants before it (domain/outperform.ts). Left out on both sides:
-// Stories (their counts are of another kind and last a day), the channel's posts published outside Crove
+// channel's last OUTPERFORM_HISTORY published Ludy variants before it (domain/outperform.ts). Left out on both sides:
+// Stories (their counts are of another kind and last a day), the channel's posts published outside Ludy
 // (ludy_social.external_post, never a variant) and the variant itself.
 //
 // Once: a successful check sets outperform_checked_at with a conditional update (only while null), whether the post
@@ -77,7 +77,7 @@ export const metricsCheckOutperforming = defineCommand({
     // No 24-hour capture yet (asked a moment early), or one too old to tell anyone about now: not weighed.
     const day = await dayCapture(ctx.trx, ctx.orgId, v.id, v.published_at);
     if (!day || !day.recent) return skipped;
-    // The channel's published Crove posts before it, newest first, with the latest counts of each.
+    // The channel's published Ludy posts before it, newest first, with the latest counts of each.
     const { rows: earlier } = await sql<{ metrics: Record<string, number> }>`
       SELECT s.metrics FROM ludy_social.post_variant e
       CROSS JOIN LATERAL (

@@ -10,7 +10,7 @@ import { foldMathAlphanumerics } from './text-styles.ts';
 // What social.publish.record keeps as the error code when X or LinkedIn refused a text identical to a recent post: the
 // adapters' DUPLICATE_CONTENT in @ludy/channel, which the browser cannot import.
 export const DUPLICATE_CONTENT = 'DUPLICATE_CONTENT';
-// Facebook's 506 ("duplicate status message"): unclear, since the post it matched may be Crove's own earlier attempt.
+// Facebook's 506 ("duplicate status message"): unclear, since the post it matched may be Ludy's own earlier attempt.
 export const POSSIBLE_DUPLICATE = 'POSSIBLE_DUPLICATE';
 
 // How far back a published post counts, and how many posts of a channel one read compares at most.

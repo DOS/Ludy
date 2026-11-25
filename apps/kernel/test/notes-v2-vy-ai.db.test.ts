@@ -24,7 +24,7 @@ import { DraftBudget } from '../src/ai-draft-limit.ts';
 import { runNotesOrganize, runNotesTodoPlan, type MeetingSummaryDeps } from '../src/member-vy-ports.ts';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -38,7 +38,7 @@ const SECRET_NOTE_TITLE = 'Tai lieu hop rieng cua Carol';
 const SECRET_NOTE_BODY = 'Mat khau noi bo khong duoc ro ri sang member khac';
 
 suite('Notes v2 Vy daily planner & inbox organizer PG17 integration (#3563)', () => {
-  const dbName = `crove_test_notes_v2_vy_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_notes_v2_vy_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let db: Db;

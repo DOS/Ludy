@@ -2,7 +2,7 @@
 // The sales coworker's draft of the follow-up of a "Cần theo dõi" step on PostgreSQL (#3101): crm.followup.source gives the facts of an open step (the contact, the days, the deal's sent quote with
 // its exact total) and nothing else; the draft built around them holds the exact total and the link of an unanswered quote and of a quiet deal that has one; a model that states a figure or a link
 // gets the fixed words with the same facts; with AI off the fixed words are used; nothing is sent (no mail row, no message) and no state changes but the link the member's own command makes; a
-// viewer is refused, another org's step is not found, a decided quote's step has nothing to remind about. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// viewer is refused, another org's step is not found, a decided quote's step has nothing to remind about. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -18,7 +18,7 @@ import { DraftBudget } from '../src/ai-draft-limit.ts';
 import { crmFollowupAi, draftCrmFollowup } from '../src/crm-followup-ai.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const SYSTEM = { type: 'system' as const, component: 'crm.deal_stale' };
@@ -27,7 +27,7 @@ const CONFIG = { baseURL: 'http://localhost:1/v1', apiKey: null, model: 'test' }
 const GOOD_WORDS = { lead: 'Bên mình nhắn để hỏi xem anh/chị đã xem báo giá chưa, thông tin nằm ngay bên dưới.', closing: 'Rất mong nhận được phản hồi của anh/chị.' };
 
 suite('the follow-up draft of a next step on PostgreSQL (#3101)', () => {
-  const dbName = `crove_test_crm_followup_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_crm_followup_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

@@ -1,6 +1,6 @@
 // The worker's part of the notes module (issue #1671, ADR-0037 §4): a former member's private notes are removed 30 days
 // after they left (a queued job, and a daily sweep for a removal that queued none, #1733), the trash is emptied daily, and every 5 minutes the due to-do reminders are sent (#1675). startWorker() works and queues these jobs only when the module is
-// installed (Runtime.installed('notes'), CROVE_MODULES), so a deployment without notes neither queues nor works them.
+// installed (Runtime.installed('notes'), LUDY_MODULES), so a deployment without notes neither queues nor works them.
 // Jobs carry ids only; the commands run in the org's system context and reach private notes through definers that
 // answer counts, never text.
 import { sql } from 'kysely';

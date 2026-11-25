@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The four signals reads over MCP, in the sealed context of a grant (Vy V4 and V5, #2967 and #2969, step S2), on PostgreSQL 17: an owner's or admin's company grant and a member-bound grant of a member
 // with the whole org in view get the same answers as the person's own session; a member-bound grant of a branch-limited member is refused by the two finance reads with SIGNAL_PARTIAL_VIEW (never the
-// part of the books in view) while the CRM reads answer; a grant without the scope, a revoked grant and a demoted grantor reach nothing. Set CROVE_TEST_ADMIN_URL to a superuser URL.
+// part of the books in view) while the CRM reads answer; a grant without the scope, a revoked grant and a demoted grantor reach nothing. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -15,7 +15,7 @@ import { crmCommands, crmQueries } from '@ludy/mod-crm';
 import { addDays, financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const TODAY = vietnamToday();
@@ -25,7 +25,7 @@ const CONVERSATION_RULE = 'kernel.signals.conversation_unanswered';
 const READS = ['crm.signals.won_deals', 'crm.signals.open_deals', 'finance.signals.sales', 'finance.signals.overdue_receivables'] as const;
 
 suite('the signals reads over MCP (#2967, #2969, step S2)', () => {
-  const dbName = `crove_test_signals_mcp_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_signals_mcp_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

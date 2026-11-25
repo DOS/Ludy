@@ -1,7 +1,7 @@
 // Fair order on the extraction queue (#432, ADR-0035) on PostgreSQL 17 with the vendored pg-boss schema: one org's
 // 500-entry ZIP does not hold back another org's single upload. The jobs are sent as the outbox relay sends them (in
 // batches of 100, with extractPriorities and sendExtractJob, as ludy_worker) and fetched as the extraction worker
-// fetches them (one at a time). Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its database.
+// fetches them (one at a time). Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; the run creates and drops its database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -13,7 +13,7 @@ import { jobGroup } from '../src/job-keys.ts';
 import { JOB_SCHEMA, QUEUES } from '../src/jobs-schema.ts';
 import { extractPriorities, sendExtractJob, type OutboxRow } from '../src/worker.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -24,7 +24,7 @@ interface Job {
 }
 
 suite('fair order of extraction jobs across orgs (#432)', () => {
-  const dbName = `crove_test_fairness_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_fairness_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let pool: pg.Pool;
   let db: Db;
   let boss: PgBoss;

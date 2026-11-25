@@ -1,11 +1,11 @@
-// Kysely types for the Crove schemas: the types generated from the migrated database (./generated/database.ts,
+// Kysely types for the Ludy schemas: the types generated from the migrated database (./generated/database.ts,
 // `pnpm db:types`, issue #48) with the refinements the catalog cannot express, such as CHECK-constraint unions and
 // columns only a trigger or a definer writes. numeric, int8 and date columns are strings (see the pool type parsers);
 // timestamptz is Date.
 //
-// The generated Database holds only the tables crove_tenant may read. crove_kernel.user_account (identity) and the
+// The generated Database holds only the tables ludy_tenant may read. ludy_kernel.user_account (identity) and the
 // other control-plane tables (plan §3.6, Decision 14) have no Kysely type on purpose: tenant code reaches them only
-// through definers (crove_kernel.member_profiles, identity_resolve, my_orgs and the like), so a direct selectFrom does
+// through definers (ludy_kernel.member_profiles, identity_resolve, my_orgs and the like), so a direct selectFrom does
 // not compile. The invariant test control-plane-reads.test.ts catches raw SQL.
 import type { ColumnType, Generated, InsertType, SelectType, UpdateType } from 'kysely';
 import type * as G from './generated/database.ts';
@@ -15,8 +15,8 @@ import type * as G from './generated/database.ts';
 // must fit the generated one, it is nullable exactly when the column is, and it is optional on insert only when the
 // column has a default or is nullable, unless the column is listed as assigned by a trigger (the third parameter).
 // A migration that renames, retypes, changes the nullability or drops the default of a refined column fails
-// typecheck here until the refinement follows (the default check means little for a column crove_tenant may not
-// insert, whose insert type is undefined). The generated write types follow crove_tenant's privileges (issue #266):
+// typecheck here until the refinement follows (the default check means little for a column ludy_tenant may not
+// insert, whose insert type is undefined). The generated write types follow ludy_tenant's privileges (issue #266):
 // a column the role may not insert or update has the write type G.NotGranted there, which a refinement keeps
 // whatever it says, so a refinement cannot make a forbidden write compile; a refinement's never is treated the same.
 //
@@ -50,7 +50,7 @@ type Refinement<Table, R, ByTrigger> = {
       : Mismatch<Table[K], R[K], K extends ByTrigger ? true : false>
     : 'not a column of the generated table';
 };
-// The refined column under the generated column's privileges: an insert or update crove_tenant is not granted
+// The refined column under the generated column's privileges: an insert or update ludy_tenant is not granted
 // (G.NotGranted) stays NotGranted whatever the refinement says, and a refinement's never becomes NotGranted too
 // (Kysely drops a never column, so an object carrying it, or a table left with no writable column, would pass).
 type WriteType<Column, Refined> = [Column] extends [G.NotGranted] ? G.NotGranted : [Refined] extends [never] ? G.NotGranted : Refined;
@@ -83,7 +83,7 @@ export type TenantTable = Refine<
     vat_filing_period: (typeof VAT_FILING_PERIODS)[number] | null;
     meeting_consent_policy: Generated<(typeof MEETING_CONSENT_POLICIES)[number]>;
     // inbound_token is the active inbound token. Every token ever issued, retired ones included, is in
-    // crove_kernel.inbound_address, which only definers read and write; rotation is the command kernel.inbound.rotate.
+    // ludy_kernel.inbound_address, which only definers read and write; rotation is the command kernel.inbound.rotate.
   }
 >;
 
@@ -100,7 +100,7 @@ export type TaxProfileTable = Refine<
     pit_filing_period: (typeof PIT_FILING_PERIODS)[number] | null;
   }
 >;
-// The org-wide records a link to a legal entity can name (#1280 part 3b, crove_kernel.record_le).
+// The org-wide records a link to a legal entity can name (#1280 part 3b, ludy_kernel.record_le).
 // The language of the daily brief mail (#2406): the member's choice when they opted in; NULL is Vietnamese.
 export const TODAY_MAIL_LANGUAGES = ['vi', 'en'] as const;
 export type TodayMailTable = Refine<G.KernelTodayMailTable, { language: ColumnType<(typeof TODAY_MAIL_LANGUAGES)[number] | null, (typeof TODAY_MAIL_LANGUAGES)[number] | null, never> }>;
@@ -167,14 +167,14 @@ export type LegalEntityTable = Refine<G.KernelLegalEntityTable, { kind: Generate
 
 // The built-in roles a member can hold on top of their base role (issue #1279, plan §4.6), and their assignments: an
 // org-wide role covers the whole org, a legal_entity role (external_accountant) names one legal entity. Tenant roles
-// only read the three tables; crove_kernel.role_assignment_grant() and role_assignment_revoke() write assignments.
+// only read the three tables; ludy_kernel.role_assignment_grant() and role_assignment_revoke() write assignments.
 export const ROLE_SCOPES = ['org', 'legal_entity'] as const;
 export type RoleScope = (typeof ROLE_SCOPES)[number];
 export type RoleTable = Refine<G.KernelRoleTable, { scope: RoleScope }>;
 export type RoleAssignmentTable = Refine<G.KernelRoleAssignmentTable, { scope: RoleScope }>;
 
 // A pending, accepted or revoked invite (issue #35). Tenant roles insert invites and may only set status,
-// revoked_at and revoked_by; crove_kernel.invite_accept() is the only writer of accepted_at and accepted_by.
+// revoked_at and revoked_by; ludy_kernel.invite_accept() is the only writer of accepted_at and accepted_by.
 export const INVITE_ROLES = ['admin', 'member', 'viewer'] as const;
 export const INVITE_STATUSES = ['pending', 'accepted', 'revoked'] as const;
 export type MemberInviteTable = Refine<
@@ -212,7 +212,7 @@ export type PartyTable = Refine<
 >;
 
 // generation is the object version the bytes were written as (ADR-0013); null only on rows from before it.
-// A file row never changes, for every role (trigger file_guard; a move to another org is refused by RLS): crove_tenant
+// A file row never changes, for every role (trigger file_guard; a move to another org is refused by RLS): ludy_tenant
 // keeps UPDATE only to lock the row (SELECT ... FOR UPDATE), so no column has an update type here.
 // social: an image uploaded for a Social post (#372); import: a spreadsheet for a module's import (#465). Neither is
 // extracted or shown in the Inbox. meeting_audio and meeting_video: encrypted meeting recordings (#2576).
@@ -285,7 +285,7 @@ export type AgentKind = (typeof AGENT_KINDS)[number];
 export const MEMBER_PERMISSION_OVERRIDE_PERMISSIONS = ['vy.use'] as const;
 export const MEMBER_VY_TABLE_MODES = ['read', 'write'] as const;
 export const MCP_MEMBER_TABLE_MODES = ['read'] as const;
-// The write scopes an MCP proposal may be listed under (crove_kernel.mcp_proposal_command, #3858 slice d): the same three as the grant's CHECK.
+// The write scopes an MCP proposal may be listed under (ludy_kernel.mcp_proposal_command, #3858 slice d): the same three as the grant's CHECK.
 export const MCP_PROPOSAL_COMMAND_SCOPES = ['ludy.social.draft', 'ludy.engage.write', 'ludy.ads.draft'] as const;
 export const MEMBER_VY_RESULT_STATUSES = ['running', 'ready', 'failed'] as const;
 export type MemberVyResultStatus = (typeof MEMBER_VY_RESULT_STATUSES)[number];
@@ -341,7 +341,7 @@ export type TaskCommentTable = Refine<
 export const CHANNEL_CONNECTION_STATUSES = ['active', 'expired', 'revoked', 'error'] as const;
 export type ChannelConnectionStatus = (typeof CHANNEL_CONNECTION_STATUSES)[number];
 
-// A connected social or messaging account (ADR-0025). Its sealed tokens live in crove_kernel.credential, which has
+// A connected social or messaging account (ADR-0025). Its sealed tokens live in ludy_kernel.credential, which has
 // no Kysely type: only the credential_* definers reach it.
 export type ChannelConnectionTable = Refine<G.KernelChannelConnectionTable, { status: Generated<ChannelConnectionStatus> }>;
 
@@ -410,7 +410,7 @@ export const EXCHANGE_RATE_SOURCES = ['invoice', 'entered'] as const;
 export type ExchangeRateSource = (typeof EXCHANGE_RATE_SOURCES)[number];
 
 // The legal entity of a finance or kernel row (#1280): the parent's, or the one the writer names, or the org's default
-// entity, filled in by the insert trigger b_legal_entity (ludy_finance.legal_entity_fill, crove_kernel.legal_entity_fill)
+// entity, filled in by the insert trigger b_legal_entity (ludy_finance.legal_entity_fill, ludy_kernel.legal_entity_fill)
 // and never changed afterwards.
 type LegalEntityColumn = ColumnType<string, string | undefined, never>;
 
@@ -722,7 +722,7 @@ export type CategorizationRuleTable = Refine<
   'legal_entity_id'
 >;
 
-// The charts of accounts Crove knows (#1403): a regime and its version. Read only for tenant roles.
+// The charts of accounts Ludy knows (#1403): a regime and its version. Read only for tenant roles.
 export const BOOKS_REGIMES = ['tt133', 'tt99'] as const;
 export type BooksRegime = (typeof BOOKS_REGIMES)[number];
 export type ChartTable = Refine<G.FinanceChartTable, { regime: ColumnType<BooksRegime, never, never> }>;
@@ -793,7 +793,7 @@ export type PurchaseLineTable = Refine<G.FinancePurchaseLineTable, { legal_entit
 export type PurchaseTaxRateTable = Refine<G.FinancePurchaseTaxRateTable, { legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
 export type PurchaseDocumentVoidTable = Refine<G.FinancePurchaseDocumentVoidTable, { legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
 
-// Crove Social (Social plan §3.2, S3).
+// Ludy Social (Social plan §3.2, S3).
 export const SOCIAL_POST_STATUSES = ['draft', 'scheduled', 'publishing', 'published', 'partially_published', 'failed', 'cancelled'] as const;
 export const SOCIAL_VARIANT_STATUSES = [
   'draft',
@@ -2070,5 +2070,5 @@ type Refined = Tables<{
   'ludy_social.post_comment': SocialPostCommentTable;
 }>;
 
-// Every table crove_tenant may read: the generated table type, or its refinement above.
+// Every table ludy_tenant may read: the generated table type, or its refinement above.
 export type Database = { [K in keyof G.Database]: K extends keyof Refined ? Refined[K] : G.Database[K] };

@@ -2,7 +2,7 @@
 // What the org sets for its payment reminders (#2488, slice 3) on PostgreSQL 17: the terms default to 30 days and the weekly item to off, the owner or an admin sets
 // both, a customer's own terms and pause are set by any member who may send reminders (a viewer reads and never writes), the settings sit on the kept party of a
 // duplicate group, bad numbers and dates are refused before the database sees them, each change is audited with ids and numbers only, another org's party is not
-// found, and a removed party takes its row with it. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// found, and a removed party takes its row with it. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -15,7 +15,7 @@ import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { enterUser } from './context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -33,7 +33,7 @@ interface Customer {
 const daysFromNow = (days: number) => new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
 
 suite('payment reminder settings (#2488)', () => {
-  const dbName = `crove_test_collection_settings_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_collection_settings_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

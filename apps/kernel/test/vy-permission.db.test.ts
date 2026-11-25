@@ -2,7 +2,7 @@
 // The permission vy.use, "Làm việc với Vy" (ADR-0049 decision 10, issue #2781): who holds it by default, who may set an
 // exception for whom, and the narrowed viewer rule of role.assign. The invariants (no skip, negative cases unconditional) are in
 // test/invariant/member-vy-private.db.test.ts; this file drives the command and the role commands end to end.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -14,12 +14,12 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
 import { contextToken } from './invariant/fixtures/context-token.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('vy.use (ADR-0049 decision 10)', () => {
-  const dbName = `crove_test_vy_use_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_vy_use_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appUrl = '';
   const pools: pg.Pool[] = [];

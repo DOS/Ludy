@@ -1,6 +1,6 @@
 // The public booking page (#1318) on PostgreSQL 17: the page reads free slots only, a request records a pending
 // booking, and the worker's crm.booking.confirm holds the host's time, links a party and confirms it, or refuses it.
-// 200 confirmations of one slot at once end with exactly one booking. Set CROVE_TEST_ADMIN_URL to a superuser URL;
+// 200 confirmations of one slot at once end with exactly one booking. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL;
 // each run makes its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -15,7 +15,7 @@ import { crmCommands, crmQueries } from '@ludy/mod-crm';
 import { bookingManageAsk, bookingManageView, bookingRequest, bookingStatus, bookingView } from '../src/booking-page.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const VN = 'Asia/Ho_Chi_Minh';
@@ -32,7 +32,7 @@ const at = (date: string, minute: number) => new Date(zonedInstant(VN, date, min
 const dayRange = (date: string) => ({ from: at(date, 0), to: at(date, 1440) });
 
 suite('the public booking page on PostgreSQL (#1318)', () => {
-  const dbName = `crove_test_crm_bookings_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_crm_bookings_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appPool: pg.Pool;
   let workerPool: pg.Pool;

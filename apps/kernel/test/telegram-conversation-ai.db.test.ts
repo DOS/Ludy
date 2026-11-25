@@ -2,7 +2,7 @@
 // The AI coworker on a Telegram bot chat (#3132, AGENTS.md "AI part named"): Dy drafts a reply for a new Telegram conversation through the AI
 // budget meter (the org's `auto_draft` switch governs the automatic drafts), the saved replies and the {tên} placeholder work, the intent source is
 // read for the suggestion, and a person presses Send: no draft is ever sent by itself, and with no model the inbox still takes the message and the
-// reply. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// reply. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -18,7 +18,7 @@ import { systemMeter } from '../src/ai-meter.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const SYSTEM = { type: 'system' as const, component: 'conversations' };
@@ -26,7 +26,7 @@ const CUSTOMER_TEXT = 'Áo thun cotton này giá bao nhiêu vậy shop? (bí m�
 const DRAFT_TEXT = 'Dạ áo thun cotton giá [giá] ạ, bạn cần size nào ạ?';
 
 suite('Dy on a Telegram bot chat on PostgreSQL (#3132)', () => {
-  const dbName = `crove_test_telegram_ai_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_telegram_ai_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

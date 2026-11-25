@@ -3,7 +3,7 @@
 // kernel.today answers with the name of the coworker of each app (Ly finance, Dy crm and conversations, Uy social and ads,
 // Vy for the summary line), the name being the display name of the org's own agent now, so a rename shows at once. With no
 // agent of a coworker the roster's name stands; a retired agent, a member's own Vy and another org's agent never name one.
-// Nothing here calls a model. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// Nothing here calls a model. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -15,12 +15,12 @@ import { COWORKER_ROSTER, zTodayList, type TodayList } from '@ludy/kernel-contra
 import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('kernel.today names the AI coworkers (#3265)', () => {
-  const dbName = `crove_test_today_coworkers_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_today_coworkers_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let rt: Runtime;

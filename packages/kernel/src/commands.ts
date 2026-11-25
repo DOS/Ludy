@@ -1178,7 +1178,7 @@ export async function sessionOrgs(db: Db, userId: string, sessionId: string | nu
 //   any other page: the same definer, membership and session checks, audit row and upstream sign-out. An org that
 //   cannot run it (its owner revoked this session there, or the user left it since the lookup) passes to the next
 //   one, so one org's owner cannot block a global self revoke (issue #196);
-// - a user with no org that can run it has nowhere to audit: ludy_kernel.session_revoke_orgless revokes in Crove
+// - a user with no org that can run it has nowhere to audit: ludy_kernel.session_revoke_orgless revokes in Ludy
 //   only, in the org-less request transaction right after the session check, and refuses while some org could.
 // Revoking another user's sessions always needs that user's org: owners revoke in their org only.
 export async function revokeOwnSessionsWithoutOrg(runtime: Runtime, actor: UserActor, rawInput: unknown): Promise<{ revoked: string[] }> {

@@ -3,7 +3,7 @@
 // `notes.todo` and set by the kernel; the to-do becomes handed_over with the task's id; an archived position is refused
 // and nothing changes; only the owner hands their own open to-do over; the audit row and events keep markers and ids,
 // not text; kernel.task.create's public input still sets no source_ref; My work lists my open to-dos and the open tasks
-// of the positions I hold. Set CROVE_TEST_ADMIN_URL to a superuser URL; the run makes its own database.
+// of the positions I hold. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; the run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -16,7 +16,7 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { notesCommands, notesQueries } from '@ludy/mod-notes';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const TITLE = 'Nộp tờ khai thuế GTGT quý 3';
 const DETAILS = 'Riêng tư: khách nợ lương nhân viên';
@@ -36,7 +36,7 @@ interface TaskView {
 }
 
 suite('to-do hand-over and My work on PostgreSQL (#1674)', () => {
-  const dbName = `crove_test_notes_hand_over_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_notes_hand_over_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let app: Runtime;

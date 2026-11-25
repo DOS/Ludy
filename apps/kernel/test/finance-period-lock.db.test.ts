@@ -3,7 +3,7 @@
 // owner's alone, R3 with a reason on the audit row; the database guard holds for the database owner too; a lock
 // and a posting in flight wait for each other (ADR-0021 cases A and B); and a lock or unlock and a change of the
 // caller's role or permission wait for each other (#1348), without a deadlock under the accountant preset (#1922).
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -27,7 +27,7 @@ import { inProcessExtract } from './extract-service.ts';
 import { enterUser } from './context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const FIXTURE = readFileSync(new URL('../../extract/test/fixtures/einvoice-basic.xml', import.meta.url), 'utf8');
 const SECRET = 'test-only-jwt-secret-for-period-lock-0123456789';
@@ -80,7 +80,7 @@ const RAW_COMMANDS = [rawCall('test.period.lock_raw', 'lock_period'), rawCall('t
 const suite = ADMIN ? describe : describe.skip;
 
 suite('period lock (#329)', () => {
-  const dbName = `crove_test_period_lock_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_period_lock_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

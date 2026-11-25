@@ -1,6 +1,6 @@
 // The Metrics tab's totals against the window just before (#947) on PostgreSQL 17: the same sums for the window of
 // the same length that ends where the chosen one starts, in total and per channel, with the label filter, and never
-// another org's posts. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// another org's posts. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -12,7 +12,7 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { socialCommands, socialQueries } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -27,7 +27,7 @@ interface WindowTotals extends Totals {
 }
 
 suite('social metrics against the window before (#947)', () => {
-  const dbName = `crove_test_social_compare_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_compare_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

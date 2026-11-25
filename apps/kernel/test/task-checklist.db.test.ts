@@ -37,7 +37,7 @@ import { runOrgExport } from '../src/org-export.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 type Task = z.infer<typeof zTask>;
 type TaskDetail = z.infer<typeof zTaskDetail>;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
@@ -63,7 +63,7 @@ class MemoryStore implements BlobStore {
 }
 
 suite('projects (#2606): task checklist flows on PostgreSQL 17', () => {
-  const dbName = `crove_test_checklist_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_checklist_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let db: Db;
@@ -154,12 +154,18 @@ suite('projects (#2606): task checklist flows on PostgreSQL 17', () => {
     const owner = await newPerson('owner');
     const org = await createOrg(appRt, asUser(owner.userId), 'Checklist Co');
 
-    // Direct SQL check constraint validation via ludy_kernel.task_checklist_valid (including missing keys)
+    // Direct SQL check constraint validation via ludy_kernel.task_checklist_valid (including missing keys & Unicode whitespace)
     const invalidJsonPayloads = [
       'null',
       '{}',
       '[{}]',
       JSON.stringify([{ text: '   ', done: false }]),
+      JSON.stringify([{ text: '\t', done: false }]),
+      JSON.stringify([{ text: '\n\r\v\f', done: false }]),
+      JSON.stringify([{ text: '\u00A0', done: false }]),
+      JSON.stringify([{ text: '\u1680\u2000\u2003\u200A', done: false }]),
+      JSON.stringify([{ text: '\u2028\u2029\u202F\u205F\u3000\uFEFF', done: false }]),
+      JSON.stringify([{ text: '\t\u00A0\u2003\u3000\uFEFF', done: false }]),
       JSON.stringify([{ text: 'a'.repeat(301), done: false }]),
       JSON.stringify([{ text: 'thiếu done' }]),
       JSON.stringify([{ done: false }]),
@@ -178,6 +184,63 @@ suite('projects (#2606): task checklist flows on PostgreSQL 17', () => {
         ),
       ).rejects.toMatchObject({ code: '23514' });
     }
+
+    // Verify SQL function security/volatility/search_path/ACL parity and validated task_revision_positive constraint
+    const fnParity = await withAdmin(async (c) => {
+      const fn = await c.query<{
+        prosecdef: boolean;
+        provolatile: string;
+        proconfig: string[] | null;
+        direct_grantees: string[] | null;
+        tenant_exec: boolean;
+        public_exec: boolean;
+        prober_exec: boolean;
+        reporter_exec: boolean;
+        auth_reader_exec: boolean;
+      }>(
+        `SELECT p.prosecdef, p.provolatile::text, p.proconfig,
+                (SELECT pg_catalog.array_agg(gr.rolname::text ORDER BY gr.rolname)
+                   FROM pg_catalog.aclexplode(p.proacl) a
+                   JOIN pg_catalog.pg_roles gr ON gr.oid = a.grantee
+                  WHERE a.grantee <> p.proowner) AS direct_grantees,
+                has_function_privilege('ludy_tenant', p.oid, 'EXECUTE') AS tenant_exec,
+                has_function_privilege('public', p.oid, 'EXECUTE') AS public_exec,
+                has_function_privilege('ludy_prober', p.oid, 'EXECUTE') AS prober_exec,
+                has_function_privilege('ludy_reporter', p.oid, 'EXECUTE') AS reporter_exec,
+                has_function_privilege('ludy_auth_reader', p.oid, 'EXECUTE') AS auth_reader_exec
+           FROM pg_catalog.pg_proc p
+           JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+          WHERE n.nspname = 'ludy_kernel' AND p.proname = 'task_checklist_valid'`,
+      );
+      const con = await c.query<{ convalidated: boolean }>(
+        `SELECT c.convalidated
+           FROM pg_catalog.pg_constraint c
+           JOIN pg_catalog.pg_class t ON t.oid = c.conrelid
+           JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace
+          WHERE n.nspname = 'ludy_kernel' AND t.relname = 'task' AND c.conname = 'task_revision_positive'`,
+      );
+      return { fn: fn.rows[0], con: con.rows[0] };
+    });
+    expect(fnParity.fn).toMatchObject({
+      prosecdef: false,
+      provolatile: 'i',
+      proconfig: ['search_path=pg_catalog, pg_temp'],
+      direct_grantees: ['ludy_tenant'],
+      tenant_exec: true,
+      public_exec: false,
+      prober_exec: false,
+      reporter_exec: false,
+      auth_reader_exec: false,
+    });
+    expect(fnParity.con?.convalidated).toBe(true);
+
+    // Leading/trailing Unicode whitespace around real text passes SQL CHECK and is trimmed by Zod on command write
+    const sqlTrimCheck = await withAdmin((c) =>
+      c.query<{ ok: boolean }>(`SELECT ludy_kernel.task_checklist_valid($1::jsonb) AS ok`, [
+        JSON.stringify([{ text: '\u00A0Bước hợp lệ\t', done: false }]),
+      ]),
+    );
+    expect(sqlTrimCheck.rows[0]?.ok).toBe(true);
 
     // Create task with checklist via projects.task.create
     const { projectId } = await exec<{ projectId: string }>(owner.userId, org.orgId, 'projects.project.create', {
@@ -371,5 +434,130 @@ suite('projects (#2606): task checklist flows on PostgreSQL 17', () => {
     );
     const shortTaskAfter = await query<TaskDetail>(owner.userId, org.orgId, 'kernel.task.get', { id: splitDigitsTaskId });
     expect(shortTaskAfter.task.checklist[2]).toEqual({ text: 'Số chứng từ ngắn 87654321 cần giữ', done: false });
+  });
+
+  it('enforces backwards-compatible expectedRevision optimistic concurrency across concurrent checklist edits', async () => {
+    const owner = await newPerson('rev-owner');
+    const editorA = await newPerson('rev-editor-a');
+    const editorB = await newPerson('rev-editor-b');
+    const org = await createOrg(appRt, asUser(owner.userId), 'Checklist Revision Co');
+
+    await withAdmin((c) =>
+      c.query(
+        `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member')`,
+        [org.orgId, editorA.userId, editorB.userId],
+      ),
+    );
+
+    const { projectId } = await exec<{ projectId: string }>(owner.userId, org.orgId, 'projects.project.create', {
+      name: 'Dự án kiểm tra revision',
+    });
+    const { taskId } = await exec<{ taskId: string }>(owner.userId, org.orgId, 'projects.task.create', {
+      projectId,
+      title: 'Kiểm soát xung đột checklist',
+      assigneePositionId: null,
+      checklist: [
+        { text: 'Bước 1', done: false },
+        { text: 'Bước 2', done: false },
+      ],
+    });
+
+    // Newly created task starts at revision 1 across get, list, and projects.board.
+    const initialDetail = await query<TaskDetail>(editorA.userId, org.orgId, 'kernel.task.get', { id: taskId });
+    expect(initialDetail.task.revision).toBe(1);
+    const listed = await query<{ tasks: Task[] }>(editorA.userId, org.orgId, 'kernel.task.list', {});
+    expect(listed.tasks.find((t) => t.id === taskId)?.revision).toBe(1);
+    const board = await query<ProjectBoard>(editorA.userId, org.orgId, 'projects.board', { projectId });
+    expect(board.tasks.find((t) => t.id === taskId)?.revision).toBe(1);
+
+    // No-op update with matching expectedRevision preserves revision = 1.
+    const noopRes = await exec<{ taskId: string; revision: number }>(editorA.userId, org.orgId, 'kernel.task.update', {
+      id: taskId,
+      expectedRevision: 1,
+      checklist: [
+        { text: 'Bước 1', done: false },
+        { text: 'Bước 2', done: false },
+      ],
+    });
+    expect(noopRes).toEqual({ taskId, revision: 1 });
+
+    // Backwards-compatible edit omitting expectedRevision succeeds and increments revision to 2.
+    const legacyRes = await exec<{ taskId: string; revision: number }>(editorA.userId, org.orgId, 'kernel.task.update', {
+      id: taskId,
+      checklist: [
+        { text: 'Bước 1', done: true },
+        { text: 'Bước 2', done: false },
+      ],
+    });
+    expect(legacyRes).toEqual({ taskId, revision: 2 });
+
+    // Stale expectedRevision (1) is rejected with 409 TASK_STALE_REVISION even if checklist matches or differs.
+    await expect(
+      exec(editorB.userId, org.orgId, 'kernel.task.update', {
+        id: taskId,
+        expectedRevision: 1,
+        checklist: [
+          { text: 'Bước 1', done: false },
+          { text: 'Bước 2', done: true },
+        ],
+      }),
+    ).rejects.toMatchObject({ code: 'TASK_STALE_REVISION', status: 409 });
+
+    await expect(
+      exec(editorB.userId, org.orgId, 'kernel.task.update', {
+        id: taskId,
+        expectedRevision: 1,
+        checklist: [
+          { text: 'Bước 1', done: true },
+          { text: 'Bước 2', done: false },
+        ],
+      }),
+    ).rejects.toMatchObject({ code: 'TASK_STALE_REVISION', status: 409 });
+
+    // Concurrent race with same expectedRevision = 2: FOR UPDATE guarantees strictly one wins and one gets 409.
+    const raceResults = await Promise.allSettled([
+      exec<{ taskId: string; revision: number }>(editorA.userId, org.orgId, 'kernel.task.update', {
+        id: taskId,
+        expectedRevision: 2,
+        checklist: [
+          { text: 'Bước 1', done: true },
+          { text: 'Bước 2', done: false },
+          { text: 'Bước 3 từ A', done: false },
+        ],
+      }),
+      exec<{ taskId: string; revision: number }>(editorB.userId, org.orgId, 'kernel.task.update', {
+        id: taskId,
+        expectedRevision: 2,
+        checklist: [
+          { text: 'Bước 1', done: true },
+          { text: 'Bước 2', done: true },
+        ],
+      }),
+    ]);
+    const fulfilled = raceResults.filter((r): r is PromiseFulfilledResult<{ taskId: string; revision: number }> => r.status === 'fulfilled');
+    const rejected = raceResults.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+    expect(fulfilled).toHaveLength(1);
+    expect(fulfilled[0]?.value).toEqual({ taskId, revision: 3 });
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]?.reason).toMatchObject({ code: 'TASK_STALE_REVISION', status: 409 });
+
+    // Status change also bumps revision so stale checklist editors must reload first.
+    await exec(owner.userId, org.orgId, 'kernel.task.set_status', { id: taskId, status: 'in_progress' });
+    await expect(
+      exec(editorA.userId, org.orgId, 'kernel.task.update', {
+        id: taskId,
+        expectedRevision: 3,
+        checklist: [{ text: 'Cũ', done: false }],
+      }),
+    ).rejects.toMatchObject({ code: 'TASK_STALE_REVISION', status: 409 });
+
+    const current = await query<TaskDetail>(editorB.userId, org.orgId, 'kernel.task.get', { id: taskId });
+    expect(current.task.revision).toBe(4);
+    const retryRes = await exec<{ taskId: string; revision: number }>(editorB.userId, org.orgId, 'kernel.task.update', {
+      id: taskId,
+      expectedRevision: current.task.revision,
+      checklist: [...current.task.checklist, { text: 'Bước sau khi tải lại', done: false }],
+    });
+    expect(retryRes).toEqual({ taskId, revision: 5 });
   });
 });

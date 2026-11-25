@@ -2,7 +2,7 @@
 // account. It shows the post as each channel will show it and takes the client's answer with the name they type. A
 // plan link (#902) shows each of its posts in schedule order and takes an answer on each.
 // The token stays after the # (browsers never send it to a server in the address) and goes to the API in a POST
-// body only. With the org's white-label branding (#1053) it shows the agency's logo, name and accent instead of Crove's.
+// body only. With the org's white-label branding (#1053) it shows the agency's logo, name and accent instead of Ludy's.
 // The team's reply to an answer (#1301) shows under it, signed with that same name, never a member's.
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';

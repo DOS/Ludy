@@ -49,7 +49,7 @@ const unsetWhenBlank = (value: unknown) => (typeof value === 'string' && value.t
 const seconds = (fallback: number) => z.preprocess(unsetWhenBlank, z.coerce.number().int().min(0).max(604_800).default(fallback));
 
 const schema = z.object({
-  // Connect as ludy_prober (password CROVE_PROBER_DB_PASSWORD, set by `migrate`).
+  // Connect as ludy_prober (password LUDY_PROBER_DB_PASSWORD, set by `migrate`).
   PROBER_DATABASE_URL: optional,
   // ALERT_WEBHOOK_URL, ALERT_WEBHOOK_FORMAT, ALERT_TELEGRAM_CHAT_ID, ALERT_INSTANCE and PUBLIC_URL (alert.ts).
   ...WEBHOOK_ENV,
@@ -160,7 +160,7 @@ export interface ProberConfig {
   backupHeartbeatUrl?: string | undefined;
   // The status page's file; unset: none is written.
   statusFile?: string | undefined;
-  // The modules the deployment runs (CROVE_MODULES; loadProberConfig reads unset as every module). Left out of a
+  // The modules the deployment runs (LUDY_MODULES; loadProberConfig reads unset as every module). Left out of a
   // config built by hand: only the modules the workers record count.
   modules?: readonly string[] | undefined;
   // Supabase Auth's health URL (<base>/health); unset: Auth is not checked.

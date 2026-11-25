@@ -69,7 +69,7 @@ export interface MediaRule {
   maxImageBytes: number | null;
   maxVideoBytes: number | null;
   maxVideoSeconds: number | null;
-  // Allowed video MIME types, where the channel takes fewer than Crove uploads (MP4 and QuickTime); absent means any.
+  // Allowed video MIME types, where the channel takes fewer than Ludy uploads (MP4 and QuickTime); absent means any.
   videoTypes?: readonly string[];
   // A document's size cap, where kinds takes documents (#1119). A document is always the post's only file.
   maxDocumentBytes?: number;
@@ -92,7 +92,7 @@ export interface ChannelCapabilities {
 const MB = 1024 * 1024;
 const ANY_IMAGE: readonly string[] = [];
 
-// The channels whose platform takes photos but whose Crove adapter posts only video. None since TikTok's photo posts
+// The channels whose platform takes photos but whose Ludy adapter posts only video. None since TikTok's photo posts
 // (#710).
 export const VIDEO_ONLY_ADAPTERS: ReadonlySet<Provider> = new Set<Provider>([]);
 
@@ -102,9 +102,9 @@ export const PHOTO_BODY_MAX: Readonly<Partial<Record<Provider, number>>> = { tik
 // A shorter text where a channel's posts with media take one (#747): a Telegram caption is 1,024 characters, where a
 // message's text is 4,096.
 export const MEDIA_BODY_MAX: Readonly<Partial<Record<Provider, number>>> = { telegram: 1024 };
-// How much alt text each channel's Crove adapter sends (#790, #801), in characters, the smallest over its media kinds
+// How much alt text each channel's Ludy adapter sends (#790, #801), in characters, the smallest over its media kinds
 // (Bluesky cuts a video's at 1000): the adapters cut a longer one. A channel missing here sends no alt text, or none
-// Crove cuts. An AI suggestion (#1121) keeps within the smallest of the chosen channels.
+// Ludy cuts. An AI suggestion (#1121) keeps within the smallest of the chosen channels.
 export const ALT_TEXT_LIMITS: Readonly<Partial<Record<Provider, number>>> = {
   x: 1000,
   facebook_page: 1000,
@@ -173,9 +173,9 @@ export function sentText(provider: Provider, body: string, linkUrl: string | nul
   return [text, link].filter(Boolean).join('\n\n');
 }
 
-// The first comment each channel's Crove adapter posts after the post (#587, #609), and how its text is counted: a
+// The first comment each channel's Ludy adapter posts after the post (#587, #609), and how its text is counted: a
 // comment on LinkedIn, Facebook Pages and Instagram, a reply in the thread on X, Bluesky and Threads. Facebook,
-// Instagram and Threads need a permission Crove asks for at connect time since #609; a connection made earlier is
+// Instagram and Threads need a permission Ludy asks for at connect time since #609; a connection made earlier is
 // refused by the platform and comments once it reconnects. A channel missing here takes no first comment.
 // Limits (#609): a Facebook comment message 8000 characters, an Instagram comment 2200 characters (its hashtag cap is
 // not enforced reliably by the API, so it is not checked), a Threads reply 500 characters, counted as Threads post text.
@@ -235,7 +235,7 @@ export const AUTO_REPLY_RULES: Readonly<Partial<Record<Provider, TextRule>>> = {
 };
 
 // Reposts when a post takes off (#773): on the channels whose adapter reposts the account's own post and reports likes
-// (Threads, Bluesky, Mastodon; X reports no counts to Crove yet), a variant may carry one repost rule
+// (Threads, Bluesky, Mastodon; X reports no counts to Ludy yet), a variant may carry one repost rule
 // (`settings.repost`: { likes?, afterHours? }), at a like count, after some hours, or whichever comes first.
 export const REPOST_PROVIDERS: ReadonlySet<Provider> = new Set<Provider>(['sandbox', 'threads', 'bluesky', 'mastodon']);
 // The channels whose status check can itself publish (#946): Instagram and Threads upload a container first and post it
@@ -285,14 +285,14 @@ export function autoReplyOf(settings: Readonly<Record<string, unknown>> | undefi
 //   posts); `multiple` lets a voter pick several, `hideTotals` hides the counts until the poll ends; a day when unsaid.
 // - Telegram (sendPoll): the post's text, link included, is the question (1 to 300 characters), so the poll is the post,
 //   one message, with its buttons, silence and pin as any post; 2 to 12 options of up to 100 characters (Telegram also
-//   takes one, Crove asks for two like every channel); `durationMinutes` up to 43,800 (open_period, 5 to 2,628,000
+//   takes one, Ludy asks for two like every channel); `durationMinutes` up to 43,800 (open_period, 5 to 2,628,000
 //   seconds), open until stopped in Telegram when unsaid; `multiple` (allows_multiple_answers) and `hideTotals`
 //   (hide_results_until_closes). Always anonymous, Telegram's default: the docs do not say a channel takes a public
-//   poll, so Crove offers none.
+//   poll, so Ludy offers none.
 // - LinkedIn, member and Company Page (Posts API content.poll): a question of its own (`question`, 1 to 140
 //   characters), the post's text staying its commentary; 2 to 4 options of up to 30 characters; 1, 3, 7 or 14 days
 //   (settings.duration ONE_DAY, THREE_DAYS, SEVEN_DAYS, FOURTEEN_DAYS), a week when unsaid; one answer per voter.
-// Every poll goes on a post without images or video: Mastodon and LinkedIn refuse both together, and Crove sends a
+// Every poll goes on a post without images or video: Mastodon and LinkedIn refuse both together, and Ludy sends a
 // Telegram poll without media.
 export interface PollRule {
   minOptions: number;
@@ -472,7 +472,7 @@ export function coverOf(settings: Readonly<Record<string, unknown>> | undefined)
 
 export const coverKind = (cover: Cover): CoverKind => ('atMs' in cover ? 'frame' : 'image');
 
-// What each channel's Crove adapter sends as a video's cover (#642); a channel missing here takes none. Instagram
+// What each channel's Ludy adapter sends as a video's cover (#642); a channel missing here takes none. Instagram
 // Reels take a frame (thumb_offset) or an image (cover_url); TikTok's direct post takes a frame
 // (video_cover_timestamp_ms) and no uploaded image; YouTube takes an image (thumbnails.set) and no frame, since the
 // Data API has no way to pick one. A Facebook Page video takes an image (`thumb` on /{page-id}/videos, #1499), on a
@@ -529,11 +529,11 @@ export const COVER_RULES: Readonly<Partial<Record<Provider, readonly CoverKind[]
 };
 // The channels whose Reels take no cover through the API although their feed videos do (#1499): Meta's Reels
 // publishing documents no cover parameter, and setting one afterwards (/{video-id}/thumbnails) needs
-// pages_read_user_content, which Crove does not ask for. The member changes it in Facebook instead.
+// pages_read_user_content, which Ludy does not ask for. The member changes it in Facebook instead.
 export const REEL_COVER_REFUSED: ReadonlySet<Provider> = new Set<Provider>(['facebook_page']);
 // A title on the video posts of a channel that has none otherwise (#1499): a Facebook Page video (one video, a feed
 // post) and a Reel take the post's title (`title` on /{page-id}/videos and on the Reel's finish step); its text and
-// photo posts and its Stories take none. Optional. Meta documents no length: 255 is Crove's cap [unverified],
+// photo posts and its Stories take none. Optional. Meta documents no length: 255 is Ludy's cap [unverified],
 // counted in UTF-16 as Facebook counts the post's text.
 export const VIDEO_TITLE_RULES: Readonly<Partial<Record<Provider, TextRule>>> = {
   facebook_page: { max: 255, count: 'utf16', required: false },
@@ -563,7 +563,7 @@ export function tiktokModeOf(settings: Readonly<Record<string, unknown>> | undef
 }
 
 // A permission the variant needs on its connection beyond what every post of its channel needs, by the scope the
-// platform names it with (#903): TikTok's inbox upload needs video.upload, which connections made before Crove asked
+// platform names it with (#903): TikTok's inbox upload needs video.upload, which connections made before Ludy asked
 // for it lack. The publisher checks it against the scopes stored with the connection before calling the platform.
 export function scopeNeeded(provider: Provider, settings: Readonly<Record<string, unknown>> | undefined): string | null {
   return provider === 'tiktok' && tiktokModeOf(settings) === 'inbox' ? 'video.upload' : null;
@@ -787,7 +787,7 @@ export function documentTitleOf(settings: Readonly<Record<string, unknown>> | un
 // member kept: the composer prefills it from the link preview it fetched (#641) and the member edits it, and its image
 // is one of the org's Social uploads, never the fetched page image. A card goes on a link post with no media (LinkedIn's
 // content.article and Bluesky's app.bsky.embed.external are the post's one content, so images win), and then the link
-// is not added to the text. The title (1 to 200 characters) and description (at most 300) are Crove's caps, as neither
+// is not added to the text. The title (1 to 200 characters) and description (at most 300) are Ludy's caps, as neither
 // platform documents one [unverified]; Bluesky takes a thumbnail of at most 1,000,000 bytes. The adapters' linkCardOf
 // in @ludy/channel reads the same shape and limits.
 export const LINK_CARD_PROVIDERS: ReadonlySet<Provider> = new Set<Provider>(['linkedin', 'linkedin_page', 'bluesky']);
@@ -829,30 +829,30 @@ export function carriesLinkCard(provider: Provider, settings: Readonly<Record<st
   return card !== null && card !== 'invalid';
 }
 
-// The channels whose Crove adapter posts video today (#410). A platform may take video while its adapter does not yet:
+// The channels whose Ludy adapter posts video today (#410). A platform may take video while its adapter does not yet:
 // the composer says so instead of letting a video fail at publish time. Each adapter that learns video joins here.
 export const VIDEO_READY: ReadonlySet<Provider> = new Set<Provider>(['sandbox', 'youtube', 'tiktok', 'instagram', 'facebook_page', 'threads', 'x', 'linkedin', 'linkedin_page', 'telegram', 'mastodon', 'bluesky', 'pinterest', 'discord', 'zalo_oa']);
 
-// The channels whose Crove adapter takes a published post down (#860, #1137, #1138; Zalo OA's article/remove, #1430);
+// The channels whose Ludy adapter takes a published post down (#860, #1137, #1138; Zalo OA's article/remove, #1430);
 // the others answer REMOVE_NOT_SUPPORTED until their adapter learns it. Telegram lets a bot delete a channel post only
-// within 48 hours of it. Threads stays out: its delete endpoint needs the threads_delete permission, which Crove's
+// within 48 hours of it. Threads stays out: its delete endpoint needs the threads_delete permission, which Ludy's
 // Threads connect does not ask for.
 export const REMOVE_READY: ReadonlySet<Provider> = new Set<Provider>(['sandbox', 'bluesky', 'mastodon', 'telegram', 'discord', 'x', 'facebook_page', 'youtube', 'linkedin', 'linkedin_page', 'pinterest', 'wordpress', 'google_business', 'zalo_oa']);
 
-// The channels whose Crove adapter corrects a published post's text (#1223): Facebook Pages (`POST /{page-post-id}`),
+// The channels whose Ludy adapter corrects a published post's text (#1223): Facebook Pages (`POST /{page-post-id}`),
 // LinkedIn members and pages (a PARTIAL_UPDATE of the commentary), Mastodon (`PUT /api/v1/statuses/:id`), Telegram
 // (`editMessageText`, `editMessageCaption`), Discord (editing the webhook's message) and Zalo OA (`article/update`
 // with the whole article, its cover and images sent again, #1430), YouTube (`videos.update` of the snippet, read first
 // and sent back whole, with the force-ssl scope), Google Business (`localPosts.patch` of the summary alone) and
 // WordPress (`POST /wp/v2/posts/:id` of the text, its title and images kept; #1474). Instagram, Threads, Bluesky, X and
-// TikTok have no edit Crove can make and answer EDIT_NOT_SUPPORTED. Pinterest stays out: it is not confirmed that its
-// pin update works without boards:write, which Crove's Pinterest connect does not ask for.
+// TikTok have no edit Ludy can make and answer EDIT_NOT_SUPPORTED. Pinterest stays out: it is not confirmed that its
+// pin update works without boards:write, which Ludy's Pinterest connect does not ask for.
 export const EDIT_READY: ReadonlySet<Provider> = new Set<Provider>(['sandbox', 'facebook_page', 'linkedin', 'linkedin_page', 'mastodon', 'telegram', 'discord', 'zalo_oa', 'youtube', 'google_business', 'wordpress']);
 
 // Why a published variant's text cannot be corrected (#1223), or null when it can: the channel has no edit
 // ('provider'), the post is a poll, whose question or options no edit may change without resetting its votes ('poll'),
 // or a Story or a Reel, whose text no edit reaches ('post_type'), as a Facebook video's description ('video') and a
-// Zalo video article (#1429), whose video_id Crove does not keep to send again ('video'), or a WordPress post kept on
+// Zalo video article (#1429), whose video_id Ludy does not keep to send again ('video'), or a WordPress post kept on
 // the site as a draft or pending review, which has no public post to correct ('draft', #1474). Any YouTube video,
 // a Short included, takes an edit of its description. The adapters refuse the same before any call.
 export type EditRefusal = 'provider' | 'poll' | 'post_type' | 'video' | 'draft';
@@ -874,7 +874,7 @@ export function editRefusal(provider: string, settings: Readonly<Record<string, 
 export const REMOVE_AT_MIN_GAP_MS = 5 * 60_000;
 // The furthest a takedown may be planned, so stale or far values never stay in the worker's scan.
 export const REMOVE_AT_MAX_MS = 365 * 24 * 3_600_000;
-// How long after a post the platform still lets Crove take it down, where it limits that: Telegram lets a bot delete a
+// How long after a post the platform still lets Ludy take it down, where it limits that: Telegram lets a bot delete a
 // channel post within 48 hours only.
 export const REMOVE_WINDOW_MS: Readonly<Partial<Record<Provider, number>>> = { telegram: 48 * 3_600_000 };
 // The furthest a takedown may come after the post on this channel.
@@ -942,9 +942,9 @@ export const CAPABILITIES: Readonly<Record<Provider, ChannelCapabilities>> = {
     unverified: ['body.max'],
   },
   // Zalo OA values: the article/create reference (developers.zalo.me, OA content API). The cover is required, so one
-  // image at least; the docs set no image count, and 10 is Crove's cap (#943): the first image is the cover, the others
+  // image at least; the docs set no image count, and 10 is Ludy's cap (#943): the first image is the cover, the others
   // follow the text as image blocks. Every image file is 1 MB at most. A video article (#1429) is one video alone, MP4
-  // (Zalo takes MP4 and AVI; Crove uploads MP4 and QuickTime) of up to 50 MB, with no length limit in the docs, and
+  // (Zalo takes MP4 and AVI; Ludy uploads MP4 and QuickTime) of up to 50 MB, with no length limit in the docs, and
   // needs a cover image as its thumbnail (COVER_REQUIRED).
   zalo_oa: {
     provider: 'zalo_oa',
@@ -1087,7 +1087,7 @@ export const CAPABILITIES: Readonly<Record<Provider, ChannelCapabilities>> = {
     unverified: [],
   },
   // WordPress (#833): a blog post through the site's REST API. WordPress sets no length on a post; 100,000 characters is
-  // Crove's own cap. The title is the post's own or the text's first line; up to 10 images (JPEG, PNG, WebP or GIF, kept
+  // Ludy's own cap. The title is the post's own or the text's first line; up to 10 images (JPEG, PNG, WebP or GIF, kept
   // to 10 MB each, as many hosts cap uploads near there) go to the media library and after the text, the first as the
   // featured image. No video.
   wordpress: {
@@ -1159,7 +1159,7 @@ function weightedCount(nfc: string): number {
 }
 
 const URL_PATTERN = /\bhttps?:\/\/[^\s<>"']+/giu;
-// A link as X finds one: with a scheme, or a host name without one (crove.vn/gia). X knows every TLD; this list holds
+// A link as X finds one: with a scheme, or a host name without one (ludy.vn/gia). X knows every TLD; this list holds
 // the common ones, so "TP.HCM" stays text, and a bare link on a rarer TLD counts its own length (X then refuses an
 // over-long post at publish, never silently).
 const BARE_TLDS = 'com|net|org|vn|io|co|ai|app|dev|me|info|biz|xyz|shop|store|online|site|tech|asia|edu|gov|us|uk|jp|sg|tv|ly|gg|link';
@@ -1174,7 +1174,7 @@ export function countLinks(text: string): number {
 // and the visibility (`settings.visibility`: public, the default, or unlisted). The adapter reads the same shapes.
 export const MASTODON_VISIBILITY = ['public', 'unlisted'] as const;
 // Who sees a LinkedIn post (#983), in the same `settings.visibility`: public (the default, sent as PUBLIC as before),
-// connections (CONNECTIONS, the member's 1st-degree network) or loggedIn (LOGGED_IN, signed-in members). Crove posts as
+// connections (CONNECTIONS, the member's 1st-degree network) or loggedIn (LOGGED_IN, signed-in members). Ludy posts as
 // the member, so all three apply. The adapter maps the same values.
 export const LINKEDIN_VISIBILITY = ['public', 'connections', 'loggedIn'] as const;
 export type LinkedInVisibility = (typeof LINKEDIN_VISIBILITY)[number];
@@ -1381,13 +1381,13 @@ export function isInstagramReel(media: readonly { kind: MediaKind }[], settings:
 }
 
 // Whether a Reel stays off the profile grid (#1019): kept to the Reels tab, or a trial Reel (which reaches followers
-// only once graduated, and Crove does not learn when). The grid preview leaves these out.
+// only once graduated, and Ludy does not learn when). The grid preview leaves these out.
 export function instagramReelOffGrid(settings: Readonly<Record<string, unknown>> | undefined): boolean {
   const options = instagramReelOf(settings);
   return options !== null && options !== 'invalid' && options.reelFeed !== 'feed';
 }
 
-// Publishing limits Crove counts itself (#775, plan §3.6: "Rate limits and quotas tracked per app and per account"),
+// Publishing limits Ludy counts itself (#775, plan §3.6: "Rate limits and quotas tracked per app and per account"),
 // for the channels whose API has no quota endpoint: how many posts one account may make in a window. Instagram and
 // Threads read their own quota from the platform (#743). The numbers are the platforms' documented per-account limits,
 // kept a little under where they are approximate: TikTok about 15 posts a day per creator, YouTube's 100 uploads a day,
@@ -1428,7 +1428,7 @@ export function limitWait(starts: readonly Date[], limit: PublishLimit, now: Dat
 
 // Media a channel fetches by URL (#772): on a deployment whose storage hands out no public file URLs (local disk), these
 // cannot go out, so the composer says so before the post is submitted. Instagram takes a Reel or a video Story without
-// one (Crove uploads the bytes), but not images, carousels or a cover image; Threads, Google Business, Zalo OA (its
+// one (Ludy uploads the bytes), but not images, carousels or a cover image; Threads, Google Business, Zalo OA (its
 // images, and a video article's cover image, #1429) and TikTok photos are fetched by URL always.
 export function needsPublicUrls(provider: Provider, media: readonly { kind: MediaKind }[], settings?: Readonly<Record<string, unknown>>): boolean {
   if (media.length === 0) return false;

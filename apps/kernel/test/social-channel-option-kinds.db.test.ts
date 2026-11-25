@@ -2,7 +2,7 @@
 // #1030), through the channel option cache of #1120: asked for by a member, read by the worker with the channel's
 // sealed credential and recorded; each WordPress term keeps its taxonomy; the scope and connection checks hold; and the
 // database lets a member only ask again. YouTube and WordPress answers are recorded shapes from the YouTube Data API v3
-// and the WordPress REST API handbook; no live call. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its
+// and the WordPress REST API handbook; no live call. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its
 // own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -17,7 +17,7 @@ import { runChannelOptionJob, socialCommands, socialQueries, type ChannelOptionL
 import { TEST_MANIFESTS } from './manifests.ts';
 import { contextToken } from './context-token.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -42,7 +42,7 @@ function platform(routes: Record<string, Answer[]>) {
 const PLAYLISTS = 'GET www.googleapis.com/youtube/v3/playlists';
 
 suite('YouTube playlists and WordPress terms as channel options on PostgreSQL (#1131)', () => {
-  const dbName = `crove_test_social_option_kinds_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_option_kinds_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

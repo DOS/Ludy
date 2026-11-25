@@ -21,7 +21,7 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { notesCommands, notesQueries } from '@ludy/mod-notes';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -37,7 +37,7 @@ const FUTURE_RESCHEDULE_DAY = `${FUTURE_YEAR}-12-10`;
 const FUTURE_RESCHEDULE_NEXT = `${FUTURE_YEAR}-12-11`;
 
 suite('personal to-do recurrence and reschedule on PostgreSQL (#3557)', () => {
-  const dbName = `crove_test_notes_todo_rec_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_notes_todo_rec_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let app: Runtime;
@@ -651,5 +651,193 @@ suite('personal to-do recurrence and reschedule on PostgreSQL (#3557)', () => {
     }
     const lockRootAfter = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: lockRoot.todoId });
     expect(lockRootAfter.recurrence).toBeNull();
+  });
+
+  it('restores sibling recurrence on stopSeries undo even after link additions and removals (#3661)', async () => {
+    const o = await setupOrg();
+    const targetTaskA = await admin(async (c) =>
+      (await c.query<{ id: string }>(`INSERT INTO ludy_kernel.task (org_id, title, source, created_by_type) VALUES ($1, 'Link target A', 'human', 'user') RETURNING id`, [o.orgId])).rows[0] as { id: string },
+    );
+    const targetTaskB = await admin(async (c) =>
+      (await c.query<{ id: string }>(`INSERT INTO ludy_kernel.task (org_id, title, source, created_by_type) VALUES ($1, 'Link target B', 'human', 'user') RETURNING id`, [o.orgId])).rows[0] as { id: string },
+    );
+
+    // 1. Add a link onto a stopped open sibling (touchTodo bumps updated_at without bumping revision), then undo stopSeries.
+    const root1 = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', {
+      title: 'Link add on stopped sibling',
+      dueOn: '2027-11-01',
+      timeZone: 'Asia/Ho_Chi_Minh',
+      recurrence: { freq: 'daily', interval: 1 },
+    });
+    const child1 = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: root1.todoId });
+    const sibling1Id = child1.nextTodoId as string;
+    await o.exec<TodoWritten>(o.mine, 'notes.todo.reopen', { todoId: root1.todoId });
+
+    const stopped1 = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', {
+      todoId: root1.todoId,
+      stopSeries: true,
+    });
+    expect(stopped1.stoppedSiblings).toEqual([{ todoId: sibling1Id, recurrence: { freq: 'daily', interval: 1 } }]);
+
+    const addedSibLink = await o.exec<{ todoId: string; linkId: string }>(o.mine, 'notes.todo.link_add', {
+      todoId: sibling1Id,
+      targetType: 'kernel.task',
+      targetId: targetTaskA.id,
+    });
+    const sibAfterAdd = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: sibling1Id });
+    expect(sibAfterAdd.recurrence).toBeNull();
+    expect(sibAfterAdd.revision).toBe(2);
+
+    await o.exec<TodoWritten>(o.mine, 'notes.todo.reopen', {
+      todoId: root1.todoId,
+      expectedRevision: stopped1.revision,
+      restoreRecurrence: stopped1.stoppedRecurrence,
+      restoreSiblings: stopped1.stoppedSiblings,
+    });
+    const restoredSibAfterAdd = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: sibling1Id });
+    expect(restoredSibAfterAdd.recurrence).toEqual({ freq: 'daily', interval: 1 });
+    const nextFromSib = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: sibling1Id });
+    expect(nextFromSib.nextDueOn).toBe('2027-11-03');
+
+    // 2. Remove an existing link from a stopped open sibling AND touch the completed todo itself before undo.
+    await o.exec<TodoWritten>(o.mine, 'notes.todo.reopen', { todoId: sibling1Id, undoNextTodoId: nextFromSib.nextTodoId as string });
+    await o.exec<TodoWritten>(o.mine, 'notes.todo.reopen', { todoId: root1.todoId });
+    // Now root1 and sibling1 are both open, sibling1 has link addedSibLink.linkId, and let's also add a non-recurring sibling.
+    const nonRecSib = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', {
+      title: 'Already non-recurring sibling',
+      dueOn: '2027-11-05',
+      timeZone: 'Asia/Ho_Chi_Minh',
+      recurrence: { freq: 'daily', interval: 1 },
+    });
+    // Force nonRecSib into the same series with recurrence explicitly cleared before stopSeries.
+    await admin((c) => c.query(`UPDATE ludy_notes.todo SET series_id = $1, recurrence = NULL WHERE org_id = $2 AND id = $3`, [root1.todoId, o.orgId, nonRecSib.todoId]));
+
+    const stopped2 = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', {
+      todoId: root1.todoId,
+      stopSeries: true,
+    });
+    expect(stopped2.stoppedSiblings).toEqual([{ todoId: sibling1Id, recurrence: { freq: 'daily', interval: 1 } }]);
+
+    // Remove link on sibling1, add link on nonRecSib, and add/remove link on the completed root1 itself.
+    await o.exec(o.mine, 'notes.todo.link_remove', { linkId: addedSibLink.linkId });
+    await o.exec(o.mine, 'notes.todo.link_add', { todoId: nonRecSib.todoId, targetType: 'kernel.task', targetId: targetTaskB.id });
+    const rootLink = await o.exec<{ todoId: string; linkId: string }>(o.mine, 'notes.todo.link_add', {
+      todoId: root1.todoId,
+      targetType: 'kernel.task',
+      targetId: targetTaskA.id,
+    });
+    await o.exec(o.mine, 'notes.todo.link_remove', { linkId: rootLink.linkId });
+
+    await o.exec<TodoWritten>(o.mine, 'notes.todo.reopen', {
+      todoId: root1.todoId,
+      expectedRevision: stopped2.revision,
+      restoreRecurrence: stopped2.stoppedRecurrence,
+      restoreSiblings: stopped2.stoppedSiblings,
+    });
+    expect((await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: sibling1Id })).recurrence).toEqual({ freq: 'daily', interval: 1 });
+    // Pre-existing non-recurring sibling touched by link edit must NOT gain recurrence on undo.
+    expect((await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: nonRecSib.todoId })).recurrence).toBeNull();
+
+    // 3. Even when restoreSiblings is omitted (legacy caller), a link touch on the completed todo itself still restores untouched siblings.
+    const stopped3 = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', {
+      todoId: root1.todoId,
+      stopSeries: true,
+    });
+    await o.exec(o.mine, 'notes.todo.link_add', { todoId: root1.todoId, targetType: 'kernel.task', targetId: targetTaskB.id });
+    await o.exec<TodoWritten>(o.mine, 'notes.todo.reopen', {
+      todoId: root1.todoId,
+      expectedRevision: stopped3.revision,
+      restoreRecurrence: stopped3.stoppedRecurrence,
+    });
+    expect((await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: sibling1Id })).recurrence).toEqual({ freq: 'daily', interval: 1 });
+    expect((await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: nonRecSib.todoId })).recurrence).toBeNull();
+  });
+
+  it('preserves intended wall-clock dueTime across DST spring-forward transitions on PG17 (#3661)', async () => {
+    const o = await setupOrg();
+
+    // America/New_York spring-forward: 2026-03-07 02:30 EST -> 2026-03-08 03:30 EDT -> 2026-03-09 02:30 EDT.
+    const nyRoot = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', {
+      title: 'NY DST daily 02:30',
+      dueOn: '2026-03-07',
+      dueTime: '02:30',
+      timeZone: 'America/New_York',
+      reminder: 'auto',
+      recurrence: { freq: 'daily', interval: 1 },
+    });
+    const nyDay2Res = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: nyRoot.todoId });
+    const nyDay2 = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: nyDay2Res.nextTodoId as string });
+    expect(nyDay2.dueOn).toBe('2026-03-08');
+    expect(nyDay2.dueTime).toBe('03:30');
+
+    const nyDay3Res = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: nyDay2.id });
+    const nyDay3 = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: nyDay3Res.nextTodoId as string });
+    expect(nyDay3.dueOn).toBe('2026-03-09');
+    expect(nyDay3.dueTime).toBe('02:30');
+    expect(nyDay3.dueAt).toBe('2026-03-09T06:30:00.000Z');
+    expect(nyDay3.remindAt).toBe('2026-03-09T06:00:00.000Z');
+
+    // Rescheduling the gap-day occurrence in the series also restores the intended 02:30 wall-clock time.
+    await o.exec<TodoWritten>(o.mine, 'notes.todo.reopen', { todoId: nyDay2.id, undoNextTodoId: nyDay3.id });
+    await o.exec<TodoRescheduled>(o.mine, 'notes.todo.reschedule', { todoIds: [nyDay2.id], dueOn: '2026-03-10' });
+    const nyRescheduled = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: nyDay2.id });
+    expect(nyRescheduled.dueOn).toBe('2026-03-10');
+    expect(nyRescheduled.dueTime).toBe('02:30');
+
+    // Europe/London spring-forward: 2026-03-28 01:30 GMT -> 2026-03-29 02:30 BST -> 2026-03-30 01:30 BST.
+    const ukRoot = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', {
+      title: 'London DST daily 01:30',
+      dueOn: '2026-03-28',
+      dueTime: '01:30',
+      timeZone: 'Europe/London',
+      reminder: 'auto',
+      recurrence: { freq: 'daily', interval: 1 },
+    });
+    const ukDay2Res = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: ukRoot.todoId });
+    const ukDay2 = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: ukDay2Res.nextTodoId as string });
+    expect(ukDay2.dueTime).toBe('02:30');
+    const ukDay3Res = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: ukDay2.id });
+    const ukDay3 = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: ukDay3Res.nextTodoId as string });
+    expect(ukDay3.dueOn).toBe('2026-03-30');
+    expect(ukDay3.dueTime).toBe('01:30');
+    expect(ukDay3.dueAt).toBe('2026-03-30T00:30:00.000Z');
+
+    // Explicit edit on the gap day (e.g. 04:00) is honored and not overridden by earlier occurrences.
+    const editedGapRoot = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', {
+      title: 'NY edited gap day keeps 04:00',
+      dueOn: '2026-03-07',
+      dueTime: '02:30',
+      timeZone: 'America/New_York',
+      recurrence: { freq: 'daily', interval: 1 },
+    });
+    const editedGap2Res = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: editedGapRoot.todoId });
+    const editedGap2 = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: editedGap2Res.nextTodoId as string });
+    await o.exec<TodoWritten>(o.mine, 'notes.todo.update', {
+      todoId: editedGap2.id,
+      revision: editedGap2.revision,
+      title: editedGap2.title,
+      details: editedGap2.details,
+      checklist: editedGap2.checklist,
+      dueOn: editedGap2.dueOn,
+      dueTime: '04:00',
+      timeZone: editedGap2.timeZone,
+    });
+    const editedGap3Res = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: editedGap2.id });
+    const editedGap3 = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: editedGap3Res.nextTodoId as string });
+    expect(editedGap3.dueTime).toBe('04:00');
+
+    // Asia/Ho_Chi_Minh has no DST and stays invariant at 02:30 across March transition dates.
+    const vnRoot = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', {
+      title: 'VN fixed 02:30',
+      dueOn: '2026-03-07',
+      dueTime: '02:30',
+      timeZone: 'Asia/Ho_Chi_Minh',
+      recurrence: { freq: 'daily', interval: 1 },
+    });
+    const vnDay2Res = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: vnRoot.todoId });
+    const vnDay3Res = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: vnDay2Res.nextTodoId as string });
+    const vnDay3 = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: vnDay3Res.nextTodoId as string });
+    expect(vnDay3.dueOn).toBe('2026-03-09');
+    expect(vnDay3.dueTime).toBe('02:30');
   });
 });

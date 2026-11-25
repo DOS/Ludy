@@ -200,6 +200,7 @@ export const notesVyAccepted = defineQuery({
         .where('org_id', '=', ctx.orgId)
         .where('owner_user_id', '=', userId)
         .where('source_run_id', '=', input.todoRunId)
+        .limit(1)
         .executeTakeFirst();
       todosAccepted = todoRow !== undefined;
     }
@@ -297,6 +298,12 @@ export const todoAcceptSuggestions = defineCommand({
   target: (input) => ({ type: 'notes.note', id: input.noteId }),
   handler: async (ctx, input): Promise<TodoAcceptSuggestionsResult> => {
     const userId = userOf(ctx.actor);
+    if (input.runId !== undefined) {
+      // Serialize concurrent accepts per (org, owner, runId) before reading note/prior rows so partial-purged runs
+      // (e.g. source_run_seq = 0 removed while source_run_seq >= 1 survives) cannot race past the prior check.
+      const lockKey = `ludy_notes.todo_accept_run:${ctx.orgId.toLowerCase()}:${userId.toLowerCase()}:${input.runId.toLowerCase()}`;
+      await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${lockKey}, 0))`.execute(ctx.trx);
+    }
     const note = await ctx.trx
       .selectFrom('ludy_notes.note')
       .select(['id', 'revision', 'deleted_at'])
@@ -315,12 +322,16 @@ export const todoAcceptSuggestions = defineCommand({
       });
     }
     if (input.runId !== undefined) {
+      // Any surviving to-do from this run (live or in trash, at any source_run_seq) blocks replay; if every
+      // created to-do was permanently purged (which in normal retention happens >= 30 days after deletion, once
+      // the Vy run's 30-day cached result has also expired), explicit user re-run cleanly starts again at seq = 0.
       const prior = await ctx.trx
         .selectFrom('ludy_notes.todo')
         .select('id')
         .where('org_id', '=', ctx.orgId)
         .where('owner_user_id', '=', userId)
         .where('source_run_id', '=', input.runId)
+        .limit(1)
         .executeTakeFirst();
       if (prior) {
         throw new DomainError('VY_RUN_ALREADY_ACCEPTED', 409, 'Các việc gợi ý của lượt chạy này đã được lưu rồi');

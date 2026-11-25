@@ -2,7 +2,7 @@
 // newest other post on the same channel connection with the same text, published in the last 30 days or scheduled or
 // queued there; social.post.pre_review adds a finding. A post published longer ago, another channel, or one word
 // changed name nothing, and a member limited to some channels (#1081) learns nothing of the others.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -15,13 +15,13 @@ import { socialCommands, socialQueries, type PostView, type PreReview } from '@l
 import { styleSelection, styleText } from '@ludy/mod-social/contract';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const DAY = 86_400_000;
 
 suite('social duplicate text on PostgreSQL (#1156)', () => {
-  const dbName = `crove_test_social_duplicate_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_duplicate_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appPool: pg.Pool;
   let db: Db;

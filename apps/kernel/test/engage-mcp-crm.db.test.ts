@@ -4,7 +4,7 @@
 // quote, a quote line and a booking, that every typed text reaches the client as one plain line, that what must never leave (the quote's links and their tokens, the buyer's address and email, who made a
 // row, versions, the meeting's join link, the host, stock item ids) does not, the filters, the paging and its hard maximum, that another org's rows are neither listed nor found, and who may read what:
 // a company grant (owner or admin) reads the org's rows, a member-bound grant reads the whole org's deals and quotes as that member does in the app (a viewer and a plain member included), while the
-// bookings (a guest's name, email and phone) are for an owner or admin only. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// bookings (a guest's name, email and phone) are for an owner or admin only. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -17,7 +17,7 @@ import { DomainError, Runtime, type UserActor } from '@ludy/kernel-runtime';
 import { crmCommands, crmQueries } from '@ludy/mod-crm';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const CANARY = 'BÍ MẬT-3860';
@@ -87,7 +87,7 @@ interface Bookings {
 }
 
 suite('the CRM MCP reads (#3860)', () => {
-  const dbName = `crove_test_engage_mcp_crm_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_engage_mcp_crm_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let runtime: Runtime;

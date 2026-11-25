@@ -1,6 +1,6 @@
 // Editing a party, a vendor or a customer, on PostgreSQL 17 (issue #887): who may edit, the version check that refuses
 // an edit made over someone else's, the tax code that can be added but never changed, the field checks, the org
-// boundary, and what the audit row and the activity feed keep. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run
+// boundary, and what the audit row and the activity feed keep. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run
 // makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -12,7 +12,7 @@ import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/
 import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -27,7 +27,7 @@ interface Edit {
 }
 
 suite('editing a party (#887)', () => {
-  const dbName = `crove_test_party_edit_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_party_edit_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

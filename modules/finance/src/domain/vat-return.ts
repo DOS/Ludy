@@ -12,7 +12,7 @@
 //   the VAT return.
 // - Form 01/GTGT indicators: Appendix II of Circular 80/2021/TT-BTC. From the July 2026 (Q3 2026) period the form
 //   comes from Circular 89/2026/TT-BTC, which keeps the indicators used here and adds [32b] (values outside the VAT
-//   base) and [34a] (sales outside the scope of the VAT law); Crove has no data for those two yet, so they are 0.
+//   base) and [34a] (sales outside the scope of the VAT law); Ludy has no data for those two yet, so they are 0.
 //   Sales at the reduced 8% rate are declared in [32]/[33] with the 10% rate, the VAT actually charged in [33], and
 //   the reduction on the appendix of the decree.
 // The rules are data (the tables below), so a correction is a change to the data, not to the code.
@@ -21,7 +21,7 @@ import { Decimal, money, type DecimalValue, type Money } from '@ludy/l10n-vn';
 import { canonical } from './money.ts';
 
 // The rate buckets of an invoice line (VAT_RATES, shared with the API contract). KCT: not subject to VAT ("không
-// chịu thuế"). KKKNT: not declared and not taxed ("không kê khai, tính nộp thuế"). other: a rate Crove cannot place
+// chịu thuế"). KKKNT: not declared and not taxed ("không kê khai, tính nộp thuế"). other: a rate Ludy cannot place
 // (blank, "KHAC:...", unreadable).
 export { VAT_PERIOD_PATTERN, VAT_RATES };
 export type VatRate = (typeof VAT_RATES)[number];
@@ -46,7 +46,7 @@ export function normalizeVatRate(raw: string | null | undefined): VatRate {
 export { REDUCED_RATE_PERIODS, reducedRateApplies } from '@ludy/l10n-vn';
 
 // A tax period: a month ("2026-09") or a quarter ("2026-Q3"). Monthly filers are those above 50 billion VND of
-// revenue in the previous year; the rest file quarterly (Decree 126/2020/ND-CP, Article 9). Crove does not decide
+// revenue in the previous year; the rest file quarterly (Decree 126/2020/ND-CP, Article 9). Ludy does not decide
 // which applies; the accountant picks. VAT_PERIOD_PATTERN: "2026-09" or "2026-Q3".
 
 export interface VatPeriod {
@@ -171,7 +171,7 @@ function invoiceTableByRate(doc: VatDocumentInput): DocumentBreakdown | null {
 
 /**
  * Splits one invoice into taxable value and VAT by rate. An invoice whose own VAT table is stored (#685) and adds up
- * to the invoice is split exactly as that table says. Otherwise Crove has each line's amount and rate and the
+ * to the invoice is split exactly as that table says. Otherwise Ludy has each line's amount and rate and the
  * invoice's total VAT, not the VAT per rate, so:
  * - the taxable value of a rate is the sum of its lines (a discount line is already negative);
  * - an invoice with one taxed rate (5, 8 or 10) puts all its VAT on that rate, exactly as invoiced;
@@ -223,7 +223,7 @@ export function documentVatByRate(doc: VatDocumentInput): DocumentBreakdown {
  * Whether an invoice's VAT is far from what its lines' rates give (issue #358): the invoice's VAT against the sum of
  * each line's amount x its rate (0 for 0%, KCT and KKKNT). Sellers round VAT to whole dong per line or on the total,
  * so up to one dong per taxed line is rounding, not a mismatch; with no taxed line, any VAT is. Invoices with a line
- * of unknown rate are not judged: Crove cannot say what VAT that line carries, and `rate_unknown` already flags them.
+ * of unknown rate are not judged: Ludy cannot say what VAT that line carries, and `rate_unknown` already flags them.
  */
 export function vatMismatch(doc: VatDocumentInput): boolean {
   let expected = money(0);
@@ -265,7 +265,7 @@ export function sideTotals(breakdowns: ReadonlyArray<Pick<DocumentBreakdown, 'ra
   };
 }
 
-// The form 01/GTGT indicators Crove can fill from invoices, in the form's order. [25] (input VAT eligible for
+// The form 01/GTGT indicators Ludy can fill from invoices, in the form's order. [25] (input VAT eligible for
 // deduction) and everything from [36] on need the accountant's judgement or the previous return, so they are left
 // out. Labels stay Vietnamese: they are the form's own wording, for Vietnamese accountants.
 export interface FormIndicator {

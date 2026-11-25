@@ -4,7 +4,7 @@
 // body or asks the database, and refuses a wrong one with one answer that says nothing; it caps the body; it parks only a verified private-chat
 // message, names no org in its path or answer and writes no tenant row; two bots on one deployment reach their own connections; the worker takes a
 // parked update into the customer's thread under the org that holds the hook, once; chats are turned on and off through a command and a job that
-// sets and deletes the webhook with the sealed token; and a reply goes out through sendMessage exactly once. Set CROVE_TEST_ADMIN_URL to a superuser
+// sets and deletes the webhook with the sealed token; and a reply goes out through sendMessage exactly once. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser
 // URL; each run makes its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -23,7 +23,7 @@ import { createHttpApp } from '../src/http.ts';
 import { RateLimiter } from '../src/rate-limit.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const SECRET = 'test-only-jwt-secret-for-telegram-0123456789-abcdefghij';
@@ -60,7 +60,7 @@ interface Org {
 }
 
 suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
-  const dbName = `crove_test_telegram_webhook_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_telegram_webhook_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let app: ReturnType<typeof createHttpApp>;

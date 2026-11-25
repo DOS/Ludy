@@ -85,7 +85,7 @@ const requireSystem = (ctx: CommandContext) => {
 export const variantRemove = defineCommand({
   name: 'social.variant.remove',
   input: z.strictObject({ variantId: zId, reason: z.string().trim().max(REMOVE_REASON_MAX).optional() }),
-  // The worker takes the post down from its event: an effect outside Crove (#1653).
+  // The worker takes the post down from its event: an effect outside Ludy (#1653).
   risk: 'R2',
   sideEffect: 'external',
   access: ADMINS,
@@ -118,7 +118,7 @@ export const removeBegin = defineCommand({
   runsWhenOff: 'a takedown asked before the app was switched off still goes out: removing a post stops its exposure (ADR-0053)',
   // after: the last remove call the ask saw (null: none was made).
   input: z.strictObject({ variantId: zId, provider: z.string().min(1).max(32), after: z.string().min(1).max(300).nullable() }),
-  // Commits the provider call as started; the worker then makes it, an effect outside Crove (#1578).
+  // Commits the provider call as started; the worker then makes it, an effect outside Ludy (#1578).
   risk: 'R2',
   sideEffect: 'external',
   access: 'system',

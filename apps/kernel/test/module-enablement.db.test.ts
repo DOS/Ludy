@@ -1,7 +1,7 @@
 // Per-deployment module enablement on a real PostgreSQL 17 (plan Decision 12, ADR-0031): a kernel booted with
 // CROVE_MODULES=kernel registers no finance command, query, job or route, a lookup into finance answers
 // not_installed, and the kernel's own flows still work. Migrations still apply to every schema. Set
-// CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its own database.
+// LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; the run creates and drops its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { createServer, type AddressInfo } from 'node:net';
 import { fileURLToPath } from 'node:url';
@@ -20,7 +20,7 @@ import { createKernel, defaultAdapters, moduleDefinitions, type IdentityPort } f
 import { startExtractService } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const PNG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 const SESSION = '3a1f0c7e-6b2d-4e8a-9c51-2d7f4b8e0a13';
@@ -68,7 +68,7 @@ const probeCommand = defineCommand({
 const suite = ADMIN ? describe : describe.skip;
 
 suite('module enablement on PostgreSQL (plan Decision 12, ADR-0031)', () => {
-  const dbName = `crove_test_modules_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_modules_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl: string;
   let pool: pg.Pool;
   let db: Db;

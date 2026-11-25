@@ -272,4 +272,123 @@ describe('summaryModelPort notes adapter wrapper (#1677)', () => {
     expect(meterCalls).toBe(1);
     expect(serverCalls).toBe(1);
   });
+
+  it('destructures prompt.system and prompt.user once before validation so mutating or throwing getters cannot bypass bounds (#3522)', async () => {
+    const sentPayloads: Array<{ system?: string; user?: string }> = [];
+    let meterCalls = 0;
+    let serverCalls = 0;
+    const meter: AiMeter = {
+      admit: async () => {
+        meterCalls += 1;
+      },
+      record: async () => undefined,
+    };
+
+    await withStubServer(
+      (reqBody) => {
+        serverCalls += 1;
+        const parsed = JSON.parse(reqBody) as {
+          messages?: Array<{ role?: string; content?: string }>;
+        };
+        const system = parsed.messages?.find((m) => m.role === 'system')?.content;
+        const user = parsed.messages?.find((m) => m.role === 'user')?.content;
+        sentPayloads.push({
+          ...(system !== undefined ? { system } : {}),
+          ...(user !== undefined ? { user } : {}),
+        });
+        return {
+          status: 200,
+          body: JSON.stringify({
+            id: 'chatcmpl-getter',
+            object: 'chat.completion',
+            created: 1700000000,
+            model: 'test-model',
+            choices: [{ index: 0, message: { role: 'assistant', content: '{"summary":"OK","bullets":[]}' }, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+          }),
+        };
+      },
+      async (baseURL) => {
+        const port = summaryModelPort({ baseURL, apiKey: null, model: 'test-model' }, 2000);
+
+        // 1. Valid on first read, oversized/wrong-type on any subsequent read: must read once and forward read-1 values only.
+        let systemReads = 0;
+        let userReads = 0;
+        const flipToBadPrompt = {
+          feature: 'notes.summary' as const,
+          get system(): string {
+            systemReads += 1;
+            return systemReads === 1 ? 'VALID_SYSTEM_ONCE' : 'x'.repeat(16_001);
+          },
+          get user(): string {
+            userReads += 1;
+            return userReads === 1 ? 'VALID_USER_ONCE' : ('y'.repeat(NOTE_AI_LIMITS.maxNoteChars * 6 + 4_001) as string);
+          },
+        };
+        const ok = await withAiScope({ orgId: 'org-1', memberRunId: 'run-getter-once', meter }, () =>
+          port.generate(WHO, flipToBadPrompt),
+        );
+        expect(ok.text).toBe('{"summary":"OK","bullets":[]}');
+        expect(systemReads).toBe(1);
+        expect(userReads).toBe(1);
+        expect(sentPayloads).toEqual([{ system: 'VALID_SYSTEM_ONCE', user: 'VALID_USER_ONCE' }]);
+
+        // 2. Invalid on first read, valid on second read: must read once and fail closed before meter or HTTP call.
+        let badSystemReads = 0;
+        let badUserReads = 0;
+        const flipToValidPrompt = {
+          feature: 'notes.todo_suggest' as const,
+          get system(): string {
+            badSystemReads += 1;
+            return badSystemReads === 1 ? '' : 'VALID_ON_SECOND_READ';
+          },
+          get user(): string {
+            badUserReads += 1;
+            return badUserReads === 1 ? 'VALID_USER' : 'VALID_USER';
+          },
+        };
+        await expect(
+          withAiScope({ orgId: 'org-1', memberRunId: 'run-getter-bad', meter }, () =>
+            port.generate(WHO, flipToValidPrompt),
+          ),
+        ).rejects.toMatchObject({ name: 'NoteAiModelError', kind: 'failed', message: 'NOTE_AI_FAILED' });
+        expect(badSystemReads).toBe(1);
+        expect(badUserReads).toBe(1);
+
+        // 3. Throwing getters on prompt.system or prompt.user must fail closed across Note AI features without leaking error text.
+        const throwingUserPrompt = {
+          feature: 'notes.organize' as const,
+          system: 'VALID_SYS',
+          get user(): string {
+            throw new Error('SECRET_GETTER_THROW_TEXT');
+          },
+        };
+        const throwingSystemPrompt = {
+          feature: 'notes.todo_plan' as const,
+          get system(): string {
+            throw new Error('SECRET_SYSTEM_THROW_TEXT');
+          },
+          user: 'VALID_USER',
+        };
+        for (const [runId, badPrompt] of [
+          ['run-getter-throw-user', throwingUserPrompt],
+          ['run-getter-throw-sys', throwingSystemPrompt],
+        ] as const) {
+          const err = await withAiScope({ orgId: 'org-1', memberRunId: runId, meter }, () =>
+            port.generate(WHO, badPrompt),
+          ).then(
+            () => null,
+            (e: unknown) => e,
+          );
+          expect(err).toBeInstanceOf(NoteAiModelError);
+          expect((err as NoteAiModelError).message).toBe('NOTE_AI_FAILED');
+          expect(String((err as Error).message) + String((err as Error).stack)).not.toContain('SECRET_GETTER_THROW_TEXT');
+          expect(String((err as Error).message) + String((err as Error).stack)).not.toContain('SECRET_SYSTEM_THROW_TEXT');
+        }
+      },
+    );
+
+    expect(meterCalls).toBe(1);
+    expect(serverCalls).toBe(1);
+  });
 });

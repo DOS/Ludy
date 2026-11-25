@@ -3,7 +3,7 @@
 // user would act: a clean group (one exact candidate, no warning) apart from lines to look at (two candidates, a partial
 // amount, only the name), a clean voucher a proposer alone cannot approve under four-eyes (nothing posts), the same voucher
 // approved by another person in one bulk approval, the matched-lines list with approver and reason, a claim of the matcher
-// the server does not confirm, and an undo through the ordinary reversal. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run
+// the server does not confirm, and an undo through the ordinary reversal. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run
 // creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -25,7 +25,7 @@ import { createSessionStatusSource } from '../src/sessions.ts';
 import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const FIXTURE = readFileSync(new URL('../../extract/test/fixtures/einvoice-basic.xml', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-bank-groups-2385';
@@ -58,7 +58,7 @@ const account = (name: string): Account => ({ subject: randomUUID(), email: `${n
 const suite = ADMIN ? describe : describe.skip;
 
 suite('bank match groups and the matched lines (#2385)', () => {
-  const dbName = `crove_test_bank_groups_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_bank_groups_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

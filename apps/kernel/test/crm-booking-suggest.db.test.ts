@@ -1,7 +1,7 @@
 // Booking times for a reply to a client (#1440) on PostgreSQL 17, through the API: a recorded model reads the days and
 // times the pasted message asks for, and the answer offers the type's real free slots inside them, else the next free
 // ones; a server without AI, an empty message and a failing model all still answer the next free slots and say why;
-// viewers are refused before the model is asked; nothing is written. Set CROVE_TEST_ADMIN_URL to a superuser URL; each
+// viewers are refused before the model is asked; nothing is written. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each
 // run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -22,7 +22,7 @@ import { createHttpApp } from '../src/http.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-booking-suggest-0123';
 const ISSUER = 'crove-auth';
@@ -45,7 +45,7 @@ function bookableDay(offset: number): string {
 const at = (date: string, minute: number) => new Date(zonedInstant(VN, date, minute)).toISOString();
 
 suite('booking suggestions from a client message (#1440)', () => {
-  const dbName = `crove_test_crm_suggest_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_crm_suggest_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

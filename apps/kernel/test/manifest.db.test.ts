@@ -5,7 +5,7 @@
 // permission a ludy_kernel.role_permission row grants, a command or the approval policy names, or a database function
 // or policy checks is declared, with exactly the seeded rows as its default roles (manifest-permissions.ts), and every
 // entity matches its table's legal_entity_id column and append-only trigger and the numbering series its table's
-// triggers allocate, and every command's audit target is an entity (manifest-entities.ts). Set CROVE_TEST_ADMIN_URL to a
+// triggers allocate, and every command's audit target is an entity (manifest-entities.ts). Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a
 // superuser URL; each run makes its own database.
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -16,7 +16,7 @@ import { DATA_CLASSES, columns, type DataClass, type ModuleManifest } from '@lud
 import { commandTargetTypes, entityProblems, numberingCalls, type NumberingCall } from './manifest-entities.ts';
 import { MODULE_MANIFESTS, permissionProblems, sqlPermissionUses, staticPermissionUses, type Grant, type Manifests, type PermissionUse } from './manifest-permissions.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 // The control plane's tables in ludy_kernel (plan §3.6): no app, module or package source may name them (the
 // control-plane-reads invariant), so their owner is declared here, beside the module manifests.
@@ -92,7 +92,7 @@ function classified(): Map<string, { cls: DataClass; file: string }> {
 }
 
 suite('module manifests against the catalog (#1588, #1599)', () => {
-  const dbName = `crove_test_manifest_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_manifest_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let catalog: Array<{ schema: string; table: string }> = [];
   let columnRows: Array<{ schema: string; table: string; column: string }> = [];
   let grants: Grant[] = [];

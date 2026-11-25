@@ -3,7 +3,7 @@
 // revoked (or a month after the channel expired with no new authorization, then a week) the nightly job deletes the stored object and the file row, which takes every extraction version and the link with it;
 // a report a member imported, a file under an evidence hold, a file a purchase document names, a file that is not a poll's own and the files of a live connection are never touched, nothing before the
 // grace, and nothing is reachable by a login or a context that is not the worker as the system.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -17,7 +17,7 @@ import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { runMarketplacePurge } from '../src/marketplace-retention.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -44,7 +44,7 @@ class MemoryStore implements BlobStore {
 }
 
 suite('purge of the never-booked files of a gone marketplace connection (#4284)', () => {
-  const dbName = `crove_test_mkt_purge_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_mkt_purge_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

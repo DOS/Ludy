@@ -1,6 +1,6 @@
 // Inbound address rotation (issue #37, plan §7.6), the product flow: the RPC procedure, idempotent retries and
 // mail through the real worker. The security invariants (owner only, EXECUTE matrix, tombstones, forced
-// collisions) are in test/invariant/inbound-rotation.db.test.ts. Set CROVE_TEST_ADMIN_URL to a superuser URL;
+// collisions) are in test/invariant/inbound-rotation.db.test.ts. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL;
 // each run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -21,7 +21,7 @@ import { startWorker } from '../src/worker.ts';
 import { startExtractService } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const FIXTURE = readFileSync(new URL('../../extract/test/fixtures/einvoice-basic.xml', import.meta.url), 'utf8');
 const TOKEN = /^[0-9a-f]{24}$/;
@@ -50,7 +50,7 @@ class MemoryStore implements BlobStore {
 const suite = ADMIN ? describe : describe.skip;
 
 suite('inbound address rotation on PostgreSQL', () => {
-  const dbName = `crove_test_rot_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_rot_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let workerUrl = '';
   let pool: pg.Pool;

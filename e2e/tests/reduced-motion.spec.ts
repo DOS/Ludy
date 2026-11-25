@@ -77,9 +77,11 @@ test('nothing on the sidebar screens slides, zooms, fades or pulses when the sys
   const sidebar = page.getByRole('complementary');
   const apps = sidebar.getByRole('list', { name: 'Ứng dụng' });
   const links = new Set<string>();
-  // The shell shows the menu once the org's apps are read (ADR-0053), a moment after the address changes: wait for it instead of counting at once.
-  await expect(apps.getByRole('link').first()).toBeVisible();
+  // The switcher renders Overview (.first()) immediately and fills role-filtered apps once org.apps and me.get finish: wait for both before counting.
+  await expect(apps.getByRole('link').nth(1)).toBeVisible();
+  await expect(sidebar.getByRole('button', { name: /^Tài khoản: .*@/ })).toBeVisible();
   const appCount = await apps.getByRole('link').count();
+  expect(appCount).toBeGreaterThan(1);
   for (let i = 0; i < appCount; i++) {
     await apps.getByRole('link').nth(i).click();
     await page.waitForLoadState('networkidle');

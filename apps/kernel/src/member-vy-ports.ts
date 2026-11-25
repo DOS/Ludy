@@ -76,18 +76,30 @@ async function invokeNoteAiModel(
     prompt === null ||
     typeof prompt !== 'object' ||
     Array.isArray(prompt) ||
-    typeof prompt.system !== 'string' ||
-    prompt.system.length === 0 ||
-    prompt.system.length > NOTE_AI_MAX_SYSTEM_CHARS ||
-    typeof prompt.user !== 'string' ||
-    prompt.user.length === 0 ||
-    prompt.user.length > NOTE_AI_MAX_PROMPT_CHARS ||
     !Number.isFinite(timeoutMs) ||
     timeoutMs <= 0
   ) {
     throw new NoteAiModelError('failed');
   }
-  const safePrompt = { system: prompt.system, user: prompt.user };
+  // Single-read destructure before validation so getter-backed prompt objects cannot mutate between checks and the call.
+  let safePrompt: { system: string; user: string };
+  try {
+    const { system, user } = prompt;
+    if (
+      typeof system !== 'string' ||
+      system.length === 0 ||
+      system.length > NOTE_AI_MAX_SYSTEM_CHARS ||
+      typeof user !== 'string' ||
+      user.length === 0 ||
+      user.length > NOTE_AI_MAX_PROMPT_CHARS
+    ) {
+      throw new NoteAiModelError('failed');
+    }
+    safePrompt = { system, user };
+  } catch (error: unknown) {
+    if (error instanceof NoteAiModelError) throw error;
+    throw new NoteAiModelError('failed');
+  }
   const signal = AbortSignal.timeout(Math.min(timeoutMs, NOTE_AI_TIMEOUT_MS));
   try {
     const result = await call(safePrompt, signal);
@@ -1726,7 +1738,7 @@ async function executeAndStoreProposalRun(params: {
 
 function runtimeQueryFn(runtime: Runtime, as: { actor: UserActor; orgId: string }): SourceQueryFn {
   return async <T>(name: string, input: Record<string, unknown>) => {
-    // Check deployment-level module registration (CROVE_MODULES) before Runtime.query to avoid QUERY_NOT_FOUND.
+    // Check deployment-level module registration (LUDY_MODULES) before Runtime.query to avoid QUERY_NOT_FOUND.
     if (name.startsWith('notes.') && !runtime.installed('notes')) return { status: 'not_installed' as const };
     if (name.startsWith('meetings.') && !runtime.installed('meetings')) return { status: 'not_installed' as const };
     try {

@@ -44,7 +44,7 @@ export const setAddress = defineCommand({
 });
 
 // The org's contact email (issue #669): where the org's own mail goes, today Finance's request for the purchase
-// invoices the tax portal lists and Crove lacks. Owners and admins set or clear it in Settings; those mails name the
+// invoices the tax portal lists and Ludy lacks. Owners and admins set or clear it in Settings; those mails name the
 // org's inbound address (which only they see) as the Reply-To, so nobody else may redirect them, and a database guard
 // (tenant_contact_email_guard) refuses any other writer. Stored lower-cased and trimmed. The audit row and the activity
 // feed say that it changed, never the address: both are kept for good, an address is personal data.

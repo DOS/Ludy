@@ -395,6 +395,7 @@ export const zProjectTaskCard = z.object({
   startOn: zLocalDate.nullable().optional(),
   due: z.string().nullable(),
   checklist: z.array(zTaskChecklistStepView),
+  revision: z.number().int().positive().optional(),
   tainted: z.boolean(),
   checkedOut: z.boolean(),
   commentCount: z.number().int().nonnegative(),

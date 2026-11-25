@@ -19,7 +19,7 @@ import { NOTIFY_COMMANDS } from '../src/worker.ts';
 import { summaryReadyMailTemplate } from '../src/summary-ready-mail.ts';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -27,7 +27,7 @@ const SECRET_LINE = 'Khách A hẹn gặp tại quán cà phê Bình Minh lúc 9
 const SECRET_ANSWER = 'Cuộc họp bàn việc gặp khách A';
 
 suite('the "minutes draft ready" notice (#3730)', () => {
-  const dbName = `crove_test_summary_ready_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_summary_ready_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let orgId = '';
