@@ -263,14 +263,13 @@ export const noteImportEnex = defineCommand({
       if (insertedNotes.length !== chunk.length) {
         throw new Error('note batch insert count mismatch');
       }
-      for (let i = 0; i < chunk.length; i += 1) {
-        const noteId = insertedNotes[i]!.id;
-        createdNoteIds.push(noteId);
+      createdNoteIds.push(...insertedNotes.map((row) => row.id));
+      insertedNotes.forEach((row, i) => {
         for (const att of chunk[i]!.item.attachments) {
           pendingAttachments.push({
             org_id: ctx.orgId,
             id: att.attachmentId,
-            note_id: noteId,
+            note_id: row.id,
             author_user_id: userId,
             filename: att.filename,
             content_type: att.contentType,
@@ -282,7 +281,7 @@ export const noteImportEnex = defineCommand({
             created_at: ctx.now,
           });
         }
-      }
+      });
     }
 
     for (let offset = 0; offset < pendingAttachments.length; offset += INSERT_BATCH_SIZE) {
@@ -592,9 +591,9 @@ export const todoImportTodoist = defineCommand({
         if (insertedTodos.length !== chunk.length) {
           throw new Error('todo batch insert count mismatch');
         }
-        for (let i = 0; i < chunk.length; i += 1) {
-          createdTodoIds.push(insertedTodos[i]!.id);
-          checklistSteps += chunk[i]!.task.checklist.length;
+        createdTodoIds.push(...insertedTodos.map((row) => row.id));
+        for (const entry of chunk) {
+          checklistSteps += entry.task.checklist.length;
         }
       }
     }
