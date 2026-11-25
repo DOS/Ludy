@@ -47,7 +47,7 @@ import { ROLES, missingAnchors, openMeeting, userOf } from './transcript.ts';
 // Linear scans, no backtracking regex: a title is at most ITEM_TITLE_MAX (300) characters in the contract and in the table, and the scans are linear anyway.
 export const hasLink = (lower: string): boolean => lower.includes('http://') || lower.includes('https://') || lower.includes('www.');
 // An email: a non-empty part before an '@' and, between two '@' or after the last, a part with a '.' that has a character on each side of it.
-export function hasEmail(token: string): boolean {
+function hasEmail(token: string): boolean {
   const parts = token.split('@');
   for (let i = 1; i < parts.length; i += 1) {
     const before = parts[i - 1] as string;
@@ -57,9 +57,8 @@ export function hasEmail(token: string): boolean {
   }
   return false;
 }
-// The phone-like runs of a text: digits with spaces, dots and dashes between them, nine characters or more from the first digit to the last, each as written.
-export function phoneSpans(text: string): string[] {
-  const spans: string[] = [];
+// A phone-like run: digits with spaces, dots and dashes between them, nine characters or more from the first digit to the last.
+function hasPhone(text: string): boolean {
   let start = -1;
   let last = -1;
   for (let i = 0; i <= text.length; i += 1) {
@@ -69,14 +68,13 @@ export function phoneSpans(text: string): string[] {
       if (start < 0) start = i;
       last = i;
     } else if (!(c === ' ' || c === '\t' || c === '\n' || c === '.' || c === '-')) {
-      if (start >= 0 && last - start + 1 >= 9) spans.push(text.slice(start, last + 1));
+      if (start >= 0 && last - start + 1 >= 9) return true;
       start = -1;
       last = -1;
     }
   }
-  return spans;
+  return false;
 }
-export const hasPhone = (text: string): boolean => phoneSpans(text).length > 0;
 export function itemFlags(title: string): ItemFlag[] {
   const lower = title.toLowerCase();
   const found = hasLink(lower) || hasPhone(title) || lower.split(/\s+/).some((token) => hasEmail(token));

@@ -11,7 +11,7 @@ import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import type { MinutesVersions, TranslationSource } from '@ludy/kernel-contract';
 import { Runtime } from '@ludy/kernel-runtime';
-import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
+import { meetingsCommands, meetingsQueries, versionTextProblem } from '@ludy/mod-meetings';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
 
 const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
@@ -194,6 +194,45 @@ suite('the second-language version of the published minutes (#4777)', () => {
     // The meeting's own delete reaches it by the foreign key.
     await sqlAdmin('DELETE FROM ludy_meetings.meeting WHERE org_id = $1 AND id = $2', [orgId, kept]);
     expect(await stored(kept)).toEqual([]);
+  });
+
+  // The erasure finds a person in the original's rows only (a version is dropped with the original's redaction, never read): so a text may be accepted as a version only if every value the database's own
+  // matching (ludy_kernel.text_mentions, the finder's and the erasure's one) finds in it is found in the original too. The code check (versionTextProblem) is held to that here, on the real function.
+  // One deliberate exception, not in the table: a large amount the original writes with commas (1,250,000,000) and the version with dots (1.250.000.000). The database reads dots as the separators of a
+  // number and commas not, so it finds those digits only in the version; but they are the original's own digits, so the version holds nothing the original does not, and refusing it would refuse every
+  // English amount of 100 million or more that a Vietnamese reader writes with dots.
+  it('what the personal-data matching finds in an accepted version it finds in the original; what it finds only in the version is refused', async () => {
+    type Probe = { kind: 'digits' | 'email'; value: string };
+    const cases: Array<{ original: string; version: string; probes: Probe[]; accepted: boolean }> = [
+      { original: 'Gọi (028) 3829 1234', version: 'Call 028 3829 1234', probes: [{ kind: 'digits', value: '02838291234' }], accepted: true },
+      { original: 'Gọi 028 3829 1234', version: 'Call (028) 3829-1234', probes: [{ kind: 'digits', value: '02838291234' }], accepted: true },
+      { original: 'Gửi tới alice@example.com', version: 'Send to <Alice@Example.com>, please', probes: [{ kind: 'email', value: 'alice@example.com' }], accepted: true },
+      { original: 'Mã 028, 382 và 9123', version: 'Call (028) 382-9123', probes: [{ kind: 'digits', value: '0283829123' }], accepted: false },
+      { original: 'Mã 0912, 345 và 678', version: 'Call 0912 345 678', probes: [{ kind: 'digits', value: '0912345678' }], accepted: false },
+      { original: 'Mã 0912, 345 và 678', version: 'Call 0912\r\n345\r\n678', probes: [{ kind: 'digits', value: '0912345678' }], accepted: false },
+      { original: 'Số 1234567', version: 'Account 01234567', probes: [{ kind: 'digits', value: '01234567' }], accepted: false },
+      { original: 'Gửi tới alice@example.com', version: 'Send to _alice@example.com', probes: [{ kind: 'email', value: '_alice@example.com' }, { kind: 'email', value: 'alice@example.com' }], accepted: false },
+      { original: 'Gửi tới alice@example.com', version: "Send to o'alice@example.com", probes: [{ kind: 'email', value: "o'alice@example.com" }], accepted: false },
+    ];
+    for (const { original, version, probes, accepted } of cases) {
+      const problem = versionTextProblem(original, version);
+      let onlyInVersion = false;
+      for (const probe of probes) {
+        const { rows } = await sqlAdmin<{ inVersion: boolean; inOriginal: boolean }>(
+          'SELECT ludy_kernel.text_mentions($1, $3, $4) AS "inVersion", ludy_kernel.text_mentions($2, $3, $4) AS "inOriginal"',
+          [version, original, probe.kind, probe.value],
+        );
+        if (rows[0]?.inVersion === true && rows[0].inOriginal === false) onlyInVersion = true;
+      }
+      // Accepted: nothing is found only in the version. Refused: the case is one where the database finds a value only in the version, and the code refuses it.
+      if (accepted) {
+        expect(problem, `${original} | ${version}`).toBeNull();
+        expect(onlyInVersion, `${original} | ${version}`).toBe(false);
+      } else {
+        expect(problem, `${original} | ${version}`).not.toBeNull();
+        expect(onlyInVersion, `${original} | ${version}`).toBe(true);
+      }
+    }
   });
 
   it('the table has no UPDATE for the tenant role (a replacement is a delete and an insert)', async () => {

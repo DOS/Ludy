@@ -21,7 +21,7 @@ import {
   type TranslationTarget,
 } from '@ludy/kernel-contract';
 import { DomainError, defineCommand, defineQuery } from '@ludy/kernel-runtime';
-import { hasEmail, hasLink, phoneSpans, recorderMeeting } from './results.ts';
+import { hasLink, recorderMeeting } from './results.ts';
 import { readTranslationSource } from './translate-run.ts';
 import { ROLES, lockMeeting, openMeeting, userOf } from './transcript.ts';
 
@@ -29,42 +29,87 @@ import { ROLES, lockMeeting, openMeeting, userOf } from './transcript.ts';
 const VERSION_BYTES_MAX = 300_000;
 const notPublished = () => new DomainError('MINUTES_NOT_PUBLISHED', 409, 'The minutes are not published, so there is nothing to put a second version beside');
 
-// The ways to reach someone that a text writes, each one named, not only the kinds: a version may hold an address, a link or a phone number only if THE ORIGINAL holds that very one. A kind-by-kind check
-// ("the original has an address, so any address may be written") would let the recorder put another person's address or number into a version, where the personal-data erasure (which finds a person in
-// the original's rows, never in a version) could not reach it. Tokens are compared in lower case with the punctuation at their edges taken off; a phone number by its digits alone (so "1.250.000" and
-// "1 250 000" are the same, "0912 345 678" built from digit runs the original has apart is not).
-const EDGE = /^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu;
+// The ways to reach someone that a text writes, each one named, not only the kinds: a version may hold an address, a link or a number that identifies someone (a phone number, a tax code, an ID,
+// an account: 8 digits or more) only if THE ORIGINAL holds that very one. A kind-by-kind check ("the original has an address, so any address may be written") would let the recorder put another
+// person's address or number into a version, where the personal-data erasure (which finds a person in the original's rows, never in a version: personal-data.ts) could not reach it. So the rule
+// is the database's own matching (ludy_kernel.text_mention_pattern), taken from the safe side: whatever that pattern could find in a version, it also finds in the original.
+//   - Both texts are folded to NFKC first (a full-width "＠" or "０９１２" is the same character as its plain form for a reader).
+//   - Address: a word of the text (cut at white space, in lower case) that holds an "@" is an address, and the version may hold only a word the original holds. Only wrappers are taken off its
+//     edges (an opening bracket or quote before; a closing bracket, quote or sentence punctuation after): the characters an address's local part may hold, and what the database's pattern
+//     refuses next to an address (letters, digits, "_", "-", a dot before another letter), stay, so "_alice@example.com" is not "alice@example.com".
+//   - Link: the same, for a word that holds "http://", "https://" or "www.".
+//   - Number: a span is the digits of a text with up to three separators between two of them (space, tab, line break, no-break spaces, ".", "(", ")", "-", and "," between two digits: 1.250.000.000
+//     and 1,250,000,000 are one span of the same digits); a span of 8 digits or more is what the database's probe finds (leading zeros count: 01234567 is not 1234567). The version may hold only
+//     the very spans the original holds, compared by their digits ("0912 345 678" = "0912-345-678"; Vietnam's "+84 912 345 678" is another run of digits than "0912 345 678", so a recorder writes the number as the original does), so a number built from digit runs the original writes apart is refused.
+// Linear scans only, no regular expression over the whole text that could backtrack: a version holds up to VERSION_BYTES_MAX bytes.
+const OPENERS = '([{<"«“‘';
+const CLOSERS = ['.', ',', ';', ':', '!', '?', ')', ']', '}', '>', '"', "'", '»', '”', '’'];
+function trimWrappers(word: string): string {
+  let from = 0;
+  let to = word.length;
+  while (from < to && OPENERS.includes(word[from] as string)) from += 1;
+  while (to > from && CLOSERS.includes(word[to - 1] as string)) to -= 1;
+  return word.slice(from, to);
+}
+const SEPARATORS = ' \t\n\r   ﻿.()-';
+const NUMBER_DIGITS_MIN = 8;
+const isDigit = (c: string | undefined): boolean => c !== undefined && c >= '0' && c <= '9';
+function numberSpans(text: string): Set<string> {
+  const spans = new Set<string>();
+  let digits = '';
+  let gap = 0;
+  const flush = () => {
+    if (digits.length >= NUMBER_DIGITS_MIN) spans.add(digits);
+    digits = '';
+    gap = 0;
+  };
+  for (let i = 0; i < text.length; i += 1) {
+    const c = text[i] as string;
+    if (isDigit(c)) {
+      if (digits !== '' && gap > 3) flush();
+      digits += c;
+      gap = 0;
+    } else if (digits !== '' && (SEPARATORS.includes(c) || (c === ',' && isDigit(text[i - 1]) && isDigit(text[i + 1])))) {
+      gap += 1;
+    } else flush();
+  }
+  flush();
+  return spans;
+}
+
 interface Contacts {
   links: Set<string>;
   emails: Set<string>;
-  phones: Set<string>;
+  numbers: Set<string>;
 }
 function contactsOf(text: string): Contacts {
   const links = new Set<string>();
   const emails = new Set<string>();
   for (const raw of text.toLowerCase().split(/\s+/u)) {
-    const token = raw.replace(EDGE, '');
-    if (token === '') continue;
-    if (hasLink(token)) links.add(token);
-    if (hasEmail(token)) emails.add(token);
+    const word = trimWrappers(raw);
+    if (word === '') continue;
+    if (hasLink(word)) links.add(word);
+    if (word.includes('@')) emails.add(word);
   }
-  return { links, emails, phones: new Set(phoneSpans(text).map((span) => span.replace(/\D/gu, ''))) };
+  return { links, emails, numbers: numberSpans(text) };
 }
 
-// The digit runs of a text, thousands separators and leading zeros set aside ("1.500.000" and "1,500,000" are the same three runs).
+// The digit runs of a text, thousands separators and leading zeros of a short figure set aside ("1.500.000" and "1,500,000" are the same three runs). A run of 8 digits or more keeps its zeros.
 function digitRuns(text: string): Set<string> {
   const runs = new Set<string>();
-  for (const run of text.match(/\d+/g) ?? []) runs.add(run.replace(/^0+(?=\d)/, ''));
+  for (const run of text.match(/\d+/g) ?? []) runs.add(run.length >= NUMBER_DIGITS_MIN ? run : run.replace(/^0+(?=\d)/, ''));
   return runs;
 }
 
-/** What code finds wrong with a segment's reviewed text against the original it is beside: a figure, link, address or phone number the original does not hold. Null when nothing. */
+/** What code finds wrong with a segment's reviewed text against the original it is beside: a figure, link, address or number that identifies someone that the original does not hold. Null when nothing. */
 export function versionTextProblem(original: string, text: string): 'INVENTED_NUMBER' | 'CONTACT_ADDED' | null {
-  const known = digitRuns(original);
-  for (const run of digitRuns(text)) if (!known.has(run)) return 'INVENTED_NUMBER';
-  const had = contactsOf(original);
-  const now = contactsOf(text);
-  for (const kind of ['links', 'emails', 'phones'] as const) for (const one of now[kind]) if (!had[kind].has(one)) return 'CONTACT_ADDED';
+  const was = original.normalize('NFKC');
+  const now = text.normalize('NFKC');
+  const known = digitRuns(was);
+  for (const run of digitRuns(now)) if (!known.has(run)) return 'INVENTED_NUMBER';
+  const had = contactsOf(was);
+  const has = contactsOf(now);
+  for (const kind of ['links', 'emails', 'numbers'] as const) for (const one of has[kind]) if (!had[kind].has(one)) return 'CONTACT_ADDED';
   return null;
 }
 
