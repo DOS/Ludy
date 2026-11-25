@@ -52,6 +52,7 @@ import { MCP_WAKE_SWEEP_CRON, MCP_WAKE_SWEEP_EXPIRE_SECONDS, runWakeSweep } from
 import { engageWakeFeed } from './mcp-wake-engage.ts';
 import { runMeetingHookDelivery, type MeetingHookJob } from './meeting-hook.ts';
 import { MEETINGS_MORNING_CRON, runMeetingsMorningSweep } from './meetings-morning.ts';
+import { MEETINGS_WEEKLY_CRON, runMeetingsWeeklySweep } from './meetings-weekly.ts';
 import { MEETINGS_SERIES_NUDGE_CRON, runMeetingsSeriesNudgeSweep } from './meetings-series-nudge.ts';
 import { MEETING_HOOK_SWEEP_CRON, MEETING_HOOK_SWEEP_EXPIRE_SECONDS, runMeetingHookSweep } from './meeting-hook-sweep.ts';
 import type { MediaAudioExtractor } from './meetings-extract.ts';
@@ -1758,6 +1759,21 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     await boss.schedule(QUEUES.meetingsMorning, MEETINGS_MORNING_CRON, null, { tz: MEMBER_VY_SWEEP_TZ });
   } else {
     await dropCron(QUEUES.meetingsMorning);
+  }
+  // The opt-in weekly notice of the week's meetings (#4967): every 5 minutes, the counts of the "this week" card and a link to each member whose Monday time has come (meetings-weekly.ts). The same rules as the
+  // morning notice: no credential, nothing reached (the mail queues send the mail), a missed tick is found again by the next one, and nothing here runs Vy.
+  if (deps.runtime.installed('meetings')) {
+    await boss.work(QUEUES.meetingsWeekly, { batchSize: 1 }, async () => {
+      const done = await runMeetingsWeeklySweep({
+        runtime: deps.runtime,
+        workerDb: deps.workerDb,
+        ...(deps.push ? { onNotified: ({ orgId, notificationId }) => sendKernelPush(orgId, notificationId) } : {}),
+      });
+      if (done.sent + done.failures > 0) console.log(`[meetings-weekly] sent ${done.sent}, failures ${done.failures}`);
+    });
+    await boss.schedule(QUEUES.meetingsWeekly, MEETINGS_WEEKLY_CRON, null, { tz: MEMBER_VY_SWEEP_TZ });
+  } else {
+    await dropCron(QUEUES.meetingsWeekly);
   }
   // A member's minutes webhook (meetings integrations A6, #3164): a sweep every minute hands over the deliveries stored at publish (meeting-hook-sweep.ts), and one job per delivery posts it to the
   // address the member set (meeting-hook.ts, through the signing helper of mcp-wake.ts). The same rule as the wake-up (without a credential key no secret can be opened, so neither runs), and only when the meetings module is installed: its commands are what the sweep and the job run.

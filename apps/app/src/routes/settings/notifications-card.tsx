@@ -3,7 +3,7 @@
 // (a mute is per member and org), so the card is the tab "Thông báo của tôi". The bell's screen keeps the list and a link here. No AI acts on this card: a person switches kinds.
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useTranslations } from 'use-intl';
-import { MORNING_KIND } from '@ludy/kernel-contract';
+import { MORNING_KIND, WEEKLY_KIND } from '@ludy/kernel-contract';
 import { Card } from '@ludy/ui/components/card';
 import { Checkbox } from '@ludy/ui/components/checkbox';
 import { ErrorText } from '../../components/ui.tsx';
@@ -12,6 +12,7 @@ import { SETTINGS_CARD } from './tabs.ts';
 import { meetingsInstalled } from '../../components/linked-meetings.tsx';
 import { PushSetting } from '../../components/push-setting.tsx';
 import { MorningNoticeSetting } from '../../components/morning-notice-setting.tsx';
+import { WeeklyNoticeSetting } from '../../components/weekly-notice-setting.tsx';
 import { TodayMailSetting } from '../../components/today-mail-setting.tsx';
 import { client, errorMessage, orpc, queryClient } from '../../lib/api.ts';
 import { installedModules, useModulesVersion } from '../../lib/org-modules.ts';
@@ -66,6 +67,8 @@ export function NotificationPreferences() {
       </Anchor>
       {/* The opt-in morning notice of the day's meetings (#3955): the member's own, with the meetings app. */}
       {meetingsInstalled() && <MorningNoticeSetting muted={muted.includes(MORNING_KIND)} />}
+      {/* The opt-in weekly notice of the week's meetings (#4967): the member's own, with the meetings app. */}
+      {meetingsInstalled() && <WeeklyNoticeSetting muted={muted.includes(WEEKLY_KIND)} />}
     </>
   );
 }
