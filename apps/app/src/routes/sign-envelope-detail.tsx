@@ -429,7 +429,9 @@ export function SignEnvelopeDetailPage() {
   const isDraft = envelope?.status === 'draft';
   const roleHere = meQuery.data?.orgs.find((o) => o.slug === slug)?.role ?? orgQuery.data?.role;
   const currentUserId = meQuery.data?.userId ?? null;
-  const noticeOrg = meQuery.data?.orgs.find((o) => o.slug === slug)?.orgId ?? (slug || null);
+  const noticeOrg =
+    meQuery.data?.orgs.find((o) => o.slug === slug)?.orgId ??
+    (orgQuery.data?.slug === slug ? orgQuery.data.orgId : null);
   const noticeScopeKey = `${noticeOrg ?? ''}\0${currentUserId ?? ''}\0${id}`;
   const [docxWarningsState, setDocxWarningsState] = useState<{
     key: string;

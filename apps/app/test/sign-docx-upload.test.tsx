@@ -336,6 +336,8 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
       envelopeId: envDetailId,
       slug: 'acme',
       orgId,
+      userId: userAId,
+      sessionId: null,
       warnings: ['images_skipped', 'footnotes_skipped'],
     });
     expect(invalidateEnvelopes).toHaveBeenCalledTimes(1);
@@ -577,20 +579,40 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
       envelopeId: envDetailId,
       slug: 'acme',
       orgId: null,
+      userId: null,
+      sessionId: null,
       warnings: ['images_skipped'],
     });
+
+    // Knowing userId without orgId (me.get missing new orgId) ALSO holds on list page instead of saving under slug and losing the banner on Detail.
+    setCreatedDocxNotice.mockClear();
+    await handleEnvelopeCreatedWithWarnings({
+      envelopeId: envDetailId,
+      warnings: ['images_skipped'],
+      slug: 'acme',
+      orgId: null,
+      userId: userAId,
+      setCreateOpen,
+      setCreatedDocxNotice,
+      invalidateEnvelopes,
+      navigateToEnvelope: unpersistedNav,
+    });
+    expect(unpersistedNav).not.toHaveBeenCalled();
+    expect(readCreatedDocxWarnings(envDetailId, { org: 'acme', userId: userAId })).toEqual([]);
 
     // Clicking "Open envelope" while me.get is still down stays on list page; once me.get recovers, it persists before navigating.
     const unpersistedNotice = {
       envelopeId: envDetailId,
       slug: 'acme',
       orgId: null,
+      userId: userAId,
+      sessionId: 'sess-a',
       warnings: ['images_skipped'] as const,
     };
     expect(
       await openCreatedDocxNoticeEnvelope({
         notice: unpersistedNotice,
-        userId: null,
+        currentUserId: userAId,
         resolveUserScope: async () => {
           throw new Error('still offline');
         },
@@ -600,11 +622,39 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
     ).toBe(false);
     expect(unpersistedNav).not.toHaveBeenCalled();
 
+    // If account changed to User B after creation, Open refuses to persist or navigate under User B.
+    setCreatedDocxNotice.mockClear();
+    expect(
+      await openCreatedDocxNoticeEnvelope({
+        notice: unpersistedNotice,
+        currentUserId: userBId,
+        setCreatedDocxNotice,
+        navigateToEnvelope: unpersistedNav,
+      }),
+    ).toBe(false);
+    expect(setCreatedDocxNotice).toHaveBeenCalledWith(null);
+    expect(unpersistedNav).not.toHaveBeenCalled();
+
+    // Even when notice had userId: null (me.get failed on creation), sessionId mismatch blocks persisting for User B.
+    setCreatedDocxNotice.mockClear();
+    expect(
+      await openCreatedDocxNoticeEnvelope({
+        notice: { ...unpersistedNotice, userId: null },
+        currentUserId: userBId,
+        resolveCurrentSessionId: async () => 'sess-b',
+        setCreatedDocxNotice,
+        navigateToEnvelope: unpersistedNav,
+      }),
+    ).toBe(false);
+    expect(setCreatedDocxNotice).toHaveBeenCalledWith(null);
+    expect(unpersistedNav).not.toHaveBeenCalled();
+
     const recoveredOrder: string[] = [];
     expect(
       await openCreatedDocxNoticeEnvelope({
         notice: unpersistedNotice,
-        userId: null,
+        currentUserId: userAId,
+        resolveCurrentSessionId: async () => 'sess-a',
         resolveUserScope: async () => {
           recoveredOrder.push('resolve');
           return { orgId, userId: userAId };
@@ -663,7 +713,8 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
     expect(
       await openCreatedDocxNoticeEnvelope({
         notice: unpersistedNotice,
-        userId: null,
+        currentUserId: userAId,
+        resolveCurrentSessionId: async () => 'sess-a',
         resolveUserScope: async () => {
           dismissedMidFlight = true;
           return { orgId, userId: userAId };

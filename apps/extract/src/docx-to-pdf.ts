@@ -1641,7 +1641,6 @@ class PdfPaginator {
   private page: PDFPage | null = null;
   private cursorY = A4_HEIGHT - MARGIN_TOP;
   private pendingBreaks = 0;
-  private sawLeadingBreak = false;
 
   constructor(pdfDoc: PDFDocument, fonts: PdfFontContext, warnings: Set<DocxToPdfWarning>) {
     this.pdfDoc = pdfDoc;
@@ -1656,7 +1655,6 @@ class PdfPaginator {
     this.page = this.pdfDoc.addPage([A4_WIDTH, A4_HEIGHT]);
     this.cursorY = A4_HEIGHT - MARGIN_TOP;
     this.pendingBreaks = 0;
-    this.sawLeadingBreak = false;
     return this.page;
   }
 
@@ -1674,15 +1672,6 @@ class PdfPaginator {
   }
 
   requestPageBreak(): void {
-    if (this.page) {
-      this.pendingBreaks += 1;
-      return;
-    }
-    // Ignore only the first leading page break at document start; consecutive explicit breaks still create blank pages.
-    if (!this.sawLeadingBreak) {
-      this.sawLeadingBreak = true;
-      return;
-    }
     this.pendingBreaks += 1;
   }
 

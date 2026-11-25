@@ -357,15 +357,31 @@ describe('docx_to_pdf conversion (#4721)', () => {
       expect(p2).toBeDefined();
       expect(p2!.y).toBeCloseTo(p1!.y, 3);
 
-      // Leading page break and trailing inline break do not create extra blank pages.
+      // Explicit leading w:br type="page" moves content to page 2 (unlike pageBreakBefore on paragraph 1),
+      // while trailing explicit break after the last paragraph adds no extra EOF page.
+      drawn.length = 0;
+      const singleLeadingBreakDocx = buildDocx({
+        'word/document.xml': [
+          '<?xml version="1.0" encoding="UTF-8"?>',
+          '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">',
+          '<w:body>',
+          '<w:p><w:r><w:br w:type="page"/></w:r></w:p>',
+          '<w:p><w:r><w:t>Sau ngắt đầu</w:t><w:br w:type="page"/></w:r></w:p>',
+          '</w:body></w:document>',
+        ].join(''),
+      });
+      const leadingRes = await convertDocxToPdf(singleLeadingBreakDocx);
+      expect(leadingRes.pageCount).toBe(2);
+      expect(drawn.find((d) => d.text === 'Sau ngắt đầu')?.y).toBeCloseTo(p1!.y, 3);
+
+      // w:pageBreakBefore on paragraph 1 plus trailing w:br type="page" yields 1 page total.
       drawn.length = 0;
       const singlePageDocx = buildDocx({
         'word/document.xml': [
           '<?xml version="1.0" encoding="UTF-8"?>',
           '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">',
           '<w:body>',
-          '<w:p><w:r><w:br w:type="page"/></w:r></w:p>',
-          '<w:p><w:r><w:t>Duy nhất</w:t><w:br w:type="page"/></w:r></w:p>',
+          '<w:p><w:pPr><w:pageBreakBefore/></w:pPr><w:r><w:t>Duy nhất</w:t><w:br w:type="page"/></w:r></w:p>',
           '</w:body></w:document>',
         ].join(''),
       });
@@ -440,20 +456,20 @@ describe('docx_to_pdf conversion (#4721)', () => {
       expect(emptyBothBreaksRes.pageCount).toBe(3);
       expect(drawn.find((d) => d.text === 'Sau đoạn ngắt')?.y).toBeCloseTo(p1!.y, 3);
 
-      // Two explicit page breaks before the first content paragraph skip only the first break and place content on page 2.
+      // Two explicit page breaks before the first content paragraph leave pages 1-2 blank and place content on page 3.
       drawn.length = 0;
       const leadingDoubleBreakDocx = buildDocx({
         'word/document.xml': [
           '<?xml version="1.0" encoding="UTF-8"?>',
           '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">',
           '<w:body>',
-          '<w:p><w:r><w:br w:type="page"/><w:br w:type="page"/><w:t>Đầu trang 2</w:t></w:r></w:p>',
+          '<w:p><w:r><w:br w:type="page"/><w:br w:type="page"/><w:t>Đầu trang 3</w:t></w:r></w:p>',
           '</w:body></w:document>',
         ].join(''),
       });
       const leadingDoubleRes = await convertDocxToPdf(leadingDoubleBreakDocx);
-      expect(leadingDoubleRes.pageCount).toBe(2);
-      expect(drawn.find((d) => d.text === 'Đầu trang 2')?.y).toBeCloseTo(p1!.y, 3);
+      expect(leadingDoubleRes.pageCount).toBe(3);
+      expect(drawn.find((d) => d.text === 'Đầu trang 3')?.y).toBeCloseTo(p1!.y, 3);
 
       // Trailing double explicit break after content preserves 1 blank page between breaks while dropping the extra page after the final break.
       drawn.length = 0;
