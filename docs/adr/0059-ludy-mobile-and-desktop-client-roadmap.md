@@ -1,16 +1,16 @@
 # 0059. Ludy Mobile and the desktop client roadmap
 
-- Status: **Proposed** (2026-11-25). Nothing here is decided: every point waits for the owner's answers in section 8 of [docs/plan/desktop-mobile-apps.md](../plan/desktop-mobile-apps.md). Tóm tắt tiếng Việt cho chủ sở hữu nằm ở đầu tài liệu kế hoạch đó.
+- Status: **Accepted (owner, 2026-11-25)**. The owner answered the questions of section 8 of [docs/plan/desktop-mobile-apps.md](../plan/desktop-mobile-apps.md) in the Claude PO chat; the answers are quoted in its "Owner decisions (2026-11-25)" section. **Expo (React Native) is decided** ("Expo luôn."), the first jobs are approvals plus the Engage inbox, macOS follows the signed Windows build, and the owner already holds the store and signing accounts. Points 5 (push for self-hosters), the platform split and the milestone are **PO defaults, owner may change**. Tóm tắt tiếng Việt cho chủ sở hữu nằm ở đầu tài liệu kế hoạch đó.
 - Date: 2026-11-25
 - Deciders: owner (JOY); Platform PO for the shared shell, auth scopes and shared-core files
-- Amends, once accepted: the **Mobile row of plan Decision 14** ("Client platforms", [crove-os-kernel.md](../plan/crove-os-kernel.md)) and the scope of **Ludy Desktop** in [ADR-0055](0055-three-capture-paths-one-meeting.md) section 4. Neither written text is edited by this draft.
+- Amends: the **Mobile row of plan Decision 14** ("Client platforms", [crove-os-kernel.md](../plan/crove-os-kernel.md)) and the scope of **Ludy Desktop** in [ADR-0055](0055-three-capture-paths-one-meeting.md) section 4. The amended texts get a one-line "amended by ADR-0059" pointer in a follow-up docs change; this ADR is the authority meanwhile.
 - Related: Icebox issue #65 (mobile app), [ADR-0032](0032-oauth-authorization-server.md), [ADR-0028](0028-identity-sessions-and-revocation.md), [ADR-0047](0047-meeting-notes-audio-and-transcripts.md)
 
 ## Context and problem statement
 
 Decision 14 says mobile is Expo "when wedge customers ask for mobile approvals or camera capture", with Capacitor as the fallback and "an extension of the web app, not a copy" as the scope. On 2026-11-25 the owner asked for a desktop and a mobile app and suggested Engage (Social, CRM) and Meeting Notes first. ADR-0055 already approved Ludy Desktop (Electron, Windows first) with meeting capture first and only "kept room" for tray notifications and a global hotkey. The plan answers which jobs to put on each device and in what order.
 
-## Proposed decisions
+## Decisions
 
 1. **Trigger.** The owner's request counts as the trigger of Decision 14. The PWA (manifest, service worker, web push, share target) stays the bridge and gets a phone-ergonomics pass first (plan Phase 1).
 2. **Scope of Ludy Mobile.** Jobs, not apps: the cross-app approvals queue, the Engage conversations inbox with AI-drafted replies a person edits and sends, native push; then receipt capture into Chứng từ and contact lookup with a typed quick note; then in-person meeting recording and minutes. Everything else opens on the web. This widens Decision 14's list (approvals, push, camera, biometrics) with the inbox, lookup and recording, and keeps its "not a copy" rule.
@@ -27,7 +27,7 @@ Decision 14 says mobile is Expo "when wedge customers ask for mobile approvals o
 - The shared client package and the new scopes are shared-core and protected-path work.
 - Self-hosters get no native push in Phase 2a.
 - Store review and policy checks (login, purchase, account deletion, AGPL) happen before the first submission.
-- If accepted, Decision 14's Mobile row and ADR-0055 section 4 get a short "amended by ADR-0059" note in the same PR that accepts this draft.
+- Decision 14's Mobile row and ADR-0055 section 4 get a short "amended by ADR-0059" pointer in a follow-up docs change (the Mobile row also states that the Expo choice was confirmed by the owner on 2026-11-25).
 
 ## Revisit when
 

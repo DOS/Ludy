@@ -1,10 +1,11 @@
 # Desktop and mobile apps for Ludy (plan, 2026-11-25)
 
-Status: **proposal for the owner**. Docs only: no code, no issue, no account, no spending. A native mobile app is a new customer-visible product, so under [AGENTS.md](../../AGENTS.md) nothing here is built until the owner answers section 8. Companion ADR draft (Proposed): [ADR-0059](../adr/0059-ludy-mobile-and-desktop-client-roadmap.md). Written by a planning sub-session of the Platform and Frontend PO.
+Status: **owner decisions recorded 2026-11-25** (see "Owner decisions (2026-11-25)" below); the phases are the backlog. Questions 4, 6 and 8 were not asked separately and follow the recommendation as "PO default, owner may change". Companion ADR: [ADR-0059](../adr/0059-ludy-mobile-and-desktop-client-roadmap.md) (Accepted, owner, 2026-11-25). Written by a planning sub-session of the Platform and Frontend PO.
 
 ## Tóm tắt cho chủ sở hữu (JOY)
 
-- Hoàn thành: đã lập kế hoạch app máy tính và app điện thoại cho Ludy (tài liệu này) kèm bản nháp ADR-0059 ở trạng thái "Đề xuất". Chưa có dòng mã, issue, tài khoản hay khoản chi nào.
+- **Cập nhật 2026-11-25:** anh đã chốt: làm app điện thoại thật bằng **Expo**, ba việc đầu là duyệt + hộp thư Engage (kèm AI soạn câu trả lời và thông báo đẩy), rồi chụp chứng từ + tra khách, rồi ghi âm họp trực tiếp; làm bản **Mac sớm** ngay sau bản Windows đã ký; anh đã có sẵn tài khoản Apple, Google Play, chứng chỉ ký Windows và Apple Developer ID nên không cần mua thêm. Các bước đăng ký cửa hàng và ký vẫn do anh duyệt (runbook, không để bí mật trong repo). Câu hỏi giấy phép AGPL trên cửa hàng đã thêm vào #62 cho luật sư. Các câu 4, 6, 8 theo đề xuất, ghi là "PO mặc định, anh có thể đổi".
+- Bản gốc của kế hoạch (trước khi anh trả lời) ở các dòng dưới. Hoàn thành: đã lập kế hoạch app máy tính và app điện thoại cho Ludy (tài liệu này) kèm ADR-0059.
 - Trả lời câu hỏi của anh: **đúng một nửa**. Hộp thư hội thoại của Engage nên làm đầu tiên trên điện thoại (khách nhắn Zalo, Facebook lúc anh đang ngoài đường). CRM chỉ cần tra khách và ghi chú nhanh, không cần bảng cơ hội. Ghi âm họp thì khác nhau giữa hai máy: **trên máy tính là việc đầu tiên** (đang làm, ADR-0055); trên điện thoại chỉ ghi được cuộc họp trực tiếp, không ghi được cuộc gọi Zoom hay Zalo của máy khác, nên để sau.
 - Hai việc anh chưa nêu nhưng đối thủ đều có trên điện thoại: **duyệt việc cần anh** (chi tiền, nghỉ phép, bài đăng, đề xuất của AI) và **chụp chứng từ** gửi vào Tài chính. Đề xuất bản điện thoại đầu tiên gồm: duyệt, hội thoại có AI soạn sẵn câu trả lời, thông báo đẩy; bản kế tiếp: chụp chứng từ và tra khách.
 - Công nghệ: giữ quyết định cũ là Expo (React Native), dùng chung hợp đồng dữ liệu với web. Trước đó, web trên điện thoại (PWA, đã có thông báo đẩy) làm cầu nối miễn phí. Việc cần ứng dụng thật: thông báo trên iPhone không bắt cài vào Màn hình chính, ghi âm khi tắt màn hình, có mặt trên cửa hàng ứng dụng.
@@ -12,6 +13,21 @@ Status: **proposal for the owner**. Docs only: no code, no issue, no account, no
 - Rủi ro cần biết: chủ máy chủ tự cài (self-host) không gửi được thông báo đẩy vào app trên cửa hàng, vì khóa gửi thuộc về người phát hành app; và giấy phép AGPL với cửa hàng ứng dụng cần luật sư xem trước khi nộp.
 - Có 9 câu cần anh quyết ở mục 8, mỗi câu có đề xuất. Quan trọng nhất: làm app thật ngay hay chờ khách pilot đòi; Expo hay chỉ PWA; ba việc đầu tiên.
 - Hạn chế: chưa có số liệu từ khách pilot về điện thoại và thói quen của họ (Phase 0 hỏi 5 câu); thông tin đối thủ lấy từ trang công khai và tóm tắt tìm kiếm, ghi rõ chỗ chưa kiểm chứng.
+
+## Owner decisions (2026-11-25)
+
+Recorded from the owner's answers in the Claude PO chat (popups), quoted as given. The text of sections 1 to 9 below is the original proposal, kept for reasoning; where it says "proposed" or "recommended", this section rules.
+
+| Question | Owner answer | Effect |
+|---|---|---|
+| Q3 first jobs | "Duyệt + hộp thư Engage trước (Khuyên dùng)" | Release 1 = approvals plus Engage inbox with AI-drafted replies plus push; release 2 = receipt capture plus contact lookup and quick note; release 3 = in-person meeting recording |
+| Q1, Q2 technology | First: "Expo là gì? TAo chưa chốt cái đó mà?" (Decision 14's Expo line had not been decided with the owner); after the options: "Expo luôn." | Native app now with Expo (React Native). The PWA work already in the UI/UX wave continues (Phase 1). Capacitor stays only as the written fallback |
+| Q5 accounts | "Tao có tài khoản hết rồi" | The owner holds Apple Developer, Google Play Console, a Windows code-signing certificate and an Apple Developer ID for macOS signing and notarization. No purchase is needed. Store and signing steps stay owner and Production steps with his approval, done from runbooks, no secrets in the repository |
+| Q7 desktop | "Làm bản Mac sớm" | macOS (D4) follows right after the signed Windows build (D2); it no longer waits for a pilot that uses Macs |
+| Q9 AGPL on stores | (PO decision, owner informed) | The question is added to the lawyer's list in #62. Until answered, the store build contains only code owned by the project owner |
+| Q4 platforms, Q6 push, Q8 milestone | not asked separately | **PO default, owner may change:** both platforms from one Expo codebase, Android internal track and TestFlight first; native push only for Crove Cloud through a relay in the private layer, self-hosters keep PWA push; Phase 1 in M3, Phase 2a in M3 when a worker is free, else right after the pilot exit |
+
+Section 8 question 5 (spending) is moot: no purchase. The cost lines in section 3.5 and the Vietnamese summary describe what the owner already holds.
 
 ## 1. Jobs, not apps
 
