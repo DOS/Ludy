@@ -42,6 +42,8 @@ export interface PublicConfig {
   mcpEnabled?: boolean;
   // Cloudflare Turnstile's site key for the booking form (TURNSTILE_SITE_KEY, #1353); null when the deployment sets none.
   turnstileSiteKey?: string | null;
+  // Google Picker for the audio of a Google Meet recording (#3174, ADR-0025 amendment): public browser values of the Google project; null when the deployment sets none.
+  googlePicker?: { apiKey: string; appId: string; clientId: string } | null;
   // The product name users see (BRAND_NAME, issue #1040); older servers send none, and "Crove" stands.
   brandName?: string;
   // The terms of service and privacy notice (TERMS_URL, PRIVACY_URL, #688): https: pages, null when unset.

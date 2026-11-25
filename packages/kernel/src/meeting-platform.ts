@@ -775,7 +775,7 @@ export const meetingPlatformRecordings = defineQuery({
     let query = ctx.trx
       .selectFrom('ludy_kernel.meeting_platform_recording as r')
       .innerJoin('ludy_kernel.meeting_platform_connection as c', (join) => join.onRef('c.org_id', '=', 'r.org_id').onRef('c.id', '=', 'r.connection_id'))
-      .select(['r.id', 'r.connection_id', 'c.provider', 'r.title', 'r.started_at', 'r.length_seconds', 'r.size_bytes', 'r.has_audio', 'r.has_video', 'r.has_transcript', 'r.status', 'r.meeting_id', 'r.error_code', 'r.meeting_key'])
+      .select(['r.id', 'r.connection_id', 'c.provider', 'r.title', 'r.started_at', 'r.length_seconds', 'r.size_bytes', 'r.has_audio', 'r.has_video', 'r.has_transcript', 'r.status', 'r.meeting_id', 'r.error_code', 'r.picked_file_id', 'r.meeting_key'])
       .where('r.org_id', '=', ctx.orgId)
       .where('r.user_id', '=', ctx.actor.userId)
       .where('r.status', '<>', 'dismissed');
@@ -800,6 +800,7 @@ export const meetingPlatformRecordings = defineQuery({
         status: r.status,
         meetingId: r.meeting_id,
         errorCode: r.error_code,
+        picked: r.picked_file_id !== null,
         matchedMeeting: matchedId === undefined ? null : { meetingId: matchedId },
       };
     });
