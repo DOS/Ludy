@@ -258,6 +258,7 @@ suite('personal data in meeting text on PostgreSQL (#2594, ADR-0047)', () => {
   it('keeps every meeting text column in the registry with handling erase', () => {
     const columns = [
       'crove_meetings.meeting.title',
+      'ludy_meetings.meeting.place',
       'crove_meetings.transcript_segment.text',
       'crove_meetings.transcript_segment.speaker_label',
       'crove_meetings.meeting_result.summary',

@@ -68,13 +68,7 @@ describe('personal-data registry: notes (#1874)', () => {
 
   it('lists as waiting only columns the manifests classify, and none that is also registered', () => {
     const pending = Object.keys(PERSONAL_DATA_PENDING);
-    // The notes' columns, and the meetings' (the place of a meeting waits for the definers of #5014, see PERSONAL_DATA_PENDING).
-    const meetingsClassified = Object.entries(meetingsManifest.tables.ludy_meetings).flatMap(([table, cols]) =>
-      Object.entries(cols as Record<string, string>)
-        .filter(([, cls]) => cls !== 'internal')
-        .map(([column]) => `ludy_meetings.${table}.${column}`),
-    );
-    expect(pending.filter((key) => !classified.includes(key) && !meetingsClassified.includes(key))).toEqual([]);
+    expect(pending.filter((key) => !classified.includes(key))).toEqual([]);
     expect(pending.filter((key) => key in PERSONAL_DATA_COLUMNS)).toEqual([]);
   });
 });
@@ -95,6 +89,7 @@ describe('personal-data registry: meetings (#2578)', () => {
     // The finder searches every meeting text column as free text (#2594): the rows an actor reads are listed, the rest counted per recorder.
     for (const key of [
       'ludy_meetings.meeting.title',
+      'ludy_meetings.meeting.place',
       'ludy_meetings.transcript_segment.text',
       'ludy_meetings.transcript_segment.speaker_label',
       'ludy_meetings.meeting_result.summary',
