@@ -250,7 +250,6 @@ export interface LudyMeetingsSchema {
   'ludy_meetings.tracker_term': MeetingsTrackerTermTable;
   'ludy_meetings.transcript_segment': MeetingsTranscriptSegmentTable;
   'ludy_meetings.translation': MeetingsTranslationTable;
-  'ludy_meetings.zz_probe': MeetingsZzProbeTable;
   'ludy_meetings.weekly_notice': MeetingsWeeklyNoticeTable;
 }
 
@@ -4017,12 +4016,6 @@ export interface MeetingsTranscriptSegmentTable {
   source_run_id: ColumnType<string | null, string | null, NotGranted>;
   search: ColumnType<string | null, never, NotGranted>;
   source: ColumnType<string, string | undefined, NotGranted>;
-}
-
-/** ludy_meetings.zz_probe (throwaway, #5026 step 0) */
-export interface MeetingsZzProbeTable {
-  org_id: ColumnType<string, string, NotGranted>;
-  id: ColumnType<string, string | undefined, NotGranted>;
 }
 
 /** ludy_meetings.translation */
