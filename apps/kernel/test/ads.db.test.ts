@@ -2783,6 +2783,141 @@ suite('ads on PostgreSQL (#2217)', () => {
               expect((await events('ads.activate.queued', today.launch.id)).length).toBe(2);
             });
 
+            it('skips orgs with ads switched off in launch_requeue and activate_requeue while continuing to requeue enabled orgs (#3409)', async () => {
+              const w = new SandboxAdWriter();
+              const onActivate = await created('Requeue bật', w, { dailyBudget: '50000' });
+              const approvedQueued = await approvedPlan(onActivate.account, {
+                ...(onActivate.page ? { pageConnectionId: onActivate.page.id } : {}),
+                dailyBudget: '50000',
+              });
+              expect(approvedQueued.answer.status, JSON.stringify(approvedQueued.answer.body)).toBe(200);
+              const onQueued = {
+                launch: (await launchOf(approvedQueued.draft.id)) as NonNullable<Awaited<ReturnType<typeof launchOf>>>,
+              };
+              const ageLaunch = (targetOrg: string, id: string) =>
+                admin(async (c) => {
+                  await c.query('ALTER TABLE ludy_ads.ad_launch DISABLE TRIGGER launch_guard');
+                  try {
+                    await c.query(`UPDATE ludy_ads.ad_launch SET updated_at = now() - interval '10 minutes', state = state, step = step WHERE org_id = $1 AND id = $2`, [targetOrg, id]);
+                  } finally {
+                    await c.query('ALTER TABLE ludy_ads.ad_launch ENABLE ALWAYS TRIGGER launch_guard');
+                  }
+                });
+              await ageLaunch(orgId, onQueued.launch.id);
+              await ageLaunch(orgId, onActivate.launch.id);
+
+              // Create a second active org with a stuck queued launch and turn ads off through kernel.org.set_app.
+              const offOrg = await rpc('org/create', await tokenFor(outsider), { name: 'Công ty tắt Ads requeue', idempotencyKey: randomUUID() }, null);
+              expect(offOrg.status).toBe(200);
+              const offOrgId = String(offOrg.body?.orgId);
+              const offReadConn = randomUUID();
+              const offWriteConn = randomUUID();
+              const offAccount = randomUUID();
+              const offQueuedDraft = randomUUID();
+              const offActivateDraft = randomUUID();
+              const offQueuedId = randomUUID();
+              const offActivateId = randomUUID();
+              const HASH = `sha256:${'a'.repeat(64)}`;
+              try {
+                await admin(async (c) => {
+                  await c.query(
+                    `INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, scopes, connected_by)
+                     VALUES ($1, $2, 'sandbox_ads', 'acct-off-1', 'Tắt', '{}', $4),
+                            ($1, $3, 'sandboxwrite_ads', 'acct-off-1', 'Ghi tắt', '{ads_read,ads_management}', $4)`,
+                    [offOrgId, offReadConn, offWriteConn, outsider.userId],
+                  );
+                  await c.query(
+                    `INSERT INTO ludy_ads.ad_account (org_id, id, channel_connection_id, provider, external_account_id, name, backfill_from, currency, time_zone)
+                     VALUES ($1, $2, $3, 'sandbox_ads', 'acct-off-1', 'Tắt', '2025-10-01', 'VND', 'Asia/Ho_Chi_Minh')`,
+                    [offOrgId, offAccount, offReadConn],
+                  );
+                  await c.query('ALTER TABLE ludy_ads.ad_account DISABLE TRIGGER write_connection_guard');
+                  try {
+                    await c.query(`UPDATE ludy_ads.ad_account SET write_connection_id = $3 WHERE org_id = $1 AND id = $2`, [offOrgId, offAccount, offWriteConn]);
+                  } finally {
+                    await c.query('ALTER TABLE ludy_ads.ad_account ENABLE ALWAYS TRIGGER write_connection_guard');
+                  }
+                  await c.query(
+                    `INSERT INTO ludy_ads.ad_campaign_draft (org_id, id, ad_account_id, name, objective, created_by)
+                     VALUES ($1, $2, $3, 'Tắt launch', 'traffic', $4),
+                            ($1, $5, $3, 'Tắt activate', 'traffic', $4)`,
+                    [offOrgId, offQueuedDraft, offAccount, outsider.userId, offActivateDraft],
+                  );
+                  await c.query(
+                    `INSERT INTO ludy_ads.ad_launch (org_id, id, ad_account_id, draft_id, proposal_id, plan_hash, currency, daily_budget, start_on, end_on, amount, commit_until, created_by, state, step, created_at, updated_at)
+                     VALUES ($1, $2, $3, $4, $5, $6, 'VND', '100000', $7::date, $8::date, '700000', $8::date, $9, 'queued', NULL, now() - interval '10 minutes', now() - interval '10 minutes')`,
+                    [offOrgId, offQueuedId, offAccount, offQueuedDraft, randomUUID(), HASH, inDays(0), inDays(6), outsider.userId],
+                  );
+                });
+
+                const offOwnerActor = { type: 'user' as const, userId: outsider.userId, aal: 'aal1' as const, sessionId: outsider.session };
+                await api.execute('kernel.org.set_app', { module: 'ads', enabled: false }, { actor: offOwnerActor, orgId: offOrgId, idempotencyKey: randomUUID() });
+
+                await admin((c) =>
+                  c.query(
+                    `INSERT INTO ludy_ads.ad_launch (org_id, id, ad_account_id, draft_id, proposal_id, plan_hash, currency, daily_budget, start_on, end_on, amount, commit_until, created_by, state, step, started_at, created_at, updated_at)
+                     VALUES ($1, $2, $3, $4, $5, $6, 'VND', '100000', $7::date, $8::date, '700000', $8::date, $9, 'launching', 'paused', now() - interval '10 minutes', now() - interval '10 minutes', now() - interval '10 minutes')`,
+                    [offOrgId, offActivateId, offAccount, offActivateDraft, randomUUID(), HASH, inDays(0), inDays(6), outsider.userId],
+                  ),
+                );
+
+                const countFor = async (targetOrg: string, type: string, launchId: string) =>
+                  Number(
+                    (
+                      await row<{ n: string }>(
+                        `SELECT count(*)::text AS n FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = $2 AND payload ->> 'launchId' = $3`,
+                        [targetOrg, type, launchId],
+                      )
+                    )[0]?.n ?? '0',
+                  );
+                const pendingFor = async (targetOrg: string, type: string, launchId: string) =>
+                  Number(
+                    (
+                      await row<{ n: string }>(
+                        `SELECT count(*)::text AS n FROM ludy_kernel.outbox_pending p
+                         JOIN ludy_kernel.outbox_event e ON e.org_id = p.org_id AND e.id = p.event_id
+                         WHERE p.org_id = $1 AND e.type = $2 AND e.payload ->> 'launchId' = $3`,
+                        [targetOrg, type, launchId],
+                      )
+                    )[0]?.n ?? '0',
+                  );
+
+                const onLaunchBefore = await countFor(orgId, 'ads.launch.queued', onQueued.launch.id);
+                const onActivateBefore = await countFor(orgId, 'ads.activate.queued', onActivate.launch.id);
+
+                const launched = await inContext('system', async (c) => Number((await c.query<{ n: number }>(`SELECT ludy_ads.launch_requeue($1::text[], 500) AS n`, [['sandboxwrite_ads']])).rows[0]?.n), true);
+                expect(launched).toBeGreaterThanOrEqual(1);
+                expect(await countFor(orgId, 'ads.launch.queued', onQueued.launch.id)).toBe(onLaunchBefore + 1);
+                expect(await countFor(offOrgId, 'ads.launch.queued', offQueuedId)).toBe(0);
+                expect(await pendingFor(offOrgId, 'ads.launch.queued', offQueuedId)).toBe(0);
+
+                const activated = await inContext('system', async (c) => Number((await c.query<{ n: number }>(`SELECT ludy_ads.activate_requeue($1::text[], 500) AS n`, [['sandboxwrite_ads']])).rows[0]?.n), true);
+                expect(activated).toBeGreaterThanOrEqual(1);
+                expect(await countFor(orgId, 'ads.activate.queued', onActivate.launch.id)).toBe(onActivateBefore + 1);
+                expect(await countFor(offOrgId, 'ads.activate.queued', offActivateId)).toBe(0);
+                expect(await pendingFor(offOrgId, 'ads.activate.queued', offActivateId)).toBe(0);
+
+                // Once Ads is turned back on for that org, both sweeps pick up its stuck launches again.
+                await api.execute('kernel.org.set_app', { module: 'ads', enabled: true }, { actor: offOwnerActor, orgId: offOrgId, idempotencyKey: randomUUID() });
+                await inContext('system', (c) => c.query(`SELECT ludy_ads.launch_requeue($1::text[], 500)`, [['sandboxwrite_ads']]), true);
+                await inContext('system', (c) => c.query(`SELECT ludy_ads.activate_requeue($1::text[], 500)`, [['sandboxwrite_ads']]), true);
+                expect(await countFor(offOrgId, 'ads.launch.queued', offQueuedId)).toBe(1);
+                expect(await pendingFor(offOrgId, 'ads.launch.queued', offQueuedId)).toBe(1);
+                expect(await countFor(offOrgId, 'ads.activate.queued', offActivateId)).toBe(1);
+                expect(await pendingFor(offOrgId, 'ads.activate.queued', offActivateId)).toBe(1);
+              } finally {
+                await admin(async (c) => {
+                  await c.query('ALTER TABLE ludy_ads.ad_launch DISABLE TRIGGER launch_guard');
+                  try {
+                    await c.query(`UPDATE ludy_ads.ad_launch SET state = 'cancelled', stop_reason = 'cap_lowered', commit_until = NULL, finished_at = now(), wound_down_at = now() WHERE org_id = $1 AND id = ANY($2::uuid[])`, [orgId, [onQueued.launch.id, onActivate.launch.id]]);
+                  } finally {
+                    await c.query('ALTER TABLE ludy_ads.ad_launch ENABLE ALWAYS TRIGGER launch_guard');
+                  }
+                  await c.query(`UPDATE ludy_kernel.tenant SET status = 'closed' WHERE org_id = $1`, [offOrgId]);
+                });
+              }
+            });
+
             it('runs a launch that needs attention again only when an owner or an admin asks, and reconciles what the earlier attempt left unsettled before it creates anything', async () => {
               const w = new SandboxAdWriter();
               const { draft, launch } = await queued('Chạy lại không trùng', { variants: [variant(1)] });

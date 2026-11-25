@@ -35,6 +35,10 @@ const NOT_SHOWN: Record<string, string> = {
   CHAPTERS_ALREADY_COPIED: 'meetings chapters',
   CHAPTERS_STALE: 'meetings chapters',
   DRAFT_CHAPTERS_EXIST: 'meetings chapters',
+  // The tracked words (#4818) are worded by their editor itself (a word already tracked, the limit, a word removed meanwhile).
+  TRACKER_TERM_TAKEN: 'meetings trackers',
+  TRACKER_MAX: 'meetings trackers',
+  TRACKER_TERM_NOT_FOUND: 'meetings trackers',
   // The highlights (#4819) word the two refusals a person can cause themselves on the transcript (the limit and a line that is not published), and a mark that was removed meanwhile is the kernel's own text.
   HIGHLIGHT_LIMIT: 'meetings highlights',
   HIGHLIGHT_NOT_ANCHORED: 'meetings highlights',
