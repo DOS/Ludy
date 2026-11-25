@@ -505,7 +505,7 @@ suite('a Microsoft Teams recording from the connect to the staged bytes (meeting
     try {
       await holder.query('BEGIN');
       await holder.query('SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1, 0))', [`meetings.import.pair:${org.orgId}:${connectionId}:${OCC.S1}`]);
-      await holder.query("UPDATE ludy_kernel.meeting_platform_recording SET status = 'importing', meeting_id = $2, staging_key = $3 WHERE id = $1", [video, meetingOfFirst, `staging/pair-holder-${randomUUID()}`]);
+      await holder.query("UPDATE ludy_kernel.meeting_platform_recording SET status = 'importing', meeting_id = $2, staging_key = $3 WHERE id = $1", [video, meetingOfFirst, `staging/${randomBytes(32).toString('hex')}`]);
       let settled = false;
       const second = refusal(click(transcript));
       void second.then(() => {
