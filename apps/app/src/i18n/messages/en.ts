@@ -227,6 +227,42 @@ export const en = {
     notMember: 'You are not a member of this organization.',
     support: 'Feedback / Support',
     status: 'System status',
+    quickCreate: {
+      trigger: 'Quick create',
+      menuLabel: 'Quick create menu',
+      uploadDocument: 'Upload document',
+      quickCapture: 'New personal to-do',
+      newTeamTask: 'New team task',
+      newNote: 'New note',
+      newContact: 'New contact',
+      newDeal: 'New deal',
+      newSignEnvelope: 'New eSign envelope',
+    },
+    vyDrawer: {
+      trigger: 'Ask {name}',
+      title: 'AI coworker {name}',
+      subtitle: 'Quick daily summary and workflow shortcuts. You always approve money, messages, and spend.',
+      aiOff: 'AI is turned off on this server. Ledgers, approvals, and core workflows continue working normally.',
+      noPermission: 'Your role does not include permission to use {name}. Deterministic shortcuts below remain available.',
+      budgetStop: "{name} has reached this month's AI budget. Core workflows continue working normally.",
+      readyHint: '{name} works strictly within your permissions and never posts entries or sends messages on its own.',
+      todayHeading: 'Needs you today',
+      todayCount: '{count, plural, one {# item waiting} other {# items waiting}}',
+      todayEmpty: 'Nothing is waiting for you today.',
+      shortcutsHeading: 'Quick shortcuts',
+      openOverview: 'Open Overview',
+      openMyWorkPlanner: '{name} daily planner',
+      openNotes: 'Open Notes',
+      openInbox: 'Open Pending approval',
+      openAgents: 'Open AI team',
+      openAiUsage: 'View AI budgets',
+    },
+    aiPill: {
+      label: 'Monthly AI budget: {percent}%',
+      short: 'AI {percent}%',
+      warn: 'Monthly AI budget warning: {percent}%',
+      stop: 'Monthly AI budget reached: {percent}%',
+    },
   },
   aiUsagePage: {
     title: 'AI use and budgets',
@@ -4444,6 +4480,7 @@ export const en = {
         openMatched: 'Open meeting',
         openMatchedOf: 'Open meeting for {title}',
         failed: 'Could not import: {reason}',
+        pairTaken: 'The other entry of this meeting (video or transcript) is already imported or being imported.',
         viewerOnly: 'Only members can import recordings. Your role is view-only.',
       },
       errors: {
@@ -4830,6 +4867,7 @@ export const en = {
     minutesLink: {
       title: 'Share the minutes',
       hint: 'Make a link that lets people outside your organization read the published summary, decisions and action items. They need no account and cannot change anything. They do not see the transcript, the recording, the chapters or any draft.',
+      managerHint: 'Links the recorder made so people outside the organization can read the published minutes. As an owner or admin you can end a link when needed; you cannot make one here.',
       offNote: 'Your organization has not turned on sharing minutes with people outside, so no link can be made.',
       offAdmin: 'You can turn it on on the Meetings page, in Settings, on the "Share minutes outside" card.',
       offAdminLink: 'Open the Meetings page',
@@ -4858,6 +4896,7 @@ export const en = {
       revokeFor: 'Revoke the link made {at}',
       revokeTitle: 'Revoke this link?',
       revokeConfirm: 'Anyone holding the link can no longer open the minutes. This cannot be undone; you can still make a new link.',
+      revokeConfirmManager: 'Whoever holds the link can no longer open the minutes. This cannot be undone; the recorder can still make a new link.',
       revoked: 'Link revoked.',
     },
     // "Share minutes outside" (#4822): the organization setting card; off by default, an owner or admin changes it.
@@ -4990,6 +5029,16 @@ export const en = {
       draftTitle: 'Draft transcript',
       draftNote: 'Only you see this draft. Check it and correct a line where the speech was misheard; nothing is shared with the other attendees from here.',
       publishedNote: 'The transcript the recorder shared with the meeting.',
+      // Find the questions, figures and dates (#4954).
+      filters: {
+        label: 'Find in the transcript',
+        question: 'Questions ({count})',
+        figure: 'Figures ({count})',
+        date: 'Dates and deadlines ({count})',
+        note: '{count, plural, one {# line that looks like it} other {# lines that look like it}}. Found by rules, not by AI, so check the line.',
+        none: 'No line looks like it.',
+        showInContext: 'Show in the transcript',
+      },
       // Download the transcript as a file (#4817).
       export: {
         label: 'Download the transcript',
@@ -5775,7 +5824,7 @@ export const en = {
       },
       acceptClean: 'Make {count} clear tasks',
       publish: 'Share with the attendees',
-      publishNote: 'Sharing shows the summary and the items to everyone who can read this meeting. The transcript is shared separately.',
+      publishNote: 'Sharing shows the summary, the items and the transcript to everyone who can read this meeting.',
       vy: {
         title: 'Vy summarizes this meeting',
         desc: 'Vy reads the transcript and proposes a summary, the decisions and the action items, for you only. It uses your AI budget and takes up to a minute. Nothing is shared until you have read it and decide.',
@@ -5866,6 +5915,7 @@ export const en = {
         stale: 'This translation is older than the original minutes; translate again.',
       },
       reviewNote: 'Some of this draft was written by Vy and you have not marked it as read. Read it, correct what is wrong, then confirm to be able to share it.',
+      reviewNoteTranscript: 'The transcript ({count} lines) was written by a machine and you have not marked it as read. Sharing lets the readers of the meeting see it, so look it over before you confirm.',
       reviewed: 'I have read it',
       saveAsNote: 'Save as shared note',
       saveAsNoteConfirmTitle: 'Save this summary as a shared note?',
@@ -17014,6 +17064,7 @@ export const en = {
       CHAPTER_ANCHOR_LOST: 'The transcript changed after you saved the chapters, so a chapter no longer starts at a line of it. Save the chapters again, then share.',
       NO_CLEAN_ITEMS: 'No action item is clean: pick the person, the date and the seat of each one yourself.',
       DRAFT_NOT_REVIEWED: 'Some items Vy suggested have not been reviewed by you yet. Read and confirm them before sharing.',
+      STALE_TRANSCRIPT_REVIEW: 'The transcript changed since you opened this screen. Look over the new lines, then confirm again.',
       DRAFT_SUMMARY_EXISTS: 'You already have a summary draft. Share it or save over it, then copy Vy\'s summary.',
       SUMMARY_BUSY: 'Vy is busy summarizing. Try again in a few minutes.',
       SUMMARY_ALREADY_COPIED: 'This summary was already copied into your draft.',
@@ -17108,6 +17159,7 @@ export const en = {
       MEETING_PLATFORM_NOT_FOUND: 'This meeting platform connection or recording was not found.',
       MEETING_PLATFORM_NO_AUDIO: 'The platform offers only a video file, so there is no audio file to import.',
       MEETING_PLATFORM_OWNER_LEFT: 'The person who connected this meeting platform is no longer a member of the organization.',
+      MEETING_PLATFORM_PAIR_TAKEN: 'This meeting was already imported, or is being imported, from its other entry (the video or the transcript). Open the meeting in your list instead.',
       MEETING_PLATFORM_PICK_REQUIRED: 'Choose this recording\'s file in Google Drive before you import it.',
       MEETING_PLATFORM_STATE: 'This recording cannot be imported in its current state (already imported, importing or skipped).',
       MEETING_SETTINGS_INVALID: 'A kept video cannot be kept longer than the audio.',
@@ -19446,6 +19498,10 @@ export const en = {
       },
       member: {
         change_role: "Change a member's role",
+        home_layout: {
+          get: 'Read the Home layout',
+          save: 'Save the Home layout',
+        },
         invite: {
           accept: 'Accept an invite',
           create: 'Invite a member',
@@ -19864,7 +19920,7 @@ export const en = {
       },
       result: {
         get: 'Read the summary and the action items of a meeting',
-        publish: 'Share the summary and the action items with the meeting\'s attendees',
+        publish: 'Share the summary, the action items and the transcript with the meeting\'s attendees',
       },
       title: {
         start: 'Ask Vy to suggest a title for a meeting',

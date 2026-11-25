@@ -356,7 +356,8 @@ suite('the meeting transcript (#2578, M4a)', () => {
     expect(attendee.stage).toBe('published');
     expect(attendee.segments.map((s) => [s.text, s.stage])).toEqual([['đã công bố', 'published']]);
     const recorder = (await get('recorder', meetingId)).body as { segments: Array<{ stage: string }> };
-    expect(recorder.segments.map((s) => s.stage)).toEqual(['draft', 'published']);
+    // The recorder reads the working draft alone while one exists (#4899): the line shared before it stays for the readers and is not listed beside the draft that will replace it.
+    expect(recorder.segments.map((s) => s.stage)).toEqual(['draft']);
     const published = (await rows(meetingId)).find((r) => r.stage === 'published')!;
     expect((await rpc('meetings/transcript/correct', 'recorder', { segmentId: published.id, text: 'sửa' })).status).toBe(404);
     // The recorder's re-run replaces the draft and leaves the published rows.

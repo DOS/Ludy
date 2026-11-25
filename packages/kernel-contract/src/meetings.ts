@@ -737,7 +737,8 @@ export const zActionItemDeleted = z.strictObject({ itemId: zId, deleted: z.liter
 // The one click that shows the drafts to the meeting's readers: `confirmed: true` is the person's own click, never defaulted.
 export const zResultPublish = z.strictObject({ meetingId: zId, confirmed: z.literal(true) });
 // `chapters` (#3844): how many chapters of the meeting's table of contents were published with them.
-export const zResultPublished = z.strictObject({ meetingId: zId, results: z.number().int().min(0), items: z.number().int().min(0), chapters: z.number().int().min(0) });
+// `lines` (#4899): how many lines of the draft transcript were shared with them, the lines the meeting's readers read from now on.
+export const zResultPublished = z.strictObject({ meetingId: zId, results: z.number().int().min(0), items: z.number().int().min(0), chapters: z.number().int().min(0), lines: z.number().int().min(0) });
 
 // Accepting an item makes a team task from it. The person confirms the title, picks the date and the seat (never picked for them when the attendee holds
 // none or several); a task is read by every member, and the transcript is never copied into it.
@@ -788,6 +789,12 @@ export const zMeetingResults = z.strictObject({
   draft: zMeetingResultView.nullable(),
   published: zMeetingResultView.nullable(),
   items: z.array(zActionItemView),
+  // The recorder's draft transcript lines (#4899): how many there are (the publish shares them too), how many of them a machine wrote (a transcription, a platform's transcript) and the recorder has not read
+  // yet (shared only after the review), and a key over exactly those unread lines that the review sends back so it clears only what this screen showed. Zero and empty for a reader, and for a transcript the
+  // recorder typed.
+  transcriptDraft: z.number().int().min(0),
+  transcriptUnread: z.number().int().min(0),
+  transcriptUnreadKey: z.string().max(64),
 });
 export type MeetingResults = z.infer<typeof zMeetingResults>;
 export type ActionItemView = z.infer<typeof zActionItemView>;
@@ -879,7 +886,12 @@ export type NotesPreview = z.infer<typeof zNotesPreview>;
 
 // The recorder's explicit review of the draft Vy wrote: `confirmed: true` is their own click, never defaulted. Only then can the draft be shared.
 // `ids` are the rows the screen showed (the summary and the items): only those lose the mark, so a row copied in another tab after the recorder looked keeps it.
-export const zDraftReview = z.strictObject({ meetingId: zId, confirmed: z.literal(true), ids: z.array(zId).min(1).max(ITEMS_PER_MEETING_MAX + 1) });
+// `transcript` (#4899): the same "I read this" for the draft transcript lines of the meeting that a machine wrote. They are too many to name one by one (an hour of talk is hundreds of lines), so the
+// command finds them itself, in the recorder's own meeting. Either some ids or `transcript` must be there.
+export const zDraftReview = z
+  // `transcript` is the key the screen was given with `transcriptUnreadKey`: the review reads the unread transcript lines only while they are still exactly those (STALE_TRANSCRIPT_REVIEW otherwise).
+  .strictObject({ meetingId: zId, confirmed: z.literal(true), ids: z.array(zId).max(ITEMS_PER_MEETING_MAX + 1), transcript: z.string().min(1).max(64).optional() })
+  .refine((v) => v.ids.length > 0 || v.transcript !== undefined, { message: 'name what was read: ids, or the transcript' });
 export const zDraftReviewed = z.strictObject({ meetingId: zId, cleared: z.number().int().min(0) });
 
 // The recorder's Vy summarizing a meeting (#2580, M6 part B2). `start` is the module's own command (the route runs it first); `summarize` is the route the screen

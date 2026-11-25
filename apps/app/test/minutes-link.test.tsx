@@ -67,6 +67,12 @@ function panel(list: MinutesLinkItems | null, role: 'owner' | 'admin' | 'member'
   client.current.setQueryData(['org', 'get'], { role });
   return renderToStaticMarkup(wrap(<MinutesLinkPanel meetingId={MEETING} slug="acme" />, locale));
 }
+function managerPanel(list: MinutesLinkItems | null, role: 'owner' | 'admin' | 'member' = 'admin', locale: 'en' | 'vi' = 'vi') {
+  client.current.clear();
+  if (list) client.current.setQueryData(['meetings', 'minutesLink', 'list'], list);
+  client.current.setQueryData(['org', 'get'], { role });
+  return renderToStaticMarkup(wrap(<MinutesLinkPanel meetingId={MEETING} slug="acme" manager />, locale));
+}
 const noop = () => undefined;
 const baseView = { slug: 'acme', enabled: true, items: [], canEnable: false, made: null, copy: 'idle' as const, creating: false, revokingId: null, error: null, onCreate: noop, onRevoke: noop, onCopy: noop, onDismiss: noop };
 
@@ -149,6 +155,55 @@ describe('MinutesLinkPanel states', () => {
   });
 });
 
+describe('the manager view: an owner or admin who is not the recorder (#4947)', () => {
+  const items = [link(1), link(2, { state: 'expired' }), link(3, { state: 'revoked', revokedAt: '2026-11-21T03:00:00.000Z' })];
+
+  it('lists the links with their state and opens and offers "Thu hồi" on the live one, and has no create button, no switch note and no new-link block', () => {
+    for (const role of ['owner', 'admin'] as const) {
+      const html = managerPanel({ enabled: true, items }, role);
+      expect(html).toContain('data-testid="minutes-link"');
+      expect(html).toContain(viMessages.meetings.minutesLink.managerHint);
+      expect(html).not.toContain(viMessages.meetings.minutesLink.hint);
+      expect(html.match(/data-testid="minutes-link-item"/g)).toHaveLength(3);
+      expect(html).toContain('Còn hạn');
+      expect(html).toContain('Hết hạn');
+      expect(html).toContain('Đã thu hồi');
+      expect(html.match(/Thu hồi liên kết tạo/g)).toHaveLength(1);
+      expect(html).not.toContain('data-testid="minutes-link-create"');
+      expect(html).not.toContain('data-testid="minutes-link-off"');
+      expect(html).not.toContain('data-testid="minutes-link-made"');
+      expect(html).not.toContain('data-testid="minutes-link-limit"');
+    }
+  });
+
+  it('still lists and lets them end a link when the org setting has since been turned off', () => {
+    const html = managerPanel({ enabled: false, items });
+    expect(html.match(/data-testid="minutes-link-item"/g)).toHaveLength(3);
+    expect(html).not.toContain('data-testid="minutes-link-off"');
+    expect(html).not.toContain('data-testid="minutes-link-create"');
+  });
+
+  it('draws nothing when the meeting has no link, nothing for a member who is not the recorder, and nothing until the list is read', () => {
+    expect(managerPanel({ enabled: true, items: [] })).toBe('');
+    expect(managerPanel({ enabled: true, items }, 'member')).toBe('');
+    expect(managerPanel(null)).toBe('');
+  });
+
+  it('is worded for someone who cannot make a link, in English too', () => {
+    const html = managerPanel({ enabled: true, items }, 'admin', 'en');
+    expect(html).toContain(en.meetings.minutesLink.managerHint);
+    expect(en.meetings.minutesLink.revokeConfirmManager).toContain('the recorder can still make a new link');
+    expect(viMessages.meetings.minutesLink.revokeConfirmManager).not.toContain('bạn vẫn tạo được');
+  });
+
+  it('keeps the recorder\'s own panel as it was: the create button and the plain hint', () => {
+    const html = panel({ enabled: true, items });
+    expect(html).toContain('data-testid="minutes-link-create"');
+    expect(html).toContain(viMessages.meetings.minutesLink.hint);
+    expect(html).not.toContain(viMessages.meetings.minutesLink.managerHint);
+  });
+});
+
 describe('MinutesLinkView with a new link', () => {
   const made = { url: `https://app.example.test/-/minutes#${TOKEN}`, expiresAt: '2026-12-20T03:00:00.000Z' };
 
@@ -203,10 +258,33 @@ describe('the panel on the meeting page', () => {
   }
 
   it('shows to the recorder with published minutes, and to no one else, and not before anything is published', () => {
-    expect(results({ meetingId: 'm1', isRecorder: true, draft: null, published: publishedView, items: [] })).toContain('data-testid="minutes-link"');
-    expect(results({ meetingId: 'm1', isRecorder: false, draft: null, published: publishedView, items: [] })).not.toContain('data-testid="minutes-link"');
-    expect(results({ meetingId: 'm1', isRecorder: true, draft: draftView, published: null, items: [] })).not.toContain('data-testid="minutes-link"');
-    expect(results({ meetingId: 'm1', isRecorder: true, draft: null, published: null, items: [] })).not.toContain('data-testid="minutes-link"');
+    expect(results({ meetingId: 'm1', transcriptDraft: 0, transcriptUnread: 0, transcriptUnreadKey: '', isRecorder: true, draft: null, published: publishedView, items: [] })).toContain('data-testid="minutes-link"');
+    expect(results({ meetingId: 'm1', transcriptDraft: 0, transcriptUnread: 0, transcriptUnreadKey: '', isRecorder: false, draft: null, published: publishedView, items: [] })).not.toContain('data-testid="minutes-link"');
+    expect(results({ meetingId: 'm1', transcriptDraft: 0, transcriptUnread: 0, transcriptUnreadKey: '', isRecorder: true, draft: draftView, published: null, items: [] })).not.toContain('data-testid="minutes-link"');
+    expect(results({ meetingId: 'm1', transcriptDraft: 0, transcriptUnread: 0, transcriptUnreadKey: '', isRecorder: true, draft: null, published: null, items: [] })).not.toContain('data-testid="minutes-link"');
+  });
+
+  // #4947: an owner or admin who is not the recorder sees the links of the meeting (to end one), only when there is one, and never a create button.
+  function resultsFor(role: 'owner' | 'admin' | 'member', links: MinutesLinkItem[], r: Results): string {
+    client.current.clear();
+    client.current.setQueryData(['meetings', 'results', 'get'], r);
+    client.current.setQueryData(['meetings', 'results', 'summaryStatus'], { meetingId: 'm1', enabled: false });
+    client.current.setQueryData(['org', 'get'], { role, members: [] });
+    client.current.setQueryData(['meetings', 'minutesLink', 'list'], { enabled: true, items: links });
+    return renderToStaticMarkup(wrap(<MeetingResults meetingId="m1" slug="acme" readers={[]} />, 'en'));
+  }
+  it('shows an owner or admin who is not the recorder the links to end, without a create button, and shows a member nothing', () => {
+    const published = { meetingId: 'm1', transcriptDraft: 0, transcriptUnread: 0, transcriptUnreadKey: '', isRecorder: false, draft: null, published: publishedView, items: [] };
+    for (const role of ['owner', 'admin'] as const) {
+      const html = resultsFor(role, [link(1)], published);
+      expect(html).toContain('data-testid="minutes-link"');
+      expect(html).toContain('data-testid="minutes-link-item"');
+      expect(html).not.toContain('data-testid="minutes-link-create"');
+    }
+    expect(resultsFor('admin', [], published)).not.toContain('data-testid="minutes-link"');
+    expect(resultsFor('member', [link(1)], published)).not.toContain('data-testid="minutes-link"');
+    // Nothing published yet: nothing to share, so no panel.
+    expect(resultsFor('owner', [link(1)], { meetingId: 'm1', transcriptDraft: 0, transcriptUnread: 0, transcriptUnreadKey: '', isRecorder: false, draft: null, published: null, items: [] })).not.toContain('data-testid="minutes-link"');
   });
 });
 

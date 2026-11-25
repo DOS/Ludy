@@ -226,6 +226,42 @@ export const vi = {
     notMember: 'Bạn không thuộc tổ chức này.',
     support: 'Góp ý / Hỗ trợ',
     status: 'Trạng thái hệ thống',
+    quickCreate: {
+      trigger: 'Tạo nhanh',
+      menuLabel: 'Tạo mới nhanh',
+      uploadDocument: 'Tải chứng từ lên',
+      quickCapture: 'Thêm việc cá nhân',
+      newTeamTask: 'Giao việc nhóm',
+      newNote: 'Ghi chú mới',
+      newContact: 'Thêm người liên hệ',
+      newDeal: 'Tạo cơ hội',
+      newSignEnvelope: 'Tạo hồ sơ ký',
+    },
+    vyDrawer: {
+      trigger: 'Hỏi {name}',
+      title: 'Đồng nghiệp AI {name}',
+      subtitle: 'Tóm tắt nhanh trong ngày và lối tắt công việc. Mọi khoản tiền, tin nhắn và chi tiêu đều do bạn duyệt.',
+      aiOff: 'AI đang tắt trên máy chủ này. Sổ sách, duyệt chứng từ và công việc vẫn chạy bình thường.',
+      noPermission: 'Vai trò của bạn chưa được bật quyền làm việc với {name}. Các lối tắt bên dưới vẫn mở bình thường.',
+      budgetStop: '{name} đã dùng hết ngân sách AI tháng này. Các quy trình chính vẫn chạy bình thường.',
+      readyHint: '{name} bám sát quyền của bạn trong tổ chức và không tự ghi sổ hay gửi tin.',
+      todayHeading: 'Hôm nay cần bạn',
+      todayCount: '{count, plural, other {# mục cần xem}}',
+      todayEmpty: 'Hôm nay chưa có việc nào đang chờ.',
+      shortcutsHeading: 'Đi nhanh tới',
+      openOverview: 'Mở Tổng quan',
+      openMyWorkPlanner: '{name} sắp lịch hôm nay',
+      openNotes: 'Mở Ghi chú',
+      openInbox: 'Mở Chứng từ chờ duyệt',
+      openAgents: 'Mở Đội ngũ AI',
+      openAiUsage: 'Xem ngân sách AI',
+    },
+    aiPill: {
+      label: 'Ngân sách AI tháng này: {percent}%',
+      short: 'AI {percent}%',
+      warn: 'Ngân sách AI sắp chạm ngưỡng: {percent}%',
+      stop: 'Ngân sách AI đã chạm hạn mức: {percent}%',
+    },
   },
   aiUsagePage: {
     title: 'Ngân sách và mức dùng AI',
@@ -4441,6 +4477,7 @@ export const vi = {
         openMatched: 'Mở cuộc họp',
         openMatchedOf: 'Mở cuộc họp cho {title}',
         failed: 'Không nhập được: {reason}',
+        pairTaken: 'Mục còn lại của cuộc họp này (video hoặc bản chép lời) đã được nhập hoặc đang được nhập.',
         viewerOnly: 'Chỉ thành viên mới nhập được bản ghi. Bạn đang ở quyền chỉ xem.',
       },
       errors: {
@@ -4828,6 +4865,7 @@ export const vi = {
     minutesLink: {
       title: 'Chia sẻ biên bản',
       hint: 'Tạo một liên kết cho người ngoài tổ chức xem phần tóm tắt, các quyết định và việc cần làm đã xuất bản. Họ không cần tài khoản và không sửa được gì. Họ không thấy bản ghi, video, các chương hay bản nháp.',
+      managerHint: 'Các liên kết người ghi cuộc họp đã tạo cho người ngoài tổ chức xem biên bản đã xuất bản. Là chủ sở hữu hoặc quản trị viên, bạn thu hồi được một liên kết khi cần; bạn không tạo liên kết ở đây.',
       offNote: 'Tổ chức chưa bật chia sẻ biên bản ra ngoài, nên chưa tạo được liên kết.',
       offAdmin: 'Bạn bật được ở trang Cuộc họp, mục Cài đặt, thẻ "Chia sẻ biên bản ra ngoài".',
       offAdminLink: 'Mở trang Cuộc họp',
@@ -4856,6 +4894,7 @@ export const vi = {
       revokeFor: 'Thu hồi liên kết tạo {at}',
       revokeTitle: 'Thu hồi liên kết này?',
       revokeConfirm: 'Người đang giữ liên kết sẽ không mở được biên bản nữa. Việc này không hoàn tác được; bạn vẫn tạo được liên kết mới.',
+      revokeConfirmManager: 'Người đang giữ liên kết sẽ không mở được biên bản nữa. Việc này không hoàn tác được; người ghi cuộc họp vẫn tạo được liên kết mới.',
       revoked: 'Đã thu hồi liên kết.',
     },
     // "Chia sẻ biên bản ra ngoài" (#4822): thẻ cài đặt của tổ chức; mặc định tắt, chủ sở hữu hoặc quản trị viên đổi.
@@ -4989,6 +5028,16 @@ export const vi = {
       draftTitle: 'Bản ghi lời (nháp)',
       draftNote: 'Chỉ bạn thấy bản nháp này. Hãy đọc lại và sửa dòng nào nghe sai; từ đây chưa chia sẻ gì cho người dự họp.',
       publishedNote: 'Bản ghi lời mà người ghi đã chia sẻ cho cuộc họp.',
+      // Tìm câu hỏi, con số và ngày (#4954).
+      filters: {
+        label: 'Tìm trong bản ghi lời',
+        question: 'Câu hỏi ({count})',
+        figure: 'Con số ({count})',
+        date: 'Hạn và ngày ({count})',
+        note: '{count, plural, other {# dòng có vẻ như vậy}}. Tìm theo quy tắc, không dùng AI, nên hãy đọc lại dòng đó.',
+        none: 'Không có dòng nào có vẻ như vậy.',
+        showInContext: 'Xem trong bản ghi lời',
+      },
       // Tải bản ghi lời về máy (#4817).
       export: {
         label: 'Tải bản ghi lời về',
@@ -5773,7 +5822,7 @@ export const vi = {
       },
       acceptClean: 'Tạo {count} việc rõ ràng',
       publish: 'Chia sẻ cho người dự họp',
-      publishNote: 'Chia sẻ sẽ cho mọi người đọc được cuộc họp này thấy bản tóm tắt và các việc. Bản ghi lời nói được chia sẻ riêng.',
+      publishNote: 'Chia sẻ sẽ cho mọi người đọc được cuộc họp này thấy bản tóm tắt, các việc và bản ghi lời nói.',
       vy: {
         title: 'Vy tóm tắt cuộc họp này',
         desc: 'Vy đọc bản ghi lời nói và đề xuất bản tóm tắt, các quyết định và việc cần làm, chỉ cho riêng bạn. Việc này tính vào ngân sách AI của bạn và mất tối đa một phút. Không có gì được chia sẻ cho đến khi bạn đã đọc và quyết định.',
@@ -5864,6 +5913,7 @@ export const vi = {
         stale: 'Bản dịch này cũ so với biên bản gốc; hãy dịch lại.',
       },
       reviewNote: 'Một phần bản nháp này do Vy viết và bạn chưa đánh dấu là đã đọc. Hãy đọc, sửa chỗ sai, rồi xác nhận để có thể chia sẻ.',
+      reviewNoteTranscript: 'Bản ghi lời nói ({count} dòng) do máy chép và bạn chưa đánh dấu là đã đọc. Chia sẻ sẽ cho người đọc cuộc họp thấy bản ghi này, nên hãy xem lại bản ghi trước khi xác nhận.',
       reviewed: 'Tôi đã đọc',
       saveAsNote: 'Lưu thành ghi chú chung',
       saveAsNoteConfirmTitle: 'Lưu bản tóm tắt thành ghi chú dùng chung?',
@@ -17014,6 +17064,7 @@ export const vi = {
       CHAPTER_ANCHOR_LOST: 'Bản ghi lời nói đã thay đổi sau khi bạn lưu mục lục, nên có mục không còn bắt đầu ở một dòng của bản ghi. Hãy lưu lại mục lục rồi chia sẻ.',
       NO_CLEAN_ITEMS: 'Không có việc nào rõ ràng: hãy tự chọn người, ngày và vị trí cho từng việc.',
       DRAFT_NOT_REVIEWED: 'Còn mục do Vy gợi ý chưa được bạn xem lại. Hãy đọc và xác nhận trước khi chia sẻ.',
+      STALE_TRANSCRIPT_REVIEW: 'Bản ghi lời nói đã thay đổi từ lúc bạn mở màn hình này. Hãy xem lại các dòng mới rồi xác nhận lại.',
       DRAFT_SUMMARY_EXISTS: 'Bạn đã có bản tóm tắt nháp. Hãy chia sẻ hoặc lưu đè lên nó, rồi mới chép bản của Vy.',
       SUMMARY_BUSY: 'Vy đang bận tóm tắt. Hãy thử lại sau vài phút.',
       SUMMARY_ALREADY_COPIED: 'Bản tóm tắt này đã được chép vào bản nháp của bạn.',
@@ -17097,6 +17148,7 @@ export const vi = {
       MEETING_PLATFORM_NOT_FOUND: 'Không tìm thấy bản ghi hoặc kết nối nền tảng họp này.',
       MEETING_PLATFORM_NO_AUDIO: 'Nền tảng chỉ có bản hình, chưa có tệp âm thanh để nhập.',
       MEETING_PLATFORM_OWNER_LEFT: 'Người đã kết nối nền tảng họp này không còn là thành viên của tổ chức.',
+      MEETING_PLATFORM_PAIR_TAKEN: 'Cuộc họp này đã được nhập (hoặc đang được nhập) từ mục còn lại của nó (video hoặc bản chép lời). Hãy mở cuộc họp trong danh sách của bạn.',
       MEETING_PLATFORM_PICK_REQUIRED: 'Hãy chọn tệp ghi hình này trong Google Drive trước khi nhập.',
       MEETING_PLATFORM_STATE: 'Bản ghi này đang ở trạng thái không nhập được lúc này (đã nhập, đang nhập hoặc đã bỏ qua).',
       MEETING_SETTINGS_INVALID: 'Video không thể được lưu lâu hơn âm thanh.',
@@ -19446,6 +19498,10 @@ export const vi = {
       },
       member: {
         change_role: 'Đổi vai trò thành viên',
+        home_layout: {
+          get: 'Xem bố cục Trang chủ',
+          save: 'Lưu bố cục Trang chủ',
+        },
         invite: {
           accept: 'Nhận lời mời vào tổ chức',
           create: 'Mời thành viên',
@@ -19864,7 +19920,7 @@ export const vi = {
       },
       result: {
         get: 'Xem tóm tắt và việc cần làm của cuộc họp',
-        publish: 'Chia sẻ tóm tắt và việc cần làm với người dự họp',
+        publish: 'Chia sẻ tóm tắt, việc cần làm và bản ghi lời nói với người dự họp',
       },
       title: {
         start: 'Nhờ Vy gợi ý tên cho một cuộc họp',

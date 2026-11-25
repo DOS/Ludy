@@ -88,7 +88,7 @@ suite('sign-up policy through the /auth/v1 proxy (#350)', () => {
     app.fetch(
       new Request(`http://localhost/auth/v1${path}`, {
         method,
-        headers: { 'content-type': contentType, ...(invite === undefined ? {} : { 'x-crove-invite': invite }) },
+        headers: { 'content-type': contentType, ...(invite === undefined ? {} : { 'x-ludy-invite': invite }) },
         ...(body === undefined ? {} : { body: typeof body === 'string' ? body : JSON.stringify(body) }),
       }),
       { incoming: { socket: { remoteAddress: client } } },
@@ -158,7 +158,7 @@ suite('sign-up policy through the /auth/v1 proxy (#350)', () => {
       req.on('data', (chunk: Buffer) => (raw += chunk.toString()));
       req.on('end', () => {
         reached.push(`${req.method} ${req.url} ${raw}`);
-        const leaked = req.headers['x-crove-invite'];
+        const leaked = req.headers['x-ludy-invite'] ?? req.headers['x-crove-invite'];
         if (leaked !== undefined) leakedTokens.push(String(leaked));
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');

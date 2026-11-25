@@ -6,7 +6,7 @@ import { v7 as uuidv7 } from 'uuid';
 import { SubjectKeyError, SubjectVault, parseSealed } from './subject-vault.ts';
 import { keyedHash } from './keyed-hash.ts';
 import type { z } from 'zod';
-import { contextTaint, readEnvPair, singleCell, type CellResolver, type Database, type Db, type MemberRole } from '@ludy/db';
+import { contextTaint, singleCell, type CellResolver, type Database, type Db, type MemberRole } from '@ludy/db';
 import { DomainError, toDomainError } from './errors.ts';
 import { eventPayloadProblem, normalizeEventPayload } from './event-payload.ts';
 import { sha256Hex } from './storage.ts';
@@ -1725,7 +1725,7 @@ export class Runtime {
     this.inputHash = inputHash;
     this.#manifestTables = manifestTableClasses(manifests as readonly ManifestTables[]);
     const contextTokenKey = options.contextTokenKey === undefined
-      ? readEnvPair(process.env, 'LUDY_CONTEXT_TOKEN_KEY', 'CROVE_CONTEXT_TOKEN_KEY')
+      ? (process.env.LUDY_CONTEXT_TOKEN_KEY?.trim() || undefined)
       : options.contextTokenKey;
     this.#contextTokenKey = contextTokenKey?.trim() ? contextTokenKeyBytes(contextTokenKey) : null;
     this.#readAuditKey = options.readAuditKey ? Buffer.from(options.readAuditKey) : null;

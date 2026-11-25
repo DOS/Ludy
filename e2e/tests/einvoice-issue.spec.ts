@@ -21,7 +21,7 @@ test('asks to issue a draft, sees it issued by the worker with its original stor
   const nav = page.getByRole('navigation');
 
   await test.step('the org sets its tax code and connects the offline provider, whose series are read', async () => {
-    await nav.getByRole('link', { name: 'Cài đặt' }).click();
+    await page.getByRole('banner').getByRole('link', { name: 'Cài đặt', exact: true }).click();
     await page.getByRole('button', { name: 'Nhập', exact: true }).click();
     const form = page.getByRole('form', { name: 'Mã số thuế' });
     await form.getByLabel('Mã số thuế').fill(SELLER_TAX_CODE);

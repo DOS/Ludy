@@ -327,7 +327,7 @@ test('Phase 7 non-admin salary isolation blocks a chief accountant member across
   await signInNewUser(page, newEmail('hr-iso-owner'));
   const slug = await createOrg(page, 'Công ty Cách Ly Lương');
 
-  await page.getByRole('navigation').getByRole('link', { name: 'Cài đặt' }).click();
+  await page.getByRole('banner').getByRole('link', { name: 'Cài đặt', exact: true }).click();
   await openSettingsTab(page, 'security');
   await enrollTotp(page);
   await expect(page.getByText('Đang bật')).toBeVisible();

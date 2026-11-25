@@ -317,7 +317,7 @@ test('Phase 7 non-admin (member + Kế toán trưởng) department and wage-roll
   await signInNewUser(page, newEmail('hr-dept-iso-owner'));
   const slug = await createOrg(page, 'Công ty Cách Ly Phòng Ban');
 
-  await page.getByRole('navigation').getByRole('link', { name: 'Cài đặt' }).click();
+  await page.getByRole('banner').getByRole('link', { name: 'Cài đặt', exact: true }).click();
   await openSettingsTab(page, 'security');
   await enrollTotp(page);
   await expect(page.getByText('Đang bật')).toBeVisible();

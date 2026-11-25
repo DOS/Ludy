@@ -682,7 +682,7 @@ suite('kernel on PostgreSQL', () => {
     const deliver = (secret: string, body = mime) =>
       app.request('/api/inbound/email', {
         method: 'POST',
-        headers: { authorization: `Bearer ${secret}`, 'content-type': 'message/rfc822', 'x-crove-recipient': `${token}@in.test` },
+        headers: { authorization: `Bearer ${secret}`, 'content-type': 'message/rfc822', 'x-ludy-recipient': `${token}@in.test` },
         body,
       });
     const count = (query: string, params: unknown[]) =>

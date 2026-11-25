@@ -131,7 +131,7 @@ test('a vendor group of clean invoices is approved in one action, and a rule sho
       await prompt.click();
     }
     await expect(page).toHaveURL(new RegExp(`/o/${slug}/inbox$`));
-    await page.getByRole('navigation').getByRole('link', { name: 'Cài đặt' }).click();
+    await page.getByRole('banner').getByRole('link', { name: 'Cài đặt', exact: true }).click();
     await openSettingsTab(page, 'accounting');
     const card = page.locator('[aria-label="Quy tắc định khoản đã học"]');
     const row = card.getByRole('listitem');

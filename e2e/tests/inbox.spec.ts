@@ -36,9 +36,9 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
   });
 
   await test.step('the empty Inbox links the quick guide, and the shell the support channel (#310)', async () => {
-    const sidebar = page.getByRole('complementary');
-    await sidebar.getByRole('button', { name: /^Tài khoản:/ }).click();
-    const support = sidebar.getByRole('link', { name: 'Góp ý / Hỗ trợ' });
+    const topBar = page.getByRole('banner');
+    await topBar.getByRole('button', { name: /^Tài khoản:/ }).click();
+    const support = topBar.getByRole('link', { name: 'Góp ý / Hỗ trợ' });
     await expect(support).toHaveAttribute('href', 'mailto:support@e2e.test');
     await page.keyboard.press('Escape');
     await page.getByRole('link', { name: 'Xem hướng dẫn nhanh: tải lên, duyệt, khai thuế, xuất Excel' }).click();
@@ -251,7 +251,8 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
 
   await test.step('add a sub-account in Settings and make it the vendor default (#319)', async () => {
     const nav = page.getByRole('navigation');
-    await nav.getByRole('link', { name: 'Cài đặt' }).click();
+    const topBar = page.getByRole('banner');
+    await topBar.getByRole('link', { name: 'Cài đặt', exact: true }).click();
     await openSettingsTab(page, 'accounting');
     await page.getByRole('button', { name: 'Thêm tài khoản con' }).click();
     const add = page.getByRole('form', { name: 'Thêm tài khoản con' });
@@ -269,7 +270,7 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
     await expect(picker).toHaveValue('6422.VP');
 
     // While it is a vendor's default, the sub-account stays in use, and the refusal names the vendor.
-    await nav.getByRole('link', { name: 'Cài đặt' }).click();
+    await topBar.getByRole('link', { name: 'Cài đặt', exact: true }).click();
     await openSettingsTab(page, 'accounting');
     await page.getByRole('button', { name: 'Ngừng dùng tài khoản 6422.VP · Văn phòng Hà Nội' }).click();
     await expect(page.getByText(`Tài khoản 6422.VP đang là tài khoản mặc định của ${SELLER}`, { exact: false })).toBeVisible();

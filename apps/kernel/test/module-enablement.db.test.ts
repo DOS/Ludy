@@ -90,7 +90,7 @@ suite('module enablement on PostgreSQL (plan Decision 12, ADR-0031)', () => {
       WEB_DIST: '/nonexistent',
       HOST: '127.0.0.1',
       PORT: String(port),
-      ...(modules === undefined ? {} : { CROVE_MODULES: modules }),
+      ...(modules === undefined ? {} : { LUDY_MODULES: modules }),
     });
 
   async function adminQuery<R extends pg.QueryResultRow>(text: string, values: unknown[] = []): Promise<R[]> {

@@ -367,14 +367,14 @@ suite('prober on PostgreSQL', () => {
     expect(await probeOnce(proberConfig(), quiet)).toBe(EXIT.unhealthy);
     expect(received).toHaveLength(1);
     expect(received[0]?.path).toBe('/hook/secret');
-    const body = received[0]?.body as { text: string; ludy: { kind: string; findings: Array<{ check: string }>; health: Record<string, unknown> }; crove: { kind: string; findings: Array<{ check: string }>; health: Record<string, unknown> } };
+    const body = received[0]?.body as { text: string; ludy: { kind: string; findings: Array<{ check: string }>; health: Record<string, unknown> }; crove?: unknown };
     expect(body.text).toMatch(/^\[Ludy\] ALERT on prober-test: 5 health check\(s\) failed\./);
     expect(body.ludy.kind).toBe('alert');
     expect(body.ludy.findings.map((f) => f.check)).toEqual(['outbox', 'inbound', 'job_age', 'dead_letters', 'heartbeat']);
-    expect(body.crove).toEqual(body.ludy);
+    expect(body.crove).toBeUndefined();
     // Aggregates only: no org id or payload leaves the database.
     expect(JSON.stringify(body)).not.toContain(orgId);
-    expect(Object.keys(body.crove.health).sort()).toEqual([
+    expect(Object.keys(body.ludy.health).sort()).toEqual([
       'archive_lag_seconds',
       'archive_verify_age_seconds',
       'checked_at',
@@ -399,7 +399,7 @@ suite('prober on PostgreSQL', () => {
     expect(received).toEqual([
       {
         path: '/hook/secret',
-        body: { text: '[Ludy] Test alert from office: alert delivery works.', content: '[Ludy] Test alert from office: alert delivery works.', ludy: expect.objectContaining({ kind: 'test', severity: 'info' }), crove: expect.objectContaining({ kind: 'test', severity: 'info' }) },
+        body: { text: '[Ludy] Test alert from office: alert delivery works.', content: '[Ludy] Test alert from office: alert delivery works.', ludy: expect.objectContaining({ kind: 'test', severity: 'info' }) },
       },
     ]);
   });
@@ -407,16 +407,16 @@ suite('prober on PostgreSQL', () => {
   it('exits 2 and alerts when the database refuses the login, and refuses to probe as a superuser', async () => {
     received.length = 0;
     expect(await probeOnce(proberConfig({ databaseUrl: login('ludy_prober', 'wrong-password') }), quiet)).toBe(EXIT.probeFailed);
-    expect(received[0]?.body).toMatchObject({ crove: { kind: 'alert', findings: [{ check: 'probe' }] } });
+    expect(received[0]?.body).toMatchObject({ ludy: { kind: 'alert', findings: [{ check: 'probe' }] } });
     await expect(readHealth(adminUrl, 3600)).rejects.toThrow(/refusing to probe as .*connect PROBER_DATABASE_URL as ludy_prober/);
   });
 
   // #1952 (plan §3.5): an API process of its own is ready only while every live worker runs its build or a newer one,
-  // ordered by CROVE_BUILD_TIME. No live worker, a clean stop and a worker silent for over 90 seconds are not reasons;
+  // ordered by LUDY_BUILD_TIME. No live worker, a clean stop and a worker silent for over 90 seconds are not reasons;
   // a worker of unknown build time (a release before #1952, or one a rollback put back on the same host) is older.
   it('keeps /readyz waiting while a live worker runs an older build, never for the single "all" process', async () => {
     const API = '2026-11-01T00:00:00+00:00';
-    const ready = async (env: Record<string, string> = { CROVE_BUILD_TIME: API }, workerBuildCheck = true) => {
+    const ready = async (env: Record<string, string> = { LUDY_BUILD_TIME: API }, workerBuildCheck = true) => {
       const app = createHttpApp({
         config: loadConfig({ DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: 'x'.repeat(32), AUTH_ISSUER: 'ludy-auth', AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, ...env }),
         runtime: { installed: () => true, modules: () => ['kernel'] } as unknown as Runtime,
@@ -440,7 +440,7 @@ suite('prober on PostgreSQL', () => {
     // A second, older worker: not ready, unless this process is the single "all" one or knows no build time.
     await beat(workerDb, 'worker-b', ['kernel'], { id: 'bbbb', time: '2026-10-31T23:59:59+00:00' });
     expect(await ready()).toEqual(notReady);
-    expect(await ready({ CROVE_BUILD_TIME: API }, false)).toEqual({ status: 200, body: { ready: true } });
+    expect(await ready({ LUDY_BUILD_TIME: API }, false)).toEqual({ status: 200, body: { ready: true } });
     expect(await ready({})).toEqual({ status: 200, body: { ready: true } });
     // Its clean stop (no modules) ends the wait at once; so does silence for over 90 seconds.
     await beat(workerDb, 'worker-b', [], { id: 'bbbb', time: '2026-10-31T23:59:59+00:00' });
