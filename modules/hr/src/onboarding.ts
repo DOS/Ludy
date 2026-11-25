@@ -64,6 +64,7 @@ interface RawOnboardingRow {
   employee_id: string;
   employee_name: string;
   department_name: string | null;
+  erased_at: Date | string | null;
   status: HrOnboardingStatus;
   contact_confirmed: boolean;
   id_confirmed: boolean;
@@ -83,27 +84,36 @@ interface RawOnboardingRow {
   created_at: Date | string;
 }
 
-function mapSubmissionView(row: RawOnboardingRow): HrOnboardingSubmissionView {
+export function maskBankAccountPreview(raw: string): string {
+  const trimmed = raw.trim();
+  if (trimmed.length <= 4) return '****';
+  const shown = Math.min(4, Math.max(2, Math.floor(trimmed.length / 2) - 1));
+  return `****${trimmed.slice(-shown)}`;
+}
+
+function mapSubmissionView(row: RawOnboardingRow, bankAccountMasked: string | null): HrOnboardingSubmissionView {
+  const erased = row.erased_at !== null;
   return {
     id: row.id,
     employeeId: row.employee_id,
     employeeName: row.employee_name,
     legalEntityId: row.legal_entity_id,
-    departmentName: row.department_name,
+    departmentName: erased ? null : row.department_name,
     status: row.status,
     contactConfirmed: row.contact_confirmed,
     idConfirmed: row.id_confirmed,
     bankConfirmed: row.bank_confirmed,
     handbookConfirmed: row.handbook_confirmed,
-    address: row.address,
-    birthDate: row.birth_date === null ? null : iso(row.birth_date),
-    bankCode: row.bank_code,
-    hasIdentityNumber: row.national_id_sealed !== null,
-    hasBankAccount: row.bank_account_sealed !== null,
-    hasTaxCode: row.tax_code_sealed !== null,
-    hasInsuranceNumber: row.insurance_number_sealed !== null,
-    note: row.note,
-    decisionNote: row.decision_note,
+    address: erased ? null : row.address,
+    birthDate: erased || row.birth_date === null ? null : iso(row.birth_date),
+    bankCode: erased ? null : row.bank_code,
+    bankAccountMasked: erased ? null : bankAccountMasked,
+    hasIdentityNumber: !erased && row.national_id_sealed !== null,
+    hasBankAccount: !erased && row.bank_account_sealed !== null,
+    hasTaxCode: !erased && row.tax_code_sealed !== null,
+    hasInsuranceNumber: !erased && row.insurance_number_sealed !== null,
+    note: erased ? null : row.note,
+    decisionNote: erased ? null : row.decision_note,
     reviewedBy: row.reviewed_by,
     reviewedAt: row.reviewed_at === null ? null : new Date(row.reviewed_at).toISOString(),
     createdAt: new Date(row.created_at).toISOString(),
@@ -111,11 +121,11 @@ function mapSubmissionView(row: RawOnboardingRow): HrOnboardingSubmissionView {
 }
 
 async function querySubmissionViews(
-  trx: QueryContext['trx'],
+  ctx: QueryContext,
   orgId: string,
   filters: { employeeId?: string; status?: HrOnboardingStatus; limit: number },
 ): Promise<HrOnboardingSubmissionView[]> {
-  let q = trx
+  let q = ctx.trx
     .selectFrom('ludy_hr.onboarding_submission as s')
     .innerJoin('ludy_hr.payroll_employee as e', (j) =>
       j.onRef('e.org_id', '=', 's.org_id').onRef('e.id', '=', 's.employee_id'),
@@ -128,6 +138,7 @@ async function querySubmissionViews(
       's.legal_entity_id',
       's.employee_id',
       'e.display_name as employee_name',
+      'e.erased_at',
       'd.name as department_name',
       's.status',
       's.contact_confirmed',
@@ -159,7 +170,23 @@ async function querySubmissionViews(
     q = q.where('s.status', '=', filters.status);
   }
   const rows = (await q.execute()) as RawOnboardingRow[];
-  return rows.map(mapSubmissionView);
+  const sealedItems: { sealed: string; place: string; ref: string }[] = [];
+  const sealedRowIndex: number[] = [];
+  rows.forEach((row, index) => {
+    if (row.erased_at === null && row.bank_account_sealed !== null) {
+      sealedItems.push({ sealed: row.bank_account_sealed, place: ACCOUNT_PLACE, ref: subjectOf(row.employee_id) });
+      sealedRowIndex.push(index);
+    }
+  });
+  const opened = sealedItems.length === 0 ? [] : await ctx.openMany(sealedItems);
+  const maskedByRow = new Map<number, string>();
+  sealedRowIndex.forEach((rowIdx, itemIdx) => {
+    const val = opened[itemIdx];
+    if (typeof val === 'string') {
+      maskedByRow.set(rowIdx, maskBankAccountPreview(val));
+    }
+  });
+  return rows.map((row, index) => mapSubmissionView(row, maskedByRow.get(index) ?? null));
 }
 
 export const selfOnboardingGet = defineQuery({
@@ -188,7 +215,7 @@ export const selfOnboardingGet = defineQuery({
       .where('id', '=', emp.id)
       .executeTakeFirstOrThrow();
 
-    const submissions = await querySubmissionViews(ctx.trx, ctx.orgId, {
+    const submissions = await querySubmissionViews(ctx, ctx.orgId, {
       employeeId: emp.id,
       limit: 50,
     });
@@ -263,11 +290,25 @@ export const selfOnboardingSubmit = defineCommand({
     if (record.status !== 'active') {
       throw new DomainError('HR_EMPLOYEE_ENDED', 409, 'Nhân viên đã nghỉ việc, không thể gửi phiếu xác nhận');
     }
+    if ((input.bankCode !== undefined) !== (input.accountNumber !== undefined)) {
+      throw new DomainError('VALIDATION', 422, 'Khi cập nhật ngân hàng cần nhập đầy đủ cả mã ngân hàng và số tài khoản');
+    }
     if (input.bankCode !== undefined) {
       requireKnownBank(input.bankCode);
-      if (input.accountNumber === undefined) {
-        throw new DomainError('VALIDATION', 422, 'Khi cập nhật ngân hàng cần nhập kèm số tài khoản mới');
-      }
+    }
+
+    const existingPending = await ctx.trx
+      .selectFrom('ludy_hr.onboarding_submission')
+      .select('id')
+      .where('org_id', '=', ctx.orgId)
+      .where('employee_id', '=', emp.id)
+      .where('status', '=', 'pending')
+      .limit(1)
+      .executeTakeFirst();
+    if (existingPending) {
+      throw invalidOnboardingState(
+        'Bạn đã có một phiếu xác nhận thông tin đang chờ duyệt; vui lòng hủy hoặc chờ xử lý trước khi gửi phiếu mới',
+      );
     }
 
     const subject = subjectOf(emp.id);
@@ -276,30 +317,41 @@ export const selfOnboardingSubmit = defineCommand({
     const taxCodeSealed = input.taxCode !== undefined ? await ctx.seal(subject, TAX_CODE_PLACE, input.taxCode) : null;
     const insuranceSealed = input.insuranceNumber !== undefined ? await ctx.seal(subject, INSURANCE_PLACE, input.insuranceNumber) : null;
 
-    const inserted = await ctx.trx
-      .insertInto('ludy_hr.onboarding_submission')
-      .values({
-        org_id: ctx.orgId,
-        employee_id: emp.id,
-        status: 'pending',
-        contact_confirmed: input.contactConfirmed,
-        id_confirmed: input.idConfirmed,
-        bank_confirmed: input.bankConfirmed,
-        handbook_confirmed: input.handbookConfirmed,
-        address: input.address ?? null,
-        birth_date: input.birthDate ?? null,
-        national_id_sealed: nationalIdSealed,
-        bank_code: input.bankCode ?? null,
-        bank_account_sealed: bankAccountSealed,
-        tax_code_sealed: taxCodeSealed,
-        insurance_number_sealed: insuranceSealed,
-        note: input.note ?? null,
-        created_by: callerUserId,
-        created_at: ctx.now,
-        updated_at: ctx.now,
-      })
-      .returning(['id', 'legal_entity_id'])
-      .executeTakeFirstOrThrow();
+    let inserted: { id: string; legal_entity_id: string };
+    try {
+      inserted = await ctx.trx
+        .insertInto('ludy_hr.onboarding_submission')
+        .values({
+          org_id: ctx.orgId,
+          employee_id: emp.id,
+          status: 'pending',
+          contact_confirmed: input.contactConfirmed,
+          id_confirmed: input.idConfirmed,
+          bank_confirmed: input.bankConfirmed,
+          handbook_confirmed: input.handbookConfirmed,
+          address: input.address ?? null,
+          birth_date: input.birthDate ?? null,
+          national_id_sealed: nationalIdSealed,
+          bank_code: input.bankCode ?? null,
+          bank_account_sealed: bankAccountSealed,
+          tax_code_sealed: taxCodeSealed,
+          insurance_number_sealed: insuranceSealed,
+          note: input.note ?? null,
+          created_by: callerUserId,
+          created_at: ctx.now,
+          updated_at: ctx.now,
+        })
+        .returning(['id', 'legal_entity_id'])
+        .executeTakeFirstOrThrow();
+    } catch (error) {
+      const pg = error as { code?: string; constraint?: string };
+      if (pg.code === '23505' && pg.constraint === 'onboarding_submission_one_pending_uq') {
+        throw invalidOnboardingState(
+          'Bạn đã có một phiếu xác nhận thông tin đang chờ duyệt; vui lòng hủy hoặc chờ xử lý trước khi gửi phiếu mới',
+        );
+      }
+      throw error;
+    }
 
     ctx.audit({
       submissionId: inserted.id,
@@ -372,7 +424,7 @@ export const onboardingList = defineQuery({
   sensitive: true,
   handler: async (ctx, input): Promise<HrOnboardingSubmissionView[]> => {
     userOf(ctx.actor);
-    return querySubmissionViews(ctx.trx, ctx.orgId, {
+    return querySubmissionViews(ctx, ctx.orgId, {
       ...(input.employeeId !== undefined ? { employeeId: input.employeeId } : {}),
       ...(input.status !== undefined ? { status: input.status } : {}),
       limit: input.limit,
@@ -452,11 +504,11 @@ export const onboardingApprove = defineCommand({
       throw invalidOnboardingState('Phiếu xác nhận này đã được xử lý trước đó');
     }
 
+    if ((existing.bank_code !== null) !== (existing.bank_account_sealed !== null)) {
+      throw new DomainError('VALIDATION', 422, 'Thông tin ngân hàng phải có đủ cả mã ngân hàng và số tài khoản đi kèm');
+    }
     if (existing.bank_code !== null) {
       requireKnownBank(existing.bank_code);
-      if (existing.bank_account_sealed === null) {
-        throw new DomainError('VALIDATION', 422, 'Không thể áp dụng mã ngân hàng mới khi chưa có số tài khoản đi kèm');
-      }
     }
 
     const empPatch: {

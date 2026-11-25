@@ -153,17 +153,17 @@ const CELL_DOTS = '…………';
 const MARGIN = { top: 1134, bottom: 1134, left: 1701, right: 1134 };
 const CONTENT_WIDTH = 11906 - MARGIN.left - MARGIN.right;
 
-interface RunStyle {
+export interface RunStyle {
   bold?: boolean;
   italic?: boolean;
   // Half points.
   size?: number;
 }
-const run = (text: string, style: RunStyle = {}): string => {
+export const run = (text: string, style: RunStyle = {}): string => {
   const props = `${style.bold ? '<w:b/><w:bCs/>' : ''}${style.italic ? '<w:i/><w:iCs/>' : ''}${style.size ? `<w:sz w:val="${style.size}"/><w:szCs w:val="${style.size}"/>` : ''}`;
   return `<w:r>${props === '' ? '' : `<w:rPr>${props}</w:rPr>`}<w:t xml:space="preserve">${xmlEscape(cleanLine(text))}</w:t></w:r>`;
 };
-interface ParagraphStyle {
+export interface ParagraphStyle {
   align?: 'center' | 'left';
   before?: number;
   after?: number;
@@ -171,12 +171,12 @@ interface ParagraphStyle {
   bullet?: boolean;
   keepNext?: boolean;
 }
-const paragraph = (runs: string, style: ParagraphStyle = {}): string => {
+export const paragraph = (runs: string, style: ParagraphStyle = {}): string => {
   const spacing = style.before !== undefined || style.after !== undefined ? `<w:spacing${style.before !== undefined ? ` w:before="${style.before}"` : ''}${style.after !== undefined ? ` w:after="${style.after}"` : ''}/>` : '';
   const props = `${style.keepNext ? '<w:keepNext/>' : ''}${spacing}${style.bullet ? '<w:ind w:left="567" w:hanging="283"/>' : ''}${style.align === 'center' ? '<w:jc w:val="center"/>' : ''}`;
   return `<w:p>${props === '' ? '' : `<w:pPr>${props}</w:pPr>`}${runs}</w:p>`;
 };
-const text = (value: string, style: RunStyle = {}, para: ParagraphStyle = {}) => paragraph(run(value, style), para);
+export const text = (value: string, style: RunStyle = {}, para: ParagraphStyle = {}) => paragraph(run(value, style), para);
 const labelled = (label: string, value: string) => paragraph(run(`${label}: `, { bold: true }) + run(value));
 const heading = (value: string) => text(value, { bold: true }, { before: 200, keepNext: true });
 const bullet = (value: string) => paragraph(run(`• ${value}`), { bullet: true });
@@ -245,8 +245,13 @@ export function documentXml(doc: MinutesDoc): string {
   out.push(table([Math.floor(CONTENT_WIDTH / 2), CONTENT_WIDTH - Math.floor(CONTENT_WIDTH / 2)], [[sign('NGƯỜI GHI BIÊN BẢN'), sign('CHỦ TRÌ CUỘC HỌP')]], { borders: false }));
   // A table at the end of the body needs a paragraph after it.
   out.push(paragraph(''));
+  return wordDocument(out.join(''));
+}
+
+/** The word/document.xml around a body: the A4 page and the margins of a Vietnamese administrative text (the transcript file uses the same). */
+export function wordDocument(body: string): string {
   const section = `<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="${MARGIN.top}" w:right="${MARGIN.right}" w:bottom="${MARGIN.bottom}" w:left="${MARGIN.left}" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr>`;
-  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<w:document xmlns:w="${W}" xmlns:r="${R}"><w:body>${out.join('')}${section}</w:body></w:document>`;
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<w:document xmlns:w="${W}" xmlns:r="${R}"><w:body>${body}${section}</w:body></w:document>`;
 }
 
 const CONTENT_TYPES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -258,17 +263,20 @@ const DOCUMENT_RELS = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 const STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:styles xmlns:w="${W}"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:eastAsia="Times New Roman" w:cs="Times New Roman"/><w:sz w:val="26"/><w:szCs w:val="26"/><w:lang w:val="vi-VN" w:eastAsia="vi-VN" w:bidi="ar-SA"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="80" w:line="276" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style><w:style w:type="table" w:default="1" w:styleId="TableNormal"><w:name w:val="Normal Table"/><w:uiPriority w:val="99"/><w:semiHidden/><w:unhideWhenUsed/><w:tblPr><w:tblInd w:w="0" w:type="dxa"/><w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="108" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar></w:tblPr></w:style></w:styles>`;
 
-/** The .docx of the minutes: the zip of its parts, [Content_Types].xml first. */
-export function buildMinutesDocx(doc: MinutesDoc): Uint8Array {
+/** A .docx around a word/document.xml: the zip of its parts, [Content_Types].xml first. */
+export function buildDocx(documentXmlText: string): Uint8Array {
   const utf8 = (s: string) => new TextEncoder().encode(s);
   return zipFiles([
     { name: '[Content_Types].xml', data: utf8(CONTENT_TYPES) },
     { name: '_rels/.rels', data: utf8(ROOT_RELS) },
-    { name: 'word/document.xml', data: utf8(documentXml(doc)) },
+    { name: 'word/document.xml', data: utf8(documentXmlText) },
     { name: 'word/_rels/document.xml.rels', data: utf8(DOCUMENT_RELS) },
     { name: 'word/styles.xml', data: utf8(STYLES) },
   ]);
 }
+
+/** The .docx of the minutes. */
+export const buildMinutesDocx = (doc: MinutesDoc): Uint8Array => buildDocx(documentXml(doc));
 
 /**
  * The file name: "Biên bản họp - <title> - <YYYY-MM-DD>.docx", the title cut to fit and stripped of what a file name cannot hold on Windows, macOS or Linux (path separators, : * ? " < > |, controls, the invisible
