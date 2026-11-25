@@ -870,6 +870,15 @@ export const vi = {
       noMail: 'Máy chủ này chưa gửi được email, nên chưa có thư nào được gửi cho đến khi người cài đặt thiết lập thư. Thông báo trong ứng dụng vẫn hoạt động, và thông báo đẩy trên trình duyệt cũng vẫn gửi nếu đã bật trên thiết bị.',
       saved: 'Đã lưu',
     },
+    weeklyNotice: {
+      title: 'Các cuộc họp tuần qua, vào sáng thứ Hai',
+      hint: 'Mỗi tuần một lần, vào sáng thứ Hai lúc bạn chọn, một thông báo trong ứng dụng và qua email với bốn con số (số cuộc họp bạn đọc được có kết quả đã công bố trong 7 ngày qua, số quyết định đã công bố, số việc còn mở và số việc đã quá hạn) kèm đường dẫn đến thẻ "Tuần này", cùng thông báo đẩy nếu bạn bật trên thiết bị này. Chỉ có con số và đường dẫn, không tiêu đề, không nội dung quyết định. Tuần nào không có gì để báo thì không gửi.',
+      label: 'Gửi cho tôi tổng kết các cuộc họp tuần qua vào mỗi sáng thứ Hai',
+      at: 'Lúc',
+      zone: 'Theo múi giờ của bạn: {zone}',
+      noMail: 'Máy chủ này chưa gửi được email, nên chưa có thư nào được gửi cho đến khi người cài đặt thiết lập thư. Thông báo trong ứng dụng vẫn hoạt động, và thông báo đẩy trên trình duyệt cũng vẫn gửi nếu đã bật trên thiết bị.',
+      saved: 'Đã lưu',
+    },
     todayMail: {
       title: 'Tóm tắt hằng ngày qua email',
       hint: 'Mỗi sáng, một thư ngắn cho biết hôm nay có bao nhiêu việc cần bạn kèm liên kết về Tổng quan. Thư chỉ có số lượng và liên kết, không có số tiền hay nội dung.',
@@ -924,6 +933,7 @@ export const vi = {
         meetings_series_open_items: 'Việc còn dở từ cuộc họp trước',
         meetings_summary_ready: 'Bản nháp biên bản đã sẵn sàng',
         meetings_morning: 'Lịch họp hôm nay',
+        meetings_weekly: 'Các cuộc họp tuần qua',
       },
       fields: {
         title: 'Tiêu đề',
@@ -1015,6 +1025,7 @@ export const vi = {
       meetings_series_open_items: 'Việc còn dở từ buổi họp trước của chuỗi cuộc họp',
       meetings_summary_ready: 'Bản nháp biên bản của cuộc họp tôi ghi đã sẵn sàng (gửi cả qua email và thông báo đẩy; tắt ở đây là tắt cả ba)',
       meetings_morning: 'Các cuộc họp hôm nay của tôi, nếu tôi đã bật thông báo buổi sáng (gửi cả qua email và thông báo đẩy; tắt ở đây là tắt cả ba)',
+      meetings_weekly: 'Các con số của các cuộc họp tuần qua, nếu tôi đã bật thông báo sáng thứ Hai (gửi cả qua email và thông báo đẩy; tắt ở đây là tắt cả ba)',
       kernel_channel_expired: 'Kết nối tài khoản quảng cáo hết hạn hoặc bị từ chối',
       kernel_ai_budget: 'Ngân sách AI sắp hết hoặc đã hết',
       kernel_conversation_new: 'Có hội thoại mới cần trả lời',
@@ -1038,6 +1049,7 @@ export const vi = {
       series_open_items: 'Sắp họp tiếp: bạn còn {count, plural, other {# việc}} dở từ buổi họp trước. Mở buổi họp trước để xem.',
       summary_ready: 'Bản nháp biên bản của cuộc họp bạn ghi đã sẵn sàng. Mở cuộc họp để xem và chỉnh.',
       morning: 'Hôm nay bạn có {count, plural, other {# cuộc họp}}. Mở trang Cuộc họp để xem.',
+      weekly: '7 ngày qua: {cut, select, yes {ít nhất } other {}}{meetings, plural, other {# cuộc họp}} có kết quả đã công bố, {decisions, plural, other {# quyết định}} đã công bố, {open, plural, other {# việc còn mở}}{overdue, plural, =0 {} other {, # việc quá hạn}}. Mở trang Cuộc họp để xem tuần này.',
       ai_budget_warn: 'Ngân sách AI đã dùng {percent}%. Hết ngân sách thì chỉ phần AI dừng, sổ sách vẫn chạy.',
       ai_budget_stop: 'Ngân sách AI tháng này đã hết. Việc cần AI sẽ chờ; hãy nâng ngân sách hoặc đợi sang tháng mới. Sổ sách vẫn chạy bình thường.',
       channel_expired: 'Một tài khoản quảng cáo bị tạm dừng cập nhật vì kết nối hết hạn hoặc bị từ chối. Hãy kết nối lại để lấy tiếp số liệu, không mất ngày nào.',
@@ -19930,6 +19942,11 @@ export const vi = {
         get: 'Xem cài đặt thông báo buổi sáng về các cuộc họp trong ngày của bạn',
         notice: 'Gửi cho một thành viên thông báo buổi sáng về các cuộc họp trong ngày (lượt quét của hệ thống)',
         set: 'Bật hoặc tắt thông báo buổi sáng về các cuộc họp trong ngày, và chọn giờ',
+      },
+      weekly: {
+        get: 'Xem cài đặt thông báo sáng thứ Hai về các cuộc họp trong tuần của bạn',
+        notice: 'Gửi cho một thành viên thông báo sáng thứ Hai về các cuộc họp trong tuần (lượt quét của hệ thống)',
+        set: 'Bật hoặc tắt thông báo sáng thứ Hai về các cuộc họp trong tuần, và chọn giờ',
       },
       brief: {
         facts: 'Xem những gì đã chốt, việc còn dở và cơ hội đang mở của khách trước một cuộc họp',
