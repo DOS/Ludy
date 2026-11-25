@@ -124,6 +124,8 @@ import {
   type ConversationSummary,
   type SavedReplyListed,
   type SavedReplyView,
+  contactNameOf,
+  fillNamePlaceholder,
   hasNamePlaceholder,
 } from '@ludy/kernel-contract';
 import { z } from 'zod';
@@ -1383,6 +1385,17 @@ const refuseUnfilledPlaceholder = (body: string): void => {
   if (hasNamePlaceholder(body)) throw new DomainError('REPLY_PLACEHOLDER', 422, 'Câu trả lời còn chỗ trống {tên} chưa điền, hãy sửa lại trước khi gửi');
 };
 
+async function draftContactName(ctx: CommandContext, conversation: Pick<ConversationRow, 'party_id' | 'identity_id'>): Promise<string | null> {
+  const party = conversation.party_id
+    ? await ctx.trx.selectFrom('ludy_kernel.party').select('name').where('org_id', '=', ctx.orgId).where('id', '=', conversation.party_id).executeTakeFirst()
+    : undefined;
+  const identity =
+    !party?.name?.trim() && conversation.identity_id
+      ? await ctx.trx.selectFrom('ludy_kernel.conversation_identity').select('display_name').where('org_id', '=', ctx.orgId).where('id', '=', conversation.identity_id).executeTakeFirst()
+      : undefined;
+  return contactNameOf({ partyName: party?.name ?? null, displayName: identity?.display_name ?? null });
+}
+
 export const conversationReply = defineCommand({
   name: 'kernel.conversation.reply',
   input: zConversationReply,
@@ -1471,9 +1484,10 @@ export const conversationReply = defineCommand({
     for (const d of open) {
       if (d.id === input.draftId && d.state === 'live' && d.body !== null) {
         usedDraft = true;
+        const contactName = hasNamePlaceholder(d.body) ? await draftContactName(ctx, conversation) : null;
         await ctx.trx
           .updateTable('ludy_kernel.conversation_draft')
-          .set({ state: 'used', body: null, draft_length: d.body.length, final_length: input.body.length, edit_size: editSize(d.body, input.body), decided_at: ctx.now })
+          .set({ state: 'used', body: null, draft_length: d.body.length, final_length: input.body.length, edit_size: draftEditSize(d.body, input.body, contactName), decided_at: ctx.now })
           .where('org_id', '=', ctx.orgId)
           .where('id', '=', d.id)
           .execute();
@@ -3373,6 +3387,12 @@ export function editSize(draft: string, sent: string): number {
   let end = 0;
   while (end < a.length - start && end < b.length - start && a[a.length - 1 - end] === b[b.length - 1 - end]) end++;
   return Math.max(a.length - start - end, b.length - start - end);
+}
+
+/** Compares the sent reply against the draft after filling only `{tên}` with the contact name (dropping it when none),
+ * so filling the contact name is not counted as the person's own edit (#3105). */
+export function draftEditSize(draft: string, sent: string, contactName: string | null = null): number {
+  return editSize(fillNamePlaceholder(draft, contactName), sent);
 }
 
 interface SavedReplyRow {

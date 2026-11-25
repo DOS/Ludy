@@ -197,4 +197,81 @@ suite('Highlights (#4819)', () => {
     for (const secret of ['rất riêng', 'Họp kiểm toán']) expect(text, secret).not.toContain(secret);
     expect(text).toContain('startSeconds');
   });
+
+  // The order of a mark and a re-publish (#4971). A reader cannot hold the meeting row, so the add and the publish take one advisory lock of the meeting (key `meetings.lines:<org>:<meeting>`): the publish exclusively, the add shared.
+  const LINES_LOCK = "pg_catalog.hashtextextended('meetings.lines:' || lower($1::text) || ':' || lower($2::text), 0)";
+  // A transaction of its own that holds the lock, to play the other side.
+  async function holding<T>(meetingId: string, mode: 'pg_advisory_xact_lock' | 'pg_advisory_xact_lock_shared', during: (c: pg.Client) => Promise<T>, release: (c: pg.Client) => Promise<void>): Promise<T> {
+    const c = new pg.Client({ connectionString: adminUrl });
+    await c.connect();
+    try {
+      await c.query('BEGIN');
+      await c.query(`SELECT pg_catalog.${mode}(${LINES_LOCK})`, [orgId, meetingId]);
+      const out = await during(c);
+      await release(c);
+      return out;
+    } finally {
+      await c.end();
+    }
+  }
+  const settledWithin = async (promise: Promise<unknown>, ms: number): Promise<boolean> => {
+    let settled = false;
+    void promise.then(
+      () => (settled = true),
+      () => (settled = true),
+    );
+    await new Promise((resolve) => setTimeout(resolve, ms));
+    return settled;
+  };
+
+  it('an add that meets a publish in progress waits for it and is checked against the lines it leaves', async () => {
+    const id = await fiveLines('Họp đánh dấu trong lúc công bố lại');
+    let add!: Promise<unknown>;
+    let waited = true;
+    await holding(
+      id,
+      'pg_advisory_xact_lock',
+      async (c) => {
+        // The publish is half done: the old published lines are gone, new ones stand at other seconds.
+        await c.query("DELETE FROM ludy_meetings.transcript_segment WHERE org_id = $1 AND meeting_id = $2 AND stage = 'published'", [orgId, id]);
+        await c.query(`INSERT INTO ludy_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, 70, 75, 'Người nói 1', 'Dòng mới 70', 'published')`, [orgId, id]);
+        add = mark('lan', id, 20).then(
+          () => 'added',
+          (error: unknown) => error,
+        );
+        waited = !(await settledWithin(add, 600));
+      },
+      async (c) => {
+        await c.query('COMMIT');
+      },
+    );
+    expect(waited, 'the add waits while the publish holds the lines').toBe(true);
+    // Once the publish has committed the add reads the new lines: second 20 starts none of them.
+    expect(await add).toMatchObject({ code: 'HIGHLIGHT_NOT_ANCHORED' });
+    expect((await sqlAdmin('SELECT count(*)::int AS n FROM ludy_meetings.meeting_highlight WHERE org_id = $1 AND meeting_id = $2', [orgId, id])).rows[0]).toEqual({ n: 0 });
+    expect((await mark('lan', id, 70)).created).toBe(true);
+  });
+
+  it('a publish that meets an add in progress waits for it', async () => {
+    const id = await meeting('Họp công bố lúc có người đánh dấu');
+    await say(id, 10, 'Dòng nháp', 'draft');
+    let publish!: Promise<unknown>;
+    let waited = true;
+    await holding(
+      id,
+      'pg_advisory_xact_lock_shared',
+      async () => {
+        publish = runtime.execute<{ lines: number }>('meetings.result.publish', { meetingId: id, confirmed: true }, { actor: asUser('rec'), orgId }).then(
+          (out) => out,
+          (error: unknown) => error,
+        );
+        waited = !(await settledWithin(publish, 600));
+      },
+      async (c) => {
+        await c.query('COMMIT');
+      },
+    );
+    expect(waited, 'the publish waits while an add holds the lines').toBe(true);
+    expect(await publish).toMatchObject({ lines: 1 });
+  });
 });

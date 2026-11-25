@@ -96,6 +96,8 @@ describe('buildQuickCreateItems', () => {
     });
     expect(all.map((i) => i.id)).toEqual([
       'uploadDocument',
+      'recordExpense',
+      'createSalesInvoice',
       'quickCapture',
       'newTeamTask',
       'newNote',
@@ -110,7 +112,7 @@ describe('buildQuickCreateItems', () => {
       canCreateTeamTask: false,
       canQuickCapture: false,
     });
-    expect(minimalMember.map((i) => i.id)).toEqual(['uploadDocument']);
+    expect(minimalMember.map((i) => i.id)).toEqual(['uploadDocument', 'recordExpense', 'createSalesInvoice']);
   });
 });
 
