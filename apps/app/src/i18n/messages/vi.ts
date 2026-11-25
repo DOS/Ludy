@@ -567,6 +567,20 @@ export const vi = {
     layout: {
       allHidden: 'Tất cả khối ứng dụng đang ẩn · Nhấn Tùy chỉnh để bật lại',
     },
+    // The three money tiles under Hôm nay cần bạn (#4785): what customers owe, what the org owes, the bank balance.
+    money: {
+      title: 'Tiền của bạn hôm nay',
+      retry: 'Thử lại',
+      receivables: { label: 'Chưa thu', hint: 'Khách hàng còn nợ bạn', open: 'Mở danh sách khách hàng' },
+      payables: { label: 'Chưa trả', hint: 'Bạn còn nợ nhà cung cấp', open: 'Mở danh sách nhà cung cấp' },
+      bank: {
+        label: 'Tiền ngân hàng',
+        hint: '{count, plural, =0 {Chưa có số dư ngân hàng} other {# tài khoản ngân hàng}}',
+        open: 'Mở sao kê ngân hàng',
+        account: '{name}: {amount}',
+        more: '{count, plural, other {và # tài khoản khác}}',
+      },
+    },
     blocks: {
       finance_tax_deadlines: {
         title: 'Việc thuế trong 30 ngày tới',

@@ -52,6 +52,7 @@ function seeded() {
     ledgerAccount: orpc.ledger.account.queryKey({ input: { period: '2026-09', accountCode: '331' } }),
     overview: orpc.financeOverview.get.queryKey({ input: { range: 'last_30_days' } }),
     overviewExplain: orpc.financeOverview.explain.queryKey({ input: { range: 'last_30_days' } }),
+    homeMoney: orpc.financeHomeMoney.get.queryKey({ input: {} }),
     monthClose: orpc.financeMonthClose.get.queryKey({ input: { month: '2026-10' } }),
     monthCloseExplain: orpc.financeMonthClose.explain.queryKey({ input: { month: '2026-10' } }),
     me: orpc.me.get.queryKey(),
@@ -106,10 +107,10 @@ describe('invalidateHint', () => {
     }
   });
 
-  it('journal_entry: the journal, that entry, the documents, the ledger reports, the overview, the customers and the proposal that posted it', async () => {
+  it('journal_entry: the journal, that entry, the documents, the ledger reports, the overview, the Home money tiles, the customers and the proposal that posted it', async () => {
     const { qc, stale } = seeded();
     await invalidateHint(qc, { type: 'journal_entry', id: ENTRY });
-    expect(stale()).toEqual(['customers', 'detail1', 'documents', 'entry', 'journal', 'ledger', 'ledgerAccount', 'monthClose', 'monthCloseExplain', 'overview', 'overviewExplain']);
+    expect(stale()).toEqual(['customers', 'detail1', 'documents', 'entry', 'homeMoney', 'journal', 'ledger', 'ledgerAccount', 'monthClose', 'monthCloseExplain', 'overview', 'overviewExplain']);
   });
 
   it('document: the documents, the vendors, the customers, the sales number gaps and the proposal that recorded it', async () => {

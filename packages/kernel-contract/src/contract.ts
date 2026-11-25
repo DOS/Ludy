@@ -221,6 +221,7 @@ import { zCompanySuggest, zCompanySuggested } from './contact-company.ts';
 import { zVatLateExplainAsk, zVatLateExplanation } from './vat-late.ts';
 import { zCashForecast, zCashForecastExplanation, zFinanceCashForecastExplainAsk, zFinanceCashForecastInput } from './finance-cash-forecast.ts';
 import { zFinanceOverview, zFinanceOverviewExplainAsk, zFinanceOverviewInput, zOverviewExplanation } from './finance-overview.ts';
+import { zFinanceHomeMoney, zFinanceHomeMoneyInput } from './finance-home-money.ts';
 import { zFinanceMonthCloseExplainAsk, zFinanceMonthCloseInput, zMonthClose, zMonthCloseNote } from './finance-month-close.ts';
 import { zExpenseVarianceExplanation, zFinanceExpenseVariance, zFinanceExpenseVarianceExplainAsk, zFinanceExpenseVarianceInput } from './finance-expense-variance.ts';
 import { zImportBatch, zImportCommit, zImportCommitted, zImportPreview, zImportPreviewQuery, zImportRef, zImportStage } from './contact-import.ts';
@@ -3624,6 +3625,11 @@ export const contract = {
   financeOverview: {
     get: oc.input(zFinanceOverviewInput).output(zFinanceOverview),
     explain: oc.input(zFinanceOverviewExplainAsk).output(zOverviewExplanation),
+  },
+  // The three money tiles on Home (#4785): what customers owe, what the org owes suppliers and the money in the bank, as of today, read only and decided by the
+  // books; `available: false` for a member who may not see the org's money totals (the finance module decides who).
+  financeHomeMoney: {
+    get: oc.input(zFinanceHomeMoneyInput).output(zFinanceHomeMoney),
   },
   // The month-close checklist on the Kế toán screen, every role and read only: get answers, for one legal entity and month, the items still open (pending proposals, portal
   // invoices not matched to a voucher, unbooked bank lines, marketplace settlements and payouts, the stock close, the VAT mark, the period lock), each counted by a read of the

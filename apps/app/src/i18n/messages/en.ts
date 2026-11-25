@@ -568,6 +568,20 @@ export const en = {
     layout: {
       allHidden: 'All app blocks are hidden · Click Customize to turn them back on',
     },
+    // The three money tiles under "Needs you today" (#4785): what customers owe, what the org owes, the bank balance.
+    money: {
+      title: 'Your money today',
+      retry: 'Try again',
+      receivables: { label: 'Unpaid by customers', hint: 'Customers still owe you', open: 'Open the customers list' },
+      payables: { label: 'Unpaid to suppliers', hint: 'You still owe suppliers', open: 'Open the suppliers list' },
+      bank: {
+        label: 'Bank balance',
+        hint: '{count, plural, =0 {No bank balance yet} one {# bank account} other {# bank accounts}}',
+        open: 'Open the bank statements',
+        account: '{name}: {amount}',
+        more: '{count, plural, one {and # more account} other {and # more accounts}}',
+      },
+    },
     blocks: {
       finance_tax_deadlines: {
         title: 'Tax deadlines in the next 30 days',

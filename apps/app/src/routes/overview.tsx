@@ -26,6 +26,7 @@ import {
 import { HomeCreateBar } from '../components/home-create-bar.tsx';
 import { HomeCustomizePanel } from '../components/home-customize-panel.tsx';
 import { HomeVyBar } from '../components/home-vy-bar.tsx';
+import { MoneyTiles } from '../components/money-tiles.tsx';
 import { OrgNotesPanel } from '../components/notes-panel.tsx';
 import { SalesNumberGaps } from '../components/sales-number-gaps.tsx';
 import { SinceYesterday, useSinceYesterday } from '../components/since-yesterday.tsx';
@@ -677,6 +678,9 @@ export function OverviewPage() {
         modules={modules}
       />
       {startCard && <Day1QuickStart slug={slug} steps={quickStart} financeOn={financeOn} onDismiss={dismissStart} />}
+
+      {/* The three money tiles (#4785): Chưa thu, Chưa trả, Tiền ngân hàng; the finance module says who sees them, and they are hidden while Finance is off. */}
+      <MoneyTiles slug={slug} financeOn={financeOn} />
 
       {/* Row 2: Compact operational strip combining Waiting counts + SinceYesterday coworker updates; hidden when empty (#4644). */}
       {hasOperationalStrip && (

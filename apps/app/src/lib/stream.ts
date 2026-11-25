@@ -56,6 +56,8 @@ export function hintMatches(hint: StreamHint, query: Query): boolean {
         // The Kế toán overview (#2631) and the coworker's sentence on it read the same entries.
         path === 'financeOverview.get' ||
         path === 'financeOverview.explain' ||
+        // The Home money tiles (#4785) read the same entries: what customers owe (131), what the org owes (331) and the bank accounts (112).
+        path === 'financeHomeMoney.get' ||
         // The cash forecast reads the same entries (cash, receivables, payables) and the coworker's note on it; the month-close checklist counts bank lines settled by vouchers, settlements and payouts recorded, and the period lock, all of which are entries.
         path === 'financeCashForecast.get' ||
         path === 'financeCashForecast.explain' ||

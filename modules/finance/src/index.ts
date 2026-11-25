@@ -42,6 +42,7 @@ import { collectionSettingCommands, collectionSettingQueries } from './collectio
 import { paymentReminderCommands, paymentReminderQueries } from './payment-reminders.ts';
 import { financeCashForecastQuery } from './cash-forecast.ts';
 import { financeOverviewQuery } from './overview.ts';
+import { financeHomeMoneyQuery } from './home-money.ts';
 import { financeMonthCloseQuery } from './month-close.ts';
 import { financeExpenseVarianceQuery } from './expense-variance.ts';
 import { einvoiceConnectionCommands, einvoiceConnectionQueries } from './einvoice-connections.ts';
@@ -338,6 +339,7 @@ export const financeQueries = [
   statementsPeriodQuery,
   financeCashForecastQuery,
   financeOverviewQuery,
+  financeHomeMoneyQuery,
   financeMonthCloseQuery,
   financeExpenseVarianceQuery,
   openingBalancePreview,
