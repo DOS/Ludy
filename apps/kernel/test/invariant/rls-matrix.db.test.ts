@@ -3556,16 +3556,6 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
   },
-  // #4822 (step 0): a read-only link to the published minutes of a meeting for people outside the org. The token is stored only as a hash; the row cascades with its meeting.
-  'crove_meetings.minutes_link': {
-    make: (o) => {
-      const meeting = meetingsMeetingRow(o);
-      return {
-        setup: [{ table: 'crove_meetings.meeting', values: meeting }],
-        row: { org_id: o.id, id: randomUUID(), meeting_id: meeting.id, token_sha256: hex64(), expires_at: new Date(Date.now() + 86_400_000).toISOString(), created_by: o.owner },
-      };
-    },
-  },
   // #2587 (L1): a meeting's link to a deal (the CRM module is reached through ctx.query, so the deal id has no foreign key).
   'crove_meetings.meeting_link': {
     make: (o) => {
@@ -3655,6 +3645,16 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       setup: [],
       row: { org_id: o.id, user_id: o.owner, url: 'https://hooks.example.com/ludy-minutes', secret_sealed: '{"keyId":"k1","envelope":"AAAAAAAAAAAAAAAA"}', secret_hint: 'whk_00000000' },
     }),
+  },
+  // #4822 (step 0): a read-only link to the published minutes of a meeting for people outside the org. The token is stored only as a hash; the row cascades with its meeting.
+  'crove_meetings.minutes_link': {
+    make: (o) => {
+      const meeting = meetingsMeetingRow(o);
+      return {
+        setup: [{ table: 'crove_meetings.meeting', values: meeting }],
+        row: { org_id: o.id, id: randomUUID(), meeting_id: meeting.id, token_sha256: hex64(), expires_at: new Date(Date.now() + 86_400_000).toISOString(), created_by: o.owner },
+      };
+    },
   },
   // #3578 (meetings): a minutes template the org wrote. Every member of the org reads it; a RESTRICTIVE write policy lets an owner or admin write it (the factory's owner is one), and the
   // table grants no DELETE to a login role. Its factory landed before the table (#3625); the table is on main with the migration of #3578.
