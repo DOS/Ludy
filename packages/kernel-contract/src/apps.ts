@@ -50,6 +50,18 @@ for (const id of MODULE_IDS) {
   }
 }
 
+// What a new org says it is when it is created (ADR-0053 amendment, 2026-11-25, owner decision on #4802). `solo` ("Một mình tôi") leaves on only the modules
+// a one-person company uses: Tài chính (finance), Cộng tác (notes, projects, meetings) and Ludy AI (the kernel, always on). `team` ("Có nhân viên") leaves every module
+// on, which is also what an org created with no type has. The type is not stored: it is the list of modules the org starts with off.
+export const ORG_KINDS = ['solo', 'team'] as const;
+export type OrgKind = (typeof ORG_KINDS)[number];
+
+// The modules switched off at creation for each type. A module shipped later is on for both until this list names it (ADR-0053: on by default).
+export const ORG_KIND_APPS_OFF: Readonly<Record<OrgKind, readonly SwitchableModuleId[]>> = {
+  solo: ['social', 'crm', 'ads', 'hr', 'sign'],
+  team: [],
+};
+
 /** Return true when `id` is a canonical module shipped by the codebase, regardless of whether it is enabled in `LUDY_MODULES`. */
 export function isKnownModule(id: string): id is ModuleId {
   return (MODULE_IDS as readonly string[]).includes(id);

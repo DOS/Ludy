@@ -1,6 +1,7 @@
 import { oc } from '@orpc/contract';
 import { z } from 'zod';
 import { zTranscriptExport, zTranscriptExportInput } from './meeting-transcript-export.ts';
+import { ORG_KINDS } from './apps.ts';
 import { zChapters, zChaptersCopied, zChaptersCopy, zChaptersSave, zChaptersSaved } from './meeting-chapters.ts';
 import {
   zBulkApproveItems,
@@ -1113,8 +1114,9 @@ export const contract = {
     },
   },
   org: {
-    // A retry with the same idempotencyKey returns the org the first request created.
-    create: oc.input(z.object({ name: z.string().trim().min(1).max(200), idempotencyKey: zId })).output(zOrgSummary),
+    // A retry with the same idempotencyKey returns the org the first request created. `kind` (ORG_KINDS): 'solo' starts the org with only Tài chính, Cộng tác and Ludy AI on,
+    // 'team' (and no kind) with every app on (ADR-0053 amendment, #4802); the apps stay one switch each in Settings afterwards.
+    create: oc.input(z.object({ name: z.string().trim().min(1).max(200), idempotencyKey: zId, kind: z.enum(ORG_KINDS).optional() })).output(zOrgSummary),
     get: oc.output(zOrgDetail),
     // Every role (ADR-0053, #3313): the apps the org may switch, and for each whether the deployment runs it, the org holds
     // it and its owner or admin left it on. Owners and admins switch one with setApp (R2, audited); every app is on by default.
