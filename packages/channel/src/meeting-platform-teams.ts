@@ -82,9 +82,13 @@ function retryWaitMs(header: string | null, nowMs: number): number {
   const value = (header ?? '').trim();
   if (value === '') return RETRY_DEFAULT_WAIT_MS;
   if (/^\d{1,6}$/.test(value)) return Number(value) * 1000;
-  const at = Date.parse(value);
+  // An HTTP date has letters in it; "-1" or "1.5" is not a date and gets the default wait.
+  const at = /[A-Za-z]/.test(value) ? Date.parse(value) : Number.NaN;
   return Number.isNaN(at) ? RETRY_DEFAULT_WAIT_MS : Math.max(0, at - nowMs);
 }
+// All the waits of one list (its signal) together: a list of 60 meetings must not wait 5 seconds on every read.
+const RETRY_BUDGET_MS = 15_000;
+const retryBudgets = new WeakMap<AbortSignal, number>();
 const abortableSleep = (ms: number, signal?: AbortSignal) =>
   new Promise<void>((resolve) => {
     if (signal?.aborted) return resolve();
@@ -314,7 +318,9 @@ export class TeamsMeetingPlatform implements MeetingPlatformAdapter, MeetingPlat
       if (response.status !== 429 || attempt > 0) return { status: response.status, response };
       const wait = retryWaitMs(response.headers.get('retry-after'), this.now().getTime());
       await response.body?.cancel().catch(() => undefined);
-      if (wait > RETRY_MAX_WAIT_MS || signal?.aborted) return { status: 429, response: new Response(null, { status: 429 }) };
+      const left = signal ? (retryBudgets.get(signal) ?? RETRY_BUDGET_MS) : RETRY_MAX_WAIT_MS;
+      if (wait > RETRY_MAX_WAIT_MS || wait > left || signal?.aborted) return { status: 429, response: new Response(null, { status: 429 }) };
+      if (signal) retryBudgets.set(signal, left - wait);
       await this.sleep(wait, signal);
       if (signal?.aborted) return { status: 429, response: new Response(null, { status: 429 }) };
     }

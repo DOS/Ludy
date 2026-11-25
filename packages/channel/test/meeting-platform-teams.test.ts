@@ -265,6 +265,25 @@ describe('TeamsMeetingPlatform.list', () => {
     stop.abort();
     const aborted = teams(calendar([{ status: 429, json: {} }, { json: fixture('calendar-view') }]));
     expect(await codeOf(aborted.adapter.list(CREDENTIAL, SINCE, stop.signal))).toBe('platform_unavailable');
+    expect(aborted.sleeps).toEqual([]);
+    expect(calendarCalls(aborted)).toBe(1);
+    // A malformed header (not seconds, not a date) gets the default wait, never an instant retry.
+    for (const header of ['-1', '1.5', 'soon-ish']) {
+      const odd = teams(calendar([{ status: 429, json: {}, headers: { 'retry-after': header } }, { json: fixture('calendar-view') }]));
+      await odd.adapter.list(CREDENTIAL, SINCE);
+      expect(odd.sleeps, header).toEqual([1000]);
+    }
+    // One list has one budget for all its waits: every look-up answers busy once with 4 seconds to wait, so only the first few are waited for and the rest are the next pass's.
+    const busy = new Set<string>();
+    const many = teams((url) => {
+      if (url.pathname === '/v1.0/me/onlineMeetings' && !busy.has(url.search)) {
+        busy.add(url.search);
+        return { status: 429, json: {}, headers: { 'retry-after': '4' } };
+      }
+      return graph()(url);
+    });
+    await codeOf(many.adapter.list(CREDENTIAL, SINCE));
+    expect(many.sleeps.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(15_000);
   });
 
   it('skips one meeting whose files are refused or gone, and fails the whole call for a token or a busy service', async () => {
