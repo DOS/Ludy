@@ -121,14 +121,36 @@ export const formOk = (s: InputsState) =>
   dayOk(s.unpaidLeaveDays) && bhxhDayOk(s.sicknessBhxhDays) && bhxhDayOk(s.maternityBhxhDays) && dayOk(s.daysNotEmployed) && (s.workedHours === '' || hoursOk(s.workedHours)) && (s.pieceCount === '' || workUnitsOk(s.pieceCount)) && amountOk(s.bonus) && amountOk(s.retroPay) && amountOk(s.advance) && amountOk(s.offsetDeduction) && hoursOk(s.nightHours) && (s.contractTermMonths === '' || /^\d{1,2}$/.test(s.contractTermMonths)) &&
   s.overtime.every((o) => hoursOk(o.hours)) && s.allowances.every((a) => a.label.trim() !== '' && amountOk(a.amount)) && s.deductions.every((d) => d.label.trim() !== '' && amountOk(d.amount));
 
-export function Breakdown({ line, money }: { line: HrLineView; money: Money }) {
+export function splitBonusAndRetroPay(
+  b: PayrollBreakdown,
+  inputs: Record<string, unknown>,
+): { bonus: string; retroPay: string } {
+  if (typeof b.pay.retroPay === 'string') {
+    return { bonus: b.pay.bonus, retroPay: b.pay.retroPay };
+  }
+  const inputRetro = typeof inputs.retroPay === 'string' ? inputs.retroPay : '0';
+  if (!money(inputRetro).greaterThan(0)) {
+    return { bonus: b.pay.bonus, retroPay: '0' };
+  }
+  const rawBonus = typeof inputs.bonus === 'string' ? toMoney(money(inputs.bonus)) : '0';
+  const retro = money(b.pay.bonus).minus(money(rawBonus));
+  if (retro.greaterThan(0)) {
+    return { bonus: rawBonus, retroPay: toMoney(retro) };
+  }
+  return { bonus: b.pay.bonus, retroPay: '0' };
+}
+
+const isPositiveMoney = (value: string): boolean => money(value).greaterThan(0);
+
+export function Breakdown({ line, money: formatMoney }: { line: HrLineView; money: Money }) {
   const t = useTranslations('hrPayroll');
   const b = line.breakdown as unknown as PayrollBreakdown | null;
   if (!b) return <p className="text-sm text-muted-foreground">{line.refusal ?? t('noBreakdown')}</p>;
-  const row = (label: string, value: string, key: string) => (
-    <div key={key} className="flex justify-between gap-4 py-0.5">
+  const { bonus: bonusAmount, retroPay: retroPayAmount } = splitBonusAndRetroPay(b, line.inputs);
+  const row = (label: string, value: string, key: string, testId?: string) => (
+    <div key={key} className="flex justify-between gap-4 py-0.5" data-testid={testId}>
       <dt className="text-muted-foreground">{label}</dt>
-      <dd className="tabular-nums">{money(value, 'VND')}</dd>
+      <dd className="tabular-nums">{formatMoney(value, 'VND')}</dd>
     </div>
   );
   const f = line.figures;
@@ -140,7 +162,8 @@ export function Breakdown({ line, money }: { line: HrLineView; money: Money }) {
         {b.pay.allowances.map((a, i) => row(a.label, a.paid, `a${i}`))}
         {b.pay.overtime.map((o, i) => row(t('bd.overtime', { kind: t(`dayKind.${o.dayKind}`), hours: o.hours }), o.pay, `o${i}`))}
         {b.pay.nightWork && row(t('bd.night', { hours: b.pay.nightWork.hours }), b.pay.nightWork.pay, 'night')}
-        {row(t('bd.bonus'), b.pay.bonus, 'bonus')}
+        {row(t('bd.bonus'), bonusAmount, 'bonus')}
+        {isPositiveMoney(retroPayAmount) && row(t('bd.retroPay'), retroPayAmount, 'retroPay', 'hr-breakdown-retro-pay')}
         {row(t('bd.unpaidReduction'), b.pay.unpaidReduction, 'unpaid')}
         {b.pay.sicknessBhxhReduction && b.pay.sicknessBhxhReduction !== '0' && row(t('bd.sicknessBhxhReduction'), b.pay.sicknessBhxhReduction, 'sicknessBhxh')}
         {b.pay.maternityBhxhReduction && b.pay.maternityBhxhReduction !== '0' && row(t('bd.maternityBhxhReduction'), b.pay.maternityBhxhReduction, 'maternityBhxh')}
@@ -436,8 +459,9 @@ export function Payslip({ lineId, onClose }: { lineId: string; onClose: () => vo
   if (q.error) return <ErrorText>{errorMessage(q.error)}</ErrorText>;
   const p: HrPayslip = q.data;
   const b = p.breakdown as unknown as PayrollBreakdown;
-  const line = (label: string, value: string, key: string) => (
-    <tr key={key}>
+  const { bonus: bonusAmount, retroPay: retroPayAmount } = splitBonusAndRetroPay(b, p.inputs);
+  const line = (label: string, value: string, key: string, testId?: string) => (
+    <tr key={key} data-testid={testId}>
       <td className="py-1 pr-6">{label}</td>
       <td className="py-1 text-right tabular-nums">{f.money(value, 'VND')}</td>
     </tr>
@@ -465,7 +489,8 @@ export function Payslip({ lineId, onClose }: { lineId: string; onClose: () => vo
           {b.pay.allowances.map((a, i) => line(a.label, a.paid, `a${i}`))}
           {b.pay.overtime.map((o, i) => line(t('bd.overtime', { kind: t(`dayKind.${o.dayKind}`), hours: o.hours }), o.pay, `o${i}`))}
           {b.pay.nightWork && line(t('bd.night', { hours: b.pay.nightWork.hours }), b.pay.nightWork.pay, 'night')}
-          {line(t('bd.bonus'), b.pay.bonus, 'bonus')}
+          {line(t('bd.bonus'), bonusAmount, 'bonus')}
+          {money(retroPayAmount).greaterThan(0) && line(t('bd.retroPay'), retroPayAmount, 'retroPay', 'hr-payslip-retro-pay')}
           {b.pay.sicknessBhxhReduction && b.pay.sicknessBhxhReduction !== '0' && line(t('bd.sicknessBhxhReduction'), b.pay.sicknessBhxhReduction, 'sicknessBhxh')}
           {b.pay.maternityBhxhReduction && b.pay.maternityBhxhReduction !== '0' && line(t('bd.maternityBhxhReduction'), b.pay.maternityBhxhReduction, 'maternityBhxh')}
           {line(t('gross'), p.figures.gross, 'gross')}
@@ -805,6 +830,8 @@ const REASON_BADGE_VARIANT: Record<HrPayrollDiffReason, 'success' | 'destructive
   leave_change: 'warning',
   allowance_change: 'secondary',
   deduction_change: 'outline',
+  retro_pay: 'brand',
+  offset_deduction: 'warning',
 };
 
 export function formatSignedMoney(f: { money: Money }, value: string): string {
@@ -1113,9 +1140,13 @@ export function Sheet({ runId, approvedRuns, onBack }: { runId: string; approved
   const [thirteenthOpen, setThirteenthOpen] = useState(false);
   const [accept, setAccept] = useState(false);
   const [days, setDays] = useState('');
+  const [stage6bSkippedCount, setStage6bSkippedCount] = useState(0);
   const recalc = useMutation({
     mutationFn: () => client.hr.payroll.runs.recalculate({ runId, ...(days !== '' ? { workingDays: days } : {}) }),
-    onSuccess: refresh,
+    onSuccess: async (res) => {
+      setStage6bSkippedCount(res?.skippedManualOverrideLines ?? 0);
+      await refresh();
+    },
   });
   const approve = useMutation({
     mutationFn: (fingerprint: string) => client.hr.payroll.runs.approve({ runId, fingerprint, acceptFlags: accept }),
@@ -1140,9 +1171,14 @@ export function Sheet({ runId, approvedRuns, onBack }: { runId: string; approved
     },
   });
   const syncStage6b = useMutation({
-    mutationFn: () => client.hr.payroll.runs.syncStage6b({ runId }),
+    mutationFn: (resetManualOverridesForLineId?: string) =>
+      client.hr.payroll.runs.syncStage6b({
+        runId,
+        ...(resetManualOverridesForLineId ? { resetManualOverridesForLineId } : {}),
+      }),
     onMutate: () => setEditing(null),
-    onSuccess: async () => {
+    onSuccess: async (res) => {
+      setStage6bSkippedCount(res?.skippedManualOverrideLines ?? 0);
       setAccept(false);
       setEditing(null);
       await refresh();
@@ -1190,9 +1226,9 @@ export function Sheet({ runId, approvedRuns, onBack }: { runId: string; approved
                 variant="outline"
                 size="sm"
                 className="max-md:min-h-11"
-                loading={syncStage6b.isPending}
-                disabled={editing !== null || approve.isPending}
-                onClick={() => syncStage6b.mutate()}
+                loading={syncStage6b.isPending && syncStage6b.variables === undefined}
+                disabled={editing !== null || approve.isPending || syncStage6b.isPending}
+                onClick={() => syncStage6b.mutate(undefined)}
                 data-testid="hr-sync-stage6b"
               >
                 {t('syncStage6b')}
@@ -1248,6 +1284,15 @@ export function Sheet({ runId, approvedRuns, onBack }: { runId: string; approved
       {syncLeave.error && <ErrorText>{errorMessage(syncLeave.error)}</ErrorText>}
       {syncOvertime.error && <ErrorText>{errorMessage(syncOvertime.error)}</ErrorText>}
       {syncStage6b.error && <ErrorText>{errorMessage(syncStage6b.error)}</ErrorText>}
+      {draft && stage6bSkippedCount > 0 && (
+        <p
+          role="status"
+          className="mb-3 rounded-md border border-warning/40 bg-warning/10 p-3 text-xs font-medium text-warning"
+          data-testid="hr-sync-stage6b-override-notice"
+        >
+          {t('stage6b.syncSkippedManualOverride', { count: String(stage6bSkippedCount) })}
+        </p>
+      )}
       {draft && s.obstacles.includes('refused_lines') && <ErrorText>{t('refusedLines')}</ErrorText>}
       {payslip && <Payslip key={payslip} lineId={payslip} onClose={() => setPayslip(null)} />}
       {adjusting && <AdjustForm sheet={s} approvedRuns={approvedRuns} onClose={() => setAdjusting(false)} />}
@@ -1281,7 +1326,7 @@ export function Sheet({ runId, approvedRuns, onBack }: { runId: string; approved
                   </Badge>
                 )}
                 {l.flags.map((x) => {
-                  const variant = x === 'work_permit_expiring' ? 'warning' : x === 'bhxh_suspended_regime' || x === 'non_resident_flat_pit' ? 'secondary' : 'destructive';
+                  const variant = x === 'work_permit_expiring' || x === 'stage6b_manual_override' ? 'warning' : x === 'bhxh_suspended_regime' || x === 'non_resident_flat_pit' ? 'secondary' : 'destructive';
                   return (
                     <Badge key={x} className="ml-2" variant={variant} data-testid="hr-flag">
                       {t(`flag.${x}`)}
@@ -1316,6 +1361,38 @@ export function Sheet({ runId, approvedRuns, onBack }: { runId: string; approved
                     <p className="mt-2 text-xs text-muted-foreground" data-testid="hr-annual-leave-exceeded">
                       {t('annualLeaveExceededDetail', { days: l.exceededAnnualDays })}
                     </p>
+                  )}
+                  {draft && l.stage6bManualOverrides && l.stage6bManualOverrides.length > 0 && (
+                    <div
+                      role="status"
+                      className="mt-3 space-y-2 rounded-md border border-warning/40 bg-warning/10 p-3 text-xs"
+                      data-testid="hr-line-stage6b-override-warning"
+                    >
+                      <p className="font-medium text-warning">{t('stage6b.lineManualOverrideTitle')}</p>
+                      <ul className="list-disc space-y-0.5 pl-4 text-foreground">
+                        {l.stage6bManualOverrides.map((ov) => (
+                          <li key={ov.field} data-testid={`hr-line-stage6b-override-${ov.field}`}>
+                            {t('stage6b.lineManualOverrideItem', {
+                              field: t(`in.${ov.field}`),
+                              lineAmount: f.money(ov.lineAmount, 'VND'),
+                              approvedAmount: f.money(ov.approvedAmount, 'VND'),
+                            })}
+                          </li>
+                        ))}
+                      </ul>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="max-md:min-h-11"
+                        loading={syncStage6b.isPending && syncStage6b.variables === l.id}
+                        disabled={syncStage6b.isPending || approve.isPending}
+                        onClick={() => syncStage6b.mutate(l.id)}
+                        data-testid="hr-line-stage6b-restore-sync"
+                      >
+                        {t('stage6b.restoreLineSyncBtn')}
+                      </Button>
+                    </div>
                   )}
                   <div className="mt-3 flex flex-wrap gap-2">
                     {l.kind === 'pay' && l.status === 'calculated' && (

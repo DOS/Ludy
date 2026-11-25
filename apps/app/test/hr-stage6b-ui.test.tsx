@@ -5,13 +5,16 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  vietnamToday,
   type HrAdvanceRequestView,
   type HrAdjustmentItemView,
+  type HrPayslip,
   type HrRunSheet,
   type HrSelfAdvanceListResult,
   type HrSelfTripListResult,
   type HrTripRequestView,
 } from '@ludy/kernel-contract';
+import type { PayrollBreakdown } from '@ludy/l10n-vn';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
 
@@ -55,6 +58,7 @@ vi.mock('../src/lib/api.ts', async () => {
       },
     },
     queryClient: cache.current,
+    getCurrentOrg: () => 'acme',
     errorMessage: (e: unknown) => String(e),
     isStepUpRequired: () => false,
   };
@@ -65,7 +69,8 @@ const {
   HrSelfAdvanceTripCards,
   HrStage6bApprovalQueues,
 } = await import('../src/components/hr-stage6b-cards.tsx');
-const { InputsForm, Sheet, buildLineInputsUpdatePayload, stateOf } = await import('../src/routes/hr-payroll.tsx');
+const { Breakdown, InputsForm, Payslip, Sheet, buildLineInputsUpdatePayload, splitBonusAndRetroPay, stateOf } = await import('../src/routes/hr-payroll.tsx');
+const { SelfPayslipDetail } = await import('../src/routes/hr-my.tsx');
 const { I18nProvider } = await import('../src/i18n/provider.tsx');
 const { setActiveLocale } = await import('../src/i18n/runtime.ts');
 
@@ -406,11 +411,240 @@ describe('HR Stage 6B UI & i18n (#4527)', () => {
     expect(nonDraftPanelHtml).toContain('hr-adj-nondraft-notice');
   });
 
+  it('surfaces proactive locked-month hints in self-submit form and L1 queue (#4597)', () => {
+    const currentMonth = vietnamToday().slice(0, 7);
+    const ownLockedAdv: HrAdvanceRequestView = {
+      id: '00000000-0000-7000-8000-000000000961',
+      legalEntityId: LE_ID,
+      employeeId: EMP_ID,
+      employeeName: 'Trần Thị Mai',
+      departmentId: DEPT_ID,
+      departmentName: 'Kỹ thuật',
+      month: currentMonth,
+      amount: '1000000',
+      reason: 'Ứng lương tháng đã chốt',
+      status: 'pending_l1',
+      l1ApproverUserId: null,
+      l1ActedAt: null,
+      finalActedBy: null,
+      finalActedAt: null,
+      decisionNote: null,
+      payrollRunId: null,
+      createdAt: '2026-11-10T08:00:00.000Z',
+      updatedAt: '2026-11-10T08:00:00.000Z',
+      canApproveL1: false,
+      canApproveFinal: false,
+      canCancel: true,
+      payrollRunLocked: true,
+    };
+    const l1LockedAdv: HrAdvanceRequestView = {
+      ...ownLockedAdv,
+      id: '00000000-0000-7000-8000-000000000962',
+      employeeId: '00000000-0000-7000-8000-000000000999',
+      employeeName: 'Lê Văn Hùng',
+      canApproveL1: true,
+      canCancel: false,
+      payrollRunLocked: true,
+    };
+    cache.current.setQueryData(['hr', 'self', 'salaryAdvance', 'list', { limit: 100 }], {
+      employeeId: EMP_ID,
+      employeeName: 'Trần Thị Mai',
+      departmentId: DEPT_ID,
+      lockedMonths: [currentMonth],
+      items: [ownLockedAdv],
+      l1Queue: [l1LockedAdv],
+    } satisfies HrSelfAdvanceListResult);
+    cache.current.setQueryData(['hr', 'self', 'businessTrips', 'list', { limit: 100 }], {
+      employeeId: EMP_ID,
+      employeeName: 'Trần Thị Mai',
+      departmentId: DEPT_ID,
+      items: [],
+      l1Queue: [],
+    } satisfies HrSelfTripListResult);
+
+    for (const locale of ['vi', 'en'] as const) {
+      const html = wrap(<HrSelfAdvanceTripCards linked={true} />, locale);
+      expect(html).toContain('data-testid="hr-self-advance-month-locked"');
+      expect(html).toContain('aria-describedby="adv-month-locked-notice"');
+      expect(html).toContain('data-testid="hr-self-advance-item-locked"');
+      expect(html).toContain('data-testid="hr-self-advance-l1-item-locked"');
+      // L1 approve button hidden when locked, while reject button remains available.
+      expect(html).not.toContain('data-testid="hr-self-advance-l1-item-l1"');
+      expect(html).toContain('data-testid="hr-self-advance-l1-item-reject"');
+      // Semantic tokens only, zero raw Tailwind color utilities.
+      expect(html).not.toContain('bg-amber-');
+      expect(html).not.toContain('bg-red-');
+    }
+  });
+
+  it('renders stage6b_manual_override flag badge and dedicated retroPay breakdown/payslip lines (#4597)', () => {
+    const newBreakdown: PayrollBreakdown = {
+      pay: {
+        baseWage: '10000000',
+        allowances: [],
+        otherRegularPay: '0',
+        unpaidReduction: '0',
+        sicknessBhxhReduction: '0',
+        maternityBhxhReduction: '0',
+        hourlyRate: null,
+        overtime: [],
+        nightWork: null,
+        bonus: '500000',
+        retroPay: '800000',
+      },
+      insurance: {
+        insurablePay: '10000000',
+        suspended: null,
+        bounds: [],
+        funds: [],
+        unionFee: '200000',
+      },
+      tax: {
+        mode: 'progressive',
+        exemptMealCash: '0',
+        exemptOvertime: '0',
+        exemptNightWork: '0',
+        taxableIncome: '11300000',
+        incomeAfterInsurance: '10250000',
+        personalDeduction: '11000000',
+        dependentsCounted: 0,
+        dependentDeduction: '0',
+        pensionDeduction: '0',
+        assessableIncome: '0',
+        slices: [],
+        flatPercent: null,
+      },
+      deductions: { advance: '1000000', damage: '0', other: '200000', total: '1200000' },
+    };
+
+    // New breakdown keeps bonus and retroPay separated directly.
+    expect(splitBonusAndRetroPay(newBreakdown, { bonus: '500000', retroPay: '800000' })).toEqual({
+      bonus: '500000',
+      retroPay: '800000',
+    });
+    // Legacy breakdown (pre-#4597, retroPay folded into pay.bonus) reconstructs separate bonus & retroPay.
+    const { retroPay: _omitted, ...legacyPayBase } = newBreakdown.pay;
+    const legacyBreakdown: PayrollBreakdown = {
+      ...newBreakdown,
+      pay: { ...legacyPayBase, bonus: '1300000' },
+    };
+    expect(splitBonusAndRetroPay(legacyBreakdown, { bonus: '500000', retroPay: '800000' })).toEqual({
+      bonus: '500000',
+      retroPay: '800000',
+    });
+
+    const lineId = '00000000-0000-7000-8000-000000000971';
+    const sheet: HrRunSheet = {
+      run: {
+        id: RUN_ID,
+        legalEntityId: LE_ID,
+        employerName: 'Công ty Ludy',
+        month: '2026-11',
+        status: 'draft',
+        workingDays: '26',
+        approvedAt: null,
+      },
+      lines: [
+        {
+          id: lineId,
+          employeeId: EMP_ID,
+          employeeName: 'Nguyễn Văn A',
+          kind: 'pay',
+          status: 'calculated',
+          refusal: null,
+          inputs: {
+            unpaidLeaveDays: '0',
+            sicknessBhxhDays: '0',
+            maternityBhxhDays: '0',
+            daysNotEmployed: '0',
+            bonus: '500000',
+            retroPay: '800000',
+            advance: '1000000',
+            advanceFromRequests: false,
+            offsetDeduction: '200000',
+            nightHours: '0',
+            overtime: [],
+            allowances: [],
+            deductions: [],
+          },
+          figures: {
+            gross: '11300000',
+            employeeInsurance: '1050000',
+            employerInsurance: '2150000',
+            unionFee: '200000',
+            taxableIncome: '11300000',
+            pit: '0',
+            net: '9050000',
+            employerCost: '13650000',
+          },
+          breakdown: newBreakdown as unknown as Record<string, unknown>,
+          checks: [],
+          flags: ['stage6b_manual_override'],
+          stage6bManualOverrides: [{ field: 'advance', lineAmount: '1000000', approvedAmount: '1500000' }],
+          note: null,
+          adjustsMonth: null,
+        },
+      ],
+      totals: {
+        gross: '11300000',
+        employeeInsurance: '1050000',
+        employerInsurance: '2150000',
+        unionFee: '200000',
+        taxableIncome: '11300000',
+        pit: '0',
+        net: '9050000',
+        employerCost: '13650000',
+      },
+      rules: [],
+      blocking: [],
+      approvable: false,
+      fingerprint: '0'.repeat(64),
+      obstacles: [],
+    };
+    cache.current.setQueryData(['hr', 'payroll', 'runs', 'sheet', { runId: RUN_ID }], sheet);
+    cache.current.setQueryData(['hr', 'payroll', 'runs', 'list', { limit: 100 }], []);
+    cache.current.setQueryData(['hr', 'payroll', 'adjustments', 'list', { legalEntityId: LE_ID, month: '2026-11', limit: 100 }], []);
+
+    const sheetHtml = wrap(<Sheet runId={RUN_ID} approvedRuns={[]} onBack={() => undefined} />, 'vi');
+    expect(sheetHtml).toContain(viMessages.hrPayroll.flag.stage6b_manual_override);
+
+    const breakdownHtml = wrap(<Breakdown line={sheet.lines[0]!} money={(v) => `${v ?? '0'} ₫`} />, 'vi');
+    expect(breakdownHtml).toContain('data-testid="hr-breakdown-retro-pay"');
+    expect(breakdownHtml).toContain(viMessages.hrPayroll.bd.retroPay);
+    expect(breakdownHtml).toContain('800000 ₫');
+
+    const payslipData: HrPayslip = {
+      lineId,
+      runId: RUN_ID,
+      month: '2026-11',
+      status: 'approved',
+      employerName: 'Công ty Ludy',
+      employeeName: 'Nguyễn Văn A',
+      inputs: sheet.lines[0]!.inputs,
+      figures: sheet.lines[0]!.figures!,
+      breakdown: newBreakdown as unknown as Record<string, unknown>,
+    };
+    cache.current.setQueryData(['hr', 'payroll', 'lines', 'payslip', { lineId }], payslipData);
+    cache.current.setQueryData(['hr', 'self', 'payslips', 'get', { lineId }], payslipData);
+
+    const payslipEnHtml = wrap(<Payslip lineId={lineId} onClose={() => undefined} />, 'en');
+    expect(payslipEnHtml).toContain('data-testid="hr-payslip-retro-pay"');
+    expect(payslipEnHtml).toContain(en.hrPayroll.bd.retroPay);
+
+    const selfPayslipViHtml = wrap(<SelfPayslipDetail lineId={lineId} onClose={() => undefined} initialExplained={true} />, 'vi');
+    expect(selfPayslipViHtml).toContain('data-testid="hr-my-payslip-retro-pay"');
+    expect(selfPayslipViHtml).toContain(viMessages.hrPayroll.bd.retroPay);
+    expect(selfPayslipViHtml).toContain('1.300.000');
+  });
+
   it('contains Stage 6B translation namespaces in both vi and en without em/en dashes', () => {
     for (const bundle of [viMessages, en]) {
       const stage6b = JSON.stringify({
         today: bundle.today.items.hr,
         payroll: bundle.hrPayroll.stage6b,
+        flags: bundle.hrPayroll.flag.stage6b_manual_override,
+        retroPay: bundle.hrPayroll.bd.retroPay,
+        diffReasons: bundle.hrPayroll.diff.reasons,
         queues: bundle.hrEmployees.stage6bQueues,
         my: bundle.hrMy.stage6b,
       });

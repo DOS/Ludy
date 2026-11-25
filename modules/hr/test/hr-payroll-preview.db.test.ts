@@ -13,10 +13,12 @@ import { createOrg, kernelCommands, kernelManifest, kernelQueries, upsertIdentit
 import {
   HR_ERASED_NAME,
   zHrPayrollInputs,
+  type HrAdjustmentActionResult,
   type HrLeaveWritten,
   type HrPayrollPreviewDiff,
   type HrRunSheet,
   type HrRunWritten,
+  type HrSelfAdvanceSubmitResult,
   type HrWritten,
   type LegalEntity,
 } from '@ludy/kernel-contract';
@@ -313,6 +315,82 @@ describe('computePayrollDiff pure unit tests (#4445)', () => {
     expect(r2.hasRefused).toBe(true);
     expect(r2.current).toBeNull();
     expect(r2.grossDelta).toBe('-20000000');
+  });
+
+  it('emits dedicated retro_pay and offset_deduction reasons without noisy deduction_change false positives (#4597)', () => {
+    const prior = makeSnapshot(
+      '2026-09',
+      [makeSourceLine({ employeeId: 'e1' }), makeSourceLine({ employeeId: 'e2' }), makeSourceLine({ employeeId: 'e3' })],
+      { runId: 'run-sep', status: 'approved' },
+    );
+    const current = makeSnapshot(
+      '2026-10',
+      [
+        // e1: retro pay only -> retro_pay without false salary_change or deduction_change
+        makeSourceLine({
+          employeeId: 'e1',
+          inputs: zHrPayrollInputs.parse({ retroPay: '800000' }),
+          figures: {
+            gross: '20800000',
+            employeeInsurance: '2100000',
+            employerInsurance: '4300000',
+            unionFee: '400000',
+            taxableIncome: '20800000',
+            pit: '380000',
+            net: '18320000',
+            employerCost: '25500000',
+          },
+        }),
+        // e2: offset deduction only -> offset_deduction without noisy deduction_change
+        makeSourceLine({
+          employeeId: 'e2',
+          inputs: zHrPayrollInputs.parse({ offsetDeduction: '250000' }),
+          figures: {
+            gross: '20000000',
+            employeeInsurance: '2100000',
+            employerInsurance: '4300000',
+            unionFee: '400000',
+            taxableIncome: '20000000',
+            pit: '300000',
+            net: '17350000',
+            employerCost: '24700000',
+          },
+        }),
+        // e3: salary advance + offset deduction -> both deduction_change and offset_deduction
+        makeSourceLine({
+          employeeId: 'e3',
+          inputs: zHrPayrollInputs.parse({ advance: '500000', offsetDeduction: '200000' }),
+          figures: {
+            gross: '20000000',
+            employeeInsurance: '2100000',
+            employerInsurance: '4300000',
+            unionFee: '400000',
+            taxableIncome: '20000000',
+            pit: '300000',
+            net: '16900000',
+            employerCost: '24700000',
+          },
+        }),
+      ],
+      { runId: null, status: null },
+    );
+    const diff = computePayrollDiff({
+      mode: 'projected',
+      legalEntityId: 'entity-1',
+      legalEntityName: 'Công ty Thử Nghiệm',
+      month: '2026-10',
+      current,
+      prior,
+      employees: new Map([
+        ['e1', { displayName: 'Nhân viên 1', erased: false }],
+        ['e2', { displayName: 'Nhân viên 2', erased: false }],
+        ['e3', { displayName: 'Nhân viên 3', erased: false }],
+      ]),
+      includeUnchanged: false,
+    });
+    expect(diff.rows.find((r) => r.employeeId === 'e1')?.reasons).toEqual(['retro_pay']);
+    expect(diff.rows.find((r) => r.employeeId === 'e2')?.reasons).toEqual(['offset_deduction']);
+    expect(diff.rows.find((r) => r.employeeId === 'e3')?.reasons).toEqual(['deduction_change', 'offset_deduction']);
   });
 });
 
@@ -653,6 +731,89 @@ suite('hr.payroll.preview_diff on PostgreSQL 17 (#4445)', () => {
         expect(row.row_text).not.toContain('24000000');
         expect(row.row_text).not.toContain('20000000');
       }
+    } finally {
+      setRuleStatus('commentary');
+    }
+  });
+
+  it('includes approved Stage 6B advances, retro_pay, and offset_deduction in projected preview with explicit diff reasons and zero writes (#4597)', async () => {
+    setRuleStatus('confirmed');
+    try {
+      const org = await setupOrg('Công ty preview 6B');
+      const empA = await org.hire('Nguyễn Văn A', '2026-01-01', '10000000');
+      const empB = await org.hire('Trần Thị B', '2026-01-01', '10000000');
+      await adminPool.query(
+        `UPDATE ludy_hr.payroll_employee SET user_id = $1 WHERE org_id = $2 AND id = $3`,
+        [org.member, org.orgId, empA.employeeId],
+      );
+
+      // Finalize 2026-09 baseline run.
+      const runSep = await org.open('2026-09');
+      const sepSheet = await org.sheet(runSep.runId);
+      await org.approve(runSep.runId, sepSheet.fingerprint, true);
+
+      // Submit PENDING Stage 6B items for 2026-10 -> projected preview must IGNORE pending rows!
+      const pendingAdv = await org.exec<HrSelfAdvanceSubmitResult>(org.member, 'hr.self.salary_advance.submit', {
+        month: '2026-10',
+        amount: '500000',
+        reason: 'Tạm ứng tháng 10',
+      });
+      const pendingRetro = await org.exec<HrAdjustmentActionResult>(org.admin, 'hr.payroll.adjustment.create', {
+        employeeId: empA.employeeId,
+        month: '2026-10',
+        kind: 'retro_pay',
+        amount: '800000',
+        reason: 'Truy lĩnh tháng trước',
+      });
+      const pendingOffset = await org.exec<HrAdjustmentActionResult>(org.admin, 'hr.payroll.adjustment.create', {
+        employeeId: empB.employeeId,
+        month: '2026-10',
+        kind: 'offset_deduction',
+        amount: '200000',
+        reason: 'Bù trừ tạm ứng công tác',
+      });
+
+      const beforeApprove = await org.query<HrPayrollPreviewDiff>(org.owner, 'hr.payroll.preview_diff', {
+        month: '2026-10',
+      });
+      expect(beforeApprove.mode).toBe('projected');
+      expect(beforeApprove.rows).toHaveLength(0);
+      expect(beforeApprove.unchangedCount).toBe(2);
+
+      // Approve all three Stage 6B items -> projected preview now reflects them with zero payroll_run writes.
+      await org.exec(org.owner, 'hr.salary_advance.approve_final', { requestId: pendingAdv.requestId });
+      await org.exec(org.owner, 'hr.payroll.adjustment.approve', { itemId: pendingRetro.itemId });
+      await org.exec(org.owner, 'hr.payroll.adjustment.approve', { itemId: pendingOffset.itemId });
+
+      const runsBefore = await adminPool.query<{ c: string }>(
+        `SELECT COUNT(*)::text AS c FROM ludy_hr.payroll_run WHERE org_id = $1`,
+        [org.orgId],
+      );
+      const afterApprove = await org.query<HrPayrollPreviewDiff>(org.owner, 'hr.payroll.preview_diff', {
+        month: '2026-10',
+      });
+      const runsAfter = await adminPool.query<{ c: string }>(
+        `SELECT COUNT(*)::text AS c FROM ludy_hr.payroll_run WHERE org_id = $1`,
+        [org.orgId],
+      );
+      expect(runsAfter.rows[0]?.c).toBe(runsBefore.rows[0]?.c);
+      expect(afterApprove.mode).toBe('projected');
+      expect(afterApprove.unchangedCount).toBe(0);
+
+      const rowA = afterApprove.rows.find((r) => r.employeeId === empA.employeeId)!;
+      expect(rowA.reasons).toEqual(['deduction_change', 'retro_pay']);
+      expect(rowA.grossDelta).toBe('800000');
+      expect(rowA.otherDeductionDelta).toBe('500000');
+
+      const rowB = afterApprove.rows.find((r) => r.employeeId === empB.employeeId)!;
+      expect(rowB.reasons).toEqual(['offset_deduction']);
+      expect(rowB.grossDelta).toBe('0');
+      expect(rowB.otherDeductionDelta).toBe('200000');
+      expect(rowB.netDelta).toBe('-200000');
+
+      expect(toMoney(money(afterApprove.deltas.grossDelta).minus(money(afterApprove.deltas.employeeDeductionDelta)))).toBe(
+        afterApprove.deltas.netDelta,
+      );
     } finally {
       setRuleStatus('commentary');
     }

@@ -12,7 +12,7 @@
 // could be confirmed by guessing after the person is erased. The fingerprint lives in the run's own approval record, which the org purge deletes.
 import { createHash } from 'node:crypto';
 import { sql } from 'kysely';
-import { money, ruleInForce, sum, toMoney, calculatePayroll, calculateThirteenthMonthSalary, countCompletedCalendarMonths, listRulesUsed, PAYROLL_RULES, PayrollRefusedError, type LeaveEntry, type PayrollCalculation, type PayrollEmployment, type PayrollMonthInputs, type RuleRef } from '@ludy/l10n-vn';
+import { money, ruleInForce, sum, toMoney, calculatePayroll, calculateThirteenthMonthSalary, countCompletedCalendarMonths, listRulesUsed, PAYROLL_RULES, PayrollRefusedError, type LeaveEntry, type PayrollBreakdown, type PayrollCalculation, type PayrollEmployment, type PayrollMonthInputs, type RuleRef } from '@ludy/l10n-vn';
 import type { MemberRole } from '@ludy/db';
 import {
   HR_DEFAULT_WORKING_DAYS,
@@ -32,6 +32,7 @@ import {
   zHrRunOpen,
   zHrRunRecalculate,
   zHrRunRef,
+  zHrRunSyncStage6b,
   zHrRunThirteenthMonthPreview,
   type HrCheck,
   type HrLineFlag,
@@ -45,6 +46,8 @@ import {
   type HrRunSheet,
   type HrRunSummary,
   type HrRunWritten,
+  type HrStage6bManualOverride,
+  type HrStage6bManualOverrideField,
   type HrThirteenthMonthPreviewResult,
   type HrThirteenthMonthPreviewRow,
 } from '@ludy/kernel-contract';
@@ -184,6 +187,21 @@ export function figuresOf(person: Person, inputs: HrPayrollInputs, month: string
           { id: capRule.id, kind: capRule.kind, key: capRule.key, effectiveFrom: capRule.effectiveFrom, status: capRule.status },
         ].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
       : c.rulesUsed;
+    // Keep statutory BHXH/PIT calculation untouched (retroPay folds into PIT-taxable bonus outside BHXH base until accountant #61/#2535 confirms),
+    // while storing a dedicated retroPay breakdown line so payslips display bonus and retroactive pay separately.
+    const regularBonus = toMoney(money(inputs.bonus));
+    const retroPayBreakdown = toMoney(money(c.breakdown.pay.bonus).minus(money(regularBonus)));
+    const storedBreakdown: PayrollBreakdown =
+      money(inputs.retroPay).greaterThan(0) || money(retroPayBreakdown).greaterThan(0)
+        ? {
+            ...c.breakdown,
+            pay: {
+              ...c.breakdown.pay,
+              bonus: regularBonus,
+              retroPay: retroPayBreakdown,
+            },
+          }
+        : c.breakdown;
     return {
       status: 'calculated',
       gross: c.gross,
@@ -194,7 +212,7 @@ export function figuresOf(person: Person, inputs: HrPayrollInputs, month: string
       pit: c.pit,
       net: c.net,
       employer_cost: c.employerCost,
-      breakdown: JSON.stringify(c.breakdown),
+      breakdown: JSON.stringify(storedBreakdown),
       checks: JSON.stringify(checks),
       rules_used: JSON.stringify(rulesUsed),
       refusal: null,
@@ -523,54 +541,105 @@ export async function loadApprovedStage6bByEmployee(
   return result;
 }
 
-function syncStage6bPatch(
-  parsed: HrPayrollInputs,
-  approved: Stage6bApprovedSummary | undefined,
-): {
+export interface Stage6bSyncPatchResult {
   patch: Partial<HrPayrollInputs>;
   advanceIds: string[];
   adjustmentIds: string[];
   changed: boolean;
-} {
+  syncedFields: HrStage6bManualOverrideField[];
+  skippedManualOverrideFields: HrStage6bManualOverrideField[];
+  manualOverrides: HrStage6bManualOverride[];
+}
+
+export function syncStage6bPatch(
+  parsed: HrPayrollInputs,
+  approved: Stage6bApprovedSummary | undefined,
+  options?: { resetManualOverrides?: boolean },
+): Stage6bSyncPatchResult {
   const patch: Partial<HrPayrollInputs> = {};
   const advanceIds: string[] = [];
   const adjustmentIds: string[] = [];
+  const syncedFields: HrStage6bManualOverrideField[] = [];
+  const skippedManualOverrideFields: HrStage6bManualOverrideField[] = [];
+  const manualOverrides: HrStage6bManualOverride[] = [];
+  const reset = options?.resetManualOverrides === true;
   let changed = false;
 
+  const hasApprovedAdv = Boolean(approved && approved.advanceIds.length > 0);
   const targetAdv = approved?.advance ?? '0';
-  if (shouldSyncLineFlag(parsed.advanceFromRequests, parsed.advance)) {
-    const nextFrom: boolean | null = approved && approved.advanceIds.length > 0 ? true : null;
+  if (shouldSyncLineFlag(parsed.advanceFromRequests, parsed.advance) || (reset && hasApprovedAdv)) {
+    const nextFrom: boolean | null = hasApprovedAdv ? true : null;
     if (!money(parsed.advance).equals(targetAdv) || parsed.advanceFromRequests !== nextFrom) {
       patch.advance = targetAdv;
       patch.advanceFromRequests = nextFrom;
       changed = true;
     }
-    if (approved) advanceIds.push(...approved.advanceIds);
+    if (approved && hasApprovedAdv) {
+      advanceIds.push(...approved.advanceIds);
+      syncedFields.push('advance');
+    }
+  } else if (hasApprovedAdv) {
+    skippedManualOverrideFields.push('advance');
+    manualOverrides.push({
+      field: 'advance',
+      lineAmount: formatStage6bAmount(money(parsed.advance)),
+      approvedAmount: targetAdv,
+    });
   }
 
+  const hasApprovedRetro = Boolean(approved && approved.retroIds.length > 0);
   const targetRetro = approved?.retroPay ?? '0';
-  if (shouldSyncLineFlag(parsed.retroPayFromAdjustments, parsed.retroPay)) {
-    const nextFrom: boolean | null = approved && approved.retroIds.length > 0 ? true : null;
+  if (shouldSyncLineFlag(parsed.retroPayFromAdjustments, parsed.retroPay) || (reset && hasApprovedRetro)) {
+    const nextFrom: boolean | null = hasApprovedRetro ? true : null;
     if (!money(parsed.retroPay).equals(targetRetro) || parsed.retroPayFromAdjustments !== nextFrom) {
       patch.retroPay = targetRetro;
       patch.retroPayFromAdjustments = nextFrom;
       changed = true;
     }
-    if (approved) adjustmentIds.push(...approved.retroIds);
+    if (approved && hasApprovedRetro) {
+      adjustmentIds.push(...approved.retroIds);
+      syncedFields.push('retroPay');
+    }
+  } else if (hasApprovedRetro) {
+    skippedManualOverrideFields.push('retroPay');
+    manualOverrides.push({
+      field: 'retroPay',
+      lineAmount: formatStage6bAmount(money(parsed.retroPay)),
+      approvedAmount: targetRetro,
+    });
   }
 
+  const hasApprovedOffset = Boolean(approved && approved.offsetIds.length > 0);
   const targetOffset = approved?.offsetDeduction ?? '0';
-  if (shouldSyncLineFlag(parsed.offsetFromAdjustments, parsed.offsetDeduction)) {
-    const nextFrom: boolean | null = approved && approved.offsetIds.length > 0 ? true : null;
+  if (shouldSyncLineFlag(parsed.offsetFromAdjustments, parsed.offsetDeduction) || (reset && hasApprovedOffset)) {
+    const nextFrom: boolean | null = hasApprovedOffset ? true : null;
     if (!money(parsed.offsetDeduction).equals(targetOffset) || parsed.offsetFromAdjustments !== nextFrom) {
       patch.offsetDeduction = targetOffset;
       patch.offsetFromAdjustments = nextFrom;
       changed = true;
     }
-    if (approved) adjustmentIds.push(...approved.offsetIds);
+    if (approved && hasApprovedOffset) {
+      adjustmentIds.push(...approved.offsetIds);
+      syncedFields.push('offsetDeduction');
+    }
+  } else if (hasApprovedOffset) {
+    skippedManualOverrideFields.push('offsetDeduction');
+    manualOverrides.push({
+      field: 'offsetDeduction',
+      lineAmount: formatStage6bAmount(money(parsed.offsetDeduction)),
+      approvedAmount: targetOffset,
+    });
   }
 
-  return { patch, advanceIds, adjustmentIds, changed };
+  return {
+    patch,
+    advanceIds,
+    adjustmentIds,
+    changed,
+    syncedFields,
+    skippedManualOverrideFields,
+    manualOverrides,
+  };
 }
 
 async function linkSyncedStage6bRun(
@@ -816,6 +885,7 @@ export const runRecalculate = defineCommand({
     const linkedAdvIds: string[] = [];
     const linkedAdjIds: string[] = [];
     let added = 0;
+    let skippedManualOverrideLines = 0;
     for (const person of people) {
       const existing = byEmployee.get(person.employeeId);
       const approvedOt = overtimeByEmployee.get(person.employeeId) ?? [];
@@ -833,6 +903,9 @@ export const runRecalculate = defineCommand({
         const s6b = syncStage6bPatch(nextInputs, approvedStage6b);
         if (s6b.changed) {
           nextInputs = { ...nextInputs, ...s6b.patch };
+        }
+        if (s6b.skippedManualOverrideFields.length > 0) {
+          skippedManualOverrideLines += 1;
         }
         linkedAdvIds.push(...s6b.advanceIds);
         linkedAdjIds.push(...s6b.adjustmentIds);
@@ -881,8 +954,19 @@ export const runRecalculate = defineCommand({
         )
         .execute();
     }
-    ctx.audit({ runId: run.id, recalculated: people.length - added, added, removed: gone.length, workingDaysChanged: workingDays !== run.working_days });
-    return { runId: run.id, lines: people.length };
+    ctx.audit({
+      runId: run.id,
+      recalculated: people.length - added,
+      added,
+      removed: gone.length,
+      workingDaysChanged: workingDays !== run.working_days,
+      ...(skippedManualOverrideLines > 0 ? { skippedManualOverrideLines } : {}),
+    });
+    return {
+      runId: run.id,
+      lines: people.length,
+      ...(skippedManualOverrideLines > 0 ? { skippedManualOverrideLines } : {}),
+    };
   },
 });
 
@@ -1437,7 +1521,7 @@ export async function syncEmployeeDraftPayrollOvertime(
 
 export const runSyncStage6b = defineCommand({
   name: 'hr.payroll.run.sync_stage6b',
-  input: zHrRunRef,
+  input: zHrRunSyncStage6b,
   risk: 'R1',
   sideEffect: 'internal',
   access: MANAGERS,
@@ -1454,17 +1538,29 @@ export const runSyncStage6b = defineCommand({
     const meta = await loadRunMeta(ctx, input.runId);
     await lockOvertimeRun(ctx.trx, ctx.orgId, meta.legal_entity_id, meta.month);
     const { payRun, locked, byLineId, people } = await lockDraftLines(ctx, input.runId);
+    if (input.resetManualOverridesForLineId !== undefined) {
+      const targetRow = byLineId.get(input.resetManualOverridesForLineId);
+      if (!targetRow) throw lineNotFound();
+      if (!people.has(targetRow.employee_id)) {
+        throw new DomainError('HR_EMPLOYEE_NOT_PAID', 409, 'Nhân viên này không có lương trong tháng này');
+      }
+    }
     const paidEmployeeIds = [...new Set(locked.filter((l) => people.has(l.employee_id)).map((l) => l.employee_id))];
     const stage6bByEmployee = await loadApprovedStage6bByEmployee(ctx, paidEmployeeIds, payRun.month);
     const updates: { lineId: string; employmentId: string; inputs: HrPayrollInputs; figures: LineFigures }[] = [];
     const linkedAdvIds: string[] = [];
     const linkedAdjIds: string[] = [];
+    let skippedManualOverrideLines = 0;
     for (const row of locked) {
       if (!people.has(row.employee_id)) continue;
       const { line, person, existing } = resolveDraftLineTarget(byLineId, people, row.id);
-      const s6b = syncStage6bPatch(existing, stage6bByEmployee.get(line.employee_id));
+      const resetManualOverrides = input.resetManualOverridesForLineId === line.id;
+      const s6b = syncStage6bPatch(existing, stage6bByEmployee.get(line.employee_id), { resetManualOverrides });
       linkedAdvIds.push(...s6b.advanceIds);
       linkedAdjIds.push(...s6b.adjustmentIds);
+      if (s6b.skippedManualOverrideFields.length > 0) {
+        skippedManualOverrideLines += 1;
+      }
       if (!s6b.changed) continue;
       const contractTermPatch =
         person.terms.termMonths !== null && line.employment_id !== person.terms.id
@@ -1484,17 +1580,32 @@ export const runSyncStage6b = defineCommand({
     }
     await applyBatchLineUpdates(ctx, payRun.id, updates);
     await linkSyncedStage6bRun(ctx, payRun.id, linkedAdvIds, linkedAdjIds);
-    ctx.audit({ month: payRun.month, updatedLines: updates.length });
-    return { runId: payRun.id, lines: updates.length };
+    ctx.audit({
+      month: payRun.month,
+      updatedLines: updates.length,
+      ...(input.resetManualOverridesForLineId ? { resetManualOverridesForLineId: input.resetManualOverridesForLineId } : {}),
+      ...(skippedManualOverrideLines > 0 ? { skippedManualOverrideLines } : {}),
+    });
+    return {
+      runId: payRun.id,
+      lines: updates.length,
+      ...(skippedManualOverrideLines > 0 ? { skippedManualOverrideLines } : {}),
+    };
   },
 });
+
+export interface SyncEmployeeStage6bResult {
+  synced: boolean;
+  syncedFields: HrStage6bManualOverrideField[];
+  skippedFields: HrStage6bManualOverrideField[];
+}
 
 export async function syncEmployeeDraftPayrollStage6b(
   ctx: Ctx,
   legalEntityId: string,
   month: string,
   employeeId: string,
-): Promise<boolean> {
+): Promise<SyncEmployeeStage6bResult> {
   const payRun = await ctx.trx
     .selectFrom('ludy_hr.payroll_run')
     .select(['id', 'month', 'working_days'])
@@ -1504,7 +1615,7 @@ export async function syncEmployeeDraftPayrollStage6b(
     .where('status', '=', 'draft')
     .forUpdate()
     .executeTakeFirst();
-  if (!payRun) return false;
+  if (!payRun) return { synced: false, syncedFields: [], skippedFields: [] };
   const line = await ctx.trx
     .selectFrom('ludy_hr.payroll_line')
     .select(['id', 'employment_id', 'inputs'])
@@ -1514,15 +1625,21 @@ export async function syncEmployeeDraftPayrollStage6b(
     .where('kind', '=', 'pay')
     .forUpdate()
     .executeTakeFirst();
-  if (!line) return false;
+  if (!line) return { synced: false, syncedFields: [], skippedFields: [] };
+  const people = await peopleOf(ctx, legalEntityId, month);
+  const person = people.find((p) => p.employeeId === employeeId);
+  if (!person) return { synced: false, syncedFields: [], skippedFields: [] };
   const parsed = parseInputs(line.inputs);
   const stage6bByEmployee = await loadApprovedStage6bByEmployee(ctx, [employeeId], month);
   const s6b = syncStage6bPatch(parsed, stage6bByEmployee.get(employeeId));
   await linkSyncedStage6bRun(ctx, payRun.id, s6b.advanceIds, s6b.adjustmentIds);
-  if (!s6b.changed) return false;
-  const people = await peopleOf(ctx, legalEntityId, month);
-  const person = people.find((p) => p.employeeId === employeeId);
-  if (!person) return false;
+  if (!s6b.changed) {
+    return {
+      synced: s6b.syncedFields.length > 0,
+      syncedFields: s6b.syncedFields,
+      skippedFields: s6b.skippedManualOverrideFields,
+    };
+  }
   const contractTermPatch =
     person.terms.termMonths !== null && line.employment_id !== person.terms.id
       ? { contractTermMonths: person.terms.termMonths }
@@ -1534,7 +1651,11 @@ export async function syncEmployeeDraftPayrollStage6b(
   });
   const f = figuresOf(person, merged, payRun.month, payRun.working_days);
   await applyBatchLineUpdates(ctx, payRun.id, [{ lineId: line.id, employmentId: person.terms.id, inputs: merged, figures: f }]);
-  return true;
+  return {
+    synced: true,
+    syncedFields: s6b.syncedFields,
+    skippedFields: s6b.skippedManualOverrideFields,
+  };
 }
 
 // A signed correction of an approved month, carried in a draft run of a later month. The differences are typed; net and the employer's cost follow from them. A correction is never
@@ -1928,6 +2049,11 @@ export const runSheet = defineQuery({
       list.push({ kind: row.kind, month: row.month, days: row.days, approved: row.approved });
       leaveByEmployee.set(row.employee_id, list);
     }
+    const draft = run.status === 'draft';
+    const stage6bByEmployee =
+      draft && employeeIds.length > 0
+        ? await loadApprovedStage6bByEmployee(ctx, employeeIds, run.month)
+        : new Map<string, Stage6bApprovedSummary>();
     const today = vietnamDay(new Date());
     const start = monthStart(run.month);
     const end = monthEnd(run.month);
@@ -1943,6 +2069,7 @@ export const runSheet = defineQuery({
       const used = own.find((t) => t.id === l.employment_id);
       const flags: HrLineFlag[] = [];
       let exceededAnnualDays: string | undefined;
+      let stage6bManualOverrides: HrStage6bManualOverride[] | undefined;
       if (l.status === 'refused') flags.push('refused');
       if (checks.some((c) => c.id === 'minimum_wage' && !c.ok)) flags.push('check_minimum_wage');
       if (checks.some((c) => c.id === 'deduction_cap' && !c.ok)) flags.push('check_deduction_cap');
@@ -1983,6 +2110,13 @@ export const runSheet = defineQuery({
           }
         }
         const parsedLineInputs = parseInputs(l.inputs);
+        if (draft) {
+          const overrideCheck = syncStage6bPatch(parsedLineInputs, stage6bByEmployee.get(l.employee_id));
+          if (overrideCheck.manualOverrides.length > 0) {
+            flags.push('stage6b_manual_override');
+            stage6bManualOverrides = overrideCheck.manualOverrides;
+          }
+        }
         if (used?.contract_type === 'fixed_term' && l.status === 'refused' && parsedLineInputs.contractTermMonths === null) {
           flags.push('fixed_term_months_missing');
         }
@@ -2024,12 +2158,12 @@ export const runSheet = defineQuery({
         checks,
         flags,
         ...(exceededAnnualDays !== undefined ? { exceededAnnualDays } : {}),
+        ...(stage6bManualOverrides !== undefined ? { stage6bManualOverrides } : {}),
         note: l.note,
         adjustsMonth: l.adjusts_run_id ? (adjustedRuns.find((r) => r.id === l.adjusts_run_id)?.month ?? null) : null,
       };
     });
     const stored = run.approval as { rules?: HrRuleView[] } | null;
-    const draft = run.status === 'draft';
     const { used, blocking } = draft ? rulesOfLines(lines) : { used: stored?.rules ?? [], blocking: [] as HrRuleView[] };
     const obstacles: HrRunSheet['obstacles'] = [];
     if (lines.length === 0) obstacles.push('no_lines');

@@ -33,6 +33,7 @@ import {
   figuresOfLine,
   formatSyncUnpaidDays,
   initialInputsFor,
+  loadApprovedStage6bByEmployee,
   loadBhxhLeaveByEmployee,
   parseInputs,
   peopleOf,
@@ -336,6 +337,16 @@ function detectReasons(args: {
       reasons.add('salary_change');
     }
 
+    const retroPayChanged = !money(pIn.retroPay).equals(money(cIn.retroPay));
+    if (retroPayChanged) {
+      reasons.add('retro_pay');
+    }
+
+    const offsetDeductionChanged = !money(pIn.offsetDeduction).equals(money(cIn.offsetDeduction));
+    if (offsetDeductionChanged) {
+      reasons.add('offset_deduction');
+    }
+
     const pDeps = priorPay.breakdown?.dependentsCounted ?? null;
     const cDeps = currPay.breakdown?.dependentsCounted ?? null;
     const pTaxMode = priorPay.breakdown?.taxMode ?? null;
@@ -352,7 +363,7 @@ function detectReasons(args: {
       (pTaxMode !== null && cTaxMode !== null && pTaxMode !== cTaxMode) ||
       !priorAdj.insuranceAndPit.equals(currAdj.insuranceAndPit);
 
-    if (explicitDeductionChanged || (money(grossDelta).isZero() && nonZeroMoney(employeeDeductionDelta))) {
+    if (explicitDeductionChanged || (!offsetDeductionChanged && money(grossDelta).isZero() && nonZeroMoney(employeeDeductionDelta))) {
       reasons.add('deduction_change');
     }
   } else {
@@ -605,6 +616,7 @@ async function buildProjectedSnapshot(
   const lastInputs = new Map(prevMonthLines.map((b) => [b.employee_id, { employment_id: b.employment_id, inputs: b.inputs }]));
 
   const bhxhByEmployee = await loadBhxhLeaveByEmployee(ctx, employeeIds, month);
+  const stage6bByEmployee = await loadApprovedStage6bByEmployee(ctx, employeeIds, month);
   const unpaidEntries =
     employeeIds.length === 0
       ? []
@@ -629,7 +641,13 @@ async function buildProjectedSnapshot(
       hourlyRate: person.terms.hourlyRate,
       pieceRate: person.terms.pieceRate,
     });
-    const base = initialInputsFor(person, lastInputs.get(person.employeeId), bhxhByEmployee.get(person.employeeId));
+    const base = initialInputsFor(
+      person,
+      lastInputs.get(person.employeeId),
+      bhxhByEmployee.get(person.employeeId),
+      undefined,
+      stage6bByEmployee.get(person.employeeId),
+    );
     const unpaid = unpaidByEmployee.get(person.employeeId);
     const inputs: HrPayrollInputs =
       unpaid !== undefined ? { ...base, unpaidLeaveDays: unpaid, unpaidLeaveFromLedger: true } : base;
