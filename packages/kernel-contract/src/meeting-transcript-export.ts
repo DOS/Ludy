@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The transcript of a meeting as a file to keep (#4817, plan docs/plan/meetings-integrations.md): plain text ("speaker: line", each with its time) or SRT (timed captions), built on the server
+// The transcript of a meeting as a file to keep (#4817, plan docs/plan/meetings.md L19): plain text ("speaker: line", each with its time) or SRT (timed captions), built on the server
 // from the lines the caller reads, under the same reader rule as the transcript page (the recorder reads their draft, every other reader the published lines), so text that was redacted is
 // not in the file. The file comes back inside the answer as base64, so no download route is needed. This file holds the shapes and the limits both sides use; no database or network access here.
 import { z } from 'zod';

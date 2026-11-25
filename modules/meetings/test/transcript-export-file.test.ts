@@ -12,14 +12,18 @@ describe('times', () => {
     expect(clockText(3661)).toBe('01:01:01');
     expect(clockText(-5)).toBe('00:00:00');
     expect(srtTime(754)).toBe('00:12:34,000');
-    expect(srtTime(3661.0505)).toBe('01:01:01,051');
-    expect(srtTime(0.9996)).toBe('00:00:01,000');
+    expect(srtTime(3661.0505)).toBe('01:01:01,050');
+    // Cut, not rounded: the same second as the plain text's clock.
+    expect(srtTime(754.9)).toBe('00:12:34,900');
+    expect(srtTime(0.9996)).toBe('00:00:00,999');
+    expect(srtTime(1.001)).toBe('00:00:01,001');
   });
 });
 
 describe('cleaning', () => {
   it('turns a break into a space and drops hidden, bidirectional and lone-surrogate characters', () => {
     expect(cleanLine('a\n\nb\tc\r\nd')).toBe('a b c d');
+    expect(cleanLine('a\u000bb\u000cc\u0085d')).toBe('a b c d');
     expect(cleanLine('x\u202ey\u200bz\u2060 w')).toBe('xyz w');
     expect(cleanLine('ok\ud800 bad')).toBe('ok bad');
     expect(cleanLine('  \u200b  ')).toBe('');
@@ -48,6 +52,10 @@ describe('the SRT', () => {
   it('shows a line that ends where it starts (or before) for two seconds, and numbers only the cues that exist', () => {
     const srt = transcriptSrt([line(10, 10, 'Hà', 'a'), line(12, 11, 'Hà', ''), line(20, 25, 'Hà', 'b')]);
     expect(srt).toBe('1\n00:00:10,000 --> 00:00:12,000\nHà: a\n\n2\n00:00:20,000 --> 00:00:25,000\nHà: b\n\n');
+  });
+
+  it('gives a line that ends within the same millisecond as it starts two seconds', () => {
+    expect(transcriptSrt([line(10.0001, 10.0004, 'Hà', 'a')])).toBe('1\n00:00:10,000 --> 00:00:12,000\nHà: a\n\n');
   });
 
   it('cannot be made to start a second cue from inside a text', () => {

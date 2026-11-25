@@ -157,9 +157,12 @@ suite('The transcript as a file (#4817)', () => {
   it('leaves an audit row that names the meeting and holds none of its text', async () => {
     const id = await meeting({ title: 'Họp kiểm toán', readers: ['lan'] });
     await line(id, 1, 3, 'Hà', 'Zorbaxx không được vào nhật ký', 'published');
-    await download('lan', id, 'txt');
+    const file = await download('lan', id, 'txt');
     const audit = await sqlAdmin<{ row: string }>(`SELECT audit_event::text AS row FROM ludy_kernel.audit_event WHERE org_id = $1 AND audit_event::text LIKE '%meetings.transcript.download%' AND audit_event::text LIKE $2`, [orgId, `%${id}%`]);
     expect(audit.rows.length).toBeGreaterThan(0);
-    expect(audit.rows.map((r) => r.row).join('\n')).not.toContain('Zorbaxx');
+    const logged = audit.rows.map((r) => r.row).join('\n');
+    expect(logged).not.toContain('Zorbaxx');
+    // Nor the file's own base64 (the answer is never audited).
+    expect(logged).not.toContain(file.contentBase64.slice(0, 24));
   });
 });

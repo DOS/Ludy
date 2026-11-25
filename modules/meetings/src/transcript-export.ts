@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The transcript of a meeting as a file (#4817, plan docs/plan/meetings-integrations.md), the module's side.
+// The transcript of a meeting as a file (#4817, plan docs/plan/meetings.md L19), the module's side.
 //
 // meetings.transcript.download   the lines the caller may read, as plain text or SRT. A sensitive read: each one leaves an audit row naming the meeting, with no text in it.
 //

@@ -18,7 +18,7 @@ const LONE_SURROGATE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[
 /** One line as the file may hold it: a break or tab is a space, no other hidden character, no lone surrogate, whitespace runs one space. */
 export function cleanLine(raw: string): string {
   return raw
-    .replace(/[\r\n\t\u2028\u2029]+/gu, ' ')
+    .replace(/[\r\n\t\v\f\u0085\u2028\u2029]+/gu, ' ')
     .replace(HIDDEN, '')
     .replace(LONE_SURROGATE, '')
     .replace(/\s+/gu, ' ')
@@ -33,9 +33,11 @@ export function clockText(seconds: number): string {
   return `${pad(Math.floor(total / 3600), 2)}:${pad(Math.floor((total % 3600) / 60))}:${pad(total % 60)}`;
 }
 
-/** "HH:MM:SS,mmm" as SRT writes a time. */
+const wholeMs = (seconds: number): number => Math.max(0, Math.floor(seconds * 1000 + 1e-6));
+
+/** "HH:MM:SS,mmm" as SRT writes a time (cut, not rounded, so it agrees with the plain text's clock). */
 export function srtTime(seconds: number): string {
-  const ms = Math.max(0, Math.round(seconds * 1000));
+  const ms = wholeMs(seconds);
   return `${pad(Math.floor(ms / 3_600_000))}:${pad(Math.floor((ms % 3_600_000) / 60_000))}:${pad(Math.floor((ms % 60_000) / 1000))},${pad(ms % 1000, 3)}`;
 }
 
@@ -51,7 +53,7 @@ function cleaned(lines: readonly ExportLine[]): CleanLine[] {
     const text = cleanLine(line.text);
     if (text === '') continue;
     // A cue never ends before it starts: a line with no usable end is shown for two seconds.
-    const end = line.endSeconds > line.startSeconds ? line.endSeconds : line.startSeconds + 2;
+    const end = wholeMs(line.endSeconds) > wholeMs(line.startSeconds) ? line.endSeconds : line.startSeconds + 2;
     out.push({ start: line.startSeconds, end, who: cleanLine(line.speakerLabel), text });
   }
   return out;
