@@ -444,6 +444,92 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     expect(await mine(o, o.lan)).toContainEqual(expect.objectContaining({ id: recordingId, status: 'imported', meetingId }));
   });
 
+  it('refuses to begin the second row of a meeting offered twice (a key and the key plus ~transcript) while the first is on its way or done, for any caller of the definer (ADR-0055, #4943)', async () => {
+    const o = await org();
+    const c = await connect(o, o.lan);
+    const T = '~transcript';
+    await replace(o, c.connectionId, ['P', 'Q', 'R', 'S', 'W'].flatMap((k) => [listed(k), listed(`${k}${T}`, { hasAudio: false, hasTranscript: true })]));
+    const begun = async (key: string) => {
+      const recordingId = await idOf(key, c.connectionId);
+      const k = stagingKey();
+      await o.exec(o.lan, 'test.mp.begin', { recordingId, meetingId: await meetingFor(o, o.lan), stagingKey: k });
+      return { recordingId, stagingKey: k };
+    };
+    const tryBegin = async (key: string) => refuses(o.exec(o.lan, 'test.mp.begin', { recordingId: await idOf(key, c.connectionId), meetingId: await meetingFor(o, o.lan), stagingKey: stagingKey() }));
+    // The first row on its way: the other row of the pair is refused with its own code, from either side, and stays a suggestion (no meeting, no key).
+    await begun('P');
+    expect(await tryBegin(`P${T}`)).toBe('MEETING_PLATFORM_PAIR_TAKEN');
+    expect(await rowOf(`P${T}`, c.connectionId)).toMatchObject({ status: 'suggested', meeting_id: null, staging_key: null });
+    await begun(`Q${T}`);
+    expect(await tryBegin('Q')).toBe('MEETING_PLATFORM_PAIR_TAKEN');
+    expect(await rowOf('Q', c.connectionId)).toMatchObject({ status: 'suggested', meeting_id: null, staging_key: null });
+    // Every status that means "the call is taken" refuses the other row: the rows of the first are moved as the table owner would see them move.
+    const mv = (key: string, set: string, params: unknown[] = []) => sqlAdmin(`UPDATE ludy_kernel.meeting_platform_recording SET ${set} WHERE connection_id = $1 AND external_id = $2`, [c.connectionId, key, ...params]);
+    const meeting = await meetingFor(o, o.lan);
+    for (const status of ['staged', 'claimed']) {
+      await mv('P', `status = '${status}', staging_key = $3`, [stagingKey()]);
+      expect(await tryBegin(`P${T}`), status).toBe('MEETING_PLATFORM_PAIR_TAKEN');
+    }
+    await mv('P', "status = 'imported', staging_key = NULL, meeting_id = $3", [meeting]);
+    expect(await tryBegin(`P${T}`)).toBe('MEETING_PLATFORM_PAIR_TAKEN');
+    // A plain key is its own pair: the rows of another meeting are not held by the first's.
+    await begun('R');
+    expect(await rowOf('S', c.connectionId)).toMatchObject({ status: 'suggested' });
+    // A sibling that is only skipped or failed leaves the row free: dismissed, then a failed try (the worker's), then the row can be begun.
+    await o.exec(o.lan, 'kernel.meeting_platform.recording.dismiss', { recordingId: await idOf(`S${T}`, c.connectionId) });
+    expect(await tryBegin('S')).toBeNull();
+    const failed = await begun(`W${T}`);
+    expect(await o.sys('kernel.meeting_platform.import_failed', { recordingId: failed.recordingId, code: 'timeout', stagingKey: failed.stagingKey })).toMatchObject({ applied: 1 });
+    expect((await rowOf(`W${T}`, c.connectionId))?.status).toBe('failed');
+    expect(await tryBegin('W')).toBeNull();
+    // Another member's rows of the same keys (his own connection) are not held by this member's.
+    const cn = await connect(o, o.nam);
+    await replace(o, cn.connectionId, [listed('P'), listed(`P${T}`, { hasAudio: false, hasTranscript: true })]);
+    const theirs = await idOf(`P${T}`, cn.connectionId);
+    expect(await refuses(o.exec(o.nam, 'test.mp.begin', { recordingId: theirs, meetingId: await meetingFor(o, o.nam), stagingKey: stagingKey() }))).toBeNull();
+  });
+
+  it('makes the begin of one row of a meeting wait for the other row\'s begin in flight, then refuses it (the pair lock inside the definer, ADR-0055, #4943)', async () => {
+    // Deterministic: a second connection plays the first start of the occurrence's first row. It takes the pair lock the definer takes and puts that row on its way, then holds its transaction open. The begin of the
+    // other row must WAIT on the lock (it would pass if it read before the first commits), and once the first commits, see the row on its way and be refused.
+    const o = await org();
+    const c = await connect(o, o.lan);
+    const T = '~transcript';
+    await replace(o, c.connectionId, [listed('X'), listed(`X${T}`, { hasAudio: false, hasTranscript: true })]);
+    const first = await idOf('X', c.connectionId);
+    const second = await idOf(`X${T}`, c.connectionId);
+    const meetingOfFirst = await meetingFor(o, o.lan);
+    const holder = new pg.Client({ connectionString: adminUrl });
+    await holder.connect();
+    try {
+      await holder.query('BEGIN');
+      await holder.query('SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1, 0))', [`meetings.import.pair:${o.orgId}:${c.connectionId}:X`]);
+      await holder.query("UPDATE ludy_kernel.meeting_platform_recording SET status = 'importing', meeting_id = $2, staging_key = $3 WHERE id = $1", [first, meetingOfFirst, stagingKey()]);
+      let settled = false;
+      const waiting = refuses(o.exec(o.lan, 'test.mp.begin', { recordingId: second, meetingId: await meetingFor(o, o.lan), stagingKey: stagingKey() }));
+      void waiting.then(() => {
+        settled = true;
+      });
+      for (let i = 0; ; i++) {
+        const w = await sqlAdmin<{ n: number }>(
+          `SELECT count(*)::int AS n FROM pg_catalog.pg_locks l
+           WHERE l.locktype = 'advisory' AND NOT l.granted AND l.database = (SELECT oid FROM pg_catalog.pg_database WHERE datname = pg_catalog.current_database())`,
+        );
+        if ((w.rows[0]?.n ?? 0) > 0) break;
+        if (i >= 200) throw new Error('the begin of the second row never waited for the one in flight');
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      expect(settled).toBe(false);
+      await holder.query('COMMIT');
+      expect(await waiting).toBe('MEETING_PLATFORM_PAIR_TAKEN');
+    } finally {
+      await holder.query('ROLLBACK').catch(() => undefined);
+      await holder.end();
+    }
+    expect(await rowOf(`X${T}`, c.connectionId)).toMatchObject({ status: 'suggested', meeting_id: null, staging_key: null });
+    expect(await rowOf('X', c.connectionId)).toMatchObject({ status: 'importing' });
+  });
+
   it('a failed import can be tried again, a dismissed or failed suggestion can be dismissed, and the codes are the known ones', async () => {
     const o = await org();
     const c = await connect(o, o.lan);
