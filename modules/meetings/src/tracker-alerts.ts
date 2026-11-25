@@ -69,7 +69,8 @@ export const trackerAlertGet = defineQuery({
 export async function emitTrackerAlert(ctx: CommandContext, meetingId: string): Promise<void> {
   const row = await ctx.trx.selectFrom('ludy_meetings.meeting').select('id').where('org_id', '=', ctx.orgId).where('id', '=', meetingId).executeTakeFirst();
   if (!row) return;
-  await ctx.emit(TRACKER_ALERT_EVENT, zTrackerAlertEvent.parse({ meetingId }));
+  // The event type is a literal, as the job-egress analysis reads emits (the test below pins it to TRACKER_ALERT_EVENT).
+  await ctx.emit('meetings.tracker.alert', zTrackerAlertEvent.parse({ meetingId }));
 }
 
 // What the counting definer returned (a term id and a number each), the busiest words first (ties by id), at most TRACKER_ALERT_TERMS_MAX.

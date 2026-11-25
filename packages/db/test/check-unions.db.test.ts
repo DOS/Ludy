@@ -422,6 +422,7 @@ const UNIONS = unions({
   'ludy_meetings.meeting.consent_method': MEETING_CONSENT_METHODS,
   'ludy_meetings.meeting.recording_stop_reason': MEETING_RECORDING_STOP_REASONS,
   'ludy_meetings.meeting.summary_template': MEETING_SUMMARY_TEMPLATES,
+  'ludy_meetings.tracker_alert.language': MEETING_LANGUAGES,
   'ludy_meetings.capture_session.kind': MEETING_CAPTURE_KINDS,
   'ludy_meetings.capture_session.ended_reason': MEETING_CAPTURE_ENDED_REASONS,
   'ludy_meetings.chat_channel.kind': MEETING_CHAT_KINDS,

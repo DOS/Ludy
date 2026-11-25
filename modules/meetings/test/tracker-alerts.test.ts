@@ -2,10 +2,16 @@
 // What the alert does with the counts the counting definer returns (#4873): the busiest words first, at most five, none for a word that does not come up. The counting itself is held to the Trackers card's
 // (tracker-count.ts) by the database test, which runs the same fixtures through the SQL and through the TS.
 import { describe, expect, it } from 'vitest';
-import { encodeTrackerAlertTerms, parseTrackerAlertTerms, TRACKER_ALERT_TERMS_MAX } from '@ludy/kernel-contract';
+import { encodeTrackerAlertTerms, parseTrackerAlertTerms, TRACKER_ALERT_EVENT, TRACKER_ALERT_TERMS_MAX } from '@ludy/kernel-contract';
 import { topTrackerHits } from '../src/tracker-alerts.ts';
 
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+
+describe('the event type', () => {
+  it('is the literal the publish emits (the job-egress analysis reads emits by their literal)', () => {
+    expect(TRACKER_ALERT_EVENT).toBe('meetings.tracker.alert');
+  });
+});
 
 describe('topTrackerHits', () => {
   it('orders the words by how often they came up, the busiest first', () => {
