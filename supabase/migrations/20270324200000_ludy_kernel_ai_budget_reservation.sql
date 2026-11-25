@@ -4,11 +4,11 @@
 -- ludy_kernel.ai_budget_reservation  short-lived holds created inside Runtime.execute() under an org-scoped advisory
 --                                    transaction lock before an external AI provider call begins, released when
 --                                    record() commits org_usage, released immediately when a provider call fails,
---                                    and swept on expiry (10 minute TTL) so concurrent calls cannot slip past a
+--                                    and swept on expiry (15 minute TTL) so concurrent calls cannot slip past a
 --                                    hard_stop monthly budget together.
 -- ludy_kernel.ai_budget_reserved     active (unexpired) reserved amount for a budget scope ('org', 'module', 'agent').
 -- ludy_kernel.ai_budget_exhausted    restated to include active reservations alongside committed ai_budget_spent.
--- ludy_kernel.org_purge              restated from 20270323150000 with ludy_kernel.ai_budget_reservation added.
+-- ludy_kernel.org_purge              restated from 20270324190100 with ludy_kernel.ai_budget_reservation added.
 SET LOCAL lock_timeout = '2s';
 
 CREATE TABLE IF NOT EXISTS ludy_kernel.ai_budget_reservation (
@@ -66,7 +66,7 @@ REVOKE ALL ON FUNCTION ludy_kernel.ai_budget_exhausted(uuid, text, uuid)
   FROM PUBLIC, ludy_tenant, ludy_app, ludy_worker, ludy_definer_tenant;
 GRANT EXECUTE ON FUNCTION ludy_kernel.ai_budget_exhausted(uuid, text, uuid) TO ludy_tenant;
 
--- Restate ludy_kernel.org_purge from 20270323150000_ludy_kernel_org_purge_sign_deposit
+-- Restate ludy_kernel.org_purge from 20270324190100_ludy_kernel_org_purge_tracker_term
 -- with ludy_kernel.ai_budget_reservation added to v_kernel_first (issue #3979).
 CREATE OR REPLACE FUNCTION ludy_kernel.org_purge(p_min_days integer)
  RETURNS TABLE(outcome text, counts jsonb, blob_keys text[])
@@ -110,7 +110,7 @@ DECLARE
     'ludy_kernel.member_vy_memory', 'ludy_kernel.member_vy_result',
     'ludy_hr.candidate', 'ludy_hr.job_opening',
     'ludy_hr.payroll_bank_template', 'ludy_hr.payroll_dependent', 'ludy_hr.attendance_log', 'ludy_hr.attendance_qr_config', 'ludy_hr.onboarding_submission', 'ludy_hr.overtime_request', 'ludy_hr.probation_review', 'ludy_hr.leave_request', 'ludy_hr.payroll_leave_entry', 'ludy_hr.employee_asset_handover', 'ludy_hr.okr_key_result', 'ludy_hr.okr_objective', 'ludy_hr.payroll_employee', 'ludy_hr.department',
-    'ludy_meetings.glossary_term', 'ludy_meetings.minutes_template', 'ludy_meetings.chat_post_body', 'ludy_meetings.chat_post', 'ludy_meetings.chat_channel_target', 'ludy_meetings.chat_channel', 'ludy_meetings.morning_notice', 'ludy_meetings.calendar_agenda', 'ludy_meetings.capture_session', 'ludy_meetings.hook_delivery', 'ludy_meetings.member_hook', 'ludy_meetings.translation', 'ludy_meetings.meeting_note', 'ludy_meetings.media_key', 'ludy_meetings.action_item', 'ludy_meetings.meeting_result', 'ludy_meetings.transcript_segment', 'ludy_meetings.live_line', 'ludy_meetings.live_chunk', 'ludy_meetings.audio_segment', 'ludy_meetings.meeting_video', 'ludy_meetings.meeting_reader', 'ludy_meetings.meeting',
+    'ludy_meetings.tracker_term', 'ludy_meetings.glossary_term', 'ludy_meetings.minutes_template', 'ludy_meetings.chat_post_body', 'ludy_meetings.chat_post', 'ludy_meetings.chat_channel_target', 'ludy_meetings.chat_channel', 'ludy_meetings.morning_notice', 'ludy_meetings.calendar_agenda', 'ludy_meetings.capture_session', 'ludy_meetings.hook_delivery', 'ludy_meetings.member_hook', 'ludy_meetings.translation', 'ludy_meetings.meeting_note', 'ludy_meetings.media_key', 'ludy_meetings.action_item', 'ludy_meetings.meeting_result', 'ludy_meetings.transcript_segment', 'ludy_meetings.live_line', 'ludy_meetings.live_chunk', 'ludy_meetings.audio_segment', 'ludy_meetings.meeting_video', 'ludy_meetings.meeting_reader', 'ludy_meetings.meeting',
     'ludy_kernel.saved_reply', 'ludy_kernel.conversation_setting', 'ludy_kernel.member_availability', 'ludy_kernel.conversation_composing', 'ludy_kernel.conversation_draft', 'ludy_kernel.conversation_note', 'ludy_kernel.conversation_read', 'ludy_kernel.conversation_attachment', 'ludy_kernel.conversation_message', 'ludy_kernel.conversation', 'ludy_kernel.conversation_identity', 'ludy_kernel.channel_access',
     'ludy_ads.ad_flag_setting', 'ludy_ads.ad_campaign_request', 'ludy_ads.ad_campaign_draft', 'ludy_ads.ad_spend_cap', 'ludy_ads.ad_org_setting', 'ludy_ads.ad_sync_run', 'ludy_ads.ad_spend_day', 'ludy_ads.ad_account',
     'ludy_kernel.today_mail', 'ludy_kernel.saved_view', 'ludy_notes.link', 'ludy_notes.todo', 'ludy_notes.todo_list', 'ludy_notes.attachment', 'ludy_notes.note_version', 'ludy_notes.note', 'ludy_notes.notebook', 'ludy_notes.note_template',

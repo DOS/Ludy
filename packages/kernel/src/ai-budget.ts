@@ -9,7 +9,7 @@
 // The worker (as the system) and the API (as the member who asked) reserve against covering hard-stop budgets under an
 // org-scoped advisory transaction lock before a model call begins (@ludy/agent's metered(), through the AiMeter the
 // caller's scope carries), release that reservation atomically when recording what the call used, and release it early
-// if the call fails without usage (unsettled holds expire after 10 minutes). Nothing else is gated: posting, reading,
+// if the call fails without usage (unsettled holds expire after 15 minutes). Nothing else is gated: posting, reading,
 // approving, exports and the deterministic checks never ask.
 //
 // The worker's sweep tells the org's owners and admins once per budget, month and level when a budget crossed its
@@ -55,13 +55,23 @@ export type AiBudgetReserve =
 export async function lockAiBudgetOrg(
   trx: CommandContext["trx"],
   orgId: string,
-): Promise<void> {
+): Promise<string> {
   await sql`SET LOCAL lock_timeout = '3s'`.execute(trx);
-  await acquireAdvisoryXactLock(trx, advisoryLockKey("ai.budget", orgId));
+  const { rows } = await sql<{ id: string }>`
+    SELECT ${orgId}::uuid::text AS id`.execute(trx);
+  const canonicalOrgId = rows[0]?.id;
+  if (!canonicalOrgId) {
+    throw new Error("ai budget org canonicalization returned no row");
+  }
+  await acquireAdvisoryXactLock(
+    trx,
+    advisoryLockKey("ai.budget", canonicalOrgId),
+  );
+  return canonicalOrgId;
 }
 
 // Atomically sweeps expired holds, seeds defaultMonthlyBudget if permitted and missing, checks all covering hard-stop
-// policies against spent + reserved + projectedCost, and inserts a 10-minute reservation hold when admitted.
+// policies against spent + reserved + projectedCost, and inserts a 15-minute reservation hold when admitted.
 export async function reserveAiBudget(
   trx: CommandContext["trx"],
   params: {
@@ -75,11 +85,11 @@ export async function reserveAiBudget(
     allowDefaultSeed: boolean;
   },
 ): Promise<AiBudgetReserve> {
-  await lockAiBudgetOrg(trx, params.orgId);
+  const canonicalOrgId = await lockAiBudgetOrg(trx, params.orgId);
 
   await trx
     .deleteFrom("ludy_kernel.ai_budget_reservation")
-    .where("org_id", "=", params.orgId)
+    .where("org_id", "=", canonicalOrgId)
     .where("expires_at", "<=", sql<Date>`pg_catalog.now()`)
     .execute();
 
@@ -91,13 +101,13 @@ export async function reserveAiBudget(
     }>`
       SELECT
         (SELECT b.scope FROM ludy_kernel.budget_policy b
-         WHERE b.org_id = ${params.orgId}::uuid AND b.hard_stop
-           AND (b.scope = 'org' OR (b.scope = 'module' AND b.target = ${params.module}) OR (b.scope = 'agent' AND b.target = ${params.agentId}::text))
+         WHERE b.org_id = ${canonicalOrgId}::uuid AND b.hard_stop
+           AND (b.scope = 'org' OR (b.scope = 'module' AND b.target = ${params.module}) OR (b.scope = 'agent' AND b.target = ${params.agentId}::uuid::text))
            AND ludy_kernel.ai_budget_spent(b.org_id, b.scope, b.target)
              + ludy_kernel.ai_budget_reserved(b.org_id, b.scope, b.target)
              + ${params.projectedCost}::numeric >= b.monthly_limit
          ORDER BY CASE b.scope WHEN 'agent' THEN 0 WHEN 'module' THEN 1 ELSE 2 END LIMIT 1) AS scope,
-        EXISTS (SELECT 1 FROM ludy_kernel.budget_policy o WHERE o.org_id = ${params.orgId}::uuid AND o.scope = 'org') AS has_org,
+        EXISTS (SELECT 1 FROM ludy_kernel.budget_policy o WHERE o.org_id = ${canonicalOrgId}::uuid AND o.scope = 'org') AS has_org,
         ((pg_catalog.date_trunc('month', pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh') + pg_catalog.make_interval(months => 1)) AT TIME ZONE 'Asia/Ho_Chi_Minh') AS retry_at`.execute(
       trx,
     );
@@ -116,7 +126,7 @@ export async function reserveAiBudget(
     await trx
       .insertInto("ludy_kernel.budget_policy")
       .values({
-        org_id: params.orgId,
+        org_id: canonicalOrgId,
         scope: "org",
         target: "*",
         monthly_limit: params.defaultMonthlyBudget,
@@ -140,13 +150,13 @@ export async function reserveAiBudget(
   const inserted = await trx
     .insertInto("ludy_kernel.ai_budget_reservation")
     .values({
-      org_id: params.orgId,
+      org_id: canonicalOrgId,
       module: params.module,
       agent_id: params.agentId,
       actor_user_id: params.actorUserId,
       feature: params.feature,
       amount: params.projectedCost,
-      expires_at: sql<Date>`pg_catalog.now() + pg_catalog.make_interval(mins => 10)`,
+      expires_at: sql<Date>`pg_catalog.now() + pg_catalog.make_interval(mins => 15)`,
     })
     .returning("id")
     .executeTakeFirstOrThrow();
@@ -210,7 +220,7 @@ const checkQuery = (name: string, access: readonly MemberRole[] | "system") =>
       SELECT
         (SELECT b.scope FROM ludy_kernel.budget_policy b
          WHERE b.org_id = ${ctx.orgId}::uuid AND b.hard_stop
-           AND (b.scope = 'org' OR (b.scope = 'module' AND b.target = ${input.module}) OR (b.scope = 'agent' AND b.target = ${input.agentId}::text))
+           AND (b.scope = 'org' OR (b.scope = 'module' AND b.target = ${input.module}) OR (b.scope = 'agent' AND b.target = ${input.agentId}::uuid::text))
            AND ludy_kernel.ai_budget_spent(b.org_id, b.scope, b.target)
              + ludy_kernel.ai_budget_reserved(b.org_id, b.scope, b.target) >= b.monthly_limit
          ORDER BY CASE b.scope WHEN 'agent' THEN 0 WHEN 'module' THEN 1 ELSE 2 END LIMIT 1) AS scope,
@@ -397,7 +407,7 @@ async function coveringBudgets(
     FROM ludy_kernel.budget_policy b
     CROSS JOIN LATERAL (SELECT ludy_kernel.ai_budget_spent(b.org_id, b.scope, b.target) AS spent) s
     WHERE b.org_id = ${ctx.orgId}::uuid
-      AND (b.scope = 'org' OR (b.scope = 'module' AND b.target = ${module}) OR (b.scope = 'agent' AND b.target = ${agentId}::text))
+      AND (b.scope = 'org' OR (b.scope = 'module' AND b.target = ${module}) OR (b.scope = 'agent' AND b.target = ${agentId}::uuid::text))
     ORDER BY b.scope, b.target`.execute(ctx.trx);
   return rows;
 }

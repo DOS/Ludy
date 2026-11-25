@@ -13,7 +13,7 @@ import { sql } from 'kysely';
 import { z } from 'zod';
 import { tableWrite, zId } from '@ludy/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
-import { deleteAiBudgetReservation, reserveAiBudget, type AiBudgetReserve } from './ai-budget.ts';
+import { deleteAiBudgetReservation, lockAiBudgetOrg, reserveAiBudget, type AiBudgetReserve } from './ai-budget.ts';
 import { kernelManifest } from './manifest.ts';
 
 const MEMBER_ROLES = ['owner', 'admin', 'member', 'viewer'] as const;
@@ -615,6 +615,8 @@ export const memberVyMeterReserve = defineCommand({
       .executeTakeFirst();
     if (!agent || agent.status !== 'active') throw new DomainError('VY_NOT_ALLOWED', 403, 'Bạn chưa được phép làm việc với Vy');
     const module = MEMBER_VY_FEATURES[input.feature].module;
+    // Acquire the per-org AI budget lock before reading kill switches so switch + budget checks serialize cleanly.
+    await lockAiBudgetOrg(ctx.trx, ctx.orgId);
     const { blocked } = await checkMemberVyKillSwitches(ctx, module, agent.id);
     if (blocked) {
       ctx.audit({ feature: input.feature, module, agent: agent.id, allowed: false, scope: blocked.scope });

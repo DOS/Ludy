@@ -8,11 +8,12 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
+import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AiBudgetExhaustedError, metered, withAiScope, type AiMeter, type InvoiceReader } from '@ludy/agent';
 import { createDb, createPool, type Db } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
-import { WAITING_FOR_AI_BUDGET, createOrg, kernelCommands, kernelQueries, runAgentWake, upsertIdentity } from '@ludy/kernel';
+import { WAITING_FOR_AI_BUDGET, createOrg, kernelCommands, kernelQueries, lockAiBudgetOrg, runAgentWake, upsertIdentity } from '@ludy/kernel';
 import { Runtime, fileKey, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
 import { AI_BUDGET_RECHECK_MS, extractAndPropose, financeAgentPrograms, financeCommands, financeQueries } from '@ludy/mod-finance';
 import type { ExtractClient } from '@ludy/extract-contract';
@@ -416,18 +417,46 @@ suite('the AI budget meter on PostgreSQL (#2382)', () => {
       const meter = meterFactory(o);
 
       let inFlight = 0;
+      let admitted = 0;
+      let rejectedCount = 0;
       let releaseHold!: () => void;
       const holdOpen = new Promise<void>((resolve) => {
         releaseHold = resolve;
       });
+      let resolveAllDecided!: () => void;
+      const allDecided = new Promise<void>((resolve) => {
+        resolveAllDecided = resolve;
+      });
+      const checkDecided = () => {
+        if (admitted + rejectedCount === 4 && inFlight + rejectedCount === 4) {
+          resolveAllDecided();
+        }
+      };
+      const barrierMeter: AiMeter = {
+        admit: async (call) => {
+          try {
+            const reservationId = await meter.admit(call);
+            admitted += 1;
+            checkDecided();
+            return reservationId;
+          } catch (error) {
+            rejectedCount += 1;
+            checkDecided();
+            throw error;
+          }
+        },
+        record: (call, used, reservationId) => meter.record(call, used, reservationId),
+        ...(meter.release ? { release: (call, reservationId) => meter.release!(call, reservationId) } : {}),
+      };
 
       const resultsPromise = Promise.allSettled(
         Array.from({ length: 4 }, () =>
-          withAiScope({ orgId: o.orgId, meter }, () =>
+          withAiScope({ orgId: o.orgId, meter: barrierMeter }, () =>
             metered(
               'social.draft',
               async () => {
                 inFlight += 1;
+                checkDecided();
                 await holdOpen;
                 return { usage };
               },
@@ -438,15 +467,17 @@ suite('the AI budget meter on PostgreSQL (#2382)', () => {
         ),
       );
 
-      // Give all 4 concurrent calls time to run admit(); release barrier once admitted calls sit in flight.
-      const deadline = Date.now() + 3000;
-      while (inFlight < 2 && Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, 20));
+      let results: PromiseSettledResult<unknown>[];
+      try {
+        await allDecided;
+        expect(admitted).toBe(2);
+        expect(rejectedCount).toBe(2);
+        expect(inFlight).toBe(2);
+      } finally {
+        releaseHold();
+        results = await resultsPromise;
       }
-      await new Promise((r) => setTimeout(r, 100));
-      releaseHold();
 
-      const results = await resultsPromise;
       const fulfilled = results.filter((r) => r.status === 'fulfilled');
       const rejected = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
       expect(fulfilled).toHaveLength(2);
@@ -567,5 +598,66 @@ suite('the AI budget meter on PostgreSQL (#2382)', () => {
         ),
       ).rejects.toThrow(/check constraint|ai_budget_reservation_amount_check|numeric field overflow/);
     }
+
+    // Finding 1, 2, 4: canonicalize orgId before advisory lock, match uppercase agentId to lowercase budget_policy.target,
+    // and issue a 15-minute reservation lease so it outlasts 10-minute transcription calls.
+    const lockIdsFor = (candidateOrgId: string) =>
+      db.transaction().execute(async (trx) => {
+        const canonical = await lockAiBudgetOrg(trx, candidateOrgId);
+        const locks = await sql<{ classid: number; objid: number }>`
+          SELECT classid, objid FROM pg_catalog.pg_locks
+          WHERE locktype = 'advisory' AND pid = pg_catalog.pg_backend_pid()`.execute(trx);
+        return { canonical, locks: locks.rows };
+      });
+    const upperLock = await lockIdsFor(openOrg.orgId.toUpperCase());
+    const lowerLock = await lockIdsFor(openOrg.orgId.toLowerCase());
+    expect(upperLock.canonical).toBe(openOrg.orgId.toLowerCase());
+    expect(upperLock.locks).toHaveLength(1);
+    expect(upperLock.locks).toEqual(lowerLock.locks);
+
+    const { agentId } = await rt.execute<{ agentId: string }>(
+      'kernel.agent.template.install',
+      { templateKey: 'finance.chief_accountant' },
+      { actor: asMfa(openOrg.owner), orgId: openOrg.orgId },
+    );
+    await setBudget(openOrg, '0.005000', 'agent', agentId);
+    const upperAgentBlocked = await worker.execute<{ allowed: boolean; scope?: string }>(
+      'kernel.ai.budget.reserve',
+      { module: 'finance', agentId: agentId.toUpperCase(), feature: 'finance.invoice_extract', projectedCost: '0.005000' },
+      { actor: system, orgId: openOrg.orgId.toUpperCase() },
+    );
+    expect(upperAgentBlocked).toMatchObject({ allowed: false, scope: 'agent' });
+
+    const upperAgentHold = await worker.execute<{ allowed: true; reservationId: string }>(
+      'kernel.ai.budget.reserve',
+      { module: 'finance', agentId: agentId.toUpperCase(), feature: 'finance.invoice_extract', projectedCost: '0.004500' },
+      { actor: system, orgId: openOrg.orgId.toUpperCase() },
+    );
+    expect(upperAgentHold).toMatchObject({ allowed: true, reservationId: expect.any(String) });
+    const leaseLongEnough = await admin((c) =>
+      c
+        .query<{ ok: boolean }>(
+          `SELECT expires_at > pg_catalog.now() + pg_catalog.make_interval(mins => 14) AS ok
+           FROM ludy_kernel.ai_budget_reservation WHERE org_id = $1 AND id = $2`,
+          [openOrg.orgId, upperAgentHold.reservationId],
+        )
+        .then((r) => r.rows[0]?.ok),
+    );
+    expect(leaseLongEnough).toBe(true);
+    expect(
+      await worker.execute(
+        'kernel.ai.budget.release',
+        { reservationId: upperAgentHold.reservationId.toUpperCase() },
+        { actor: system, orgId: openOrg.orgId.toUpperCase() },
+      ),
+    ).toEqual({ released: true });
+    await worker.execute(
+      'kernel.ai.usage.record',
+      { feature: 'finance.invoice_extract', module: 'finance', agentId, inputTokens: 1000, outputTokens: 100, cost: '0.005000' },
+      { actor: system, orgId: openOrg.orgId },
+    );
+    expect(
+      await worker.query('kernel.ai.budget.check', { module: 'finance', agentId: agentId.toUpperCase() }, { actor: system, orgId: openOrg.orgId.toUpperCase() }),
+    ).toMatchObject({ allowed: false, scope: 'agent' });
   });
 });

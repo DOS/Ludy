@@ -306,13 +306,40 @@ suite('member Vy commands (ADR-0049 stage A slice 3)', () => {
 
     const price = { inputPerMTok: '3', outputPerMTok: '15' };
     const usage = { inputTokens: 1000, outputTokens: 100 };
-    const meter = memberMeter(runtime, asUser(users.alice), { price });
+    const baseMeter = memberMeter(runtime, asUser(users.alice), { price });
 
     let inFlight = 0;
+    let admitted = 0;
+    let rejectedCount = 0;
     let releaseHold!: () => void;
     const holdOpen = new Promise<void>((resolve) => {
       releaseHold = resolve;
     });
+    let resolveAllDecided!: () => void;
+    const allDecided = new Promise<void>((resolve) => {
+      resolveAllDecided = resolve;
+    });
+    const checkDecided = () => {
+      if (admitted + rejectedCount === 4 && inFlight + rejectedCount === 4) {
+        resolveAllDecided();
+      }
+    };
+    const meter: typeof baseMeter = {
+      admit: async (call) => {
+        try {
+          const reservationId = await baseMeter.admit(call);
+          admitted += 1;
+          checkDecided();
+          return reservationId;
+        } catch (error) {
+          rejectedCount += 1;
+          checkDecided();
+          throw error;
+        }
+      },
+      record: (call, used, reservationId) => baseMeter.record(call, used, reservationId),
+      ...(baseMeter.release ? { release: (call, reservationId) => baseMeter.release!(call, reservationId) } : {}),
+    };
 
     const settledPromise = Promise.allSettled(
       Array.from({ length: 4 }, () =>
@@ -321,6 +348,7 @@ suite('member Vy commands (ADR-0049 stage A slice 3)', () => {
             'notes.summary',
             async () => {
               inFlight += 1;
+              checkDecided();
               await holdOpen;
               return { usage };
             },
@@ -331,14 +359,17 @@ suite('member Vy commands (ADR-0049 stage A slice 3)', () => {
       ),
     );
 
-    const deadline = Date.now() + 3000;
-    while (inFlight < 2 && Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, 20));
+    let settled: PromiseSettledResult<unknown>[];
+    try {
+      await allDecided;
+      expect(admitted).toBe(2);
+      expect(rejectedCount).toBe(2);
+      expect(inFlight).toBe(2);
+    } finally {
+      releaseHold();
+      settled = await settledPromise;
     }
-    await new Promise((r) => setTimeout(r, 100));
-    releaseHold();
 
-    const settled = await settledPromise;
     expect(settled.filter((r) => r.status === 'fulfilled')).toHaveLength(2);
     const rejected = settled.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
     expect(rejected).toHaveLength(2);
