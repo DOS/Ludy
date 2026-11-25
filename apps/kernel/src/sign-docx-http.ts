@@ -101,7 +101,7 @@ export class ExpiringLruCache<T> {
     const entry = this.map.get(key);
     if (!entry) return undefined;
     if (entry.expiresAt <= now) {
-      this.map.delete(key);
+      this.pruneExpired(now);
       return undefined;
     }
     this.map.delete(key);
