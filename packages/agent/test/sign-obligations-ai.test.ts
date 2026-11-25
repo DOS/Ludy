@@ -1685,6 +1685,34 @@ describe('checkSignObligationExtract (#3821)', () => {
         expectedCurrency: 'PHP',
         rejectedValue: '10',
       },
+      {
+        title: 'Turkish Lira Prefix Symbol',
+        quote: '10 ₺500; equivalent: USD 10.',
+        expectedValue: '500',
+        expectedCurrency: 'TRY',
+        rejectedValue: '10',
+      },
+      {
+        title: 'Lowercase Article Before Capitalized Period',
+        quote: 'a Year 50 USD 10; equivalent: EUR 45.',
+        expectedValue: '50',
+        expectedCurrency: 'USD',
+        rejectedValue: '10',
+      },
+      {
+        title: 'Rate Preposition Before Period',
+        quote: 'per year 100 USD 50; equivalent: EUR 90.',
+        expectedValue: '100',
+        expectedCurrency: 'USD',
+        rejectedValue: '50',
+      },
+      {
+        title: 'Numeric Denominator After Currency',
+        quote: '100 EUR/24; equivalent: USD 110.',
+        expectedValue: '100',
+        expectedCurrency: 'EUR',
+        rejectedValue: '24',
+      },
     ];
     for (const testCase of hardeningCases) {
       const req: SignObligationExtractRequest = {
@@ -1729,6 +1757,89 @@ describe('checkSignObligationExtract (#3821)', () => {
           obligations: [],
         }).proposal?.contractValue,
       ).toBeNull();
+    }
+
+    const slashRateCrossCases: ReadonlyArray<{
+      readonly title: string;
+      readonly quote: string;
+      readonly accepted: ReadonlyArray<{ readonly value: string; readonly currency: string }>;
+      readonly rejected: ReadonlyArray<{ readonly value: string; readonly currency: string }>;
+    }> = [
+      {
+        title: 'Vietnamese Dong Slash Month Before USD',
+        quote: 'Phí: 500.000đ/tháng 200 USD',
+        accepted: [
+          { value: '500000', currency: 'VND' },
+          { value: '200', currency: 'USD' },
+        ],
+        rejected: [{ value: '200', currency: 'VND' }],
+      },
+      {
+        title: 'US Dollar Sign Slash Month Before EUR',
+        quote: 'Fee: 100 US$/month 200 EUR',
+        accepted: [
+          { value: '100', currency: 'USD' },
+          { value: '200', currency: 'EUR' },
+        ],
+        rejected: [{ value: '200', currency: 'USD' }],
+      },
+      {
+        title: 'Euros Word Slash Month Before USD',
+        quote: 'Fee: 100 euros/month 200 USD',
+        accepted: [
+          { value: '100', currency: 'EUR' },
+          { value: '200', currency: 'USD' },
+        ],
+        rejected: [{ value: '100', currency: 'USD' }],
+      },
+    ];
+    for (const testCase of slashRateCrossCases) {
+      const req: SignObligationExtractRequest = {
+        envelopeTitle: testCase.title,
+        pageCount: 1,
+        pages: [
+          {
+            page: 1,
+            text: `Bên B: Công ty ABC\n${testCase.quote}`,
+          },
+        ],
+      };
+      for (const expected of testCase.accepted) {
+        expect(
+          checkSignObligationExtract(req, {
+            counterpartyName: 'Công ty ABC',
+            effectiveDate: null,
+            expiryDate: null,
+            renewalNoticeDays: null,
+            autoRenew: false,
+            contractValue: expected.value,
+            currency: expected.currency,
+            citations: [
+              { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+              { field: 'contractValue', pageNumber: 1, quoteExcerpt: testCase.quote },
+            ],
+            obligations: [],
+          }).proposal,
+        ).toMatchObject({ contractValue: expected.value, currency: expected.currency });
+      }
+      for (const bad of testCase.rejected) {
+        expect(
+          checkSignObligationExtract(req, {
+            counterpartyName: 'Công ty ABC',
+            effectiveDate: null,
+            expiryDate: null,
+            renewalNoticeDays: null,
+            autoRenew: false,
+            contractValue: bad.value,
+            currency: bad.currency,
+            citations: [
+              { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+              { field: 'contractValue', pageNumber: 1, quoteExcerpt: testCase.quote },
+            ],
+            obligations: [],
+          }).proposal?.contractValue,
+        ).toBeNull();
+      }
     }
   });
 });

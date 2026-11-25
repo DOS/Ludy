@@ -2843,15 +2843,10 @@ function splitCurrencyClauses(preservedQuote: string): string[] {
     /\b(AUD|CAD|HKD|NZD|SGD|TWD|USD|US)[ \t]*[\r\n]+[ \t]*(?=\$)/gi,
     '$1 ',
   );
-  const separatedRateSuffixes = collapsedDollarBreaks
-    .replace(
-      /(?:^|(?<!\d))(\d+(?:[.,]\d+)*[ \t]*(?:[\p{L}]{2,4}|[$€£¥₫₩₹₽฿₱₺]))\/(year|yr|month|mo|quarter|qtr|week|wk|day|hour|hr|user|seat|unit|năm|nam|tháng|thang|quý|quy|tuần|tuan|ngày|ngay|giờ|gio|người|nguoi)(?![\p{L}\p{N}])/giu,
-      '$1 per $2; ',
-    )
-    .replace(
-      /(?<=[\p{L}$€£¥₫₩₹₽฿₱₺])\/(year|yr|month|mo|quarter|qtr|week|wk|day|hour|hr|user|seat|unit|năm|nam|tháng|thang|quý|quy|tuần|tuan|ngày|ngay|giờ|gio|người|nguoi)(?![\p{L}\p{N}])/giu,
-      ' per $1',
-    );
+  const separatedRateSuffixes = collapsedDollarBreaks.replace(
+    /(?<=[\p{L}\p{N}$€£¥₫₩₹₽฿₱₺])\/(year|yr|month|mo|quarter|qtr|week|wk|day|hour|hr|user|seat|unit|năm|nam|tháng|thang|quý|quy|tuần|tuan|ngày|ngay|giờ|gio|người|nguoi)(?![\p{L}\p{N}])(?![ \t]*[:=-])/giu,
+    ' per $1; ',
+  );
   const rawChunks = separatedRateSuffixes
     .split(/(?:[\r\n;|()]+|(?<!\d)\/|\/(?!\d))+|[ \t]+-[ \t]+|,\s+|\s+(?:or|and|và|hoặc|tương đương)\s+/iu)
     .map((part) => part.trim())
@@ -2940,7 +2935,7 @@ const LEFT_SUBYEAR_PERIOD_LABEL_RE =
   /(?:^|[^\p{L}])(?:month|mo|quarter|qtr|week|wk|day|tháng|thang|quý|quy|tuần|tuan|ngày|ngay)\.?\s*$/iu;
 const RATE_PREPOSITION_BEFORE_PERIOD_RE =
   /(?:^|[^\p{L}])(?:per|every|each|mỗi|moi|hàng|hang)\s+(?:year|yr|month|mo|quarter|qtr|week|wk|day|năm|nam|tháng|thang|quý|quy|tuần|tuan|ngày|ngay)\s*$/iu;
-const LOWERCASE_A_BEFORE_PERIOD_RE = /(?:^|[^\p{L}])a\s+(?:year|yr|month|mo|quarter|qtr|week|wk|day)\s*$/u;
+const ARTICLE_A_BEFORE_PERIOD_RE = /(?:^|[^\p{L}])(a)\s+(?:year|yr|month|mo|quarter|qtr|week|wk|day)\s*$/iu;
 const SMALL_ORDINAL_INT_RE = /^(?:0|[1-9]\d?)$/;
 const YEAR_ORDINAL_INT_RE = /^(?:[1-9]\d?|(?:19|20)\d{2})$/;
 
@@ -2955,7 +2950,8 @@ function isOrdinalLabelBeforeLeft(
   if (/(?:^|[^\p{L}\p{N}])#\s*$/.test(beforeLeftNum)) {
     return /^\d{1,3}$/.test(leftNumToken);
   }
-  if (RATE_PREPOSITION_BEFORE_PERIOD_RE.test(beforeLeftNum) || LOWERCASE_A_BEFORE_PERIOD_RE.test(beforeLeftNum)) {
+  const articleMatch = ARTICLE_A_BEFORE_PERIOD_RE.exec(beforeLeftNum);
+  if (RATE_PREPOSITION_BEFORE_PERIOD_RE.test(beforeLeftNum) || articleMatch?.[1] === 'a') {
     return false;
   }
   if (LEFT_YEAR_LABEL_RE.test(beforeLeftNum)) {
