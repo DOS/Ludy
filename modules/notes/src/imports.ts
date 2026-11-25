@@ -16,8 +16,10 @@ import {
   spreadKeys,
   zEnexImportCommand,
   zTodoistImportCommand,
+  type EnexImportNoteInput,
   type EnexImportResult,
   type NoteImportFailure,
+  type ParsedTodoistTask,
   type TodoListSection,
   type TodoistImportResult,
 } from '@ludy/kernel-contract';
@@ -28,6 +30,7 @@ import { resolveNotebookForNote } from './notes.ts';
 import { detailsOf, due, ownKeys, parseSections, remindAt } from './todos.ts';
 
 const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
+const INSERT_BATCH_SIZE = 200;
 
 function requireHumanUser(actor: CommandContext['actor']): string {
   if (actor.type !== 'user' || actor.extension) {
@@ -120,12 +123,25 @@ export const noteImportEnex = defineCommand({
       }
     }
 
+    for (const item of input.notes) {
+      for (const att of item.attachments) {
+        if (att.storageKey !== `notes/${ctx.orgId}/${att.attachmentId}`) {
+          throw new DomainError('INVALID', 400, 'Khóa lưu trữ tệp đính kèm không hợp lệ');
+        }
+      }
+    }
+
     const createdNoteIds: string[] = [];
     const createdNotebookIds: string[] = [];
     const createdNotebookIdSet = new Set<string>();
     const reusedNotebookIds = new Set<string>();
     const unusedStorageKeys: string[] = [];
-    let attachmentsCount = 0;
+    const pendingNotes: Array<{
+      item: EnexImportNoteInput;
+      notebookId: string | null;
+      createdAt: Date;
+      updatedAt: Date;
+    }> = [];
     let skippedDuplicates = 0;
 
     for (const item of input.notes) {
@@ -140,14 +156,12 @@ export const noteImportEnex = defineCommand({
         if (input.skipDuplicates && seenNoteKeys.has(noteDupKey)) {
           skippedDuplicates += 1;
           for (const att of item.attachments) {
-            if (att.storageKey === `notes/${ctx.orgId}/${att.attachmentId}`) {
-              unusedStorageKeys.push(att.storageKey);
-            }
+            unusedStorageKeys.push(att.storageKey);
           }
           continue;
         }
         seenNoteKeys.add(noteDupKey);
-        if (noteNotebookId !== null && targetNotebookId === null && !createdNotebookIdSet.has(noteNotebookId)) {
+        if (noteNotebookId !== null && !createdNotebookIdSet.has(noteNotebookId)) {
           reusedNotebookIds.add(noteNotebookId);
         }
       } else {
@@ -203,53 +217,83 @@ export const noteImportEnex = defineCommand({
       const createdAt = parseSanitizedTimestamp(item.createdAt, ctx.now, ctx.now);
       const rawUpdated = parseSanitizedTimestamp(item.updatedAt, createdAt, ctx.now);
       const updatedAt = rawUpdated.getTime() < createdAt.getTime() ? createdAt : rawUpdated;
+      pendingNotes.push({
+        item,
+        notebookId: noteNotebookId,
+        createdAt,
+        updatedAt,
+      });
+    }
 
-      const noteRow = await ctx.trx
+    const pendingAttachments: Array<{
+      org_id: string;
+      id: string;
+      note_id: string;
+      author_user_id: string;
+      filename: string;
+      content_type: string;
+      size_bytes: number;
+      sha256: string;
+      storage_key: string;
+      extracted_text: null;
+      extract_status: 'pending' | 'skipped';
+      created_at: Date;
+    }> = [];
+
+    for (let offset = 0; offset < pendingNotes.length; offset += INSERT_BATCH_SIZE) {
+      const chunk = pendingNotes.slice(offset, offset + INSERT_BATCH_SIZE);
+      const insertedNotes = await ctx.trx
         .insertInto('ludy_notes.note')
-        .values({
-          org_id: ctx.orgId,
-          author_user_id: userId,
-          notebook_id: noteNotebookId,
-          visibility: 'private',
-          title: item.title,
-          body: item.body,
-          tags: item.tags,
-          tainted: true,
-          created_at: createdAt,
-          updated_at: updatedAt,
-        })
+        .values(
+          chunk.map((entry) => ({
+            org_id: ctx.orgId,
+            author_user_id: userId,
+            notebook_id: entry.notebookId,
+            visibility: 'private' as const,
+            title: entry.item.title,
+            body: entry.item.body,
+            tags: entry.item.tags,
+            tainted: true,
+            created_at: entry.createdAt,
+            updated_at: entry.updatedAt,
+          })),
+        )
         .returning('id')
-        .executeTakeFirstOrThrow();
-      createdNoteIds.push(noteRow.id);
-
-      for (const att of item.attachments) {
-        const expectedKey = `notes/${ctx.orgId}/${att.attachmentId}`;
-        if (att.storageKey !== expectedKey) {
-          throw new DomainError('INVALID', 400, 'Khóa lưu trữ tệp đính kèm không hợp lệ');
-        }
-        await ctx.trx
-          .insertInto('ludy_notes.attachment')
-          .values({
+        .execute();
+      if (insertedNotes.length !== chunk.length) {
+        throw new Error('note batch insert count mismatch');
+      }
+      createdNoteIds.push(...insertedNotes.map((row) => row.id));
+      insertedNotes.forEach((row, i) => {
+        for (const att of chunk[i]!.item.attachments) {
+          pendingAttachments.push({
             org_id: ctx.orgId,
             id: att.attachmentId,
-            note_id: noteRow.id,
+            note_id: row.id,
             author_user_id: userId,
             filename: att.filename,
             content_type: att.contentType,
             size_bytes: att.sizeBytes,
             sha256: att.sha256,
-            storage_key: expectedKey,
+            storage_key: att.storageKey,
             extracted_text: null,
             extract_status: att.extractStatus,
             created_at: ctx.now,
-          })
-          .execute();
-        if (att.extractStatus === 'pending') {
-          await ctx.emit(NOTE_ATTACHMENT_EXTRACT_QUEUED_EVENT, { attachmentId: att.attachmentId });
+          });
         }
-        attachmentsCount += 1;
+      });
+    }
+
+    for (let offset = 0; offset < pendingAttachments.length; offset += INSERT_BATCH_SIZE) {
+      const chunk = pendingAttachments.slice(offset, offset + INSERT_BATCH_SIZE);
+      await ctx.trx.insertInto('ludy_notes.attachment').values(chunk).execute();
+    }
+    for (const att of pendingAttachments) {
+      if (att.extract_status === 'pending') {
+        await ctx.emit(NOTE_ATTACHMENT_EXTRACT_QUEUED_EVENT, { attachmentId: att.id });
       }
     }
+    const attachmentsCount = pendingAttachments.length;
 
     ctx.audit({
       importedNotes: createdNoteIds.length,
@@ -336,12 +380,17 @@ export const todoImportTodoist = defineCommand({
       }
     }
 
-    let ownSortRows = await ownKeys(ctx, null);
+    const ownSortRows = await ownKeys(ctx, null);
     let lastTodoSortKey = ownSortRows.at(-1)?.sort_key ?? null;
 
     const createdListIds: string[] = [];
     const updatedListIds = new Set<string>();
     const createdTodoIds: string[] = [];
+    const pendingTodos: Array<{
+      task: ParsedTodoistTask;
+      listId: string | null;
+      sectionId: string | null;
+    }> = [];
     let createdSections = 0;
     let checklistSteps = 0;
     let skippedDuplicates = 0;
@@ -354,7 +403,7 @@ export const todoImportTodoist = defineCommand({
       if (useTarget && targetListRow) {
         resolvedListId = targetListRow.id;
         const currentSections = parseSections(targetListRow.sections);
-        let nextSections = [...currentSections];
+        const nextSections = [...currentSections];
         let added = 0;
         for (const secName of parsedList.sections) {
           const existingSec = nextSections.find((s) => s.name.trim().toLowerCase() === secName.trim().toLowerCase());
@@ -479,55 +528,73 @@ export const todoImportTodoist = defineCommand({
           continue;
         }
         seenTodoKeys.add(dupKey);
+        const sectionId = task.sectionName ? (sectionIdByName.get(task.sectionName.trim().toLowerCase()) ?? null) : null;
+        pendingTodos.push({ task, listId: resolvedListId, sectionId });
+      }
+    }
 
-        let sortKey = keyBetween(lastTodoSortKey, null);
-        if (sortKey.length > REBALANCE_AT) {
-          const fresh = spreadKeys(ownSortRows.length + 1);
+    if (pendingTodos.length > 0) {
+      const pendingSortKeys: string[] = [];
+      for (let i = 0; i < pendingTodos.length; i += 1) {
+        const nextKey = keyBetween(lastTodoSortKey, null);
+        if (nextKey.length > REBALANCE_AT) {
+          const fresh = spreadKeys(ownSortRows.length + pendingTodos.length);
           if (ownSortRows.length > 0) {
             const ids = ownSortRows.map((r) => r.id);
             const keys = fresh.slice(0, ownSortRows.length);
             await sql`UPDATE ludy_notes.todo AS t SET sort_key = v.key
               FROM unnest(${ids}::uuid[], ${keys}::text[]) AS v(id, key)
               WHERE t.org_id = ${ctx.orgId}::uuid AND t.id = v.id`.execute(ctx.trx);
-            for (let i = 0; i < ownSortRows.length; i += 1) {
-              ownSortRows[i]!.sort_key = keys[i] as string;
-            }
           }
-          sortKey = fresh[ownSortRows.length] as string;
+          pendingSortKeys.length = 0;
+          for (let j = 0; j < pendingTodos.length; j += 1) {
+            pendingSortKeys.push(fresh[ownSortRows.length + j] as string);
+          }
+          break;
         }
+        pendingSortKeys.push(nextKey);
+        lastTodoSortKey = nextKey;
+      }
 
-        const sectionId = task.sectionName ? (sectionIdByName.get(task.sectionName.trim().toLowerCase()) ?? null) : null;
-        const when = due({ dueOn: task.dueOn, dueTime: task.dueTime, timeZone: task.timeZone });
-        const remind = remindAt('auto', when, ctx.now);
-        const insertedTodo = await ctx.trx
+      for (let offset = 0; offset < pendingTodos.length; offset += INSERT_BATCH_SIZE) {
+        const chunk = pendingTodos.slice(offset, offset + INSERT_BATCH_SIZE);
+        const insertedTodos = await ctx.trx
           .insertInto('ludy_notes.todo')
-          .values({
-            org_id: ctx.orgId,
-            owner_user_id: userId,
-            title: task.title,
-            details: detailsOf(task.details),
-            checklist: JSON.stringify(task.checklist),
-            priority: task.priority,
-            tags: task.tags,
-            list_id: resolvedListId,
-            section_id: sectionId,
-            ...when,
-            remind_at: remind.at,
-            reminded_at: remind.passed ? ctx.now : null,
-            sort_key: sortKey,
-            source_note_id: null,
-            recurrence: null,
-            tainted: true,
-            created_at: ctx.now,
-            updated_at: ctx.now,
-          })
+          .values(
+            chunk.map((entry, idx) => {
+              const when = due({ dueOn: entry.task.dueOn, dueTime: entry.task.dueTime, timeZone: entry.task.timeZone });
+              const remind = remindAt('auto', when, ctx.now);
+              return {
+                org_id: ctx.orgId,
+                owner_user_id: userId,
+                title: entry.task.title,
+                details: detailsOf(entry.task.details),
+                checklist: JSON.stringify(entry.task.checklist),
+                priority: entry.task.priority,
+                tags: entry.task.tags,
+                list_id: entry.listId,
+                section_id: entry.sectionId,
+                ...when,
+                remind_at: remind.at,
+                reminded_at: remind.passed ? ctx.now : null,
+                sort_key: pendingSortKeys[offset + idx] as string,
+                source_note_id: null,
+                recurrence: null,
+                tainted: true,
+                created_at: ctx.now,
+                updated_at: ctx.now,
+              };
+            }),
+          )
           .returning('id')
-          .executeTakeFirstOrThrow();
-
-        lastTodoSortKey = sortKey;
-        ownSortRows.push({ id: insertedTodo.id, sort_key: sortKey });
-        createdTodoIds.push(insertedTodo.id);
-        checklistSteps += task.checklist.length;
+          .execute();
+        if (insertedTodos.length !== chunk.length) {
+          throw new Error('todo batch insert count mismatch');
+        }
+        createdTodoIds.push(...insertedTodos.map((row) => row.id));
+        for (const entry of chunk) {
+          checklistSteps += entry.task.checklist.length;
+        }
       }
     }
 
