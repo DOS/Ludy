@@ -375,6 +375,8 @@ const AUTHOR_ONLY = new Map<string, string>([
   ['crove_meetings.meeting_result', 'false'],
   // Meeting videos (ADR-0047 point 2): worker system context reads and writes nothing.
   ['crove_meetings.meeting_video', 'false'],
+  // The recorder's links to the published minutes for people outside the org (#4822): written by the recorder and read by the org's members, users only; worker system context reads and writes nothing (the page's count is made by a definer).
+  ['crove_meetings.minutes_link', 'false'],
   // The recorder's published second-language version of a meeting's minutes (#4777): read by the meeting's readers, users only; worker system context reads and writes nothing.
   ['crove_meetings.minutes_version', 'false'],
   // A member's own morning notice setting (#3955): the member's alone; worker system context reads and writes nothing (its one reader is a definer).
