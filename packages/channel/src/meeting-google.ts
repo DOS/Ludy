@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Google Meet as a meeting platform (meetings integrations C2, issue #3174, plan docs/plan/meetings-integrations.md section 6.1): the TRANSCRIPT-ONLY half. The Meet REST API serves the text of a
+// Google Meet as a meeting platform (meetings integrations C2, issue #3174, plan docs/plan/meetings-integrations.md section 6.1): the transcript half, and, behind `recordings` (off), the recording half of the Picker route. The Meet REST API serves the text of a
 // conference's own transcript (`conferenceRecords.transcripts.entries`) with the sensitive scope `meetings.space.readonly`, so this adapter needs no Drive scope and no security assessment. The audio
 // path (the recording file in the organizer's Drive) is not read with a restricted scope: the owner chose the Picker route (2026-11-25, ADR-0025 amendment). It is built here behind `recordings`, which nothing sets yet:
 // the member picks one recording in Google Picker (`drive.file`) and the server then reads only that file. Without `recordings` this adapter is transcript only, as before.
@@ -30,7 +30,9 @@ export const GOOGLE_DRIVE_DOWNLOAD_HOST = 'www.googleapis.com';
 export const GOOGLE_DRIVE_REDIRECT_SUFFIX = 'googleusercontent.com';
 
 const API = 'https://meet.googleapis.com/v2';
-// Pages of conference records read per listing (100 each): the newest 300 conferences in the window are looked at, and at most MEETING_PLATFORM_LIST_MAX with a finished transcript are returned.
+// Pages of conference records read per listing (100 each): the newest 300 conferences in the window are looked at, and at most MEETING_PLATFORM_LIST_MAX with a finished transcript (or, with `recordings`, a finished recording) are returned.
+// With `recordings` a conference with no transcript costs one more call (its recordings), only for conferences from the last RECORDING_LOOKUP_DAYS days, and a failure of that call hides that recording for this pass, never the transcripts.
+const RECORDING_LOOKUP_DAYS = 14;
 const RECORD_PAGES = 3;
 const PAGE_SIZE = 100;
 const LOOKUP_PARALLEL = 4;
@@ -214,7 +216,7 @@ export class GoogleMeetAdapter implements MeetingPlatformAdapter, MeetingPlatfor
     return body;
   }
 
-  // The conferences of the member (as organizer, per Google's own rule) that ended at or after `since` and have a transcript Google finished writing. The recording file is not offered (no audio path).
+  // The conferences of the member (as organizer, per Google's own rule) that ended at or after `since` and have a transcript Google finished writing; with `recordings`, also those with no transcript at all and one finished recording file (the first by start time, then name: one recording per conference is offered).
   async list(credential: MeetingPlatformCredential, since: Date, signal?: AbortSignal): Promise<MeetingPlatformListed[]> {
     const records: { name: string; start: number; end: number; space: string | null }[] = [];
     let pageToken: string | null = null;
@@ -269,10 +271,13 @@ export class GoogleMeetAdapter implements MeetingPlatformAdapter, MeetingPlatfor
         // One conference that Google no longer shows must not hide the others.
         const body = await this.get(`${record.name}/transcripts`, { pageSize: '10' }, credential, signal, true);
         if (body === null) continue;
-        const done = (Array.isArray(body.transcripts) ? body.transcripts : []).map(object).find((t) => t !== null && t.state === 'FILE_GENERATED' && TRANSCRIPT_NAME.test(text(t.name) ?? '') && (text(t.name) ?? '').startsWith(`${record.name}/transcripts/`));
+        const transcripts = (Array.isArray(body.transcripts) ? body.transcripts : []).map(object).filter((t) => t !== null);
+        const done = transcripts.find((t) => t !== null && t.state === 'FILE_GENERATED' && TRANSCRIPT_NAME.test(text(t.name) ?? '') && (text(t.name) ?? '').startsWith(`${record.name}/transcripts/`));
         const name = text(done?.name);
         // A conference with a finished transcript is offered as its transcript (free, nothing to pick). Only one without it may be offered as its recording file, when the Picker route is on.
-        const recording = name === null && this.recordings ? await this.recordingOf(record.name, credential, signal) : null;
+        // A transcript Google is still writing means the conference will be offered as that transcript: its recording is not offered meanwhile, so a member never imports both.
+        const lookup = name === null && this.recordings && transcripts.length === 0 && record.start >= this.now().getTime() - RECORDING_LOOKUP_DAYS * 86_400_000;
+        const recording = lookup ? await this.recordingOf(record.name, credential, signal, undefined, true) : null;
         const offered = name ?? recording?.name ?? null;
         if (offered === null) continue;
         const call = record.space === null ? null : await spaceCall(record.space);
@@ -294,19 +299,31 @@ export class GoogleMeetAdapter implements MeetingPlatformAdapter, MeetingPlatfor
   }
 
   // The finished recording of a conference and the Drive file it was written to, or null when there is none (or Google no longer shows the conference). `driveDestination.file` is the Drive file id;
-  // a state other than FILE_GENERATED has no file yet. A file id that is not one is dropped, so nothing odd is ever put into a URL.
-  private async recordingOf(conference: string, credential: MeetingPlatformCredential, signal?: AbortSignal): Promise<{ name: string; fileId: string } | null> {
-    const body = await this.get(`${conference}/recordings`, { pageSize: '10' }, credential, signal, true);
+  // a state other than FILE_GENERATED has no file yet. A file id that is not one is dropped, so nothing odd is ever put into a URL. Of several finished recordings (a conference stopped and started again) the one
+  // that started first is offered, ties by name, so the answer does not change with Google's order; `wanted` looks for exactly that recording instead. `forgive`: a failure to reach Google is no recording this
+  // time (the listing), not a failure of the whole call.
+  private async recordingOf(conference: string, credential: MeetingPlatformCredential, signal?: AbortSignal, wanted?: string, forgive = false): Promise<{ name: string; fileId: string } | null> {
+    let body: Json | null;
+    try {
+      body = await this.get(`${conference}/recordings`, { pageSize: '50' }, credential, signal, !wanted);
+    } catch (error) {
+      if (forgive && error instanceof MeetingPlatformError && error.code === 'platform_unavailable') return null;
+      throw error;
+    }
     if (body === null) return null;
+    const found: { name: string; fileId: string; start: number }[] = [];
     for (const item of Array.isArray(body.recordings) ? body.recordings : []) {
       const recording = object(item);
       const name = text(recording?.name);
       const fileId = text(object(recording?.driveDestination)?.file);
       if (recording?.state !== 'FILE_GENERATED' || name === null || fileId === null) continue;
       if (!RECORDING_NAME.test(name) || !name.startsWith(`${conference}/recordings/`) || !DRIVE_FILE_ID.test(fileId)) continue;
-      return { name, fileId };
+      if (wanted !== undefined && name !== wanted) continue;
+      found.push({ name, fileId, start: instant(recording?.startTime) ?? 0 });
     }
-    return null;
+    found.sort((x, y) => x.start - y.start || (x.name < y.name ? -1 : x.name > y.name ? 1 : 0));
+    const first = found[0];
+    return first ? { name: first.name, fileId: first.fileId } : null;
   }
 
   // The Drive file id Meet gave for one listed recording, asked of Meet now (never trusted from the client): the pick command compares the member's pick with it, so a member cannot make the server read a Drive file
@@ -315,8 +332,9 @@ export class GoogleMeetAdapter implements MeetingPlatformAdapter, MeetingPlatfor
     if (!this.recordings) return null;
     const match = RECORDING_NAME.exec(recordingId);
     if (!match) return null;
-    const found = await this.recordingOf(`conferenceRecords/${match[1]}`, credential, signal);
-    return found !== null && found.name === recordingId ? { fileId: found.fileId } : null;
+    // Asked for by exact name (a conference with several recordings is not decided by Google's order). A refused grant (403) is `connection_expired`, as for any Meet read, not "gone".
+    const found = await this.recordingOf(`conferenceRecords/${match[1]}`, credential, signal, recordingId);
+    return found === null ? null : { fileId: found.fileId };
   }
 
   // The recording file of a conference, read from Drive with the server's own token: only the file Meet named for this recording (the member picked it in Google Picker, which is what lets `drive.file` read it).

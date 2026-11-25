@@ -35,9 +35,10 @@ function google(routes: Record<string, Route>) {
   return { fetch, seen };
 }
 const refresher = { refresh: async () => ({ refused: 'no' }) };
+const NOW = new Date('2026-11-18T00:00:00Z');
 const over = (routes: Record<string, Route>, recordings: boolean) => {
   const fake = google(routes);
-  return { adapter: new GoogleMeetAdapter({ refresher, fetch: fake.fetch, recordings }), ...fake };
+  return { adapter: new GoogleMeetAdapter({ refresher, fetch: fake.fetch, recordings, now: () => NOW }), ...fake };
 };
 
 const REC = (conference: string, over: Record<string, unknown> = {}) => ({
@@ -102,7 +103,8 @@ describe('Google Meet recordings through the Picker route', () => {
     const { adapter } = over({ ...ROUTES, 'conferenceRecords/eee555/recordings': { status: 404, body: {} } }, true);
     expect(await adapter.recordingFile(CREDENTIAL, 'conferenceRecords/aaa111/recordings/r1')).toEqual({ fileId: FILE });
     expect(await adapter.recordingFile(CREDENTIAL, 'conferenceRecords/aaa111/recordings/other')).toBeNull();
-    expect(await adapter.recordingFile(CREDENTIAL, 'conferenceRecords/eee555/recordings/r1')).toBeNull();
+    // Google no longer shows the conference: gone, not "no file". A refused grant is a connection to renew.
+    await expect(adapter.recordingFile(CREDENTIAL, 'conferenceRecords/eee555/recordings/r1')).rejects.toMatchObject({ code: 'recording_gone' });
     expect(await adapter.recordingFile(CREDENTIAL, 'conferenceRecords/aaa111/transcripts/t1')).toBeNull();
     expect(await adapter.recordingFile(CREDENTIAL, '../x')).toBeNull();
   });
@@ -122,6 +124,44 @@ describe('Google Meet recordings through the Picker route', () => {
     await expect(adapter.prepareDownload(CREDENTIAL, 'conferenceRecords/aaa111/recordings/r1', 'audio')).rejects.toMatchObject({ code: 'no_audio' });
     await expect(adapter.prepareDownload(CREDENTIAL, 'conferenceRecords/aaa111/transcripts/t1', 'video')).rejects.toMatchObject({ code: 'platform_refused' });
     await expect(adapter.prepareDownload(CREDENTIAL, 'conferenceRecords/aaa111/recordings/gone', 'video')).rejects.toMatchObject({ code: 'recording_gone' });
+  });
+
+  it('offers the same recording of a conference with several, whatever order Google lists them in, and finds a listed one by its exact name', async () => {
+    const r1 = REC('aaa111', { name: 'conferenceRecords/aaa111/recordings/r1', startTime: T(0), driveDestination: { file: FILE } });
+    const r2 = REC('aaa111', { name: 'conferenceRecords/aaa111/recordings/r2', startTime: T(20), driveDestination: { file: `${FILE}X` } });
+    const bad = REC('aaa111', { name: 'conferenceRecords/aaa111/recordings/r0', startTime: T(-5), driveDestination: { file: 'no' } });
+    for (const order of [[r1, r2], [r2, r1], [bad, r2, r1]]) {
+      const { adapter } = over({ ...ROUTES, 'conferenceRecords/aaa111/recordings': { body: { recordings: order } } }, true);
+      expect((await adapter.list(CREDENTIAL, SINCE)).map((r) => r.id)).toContain('conferenceRecords/aaa111/recordings/r1');
+      expect(await adapter.recordingFile(CREDENTIAL, 'conferenceRecords/aaa111/recordings/r1')).toEqual({ fileId: FILE });
+      expect(await adapter.recordingFile(CREDENTIAL, 'conferenceRecords/aaa111/recordings/r2')).toEqual({ fileId: `${FILE}X` });
+    }
+  });
+
+  it('never fails the listing for the recordings: a 429, a 5xx or a refused conference hides that recording only', async () => {
+    for (const status of [429, 503, 403, 404]) {
+      const { adapter } = over({ ...ROUTES, 'conferenceRecords/aaa111/recordings': { status, body: {} } }, true);
+      expect((await adapter.list(CREDENTIAL, SINCE)).map((r) => r.id)).toEqual(['conferenceRecords/bbb222/transcripts/t1']);
+    }
+  });
+
+  it('offers a recording only while the conference has no transcript at all, and only for a recent conference', async () => {
+    // A transcript Google is still writing: the conference will be a transcript, so its recording is not offered meanwhile and not even asked for.
+    const writing = { ...ROUTES, 'conferenceRecords/aaa111/transcripts': { body: { transcripts: [{ name: 'conferenceRecords/aaa111/transcripts/t9', state: 'ENDED' }] } } };
+    const first = over(writing, true);
+    expect((await first.adapter.list(CREDENTIAL, SINCE)).map((r) => r.id)).toEqual(['conferenceRecords/bbb222/transcripts/t1']);
+    expect(first.seen).not.toContain('conferenceRecords/aaa111/recordings');
+    // A conference older than the lookup window is not asked for its recordings.
+    const old = { ...ROUTES, conferenceRecords: { body: { conferenceRecords: [{ name: 'conferenceRecords/aaa111', startTime: '2026-09-01T02:00:00Z', endTime: '2026-09-01T02:30:00Z', space: 'spaces/s1' }] } } };
+    const second = over(old, true);
+    expect(await second.adapter.list(CREDENTIAL, SINCE)).toEqual([]);
+    expect(second.seen).not.toContain('conferenceRecords/aaa111/recordings');
+  });
+
+  it('reports a refused grant on the recording lookup as a connection to renew', async () => {
+    const { adapter } = over({ ...ROUTES, 'conferenceRecords/aaa111/recordings': { status: 403, body: {} } }, true);
+    await expect(adapter.recordingFile(CREDENTIAL, 'conferenceRecords/aaa111/recordings/r1')).rejects.toMatchObject({ code: 'connection_expired' });
+    await expect(adapter.prepareDownload(CREDENTIAL, 'conferenceRecords/aaa111/recordings/r1', 'video')).rejects.toMatchObject({ code: 'connection_expired' });
   });
 
   it('keeps the connect scopes as they are until the pick step asks for the Drive scope, and never names a restricted one', () => {

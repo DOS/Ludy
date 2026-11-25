@@ -336,7 +336,7 @@ export interface MeetingPlatformAdaptersConfig {
   // The Google Meet adapter (C2, #3174) is there only when the deployment has a Google OAuth client for it (MEETINGS_GOOGLE_CLIENT_ID and MEETINGS_GOOGLE_CLIENT_SECRET, a client of its own beside the calendar's);
   // without one the provider has no adapter at all. Token renewal goes through the calendar adapter's refresh, made with this client.
   google?: GoogleMeetAppConfig | undefined;
-  // The Picker route for the audio of a Meet recording (#3174, ADR-0025 amendment): with it, the Google adapter also offers and reads a recording of a conference that has no transcript. Off unless set; nothing sets it yet.
+  // The Picker route for the audio of a Meet recording (#3174, ADR-0025 amendment): with it, the Google adapter also offers and reads a recording of a conference that has no transcript. Off unless set; nothing sets it yet, and it must not be set before the pick command gates the start of an import for such a row (the job would otherwise read a Drive file the member never picked, and Drive would answer 404).
   googleRecordings?: boolean | undefined;
   // The offline sandbox is on unless this is `false`.
   sandbox?: boolean | undefined;
