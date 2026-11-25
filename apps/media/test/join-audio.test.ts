@@ -83,9 +83,10 @@ describe('POST /join-audio refuses a body that is not framed exactly', () => {
 
   it('an empty body is a bad_request and a body over the cap is too_large', async () => {
     expect((await app.request('/join-audio', { method: 'POST' })).status).toBe(400);
+    // The join's cap is half the input cap (the parts are copied out of the body).
     const small = createMediaApp({ maxInputBytes: 100 });
-    const res = await post(small, new Uint8Array(200));
-    expect(res.status).toBe(413);
+    expect((await post(small, new Uint8Array(60))).status).toBe(413);
+    expect((await post(small, frames(1, [4]))).status).not.toBe(413);
   });
 });
 
@@ -132,6 +133,23 @@ describe.skipIf(!hasFfmpeg)('POST /join-audio with ffmpeg', () => {
     expect(junk.status).toBe(422);
     expect(((await junk.json()) as { code: string }).code).toBe('malformed_media');
   });
+
+  it('does not let a timestamp jump inside a part stretch the answer: the length is what the parts hold', async () => {
+    const jumped = synth('jump.opus', ['-f', 'lavfi', '-i', 'sine=frequency=440:duration=2', '-c:a', 'libopus', '-output_ts_offset', '500']);
+    const plain = tone('plain.wav', 880, 2, ['-ar', '48000', '-ac', '1']);
+    const res = await post(app, await body([part(jumped), part(plain)]));
+    expect(res.status).toBe(200);
+    const result = zMediaNormalizeResult.parse(((await res.json()) as { result: unknown }).result);
+    expect(Math.abs(result.durationSeconds - 4)).toBeLessThan(0.6);
+  });
+
+  it('refuses parts that together are longer than a recording may be', async () => {
+    // 4000 s of 8-bit mono at 8 kHz is 32 MB of plain samples: cheap to make and to measure, and two of them are longer than the 7200 s a recording may last.
+    const long = (name: string) => synth(name, ['-f', 'lavfi', '-i', 'sine=frequency=300:duration=4000:sample_rate=8000', '-c:a', 'pcm_u8', '-ar', '8000', '-ac', '1']);
+    const res = await post(app, await body([part(long('long1.wav')), part(long('long2.wav'))]));
+    expect(res.status).toBe(413);
+    expect(((await res.json()) as { code: string }).code).toBe('too_large');
+  }, 120_000);
 
   it('joins a single part (a recording of one segment) like normalize', async () => {
     const res = await post(app, await body([part(tone('one.wav', 440, 2, ['-ar', '48000', '-ac', '1']))]));
