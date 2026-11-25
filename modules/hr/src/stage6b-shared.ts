@@ -23,16 +23,27 @@ export async function assertDraftOrNoPayrollRun(
   legalEntityId: string,
   month: string,
 ): Promise<void> {
-  const res = await sql<{ locked: boolean }>`
+  const res = await sql<{ locked: boolean | null }>`
     SELECT ludy_hr.hr_stage6b_payroll_run_locked(${orgId}::uuid, ${legalEntityId}::uuid, ${month}) AS locked
   `.execute(trx);
-  if (res.rows[0]?.locked) {
+  if (res.rows[0]?.locked !== false) {
     throw new DomainError(
       'HR_RUN_NOT_DRAFT',
       409,
       'Bảng lương của tháng này đã được duyệt, không thể gửi hoặc duyệt thêm tạm ứng hay điều chỉnh; sửa sai bằng dòng điều chỉnh ở kỳ lương sau',
     );
   }
+}
+
+export async function loadLockedPayrollMonths(
+  trx: QueryContext['trx'],
+  orgId: string,
+  legalEntityId: string,
+): Promise<string[]> {
+  const res = await sql<{ months: string[] | null }>`
+    SELECT ludy_hr.hr_stage6b_locked_payroll_months(${orgId}::uuid, ${legalEntityId}::uuid) AS months
+  `.execute(trx);
+  return Array.isArray(res.rows[0]?.months) ? res.rows[0].months : [];
 }
 
 export function isoTimestamp(value: Date | string | null | undefined): string | null {

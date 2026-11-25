@@ -221,6 +221,7 @@ describe('meetings commands and queries construction', () => {
       'meetings.brief.status',
       'meetings.digest.facts',
       'meetings.digest.status',
+      'meetings.load.week',
       'meetings.today.facts',
       'meetings.morning.get',
       'meetings.assignee.facts',

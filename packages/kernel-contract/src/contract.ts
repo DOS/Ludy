@@ -324,7 +324,7 @@ import {
   zHrEmploymentAdd,
   zHrWritten,
 } from './hr.ts';
-import { zPayrollSettlement, zPayrollSettlementRef, zHrCoworkerAsk, zHrCoworkerExplained, zHrCoworkerFlagged, zHrCoworkerPayslipAsk, zHrCoworkerPrepared, zHrLineAdjust, zHrLineInputsSet, zHrPayrollDiffExplainAsk, zHrPayrollDiffExplained, zHrPayrollPreviewDiff, zHrPayrollPreviewDiffAsk, zHrPayslip, zHrPaymentRequest, zHrPostingRequest, zHrPayslipRef, zHrRunApplyThirteenthMonth, zHrRunApprove, zHrRunImportTimekeeping, zHrRunList, zHrRunOpen, zHrRunRecalculate, zHrRunRef, zHrRunSheet, zHrRunSummary, zHrRunThirteenthMonthPreview, zHrRunWritten, zHrThirteenthMonthPreviewResult } from './hr-payroll.ts';
+import { zPayrollSettlement, zPayrollSettlementRef, zHrCoworkerAsk, zHrCoworkerExplained, zHrCoworkerFlagged, zHrCoworkerPayslipAsk, zHrCoworkerPrepared, zHrLineAdjust, zHrLineInputsSet, zHrPayrollDiffExplainAsk, zHrPayrollDiffExplained, zHrPayrollPreviewDiff, zHrPayrollPreviewDiffAsk, zHrPayslip, zHrPaymentRequest, zHrPostingRequest, zHrPayslipRef, zHrRunApplyThirteenthMonth, zHrRunApprove, zHrRunImportTimekeeping, zHrRunList, zHrRunOpen, zHrRunRecalculate, zHrRunRef, zHrRunSheet, zHrRunSummary, zHrRunSyncStage6b, zHrRunThirteenthMonthPreview, zHrRunWritten, zHrThirteenthMonthPreviewResult } from './hr-payroll.ts';
 import { zHrBankTemplate, zHrBankTemplateCreate, zHrBankTemplateEdit, zHrBankTemplateList, zHrBankTemplateRef, zHrBankTemplateWritten } from './hr-bank-template.ts';
 import {
   zHrLeaveBalanceAsk,
@@ -705,6 +705,7 @@ import { zMeetingRename, zMeetingRenamed, zTitleAnswer } from './meeting-title.t
 import { zCommitmentsAnswer } from './meeting-commitments.ts';
 import { zOpenPointsAnswer } from './meeting-open-points.ts';
 import { zDigestAnswer, zDigestAsk, zDigestFacts, zDigestStatus } from './meeting-digest.ts';
+import { zLoadWeek, zLoadWeekInput } from './meeting-load.ts';
 import { zMeetingsTodayFacts } from './meeting-today.ts';
 import { zMorningEmpty, zMorningSet, zMorningState } from './meeting-morning.ts';
 import { zAssigneeAnswer, zAssigneeAsk, zAssigneeStatus } from './meeting-assignee.ts';
@@ -1653,7 +1654,7 @@ export const contract = {
         applyThirteenthMonth: oc.input(zHrRunApplyThirteenthMonth).output(zHrRunWritten),
         syncLeave: oc.input(zHrRunRef).output(zHrRunWritten),
         syncOvertime: oc.input(zHrRunRef).output(zHrRunWritten),
-        syncStage6b: oc.input(zHrRunRef).output(zHrRunWritten),
+        syncStage6b: oc.input(zHrRunSyncStage6b).output(zHrRunWritten),
         approve: oc.input(zHrRunApprove).output(zHrRunWritten),
       },
       adjustments: {
@@ -1942,6 +1943,11 @@ export const contract = {
       facts: oc.input(zDigestAsk).output(zDigestFacts),
       status: oc.input(zBriefEmpty).output(zDigestStatus),
       recap: oc.input(zDigestAsk).output(zDigestAnswer),
+    },
+    // The week's meeting load (#4770), for an owner or an admin: per member the meetings and minutes of a week, and the recurring series that may be worth trimming, read by code from the meetings the caller reads (no
+    // extra right to read, no text, no model call, nothing stored).
+    load: {
+      week: oc.input(zLoadWeekInput).output(zLoadWeek),
     },
     // The Today view (#3955): the member's own agenda for today with the facts of each event's brief, read by code as the member in one call and working with AI off. Vy's sentences stay the brief's own click.
     today: {

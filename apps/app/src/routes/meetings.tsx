@@ -34,6 +34,7 @@ import { DataTable, Empty, ErrorText, ListSkeleton, PageHeader } from '../compon
 import { MeetingSearch } from '../components/meeting-search.tsx';
 import { MeetingAsk } from '../components/meeting-ask.tsx';
 import { MeetingDigest } from '../components/meeting-digest.tsx';
+import { MeetingLoad } from '../components/meeting-load.tsx';
 import { TodayAgenda, UpcomingAgenda } from '../components/meeting-agenda.tsx';
 import { ImportAutoClaim } from '../components/meeting-import-claim.tsx';
 import { meetingsInstalled } from '../components/linked-meetings.tsx';
@@ -65,7 +66,7 @@ const STATUS_VARIANTS: Record<string, 'success' | 'secondary' | 'outline' | 'des
 };
 
 type MeetingsTab = 'recorded' | 'today' | 'upcoming';
-type UtilityTool = 'digest' | 'ask' | 'search';
+type UtilityTool = 'digest' | 'ask' | 'search' | 'load';
 
 // The org's three retention periods (ADR-0047 point 7, plan section 9). Everyone who reads meetings sees them; an owner or admin changes them. A change
 // applies to meetings recorded afterwards. The AI coworker has no part here: the periods are the org's own, and the core works with AI off.
@@ -430,6 +431,9 @@ export function MeetingsPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const tableContainerRef = useRef<HTMLDivElement>(null);
 
+  // The week's meeting load (#4770) is for an owner or an admin: no button, no panel and no read for anyone else.
+  const orgRole = useQuery(orpc.org.get.queryOptions()).data?.role;
+  const canSeeLoad = orgRole === 'owner' || orgRole === 'admin';
   const meetingsQuery = useQuery(orpc.meetings.list.queryOptions({ input: { limit: 200 } }));
   const todayAgendaQuery = useQuery({
     ...orpc.meetings.today.facts.queryOptions({ input: {} }),
@@ -642,6 +646,20 @@ export function MeetingsPage() {
               >
                 {t('tools.search')}
               </Button>
+              {canSeeLoad && (
+                <Button
+                  type="button"
+                  variant={activeTool === 'load' ? 'secondary' : 'outline'}
+                  size="sm"
+                  className="max-md:min-h-11"
+                  aria-expanded={activeTool === 'load'}
+                  aria-controls="meetings-tool-panel-load"
+                  data-testid="meetings-tool-load"
+                  onClick={() => toggleTool('load')}
+                >
+                  {t('tools.load')}
+                </Button>
+              )}
             </div>
             <div id="meetings-tool-panel-digest" hidden={activeTool !== 'digest'}>
               {openedTools.has('digest') && <MeetingDigest slug={slug} />}
@@ -652,6 +670,11 @@ export function MeetingsPage() {
             <div id="meetings-tool-panel-search" hidden={activeTool !== 'search'} className="rounded-lg border border-border bg-card p-4">
               {openedTools.has('search') && <MeetingSearch slug={slug} />}
             </div>
+            {canSeeLoad && (
+              <div id="meetings-tool-panel-load" hidden={activeTool !== 'load'}>
+                {openedTools.has('load') && <MeetingLoad slug={slug} />}
+              </div>
+            )}
           </div>
 
           <div className="space-y-2" data-testid="meetings-toolbar">

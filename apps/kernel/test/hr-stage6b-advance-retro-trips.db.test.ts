@@ -550,7 +550,15 @@ suite('HR Stage 6B salary advance, retro/offset adjustments, and business trips 
     expect(line.inputs.offsetFromAdjustments).toBe(true);
     expect(bd.deductions.advance).toBe('2000000');
     expect(bd.deductions.other).toBe('200000');
+    expect(bd.pay.bonus).toBe('0');
+    expect(bd.pay.retroPay).toBe('800001');
+    // Statutory BHXH insurable pay remains untouched (10M base wage; retro pay taxability awaits accountant #61 / #2535).
+    expect(bd.insurance.insurablePay).toBe('10000000');
     expect(line.figures?.gross).toBe('10800001.00');
+    const payslip = await o.query<HrPayslip>(o.owner, 'hr.payroll.line.payslip', { lineId: line.id });
+    const psBd = payslip.breakdown as unknown as PayrollBreakdown;
+    expect(psBd.pay.bonus).toBe('0');
+    expect(psBd.pay.retroPay).toBe('800001');
 
     // All synced Stage 6B rows carry payroll_run_id pointing to this run.
     const advRows = await adminPool.query<{ payroll_run_id: string | null }>(
@@ -578,14 +586,22 @@ suite('HR Stage 6B salary advance, retro/offset adjustments, and business trips 
       reason: 'Ứng thêm sau override',
     });
     await o.exec(o.mgr, 'hr.salary_advance.approve_l1', { requestId: adv3.requestId });
-    await o.exec(o.owner, 'hr.salary_advance.approve_final', { requestId: adv3.requestId });
-    await o.exec(o.owner, 'hr.payroll.run.sync_stage6b', { runId: runRes.runId });
-    await o.exec(o.owner, 'hr.payroll.run.recalculate', { runId: runRes.runId });
+    const adv3Final = await o.exec<HrAdvanceActionResult>(o.owner, 'hr.salary_advance.approve_final', { requestId: adv3.requestId });
+    expect(adv3Final.payrollSynced).toBe(false);
+    expect(adv3Final.payrollSyncSkippedReason).toBe('manual_override');
+    const syncSkipped = await o.exec<HrRunWritten>(o.owner, 'hr.payroll.run.sync_stage6b', { runId: runRes.runId });
+    expect(syncSkipped.skippedManualOverrideLines).toBe(1);
+    const recalcSkipped = await o.exec<HrRunWritten>(o.owner, 'hr.payroll.run.recalculate', { runId: runRes.runId });
+    expect(recalcSkipped.skippedManualOverrideLines).toBe(1);
 
     const sheetAfterManual = await o.query<HrRunSheet>(o.owner, 'hr.payroll.run.sheet', { runId: runRes.runId });
     const lineAfter = sheetAfterManual.lines.find((l) => l.employeeId === o.staffEmployeeId)!;
     expect(lineAfter.inputs.advance).toBe('1250000');
     expect(lineAfter.inputs.advanceFromRequests).toBe(false);
+    expect(lineAfter.flags).toContain('stage6b_manual_override');
+    expect(lineAfter.stage6bManualOverrides).toEqual([
+      { field: 'advance', lineAmount: '1250000', approvedAmount: '2100000' },
+    ]);
     // Non-overridden retroPay & offsetDeduction remain synced!
     expect(lineAfter.inputs.retroPay).toBe('800000.5');
     expect(lineAfter.inputs.offsetDeduction).toBe('200000.25');
@@ -629,6 +645,17 @@ suite('HR Stage 6B salary advance, retro/offset adjustments, and business trips 
       { runId: runRes.runId, fingerprint: sheetAfterPartial.fingerprint, acceptFlags: true },
       asMfa(o.owner),
     );
+
+    // Self-service list & L1 queue now proactively surface the finalized month as locked (#4597).
+    const staffLockedList = await o.query<HrSelfAdvanceListResult>(o.staff, 'hr.self.salary_advance.list', {});
+    expect(staffLockedList.lockedMonths).toContain(month);
+    const staffPendingRow = staffLockedList.items.find((r) => r.id === advPendingL1.requestId);
+    expect(staffPendingRow?.payrollRunLocked).toBe(true);
+    const mgrLockedList = await o.query<HrSelfAdvanceListResult>(o.mgr, 'hr.self.salary_advance.list', {});
+    const mgrPendingRow = mgrLockedList.l1Queue.find((r) => r.id === advPendingL1.requestId);
+    expect(mgrPendingRow?.payrollRunLocked).toBe(true);
+    const adminLockedList = await o.query<HrAdvanceRequestView[]>(o.owner, 'hr.salary_advance.list', { month });
+    expect(adminLockedList.find((r) => r.id === advPendingFinal.requestId)?.payrollRunLocked).toBe(true);
 
     // B4 Money guard: once month payroll run is approved (non-draft), no Stage 6B advance/adjustment can be submitted, created, or approved for that month.
     await expect(
@@ -939,6 +966,294 @@ suite('HR Stage 6B salary advance, retro/offset adjustments, and business trips 
     for (const tbl of ['salary_advance_request', 'payroll_adjustment_item', 'business_trip_request']) {
       const cnt = await adminPool.query<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_hr.${tbl} WHERE org_id = $1`, [o.orgId]);
       expect(cnt.rows[0]?.n).toBe('0');
+    }
+  });
+
+  it('hardens NULL/out-of-scope le_scope helpers, fail-closed payroll_run_locked, Stage 6B admin INSERT created_by, and manual-override restore (#4597)', async () => {
+    setPayrollConfirmed(true);
+    const o = await setupOrg('standard');
+    const o2 = await setupOrg('standard');
+    const month = '2026-09';
+
+    // Second legal entity + scoped member limited ONLY to branchId.
+    const branchId = (
+      await withAdmin(async (c) =>
+        (
+          await c.query<{ id: string }>(
+            `INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh phụ', 'branch', $2) RETURNING id`,
+            [o.orgId, o.owner],
+          )
+        ).rows[0]!.id,
+      )
+    );
+    const scopedUser = await o.mkUser('scoped-le');
+    await withAdmin(async (c) => {
+      await c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [o.orgId, scopedUser]);
+      await c.query(
+        `INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by)
+         VALUES ($1, $2, 'external_accountant', $3, $4)`,
+        [o.orgId, scopedUser, branchId, o.owner],
+      );
+    });
+    const branchEmp = await o.exec<HrWritten>(o.owner, 'hr.payroll.employee.add', {
+      displayName: 'Nhân viên Chi nhánh phụ',
+      legalEntityId: branchId,
+      employment: { effectiveFrom: '2026-01-01', contractType: 'indefinite', region: 'I', baseWage: '10000000' },
+    });
+    await o.exec(o.owner, 'hr.payroll.employee.link_member', { employeeId: branchEmp.employeeId, userId: scopedUser });
+
+    // Seed Stage 6B advance + Stage 4C leave + Stage 5A QR config + Stage 5B overtime in defaultEntityId.
+    const adv = await o.exec<HrSelfAdvanceSubmitResult>(o.staff, 'hr.self.salary_advance.submit', {
+      month,
+      amount: '500000',
+      reason: 'Advance for helper hardening test',
+    });
+    const leaveReq = await o.exec<{ requestId: string }>(o.staff, 'hr.self.leave.request_submit', {
+      startOn: '2026-09-10',
+      endOn: '2026-09-10',
+      kind: 'unpaid_leave',
+      days: '1',
+      reason: 'Leave helper hardening test',
+    });
+    const otReq = await o.exec<{ requestId: string }>(o.staff, 'hr.self.overtime.submit', {
+      workDate: '2026-09-12',
+      dayType: 'weekday',
+      hours: '2',
+      reason: 'OT helper hardening test',
+    });
+    const qrHash = sha256Hex(Buffer.from('stage6b-followup-qr-secret'));
+    await withAdmin((c) =>
+      c.query(
+        `INSERT INTO ludy_hr.attendance_qr_config (org_id, legal_entity_id, active, qr_secret_hash, created_by)
+         VALUES ($1, $2, true, $3, $4)`,
+        [o.orgId, o.defaultEntityId, qrHash, o.owner],
+      ),
+    );
+
+    // 1. NULL ctx_le_scope() fail-closed test across ALL 6 hardened HR helpers:
+    // Seal a valid user context with org/user/role set and le_scope explicitly NULL so ctx_le_scope() IS NULL.
+    await withAdmin(async (c) => {
+      await c.query('BEGIN');
+      await c.query(
+        `SELECT ludy_kernel.ctx_write(jsonb_build_object(
+          'v', 1, 'org', $1::uuid, 'actor', 'user', 'user', $2::uuid, 'role', 'owner', 'le_scope', NULL, 'flags', '[]'::jsonb
+        ))`,
+        [o.orgId, o.owner],
+      );
+      await c.query('SET LOCAL ROLE ludy_tenant');
+      const scopeCheck = await c.query<{ s: string[] | null }>('SELECT ludy_kernel.ctx_le_scope() AS s');
+      expect(scopeCheck.rows[0]?.s).toBeNull();
+
+      const advName = await c.query<{ n: string | null }>(
+        `SELECT ludy_hr.hr_stage6b_request_employee_name($1::uuid, 'salary_advance', $2::uuid) AS n`,
+        [o.orgId, adv.requestId],
+      );
+      expect(advName.rows[0]?.n).toBeNull();
+
+      const leaveName = await c.query<{ n: string | null }>(
+        `SELECT ludy_hr.leave_request_employee_name($1::uuid, $2::uuid) AS n`,
+        [o.orgId, leaveReq.requestId],
+      );
+      expect(leaveName.rows[0]?.n).toBeNull();
+
+      const otName = await c.query<{ n: string | null }>(
+        `SELECT ludy_hr.overtime_request_employee_name($1::uuid, $2::uuid) AS n`,
+        [o.orgId, otReq.requestId],
+      );
+      expect(otName.rows[0]?.n).toBeNull();
+
+      await c.query('SAVEPOINT sp_locked');
+      await expect(
+        c.query(`SELECT ludy_hr.hr_stage6b_payroll_run_locked($1::uuid, $2::uuid, $3)`, [o.orgId, o.defaultEntityId, month]),
+      ).rejects.toMatchObject({ code: '42501' });
+      await c.query('ROLLBACK TO SAVEPOINT sp_locked');
+
+      await c.query('SAVEPOINT sp_months');
+      await expect(
+        c.query(`SELECT ludy_hr.hr_stage6b_locked_payroll_months($1::uuid, $2::uuid)`, [o.orgId, o.defaultEntityId]),
+      ).rejects.toMatchObject({ code: '42501' });
+      await c.query('ROLLBACK TO SAVEPOINT sp_months');
+      await c.query('ROLLBACK');
+
+      // Also verify verify_attendance_qr as linked staff with NULL le_scope -> returns false and clears qr_verified_hash!
+      await c.query('BEGIN');
+      await c.query(
+        `SELECT ludy_kernel.ctx_write(jsonb_build_object(
+          'v', 1, 'org', $1::uuid, 'actor', 'user', 'user', $2::uuid, 'role', 'member', 'le_scope', NULL, 'flags', '[]'::jsonb
+        ))`,
+        [o.orgId, o.staff],
+      );
+      await c.query('SET LOCAL ROLE ludy_tenant');
+      const qrNull = await c.query<{ ok: boolean; hash: string }>(
+        `SELECT ludy_hr.verify_attendance_qr($1::uuid, $2::uuid, $3) AS ok,
+                pg_catalog.current_setting('ludy_hr.qr_verified_hash', true) AS hash`,
+        [o.orgId, o.defaultEntityId, qrHash],
+      );
+      expect(qrNull.rows[0]).toEqual({ ok: false, hash: '' });
+      await c.query('ROLLBACK');
+    });
+
+    // 2. Fail-closed hr_stage6b_payroll_run_locked & hr_stage6b_locked_payroll_months for unauthorized / out-of-scope callers.
+    const appClient = await appPool.connect();
+    try {
+      // No context entered at all -> 42501 (permission denied or raised 42501).
+      await appClient.query('BEGIN');
+      await appClient.query('SET LOCAL ROLE ludy_tenant');
+      await expect(
+        appClient.query(`SELECT ludy_hr.hr_stage6b_payroll_run_locked($1::uuid, $2::uuid, $3)`, [o.orgId, o.defaultEntityId, month]),
+      ).rejects.toMatchObject({ code: '42501' });
+      await appClient.query('ROLLBACK');
+
+      // Viewer, unlinked plain member, cross-org owner, and branch-scoped admin querying defaultEntityId -> all raise 42501!
+      for (const bad of [
+        { userId: o.viewer, orgId: o.orgId },
+        { userId: o.plain, orgId: o.orgId },
+        { userId: o2.owner, orgId: o2.orgId },
+        { userId: scopedUser, orgId: o.orgId },
+      ]) {
+        await appClient.query('BEGIN');
+        await enterUser(appClient, bad.userId, bad.orgId);
+        await expect(
+          appClient.query(`SELECT ludy_hr.hr_stage6b_payroll_run_locked($1::uuid, $2::uuid, $3)`, [o.orgId, o.defaultEntityId, month]),
+        ).rejects.toMatchObject({ code: '42501' });
+        await appClient.query('ROLLBACK');
+
+        await appClient.query('BEGIN');
+        await enterUser(appClient, bad.userId, bad.orgId);
+        await expect(
+          appClient.query(`SELECT ludy_hr.hr_stage6b_locked_payroll_months($1::uuid, $2::uuid)`, [o.orgId, o.defaultEntityId]),
+        ).rejects.toMatchObject({ code: '42501' });
+        await appClient.query('ROLLBACK');
+      }
+
+      // Scoped branch member CAN call the helpers for their own branchId, and their ctx_le_scope is [branchId].
+      await appClient.query('BEGIN');
+      await enterUser(appClient, scopedUser, o.orgId);
+      const scopedOk = await appClient.query<{ scope: string[]; locked: boolean; months: string[] }>(
+        `SELECT ludy_kernel.ctx_le_scope() AS scope,
+                ludy_hr.hr_stage6b_payroll_run_locked($1::uuid, $2::uuid, $3) AS locked,
+                ludy_hr.hr_stage6b_locked_payroll_months($1::uuid, $2::uuid) AS months`,
+        [o.orgId, branchId, month],
+      );
+      expect(scopedOk.rows[0]).toEqual({ scope: [branchId], locked: false, months: [] });
+      await appClient.query('ROLLBACK');
+
+      // Valid linked staff & active dept manager succeed cleanly (false before approval, true + month listed after approval).
+      for (const goodUser of [o.staff, o.mgr, o.owner]) {
+        await appClient.query('BEGIN');
+        await enterUser(appClient, goodUser, o.orgId);
+        const unlocked = await appClient.query<{ locked: boolean; months: string[] }>(
+          `SELECT ludy_hr.hr_stage6b_payroll_run_locked($1::uuid, $2::uuid, $3) AS locked,
+                  ludy_hr.hr_stage6b_locked_payroll_months($1::uuid, $2::uuid) AS months`,
+          [o.orgId, o.defaultEntityId, month],
+        );
+        expect(unlocked.rows[0]).toEqual({ locked: false, months: [] });
+        await appClient.query('ROLLBACK');
+      }
+
+      // 3. Stage 6B admin INSERT policy hardening: explicit created_by = NULL or spoofed created_by rejected (42501);
+      // omitting created_by stamps caller via column DEFAULT ludy_kernel.ctx_user_id() and preserves anti-self-approval!
+      for (const badCreatedBy of [null, o.owner]) {
+        for (const stmt of [
+          {
+            sql: `INSERT INTO ludy_hr.salary_advance_request (org_id, legal_entity_id, employee_id, month, amount, reason, status, created_by)
+                  VALUES ($1, $2, $3, $4, 300000, 'Spoofed', 'pending_final', $5)`,
+            params: [o.orgId, o.defaultEntityId, o.staffEmployeeId, month, badCreatedBy],
+          },
+          {
+            sql: `INSERT INTO ludy_hr.payroll_adjustment_item (org_id, legal_entity_id, employee_id, month, kind, amount, reason, status, created_by)
+                  VALUES ($1, $2, $3, $4, 'retro_pay', 300000, 'Spoofed', 'pending', $5)`,
+            params: [o.orgId, o.defaultEntityId, o.staffEmployeeId, month, badCreatedBy],
+          },
+          {
+            sql: `INSERT INTO ludy_hr.business_trip_request (org_id, legal_entity_id, employee_id, destination, purpose, start_on, end_on, estimated_allowance, status, created_by)
+                  VALUES ($1, $2, $3, 'Đà Lạt', 'Spoofed', '2026-09-15', '2026-09-16', 100000, 'pending_final', $4)`,
+            params: [o.orgId, o.defaultEntityId, o.staffEmployeeId, badCreatedBy],
+          },
+        ]) {
+          await appClient.query('BEGIN');
+          await enterUser(appClient, o.admin, o.orgId);
+          await expect(appClient.query(stmt.sql, stmt.params)).rejects.toMatchObject({ code: '42501' });
+          await appClient.query('ROLLBACK');
+        }
+      }
+
+      // Omitting created_by as admin stamps created_by = admin via DEFAULT, so admin still cannot self-approve!
+      await appClient.query('BEGIN');
+      await enterUser(appClient, o.admin, o.orgId);
+      const insertedAdj = await appClient.query<{ id: string; created_by: string | null }>(
+        `INSERT INTO ludy_hr.payroll_adjustment_item (org_id, legal_entity_id, employee_id, month, kind, amount, reason, status)
+         VALUES ($1, $2, $3, $4, 'retro_pay', 300000, 'Default created_by test', 'pending')
+         RETURNING id, created_by`,
+        [o.orgId, o.defaultEntityId, o.staffEmployeeId, month],
+      );
+      expect(insertedAdj.rows[0]?.created_by).toBe(o.admin);
+      await appClient.query('COMMIT');
+
+      await expect(
+        o.exec(o.admin, 'hr.payroll.adjustment.approve', { itemId: insertedAdj.rows[0]!.id }),
+      ).rejects.toMatchObject({ code: 'HR_SELF_APPROVAL_BLOCKED' });
+
+      // 4. Manual override on retroPay + adjustment approval warning + 1-click restore via sync_stage6b({ resetManualOverridesForLineId }).
+      const run = await o.exec<HrRunWritten>(o.owner, 'hr.payroll.run.open', { month });
+      const sheet0 = await o.query<HrRunSheet>(o.owner, 'hr.payroll.run.sheet', { runId: run.runId });
+      const line0 = sheet0.lines.find((l) => l.employeeId === o.staffEmployeeId)!;
+      await o.exec(o.owner, 'hr.payroll.line.inputs.set', {
+        lineId: line0.id,
+        inputs: { retroPay: '150000' },
+      });
+      const adjApproved = await o.exec<HrAdjustmentActionResult>(o.owner, 'hr.payroll.adjustment.approve', {
+        itemId: insertedAdj.rows[0]!.id,
+      });
+      expect(adjApproved.status).toBe('approved');
+      expect(adjApproved.payrollSynced).toBe(false);
+      expect(adjApproved.payrollSyncSkippedReason).toBe('manual_override');
+
+      const sheetWarn = await o.query<HrRunSheet>(o.owner, 'hr.payroll.run.sheet', { runId: run.runId });
+      const lineWarn = sheetWarn.lines.find((l) => l.id === line0.id)!;
+      expect(lineWarn.flags).toContain('stage6b_manual_override');
+      expect(lineWarn.stage6bManualOverrides).toEqual([
+        { field: 'retroPay', lineAmount: '150000', approvedAmount: '300000' },
+      ]);
+
+      // Fractional bonus with zero or sub-dong retroPay must never create phantom or negative breakdown.pay.retroPay!
+      await o.exec(o.owner, 'hr.payroll.line.inputs.set', {
+        lineId: line0.id,
+        inputs: { bonus: '500000.6', retroPay: '0' },
+      });
+      const sheetFracZero = await o.query<HrRunSheet>(o.owner, 'hr.payroll.run.sheet', { runId: run.runId });
+      const bdFracZero = sheetFracZero.lines.find((l) => l.id === line0.id)!.breakdown as unknown as PayrollBreakdown;
+      expect(bdFracZero.pay.bonus).toBe('500001');
+      expect(bdFracZero.pay.retroPay).toBeUndefined();
+
+      await o.exec(o.owner, 'hr.payroll.line.inputs.set', {
+        lineId: line0.id,
+        inputs: { bonus: '500000.3', retroPay: '0.1' },
+      });
+      const sheetFracTiny = await o.query<HrRunSheet>(o.owner, 'hr.payroll.run.sheet', { runId: run.runId });
+      const bdFracTiny = sheetFracTiny.lines.find((l) => l.id === line0.id)!.breakdown as unknown as PayrollBreakdown;
+      expect(bdFracTiny.pay.bonus).toBe('500000');
+      expect(bdFracTiny.pay.retroPay).toBeUndefined();
+
+      // Restore sync for this specific line -> updates retroPay to 300000, links payroll_run_id, clears warning flag!
+      const restored = await o.exec<HrRunWritten>(o.owner, 'hr.payroll.run.sync_stage6b', {
+        runId: run.runId,
+        resetManualOverridesForLineId: line0.id,
+      });
+      expect(restored.skippedManualOverrideLines).toBeUndefined();
+      const sheetRestored = await o.query<HrRunSheet>(o.owner, 'hr.payroll.run.sheet', { runId: run.runId });
+      const lineRestored = sheetRestored.lines.find((l) => l.id === line0.id)!;
+      expect(lineRestored.inputs.retroPay).toBe('300000');
+      expect(lineRestored.inputs.retroPayFromAdjustments).toBe(true);
+      expect(lineRestored.flags).not.toContain('stage6b_manual_override');
+      expect(lineRestored.stage6bManualOverrides).toBeUndefined();
+      const linkedCheck = await adminPool.query<{ payroll_run_id: string | null }>(
+        `SELECT payroll_run_id FROM ludy_hr.payroll_adjustment_item WHERE org_id = $1 AND id = $2`,
+        [o.orgId, insertedAdj.rows[0]!.id],
+      );
+      expect(linkedCheck.rows[0]?.payroll_run_id).toBe(run.runId);
+    } finally {
+      appClient.release();
     }
   });
 });

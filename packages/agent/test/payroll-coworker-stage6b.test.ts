@@ -3,8 +3,12 @@
 // pseudonymization (E1..En), promptLeaks protection, and AI-off parity (#4527).
 import { describe, expect, it } from 'vitest';
 import {
+  diffFactsText,
+  explainFactsText,
   findAnomalies,
+  payrollFiguresOf,
   promptLeaks,
+  pseudonymizePayrollDiff,
   pseudonymizeSheet,
   restoreAliases,
   type PayrollFigures,
@@ -106,5 +110,78 @@ describe('payroll-coworker Stage 6B large advance & adjustment anomalies (#4527)
     expect(adv?.facts).toContain('10,000,000');
     expect(adj?.facts).toContain('4,500,000');
     expect(adj?.facts).toContain('10,000,000');
+  });
+
+  it('extracts retroPay into payrollFiguresOf and formats retro_pay / offset_deduction in explain & diff facts (#4597)', () => {
+    const figures = payrollFiguresOf(
+      { gross: '11300000', employeeInsurance: '1050000', pit: '0', net: '10050000' },
+      {
+        pay: {
+          baseWage: '10000000',
+          allowances: [],
+          otherRegularPay: '0',
+          overtime: [],
+          nightWork: '0',
+          bonus: '500000',
+          retroPay: '800000',
+          unpaidReduction: '0',
+          sicknessBhxhReduction: '0',
+          maternityBhxhReduction: '0',
+          gross: '11300000',
+        },
+        insurance: { employee: { total: '1050000' } },
+        pit: { tax: '0' },
+        deductions: { total: '200000' },
+        net: '10050000',
+      },
+    );
+    expect(figures.bonus).toBe('500000');
+    expect(figures.retro_pay).toBe('800000');
+
+    const viExplain = explainFactsText({ language: 'vi', figures, dependentsCounted: 0 });
+    expect(viExplain).toContain('Truy lĩnh: 800.000');
+    expect(viExplain).toContain('Thưởng: 500.000');
+
+    const enExplain = explainFactsText({ language: 'en', figures, dependentsCounted: 0 });
+    expect(enExplain).toContain('Retro pay: 800,000');
+    expect(enExplain).toContain('Bonus: 500,000');
+
+    const { sheet: viDiff } = pseudonymizePayrollDiff(
+      {
+        language: 'vi',
+        hasPrior: true,
+        headcount: 1,
+        priorHeadcount: 1,
+        headcountDelta: 0,
+        grossDelta: '800000',
+        employeeDeductionDelta: '200000',
+        netDelta: '600000',
+        employerStatutoryDelta: '0',
+        employerCostDelta: '800000',
+        rows: [
+          {
+            employeeId: 'emp-1',
+            reasons: ['retro_pay', 'offset_deduction'],
+            grossDelta: '800000',
+            employeeDeductionDelta: '200000',
+            netDelta: '600000',
+            employerStatutoryDelta: '0',
+            employerCostDelta: '800000',
+            priorLeaveDays: '0',
+            currentLeaveDays: '0',
+            hasRefused: false,
+            hasFlags: false,
+          },
+        ],
+      },
+      { random: () => 0 },
+    );
+    const viDiffText = diffFactsText(viDiff);
+    expect(viDiffText).toContain('truy lĩnh');
+    expect(viDiffText).toContain('bù trừ hoặc truy thu');
+
+    const enDiffText = diffFactsText({ ...viDiff, language: 'en' });
+    expect(enDiffText).toContain('retroactive pay');
+    expect(enDiffText).toContain('offset deduction');
   });
 });

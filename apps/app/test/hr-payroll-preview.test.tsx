@@ -146,7 +146,7 @@ function sampleDiff(over: Partial<HrPayrollPreviewDiff> = {}): HrPayrollPreviewD
         employeeName: 'Nguyễn Văn An',
         erased: false,
         changed: true,
-        reasons: ['new_hire', 'salary_change', 'allowance_change', 'deduction_change'],
+        reasons: ['new_hire', 'salary_change', 'allowance_change', 'deduction_change', 'retro_pay', 'offset_deduction'],
         prior: null,
         current: {
           gross: '25000000',
@@ -291,7 +291,7 @@ describe('PayrollDiffPanel UI & i18n (#4445)', () => {
     cache.explainCalls = 0;
   });
 
-  it('ships complete VI/EN diff translations with all 6 reasons and zero em/en dashes', () => {
+  it('ships complete VI/EN diff translations with all 8 reasons and zero em/en dashes', () => {
     for (const reason of HR_PAYROLL_DIFF_REASONS) {
       expect(viMessages.hrPayroll.diff.reasons[reason]).toBeTruthy();
       expect(en.hrPayroll.diff.reasons[reason]).toBeTruthy();
@@ -300,7 +300,7 @@ describe('PayrollDiffPanel UI & i18n (#4445)', () => {
     expect(serialized).not.toMatch(/[\u2014\u2013]/);
   });
 
-  it('renders accessible <thead>, <th scope="col">, all 6 reason badges, masked erased name, signed VND deltas, and zero auto AI call', () => {
+  it('renders accessible <thead>, <th scope="col">, all 8 reason badges, masked erased name, signed VND deltas, and zero auto AI call', () => {
     const diff = sampleDiff();
     const htmlVi = renderPanel(diff, 'vi', 'run');
 

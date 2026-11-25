@@ -25,7 +25,7 @@ import { hasAddress } from './reminder.ts';
 export const PAYROLL_COMPONENTS = ['base_wage', 'allowances', 'other_regular_pay', 'overtime', 'night_work', 'bonus', 'unpaid_reduction', 'sickness_bhxh_reduction', 'maternity_bhxh_reduction', 'gross', 'employee_insurance', 'pit', 'deductions', 'net'] as const;
 export type PayrollComponent = (typeof PAYROLL_COMPONENTS)[number];
 /** One person's month as amounts (decimal strings), by fixed component. */
-export type PayrollFigures = Record<PayrollComponent, string>;
+export type PayrollFigures = Record<PayrollComponent, string> & { retro_pay?: string };
 
 export const PAYROLL_SENTENCE_MAX = 280;
 export const PAYROLL_EXPLAIN_MAX = 900;
@@ -610,6 +610,7 @@ export function payrollFiguresOf(figures: { gross: string; employeeInsurance: st
     overtime: sum(list(pay.overtime).map((o) => rec(o).pay)),
     night_work: str(rec(pay.nightWork).pay),
     bonus: str(pay.bonus),
+    ...(pay.retroPay !== undefined ? { retro_pay: str(pay.retroPay) } : {}),
     unpaid_reduction: str(pay.unpaidReduction),
     sickness_bhxh_reduction: str(pay.sicknessBhxhReduction),
     maternity_bhxh_reduction: str(pay.maternityBhxhReduction),
@@ -633,6 +634,10 @@ export function explainFactsText(request: PayslipExplainRequest): string {
   const labels = COMPONENT_LABEL[language];
   const line = (key: PayrollComponent) => `- ${labels[key]}: ${amountOf(figures[key], language)}`;
   const earned = (['base_wage', 'allowances', 'other_regular_pay', 'overtime', 'night_work', 'bonus', 'unpaid_reduction', 'sickness_bhxh_reduction', 'maternity_bhxh_reduction'] as const).filter((k) => !new Decimal(figures[k]).isZero());
+  const retroPayLine =
+    figures.retro_pay !== undefined && !new Decimal(figures.retro_pay).isZero()
+      ? [`- ${language === 'vi' ? 'Truy lĩnh' : 'Retro pay'}: ${amountOf(figures.retro_pay, language)}`]
+      : [];
   const taken = (['employee_insurance', 'pit', 'deductions'] as const).filter((k) => !new Decimal(figures[k]).isZero());
   const dependents = request.dependentsCounted > 0 ? [language === 'vi' ? `- Số người phụ thuộc được tính giảm trừ: ${request.dependentsCounted}` : `- Dependents counted for the deduction: ${request.dependentsCounted}`] : [];
   const notes: string[] = [];
@@ -655,6 +660,7 @@ export function explainFactsText(request: PayslipExplainRequest): string {
   return [
     language === 'vi' ? 'Các khoản tạo nên thu nhập:' : 'Pay components:',
     ...earned.map(line),
+    ...retroPayLine,
     line('gross'),
     language === 'vi' ? 'Các khoản trừ:' : 'Deductions:',
     ...taken.map(line),
@@ -772,6 +778,8 @@ const REASON_LABELS: Record<Language, Record<string, string>> = {
     leave_change: 'thay đổi ngày nghỉ',
     allowance_change: 'thay đổi phụ cấp',
     deduction_change: 'thay đổi khấu trừ hoặc thuế',
+    retro_pay: 'truy lĩnh',
+    offset_deduction: 'bù trừ hoặc truy thu',
   },
   en: {
     new_hire: 'new hire',
@@ -780,6 +788,8 @@ const REASON_LABELS: Record<Language, Record<string, string>> = {
     leave_change: 'leave change',
     allowance_change: 'allowance change',
     deduction_change: 'deduction or tax change',
+    retro_pay: 'retroactive pay',
+    offset_deduction: 'offset deduction',
   },
 };
 
