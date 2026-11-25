@@ -2370,6 +2370,7 @@ export interface HrPayrollEmploymentTable {
   hourly_rate: ColumnType<string | null, string | null, NotGranted>;
   piece_rate: ColumnType<string | null, string | null, NotGranted>;
   tax_resident: ColumnType<boolean, boolean | undefined, NotGranted>;
+  scheduled_hours_per_day: ColumnType<string | null, string | null, NotGranted>;
 }
 
 /** ludy_hr.payroll_leave_entry */

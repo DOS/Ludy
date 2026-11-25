@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from 'vitest';
-import { isVietnamHoliday, weekdayOf, zHrPayrollInputs } from '@ludy/kernel-contract';
+import { isValidScheduledHoursPerDay, isVietnamHoliday, weekdayOf, zHrPayrollInputs, zHrScheduledHoursPerDay } from '@ludy/kernel-contract';
 import { parseTimekeepingSheet } from '@ludy/l10n-vn';
 import {
   computeEmployeeAttendanceRollup,
@@ -488,9 +488,13 @@ describe('HR Stage 5C attendance deterministic helpers (#4447)', () => {
         },
       ],
     });
-    // Only 2026-09-12 and 2026-09-25 count: 2 worked days, 0 overtime, 1h ordinary night (22:00-23:00 ICT on 09-25? wait 15:00Z=22:00ICT to 23:00Z=06:00ICT -> 8h)
+    // Only 2026-09-12 and 2026-09-25 count: 2 worked days, 0 overtime, and 8h ordinary night
+    // (2026-09-25 15:00Z..23:00Z = 22:00..06:00+1d ICT falls entirely inside the night window).
     expect(monthlyRollup.workedDays).toBe('2');
+    expect(monthlyRollup.workedHours).toBeNull();
+    expect(monthlyRollup.paidHolidayHours).toBe('0');
     expect(monthlyRollup.overtimeHours).toBe('0');
+    expect(monthlyRollup.overtime).toEqual([]);
     expect(monthlyRollup.nightHours).toBe('8');
     // Pre-hire & post-end logs did NOT reduce unpaidLeaveDays below 26 - (2 worked + 0 holiday in [12,25] + 10 daysNotEmployed) = 14
     expect(monthlyRollup.unpaidLeaveDays).toBe('14');
@@ -505,21 +509,21 @@ describe('HR Stage 5C attendance deterministic helpers (#4447)', () => {
       endedOn: '2026-09-15',
       entries: [
         {
-          workDate: '2026-09-11', // pre-hire
+          workDate: '2026-09-11', // pre-hire (Fri)
           checkedInAt: new Date('2026-09-11T01:00:00Z'),
           checkedOutAt: new Date('2026-09-11T10:00:00Z'),
           workedMinutes: 540,
           status: 'present',
         },
         {
-          workDate: '2026-09-14', // in window (8h)
+          workDate: '2026-09-14', // in window (Mon, 8h)
           checkedInAt: new Date('2026-09-14T01:00:00Z'),
           checkedOutAt: new Date('2026-09-14T09:00:00Z'),
           workedMinutes: 480,
           status: 'present',
         },
         {
-          workDate: '2026-09-16', // post-end (Sunday / weekday OT or regular)
+          workDate: '2026-09-16', // post-end (Wed normal day with 1h OT; must be excluded)
           checkedInAt: new Date('2026-09-16T01:00:00Z'),
           checkedOutAt: new Date('2026-09-16T11:00:00Z'),
           workedMinutes: 600,
@@ -528,6 +532,176 @@ describe('HR Stage 5C attendance deterministic helpers (#4447)', () => {
       ],
     });
     expect(hourlyRollup.workedHours).toBe('8');
+    expect(hourlyRollup.paidHolidayHours).toBe('0');
     expect(hourlyRollup.overtimeHours).toBe('0');
+    expect(hourlyRollup.overtime).toEqual([]);
+    expect(hourlyRollup.nightHours).toBe('0');
+  });
+
+  it('credits VN Labor Code Art. 112 paid public holidays for hourly workers with scheduledHoursPerDay inside [hireDate, endedOn]', () => {
+    const baseInputs = zHrPayrollInputs.parse({});
+    const normalShiftEntry = {
+      workDate: '2026-09-14',
+      checkedInAt: new Date('2026-09-14T01:00:00Z'),
+      checkedOutAt: new Date('2026-09-14T09:00:00Z'),
+      workedMinutes: 480, // 8h
+      status: 'present' as const,
+    };
+
+    // Without scheduledHoursPerDay: backward-compatible, zero fabricated paid holiday hours
+    const noSchedule = computeEmployeeAttendanceRollup({
+      month: '2026-09',
+      workingDays: '26',
+      payBasis: 'hourly',
+      scheduledHoursPerDay: null,
+      existingInputs: baseInputs,
+      paidLeaveDays: '0',
+      hireDate: '2026-01-01',
+      entries: [normalShiftEntry],
+    });
+    expect(noSchedule.paidHolidayHours).toBe('0');
+    expect(noSchedule.workedHours).toBe('8');
+    expect(noSchedule.overtime).toEqual([]);
+
+    // With contractual part-time schedule 4.5h/day in 2026-09 (1 Mon-Sat holiday: 2026-09-02 National Day)
+    const partTime = computeEmployeeAttendanceRollup({
+      month: '2026-09',
+      workingDays: '26',
+      payBasis: 'hourly',
+      scheduledHoursPerDay: '4.50',
+      existingInputs: baseInputs,
+      paidLeaveDays: '0',
+      hireDate: '2026-01-01',
+      entries: [normalShiftEntry],
+    });
+    expect(partTime.paidHolidayHours).toBe('4.5');
+    expect(partTime.workedHours).toBe('12.5');
+    expect(partTime.overtimeHours).toBe('0');
+    expect(partTime.overtime).toEqual([]);
+
+    // Working 4h on National Day 2026-09-02 keeps 300% holiday OT separate from 100% Art. 112 regular holiday pay
+    const workedHoliday = computeEmployeeAttendanceRollup({
+      month: '2026-09',
+      workingDays: '26',
+      payBasis: 'hourly',
+      scheduledHoursPerDay: '4',
+      existingInputs: baseInputs,
+      paidLeaveDays: '0',
+      hireDate: '2026-01-01',
+      entries: [
+        normalShiftEntry,
+        {
+          workDate: '2026-09-02',
+          checkedInAt: new Date('2026-09-02T01:30:00Z'),
+          checkedOutAt: new Date('2026-09-02T05:30:00Z'),
+          workedMinutes: 240,
+          status: 'half_day',
+        },
+      ],
+    });
+    expect(workedHoliday.paidHolidayHours).toBe('4');
+    expect(workedHoliday.workedHours).toBe('12');
+    expect(workedHoliday.overtimeHours).toBe('4');
+    expect(workedHoliday.overtime).toEqual([{ dayKind: 'holiday', night: false, hours: '4' }]);
+
+    // Multi-holiday month (Feb 2026 has 5 Mon-Fri Tet holidays) + fractional normal minutes via decimal.js
+    const tetFractional = computeEmployeeAttendanceRollup({
+      month: '2026-02',
+      workingDays: '26',
+      payBasis: 'hourly',
+      scheduledHoursPerDay: '4.5',
+      existingInputs: baseInputs,
+      paidLeaveDays: '0',
+      hireDate: '2026-01-01',
+      entries: [
+        {
+          workDate: '2026-02-02',
+          checkedInAt: new Date('2026-02-02T01:00:00Z'),
+          checkedOutAt: new Date('2026-02-02T04:20:00Z'),
+          workedMinutes: 200, // 3.3333...h -> + 5 * 4.5 (22.5) = 25.8333... -> 25.83
+          status: 'half_day',
+        },
+      ],
+    });
+    expect(tetFractional.paidHolidayHours).toBe('22.5');
+    expect(tetFractional.workedHours).toBe('25.83');
+
+    // Employment window boundaries [hireDate, endedOn]:
+    // Hired after 2026-09-02 -> 0 paid holiday hours
+    const hiredAfterHoliday = computeEmployeeAttendanceRollup({
+      month: '2026-09',
+      workingDays: '26',
+      payBasis: 'hourly',
+      scheduledHoursPerDay: '8',
+      existingInputs: baseInputs,
+      paidLeaveDays: '0',
+      hireDate: '2026-09-03',
+      entries: [normalShiftEntry],
+    });
+    expect(hiredAfterHoliday.paidHolidayHours).toBe('0');
+    expect(hiredAfterHoliday.workedHours).toBe('8');
+
+    // Ended before 2026-09-02 -> 0 paid holiday hours
+    const endedBeforeHoliday = computeEmployeeAttendanceRollup({
+      month: '2026-09',
+      workingDays: '26',
+      payBasis: 'hourly',
+      scheduledHoursPerDay: '8',
+      existingInputs: baseInputs,
+      paidLeaveDays: '0',
+      hireDate: '2026-01-01',
+      endedOn: '2026-09-01',
+      entries: [
+        {
+          workDate: '2026-09-01',
+          checkedInAt: new Date('2026-09-01T01:00:00Z'),
+          checkedOutAt: new Date('2026-09-01T09:00:00Z'),
+          workedMinutes: 480,
+          status: 'present',
+        },
+      ],
+    });
+    expect(endedBeforeHoliday.paidHolidayHours).toBe('0');
+    expect(endedBeforeHoliday.workedHours).toBe('8');
+
+    // Inclusive boundary hireDate === 2026-09-02 AND endedOn === 2026-09-02 credits the holiday
+    const inclusiveBoundary = computeEmployeeAttendanceRollup({
+      month: '2026-09',
+      workingDays: '26',
+      payBasis: 'hourly',
+      scheduledHoursPerDay: '6.25',
+      existingInputs: baseInputs,
+      paidLeaveDays: '0',
+      hireDate: '2026-09-02',
+      endedOn: '2026-09-02',
+      entries: [],
+    });
+    expect(inclusiveBoundary.paidHolidayHours).toBe('6.25');
+    expect(inclusiveBoundary.workedHours).toBe('6.25');
+
+    // Monthly payBasis keeps day-based calculation untouched even if scheduledHoursPerDay is provided
+    const monthlyIgnored = computeEmployeeAttendanceRollup({
+      month: '2026-09',
+      workingDays: '26',
+      payBasis: 'monthly',
+      scheduledHoursPerDay: '8',
+      existingInputs: baseInputs,
+      paidLeaveDays: '0',
+      hireDate: '2026-01-01',
+      entries: [normalShiftEntry],
+    });
+    expect(monthlyIgnored.workedHours).toBeNull();
+    expect(monthlyIgnored.paidHolidayHours).toBe('0');
+  });
+
+  it('validates contractual scheduledHoursPerDay strictly within (0, 24] with at most 2 decimals', () => {
+    for (const valid of ['0.01', '0.5', '4', '7.5', '8.00', '24', '24.00', ' 4.25 ']) {
+      expect(isValidScheduledHoursPerDay(valid)).toBe(true);
+      expect(zHrScheduledHoursPerDay.safeParse(valid).success).toBe(true);
+    }
+    for (const invalid of ['', '0', '0.0', '0.00', '-4', '24.01', '25', '8.125', '04', '.5', 'abc']) {
+      expect(isValidScheduledHoursPerDay(invalid)).toBe(false);
+      expect(zHrScheduledHoursPerDay.safeParse(invalid).success).toBe(false);
+    }
   });
 });

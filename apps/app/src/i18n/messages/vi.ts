@@ -1989,7 +1989,12 @@ export const vi = {
     },
     hourlyRate: 'Đơn giá giờ (đ/giờ)',
     pieceRate: 'Đơn giá sản phẩm (đ/đơn vị)',
+    scheduledHoursPerDay: 'Giờ chuẩn ngày lễ (giờ/ngày)',
+    scheduledHoursPerDayPlaceholder: 'VD: 4 hoặc 8 (tùy chọn)',
+    scheduledHoursPerDayHint: 'Tự cộng giờ hưởng nguyên lương ngày lễ theo Điều 112 BLLĐ khi tổng hợp chấm công.',
+    scheduledHoursPerDayError: 'Nhập số giờ lớn hơn 0 và không quá 24 (tối đa 2 số thập phân).',
     hourlyRateUnit: '{rate}/giờ',
+    hourlyRateWithSchedule: '{base} ({hours} giờ/ngày lễ)',
     pieceRateUnit: '{rate}/sp',
     taxResidency: 'Tình trạng cư trú thuế',
     taxResidencyOptions: {

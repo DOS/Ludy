@@ -118,6 +118,7 @@ export const EMPLOYMENT_COLUMNS = [
   'pay_basis',
   'hourly_rate',
   'piece_rate',
+  'scheduled_hours_per_day',
   'tax_resident',
   'created_by',
   'created_at',
@@ -140,6 +141,7 @@ interface PreparedEmploymentRow {
   pay_basis: HrEmploymentTerms['payBasis'];
   hourly_rate: string | null;
   piece_rate: string | null;
+  scheduled_hours_per_day: string | null;
   tax_resident: boolean;
 }
 
@@ -153,6 +155,7 @@ export function prepareEmploymentTerms(terms: EmploymentTermsInput, defaultPayFu
   const payBasis = terms.payBasis ?? 'monthly';
   const hourlyRate = terms.hourlyRate ?? null;
   const pieceRate = terms.pieceRate ?? null;
+  const scheduledHoursPerDay = terms.scheduledHoursPerDay ?? null;
   const taxResident = terms.taxResident ?? true;
   const contractForm = terms.contractForm ?? null;
   const termMonths = terms.termMonths ?? null;
@@ -247,6 +250,7 @@ export function prepareEmploymentTerms(terms: EmploymentTermsInput, defaultPayFu
     pay_basis: payBasis,
     hourly_rate: hourlyRate,
     piece_rate: pieceRate,
+    scheduled_hours_per_day: scheduledHoursPerDay,
     tax_resident: taxResident,
   };
 }
@@ -424,6 +428,7 @@ export const employeeAdd = defineCommand({
       region: prepared.region,
       payFunction: prepared.pay_function,
       payBasis: prepared.pay_basis,
+      scheduledHoursPerDay: prepared.scheduled_hours_per_day,
       taxResident: prepared.tax_resident,
       baseWage: auditValue(EMPLOYMENT, 'base_wage', prepared.base_wage),
       hourlyRate: auditValue(EMPLOYMENT, 'hourly_rate', prepared.hourly_rate),
@@ -631,6 +636,7 @@ export const employmentAdd = defineCommand({
       region: prepared.region,
       payFunction: prepared.pay_function,
       payBasis: prepared.pay_basis,
+      scheduledHoursPerDay: prepared.scheduled_hours_per_day,
       taxResident: prepared.tax_resident,
       baseWage: auditValue(EMPLOYMENT, 'base_wage', prepared.base_wage),
       hourlyRate: auditValue(EMPLOYMENT, 'hourly_rate', prepared.hourly_rate),
@@ -1157,6 +1163,7 @@ const TERMS_SELECT_COLUMNS = [
   'pay_basis',
   'hourly_rate',
   'piece_rate',
+  'scheduled_hours_per_day',
   'tax_resident',
 ] as const;
 
@@ -1178,6 +1185,7 @@ interface TermsRow {
   pay_basis: HrEmploymentView['payBasis'];
   hourly_rate: string | null;
   piece_rate: string | null;
+  scheduled_hours_per_day: string | null;
   tax_resident: boolean;
 }
 
@@ -1191,6 +1199,7 @@ const termsView = (r: TermsRow): HrEmploymentView => ({
   payBasis: r.pay_basis,
   hourlyRate: r.hourly_rate,
   pieceRate: r.piece_rate,
+  scheduledHoursPerDay: r.scheduled_hours_per_day,
   taxResident: r.tax_resident,
   contractForm: r.contract_form,
   termMonths: r.term_months,

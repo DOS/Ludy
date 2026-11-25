@@ -19,6 +19,7 @@ import {
   HR_REGIONS,
   HR_RELATIONS,
   SIGN_BY_SOURCE_MAX,
+  isValidScheduledHoursPerDay,
   vietnamToday,
   type HrContractAlert,
   type HrContractForm,
@@ -79,6 +80,7 @@ export interface TermsState {
   payBasis: HrPayBasis;
   hourlyRate: string;
   pieceRate: string;
+  scheduledHoursPerDay: string;
   taxResident: boolean;
   contractForm: HrContractForm | '';
   termMonths: string;
@@ -98,6 +100,7 @@ export const blankTerms = (): TermsState => ({
   payBasis: 'monthly',
   hourlyRate: '',
   pieceRate: '',
+  scheduledHoursPerDay: '',
   taxResident: true,
   contractForm: '',
   termMonths: '',
@@ -112,8 +115,9 @@ export const idNumberOk = (v: string) => v.trim() === '' || /^(\d{10}|\d{12})$/.
 export const workPermitNumberOk = (v: string) => v.trim() === '' || /^[A-Za-z0-9][A-Za-z0-9 ./-]{3,29}$/.test(v.trim());
 const wageOk = (v: string) => /^\d{1,16}(\.\d{1,2})?$/.test(v);
 const positiveWageOk = (v: string) => wageOk(v) && /[1-9]/.test(v);
+export const scheduledHoursOk = (v: string) => v.trim() === '' || isValidScheduledHoursPerDay(v);
 export function termsValid(terms: TermsState): boolean {
-  if (terms.payBasis === 'hourly') return positiveWageOk(terms.hourlyRate);
+  if (terms.payBasis === 'hourly') return positiveWageOk(terms.hourlyRate) && scheduledHoursOk(terms.scheduledHoursPerDay);
   if (terms.payBasis === 'piece_rate') return positiveWageOk(terms.pieceRate);
   return wageOk(terms.baseWage);
 }
@@ -133,6 +137,7 @@ function hasContractDetails(terms: TermsState): boolean {
 export function buildEmploymentPayload(terms: TermsState): HrEmploymentTerms {
   const termMonthsRaw = terms.termMonths.trim();
   const probationWageRaw = terms.probationWage.trim();
+  const scheduledHoursRaw = terms.scheduledHoursPerDay.trim();
   return {
     effectiveFrom: terms.effectiveFrom,
     contractType: terms.contractType,
@@ -141,6 +146,7 @@ export function buildEmploymentPayload(terms: TermsState): HrEmploymentTerms {
     payFunction: terms.payFunction,
     payBasis: terms.payBasis,
     ...(terms.payBasis === 'hourly' && terms.hourlyRate.trim() !== '' ? { hourlyRate: terms.hourlyRate.trim() } : {}),
+    ...(terms.payBasis === 'hourly' && scheduledHoursRaw !== '' ? { scheduledHoursPerDay: scheduledHoursRaw } : {}),
     ...(terms.payBasis === 'piece_rate' && terms.pieceRate.trim() !== '' ? { pieceRate: terms.pieceRate.trim() } : {}),
     taxResident: terms.taxResident,
     ...(terms.contractForm !== '' ? { contractForm: terms.contractForm } : {}),
@@ -225,7 +231,14 @@ function formatContractAlert(t: ReturnType<typeof useTranslations<'hrEmployees'>
 }
 
 function formatPaySummary(t: ReturnType<typeof useTranslations<'hrEmployees'>>, f: ReturnType<typeof useFormat>, row: HrEmploymentView): string {
-  if (row.payBasis === 'hourly') return t('hourlyRateUnit', { rate: f.money(row.hourlyRate ?? '0', 'VND') });
+  if (row.payBasis === 'hourly') {
+    const base = t('hourlyRateUnit', { rate: f.money(row.hourlyRate ?? '0', 'VND') });
+    if (row.scheduledHoursPerDay !== null) {
+      const hours = row.scheduledHoursPerDay.replace(/(\.\d*?[1-9])0+$|\.0+$/, '$1');
+      return t('hourlyRateWithSchedule', { base, hours });
+    }
+    return base;
+  }
   if (row.payBasis === 'piece_rate') return t('pieceRateUnit', { rate: f.money(row.pieceRate ?? '0', 'VND') });
   return f.money(row.baseWage, 'VND');
 }
@@ -307,6 +320,8 @@ export function TermsFields({
   const errors = findings.filter((item) => item.severity === 'error');
   const warnings = findings.filter((item) => item.severity === 'warning');
   const derivedEnd = autoEndDateFor(value);
+  const scheduledHoursInvalid =
+    value.scheduledHoursPerDay.trim() !== '' && !scheduledHoursOk(value.scheduledHoursPerDay);
   return (
     <>
       <div className="space-y-1">
@@ -365,17 +380,45 @@ export function TermsFields({
         </div>
       )}
       {value.payBasis === 'hourly' && (
-        <div className="space-y-1">
-          <Label htmlFor={`${id}-hourly-rate`}>{t('hourlyRate')}</Label>
-          <Input
-            id={`${id}-hourly-rate`}
-            value={value.hourlyRate}
-            inputMode="decimal"
-            maxLength={19}
-            onChange={(e) => onChange({ hourlyRate: e.target.value.replace(/[^\d.]/g, '') })}
-            data-testid="hr-terms-hourly-rate"
-          />
-        </div>
+        <>
+          <div className="space-y-1">
+            <Label htmlFor={`${id}-hourly-rate`}>{t('hourlyRate')}</Label>
+            <Input
+              id={`${id}-hourly-rate`}
+              value={value.hourlyRate}
+              inputMode="decimal"
+              maxLength={19}
+              className="max-md:min-h-11"
+              onChange={(e) => onChange({ hourlyRate: e.target.value.replace(/[^\d.]/g, '') })}
+              data-testid="hr-terms-hourly-rate"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor={`${id}-scheduled-hours`}>{t('scheduledHoursPerDay')}</Label>
+            <Input
+              id={`${id}-scheduled-hours`}
+              value={value.scheduledHoursPerDay}
+              inputMode="decimal"
+              maxLength={6}
+              placeholder={t('scheduledHoursPerDayPlaceholder')}
+              aria-invalid={scheduledHoursInvalid || undefined}
+              aria-describedby={
+                scheduledHoursInvalid
+                  ? `${id}-scheduled-hours-error ${id}-scheduled-hours-hint`
+                  : `${id}-scheduled-hours-hint`
+              }
+              className="max-md:min-h-11"
+              onChange={(e) => onChange({ scheduledHoursPerDay: e.target.value.replace(/[^\d.]/g, '') })}
+              data-testid="hr-terms-scheduled-hours"
+            />
+            <FieldError id={`${id}-scheduled-hours`}>
+              {scheduledHoursInvalid ? t('scheduledHoursPerDayError') : null}
+            </FieldError>
+            <p id={`${id}-scheduled-hours-hint`} className="text-xs text-subtle-foreground">
+              {t('scheduledHoursPerDayHint')}
+            </p>
+          </div>
+        </>
       )}
       {value.payBasis === 'piece_rate' && (
         <div className="space-y-1">
