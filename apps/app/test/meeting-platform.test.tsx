@@ -107,6 +107,7 @@ describe('MeetingPlatforms (Settings)', () => {
     const teamsVi = renderToStaticMarkup(wrap(<DisconnectAsk provider="microsoft_teams" name="Microsoft Teams: An" />, 'vi'));
     expect(teamsVi).toContain('myapps.microsoft.com');
     expect(teamsVi).toContain('90 ngày');
+    expect(teamsVi).toContain('quản trị viên');
     for (const provider of ['google_meet', 'zoom', 'sandbox']) {
       const html = renderToStaticMarkup(wrap(<DisconnectAsk provider={provider} name="X" />));
       expect(html, provider).toContain('meeting-platform-disconnect-ask');

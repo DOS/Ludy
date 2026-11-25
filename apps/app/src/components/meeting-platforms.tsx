@@ -3,7 +3,7 @@
 // and the connect button of each provider this deployment offers: the offline sandbox where the deployment's test channels are on, and Google Meet, Zoom (C3, #3175) and Microsoft Teams (C4, #3176) where the
 // deployment has its own app. Ludy only lists recordings through a connection; the import is a click on the Meetings tab. The core works with AI off: no model is called here.
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useState, useId } from 'react';
 import { useTranslations } from 'use-intl';
 import type { MeetingPlatformConnectProvider, MeetingPlatformConnectionView } from '@ludy/kernel-contract';
 import { Badge } from '@ludy/ui/components/badge';
@@ -22,10 +22,10 @@ import { ErrorText, RowsSkeleton } from './ui.tsx';
 const refreshAll = () => queryClient.invalidateQueries({ queryKey: orpc.meetingPlatform.key() });
 
 // What a disconnect does, said before it is done. Microsoft has no endpoint to revoke the access (Google and Zoom have), so for Teams the member is told to also remove the app in their Microsoft account.
-export function DisconnectAsk({ provider, name }: { provider: string; name: string }) {
+export function DisconnectAsk({ provider, name, id }: { provider: string; name: string; id?: string | undefined }) {
   const t = useTranslations('meetings.platform.settings');
   return (
-    <div className="mt-2 space-y-1 text-xs text-muted-foreground" data-testid="meeting-platform-disconnect-ask">
+    <div id={id} className="mt-2 space-y-1 text-xs text-muted-foreground" data-testid="meeting-platform-disconnect-ask">
       <p>{t('disconnectAsk', { name })}</p>
       {provider === 'microsoft_teams' && <p data-testid="meeting-platform-disconnect-teams">{t('disconnectTeams')}</p>}
     </div>
@@ -37,6 +37,7 @@ function ConnectionRow({ connection }: { connection: MeetingPlatformConnectionVi
   const tp = useTranslations('meetings.platform');
   const f = useFormat();
   const [confirm, setConfirm] = useState(false);
+  const askId = useId();
   const refresh = useMutation({
     mutationFn: () => orpc.meetingPlatform.refresh.call({ connectionId: connection.id }),
     onSuccess: async () => {
@@ -75,7 +76,7 @@ function ConnectionRow({ connection }: { connection: MeetingPlatformConnectionVi
           )}
         </div>
         {confirm ? (
-          <div className="flex shrink-0 flex-wrap gap-2" role="alertdialog" aria-label={t('disconnectOf', { name })} data-testid="meeting-platform-confirm">
+          <div className="flex shrink-0 flex-wrap gap-2" role="alertdialog" aria-label={t('disconnectOf', { name })} aria-describedby={askId} data-testid="meeting-platform-confirm">
             <Button size="sm" variant="destructive" loading={disconnect.isPending} disabled={disconnect.isPending} onClick={() => disconnect.mutate()}>
               {t('disconnectYes')}
             </Button>
@@ -94,7 +95,7 @@ function ConnectionRow({ connection }: { connection: MeetingPlatformConnectionVi
           </div>
         )}
       </div>
-      {confirm && <DisconnectAsk provider={connection.provider} name={name} />}
+      {confirm && <DisconnectAsk id={askId} provider={connection.provider} name={name} />}
       {refresh.error && <ErrorText>{errorMessage(refresh.error)}</ErrorText>}
       {disconnect.error && <ErrorText>{errorMessage(disconnect.error)}</ErrorText>}
     </li>
