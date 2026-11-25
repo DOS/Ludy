@@ -840,10 +840,8 @@ suite('meeting notes readers and permissions on PostgreSQL (#2575, ADR-0047)', (
          WHERE n.nspname = 'crove_meetings' AND p.prosecdef = true`,
       ),
     );
-    if (rows.length === 0) {
-      expect(rows).toEqual([]);
-      return;
-    }
+    // Not an empty match: the hook definers (hook_get and the rest) are SECURITY DEFINER on main, so a query that finds none is broken, not clean (#5033).
+    expect(rows.map((r) => r.proname), 'the catalog query must find the module\'s SECURITY DEFINER functions').toEqual(expect.arrayContaining(Object.keys(HOOK_DEFINER_TEXT)));
     for (const fn of rows) {
       expect(fn.proconfig, `${fn.proname} must pin search_path to pg_catalog, pg_temp`).toContain('search_path=pg_catalog, pg_temp');
       expect(fn.hasPublicExec, `${fn.proname} must not grant EXECUTE to PUBLIC`).toBe(false);
@@ -866,6 +864,8 @@ suite('meeting notes readers and permissions on PostgreSQL (#2575, ADR-0047)', (
       ),
     );
     const present = rows.filter((r) => Object.hasOwn(HOOK_DEFINER_TEXT, r.proname));
+    // All eight exist as SECURITY DEFINER on main (#5033), so none may be missing from the audit below.
+    expect(present.map((r) => r.proname).sort(), 'the catalog query must find all eight text-returning definers').toEqual(Object.keys(HOOK_DEFINER_TEXT).sort());
     for (const fn of present) {
       expect([...fn.grantees].sort(), `${fn.proname} is executable by ${HOOK_DEFINER_EXECUTORS[fn.proname]?.join(', ')} alone`).toEqual([...(HOOK_DEFINER_EXECUTORS[fn.proname] ?? [])].sort());
     }
