@@ -15,10 +15,10 @@ import { contextTokenKeyBytes, mintContextToken, Runtime } from '@ludy/kernel-ru
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
 // The key the migration runner installed (vitest.invariant.config.ts).
-const KEY = process.env.CROVE_CONTEXT_TOKEN_KEY ?? '';
+const KEY = process.env.LUDY_CONTEXT_TOKEN_KEY ?? process.env.CROVE_CONTEXT_TOKEN_KEY ?? '';
 const LOGIN_ROLES = ['crove_app', 'crove_worker', 'crove_tenant', 'crove_definer_tenant', 'crove_auth_reader'];
 
 const suite = ADMIN && KEY ? describe : describe.skip;

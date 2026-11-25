@@ -39,7 +39,7 @@ const setMapStatus = (status: 'confirmed' | 'commentary') => {
   for (const map of Object.values(PAYROLL_POSTING_MAPS)) (map as { status: string }).status = status;
 };
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 

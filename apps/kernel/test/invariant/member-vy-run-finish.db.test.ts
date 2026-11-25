@@ -19,7 +19,7 @@ import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswo
 // The extra column of an ai_run seed once the table has `feature` (#3029); empty before.
 let FEAT: AiRunFeature = { cols: "", vals: "" };
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(
   new URL("../../../../supabase/migrations", import.meta.url),
 );

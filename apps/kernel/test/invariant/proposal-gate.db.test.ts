@@ -26,7 +26,7 @@ import { extractAndPropose, financeCommands, financeQueries } from '@ludy/mod-fi
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 // The kernel's proposal edit command: the only command that runs a reviser.
 const EDIT = 'kernel.proposal.edit';
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));

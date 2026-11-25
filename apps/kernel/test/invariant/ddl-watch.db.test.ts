@@ -15,7 +15,7 @@ import { installDdlWatch, migrate } from '@ludy/db/migrate';
 import { sweepSecuritySignals } from '../../src/security-signals.ts';
 import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
 const ROLES = ['crove_app', 'crove_worker', 'crove_tenant', 'crove_definer_tenant', 'crove_auth_reader', 'crove_prober', 'crove_reporter'];
 
@@ -66,9 +66,9 @@ suite('DDL outside the migration pipeline on PostgreSQL (#1202)', () => {
 
   async function sweep() {
     const lines: string[] = [];
-    const posted: Array<{ text: string; crove: Record<string, unknown> }> = [];
+    const posted: Array<{ text: string; ludy: Record<string, unknown> }> = [];
     const fetch = (async (_url: string, init: RequestInit) => {
-      posted.push(JSON.parse(String(init.body)) as { text: string; crove: Record<string, unknown> });
+      posted.push(JSON.parse(String(init.body)) as { text: string; ludy: Record<string, unknown> });
       return new Response('{}', { status: 200 });
     }) as unknown as typeof globalThis.fetch;
     const found = await sweepSecuritySignals({
@@ -77,7 +77,7 @@ suite('DDL outside the migration pipeline on PostgreSQL (#1202)', () => {
       fetch,
       log: (line) => lines.push(line),
     });
-    return { found, lines, posted: posted.filter((p) => String(p.crove.signal).startsWith('out_of_pipeline_ddl')) };
+    return { found, lines, posted: posted.filter((p) => String(p.ludy.signal).startsWith('out_of_pipeline_ddl')) };
   }
 
   beforeAll(async () => {
@@ -181,7 +181,7 @@ suite('DDL outside the migration pipeline on PostgreSQL (#1202)', () => {
 
     const first = await sweep();
     expect(first.posted).toHaveLength(1);
-    expect(first.posted[0]?.crove).toMatchObject({ kind: 'security', signal: 'out_of_pipeline_ddl', value: 9, orgId: null });
+    expect(first.posted[0]?.ludy).toMatchObject({ kind: 'security', signal: 'out_of_pipeline_ddl', value: 9, orgId: null });
     expect(first.posted[0]?.text).toMatch(
       new RegExp(`^\\[(?:Crove|Ludy)\\] Security alert from books\\.example\\.test: 9 schema change\\(s\\) outside the migration pipeline, first by ${adminRole}: CREATE TABLE public\\.ddl_probe \\(ddl_event \\d+\\)`),
     );
@@ -220,7 +220,7 @@ suite('DDL outside the migration pipeline on PostgreSQL (#1202)', () => {
     ]);
     // One database session (the grant before the switch included): one alert.
     const { posted } = await sweep();
-    expect(posted.map((p) => p.crove.value)).toEqual([6]);
+    expect(posted.map((p) => p.ludy.value)).toEqual([6]);
   });
 
   it("spares Supabase Auth's role only for its objects in the auth schema, and records the rest of its DDL", async () => {
@@ -262,7 +262,7 @@ suite('DDL outside the migration pipeline on PostgreSQL (#1202)', () => {
     }
     await withClient(adminUrl, (c) => c.query('DROP TABLE public.ddl_probe_session_12'));
     const { posted, lines } = await sweep();
-    expect(posted.map((p) => [p.crove.signal, p.crove.value])).toEqual([
+    expect(posted.map((p) => [p.ludy.signal, p.ludy.value])).toEqual([
       ...Array.from({ length: 10 }, () => ['out_of_pipeline_ddl', 1]),
       ['out_of_pipeline_ddl_more', 4],
     ]);

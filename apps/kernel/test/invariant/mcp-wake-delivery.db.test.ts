@@ -20,7 +20,7 @@ import { makeWakeSecret } from '../../src/mcp-wake-setup.ts';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { auditRoleFunctionExecute, auditRoleTablePrivileges, createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
