@@ -35,7 +35,7 @@ import type { MeetingPlatformAdapter, MeetingPlatformDownload, MeetingPlatformTr
 import { MeetingPlatformError } from '@ludy/channel';
 import { DomainError, EgressError, guardedStream, type BlobStore, type CredentialBroker, type EgressStream, type EgressStreamOptions, type Runtime } from '@ludy/kernel-runtime';
 import { freshCredential } from './meeting-platform-credential.ts';
-import { extractAudioFromVideo, type MediaAudioExtractor } from './meetings-extract.ts';
+import { extractAudioFromVideo, joinAudioFromParts, type MediaAudioExtractor } from './meetings-extract.ts';
 import { MEDIA_PROBE_FAILED, MEDIA_PROBE_UNAVAILABLE, MEDIA_TOO_LONG } from './meetings-measure.ts';
 
 const ACTOR = { type: 'system' as const, component: 'meetings.import' };
@@ -250,6 +250,46 @@ async function audioOfVideo(deps: MeetingsImportDeps, job: MeetingsImportJob, do
   }
 }
 
+// The audio of a recording the platform made in several parts (Zoom, #3175): every part is fetched through the guard in order and sealed as it arrives (the parts together counted against the cap of their
+// format), crove-media reads them back in one framed call and returns ONE Opus, and the sealed parts are deleted when the call ends. A part that fails fails the whole import, so a partial recording is never
+// staged. Each part must declare its length (its response, else the size the platform listed for that file); one that does not is refused as the platform's answer. A sandbox that cannot join, or none, is `no_audio`.
+async function audioOfParts(deps: MeetingsImportDeps, job: MeetingsImportJob, parts: readonly MeetingPlatformDownload[], format: 'audio' | 'video', signal?: AbortSignal): Promise<Uint8Array> {
+  const extractor = deps.extractor;
+  if (!extractor?.configured || !extractor.join) throw new MeetingPlatformError('no_audio');
+  const cap = format === 'video' ? MEETING_PLATFORM_VIDEO_MAX_BYTES : MEETING_PLATFORM_IMPORT_MAX_BYTES;
+  // The sizes the platform listed, added up, over the cap: refused before any file is opened.
+  const listed = parts.map((part) => part.sizeBytes ?? null);
+  if (listed.every((n): n is number => n !== null) && listed.reduce((sum, n) => sum + n, 0) > cap) throw new MeetingPlatformError('too_large');
+  // Each part is opened when its turn comes and closed once it is sealed, so only one connection is open at a time (a part that waited open and idle behind the others could be cut by the platform).
+  let declaredTotal = 0;
+  const opens = parts.map((part) => async () => {
+    if (part.inline) throw new MeetingPlatformError('platform_refused');
+    const opened = await openDownload(deps, part, cap - declaredTotal, signal);
+    try {
+      const known = opened.declared ?? part.sizeBytes ?? null;
+      if (known === null || known < 1) throw new MeetingPlatformError('platform_refused');
+      declaredTotal += known;
+      if (declaredTotal > cap) throw new MeetingPlatformError('too_large');
+      const body = opened.response.body;
+      return {
+        expectedLength: known,
+        release: opened.release,
+        source: (async function* () {
+          for await (const chunk of body) {
+            if (signal?.aborted) throw new MeetingPlatformError('platform_unavailable');
+            yield chunk;
+          }
+        })(),
+      };
+    } catch (error) {
+      opened.release();
+      throw error;
+    }
+  });
+  const out = await joinAudioFromParts({ parts: opens, kind: format, maxBytes: cap, store: deps.store, orgId: job.orgId, meetingId: job.id, extractor });
+  return out.audio;
+}
+
 // The lines of a platform's transcript as the staged JSON `{ segments }` (and `truncated: true` when the transcript was cut, #3922), bounded again here: the platform's text is tainted, so every line is cut to the draft's limits, an empty one is dropped, the times are
 // clamped to the longest call the draft takes and a line with no speaker gets a neutral label. Nothing of the platform but the lines is staged (no participant list, no title). `no_transcript` when no line is left.
 export const UNKNOWN_SPEAKER = 'Người nói';
@@ -311,8 +351,10 @@ export async function runMeetingsImport(deps: MeetingsImportDeps, job: MeetingsI
       const download = await adapter.transcriptFile(credential, job.externalId, attempt.signal);
       bytes = stageTranscript(adapter.parseTranscript(await fetchBytes(deps, download, attempt.signal, TRANSCRIPT_FILE_MAX_BYTES)));
     } else {
-      const download = await adapter.prepareDownload(credential, job.externalId, format as 'audio' | 'video', attempt.signal);
-      bytes = download.format === 'video' ? await audioOfVideo(deps, job, download, attempt.signal) : await fetchBytes(deps, download, attempt.signal);
+      // A recording made in segments comes as two or more files (Zoom, #3175): they are joined into one audio. A platform that never splits has no such step, and a recording of one file answers with none.
+      const parts = adapter.prepareParts ? await adapter.prepareParts(credential, job.externalId, format as 'audio' | 'video', attempt.signal) : [];
+      const download = parts.length < 2 ? await adapter.prepareDownload(credential, job.externalId, format as 'audio' | 'video', attempt.signal) : null;
+      bytes = download === null ? await audioOfParts(deps, job, parts, format as 'audio' | 'video', attempt.signal) : download.format === 'video' ? await audioOfVideo(deps, job, download, attempt.signal) : await fetchBytes(deps, download, attempt.signal);
       // The audio cap is the same whether the audio came as a file or out of a video.
       if (bytes.byteLength > MEETING_PLATFORM_IMPORT_MAX_BYTES) throw new MeetingPlatformError('too_large');
     }
