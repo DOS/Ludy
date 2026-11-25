@@ -185,6 +185,10 @@ describe('the Telegram chats card', () => {
     expect(text(named)).toContain('Cho tin nhắn của @lan_tran vào Hộp thư của bạn? Chỉ làm vậy nếu đó là tài khoản của chính bạn.');
     expect(text(named)).toContain('Đúng, cho phép');
     expect(text(named)).toContain('Hủy');
+    // If an account disconnects while confirmation is open, the confirm prompt hides and Dismiss stays available.
+    const staleConfirm = view([account({ enabled: false, approved: false })]);
+    expect(staleConfirm).not.toContain('data-testid="telegram-business-confirm"');
+    expect(text(staleConfirm)).toContain('Bỏ qua');
     // The first button is replaced by the question.
     expect(text(named)).not.toContain('Cho nhận tin');
     const unnamed = view([account({ approved: false, username: null })]);

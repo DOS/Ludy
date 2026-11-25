@@ -310,6 +310,30 @@ describe('turning the webhook on and off', () => {
     expect(calls).toHaveLength(0);
   });
 
+  it('reads current webhook url via getWebhookInfo without leaking token', async () => {
+    const hook = newTelegramHookId();
+    const { fetchImpl } = bot([
+      ok({ url: `https://ludy.example.com/api/channels/telegram/webhook/${hook}` }),
+      ok({ url: '' }),
+      ok({ something: 'bad' }),
+      fail(502, `Bad Gateway ${TOKEN}`),
+    ]);
+    const adapter = new TelegramConversations({ fetch: fetchImpl });
+    expect(adapter.chatHookBotId(SECRET)).toBe('123456789');
+    expect(adapter.chatHookBotId('{}')).toBeNull();
+    expect(await adapter.chatHookInfo({ secret: SECRET, hook, baseUrl: 'https://ludy.example.com/' })).toEqual({
+      kind: 'ok',
+      url: `https://ludy.example.com/api/channels/telegram/webhook/${hook}`,
+      matchesHook: true,
+    });
+    expect(await adapter.chatHookInfo({ secret: SECRET, hook, baseUrl: 'https://ludy.example.com' })).toEqual({ kind: 'ok', url: '', matchesHook: false });
+    expect(await adapter.chatHookInfo({ secret: SECRET })).toEqual({ kind: 'failed', retry: true, code: 'TG_WEBHOOK_INFO_SHAPE' });
+    const failed = await adapter.chatHookInfo({ secret: SECRET });
+    expect(failed).toEqual({ kind: 'failed', retry: true, code: 'TELEGRAM_502' });
+    expect(JSON.stringify(failed)).not.toContain(TOKEN);
+    expect(await adapter.chatHookInfo({ secret: '{}' })).toEqual({ kind: 'failed', retry: false, code: 'TELEGRAM_NO_TOKEN' });
+  });
+
   it('is built from random ids: two hooks never collide in a thousand draws', () => {
     const ids = new Set(Array.from({ length: 1000 }, () => newTelegramHookId()));
     expect(ids.size).toBe(1000);
@@ -417,13 +441,15 @@ describe('the state of a business connection', () => {
   });
 
   it('reads a connection: the account, whether it is on and whether the bot may reply', () => {
-    expect(telegramBusinessState(connection())).toEqual({ id: CONN, userId: String(OWNER), name: 'Lan Trần', date: DATE, canReply: true, enabled: true });
-    expect(telegramBusinessState(connection({ rights: {}, is_enabled: false }))).toEqual({ id: CONN, userId: String(OWNER), name: 'Lan Trần', date: DATE, canReply: false, enabled: false });
-    // No `is_enabled` means off, never on; no rights means the bot may not reply; invalid or missing dates are omitted.
+    expect(telegramBusinessState(connection())).toEqual({ id: CONN, userId: String(OWNER), name: 'Lan Trần', date: DATE, updateId: 11, canReply: true, enabled: true });
+    expect(telegramBusinessState(connection({ rights: {}, is_enabled: false }))).toEqual({ id: CONN, userId: String(OWNER), name: 'Lan Trần', date: DATE, updateId: 11, canReply: false, enabled: false });
+    // No `is_enabled` means off, never on; no rights means the bot may not reply; invalid or missing dates and update_ids are omitted.
     expect(telegramBusinessState(connection({ is_enabled: undefined, rights: undefined }))).toMatchObject({ enabled: false, canReply: false });
     expect(telegramBusinessState(connection({ date: undefined }))).not.toHaveProperty('date');
     expect(telegramBusinessState(connection({ date: -1 }))).not.toHaveProperty('date');
     expect(telegramBusinessState(connection({ date: 1.5 }))).not.toHaveProperty('date');
+    expect(telegramBusinessState({ business_connection: connection().business_connection })).not.toHaveProperty('updateId');
+    expect(telegramBusinessState({ update_id: -5, business_connection: connection().business_connection })).not.toHaveProperty('updateId');
   });
 
   it('is nothing for an update that is no whole connection', () => {
@@ -461,7 +487,7 @@ describe('the state of a business connection', () => {
   it('is carried by the notice beside the business connection of the events, and a bot chat\'s message carries neither', () => {
     const hook = newTelegramHookId();
     const parse = (update: unknown) => parseTelegramChatNotice(wrapTelegramChatNotice(hook, Buffer.from(JSON.stringify(update), 'utf8')));
-    expect(parse(connection())).toEqual({ accountId: hook, events: [], businessState: { id: CONN, userId: String(OWNER), name: 'Lan Trần', date: DATE, canReply: true, enabled: true } });
+    expect(parse(connection())).toEqual({ accountId: hook, events: [], businessState: { id: CONN, userId: String(OWNER), name: 'Lan Trần', date: DATE, updateId: 11, canReply: true, enabled: true } });
     const business = parse(businessMessage());
     expect(business.businessConnectionId).toBe(CONN);
     expect(business.events).toHaveLength(1);

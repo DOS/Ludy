@@ -20,6 +20,9 @@
 SET LOCAL lock_timeout = '2s';
 
 ALTER TABLE ludy_kernel.channel_connection ADD COLUMN IF NOT EXISTS chat_hook_key_id text;
+ALTER TABLE ludy_kernel.channel_connection ADD COLUMN IF NOT EXISTS chat_displace_pending boolean NOT NULL DEFAULT false;
+ALTER TABLE ludy_kernel.channel_connection ADD COLUMN IF NOT EXISTS chat_hook_rekey_after timestamptz;
+ALTER TABLE ludy_kernel.channel_connection ADD COLUMN IF NOT EXISTS chat_business_order jsonb NOT NULL DEFAULT '{}'::jsonb;
 
 DO $$
 BEGIN
@@ -37,7 +40,8 @@ BEGIN
   END IF;
 END $$;
 
-GRANT UPDATE (chat_hook_key_id) ON ludy_kernel.channel_connection TO ludy_tenant;
+GRANT UPDATE (chat_hook_key_id, chat_displace_pending, chat_hook_rekey_after, chat_business_order)
+  ON ludy_kernel.channel_connection TO ludy_tenant;
 
 -- Cross-column uniqueness across chat_hook and chat_hook_next (#3150 item 4): one row's live hook cannot equal another
 -- row's pending hook. Sorted advisory locks serialize concurrent updates/inserts on identical hook values without
@@ -102,16 +106,18 @@ REVOKE ALL ON FUNCTION ludy_kernel.conversation_chat_hook_connections(text)
 GRANT EXECUTE ON FUNCTION ludy_kernel.conversation_chat_hook_connections(text) TO ludy_worker;
 
 -- Live Telegram connections whose registered webhook secret is still derived from an older credential key (or NULL on
--- connections created before chat_hook_key_id existed), paged by (org_id, id) (#3150 item 1). Worker-only.
+-- connections created before chat_hook_key_id existed), paged by (COALESCE(chat_hook_rekey_after, epoch), org_id, id)
+-- so connections with persistent transient errors never starve healthy ones behind them (#3150 item 1). Worker-only.
 CREATE OR REPLACE FUNCTION ludy_kernel.telegram_chat_hook_rekey_due(
   p_key_id text,
   p_limit integer,
+  p_after_rekey_at timestamptz,
   p_after_org uuid,
   p_after_id uuid
 )
-RETURNS TABLE (org_id uuid, connection_id uuid)
+RETURNS TABLE (org_id uuid, connection_id uuid, chat_hook_rekey_after timestamptz)
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
-  SELECT c.org_id, c.id AS connection_id
+  SELECT c.org_id, c.id AS connection_id, c.chat_hook_rekey_after
   FROM ludy_kernel.channel_connection c
   JOIN ludy_kernel.tenant t ON t.org_id = c.org_id AND t.status IN ('active', 'offboarding')
   WHERE c.provider = 'telegram'
@@ -120,14 +126,126 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
     AND c.chat_hook IS NOT NULL
     AND c.chat_hook_key_id IS DISTINCT FROM p_key_id
     AND ludy_kernel.credential_usable(c.org_id, c.id)
-    AND (p_after_org IS NULL OR p_after_id IS NULL OR (c.org_id, c.id) > (p_after_org, p_after_id))
-  ORDER BY c.org_id, c.id
+    AND (
+      p_after_org IS NULL
+      OR p_after_id IS NULL
+      OR (COALESCE(c.chat_hook_rekey_after, '1970-01-01T00:00:00Z'::timestamptz), c.org_id, c.id)
+         > (COALESCE(p_after_rekey_at, '1970-01-01T00:00:00Z'::timestamptz), p_after_org, p_after_id)
+    )
+  ORDER BY COALESCE(c.chat_hook_rekey_after, '1970-01-01T00:00:00Z'::timestamptz), c.org_id, c.id
   LIMIT LEAST(GREATEST(p_limit, 1), 1000)
 $$;
 
-REVOKE ALL ON FUNCTION ludy_kernel.telegram_chat_hook_rekey_due(text, integer, uuid, uuid)
+REVOKE ALL ON FUNCTION ludy_kernel.telegram_chat_hook_rekey_due(text, integer, timestamptz, uuid, uuid)
   FROM PUBLIC, ludy_tenant, ludy_app, ludy_worker, ludy_definer_tenant;
-GRANT EXECUTE ON FUNCTION ludy_kernel.telegram_chat_hook_rekey_due(text, integer, uuid, uuid) TO ludy_worker;
+GRANT EXECUTE ON FUNCTION ludy_kernel.telegram_chat_hook_rekey_due(text, integer, timestamptz, uuid, uuid) TO ludy_worker;
+
+-- Live Telegram connections whose bot displacement sweep failed transiently and still need stale orgs cleared (#3150). Worker-only.
+CREATE OR REPLACE FUNCTION ludy_kernel.telegram_chat_displace_due(p_limit integer)
+RETURNS TABLE (org_id uuid, connection_id uuid, chat_bot_id text, chat_changed_at timestamptz)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+  SELECT c.org_id, c.id AS connection_id, c.chat_bot_id, c.chat_changed_at
+  FROM ludy_kernel.channel_connection c
+  JOIN ludy_kernel.tenant t ON t.org_id = c.org_id AND t.status IN ('active', 'offboarding')
+  WHERE c.provider = 'telegram'
+    AND c.status = 'active'
+    AND c.chat_state = 'on'
+    AND c.chat_displace_pending = true
+    AND c.chat_bot_id IS NOT NULL
+  ORDER BY c.chat_changed_at NULLS LAST, c.org_id, c.id
+  LIMIT LEAST(GREATEST(p_limit, 1), 500)
+$$;
+
+REVOKE ALL ON FUNCTION ludy_kernel.telegram_chat_displace_due(integer)
+  FROM PUBLIC, ludy_tenant, ludy_app, ludy_worker, ludy_definer_tenant;
+GRANT EXECUTE ON FUNCTION ludy_kernel.telegram_chat_displace_due(integer) TO ludy_worker;
+
+-- Non-connection-blocking worker leases for per-bot webhook serialization and rekey sweep mutual exclusion (#3150),
+-- avoiding advisory-lock pool deadlocks under WORKER_DATABASE_POOL_MAX=2. Definer-only.
+CREATE TABLE IF NOT EXISTS ludy_kernel.telegram_webhook_lock (
+  lock_key text PRIMARY KEY CHECK (lock_key ~ '^[a-z0-9:._-]{1,100}$'),
+  owner_id uuid NOT NULL,
+  locked_until timestamptz NOT NULL
+);
+
+REVOKE ALL ON TABLE ludy_kernel.telegram_webhook_lock FROM PUBLIC;
+REVOKE ALL ON TABLE ludy_kernel.telegram_webhook_lock FROM ludy_tenant, ludy_app, ludy_worker, ludy_definer_tenant, ludy_prober;
+DO $$
+DECLARE
+  v_role name;
+BEGIN
+  FOR v_role IN
+    SELECT rolname
+    FROM pg_catalog.pg_roles
+    WHERE (rolname LIKE 'ludy\_%' ESCAPE '\' OR rolname LIKE 'crove\_%' ESCAPE '\')
+      AND rolname <> current_user
+  LOOP
+    EXECUTE pg_catalog.format('REVOKE ALL ON TABLE ludy_kernel.telegram_webhook_lock FROM %I', v_role);
+  END LOOP;
+END
+$$;
+
+ALTER TABLE ludy_kernel.telegram_webhook_lock ENABLE ROW LEVEL SECURITY;
+
+SELECT ludy_kernel.agent_write_guard_install('ludy_kernel.telegram_webhook_lock');
+
+CREATE OR REPLACE FUNCTION ludy_kernel.telegram_webhook_lock_acquire(
+  p_lock_key text,
+  p_owner_id uuid,
+  p_ttl_seconds integer
+)
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+  v_key text;
+  v_now timestamptz := pg_catalog.clock_timestamp();
+BEGIN
+  IF p_lock_key IS NULL OR p_lock_key !~ '^[a-z0-9:._-]{1,100}$' OR p_owner_id IS NULL OR p_ttl_seconds IS NULL OR p_ttl_seconds < 1 OR p_ttl_seconds > 3600 THEN
+    RAISE EXCEPTION 'TELEGRAM_WEBHOOK_LOCK_INPUT_INVALID' USING ERRCODE = '22023';
+  END IF;
+
+  DELETE FROM ludy_kernel.telegram_webhook_lock
+  WHERE locked_until <= v_now - interval '1 hour';
+
+  INSERT INTO ludy_kernel.telegram_webhook_lock (lock_key, owner_id, locked_until)
+  VALUES (p_lock_key, p_owner_id, v_now + pg_catalog.make_interval(secs => p_ttl_seconds))
+  ON CONFLICT (lock_key) DO UPDATE
+    SET owner_id = EXCLUDED.owner_id,
+        locked_until = EXCLUDED.locked_until
+    WHERE ludy_kernel.telegram_webhook_lock.locked_until <= v_now
+       OR ludy_kernel.telegram_webhook_lock.owner_id = EXCLUDED.owner_id
+  RETURNING lock_key INTO v_key;
+
+  RETURN v_key IS NOT NULL;
+END $$;
+
+REVOKE ALL ON FUNCTION ludy_kernel.telegram_webhook_lock_acquire(text, uuid, integer)
+  FROM PUBLIC, ludy_tenant, ludy_app, ludy_worker, ludy_definer_tenant;
+GRANT EXECUTE ON FUNCTION ludy_kernel.telegram_webhook_lock_acquire(text, uuid, integer) TO ludy_worker;
+
+CREATE OR REPLACE FUNCTION ludy_kernel.telegram_webhook_lock_release(
+  p_lock_key text,
+  p_owner_id uuid
+)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $$
+BEGIN
+  IF p_lock_key IS NULL OR p_owner_id IS NULL THEN
+    RETURN;
+  END IF;
+  DELETE FROM ludy_kernel.telegram_webhook_lock
+  WHERE lock_key = p_lock_key AND owner_id = p_owner_id;
+END $$;
+
+REVOKE ALL ON FUNCTION ludy_kernel.telegram_webhook_lock_release(text, uuid)
+  FROM PUBLIC, ludy_tenant, ludy_app, ludy_worker, ludy_definer_tenant;
+GRANT EXECUTE ON FUNCTION ludy_kernel.telegram_webhook_lock_release(text, uuid) TO ludy_worker;
 
 -- Counts of hooked Telegram connections grouped by webhook secret key id, split by whether the worker can still
 -- re-register them without an owner reconnecting (#3150 item 1). Worker-only.

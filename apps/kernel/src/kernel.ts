@@ -1097,11 +1097,22 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
         workerDb: db,
         adapter: (provider: string) => (Object.hasOwn(publishers, provider) ? publishers[provider]?.conversations : undefined),
         baseUrl: config.PUBLIC_URL,
+        maxPages: 500,
       });
+      if (outcome.skipped) {
+        console.error(
+          `[telegram-webhook-rekey] skipped (${outcome.skipReason ?? 'locked or unconfigured'}); did not verify remaining webhooks`,
+        );
+        return 1;
+      }
       console.log(
         `[telegram-webhook-rekey] rekeyed ${outcome.rekeyed}, failed ${outcome.failed}; left under an older key: ${outcome.leftActive} active, ${outcome.leftInactive} to reconnect`,
       );
-      return outcome.failed > 0 ? 1 : 0;
+      if (outcome.failed > 0 || outcome.leftActive > 0) {
+        console.error('[telegram-webhook-rekey] incomplete: keep CREDENTIAL_KEY_PREVIOUS until failed = 0 and leftActive = 0');
+        return 1;
+      }
+      return 0;
     } finally {
       await pool.end().catch((error: unknown) => console.error('[telegram-webhook-rekey] could not close the pool', error));
     }

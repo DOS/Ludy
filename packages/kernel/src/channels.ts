@@ -173,7 +173,7 @@ export const channelDisconnect = defineCommand({
         .updateTable('ludy_kernel.channel_connection')
         // A Telegram connection that answered chats gives its hook up too (#3132): the webhook at Telegram is left to be removed in BotFather, and a
         // notice that still comes in on it finds no connection and is dropped.
-        .set({ status: 'revoked', status_reason: input.reason ?? 'disconnected', updated_at: ctx.now, chat_state: 'off', chat_hook: null, chat_hook_next: null, chat_bot_id: null, chat_hook_key_id: null, chat_business: '[]' })
+        .set({ status: 'revoked', status_reason: input.reason ?? 'disconnected', updated_at: ctx.now, chat_state: 'off', chat_hook: null, chat_hook_next: null, chat_bot_id: null, chat_hook_key_id: null, chat_displace_pending: false, chat_hook_rekey_after: null, chat_business: '[]', chat_business_order: '{}' })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.connectionId)
         .execute();
@@ -615,7 +615,7 @@ export const channelTelegramChatSet = defineCommand({
       return { chatState: 'off' };
     }
     if (row.status !== 'active') {
-      await update({ chat_hook: null, chat_hook_next: null, chat_state: 'off', chat_bot_id: null, chat_hook_key_id: null, chat_error: null });
+      await update({ chat_hook: null, chat_hook_next: null, chat_state: 'off', chat_bot_id: null, chat_hook_key_id: null, chat_displace_pending: false, chat_hook_rekey_after: null, chat_error: null });
       ctx.audit({ connection_id: input.connectionId, action: 'disable', local: true });
       return { chatState: 'off' };
     }
@@ -653,10 +653,13 @@ export const channelTelegramChatWork = defineQuery({
       .executeTakeFirst();
     if (!row || row.provider !== 'telegram' || row.status !== 'active') return { action: 'none' };
     if (input.action === 'disable') return row.chat_state === 'disabling' ? { action: 'call' } : { action: 'none' };
-    const hook =
-      row.chat_state === 'enabling' && row.chat_hook_next
+    const hook = input.rekey
+      ? row.chat_state === 'on' && row.chat_hook
+        ? row.chat_hook
+        : null
+      : row.chat_state === 'enabling' && row.chat_hook_next
         ? row.chat_hook_next
-        : row.chat_state === 'on' && row.chat_hook && (input.rekey || (input.usedHookFp && hookFp(row.chat_hook) !== input.usedHookFp))
+        : row.chat_state === 'on' && row.chat_hook && input.usedHookFp && hookFp(row.chat_hook) !== input.usedHookFp
           ? row.chat_hook
           : null;
     if (!hook) return { action: 'none' };
@@ -706,18 +709,18 @@ export const channelTelegramChatRecord = defineCommand({
     const failure = input.outcome === 'failed' ? (input.code ?? 'FAILED') : null;
     if (input.action === 'disable') {
       if (state !== 'disabling') return skipped();
-      await set({ chat_hook: null, chat_hook_next: null, chat_state: 'off', chat_bot_id: null, chat_hook_key_id: null, chat_error: failure });
+      await set({ chat_hook: null, chat_hook_next: null, chat_state: 'off', chat_bot_id: null, chat_hook_key_id: null, chat_displace_pending: false, chat_hook_rekey_after: null, chat_error: failure });
       ctx.audit({ connection_id: input.connectionId, action: 'disable', outcome: input.outcome, ...(failure ? { code: failure } : {}) });
       return { applied: true, hookChanged: false, chatState: 'off', changedAt: ctx.now.toISOString() };
     }
     if (state === 'enabling' && row.chat_hook_next) {
       if (input.hookFp && hookFp(row.chat_hook_next) !== input.hookFp) return skipped(true);
       if (input.outcome === 'done') {
-        await set({ chat_hook: row.chat_hook_next, chat_hook_next: null, chat_state: 'on', chat_error: null, chat_bot_id: input.botId ?? null, chat_hook_key_id: input.hookKeyId ?? null });
+        await set({ chat_hook: row.chat_hook_next, chat_hook_next: null, chat_state: 'on', chat_error: null, chat_bot_id: input.botId ?? null, chat_hook_key_id: input.hookKeyId ?? null, chat_displace_pending: true, chat_hook_rekey_after: null });
       } else if (row.chat_hook) {
         await set({ chat_hook_next: null, chat_state: 'on', chat_error: failure });
       } else {
-        await set({ chat_hook: null, chat_hook_next: null, chat_state: 'off', chat_bot_id: null, chat_hook_key_id: null, chat_error: failure });
+        await set({ chat_hook: null, chat_hook_next: null, chat_state: 'off', chat_bot_id: null, chat_hook_key_id: null, chat_displace_pending: false, chat_hook_rekey_after: null, chat_error: failure });
       }
       ctx.audit({ connection_id: input.connectionId, action: 'enable', outcome: input.outcome, ...(failure ? { code: failure } : {}) });
       return { applied: true, hookChanged: false, chatState: input.outcome === 'done' || row.chat_hook ? 'on' : 'off', changedAt: ctx.now.toISOString() };
@@ -736,7 +739,7 @@ export const channelTelegramChatRekeyRecord = defineCommand({
   sideEffect: 'internal',
   access: 'system',
   target: (input) => ({ type: 'kernel.channel_connection', id: input.connectionId }),
-  handler: async (ctx, input): Promise<{ applied: boolean }> => {
+  handler: async (ctx, input): Promise<{ applied: boolean; displaceAt: string | null }> => {
     const row = await ctx.trx
       .selectFrom('ludy_kernel.channel_connection')
       .select(['provider', 'status', 'chat_state', 'chat_hook', 'chat_bot_id'])
@@ -745,16 +748,47 @@ export const channelTelegramChatRekeyRecord = defineCommand({
       .forUpdate()
       .executeTakeFirst();
     if (!row || row.provider !== 'telegram' || row.status !== 'active' || row.chat_state !== 'on' || !row.chat_hook || hookFp(row.chat_hook) !== input.hookFp) {
-      return { applied: false };
+      return { applied: false, displaceAt: null };
     }
     await ctx.trx
       .updateTable('ludy_kernel.channel_connection')
-      .set({ chat_hook_key_id: input.hookKeyId, ...(input.botId ? { chat_bot_id: input.botId } : {}) })
+      .set({ chat_hook_key_id: input.hookKeyId, chat_hook_rekey_after: null, chat_displace_pending: true, ...(input.botId ? { chat_bot_id: input.botId } : {}) })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
       .execute();
     ctx.audit({ connection_id: input.connectionId, action: 'rekey' });
-    return { applied: true };
+    return { applied: true, displaceAt: ctx.now.toISOString() };
+  },
+});
+
+// Records the timestamp of a transient rekey failure so subsequent sweeps put failed rows behind untouched ones
+// without starving the fleet (#3150 item 1).
+export const channelTelegramChatRekeyRetry = defineCommand({
+  name: 'kernel.channel.telegram_chat_rekey_retry',
+  input: z.strictObject({ connectionId: zId, hookFp: zHookFp }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  target: (input) => ({ type: 'kernel.channel_connection', id: input.connectionId }),
+  handler: async (ctx, input): Promise<{ marked: boolean }> => {
+    const row = await ctx.trx
+      .selectFrom('ludy_kernel.channel_connection')
+      .select(['provider', 'status', 'chat_state', 'chat_hook'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.connectionId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!row || row.provider !== 'telegram' || row.status !== 'active' || row.chat_state !== 'on' || !row.chat_hook || hookFp(row.chat_hook) !== input.hookFp) {
+      return { marked: false };
+    }
+    await ctx.trx
+      .updateTable('ludy_kernel.channel_connection')
+      .set({ chat_hook_rekey_after: ctx.now })
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.connectionId)
+      .execute();
+    ctx.audit({ connection_id: input.connectionId, action: 'rekey_retry' });
+    return { marked: true };
   },
 });
 
@@ -776,28 +810,64 @@ export const channelTelegramChatDisplaced = defineCommand({
       .where('id', '=', input.connectionId)
       .forUpdate()
       .executeTakeFirst();
-    if (!row || row.provider !== 'telegram' || row.status !== 'active' || row.chat_bot_id !== input.botId || (row.chat_state !== 'on' && row.chat_state !== 'enabling')) {
+    if (!row || row.provider !== 'telegram' || row.status !== 'active' || (row.chat_bot_id !== null && row.chat_bot_id !== input.botId) || (row.chat_state !== 'on' && row.chat_state !== 'enabling' && row.chat_state !== 'disabling')) {
       return { displaced: false };
     }
     if (input.takenAt && row.chat_changed_at && row.chat_changed_at.getTime() > Date.parse(input.takenAt)) {
       return { displaced: false };
     }
+    const disabling = row.chat_state === 'disabling';
     await ctx.trx
       .updateTable('ludy_kernel.channel_connection')
-      .set({ chat_hook: null, chat_hook_next: null, chat_state: 'off', chat_bot_id: null, chat_hook_key_id: null, chat_error: 'BOT_TAKEN_OVER', chat_changed_at: ctx.now })
+      .set({ chat_hook: null, chat_hook_next: null, chat_state: 'off', chat_bot_id: null, chat_hook_key_id: null, chat_displace_pending: false, chat_hook_rekey_after: null, chat_error: disabling ? null : 'BOT_TAKEN_OVER', chat_changed_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
       .execute();
-    ctx.audit({ connection_id: input.connectionId, action: 'displaced', code: 'BOT_TAKEN_OVER' });
-    await notifyMembers(ctx, {
-      kind: TELEGRAM_CHAT_DISPLACED,
-      users: await ownersAndAdmins(ctx),
-      key: `telegram_chat_displaced:${input.connectionId}:${(row.chat_changed_at ?? ctx.now).toISOString()}`,
-      subject: { type: 'kernel.channel_connection', id: input.connectionId },
-      detail: {},
-      required: true,
-    });
+    ctx.audit({ connection_id: input.connectionId, action: 'displaced', code: disabling ? 'DISABLED' : 'BOT_TAKEN_OVER' });
+    if (!disabling) {
+      await notifyMembers(ctx, {
+        kind: TELEGRAM_CHAT_DISPLACED,
+        users: await ownersAndAdmins(ctx),
+        key: `telegram_chat_displaced:${input.connectionId}:${(row.chat_changed_at ?? ctx.now).toISOString()}`,
+        subject: { type: 'kernel.channel_connection', id: input.connectionId },
+        detail: {},
+        required: true,
+      });
+    }
     return { displaced: true };
+  },
+});
+
+// Clears chat_displace_pending once every displaced peer org connection for this bot has been notified (#3150 item 2).
+export const channelTelegramChatDisplacedAck = defineCommand({
+  name: 'kernel.channel.telegram_chat_displaced_ack',
+  input: z.strictObject({ connectionId: zId, botId: z.string().regex(/^[0-9]{3,20}$/), checkedAt: z.iso.datetime({ offset: true }).optional() }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  target: (input) => ({ type: 'kernel.channel_connection', id: input.connectionId }),
+  handler: async (ctx, input): Promise<{ cleared: boolean }> => {
+    const row = await ctx.trx
+      .selectFrom('ludy_kernel.channel_connection')
+      .select(['provider', 'status', 'chat_state', 'chat_bot_id', 'chat_changed_at', 'chat_displace_pending'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.connectionId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!row || !row.chat_displace_pending || row.provider !== 'telegram' || row.status !== 'active' || row.chat_state !== 'on' || row.chat_bot_id !== input.botId) {
+      return { cleared: false };
+    }
+    if (input.checkedAt && row.chat_changed_at && row.chat_changed_at.getTime() > Date.parse(input.checkedAt)) {
+      return { cleared: false };
+    }
+    await ctx.trx
+      .updateTable('ludy_kernel.channel_connection')
+      .set({ chat_displace_pending: false })
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.connectionId)
+      .execute();
+    ctx.audit({ connection_id: input.connectionId, action: 'displace_ack' });
+    return { cleared: true };
   },
 });
 
@@ -818,15 +888,22 @@ const zBusinessAccount = z.strictObject({
   username: z.string().regex(/^[A-Za-z0-9_]{1,64}$/).nullable(),
   canReply: z.boolean(),
   enabled: z.boolean(),
-  // Telegram's event timestamp (Unix seconds), used to ignore older out-of-order updates.
-  date: z.number().int().nonnegative().max(10_000_000_000).optional(),
   // An owner or admin of the org allowed this account's chats in. Telegram lets any Premium user connect a bot that has Business Mode on, so an account
   // Telegram reports is not yet one the org chose: nothing of it is stored until a person allows it, and only a person can.
   approved: z.boolean(),
 });
 export type TelegramBusinessAccount = z.infer<typeof zBusinessAccount>;
-// What Telegram tells of an account; whether the org allowed it is the org's, never Telegram's.
-const zBusinessReport = zBusinessAccount.omit({ approved: true });
+// What Telegram tells of an account; ordering metadata (updateId, date) lives separately in chat_business_order so
+// chat_business keeps its strict historical shape for rolling upgrades and rollbacks (#3150).
+const zBusinessReport = zBusinessAccount.omit({ approved: true }).extend({
+  date: z.number().int().nonnegative().max(10_000_000_000).optional(),
+  updateId: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+});
+const zBusinessOrderEntry = z.strictObject({
+  updateId: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+  date: z.number().int().nonnegative().max(10_000_000_000).optional(),
+});
+type BusinessOrderEntry = z.infer<typeof zBusinessOrderEntry>;
 // A short fingerprint of an account's id for the screen to name it by (the id itself stays on the server).
 export const businessRef = (id: string): string => createHash('sha256').update(`telegram.business:${id}`).digest('hex').slice(0, 12);
 export const TELEGRAM_BUSINESS_ACCOUNTS_MAX = 10;
@@ -840,6 +917,25 @@ export function parseBusinessAccounts(value: unknown): TelegramBusinessAccount[]
     return parsed.success ? [parsed.data] : [];
   });
 }
+function parseBusinessOrder(value: unknown): Record<string, BusinessOrderEntry> {
+  const raw = typeof value === 'string' ? safeJson(value) : value;
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return {};
+  const out: Record<string, BusinessOrderEntry> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (!/^[0-9a-f]{12}$/.test(k)) continue;
+    const parsed = zBusinessOrderEntry.safeParse(v);
+    if (parsed.success) out[k] = parsed.data;
+  }
+  return out;
+}
+function pruneBusinessOrder(order: Record<string, BusinessOrderEntry>, accounts: readonly TelegramBusinessAccount[]): Record<string, BusinessOrderEntry> {
+  const keep = new Set(accounts.map((a) => businessRef(a.id)));
+  const out: Record<string, BusinessOrderEntry> = {};
+  for (const [k, v] of Object.entries(order)) {
+    if (keep.has(k)) out[k] = v;
+  }
+  return out;
+}
 const safeJson = (text: string): unknown => {
   try {
     return JSON.parse(text);
@@ -850,7 +946,7 @@ const safeJson = (text: string): unknown => {
 
 // Records what Telegram said about one business connection: a new account is added, a known one updated (also to disabled, which stops its messages
 // coming in). Only for a Telegram connection that is active and has chats on or being switched: anything else was sent to a hook that no longer
-// counts. At most TELEGRAM_BUSINESS_ACCOUNTS_MAX accounts: a new one when the list is full replaces the oldest disabled one, else is refused. The
+// counts. At most TELEGRAM_BUSINESS_ACCOUNTS_MAX accounts: a new one when the list is full replaces the oldest unapproved disconnected one, else is refused. The
 // audit row holds the state and the right, never an id or a name.
 export const channelTelegramBusinessRecord = defineCommand({
   name: 'kernel.channel.telegram_business_record',
@@ -862,32 +958,49 @@ export const channelTelegramBusinessRecord = defineCommand({
   handler: async (ctx, input): Promise<{ applied: boolean }> => {
     const row = await ctx.trx
       .selectFrom('ludy_kernel.channel_connection')
-      .select(['provider', 'status', 'chat_state', 'chat_business'])
+      .select(['provider', 'status', 'chat_state', 'chat_business', 'chat_business_order'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
       .forUpdate()
       .executeTakeFirst();
     if (!row || row.provider !== 'telegram' || row.status !== 'active' || row.chat_state === 'off') return { applied: false };
     const accounts = parseBusinessAccounts(row.chat_business);
-    const byId = accounts.findIndex((a) => a.id === input.account.id);
+    const order = parseBusinessOrder(row.chat_business_order);
+    const { date: incomingDate, updateId: incomingUpdateId, ...reportFields } = input.account;
+    const byId = accounts.findIndex((a) => a.id === reportFields.id);
     // Deduplicate unapproved entries by userId so a stranger disconnecting/reconnecting cannot fill multiple slots (#3150 item 7).
-    const byUser = byId >= 0 ? -1 : accounts.findIndex((a) => !a.approved && a.userId === input.account.userId);
+    const byUser = byId >= 0 ? -1 : accounts.findIndex((a) => !a.approved && a.userId === reportFields.userId);
     const at = byId >= 0 ? byId : byUser;
     let account: TelegramBusinessAccount;
     let next: TelegramBusinessAccount[];
+    let entryOrder: BusinessOrderEntry | undefined;
     if (at >= 0) {
       const existing = accounts[at] as TelegramBusinessAccount;
-      // Ignore stale out-of-order business_connection updates dated earlier than what we already hold (#3150 item 6).
-      if (existing.date !== undefined && input.account.date !== undefined && input.account.date < existing.date) {
+      const prev = order[businessRef(existing.id)];
+      // Reject stale out-of-order updates using Telegram Update.update_id (even when BusinessConnection.date is unchanged) with date fallback (#3150 item 6).
+      if (incomingUpdateId !== undefined && prev?.updateId !== undefined && incomingUpdateId <= prev.updateId) {
         return { applied: false };
       }
-      const date = input.account.date ?? existing.date;
+      if (incomingUpdateId === undefined && prev?.updateId !== undefined && byId >= 0) {
+        return { applied: false };
+      }
+      if ((prev?.updateId === undefined || byId < 0) && prev?.date !== undefined && incomingDate !== undefined && incomingDate < prev.date) {
+        return { applied: false };
+      }
+      const nextUpdateId = incomingUpdateId ?? prev?.updateId;
+      const nextDate = incomingDate ?? prev?.date;
+      if (nextUpdateId !== undefined || nextDate !== undefined) {
+        entryOrder = { ...(nextUpdateId !== undefined ? { updateId: nextUpdateId } : {}), ...(nextDate !== undefined ? { date: nextDate } : {}) };
+      }
       // A known connection keeps what the org decided when its id and userId still match; a new connection id starts unapproved.
-      const approved = byId >= 0 && existing.userId === input.account.userId ? existing.approved : false;
-      account = { ...input.account, ...(date !== undefined ? { date } : {}), approved };
+      const approved = byId >= 0 && existing.userId === reportFields.userId ? existing.approved : false;
+      account = { ...reportFields, approved };
       next = accounts.map((a, i) => (i === at ? account : a));
     } else {
-      account = { ...input.account, approved: false };
+      account = { ...reportFields, approved: false };
+      if (incomingUpdateId !== undefined || incomingDate !== undefined) {
+        entryOrder = { ...(incomingUpdateId !== undefined ? { updateId: incomingUpdateId } : {}), ...(incomingDate !== undefined ? { date: incomingDate } : {}) };
+      }
       if (accounts.length < TELEGRAM_BUSINESS_ACCOUNTS_MAX) {
         next = [...accounts, account];
       } else {
@@ -897,9 +1010,11 @@ export const channelTelegramBusinessRecord = defineCommand({
         next = [...accounts.filter((_, i) => i !== gone), account];
       }
     }
+    const nextOrder = pruneBusinessOrder(order, next);
+    if (entryOrder) nextOrder[businessRef(account.id)] = entryOrder;
     await ctx.trx
       .updateTable('ludy_kernel.channel_connection')
-      .set({ chat_business: JSON.stringify(next) })
+      .set({ chat_business: JSON.stringify(next), chat_business_order: JSON.stringify(nextOrder) })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
       .execute();
@@ -924,7 +1039,7 @@ export const channelTelegramBusinessAllow = defineCommand({
     requireUser(ctx);
     const row = await ctx.trx
       .selectFrom('ludy_kernel.channel_connection')
-      .select(['provider', 'chat_business'])
+      .select(['provider', 'chat_business', 'chat_business_order'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
       .forUpdate()
@@ -940,7 +1055,13 @@ export const channelTelegramBusinessAllow = defineCommand({
         throw new DomainError('BUSINESS_ACCOUNT_APPROVED', 409, 'Hãy ngừng nhận tin tài khoản này trước khi gỡ khỏi danh sách');
       }
       const next = accounts.filter((_, i) => i !== at);
-      await ctx.trx.updateTable('ludy_kernel.channel_connection').set({ chat_business: JSON.stringify(next) }).where('org_id', '=', ctx.orgId).where('id', '=', input.connectionId).execute();
+      const nextOrder = pruneBusinessOrder(parseBusinessOrder(row.chat_business_order), next);
+      await ctx.trx
+        .updateTable('ludy_kernel.channel_connection')
+        .set({ chat_business: JSON.stringify(next), chat_business_order: JSON.stringify(nextOrder) })
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', input.connectionId)
+        .execute();
       ctx.audit({ connection_id: input.connectionId, action: 'business_dismiss', ref: input.ref });
       return { approved: false };
     }
@@ -970,5 +1091,5 @@ export const channelTelegramBusinessKnown = defineQuery({
   },
 });
 
-export const channelCommands = [channelConnect, channelDisconnect, channelMarkExpired, channelRevokeByPlatform, channelCloseOrphan, channelOAuthBegin, channelOAuthConsume, channelRefresh, channelReseal, channelTelegramChatSet, channelTelegramChatRecord, channelTelegramChatRekeyRecord, channelTelegramChatDisplaced, channelTelegramBusinessRecord, channelTelegramBusinessAllow];
+export const channelCommands = [channelConnect, channelDisconnect, channelMarkExpired, channelRevokeByPlatform, channelCloseOrphan, channelOAuthBegin, channelOAuthConsume, channelRefresh, channelReseal, channelTelegramChatSet, channelTelegramChatRecord, channelTelegramChatRekeyRecord, channelTelegramChatRekeyRetry, channelTelegramChatDisplaced, channelTelegramChatDisplacedAck, channelTelegramBusinessRecord, channelTelegramBusinessAllow];
 export const channelQueries = [channelsList, channelCredential, channelTelegramChatWork, channelTelegramBusinessKnown];

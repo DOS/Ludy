@@ -9,7 +9,7 @@
 // connection holds, and the `secret_token` Telegram echoes in X-Telegram-Bot-Api-Secret-Token is not stored anywhere but derived from the
 // hook under a key of the deployment (telegramHookSecret), so the route can check it before it reads the body or asks the database.
 import { createHmac, createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import { ConversationNoticeError, type ConversationAdapter, type ConversationBusinessLookupInput, type ConversationBusinessLookupResult, type ConversationBusinessState, type ConversationCallResult, type ConversationChatHookInput, type ConversationChatHookResult, type ConversationMediaInput, type ConversationMediaResult, type ConversationNotice, type ConversationReplyInput, type InboundConversationEvent } from './conversation.ts';
+import { ConversationNoticeError, type ConversationAdapter, type ConversationBusinessLookupInput, type ConversationBusinessLookupResult, type ConversationBusinessState, type ConversationCallResult, type ConversationChatHookInfoResult, type ConversationChatHookInput, type ConversationChatHookResult, type ConversationMediaInput, type ConversationMediaResult, type ConversationNotice, type ConversationReplyInput, type InboundConversationEvent } from './conversation.ts';
 import { TELEGRAM_HOSTS, TELEGRAM_TEXT_MAX, TelegramClient, TelegramError, telegramSecretOf } from './telegram.ts';
 import { mediaHostAllowed } from './zalo-conversation.ts';
 import { allowlistedFetch, type Fetch } from './oauth.ts';
@@ -49,6 +49,13 @@ export function telegramHookSecretOk(input: { hook: string; header: string | und
 // The bot id is the number before the colon of the token: public, and what tells two connections of one bot apart from two bots.
 export function telegramBotId(botToken: string): string {
   return botToken.split(':')[0] ?? '';
+}
+
+// Public Telegram webhook address for one connection's hook (trailing slashes trimmed without polynomial regexes).
+function telegramWebhookUrl(baseUrl: string, hook: string): string {
+  let end = baseUrl.length;
+  while (end > 0 && baseUrl.charCodeAt(end - 1) === 47) end--;
+  return `${baseUrl.slice(0, end)}/api/channels/telegram/webhook/${hook}`;
 }
 
 // The envelope the route parks after the secret check: the hook the request came on, and the update as Telegram sent it.
@@ -283,7 +290,8 @@ function accountNameOf(user: TelegramUser): string | undefined {
 // A `business_connection` update: the bot was connected to, edited on or disconnected from a business account. Anything that does not read as a
 // whole connection (a missing id or user, `is_enabled` not true) is not state, and `is_enabled` missing means off, never on.
 export function telegramBusinessState(update: unknown): ConversationBusinessState | null {
-  const connection = objectOf(objectOf(update)?.business_connection);
+  const top = objectOf(update);
+  const connection = objectOf(top?.business_connection);
   if (!connection) return null;
   const id = businessIdOf(connection.id);
   const user = objectOf(connection.user) as TelegramUser | null;
@@ -293,7 +301,8 @@ export function telegramBusinessState(update: unknown): ConversationBusinessStat
   const name = accountNameOf(user);
   const username = typeof user.username === 'string' && /^[A-Za-z0-9_]{1,64}$/.test(user.username) ? user.username : null;
   const date = typeof connection.date === 'number' && Number.isSafeInteger(connection.date) && connection.date >= 0 && connection.date <= 10_000_000_000 ? connection.date : undefined;
-  return { id, userId, ...(name ? { name } : {}), ...(username ? { username } : {}), ...(date !== undefined ? { date } : {}), canReply: rights?.can_reply === true || connection.can_reply === true, enabled: connection.is_enabled === true };
+  const updateId = typeof top?.update_id === 'number' && Number.isSafeInteger(top.update_id) && top.update_id >= 0 ? top.update_id : undefined;
+  return { id, userId, ...(name ? { name } : {}), ...(username ? { username } : {}), ...(date !== undefined ? { date } : {}), ...(updateId !== undefined ? { updateId } : {}), canReply: rights?.can_reply === true || connection.can_reply === true, enabled: connection.is_enabled === true };
 }
 
 // The notice the route parked: its hook is the account id, which the worker maps to a connection (ADR-0039: it names no org). Malformed JSON, a
@@ -422,12 +431,29 @@ export class TelegramConversations implements ConversationAdapter {
     if (input.takenBotIds.includes(botId)) return { kind: 'failed', retry: false, code: 'BOT_IN_USE' };
     if (!input.baseUrl.startsWith('https://')) return { kind: 'failed', retry: false, code: 'WEBHOOK_NEEDS_HTTPS' };
     if (!input.key) return { kind: 'failed', retry: false, code: 'NO_HOOK_KEY' };
-    // The trailing slashes of the address are cut by hand (a pattern on an address a deployment sets would be a polynomial regular expression).
-    let end = input.baseUrl.length;
-    while (end > 0 && input.baseUrl.charCodeAt(end - 1) === 47) end--;
-    const url = `${input.baseUrl.slice(0, end)}/api/channels/telegram/webhook/${input.hook}`;
+    const url = telegramWebhookUrl(input.baseUrl, input.hook);
     const set = await setTelegramWebhook(s.botToken, { url, secretToken: telegramHookSecret(input.key, input.hook) }, this.fetchImpl);
     return set.kind === 'done' ? { kind: 'done', botId } : set;
+  }
+
+  chatHookBotId(secret: string): string | null {
+    const s = telegramSecretOf(secret);
+    return s ? telegramBotId(s.botToken) : null;
+  }
+
+  // Reads the bot's currently registered webhook URL via getWebhookInfo so key rotation never steals a webhook
+  // already pointing elsewhere (#3150 item 1).
+  async chatHookInfo(input: { secret: string; hook?: string; baseUrl?: string }): Promise<ConversationChatHookInfoResult> {
+    const s = telegramSecretOf(input.secret);
+    if (!s) return { kind: 'failed', retry: false, code: 'TELEGRAM_NO_TOKEN' };
+    try {
+      const info = await this.client.call<{ url?: unknown } | null>(s.botToken, 'getWebhookInfo', {});
+      if (typeof info?.url !== 'string') return { kind: 'failed', retry: true, code: 'TG_WEBHOOK_INFO_SHAPE' };
+      const matchesHook = input.hook !== undefined && input.baseUrl !== undefined ? info.url === telegramWebhookUrl(input.baseUrl, input.hook) : undefined;
+      return { kind: 'ok', url: info.url, ...(matchesHook !== undefined ? { matchesHook } : {}) };
+    } catch (error) {
+      return hookFailure(error);
+    }
   }
 
   // Reads one business connection back with `getBusinessConnection` [O] (#3224), for a message that named one Ludy never recorded. Telegram answers only for a
@@ -486,7 +512,7 @@ function replyFailure(error: unknown): ConversationCallResult {
 
 export type TelegramHookResult = { kind: 'done' } | { kind: 'failed'; retry: boolean; code: string };
 
-function hookFailure(error: unknown): TelegramHookResult {
+function hookFailure(error: unknown): { kind: 'failed'; retry: boolean; code: string } {
   if (error instanceof TelegramError) {
     if (error.status === 401 || error.status === 404) return { kind: 'failed', retry: false, code: 'TELEGRAM_TOKEN_REFUSED' };
     if (error.status === 400) return { kind: 'failed', retry: false, code: 'TELEGRAM_WEBHOOK_REFUSED' };

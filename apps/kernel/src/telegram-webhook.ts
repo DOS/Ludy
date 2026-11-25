@@ -14,8 +14,6 @@ import { DomainError, type Runtime } from '@ludy/kernel-runtime';
 
 export const TELEGRAM_WEBHOOK_PATH = '/api/channels/telegram/webhook/:hook';
 export const TELEGRAM_SECRET_HEADER = 'x-telegram-bot-api-secret-token';
-// The provider name the update is parked under: the worker's parser and its hook lookup are keyed by it, and the backlog cap is its own.
-export const TELEGRAM_INTAKE_PROVIDER = 'telegram_chat';
 
 export interface TelegramWebhookConfig {
   // The keys the hook secret is derived from, the current one first (the broker's `deriveKeys`): one under a rotation that keeps the old key.

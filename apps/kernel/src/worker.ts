@@ -125,7 +125,7 @@ import { runAdsRevoke } from './ads-revoke.ts';
 import { ADS_DUE_PAGE, adsDue, pruneAdsRuns, runAdsSync, type AdsSyncJob } from './ads-sync.ts';
 import { HELD_SWEEP_MS, holdEvents, planHolds, releaseHeld, releaseHeldOfOrg, type SweepCursor } from './outbox-hold.ts';
 import { failUnaskable, runAdsCampaignDraft, sweepAdsCampaignRequests, type AdsCampaignDraftJob } from './ads-worker.ts';
-import { failUndraftable, rekeyTelegramWebhooks, requestDueConversationDrafts, sweepConversationComposing, sweepConversationDrafts, runConversationDraft, type ConversationDraftJob, dueConversationAttachments, dueConversationSync, failChatHook, failUnsendable, requestConversationAttachments, requestConversationSync, purgeExpiredConversations, runConversationAttachment, runConversationDeletions, runConversationIntake, runConversationJob, runConversationSync, runTelegramChatHook, sweepConversationBlobs, sweepStaleReplies, type ConversationAttachmentJob, type ConversationChatJob, type ConversationJob, type ConversationSyncJob } from './conversations-worker.ts';
+import { failUndraftable, reconcileTelegramDisplacements, rekeyTelegramWebhooks, requestDueConversationDrafts, sweepConversationComposing, sweepConversationDrafts, runConversationDraft, type ConversationDraftJob, dueConversationAttachments, dueConversationSync, failChatHook, failUnsendable, requestConversationAttachments, requestConversationSync, purgeExpiredConversations, runConversationAttachment, runConversationDeletions, runConversationIntake, runConversationJob, runConversationSync, runTelegramChatHook, sweepConversationBlobs, sweepStaleReplies, type ConversationAttachmentJob, type ConversationChatJob, type ConversationJob, type ConversationSyncJob } from './conversations-worker.ts';
 import { runLiveCheck } from './calendar-live.ts';
 import { CALENDAR_SYNC_SWEEP_MS, runCalendarWriteBack, syncCalendars, type CalendarWriteBackJob } from './calendar-sync.ts';
 import { BANK_FEED_NOTICE_CLAIM, claimBankFeedNotices } from './bank-feed-webhook.ts';
@@ -3931,6 +3931,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       // Meta's data deletion requests that name conversations (CV6, #2305), the same callback as the Ads one above.
       await runConversationDeletions({ runtime: deps.runtime, workerDb: deps.workerDb });
       await sweepStaleReplies({ workerDb: deps.workerDb, runtime: deps.runtime });
+      await reconcileTelegramDisplacements({ workerDb: deps.workerDb, runtime: deps.runtime });
       // What the webhook did not bring (CV5b, #2329): the recent history of an account that is due (the first read of a new or
       // reconnected one, then hourly) and the name of a customer who has none yet, for the providers whose adapters can read them. The
       // history read only runs where the deployment has turned it on, once its live check has settled the platform's shapes.

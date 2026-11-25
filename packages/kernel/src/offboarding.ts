@@ -49,7 +49,7 @@ export const EXPORT_TABLES = {
   'kernel.calendar_event': { from: 'ludy_kernel.calendar_event', omit: [] },
   // Connected channel accounts (ADR-0025). Their sealed tokens (ludy_kernel.credential) are secrets and stay out.
   // The keyed hash of the Meta user who granted a connection (Meta's data deletion callback) is the deployment's, not the org's.
-  'kernel.channel_connection': { from: 'ludy_kernel.channel_connection', omit: ['granted_by_hash', 'chat_hook', 'chat_hook_next', 'chat_hook_key_id'] },
+  'kernel.channel_connection': { from: 'ludy_kernel.channel_connection', omit: ['granted_by_hash', 'chat_hook', 'chat_hook_next', 'chat_hook_key_id', 'chat_displace_pending', 'chat_hook_rekey_after', 'chat_business_order'] },
   // Which members use which channels (#2303), and the conversation core (CV6, #2305): the customers' comments and messages, the
   // identities they wrote under, the org's internal notes on them and its retention. Read marks are per-member state and stay out.
   'kernel.channel_access': { from: 'ludy_kernel.channel_access', omit: [] },

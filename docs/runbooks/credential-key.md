@@ -50,7 +50,7 @@ Rotate when someone who could read the key loses that access, when the key may h
    [telegram-webhook-rekey] rekeyed 4, failed 0; left under an older key: 0 active, 1 to reconnect
    ```
 
-   To run that webhook sweep immediately without waiting for the next 10-minute pass, run `telegram-webhook-rekey` in the worker container (`node dist/main.js telegram-webhook-rekey` or `tsx src/main.ts telegram-webhook-rekey`). To check the remaining Telegram webhooks by hand (as the database owner):
+   To run that webhook sweep immediately without waiting for the next 10-minute pass, run `node apps/kernel/src/main.ts telegram-webhook-rekey` in the worker container (confirm exit status `0` and `left under an older key: 0 active`, not `skipped`, before removing `CREDENTIAL_KEY_PREVIOUS`). To check the remaining Telegram webhooks by hand (as the database owner):
 
    ```sql
    SELECT COALESCE(chat_hook_key_id, 'legacy') AS key_id, count(*)

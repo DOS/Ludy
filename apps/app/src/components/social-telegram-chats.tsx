@@ -110,13 +110,15 @@ export function TelegramBusiness({ connectionId, accounts, canEdit, initialConfi
       ) : (
         <>
           <ul className="space-y-2 text-xs text-subtle-foreground">
-            {accounts.map((a) => (
+            {accounts.map((a) => {
+              const isConfirming = a.enabled && confirming === a.ref;
+              return (
               <li key={a.ref} data-testid="telegram-business-account" className="space-y-1">
                 {/* The name is the account's own choice and can say anything; the @username is unique, so it has a line of its own, labelled. */}
                 <p>
                   <span>{a.name ?? t('telegramBusinessUnnamed')}</span> <span data-testid="telegram-business-username">{a.username ? `${t('telegramBusinessUsername')} @${a.username}` : t('telegramBusinessNoUsername')}</span>: {status(a)}
                 </p>
-                {canEdit && !a.approved && confirming !== a.ref && (
+                {canEdit && !a.approved && !isConfirming && (
                   <div className="flex flex-wrap gap-2">
                     {a.enabled && (
                       <Button variant="outline" size="sm" className={PHONE_TARGET} onClick={() => setConfirming(a.ref)}>
@@ -134,7 +136,7 @@ export function TelegramBusiness({ connectionId, accounts, canEdit, initialConfi
                     </Button>
                   </div>
                 )}
-                {canEdit && a.enabled && !a.approved && confirming === a.ref && (
+                {canEdit && !a.approved && isConfirming && (
                   <div className="space-y-1" data-testid="telegram-business-confirm">
                     <p className="text-warning">{a.username ? t('telegramBusinessConfirm', { username: a.username }) : t('telegramBusinessConfirmNoUsername')}</p>
                     <div className="flex gap-2">
@@ -154,7 +156,8 @@ export function TelegramBusiness({ connectionId, accounts, canEdit, initialConfi
                   </Button>
                 )}
               </li>
-            ))}
+              );
+            })}
           </ul>
           {accounts.some((a) => a.enabled && !a.approved) && <p className="text-xs text-warning">{t('telegramBusinessPendingNote')}</p>}
           <p className="text-xs text-subtle-foreground">{t('telegramBusinessWindow')}</p>

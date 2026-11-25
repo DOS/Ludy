@@ -44,8 +44,10 @@ export interface ConversationBusinessState {
   name?: string | undefined;
   // The account's @username (unique on Telegram), so an owner can tell their own account from a stranger who wears the same name.
   username?: string | undefined;
-  // Telegram's event timestamp in Unix seconds, used to ignore older out-of-order updates.
+  // Telegram's event timestamp in Unix seconds, used as fallback ordering when no update_id is present.
   date?: number | undefined;
+  // Monotonic Telegram Update.update_id, used to order business_connection changes even when BusinessConnection.date is unchanged.
+  updateId?: number | undefined;
   canReply: boolean;
   enabled: boolean;
 }
@@ -157,6 +159,7 @@ export type ConversationChatHookResult =
   // `botId`: the bot's public number, kept on the connection so a second connection of the same bot is refused.
   | { kind: 'done'; botId: string | null }
   | { kind: 'failed'; retry: boolean; code: string };
+export type ConversationChatHookInfoResult = { kind: 'ok'; url: string; matchesHook?: boolean } | { kind: 'failed'; retry: boolean; code: string };
 
 // The bytes of an image the platform gave only by a reference (`mediaRef`, #3131), read with the connection's sealed credential inside the fetch job.
 export interface ConversationMediaInput {
@@ -201,6 +204,8 @@ export interface ConversationAdapter {
   // An image the platform gave by a reference (#3131): the adapter turns it into bytes with the credential; the caller checks the bytes (type, size) itself.
   media?(input: ConversationMediaInput): Promise<ConversationMediaResult>;
   chatHook?(input: ConversationChatHookInput): Promise<ConversationChatHookResult>;
+  chatHookInfo?(input: { secret: string; hook?: string; baseUrl?: string }): Promise<ConversationChatHookInfoResult>;
+  chatHookBotId?(secret: string): string | null;
   // A Telegram Business connection Ludy has no record of, read back with the bot's own token (#3224).
   businessConnection?(input: ConversationBusinessLookupInput): Promise<ConversationBusinessLookupResult>;
 }

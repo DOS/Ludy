@@ -180,7 +180,7 @@ suite('Telegram Business connection read back on PostgreSQL (#3224)', () => {
     // The message that made Ludy look is not kept: nothing of an account is stored before a person allows it (plan 4.2 point 9).
     expect(await intake(lookup)).toEqual({ stored: 0, dropped: 0 });
     expect(t.calls).toEqual([{ method: 'getBusinessConnection', token: TOKEN, json: { business_connection_id: ENABLED } }]);
-    expect(await accounts()).toEqual([{ id: ENABLED, userId: String(OWNER_TG), name: 'Lan Trần', username: 'lan_tran', date: expect.any(Number), canReply: true, enabled: true, approved: false }]);
+    expect(await accounts()).toEqual([{ id: ENABLED, userId: String(OWNER_TG), name: 'Lan Trần', username: 'lan_tran', canReply: true, enabled: true, approved: false }]);
     expect(await messagesOf(`b:3001:${ENABLED}`)).toEqual([]);
     // The screen lists it as waiting, without the ids.
     const list = await api.query<Array<{ id: string; chatBusiness: Array<{ ref: string; approved: boolean }> }>>('kernel.channel.list', {}, asOwner());
