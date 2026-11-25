@@ -291,13 +291,14 @@ suite('org offboarding on PostgreSQL (#38)', () => {
       await seeder.end();
     }
 
-    const generatedAt = new Date('2026-10-16T00:00:00Z');
+    const generatedAt = new Date(Math.floor(Date.now() / 86_400_000) * 86_400_000 - 10 * 86_400_000);
+    const expectedExpiresAt = new Date(generatedAt.getTime() + 40 * 86_400_000).toISOString();
     const record = await runOrgExport({ runtime: workerRuntime, store, sealer, retentionDays: 40 }, org.orgId, { now: () => generatedAt });
     // The tax portal's purchase lists are kept records (#465): an export carries them.
     expect(EXPORT_TABLE_NAMES).toEqual(expect.arrayContaining(['finance.portal_invoice_list', 'finance.portal_invoice_row']));
     // One chunk per table here, in table order; everything sealed under the org's export prefix.
     expect(record.parts.map((p) => [p.table, p.chunk])).toEqual(EXPORT_TABLE_NAMES.map((t) => [t, 0]));
-    expect(record).toMatchObject({ format: 'crove.org-export.v2', encryption: 'aes-256-gcm', fileCount: 1, expiresAt: '2026-11-25T00:00:00.000Z' });
+    expect(record).toMatchObject({ format: 'crove.org-export.v2', encryption: 'aes-256-gcm', fileCount: 1, expiresAt: expectedExpiresAt });
     const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
     const lines = (text: string) => text.split('\n').filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>);
     for (const part of record.parts) {
@@ -334,7 +335,7 @@ suite('org offboarding on PostgreSQL (#38)', () => {
     expect((await rowsOf('kernel.audit_event')).find((r) => r.command_id === systemCommand)).toMatchObject({ actor_type: 'system', detail: { rows: 1 } });
     expect((await rowsOf('kernel.audit_event')).every((r) => !(r.detail && typeof r.detail === 'object' && 'workerInstance' in r.detail))).toBe(true);
     const manifest = JSON.parse(decode(sealer.open(await store.get(record.manifestKey), exportAad(org.orgId, 'manifest'), 'aes-256-gcm'))) as OrgExportManifest;
-    expect(manifest).toMatchObject({ orgId: org.orgId, generatedAt: '2026-10-16T00:00:00.000Z', snapshot: 'repeatable read', fileCount: 1, parts: record.parts });
+    expect(manifest).toMatchObject({ orgId: org.orgId, generatedAt: generatedAt.toISOString(), snapshot: 'repeatable read', fileCount: 1, parts: record.parts });
     // The stored files are the kernel.file rows: key, generation and sha256 of each blob, which stays under org/.
     expect(await rowsOf('kernel.file')).toEqual([
       expect.objectContaining({ filename: 'hd.xml', content_type: 'application/xml', storage_key: expect.stringMatching(`^org/${org.orgId}/`), generation: expect.stringMatching(/^content:/) }),
