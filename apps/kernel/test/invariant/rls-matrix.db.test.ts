@@ -131,7 +131,6 @@ const PENDING_TABLES = new Set<string>([
   'crove_kernel.member_vy_memory',
   'crove_kernel.member_vy_result',
   'crove_meetings.live_line',
-  'crove_meetings.meeting_highlight',
   'crove_meetings.meeting_link',
   'crove_meetings.minutes_version',
   'crove_notes.link',
@@ -3560,7 +3559,7 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   },
   // #4819 (meetings highlights): a reader's or the recorder's mark on a transcript line or range, an anchor in seconds and who marked it, no text. Read by the meeting's readers and the recorder, inserted
   // by either for themselves and deleted by the author or the recorder, all in a user context (the org's owner is the recorder of the factory's meeting); the system context reads none. No UPDATE for a
-  // login role. Its factory lands before the table (PENDING_TABLES).
+  // login role. Its table landed in #4819 (step 2), which removed it from PENDING_TABLES.
   'crove_meetings.meeting_highlight': {
     make: (o) => {
       const meeting = meetingsMeetingRow(o);
