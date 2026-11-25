@@ -85,12 +85,12 @@ function parseAttendanceSnapshot(value: unknown): HrProbationAttendanceSummary {
   };
 }
 
-async function loadProbationFacts(
+async function loadProbationFactsWithMeta(
   ctx: QueryContext,
   employeeId: string,
   requestedPeriodStart?: string,
   requestedPeriodEnd?: string,
-): Promise<HrProbationPreviewResult> {
+): Promise<{ preview: HrProbationPreviewResult; earliestEffectiveFrom: string | null }> {
   const emp = await ctx.trx
     .selectFrom('ludy_hr.payroll_employee as e')
     .leftJoin('ludy_hr.department as d', (j) =>
@@ -124,9 +124,10 @@ async function loadProbationFacts(
 
   const firstTerm = terms[0];
   const latestTerm = terms[terms.length - 1];
+  const earliestEffectiveFrom = firstTerm ? iso(firstTerm.effective_from) : null;
   const today = vietnamToday();
   const probationEndOn = latestTerm?.probation_end_on ? iso(latestTerm.probation_end_on) : null;
-  const periodStart = requestedPeriodStart ?? (firstTerm ? iso(firstTerm.effective_from) : today);
+  const periodStart = requestedPeriodStart ?? (earliestEffectiveFrom ?? today);
   const defaultEnd = probationEndOn && probationEndOn >= periodStart ? probationEndOn : today >= periodStart ? today : periodStart;
   const periodEnd = requestedPeriodEnd ?? defaultEnd;
   if (periodEnd < periodStart) {
@@ -195,28 +196,41 @@ async function loadProbationFacts(
   }
 
   return {
-    employeeId: emp.id,
-    employeeName: emp.display_name,
-    linkedUserId: emp.user_id,
-    departmentName: emp.department_name ?? null,
-    jobTitle: emp.job_title,
-    probationEndOn,
-    periodStart,
-    periodEnd,
-    projectsAvailable,
-    completedTasksCount,
-    completedTasks,
-    attendance: {
-      monthCount: monthsSeen.size,
-      annualLeaveDays: formatDecimalString(annualLeave),
-      personalPaidLeaveDays: formatDecimalString(personalPaidLeave),
-      unpaidLeaveDays: formatDecimalString(unpaidLeave),
-      sicknessBhxhDays: formatDecimalString(sicknessBhxh),
-      maternityBhxhDays: formatDecimalString(maternityBhxh),
-      overtimeHours: formatDecimalString(otHours),
-      overtimeRequestsCount: otRows.length,
+    earliestEffectiveFrom,
+    preview: {
+      employeeId: emp.id,
+      employeeName: emp.display_name,
+      linkedUserId: emp.user_id,
+      departmentName: emp.department_name ?? null,
+      jobTitle: emp.job_title,
+      probationEndOn,
+      periodStart,
+      periodEnd,
+      projectsAvailable,
+      completedTasksCount,
+      completedTasks,
+      attendance: {
+        monthCount: monthsSeen.size,
+        annualLeaveDays: formatDecimalString(annualLeave),
+        personalPaidLeaveDays: formatDecimalString(personalPaidLeave),
+        unpaidLeaveDays: formatDecimalString(unpaidLeave),
+        sicknessBhxhDays: formatDecimalString(sicknessBhxh),
+        maternityBhxhDays: formatDecimalString(maternityBhxh),
+        overtimeHours: formatDecimalString(otHours),
+        overtimeRequestsCount: otRows.length,
+      },
     },
   };
+}
+
+async function loadProbationFacts(
+  ctx: QueryContext,
+  employeeId: string,
+  requestedPeriodStart?: string,
+  requestedPeriodEnd?: string,
+): Promise<HrProbationPreviewResult> {
+  const { preview } = await loadProbationFactsWithMeta(ctx, employeeId, requestedPeriodStart, requestedPeriodEnd);
+  return preview;
 }
 
 export const probationPreview = defineQuery({
@@ -351,7 +365,50 @@ export const probationDecide = defineCommand({
     }
 
     const selfApproved = await assertNotSelfApprover(ctx.trx, ctx.orgId, callerUserId, role, input.employeeId, true);
-    const facts = await loadProbationFacts(ctx, input.employeeId, input.periodStart, input.periodEnd);
+    const { preview: facts, earliestEffectiveFrom } = await loadProbationFactsWithMeta(
+      ctx,
+      input.employeeId,
+      input.periodStart,
+      input.periodEnd,
+    );
+
+    if (input.probationEndOn !== undefined && input.probationEndOn !== null) {
+      if (facts.probationEndOn !== null && input.probationEndOn !== facts.probationEndOn) {
+        throw new DomainError(
+          'HR_PROBATION_PERIOD_INVALID',
+          422,
+          'Ngày kết thúc thử việc không khớp với thông tin hợp đồng hiện tại',
+        );
+      }
+      if (earliestEffectiveFrom !== null && input.probationEndOn < earliestEffectiveFrom) {
+        throw new DomainError(
+          'HR_PROBATION_PERIOD_INVALID',
+          422,
+          'Ngày kết thúc thử việc không thể trước ngày bắt đầu hợp đồng',
+        );
+      }
+      if (earliestEffectiveFrom === null && input.probationEndOn < facts.periodStart) {
+        throw new DomainError(
+          'HR_PROBATION_PERIOD_INVALID',
+          422,
+          'Ngày kết thúc thử việc không thể trước ngày bắt đầu kỳ đánh giá',
+        );
+      }
+    }
+    const resolvedProbationEndOn = input.probationEndOn ?? facts.probationEndOn;
+    if (
+      input.decision === 'extend' &&
+      resolvedProbationEndOn !== null &&
+      input.extendedUntil !== undefined &&
+      input.extendedUntil !== null &&
+      input.extendedUntil <= resolvedProbationEndOn
+    ) {
+      throw new DomainError(
+        'HR_PROBATION_PERIOD_INVALID',
+        422,
+        'Ngày gia hạn thử việc phải sau ngày kết thúc thử việc hiện tại',
+      );
+    }
 
     const inserted = await ctx.trx
       .insertInto('ludy_hr.probation_review')
@@ -359,7 +416,7 @@ export const probationDecide = defineCommand({
         org_id: ctx.orgId,
         employee_id: input.employeeId,
         reviewer_user_id: callerUserId,
-        probation_end_on: input.probationEndOn ?? facts.probationEndOn,
+        probation_end_on: resolvedProbationEndOn,
         period_start: facts.periodStart,
         period_end: facts.periodEnd,
         completed_tasks_count: facts.completedTasksCount,

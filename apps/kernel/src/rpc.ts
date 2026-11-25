@@ -1366,6 +1366,10 @@ export function createRpcHandler(
         approveL1: os.hr.overtimeRequests.approveL1.handler(hrCommand('hr.overtime.approve_l1')),
         approveFinal: os.hr.overtimeRequests.approveFinal.handler(hrCommand('hr.overtime.approve_final')),
         reject: os.hr.overtimeRequests.reject.handler(hrCommand('hr.overtime.reject')),
+        settings: {
+          get: os.hr.overtimeRequests.settings.get.handler(hrQuery('hr.overtime.settings.get')),
+          set: os.hr.overtimeRequests.settings.set.handler(hrCommand('hr.overtime.settings.set')),
+        },
       },
       salaryAdvances: {
         list: os.hr.salaryAdvances.list.handler(hrQuery('hr.salary_advance.list')),
