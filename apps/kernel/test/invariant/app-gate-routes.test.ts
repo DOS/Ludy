@@ -48,7 +48,6 @@ const CLASSES: Record<string, { app: string; gate: Gate; why: string }> = {
   '/api/review/answer': { app: 'social', gate: 'sql', why: 'review_link_by_token: a write of the visitor is refused as for a revoked link' },
   '/api/quote/view': { app: 'crm', gate: 'sql', why: 'quote_link_view' },
   '/api/minutes/view': { app: 'meetings', gate: 'sql', why: 'minutes_link_view' },
-  '/api/minutes/view': { app: 'meetings', gate: 'sql', why: 'minutes_link_view' },
   '/api/quote/logo': { app: 'crm', gate: 'sql', why: 'quote_link_logo' },
   '/api/report/view': { app: 'social', gate: 'sql', why: 'report_link_view' },
   '/cal/:file': { app: 'social+crm', gate: 'sql', why: 'calendar_feed_events (social) and booking_feed_events (crm)' },

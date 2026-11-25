@@ -116,7 +116,6 @@ const PUBLIC: Record<string, string> = {
 // here first, in a PR of its own; the PR that adds the route moves it into PUBLIC. A route here may be public and may
 // not exist yet; the stale-list check below skips it, and nothing else does.
 const PENDING: Record<string, string> = {
-  '/api/minutes/view': "the published minutes of a meeting, for a person outside the org (#4822): the token is in the POST JSON body (never the URL), stored hashed, 30 day expiry, revocable; answers one opaque 404 for an unknown, revoked, expired, switched-off or unpublished link; per-address rate limit; no-store, no-referrer and noindex; returns only the published summary, decisions and action items, never the transcript, a draft or the recording",
   '/auth-templates/:name': 'Ludy-branded GoTrue email templates (#3577): strict allowlist of the five static HTML auth templates for the bundled auth container, zero dynamic file reads and zero tenant data',
 };
 const isPublic = (path: string) => Object.hasOwn(PUBLIC, path) || Object.hasOwn(PENDING, path);
