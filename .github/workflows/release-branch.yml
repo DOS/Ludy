@@ -1,6 +1,6 @@
 name: release-branch
 
-# The web app ships with the backend release (#2261, #3580, docs/runbooks/split-app-api.md). Vercel's Production Branch is
+# The web app ships with the backend release (#2261, #3580, #4724, docs/runbooks/split-app-api.md). Vercel's Production Branch is
 # `release`, so app.<domain> is built from whatever commit this workflow points `release` at, and never from a plain
 # merge to main. `.github/workflows/deploy.yml` dispatches it automatically on `main` after a successful `pilot` `v*`
 # tag deploy, and it also runs by hand (`gh workflow run release-branch.yml -f tag=v1.2.3`) for rollbacks or recovery.
@@ -8,6 +8,9 @@ name: release-branch
 #
 # The file that runs is the one on main (a dispatch from another ref is refused below, and the `release` environment
 # should allow main only: docs/runbooks/split-app-api.md), so a tagged commit cannot edit the checks that gate it.
+# When RELEASE_BRANCH_APP_CLIENT_ID and RELEASE_BRANCH_APP_PRIVATE_KEY are set in the `release` environment, this
+# workflow mints a scoped single-repo GitHub App token (contents: write + workflows: write) after CI passes so releases
+# can advance across `.github/workflows/*` changes; otherwise it falls back to `github.token`.
 
 on:
   workflow_dispatch:
@@ -37,11 +40,13 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: 0
 
       - name: The tag is a release on main
         id: tag
         env:
+          GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
@@ -49,6 +54,17 @@ jobs:
             echo "::error::'$TAG' is not a release tag (v followed by letters, digits, dot, dash, underscore)"
             exit 1
           fi
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::missing GH_TOKEN for tag fetch"
+            exit 1
+          fi
+          basic_auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
+          GIT_TERMINAL_PROMPT=0 \
+          GIT_CONFIG_COUNT=2 \
+          GIT_CONFIG_KEY_0="http.${GITHUB_SERVER_URL}/.extraheader" \
+          GIT_CONFIG_VALUE_0="" \
+          GIT_CONFIG_KEY_1="http.${GITHUB_SERVER_URL}/.extraheader" \
+          GIT_CONFIG_VALUE_1="AUTHORIZATION: basic ${basic_auth}" \
           git fetch --no-tags origin main "refs/tags/$TAG:refs/tags/$TAG"
           sha="$(git rev-parse "refs/tags/$TAG^{commit}")"
           if ! git merge-base --is-ancestor "$sha" origin/main; then
@@ -85,12 +101,82 @@ jobs:
             sleep 30
           done
 
+      - name: Check release push credentials
+        id: push-auth
+        env:
+          CLIENT_ID: ${{ vars.RELEASE_BRANCH_APP_CLIENT_ID }}
+          HAS_PRIVATE_KEY: ${{ secrets.RELEASE_BRANCH_APP_PRIVATE_KEY != '' }}
+        run: |
+          set -euo pipefail
+          if [ -n "$CLIENT_ID" ] && [ "$HAS_PRIVATE_KEY" = "true" ]; then
+            if ! [[ "$CLIENT_ID" =~ ^[A-Za-z0-9._-]{1,64}$ ]]; then
+              echo "::error::RELEASE_BRANCH_APP_CLIENT_ID must match ^[A-Za-z0-9._-]{1,64}$"
+              exit 1
+            fi
+            echo 'use_app=true' >> "$GITHUB_OUTPUT"
+          elif [ -z "$CLIENT_ID" ] && [ "$HAS_PRIVATE_KEY" != "true" ]; then
+            echo 'use_app=false' >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::RELEASE_BRANCH_APP_CLIENT_ID and RELEASE_BRANCH_APP_PRIVATE_KEY must both be set in the release environment, or both left unset (see docs/runbooks/split-app-api.md)"
+            exit 1
+          fi
+
+      - name: Mint release-branch GitHub App token
+        id: app-token
+        if: steps.push-auth.outputs.use_app == 'true'
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          client-id: ${{ vars.RELEASE_BRANCH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_BRANCH_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-workflows: write
+          skip-token-revoke: false
+
       - name: Point release at the tagged commit
         env:
           TAG: ${{ inputs.tag }}
           SHA: ${{ steps.tag.outputs.sha }}
+          PUSH_TOKEN: ${{ steps.push-auth.outputs.use_app == 'true' && steps.app-token.outputs.token || github.token }}
+          AUTH_MODE: ${{ steps.push-auth.outputs.use_app == 'true' && 'github-app' || 'github-token' }}
         run: |
           set -euo pipefail
-          before="$(git ls-remote origin refs/heads/release | cut -f1)"
-          git push --force origin "$SHA:refs/heads/release"
-          echo "release: ${before:-none} -> $SHA ($TAG)" >> "$GITHUB_STEP_SUMMARY"
+          if [ -z "$PUSH_TOKEN" ]; then
+            echo "::error::missing push token for release branch update"
+            exit 1
+          fi
+          run_git() {
+            local basic_auth
+            basic_auth="$(printf 'x-access-token:%s' "$PUSH_TOKEN" | base64 | tr -d '\n')"
+            GIT_TERMINAL_PROMPT=0 \
+            GIT_CONFIG_COUNT=2 \
+            GIT_CONFIG_KEY_0="http.${GITHUB_SERVER_URL}/.extraheader" \
+            GIT_CONFIG_VALUE_0="" \
+            GIT_CONFIG_KEY_1="http.${GITHUB_SERVER_URL}/.extraheader" \
+            GIT_CONFIG_VALUE_1="AUTHORIZATION: basic ${basic_auth}" \
+            git "$@"
+          }
+          err_file="$RUNNER_TEMP/release-push.err"
+          : > "$err_file"
+          replayed=false
+          cleanup() {
+            if [ "$replayed" != true ] && [ -s "$err_file" ]; then
+              cat "$err_file" >&2 || true
+            fi
+            rm -f "$err_file"
+          }
+          trap cleanup EXIT
+
+          before="$(run_git ls-remote origin refs/heads/release | cut -f1)"
+          if ! run_git push --force origin "$SHA:refs/heads/release" 2> "$err_file"; then
+            cat "$err_file" >&2
+            replayed=true
+            if [ "$AUTH_MODE" = github-token ] && grep -qiE 'without workflows permission|workflows permission' "$err_file"; then
+              echo "::error::GITHUB_TOKEN cannot push commits touching .github/workflows/* to refs/heads/release. Configure RELEASE_BRANCH_APP_CLIENT_ID and RELEASE_BRANCH_APP_PRIVATE_KEY in the release GitHub environment (see docs/runbooks/split-app-api.md)."
+            fi
+            exit 1
+          fi
+          cat "$err_file" >&2
+          replayed=true
+          echo "release: ${before:-none} -> $SHA ($TAG) via $AUTH_MODE" >> "$GITHUB_STEP_SUMMARY"
