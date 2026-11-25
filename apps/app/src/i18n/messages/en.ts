@@ -425,7 +425,7 @@ export const en = {
         vatPeriod: {
           title: 'Choose your VAT filing period',
           description: 'Pick monthly or quarterly so Ludy reminds you before each return is due.',
-          action: 'Choose period',
+          action: 'Set up the period',
         },
         twoFactor: {
           title: 'Turn on two-factor sign-in',

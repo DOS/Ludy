@@ -423,7 +423,7 @@ export const vi = {
         vatPeriod: {
           title: 'Chọn kỳ khai thuế GTGT',
           description: 'Chọn khai theo tháng hay theo quý để Ludy nhắc đúng hạn tờ khai.',
-          action: 'Chọn kỳ khai',
+          action: 'Thiết lập kỳ khai',
         },
         twoFactor: {
           title: 'Bật xác thực hai lớp',
