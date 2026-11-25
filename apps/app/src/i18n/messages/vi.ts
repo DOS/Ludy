@@ -872,7 +872,7 @@ export const vi = {
     },
     weeklyNotice: {
       title: 'Các cuộc họp tuần qua, vào sáng thứ Hai',
-      hint: 'Mỗi tuần một lần, vào sáng thứ Hai lúc bạn chọn, một thông báo trong ứng dụng và qua email với bốn con số (số cuộc họp bạn đọc được có kết quả đã công bố trong 7 ngày qua, số quyết định đã công bố, số việc còn mở và số việc đã quá hạn) kèm đường dẫn đến thẻ "Tuần này", cùng thông báo đẩy nếu bạn bật trên thiết bị này. Chỉ có con số và đường dẫn, không tiêu đề, không nội dung quyết định. Tuần nào không có gì để báo thì không gửi.',
+      hint: 'Mỗi tuần một lần, vào sáng thứ Hai lúc bạn chọn, một thông báo trong ứng dụng và qua email với vài con số (số cuộc họp bạn đọc được có kết quả đã công bố trong 7 ngày qua, số quyết định đã công bố, số việc còn mở, số việc đã quá hạn và, nếu tổ chức có theo dõi từ khóa, số lần chúng xuất hiện) kèm đường dẫn đến thẻ "Tuần này", cùng thông báo đẩy nếu bạn bật trên thiết bị này. Chỉ có con số và đường dẫn, không tiêu đề, không nội dung quyết định. Tuần nào không có gì để báo thì không gửi.',
       label: 'Gửi cho tôi tổng kết các cuộc họp tuần qua vào mỗi sáng thứ Hai',
       at: 'Lúc',
       zone: 'Theo múi giờ của bạn: {zone}',
@@ -1053,7 +1053,7 @@ export const vi = {
       tracker_alert: 'Trong bản ghi một cuộc họp mới: {words}. Mở cuộc họp để đọc.',
       tracker_alert_plain: 'Từ khóa bạn theo dõi có trong bản ghi một cuộc họp mới. Mở cuộc họp để đọc.',
       morning: 'Hôm nay bạn có {count, plural, other {# cuộc họp}}. Mở trang Cuộc họp để xem.',
-      weekly: '7 ngày qua: {cut, select, yes {ít nhất } other {}}{meetings, plural, other {# cuộc họp}} có kết quả đã công bố, {decisions, plural, other {# quyết định}} đã công bố, {open, plural, other {# việc còn mở}}{overdue, plural, =0 {} other {, # việc quá hạn}}{trackedText, select, none {} other {, từ khóa theo dõi xuất hiện {trackedText} lần}}. Mở trang Cuộc họp để xem tuần này.',
+      weekly: '7 ngày qua: {cut, select, yes {ít nhất } other {}}{meetings, plural, other {# cuộc họp}} có kết quả đã công bố, {decisions, plural, other {# quyết định}} đã công bố, {open, plural, other {# việc còn mở}}{overdue, plural, =0 {} other {, # việc quá hạn}}{trackedMore, select, yes {, từ khóa theo dõi xuất hiện {tracked}+ lần} other {{tracked, plural, =0 {} other {, từ khóa theo dõi xuất hiện # lần}}}}. Mở trang Cuộc họp để xem tuần này.',
       ai_budget_warn: 'Ngân sách AI đã dùng {percent}%. Hết ngân sách thì chỉ phần AI dừng, sổ sách vẫn chạy.',
       ai_budget_stop: 'Ngân sách AI tháng này đã hết. Việc cần AI sẽ chờ; hãy nâng ngân sách hoặc đợi sang tháng mới. Sổ sách vẫn chạy bình thường.',
       channel_expired: 'Một tài khoản quảng cáo bị tạm dừng cập nhật vì kết nối hết hạn hoặc bị từ chối. Hãy kết nối lại để lấy tiếp số liệu, không mất ngày nào.',

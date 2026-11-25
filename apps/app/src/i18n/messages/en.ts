@@ -873,7 +873,7 @@ export const en = {
     },
     weeklyNotice: {
       title: "Last week's meetings, on Monday",
-      hint: 'Once a week, on Monday at the time you choose, a notice in the app and by email with four numbers (the meetings you read with a published result in the last 7 days, the decisions published, the action items still open and the overdue ones) and a link to the "This week" card, plus a browser push if turned on for this device. Only numbers and a link are sent, no title and no text of a decision. Nothing is sent for a week with nothing to show.',
+      hint: 'Once a week, on Monday at the time you choose, a notice in the app and by email with a few numbers (the meetings you read with a published result in the last 7 days, the decisions published, the action items still open, the overdue ones and, if your organization tracks words, how often they came up) and a link to the "This week" card, plus a browser push if turned on for this device. Only numbers and a link are sent, no title and no text of a decision. Nothing is sent for a week with nothing to show.',
       label: "Send me a summary of last week's meetings every Monday",
       at: 'At',
       zone: 'In your time zone: {zone}',
@@ -1055,7 +1055,7 @@ export const en = {
       tracker_alert: 'In the transcript of a new meeting: {words}. Open the meeting to read them.',
       tracker_alert_plain: 'A word you track is in the transcript of a new meeting. Open the meeting to read them.',
       morning: 'You have {count, plural, one {# meeting} other {# meetings}} today. Open the meetings page to see them.',
-      weekly: 'Last 7 days: {cut, select, yes {at least } other {}}{meetings, plural, one {# meeting} other {# meetings}} with a published result, {decisions, plural, one {# decision} other {# decisions}} published, {open, plural, one {# open action item} other {# open action items}}{overdue, plural, =0 {} other {, # overdue}}{trackedText, select, none {} other {, tracked words came up {trackedText} times}}. Open the meetings page to see this week.',
+      weekly: 'Last 7 days: {cut, select, yes {at least } other {}}{meetings, plural, one {# meeting} other {# meetings}} with a published result, {decisions, plural, one {# decision} other {# decisions}} published, {open, plural, one {# open action item} other {# open action items}}{overdue, plural, =0 {} other {, # overdue}}{trackedMore, select, yes {, tracked words came up {tracked}+ times} other {{tracked, plural, =0 {} one {, tracked words came up # time} other {, tracked words came up # times}}}}. Open the meetings page to see this week.',
       ai_budget_warn: 'The AI budget is {percent}% used. When it runs out only the AI stops; the books keep working.',
       ai_budget_stop: "This month's AI budget is used up. Work that needs the AI waits; raise the budget or wait for next month. The books keep working as usual.",
       channel_expired: 'An ad account was paused because its connection expired or was refused. Connect it again to read on, with no day lost.',

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The member's opt-in to the weekly notice of the week's meetings (#4967), in their notification settings: off by default, theirs alone, on Monday at a time of day they pick in their own time zone (the browser's,
-// taken when they turn it on or change the time). The notice, in the app and by mail, says only four numbers (the meetings they read with a published result in the last 7 days, the decisions published, the open
+// taken when they turn it on or change the time). The notice, in the app and by mail, says only a few numbers (the meetings they read with a published result in the last 7 days, the decisions published, the open
 // action items and the overdue ones) and links to the "This week" card: no title, no name, no word of a decision. One more switch of the same page (the kind "Last week's meetings") mutes it too.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';

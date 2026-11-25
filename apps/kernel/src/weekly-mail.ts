@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The weekly mail of the week's meetings (#4967, template meetings.weekly): a fixed few lines with the four numbers of the "this week" card and the link that opens it, nothing else. No title, name or word of a
+// The weekly mail of the week's meetings (#4967, template meetings.weekly): a fixed few lines with the numbers of the "this week" card and the link that opens it, nothing else. No title, name or word of a
 // decision is in the merge data (meetings.weekly.notice stores none), so none can be in the mail, and none is left to erase; the merge data is parsed strictly, so a stored extra key is refused rather than
 // rendered. A number that a limit cut is written "at least". A fifth line (#5019) says how often the org's tracked words came up, only when some did: a number, never a word.
 import { WEEKLY_TRACKED_MAX, zWeeklyMail, type WeeklyMail } from '@ludy/kernel-contract';

@@ -2,7 +2,8 @@
 -- The weekly meetings notice (#4967) says one more number when the org keeps tracked words (#5019, plan docs/plan/meetings.md L22 x L28): ludy_meetings.weekly_notices_due is restated with ONE more output column,
 -- `tracked integer`, the last one: how often the org's tracked words came up in the published transcript lines of the meetings the member reads (the same 50 newest meetings, reader rule and 7 day window as the
 -- other numbers), NULL when the org keeps no tracked word, at most 999. The counting is ludy_meetings.tracker_hits_in (20270327180000), the one statement of the matching rule shared with the tracker alert; the function
--- returns a number only (no text, no jsonb, no id). Everything else of the body of 20270327100000 is unchanged, and the grants are the same (REVOKE from PUBLIC and every role, EXECUTE to ludy_worker only).
+-- returns a number only (no text, no jsonb, no id). Everything else of the body of 20270327100000 is unchanged except that the final SELECT, with its random order and limit, is now a derived table, so that the
+-- tracked number is computed only for the members the limit picked; the grants are the same (REVOKE from PUBLIC and every role, EXECUTE to ludy_worker only).
 -- A function cannot gain an output column in place, so the old one is dropped first: no caller selects by position (the sweep and the command name their columns).
 SET LOCAL lock_timeout = '2s';
 
@@ -150,17 +151,21 @@ LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS 
     FROM sliced s
     GROUP BY s.org_id, s.user_id, s.day, s.language
   )
-  SELECT t.org_id, t.user_id, t.day, t.meetings, t.decisions, t.open_items, LEAST(t.overdue_all, t.open_items), t.cut, (t.language OPERATOR(pg_catalog.=) 'en'),
+  -- The limit is structural: the inner query picks the members (in a random order, at most p_limit) and only those pay for the tracked-word number below, never every due member of every org.
+  SELECT q.org_id, q.user_id, q.day, q.meetings, q.decisions, q.open_items, q.overdue, q.cut, q.english,
          -- How often the org's tracked words came up in the published lines of the member's readable meetings (the same 50 as the other numbers): NULL when the org keeps no tracked word (no line, not 0),
          -- else the sum of the shared helper's hits (the one statement of the matching rule), at most 999. Only a number leaves: no word, no line, no meeting id.
-         CASE WHEN EXISTS (SELECT 1 FROM ludy_meetings.tracker_term x WHERE x.org_id = t.org_id)
-           THEN LEAST(999, COALESCE((SELECT pg_catalog.sum(h.hits) FROM readable r CROSS JOIN LATERAL ludy_meetings.tracker_hits_in(r.org_id, r.meeting_id) h WHERE r.org_id = t.org_id AND r.user_id = t.user_id AND r.rn <= 50), 0))::integer
+         CASE WHEN EXISTS (SELECT 1 FROM ludy_meetings.tracker_term x WHERE x.org_id = q.org_id)
+           THEN LEAST(999, COALESCE((SELECT pg_catalog.sum(h.hits) FROM readable r CROSS JOIN LATERAL ludy_meetings.tracker_hits_in(r.org_id, r.meeting_id) h WHERE r.org_id = q.org_id AND r.user_id = q.user_id AND r.rn <= 50), 0))::integer
          END
-  FROM totals t
-  WHERE t.meetings > 0
-  -- A random order, so a pass that cannot finish everyone (the sweep takes 200) reaches a different slice next time and no failing group starves the rest.
-  ORDER BY pg_catalog.random()
-  LIMIT GREATEST(1, LEAST(p_limit, 500))
+  FROM (
+    SELECT t.org_id, t.user_id, t.day, t.meetings, t.decisions, t.open_items, LEAST(t.overdue_all, t.open_items) AS overdue, t.cut, (t.language OPERATOR(pg_catalog.=) 'en') AS english
+    FROM totals t
+    WHERE t.meetings > 0
+    -- A random order, so a pass that cannot finish everyone (the sweep takes 200) reaches a different slice next time and no failing group starves the rest.
+    ORDER BY pg_catalog.random()
+    LIMIT GREATEST(1, LEAST(p_limit, 500))
+  ) q
 $$;
 REVOKE ALL ON FUNCTION ludy_meetings.weekly_notices_due(integer, uuid, uuid, date, timestamptz) FROM PUBLIC, ludy_tenant, ludy_app, ludy_worker, ludy_definer_tenant;
 GRANT EXECUTE ON FUNCTION ludy_meetings.weekly_notices_due(integer, uuid, uuid, date, timestamptz) TO ludy_worker;
