@@ -198,6 +198,22 @@ suite('search across readable meetings (#2589, L2)', () => {
     await expect(search('recorder', 'labelfilter', { limit: 5 }).then(() => runtime.query('meetings.search', { q: 'labelfilter', label: 'x'.repeat(41) }, { actor: asUser('recorder'), orgId }))).rejects.toBeDefined();
   }, 120_000);
 
+  it('says capped on the last page of a labelled search, and finds nothing beyond the 200 reachable hits (#4965)', async () => {
+    // One newer meeting holds 210 lines with the word, so the search reaches 200 of them and no more; the older meeting with its own label is past that reach.
+    const big = await meeting('recorder', 'Họp lớn', 'org', [], orgId, '2026-12-31T03:00:00Z');
+    await sqlAdmin(`INSERT INTO ludy_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) SELECT $1, $2, g, g + 1, 'Hà', 'Bigword dòng ' || g, 'published' FROM generate_series(1, 210) g`, [orgId, big]);
+    const small = await meeting('recorder', 'Họp nhỏ', 'org', [], orgId, '2026-01-02T03:00:00Z');
+    await line(small, 'Bigword dòng cuối', 'published', 1);
+    for (const [id, label] of [[big, 'Khối lớn'], [small, 'Khối nhỏ']] as const) await sqlAdmin('INSERT INTO ludy_meetings.meeting_label (org_id, meeting_id, label, created_by) VALUES ($1, $2, $3, $4)', [orgId, id, label, users.recorder]);
+    const page = (label: string, offset: number) => runtime.query<MeetingSearchResult>('meetings.search', { q: 'bigword', limit: 20, offset, label }, { actor: asUser('recorder'), orgId });
+    const first = await page('khối lớn', 0);
+    expect([first.hits.length, first.hasMore, first.capped]).toEqual([20, true, false]);
+    const last = await page('khối lớn', 180);
+    expect([last.hits.length, last.hasMore, last.capped]).toEqual([20, false, true]);
+    const beyond = await page('khối nhỏ', 0);
+    expect([beyond.hits.length, beyond.hasMore, beyond.capped]).toEqual([0, false, true]);
+  }, 120_000);
+
   it('keeps another org out, both ways', async () => {
     const foreign = await meeting('outsider', 'Họp org khác', 'org', [], otherOrgId);
     await line(foreign, 'Giá vàng hôm nay tăng mạnh', 'published', 3, otherOrgId);

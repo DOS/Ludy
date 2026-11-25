@@ -93,8 +93,8 @@ const DEFINER_PAGE = 51;
 
 /**
  * The hits of one page of the search restricted to the meetings that carry a label (#4965), with no change to the definer: the ids of the hits the search can reach (the first MEETING_SEARCH_HITS_MAX, in
- * its order) are asked of the definer page by page, read under row security joined to the label, and the filtered list is paged here. The answer is exact within those reachable hits: `capped` says there
- * were more hits than that, which may hold more lines of the labelled meetings than the list shows.
+ * its order) are asked of the definer page by page, read under row security joined to the label, and the filtered list is paged here. The answer is exact within those reachable hits: `capped` (on the last page)
+ * says there were more hits than that, which may hold more lines of the labelled meetings than the list shows.
  */
 async function findLabelledSearchHits(
   trx: Trx,
@@ -111,9 +111,10 @@ async function findLabelledSearchHits(
     if (found.rows.length < DEFINER_PAGE) break;
   }
   const reachable = ids.slice(0, MEETING_SEARCH_HITS_MAX);
-  const capped = ids.length > MEETING_SEARCH_HITS_MAX;
   const hits = await readHits(trx, orgId, reachable, label);
-  return { hits: hits.slice(offset, offset + size), hasMore: hits.length > offset + size, capped };
+  const hasMore = hits.length > offset + size;
+  // Like the unlabelled search, `capped` is said on the last page the filtered list can give (the client stops paging on it), and only when the search had more hits than it can reach.
+  return { hits: hits.slice(offset, offset + size), hasMore, capped: !hasMore && ids.length > MEETING_SEARCH_HITS_MAX };
 }
 
 export const meetingSearch = defineQuery({
