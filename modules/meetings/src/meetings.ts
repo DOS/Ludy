@@ -16,6 +16,7 @@ import { commitmentsCommands, commitmentsQueries } from './commitments.ts';
 import { templateSuggestCommands, templateSuggestQueries } from './template-suggest.ts';
 import { openPointsCommands, openPointsQueries } from './open-points.ts';
 import { salesInsightCommands, salesInsightQueries } from './sales-insight.ts';
+import { labelSuggestCommands, labelSuggestQueries } from './label-suggest.ts';
 import { notesCommands, notesQueries } from './notes.ts';
 import { resultCommands, resultQueries } from './results.ts';
 import { glossaryCommands, glossaryQueries } from './glossary.ts';
@@ -1149,6 +1150,7 @@ export const meetingsCommands = [
   ...templateSuggestCommands,
   ...openPointsCommands,
   ...salesInsightCommands,
+  ...labelSuggestCommands,
   ...summaryCommands,
   ...speakerCommands,
   ...seriesCommands,
@@ -1208,6 +1210,7 @@ export const meetingsQueries = [
   ...templateSuggestQueries,
   ...openPointsQueries,
   ...salesInsightQueries,
+  ...labelSuggestQueries,
   ...summaryQueries,
   ...seriesQueries,
   ...minutesTemplateQueries,

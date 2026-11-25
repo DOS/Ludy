@@ -18,29 +18,48 @@ import { ContractDrafterDialog } from '../components/sign/contract-drafter-dialo
 import { ContractVaultBar } from '../components/sign/contract-vault-bar.tsx';
 import {
   DocxConversionNotice,
+  DocxWarningsAlert,
   inspectSelectedSignUploadFile,
+  saveCreatedDocxWarnings,
   type DocxConversionStatus,
 } from '../components/sign/docx-conversion-notice.tsx';
+import {
+  clearAllCreatedDocxWarnings,
+  clearCreatedDocxWarnings,
+  clearPendingDocxListNotices,
+  getDocxNoticeAuthEpoch,
+  listPendingDocxListNotices,
+  removePendingDocxListNotice,
+  sanitizeDocxWarnings,
+  subscribePendingDocxListNotices,
+  upsertPendingDocxListNotice,
+} from '../lib/sign-docx-notices.ts';
 import { VersionDiffDialog } from '../components/sign/version-diff-dialog.tsx';
 import { FormDialog } from '../components/form-dialog.tsx';
 import { CoworkerAttribution, ProposalSurface } from '../components/proposal-surface.tsx';
 import { useFormat } from '../i18n/provider.tsx';
-import { errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { errorMessage, getCurrentOrg, orpc, queryClient } from '../lib/api.ts';
 import { useListPeekNav } from '../lib/list-peek-nav.ts';
 import {
   SIGN_UPLOAD_ACCEPT,
+  SignSessionMismatchError,
+  SignSessionUnverifiedError,
   canManageEnvelopeLinks,
   convertSignDocx,
   downloadSignFile,
+  fetchUserScopeForSession,
   isSignDocxFile,
+  readVerifiedSession,
   signApi,
+  subscribeSignAuthStateChange,
   uploadSignPdf,
   type SignAiAnalysis,
   type SignDocxConvertCompletedResult,
+  type SignDocxToPdfWarning,
   type SignEnvelopeSummary,
   type SignObligationRenewalListItem,
 } from '../lib/sign-api.ts';
-import type { SignEnvelopeStatus } from '../lib/sign-fields.ts';
+import type { SignEnvelopeStatus, SignRoutingMode } from '../lib/sign-fields.ts';
 import { buildInPersonSigningUrl, buildSigningUrl, copyTextToClipboard } from '../lib/sign-hash.ts';
 import { toast } from '../lib/toast.ts';
 import { DataTable, Empty, ErrorText, PageHeader, PeekSheet, TableSkeleton } from '../components/ui.tsx';
@@ -112,12 +131,734 @@ function triggerBlobDownload(blob: Blob, filename: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+export interface CreatedDocxListNotice {
+  envelopeId: string;
+  slug: string;
+  orgId: string | null;
+  userId: string | null;
+  sessionId?: string | null | undefined;
+  envelopeTitle?: string | undefined;
+  warnings: readonly SignDocxToPdfWarning[];
+}
+
+export interface CreatedEnvelopeSubmitContext {
+  slug: string;
+  orgId: string | null;
+  userId: string | null;
+  sessionId: string | null;
+  authEpoch?: number | undefined;
+  sessionChanged?: boolean | undefined;
+  sessionUnverified?: boolean | undefined;
+  reqId: number;
+}
+
+export type PendingDocxNoticeAction =
+  | { kind: 'upsert'; notice: CreatedDocxListNotice }
+  | { kind: 'remove'; envelopeId: string }
+  | { kind: 'clear_scope'; envelopeId: string; sessionId?: string | null | undefined; userId?: string | null | undefined }
+  | { kind: 'clear_all' };
+
+export function applyPendingDocxNoticeUpdate(
+  prev: readonly CreatedDocxListNotice[],
+  action: PendingDocxNoticeAction,
+): CreatedDocxListNotice[] {
+  switch (action.kind) {
+    case 'clear_all':
+      return [];
+    case 'clear_scope':
+      return prev.filter((item) => {
+        if (item.envelopeId === action.envelopeId) return false;
+        if (action.sessionId) return item.sessionId !== action.sessionId;
+        if (action.userId) return Boolean(item.sessionId) || item.userId !== action.userId;
+        return true;
+      });
+    case 'remove':
+      return prev.filter((item) => item.envelopeId !== action.envelopeId);
+    case 'upsert':
+      return [action.notice, ...prev.filter((item) => item.envelopeId !== action.notice.envelopeId)].slice(0, 20);
+  }
+}
+
+export async function reconcilePendingDocxNoticesWithSession(deps: {
+  pendingNotices: readonly CreatedDocxListNotice[];
+  currentUserId: string | null;
+  readVerifiedSessionId: () => Promise<string | null>;
+  isStillCurrent?: (() => boolean) | undefined;
+  onMismatchSessionId: (liveSessionId: string) => void;
+  onStaleUserCache: () => void;
+}): Promise<{ verifiedSessionId: string | null; liveSessionId: string | null }> {
+  const noticeSessions = new Set(
+    deps.pendingNotices.filter((n) => n.sessionId).map((n) => n.sessionId as string),
+  );
+  if (noticeSessions.size === 0) {
+    return { verifiedSessionId: null, liveSessionId: null };
+  }
+  const liveSessionId = await deps.readVerifiedSessionId();
+  if (!liveSessionId || (deps.isStillCurrent && !deps.isStillCurrent())) {
+    return { verifiedSessionId: null, liveSessionId: null };
+  }
+  deps.onMismatchSessionId(liveSessionId);
+  const staleUserCache = deps.pendingNotices.some(
+    (n) => n.sessionId === liveSessionId && n.userId && deps.currentUserId !== null && n.userId !== deps.currentUserId,
+  );
+  if (staleUserCache && (!deps.isStillCurrent || deps.isStillCurrent())) {
+    deps.onStaleUserCache();
+  }
+  return {
+    verifiedSessionId: noticeSessions.has(liveSessionId) ? liveSessionId : null,
+    liveSessionId,
+  };
+}
+
+export function isCreatedDocxListNoticeVisible(
+  notice: CreatedDocxListNotice | null,
+  slug: string,
+  currentUserId: string | null,
+  verifiedSessionId: string | null,
+): boolean {
+  if (!notice || notice.slug !== slug) return false;
+  if (notice.sessionId && verifiedSessionId !== notice.sessionId) return false;
+  if (notice.userId) return notice.userId === currentUserId;
+  return Boolean(notice.sessionId && verifiedSessionId === notice.sessionId);
+}
+
+export async function captureEnvelopeSubmitContext(deps: {
+  slug: string;
+  reqId: number;
+  includeUserScope?: boolean | undefined;
+  readSessionId: () => Promise<string | null>;
+  resolveScope: (
+    targetSlug: string,
+    expectedSessionId?: string | null,
+  ) => Promise<{ orgId: string | null; userId: string | null; sessionId: string | null } | null>;
+}): Promise<CreatedEnvelopeSubmitContext> {
+  const authEpoch = getDocxNoticeAuthEpoch();
+  let sessionId: string | null;
+  try {
+    sessionId = await deps.readSessionId();
+  } catch {
+    return {
+      slug: deps.slug,
+      orgId: null,
+      userId: null,
+      sessionId: null,
+      authEpoch,
+      sessionUnverified: true,
+      reqId: deps.reqId,
+    };
+  }
+  let liveScope: { orgId: string | null; userId: string | null; sessionId: string | null } | null = null;
+  if (deps.includeUserScope !== false) {
+    try {
+      liveScope = await deps.resolveScope(deps.slug, sessionId);
+    } catch {
+      liveScope = null;
+    }
+  }
+  let sessionAfter: string | null;
+  try {
+    sessionAfter = await deps.readSessionId();
+  } catch {
+    return {
+      slug: deps.slug,
+      orgId: null,
+      userId: null,
+      sessionId,
+      authEpoch,
+      sessionUnverified: true,
+      reqId: deps.reqId,
+    };
+  }
+  if (
+    getDocxNoticeAuthEpoch() !== authEpoch ||
+    sessionAfter !== sessionId ||
+    (liveScope?.sessionId != null && liveScope.sessionId !== sessionId)
+  ) {
+    return {
+      slug: deps.slug,
+      orgId: null,
+      userId: null,
+      sessionId,
+      authEpoch,
+      sessionChanged: true,
+      reqId: deps.reqId,
+    };
+  }
+  return {
+    slug: deps.slug,
+    orgId: liveScope?.orgId ?? null,
+    userId: liveScope?.userId ?? null,
+    sessionId: liveScope?.sessionId ?? sessionId,
+    authEpoch,
+    reqId: deps.reqId,
+  };
+}
+
+type ResolvedScopeDecision =
+  | { kind: 'ok'; orgId: string | null; userId: string | null }
+  | { kind: 'mismatch' }
+  | { kind: 'unverified' };
+
+function mergeFetchedUserScope(input: {
+  expectedUserId: string | null;
+  currentOrgId: string | null;
+  fetched: { orgId?: string | null | undefined; userId?: string | null | undefined } | null;
+}): ResolvedScopeDecision {
+  if (!input.fetched) {
+    return { kind: 'unverified' };
+  }
+  const fetchedUserId = input.fetched.userId ?? null;
+  if (input.expectedUserId) {
+    if (fetchedUserId && fetchedUserId !== input.expectedUserId) {
+      return { kind: 'mismatch' };
+    }
+    if (!fetchedUserId) {
+      return input.currentOrgId
+        ? { kind: 'ok', orgId: input.currentOrgId, userId: input.expectedUserId }
+        : { kind: 'unverified' };
+    }
+  }
+  return {
+    kind: 'ok',
+    orgId: input.currentOrgId ?? input.fetched.orgId ?? null,
+    userId: input.expectedUserId ?? fetchedUserId,
+  };
+}
+
+type LiveSessionState = 'match' | 'unverified' | 'mismatch' | 'aborted';
+
+async function checkLiveSessionState(deps: {
+  expectedSessionId?: string | null | undefined;
+  noticeHasUserId: boolean;
+  resolveCurrentSessionId?: (() => Promise<string | null>) | undefined;
+  isCurrentContext?: (() => boolean) | undefined;
+}): Promise<LiveSessionState> {
+  if (!deps.expectedSessionId) {
+    return 'match';
+  }
+  if (!deps.resolveCurrentSessionId) {
+    return deps.noticeHasUserId ? 'match' : 'unverified';
+  }
+  let liveSessionId: string | null;
+  try {
+    liveSessionId = await deps.resolveCurrentSessionId();
+  } catch {
+    return 'unverified';
+  }
+  if (deps.isCurrentContext && !deps.isCurrentContext()) {
+    return 'aborted';
+  }
+  if (!liveSessionId) {
+    return 'unverified';
+  }
+  if (liveSessionId !== deps.expectedSessionId) {
+    return 'mismatch';
+  }
+  return 'match';
+}
+
+export async function handleEnvelopeCreatedWithWarnings(deps: {
+  envelopeId: string;
+  envelopeTitle?: string | undefined;
+  warnings: readonly SignDocxToPdfWarning[];
+  slug: string;
+  orgId?: string | null | undefined;
+  userId?: string | null | undefined;
+  sessionId?: string | null | undefined;
+  authEpoch?: number | undefined;
+  resolveCurrentSessionId?: (() => Promise<string | null>) | undefined;
+  resolveUserScope?: (() => Promise<{ orgId?: string | null | undefined; userId?: string | null | undefined; sessionId?: string | null | undefined } | null>) | undefined;
+  isCurrentContext?: (() => boolean) | undefined;
+  hasOtherPendingNotice?: (() => boolean) | undefined;
+  onPendingNoticeAction?: ((action: PendingDocxNoticeAction) => void) | undefined;
+  setCreateOpen: (open: boolean) => void;
+  setCreatedDocxNotice: (notice: CreatedDocxListNotice | null) => void;
+  invalidateEnvelopes: () => Promise<unknown>;
+  navigateToEnvelope: (slug: string, envelopeId: string) => Promise<unknown>;
+}): Promise<void> {
+  const hasSignedOutSinceSubmit = (): boolean =>
+    deps.authEpoch !== undefined && getDocxNoticeAuthEpoch() !== deps.authEpoch;
+  const isStillCurrent = (): boolean =>
+    !hasSignedOutSinceSubmit() && (!deps.isCurrentContext || deps.isCurrentContext());
+  if (isStillCurrent()) {
+    deps.setCreateOpen(false);
+  }
+  const cleanWarnings = sanitizeDocxWarnings(deps.warnings);
+  let resolvedOrgId = deps.orgId ?? null;
+  let resolvedUserId = deps.userId ?? null;
+  // Identity proof comes strictly from the submit-time actor or session, never a post-fetch lookup alone.
+  const submitSessionId = deps.sessionId ?? null;
+  const hasSubmitActorProof = Boolean(deps.userId || submitSessionId);
+
+  const buildNotice = (): CreatedDocxListNotice => ({
+    envelopeId: deps.envelopeId,
+    slug: deps.slug,
+    orgId: resolvedOrgId,
+    userId: resolvedUserId,
+    sessionId: submitSessionId,
+    ...(deps.envelopeTitle ? { envelopeTitle: deps.envelopeTitle } : {}),
+    warnings: cleanWarnings,
+  });
+
+  const applyPendingStore = (action: PendingDocxNoticeAction): void => {
+    switch (action.kind) {
+      case 'upsert':
+        upsertPendingDocxListNotice(action.notice);
+        break;
+      case 'remove':
+        removePendingDocxListNotice(action.envelopeId);
+        break;
+      case 'clear_scope':
+        clearPendingDocxListNotices({
+          envelopeId: action.envelopeId,
+          ...(action.sessionId ? { sessionId: action.sessionId } : {}),
+          ...(action.userId ? { userId: action.userId } : {}),
+        });
+        break;
+      case 'clear_all':
+        clearPendingDocxListNotices();
+        break;
+    }
+  };
+
+  const clearOnMismatch = async (): Promise<void> => {
+    const scopeAction: PendingDocxNoticeAction = {
+      kind: 'clear_scope',
+      envelopeId: deps.envelopeId,
+      ...(submitSessionId ? { sessionId: submitSessionId } : deps.userId ? { userId: deps.userId } : {}),
+    };
+    applyPendingStore(scopeAction);
+    await deps.invalidateEnvelopes();
+    if (isStillCurrent()) {
+      deps.onPendingNoticeAction?.(scopeAction);
+      deps.setCreatedDocxNotice(null);
+    }
+  };
+
+  const hasOtherPending = (): boolean =>
+    Boolean(deps.hasOtherPendingNotice?.()) ||
+    Boolean(deps.slug && listPendingDocxListNotices(deps.slug, null).some((n) => n.envelopeId !== deps.envelopeId));
+
+  const showPendingOrNavigateClean = async (): Promise<void> => {
+    const pendingNotice = cleanWarnings.length > 0 ? buildNotice() : null;
+    if (pendingNotice) {
+      applyPendingStore({ kind: 'upsert', notice: pendingNotice });
+    } else {
+      applyPendingStore({ kind: 'remove', envelopeId: deps.envelopeId });
+    }
+    await deps.invalidateEnvelopes();
+    if (!isStillCurrent()) {
+      return;
+    }
+    if (pendingNotice) {
+      deps.onPendingNoticeAction?.({ kind: 'upsert', notice: pendingNotice });
+      deps.setCreatedDocxNotice(pendingNotice);
+      return;
+    }
+    deps.onPendingNoticeAction?.({ kind: 'remove', envelopeId: deps.envelopeId });
+    deps.setCreatedDocxNotice(null);
+    if (deps.slug && !hasOtherPending()) {
+      await deps.navigateToEnvelope(deps.slug, deps.envelopeId);
+    }
+  };
+
+  if (hasSignedOutSinceSubmit()) {
+    await clearOnMismatch();
+    return;
+  }
+
+  const initialSessionState = await checkLiveSessionState({
+    expectedSessionId: submitSessionId,
+    noticeHasUserId: Boolean(deps.userId),
+    resolveCurrentSessionId: deps.resolveCurrentSessionId,
+  });
+  if (hasSignedOutSinceSubmit() || initialSessionState === 'mismatch') {
+    await clearOnMismatch();
+    return;
+  }
+  if (initialSessionState === 'unverified') {
+    await showPendingOrNavigateClean();
+    return;
+  }
+
+  let scopeResolutionUnverified = false;
+  if (
+    hasSubmitActorProof &&
+    cleanWarnings.length > 0 &&
+    (!resolvedUserId || !resolvedOrgId) &&
+    deps.resolveUserScope
+  ) {
+    try {
+      const fetched = await deps.resolveUserScope();
+      const decision = mergeFetchedUserScope({
+        expectedUserId: deps.userId ?? resolvedUserId,
+        currentOrgId: resolvedOrgId,
+        fetched,
+      });
+      if (hasSignedOutSinceSubmit() || decision.kind === 'mismatch') {
+        await clearOnMismatch();
+        return;
+      }
+      if (decision.kind === 'unverified') {
+        scopeResolutionUnverified = true;
+      } else {
+        resolvedOrgId = decision.orgId;
+        resolvedUserId = decision.userId;
+      }
+    } catch {
+      // Non-fatal: keep banner in pending store until orgId + userId resolve cleanly.
+      scopeResolutionUnverified = true;
+    }
+  }
+
+  if (hasSignedOutSinceSubmit() || (deps.userId && resolvedUserId && deps.userId !== resolvedUserId)) {
+    await clearOnMismatch();
+    return;
+  }
+
+  const finalSessionState = await checkLiveSessionState({
+    expectedSessionId: submitSessionId,
+    noticeHasUserId: Boolean(deps.userId),
+    resolveCurrentSessionId: deps.resolveCurrentSessionId,
+  });
+  if (hasSignedOutSinceSubmit() || finalSessionState === 'mismatch') {
+    await clearOnMismatch();
+    return;
+  }
+  if (finalSessionState === 'unverified' || scopeResolutionUnverified) {
+    await showPendingOrNavigateClean();
+    return;
+  }
+
+  let persisted = false;
+  if (hasSubmitActorProof) {
+    const scope = { org: resolvedOrgId, userId: resolvedUserId };
+    if (cleanWarnings.length > 0) {
+      persisted = saveCreatedDocxWarnings(deps.envelopeId, cleanWarnings, scope);
+    } else if (resolvedOrgId && resolvedUserId) {
+      clearCreatedDocxWarnings(deps.envelopeId, scope);
+      persisted = true;
+    }
+  }
+
+  const willAutoNavigate =
+    Boolean(deps.slug) &&
+    (cleanWarnings.length === 0 || persisted) &&
+    !hasOtherPending();
+  const listNotice = cleanWarnings.length > 0 && (!persisted || !willAutoNavigate) ? buildNotice() : null;
+  if (listNotice) {
+    applyPendingStore({ kind: 'upsert', notice: listNotice });
+  } else {
+    applyPendingStore({ kind: 'remove', envelopeId: deps.envelopeId });
+  }
+
+  await deps.invalidateEnvelopes();
+  if (!isStillCurrent()) {
+    return;
+  }
+  if (listNotice) {
+    deps.onPendingNoticeAction?.({ kind: 'upsert', notice: listNotice });
+    deps.setCreatedDocxNotice(listNotice);
+    return;
+  }
+  deps.onPendingNoticeAction?.({ kind: 'remove', envelopeId: deps.envelopeId });
+  deps.setCreatedDocxNotice(cleanWarnings.length > 0 ? buildNotice() : null);
+  if (willAutoNavigate) {
+    await deps.navigateToEnvelope(deps.slug, deps.envelopeId);
+  }
+}
+
+async function verifyLiveSessionMatch(deps: {
+  expectedSessionId?: string | null | undefined;
+  noticeHasUserId: boolean;
+  resolveCurrentSessionId?: (() => Promise<string | null>) | undefined;
+  isCurrentContext?: (() => boolean) | undefined;
+  onSessionMismatch: () => void;
+}): Promise<boolean> {
+  const state = await checkLiveSessionState(deps);
+  if (state === 'mismatch') {
+    deps.onSessionMismatch();
+    return false;
+  }
+  return state === 'match';
+}
+
+export async function openCreatedDocxNoticeEnvelope(deps: {
+  notice: CreatedDocxListNotice;
+  currentUserId?: string | null | undefined;
+  resolveCurrentSessionId?: (() => Promise<string | null>) | undefined;
+  resolveUserScope?: (() => Promise<{ orgId?: string | null | undefined; userId?: string | null | undefined; sessionId?: string | null | undefined } | null>) | undefined;
+  isCurrentContext?: (() => boolean) | undefined;
+  setCreatedDocxNotice: (notice: CreatedDocxListNotice | null) => void;
+  navigateToEnvelope: (slug: string, envelopeId: string) => Promise<unknown>;
+}): Promise<boolean> {
+  if (deps.isCurrentContext && !deps.isCurrentContext()) {
+    return false;
+  }
+  // Never attribute an anonymous notice (missing both creator userId and sessionId) to the active user.
+  if (!deps.notice.userId && !deps.notice.sessionId) {
+    deps.setCreatedDocxNotice(null);
+    return false;
+  }
+  const initialSessionOk = await verifyLiveSessionMatch({
+    expectedSessionId: deps.notice.sessionId,
+    noticeHasUserId: Boolean(deps.notice.userId),
+    resolveCurrentSessionId: deps.resolveCurrentSessionId,
+    isCurrentContext: deps.isCurrentContext,
+    onSessionMismatch: () => deps.setCreatedDocxNotice(null),
+  });
+  if (!initialSessionOk) {
+    return false;
+  }
+  const cleanWarnings = sanitizeDocxWarnings(deps.notice.warnings);
+  let resolvedOrgId = deps.notice.orgId;
+  // Never adopt stale cached meQuery userId when resolveUserScope can verify the live user directly.
+  let resolvedUserId = deps.notice.userId ?? (!deps.resolveUserScope ? (deps.currentUserId ?? null) : null);
+  const cacheDisagreesWithNotice = Boolean(
+    deps.notice.userId && deps.currentUserId && deps.notice.userId !== deps.currentUserId,
+  );
+  if ((cleanWarnings.length > 0 && (!resolvedUserId || !resolvedOrgId)) || cacheDisagreesWithNotice) {
+    if (deps.resolveUserScope) {
+      try {
+        const fetched = await deps.resolveUserScope();
+        const decision = mergeFetchedUserScope({
+          expectedUserId: deps.notice.userId ?? resolvedUserId,
+          currentOrgId: resolvedOrgId,
+          fetched,
+        });
+        if (decision.kind === 'mismatch') {
+          deps.setCreatedDocxNotice(null);
+          return false;
+        }
+        if (decision.kind === 'unverified') {
+          return false;
+        }
+        resolvedOrgId = decision.orgId;
+        resolvedUserId = decision.userId;
+      } catch {
+        return false;
+      }
+    } else if (cacheDisagreesWithNotice) {
+      // Cannot confirm whether cache mismatch is stale or real without live scope lookup -> abort without clearing notice.
+      return false;
+    }
+  }
+  // Check cancellation, dismissal, and session consistency strictly BEFORE writing warnings to storage.
+  if (deps.isCurrentContext && !deps.isCurrentContext()) {
+    return false;
+  }
+  if (deps.notice.userId && resolvedUserId && deps.notice.userId !== resolvedUserId) {
+    deps.setCreatedDocxNotice(null);
+    return false;
+  }
+  const finalSessionOk = await verifyLiveSessionMatch({
+    expectedSessionId: deps.notice.sessionId,
+    noticeHasUserId: Boolean(deps.notice.userId),
+    resolveCurrentSessionId: deps.resolveCurrentSessionId,
+    isCurrentContext: deps.isCurrentContext,
+    onSessionMismatch: () => deps.setCreatedDocxNotice(null),
+  });
+  if (!finalSessionOk) {
+    return false;
+  }
+  if (deps.isCurrentContext && !deps.isCurrentContext()) {
+    return false;
+  }
+  const persisted =
+    cleanWarnings.length === 0 ||
+    saveCreatedDocxWarnings(deps.notice.envelopeId, cleanWarnings, {
+      org: resolvedOrgId,
+      userId: resolvedUserId,
+    });
+  if (!persisted) {
+    return false;
+  }
+  deps.setCreatedDocxNotice(null);
+  await deps.navigateToEnvelope(deps.notice.slug, deps.notice.envelopeId);
+  return true;
+}
+
+export type CreateEnvelopeMutationOutcome =
+  | {
+      cancelled: true;
+    }
+  | {
+      cancelled: false;
+      created: { envelopeId: string };
+      warnings: readonly SignDocxToPdfWarning[];
+      submitContext: CreatedEnvelopeSubmitContext | null;
+    };
+
+export async function submitCreateEnvelopeFromDialog(deps: {
+  title: string;
+  file: File;
+  converted: SignDocxConvertCompletedResult | null;
+  orgSlug?: string | undefined;
+  resolveSubmitContext?: (() => CreatedEnvelopeSubmitContext | Promise<CreatedEnvelopeSubmitContext>) | undefined;
+  readSessionId?: (() => Promise<string | null>) | undefined;
+  isMounted?: (() => boolean) | undefined;
+  isSubmitContextCurrent?: ((ctx: CreatedEnvelopeSubmitContext) => boolean) | undefined;
+  getLiveOrgSlug?: (() => string | null) | undefined;
+  docxRequiredMessage: string;
+  verifyIdentityErrorMessage?: string | undefined;
+  uploadPdf: (file: File, orgSlug?: string | null, expectedSessionId?: string | null) => Promise<{ fileId: string }>;
+  createEnvelope: (
+    input: {
+      title: string;
+      routingMode: SignRoutingMode;
+      sourceFileId: string;
+      sourceDocxSha256?: string;
+    },
+    orgSlug?: string | null,
+    expectedSessionId?: string | null,
+  ) => Promise<{ envelopeId: string }>;
+}): Promise<CreateEnvelopeMutationOutcome> {
+  const readLiveOrg = deps.getLiveOrgSlug ?? getCurrentOrg;
+  const isSessionConsistent = async (ctx: CreatedEnvelopeSubmitContext | null): Promise<'match' | 'changed' | 'unverified'> => {
+    if (ctx?.sessionChanged) return 'changed';
+    if (ctx?.authEpoch !== undefined && getDocxNoticeAuthEpoch() !== ctx.authEpoch) return 'changed';
+    if (ctx?.sessionUnverified) return 'unverified';
+    if (ctx && deps.readSessionId) {
+      let liveSessionId: string | null;
+      try {
+        liveSessionId = await deps.readSessionId();
+      } catch {
+        return 'unverified';
+      }
+      if (ctx.authEpoch !== undefined && getDocxNoticeAuthEpoch() !== ctx.authEpoch) return 'changed';
+      if (liveSessionId !== ctx.sessionId) return 'changed';
+    }
+    return 'match';
+  };
+  const isActiveFor = (ctx: CreatedEnvelopeSubmitContext | null, fallbackSlug: string | undefined): boolean => {
+    if (deps.isMounted && !deps.isMounted()) return false;
+    const liveOrg = typeof readLiveOrg === 'function' ? readLiveOrg() : null;
+    if (ctx) {
+      if (ctx.sessionChanged) return false;
+      if (deps.isSubmitContextCurrent && !deps.isSubmitContextCurrent(ctx)) return false;
+      if (liveOrg !== null && ctx.slug && liveOrg !== ctx.slug) return false;
+      return true;
+    }
+    if (liveOrg !== null && fallbackSlug && liveOrg !== fallbackSlug) return false;
+    return true;
+  };
+  const ensureReadyForWrite = async (
+    ctx: CreatedEnvelopeSubmitContext | null,
+    fallbackSlug: string | undefined,
+  ): Promise<'match' | 'cancelled' | 'unverified'> => {
+    if (!isActiveFor(ctx, fallbackSlug)) return 'cancelled';
+    const sessionState = await isSessionConsistent(ctx);
+    if (!isActiveFor(ctx, fallbackSlug) || sessionState === 'changed') return 'cancelled';
+    return sessionState;
+  };
+
+  const submitContext = deps.resolveSubmitContext ? await deps.resolveSubmitContext() : null;
+  const pinnedOrgSlug = submitContext?.slug || deps.orgSlug || undefined;
+  const preWriteState = await ensureReadyForWrite(submitContext, pinnedOrgSlug);
+  if (preWriteState === 'cancelled') {
+    return { cancelled: true };
+  }
+  if (preWriteState === 'unverified') {
+    throw new Error(deps.verifyIdentityErrorMessage ?? deps.docxRequiredMessage);
+  }
+  if (
+    submitContext !== null &&
+    deps.converted &&
+    deps.converted.warnings.length > 0 &&
+    !submitContext.userId &&
+    !submitContext.sessionId
+  ) {
+    throw new Error(deps.verifyIdentityErrorMessage ?? deps.docxRequiredMessage);
+  }
+  const expectedSessionId = submitContext !== null ? submitContext.sessionId : undefined;
+  const runWrite = async <T,>(fn: () => Promise<T>): Promise<{ cancelled: true } | { cancelled: false; value: T }> => {
+    try {
+      return { cancelled: false, value: await fn() };
+    } catch (error) {
+      if (error instanceof SignSessionMismatchError) {
+        return { cancelled: true };
+      }
+      if (error instanceof SignSessionUnverifiedError) {
+        if (!isActiveFor(submitContext, pinnedOrgSlug)) return { cancelled: true };
+        throw new Error(deps.verifyIdentityErrorMessage ?? deps.docxRequiredMessage);
+      }
+      throw error;
+    }
+  };
+  if (deps.converted) {
+    const createdOutcome = await runWrite(() =>
+      deps.createEnvelope(
+        {
+          title: deps.title,
+          routingMode: 'parallel',
+          sourceFileId: deps.converted!.fileId,
+          sourceDocxSha256: deps.converted!.sourceDocxSha256,
+        },
+        pinnedOrgSlug,
+        expectedSessionId,
+      ),
+    );
+    if (createdOutcome.cancelled) return { cancelled: true };
+    return {
+      cancelled: false,
+      created: createdOutcome.value,
+      warnings: deps.converted.warnings,
+      submitContext,
+    };
+  }
+  if (isSignDocxFile(deps.file)) {
+    throw new Error(deps.docxRequiredMessage);
+  }
+  const uploadedOutcome = await runWrite(() => deps.uploadPdf(deps.file, pinnedOrgSlug, expectedSessionId));
+  if (uploadedOutcome.cancelled) {
+    return { cancelled: true };
+  }
+  const postUploadState = await ensureReadyForWrite(submitContext, pinnedOrgSlug);
+  if (postUploadState === 'cancelled') {
+    return { cancelled: true };
+  }
+  if (postUploadState === 'unverified') {
+    throw new Error(deps.verifyIdentityErrorMessage ?? deps.docxRequiredMessage);
+  }
+  const createdOutcome = await runWrite(() =>
+    deps.createEnvelope(
+      {
+        title: deps.title,
+        routingMode: 'parallel',
+        sourceFileId: uploadedOutcome.value.fileId,
+      },
+      pinnedOrgSlug,
+      expectedSessionId,
+    ),
+  );
+  if (createdOutcome.cancelled) return { cancelled: true };
+  return {
+    cancelled: false,
+    created: createdOutcome.value,
+    warnings: [],
+    submitContext,
+  };
+}
+
 export function CreateEnvelopeDialog({
   onClose,
   onCreated,
+  orgSlug,
+  captureContext,
+  isContextValid,
 }: {
   onClose: () => void;
-  onCreated: (envelopeId: string) => Promise<void> | void;
+  onCreated: (
+    envelopeId: string,
+    warnings?: readonly SignDocxToPdfWarning[],
+    submitContext?: CreatedEnvelopeSubmitContext | null,
+    envelopeTitle?: string,
+  ) => Promise<void> | void;
+  orgSlug?: string | undefined;
+  captureContext?:
+    | ((options?: { needsUserScope?: boolean }) => CreatedEnvelopeSubmitContext | Promise<CreatedEnvelopeSubmitContext>)
+    | undefined;
+  isContextValid?: ((ctx: CreatedEnvelopeSubmitContext) => boolean) | undefined;
 }) {
   const t = useTranslations('sign');
   const [title, setTitle] = useState('');
@@ -126,46 +867,56 @@ export function CreateEnvelopeDialog({
   const [formError, setFormError] = useState<string | null>(null);
   const [docxStatus, setDocxStatus] = useState<DocxConversionStatus>('idle');
   const [docxResult, setDocxResult] = useState<SignDocxConvertCompletedResult | null>(null);
+  const [capturingContext, setCapturingContext] = useState(false);
   const pickTokenRef = useRef(0);
+  const mountedRef = useRef(true);
 
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
+      mountedRef.current = false;
       pickTokenRef.current += 1;
     };
   }, []);
 
   const createMutation = useMutation({
-    mutationFn: async (input: { title: string; file: File; converted: SignDocxConvertCompletedResult | null }) => {
-      if (input.converted) {
-        return {
-          created: await signApi.createEnvelope({
-            title: input.title,
-            routingMode: 'parallel',
-            sourceFileId: input.converted.fileId,
-            sourceDocxSha256: input.converted.sourceDocxSha256,
-          }),
-          warnings: input.converted.warnings,
-        };
-      }
-      if (isSignDocxFile(input.file)) {
-        throw new Error(t('pdfRequired'));
-      }
-      const uploaded = await uploadSignPdf(input.file);
-      return {
-        created: await signApi.createEnvelope({
-          title: input.title,
-          routingMode: 'parallel',
-          sourceFileId: uploaded.fileId,
-        }),
-        warnings: [],
-      };
+    mutationFn: async (input: {
+      title: string;
+      file: File;
+      converted: SignDocxConvertCompletedResult | null;
+      pinnedOrgSlug: string | undefined;
+      preCapturedContext?: CreatedEnvelopeSubmitContext | null | undefined;
+      isSubmitContextCurrent: ((ctx: CreatedEnvelopeSubmitContext) => boolean) | undefined;
+    }) => {
+      return submitCreateEnvelopeFromDialog({
+        title: input.title,
+        file: input.file,
+        converted: input.converted,
+        orgSlug: input.pinnedOrgSlug,
+        resolveSubmitContext:
+          input.preCapturedContext !== undefined ? () => input.preCapturedContext! : undefined,
+        readSessionId: async () => (await readVerifiedSession()).sessionId,
+        isMounted: () => mountedRef.current,
+        isSubmitContextCurrent: input.isSubmitContextCurrent,
+        docxRequiredMessage: t('pdfRequired'),
+        verifyIdentityErrorMessage: t('docxCreateIdentityPending'),
+        uploadPdf: (file, targetSlug, expectedSessionId) => uploadSignPdf(file, targetSlug, expectedSessionId),
+        createEnvelope: (payload, targetSlug, expectedSessionId) =>
+          signApi.createEnvelope(payload, targetSlug, expectedSessionId),
+      });
     },
-    onSuccess: async ({ created, warnings }) => {
-      toast(warnings.length > 0 ? t('docxWarningBanner') : t('createdToast'));
-      await onCreated(created.envelopeId);
+    onSuccess: async (outcome, variables) => {
+      if (outcome.cancelled) return;
+      const inCurrentContext =
+        mountedRef.current &&
+        (!isContextValid || !outcome.submitContext || isContextValid(outcome.submitContext));
+      if (inCurrentContext) {
+        toast(outcome.warnings.length > 0 ? t('docxWarningBanner') : t('createdToast'));
+      }
+      await onCreated(outcome.created.envelopeId, outcome.warnings, outcome.submitContext, variables.title);
     },
     onError: (error) => {
-      setFormError(errorMessage(error));
+      if (mountedRef.current) setFormError(errorMessage(error));
     },
   });
 
@@ -182,7 +933,7 @@ export function CreateEnvelopeDialog({
     }
     setInspectingFile(true);
     const checked = await inspectSelectedSignUploadFile(file);
-    if (pickTokenRef.current !== token) return;
+    if (!mountedRef.current || pickTokenRef.current !== token) return;
     setInspectingFile(false);
     if (!checked.ok) {
       setFormError(t(checked.errorKey));
@@ -194,12 +945,12 @@ export function CreateEnvelopeDialog({
     if (checked.kind === 'docx') {
       setDocxStatus('converting');
       try {
-        const converted = await convertSignDocx(file);
-        if (pickTokenRef.current !== token) return;
+        const converted = await convertSignDocx(file, orgSlug || undefined);
+        if (!mountedRef.current || pickTokenRef.current !== token) return;
         setDocxResult(converted);
         setDocxStatus('ready');
       } catch (error) {
-        if (pickTokenRef.current !== token) return;
+        if (!mountedRef.current || pickTokenRef.current !== token) return;
         setSelectedFile(null);
         setDocxStatus('error');
         setFormError(errorMessage(error));
@@ -207,9 +958,9 @@ export function CreateEnvelopeDialog({
     }
   };
 
-  const handleCreateSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const handleCreateSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (inspectingFile || createMutation.isPending || docxStatus === 'converting') return;
+    if (capturingContext || inspectingFile || createMutation.isPending || docxStatus === 'converting') return;
     setFormError(null);
     if (!selectedFile) {
       setFormError(t('pdfRequired'));
@@ -222,7 +973,37 @@ export function CreateEnvelopeDialog({
       return;
     }
     const cleanTitle = title.trim() || selectedFile.name.replace(/\.(pdf|docx)$/i, '') || selectedFile.name;
-    createMutation.mutate({ title: cleanTitle, file: selectedFile, converted: docxResult });
+    const needsUserScope = Boolean(docxResult && docxResult.warnings.length > 0);
+    let preCapturedContext: CreatedEnvelopeSubmitContext | null | undefined;
+    if (captureContext) {
+      setCapturingContext(true);
+      try {
+        preCapturedContext = await captureContext({ needsUserScope });
+      } catch {
+        if (mountedRef.current) setFormError(t('docxCreateIdentityPending'));
+        return;
+      } finally {
+        if (mountedRef.current) setCapturingContext(false);
+      }
+      if (!mountedRef.current || (isContextValid && !isContextValid(preCapturedContext))) {
+        return;
+      }
+      if (preCapturedContext.sessionChanged) {
+        return;
+      }
+      if (preCapturedContext.sessionUnverified) {
+        setFormError(t('docxCreateIdentityPending'));
+        return;
+      }
+    }
+    createMutation.mutate({
+      title: cleanTitle,
+      file: selectedFile,
+      converted: docxResult,
+      pinnedOrgSlug: orgSlug || undefined,
+      preCapturedContext,
+      isSubmitContextCurrent: isContextValid,
+    });
   };
 
   return (
@@ -230,8 +1011,8 @@ export function CreateEnvelopeDialog({
       testId="sign-create-dialog"
       title={t('createTitle')}
       description={t('createHint')}
-      busy={createMutation.isPending}
-      submitDisabled={inspectingFile || docxStatus === 'converting' || docxStatus === 'error'}
+      busy={capturingContext || createMutation.isPending}
+      submitDisabled={capturingContext || inspectingFile || docxStatus === 'converting' || docxStatus === 'error'}
       dirty={title.trim() !== '' || selectedFile !== null}
       submitLabel={t('createSubmit')}
       submitTestId="sign-create-submit-btn"
@@ -493,6 +1274,15 @@ export function SignEnvelopesPage() {
 
   const [tab, setTab] = useState<EnvelopeFilterTab>('all');
   const [createOpen, setCreateOpen] = useState(false);
+  const [pendingDocxNotices, setPendingDocxNotices] = useState<CreatedDocxListNotice[]>(() =>
+    listPendingDocxListNotices(slug, null),
+  );
+  const pendingDocxNoticesRef = useRef(pendingDocxNotices);
+  pendingDocxNoticesRef.current = pendingDocxNotices;
+  const [verifiedNoticeSessions, setVerifiedNoticeSessions] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const [authVerifyEpoch, setAuthVerifyEpoch] = useState(0);
   const [diffOpen, setDiffOpen] = useState(false);
   const [drafterOpen, setDrafterOpen] = useState(false);
   const [sharedLinkDialog, setSharedLinkDialog] = useState<{ title: string; url: string } | null>(null);
@@ -506,25 +1296,55 @@ export function SignEnvelopesPage() {
   } | null>(null);
   const inPersonReqRef = useRef(0);
   const rowActionReqRef = useRef(0);
+  const docxNoticeReqRef = useRef(0);
+  const activeSlugRef = useRef(slug);
+  activeSlugRef.current = slug;
+  const mountedRef = useRef(true);
+  const prevUserIdRef = useRef<string | null>(null);
   const listContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    let cancelled = false;
     inPersonReqRef.current += 1;
     rowActionReqRef.current += 1;
+    docxNoticeReqRef.current += 1;
     setInPersonModal(null);
     setSharedLinkDialog(null);
     setCreateOpen(false);
+    setPendingDocxNotices(listPendingDocxListNotices(slug, null));
+    setVerifiedNoticeSessions(new Set());
     setDiffOpen(false);
     setDrafterOpen(false);
     setPendingRowAction(null);
+    const unsubscribePendingStore = subscribePendingDocxListNotices(() => {
+      if (!cancelled && mountedRef.current) {
+        setPendingDocxNotices(listPendingDocxListNotices(slug, null));
+      }
+    });
+    return () => {
+      cancelled = true;
+      unsubscribePendingStore();
+    };
   }, [slug]);
 
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
+      mountedRef.current = false;
       inPersonReqRef.current += 1;
       rowActionReqRef.current += 1;
+      docxNoticeReqRef.current += 1;
     };
   }, []);
+
+  const isSameActiveOrgContext = (capturedSlug: string | undefined, capturedReqId: number): boolean => {
+    if (!mountedRef.current) return false;
+    if (docxNoticeReqRef.current !== capturedReqId) return false;
+    if ((activeSlugRef.current ?? '') !== (capturedSlug ?? '')) return false;
+    const liveOrg = typeof getCurrentOrg === 'function' ? getCurrentOrg() : null;
+    if (liveOrg !== null && capturedSlug && liveOrg !== capturedSlug) return false;
+    return true;
+  };
 
   const hasMeQuery = Boolean((orpc as { me?: { get?: { queryOptions?: () => unknown } } }).me?.get?.queryOptions);
   const meQuery = useQuery(
@@ -542,6 +1362,125 @@ export function SignEnvelopesPage() {
   const defaultPartyAName = currentOrgInfo?.name ?? '';
   const roleHere = currentOrgInfo?.role ?? orgQuery.data?.role ?? null;
   const currentUserId = meQuery.data?.userId ?? null;
+
+  useEffect(() => {
+    const prev = prevUserIdRef.current;
+    prevUserIdRef.current = currentUserId;
+    if (prev !== null && prev !== currentUserId) {
+      docxNoticeReqRef.current += 1;
+      setVerifiedNoticeSessions(new Set());
+    }
+  }, [currentUserId, slug]);
+
+  useEffect(() => {
+    if (pendingDocxNotices.length === 0) {
+      setVerifiedNoticeSessions((prev) => (prev.size === 0 ? prev : new Set()));
+      return;
+    }
+    let cancelled = false;
+    let verifying = true;
+    let activeVerifiedSessionId: string | null = null;
+    setVerifiedNoticeSessions(new Set());
+    void reconcilePendingDocxNoticesWithSession({
+      pendingNotices: pendingDocxNotices,
+      currentUserId,
+      readVerifiedSessionId: async () => (await readVerifiedSession()).sessionId,
+      isStillCurrent: () => !cancelled,
+      onMismatchSessionId: (liveSessionId) => {
+        if (cancelled) return;
+        clearPendingDocxListNotices({ mismatchSessionId: liveSessionId });
+        setPendingDocxNotices((prevList) => {
+          const filtered = prevList.filter((n) => !n.sessionId || n.sessionId === liveSessionId);
+          return filtered.length === prevList.length ? prevList : filtered;
+        });
+      },
+      onStaleUserCache: () => {
+        if (cancelled) return;
+        void queryClient.invalidateQueries({ queryKey: orpc.me.get.queryKey() });
+      },
+    })
+      .then(({ verifiedSessionId }) => {
+        verifying = false;
+        if (cancelled) return;
+        activeVerifiedSessionId = verifiedSessionId;
+        setVerifiedNoticeSessions(verifiedSessionId ? new Set([verifiedSessionId]) : new Set());
+      })
+      .catch(() => {
+        verifying = false;
+        activeVerifiedSessionId = null;
+        if (!cancelled) setVerifiedNoticeSessions(new Set());
+      });
+
+    const unsubscribeAuth = subscribeSignAuthStateChange((event, nextSessionId) => {
+      if (cancelled) return;
+      if (event === 'SIGNED_OUT') {
+        clearAllCreatedDocxWarnings();
+        setVerifiedNoticeSessions(new Set());
+        setPendingDocxNotices([]);
+        return;
+      }
+      activeVerifiedSessionId = null;
+      setVerifiedNoticeSessions(new Set());
+      if (nextSessionId) {
+        clearPendingDocxListNotices({ mismatchSessionId: nextSessionId });
+        setPendingDocxNotices((prevList) => {
+          const filtered = prevList.filter((n) => !n.sessionId || n.sessionId === nextSessionId);
+          return filtered.length === prevList.length ? prevList : filtered;
+        });
+      }
+      setAuthVerifyEpoch((v) => v + 1);
+    });
+    const onFocus = () => {
+      if (cancelled || verifying) return;
+      void readVerifiedSession()
+        .then(({ sessionId: liveSessionId }) => {
+          if (cancelled) return;
+          if (liveSessionId && activeVerifiedSessionId === liveSessionId) {
+            return;
+          }
+          activeVerifiedSessionId = null;
+          setVerifiedNoticeSessions(new Set());
+          if (liveSessionId) {
+            clearPendingDocxListNotices({ mismatchSessionId: liveSessionId });
+            setPendingDocxNotices((prevList) => {
+              const filtered = prevList.filter((n) => !n.sessionId || n.sessionId === liveSessionId);
+              return filtered.length === prevList.length ? prevList : filtered;
+            });
+          }
+          setAuthVerifyEpoch((v) => v + 1);
+        })
+        .catch(() => {
+          if (!cancelled) {
+            activeVerifiedSessionId = null;
+            setVerifiedNoticeSessions(new Set());
+            setAuthVerifyEpoch((v) => v + 1);
+          }
+        });
+    };
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+      window.addEventListener('focus', onFocus);
+    }
+    return () => {
+      cancelled = true;
+      unsubscribeAuth();
+      if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') {
+        window.removeEventListener('focus', onFocus);
+      }
+    };
+  }, [pendingDocxNotices, currentUserId, authVerifyEpoch]);
+
+  const readCurrentSessionIdStrict = async (): Promise<string | null> => (await readVerifiedSession()).sessionId;
+
+  const resolveScopeForSlug = async (
+    targetSlug: string,
+    expectedSessionId?: string | null,
+  ): Promise<{ orgId: string | null; userId: string | null; sessionId: string | null } | null> => {
+    try {
+      return await fetchUserScopeForSession(targetSlug, expectedSessionId);
+    } catch {
+      return null;
+    }
+  };
   const hasAuthRole = Boolean(meQuery.data || orgQuery.data);
   const canWriteSign = hasAuthRole && Boolean(roleHere && roleHere !== 'viewer');
   const canAskVy = canWriteSign;
@@ -809,6 +1748,134 @@ export function SignEnvelopesPage() {
   const activeEnvelopeIsSealed = activeEnvelope
     ? activeEnvelope.status === 'completed' && activeEnvelope.sealStatus === 'sealed'
     : false;
+  const pendingVerifiableNotices = pendingDocxNotices.filter(
+    (n) =>
+      n.slug === slug &&
+      Boolean(n.userId || n.sessionId) &&
+      (!n.userId ||
+        n.userId === currentUserId ||
+        Boolean(n.sessionId && (currentUserId === null || verifiedNoticeSessions.has(n.sessionId)))),
+  );
+  const pendingNoticeByEnvelopeId = new Map(pendingVerifiableNotices.map((n) => [n.envelopeId, n] as const));
+  const pendingEnvelopeIds = new Set(pendingNoticeByEnvelopeId.keys());
+
+  const syncPendingNoticeAction = (action: PendingDocxNoticeAction) => {
+    switch (action.kind) {
+      case 'upsert':
+        upsertPendingDocxListNotice(action.notice);
+        break;
+      case 'remove':
+        removePendingDocxListNotice(action.envelopeId);
+        break;
+      case 'clear_scope':
+        clearPendingDocxListNotices({
+          envelopeId: action.envelopeId,
+          ...(action.sessionId ? { sessionId: action.sessionId } : {}),
+          ...(action.userId ? { userId: action.userId } : {}),
+        });
+        break;
+      case 'clear_all':
+        clearPendingDocxListNotices();
+        break;
+    }
+    if (mountedRef.current) {
+      setPendingDocxNotices((prev) => applyPendingDocxNoticeUpdate(prev, action));
+    }
+  };
+
+  const triggerOpenPendingNotice = (noticeSnapshot: CreatedDocxListNotice) => {
+    const reqId = (docxNoticeReqRef.current += 1);
+    let clearedByMismatch = false;
+    void openCreatedDocxNoticeEnvelope({
+      notice: noticeSnapshot,
+      currentUserId,
+      resolveCurrentSessionId: readCurrentSessionIdStrict,
+      resolveUserScope: () => resolveScopeForSlug(noticeSnapshot.slug, noticeSnapshot.sessionId),
+      isCurrentContext: () => isSameActiveOrgContext(noticeSnapshot.slug, reqId),
+      setCreatedDocxNotice: (next) => {
+        if (next === null) {
+          clearedByMismatch = true;
+          syncPendingNoticeAction({ kind: 'remove', envelopeId: noticeSnapshot.envelopeId });
+        }
+      },
+      navigateToEnvelope: (navSlug, navId) =>
+        navigate({ to: '/o/$slug/sign/envelopes/$id', params: { slug: navSlug, id: navId } }),
+    })
+      .then((opened) => {
+        if (!opened && !clearedByMismatch && isSameActiveOrgContext(noticeSnapshot.slug, reqId)) {
+          toast(t('docxWarningOpenPending'), 'error');
+        }
+      })
+      .catch(() => {
+        if (isSameActiveOrgContext(noticeSnapshot.slug, reqId)) {
+          toast(t('docxWarningOpenPending'), 'error');
+        }
+      });
+  };
+
+  const dismissCreatedNotice = (noticeSnapshot: CreatedDocxListNotice) => {
+    docxNoticeReqRef.current += 1;
+    clearCreatedDocxWarnings(noticeSnapshot.envelopeId, {
+      org: noticeSnapshot.orgId,
+      userId: noticeSnapshot.userId ?? currentUserId,
+    });
+    syncPendingNoticeAction({ kind: 'remove', envelopeId: noticeSnapshot.envelopeId });
+  };
+
+  const renderEnvelopeTitleControl = (item: Pick<SignEnvelopeSummary, 'id' | 'title'>) => {
+    const pendingNotice = pendingNoticeByEnvelopeId.get(item.id);
+    if (pendingNotice) {
+      return (
+        <button
+          type="button"
+          onClick={() => triggerOpenPendingNotice(pendingNotice)}
+          className="inline-flex max-md:min-h-11 items-center text-left font-medium text-foreground hover:underline focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+        >
+          {item.title}
+        </button>
+      );
+    }
+    return (
+      <Link
+        to="/o/$slug/sign/envelopes/$id"
+        params={{ slug, id: item.id }}
+        className="inline-flex max-md:min-h-11 items-center font-medium text-foreground hover:underline focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+      >
+        {item.title}
+      </Link>
+    );
+  };
+
+  const renderEnvelopeOpenControl = (
+    envelopeId: string,
+    variant: 'default' | 'secondary',
+    testId?: string,
+  ) => {
+    const pendingNotice = pendingNoticeByEnvelopeId.get(envelopeId);
+    if (pendingNotice) {
+      return (
+        <Button
+          type="button"
+          size="sm"
+          variant={variant}
+          onClick={() => triggerOpenPendingNotice(pendingNotice)}
+          data-testid={testId}
+        >
+          {t('actions.open')}
+        </Button>
+      );
+    }
+    return (
+      <Link
+        to="/o/$slug/sign/envelopes/$id"
+        params={{ slug, id: envelopeId }}
+        className={buttonVariants({ size: 'sm', variant })}
+        data-testid={testId}
+      >
+        {t('actions.open')}
+      </Link>
+    );
+  };
 
   return (
     <div className="space-y-5">
@@ -846,7 +1913,125 @@ export function SignEnvelopesPage() {
         }
       />
 
-      <ContractVaultBar key={slug} slug={slug} canAskVy={canAskVy} />
+      <ContractVaultBar
+        key={slug}
+        slug={slug}
+        canAskVy={canAskVy}
+        pendingEnvelopeIds={pendingEnvelopeIds}
+        onOpenPendingEnvelope={(envelopeId) => {
+          const targetNotice = pendingNoticeByEnvelopeId.get(envelopeId);
+          if (targetNotice) triggerOpenPendingNotice(targetNotice);
+        }}
+      />
+
+      {(() => {
+        const verifyPendingIds: string[] = [];
+        const visibleTitleTotals = new Map<string, number>();
+        for (const notice of pendingVerifiableNotices) {
+          const verifiedSession =
+            notice.sessionId && verifiedNoticeSessions.has(notice.sessionId) ? notice.sessionId : null;
+          if (isCreatedDocxListNoticeVisible(notice, slug, currentUserId, verifiedSession)) {
+            const titleKey = notice.envelopeTitle ?? '';
+            visibleTitleTotals.set(titleKey, (visibleTitleTotals.get(titleKey) ?? 0) + 1);
+            continue;
+          }
+          const sessionStillPending =
+            Boolean(notice.sessionId) && !verifiedNoticeSessions.has(notice.sessionId as string);
+          const userStillPending =
+            Boolean(notice.userId) &&
+            Boolean(notice.sessionId) &&
+            (currentUserId === null || verifiedNoticeSessions.has(notice.sessionId as string));
+          if (
+            (sessionStillPending || userStillPending) &&
+            (!notice.userId ||
+              currentUserId === null ||
+              notice.userId === currentUserId ||
+              Boolean(notice.sessionId && verifiedNoticeSessions.has(notice.sessionId)))
+          ) {
+            verifyPendingIds.push(notice.envelopeId);
+          }
+        }
+        const visibleTitleSeen = new Map<string, number>();
+        const verifyPendingIndexById = new Map(verifyPendingIds.map((envId, idx) => [envId, idx] as const));
+        return pendingVerifiableNotices.map((notice) => {
+          const verifiedSession =
+            notice.sessionId && verifiedNoticeSessions.has(notice.sessionId) ? notice.sessionId : null;
+          if (isCreatedDocxListNoticeVisible(notice, slug, currentUserId, verifiedSession)) {
+            const titleKey = notice.envelopeTitle ?? '';
+            const totalSameTitle = visibleTitleTotals.get(titleKey) ?? 0;
+            const seenCount = (visibleTitleSeen.get(titleKey) ?? 0) + 1;
+            visibleTitleSeen.set(titleKey, seenCount);
+            const labelSuffix = totalSameTitle > 1 ? ` (${seenCount}/${totalSameTitle})` : '';
+            const openLabel = notice.envelopeTitle
+              ? `${t('templates.openEnvelopeButton')}: ${notice.envelopeTitle}${labelSuffix}`
+              : labelSuffix
+                ? `${t('templates.openEnvelopeButton')}${labelSuffix}`
+                : undefined;
+            return (
+              <DocxWarningsAlert
+                key={notice.envelopeId}
+                title={notice.envelopeTitle}
+                labelSuffix={labelSuffix}
+                warnings={notice.warnings}
+                action={
+                  notice.slug ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="min-h-11"
+                      aria-label={openLabel}
+                      data-testid="sign-docx-warning-open-envelope"
+                      onClick={() => triggerOpenPendingNotice(notice)}
+                    >
+                      {t('templates.openEnvelopeButton')}
+                    </Button>
+                  ) : undefined
+                }
+                onDismiss={() => dismissCreatedNotice(notice)}
+              />
+            );
+          }
+          const pendingIdx = verifyPendingIndexById.get(notice.envelopeId);
+          if (pendingIdx !== undefined) {
+            const ordinalSuffix =
+              verifyPendingIds.length > 1 ? ` (${pendingIdx + 1}/${verifyPendingIds.length})` : '';
+            return (
+              <Alert key={notice.envelopeId} data-testid="sign-docx-warning-verify-pending">
+                <AlertDescription className="space-y-1.5">
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="text-sm text-foreground">{t('docxWarningOpenPending')}</p>
+                    <button
+                      type="button"
+                      onClick={() => dismissCreatedNotice(notice)}
+                      aria-label={`${common('close')}${ordinalSuffix}`}
+                      className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-md text-base text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      <span aria-hidden="true">×</span>
+                    </button>
+                  </div>
+                  {notice.slug ? (
+                    <div className="pt-1">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="min-h-11"
+                        aria-label={ordinalSuffix ? `${t('templates.openEnvelopeButton')}${ordinalSuffix}` : undefined}
+                        data-testid="sign-docx-warning-open-envelope"
+                        onClick={() => triggerOpenPendingNotice(notice)}
+                      >
+                        {t('templates.openEnvelopeButton')}
+                      </Button>
+                    </div>
+                  ) : null}
+                </AlertDescription>
+              </Alert>
+            );
+          }
+          return null;
+        });
+      })()}
 
       <Tabs value={tab} onValueChange={(next) => setTab(next as EnvelopeFilterTab)}>
         <TabsList className="flex max-w-full flex-wrap group-data-horizontal/tabs:h-auto">
@@ -919,13 +2104,7 @@ export function SignEnvelopesPage() {
                     >
                       <TableCell data-label={t('columns.title')}>
                         <span className="inline-flex flex-wrap items-center gap-1.5">
-                          <Link
-                            to="/o/$slug/sign/envelopes/$id"
-                            params={{ slug, id: item.id }}
-                            className="inline-flex max-md:min-h-11 items-center font-medium text-foreground hover:underline focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
-                          >
-                            {item.title}
-                          </Link>
+                          {renderEnvelopeTitleControl(item)}
                           {entry.overdueObligationCount > 0 ? (
                             <Badge variant="destructive">
                               {t('obligations.overdueCountBadge', { count: String(entry.overdueObligationCount) })}
@@ -979,13 +2158,7 @@ export function SignEnvelopesPage() {
                               {t('actions.downloadSealed')}
                             </Button>
                           ) : null}
-                          <Link
-                            to="/o/$slug/sign/envelopes/$id"
-                            params={{ slug, id: item.id }}
-                            className={buttonVariants({ size: 'sm', variant: 'secondary' })}
-                          >
-                            {t('actions.open')}
-                          </Link>
+                          {renderEnvelopeOpenControl(item.id, 'secondary')}
                         </div>
                       </TableCell>
                     </TableRow>
@@ -1043,13 +2216,7 @@ export function SignEnvelopesPage() {
                     >
                       <TableCell data-label={t('columns.title')}>
                         <span className="inline-flex flex-wrap items-center gap-1.5">
-                          <Link
-                            to="/o/$slug/sign/envelopes/$id"
-                            params={{ slug, id: item.id }}
-                            className="inline-flex max-md:min-h-11 items-center font-medium text-foreground hover:underline focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
-                          >
-                            {item.title}
-                          </Link>
+                          {renderEnvelopeTitleControl(item)}
                           {item.certificateCode ? <span className="font-mono text-xs text-muted-foreground">{item.certificateCode}</span> : null}
                           {item.pageCount ? <span className="text-xs text-subtle-foreground">{t('pagesCount', { count: String(item.pageCount) })}</span> : null}
                         </span>
@@ -1127,13 +2294,7 @@ export function SignEnvelopesPage() {
                               {t('actions.downloadSealed')}
                             </Button>
                           ) : null}
-                          <Link
-                            to="/o/$slug/sign/envelopes/$id"
-                            params={{ slug, id: item.id }}
-                            className={buttonVariants({ size: 'sm', variant: 'secondary' })}
-                          >
-                            {t('actions.open')}
-                          </Link>
+                          {renderEnvelopeOpenControl(item.id, 'secondary')}
                         </div>
                       </TableCell>
                     </TableRow>
@@ -1230,14 +2391,7 @@ export function SignEnvelopesPage() {
                   {t('actions.downloadSealed')}
                 </Button>
               ) : null}
-              <Link
-                to="/o/$slug/sign/envelopes/$id"
-                params={{ slug, id: activeEnvelope.id }}
-                className={buttonVariants({ size: 'sm', variant: 'default' })}
-                data-testid="sign-peek-open-link"
-              >
-                {t('actions.open')}
-              </Link>
+              {renderEnvelopeOpenControl(activeEnvelope.id, 'default', 'sign-peek-open-link')}
             </>
           }
         >
@@ -1263,13 +2417,57 @@ export function SignEnvelopesPage() {
       {createOpen ? (
         <CreateEnvelopeDialog
           key={slug}
+          orgSlug={slug || undefined}
+          captureContext={(options) =>
+            captureEnvelopeSubmitContext({
+              slug,
+              reqId: docxNoticeReqRef.current,
+              includeUserScope: options?.needsUserScope ?? false,
+              readSessionId: readCurrentSessionIdStrict,
+              resolveScope: resolveScopeForSlug,
+            })
+          }
+          isContextValid={(ctx) =>
+            isSameActiveOrgContext(ctx.slug, ctx.reqId) &&
+            (ctx.authEpoch === undefined || getDocxNoticeAuthEpoch() === ctx.authEpoch)
+          }
           onClose={() => setCreateOpen(false)}
-          onCreated={async (envelopeId) => {
-            setCreateOpen(false);
-            await queryClient.invalidateQueries({ queryKey: ['sign', 'envelopes'] });
-            if (slug) {
-              await navigate({ to: '/o/$slug/sign/envelopes/$id', params: { slug, id: envelopeId } });
-            }
+          onCreated={async (envelopeId, warnings = [], submitContext, envelopeTitle) => {
+            const targetSlug = submitContext?.slug ?? slug;
+            const targetOrgId = submitContext ? submitContext.orgId : null;
+            const targetUserId = submitContext ? submitContext.userId : null;
+            const targetSessionId = submitContext?.sessionId ?? null;
+            const targetReqId = submitContext?.reqId ?? docxNoticeReqRef.current;
+            const targetAuthEpoch = submitContext?.authEpoch;
+            await handleEnvelopeCreatedWithWarnings({
+              envelopeId,
+              envelopeTitle,
+              warnings,
+              slug: targetSlug,
+              orgId: targetOrgId,
+              userId: targetUserId,
+              sessionId: targetSessionId,
+              authEpoch: targetAuthEpoch,
+              resolveCurrentSessionId: readCurrentSessionIdStrict,
+              resolveUserScope:
+                targetUserId && targetOrgId
+                  ? undefined
+                  : () => resolveScopeForSlug(targetSlug, targetSessionId),
+              isCurrentContext: () =>
+                isSameActiveOrgContext(targetSlug, targetReqId) &&
+                (targetAuthEpoch === undefined || getDocxNoticeAuthEpoch() === targetAuthEpoch),
+              hasOtherPendingNotice: () =>
+                pendingDocxNoticesRef.current.some((n) => n.envelopeId !== envelopeId),
+              onPendingNoticeAction: syncPendingNoticeAction,
+              setCreateOpen,
+              setCreatedDocxNotice: () => {},
+              invalidateEnvelopes: () =>
+                queryClient.invalidateQueries({
+                  queryKey: targetSlug ? ['sign', 'envelopes', targetSlug] : ['sign', 'envelopes'],
+                }),
+              navigateToEnvelope: (navSlug, navId) =>
+                navigate({ to: '/o/$slug/sign/envelopes/$id', params: { slug: navSlug, id: navId } }),
+            });
           }}
         />
       ) : null}

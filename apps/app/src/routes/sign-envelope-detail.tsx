@@ -15,6 +15,23 @@ import { Label } from '@ludy/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { FieldOptionsAndAttachmentEditor } from '../components/sign/field-options-editor.tsx';
 import { FieldOverlayLayer } from '../components/sign/field-placer.tsx';
+import {
+  DocxWarningsAlert,
+  clearCreatedDocxWarnings,
+  saveCreatedDocxWarnings,
+} from '../components/sign/docx-conversion-notice.tsx';
+import {
+  clearAllCreatedDocxWarnings,
+  clearPendingDocxListNotices,
+  hasLocalDocxNoticeCandidate,
+  probeLocalDocxNoticeCandidate,
+  readCreatedDocxWarningsWithStatus,
+  readPendingDocxListNotice,
+  removePendingDocxListNotice,
+  sanitizeDocxWarnings,
+  type CreatedDocxWarningScope,
+  type PendingCreatedDocxNotice,
+} from '../lib/sign-docx-notices.ts';
 import { EnvelopeKycCard } from '../components/sign/envelope-kyc-card.tsx';
 import { EnvelopeObligationsCard } from '../components/sign/envelope-obligations-card.tsx';
 import { EnvelopePlaybookCard } from '../components/sign/envelope-playbook-card.tsx';
@@ -32,13 +49,18 @@ import { ErrorText, isEmailAddress, ListSkeleton, PageHeader } from '../componen
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import {
+  SignSessionMismatchError,
   canManageEnvelopeLinks,
   canVoidEnvelope,
   downloadSignFile,
   downloadSignPdfBytes,
+  fetchUserScopeForSession,
   normalizeAiAnalysis,
+  readVerifiedSession,
   signApi,
+  subscribeSignAuthStateChange,
   type SignAiAnalysis,
+  type SignDocxToPdfWarning,
   type SignEnvelopeDocumentSummary,
   type SignFieldRecord,
   type SignProposedField,
@@ -68,6 +90,159 @@ import {
 import { buildInPersonSigningUrl, buildSigningUrl, copyTextToClipboard } from '../lib/sign-hash.ts';
 import { extractPdfPagesText } from '../lib/sign-pdf.ts';
 import { toast } from '../lib/toast.ts';
+
+export type ResolveDetailDocxWarningsResult =
+  | {
+      status: 'resolved';
+      warnings: readonly SignDocxToPdfWarning[];
+      org: string;
+      userId: string;
+    }
+  | { status: 'none' }
+  | { status: 'retryable_error' };
+
+export async function resolveDetailDocxWarnings(deps: {
+  envelopeId: string;
+  slug: string;
+  noticeOrg: string | null;
+  currentUserId: string | null;
+  pendingNotice?: PendingCreatedDocxNotice | null | undefined;
+  resolveCurrentSessionId: () => Promise<string | null>;
+  resolveUserScope?: (expectedSessionId?: string | null) => Promise<{
+    orgId?: string | null | undefined;
+    userId?: string | null | undefined;
+    sessionId?: string | null | undefined;
+  } | null>;
+  isStillValid?: (() => boolean) | undefined;
+}): Promise<ResolveDetailDocxWarningsResult> {
+  if (!deps.envelopeId || !deps.slug) return { status: 'none' };
+  const usesLiveStore = deps.pendingNotice === undefined;
+  const initialProbe = usesLiveStore
+    ? probeLocalDocxNoticeCandidate(deps.envelopeId, deps.slug)
+    : 'present';
+  if (initialProbe === 'none') {
+    return { status: 'none' };
+  }
+  if (initialProbe === 'storage_error') {
+    return { status: 'retryable_error' };
+  }
+  if (deps.isStillValid && !deps.isStillValid()) return { status: 'none' };
+
+  let liveSessionId: string | null;
+  try {
+    liveSessionId = await deps.resolveCurrentSessionId();
+  } catch {
+    return { status: 'retryable_error' };
+  }
+  if (deps.isStillValid && !deps.isStillValid()) {
+    return { status: 'none' };
+  }
+  if (!liveSessionId) {
+    return { status: 'none' };
+  }
+
+  let resolvedOrgId: string | null = deps.noticeOrg;
+  let resolvedUserId: string | null = deps.currentUserId;
+  if (deps.resolveUserScope) {
+    let fetched: {
+      orgId?: string | null | undefined;
+      userId?: string | null | undefined;
+      sessionId?: string | null | undefined;
+    } | null;
+    try {
+      fetched = await deps.resolveUserScope(liveSessionId);
+    } catch (err) {
+      if (err instanceof SignSessionMismatchError) {
+        return { status: 'none' };
+      }
+      return { status: 'retryable_error' };
+    }
+    if (!fetched) return { status: 'none' };
+    if (fetched.sessionId && fetched.sessionId !== liveSessionId) {
+      return { status: 'none' };
+    }
+    resolvedOrgId = fetched.orgId ?? null;
+    resolvedUserId = fetched.userId ?? null;
+  }
+
+  let finalSessionId: string | null;
+  try {
+    finalSessionId = await deps.resolveCurrentSessionId();
+  } catch {
+    return { status: 'retryable_error' };
+  }
+  if (!finalSessionId || finalSessionId !== liveSessionId) {
+    return { status: 'none' };
+  }
+  if (!resolvedOrgId || !resolvedUserId) {
+    return { status: 'none' };
+  }
+  if (deps.isStillValid && !deps.isStillValid()) {
+    return { status: 'none' };
+  }
+
+  const storedResult = readCreatedDocxWarningsWithStatus(deps.envelopeId, {
+    org: resolvedOrgId,
+    userId: resolvedUserId,
+  });
+  if (storedResult.warnings.length > 0) {
+    if (usesLiveStore) {
+      removePendingDocxListNotice(deps.envelopeId);
+    }
+    return {
+      status: 'resolved',
+      warnings: storedResult.warnings,
+      org: resolvedOrgId,
+      userId: resolvedUserId,
+    };
+  }
+
+  const candidateNotice = usesLiveStore
+    ? readPendingDocxListNotice(deps.envelopeId, deps.slug)
+    : deps.pendingNotice;
+  if (!candidateNotice) {
+    if (!storedResult.storageReadable) {
+      return { status: 'retryable_error' };
+    }
+    return { status: 'none' };
+  }
+  if (candidateNotice.envelopeId !== deps.envelopeId || candidateNotice.slug !== deps.slug) {
+    return { status: 'none' };
+  }
+  if (!candidateNotice.userId && !candidateNotice.sessionId) return { status: 'none' };
+  if (candidateNotice.sessionId && liveSessionId !== candidateNotice.sessionId) {
+    clearPendingDocxListNotices({ mismatchSessionId: liveSessionId });
+    return { status: 'none' };
+  }
+  if (candidateNotice.userId && resolvedUserId !== candidateNotice.userId) {
+    clearPendingDocxListNotices({ mismatchUserId: resolvedUserId });
+    return { status: 'none' };
+  }
+  const cleanWarnings = sanitizeDocxWarnings(candidateNotice.warnings);
+  if (cleanWarnings.length === 0) return { status: 'none' };
+
+  // Verify request validity and live pending status immediately before persisting so concurrent resolves or dismissals cannot resurrect warnings.
+  if (deps.isStillValid && !deps.isStillValid()) {
+    return { status: 'none' };
+  }
+  if (usesLiveStore && !readPendingDocxListNotice(deps.envelopeId, deps.slug)) {
+    return { status: 'none' };
+  }
+
+  const persisted = saveCreatedDocxWarnings(deps.envelopeId, cleanWarnings, {
+    org: resolvedOrgId,
+    userId: resolvedUserId,
+  });
+  if (persisted) {
+    removePendingDocxListNotice(deps.envelopeId);
+  }
+  return {
+    status: 'resolved',
+    warnings: cleanWarnings,
+    org: resolvedOrgId,
+    userId: resolvedUserId,
+  };
+}
 
 function toDraftPlacements(fields: readonly SignFieldRecord[]): DraftFieldPlacement[] {
   return fields.map((f) => ({
@@ -423,6 +598,29 @@ export function SignEnvelopeDetailPage() {
   const isDraft = envelope?.status === 'draft';
   const roleHere = meQuery.data?.orgs.find((o) => o.slug === slug)?.role ?? orgQuery.data?.role;
   const currentUserId = meQuery.data?.userId ?? null;
+  const noticeOrg =
+    meQuery.data?.orgs.find((o) => o.slug === slug)?.orgId ??
+    (orgQuery.data?.slug === slug ? orgQuery.data.orgId : null);
+  const noticeScopeKey = `${noticeOrg ?? ''}\0${currentUserId ?? ''}\0${id}`;
+  const detailDocxNoticeReqRef = useRef(0);
+  const detailDocxRetryCountRef = useRef(0);
+  const [detailDocxVerifyEpoch, setDetailDocxVerifyEpoch] = useState(0);
+  const [docxWarningsState, setDocxWarningsState] = useState<{
+    key: string;
+    scope: CreatedDocxWarningScope | null;
+    warnings: readonly SignDocxToPdfWarning[];
+  }>(() => ({
+    key: '',
+    scope: null,
+    warnings: [],
+  }));
+  const docxWarnings =
+    docxWarningsState.key === noticeScopeKey &&
+    docxWarningsState.scope !== null &&
+    (!noticeOrg || docxWarningsState.scope.org === noticeOrg) &&
+    (!currentUserId || docxWarningsState.scope.userId === currentUserId)
+      ? docxWarningsState.warnings
+      : [];
   const canManageLinks = meQuery.data
     ? canManageEnvelopeLinks({
         role: roleHere,
@@ -471,7 +669,136 @@ export function SignEnvelopeDetailPage() {
     setMintedLinks([]);
     setQrModalTarget(null);
     setInPersonQrOpen(false);
+    detailDocxRetryCountRef.current = 0;
   }, [id]);
+
+  useEffect(() => {
+    const reqId = (detailDocxNoticeReqRef.current += 1);
+    setDocxWarningsState({
+      key: noticeScopeKey,
+      scope: null,
+      warnings: [],
+    });
+    if (!id || !slug || !hasLocalDocxNoticeCandidate(id, slug)) {
+      detailDocxRetryCountRef.current = 0;
+      return;
+    }
+    let cancelled = false;
+    let verifying = true;
+    let activeVerifiedScopeKey: string | null = null;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleRetry = () => {
+      if (cancelled || detailDocxNoticeReqRef.current !== reqId) return;
+      const attempt = detailDocxRetryCountRef.current;
+      if (attempt >= 4) return;
+      const delays = [1500, 3000, 6000, 10000] as const;
+      detailDocxRetryCountRef.current = attempt + 1;
+      retryTimer = setTimeout(() => {
+        if (!cancelled && detailDocxNoticeReqRef.current === reqId) {
+          setDetailDocxVerifyEpoch((v) => v + 1);
+        }
+      }, delays[attempt] ?? 10000);
+    };
+    const triggerReverify = () => {
+      if (!cancelled && detailDocxNoticeReqRef.current === reqId) {
+        setDetailDocxVerifyEpoch((v) => v + 1);
+      }
+    };
+    const handleOnline = () => {
+      if (cancelled || detailDocxNoticeReqRef.current !== reqId) return;
+      detailDocxRetryCountRef.current = 0;
+      triggerReverify();
+    };
+    const handleFocus = () => {
+      if (cancelled || verifying || detailDocxNoticeReqRef.current !== reqId) return;
+      void readVerifiedSession()
+        .then(({ sessionId: liveSessionId }) => {
+          if (cancelled || detailDocxNoticeReqRef.current !== reqId) return;
+          if (liveSessionId && activeVerifiedScopeKey === liveSessionId) {
+            return;
+          }
+          activeVerifiedScopeKey = null;
+          detailDocxRetryCountRef.current = 0;
+          setDocxWarningsState({ key: noticeScopeKey, scope: null, warnings: [] });
+          triggerReverify();
+        })
+        .catch(() => {
+          if (!cancelled && detailDocxNoticeReqRef.current === reqId) {
+            activeVerifiedScopeKey = null;
+            detailDocxRetryCountRef.current = 0;
+            setDocxWarningsState({ key: noticeScopeKey, scope: null, warnings: [] });
+            triggerReverify();
+          }
+        });
+    };
+    const unsubscribeAuth = subscribeSignAuthStateChange((event) => {
+      if (cancelled) return;
+      if (event === 'SIGNED_OUT') {
+        clearAllCreatedDocxWarnings();
+      }
+      activeVerifiedScopeKey = null;
+      detailDocxRetryCountRef.current = 0;
+      setDocxWarningsState({ key: noticeScopeKey, scope: null, warnings: [] });
+      triggerReverify();
+    });
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+      window.addEventListener('online', handleOnline);
+      window.addEventListener('focus', handleFocus);
+    }
+
+    void resolveDetailDocxWarnings({
+      envelopeId: id,
+      slug,
+      noticeOrg,
+      currentUserId,
+      resolveCurrentSessionId: async () => {
+        const verified = await readVerifiedSession();
+        activeVerifiedScopeKey = verified.sessionId;
+        return verified.sessionId;
+      },
+      resolveUserScope: (expectedSessionId) => fetchUserScopeForSession(slug, expectedSessionId),
+      isStillValid: () => !cancelled && detailDocxNoticeReqRef.current === reqId,
+    })
+      .then((result) => {
+        verifying = false;
+        if (cancelled || detailDocxNoticeReqRef.current !== reqId) {
+          return;
+        }
+        if (result.status === 'retryable_error') {
+          activeVerifiedScopeKey = null;
+          scheduleRetry();
+          return;
+        }
+        detailDocxRetryCountRef.current = 0;
+        if (result.status === 'none') {
+          return;
+        }
+        if (currentUserId && result.userId !== currentUserId) {
+          activeVerifiedScopeKey = null;
+          void queryClient.invalidateQueries({ queryKey: orpc.me.get.queryKey() });
+          setDocxWarningsState({ key: noticeScopeKey, scope: null, warnings: [] });
+          return;
+        }
+        setDocxWarningsState({
+          key: noticeScopeKey,
+          scope: { org: result.org, userId: result.userId },
+          warnings: result.warnings,
+        });
+      })
+      .catch(() => {
+        verifying = false;
+        activeVerifiedScopeKey = null;
+      });
+    return () => {
+      cancelled = true;
+      if (retryTimer !== null) clearTimeout(retryTimer);
+      unsubscribeAuth();
+      if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') {
+        window.removeEventListener('online', handleOnline);
+        window.removeEventListener('focus', handleFocus);
+      }
+    };
+  }, [id, slug, noticeOrg, currentUserId, noticeScopeKey, detailDocxVerifyEpoch]);
 
   useEffect(() => {
     if (!detailQuery.data || fieldsDirty) return;
@@ -1353,6 +1680,21 @@ export function SignEnvelopeDetailPage() {
           <AlertTitle>{t('hrContractNd337.title')}</AlertTitle>
           <AlertDescription>{t('hrContractNd337.body')}</AlertDescription>
         </Alert>
+      ) : null}
+
+      {docxWarnings.length > 0 ? (
+        <DocxWarningsAlert
+          warnings={docxWarnings}
+          onDismiss={() => {
+            detailDocxNoticeReqRef.current += 1;
+            const activeScope = docxWarningsState.key === noticeScopeKey ? docxWarningsState.scope : null;
+            if (id && activeScope) {
+              clearCreatedDocxWarnings(id, activeScope);
+              removePendingDocxListNotice(id);
+            }
+            setDocxWarningsState({ key: noticeScopeKey, scope: null, warnings: [] });
+          }}
+        />
       ) : null}
 
       {envelope.inspectStatus === 'pending' ? (

@@ -65,6 +65,7 @@ export const MEMBER_VY_FEATURES = {
   'meetings.open_points': { module: 'meetings', expiryMinutes: 30 },
   // The recorder's Vy extracting sales call insights (customer concerns, buying signals, agreed next steps with cited transcript line IDs) for a meeting linked to an open deal (#4920): one foreground model call, results returned to the recorder alone and stored as counts only.
   'meetings.sales_insight': { module: 'meetings', expiryMinutes: 30 },
+  'meetings.label_suggest': { module: 'meetings', expiryMinutes: 30 },
   'projects.tasks_from_note': { module: 'projects', expiryMinutes: 30 },
   'projects.tasks_from_source': { module: 'projects', expiryMinutes: 30 },
 } as const;
