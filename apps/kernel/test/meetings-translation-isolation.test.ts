@@ -125,6 +125,8 @@ describe('a translation is never a source: the migrations (E1, #3184)', () => {
       'ludy_kernel_org_purge_minutes_version.sql',
       // #3979 (AI meter concurrency): the purge restatement that adds ludy_kernel.ai_budget_reservation restates the whole list, the translation table included; its body is the previous one.
       'ludy_kernel_ai_budget_reservation.sql',
+      // #4822 (minutes link): the purge restatement that adds ludy_meetings.minutes_link restates the whole list, the translation table included; its body is the previous one.
+      'ludy_kernel_org_purge_minutes_link.sql',
       // #4873 (tracker alerts): the purge restatement that adds ludy_meetings.tracker_alert restates the whole list, the translation table included; its body is the previous one.
       'ludy_kernel_org_purge_tracker_alert.sql',
     ]);
