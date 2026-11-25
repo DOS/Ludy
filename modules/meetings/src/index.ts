@@ -14,5 +14,6 @@ export { ASSIGNEE_CONNECTORS, ASSIGNEE_HONORIFICS } from './assignee-match.ts';
 export { setSummaryEnabled } from './summary-run.ts';
 export { setMeetingVideoImport } from './import.ts';
 export { translateCommands } from './translate.ts';
+export { versionTextProblem } from './minutes-version.ts';
 export { lineHash, setTranslationTargets, translationHash } from './translate-run.ts';
 export type { McpDecision, McpDecisions, McpMeetingRow, McpMeetings, McpMinutes, McpOpenAction, McpOpenActions, McpSearch, McpSearchHit, McpSeriesOpenItems } from './mcp.ts';

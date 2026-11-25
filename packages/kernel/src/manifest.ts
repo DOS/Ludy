@@ -80,8 +80,9 @@ export const kernelManifest = defineModule({
       meeting_platform_connection: columns(['org_id', 'id', 'user_id', 'provider', 'scopes', 'status', 'status_reason', 'expires_at', 'last_synced_at', 'connected_at', 'updated_at'], { external_account: 'contact', display_name: 'contact' }),
       meeting_platform_credential: columns(['org_id', 'id', 'key_id', 'created_at', 'sealed_at'], { envelope: 'sensitive' }),
       meeting_platform_recording: columns(
-        ['org_id', 'id', 'connection_id', 'user_id', 'external_id', 'started_at', 'length_seconds', 'size_bytes', 'has_audio', 'has_video', 'has_transcript', 'status', 'meeting_id', 'meeting_key', 'staged_at', 'error_code', 'created_at', 'updated_at'],
-        { title: 'pii', staging_key: 'sensitive' },
+        ['org_id', 'id', 'connection_id', 'user_id', 'external_id', 'started_at', 'length_seconds', 'size_bytes', 'has_audio', 'has_video', 'has_transcript', 'status', 'meeting_id', 'meeting_key', 'staged_at', 'error_code', 'created_at', 'updated_at', 'picked_at'],
+        // The Drive file id the member picked (#3174): sensitive like the staging key, it names a file in a member's Drive.
+        { title: 'pii', staging_key: 'sensitive', picked_file_id: 'sensitive' },
       ),
       member_availability: columns(['org_id', 'id', 'user_id', 'status', 'until', 'updated_at']),
       member_invite: columns(['org_id', 'id', 'role', 'token_sha256', 'status', 'invited_by', 'created_at', 'expires_at', 'accepted_at', 'accepted_by', 'revoked_at', 'revoked_by', 'legal_entity_ids', 'role_key', 'role_scope'], { email: 'contact' }),

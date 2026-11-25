@@ -45,7 +45,7 @@ import { ROLES, draftLineState, missingAnchors, openMeeting, userOf } from './tr
 // What code finds wrong with an item's text: a link, an email address or a phone number in a title (a task is read by every member, and a title the model
 // wrote from a transcript must not carry a way to reach someone off the page). Fixed words, never the text.
 // Linear scans, no backtracking regex: a title is at most ITEM_TITLE_MAX (300) characters in the contract and in the table, and the scans are linear anyway.
-const hasLink = (lower: string): boolean => lower.includes('http://') || lower.includes('https://') || lower.includes('www.');
+export const hasLink = (lower: string): boolean => lower.includes('http://') || lower.includes('https://') || lower.includes('www.');
 // An email: a non-empty part before an '@' and, between two '@' or after the last, a part with a '.' that has a character on each side of it.
 function hasEmail(token: string): boolean {
   const parts = token.split('@');
