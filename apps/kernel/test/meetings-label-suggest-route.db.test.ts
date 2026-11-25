@@ -229,7 +229,7 @@ suite('the recorder\'s Vy label route (#5010)', () => {
 
   it('cleans the answer by the rules of a typed label: an address, a run of seven digits, a repeat of a label in another case are dropped; at most three, and never past five labels', async () => {
     const meetingId = await seedMeeting('recorder', { labels: ['Khách Hoa Sen'] });
-    const raw = JSON.stringify({ labels: ['a@b.com', 'Mã 1234567', 'KHÁCH HOA SEN', 'Dự án A', 'Dự án B', 'Dự án C', 'Dự án D'] });
+    const raw = JSON.stringify({ labels: ['a@example.com', 'Mã 1234567', 'KHÁCH HOA SEN', 'Dự án A', 'Dự án B', 'Dự án C', 'Dự án D'] });
     const out = await ask('recorder', meetingId, { model: model(raw) });
     expect(out).toEqual({ state: 'suggested', errorCode: null, labels: ['Dự án A', 'Dự án B', 'Dự án C'], dropped: 4 });
     const stored = await sqlAdmin<{ body: string }>(`SELECT body FROM ludy_kernel.member_vy_result WHERE org_id = $1 AND subject_id = $2`, [orgId, meetingId]);

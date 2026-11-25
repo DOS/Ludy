@@ -48,7 +48,7 @@ describe('checkLabelSuggestions', () => {
   });
 
   it('drops what a typed label would be refused: an "@", a run of seven digits, a line break, 41 characters, an empty text', () => {
-    const answer = { labels: ['a@b.com', 'Mã 1234567', 'Mã 123 456 78', 'Dòng một\nDòng hai', 'x'.repeat(41), '   ', 'Hợp lệ'] };
+    const answer = { labels: ['a@example.com', 'Mã 1234567', 'Mã 123 456 78', 'Dòng một\nDòng hai', 'x'.repeat(41), '   ', 'Hợp lệ'] };
     expect(checkLabelSuggestions(json(answer), [], RULES)).toEqual({ labels: ['Hợp lệ'], dropped: 6 });
     // Forty characters pass, and six digits are fine.
     const forty = 'y'.repeat(40);
@@ -108,11 +108,11 @@ describe('labelsInUse', () => {
 
   it('keeps at most 30 distinct labels in all, and leaves out a text the label rules refuse', () => {
     const many = Array.from({ length: 50 }, (_, i) => `Nhãn ${i}`);
-    const out = labelsInUse({ existing: ['Có sẵn'], readable: [...many, 'a@b.com', 'x'.repeat(41)], rules: RULES });
+    const out = labelsInUse({ existing: ['Có sẵn'], readable: [...many, 'a@example.com', 'x'.repeat(41)], rules: RULES });
     expect(out.onMeeting).toEqual(['Có sẵn']);
     expect(out.others).toHaveLength(LABEL_SUGGEST_LIMITS.inUse - 1);
     expect(out.others[0]).toBe('Nhãn 0');
-    expect(out.others).not.toContain('a@b.com');
+    expect(out.others).not.toContain('a@example.com');
   });
 });
 
