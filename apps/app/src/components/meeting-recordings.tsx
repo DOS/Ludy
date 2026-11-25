@@ -19,7 +19,7 @@ import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { getConfig } from '../lib/auth.ts';
 import { pickDriveFile } from '../lib/google-picker.ts';
-import { canRetry, canSubmitImport, errorKey, importBlock, isTranscriptImport, lengthParts, matchedSuggestion, pollMs } from '../lib/meeting-platform.ts';
+import { canRetry, canSubmitImport, errorKey, importBlock, isTranscriptImport, lengthParts, matchedSuggestion, pairTaken, pollMs } from '../lib/meeting-platform.ts';
 import { formatBytes } from '../lib/offboarding.ts';
 import { toast } from '../lib/toast.ts';
 import { useConsentPolicy } from './consent-policy.tsx';
@@ -166,7 +166,7 @@ function offers(row: MeetingPlatformRecordingView, words: { audio: string; video
   return items.length > 0 ? items.join(', ') : words.nothing;
 }
 
-function RecordingRow({ row, slug, canImport, onImport }: { row: MeetingPlatformRecordingView; slug: string; canImport: boolean; onImport: (row: MeetingPlatformRecordingView) => void }) {
+function RecordingRow({ row, slug, canImport, taken, onImport }: { row: MeetingPlatformRecordingView; slug: string; canImport: boolean; taken: boolean; onImport: (row: MeetingPlatformRecordingView) => void }) {
   const t = useTranslations('meetings.platform.recordings');
   const tp = useTranslations('meetings.platform');
   const f = useFormat();
@@ -214,6 +214,8 @@ function RecordingRow({ row, slug, canImport, onImport }: { row: MeetingPlatform
     </Button>
   );
   const title = row.title === '' ? t('untitled') : row.title;
+  // A meeting can be offered twice (its video and its transcript, which import differently): the buttons' names say which row they are, so a screen reader does not hear two identical ones.
+  const labelTitle = isTranscriptImport(row) ? `${title} (${t('offerTranscript')})` : title;
   const matched = matchedSuggestion(row);
   const block = importBlock(row);
   const length = row.lengthSeconds === null ? null : lengthParts(row.lengthSeconds);
@@ -257,23 +259,27 @@ function RecordingRow({ row, slug, canImport, onImport }: { row: MeetingPlatform
               <Link
                 to="/o/$slug/meetings/$id"
                 params={{ slug, id: matched.meetingId }}
-                aria-label={t('openMatchedOf', { title })}
+                aria-label={t('openMatchedOf', { title: labelTitle })}
                 className="inline-flex min-h-11 min-w-11 items-center rounded px-2 text-xs font-medium text-link underline focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 md:min-h-6 md:min-w-0 md:px-0"
                 data-testid="meeting-recording-matched-link"
               >
                 {t('openMatched')}
               </Link>
-              {quiet(t('dismiss'), t('dismissOf', { title }))}
+              {quiet(t('dismiss'), t('dismissOf', { title: labelTitle }))}
             </>
           )}
           {row.status === 'suggested' && matched === null && block === null && (
             <>
-              {canImport && needsPick && !row.picked ? (
+              {taken ? (
+                <span className="text-xs text-muted-foreground" role="status" data-testid="meeting-recording-pair-taken">
+                  {t('pairTaken')}
+                </span>
+              ) : canImport && needsPick && !row.picked ? (
                 pickButton(t('pick'))
               ) : canImport ? (
                 <>
                   {needsPick && pickButton(t('pickAgain'))}
-                  <Button type="button" size="sm" aria-label={t('importOf', { title })} data-testid="meeting-recording-import" onClick={() => onImport(row)}>
+                  <Button type="button" size="sm" aria-label={t('importOf', { title: labelTitle })} data-testid="meeting-recording-import" onClick={() => onImport(row)}>
                     {t('import')}
                   </Button>
                 </>
@@ -282,7 +288,7 @@ function RecordingRow({ row, slug, canImport, onImport }: { row: MeetingPlatform
                   {t('viewerOnly')}
                 </span>
               )}
-              {quiet(t('dismiss'), t('dismissOf', { title }))}
+              {quiet(t('dismiss'), t('dismissOf', { title: labelTitle }))}
             </>
           )}
           {row.status === 'suggested' && matched === null && block !== null && (
@@ -290,7 +296,7 @@ function RecordingRow({ row, slug, canImport, onImport }: { row: MeetingPlatform
               <span className="text-xs text-muted-foreground" data-testid="meeting-recording-blocked">
                 {block === 'video_only' ? t('videoOnly') : block === 'transcript_only' ? t('transcriptOnly') : block === 'too_long' ? t('tooLong') : t('tooLarge')}
               </span>
-              {quiet(t('dismiss'), t('dismissOf', { title }))}
+              {quiet(t('dismiss'), t('dismissOf', { title: labelTitle }))}
             </>
           )}
           {row.status === 'importing' && (
@@ -315,13 +321,18 @@ function RecordingRow({ row, slug, canImport, onImport }: { row: MeetingPlatform
                   {tp('settings.title')}
                 </Link>
               )}
+              {taken && (
+                <span className="text-xs text-muted-foreground" role="status" data-testid="meeting-recording-pair-taken">
+                  {t('pairTaken')}
+                </span>
+              )}
               {canImport && needsPick && (row.errorCode === 'pick_missing' || row.errorCode === 'pick_mismatch') && pickButton(t('pickAgain'))}
-              {canImport && canRetry(row) && !(needsPick && (row.errorCode === 'pick_missing' || row.errorCode === 'pick_mismatch')) && (
-                <Button type="button" size="sm" variant="outline" aria-label={t('importOf', { title })} data-testid="meeting-recording-retry" onClick={() => onImport(row)}>
+              {canImport && !taken && canRetry(row) && !(needsPick && (row.errorCode === 'pick_missing' || row.errorCode === 'pick_mismatch')) && (
+                <Button type="button" size="sm" variant="outline" aria-label={t('importOf', { title: labelTitle })} data-testid="meeting-recording-retry" onClick={() => onImport(row)}>
                   {t('retry')}
                 </Button>
               )}
-              {quiet(t('dismiss'), t('dismissOf', { title }))}
+              {quiet(t('dismiss'), t('dismissOf', { title: labelTitle }))}
             </>
           )}
         </div>
@@ -382,7 +393,7 @@ export function PlatformRecordings({ slug }: { slug: string }) {
       {rows.length > 0 && (
         <ul className="divide-y rounded-lg border border-border bg-card">
           {rows.map((row) => (
-            <RecordingRow key={row.id} row={row} slug={slug} canImport={canImport} onImport={setTarget} />
+            <RecordingRow key={row.id} row={row} slug={slug} canImport={canImport} taken={pairTaken(rows, row)} onImport={setTarget} />
           ))}
         </ul>
       )}

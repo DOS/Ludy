@@ -40,6 +40,8 @@ const OCC = {
   S2: occurrenceId(IDS.SSSS, '2026-11-12T09:00:00', '2026-11-12T10:00:00'),
   S3: occurrenceId(IDS.SSSS, '2026-11-13T09:00:00', '2026-11-13T10:00:00'),
 };
+// The transcript's own suggestion of a meeting that has a recording too: the occurrence's key plus the suffix.
+const TR = (key: string) => `${key}~transcript`;
 const RECORDING_ID = '7e31db25-bc6e-4fd8-96c7-e01264e9b6fc';
 const TRANSCRIPT_ID = 'MSMjMCMjZDAwYWU3NjUtNmM2Yi00NjQxLTgwMWQtMTkzMmFmMjEzNzdh';
 
@@ -130,7 +132,7 @@ describe('TeamsMeetingPlatform.list', () => {
   it('lists the finished meetings that have a recording or a transcript, newest first, and nothing else', async () => {
     const { adapter, calls } = teams(graph());
     const listed = await adapter.list(CREDENTIAL, SINCE);
-    expect(listed.map((m) => m.id)).toEqual([OCC.A, OCC.B, OCC.S2, OCC.S1]);
+    expect(listed.map((m) => m.id)).toEqual([OCC.A, TR(OCC.A), OCC.B, OCC.S2, TR(OCC.S2), OCC.S1, TR(OCC.S1)]);
     expect(listed[0]).toEqual({
       id: OCC.A,
       title: 'Họp tuần (Teams)',
@@ -140,11 +142,13 @@ describe('TeamsMeetingPlatform.list', () => {
       sizeBytes: null,
       hasAudio: false,
       hasVideo: true,
-      hasTranscript: true,
+      hasTranscript: false,
       call: { platform: 'microsoft_teams', id: '19:meeting_aaaa@thread.v2' },
     });
+    // The same meeting's transcript is its own suggestion: the same times and call, no video, so it imports without the video processing.
+    expect(listed[1]).toEqual({ ...listed[0], id: TR(OCC.A), hasVideo: false, hasTranscript: true });
     // A meeting someone else organized: its transcript is offered, its recording is not (only the organizer may download it).
-    expect(listed[1]).toMatchObject({ hasVideo: false, hasTranscript: true, title: 'Product review (organized by someone else)', call: { platform: 'microsoft_teams', id: '19:meeting_bbbb@thread.v2' } });
+    expect(listed[2]).toMatchObject({ hasVideo: false, hasTranscript: true, title: 'Product review (organized by someone else)', call: { platform: 'microsoft_teams', id: '19:meeting_bbbb@thread.v2' } });
     // Not listed: a call with no online meeting, a cancelled one, one still running, one with two recordings and no transcript, one with nothing, one Graph does not know.
     expect(calls.every((c) => c.method === 'GET')).toBe(true);
     expect(calls.filter((c) => c.url.includes('/recordings')).map((c) => decodeURIComponent(c.url))).not.toContain(expect.stringContaining(IDS.BBBB));
@@ -215,7 +219,7 @@ describe('TeamsMeetingPlatform.list', () => {
     const found = await first.adapter.list(CREDENTIAL, SINCE);
     // The older meeting of page two has no files in the fixtures, so only the pages being read is checked.
     expect(first.calls.filter((c) => new URL(c.url).pathname === '/v1.0/me/calendarView')).toHaveLength(2);
-    expect(found.map((m) => m.id)).toEqual([OCC.A, OCC.B, OCC.S2, OCC.S1]);
+    expect(found.map((m) => m.id)).toEqual([OCC.A, TR(OCC.A), OCC.B, OCC.S2, TR(OCC.S2), OCC.S1, TR(OCC.S1)]);
     // Graph's own host is not enough: the sign-in host, a port, credentials in the address and another path on Graph are refused too (the bearer goes with the link).
     for (const link of ['https://login.microsoftonline.com/v1.0/me/calendarView', 'https://graph.microsoft.com:8443/v1.0/me/calendarView', 'https://user:pw@graph.microsoft.com/v1.0/me/calendarView', 'https://graph.microsoft.com/v1.0/me/messages', 'http://graph.microsoft.com/v1.0/me/calendarView', 'not a url']) {
       const odd = teams((url) => (url.pathname === '/v1.0/me/calendarView' ? { json: { ...fixture('calendar-view'), '@odata.nextLink': link } } : graph()(url)));
@@ -235,7 +239,7 @@ describe('TeamsMeetingPlatform.list', () => {
     const calendarCalls = (t: { calls: Call[] }) => t.calls.filter((c) => new URL(c.url).pathname === '/v1.0/me/calendarView' && !new URL(c.url).searchParams.has('page')).length;
     // Busy once, then fine: the list is the same as without the 429, after the 2 seconds Graph named.
     const once = teams(calendar([{ status: 429, json: {}, headers: { 'retry-after': '2' } }, { json: fixture('calendar-view') }]));
-    expect((await once.adapter.list(CREDENTIAL, SINCE)).map((m) => m.id)).toEqual([OCC.A, OCC.B, OCC.S2, OCC.S1]);
+    expect((await once.adapter.list(CREDENTIAL, SINCE)).map((m) => m.id)).toEqual([OCC.A, TR(OCC.A), OCC.B, OCC.S2, TR(OCC.S2), OCC.S1, TR(OCC.S1)]);
     expect(once.sleeps).toEqual([2000]);
     expect(calendarCalls(once)).toBe(2);
     // No header: a short default wait. A date: the time left to it.
@@ -258,7 +262,7 @@ describe('TeamsMeetingPlatform.list', () => {
     // The same for a look-up of one meeting and for a download description.
     let lookups = 0;
     const lookup = teams((url) => (url.pathname === '/v1.0/me/onlineMeetings' && lookups++ === 0 ? { status: 429, json: {}, headers: { 'retry-after': '1' } } : graph()(url)));
-    expect((await lookup.adapter.list(CREDENTIAL, SINCE)).map((m) => m.id)).toEqual([OCC.A, OCC.B, OCC.S2, OCC.S1]);
+    expect((await lookup.adapter.list(CREDENTIAL, SINCE)).map((m) => m.id)).toEqual([OCC.A, TR(OCC.A), OCC.B, OCC.S2, TR(OCC.S2), OCC.S1, TR(OCC.S1)]);
     expect(lookup.sleeps).toEqual([1000]);
     // An aborted pass does not retry.
     const stop = new AbortController();
@@ -288,7 +292,7 @@ describe('TeamsMeetingPlatform.list', () => {
 
   it('skips one meeting whose files are refused or gone, and fails the whole call for a token or a busy service', async () => {
     const forbidden = teams(graph({ [`/v1.0/me/onlineMeetings/${IDS.BBBB}/transcripts`]: { status: 403, json: fixture('error-forbidden') } }));
-    expect((await forbidden.adapter.list(CREDENTIAL, SINCE)).map((m) => m.id)).toEqual([OCC.A, OCC.S2, OCC.S1]);
+    expect((await forbidden.adapter.list(CREDENTIAL, SINCE)).map((m) => m.id)).toEqual([OCC.A, TR(OCC.A), OCC.S2, TR(OCC.S2), OCC.S1, TR(OCC.S1)]);
     expect(await codeOf(teams(graph({ '/v1.0/me/calendarView': { status: 401, json: {} } })).adapter.list(CREDENTIAL, SINCE))).toBe('connection_expired');
     expect(await codeOf(teams(graph({ '/v1.0/me/calendarView': { status: 429, json: {} } })).adapter.list(CREDENTIAL, SINCE))).toBe('platform_unavailable');
     expect(await codeOf(teams(graph({ '/v1.0/me/calendarView': { status: 503, json: {} } })).adapter.list(CREDENTIAL, SINCE))).toBe('platform_unavailable');
@@ -317,8 +321,10 @@ describe('TeamsMeetingPlatform.list', () => {
     const { adapter, calls } = teams(route);
     const listed = await adapter.list(CREDENTIAL, SINCE);
     expect(listed.filter((m) => m.id.startsWith(`${IDS.SSSS}~`)).map((m) => [m.id, m.hasVideo, m.hasTranscript])).toEqual([
-      [OCC.S2, true, true],
-      [OCC.S1, true, true],
+      [OCC.S2, true, false],
+      [TR(OCC.S2), false, true],
+      [OCC.S1, true, false],
+      [TR(OCC.S1), false, true],
     ]);
     expect(calls.filter((c) => c.url.includes(`${IDS.SSSS}/recordings`))).toHaveLength(2);
     expect((await adapter.prepareDownload(CREDENTIAL, OCC.S2, 'video')).url).toBe(`${base}/recordings/22222222-bc6e-4fd8-96c7-e01264e9b6f2/content`);
@@ -327,7 +333,7 @@ describe('TeamsMeetingPlatform.list', () => {
     for (const link of ['https://evil.example/x', 'https://login.microsoftonline.com/v1.0/me/onlineMeetings', `${base}/transcripts?page=2`, `http://graph.microsoft.com/v1.0/me/onlineMeetings/${IDS.SSSS}/recordings?page=2`, `https://graph.microsoft.com:8443/v1.0/me/onlineMeetings/${IDS.SSSS}/recordings?page=2`, `https://user:pw@graph.microsoft.com/v1.0/me/onlineMeetings/${IDS.SSSS}/recordings?page=2`, 'not a url']) {
       const odd = teams((url) => split('recordings', 1, link)(url) ?? graph()(url));
       const shown = await odd.adapter.list(CREDENTIAL, SINCE);
-      expect(shown.map((m) => [m.id, m.hasVideo]), link).toEqual([[OCC.A, true], [OCC.B, false], [OCC.S2, false], [OCC.S1, false]]);
+      expect(shown.map((m) => [m.id, m.hasVideo]), link).toEqual([[OCC.A, true], [TR(OCC.A), false], [OCC.B, false], [OCC.S2, false], [OCC.S1, false]]);
       // By the parsed address, not a substring: nothing was sent to another host, port, credentials or the sign-in host.
       expect(odd.calls.filter((c) => { const u = new URL(c.url); return u.hostname !== TEAMS_GRAPH_HOST || u.port !== '' || u.username !== ''; }), link).toEqual([]);
       expect(await codeOf(odd.adapter.prepareDownload(CREDENTIAL, OCC.S1, 'video')), link).toBe('platform_unavailable');
@@ -354,8 +360,10 @@ describe('TeamsMeetingPlatform.list', () => {
     const series = listed.filter((m) => m.id.startsWith(`${IDS.SSSS}~`));
     // The first and the second occurrence have one recording and one transcript each; the third has two recordings in its window and is not offered.
     expect(series.map((m) => [m.id, m.title, m.hasVideo, m.hasTranscript])).toEqual([
-      [OCC.S2, 'Weekly sync (second time)', true, true],
-      [OCC.S1, 'Weekly sync (first time)', true, true],
+      [OCC.S2, 'Weekly sync (second time)', true, false],
+      [TR(OCC.S2), 'Weekly sync (second time)', false, true],
+      [OCC.S1, 'Weekly sync (first time)', true, false],
+      [TR(OCC.S1), 'Weekly sync (first time)', false, true],
     ]);
     expect(series.every((m) => m.call?.platform === 'microsoft_teams' && m.call.id === '19:meeting_ssss@thread.v2')).toBe(true);
     expect(listed.some((m) => m.id === OCC.S3)).toBe(false);
@@ -380,7 +388,7 @@ describe('TeamsMeetingPlatform.list', () => {
     // The Skype event is never looked up.
     expect(calls.some((c) => decodeURIComponent(c.url).includes('meeting_JJJJ'))).toBe(false);
     const rejected = teams((url) => (url.pathname === '/v1.0/me/onlineMeetings' && (url.searchParams.get('$filter') ?? '').includes('meeting_BBBB') ? { status: 400, json: { error: { code: 'BadRequest' } } } : graph()(url)));
-    expect((await rejected.adapter.list(CREDENTIAL, SINCE)).map((m) => m.id)).toEqual([OCC.A, OCC.S2, OCC.S1]);
+    expect((await rejected.adapter.list(CREDENTIAL, SINCE)).map((m) => m.id)).toEqual([OCC.A, TR(OCC.A), OCC.S2, TR(OCC.S2), OCC.S1, TR(OCC.S1)]);
   });
 
   it('stops the other look-ups when one fails', async () => {
@@ -479,6 +487,21 @@ describe('TeamsMeetingPlatform.transcript', () => {
     const content = calls.find((c) => new URL(c.url).pathname === contentPath);
     expect(content?.headers.accept).toBe('text/vtt');
     expect(content?.headers.authorization).toBe(`Bearer ${CREDENTIAL.accessToken}`);
+  });
+
+  it('reads the transcript of the transcript\'s own suggestion (the key with the suffix) as the same transcript, and refuses to describe a recording download for it', async () => {
+    const { adapter, calls } = teams(graph({ [contentPath]: { text: VTT, headers: { 'content-type': 'text/vtt' } } }));
+    const transcript = await adapter.transcript(CREDENTIAL, TR(OCC.A));
+    expect(transcript.entries[0]).toMatchObject({ speaker: 'Nguyễn Thị Lan' });
+    expect(calls.some((c) => new URL(c.url).pathname === contentPath)).toBe(true);
+    // The suggestion of the transcript is not a recording: no download is described for it, and nothing is asked of Graph for the refusal.
+    const before = calls.length;
+    expect(await codeOf(adapter.prepareDownload(CREDENTIAL, TR(OCC.A), 'video'))).toBe('platform_refused');
+    expect(calls.length).toBe(before);
+    // A key with the suffix twice, or after something else, is no key of ours.
+    for (const key of [`${TR(OCC.A)}~transcript`, `${OCC.A}~video`, `${IDS.AAAA}~transcript`]) {
+      expect(await codeOf(adapter.transcript(CREDENTIAL, key)), key).toBe('recording_gone');
+    }
   });
 
   it('keeps an injected instruction as plain data: tags are dropped, never run, and the text stays one line of the transcript', async () => {

@@ -4441,6 +4441,7 @@ export const vi = {
         openMatched: 'Mở cuộc họp',
         openMatchedOf: 'Mở cuộc họp cho {title}',
         failed: 'Không nhập được: {reason}',
+        pairTaken: 'Mục còn lại của cuộc họp này (video hoặc bản chép lời) đã được nhập hoặc đang được nhập.',
         viewerOnly: 'Chỉ thành viên mới nhập được bản ghi. Bạn đang ở quyền chỉ xem.',
       },
       errors: {
@@ -17107,6 +17108,7 @@ export const vi = {
       MEETING_PLATFORM_NOT_FOUND: 'Không tìm thấy bản ghi hoặc kết nối nền tảng họp này.',
       MEETING_PLATFORM_NO_AUDIO: 'Nền tảng chỉ có bản hình, chưa có tệp âm thanh để nhập.',
       MEETING_PLATFORM_OWNER_LEFT: 'Người đã kết nối nền tảng họp này không còn là thành viên của tổ chức.',
+      MEETING_PLATFORM_PAIR_TAKEN: 'Cuộc họp này đã được nhập (hoặc đang được nhập) từ mục còn lại của nó (video hoặc bản chép lời). Hãy mở cuộc họp trong danh sách của bạn.',
       MEETING_PLATFORM_PICK_REQUIRED: 'Hãy chọn tệp ghi hình này trong Google Drive trước khi nhập.',
       MEETING_PLATFORM_STATE: 'Bản ghi này đang ở trạng thái không nhập được lúc này (đã nhập, đang nhập hoặc đã bỏ qua).',
       MEETING_SETTINGS_INVALID: 'Video không thể được lưu lâu hơn âm thanh.',
