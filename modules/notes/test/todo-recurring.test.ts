@@ -3,9 +3,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   TODO_RESCHEDULE_BATCH_MAX,
+  isSpringForwardDate,
   nextTodoOccurrenceDate,
   normalizeTodoRecurrence,
+  recoverSpringForwardDueTime,
   shiftTodoSchedule,
+  todoAutoReminder,
   todoDueInstant,
   todoLocalTime,
   zTodoComplete,
@@ -128,5 +131,124 @@ describe('shiftTodoSchedule (#3557)', () => {
 
     const noRemind = shiftTodoSchedule({ dueOn: '2026-11-17', dueAt, timeZone: 'Asia/Ho_Chi_Minh', remindAt: null }, '2026-11-20');
     expect(noRemind.remindAt).toBeNull();
+    expect(noRemind.dueTime).toBe('10:00');
+  });
+
+  it('preserves intended wall-clock dueTime across spring-forward DST gaps in America/New_York and Europe/London', () => {
+    // America/New_York skips 02:00..02:59 on 2026-03-08.
+    const nyDay1Due = todoDueInstant('2026-03-07', '02:30', 'America/New_York');
+    const nyDay1Auto = todoAutoReminder({ dueOn: '2026-03-07', dueAt: nyDay1Due, timeZone: 'America/New_York' });
+    const nyDay2 = shiftTodoSchedule(
+      { dueOn: '2026-03-07', dueAt: nyDay1Due, timeZone: 'America/New_York', remindAt: nyDay1Auto },
+      '2026-03-08',
+    );
+    expect(todoLocalTime(nyDay2.dueAt!, 'America/New_York')).toBe('03:30');
+    expect(nyDay2.dueTime).toBe('02:30');
+
+    const nyDay3 = shiftTodoSchedule({ ...nyDay2, timeZone: 'America/New_York' }, '2026-03-09');
+    expect(nyDay3.dueTime).toBe('02:30');
+    expect(todoLocalTime(nyDay3.dueAt!, 'America/New_York')).toBe('02:30');
+    expect(nyDay3.dueAt!.toISOString()).toBe('2026-03-09T06:30:00.000Z');
+    expect(todoLocalTime(nyDay3.remindAt!, 'America/New_York')).toBe('02:00');
+    expect(nyDay3.remindAt!.toISOString()).toBe('2026-03-09T06:00:00.000Z');
+
+    // Custom reminder lead duration (15 min before due) also survives the spring-forward gap.
+    const nyCustomDay1 = new Date(nyDay1Due.getTime() - 15 * 60_000);
+    const nyCustomDay2 = shiftTodoSchedule(
+      { dueOn: '2026-03-07', dueAt: nyDay1Due, dueTime: '02:30', timeZone: 'America/New_York', remindAt: nyCustomDay1 },
+      '2026-03-08',
+    );
+    const nyCustomDay3 = shiftTodoSchedule({ ...nyCustomDay2, timeZone: 'America/New_York' }, '2026-03-09');
+    expect(todoLocalTime(nyCustomDay3.dueAt!, 'America/New_York')).toBe('02:30');
+    expect(todoLocalTime(nyCustomDay3.remindAt!, 'America/New_York')).toBe('02:15');
+    expect(nyCustomDay3.dueAt!.getTime() - nyCustomDay3.remindAt!.getTime()).toBe(15 * 60_000);
+
+    // Europe/London skips 01:00..01:59 on 2026-03-29.
+    const ukDay1Due = todoDueInstant('2026-03-28', '01:30', 'Europe/London');
+    const ukDay1Auto = todoAutoReminder({ dueOn: '2026-03-28', dueAt: ukDay1Due, timeZone: 'Europe/London' });
+    const ukDay2 = shiftTodoSchedule(
+      { dueOn: '2026-03-28', dueAt: ukDay1Due, timeZone: 'Europe/London', remindAt: ukDay1Auto },
+      '2026-03-29',
+    );
+    expect(todoLocalTime(ukDay2.dueAt!, 'Europe/London')).toBe('02:30');
+    expect(ukDay2.dueTime).toBe('01:30');
+    const ukDay3 = shiftTodoSchedule({ ...ukDay2, timeZone: 'Europe/London' }, '2026-03-30');
+    expect(todoLocalTime(ukDay3.dueAt!, 'Europe/London')).toBe('01:30');
+    expect(ukDay3.dueAt!.toISOString()).toBe('2026-03-30T00:30:00.000Z');
+    expect(todoLocalTime(ukDay3.remindAt!, 'Europe/London')).toBe('01:00');
+  });
+
+  it('preserves local wall-clock time across fall-back DST transitions and in Asia/Ho_Chi_Minh', () => {
+    // America/New_York repeats 01:00..01:59 on 2026-11-01; Europe/London repeats 01:00..01:59 on 2026-10-25.
+    const nyFall1 = todoDueInstant('2026-10-31', '01:30', 'America/New_York');
+    const nyFall2 = shiftTodoSchedule(
+      { dueOn: '2026-10-31', dueAt: nyFall1, timeZone: 'America/New_York', remindAt: todoAutoReminder({ dueOn: '2026-10-31', dueAt: nyFall1, timeZone: 'America/New_York' }) },
+      '2026-11-01',
+    );
+    const nyFall3 = shiftTodoSchedule({ ...nyFall2, timeZone: 'America/New_York' }, '2026-11-02');
+    expect(todoLocalTime(nyFall2.dueAt!, 'America/New_York')).toBe('01:30');
+    expect(todoLocalTime(nyFall3.dueAt!, 'America/New_York')).toBe('01:30');
+    expect(nyFall3.dueAt!.toISOString()).toBe('2026-11-02T06:30:00.000Z');
+
+    const ukFall1 = todoDueInstant('2026-10-24', '01:30', 'Europe/London');
+    const ukFall2 = shiftTodoSchedule({ dueOn: '2026-10-24', dueAt: ukFall1, timeZone: 'Europe/London', remindAt: null }, '2026-10-25');
+    const ukFall3 = shiftTodoSchedule({ ...ukFall2, timeZone: 'Europe/London' }, '2026-10-26');
+    expect(todoLocalTime(ukFall2.dueAt!, 'Europe/London')).toBe('01:30');
+    expect(todoLocalTime(ukFall3.dueAt!, 'Europe/London')).toBe('01:30');
+    expect(ukFall3.dueAt!.toISOString()).toBe('2026-10-26T01:30:00.000Z');
+
+    // Asia/Ho_Chi_Minh has no DST across March or November transition dates.
+    const vnDue = todoDueInstant('2026-03-07', '02:30', 'Asia/Ho_Chi_Minh');
+    const vnDay2 = shiftTodoSchedule(
+      { dueOn: '2026-03-07', dueAt: vnDue, timeZone: 'Asia/Ho_Chi_Minh', remindAt: todoAutoReminder({ dueOn: '2026-03-07', dueAt: vnDue, timeZone: 'Asia/Ho_Chi_Minh' }) },
+      '2026-03-08',
+    );
+    const vnDay3 = shiftTodoSchedule({ ...vnDay2, timeZone: 'Asia/Ho_Chi_Minh' }, '2026-03-09');
+    expect(todoLocalTime(vnDay2.dueAt!, 'Asia/Ho_Chi_Minh')).toBe('02:30');
+    expect(todoLocalTime(vnDay3.dueAt!, 'Asia/Ho_Chi_Minh')).toBe('02:30');
+    expect(todoLocalTime(vnDay3.remindAt!, 'Asia/Ho_Chi_Minh')).toBe('02:00');
+  });
+
+  it('detects spring-forward transition days and recovers intended pre-gap dueTime safely', () => {
+    expect(isSpringForwardDate('2026-03-08', 'America/New_York')).toBe(true);
+    expect(isSpringForwardDate('2026-03-07', 'America/New_York')).toBe(false);
+    expect(isSpringForwardDate('2026-03-09', 'America/New_York')).toBe(false);
+    expect(isSpringForwardDate('2026-11-01', 'America/New_York')).toBe(false);
+    expect(isSpringForwardDate('2026-03-29', 'Europe/London')).toBe(true);
+    expect(isSpringForwardDate('2026-03-08', 'America/Havana')).toBe(true);
+    expect(isSpringForwardDate('2026-03-08', 'Asia/Ho_Chi_Minh')).toBe(false);
+
+    const gapDueAt = todoDueInstant('2026-03-08', '02:30', 'America/New_York');
+    expect(
+      recoverSpringForwardDueTime(
+        { dueOn: '2026-03-08', dueAt: gapDueAt, timeZone: 'America/New_York' },
+        [{ dueOn: '2026-03-07', dueAt: todoDueInstant('2026-03-07', '02:30', 'America/New_York'), timeZone: 'America/New_York' }],
+      ),
+    ).toBe('02:30');
+
+    // Does not revert when user explicitly set 04:00 on the gap day or when the series was already 03:30.
+    expect(
+      recoverSpringForwardDueTime(
+        { dueOn: '2026-03-08', dueAt: todoDueInstant('2026-03-08', '04:00', 'America/New_York'), timeZone: 'America/New_York' },
+        [{ dueOn: '2026-03-07', dueAt: todoDueInstant('2026-03-07', '02:30', 'America/New_York'), timeZone: 'America/New_York' }],
+      ),
+    ).toBeNull();
+    expect(
+      recoverSpringForwardDueTime(
+        { dueOn: '2026-03-08', dueAt: gapDueAt, timeZone: 'America/New_York' },
+        [
+          { dueOn: '2026-03-07', dueAt: todoDueInstant('2026-03-07', '03:30', 'America/New_York'), timeZone: 'America/New_York' },
+          { dueOn: '2026-03-06', dueAt: todoDueInstant('2026-03-06', '02:30', 'America/New_York'), timeZone: 'America/New_York' },
+        ],
+      ),
+    ).toBeNull();
+
+    // Unsupported time zones fall back safely to DEFAULT_TIME_ZONE (Asia/Ho_Chi_Minh) without throwing.
+    const fallbackShift = shiftTodoSchedule(
+      { dueOn: '2026-03-07', dueAt: todoDueInstant('2026-03-07', '09:00', 'Asia/Ho_Chi_Minh'), timeZone: 'Mars/Olympus', remindAt: null },
+      '2026-03-08',
+    );
+    expect(fallbackShift.dueTime).toBe('09:00');
+    expect(todoLocalTime(fallbackShift.dueAt!, 'Asia/Ho_Chi_Minh')).toBe('09:00');
   });
 });
