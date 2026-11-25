@@ -132,6 +132,7 @@ const PENDING_TABLES = new Set<string>([
   'crove_kernel.member_vy_result',
   'crove_meetings.live_line',
   'crove_meetings.meeting_link',
+  'crove_meetings.minutes_link',
   'crove_meetings.minutes_version',
   'crove_notes.link',
   'crove_notes.note',
@@ -235,6 +236,7 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   ['crove_meetings.meeting_reader', () => 'false'], // As above.
   ['crove_meetings.meeting_result', () => 'false'], // As above (summaries and decisions, ADR-0047).
   ['crove_meetings.meeting_video', () => 'false'], // As above.
+  ['crove_meetings.minutes_link', () => 'false'], // The recorder's own links to the published minutes, read by the recorder (and owners and admins), users (#4822); an agent context reads none.
   ['crove_meetings.minutes_version', () => 'false'], // The recorder's published second-language version of the minutes, read by the meeting's readers, users (#4777).
   ['crove_meetings.morning_notice', () => 'false'], // A member's own opt-in to the morning notice of the day's meetings, read by that member, a user (#3955).
   ['crove_meetings.transcript_segment', () => 'false'], // As above (transcript segments, ADR-0047).
@@ -3551,6 +3553,16 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       return {
         setup: [{ table: 'crove_meetings.meeting', values: meeting }],
         row: { org_id: o.id, id: randomUUID(), meeting_id: meeting.id, stage: 'draft', position: 1, title: 'RLS matrix chapter', start_seconds: 0, tainted: 'true' },
+      };
+    },
+  },
+  // #4822 (step 0): a read-only link to the published minutes of a meeting for people outside the org. The token is stored only as a hash; the row cascades with its meeting.
+  'crove_meetings.minutes_link': {
+    make: (o) => {
+      const meeting = meetingsMeetingRow(o);
+      return {
+        setup: [{ table: 'crove_meetings.meeting', values: meeting }],
+        row: { org_id: o.id, id: randomUUID(), meeting_id: meeting.id, token_sha256: hex64(), expires_at: new Date(Date.now() + 86_400_000).toISOString(), created_by: o.owner },
       };
     },
   },
