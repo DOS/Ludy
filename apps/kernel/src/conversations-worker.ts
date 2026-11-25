@@ -365,6 +365,16 @@ async function withBotWebhookLock<T>(workerDb: Db, lockKey: string, fn: (renew: 
   return res.value;
 }
 
+// Checks whether Telegram's registered webhook URL ends on one of this connection's own hook paths, regardless of PUBLIC_URL origin (#3150).
+function matchesAnyHookPath(liveUrl: string, hooks: readonly (string | undefined)[]): boolean {
+  try {
+    const path = new URL(liveUrl).pathname;
+    return hooks.some((hook) => Boolean(hook) && path === `/api/channels/telegram/webhook/${hook}`);
+  } catch {
+    return false;
+  }
+}
+
 // When one org registers Telegram's webhook for a bot token, Telegram replaces any webhook another org had set for the
 // same bot. Mark those other orgs' connections off and notify their admins via SYSTEM without revealing which org took it (#3150 item 2).
 async function displaceOtherTelegramOrgs(
@@ -374,28 +384,35 @@ async function displaceOtherTelegramOrgs(
   botId: string | null | undefined,
   takenAt: string | null,
   renewLock?: () => Promise<boolean>,
-): Promise<boolean> {
-  if (!workerDb || !botId) return false;
+): Promise<{ ok: boolean; newerOnChangedAt: string | null }> {
+  if (!workerDb || !botId) return { ok: false, newerOnChangedAt: null };
   const { rows } = await sql<{ org_id: string; connection_id: string }>`
     SELECT org_id, connection_id FROM ludy_kernel.telegram_chat_other_orgs_with_bot(${botId}, ${excludeOrgId}::uuid)`.execute(workerDb);
   let ok = true;
+  let newerOnChangedAt: string | null = null;
   for (const [index, other] of rows.entries()) {
     if (renewLock && index > 0 && index % 5 === 0) {
       const held = await renewLock().catch(() => false);
-      if (!held) return false;
+      if (!held) return { ok: false, newerOnChangedAt };
     }
     try {
-      await runtime.execute(
+      const res = await runtime.execute<{ displaced: boolean; conflictState?: 'on' | 'enabling' | 'disabling'; conflictChangedAt?: string }>(
         'kernel.channel.telegram_chat_displaced',
         { connectionId: other.connection_id, botId, ...(takenAt ? { takenAt } : {}) },
         { actor: SYSTEM, orgId: other.org_id },
       );
+      if (!res.displaced && res.conflictState) {
+        ok = false;
+        if (res.conflictState === 'on' && res.conflictChangedAt && (!newerOnChangedAt || Date.parse(res.conflictChangedAt) > Date.parse(newerOnChangedAt))) {
+          newerOnChangedAt = res.conflictChangedAt;
+        }
+      }
     } catch (error) {
       ok = false;
       console.error(`[conversations] displace ${other.connection_id.slice(0, 8)}`, error instanceof Error ? error.name : typeof error);
     }
   }
-  return ok;
+  return { ok, newerOnChangedAt };
 }
 
 async function displaceAndAck(
@@ -406,22 +423,24 @@ async function displaceAndAck(
   botId: string | null | undefined,
   checkedAt: string | null,
   renewLock?: () => Promise<boolean>,
-): Promise<void> {
-  if (!workerDb || !botId) return;
-  const done = await displaceOtherTelegramOrgs(runtime, workerDb, orgId, botId, checkedAt, renewLock).catch((error: unknown) => {
+): Promise<{ acked: boolean; newerOnChangedAt: string | null }> {
+  if (!workerDb || !botId) return { acked: false, newerOnChangedAt: null };
+  const scan = await displaceOtherTelegramOrgs(runtime, workerDb, orgId, botId, checkedAt, renewLock).catch((error: unknown) => {
     console.error(`[conversations] displace scan ${connectionId.slice(0, 8)}`, error instanceof Error ? error.name : typeof error);
-    return false;
+    return { ok: false, newerOnChangedAt: null };
   });
-  if (!done) return;
-  await runtime
-    .execute(
+  if (!scan.ok) return { acked: false, newerOnChangedAt: scan.newerOnChangedAt };
+  try {
+    await runtime.execute(
       'kernel.channel.telegram_chat_displaced_ack',
       { connectionId, botId, ...(checkedAt ? { checkedAt } : {}) },
       { actor: SYSTEM, orgId },
-    )
-    .catch((error: unknown) => {
-      console.error(`[conversations] displace ack ${connectionId.slice(0, 8)}`, error instanceof Error ? error.name : typeof error);
-    });
+    );
+    return { acked: true, newerOnChangedAt: null };
+  } catch (error) {
+    console.error(`[conversations] displace ack ${connectionId.slice(0, 8)}`, error instanceof Error ? error.name : typeof error);
+    return { acked: false, newerOnChangedAt: null };
+  }
 }
 
 const DISPLACE_SWEEP_MS = 10_000;
@@ -445,7 +464,20 @@ export async function reconcileTelegramDisplacements(deps: { workerDb: Db; runti
         { actor: SYSTEM, orgId: row.org_id },
       );
       if (work.action !== 'call') return;
-      await displaceAndAck(deps.runtime, deps.workerDb, row.org_id, row.connection_id, row.chat_bot_id, row.chat_changed_at?.toISOString() ?? null, renew);
+      const takenAt = work.changedAt ?? row.chat_changed_at?.toISOString() ?? null;
+      const res = await displaceAndAck(deps.runtime, deps.workerDb, row.org_id, row.connection_id, row.chat_bot_id, takenAt, renew);
+      // If another org legitimately went 'on' AFTER this connection's latest change, displace this stale connection instead of leaving both 'on'.
+      if (!res.acked && res.newerOnChangedAt) {
+        await deps.runtime
+          .execute(
+            'kernel.channel.telegram_chat_displaced',
+            { connectionId: row.connection_id, botId: row.chat_bot_id, takenAt: res.newerOnChangedAt },
+            { actor: SYSTEM, orgId: row.org_id },
+          )
+          .catch((error: unknown) => {
+            console.error(`[conversations] self-displace ${row.connection_id.slice(0, 8)}`, error instanceof Error ? error.name : typeof error);
+          });
+      }
       checked += 1;
     }).catch((error: unknown) => {
       console.error(`[conversations] reconcile displace ${row.connection_id.slice(0, 8)}`, error instanceof Error ? error.name : typeof error);
@@ -520,7 +552,8 @@ export async function runTelegramChatHook(deps: ChatHookDeps, job: ConversationC
                   const res = await failed(work.hookFp, info.code);
                   return { ...res, workFp: work.hookFp };
                 }
-                if (info.url === '' || (!info.matchesHook && info.matchesHookPath !== true)) {
+                const ownsLiveUrl = info.matchesHook === true || info.matchesHookPath === true || (work.alternateHook ? matchesAnyHookPath(info.url, [work.alternateHook]) : false);
+                if (info.url === '' || !ownsLiveUrl) {
                   const recorded = await record(work.hookFp, 'done');
                   return { text: 'off', again: recorded.hookChanged, workFp: work.hookFp };
                 }

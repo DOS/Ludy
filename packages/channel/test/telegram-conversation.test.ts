@@ -315,6 +315,7 @@ describe('turning the webhook on and off', () => {
     const { fetchImpl } = bot([
       ok({ url: `https://ludy.example.com/api/channels/telegram/webhook/${hook}` }),
       ok({ url: `https://old.example.com/api/channels/telegram/webhook/${hook}` }),
+      ok({ url: `https://old.example.com/api/channels/telegram/webhook/${hook}` }),
       ok({ url: '' }),
       ok({ something: 'bad' }),
       fail(502, `Bad Gateway ${TOKEN}`),
@@ -329,6 +330,12 @@ describe('turning the webhook on and off', () => {
       matchesHookPath: true,
     });
     expect(await adapter.chatHookInfo({ secret: SECRET, hook, baseUrl: 'https://ludy.example.com' })).toEqual({
+      kind: 'ok',
+      url: `https://old.example.com/api/channels/telegram/webhook/${hook}`,
+      matchesHook: false,
+      matchesHookPath: true,
+    });
+    expect(await adapter.chatHookInfo({ secret: SECRET, hook, baseUrl: '' })).toEqual({
       kind: 'ok',
       url: `https://old.example.com/api/channels/telegram/webhook/${hook}`,
       matchesHook: false,

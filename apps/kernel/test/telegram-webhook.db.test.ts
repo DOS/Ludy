@@ -787,6 +787,13 @@ suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
     );
     expect(staleDisplace.displaced).toBe(false);
     expect((await rows<{ chat_state: string }>('SELECT chat_state FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [first.orgId, first.connectionId]))[0]?.chat_state).toBe('on');
+
+    // Re-enabling and displacing the same connection a second time notifies admins again instead of deduping (#3150).
+    await api.execute('kernel.channel.telegram_chat_set', { connectionId: second.connectionId, on: true }, asOwner(second));
+    const t3 = telegram();
+    const adapter3 = new TelegramPublisher(undefined, new TelegramConversations({ fetch: t3.fetchImpl })).conversations;
+    expect(await runTelegramChatHook({ runtime: worker, broker: vault, adapter: () => adapter3, baseUrl: APP_URL, workerDb }, { orgId: second.orgId, connectionId: second.connectionId, action: 'chat', on: true })).toBe('on');
+    expect((await rows<{ id: string }>("SELECT id FROM ludy_kernel.notification WHERE org_id = $1 AND kind = 'kernel.telegram_chat_displaced'", [first.orgId])).length).toBe(4);
   });
 
   it('caps Telegram inbound notices per org at 1,000 so one org flood cannot starve another (#3150 item 3)', async () => {
@@ -1034,6 +1041,23 @@ suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
     const tStalePeer = telegram();
     expect(await runTelegramChatHook(hookDeps(tStalePeer.fetchImpl), { orgId: winner.orgId, connectionId: winner.connectionId, action: 'chat', on: false })).toBe('off');
     expect(tStalePeer.calls.map((c) => c.method)).toEqual(['getWebhookInfo', 'deleteWebhook']);
+    expect(liveUrls.get(raceToken)).toBeUndefined();
+    expect((await rows('SELECT chat_state FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [winner.orgId, winner.connectionId]))[0]).toEqual({ chat_state: 'off' });
+
+    // Reconcile recovery when another org legitimately holds 'on' with a newer timestamp displaces the older stale connection instead of leaving both 'on' (#3150).
+    await rows("UPDATE ludy_kernel.channel_connection SET chat_state = 'on', chat_hook = $3, chat_hook_next = NULL, chat_bot_id = '666666667', chat_displace_pending = true, chat_error = NULL, chat_changed_at = now() - interval '2 minutes' WHERE org_id = $1 AND id = $2", [winner.orgId, winner.connectionId, winnerHookRow?.chat_hook]);
+    await rows("UPDATE ludy_kernel.channel_connection SET chat_state = 'on', chat_hook = $3, chat_hook_next = NULL, chat_bot_id = '666666667', chat_displace_pending = false, chat_error = NULL, chat_changed_at = now() WHERE org_id = $1 AND id = $2", [loser.orgId, loser.connectionId, loserHook]);
+    expect(await reconcileTelegramDisplacements({ workerDb, runtime: worker, force: true })).toBeGreaterThanOrEqual(1);
+    expect((await rows('SELECT chat_state, chat_error FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [winner.orgId, winner.connectionId]))[0]).toEqual({ chat_state: 'off', chat_error: 'BOT_TAKEN_OVER' });
+    expect((await rows('SELECT chat_state, chat_error FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [loser.orgId, loser.connectionId]))[0]).toEqual({ chat_state: 'on', chat_error: null });
+
+    // Disabling mid-rotation (chat_hook_next set while peer holds 'on') deletes Telegram's live URL when it points to chat_hook_next (#3150).
+    const altNextHook = 'winner_next_hook___________________________';
+    liveUrls.set(raceToken, `${APP_URL}${BASE}/${altNextHook}`);
+    await rows("UPDATE ludy_kernel.channel_connection SET chat_state = 'disabling', chat_hook = $3, chat_hook_next = $4, chat_bot_id = '666666667', chat_error = NULL WHERE org_id = $1 AND id = $2", [winner.orgId, winner.connectionId, winnerHookRow?.chat_hook, altNextHook]);
+    const tAltDisable = telegram();
+    expect(await runTelegramChatHook(hookDeps(tAltDisable.fetchImpl), { orgId: winner.orgId, connectionId: winner.connectionId, action: 'chat', on: false })).toBe('off');
+    expect(tAltDisable.calls.map((c) => c.method)).toEqual(['getWebhookInfo', 'deleteWebhook']);
     expect(liveUrls.get(raceToken)).toBeUndefined();
     expect((await rows('SELECT chat_state FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [winner.orgId, winner.connectionId]))[0]).toEqual({ chat_state: 'off' });
   });

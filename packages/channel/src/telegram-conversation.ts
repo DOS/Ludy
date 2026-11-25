@@ -452,8 +452,9 @@ export class TelegramConversations implements ConversationAdapter {
       const matchesHook = input.hook !== undefined && input.baseUrl !== undefined ? info.url === telegramWebhookUrl(input.baseUrl, input.hook) : undefined;
       let matchesHookPath: boolean | undefined;
       if (input.hook !== undefined) {
+        const safeBase = input.baseUrl && /^https?:\/\//i.test(input.baseUrl) ? input.baseUrl : 'https://placeholder.invalid';
         try {
-          matchesHookPath = info.url !== '' && new URL(info.url).pathname === new URL(telegramWebhookUrl(input.baseUrl ?? 'https://placeholder.invalid', input.hook)).pathname;
+          matchesHookPath = info.url !== '' && new URL(info.url).pathname === new URL(telegramWebhookUrl(safeBase, input.hook)).pathname;
         } catch {
           matchesHookPath = false;
         }

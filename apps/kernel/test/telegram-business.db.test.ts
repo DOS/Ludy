@@ -576,6 +576,36 @@ suite('Telegram Business mode on PostgreSQL (#3191)', () => {
       ),
     ).toEqual({ applied: true });
     expect((await accountsOf(b)).map((x) => x.id)).toContain('x12');
+    // After >= 6 days idle (reset update_id window), a dismissed account reconnecting with a real webhook update_id and the same date succeeds (#3150),
+    // while an updateId-less readback on a dismissed account with the same date remains blocked.
+    const x12RefAfterReset = ((await api.query<Array<{ id: string; chatBusiness: Array<{ ref: string }> }>>('kernel.channel.list', {}, asOwner(b))).find((c) => c.id === b.connectionId)?.chatBusiness ?? []).at(-1)?.ref as string;
+    expect(await api.execute('kernel.channel.telegram_business_allow', { connectionId: b.connectionId, ref: x12RefAfterReset, allow: false, dismiss: true }, asOwner(b))).toEqual({ approved: false });
+    const [bOrder] = await rows<{ chat_business_order: Record<string, Record<string, unknown>> }>('SELECT chat_business_order FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [b.orgId, b.connectionId]);
+    const agedDismissOrder = Object.fromEntries(
+      Object.entries(bOrder?.chat_business_order ?? {}).map(([k, v]) => [k, { ...v, seenAt: nowSec() - 7 * 86_400, removedAt: nowSec() - 7 * 86_400 }]),
+    );
+    await rows('UPDATE ludy_kernel.channel_connection SET chat_business_order = $1 WHERE org_id = $2 AND id = $3', [JSON.stringify(agedDismissOrder), b.orgId, b.connectionId]);
+    expect(
+      await worker.execute<{ applied: boolean }>(
+        'kernel.channel.telegram_business_record',
+        { connectionId: b.connectionId, account: { id: 'x12', userId: '12', name: null, username: null, date: 200, updateId: 7, canReply: true, enabled: true } },
+        { actor: { type: 'system', component: 'test' }, orgId: b.orgId },
+      ),
+    ).toEqual({ applied: true });
+    // Dismiss x12 again to free a slot, add readback-only x13 (no updateId), dismiss it, and confirm same-date readback stays blocked while a sequenced webhook update works.
+    const x12RefClean = ((await api.query<Array<{ id: string; chatBusiness: Array<{ ref: string }> }>>('kernel.channel.list', {}, asOwner(b))).find((c) => c.id === b.connectionId)?.chatBusiness ?? []).at(-1)?.ref as string;
+    expect(await api.execute('kernel.channel.telegram_business_allow', { connectionId: b.connectionId, ref: x12RefClean, allow: false, dismiss: true }, asOwner(b))).toEqual({ approved: false });
+    expect((await record('x13', true, '13', 300)).applied).toBe(true);
+    const x13Ref = ((await api.query<Array<{ id: string; chatBusiness: Array<{ ref: string }> }>>('kernel.channel.list', {}, asOwner(b))).find((c) => c.id === b.connectionId)?.chatBusiness ?? []).at(-1)?.ref as string;
+    expect(await api.execute('kernel.channel.telegram_business_allow', { connectionId: b.connectionId, ref: x13Ref, allow: false, dismiss: true }, asOwner(b))).toEqual({ approved: false });
+    expect((await record('x13', true, '13', 300)).applied).toBe(false);
+    expect(
+      await worker.execute<{ applied: boolean }>(
+        'kernel.channel.telegram_business_record',
+        { connectionId: b.connectionId, account: { id: 'x13', userId: '13', name: null, username: null, date: 300, updateId: 100, canReply: true, enabled: true } },
+        { actor: { type: 'system', component: 'test' }, orgId: b.orgId },
+      ),
+    ).toEqual({ applied: true });
     // Disconnecting forgets the accounts: chats turned off first, as for the hook.
     await api.execute('kernel.channel.telegram_chat_set', { connectionId: b.connectionId, on: false }, asOwner(b));
     expect(await runTelegramChatHook({ runtime: worker, broker: vault, adapter: (p: string) => (p === 'telegram' ? adapter : undefined), baseUrl: APP_URL }, { orgId: b.orgId, connectionId: b.connectionId, action: 'chat', on: false })).toBe('off');

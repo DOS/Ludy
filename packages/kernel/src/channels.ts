@@ -9,7 +9,7 @@
 //   stores. Connecting an account that is already connected replaces its tokens on the same connection row.
 // - Only the worker reads a credential back (kernel.channel.credential, system actor, credential_get granted to
 //   ludy_worker alone), and only while the member who connected the account is still in the org.
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
 import { z } from 'zod';
 import { isAdProviderId, isAdWriteProviderId, zId } from '@ludy/kernel-contract';
@@ -631,8 +631,12 @@ export interface TelegramChatWork {
   action: 'call' | 'none';
   // The hook to set (an enable), for the worker to build the webhook address and its secret from. In memory only: never logged or stored.
   hook?: string;
+  // Pending next hook when disabling mid-rotation (`chat_hook` and `chat_hook_next` both set), so getWebhookInfo matches either hook of this connection.
+  alternateHook?: string;
   // Its fingerprint, which the worker hands back to say which hook it set.
   hookFp?: string;
+  // Latest persisted chat_changed_at read alongside rekey/reconcile work under lock.
+  changedAt?: string;
   // Expected bot id recorded on the connection when rekeying, used to skip if the channel reconnected to another bot while acquiring the lock.
   expectedBotId?: string;
   // The bots the org's other connections already answer chats with: the same bot cannot have two webhooks.
@@ -649,15 +653,16 @@ export const channelTelegramChatWork = defineQuery({
   handler: async (ctx, input): Promise<TelegramChatWork> => {
     const row = await ctx.trx
       .selectFrom('ludy_kernel.channel_connection')
-      .select(['provider', 'status', 'chat_state', 'chat_hook', 'chat_hook_next', 'chat_bot_id'])
+      .select(['provider', 'status', 'chat_state', 'chat_hook', 'chat_hook_next', 'chat_bot_id', 'chat_changed_at'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
       .executeTakeFirst();
     if (!row || row.provider !== 'telegram' || row.status !== 'active') return { action: 'none' };
     if (input.action === 'disable') {
-      return row.chat_state === 'disabling'
-        ? { action: 'call', ...(row.chat_hook ? { hook: row.chat_hook, hookFp: hookFp(row.chat_hook) } : {}) }
-        : { action: 'none' };
+      if (row.chat_state !== 'disabling') return { action: 'none' };
+      const hook = row.chat_hook ?? row.chat_hook_next;
+      const alternateHook = row.chat_hook && row.chat_hook_next && row.chat_hook !== row.chat_hook_next ? row.chat_hook_next : undefined;
+      return { action: 'call', ...(hook ? { hook, hookFp: hookFp(hook) } : {}), ...(alternateHook ? { alternateHook } : {}) };
     }
     const hook = input.rekey
       ? row.chat_state === 'on' && row.chat_hook
@@ -683,6 +688,7 @@ export const channelTelegramChatWork = defineQuery({
       action: 'call',
       hook,
       hookFp: hookFp(hook),
+      ...(input.rekey && row.chat_changed_at ? { changedAt: row.chat_changed_at.toISOString() } : {}),
       ...(input.rekey && row.chat_bot_id ? { expectedBotId: row.chat_bot_id } : {}),
       takenBotIds: others.flatMap((o) => (o.chat_bot_id ? [o.chat_bot_id] : [])),
     };
@@ -816,7 +822,7 @@ export const channelTelegramChatDisplaced = defineCommand({
   sideEffect: 'internal',
   access: 'system',
   target: (input) => ({ type: 'kernel.channel_connection', id: input.connectionId }),
-  handler: async (ctx, input): Promise<{ displaced: boolean }> => {
+  handler: async (ctx, input): Promise<{ displaced: boolean; conflictState?: 'on' | 'enabling' | 'disabling'; conflictChangedAt?: string }> => {
     if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ tiến trình hệ thống mới thực hiện được việc này');
     const row = await ctx.trx
       .selectFrom('ludy_kernel.channel_connection')
@@ -829,7 +835,11 @@ export const channelTelegramChatDisplaced = defineCommand({
       return { displaced: false };
     }
     if (input.takenAt && row.chat_changed_at && row.chat_changed_at.getTime() > Date.parse(input.takenAt)) {
-      return { displaced: false };
+      return {
+        displaced: false,
+        conflictState: row.chat_state as 'on' | 'enabling' | 'disabling',
+        conflictChangedAt: row.chat_changed_at.toISOString(),
+      };
     }
     const disabling = row.chat_state === 'disabling';
     await ctx.trx
@@ -843,7 +853,8 @@ export const channelTelegramChatDisplaced = defineCommand({
       await notifyMembers(ctx, {
         kind: TELEGRAM_CHAT_DISPLACED,
         users: await ownersAndAdmins(ctx),
-        key: `telegram_chat_displaced:${input.connectionId}:${(row.chat_changed_at ?? ctx.now).toISOString()}`,
+        // Each displacement notifies admins even if re-enabled and displaced again inside the same millisecond (#3150).
+        key: `telegram_chat_displaced:${input.connectionId}:${ctx.now.toISOString()}:${randomUUID()}`,
         subject: { type: 'kernel.channel_connection', id: input.connectionId },
         detail: {},
         required: true,
@@ -986,7 +997,7 @@ function isStaleBusinessUpdate(
   }
   if (incomingUpdateId === undefined && prev.updateId !== undefined && opts.sameId) return true;
   if ((prev.updateId === undefined || !opts.sameId || !updateIdSeqActive) && prev.date !== undefined && incomingDate !== undefined) {
-    return opts.previouslyRemoved ? incomingDate <= prev.date : incomingDate < prev.date;
+    return opts.previouslyRemoved && incomingUpdateId === undefined ? incomingDate <= prev.date : incomingDate < prev.date;
   }
   return false;
 }
