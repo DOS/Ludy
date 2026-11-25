@@ -4373,6 +4373,7 @@ export const vi = {
         disconnect: 'Ngắt kết nối',
         disconnectOf: 'Ngắt kết nối {name}',
         disconnectAsk: 'Ngắt kết nối {name}? Ludy sẽ quên quyền truy cập và xóa danh sách gợi ý của kết nối này. Các cuộc họp đã nhập vào Ludy vẫn còn; bản gốc trên nền tảng không bị động đến.',
+        disconnectTeams: 'Microsoft không cho ứng dụng tự hủy quyền của mình, nên Ludy không thể chấm dứt quyền này ở phía Microsoft. Để chấm dứt, bạn hãy gỡ Ludy trong tài khoản Microsoft ("My Apps", myapps.microsoft.com), hoặc nhờ quản trị viên Microsoft 365 nếu họ đã cho phép Ludy cho cả tổ chức. Trước khi gỡ, Microsoft vẫn giữ quyền này, và mã đăng nhập đã cấp có thể còn dùng được đến 90 ngày.',
         disconnectYes: 'Ngắt kết nối',
         disconnectNo: 'Giữ lại',
         connectSandbox: 'Kết nối bản thử',

@@ -4376,6 +4376,7 @@ export const en = {
         disconnect: 'Disconnect',
         disconnectOf: 'Disconnect {name}',
         disconnectAsk: 'Disconnect {name}? Ludy will forget the access and delete the list of suggestions from this connection. Meetings already imported into Ludy stay; the original on the platform is not touched.',
+        disconnectTeams: 'Microsoft gives an app no way to cancel its own permission, so Ludy cannot end it at Microsoft. To end it, remove Ludy in your Microsoft account ("My Apps", myapps.microsoft.com), or ask your Microsoft 365 administrator if they allowed Ludy for your whole organization. Until then Microsoft keeps the permission, and a sign-in token already issued can stay usable for up to 90 days.',
         disconnectYes: 'Disconnect',
         disconnectNo: 'Keep it',
         connectSandbox: 'Connect the test platform',
