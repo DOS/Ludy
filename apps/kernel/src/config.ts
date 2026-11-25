@@ -2,6 +2,7 @@ import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { EXTRACT_TIMING } from '@ludy/extract-contract';
 import { misaBlockers } from '@ludy/einvoice';
+import { SES_CONFIGURATION_SET_PATTERN, SES_REGION_PATTERN, SES_SNS_TOPIC_ARN_PATTERN } from '@ludy/mail';
 import { MODULE_IDS, TRANSLATION_FLAGGED_TARGETS, zExtensionId, type ModuleId, type TranslationFlaggedTarget } from '@ludy/kernel-contract';
 import type { UsageLimits } from '@ludy/kernel';
 import { parseAllowedEmails } from './auth-access.ts';
@@ -712,12 +713,20 @@ const schema = z.object({
   SMTP_USER: optional,
   SMTP_PASS: optional,
   SMTP_FROM: optional,
-  // The provider of Ludy's own mails (#539, Email plan §3.9): smtp (the settings above; off without SMTP_HOST) or
-  // resend (RESEND_API_KEY; SMTP_FROM, on a domain verified at Resend, stays the sender). RESEND_WEBHOOK_SECRET
-  // (whsec_...) checks the signature of Resend's delivery webhooks.
-  MAIL_PROVIDER: z.preprocess((v) => (v === '' ? undefined : v), z.enum(['smtp', 'resend']).default('smtp')),
+  // The provider of Ludy's own mails (#539, #4960, Email plan §3.9): smtp (the settings above; off without SMTP_HOST),
+  // resend (RESEND_API_KEY; SMTP_FROM, on a domain verified at Resend, stays the sender; RESEND_WEBHOOK_SECRET whsec_...),
+  // or ses (Amazon SES v2 HTTP API with SES_REGION, SES_ACCESS_KEY_ID, SES_SECRET_ACCESS_KEY, optional SES_CONFIGURATION_SET
+  // and optional SES_SNS_TOPIC_ARN for SNS delivery event webhooks).
+  MAIL_PROVIDER: z.preprocess((v) => (v === '' ? undefined : v), z.enum(['smtp', 'resend', 'ses']).default('smtp')),
   RESEND_API_KEY: optional,
   RESEND_WEBHOOK_SECRET: optional.pipe(z.string().regex(/^whsec_[A-Za-z0-9+/=]{24,}$/, 'RESEND_WEBHOOK_SECRET is the whsec_... signing secret of the webhook').optional()),
+  SES_REGION: optional.pipe(z.string().regex(SES_REGION_PATTERN, 'SES_REGION is an AWS region such as ap-southeast-1').optional()),
+  SES_ACCESS_KEY_ID: optional,
+  SES_SECRET_ACCESS_KEY: optional,
+  SES_CONFIGURATION_SET: optional.pipe(z.string().regex(SES_CONFIGURATION_SET_PATTERN, 'SES_CONFIGURATION_SET is the configuration set name (letters, digits, - and _)').optional()),
+  SES_SNS_TOPIC_ARN: optional.pipe(
+    z.string().regex(SES_SNS_TOPIC_ARN_PATTERN, 'SES_SNS_TOPIC_ARN is the ARN of the Amazon SNS topic (arn:aws:sns:<region>:<account>:<topic>)').optional(),
+  ),
   // The build this image was made from (#892): the git SHA the release workflow passes as the image's LUDY_BUILD build
   // argument. GET /version reports it, so the deploy's smoke test can tell the new image from the old one. Unset (a
   // local build): "dev".
@@ -939,6 +948,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (config.SMTP_HOST && !config.SMTP_FROM) throw new Error('SMTP_HOST needs SMTP_FROM, the sender address of Ludy mails');
   if (config.MAIL_PROVIDER === 'resend' && (!config.RESEND_API_KEY || !config.SMTP_FROM)) {
     throw new Error('MAIL_PROVIDER=resend needs RESEND_API_KEY and SMTP_FROM, the sender address on a domain verified at Resend');
+  }
+  if (config.MAIL_PROVIDER === 'ses') {
+    if (!config.SES_REGION || !config.SES_ACCESS_KEY_ID || !config.SES_SECRET_ACCESS_KEY || !config.SMTP_FROM) {
+      throw new Error('MAIL_PROVIDER=ses needs SES_REGION, SES_ACCESS_KEY_ID, SES_SECRET_ACCESS_KEY and SMTP_FROM, the sender address on a domain verified at Amazon SES');
+    }
+    if (config.SES_SNS_TOPIC_ARN) {
+      const snsRegion = config.SES_SNS_TOPIC_ARN.split(':')[3];
+      if (snsRegion && snsRegion !== config.SES_REGION) {
+        throw new Error(`SES_SNS_TOPIC_ARN region (${snsRegion}) must match SES_REGION (${config.SES_REGION})`);
+      }
+    }
   }
   const presigned = config.STORAGE === 's3' && config.S3_PRESIGNED_URLS === 'true';
   // Cloudflare R2 has no POST policy uploads: with presigned URLs on, every browser upload would fail at the bucket.

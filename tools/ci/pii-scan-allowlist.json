@@ -136,5 +136,17 @@
       "apps/web/src/content/site.ts"
     ],
     "reason": "the project's own public contact address on its domain, given by the owner on 2026-11-13 for the privacy page (ludy.so/privacy); not a person's address"
+  },
+  {
+    "kind": "email",
+    "values": [
+      "success@simulator.amazonses.com",
+      "bounce@simulator.amazonses.com",
+      "complaint@simulator.amazonses.com"
+    ],
+    "paths": [
+      "docs/runbooks/email-ses-pilot-cutover.md"
+    ],
+    "reason": "AWS's official Amazon SES Mailbox Simulator test addresses documented in the SES pilot cutover runbook (#4960); not personal data"
   }
 ]

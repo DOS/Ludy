@@ -157,6 +157,8 @@ const OTHER_SENDS: Readonly<Record<string, { command: string } | { reason: strin
 const OTHER_SENDS_PENDING: Readonly<Record<string, string>> = {
   'kernel-mcp-wake-sweep handler': '#3024',
   'finance-misa-amis-push handler': '#3902',
+  // The weekly meetings notice sweep (#4967, step 0 of 2): the site and its command land in the table's own PR, which removes this entry.
+  'meetings-weekly handler': '#4967',
 };
 
 // Events that feed a queue with egress and that no command emits: a definer writes them for a request without one.
