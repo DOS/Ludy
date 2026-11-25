@@ -139,7 +139,7 @@ suite('invariant: member_home_layout security, RLS, CHECK, and recipient stream 
   async function openStream(token: string, orgSlug: string) {
     const issued = await httpApp.request('/api/stream/tickets', {
       method: 'POST',
-      headers: { authorization: `Bearer ${token}`, 'x-crove-org': orgSlug },
+      headers: { authorization: `Bearer ${token}`, 'x-ludy-org': orgSlug },
     });
     expect(issued.status).toBe(200);
     const { ticket } = (await issued.json()) as { ticket: string };
@@ -487,7 +487,7 @@ suite('invariant: member_home_layout security, RLS, CHECK, and recipient stream 
         headers: {
           authorization: `Bearer ${alice.token}`,
           'content-type': 'application/json',
-          'x-crove-org': created.slug,
+          'x-ludy-org': created.slug,
         },
         body: JSON.stringify({ json: { blocks: [{ id: 'teamwork_my_work', visible: false }] } }),
       });
@@ -503,7 +503,7 @@ suite('invariant: member_home_layout security, RLS, CHECK, and recipient stream 
         headers: {
           authorization: `Bearer ${alice.token}`,
           'content-type': 'application/json',
-          'x-crove-org': created.slug,
+          'x-ludy-org': created.slug,
         },
         body: JSON.stringify({ json: { reset: true } }),
       });
