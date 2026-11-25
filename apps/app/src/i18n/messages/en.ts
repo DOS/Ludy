@@ -871,6 +871,15 @@ export const en = {
       noMail: 'This server cannot send email yet, so no email is sent until the installer sets up mail. In-app notices still work, and browser push also fires if enabled on a device.',
       saved: 'Saved',
     },
+    weeklyNotice: {
+      title: "Last week's meetings, on Monday",
+      hint: 'Once a week, on Monday at the time you choose, a notice in the app and by email with four numbers (the meetings you read with a published result in the last 7 days, the decisions published, the action items still open and the overdue ones) and a link to the "This week" card, plus a browser push if turned on for this device. Only numbers and a link are sent, no title and no text of a decision. Nothing is sent for a week with nothing to show.',
+      label: "Send me a summary of last week's meetings every Monday",
+      at: 'At',
+      zone: 'In your time zone: {zone}',
+      noMail: 'This server cannot send email yet, so no email is sent until the installer sets up mail. In-app notices still work, and browser push also fires if enabled on a device.',
+      saved: 'Saved',
+    },
     todayMail: {
       title: 'Daily brief by email',
       hint: 'Every morning, a short mail with how many items need you today and a link to the overview. It holds counts and links only, no amounts or content.',
@@ -925,6 +934,7 @@ export const en = {
         meetings_series_open_items: 'Open items from previous meeting',
         meetings_summary_ready: 'Minutes draft ready',
         meetings_morning: 'Meetings today',
+        meetings_weekly: "Last week's meetings",
       },
       fields: {
         title: 'Title',
@@ -1017,6 +1027,7 @@ export const en = {
       meetings_series_open_items: 'Open items from the previous meeting of a series',
       meetings_summary_ready: 'The minutes draft of a meeting I recorded is ready (also sent by email and push; turning it off here turns off all three)',
       meetings_morning: 'The meetings I have today, if I asked for the morning notice (also sent by email and push; turning it off here turns off all three)',
+      meetings_weekly: "The numbers of last week's meetings, if I asked for the Monday notice (also sent by email and push; turning it off here turns off all three)",
       kernel_channel_expired: 'An ad account connection expired or was refused',
       kernel_ai_budget: 'The AI budget is nearly or fully used',
       kernel_conversation_new: 'A new conversation needs an answer',
@@ -1040,6 +1051,7 @@ export const en = {
       series_open_items: 'Meeting soon: you still have {count, plural, one {# open item} other {# open items}} from the previous meeting. Open it to see them.',
       summary_ready: 'The minutes draft of a meeting you recorded is ready. Open the meeting to review and edit it.',
       morning: 'You have {count, plural, one {# meeting} other {# meetings}} today. Open the meetings page to see them.',
+      weekly: 'Last 7 days: {cut, select, yes {at least } other {}}{meetings, plural, one {# meeting} other {# meetings}} with a published result, {decisions, plural, one {# decision} other {# decisions}} published, {open, plural, one {# open action item} other {# open action items}}{overdue, plural, =0 {} other {, # overdue}}. Open the meetings page to see this week.',
       ai_budget_warn: 'The AI budget is {percent}% used. When it runs out only the AI stops; the books keep working.',
       ai_budget_stop: "This month's AI budget is used up. Work that needs the AI waits; raise the budget or wait for next month. The books keep working as usual.",
       channel_expired: 'An ad account was paused because its connection expired or was refused. Connect it again to read on, with no day lost.',
@@ -19927,6 +19939,11 @@ export const en = {
         get: "See your own setting for the morning notice of the day's meetings",
         notice: "Send a member their morning notice of the day's meetings (the system's sweep)",
         set: "Turn the morning notice of the day's meetings on or off, and choose its time",
+      },
+      weekly: {
+        get: "See your own setting for the Monday notice of the week's meetings",
+        notice: "Send a member their Monday notice of the week's meetings (the system's sweep)",
+        set: "Turn the Monday notice of the week's meetings on or off, and choose its time",
       },
       brief: {
         facts: "See what was decided, what is still open and the customer's open deals before a meeting",
