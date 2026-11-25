@@ -720,6 +720,7 @@ import { zDigestAnswer, zDigestAsk, zDigestFacts, zDigestStatus } from './meetin
 import { zLoadWeek, zLoadWeekInput } from './meeting-load.ts';
 import { zTrackerAdd, zTrackerDone, zTrackerHits, zTrackerList, zTrackerMeetingInput, zTrackerRemove, zTrackerTerms, zTrackerWeek, zTrackerWeekInput } from './meeting-trackers.ts';
 import { zHighlightAdd, zHighlightAdded, zHighlightRemove, zHighlightRemoved, zHighlights } from './meeting-highlights.ts';
+import { zLabelAdd, zLabelAdded, zLabelIndex, zLabelIndexInput, zLabelRemove, zLabelRemoved, zMeetingLabels } from './meeting-labels.ts';
 import { zMeetingsTodayFacts } from './meeting-today.ts';
 import { zMorningEmpty, zMorningSet, zMorningState } from './meeting-morning.ts';
 import { zWeeklyEmpty, zWeeklySet, zWeeklyState } from './meeting-weekly.ts';
@@ -2046,6 +2047,13 @@ export const contract = {
       list: oc.input(zMeetingRef).output(zHighlights),
       add: oc.input(zHighlightAdd).output(zHighlightAdded),
       remove: oc.input(zHighlightRemove).output(zHighlightRemoved),
+    },
+    // Labels on a meeting (#4955): `list` the labels of one meeting the caller may read, `index` the labels across the meetings the caller reads (for the list's filter), and the recorder's `add` and `remove`.
+    label: {
+      list: oc.input(zMeetingRef).output(zMeetingLabels),
+      index: oc.input(zLabelIndexInput).output(zLabelIndex),
+      add: oc.input(zLabelAdd).output(zLabelAdded),
+      remove: oc.input(zLabelRemove).output(zLabelRemoved),
     },
     // The Today view (#3955): the member's own agenda for today with the facts of each event's brief, read by code as the member in one call and working with AI off. Vy's sentences stay the brief's own click.
     today: {

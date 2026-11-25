@@ -468,7 +468,7 @@ export const PERSONAL_DATA_COLUMNS = {
   'ludy_meetings.minutes_version.body': {
     kind: 'free_text',
     handling: 'erase',
-    reason: "The recorder's reviewed translation of a meeting's published minutes, which may name or describe a person: read where the actor reads the meeting, deleted with the meeting (its recorder, an owner, the retention job or the org purge) and with the minutes it sits beside, and dropped, not redacted, by an erasure that touches the published minutes",
+    reason: "The recorder's reviewed translation of a meeting's published minutes, which may name or describe a person: read where the actor reads the meeting, deleted with the meeting (its recorder, an owner, the retention job or the org purge) and with the minutes it sits beside, and dropped, not redacted, by an erasure that touches the meeting",
   },
   // The body of a minutes-webhook event waiting to be sent (meetings integrations A6, issue #3164): the title, summary, decisions and action items the recorder ticked, copied at publish and kept
   // only while the event waits. The database wipes it (sets it to NULL) the moment the delivery settles, and drops a waiting event, wiping it, when the meeting's title, its published summary or
@@ -497,6 +497,16 @@ export const PERSONAL_DATA_COLUMNS = {
     kind: 'free_text',
     handling: 'erase',
     reason: "A chapter title of a meeting, which may name or describe a person: read by the recorder alone until published, then by the meeting's readers; the owner's erasure edits the value out of it as out of a meeting title; deleted with the meeting (its recorder, an owner for a personal-data request, the retention job or the org purge), and a draft 30 days after it was made",
+  },
+  // The labels the recorder puts on a meeting (#4955, #4964): up to five short plain-text tags ("Khách Hoa Sen", "Họp tuần") that the meetings list filters by. A label may still name a person (the
+  // command refuses an "@", a line break and a run of seven digits, but nothing here rests on that), so it is handled as the title of a meeting is: the finder lists it where the actor reads the meeting
+  // (ludy_meetings.personal_row_ids, kind 7), counts it per recorder where the owner cannot (ludy_meetings.personal_matches, as a title), and the erasure redacts the value in it by the rule of the title
+  // (ludy_meetings.personal_erase, counted in the titles); a redaction that would leave two labels alike on one meeting drops the later one, so the label list never holds the same text twice. A label
+  // that an owner cannot read is part of the stamp of the notice, so a label added after a notice is not covered by it. It goes with the meeting (the recorder's delete, an owner's delete, the org purge).
+  'ludy_meetings.meeting_label.label': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: "A label the recorder put on a meeting, which may name or describe a person: read by the recorder and the meeting's readers; the owner's erasure edits the value out of it as out of a meeting title (or drops the label when the edit would repeat another label of the meeting); deleted with the meeting (its recorder, an owner for a personal-data request, the retention job or the org purge)",
   },
   // The title of an event of a member's own Google Calendar (meetings B1, issue #3165): an 8-day cache (1 day back to 7 ahead) kept only while the member's switch "Cho Ludy đọc tên và giờ
   // cuộc họp trong lịch" is on. Read by that member alone (row security: an owner, an admin, another member, an agent and the system context read none), so there is no finder and no
@@ -1077,7 +1087,7 @@ async function meetingScan<T>(trx: QueryContext['trx'], run: () => Promise<T>): 
 }
 
 // The tables of ludy_meetings.personal_row_ids's kind codes.
-const MEETING_ROW_TABLES: Record<number, string> = { 1: 'transcript_segment', 2: 'meeting_result', 3: 'action_item', 4: 'meeting', 5: 'meeting_note', 6: 'meeting_chapter' };
+const MEETING_ROW_TABLES: Record<number, string> = { 1: 'transcript_segment', 2: 'meeting_result', 3: 'action_item', 4: 'meeting', 5: 'meeting_note', 6: 'meeting_chapter', 7: 'meeting_label' };
 
 // Caller-RLS meeting visibility and active text retention check for meetings.meeting roadmap signals (#4600, ADR-0047).
 function meetingSignalReadable(alias: 't' | 's'): RawBuilder<boolean> {
@@ -1405,6 +1415,7 @@ const SHORT_NUMBER_MEETING_COLUMNS = new Set([
   'ludy_meetings.action_item.when_drafted',
   'ludy_meetings.meeting_note.body',
   'ludy_meetings.meeting_chapter.title',
+  'ludy_meetings.meeting_label.label',
 ]);
 // The same for MISA AMIS's refusal text on a pushed voucher (#4015): a short number there may be an amount or an invoice number MISA quoted.
 export const MISA_PUSH_REASON_SHORT_NUMBER_REASON =

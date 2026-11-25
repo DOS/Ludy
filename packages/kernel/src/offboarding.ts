@@ -226,6 +226,8 @@ export const EXPORT_TABLES = {
   'meetings.private_count': { from: 'ludy_kernel.meeting_private_counts()', omit: [] },
   // The links (a party, a deal, a calendar event) of those shared meetings (L1, #2587): ids only, never of an attendees-only meeting.
   'meetings.link': { from: 'ludy_kernel.meeting_link_export_rows()', omit: [] },
+  // The labels the recorder put on those shared, unexpired meetings (#4955): short plain texts, never of an attendees-only meeting.
+  'meetings.label': { from: 'ludy_kernel.meeting_label_export_rows()', omit: [] },
   'meetings.reader': { from: 'ludy_kernel.meeting_reader_export_rows()', omit: [] },
   'meetings.transcript_segment': { from: 'ludy_kernel.meeting_transcript_export_rows()', omit: ['search'] },
   'meetings.result': { from: 'ludy_kernel.meeting_result_export_rows()', omit: [] },

@@ -32,6 +32,8 @@ const ALLOWED: Record<string, Record<string, string>> = {
     'position.title': 'the title of a position in the org chart (ludy_kernel.position.title, internal)',
     'template.title': "an agent template's title (ludy_kernel.agent_template.title, internal)",
   },
+  // Not classified before the labels of a meeting (ludy_meetings.meeting_label.label, personal data since #4964) made the name `label` one; this one is the name of a role.
+  'packages/kernel/src/roles.ts': { label: 'the display name of a role (a built-in role label or the key of a custom role), internal' },
   'packages/kernel/src/extraction.ts': {
     'file.filename': 'the filename of an accounting source file (ludy_kernel.file.filename, internal)',
   },
