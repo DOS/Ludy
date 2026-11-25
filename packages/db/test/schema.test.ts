@@ -22,7 +22,7 @@ describe('Database', () => {
   });
 
   it('has no control-plane or definer-only table', () => {
-    type ControlPlane = 'user_account' | 'auth_session' | 'inbound_address' | 'inbound_pending' | 'auth_email_send';
+    type ControlPlane = 'user_account' | 'auth_session' | 'inbound_address' | 'inbound_pending' | 'auth_email_send' | 'mcp_rate_limit';
     // Tables ludy_tenant cannot read: only definers or the worker reach them.
     type DefinerOnly =
       | 'credential'
