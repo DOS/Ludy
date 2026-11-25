@@ -255,3 +255,220 @@ test('recording player: the speed is picked, applied and remembered in this brow
     expect(await page.evaluate(() => (document.querySelector('audio') as HTMLAudioElement).paused)).toBe(true);
   });
 });
+
+test('spoken cues to Vy: code finds explicit cues as marked unconfirmed draft items without AI, stays idempotent, and publishes after confirmation (#4807)', async ({ browser, page }) => {
+  const recorderEmail = newEmail('meetings-voice-cue-rec');
+  const lanEmail = newEmail('meetings-voice-cue-lan');
+  const readerEmail = newEmail('meetings-voice-cue-reader');
+  await signInNewUser(page, recorderEmail);
+  const slug = await createOrg(page, 'Công ty Lệnh Nói Với Vy');
+
+  // Attendee Lan holds a display name and one active position so code matches "cho Lan" and preselects her seat.
+  const lanPage = await browser.newPage();
+  try {
+    await signInNewUser(lanPage, lanEmail);
+    await expect.poll(() => sql<{ id: string }>(`SELECT id FROM ludy_kernel.user_account WHERE lower(email) = lower(:'email')`, { email: lanEmail }).length).toBe(1);
+  } finally {
+    await lanPage.close();
+  }
+  exec(`UPDATE ludy_kernel.user_account SET display_name = 'Trần Thị Lan' WHERE lower(email) = lower(:'email')`, { email: lanEmail });
+  exec(
+    `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role)
+     SELECT t.org_id, u.id, 'member' FROM ludy_kernel.tenant t, ludy_kernel.user_account u
+      WHERE t.slug = :'slug' AND lower(u.email) = lower(:'email')`,
+    { slug, email: lanEmail },
+  );
+  exec(
+    `INSERT INTO ludy_kernel.position (org_id, id, title, module, role_key, holder_user_id)
+     SELECT t.org_id, gen_random_uuid(), 'Nhân viên kinh doanh', 'kernel', 'member', u.id
+       FROM ludy_kernel.tenant t, ludy_kernel.user_account u
+      WHERE t.slug = :'slug' AND lower(u.email) = lower(:'email')`,
+    { slug, email: lanEmail },
+  );
+  const [{ id: lanUserId }] = sql<{ id: string }>(`SELECT id FROM ludy_kernel.user_account WHERE lower(email) = lower(:'email')`, { email: lanEmail }) as [{ id: string }];
+  const [{ id: lanPositionId }] = sql<{ id: string }>(
+    `SELECT p.id FROM ludy_kernel.position p JOIN ludy_kernel.tenant t ON t.org_id = p.org_id WHERE t.slug = :'slug' AND p.holder_user_id = :'user'::uuid`,
+    { slug, user: lanUserId },
+  ) as [{ id: string }];
+
+  const reader = await browser.newPage();
+  try {
+    await signInNewUser(reader, readerEmail);
+    await expect.poll(() => sql<{ id: string }>(`SELECT id FROM ludy_kernel.user_account WHERE lower(email) = lower(:'email')`, { email: readerEmail }).length).toBe(1);
+    exec(
+      `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role)
+       SELECT t.org_id, u.id, 'member' FROM ludy_kernel.tenant t, ludy_kernel.user_account u
+        WHERE t.slug = :'slug' AND lower(u.email) = lower(:'email')`,
+      { slug, email: readerEmail },
+    );
+
+    // Wednesday 2026-11-25 10:00 Vietnam time (UTC+7): "hạn thứ sáu" resolves deterministically to Friday 2026-11-27.
+    // Visibility is 'org' at creation (there is no post-create visibility toggle), with Lan added as an attendee for name matching and reader kept as a non-attendee org member.
+    const id = seedMeeting(slug, recorderEmail, 'Họp chốt báo giá với Lan', {
+      startedAt: '2026-11-25T03:00:00Z',
+      visibility: 'org',
+      readers: [lanEmail],
+      segments: [
+        { from: 0, to: 10, who: 'Hà', said: 'Chào mọi người, bắt đầu họp.' },
+        { from: 10, to: 20, who: 'Hà', said: 'Vy ơi, ghi lại việc gửi báo giá cho Lan, hạn thứ sáu' },
+        { from: 20, to: 30, who: 'Nam', said: 'anh Vy ghi lại biên bản' },
+      ],
+    });
+
+    const panel = page.getByTestId('meeting-results');
+    const voiceCues = page.getByTestId('voice-cues');
+    const findBtn = voiceCues.getByRole('button', { name: 'Tìm lệnh đã nói với Vy' });
+
+    await test.step('recorder opens the meeting and sees the voice-cues card with no AI', async () => {
+      await page.goto(`/o/${slug}/meetings/${id}`);
+      await expect(page.getByText('Toàn tổ chức', { exact: true })).toBeVisible();
+      await expect(panel).toBeVisible();
+      await expect(voiceCues).toBeVisible();
+      await expect(voiceCues).toContainText('Lệnh đã nói với Vy');
+      await expect(voiceCues).toContainText('không dùng AI');
+      await expect(findBtn).toBeVisible();
+      await expect(panel.getByTestId('vy-summary')).toHaveCount(0);
+      await expect(panel.getByTestId('action-item')).toHaveCount(0);
+      await expect(panel.getByTestId('vy-review')).toHaveCount(0);
+    });
+
+    await test.step('first click creates one marked draft item for the explicit cue, ignores the non-cue, and creates no published result or task', async () => {
+      const draftCall = page.waitForResponse((r) => r.request().method() === 'POST' && /voiceCue\/draft/.test(r.url()));
+      await findBtn.click();
+      expect((await draftCall).ok()).toBe(true);
+
+      await expect(voiceCues.getByTestId('voice-cues-done')).toHaveText('Đã thêm 1 việc nháp từ lệnh đã nói.');
+      const items = panel.getByTestId('action-item');
+      await expect(items).toHaveCount(1);
+
+      const item = items.first();
+      await expect(item).toContainText('0:10');
+      await expect(item).toContainText('Nói với Vy');
+      await expect(item).toContainText('Vy đã viết');
+      await expect(item).toContainText('Bản nháp');
+      await expect(item).toContainText('Lan');
+      await expect(item).toContainText('thứ sáu');
+      await expect(item.getByLabel('Tên việc', { exact: true })).toHaveValue('việc gửi báo giá');
+      await expect(item.getByLabel('Tên việc', { exact: true })).not.toHaveValue(/biên bản/);
+      await expect(item.getByLabel('Vị trí', { exact: true })).toHaveValue(lanPositionId);
+      await expect(item.getByLabel('Hạn', { exact: true })).toHaveValue('27/11/2026');
+
+      const dbItems = sql<{
+        title: string;
+        who_parsed: string | null;
+        when_drafted: string;
+        when_parsed: string | null;
+        transcript_seconds: number | null;
+        stage: string;
+        status: string;
+        tainted: boolean;
+        flags: string[];
+        task_id: string | null;
+      }>(
+        `SELECT title, who_parsed, when_drafted, when_parsed::text, transcript_seconds, stage, status, tainted, flags, task_id
+           FROM ludy_meetings.action_item WHERE meeting_id = :'id'::uuid`,
+        { id },
+      );
+      expect(dbItems).toHaveLength(1);
+      expect(dbItems[0]).toMatchObject({
+        title: 'việc gửi báo giá',
+        who_parsed: lanUserId,
+        when_drafted: 'thứ sáu',
+        when_parsed: '2026-11-27',
+        transcript_seconds: 10,
+        stage: 'draft',
+        status: 'suggested',
+        tainted: true,
+        flags: ['asked_aloud'],
+        task_id: null,
+      });
+      expect(sql<{ n: number }>(`SELECT count(*)::int AS n FROM ludy_meetings.meeting_result WHERE meeting_id = :'id'::uuid`, { id })[0]?.n).toBe(0);
+      expect(sql<{ n: number }>(`SELECT count(*)::int AS n FROM ludy_meetings.action_item WHERE meeting_id = :'id'::uuid AND stage = 'published'`, { id })[0]?.n).toBe(0);
+      expect(sql<{ n: number }>(`SELECT count(*)::int AS n FROM ludy_kernel.task t JOIN ludy_kernel.tenant tn ON tn.org_id = t.org_id WHERE tn.slug = :'slug'`, { slug })[0]?.n).toBe(0);
+      expect(sql<{ n: number }>(`SELECT count(*)::int AS n FROM ludy_notes.todo td JOIN ludy_kernel.tenant tn ON tn.org_id = td.org_id WHERE tn.slug = :'slug'`, { slug })[0]?.n).toBe(0);
+      expect(sql<{ n: number }>(`SELECT count(*)::int AS n FROM ludy_crm.deal d JOIN ludy_kernel.tenant tn ON tn.org_id = d.org_id WHERE tn.slug = :'slug'`, { slug })[0]?.n).toBe(0);
+      expect(sql<{ n: number }>(`SELECT count(*)::int AS n FROM ludy_crm.deal_next_step ns JOIN ludy_kernel.tenant tn ON tn.org_id = ns.org_id WHERE tn.slug = :'slug'`, { slug })[0]?.n).toBe(0);
+
+      const readerResultsRead = reader.waitForResponse((r) => /\/meetings\/results\/get/.test(r.url()));
+      await reader.goto(`/o/${slug}/meetings/${id}`);
+      expect((await readerResultsRead).ok()).toBe(true);
+      await expect(reader.getByText('Họp chốt báo giá với Lan').first()).toBeVisible();
+      await expect(reader.getByTestId('meeting-results')).toHaveCount(0);
+    });
+
+    await test.step('second click does not duplicate the existing voice-cue draft item', async () => {
+      const secondCall = page.waitForResponse((r) => r.request().method() === 'POST' && /voiceCue\/draft/.test(r.url()));
+      await findBtn.click();
+      expect((await secondCall).ok()).toBe(true);
+
+      await expect(voiceCues.getByTestId('voice-cues-done')).toHaveText('Không có việc nháp mới. Bỏ qua: 1 lệnh đã có việc.');
+      await expect(panel.getByTestId('action-item')).toHaveCount(1);
+      expect(sql<{ n: number }>(`SELECT count(*)::int AS n FROM ludy_meetings.action_item WHERE meeting_id = :'id'::uuid`, { id })[0]?.n).toBe(1);
+    });
+
+    await test.step('item starts unconfirmed blocking publish and bulk accept, then recorder confirms, publishes to the org, and reader sees it', async () => {
+      const item = panel.getByTestId('action-item').first();
+      const reviewBox = panel.getByTestId('vy-review');
+      const publishBtn = panel.getByRole('button', { name: 'Chia sẻ cho người dự họp' });
+
+      await expect(reviewBox).toBeVisible();
+      await expect(reviewBox).toContainText('Một phần bản nháp này do Vy viết và bạn chưa đánh dấu là đã đọc.');
+      await expect(publishBtn).toBeDisabled();
+      await expect(panel.getByRole('button', { name: /việc rõ ràng/ })).toHaveCount(0);
+
+      const reviewCall = page.waitForResponse((r) => r.request().method() === 'POST' && /results\/review/.test(r.url()));
+      await reviewBox.getByRole('button', { name: 'Tôi đã đọc' }).click();
+      expect((await reviewCall).ok()).toBe(true);
+
+      await expect(reviewBox).toHaveCount(0);
+      await expect(item).not.toContainText('Vy đã viết');
+      await expect(item).toContainText('Nói với Vy');
+      await expect(item).toContainText('Bản nháp');
+      await expect(publishBtn).toBeEnabled();
+      expect(
+        sql<{ tainted: boolean; stage: string; flags: string[] }>(
+          `SELECT tainted, stage, flags FROM ludy_meetings.action_item WHERE meeting_id = :'id'::uuid`,
+          { id },
+        ),
+      ).toEqual([{ tainted: false, stage: 'draft', flags: ['asked_aloud'] }]);
+
+      const publishCall = page.waitForResponse((r) => r.request().method() === 'POST' && /results\/publish/.test(r.url()));
+      await publishBtn.click();
+      expect((await publishCall).ok()).toBe(true);
+
+      await expect(publishBtn).toHaveCount(0);
+      await expect(item).not.toContainText('Bản nháp');
+      await expect(item).toContainText('Nói với Vy');
+      expect(sql<{ stage: string }>(`SELECT stage FROM ludy_meetings.action_item WHERE meeting_id = :'id'::uuid`, { id })).toEqual([{ stage: 'published' }]);
+
+      // Printable minutes page renders the published action item with Lan's display name and due date.
+      await panel.getByRole('link', { name: 'Xem biên bản' }).click();
+      const sheet = page.getByTestId('minutes-sheet');
+      await expect(sheet).toBeVisible();
+      await expect(sheet.getByTestId('minutes-draft')).toHaveCount(0);
+      const actionRow = sheet.getByTestId('minutes-action');
+      await expect(actionRow).toHaveCount(1);
+      await expect(actionRow).toContainText('việc gửi báo giá');
+      await expect(actionRow).toContainText('Trần Thị Lan');
+      await expect(actionRow).toContainText('27/11/2026');
+
+      // An org member not explicitly listed on meeting_reader sees the published action item via visibility 'org'.
+      await reader.goto(`/o/${slug}/meetings/${id}`);
+      const readerPanel = reader.getByTestId('meeting-results');
+      await expect(readerPanel).toBeVisible();
+      await expect(readerPanel.getByTestId('voice-cues')).toHaveCount(0);
+      const readerItem = readerPanel.getByTestId('action-item');
+      await expect(readerItem).toHaveCount(1);
+      await expect(readerItem).toContainText('Nói với Vy');
+      await expect(readerItem).toContainText('0:10');
+      await expect(readerItem).toContainText('Lan');
+      await expect(readerItem).not.toContainText('Bản nháp');
+      await expect(readerItem).not.toContainText('Vy đã viết');
+      await expect(readerItem.getByLabel('Tên việc', { exact: true })).toHaveValue('việc gửi báo giá');
+      await expect(readerItem.getByLabel('Vị trí', { exact: true })).toHaveValue(lanPositionId);
+      await expect(readerItem.getByLabel('Hạn', { exact: true })).toHaveValue('27/11/2026');
+    });
+  } finally {
+    await reader.close();
+  }
+});
