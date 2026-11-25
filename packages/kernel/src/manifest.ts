@@ -100,7 +100,7 @@ export const kernelManifest = defineModule({
       outbox_archive: columns(['org_id', 'day', 'object_key', 'sha256', 'row_count', 'archived_at', 'purged_at', 'purged_rows']),
       outbox_event: columns(['org_id', 'id', 'type', 'actor_id', 'command_id', 'created_at', 'actor_type', 'agent_id', 'agent_run'], { payload: 'pii' }),
       outbox_held: columns(['org_id', 'id', 'event_id', 'module', 'held_at']),
-      outbox_pending: columns(['seq', 'org_id', 'event_id', 'attempts', 'last_error', 'held_type']),
+      outbox_pending: columns(['seq', 'org_id', 'event_id', 'attempts', 'last_error', 'held_type', 'enqueued_at']),
       party: columns(['org_id', 'id', 'kind', 'source_trust', 'verified_at', 'verified_by', 'version', 'created_at', 'updated_at', 'duplicate_of', 'company_id', 'actor_origin', 'tainted'], { name: 'pii', tax_code: 'national_id_if_individual', address: 'contact', email: 'contact', phone: 'contact', search: 'pii' }),
       permission_catalog: columns(['permission', 'grantable_to_viewer', 'entity_roles_count']),
       permission_default: columns(['base_role', 'permission']),
@@ -125,7 +125,7 @@ export const kernelManifest = defineModule({
       task_comment: columns(['org_id', 'id', 'task_id', 'author_type', 'author_id', 'run_id', 'tainted', 'created_at'], { body: 'pii' }),
       tax_obligation_done: columns(['org_id', 'id', 'obligation', 'period', 'done_by', 'done_at', 'legal_entity_id']),
       tax_profile: columns(['org_id', 'id', 'obligations', 'pit_filing_period', 'fiscal_year_end_month', 'updated_by', 'created_at', 'updated_at']),
-      tenant: columns(['org_id', 'slug', 'name', 'status', 'base_currency', 'created_by', 'created_at', 'vat_filing_period', 'missing_invoice_reminder_day', 'approval_preset', 'approval_policy_version', 'meeting_audio_retention_days', 'meeting_video_retention_days', 'meeting_text_retention_days', 'meeting_consent_policy', 'meeting_hooks', 'meeting_minutes_esign', 'mcp_member_grants', 'apps_off', 'apps_version'], { inbound_token: 'sensitive', conversation_token: 'sensitive', tax_code: 'national_id_if_individual', address: 'contact', contact_email: 'contact' }),
+      tenant: columns(['org_id', 'slug', 'name', 'status', 'base_currency', 'created_by', 'created_at', 'vat_filing_period', 'missing_invoice_reminder_day', 'approval_preset', 'approval_policy_version', 'meeting_audio_retention_days', 'meeting_video_retention_days', 'meeting_text_retention_days', 'meeting_consent_policy', 'meeting_hooks', 'meeting_minutes_esign', 'hr_overtime_require_l1', 'mcp_member_grants', 'apps_off', 'apps_version'], { inbound_token: 'sensitive', conversation_token: 'sensitive', tax_code: 'national_id_if_individual', address: 'contact', contact_email: 'contact' }),
       tenant_member: columns(['org_id', 'user_id', 'role', 'created_at']),
       // The members who opted in to the daily brief by email (#2406); last_sent_day is the Vietnam day of the last mail.
       today_mail: columns(['org_id', 'id', 'user_id', 'created_at', 'last_sent_day', 'language']),

@@ -4,6 +4,7 @@
 import { sql } from 'kysely';
 import { z } from 'zod';
 import { DomainError, readVerified, type BlobStore, type Runtime } from '@ludy/kernel-runtime';
+import { publicPageAllowed } from './public-page-gate.ts';
 import type { PageBrand } from './report-link.ts';
 
 export const REVIEW_VIEWS_PER_MINUTE = 60;
@@ -71,6 +72,7 @@ export type ReviewPage = ReviewPostPage | ReviewPlanPage;
 export async function reviewView(runtime: Runtime, body: unknown): Promise<ReviewPage | null> {
   const input = zView.safeParse(body);
   if (!input.success) return null;
+  if (!(await publicPageAllowed(runtime, { module: 'social', kind: 'review_link' }, input.data.token))) return null;
   return runtime.orgless(async (db) => {
     const { rows } = await sql<{ page: ReviewPage | null }>`SELECT ludy_social.review_link_view(${input.data.token}) AS page`.execute(db);
     return rows[0]?.page ?? null;
@@ -81,6 +83,7 @@ export async function reviewView(runtime: Runtime, body: unknown): Promise<Revie
 export async function reviewMedia(runtime: Runtime, body: unknown): Promise<{ id: string; type: string }[][] | null> {
   const input = zView.safeParse(body);
   if (!input.success) return null;
+  if (!(await publicPageAllowed(runtime, { module: 'social', kind: 'review_link' }, input.data.token))) return null;
   return runtime.orgless(async (db) => {
     const { rows } = await sql<{ media: { id: string; type: string }[][] | null }>`SELECT ludy_social.review_link_media(${input.data.token}) AS media`.execute(db);
     return rows[0]?.media ?? null;
@@ -98,6 +101,7 @@ export async function reviewFile(
 ): Promise<ReviewFile | null> {
   const input = zFile.safeParse(body);
   if (!input.success) return null;
+  if (!(await publicPageAllowed(runtime, { module: 'social', kind: 'review_link' }, input.data.token))) return null;
   const meta = await runtime.orgless(async (db) => {
     const { rows } = await sql<{ file: { key: string; generation: string | null; sha256: string; type: string; size: string | number; filename: string } | null }>`SELECT ludy_social.review_link_file(${input.data.token}, ${input.data.fileId}::uuid) AS file`.execute(db);
     return rows[0]?.file ?? null;
@@ -121,6 +125,7 @@ export async function reviewAnswer(runtime: Runtime, body: unknown): Promise<{ r
   const { token, postId, name, verdict } = parsed.data;
   const text = parsed.data.body ? parsed.data.body : null;
   if (verdict === 'comment' && !text) throw new DomainError('REVIEW_ANSWER_INVALID', 422, 'Hãy nhập tên của bạn; một bình luận cần có nội dung');
+  if (!(await publicPageAllowed(runtime, { module: 'social', kind: 'review_link' }, token))) return null;
   return runtime.orgless(async (db) => {
     try {
       const { rows } = postId

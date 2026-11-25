@@ -12,6 +12,8 @@ export type HrOvertimeDayType = (typeof HR_OVERTIME_DAY_TYPES)[number];
 
 // Vietnam Labor Code 2019 Art. 107(2)(b) ordinary monthly OT cap (40 hours/month warning threshold).
 export const HR_OVERTIME_MONTHLY_CAP_HOURS = '40';
+// Physical single-day ceiling (24 hours/day): multi-request same-day totals above 24h are flagged to approvers.
+export const HR_OVERTIME_DAILY_MAX_HOURS = '24';
 
 // Art. 98 multipliers explicitly marked commentary until accountant primary confirmation (#2535).
 export const HR_OVERTIME_COMMENTARY_RULES: Record<
@@ -55,6 +57,8 @@ export const zHrSelfOvertimeSubmitResult = z.object({
   month: zHrMonth,
   monthHoursTotal: z.string(),
   exceedsMonthlyCap: z.boolean(),
+  dayHoursTotal: z.string(),
+  exceedsDailyCap: z.boolean(),
 });
 export type HrSelfOvertimeSubmitResult = z.infer<typeof zHrSelfOvertimeSubmitResult>;
 
@@ -85,6 +89,10 @@ export const zHrOvertimeRequestView = z.object({
   finalActedAt: z.string().nullable(),
   reason: z.string().nullable(),
   decisionNote: z.string().nullable(),
+  monthHoursTotal: z.string(),
+  exceedsMonthlyCap: z.boolean(),
+  dayHoursTotal: z.string(),
+  exceedsDailyCap: z.boolean(),
   createdAt: z.string(),
 });
 export type HrOvertimeRequestView = z.infer<typeof zHrOvertimeRequestView>;
@@ -123,5 +131,22 @@ export const zHrOvertimeActionResult = z.object({
   requestId: zId,
   status: z.enum(HR_OVERTIME_STATUSES),
   payrollRunUpdated: z.boolean(),
+  monthHoursTotal: z.string().optional(),
+  exceedsMonthlyCap: z.boolean().optional(),
+  dayHoursTotal: z.string().optional(),
+  exceedsDailyCap: z.boolean().optional(),
 });
 export type HrOvertimeActionResult = z.infer<typeof zHrOvertimeActionResult>;
+
+export const zHrOvertimeSettingsGet = z.strictObject({});
+export type HrOvertimeSettingsGet = z.input<typeof zHrOvertimeSettingsGet>;
+
+export const zHrOvertimeSettingsSet = z.strictObject({
+  requireL1: z.boolean(),
+});
+export type HrOvertimeSettingsSet = z.input<typeof zHrOvertimeSettingsSet>;
+
+export const zHrOvertimeSettings = z.object({
+  requireL1: z.boolean(),
+});
+export type HrOvertimeSettings = z.infer<typeof zHrOvertimeSettings>;

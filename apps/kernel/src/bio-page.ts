@@ -5,6 +5,7 @@
 import { sql } from 'kysely';
 import { readVerified, type BlobStore, type Runtime } from '@ludy/kernel-runtime';
 import { DEFAULT_BRAND_NAME } from './config.ts';
+import { publicPageAllowed } from './public-page-gate.ts';
 
 export const BIO_HITS_PER_MINUTE = 120;
 const SLUG = /^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/;
@@ -30,6 +31,7 @@ export interface BioView {
 
 export async function bioView(runtime: Runtime, slug: string): Promise<BioView | null> {
   if (!SLUG.test(slug)) return null;
+  if (!(await publicPageAllowed(runtime, { module: 'social', kind: 'bio' }, slug))) return null;
   return runtime.orgless(async (db) => {
     const { rows } = await sql<{ page: BioView | null }>`SELECT ludy_social.bio_page_view(${slug}) AS page`.execute(db);
     return rows[0]?.page ?? null;
@@ -39,6 +41,7 @@ export async function bioView(runtime: Runtime, slug: string): Promise<BioView |
 // The link behind a button or a shown post, counted unless the visitor is automated; null for anything else.
 export async function bioGo(runtime: Runtime, slug: string, target: string, userAgent: string | undefined): Promise<string | null> {
   if (!SLUG.test(slug) || !TARGET.test(target)) return null;
+  if (!(await publicPageAllowed(runtime, { module: 'social', kind: 'bio' }, slug))) return null;
   const count = Boolean(userAgent) && !AUTOMATED.test(userAgent as string);
   const url = await runtime.orgless(async (db) => {
     const { rows } = await sql<{ url: string | null }>`SELECT ludy_social.bio_page_go(${slug}, ${target}, ${count}) AS url`.execute(db);
@@ -50,6 +53,7 @@ export async function bioGo(runtime: Runtime, slug: string, target: string, user
 // An image the page shows, read as stored and checked against its hash; null for any other file.
 export async function bioImage(runtime: Runtime, store: BlobStore, slug: string, fileId: string): Promise<{ bytes: Uint8Array; contentType: string } | null> {
   if (!SLUG.test(slug) || !UUID.test(fileId)) return null;
+  if (!(await publicPageAllowed(runtime, { module: 'social', kind: 'bio' }, slug))) return null;
   const file = await runtime.orgless(async (db) => {
     const { rows } = await sql<{ storage_key: string; generation: string | null; sha256: string; content_type: string; size_bytes: string }>`
       SELECT storage_key, generation, sha256, content_type, size_bytes FROM ludy_social.bio_page_file(${slug}, ${fileId}::uuid)`.execute(db);

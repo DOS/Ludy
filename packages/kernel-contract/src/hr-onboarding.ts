@@ -48,6 +48,13 @@ export const zHrSelfOnboardingSubmit = z
       v.insuranceNumber !== undefined ||
       v.note !== undefined,
     { message: 'confirm at least one checklist item or enter updated information' },
+  )
+  .refine(
+    (v) => (v.bankCode === undefined) === (v.accountNumber === undefined),
+    {
+      message: 'bankCode and accountNumber must be provided together',
+      path: ['accountNumber'],
+    },
   );
 export type HrSelfOnboardingSubmit = z.input<typeof zHrSelfOnboardingSubmit>;
 
@@ -84,6 +91,7 @@ export const zHrOnboardingSubmissionView = z.object({
   address: z.string().nullable(),
   birthDate: z.string().nullable(),
   bankCode: z.string().nullable(),
+  bankAccountMasked: z.string().nullable(),
   hasIdentityNumber: z.boolean(),
   hasBankAccount: z.boolean(),
   hasTaxCode: z.boolean(),
