@@ -81,7 +81,7 @@ suite('back-pressure on PostgreSQL (#894)', () => {
         await c.query(
           `WITH e AS (INSERT INTO ludy_kernel.outbox_event (org_id, type, payload, created_at)
                       VALUES ($1, 'test.lag', '{}', now() - $2::interval) RETURNING org_id, id)
-           INSERT INTO ludy_kernel.outbox_pending (org_id, event_id) SELECT org_id, id FROM e`,
+           INSERT INTO ludy_kernel.outbox_pending (org_id, event_id, enqueued_at) SELECT org_id, id, now() - $2::interval FROM e`,
           [orgId, age],
         );
       }

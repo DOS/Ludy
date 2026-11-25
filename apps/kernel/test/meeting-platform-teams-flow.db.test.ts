@@ -332,11 +332,13 @@ suite('a Microsoft Teams recording from the connect to the staged bytes (meeting
     );
     // Newest first. The meeting with two recordings (E) and the occurrence of the series with two recordings in its window (S3) are not offered, nor the meetings with no files, the cancelled one, the one still running,
     // the call of another service and the one Graph does not know.
+    // A row is as long as its file (#4867): the span of the recording, or of the transcript when there is no recording, not the scheduled hour. A 02:05 to 02:55 recording is 3000 s, a 07:05 to 07:55
+    // transcript is 3000 s, and the series' 09:02 to 09:57 and 09:03 to 09:58 files are 3300 s each.
     expect(stored.rows.map((r) => [r.external_id, r.title, r.status, r.has_audio, r.has_video, r.has_transcript, r.length_seconds, r.size_bytes])).toEqual([
-      [OCC.A, 'Họp tuần (Teams)', 'suggested', false, true, true, 3600, null],
-      [OCC.B, 'Product review (organized by someone else)', 'suggested', false, false, true, 3600, null],
-      [OCC.S2, 'Weekly sync (second time)', 'suggested', false, true, true, 3600, null],
-      [OCC.S1, 'Weekly sync (first time)', 'suggested', false, true, true, 3600, null],
+      [OCC.A, 'Họp tuần (Teams)', 'suggested', false, true, true, 3000, null],
+      [OCC.B, 'Product review (organized by someone else)', 'suggested', false, false, true, 3000, null],
+      [OCC.S2, 'Weekly sync (second time)', 'suggested', false, true, true, 3300, null],
+      [OCC.S1, 'Weekly sync (first time)', 'suggested', false, true, true, 3300, null],
     ]);
     expect(stored.rows.every((r) => r.user_id === member.userId)).toBe(true);
     const ids = stored.rows.map((r) => r.external_id);
@@ -346,8 +348,9 @@ suite('a Microsoft Teams recording from the connect to the staged bytes (meeting
     const shown = await recordings();
     expect(shown.every((r) => r.provider === 'microsoft_teams' && r.connectionId === connectionId && r.status === 'suggested' && r.sizeBytes === null && r.errorCode === null)).toBe(true);
     const transcriptOnly = shown.find((r) => r.title === 'Product review (organized by someone else)');
-    expect(transcriptOnly).toMatchObject({ hasAudio: false, hasVideo: false, hasTranscript: true, lengthSeconds: 3600 });
-    expect(new Date(String(transcriptOnly?.startedAt)).toISOString()).toBe('2026-11-16T07:00:00.000Z');
+    expect(transcriptOnly).toMatchObject({ hasAudio: false, hasVideo: false, hasTranscript: true, lengthSeconds: 3000 });
+    // It starts when its transcript started (07:05), not at the calendar slot's 07:00: the start and the length come from the same file (#4867).
+    expect(new Date(String(transcriptOnly?.startedAt)).toISOString()).toBe('2026-11-16T07:05:00.000Z');
     expect(shown.filter((r) => r.hasVideo).map((r) => r.title)).toEqual(['Họp tuần (Teams)', 'Weekly sync (second time)', 'Weekly sync (first time)']);
   });
 
