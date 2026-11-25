@@ -4,16 +4,20 @@ import { sql } from 'kysely';
 import {
   auditValue,
   HR_OVERTIME_COMMENTARY_RULES,
+  HR_OVERTIME_DAILY_MAX_HOURS,
   HR_OVERTIME_MONTHLY_CAP_HOURS,
   tableWrite,
   zHrOvertimeDecide,
   zHrOvertimeList,
   zHrOvertimeRef,
+  zHrOvertimeSettingsGet,
+  zHrOvertimeSettingsSet,
   zHrSelfOvertimeList,
   zHrSelfOvertimeSubmit,
   type HrOvertimeActionResult,
   type HrOvertimeDayType,
   type HrOvertimeRequestView,
+  type HrOvertimeSettings,
   type HrOvertimeStatus,
   type HrSelfOvertimeListResult,
   type HrSelfOvertimeSubmitResult,
@@ -44,6 +48,15 @@ const otNotFound = () =>
 const invalidOtState = (message: string) =>
   new DomainError('HR_OVERTIME_INVALID_STATE', 409, message);
 
+async function readOvertimeRequireL1(trx: QueryContext['trx'], orgId: string): Promise<boolean> {
+  const row = await trx
+    .selectFrom('ludy_kernel.tenant')
+    .select(['hr_overtime_require_l1'])
+    .where('org_id', '=', orgId)
+    .executeTakeFirst();
+  return row?.hr_overtime_require_l1 === true;
+}
+
 interface RawOvertimeRow {
   id: string;
   legal_entity_id: string;
@@ -71,7 +84,10 @@ function formatHoursString(raw: ReturnType<typeof money>): string {
   return fixed.replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
 }
 
-function mapOvertimeView(row: RawOvertimeRow): HrOvertimeRequestView {
+function mapOvertimeView(
+  row: RawOvertimeRow,
+  totals: { monthTotal: ReturnType<typeof money>; dayTotal: ReturnType<typeof money> },
+): HrOvertimeRequestView {
   const rule = HR_OVERTIME_COMMENTARY_RULES[row.day_type];
   const erased = row.employee_name === null;
   return {
@@ -96,6 +112,10 @@ function mapOvertimeView(row: RawOvertimeRow): HrOvertimeRequestView {
     finalActedAt: row.final_acted_at === null ? null : new Date(row.final_acted_at).toISOString(),
     reason: erased ? null : row.reason,
     decisionNote: erased ? null : row.decision_note,
+    monthHoursTotal: formatHoursString(totals.monthTotal),
+    exceedsMonthlyCap: totals.monthTotal.greaterThan(money(HR_OVERTIME_MONTHLY_CAP_HOURS)),
+    dayHoursTotal: formatHoursString(totals.dayTotal),
+    exceedsDailyCap: totals.dayTotal.greaterThan(money(HR_OVERTIME_DAILY_MAX_HOURS)),
     createdAt: new Date(row.created_at).toISOString(),
   };
 }
@@ -155,7 +175,35 @@ async function queryOvertimeViews(
   if (filters.status !== undefined) q = q.where('ot.status', '=', filters.status);
 
   const rows = (await q.execute()) as RawOvertimeRow[];
-  return rows.map(mapOvertimeView);
+  if (rows.length === 0) return [];
+
+  const employeeIds = [...new Set(rows.map((r) => r.employee_id))];
+  const months = [...new Set(rows.map((r) => r.month))];
+  const activeRows = await trx
+    .selectFrom('ludy_hr.overtime_request')
+    .select(['employee_id', 'month', 'work_date', 'hours'])
+    .where('org_id', '=', orgId)
+    .where('employee_id', 'in', employeeIds)
+    .where('month', 'in', months)
+    .where('status', 'in', ['pending_l1', 'pending_final', 'approved'])
+    .execute();
+
+  const monthTotals = new Map<string, ReturnType<typeof money>>();
+  const dayTotals = new Map<string, ReturnType<typeof money>>();
+  for (const active of activeRows) {
+    const h = money(active.hours);
+    const mKey = `${active.employee_id}:${active.month}`;
+    monthTotals.set(mKey, (monthTotals.get(mKey) ?? money(0)).plus(h));
+    const dKey = `${active.employee_id}:${iso(active.work_date)}`;
+    dayTotals.set(dKey, (dayTotals.get(dKey) ?? money(0)).plus(h));
+  }
+
+  return rows.map((row) =>
+    mapOvertimeView(row, {
+      monthTotal: monthTotals.get(`${row.employee_id}:${row.month}`) ?? money(0),
+      dayTotal: dayTotals.get(`${row.employee_id}:${iso(row.work_date)}`) ?? money(0),
+    }),
+  );
 }
 
 async function assertEmployeeNotErasedForRequest(
@@ -220,7 +268,7 @@ export const selfOvertimeSubmit = defineCommand({
     await lockOvertimeEmployeeMonth(ctx.trx, ctx.orgId, emp.id, month);
     const existingRows = await ctx.trx
       .selectFrom('ludy_hr.overtime_request')
-      .select('hours')
+      .select(['work_date', 'hours'])
       .where('org_id', '=', ctx.orgId)
       .where('employee_id', '=', emp.id)
       .where('month', '=', month)
@@ -228,8 +276,13 @@ export const selfOvertimeSubmit = defineCommand({
       .execute();
 
     let totalHours = money(input.hours);
+    let dayTotalHours = money(input.hours);
     for (const row of existingRows) {
-      totalHours = totalHours.plus(money(row.hours));
+      const h = money(row.hours);
+      totalHours = totalHours.plus(h);
+      if (iso(row.work_date) === input.workDate) {
+        dayTotalHours = dayTotalHours.plus(h);
+      }
     }
     if (totalHours.greaterThan(HR_OVERTIME_PHYSICAL_MONTH_MAX_HOURS)) {
       throw new DomainError('VALIDATION', 422, 'Tổng số giờ làm thêm trong tháng không được vượt quá 744 giờ');
@@ -283,6 +336,8 @@ export const selfOvertimeSubmit = defineCommand({
 
     const monthHoursTotal = formatHoursString(totalHours);
     const exceedsMonthlyCap = totalHours.greaterThan(money(HR_OVERTIME_MONTHLY_CAP_HOURS));
+    const dayHoursTotal = formatHoursString(dayTotalHours);
+    const exceedsDailyCap = dayTotalHours.greaterThan(money(HR_OVERTIME_DAILY_MAX_HOURS));
 
     ctx.audit({
       requestId: inserted.id,
@@ -294,6 +349,7 @@ export const selfOvertimeSubmit = defineCommand({
       isNight: input.isNight,
       status: initialStatus,
       exceedsMonthlyCap,
+      exceedsDailyCap,
       ...(input.reason !== undefined ? { reason: auditValue(OVERTIME, 'reason', input.reason) } : {}),
     });
 
@@ -303,6 +359,8 @@ export const selfOvertimeSubmit = defineCommand({
       month,
       monthHoursTotal,
       exceedsMonthlyCap,
+      dayHoursTotal,
+      exceedsDailyCap,
     };
   },
 });
@@ -443,16 +501,8 @@ async function updatePendingL1WithGuard(
     if (departmentId === null) {
       throw new DomainError('FORBIDDEN', 403, 'Chỉ quản lý phòng ban được phân công hoặc quản trị viên mới duyệt được đơn này');
     }
-    updateQ = updateQ.where((eb) =>
-      eb.exists(
-        eb
-          .selectFrom('ludy_hr.department')
-          .select('id')
-          .where('org_id', '=', orgId)
-          .where('id', '=', departmentId)
-          .where('archived_at', 'is', null)
-          .where('manager_user_id', '=', callerUserId),
-      ),
+    updateQ = updateQ.where(
+      sql<boolean>`ludy_hr.lock_active_department_manager(${orgId}::uuid, ${departmentId}::uuid)`,
     );
   }
   const updated = await updateQ.executeTakeFirst();
@@ -569,6 +619,7 @@ export const overtimeApproveFinal = defineCommand({
     if (!preRead) throw otNotFound();
 
     await lockOvertimeRun(ctx.trx, ctx.orgId, preRead.legal_entity_id, preRead.month);
+    await lockOvertimeEmployeeMonth(ctx.trx, ctx.orgId, preRead.employee_id, preRead.month);
 
     const selfApproved = await assertNotSelfApprover(ctx.trx, ctx.orgId, callerUserId, role, preRead.employee_id, true);
     await assertEmployeeNotErasedForRequest(ctx.trx, ctx.orgId, preRead.id);
@@ -578,7 +629,7 @@ export const overtimeApproveFinal = defineCommand({
 
     const existing = await ctx.trx
       .selectFrom('ludy_hr.overtime_request')
-      .select(['id', 'legal_entity_id', 'employee_id', 'month', 'hours', 'day_type', 'is_night', 'status'])
+      .select(['id', 'legal_entity_id', 'employee_id', 'month', 'work_date', 'hours', 'day_type', 'is_night', 'status'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.requestId)
       .forUpdate()
@@ -587,18 +638,36 @@ export const overtimeApproveFinal = defineCommand({
     if (existing.status !== 'pending_l1' && existing.status !== 'pending_final') {
       throw invalidOtState('Chỉ duyệt chốt được đơn làm thêm giờ đang chờ duyệt');
     }
+    if (existing.status === 'pending_l1' && (await readOvertimeRequireL1(ctx.trx, ctx.orgId))) {
+      throw new DomainError(
+        'HR_OVERTIME_L1_REQUIRED',
+        409,
+        'Tổ chức đang bật chế độ bắt buộc duyệt cấp 1 trước khi duyệt chốt',
+      );
+    }
 
-    const approvedRows = await ctx.trx
+    const activeMonthRows = await ctx.trx
       .selectFrom('ludy_hr.overtime_request')
-      .select('hours')
+      .select(['id', 'work_date', 'hours', 'status'])
       .where('org_id', '=', ctx.orgId)
       .where('employee_id', '=', existing.employee_id)
       .where('month', '=', existing.month)
-      .where('status', '=', 'approved')
+      .where('status', 'in', ['pending_l1', 'pending_final', 'approved'])
       .execute();
+    const targetDate = iso(existing.work_date);
     let approvedTotal = money(existing.hours);
-    for (const row of approvedRows) {
-      approvedTotal = approvedTotal.plus(money(row.hours));
+    let monthTotal = money(existing.hours);
+    let dayTotal = money(existing.hours);
+    for (const row of activeMonthRows) {
+      if (row.id === existing.id) continue;
+      const h = money(row.hours);
+      monthTotal = monthTotal.plus(h);
+      if (iso(row.work_date) === targetDate) {
+        dayTotal = dayTotal.plus(h);
+      }
+      if (row.status === 'approved') {
+        approvedTotal = approvedTotal.plus(h);
+      }
     }
     if (approvedTotal.greaterThan(HR_OVERTIME_PHYSICAL_MONTH_MAX_HOURS)) {
       throw new DomainError('VALIDATION', 422, 'Tổng số giờ làm thêm đã duyệt trong tháng không được vượt quá 744 giờ');
@@ -624,6 +693,10 @@ export const overtimeApproveFinal = defineCommand({
       existing.employee_id,
     );
 
+    const monthHoursTotal = formatHoursString(monthTotal);
+    const exceedsMonthlyCap = monthTotal.greaterThan(money(HR_OVERTIME_MONTHLY_CAP_HOURS));
+    const dayHoursTotal = formatHoursString(dayTotal);
+    const exceedsDailyCap = dayTotal.greaterThan(money(HR_OVERTIME_DAILY_MAX_HOURS));
     const noted = input.note !== undefined;
     ctx.audit({
       requestId: existing.id,
@@ -632,12 +705,22 @@ export const overtimeApproveFinal = defineCommand({
       hours: formatHoursString(money(existing.hours)),
       dayType: existing.day_type,
       isNight: existing.is_night,
+      exceedsMonthlyCap,
+      exceedsDailyCap,
       selfApproved,
       payrollRunUpdated,
       noted,
     });
 
-    return { requestId: existing.id, status: 'approved', payrollRunUpdated };
+    return {
+      requestId: existing.id,
+      status: 'approved',
+      payrollRunUpdated,
+      monthHoursTotal,
+      exceedsMonthlyCap,
+      dayHoursTotal,
+      exceedsDailyCap,
+    };
   },
 });
 
@@ -734,15 +817,47 @@ export const overtimeReject = defineCommand({
   },
 });
 
+export const overtimeSettingsGet = defineQuery({
+  name: 'hr.overtime.settings.get',
+  input: zHrOvertimeSettingsGet,
+  access: STAFF_ROLES,
+  handler: async (ctx): Promise<HrOvertimeSettings> => ({
+    requireL1: await readOvertimeRequireL1(ctx.trx, ctx.orgId),
+  }),
+});
+
+export const overtimeSettingsSet = defineCommand({
+  name: 'hr.overtime.settings.set',
+  input: zHrOvertimeSettingsSet,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: MANAGERS,
+  handler: async (ctx, input): Promise<HrOvertimeSettings> => {
+    if (ctx.actor.type !== 'user') {
+      throw new DomainError('FORBIDDEN', 403, 'Chỉ thành viên đã đăng nhập mới thay đổi được cài đặt này');
+    }
+    const previous = await readOvertimeRequireL1(ctx.trx, ctx.orgId);
+    await ctx.trx
+      .updateTable('ludy_kernel.tenant')
+      .set({ hr_overtime_require_l1: input.requireL1 })
+      .where('org_id', '=', ctx.orgId)
+      .execute();
+    ctx.audit({ requireL1: input.requireL1, previous });
+    return { requireL1: input.requireL1 };
+  },
+});
+
 export const hrOvertimeCommands = [
   selfOvertimeSubmit,
   selfOvertimeCancel,
   overtimeApproveL1,
   overtimeApproveFinal,
   overtimeReject,
+  overtimeSettingsSet,
 ];
 
 export const hrOvertimeQueries = [
   selfOvertimeList,
   overtimeList,
+  overtimeSettingsGet,
 ];

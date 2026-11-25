@@ -56,12 +56,16 @@ export function canSubmitProbationDecision(args: {
   previewMatchesRange: boolean;
   extendedUntil: string;
   effectiveEnd: string;
+  probationEndOn?: string | null;
 }): boolean {
   return (
     Boolean(args.decision) &&
     args.rangeValid &&
     args.previewMatchesRange &&
-    (args.decision !== 'extend' || (Boolean(args.extendedUntil) && args.extendedUntil > args.effectiveEnd))
+    (args.decision !== 'extend' ||
+      (Boolean(args.extendedUntil) &&
+        args.extendedUntil > args.effectiveEnd &&
+        (!args.probationEndOn || args.extendedUntil > args.probationEndOn)))
   );
 }
 
@@ -203,6 +207,7 @@ export function HrProbationPanel({ employeeId }: { employeeId: string }) {
     previewMatchesRange,
     extendedUntil,
     effectiveEnd,
+    probationEndOn: preview?.probationEndOn ?? null,
   });
 
   const history: readonly HrProbationReviewView[] = listQ.data ?? [];
@@ -405,7 +410,11 @@ export function HrProbationPanel({ employeeId }: { employeeId: string }) {
                   type="date"
                   className={PHONE_TARGET}
                   value={extendedUntil}
-                  min={effectiveEnd || undefined}
+                  min={
+                    preview?.probationEndOn && preview.probationEndOn > effectiveEnd
+                      ? preview.probationEndOn
+                      : effectiveEnd || undefined
+                  }
                   onChange={(ev) => setExtendedUntil(ev.target.value)}
                   data-testid="hr-probation-extended-until"
                 />

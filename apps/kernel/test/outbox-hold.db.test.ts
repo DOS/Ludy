@@ -11,13 +11,17 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sql } from 'kysely';
 import pg from 'pg';
+import { PgBoss } from 'pg-boss';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createDb, createPool, type Db } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { buildKernelCommands, createOrg, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import { Runtime } from '@ludy/kernel-runtime';
+import { PausableWork, checkBackPressure, outboxLagSeconds } from '../src/back-pressure.ts';
+import { JOB_SCHEMA, QUEUES } from '../src/jobs-schema.ts';
 import { holdEvents, planHolds, releaseHeld, releaseHeldOfOrg } from '../src/outbox-hold.ts';
 import { archiveOutbox } from '../src/outbox-retention.ts';
+import { evaluateHealth, readHealth } from '../src/prober.ts';
 import { LocalArchiveStore } from '../src/worm.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
@@ -28,6 +32,7 @@ const suite = ADMIN ? describe : describe.skip;
 suite('parked events of an app that is off (ADR-0053, C3b)', () => {
   const dbName = `ludy_test_outboxhold_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let proberUrl = '';
   let appPool: pg.Pool;
   let workerPool: pg.Pool;
   let workerDb: Db;
@@ -73,13 +78,14 @@ suite('parked events of an app that is off (ADR-0053, C3b)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw', ludy_prober: 'test-prober-pw' });
     const login = (user: string, pw: string) => {
       const u = new URL(adminUrl);
       u.username = user;
       u.password = pw;
       return u.toString();
     };
+    proberUrl = login('ludy_prober', 'test-prober-pw');
     appPool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 2 });
     workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 4 });
     workerDb = createDb(workerPool);
@@ -359,5 +365,111 @@ suite('parked events of an app that is off (ADR-0053, C3b)', () => {
     expect((await held(b)).length).toBe(1);
     await admin((c) => c.query('DELETE FROM ludy_kernel.outbox_pending'));
     await admin((c) => c.query('DELETE FROM ludy_kernel.outbox_held'));
+  });
+
+  it('measures lag from enqueued_at when a days-old parked event is released back to outbox_pending (#3409)', async () => {
+    const a = orgs[0] as string;
+    await admin((c) => c.query('DELETE FROM ludy_kernel.outbox_pending'));
+    await admin((c) => c.query('DELETE FROM ludy_kernel.outbox_held'));
+
+    // Direct insert onto outbox_pending without specifying enqueued_at uses DEFAULT pg_catalog.now(), not outbox_event.created_at.
+    const directId = randomUUID();
+    await admin(async (c) => {
+      await c.query(
+        `INSERT INTO ludy_kernel.outbox_event (org_id, id, type, payload, created_at)
+         VALUES ($1, $2, 'ads.launch.queued', '{}', now() - interval '5 days')`,
+        [a, directId],
+      );
+      await c.query('INSERT INTO ludy_kernel.outbox_pending (org_id, event_id) VALUES ($1, $2)', [a, directId]);
+    });
+    const directLag = await outboxLagSeconds(workerDb);
+    expect(directLag).toBeGreaterThanOrEqual(0);
+    expect(directLag).toBeLessThan(10);
+    const directHealth = await readHealth(proberUrl, 3600);
+    expect(directHealth.outbox_pending).toBe(1);
+    expect(directHealth.outbox_oldest_age_seconds).toBeGreaterThanOrEqual(0);
+    expect(directHealth.outbox_oldest_age_seconds).toBeLessThan(10);
+    await admin((c) => c.query('DELETE FROM ludy_kernel.outbox_pending'));
+
+    // An event created 5 days ago, parked in outbox_held, and released via outbox_release measures seconds of lag (not 5 days).
+    const agedId = await emit(a, 'ads.launch.queued');
+    await admin(async (c) => {
+      await c.query('ALTER TABLE ludy_kernel.outbox_event DISABLE TRIGGER USER');
+      try {
+        await c.query("UPDATE ludy_kernel.outbox_event SET created_at = now() - interval '5 days' WHERE org_id = $1 AND id = $2", [a, agedId]);
+      } finally {
+        await c.query('ALTER TABLE ludy_kernel.outbox_event ENABLE TRIGGER USER');
+      }
+    });
+    const parked = await batch(new Set([`${a}:ads`]));
+    expect(parked.held.map((h) => h.row.event_id)).toEqual([agedId]);
+    await admin((c) => c.query("UPDATE ludy_kernel.outbox_held SET held_at = now() - interval '2 days' WHERE org_id = $1 AND event_id = $2", [a, agedId]));
+
+    expect(await releaseHeld(workerDb, async () => true)).toEqual({ released: 1, waiting: 0, pairs: 1 });
+    expect(await pending()).toEqual([agedId]);
+
+    // Original event created_at stays 5 days ago, while outbox_pending.enqueued_at is stamped to release time.
+    const rowAges = await admin(async (c) =>
+      (
+        await c.query<{ created_age_s: number; enqueued_age_s: number }>(
+          `SELECT EXTRACT(EPOCH FROM now() - e.created_at)::double precision AS created_age_s,
+                  EXTRACT(EPOCH FROM now() - p.enqueued_at)::double precision AS enqueued_age_s
+           FROM ludy_kernel.outbox_pending p
+           JOIN ludy_kernel.outbox_event e ON e.org_id = p.org_id AND e.id = p.event_id
+           WHERE p.org_id = $1 AND p.event_id = $2`,
+          [a, agedId],
+        )
+      ).rows[0],
+    );
+    expect(rowAges?.created_age_s).toBeGreaterThan(4 * 86_400);
+    expect(rowAges?.enqueued_age_s).toBeGreaterThanOrEqual(0);
+    expect(rowAges?.enqueued_age_s).toBeLessThan(10);
+
+    // Both outbox_lag_seconds() and health() report release-time lag, not 5 days.
+    const releaseLag = await outboxLagSeconds(workerDb);
+    expect(releaseLag).toBeGreaterThanOrEqual(0);
+    expect(releaseLag).toBeLessThan(10);
+
+    const health = await readHealth(proberUrl, 3600);
+    expect(health.outbox_pending).toBe(1);
+    expect(health.outbox_oldest_age_seconds).toBeGreaterThanOrEqual(0);
+    expect(health.outbox_oldest_age_seconds).toBeLessThan(10);
+    const limits = { outboxAgeSeconds: 300, jobAgeSeconds: 900, heartbeatAgeSeconds: 120, deadLetters: 0, notifyQueuePercent: 50 };
+    expect(evaluateHealth(health, limits, 3600).filter((f) => f.check === 'outbox')).toEqual([]);
+
+    // Exercise the v_held branch of outbox_lag_seconds() too while a relay kill switch is active on another type.
+    await admin((c) => c.query("SELECT ludy_kernel.global_kill_switch_set('relay:test.other', true, 'test', 'ops')"));
+    try {
+      const heldBranchLag = await outboxLagSeconds(workerDb);
+      expect(heldBranchLag).toBeGreaterThanOrEqual(0);
+      expect(heldBranchLag).toBeLessThan(10);
+    } finally {
+      await admin((c) => c.query("SELECT ludy_kernel.global_kill_switch_set('relay:test.other', false, 'test', 'ops')"));
+    }
+
+    // Back-pressure does not pause background queues for the newly released event, and the relay claims it normally.
+    const boss = new PgBoss({ connectionString: adminUrl, schema: JOB_SCHEMA, migrate: false, supervise: false, schedule: false });
+    await boss.start();
+    try {
+      const work = new PausableWork(boss);
+      const ran: string[] = [];
+      await work.add(QUEUES.agentSweep, () =>
+        boss.work<{ tag: string }>(QUEUES.agentSweep, { batchSize: 1, pollingIntervalSeconds: 0.5 }, async ([job]) => {
+          if (job) ran.push(job.data.tag);
+        }),
+      );
+      await checkBackPressure({ work, readLagSeconds: () => outboxLagSeconds(workerDb), thresholdSeconds: 30, log: () => {} });
+      expect(work.paused).toBe(false);
+      await boss.send(QUEUES.agentSweep, { tag: 'released-ok' });
+      for (let i = 0; i < 40 && !ran.includes('released-ok'); i++) await new Promise((resolve) => setTimeout(resolve, 250));
+      expect(ran).toEqual(['released-ok']);
+    } finally {
+      await boss.stop({ graceful: false });
+    }
+
+    const relayed = await batch(new Set());
+    expect(relayed.held).toEqual([]);
+    expect(relayed.rest.map((r) => r.event_id)).toEqual([agedId]);
+    expect(await pending()).toEqual([]);
   });
 });

@@ -241,8 +241,9 @@ suite('the pairing code of the MCP endpoint (#4591)', () => {
     await root.end();
   });
 
-  // A fresh app over the same runtime and database: its own rate limits, so one test's attempts never count against another's.
+  // A fresh app over the same runtime and database, with cleared rate-limit buckets so one test's attempts never count against another's.
   const freshApp = async (env: Record<string, string> = {}) => {
+    await admin((c) => c.query('DELETE FROM ludy_kernel.mcp_rate_limit'));
     const config = loadConfig({ ...bootEnv, ...env });
     const oauth = await createOauthServer(config, (fn) => sharedRuntime.orgless(fn));
     return createHttpApp({ config, oauth, runtime: sharedRuntime, store: new MemoryStore(), authenticate: createAuthenticator(config, sharedDb), pool, aiEnabled: false });

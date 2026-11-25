@@ -241,6 +241,7 @@ export interface LudyMeetingsSchema {
   'ludy_meetings.meeting_video': MeetingsMeetingVideoTable;
   'ludy_meetings.minutes_template': MeetingsMinutesTemplateTable;
   'ludy_meetings.morning_notice': MeetingsMorningNoticeTable;
+  'ludy_meetings.tracker_term': MeetingsTrackerTermTable;
   'ludy_meetings.transcript_segment': MeetingsTranscriptSegmentTable;
   'ludy_meetings.translation': MeetingsTranslationTable;
 }
@@ -3604,6 +3605,7 @@ export interface KernelTenantTable {
   apps_off: Generated<string[]>;
   apps_version: Generated<number>;
   meeting_minutes_esign: Generated<boolean>;
+  hr_overtime_require_l1: Generated<boolean>;
 }
 
 /** ludy_kernel.today_mail */
@@ -3902,6 +3904,15 @@ export interface MeetingsMorningNoticeTable {
   language: Generated<string>;
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_meetings.tracker_term */
+export interface MeetingsTrackerTermTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  term: ColumnType<string, string, NotGranted>;
+  created_by: ColumnType<string, string, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
 /** ludy_meetings.transcript_segment */

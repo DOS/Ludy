@@ -238,7 +238,7 @@ suite('prober on PostgreSQL', () => {
       await c.query(
         `WITH e AS (INSERT INTO ludy_kernel.outbox_event (org_id, type, payload, created_at)
                     VALUES ($1, 'test.health', '{}', now() - interval '10 minutes') RETURNING org_id, id)
-         INSERT INTO ludy_kernel.outbox_pending (org_id, event_id) SELECT org_id, id FROM e`,
+         INSERT INTO ludy_kernel.outbox_pending (org_id, event_id, enqueued_at) SELECT org_id, id, now() - interval '10 minutes' FROM e`,
         [orgId],
       );
       await c.query(
