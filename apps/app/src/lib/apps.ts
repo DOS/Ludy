@@ -17,7 +17,9 @@ type NavDecl = Screens[ModuleId]['nav'][number];
 type AppNavDecl = Extract<NavDecl, { app: string }>;
 
 export type AppId = AppNavDecl['app'];
-export type AppGroupId = AppNavDecl['group'];
+// `more` is the foot group of "Thêm" (#4790): the items a manifest flags `more: true`, never a group a manifest names.
+export type AppGroupId = AppNavDecl['group'] | 'more';
+export const MORE_GROUP = 'more' satisfies AppGroupId;
 export type NavLabel = NavDecl['label'];
 export interface NavItem {
   to: `/o/$slug/${NavDecl['path']}`;
@@ -25,6 +27,8 @@ export interface NavItem {
   module: ModuleId;
   // Set for a screen that serves several modules (the reports, #2435): the item shows where any of them runs.
   modules?: readonly string[] | undefined;
+  // Set for an item its manifest flags as used less than monthly (#4790): the menu draws it in the "Thêm" group, nothing else about it changes.
+  more?: true;
 }
 
 export interface App {
@@ -33,9 +37,10 @@ export interface App {
 }
 
 const MODULES = Object.entries(MODULE_SCREENS) as Array<[ModuleId, ModuleScreens]>;
+const isMore = (nav: object): boolean => 'more' in nav && nav.more === true;
 const item = (module: ModuleId, screens: ModuleScreens, nav: { path: string; label: string; modules?: readonly string[] }): NavItem => {
   const modules = nav.modules ?? screens.routes.find((route) => route.path === nav.path)?.modules;
-  return { to: `/o/$slug/${nav.path}` as NavItem['to'], label: nav.label as NavLabel, module, ...(modules ? { modules } : {}) };
+  return { to: `/o/$slug/${nav.path}` as NavItem['to'], label: nav.label as NavLabel, module, ...(modules ? { modules } : {}), ...(isMore(nav) ? { more: true as const } : {}) };
 };
 
 // The Apps in switcher order (#3225): Cộng tác, Tài chính, Engage, Nhân sự, Ludy eSign, Ludy AI. The overview is not an App: it is the first entry of the switcher, notifications are
@@ -56,20 +61,25 @@ export const ITEM_ORDER: Partial<Record<AppId, readonly string[]>> = {
   ai: ['agents', 'ai-usage', 'ai-connections'],
 };
 
-// Every app with its groups, each in the order its first item appears in the manifests, unless GROUP_ORDER fixes it.
-export const APPS: readonly App[] = (() => {
-  const apps: Array<{ id: AppId; groups: Array<{ id: AppGroupId; items: NavItem[] }> }> = [];
-  for (const [module, screens] of MODULES) {
+// Every app with its groups, each in the order its first item appears in the manifests, unless GROUP_ORDER fixes it. An item a manifest flags `more` leaves its group for the app's last group, `more` (#4790),
+// which is there only when the app has such an item; the items of `more` keep the order of the manifests, or ITEM_ORDER. Built from the given modules so a test can flag an item without touching the real ones.
+export function buildApps(modules: ReadonlyArray<[ModuleId, ModuleScreens]>): App[] {
+  const apps: Array<{ id: AppId; groups: Array<{ id: AppGroupId; items: NavItem[] }>; more: NavItem[] }> = [];
+  for (const [module, screens] of modules) {
     for (const nav of screens.nav) {
       if (nav.app === null) continue;
       let app = apps.find((a) => a.id === nav.app);
-      if (!app) apps.push((app = { id: nav.app as AppId, groups: [] }));
+      if (!app) apps.push((app = { id: nav.app as AppId, groups: [], more: [] }));
+      if (isMore(nav)) {
+        app.more.push(item(module, screens, nav));
+        continue;
+      }
       let group = app.groups.find((g) => g.id === nav.group);
       if (!group) app.groups.push((group = { id: nav.group as AppGroupId, items: [] }));
       group.items.push(item(module, screens, nav));
     }
   }
-  for (const app of apps) {
+  const built: App[] = apps.map((app) => {
     const order = GROUP_ORDER[app.id];
     if (order) app.groups.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
     const items = ITEM_ORDER[app.id];
@@ -79,11 +89,14 @@ export const APPS: readonly App[] = (() => {
         return at < 0 ? items.length : at;
       };
       for (const group of app.groups) group.items.sort((a, b) => rank(a) - rank(b));
+      app.more.sort((a, b) => rank(a) - rank(b));
     }
-  }
-  apps.sort((a, b) => APP_ORDER.indexOf(a.id) - APP_ORDER.indexOf(b.id));
-  return apps;
-})();
+    return { id: app.id, groups: app.more.length > 0 ? [...app.groups, { id: MORE_GROUP, items: app.more }] : app.groups };
+  });
+  built.sort((a, b) => APP_ORDER.indexOf(a.id) - APP_ORDER.indexOf(b.id));
+  return built;
+}
+export const APPS: readonly App[] = buildApps(MODULES);
 
 type SettingsPath =
   | 'settings'
@@ -210,9 +223,10 @@ const FIND_ITEMS: readonly NavItem[] = MODULES.flatMap(([module, screens]) =>
 
 // The groups that carry a heading in the menu: the Engage app's areas of work and the Tài chính groups after its first. The reports group is one item, and the first group of the other apps is
 // named by the app itself.
-export type HeadedGroupId = 'inbox' | 'crm' | 'marketing' | 'sell' | 'buy' | 'ledger';
+// The "Thêm" group (`more`, #4790) is headed too: its heading is the button that opens it.
+export type HeadedGroupId = 'inbox' | 'crm' | 'marketing' | 'sell' | 'buy' | 'ledger' | 'more';
 export function isHeadedGroup(id: AppGroupId): id is HeadedGroupId {
-  return id === 'inbox' || id === 'crm' || id === 'marketing' || id === 'sell' || id === 'buy' || id === 'ledger';
+  return id === 'inbox' || id === 'crm' || id === 'marketing' || id === 'sell' || id === 'buy' || id === 'ledger' || id === MORE_GROUP;
 }
 
 // Words that find a menu item in Ctrl K without being shown (#3588): what an owner types for the thing, not the screen's name. Folded like the label, so

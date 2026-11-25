@@ -33,6 +33,7 @@ import { digestCommands, digestQueries } from './digest.ts';
 import { highlightsCommands, highlightsQueries } from './highlights.ts';
 import { loadQueries } from './load.ts';
 import { trackersCommands, trackersQueries } from './trackers.ts';
+import { voiceCueCommands } from './voice-cue.ts';
 import { minutesDocxQueries } from './minutes-docx.ts';
 import { todayQueries } from './today.ts';
 import { morningCommands, morningQueries } from './morning.ts';
@@ -1150,6 +1151,7 @@ export const meetingsCommands = [
   ...askRunCommands,
   ...briefCommands,
   ...digestCommands,
+  ...voiceCueCommands,
   ...morningCommands,
   ...assigneeCommands,
   ...adherenceCommands,
