@@ -78,7 +78,7 @@ const TOKEN_ANSWER = {
   access_token: ACCESS,
   refresh_token: REFRESH,
   expires_in: 3599,
-  scope: 'openid profile Calendars.ReadBasic OnlineMeetingRecording.Read.All OnlineMeetingTranscript.Read.All',
+  scope: 'openid profile offline_access Calendars.ReadBasic OnlineMeetings.Read OnlineMeetingRecording.Read.All OnlineMeetingTranscript.Read.All',
   id_token: idToken({ oid: OID, tid: TID, name: 'Linh Nguyen' }),
 };
 
