@@ -633,6 +633,8 @@ export interface TelegramChatWork {
   hook?: string;
   // Its fingerprint, which the worker hands back to say which hook it set.
   hookFp?: string;
+  // Expected bot id recorded on the connection when rekeying, used to skip if the channel reconnected to another bot while acquiring the lock.
+  expectedBotId?: string;
   // The bots the org's other connections already answer chats with: the same bot cannot have two webhooks.
   takenBotIds?: string[];
 }
@@ -647,7 +649,7 @@ export const channelTelegramChatWork = defineQuery({
   handler: async (ctx, input): Promise<TelegramChatWork> => {
     const row = await ctx.trx
       .selectFrom('ludy_kernel.channel_connection')
-      .select(['provider', 'status', 'chat_state', 'chat_hook', 'chat_hook_next'])
+      .select(['provider', 'status', 'chat_state', 'chat_hook', 'chat_hook_next', 'chat_bot_id'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
       .executeTakeFirst();
@@ -677,7 +679,13 @@ export const channelTelegramChatWork = defineQuery({
       .where('chat_state', 'in', ['enabling', 'on'])
       .where('chat_bot_id', 'is not', null)
       .execute();
-    return { action: 'call', hook, hookFp: hookFp(hook), takenBotIds: others.flatMap((o) => (o.chat_bot_id ? [o.chat_bot_id] : [])) };
+    return {
+      action: 'call',
+      hook,
+      hookFp: hookFp(hook),
+      ...(input.rekey && row.chat_bot_id ? { expectedBotId: row.chat_bot_id } : {}),
+      takenBotIds: others.flatMap((o) => (o.chat_bot_id ? [o.chat_bot_id] : [])),
+    };
   },
 });
 
@@ -752,6 +760,9 @@ export const channelTelegramChatRekeyRecord = defineCommand({
       .forUpdate()
       .executeTakeFirst();
     if (!row || row.provider !== 'telegram' || row.status !== 'active' || row.chat_state !== 'on' || !row.chat_hook || hookFp(row.chat_hook) !== input.hookFp) {
+      return { applied: false, displaceAt: null };
+    }
+    if (input.botId && row.chat_bot_id && row.chat_bot_id !== input.botId) {
       return { applied: false, displaceAt: null };
     }
     await ctx.trx

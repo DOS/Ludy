@@ -1014,17 +1014,27 @@ suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
     expect(migrateCalls).toEqual(['getWebhookInfo', 'setWebhook']);
     expect((await rows('SELECT chat_state, chat_hook_key_id, chat_error FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [winner.orgId, winner.connectionId]))[0]).toEqual({ chat_state: 'on', chat_hook_key_id: vaultKey1.id, chat_error: null });
 
-    // Disable race guard: if org B already holds the same bot live ('on') while org A's disable job runs, A skips deleteWebhook so B stays live.
+    // Disable race guard: if org B holds the bot in DB AND Telegram's live URL points to org B, org A skips deleteWebhook and leaves B's URL untouched.
+    const loserHook = 'orgB_live_hook_____________________________';
+    const loserUrl = `${APP_URL}${BASE}/${loserHook}`;
     await api.execute('kernel.channel.telegram_chat_set', { connectionId: winner.connectionId, on: false }, asOwner(winner));
-    await rows("UPDATE ludy_kernel.channel_connection SET chat_state = 'on', chat_hook = 'orgB_live_hook_____________________________', chat_bot_id = '666666667', chat_error = NULL WHERE org_id = $1 AND id = $2", [loser.orgId, loser.connectionId]);
-    const disableCalls: string[] = [];
-    const hijackedDisableFetch: Fetch = async (input) => {
-      disableCalls.push(new URL(input).pathname.split('/').at(-1) as string);
-      return new Response(JSON.stringify({ ok: true, result: true }), { status: 200, headers: { 'content-type': 'application/json' } });
-    };
-    expect(await runTelegramChatHook(hookDeps(hijackedDisableFetch), { orgId: winner.orgId, connectionId: winner.connectionId, action: 'chat', on: false })).toBe('off');
-    expect(disableCalls).toEqual([]);
+    await rows("UPDATE ludy_kernel.channel_connection SET chat_state = 'on', chat_hook = $3, chat_bot_id = '666666667', chat_error = NULL WHERE org_id = $1 AND id = $2", [loser.orgId, loser.connectionId, loserHook]);
+    liveUrls.set(raceToken, loserUrl);
+    const tTakeover = telegram();
+    expect(await runTelegramChatHook(hookDeps(tTakeover.fetchImpl), { orgId: winner.orgId, connectionId: winner.connectionId, action: 'chat', on: false })).toBe('off');
+    expect(tTakeover.calls.map((c) => c.method)).toEqual(['getWebhookInfo']);
+    expect(liveUrls.get(raceToken)).toBe(loserUrl);
     expect((await rows('SELECT chat_state FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [winner.orgId, winner.connectionId]))[0]).toEqual({ chat_state: 'off' });
     expect((await rows('SELECT chat_state FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [loser.orgId, loser.connectionId]))[0]).toEqual({ chat_state: 'on' });
+
+    // Conversely, when another org has a stale 'on' row in DB but Telegram's live URL still points to the disabling org, disable deletes the webhook cleanly.
+    const winnerUrl = `${APP_URL}${BASE}/${winnerHookRow?.chat_hook}`;
+    liveUrls.set(raceToken, winnerUrl);
+    await rows("UPDATE ludy_kernel.channel_connection SET chat_state = 'disabling', chat_hook = $3, chat_bot_id = '666666667', chat_error = NULL WHERE org_id = $1 AND id = $2", [winner.orgId, winner.connectionId, winnerHookRow?.chat_hook]);
+    const tStalePeer = telegram();
+    expect(await runTelegramChatHook(hookDeps(tStalePeer.fetchImpl), { orgId: winner.orgId, connectionId: winner.connectionId, action: 'chat', on: false })).toBe('off');
+    expect(tStalePeer.calls.map((c) => c.method)).toEqual(['getWebhookInfo', 'deleteWebhook']);
+    expect(liveUrls.get(raceToken)).toBeUndefined();
+    expect((await rows('SELECT chat_state FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [winner.orgId, winner.connectionId]))[0]).toEqual({ chat_state: 'off' });
   });
 });

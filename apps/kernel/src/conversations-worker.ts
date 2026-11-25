@@ -503,15 +503,36 @@ export async function runTelegramChatHook(deps: ChatHookDeps, job: ConversationC
           if (preWork.hookFp && work.hookFp && work.hookFp !== preWork.hookFp) {
             return { text: last, again: true, workFp: usedHookFp };
           }
-          // Before deleting the bot's webhook, check under the per-bot lock whether another org already holds it live ('on') so a race never deletes another org's webhook.
+          // Before deleting the bot's webhook, check whether another org says 'on'; if so, verify live Telegram webhook
+          // ownership so a stale peer row cannot prevent B from deleting its own webhook while another owner's webhook stays untouched.
           const lockBotId = validBotId(adapter.chatHookBotId?.(openedSecret) ?? null);
           if (!job.on && deps.workerDb && lockBotId) {
             const { rows: takers } = await sql<{ taken: boolean }>`
               SELECT ludy_kernel.telegram_chat_other_org_holds_bot(${lockBotId}, ${job.orgId}::uuid) AS taken`.execute(deps.workerDb);
             if (takers[0]?.taken === true) {
-              const recorded = await record(work.hookFp, 'done');
-              return { text: 'off', again: recorded.hookChanged, workFp: work.hookFp };
+              if (adapter.chatHookInfo && work.hook) {
+                if (renewLock && !(await renewLock().catch(() => false))) {
+                  const res = await failed(work.hookFp, 'TELEGRAM_BOT_LOCK_BUSY');
+                  return { ...res, workFp: work.hookFp };
+                }
+                const info = await adapter.chatHookInfo({ secret: openedSecret, hook: work.hook, baseUrl: deps.baseUrl });
+                if (info.kind === 'failed') {
+                  const res = await failed(work.hookFp, info.code);
+                  return { ...res, workFp: work.hookFp };
+                }
+                if (info.url === '' || (!info.matchesHook && info.matchesHookPath !== true)) {
+                  const recorded = await record(work.hookFp, 'done');
+                  return { text: 'off', again: recorded.hookChanged, workFp: work.hookFp };
+                }
+              } else {
+                const recorded = await record(work.hookFp, 'done');
+                return { text: 'off', again: recorded.hookChanged, workFp: work.hookFp };
+              }
             }
+          }
+          if (renewLock && !(await renewLock().catch(() => false))) {
+            const res = await failed(work.hookFp, 'TELEGRAM_BOT_LOCK_BUSY');
+            return { ...res, workFp: work.hookFp };
           }
           const derived = deps.broker.deriveKeys?.(TELEGRAM_HOOK_KEY_INFO)[0];
           let answer;
@@ -534,9 +555,17 @@ export async function runTelegramChatHook(deps: ChatHookDeps, job: ConversationC
           }
           return { text: job.on ? 'on' : 'off', again: recorded.hookChanged, workFp: work.hookFp };
         };
-        const lockedResult = deps.workerDb && lockKey ? await withBotWebhookLock(deps.workerDb, lockKey, runLocked) : await runLocked();
-        activeHookFp = lockedResult.workFp;
-        outcome = { text: lockedResult.text, again: lockedResult.again };
+        try {
+          const lockedResult = deps.workerDb && lockKey ? await withBotWebhookLock(deps.workerDb, lockKey, runLocked) : await runLocked();
+          activeHookFp = lockedResult.workFp;
+          outcome = { text: lockedResult.text, again: lockedResult.again };
+        } catch (error) {
+          if (error instanceof Error && error.message === 'TELEGRAM_BOT_LOCK_BUSY') {
+            outcome = await failed(preWork.hookFp, 'TELEGRAM_BOT_LOCK_BUSY');
+          } else {
+            throw error;
+          }
+        }
       }
     }
     last = outcome.text;
@@ -686,6 +715,9 @@ async function rekeyOneTelegramWebhook(
   const runLocked = async (renewLock?: () => Promise<boolean>): Promise<'rekeyed' | 'failed' | 'skipped'> => {
     const work = await deps.runtime.query<TelegramChatWork>('kernel.channel.telegram_chat_work', { connectionId: row.connection_id, action: 'enable', rekey: true }, options);
     if (work.action !== 'call' || !work.hook || !work.hookFp) return 'skipped';
+    if (work.hookFp !== preWork.hookFp || (work.expectedBotId && rawBotId && rawBotId !== work.expectedBotId)) {
+      return 'skipped';
+    }
     if (adapter.chatHookInfo) {
       const checkedAt = new Date().toISOString();
       const info = await adapter.chatHookInfo({ secret: opened.secret, hook: work.hook, baseUrl: deps.baseUrl });
