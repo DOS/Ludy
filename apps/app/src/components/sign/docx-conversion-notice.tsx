@@ -66,17 +66,21 @@ export function DocxWarningsAlert({
   onDismiss,
   action,
   title,
+  labelSuffix,
 }: {
   warnings: readonly SignDocxToPdfWarning[];
   onDismiss?: () => void;
   action?: ReactNode | undefined;
   title?: string | undefined;
+  labelSuffix?: string | undefined;
 }) {
   const t = useTranslations('sign');
   const common = useTranslations('common');
   if (warnings.length === 0) return null;
 
-  const dismissLabel = title ? `${common('close')}: ${title}` : common('close');
+  const dismissLabel = title
+    ? `${common('close')}: ${title}${labelSuffix ?? ''}`
+    : `${common('close')}${labelSuffix ?? ''}`;
 
   return (
     <Alert data-testid="sign-docx-warning-banner">

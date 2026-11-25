@@ -382,9 +382,12 @@ export function removePendingDocxListNotice(envelopeId: string): PendingCreatedD
   return [...pendingUnpersistedDocxNotices.values()].map(stripTimestamp);
 }
 
-/** Clears unpersisted pending .docx notices matching no active session or belonging to a previous account (#4729). */
+/** Clears unpersisted pending .docx notices matching an envelope/session/user scope or belonging to another account (#4729). */
 export function clearPendingDocxListNotices(filter?: {
+  envelopeId?: string | undefined;
   slug?: string | undefined;
+  sessionId?: string | undefined;
+  userId?: string | undefined;
   mismatchUserId?: string | null | undefined;
   mismatchSessionId?: string | null | undefined;
 }): PendingCreatedDocxNotice[] {
@@ -393,7 +396,13 @@ export function clearPendingDocxListNotices(filter?: {
     return [];
   }
   for (const [id, entry] of pendingUnpersistedDocxNotices) {
-    if (filter.slug && entry.slug === filter.slug) {
+    if (filter.envelopeId && entry.envelopeId === filter.envelopeId) {
+      pendingUnpersistedDocxNotices.delete(id);
+    } else if (filter.sessionId && entry.sessionId === filter.sessionId) {
+      pendingUnpersistedDocxNotices.delete(id);
+    } else if (filter.userId && entry.userId === filter.userId) {
+      pendingUnpersistedDocxNotices.delete(id);
+    } else if (filter.slug && entry.slug === filter.slug) {
       pendingUnpersistedDocxNotices.delete(id);
     } else if (filter.mismatchUserId !== undefined && entry.userId && entry.userId !== filter.mismatchUserId) {
       pendingUnpersistedDocxNotices.delete(id);

@@ -81,6 +81,7 @@ const { orpc, queryClient } = await import('../src/lib/api.ts');
 const { ensureSignedOutListener } = await import('../src/lib/ceremony-boot.ts');
 const {
   CreateEnvelopeDialog,
+  SignEnvelopesPage,
   applyPendingDocxNoticeUpdate,
   captureEnvelopeSubmitContext,
   handleEnvelopeCreatedWithWarnings,
@@ -88,7 +89,7 @@ const {
   openCreatedDocxNoticeEnvelope,
   submitCreateEnvelopeFromDialog,
 } = await import('../src/routes/sign-envelopes.tsx');
-const { SignEnvelopeDetailPage, resolveDetailPendingDocxWarnings } = await import(
+const { SignEnvelopeDetailPage, resolveDetailDocxWarnings } = await import(
   '../src/routes/sign-envelope-detail.tsx'
 );
 const { CreateTemplateForm } = await import('../src/routes/sign-templates.tsx');
@@ -443,6 +444,7 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
     const envelopeFixture = makeEnvelopeDetailFixture();
     queryClient.setQueryData(['sign', 'envelope', envDetailId], envelopeFixture);
 
+    // SignEnvelopeDetailPage withholds unverified sessionStorage banners before live session/user verification runs.
     const detailHtml = renderToStaticMarkup(
       <QueryClientProvider client={queryClient}>
         <IntlProvider locale="vi" timeZone="Asia/Ho_Chi_Minh" messages={catalog('vi')}>
@@ -450,25 +452,58 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
         </IntlProvider>
       </QueryClientProvider>,
     );
-    expect(detailHtml).toContain('data-testid="sign-docx-warning-banner"');
-    expect(detailHtml).toContain('aria-label="Đóng"');
-    expect(detailHtml).toContain('min-h-11 min-w-11');
-    expect(detailHtml).toContain('footnote/endnote');
+    expect(detailHtml).not.toContain('data-testid="sign-docx-warning-banner"');
 
-    // Titled DocxWarningsAlert exposes distinct envelope title + accessible dismiss label.
+    // Persisted DocxWarningsAlert renders accessible close/duplicate-title labels once verified.
+    const verifiedDetailBannerHtml = renderToStaticMarkup(
+      <IntlProvider locale="vi" timeZone="Asia/Ho_Chi_Minh" messages={catalog('vi')}>
+        <DocxWarningsAlert warnings={['images_skipped', 'footnotes_skipped']} onDismiss={() => {}} />
+      </IntlProvider>,
+    );
+    expect(verifiedDetailBannerHtml).toContain('data-testid="sign-docx-warning-banner"');
+    expect(verifiedDetailBannerHtml).toContain('aria-label="Đóng"');
+    expect(verifiedDetailBannerHtml).toContain('min-h-11 min-w-11');
+    expect(verifiedDetailBannerHtml).toContain('footnote/endnote');
+
+    // Titled DocxWarningsAlert exposes distinct envelope title + accessible dismiss label (and ordinal suffix on duplicates).
     const titledBannerHtml = renderToStaticMarkup(
       <IntlProvider locale="vi" timeZone="Asia/Ho_Chi_Minh" messages={catalog('vi')}>
         <DocxWarningsAlert
           title="Hợp đồng từ Word"
+          labelSuffix=" (1/2)"
           warnings={['images_skipped']}
           onDismiss={() => {}}
         />
       </IntlProvider>,
     );
     expect(titledBannerHtml).toContain('Hợp đồng từ Word');
-    expect(titledBannerHtml).toContain('aria-label="Đóng: Hợp đồng từ Word"');
+    expect(titledBannerHtml).toContain('aria-label="Đóng: Hợp đồng từ Word (1/2)"');
 
-    // Another signed-in user in the same org must not render User A's warning banner on SignEnvelopeDetailPage.
+    // Another signed-in user in the same org must not render or verify User A's warning banner on SignEnvelopeDetailPage.
+    expect(
+      await resolveDetailDocxWarnings({
+        envelopeId: envDetailId,
+        slug: 'acme',
+        noticeOrg: ORG_A_ID,
+        currentUserId: USER_A_ID,
+        resolveCurrentSessionId: async () => 'sess-b',
+        resolveUserScope: async () => ({ orgId: ORG_A_ID, userId: USER_B_ID, sessionId: 'sess-b' }),
+      }),
+    ).toBeNull();
+    expect(
+      await resolveDetailDocxWarnings({
+        envelopeId: envDetailId,
+        slug: 'acme',
+        noticeOrg: ORG_A_ID,
+        currentUserId: USER_A_ID,
+        resolveCurrentSessionId: async () => 'sess-a',
+        resolveUserScope: async () => ({ orgId: ORG_A_ID, userId: USER_A_ID, sessionId: 'sess-a' }),
+      }),
+    ).toEqual({
+      warnings: ['images_skipped', 'footnotes_skipped'],
+      org: ORG_A_ID,
+      userId: USER_A_ID,
+    });
     queryClient.setQueryData(orpc.me.get.queryKey(), {
       userId: USER_B_ID,
       email: 'b@example.com',
@@ -534,7 +569,7 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
     expect(setCreatedDocxNotice).toHaveBeenLastCalledWith(null);
   });
 
-  it('keeps storage intact across QuotaExceededError/SecurityError, corrupt JSON, and pending sign-out recovery (#4729)', () => {
+  it('keeps storage intact across QuotaExceededError/SecurityError, corrupt JSON, and pending sign-out recovery (#4729)', async () => {
     const existingEnvelopeId = '01900000-0000-7000-8000-0000000000e1';
     const quotaStore = new Map<string, string>();
     let rejectQuotaWrites = false;
@@ -566,14 +601,20 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
     expect(quotaStore.get('ludy.sign.created_docx_warnings')).toBe(persistedSnapshotBeforeQuota);
     expect(readCreatedDocxWarnings(existingEnvelopeId, SCOPE_USER_A)).toEqual(['headers_footers_simplified']);
     expect(readCreatedDocxWarnings(envDetailId, SCOPE_USER_A)).toEqual(['images_skipped', 'complex_columns_simplified']);
-    const quotaDetailHtml = renderToStaticMarkup(
-      <QueryClientProvider client={queryClient}>
-        <IntlProvider locale="vi" timeZone="Asia/Ho_Chi_Minh" messages={catalog('vi')}>
-          <SignEnvelopeDetailPage />
-        </IntlProvider>
-      </QueryClientProvider>,
-    );
-    expect(quotaDetailHtml).toContain('data-testid="sign-docx-warning-banner"');
+    expect(
+      await resolveDetailDocxWarnings({
+        envelopeId: envDetailId,
+        slug: 'acme',
+        noticeOrg: ORG_A_ID,
+        currentUserId: USER_A_ID,
+        resolveCurrentSessionId: async () => 'sess-a',
+        resolveUserScope: async () => ({ orgId: ORG_A_ID, userId: USER_A_ID, sessionId: 'sess-a' }),
+      }),
+    ).toEqual({
+      warnings: ['images_skipped', 'complex_columns_simplified'],
+      org: ORG_A_ID,
+      userId: USER_A_ID,
+    });
     clearCreatedDocxWarnings(envDetailId, SCOPE_USER_A);
     expect(readCreatedDocxWarnings(envDetailId, SCOPE_USER_A)).toEqual([]);
     expect(readCreatedDocxWarnings(existingEnvelopeId, SCOPE_USER_A)).toEqual(['headers_footers_simplified']);
@@ -1335,7 +1376,7 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
 
     // Session mismatch on direct detail open drops A's pending warning without promoting to B.
     expect(
-      await resolveDetailPendingDocxWarnings({
+      await resolveDetailDocxWarnings({
         envelopeId: envDetailId,
         slug: 'acme',
         noticeOrg: ORG_A_ID,
@@ -1347,14 +1388,30 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
     expect(readPendingDocxListNotice(envDetailId, 'acme')).toBeNull();
     expect(readCreatedDocxWarnings(envDetailId, SCOPE_USER_B)).toEqual([]);
 
+    // Cancelled / already-dismissed concurrent resolveDetailDocxWarnings never resurrects warnings into sessionStorage.
+    upsertPendingDocxListNotice(savedPending!);
+    expect(
+      await resolveDetailDocxWarnings({
+        envelopeId: envDetailId,
+        slug: 'acme',
+        noticeOrg: ORG_A_ID,
+        currentUserId: USER_A_ID,
+        resolveCurrentSessionId: async () => 'sess-a',
+        resolveUserScope: async () => {
+          removePendingDocxListNotice(envDetailId);
+          return { orgId: ORG_A_ID, userId: USER_A_ID, sessionId: 'sess-a' };
+        },
+      }),
+    ).toBeNull();
+    expect(readCreatedDocxWarnings(envDetailId, SCOPE_USER_A)).toEqual([]);
+
     // Valid matching session on direct detail open resolves scope even if cached currentUserId is stale and promotes cleanly.
     upsertPendingDocxListNotice(savedPending!);
-    const promoted = await resolveDetailPendingDocxWarnings({
+    const promoted = await resolveDetailDocxWarnings({
       envelopeId: envDetailId,
       slug: 'acme',
       noticeOrg: null,
       currentUserId: USER_B_ID,
-      pendingNotice: readPendingDocxListNotice(envDetailId, 'acme'),
       resolveCurrentSessionId: async () => 'sess-a',
       resolveUserScope: async (expectedSessionId) => {
         expect(expectedSessionId).toBe('sess-a');
@@ -1369,8 +1426,32 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
     expect(readPendingDocxListNotice(envDetailId, 'acme')).toBeNull();
     expect(readCreatedDocxWarnings(envDetailId, SCOPE_USER_A)).toEqual(['images_skipped']);
 
-    // Session mismatch during mid-flight unmount also purges prior pending notices from module store.
+    // List page keeps generic verify-pending banner (never leaking contract title) when userId verification is still pending.
+    queryClient.clear();
     upsertPendingDocxListNotice(savedPending!);
+    const pendingListHtml = renderToStaticMarkup(
+      <QueryClientProvider client={queryClient}>
+        <IntlProvider locale="vi" timeZone="Asia/Ho_Chi_Minh" messages={catalog('vi')}>
+          <SignEnvelopesPage />
+        </IntlProvider>
+      </QueryClientProvider>,
+    );
+    expect(pendingListHtml).toContain('data-testid="sign-docx-warning-verify-pending"');
+    expect(pendingListHtml).toContain('data-testid="sign-docx-warning-open-envelope"');
+    expect(pendingListHtml).not.toContain('Hợp đồng pending');
+
+    // Targeted session mismatch during mid-flight unmount removes stale A pending notices without wiping active B notices.
+    const userBPending = {
+      envelopeId: '01900000-0000-7000-8000-0000000000ee',
+      slug: 'acme',
+      orgId: null,
+      userId: USER_B_ID,
+      sessionId: 'sess-b',
+      envelopeTitle: 'Hợp đồng B',
+      warnings: ['ole_objects_skipped'] as const,
+    };
+    upsertPendingDocxListNotice(savedPending!);
+    upsertPendingDocxListNotice(userBPending);
     await handleEnvelopeCreatedWithWarnings({
       envelopeId: SECOND_ENV_ID,
       warnings: ['footnotes_skipped'],
@@ -1387,5 +1468,7 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
     });
     expect(readPendingDocxListNotice(envDetailId, 'acme')).toBeNull();
     expect(readPendingDocxListNotice(SECOND_ENV_ID, 'acme')).toBeNull();
+    expect(readPendingDocxListNotice(userBPending.envelopeId, 'acme')?.userId).toBe(USER_B_ID);
+    clearPendingDocxListNotices();
   });
 });

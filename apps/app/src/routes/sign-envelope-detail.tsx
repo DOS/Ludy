@@ -86,28 +86,26 @@ import { buildInPersonSigningUrl, buildSigningUrl, copyTextToClipboard } from '.
 import { extractPdfPagesText } from '../lib/sign-pdf.ts';
 import { toast } from '../lib/toast.ts';
 
-export async function resolveDetailPendingDocxWarnings(deps: {
+export async function resolveDetailDocxWarnings(deps: {
   envelopeId: string;
   slug: string;
   noticeOrg: string | null;
   currentUserId: string | null;
-  pendingNotice: PendingCreatedDocxNotice | null;
+  pendingNotice?: PendingCreatedDocxNotice | null | undefined;
   resolveCurrentSessionId: () => Promise<string | null>;
   resolveUserScope?: (expectedSessionId?: string | null) => Promise<{
     orgId?: string | null | undefined;
     userId?: string | null | undefined;
     sessionId?: string | null | undefined;
   } | null>;
+  isStillValid?: (() => boolean) | undefined;
 }): Promise<{
   warnings: readonly SignDocxToPdfWarning[];
   org: string;
   userId: string;
 } | null> {
-  if (!deps.envelopeId || !deps.slug || !deps.pendingNotice) return null;
-  if (deps.pendingNotice.envelopeId !== deps.envelopeId || deps.pendingNotice.slug !== deps.slug) return null;
-  if (!deps.pendingNotice.userId && !deps.pendingNotice.sessionId) return null;
-  const cleanWarnings = sanitizeDocxWarnings(deps.pendingNotice.warnings);
-  if (cleanWarnings.length === 0) return null;
+  if (!deps.envelopeId || !deps.slug) return null;
+  if (deps.isStillValid && !deps.isStillValid()) return null;
 
   let liveSessionId: string | null;
   try {
@@ -115,30 +113,19 @@ export async function resolveDetailPendingDocxWarnings(deps: {
   } catch {
     return null;
   }
-  if (!liveSessionId) {
-    return null;
-  }
-  if (deps.pendingNotice.sessionId && liveSessionId !== deps.pendingNotice.sessionId) {
-    clearPendingDocxListNotices({ mismatchSessionId: liveSessionId });
+  if (!liveSessionId || (deps.isStillValid && !deps.isStillValid())) {
     return null;
   }
 
-  let resolvedOrgId = deps.pendingNotice.orgId ?? deps.noticeOrg;
-  let resolvedUserId = deps.currentUserId;
-  if (
-    (!resolvedOrgId ||
-      !resolvedUserId ||
-      !deps.pendingNotice.userId ||
-      !deps.pendingNotice.sessionId ||
-      deps.pendingNotice.userId !== resolvedUserId) &&
-    deps.resolveUserScope
-  ) {
+  let resolvedOrgId: string | null = deps.noticeOrg;
+  let resolvedUserId: string | null = deps.currentUserId;
+  if (deps.resolveUserScope) {
     const fetched = await deps.resolveUserScope(liveSessionId).catch(() => null);
     if (!fetched) return null;
     if (fetched.sessionId && fetched.sessionId !== liveSessionId) {
       return null;
     }
-    resolvedOrgId = fetched.orgId ?? resolvedOrgId;
+    resolvedOrgId = fetched.orgId ?? null;
     resolvedUserId = fetched.userId ?? null;
   }
 
@@ -154,8 +141,45 @@ export async function resolveDetailPendingDocxWarnings(deps: {
   if (!resolvedOrgId || !resolvedUserId) {
     return null;
   }
-  if (deps.pendingNotice.userId && resolvedUserId !== deps.pendingNotice.userId) {
+  if (deps.isStillValid && !deps.isStillValid()) {
+    return null;
+  }
+
+  const stored = readCreatedDocxWarnings(deps.envelopeId, {
+    org: resolvedOrgId,
+    userId: resolvedUserId,
+  });
+  if (stored.length > 0) {
+    return {
+      warnings: stored,
+      org: resolvedOrgId,
+      userId: resolvedUserId,
+    };
+  }
+
+  const usesLiveStore = deps.pendingNotice === undefined;
+  const candidateNotice = usesLiveStore
+    ? readPendingDocxListNotice(deps.envelopeId, deps.slug)
+    : deps.pendingNotice;
+  if (!candidateNotice) return null;
+  if (candidateNotice.envelopeId !== deps.envelopeId || candidateNotice.slug !== deps.slug) return null;
+  if (!candidateNotice.userId && !candidateNotice.sessionId) return null;
+  if (candidateNotice.sessionId && liveSessionId !== candidateNotice.sessionId) {
+    clearPendingDocxListNotices({ mismatchSessionId: liveSessionId });
+    return null;
+  }
+  if (candidateNotice.userId && resolvedUserId !== candidateNotice.userId) {
     clearPendingDocxListNotices({ mismatchUserId: resolvedUserId });
+    return null;
+  }
+  const cleanWarnings = sanitizeDocxWarnings(candidateNotice.warnings);
+  if (cleanWarnings.length === 0) return null;
+
+  // Verify request validity and live pending status immediately before persisting so concurrent resolves or dismissals cannot resurrect warnings.
+  if (deps.isStillValid && !deps.isStillValid()) {
+    return null;
+  }
+  if (usesLiveStore && !readPendingDocxListNotice(deps.envelopeId, deps.slug)) {
     return null;
   }
 
@@ -537,16 +561,17 @@ export function SignEnvelopeDetailPage() {
     scope: CreatedDocxWarningScope | null;
     warnings: readonly SignDocxToPdfWarning[];
   }>(() => ({
-    key: noticeScopeKey,
-    scope: noticeOrg && currentUserId ? { org: noticeOrg, userId: currentUserId } : null,
-    warnings: id ? readCreatedDocxWarnings(id, { org: noticeOrg, userId: currentUserId }) : [],
+    key: '',
+    scope: null,
+    warnings: [],
   }));
   const docxWarnings =
-    docxWarningsState.key === noticeScopeKey
+    docxWarningsState.key === noticeScopeKey &&
+    docxWarningsState.scope !== null &&
+    (!noticeOrg || docxWarningsState.scope.org === noticeOrg) &&
+    (!currentUserId || docxWarningsState.scope.userId === currentUserId)
       ? docxWarningsState.warnings
-      : id
-        ? readCreatedDocxWarnings(id, { org: noticeOrg, userId: currentUserId })
-        : [];
+      : [];
   const canManageLinks = meQuery.data
     ? canManageEnvelopeLinks({
         role: roleHere,
@@ -599,34 +624,30 @@ export function SignEnvelopeDetailPage() {
 
   useEffect(() => {
     const reqId = (detailDocxNoticeReqRef.current += 1);
-    const scope = noticeOrg && currentUserId ? { org: noticeOrg, userId: currentUserId } : null;
-    const stored = id ? readCreatedDocxWarnings(id, { org: noticeOrg, userId: currentUserId }) : [];
     setDocxWarningsState({
       key: noticeScopeKey,
-      scope,
-      warnings: stored,
+      scope: null,
+      warnings: [],
     });
-    if (stored.length > 0 || !id || !slug) {
-      return;
-    }
-    const pendingNotice = readPendingDocxListNotice(id, slug);
-    if (!pendingNotice) {
+    if (!id || !slug) {
       return;
     }
     let cancelled = false;
-    void resolveDetailPendingDocxWarnings({
+    void resolveDetailDocxWarnings({
       envelopeId: id,
       slug,
       noticeOrg,
       currentUserId,
-      pendingNotice,
       resolveCurrentSessionId: async () => (await readVerifiedSession()).sessionId,
       resolveUserScope: (expectedSessionId) => fetchUserScopeForSession(slug, expectedSessionId),
+      isStillValid: () => !cancelled && detailDocxNoticeReqRef.current === reqId,
     }).then((resolved) => {
       if (cancelled || detailDocxNoticeReqRef.current !== reqId || !resolved) {
         return;
       }
       if (currentUserId && resolved.userId !== currentUserId) {
+        void queryClient.invalidateQueries({ queryKey: orpc.me.get.queryKey() });
+        setDocxWarningsState({ key: noticeScopeKey, scope: null, warnings: [] });
         return;
       }
       setDocxWarningsState({
@@ -1528,14 +1549,11 @@ export function SignEnvelopeDetailPage() {
           onDismiss={() => {
             detailDocxNoticeReqRef.current += 1;
             const activeScope = docxWarningsState.key === noticeScopeKey ? docxWarningsState.scope : null;
-            if (id) {
-              clearCreatedDocxWarnings(id, {
-                org: activeScope?.org ?? noticeOrg,
-                userId: activeScope?.userId ?? currentUserId,
-              });
+            if (id && activeScope) {
+              clearCreatedDocxWarnings(id, activeScope);
               removePendingDocxListNotice(id);
             }
-            setDocxWarningsState({ key: noticeScopeKey, scope: activeScope, warnings: [] });
+            setDocxWarningsState({ key: noticeScopeKey, scope: null, warnings: [] });
           }}
         />
       ) : null}

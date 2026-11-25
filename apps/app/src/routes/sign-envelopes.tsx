@@ -150,6 +150,7 @@ export interface CreatedEnvelopeSubmitContext {
 export type PendingDocxNoticeAction =
   | { kind: 'upsert'; notice: CreatedDocxListNotice }
   | { kind: 'remove'; envelopeId: string }
+  | { kind: 'clear_scope'; envelopeId: string; sessionId?: string | null | undefined; userId?: string | null | undefined }
   | { kind: 'clear_all' };
 
 export function applyPendingDocxNoticeUpdate(
@@ -159,6 +160,13 @@ export function applyPendingDocxNoticeUpdate(
   switch (action.kind) {
     case 'clear_all':
       return [];
+    case 'clear_scope':
+      return prev.filter(
+        (item) =>
+          item.envelopeId !== action.envelopeId &&
+          !(action.sessionId && item.sessionId === action.sessionId) &&
+          !(action.userId && item.userId === action.userId),
+      );
     case 'remove':
       return prev.filter((item) => item.envelopeId !== action.envelopeId);
     case 'upsert':
@@ -351,6 +359,13 @@ export async function handleEnvelopeCreatedWithWarnings(deps: {
       case 'remove':
         removePendingDocxListNotice(action.envelopeId);
         break;
+      case 'clear_scope':
+        clearPendingDocxListNotices({
+          envelopeId: action.envelopeId,
+          ...(action.sessionId ? { sessionId: action.sessionId } : {}),
+          ...(action.userId ? { userId: action.userId } : {}),
+        });
+        break;
       case 'clear_all':
         clearPendingDocxListNotices();
         break;
@@ -358,10 +373,16 @@ export async function handleEnvelopeCreatedWithWarnings(deps: {
   };
 
   const clearOnMismatch = async (): Promise<void> => {
-    applyPendingStore({ kind: 'clear_all' });
+    const scopeAction: PendingDocxNoticeAction = {
+      kind: 'clear_scope',
+      envelopeId: deps.envelopeId,
+      ...(submitSessionId ? { sessionId: submitSessionId } : {}),
+      ...(deps.userId ? { userId: deps.userId } : {}),
+    };
+    applyPendingStore(scopeAction);
     await deps.invalidateEnvelopes();
     if (isStillCurrent()) {
-      deps.onPendingNoticeAction?.({ kind: 'clear_all' });
+      deps.onPendingNoticeAction?.(scopeAction);
       deps.setCreatedDocxNotice(null);
     }
   };
@@ -1285,6 +1306,13 @@ export function SignEnvelopesPage() {
             const filtered = prevList.filter((n) => !n.sessionId || n.sessionId === liveSessionId);
             return filtered.length === prevList.length ? prevList : filtered;
           });
+          if (
+            pendingDocxNotices.some(
+              (n) => n.sessionId === liveSessionId && n.userId && currentUserId !== null && n.userId !== currentUserId,
+            )
+          ) {
+            void queryClient.invalidateQueries({ queryKey: orpc.me.get.queryKey() });
+          }
         }
       })
       .catch(() => {
@@ -1591,6 +1619,13 @@ export function SignEnvelopesPage() {
       case 'remove':
         removePendingDocxListNotice(action.envelopeId);
         break;
+      case 'clear_scope':
+        clearPendingDocxListNotices({
+          envelopeId: action.envelopeId,
+          ...(action.sessionId ? { sessionId: action.sessionId } : {}),
+          ...(action.userId ? { userId: action.userId } : {}),
+        });
+        break;
       case 'clear_all':
         clearPendingDocxListNotices();
         break;
@@ -1742,27 +1777,50 @@ export function SignEnvelopesPage() {
       />
 
       {(() => {
-        const verifyPendingIds = pendingVerifiableNotices
-          .filter((notice) => {
-            const verifiedSession =
-              notice.sessionId && verifiedNoticeSessions.has(notice.sessionId) ? notice.sessionId : null;
-            return (
-              !isCreatedDocxListNoticeVisible(notice, slug, currentUserId, verifiedSession) &&
-              Boolean(notice.sessionId) &&
-              !verifiedNoticeSessions.has(notice.sessionId as string) &&
-              (!notice.userId || currentUserId === null || notice.userId === currentUserId)
-            );
-          })
-          .map((n) => n.envelopeId);
+        const visibleNoticeIds: string[] = [];
+        const verifyPendingIds: string[] = [];
+        const visibleTitleTotals = new Map<string, number>();
+        for (const notice of pendingVerifiableNotices) {
+          const verifiedSession =
+            notice.sessionId && verifiedNoticeSessions.has(notice.sessionId) ? notice.sessionId : null;
+          if (isCreatedDocxListNoticeVisible(notice, slug, currentUserId, verifiedSession)) {
+            visibleNoticeIds.push(notice.envelopeId);
+            const titleKey = notice.envelopeTitle ?? '';
+            visibleTitleTotals.set(titleKey, (visibleTitleTotals.get(titleKey) ?? 0) + 1);
+            continue;
+          }
+          const sessionStillPending =
+            Boolean(notice.sessionId) && !verifiedNoticeSessions.has(notice.sessionId as string);
+          const userStillPending =
+            Boolean(notice.userId) && currentUserId === null && Boolean(notice.sessionId);
+          if (
+            (sessionStillPending || userStillPending) &&
+            (!notice.userId || currentUserId === null || notice.userId === currentUserId)
+          ) {
+            verifyPendingIds.push(notice.envelopeId);
+          }
+        }
+        const visibleTitleSeen = new Map<string, number>();
         const verifyPendingIndexById = new Map(verifyPendingIds.map((envId, idx) => [envId, idx] as const));
         return pendingVerifiableNotices.map((notice) => {
           const verifiedSession =
             notice.sessionId && verifiedNoticeSessions.has(notice.sessionId) ? notice.sessionId : null;
           if (isCreatedDocxListNoticeVisible(notice, slug, currentUserId, verifiedSession)) {
+            const titleKey = notice.envelopeTitle ?? '';
+            const totalSameTitle = visibleTitleTotals.get(titleKey) ?? 0;
+            const seenCount = (visibleTitleSeen.get(titleKey) ?? 0) + 1;
+            visibleTitleSeen.set(titleKey, seenCount);
+            const labelSuffix = totalSameTitle > 1 ? ` (${seenCount}/${totalSameTitle})` : '';
+            const openLabel = notice.envelopeTitle
+              ? `${t('templates.openEnvelopeButton')}: ${notice.envelopeTitle}${labelSuffix}`
+              : labelSuffix
+                ? `${t('templates.openEnvelopeButton')}${labelSuffix}`
+                : undefined;
             return (
               <DocxWarningsAlert
                 key={notice.envelopeId}
                 title={notice.envelopeTitle}
+                labelSuffix={labelSuffix}
                 warnings={notice.warnings}
                 action={
                   notice.slug ? (
@@ -1771,11 +1829,7 @@ export function SignEnvelopesPage() {
                       variant="outline"
                       size="sm"
                       className="min-h-11"
-                      aria-label={
-                        notice.envelopeTitle
-                          ? `${t('templates.openEnvelopeButton')}: ${notice.envelopeTitle}`
-                          : undefined
-                      }
+                      aria-label={openLabel}
                       data-testid="sign-docx-warning-open-envelope"
                       onClick={() => triggerOpenPendingNotice(notice)}
                     >
