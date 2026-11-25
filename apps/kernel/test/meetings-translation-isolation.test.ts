@@ -139,6 +139,8 @@ describe('a translation is never a source: the migrations (E1, #3184)', () => {
       'ludy_kernel_org_purge_hr_stage5d.sql',
       // #4967 (weekly meetings notice): the purge restatement that adds ludy_meetings.weekly_notice restates the whole list, the translation table included; its body is the previous one.
       'ludy_kernel_org_purge_weekly_notice.sql',
+      // #4873 (tracker alerts): the purge restatement that adds ludy_meetings.tracker_alert restates the whole list, the translation table included; its body is the previous one.
+      'ludy_kernel_org_purge_tracker_alert.sql',
     ]);
   });
 });

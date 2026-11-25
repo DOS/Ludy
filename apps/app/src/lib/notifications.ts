@@ -20,7 +20,7 @@ export const NOTIFICATION_KINDS = {
   projects: ['projects.weekly_status'],
   // About 30 minutes before the next meeting of a series: how many of my items from the previous meeting are still open (#3542). It holds a count and the previous meeting, no title.
   // And the recorder's "minutes draft ready" notice (#3730): it holds no text of the draft, and the same switch turns off its email. And the opt-in "meetings today" notice (#3955): a count and a link, no title; the same switch turns off its email.
-  meetings: ['meetings.series_open_items', 'meetings.summary_ready', 'meetings.morning', 'meetings.weekly'],
+  meetings: ['meetings.series_open_items', 'meetings.summary_ready', 'meetings.morning', 'meetings.weekly', 'meetings.tracker_alert'],
 } as const;
 export type KnownNotificationKind = (typeof NOTIFICATION_KINDS)[keyof typeof NOTIFICATION_KINDS][number];
 
@@ -92,6 +92,8 @@ export function notificationTarget(item: { kind: string; subjectId: string | nul
     case 'meetings.series_open_items':
     // The meeting whose draft is ready: the recorder's own, opened where the draft is reviewed.
     case 'meetings.summary_ready':
+    // The meeting whose minutes hold a tracked word (#4873): any member who reads it and turned the alert on.
+    case 'meetings.tracker_alert':
       return item.subjectId ? { to: 'meeting', id: item.subjectId } : null;
     // The morning notice opens the meetings page, where the day's meetings and their briefs are (#3955).
     case 'meetings.morning':

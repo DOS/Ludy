@@ -38,6 +38,7 @@ import { digestCommands, digestQueries } from './digest.ts';
 import { highlightsCommands, highlightsQueries } from './highlights.ts';
 import { labelsCommands, labelsQueries } from './labels.ts';
 import { loadQueries } from './load.ts';
+import { trackerAlertCommands, trackerAlertQueries } from './tracker-alerts.ts';
 import { trackersCommands, trackersQueries } from './trackers.ts';
 import { voiceCueCommands } from './voice-cue.ts';
 import { minutesDocxQueries } from './minutes-docx.ts';
@@ -1140,6 +1141,7 @@ export const meetingsCommands = [
   ...notesCommands,
   ...chaptersCommands,
   ...trackersCommands,
+  ...trackerAlertCommands,
   ...highlightsCommands,
   ...labelsCommands,
   ...chaptersRunCommands,
@@ -1221,6 +1223,7 @@ export const meetingsQueries = [
   ...digestQueries,
   ...loadQueries,
   ...trackersQueries,
+  ...trackerAlertQueries,
   ...highlightsQueries,
   ...labelsQueries,
   ...minutesDocxQueries,

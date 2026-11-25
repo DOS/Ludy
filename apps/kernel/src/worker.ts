@@ -4,7 +4,7 @@ import { CompiledQuery, sql, type Transaction } from 'kysely';
 import pg from 'pg';
 import { PgBoss, type Db as BossDb, type SendOptions } from 'pg-boss';
 import type { Database, Db } from '@ludy/db';
-import { MINUTES_PUBLISHED_EVENT, SUMMARY_READY_EVENT, vietnamToday } from '@ludy/kernel-contract';
+import { MINUTES_PUBLISHED_EVENT, SUMMARY_READY_EVENT, TRACKER_ALERT_EVENT, vietnamToday } from '@ludy/kernel-contract';
 import { DomainError, inboundKey, moduleOffOf, type AgentProgram, type BlobStore, type CredentialBroker, type Runtime } from '@ludy/kernel-runtime';
 import { KERNEL_NOTIFYING_EVENTS, PUSH_EVENTS, MCP_ENGAGE_READS_NOTICE_SWEEP_MS, MCP_PROPOSAL_NOTICE_SWEEP_MS, PROPOSAL_NUDGE_SWEEP_MS, TODAY_MAIL_SWEEP_MS, runAgentWake, sweepMcpEngageReadsNotices, sweepMcpProposalNotices, sweepProposalNudges, sweepTodayMail, type UsageLimits } from '@ludy/kernel';
 import { aiDocumentFailure, type AdsCampaignWriter, type ConversationWriter, type InvoiceReader } from '@ludy/agent';
@@ -160,6 +160,8 @@ export const NOTIFY_COMMANDS: ReadonlyMap<string, { module: string; command: str
   ...FINANCE_NOTIFYING_EVENTS.map((type): [string, { module: string; command: string }] => [type, { module: 'finance', command: 'finance.notification.dispatch' }]),
   // The recorder's "minutes draft ready" notice and its mail (#3730).
   [SUMMARY_READY_EVENT, { module: 'meetings', command: 'meetings.summary.ready_notice' }],
+  // A tracked word in the minutes of a new meeting, for the members who opted in and read it (#4873).
+  [TRACKER_ALERT_EVENT, { module: 'meetings', command: 'meetings.tracker.alert_notice' }],
 ]);
 const NOTIFY_RETRY_LIMIT = 3;
 // A booking's confirmation (#1318): a failure retries soon, since the visitor's page is waiting on it.

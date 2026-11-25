@@ -718,6 +718,7 @@ import { zVoiceCueDraft, zVoiceCueDrafted } from './meeting-voice-cue.ts';
 import { zOpenPointsAnswer } from './meeting-open-points.ts';
 import { zDigestAnswer, zDigestAsk, zDigestFacts, zDigestStatus } from './meeting-digest.ts';
 import { zLoadWeek, zLoadWeekInput } from './meeting-load.ts';
+import { zTrackerAlertGet, zTrackerAlertSet, zTrackerAlertState } from './meeting-tracker-alerts.ts';
 import { zTrackerAdd, zTrackerDone, zTrackerHits, zTrackerList, zTrackerMeetingInput, zTrackerRemove, zTrackerTerms, zTrackerWeek, zTrackerWeekInput } from './meeting-trackers.ts';
 import { zHighlightAdd, zHighlightAdded, zHighlightRemove, zHighlightRemoved, zHighlights } from './meeting-highlights.ts';
 import { zLabelAdd, zLabelAdded, zLabelRemove, zLabelRemoved, zLabelSuggestAnswer, zMeetingLabels } from './meeting-labels.ts';
@@ -2040,6 +2041,9 @@ export const contract = {
       remove: oc.input(zTrackerRemove).output(zTrackerDone),
       hits: oc.input(zTrackerMeetingInput).output(zTrackerHits),
       week: oc.input(zTrackerWeekInput).output(zTrackerWeek),
+      // The member's own switch for the alert when a tracked word comes up in the minutes of a new meeting (#4873): `alertGet` reads it (off by default), `alertSet` turns it on or off.
+      alertGet: oc.input(zTrackerAlertGet).output(zTrackerAlertState),
+      alertSet: oc.input(zTrackerAlertSet).output(zTrackerAlertState),
     },
     // Highlights on a transcript line or range (#4819): `list` the marks of a meeting the caller may read, `add` and `remove` the caller's own (the recorder removes any mark of their meeting). A mark
     // is an anchor in seconds and who made it, no text: the lines are read from the transcript.
