@@ -30,6 +30,23 @@ export function isTranscriptImport(row: Pick<MeetingPlatformRecordingView, 'prov
   return !row.hasAudio && !row.hasVideo && row.hasTranscript && (MEETING_PLATFORM_TRANSCRIPT_PROVIDERS as readonly string[]).includes(row.provider);
 }
 
+// The other row of one meeting that a platform offers twice (a video and its transcript alone, ADR-0055) is on its way or done: its start is refused by the server (`MEETING_PLATFORM_PAIR_TAKEN`), so the screen
+// shows the row as taken instead of a button that would only fail. The view carries no platform key, so the two rows are told apart the way the server's list makes them: the same connection, title and start,
+// one a transcript-only row and the other a row with a video file.
+export function pairTaken(rows: readonly MeetingPlatformRecordingView[], row: MeetingPlatformRecordingView): boolean {
+  const mine = isTranscriptImport(row);
+  return rows.some(
+    (other) =>
+      other.id !== row.id &&
+      other.connectionId === row.connectionId &&
+      other.provider === row.provider &&
+      other.startedAt === row.startedAt &&
+      other.title === row.title &&
+      (mine ? other.hasVideo && !other.hasTranscript : isTranscriptImport(other) && row.hasVideo && !row.hasTranscript) &&
+      (other.status === 'importing' || other.status === 'staged' || other.status === 'claimed' || other.status === 'imported'),
+  );
+}
+
 // Why a recording cannot be imported, or null. A recording with only a video file can be imported where the deployment can take the audio out of it (`videoImportMaxBytes`, C2a #3306); then the video's own size
 // cap applies, as that deployment sets it (the audio that comes out is capped when it is staged). A transcript-only recording of a provider with a transcript path has no length or size limit of Ludy's own
 // (nothing is transcribed or stored but its lines); one of a provider without that path is shown as such.

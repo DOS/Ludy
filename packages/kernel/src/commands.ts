@@ -73,7 +73,8 @@ import { setAddress, setContactEmail } from './org-address.ts';
 import { partyCommands } from './parties.ts';
 import { setTaxCode, setVatFilingPeriod } from './tax-code.ts';
 import { setApprovalPreset } from './approval-preset.ts';
-import { setAppCommand, type AppBusyProbe } from './org-apps.ts';
+import { setAppCommand, type AppBusyProbe, type OrgAppsOptions } from './org-apps.ts';
+import { homeLayoutCommands } from './home-layout.ts';
 import { legalEntityCommands } from './legal-entities.ts';
 import { numberingCommands } from './numbering.ts';
 import { cancelMemberVyRuns, memberVyCommands } from './member-vy.ts';
@@ -1295,14 +1296,19 @@ export function buildKernelCommands(
     shippedModules?: readonly string[];
     // What each app is busy with, so switching it off can be refused while that work is open (ADR-0053, kernel.org.set_app).
     appBusy?: Readonly<Record<string, AppBusyProbe>>;
+    // Deployment modules and org entitlements for effective module checks (kernel.member.home_layout.save).
+    apps?: Pick<OrgAppsOptions, 'deployment' | 'entitlements'>;
   } = {},
 ) {
   return [
-    options.orgCreateLimits ? orgCreateCommand(options.orgCreateLimits) : createOrgCommand,
+    options.orgCreateLimits || options.shippedModules
+      ? orgCreateCommand(options.orgCreateLimits, options.shippedModules ? { shipped: options.shippedModules } : {})
+      : createOrgCommand,
     options.inviteLimits || options.messageIdDomain
       ? inviteCreateCommand(options.inviteLimits, { messageIdDomain: options.messageIdDomain })
       : createInvite,
     ...otherKernelCommands,
+    ...homeLayoutCommands(options.apps ? { apps: options.apps } : {}),
     setAppCommand({ ...(options.shippedModules ? { shipped: options.shippedModules } : {}), ...(options.appBusy ? { busy: options.appBusy } : {}) }),
     options.uploadBeginLimits ? beginUploadCommand(options.uploadBeginLimits) : beginUpload,
     options.inboundRotateLimits ? inboundRotateCommand(options.inboundRotateLimits) : rotateInbound,

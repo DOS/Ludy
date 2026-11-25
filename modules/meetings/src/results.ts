@@ -40,12 +40,12 @@ import { enqueueMinutesHook } from './hook.ts';
 import { vnDayStart } from './retention.ts';
 import { suggestAssignee, type Person, type Suggested } from './assignee-match.ts';
 import { attendeeNames, cleanName } from './speaker.ts';
-import { ROLES, missingAnchors, openMeeting, userOf } from './transcript.ts';
+import { ROLES, draftLineState, missingAnchors, openMeeting, userOf } from './transcript.ts';
 
 // What code finds wrong with an item's text: a link, an email address or a phone number in a title (a task is read by every member, and a title the model
 // wrote from a transcript must not carry a way to reach someone off the page). Fixed words, never the text.
 // Linear scans, no backtracking regex: a title is at most ITEM_TITLE_MAX (300) characters in the contract and in the table, and the scans are linear anyway.
-const hasLink = (lower: string): boolean => lower.includes('http://') || lower.includes('https://') || lower.includes('www.');
+export const hasLink = (lower: string): boolean => lower.includes('http://') || lower.includes('https://') || lower.includes('www.');
 // An email: a non-empty part before an '@' and, between two '@' or after the last, a part with a '.' that has a character on each side of it.
 function hasEmail(token: string): boolean {
   const parts = token.split('@');
@@ -315,7 +315,9 @@ export const resultPublish = defineCommand({
       .executeTakeFirst();
     // The same for the draft chapters (#3844); the database refuses a tainted draft chapter too.
     const unreadChapter = await ctx.trx.selectFrom('ludy_meetings.meeting_chapter').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').where('tainted', '=', true).executeTakeFirst();
-    if (unread || unreadChapter) throw new DomainError('DRAFT_NOT_REVIEWED', 409, 'Read the draft Vy wrote before sharing it');
+    // And for the draft transcript lines (#4899): a transcript a machine wrote is shared only after the recorder has read it (the review with `transcript`); the database refuses a tainted draft line too.
+    const unreadLine = await ctx.trx.selectFrom('ludy_meetings.transcript_segment').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').where('tainted', '=', true).limit(1).executeTakeFirst();
+    if (unread || unreadChapter || unreadLine) throw new DomainError('DRAFT_NOT_REVIEWED', 409, 'Read the draft Vy wrote before sharing it');
     // The draft is locked first: the nightly expiry (meetings.retention.shred, kind 'draft') then waits for this publish, or has already deleted the draft, in which
     // case none is found here and the summary published before it is not replaced by nothing.
     const draft = await ctx.trx.selectFrom('ludy_meetings.meeting_result').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').forUpdate().executeTakeFirst();
@@ -343,6 +345,16 @@ export const resultPublish = defineCommand({
       .where('status', '=', 'suggested')
       .returning(['id', 'title', 'who_drafted', 'when_parsed'])
       .execute();
+    // The draft transcript lines (#4899) replace the lines published before them, as the summary and the chapters do: a reader reads the transcript only once the recorder has shared it (ADR-0047 point 3).
+    // The tenant role may not set a line's stage nor delete a published line, so the database function does the move (the recorder's user context, the draft lines locked first, the whole publish refused
+    // while a line is still the model's and unread); the chapters below are checked against the lines as they stand after the move (the lines this publish shares), so a chapter saved against a line that this publish replaces is refused, not left pointing at nothing.
+    let lines = 0;
+    try {
+      lines = (await sql<{ n: number }>`SELECT ludy_meetings.transcript_publish(${ctx.orgId}::uuid, ${input.meetingId}::uuid) AS n`.execute(ctx.trx)).rows[0]?.n ?? 0;
+    } catch (error: unknown) {
+      if (error instanceof Error && error.message.includes('MEETINGS_DRAFT_NOT_REVIEWED')) throw new DomainError('DRAFT_NOT_REVIEWED', 409, 'Read the draft Vy wrote before sharing it');
+      throw error;
+    }
     // The draft chapters (#3844) replace the chapters published before them, as the summary does.
     const draftChapters = await ctx.trx.selectFrom('ludy_meetings.meeting_chapter').select(['id', 'start_seconds']).where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').forUpdate().execute();
     let chapters = 0;
@@ -363,7 +375,7 @@ export const resultPublish = defineCommand({
         .execute();
       chapters = flipped.length;
     }
-    if (results === 0 && items.length === 0 && chapters === 0) throw new DomainError('NOTHING_TO_PUBLISH', 409, 'There is no draft to share');
+    if (results === 0 && items.length === 0 && chapters === 0 && lines === 0) throw new DomainError('NOTHING_TO_PUBLISH', 409, 'There is no draft to share');
     // The recorder's own webhook (A6, #3164): when they have one that stands, the event for this publish is stored in this same transaction, and nowhere else. No model, no other reader.
     await enqueueMinutesHook(ctx, {
       meetingId: input.meetingId,
@@ -377,8 +389,8 @@ export const resultPublish = defineCommand({
     if (published !== null && (await meetingIsOrgVisible(ctx.trx, ctx.orgId, input.meetingId))) {
       await ctx.emit('meetings.minutes.published', zMinutesPublishedEvent.parse({ meetingId: input.meetingId, publishedAt: published.updated_at.toISOString() }));
     }
-    ctx.audit({ meetingId: input.meetingId, results, items: items.length, chapters });
-    return { meetingId: input.meetingId, results, items: items.length, chapters };
+    ctx.audit({ meetingId: input.meetingId, results, items: items.length, chapters, lines });
+    return { meetingId: input.meetingId, results, items: items.length, chapters, lines };
   },
 });
 
@@ -516,6 +528,8 @@ export const meetingResultGet = defineQuery({
       }
     }
     const seats = await seatsOf(ctx.trx, ctx.orgId, [...items.flatMap((i) => (i.who_parsed ? [i.who_parsed] : [])), ...[...suggestions.values()].map((s) => s.userId)]);
+    // The draft transcript lines (#4899): how many, how many a machine wrote that the recorder has not read, and a key over those unread ones that the review names. Counts and a key, never a line. Only the recorder has a draft, so nothing is asked for anyone else (row security would test every line of the meeting for it).
+    const lines = meeting.recorder_user_id === userId ? await draftLineState(ctx.trx, ctx.orgId, input.meetingId) : { draft: 0, unread: 0, key: '' };
     const view = (stage: 'draft' | 'published') => {
       const r = results.find((x) => x.stage === stage);
       return r ? { id: r.id, feature: r.feature as 'manual' | 'meetings.summary', stage, summary: r.summary, decisions: Array.isArray(r.decisions) ? (r.decisions as string[]) : [], tainted: r.tainted } : null;
@@ -525,6 +539,9 @@ export const meetingResultGet = defineQuery({
       isRecorder: meeting.recorder_user_id === userId,
       draft: view('draft'),
       published: view('published'),
+      transcriptDraft: lines.draft,
+      transcriptUnread: lines.unread,
+      transcriptUnreadKey: lines.key,
       items: items.map((i): ActionItemView => {
         const held = i.who_parsed ? (seats.get(i.who_parsed) ?? []) : [];
         const flags = (Array.isArray(i.flags) ? i.flags : []) as ItemFlag[];

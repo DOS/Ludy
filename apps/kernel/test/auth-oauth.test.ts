@@ -58,7 +58,7 @@ describe('AUTH_SIGN_IN and AUTH_OAUTH_*', () => {
 
   it('refuses a client id that is not a UUID, and a localhost Auth URL on a public deployment', () => {
     for (const bad of ['not-a-uuid', `${CLIENT}0`, 'ludy']) expect(() => loadConfig({ ...BASE, AUTH_OAUTH_CLIENT_ID: bad }), bad).toThrow(/AUTH_OAUTH_CLIENT_ID/);
-    const publicDeployment = { PUBLIC_URL: 'https://books.example.com', CROVE_CONTEXT_TOKEN_KEY: Buffer.alloc(48, 5).toString('base64'), EXPORT_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString('base64'), AUTH_AUTOCONFIRM: 'false' };
+    const publicDeployment = { PUBLIC_URL: 'https://books.example.com', LUDY_CONTEXT_TOKEN_KEY: Buffer.alloc(48, 5).toString('base64'), EXPORT_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString('base64'), AUTH_AUTOCONFIRM: 'false' };
     expect(() => loadConfig({ ...BASE, ...publicDeployment, ...ON })).not.toThrow();
     expect(() => loadConfig({ ...BASE, ...publicDeployment, ...ON, PUBLIC_AUTH_URL: 'http://localhost:9999/auth/v1' })).toThrow(/localhost address on a public PUBLIC_URL/);
   });

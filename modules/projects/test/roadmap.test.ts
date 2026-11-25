@@ -297,6 +297,7 @@ describe('computeSignalRollup (#4492)', () => {
       results: {
         meetingId: '00000000-0000-4000-8000-000000000010',
         isRecorder: true,
+        transcriptDraft: 0, transcriptUnread: 0, transcriptUnreadKey: '',
         draft: {
           id: '00000000-0000-4000-8000-000000000011',
           feature: 'manual',
@@ -332,6 +333,7 @@ describe('computeSignalRollup (#4492)', () => {
       results: {
         meetingId: '00000000-0000-4000-8000-000000000010',
         isRecorder: true,
+        transcriptDraft: 0, transcriptUnread: 0, transcriptUnreadKey: '',
         draft: {
           id: '00000000-0000-4000-8000-000000000011',
           feature: 'manual',

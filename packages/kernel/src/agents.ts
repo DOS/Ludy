@@ -1583,10 +1583,7 @@ export const startAgentRun = defineCommand({
         EXISTS (SELECT 1 FROM ludy_kernel.kill_switch k WHERE k.org_id = ${ctx.orgId}::uuid AND k.released_at IS NULL
                 AND (k.scope = 'org' OR (k.scope = 'module' AND k.target = ${position.module}) OR (k.scope = 'agent' AND k.target = ${agent.id})))
           OR ludy_kernel.global_kill_switch_on('ai') AS killed,
-        EXISTS (SELECT 1 FROM ludy_kernel.budget_policy b
-                WHERE b.org_id = ${ctx.orgId}::uuid AND b.hard_stop
-                  AND (b.scope = 'org' OR (b.scope = 'module' AND b.target = ${position.module}) OR (b.scope = 'agent' AND b.target = ${agent.id}))
-                  AND ludy_kernel.ai_budget_spent(b.org_id, b.scope, b.target) >= b.monthly_limit) AS spent,
+        ludy_kernel.ai_budget_exhausted(${ctx.orgId}::uuid, ${position.module}, ${agent.id}::uuid) AS spent,
         (SELECT count(*)::int FROM ludy_kernel.ai_run r WHERE r.org_id = ${ctx.orgId}::uuid AND r.agent_id = ${agent.id}::uuid
            AND r.started_at >= date_trunc('day', now() AT TIME ZONE 'Asia/Ho_Chi_Minh') AT TIME ZONE 'Asia/Ho_Chi_Minh') AS today`.execute(ctx.trx);
     const gate = gates[0];

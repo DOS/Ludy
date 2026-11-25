@@ -14,10 +14,12 @@ import { titleCommands, titleQueries } from './title.ts';
 import { commitmentsCommands, commitmentsQueries } from './commitments.ts';
 import { templateSuggestCommands, templateSuggestQueries } from './template-suggest.ts';
 import { openPointsCommands, openPointsQueries } from './open-points.ts';
+import { salesInsightCommands, salesInsightQueries } from './sales-insight.ts';
 import { notesCommands, notesQueries } from './notes.ts';
 import { resultCommands, resultQueries } from './results.ts';
 import { glossaryCommands, glossaryQueries } from './glossary.ts';
 import { minutesTemplateCommands, minutesTemplateQueries } from './minutes-templates.ts';
+import { minutesVersionCommands, minutesVersionQueries } from './minutes-version.ts';
 import { mcpMeetingsQueries } from './mcp.ts';
 import { seriesCommands, seriesQueries } from './series.ts';
 import { speakerCommands } from './speaker.ts';
@@ -25,6 +27,7 @@ import { summaryCommands, summaryQueries } from './summary.ts';
 import { summaryReadyCommands } from './summary-ready.ts';
 import { summaryRunCommands, summaryRunQueries } from './summary-run.ts';
 import { dropDraftTranslationsForMember, translateCommands } from './translate.ts';
+import { speakingStyleQueries } from './speaking-style.ts';
 import { transcriptExportQueries } from './transcript-export.ts';
 import { translateRunCommands, translateRunQueries } from './translate-run.ts';
 import { askRunCommands, askRunQueries } from './ask.ts';
@@ -52,6 +55,7 @@ import { lockMeetingMedia, recordSealedMedia } from './media-record.ts';
 import { createMeetingRow } from './meeting-core.ts';
 import { importCommands } from './import.ts';
 import { meetingMinutesEsignGet, meetingMinutesEsignSet } from './minutes-esign.ts';
+import { minutesLinkCommands, minutesLinkQueries } from './minutes-link.ts';
 import { dropFollowupPayloads } from './followup-erase.ts';
 import { dealUpdateCommands, dealUpdateQueries } from './deal-update.ts';
 import { followupCommands, followupQueries } from './followup.ts';
@@ -1121,6 +1125,7 @@ export const meetingsCommands = [
   meetingSettingsSet,
   meetingConsentPolicySet,
   meetingMinutesEsignSet,
+  ...minutesLinkCommands,
   meetingRetentionShred,
   meetingShredReplay,
   meetingMediaDiscard,
@@ -1139,10 +1144,12 @@ export const meetingsCommands = [
   ...commitmentsCommands,
   ...templateSuggestCommands,
   ...openPointsCommands,
+  ...salesInsightCommands,
   ...summaryCommands,
   ...speakerCommands,
   ...seriesCommands,
   ...minutesTemplateCommands,
+  ...minutesVersionCommands,
   ...glossaryCommands,
   ...summaryRunCommands,
   ...summaryReadyCommands,
@@ -1181,6 +1188,7 @@ export const meetingsQueries = [
   meetingSettingsGet,
   meetingConsentPolicyGet,
   meetingMinutesEsignGet,
+  ...minutesLinkQueries,
   meetingMediaOrphanKeys,
   transcriptGet,
   ...redactQueries,
@@ -1194,9 +1202,11 @@ export const meetingsQueries = [
   ...commitmentsQueries,
   ...templateSuggestQueries,
   ...openPointsQueries,
+  ...salesInsightQueries,
   ...summaryQueries,
   ...seriesQueries,
   ...minutesTemplateQueries,
+  ...minutesVersionQueries,
   ...glossaryQueries,
   ...summaryRunQueries,
   ...translateRunQueries,
@@ -1221,4 +1231,5 @@ export const meetingsQueries = [
   ...hookQueries,
   ...mcpMeetingsQueries,
   ...transcriptExportQueries,
+  ...speakingStyleQueries,
 ];

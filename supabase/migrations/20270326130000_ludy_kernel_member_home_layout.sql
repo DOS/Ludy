@@ -1,9 +1,139 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
--- Issue #4487: restate ludy_kernel.org_purge from 20270324190100_ludy_kernel_org_purge_tracker_term,
--- keeping ludy_meetings.tracker_term, ludy_sign.envelope_document, ludy_sign.envelope_deposit, and ludy_sign.deposit_profile,
--- and deleting append-only ludy_hr.candidate_stage_transition under the purge guard ahead of ludy_hr.candidate.
+-- Per-member, per-org customizable Global Home layout (#4923 Phase 1, Closes #4925, step 1 of 2; step 0 registered the RLS matrix factory). Idempotent; applied files stay untouched.
+--
+-- ludy_kernel.member_home_layout_ok      shape validator for layout_json: JSON object <= 4096 bytes, exact keys (v, blocks), v = 1, blocks length 1..12 with unique canonical block ids and boolean visible.
+-- ludy_kernel.member_home_layout         one row per (org_id, user_id) storing the member's saved block order and visibility; removed with the membership and on org purge.
+-- ludy_kernel.member_home_layout_notify  sends recipient-scoped invalidation hint (<org_id> home_layout <id> @<user_id>) on ludy_stream for INSERT/UPDATE/DELETE so a member's other open sessions refetch.
+-- ludy_kernel.org_purge                  restated from 20270326030000 with ludy_kernel.member_home_layout added to v_kernel_first.
 SET LOCAL lock_timeout = '2s';
 
+CREATE OR REPLACE FUNCTION ludy_kernel.member_home_layout_ok(p_layout jsonb)
+RETURNS boolean
+LANGUAGE plpgsql
+IMMUTABLE
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+  v_len int;
+  v_distinct bigint;
+  v_elem jsonb;
+BEGIN
+  IF p_layout IS NULL OR pg_catalog.jsonb_typeof(p_layout) IS DISTINCT FROM 'object' THEN
+    RETURN false;
+  END IF;
+  IF pg_catalog.octet_length(p_layout::text) > 4096 THEN
+    RETURN false;
+  END IF;
+  IF (SELECT pg_catalog.array_agg(k ORDER BY k) FROM pg_catalog.jsonb_object_keys(p_layout) k)
+     IS DISTINCT FROM ARRAY['blocks', 'v']::text[] THEN
+    RETURN false;
+  END IF;
+  IF (p_layout -> 'v') IS DISTINCT FROM '1'::jsonb
+     OR pg_catalog.jsonb_typeof(p_layout -> 'blocks') IS DISTINCT FROM 'array' THEN
+    RETURN false;
+  END IF;
+  v_len := pg_catalog.jsonb_array_length(p_layout -> 'blocks');
+  IF v_len IS NULL OR v_len < 1 OR v_len > 12 THEN
+    RETURN false;
+  END IF;
+  FOR v_elem IN
+    SELECT elem FROM pg_catalog.jsonb_array_elements(p_layout -> 'blocks') AS elem
+  LOOP
+    IF pg_catalog.jsonb_typeof(v_elem) IS DISTINCT FROM 'object' THEN
+      RETURN false;
+    END IF;
+    IF (SELECT pg_catalog.array_agg(ek ORDER BY ek) FROM pg_catalog.jsonb_object_keys(v_elem) ek)
+       IS DISTINCT FROM ARRAY['id', 'visible']::text[] THEN
+      RETURN false;
+    END IF;
+    IF pg_catalog.jsonb_typeof(v_elem -> 'id') IS DISTINCT FROM 'string'
+       OR pg_catalog.jsonb_typeof(v_elem -> 'visible') IS DISTINCT FROM 'boolean' THEN
+      RETURN false;
+    END IF;
+    IF NOT COALESCE(
+      (v_elem ->> 'id') = ANY (ARRAY[
+        'finance_tax_deadlines',
+        'finance_approvals',
+        'teamwork_my_work',
+        'engage_pipeline',
+        'hr_pending',
+        'esign_pending'
+      ]::text[]),
+      false
+    ) THEN
+      RETURN false;
+    END IF;
+  END LOOP;
+  SELECT pg_catalog.count(DISTINCT (elem ->> 'id'))
+  INTO v_distinct
+  FROM pg_catalog.jsonb_array_elements(p_layout -> 'blocks') AS elem;
+  RETURN v_distinct IS NOT DISTINCT FROM v_len::bigint;
+END $$;
+
+REVOKE ALL ON FUNCTION ludy_kernel.member_home_layout_ok(jsonb)
+  FROM PUBLIC, ludy_tenant, ludy_app, ludy_worker, ludy_definer_tenant;
+GRANT EXECUTE ON FUNCTION ludy_kernel.member_home_layout_ok(jsonb) TO ludy_tenant;
+
+CREATE TABLE IF NOT EXISTS ludy_kernel.member_home_layout (
+  id uuid NOT NULL DEFAULT ludy_kernel.uuid_v7(),
+  org_id uuid NOT NULL REFERENCES ludy_kernel.tenant (org_id) ON DELETE CASCADE,
+  user_id uuid NOT NULL,
+  layout_json jsonb NOT NULL CHECK (ludy_kernel.member_home_layout_ok(layout_json)),
+  updated_at timestamptz NOT NULL DEFAULT pg_catalog.now(),
+  PRIMARY KEY (org_id, id),
+  CONSTRAINT member_home_layout_user_uq UNIQUE (org_id, user_id),
+  CONSTRAINT member_home_layout_member_fk
+    FOREIGN KEY (org_id, user_id) REFERENCES ludy_kernel.tenant_member (org_id, user_id) ON DELETE CASCADE
+);
+
+SELECT ludy_kernel.apply_tenant_rls('ludy_kernel.member_home_layout');
+REVOKE UPDATE ON ludy_kernel.member_home_layout FROM ludy_tenant;
+GRANT UPDATE (layout_json, updated_at) ON ludy_kernel.member_home_layout TO ludy_tenant;
+
+DROP POLICY IF EXISTS own_member_home_layout ON ludy_kernel.member_home_layout;
+CREATE POLICY own_member_home_layout ON ludy_kernel.member_home_layout
+  AS RESTRICTIVE FOR ALL TO ludy_tenant
+  USING (
+    user_id = (SELECT ludy_kernel.ctx_user_id())
+    OR ((SELECT ludy_kernel.ctx_user_id()) IS NULL AND (SELECT ludy_kernel.ctx_agent_id()) IS NULL)
+  )
+  WITH CHECK (
+    user_id = (SELECT ludy_kernel.ctx_user_id())
+    OR ((SELECT ludy_kernel.ctx_user_id()) IS NULL AND (SELECT ludy_kernel.ctx_agent_id()) IS NULL)
+  );
+
+CREATE OR REPLACE FUNCTION ludy_kernel.member_home_layout_notify() RETURNS trigger
+LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+  v_row record;
+BEGIN
+  IF TG_NARGS <> 2 OR TG_ARGV[0] <> 'home_layout' OR TG_ARGV[1] <> 'id' THEN
+    RAISE EXCEPTION 'STREAM_HINT_INVALID' USING ERRCODE = '22023';
+  END IF;
+  IF TG_OP = 'DELETE' THEN
+    v_row := OLD;
+  ELSE
+    v_row := NEW;
+  END IF;
+  IF v_row.org_id IS NULL OR v_row.id IS NULL OR v_row.user_id IS NULL THEN
+    RETURN NULL;
+  END IF;
+  PERFORM pg_catalog.pg_notify(
+    'ludy_stream',
+    v_row.org_id::text || ' ' || TG_ARGV[0] || ' ' || v_row.id::text || ' @' || v_row.user_id::text
+  );
+  RETURN NULL;
+END $$;
+REVOKE ALL ON FUNCTION ludy_kernel.member_home_layout_notify()
+  FROM PUBLIC, ludy_tenant, ludy_app, ludy_worker, ludy_definer_tenant;
+
+DROP TRIGGER IF EXISTS stream_hint ON ludy_kernel.member_home_layout;
+CREATE TRIGGER stream_hint
+  AFTER INSERT OR UPDATE OR DELETE ON ludy_kernel.member_home_layout
+  FOR EACH ROW EXECUTE FUNCTION ludy_kernel.member_home_layout_notify('home_layout', 'id');
+
+-- Restate ludy_kernel.org_purge from 20270326030000_ludy_kernel_org_purge_minutes_link
+-- with ludy_kernel.member_home_layout added to v_kernel_first (issue #4925).
 CREATE OR REPLACE FUNCTION ludy_kernel.org_purge(p_min_days integer)
  RETURNS TABLE(outcome text, counts jsonb, blob_keys text[])
  LANGUAGE plpgsql
@@ -46,10 +176,10 @@ DECLARE
     'ludy_kernel.member_vy_memory', 'ludy_kernel.member_vy_result',
     'ludy_hr.candidate', 'ludy_hr.job_opening',
     'ludy_hr.payroll_bank_template', 'ludy_hr.payroll_dependent', 'ludy_hr.attendance_log', 'ludy_hr.attendance_qr_config', 'ludy_hr.onboarding_submission', 'ludy_hr.overtime_request', 'ludy_hr.probation_review', 'ludy_hr.leave_request', 'ludy_hr.payroll_leave_entry', 'ludy_hr.employee_asset_handover', 'ludy_hr.okr_key_result', 'ludy_hr.okr_objective', 'ludy_hr.payroll_employee', 'ludy_hr.department',
-    'ludy_meetings.tracker_term', 'ludy_meetings.glossary_term', 'ludy_meetings.minutes_template', 'ludy_meetings.chat_post_body', 'ludy_meetings.chat_post', 'ludy_meetings.chat_channel_target', 'ludy_meetings.chat_channel', 'ludy_meetings.morning_notice', 'ludy_meetings.calendar_agenda', 'ludy_meetings.capture_session', 'ludy_meetings.hook_delivery', 'ludy_meetings.member_hook', 'ludy_meetings.translation', 'ludy_meetings.meeting_note', 'ludy_meetings.media_key', 'ludy_meetings.action_item', 'ludy_meetings.meeting_result', 'ludy_meetings.transcript_segment', 'ludy_meetings.live_line', 'ludy_meetings.live_chunk', 'ludy_meetings.audio_segment', 'ludy_meetings.meeting_video', 'ludy_meetings.meeting_reader', 'ludy_meetings.meeting',
+    'ludy_meetings.tracker_term', 'ludy_meetings.glossary_term', 'ludy_meetings.minutes_template', 'ludy_meetings.chat_post_body', 'ludy_meetings.chat_post', 'ludy_meetings.chat_channel_target', 'ludy_meetings.chat_channel', 'ludy_meetings.morning_notice', 'ludy_meetings.calendar_agenda', 'ludy_meetings.capture_session', 'ludy_meetings.hook_delivery', 'ludy_meetings.member_hook', 'ludy_meetings.minutes_version', 'ludy_meetings.translation', 'ludy_meetings.meeting_note', 'ludy_meetings.media_key', 'ludy_meetings.minutes_link', 'ludy_meetings.action_item', 'ludy_meetings.meeting_result', 'ludy_meetings.transcript_segment', 'ludy_meetings.live_line', 'ludy_meetings.live_chunk', 'ludy_meetings.audio_segment', 'ludy_meetings.meeting_video', 'ludy_meetings.meeting_reader', 'ludy_meetings.meeting',
     'ludy_kernel.saved_reply', 'ludy_kernel.conversation_setting', 'ludy_kernel.member_availability', 'ludy_kernel.conversation_composing', 'ludy_kernel.conversation_draft', 'ludy_kernel.conversation_note', 'ludy_kernel.conversation_read', 'ludy_kernel.conversation_attachment', 'ludy_kernel.conversation_message', 'ludy_kernel.conversation', 'ludy_kernel.conversation_identity', 'ludy_kernel.channel_access',
     'ludy_ads.ad_flag_setting', 'ludy_ads.ad_campaign_request', 'ludy_ads.ad_campaign_draft', 'ludy_ads.ad_spend_cap', 'ludy_ads.ad_org_setting', 'ludy_ads.ad_sync_run', 'ludy_ads.ad_spend_day', 'ludy_ads.ad_account',
-    'ludy_kernel.today_mail', 'ludy_kernel.saved_view', 'ludy_notes.link', 'ludy_notes.todo', 'ludy_notes.todo_list', 'ludy_notes.attachment', 'ludy_notes.note_version', 'ludy_notes.note', 'ludy_notes.notebook', 'ludy_notes.note_template',
+    'ludy_kernel.member_home_layout', 'ludy_kernel.today_mail', 'ludy_kernel.saved_view', 'ludy_notes.link', 'ludy_notes.todo', 'ludy_notes.todo_list', 'ludy_notes.attachment', 'ludy_notes.note_version', 'ludy_notes.note', 'ludy_notes.notebook', 'ludy_notes.note_template',
     'ludy_projects.roadmap_signal', 'ludy_projects.roadmap_announcement', 'ludy_projects.roadmap_vote', 'ludy_projects.roadmap_subscriber', 'ludy_projects.roadmap_otp', 'ludy_projects.roadmap_item', 'ludy_projects.roadmap_board',
     'ludy_projects.project_cycle_snapshot', 'ludy_projects.project_cycle_task_history',
     'ludy_projects.project_triage_item', 'ludy_projects.time_entry', 'ludy_projects.task_dependency', 'ludy_projects.project_task', 'ludy_projects.project_column', 'ludy_projects.project_cycle', 'ludy_projects.project_member', 'ludy_projects.project',
@@ -60,7 +190,7 @@ DECLARE
     'ludy_kernel.idempotency_key', 'ludy_kernel.extension_token', 'ludy_kernel.extension_auth_code', 'ludy_kernel.agent_wake_delivery', 'ludy_kernel.agent_wake_signal_seen', 'ludy_kernel.agent_grant_wake', 'ludy_kernel.agent_grant', 'ludy_kernel.oauth_state', 'ludy_kernel.outbox_pending', 'ludy_kernel.outbox_held',
     'ludy_kernel.proposal_policy', 'ludy_kernel.refusal_tally', 'ludy_kernel.tax_obligation_done',
     'ludy_kernel.tax_profile', 'ludy_kernel.usage_deferral', 'ludy_kernel.file_upload', 'ludy_kernel.record_le',
-    'ludy_kernel.budget_policy', 'ludy_kernel.kill_switch', 'ludy_kernel.credential', 'ludy_kernel.subject_key', 'ludy_kernel.calendar_credential',
+    'ludy_kernel.ai_budget_reservation', 'ludy_kernel.budget_policy', 'ludy_kernel.kill_switch', 'ludy_kernel.credential', 'ludy_kernel.subject_key', 'ludy_kernel.calendar_credential',
     'ludy_finance.vendor_account_rule', 'ludy_finance.categorization_rule', 'ludy_finance.stock_alias', 'ludy_finance.marketplace_column_profile', 'ludy_finance.marketplace_party', 'ludy_finance.einvoice_connection', 'ludy_finance.marketplace_hook_notice', 'ludy_finance.marketplace_hook', 'ludy_finance.marketplace_connection_file', 'ludy_finance.marketplace_vat_rate', 'ludy_finance.marketplace_connection', 'ludy_finance.marketplace_column_check', 'ludy_finance.misa_amis_match', 'ludy_finance.misa_amis_match_check', 'ludy_finance.misa_amis_push', 'ludy_finance.misa_amis_connection', 'ludy_finance.einvoice_series', 'ludy_finance.bank_party_rule', 'ludy_finance.customer_collection', 'ludy_finance.collection_setting', 'ludy_finance.bank_account_number', 'ludy_finance.bank_feed_webhook_notice', 'ludy_finance.bank_feed_hook', 'ludy_finance.bank_feed_account', 'ludy_finance.bank_feed_listed_account', 'ludy_crm.booking_feed', 'ludy_crm.booking', 'ludy_kernel.availability_rule',
     'ludy_kernel.calendar_event_link', 'ludy_kernel.calendar_event', 'ludy_kernel.calendar_connection', 'ludy_kernel.meeting_platform_recording', 'ludy_kernel.meeting_platform_credential', 'ludy_kernel.meeting_platform_connection', 'ludy_crm.sales_order_delivery', 'ludy_crm.sales_order_line', 'ludy_crm.sales_order', 'ludy_crm.quote_link', 'ludy_crm.quote_line', 'ludy_crm.quote', 'ludy_crm.quote_setting', 'ludy_crm.deal_next_step', 'ludy_crm.deal_setting', 'ludy_crm.deal', 'ludy_crm.pipeline_stage', 'ludy_crm.import_row', 'ludy_crm.import_batch', 'ludy_crm.event_type'];
   v_social text[] := ARRAY[
@@ -120,9 +250,6 @@ BEGIN
   DELETE FROM ludy_finance.einvoice_draft d WHERE d.org_id = v_org;
   GET DIAGNOSTICS v_n = ROW_COUNT;
   v_deleted := v_deleted || pg_catalog.jsonb_build_object('ludy_finance.einvoice_draft', v_n);
-  DELETE FROM ludy_hr.candidate_stage_transition cst WHERE cst.org_id = v_org;
-  GET DIAGNOSTICS v_n = ROW_COUNT;
-  v_deleted := v_deleted || pg_catalog.jsonb_build_object('ludy_hr.candidate_stage_transition', v_n);
   DELETE FROM ludy_hr.salary_advance_request r WHERE r.org_id = v_org;
   GET DIAGNOSTICS v_n = ROW_COUNT;
   v_deleted := v_deleted || pg_catalog.jsonb_build_object('ludy_hr.salary_advance_request', v_n);

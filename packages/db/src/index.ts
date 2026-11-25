@@ -5,7 +5,6 @@ import type { Database } from './schema.ts';
 export type { Database } from './schema.ts';
 export * from './schema.ts';
 export { singleCell, type CellResolver } from './cells.ts';
-export { checkEnvPair, readEnvPair, type EnvPairResult, type EnvPairSource } from './env.ts';
 
 // Money (numeric), int8 and dates stay strings end to end; timestamptz becomes a Date.
 const NUMERIC = 1700;
@@ -179,8 +178,7 @@ export function createPool(options: PoolOptions): pg.Pool {
     {
       connectionString: options.connectionString,
       max: options.max ?? 10,
-      // Deferred from #3970 to #3972 (with two-step sealed-context.db.test.ts update) so Invariant suite (from base) stays green.
-      application_name: options.applicationName ?? 'crove',
+      application_name: options.applicationName ?? 'ludy',
       statement_timeout: options.statementTimeoutMs ?? 15_000,
       idle_in_transaction_session_timeout: 10_000,
       types,

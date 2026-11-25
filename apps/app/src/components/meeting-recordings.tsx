@@ -4,9 +4,9 @@
 // platform's copy and transcribes the audio itself. The core works with AI off, and Ludy never joins or records a call. The list is the member's alone (the server's row security).
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
-import { useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
-import { IMPORT_CONSENT_NOTICE_VERSION, MEETING_SUMMARY_TEMPLATES, type MeetingLanguage, type MeetingPlatformRecordingView, type BuiltInSummaryTemplate, type MeetingVisibility } from '@ludy/kernel-contract';
+import { IMPORT_CONSENT_NOTICE_VERSION, MEETING_SUMMARY_TEMPLATES, meetingPlatformNeedsPick, type MeetingLanguage, type MeetingPlatformRecordingView, type BuiltInSummaryTemplate, type MeetingVisibility } from '@ludy/kernel-contract';
 import { IMPORT_NOTICE, noticeLanguageFor } from '@ludy/meeting-recorder';
 import { Badge } from '@ludy/ui/components/badge';
 import { Button } from '@ludy/ui/components/button';
@@ -17,7 +17,9 @@ import { Label } from '@ludy/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
-import { canRetry, canSubmitImport, errorKey, importBlock, isTranscriptImport, lengthParts, matchedSuggestion, pollMs } from '../lib/meeting-platform.ts';
+import { getConfig } from '../lib/auth.ts';
+import { pickDriveFile } from '../lib/google-picker.ts';
+import { canRetry, canSubmitImport, errorKey, importBlock, isTranscriptImport, lengthParts, matchedSuggestion, pairTaken, pollMs } from '../lib/meeting-platform.ts';
 import { formatBytes } from '../lib/offboarding.ts';
 import { toast } from '../lib/toast.ts';
 import { useConsentPolicy } from './consent-policy.tsx';
@@ -164,7 +166,7 @@ function offers(row: MeetingPlatformRecordingView, words: { audio: string; video
   return items.length > 0 ? items.join(', ') : words.nothing;
 }
 
-function RecordingRow({ row, slug, canImport, onImport }: { row: MeetingPlatformRecordingView; slug: string; canImport: boolean; onImport: (row: MeetingPlatformRecordingView) => void }) {
+function RecordingRow({ row, slug, canImport, taken, onImport }: { row: MeetingPlatformRecordingView; slug: string; canImport: boolean; taken: boolean; onImport: (row: MeetingPlatformRecordingView) => void }) {
   const t = useTranslations('meetings.platform.recordings');
   const tp = useTranslations('meetings.platform');
   const f = useFormat();
@@ -179,7 +181,41 @@ function RecordingRow({ row, slug, canImport, onImport }: { row: MeetingPlatform
     },
     onSuccess: () => refreshRecordings(),
   });
+  // Google Meet's Picker route (#3174): a recording that is a video file in the organizer's Drive is picked in Google Picker first, and only its file id goes to the API (the token Google gives the browser for the
+  // pick never does, apps/app/src/lib/google-picker.ts). Shown only where the deployment set the Picker's keys.
+  const picker = getConfig().googlePicker ?? null;
+  const needsPick = picker !== null && meetingPlatformNeedsPick(row.provider, row);
+  // The Pick button gives way to Import once the row says it was picked: focus follows to Import, so a keyboard user does not land on the page's start.
+  const rowRef = useRef<HTMLLIElement>(null);
+  const refocus = useRef(false);
+  useEffect(() => {
+    if (!refocus.current || !row.picked) return;
+    refocus.current = false;
+    rowRef.current?.querySelector<HTMLElement>('[data-testid="meeting-recording-import"]')?.focus();
+  }, [row.picked]);
+  const [pickNote, setPickNote] = useState<'cancelled' | 'denied' | 'failed' | null>(null);
+  const pick = useMutation({
+    mutationFn: async () => {
+      const result = await pickDriveFile(picker as NonNullable<typeof picker>);
+      if (result.status === 'picked') await orpc.meetingPlatform.pick.call({ recordingId: row.id, fileId: result.fileId });
+      return result;
+    },
+    onSuccess: (result) => {
+      setPickNote(result.status === 'picked' ? null : result.status);
+      if (result.status === 'picked') {
+        refocus.current = true;
+        refreshRecordings();
+      }
+    },
+  });
+  const pickButton = (label: string) => (
+    <Button type="button" size="sm" variant="outline" className="max-md:min-h-11 max-md:min-w-11" loading={pick.isPending} aria-label={t('pickOf', { title })} data-testid="meeting-recording-pick" onClick={() => pick.mutate()}>
+      {label}
+    </Button>
+  );
   const title = row.title === '' ? t('untitled') : row.title;
+  // A meeting can be offered twice (its video and its transcript, which import differently): the buttons' names say which row they are, so a screen reader does not hear two identical ones.
+  const labelTitle = isTranscriptImport(row) ? `${title} (${t('offerTranscript')})` : title;
   const matched = matchedSuggestion(row);
   const block = importBlock(row);
   const length = row.lengthSeconds === null ? null : lengthParts(row.lengthSeconds);
@@ -190,7 +226,7 @@ function RecordingRow({ row, slug, canImport, onImport }: { row: MeetingPlatform
     </Button>
   );
   return (
-    <li className="space-y-2 p-3 text-sm" data-testid="meeting-recording" data-status={row.status}>
+    <li ref={rowRef} className="space-y-2 p-3 text-sm" data-testid="meeting-recording" data-status={row.status}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 space-y-1">
           <div className="flex flex-wrap items-center gap-2">
@@ -223,27 +259,36 @@ function RecordingRow({ row, slug, canImport, onImport }: { row: MeetingPlatform
               <Link
                 to="/o/$slug/meetings/$id"
                 params={{ slug, id: matched.meetingId }}
-                aria-label={t('openMatchedOf', { title })}
+                aria-label={t('openMatchedOf', { title: labelTitle })}
                 className="inline-flex min-h-11 min-w-11 items-center rounded px-2 text-xs font-medium text-link underline focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 md:min-h-6 md:min-w-0 md:px-0"
                 data-testid="meeting-recording-matched-link"
               >
                 {t('openMatched')}
               </Link>
-              {quiet(t('dismiss'), t('dismissOf', { title }))}
+              {quiet(t('dismiss'), t('dismissOf', { title: labelTitle }))}
             </>
           )}
           {row.status === 'suggested' && matched === null && block === null && (
             <>
-              {canImport ? (
-                <Button type="button" size="sm" aria-label={t('importOf', { title })} data-testid="meeting-recording-import" onClick={() => onImport(row)}>
-                  {t('import')}
-                </Button>
+              {taken ? (
+                <span className="text-xs text-muted-foreground" role="status" data-testid="meeting-recording-pair-taken">
+                  {t('pairTaken')}
+                </span>
+              ) : canImport && needsPick && !row.picked ? (
+                pickButton(t('pick'))
+              ) : canImport ? (
+                <>
+                  {needsPick && pickButton(t('pickAgain'))}
+                  <Button type="button" size="sm" aria-label={t('importOf', { title: labelTitle })} data-testid="meeting-recording-import" onClick={() => onImport(row)}>
+                    {t('import')}
+                  </Button>
+                </>
               ) : (
                 <span className="text-xs text-muted-foreground" data-testid="meeting-recording-viewer">
                   {t('viewerOnly')}
                 </span>
               )}
-              {quiet(t('dismiss'), t('dismissOf', { title }))}
+              {quiet(t('dismiss'), t('dismissOf', { title: labelTitle }))}
             </>
           )}
           {row.status === 'suggested' && matched === null && block !== null && (
@@ -251,7 +296,7 @@ function RecordingRow({ row, slug, canImport, onImport }: { row: MeetingPlatform
               <span className="text-xs text-muted-foreground" data-testid="meeting-recording-blocked">
                 {block === 'video_only' ? t('videoOnly') : block === 'transcript_only' ? t('transcriptOnly') : block === 'too_long' ? t('tooLong') : t('tooLarge')}
               </span>
-              {quiet(t('dismiss'), t('dismissOf', { title }))}
+              {quiet(t('dismiss'), t('dismissOf', { title: labelTitle }))}
             </>
           )}
           {row.status === 'importing' && (
@@ -276,12 +321,18 @@ function RecordingRow({ row, slug, canImport, onImport }: { row: MeetingPlatform
                   {tp('settings.title')}
                 </Link>
               )}
-              {canImport && canRetry(row) && (
-                <Button type="button" size="sm" variant="outline" aria-label={t('importOf', { title })} data-testid="meeting-recording-retry" onClick={() => onImport(row)}>
+              {taken && (
+                <span className="text-xs text-muted-foreground" role="status" data-testid="meeting-recording-pair-taken">
+                  {t('pairTaken')}
+                </span>
+              )}
+              {canImport && needsPick && (row.errorCode === 'pick_missing' || row.errorCode === 'pick_mismatch') && pickButton(t('pickAgain'))}
+              {canImport && !taken && canRetry(row) && !(needsPick && (row.errorCode === 'pick_missing' || row.errorCode === 'pick_mismatch')) && (
+                <Button type="button" size="sm" variant="outline" aria-label={t('importOf', { title: labelTitle })} data-testid="meeting-recording-retry" onClick={() => onImport(row)}>
                   {t('retry')}
                 </Button>
               )}
-              {quiet(t('dismiss'), t('dismissOf', { title }))}
+              {quiet(t('dismiss'), t('dismissOf', { title: labelTitle }))}
             </>
           )}
         </div>
@@ -293,6 +344,16 @@ function RecordingRow({ row, slug, canImport, onImport }: { row: MeetingPlatform
           {t('failed', { reason: tp(`errors.${errorKey(row.errorCode)}`) })}
         </p>
       )}
+      {needsPick && row.status === 'suggested' && (
+        <p className="text-xs text-subtle-foreground" role="status" aria-live="polite" data-testid="meeting-recording-pick-note">
+          {row.picked ? t('pickedNote') : t('pickNote')}
+        </p>
+      )}
+      {/* Always mounted, so a screen reader announces what fills it (a cancelled, refused or failed pick). The note above is mounted too and changes to "file chosen". */}
+      <p className="text-xs text-muted-foreground" role="status" aria-live="polite" data-testid="meeting-recording-pick-state">
+        {pickNote !== null ? t(pickNote === 'cancelled' ? 'pickCancelled' : pickNote === 'failed' ? 'pickFailed' : 'pickDenied') : ''}
+      </p>
+      {pick.error && <ErrorText>{errorMessage(pick.error)}</ErrorText>}
       {dismiss.error && <ErrorText>{errorMessage(dismiss.error)}</ErrorText>}
     </li>
   );
@@ -332,7 +393,7 @@ export function PlatformRecordings({ slug }: { slug: string }) {
       {rows.length > 0 && (
         <ul className="divide-y rounded-lg border border-border bg-card">
           {rows.map((row) => (
-            <RecordingRow key={row.id} row={row} slug={slug} canImport={canImport} onImport={setTarget} />
+            <RecordingRow key={row.id} row={row} slug={slug} canImport={canImport} taken={pairTaken(rows, row)} onImport={setTarget} />
           ))}
         </ul>
       )}

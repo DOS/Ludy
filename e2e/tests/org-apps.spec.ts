@@ -11,7 +11,7 @@ const streamUp = (page: Page) => page.waitForResponse((r) => /\/api\/stream(\?|$
 test('an owner switches Social off and on again from Settings', async ({ page }) => {
   await signUp(page, newEmail('org-apps'));
   const slug = await createOrg(page, 'Công ty chọn ứng dụng');
-  await page.getByRole('navigation').getByRole('link', { name: 'Cài đặt', exact: true }).click();
+  await page.getByRole('banner').getByRole('link', { name: 'Cài đặt', exact: true }).click();
   await openSettingsTab(page, 'apps');
 
   const social = page.getByTestId('org-app-social');

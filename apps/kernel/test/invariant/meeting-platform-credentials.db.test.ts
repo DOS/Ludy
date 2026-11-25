@@ -13,7 +13,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { migrate } from '@ludy/db/migrate';
 import { createDbClient, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -31,10 +31,12 @@ const RETURNS: Readonly<Record<string, string>> = {
   meeting_platform_recording_replace: 'integer',
   meeting_platform_recording_begin: 'void',
   meeting_platform_recording_dismiss: 'void',
+  meeting_platform_recording_pick: 'void',
   meeting_platform_import_open: 'TABLE(org_id uuid, id uuid, connection_id uuid, provider text, external_id text, has_audio boolean, has_video boolean, size_bytes bigint, staging_key text)',
   meeting_platform_import_staged: 'integer',
   meeting_platform_import_failed: 'integer',
   meeting_platform_import_holds: 'text',
+  meeting_platform_import_pick: 'text',
   meeting_platform_recording_claim: 'TABLE(staging_key text, meeting_id uuid, size_bytes bigint)',
   meeting_platform_recording_claim_failed: 'void',
   meeting_platform_recording_imported: 'void',
@@ -56,10 +58,12 @@ const EXECUTORS: Readonly<Record<string, readonly string[]>> = {
   meeting_platform_recording_replace: ['crove_worker'],
   meeting_platform_recording_begin: ['crove_app'],
   meeting_platform_recording_dismiss: ['crove_app'],
+  meeting_platform_recording_pick: ['crove_app'],
   meeting_platform_import_open: ['crove_worker'],
   meeting_platform_import_staged: ['crove_worker'],
   meeting_platform_import_failed: ['crove_worker'],
   meeting_platform_import_holds: ['crove_worker'],
+  meeting_platform_import_pick: ['crove_worker'],
   meeting_platform_recording_claim: ['crove_app'],
   meeting_platform_recording_claim_failed: ['crove_app'],
   meeting_platform_recording_imported: ['crove_app'],
@@ -72,14 +76,8 @@ const EXECUTORS: Readonly<Record<string, readonly string[]>> = {
 // meeting_platform_ring (Zoom's webhook doorbell, #3175): clears the last listing of the active connections of one account whose org has Meetings on (it asks org_app_on) so the sweep lists them again, returns only how many; the API login runs it.
 // meeting_platform_recording_pick and meeting_platform_import_pick (the Picker route for Google Meet audio, #3174, ADR-0025 amendment of 2026-11-25): the first keeps the Drive file id a member picked on their own row (a Google Meet recording
 // that is a video file only, still suggested or failed), the second hands the worker the id of the row that is importing under exactly one staging key; neither returns a title or any text of a meeting (a void and one Drive id).
-const PENDING_RETURNS: Readonly<Record<string, string>> = {
-  meeting_platform_recording_pick: 'void',
-  meeting_platform_import_pick: 'text',
-};
-const PENDING_EXECUTORS: Readonly<Record<string, readonly string[]>> = {
-  meeting_platform_recording_pick: ['crove_app'],
-  meeting_platform_import_pick: ['crove_worker'],
-};
+const PENDING_RETURNS: Readonly<Record<string, string>> = {};
+const PENDING_EXECUTORS: Readonly<Record<string, readonly string[]>> = {};
 
 // A column name that would carry something a person wrote or the platform titled.
 const TEXTUAL_NAME = /title|summary|body|text|name|subject|note|transcript|decision|message/i;

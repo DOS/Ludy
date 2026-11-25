@@ -126,9 +126,13 @@ export const meetingsManifest = defineModule({
       ]),
       // A member's own webhook for the minutes they publish (A6, #3164): definer-only. The address can carry a token in its path and the sealed secret is the broker's envelope, so both are sensitive.
       member_hook: columns(['org_id', 'id', 'user_id', 'fields', 'enabled', 'paused_reason', 'secret_hint', 'previous_until', 'failing_since', 'consecutive_failures', 'last_delivery_at', 'last_status', 'created_at', 'updated_at'], { url: 'sensitive', secret_sealed: 'sensitive', previous_sealed: 'sensitive' }),
+      // The links to the published minutes for people outside the org (#4822): ids, times and a count; the token is kept only as a hash.
+      minutes_link: columns(['org_id', 'id', 'meeting_id', 'token_sha256', 'expires_at', 'created_by', 'created_at', 'revoked_at', 'revoked_by', 'first_viewed_at', 'views']),
       // The minutes templates an org's owner or admin writes (#3578): a name and 1 to 8 sections (title, hint for Vy). Layout the org wrote, not personal data; the settings screen asks for no
       // names or personal details in a template. The meeting's own copy of one is on the meeting row.
       minutes_template: columns(['org_id', 'id', 'name', 'sections', 'archived_at', 'created_by', 'created_at', 'updated_at']),
+      // The recorder's published second-language version of a meeting's minutes (#4777): read by the meeting's readers. The body (the reviewed translated text) is personal data.
+      minutes_version: columns(['org_id', 'id', 'meeting_id', 'language', 'source_hash', 'published_by', 'source_run_id', 'published_at'], { body: 'pii' }),
       // A member's own opt-in to the morning notice of the day's meetings (#3955): a time of day, their time zone and the language of the mail. One row per member, theirs alone; no title, name or text of a meeting is in it.
       morning_notice: columns(['org_id', 'id', 'user_id', 'send_minute', 'time_zone', 'language', 'created_at', 'updated_at']),
       // The words an org tracks across its meetings (#4818): a term an owner chose, plain text, like a glossary term; no meeting text.

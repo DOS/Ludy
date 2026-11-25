@@ -115,7 +115,7 @@ import {
   type SignAi,
 } from './sign-ai.ts';
 import { draftProjectAcceptanceSummary, signAcceptanceAi } from './sign-acceptance-ai.ts';
-import { dealUpdateStatusOf, runMeetingDealUpdate, adherenceStatusOf, runMeetingAdherence, assigneeStatusOf, runMeetingAssignee, briefStatusOf, digestStatusOf, followupNoteStatusOf, runMeetingBrief, runMeetingFollowupNote, runMeetingTitle, runMeetingDigest, askStatusOf, notesVyStatusOf, readNotesVyResults, runLiveNotes, runMeetingAsk, runMeetingChapters, runMeetingSummary, runMeetingTranslation, runNotesEnhance, runNotesOrganize, runNotesSuggestTodos, runNotesSummarize, runNotesTodoPlan, runProjectsTasksFromNote, runProjectsTasksFromSource, runTranscriptTranslation, tasksFromNoteStatusOf, tasksFromSourceStatusOf, transcriptTranslationStatusOf, translationStatusOf, type ModelPort, runMeetingCommitments, runMeetingOpenPoints , runMeetingTemplateSuggest } from './member-vy-ports.ts';
+import { dealUpdateStatusOf, runMeetingDealUpdate, adherenceStatusOf, runMeetingAdherence, assigneeStatusOf, runMeetingAssignee, briefStatusOf, digestStatusOf, followupNoteStatusOf, runMeetingBrief, runMeetingFollowupNote, runMeetingTitle, runMeetingDigest, askStatusOf, notesVyStatusOf, readNotesVyResults, runLiveNotes, runMeetingAsk, runMeetingChapters, runMeetingSummary, runMeetingTranslation, runNotesEnhance, runNotesOrganize, runNotesSuggestTodos, runNotesSummarize, runNotesTodoPlan, runProjectsTasksFromNote, runProjectsTasksFromSource, runTranscriptTranslation, tasksFromNoteStatusOf, tasksFromSourceStatusOf, transcriptTranslationStatusOf, translationStatusOf, type ModelPort, runMeetingCommitments, runMeetingOpenPoints, runMeetingSalesInsight, salesInsightStatusOf, runMeetingTemplateSuggest } from './member-vy-ports.ts';
 import { draftReorder, stockAi, suggestItems, suggestMarketplaceItems } from './stock-ai.ts';
 import { MARKETPLACE_AUTHORIZED_ADAPTERS, MARKETPLACE_FEE_CYCLE_DAYS, misaChannelProvider, MarketplaceProviderError, SANDBOX_MARKETPLACE_SECRET, type EInvoiceSuggestSource, type MarketplaceProvider, type MarketplaceTestResult, type MarketplaceSuggestSource, type MarketplaceProposalFacts, type ReorderSource, type SuggestSource } from '@ludy/mod-finance';
 import { cashForecastAi, explainCashForecast } from './finance-cash-forecast-ai.ts';
@@ -1098,9 +1098,19 @@ export function createRpcHandler(
         }),
       ),
     },
+    overview: {
+      homeLayout: {
+        get: os.overview.homeLayout.get.handler(({ context }) =>
+          inOrg(context, (orgId, actor) => runtime.query('kernel.member.home_layout.get', {}, { actor, orgId })),
+        ),
+        save: os.overview.homeLayout.save.handler(({ context, input }) =>
+          inOrg(context, (orgId, actor) => runtime.execute('kernel.member.home_layout.save', input, { actor, orgId })),
+        ),
+      },
+    },
     org: {
       create: os.org.create.handler(({ context, input }) =>
-        guard(() => createOrg(runtime, actorOf(context.user), input.name, input.idempotencyKey)),
+        guard(() => createOrg(runtime, actorOf(context.user), input.name, input.idempotencyKey, input.kind)),
       ),
       get: os.org.get.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.org.get', {}, { actor, orgId }))),
       apps: os.org.apps.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.org.apps', {}, { actor, orgId }))),
@@ -1787,7 +1797,17 @@ export function createRpcHandler(
         get: os.meetings.minutesEsign.get.handler(meetingsQuery('meetings.minutes_esign.get')),
         set: os.meetings.minutesEsign.set.handler(meetingsCommand('meetings.minutes_esign.set')),
       },
+      minutesLink: {
+        switch: {
+          get: os.meetings.minutesLink.switch.get.handler(meetingsQuery('meetings.minutes_link.switch.get')),
+          set: os.meetings.minutesLink.switch.set.handler(meetingsCommand('meetings.minutes_link.switch.set')),
+        },
+        create: os.meetings.minutesLink.create.handler(meetingsCommand('meetings.minutes_link.create')),
+        revoke: os.meetings.minutesLink.revoke.handler(meetingsCommand('meetings.minutes_link.revoke')),
+        list: os.meetings.minutesLink.list.handler(meetingsQuery('meetings.minutes_link.list')),
+      },
       search: os.meetings.search.handler(meetingsQuery('meetings.search')),
+      speakingStyle: { get: os.meetings.speakingStyle.get.handler(meetingsQuery('meetings.speaking_style.get')) },
       transcript: {
         get: os.meetings.transcript.get.handler(meetingsQuery('meetings.transcript.get')),
         download: os.meetings.transcript.download.handler(meetingsQuery('meetings.transcript.download')),
@@ -1878,6 +1898,7 @@ export function createRpcHandler(
           inMeetings(context, (orgId, actor) => runMeetingTranslation({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: translations, price: aiPrice }, orgId, actor, input.meetingId, input.stage, input.to)),
         ),
         get: os.meetings.translation.get.handler(meetingsQuery('meetings.translation.get')),
+        source: os.meetings.translation.source.handler(meetingsQuery('meetings.translation.source')),
         // The transcript (E2, #3185): the member's own Vy translates the next batch of the lines they read, in the request; the page asks again while it is open.
         transcriptStatus: os.meetings.translation.transcriptStatus.handler(({ context, input }) =>
           inMeetings(context, (orgId, actor) => transcriptTranslationStatusOf({ runtime, price: aiPrice, hasModel: summaryModel !== null }, orgId, actor, input.meetingId, input.to)),
@@ -1887,6 +1908,12 @@ export function createRpcHandler(
         ),
         transcriptStop: os.meetings.translation.transcriptStop.handler(meetingsCommand('meetings.translation.transcript_stop')),
         transcriptGet: os.meetings.translation.transcriptGet.handler(meetingsQuery('meetings.translation.transcript_get')),
+      },
+      // The second-language version of the published minutes (#4777): the recorder's reviewed text, published by their click, read by every reader; see modules/meetings/src/minutes-version.ts.
+      minutesVersion: {
+        get: os.meetings.minutesVersion.get.handler(meetingsQuery('meetings.minutes_version.get')),
+        publish: os.meetings.minutesVersion.publish.handler(meetingsCommand('meetings.minutes_version.publish')),
+        unpublish: os.meetings.minutesVersion.unpublish.handler(meetingsCommand('meetings.minutes_version.unpublish')),
       },
       // Ask across meetings (A3, #3161): the member's own Vy answers from the lines the member's own search finds, each sentence with a citation to a transcript line; nothing is stored or sent;
       // see member-vy-ports.ts.
@@ -1941,6 +1968,15 @@ export function createRpcHandler(
         status: os.meetings.openPoints.status.handler(meetingsQuery('meetings.open_points.status')),
         list: os.meetings.openPoints.list.handler(({ context, input }) =>
           inMeetings(context, (orgId, actor) => runMeetingOpenPoints({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: summaries }, orgId, actor, input.meetingId)),
+        ),
+      },
+      // Sales call insights for a meeting linked to an open deal (#4920, L26): recorder-only foreground Vy run with cited transcript line IDs and code-computed customer talk share.
+      salesInsight: {
+        status: os.meetings.salesInsight.status.handler(({ context, input }) =>
+          inMeetings(context, (orgId, actor) => salesInsightStatusOf({ runtime, model: summaryModel, meter: aiMeter ?? (() => null) }, orgId, actor, input.meetingId)),
+        ),
+        analyze: os.meetings.salesInsight.analyze.handler(({ context, input }) =>
+          inMeetings(context, (orgId, actor) => runMeetingSalesInsight({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: summaries }, orgId, actor, input.meetingId)),
         ),
       },
       // This week's decisions and what is still open, across the meetings the member reads (#3949): the facts are read as the member (no model); the click has the member's own Vy write two or three sentences from
@@ -3221,6 +3257,7 @@ export function createRpcHandler(
       recordings: os.meetingPlatform.recordings.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.meeting_platform.recordings', {}, { actor, orgId }))),
       refresh: os.meetingPlatform.refresh.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.meeting_platform.refresh', input, { actor, orgId }))),
       dismiss: os.meetingPlatform.dismiss.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.meeting_platform.recording.dismiss', input, { actor, orgId }))),
+      pick: os.meetingPlatform.pick.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.meeting_platform.recording.pick', input, { actor, orgId }))),
       disconnect: os.meetingPlatform.disconnect.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.meeting_platform.disconnect', input, { actor, orgId }))),
       // A throwaway token is sealed for the sandbox account and dropped: the sandbox platform opens nothing, so the credential only has to exist. Connecting again is a reconnect of the same account.
       connectSandbox: os.meetingPlatform.connectSandbox.handler(({ context }) =>

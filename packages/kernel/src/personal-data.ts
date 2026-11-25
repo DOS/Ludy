@@ -457,6 +457,19 @@ export const PERSONAL_DATA_COLUMNS = {
     handling: 'erase',
     reason: "A machine translation of a meeting's summary, which may name or describe a person: read by the member who asked alone, deleted with the meeting (its recorder, an owner, the retention job or the org purge), with the summary it translated, and 30 days after the member who asked was removed (the former-member purge of their Vy data), and dropped, not redacted, by an erasure that touches the meeting",
   },
+  // The second-language version of a meeting's published minutes (Meetings, issue #4777): the text the recorder reviewed, edited and published beside the original, read by every reader of the
+  // meeting. It holds no figure, link, address or number that identifies someone (8 digits or more) that its original does not hold ITSELF, each one by name: the publish command (versionTextProblem,
+  // modules/meetings/src/minutes-version.ts) holds the text to the database's own matching (text_mention_pattern, here the probe's), from the safe side: on the texts as stored and on their NFKC fold, an address is a
+  // whole word with an "@" (the characters the pattern refuses beside an address stay part of it) and a number is each run of 8 to 20 digits the pattern can find, with its own boundary rules and
+  // leading zeros kept, so what the pattern finds in a version it finds in the original (a db test holds the code to the real function). So the finder reads the person's value in the original and a
+  // redaction of the original reaches the version by the database: it DROPS the version (never redacts it: a name cannot be located reliably in another language) the moment the published
+  // summary, a decision or an action item title changes, is replaced or is unpublished, and it goes with the meeting (the recorder, an owner, the retention job or the org purge). ludy_meetings.personal_erase also
+  // DROPS it directly (#4857), for every meeting the erasure touches and whether or not the original could be redacted, so no path depends on those triggers alone.
+  'ludy_meetings.minutes_version.body': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: "The recorder's reviewed translation of a meeting's published minutes, which may name or describe a person: read where the actor reads the meeting, deleted with the meeting (its recorder, an owner, the retention job or the org purge) and with the minutes it sits beside, and dropped, not redacted, by an erasure that touches the published minutes",
+  },
   // The body of a minutes-webhook event waiting to be sent (meetings integrations A6, issue #3164): the title, summary, decisions and action items the recorder ticked, copied at publish and kept
   // only while the event waits. The database wipes it (sets it to NULL) the moment the delivery settles, and drops a waiting event, wiping it, when the meeting's title, its published summary or
   // decisions or an action item change (which is what the erasure's redaction does), when the hook is turned off or its address changes, when the member leaves, the owner turns the feature off, or

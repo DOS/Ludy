@@ -90,9 +90,9 @@ const NOT_SHOWN: Record<string, string> = {
   // The inbound mail endpoint answers the mail relay, not a browser.
   EMPTY_MESSAGE: 'inbound mail',
   UNKNOWN_RECIPIENT: 'inbound mail',
+  LEGACY_RECIPIENT_HEADER: 'inbound mail',
   UNREADABLE_MESSAGE: 'inbound mail',
   INBOUND_BLOB_MISMATCH: 'inbound mail',
-  RECIPIENT_HEADER_CONFLICT: 'inbound mail',
   // Bounce reports to a mail's Return-Path (#539), dropped by the worker.
   UNREADABLE_BOUNCE: 'inbound mail',
   UNKNOWN_BOUNCE: 'inbound mail',
@@ -112,8 +112,6 @@ const NOT_SHOWN: Record<string, string> = {
   INVALID_STORAGE_KEY: 'bug',
   INVALID_GENERATION: 'bug',
   IDEMPOTENCY_UNSUPPORTED: 'bug',
-  // The SPA only sends x-ludy-org and never sends conflicting x-ludy-org / x-crove-org headers.
-  ORG_HEADER_CONFLICT: 'bug',
   // eSign worker (#3323, #3554): system-only seal and CA worker commands/queries.
   SIGN_INVALID_SEALED_FILE: 'sign worker',
   SIGN_INVALID_CERTIFICATE_FILE: 'sign worker',
@@ -134,6 +132,8 @@ const NOT_SHOWN: Record<string, string> = {
   STAGED_UPLOAD_REQUIRED: 'meetings',
   // A playback stream whose file changed under it (#2579): the player's request fails and the page reloads the meeting.
   MEDIA_REPLACED: 'meetings',
+  // The public minutes link (#4822): POST /api/minutes/view answers 404 for a token that is wrong, revoked or expired; the viewer page reads that as its own "link not valid" state, in its own words, and shows no kernel error.
+  MINUTES_LINK_INVALID: 'public minutes viewer',
 };
 
 function sources(dir: string): string[] {

@@ -1,6 +1,5 @@
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
-import { checkEnvPair } from '@ludy/db';
 import { EXTRACT_TIMING } from '@ludy/extract-contract';
 import { misaBlockers } from '@ludy/einvoice';
 import { MODULE_IDS, TRANSLATION_FLAGGED_TARGETS, zExtensionId, type ModuleId, type TranslationFlaggedTarget } from '@ludy/kernel-contract';
@@ -592,6 +591,12 @@ const schema = z.object({
   // with neither set there is no Google Meet adapter and no Google Meet connection. Both or neither. The value of the calendar's client may be used here if the owner decides so.
   MEETINGS_GOOGLE_CLIENT_ID: optional,
   MEETINGS_GOOGLE_CLIENT_SECRET: optional,
+  // Google Meet audio through Google Picker (Meetings C2, #3174, ADR-0025 amendment of 2026-11-25): the member picks a recording in Google Picker in their own browser (`drive.file`, a short-lived token minted in
+  // the browser by Google Identity Services, never sent to the API) and Ludy reads only that file. The Google project's browser API key (restricted to the app's origin and https://docs.google.com/*) and its project number
+  // (the Picker's app id), with the Google OAuth client above (its client id is the one the browser asks Google Identity Services for the token with). Both or neither; they need MEETINGS_GOOGLE_CLIENT_ID. Set, the Google
+  // adapter offers recordings of conferences with no transcript and the app's CSP lets Google's scripts and frames in (docs/runbooks/meetings-google.md); unset, none of that. Public values, never secrets.
+  MEETINGS_GOOGLE_PICKER_API_KEY: optional.pipe(z.string().regex(/^[A-Za-z0-9_-]{20,100}$/, 'MEETINGS_GOOGLE_PICKER_API_KEY is a Google API key').optional()),
+  MEETINGS_GOOGLE_PICKER_APP_ID: optional.pipe(z.string().regex(/^[0-9]{6,20}$/, 'MEETINGS_GOOGLE_PICKER_APP_ID is the number of the Google project').optional()),
   // Microsoft Teams recordings and transcripts (Meetings C4, #3176): the operator's own multi-tenant Microsoft Entra app (work and school accounts; authorization code with PKCE) with the delegated
   // permissions of docs/runbooks/meetings-teams.md and the redirect URL APP_URL/meetings/oauth/microsoft_teams/callback. Two of the permissions need a customer's tenant administrator to consent. Off by default: with
   // neither set there is no Teams adapter and no Teams connection. Both or neither. Its own pair, apart from CALENDAR_MICROSOFT_*: a calendar app asks for calendar scopes only.
@@ -824,60 +829,21 @@ const schema = z.object({
 
 export type SessionCheckMode = 'db' | 'jwt' | 'off';
 
-const BRANDED_ENV_PAIRS = [
-  ['LUDY_MODULES', 'CROVE_MODULES'],
-  ['LUDY_SHARED_DATABASE', 'CROVE_SHARED_DATABASE'],
-  ['LUDY_SHARED_DATABASE_SWITCH', 'CROVE_SHARED_DATABASE_SWITCH'],
-  ['LUDY_CONTEXT_TOKEN_KEY', 'CROVE_CONTEXT_TOKEN_KEY'],
-  ['LUDY_BUILD', 'CROVE_BUILD'],
-  ['LUDY_BUILD_TIME', 'CROVE_BUILD_TIME'],
-  ['LUDY_ALLOW_ALL_IN_ONE', 'CROVE_ALLOW_ALL_IN_ONE'],
-  ['LUDY_APP_DB_PASSWORD', 'CROVE_APP_DB_PASSWORD'],
-  ['LUDY_WORKER_DB_PASSWORD', 'CROVE_WORKER_DB_PASSWORD'],
-  ['LUDY_PROBER_DB_PASSWORD', 'CROVE_PROBER_DB_PASSWORD'],
-  ['LUDY_REPORTER_DB_PASSWORD', 'CROVE_REPORTER_DB_PASSWORD'],
-] as const;
-
-function normalizeBrandedEnv(env: NodeJS.ProcessEnv): Record<string, string | undefined> {
-  const normalized: Record<string, string | undefined> = { ...env };
-  for (const [primary, legacy] of BRANDED_ENV_PAIRS) {
-    const resolved = checkEnvPair(env, primary, legacy);
-    if (!resolved.ok) {
-      throw new Error(`invalid configuration: ${resolved.error}`);
-    }
-    if (resolved.value !== undefined) {
-      normalized[primary] = resolved.value;
-    } else {
-      delete normalized[primary];
-    }
-  }
-  return normalized;
-}
-
-type LegacyBrandedConfig = {
-  readonly CROVE_MODULES: z.infer<typeof schema>['LUDY_MODULES'];
-  readonly CROVE_SHARED_DATABASE: 'true' | 'false';
-  readonly CROVE_SHARED_DATABASE_SWITCH: 'true' | 'false';
-  readonly CROVE_CONTEXT_TOKEN_KEY: string | undefined;
-  readonly CROVE_BUILD: string | undefined;
-  readonly CROVE_BUILD_TIME: string | undefined;
-  readonly CROVE_ALLOW_ALL_IN_ONE: 'true' | 'false' | undefined;
-  readonly CROVE_APP_DB_PASSWORD: string | undefined;
-  readonly CROVE_WORKER_DB_PASSWORD: string | undefined;
-  readonly CROVE_PROBER_DB_PASSWORD: string | undefined;
-  readonly CROVE_REPORTER_DB_PASSWORD: string | undefined;
+export type Config = Omit<z.infer<typeof schema>, 'AUTH_ISSUER' | 'AUTH_SESSION_CHECK' | 'EINVOICE_SANDBOX' | 'ADS_SANDBOX'> & {
+  AUTH_ISSUER: string;
+  AUTH_SESSION_CHECK: SessionCheckMode;
+  EINVOICE_SANDBOX: 'true' | 'false';
+  ADS_SANDBOX: 'true' | 'false';
 };
 
-export type Config = Omit<z.infer<typeof schema>, 'AUTH_ISSUER' | 'AUTH_SESSION_CHECK' | 'EINVOICE_SANDBOX' | 'ADS_SANDBOX'> &
-  LegacyBrandedConfig & {
-    AUTH_ISSUER: string;
-    AUTH_SESSION_CHECK: SessionCheckMode;
-    EINVOICE_SANDBOX: 'true' | 'false';
-    ADS_SANDBOX: 'true' | 'false';
-  };
-
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  const parsed = schema.safeParse(normalizeBrandedEnv(env));
+  if (env.CROVE_SHARED_DATABASE?.trim()) {
+    throw new Error('Invalid configuration: CROVE_SHARED_DATABASE has been retired; rename it to LUDY_SHARED_DATABASE');
+  }
+  if (env.CROVE_SHARED_DATABASE_SWITCH?.trim()) {
+    throw new Error('Invalid configuration: CROVE_SHARED_DATABASE_SWITCH has been retired; rename it to LUDY_SHARED_DATABASE_SWITCH');
+  }
+  const parsed = schema.safeParse(env);
   if (!parsed.success) {
     const fields = parsed.error.issues.map((i) => (i.code === 'custom' ? `${i.path.join('.')} (${i.message})` : i.path.join('.'))).join(', ');
     throw new Error(`invalid configuration: ${fields}`);
@@ -888,17 +854,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   }
   const config: Config = {
     ...raw,
-    CROVE_MODULES: raw.LUDY_MODULES,
-    CROVE_SHARED_DATABASE: raw.LUDY_SHARED_DATABASE,
-    CROVE_SHARED_DATABASE_SWITCH: raw.LUDY_SHARED_DATABASE_SWITCH,
-    CROVE_CONTEXT_TOKEN_KEY: raw.LUDY_CONTEXT_TOKEN_KEY,
-    CROVE_BUILD: raw.LUDY_BUILD,
-    CROVE_BUILD_TIME: raw.LUDY_BUILD_TIME,
-    CROVE_ALLOW_ALL_IN_ONE: raw.LUDY_ALLOW_ALL_IN_ONE,
-    CROVE_APP_DB_PASSWORD: raw.LUDY_APP_DB_PASSWORD,
-    CROVE_WORKER_DB_PASSWORD: raw.LUDY_WORKER_DB_PASSWORD,
-    CROVE_PROBER_DB_PASSWORD: raw.LUDY_PROBER_DB_PASSWORD,
-    CROVE_REPORTER_DB_PASSWORD: raw.LUDY_REPORTER_DB_PASSWORD,
     AUTH_ISSUER: raw.AUTH_ISSUER,
     AUTH_SESSION_CHECK: raw.AUTH_SESSION_CHECK ?? (raw.AUTH_UPSTREAM_URL ? 'db' : 'jwt'),
     EINVOICE_SANDBOX: raw.EINVOICE_SANDBOX ?? (isLocalUrl(raw.PUBLIC_URL) ? 'true' : 'false'),
@@ -1057,6 +1012,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (config.CALENDAR_MICROSOFT_CLIENT_ID && !/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(config.CALENDAR_MICROSOFT_CLIENT_ID)) throw new Error('CALENDAR_MICROSOFT_CLIENT_ID is the application (client) id of a Microsoft Entra app registration, a UUID');
   if (Boolean(config.MEETINGS_GOOGLE_CLIENT_ID) !== Boolean(config.MEETINGS_GOOGLE_CLIENT_SECRET)) throw new Error('set both MEETINGS_GOOGLE_CLIENT_ID and MEETINGS_GOOGLE_CLIENT_SECRET, or neither');
   if (config.MEETINGS_GOOGLE_CLIENT_ID && !/^[0-9]{6,32}-[A-Za-z0-9_-]{8,64}\.apps\.googleusercontent\.com$/.test(config.MEETINGS_GOOGLE_CLIENT_ID)) throw new Error('MEETINGS_GOOGLE_CLIENT_ID is the client id of a Google OAuth web client');
+  if (Boolean(config.MEETINGS_GOOGLE_PICKER_API_KEY) !== Boolean(config.MEETINGS_GOOGLE_PICKER_APP_ID)) throw new Error('set both MEETINGS_GOOGLE_PICKER_API_KEY and MEETINGS_GOOGLE_PICKER_APP_ID, or neither');
+  if (config.MEETINGS_GOOGLE_PICKER_API_KEY && !config.MEETINGS_GOOGLE_CLIENT_ID) throw new Error('MEETINGS_GOOGLE_PICKER_API_KEY needs the Google Meet client (MEETINGS_GOOGLE_CLIENT_ID and MEETINGS_GOOGLE_CLIENT_SECRET)');
   if (Boolean(config.ZOOM_OAUTH_CLIENT_ID) !== Boolean(config.ZOOM_OAUTH_CLIENT_SECRET)) throw new Error('set both ZOOM_OAUTH_CLIENT_ID and ZOOM_OAUTH_CLIENT_SECRET, or neither');
   if (Boolean(config.TEAMS_OAUTH_CLIENT_ID) !== Boolean(config.TEAMS_OAUTH_CLIENT_SECRET)) throw new Error('set both TEAMS_OAUTH_CLIENT_ID and TEAMS_OAUTH_CLIENT_SECRET, or neither');
   if (config.TEAMS_OAUTH_CLIENT_ID && !/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(config.TEAMS_OAUTH_CLIENT_ID)) throw new Error('TEAMS_OAUTH_CLIENT_ID is the application (client) id of a Microsoft Entra app registration, a UUID');

@@ -48,6 +48,25 @@ export async function lockMeeting(trx: QueryContext['trx'], orgId: string, meeti
   if (!held) throw notFound();
 }
 
+/**
+ * The draft transcript lines of a meeting as the recorder's screen needs them (#4899): how many there are, how many a machine wrote and the recorder has not read, and a key over exactly those unread lines
+ * (the digest of their ids, empty when none). The review names that key, so it clears only the lines the screen showed. Row security lets only the recorder see a draft, so callers ask for the recorder.
+ */
+export async function draftLineState(trx: QueryContext['trx'], orgId: string, meetingId: string): Promise<{ draft: number; unread: number; key: string }> {
+  const row = await trx
+    .selectFrom('ludy_meetings.transcript_segment')
+    .select([
+      sql<string>`count(*)::text`.as('draft'),
+      sql<string>`(count(*) filter (where tainted))::text`.as('unread'),
+      sql<string | null>`md5(string_agg(id::text, ',' order by id) filter (where tainted))`.as('key'),
+    ])
+    .where('org_id', '=', orgId)
+    .where('meeting_id', '=', meetingId)
+    .where('stage', '=', 'draft')
+    .executeTakeFirstOrThrow();
+  return { draft: Number(row.draft), unread: Number(row.unread), key: row.key ?? '' };
+}
+
 // A new run replaces the earlier draft, corrections included: the recorder asked for it. The caller has checked that the caller is the recorder.
 // `fromRun` is set only by the copy of a Vy result (meetings.transcript.copy_result): those rows are the model's text, so they are born tainted and name the run they came
 // from (source_run_id), and nothing can change either afterwards but the recorder's review (ludy_meetings.draft_review). What the recorder typed is not tainted.
@@ -161,11 +180,14 @@ export const transcriptGet = defineQuery({
       .orderBy('id')
       .execute();
     const stage: Transcript['stage'] = rows.length === 0 ? 'none' : rows.some((r) => r.stage === 'draft') ? 'draft' : 'published';
+    // The recorder reads their working draft while one exists (a re-transcription after a publish, #4899): the lines published before it stay for the readers until the next publish replaces them, and are not
+    // listed again beside the draft that will replace them. A reader reads published lines only, so nothing changes for them.
+    const shown = stage === 'draft' ? rows.filter((r) => r.stage === 'draft') : rows;
     return {
       meetingId: input.meetingId,
       isRecorder: meeting.recorder_user_id === userId,
       stage,
-      segments: rows.map((r) => ({
+      segments: shown.map((r) => ({
         id: r.id,
         startSeconds: Number(r.start_seconds),
         endSeconds: Number(r.end_seconds),

@@ -18,7 +18,7 @@ import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
 import { createDbClient, createDbPool, createRawPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
 const SEAL_INVALID = { code: '42501', message: 'CONTEXT_SEAL_INVALID' };
 
@@ -633,7 +633,7 @@ suite('sealed request context on PostgreSQL (§4.5 item 5, T11)', () => {
     `SELECT set_config('crove.org_id', '00000000-0000-0000-0000-000000000000', false)`,
     `SELECT set_config('crove.user_id', '00000000-0000-0000-0000-000000000000', false)`,
     // The context lock of the re-entry guard (T10), held at session level.
-    'SELECT pg_advisory_lock(1129467734, pg_backend_pid())',
+    'SELECT pg_advisory_lock(1280656473, pg_backend_pid())',
     'SET ROLE crove_tenant',
     'SET search_path = public',
     'SET default_transaction_read_only = on',
@@ -691,7 +691,7 @@ suite('sealed request context on PostgreSQL (§4.5 item 5, T11)', () => {
                     current_setting('application_name') AS app`,
           );
           // Startup values (statement_timeout, application_name) survive the reset.
-          expect(rows[0], poison).toEqual({ ctx: '', ro: 'off', sp: 'pg_catalog, pg_temp', st: '15s', app: 'crove' });
+          expect(rows[0], poison).toEqual({ ctx: '', ro: 'off', sp: 'pg_catalog, pg_temp', st: '15s', app: 'ludy' });
           expect(await enterOnPooled(next), poison).toEqual([{ name: 'party of A', who: 'crove_app', org: orgA }]);
         } finally {
           next.release();
@@ -825,7 +825,7 @@ suite('sealed request context on PostgreSQL (§4.5 item 5, T11)', () => {
       }
 
       // A session-level lock on the re-entry guard's key (T10) left behind is recovered the same way (#105).
-      expect(POISON[4]).toContain('pg_advisory_lock(1129467734');
+      expect(POISON[4]).toContain('pg_advisory_lock(1280656473');
       const lockBackend = await poison(POISON[4]);
       const locked = await pooled.connect();
       expect(await pid(locked)).toBe(lockBackend);

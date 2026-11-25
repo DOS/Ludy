@@ -15,21 +15,22 @@ test('the bottom account popover switches orgs, theme, and language by mouse and
   await page.goto('/onboarding');
   const second = await createOrg(page, 'Công ty Hướng Dương');
   await expect(page).toHaveURL(new RegExp(`/o/${second}/overview$`));
+  const topBar = page.getByRole('banner');
   const sidebar = page.getByRole('complementary');
-  const trigger = accountButton(sidebar);
+  const trigger = accountButton(topBar);
 
-  await test.step('active org context sits on the bottom account trigger, not a top org dropdown', async () => {
+  await test.step('active org context sits on the top-right account trigger, not an inline org dropdown', async () => {
     await expect(trigger).toHaveAccessibleName(new RegExp(String.raw`^Tài khoản: .*Công ty Hướng Dương`));
     await expect(trigger).toHaveAttribute('title', /Công ty Hướng Dương/);
-    await expect(sidebar.getByRole('combobox')).toHaveCount(0);
-    await expect(orgButton(sidebar)).toHaveCount(0);
-    await expect(sidebar.getByRole('link', { name: 'Thêm tổ chức' })).toHaveCount(0);
+    await expect(topBar.getByRole('combobox')).toHaveCount(0);
+    await expect(orgButton(topBar)).toHaveCount(0);
+    await expect(topBar.getByRole('link', { name: 'Thêm tổ chức' })).toHaveCount(0);
   });
 
   await test.step('opening the account popover shows OrgMenu and multi-org navigation', async () => {
     await trigger.click();
-    await expect(sidebar.getByRole('link', { name: 'Tất cả doanh nghiệp' })).toBeVisible();
-    const button = orgButton(sidebar);
+    await expect(topBar.getByRole('link', { name: 'Tất cả doanh nghiệp' })).toBeVisible();
+    const button = orgButton(topBar);
     await expect(button).toHaveAccessibleName('Tổ chức: Công ty Hướng Dương');
     await button.click();
     const menu = page.getByRole('menu', { name: /^Tổ chức:/ });
@@ -44,15 +45,15 @@ test('the bottom account popover switches orgs, theme, and language by mouse and
   await test.step('Escape closes OrgMenu first, then AccountPopover, returning focus at each layer', async () => {
     await page.keyboard.press('Escape');
     await expect(page.getByRole('menu')).toHaveCount(0);
-    await expect(orgButton(sidebar)).toBeFocused();
+    await expect(orgButton(topBar)).toBeFocused();
     await page.keyboard.press('Escape');
-    await expect(sidebar.getByTestId('account-popover')).toHaveCount(0);
+    await expect(topBar.getByTestId('account-popover')).toHaveCount(0);
     await expect(trigger).toBeFocused();
   });
 
   await test.step('the theme and language segmented toggles stay in sync with DOM and reload', async () => {
     await trigger.click();
-    const themeGroup = sidebar.getByRole('radiogroup', { name: 'Giao diện' });
+    const themeGroup = topBar.getByRole('radiogroup', { name: 'Giao diện' });
     await expect(themeGroup.getByRole('radio', { name: 'Sáng' })).toHaveAttribute('aria-checked', 'true');
     await themeGroup.getByRole('radio', { name: 'Tối' }).click();
     await expect(page.locator('html')).toHaveClass(/\bdark\b/);
@@ -61,22 +62,22 @@ test('the bottom account popover switches orgs, theme, and language by mouse and
     await page.reload();
     await expect(page.locator('html')).toHaveClass(/\bdark\b/);
     await trigger.click();
-    await expect(sidebar.getByRole('radiogroup', { name: 'Giao diện' }).getByRole('radio', { name: 'Tối' })).toHaveAttribute('aria-checked', 'true');
-    await sidebar.getByRole('radiogroup', { name: 'Giao diện' }).getByRole('radio', { name: 'Sáng' }).click();
+    await expect(topBar.getByRole('radiogroup', { name: 'Giao diện' }).getByRole('radio', { name: 'Tối' })).toHaveAttribute('aria-checked', 'true');
+    await topBar.getByRole('radiogroup', { name: 'Giao diện' }).getByRole('radio', { name: 'Sáng' }).click();
     await expect(page.locator('html')).not.toHaveClass(/\bdark\b/);
 
-    const langGroup = sidebar.getByRole('radiogroup', { name: 'Ngôn ngữ' });
+    const langGroup = topBar.getByRole('radiogroup', { name: 'Ngôn ngữ' });
     await langGroup.getByRole('radio', { name: /English/ }).click();
     await expect(page.locator('html')).toHaveAttribute('lang', 'en');
-    await expect(sidebar.getByRole('radiogroup', { name: 'Language' }).getByRole('radio', { name: /English/ })).toHaveAttribute('aria-checked', 'true');
-    await sidebar.getByRole('radiogroup', { name: 'Language' }).getByRole('radio', { name: /Tiếng Việt/ }).click();
+    await expect(topBar.getByRole('radiogroup', { name: 'Language' }).getByRole('radio', { name: /English/ })).toHaveAttribute('aria-checked', 'true');
+    await topBar.getByRole('radiogroup', { name: 'Language' }).getByRole('radio', { name: /Tiếng Việt/ }).click();
     await expect(page.locator('html')).toHaveAttribute('lang', 'vi');
     await page.keyboard.press('Escape');
   });
 
   await test.step('the arrow keys and Enter switch to the other org', async () => {
     await trigger.click();
-    const button = orgButton(sidebar);
+    const button = orgButton(topBar);
     await button.focus();
     await page.keyboard.press('Enter');
     const menu = page.getByRole('menu', { name: /^Tổ chức:/ });
@@ -91,7 +92,7 @@ test('the bottom account popover switches orgs, theme, and language by mouse and
     await expect(trigger).toHaveAttribute('title', /Công ty Hoa Sen/);
   });
 
-  await test.step('on an App screen, the expanded bottom trigger visibly displays the active org name', async () => {
+  await test.step('on an App screen, the top-bar trigger visibly displays the active org name', async () => {
     await sidebar.getByRole('link', { name: 'Tài chính', exact: true }).click();
     await expect(page).toHaveURL(new RegExp(`/o/${first}/accounting$`));
     await expect(trigger).toContainText('Công ty Hoa Sen');
@@ -118,8 +119,8 @@ test('the bottom account popover switches orgs, theme, and language by mouse and
     await page.keyboard.press('Enter');
     await expect(page.locator('html')).toHaveClass(/\bdark\b/);
     await trigger.click();
-    await expect(sidebar.getByRole('radiogroup', { name: 'Giao diện' }).getByRole('radio', { name: 'Tối' })).toHaveAttribute('aria-checked', 'true');
-    await sidebar.getByRole('radiogroup', { name: 'Giao diện' }).getByRole('radio', { name: 'Sáng' }).click();
+    await expect(topBar.getByRole('radiogroup', { name: 'Giao diện' }).getByRole('radio', { name: 'Tối' })).toHaveAttribute('aria-checked', 'true');
+    await topBar.getByRole('radiogroup', { name: 'Giao diện' }).getByRole('radio', { name: 'Sáng' }).click();
     await expect(page.locator('html')).not.toHaveClass(/\bdark\b/);
     await page.keyboard.press('Escape');
 
@@ -150,7 +151,7 @@ test('the bottom account popover switches orgs, theme, and language by mouse and
 
   await test.step('"Thêm tổ chức" opens the form for the next org', async () => {
     await trigger.click();
-    await orgButton(sidebar).click();
+    await orgButton(topBar).click();
     await page.getByRole('menuitem', { name: 'Thêm tổ chức' }).click();
     await expect(page).toHaveURL(/\/onboarding$/);
     await expect(page.getByRole('heading', { name: 'Thêm tổ chức' })).toBeVisible();

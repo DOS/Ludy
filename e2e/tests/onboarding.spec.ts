@@ -71,14 +71,44 @@ test('a firm adds a client company by tax code, then opens the form again for th
     expect(org).toEqual({ name: 'Công ty TNHH Khách hàng Một', tax_code: TAX_CODE, address: 'Số 1 Phố Huế, Hà Nội' });
   });
 
-  await test.step('the sidebar opens the form again for the next client, with a way back', async () => {
-    const sidebar = page.getByRole('complementary');
-    await sidebar.getByRole('button', { name: /^Tài khoản:/ }).click();
-    await sidebar.getByRole('button', { name: /^Tổ chức:/ }).click();
+  await test.step('the top bar opens the form again for the next client, with a way back', async () => {
+    const topBar = page.getByRole('banner');
+    await topBar.getByRole('button', { name: /^Tài khoản:/ }).click();
+    await topBar.getByRole('button', { name: /^Tổ chức:/ }).click();
     await page.getByRole('menuitem', { name: 'Thêm tổ chức' }).click();
     await expect(page).toHaveURL(/\/onboarding$/);
     await expect(page.getByRole('heading', { name: 'Thêm tổ chức' })).toBeVisible();
     await page.getByRole('link', { name: 'Quay lại' }).click();
     await expect(page).toHaveURL(new RegExp(`/o/${slug}/overview$`));
   });
+});
+
+// The type a new org picks (#4802): "Một mình tôi" is chosen by default and leaves Engage, Nhân sự and eSign off; "Có nhân viên" leaves every app on.
+test('a new org picks its type: solo by default, or with staff', async ({ page }) => {
+  await page.goto('/');
+  await signUp(page, newEmail('kind'));
+  await expect(page.getByRole('radio', { name: /^Một mình tôi/ })).toBeChecked();
+  await expect(page.getByRole('radio', { name: /^Có nhân viên/ })).not.toBeChecked();
+  // The radios are one group: the arrow keys move the choice.
+  await page.getByRole('radio', { name: /^Một mình tôi/ }).focus();
+  await page.keyboard.press('ArrowDown');
+  await expect(page.getByRole('radio', { name: /^Có nhân viên/ })).toBeChecked();
+  await page.keyboard.press('ArrowUp');
+  await expect(page.getByRole('radio', { name: /^Một mình tôi/ })).toBeChecked();
+
+  await page.getByLabel('Tên công ty hoặc hộ kinh doanh').fill('Cửa hàng Một Mình');
+  await page.getByRole('button', { name: 'Tạo tổ chức' }).click();
+  await expect(page).toHaveURL(/\/o\/[^/]+\/overview$/);
+  const soloSlug = new URL(page.url()).pathname.split('/')[2] ?? '';
+  const [solo] = sql<{ apps_off: string }>("SELECT array_to_string(apps_off, ',') AS apps_off FROM ludy_kernel.tenant WHERE slug = :'slug'", { slug: soloSlug });
+  expect(solo?.apps_off).toBe('ads,crm,hr,sign,social');
+
+  await page.goto('/onboarding');
+  await page.getByLabel('Tên công ty hoặc hộ kinh doanh').fill('Công ty Có Nhân Viên');
+  await page.getByRole('radio', { name: /^Có nhân viên/ }).check();
+  await page.getByRole('button', { name: 'Tạo tổ chức' }).click();
+  await expect(page).toHaveURL(/\/o\/[^/]+\/overview$/);
+  const teamSlug = new URL(page.url()).pathname.split('/')[2] ?? '';
+  const [team] = sql<{ apps_off: string }>("SELECT array_to_string(apps_off, ',') AS apps_off FROM ludy_kernel.tenant WHERE slug = :'slug'", { slug: teamSlug });
+  expect(team?.apps_off).toBe('');
 });

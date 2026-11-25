@@ -23,7 +23,9 @@ import { useMinutesEsign } from './minutes-esign.tsx';
 import { DraftRedactionDialog, RedactionNudge, useRedactCandidatesQuery } from './meeting-redaction.tsx';
 import { MeetingZalo } from './meeting-zalo.tsx';
 import { MeetingChatPost } from './meeting-chat.tsx';
+import { MinutesLinkPanel } from './minutes-link.tsx';
 import { MeetingTranslation } from './meeting-translation.tsx';
+import { MinutesVersionPublisher, MinutesVersionSwitch } from './meeting-minutes-version.tsx';
 import { MeetingVoiceCues } from './meeting-voice-cues.tsx';
 import { clock } from './meeting-transcript.tsx';
 import { TalkTimeLine } from './meeting-talk-time.tsx';
@@ -395,6 +397,7 @@ export function SpeakerSuggestions({ meetingId, runId }: { meetingId: string; ru
     onSuccess: () => {
       void list.refetch();
       void queryClient.invalidateQueries({ queryKey: orpc.meetings.transcript.key() });
+      void queryClient.invalidateQueries({ queryKey: orpc.meetings.speakingStyle.key() });
     },
   });
   const suggestions = list.data?.suggestions ?? [];
@@ -614,10 +617,12 @@ export function MeetingResults({
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: orpc.meetings.results.key() });
       await queryClient.invalidateQueries({ queryKey: orpc.meetings.transcript.redactCandidates.key() });
+      // The transcript lines are shared with the summary (#4899): the transcript card and the lists that read them read again.
+      await queryClient.invalidateQueries({ queryKey: orpc.meetings.transcript.key() });
       setFocusPublished(true);
     },
   });
-  const review = useMutation({ mutationFn: (ids: string[]) => orpc.meetings.results.review.call({ meetingId, confirmed: true, ids }), onSuccess: refresh });
+  const review = useMutation({ mutationFn: (read: { ids: string[]; transcript: string | undefined }) => orpc.meetings.results.review.call({ meetingId, confirmed: true, ids: read.ids, transcript: read.transcript }), onSuccess: refresh, onError: refresh });
   const acceptClean = useMutation({ mutationFn: () => orpc.meetings.actionItems.acceptClean.call({ meetingId, confirmed: true }), onSuccess: refresh });
   if (query.isPending) return null;
   if (query.error) return <ErrorText>{errorMessage(query.error)}</ErrorText>;
@@ -626,6 +631,8 @@ export function MeetingResults({
   // A reader with nothing shared sees no panel at all.
   if (!isRecorder && !published && items.length === 0) return null;
   const hasDraft = draft !== null || items.some((i) => i.stage === 'draft');
+  // A meeting whose draft is only transcript lines (a transcription, or a new one after the minutes were shared) still has something to share (#4899).
+  const canPublish = hasDraft || data.transcriptDraft > 0;
   const hasPublishedSummary =
     published !== null && (published.summary.trim() !== '' || published.decisions.some((d) => d.trim() !== ''));
   const hasDraftSummary =
@@ -638,8 +645,12 @@ export function MeetingResults({
   // What Vy wrote and the recorder has not read: the draft is not shared until they confirm it (or rewrite it).
   // The rows on the screen that Vy wrote: the review names exactly these, so a row copied in another tab after this one loaded keeps its mark.
   const unreadIds = [...(draft?.tainted ? [draft.id] : []), ...items.filter((i) => i.stage === 'draft' && i.tainted).map((i) => i.id)];
-  const unread = unreadIds.length > 0;
+  // The transcript lines a machine wrote and the recorder has not read (#4899): too many to name, so the review names the transcript itself, and the server finds the lines in this recorder's own meeting.
+  const unreadLines = data.transcriptUnread;
+  const unread = unreadIds.length > 0 || unreadLines > 0;
   const cleanCount = items.filter((i) => i.clean).length;
+  // The shared text as the translation reads it (the summary, the decisions and the titles of the shared items).
+  const publishedOriginal = { summary: published?.summary ?? '', decisions: published?.decisions ?? [], items: items.filter((i) => i.stage === 'published') };
   const effectiveRedactedEpoch = redaction ? redaction.redactedEpoch : localRedactedEpoch;
   return (
     <Card data-testid="meeting-results">
@@ -658,10 +669,14 @@ export function MeetingResults({
                 {t('publishedTitle')}
               </h3>
             )}
-            <SummaryText summary={published.summary} decisions={published.decisions} template={template} copy={minutesTemplate} />
+            {/* The second-language version the recorder published (#4777): readers switch between the original and it; the original shows first. */}
+            <MinutesVersionSwitch meetingId={meetingId} original={publishedOriginal}>
+              <SummaryText summary={published.summary} decisions={published.decisions} template={template} copy={minutesTemplate} />
+            </MinutesVersionSwitch>
             {/* Who did the talking (#4765): one line worked out in code from the transcript the reader may read, no AI */}
             <TalkTimeLine meetingId={meetingId} />
-            <MeetingTranslation meetingId={meetingId} stage="published" original={{ summary: published.summary, decisions: published.decisions, items: items.filter((i) => i.stage === 'published') }} />
+            <MeetingTranslation meetingId={meetingId} stage="published" original={publishedOriginal} />
+            {isRecorder && <MinutesVersionPublisher meetingId={meetingId} original={publishedOriginal} />}
           </section>
         )}
         {canSaveAsNote && <SaveSummaryAsNote key={meetingId} meetingId={meetingId} visibility={visibility} slug={slug} />}
@@ -699,6 +714,10 @@ export function MeetingResults({
           <MeetingZalo meetingId={meetingId} title={title} summary={published?.summary ?? null} decisions={published?.decisions ?? []} items={items.filter((i) => i.stage === 'published')} />
         )}
         {isRecorder && (published || items.some((i) => i.stage === 'published')) && <MeetingChatPost meetingId={meetingId} />}
+        {/* "Chia sẻ biên bản" (#4822): a read-only link to the published minutes for people outside the org, only for the recorder and only once something is published. */}
+        {isRecorder && (published !== null || items.some((i) => i.stage === 'published')) && <MinutesLinkPanel key={`link-${meetingId}`} meetingId={meetingId} slug={slug} />}
+        {/* #4947: an owner or admin who is not the recorder sees the links of this meeting and can end one (the recorder may be away); no create button, and nothing is drawn for them when there is no link. */}
+        {!isRecorder && (published !== null || items.some((i) => i.stage === 'published')) && <MinutesLinkPanel key={`link-manage-${meetingId}`} meetingId={meetingId} slug={slug} manager />}
         {isRecorder && <TemplatePicker meetingId={meetingId} template={template} copy={minutesTemplate} />}
         {/* Cues spoken to Vy in the meeting (#4807): the recorder's click drafts a marked item for each, found by code */}
         {isRecorder && <MeetingVoiceCues key={`cues-${meetingId}`} meetingId={meetingId} />}
@@ -733,7 +752,7 @@ export function MeetingResults({
           </section>
         )}
         {isRecorder && <NewItem meetingId={meetingId} readers={readers} />}
-        {isRecorder && hasDraft && (
+        {isRecorder && canPublish && (
           <div className="space-y-2 border-t pt-3">
             <RedactionNudge
               count={redactCandidatesQuery.data?.candidates.length ?? 0}
@@ -764,9 +783,10 @@ export function MeetingResults({
             <p className="text-xs text-muted-foreground">{t('publishNote')}</p>
             {unread && (
               <div className="space-y-2" data-testid="vy-review">
-                <p className="text-sm">{t('reviewNote')}</p>
+                {unreadIds.length > 0 && <p className="text-sm">{t('reviewNote')}</p>}
+                {unreadLines > 0 && <p className="text-sm">{t('reviewNoteTranscript', { count: String(unreadLines) })}</p>}
                 {review.error && <ErrorText>{errorMessage(review.error)}</ErrorText>}
-                <Button size="sm" variant="outline" loading={review.isPending} onClick={() => review.mutate(unreadIds)}>
+                <Button size="sm" variant="outline" loading={review.isPending} onClick={() => review.mutate({ ids: unreadIds, transcript: unreadLines > 0 ? data.transcriptUnreadKey : undefined })}>
                   {t('reviewed')}
                 </Button>
               </div>

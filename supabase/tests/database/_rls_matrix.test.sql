@@ -11,8 +11,8 @@ SELECT plan(9);
 -- sign a context token as the superuser, and enter the API role inside the enclosing runner transaction.
 DO $$
 DECLARE
-  v_kernel text := CASE WHEN pg_catalog.to_regnamespace('ludy_kernel') IS NOT NULL THEN 'ludy_kernel' ELSE 'crove_kernel' END;
-  v_role text := CASE WHEN v_kernel = 'ludy_kernel' AND EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'ludy_app') THEN 'ludy_app' ELSE 'crove_app' END;
+  v_kernel text := 'ludy_kernel';
+  v_role text := 'ludy_app';
   v_user_a uuid;
   v_user_b uuid;
   v_org_a uuid;

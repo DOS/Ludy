@@ -5,7 +5,7 @@
 // recorder's own click copies it here as the draft. Without AI (or with transcription off) there is no button and no
 // transcript, and the recording and its playback work as before.
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useEffect, useRef, useState, type RefObject } from 'react';
+import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { useTranslations } from 'use-intl';
 import { TRANSCRIPT_SEGMENTS_MAX, type TranscriptRedacted, type TranscriptSegment, type TranslationTarget } from '@ludy/kernel-contract';
 import { Badge } from '@ludy/ui/components/badge';
@@ -22,6 +22,7 @@ import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { covers, ownSingleAt } from '../lib/highlights.ts';
 import { platformTranscript } from '../lib/meeting-platform.ts';
 import { focusedSegment, type TranscriptFocus } from '../lib/transcript-focus.ts';
+import { filterCounts, LINE_FILTERS, lineMatches, type LineFilter } from '../lib/transcript-filters.ts';
 
 // Reading a transcript is a sensitive read that leaves an audit row: no refetch on focus or remount.
 const READ_ONCE = { staleTime: 5 * 60_000, refetchOnWindowFocus: false } as const;
@@ -44,7 +45,7 @@ interface LineMark {
   onClick: (shift: boolean) => void;
 }
 
-function Line({ segment, editable, focused, focusToken, translation, onSeek, mark }: { segment: TranscriptSegment; editable: boolean; focused: boolean; focusToken?: number | undefined; mark?: LineMark | undefined; onSeek?: ((second: number) => void) | undefined; translation?: { part: Parameters<typeof TranslatedLine>[0]['part']; to: string } | undefined }) {
+function Line({ segment, editable, focused, focusToken, translation, onSeek, mark, onShow }: { segment: TranscriptSegment; editable: boolean; focused: boolean; focusToken?: number | undefined; mark?: LineMark | undefined; onShow?: (() => void) | undefined; onSeek?: ((second: number) => void) | undefined; translation?: { part: Parameters<typeof TranslatedLine>[0]['part']; to: string } | undefined }) {
   const t = useTranslations('meetings.transcript');
   const th = useTranslations('meetings.highlights');
   const [editing, setEditing] = useState(false);
@@ -71,6 +72,7 @@ function Line({ segment, editable, focused, focusToken, translation, onSeek, mar
     onSuccess: () => {
       setEditing(false);
       void queryClient.invalidateQueries({ queryKey: orpc.meetings.transcript.key() });
+      void queryClient.invalidateQueries({ queryKey: orpc.meetings.speakingStyle.key() });
       // The tracked words are counted from the lines (#4818).
       void queryClient.invalidateQueries({ queryKey: orpc.meetings.tracker.hits.key() });
     },
@@ -86,7 +88,7 @@ function Line({ segment, editable, focused, focusToken, translation, onSeek, mar
   return (
     <li
       ref={ref}
-      className={focused ? 'space-y-1 rounded-md bg-warning/15 px-2 py-2 text-sm' : mark?.covered ? 'space-y-1 rounded-md bg-primary/10 px-2 py-2 text-sm' : 'space-y-1 py-2 text-sm'}
+      className={focused ? 'space-y-1 rounded-md bg-warning/15 px-2 py-2 text-sm' : mark?.covered ? 'space-y-1 rounded-md bg-primary/10 px-2 py-2 text-sm' : onShow ? 'space-y-1 rounded-md bg-accent/50 px-2 py-2 text-sm' : 'space-y-1 py-2 text-sm'}
       data-testid="transcript-line"
       {...(focused ? { 'aria-current': 'location' as const, 'data-focused': 'true' } : {})}
       {...(mark?.covered ? { 'data-highlighted': 'true' } : {})}
@@ -106,11 +108,17 @@ function Line({ segment, editable, focused, focusToken, translation, onSeek, mar
           <span className="font-medium text-foreground">{segment.speakerLabel}</span>
         )}
         {segment.corrected && <Badge variant="outline">{t('corrected')}</Badge>}
+        {onShow && (
+          // In a filtered view (#4954): back to the full transcript at this line.
+          <Button size="xs" variant="ghost" className="ml-auto max-md:min-h-11" data-testid="transcript-show-in-context" onClick={onShow}>
+            {t('filters.showInContext')}
+          </Button>
+        )}
         {mark && !editing && (
           <Button
             size="xs"
             variant="ghost"
-            className="ml-auto"
+            className={onShow ? undefined : 'ml-auto'}
             data-testid="transcript-highlight"
             aria-pressed={mark.pressed}
             aria-label={mark.pressed ? th('unmarkLine', { time: clock(segment.startSeconds) }) : th('markLine', { time: clock(segment.startSeconds) })}
@@ -204,6 +212,7 @@ function VyTranscribe({ meetingId, hasDraft }: { meetingId: string; hasDraft: bo
   });
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: orpc.meetings.transcript.key() });
+    void queryClient.invalidateQueries({ queryKey: orpc.meetings.speakingStyle.key() });
   };
   const start = useMutation({ mutationFn: () => orpc.meetings.transcript.start.call({ meetingId }), onSuccess: refresh });
   // Stops the recorder's own run (#3033), so a lost job does not hold their slot until it expires.
@@ -308,6 +317,15 @@ export function MeetingTranscript({
   const translated = useTranscriptParts(meetingId, target);
   // The highlights of this meeting and the click on a line's button (#4819).
   const marks = useLineMarks(meetingId);
+  // The filter picked above the lines (#4954): a view over the lines the caller can already read, kept in this component only.
+  const [lineFilter, setLineFilter] = useState<LineFilter | null>(null);
+  // The line "show in context" opened: marked and scrolled to in the full transcript; `token` changes on each click.
+  const [shown, setShown] = useState<{ id: string; token: number; since: number | undefined } | null>(null);
+  // A chapter, search or commitment jump leaves the filtered view: the line it names may not pass the filter.
+  useEffect(() => {
+    setLineFilter(null);
+  }, [focusSecond?.token, focusSegmentId]);
+  const counts = useMemo(() => filterCounts(query.data?.segments ?? []), [query.data?.segments]);
   if (query.isPending) return null;
   if (query.error) return <ErrorText>{errorMessage(query.error)}</ErrorText>;
   const transcript = query.data;
@@ -323,7 +341,8 @@ export function MeetingTranscript({
   const draft = transcript.stage === 'draft';
   // Lines a meeting platform wrote (C2, #3174): said in words, with the platform's name, that they are not Ludy's (#3922: and that they may be cut at the limit of a draft).
   const platform = platformTranscript(transcript.segments);
-  const focusedId = focusSecond ? focusedSegment(transcript.segments, focusSecond)?.id : focusSegmentId;
+  const focusedId = (shown && shown.since === focusSecond?.token ? shown.id : undefined) ?? (focusSecond ? focusedSegment(transcript.segments, focusSecond)?.id : focusSegmentId);
+  const visible = lineFilter ? transcript.segments.filter((segment) => lineMatches(lineFilter, segment.text)) : transcript.segments;
   return (
     <div className="space-y-3">
       {transcript.isRecorder && <VyTranscribe key={`vy-transcribe-${redactedEpoch}`} meetingId={meetingId} hasDraft={draft} />}
@@ -374,14 +393,40 @@ export function MeetingTranscript({
         )}
       </CardHeader>
       <CardContent>
+        <div role="group" aria-label={t('filters.label')} className="mb-2 flex flex-wrap items-center gap-2" data-testid="transcript-filters">
+          {LINE_FILTERS.map((filter) => (
+            <Button
+              key={filter}
+              size="sm"
+              className="max-md:min-h-11"
+              variant={lineFilter === filter ? 'default' : 'outline'}
+              aria-pressed={lineFilter === filter}
+              data-testid={`transcript-filter-${filter}`}
+              onClick={() => {
+                setShown(null);
+                setLineFilter(lineFilter === filter ? null : filter);
+              }}
+            >
+              {t(`filters.${filter}`, { count: String(counts[filter]) })}
+            </Button>
+          ))}
+        </div>
+        {/* Always in the page, so a screen reader announces the text when it changes. */}
+        <p className="mb-1 text-xs text-muted-foreground empty:hidden" role="status" data-testid="transcript-filter-note">
+          {lineFilter ? (visible.length === 0 ? t('filters.none') : t('filters.note', { count: visible.length })) : null}
+        </p>
         <ul className="divide-y">
-          {transcript.segments.map((segment) => (
+          {visible.map((segment) => (
             <Line
               key={segment.id}
               segment={segment}
               editable={transcript.isRecorder}
               focused={segment.id === focusedId}
-              focusToken={focusSecond?.token}
+              focusToken={shown?.id === segment.id ? shown.token : focusSecond?.token}
+              onShow={lineFilter ? () => {
+                setLineFilter(null);
+                setShown({ id: segment.id, token: (shown?.token ?? 0) + 1, since: focusSecond?.token });
+              } : undefined}
               // Only a published line can be marked: the readers read published lines, and a mark on the recorder's draft would tell them where it is.
               mark={
                 segment.stage === 'published'

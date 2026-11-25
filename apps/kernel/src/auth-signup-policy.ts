@@ -115,7 +115,6 @@ export function signupGate(rules: SignupRules, request: SignupRequest): SignupGa
 // The request header the web app puts the invite token in when it signs up from an accept link. Read by the proxy
 // and never forwarded.
 export const INVITE_TOKEN_HEADER = 'x-ludy-invite';
-export const LEGACY_INVITE_TOKEN_HEADER = 'x-crove-invite';
 
 // The token of a sign-up request, or null when the header is missing or is not one well-formed token.
 const INVITE_TOKEN = /^[A-Za-z0-9_-]{43}$/;

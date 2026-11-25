@@ -224,7 +224,7 @@ suite('inbound address rotation on PostgreSQL', () => {
   const deliver = (token: string, number: string) =>
     httpApp().request('/api/inbound/email', {
       method: 'POST',
-      headers: { authorization: `Bearer ${INBOUND_SECRET}`, 'content-type': 'message/rfc822', 'x-crove-recipient': `${token}@in.test` },
+      headers: { authorization: `Bearer ${INBOUND_SECRET}`, 'content-type': 'message/rfc822', 'x-ludy-recipient': `${token}@in.test` },
       body: mime(token, number),
     });
   const messages = (id: string) => count('SELECT count(*) AS n FROM ludy_kernel.inbound_message WHERE message_id LIKE $1', [`%${id}%`]);

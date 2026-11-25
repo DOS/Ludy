@@ -13,7 +13,7 @@ import { vi as viMessages } from '../src/i18n/messages/vi.ts';
 import { catalog } from '../src/i18n/runtime.ts';
 
 const client = vi.hoisted(() => ({ current: null as unknown as import('@tanstack/react-query').QueryClient }));
-const config = vi.hoisted(() => ({ modules: ['kernel', 'meetings'] as string[], sandbox: true }));
+const config = vi.hoisted(() => ({ modules: ['kernel', 'meetings'] as string[], sandbox: true, googlePicker: null as { apiKey: string; appId: string; clientId: string } | null }));
 
 vi.mock('../src/lib/api.ts', async () => {
   const { QueryClient: QC } = await import('@tanstack/react-query');
@@ -28,7 +28,7 @@ vi.mock('../src/lib/api.ts', async () => {
     });
   return { orpc: node([]), client: node(['client']), getCurrentOrg: () => 'acme', queryClient: client.current, errorMessage: (e: unknown) => `ERR:${(e as Error).message}`, claimImportedMedia: vi.fn() };
 });
-vi.mock('../src/lib/auth.ts', () => ({ getConfig: () => ({ modules: config.modules, channels: { sandbox: config.sandbox } }) }));
+vi.mock('../src/lib/auth.ts', () => ({ getConfig: () => ({ modules: config.modules, channels: { sandbox: config.sandbox }, googlePicker: config.googlePicker }) }));
 vi.mock('@tanstack/react-router', async (importOriginal) => {
   const { createElement } = await import('react');
   return {
@@ -38,7 +38,7 @@ vi.mock('@tanstack/react-router', async (importOriginal) => {
   };
 });
 
-const { MeetingPlatforms } = await import('../src/components/meeting-platforms.tsx');
+const { MeetingPlatforms, DisconnectAsk } = await import('../src/components/meeting-platforms.tsx');
 const { PlatformRecordings, ImportForm } = await import('../src/components/meeting-recordings.tsx');
 const { MEETINGS_TEAMS_GUIDE } = await import('../src/lib/meeting-platform.ts');
 const { AdminConsent } = await import('../src/routes/meeting-platform-oauth.tsx');
@@ -66,6 +66,7 @@ const recording = (over: Partial<MeetingPlatformRecordingView> = {}): MeetingPla
   hasVideo: false,
   hasTranscript: false,
   videoImportMaxBytes: null,
+  picked: false,
   status: 'suggested',
   meetingId: null,
   errorCode: null,
@@ -99,6 +100,22 @@ const failQuery = (key: string[], message: string) => {
 const disabledSubmit = (html: string) => /<button[^>]*data-testid="meeting-import-submit"[^>]*>/.exec(html)?.[0] ?? '';
 
 describe('MeetingPlatforms (Settings)', () => {
+  it('tells a Teams member, before the disconnect, that Microsoft cannot cancel the access from outside and where to remove the app; the other platforms get no such line', () => {
+    const teamsEn = renderToStaticMarkup(wrap(<DisconnectAsk provider="microsoft_teams" name="Microsoft Teams: An" />));
+    expect(teamsEn).toContain(en.meetings.platform.settings.disconnectTeams.slice(0, 40));
+    expect(teamsEn).toContain('myapps.microsoft.com');
+    expect(teamsEn).toContain('90');
+    const teamsVi = renderToStaticMarkup(wrap(<DisconnectAsk provider="microsoft_teams" name="Microsoft Teams: An" />, 'vi'));
+    expect(teamsVi).toContain('myapps.microsoft.com');
+    expect(teamsVi).toContain('90 ngày');
+    expect(teamsVi).toContain('quản trị viên');
+    for (const provider of ['google_meet', 'zoom', 'sandbox']) {
+      const html = renderToStaticMarkup(wrap(<DisconnectAsk provider={provider} name="X" />));
+      expect(html, provider).toContain('meeting-platform-disconnect-ask');
+      expect(html, provider).not.toContain('meeting-platform-disconnect-teams');
+    }
+  });
+
   it('lists the connection with its provider, account, status and last listing, and a refresh and a disconnect button', () => {
     reset();
     client.current.setQueryData(KEYS.connections, [connection()]);
@@ -296,6 +313,42 @@ describe('PlatformRecordings (Meetings tab)', () => {
     expect(renderToStaticMarkup(wrap(<PlatformRecordings slug="acme" />))).toContain('ERR:down');
   });
 
+  it('asks a Google Meet video recording to be picked in Google Drive first, then offers "Nhập" and a new pick, only where the deployment set the Picker (#3174)', () => {
+    reset();
+    client.current.setQueryData(KEYS.connections, [connection()]);
+    const meet = (over: Partial<MeetingPlatformRecordingView> = {}) => recording({ provider: 'google_meet', hasAudio: false, hasVideo: true, hasTranscript: false, videoImportMaxBytes: 2 * 1024 ** 3, ...over });
+    const text = en.meetings.platform.recordings;
+    try {
+      config.googlePicker = { apiKey: 'AIzaSyFakeKeyForTestsOnly000000000000', appId: '123456789012', clientId: '123456789012-abcdefghijklmnop.apps.googleusercontent.com' };
+      client.current.setQueryData(KEYS.recordings, [meet()]);
+      const notPicked = renderToStaticMarkup(wrap(<PlatformRecordings slug="acme" />));
+      expect(count(notPicked, 'data-testid="meeting-recording-pick"')).toBe(1);
+      expect(count(notPicked, 'data-testid="meeting-recording-import"')).toBe(0);
+      expect(notPicked).toContain(text.pick);
+      expect(count(notPicked, 'data-testid="meeting-recording-pick-note"')).toBe(1);
+      client.current.setQueryData(KEYS.recordings, [meet({ picked: true })]);
+      const picked = renderToStaticMarkup(wrap(<PlatformRecordings slug="acme" />));
+      expect(count(picked, 'data-testid="meeting-recording-import"')).toBe(1);
+      expect(count(picked, 'data-testid="meeting-recording-pick"')).toBe(1);
+      expect(picked).toContain(text.pickAgain);
+      expect(picked).toContain(text.pickedNote);
+      // A failed try that said "pick again" shows the pick and no retry.
+      client.current.setQueryData(KEYS.recordings, [meet({ status: 'failed', errorCode: 'pick_mismatch', meetingId: '0198a0b4-3c5d-7e6f-8a9b-0c1d2e3f4a5b' })]);
+      const failed = renderToStaticMarkup(wrap(<PlatformRecordings slug="acme" />));
+      expect(count(failed, 'data-testid="meeting-recording-pick"')).toBe(1);
+      expect(count(failed, 'data-testid="meeting-recording-retry"')).toBe(0);
+      // Another provider's video-only recording is untouched by the Picker.
+      client.current.setQueryData(KEYS.recordings, [recording({ provider: 'zoom', hasAudio: false, hasVideo: true, videoImportMaxBytes: 2 * 1024 ** 3 })]);
+      expect(count(renderToStaticMarkup(wrap(<PlatformRecordings slug="acme" />)), 'data-testid="meeting-recording-pick"')).toBe(0);
+      // Without the deployment's Picker keys there is no pick button.
+      config.googlePicker = null;
+      client.current.setQueryData(KEYS.recordings, [meet()]);
+      expect(count(renderToStaticMarkup(wrap(<PlatformRecordings slug="acme" />)), 'data-testid="meeting-recording-pick"')).toBe(0);
+    } finally {
+      config.googlePicker = null;
+    }
+  });
+
   it('offers "Nhập" for a video-only recording where the server can take the audio out of it, says only the audio is kept, and blocks it where it cannot (C2a)', () => {
     reset();
     client.current.setQueryData(KEYS.connections, [connection()]);
@@ -311,6 +364,40 @@ describe('PlatformRecordings (Meetings tab)', () => {
     expect(off).not.toContain(en.meetings.platform.recordings.videoKeepsAudio);
   });
 
+  it('shows no "Nhập" on the row of a meeting whose other entry (its video or its transcript) is on its way or imported, says it is taken, and keeps "Bỏ qua" (ADR-0055)', () => {
+    const video = (over: Partial<MeetingPlatformRecordingView> = {}) => recording({ id: 'v', provider: 'microsoft_teams', hasAudio: false, hasVideo: true, hasTranscript: false, videoImportMaxBytes: 2 * 1024 ** 3, ...over });
+    const transcript = (over: Partial<MeetingPlatformRecordingView> = {}) => recording({ id: 't', provider: 'microsoft_teams', hasAudio: false, hasVideo: false, hasTranscript: true, ...over });
+    for (const locale of ['en', 'vi'] as const) {
+      const messages = locale === 'en' ? en : viMessages;
+      reset();
+      client.current.setQueryData(KEYS.connections, [connection()]);
+      // Neither is on its way: both offer "Nhập", and none says it is taken.
+      client.current.setQueryData(KEYS.recordings, [video(), transcript()]);
+      const open = renderToStaticMarkup(wrap(<PlatformRecordings slug="acme" />, locale));
+      expect(count(open, 'data-testid="meeting-recording-import"'), locale).toBe(2);
+      expect(count(open, 'data-testid="meeting-recording-pair-taken"'), locale).toBe(0);
+      // Each state that means "the call is taken" turns the other row into a note, and the row still offers "Bỏ qua".
+      for (const status of ['importing', 'staged', 'claimed', 'imported'] as const) {
+        client.current.setQueryData(KEYS.recordings, [video({ status, meetingId: 'm1' }), transcript()]);
+        const html = renderToStaticMarkup(wrap(<PlatformRecordings slug="acme" />, locale));
+        expect(count(html, 'data-testid="meeting-recording-import"'), `${locale} ${status}`).toBe(0);
+        expect(count(html, 'data-testid="meeting-recording-pair-taken"'), `${locale} ${status}`).toBe(1);
+        expect(html).toContain(esc(messages.meetings.platform.recordings.pairTaken));
+        expect(html).toContain(messages.meetings.platform.recordings.dismiss);
+        // The same the other way round: a transcript on its way takes the video's row.
+        client.current.setQueryData(KEYS.recordings, [video(), transcript({ status, meetingId: 'm1' })]);
+        const back = renderToStaticMarkup(wrap(<PlatformRecordings slug="acme" />, locale));
+        expect(count(back, 'data-testid="meeting-recording-import"'), `${locale} ${status} back`).toBe(0);
+        expect(count(back, 'data-testid="meeting-recording-pair-taken"'), `${locale} ${status} back`).toBe(1);
+      }
+      // A sibling that is only dismissed or failed leaves the row free; another meeting's row (a different start) is not its sibling.
+      client.current.setQueryData(KEYS.recordings, [video({ status: 'dismissed' }), transcript()]);
+      expect(count(renderToStaticMarkup(wrap(<PlatformRecordings slug="acme" />, locale)), 'data-testid="meeting-recording-import"'), locale).toBe(1);
+      client.current.setQueryData(KEYS.recordings, [video({ status: 'importing', meetingId: 'm1', startedAt: '2026-11-15T02:00:00.000Z' }), transcript()]);
+      expect(count(renderToStaticMarkup(wrap(<PlatformRecordings slug="acme" />, locale)), 'data-testid="meeting-recording-import"'), locale).toBe(1);
+    }
+  });
+
   it('offers "Nhập" for a recording that has only the platform\'s transcript, names the platform whose text it is in both languages, and blocks a provider with no transcript path (C2, #3174)', () => {
     for (const locale of ['en', 'vi'] as const) {
       const messages = locale === 'en' ? en : viMessages;
@@ -321,6 +408,8 @@ describe('PlatformRecordings (Meetings tab)', () => {
       expect(count(on, 'data-testid="meeting-recording-import"'), locale).toBe(1);
       expect(count(on, 'data-testid="meeting-recording-blocked"'), locale).toBe(0);
       expect(on).toContain(esc(messages.meetings.platform.recordings.transcriptKeepsText.replace('{platform}', 'Google Meet')));
+      // The buttons of a transcript row say so in their names: a meeting can be offered twice (video and transcript), and the two rows must not have identical buttons.
+      expect(on).toContain(esc(messages.meetings.platform.recordings.importOf.replace('{title}', `${recording().title} (${messages.meetings.platform.recordings.offerTranscript})`)));
       client.current.setQueryData(KEYS.recordings, [recording({ provider: 'another_platform' as never, hasAudio: false, hasVideo: false, hasTranscript: true })]);
       const off = renderToStaticMarkup(wrap(<PlatformRecordings slug="acme" />, locale));
       expect(count(off, 'data-testid="meeting-recording-import"'), locale).toBe(0);

@@ -184,6 +184,10 @@ suite('the Hộp thư MCP reads (#3860)', () => {
     expect(listed.conversations.map((c) => c.id)).toEqual(['a1c', 'a1d', 'a1e', 'a2c', 'a2d'].map((k) => conv[k]));
     expect(listed.more).toBe(false);
     expect(listed.next).toBeNull();
+<<<<<<< HEAD
+=======
+>>>>>>> origin/main
+    // The other org's thread is absent by its whole id and identifiers: a short fragment of a random UUID can turn up in any answer by chance (#4876, #4487).
     const listedJson = JSON.stringify(listed);
     expect(listedJson).not.toContain(conv.b1c as string);
     expect(listedJson).not.toContain('t-b1c');

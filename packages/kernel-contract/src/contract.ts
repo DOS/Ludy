@@ -1,6 +1,10 @@
 import { oc } from '@orpc/contract';
+import { zMinutesLinkCreate, zMinutesLinkCreated, zMinutesLinkItems, zMinutesLinkList, zMinutesLinkRevoke, zMinutesLinkRevoked, zMinutesLinkSwitch, zMinutesLinkSwitchGet } from './meeting-minutes-link.ts';
 import { z } from 'zod';
+import { zSpeakingStyle, zSpeakingStyleInput } from './meeting-speaking-style.ts';
 import { zTranscriptExport, zTranscriptExportInput } from './meeting-transcript-export.ts';
+import { zSalesInsightAnswer, zSalesInsightStatus } from './meeting-sales-insight.ts';
+import { ORG_KINDS } from './apps.ts';
 import { zChapters, zChaptersCopied, zChaptersCopy, zChaptersSave, zChaptersSaved } from './meeting-chapters.ts';
 import {
   zBulkApproveItems,
@@ -285,9 +289,10 @@ import { zFixedAsset, zFixedAssetCreate, zFixedAssetEnd } from './fixed-asset.ts
 import { zStatementsHtkkCheck, zStatementsHtkkYear } from './statements-htkk.ts';
 import { zTaxObligationMark, zTaxProfile } from './tax-calendar.ts';
 import { zSinceYesterday, zTodayBrief, zTodayBriefInput, zTodayList, zTodayMailSet, zTodayMailSetting, zTodayWeekly, zTodayWeeklyInput } from './today.ts';
+import { zHomeLayoutSaveInput, zHomeLayoutView } from './home-layout.ts';
 import { zBookEntity, zLegalEntity, zLegalEntityInput } from './legal-entity.ts';
 import { zBuiltinRoleKey, zMemberRoles, zRoleAssignInput } from './roles.ts';
-import { zMeetingPlatformConnectProvider, zMeetingPlatformConnectionRef, zMeetingPlatformConnectionView, zMeetingPlatformRecordingRef, zMeetingPlatformRecordingView } from './meeting-platform.ts';
+import { zMeetingPlatformConnectProvider, zMeetingPlatformConnectionRef, zMeetingPlatformConnectionView, zMeetingPlatformRecordingPick, zMeetingPlatformRecordingRef, zMeetingPlatformRecordingView } from './meeting-platform.ts';
 import { zCalendarConnectionView, zCalendarEventAdd, zCalendarEventCancel, zCalendarEventView, zCalendarRange, zCalendarSlot, zCalendarSlotsQuery, zCalendarOAuthProvider, zMyCalendar, zWorkingHours } from './calendar.ts';
 import { zEInvoiceDraftFromOrder, zOrderLineInvoiceStates, zOrderLineInvoiceStatesInput, zStockMoveFromOrderLine, zStockMoveFromOrderLineResult } from './finance-orders.ts';
 import { zQuoteAccept, zQuoteDecided, zQuoteDecline, zSalesOrder, zSalesOrderCancel, zSalesOrderDeliver, zSalesOrderDeliveryChanged, zSalesOrderHandoff, zSalesOrderListQuery, zSalesOrderPage, zSalesOrderRef, zSalesOrderSummary, zSalesOrderUndeliver } from './crm-sales-orders.ts';
@@ -684,6 +689,7 @@ import {
   zTranscriptTranslationStatus,
   zTranscriptTranslationView,
   zTranslationRef,
+  zTranslationSource,
   zTranscriptTranslationRef,
   zTranslationStatus,
   zTranslations,
@@ -701,6 +707,7 @@ import {
   zMinutesTemplateUpdate,
   zMinutesTemplates,
 } from './meeting-minutes-templates.ts';
+import { zMinutesVersionPublish, zMinutesVersionPublished, zMinutesVersionUnpublish, zMinutesVersionUnpublished, zMinutesVersions } from './meeting-minutes-version.ts';
 import { zMinutesDocx, zMinutesDocxInput } from './meeting-minutes-docx.ts';
 import { zAskAnswer, zAskEmpty, zAskInput, zAskLines, zAskMeetingLinesInput, zAskStatus } from './meeting-ask.ts';
 import { zBriefAnswer, zBriefEmpty, zBriefFacts, zBriefStatus, zBriefTarget } from './meeting-brief.ts';
@@ -1112,9 +1119,17 @@ export const contract = {
       set: oc.input(zTodayMailSet).output(zTodayMailSetting),
     },
   },
+  // Global Home customizable block layout (#4923 Phase 1, #4925); every member role reads/writes only their own.
+  overview: {
+    homeLayout: {
+      get: oc.output(zHomeLayoutView),
+      save: oc.input(zHomeLayoutSaveInput).output(zHomeLayoutView),
+    },
+  },
   org: {
-    // A retry with the same idempotencyKey returns the org the first request created.
-    create: oc.input(z.object({ name: z.string().trim().min(1).max(200), idempotencyKey: zId })).output(zOrgSummary),
+    // A retry with the same idempotencyKey returns the org the first request created. `kind` (ORG_KINDS): 'solo' starts the org with only Tài chính, Cộng tác and Ludy AI on,
+    // 'team' (and no kind) with every app on (ADR-0053 amendment, #4802); the apps stay one switch each in Settings afterwards.
+    create: oc.input(z.object({ name: z.string().trim().min(1).max(200), idempotencyKey: zId, kind: z.enum(ORG_KINDS).optional() })).output(zOrgSummary),
     get: oc.output(zOrgDetail),
     // Every role (ADR-0053, #3313): the apps the org may switch, and for each whether the deployment runs it, the org holds
     // it and its owner or admin left it on. Owners and admins switch one with setApp (R2, audited); every app is on by default.
@@ -1241,6 +1256,8 @@ export const contract = {
     // Lists the member's connections again at the sweep's next pass (nothing is fetched by the request).
     refresh: oc.input(z.strictObject({ connectionId: zId.optional() })).output(z.strictObject({ refreshed: z.number().int() })),
     dismiss: oc.input(zMeetingPlatformRecordingRef).output(z.strictObject({ recordingId: zId, dismissed: z.literal(true) })),
+    // Google Meet's Picker route (#3174): the member picked the recording's file in Google Picker and sends the Drive file id (never a token); the worker's import job checks it against the id Meet gave.
+    pick: oc.input(zMeetingPlatformRecordingPick).output(z.strictObject({ recordingId: zId, picked: z.literal(true) })),
     disconnect: oc.input(zMeetingPlatformConnectionRef).output(z.strictObject({ connectionId: zId, disconnected: z.literal(true) })),
     connectSandbox: oc.input(z.strictObject({})).output(z.strictObject({ connectionId: zId, reconnected: z.boolean() })),
     // The platforms this deployment lets a member connect through the platform's own dialog (Zoom, C3): empty without the app credentials and a credential key, so the screen shows no connect button the
@@ -1926,6 +1943,16 @@ export const contract = {
     minutesDocx: {
       download: oc.input(zMinutesDocxInput).output(zMinutesDocx),
     },
+    // The link to the published minutes for people outside the org (#4822): the recorder makes it (the token comes back once), lists and revokes; an owner or admin switches the feature (off by default).
+    minutesLink: {
+      switch: {
+        get: oc.input(zMinutesLinkSwitchGet).output(zMinutesLinkSwitch),
+        set: oc.input(zMinutesLinkSwitch).output(zMinutesLinkSwitch),
+      },
+      create: oc.input(zMinutesLinkCreate).output(zMinutesLinkCreated),
+      revoke: oc.input(zMinutesLinkRevoke).output(zMinutesLinkRevoked),
+      list: oc.input(zMinutesLinkList).output(zMinutesLinkItems),
+    },
     // A member's own webhook for the minutes they publish (A6, #3164): the card reads `get`, `set` makes or changes it (the secret comes back once, when it is made), `rotateSecret`, `clear` and
     // `test` (a `ping` with no meeting data). The owner's `switch` (off by default) gates all of it; nothing is sent while it is off.
     hook: {
@@ -1938,6 +1965,8 @@ export const contract = {
     },
     // Search across the transcript lines the caller reads (L2, #2589): plain folded text search, no model call.
     search: oc.input(zMeetingSearchInput).output(zMeetingSearchResult),
+    // How each speaker spoke (#4919): pace, filler words and the longest stretch without a pause, counted by code from the lines the caller reads. Counts and words of a fixed list only.
+    speakingStyle: { get: oc.input(zSpeakingStyleInput).output(zSpeakingStyle) },
     // Ask across meetings (A3, #3161): the member's own Vy answers a question from the lines the member's own search finds, each sentence with a citation to a transcript line; nothing is stored or sent.
     // `status` is the box (may Vy be asked now, the cost of one question), `ask` is the click.
     ask: {
@@ -1981,6 +2010,12 @@ export const contract = {
     openPoints: {
       status: oc.input(zSummaryRef).output(zSummaryStatus),
       list: oc.input(zSummaryRef).output(zOpenPointsAnswer),
+    },
+    // Sales call insights for a meeting linked to an open deal (#4920, L26): `status` feeds the button (recorder + linked open deal + transcript), `analyze` runs the recorder's own Vy once to extract
+    // customer concerns, buying signals and agreed next steps citing existing transcript line IDs, plus code-computed customer talk-time share from mapped speakers. Results stay tainted and ephemeral.
+    salesInsight: {
+      status: oc.input(zSummaryRef).output(zSalesInsightStatus),
+      analyze: oc.input(zSummaryRef).output(zSalesInsightAnswer),
     },
     // This week's decisions and what is still open, across the meetings the member reads (#3949): `facts` are read by code as the member (published decisions and open action items of the meetings that started in the
     // last 7, 14 or 30 days) and work with AI off; `status` is the button (may Vy be used now, the cost of one recap), `recap` the click that has the member's own Vy write two or three sentences from those facts. Nothing
@@ -2101,12 +2136,21 @@ export const contract = {
       status: oc.input(zTranslationRef).output(zTranslationStatus),
       translate: oc.input(zTranslationRef).output(zTranslated),
       get: oc.input(zMeetingRef).output(zTranslations),
+      // The original the recorder reviews a version against: the published segments and the hash that names them (what `minutesVersion.publish` is held to).
+      source: oc.input(zTranslationRef).output(zTranslationSource),
       // The same for the transcript (E2, #3185): the member's own Vy translates the lines they read a few chunks at a time, in the request. `transcriptTranslate` is the click (the page asks
       // again while it is open), `transcriptStop` ends the member's own run, `transcriptStatus` is the button and the progress, and `transcriptGet` is the member's parts beside the lines.
       transcriptStatus: oc.input(zTranscriptTranslationRef).output(zTranscriptTranslationStatus),
       transcriptTranslate: oc.input(zTranscriptTranslationRef).output(zTranscriptTranslated),
       transcriptStop: oc.input(zMeetingRef).output(zTranscriptTranslateStopped),
       transcriptGet: oc.input(zTranscriptTranslationRef).output(zTranscriptTranslationView),
+    },
+    // The second-language version of the published minutes (#4777): the recorder's reviewed text, published beside the original by their click; every reader of the meeting reads it.
+    // MINUTES_NOT_PUBLISHED and MINUTES_VERSION_STALE (409), MINUTES_VERSION_SEGMENTS_INVALID and MINUTES_VERSION_TEXT_REJECTED (422), TRANSLATION_LANGUAGE_OFF (422), FORBIDDEN (403, not the recorder).
+    minutesVersion: {
+      get: oc.input(zMeetingRef).output(zMinutesVersions),
+      publish: oc.input(zMinutesVersionPublish).output(zMinutesVersionPublished),
+      unpublish: oc.input(zMinutesVersionUnpublish).output(zMinutesVersionUnpublished),
     },
     actionItems: {
       create: oc.input(zActionItemCreate).output(zActionItemCreated),

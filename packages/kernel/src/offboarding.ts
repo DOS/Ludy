@@ -218,12 +218,18 @@ export const EXPORT_TABLES = {
   'social.metric_snapshot': { from: 'ludy_social.metric_snapshot', omit: [] },
   'social.queue': { from: 'ludy_social.queue', omit: [] },
   'social.queue_slot': { from: 'ludy_social.queue_slot', omit: [] },
-  // Meetings (ADR-0047 point 7, #2579): the meetings shared with the whole org, and per recorder how many attendees-only meetings were left out (ludy_kernel.
-  // meeting_private_counts, a definer that answers counts only). Never audio or video.
+  // Meetings (ADR-0047 point 7, #2579, #3388): the meetings shared with the whole org, their links, their readers,
+  // and their published, unexpired transcript segments (without the folded search column), summaries/decisions, and
+  // action items, plus per recorder how many attendees-only meetings were left out (ludy_kernel.meeting_private_counts,
+  // a definer that answers counts only). Never drafts, expired rows, attendees-only meetings, audio, or video.
   'meetings.meeting': { from: 'ludy_kernel.meeting_export_rows()', omit: [] },
   'meetings.private_count': { from: 'ludy_kernel.meeting_private_counts()', omit: [] },
   // The links (a party, a deal, a calendar event) of those shared meetings (L1, #2587): ids only, never of an attendees-only meeting.
   'meetings.link': { from: 'ludy_kernel.meeting_link_export_rows()', omit: [] },
+  'meetings.reader': { from: 'ludy_kernel.meeting_reader_export_rows()', omit: [] },
+  'meetings.transcript_segment': { from: 'ludy_kernel.meeting_transcript_export_rows()', omit: ['search'] },
+  'meetings.result': { from: 'ludy_kernel.meeting_result_export_rows()', omit: [] },
+  'meetings.action_item': { from: 'ludy_kernel.meeting_action_item_export_rows()', omit: [] },
   // The rest of the social module's own data (#3367): its calendar notes, goals, ideas and labels, the brand voice and the channel rules, comments and versions of posts, the review
   // and report links with their feedback (the hash of a link's token is the visitor's credential and stays out), the bio pages and short links with their click counts, the
   // external posts the org imported, and the daily snapshots of its accounts. What only one member reads (notifications, mutes, push subscriptions) and what is a cache or a log
@@ -276,7 +282,7 @@ export const EXPORT_TABLES = {
   'ads.ad_object': { from: 'ludy_ads.ad_object', omit: [] },
   'ads.ad_org_setting': { from: 'ludy_ads.ad_org_setting', omit: [] },
   'ads.ad_spend_cap': { from: 'ludy_ads.ad_spend_cap', omit: [] },
-  // Meetings (#3367): the chat channels' settings. A meeting's transcript, notes, results and the rest are readable by its attendees only, so only the meetings shared with the org are exported (meetings.meeting).
+  // Meetings (#3367, #3388): the chat channels' settings. Published transcript segments, results, action items, readers, and links of shared, unexpired meetings are exported above; drafts, notes, expired rows, attendees-only meetings, and recordings stay out.
   'meetings.chat_channel': { from: 'ludy_meetings.chat_channel', omit: [] },
   // Meetings (#3578): the minutes templates the org wrote, its own layout text (a name and sections; no personal data), archived ones included.
   'meetings.minutes_template': { from: 'ludy_meetings.minutes_template', omit: [] },

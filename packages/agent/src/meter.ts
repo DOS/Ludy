@@ -137,6 +137,8 @@ export const AI_FEATURES = {
   'meetings.followup_note': 'meetings',
   // The recorder's Vy proposing the update of a deal after a meeting linked to it (#4766): one call over the published minutes, the recorder waiting for it, through their own meter.
   'meetings.deal_update': 'meetings',
+  // The recorder's Vy extracting sales call insights (concerns, buying signals, agreed next steps) from the transcript of a meeting linked to an open deal (#4920): one call, the recorder waiting for it, through their own meter.
+  'meetings.sales_insight': 'meetings',
   // Vy's weekly status of one project (projects P6, #2597): transient 3 to 5 plain sentences from deterministic counts and task titles/comments only, never reading notes.
   'projects.weekly_status': 'projects',
   // Vy's cycle summary for one project sprint/cycle (#4361): transient 3 to 5 plain sentences from deterministic cycle metrics and task titles/comments only, never reading notes.
@@ -234,10 +236,12 @@ export interface AiCall {
 }
 
 export interface AiMeter {
-  // Before the call. Throws AiBudgetExhaustedError when a budget that covers it is spent.
-  admit(call: AiCall): Promise<void>;
-  // After the call, with what it used. A failure here never fails the call: the caller logs it.
-  record(call: AiCall, usage: AiUsage): Promise<void>;
+  // Before the call. Returns a reservation id when backed by an admission hold, or throws AiBudgetExhaustedError when a budget that covers it is spent.
+  admit(call: AiCall): Promise<string | void>;
+  // After the call, with what it used and any reservation id to delete in the same transaction. A failure here never fails the call: the caller logs it.
+  record(call: AiCall, usage: AiUsage, reservationId?: string): Promise<void>;
+  // Best-effort release of an admitted reservation when the call failed before recording usage.
+  release?(call: AiCall, reservationId: string): Promise<void>;
 }
 
 // A budget that covers the call is spent: the org's, the module's or the agent's. retryAt: when the month turns and
@@ -273,6 +277,7 @@ export function withAiScope<T>(scope: AiScope, fn: () => Promise<T>): Promise<T>
 export const UNMETERED: AiMeter = {
   admit: async () => {},
   record: async () => {},
+  release: async () => {},
 };
 
 function tokens(usage: { inputTokens: number | undefined; outputTokens: number | undefined; audioSeconds?: number | undefined } | undefined): AiUsage {
@@ -283,7 +288,8 @@ function tokens(usage: { inputTokens: number | undefined; outputTokens: number |
 
 // The one door to the model: `call` is the generateText call, made only once the meter admitted it. The caller's own
 // sink (onUsage) sees the same tokens. Counts what the call used even when the answer was unusable (the model was paid
-// for it); a call that failed before an answer counts nothing. `expected` is what the caller knows the call will use before it is made; the meter sees it in admit().
+// for it); a call that failed before an answer releases any admission hold and counts nothing. `expected` is what the
+// caller knows the call will use before it is made; the meter reserves against it in admit().
 export async function metered<R extends { usage: { inputTokens: number | undefined; outputTokens: number | undefined; audioSeconds?: number | undefined } }>(
   feature: AiFeature,
   call: () => Promise<R>,
@@ -295,20 +301,39 @@ export async function metered<R extends { usage: { inputTokens: number | undefin
   const { meter } = scope;
   const info: AiCall = { feature, module: AI_FEATURES[feature], orgId: scope.orgId, agentId: scope.agentId ?? null, memberRunId: scope.memberRunId ?? null };
   if (expected) info.expected = expected;
-  await meter.admit(info);
+  const admitted = await meter.admit(info);
+  const reservationId = typeof admitted === 'string' ? admitted : undefined;
+  let recorded = false;
   const settle = async (used: AiUsage) => {
-    onUsage?.(used);
+    recorded = true;
     try {
-      await meter.record(info, used);
+      await meter.record(info, used, reservationId);
     } catch (error: unknown) {
       console.error(`[ai-meter] could not record a ${feature} call`, error instanceof Error ? error.name : typeof error);
+    }
+    try {
+      onUsage?.(used);
+    } catch (error: unknown) {
+      console.error(`[ai-meter] onUsage failed for a ${feature} call`, error instanceof Error ? error.name : typeof error);
+    }
+  };
+  const release = async () => {
+    if (recorded || !reservationId || !meter.release) return;
+    try {
+      await meter.release(info, reservationId);
+    } catch (error: unknown) {
+      console.error(`[ai-meter] could not release a ${feature} reservation`, error instanceof Error ? error.name : typeof error);
     }
   };
   let result: R;
   try {
     result = await call();
   } catch (error: unknown) {
-    if (NoObjectGeneratedError.isInstance(error) && error.usage) await settle(tokens(error.usage));
+    if (NoObjectGeneratedError.isInstance(error) && error.usage) {
+      await settle(tokens(error.usage));
+    } else {
+      await release();
+    }
     throw error;
   }
   await settle(tokens(result.usage));

@@ -12,7 +12,7 @@ import { migrate } from '@ludy/db/migrate';
 import { PERSONAL_DATA_COLUMNS, PERSONAL_DATA_NAME_PATTERN, PERSONAL_DATA_SCHEMAS, SEALED_COLUMNS } from '@ludy/kernel';
 import { createDbClient, resolveDbIdentifiers, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
 
 // Control-plane tables: not tenant data, never read by tenant code (control-plane-reads.test.ts keeps the list).

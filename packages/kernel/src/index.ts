@@ -12,6 +12,7 @@ export * from './push.ts';
 export * from './inbox-items.ts';
 export * from './saved-views.ts';
 export * from './today-mail.ts';
+export * from './home-layout.ts';
 export * from './today-weekly.ts';
 export * from './saved-view-filter.ts';
 export * from './task-filter.ts';

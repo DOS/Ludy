@@ -433,6 +433,7 @@ const UNIONS = unions({
   'ludy_meetings.meeting_chapter.stage': MEETING_RESULT_STAGES,
   'ludy_meetings.meeting_result.feature': MEETING_RESULT_FEATURES,
   'ludy_meetings.meeting_result.stage': MEETING_RESULT_STAGES,
+  'ludy_meetings.minutes_version.language': TRANSLATION_TARGET_LANGUAGES,
   'ludy_meetings.transcript_segment.stage': TRANSCRIPT_STAGES,
   'ludy_meetings.transcript_segment.source': TRANSCRIPTION_MAKERS,
   'ludy_meetings.translation.kind': TRANSLATION_KINDS,

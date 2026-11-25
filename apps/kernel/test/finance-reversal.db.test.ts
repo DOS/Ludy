@@ -112,7 +112,7 @@ suite('journal reversal through the API, and voided purchase documents (#165)', 
   async function rpc(path: string, token: string, input: unknown, slug: string | null = org.slug) {
     const response = await app.request(`/api/rpc/${path}`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...(slug ? { 'x-crove-org': slug } : {}) },
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...(slug ? { 'x-ludy-org': slug } : {}) },
       body: JSON.stringify(input === undefined ? {} : { json: input }),
     });
     const body = (await response.json().catch(() => null)) as ({ json?: unknown } & Record<string, unknown>) | null;
@@ -248,7 +248,7 @@ suite('journal reversal through the API, and voided purchase documents (#165)', 
 
   // #878: the exports a document went out in, for its history; the entry is dated 15 September 2026.
   const download = async (path: string) => {
-    const response = await app.request(path, { headers: { authorization: `Bearer ${await tokenFor(viewer)}`, 'x-crove-org': org.slug } });
+    const response = await app.request(path, { headers: { authorization: `Bearer ${await tokenFor(viewer)}`, 'x-ludy-org': org.slug } });
     expect(response.status, path).toBe(200);
     await response.arrayBuffer();
   };
@@ -474,7 +474,7 @@ suite('journal reversal through the API, and voided purchase documents (#165)', 
 
     // The download, for a viewer like the journal export, and its audit row (counts only, with the format).
     const response = await app.request('/api/export/misa/purchases.xlsx', {
-      headers: { authorization: `Bearer ${await tokenFor(viewer)}`, 'x-crove-org': org.slug },
+      headers: { authorization: `Bearer ${await tokenFor(viewer)}`, 'x-ludy-org': org.slug },
     });
     expect(response.status).toBe(200);
     expect(response.headers.get('content-type')).toBe('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');

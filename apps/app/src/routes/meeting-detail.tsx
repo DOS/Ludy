@@ -25,6 +25,7 @@ import { MeetingCommitments } from '../components/meeting-commitments.tsx';
 import { MeetingTemplateSuggest } from '../components/meeting-template-suggest.tsx';
 import { MeetingAskThis } from '../components/meeting-ask-this.tsx';
 import { MeetingOpenPoints } from '../components/meeting-open-points.tsx';
+import { MeetingSalesInsight } from '../components/meeting-sales-insight.tsx';
 import { MeetingNotes } from '../components/meeting-notes.tsx';
 import {
   DraftRedactionDialog,
@@ -33,6 +34,7 @@ import {
   useRedactCandidatesQuery,
 } from '../components/meeting-redaction.tsx';
 import { MeetingHighlights } from '../components/meeting-highlights.tsx';
+import { MeetingSpeakingStyle } from '../components/meeting-speaking-style.tsx';
 import { MeetingTalkTime } from '../components/meeting-talk-time.tsx';
 import { MeetingTrackerHits } from '../components/meeting-trackers.tsx';
 import { MeetingTranscript, clock } from '../components/meeting-transcript.tsx';
@@ -501,6 +503,8 @@ export function MeetingDetailPage() {
       <MeetingAskThis key={`ask-this-${id}-${redactedEpoch}`} meetingId={id} hasTranscript={hasTranscript} onJump={jumpTo} />
       {/* What the meeting left open (#4768): the recorder's own Vy on a click, questions not heard answered and decisions raised and not taken, each opens the transcript where it was said; kept in state only, so a redaction (the epoch) clears it */}
       <MeetingOpenPoints key={`open-points-${id}-${redactedEpoch}`} meetingId={id} isRecorder={meeting.isRecorder} hasTranscript={hasTranscript} onJump={jumpTo} />
+      {/* Sales call insights for a meeting linked to an open deal (#4920, L26): recorder-only, ephemeral and clears on redaction */}
+      <MeetingSalesInsight key={`sales-insight-${id}-${redactedEpoch}`} meetingId={id} isRecorder={meeting.isRecorder} hasTranscript={hasTranscript} onJump={jumpTo} />
       {/* The transcript: the recorder's draft, or what was shared with the meeting */}
       <MeetingTranscript
         key={`transcript-${id}`}
@@ -527,6 +531,8 @@ export function MeetingDetailPage() {
       <MeetingHighlights key={`highlights-${id}`} meetingId={id} isRecorder={meeting.isRecorder} onJump={jumpTo} />
       {/* Who did the talking (#4765): talk time, turns and longest stretch per speaker, worked out in code from the lines above, no AI */}
       <MeetingTalkTime key={`talk-time-${id}`} meetingId={id} />
+      {/* How each speaker spoke (#4919): pace, filler words and longest stretch without a pause, counted by code on the server from the lines the caller reads, no AI */}
+      <MeetingSpeakingStyle key={`speaking-style-${id}`} meetingId={id} />
       {/* Did the meeting cover its agenda (#3959): the recorder's own click, Vy compares the agenda with the transcript above and cites the lines */}
       <MeetingAdherence key={`adherence-${id}`} meetingId={id} isRecorder={meeting.isRecorder} onJump={jumpTo} redactedEpoch={redactedEpoch} />
       {/* The recorder's own rough notes (A5): theirs alone, so only the recorder gets the box */}

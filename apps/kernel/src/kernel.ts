@@ -264,9 +264,8 @@ export interface ModuleDefinitions {
 const OVERVIEW_CONTRIBUTIONS: Partial<Record<ModuleId, readonly OverviewContribution[]>> = { social: socialOverviewContributions };
 
 // The overview contributions of the modules LUDY_MODULES enables, which kernel.org.overview runs in each org.
-export function overviewContributions(config: Pick<Config, 'LUDY_MODULES'> | Pick<Config, 'CROVE_MODULES'>): OverviewContribution[] {
-  const modules = 'LUDY_MODULES' in config ? config.LUDY_MODULES : config.CROVE_MODULES;
-  return modules.flatMap((module) => OVERVIEW_CONTRIBUTIONS[module] ?? []);
+export function overviewContributions(config: Pick<Config, 'LUDY_MODULES'>): OverviewContribution[] {
+  return config.LUDY_MODULES.flatMap((module) => OVERVIEW_CONTRIBUTIONS[module] ?? []);
 }
 
 // Transcription of meetings is on only with MEETINGS_TRANSCRIBE=on and a provider (#2578, M4b); the module works with it off.
@@ -312,6 +311,7 @@ export function moduleDefinitions(config: Config, billing: Billing = selfHostBil
         messageIdDomain: messageIdDomain(config),
         shippedModules: AVAILABLE_MODULES,
         appBusy: { meetings: meetingsBusy, ads: adsBusy },
+        apps: { deployment: config.LUDY_MODULES, entitlements: (orgId) => billing.entitlements(orgId) },
       }),
       queries: kernelQueries({
         inboundDomain: config.INBOUND_DOMAIN ?? null,
@@ -357,9 +357,8 @@ const MODULE_MANIFESTS: Record<ModuleId, ModuleManifest> = {
   hr: hrManifest,
 };
 
-export function moduleManifests(config: Pick<Config, 'LUDY_MODULES'> | Pick<Config, 'CROVE_MODULES'>): ModuleManifest[] {
-  const modules = 'LUDY_MODULES' in config ? config.LUDY_MODULES : config.CROVE_MODULES;
-  return modules.map((module) => MODULE_MANIFESTS[module]);
+export function moduleManifests(config: Pick<Config, 'LUDY_MODULES'>): ModuleManifest[] {
+  return config.LUDY_MODULES.map((module) => MODULE_MANIFESTS[module]);
 }
 
 // The runtime of every server role, and the only place the server constructs one: the enabled modules' commands and
@@ -432,10 +431,12 @@ export function channelConversationAdapters(config: WhatsAppConfig): Record<stri
 
 // The meeting platforms a deployment has (Meetings C1 to C4): the offline sandbox when the channel sandbox is on, Zoom only when the deployment has its own Zoom OAuth app, Teams only when it has its own
 // Microsoft Entra app, and Google Meet only when it has a Google OAuth client for it (all off by default).
-export function meetingPlatformsOf(config: Pick<Config, 'CHANNEL_SANDBOX' | 'ZOOM_OAUTH_CLIENT_ID' | 'ZOOM_OAUTH_CLIENT_SECRET' | 'TEAMS_OAUTH_CLIENT_ID' | 'TEAMS_OAUTH_CLIENT_SECRET' | 'MEETINGS_GOOGLE_CLIENT_ID' | 'MEETINGS_GOOGLE_CLIENT_SECRET'>) {
+export function meetingPlatformsOf(config: Pick<Config, 'CHANNEL_SANDBOX' | 'ZOOM_OAUTH_CLIENT_ID' | 'ZOOM_OAUTH_CLIENT_SECRET' | 'TEAMS_OAUTH_CLIENT_ID' | 'TEAMS_OAUTH_CLIENT_SECRET' | 'MEETINGS_GOOGLE_CLIENT_ID' | 'MEETINGS_GOOGLE_CLIENT_SECRET' | 'MEETINGS_GOOGLE_PICKER_API_KEY' | 'MEETINGS_GOOGLE_PICKER_APP_ID'>) {
   return meetingPlatformAdapters({
     sandbox: config.CHANNEL_SANDBOX === 'true',
     ...(config.MEETINGS_GOOGLE_CLIENT_ID && config.MEETINGS_GOOGLE_CLIENT_SECRET ? { google: { clientId: config.MEETINGS_GOOGLE_CLIENT_ID, clientSecret: config.MEETINGS_GOOGLE_CLIENT_SECRET } } : {}),
+    // The Picker route (#3174): the Google adapter also offers and reads a recording of a conference with no transcript, only where the operator set the Picker's key and app id.
+    googleRecordings: Boolean(config.MEETINGS_GOOGLE_PICKER_API_KEY && config.MEETINGS_GOOGLE_PICKER_APP_ID && config.MEETINGS_GOOGLE_CLIENT_ID),
     ...(config.ZOOM_OAUTH_CLIENT_ID && config.ZOOM_OAUTH_CLIENT_SECRET ? { zoom: { clientId: config.ZOOM_OAUTH_CLIENT_ID, clientSecret: config.ZOOM_OAUTH_CLIENT_SECRET } } : {}),
     ...(config.TEAMS_OAUTH_CLIENT_ID && config.TEAMS_OAUTH_CLIENT_SECRET ? { teams: { clientId: config.TEAMS_OAUTH_CLIENT_ID, clientSecret: config.TEAMS_OAUTH_CLIENT_SECRET } } : {}),
   });
@@ -959,6 +960,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
             evidenceLockDays: config.EVIDENCE_LOCK_DAYS,
             // The audio of a video-only platform recording (C2a, #3306): crove-media extracts it; without MEDIA_URL the extractor is not configured and such a recording fails `no_audio`.
             meetingsImportExtractor: mediaAudioExtractorFor(config.MEDIA_URL, config.MEDIA_CALL_TIMEOUT_MS),
+            ...(config.MEDIA_MAX_INPUT_BYTES ? { meetingsImportMediaInputBytes: config.MEDIA_MAX_INPUT_BYTES } : {}),
             channels: { broker: resolved.broker, einvoiceProviders: einvoiceProvidersOf(config), marketplaceProviders: marketplaceProvidersOf(config), ...(config.MISA_AMIS_CLIENT_ID ? { misaAmis: misaAmisClientOf(config) as AmisClient, ...(config.MISA_AMIS_PUSH === 'on' ? { misaAmisPush: true } : {}) } : {}), ...(config.MISA_ASP_CLIENT_ID ? { misaAsp: misaAspClientOf(config) as AmisClient, ...(config.MISA_ASP_PUSH === 'on' ? { misaAspPush: true } : {}) } : {}), conversationHistory: config.CHANNEL_ZALO_HISTORY === 'true', facebookHistory: config.CHANNEL_FACEBOOK_HISTORY === 'true', threadsHistory: config.CHANNEL_THREADS_HISTORY === 'true', youtubeHistory: config.CHANNEL_YOUTUBE_HISTORY === 'true', conversationMediaHosts: zaloMediaHostsOf(config.CHANNEL_ZALO_MEDIA_HOSTS), conversationMediaHostsBy: { whatsapp: zaloMediaHostsOf(config.CHANNEL_WHATSAPP_MEDIA_HOSTS) }, conversationAdapters: channelConversationAdapters(config), publishers: channelPublishers(config), refreshers: channelRefreshers(config), calendars: calendarAdapters(config), meetingPlatforms: meetingPlatformsOf(config), bankFeeds: bankFeedProviders({ sandbox: config.BANK_FEED_SANDBOX === 'true', sandboxWebhookSecret: config.BANK_FEED_SANDBOX_WEBHOOK_SECRET }), bankFeedHosted: bankFeedHostedOf(config), adPlatforms: adPlatformsOf(config), adRevokers: adRevokersOf(config), adWriters: adWritersOf(config), adPausers: adPausersOf(config), adActivators: adActivatorsOf(config), adManagers: adManagersOf(config), adStateReaders: adStateReadersOf(config) },
             publicUrl: config.PUBLIC_URL,
             appUrl: appUrl(config),
