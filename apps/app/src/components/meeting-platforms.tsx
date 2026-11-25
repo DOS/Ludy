@@ -21,6 +21,17 @@ import { ErrorText, RowsSkeleton } from './ui.tsx';
 
 const refreshAll = () => queryClient.invalidateQueries({ queryKey: orpc.meetingPlatform.key() });
 
+// What a disconnect does, said before it is done. Microsoft has no endpoint to revoke the access (Google and Zoom have), so for Teams the member is told to also remove the app in their Microsoft account.
+export function DisconnectAsk({ provider, name }: { provider: string; name: string }) {
+  const t = useTranslations('meetings.platform.settings');
+  return (
+    <div className="mt-2 space-y-1 text-xs text-muted-foreground" data-testid="meeting-platform-disconnect-ask">
+      <p>{t('disconnectAsk', { name })}</p>
+      {provider === 'microsoft_teams' && <p data-testid="meeting-platform-disconnect-teams">{t('disconnectTeams')}</p>}
+    </div>
+  );
+}
+
 function ConnectionRow({ connection }: { connection: MeetingPlatformConnectionView }) {
   const t = useTranslations('meetings.platform.settings');
   const tp = useTranslations('meetings.platform');
@@ -83,7 +94,7 @@ function ConnectionRow({ connection }: { connection: MeetingPlatformConnectionVi
           </div>
         )}
       </div>
-      {confirm && <p className="mt-2 text-xs text-muted-foreground">{t('disconnectAsk', { name })}</p>}
+      {confirm && <DisconnectAsk provider={connection.provider} name={name} />}
       {refresh.error && <ErrorText>{errorMessage(refresh.error)}</ErrorText>}
       {disconnect.error && <ErrorText>{errorMessage(disconnect.error)}</ErrorText>}
     </li>
