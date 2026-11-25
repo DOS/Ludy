@@ -5,7 +5,7 @@
 // sends nothing. A brief that fails to load is simply not shown: the list is what matters.
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { useTranslations } from 'use-intl';
-import type { TodayItem } from '@ludy/kernel-contract';
+import { todayCount, type TodayItem } from '@ludy/kernel-contract';
 import { cn } from '@ludy/ui/lib/utils';
 import { useLocaleSetting } from '../i18n/provider.tsx';
 import { client } from '../lib/api.ts';
@@ -56,8 +56,17 @@ export function TodayBrief({
       </div>
     );
   }
-  const { writtenBy, sentences } = brief.data;
-  if (writtenBy === null || sentences.length === 0) return null;
+  const { writtenBy, sentences, budgetSpent } = brief.data;
+  if (writtenBy === null || sentences.length === 0) {
+    // AI off for the month (the budget is spent): one fixed sentence from the list's own count, so the card never goes blank (#4783).
+    if (!budgetSpent) return null;
+    return (
+      <ProposalSurface proposed={false} className={cn('p-4', className)} data-testid="today-brief">
+        <p className="text-sm text-foreground">{t('fixed', { count: todayCount(items) })}</p>
+        <p className="mt-2 text-xs text-muted-foreground">{t('byTemplate')}</p>
+      </ProposalSurface>
+    );
+  }
   const isAi = writtenBy === 'vy';
   return (
     <ProposalSurface proposed={isAi} className={cn('p-4', className)} data-testid="today-brief">

@@ -395,6 +395,8 @@ export const en = {
       aiBadge: 'Written by {gm}',
       byVy: '{gm}, the general manager of the AI coworkers, wrote this from the figures of the list below; every number was checked against the list. You review and approve each item on its own screen.',
       byTemplate: 'An automatic summary of the figures of the list below.',
+      // AI off or the month's budget spent (#4783): one fixed sentence from the list's own count, not written by AI.
+      fixed: '{count, plural, one {# item needs you today, in the list below.} other {# items need you today, in the list below.}}',
     },
     // "This week" below the list (#3257): the last 7 days, figures computed by the apps' own reads and Vy's sentences over them.
     weekly: {
@@ -419,7 +421,18 @@ export const en = {
       subtitle: 'Take one first step to bring live work onto your Home screen.',
       stepLabel: 'Step {step}',
       guideLink: 'Read the quick guide',
+      dismiss: 'Hide this card',
       steps: {
+        vatPeriod: {
+          title: 'Choose your VAT filing period',
+          description: 'Pick monthly or quarterly so Ludy reminds you before each return is due.',
+          action: 'Set up the period',
+        },
+        twoFactor: {
+          title: 'Turn on two-factor sign-in',
+          description: 'Approving payments and posting entries needs two-factor sign-in; set it up now so it never blocks you.',
+          action: 'Open security',
+        },
         uploadInvoice: {
           title: 'Upload your first invoice',
           description: 'Drop a PDF, photo, or XML file into your inbox so your AI coworker can read and check it for you.',
@@ -472,7 +485,16 @@ export const en = {
     title: 'Overview',
     subtitle: 'What waits for you in this organization, and the tax deadlines ahead.',
     lastActivity: 'What waits for you, and the tax deadlines ahead. Last activity at {when}.',
-    upload: 'Upload documents',
+    // Create actions named by the job (#4783); the list is in lib/home-actions.ts.
+    actions: {
+      label: 'Quick create',
+      items: {
+        uploadInvoice: 'Upload an invoice',
+        recordExpense: 'Record an expense',
+        createSalesInvoice: 'Create a sales invoice',
+        addCustomer: 'Add a customer',
+      },
+    },
     loading: 'Counting what waits',
     operationalStrip: 'Other waiting items and coworker updates',
     showDetails: 'Show details',
