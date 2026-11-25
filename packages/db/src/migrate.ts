@@ -203,7 +203,7 @@ function isConcurrentCatalogUpdateError(error: unknown): boolean {
 
 // Revokes direct privileges on ludy_* objects bestowed by another grantor (e.g., via WITH GRANT OPTION)
 // by switching to the grantor role via SET LOCAL ROLE so PostgreSQL 17's object-level REVOKE removes them
-// before 20270326210000's fail-closed ACL verification runs. Each object class drains leaf-first across
+// before 20270327030000's fail-closed ACL verification runs. Each object class drains leaf-first across
 // bounded passes without using CASCADE so non-legacy dependents are never stripped silently.
 async function revokeDelegatedLegacyObjectGrants(client: pg.ClientBase): Promise<void> {
   await client.query(`DO $$

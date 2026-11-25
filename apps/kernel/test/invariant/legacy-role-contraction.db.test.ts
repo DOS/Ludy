@@ -727,7 +727,7 @@ suite('legacy crove_* role and crove.* GUC contraction (#3972)', () => {
         expect(leftoverAuth).toEqual([]);
 
         await bClient.query(
-          "UPDATE ludy_meta.schema_migrations SET name = '20270326210000_corrupted_stage7.sql' WHERE name LIKE '%\\_ludy\\_kernel\\_contract\\_crove\\_roles\\_and\\_gucs.sql'",
+          "UPDATE ludy_meta.schema_migrations SET name = '20270327030000_corrupted_stage7.sql' WHERE name LIKE '%\\_ludy\\_kernel\\_contract\\_crove\\_roles\\_and\\_gucs.sql'",
         );
         await expect(migrate({ adminUrl: dbBUrl, dir: MIGRATIONS })).rejects.toThrow(/migration ledger mismatch for version/);
       } finally {
