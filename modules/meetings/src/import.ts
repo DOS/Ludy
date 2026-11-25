@@ -47,7 +47,7 @@ function importError(error: unknown): never {
 
 // Whose transcription a platform's transcript is, by the provider of the connection it came through (the sandbox is the offline test platform and labels like Google, as C2 did).
 // Typed on the contract's list of providers with a transcript path, so a provider added there cannot be left without its label.
-const TRANSCRIPT_SOURCE_OF: Record<MeetingPlatformTranscriptProvider, TranscriptionMaker> = { google_meet: 'google_meet', microsoft_teams: 'microsoft_teams', sandbox: 'google_meet' };
+const TRANSCRIPT_SOURCE_OF: Record<MeetingPlatformTranscriptProvider, TranscriptionMaker> = { google_meet: 'google_meet', microsoft_teams: 'microsoft_teams', zoom: 'zoom', sandbox: 'google_meet' };
 const hasTranscriptPath = (provider: string): provider is MeetingPlatformTranscriptProvider => (MEETING_PLATFORM_TRANSCRIPT_PROVIDERS as readonly string[]).includes(provider);
 
 type Trx = CommandContext['trx'];
@@ -206,7 +206,7 @@ export const meetingImportDiscardEmpty = defineCommand({
 // The member's own step that finishes a TRANSCRIPT-ONLY import (C2, #3174): the worker's job staged the platform's transcript, the import route claimed it and read it again, and this command writes
 // the lines as the recorder's draft. It is no RPC command (nothing in the contract names it): only the route runs it, with the lines it read from the staged file, so a member cannot call it
 // with text of their own under the platform's name. It still refuses anything but the claimed transcript-only recording of this member for this meeting. The lines are the platform's
-// transcription (Google Meet's or Microsoft Teams', by the provider of the connection the recording came through; a provider with no transcript path is refused): born tainted, `source` the platform (nothing updates it), so the recorder reads them before anything is published, and no AI call or cost is involved. It also takes the recording to `imported`
+// transcription (Google Meet's, Microsoft Teams' or Zoom's, by the provider of the connection the recording came through; a provider with no transcript path is refused): born tainted, `source` the platform (nothing updates it), so the recorder reads them before anything is published, and no AI call or cost is involved. It also takes the recording to `imported`
 // and ends the meeting, as recording a media does for an audio import. The audit row holds ids and a count, never a line.
 export const meetingImportTakeTranscript = defineCommand({
   name: 'meetings.import.take_transcript',
