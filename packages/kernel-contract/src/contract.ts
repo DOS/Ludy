@@ -289,7 +289,7 @@ import { zTaxObligationMark, zTaxProfile } from './tax-calendar.ts';
 import { zSinceYesterday, zTodayBrief, zTodayBriefInput, zTodayList, zTodayMailSet, zTodayMailSetting, zTodayWeekly, zTodayWeeklyInput } from './today.ts';
 import { zBookEntity, zLegalEntity, zLegalEntityInput } from './legal-entity.ts';
 import { zBuiltinRoleKey, zMemberRoles, zRoleAssignInput } from './roles.ts';
-import { zMeetingPlatformConnectProvider, zMeetingPlatformConnectionRef, zMeetingPlatformConnectionView, zMeetingPlatformRecordingRef, zMeetingPlatformRecordingView } from './meeting-platform.ts';
+import { zMeetingPlatformConnectProvider, zMeetingPlatformConnectionRef, zMeetingPlatformConnectionView, zMeetingPlatformRecordingPick, zMeetingPlatformRecordingRef, zMeetingPlatformRecordingView } from './meeting-platform.ts';
 import { zCalendarConnectionView, zCalendarEventAdd, zCalendarEventCancel, zCalendarEventView, zCalendarRange, zCalendarSlot, zCalendarSlotsQuery, zCalendarOAuthProvider, zMyCalendar, zWorkingHours } from './calendar.ts';
 import { zEInvoiceDraftFromOrder, zOrderLineInvoiceStates, zOrderLineInvoiceStatesInput, zStockMoveFromOrderLine, zStockMoveFromOrderLineResult } from './finance-orders.ts';
 import { zQuoteAccept, zQuoteDecided, zQuoteDecline, zSalesOrder, zSalesOrderCancel, zSalesOrderDeliver, zSalesOrderDeliveryChanged, zSalesOrderHandoff, zSalesOrderListQuery, zSalesOrderPage, zSalesOrderRef, zSalesOrderSummary, zSalesOrderUndeliver } from './crm-sales-orders.ts';
@@ -1246,6 +1246,8 @@ export const contract = {
     // Lists the member's connections again at the sweep's next pass (nothing is fetched by the request).
     refresh: oc.input(z.strictObject({ connectionId: zId.optional() })).output(z.strictObject({ refreshed: z.number().int() })),
     dismiss: oc.input(zMeetingPlatformRecordingRef).output(z.strictObject({ recordingId: zId, dismissed: z.literal(true) })),
+    // Google Meet's Picker route (#3174): the member picked the recording's file in Google Picker and sends the Drive file id (never a token); the worker's import job checks it against the id Meet gave.
+    pick: oc.input(zMeetingPlatformRecordingPick).output(z.strictObject({ recordingId: zId, picked: z.literal(true) })),
     disconnect: oc.input(zMeetingPlatformConnectionRef).output(z.strictObject({ connectionId: zId, disconnected: z.literal(true) })),
     connectSandbox: oc.input(z.strictObject({})).output(z.strictObject({ connectionId: zId, reconnected: z.boolean() })),
     // The platforms this deployment lets a member connect through the platform's own dialog (Zoom, C3): empty without the app credentials and a credential key, so the screen shows no connect button the
