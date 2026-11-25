@@ -86,11 +86,16 @@ suite('Tracker alerts (#4873)', () => {
       [orgId, meetingId, users.rec, title, visibility],
     );
     for (const reader of readers) await sqlAdmin('INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)', [orgId, randomUUID(), meetingId, users[reader]]);
-    for (const [n, text] of lines.entries()) {
-      await sqlAdmin(`INSERT INTO ludy_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, $3::numeric, $3::numeric + 5, 'Người nói 1', $4, $5::text)`, [orgId, meetingId, n * 10, text, stage]);
-    }
+    const seedLines = async () => {
+      for (const [n, text] of lines.entries()) {
+        await sqlAdmin(`INSERT INTO ludy_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, $3::numeric, $3::numeric + 5, 'Người nói 1', $4, $5::text)`, [orgId, meetingId, n * 10, text, stage]);
+      }
+    };
+    // Published lines are there before the publish. Draft lines are put in after it: the publish moves the draft lines to published (#4899), and a draft that stays a draft is what the test is about.
+    if (stage === 'published') await seedLines();
     await run('meetings.summary.save', 'rec', { meetingId, summary: 'Tóm tắt không có từ khóa', decisions: [] });
     await run('meetings.result.publish', 'rec', { meetingId, confirmed: true });
+    if (stage === 'draft') await seedLines();
     const events = await sqlAdmin<{ id: string; payload: Record<string, unknown> }>('SELECT id, payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = $2 ORDER BY created_at DESC, id DESC', [orgId, TRACKER_ALERT_EVENT]);
     const event = events.rows.find((e) => e.payload.meetingId === meetingId);
     expect(event, 'the publish stored its event').toBeDefined();

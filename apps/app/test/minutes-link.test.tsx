@@ -258,10 +258,10 @@ describe('the panel on the meeting page', () => {
   }
 
   it('shows to the recorder with published minutes, and to no one else, and not before anything is published', () => {
-    expect(results({ meetingId: 'm1', isRecorder: true, draft: null, published: publishedView, items: [] })).toContain('data-testid="minutes-link"');
-    expect(results({ meetingId: 'm1', isRecorder: false, draft: null, published: publishedView, items: [] })).not.toContain('data-testid="minutes-link"');
-    expect(results({ meetingId: 'm1', isRecorder: true, draft: draftView, published: null, items: [] })).not.toContain('data-testid="minutes-link"');
-    expect(results({ meetingId: 'm1', isRecorder: true, draft: null, published: null, items: [] })).not.toContain('data-testid="minutes-link"');
+    expect(results({ meetingId: 'm1', transcriptDraft: 0, transcriptUnread: 0, transcriptUnreadKey: '', isRecorder: true, draft: null, published: publishedView, items: [] })).toContain('data-testid="minutes-link"');
+    expect(results({ meetingId: 'm1', transcriptDraft: 0, transcriptUnread: 0, transcriptUnreadKey: '', isRecorder: false, draft: null, published: publishedView, items: [] })).not.toContain('data-testid="minutes-link"');
+    expect(results({ meetingId: 'm1', transcriptDraft: 0, transcriptUnread: 0, transcriptUnreadKey: '', isRecorder: true, draft: draftView, published: null, items: [] })).not.toContain('data-testid="minutes-link"');
+    expect(results({ meetingId: 'm1', transcriptDraft: 0, transcriptUnread: 0, transcriptUnreadKey: '', isRecorder: true, draft: null, published: null, items: [] })).not.toContain('data-testid="minutes-link"');
   });
 
   // #4947: an owner or admin who is not the recorder sees the links of the meeting (to end one), only when there is one, and never a create button.
@@ -274,7 +274,7 @@ describe('the panel on the meeting page', () => {
     return renderToStaticMarkup(wrap(<MeetingResults meetingId="m1" slug="acme" readers={[]} />, 'en'));
   }
   it('shows an owner or admin who is not the recorder the links to end, without a create button, and shows a member nothing', () => {
-    const published = { meetingId: 'm1', isRecorder: false, draft: null, published: publishedView, items: [] };
+    const published = { meetingId: 'm1', transcriptDraft: 0, transcriptUnread: 0, transcriptUnreadKey: '', isRecorder: false, draft: null, published: publishedView, items: [] };
     for (const role of ['owner', 'admin'] as const) {
       const html = resultsFor(role, [link(1)], published);
       expect(html).toContain('data-testid="minutes-link"');
@@ -284,7 +284,7 @@ describe('the panel on the meeting page', () => {
     expect(resultsFor('admin', [], published)).not.toContain('data-testid="minutes-link"');
     expect(resultsFor('member', [link(1)], published)).not.toContain('data-testid="minutes-link"');
     // Nothing published yet: nothing to share, so no panel.
-    expect(resultsFor('owner', [link(1)], { meetingId: 'm1', isRecorder: false, draft: null, published: null, items: [] })).not.toContain('data-testid="minutes-link"');
+    expect(resultsFor('owner', [link(1)], { meetingId: 'm1', transcriptDraft: 0, transcriptUnread: 0, transcriptUnreadKey: '', isRecorder: false, draft: null, published: null, items: [] })).not.toContain('data-testid="minutes-link"');
   });
 });
 
