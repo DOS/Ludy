@@ -30,13 +30,13 @@ vi.mock('../src/lib/api.ts', async () => {
 const { MeetingTalkTime, TalkTimeLine } = await import('../src/components/meeting-talk-time.tsx');
 
 let n = 0;
-const segment = (speakerLabel: string, startSeconds: number, endSeconds: number, text = 'Nội dung') => ({
+const segment = (speakerLabel: string, startSeconds: number, endSeconds: number, text = 'Nội dung', stage: 'draft' | 'published' = 'published') => ({
   id: `s${(n += 1)}`,
   startSeconds,
   endSeconds,
   speakerLabel,
   text,
-  stage: 'published' as const,
+  stage,
   corrected: false,
   source: 'ludy' as const,
 });
@@ -97,6 +97,13 @@ describe('the card', () => {
     expect(card(transcript([segment('Lan', 0, 10), segment('Hùng', 10, 20, ''), segment('An', 20, 25)])).includes('Hùng')).toBe(false);
   });
 
+  it('goes when the last read of the transcript failed, as the transcript panel does', () => {
+    expect(card(TWO)).not.toBe('');
+    client.current.getQueryCache().find({ queryKey: ['meetings', 'transcript', 'get'] })?.setState({ status: 'error', error: new Error('MEETING_NOT_FOUND'), fetchStatus: 'idle' });
+    expect(card(null)).toBe('');
+    expect(lineOf(null)).toBe('');
+  });
+
   it('writes a speaker name as plain text, never as markup', () => {
     const html = card(transcript([segment('<img src=x onerror=alert(1)> & <b>Lan</b>', 0, 10), segment('Hùng', 10, 15)]));
     expect(html).not.toContain('<img');
@@ -124,6 +131,14 @@ describe('the line under the summary', () => {
     expect(textOf(lineOf(four))).toBe('Talk time: An 40%, Bình 30%, Chi 20% and 1 other');
     const five = transcript([...four.segments, segment('Em', 100, 110)]);
     expect(textOf(lineOf(five))).toContain('and 2 others');
+  });
+
+  it('counts the published lines only, so the recorder sees what a reader sees under the summary', () => {
+    const mixed = transcript([segment('Lan', 0, 10), segment('Hùng', 10, 20, 'Nội dung', 'draft')]);
+    expect(textOf(card(mixed))).toContain('Hùng');
+    expect(lineOf(mixed)).toBe('');
+    const both = transcript([segment('Lan', 0, 10), segment('Hùng', 10, 15), segment('An', 15, 100, 'Nội dung', 'draft')]);
+    expect(textOf(lineOf(both))).toBe('Talk time: Lan 67%, Hùng 33%');
   });
 
   it('shows nothing for one speaker or when no line has text left', () => {

@@ -15,10 +15,14 @@ const READ_ONCE = { staleTime: 5 * 60_000, refetchOnWindowFocus: false } as cons
 // How many names the one-line summary lists before it says "and N others".
 const SUMMARY_LINE_SPEAKERS = 3;
 
-// The figures of the meeting for the caller, or null while loading, with no transcript, or with fewer than two speakers (one person talking has nothing to compare).
-function useFigures(meetingId: string): SpeakerFigures | null {
+// The figures of the meeting for the caller, or null while loading, with no transcript, with fewer than two speakers (one person talking has nothing to compare), or when the last read of the
+// transcript failed (a refetch that fails keeps the lines of the earlier read, and the transcript panel shows the error instead of them, so the figures go too: a 404 after the text retention date).
+// `publishedOnly` keeps the published lines, for the line under the published summary: the recorder's draft is not what a reader sees there.
+function useFigures(meetingId: string, publishedOnly = false): SpeakerFigures | null {
   const transcript = useQuery({ ...orpc.meetings.transcript.get.queryOptions({ input: { meetingId } }), ...READ_ONCE });
-  const figures = transcript.data ? speakerFigures(transcript.data.segments) : null;
+  if (transcript.error || !transcript.data) return null;
+  const lines = publishedOnly ? transcript.data.segments.filter((s) => s.stage === 'published') : transcript.data.segments;
+  const figures = speakerFigures(lines);
   return figures && figures.speakers.length >= 2 ? figures : null;
 }
 
@@ -87,7 +91,7 @@ export function MeetingTalkTime({ meetingId }: { meetingId: string }) {
 // The one line under the published summary: the biggest shares by name, "and N others" for the rest.
 export function TalkTimeLine({ meetingId }: { meetingId: string }) {
   const t = useTranslations('meetings.talkTime');
-  const figures = useFigures(meetingId);
+  const figures = useFigures(meetingId, true);
   if (!figures) return null;
   const percents = wholePercents(figures.speakers.map((s) => s.share));
   const listed = figures.speakers.slice(0, SUMMARY_LINE_SPEAKERS).map((s, i) => `${s.speaker} ${percents[i]}%`);
