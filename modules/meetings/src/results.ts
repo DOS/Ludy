@@ -75,6 +75,14 @@ function hasPhone(text: string): boolean {
   }
   return false;
 }
+/**
+ * The flags an item has after its title was looked at again: what code finds in the title now, plus the mark that it was asked for out loud (#4807), which a title or a date edited by the recorder, or a title
+ * redacted, does not take away (the mark says where the item came from, not what its title holds).
+ */
+export function flagsAfterEdit(existing: unknown, title: string): ItemFlag[] {
+  const kept = Array.isArray(existing) && existing.includes('asked_aloud') ? (['asked_aloud'] as const) : [];
+  return [...new Set<ItemFlag>([...itemFlags(title), ...kept])];
+}
 export function itemFlags(title: string): ItemFlag[] {
   const lower = title.toLowerCase();
   const found = hasLink(lower) || hasPhone(title) || lower.split(/\s+/).some((token) => hasEmail(token));
@@ -227,7 +235,7 @@ export const actionItemEdit = defineCommand({
   handler: async (ctx, input) => {
     const userId = userOf(ctx.actor);
     // RLS shows a draft to its recorder only, so any other caller meets the same answer as for an unknown id.
-    const item = await ctx.trx.selectFrom('ludy_meetings.action_item').select(['meeting_id', 'title']).where('org_id', '=', ctx.orgId).where('id', '=', input.itemId).where('stage', '=', 'draft').executeTakeFirst();
+    const item = await ctx.trx.selectFrom('ludy_meetings.action_item').select(['meeting_id', 'title', 'flags']).where('org_id', '=', ctx.orgId).where('id', '=', input.itemId).where('stage', '=', 'draft').executeTakeFirst();
     if (!item) throw itemNotFound();
     const meeting = await openMeeting(ctx.trx, ctx.orgId, item.meeting_id);
     if (meeting.recorder_user_id !== userId) throw itemNotFound();
@@ -243,7 +251,7 @@ export const actionItemEdit = defineCommand({
         ...(input.when === undefined ? {} : { when_drafted: input.when }),
         ...(input.whenDate === undefined ? {} : { when_parsed: input.whenDate }),
         ...(input.transcriptSeconds === undefined ? {} : { transcript_seconds: input.transcriptSeconds }),
-        flags: sql`${JSON.stringify(itemFlags(title))}::jsonb`,
+        flags: sql`${JSON.stringify(flagsAfterEdit(item.flags, title))}::jsonb`,
         updated_at: sql<Date>`pg_catalog.now()`,
       })
       .where('org_id', '=', ctx.orgId)

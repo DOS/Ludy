@@ -1919,6 +1919,10 @@ export function createRpcHandler(
           inMeetings(context, (orgId, actor) => runMeetingTitle({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: summaries }, orgId, actor, input.meetingId)),
         ),
       },
+      // Spoken cues to Vy (#4807): the recorder's click drafts a marked action item for each cue found in the transcript, by code; see modules/meetings/src/voice-cue.ts.
+      voiceCue: {
+        draft: os.meetings.voiceCue.draft.handler(meetingsCommand('meetings.voice_cue.draft')),
+      },
       // What each speaker committed to or decided (#3954): `status` feeds the button, `list` runs the recorder's own Vy once and returns the checked lines, grouped by speaker, to the browser; nothing is stored,
       // published or made a task. See member-vy-ports.ts.
       commitments: {
@@ -1964,6 +1968,12 @@ export function createRpcHandler(
       // The week's meeting load for an owner or an admin (#4770): per member and the series worth trimming, read by code under the caller's own row security; see modules/meetings/src/load.ts.
       load: {
         week: os.meetings.load.week.handler(meetingsQuery('meetings.load.week')),
+      },
+      // Highlights on a transcript line or range (#4819): the marks of a meeting, and the caller's own add and remove, under the caller's own row security; see modules/meetings/src/highlights.ts.
+      highlight: {
+        list: os.meetings.highlight.list.handler(meetingsQuery('meetings.highlight.list')),
+        add: os.meetings.highlight.add.handler(meetingsCommand('meetings.highlight.add')),
+        remove: os.meetings.highlight.remove.handler(meetingsCommand('meetings.highlight.remove')),
       },
       // The Today view (#3955): the member's own agenda for today with the facts of each event's brief, read as the member in one call (no model, nothing in the background); see modules/meetings/src/today.ts.
       today: {

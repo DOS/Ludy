@@ -220,6 +220,8 @@ export const vi = {
       inbox: 'Hộp thư',
       crm: 'CRM',
       marketing: 'Marketing',
+      // The foot of an app's menu: items a small business opens less than monthly (#4790).
+      more: 'Thêm',
     },
     notMember: 'Bạn không thuộc tổ chức này.',
     support: 'Góp ý / Hỗ trợ',
@@ -5320,6 +5322,28 @@ export const vi = {
       line: 'Thời gian nói: {list}',
       lineMore: 'Thời gian nói: {list} và {count, number} người khác',
     },
+    highlights: {
+      title: 'Đoạn nổi bật',
+      desc: 'Những dòng của bản ghi lời nói mà mọi người đã đánh dấu. Ai đọc được cuộc họp này đều thấy. Bấm vào giờ để đến đó.',
+      mark: 'Nổi bật',
+      marked: 'Đã đánh dấu',
+      markLine: 'Đánh dấu nổi bật dòng lúc {time}',
+      unmarkLine: 'Bỏ dấu nổi bật của bạn ở dòng lúc {time}',
+      markHint: 'Đánh dấu dòng này. Giữ Shift rồi bấm để đánh dấu từ dòng bạn bấm trước đó đến dòng này.',
+      jump: 'Đến {time} trong bản ghi và trình phát',
+      markedBy: 'Đánh dấu bởi {who}',
+      you: 'bạn',
+      aMember: 'một thành viên',
+      noLines: 'Các dòng này không còn trong bản ghi lời nói.',
+      moreLines: 'và {count, number} dòng nữa',
+      copy: 'Chép các dòng',
+      copied: 'Đã chép',
+      remove: 'Bỏ đánh dấu',
+      errors: {
+        HIGHLIGHT_LIMIT: 'Mỗi cuộc họp bạn chỉ đánh dấu được tối đa 50 đoạn. Hãy bỏ bớt một đoạn trước.',
+        HIGHLIGHT_NOT_ANCHORED: 'Bạn chỉ đánh dấu được những dòng của bản ghi mà bạn đọc được.',
+      },
+    },
     chapters: {
       title: 'Mục lục',
       readerNote: 'Các phần của cuộc họp, mỗi phần có giờ trong bản ghi lời nói. Bấm vào một phần để đến dòng đó.',
@@ -5481,6 +5505,20 @@ export const vi = {
       draft: 'Bản nháp',
       accepted: 'Đã tạo việc',
       flagContact: 'Có thông tin liên lạc',
+      flagAskedAloud: 'Nói với Vy',
+      // Lệnh đã nói với Vy trong cuộc họp (#4807): tìm bằng code, không dùng AI.
+      voiceCues: {
+        title: 'Lệnh đã nói với Vy',
+        desc: 'Khi có người nói "Vy ơi, ghi lại ..." hoặc "Vy, note ...", Ludy tìm những câu đó trong bản ghi lời bằng code (không dùng AI) và ghi thành việc nháp, có nhãn "Nói với Vy" và giờ đã nói. Việc nháp chưa được chia sẻ hay giao cho ai: bạn xem lại từng việc như mọi việc Vy gợi ý.',
+        find: 'Tìm lệnh đã nói với Vy',
+        none: 'Bản ghi lời không có câu nào gọi Vy ghi lại hay nhắc việc.',
+        nothingNew: 'Không có việc nháp mới.',
+        created: 'Đã thêm {count, number} việc nháp từ lệnh đã nói.',
+        left: 'Bỏ qua: {list}.',
+        duplicate: '{count, number} lệnh đã có việc',
+        empty: '{count, number} lệnh không có nội dung để ghi',
+        full: '{count, number} lệnh vì cuộc họp đã đủ số việc',
+      },
       fromVy: 'Vy đã viết',
       unknownMember: 'Thành viên đã rời',
       severalSeats: 'Người này giữ nhiều vị trí. Hãy chọn vị trí sẽ làm việc này.',
@@ -19397,6 +19435,9 @@ export const vi = {
         start: 'Nhờ Vy kiểm tra cuộc họp đã bàn đủ các mục định bàn chưa',
         status: 'Xem Vy có thể kiểm tra các mục định bàn của một cuộc họp hay không',
       },
+      voice_cue: {
+        draft: 'Tìm những lệnh đã nói với Vy trong bản ghi lời và ghi thành việc nháp',
+      },
       digest: {
         facts: 'Xem những gì đã chốt và việc còn dở trong các cuộc họp bạn được đọc, trong một tuần hoặc lâu hơn',
         start: 'Nhờ Vy viết vài câu về những việc đã chốt và việc còn dở của tuần',
@@ -19404,6 +19445,11 @@ export const vi = {
       },
       load: {
         week: 'Xem mỗi người họp bao nhiêu trong một tuần và những cuộc họp lặp lại có thể bớt, từ các cuộc họp bạn được đọc',
+      },
+      highlight: {
+        add: 'Đánh dấu nổi bật một dòng hoặc một đoạn của bản ghi cuộc họp',
+        list: 'Xem các đoạn nổi bật của một cuộc họp',
+        remove: 'Bỏ một đoạn nổi bật của cuộc họp',
       },
       assignee: {
         facts: 'Xem tên được nhắc cho một việc cần làm và những người có thể nhận việc',

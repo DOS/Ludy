@@ -26,6 +26,7 @@ const CLASSES: Record<string, { app: string; gate: Gate; why: string }> = {
   '/version': { app: 'kernel', gate: 'kernel', why: 'build id' },
   '/api/config': { app: 'kernel', gate: 'kernel', why: 'SPA config' },
   '/status': { app: 'kernel', gate: 'kernel', why: 'status page' },
+  '/auth-templates/:name': { app: 'kernel', gate: 'kernel', why: 'GoTrue auth email templates' },
   '/auth/v1/*': { app: 'kernel', gate: 'kernel', why: 'sign-in proxy' },
   '/webhooks/mail/:provider': { app: 'kernel', gate: 'kernel', why: 'mail delivery events' },
   '/api/inbound/email': { app: 'kernel', gate: 'kernel', why: 'inbound mail' },
@@ -97,8 +98,6 @@ const CLASSES: Record<string, { app: string; gate: Gate; why: string }> = {
   // #4723 (eSign Slice 6d): ludy_sign.public_deposit_qr_source and public_record_deposit_notice enforce org_app_on + entitlement -> opaque 404.
   '/api/sign/deposit-qr': { app: 'sign', gate: 'sql', why: 'crove_sign.public_deposit_qr_source checks org_app_on + entitlement -> 404 (#4723)' },
   '/api/sign/deposit-notice': { app: 'sign', gate: 'sql', why: 'crove_sign.public_record_deposit_notice checks org_app_on + entitlement -> 404 (#4723)' },
-  // #3577 (GoTrue Vietnamese email templates): Step 0 pre-registration; #3577 moves this route from 'pending' to app: 'kernel', gate: 'kernel'.
-  '/auth-templates/:name': { app: 'auth', gate: 'pending', why: '#3577 (Step 0 pre-registration for GoTrue auth email templates; moves to app kernel / gate kernel when #3577 lands)' },
 };
 
 // The paths of the two lists of route-coverage.test.ts: a key at the start of a line inside `const PUBLIC` or `const PENDING`. A line at the key indent that

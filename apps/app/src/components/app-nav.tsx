@@ -23,6 +23,7 @@ import {
   SETTINGS_ITEMS,
   TOP_ITEMS,
   currentMenuItem,
+  MORE_GROUP,
   isHeadedGroup,
   isSettingsPath,
   type AppId,
@@ -125,6 +126,28 @@ export function ShellNav({
       restoreToggleFocusRef.current = true;
     }
   };
+  // The item rows of one group; the "Thêm" group draws the same rows (#4790).
+  const itemRows = (items: readonly (NavItem | SettingsNavItem)[]) =>
+    items.map((item) => {
+      const badge = badges[item.label];
+      const isCurrent = item.to === currentTo;
+      return (
+        <li key={item.to}>
+          <Link
+            to={item.to}
+            params={{ slug }}
+            onClick={onNavigate}
+            className={`flex min-h-11 items-center gap-2.5 rounded-lg px-3 py-1.5 text-sm hover:bg-sidebar-accent hover:text-foreground md:min-h-0 md:py-0.5 ${isCurrent ? 'bg-primary/15 text-foreground' : 'text-muted-foreground'}`}
+            activeOptions={{ exact: true }}
+            {...(isCurrent ? { 'aria-current': 'page' as const } : {})}
+          >
+            <NavIcon name={menuIcon(item.label)} />
+            <span className="min-w-0 flex-1 truncate">{t(IN_MENU_LABEL[item.label as NavLabel] ?? item.label)}</span>
+            {badge ? <span className="rounded-full bg-primary px-1.5 text-xs text-primary-foreground tabular-nums">{badge}</span> : null}
+          </Link>
+        </li>
+      );
+    });
   const menuTitle = current ? t(`appNames.${current.id}`) : settingsSelected ? t('settings') : null;
   const menuGroups: ReadonlyArray<{ id: string; heading: HeadedGroupId | null; ariaLabel?: string; items: readonly (NavItem | SettingsNavItem)[] }> = current
     ? current.groups.map((group) => {
@@ -132,7 +155,7 @@ export function ShellNav({
         return {
           id: group.id,
           heading,
-          ...(heading ? {} : { ariaLabel: group.id === 'reports' ? t('reports') : t(`appNames.${current.id}`) }),
+          ...(heading && group.id !== MORE_GROUP ? {} : { ariaLabel: group.id === 'reports' ? t('reports') : t(`appNames.${current.id}`) }),
           items: group.items,
         };
       })
@@ -322,40 +345,30 @@ export function ShellNav({
               )}
               {menuGroups.map((group, index) => {
                 const labelId = `${groupIdBase}-${group.id}`;
+                const sectionClass = index === 0 ? '' : 'mt-3 md:mt-2';
+                // An app whose only group is "Thêm" has nothing else to fold it under: its items show, no toggle.
+                if (group.id === MORE_GROUP && menuGroups.length > 1) {
+                  // Keyed by app, so switching apps starts the next app's group folded.
+                  return (
+                    <MoreGroup key={`${current?.id}-${group.id}`} id={labelId} className={sectionClass} label={t('groups.more')} containsCurrent={group.items.some((item) => item.to === currentTo)} hasBadge={hasBadge(group.items as readonly NavItem[])}>
+                      {itemRows(group.items)}
+                    </MoreGroup>
+                  );
+                }
+                const heading = group.id === MORE_GROUP ? null : group.heading;
                 return (
                   <section
                     key={group.id}
-                    className={index === 0 ? '' : 'mt-3 md:mt-2'}
-                    {...(group.heading ? { 'aria-labelledby': labelId } : { 'aria-label': group.ariaLabel })}
+                    className={sectionClass}
+                    {...(heading ? { 'aria-labelledby': labelId } : { 'aria-label': group.ariaLabel })}
                   >
-                    {group.heading && (
+                    {heading && (
                       // A label, not a heading: the page's own heading stays the only one with a screen's name ("Khách hàng").
                       <p id={labelId} className="px-3 pb-1 text-xs font-medium text-subtle-foreground">
-                        {t(`groups.${group.heading}`)}
+                        {t(`groups.${heading}`)}
                       </p>
                     )}
-                    <ul className="flex flex-col gap-0.5">
-                      {group.items.map((item) => {
-                        const badge = badges[item.label];
-                        const isCurrent = item.to === currentTo;
-                        return (
-                          <li key={item.to}>
-                            <Link
-                              to={item.to}
-                              params={{ slug }}
-                              onClick={onNavigate}
-                              className={`flex min-h-11 items-center gap-2.5 rounded-lg px-3 py-1.5 text-sm hover:bg-sidebar-accent hover:text-foreground md:min-h-0 md:py-0.5 ${isCurrent ? 'bg-primary/15 text-foreground' : 'text-muted-foreground'}`}
-                              activeOptions={{ exact: true }}
-                              {...(isCurrent ? { 'aria-current': 'page' as const } : {})}
-                            >
-                              <NavIcon name={menuIcon(item.label)} />
-                              <span className="min-w-0 flex-1 truncate">{t(IN_MENU_LABEL[item.label as NavLabel] ?? item.label)}</span>
-                              {badge ? <span className="rounded-full bg-primary px-1.5 text-xs text-primary-foreground tabular-nums">{badge}</span> : null}
-                            </Link>
-                          </li>
-                        );
-                      })}
-                    </ul>
+                    <ul className="flex flex-col gap-0.5">{itemRows(group.items)}</ul>
                   </section>
                 );
               })}
@@ -365,6 +378,37 @@ export function ShellNav({
         )}
       </div>
     </nav>
+  );
+}
+
+// The "Thêm" group at the foot of an app menu (#4790): a disclosure button for the heading, collapsed until the current screen is one of its items. Collapsed, the list is `hidden`, so it is out of the
+// tab order and the reading order; the button says whether it is open (aria-expanded) and what it controls. Its target is 44px on a phone, as the rows are. The group is not on the rail.
+function MoreGroup({ id, className, label, containsCurrent, hasBadge, children }: { id: string; className: string; label: string; containsCurrent: boolean; hasBadge: boolean; children: ReactNode }) {
+  const [open, setOpen] = useState(containsCurrent);
+  // Reaching one of its screens by Ctrl K, a link or the address opens it. Closing it again by hand while on one of its screens stays closed until the next such arrival.
+  useEffect(() => {
+    if (containsCurrent) setOpen(true);
+  }, [containsCurrent]);
+  const listId = `${id}-list`;
+  return (
+    <section className={className} aria-labelledby={id}>
+      <button
+        type="button"
+        id={id}
+        aria-expanded={open}
+        aria-controls={listId}
+        onClick={() => setOpen((value) => !value)}
+        className="flex min-h-11 w-full items-center justify-between gap-2 rounded-lg px-3 py-1.5 text-left text-xs font-medium text-subtle-foreground hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none md:min-h-0 md:py-1"
+      >
+        <span>{label}</span>
+        {/* A count on a folded item would be out of sight: a dot on the closed button says something waits inside, as the rail's dot does. */}
+        {hasBadge && !open && <span className="ml-auto size-2 rounded-full bg-primary" aria-hidden="true" />}
+        <NavIcon name="expand" className={cn('shrink-0 transition-transform motion-reduce:transition-none', open && 'rotate-180')} />
+      </button>
+      <ul id={listId} hidden={!open} className="flex flex-col gap-0.5">
+        {children}
+      </ul>
+    </section>
   );
 }
 
