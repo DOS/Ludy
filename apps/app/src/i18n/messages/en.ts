@@ -2546,6 +2546,8 @@ export const en = {
     unitLabel: 'Unit (optional)',
     unitPlaceholder: 'orders, clients, %, VND...',
     linkedProjectLabel: 'Link Ludy Projects project (optional)',
+    searchProjectsPlaceholder: 'Search projects by name...',
+    loadMoreProjectsBtn: 'Load more projects',
     noLinkedProject: 'No project link',
     linkedTasksLabel: 'Pick specific tasks (leave empty to track whole project)',
     loadingTasks: 'Loading project tasks...',
@@ -4125,6 +4127,9 @@ export const en = {
       closeLightbox: 'Close image preview',
       loadingPreview: 'Loading preview...',
       previewFailed: 'Could not load inline preview. You can still download the file.',
+      extractPolling: 'Waiting for attachment text extraction...',
+      extractPollPaused: 'Text extraction is taking longer than usual. Auto-refresh is paused.',
+      extractPollRetry: 'Check again',
       status: {
         pending: 'Extracting text...',
         done: 'Searchable',
@@ -4143,6 +4148,7 @@ export const en = {
       invalidSizeLimit: 'The selected file exceeds the 50 MB limit.',
       invalidExtension: 'Please choose an Evernote .enex file.',
       invalidUtf8: 'The selected file is not valid UTF-8 text.',
+      noteTooLong: 'A note exceeds the 100,000-character limit after conversion.',
       previewHeading: 'Dry-run preview',
       summaryNotes: '{count, plural, one {# note} other {# notes}}',
       summaryAttachments: '{count, plural, one {# attachment} other {# attachments}}',
@@ -5359,6 +5365,7 @@ export const en = {
       back: 'Back to the meeting',
       pageTitle: 'Meeting minutes',
       print: 'Print or save as PDF',
+      docx: 'Download as Word (.docx)',
       printHint: 'Your browser prints this page. Choose "Save as PDF" if you want a file.',
       placeLabel: 'Meeting place',
       placeHint: 'For printing only; not saved. Leave it empty to print a dotted line to fill in by hand.',
@@ -16466,6 +16473,7 @@ export const en = {
       HR_OKR_PARENT_ARCHIVED: 'Cannot align under an archived parent objective',
       HR_OKR_PARENT_SCOPE: 'Invalid parent objective level for this objective scope',
       HR_OKR_ARCHIVED: 'Archived objectives cannot be modified',
+      HR_OKR_OWNER_ERASED: 'Cannot reopen or modify an individual objective after employee erasure',
       HR_OKR_SELF_PARENT: 'An objective cannot align under itself',
       HR_OKR_HAS_CHILDREN_QUARTER: 'Cannot change quarter while child objectives align under this objective',
       HR_OKR_PROJECT_REQUIRED: 'Select a Ludy Projects project before selecting tasks',
@@ -16689,6 +16697,7 @@ export const en = {
       MEETING_TITLE_TOO_LONG: 'A meeting title holds at most 200 characters.',
       DIGEST_OFF: 'Vy writing the weekly recap is not turned on on this system.',
       DIGEST_BUSY: 'Vy is busy writing recaps. Try again in a few minutes.',
+      MINUTES_NOT_PUBLISHED: 'The recorder has not shared the minutes yet, so there is no file to download.',
       TRANSLATION_NOT_FOUND: 'There is no summary you can read to translate.',
       TRANSLATION_NOTHING: 'There is nothing to translate yet.',
       TRANSLATION_LANGUAGE_OFF: 'This translation language is not turned on here.',
@@ -19404,6 +19413,9 @@ export const en = {
         get: 'Read the consent policy of meetings',
         set: 'Change the consent policy of meetings',
       },
+      minutes_docx: {
+        download: "Download a meeting's shared minutes as a Word file",
+      },
       minutes_esign: {
         get: 'Read whether meeting minutes can be sent for signing',
         set: 'Turn signing of meeting minutes on or off',
@@ -19660,6 +19672,7 @@ export const en = {
     },
     projects: {
       board: 'Read a project board and task list',
+      board_snapshots: 'Read batched project board column and task summaries',
       column: {
         create: 'Create a custom board column in a project',
         delete: 'Delete a custom board column in a project',

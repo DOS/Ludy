@@ -2543,6 +2543,8 @@ export const vi = {
     unitLabel: 'Đơn vị (tùy chọn)',
     unitPlaceholder: 'đơn, khách, %, triệu...',
     linkedProjectLabel: 'Liên kết dự án Công tác (tùy chọn)',
+    searchProjectsPlaceholder: 'Tìm nhanh dự án theo tên...',
+    loadMoreProjectsBtn: 'Tải thêm dự án',
     noLinkedProject: 'Không liên kết dự án',
     linkedTasksLabel: 'Chọn công việc cụ thể (bỏ trống để tính cả dự án)',
     loadingTasks: 'Đang tải công việc...',
@@ -4122,6 +4124,9 @@ export const vi = {
       closeLightbox: 'Đóng xem ảnh',
       loadingPreview: 'Đang tải xem trước...',
       previewFailed: 'Chưa tải được bản xem trước. Bạn vẫn có thể bấm Tải về.',
+      extractPolling: 'Đang chờ trích xuất chữ từ tệp đính kèm...',
+      extractPollPaused: 'Trích xuất chữ đang mất nhiều thời gian hơn bình thường. Đã tạm dừng tự động làm mới.',
+      extractPollRetry: 'Kiểm tra lại',
       status: {
         pending: 'Đang đọc chữ...',
         done: 'Đã lập chỉ mục tìm kiếm',
@@ -4140,6 +4145,7 @@ export const vi = {
       invalidSizeLimit: 'Tệp vừa chọn vượt quá giới hạn 50 MB.',
       invalidExtension: 'Hãy chọn đúng tệp Evernote có đuôi .enex.',
       invalidUtf8: 'Tệp không phải văn bản UTF-8 hợp lệ.',
+      noteTooLong: 'Nội dung ghi chú sau khi chuyển đổi vượt quá giới hạn 100.000 ký tự.',
       previewHeading: 'Xem trước trước khi nhập',
       summaryNotes: '{count, number} ghi chú',
       summaryAttachments: '{count, number} tệp đính kèm',
@@ -5356,6 +5362,7 @@ export const vi = {
       back: 'Về cuộc họp',
       pageTitle: 'Biên bản cuộc họp',
       print: 'In hoặc lưu PDF',
+      docx: 'Tải về Word (.docx)',
       printHint: 'Trình duyệt sẽ in trang này. Chọn "Lưu dưới dạng PDF" nếu bạn muốn có tệp.',
       placeLabel: 'Địa điểm họp',
       placeHint: 'Chỉ để in; không được lưu. Bỏ trống thì biên bản chừa dòng chấm để điền tay.',
@@ -16465,6 +16472,7 @@ export const vi = {
       HR_OKR_PARENT_ARCHIVED: 'Không thể liên kết vào mục tiêu cha đã lưu trữ',
       HR_OKR_PARENT_SCOPE: 'Cấp mục tiêu cha không hợp lệ cho mục tiêu đang tạo',
       HR_OKR_ARCHIVED: 'Mục tiêu đã lưu trữ không thể thay đổi',
+      HR_OKR_OWNER_ERASED: 'Không thể mở lại hoặc chỉnh sửa mục tiêu cá nhân của nhân viên đã xóa dữ liệu',
       HR_OKR_SELF_PARENT: 'Mục tiêu không thể tự liên kết lên chính nó',
       HR_OKR_HAS_CHILDREN_QUARTER: 'Không thể đổi quý khi mục tiêu đang có mục tiêu con liên kết',
       HR_OKR_PROJECT_REQUIRED: 'Cần chọn dự án Công tác trước khi gắn công việc',
@@ -16686,6 +16694,7 @@ export const vi = {
       MEETING_TITLE_TOO_LONG: 'Tên cuộc họp dài tối đa 200 ký tự.',
       DIGEST_OFF: 'Hệ thống này chưa bật việc nhờ Vy tóm tắt tuần.',
       DIGEST_BUSY: 'Vy đang bận viết các bản tóm tắt. Hãy thử lại sau vài phút.',
+      MINUTES_NOT_PUBLISHED: 'Người ghi chưa chia sẻ biên bản, nên chưa có tệp để tải về.',
       ASSIGNEE_OFF: 'Hệ thống này chưa bật việc nhờ Vy xem một việc cần làm của ai.',
       ASSIGNEE_BUSY: 'Vy đang bận đọc tên. Hãy thử lại sau vài phút.',
       TRANSLATION_NOT_FOUND: 'Không có bản tóm tắt nào bạn đọc được để dịch.',
@@ -19403,6 +19412,9 @@ export const vi = {
         get: 'Xem quy định xác nhận trước khi ghi',
         set: 'Đổi quy định xác nhận trước khi ghi',
       },
+      minutes_docx: {
+        download: 'Tải biên bản đã chia sẻ của một cuộc họp về dạng tệp Word',
+      },
       minutes_esign: {
         get: 'Xem biên bản họp có được gửi đi ký hay không',
         set: 'Bật hoặc tắt việc ký biên bản họp',
@@ -19659,6 +19671,7 @@ export const vi = {
     },
     projects: {
       board: 'Xem bảng và danh sách việc của dự án',
+      board_snapshots: 'Xem tóm tắt bảng và công việc của nhiều dự án',
       column: {
         create: 'Tạo cột tùy chỉnh trên bảng dự án',
         delete: 'Xóa cột tùy chỉnh trên bảng dự án',

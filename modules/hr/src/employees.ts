@@ -816,7 +816,7 @@ export const employeeErase = defineCommand({
     tableWrite(hrManifest.tables, 'ludy_hr', 'contract_addendum', ['change_summary', 'previous_title', 'new_title', 'void_reason', 'updated_at']),
     tableWrite(hrManifest.tables, 'ludy_hr', 'employee_asset_handover', ['serial_number', 'notes', 'updated_at']),
     tableWrite(hrManifest.tables, 'ludy_hr', 'okr_key_result', ['last_checkin_note', 'updated_at']),
-    tableWrite(hrManifest.tables, 'ludy_hr', 'okr_objective', ['owner_employee_id', 'status', 'updated_at']),
+    tableWrite(hrManifest.tables, 'ludy_hr', 'okr_objective', ['title', 'owner_employee_id', 'status', 'updated_at']),
     // The person's key, deleted by ludy_kernel.subject_key_shred.
     tableWrite(kernelManifest.tables, 'ludy_kernel', 'subject_key', ['ref']),
   ],
@@ -1036,6 +1036,7 @@ export const employeeErase = defineCommand({
     const erasedOkrObjectives = await ctx.trx
       .updateTable('ludy_hr.okr_objective')
       .set({
+        title: sql<string>`CASE WHEN scope = 'individual' THEN '[erased]' ELSE title END`,
         owner_employee_id: null,
         status: sql<'draft' | 'active' | 'completed' | 'archived'>`CASE WHEN scope = 'individual' AND status IN ('draft', 'active') THEN 'archived' ELSE status END`,
         updated_at: ctx.now,
@@ -1086,7 +1087,7 @@ export const employeeErase = defineCommand({
         'business trip details',
         'contract addendum summaries, titles and void reasons',
         'asset handover serial numbers and notes',
-        'okr ownership and check-in notes',
+        'okr individual objective titles, ownership and check-in notes',
       ],
       kept: [
         { what: 'the identity number, the account number, the tax code, the insurance number and the work permit number', reason: 'They stay in their row, but the key that opens them is deleted: nobody can read them again' },

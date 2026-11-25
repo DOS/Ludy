@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import {
   projectBoard,
+  projectBoardSnapshots,
   projectGet,
   projectList,
   projectMemberCompletedTasks,
@@ -223,6 +224,7 @@ export {
 export {
   projectArchive,
   projectBoard,
+  projectBoardSnapshots,
   projectCreate,
   projectGet,
   projectList,
@@ -274,6 +276,7 @@ export const projectsCommands = [
 
 export const projectsQueries = [
   projectList,
+  projectBoardSnapshots,
   projectMemberCompletedTasks,
   projectGet,
   projectBoard,

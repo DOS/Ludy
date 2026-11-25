@@ -101,6 +101,41 @@ function looksLikePlainUtf8(bytes: Uint8Array): string | null {
   return decoded;
 }
 
+const NOTE_ATTACHMENT_MARKUP_SNIFF_CHARS = 16_384;
+
+function skipLeadingMarkupWhitespace(text: string, start: number): number {
+  let i = start;
+  while (i < text.length) {
+    const code = text.charCodeAt(i);
+    if (code === 0x20 || code === 0x09 || code === 0x0a || code === 0x0d || code === 0x0c || code === 0xfeff) {
+      i += 1;
+    } else {
+      break;
+    }
+  }
+  return i;
+}
+
+function stripLeadingMarkupProlog(text: string): string {
+  let i = skipLeadingMarkupWhitespace(text, 0);
+  while (i < text.length) {
+    if (text.startsWith('<!--', i)) {
+      const close = text.indexOf('-->', i + 4);
+      if (close < 0) break;
+      i = skipLeadingMarkupWhitespace(text, close + 3);
+      continue;
+    }
+    if (text.startsWith('<?', i)) {
+      const close = text.indexOf('?>', i + 2);
+      if (close < 0) break;
+      i = skipLeadingMarkupWhitespace(text, close + 2);
+      continue;
+    }
+    break;
+  }
+  return text.slice(i);
+}
+
 function lowerExtension(filename: string): string {
   const trimmed = filename.trim();
   const dot = trimmed.lastIndexOf('.');
@@ -164,21 +199,31 @@ export function classifyNoteAttachment(
 
   const textHead = looksLikePlainUtf8(bytes);
   if (textHead !== null) {
-    const trimmedLower = textHead.trimStart().slice(0, 512).toLowerCase();
+    const trimmedLower = textHead.trimStart().slice(0, NOTE_ATTACHMENT_MARKUP_SNIFF_CHARS).toLowerCase();
+    const markupStart = stripLeadingMarkupProlog(trimmedLower);
     // Active markup (SVG, HTML, XHTML, XML) is never classified as inline-safe and never rendered inline.
-    if (trimmedLower.includes('<svg') || ext === 'svg' || declared === 'image/svg+xml') {
+    if (
+      trimmedLower.includes('<svg') ||
+      markupStart.startsWith('<!doctype svg') ||
+      ext === 'svg' ||
+      declared === 'image/svg+xml'
+    ) {
       return { contentType: 'image/svg+xml', extractStatus: 'skipped' };
     }
+    const isXhtmlHint = ext === 'xhtml' || declared === 'application/xhtml+xml';
     if (
-      trimmedLower.startsWith('<!doctype html') ||
-      trimmedLower.startsWith('<html') ||
-      ext === 'html' ||
-      ext === 'htm' ||
-      declared === 'text/html'
+      !isXhtmlHint &&
+      (markupStart.startsWith('<!doctype html') ||
+        markupStart.startsWith('<html') ||
+        /<!doctype\s+html(?=[\s>]|$)/.test(trimmedLower) ||
+        /<html(?=[\s>/]|$)/.test(trimmedLower) ||
+        ext === 'html' ||
+        ext === 'htm' ||
+        declared === 'text/html')
     ) {
       return { contentType: 'text/html', extractStatus: 'skipped' };
     }
-    if (ext === 'xhtml' || declared === 'application/xhtml+xml') {
+    if (isXhtmlHint) {
       return { contentType: 'application/xhtml+xml', extractStatus: 'skipped' };
     }
     if (trimmedLower.startsWith('<?xml') || trimmedLower.startsWith('<') || ext === 'xml' || declared === 'text/xml' || declared === 'application/xml') {

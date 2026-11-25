@@ -328,6 +328,7 @@ export const KERNEL_ERROR_CODES = [
   'HR_OKR_PARENT_ARCHIVED',
   'HR_OKR_PARENT_SCOPE',
   'HR_OKR_ARCHIVED',
+  'HR_OKR_OWNER_ERASED',
   'HR_OKR_SELF_PARENT',
   'HR_OKR_HAS_CHILDREN_QUARTER',
   'HR_OKR_PROJECT_REQUIRED',
@@ -591,6 +592,8 @@ export const KERNEL_ERROR_CODES = [
   // The weekly digest across meetings (#3949).
   'DIGEST_OFF',
   'DIGEST_BUSY',
+  // The published minutes as a Word file (#4774).
+  'MINUTES_NOT_PUBLISHED',
   // Vy naming who an action item belongs to (#3921).
   'ASSIGNEE_OFF',
   'ASSIGNEE_BUSY',

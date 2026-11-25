@@ -945,18 +945,59 @@ export function convertEnmlToSafeMarkdown(
     out.push('\n```');
   }
 
-  const normalized = out
-    .join('')
-    .replace(/\r\n?/g, '\n')
-    .replace(/[ \t]+\n/g, '\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
+  const normalized = normalizeConvertedMarkdown(out.join(''));
 
   if (normalized.length > NOTE_BODY_MAX) {
     return failImport('NOTE_TOO_LONG', 422, 'Converted note body exceeds 100,000 characters');
   }
 
   return { markdown: normalized, strippedRemoteImages };
+}
+
+function normalizeConvertedMarkdown(raw: string): string {
+  const parts: string[] = [];
+  let lineStart = 0;
+  let newlineRun = 0;
+  let started = false;
+  const len = raw.length;
+
+  for (let i = 0; i <= len; i += 1) {
+    const code = i < len ? raw.charCodeAt(i) : -1;
+    const isCr = code === 0x0d;
+    const isLf = code === 0x0a;
+    if (i < len && !isCr && !isLf) continue;
+
+    // Strip spaces/tabs right before line endings in O(n) without polynomial regexes.
+    let end = i;
+    while (end > lineStart) {
+      const prev = raw.charCodeAt(end - 1);
+      if (prev === 0x20 || prev === 0x09) end -= 1;
+      else break;
+    }
+
+    if (!started) {
+      const firstLine = raw.slice(lineStart, end).trimStart();
+      if (firstLine.length > 0) {
+        parts.push(firstLine);
+        started = true;
+        newlineRun = 0;
+      }
+    } else if (end > lineStart) {
+      if (newlineRun > 0) {
+        parts.push(newlineRun >= 2 ? '\n\n' : '\n');
+        newlineRun = 0;
+      }
+      parts.push(raw.slice(lineStart, end));
+    }
+
+    if (i < len) {
+      if (started) newlineRun += 1;
+      if (isCr && i + 1 < len && raw.charCodeAt(i + 1) === 0x0a) i += 1;
+      lineStart = i + 1;
+    }
+  }
+
+  return parts.join('').trim();
 }
 
 // ---------------------------------------------------------------------------
@@ -1903,6 +1944,14 @@ export function parseTodoistCsv(
 // Dry-run preview helpers & Zod command contracts
 // ---------------------------------------------------------------------------
 
+export type EnexExistingNoteRef =
+  | string
+  | {
+      title: string;
+      notebookId?: string | null;
+      notebookName?: string | null;
+    };
+
 export interface EnexDryRunPreview {
   notesCount: number;
   attachmentsCount: number;
@@ -1916,12 +1965,60 @@ export interface EnexDryRunPreview {
 
 export function buildEnexDryRunPreview(
   parsed: EnexParseSuccess,
-  existingPrivateNotebooks: ReadonlyArray<{ name: string }>,
-  existingNoteTitles: readonly string[],
-  options: { overrideNotebookName?: string | null; unfiled?: boolean } = {},
+  existingPrivateNotebooks: ReadonlyArray<{ id?: string | null; name: string }>,
+  existingNotes: readonly EnexExistingNoteRef[],
+  options: { targetNotebookId?: string | null; overrideNotebookName?: string | null; unfiled?: boolean } = {},
 ): EnexDryRunPreview {
-  const existingNbSet = new Set(existingPrivateNotebooks.map((b) => b.name.trim().toLowerCase()));
-  const seenNoteSet = new Set(existingNoteTitles.map((t) => t.trim().toLowerCase()));
+  const existingNbByName = new Map<string, { id: string | null; name: string }>();
+  for (const nb of existingPrivateNotebooks) {
+    const key = nb.name.trim().toLowerCase();
+    if (!existingNbByName.has(key)) {
+      existingNbByName.set(key, { id: nb.id ? nb.id.trim().toLowerCase() : null, name: nb.name });
+    }
+  }
+
+  const resolveExistingNotebookScope = (notebookId: string | null | undefined, notebookName: string | null | undefined): string | null => {
+    if (notebookId !== undefined) {
+      if (notebookId === null) return 'unfiled';
+      const trimmedId = notebookId.trim().toLowerCase();
+      return trimmedId ? `id:${trimmedId}` : 'unfiled';
+    }
+    if (notebookName !== undefined) {
+      if (notebookName === null) return 'unfiled';
+      const nbKey = notebookName.trim().toLowerCase();
+      if (!nbKey) return 'unfiled';
+      const matched = existingNbByName.get(nbKey);
+      return matched?.id ? `id:${matched.id}` : `name:${nbKey}`;
+    }
+    return null;
+  };
+
+  const legacyGlobalTitles = new Set<string>();
+  const seenScopedNoteKeys = new Set<string>();
+  for (const entry of existingNotes) {
+    if (typeof entry === 'string') {
+      const titleKey = entry.trim().toLowerCase();
+      if (titleKey) legacyGlobalTitles.add(titleKey);
+      continue;
+    }
+    const titleKey = entry.title.trim().toLowerCase();
+    if (!titleKey) continue;
+    const scope = resolveExistingNotebookScope(entry.notebookId, entry.notebookName);
+    if (scope === null) legacyGlobalTitles.add(titleKey);
+    else seenScopedNoteKeys.add(`${scope}:${titleKey}`);
+  }
+
+  const explicitTargetId = options.targetNotebookId ? options.targetNotebookId.trim().toLowerCase() : null;
+  const overrideNbKey = options.overrideNotebookName ? options.overrideNotebookName.trim().toLowerCase() : null;
+  const overrideScope = explicitTargetId
+    ? `id:${explicitTargetId}`
+    : overrideNbKey
+      ? (() => {
+          const matched = existingNbByName.get(overrideNbKey);
+          return matched?.id ? `id:${matched.id}` : `name:${overrideNbKey}`;
+        })()
+      : null;
+
   const notebooksNewSet = new Set<string>();
   const notebooksExistingSet = new Set<string>();
   const uniqueTags = new Set<string>();
@@ -1932,15 +2029,32 @@ export function buildEnexDryRunPreview(
   for (const note of parsed.notes) {
     attachmentsCount += note.resources.length;
     for (const tag of note.tags) uniqueTags.add(tag);
-    const key = note.title.trim().toLowerCase();
-    if (seenNoteSet.has(key)) duplicateTitles += 1;
-    seenNoteSet.add(key);
 
-    if (!options.unfiled && !options.overrideNotebookName && note.notebookName) {
+    let noteScope: string;
+    if (options.unfiled) {
+      noteScope = 'unfiled';
+    } else if (overrideScope !== null) {
+      noteScope = overrideScope;
+    } else if (note.notebookName) {
       const nbKey = note.notebookName.trim().toLowerCase();
-      if (existingNbSet.has(nbKey)) notebooksExistingSet.add(note.notebookName);
-      else notebooksNewSet.add(note.notebookName);
+      const matched = existingNbByName.get(nbKey);
+      if (matched) {
+        notebooksExistingSet.add(note.notebookName);
+        noteScope = matched.id ? `id:${matched.id}` : `name:${nbKey}`;
+      } else {
+        notebooksNewSet.add(note.notebookName);
+        noteScope = `new:${nbKey}`;
+      }
+    } else {
+      noteScope = 'unfiled';
     }
+
+    const titleKey = note.title.trim().toLowerCase();
+    const scopedKey = `${noteScope}:${titleKey}`;
+    if (legacyGlobalTitles.has(titleKey) || seenScopedNoteKeys.has(scopedKey)) {
+      duplicateTitles += 1;
+    }
+    seenScopedNoteKeys.add(scopedKey);
   }
 
   return {
@@ -1954,6 +2068,14 @@ export function buildEnexDryRunPreview(
     warningsCount: parsed.warnings.length,
   };
 }
+
+export type TodoistExistingTodoRef =
+  | string
+  | {
+      title: string;
+      listId?: string | null;
+      listName?: string | null;
+    };
 
 export interface TodoistDryRunPreview {
   tasksCount: number;
@@ -1971,11 +2093,49 @@ export interface TodoistDryRunPreview {
 export function buildTodoistDryRunPreview(
   parsed: TodoistParseSuccess,
   existingLists: ReadonlyArray<{ id: string; name: string }>,
-  existingTodoTitles: readonly string[],
+  existingTodos: readonly TodoistExistingTodoRef[],
   options: { targetListId?: string | null; useInbox?: boolean } = {},
 ): TodoistDryRunPreview {
-  const existingListMap = new Map(existingLists.map((l) => [l.name.trim().toLowerCase(), l.name]));
-  const seenTitles = new Set(existingTodoTitles.map((t) => t.trim().toLowerCase()));
+  const existingListMap = new Map<string, { id: string; name: string }>();
+  for (const list of existingLists) {
+    const key = list.name.trim().toLowerCase();
+    if (!existingListMap.has(key)) {
+      existingListMap.set(key, { id: list.id.trim().toLowerCase(), name: list.name });
+    }
+  }
+
+  const resolveExistingListScope = (listId: string | null | undefined, listName: string | null | undefined): string | null => {
+    if (listId !== undefined) {
+      if (listId === null) return 'inbox';
+      const trimmedId = listId.trim().toLowerCase();
+      return trimmedId ? `id:${trimmedId}` : 'inbox';
+    }
+    if (listName !== undefined) {
+      if (listName === null) return 'inbox';
+      const listKey = listName.trim().toLowerCase();
+      if (!listKey) return 'inbox';
+      const matched = existingListMap.get(listKey);
+      return matched ? `id:${matched.id}` : `name:${listKey}`;
+    }
+    return null;
+  };
+
+  const legacyGlobalTitles = new Set<string>();
+  const seenScopedTitles = new Set<string>();
+  for (const entry of existingTodos) {
+    if (typeof entry === 'string') {
+      const titleKey = entry.trim().toLowerCase();
+      if (titleKey) legacyGlobalTitles.add(titleKey);
+      continue;
+    }
+    const titleKey = entry.title.trim().toLowerCase();
+    if (!titleKey) continue;
+    const scope = resolveExistingListScope(entry.listId, entry.listName);
+    if (scope === null) legacyGlobalTitles.add(titleKey);
+    else seenScopedTitles.add(`${scope}:${titleKey}`);
+  }
+
+  const explicitTargetListId = options.targetListId ? options.targetListId.trim().toLowerCase() : null;
   const listsNewSet = new Set<string>();
   const listsExistingSet = new Set<string>();
   const uniqueTags = new Set<string>();
@@ -1983,12 +2143,25 @@ export function buildTodoistDryRunPreview(
   let duplicateTitles = 0;
 
   for (const list of parsed.lists) {
-    if ((list.fromExplicitList || (!options.useInbox && !options.targetListId)) && list.name) {
+    let listScope: string;
+    if (!list.fromExplicitList && options.useInbox) {
+      listScope = 'inbox';
+    } else if (!list.fromExplicitList && explicitTargetListId) {
+      listScope = `id:${explicitTargetListId}`;
+    } else if (list.name) {
       const key = list.name.trim().toLowerCase();
       const matched = existingListMap.get(key);
-      if (matched) listsExistingSet.add(matched);
-      else listsNewSet.add(list.name);
+      if (matched) {
+        listsExistingSet.add(matched.name);
+        listScope = `id:${matched.id}`;
+      } else {
+        listsNewSet.add(list.name);
+        listScope = `new:${key}`;
+      }
+    } else {
+      listScope = 'inbox';
     }
+
     for (const task of list.tasks) {
       if (task.priority === 1) priorityCounts.p1 += 1;
       else if (task.priority === 2) priorityCounts.p2 += 1;
@@ -1996,8 +2169,11 @@ export function buildTodoistDryRunPreview(
       else priorityCounts.p4 += 1;
       for (const tag of task.tags) uniqueTags.add(tag);
       const tKey = task.title.trim().toLowerCase();
-      if (seenTitles.has(tKey)) duplicateTitles += 1;
-      seenTitles.add(tKey);
+      const scopedKey = `${listScope}:${tKey}`;
+      if (legacyGlobalTitles.has(tKey) || seenScopedTitles.has(scopedKey)) {
+        duplicateTitles += 1;
+      }
+      seenScopedTitles.add(scopedKey);
     }
   }
 
