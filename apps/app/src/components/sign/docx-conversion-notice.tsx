@@ -65,25 +65,32 @@ export function DocxWarningsAlert({
   warnings,
   onDismiss,
   action,
+  title,
 }: {
   warnings: readonly SignDocxToPdfWarning[];
   onDismiss?: () => void;
   action?: ReactNode | undefined;
+  title?: string | undefined;
 }) {
   const t = useTranslations('sign');
   const common = useTranslations('common');
   if (warnings.length === 0) return null;
 
+  const dismissLabel = title ? `${common('close')}: ${title}` : common('close');
+
   return (
     <Alert data-testid="sign-docx-warning-banner">
       <AlertDescription className="space-y-1.5">
         <div className="flex items-start justify-between gap-2">
-          <p className="font-medium text-foreground">{t('docxWarningBanner')}</p>
+          <div className="min-w-0 space-y-0.5">
+            {title ? <p className="text-sm font-semibold text-foreground">{title}</p> : null}
+            <p className="font-medium text-foreground">{t('docxWarningBanner')}</p>
+          </div>
           {onDismiss ? (
             <button
               type="button"
               onClick={onDismiss}
-              aria-label={common('close')}
+              aria-label={dismissLabel}
               className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-md text-base text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <span aria-hidden="true">×</span>

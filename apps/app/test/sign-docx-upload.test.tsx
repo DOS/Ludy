@@ -63,10 +63,19 @@ const {
   SIGN_DOCX_MIME,
   SIGN_UPLOAD_ACCEPT,
   SignSessionMismatchError,
+  SignSessionUnverifiedError,
   convertSignDocx,
+  fetchUserScopeForSession,
+  readVerifiedSession,
   uploadSignPdf,
 } = await import('../src/lib/sign-api.ts');
-const { accessToken } = await import('../src/lib/auth.ts');
+const {
+  clearPendingDocxListNotices,
+  listPendingDocxListNotices,
+  removePendingDocxListNotice,
+  upsertPendingDocxListNotice,
+} = await import('../src/lib/sign-docx-notices.ts');
+const { accessToken, auth } = await import('../src/lib/auth.ts');
 const { orpc, queryClient } = await import('../src/lib/api.ts');
 const { ensureSignedOutListener } = await import('../src/lib/ceremony-boot.ts');
 const {
@@ -82,14 +91,93 @@ const { SignEnvelopeDetailPage } = await import('../src/routes/sign-envelope-det
 const { CreateTemplateForm } = await import('../src/routes/sign-templates.tsx');
 const { ContractVaultBar } = await import('../src/components/sign/contract-vault-bar.tsx');
 
+const ORG_A_ID = '01900000-0000-7000-8000-0000000000a1';
+const ORG_B_ID = '01900000-0000-7000-8000-0000000000a2';
+const USER_A_ID = '01900000-0000-7000-8000-000000000088';
+const USER_B_ID = '01900000-0000-7000-8000-000000000099';
+const SECOND_ENV_ID = '01900000-0000-7000-8000-0000000000ed';
+const SCOPE_USER_A = { org: ORG_A_ID, userId: USER_A_ID };
+const SCOPE_USER_B = { org: ORG_A_ID, userId: USER_B_ID };
+const SCOPE_OTHER_ORG = { org: ORG_B_ID, userId: USER_A_ID };
+
 function makeTestFile(bytes: Uint8Array, name: string, type = ''): File {
   return new File([new Uint8Array(bytes)], name, { type });
+}
+
+function makeTestJwt(sessionId: string): string {
+  const payload = btoa(JSON.stringify({ session_id: sessionId }))
+    .replace(/=/g, '')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_');
+  return `hdr.${payload}.sig`;
+}
+
+function installMemorySessionStorage() {
+  const store = new Map<string, string>();
+  vi.stubGlobal('window', {
+    location: { pathname: '/o/acme/sign/envelopes', hash: '' },
+    sessionStorage: {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+    },
+  });
+  return store;
+}
+
+function makeEnvelopeDetailFixture(envelopeId = envDetailId, createdBy = USER_A_ID) {
+  return {
+    envelope: {
+      id: envelopeId,
+      title: 'Hợp đồng từ Word',
+      subject: null,
+      message: null,
+      status: 'draft',
+      routingMode: 'parallel',
+      sourceKind: 'standalone',
+      sourceId: null,
+      sourceFileId: '01900000-0000-7000-8000-0000000000f1',
+      sourceSha256: 'c'.repeat(64),
+      inspectStatus: 'pending',
+      inspectError: null,
+      pageCount: null,
+      pageDimensions: null,
+      detectedTags: [],
+      shareSummaryWithSigners: false,
+      sharedSummary: null,
+      allowDelegation: true,
+      sealedFileId: null,
+      sealedSha256: null,
+      sealStatus: null,
+      certificateFileId: null,
+      certificateSha256: null,
+      certificateCode: null,
+      expiresAt: null,
+      autoRemindBeforeExpiry: true,
+      sentAt: null,
+      completedAt: null,
+      declinedAt: null,
+      declineAcknowledgedAt: null,
+      voidedAt: null,
+      voidedBy: null,
+      voidReason: null,
+      expiredAt: null,
+      version: 1,
+      createdBy,
+      createdAt: '2026-11-25T00:00:00.000Z',
+      updatedAt: '2026-11-25T00:00:00.000Z',
+    },
+    signers: [],
+    fields: [],
+  };
 }
 
 describe('eSign .docx client upload and UI components (#4721)', () => {
   afterEach(() => {
     clearAllCreatedDocxWarnings();
     queryClient.clear();
+    vi.mocked(accessToken).mockImplementation(async () => 'test-token');
+    vi.mocked(auth).mockReset();
     vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
@@ -301,30 +389,13 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
     expect(seenPollSignal?.aborted).toBe(true);
   });
 
-  it('persists dismissible DocxWarningsAlert across envelope creation navigation and clears on dismiss or sign-out (#4729)', async () => {
-    const store = new Map<string, string>();
-    vi.stubGlobal('window', {
-      location: { pathname: '/o/acme/sign/envelopes', hash: '' },
-      sessionStorage: {
-        getItem: (k: string) => store.get(k) ?? null,
-        setItem: (k: string, v: string) => void store.set(k, v),
-        removeItem: (k: string) => void store.delete(k),
-      },
-    });
-
-    const orgId = '01900000-0000-7000-8000-0000000000a1';
-    const otherOrgId = '01900000-0000-7000-8000-0000000000a2';
-    const userAId = '01900000-0000-7000-8000-000000000088';
-    const userBId = '01900000-0000-7000-8000-000000000099';
-    const scopeUserA = { org: orgId, userId: userAId };
-    const scopeUserB = { org: orgId, userId: userBId };
-    const scopeOtherOrg = { org: otherOrgId, userId: userAId };
-
+  it('persists scoped DocxWarningsAlert across creation/detail navigation and clears on dismiss or sign-out (#4729)', async () => {
+    const store = installMemorySessionStorage();
     queryClient.setQueryData(orpc.me.get.queryKey(), {
-      userId: userAId,
+      userId: USER_A_ID,
       email: 'a@example.com',
       displayName: 'User A',
-      orgs: [{ orgId, slug: 'acme', name: 'Acme', role: 'owner' }],
+      orgs: [{ orgId: ORG_A_ID, slug: 'acme', name: 'Acme', role: 'owner' }],
     });
 
     const setCreateOpen = vi.fn();
@@ -334,10 +405,11 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
 
     await handleEnvelopeCreatedWithWarnings({
       envelopeId: envDetailId,
+      envelopeTitle: 'Hợp đồng từ Word',
       warnings: ['images_skipped', 'footnotes_skipped'],
       slug: 'acme',
-      orgId,
-      userId: userAId,
+      orgId: ORG_A_ID,
+      userId: USER_A_ID,
       setCreateOpen,
       setCreatedDocxNotice,
       invalidateEnvelopes,
@@ -348,66 +420,24 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
     expect(setCreatedDocxNotice).toHaveBeenCalledWith({
       envelopeId: envDetailId,
       slug: 'acme',
-      orgId,
-      userId: userAId,
+      orgId: ORG_A_ID,
+      userId: USER_A_ID,
       sessionId: null,
+      envelopeTitle: 'Hợp đồng từ Word',
       warnings: ['images_skipped', 'footnotes_skipped'],
     });
     expect(invalidateEnvelopes).toHaveBeenCalledTimes(1);
     expect(navigateToEnvelope).toHaveBeenCalledWith('acme', envDetailId);
-    expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual(['images_skipped', 'footnotes_skipped']);
+    expect(readCreatedDocxWarnings(envDetailId, SCOPE_USER_A)).toEqual(['images_skipped', 'footnotes_skipped']);
     // Reading does not auto-consume so the banner persists across detail reloads until dismissed.
-    expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual(['images_skipped', 'footnotes_skipped']);
+    expect(readCreatedDocxWarnings(envDetailId, SCOPE_USER_A)).toEqual(['images_skipped', 'footnotes_skipped']);
     // Warnings are strictly isolated per user and org; another user or org cannot see or dismiss User A's banner.
-    expect(readCreatedDocxWarnings(envDetailId, scopeUserB)).toEqual([]);
-    expect(readCreatedDocxWarnings(envDetailId, scopeOtherOrg)).toEqual([]);
-    clearCreatedDocxWarnings(envDetailId, scopeUserB);
-    expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual(['images_skipped', 'footnotes_skipped']);
+    expect(readCreatedDocxWarnings(envDetailId, SCOPE_USER_B)).toEqual([]);
+    expect(readCreatedDocxWarnings(envDetailId, SCOPE_OTHER_ORG)).toEqual([]);
+    clearCreatedDocxWarnings(envDetailId, SCOPE_USER_B);
+    expect(readCreatedDocxWarnings(envDetailId, SCOPE_USER_A)).toEqual(['images_skipped', 'footnotes_skipped']);
 
-    const envelopeFixture = {
-      envelope: {
-        id: envDetailId,
-        title: 'Hợp đồng từ Word',
-        subject: null,
-        message: null,
-        status: 'draft',
-        routingMode: 'parallel',
-        sourceKind: 'standalone',
-        sourceId: null,
-        sourceFileId: '01900000-0000-7000-8000-0000000000f1',
-        sourceSha256: 'c'.repeat(64),
-        inspectStatus: 'pending',
-        inspectError: null,
-        pageCount: null,
-        pageDimensions: null,
-        detectedTags: [],
-        shareSummaryWithSigners: false,
-        sharedSummary: null,
-        allowDelegation: true,
-        sealedFileId: null,
-        sealedSha256: null,
-        sealStatus: null,
-        certificateFileId: null,
-        certificateSha256: null,
-        certificateCode: null,
-        expiresAt: null,
-        autoRemindBeforeExpiry: true,
-        sentAt: null,
-        completedAt: null,
-        declinedAt: null,
-        declineAcknowledgedAt: null,
-        voidedAt: null,
-        voidedBy: null,
-        voidReason: null,
-        expiredAt: null,
-        version: 1,
-        createdBy: userAId,
-        createdAt: '2026-11-25T00:00:00.000Z',
-        updatedAt: '2026-11-25T00:00:00.000Z',
-      },
-      signers: [],
-      fields: [],
-    };
+    const envelopeFixture = makeEnvelopeDetailFixture();
     queryClient.setQueryData(['sign', 'envelope', envDetailId], envelopeFixture);
 
     const detailHtml = renderToStaticMarkup(
@@ -422,12 +452,25 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
     expect(detailHtml).toContain('min-h-11 min-w-11');
     expect(detailHtml).toContain('footnote/endnote');
 
+    // Titled DocxWarningsAlert exposes distinct envelope title + accessible dismiss label.
+    const titledBannerHtml = renderToStaticMarkup(
+      <IntlProvider locale="vi" timeZone="Asia/Ho_Chi_Minh" messages={catalog('vi')}>
+        <DocxWarningsAlert
+          title="Hợp đồng từ Word"
+          warnings={['images_skipped']}
+          onDismiss={() => {}}
+        />
+      </IntlProvider>,
+    );
+    expect(titledBannerHtml).toContain('Hợp đồng từ Word');
+    expect(titledBannerHtml).toContain('aria-label="Đóng: Hợp đồng từ Word"');
+
     // Another signed-in user in the same org must not render User A's warning banner on SignEnvelopeDetailPage.
     queryClient.setQueryData(orpc.me.get.queryKey(), {
-      userId: userBId,
+      userId: USER_B_ID,
       email: 'b@example.com',
       displayName: 'User B',
-      orgs: [{ orgId, slug: 'acme', name: 'Acme', role: 'owner' }],
+      orgs: [{ orgId: ORG_A_ID, slug: 'acme', name: 'Acme', role: 'owner' }],
     });
     const otherUserDetailHtml = renderToStaticMarkup(
       <QueryClientProvider client={queryClient}>
@@ -438,13 +481,7 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
     );
     expect(otherUserDetailHtml).not.toContain('data-testid="sign-docx-warning-banner"');
 
-    // Restore User A, then verify SIGNED_OUT clears persisted sessionStorage notices across the tab.
-    queryClient.setQueryData(orpc.me.get.queryKey(), {
-      userId: userAId,
-      email: 'a@example.com',
-      displayName: 'User A',
-      orgs: [{ orgId, slug: 'acme', name: 'Acme', role: 'owner' }],
-    });
+    // SIGNED_OUT clears persisted sessionStorage notices across the tab.
     let authStateCb: ((event: string) => void) | null = null;
     ensureSignedOutListener({
       isIsolated: () => false,
@@ -455,22 +492,20 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
     });
     expect(authStateCb).not.toBeNull();
     authStateCb!('SIGNED_OUT');
-    expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual([]);
+    expect(readCreatedDocxWarnings(envDetailId, SCOPE_USER_A)).toEqual([]);
     expect(store.has('ludy.sign.created_docx_warnings')).toBe(false);
 
-    // Re-seed User A auth + envelope cache after SIGNED_OUT queryClient.clear(), then test dismiss & quota preservation.
+    // Re-seed User A auth + envelope cache after SIGNED_OUT queryClient.clear(), then test explicit dismiss & clean PDF clear.
     queryClient.setQueryData(orpc.me.get.queryKey(), {
-      userId: userAId,
+      userId: USER_A_ID,
       email: 'a@example.com',
       displayName: 'User A',
-      orgs: [{ orgId, slug: 'acme', name: 'Acme', role: 'owner' }],
+      orgs: [{ orgId: ORG_A_ID, slug: 'acme', name: 'Acme', role: 'owner' }],
     });
     queryClient.setQueryData(['sign', 'envelope', envDetailId], envelopeFixture);
-
-    // Re-seed and dismiss explicitly as User A.
-    saveCreatedDocxWarnings(envDetailId, ['images_skipped', 'footnotes_skipped'], scopeUserA);
-    clearCreatedDocxWarnings(envDetailId, scopeUserA);
-    expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual([]);
+    saveCreatedDocxWarnings(envDetailId, ['images_skipped', 'footnotes_skipped'], SCOPE_USER_A);
+    clearCreatedDocxWarnings(envDetailId, SCOPE_USER_A);
+    expect(readCreatedDocxWarnings(envDetailId, SCOPE_USER_A)).toEqual([]);
     const afterDismissHtml = renderToStaticMarkup(
       <QueryClientProvider client={queryClient}>
         <IntlProvider locale="vi" timeZone="Asia/Ho_Chi_Minh" messages={catalog('vi')}>
@@ -480,23 +515,23 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
     );
     expect(afterDismissHtml).not.toContain('data-testid="sign-docx-warning-banner"');
 
-    // Creating a clean envelope with zero warnings clears any prior stored notice.
-    saveCreatedDocxWarnings(envDetailId, ['images_skipped'], scopeUserA);
+    saveCreatedDocxWarnings(envDetailId, ['images_skipped'], SCOPE_USER_A);
     await handleEnvelopeCreatedWithWarnings({
       envelopeId: envDetailId,
       warnings: [],
       slug: '',
-      orgId,
-      userId: userAId,
+      orgId: ORG_A_ID,
+      userId: USER_A_ID,
       setCreateOpen,
       setCreatedDocxNotice,
       invalidateEnvelopes,
       navigateToEnvelope,
     });
-    expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual([]);
+    expect(readCreatedDocxWarnings(envDetailId, SCOPE_USER_A)).toEqual([]);
     expect(setCreatedDocxNotice).toHaveBeenLastCalledWith(null);
+  });
 
-    // When sessionStorage.setItem throws QuotaExceededError on adding a second envelope, existing persisted notices stay intact in sessionStorage and fallback holds the new entry.
+  it('keeps storage intact across QuotaExceededError/SecurityError, corrupt JSON, and pending sign-out recovery (#4729)', () => {
     const existingEnvelopeId = '01900000-0000-7000-8000-0000000000e1';
     const quotaStore = new Map<string, string>();
     let rejectQuotaWrites = false;
@@ -505,24 +540,29 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
       sessionStorage: {
         getItem: (k: string) => quotaStore.get(k) ?? null,
         setItem: (k: string, v: string) => {
-          if (rejectQuotaWrites) {
-            throw new DOMException('Quota exceeded', 'QuotaExceededError');
-          }
+          if (rejectQuotaWrites) throw new DOMException('Quota exceeded', 'QuotaExceededError');
           quotaStore.set(k, v);
         },
         removeItem: (k: string) => void quotaStore.delete(k),
       },
     });
-    saveCreatedDocxWarnings(existingEnvelopeId, ['headers_footers_simplified'], scopeUserA);
+    queryClient.setQueryData(orpc.me.get.queryKey(), {
+      userId: USER_A_ID,
+      email: 'a@example.com',
+      displayName: 'User A',
+      orgs: [{ orgId: ORG_A_ID, slug: 'acme', name: 'Acme', role: 'owner' }],
+    });
+    queryClient.setQueryData(['sign', 'envelope', envDetailId], makeEnvelopeDetailFixture());
+
+    saveCreatedDocxWarnings(existingEnvelopeId, ['headers_footers_simplified'], SCOPE_USER_A);
     const persistedSnapshotBeforeQuota = quotaStore.get('ludy.sign.created_docx_warnings');
     expect(persistedSnapshotBeforeQuota).toBeDefined();
 
     rejectQuotaWrites = true;
-    saveCreatedDocxWarnings(envDetailId, ['images_skipped', 'complex_columns_simplified'], scopeUserA);
-    // Pre-existing record in sessionStorage was not erased by QuotaExceededError on adding a second notice.
+    saveCreatedDocxWarnings(envDetailId, ['images_skipped', 'complex_columns_simplified'], SCOPE_USER_A);
     expect(quotaStore.get('ludy.sign.created_docx_warnings')).toBe(persistedSnapshotBeforeQuota);
-    expect(readCreatedDocxWarnings(existingEnvelopeId, scopeUserA)).toEqual(['headers_footers_simplified']);
-    expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual(['images_skipped', 'complex_columns_simplified']);
+    expect(readCreatedDocxWarnings(existingEnvelopeId, SCOPE_USER_A)).toEqual(['headers_footers_simplified']);
+    expect(readCreatedDocxWarnings(envDetailId, SCOPE_USER_A)).toEqual(['images_skipped', 'complex_columns_simplified']);
     const quotaDetailHtml = renderToStaticMarkup(
       <QueryClientProvider client={queryClient}>
         <IntlProvider locale="vi" timeZone="Asia/Ho_Chi_Minh" messages={catalog('vi')}>
@@ -531,38 +571,94 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
       </QueryClientProvider>,
     );
     expect(quotaDetailHtml).toContain('data-testid="sign-docx-warning-banner"');
-    clearCreatedDocxWarnings(envDetailId, scopeUserA);
-    expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual([]);
-    expect(readCreatedDocxWarnings(existingEnvelopeId, scopeUserA)).toEqual(['headers_footers_simplified']);
+    clearCreatedDocxWarnings(envDetailId, SCOPE_USER_A);
+    expect(readCreatedDocxWarnings(envDetailId, SCOPE_USER_A)).toEqual([]);
+    expect(readCreatedDocxWarnings(existingEnvelopeId, SCOPE_USER_A)).toEqual(['headers_footers_simplified']);
     rejectQuotaWrites = false;
-    clearCreatedDocxWarnings(existingEnvelopeId, scopeUserA);
-    expect(readCreatedDocxWarnings(existingEnvelopeId, scopeUserA)).toEqual([]);
+    clearCreatedDocxWarnings(existingEnvelopeId, SCOPE_USER_A);
+    expect(readCreatedDocxWarnings(existingEnvelopeId, SCOPE_USER_A)).toEqual([]);
 
-    // When sessionStorage is unavailable (null/blocked), clearing clean PDFs never pollutes dismissed tracking or evicts real notices.
+    // Clearing clean PDFs when sessionStorage is absent never evicts fallback warnings.
     vi.stubGlobal('window', { location: { pathname: '/o/acme/sign/envelopes', hash: '' } });
-    saveCreatedDocxWarnings(envDetailId, ['images_skipped'], scopeUserA);
+    saveCreatedDocxWarnings(envDetailId, ['images_skipped'], SCOPE_USER_A);
     for (let i = 0; i < 30; i += 1) {
-      clearCreatedDocxWarnings(`01900000-0000-7000-8000-0000000001${String(i).padStart(2, '0')}`, scopeUserA);
+      clearCreatedDocxWarnings(`01900000-0000-7000-8000-0000000001${String(i).padStart(2, '0')}`, SCOPE_USER_A);
     }
-    expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual(['images_skipped']);
-    clearCreatedDocxWarnings(envDetailId, scopeUserA);
-    expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual([]);
+    expect(readCreatedDocxWarnings(envDetailId, SCOPE_USER_A)).toEqual(['images_skipped']);
+    clearCreatedDocxWarnings(envDetailId, SCOPE_USER_A);
+    expect(readCreatedDocxWarnings(envDetailId, SCOPE_USER_A)).toEqual([]);
 
-    // If a persisted notice was dismissed while sessionStorage became temporarily inaccessible, re-enabling storage keeps it suppressed.
-    const transientStore = new Map<string, string>();
-    const workingStorage = {
-      getItem: (k: string) => transientStore.get(k) ?? null,
-      setItem: (k: string, v: string) => void transientStore.set(k, v),
-      removeItem: (k: string) => void transientStore.delete(k),
+    // Sign-out wipes stale storage on recovery even if removeItem initially threw SecurityError.
+    const flakyStore = new Map<string, string>();
+    let allowSignOutRemove = true;
+    let blockStorageAccess = false;
+    let blockReadOnly = false;
+    const flakyStorage = {
+      getItem: (k: string) => {
+        if (blockStorageAccess || blockReadOnly) throw new DOMException('Denied', 'SecurityError');
+        return flakyStore.get(k) ?? null;
+      },
+      setItem: (k: string, v: string) => {
+        if (blockStorageAccess) throw new DOMException('Denied', 'SecurityError');
+        flakyStore.set(k, v);
+      },
+      removeItem: (k: string) => {
+        if (blockStorageAccess || !allowSignOutRemove) throw new DOMException('Blocked', 'SecurityError');
+        flakyStore.delete(k);
+      },
     };
-    vi.stubGlobal('window', { location: { pathname: '/o/acme/sign/envelopes', hash: '' }, sessionStorage: workingStorage });
-    saveCreatedDocxWarnings(envDetailId, ['images_skipped'], scopeUserA);
-    vi.stubGlobal('window', { location: { pathname: '/o/acme/sign/envelopes', hash: '' } });
-    clearCreatedDocxWarnings(envDetailId, scopeUserA);
-    vi.stubGlobal('window', { location: { pathname: '/o/acme/sign/envelopes', hash: '' }, sessionStorage: workingStorage });
-    expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual([]);
+    vi.stubGlobal('window', { location: { pathname: '/o/acme/sign/envelopes', hash: '' }, sessionStorage: flakyStorage });
+    saveCreatedDocxWarnings(envDetailId, ['images_skipped'], SCOPE_USER_A);
+    allowSignOutRemove = false;
+    clearAllCreatedDocxWarnings();
+    expect(readCreatedDocxWarnings(envDetailId, SCOPE_USER_A)).toEqual([]);
+    allowSignOutRemove = true;
+    expect(readCreatedDocxWarnings(envDetailId, SCOPE_USER_A)).toEqual([]);
+    expect(flakyStore.has('ludy.sign.created_docx_warnings')).toBe(false);
 
-    // If me.get was still pending when the envelope was created, verified sessionId lets resolveUserScope fetch user/org before persisting & navigating.
+    // Recovery after temporary storage block syncs both fallback dismissals and fallback saves directly onto sessionStorage.
+    saveCreatedDocxWarnings(envDetailId, ['images_skipped'], SCOPE_USER_A);
+    vi.stubGlobal('window', { location: { pathname: '/o/acme/sign/envelopes', hash: '' } });
+    clearCreatedDocxWarnings(envDetailId, SCOPE_USER_A);
+    saveCreatedDocxWarnings(SECOND_ENV_ID, ['footnotes_skipped'], SCOPE_USER_A);
+    vi.stubGlobal('window', { location: { pathname: '/o/acme/sign/envelopes', hash: '' }, sessionStorage: flakyStorage });
+    expect(readCreatedDocxWarnings(envDetailId, SCOPE_USER_A)).toEqual([]);
+    expect(readCreatedDocxWarnings(SECOND_ENV_ID, SCOPE_USER_A)).toEqual(['footnotes_skipped']);
+    const syncedRaw = flakyStore.get('ludy.sign.created_docx_warnings') ?? '';
+    expect(syncedRaw).not.toContain(envDetailId);
+    expect(syncedRaw).toContain(SECOND_ENV_ID);
+
+    // Dismissing while getItem and setItem both throw SecurityError preserves suppression across recovery.
+    clearAllCreatedDocxWarnings();
+    saveCreatedDocxWarnings(envDetailId, ['images_skipped'], SCOPE_USER_A);
+    blockStorageAccess = true;
+    clearCreatedDocxWarnings(envDetailId, SCOPE_USER_A);
+    blockStorageAccess = false;
+    expect(readCreatedDocxWarnings(envDetailId, SCOPE_USER_A)).toEqual([]);
+    expect(flakyStore.has('ludy.sign.created_docx_warnings')).toBe(false);
+
+    // saveCreatedDocxWarnings never overwrites existing sessionStorage notices on transient getItem failure, but repairs corrupt JSON.
+    saveCreatedDocxWarnings(envDetailId, ['images_skipped'], SCOPE_USER_A);
+    blockReadOnly = true;
+    saveCreatedDocxWarnings(SECOND_ENV_ID, ['footnotes_skipped'], SCOPE_USER_A);
+    blockReadOnly = false;
+    expect(readCreatedDocxWarnings(envDetailId, SCOPE_USER_A)).toEqual(['images_skipped']);
+    expect(readCreatedDocxWarnings(SECOND_ENV_ID, SCOPE_USER_A)).toEqual(['footnotes_skipped']);
+
+    flakyStore.set('ludy.sign.created_docx_warnings', '{corrupt-json');
+    expect(saveCreatedDocxWarnings(envDetailId, ['images_skipped'], SCOPE_USER_A)).toBe(true);
+    expect(flakyStore.get('ludy.sign.created_docx_warnings')).toContain(envDetailId);
+    expect(readCreatedDocxWarnings(envDetailId, SCOPE_USER_A)).toEqual(['images_skipped']);
+  });
+
+  it('isolates list notice visibility, scope attribution, and Open navigation by live userId and sessionId (#4729)', async () => {
+    installMemorySessionStorage();
+    const setCreateOpen = vi.fn();
+    const setCreatedDocxNotice = vi.fn();
+    const invalidateEnvelopes = vi.fn(async () => {});
+    const navCalls: string[] = [];
+
+    // Verified sessionId lets resolveUserScope fetch user/org before persisting and navigating.
     const resolveOrder: string[] = [];
     await handleEnvelopeCreatedWithWarnings({
       envelopeId: envDetailId,
@@ -574,19 +670,19 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
       resolveCurrentSessionId: async () => 'sess-a',
       resolveUserScope: async () => {
         resolveOrder.push('resolve');
-        return { orgId, userId: userAId };
+        return { orgId: ORG_A_ID, userId: USER_A_ID };
       },
       setCreateOpen,
       setCreatedDocxNotice,
       invalidateEnvelopes,
       navigateToEnvelope: async () => {
-        resolveOrder.push(`nav:${readCreatedDocxWarnings(envDetailId, scopeUserA).join(',')}`);
+        resolveOrder.push(`nav:${readCreatedDocxWarnings(envDetailId, SCOPE_USER_A).join(',')}`);
       },
     });
     expect(resolveOrder).toEqual(['resolve', 'nav:ole_objects_skipped']);
-    clearCreatedDocxWarnings(envDetailId, scopeUserA);
+    clearCreatedDocxWarnings(envDetailId, SCOPE_USER_A);
 
-    // Anonymous submit missing both userId and sessionId cannot attribute warnings to a post-login user returned by resolveUserScope.
+    // Anonymous submit missing both userId and sessionId cannot attribute warnings to a post-login resolveUserScope result.
     setCreatedDocxNotice.mockClear();
     const unverifiedNav = vi.fn(async () => {});
     await handleEnvelopeCreatedWithWarnings({
@@ -596,184 +692,16 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
       orgId: null,
       userId: null,
       sessionId: null,
-      resolveUserScope: async () => ({ orgId, userId: userBId, sessionId: 'sess-b' }),
+      resolveUserScope: async () => ({ orgId: ORG_A_ID, userId: USER_B_ID, sessionId: 'sess-b' }),
       setCreateOpen,
       setCreatedDocxNotice,
       invalidateEnvelopes,
       navigateToEnvelope: unverifiedNav,
     });
     expect(unverifiedNav).not.toHaveBeenCalled();
-    expect(readCreatedDocxWarnings(envDetailId, scopeUserB)).toEqual([]);
-    expect(setCreatedDocxNotice).toHaveBeenCalledWith({
-      envelopeId: envDetailId,
-      slug: 'acme',
-      orgId: null,
-      userId: null,
-      sessionId: null,
-      warnings: ['images_skipped'],
-    });
+    expect(readCreatedDocxWarnings(envDetailId, SCOPE_USER_B)).toEqual([]);
 
-    // When readCurrentSessionId transiently returns null after creation, still invalidate the list and keep the pending notice visible.
-    setCreatedDocxNotice.mockClear();
-    invalidateEnvelopes.mockClear();
-    await handleEnvelopeCreatedWithWarnings({
-      envelopeId: envDetailId,
-      warnings: ['images_skipped'],
-      slug: 'acme',
-      orgId,
-      userId: userAId,
-      sessionId: 'sess-a',
-      resolveCurrentSessionId: async () => null,
-      setCreateOpen,
-      setCreatedDocxNotice,
-      invalidateEnvelopes,
-      navigateToEnvelope: unverifiedNav,
-    });
-    expect(invalidateEnvelopes).toHaveBeenCalledTimes(1);
-    expect(unverifiedNav).not.toHaveBeenCalled();
-    expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual([]);
-    expect(setCreatedDocxNotice).toHaveBeenCalledWith({
-      envelopeId: envDetailId,
-      slug: 'acme',
-      orgId,
-      userId: userAId,
-      sessionId: 'sess-a',
-      warnings: ['images_skipped'],
-    });
-
-    // If me.get is unavailable AND resolveUserScope fails, keep the notice on the list page instead of auto-navigating away from warnings.
-    setCreatedDocxNotice.mockClear();
-    const unpersistedNav = vi.fn(async () => {});
-    await handleEnvelopeCreatedWithWarnings({
-      envelopeId: envDetailId,
-      warnings: ['images_skipped'],
-      slug: 'acme',
-      orgId: null,
-      userId: null,
-      resolveUserScope: async () => {
-        throw new Error('offline');
-      },
-      setCreateOpen,
-      setCreatedDocxNotice,
-      invalidateEnvelopes,
-      navigateToEnvelope: unpersistedNav,
-    });
-    expect(unpersistedNav).not.toHaveBeenCalled();
-    expect(setCreatedDocxNotice).toHaveBeenCalledWith({
-      envelopeId: envDetailId,
-      slug: 'acme',
-      orgId: null,
-      userId: null,
-      sessionId: null,
-      warnings: ['images_skipped'],
-    });
-
-    // Knowing userId without orgId (me.get missing new orgId) ALSO holds on list page instead of saving under slug and losing the banner on Detail.
-    setCreatedDocxNotice.mockClear();
-    await handleEnvelopeCreatedWithWarnings({
-      envelopeId: envDetailId,
-      warnings: ['images_skipped'],
-      slug: 'acme',
-      orgId: null,
-      userId: userAId,
-      setCreateOpen,
-      setCreatedDocxNotice,
-      invalidateEnvelopes,
-      navigateToEnvelope: unpersistedNav,
-    });
-    expect(unpersistedNav).not.toHaveBeenCalled();
-    expect(readCreatedDocxWarnings(envDetailId, { org: 'acme', userId: userAId })).toEqual([]);
-
-    // Clicking "Open envelope" while me.get is still down stays on list page; once me.get recovers, it persists before navigating.
-    const unpersistedNotice = {
-      envelopeId: envDetailId,
-      slug: 'acme',
-      orgId: null,
-      userId: userAId,
-      sessionId: 'sess-a',
-      warnings: ['images_skipped'] as const,
-    };
-    expect(
-      await openCreatedDocxNoticeEnvelope({
-        notice: unpersistedNotice,
-        currentUserId: userAId,
-        resolveUserScope: async () => {
-          throw new Error('still offline');
-        },
-        setCreatedDocxNotice,
-        navigateToEnvelope: unpersistedNav,
-      }),
-    ).toBe(false);
-    expect(unpersistedNav).not.toHaveBeenCalled();
-
-    // If account changed to User B after creation, Open refuses to persist or navigate under User B.
-    setCreatedDocxNotice.mockClear();
-    expect(
-      await openCreatedDocxNoticeEnvelope({
-        notice: unpersistedNotice,
-        currentUserId: userBId,
-        setCreatedDocxNotice,
-        navigateToEnvelope: unpersistedNav,
-      }),
-    ).toBe(false);
-    expect(setCreatedDocxNotice).toHaveBeenCalledWith(null);
-    expect(unpersistedNav).not.toHaveBeenCalled();
-
-    // Even when notice had userId: null (me.get failed on creation), sessionId mismatch blocks persisting for User B.
-    setCreatedDocxNotice.mockClear();
-    expect(
-      await openCreatedDocxNoticeEnvelope({
-        notice: { ...unpersistedNotice, userId: null },
-        currentUserId: userBId,
-        resolveCurrentSessionId: async () => 'sess-b',
-        setCreatedDocxNotice,
-        navigateToEnvelope: unpersistedNav,
-      }),
-    ).toBe(false);
-    expect(setCreatedDocxNotice).toHaveBeenCalledWith(null);
-    expect(unpersistedNav).not.toHaveBeenCalled();
-
-    const recoveredOrder: string[] = [];
-    expect(
-      await openCreatedDocxNoticeEnvelope({
-        notice: unpersistedNotice,
-        currentUserId: userAId,
-        resolveCurrentSessionId: async () => 'sess-a',
-        resolveUserScope: async () => {
-          recoveredOrder.push('resolve');
-          return { orgId, userId: userAId };
-        },
-        setCreatedDocxNotice,
-        navigateToEnvelope: async (navSlug, navId) => {
-          recoveredOrder.push(`nav:${navSlug}:${navId}:${readCreatedDocxWarnings(envDetailId, scopeUserA).join(',')}`);
-        },
-      }),
-    ).toBe(true);
-    expect(recoveredOrder).toEqual(['resolve', `nav:acme:${envDetailId}:images_skipped`]);
-    clearCreatedDocxWarnings(envDetailId, scopeUserA);
-
-    // If org context changed while resolveUserScope was in flight, stale notice/navigation is suppressed.
-    setCreatedDocxNotice.mockClear();
-    const staleNav = vi.fn(async () => {});
-    await handleEnvelopeCreatedWithWarnings({
-      envelopeId: envDetailId,
-      warnings: ['images_skipped'],
-      slug: 'acme',
-      orgId: null,
-      userId: null,
-      resolveUserScope: async () => ({ orgId, userId: userAId }),
-      isCurrentContext: () => false,
-      setCreateOpen,
-      setCreatedDocxNotice,
-      invalidateEnvelopes,
-      navigateToEnvelope: staleNav,
-    });
-    expect(setCreatedDocxNotice).not.toHaveBeenCalled();
-    expect(staleNav).not.toHaveBeenCalled();
-    clearCreatedDocxWarnings(envDetailId, scopeUserA);
-
-    // Leaving the list page after createEnvelope succeeded skips UI updates (setCreateOpen, banner, navigate)
-    // while still invalidating the list cache and persisting warnings for the verified creator session.
+    // Leaving list page after createEnvelope still invalidates and persists for the verified session, while suppressing stale UI updates.
     setCreateOpen.mockClear();
     setCreatedDocxNotice.mockClear();
     invalidateEnvelopes.mockClear();
@@ -781,119 +709,203 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
       envelopeId: envDetailId,
       warnings: ['images_skipped'],
       slug: 'acme',
-      orgId,
-      userId: userAId,
+      orgId: ORG_A_ID,
+      userId: USER_A_ID,
       sessionId: 'sess-a',
       resolveCurrentSessionId: async () => 'sess-a',
       isCurrentContext: () => false,
       setCreateOpen,
       setCreatedDocxNotice,
       invalidateEnvelopes,
-      navigateToEnvelope: staleNav,
+      navigateToEnvelope: unverifiedNav,
     });
     expect(setCreateOpen).not.toHaveBeenCalled();
     expect(setCreatedDocxNotice).not.toHaveBeenCalled();
-    expect(staleNav).not.toHaveBeenCalled();
+    expect(unverifiedNav).not.toHaveBeenCalled();
     expect(invalidateEnvelopes).toHaveBeenCalledTimes(1);
-    expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual(['images_skipped']);
-    clearCreatedDocxWarnings(envDetailId, scopeUserA);
+    expect(readCreatedDocxWarnings(envDetailId, SCOPE_USER_A)).toEqual(['images_skipped']);
+    clearCreatedDocxWarnings(envDetailId, SCOPE_USER_A);
 
-    // If session changed or signed out while createEnvelope was in flight, never persist warnings into sessionStorage.
+    // Session mismatch in flight while page was left never persists warnings into sessionStorage.
     invalidateEnvelopes.mockClear();
     await handleEnvelopeCreatedWithWarnings({
       envelopeId: envDetailId,
       warnings: ['images_skipped'],
       slug: 'acme',
-      orgId,
-      userId: userAId,
+      orgId: ORG_A_ID,
+      userId: USER_A_ID,
       sessionId: 'sess-a',
       resolveCurrentSessionId: async () => 'sess-b',
       isCurrentContext: () => false,
       setCreateOpen,
       setCreatedDocxNotice,
       invalidateEnvelopes,
-      navigateToEnvelope: staleNav,
+      navigateToEnvelope: unverifiedNav,
     });
-    expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual([]);
+    expect(readCreatedDocxWarnings(envDetailId, SCOPE_USER_A)).toEqual([]);
 
-    // Anonymous notice missing both creator userId and sessionId cannot be attributed to currentUserId on Open.
+    // Mismatched userId from resolveUserScope never adopts fetched orgId or persists warnings.
     setCreatedDocxNotice.mockClear();
+    await handleEnvelopeCreatedWithWarnings({
+      envelopeId: envDetailId,
+      warnings: ['images_skipped'],
+      slug: 'acme',
+      orgId: null,
+      userId: USER_A_ID,
+      resolveUserScope: async () => ({ orgId: '01900000-0000-7000-8000-0000000000b1', userId: USER_B_ID }),
+      setCreateOpen,
+      setCreatedDocxNotice,
+      invalidateEnvelopes,
+      navigateToEnvelope: unverifiedNav,
+    });
+    expect(setCreatedDocxNotice).toHaveBeenLastCalledWith(null);
+    expect(readCreatedDocxWarnings(envDetailId, SCOPE_USER_A)).toEqual([]);
+    expect(readCreatedDocxWarnings(envDetailId, { org: '01900000-0000-7000-8000-0000000000b1', userId: USER_B_ID })).toEqual([]);
+
+    // Knowing userId without orgId holds on list page instead of writing under slug.
+    await handleEnvelopeCreatedWithWarnings({
+      envelopeId: envDetailId,
+      warnings: ['images_skipped'],
+      slug: 'acme',
+      orgId: null,
+      userId: USER_A_ID,
+      setCreateOpen,
+      setCreatedDocxNotice,
+      invalidateEnvelopes,
+      navigateToEnvelope: unverifiedNav,
+    });
+    expect(unverifiedNav).not.toHaveBeenCalled();
+    expect(readCreatedDocxWarnings(envDetailId, { org: 'acme', userId: USER_A_ID })).toEqual([]);
+
+    // Open verifies account/session before persisting, aborts cleanly on mid-flight dismissal, and rejects session mismatch.
+    const unpersistedNotice = {
+      envelopeId: envDetailId,
+      slug: 'acme',
+      orgId: null,
+      userId: USER_A_ID,
+      sessionId: 'sess-a',
+      warnings: ['images_skipped'] as const,
+    };
     expect(
       await openCreatedDocxNoticeEnvelope({
-        notice: { ...unpersistedNotice, orgId, userId: null, sessionId: null },
-        currentUserId: userBId,
+        notice: unpersistedNotice,
+        currentUserId: USER_B_ID,
         setCreatedDocxNotice,
-        navigateToEnvelope: staleNav,
+        navigateToEnvelope: unverifiedNav,
       }),
     ).toBe(false);
-    expect(setCreatedDocxNotice).toHaveBeenCalledWith(null);
-    expect(readCreatedDocxWarnings(envDetailId, { org: orgId, userId: userBId })).toEqual([]);
-    expect(staleNav).not.toHaveBeenCalled();
+    expect(
+      await openCreatedDocxNoticeEnvelope({
+        notice: { ...unpersistedNotice, userId: null },
+        currentUserId: USER_B_ID,
+        resolveCurrentSessionId: async () => 'sess-b',
+        setCreatedDocxNotice,
+        navigateToEnvelope: unverifiedNav,
+      }),
+    ).toBe(false);
+    expect(
+      await openCreatedDocxNoticeEnvelope({
+        notice: { ...unpersistedNotice, userId: null, sessionId: null },
+        currentUserId: USER_B_ID,
+        setCreatedDocxNotice,
+        navigateToEnvelope: unverifiedNav,
+      }),
+    ).toBe(false);
 
-    // Dismissing while openCreatedDocxNoticeEnvelope is awaiting resolveUserScope cancels BEFORE saveCreatedDocxWarnings runs.
     let dismissedMidFlight = false;
     expect(
       await openCreatedDocxNoticeEnvelope({
         notice: unpersistedNotice,
-        currentUserId: userAId,
+        currentUserId: USER_A_ID,
         resolveCurrentSessionId: async () => 'sess-a',
         resolveUserScope: async () => {
           dismissedMidFlight = true;
-          return { orgId, userId: userAId };
+          return { orgId: ORG_A_ID, userId: USER_A_ID };
         },
         isCurrentContext: () => !dismissedMidFlight,
         setCreatedDocxNotice,
-        navigateToEnvelope: staleNav,
+        navigateToEnvelope: unverifiedNav,
       }),
     ).toBe(false);
-    expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual([]);
-    expect(staleNav).not.toHaveBeenCalled();
-
-    // Dismissing during the final resolveCurrentSessionId verification also aborts before saving or navigating.
-    setCreatedDocxNotice.mockClear();
     let sessionCallCount = 0;
-    let dismissedOnFinalSessionCheck = false;
+    let dismissedOnFinal = false;
     expect(
       await openCreatedDocxNoticeEnvelope({
-        notice: { ...unpersistedNotice, orgId },
-        currentUserId: userAId,
+        notice: { ...unpersistedNotice, orgId: ORG_A_ID },
+        currentUserId: USER_A_ID,
         resolveCurrentSessionId: async () => {
-          sessionCallCount += 1;
-          if (sessionCallCount === 2) {
-            dismissedOnFinalSessionCheck = true;
-          }
+          if (++sessionCallCount === 2) dismissedOnFinal = true;
           return 'sess-a';
         },
-        isCurrentContext: () => !dismissedOnFinalSessionCheck,
+        isCurrentContext: () => !dismissedOnFinal,
         setCreatedDocxNotice,
-        navigateToEnvelope: staleNav,
+        navigateToEnvelope: unverifiedNav,
       }),
     ).toBe(false);
     expect(sessionCallCount).toBe(2);
-    expect(setCreatedDocxNotice).not.toHaveBeenCalled();
-    expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual([]);
-    expect(staleNav).not.toHaveBeenCalled();
+    expect(readCreatedDocxWarnings(envDetailId, SCOPE_USER_A)).toEqual([]);
 
-    // If sessionId cannot be resolved (null), keep notice pending for retry instead of attributing to cached currentUserId.
-    setCreatedDocxNotice.mockClear();
     expect(
       await openCreatedDocxNoticeEnvelope({
-        notice: { ...unpersistedNotice, orgId, userId: null },
-        currentUserId: userBId,
-        resolveCurrentSessionId: async () => null,
+        notice: unpersistedNotice,
+        currentUserId: USER_A_ID,
+        resolveCurrentSessionId: async () => 'sess-a',
+        resolveUserScope: async () => ({ orgId: ORG_A_ID, userId: USER_A_ID }),
         setCreatedDocxNotice,
-        navigateToEnvelope: staleNav,
+        navigateToEnvelope: async (navSlug, navId) => {
+          navCalls.push(`${navSlug}:${navId}:${readCreatedDocxWarnings(envDetailId, SCOPE_USER_A).join(',')}`);
+        },
       }),
-    ).toBe(false);
-    expect(setCreatedDocxNotice).not.toHaveBeenCalled();
-    expect(readCreatedDocxWarnings(envDetailId, { org: orgId, userId: userBId })).toEqual([]);
-    expect(staleNav).not.toHaveBeenCalled();
+    ).toBe(true);
+    expect(navCalls).toEqual([`acme:${envDetailId}:images_skipped`]);
 
-    // CreateEnvelopeDialog pins submitContext.slug to uploadPdf and createEnvelope, and aborts if org switches mid-flight.
+    const anonSessionNotice = {
+      envelopeId: envDetailId,
+      slug: 'acme',
+      orgId: null,
+      userId: null,
+      sessionId: 'sess-a',
+      warnings: ['images_skipped'] as const,
+    };
+    expect(isCreatedDocxListNoticeVisible(anonSessionNotice, 'acme', USER_B_ID, null)).toBe(false);
+    expect(isCreatedDocxListNoticeVisible(anonSessionNotice, 'acme', USER_B_ID, 'sess-b')).toBe(false);
+    expect(isCreatedDocxListNoticeVisible({ ...anonSessionNotice, sessionId: null }, 'acme', USER_B_ID, 'sess-a')).toBe(false);
+    expect(isCreatedDocxListNoticeVisible(anonSessionNotice, 'acme', USER_A_ID, 'sess-a')).toBe(true);
+
+    // fetchUserScopeForSession bypasses stale TanStack Query me.get cache and verifies token identity directly.
+    queryClient.setQueryData(orpc.me.get.queryKey(), {
+      userId: USER_A_ID,
+      email: 'a@example.com',
+      displayName: 'User A',
+      orgs: [{ orgId: ORG_A_ID, slug: 'acme', name: 'Acme', role: 'owner' }],
+    });
+    const jwtB = makeTestJwt('sess-b');
+    vi.mocked(accessToken).mockImplementation(async () => jwtB);
+    const seenRpcHeaders: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const hdrs = new Headers(input instanceof Request ? input.headers : init?.headers);
+        seenRpcHeaders.push(hdrs.get('authorization') ?? '');
+        return new Response(
+          JSON.stringify({
+            json: { userId: USER_B_ID, orgs: [{ orgId: ORG_A_ID, slug: 'acme', name: 'Acme', role: 'member' }] },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }),
+    );
+    const isolatedScope = await fetchUserScopeForSession('acme', 'sess-b');
+    expect(isolatedScope).toEqual({ orgId: ORG_A_ID, userId: USER_B_ID, sessionId: 'sess-b' });
+    expect(seenRpcHeaders[0]).toBe(`Bearer ${jwtB}`);
+  });
+
+  it('pins orgSlug and verifies session consistency across capture, upload, and envelope creation (#4729)', async () => {
+    const samplePdf = makeTestFile(new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d]), 'hop-dong.pdf', 'application/pdf');
     const uploadCalls: Array<{ name: string; orgSlug: string | null | undefined }> = [];
     const createCalls: Array<{ sourceFileId: string; orgSlug: string | null | undefined }> = [];
-    const samplePdf = makeTestFile(new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d]), 'hop-dong.pdf', 'application/pdf');
     let liveOrgSlug = 'org-a';
+
     const pinnedOutcome = await submitCreateEnvelopeFromDialog({
       title: 'Hop dong A',
       file: samplePdf,
@@ -901,8 +913,8 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
       orgSlug: 'org-a',
       resolveSubmitContext: async () => ({
         slug: 'org-a',
-        orgId,
-        userId: userAId,
+        orgId: ORG_A_ID,
+        userId: USER_A_ID,
         sessionId: 'sess-a',
         reqId: 1,
       }),
@@ -923,234 +935,118 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
     expect(uploadCalls).toEqual([{ name: 'hop-dong.pdf', orgSlug: 'org-a' }]);
     expect(createCalls).toEqual([{ sourceFileId: 'file-org-a', orgSlug: 'org-a' }]);
 
-    // Switching org while resolveSubmitContext awaits aborts before any upload or create request runs.
+    // Switching org mid-flight aborts before upload and before create.
     uploadCalls.length = 0;
     createCalls.length = 0;
     liveOrgSlug = 'org-a';
-    const abortedBeforeUpload = await submitCreateEnvelopeFromDialog({
-      title: 'Hop dong stale',
-      file: samplePdf,
-      converted: null,
-      orgSlug: 'org-a',
-      resolveSubmitContext: async () => {
-        liveOrgSlug = 'org-b';
-        return {
+    expect(
+      await submitCreateEnvelopeFromDialog({
+        title: 'Stale org',
+        file: samplePdf,
+        converted: null,
+        orgSlug: 'org-a',
+        resolveSubmitContext: async () => {
+          liveOrgSlug = 'org-b';
+          return { slug: 'org-a', orgId: ORG_A_ID, userId: USER_A_ID, sessionId: 'sess-a', reqId: 1 };
+        },
+        isMounted: () => true,
+        isSubmitContextCurrent: (ctx) => ctx.slug === liveOrgSlug,
+        getLiveOrgSlug: () => liveOrgSlug,
+        docxRequiredMessage: 'PDF required',
+        uploadPdf: async () => ({ fileId: 'unused' }),
+        createEnvelope: async () => ({ envelopeId: 'unused' }),
+      }),
+    ).toEqual({ cancelled: true });
+
+    liveOrgSlug = 'org-a';
+    expect(
+      await submitCreateEnvelopeFromDialog({
+        title: 'Switched during upload',
+        file: samplePdf,
+        converted: null,
+        orgSlug: 'org-a',
+        resolveSubmitContext: async () => ({
           slug: 'org-a',
-          orgId,
-          userId: userAId,
+          orgId: ORG_A_ID,
+          userId: USER_A_ID,
           sessionId: 'sess-a',
           reqId: 1,
-        };
-      },
-      isMounted: () => true,
-      isSubmitContextCurrent: (ctx) => ctx.slug === liveOrgSlug,
-      getLiveOrgSlug: () => liveOrgSlug,
-      docxRequiredMessage: 'PDF required',
-      uploadPdf: async (file, slugArg) => {
-        uploadCalls.push({ name: file.name, orgSlug: slugArg });
-        return { fileId: 'should-not-upload' };
-      },
-      createEnvelope: async (input, slugArg) => {
-        createCalls.push({ sourceFileId: input.sourceFileId, orgSlug: slugArg });
-        return { envelopeId: 'should-not-create' };
-      },
-    });
-    expect(abortedBeforeUpload).toEqual({ cancelled: true });
-    expect(uploadCalls).toEqual([]);
+        }),
+        isMounted: () => true,
+        isSubmitContextCurrent: (ctx) => ctx.slug === liveOrgSlug,
+        getLiveOrgSlug: () => liveOrgSlug,
+        docxRequiredMessage: 'PDF required',
+        uploadPdf: async (file, slugArg) => {
+          uploadCalls.push({ name: file.name, orgSlug: slugArg });
+          liveOrgSlug = 'org-b';
+          return { fileId: 'file-switched' };
+        },
+        createEnvelope: async (input, slugArg) => {
+          createCalls.push({ sourceFileId: input.sourceFileId, orgSlug: slugArg });
+          return { envelopeId: 'should-not-create' };
+        },
+      }),
+    ).toEqual({ cancelled: true });
     expect(createCalls).toEqual([]);
 
-    // Switching org while uploadPdf is in flight aborts before createEnvelope executes.
-    uploadCalls.length = 0;
-    createCalls.length = 0;
-    liveOrgSlug = 'org-a';
-    const abortedBeforeCreate = await submitCreateEnvelopeFromDialog({
-      title: 'Hop dong stale post-upload',
-      file: samplePdf,
-      converted: null,
-      orgSlug: 'org-a',
-      resolveSubmitContext: async () => ({
-        slug: 'org-a',
-        orgId,
-        userId: userAId,
-        sessionId: 'sess-a',
-        reqId: 1,
-      }),
-      isMounted: () => true,
-      isSubmitContextCurrent: (ctx) => ctx.slug === liveOrgSlug,
-      getLiveOrgSlug: () => liveOrgSlug,
-      docxRequiredMessage: 'PDF required',
-      uploadPdf: async (file, slugArg) => {
-        uploadCalls.push({ name: file.name, orgSlug: slugArg });
-        liveOrgSlug = 'org-b';
-        return { fileId: 'uploaded-a-then-switched' };
-      },
-      createEnvelope: async (input, slugArg) => {
-        createCalls.push({ sourceFileId: input.sourceFileId, orgSlug: slugArg });
-        return { envelopeId: 'should-not-create' };
-      },
-    });
-    expect(abortedBeforeCreate).toEqual({ cancelled: true });
-    expect(uploadCalls).toEqual([{ name: 'hop-dong.pdf', orgSlug: 'org-a' }]);
-    expect(createCalls).toEqual([]);
-
-    // resolveUserScope returning a different userId is treated as an account mismatch and never adopts fetched.orgId.
-    setCreatedDocxNotice.mockClear();
-    invalidateEnvelopes.mockClear();
-    await handleEnvelopeCreatedWithWarnings({
-      envelopeId: envDetailId,
-      warnings: ['images_skipped'],
-      slug: 'acme',
-      orgId: null,
-      userId: userAId,
-      resolveUserScope: async () => ({ orgId: '01900000-0000-7000-8000-0000000000b1', userId: userBId }),
-      setCreateOpen,
-      setCreatedDocxNotice,
-      invalidateEnvelopes,
-      navigateToEnvelope: staleNav,
-    });
-    expect(setCreatedDocxNotice).toHaveBeenLastCalledWith(null);
-    expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual([]);
-    expect(readCreatedDocxWarnings(envDetailId, { org: '01900000-0000-7000-8000-0000000000b1', userId: userAId })).toEqual([]);
-    expect(readCreatedDocxWarnings(envDetailId, { org: '01900000-0000-7000-8000-0000000000b1', userId: userBId })).toEqual([]);
-
-    setCreatedDocxNotice.mockClear();
-    expect(
-      await openCreatedDocxNoticeEnvelope({
-        notice: { ...unpersistedNotice, orgId: null, userId: userAId, sessionId: null },
-        currentUserId: userAId,
-        resolveUserScope: async () => ({ orgId: '01900000-0000-7000-8000-0000000000b2', userId: userBId }),
-        setCreatedDocxNotice,
-        navigateToEnvelope: staleNav,
-      }),
-    ).toBe(false);
-    expect(setCreatedDocxNotice).toHaveBeenCalledWith(null);
-    expect(readCreatedDocxWarnings(envDetailId, { org: '01900000-0000-7000-8000-0000000000b2', userId: userAId })).toEqual([]);
-
-    // Notice banner details with missing userId stay hidden until sessionId verification matches live session.
-    const anonSessionNotice = {
-      envelopeId: envDetailId,
-      slug: 'acme',
-      orgId: null,
-      userId: null,
-      sessionId: 'sess-a',
-      warnings: ['images_skipped'] as const,
-    };
-    expect(isCreatedDocxListNoticeVisible(anonSessionNotice, 'acme', userBId, null)).toBe(false);
-    expect(isCreatedDocxListNoticeVisible(anonSessionNotice, 'acme', userBId, 'sess-b')).toBe(false);
-    expect(isCreatedDocxListNoticeVisible({ ...anonSessionNotice, sessionId: null }, 'acme', userBId, 'sess-a')).toBe(false);
-    expect(isCreatedDocxListNoticeVisible(anonSessionNotice, 'acme', userAId, 'sess-a')).toBe(true);
-
-    // If sessionStorage.removeItem fails or storage is unavailable during sign-out, recovery wipes stale notices before returning or writing.
-    const signOutStore = new Map<string, string>();
-    let allowSignOutRemove = true;
-    const flakyStorage = {
-      getItem: (k: string) => signOutStore.get(k) ?? null,
-      setItem: (k: string, v: string) => void signOutStore.set(k, v),
-      removeItem: (k: string) => {
-        if (!allowSignOutRemove) {
-          throw new DOMException('Blocked during signout', 'SecurityError');
-        }
-        signOutStore.delete(k);
-      },
-    };
-    vi.stubGlobal('window', { location: { pathname: '/o/acme/sign/envelopes', hash: '' }, sessionStorage: flakyStorage });
-    saveCreatedDocxWarnings(envDetailId, ['images_skipped'], scopeUserA);
-    expect(signOutStore.has('ludy.sign.created_docx_warnings')).toBe(true);
-    allowSignOutRemove = false;
-    clearAllCreatedDocxWarnings();
-    expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual([]);
-    allowSignOutRemove = true;
-    expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual([]);
-    expect(signOutStore.has('ludy.sign.created_docx_warnings')).toBe(false);
-
-    // Recovery after temporary storage block syncs both fallback dismissals and fallback saves directly onto sessionStorage.
-    saveCreatedDocxWarnings(envDetailId, ['images_skipped'], scopeUserA);
-    vi.stubGlobal('window', { location: { pathname: '/o/acme/sign/envelopes', hash: '' } });
-    clearCreatedDocxWarnings(envDetailId, scopeUserA);
-    const secondEnvId = '01900000-0000-7000-8000-0000000000ed';
-    saveCreatedDocxWarnings(secondEnvId, ['footnotes_skipped'], scopeUserA);
-    vi.stubGlobal('window', { location: { pathname: '/o/acme/sign/envelopes', hash: '' }, sessionStorage: flakyStorage });
-    expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual([]);
-    expect(readCreatedDocxWarnings(secondEnvId, scopeUserA)).toEqual(['footnotes_skipped']);
-    const syncedRaw = signOutStore.get('ludy.sign.created_docx_warnings') ?? '';
-    expect(syncedRaw).not.toContain(envDetailId);
-    expect(syncedRaw).toContain(secondEnvId);
-
-    // captureEnvelopeSubmitContext binds userId/orgId directly from live session me.get instead of stale cached UI identity.
-    const liveCaptured = await captureEnvelopeSubmitContext({
-      slug: 'acme',
-      reqId: 3,
-      readSessionId: async () => 'sess-b',
-      resolveScope: async (_targetSlug, expectedSession) => ({
-        orgId: '01900000-0000-7000-8000-0000000000b1',
-        userId: userBId,
-        sessionId: expectedSession ?? null,
-      }),
-    });
-    expect(liveCaptured).toEqual({
-      slug: 'acme',
-      orgId: '01900000-0000-7000-8000-0000000000b1',
-      userId: userBId,
-      sessionId: 'sess-b',
-      reqId: 3,
-    });
-    const offlineCaptured = await captureEnvelopeSubmitContext({
-      slug: 'acme',
-      reqId: 4,
-      readSessionId: async () => 'sess-b',
-      resolveScope: async () => {
-        throw new Error('me offline');
-      },
-    });
-    expect(offlineCaptured).toEqual({
-      slug: 'acme',
-      orgId: null,
-      userId: null,
-      sessionId: 'sess-b',
-      reqId: 4,
-    });
-
-    // Session switch during me.get in captureEnvelopeSubmitContext marks sessionChanged so upload/create aborts before sending.
-    let sessionCall = 0;
-    const swappedCapture = await captureEnvelopeSubmitContext({
+    // Swapping session (sess-a -> sess-b OR null -> sess-new) during capture marks sessionChanged and aborts.
+    let swapCall = 0;
+    const swapped = await captureEnvelopeSubmitContext({
       slug: 'acme',
       reqId: 5,
-      readSessionId: async () => (sessionCall++ === 0 ? 'sess-a' : 'sess-b'),
+      readSessionId: async () => (swapCall++ === 0 ? 'sess-a' : 'sess-b'),
       resolveScope: async () => null,
     });
-    expect(swappedCapture.sessionChanged).toBe(true);
+    expect(swapped.sessionChanged).toBe(true);
 
-    uploadCalls.length = 0;
-    createCalls.length = 0;
-    const abortedOnSessionSwap = await submitCreateEnvelopeFromDialog({
-      title: 'Hop dong session swapped',
-      file: samplePdf,
-      converted: null,
-      orgSlug: 'acme',
-      resolveSubmitContext: async () => swappedCapture,
-      isMounted: () => true,
-      getLiveOrgSlug: () => 'acme',
-      docxRequiredMessage: 'PDF required',
-      uploadPdf: async (file, slugArg) => {
-        uploadCalls.push({ name: file.name, orgSlug: slugArg });
-        return { fileId: 'should-not-upload' };
-      },
-      createEnvelope: async (input, slugArg) => {
-        createCalls.push({ sourceFileId: input.sourceFileId, orgSlug: slugArg });
-        return { envelopeId: 'should-not-create' };
-      },
+    let loginCall = 0;
+    const loggedInMid = await captureEnvelopeSubmitContext({
+      slug: 'acme',
+      reqId: 7,
+      readSessionId: async () => (loginCall++ === 0 ? null : 'sess-new'),
+      resolveScope: async () => ({ orgId: ORG_A_ID, userId: USER_A_ID, sessionId: 'sess-new' }),
     });
-    expect(abortedOnSessionSwap).toEqual({ cancelled: true });
-    expect(uploadCalls).toEqual([]);
-    expect(createCalls).toEqual([]);
+    expect(loggedInMid.sessionChanged).toBe(true);
 
-    // Submitting a converted .docx that has warnings fails before createEnvelope when neither userId nor sessionId can be proved.
-    const docxWithWarningsFile = makeTestFile(new Uint8Array([0x50, 0x4b, 0x03, 0x04]), 'hd.docx', SIGN_DOCX_MIME);
-    createCalls.length = 0;
+    // Org switch while readSessionId awaits is re-checked synchronously before uploadPdf runs.
+    liveOrgSlug = 'org-a';
+    uploadCalls.length = 0;
+    expect(
+      await submitCreateEnvelopeFromDialog({
+        title: 'Org switched during readSessionId',
+        file: samplePdf,
+        converted: null,
+        orgSlug: 'org-a',
+        resolveSubmitContext: async () => ({
+          slug: 'org-a',
+          orgId: ORG_A_ID,
+          userId: USER_A_ID,
+          sessionId: 'sess-a',
+          reqId: 8,
+        }),
+        readSessionId: async () => {
+          liveOrgSlug = 'org-b';
+          return 'sess-a';
+        },
+        isMounted: () => true,
+        isSubmitContextCurrent: (ctx) => ctx.slug === liveOrgSlug,
+        getLiveOrgSlug: () => liveOrgSlug,
+        docxRequiredMessage: 'PDF required',
+        uploadPdf: async (file, slugArg) => {
+          uploadCalls.push({ name: file.name, orgSlug: slugArg });
+          return { fileId: 'unused' };
+        },
+        createEnvelope: async () => ({ envelopeId: 'unused' }),
+      }),
+    ).toEqual({ cancelled: true });
+    expect(uploadCalls).toEqual([]);
+
+    // Converted .docx with warnings rejects before createEnvelope when neither userId nor sessionId can be proved.
+    const docxFile = makeTestFile(new Uint8Array([0x50, 0x4b, 0x03, 0x04]), 'hd.docx', SIGN_DOCX_MIME);
     await expect(
       submitCreateEnvelopeFromDialog({
-        title: 'Hop dong canh bao',
-        file: docxWithWarningsFile,
+        title: 'Unverified docx warnings',
+        file: docxFile,
         converted: {
           status: 'completed',
           fileId: 'file-docx-1',
@@ -1160,97 +1056,112 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
           warnings: ['images_skipped'],
         },
         orgSlug: 'acme',
-        resolveSubmitContext: async () => ({
-          slug: 'acme',
-          orgId: null,
-          userId: null,
-          sessionId: null,
-          reqId: 6,
-        }),
+        resolveSubmitContext: async () => ({ slug: 'acme', orgId: null, userId: null, sessionId: null, reqId: 6 }),
         isMounted: () => true,
         getLiveOrgSlug: () => 'acme',
         docxRequiredMessage: 'PDF required',
         verifyIdentityErrorMessage: 'Retry identity verification',
         uploadPdf: async () => ({ fileId: 'unused' }),
-        createEnvelope: async (input, slugArg) => {
-          createCalls.push({ sourceFileId: input.sourceFileId, orgSlug: slugArg });
-          return { envelopeId: 'should-not-create' };
-        },
+        createEnvelope: async () => ({ envelopeId: 'should-not-create' }),
       }),
     ).rejects.toThrow('Retry identity verification');
-    expect(createCalls).toEqual([]);
+  });
 
-    // Dismissing while sessionStorage getItem and setItem both throw SecurityError still remembers the dismissal across storage recovery.
-    const throwingStoreMap = new Map<string, string>();
-    let blockStorageAccess = false;
-    const securityFlakyStorage = {
-      getItem: (k: string) => {
-        if (blockStorageAccess) throw new DOMException('Denied', 'SecurityError');
-        return throwingStoreMap.get(k) ?? null;
-      },
-      setItem: (k: string, v: string) => {
-        if (blockStorageAccess) throw new DOMException('Denied', 'SecurityError');
-        throwingStoreMap.set(k, v);
-      },
-      removeItem: (k: string) => {
-        if (blockStorageAccess) throw new DOMException('Denied', 'SecurityError');
-        throwingStoreMap.delete(k);
-      },
-    };
-    vi.stubGlobal('window', { location: { pathname: '/o/acme/sign/envelopes', hash: '' }, sessionStorage: securityFlakyStorage });
-    saveCreatedDocxWarnings(envDetailId, ['images_skipped'], scopeUserA);
-    expect(throwingStoreMap.has('ludy.sign.created_docx_warnings')).toBe(true);
-    blockStorageAccess = true;
-    clearCreatedDocxWarnings(envDetailId, scopeUserA);
-    blockStorageAccess = false;
-    expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual([]);
-    expect(throwingStoreMap.has('ludy.sign.created_docx_warnings')).toBe(false);
-
-    // Capturing submit context flags null -> signed-in session changes, and org switch while reading session aborts writes.
-    let loginMidCapture = 0;
-    const loggedInMidCapture = await captureEnvelopeSubmitContext({
+  it('preserves pending notices across navigations, routes ContractVaultBar pending links cleanly, and skips me.get on PDF submits (#4729)', async () => {
+    const resolveScopeSpy = vi.fn(async () => ({ orgId: ORG_A_ID, userId: USER_A_ID, sessionId: 'sess-a' }));
+    const fastPdfContext = await captureEnvelopeSubmitContext({
       slug: 'acme',
-      reqId: 7,
-      readSessionId: async () => (loginMidCapture++ === 0 ? null : 'sess-new'),
-      resolveScope: async () => ({ orgId, userId: userAId, sessionId: 'sess-new' }),
+      reqId: 9,
+      includeUserScope: false,
+      readSessionId: async () => 'sess-a',
+      resolveScope: resolveScopeSpy,
     });
-    expect(loggedInMidCapture.sessionChanged).toBe(true);
+    expect(resolveScopeSpy).not.toHaveBeenCalled();
+    expect(fastPdfContext).toEqual({
+      slug: 'acme',
+      orgId: null,
+      userId: null,
+      sessionId: 'sess-a',
+      reqId: 9,
+    });
 
-    uploadCalls.length = 0;
-    createCalls.length = 0;
-    liveOrgSlug = 'org-a';
-    const switchedDuringSessionRead = await submitCreateEnvelopeFromDialog({
-      title: 'Hop dong switched during session check',
-      file: samplePdf,
-      converted: null,
-      orgSlug: 'org-a',
-      resolveSubmitContext: async () => ({
-        slug: 'org-a',
-        orgId,
-        userId: userAId,
+    // Cross-navigation pending list notice store keeps remaining notices after opening another envelope and clears on sign-out/user change.
+    upsertPendingDocxListNotice({
+      envelopeId: envDetailId,
+      slug: 'acme',
+      orgId: null,
+      userId: USER_A_ID,
+      sessionId: 'sess-a',
+      envelopeTitle: 'Hợp đồng A',
+      warnings: ['images_skipped'],
+    });
+    upsertPendingDocxListNotice({
+      envelopeId: SECOND_ENV_ID,
+      slug: 'acme',
+      orgId: null,
+      userId: USER_A_ID,
+      sessionId: 'sess-a',
+      envelopeTitle: 'Hợp đồng B',
+      warnings: ['footnotes_skipped'],
+    });
+    removePendingDocxListNotice(envDetailId);
+    expect(listPendingDocxListNotices('acme', USER_A_ID).map((n) => n.envelopeId)).toEqual([SECOND_ENV_ID]);
+    expect(listPendingDocxListNotices('acme', USER_B_ID)).toEqual([]);
+    clearPendingDocxListNotices({ mismatchSessionId: 'sess-b' });
+    expect(listPendingDocxListNotices('acme', USER_A_ID)).toEqual([]);
+
+    // Handle creation preserves unpersisted A alongside unpersisted B and clean PDF C without navigating away.
+    const setCreateOpen = vi.fn();
+    const setCreatedDocxNotice = vi.fn();
+    const invalidateEnvelopes = vi.fn(async () => {});
+    const navSpy = vi.fn(async () => {});
+    let pendingList = applyPendingDocxNoticeUpdate([], {
+      kind: 'upsert',
+      notice: {
+        envelopeId: envDetailId,
+        slug: 'acme',
+        orgId: null,
+        userId: null,
         sessionId: 'sess-a',
-        reqId: 8,
-      }),
-      readSessionId: async () => {
-        liveOrgSlug = 'org-b';
-        return 'sess-a';
-      },
-      isMounted: () => true,
-      isSubmitContextCurrent: (ctx) => ctx.slug === liveOrgSlug,
-      getLiveOrgSlug: () => liveOrgSlug,
-      docxRequiredMessage: 'PDF required',
-      uploadPdf: async (file, slugArg) => {
-        uploadCalls.push({ name: file.name, orgSlug: slugArg });
-        return { fileId: 'should-not-upload' };
-      },
-      createEnvelope: async (input, slugArg) => {
-        createCalls.push({ sourceFileId: input.sourceFileId, orgSlug: slugArg });
-        return { envelopeId: 'should-not-create' };
+        warnings: ['images_skipped'],
       },
     });
-    expect(switchedDuringSessionRead).toEqual({ cancelled: true });
-    expect(uploadCalls).toEqual([]);
-    expect(createCalls).toEqual([]);
+    await handleEnvelopeCreatedWithWarnings({
+      envelopeId: SECOND_ENV_ID,
+      warnings: ['footnotes_skipped'],
+      slug: 'acme',
+      orgId: null,
+      userId: null,
+      sessionId: 'sess-a',
+      resolveCurrentSessionId: async () => null,
+      hasOtherPendingNotice: () => pendingList.some((n) => n.envelopeId !== SECOND_ENV_ID),
+      onPendingNoticeAction: (action) => {
+        pendingList = applyPendingDocxNoticeUpdate(pendingList, action);
+      },
+      setCreateOpen,
+      setCreatedDocxNotice,
+      invalidateEnvelopes,
+      navigateToEnvelope: navSpy,
+    });
+    const pdfEnvId = '01900000-0000-7000-8000-0000000000ef';
+    await handleEnvelopeCreatedWithWarnings({
+      envelopeId: pdfEnvId,
+      warnings: [],
+      slug: 'acme',
+      orgId: null,
+      userId: null,
+      sessionId: 'sess-a',
+      hasOtherPendingNotice: () => pendingList.some((n) => n.envelopeId !== pdfEnvId),
+      onPendingNoticeAction: (action) => {
+        pendingList = applyPendingDocxNoticeUpdate(pendingList, action);
+      },
+      setCreateOpen,
+      setCreatedDocxNotice,
+      invalidateEnvelopes,
+      navigateToEnvelope: navSpy,
+    });
+    expect(pendingList.map((n) => n.envelopeId)).toEqual([SECOND_ENV_ID, envDetailId]);
+    expect(navSpy).not.toHaveBeenCalled();
 
     // ContractVaultBar switches pending unpersisted envelope links to buttons so warning persistence precedes navigation.
     const pendingVaultHtml = renderToStaticMarkup(
@@ -1305,60 +1216,42 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
     expect(pendingVaultHtml).not.toContain('<a ');
     expect(pendingVaultHtml).toContain(`data-testid="sign-vault-citation-link-${envDetailId}"`);
     expect(pendingVaultHtml).toContain(`data-testid="sign-vault-open-${envDetailId}"`);
+  });
 
-    // saveCreatedDocxWarnings never overwrites existing sessionStorage notices when getItem fails transiently.
-    const preserveMap = new Map<string, string>();
-    let blockReadOnly = false;
-    const readFailStorage = {
-      getItem: (k: string) => {
-        if (blockReadOnly) throw new DOMException('Transient read error', 'SecurityError');
-        return preserveMap.get(k) ?? null;
-      },
-      setItem: (k: string, v: string) => void preserveMap.set(k, v),
-      removeItem: (k: string) => void preserveMap.delete(k),
-    };
-    vi.stubGlobal('window', { location: { pathname: '/o/acme/sign/envelopes', hash: '' }, sessionStorage: readFailStorage });
-    saveCreatedDocxWarnings(envDetailId, ['images_skipped'], scopeUserA);
-    blockReadOnly = true;
-    saveCreatedDocxWarnings(secondEnvId, ['footnotes_skipped'], scopeUserA);
-    blockReadOnly = false;
-    expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual(['images_skipped']);
-    expect(readCreatedDocxWarnings(secondEnvId, scopeUserA)).toEqual(['footnotes_skipped']);
+  it('aborts UPLOAD_BUSY uploadSignPdf retries on verified session switch and surfaces retry error on auth read failures (#4729)', async () => {
+    const samplePdf = makeTestFile(new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d]), 'hop-dong.pdf', 'application/pdf');
+    const jwtA = makeTestJwt('sess-a');
+    const jwtB = makeTestJwt('sess-b');
 
-    // Corrupt JSON in readable sessionStorage is treated as empty so saveCreatedDocxWarnings can overwrite and repair it.
-    preserveMap.set('ludy.sign.created_docx_warnings', '{corrupt-json');
-    expect(saveCreatedDocxWarnings(envDetailId, ['images_skipped'], scopeUserA)).toBe(true);
-    expect(preserveMap.get('ludy.sign.created_docx_warnings')).toContain(envDetailId);
-    expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual(['images_skipped']);
+    // Auth refresh failure returning { session: null, error } throws SignSessionUnverifiedError without sending an HTTP request.
+    vi.mocked(auth).mockImplementation(
+      () =>
+        ({
+          getSession: async () => ({ data: { session: null }, error: new Error('refresh timeout') }),
+        }) as unknown as ReturnType<typeof auth>,
+    );
+    const noSendFetch = vi.fn();
+    vi.stubGlobal('fetch', noSendFetch);
+    await expect(readVerifiedSession()).rejects.toBeInstanceOf(SignSessionUnverifiedError);
+    await expect(uploadSignPdf(samplePdf, 'acme', null)).rejects.toBeInstanceOf(SignSessionUnverifiedError);
+    expect(noSendFetch).not.toHaveBeenCalled();
 
-    // captureEnvelopeSubmitContext skips resolveScope (me.get) when includeUserScope=false for fast PDF submits.
-    const resolveScopeSpy = vi.fn(async () => ({ orgId, userId: userAId, sessionId: 'sess-a' }));
-    const fastPdfContext = await captureEnvelopeSubmitContext({
-      slug: 'acme',
-      reqId: 9,
-      includeUserScope: false,
-      readSessionId: async () => 'sess-a',
-      resolveScope: resolveScopeSpy,
-    });
-    expect(resolveScopeSpy).not.toHaveBeenCalled();
-    expect(fastPdfContext).toEqual({
-      slug: 'acme',
-      orgId: null,
-      userId: null,
-      sessionId: 'sess-a',
-      reqId: 9,
-    });
-
-    // Transient readSessionId error throws verifyIdentityErrorMessage in dialog instead of cancelling silently.
+    // Transient readSessionId error during dialog submit surfaces verifyIdentityErrorMessage instead of cancelling silently.
     await expect(
       submitCreateEnvelopeFromDialog({
-        title: 'Hop dong transient session fail',
+        title: 'Transient readSessionId fail',
         file: samplePdf,
         converted: null,
         orgSlug: 'acme',
-        resolveSubmitContext: async () => fastPdfContext,
+        resolveSubmitContext: async () => ({
+          slug: 'acme',
+          orgId: null,
+          userId: null,
+          sessionId: 'sess-a',
+          reqId: 9,
+        }),
         readSessionId: async () => {
-          throw new Error('session storage offline');
+          throw new Error('session unavailable');
         },
         isMounted: () => true,
         getLiveOrgSlug: () => 'acme',
@@ -1369,63 +1262,8 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
       }),
     ).rejects.toThrow('Retry identity verification');
 
-    // Pending unpersisted warnings remain preserved across additional unpersisted .docx or clean PDF creations.
-    let pendingList = applyPendingDocxNoticeUpdate([], {
-      kind: 'upsert',
-      notice: {
-        envelopeId: envDetailId,
-        slug: 'acme',
-        orgId: null,
-        userId: null,
-        sessionId: 'sess-a',
-        warnings: ['images_skipped'],
-      },
-    });
-    await handleEnvelopeCreatedWithWarnings({
-      envelopeId: secondEnvId,
-      warnings: ['footnotes_skipped'],
-      slug: 'acme',
-      orgId: null,
-      userId: null,
-      sessionId: 'sess-a',
-      resolveCurrentSessionId: async () => null,
-      hasOtherPendingNotice: () => pendingList.some((n) => n.envelopeId !== secondEnvId),
-      onPendingNoticeAction: (action) => {
-        pendingList = applyPendingDocxNoticeUpdate(pendingList, action);
-      },
-      setCreateOpen,
-      setCreatedDocxNotice,
-      invalidateEnvelopes,
-      navigateToEnvelope: staleNav,
-    });
-    expect(pendingList.map((n) => n.envelopeId)).toEqual([secondEnvId, envDetailId]);
-
-    const pdfEnvId = '01900000-0000-7000-8000-0000000000ef';
-    staleNav.mockClear();
-    await handleEnvelopeCreatedWithWarnings({
-      envelopeId: pdfEnvId,
-      warnings: [],
-      slug: 'acme',
-      orgId: null,
-      userId: null,
-      sessionId: 'sess-a',
-      hasOtherPendingNotice: () => pendingList.some((n) => n.envelopeId !== pdfEnvId),
-      onPendingNoticeAction: (action) => {
-        pendingList = applyPendingDocxNoticeUpdate(pendingList, action);
-      },
-      setCreateOpen,
-      setCreatedDocxNotice,
-      invalidateEnvelopes,
-      navigateToEnvelope: staleNav,
-    });
-    expect(pendingList.map((n) => n.envelopeId)).toEqual([secondEnvId, envDetailId]);
-    expect(staleNav).not.toHaveBeenCalled();
-
-    // uploadSignPdf aborts UPLOAD_BUSY retry before sending if live session token switched mid-backoff.
-    const makeJwt = (sessionId: string) =>
-      `hdr.${btoa(JSON.stringify({ session_id: sessionId })).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_')}.sig`;
-    const jwtA = makeJwt('sess-a');
-    const jwtB = makeJwt('sess-b');
+    // uploadSignPdf aborts UPLOAD_BUSY retry before sending attempt #2 if live session token switched from sess-a to sess-b.
+    vi.mocked(auth).mockReset();
     let activeJwt = jwtA;
     vi.mocked(accessToken).mockImplementation(async () => activeJwt);
     const seenAuthHeaders: string[] = [];

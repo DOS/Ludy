@@ -25,8 +25,23 @@ interface StoredDocxWarningNotice {
   createdAt: number;
 }
 
+export interface PendingCreatedDocxNotice {
+  envelopeId: string;
+  slug: string;
+  orgId: string | null;
+  userId: string | null;
+  sessionId?: string | null | undefined;
+  envelopeTitle?: string | undefined;
+  warnings: readonly SignDocxToPdfWarning[];
+}
+
+interface StoredPendingCreatedDocxNotice extends PendingCreatedDocxNotice {
+  createdAt: number;
+}
+
 const fallbackDocxNotices = new Map<string, StoredDocxWarningNotice>();
 const fallbackDismissedNotices = new Map<string, number>();
+const pendingUnpersistedDocxNotices = new Map<string, StoredPendingCreatedDocxNotice>();
 const knownStorageNoticeKeys = new Set<string>();
 let pendingSignOutClear = false;
 
@@ -322,7 +337,85 @@ export function clearCreatedDocxWarnings(
 export function clearAllCreatedDocxWarnings(): void {
   fallbackDocxNotices.clear();
   fallbackDismissedNotices.clear();
+  pendingUnpersistedDocxNotices.clear();
   knownStorageNoticeKeys.clear();
   pendingSignOutClear = true;
   void flushPendingSignOutClear();
+}
+
+function stripTimestamp({ createdAt: _ignored, ...rest }: StoredPendingCreatedDocxNotice): PendingCreatedDocxNotice {
+  return rest;
+}
+
+function pruneFreshPendingNotices(now: number): void {
+  for (const [id, entry] of pendingUnpersistedDocxNotices) {
+    if (!isFreshNotice(now, entry.createdAt) || entry.warnings.length === 0) {
+      pendingUnpersistedDocxNotices.delete(id);
+    }
+  }
+}
+
+/** Records an unpersisted .docx warning across list/detail navigations within the same session and org slug (#4729). */
+export function upsertPendingDocxListNotice(notice: PendingCreatedDocxNotice, now = Date.now()): PendingCreatedDocxNotice[] {
+  const cleanWarnings = sanitizeDocxWarnings(notice.warnings);
+  if (!notice.envelopeId || !notice.slug || cleanWarnings.length === 0) {
+    return [...pendingUnpersistedDocxNotices.values()].map(stripTimestamp);
+  }
+  pruneFreshPendingNotices(now);
+  pendingUnpersistedDocxNotices.delete(notice.envelopeId);
+  const next: StoredPendingCreatedDocxNotice = { ...notice, warnings: cleanWarnings, createdAt: now };
+  const rebuilt = new Map<string, StoredPendingCreatedDocxNotice>([[notice.envelopeId, next]]);
+  for (const [id, existing] of pendingUnpersistedDocxNotices) {
+    if (rebuilt.size >= MAX_STORED_DOCX_NOTICES) break;
+    rebuilt.set(id, existing);
+  }
+  pendingUnpersistedDocxNotices.clear();
+  for (const [id, entry] of rebuilt) {
+    pendingUnpersistedDocxNotices.set(id, entry);
+  }
+  return [...pendingUnpersistedDocxNotices.values()].map(stripTimestamp);
+}
+
+/** Removes a single unpersisted pending .docx notice once persisted or explicitly dismissed (#4729). */
+export function removePendingDocxListNotice(envelopeId: string): PendingCreatedDocxNotice[] {
+  pendingUnpersistedDocxNotices.delete(envelopeId);
+  return [...pendingUnpersistedDocxNotices.values()].map(stripTimestamp);
+}
+
+/** Clears unpersisted pending .docx notices matching no active session or belonging to a previous account (#4729). */
+export function clearPendingDocxListNotices(filter?: {
+  slug?: string | undefined;
+  mismatchUserId?: string | null | undefined;
+  mismatchSessionId?: string | null | undefined;
+}): PendingCreatedDocxNotice[] {
+  if (!filter) {
+    pendingUnpersistedDocxNotices.clear();
+    return [];
+  }
+  for (const [id, entry] of pendingUnpersistedDocxNotices) {
+    if (filter.slug && entry.slug === filter.slug) {
+      pendingUnpersistedDocxNotices.delete(id);
+    } else if (filter.mismatchUserId !== undefined && entry.userId && entry.userId !== filter.mismatchUserId) {
+      pendingUnpersistedDocxNotices.delete(id);
+    } else if (filter.mismatchSessionId && entry.sessionId && entry.sessionId !== filter.mismatchSessionId) {
+      pendingUnpersistedDocxNotices.delete(id);
+    }
+  }
+  return [...pendingUnpersistedDocxNotices.values()].map(stripTimestamp);
+}
+
+/** Lists unpersisted pending .docx notices still valid for the given workspace slug and active user (#4729). */
+export function listPendingDocxListNotices(
+  slug: string,
+  currentUserId: string | null = null,
+  now = Date.now(),
+): PendingCreatedDocxNotice[] {
+  pruneFreshPendingNotices(now);
+  const out: PendingCreatedDocxNotice[] = [];
+  for (const entry of pendingUnpersistedDocxNotices.values()) {
+    if (entry.slug !== slug) continue;
+    if (currentUserId !== null && entry.userId && entry.userId !== currentUserId) continue;
+    out.push(stripTimestamp(entry));
+  }
+  return out;
 }

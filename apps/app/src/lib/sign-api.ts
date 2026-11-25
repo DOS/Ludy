@@ -57,7 +57,7 @@ import {
 } from '@ludy/kernel-contract';
 import { apiFetch, client, clientForOrg, fetchFile, getCurrentOrg, orglessClient, uploadFiles } from './api.ts';
 import { apiUrl, serverOrigin } from './api-base.ts';
-import { accessToken, getConfig } from './auth.ts';
+import * as authMod from './auth.ts';
 import {
   ClientError,
   apiErrorFromResponse,
@@ -507,21 +507,117 @@ export class SignSessionUnverifiedError extends Error {
   }
 }
 
+export interface VerifiedSessionToken {
+  token: string;
+  sessionId: string | null;
+}
+
+type AuthSessionClient = {
+  getSession?: () => Promise<{
+    data?: { session?: { access_token?: string | null } | null };
+    error?: unknown;
+  }>;
+};
+
+async function readFallbackAccessToken(): Promise<string | null> {
+  if (typeof authMod.accessToken !== 'function') {
+    return null;
+  }
+  try {
+    return await authMod.accessToken();
+  } catch {
+    throw new SignSessionUnverifiedError();
+  }
+}
+
+export async function readVerifiedSession(): Promise<VerifiedSessionToken> {
+  let token: string | null = null;
+  let usedGetSession = false;
+  const authFn = (authMod as { auth?: unknown }).auth;
+  if (typeof authFn === 'function') {
+    let clientInstance: AuthSessionClient | null | undefined;
+    try {
+      clientInstance = (authFn as () => AuthSessionClient | null | undefined)();
+    } catch {
+      throw new SignSessionUnverifiedError();
+    }
+    if (clientInstance && typeof clientInstance.getSession === 'function') {
+      usedGetSession = true;
+      let res: {
+        data?: { session?: { access_token?: string | null } | null };
+        error?: unknown;
+      } | null;
+      try {
+        res = await clientInstance.getSession();
+      } catch {
+        throw new SignSessionUnverifiedError();
+      }
+      if (res?.error) {
+        throw new SignSessionUnverifiedError();
+      }
+      token = res?.data?.session?.access_token ?? null;
+    }
+  }
+  if (!usedGetSession) {
+    token = await readFallbackAccessToken();
+  }
+  if (!token) {
+    throw new SignSessionUnverifiedError();
+  }
+  return { token, sessionId: sessionIdFromToken(token) };
+}
+
 async function resolvePinnedRequestHeaders(
   orgSlug: string | null | undefined,
   expectedSessionId?: string | null,
 ): Promise<Record<string, string>> {
-  let token: string | null;
-  try {
-    token = await accessToken();
-  } catch {
-    throw new SignSessionUnverifiedError();
-  }
-  if (expectedSessionId !== undefined && sessionIdFromToken(token) !== expectedSessionId) {
-    throw new SignSessionMismatchError();
+  const { token, sessionId: liveSessionId } = await readVerifiedSession();
+  if (expectedSessionId !== undefined) {
+    if (expectedSessionId) {
+      if (!liveSessionId) {
+        throw new SignSessionUnverifiedError();
+      }
+      if (liveSessionId !== expectedSessionId) {
+        throw new SignSessionMismatchError();
+      }
+    } else if (liveSessionId !== null) {
+      throw new SignSessionMismatchError();
+    }
   }
   const resolvedOrg = orgSlug === undefined ? getCurrentOrg() : orgSlug;
   return requestHeaders(token, resolvedOrg);
+}
+
+export async function fetchUserScopeForSession(
+  targetSlug: string,
+  expectedSessionId?: string | null,
+): Promise<{ orgId: string | null; userId: string | null; sessionId: string | null } | null> {
+  const before = await readVerifiedSession();
+  if (expectedSessionId && before.sessionId !== expectedSessionId) {
+    return null;
+  }
+  const rpcUrl = `${serverOrigin()}/api/rpc`;
+  const meClient = createORPCClient<ContractRouterClient<typeof contract>>(
+    new RPCLink({ url: rpcUrl, headers: () => requestHeaders(before.token, null) }),
+  );
+  const me = await meClient.me.get();
+  let orgId = me.orgs.find((o) => o.slug === targetSlug)?.orgId ?? null;
+  if (!orgId && targetSlug && (!getCurrentOrg() || getCurrentOrg() === targetSlug)) {
+    const orgClient = createORPCClient<ContractRouterClient<typeof contract>>(
+      new RPCLink({ url: rpcUrl, headers: () => requestHeaders(before.token, targetSlug) }),
+    );
+    const orgDetail = await orgClient.org.get();
+    orgId = orgDetail?.slug === targetSlug ? orgDetail.orgId : null;
+  }
+  const after = await readVerifiedSession();
+  if (after.sessionId !== before.sessionId || (expectedSessionId && after.sessionId !== expectedSessionId)) {
+    return null;
+  }
+  return {
+    userId: me.userId ?? null,
+    orgId,
+    sessionId: after.sessionId,
+  };
 }
 
 export async function uploadSignPdf(
@@ -536,7 +632,7 @@ export async function uploadSignPdf(
     return { fileId: uploaded.fileId };
   }
   const resolvedOrg = orgSlug === undefined ? getCurrentOrg() : orgSlug;
-  const uploadsMode = typeof getConfig === 'function' ? getConfig().uploads : 'local';
+  const uploadsMode = typeof authMod.getConfig === 'function' ? authMod.getConfig().uploads : 'local';
   if (uploadsMode === 'presigned') {
     const grantHeaders = await resolvePinnedRequestHeaders(resolvedOrg, expectedSessionId);
     const grantRes = await fetch(apiUrl('/api/files/uploads'), {
@@ -682,12 +778,13 @@ export const signApi = {
     orgSlug?: string | null,
     expectedSessionId?: string | null,
   ) => {
+    const resolvedOrg = orgSlug === undefined ? getCurrentOrg() : orgSlug;
     const scopedClient =
       expectedSessionId !== undefined
         ? createORPCClient<ContractRouterClient<typeof contract>>(
             new RPCLink({
               url: `${serverOrigin()}/api/rpc`,
-              headers: () => resolvePinnedRequestHeaders(orgSlug, expectedSessionId),
+              headers: () => resolvePinnedRequestHeaders(resolvedOrg, expectedSessionId),
             }),
           )
         : orgSlug && typeof clientForOrg === 'function'
@@ -1207,7 +1304,7 @@ export async function loadCeremonyWorkspaceProfiles(orgNameHint?: string | null)
   stamps: SignOrgStampItem[];
 } | null> {
   try {
-    const tok = await accessToken();
+    const tok = await readFallbackAccessToken();
     if (!tok) return null;
     const me = await orglessClient.me.get();
     if (!me.orgs.length) return null;
