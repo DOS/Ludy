@@ -254,9 +254,9 @@ describe('health thresholds', () => {
       expect(await probeOnce(cfg, { ...io, fetch: hook.fetch, readHealth: async () => behind })).toBe(EXIT.unhealthy);
       expect(await probeOnce(cfg, { ...io, fetch: hook.fetch, readHealth: async () => behind })).toBe(EXIT.unhealthy);
       expect(hook.calls).toHaveLength(1);
-      expect(hook.body(0).crove.findings).toEqual([expect.objectContaining({ check: 'wal_archive', value: 900, threshold: 600 })]);
+      expect(hook.body(0).ludy.findings).toEqual([expect.objectContaining({ check: 'wal_archive', value: 900, threshold: 600 })]);
       expect(await probeOnce(cfg, { ...io, fetch: hook.fetch, readHealth: async () => ({ ...healthy, wal_archive: wal() }) })).toBe(EXIT.ok);
-      expect(hook.body(1).crove).toMatchObject({ kind: 'resolved', previous: ['wal_archive'] });
+      expect(hook.body(1).ludy).toMatchObject({ kind: 'resolved', previous: ['wal_archive'] });
     });
   });
 
@@ -313,10 +313,10 @@ describe('health thresholds', () => {
     expect(await probeOnce(cfg, { ...io, fetch: hook.fetch, readHealth: read(failing) })).toBe(EXIT.unhealthy);
     expect(hook.calls).toHaveLength(1);
     expect(window).toBe(3600);
-    expect(hook.body(0).crove.findings).toEqual([expect.objectContaining({ check: 'extraction', value: 4, threshold: 2 })]);
+    expect(hook.body(0).ludy.findings).toEqual([expect.objectContaining({ check: 'extraction', value: 4, threshold: 2 })]);
     expect(await probeOnce(cfg, { ...io, fetch: hook.fetch, readHealth: read({ ...healthy, extraction_document_failures: 9 }) })).toBe(EXIT.ok);
     expect(hook.calls).toHaveLength(2);
-    expect(hook.body(1).crove).toMatchObject({ kind: 'resolved', previous: ['extraction'] });
+    expect(hook.body(1).ludy).toMatchObject({ kind: 'resolved', previous: ['extraction'] });
   });
 
   it('alerts once when the archive falls behind, and sends a recovery when it catches up (#1997)', async () => {
@@ -327,10 +327,10 @@ describe('health thresholds', () => {
     expect(await probeOnce(cfg, { ...io, fetch: hook.fetch, readHealth: async () => behind })).toBe(EXIT.unhealthy);
     expect(await probeOnce(cfg, { ...io, fetch: hook.fetch, readHealth: async () => behind })).toBe(EXIT.unhealthy);
     expect(hook.calls).toHaveLength(1);
-    expect(hook.body(0).crove.findings).toEqual([expect.objectContaining({ check: 'archive_lag', value: 5000, threshold: 3600 })]);
+    expect(hook.body(0).ludy.findings).toEqual([expect.objectContaining({ check: 'archive_lag', value: 5000, threshold: 3600 })]);
     expect(await probeOnce(cfg, { ...io, fetch: hook.fetch, readHealth: async () => ({ ...healthy, archive_lag_seconds: 620 }) })).toBe(EXIT.ok);
     expect(hook.calls).toHaveLength(2);
-    expect(hook.body(1).crove).toMatchObject({ kind: 'resolved', previous: ['archive_lag'] });
+    expect(hook.body(1).ludy).toMatchObject({ kind: 'resolved', previous: ['archive_lag'] });
   });
 
   it('honors the dead letter limit', () => {
@@ -371,18 +371,17 @@ describe('prober configuration', () => {
   });
 
   // #1894: the modules the deployment runs, which health() counts in the job age whatever the workers record.
-  it('reads the modules the deployment runs from LUDY_MODULES / CROVE_MODULES, as the API does, and hands them to readHealth', async () => {
+  it('reads the modules the deployment runs from LUDY_MODULES, as the API does, and ignores CROVE_MODULES', async () => {
     expect(loadProberConfig({}).modules).toEqual(['kernel', 'finance', 'social', 'ads', 'crm', 'notes', 'hr', 'meetings', 'projects', 'sign']);
-    expect(loadProberConfig({ CROVE_MODULES: '' }).modules).toEqual(['kernel', 'finance', 'social', 'ads', 'crm', 'notes', 'hr', 'meetings', 'projects', 'sign']);
-    expect(loadProberConfig({ CROVE_MODULES: ' Finance , notes' }).modules).toEqual(['kernel', 'finance', 'notes']);
+    expect(loadProberConfig({ LUDY_MODULES: '' }).modules).toEqual(['kernel', 'finance', 'social', 'ads', 'crm', 'notes', 'hr', 'meetings', 'projects', 'sign']);
+    expect(loadProberConfig({ CROVE_MODULES: 'crm' }).modules).toEqual(['kernel', 'finance', 'social', 'ads', 'crm', 'notes', 'hr', 'meetings', 'projects', 'sign']);
+    expect(loadProberConfig({ LUDY_MODULES: ' Finance , notes' }).modules).toEqual(['kernel', 'finance', 'notes']);
     expect(loadProberConfig({ LUDY_MODULES: 'crm' }).modules).toEqual(['kernel', 'crm']);
-    expect(loadProberConfig({ LUDY_MODULES: 'finance', CROVE_MODULES: 'finance' }).modules).toEqual(['kernel', 'finance']);
-    expect(() => loadProberConfig({ CROVE_MODULES: 'finanse' })).toThrow(/LUDY_MODULES/);
-    expect(() => loadProberConfig({ LUDY_MODULES: 'finance', CROVE_MODULES: 'crm' })).toThrow(/LUDY_MODULES and CROVE_MODULES are both set with conflicting values/);
+    expect(() => loadProberConfig({ LUDY_MODULES: 'finanse' })).toThrow(/LUDY_MODULES/);
     const readHealth = vi.fn(async () => healthy);
-    const config = { ...loadProberConfig({ CROVE_MODULES: 'finance' }), databaseUrl: 'postgres://prober@db.test/crove' };
+    const config = { ...loadProberConfig({ LUDY_MODULES: 'finance' }), databaseUrl: 'postgres://prober@db.test/ludy' };
     await probeOnce(config, { log: () => {}, error: () => {}, readHealth });
-    expect(readHealth).toHaveBeenCalledWith('postgres://prober@db.test/crove', 3600, ['kernel', 'finance'], 3600);
+    expect(readHealth).toHaveBeenCalledWith('postgres://prober@db.test/ludy', 3600, ['kernel', 'finance'], 3600);
   });
 
   it('counts dead letters over the --every interval plus 60 s unless the window is set', () => {
@@ -425,7 +424,7 @@ describe('backup failure alert', () => {
     expect(body.text).toBe('[Ludy] ALERT on books.example.test: the backup failed.\n- backup failed: pg_dump failed: connection refused');
     const expected = { kind: 'alert', state: 'new', severity: 'critical', findings: [{ check: 'backup', value: null, threshold: null }] };
     expect(body.ludy).toMatchObject(expected);
-    expect(body.crove).toMatchObject(expected);
+    expect(body.crove).toBeUndefined();
     expect(io.err).toContain('[prober] FAIL backup: backup failed: pg_dump failed: connection refused');
     expect(io.out.join('\n')).not.toContain('secret-token-123');
   });
@@ -435,7 +434,7 @@ describe('backup failure alert', () => {
     const hook = webhook(500);
     const code = await runProber(['--backup-failed', 'x'.repeat(2000)], { ALERT_WEBHOOK_URL: SECRET_HOOK }, { fetch: hook.fetch, log: io.log, error: io.error });
     expect(code).toBe(EXIT.deliveryFailed);
-    const finding = (hook.body().crove as { findings: Array<{ message: string }> }).findings[0];
+    const finding = (hook.body().ludy as { findings: Array<{ message: string }> }).findings[0];
     expect(finding?.message).toHaveLength('backup failed: '.length + 500);
     expect(finding?.message.endsWith('...')).toBe(true);
   });
@@ -504,9 +503,9 @@ describe('prober exit codes', () => {
     expect(body.content).toBe(body.text);
     const expected = { kind: 'alert', severity: 'critical', instance: 'crove.example.test', at: '2026-10-15T12:00:00.000Z' };
     expect(body.ludy).toMatchObject(expected);
-    expect(body.crove).toMatchObject(expected);
-    expect(body.crove.findings).toEqual([{ check: 'heartbeat', value: 900, threshold: 120, message: expect.any(String) }]);
-    expect(body.crove.health).toEqual(sick);
+    expect(body.crove).toBeUndefined();
+    expect(body.ludy.findings).toEqual([{ check: 'heartbeat', value: 900, threshold: 120, message: expect.any(String) }]);
+    expect(body.ludy.health).toEqual(sick);
     expect(io.out).toEqual(['[prober] alert sent to webhook at hooks.example.test']);
   });
 
@@ -521,7 +520,7 @@ describe('prober exit codes', () => {
       },
     });
     expect(code).toBe(EXIT.probeFailed);
-    expect(hook.body().crove.findings).toEqual([
+    expect(hook.body().ludy.findings).toEqual([
       { check: 'probe', value: null, threshold: null, message: 'the prober could not read ludy_kernel.health(): connect ECONNREFUSED 10.0.0.5:5432' },
     ]);
   });
@@ -695,7 +694,7 @@ describe('Supabase Auth check (#1994)', () => {
     // The second alerts, once.
     expect(await run()).toBe(EXIT.unhealthy);
     expect(net.hooks).toHaveLength(1);
-    expect(net.body(0).crove.findings).toEqual([
+    expect(net.body(0).ludy.findings).toEqual([
       { check: 'auth', value: 2, threshold: 2, message: 'Supabase Auth did not answer its health check 2 time(s) in a row (HTTP 503): nobody can sign in' },
     ]);
     // Neither the health URL nor the key reaches the alert.
@@ -706,7 +705,7 @@ describe('Supabase Auth check (#1994)', () => {
     up = true;
     expect(await run()).toBe(EXIT.ok);
     expect(net.hooks).toHaveLength(2);
-    expect(net.body(1).crove).toMatchObject({ kind: 'resolved', previous: ['auth'] });
+    expect(net.body(1).ludy).toMatchObject({ kind: 'resolved', previous: ['auth'] });
     expect(authState.misses).toBe(0);
     // The publishable key went with every request.
     expect(new Set(keys)).toEqual(new Set(['pk_test']));
@@ -720,7 +719,7 @@ describe('Supabase Auth check (#1994)', () => {
     // The state runProber starts its loop with.
     const authState = initialAuthState(cfg);
     expect(await probeOnce(cfg, { ...io, fetch: net.fetch, readHealth: async () => healthy, authState })).toBe(EXIT.unhealthy);
-    expect(net.body(0).crove.findings).toEqual([expect.objectContaining({ check: 'auth', value: 2, threshold: 2 })]);
+    expect(net.body(0).ludy.findings).toEqual([expect.objectContaining({ check: 'auth', value: 2, threshold: 2 })]);
     up = true;
     expect(await probeOnce(cfg, { ...io, fetch: net.fetch, readHealth: async () => healthy, authState })).toBe(EXIT.ok);
     up = false;
@@ -734,7 +733,7 @@ describe('Supabase Auth check (#1994)', () => {
     const net = endpoints();
     up = false;
     expect(await probeOnce(config({ authHealthUrl: `${base}/health`, authMisses: 2 }), { ...io, fetch: net.fetch, readHealth: async () => healthy })).toBe(EXIT.unhealthy);
-    expect(net.body(0).crove.findings).toEqual([expect.objectContaining({ check: 'auth', value: 1, threshold: 1 })]);
+    expect(net.body(0).ludy.findings).toEqual([expect.objectContaining({ check: 'auth', value: 1, threshold: 1 })]);
     up = true;
   });
 
@@ -774,7 +773,6 @@ describe('test alert', () => {
       text: '[Ludy] Test alert from office: alert delivery works.',
       content: '[Ludy] Test alert from office: alert delivery works.',
       ludy: testAlert,
-      crove: testAlert,
     });
     expect(io.out).toEqual(['[prober] test alert sent to webhook at hooks.example.test']);
   });
@@ -797,7 +795,7 @@ describe('test alert', () => {
     const payload = alertPayload({ kind: 'alert', instance: 'x', at: 'now', findings });
     expect(payload.text.length).toBeLessThanOrEqual(1900);
     expect(payload.text.endsWith('...')).toBe(true);
-    expect(payload.crove.findings).toHaveLength(100);
+    expect(payload.ludy.findings).toHaveLength(100);
     const timedOut = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
       expect(init?.signal).toBeInstanceOf(AbortSignal);
       throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
@@ -945,7 +943,7 @@ describe('WORM verification marker (#2082)', () => {
     const sick = { ...healthy, worker_heartbeat_age_seconds: 900 };
     expect(await runProber([], env, { ...io, fetch: hook.fetch, readHealth: async () => sick, now: () => now })).toBe(EXIT.unhealthy);
     expect(hook.calls).toHaveLength(2);
-    expect(hook.body(0).crove.findings).toEqual([
+    expect(hook.body(0).ludy.findings).toEqual([
       {
         check: 'archive_marker',
         value: null,
@@ -953,7 +951,7 @@ describe('WORM verification marker (#2082)', () => {
         message: 'the prober cannot check the WORM verification marker: invalid archive settings: S3_ENDPOINT (docs/runbooks/worm-archive.md)',
       },
     ]);
-    expect(hook.body(1).crove.findings.map((f: { check: string }) => f.check)).toEqual(['heartbeat']);
+    expect(hook.body(1).ludy.findings.map((f: { check: string }) => f.check)).toEqual(['heartbeat']);
     expect(JSON.stringify([io.out, io.err, hook.calls.map((c) => c.init.body)])).not.toContain('internal.example.test');
   });
 
@@ -1094,7 +1092,7 @@ describe('WORM verification marker (#2082)', () => {
     // The database's own gate says it was notified already: the marker alert goes out all the same.
     expect(await probeOnce({ ...cfg, statusFile: '/data/status/probe.json' }, { ...deps, gate: forged, archiveStore: stale, writeStatus })).toBe(EXIT.unhealthy);
     expect(hook.calls).toHaveLength(1);
-    expect(hook.body(0).crove.findings).toEqual([
+    expect(hook.body(0).ludy.findings).toEqual([
       {
         check: 'archive_marker',
         value: 172_800,
@@ -1108,7 +1106,7 @@ describe('WORM verification marker (#2082)', () => {
     expect(hook.calls).toHaveLength(1);
     // A new marker resolves it.
     expect(await probeOnce(cfg, { ...deps, archiveStore: fresh })).toBe(EXIT.ok);
-    expect(hook.body(1).crove).toMatchObject({ kind: 'resolved', previous: ['archive_marker'] });
+    expect(hook.body(1).ludy).toMatchObject({ kind: 'resolved', previous: ['archive_marker'] });
   });
 
   it('alerts when the database cannot be read too, and when the store cannot be read, on one line', async () => {
@@ -1118,11 +1116,11 @@ describe('WORM verification marker (#2082)', () => {
       throw new Error('connect ECONNREFUSED');
     };
     expect(await probeOnce(config({ archiveMarker: settings }), { ...io, fetch: hook.fetch, readHealth: down, now: () => now, archiveStore: stale })).toBe(EXIT.probeFailed);
-    expect(hook.calls.map((_, i) => hook.body(i).crove.findings[0].check)).toEqual(['archive_marker', 'probe']);
+    expect(hook.calls.map((_, i) => hook.body(i).ludy.findings[0].check)).toEqual(['archive_marker', 'probe']);
 
     const refused = await probeOnce(config({ archiveMarker: settings }), { ...io, fetch: hook.fetch, readHealth: async () => healthy, now: () => now, archiveStore: storeOf({}, true) });
     expect(refused).toBe(EXIT.unhealthy);
-    expect(hook.body(2).crove.findings[0]).toMatchObject({
+    expect(hook.body(2).ludy.findings[0]).toMatchObject({
       check: 'archive_marker',
       value: null,
       message: 'the prober could not read the verification marker from the WORM archive store: AccessDenied: s3:ListBucketVersions not allowed (docs/runbooks/worm-archive.md)',
@@ -1145,8 +1143,8 @@ describe('WORM verification marker (#2082)', () => {
       writeStatus,
     });
     expect(code).toBe(EXIT.unhealthy);
-    expect(hook.body(3).crove.findings[0].message).toBe('the prober could not read the verification marker from the WORM archive store: no answer within 0 s (docs/runbooks/worm-archive.md)');
-    expect(hook.body(4).crove.findings.map((f: { check: string }) => f.check)).toEqual(['heartbeat']);
+    expect(hook.body(3).ludy.findings[0].message).toBe('the prober could not read the verification marker from the WORM archive store: no answer within 0 s (docs/runbooks/worm-archive.md)');
+    expect(hook.body(4).ludy.findings.map((f: { check: string }) => f.check)).toEqual(['heartbeat']);
     expect(statuses).toEqual([expect.objectContaining({ failing: ['heartbeat', 'archive_marker'] })]);
   });
 
@@ -1159,7 +1157,7 @@ describe('WORM verification marker (#2082)', () => {
     const newest = 'verify/v1/20261030T020000Z.json';
     expect(await run(versioned({ [newest]: 1 }))).toBe(EXIT.ok);
     expect(await run(versioned({ [newest]: 2, 'verify/v1/20261029T020000Z.json': 2 }))).toBe(EXIT.unhealthy);
-    expect(hook.body(0).crove.findings).toEqual([
+    expect(hook.body(0).ludy.findings).toEqual([
       {
         check: 'archive_marker',
         value: null,
@@ -1178,7 +1176,7 @@ describe('WORM verification marker (#2082)', () => {
     const hook = webhook();
     const misconfigured = { maxAgeSeconds: 93_600, error: 'ARCHIVE_STORE=s3 needs ARCHIVE_S3_BUCKET' };
     expect(await probeOnce(config({ archiveMarker: misconfigured }), { ...io, fetch: hook.fetch, readHealth: async () => healthy, now: () => now })).toBe(EXIT.unhealthy);
-    expect(hook.body(0).crove.findings[0].message).toBe(
+    expect(hook.body(0).ludy.findings[0].message).toBe(
       'the prober cannot check the WORM verification marker: ARCHIVE_STORE=s3 needs ARCHIVE_S3_BUCKET (docs/runbooks/worm-archive.md)',
     );
     // A marker named from a clock that ran a year ahead, written two days ago, and today's, named from the right clock:
@@ -1195,7 +1193,7 @@ describe('WORM verification marker (#2082)', () => {
     const run = async (store: ArchiveStore, startedAt?: Date) => {
       const hook = webhook();
       const code = await probeOnce(config({ archiveMarker: settings }), { ...io, fetch: hook.fetch, readHealth: async () => healthy, now: () => now, archiveStore: store, ...(startedAt ? { startedAt } : {}) });
-      return { code, finding: hook.calls.length ? hook.body(0).crove.findings[0] : null };
+      return { code, finding: hook.calls.length ? hook.body(0).ludy.findings[0] : null };
     };
     const twoDays = new Date(now.getTime() - 2 * DAY);
     const batch = { [archiveKey(1)]: { body: 'a batch', at: twoDays } };

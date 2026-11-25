@@ -1202,7 +1202,7 @@ suite('eSign Slice 5e signer KYC attachment verification check (#4443)', () => {
     );
     expect(checkedByIdx.rows[0]?.indexdef).toContain('checked_by IS NOT NULL');
 
-    const conflictHeaderRes = await appAiOff.request('/api/rpc/sign/kyc/list', {
+    const legacyIgnoredRes = await appAiOff.request('/api/rpc/sign/kyc/list', {
       method: 'POST',
       headers: {
         authorization: `Bearer ${await tokenFor(owner)}`,
@@ -1212,8 +1212,7 @@ suite('eSign Slice 5e signer KYC attachment verification check (#4443)', () => {
       },
       body: JSON.stringify({ json: { envelopeId: completedSetup.envelopeId } }),
     });
-    expect(conflictHeaderRes.status).toBe(400);
-    await expect(conflictHeaderRes.json()).resolves.toMatchObject({ code: 'ORG_HEADER_CONFLICT' });
+    expect(legacyIgnoredRes.status).toBe(200);
 
     // Stale pending KYC sweep recovery vs hard timeout + incomplete inspectAttachmentPages fallback.
     const sweepSetup = await createEnvelopeWithAttachmentSlots(owner, {

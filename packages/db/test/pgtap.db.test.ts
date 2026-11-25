@@ -8,7 +8,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { MODULE_FILE, listTests, pgtapDatabase, runTestFile, type PgtapDatabase } from './invariant/pgtap/runner.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const suite = ADMIN ? describe : describe.skip;
 
 suite('pgTAP tests of the modules in supabase/tests/database', () => {
