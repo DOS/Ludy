@@ -11,9 +11,12 @@ import {
   deriveTodoistListNameFromFilename,
   parseEnexImport,
   parseTodoistCsv,
+  type EnexExistingNoteRef,
   type EnexImportResult,
+  type NoteImportFailure,
   type NotebookSummary,
   type TodoListSummary,
+  type TodoistExistingTodoRef,
   type TodoistImportResult,
 } from '@ludy/kernel-contract';
 import { Button } from '@ludy/ui/components/button';
@@ -33,9 +36,10 @@ export type NoteImportDialogProps =
       onOpenChange: (open: boolean) => void;
       slug: string;
       notebooks: readonly NotebookSummary[];
-      existingNoteTitles: readonly string[];
+      existingNotes?: readonly EnexExistingNoteRef[];
+      existingNoteTitles?: readonly EnexExistingNoteRef[];
       defaultNotebookId?: string | null;
-      onImported: (result: EnexImportResult) => void;
+      onImported: (result: EnexImportResult, meta?: { targetNotebookId: string | null }) => void;
     }
   | {
       mode: 'todoist';
@@ -43,11 +47,34 @@ export type NoteImportDialogProps =
       onOpenChange: (open: boolean) => void;
       slug: string;
       todoLists: readonly TodoListSummary[];
-      existingTodoTitles: readonly string[];
+      existingTodos?: readonly TodoistExistingTodoRef[];
+      existingTodoTitles?: readonly TodoistExistingTodoRef[];
       defaultListId?: string | null;
       timeZone: string;
       onImported: (result: TodoistImportResult) => void;
     };
+
+export function resolveNoteImportParseError(
+  parsed: Pick<NoteImportFailure, 'code' | 'detail'> | null | undefined,
+  messages: {
+    invalidSizeLimit: string;
+    noteTooLong: string;
+    kernelError: (code: Exclude<NoteImportFailure['code'], 'TOO_LARGE' | 'NOTE_TOO_LONG'>) => string;
+  },
+): string | null {
+  if (!parsed) return null;
+  if (parsed.code === 'TOO_LARGE') return messages.invalidSizeLimit;
+  if (parsed.code === 'NOTE_TOO_LONG') return messages.noteTooLong;
+  if (
+    parsed.code === 'NOTE_IMPORT_INVALID' ||
+    parsed.code === 'NOTE_IMPORT_UNSAFE_XML' ||
+    parsed.code === 'NOTE_IMPORT_EMPTY' ||
+    parsed.code === 'NOTE_ATTACHMENT_LIMIT'
+  ) {
+    return messages.kernelError(parsed.code);
+  }
+  return parsed.detail;
+}
 
 export function NoteImportDialog(props: NoteImportDialogProps) {
   const isEnex = props.mode === 'enex';
@@ -103,45 +130,56 @@ export function NoteImportDialog(props: NoteImportDialogProps) {
 
   const enexPreview = useMemo(() => {
     if (!isEnex || !parsedEnex?.ok) return null;
+    const targetNotebookId = targetValue !== 'auto' && targetValue !== 'unfiled' ? targetValue : null;
     const overrideNotebook =
-      targetValue !== 'auto' && targetValue !== 'unfiled'
-        ? (props.notebooks.find((b) => b.id === targetValue)?.name ?? 'target')
+      targetNotebookId !== null
+        ? (props.notebooks.find((b) => b.id === targetNotebookId)?.name ?? 'target')
         : null;
+    const existingNotes = props.existingNotes ?? props.existingNoteTitles ?? [];
     return buildEnexDryRunPreview(
       parsedEnex,
       props.notebooks.filter((b) => b.visibility === 'private'),
-      props.existingNoteTitles,
-      { overrideNotebookName: overrideNotebook, unfiled: targetValue === 'unfiled' },
+      existingNotes,
+      { targetNotebookId, overrideNotebookName: overrideNotebook, unfiled: targetValue === 'unfiled' },
     );
-  }, [isEnex, parsedEnex, targetValue, props.mode === 'enex' ? props.notebooks : null, props.mode === 'enex' ? props.existingNoteTitles : null]);
+  }, [
+    isEnex,
+    parsedEnex,
+    targetValue,
+    props.mode === 'enex' ? props.notebooks : null,
+    props.mode === 'enex' ? props.existingNotes : null,
+    props.mode === 'enex' ? props.existingNoteTitles : null,
+  ]);
 
   const todoistPreview = useMemo(() => {
     if (isEnex || !parsedTodoist?.ok) return null;
     const explicitTargetListId = targetValue !== 'auto' && targetValue !== 'inbox' ? targetValue : null;
+    const existingTodos = props.existingTodos ?? props.existingTodoTitles ?? [];
     return buildTodoistDryRunPreview(
       parsedTodoist,
       props.todoLists,
-      props.existingTodoTitles,
+      existingTodos,
       { targetListId: explicitTargetListId, useInbox: targetValue === 'inbox' },
     );
-  }, [isEnex, parsedTodoist, targetValue, props.mode === 'todoist' ? props.todoLists : null, props.mode === 'todoist' ? props.existingTodoTitles : null]);
+  }, [
+    isEnex,
+    parsedTodoist,
+    targetValue,
+    props.mode === 'todoist' ? props.todoLists : null,
+    props.mode === 'todoist' ? props.existingTodos : null,
+    props.mode === 'todoist' ? props.existingTodoTitles : null,
+  ]);
 
   const parseErrorMessage = useMemo(() => {
     if (localError) return localError;
     const parsed = isEnex ? parsedEnex : parsedTodoist;
     if (!parsed || parsed.ok) return null;
-    if (parsed.code === 'TOO_LARGE') return t('invalidSizeLimit');
-    if (
-      parsed.code === 'NOTE_IMPORT_INVALID' ||
-      parsed.code === 'NOTE_IMPORT_UNSAFE_XML' ||
-      parsed.code === 'NOTE_IMPORT_EMPTY' ||
-      parsed.code === 'NOTE_TOO_LONG' ||
-      parsed.code === 'NOTE_ATTACHMENT_LIMIT'
-    ) {
-      return tKernel(parsed.code);
-    }
-    return parsed.detail;
-  }, [localError, isEnex, parsedEnex, parsedTodoist, t, tKernel]);
+    return resolveNoteImportParseError(parsed, {
+      invalidSizeLimit: t('invalidSizeLimit'),
+      noteTooLong: tNotes('import.noteTooLong'),
+      kernelError: (code) => tKernel(code),
+    });
+  }, [localError, isEnex, parsedEnex, parsedTodoist, t, tNotes, tKernel]);
 
   const upload = useMutation({
     mutationFn: async () => {
@@ -150,6 +188,7 @@ export function NoteImportDialog(props: NoteImportDialogProps) {
         const targetNotebookId = targetValue !== 'auto' && targetValue !== 'unfiled' ? targetValue : null;
         return {
           mode: 'enex' as const,
+          targetNotebookId,
           result: await importEvernoteEnex(
             selectedFile,
             {
@@ -186,7 +225,7 @@ export function NoteImportDialog(props: NoteImportDialogProps) {
           'success',
         );
         props.onOpenChange(false);
-        props.onImported(r);
+        props.onImported(r, { targetNotebookId: outcome.targetNotebookId });
       } else if (outcome.mode === 'todoist' && props.mode === 'todoist') {
         const r = outcome.result;
         toast(
@@ -395,7 +434,13 @@ export function NoteImportDialog(props: NoteImportDialogProps) {
             </section>
           )}
 
-          {upload.error && <ErrorText>{errorMessage(upload.error)}</ErrorText>}
+          {upload.error && (
+            <ErrorText>
+              {isEnex && (upload.error as { code?: unknown } | null)?.code === 'NOTE_TOO_LONG'
+                ? tNotes('import.noteTooLong')
+                : errorMessage(upload.error)}
+            </ErrorText>
+          )}
         </div>
 
         <DialogFooter>

@@ -10,6 +10,7 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
 import pg from 'pg';
+import { PgBoss } from 'pg-boss';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool, type Db } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
@@ -18,12 +19,13 @@ import type { ExtractClient, ExtractKind, ExtractResult } from '@ludy/extract-co
 import type { PersonalDataErasure, PersonalDataNotice, PersonalDataResult } from '@ludy/kernel-contract';
 import { NOTE_ATTACHMENT_MAX_BYTES, type Note, type NoteAttachment, type NoteSummary, type NoteWritten } from '@ludy/kernel-contract';
 import { Runtime, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
-import { notesCommands, notesQueries } from '@ludy/mod-notes';
+import { NOTE_ATTACHMENT_EXTRACT_QUEUED_EVENT, notesCommands, notesQueries } from '@ludy/mod-notes';
 import { hashExtensionSecret, newExtensionToken } from '../src/auth-extension.ts';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
-import { requestDueNoteAttachmentExtracts, runNoteAttachmentExtract, sweepNoteAttachmentBlobs } from '../src/notes-worker.ts';
+import { JOB_SCHEMA } from '../src/jobs-schema.ts';
+import { queueNoteAttachmentExtract, requestDueNoteAttachmentExtracts, runNoteAttachmentExtract, sweepNoteAttachmentBlobs } from '../src/notes-worker.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
@@ -53,7 +55,11 @@ const enc = new TextEncoder();
 const pdf = (text: string) => enc.encode(`%PDF-1.4\n% ${text}\n%%EOF\n`);
 const png = () => new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52, 0, 0, 0, 2, 0, 0, 0, 3]);
 const svg = () => enc.encode('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>');
+const svgWithLongProlog = () =>
+  enc.encode(`<?xml version="1.0"?>\n<!-- ${'x'.repeat(1500)} -->\n<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`);
 const html = () => enc.encode('<!doctype html><html><body><script>alert(1)</script></body></html>');
+const htmlWithLongComment = () =>
+  enc.encode(`<!-- ${'y'.repeat(1500)} -->\n<!doctype html><html><body><script>alert(1)</script></body></html>`);
 const docx = () => new Uint8Array([0x50, 0x4b, 0x03, 0x04, ...enc.encode('word/document.xml'), 0, 0, 0]);
 
 // The internal crove-extract stand-in: answers the PDF and DOCX text it is told to.
@@ -219,7 +225,9 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
       [png(), 'anh.png', 'image/png', 'inline'],
       [pdf('x'), 'tai-lieu.pdf', 'application/pdf', 'inline'],
       [svg(), 'logo.svg', 'image/svg+xml', 'attachment'],
+      [svgWithLongProlog(), 'spoofed-svg.png', 'image/svg+xml', 'attachment'],
       [html(), 'trang.html', 'text/html', 'attachment'],
+      [htmlWithLongComment(), 'spoofed-html.png', 'text/html', 'attachment'],
       [docx(), 'van-ban.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'attachment'],
     ];
     for (const [bytes, name, type, mode] of cases) {
@@ -329,14 +337,60 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
       await c.query("SET session_replication_role = 'replica'");
       await c.query("UPDATE ludy_notes.attachment SET created_at = now() - interval '20 minutes' WHERE org_id = $1 AND id = ANY($2)", [o.orgId, [waiting.id, inTrash.id]]);
     });
-    const sent: Array<{ name: string; data: unknown; key: unknown }> = [];
-    const boss = { send: async (name: string, data?: object | null, options?: { singletonKey?: string }) => (sent.push({ name, data, key: options?.singletonKey }), 'job') };
+    const sent: Array<{ name: string; data: unknown; key: unknown; singletonSeconds: unknown }> = [];
+    const boss = {
+      send: async (name: string, data?: object | null, options?: { singletonKey?: string; singletonSeconds?: number }) => (
+        sent.push({ name, data, key: options?.singletonKey, singletonSeconds: options?.singletonSeconds }),
+        'job'
+      ),
+    };
     await requestDueNoteAttachmentExtracts({ runtime: worker, workerDb, boss: boss as never });
     const mine = sent.filter((s) => (s.data as { orgId: string }).orgId === o.orgId);
     expect(mine.map((s) => (s.data as { attachmentId: string }).attachmentId)).toEqual([waiting.id]);
     expect(mine[0]?.name).toBe('notes-attachment-extract');
     expect(mine[0]?.key).toEqual(expect.stringContaining(waiting.id));
+    expect(mine[0]?.singletonSeconds).toBe(300);
     expect(sent.some((s) => [fresh.id, inTrash.id].includes((s.data as { attachmentId: string }).attachmentId))).toBe(false);
+    // Live PgBoss deduplicates repeated sends for the same org+attachment within the 300s singleton slot while keeping orgs isolated.
+    const workerUrl = new URL(adminUrl);
+    workerUrl.username = 'ludy_worker';
+    workerUrl.password = 'test-worker-pw';
+    const pgBoss = new PgBoss({
+      connectionString: workerUrl.toString(),
+      schema: JOB_SCHEMA,
+      migrate: false,
+      createSchema: false,
+      supervise: false,
+      schedule: false,
+    });
+    pgBoss.on('error', () => {});
+    await pgBoss.start();
+    try {
+      const attId = randomUUID();
+      const firstId = await queueNoteAttachmentExtract(pgBoss, {
+        org_id: o.orgId,
+        event_id: randomUUID(),
+        type: NOTE_ATTACHMENT_EXTRACT_QUEUED_EVENT,
+        payload: { attachmentId: attId },
+      });
+      const dupId = await queueNoteAttachmentExtract(pgBoss, {
+        org_id: o.orgId,
+        event_id: randomUUID(),
+        type: NOTE_ATTACHMENT_EXTRACT_QUEUED_EVENT,
+        payload: { attachmentId: attId },
+      });
+      const otherOrgId = await queueNoteAttachmentExtract(pgBoss, {
+        org_id: randomUUID(),
+        event_id: randomUUID(),
+        type: NOTE_ATTACHMENT_EXTRACT_QUEUED_EVENT,
+        payload: { attachmentId: attId },
+      });
+      expect(firstId).toEqual(expect.any(String));
+      expect(dupId).toBeNull();
+      expect(otherOrgId).toEqual(expect.any(String));
+    } finally {
+      await pgBoss.stop({ graceful: false }).catch(() => {});
+    }
     // The app login may not list them.
     await expect(admin((c) => c.query('SET ROLE ludy_app').then(() => c.query('SELECT * FROM ludy_notes.attachment_extract_due(10)')))).rejects.toThrow();
   });
