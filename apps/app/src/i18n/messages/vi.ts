@@ -16445,6 +16445,7 @@ export const vi = {
       HR_OKR_PARENT_ARCHIVED: 'Không thể liên kết vào mục tiêu cha đã lưu trữ',
       HR_OKR_PARENT_SCOPE: 'Cấp mục tiêu cha không hợp lệ cho mục tiêu đang tạo',
       HR_OKR_ARCHIVED: 'Mục tiêu đã lưu trữ không thể thay đổi',
+      HR_OKR_OWNER_ERASED: 'Không thể mở lại hoặc chỉnh sửa mục tiêu cá nhân của nhân viên đã xóa dữ liệu',
       HR_OKR_SELF_PARENT: 'Mục tiêu không thể tự liên kết lên chính nó',
       HR_OKR_HAS_CHILDREN_QUARTER: 'Không thể đổi quý khi mục tiêu đang có mục tiêu con liên kết',
       HR_OKR_PROJECT_REQUIRED: 'Cần chọn dự án Công tác trước khi gắn công việc',

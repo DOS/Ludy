@@ -16446,6 +16446,7 @@ export const en = {
       HR_OKR_PARENT_ARCHIVED: 'Cannot align under an archived parent objective',
       HR_OKR_PARENT_SCOPE: 'Invalid parent objective level for this objective scope',
       HR_OKR_ARCHIVED: 'Archived objectives cannot be modified',
+      HR_OKR_OWNER_ERASED: 'Cannot reopen or modify an individual objective after employee erasure',
       HR_OKR_SELF_PARENT: 'An objective cannot align under itself',
       HR_OKR_HAS_CHILDREN_QUARTER: 'Cannot change quarter while child objectives align under this objective',
       HR_OKR_PROJECT_REQUIRED: 'Select a Ludy Projects project before selecting tasks',
