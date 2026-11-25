@@ -100,8 +100,10 @@ export function NotificationsPage() {
 
   const feedScrollRef = useRef<HTMLDivElement>(null);
   const feedListRef = useRef<HTMLUListElement>(null);
+  const filterAreaRef = useRef<HTMLDivElement>(null);
   const detailPaneRef = useRef<HTMLElement>(null);
   const lastTriggerRowIdRef = useRef<string | null>(null);
+  const pendingFocusRowIdRef = useRef<string | null>(null);
 
   const updateSearch = (patch: { [K in keyof NotificationsSearch]?: NotificationsSearch[K] | undefined }) => {
     void navigate({
@@ -137,18 +139,23 @@ export function NotificationsPage() {
     read.mutate({ ids: [id] });
   };
 
-  const markGroupRead = (group: WorkNotification[]) => {
+  const markGroupRead = (group: WorkNotification[], options?: { clearGroupSearch?: boolean }) => {
     const chunks = unreadIdChunks(group);
     if (chunks.length === 0) return;
     setPendingScope('group');
     void (async () => {
       for (const ids of chunks) await read.mutateAsync({ ids });
+      if (options?.clearGroupSearch && activeFilter === 'unread' && search.selected?.startsWith('group:')) {
+        updateSearch({ selected: undefined });
+      }
     })()
       .catch(() => undefined)
       .finally(() => setPendingScope(null));
-    if (activeFilter === 'unread' && search.selected?.startsWith('group:')) {
-      updateSearch({ selected: undefined });
-    }
+  };
+
+  const isRowMarkPending = (row: NotificationRow<WorkNotification> | null): boolean => {
+    if (!read.isPending || !row) return false;
+    return row.type === 'group' ? pendingScope === 'group' : pendingScope === row.item.id;
   };
 
   const handleReadAll = () => {
@@ -174,16 +181,25 @@ export function NotificationsPage() {
   };
 
   const closeMobileSheet = () => {
-    const closingId = lastTriggerRowIdRef.current ?? activeRowId;
+    pendingFocusRowIdRef.current = lastTriggerRowIdRef.current ?? activeRowId;
     updateSearch({ selected: undefined });
-    window.setTimeout(() => {
-      restoreNotificationRowFocus(
-        feedListRef.current,
-        closingId,
-        hasBlockingOverlayForPeek('', document),
-      );
-    }, 0);
   };
+
+  // Restore focus after TanStack Router finishes clearing ?selected= and the Sheet closes cleanly.
+  useEffect(() => {
+    if (isDesktop || activeRow !== null) return;
+    const closingId = pendingFocusRowIdRef.current;
+    if (closingId === null) return;
+    pendingFocusRowIdRef.current = null;
+    const timer = window.setTimeout(() => {
+      const blocked = hasBlockingOverlayForPeek('', document);
+      if (blocked) return;
+      if (restoreNotificationRowFocus(feedListRef.current, closingId, false)) return;
+      const fallback = filterAreaRef.current?.querySelector<HTMLElement>('button, [role="radio"]');
+      fallback?.focus();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [isDesktop, activeRow]);
 
   // J/K and ArrowDown/ArrowUp move through visible rows without hijacking inputs, dialogs, sheets, or SegmentedControl.
   const latestNavRef = useRef({ rows, activeRowId, isDesktop, updateSearch });
@@ -272,7 +288,7 @@ export function NotificationsPage() {
   );
 
   const filterBar = (
-    <div className="space-y-2.5" data-testid="notifications-filter-bar">
+    <div ref={filterAreaRef} className="space-y-2.5" data-testid="notifications-filter-bar">
       <SegmentedControl
         size="sm"
         value={activeFilter}
@@ -498,7 +514,7 @@ export function NotificationsPage() {
               cappedAtEnd={activeRow !== null && isCappedRow(activeRow)}
               onMarkSingleRead={(id) => markSingleRead(id, true)}
               onMarkGroupRead={markGroupRead}
-              markPending={read.isPending && pendingScope !== 'all'}
+              markPending={isRowMarkPending(activeRow)}
             />
           </section>
         </div>
@@ -532,13 +548,14 @@ export function NotificationsPage() {
                   )}
                 </SheetTitle>
               </SheetHeader>
-              <SheetBody>
+              <SheetBody key={activeRowId ?? undefined} className="space-y-4">
                 <NotificationDetailBody
                   slug={slug}
                   row={activeRow}
                   cappedAtEnd={isCappedRow(activeRow)}
                   onMarkSingleRead={(id) => markSingleRead(id, true)}
                 />
+                {read.error && <ErrorText>{errorMessage(read.error)}</ErrorText>}
               </SheetBody>
               <SheetFooter className="empty:hidden">
                 <NotificationDetailActions
@@ -546,7 +563,7 @@ export function NotificationsPage() {
                   row={activeRow}
                   onMarkSingleRead={(id) => markSingleRead(id, true)}
                   onMarkGroupRead={markGroupRead}
-                  markPending={read.isPending && pendingScope !== 'all'}
+                  markPending={isRowMarkPending(activeRow)}
                 />
               </SheetFooter>
             </>

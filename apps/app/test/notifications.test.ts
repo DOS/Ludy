@@ -258,15 +258,21 @@ describe('keyboard row navigation, focus restoration, and relative time', () => 
     expect(stepNotificationRowIndex(1, 3, -1)).toBe(0);
   });
 
-  it('restores focus to the triggering feed row unless blocked or missing', () => {
-    let focused = false;
-    const row = { focus: () => { focused = true; }, isConnected: true, tabIndex: 0 };
-    const root = { querySelector: (sel: string) => (sel === '[data-notification-row="n1"]' ? row : null) };
+  it('restores focus to the triggering feed row (or first remaining row) unless blocked or empty', () => {
+    let focusedId: string | null = null;
+    const row1 = { focus: () => { focusedId = 'n1'; }, isConnected: true, tabIndex: 0 };
+    const row2 = { focus: () => { focusedId = 'n2'; }, isConnected: true, tabIndex: 0 };
+    const root = {
+      querySelector: (sel: string) =>
+        sel === '[data-notification-row="n1"]' ? row1 : sel === '[data-notification-row]' ? row2 : null,
+    };
     expect(restoreNotificationRowFocus(root, 'n1', true)).toBe(false);
-    expect(focused).toBe(false);
+    expect(focusedId).toBeNull();
     expect(restoreNotificationRowFocus(root, 'n1', false)).toBe(true);
-    expect(focused).toBe(true);
-    expect(restoreNotificationRowFocus(root, 'missing', false)).toBe(false);
+    expect(focusedId).toBe('n1');
+    expect(restoreNotificationRowFocus(root, 'missing', false)).toBe(true);
+    expect(focusedId).toBe('n2');
+    expect(restoreNotificationRowFocus({ querySelector: () => null }, 'missing', false)).toBe(false);
   });
 
   it('formats relative timestamps cleanly in both vi and en without em dashes', () => {

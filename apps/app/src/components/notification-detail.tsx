@@ -12,6 +12,7 @@ import {
   formatRelativeNotificationTime,
   groupSubjectCount,
   notificationApp,
+  notificationRowId,
   notificationTarget,
   periodParts,
   type GroupableKind,
@@ -488,7 +489,7 @@ export function NotificationDetailActions({
   slug: string;
   row: NotificationRow<WorkNotification>;
   onMarkSingleRead: (id: string) => void;
-  onMarkGroupRead: (items: WorkNotification[]) => void;
+  onMarkGroupRead: (items: WorkNotification[], options?: { clearGroupSearch?: boolean }) => void;
   markPending: boolean;
 }) {
   const t = useTranslations('notifications');
@@ -503,7 +504,7 @@ export function NotificationDetailActions({
             variant="outline"
             loading={markPending}
             data-testid="notification-mark-group-read"
-            onClick={() => onMarkGroupRead(row.items)}
+            onClick={() => onMarkGroupRead(row.items, { clearGroupSearch: true })}
           >
             {t('markGroupRead')}
           </Button>
@@ -515,7 +516,7 @@ export function NotificationDetailActions({
             detail={{}}
             testId="notification-primary-cta"
             className={cn(buttonVariants({ variant: 'default', size: 'default' }), PHONE_TARGET)}
-            onClick={() => onMarkGroupRead(row.items)}
+            onClick={() => onMarkGroupRead(row.items, { clearGroupSearch: false })}
           >
             {t(`detail.actions.${groupTarget.to}`)}
           </NotificationTargetLink>
@@ -711,7 +712,7 @@ export function NotificationDetailPane({
   row: NotificationRow<WorkNotification> | null;
   cappedAtEnd?: boolean;
   onMarkSingleRead: (id: string) => void;
-  onMarkGroupRead: (items: WorkNotification[]) => void;
+  onMarkGroupRead: (items: WorkNotification[], options?: { clearGroupSearch?: boolean }) => void;
   markPending: boolean;
 }) {
   const t = useTranslations('notifications');
@@ -725,6 +726,7 @@ export function NotificationDetailPane({
     );
   }
 
+  const rowKey = notificationRowId(row);
   return (
     <div className="flex h-full flex-col">
       <div className="space-y-2 border-b border-border p-5">
@@ -737,7 +739,7 @@ export function NotificationDetailPane({
           )}
         </h2>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto p-5">
+      <div key={rowKey} className="min-h-0 flex-1 overflow-y-auto p-5">
         <NotificationDetailBody slug={slug} row={row} cappedAtEnd={cappedAtEnd} onMarkSingleRead={onMarkSingleRead} />
       </div>
       <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border p-4 empty:hidden">

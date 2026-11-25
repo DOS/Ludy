@@ -311,15 +311,16 @@ export function formatRelativeNotificationTime(iso: string, locale: Locale, nowM
   return rtf.format(Math.round(diffSec / (86_400 * 365)), 'year');
 }
 
-/** Return focus to the triggering feed row after closing the mobile notification detail Sheet. */
+/** Return focus to the triggering feed row (or the first remaining feed row) after closing the mobile detail Sheet. */
 export function restoreNotificationRowFocus(
   root: { querySelector: (selector: string) => { focus: () => void; isConnected?: boolean; tabIndex?: number } | null } | null | undefined,
   rowId: string | null,
   blocked: boolean,
 ): boolean {
-  if (!root || !rowId || blocked) return false;
-  const safeId = typeof CSS !== 'undefined' && typeof CSS.escape === 'function' ? CSS.escape(rowId) : rowId.replace(/["\\]/g, '\\$&');
-  const target = root.querySelector(`[data-notification-row="${safeId}"]`);
+  if (!root || blocked) return false;
+  const safeId = rowId ? (typeof CSS !== 'undefined' && typeof CSS.escape === 'function' ? CSS.escape(rowId) : rowId.replace(/["\\]/g, '\\$&')) : null;
+  const exact = safeId ? root.querySelector(`[data-notification-row="${safeId}"]`) : null;
+  const target = exact && exact.isConnected !== false ? exact : root.querySelector('[data-notification-row]');
   if (!target || target.isConnected === false || (target.tabIndex !== undefined && target.tabIndex < 0)) return false;
   target.focus();
   return true;
