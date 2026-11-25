@@ -38,7 +38,7 @@ import {
 
 type Pool = ReturnType<typeof createPool>;
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -85,7 +85,7 @@ function makePngBase64(width = 120, height = 40): string {
 const VALID_PNG_BASE64 = makePngBase64();
 
 suite('eSign retention & unsealed signer erasure (#3427, #3428 L4)', () => {
-  const dbName = `crove_test_sign_ret_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_sign_ret_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let adminPool: Pool | undefined;
   let appPool: Pool | undefined;
@@ -709,7 +709,7 @@ suite('eSign retention & unsealed signer erasure (#3427, #3428 L4)', () => {
 
     const appClient = await appPool!.connect();
     try {
-      const adminToken = mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', {
+      const adminToken = mintContextToken(process.env.LUDY_CONTEXT_TOKEN_KEY ?? process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', {
         userId: adminA,
         orgId: orgA,
         sessionId: null,
@@ -725,7 +725,7 @@ suite('eSign retention & unsealed signer erasure (#3427, #3428 L4)', () => {
       await appClient.query('ROLLBACK TO SAVEPOINT sp_non_owner');
       await appClient.query('ROLLBACK');
 
-      const ownerToken = mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', {
+      const ownerToken = mintContextToken(process.env.LUDY_CONTEXT_TOKEN_KEY ?? process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', {
         userId: ownerA,
         orgId: orgA,
         sessionId: null,

@@ -1,12 +1,12 @@
 // The CHECK-constraint unions of src/schema.ts against the database (issue #266). On a freshly migrated database it
-// reads every CHECK constraint that restricts one column of a table crove_tenant may read to a fixed set of values
+// reads every CHECK constraint that restricts one column of a table ludy_tenant may read to a fixed set of values
 // (`col IN (...)`, which PostgreSQL stores as `col = ANY (ARRAY[...])`, or `col = '...'`) and compares the values with
 // the const array schema.ts refines that column to; a set in a form it cannot read (an OR chain) fails the test
 // instead of being skipped. A migration that widens or narrows such a constraint, or adds one, fails here until
 // schema.ts follows. The type of UNIONS ties each array to the column's refined Kysely type, so `pnpm typecheck`
 // fails when an array and the refinement drift apart.
 //
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; the test creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; the test creates and drops its own database.
 import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import type { SelectType } from 'kysely';
@@ -308,7 +308,7 @@ import {
   type Database,
 } from '../src/schema.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SCHEMAS = ['ludy_kernel', 'ludy_finance', 'ludy_social', 'ludy_crm', 'ludy_notes', 'ludy_ads', 'ludy_hr', 'ludy_meetings', 'ludy_projects', 'ludy_sign'];
 const suite = ADMIN ? describe : describe.skip;
@@ -714,7 +714,7 @@ function markOrigins(definition: string): string[] | null {
 }
 
 suite('CHECK-constraint unions of schema.ts against the database', () => {
-  const dbName = `crove_test_check_unions_${Date.now()}_${randomBytes(4).toString('hex')}`;
+  const dbName = `ludy_test_check_unions_${Date.now()}_${randomBytes(4).toString('hex')}`;
   let admin: pg.Client;
   let created = false;
   let constraints: Constraint[] = [];

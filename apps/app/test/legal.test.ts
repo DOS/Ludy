@@ -13,8 +13,8 @@ describe('legal links', () => {
   });
 
   it('picks the sentence that fits the pages that are set', () => {
-    const terms = 'https://crove.example.com/legal/terms';
-    const privacy = 'https://crove.example.com/legal/privacy';
+    const terms = 'https://ludy.example.com/legal/terms';
+    const privacy = 'https://ludy.example.com/legal/privacy';
     expect(legalLinks({ termsUrl: terms, privacyUrl: privacy })).toEqual({ terms, privacy });
     expect(consentKey(legalLinks({ termsUrl: terms, privacyUrl: privacy }))).toBe('consentBoth');
     expect(consentKey(legalLinks({ termsUrl: terms }))).toBe('consentTerms');
@@ -22,7 +22,7 @@ describe('legal links', () => {
   });
 
   it('hides anything but an https: page', () => {
-    for (const url of ['javascript:alert(1)', 'http://crove.example.com/terms', 'mailto:legal@example.com', 'data:text/html,x', '/terms', 'not a url']) {
+    for (const url of ['javascript:alert(1)', 'http://ludy.example.com/terms', 'mailto:legal@example.com', 'data:text/html,x', '/terms', 'not a url']) {
       expect(legalLinks({ termsUrl: url, privacyUrl: url }), url).toEqual({ terms: null, privacy: null });
     }
   });

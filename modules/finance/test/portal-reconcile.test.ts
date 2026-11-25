@@ -1,4 +1,4 @@
-// Reconciling the tax portal's purchase list with Crove's purchases (#465): the match key, template and series
+// Reconciling the tax portal's purchase list with Ludy's purchases (#465): the match key, template and series
 // variants, the fallback without a tax code, amounts as a check, cancelled and replaced invoices, duplicates, period
 // scoping; the portal status words; and the worker's second check of the sandbox's answer.
 import { describe, expect, it } from 'vitest';

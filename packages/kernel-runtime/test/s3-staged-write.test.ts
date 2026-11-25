@@ -95,7 +95,7 @@ function fakeS3(options: { versionId?: string; shortBy?: number; store?: Constru
       throw new Error(`unexpected command ${(command as object).constructor.name}`);
     },
   } as unknown as S3Sender;
-  return { store: new S3BlobStore(client, 'crove-files', { presigner: {} as never, ...options.store }), objects, uploads, sent, copies };
+  return { store: new S3BlobStore(client, 'ludy-files', { presigner: {} as never, ...options.store }), objects, uploads, sent, copies };
 }
 
 const orgId = randomUUID();
@@ -242,7 +242,7 @@ describe('S3BlobStore openStaged', () => {
         cancel: () => onCancel?.(),
       }),
   });
-  const storeAnswering = (answer: () => unknown) => new S3BlobStore({ send: async () => answer() } as unknown as S3Sender, 'crove-files', { presigner: {} as never });
+  const storeAnswering = (answer: () => unknown) => new S3BlobStore({ send: async () => answer() } as unknown as S3Sender, 'ludy-files', { presigner: {} as never });
 
   it('stops a body that passes the cap while it streams, though it declared less', async () => {
     const store = storeAnswering(() => ({ ContentLength: 500, Body: bodyOf([600, 600]) }));

@@ -1,4 +1,4 @@
-// Posts published outside Crove on the Metrics tab (#1054): one list with Crove's own by publish time, the switch and
+// Posts published outside Ludy on the Metrics tab (#1054): one list with Ludy's own by publish time, the switch and
 // its hint, the chip, and a link to the post only when its page is https. Rendered on the server.
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';

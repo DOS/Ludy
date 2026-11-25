@@ -35,7 +35,7 @@ describe('encodeQrMatrix and qrSvgPath', () => {
     const samples = [
       'qr=short-1', // Version 1 (21x21)
       'https://app.ludy.vn/o/demo-org/hr/my?qr=secret-office-token-123', // Version 4 (33x33)
-      `https://app.ludy.vn/o/cong-ty-tnhh-thuong-mai-crove/hr/my?qr=${'a'.repeat(110)}`, // Version 7+ (>= 45x45 with version info)
+      `https://app.ludy.vn/o/cong-ty-tnhh-thuong-mai-ludy/hr/my?qr=${'a'.repeat(110)}`, // Version 7+ (>= 45x45 with version info)
     ];
 
     for (const payload of samples) {

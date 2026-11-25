@@ -45,7 +45,7 @@ describe('loadTranscriptSet', () => {
   });
 
   it('refuses a recording with no reference and a reference with no recording, and names the files', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'crove-transcribe-set-'));
+    const dir = mkdtempSync(join(tmpdir(), 'ludy-transcribe-set-'));
     mkdirSync(join(dir, 'sub'));
     writeFileSync(join(dir, 'ok.ogg'), 'x');
     writeFileSync(join(dir, 'ok.txt'), 'xin chào');
@@ -68,7 +68,7 @@ describe('loadTranscriptSet', () => {
   });
 
   it('matches an upper-case .TXT reference and reads it from its own path, and does not follow a symbolic link out of the set', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'crove-transcribe-case-'));
+    const dir = mkdtempSync(join(tmpdir(), 'ludy-transcribe-case-'));
     writeFileSync(join(dir, 'hop.ogg'), 'x');
     writeFileSync(join(dir, 'hop.TXT'), 'xin chào');
     symlinkSync(dir, join(dir, 'loop'));
@@ -78,7 +78,7 @@ describe('loadTranscriptSet', () => {
   });
 
   it('refuses a directory with no recording at all', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'crove-transcribe-empty-'));
+    const dir = mkdtempSync(join(tmpdir(), 'ludy-transcribe-empty-'));
     expect(() => loadTranscriptSet(dir)).toThrow(/holds no recording/);
   });
 });

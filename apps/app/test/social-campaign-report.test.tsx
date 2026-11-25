@@ -109,7 +109,7 @@ function report(locale: 'vi' | 'en', data: unknown): string {
 describe('a campaign report link, its audience choice and Reels watch time (#1159)', () => {
   const saved = (globalThis as { window?: unknown }).window;
   beforeAll(() => {
-    (globalThis as { window?: unknown }).window = { location: { hash: `#${TOKEN}`, origin: 'https://crove.example' }, localStorage: { getItem: () => null, setItem: () => undefined } };
+    (globalThis as { window?: unknown }).window = { location: { hash: `#${TOKEN}`, origin: 'https://ludy.example' }, localStorage: { getItem: () => null, setItem: () => undefined } };
   });
   afterAll(() => {
     (globalThis as { window?: unknown }).window = saved;

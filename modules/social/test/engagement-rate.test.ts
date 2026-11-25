@@ -5,7 +5,7 @@ describe('engagement rate (#1157)', () => {
   it('counts engagement as the client report and the goals do, over reach', () => {
     expect(GOAL_ENGAGEMENT_COUNTS).toEqual(['reactions', 'comments', 'shares', 'saves', 'clicks']);
     const rate = engagementRate({ reach: 2000, impressions: 5000, views: 9000, reactions: 40, comments: 10, shares: 5, saves: 4, clicks: 10, linkClicks: 99 });
-    // 69 of 2000 people reached; impressions, views and Crove's link clicks take no part.
+    // 69 of 2000 people reached; impressions, views and Ludy's link clicks take no part.
     expect(rate).toEqual({ rate: 69 / 2000, basis: 'reach', engagement: 69, denominator: 2000 });
     expect(rate && engagementRatePercent(rate)).toBe(3.45);
   });

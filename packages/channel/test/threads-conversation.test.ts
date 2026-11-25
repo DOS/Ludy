@@ -19,7 +19,7 @@ const APP = { appId: '987654321', appSecret: 'threads-secret-not-real-0123456789
 const USER = '17841400000000777';
 const POST = '18000000000000001';
 const SECRET = JSON.stringify({ accessToken: 'threads-token-1' });
-const REDIRECT = 'https://crove.example/channels/oauth/threads/callback';
+const REDIRECT = 'https://ludy.example/channels/oauth/threads/callback';
 const NOW = Date.parse('2026-11-13T12:00:00Z');
 
 type Answer = { status?: number; body?: unknown; network?: true };

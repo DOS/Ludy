@@ -69,7 +69,7 @@ describe('auto-replies on likes (#746)', () => {
     expect(codes('threads', { text: 'a', likes: 2.5 })).toEqual([['AUTO_REPLY_INVALID', 'settings.autoReply', 1_000_000, null]]);
     expect(codes('threads', 'Cảm ơn')).toEqual([['AUTO_REPLY_INVALID', 'settings.autoReply', 1_000_000, null]]);
     expect(codes('threads', { text: '😀'.repeat(501), likes: 5 })).toEqual([['AUTO_REPLY_TOO_LONG', 'settings.autoReply.text', 500, 501]]);
-    // X and LinkedIn report no like counts to Crove yet.
+    // X and LinkedIn report no like counts to Ludy yet.
     expect(codes('x', { text: 'a', likes: 5 })).toEqual([['AUTO_REPLY_NOT_SUPPORTED', 'settings.autoReply', null, null]]);
     expect(codes('linkedin', { text: 'a', likes: 5 })).toEqual([['AUTO_REPLY_NOT_SUPPORTED', 'settings.autoReply', null, null]]);
     expect(codes('instagram', { text: 'a', likes: 5 })).toContainEqual(['AUTO_REPLY_NOT_SUPPORTED', 'settings.autoReply', null, null]);
@@ -81,7 +81,7 @@ describe('first comments (#587)', () => {
   const base = { body: 'Khai trương', title: null, media: [] };
   // Only the comment's own issues: a Zalo OA or Instagram post here also lacks its required media.
   const commentIssues = (provider: Provider, firstComment: string) => validateVariant({ ...base, provider, settings: { firstComment } }).filter((i) => i.field === 'settings.firstComment');
-  it('checks the comment against the channel limit, and refuses it where Crove posts none', () => {
+  it('checks the comment against the channel limit, and refuses it where Ludy posts none', () => {
     expect(validateVariant({ ...base, provider: 'x', settings: { firstComment: '#a #b' } })).toEqual([]);
     expect(validateVariant({ ...base, provider: 'x', settings: { firstComment: 'ệ'.repeat(141) } })).toEqual([{ code: 'COMMENT_TOO_LONG', field: 'settings.firstComment', limit: 280, actual: 282 }]);
     expect(commentIssues('zalo_oa', '#a').map((i) => i.code)).toEqual(['COMMENT_NOT_SUPPORTED']);

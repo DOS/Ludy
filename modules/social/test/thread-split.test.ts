@@ -175,7 +175,7 @@ const word = fc.oneof(
   { weight: 2, arbitrary: fc.constantFrom('mừng'.normalize('NFD'), 'Hồ Gươm'.normalize('NFD'), 'tiệm'.normalize('NFD')) },
   { weight: 2, arbitrary: fc.constantFrom('😀', '👍🏽', '👨‍👩‍👧', '🇻🇳', '1️⃣', '❤️') },
   { weight: 2, arbitrary: fc.constantFrom('#BánhMì', '#sale2024', '@tiembanh', '@an.nhien_vn') },
-  { weight: 1, arbitrary: fc.constantFrom('https://tiembanh.vn/thuc-don?ngay=hom-nay', 'crove.vn/gia', 'www.example.com/a/b', 'hi@tiembanh.vn') },
+  { weight: 1, arbitrary: fc.constantFrom('https://tiembanh.vn/thuc-don?ngay=hom-nay', 'ludy.vn/gia', 'www.example.com/a/b', 'hi@tiembanh.vn') },
   { weight: 1, arbitrary: fc.constantFrom('khuyến mãi', 'SALE', 'Đặc sản').map((w) => styleText(w, 'bold')) },
   { weight: 1, arbitrary: fc.integer({ min: 40, max: 400 }).map((n) => 'ạ'.repeat(n)) },
 );

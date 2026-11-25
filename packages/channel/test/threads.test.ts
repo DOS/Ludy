@@ -6,7 +6,7 @@ import { ThreadsConnector, ThreadsPublisher, ThreadsRefresher, type Fetch, type 
 const APP = { appId: '987654321', appSecret: 'test-threads-secret-not-real' };
 const USER = '17841400000000777';
 const SECRET = JSON.stringify({ accessToken: 'threads-token-1' });
-const REDIRECT = 'https://crove.example/channels/oauth/threads/callback';
+const REDIRECT = 'https://ludy.example/channels/oauth/threads/callback';
 
 function threads(routes: Record<string, { status?: number; body: unknown }[]>) {
   const calls: { route: string; form: Record<string, string>; query: URLSearchParams; auth: string | null }[] = [];

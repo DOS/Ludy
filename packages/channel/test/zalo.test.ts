@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { newOAuthAttempt, ZaloOaConnector, ZaloOaPublisher, ZaloOaRefresher, type EditInput, type Fetch, type PublishInput, type RemoveInput } from '../src/index.ts';
 
 const APP = { appId: '4318000000000000001', appSecret: 'test-zalo-secret-not-real' };
-const REDIRECT = 'https://crove.example/channels/oauth/zalo_oa/callback';
+const REDIRECT = 'https://ludy.example/channels/oauth/zalo_oa/callback';
 const SECRET = JSON.stringify({ accessToken: 'zalo-access-1', refreshToken: 'zalo-refresh-1' });
 
 function zalo(routes: Record<string, { status?: number; body: unknown }[]>) {
@@ -69,7 +69,7 @@ describe('ZaloOaRefresher', () => {
     expect(await new ZaloOaRefresher(APP, refused.fetchImpl).refresh(SECRET)).toEqual({ refused: '-14020' });
     const down = zalo({ 'POST oauth.zaloapp.com/v4/oa/access_token': [{ status: 503, body: {} }] });
     expect(await new ZaloOaRefresher(APP, down.fetchImpl).refresh(SECRET)).toEqual({ failed: '503' });
-    // A rate limit, or an error code Crove does not know, is not a dead token: the next sweep tries again.
+    // A rate limit, or an error code Ludy does not know, is not a dead token: the next sweep tries again.
     const limited = zalo({ 'POST oauth.zaloapp.com/v4/oa/access_token': [{ status: 429, body: { error: -32, message: 'Too many requests' } }] });
     expect(await new ZaloOaRefresher(APP, limited.fetchImpl).refresh(SECRET)).toEqual({ failed: '-32' });
     const odd = zalo({ 'POST oauth.zaloapp.com/v4/oa/access_token': [{ body: { error: -9999, message: 'Something else' } }] });

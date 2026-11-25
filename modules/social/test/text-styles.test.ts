@@ -66,9 +66,9 @@ describe('styleSelection', () => {
   });
 
   it('keeps hashtags, @mentions, links, emails and emoji in the selection as they are, even ones it cuts', () => {
-    const text = 'Sale #khuyenmai @lan.anh xem crove.vn/gia, https://x.com/a, www.crove.vn và hi@crove.vn 1️⃣ 🇻🇳 👍🏽 #️⃣ ok';
+    const text = 'Sale #khuyenmai @lan.anh xem ludy.vn/gia, https://x.com/a, www.ludy.vn và hi@ludy.example 1️⃣ 🇻🇳 👍🏽 #️⃣ ok';
     const bold = all(text, 'bold');
-    for (const token of ['#khuyenmai', '@lan.anh', 'crove.vn/gia', 'https://x.com/a', 'www.crove.vn', 'hi@crove.vn', '1️⃣', '🇻🇳', '👍🏽', '#️⃣']) expect(bold).toContain(token);
+    for (const token of ['#khuyenmai', '@lan.anh', 'ludy.vn/gia', 'https://x.com/a', 'www.ludy.vn', 'hi@ludy.example', '1️⃣', '🇻🇳', '👍🏽', '#️⃣']) expect(bold).toContain(token);
     expect(bold.startsWith(styleText('Sale', 'bold'))).toBe(true);
     expect(bold.endsWith(styleText('ok', 'bold'))).toBe(true);
     expect(all(bold, null)).toBe(text);

@@ -6,7 +6,7 @@
 // - archive preserves existing employees while blocking new assignment to archived departments;
 // - active headcount and exact Decimal baseWageTotal rollup as of today (excluding ended employees and future terms);
 // - employee list filtering, edit clearing (null), ended-employee refusal, erasure clearing, offboarding export, and org_purge order.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; the run creates and drops its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -17,14 +17,14 @@ import type { HrDepartmentView, HrEmployee, HrEmployeeSummary, HrWritten } from 
 import { CredentialVault, Runtime, SUBJECT_WRAP_INFO, SubjectVault, parseVaultKey } from '@ludy/kernel-runtime';
 import { hrCommands, hrManifest, hrQueries } from '../src/index.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 type PoolHandle = ReturnType<typeof createPool>;
 
 suite('HR departments & employee assignment (#3412)', () => {
-  const dbName = `crove_test_hr_dept_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_hr_dept_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let adminPool: PoolHandle;
   let appPool: PoolHandle;

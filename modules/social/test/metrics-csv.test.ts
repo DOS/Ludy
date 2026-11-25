@@ -56,7 +56,7 @@ describe('metrics CSV (#578)', () => {
     expect(rate({ impressions: 300, reactions: 1 })).toBe('0.33');
     expect(rate({ views: 300, reactions: 1 })).toBe('');
     expect(rate({ reach: 0, reactions: 1 })).toBe('');
-    // Crove's short link clicks (the row's clicks) are not the platform's and take no part.
+    // Ludy's short link clicks (the row's clicks) are not the platform's and take no part.
     expect(rate({ reach: 100 })).toBe('');
   });
 

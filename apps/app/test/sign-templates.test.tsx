@@ -134,8 +134,8 @@ function assertPairedLabels(html: string): void {
 describe('eSign templates UI components (#3526)', () => {
   it('formats direct signing links strictly in the URL fragment (/-/sign/d#<token>)', () => {
     const token = 'A'.repeat(43);
-    const url = buildDirectSigningUrl(token, 'https://app.crove.vn');
-    expect(url).toBe(`https://app.crove.vn/-/sign/d#${token}`);
+    const url = buildDirectSigningUrl(token, 'https://app.ludy.vn');
+    expect(url).toBe(`https://app.ludy.vn/-/sign/d#${token}`);
     expect(url).not.toContain('?token=');
   });
 
@@ -171,7 +171,7 @@ describe('eSign templates UI components (#3526)', () => {
   it('renders TemplateRolesCard and DirectLinkCard in vi and en with paired labels and zero secret leaks', () => {
     const detail = makeTemplateDetail();
     const freshToken = 'B'.repeat(43);
-    const freshUrl = buildDirectSigningUrl(freshToken, 'https://app.crove.vn');
+    const freshUrl = buildDirectSigningUrl(freshToken, 'https://app.ludy.vn');
 
     for (const locale of ['vi', 'en'] as const) {
       const rolesHtml = renderToStaticMarkup(

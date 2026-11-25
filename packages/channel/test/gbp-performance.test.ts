@@ -52,7 +52,7 @@ describe('GoogleBusinessPublisher.accountMetrics', () => {
                 series('BUSINESS_IMPRESSIONS_DESKTOP_SEARCH', [['2026-10-20', '20']]),
                 series('BUSINESS_IMPRESSIONS_MOBILE_MAPS', [['2026-10-20', '30'], ['2026-10-21', '2']]),
                 series('BUSINESS_IMPRESSIONS_MOBILE_SEARCH', [['2026-10-20', '40']]),
-                // A metric Crove does not ask for, a breakdown and a day out of the range are not counted.
+                // A metric Ludy does not ask for, a breakdown and a day out of the range are not counted.
                 series('BUSINESS_BOOKINGS', [['2026-10-20', '99']]),
                 series('CALL_CLICKS', [['2026-10-20', '50']], { dailySubEntityType: { dayOfWeek: 'MONDAY' } }),
                 series('WEBSITE_CLICKS', [['2026-10-25', '9'], ['2026-10-10', '9']]),

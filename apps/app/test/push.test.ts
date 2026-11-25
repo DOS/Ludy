@@ -1,5 +1,5 @@
 // Browser push in the SPA (#1238): the one Trusted Types policy passes only the service worker's own URL, the policy is
-// created once and only when push is turned on, and the service worker shows a push and opens only a Crove path of
+// created once and only when push is turned on, and the service worker shows a push and opens only a Ludy path of
 // its own origin, with no fetch handler and no imported script.
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
@@ -111,7 +111,7 @@ function loadWorker() {
   const shown: { title: string; options: Record<string, unknown> }[] = [];
   const opened: string[] = [];
   const self = {
-    location: { origin: 'https://crove.example' },
+    location: { origin: 'https://ludy.example' },
     addEventListener: (type: string, fn: (event: unknown) => void) => listeners.set(type, fn),
     skipWaiting: () => undefined,
     clients: { claim: async () => undefined, openWindow: async (url: string) => (opened.push(url), null) },
@@ -137,21 +137,21 @@ describe('the service worker', () => {
     expect(code).not.toMatch(/importScripts|addEventListener\(\s*['"]fetch|caches\b|\bfetch\s*\(|\beval\b|new Function/);
   });
 
-  it('shows the push and opens a Crove path of its own origin', async () => {
+  it('shows the push and opens a Ludy path of its own origin', async () => {
     const w = loadWorker();
-    await w.fire('push', { data: { json: () => ({ title: 'Crove', body: 'Có bài đang chờ bạn duyệt', url: POST, tag: 'review_requested:x' }) } });
-    expect(w.shown).toEqual([{ title: 'Crove', options: { body: 'Có bài đang chờ bạn duyệt', tag: 'review_requested:x', icon: '/assets/icon-192.png', data: { path: POST } } }]);
+    await w.fire('push', { data: { json: () => ({ title: 'Ludy', body: 'Có bài đang chờ bạn duyệt', url: POST, tag: 'review_requested:x' }) } });
+    expect(w.shown).toEqual([{ title: 'Ludy', options: { body: 'Có bài đang chờ bạn duyệt', tag: 'review_requested:x', icon: '/assets/icon-192.png', data: { path: POST } } }]);
     let closed = false;
     await w.fire('notificationclick', { notification: { data: w.shown[0]?.options.data, close: () => (closed = true) } });
     expect(closed).toBe(true);
-    expect(w.opened).toEqual([`https://crove.example${POST}`]);
+    expect(w.opened).toEqual([`https://ludy.example${POST}`]);
   });
 
   it('opens the posts assigned to the reader (#1359)', async () => {
     const w = loadWorker();
-    await w.fire('push', { data: { json: () => ({ title: 'Crove', body: 'Bạn được giao 3 bài mới', url: '/o/acme/social?assignee=me', tag: 'assigned:x' }) } });
+    await w.fire('push', { data: { json: () => ({ title: 'Ludy', body: 'Bạn được giao 3 bài mới', url: '/o/acme/social?assignee=me', tag: 'assigned:x' }) } });
     await w.fire('notificationclick', { notification: { data: w.shown[0]?.options.data, close: () => undefined } });
-    expect(w.opened).toEqual(['https://crove.example/o/acme/social?assignee=me']);
+    expect(w.opened).toEqual(['https://ludy.example/o/acme/social?assignee=me']);
   });
 
   it('opens a meeting and the meetings list (#3736)', async () => {
@@ -161,7 +161,7 @@ describe('the service worker', () => {
       await w.fire('push', { data: { json: () => ({ title: 'Ludy', body: 'Bản nháp biên bản đã sẵn sàng để bạn xem', url, tag: 'meetings.summary_ready:x' }) } });
     }
     for (const shown of w.shown) await w.fire('notificationclick', { notification: { data: shown.options.data, close: () => undefined } });
-    expect(w.opened).toEqual([`https://crove.example${MEETING}`, 'https://crove.example/o/acme/meetings']);
+    expect(w.opened).toEqual([`https://ludy.example${MEETING}`, 'https://ludy.example/o/acme/meetings']);
   });
 
   it('opens nothing for a meetings link that is not a notification path (#3736)', async () => {
@@ -173,10 +173,10 @@ describe('the service worker', () => {
     expect(w.opened).toEqual([]);
   });
 
-  it('opens nothing for a link that is not a Crove notification path', async () => {
+  it('opens nothing for a link that is not a Ludy notification path', async () => {
     const w = loadWorker();
     for (const url of ['https://evil.example/o/acme/social/channels', '//evil.example/o/acme/social/channels', 'javascript:alert(1)', '/o/acme/settings', '/o/acme/social/channels?x=1', `${POST}#x`, '/o/acme/social/new?channel=x', '/o/acme/social?assignee=other', '/o/acme/social?assignee=me&x=1', '/o/acme/social']) {
-      await w.fire('push', { data: { json: () => ({ title: 'Crove', body: 'x', url }) } });
+      await w.fire('push', { data: { json: () => ({ title: 'Ludy', body: 'x', url }) } });
       await w.fire('notificationclick', { notification: { data: w.shown.at(-1)?.options.data, close: () => undefined } });
     }
     expect(w.shown.every((s) => (s.options.data as { path: unknown }).path === null)).toBe(true);

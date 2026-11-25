@@ -143,7 +143,7 @@ function input(overrides: Partial<BctcInput> = {}): BctcInput {
   };
 }
 
-const taxpayer: BctcTaxpayer = { taxCode: '0101234564', name: 'Công ty TNHH Crove Demo', address: '1 Đường Mẫu, Quận 1' };
+const taxpayer: BctcTaxpayer = { taxCode: '0101234564', name: 'Công ty TNHH Ludy Demo', address: '1 Đường Mẫu, Quận 1' };
 const samples: Record<string, string> = {};
 function build(name: string, i: BctcInput, who = taxpayer): string {
   const xml = buildStatementsXml(i, who, { today: '2027-03-15' });
@@ -234,9 +234,9 @@ describe('buildStatementsXml', () => {
   });
 
   it('escapes the org name and keeps it and the address on one line', () => {
-    const xml = build('escape', input(), { taxCode: '0101234564', name: 'A & B <"Crove">\n  Demo', address: null });
+    const xml = build('escape', input(), { taxCode: '0101234564', name: 'A & B <"Ludy">\n  Demo', address: null });
     const { text } = read(xml);
-    expect(text.get(`${NNT}/tenNNT`)).toBe('A & B <"Crove"> Demo');
+    expect(text.get(`${NNT}/tenNNT`)).toBe('A & B <"Ludy"> Demo');
     expect(text.get(`${NNT}/dchiNNT`)).toBeUndefined();
   });
 

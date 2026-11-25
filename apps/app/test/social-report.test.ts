@@ -25,7 +25,7 @@ describe('client report links (#643)', () => {
   });
 
   it('keeps the token after the #', () => {
-    expect(reportUrl('https://app.crove.test', 'a'.repeat(43))).toBe(`https://app.crove.test/-/report#${'a'.repeat(43)}`);
+    expect(reportUrl('https://app.ludy.test', 'a'.repeat(43))).toBe(`https://app.ludy.test/-/report#${'a'.repeat(43)}`);
   });
 });
 

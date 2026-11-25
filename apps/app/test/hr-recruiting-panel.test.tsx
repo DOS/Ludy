@@ -175,7 +175,7 @@ const sampleDepartment: HrDepartmentView = {
 
 const sampleEntity: LegalEntity = {
   id: ENTITY_ID,
-  name: 'Công ty TNHH Crove',
+  name: 'Công ty TNHH Ludy',
   kind: 'company',
   taxCode: '0312345678',
   parentId: null,

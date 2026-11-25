@@ -25,14 +25,14 @@ import {
 import { CredentialVault, Runtime, SUBJECT_WRAP_INFO, SubjectVault, parseVaultKey } from '@ludy/kernel-runtime';
 import { hrCommands, hrManifest, hrQueries, hrToday, labor01PliWindowFor } from '../src/index.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 type PoolHandle = ReturnType<typeof createPool>;
 
 suite('HR Home Today alerts (#4444)', () => {
-  const dbName = `crove_test_hr_today_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_hr_today_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let adminPool: PoolHandle;
   let appPool: PoolHandle;

@@ -5,8 +5,8 @@ import { duplicateText, newestDuplicate, refusesDuplicates, styleSelection, styl
 describe('duplicateText (#1156)', () => {
   it('drops links, t.co ones and bare hosts alike', () => {
     expect(duplicateText('Khai trương chi nhánh mới\n\nhttps://t.co/abc123 https://t.co/media1')).toBe('Khai trương chi nhánh mới');
-    expect(duplicateText('Khai trương chi nhánh mới https://crove.vn/khai-truong')).toBe(duplicateText('Khai trương chi nhánh mới https://t.co/x1'));
-    expect(duplicateText('Xem crove.vn/gia nhé')).toBe('Xem nhé');
+    expect(duplicateText('Khai trương chi nhánh mới https://ludy.vn/khai-truong')).toBe(duplicateText('Khai trương chi nhánh mới https://t.co/x1'));
+    expect(duplicateText('Xem ludy.vn/gia nhé')).toBe('Xem nhé');
     // Not a link: a host on a TLD X does not find without a scheme stays, as in comparableText.
     expect(duplicateText('TP.HCM hôm nay')).toBe('TP.HCM hôm nay');
   });
@@ -30,7 +30,7 @@ describe('duplicateText (#1156)', () => {
 
   it('compares styled letters (#1179) as their plain ones, links included', () => {
     expect(duplicateText(styleText('Ưu đãi cuối tuần', 'bold'))).toBe('Ưu đãi cuối tuần');
-    expect(duplicateText(`${styleText('Khuyến mãi', 'italic')} ${styleText('crove.vn/gia', 'bold')}`)).toBe('Khuyến mãi');
+    expect(duplicateText(`${styleText('Khuyến mãi', 'italic')} ${styleText('ludy.vn/gia', 'bold')}`)).toBe('Khuyến mãi');
     const half = styleSelection('Ưu đãi cuối tuần #sale', 0, 6, 'boldItalic').text;
     expect(duplicateText(half)).toBe(duplicateText('Ưu đãi cuối tuần #sale'));
     // Still case sensitive: a bold capital is a capital.
@@ -38,7 +38,7 @@ describe('duplicateText (#1156)', () => {
   });
 
   it('compares as the X adapter compares a post with what it sent', () => {
-    for (const text of ['a &lt;b&gt; &amp; c https://t.co/x', 'Khai trương crove.vn/a\n\n  mới', 'Việt'.normalize('NFD'), '&amp;lt;', '', ' https://a.vn ']) {
+    for (const text of ['a &lt;b&gt; &amp; c https://t.co/x', 'Khai trương ludy.vn/a\n\n  mới', 'Việt'.normalize('NFD'), '&amp;lt;', '', ' https://a.vn ']) {
       expect(duplicateText(text)).toBe(comparableText(text));
     }
   });
@@ -54,7 +54,7 @@ describe('newestDuplicate (#1156)', () => {
   ];
 
   it('names the newest match, scheduled ahead of published', () => {
-    expect(newestDuplicate('Ưu đãi cuối tuần https://crove.vn/uu-dai', candidates)).toEqual({ at: '2026-10-30T02:00:00.000Z', status: 'queued' });
+    expect(newestDuplicate('Ưu đãi cuối tuần https://ludy.vn/uu-dai', candidates)).toEqual({ at: '2026-10-30T02:00:00.000Z', status: 'queued' });
     expect(newestDuplicate('Ưu đãi cuối tuần', candidates.slice(0, 2))).toEqual({ at: '2026-10-20T02:00:00.000Z', status: 'published' });
   });
 

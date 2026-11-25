@@ -6,7 +6,7 @@ import { LINKEDIN_DOCUMENT_MAX_BYTES, LINKEDIN_DOCUMENT_TITLE_MAX, LINKEDIN_VERS
 const APP = { clientId: '86abcdefgh1234', clientSecret: 'test-linkedin-secret-not-real' };
 const MEMBER = 'yrZCpj2Z12';
 const SECRET = JSON.stringify({ accessToken: 'li-token-1' });
-const REDIRECT = 'https://crove.example/channels/oauth/linkedin/callback';
+const REDIRECT = 'https://ludy.example/channels/oauth/linkedin/callback';
 const UPLOAD = 'https://www.linkedin.com/dms-uploads/sp/v2/D4D10AQ/upload?ca=vector_feedshare';
 
 type Answer = { status?: number; body?: unknown; headers?: Record<string, string> };
@@ -363,7 +363,7 @@ describe('LinkedIn post counts (#797)', () => {
 // Company Pages (#1077), against answers shaped like the Organization Access Control, Organization Lookup, Posts,
 // Images, Videos and Comments API docs (Community Management API, Linkedin-Version 202604); no live call.
 describe('LinkedIn Company Pages (#1077)', () => {
-  const PAGE_REDIRECT = 'https://crove.example/channels/oauth/linkedin_page/callback';
+  const PAGE_REDIRECT = 'https://ludy.example/channels/oauth/linkedin_page/callback';
   const ORG_A = '2414183';
   const ORG_B = '79988552';
   const ACL = '/rest/organizationAcls';
