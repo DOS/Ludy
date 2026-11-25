@@ -9,10 +9,15 @@
 import { sql } from 'kysely';
 import { z } from 'zod';
 import type { MemberRole } from '@ludy/db';
-import { FOLLOWUP_MAIL_SOURCE } from '@ludy/kernel-contract';
+import { FOLLOWUP_MAIL_SOURCE, TRACKER_ALERT_MAIL_SOURCE } from '@ludy/kernel-contract';
 import { DomainError, defineCommand, defineQuery, exportKey, GENERATION_PATTERN, type QueryContext } from '@ludy/kernel-runtime';
 
 const OWNERS: readonly MemberRole[] = ['owner'];
+
+// The mail of a meeting's text or of what a meeting holds is left out of the owner's copy of the mail log, its delivery events and the pointers of the suppression list: the follow-up mails of a meeting (#4533)
+// and the tracked-word alert (#4873), whose payload counts the words found in a meeting that may be attendees-only, which the export leaves out. Constant names, never input: they go into the queries below as text.
+const MAIL_SOURCES_LEFT_OUT: readonly string[] = [FOLLOWUP_MAIL_SOURCE, TRACKER_ALERT_MAIL_SOURCE];
+const LEFT_OUT_LIST = MAIL_SOURCES_LEFT_OUT.map((source) => `'${source}'`).join(', ');
 
 // The tables an export contains, with the columns left out. Machinery (idempotency keys, outbox, session records,
 // inbound address tokens and drop counts) is not tenant data and stays out; so do secrets: the inbound token (the
@@ -64,14 +69,15 @@ export const EXPORT_TABLES = {
   'kernel.conversation_draft': { from: 'ludy_kernel.conversation_draft', omit: [] },
   'kernel.saved_reply': { from: 'ludy_kernel.saved_reply', omit: [] },
   'kernel.conversation_note': { from: 'ludy_kernel.conversation_note', omit: [] },
+  // The mail sources left out below (MAIL_SOURCES_LEFT_OUT: the follow-up mails and the tracked-word alert, #4873) are treated alike in the three tables.
   // Outbound mail (#538): the mail log, its delivery events (#539) and the org's suppression list. The address hashes
   // are keyed by the deployment. The follow-up mails of a meeting (#4533, ADR-0047) are left out: each holds the meeting's summary, decisions and action items or a note about it (payload),
   // the subject the recorder typed and the recipients, and the meeting may be attendees-only, which the export leaves out. The mail log drops the payload 30 days after a mail reaches a final
   // status (mail_retention_purge), but keeps the address and the subject for 13 months, so the rows stay out for as long as they exist. The delivery events (#4577) follow their mail: an event is
   // exported only when its mail is (a mail_event always has its message, by foreign key; the anti-join touches only the small follow-up set), so no event points at a message the snapshot does not hold. A suppression row (#4584) is kept whole except that its source_message_id is nulled when it names a follow-up mail (the scrub in the snapshot query below).
-  'kernel.mail_message': { from: `(SELECT m.* FROM ludy_kernel.mail_message m WHERE m.source <> '${FOLLOWUP_MAIL_SOURCE}')`, omit: [] },
+  'kernel.mail_message': { from: `(SELECT m.* FROM ludy_kernel.mail_message m WHERE m.source NOT IN (${LEFT_OUT_LIST}))`, omit: [] },
   'kernel.mail_suppression': { from: 'ludy_kernel.mail_suppression', omit: [] },
-  'kernel.mail_event': { from: `(SELECT e.* FROM ludy_kernel.mail_event e WHERE NOT EXISTS (SELECT 1 FROM ludy_kernel.mail_message m WHERE m.org_id = e.org_id AND m.id = e.message_id AND m.source = '${FOLLOWUP_MAIL_SOURCE}'))`, omit: [] },
+  'kernel.mail_event': { from: `(SELECT e.* FROM ludy_kernel.mail_event e WHERE NOT EXISTS (SELECT 1 FROM ludy_kernel.mail_message m WHERE m.org_id = e.org_id AND m.id = e.message_id AND m.source IN (${LEFT_OUT_LIST})))`, omit: [] },
   // What the org's people decided and set up in the kernel (#3367): budgets and kill switches, how long a proposal waits, the tax profile and the filings marked done,
   // the voucher number series with every allocation and void, which legal entity a record belongs to, the views members shared, availability, permission overrides and the Inbox.
   // What row security keeps to one member (notifications and their mutes, the daily mail setting, a member's own calendar and meeting platform accounts, private views)
@@ -521,7 +527,7 @@ export const exportSnapshot = defineQuery({
         table === 'kernel.audit_event'
           ? sql`|| pg_catalog.jsonb_build_object('detail', CASE WHEN pg_catalog.jsonb_typeof(t.detail) = 'object' THEN t.detail - 'workerInstance' ELSE t.detail END)`
           : table === 'kernel.mail_suppression'
-            ? sql`|| CASE WHEN t.source_message_id IS NOT NULL AND EXISTS (SELECT 1 FROM ludy_kernel.mail_message m WHERE m.org_id = t.org_id AND m.id = t.source_message_id AND m.source = ${FOLLOWUP_MAIL_SOURCE}) THEN pg_catalog.jsonb_build_object('source_message_id', NULL) ELSE '{}'::jsonb END`
+            ? sql`|| CASE WHEN t.source_message_id IS NOT NULL AND EXISTS (SELECT 1 FROM ludy_kernel.mail_message m WHERE m.org_id = t.org_id AND m.id = t.source_message_id AND m.source IN (${sql.join(MAIL_SOURCES_LEFT_OUT)})) THEN pg_catalog.jsonb_build_object('source_message_id', NULL) ELSE '{}'::jsonb END`
             : table === 'projects.roadmap_signal'
               ? sql`|| CASE WHEN t.source_type = 'meetings.meeting' AND NOT EXISTS (SELECT 1 FROM ludy_kernel.meeting_export_rows() m WHERE m.org_id = t.org_id AND m.id = t.source_id) THEN pg_catalog.jsonb_build_object('quote_excerpt', NULL) ELSE '{}'::jsonb END`
               : sql``;

@@ -349,6 +349,47 @@ suite('Tracker alerts (#4873)', () => {
     }
   });
 
+  // The owner's org export: the alert mail's payload counts the words found in a meeting that may be attendees-only, so the mail, its delivery events and the pointer of a suppression row at it stay out (as the follow-up mails do).
+  it('leaves the alert mail out of the org export, with its delivery events and the suppression pointer at it, and keeps every other mail', async () => {
+    await clear();
+    await addTerm('giá');
+    await optIn('lan');
+    const { eventId } = await published('Họp đưa vào bản xuất', 'org', [], ['Bàn về giá hôm nay.']);
+    expect(await notice(eventId)).toEqual({ notified: 1, mailed: 1 });
+    const alertMail = (await sqlAdmin<{ id: string }>("SELECT id FROM ludy_kernel.mail_message WHERE org_id = $1 AND source = 'meetings.tracker_alert' ORDER BY created_at DESC LIMIT 1", [orgId])).rows[0]?.id;
+    expect(alertMail).toBeDefined();
+    const other = (await sqlAdmin<{ id: string }>(
+      "INSERT INTO ludy_kernel.mail_message (org_id, stream, source, source_id, template_key, to_address, to_hash, subject, payload, message_id_header, status) VALUES ($1, 'transactional', 'finance.payment_reminder.notice1', $2, 'x.y', 'a@b.test', repeat('a', 64), 's', '{\"keep\":true}', $3, 'queued') RETURNING id",
+      [orgId, randomUUID(), `<export-${randomUUID()}@y.test>`],
+    )).rows[0]!.id;
+    const event = async (messageId: string) =>
+      (await sqlAdmin<{ id: string }>("INSERT INTO ludy_kernel.mail_event (org_id, message_id, provider, provider_event_id, kind, occurred_at) VALUES ($1, $2, 'test', $3, 'delivered', now()) RETURNING id", [orgId, messageId, randomUUID()])).rows[0]!.id;
+    const alertEvent = await event(alertMail!);
+    const otherEvent = await event(other);
+    const suppress = async (hash: string, sourceMessageId: string) =>
+      (await sqlAdmin<{ id: string }>("INSERT INTO ludy_kernel.mail_suppression (org_id, to_hash, scope, reason, source_message_id) VALUES ($1, repeat($2, 64), 'all', 'hard_bounce', $3) RETURNING id", [orgId, hash, sourceMessageId])).rows[0]!.id;
+    const ofAlert = await suppress('d', alertMail!);
+    const ofOther = await suppress('e', other);
+    const dump = async (table: string) => {
+      const lines: string[] = [];
+      await worker.stream('kernel.org.export.snapshot', { table }, { actor: { type: 'system' as const, component: 'tracker-alert-test' }, orgId }, async (raw) => {
+        lines.push(...(raw as { lines: string[] }).lines);
+      });
+      return lines.map((l) => JSON.parse(l) as Record<string, unknown>);
+    };
+    const mails = await dump('kernel.mail_message');
+    expect(mails.map((r) => r.id)).toContain(other);
+    expect(mails.map((r) => r.id)).not.toContain(alertMail);
+    expect(mails.filter((r) => r.source === 'meetings.tracker_alert')).toEqual([]);
+    const events = (await dump('kernel.mail_event')).map((r) => r.id);
+    expect(events).toContain(otherEvent);
+    expect(events).not.toContain(alertEvent);
+    const suppressions = new Map((await dump('kernel.mail_suppression')).map((r) => [r.id as string, r]));
+    expect(suppressions.get(ofAlert)).toMatchObject({ reason: 'hard_bounce', source_message_id: null });
+    expect(Object.keys(suppressions.get(ofAlert)!)).toContain('source_message_id');
+    expect(suppressions.get(ofOther)).toMatchObject({ source_message_id: other });
+  });
+
   it('returns the recipients a page at a time in id order, and the page is clamped', async () => {
     await clear();
     await addTerm('giá');
