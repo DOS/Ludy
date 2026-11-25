@@ -716,6 +716,8 @@ export function MeetingResults({
         {isRecorder && (published || items.some((i) => i.stage === 'published')) && <MeetingChatPost meetingId={meetingId} />}
         {/* "Chia sẻ biên bản" (#4822): a read-only link to the published minutes for people outside the org, only for the recorder and only once something is published. */}
         {isRecorder && (published !== null || items.some((i) => i.stage === 'published')) && <MinutesLinkPanel key={`link-${meetingId}`} meetingId={meetingId} slug={slug} />}
+        {/* #4947: an owner or admin who is not the recorder sees the links of this meeting and can end one (the recorder may be away); no create button, and nothing is drawn for them when there is no link. */}
+        {!isRecorder && (published !== null || items.some((i) => i.stage === 'published')) && <MinutesLinkPanel key={`link-manage-${meetingId}`} meetingId={meetingId} slug={slug} manager />}
         {isRecorder && <TemplatePicker meetingId={meetingId} template={template} copy={minutesTemplate} />}
         {/* Cues spoken to Vy in the meeting (#4807): the recorder's click drafts a marked item for each, found by code */}
         {isRecorder && <MeetingVoiceCues key={`cues-${meetingId}`} meetingId={meetingId} />}

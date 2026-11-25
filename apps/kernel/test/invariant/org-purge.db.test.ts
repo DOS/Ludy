@@ -20,7 +20,7 @@ import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
 import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
 const WORKER_ONLY = ['crove_kernel.org_purge_check(text)', 'crove_kernel.org_purge(integer)'];
 const NOBODY = ['crove_kernel.org_purge_refusal(uuid,integer)', 'crove_kernel.tenant_close_requires_purge()'];

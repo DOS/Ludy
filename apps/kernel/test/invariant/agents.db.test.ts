@@ -19,7 +19,7 @@ import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
 import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
 const TEMPLATE = 'finance.chief_accountant';
 const SYSTEM = { type: 'system' as const, component: 'kernel.agent' };
@@ -1809,9 +1809,9 @@ suite('agents in the org chart: T18 negative tests on PostgreSQL (ADR-0029)', ()
       tail: sql`SELECT 1; COMMIT`,
       rollback: sql`ROLLBACK`,
       begin: sql`BEGIN`,
-      runtimeSavepoint: sql`SAVEPOINT ${sql.raw('crove_try_run_1')}`,
-      runtimeRollback: sql`ROLLBACK TO SAVEPOINT ${sql.id('crove_try_run_1')}`,
-      unicodeName: sql.raw('SAVEPOINT U&"\\0063rove_try_run_1"'),
+      runtimeSavepoint: sql`SAVEPOINT ${sql.raw('ludy_try_run_1')}`,
+      runtimeRollback: sql`ROLLBACK TO SAVEPOINT ${sql.id('ludy_try_run_1')}`,
+      unicodeName: sql.raw('SAVEPOINT U&"\\006cudy_try_run_1"'),
       // The query is read as it runs: compiled, then split as PostgreSQL's lexer splits it (#1831 review).
       aliased: sql`SELECT 1; ${sql.raw('COMMIT; SELECT 1').as('x')}`,
       splitKeyword: sql`SELECT 1; COMM${sql.raw('IT; SELECT 1').as('x')}`,

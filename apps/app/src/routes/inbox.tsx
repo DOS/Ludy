@@ -574,7 +574,7 @@ export function InboxPage() {
               <section
                 aria-label={t('queueRegion')}
                 data-testid="inbox-split-queue"
-                className="sticky top-6 max-h-[calc(100dvh-3rem)] overflow-y-auto"
+                className="sticky top-16 max-h-[calc(100dvh-5rem)] overflow-y-auto"
               >
                 <div className="overflow-hidden rounded-xl border bg-card">
                   <Table className="w-full [&_td]:whitespace-normal [&_th]:whitespace-normal">

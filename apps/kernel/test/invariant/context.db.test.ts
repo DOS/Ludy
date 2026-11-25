@@ -12,7 +12,7 @@ import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
 import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
 // The context lock namespace in 20261015130000_crove_kernel_context_reentry_guard.sql ('CROV').
 const NAMESPACE = 1129467734;

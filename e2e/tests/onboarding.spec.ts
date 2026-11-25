@@ -71,10 +71,10 @@ test('a firm adds a client company by tax code, then opens the form again for th
     expect(org).toEqual({ name: 'Công ty TNHH Khách hàng Một', tax_code: TAX_CODE, address: 'Số 1 Phố Huế, Hà Nội' });
   });
 
-  await test.step('the sidebar opens the form again for the next client, with a way back', async () => {
-    const sidebar = page.getByRole('complementary');
-    await sidebar.getByRole('button', { name: /^Tài khoản:/ }).click();
-    await sidebar.getByRole('button', { name: /^Tổ chức:/ }).click();
+  await test.step('the top bar opens the form again for the next client, with a way back', async () => {
+    const topBar = page.getByRole('banner');
+    await topBar.getByRole('button', { name: /^Tài khoản:/ }).click();
+    await topBar.getByRole('button', { name: /^Tổ chức:/ }).click();
     await page.getByRole('menuitem', { name: 'Thêm tổ chức' }).click();
     await expect(page).toHaveURL(/\/onboarding$/);
     await expect(page.getByRole('heading', { name: 'Thêm tổ chức' })).toBeVisible();

@@ -29,7 +29,7 @@ import { contextToken } from './fixtures/context-token.ts';
 import { aiRunFeature } from './fixtures/ai-run-feature.ts';
 import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
 
 // The one tenant policy crove_kernel.apply_tenant_rls creates, as pg_get_expr prints it.
@@ -3741,6 +3741,7 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
     make: (o) => ({
       row: { org_id: o.id, id: randomUUID(), user_id: o.owner },
     }),
+    noInsertControl: "one row per member (UNIQUE (org_id, user_id)) and the own-row policy admits only the acting member's own user id, so the seed already holds the owner's row and a second insert as that member would be a duplicate; the insert, the delete and a viewer's refusal are tested in meetings-tracker-alerts.db.test.ts",
   },
   // #4818 (meetings trackers): a keyword or phrase the org tracks across its meetings, at most 20 an org. Read by every member of the org and written and deleted by an owner or an admin (the factory's
   // owner is one), all in a user context; the system context reads none. No UPDATE for a login role. Its table landed in #4818 (step 2), which removed it from PENDING_TABLES.

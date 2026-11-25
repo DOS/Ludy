@@ -12,7 +12,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { applyConcurrentIndexes, CONCURRENT_INDEX_MARKER, concurrentIndexes, hardeningViolations, migrate, readMigrations } from '../../src/migrate.ts';
 import { resolveDbIdentifiers, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
 const RUNNER = 'crove_test_runner';
 // Roles are cluster-wide. When an earlier run already created them, the runner gets the ADMIN OPTION it

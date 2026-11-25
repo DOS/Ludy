@@ -35,7 +35,7 @@ test('fetch the period purchase list and invoice XML from the tax portal', async
   });
   await createOrg(page, 'Công ty Lấy hóa đơn E2E');
   const nav = page.getByRole('navigation');
-  await nav.getByRole('link', { name: 'Cài đặt' }).click();
+  await page.getByRole('banner').getByRole('link', { name: 'Cài đặt', exact: true }).click();
   await page.getByRole('button', { name: 'Nhập', exact: true }).click();
   const form = page.getByRole('form', { name: 'Mã số thuế' });
   await form.getByLabel('Mã số thuế').fill(BUYER_TAX_CODE);

@@ -14,7 +14,7 @@ import { Runtime, defineCommand, defineQuery, type Lookup } from '@ludy/kernel-r
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
 
 // The targets: one every member may read, one only owners and admins may read, one only the system actor may read.
