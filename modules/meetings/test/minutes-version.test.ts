@@ -109,7 +109,7 @@ describe('versionTextProblem: what the database pattern could find in a version,
     expect(versionTextProblem('aalice@example.com', '\u00aaalice@example.com')).not.toBeNull();
     expect(versionTextProblem('Mã 20912345678', 'Mã \u00b20912345678')).not.toBeNull();
     expect(versionTextProblem('nguye\u0302\u0303n@example.com', 'nguy\u1ec5n@example.com')).not.toBeNull();
-    expect(versionTextProblem('\u0130@x.com', 'i\u0307@x.com')).not.toBeNull();
+    expect(versionTextProblem('\u0130@example.com', 'i\u0307@example.com')).not.toBeNull();
     // Written the same in both, they are the original's own.
     expect(versionTextProblem('Mã \uff10\uff19\uff11\uff12\uff13\uff14\uff15\uff16\uff17\uff18', 'Code \uff10\uff19\uff11\uff12\uff13\uff14\uff15\uff16\uff17\uff18')).toBeNull();
   });
