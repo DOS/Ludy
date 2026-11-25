@@ -4867,6 +4867,7 @@ export const en = {
     minutesLink: {
       title: 'Share the minutes',
       hint: 'Make a link that lets people outside your organization read the published summary, decisions and action items. They need no account and cannot change anything. They do not see the transcript, the recording, the chapters or any draft.',
+      managerHint: 'Links the recorder made so people outside the organization can read the published minutes. As an owner or admin you can end a link when needed; you cannot make one here.',
       offNote: 'Your organization has not turned on sharing minutes with people outside, so no link can be made.',
       offAdmin: 'You can turn it on on the Meetings page, in Settings, on the "Share minutes outside" card.',
       offAdminLink: 'Open the Meetings page',
@@ -4895,6 +4896,7 @@ export const en = {
       revokeFor: 'Revoke the link made {at}',
       revokeTitle: 'Revoke this link?',
       revokeConfirm: 'Anyone holding the link can no longer open the minutes. This cannot be undone; you can still make a new link.',
+      revokeConfirmManager: 'Whoever holds the link can no longer open the minutes. This cannot be undone; the recorder can still make a new link.',
       revoked: 'Link revoked.',
     },
     // "Share minutes outside" (#4822): the organization setting card; off by default, an owner or admin changes it.
