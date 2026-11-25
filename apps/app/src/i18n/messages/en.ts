@@ -5424,6 +5424,18 @@ export const en = {
       line: 'Talk time: {list}',
       lineMore: 'Talk time: {list} and {count, plural, one {# other} other {# others}}',
     },
+    speakingStyle: {
+      title: 'How they spoke',
+      desc: 'Worked out from the transcript lines you can read: each speaker\'s pace, filler words and longest stretch without a pause. No AI.',
+      speaker: 'Speaker',
+      pace: 'Pace (words/min)',
+      paceNone: '-',
+      fillers: 'Filler words',
+      topFillers: 'Most used',
+      none: '-',
+      stretch: 'Longest stretch',
+      note: 'Filler words come from a fixed list (ờ, ờm, à, ừm, kiểu như, thì là, um, uhm, uh, you know). These are facts about the transcript, not a judgment of a person; a pace shows only once someone has talked long enough.',
+    },
     trackers: {
       title: 'Tracked words',
       desc: 'Words and phrases your organization follows, and how often they came up in this meeting. Click a time to go there.',
@@ -19806,6 +19818,9 @@ export const en = {
       speaker: {
         name: 'Name a speaker of the draft transcript after a person in the meeting',
         suggestions: 'See the speaker names Vy suggested after a summary',
+      },
+      speaking_style: {
+        get: 'See how each speaker spoke in a meeting: pace, filler words and longest stretch',
       },
       deal_update: {
         confirm: 'Save the recorder\'s update of the deal a meeting is linked to',

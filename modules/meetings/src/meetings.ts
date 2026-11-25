@@ -26,6 +26,7 @@ import { summaryCommands, summaryQueries } from './summary.ts';
 import { summaryReadyCommands } from './summary-ready.ts';
 import { summaryRunCommands, summaryRunQueries } from './summary-run.ts';
 import { dropDraftTranslationsForMember, translateCommands } from './translate.ts';
+import { speakingStyleQueries } from './speaking-style.ts';
 import { transcriptExportQueries } from './transcript-export.ts';
 import { translateRunCommands, translateRunQueries } from './translate-run.ts';
 import { askRunCommands, askRunQueries } from './ask.ts';
@@ -1227,4 +1228,5 @@ export const meetingsQueries = [
   ...hookQueries,
   ...mcpMeetingsQueries,
   ...transcriptExportQueries,
+  ...speakingStyleQueries,
 ];

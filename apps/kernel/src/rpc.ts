@@ -1797,6 +1797,7 @@ export function createRpcHandler(
         list: os.meetings.minutesLink.list.handler(meetingsQuery('meetings.minutes_link.list')),
       },
       search: os.meetings.search.handler(meetingsQuery('meetings.search')),
+      speakingStyle: { get: os.meetings.speakingStyle.get.handler(meetingsQuery('meetings.speaking_style.get')) },
       transcript: {
         get: os.meetings.transcript.get.handler(meetingsQuery('meetings.transcript.get')),
         download: os.meetings.transcript.download.handler(meetingsQuery('meetings.transcript.download')),
