@@ -23,7 +23,8 @@ export type LabelProblem = 'empty' | 'too_long' | 'control' | 'address' | 'digit
 
 /**
  * Why a label cannot be used, or null when it can. A label is plain text for grouping meetings, so a line break or other control character, an "@" (an e-mail address) and a run of seven digits or more
- * (a phone number, an ID, a tax code) are refused: a label is outside the personal-data finders and the erasure, by design.
+ * (a phone number, an ID, a tax code) are refused, which keeps most personal data out of a label. It is a first line only: a label is personal data like a meeting title (#4964), so the finder lists it and the
+ * erasure redacts it whatever these checks let through (a name, for one).
  */
 export function labelProblem(text: string): LabelProblem | null {
   const clean = cleanLabelText(text);

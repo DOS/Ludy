@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Labels on a meeting (#4955, plan docs/plan/meetings.md L28): the recorder puts up to five short plain-text labels on a meeting, and the meetings list filters by them, so a business with no CRM data can group
-// "everything about this client". A label holds no transcript text and no name of a person by design: the text is checked by code (`labelProblem`: no line break, no "@", no run of seven digits). Who may read, add
+// "everything about this client". A label is meant to hold no transcript text and no name of a person: the text is checked by code (`labelProblem`: no line break, no "@", no run of seven digits), but that is a first line only, and a label is personal data like a meeting title (#4964): the finder and the erasure reach it. Who may read, add
 // and remove is decided by the row policies of ludy_meetings.meeting_label (user context only; the recorder and the readers read; the recorder adds and removes; nobody edits), and these commands check it again.
 // A label goes with its meeting because the row cascades. At most five labels a meeting, counted under a lock on the meeting, and the same label twice (whatever the case) is one label. An audit row carries the
 // meeting id and the label id, never the text.

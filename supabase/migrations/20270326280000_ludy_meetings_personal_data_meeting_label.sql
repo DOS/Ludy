@@ -392,6 +392,8 @@ BEGIN
     -- A label is never edited by a member, and the unique index folds the case, so a redaction that would leave a label equal to another one of the meeting (two labels that held the value become the same
     -- text, or a label that held it becomes one already there) drops the later row instead of changing it: the one kept is a label that held nothing of the value, else the oldest. A dropped label
     -- counts too. The new text is cut to the column's limit of 40 characters and trimmed, so the row's own check holds.
+    -- A label.add of the recorder that runs at the same moment and lands on the same text as a redaction hits the unique index and aborts this whole erasure (23505): it fails closed, nothing is half erased,
+    -- and asking again works. A label is added under the recorder's own lock, so this is a narrow race and not a case worth a retry loop inside the function.
     WITH cand AS (
       SELECT b.id, b.created_at,
              (ludy_kernel.text_mentions(b.label, p_kind, p_value) AND (v_named OR v_rec OR v_read)) AS chg,
