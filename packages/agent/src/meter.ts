@@ -129,6 +129,8 @@ export const AI_FEATURES = {
   'meetings.title': 'meetings',
   // The recorder's Vy listing what each speaker committed to or decided (#3954): one call over the transcript, the member waiting for it, through their own meter.
   'meetings.commitments': 'meetings',
+  // The recorder's Vy suggesting the minutes template of a meeting when code could not tell (#4772): one call over the transcript, the recorder waiting for it, through their own meter.
+  'meetings.template_suggest': 'meetings',
   // The recorder's Vy drafting a personal-note follow-up email from the meeting's facts (#4292): one call, the member waiting for it, through their own meter.
   'meetings.followup_note': 'meetings',
   // Vy's weekly status of one project (projects P6, #2597): transient 3 to 5 plain sentences from deterministic counts and task titles/comments only, never reading notes.

@@ -701,6 +701,7 @@ import { zAskAnswer, zAskEmpty, zAskInput, zAskStatus } from './meeting-ask.ts';
 import { zBriefAnswer, zBriefEmpty, zBriefFacts, zBriefStatus, zBriefTarget } from './meeting-brief.ts';
 import { zMeetingRename, zMeetingRenamed, zTitleAnswer } from './meeting-title.ts';
 import { zCommitmentsAnswer } from './meeting-commitments.ts';
+import { zTemplateSuggestion, zTemplateVyAnswer } from './meeting-template-suggest.ts';
 import { zDigestAnswer, zDigestAsk, zDigestFacts, zDigestStatus } from './meeting-digest.ts';
 import { zMeetingsTodayFacts } from './meeting-today.ts';
 import { zMorningEmpty, zMorningSet, zMorningState } from './meeting-morning.ts';
@@ -1925,6 +1926,13 @@ export const contract = {
     commitments: {
       status: oc.input(zSummaryRef).output(zSummaryStatus),
       list: oc.input(zSummaryRef).output(zCommitmentsAnswer),
+    },
+    // Suggesting the minutes template from the meeting itself (#4772): `suggest` is code's answer (the series, a linked deal, words in the title, the number of people; no model), `status` is the button of Vy's fallback (the
+    // same answer as the chapters') and `vy` the click that has the recorder's own Vy read the transcript when code cannot tell. Nothing is stored; the recorder accepts with the existing `setTemplate`.
+    templateSuggest: {
+      suggest: oc.input(zSummaryRef).output(zTemplateSuggestion),
+      status: oc.input(zSummaryRef).output(zSummaryStatus),
+      vy: oc.input(zSummaryRef).output(zTemplateVyAnswer),
     },
     // This week's decisions and what is still open, across the meetings the member reads (#3949): `facts` are read by code as the member (published decisions and open action items of the meetings that started in the
     // last 7, 14 or 30 days) and work with AI off; `status` is the button (may Vy be used now, the cost of one recap), `recap` the click that has the member's own Vy write two or three sentences from those facts. Nothing

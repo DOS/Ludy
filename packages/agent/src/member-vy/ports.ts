@@ -49,6 +49,7 @@ export type ModelFeature =
   | 'meetings.chapters'
   | 'meetings.title'
   | 'meetings.commitments'
+  | 'meetings.template_suggest'
   | 'meetings.followup_note'
   | 'projects.tasks_from_note'
   | 'projects.tasks_from_source'
