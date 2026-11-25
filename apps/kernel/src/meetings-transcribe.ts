@@ -12,7 +12,7 @@
 // The job writes no meeting table: the recorder's own action copies the result into the draft (meetings.transcript.copy_result). A failed run stores a fixed
 // code, never a message. Logs carry ids and codes. A job is never retried by the queue: another try would send the audio to the provider again; the recorder
 // starts it again if they want to.
-import { AiBudgetExhaustedError, aiCost, mergeChunkTranscripts, transcribeChunks, withAiScope, TranscriptionError, type AiCall, type AiMeter, type AiUsage, type TranscribeConfig, type TranscribeInput, type TranscriptSegment } from '@ludy/agent';
+import { AiBudgetExhaustedError, mergeChunkTranscripts, transcribeChunks, withAiScope, TranscriptionError, type TranscribeConfig, type TranscribeInput, type TranscriptSegment } from '@ludy/agent';
 import {
   DomainError,
   decryptBlobBuffer,
@@ -28,6 +28,7 @@ import {
 import type { MediaMeasurer } from './meetings-measure.ts';
 import { MEMBER_VY_RUN_ERROR_CODES, type MemberVyRunErrorCode } from '@ludy/kernel';
 import { decodeTranscriptResult, encodeTranscriptResult, TRANSCRIPT_RESULT_MAX } from '@ludy/mod-meetings';
+import { memberVyRunMeter } from './ai-meter.ts';
 
 export interface MeetingsTranscribeJob {
   orgId: string;
@@ -60,40 +61,6 @@ interface RunAudio {
   keyId: string;
   wrappedKey: Buffer | Uint8Array;
   segments: Array<{ order: number; startOffsetSeconds: number; lengthSeconds: number; fileId: string; storageKey: string; generation: string | null; sizeBytes: number; sha256: string; contentType: string }>;
-}
-
-// The meter of one run: admission enters the member's context again, which checks everything decision 1 and 6 name; the record is the system's row for the
-// run's agent (ids, the feature, the cost in the deployment's unit; never text).
-class RunMeter implements AiMeter {
-  private readonly deps: MeetingsTranscribeDeps;
-  private readonly vy: MemberVyRuntime;
-  private readonly job: MeetingsTranscribeJob;
-
-  constructor(deps: MeetingsTranscribeDeps, vy: MemberVyRuntime, job: MeetingsTranscribeJob) {
-    this.deps = deps;
-    this.vy = vy;
-    this.job = job;
-  }
-
-  // Admission also sends the call's projected cost when it knows one (a chunk: its measured seconds, priced by the same aiCost the record uses), so a chunk that would cross a
-  // hard-stop budget is refused before the provider call (#2863 item 8). No projection (or a price of 0) is the entry's check alone, as before.
-  async admit(call: AiCall): Promise<void> {
-    const projected = call.expected ? aiCost([call.expected], this.deps.price) : '0';
-    try {
-      await this.vy.query('kernel.member_vy.run.check', /^0+(?:\.0+)?$/.test(projected) ? {} : { projectedCost: projected });
-    } catch (error: unknown) {
-      if (error instanceof DomainError && error.code === 'BUDGET_EXHAUSTED') throw new AiBudgetExhaustedError('module', null);
-      throw error;
-    }
-  }
-
-  async record(call: AiCall, usage: AiUsage): Promise<void> {
-    await this.deps.runtime.execute(
-      'kernel.ai.usage.record',
-      { feature: call.feature, module: call.module, agentId: this.job.agentId, inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, cost: aiCost([usage], this.deps.price) },
-      { actor: SYSTEM, orgId: this.job.orgId },
-    );
-  }
 }
 
 // The fixed code a failure is stored under: a word from the kernel's list (MEMBER_VY_RUN_ERROR_CODES, the same one the database checks), never the error's text. A failure
@@ -155,7 +122,12 @@ export async function runMeetingsTranscribe(deps: MeetingsTranscribeDeps, job: M
     const audio = await vy.execute<RunAudio>('kernel.member_vy.meeting_audio.open', { meetingId: job.meetingId });
     // A transcript past what one result row holds fails whatever is done, so it is refused before any chunk is sent and charged.
     if (audio.segments.reduce((n, seg) => n + seg.lengthSeconds, 0) > TRANSCRIPT_MAX_SECONDS) throw new DomainError('TRANSCRIPT_TOO_LONG', 422, 'The meeting is too long to transcribe in one go');
-    const scope = { orgId: job.orgId, agentId: job.agentId, memberRunId: job.runId, meter: new RunMeter(deps, vy, job) };
+    const scope = {
+      orgId: job.orgId,
+      agentId: job.agentId,
+      memberRunId: job.runId,
+      meter: memberVyRunMeter({ runtime: deps.runtime, vy, actor: SYSTEM, orgId: job.orgId, agentId: job.agentId, price: deps.price }),
+    };
     // One chunk at a time, the gate of the audio door passed again before each one (openChunk), then the chunk behind the meter (its admit enters the context once more).
     const done: TranscriptSegment[][] = [];
     let measuredTotal = 0;

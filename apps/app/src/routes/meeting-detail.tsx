@@ -33,6 +33,7 @@ import {
   useRedactCandidatesQuery,
 } from '../components/meeting-redaction.tsx';
 import { MeetingHighlights } from '../components/meeting-highlights.tsx';
+import { MeetingSpeakingStyle } from '../components/meeting-speaking-style.tsx';
 import { MeetingTalkTime } from '../components/meeting-talk-time.tsx';
 import { MeetingTrackerHits } from '../components/meeting-trackers.tsx';
 import { MeetingTranscript, clock } from '../components/meeting-transcript.tsx';
@@ -527,6 +528,8 @@ export function MeetingDetailPage() {
       <MeetingHighlights key={`highlights-${id}`} meetingId={id} isRecorder={meeting.isRecorder} onJump={jumpTo} />
       {/* Who did the talking (#4765): talk time, turns and longest stretch per speaker, worked out in code from the lines above, no AI */}
       <MeetingTalkTime key={`talk-time-${id}`} meetingId={id} />
+      {/* How each speaker spoke (#4919): pace, filler words and longest stretch without a pause, counted by code on the server from the lines the caller reads, no AI */}
+      <MeetingSpeakingStyle key={`speaking-style-${id}`} meetingId={id} />
       {/* Did the meeting cover its agenda (#3959): the recorder's own click, Vy compares the agenda with the transcript above and cites the lines */}
       <MeetingAdherence key={`adherence-${id}`} meetingId={id} isRecorder={meeting.isRecorder} onJump={jumpTo} redactedEpoch={redactedEpoch} />
       {/* The recorder's own rough notes (A5): theirs alone, so only the recorder gets the box */}

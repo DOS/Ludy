@@ -161,6 +161,9 @@ export interface MeetingPlatformAdapter {
   // At most 100 recordings that are finished and started at or after `since`, newest first.
   list(credential: MeetingPlatformCredential, since: Date, signal?: AbortSignal): Promise<MeetingPlatformListed[]>;
   prepareDownload(credential: MeetingPlatformCredential, recordingId: string, format: MeetingPlatformFormat, signal?: AbortSignal): Promise<MeetingPlatformDownload>;
+  // A recording the platform made in segments (Zoom, #3175): the downloads of all its files of that format in the order they were recorded, or an empty list for a recording of one file (then `prepareDownload` is the answer).
+  // The job joins two or more through crove-media. Absent where a platform never splits a recording.
+  prepareParts?(credential: MeetingPlatformCredential, recordingId: string, format: MeetingPlatformFormat, signal?: AbortSignal): Promise<MeetingPlatformDownload[]>;
   // The platform's own transcript of one recording, for an adapter that has one (Google Meet, C2). The job never opens a transcript download: the adapter calls its own API hosts.
   transcript?(credential: MeetingPlatformCredential, recordingId: string, signal?: AbortSignal): Promise<MeetingPlatformTranscript>;
   // The platform's own transcript when it is a FILE on the platform's download hosts (Zoom, #3175) and not an API answer: `transcriptFile` describes its download exactly as `prepareDownload` describes a recording's (the job

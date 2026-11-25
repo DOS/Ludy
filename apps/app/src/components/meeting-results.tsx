@@ -396,6 +396,7 @@ export function SpeakerSuggestions({ meetingId, runId }: { meetingId: string; ru
     onSuccess: () => {
       void list.refetch();
       void queryClient.invalidateQueries({ queryKey: orpc.meetings.transcript.key() });
+      void queryClient.invalidateQueries({ queryKey: orpc.meetings.speakingStyle.key() });
     },
   });
   const suggestions = list.data?.suggestions ?? [];

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The AI budget meter's door (#2382): what metered() asks before a call and tells after it.
 import { NoObjectGeneratedError } from 'ai';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { AiBudgetExhaustedError, AiMeterMissingError, aiCost, metered, withAiScope, type AiCall, type AiMeter, type AiUsage } from '../src/index.ts';
 
 function recorder(admit?: (call: AiCall) => void) {
@@ -121,6 +121,70 @@ describe('metered', () => {
     ]);
     expect(a.admitted.map((c) => c.orgId)).toEqual(['org-a']);
     expect(b.admitted.map((c) => c.orgId)).toEqual(['org-b']);
+  });
+
+  it('forwards reservation ids to record and releases early on failures without usage', async () => {
+    const events: string[] = [];
+    const meter: AiMeter = {
+      admit: async (call) => {
+        events.push(`admit:${call.feature}`);
+        return 'res-123';
+      },
+      record: async (_call, _usage, reservationId) => {
+        events.push(`record:${reservationId ?? 'none'}`);
+      },
+      release: async (_call, reservationId) => {
+        events.push(`release:${reservationId}`);
+      },
+    };
+
+    await withAiScope({ orgId: 'org-1', meter }, () => metered('social.draft', async () => answer));
+    expect(events).toEqual(['admit:social.draft', 'record:res-123']);
+
+    events.length = 0;
+    await expect(
+      withAiScope({ orgId: 'org-1', meter }, () =>
+        metered('social.draft', async () => {
+          throw new Error('provider 503');
+        }),
+      ),
+    ).rejects.toThrow('provider 503');
+    expect(events).toEqual(['admit:social.draft', 'release:res-123']);
+
+    const brokenRelease: AiMeter = {
+      admit: async () => 'res-456',
+      record: async () => {},
+      release: async () => {
+        throw new Error('release failed');
+      },
+    };
+    await expect(
+      withAiScope({ orgId: 'org-1', meter: brokenRelease }, () =>
+        metered('social.draft', async () => {
+          throw new Error('original error');
+        }),
+      ),
+    ).rejects.toThrow('original error');
+    const brokenOnUsage: AiMeter = {
+      admit: async () => 'res-789',
+      record: async (_call, _usage, reservationId) => {
+        events.push(`record:${reservationId ?? 'none'}`);
+      },
+      release: async (_call, reservationId) => {
+        events.push(`release:${reservationId}`);
+      },
+    };
+    events.length = 0;
+    const onUsage = vi.fn(() => {
+      throw new Error('onUsage boom');
+    });
+    await expect(
+      withAiScope({ orgId: 'org-1', meter: brokenOnUsage }, () =>
+        metered('social.draft', async () => answer, onUsage),
+      ),
+    ).resolves.toBe(answer);
+    expect(onUsage).toHaveBeenCalledTimes(1);
+    expect(events).toEqual(['record:res-789']);
   });
 });
 
