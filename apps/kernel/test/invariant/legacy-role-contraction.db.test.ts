@@ -471,6 +471,7 @@ suite('legacy crove_* role and crove.* GUC contraction (#3972)', () => {
           ),
         ).toBe(false);
 
+        await c.query(`GRANT USAGE ON SCHEMA ludy_meta TO ${defAclRole}_nonmember; GRANT SELECT ON ludy_meta.deployment TO ${defAclRole}_nonmember`);
         await c.query('SAVEPOINT sp_defacl_denied');
         await c.query(`SET LOCAL ROLE ${defAclRole}_nonmember`);
         await expect(c.query(contractionSql)).rejects.toThrow(/default privileges still grant to legacy crove_\* roles/);
@@ -661,7 +662,13 @@ suite('legacy crove_* role and crove.* GUC contraction (#3972)', () => {
         expect(rows).toEqual([{ count: '0' }]);
 
         await expect(migrate({ adminUrl: limitedUrl, dir: MIGRATIONS })).resolves.toEqual([contractionFile as string]);
-        expect(await hardeningViolations(checkDb)).toEqual([]);
+        const limitedClient = new pg.Client({ connectionString: limitedUrl });
+        await limitedClient.connect();
+        try {
+          expect(await hardeningViolations(limitedClient)).toEqual([]);
+        } finally {
+          await limitedClient.end();
+        }
       } finally {
         await checkDb.end();
       }

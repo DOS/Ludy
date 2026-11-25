@@ -16,6 +16,8 @@ DECLARE
   v_login text;
   v_remaining text;
   v_is_super boolean;
+  v_createrole boolean;
+  v_meta_oid oid;
   v_shared boolean := false;
   v_default_acls text;
   v_owned text;
@@ -43,6 +45,18 @@ DECLARE
     'crove_definer_system'
   ];
 BEGIN
+  SELECT COALESCE(rolsuper, false), COALESCE(rolcreaterole, false)
+  INTO v_is_super, v_createrole
+  FROM pg_catalog.pg_roles
+  WHERE rolname = current_user;
+  IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'crove_tenant')
+     AND (COALESCE(v_is_super, false)
+          OR (COALESCE(v_createrole, false)
+              AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'crove_tenant' AND rolsuper)
+              AND pg_catalog.pg_has_role(current_user, 'crove_tenant', 'MEMBER WITH ADMIN OPTION'))) THEN
+    EXECUTE pg_catalog.format('ALTER ROLE %I NOLOGIN', 'crove_tenant');
+  END IF;
+
   FOR r IN
     SELECT tgt.rolname AS target_role, mem.rolname AS member_role, gr.rolname AS grantor_role
     FROM pg_catalog.pg_auth_members am
@@ -209,9 +223,16 @@ BEGIN
   END LOOP;
 
   -- Default privilege entries (pg_default_acl) across ludy_* schemas (and global defaults in owned-database mode).
-  IF pg_catalog.to_regclass('ludy_meta.deployment') IS NOT NULL THEN
-    SELECT COALESCE(pg_catalog.bool_or(d.value = 'true'), false) INTO v_shared
-    FROM ludy_meta.deployment d WHERE d.key = 'shared_database';
+  v_meta_oid := pg_catalog.to_regnamespace('ludy_meta');
+  IF v_meta_oid IS NOT NULL THEN
+    IF pg_catalog.has_schema_privilege(current_user, v_meta_oid, 'USAGE') THEN
+      IF pg_catalog.to_regclass('ludy_meta.deployment') IS NOT NULL THEN
+        IF pg_catalog.has_table_privilege(current_user, 'ludy_meta.deployment', 'SELECT') THEN
+          SELECT COALESCE(pg_catalog.bool_or(d.value = 'true'), false) INTO v_shared
+          FROM ludy_meta.deployment d WHERE d.key = 'shared_database';
+        END IF;
+      END IF;
+    END IF;
   END IF;
   SELECT COALESCE(ro.rolsuper, false) INTO v_is_super
   FROM pg_catalog.pg_roles ro WHERE ro.rolname = current_user;

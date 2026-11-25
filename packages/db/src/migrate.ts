@@ -91,16 +91,76 @@ async function isDatabaseStage7Contracted(client: pg.ClientBase): Promise<boolea
   return rows[0]?.ok === true;
 }
 
-async function isClusterStage7Contracted(client: pg.ClientBase): Promise<boolean> {
-  const { rows } = await client.query<{ contracted: boolean }>(
-    `SELECT EXISTS (
-       SELECT 1 FROM pg_catalog.pg_roles r
-       WHERE r.rolname = 'crove_tenant'
-         AND pg_catalog.shobj_description(r.oid, 'pg_authid') = $1
-     ) AS contracted`,
-    [STAGE7_CLUSTER_MARKER],
+async function readCoreCutoverClusterState(client: pg.ClientBase): Promise<CoreCutoverClusterState> {
+  const { rows: stateRows } = await client.query<{
+    marker_present: boolean;
+    has_ludy_roles: boolean;
+    has_transitional_grants: boolean;
+    all_legacy_expired: boolean;
+  }>(
+    `SELECT
+       EXISTS (
+         SELECT 1 FROM pg_catalog.pg_roles r
+         WHERE r.rolname = 'crove_tenant'
+           AND pg_catalog.shobj_description(r.oid, 'pg_authid') = $1
+       ) AS marker_present,
+       EXISTS (
+         SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = ANY ($2::text[])
+       ) AS has_ludy_roles,
+       EXISTS (
+         SELECT 1
+         FROM pg_catalog.pg_auth_members am
+         JOIN pg_catalog.pg_roles tgt ON tgt.oid = am.roleid
+         JOIN pg_catalog.pg_roles mem ON mem.oid = am.member
+         WHERE mem.rolname = ANY ($3::text[])
+           AND tgt.rolname = ANY ($2::text[])
+       ) AS has_transitional_grants,
+       (
+         EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = ANY ($4::text[]))
+         AND NOT EXISTS (
+           SELECT 1 FROM pg_catalog.pg_roles
+           WHERE rolname = ANY ($4::text[])
+             AND (rolvaliduntil IS NULL OR rolvaliduntil > '1970-01-01 00:00:00+00'::timestamptz)
+         )
+       ) AS all_legacy_expired`,
+    [STAGE7_CLUSTER_MARKER, CANONICAL_LUDY_ROLES, LEGACY_CROVE_ROLES, LEGACY_LOGIN_ROLES],
   );
-  return rows[0]?.contracted === true;
+  const s = stateRows[0];
+  return classifyCoreCutoverState({
+    markerPresent: s?.marker_present === true,
+    hasLudyRoles: s?.has_ludy_roles === true,
+    hasTransitionalGrants: s?.has_transitional_grants === true,
+    allLegacyLoginsExpired: s?.all_legacy_expired === true,
+  });
+}
+
+// Acquires a cluster-wide tuple lock on crove_tenant in pg_authid until COMMIT so concurrent
+// migrate() runs across databases serialize core cutover and Stage 7 catalog mutations.
+async function lockClusterStage7Role(client: pg.ClientBase): Promise<void> {
+  await client.query(`DO $$
+    DECLARE
+      v_is_super boolean;
+      v_createrole boolean;
+    BEGIN
+      SELECT COALESCE(rolsuper, false), COALESCE(rolcreaterole, false)
+      INTO v_is_super, v_createrole
+      FROM pg_catalog.pg_roles
+      WHERE rolname = current_user;
+      IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'crove_tenant')
+         AND (COALESCE(v_is_super, false)
+              OR (COALESCE(v_createrole, false)
+                  AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'crove_tenant' AND rolsuper)
+                  AND pg_catalog.pg_has_role(current_user, 'crove_tenant', 'MEMBER WITH ADMIN OPTION'))) THEN
+        EXECUTE pg_catalog.format('ALTER ROLE %I NOLOGIN', 'crove_tenant');
+      END IF;
+    END $$`);
+}
+
+function isConcurrentCatalogUpdateError(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const { code, message } = error as { code?: unknown; message?: unknown };
+  if (code === '40P01') return true;
+  return code === 'XX000' && typeof message === 'string' && message.includes('tuple concurrently updated');
 }
 
 async function resolveMetaSchema(client: pg.ClientBase): Promise<'ludy_meta' | 'crove_meta'> {
@@ -443,57 +503,23 @@ export async function migrate(options: MigrateOptions): Promise<string[]> {
         throw new Error(`shared database: ${file.name} changes state for the whole database and has no shared-database variant (looked in ${variantsDir}); refusing to apply it`);
       }
       log(variant === undefined ? `applying ${file.name}` : `applying ${file.name} (shared-database variant)`);
-      let coreCutoverState: CoreCutoverClusterState = 'uncontracted';
-      await client.query('BEGIN');
-      try {
-        if (file.name === CORE_CUTOVER_MIGRATION) {
-          const { rows: stateRows } = await client.query<{
-            marker_present: boolean;
-            has_ludy_roles: boolean;
-            has_transitional_grants: boolean;
-            all_legacy_expired: boolean;
-          }>(
-            `SELECT
-               EXISTS (
-                 SELECT 1 FROM pg_catalog.pg_roles r
-                 WHERE r.rolname = 'crove_tenant'
-                   AND pg_catalog.shobj_description(r.oid, 'pg_authid') = $1
-               ) AS marker_present,
-               EXISTS (
-                 SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = ANY ($2::text[])
-               ) AS has_ludy_roles,
-               EXISTS (
-                 SELECT 1
-                 FROM pg_catalog.pg_auth_members am
-                 JOIN pg_catalog.pg_roles tgt ON tgt.oid = am.roleid
-                 JOIN pg_catalog.pg_roles mem ON mem.oid = am.member
-                 WHERE mem.rolname = ANY ($3::text[])
-                   AND tgt.rolname = ANY ($2::text[])
-               ) AS has_transitional_grants,
-               (
-                 EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = ANY ($4::text[]))
-                 AND NOT EXISTS (
-                   SELECT 1 FROM pg_catalog.pg_roles
-                   WHERE rolname = ANY ($4::text[])
-                     AND (rolvaliduntil IS NULL OR rolvaliduntil > '1970-01-01 00:00:00+00'::timestamptz)
-                 )
-               ) AS all_legacy_expired`,
-            [STAGE7_CLUSTER_MARKER, CANONICAL_LUDY_ROLES, LEGACY_CROVE_ROLES, LEGACY_LOGIN_ROLES],
-          );
-          const s = stateRows[0];
-          coreCutoverState = classifyCoreCutoverState({
-            markerPresent: s?.marker_present === true,
-            hasLudyRoles: s?.has_ludy_roles === true,
-            hasTransitionalGrants: s?.has_transitional_grants === true,
-            allLegacyLoginsExpired: s?.all_legacy_expired === true,
-          });
-          if (coreCutoverState === 'wiped-marker') {
-            throw new Error(
-              'stage 7 replay guard failed: canonical ludy_* roles already exist on this cluster without transitional crove_* memberships or the Stage 7 marker on crove_tenant; refusing to re-grant crove_* -> ludy_* memberships (restore COMMENT ON ROLE "crove_tenant" IS \'ludy:stage7-contracted\' if Stage 7 already completed)',
-            );
+      const isClusterCutoverMigration =
+        file.name === CORE_CUTOVER_MIGRATION || file.name.endsWith('_ludy_kernel_contract_crove_roles_and_gucs.sql');
+      const maxAttempts = isClusterCutoverMigration ? 3 : 1;
+      for (let attempt = 1; ; attempt++) {
+        let coreCutoverState: CoreCutoverClusterState = 'uncontracted';
+        await client.query('BEGIN');
+        try {
+          if (file.name === CORE_CUTOVER_MIGRATION) {
+            await lockClusterStage7Role(client);
+            coreCutoverState = await readCoreCutoverClusterState(client);
+            if (coreCutoverState === 'wiped-marker') {
+              throw new Error(
+                'stage 7 replay guard failed: canonical ludy_* roles already exist on this cluster without transitional crove_* memberships or the Stage 7 marker on crove_tenant; refusing to re-grant crove_* -> ludy_* memberships (restore COMMENT ON ROLE "crove_tenant" IS \'ludy:stage7-contracted\' if Stage 7 already completed)',
+              );
+            }
           }
-        }
-        await client.query(variant?.sql ?? file.sql);
+          await client.query(variant?.sql ?? file.sql);
         if (!shared && file.name === '20261015120000_crove_kernel_revoke_temp.sql') {
           // Immutable 20261015120000 predates ADR-0054's ludy_* roles (its filter is NOT LIKE 'crove\_%'), so on a
           // cluster where ludy_* roles already exist it grants them TEMPORARY before revoking PUBLIC. Take TEMPORARY
@@ -567,10 +593,15 @@ export async function migrate(options: MigrateOptions): Promise<string[]> {
           file.name,
           variant?.sha256 ?? file.sha256,
         ]);
-        await client.query('COMMIT');
-      } catch (error) {
-        await client.query('ROLLBACK');
-        throw new Error(`migration ${file.name} failed: ${(error as Error).message}`, { cause: error });
+          await client.query('COMMIT');
+          break;
+        } catch (error) {
+          await client.query('ROLLBACK');
+          if (attempt < maxAttempts && isConcurrentCatalogUpdateError(error)) {
+            continue;
+          }
+          throw new Error(`migration ${file.name} failed: ${(error as Error).message}`, { cause: error });
+        }
       }
       applied.push(file.name);
     }
@@ -602,27 +633,29 @@ export async function migrate(options: MigrateOptions): Promise<string[]> {
     // Re-clear any legacy crove_* login passwords on contracted clusters/DBs before hardening checks so runners
     // without SELECT on pg_catalog.pg_authid still leave no stale password verifiers for roles they manage.
     if (await isDatabaseStage7Contracted(client)) {
-      await client.query(
-        `DO $$
-         DECLARE
-           v_login text;
-           v_is_super boolean;
-           v_createrole boolean;
-         BEGIN
-           SELECT COALESCE(rolsuper, false), COALESCE(rolcreaterole, false)
-           INTO v_is_super, v_createrole
-           FROM pg_catalog.pg_roles WHERE rolname = current_user;
-           v_is_super := COALESCE(v_is_super, false);
-           v_createrole := COALESCE(v_createrole, false);
-           FOREACH v_login IN ARRAY $1::text[] LOOP
-             IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = v_login)
-                AND (v_is_super OR (v_createrole AND pg_catalog.pg_has_role(current_user, v_login, 'MEMBER WITH ADMIN OPTION'))) THEN
-               EXECUTE pg_catalog.format('ALTER ROLE %I WITH PASSWORD NULL VALID UNTIL ''-infinity''', v_login);
-             END IF;
-           END LOOP;
-         END $$`,
+      const { rows: clearSqlRows } = await client.query<{ sql: string }>(
+        `SELECT pg_catalog.format('ALTER ROLE %I WITH PASSWORD NULL VALID UNTIL ''-infinity''', r.rolname) AS sql
+         FROM pg_catalog.pg_roles r
+         CROSS JOIN (
+           SELECT COALESCE(rolsuper, false) AS is_super, COALESCE(rolcreaterole, false) AS is_createrole
+           FROM pg_catalog.pg_roles
+           WHERE rolname = current_user
+         ) cur
+         WHERE r.rolname = ANY ($1::text[])
+           AND (
+             cur.is_super
+             OR (
+               cur.is_createrole
+               AND NOT r.rolsuper
+               AND pg_catalog.pg_has_role(current_user, r.rolname, 'MEMBER WITH ADMIN OPTION')
+             )
+           )
+         ORDER BY r.rolname`,
         [LEGACY_LOGIN_ROLES],
       );
+      for (const row of clearSqlRows) {
+        await client.query(row.sql);
+      }
     }
     // Fails the run (and so the deploy) when a function or a privilege reopens the pg_temp hijack. The
     // files are already committed, so a function fix is a new forward migration; each item names its fix.
@@ -1321,10 +1354,10 @@ async function listHardeningViolations(client: pg.ClientBase, shared: boolean): 
   let legacyOwnedObjects: Array<{ schema: string; owner: string; kind: string; object: string }> = [];
   if (contracted) {
     const { rows: markerRows } = await client.query<{ missing: boolean }>(
-      `SELECT EXISTS (
+      `SELECT NOT EXISTS (
          SELECT 1 FROM pg_catalog.pg_roles r
          WHERE r.rolname = 'crove_tenant'
-           AND pg_catalog.shobj_description(r.oid, 'pg_authid') IS DISTINCT FROM $1
+           AND pg_catalog.shobj_description(r.oid, 'pg_authid') = $1
        ) AS missing`,
       [STAGE7_CLUSTER_MARKER],
     );
@@ -1740,11 +1773,16 @@ export async function setRolePasswords(adminUrl: string, passwords: Record<strin
   const client = new pg.Client({ connectionString: adminUrl, application_name: 'ludy-migrate' });
   await client.connect();
   try {
-    const clusterContracted = await isClusterStage7Contracted(client);
+    let legacyBlocked: boolean | undefined;
     for (const [role, password] of Object.entries(passwords)) {
       if (!password) continue;
-      if (clusterContracted && LEGACY_CROVE_ROLES.includes(role)) {
-        throw new Error(`refusing to set a password on legacy role ${role} after Stage 7 contraction; use the canonical ludy_* role instead`);
+      if (LEGACY_CROVE_ROLES.includes(role)) {
+        legacyBlocked ??=
+          (await isDatabaseStage7Contracted(client)) ||
+          (await readCoreCutoverClusterState(client)) !== 'uncontracted';
+        if (legacyBlocked) {
+          throw new Error(`refusing to set a password on legacy role ${role} after Stage 7 contraction; use the canonical ludy_* role instead`);
+        }
       }
       if (shared && !LUDY_ROLES.includes(role)) throw new Error(`shared database: refusing to set the password of ${role}, which is not a Ludy role`);
       const { rows } = await client.query<{ sql: string }>('SELECT format($$ALTER ROLE %I PASSWORD %L$$, $1::text, $2::text) AS sql', [
