@@ -48,7 +48,7 @@ export interface MeetingLabelSuggestInput {
   language: 'vi' | 'en';
   /** The labels this meeting has now (the recorder reads them): never suggested again, and they count against the limit. */
   existing: readonly string[];
-  /** The labels the recorder reads on the meetings they reach, one entry per use (so a label on three meetings is there three times), in any order. */
+  /** The labels the recorder reads on the meetings they reach: either one entry per use in any order, or distinct labels already ranked most used first (a tie keeps the order they came in). */
   readable: readonly string[];
   rules: LabelRules;
 }

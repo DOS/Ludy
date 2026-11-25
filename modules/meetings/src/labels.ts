@@ -154,7 +154,10 @@ export async function labelsOfMeetings(trx: QueryContext['trx'], orgId: string, 
   return byMeeting;
 }
 
-// Distinct labels in use on the non-expired meetings the caller can read, most used first (#5039):
+// Most recent readable non-expired meetings scanned when collecting labels in use (matches the former meeting.list(200) window; #5039).
+const LABEL_IN_USE_MEETINGS_MAX = 200;
+
+// Distinct labels in use on the most recent non-expired meetings the caller can read, most used first (#5039):
 // one grouped read under the caller's own row security (meeting and meeting_label RLS) instead of listing 200 full meeting rows.
 export const labelInUse = defineQuery({
   name: 'meetings.label.in_use',
@@ -163,20 +166,53 @@ export const labelInUse = defineQuery({
   handler: async (ctx, input): Promise<MeetingLabelsInUse> => {
     userOf(ctx.actor);
     const today = vnDay(new Date());
-    const { rows } = await sql<{ label: string; uses: number }>`
+    const { rows } = await sql<{ label: string; uses: number; first_ord: number }>`
+      WITH recent AS (
+        SELECT
+          m.id,
+          pg_catalog.row_number() OVER (ORDER BY m.started_at DESC, m.id DESC) AS meeting_ord
+        FROM ludy_meetings.meeting m
+        WHERE m.org_id = ${ctx.orgId}::uuid
+          AND (m.text_retention_date IS NULL OR m.text_retention_date > ${today}::date)
+        ORDER BY m.started_at DESC, m.id DESC
+        LIMIT ${LABEL_IN_USE_MEETINGS_MAX}::int
+      ),
+      seen AS (
+        SELECT
+          l.label,
+          pg_catalog.row_number() OVER (ORDER BY r.meeting_ord ASC, l.created_at ASC, l.id ASC) AS first_ord
+        FROM recent r
+        INNER JOIN ludy_meetings.meeting_label l
+          ON l.org_id = ${ctx.orgId}::uuid AND l.meeting_id = r.id
+      )
       SELECT
-        (pg_catalog.array_agg(l.label ORDER BY m.started_at DESC NULLS LAST, l.created_at ASC, l.id ASC))[1] AS label,
-        pg_catalog.count(*)::int AS uses
-      FROM ludy_meetings.meeting_label l
-      INNER JOIN ludy_meetings.meeting m
-        ON m.org_id = l.org_id AND m.id = l.meeting_id
-      WHERE l.org_id = ${ctx.orgId}::uuid
-        AND m.org_id = ${ctx.orgId}::uuid
-        AND (m.text_retention_date IS NULL OR m.text_retention_date > ${today}::date)
-      GROUP BY pg_catalog.lower(l.label)
-      ORDER BY pg_catalog.count(*) DESC, pg_catalog.max(m.started_at) DESC NULLS LAST, pg_catalog.lower(l.label) ASC
-      LIMIT ${input.limit}::int`.execute(ctx.trx);
-    return zMeetingLabelsInUse.parse({ labels: rows.map((r) => ({ label: r.label, count: r.uses })) });
+        (pg_catalog.array_agg(s.label ORDER BY s.first_ord ASC))[1] AS label,
+        pg_catalog.count(*)::int AS uses,
+        pg_catalog.min(s.first_ord)::int AS first_ord
+      FROM seen s
+      GROUP BY pg_catalog.lower(s.label)
+      ORDER BY pg_catalog.count(*) DESC, pg_catalog.min(s.first_ord) ASC`.execute(ctx.trx);
+    // Fold any non-ASCII case pairs the database locale may not collapse (e.g. C/C.UTF-8 on Vietnamese letters),
+    // keeping the earliest-seen spelling and appearance order to match labelKey() and labelsInUse().
+    const byKey = new Map<string, { label: string; count: number; firstOrd: number }>();
+    for (const r of rows) {
+      const key = labelKey(r.label);
+      const seen = byKey.get(key);
+      if (!seen) {
+        byKey.set(key, { label: r.label, count: r.uses, firstOrd: r.first_ord });
+      } else {
+        seen.count += r.uses;
+        if (r.first_ord < seen.firstOrd) {
+          seen.firstOrd = r.first_ord;
+          seen.label = r.label;
+        }
+      }
+    }
+    const labels = [...byKey.values()]
+      .sort((a, b) => b.count - a.count || a.firstOrd - b.firstOrd)
+      .slice(0, input.limit)
+      .map(({ label, count }) => ({ label, count }));
+    return zMeetingLabelsInUse.parse({ labels });
   },
 });
 

@@ -24,6 +24,7 @@ suite('Meeting labels (#4955)', () => {
   const pools: pg.Pool[] = [];
   let orgId = '';
   let runtime: Runtime;
+  let workerRuntime: Runtime;
   const users: Record<string, string> = {};
   const NAMES: Record<string, string> = { owner: 'Chủ Công Ty', rec: 'Phạm Quang Minh', lan: 'Trần Thị Lan', nam: 'Nguyễn Văn Nam', other: 'Bạn Không Đọc', solo: 'Thành Viên Riêng', viewer: 'Người Xem' };
   const asUser = (who: string) => ({ type: 'user' as const, userId: users[who] as string, aal: 'aal1' as const });
@@ -46,12 +47,13 @@ suite('Meeting labels (#4955)', () => {
   const sqlAdmin = <R extends pg.QueryResultRow = pg.QueryResultRow>(text: string, params: unknown[] = []) => admin((c) => c.query<R>(text, params));
 
   // A meeting held on Wednesday 25 November 2026 (Vietnam time), recorded by `rec` and read by `lan` and `nam`; its text period ends in a year, or yesterday for an expired one.
-  async function meeting(title: string, opts: { readers?: string[]; expired?: boolean; visibility?: 'attendees' | 'org'; startedAt?: string } = {}): Promise<string> {
+  async function meeting(title: string, opts: { readers?: string[]; expired?: boolean; visibility?: 'attendees' | 'org'; startedAt?: string | null } = {}): Promise<string> {
     const id = randomUUID();
+    const startedAt = opts.startedAt === undefined ? '2026-11-25T03:00:00Z' : opts.startedAt;
     await sqlAdmin(
       `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
        VALUES ($1, $2, $4, 'vi', $6::timestamptz, $6::timestamptz + interval '1 hour', 3600, $3, $5, 'ready', 'told_at_start', $3, now(), '1.0', current_date - 1, ${opts.expired ? 'current_date - 1' : 'current_date + 365'})`,
-      [orgId, id, users.rec, title, opts.visibility ?? 'attendees', opts.startedAt ?? '2026-11-25T03:00:00Z'],
+      [orgId, id, users.rec, title, opts.visibility ?? 'attendees', startedAt],
     );
     for (const reader of opts.readers ?? ['lan', 'nam']) await sqlAdmin('INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)', [orgId, randomUUID(), id, users[reader]]);
     return id;
@@ -71,9 +73,15 @@ suite('Meeting labels (#4955)', () => {
     url.username = 'ludy_app';
     url.password = 'test-app-pw';
     const appPool = createPool({ connectionString: url.toString(), max: 4 });
-    pools.push(appPool);
+    const workerUrl = new URL(adminUrl);
+    workerUrl.username = 'ludy_worker';
+    workerUrl.password = 'test-worker-pw';
+    const workerPool = createPool({ connectionString: workerUrl.toString(), max: 4 });
+    pools.push(appPool, workerPool);
     const db = createDb(appPool);
-    runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...meetingsCommands], queries: [...kernelQueries({ inboundDomain: null }), ...meetingsQueries] });
+    const registry = { commands: [...kernelCommands, ...meetingsCommands], queries: [...kernelQueries({ inboundDomain: null }), ...meetingsQueries] };
+    runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register(registry);
+    workerRuntime = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register(registry);
     for (const key of Object.keys(NAMES)) users[key] = await upsertIdentity(db, { issuer: 'lb', subject: key, email: `${key}@lb.test`, name: NAMES[key] as string });
     orgId = (await createOrg(runtime, asUser('owner'), 'Công ty Nhãn Họp')).orgId;
     await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member'), ($1, $6, 'member'), ($1, $7, 'viewer')`, [orgId, users.rec, users.lan, users.nam, users.other, users.solo, users.viewer]);
@@ -205,6 +213,7 @@ suite('Meeting labels (#4955)', () => {
     const oldMeeting = await meeting('Họp cũ', { readers: ['solo'], startedAt: '2026-11-20T03:00:00Z' });
     const midMeeting = await meeting('Họp giữa', { readers: ['solo'], startedAt: '2026-11-22T03:00:00Z' });
     const newMeeting = await meeting('Họp mới', { readers: ['solo'], startedAt: '2026-11-24T03:00:00Z' });
+    const orgMeeting = await meeting('Họp chung công ty', { readers: [], visibility: 'org', startedAt: '2026-11-19T03:00:00Z' });
     const hidden = await meeting('Họp kín của Nam', { readers: ['nam'], startedAt: '2026-11-25T03:00:00Z' });
     const expired = await meeting('Họp hết hạn của Solo', { readers: ['solo'], expired: true, startedAt: '2026-11-25T05:00:00Z' });
 
@@ -212,38 +221,66 @@ suite('Meeting labels (#4955)', () => {
     await put('rec', oldMeeting, 'Nhãn Cũ');
     await put('rec', midMeeting, 'khách a');
     await put('rec', newMeeting, 'KHÁCH A');
-    await put('rec', newMeeting, 'Nhãn Mới');
+    await put('rec', newMeeting, 'Nhãn Z');
+    await put('rec', newMeeting, 'Nhãn A');
+    await put('rec', orgMeeting, 'Chung Công Ty');
     await put('rec', hidden, 'Bí mật riêng');
     await sqlAdmin('INSERT INTO ludy_meetings.meeting_label (org_id, meeting_id, label, created_by) VALUES ($1, $2, $3, $4)', [orgId, expired, 'Nhãn Hết Hạn', users.rec]);
 
-    // Grouped case-insensitively with newest meeting spelling on ties, sorted count DESC then started_at DESC then lower(label) ASC; hides hidden and expired meetings.
+    // Grouped case-insensitively with earliest-seen spelling and first-appearance order on count ties, matching meeting.list + labelsInUse.
     expect(await inUse('solo')).toEqual({
       labels: [
         { label: 'KHÁCH A', count: 3 },
-        { label: 'Nhãn Mới', count: 1 },
+        { label: 'Nhãn Z', count: 1 },
+        { label: 'Nhãn A', count: 1 },
         { label: 'Nhãn Cũ', count: 1 },
+        { label: 'Chung Công Ty', count: 1 },
       ],
     });
     expect(await inUse('solo', 2)).toEqual({
       labels: [
         { label: 'KHÁCH A', count: 3 },
-        { label: 'Nhãn Mới', count: 1 },
+        { label: 'Nhãn Z', count: 1 },
       ],
     });
 
-    // Owner cannot read attendees-only meetings' labels (not even Solo's or Nam's).
-    const ownerLabels = (await inUse('owner')).labels.map((l) => l.label);
-    expect(ownerLabels).not.toContain('KHÁCH A');
-    expect(ownerLabels).not.toContain('Bí mật riêng');
-    expect(ownerLabels).not.toContain('Nhãn Hết Hạn');
+    // Owner reads org-visible meetings' labels, never attendees-only or expired meetings.
+    expect(await inUse('owner')).toEqual({
+      labels: [{ label: 'Chung Công Ty', count: 1 }],
+    });
 
-    // Recorder still reads their hidden meeting's label (minus expired).
+    // Recorder reads their hidden meeting's label and org-visible meeting's label, minus expired.
     const recLabels = (await inUse('rec')).labels.map((l) => l.label);
     expect(recLabels).toContain('Bí mật riêng');
+    expect(recLabels).toContain('Chung Công Ty');
     expect(recLabels).not.toContain('Nhãn Hết Hạn');
 
-    // Viewer and system context are refused.
+    // Invalid limits, viewer role, and system context (via ludy_worker pool) are refused.
+    await expect(inUse('solo', 0)).rejects.toMatchObject({ code: 'VALIDATION' });
+    await expect(inUse('solo', 51)).rejects.toMatchObject({ code: 'VALIDATION' });
     await expect(inUse('viewer')).rejects.toMatchObject({ code: 'FORBIDDEN' });
-    await expect(runtime.query('meetings.label.in_use', {}, { actor: { type: 'system', component: 'test.label-in-use' }, orgId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(workerRuntime.query('meetings.label.in_use', {}, { actor: { type: 'system', component: 'test.label-in-use' }, orgId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+
+    // A meeting with NULL started_at orders first under started_at DESC (NULLS FIRST), and a 200-meeting CTE cap drops older meetings beyond the 200 newest.
+    const nullStarted = await meeting('Họp chưa có giờ', { readers: ['solo'], startedAt: null });
+    await put('rec', nullStarted, 'Chưa Ghi Giờ');
+    expect((await inUse('solo')).labels.map((l) => l.label)).toEqual([
+      'KHÁCH A',
+      'Chưa Ghi Giờ',
+      'Nhãn Z',
+      'Nhãn A',
+      'Nhãn Cũ',
+      'Chung Công Ty',
+    ]);
+
+    await sqlAdmin(
+      `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+       SELECT $1, ludy_kernel.uuid_v7(), 'Họp mới ' || g, 'vi', '2026-11-26T00:00:00Z'::timestamptz + pg_catalog.make_interval(mins => g), '2026-11-26T01:00:00Z'::timestamptz + pg_catalog.make_interval(mins => g), 3600, $2, 'attendees', 'ready', 'told_at_start', $2, now(), '1.0', current_date - 1, current_date + 365
+       FROM pg_catalog.generate_series(1, 200) AS g`,
+      [orgId, users.solo],
+    );
+    expect(await inUse('solo')).toEqual({
+      labels: [{ label: 'Chưa Ghi Giờ', count: 1 }],
+    });
   });
 });
