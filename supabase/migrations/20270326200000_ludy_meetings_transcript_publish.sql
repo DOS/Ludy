@@ -28,6 +28,8 @@ BEGIN
   IF NOT ludy_meetings.is_meeting_recorder(v_org, p_meeting_id) THEN
     RAISE EXCEPTION 'MEETINGS_PUBLISH_FORBIDDEN' USING ERRCODE = '42501';
   END IF;
+  -- The meeting row first, then its lines: the order the erasure and a meeting's delete take (defence in depth; the command holds it too, before it calls this).
+  PERFORM 1 FROM ludy_meetings.meeting WHERE org_id = v_org AND id = p_meeting_id FOR NO KEY UPDATE;
   PERFORM 1 FROM ludy_meetings.transcript_segment s WHERE s.org_id = v_org AND s.meeting_id = p_meeting_id AND s.stage = 'draft' FOR UPDATE;
   IF NOT FOUND THEN
     RETURN 0;
