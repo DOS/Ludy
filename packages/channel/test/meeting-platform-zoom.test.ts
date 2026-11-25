@@ -3,7 +3,7 @@
 // response shapes (test/fixtures/zoom/) and a mocked transport. No test here may reach the network: the global fetch is replaced by a counter that must stay at zero.
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { MeetingPlatformError, ZOOM_DOWNLOAD_SUFFIX, ZOOM_HOSTS, ZoomMeetingPlatform, meetingPlatformAdapters, parseZoomNotice, zoomAccountKey, zoomDownloadUrl, type Fetch, type MeetingPlatformCredential } from '../src/index.ts';
+import { MeetingPlatformError, ZOOM_DOWNLOAD_SUFFIX, ZOOM_HOSTS, ZOOM_TRANSCRIPT_MAX_BYTES, ZoomMeetingPlatform, meetingPlatformAdapters, parseZoomNotice, parseZoomVtt, zoomAccountKey, zoomDownloadUrl, type Fetch, type MeetingPlatformCredential } from '../src/index.ts';
 
 const fixture = (name: string) => JSON.parse(readFileSync(new URL(`./fixtures/zoom/${name}.json`, import.meta.url), 'utf8')) as Record<string, unknown>;
 const CREDENTIAL: MeetingPlatformCredential = { accessToken: 'zoom-access-not-real-0001', refreshToken: 'zoom-refresh-not-real-0001' };
@@ -389,6 +389,74 @@ describe('ZoomMeetingPlatform connect (authorizeUrl and exchange)', () => {
     expect(message).not.toContain(GRANT.code);
     expect(message).not.toContain('secret-body');
     expect(message).not.toContain('access-new');
+  });
+});
+
+describe('Zoom\'s transcript file', () => {
+  const VTT = readFileSync(new URL('./fixtures/zoom/transcript.vtt', import.meta.url), 'utf8');
+  const file = (over: Record<string, unknown> = {}) => ({ id: 'f-vtt', file_type: 'TRANSCRIPT', file_extension: 'VTT', file_size: 2000, recording_type: 'audio_transcript', status: 'completed', download_url: 'https://us02web.zoom.us/rec/download/f-vtt-fresh', ...over });
+
+  it('reads the speaker from the text before the first colon, and leaves a figure, a long prefix and a cue with no colon without one', () => {
+    const { entries, truncated } = parseZoomVtt(VTT);
+    expect(truncated).toBe(false);
+    expect(entries.map((e) => [e.startSeconds, e.endSeconds, e.speaker, e.text])).toEqual([
+      [3, 5, 'Nguyen Van A', 'Xin chào mọi người, hôm nay mình bàn về báo giá.'],
+      [6, 10, 'Tran Thi B', 'Báo giá là 120 triệu, giao trong 10 ngày.'],
+      [10, 12, null, 'Không ai nói tên ở dòng này.'],
+      // The colon inside the sentence stays in it: only the first one names the speaker.
+      [13, 15, 'Nguyen Van A', 'Giờ họp: 10:30 sáng mai. Ghi lại giúp.'],
+      // "3: ..." is a figure, not a name.
+      [16, 17, null, '3: mục thứ ba'],
+      // The cue settings after the end stamp are not part of the time.
+      [62, 64, 'Le C', 'Dạ vâng.'],
+    ]);
+    const long = `WEBVTT\n\n1\n00:00:01.000 --> 00:00:02.000\n${'x'.repeat(90)}: tail\n`;
+    expect(parseZoomVtt(long).entries[0]?.speaker).toBeNull();
+    expect(parseZoomVtt('').entries).toEqual([]);
+    expect(parseZoomVtt('WEBVTT\n\n1\n00:00:01.000 --> 00:00:02.000\n   \n').entries).toEqual([]);
+  });
+
+  it('describes the one finished transcript file the way a recording\'s file is described: a fresh address, the member\'s token, the exact first host, redirects only inside zoom.us', async () => {
+    const { adapter, calls } = zoom([{ json: { uuid: 'U', recording_files: [file(), { ...file({ id: 'f-chat', file_type: 'CHAT', recording_type: 'chat_file' }) }] } }]);
+    const download = await adapter.transcriptFile(CREDENTIAL, 'AAAAAAAAAAAAAAAAAAAAAA==');
+    expect(download).toEqual({
+      url: 'https://us02web.zoom.us/rec/download/f-vtt-fresh',
+      headers: { authorization: 'Bearer zoom-access-not-real-0001' },
+      format: 'transcript',
+      contentType: 'text/vtt',
+      sizeBytes: 2000,
+      hosts: ['us02web.zoom.us'],
+      hostSuffixes: ['zoom.us'],
+    });
+    expect(calls.map((c) => c.url)).toEqual([`https://api.zoom.us/v2/meetings/${encodeURIComponent('AAAAAAAAAAAAAAAAAAAAAA==')}/recordings`]);
+  });
+
+  it('refuses a recording with no transcript, one still processing, two transcript parts, a file off Zoom\'s hosts, and an id that climbs the path', async () => {
+    const one = (files: unknown[]) => zoom([{ json: { recording_files: files } }]).adapter.transcriptFile(CREDENTIAL, 'U');
+    expect(await codeOf(one([]))).toBe('no_transcript');
+    expect(await codeOf(one([file({ status: 'processing' })]))).toBe('no_transcript');
+    expect(await codeOf(one([file(), file({ id: 'f-vtt-2' })]))).toBe('no_transcript');
+    expect(await codeOf(one([file({ download_url: 'https://evil.example.test/rec/f' })]))).toBe('platform_refused');
+    expect(await codeOf(one([file({ download_url: 'http://us02web.zoom.us/rec/f' })]))).toBe('platform_refused');
+    expect(await codeOf(one([file({ download_url: 'https://notzoom.us/rec/f' })]))).toBe('platform_refused');
+    const { adapter, calls } = zoom([{ json: {} }]);
+    for (const id of ['', '.', '..']) expect(await codeOf(adapter.transcriptFile(CREDENTIAL, id))).toBe('recording_gone');
+    expect(calls).toEqual([]);
+  });
+
+  it('maps a Zoom status the way the list does: 401 expired, 404 gone, 429 busy', async () => {
+    for (const [status, code] of [[401, 'connection_expired'], [404, 'recording_gone'], [429, 'platform_unavailable']] as const) {
+      expect(await codeOf(zoom([{ status }]).adapter.transcriptFile(CREDENTIAL, 'U'))).toBe(code);
+    }
+  });
+
+  it('parses the bytes the job got as Zoom\'s own transcript, and refuses an empty one and one over the cap', () => {
+    const { adapter } = zoom([{ json: {} }]);
+    const parsed = adapter.parseTranscript(new TextEncoder().encode(VTT));
+    expect(parsed).toMatchObject({ source: 'zoom', language: null, truncated: false });
+    expect(parsed.entries).toHaveLength(6);
+    expect(() => adapter.parseTranscript(new TextEncoder().encode('WEBVTT\n'))).toThrow(expect.objectContaining({ code: 'no_transcript' }));
+    expect(() => adapter.parseTranscript(new Uint8Array(ZOOM_TRANSCRIPT_MAX_BYTES + 1))).toThrow(expect.objectContaining({ code: 'too_large' }));
   });
 });
 
