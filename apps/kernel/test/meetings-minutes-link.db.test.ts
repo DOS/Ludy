@@ -3,7 +3,7 @@
 // makes a link, at most 10 live ones; the token is shown once and only its hash is kept; the public read answers the published summary, decisions and action items and nothing else (no draft, no
 // transcript), shows a republish at once, counts the open, and gives ONE answer (null) for a malformed, unknown, revoked, expired, switched-off or unpublished link; revoking works with the switch off;
 // the audit rows hold ids and never the token; and only the API login may run the definer.
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -12,7 +12,7 @@ import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import type { MinutesLinkCreated } from '@ludy/kernel-contract';
 import { Runtime } from '@ludy/kernel-runtime';
-import { meetingsCommands, meetingsQueries, minutesTokenHash } from '@ludy/mod-meetings';
+import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
 import { minutesView } from '../src/minutes-link.ts';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
 
@@ -64,6 +64,8 @@ suite('the minutes link for people outside the org (#4822)', () => {
     await sqlAdmin(`INSERT INTO ludy_meetings.transcript_segment (org_id, id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, $3, 0, 10, 'Người nói 1', 'LỜI NÓI BÍ MẬT', 'published')`, [orgId, randomUUID(), id]);
     return id;
   }
+  // What the database keeps of a token: its SHA-256 in hex (the test's own copy of the rule, so a change of it shows here).
+  const minutesTokenHash = (token: string) => createHash('sha256').update(token, 'utf8').digest('hex');
   const makeLink = (meetingId: string, who = 'rec') => exec<MinutesLinkCreated>(who, 'meetings.minutes_link.create', { meetingId });
   const view = (token: string) => minutesView(runtime, { token });
 
