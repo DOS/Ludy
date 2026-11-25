@@ -9,7 +9,8 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { minimalMp4, type MeetingPlatformAdapter, type MeetingPlatformDownload } from '@ludy/channel';
 import { MEETING_PLATFORM_IMPORT_MAX_BYTES } from '@ludy/kernel-contract';
 import { EgressError, LocalDiskStore, type EgressStream } from '@ludy/kernel-runtime';
-import { MediaClientError, type JoinPartSource } from '@ludy/media-contract/extract';
+import { MEDIA_LIMITS, MediaClientError, type JoinPartSource } from '@ludy/media-contract/extract';
+import { ZOOM_PARTS_MAX } from '@ludy/channel';
 import { createMediaAudioExtractor } from '../src/meetings-extract.ts';
 import { runMeetingsImport, type MeetingsImportDeps, type MeetingsImportJob } from '../src/meetings-import.ts';
 
@@ -161,6 +162,18 @@ const failedWith = (code: string) => `kernel.meeting_platform.import_failed:${co
 const STAGED = 'kernel.meeting_platform.import_staged:';
 
 describe('a recording in several parts', () => {
+  it('has the Zoom adapter and the sandbox agree on the most parts of one join', () => {
+    expect(ZOOM_PARTS_MAX).toBe(MEDIA_LIMITS.maxJoinParts);
+  });
+
+  it('refuses a count of parts the sandbox would refuse before any part is fetched, as a final failure', async () => {
+    const many = Array.from({ length: MEDIA_LIMITS.maxJoinParts + 1 }, (_, i) => ({ bytes: mp4(1000, i), declared: 1000 }));
+    const run = setup({ parts: many });
+    expect(await runMeetingsImport(run.deps, job(), attempt)).toBe('failed');
+    expect(run.executed).toEqual([failedWith('invalid_media')]);
+    expect(run.calls.opened).toBe(0);
+  });
+
   it('joins the parts in order through the sandbox and stages only the audio it returns, keeping no part', async () => {
     const parts = [mp4(3000, 1), mp4(5000, 2), mp4(2000, 3)];
     const run = setup({ parts: parts.map((bytes) => ({ bytes, declared: bytes.byteLength })) });

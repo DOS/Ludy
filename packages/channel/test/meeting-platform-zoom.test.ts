@@ -539,6 +539,20 @@ describe('a recording made in several segments is offered as one, in the order i
     expect(await listed(many.slice(0, 16))).toMatchObject({ hasAudio: true, sizeBytes: 16 });
   });
 
+  it('does not join two views of one stretch: files that began together, files of a kind outside the known ones, or files of different kinds', async () => {
+    expect(await listed([part('a1', '2026-11-17T01:00:00Z', 10), part('a2', '2026-11-17T01:00:00Z', 10)])).toBeUndefined();
+    expect(await listed([part('v1', '2026-11-17T01:00:00Z', 10, 'speaker_view', 'MP4'), part('v2', '2026-11-17T01:30:00Z', 10, 'sign_interpretation', 'MP4')])).toBeUndefined();
+    expect(await listed([part('v1', '2026-11-17T01:00:00Z', 10, 'speaker_view', 'MP4'), part('v2', '2026-11-17T01:30:00Z', 10, 'speaker_view', 'MP4')])).toBeUndefined();
+    // One file of a kind we do not know is still the recording.
+    expect(await listed([part('v1', '2026-11-17T01:00:00Z', 10, 'speaker_view', 'MP4')])).toMatchObject({ hasVideo: true, sizeBytes: 10 });
+  });
+
+  it('does not offer a kind while one of its segments is still processing', async () => {
+    const pending = { ...part('a2', '2026-11-17T01:30:00Z', 10), status: 'processing' };
+    expect(await listed([part('a1', '2026-11-17T01:00:00Z', 10), pending])).toBeUndefined();
+    expect(await listed([part('a1', '2026-11-17T01:00:00Z', 10), part('a2', '2026-11-17T01:30:00Z', 10)])).toMatchObject({ hasAudio: true, sizeBytes: 20 });
+  });
+
   it('describes the parts for the job in recording order, each as a single file is described, and none for a recording of one file', async () => {
     const files = [part('a2', '2026-11-17T01:30:00Z', 20), part('a1', '2026-11-17T01:00:00Z', 10)];
     const { adapter, calls } = zoom([{ json: { recording_files: files } }]);

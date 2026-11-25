@@ -91,16 +91,22 @@ const partsOf = (files: ZoomFile[]): ZoomFile[] => {
   if (files.length > ZOOM_PARTS_MAX || files.some((f) => Number.isNaN(startOf(f)))) return [];
   const ids = files.map((f) => text(f.id));
   if (ids.some((id) => id === '') || new Set(ids).size !== ids.length) return [];
+  // Two files that began at the same moment are two views of one stretch of the call, not consecutive segments: joining them would say it twice.
+  if (new Set(files.map(startOf)).size !== files.length) return [];
   return [...files].sort((a, b) => startOf(a) - startOf(b) || text(a.id).localeCompare(text(b.id)));
 };
+// A kind with a file Zoom is still processing is not offered yet: the finished ones alone would be a call with a segment missing, joined without a sign of the gap.
+const settled = (files: ZoomFile[]): ZoomFile[] => (completed(files).length === files.length ? files : []);
 // The audio-only files: the shared M4A Zoom makes when the host records audio-only files, in recording order.
-const audioParts = (files: ZoomFile[]) => partsOf(completed(files).filter((f) => text(f.recording_type) === 'audio_only' && (text(f.file_type).toUpperCase() === 'M4A' || text(f.file_extension).toUpperCase() === 'M4A')));
+const audioParts = (files: ZoomFile[]) => partsOf(settled(files.filter((f) => text(f.recording_type) === 'audio_only' && (text(f.file_type).toUpperCase() === 'M4A' || text(f.file_extension).toUpperCase() === 'M4A'))));
 // The video kinds, best first: the speaker view with the shared screen is the one a minutes taker wants; the first kind present is the one used, in recording order.
 const VIDEO_KINDS = ['shared_screen_with_speaker_view', 'shared_screen_with_gallery_view', 'active_speaker', 'gallery_view', 'shared_screen'] as const;
 const videoParts = (files: ZoomFile[]) => {
-  const mp4s = completed(files).filter((f) => text(f.recording_type) !== 'audio_only' && (text(f.file_type).toUpperCase() === 'MP4' || text(f.file_extension).toUpperCase() === 'MP4'));
+  const mp4s = files.filter((f) => text(f.recording_type) !== 'audio_only' && (text(f.file_type).toUpperCase() === 'MP4' || text(f.file_extension).toUpperCase() === 'MP4'));
   const kind = VIDEO_KINDS.find((k) => mp4s.some((f) => text(f.recording_type) === k));
-  return partsOf(kind ? mp4s.filter((f) => text(f.recording_type) === kind) : mp4s);
+  if (kind) return partsOf(settled(mp4s.filter((f) => text(f.recording_type) === kind)));
+  // No known kind: one file is the recording; several files of a kind we do not know are as likely views of one stretch as segments, so they are not joined, and files of different kinds never are.
+  return mp4s.length === 1 ? partsOf(settled(mp4s)) : [];
 };
 const isTranscript = (f: ZoomFile) => text(f.recording_type) === 'audio_transcript' || text(f.file_type).toUpperCase() === 'TRANSCRIPT';
 // The one finished transcript file, or undefined: two of them are two parts of one call, and half a transcript is not offered as a whole.

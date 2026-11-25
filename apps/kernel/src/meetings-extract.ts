@@ -157,6 +157,8 @@ export interface PartsJoin {
 export async function joinAudioFromParts(input: PartsJoin): Promise<{ audio: Uint8Array; durationSeconds: number }> {
   const join = input.extractor.join;
   if (!join) throw unavailable();
+  // Refused before any part is fetched: a count the sandbox would refuse is not worth downloading the recording for, once per retry.
+  if (input.parts.length < 1 || input.parts.length > MEDIA_LIMITS.maxJoinParts) throw failed('media');
   const key = (input.newKey ?? (() => randomBytes(32)))();
   const binding: BlobMediaBinding = { orgId: input.orgId, meetingId: input.meetingId, kind: input.kind };
   const stored: Array<{ key: string; created: boolean }> = [];
