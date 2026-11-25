@@ -671,9 +671,11 @@ export const signApi = {
   analyzeAi: async (
     envelopeId: string,
     pages?: ReadonlyArray<{ page: number; text: string }>,
+    expectedSourceSha256?: string,
   ): Promise<SignAiAnalysis | null> => {
     const res = await client.sign.ai.analyze({
       envelopeId,
+      ...(expectedSourceSha256 ? { expectedSourceSha256 } : {}),
       ...(pages && pages.length > 0 ? { pages: [...pages] } : {}),
     });
     return normalizeAiAnalysis(res);
@@ -1509,7 +1511,8 @@ export const publicSignApi = {
       });
       if (!response.ok) {
         const data = (await response.json().catch(() => ({}))) as { code?: string; message?: string };
-        throw new PublicSignError(response.status, data.code ?? 'SIGN_DEPOSIT_NOTICE_FAILED', data.message);
+        const code = data.code ?? (response.status === 413 ? 'TOO_LARGE' : 'SIGN_DEPOSIT_NOTICE_FAILED');
+        throw new PublicSignError(response.status, code, data.message);
       }
       return (await response.json()) as SignPublicDepositNoticeResult;
     }
@@ -1551,7 +1554,8 @@ export const publicSignApi = {
     });
     if (!response.ok) {
       const data = (await response.json().catch(() => ({}))) as { code?: string; message?: string };
-      throw new PublicSignError(response.status, data.code ?? 'SIGN_ATTACHMENT_FAILED', data.message);
+      const code = data.code ?? (response.status === 413 ? 'TOO_LARGE' : 'SIGN_ATTACHMENT_FAILED');
+      throw new PublicSignError(response.status, code, data.message);
     }
     return (await response.json()) as PublicSignFieldAttachment;
   },

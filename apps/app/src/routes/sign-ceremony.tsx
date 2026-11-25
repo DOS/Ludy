@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Mobile-first public signing ceremony (/-/sign#<token>, zero query tokens, zero CAPTCHA, OTP gate, PNG signature pad) (#3325).
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type RefObject } from 'react';
 import { useTranslations } from 'use-intl';
 import { Badge } from '@ludy/ui/components/badge';
 import { Button } from '@ludy/ui/components/button';
@@ -227,6 +227,77 @@ export function isApproverCeremonyMode(view: Pick<ReadySignView, 'signerRole' | 
       (field) => field.fieldType !== 'signature' && field.fieldType !== 'initials' && field.fieldType !== 'stamp',
     )
   );
+}
+
+export function jumpToCounterpartySummaryPage(
+  selectDoc: (docKey: string, nextPage?: number) => void | Promise<void>,
+  doc1Id: string | null,
+  page: number,
+): void {
+  void selectDoc(doc1Id ?? 'doc-1', page);
+}
+
+export async function runCeremonyDocumentSelect(deps: {
+  docKey: string;
+  nextPage?: number;
+  currentPageNumber: number;
+  pdfBytes: Uint8Array | null;
+  cachedPdfBytes: Uint8Array | undefined;
+  pdfRendered: boolean;
+  bumpGen: () => number;
+  getGen: () => number;
+  setLoadingPdf: (loading: boolean) => void;
+  setActiveDocKey: (docKey: string) => void;
+  setPageNumber: (page: number) => void;
+  clearErrors: () => void;
+  setPdfRendered: (rendered: boolean) => void;
+  setPdfBytes: (bytes: Uint8Array | null) => void;
+  fetchPdfBytes: () => Promise<Uint8Array>;
+  onFetched: (bytes: Uint8Array) => void;
+  onFetchError: (err: unknown) => void;
+}): Promise<void> {
+  const plan = planCachedDocumentSelect({
+    currentPageNumber: deps.currentPageNumber,
+    ...(deps.nextPage !== undefined ? { nextPage: deps.nextPage } : {}),
+    currentPdfBytes: deps.pdfBytes,
+    cachedPdfBytes: deps.cachedPdfBytes,
+    pdfRendered: deps.pdfRendered,
+  });
+  if (plan.action === 'noop') {
+    deps.bumpGen();
+    deps.setLoadingPdf(false);
+    deps.setActiveDocKey(deps.docKey);
+    return;
+  }
+  deps.setActiveDocKey(deps.docKey);
+  deps.setPageNumber(plan.targetPage);
+  deps.clearErrors();
+  if (plan.action === 'apply_cache') {
+    deps.bumpGen();
+    deps.setLoadingPdf(false);
+    if (plan.resetRendered) {
+      deps.setPdfRendered(false);
+    }
+    deps.setPdfBytes(plan.cached);
+    return;
+  }
+  const pdfGen = deps.bumpGen();
+  deps.setLoadingPdf(true);
+  deps.setPdfRendered(false);
+  deps.setPdfBytes(null);
+  try {
+    const bytes = await deps.fetchPdfBytes();
+    if (deps.getGen() !== pdfGen) return;
+    deps.onFetched(bytes);
+    deps.setPdfBytes(bytes);
+  } catch (pdfErr) {
+    if (deps.getGen() !== pdfGen) return;
+    deps.onFetchError(pdfErr);
+  } finally {
+    if (deps.getGen() === pdfGen) {
+      deps.setLoadingPdf(false);
+    }
+  }
 }
 
 export function planCachedDocumentSelect(opts: {
@@ -468,6 +539,7 @@ export function SignCeremonyPage() {
 
   const resetCeremonyTransientState = useCallback(() => {
     requestGenRef.current += 1;
+    pdfLoadGenRef.current += 1;
     setQrOpen(false);
     setQrPollTimedOut(false);
     setQrHandoffEndedTitle(null);
@@ -591,7 +663,7 @@ export function SignCeremonyPage() {
           pdfCacheRef.current.set(firstDocKey, bytes);
           setPdfBytes(bytes);
         } catch (pdfErr) {
-          if (requestGenRef.current !== requestId) return;
+          if (requestGenRef.current !== requestId || pdfLoadGenRef.current !== pdfGen) return;
           if (isOtpRequiredError(pdfErr)) {
             setOtpSent(false);
             setOtpCode('');
@@ -606,7 +678,7 @@ export function SignCeremonyPage() {
             setPdfError(t('invalidHint'));
           }
         } finally {
-          if (requestGenRef.current === requestId) {
+          if (requestGenRef.current === requestId && pdfLoadGenRef.current === pdfGen) {
             setLoadingPdf(false);
           }
         }
@@ -795,58 +867,45 @@ export function SignCeremonyPage() {
   const handleSelectDocument = useCallback(
     async (docKey: string, nextPage = 1) => {
       if (!token || viewState?.state !== 'ready') return;
-      const plan = planCachedDocumentSelect({
-        currentPageNumber: pageNumber,
+      const targetDoc = readyDocs.find((d) => (d.id ?? 'doc-1') === docKey) ?? null;
+      await runCeremonyDocumentSelect({
+        docKey,
         nextPage,
-        currentPdfBytes: pdfBytes,
+        currentPageNumber: pageNumber,
+        pdfBytes,
         cachedPdfBytes: pdfCacheRef.current.get(docKey),
         pdfRendered,
+        bumpGen: () => (pdfLoadGenRef.current += 1),
+        getGen: () => pdfLoadGenRef.current,
+        setLoadingPdf,
+        setActiveDocKey,
+        setPageNumber,
+        clearErrors: () => {
+          setPdfError(null);
+          setViewerRenderError(null);
+        },
+        setPdfRendered,
+        setPdfBytes,
+        fetchPdfBytes: () => publicSignApi.pdf(token, targetDoc?.id ?? undefined),
+        onFetched: (bytes) => {
+          pdfCacheRef.current.set(docKey, bytes);
+        },
+        onFetchError: (pdfErr) => {
+          if (isOtpRequiredError(pdfErr)) {
+            setOtpSent(false);
+            setOtpCode('');
+            setViewState(
+              buildOtpRequiredViewState({
+                orgName: viewState.orgName,
+                title: viewState.title,
+                inPerson: Boolean(inPersonMode || viewState.inPerson),
+              }),
+            );
+          } else {
+            setPdfError(t('invalidHint'));
+          }
+        },
       });
-      if (plan.action === 'noop') {
-        setActiveDocKey(docKey);
-        return;
-      }
-      const targetDoc = readyDocs.find((d) => (d.id ?? 'doc-1') === docKey) ?? null;
-      setActiveDocKey(docKey);
-      setPageNumber(plan.targetPage);
-      setPdfError(null);
-      setViewerRenderError(null);
-      if (plan.action === 'apply_cache') {
-        if (plan.resetRendered) {
-          setPdfRendered(false);
-        }
-        setPdfBytes(plan.cached);
-        return;
-      }
-      const pdfGen = (pdfLoadGenRef.current += 1);
-      setLoadingPdf(true);
-      setPdfRendered(false);
-      setPdfBytes(null);
-      try {
-        const bytes = await publicSignApi.pdf(token, targetDoc?.id ?? undefined);
-        if (pdfLoadGenRef.current !== pdfGen) return;
-        pdfCacheRef.current.set(docKey, bytes);
-        setPdfBytes(bytes);
-      } catch (pdfErr) {
-        if (pdfLoadGenRef.current !== pdfGen) return;
-        if (isOtpRequiredError(pdfErr)) {
-          setOtpSent(false);
-          setOtpCode('');
-          setViewState(
-            buildOtpRequiredViewState({
-              orgName: viewState.orgName,
-              title: viewState.title,
-              inPerson: Boolean(inPersonMode || viewState.inPerson),
-            }),
-          );
-        } else {
-          setPdfError(t('invalidHint'));
-        }
-      } finally {
-        if (pdfLoadGenRef.current === pdfGen) {
-          setLoadingPdf(false);
-        }
-      }
     },
     [token, viewState, readyDocs, inPersonMode, t, pageNumber, pdfBytes, pdfRendered],
   );
@@ -1422,6 +1481,7 @@ export function SignCeremonyReadyView(props: SignCeremonyReadyViewProps) {
           ],
     [viewState.documents, viewState.title, viewState.pageCount, viewState.pageDimensions],
   );
+  const packetPanelId = `${useId()}-packet-panel`;
   const [uncontrolledDocKey, setUncontrolledDocKey] = useState('doc-1');
   const resolvedDocKey = props.activeDocumentKey ?? uncontrolledDocKey;
   const activeDoc =
@@ -1520,8 +1580,8 @@ export function SignCeremonyReadyView(props: SignCeremonyReadyViewProps) {
       {viewState.sharedSummary ? (
         <CounterpartySummaryBanner
           sharedSummary={viewState.sharedSummary}
-          pageCount={viewState.pageCount}
-          onJumpToPage={props.onPageChange}
+          pageCount={packetDocuments[0]?.pageCount ?? viewState.pageCount}
+          onJumpToPage={(page) => jumpToCounterpartySummaryPage(selectDoc, doc1Id, page)}
         />
       ) : null}
 
@@ -1530,6 +1590,8 @@ export function SignCeremonyReadyView(props: SignCeremonyReadyViewProps) {
 
       {packetDocuments.length > 1 ? (
         <SignPacketTabs
+          idPrefix={packetPanelId}
+          panelId={packetPanelId}
           items={packetDocuments.map((doc) => {
             const docFields = viewState.fields.filter((f) => (f.documentId ?? doc1Id ?? null) === (doc.id ?? null));
             const requiredDocsFields = docFields.filter((f) => f.required);
@@ -1550,6 +1612,11 @@ export function SignCeremonyReadyView(props: SignCeremonyReadyViewProps) {
       ) : null}
 
       <PdfCanvasViewer
+        panelId={packetDocuments.length > 1 ? packetPanelId : undefined}
+        panelRole={packetDocuments.length > 1 ? 'tabpanel' : undefined}
+        panelAriaLabelledBy={
+          packetDocuments.length > 1 ? `${packetPanelId}-tab-${activeDoc.id ?? 'doc-1'}` : undefined
+        }
         pdfBytes={props.pdfBytes}
         pageNumber={props.pageNumber}
         pageCount={Math.max(1, activeDoc.pageCount)}
