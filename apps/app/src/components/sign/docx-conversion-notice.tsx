@@ -16,7 +16,6 @@ import {
   clearCreatedDocxWarnings,
   readCreatedDocxWarnings,
   saveCreatedDocxWarnings,
-  type CreatedDocxWarningScope,
 } from '../../lib/sign-docx-notices.ts';
 import { looksLikePdfBytes } from '../../lib/sign-pdf.ts';
 
@@ -27,7 +26,6 @@ export {
   clearCreatedDocxWarnings,
   readCreatedDocxWarnings,
   saveCreatedDocxWarnings,
-  type CreatedDocxWarningScope,
 };
 
 export type SignFileCheckResult =
