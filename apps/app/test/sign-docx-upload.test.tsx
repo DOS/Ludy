@@ -691,15 +691,19 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
     expect(staleNav).not.toHaveBeenCalled();
     clearCreatedDocxWarnings(envDetailId, scopeUserA);
 
-    // If org context changed BEFORE handleEnvelopeCreatedWithWarnings starts (submitContext reqId invalidated), it does not close dialog, save, or navigate.
+    // Leaving the list page after createEnvelope succeeded skips UI updates (setCreateOpen, banner, navigate)
+    // while still invalidating the list cache and persisting warnings for the verified creator session.
     setCreateOpen.mockClear();
     setCreatedDocxNotice.mockClear();
+    invalidateEnvelopes.mockClear();
     await handleEnvelopeCreatedWithWarnings({
       envelopeId: envDetailId,
       warnings: ['images_skipped'],
       slug: 'acme',
       orgId,
       userId: userAId,
+      sessionId: 'sess-a',
+      resolveCurrentSessionId: async () => 'sess-a',
       isCurrentContext: () => false,
       setCreateOpen,
       setCreatedDocxNotice,
@@ -709,7 +713,41 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
     expect(setCreateOpen).not.toHaveBeenCalled();
     expect(setCreatedDocxNotice).not.toHaveBeenCalled();
     expect(staleNav).not.toHaveBeenCalled();
+    expect(invalidateEnvelopes).toHaveBeenCalledTimes(1);
+    expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual(['images_skipped']);
+    clearCreatedDocxWarnings(envDetailId, scopeUserA);
+
+    // If session changed or signed out while createEnvelope was in flight, never persist warnings into sessionStorage.
+    invalidateEnvelopes.mockClear();
+    await handleEnvelopeCreatedWithWarnings({
+      envelopeId: envDetailId,
+      warnings: ['images_skipped'],
+      slug: 'acme',
+      orgId,
+      userId: userAId,
+      sessionId: 'sess-a',
+      resolveCurrentSessionId: async () => 'sess-b',
+      isCurrentContext: () => false,
+      setCreateOpen,
+      setCreatedDocxNotice,
+      invalidateEnvelopes,
+      navigateToEnvelope: staleNav,
+    });
     expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual([]);
+
+    // Anonymous notice missing both creator userId and sessionId cannot be attributed to currentUserId on Open.
+    setCreatedDocxNotice.mockClear();
+    expect(
+      await openCreatedDocxNoticeEnvelope({
+        notice: { ...unpersistedNotice, orgId, userId: null, sessionId: null },
+        currentUserId: userBId,
+        setCreatedDocxNotice,
+        navigateToEnvelope: staleNav,
+      }),
+    ).toBe(false);
+    expect(setCreatedDocxNotice).toHaveBeenCalledWith(null);
+    expect(readCreatedDocxWarnings(envDetailId, { org: orgId, userId: userBId })).toEqual([]);
+    expect(staleNav).not.toHaveBeenCalled();
 
     // Dismissing while openCreatedDocxNoticeEnvelope is awaiting resolveUserScope cancels BEFORE saveCreatedDocxWarnings runs.
     let dismissedMidFlight = false;

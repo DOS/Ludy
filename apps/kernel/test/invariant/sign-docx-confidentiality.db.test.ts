@@ -236,6 +236,36 @@ suite('eSign .docx cross-user polling and unattached file confidentiality invari
       return { status: res.status, body };
     };
 
+    const postCountingStreamDocx = async (token: string, filename: string, orgSlug = o.slug) => {
+      let chunksRead = 0;
+      const payload = new TextEncoder().encode(
+        `-----test\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\n\r\nPK\x03\x04\r\n-----test--\r\n`,
+      );
+      const stream = new ReadableStream<Uint8Array>(
+        {
+          pull(controller) {
+            chunksRead += 1;
+            controller.enqueue(payload);
+            controller.close();
+          },
+        },
+        { highWaterMark: 0 },
+      );
+      const req = new Request('http://localhost/api/sign/convert-docx', {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${token}`,
+          'x-ludy-org': orgSlug,
+          'content-type': 'multipart/form-data; boundary=---test',
+        },
+        body: stream,
+        duplex: 'half',
+      } as RequestInit & { duplex: 'half' });
+      const res = await app.request(req);
+      const body = (await res.json().catch(() => null)) as SignDocxConvertHttpResponse & Record<string, unknown>;
+      return { status: res.status, body, chunksRead, bodyUsed: req.bodyUsed };
+    };
+
     const pollDocx = async (token: string, jobId: string, orgSlug = o.slug) => {
       const res = await app.request(`/api/sign/convert-docx/${jobId}`, {
         headers: { authorization: `Bearer ${token}`, 'x-ludy-org': orgSlug },
@@ -244,7 +274,7 @@ suite('eSign .docx cross-user polling and unattached file confidentiality invari
       return { status: res.status, body };
     };
 
-    return { app, users, postDocx, pollDocx };
+    return { app, users, postDocx, postCountingStreamDocx, pollDocx };
   }
 
   async function drainQueuedDocxJobs(orgId: string) {
@@ -373,10 +403,14 @@ suite('eSign .docx cross-user polling and unattached file confidentiality invari
     expect(getSignDocxRuntimeStats(rt)).toEqual(statsBeforeUnauthorized);
     expect(getSignDocxRuntimeStats(rt)?.rateLimiterKeys ?? 0).toBe(0);
 
-    const viewerHttp = await http.postDocx(o.viewer, confidentialDocx, 'viewer.docx');
+    const viewerHttp = await http.postCountingStreamDocx(o.viewer, 'viewer.docx');
     expect(viewerHttp.status).toBe(403);
-    const extHttp = await http.postDocx('ext-user', confidentialDocx, 'ext.docx');
+    expect(viewerHttp.chunksRead).toBe(0);
+    expect(viewerHttp.bodyUsed).toBe(false);
+    const extHttp = await http.postCountingStreamDocx('ext-user', 'ext.docx');
     expect(extHttp.status).toBe(403);
+    expect(extHttp.chunksRead).toBe(0);
+    expect(extHttp.bodyUsed).toBe(false);
     expect(putCalls).toEqual([]);
     expect(getSignDocxRuntimeStats(rt)).toEqual(statsBeforeUnauthorized);
     expect(getSignDocxRuntimeStats(rt)?.rateLimiterKeys ?? 0).toBe(0);
