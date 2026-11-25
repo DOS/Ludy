@@ -1,5 +1,5 @@
 import pg from 'pg';
-import { Kysely, PostgresDialect, type Transaction } from 'kysely';
+import { Kysely, PostgresDialect } from 'kysely';
 import type { Database } from './schema.ts';
 
 export type { Database } from './schema.ts';
@@ -194,12 +194,7 @@ export function createDb(pool: pg.Pool): Kysely<Database> {
   return new Kysely<Database>({ dialect: new PostgresDialect({ pool }) });
 }
 
-// The handle every query helper takes: the pool's Kysely or the Transaction of a command. It names both classes on purpose. A
-// Transaction<Database> is a Kysely<Database> by inheritance, but TypeScript compares the two structurally, and the generic
-// $omitTables, $pickTables and withTables of the subclass make it pair every table name with every other: with N tables that is
-// N * N unions, which passes the compiler's 100000 limit at 317 tables (TS2590, #5026). Written as this union, a transaction is
-// identical to one member and no comparison runs; the inherited methods have the same type on both members, so calls behave as before.
-export type Db = Kysely<Database> | Transaction<Database>;
+export type { Db } from './handle.ts';
 
 // Row-level security is the tenant boundary, so the API and worker must never connect as a role that skips it.
 export async function assertRlsEnforced(pool: pg.Pool): Promise<void> {

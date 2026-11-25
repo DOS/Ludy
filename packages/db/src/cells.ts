@@ -1,5 +1,4 @@
-import type { Kysely } from 'kysely';
-import type { Database } from './schema.ts';
+import type { Db } from './handle.ts';
 
 // Cell-ready connection resolution (plan Decision 14, §3.6). A cell is one database holding the tenant data of
 // some orgs; the control plane holds identity, the tenant directory, staff and sessions. Every tenant
@@ -10,13 +9,13 @@ export interface CellResolver {
   // The database holding this org's tenant data. Async so a later resolver can read the tenant directory. It runs
   // before any session or membership check, so an unknown org must resolve to some cell (where enter_context
   // refuses it as for a non-member) and never raise a different error that reveals which org ids exist.
-  resolveTenant(orgId: string): Promise<Kysely<Database>>;
+  resolveTenant(orgId: string): Promise<Db>;
   // The control-plane database, for work that has no org yet (signed-in user reads, org creation, inbound mail).
-  controlPlane(): Kysely<Database>;
+  controlPlane(): Db;
 }
 
 // One database for the control plane and every org.
-export function singleCell(db: Kysely<Database>): CellResolver {
+export function singleCell(db: Db): CellResolver {
   return {
     resolveTenant: async () => db,
     controlPlane: () => db,
