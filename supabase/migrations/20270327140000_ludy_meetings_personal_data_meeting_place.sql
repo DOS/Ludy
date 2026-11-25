@@ -5,7 +5,8 @@
 -- The stamp's domain string 'crove.meetings.stamp.v1' stays as it is, and a meeting with no place adds no row to the stamp, so a stamp a notice already holds keeps its value for such a meeting.
 --   personal_row_ids       the title and the place of a meeting are one hit of kind 4 (the meeting), listed where the caller can read the meeting; the finder reads the row by id and tests each registered column.
 --   personal_matches       a place the owner cannot read is counted per recorder as a title (one count per text value).
---   text_stamp             a place the owner cannot read is part of the stamp (kind 7), so a place added or changed after a notice moves the stamp and the notice no longer covers it.
+--   text_stamp             a place the owner cannot read is part of the stamp (kind 7, the text tagged 'place'), so a place added or changed after a notice moves the stamp and the notice no longer covers it
+--                          (a hidden meeting that already has a place and an earlier notice gets a new stamp: that notice no longer covers it, which fails closed).
 --   personal_notice_items  a meeting whose only mention is in a place the owner cannot read is listed, so its recorder can be told.
 --   personal_erase         a place that holds the value is redacted by the rule of the title (the recorder, a reader, or a notice that named the meeting at this text), cut to 200 characters, counted in `titles`,
 --                          and the ones still holding the value are counted in `kept`.
@@ -178,8 +179,8 @@ BEGIN
         FROM ludy_meetings.meeting_label l
        WHERE l.org_id = p_org AND l.meeting_id = p_meeting AND NOT (p_rec OR p_read)
       UNION ALL
-      -- The place (#5014), by the rule of the title: the one the owner cannot read. A meeting with no place adds no row, so a stamp a notice already holds keeps its value.
-      SELECT 7, m.id::text, m.place FROM ludy_meetings.meeting m WHERE m.org_id = p_org AND m.id = p_meeting AND NOT p_read AND m.place IS NOT NULL
+      -- The place (#5014), by the rule of the title: the one the owner cannot read. It is tagged, so the same text moved from a label to the place changes the stamp; a meeting with no place adds no row, so a stamp a notice already holds keeps its value.
+      SELECT 7, m.id::text, 'place' || pg_catalog.chr(30) || m.place FROM ludy_meetings.meeting m WHERE m.org_id = p_org AND m.id = p_meeting AND NOT p_read AND m.place IS NOT NULL
     ) t;
   RETURN ('x' || pg_catalog.encode(pg_catalog.substr(
     pg_catalog.sha256(v_opad || pg_catalog.sha256(v_ipad || pg_catalog.convert_to(

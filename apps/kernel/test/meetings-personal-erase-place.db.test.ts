@@ -116,7 +116,10 @@ suite('the place of a meeting in the personal-data finder and the erasure (#5014
     const answer = JSON.stringify(owner);
     expect(answer).not.toContain('Kín ');
     expect(answer).not.toContain('Của org khác');
-    expect(placeRows(await find('admin'))).toBe(1);
+    // An admin reads the org-shared one only: the answer carries no CANARY of a meeting the admin cannot read (the owner's own attendees-only meeting included).
+    const adminFind = await find('admin');
+    expect(placeRows(adminFind)).toBe(1);
+    for (const canary of ['Kín ', 'Của org khác', 'Nhà ']) expect(JSON.stringify(adminFind)).not.toContain(canary);
     await expect(find('recorder')).rejects.toMatchObject({ code: 'FORBIDDEN' });
 
     // The erasure: what the owner reads is redacted at once; the hidden place and the other org's stay; a clean place and a missing one are untouched.
@@ -165,5 +168,25 @@ suite('the place of a meeting in the personal-data finder and the erasure (#5014
     const done = await erase(value);
     expect(erasedRows(done, 'ludy_meetings.meeting.title')).toBe(1);
     expect(await placeOf(hidden)).toBe(`Kín ${MARK}`);
+  });
+
+  it('counts a meeting once and each text value once when the same value is in the title and in the place', async () => {
+    const value = 'trung.hai@khach.example';
+    // Readable by the owner: the title and the place are two text values of one meeting; the finder lists each column once and the erasure redacts both.
+    const shared = await meeting('recorder', `Họp ${value}`, 'org');
+    await setPlace(shared, `Phòng ${value}`);
+    // Not readable by the owner: counted per recorder as one meeting and two text values, never shown.
+    const hidden = await meeting('recorder', `Kín ${value}`, 'attendees', ['attendee']);
+    await setPlace(hidden, `Kín ${value}`);
+    const owner = await find('owner', value);
+    expect(owner.matches.filter((m) => m.column === 'ludy_meetings.meeting.title')).toHaveLength(1);
+    expect(placeRows(owner)).toBe(1);
+    expect(owner.meetingText).toEqual([{ recorderUserId: users.recorder, meetings: 1, lines: 0, results: 0, items: 0, titles: 2 }]);
+    expect(JSON.stringify(owner)).not.toContain('Kín ');
+    const erased = await erase(value);
+    expect(erasedRows(erased, 'ludy_meetings.meeting.title')).toBe(2);
+    expect((await sqlAdmin<{ title: string }>(`SELECT title FROM ludy_meetings.meeting WHERE id = $1`, [shared])).rows[0]?.title).toBe(`Họp ${MARK}`);
+    expect(await placeOf(shared)).toBe(`Phòng ${MARK}`);
+    expect(await placeOf(hidden)).toBe(`Kín ${value}`);
   });
 });
