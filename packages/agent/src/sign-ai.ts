@@ -2948,7 +2948,7 @@ function isOrdinalLabelBeforeLeft(
   if (leftScaleWord !== undefined || !/^\d+$/.test(leftNumToken)) {
     return false;
   }
-  if (/(?:^|[^\p{L}\p{N}])#\s*$/.test(beforeLeftNum)) {
+  if (/(?:^|[^\p{L}\p{N}])#\s*$/u.test(beforeLeftNum)) {
     return /^\d{1,3}$/.test(leftNumToken);
   }
   const articleMatch = ARTICLE_A_BEFORE_PERIOD_RE.exec(beforeLeftNum);
