@@ -43,7 +43,7 @@ import { useRouteFocus } from '../lib/route-focus.ts';
 import { useScrollRoom } from '../lib/scroll-room.ts';
 import { SAFETY_POLL_MS, pollEvery, useInvalidationStream, useStreamLive } from '../lib/stream-hook.ts';
 import { unreadLabel } from '../lib/social-notifications.ts';
-import { canUseVyAssistant } from '../lib/vy.ts';
+import { canUseVy as hasVyPermission } from '../lib/vy.ts';
 import { useNotifications } from './social-notifications.tsx';
 import { useWorkNotifications } from './notifications.tsx';
 
@@ -167,7 +167,7 @@ export function OrgLayout() {
     staleTime: 15_000,
   });
   const vyToday = useQuery({ ...orpc.today.list.queryOptions(), enabled: vyDrawerOpen && Boolean(org) });
-  const canUseVy = canUseVyAssistant(orgDetail.data?.permissions);
+  const canUseVy = hasVyPermission(orgDetail.data?.permissions);
   const canViewAiBudgets = agentPermissions(roleHere).budgets;
   const gmName = vyToday.data?.coworkers.gm ?? COWORKER_ROSTER.gm;
   const quickCreateItems = useMemo(
@@ -282,13 +282,13 @@ export function OrgLayout() {
           Boolean(secondarySidebarRef.current?.contains(activeElement));
         setUserCollapsed((prev) => !prev);
         if (collapsingFromSecondary) {
-          requestAnimationFrame(() => sidebarToggleRef.current?.focus());
+          requestAnimationFrame(() => sidebarToggleRef.current?.focus({ preventScroll: true }));
         }
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [notesOn, me.isSuccess, org, roleHere, hasSecondary, paletteOpen, quickCaptureOpen, menuOpen, vyDrawerOpen, setUserCollapsed]);
+  }, [notesOn, me.isSuccess, org, roleHere, hasSecondary, sidebarCollapsed, paletteOpen, quickCaptureOpen, menuOpen, vyDrawerOpen, setUserCollapsed]);
 
   const recentEntries = useMemo<PaletteEntry[]>(
     () =>

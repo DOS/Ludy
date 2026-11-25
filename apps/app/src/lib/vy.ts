@@ -4,7 +4,7 @@
 import { VY_USE_PERMISSION, type AiMeter } from '@ludy/kernel-contract';
 
 /** True when the member's resolved permissions include `vy.use`. */
-export function canUseVyAssistant(permissions: readonly string[] | undefined): boolean {
+export function canUseVy(permissions: readonly string[] | undefined): boolean {
   return Boolean(permissions?.includes(VY_USE_PERMISSION));
 }
 

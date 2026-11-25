@@ -361,7 +361,9 @@ describe('SH-5: GlobalTopBar and drawer AccountPopover preserve active org conte
     for (const html of [desktopOverview, desktopJournal]) {
       expect(html).toContain('data-testid="account-menu-trigger"');
       expect(html).toContain(`title="chu.cong.ty@example.com · ${LONG_NAME}"`);
-      expect(html).toContain(`aria-label="Tài khoản: chu.cong.ty@example.com · ${LONG_NAME}"`);
+      expect(html).toContain('<span class="sr-only">Tài khoản: chu.cong.ty@example.com · </span>');
+      expect(html).toContain(`<span class="sr-only lg:hidden">${LONG_NAME}</span>`);
+      expect(html).not.toMatch(/aria-label="Tài khoản:/);
       expect(html).not.toContain('data-testid="org-menu"');
       expect(html).not.toContain('<details');
       expect(html).not.toContain('<select');
@@ -470,8 +472,9 @@ describe('SH-8: Persistent 48px Global Top Bar, fixed-padding 64px rail, and con
       expect(barVi).toContain('data-testid="topbar-home-link"');
       expect(barVi).not.toContain('data-testid="sidebar-toggle-btn"');
       expect(barVi).toContain('data-testid="topbar-search-btn"');
-      expect(barVi).toContain(`aria-label="${viMessages.palette.open} (Ctrl K)"`);
+      expect(barVi).toContain(`<span class="truncate">${viMessages.palette.open}</span><span class="sr-only"> (Ctrl K)</span>`);
       expect(barVi).toContain(`title="${viMessages.palette.open} (Ctrl K)"`);
+      expect(barVi).not.toMatch(/aria-label="[^"]*Ctrl K/);
       expect(barVi).toContain('data-testid="topbar-vy-btn"');
       expect(barVi).toContain('data-testid="shell-quick-capture-btn"');
       expect(barVi).toContain('data-testid="topbar-notifications-link"');
@@ -482,8 +485,9 @@ describe('SH-8: Persistent 48px Global Top Bar, fixed-padding 64px rail, and con
       // Viewer / no quick-create actions omits `+` cleanly without shifting Logo or Bell/Settings.
       const barViewerEn = topBar(path, 'en', { hasSecondary: false, quickCreate: [] });
       expect(barViewerEn).not.toContain('data-testid="shell-quick-capture-btn"');
-      expect(barViewerEn).toContain(`aria-label="${enMessages.palette.open} (Ctrl K)"`);
-      expect(barViewerEn).toContain(`aria-label="Account: chu.cong.ty@example.com · ${LONG_NAME}"`);
+      expect(barViewerEn).toContain(`<span class="truncate">${enMessages.palette.open}</span><span class="sr-only"> (Ctrl K)</span>`);
+      expect(barViewerEn).toContain('<span class="sr-only">Account: chu.cong.ty@example.com · </span>');
+      expect(barViewerEn).toContain(`<span class="sr-only lg:hidden">${LONG_NAME}</span>`);
     },
   );
 

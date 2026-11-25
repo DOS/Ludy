@@ -239,7 +239,7 @@ export const vi = {
     },
     vyDrawer: {
       trigger: 'Hỏi {name}',
-      title: 'Trợ lý {name}',
+      title: 'Đồng nghiệp AI {name}',
       subtitle: 'Tóm tắt nhanh trong ngày và lối tắt công việc. Mọi khoản tiền, tin nhắn và chi tiêu đều do bạn duyệt.',
       aiOff: 'AI đang tắt trên máy chủ này. Sổ sách, duyệt chứng từ và công việc vẫn chạy bình thường.',
       noPermission: 'Vai trò của bạn chưa được bật quyền làm việc với {name}. Các lối tắt bên dưới vẫn mở bình thường.',

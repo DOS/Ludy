@@ -240,7 +240,7 @@ export const en = {
     },
     vyDrawer: {
       trigger: 'Ask {name}',
-      title: 'Assistant {name}',
+      title: 'AI coworker {name}',
       subtitle: 'Quick daily summary and workflow shortcuts. You always approve money, messages, and spend.',
       aiOff: 'AI is turned off on this server. Ledgers, approvals, and core workflows continue working normally.',
       noPermission: 'Your role does not include permission to use {name}. Deterministic shortcuts below remain available.',

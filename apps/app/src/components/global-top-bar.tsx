@@ -9,7 +9,6 @@ import type { AiMeter } from '@ludy/kernel-contract';
 import { Button } from '@ludy/ui/components/button';
 import { NavIcon } from '@ludy/ui/components/nav-icon';
 import { cn } from '@ludy/ui/lib/utils';
-import { brandName } from '../i18n/brand.ts';
 import { isSettingsPath } from '../lib/apps.ts';
 import type { QuickCreateItem } from '../lib/quick-create.ts';
 import { showTopBarAiPill } from '../lib/vy.ts';
@@ -114,12 +113,12 @@ export function GlobalTopBar({
         <Link
           to="/o/$slug/overview"
           params={{ slug }}
-          aria-label={`${brandName()}, ${t('overview')}`}
           title={t('overview')}
           data-testid="topbar-home-link"
           className="inline-flex h-8 items-center rounded-lg px-2 hover:bg-sidebar-accent focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
         >
           <Logo />
+          <span className="sr-only">, {t('overview')}</span>
         </Link>
         {hasSecondary && onToggleSecondary && (
           <Button
@@ -144,7 +143,6 @@ export function GlobalTopBar({
         <button
           type="button"
           onClick={onOpenPalette}
-          aria-label={`${tp('open')} (${paletteKeys})`}
           title={`${tp('open')} (${paletteKeys})`}
           data-testid="topbar-search-btn"
           className="flex h-8 w-full max-w-md items-center justify-between gap-2 rounded-lg border border-field-border bg-background px-3 text-left text-sm text-subtle-foreground hover:text-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
@@ -152,8 +150,9 @@ export function GlobalTopBar({
           <span className="flex min-w-0 items-center gap-2">
             <NavIcon name="search" className="size-4 shrink-0" />
             <span className="truncate">{tp('open')}</span>
+            <span className="sr-only"> ({paletteKeys})</span>
           </span>
-          <kbd className="shrink-0 rounded-sm border bg-muted/50 px-1.5 py-0.5 font-mono text-[11px] leading-none whitespace-nowrap text-muted-foreground">
+          <kbd aria-hidden="true" className="shrink-0 rounded-sm border bg-muted/50 px-1.5 py-0.5 font-mono text-[11px] leading-none whitespace-nowrap text-muted-foreground">
             {paletteKeys}
           </kbd>
         </button>
@@ -167,7 +166,6 @@ export function GlobalTopBar({
           size="default"
           onClick={onOpenVy}
           aria-expanded={vyOpen}
-          aria-label={t('vyDrawer.trigger', { name: gmName })}
           title={t('vyDrawer.trigger', { name: gmName })}
           data-testid="topbar-vy-btn"
           data-vy-allowed={canUseVy ? 'true' : 'false'}
@@ -181,7 +179,8 @@ export function GlobalTopBar({
               canUseVy && aiMeter?.aiOn && aiMeter.state !== 'stop' ? 'text-proposal' : 'text-muted-foreground',
             )}
           />
-          <span>{gmName}</span>
+          <span aria-hidden="true">{gmName}</span>
+          <span className="sr-only">{t('vyDrawer.trigger', { name: gmName })}</span>
         </Button>
 
         <QuickCreateMenu
@@ -236,7 +235,6 @@ export function GlobalTopBar({
             <Link
               to="/o/$slug/ai-usage"
               params={{ slug }}
-              aria-label={aiPillTitle}
               title={aiPillTitle}
               data-testid="topbar-ai-meter"
               data-state={aiMeter.state}
@@ -246,7 +244,8 @@ export function GlobalTopBar({
               )}
             >
               <NavIcon name="appAi" className="size-3.5" />
-              <span>{t('aiPill.short', { percent: String(aiMeter.percent) })}</span>
+              <span aria-hidden="true">{t('aiPill.short', { percent: String(aiMeter.percent) })}</span>
+              <span className="sr-only">{aiPillTitle}</span>
             </Link>
           ) : (
             <span

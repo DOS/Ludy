@@ -516,7 +516,7 @@ export function AccountPopover({
         <PopoverTrigger
           data-testid="account-menu-trigger"
           title={isTopBar || isCompact ? compactLabel : undefined}
-          aria-label={isTopBar || isCompact ? `${t('account')}: ${compactLabel}` : undefined}
+          aria-label={isCompact ? `${t('account')}: ${compactLabel}` : undefined}
           className={
             isTopBar
               ? 'group/account inline-flex h-8 max-w-52 items-center gap-1.5 rounded-lg px-2 text-left outline-none hover:bg-sidebar-accent focus-visible:ring-3 focus-visible:ring-ring/50 data-popup-open:bg-sidebar-accent'
@@ -527,12 +527,14 @@ export function AccountPopover({
         >
           {isTopBar ? (
             <>
+              <span className="sr-only">{`${t('account')}: ${email ? `${email} · ` : ''}`}</span>
               <span aria-hidden="true" className="grid size-6 shrink-0 place-items-center rounded-full bg-primary/15 text-xs font-semibold text-primary">
                 {initial}
               </span>
               <span className="hidden min-w-0 truncate text-xs font-medium text-foreground lg:inline">
                 {orgName}
               </span>
+              <span className="sr-only lg:hidden">{orgName}</span>
               <NavIcon
                 name="expand"
                 className="size-3.5 shrink-0 text-muted-foreground transition-transform group-data-popup-open/account:rotate-180 motion-reduce:transition-none"

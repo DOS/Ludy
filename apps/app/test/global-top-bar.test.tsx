@@ -8,7 +8,7 @@ import type { AiMeter } from '@ludy/kernel-contract';
 import { I18nProvider } from '../src/i18n/provider.tsx';
 import { setActiveLocale } from '../src/i18n/runtime.ts';
 import { buildQuickCreateItems } from '../src/lib/quick-create.ts';
-import { canUseVyAssistant, resolveVyDrawerStatus, showTopBarAiPill } from '../src/lib/vy.ts';
+import { canUseVy, resolveVyDrawerStatus, showTopBarAiPill } from '../src/lib/vy.ts';
 
 const apiState = vi.hoisted(() => ({ current: null as unknown as QueryClient }));
 
@@ -116,9 +116,9 @@ describe('buildQuickCreateItems', () => {
 
 describe('vy helpers', () => {
   it('checks vy.use permission explicitly', () => {
-    expect(canUseVyAssistant(['vy.use', 'finance.proposal.approve'])).toBe(true);
-    expect(canUseVyAssistant(['finance.proposal.approve'])).toBe(false);
-    expect(canUseVyAssistant(undefined)).toBe(false);
+    expect(canUseVy(['vy.use', 'finance.proposal.approve'])).toBe(true);
+    expect(canUseVy(['finance.proposal.approve'])).toBe(false);
+    expect(canUseVy(undefined)).toBe(false);
   });
 
   it('resolves drawer states for missing permission, AI off, budget stop, and ready', () => {
@@ -191,6 +191,12 @@ describe('GlobalTopBar and VyDrawerBody SSR', () => {
       expect(idxAccount).toBeGreaterThan(idxAi);
       expect(html).toContain('data-testid="topbar-notifications-badge"');
       expect(html).toContain('href="/o/acme/ai-usage"');
+      expect(html).toContain('Ngân sách AI tháng này: 42%');
+      // Controls with visible text avoid mismatched aria-label overrides (WCAG 2.5.3).
+      expect(html).not.toMatch(/data-testid="topbar-search-btn"[^>]*aria-label=/);
+      expect(html).not.toMatch(/data-testid="topbar-vy-btn"[^>]*aria-label=/);
+      expect(html).not.toMatch(/data-testid="topbar-ai-meter"[^>]*aria-label=/);
+      expect(html).toContain('<span class="sr-only">Hỏi Vy</span>');
     }
   });
 
