@@ -705,6 +705,7 @@ import { zTemplateSuggestion, zTemplateVyAnswer } from './meeting-template-sugge
 import { zOpenPointsAnswer } from './meeting-open-points.ts';
 import { zDigestAnswer, zDigestAsk, zDigestFacts, zDigestStatus } from './meeting-digest.ts';
 import { zLoadWeek, zLoadWeekInput } from './meeting-load.ts';
+import { zTrackerAdd, zTrackerDone, zTrackerHits, zTrackerList, zTrackerMeetingInput, zTrackerRemove, zTrackerTerms, zTrackerWeek, zTrackerWeekInput } from './meeting-trackers.ts';
 import { zMeetingsTodayFacts } from './meeting-today.ts';
 import { zMorningEmpty, zMorningSet, zMorningState } from './meeting-morning.ts';
 import { zAssigneeAnswer, zAssigneeAsk, zAssigneeStatus } from './meeting-assignee.ts';
@@ -1971,6 +1972,15 @@ export const contract = {
     // extra right to read, no text, no model call, nothing stored).
     load: {
       week: oc.input(zLoadWeekInput).output(zLoadWeek),
+    },
+    // Keyword trackers (#4818): `list` the org's tracked words for every member, `add` and `remove` for an owner or an admin, `hits` what one meeting says (counts and seconds, from the lines the caller reads)
+    // and `week` the hits across the meetings the caller reads in a week. Counted by code, nothing stored, no model call.
+    tracker: {
+      list: oc.input(zTrackerList).output(zTrackerTerms),
+      add: oc.input(zTrackerAdd).output(zTrackerDone),
+      remove: oc.input(zTrackerRemove).output(zTrackerDone),
+      hits: oc.input(zTrackerMeetingInput).output(zTrackerHits),
+      week: oc.input(zTrackerWeekInput).output(zTrackerWeek),
     },
     // The Today view (#3955): the member's own agenda for today with the facts of each event's brief, read by code as the member in one call and working with AI off. Vy's sentences stay the brief's own click.
     today: {

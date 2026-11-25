@@ -32,6 +32,7 @@ import {
   useRedactCandidatesQuery,
 } from '../components/meeting-redaction.tsx';
 import { MeetingTalkTime } from '../components/meeting-talk-time.tsx';
+import { MeetingTrackerHits } from '../components/meeting-trackers.tsx';
 import { MeetingTranscript } from '../components/meeting-transcript.tsx';
 import type { TranscriptRedacted } from '@ludy/kernel-contract';
 import { RecordNotesPanel, notesInstalled } from '../components/notes-panel.tsx';
@@ -491,6 +492,8 @@ export function MeetingDetailPage() {
           redactedEpoch,
         }}
       />
+      {/* The tracked words that came up in this meeting (#4818): counted by code from the lines above the reader may read, each time opens the transcript and the player there; no AI */}
+      <MeetingTrackerHits key={`trackers-${id}`} meetingId={id} onJump={jumpTo} redactedEpoch={redactedEpoch} />
       {/* Who did the talking (#4765): talk time, turns and longest stretch per speaker, worked out in code from the lines above, no AI */}
       <MeetingTalkTime key={`talk-time-${id}`} meetingId={id} />
       {/* Did the meeting cover its agenda (#3959): the recorder's own click, Vy compares the agenda with the transcript above and cites the lines */}

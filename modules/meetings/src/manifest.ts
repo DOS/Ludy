@@ -55,6 +55,8 @@ export const meetingsManifest = defineModule({
       // The glossary an org's owner or admin keeps (#4043): terms (a product, an acronym, jargon) Vy spells the org's way. Plain text the org wrote; the settings screen asks for no people's names
       // or personal details, and the command refuses an email or web address and a number. Nothing here is a meeting's own text.
       glossary_term: columns(['org_id', 'id', 'term', 'created_by', 'created_at', 'updated_at']),
+      // The words an org tracks across its meetings (#4818): a term an owner chose, plain text, like a glossary term; no meeting text.
+      tracker_term: columns(['org_id', 'id', 'term', 'created_by', 'created_at']),
       // One event of a member's minutes webhook (member_hook, A6, #3164): the body holds the text the recorder approved and is set to NULL the moment the delivery settles, so afterwards the row is ids, a status and times.
       hook_delivery: columns(['org_id', 'id', 'hook_id', 'meeting_id', 'type', 'status', 'attempts', 'last_code', 'created_at', 'handed_at', 'sent_at'], { body: 'pii' }),
       // The pieces of about 15 seconds a recorder sends while a live-notes meeting runs (ADR-0052 L4a, #3109): order, the ciphertext's file row, size and the recorder's own length. No key, no text.

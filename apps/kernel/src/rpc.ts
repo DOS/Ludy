@@ -1951,6 +1951,14 @@ export function createRpcHandler(
       load: {
         week: os.meetings.load.week.handler(meetingsQuery('meetings.load.week')),
       },
+      // Keyword trackers (#4818): the org's tracked words, and the hits counted by code under the caller's own row security; see modules/meetings/src/trackers.ts.
+      tracker: {
+        list: os.meetings.tracker.list.handler(meetingsQuery('meetings.tracker.list')),
+        add: os.meetings.tracker.add.handler(meetingsCommand('meetings.tracker.add')),
+        remove: os.meetings.tracker.remove.handler(meetingsCommand('meetings.tracker.remove')),
+        hits: os.meetings.tracker.hits.handler(meetingsQuery('meetings.tracker.hits')),
+        week: os.meetings.tracker.week.handler(meetingsQuery('meetings.tracker.week')),
+      },
       // The Today view (#3955): the member's own agenda for today with the facts of each event's brief, read as the member in one call (no model, nothing in the background); see modules/meetings/src/today.ts.
       today: {
         facts: os.meetings.today.facts.handler(meetingsQuery('meetings.today.facts')),
