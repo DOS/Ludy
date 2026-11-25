@@ -1,20 +1,32 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// OverviewPage integration tests (#4644): Row 1 unified TodayList + TodayBrief hero card, Row 2 merged Waiting +
-// SinceYesterday strip (hidden when empty), Row 3 side-by-side TaxCalendar + TodayWeekly at lg, Row 4 quiet
-// app status links (zero duplicate tall cards), compact SalesNumberGaps, and 3-step Day-1 SME quick-start card.
+// OverviewPage integration & SSR tests (#4644, #4923 Phase 4 / #4928):
+// - Anchored PageHeader with Tùy chỉnh toggle (zero Row 0 HomeActions), Hôm nay cần bạn + inline HomeVyBar,
+//   Day-1 SME quick-start card, and compact operational strip.
+// - Role x Enabled-App modular summary blocks in persisted order, empty collapse rules, all-hidden notice,
+//   and HomeCustomizePanel (Switch, Move Up / Move Down, drag handle, polite live announcements, Reset, Save, Cancel).
 import { QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import type { z } from 'zod';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { SinceYesterday, TodayItem, TodayWeekly as Weekly, zOrgOverview } from '@ludy/kernel-contract';
+import type {
+  AiMeter,
+  ConversationCounted,
+  HomeLayoutBlock,
+  HomeLayoutView,
+  SinceYesterday,
+  TodayItem,
+  TodayWeekly as Weekly,
+  zOrgOverview,
+} from '@ludy/kernel-contract';
 
 type OrgOverview = z.infer<typeof zOrgOverview>;
 import { I18nProvider } from '../src/i18n/provider.tsx';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
 import { catalog, setActiveLocale } from '../src/i18n/runtime.ts';
+import { buildFallbackHomeLayout } from '../src/lib/home-layout.ts';
 import { briefDay, briefStorageKey, listFingerprint } from '../src/lib/today-brief.ts';
 import { weeklyCacheKey } from '../src/lib/today-weekly.ts';
 
@@ -25,10 +37,11 @@ const state = vi.hoisted(() => ({
 
 vi.mock('../src/lib/api.ts', async () => {
   const { QueryClient: QC } = await import('@tanstack/react-query');
-  state.client = new QC({ defaultOptions: { queries: { retry: false } } });
+  state.client = new QC({ defaultOptions: { queries: { retry: false, retryOnMount: false } } });
   const keyFor = (path: string[], opts?: { input?: Record<string, unknown> }) => {
     const joined = path.join('.');
     if (joined === 'notes.list' && opts?.input?.view) return [...path, opts.input.view];
+    if (joined === 'sign.envelope.list' && opts?.input?.status) return [...path, opts.input.status];
     return path;
   };
   const node = (path: string[]): unknown =>
@@ -47,6 +60,8 @@ vi.mock('../src/lib/api.ts', async () => {
   return {
     orpc: node([]),
     client: {},
+    clientForOrg: () => ({}),
+    getCurrentOrg: () => 'acme',
     queryClient: state.client,
     errorMessage: (e: unknown) => String(e),
     takeOrgLeftNotice: () => null,
@@ -84,6 +99,9 @@ vi.mock('@tanstack/react-router', () => ({
 }));
 
 const { OverviewPage } = await import('../src/routes/overview.tsx');
+const { HomeCustomizePanel } = await import('../src/components/home-customize-panel.tsx');
+const { HomeVyBar } = await import('../src/components/home-vy-bar.tsx');
+const { VyDrawerBody } = await import('../src/components/vy-drawer.tsx');
 
 // 2026-11-23 is a Monday in Vietnam time, so TodayWeekly shows automatically.
 const MONDAY = new Date('2026-11-23T03:00:00Z');
@@ -154,6 +172,43 @@ const WEEKLY: Weekly = {
   final: true,
 };
 
+const METER_READY: AiMeter = { aiOn: true, percent: 25, state: 'ok', scope: 'org', resetAt: '2026-12-01T00:00:00Z' };
+const METER_OFF: AiMeter = { aiOn: false, percent: null, state: 'none', scope: null, resetAt: '2026-12-01T00:00:00Z' };
+const METER_STOP: AiMeter = { aiOn: true, percent: 100, state: 'stop', scope: 'org', resetAt: '2026-12-01T00:00:00Z' };
+
+const HR_LEAVE_PENDING_ITEM: TodayItem = {
+  app: 'hr',
+  kind: 'proposal',
+  id: 'leave-approvals',
+  count: 1,
+  title: { key: 'hr.leaveApprovalsPending', params: { count: 1 } },
+  href: '/hr/employees',
+};
+
+const ENVELOPE_WAITING = {
+  id: 'env-1',
+  title: 'Hợp đồng dịch vụ 2026',
+  status: 'sent' as const,
+  routingMode: 'parallel' as const,
+  sourceKind: 'manual' as const,
+  sourceId: null,
+  sourceFileId: 'file-1',
+  inspectStatus: 'done' as const,
+  sealStatus: null,
+  certificateCode: null,
+  pageCount: 2,
+  expiresAt: null,
+  sentAt: '2026-11-23T01:00:00Z',
+  completedAt: null,
+  voidedAt: null,
+  expiredAt: null,
+  version: 1,
+  createdBy: 'user-1',
+  createdAt: '2026-11-23T01:00:00Z',
+  updatedAt: '2026-11-23T01:00:00Z',
+  signerSummary: { total: 2, signed: 0, waitingForMe: true },
+};
+
 // A recorded (approved) invoice of the org: the day-1 card goes away once one exists (#4783).
 const APPROVED_DOC = { id: 'doc-1', voided: null };
 
@@ -161,8 +216,14 @@ interface SeedOptions {
   locale?: 'vi' | 'en';
   documents?: Array<{ id: string; voided: null | { reversalEntryId: string } }>;
   role?: 'owner' | 'admin' | 'member' | 'viewer';
+  permissions?: string[];
+  omitOrgDetail?: boolean;
+  aiMeter?: AiMeter | null;
+  homeLayout?: HomeLayoutView;
+  omitHomeLayout?: boolean;
   overview?: OrgOverview;
   todayItems?: TodayItem[];
+  coworkers?: typeof COWORKERS;
   brief?: { writtenBy: 'vy' | 'template' | null; sentences: string[]; budgetSpent: boolean; final: boolean };
   unreadWork?: number;
   tasks?: Array<{ id: string }>;
@@ -170,6 +231,10 @@ interface SeedOptions {
   weekly?: Weekly;
   posts?: Array<{ status: string }>;
   bookings?: Array<{ status: string }>;
+  conversationsCounts?: ConversationCounted;
+  envelopes?: Array<typeof ENVELOPE_WAITING>;
+  sentEnvelopes?: Array<typeof ENVELOPE_WAITING>;
+  inProgressEnvelopes?: Array<typeof ENVELOPE_WAITING>;
   gaps?: {
     missingCount: number;
     groups: Array<{
@@ -186,29 +251,91 @@ interface SeedOptions {
   };
 }
 
-function renderOverview(opts: SeedOptions = {}): string {
+function renderWithProviders(locale: 'vi' | 'en', node: ReactNode): string {
+  const qc = state.client;
+  const messages = structuredClone(catalog(locale)) as unknown as { today: { items: Record<string, unknown> } };
+  messages.today.items = {
+    ...messages.today.items,
+    finance: { byVendor: locale === 'en' ? '{vendor}: proposals waiting' : '{vendor}: đề xuất chờ duyệt' },
+  };
+  setActiveLocale(locale);
+  return renderToStaticMarkup(
+    <I18nProvider>
+      <QueryClientProvider client={qc}>
+        <IntlProvider locale={locale} messages={messages as never} timeZone="Asia/Ho_Chi_Minh">
+          {node}
+        </IntlProvider>
+      </QueryClientProvider>
+    </I18nProvider>,
+  );
+}
+
+function seedOverviewCache(opts: SeedOptions = {}): 'vi' | 'en' {
   vi.setSystemTime(MONDAY);
   const qc = state.client;
   qc.clear();
   const locale = opts.locale ?? 'vi';
   const role = opts.role ?? 'owner';
   const todayItems = opts.todayItems ?? [];
+  const defaultPermissions =
+    role === 'owner' || role === 'admin'
+      ? ['vy.use', 'finance.proposal.approve']
+      : role === 'member'
+        ? ['vy.use']
+        : [];
 
   qc.setQueryData(['me', 'get'], {
     userId: 'user-1',
     email: 'owner@example.com',
     orgs: [{ orgId: 'org-1', slug: 'acme', name: 'Gạo Sạch Mekong', role }],
   });
+  if (!opts.omitOrgDetail) {
+    qc.setQueryData(['org', 'get'], {
+      orgId: 'org-1',
+      slug: 'acme',
+      name: 'Gạo Sạch Mekong',
+      role,
+      taxCode: null,
+      vatFilingPeriod: opts.overview?.vatFilingPeriod ?? null,
+      address: null,
+      contactEmail: null,
+      inboundAddress: null,
+      inboundDroppedCount: null,
+      members: [],
+      permissions: opts.permissions ?? defaultPermissions,
+      approvalPreset: 'founder',
+      approvalPolicyVersion: 1,
+    });
+  }
+  if (opts.aiMeter !== null) {
+    qc.setQueryData(['ai', 'meter'], opts.aiMeter ?? METER_READY);
+  }
+  if (!opts.omitHomeLayout) {
+    const resolvedPermissions = opts.permissions ?? defaultPermissions;
+    qc.setQueryData(
+      ['overview', 'homeLayout', 'get'],
+      opts.homeLayout ?? buildFallbackHomeLayout({ modules: state.modules, role, permissions: resolvedPermissions }),
+    );
+  }
   qc.setQueryData(['org', 'overview'], opts.overview ?? EMPTY_OVERVIEW);
   // An org with activity has its first invoice approved unless a test says otherwise; an empty org has none.
   qc.setQueryData(['documents', 'list'], opts.documents ?? (opts.overview?.lastActivityAt ? [APPROVED_DOC] : []));
   qc.setQueryData(['notifications', 'list'], { items: [], unreadWork: opts.unreadWork ?? 0 });
   qc.setQueryData(['tasks', 'list'], opts.tasks ?? []);
-  qc.setQueryData(['today', 'list'], { items: todayItems, coworkers: COWORKERS, dropped: 0, truncated: 0, failed: 0 });
+  qc.setQueryData(['today', 'list'], {
+    items: todayItems,
+    coworkers: opts.coworkers ?? COWORKERS,
+    dropped: 0,
+    truncated: 0,
+    failed: 0,
+  });
   qc.setQueryData(['today', 'sinceYesterday'], opts.since ?? { items: [] });
   qc.setQueryData(['bookEntities', 'list'], [{ id: 'ent-1', name: 'Công ty Mẫu', isDefault: true }]);
   qc.setQueryData(['social', 'posts', 'list'], opts.posts ?? []);
   qc.setQueryData(['crm', 'bookings', 'list'], opts.bookings ?? []);
+  qc.setQueryData(['conversations', 'counts'], opts.conversationsCounts ?? { new: 0, pending: 0, resolved: 0, unread: 0 });
+  qc.setQueryData(['sign', 'envelope', 'list', 'sent'], { items: opts.sentEnvelopes ?? opts.envelopes ?? [] });
+  qc.setQueryData(['sign', 'envelope', 'list', 'in_progress'], { items: opts.inProgressEnvelopes ?? [] });
   qc.setQueryData(['vat', 'salesNumberGaps'], opts.gaps ?? { missingCount: 0, groups: [] });
   qc.setQueryData(['notes', 'list', 'pinned'], []);
   qc.setQueryData(['notes', 'list', 'shared'], []);
@@ -222,21 +349,12 @@ function renderOverview(opts: SeedOptions = {}): string {
     qc.setQueryData(['today', 'weekly', weeklyCacheKey('acme', briefDay(), locale)], opts.weekly);
   }
 
-  const messages = structuredClone(catalog(locale)) as unknown as { today: { items: Record<string, unknown> } };
-  messages.today.items = {
-    finance: { byVendor: locale === 'en' ? '{vendor}: proposals waiting' : '{vendor}: đề xuất chờ duyệt' },
-  };
+  return locale;
+}
 
-  setActiveLocale(locale);
-  return renderToStaticMarkup(
-    <I18nProvider>
-      <QueryClientProvider client={qc}>
-        <IntlProvider locale={locale} messages={messages as never} timeZone="Asia/Ho_Chi_Minh">
-          <OverviewPage />
-        </IntlProvider>
-      </QueryClientProvider>
-    </I18nProvider>,
-  );
+function renderOverview(opts: SeedOptions = {}): string {
+  const locale = seedOverviewCache(opts);
+  return renderWithProviders(locale, <OverviewPage />);
 }
 
 const storage = new Map<string, string>();
@@ -257,13 +375,13 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe('OverviewPage layout compression and Day-1 SME quick-start (#4644)', () => {
-  it('renders compressed Row 1-4 layout for an active SME org in vi and en', () => {
+describe('OverviewPage Role x Enabled-App Global Home (#4644, #4928)', () => {
+  it('renders anchored header with Tùy chỉnh button (no Row 0 HomeActions), inline Vy bar, and all modular blocks in vi and en', () => {
     for (const locale of ['vi', 'en'] as const) {
       const html = renderOverview({
         locale,
         overview: ACTIVE_OVERVIEW,
-        todayItems: TODAY_ITEMS,
+        todayItems: [...TODAY_ITEMS, HR_LEAVE_PENDING_ITEM],
         brief: { writtenBy: 'vy', sentences: ['Hôm nay có 2 việc cần bạn.'], budgetSpent: false, final: true },
         unreadWork: 3,
         tasks: [{ id: 't1' }, { id: 't2' }],
@@ -271,16 +389,28 @@ describe('OverviewPage layout compression and Day-1 SME quick-start (#4644)', ()
         weekly: WEEKLY,
         posts: [{ status: 'scheduled' }, { status: 'scheduled' }],
         bookings: [{ status: 'confirmed' }],
+        conversationsCounts: { new: 1, pending: 0, resolved: 0, unread: 2 },
+        sentEnvelopes: [ENVELOPE_WAITING],
         gaps: {
           missingCount: 2,
           groups: [{ year: 2026, template: '1C26', series: 'TPT', firstNumber: '000001', lastNumber: '000010', recorded: 8, missingCount: 2, ranges: [{ from: '3', to: '4' }], truncated: false }],
         },
       });
 
-      // Row 1: Unified hero card holding TodayList + TodayBrief, no Day-1 quickstart.
+      // Anchored top zone: Tùy chỉnh button enabled once homeLayout settled, old Row 0 HomeActions removed.
+      expect(html).toContain('data-testid="home-customize-btn"');
+      expect(html).not.toMatch(/data-testid="home-customize-btn"[^>]*disabled=""/);
+      expect(html).toContain('data-testid="home-customize-status"');
+      expect(html).not.toContain('data-testid="home-actions"');
+
+      // Row 1: Unified hero card holding TodayList + TodayBrief + compact inline Vy prompt bar.
       expect(html).toContain('data-testid="today-hero-card"');
       expect(html).toContain('data-testid="today-brief-host"');
       expect(html).toContain('data-testid="today-brief"');
+      expect(html).toContain('data-testid="home-vy-bar"');
+      expect(html).toContain('data-testid="home-vy-input"');
+      expect(html).toContain('data-testid="home-vy-chip-pendingApprovals"');
+      expect(html).toContain('data-testid="home-vy-approval-note"');
       expect(html).not.toContain('data-testid="overview-quickstart"');
 
       // Row 2: Merged Waiting + SinceYesterday strip with 44px phone targets.
@@ -289,12 +419,15 @@ describe('OverviewPage layout compression and Day-1 SME quick-start (#4644)', ()
       expect(html).toContain('data-testid="waiting-notifications"');
       expect(html).toContain('data-testid="waiting-tasks"');
       expect(html).toContain('data-testid="since-yesterday-strip"');
-      expect(html).not.toContain('id="overview-waiting"');
-      expect(html).not.toContain('id="overview-since"');
 
-      // Row 3: TaxCalendar and TodayWeekly side-by-side at lg, plus compact SalesNumberGaps.
-      expect(html).toContain('data-testid="overview-row-3"');
-      expect(html).toContain('lg:grid-cols-2');
+      // Row 3: Modular blocks in canonical order + SalesNumberGaps + TodayWeekly.
+      expect(html).toContain('data-testid="overview-modular-blocks"');
+      expect(html).toContain('data-testid="home-block-finance_tax_deadlines"');
+      expect(html).toContain('data-testid="home-block-finance_approvals"');
+      expect(html).toContain('data-testid="home-block-teamwork_my_work"');
+      expect(html).toContain('data-testid="home-block-engage_pipeline"');
+      expect(html).toContain('data-testid="home-block-hr_pending"');
+      expect(html).toContain('data-testid="home-block-esign_pending"');
       expect(html).toContain('id="overview-tax"');
       expect(html).toContain('data-testid="today-weekly"');
       expect(html).toContain('data-testid="sales-number-gaps-compact"');
@@ -309,38 +442,74 @@ describe('OverviewPage layout compression and Day-1 SME quick-start (#4644)', ()
       expect(html).toContain('max-md:min-h-11');
 
       if (locale === 'vi') {
-        expect(html).toContain('4 ngày nữa hạn GTGT');
-        expect(html).toContain('2 bài chờ đăng');
-        expect(html).toContain('1 lịch hẹn');
+        expect(html).toContain('2 đề xuất chờ bạn duyệt');
+        expect(html).toContain('1 tệp không đọc được');
+        expect(html).toContain('2 hội thoại chưa đọc');
+        expect(html).toContain('1 đơn nghỉ phép chờ duyệt');
+        expect(html).toContain('1 hồ sơ đang chờ ký');
+        expect(html).toContain('1 hồ sơ chờ riêng bạn ký');
         expect(html).toContain('Ly đã làm 4 việc cho bạn');
       } else {
-        expect(html).toContain('4d until VAT');
-        expect(html).toContain('2 posts scheduled');
-        expect(html).toContain('1 booking');
+        expect(html).toContain('2 proposals awaiting approval');
+        expect(html).toContain('1 unreadable file');
+        expect(html).toContain('2 unread conversations');
+        expect(html).toContain('1 leave request awaiting approval');
+        expect(html).toContain('1 envelope awaiting signature');
+        expect(html).toContain('1 envelope waiting for your signature');
         expect(html).toContain('Ly did 4 things for you');
       }
     }
   });
 
-  it('hides Row 2 operational strip cleanly when waiting counts and SinceYesterday are empty', () => {
+  it('hides Row 2 operational strip cleanly when waiting counts and SinceYesterday are empty, and collapses empty blocks', () => {
+    // Even if org.overview.pendingProposals is non-zero (e.g. proposals for another app or authored by caller),
+    // finance_approvals uses caller-approvable finance proposals from today.list and collapses cleanly when 0.
+    const projectDeadlineToday: TodayItem = {
+      app: 'projects',
+      kind: 'deadline',
+      id: 'd1',
+      count: 2,
+      title: { key: 'finance.byVendor', params: { vendor: 'Dự án A' } },
+      href: '/tasks',
+    };
     const html = renderOverview({
-      overview: { ...ACTIVE_OVERVIEW, failedFiles: 0 },
-      todayItems: TODAY_ITEMS,
+      overview: { ...ACTIVE_OVERVIEW, pendingProposals: 5, failedFiles: 0, taxDues: [] },
+      todayItems: [projectDeadlineToday],
       brief: { writtenBy: null, sentences: [], budgetSpent: true, final: false },
       unreadWork: 0,
       tasks: [],
       since: { items: [] },
-      weekly: { ...WEEKLY, writtenBy: 'template', budgetSpent: true, final: false },
+      weekly: { ...WEEKLY, figures: { from: '2026-11-16', to: '2026-11-22', before: '2026-11-15', deals: null, money: null, tasks: null } },
+      posts: [],
+      bookings: [],
+      conversationsCounts: { new: 0, pending: 0, resolved: 0, unread: 0 },
+      sentEnvelopes: [],
     });
 
     expect(html).not.toContain('data-testid="overview-operational-strip"');
     expect(html).not.toContain('data-testid="since-yesterday-strip"');
-    // AI-off fallback keeps TodayList queue visible and the brief falls back to one fixed sentence from the list's own count (#4783).
     expect(html).toContain('data-testid="today-hero-card"');
-    expect(html).toContain('data-testid="today-brief"');
-    expect(html).toContain('Hôm nay có 2 việc cần bạn xem');
-    expect(html).not.toContain('today-brief-coworker');
-    expect(html).toContain('data-testid="today-weekly"');
+    expect(html).not.toContain('5 đề xuất chờ bạn duyệt');
+
+    // Every zero-item block collapses to a quiet single bordered line linking to its app.
+    expect(html).toContain('data-testid="home-block-empty-finance_tax_deadlines"');
+    expect(html).toContain('Không có hạn thuế trong 30 ngày tới');
+    expect(html).toContain('href="/o/acme/vat"');
+    expect(html).toContain('data-testid="home-block-empty-finance_approvals"');
+    expect(html).toContain('Không có chứng từ chờ duyệt');
+    expect(html).toContain('href="/o/acme/inbox"');
+    expect(html).toContain('data-testid="home-block-empty-teamwork_my_work"');
+    expect(html).toContain('Không có việc đến hạn tuần này');
+    expect(html).toContain('href="/o/acme/tasks"');
+    expect(html).toContain('data-testid="home-block-empty-engage_pipeline"');
+    expect(html).toContain('Chưa có bài đăng lên lịch, hội thoại mới hay lịch hẹn');
+    expect(html).toContain('href="/o/acme/social"');
+    expect(html).toContain('data-testid="home-block-empty-hr_pending"');
+    expect(html).toContain('Không có yêu cầu nhân sự chờ duyệt');
+    expect(html).toContain('href="/o/acme/hr/employees"');
+    expect(html).toContain('data-testid="home-block-empty-esign_pending"');
+    expect(html).toContain('Không có hồ sơ chờ ký');
+    expect(html).toContain('href="/o/acme/sign/envelopes"');
   });
 
   it('renders 3-step Day-1 SME quick-start card when a new org has zero items or activity, and preserves E2E anchors', () => {
@@ -356,7 +525,6 @@ describe('OverviewPage layout compression and Day-1 SME quick-start (#4644)', ()
     expect(html).toContain('data-testid="overview-quickstart"');
     expect(html).toContain('Bắt đầu nhanh trong 3 bước');
     expect(html).toContain(viMessages.today.empty);
-    // With the accounting app on: the first invoice, the VAT period and two-factor sign-in (benchmark L3).
     expect(html).toContain('data-testid="quickstart-step-uploadInvoice"');
     expect(html).toContain('data-testid="quickstart-step-vatPeriod"');
     expect(html).toContain('data-testid="quickstart-step-twoFactor"');
@@ -366,44 +534,162 @@ describe('OverviewPage layout compression and Day-1 SME quick-start (#4644)', ()
     expect(html).toContain('data-testid="quickstart-dismiss"');
     expect(html).toContain('href="/o/acme/guide"');
     expect(html).toContain('max-md:min-h-11');
-    // Preserves TaxCalendar + quiet AppCards links expected by E2E.
+    // Preserves TaxCalendar anchors expected by e2e/tests/overview.spec.ts:21-24.
     expect(html).toContain('Chưa chọn kỳ khai thuế');
     expect(html).toContain('Chọn kỳ khai');
+    expect(html).toContain('Việc thuế trong 30 ngày tới');
     expect(html).not.toContain('data-testid="today-weekly"');
     expect(html).not.toContain('data-testid="today-weekly-ask"');
     expect(html).not.toContain('data-app-card=');
   });
 
-  it('filters Day-1 quick-start steps strictly to enabled org modules and hides for viewers', () => {
-    state.modules = ['kernel', 'social', 'crm', 'sign'];
-    const noFinance = renderOverview({ locale: 'en', overview: EMPTY_OVERVIEW, todayItems: [] });
-    expect(noFinance).toContain('data-testid="overview-quickstart"');
-    expect(noFinance).toContain('data-testid="quickstart-step-connectChannel"');
-    expect(noFinance).toContain('data-testid="quickstart-step-configureApps"');
-    expect(noFinance).toContain('data-testid="quickstart-step-createEnvelope"');
-    expect(noFinance).not.toContain('href="/o/acme/inbox"');
-    expect(noFinance).not.toContain('href="/o/acme/guide"');
-    // No Finance module: never offers broken #tax-profile settings link.
-    expect(noFinance).not.toContain('#tax-profile');
+  it('filters modular blocks strictly by role, permissions, and enabled modules (member, viewer, crm-only)', () => {
+    // Member with HR on sees Cổng nhân viên (/hr/my), never manager queue (/hr/employees), and no finance_approvals.
+    const memberHtml = renderOverview({
+      locale: 'vi',
+      role: 'member',
+      overview: ACTIVE_OVERVIEW,
+      todayItems: [],
+    });
+    expect(memberHtml).toContain('data-testid="home-block-hr_pending"');
+    expect(memberHtml).toContain('Cổng nhân viên');
+    expect(memberHtml).toContain('href="/o/acme/hr/my"');
+    expect(memberHtml).not.toContain('href="/o/acme/hr/employees"');
+    expect(memberHtml).not.toContain('data-testid="home-block-finance_approvals"');
+    expect(memberHtml).not.toContain('data-testid="home-block-finance_tax_deadlines"');
 
-    const viewer = renderOverview({ role: 'viewer', overview: EMPTY_OVERVIEW, todayItems: [] });
-    expect(viewer).not.toContain('data-testid="overview-quickstart"');
-    expect(viewer).toContain(viMessages.today.empty);
-    expect(viewer).not.toContain('data-testid="home-actions"');
+    // Viewer sees only read-only Teamwork notes when notes is on, and zero Vy bar.
+    const viewerHtml = renderOverview({
+      role: 'viewer',
+      overview: EMPTY_OVERVIEW,
+      todayItems: [],
+    });
+    expect(viewerHtml).not.toContain('data-testid="overview-quickstart"');
+    expect(viewerHtml).toContain('data-testid="home-block-teamwork_my_work"');
+    expect(viewerHtml).toContain('href="/o/acme/notes"');
+    expect(viewerHtml).not.toContain('data-testid="home-block-engage_pipeline"');
+    expect(viewerHtml).not.toContain('data-testid="home-block-hr_pending"');
+    expect(viewerHtml).not.toContain('data-testid="home-block-esign_pending"');
+    expect(viewerHtml).not.toContain('data-testid="home-vy-bar"');
+    expect(viewerHtml).not.toContain('data-testid="home-vy-status"');
 
-    // Members never receive admin-only channel-connect quick-start CTAs.
-    state.modules = ['kernel', 'social'];
-    const memberSocialOnly = renderOverview({ locale: 'en', role: 'member', overview: EMPTY_OVERVIEW, todayItems: [] });
-    expect(memberSocialOnly).toContain('data-testid="quickstart-step-createTask"');
-    expect(memberSocialOnly).not.toContain('data-testid="quickstart-step-connectChannel"');
-    expect(memberSocialOnly).toContain('Quick start');
-    expect(memberSocialOnly).not.toContain('Quick start in 1 steps');
-    const memberSocialVi = renderOverview({ locale: 'vi', role: 'member', overview: EMPTY_OVERVIEW, todayItems: [] });
-    expect(memberSocialVi).toContain('Bắt đầu nhanh');
-    expect(memberSocialVi).not.toContain('trong 1 bước');
+    // Engage with social off and crm on links to /o/acme/bookings and uses CRM-only empty copy.
+    state.modules = ['kernel', 'crm'];
+    const crmOnly = renderOverview({ role: 'member', overview: EMPTY_OVERVIEW, todayItems: [] });
+    expect(crmOnly).toContain('data-testid="home-block-engage_pipeline"');
+    expect(crmOnly).toContain('href="/o/acme/bookings"');
+    expect(crmOnly).toContain('Chưa có lịch hẹn sắp tới');
+    expect(crmOnly).not.toContain('data-testid="home-block-finance_tax_deadlines"');
   });
 
-  it('does not mount TodayWeekly or PageHeader uploadAction before initial queries settle', () => {
+  it('guards Tùy chỉnh while homeLayout is pending/error, blocks viewer probes, handles >100 counts, and surfaces tasksError', async () => {
+    // Pending homeLayout disables Tùy chỉnh so server preferences cannot be overwritten by defaults.
+    const pendingLayoutHtml = renderOverview({
+      omitHomeLayout: true,
+      overview: ACTIVE_OVERVIEW,
+    });
+    expect(pendingLayoutHtml).toMatch(/disabled=""[^>]*data-testid="home-customize-btn"|data-testid="home-customize-btn"[^>]*disabled=""/);
+    // Non-admin waits with skeleton while server layout is in flight.
+    const memberPendingHtml = renderOverview({
+      role: 'member',
+      omitHomeLayout: true,
+      overview: ACTIVE_OVERVIEW,
+    });
+    expect(memberPendingHtml).toContain('data-testid="overview-modular-blocks-loading"');
+
+    // Error loading homeLayout surfaces retry banner and keeps Tùy chỉnh disabled.
+    const errLocale = seedOverviewCache({ omitHomeLayout: true, overview: ACTIVE_OVERVIEW });
+    await state.client.prefetchQuery({
+      queryKey: ['overview', 'homeLayout', 'get'],
+      queryFn: () => Promise.reject(new Error('Layout RPC failed')),
+    });
+    const erroredLayoutHtml = renderWithProviders(errLocale, <OverviewPage />);
+    expect(erroredLayoutHtml).toContain('data-testid="home-layout-error"');
+    expect(erroredLayoutHtml).toMatch(/disabled=""[^>]*data-testid="home-customize-btn"|data-testid="home-customize-btn"[^>]*disabled=""/);
+
+    // Viewer never hits crm.bookings.list or shows an AppCards failure on Engage, and never renders TodayWeekly.
+    const viewerCrmHtml = renderOverview({
+      role: 'viewer',
+      overview: EMPTY_OVERVIEW,
+    });
+    expect(viewerCrmHtml).not.toContain('Chưa tải được số liệu');
+    expect(viewerCrmHtml).not.toContain('data-testid="today-weekly"');
+
+    // tasksError surfaces an inline error in teamwork_my_work instead of falsely claiming zero tasks.
+    const tasksErrLocale = seedOverviewCache({
+      overview: ACTIVE_OVERVIEW,
+      weekly: { ...WEEKLY, figures: { from: '2026-11-16', to: '2026-11-22', before: '2026-11-15', deals: null, money: null, tasks: null } },
+    });
+    await state.client.prefetchQuery({
+      queryKey: ['tasks', 'list'],
+      queryFn: () => Promise.reject(new Error('Tasks unavailable')),
+    });
+    const tasksErrHtml = renderWithProviders(tasksErrLocale, <OverviewPage />);
+    expect(tasksErrHtml).toContain('Tasks unavailable');
+    expect(tasksErrHtml).not.toContain('Không có việc đến hạn tuần này');
+
+    // >100 HR leave count from today.list renders full aggregate without PII query; capped 100 eSign renders 100+.
+    const hundredSent = Array.from({ length: 100 }, (_, idx) => ({
+      ...ENVELOPE_WAITING,
+      id: `env-${idx}`,
+    }));
+    const highCountsHtml = renderOverview({
+      overview: ACTIVE_OVERVIEW,
+      todayItems: [{ ...HR_LEAVE_PENDING_ITEM, count: 105 }],
+      sentEnvelopes: hundredSent,
+      inProgressEnvelopes: [{ ...ENVELOPE_WAITING, id: 'env-in-progress' }],
+    });
+    expect(highCountsHtml).toContain('105 đơn nghỉ phép chờ duyệt');
+    expect(highCountsHtml).toContain('101+ hồ sơ đang chờ ký');
+  });
+
+  it('respects server-persisted block order and renders quiet notice when all eligible blocks are hidden', () => {
+    const customOrder: HomeLayoutView = {
+      customized: true,
+      blocks: [
+        { id: 'esign_pending', visible: true, moduleEnabled: true, permitted: true },
+        { id: 'hr_pending', visible: false, moduleEnabled: true, permitted: true },
+        { id: 'engage_pipeline', visible: true, moduleEnabled: true, permitted: true },
+        { id: 'finance_approvals', visible: true, moduleEnabled: false, permitted: true },
+        { id: 'teamwork_my_work', visible: true, moduleEnabled: true, permitted: true },
+        { id: 'finance_tax_deadlines', visible: true, moduleEnabled: true, permitted: true },
+      ],
+      defaults: [],
+    };
+    const orderedHtml = renderOverview({
+      overview: ACTIVE_OVERVIEW,
+      homeLayout: customOrder,
+      weekly: WEEKLY,
+      envelopes: [ENVELOPE_WAITING],
+      bookings: [{ status: 'confirmed' }],
+    });
+    expect(orderedHtml.indexOf('data-testid="home-block-esign_pending"')).toBeLessThan(
+      orderedHtml.indexOf('data-testid="home-block-engage_pipeline"'),
+    );
+    expect(orderedHtml.indexOf('data-testid="home-block-engage_pipeline"')).toBeLessThan(
+      orderedHtml.indexOf('data-testid="home-block-finance_tax_deadlines"'),
+    );
+    expect(orderedHtml).not.toContain('data-testid="home-block-hr_pending"');
+    expect(orderedHtml).not.toContain('data-testid="home-block-finance_approvals"');
+
+    const allHidden: HomeLayoutView = {
+      customized: true,
+      blocks: [
+        { id: 'finance_tax_deadlines', visible: false, moduleEnabled: true, permitted: true },
+        { id: 'finance_approvals', visible: false, moduleEnabled: true, permitted: true },
+        { id: 'teamwork_my_work', visible: false, moduleEnabled: true, permitted: true },
+        { id: 'engage_pipeline', visible: false, moduleEnabled: true, permitted: true },
+        { id: 'hr_pending', visible: false, moduleEnabled: true, permitted: true },
+        { id: 'esign_pending', visible: false, moduleEnabled: true, permitted: true },
+      ],
+      defaults: [],
+    };
+    const hiddenHtml = renderOverview({ overview: ACTIVE_OVERVIEW, homeLayout: allHidden });
+    expect(hiddenHtml).toContain('data-testid="home-all-blocks-hidden"');
+    expect(hiddenHtml).toContain('Tất cả khối ứng dụng đang ẩn · Nhấn Tùy chỉnh để bật lại');
+  });
+
+  it('does not mount TodayWeekly or HomeActions before initial queries settle', () => {
     vi.setSystemTime(MONDAY);
     const qc = state.client;
     qc.clear();
@@ -419,6 +705,7 @@ describe('OverviewPage layout compression and Day-1 SME quick-start (#4644)', ()
     );
     expect(loadingHtml).not.toContain('data-weekly-slot=""');
     expect(loadingHtml).not.toContain('data-testid="home-actions"');
+    expect(loadingHtml).toContain('data-testid="home-customize-btn"');
     // Loading spinner inside AppCards link is wrapped aria-hidden so link accessible text stays clean.
     expect(loadingHtml).toMatch(/<span aria-hidden="true"[^>]*><svg[^>]*data-slot="spinner"/);
   });
@@ -435,7 +722,7 @@ describe('OverviewPage layout compression and Day-1 SME quick-start (#4644)', ()
     expect(caughtUp).toContain('data-testid="today-weekly"');
   });
 
-  it('contains no em dashes, en dashes, or forbidden assistant copy in new overview/quickstart messages', () => {
+  it('contains no em dashes, en dashes, or forbidden assistant copy in overview/quickstart messages', () => {
     for (const [locale, catalogTree] of [
       ['vi', viMessages],
       ['en', en],
@@ -445,49 +732,20 @@ describe('OverviewPage layout compression and Day-1 SME quick-start (#4644)', ()
       expect(slice, locale).not.toMatch(/assistant|trợ lý/i);
     }
   });
-  it('opens with the fixed create actions named by the job, only for the apps that are on (#4783)', () => {
-    const all = renderOverview({ overview: ACTIVE_OVERVIEW, todayItems: TODAY_ITEMS });
-    expect(all).toContain('data-testid="home-actions"');
-    for (const [id, name, href] of [
-      ['uploadInvoice', 'Tải hóa đơn', '/o/acme/inbox'],
-      ['recordExpense', 'Ghi khoản chi', '/o/acme/vouchers'],
-      ['createSalesInvoice', 'Tạo hóa đơn bán', '/o/acme/sales-invoices'],
-      ['addCustomer', 'Thêm khách', '/o/acme/contacts'],
-    ] as const) {
-      expect(all).toContain(`data-testid="home-action-${id}"`);
-      expect(all).toContain(name);
-      expect(all).toContain(`href="${href}`);
-    }
-    // The row comes before the queue; each target keeps the 44 px phone height.
-    expect(all.indexOf('data-testid="home-actions"')).toBeLessThan(all.indexOf('data-testid="today-hero-card"'));
-    expect(all).toMatch(/data-testid="home-action-uploadInvoice"[^>]*max-md:min-h-11/);
-
-    // The accounting app off: only the customer remains; both off: no row at all.
-    state.modules = ['kernel', 'crm'];
-    const crmOnly = renderOverview({ overview: ACTIVE_OVERVIEW, todayItems: TODAY_ITEMS });
-    expect(crmOnly).toContain('data-testid="home-action-addCustomer"');
-    expect(crmOnly).not.toContain('data-testid="home-action-uploadInvoice"');
-    state.modules = ['kernel', 'notes'];
-    expect(renderOverview({ overview: ACTIVE_OVERVIEW, todayItems: TODAY_ITEMS })).not.toContain('data-testid="home-actions"');
-  });
 
   it('shows the day-1 start card until the first invoice is approved, and not after it or after it is closed (#4783)', () => {
     const empty = renderOverview({ overview: EMPTY_OVERVIEW, todayItems: [] });
     expect(empty).toContain('data-testid="overview-quickstart"');
-    // The queue is first and the start card sits under it.
     expect(empty.indexOf('data-testid="overview-quickstart"')).toBeGreaterThan(empty.indexOf('id="overview-today"'));
 
-    // An org with activity but no approved invoice still sees it (the card follows the invoice, not the empty queue).
     const noInvoiceYet = renderOverview({ overview: ACTIVE_OVERVIEW, todayItems: TODAY_ITEMS, documents: [] });
     expect(noInvoiceYet).toContain('data-testid="overview-quickstart"');
 
-    // The first approved invoice: gone by itself. A voided one does not count.
     const approved = renderOverview({ overview: EMPTY_OVERVIEW, todayItems: [], documents: [APPROVED_DOC] });
     expect(approved).not.toContain('data-testid="overview-quickstart"');
     const voided = renderOverview({ overview: EMPTY_OVERVIEW, todayItems: [], documents: [{ id: 'doc-2', voided: { reversalEntryId: 'e1' } }] });
     expect(voided).toContain('data-testid="overview-quickstart"');
 
-    // Closed on this device: it stays closed.
     storage.set('ludy.home.start.acme', 'dismissed');
     expect(renderOverview({ overview: EMPTY_OVERVIEW, todayItems: [] })).not.toContain('data-testid="overview-quickstart"');
   });
@@ -499,16 +757,214 @@ describe('OverviewPage layout compression and Day-1 SME quick-start (#4644)', ()
     qc.setQueryData(['me', 'get'], { userId: 'u', email: 'o@example.com', orgs: [{ orgId: 'org-1', slug: 'acme', name: 'A', role: 'owner' }] });
     qc.setQueryData(['org', 'overview'], EMPTY_OVERVIEW);
     qc.setQueryData(['today', 'list'], { items: [], coworkers: COWORKERS, dropped: 0, truncated: 0, failed: 0 });
-    setActiveLocale('vi');
-    const html = renderToStaticMarkup(
-      <I18nProvider>
-        <QueryClientProvider client={qc}>
-          <IntlProvider locale="vi" messages={catalog('vi') as never} timeZone="Asia/Ho_Chi_Minh">
-            <OverviewPage />
-          </IntlProvider>
-        </QueryClientProvider>
-      </I18nProvider>,
-    );
+    const html = renderWithProviders('vi', <OverviewPage />);
     expect(html).not.toContain('data-testid="overview-quickstart"');
+  });
+});
+
+describe('HomeVyBar & HomeCustomizePanel SSR (#4928)', () => {
+  it('renders HomeVyBar states (ready, aiOff, budgetStop, noPermission) and honors custom gmName', () => {
+    const ready = renderWithProviders(
+      'vi',
+      <HomeVyBar
+        slug="acme"
+        gmName="Linh"
+        canUseVy
+        permissionsLoaded
+        canApproveFinance
+        canViewAiBudgets
+        aiMeter={METER_READY}
+        role="owner"
+        modules={['kernel', 'finance', 'notes']}
+      />,
+    );
+    expect(ready).toContain('data-testid="home-vy-bar"');
+    expect(ready).toContain('data-testid="home-vy-input"');
+    expect(ready).toContain('Hỏi Linh');
+    expect(ready).toContain('data-testid="home-vy-chip-pendingApprovals"');
+    expect(ready).toContain('data-testid="home-vy-chip-planToday"');
+    expect(ready).not.toMatch(/data-testid="home-vy-submit"[^>]*aria-label=/);
+
+    const aiOff = renderWithProviders(
+      'vi',
+      <HomeVyBar
+        slug="acme"
+        gmName="Vy"
+        canUseVy
+        permissionsLoaded
+        canApproveFinance
+        canViewAiBudgets
+        aiMeter={METER_OFF}
+        role="owner"
+        modules={['kernel', 'finance']}
+      />,
+    );
+    expect(aiOff).toContain('data-testid="home-vy-status"');
+    expect(aiOff).toContain('data-vy-status="aiOff"');
+    expect(aiOff).not.toContain('data-testid="home-vy-input"');
+
+    const budgetStop = renderWithProviders(
+      'en',
+      <HomeVyBar
+        slug="acme"
+        gmName="Vy"
+        canUseVy
+        permissionsLoaded
+        canApproveFinance
+        canViewAiBudgets
+        aiMeter={METER_STOP}
+        role="owner"
+        modules={['kernel']}
+      />,
+    );
+    expect(budgetStop).toContain('data-testid="home-vy-status"');
+    expect(budgetStop).toContain('data-vy-status="budgetStop"');
+    expect(budgetStop).toContain('href="/o/acme/ai-usage"');
+
+    const noPerm = renderWithProviders(
+      'vi',
+      <HomeVyBar
+        slug="acme"
+        gmName="Vy"
+        canUseVy={false}
+        permissionsLoaded
+        canApproveFinance={false}
+        canViewAiBudgets={false}
+        aiMeter={METER_READY}
+        role="member"
+        modules={['kernel']}
+      />,
+    );
+    expect(noPerm).toBe('');
+
+    const meterPending = renderWithProviders(
+      'vi',
+      <HomeVyBar
+        slug="acme"
+        gmName="Vy"
+        canUseVy
+        permissionsLoaded
+        canApproveFinance
+        canViewAiBudgets
+        aiMeter={undefined}
+        role="owner"
+        modules={['kernel', 'finance']}
+      />,
+    );
+    expect(meterPending).toBe('');
+
+    const drawerWithPrompt = renderWithProviders(
+      'vi',
+      <VyDrawerBody
+        slug="acme"
+        open
+        onClose={() => undefined}
+        gmName="Vy"
+        canUseVy
+        permissionsLoaded
+        canViewAiBudgets
+        aiMeter={METER_READY}
+        todayItems={TODAY_ITEMS}
+        role="owner"
+        modules={['kernel', 'finance']}
+        prompt="Tôi có bao nhiêu hóa đơn chờ duyệt?"
+        canApproveFinance
+      />,
+    );
+    expect(drawerWithPrompt).toContain('data-testid="vy-drawer-prompt"');
+    expect(drawerWithPrompt).toContain('data-testid="vy-drawer-prompt-summary"');
+    expect(drawerWithPrompt).toContain('Tìm thấy 2 đầu việc liên quan trong Hôm nay cần bạn.');
+
+    // VyDrawerBody suppresses prompt card when caller lacks vy.use permission.
+    const drawerNoPerm = renderWithProviders(
+      'vi',
+      <VyDrawerBody
+        slug="acme"
+        open
+        onClose={() => undefined}
+        gmName="Vy"
+        canUseVy={false}
+        permissionsLoaded
+        canViewAiBudgets={false}
+        aiMeter={METER_READY}
+        todayItems={TODAY_ITEMS}
+        role="member"
+        modules={['kernel', 'finance']}
+        prompt="Tôi có bao nhiêu hóa đơn chờ duyệt?"
+      />,
+    );
+    expect(drawerNoPerm).toContain('data-testid="vy-drawer-no-permission"');
+    expect(drawerNoPerm).not.toContain('data-testid="vy-drawer-prompt"');
+
+    // EngagePipelineBlock formats LIST_CAP (200) scheduled posts as 200+ and stays gated off for viewer.
+    const twoHundredPosts = Array.from({ length: 200 }, () => ({ status: 'scheduled' }));
+    const cappedEngageHtml = renderOverview({
+      overview: ACTIVE_OVERVIEW,
+      posts: twoHundredPosts,
+    });
+    expect(cappedEngageHtml).toContain('200+ bài đăng đã lên lịch');
+
+    const viewerForcedEngageLayout: HomeLayoutView = {
+      customized: true,
+      blocks: [{ id: 'engage_pipeline', visible: true, moduleEnabled: true, permitted: true }],
+      defaults: [],
+    };
+    const viewerEngageHtml = renderOverview({
+      role: 'viewer',
+      overview: EMPTY_OVERVIEW,
+      homeLayout: viewerForcedEngageLayout,
+    });
+    expect(viewerEngageHtml).not.toContain('data-testid="home-block-engage_pipeline"');
+  });
+
+  it('renders HomeCustomizePanel with Switch, Move Up / Move Down bounds, drag handles, live region, Reset, Cancel, Save', () => {
+    const blocks: HomeLayoutBlock[] = [
+      { id: 'finance_tax_deadlines', visible: true },
+      { id: 'teamwork_my_work', visible: false },
+      { id: 'esign_pending', visible: true },
+    ];
+    const html = renderWithProviders(
+      'vi',
+      <HomeCustomizePanel
+        initialBlocks={blocks}
+        isPending={false}
+        error={new Error('Network offline')}
+        onSave={() => undefined}
+        onReset={() => undefined}
+        onCancel={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('data-testid="home-customize-panel"');
+    expect(html).toContain('aria-live="polite"');
+    expect(html).toContain('data-testid="home-customize-announcement"');
+    expect(html).toContain('draggable="true"');
+    expect(html).toContain('data-testid="home-customize-drag-finance_tax_deadlines"');
+    expect(html).toContain('data-testid="home-customize-switch-finance_tax_deadlines"');
+    expect(html).toContain('data-testid="home-customize-switch-teamwork_my_work"');
+    // First row Move Up is disabled, middle row both enabled, last row Move Down is disabled.
+    expect(html).toMatch(/disabled=""[^>]*data-testid="home-customize-up-finance_tax_deadlines"|data-testid="home-customize-up-finance_tax_deadlines"[^>]*disabled=""/);
+    expect(html).not.toMatch(/disabled=""[^>]*data-testid="home-customize-down-finance_tax_deadlines"|data-testid="home-customize-down-finance_tax_deadlines"[^>]*disabled=""/);
+    expect(html).toMatch(/disabled=""[^>]*data-testid="home-customize-down-esign_pending"|data-testid="home-customize-down-esign_pending"[^>]*disabled=""/);
+    expect(html).toContain('min-h-11 min-w-11');
+    expect(html).toContain('data-testid="home-customize-reset"');
+    expect(html).toContain('data-testid="home-customize-cancel"');
+    expect(html).toContain('data-testid="home-customize-save"');
+    expect(html).toContain('data-testid="home-customize-error"');
+    expect(html).not.toMatch(/shadow-(md|lg|xl|2xl)/);
+
+    const singleRowHtml = renderWithProviders(
+      'vi',
+      <HomeCustomizePanel
+        initialBlocks={[{ id: 'teamwork_my_work', visible: true }]}
+        isPending={false}
+        error={null}
+        onSave={() => undefined}
+        onReset={() => undefined}
+        onCancel={() => undefined}
+      />,
+    );
+    expect(singleRowHtml).toContain('draggable="false"');
+    expect(singleRowHtml).not.toContain('draggable="true"');
   });
 });

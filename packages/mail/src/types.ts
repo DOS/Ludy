@@ -70,8 +70,8 @@ export interface WebhookRequest {
 }
 
 export class WebhookRejected extends Error {
-  readonly reason: 'signature' | 'stale' | 'malformed';
-  constructor(reason: 'signature' | 'stale' | 'malformed') {
+  readonly reason: 'signature' | 'stale' | 'malformed' | 'capacity';
+  constructor(reason: 'signature' | 'stale' | 'malformed' | 'capacity') {
     super(`webhook rejected: ${reason}`);
     this.name = 'WebhookRejected';
     this.reason = reason;
@@ -87,5 +87,5 @@ export interface MailProvider {
   send(mail: OutboundMail): Promise<SendResult>;
   // Checks the signature and returns the events of one webhook delivery, or throws WebhookRejected. Absent when the
   // provider has no webhooks (SMTP: bounces arrive as DSN mails through the inbound route).
-  parseWebhook?(request: WebhookRequest, now?: number): MailEvent[];
+  parseWebhook?(request: WebhookRequest, now?: number): MailEvent[] | Promise<MailEvent[]>;
 }

@@ -2,7 +2,7 @@
 // ConversationWriter (CV8, #2310) with a stand-in for the model: what it is told, what it keeps of the answer, and what the checks after the call
 // refuse (a figure or a link the conversation and the saved replies do not contain, an empty or too long text), so a draft never invents a fact.
 import { describe, expect, it } from 'vitest';
-import { ConversationWriter, DRAFT_MESSAGES_MAX, draftFiguresOutside, draftLinksOutside, type DraftMessage, type ReplyGenerator, type ReplyDraftRequest } from '../src/index.ts';
+import { ConversationWriter, DRAFT_MESSAGES_MAX, draftFiguresOutside, draftLinksOutside, draftPlaceholdersOutside, type DraftMessage, type ReplyGenerator, type ReplyDraftRequest } from '../src/index.ts';
 
 const CONFIG = { baseURL: 'http://localhost:1/v1', apiKey: null, model: 'test' };
 const thread: DraftMessage[] = [
@@ -70,6 +70,39 @@ describe('ConversationWriter', () => {
     expect(draftFiguresOutside('Chào {tên}, shop mở cửa 8h ạ', ['Chào {tên}, shop mở cửa 8h đến 21h'])).toEqual([]);
     const { writer: invented } = writerSaying('Chào {tên}, giá 200.000đ ạ');
     expect(await invented.draft(request({ savedReplies: saved }))).toEqual({ kind: 'none', code: 'FIGURES' });
+    // Multiple `{tên}` occurrences and NFD combining marks are accepted; brackets `[giá]` alongside `{tên}` remain allowed.
+    expect(await writerSaying('Chào {tên}, cảm ơn {tên} đã nhắn shop ạ. Giá [giá] ạ.').writer.draft(request({ savedReplies: saved }))).toMatchObject({ kind: 'draft' });
+    expect(await writerSaying('Chào {te\u0302n}, shop mở cửa 8h ạ.').writer.draft(request({ savedReplies: saved }))).toMatchObject({ kind: 'draft' });
+  });
+
+  it('refuses brace placeholders other than {tên}, nested braces, and malformed braces (#3105)', async () => {
+    const saved = [{ title: 'Chào', body: 'Chào {tên}, shop mở cửa 8h đến 21h mỗi ngày ạ.' }];
+    const said = (text: string) => writerSaying(text).writer.draft(request({ savedReplies: saved }));
+    for (const bad of [
+      'Chào {name}, shop mở cửa 8h ạ.',
+      'Chào {customer}, shop còn hàng ạ.',
+      'Chào {tên}, đơn của {customer} đang được chuẩn bị ạ.',
+      'Chào {{foo}}, shop còn hàng ạ.',
+      'Chào {{tên}}, shop còn hàng ạ.',
+      'Chào {{{tên}}}, shop còn hàng ạ.',
+      'Chào {t{tên}ên}, shop còn hàng ạ.',
+      'Chào {Tên}, shop còn hàng ạ.',
+      'Chào {ten}, shop còn hàng ạ.',
+      'Chào { tên }, shop còn hàng ạ.',
+      'Chào {}, shop còn hàng ạ.',
+      'Chào {tên, shop còn hàng ạ.',
+      'Chào tên}, shop còn hàng ạ.',
+      'Chào {tên}}, shop còn hàng ạ.',
+      'Chào {{tên}, shop còn hàng ạ.',
+      'Chào ｛name｝, shop còn hàng ạ.',
+      'Chào ｛tên｝, shop còn hàng ạ.',
+      'Chào {t\u200Dên}, shop còn hàng ạ.',
+    ]) {
+      expect(await said(bad), bad).toEqual({ kind: 'none', code: 'PLACEHOLDER' });
+    }
+    expect(draftPlaceholdersOutside('Chào {tên}, giá [giá] ạ')).toEqual([]);
+    expect(draftPlaceholdersOutside('Chào {name} và {{foo}} ạ')).toEqual(['{name}', '{', '{foo}', '}']);
+    expect(draftPlaceholdersOutside('{'.repeat(8000)).length).toBeGreaterThan(0);
   });
 
   it('gives no draft when the model states a figure or a link that nothing it read contains', async () => {

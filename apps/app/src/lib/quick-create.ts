@@ -6,6 +6,8 @@ import type { Role } from './members.ts';
 
 export type QuickCreateItemId =
   | 'uploadDocument'
+  | 'recordExpense'
+  | 'createSalesInvoice'
   | 'quickCapture'
   | 'newTeamTask'
   | 'newNote'
@@ -15,6 +17,8 @@ export type QuickCreateItemId =
 
 export type QuickCreateTarget =
   | '/o/$slug/inbox'
+  | '/o/$slug/vouchers'
+  | '/o/$slug/sales-invoices'
   | '/o/$slug/tasks'
   | '/o/$slug/notes'
   | '/o/$slug/contacts'
@@ -51,6 +55,14 @@ export function buildQuickCreateItems(input: {
 
   if (has('finance')) {
     items.push({ id: 'uploadDocument', kind: 'link', to: '/o/$slug/inbox', icon: 'documents' });
+    items.push({
+      id: 'recordExpense',
+      kind: 'link',
+      to: '/o/$slug/vouchers',
+      search: { type: 'cash_payment' },
+      icon: 'vouchers',
+    });
+    items.push({ id: 'createSalesInvoice', kind: 'link', to: '/o/$slug/sales-invoices', icon: 'salesInvoices' });
   }
   if (has('notes') && canQuickCapture) {
     items.push({ id: 'quickCapture', kind: 'action', icon: 'myWork', shortcut: 'Alt+Q' });
