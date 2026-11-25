@@ -34,7 +34,13 @@ import {
   type SigningEventChainRow,
 } from '@ludy/mod-sign';
 import { contextToken } from './fixtures/context-token.ts';
-import { createDbPool, resolveDbIdentifiers, setActiveRolePasswords } from './fixtures/db-identifiers.ts';
+import {
+  auditRoleFunctionExecute,
+  createDbPool,
+  resolveDbIdentifiers,
+  setActiveRolePasswords,
+  type DbIdentifiers,
+} from './fixtures/db-identifiers.ts';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 
 type Pool = ReturnType<typeof createPool>;
@@ -91,6 +97,7 @@ suite('eSign shared meeting minutes reader-scoped confidentiality invariants (#3
   let adminPool: Pool | undefined;
   let appPool: Pool | undefined;
   let workerPool: Pool | undefined;
+  let dbIds!: DbIdentifiers;
   let runtime: Runtime;
   let workerRuntime: Runtime;
 
@@ -157,7 +164,8 @@ suite('eSign shared meeting minutes reader-scoped confidentiality invariants (#3
     adminUrl = base.toString();
 
     await migrate({ adminUrl, dir: MIGRATIONS });
-    const ids = await resolveDbIdentifiers(adminUrl);
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    const ids = dbIds;
     await setActiveRolePasswords(adminUrl, { crove_app: 'mtg-inv-app-pw', crove_worker: 'mtg-inv-worker-pw' }, ids);
 
     const loginUrl = (user: string, pw: string) => {
@@ -2081,5 +2089,442 @@ suite('eSign shared meeting minutes reader-scoped confidentiality invariants (#3
     );
     expect(replayOut.deleted).toBe(true);
     await assertUnsignedErasedAndCompletedPreserved(fxReplay, [recorderId, outsiderMemberId], [ownerId, adminId, entityLimitedMemberId, viewerId]);
+  }, 120_000);
+
+  it('pins execute grants, search_path hardening, and envelope_guard cleanup/erased refusals across crove_* and ludy_* identifiers (#4688)', async () => {
+    const fnSpecs = [
+      { sig: 'crove_meetings.cleanup_sign_minutes_on_meeting_delete()', definer: true, allowed: [] as readonly string[] },
+      { sig: 'crove_sign.cleanup_meeting_minutes_envelopes(uuid,uuid,boolean,uuid[])', definer: true, allowed: [] as readonly string[] },
+      { sig: 'crove_sign.envelope_guard()', definer: false, allowed: [] as readonly string[] },
+      {
+        sig: 'crove_sign.is_exportable_envelope(uuid,text,uuid)',
+        definer: true,
+        allowed: ['crove_tenant', 'crove_app', 'crove_worker', 'crove_definer_tenant', 'crove_definer_einvoice'] as const,
+      },
+      {
+        sig: 'crove_sign.is_exportable_envelope_id(uuid,uuid)',
+        definer: true,
+        allowed: ['crove_tenant', 'crove_app', 'crove_worker', 'crove_definer_tenant', 'crove_definer_einvoice'] as const,
+      },
+      {
+        sig: 'crove_sign.is_exportable_sign_file(uuid,uuid,text)',
+        definer: true,
+        allowed: ['crove_tenant', 'crove_app', 'crove_worker', 'crove_definer_tenant', 'crove_definer_einvoice'] as const,
+      },
+    ] as const;
+
+    const grantClient = await adminPool!.connect();
+    try {
+      for (const spec of fnSpecs) {
+        const { rows: metaRows } = await grantClient.query<{
+          fn: string;
+          definer: boolean;
+          config: string[] | null;
+          public_exec: boolean;
+        }>(
+          `SELECT p.oid::regprocedure::text AS fn,
+                  p.prosecdef AS definer,
+                  p.proconfig AS config,
+                  pg_catalog.has_function_privilege('public', p.oid, 'EXECUTE') AS public_exec
+             FROM pg_catalog.pg_proc p
+            WHERE p.oid = $1::regprocedure`,
+          [spec.sig],
+        );
+        expect(metaRows, spec.sig).toHaveLength(1);
+        const meta = metaRows[0]!;
+        expect(meta.definer, `${spec.sig} prosecdef`).toBe(spec.definer);
+        expect(meta.config, `${spec.sig} search_path`).toEqual(['search_path=pg_catalog, pg_temp']);
+        expect(meta.public_exec, `${spec.sig} PUBLIC EXECUTE`).toBe(false);
+
+        const { rows: roleRows, activeAllowed } = await auditRoleFunctionExecute(
+          grantClient,
+          dbIds,
+          spec.sig,
+          spec.allowed,
+          'brand',
+        );
+        expect(roleRows.length, `${spec.sig} brand roles`).toBeGreaterThan(0);
+        for (const allowedRole of activeAllowed) {
+          expect(
+            roleRows.some((r) => r.rolname === allowedRole && r.ok),
+            `${allowedRole} EXECUTE on ${spec.sig}`,
+          ).toBe(true);
+        }
+        for (const { rolname, ok, expected } of roleRows) {
+          expect(ok, `${rolname} EXECUTE on ${spec.sig}`).toBe(expected);
+        }
+      }
+    } finally {
+      grantClient.release();
+    }
+
+    // Create a shared meeting with an unsigned draft (erased on delete) and a completed sealed envelope.
+    const { meetingId: mtgId } = await runtime.execute<{ meetingId: string }>(
+      'meetings.meeting.create',
+      {
+        title: 'Guard Invariant Meeting',
+        language: 'vi',
+        visibility: 'org',
+        keepVideo: false,
+        liveNotes: false,
+        summaryTemplate: 'general',
+        consentMethod: 'told_at_start',
+      },
+      { actor: asUser(recorderId), orgId },
+    );
+    await runtime.execute(
+      'meetings.summary.save',
+      { meetingId: mtgId, summary: 'Guard summary.', decisions: ['Guard decision'] },
+      { actor: asUser(recorderId), orgId },
+    );
+    await runtime.execute(
+      'meetings.result.publish',
+      { meetingId: mtgId, confirmed: true },
+      { actor: asUser(recorderId), orgId },
+    );
+
+    const { fileId: compPdf } = await ingestSignFile(asUser(recorderId), orgId, `guard-comp-${randomUUID()}`);
+    const compEnv = await runtime.execute<{ envelopeId: string }>(
+      'sign.envelope.create',
+      {
+        title: 'Guard Completed',
+        subject: 'Guard Subject',
+        sourceKind: 'meeting_minutes',
+        sourceId: mtgId,
+        sourceFileId: compPdf,
+      },
+      { actor: asUser(recorderId), orgId },
+    );
+    await workerRuntime.execute(
+      'sign.envelope.inspect_complete',
+      {
+        envelopeId: compEnv.envelopeId,
+        outcome: 'passed',
+        pageCount: 1,
+        pageDimensions: [{ page: 1, widthPt: 595, heightPt: 842, rotation: 0 }],
+      },
+      { actor: asSystem('sign-pdf-inspect'), orgId },
+    );
+    const compSigner = await runtime.execute<{ signerId: string }>(
+      'sign.signer.add',
+      {
+        envelopeId: compEnv.envelopeId,
+        signerRole: 'signer',
+        roleLabel: 'Nguoi ky',
+        name: 'Guard Signer',
+        email: 'guard-signer@example.com',
+        deliveryMode: 'link',
+      },
+      { actor: asUser(recorderId), orgId },
+    );
+    const compFields = await runtime.execute<{ fieldIds: string[] }>(
+      'sign.field.set',
+      {
+        envelopeId: compEnv.envelopeId,
+        fields: [{ signerId: compSigner.signerId, fieldType: 'signature', pageNumber: 1, xNorm: 0.1, yNorm: 0.7, wNorm: 0.25, hNorm: 0.08, required: true }],
+      },
+      { actor: asUser(recorderId), orgId },
+    );
+    const sentComp = await runtime.execute<{ links: Array<{ signerId: string; token: string }> }>(
+      'sign.envelope.send',
+      { envelopeId: compEnv.envelopeId },
+      { actor: asUser(recorderId), orgId },
+    );
+    await appPool!.query(
+      `SELECT crove_sign.public_submit($1, true, 'draw', NULL, $2::jsonb, $3, 'GuardInvTest/1.0', $4)`,
+      [
+        hashSigningToken(sentComp.links[0]!.token),
+        JSON.stringify([{ fieldId: compFields.fieldIds[0]!, signaturePngBase64: VALID_PNG_BASE64 }]),
+        ipHash,
+        DEFAULT_MESSAGE_ID_DOMAIN,
+      ],
+    );
+    const sealJob = await workerRuntime.query<{
+      envelope: { completedAtIso: string | null };
+      events: Array<{ event_hash: string }>;
+    } | null>('sign.envelope.seal_job_data', { envelopeId: compEnv.envelopeId }, { actor: asSystem('sign-pdf-seal'), orgId });
+    const { fileId: sealedFileId } = await ingestSignFile(asSystem('sign-pdf-seal'), orgId, `guard-sealed-${randomUUID()}`, 'sign_sealed');
+    const { fileId: certFileId } = await ingestSignFile(asSystem('sign-pdf-seal'), orgId, `guard-cert-${randomUUID()}`, 'sign_certificate', 'application/json');
+    await workerRuntime.execute(
+      'sign.envelope.seal_complete',
+      {
+        envelopeId: compEnv.envelopeId,
+        outcome: 'sealed',
+        certificateCode: generateCertificateCode(
+          compEnv.envelopeId,
+          sealJob!.envelope.completedAtIso ?? new Date().toISOString(),
+          sealJob!.events[sealJob!.events.length - 1]!.event_hash,
+        ),
+        sealedFileId,
+        certificateFileId: certFileId,
+      },
+      { actor: asSystem('sign-pdf-seal'), orgId },
+    );
+
+    const { fileId: draftPdf } = await ingestSignFile(asUser(recorderId), orgId, `guard-draft-${randomUUID()}`);
+    const envErasedDraft = await runtime.execute<{ envelopeId: string }>(
+      'sign.envelope.create',
+      {
+        title: 'Guard Erased Draft',
+        sourceKind: 'meeting_minutes',
+        sourceId: mtgId,
+        sourceFileId: draftPdf,
+      },
+      { actor: asUser(recorderId), orgId },
+    );
+
+    await runtime.execute('meetings.meeting.delete', { meetingId: mtgId }, { actor: asUser(recorderId), orgId });
+
+    // Tenant callers cannot mutate retained_* metadata or transition/restore an erased voided envelope.
+    const appClient = await appPool!.connect();
+    try {
+      await appClient.query('BEGIN');
+      await appClient.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [
+        orgId,
+        contextToken(ownerId, orgId),
+      ]);
+
+      await appClient.query('SAVEPOINT sp_retained_tamper');
+      await expect(
+        appClient.query(
+          `UPDATE crove_sign.envelope SET retained_org_visible = false WHERE org_id = $1::uuid AND id = $2::uuid`,
+          [orgId, compEnv.envelopeId],
+        ),
+      ).rejects.toMatchObject({ code: '42501' });
+      await appClient.query('ROLLBACK TO SAVEPOINT sp_retained_tamper');
+
+      // RLS hides erased unsigned rows from tenant UPDATE completely (rowCount = 0); guardClient below also tests envelope_guard bypassing RLS.
+      await appClient.query('SAVEPOINT sp_erased_reopen');
+      const erasedUpdateRes = await appClient.query(
+        `UPDATE crove_sign.envelope
+            SET status = 'draft',
+                voided_at = NULL,
+                void_reason = NULL,
+                title = 'Restored Draft'
+          WHERE org_id = $1::uuid AND id = $2::uuid`,
+        [orgId, envErasedDraft.envelopeId],
+      );
+      expect(erasedUpdateRes.rowCount).toBe(0);
+      await appClient.query('ROLLBACK TO SAVEPOINT sp_erased_reopen');
+
+      await appClient.query('ROLLBACK');
+    } finally {
+      appClient.release();
+    }
+
+    // Prepare a second meeting with an expired envelope and an already-voided envelope holding a secret void_reason.
+    const { meetingId: mtgGuard2 } = await runtime.execute<{ meetingId: string }>(
+      'meetings.meeting.create',
+      {
+        title: 'Guard Second Meeting',
+        language: 'vi',
+        visibility: 'attendees',
+        keepVideo: false,
+        liveNotes: false,
+        summaryTemplate: 'general',
+        consentMethod: 'told_at_start',
+        readerUserIds: [outsiderMemberId],
+      },
+      { actor: asUser(recorderId), orgId },
+    );
+    await runtime.execute(
+      'meetings.summary.save',
+      { meetingId: mtgGuard2, summary: 'Guard 2 summary.', decisions: ['Guard 2 decision'] },
+      { actor: asUser(recorderId), orgId },
+    );
+    await runtime.execute(
+      'meetings.result.publish',
+      { meetingId: mtgGuard2, confirmed: true },
+      { actor: asUser(recorderId), orgId },
+    );
+
+    const createSentMinutes = async (tag: string) => {
+      const { fileId } = await ingestSignFile(asUser(recorderId), orgId, `guard-${tag}-${randomUUID()}`);
+      const env = await runtime.execute<{ envelopeId: string }>(
+        'sign.envelope.create',
+        {
+          title: `Guard ${tag}`,
+          sourceKind: 'meeting_minutes',
+          sourceId: mtgGuard2,
+          sourceFileId: fileId,
+        },
+        { actor: asUser(recorderId), orgId },
+      );
+      await workerRuntime.execute(
+        'sign.envelope.inspect_complete',
+        {
+          envelopeId: env.envelopeId,
+          outcome: 'passed',
+          pageCount: 1,
+          pageDimensions: [{ page: 1, widthPt: 595, heightPt: 842, rotation: 0 }],
+        },
+        { actor: asSystem('sign-pdf-inspect'), orgId },
+      );
+      const signer = await runtime.execute<{ signerId: string }>(
+        'sign.signer.add',
+        {
+          envelopeId: env.envelopeId,
+          signerRole: 'signer',
+          roleLabel: 'Nguoi ky',
+          name: `Signer ${tag}`,
+          email: `guard-${tag}@example.com`,
+          deliveryMode: 'link',
+        },
+        { actor: asUser(recorderId), orgId },
+      );
+      await runtime.execute(
+        'sign.field.set',
+        {
+          envelopeId: env.envelopeId,
+          fields: [{ signerId: signer.signerId, fieldType: 'signature', pageNumber: 1, xNorm: 0.1, yNorm: 0.7, wNorm: 0.25, hNorm: 0.08, required: true }],
+        },
+        { actor: asUser(recorderId), orgId },
+      );
+      await runtime.execute('sign.envelope.send', { envelopeId: env.envelopeId }, { actor: asUser(recorderId), orgId });
+      return env.envelopeId;
+    };
+
+    const envExpId = await createSentMinutes('expired');
+    const envPreVoidedId = await createSentMinutes('prevoided');
+    await runtime.execute(
+      'sign.envelope.void',
+      { envelopeId: envPreVoidedId, reason: 'Pre-existing secret reason' },
+      { actor: asUser(recorderId), orgId },
+    );
+
+    // Even when executed as the cleanup owner with the cleanup GUC set, envelope_guard blocks:
+    //   a) overwriting an already-populated retained_reader_ids snapshot (OLD.retained_reader_ids IS NULL),
+    //   b) leaving a pre-existing void_reason un-scrubbed on an already-voided envelope during cleanup,
+    //   c) forcing an expired envelope's status to 'voided' during cleanup,
+    //   d) reopening or re-stamping void_reason on an already-erased voided envelope.
+    const cleanupGuc = dbIds.schema('sign') === 'ludy_sign' ? 'ludy.sign_meeting_cleanup' : 'crove.sign_meeting_cleanup';
+    const guardClient = await adminPool!.connect();
+    try {
+      await guardClient.query('BEGIN');
+      await guardClient.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [
+        orgId,
+        contextToken(ownerId, orgId),
+      ]);
+      await guardClient.query('SELECT pg_catalog.set_config($1::text, $2::text, true)', [cleanupGuc, orgId]);
+
+      await guardClient.query('SAVEPOINT sp_snapshot_overwrite');
+      await expect(
+        guardClient.query(
+          `UPDATE crove_sign.envelope
+              SET retained_reader_ids = ARRAY[]::uuid[]
+            WHERE org_id = $1::uuid AND id = $2::uuid`,
+          [orgId, compEnv.envelopeId],
+        ),
+      ).rejects.toMatchObject({ code: '42501' });
+      await guardClient.query('ROLLBACK TO SAVEPOINT sp_snapshot_overwrite');
+
+      await guardClient.query('SAVEPOINT sp_void_reason_preserve');
+      await expect(
+        guardClient.query(
+          `UPDATE crove_sign.envelope
+              SET title = '[Erased meeting minutes]',
+                  subject = NULL,
+                  message = NULL,
+                  inspect_error = NULL,
+                  detected_tags_json = NULL,
+                  share_summary_with_signers = false,
+                  shared_summary_json = NULL,
+                  version = version + 1
+            WHERE org_id = $1::uuid AND id = $2::uuid`,
+          [orgId, envPreVoidedId],
+        ),
+      ).rejects.toMatchObject({ code: '42501' });
+      await guardClient.query('ROLLBACK TO SAVEPOINT sp_void_reason_preserve');
+
+      await guardClient.query('SET LOCAL session_replication_role = replica');
+      await guardClient.query(
+        `UPDATE crove_sign.envelope SET status = 'expired', expired_at = now() WHERE org_id = $1::uuid AND id = $2::uuid`,
+        [orgId, envExpId],
+      );
+      await guardClient.query('SET LOCAL session_replication_role = origin');
+
+      await guardClient.query('SAVEPOINT sp_expired_status_flip');
+      await expect(
+        guardClient.query(
+          `UPDATE crove_sign.envelope
+              SET status = 'voided',
+                  voided_at = now(),
+                  void_reason = 'meeting_deleted',
+                  title = '[Erased meeting minutes]',
+                  subject = NULL,
+                  message = NULL,
+                  inspect_error = NULL,
+                  detected_tags_json = NULL,
+                  share_summary_with_signers = false,
+                  shared_summary_json = NULL,
+                  version = version + 1
+            WHERE org_id = $1::uuid AND id = $2::uuid`,
+          [orgId, envExpId],
+        ),
+      ).rejects.toMatchObject({ code: '42501' });
+      await guardClient.query('ROLLBACK TO SAVEPOINT sp_expired_status_flip');
+
+      await guardClient.query('SAVEPOINT sp_erased_cleanup_bypass');
+      await expect(
+        guardClient.query(
+          `UPDATE crove_sign.envelope
+              SET status = 'draft',
+                  voided_at = NULL,
+                  void_reason = NULL,
+                  title = '[Erased meeting minutes]',
+                  subject = NULL,
+                  message = NULL,
+                  inspect_error = NULL,
+                  detected_tags_json = NULL,
+                  share_summary_with_signers = false,
+                  shared_summary_json = NULL,
+                  version = version + 1
+            WHERE org_id = $1::uuid AND id = $2::uuid`,
+          [orgId, envErasedDraft.envelopeId],
+        ),
+      ).rejects.toMatchObject({ code: '42501' });
+      await guardClient.query('ROLLBACK TO SAVEPOINT sp_erased_cleanup_bypass');
+
+      // Clear the cleanup GUC so superuser bypasses RLS while envelope_guard itself rejects direct erased/retained mutations.
+      await guardClient.query('SELECT pg_catalog.set_config($1::text, $2::text, true)', [cleanupGuc, '']);
+
+      await guardClient.query('SAVEPOINT sp_guard_retained_no_guc');
+      await expect(
+        guardClient.query(
+          `UPDATE crove_sign.envelope SET retained_org_visible = false WHERE org_id = $1::uuid AND id = $2::uuid`,
+          [orgId, compEnv.envelopeId],
+        ),
+      ).rejects.toMatchObject({ code: '42501' });
+      await guardClient.query('ROLLBACK TO SAVEPOINT sp_guard_retained_no_guc');
+
+      await guardClient.query('SAVEPOINT sp_guard_erased_reopen_no_guc');
+      await expect(
+        guardClient.query(
+          `UPDATE crove_sign.envelope
+              SET status = 'draft',
+                  voided_at = NULL,
+                  void_reason = NULL,
+                  title = 'Restored Draft'
+            WHERE org_id = $1::uuid AND id = $2::uuid`,
+          [orgId, envErasedDraft.envelopeId],
+        ),
+      ).rejects.toMatchObject({ code: '42501' });
+      await guardClient.query('ROLLBACK TO SAVEPOINT sp_guard_erased_reopen_no_guc');
+
+      await guardClient.query('SAVEPOINT sp_guard_erased_reason_no_guc');
+      await expect(
+        guardClient.query(
+          `UPDATE crove_sign.envelope
+              SET void_reason = 'tampered_reason'
+            WHERE org_id = $1::uuid AND id = $2::uuid`,
+          [orgId, envErasedDraft.envelopeId],
+        ),
+      ).rejects.toMatchObject({ code: '42501' });
+      await guardClient.query('ROLLBACK TO SAVEPOINT sp_guard_erased_reason_no_guc');
+
+      await guardClient.query('ROLLBACK');
+    } finally {
+      guardClient.release();
+    }
   }, 120_000);
 });

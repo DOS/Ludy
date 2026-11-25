@@ -589,9 +589,15 @@ suite('eSign meeting_minutes hardening & offboarding export follow-ups (#4641)',
       `SELECT pg_catalog.pg_get_functiondef('ludy_sign.cleanup_meeting_minutes_envelopes(uuid,uuid,boolean,uuid[])'::regprocedure) AS def`,
     );
     const cleanupDef = defRows[0]!.def;
-    const signerLockIdx = cleanupDef.indexOf('FROM ludy_sign.signer s');
-    const tokenLockIdx = cleanupDef.indexOf('FROM ludy_sign.signing_token t');
-    const fieldLockIdx = cleanupDef.indexOf('FROM ludy_sign.field f');
+    const signerLockMatch = /\bFROM\s+(?:ludy|crove)_sign\.signer\s+\w+\b[^;]*\bFOR\s+UPDATE\b/i.exec(cleanupDef);
+    const tokenLockMatch = /\bFROM\s+(?:ludy|crove)_sign\.signing_token\s+\w+\b[^;]*\bFOR\s+UPDATE\b/i.exec(cleanupDef);
+    const fieldLockMatch = /\bFROM\s+(?:ludy|crove)_sign\.field\s+\w+\b[^;]*\bFOR\s+UPDATE\b/i.exec(cleanupDef);
+    expect(signerLockMatch, 'signer lock statement with FOR UPDATE').not.toBeNull();
+    expect(tokenLockMatch, 'signing_token lock statement with FOR UPDATE').not.toBeNull();
+    expect(fieldLockMatch, 'field lock statement with FOR UPDATE').not.toBeNull();
+    const signerLockIdx = signerLockMatch!.index;
+    const tokenLockIdx = tokenLockMatch!.index;
+    const fieldLockIdx = fieldLockMatch!.index;
     expect(signerLockIdx).toBeGreaterThan(-1);
     expect(tokenLockIdx).toBeGreaterThan(signerLockIdx);
     expect(fieldLockIdx).toBeGreaterThan(tokenLockIdx);
