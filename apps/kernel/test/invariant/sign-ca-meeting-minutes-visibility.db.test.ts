@@ -158,7 +158,7 @@ suite('eSign CA PAdES meeting minutes reader isolation invariants (#4157, ADR-00
       headers: {
         authorization: `Bearer ${await tokenFor(who)}`,
         'content-type': 'application/json',
-        'x-crove-org': slug,
+        'x-ludy-org': slug,
       },
       body: JSON.stringify(input === undefined ? {} : { json: input }),
     });
@@ -326,7 +326,7 @@ suite('eSign CA PAdES meeting minutes reader isolation invariants (#4157, ADR-00
       form.append('purpose', 'sign_document');
       const upRes = await app.request('/api/files', {
         method: 'POST',
-        headers: { authorization: `Bearer ${await tokenFor(creator)}`, 'x-crove-org': org.slug },
+        headers: { authorization: `Bearer ${await tokenFor(creator)}`, 'x-ludy-org': org.slug },
         body: form,
       });
       expect(upRes.status).toBe(200);
@@ -452,7 +452,7 @@ suite('eSign CA PAdES meeting minutes reader isolation invariants (#4157, ADR-00
       expect(fileMeta.id).toBe(mtgCa.padesFileId);
 
       const dl = await app.request(`/api/files/${mtgCa.padesFileId}`, {
-        headers: { authorization: `Bearer ${await tokenFor(reader)}`, 'x-crove-org': org.slug },
+        headers: { authorization: `Bearer ${await tokenFor(reader)}`, 'x-ludy-org': org.slug },
       });
       expect(dl.status).toBe(200);
     }
@@ -504,7 +504,7 @@ suite('eSign CA PAdES meeting minutes reader isolation invariants (#4157, ADR-00
       ).rejects.toMatchObject({ code: 'NOT_FOUND', status: 404 });
 
       const dl = await app.request(`/api/files/${mtgCa.padesFileId}`, {
-        headers: { authorization: `Bearer ${await tokenFor(nonReader)}`, 'x-crove-org': org.slug },
+        headers: { authorization: `Bearer ${await tokenFor(nonReader)}`, 'x-ludy-org': org.slug },
       });
       expect(dl.status).toBe(404);
 

@@ -42,7 +42,7 @@ import { resolveDbIdentifiers, roleUrl, setActiveRolePasswords, wrapPool, type D
 
 type Pool = ReturnType<typeof createPool>;
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -429,7 +429,7 @@ suite('eSign Slice 4c recipient correction & audited signer delegation invariant
 
     const appClient = await appPool!.connect();
     try {
-      const ctxToken = mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', {
+      const ctxToken = mintContextToken(process.env.LUDY_CONTEXT_TOKEN_KEY ?? process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', {
         userId: ownerId,
         orgId,
         sessionId: null,

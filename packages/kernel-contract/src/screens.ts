@@ -221,6 +221,8 @@ const HR_SCREENS = {
 // and individual meetings at /o/$slug/meetings/$id belong to the same app. The printable minutes ("Xem biên bản", A4, #3162) are outside the org's frame so only the sheet reaches the paper.
 export const MEETINGS_SCREENS = {
   routes: [{ path: 'meetings' }, { path: 'meetings/record' }, { path: 'meetings/$id' }, { path: 'print/meeting-minutes/$id' }],
+  // The page a minutes link opens for a person outside the org (#4822): /-/minutes#<token>, no account.
+  outside: [{ path: '/-/minutes', public: true }],
   nav: [{ app: 'teamwork', group: 'work', path: 'meetings', label: 'meetings' }],
 } as const satisfies ModuleScreens;
 

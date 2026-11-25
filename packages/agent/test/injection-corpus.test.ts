@@ -93,6 +93,7 @@ import {
   checkCommitments,
   checkTemplateSuggestion,
   checkOpenPoints,
+  checkSalesInsight,
   checkDigest,
   checkEnhanced,
   checkFollowupPersonalNote,
@@ -818,6 +819,7 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
     cover('meetings.commitments');
     cover('meetings.template_suggest');
     cover('meetings.open_points');
+    cover('meetings.sales_insight');
     cover('meetings.followup_note');
     cover('meetings.deal_update');
 
@@ -961,6 +963,20 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
       ).toThrowError('COMMITMENTS_EMPTY');
       expect(() => checkTemplateSuggestion(JSON.stringify({ template: 'customer', reason: c.poisonedOutput, second: 0 }), poisonedSegments)).toThrowError('TEMPLATE_SUGGEST_EMPTY');
       expect(() => checkOpenPoints(JSON.stringify({ points: [{ kind: 'question', text: c.poisonedOutput, second: 0 }] }), poisonedSegments)).toThrowError('OPEN_POINTS_EMPTY');
+      const insightLineId = '99999999-9999-4999-8999-999999999999';
+      const insightSegments = [{ id: insightLineId, startSeconds: 0, endSeconds: 10, speakerLabel: 'Lan', text: `Lan gui bao gia cho khach hang. ${nextCase.untrustedInput}` }];
+      const checkedInsight = checkSalesInsight(
+        JSON.stringify({
+          concerns: [{ text: c.poisonedOutput, lineIds: [insightLineId] }],
+          buyingSignals: [{ text: c.poisonedOutput, lineIds: [insightLineId] }],
+          nextSteps: [{ text: c.poisonedOutput, owner: c.poisonedOutput, lineIds: [insightLineId] }],
+        }),
+        insightSegments,
+      );
+      expect(checkedInsight.concerns, `sales_insight concerns ${c.id}`).toEqual([]);
+      expect(checkedInsight.buyingSignals, `sales_insight buyingSignals ${c.id}`).toEqual([]);
+      expect(checkedInsight.nextSteps, `sales_insight nextSteps ${c.id}`).toEqual([]);
+      expect(checkedInsight.dropped, `sales_insight dropped ${c.id}`).toBeGreaterThanOrEqual(3);
       expect(() =>
         checkFollowupPersonalNote(JSON.stringify({ body: c.poisonedOutput }), {
           summary: `Hop nhom chot ke hoach ban hang. ${nextCase.untrustedInput}`,

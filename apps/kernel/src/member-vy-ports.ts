@@ -4,9 +4,9 @@
 // member's own user context. Asking about anyone else is refused before a command is run, and the database would refuse it anyway (the
 // restrictive policy shows a member their own rows only). Knowledge has no declared queries yet: a feature that asks gets no passages.
 import { z } from 'zod';
-import { generateMeetingDealUpdateText, DEAL_UPDATE_TIMEOUT_MS, DealUpdateModelError, ADHERENCE_TIMEOUT_MS, AdherenceModelError, generateMeetingAdherenceText, ASK_TIMEOUT_MS, DIGEST_TIMEOUT_MS, DigestModelError, generateMeetingDigestText, ASSIGNEE_TIMEOUT_MS, AssigneeModelError, generateMeetingAssigneeText, AiBudgetExhaustedError, AiMeterMissingError, AskModelError, BRIEF_TIMEOUT_MS, BriefModelError, CHAPTERS_TIMEOUT_MS, ChaptersModelError, generateMeetingBriefText, generateMeetingChaptersText, SUMMARY_TIMEOUT_MS, SummaryModelError, TASKS_FROM_NOTE_TIMEOUT_MS, TasksFromNoteModelError, TranslationModelError, aiCost, generateMeetingAskText, generateMeetingSummaryText, generateMeetingTranslationText, generateNoteOrganizeText, generateNoteSummaryText, generateTasksFromNoteText, generateTasksFromSourceText, generateTodoPlanText, generateTodoSuggestText, withAiScope, type AiConfig, type AiMeter, generateMeetingTitleText, TITLE_TIMEOUT_MS, TitleModelError, generateMeetingCommitmentsText, COMMITMENTS_TIMEOUT_MS, CommitmentsModelError, generateMeetingFollowupNoteText, FOLLOWUP_NOTE_TIMEOUT_MS, FollowupNoteModelError, OPEN_POINTS_TIMEOUT_MS, OpenPointsModelError, generateMeetingOpenPointsText, TEMPLATE_SUGGEST_TIMEOUT_MS, TemplateSuggestModelError, generateMeetingTemplateSuggestText } from '@ludy/agent';
-import { DealUpdateError, proposeDealUpdate, AdherenceError, checkAgenda, NOTE_AI_LIMITS, NOTE_AI_TIMEOUT_MS, TASKS_FROM_NOTE_LIMITS, AskError, DigestError, writeDigest, AssigneeError, pickAssignee, BriefError, writeBrief, ChaptersError, chapterMeeting, NoteAiError, NoteAiModelError, NoteOrganizeError, TodoPlanError, SummaryError, TasksFromNoteError, TasksFromSourceError, TranslationError, askAcrossMeetings, bindPorts, noKnowledge, organizeUnfiledNotes, planTodosForToday, privateText, proposeTasksFromNote, proposeTasksFromSource, revealPrivateText, enhanceNotes, suggestTodosFromNote, summarizeMeeting, summarizeNote, translateSummary, translateTranscriptChunk, planTranscriptChunks, chunkExpectedUsage, lineHash, type MemberRef, type MemoryEntry, type MemoryPort, type ModelPort, type NoteOrganizeInputNote, type NoteOrganizeInputNotebook, type Ports, type TaskSourceKind, type TodoPlanInputItem, TitleError, suggestMeetingTitles, CommitmentsError, listCommitments, FollowupNoteError, draftFollowupPersonalNote, OpenPointsError, listOpenPoints, TemplateSuggestError, suggestMeetingTemplate } from '@ludy/agent/member-vy';
-import { type DealUpdateAnswer, type DealUpdateAsk, type DealUpdateStatus, ADHERENCE_ESTIMATE, type AdherenceAnswer, type AdherenceAsk, type AdherenceFacts, type AdherenceStatus, ASK_ESTIMATE, ASK_HITS_MAX, DIGEST_ESTIMATE, digestLines, type DigestAnswer, type DigestAsk, type DigestFacts, type DigestStatus, type AssigneeAnswer, type AssigneeAsk, type AssigneeFacts, type AssigneeStatus, BRIEF_ESTIMATE, briefLines, type BriefAnswer, type BriefFacts, type BriefStatus, type BriefTarget, DEFAULT_TIME_ZONE, zNoteTodoSuggestion, zTranscriptTranslationResult, zonedDate, templateSections, type AskAnswer, type AskLines, type AskStatus, type FollowupDraft, type FollowupNoteAnswer, type FollowupNoteAsk, type FollowupNoteStatus, type LiveNotesDone, type LiveNotesInput, type MeetingSummaryTemplate, type MinutesTemplateCopy, type Note, type NoteOrganizeInput, type NoteOrganizeResult, type NoteOrganizeSuggestion, type NoteSuggestTodosInput, type NoteSuggestTodosResult, type NoteSummarizeInput, type NoteSummarizeResult, type NoteVyResults, type NoteVyStatus, type ProjectSeat, type ProjectTaskSourceType, type ProjectTasksFromNoteInput, type ProjectTasksFromNoteResult, type ProjectTasksFromNoteStatus, type ProjectTasksFromSourceInput, type ProjectTasksFromSourceResult, type ProjectTasksFromSourceStatus, type Summarized, type TodoPlanFocusItem, type TodoPlanInput, type TodoPlanRescheduleItem, type TodoPlanResult, type Transcript, type TranscriptSource, type TranscriptStarted, type TranscriptTranslated, type TranscriptTranslationStatus, type Translated, type TranslationSource, type TranslationTarget, type TranslationStatus, type TitleAnswer, type CommitmentsAnswer, type OpenPointsAnswer, type TemplateVyAnswer } from '@ludy/kernel-contract';
+import { generateMeetingDealUpdateText, DEAL_UPDATE_TIMEOUT_MS, DealUpdateModelError, ADHERENCE_TIMEOUT_MS, AdherenceModelError, generateMeetingAdherenceText, ASK_TIMEOUT_MS, DIGEST_TIMEOUT_MS, DigestModelError, generateMeetingDigestText, ASSIGNEE_TIMEOUT_MS, AssigneeModelError, generateMeetingAssigneeText, AiBudgetExhaustedError, AiMeterMissingError, AskModelError, BRIEF_TIMEOUT_MS, BriefModelError, CHAPTERS_TIMEOUT_MS, ChaptersModelError, generateMeetingBriefText, generateMeetingChaptersText, SUMMARY_TIMEOUT_MS, SummaryModelError, TASKS_FROM_NOTE_TIMEOUT_MS, TasksFromNoteModelError, TranslationModelError, aiCost, generateMeetingAskText, generateMeetingSummaryText, generateMeetingTranslationText, generateNoteOrganizeText, generateNoteSummaryText, generateTasksFromNoteText, generateTasksFromSourceText, generateTodoPlanText, generateTodoSuggestText, withAiScope, type AiConfig, type AiMeter, generateMeetingTitleText, TITLE_TIMEOUT_MS, TitleModelError, generateMeetingCommitmentsText, COMMITMENTS_TIMEOUT_MS, CommitmentsModelError, generateMeetingFollowupNoteText, FOLLOWUP_NOTE_TIMEOUT_MS, FollowupNoteModelError, OPEN_POINTS_TIMEOUT_MS, OpenPointsModelError, generateMeetingOpenPointsText, SALES_INSIGHT_TIMEOUT_MS, SalesInsightModelError, generateMeetingSalesInsightText, TEMPLATE_SUGGEST_TIMEOUT_MS, TemplateSuggestModelError, generateMeetingTemplateSuggestText } from '@ludy/agent';
+import { DealUpdateError, proposeDealUpdate, AdherenceError, checkAgenda, NOTE_AI_LIMITS, NOTE_AI_TIMEOUT_MS, TASKS_FROM_NOTE_LIMITS, AskError, DigestError, writeDigest, AssigneeError, pickAssignee, BriefError, writeBrief, ChaptersError, chapterMeeting, NoteAiError, NoteAiModelError, NoteOrganizeError, TodoPlanError, SummaryError, TasksFromNoteError, TasksFromSourceError, TranslationError, askAcrossMeetings, bindPorts, noKnowledge, organizeUnfiledNotes, planTodosForToday, privateText, proposeTasksFromNote, proposeTasksFromSource, revealPrivateText, enhanceNotes, suggestTodosFromNote, summarizeMeeting, summarizeNote, translateSummary, translateTranscriptChunk, planTranscriptChunks, chunkExpectedUsage, lineHash, type MemberRef, type MemoryEntry, type MemoryPort, type ModelPort, type NoteOrganizeInputNote, type NoteOrganizeInputNotebook, type Ports, type TaskSourceKind, type TodoPlanInputItem, TitleError, suggestMeetingTitles, CommitmentsError, listCommitments, FollowupNoteError, draftFollowupPersonalNote, OpenPointsError, listOpenPoints, SalesInsightError, analyzeSalesInsight, computeCustomerTalkShare, TemplateSuggestError, suggestMeetingTemplate } from '@ludy/agent/member-vy';
+import { type DealUpdateAnswer, type DealUpdateAsk, type DealUpdateStatus, ADHERENCE_ESTIMATE, type AdherenceAnswer, type AdherenceAsk, type AdherenceFacts, type AdherenceStatus, ASK_ESTIMATE, ASK_HITS_MAX, DIGEST_ESTIMATE, digestLines, type DigestAnswer, type DigestAsk, type DigestFacts, type DigestStatus, type AssigneeAnswer, type AssigneeAsk, type AssigneeFacts, type AssigneeStatus, BRIEF_ESTIMATE, briefLines, type BriefAnswer, type BriefFacts, type BriefStatus, type BriefTarget, DEFAULT_TIME_ZONE, zNoteTodoSuggestion, zTranscriptTranslationResult, zonedDate, templateSections, type AskAnswer, type AskLines, type AskStatus, type FollowupDraft, type FollowupNoteAnswer, type FollowupNoteAsk, type FollowupNoteStatus, type LiveNotesDone, type LiveNotesInput, type MeetingSummaryTemplate, type MinutesTemplateCopy, type Note, type NoteOrganizeInput, type NoteOrganizeResult, type NoteOrganizeSuggestion, type NoteSuggestTodosInput, type NoteSuggestTodosResult, type NoteSummarizeInput, type NoteSummarizeResult, type NoteVyResults, type NoteVyStatus, type ProjectSeat, type ProjectTaskSourceType, type ProjectTasksFromNoteInput, type ProjectTasksFromNoteResult, type ProjectTasksFromNoteStatus, type ProjectTasksFromSourceInput, type ProjectTasksFromSourceResult, type ProjectTasksFromSourceStatus, type Summarized, type TodoPlanFocusItem, type TodoPlanInput, type TodoPlanRescheduleItem, type TodoPlanResult, type Transcript, type TranscriptSource, type TranscriptStarted, type TranscriptTranslated, type TranscriptTranslationStatus, type Translated, type TranslationSource, type TranslationTarget, type TranslationStatus, type TitleAnswer, type CommitmentsAnswer, type OpenPointsAnswer, type SalesInsightAnswer, type SalesInsightStatus, type TemplateVyAnswer } from '@ludy/kernel-contract';
 import { readTasksFromSourceData, type SourceQueryFn } from '@ludy/mod-projects';
 import { DomainError, type Runtime, type UserActor } from '@ludy/kernel-runtime';
 import type { DraftBudget } from './ai-draft-limit.ts';
@@ -141,6 +141,8 @@ export function summaryModelPort(config: AiConfig, timeoutMs: number = SUMMARY_T
         ? generateMeetingTemplateSuggestText(config, prompt, Math.min(timeoutMs, TEMPLATE_SUGGEST_TIMEOUT_MS))
         : prompt.feature === 'meetings.open_points'
         ? generateMeetingOpenPointsText(config, prompt, Math.min(timeoutMs, OPEN_POINTS_TIMEOUT_MS))
+        : prompt.feature === 'meetings.sales_insight'
+        ? generateMeetingSalesInsightText(config, prompt, Math.min(timeoutMs, SALES_INSIGHT_TIMEOUT_MS))
         : prompt.feature === 'meetings.followup_note'
         ? generateMeetingFollowupNoteText(config, prompt, Math.min(timeoutMs, FOLLOWUP_NOTE_TIMEOUT_MS))
         : prompt.feature === 'meetings.deal_update'
@@ -185,6 +187,8 @@ function codeOf(error: unknown): string {
   if (error instanceof TemplateSuggestModelError) return error.kind === 'timeout' ? 'TEMPLATE_SUGGEST_TIMEOUT' : 'TEMPLATE_SUGGEST_FAILED';
   if (error instanceof OpenPointsError) return error.code;
   if (error instanceof OpenPointsModelError) return error.kind === 'timeout' ? 'OPEN_POINTS_TIMEOUT' : 'OPEN_POINTS_FAILED';
+  if (error instanceof SalesInsightError) return error.code;
+  if (error instanceof SalesInsightModelError) return error.kind === 'timeout' ? 'SALES_INSIGHT_TIMEOUT' : 'SALES_INSIGHT_FAILED';
   if (error instanceof FollowupNoteError) return error.code;
   if (error instanceof FollowupNoteModelError) return error.kind === 'timeout' ? 'FOLLOWUP_NOTE_TIMEOUT' : 'FOLLOWUP_NOTE_FAILED';
   if (error instanceof DealUpdateError) return error.code;
@@ -242,6 +246,13 @@ function openPointsCodeOf(error: unknown): string {
   if (error instanceof SummaryModelError && error.kind === 'timeout') return 'OPEN_POINTS_TIMEOUT';
   const code = codeOf(error);
   return code === 'SUMMARY_FAILED' || code === 'SUMMARY_TIMEOUT' ? 'OPEN_POINTS_FAILED' : code;
+}
+
+function salesInsightCodeOf(error: unknown): string {
+  if (error instanceof SalesInsightError || error instanceof SalesInsightModelError) return codeOf(error);
+  if (error instanceof SummaryModelError && error.kind === 'timeout') return 'SALES_INSIGHT_TIMEOUT';
+  const code = codeOf(error);
+  return code === 'SUMMARY_FAILED' || code === 'SUMMARY_TIMEOUT' ? 'SALES_INSIGHT_FAILED' : code;
 }
 
 // A personal-note follow-up run's failure: its own checks and model errors, the meter's codes, and "failed" or "timeout" for anything else.
@@ -713,6 +724,159 @@ export async function runMeetingTemplateSuggest(deps: MeetingSummaryDeps, orgId:
       return failed('AI_STOPPED');
     }
     return { state: 'suggested', errorCode: null, template: suggestion.template, reason: suggestion.reason, seconds: suggestion.seconds, dropped: 0 };
+  } finally {
+    ticket.release();
+  }
+}
+
+interface SalesInsightFacts {
+  meetingId: string;
+  language: 'vi' | 'en';
+  deal: { id: string; title: string; stage: string };
+  segments: Array<{ id: string; startSeconds: number; endSeconds: number; speakerLabel: string; text: string }>;
+  speakerMapping: { internalNames: string[]; customerNames: string[] };
+}
+
+export async function salesInsightStatusOf(
+  deps: Pick<MeetingSummaryDeps, 'runtime' | 'model' | 'meter'>,
+  orgId: string,
+  actor: UserActor,
+  meetingId: string,
+): Promise<SalesInsightStatus> {
+  const status = await deps.runtime.query<SalesInsightStatus>('meetings.sales_insight.status', { meetingId }, { actor, orgId });
+  if (status.enabled && (!deps.model || !deps.meter(actor))) return { ...status, enabled: false, reason: 'off' };
+  return status;
+}
+
+// Sales call insights for a meeting linked to an open deal (#4920, L26, ADR-0049 stage A):
+//   1. meetings.sales_insight.status as the recorder (non-recorders receive 404);
+//   2. returns a clear non-executing state when AI is off, paused by kill switch, or over budget (zero model calls);
+//   3. otherwise runs the recorder's own Vy once under meetings.sales_insight (projected-cost admitted), verifies citations + #4789 contact leaks + talk share in code,
+//      stores COUNTS ONLY on member_vy_result, and returns the tainted insights exclusively to the recorder. Never touches the deal.
+export async function runMeetingSalesInsight(deps: MeetingSummaryDeps, orgId: string, actor: UserActor, meetingId: string): Promise<SalesInsightAnswer> {
+  const as = { actor, orgId };
+  const timeoutMs = deps.timeoutMs ?? SALES_INSIGHT_TIMEOUT_MS;
+  const model = deps.model;
+  const meter = deps.meter(actor);
+  const status = await salesInsightStatusOf(deps, orgId, actor, meetingId);
+  const empty = (state: SalesInsightAnswer['state'], errorCode: string | null = null, dropped = 0): SalesInsightAnswer => ({
+    state,
+    errorCode,
+    deal: status.deal,
+    customerTalkShare: null,
+    concerns: [],
+    buyingSignals: [],
+    nextSteps: [],
+    dropped,
+  });
+
+  if (!status.available) {
+    if (status.reason === 'deal_closed') throw new DomainError('DEAL_CLOSED', 409, 'Cơ hội này đã đóng');
+    if (status.reason === 'transcribe_running') throw new DomainError('TRANSCRIBE_RUNNING', 409, 'This meeting is still being transcribed; wait for it to finish');
+    if (status.reason === 'no_transcript') throw new DomainError('TRANSCRIPT_EMPTY', 422, 'There is no transcript to read yet');
+    throw new DomainError('MEETING_NO_DEAL', 409, 'Cuộc họp này chưa liên kết với cơ hội nào');
+  }
+  if (!model || !meter || status.reason === 'off') return empty('off', 'SUMMARY_OFF');
+  if (status.reason === 'forbidden') throw new DomainError('VY_NOT_ALLOWED', 403, 'Bạn chưa được phép làm việc với Vy');
+  if (status.reason === 'paused') return empty('paused', 'AI_STOPPED');
+  if (status.reason === 'budget') return empty('budget', 'AI_BUDGET_EXHAUSTED');
+
+  const ticket = deps.budget.take(orgId, actor.userId);
+  if (!ticket.allowed) {
+    throw new DomainError('SALES_INSIGHT_BUSY', 429, 'Vy đang bận phân tích cuộc gọi; thử lại sau ít phút', { retryAfterSeconds: ticket.retryAfterSeconds });
+  }
+  try {
+    let started: { meetingId: string; runId: string };
+    try {
+      started = await deps.runtime.execute<{ meetingId: string; runId: string }>('meetings.sales_insight.start', { meetingId }, as);
+    } catch (error: unknown) {
+      if (error instanceof DomainError && (error.code === 'AI_BUDGET_EXHAUSTED' || error.code === 'VY_RUN_BUSY')) {
+        const errorCode = error.code === 'VY_RUN_BUSY' ? 'SALES_INSIGHT_BUSY' : error.code;
+        console.error(`[meetings-sales-insight] run not started: ${errorCode}`);
+        return empty(error.code === 'AI_BUDGET_EXHAUSTED' ? 'budget' : 'failed', errorCode);
+      }
+      throw error;
+    }
+    const runId = started.runId;
+    const fail = async (errorCode: string): Promise<SalesInsightAnswer> => {
+      try {
+        await deps.runtime.execute('kernel.member_vy.result.store', { runId, outcome: { status: 'failed', errorCode } }, as);
+      } catch (storeError: unknown) {
+        console.error(`[meetings-sales-insight] failed result not stored: ${salesInsightCodeOf(storeError)}`);
+      }
+      console.error(`[meetings-sales-insight] run failed: ${errorCode}`);
+      return empty(errorCode === 'AI_BUDGET_EXHAUSTED' ? 'budget' : 'failed', errorCode);
+    };
+
+    let result: Awaited<ReturnType<typeof analyzeSalesInsight>>;
+    let dealMeta = status.deal;
+    let talkShareFallback: SalesInsightAnswer['customerTalkShare'] = null;
+    try {
+      const facts = await deps.runtime.query<SalesInsightFacts>('meetings.sales_insight.facts', { meetingId }, as);
+      dealMeta = facts.deal;
+      talkShareFallback = computeCustomerTalkShare(facts.segments, facts.speakerMapping);
+      const bound = bindPorts({ orgId, memberUserId: actor.userId }, { model, memory: nothingToRemember, knowledge: noKnowledge });
+      result = await withDeadline(
+        withAiScope({ orgId, memberRunId: runId, meter }, () =>
+          analyzeSalesInsight(
+            {
+              segments: facts.segments,
+              language: facts.language,
+              deal: { title: facts.deal.title, stage: facts.deal.stage },
+              speakerMapping: facts.speakerMapping,
+            },
+            bound,
+          ),
+        ),
+        timeoutMs,
+      );
+    } catch (error: unknown) {
+      if (error instanceof SalesInsightError && error.code === 'SALES_INSIGHT_UNPARSABLE') {
+        await fail('SALES_INSIGHT_UNPARSABLE');
+        return { ...empty('none', null, 0), deal: dealMeta, customerTalkShare: talkShareFallback };
+      }
+      return await fail(salesInsightCodeOf(error));
+    }
+
+    const { answer, customerTalkShare } = result;
+    const totalItems = answer.concerns.length + answer.buyingSignals.length + answer.nextSteps.length;
+    let stored: { stored: boolean; status: 'ready' | 'failed' };
+    try {
+      stored = await deps.runtime.execute<{ stored: boolean; status: 'ready' | 'failed' }>(
+        'kernel.member_vy.result.store',
+        {
+          runId,
+          outcome: {
+            status: 'ready',
+            body: JSON.stringify({
+              v: 1,
+              concerns: answer.concerns.length,
+              buyingSignals: answer.buyingSignals.length,
+              nextSteps: answer.nextSteps.length,
+              dropped: answer.dropped,
+            }),
+          },
+        },
+        as,
+      );
+    } catch (error: unknown) {
+      if (error instanceof DomainError && error.code === 'VY_RUN_NOT_LIVE') return empty('paused', 'AI_STOPPED');
+      return await fail(salesInsightCodeOf(error));
+    }
+    if (stored.status === 'failed') {
+      console.error('[meetings-sales-insight] run failed: AI_STOPPED');
+      return empty('paused', 'AI_STOPPED');
+    }
+    return {
+      state: totalItems > 0 ? 'ready' : 'none',
+      errorCode: null,
+      deal: dealMeta,
+      customerTalkShare,
+      concerns: answer.concerns,
+      buyingSignals: answer.buyingSignals,
+      nextSteps: answer.nextSteps,
+      dropped: answer.dropped,
+    };
   } finally {
     ticket.release();
   }
