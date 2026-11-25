@@ -127,7 +127,6 @@ const PENDING_TABLES = new Set<string>([
   'crove_kernel.agent_grant',
   'crove_kernel.agent_wake_delivery',
   'crove_kernel.agent_wake_signal_seen',
-  'crove_kernel.member_home_layout',
   'crove_kernel.member_permission_override',
   'crove_kernel.member_vy_memory',
   'crove_kernel.member_vy_result',
@@ -3149,11 +3148,11 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
     noInsertControl: 'one row per member (UNIQUE (org_id, user_id)); a member writes their own, through its command (conversations-inbox.db.test.ts tests it)',
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), user_id: o.owner, status: 'available' } }),
   },
-  // A member's own Global Home layout preference (#4923, #4925, step 0): one row per member (unique on (org_id, user_id)), under a restrictive
-  // own-member policy (and system context); agents read and write none. Its factory lands before the table (PENDING_TABLES).
+  // A member's own Global Home layout preference (#4923, #4925): one row per member (UNIQUE (org_id, user_id)), under a restrictive
+  // own-member policy (and system context); agents read and write none.
   'crove_kernel.member_home_layout': {
     update: { set: 'layout_json = layout_json' },
-    noInsertControl: 'one row per member (unique on (org_id, user_id)); a member writes their own through kernel.member.home_layout.save (tested in Step 1)',
+    noInsertControl: 'one row per member (UNIQUE (org_id, user_id)); a member writes their own through kernel.member.home_layout.save (home-layout.db.test.ts tests it)',
     make: (o) => ({
       row: {
         org_id: o.id,

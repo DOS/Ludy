@@ -145,6 +145,32 @@ describe('invalidateHint', () => {
     expect(qc.getQueryState(note)?.isInvalidated).toBe(false);
   });
 
+  it('home_layout: invalidates only overview.homeLayout.get (#4925)', async () => {
+    const qc = new QueryClient();
+    const homeLayout = orpc.overview.homeLayout.get.queryKey({ input: {} });
+    const me = orpc.me.get.queryKey();
+    const org = orpc.org.get.queryKey();
+    const seed = (key: QueryKey) => qc.setQueryData(key, {});
+    for (const key of [homeLayout, me, org]) seed(key);
+    await invalidateHint(qc, { type: 'home_layout', id: P1 });
+    expect(qc.getQueryState(homeLayout)?.isInvalidated).toBe(true);
+    expect(qc.getQueryState(me)?.isInvalidated).toBe(false);
+    expect(qc.getQueryState(org)?.isInvalidated).toBe(false);
+  });
+
+  it('org_apps: invalidates both org.apps and overview.homeLayout.get (#4925)', async () => {
+    const qc = new QueryClient();
+    const orgApps = orpc.org.apps.queryKey();
+    const homeLayout = orpc.overview.homeLayout.get.queryKey({ input: {} });
+    const me = orpc.me.get.queryKey();
+    const seed = (key: QueryKey) => qc.setQueryData(key, {});
+    for (const key of [orgApps, homeLayout, me]) seed(key);
+    await invalidateHint(qc, { type: 'org_apps', id: P1 });
+    expect(qc.getQueryState(orgApps)?.isInvalidated).toBe(true);
+    expect(qc.getQueryState(homeLayout)?.isInvalidated).toBe(true);
+    expect(qc.getQueryState(me)?.isInvalidated).toBe(false);
+  });
+
   it('crm_deal: the deal board and list, that deal, the contacts\' deals and the contacts list (#3293)', async () => {
     const { qc, stale } = seeded();
     await invalidateHint(qc, { type: 'crm_deal', id: DEAL });

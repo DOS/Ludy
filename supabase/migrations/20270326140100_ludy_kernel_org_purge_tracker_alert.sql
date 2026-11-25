@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
 -- The org purge deletes the tracker alert opt-ins of the org too (#4873): ludy_meetings.tracker_alert is a tenant table of Meetings, a member's own opt-in row (no word, no meeting, no text).
 -- It refers to no meeting and no file, so its place in the list is free.
--- This replaces ludy_kernel.org_purge with the previous version (the latest on main when this was written: 20270326030000_ludy_kernel_org_purge_minutes_link.sql) plus that one table in the first list; nothing else changes.
+-- This replaces ludy_kernel.org_purge with the previous version (the latest on main when this was written: 20270326130000_ludy_kernel_member_home_layout.sql) plus that one table in the first list; nothing else changes.
 SET LOCAL lock_timeout = '2s';
 
 CREATE OR REPLACE FUNCTION ludy_kernel.org_purge(p_min_days integer)
@@ -49,7 +49,7 @@ DECLARE
     'ludy_meetings.tracker_alert', 'ludy_meetings.tracker_term', 'ludy_meetings.glossary_term', 'ludy_meetings.minutes_template', 'ludy_meetings.chat_post_body', 'ludy_meetings.chat_post', 'ludy_meetings.chat_channel_target', 'ludy_meetings.chat_channel', 'ludy_meetings.morning_notice', 'ludy_meetings.calendar_agenda', 'ludy_meetings.capture_session', 'ludy_meetings.hook_delivery', 'ludy_meetings.member_hook', 'ludy_meetings.minutes_version', 'ludy_meetings.translation', 'ludy_meetings.meeting_note', 'ludy_meetings.media_key', 'ludy_meetings.minutes_link', 'ludy_meetings.action_item', 'ludy_meetings.meeting_result', 'ludy_meetings.transcript_segment', 'ludy_meetings.live_line', 'ludy_meetings.live_chunk', 'ludy_meetings.audio_segment', 'ludy_meetings.meeting_video', 'ludy_meetings.meeting_reader', 'ludy_meetings.meeting',
     'ludy_kernel.saved_reply', 'ludy_kernel.conversation_setting', 'ludy_kernel.member_availability', 'ludy_kernel.conversation_composing', 'ludy_kernel.conversation_draft', 'ludy_kernel.conversation_note', 'ludy_kernel.conversation_read', 'ludy_kernel.conversation_attachment', 'ludy_kernel.conversation_message', 'ludy_kernel.conversation', 'ludy_kernel.conversation_identity', 'ludy_kernel.channel_access',
     'ludy_ads.ad_flag_setting', 'ludy_ads.ad_campaign_request', 'ludy_ads.ad_campaign_draft', 'ludy_ads.ad_spend_cap', 'ludy_ads.ad_org_setting', 'ludy_ads.ad_sync_run', 'ludy_ads.ad_spend_day', 'ludy_ads.ad_account',
-    'ludy_kernel.today_mail', 'ludy_kernel.saved_view', 'ludy_notes.link', 'ludy_notes.todo', 'ludy_notes.todo_list', 'ludy_notes.attachment', 'ludy_notes.note_version', 'ludy_notes.note', 'ludy_notes.notebook', 'ludy_notes.note_template',
+    'ludy_kernel.member_home_layout', 'ludy_kernel.today_mail', 'ludy_kernel.saved_view', 'ludy_notes.link', 'ludy_notes.todo', 'ludy_notes.todo_list', 'ludy_notes.attachment', 'ludy_notes.note_version', 'ludy_notes.note', 'ludy_notes.notebook', 'ludy_notes.note_template',
     'ludy_projects.roadmap_signal', 'ludy_projects.roadmap_announcement', 'ludy_projects.roadmap_vote', 'ludy_projects.roadmap_subscriber', 'ludy_projects.roadmap_otp', 'ludy_projects.roadmap_item', 'ludy_projects.roadmap_board',
     'ludy_projects.project_cycle_snapshot', 'ludy_projects.project_cycle_task_history',
     'ludy_projects.project_triage_item', 'ludy_projects.time_entry', 'ludy_projects.task_dependency', 'ludy_projects.project_task', 'ludy_projects.project_column', 'ludy_projects.project_cycle', 'ludy_projects.project_member', 'ludy_projects.project',

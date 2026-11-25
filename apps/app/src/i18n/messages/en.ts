@@ -19492,6 +19492,10 @@ export const en = {
       },
       member: {
         change_role: "Change a member's role",
+        home_layout: {
+          get: 'Read the Home layout',
+          save: 'Save the Home layout',
+        },
         invite: {
           accept: 'Accept an invite',
           create: 'Invite a member',

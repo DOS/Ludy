@@ -1098,6 +1098,16 @@ export function createRpcHandler(
         }),
       ),
     },
+    overview: {
+      homeLayout: {
+        get: os.overview.homeLayout.get.handler(({ context }) =>
+          inOrg(context, (orgId, actor) => runtime.query('kernel.member.home_layout.get', {}, { actor, orgId })),
+        ),
+        save: os.overview.homeLayout.save.handler(({ context, input }) =>
+          inOrg(context, (orgId, actor) => runtime.execute('kernel.member.home_layout.save', input, { actor, orgId })),
+        ),
+      },
+    },
     org: {
       create: os.org.create.handler(({ context, input }) =>
         guard(() => createOrg(runtime, actorOf(context.user), input.name, input.idempotencyKey, input.kind)),
