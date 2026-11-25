@@ -12,7 +12,10 @@ import { checkAdherence } from '../../packages/agent/src/member-vy/meetings-adhe
 import { checkBrief } from '../../packages/agent/src/member-vy/meetings-brief.ts';
 import { checkCommitments } from '../../packages/agent/src/member-vy/meeting-commitments.ts';
 import { checkDigest } from '../../packages/agent/src/member-vy/meetings-digest.ts';
+import { checkAnswer } from '../../packages/agent/src/member-vy/meeting-ask.ts';
 import { checkNoteOrganize } from '../../packages/agent/src/member-vy/note-organize.ts';
+import { checkOpenPoints } from '../../packages/agent/src/member-vy/meeting-open-points.ts';
+import { checkTemplateSuggestion } from '../../packages/agent/src/member-vy/meeting-template-suggest.ts';
 import { checkTitles } from '../../packages/agent/src/member-vy/meeting-title.ts';
 import { checkTodoPlan } from '../../packages/agent/src/member-vy/todo-plan.ts';
 
@@ -111,6 +114,9 @@ const ORGANIZE_NOTEBOOKS = [
 const ORGANIZE_NOTES = [
   { id: '33333333-3333-4333-8333-333333333331', title: 'Hoa don EVN', body: 'Thanh toan dien', tags: [], visibility: 'private' as const, updatedAt: '2026-11-21T00:00:00Z', canEditTags: true, revision: 1 },
 ];
+// An ask request: the numbered lines of one meeting (the first carries the scenario token), as the question box and the box on a meeting's page send them.
+const ASK_LINES = TRANSCRIPT.map((l, i) => ({ n: i + 1, meeting: 'Họp báo giá', date: '2026-11-25', at: clock(l.from), speaker: l.who, text: l.said }));
+const askJson = (token: Token = ''): string => JSON.stringify({ question: 'Chốt giá cũ cho khách nào?', lines: ASK_LINES.map((l, i) => (i === 0 ? { ...l, text: l.text + mark(token) } : l)) });
 const todoPlanJson = (token: Token = ''): string =>
   JSON.stringify({
     today: '2026-11-21',
@@ -130,7 +136,9 @@ const subjectWith = (route: Route, token: Token): string =>
         ? todoPlanJson(token)
         : route === 'organize'
           ? organizeJson(token)
-          : withToken(token);
+          : route === 'ask'
+            ? askJson(token)
+            : withToken(token);
 const codeOf = (fn: () => unknown): string => {
   try {
     fn();
@@ -213,6 +221,32 @@ describe('the fake model answers each member-Vy feature of the meetings line, an
     expect(empty).toEqual({ suggestions: [], dropped: 1 });
   });
 
+  it('ask: keeps the sentence that cites the first line and drops an invented figure, a bare link and a citation of a line that is not there; all dropped is a valid empty answer', async () => {
+    const a = await ask('ask', askJson());
+    const checked = checkAnswer(a.text, ASK_LINES);
+    expect(checked.sentences).toEqual([{ text: `Trong cuộc họp có nói: ${TRANSCRIPT[0]!.said}`, cites: [1] }]);
+    expect(checked.dropped).toBe(3);
+    const bad = await ask('ask', askJson('bad'));
+    expect(checkAnswer(bad.text, ASK_LINES)).toEqual({ sentences: [], dropped: 3 });
+  });
+
+  it('open_points: keeps a question and a decision and drops an address, a figure the line does not write and a second no line starts at; all dropped is an empty answer', async () => {
+    const a = await ask('open_points', transcriptText);
+    const checked = checkOpenPoints(a.text, segments);
+    expect(checked.dropped).toBe(3);
+    expect(checked.questions.map((p) => [p.text, p.seconds])).toEqual([['Khi nào gửi báo giá cho khách A?', 10]]);
+    expect(checked.decisions.map((p) => [p.text, p.seconds])).toEqual([['Có giữ giá cũ cho khách A hay không?', 0]]);
+    const bad = await ask('open_points', withToken('bad'));
+    expect(codeOf(() => checkOpenPoints(bad.text, segments))).toBe('OPEN_POINTS_EMPTY');
+  });
+
+  it('template_suggest: suggests the customer template with a reason that rests on a line of the transcript; "none fits" is an empty answer', async () => {
+    const a = await ask('template_suggest', transcriptText);
+    expect(checkTemplateSuggestion(a.text, segments)).toEqual({ template: 'customer', reason: 'Cuộc họp bàn giá và báo giá cho khách A.', seconds: 10 });
+    const bad = await ask('template_suggest', withToken('bad'));
+    expect(codeOf(() => checkTemplateSuggestion(bad.text, segments))).toBe('TEMPLATE_SUGGEST_EMPTY');
+  });
+
   it('a garbage answer is refused by every check as unparsable, and a down service answers HTTP 500', async () => {
     for (const route of Object.keys(ROUTE_MARKERS) as Route[]) expect((await ask(route, subjectWith(route, 'garbage'))).text, route).toBe(GARBAGE);
     expect(codeOf(() => checkTitles(GARBAGE, segments))).toBe('TITLE_UNPARSABLE');
@@ -220,6 +254,9 @@ describe('the fake model answers each member-Vy feature of the meetings line, an
     expect(codeOf(() => checkAdherence(GARBAGE, 3, 3))).toBe('ADHERENCE_UNPARSABLE');
     expect(codeOf(() => checkDigest(GARBAGE, FACTS))).toBe('DIGEST_UNPARSABLE');
     expect(codeOf(() => checkBrief(GARBAGE, FACTS))).toBe('BRIEF_UNPARSABLE');
+    expect(codeOf(() => checkAnswer(GARBAGE, ASK_LINES))).toBe('ASK_UNPARSABLE');
+    expect(codeOf(() => checkOpenPoints(GARBAGE, segments))).toBe('OPEN_POINTS_UNPARSABLE');
+    expect(codeOf(() => checkTemplateSuggestion(GARBAGE, segments))).toBe('TEMPLATE_SUGGEST_UNPARSABLE');
     for (const route of Object.keys(ROUTE_MARKERS) as Route[]) expect((await ask(route, subjectWith(route, 'down'))).status).toBe(500);
   });
 
@@ -245,6 +282,9 @@ describe('the fake model answers each member-Vy feature of the meetings line, an
       brief: 'meetings-brief.ts',
       todo_plan: 'todo-plan.ts',
       organize: 'note-organize.ts',
+      ask: 'meeting-ask.ts',
+      open_points: 'meeting-open-points.ts',
+      template_suggest: 'meeting-template-suggest.ts',
     };
     for (const route of Object.keys(sources) as Route[]) {
       const source = readFileSync(new URL(`../../packages/agent/src/member-vy/${sources[route]}`, import.meta.url), 'utf8');

@@ -5277,6 +5277,28 @@ export const vi = {
       line: 'Thời gian nói: {list}',
       lineMore: 'Thời gian nói: {list} và {count, number} người khác',
     },
+    highlights: {
+      title: 'Đoạn nổi bật',
+      desc: 'Những dòng của bản ghi lời nói mà mọi người đã đánh dấu. Ai đọc được cuộc họp này đều thấy. Bấm vào giờ để đến đó.',
+      mark: 'Nổi bật',
+      marked: 'Đã đánh dấu',
+      markLine: 'Đánh dấu nổi bật dòng lúc {time}',
+      unmarkLine: 'Bỏ dấu nổi bật của bạn ở dòng lúc {time}',
+      markHint: 'Đánh dấu dòng này. Giữ Shift rồi bấm để đánh dấu từ dòng bạn bấm trước đó đến dòng này.',
+      jump: 'Đến {time} trong bản ghi và trình phát',
+      markedBy: 'Đánh dấu bởi {who}',
+      you: 'bạn',
+      aMember: 'một thành viên',
+      noLines: 'Các dòng này không còn trong bản ghi lời nói.',
+      moreLines: 'và {count, number} dòng nữa',
+      copy: 'Chép các dòng',
+      copied: 'Đã chép',
+      remove: 'Bỏ đánh dấu',
+      errors: {
+        HIGHLIGHT_LIMIT: 'Mỗi cuộc họp bạn chỉ đánh dấu được tối đa 50 đoạn. Hãy bỏ bớt một đoạn trước.',
+        HIGHLIGHT_NOT_ANCHORED: 'Bạn chỉ đánh dấu được những dòng của bản ghi mà bạn đọc được.',
+      },
+    },
     chapters: {
       title: 'Mục lục',
       readerNote: 'Các phần của cuộc họp, mỗi phần có giờ trong bản ghi lời nói. Bấm vào một phần để đến dòng đó.',
@@ -19339,6 +19361,11 @@ export const vi = {
       },
       load: {
         week: 'Xem mỗi người họp bao nhiêu trong một tuần và những cuộc họp lặp lại có thể bớt, từ các cuộc họp bạn được đọc',
+      },
+      highlight: {
+        add: 'Đánh dấu nổi bật một dòng hoặc một đoạn của bản ghi cuộc họp',
+        list: 'Xem các đoạn nổi bật của một cuộc họp',
+        remove: 'Bỏ một đoạn nổi bật của cuộc họp',
       },
       assignee: {
         facts: 'Xem tên được nhắc cho một việc cần làm và những người có thể nhận việc',

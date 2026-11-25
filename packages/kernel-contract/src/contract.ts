@@ -707,6 +707,7 @@ import { zTemplateSuggestion, zTemplateVyAnswer } from './meeting-template-sugge
 import { zOpenPointsAnswer } from './meeting-open-points.ts';
 import { zDigestAnswer, zDigestAsk, zDigestFacts, zDigestStatus } from './meeting-digest.ts';
 import { zLoadWeek, zLoadWeekInput } from './meeting-load.ts';
+import { zHighlightAdd, zHighlightAdded, zHighlightRemove, zHighlightRemoved, zHighlights } from './meeting-highlights.ts';
 import { zMeetingsTodayFacts } from './meeting-today.ts';
 import { zMorningEmpty, zMorningSet, zMorningState } from './meeting-morning.ts';
 import { zAssigneeAnswer, zAssigneeAsk, zAssigneeStatus } from './meeting-assignee.ts';
@@ -1982,6 +1983,13 @@ export const contract = {
     // extra right to read, no text, no model call, nothing stored).
     load: {
       week: oc.input(zLoadWeekInput).output(zLoadWeek),
+    },
+    // Highlights on a transcript line or range (#4819): `list` the marks of a meeting the caller may read, `add` and `remove` the caller's own (the recorder removes any mark of their meeting). A mark
+    // is an anchor in seconds and who made it, no text: the lines are read from the transcript.
+    highlight: {
+      list: oc.input(zMeetingRef).output(zHighlights),
+      add: oc.input(zHighlightAdd).output(zHighlightAdded),
+      remove: oc.input(zHighlightRemove).output(zHighlightRemoved),
     },
     // The Today view (#3955): the member's own agenda for today with the facts of each event's brief, read by code as the member in one call and working with AI off. Vy's sentences stay the brief's own click.
     today: {

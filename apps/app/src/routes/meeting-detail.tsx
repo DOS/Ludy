@@ -32,6 +32,7 @@ import {
   canQueryRedactCandidates,
   useRedactCandidatesQuery,
 } from '../components/meeting-redaction.tsx';
+import { MeetingHighlights } from '../components/meeting-highlights.tsx';
 import { MeetingTalkTime } from '../components/meeting-talk-time.tsx';
 import { MeetingTranscript, clock } from '../components/meeting-transcript.tsx';
 import { PlaybackSpeed } from '../components/playback-speed.tsx';
@@ -519,6 +520,8 @@ export function MeetingDetailPage() {
           redactedEpoch,
         }}
       />
+      {/* The highlights readers marked on the transcript (#4819): each opens the transcript and the player at its time; no AI */}
+      <MeetingHighlights key={`highlights-${id}`} meetingId={id} isRecorder={meeting.isRecorder} onJump={jumpTo} />
       {/* Who did the talking (#4765): talk time, turns and longest stretch per speaker, worked out in code from the lines above, no AI */}
       <MeetingTalkTime key={`talk-time-${id}`} meetingId={id} />
       {/* Did the meeting cover its agenda (#3959): the recorder's own click, Vy compares the agenda with the transcript above and cites the lines */}

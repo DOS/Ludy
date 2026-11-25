@@ -5280,6 +5280,28 @@ export const en = {
       line: 'Talk time: {list}',
       lineMore: 'Talk time: {list} and {count, plural, one {# other} other {# others}}',
     },
+    highlights: {
+      title: 'Highlights',
+      desc: 'Lines of the transcript that people marked. Everyone who can read this meeting sees them. Click a time to go there.',
+      mark: 'Highlight',
+      marked: 'Highlighted',
+      markLine: 'Highlight the line at {time}',
+      unmarkLine: 'Remove your highlight of the line at {time}',
+      markHint: 'Highlight this line. Shift and click highlights everything from the line you clicked last.',
+      jump: 'Go to {time} in the transcript and the player',
+      markedBy: 'Marked by {who}',
+      you: 'you',
+      aMember: 'a member',
+      noLines: 'These lines are no longer in the transcript.',
+      moreLines: 'and {count, number} more lines',
+      copy: 'Copy the lines',
+      copied: 'Copied',
+      remove: 'Remove highlight',
+      errors: {
+        HIGHLIGHT_LIMIT: 'You can have at most 50 highlights in one meeting. Remove one first.',
+        HIGHLIGHT_NOT_ANCHORED: 'You can only highlight lines of the transcript you can read.',
+      },
+    },
     chapters: {
       title: 'Chapters',
       readerNote: 'Parts of this meeting, each with the time in the transcript. Click one to go to that line.',
@@ -19340,6 +19362,11 @@ export const en = {
       },
       load: {
         week: 'See how much of a week each person spends in meetings and the recurring meetings that may be worth trimming, from the meetings you read',
+      },
+      highlight: {
+        add: 'Mark a transcript line or range of a meeting as a highlight',
+        list: 'Read the highlights of a meeting',
+        remove: 'Remove a highlight of a meeting',
       },
       assignee: {
         facts: 'See the name said for an action item and the people it may be given to',
