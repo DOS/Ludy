@@ -289,6 +289,7 @@ import { zFixedAsset, zFixedAssetCreate, zFixedAssetEnd } from './fixed-asset.ts
 import { zStatementsHtkkCheck, zStatementsHtkkYear } from './statements-htkk.ts';
 import { zTaxObligationMark, zTaxProfile } from './tax-calendar.ts';
 import { zSinceYesterday, zTodayBrief, zTodayBriefInput, zTodayList, zTodayMailSet, zTodayMailSetting, zTodayWeekly, zTodayWeeklyInput } from './today.ts';
+import { zHomeLayoutSaveInput, zHomeLayoutView } from './home-layout.ts';
 import { zBookEntity, zLegalEntity, zLegalEntityInput } from './legal-entity.ts';
 import { zBuiltinRoleKey, zMemberRoles, zRoleAssignInput } from './roles.ts';
 import { zMeetingPlatformConnectProvider, zMeetingPlatformConnectionRef, zMeetingPlatformConnectionView, zMeetingPlatformRecordingPick, zMeetingPlatformRecordingRef, zMeetingPlatformRecordingView } from './meeting-platform.ts';
@@ -1116,6 +1117,13 @@ export const contract = {
     mail: {
       get: oc.output(zTodayMailSetting),
       set: oc.input(zTodayMailSet).output(zTodayMailSetting),
+    },
+  },
+  // Global Home customizable block layout (#4923 Phase 1, #4925); every member role reads/writes only their own.
+  overview: {
+    homeLayout: {
+      get: oc.output(zHomeLayoutView),
+      save: oc.input(zHomeLayoutSaveInput).output(zHomeLayoutView),
     },
   },
   org: {

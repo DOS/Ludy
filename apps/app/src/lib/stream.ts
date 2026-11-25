@@ -89,9 +89,9 @@ export function hintMatches(hint: StreamHint, query: Query): boolean {
     // A member's note (#1671): the notes lists and panels read again, and that note.
     case 'note':
       return path.startsWith('notes.');
-    // The org's owner switched an app on or off (ADR-0053): the menus and every screen's app list read it again.
+    // The org's owner switched an app on or off (ADR-0053): the menus, every screen's app list, and Global Home layout read again (#4925).
     case 'org_apps':
-      return path === 'org.apps';
+      return path === 'org.apps' || path === 'overview.homeLayout.get';
     // A member's own to-do (#1673): their to-do lists and linked record notes panels (#2595) read again.
     case 'todo':
       return path.startsWith('notes.todos.') || path === 'notes.panel';
@@ -109,6 +109,9 @@ export function hintMatches(hint: StreamHint, query: Query): boolean {
       const options = query.queryKey[1] as { input?: { partyId?: unknown } } | undefined;
       return (path === 'crm.deals.byParty' || path === 'parties.timeline') && (id === STREAM_HINT_MANY_ID || options?.input?.partyId === id);
     }
+    // A member's Global Home layout changed on another session/device (#4925): refresh only overview.homeLayout.get.
+    case 'home_layout':
+      return path === 'overview.homeLayout.get';
   }
 }
 

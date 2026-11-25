@@ -18,7 +18,7 @@ test('an invited address signs up only from its accept link, and the invitee joi
   const owner = newEmail('preclaim-owner');
   await signUp(page, owner);
   const slug = await createOrg(page, 'Công ty lời mời');
-  await page.getByRole('navigation').getByRole('link', { name: 'Cài đặt' }).click();
+  await page.getByRole('banner').getByRole('link', { name: 'Cài đặt', exact: true }).click();
   // Inviting is R3: turn on the second factor first (Security tab), then invite from the members tab.
   await openSettingsTab(page, 'security');
   await page.getByRole('button', { name: 'Bật xác thực hai lớp' }).click();

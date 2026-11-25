@@ -1040,7 +1040,7 @@ export function SocialCalendar({
       {/* On wide screens the undated list stands beside the calendar and stays in view, so every day is a drop away. */}
       <div className={cn('space-y-3', undatedPosts.length > 0 && 'xl:grid xl:grid-cols-[minmax(0,1fr)_16rem] xl:items-start xl:gap-3 xl:space-y-0')}>
         {undatedPosts.length > 0 && (
-          <div className="xl:sticky xl:top-4 xl:order-2">
+          <div className="xl:sticky xl:top-16 xl:order-2">
             <UndatedList
               posts={undatedPosts}
               slug={slug}

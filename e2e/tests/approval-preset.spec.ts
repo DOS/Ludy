@@ -10,7 +10,7 @@ test('an owner switches the approval rule once a chief accountant is named', asy
   const owner = newEmail('preset');
   await signUp(page, owner);
   await createOrg(page, 'Công ty quy tắc duyệt');
-  await page.getByRole('navigation').getByRole('link', { name: 'Cài đặt' }).click();
+  await page.getByRole('banner').getByRole('link', { name: 'Cài đặt', exact: true }).click();
 
   // Switching is R3: turn on the second factor first (Security tab), so the code is fresh.
   await openSettingsTab(page, 'security');

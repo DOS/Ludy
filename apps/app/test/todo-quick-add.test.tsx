@@ -62,6 +62,8 @@ vi.mock('../src/lib/api.ts', async () => {
 
 const { TodoQuickAddBar } = await import('../src/components/todo-quick-add.tsx');
 const { ShellNav } = await import('../src/components/app-nav.tsx');
+const { GlobalTopBar } = await import('../src/components/global-top-bar.tsx');
+const { buildQuickCreateItems } = await import('../src/lib/quick-create.ts');
 const { MyWorkPage } = await import('../src/routes/my-work.tsx');
 
 const NOW = new Date('2026-11-17T08:00:00+07:00');
@@ -346,14 +348,69 @@ describe('TodoQuickAddBar & ShellNav SSR rendering (#3556)', () => {
     expect(biweeklyEn).toContain('Every 2 weeks on Friday');
   });
 
-  it('renders MyWorkPage and ShellNav trigger cleanly', () => {
+  it('renders MyWorkPage, GlobalTopBar quick-create menu, and drawer trigger cleanly', () => {
     const myWorkHtml = renderInApp('vi', <MyWorkPage />);
     expect(myWorkHtml).toContain('Thêm việc, Enter để lưu');
     expect(myWorkHtml).toContain('Alt+Q');
 
-    const navWithTrigger = renderInApp(
+    const fullQuickCreate = buildQuickCreateItems({
+      modules: ['kernel', 'finance', 'notes', 'projects', 'crm', 'sign'],
+      role: 'owner',
+      canCreateTeamTask: true,
+      canQuickCapture: true,
+    });
+    const topBarWithTrigger = renderInApp(
+      'vi',
+      <GlobalTopBar
+        slug="acme"
+        pathname="/o/acme/my-work"
+        hasSecondary
+        secondaryCollapsed={false}
+        onToggleSecondary={() => undefined}
+        onOpenPalette={() => undefined}
+        paletteKeys="Ctrl K"
+        quickCreateItems={fullQuickCreate}
+        onOpenQuickCapture={() => undefined}
+        vyOpen={false}
+        onOpenVy={() => undefined}
+        canUseVy
+        gmName="Vy"
+        unreadNotices={null}
+        canViewAiBudgets
+        orgs={[{ orgId: '1', slug: 'acme', name: 'Acme' }]}
+        email="user@example.com"
+      />,
+    );
+    expect(topBarWithTrigger).toContain('data-testid="shell-quick-capture-btn"');
+    expect(topBarWithTrigger).toContain('Tạo nhanh');
+
+    const topBarViewer = renderInApp(
+      'vi',
+      <GlobalTopBar
+        slug="acme"
+        pathname="/o/acme/my-work"
+        hasSecondary
+        secondaryCollapsed={false}
+        onToggleSecondary={() => undefined}
+        onOpenPalette={() => undefined}
+        paletteKeys="Ctrl K"
+        quickCreateItems={[]}
+        vyOpen={false}
+        onOpenVy={() => undefined}
+        canUseVy={false}
+        gmName="Vy"
+        unreadNotices={null}
+        canViewAiBudgets={false}
+        orgs={[{ orgId: '1', slug: 'acme', name: 'Acme' }]}
+        email="viewer@example.com"
+      />,
+    );
+    expect(topBarViewer).not.toContain('data-testid="shell-quick-capture-btn"');
+
+    const drawerWithTrigger = renderInApp(
       'vi',
       <ShellNav
+        mode="drawer"
         slug="acme"
         apps={[]}
         app="teamwork"
@@ -365,12 +422,13 @@ describe('TodoQuickAddBar & ShellNav SSR rendering (#3556)', () => {
         onOpenQuickCapture={() => undefined}
       />,
     );
-    expect(navWithTrigger).toContain('data-testid="shell-quick-capture-btn"');
-    expect(navWithTrigger).toContain('Thêm nhanh việc cần làm (Alt+Q)');
+    expect(drawerWithTrigger).toContain('data-testid="drawer-quick-capture-btn"');
+    expect(drawerWithTrigger).toContain('Thêm nhanh việc cần làm (Alt+Q)');
 
-    const navWithoutTrigger = renderInApp(
+    const drawerWithoutTrigger = renderInApp(
       'vi',
       <ShellNav
+        mode="drawer"
         slug="acme"
         apps={[]}
         app="teamwork"
@@ -381,7 +439,7 @@ describe('TodoQuickAddBar & ShellNav SSR rendering (#3556)', () => {
         paletteKeys="Ctrl K"
       />,
     );
-    expect(navWithoutTrigger).not.toContain('data-testid="shell-quick-capture-btn"');
+    expect(drawerWithoutTrigger).not.toContain('data-testid="drawer-quick-capture-btn"');
 
     const tonightHtml = renderInApp(
       'en',

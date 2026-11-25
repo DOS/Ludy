@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The link to the published minutes for people outside the org (Meetings, #4822). Two parts:
 //   MinutesLinkSwitchCard  in the Meetings settings, for every member to read and an owner or admin to change: "Chia sẻ biên bản ra ngoài", off by default. While it is off no link can be made or opened.
-//   MinutesLinkPanel       on the recorder's meeting page, under the published minutes: "Tạo liên kết" makes a read-only link and shows the full address ONCE with a Copy button (the server keeps only a hash of
+//   MinutesLinkPanel       on the recorder's meeting page (and, for an owner or admin who is not the recorder, a manager view: the same list and "Thu hồi", no create button; #4947), under the published minutes: "Tạo liên kết" makes a read-only link and shows the full address ONCE with a Copy button (the server keeps only a hash of
 //                          the token and cannot show it again); the list says which links are live, expired or revoked and how often each was opened, never a token; "Thu hồi" ends a live link after a confirm.
 // No money and no AI part here: a person decides what to share and with whom, and the core works with AI off.
 import { useMutation, useQuery } from '@tanstack/react-query';
@@ -76,6 +76,8 @@ export interface MinutesLinkViewProps {
   items: readonly MinutesLinkItem[];
   // An owner or admin can turn the org setting on; the others are told whom to ask.
   canEnable: boolean;
+  // False for an owner or admin who is not the recorder (#4947): they see the links and can end one, they cannot make one.
+  canCreate?: boolean | undefined;
   // The address of the link made a moment ago, kept in this page only until it is hidden or left.
   made: { url: string; expiresAt: string } | null;
   copy: CopyOutcome;
@@ -89,7 +91,7 @@ export interface MinutesLinkViewProps {
   onDismiss: () => void;
 }
 
-export function MinutesLinkView({ slug, enabled, items, canEnable, made, copy, creating, revokingId, error, urlRef, onCreate, onRevoke, onCopy, onDismiss }: MinutesLinkViewProps) {
+export function MinutesLinkView({ slug, enabled, items, canEnable, canCreate = true, made, copy, creating, revokingId, error, urlRef, onCreate, onRevoke, onCopy, onDismiss }: MinutesLinkViewProps) {
   const t = useTranslations('meetings.minutesLink');
   const f = useFormat();
   const live = items.filter((i) => i.state === 'live').length;
@@ -100,10 +102,10 @@ export function MinutesLinkView({ slug, enabled, items, canEnable, made, copy, c
         <h3 id="minutes-link-title" className="text-sm font-medium text-foreground">
           {t('title')}
         </h3>
-        <p className="text-xs text-muted-foreground">{t('hint')}</p>
+        <p className="text-xs text-muted-foreground">{canCreate ? t('hint') : t('managerHint')}</p>
       </div>
 
-      {!enabled ? (
+      {!canCreate ? null : !enabled ? (
         <div className="space-y-1 text-sm text-muted-foreground" data-testid="minutes-link-off">
           <p>{t('offNote')}</p>
           {canEnable ? (
@@ -188,7 +190,7 @@ export function MinutesLinkView({ slug, enabled, items, canEnable, made, copy, c
                     render={<Button variant="ghost" size="sm" className="min-h-11 sm:min-h-0" loading={revokingId === l.id} aria-label={t('revokeFor', { at: f.dateTime(l.createdAt) })} />}
                     destructive
                     title={t('revokeTitle')}
-                    description={t('revokeConfirm')}
+                    description={canCreate ? t('revokeConfirm') : t('revokeConfirmManager')}
                     confirm={t('revoke')}
                     onConfirm={() => onRevoke(l.id)}
                   >
@@ -205,10 +207,13 @@ export function MinutesLinkView({ slug, enabled, items, canEnable, made, copy, c
   );
 }
 
-// Rendered for the recorder of a meeting with published minutes (the page decides); the list is the recorder's own and holds no token.
-export function MinutesLinkPanel({ meetingId, slug }: { meetingId: string; slug?: string | undefined }) {
-  const list = useQuery(orpc.meetings.minutesLink.list.queryOptions({ input: { meetingId } }));
+// Rendered for the recorder of a meeting with published minutes (the page decides); the list is the recorder's own and holds no token. With `manager` it is the view of an owner or admin who is not
+// the recorder (#4947): nothing is asked or drawn for anyone else, there is no create button, and a meeting with no link draws nothing (an owner or admin sees a panel only when there is a link to end).
+export function MinutesLinkPanel({ meetingId, slug, manager = false }: { meetingId: string; slug?: string | undefined; manager?: boolean | undefined }) {
   const orgQuery = useQuery(orpc.org.get.queryOptions());
+  const isAdmin = orgQuery.data?.role === 'owner' || orgQuery.data?.role === 'admin';
+  // A reader who is neither recorder nor owner or admin would be refused (403): the list is not even asked for.
+  const list = useQuery({ ...orpc.meetings.minutesLink.list.queryOptions({ input: { meetingId } }), enabled: !manager || isAdmin });
   const [made, setMade] = useState<{ url: string; expiresAt: string } | null>(null);
   const [copy, setCopy] = useState<CopyOutcome>('idle');
   const urlRef = useRef<HTMLInputElement | null>(null);
@@ -229,6 +234,8 @@ export function MinutesLinkPanel({ meetingId, slug }: { meetingId: string; slug?
   });
   const revoke = useMutation({
     mutationFn: (linkId: string) => orpc.meetings.minutesLink.revoke.call({ meetingId, linkId }),
+    // A refusal (the link is gone, the org changed) is read again, so the list shows how things stand now.
+    onError: () => void refresh(),
     onSuccess: async () => {
       toast(t('revoked'), 'success');
       // A refusal of an earlier create (ten live links) no longer stands once a link is ended.
@@ -241,15 +248,17 @@ export function MinutesLinkPanel({ meetingId, slug }: { meetingId: string; slug?
     if (made) urlRef.current?.focus();
   }, [made]);
 
+  if (manager && !isAdmin) return null;
   if (list.isPending) return null;
   if (list.error) return <ErrorText>{errorMessage(list.error)}</ErrorText>;
-  const role = orgQuery.data?.role;
+  if (manager && list.data.items.length === 0) return null;
   return (
     <MinutesLinkView
       slug={slug}
       enabled={list.data.enabled}
       items={list.data.items}
-      canEnable={role === 'owner' || role === 'admin'}
+      canEnable={isAdmin}
+      canCreate={!manager}
       made={made}
       copy={copy}
       creating={create.isPending}
