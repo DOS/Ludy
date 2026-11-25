@@ -180,6 +180,8 @@ function RecordingRow({ row, slug, canImport, onImport }: { row: MeetingPlatform
     onSuccess: () => refreshRecordings(),
   });
   const title = row.title === '' ? t('untitled') : row.title;
+  // A meeting can be offered twice (its video and its transcript, which import differently): the buttons' names say which row they are, so a screen reader does not hear two identical ones.
+  const labelTitle = isTranscriptImport(row) ? `${title} (${t('offerTranscript')})` : title;
   const matched = matchedSuggestion(row);
   const block = importBlock(row);
   const length = row.lengthSeconds === null ? null : lengthParts(row.lengthSeconds);
@@ -223,19 +225,19 @@ function RecordingRow({ row, slug, canImport, onImport }: { row: MeetingPlatform
               <Link
                 to="/o/$slug/meetings/$id"
                 params={{ slug, id: matched.meetingId }}
-                aria-label={t('openMatchedOf', { title })}
+                aria-label={t('openMatchedOf', { title: labelTitle })}
                 className="inline-flex min-h-11 min-w-11 items-center rounded px-2 text-xs font-medium text-link underline focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 md:min-h-6 md:min-w-0 md:px-0"
                 data-testid="meeting-recording-matched-link"
               >
                 {t('openMatched')}
               </Link>
-              {quiet(t('dismiss'), t('dismissOf', { title }))}
+              {quiet(t('dismiss'), t('dismissOf', { title: labelTitle }))}
             </>
           )}
           {row.status === 'suggested' && matched === null && block === null && (
             <>
               {canImport ? (
-                <Button type="button" size="sm" aria-label={t('importOf', { title })} data-testid="meeting-recording-import" onClick={() => onImport(row)}>
+                <Button type="button" size="sm" aria-label={t('importOf', { title: labelTitle })} data-testid="meeting-recording-import" onClick={() => onImport(row)}>
                   {t('import')}
                 </Button>
               ) : (
@@ -243,7 +245,7 @@ function RecordingRow({ row, slug, canImport, onImport }: { row: MeetingPlatform
                   {t('viewerOnly')}
                 </span>
               )}
-              {quiet(t('dismiss'), t('dismissOf', { title }))}
+              {quiet(t('dismiss'), t('dismissOf', { title: labelTitle }))}
             </>
           )}
           {row.status === 'suggested' && matched === null && block !== null && (
@@ -251,7 +253,7 @@ function RecordingRow({ row, slug, canImport, onImport }: { row: MeetingPlatform
               <span className="text-xs text-muted-foreground" data-testid="meeting-recording-blocked">
                 {block === 'video_only' ? t('videoOnly') : block === 'transcript_only' ? t('transcriptOnly') : block === 'too_long' ? t('tooLong') : t('tooLarge')}
               </span>
-              {quiet(t('dismiss'), t('dismissOf', { title }))}
+              {quiet(t('dismiss'), t('dismissOf', { title: labelTitle }))}
             </>
           )}
           {row.status === 'importing' && (
@@ -277,11 +279,11 @@ function RecordingRow({ row, slug, canImport, onImport }: { row: MeetingPlatform
                 </Link>
               )}
               {canImport && canRetry(row) && (
-                <Button type="button" size="sm" variant="outline" aria-label={t('importOf', { title })} data-testid="meeting-recording-retry" onClick={() => onImport(row)}>
+                <Button type="button" size="sm" variant="outline" aria-label={t('importOf', { title: labelTitle })} data-testid="meeting-recording-retry" onClick={() => onImport(row)}>
                   {t('retry')}
                 </Button>
               )}
-              {quiet(t('dismiss'), t('dismissOf', { title }))}
+              {quiet(t('dismiss'), t('dismissOf', { title: labelTitle }))}
             </>
           )}
         </div>

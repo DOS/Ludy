@@ -258,7 +258,9 @@ function nextFilesPage(link: string, path: string): string {
 // every occurrence, so a file belongs to an occurrence by the time it was made. `~` is outside the characters of a Graph id.
 // A meeting with both a recording and a transcript is offered as two suggestions, so the member can take Microsoft's free speaker-labelled transcript instead of the video: the video keeps the occurrence's
 // key, the transcript's is that key plus this suffix (`~` is outside the characters of a Graph id, so no id can end with it).
-const TRANSCRIPT_SUFFIX = '~transcript';
+// The same text as the contract's PLATFORM_TRANSCRIPT_KEY_SUFFIX (the channel does not depend on the contract; a kernel test keeps the two equal).
+export const TEAMS_TRANSCRIPT_KEY_SUFFIX = '~transcript';
+const TRANSCRIPT_SUFFIX = TEAMS_TRANSCRIPT_KEY_SUFFIX;
 const OCCURRENCE = /^([A-Za-z0-9_=-]{1,900})~(\d{9,11})~(\d{9,11})(~transcript)?$/;
 const SLACK_MS = 30 * 60_000;
 const keyOf = (meeting: string, start: number, end: number): string => `${meeting}~${Math.round(start / 1000)}~${Math.round(end / 1000)}`;
@@ -490,10 +492,17 @@ export class TeamsMeetingPlatform implements MeetingPlatformAdapter, MeetingPlat
       signal?.removeEventListener('abort', onAbort);
     }
     const seen = new Set<string>();
-    return found
-      .flat()
-      .filter((x) => !seen.has(x.id) && seen.add(x.id))
-      .slice(0, MEETING_PLATFORM_LIST_MAX);
+    // Whole meetings only: a cut at the list's maximum never separates the two suggestions of one meeting.
+    const rows: MeetingPlatformListed[] = [];
+    for (const group of found) {
+      const fresh = group.filter((x) => !seen.has(x.id));
+      if (rows.length + fresh.length > MEETING_PLATFORM_LIST_MAX) break;
+      for (const x of fresh) {
+        seen.add(x.id);
+        rows.push(x);
+      }
+    }
+    return rows;
   }
 
   async prepareDownload(credential: MeetingPlatformCredential, recordingId: string, format: MeetingPlatformFormat, signal?: AbortSignal): Promise<MeetingPlatformDownload> {

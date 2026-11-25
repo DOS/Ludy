@@ -13,6 +13,15 @@ export const zMeetingPlatformProvider = z.enum(MEETING_PLATFORM_PROVIDERS);
 export const MEETING_PLATFORM_TRANSCRIPT_PROVIDERS = ['sandbox', 'google_meet', 'microsoft_teams', 'zoom'] as const;
 export type MeetingPlatformTranscriptProvider = (typeof MEETING_PLATFORM_TRANSCRIPT_PROVIDERS)[number];
 
+// A platform that offers one meeting as two suggestions (its video, and its transcript alone: Microsoft Teams) gives the transcript's suggestion the video's key plus this suffix. The two are one
+// meeting (ADR-0055: an import never makes a second meeting for one call), so the start of one is refused once the other is importing, staged or imported. `~` is outside the characters of a platform id.
+export const PLATFORM_TRANSCRIPT_KEY_SUFFIX = '~transcript';
+// The keys of the pair a platform recording belongs to: its own key without the suffix, and with it.
+export function platformPairKeys(externalId: string): [string, string] {
+  const base = externalId.endsWith(PLATFORM_TRANSCRIPT_KEY_SUFFIX) ? externalId.slice(0, -PLATFORM_TRANSCRIPT_KEY_SUFFIX.length) : externalId;
+  return [base, `${base}${PLATFORM_TRANSCRIPT_KEY_SUFFIX}`];
+}
+
 // The names of the recording providers in the shared oauth_state table (a calendar's state is `google_calendar`; these never collide with it).
 export const MEETING_PLATFORM_OAUTH_PROVIDERS = ['google_recordings', 'zoom_recordings', 'teams_recordings'] as const;
 export type MeetingPlatformOAuthProvider = (typeof MEETING_PLATFORM_OAUTH_PROVIDERS)[number];

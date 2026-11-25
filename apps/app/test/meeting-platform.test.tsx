@@ -321,6 +321,8 @@ describe('PlatformRecordings (Meetings tab)', () => {
       expect(count(on, 'data-testid="meeting-recording-import"'), locale).toBe(1);
       expect(count(on, 'data-testid="meeting-recording-blocked"'), locale).toBe(0);
       expect(on).toContain(esc(messages.meetings.platform.recordings.transcriptKeepsText.replace('{platform}', 'Google Meet')));
+      // The buttons of a transcript row say so in their names: a meeting can be offered twice (video and transcript), and the two rows must not have identical buttons.
+      expect(on).toContain(esc(messages.meetings.platform.recordings.importOf.replace('{title}', `${recording().title} (${messages.meetings.platform.recordings.offerTranscript})`)));
       client.current.setQueryData(KEYS.recordings, [recording({ provider: 'another_platform' as never, hasAudio: false, hasVideo: false, hasTranscript: true })]);
       const off = renderToStaticMarkup(wrap(<PlatformRecordings slug="acme" />, locale));
       expect(count(off, 'data-testid="meeting-recording-import"'), locale).toBe(0);
