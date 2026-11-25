@@ -258,6 +258,9 @@ suite("the opt-in weekly notice of the week's meetings (#4967)", () => {
     const rendered = await weeklyMailTemplate.render({ messageId: randomUUID(), subject: 'x', payload: zWeeklyMail.parse(sent[0]?.payload), publicUrl: 'https://ludy.test', inboundAddress: null, brand: 'Ludy', execute: async () => undefined as never });
     const audit = (await sqlAdmin<{ detail: unknown }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.weekly.notice'`, [orgId])).rows;
     for (const text of [JSON.stringify(mine), JSON.stringify(sent), JSON.stringify(rendered), JSON.stringify(audit)]) expect(text).not.toMatch(CANARY);
+    // The audit row names the Monday and whether a mail was queued, and no number: an owner or admin reads the audit log and must not learn what a member reads.
+    expect(audit).toHaveLength(1);
+    expect(audit[0]?.detail).toEqual({ day: AT_DAY, mailed: true });
     expect(rendered?.text).toContain('2 cuộc họp');
     expect(rendered?.text).toContain('/o/');
     // The same Monday again: nothing new, by a dispatch of the same row or by a read of the definer.

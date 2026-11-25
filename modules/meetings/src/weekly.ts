@@ -8,7 +8,7 @@
 // meetings.weekly.notice   the worker's dispatch, in the system's context: the ids the sweep found are not trusted, so it derives the row again through the worker-only definer
 //                          ludy_meetings.weekly_notices_due (the member's opt-in, the numbers of what they read, not muted, not told yet, a member of an active org with an account that is not disabled) and writes
 //                          one notice keyed by the Monday ('weekly:<day>'), then one mail. The mail is queued only when the in-app notice was written, so the one switch (the notification settings: the kind's
-//                          mute) covers both, and a second dispatch for the same Monday writes and sends nothing. On a week with nothing the card would show the definer returns nothing: no notice, no mail.
+//                          mute) covers both (no count is written to the audit log or any log line), and a second dispatch for the same Monday writes and sends nothing. On a week with nothing the card would show the definer returns nothing: no notice, no mail.
 import { sql } from 'kysely';
 import { createMailMessage, notifyMembers, uploaderEntity } from '@ludy/kernel';
 import {
@@ -141,8 +141,8 @@ export const weeklyNotice = defineCommand({
         })
       : null;
     const mailed = mail?.status === 'queued';
-    // A Monday, numbers and a flag: no address in the audit row.
-    ctx.audit({ day: input.day, ...counts, mailed });
+    // A Monday and a flag, the same shape every time: no count, no address (an owner or admin reads the audit log and could probe meetings they cannot read by the numbers; the numbers are the member's own notice and mail only).
+    ctx.audit({ day: input.day, mailed });
     return { notified: true, mailed, notificationId: notice?.id ?? null };
   },
 });
