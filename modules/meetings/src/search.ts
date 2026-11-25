@@ -127,8 +127,10 @@ export const meetingSearch = defineQuery({
     // At most MEETING_SEARCH_HITS_MAX hits can be paged: a page ends there, and `capped` says there were more.
     const size = Math.min(input.limit, MEETING_SEARCH_HITS_MAX - input.offset);
     if (size < 1) return { hits: [], hasMore: false, capped: true };
-    const label = input.label === undefined ? '' : cleanLabelText(input.label);
-    if (label !== '') {
+    if (input.label !== undefined) {
+      // A label that cleans to nothing matches no meeting: no hits, never the unfiltered search (the contract's trim keeps this from happening today; it is here so a change there cannot widen the search).
+      const label = cleanLabelText(input.label);
+      if (label === '') return { hits: [], hasMore: false, capped: false };
       // With a label (#4965) the page is made of the lines of the labelled meetings, from the hits the search can reach.
       const found = await findLabelledSearchHits(ctx.trx, ctx.orgId, input.q, label, size, input.offset);
       return { hits: found.hits, hasMore: found.hasMore, capped: found.capped };
