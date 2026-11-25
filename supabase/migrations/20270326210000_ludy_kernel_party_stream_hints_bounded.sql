@@ -65,7 +65,8 @@ BEGIN
   IF v_raw IS NOT NULL AND pg_catalog.pg_input_is_valid(v_raw, 'jsonb') THEN
     v_envelope := v_raw::pg_catalog.jsonb;
     IF pg_catalog.jsonb_typeof(v_envelope) = 'object'
-       AND pg_catalog.jsonb_extract_path_text(v_envelope, 'tx') IS NOT DISTINCT FROM v_tx THEN
+       AND pg_catalog.jsonb_typeof(pg_catalog.jsonb_extract_path(v_envelope, 'tx')) = 'string'
+       AND pg_catalog.jsonb_extract_path(v_envelope, 'tx') IS NOT DISTINCT FROM pg_catalog.to_jsonb(v_tx) THEN
       v_counts_raw := pg_catalog.jsonb_extract_path(v_envelope, 'counts');
       IF v_counts_raw IS NOT NULL AND pg_catalog.jsonb_typeof(v_counts_raw) = 'object' THEN
         v_counts := v_counts_raw;
@@ -88,19 +89,25 @@ BEGIN
 
     v_ids := ARRAY[]::text[];
     IF v_entry IS NOT NULL THEN
-      IF pg_catalog.jsonb_typeof(v_entry) = 'array'
-         AND pg_catalog.jsonb_array_length(v_entry) <= 20
-         AND NOT EXISTS (
-           SELECT 1 FROM pg_catalog.jsonb_array_elements(v_entry) AS e(val)
-           WHERE pg_catalog.jsonb_typeof(e.val) IS DISTINCT FROM 'string'
-         )
-         AND NOT EXISTS (
-           SELECT 1 FROM pg_catalog.jsonb_array_elements_text(v_entry) AS s(txt)
-           WHERE s.txt IS NULL OR s.txt !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-         ) THEN
-        SELECT COALESCE(pg_catalog.array_agg(s.txt ORDER BY s.ord), ARRAY[]::text[])
-        INTO v_ids
-        FROM pg_catalog.jsonb_array_elements_text(v_entry) WITH ORDINALITY AS s(txt, ord);
+      IF pg_catalog.jsonb_typeof(v_entry) = 'array' THEN
+        IF pg_catalog.jsonb_array_length(v_entry) <= 20
+           AND NOT EXISTS (
+             SELECT 1 FROM pg_catalog.jsonb_array_elements(v_entry) AS e(val)
+             WHERE pg_catalog.jsonb_typeof(e.val) IS DISTINCT FROM 'string'
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM pg_catalog.jsonb_array_elements_text(v_entry) AS s(txt)
+             WHERE s.txt IS NULL OR s.txt !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+           ) THEN
+          SELECT
+            CASE
+              WHEN pg_catalog.count(DISTINCT s.txt) = pg_catalog.jsonb_array_length(v_entry)
+                THEN COALESCE(pg_catalog.array_agg(s.txt ORDER BY s.ord), ARRAY[]::text[])
+              ELSE ARRAY[]::text[]
+            END
+          INTO v_ids
+          FROM pg_catalog.jsonb_array_elements_text(v_entry) WITH ORDINALITY AS s(txt, ord);
+        END IF;
       END IF;
     END IF;
 

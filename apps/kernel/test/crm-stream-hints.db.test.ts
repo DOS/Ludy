@@ -208,13 +208,20 @@ suite('stream hints of deals and contacts (#3293)', () => {
     expect(renamedWithId).toEqual([`${orgId} crm_party ${replacementId}`]);
   });
 
-  // #3423: a transaction that writes many contacts or deals sends a bounded number of hints (the first 20 name their row, the 21st the nil id), not one NOTIFY per row.
+  // #3423: a transaction that writes >20 distinct contacts or deals from a fresh budget sends 21 hints (20 distinct row ids + 1 nil id sentinel), not one NOTIFY per row.
   const bounded = (payloads: string[], orgId: string, type: 'crm_party' | 'crm_deal') => {
-    expect(payloads.length).toBeLessThanOrEqual(21);
+    expect(payloads).toHaveLength(21);
     expect(payloads.every((p) => p.startsWith(`${orgId} ${type} `))).toBe(true);
     expect(payloads.filter((p) => p.endsWith(` ${STREAM_HINT_MANY_ID}`))).toHaveLength(1);
-    expect(payloads[payloads.length - 1]).toBe(`${orgId} ${type} ${STREAM_HINT_MANY_ID}`);
-    for (const p of payloads) expect(parseHint(p)).toMatchObject({ orgId, hint: { type } });
+    expect(payloads[20]).toBe(`${orgId} ${type} ${STREAM_HINT_MANY_ID}`);
+    const namedIds = payloads.slice(0, 20).map((p) => {
+      const parsed = parseHint(p);
+      expect(parsed).toMatchObject({ orgId, hint: { type } });
+      expect(parsed?.hint.id).not.toBe(STREAM_HINT_MANY_ID);
+      return parsed!.hint.id;
+    });
+    expect(new Set(namedIds).size).toBe(20);
+    expect(parseHint(payloads[20]!)).toMatchObject({ orgId, hint: { type, id: STREAM_HINT_MANY_ID } });
   };
 
   it('counts distinct changed rows so importing 11 contacts linked to an existing company keeps every row id exact (#3423)', async () => {
@@ -442,6 +449,7 @@ suite('stream hints of deals and contacts (#3293)', () => {
   it('fails closed on malformed, non-object, stale-tx, or out-of-range values in ludy.stream_hint_counts (#3423)', async () => {
     const orgId = await org();
     const uuidList = (n: number) => Array.from({ length: n }, () => randomUUID());
+    const dupId = randomUUID();
     const badRaw: Array<{ label: string; make: (tx: string) => string }> = [
       { label: 'not-json', make: () => '{not-json' },
       { label: 'null', make: () => 'null' },
@@ -449,6 +457,7 @@ suite('stream hints of deals and contacts (#3293)', () => {
       { label: 'number', make: () => '123' },
       { label: 'legacy-map', make: () => JSON.stringify({ [`crm_party:${orgId}`]: 'many' }) },
       { label: 'stale-tx', make: () => JSON.stringify({ tx: '0', counts: { [`crm_party:${orgId}`]: 'many' } }) },
+      { label: 'numeric-tx', make: (tx) => `{"tx":${tx},"counts":{"crm_party:${orgId}":"many"}}` },
       { label: 'non-object-counts', make: (tx) => JSON.stringify({ tx, counts: [] }) },
       { label: 'string-entry', make: (tx) => JSON.stringify({ tx, counts: { [`crm_party:${orgId}`]: 'oops' } }) },
       { label: 'numeric-string-entry', make: (tx) => JSON.stringify({ tx, counts: { [`crm_party:${orgId}`]: '5' } }) },
@@ -456,6 +465,7 @@ suite('stream hints of deals and contacts (#3293)', () => {
       { label: 'neg-entry', make: (tx) => JSON.stringify({ tx, counts: { [`crm_party:${orgId}`]: -5 } }) },
       { label: 'bad-uuid-entry', make: (tx) => JSON.stringify({ tx, counts: { [`crm_party:${orgId}`]: ['not-a-uuid'] } }) },
       { label: 'null-elem-entry', make: (tx) => JSON.stringify({ tx, counts: { [`crm_party:${orgId}`]: [null] } }) },
+      { label: 'dup-uuids-20', make: (tx) => JSON.stringify({ tx, counts: { [`crm_party:${orgId}`]: Array.from({ length: 20 }, () => dupId) } }) },
       { label: 'over-20-uuids-21', make: (tx) => JSON.stringify({ tx, counts: { [`crm_party:${orgId}`]: uuidList(21) } }) },
       { label: 'over-20-uuids-22', make: (tx) => JSON.stringify({ tx, counts: { [`crm_party:${orgId}`]: uuidList(22) } }) },
     ];
