@@ -592,6 +592,9 @@ export const KERNEL_ERROR_CODES = [
   'ADHERENCE_BUSY',
   // The recorder's Vy suggesting a meeting title and the rename (#3947).
   'TITLE_BUSY',
+  // The recorder's Vy suggesting labels for a meeting (#5010).
+  'LABEL_SUGGEST_BUSY',
+  'LABELS_FULL',
   'COMMITMENTS_BUSY',
   // Vy suggesting the minutes template of a meeting (#4772).
   'TEMPLATE_SUGGEST_BUSY',

@@ -1172,8 +1172,8 @@ async function findPersonalData(
       key === 'ludy_projects.roadmap_signal.quote_excerpt'
         ? sql`AND (t.source_type <> 'meetings.meeting' OR ${meetingSignalReadable('t')})`
         : sql``;
-    // A mail of a source in MAIL_SOURCES_LEFT_OUT (a follow-up mail, #4533) is found by its address but shown as its id, address, status and time only: its payload, subject and source id hold a meeting's text or
-    // counts, which an owner or admin who may not read an attendees-only meeting must not get through the finder. The row stays findable and erasable (the erasure works on the column, not on this view).
+    // A mail of a source in MAIL_SOURCES_LEFT_OUT (follow-up, weekly, summary-ready and morning meeting mails, #4533, #4967, #5018) is found by its address but shown as its id, address, status and time only: its payload, subject and source id hold a meeting's text, link or per-member
+    // counts, which an owner or admin who may not read an attendees-only meeting or private calendar count must not get through the finder. The row stays findable and erasable (the erasure works on the column, not on this view).
     const rowExpr =
       schema === 'ludy_projects' && table === 'roadmap_signal'
         ? roadmapSignalRowExpr('t')

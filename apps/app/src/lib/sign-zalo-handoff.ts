@@ -205,3 +205,29 @@ export function buildSignZaloDraft(input: SignZaloDraftInput): SignZaloDraftResu
     fits: text.length > 0 && text.length <= max,
   };
 }
+
+export interface SignZaloPreviewDraftInput extends Omit<SignZaloDraftInput, 'signingUrl'> {
+  mintedUrl?: string | null | undefined;
+  placeholderUrl: string;
+  worstCaseUrl: string;
+}
+
+/**
+ * Builds the deterministic preview draft while enforcing the worst-case minted signing URL length budget
+ * so a shorter placeholder can never hide an over-limit message before token minting (#4729).
+ */
+export function buildSignZaloPreviewDraft(input: SignZaloPreviewDraftInput): SignZaloDraftResult {
+  const { mintedUrl, placeholderUrl, worstCaseUrl, ...base } = input;
+  const cleanMinted = mintedUrl?.trim() ?? '';
+  if (cleanMinted) {
+    return buildSignZaloDraft({ ...base, signingUrl: cleanMinted });
+  }
+  const preview = buildSignZaloDraft({ ...base, signingUrl: placeholderUrl });
+  const budget = buildSignZaloDraft({ ...base, signingUrl: worstCaseUrl });
+  return {
+    text: preview.text,
+    length: Math.max(preview.length, budget.length),
+    max: preview.max,
+    fits: preview.fits && budget.fits,
+  };
+}

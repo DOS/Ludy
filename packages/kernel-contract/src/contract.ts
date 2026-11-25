@@ -721,7 +721,7 @@ import { zDigestAnswer, zDigestAsk, zDigestFacts, zDigestStatus } from './meetin
 import { zLoadWeek, zLoadWeekInput } from './meeting-load.ts';
 import { zTrackerAdd, zTrackerDone, zTrackerHits, zTrackerList, zTrackerMeetingInput, zTrackerRemove, zTrackerTerms, zTrackerWeek, zTrackerWeekInput } from './meeting-trackers.ts';
 import { zHighlightAdd, zHighlightAdded, zHighlightRemove, zHighlightRemoved, zHighlights } from './meeting-highlights.ts';
-import { zLabelAdd, zLabelAdded, zLabelRemove, zLabelRemoved, zMeetingLabels } from './meeting-labels.ts';
+import { zLabelAdd, zLabelAdded, zLabelRemove, zLabelRemoved, zLabelSuggestAnswer, zMeetingLabels } from './meeting-labels.ts';
 import { zMeetingsTodayFacts } from './meeting-today.ts';
 import { zMorningEmpty, zMorningSet, zMorningState } from './meeting-morning.ts';
 import { zWeeklyEmpty, zWeeklySet, zWeeklyState } from './meeting-weekly.ts';
@@ -2052,10 +2052,14 @@ export const contract = {
       remove: oc.input(zHighlightRemove).output(zHighlightRemoved),
     },
     // Labels on a meeting (#4955): `list` the labels of one meeting the caller may read, and the recorder's `add` and `remove`. The labels of the meetings on the list come with the list itself (#4966).
+    // `suggestStatus` is the button of Vy's suggestions (#5010, the same answer as the title's) and `suggest` the click that has the recorder's own Vy offer up to three labels from the title and the labels the recorder already reads; the
+    // answer goes back to the browser and is stored nowhere, and the recorder's pick is the existing `add`.
     label: {
       list: oc.input(zMeetingRef).output(zMeetingLabels),
       add: oc.input(zLabelAdd).output(zLabelAdded),
       remove: oc.input(zLabelRemove).output(zLabelRemoved),
+      suggestStatus: oc.input(zSummaryRef).output(zSummaryStatus),
+      suggest: oc.input(zSummaryRef).output(zLabelSuggestAnswer),
     },
     // The Today view (#3955): the member's own agenda for today with the facts of each event's brief, read by code as the member in one call and working with AI off. Vy's sentences stay the brief's own click.
     today: {

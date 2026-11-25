@@ -5,7 +5,7 @@ import { ClientError } from './errors.ts';
 import { withInviteToken } from './invite.ts';
 import { HOSTED_STORAGE_KEY, completeHostedLogin, readHostedCallback, type HostedCallback, type HostedFailure, type HostedLoginConfig } from './hosted-login.ts';
 import { OAUTH_STORAGE_KEY, completeOauthLogin, oauthRefreshFetch, readOauthCallback, type OauthCallback, type OauthSignInConfig } from './oauth-login.ts';
-import { isInPersonCeremonyIsolated, subscribeToCeremonyIsolation } from './sign-hash.ts';
+import { isInPersonCeremonyIsolated, isSignCeremonyPathname, subscribeToCeremonyIsolation } from './sign-hash.ts';
 import { readMigratedItem, type StorageLike } from './storage-migrate.ts';
 
 export interface PublicConfig {
@@ -134,7 +134,11 @@ export function migrateAuthStorage(storage?: StorageLike): void {
 function disposeAuthClient(target: Client | null): void {
   if (!target || !('dispose' in target) || typeof target.dispose !== 'function') return;
   const dispose = () => {
-    void Promise.resolve(target.dispose()).catch(() => {});
+    try {
+      void Promise.resolve(target.dispose()).catch(() => {});
+    } catch {
+      // Ignore synchronous cleanup errors from test stubs or already-disposed clients.
+    }
   };
   dispose();
   const initPromise = (target as unknown as { initializePromise?: Promise<unknown> | null }).initializePromise;
@@ -347,7 +351,23 @@ let callbackNotice: CallbackNotice | null = null;
 let capturedHosted: HostedCallback | null = null;
 let capturedOauth: OauthCallback | null = null;
 
+function stripAuthCallbackParamsFromUrl(url: URL): string {
+  // The one-time code and any error leave the address bar and history; a leaked code could still be exchanged.
+  for (const key of ['code', 'error', 'error_code', 'error_description']) url.searchParams.delete(key);
+  if (/(^#|&)(error|error_code|error_description)=/.test(url.hash)) url.hash = '';
+  return `${url.pathname}${url.search}${url.hash}`;
+}
+
 export function captureHostedCallback(): void {
+  // Scrub stray OAuth code/error parameters on /-/sign (including ?in_person=1 tabs) so shared devices
+  // never keep an exchangeable authorization code in the address bar or history, without booting auth().
+  if (typeof window !== 'undefined' && isSignCeremonyPathname(window.location.pathname)) {
+    const target = stripAuthCallbackParamsFromUrl(new URL(window.location.href));
+    if (target !== `${window.location.pathname}${window.location.search}${window.location.hash}`) {
+      window.history.replaceState(null, '', target);
+    }
+    return;
+  }
   if (isCeremonyIsolated()) return;
   const callback = readHostedCallback(window.location);
   const oauth = callback ? null : readOauthCallback(window.location);
@@ -392,10 +412,8 @@ export async function settleCallback(): Promise<void> {
   }
   const url = new URL(window.location.href);
   const hadCode = url.searchParams.has('code');
-  // The one-time code and any error leave the address bar and history; a leaked code could still be exchanged.
-  for (const key of ['code', 'error', 'error_code', 'error_description']) url.searchParams.delete(key);
-  if (/(^#|&)(error|error_code|error_description)=/.test(url.hash)) url.hash = '';
-  const target = recovery && !passwordResetBlocked() ? '/reset-password' : `${url.pathname}${url.search}${url.hash}`;
+  const strippedTarget = stripAuthCallbackParamsFromUrl(url);
+  const target = recovery && !passwordResetBlocked() ? '/reset-password' : strippedTarget;
   if (target !== `${window.location.pathname}${window.location.search}${window.location.hash}`) window.history.replaceState(null, '', target);
   if (hosted) {
     const failure = await redeemHosted(hosted);

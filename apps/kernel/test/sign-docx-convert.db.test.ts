@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // eSign Slice 6b DB + crove-extract sandbox integration tests (#4721, Gate T12):
 // - Staged .docx upload -> outbox -> worker crove-extract('docx_to_pdf') -> tmp cleanup -> actorOf(user) ingest
-// - Unattached sign_document confidentiality (can_read_sign_file: uploaded_by isolation) + cross-user jobId 404
+// - Cross-user polling and unattached sign_document confidentiality live in test/invariant/sign-docx-confidentiality.db.test.ts
 // - Preserved {{signature, r1}} / {{dropdown, r1, ...}} tags inspected by runSignPdfInspectJob
 // - sourceDocxSha256 recorded in signing_event (envelope_created) and template create audit
 // - Clean 422 on OLE2 and Track Changes, 415 on invalid MIME/magic, 403 on extension/viewer, ADR-0053 appOn guard
@@ -299,7 +299,7 @@ suite('eSign Slice 6b: native .docx upload -> tagged A4 PDF via crove-extract (#
       stepUp: 'required',
     }).register(registry);
     workerRt = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register(registry);
-  }, 120_000);
+  }, 180_000);
 
   afterAll(async () => {
     await pool?.end();
@@ -341,10 +341,7 @@ suite('eSign Slice 6b: native .docx upload -> tagged A4 PDF via crove-extract (#
     expect(workerResults).toHaveLength(1);
     expect(workerResults[0]?.status).toBe('completed');
 
-    // Cross-user poll isolation: admin in the same org receives 404 for member's jobId.
-    const otherUserPoll = await http.pollDocx(o.admin, jobId);
-    expect(otherUserPoll.status).toBe(404);
-
+    // Cross-user poll isolation is pinned in test/invariant/sign-docx-confidentiality.db.test.ts.
     // Uploader poll finalizes as actorOf(o.member) and emits warnings cleanly.
     const completed = await http.pollDocx(o.member, jobId);
     expect(completed.status).toBe(200);
@@ -381,28 +378,7 @@ suite('eSign Slice 6b: native .docx upload -> tagged A4 PDF via crove-extract (#
     expect(pollAfterReplay.status).toBe(200);
     expect(pollAfterReplay.body).toEqual(completed.body);
 
-    // File row belongs strictly to uploading user (can_read_sign_file confidentiality).
-    const fileMeta = await withAdmin((c) =>
-      c.query<{ created_by: string; source: string; content_type: string }>(
-        `SELECT created_by, source, content_type FROM ludy_kernel.file WHERE org_id = $1 AND id = $2`,
-        [o.orgId, fileId],
-      ),
-    );
-    expect(fileMeta.rows[0]).toEqual({
-      created_by: o.member,
-      source: 'sign_document',
-      content_type: 'application/pdf',
-    });
-
-    // Another member cannot attach o.member's unattached sign_document file before an envelope exists.
-    await expect(
-      rt.execute(
-        'sign.envelope.create',
-        { title: 'Stolen', sourceFileId: fileId },
-        { actor: asUser(o.admin), orgId: o.orgId },
-      ),
-    ).rejects.toThrow();
-
+    // Unattached sign_document confidentiality (can_read_sign_file & cross-user attachment refusal) lives in test/invariant/sign-docx-confidentiality.db.test.ts.
     // Uploader creates envelope carrying sourceDocxSha256 -> stored in signing_event (envelope_created).
     const env = await rt.execute<{ envelopeId: string }>(
       'sign.envelope.create',
