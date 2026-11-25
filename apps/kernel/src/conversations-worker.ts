@@ -463,7 +463,7 @@ export async function reconcileTelegramDisplacements(deps: { workerDb: Db; runti
         { connectionId: row.connection_id, action: 'enable', rekey: true },
         { actor: SYSTEM, orgId: row.org_id },
       );
-      if (work.action !== 'call') return;
+      if (work.action !== 'call' || work.expectedBotId !== row.chat_bot_id) return;
       const takenAt = work.changedAt ?? row.chat_changed_at?.toISOString() ?? null;
       const res = await displaceAndAck(deps.runtime, deps.workerDb, row.org_id, row.connection_id, row.chat_bot_id, takenAt, renew);
       // If another org legitimately went 'on' AFTER this connection's latest change, displace this stale connection instead of leaving both 'on'.

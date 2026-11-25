@@ -1060,5 +1060,33 @@ suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
     expect(tAltDisable.calls.map((c) => c.method)).toEqual(['getWebhookInfo', 'deleteWebhook']);
     expect(liveUrls.get(raceToken)).toBeUndefined();
     expect((await rows('SELECT chat_state FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [winner.orgId, winner.connectionId]))[0]).toEqual({ chat_state: 'off' });
+
+    // Reconcile bot-switch race guard: if a connection switches bots between telegram_chat_displace_due and lock acquisition,
+    // reconcileTelegramDisplacements skips the stale bot id so another org live on the old bot is never displaced (#3150).
+    await rows("UPDATE ludy_kernel.channel_connection SET chat_state = 'on', chat_hook = $3, chat_hook_next = NULL, chat_bot_id = '666666667', chat_displace_pending = true, chat_error = NULL WHERE org_id = $1 AND id = $2", [winner.orgId, winner.connectionId, winnerHookRow?.chat_hook]);
+    await rows("UPDATE ludy_kernel.channel_connection SET chat_state = 'on', chat_hook = $3, chat_hook_next = NULL, chat_bot_id = '666666667', chat_displace_pending = false, chat_error = NULL WHERE org_id = $1 AND id = $2", [loser.orgId, loser.connectionId, loserHook]);
+    let switchedBotDuringLock = false;
+    const switchRacingRuntime = new Proxy(worker, {
+      get(target, prop) {
+        if (prop === 'query') {
+          return async (name: string, ...rest: unknown[]) => {
+            const input = rest[0] as { connectionId?: string } | undefined;
+            if (!switchedBotDuringLock && name === 'kernel.channel.telegram_chat_work' && input?.connectionId === winner.connectionId) {
+              switchedBotDuringLock = true;
+              await rows("UPDATE ludy_kernel.channel_connection SET chat_bot_id = '666666668' WHERE org_id = $1 AND id = $2", [winner.orgId, winner.connectionId]);
+            }
+            return Reflect.apply(target.query, target, [name, ...rest]);
+          };
+        }
+        const value = Reflect.get(target, prop, target);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    }) as Runtime;
+    expect(await reconcileTelegramDisplacements({ workerDb, runtime: switchRacingRuntime, force: true })).toBe(0);
+    expect(switchedBotDuringLock).toBe(true);
+    expect((await rows('SELECT chat_state, chat_error FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [loser.orgId, loser.connectionId]))[0]).toEqual({ chat_state: 'on', chat_error: null });
+    expect((await rows('SELECT chat_bot_id, chat_displace_pending FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [winner.orgId, winner.connectionId]))[0]).toEqual({ chat_bot_id: '666666668', chat_displace_pending: true });
+    expect(await reconcileTelegramDisplacements({ workerDb, runtime: worker, force: true })).toBe(1);
+    expect((await rows('SELECT chat_displace_pending FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [winner.orgId, winner.connectionId]))[0]).toEqual({ chat_displace_pending: false });
   });
 });
