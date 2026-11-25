@@ -83,3 +83,33 @@ export function buildQuickCreateItems(input: {
 
   return items;
 }
+
+// The jobs Home puts in the thumb row on a phone (#4784), most common first: the ones a small business does every week
+// (Tải chứng từ, Ghi khoản chi, Lập hóa đơn bán, Thêm người liên hệ), then the other links when an app is off. Links only:
+// the row is a set of ordinary links, and the personal quick capture stays in the `+` menu.
+export const HOME_CREATE_ORDER: readonly Exclude<QuickCreateItemId, 'quickCapture'>[] = [
+  'uploadDocument',
+  'recordExpense',
+  'createSalesInvoice',
+  'newContact',
+  'newTeamTask',
+  'newDeal',
+  'newSignEnvelope',
+  'newNote',
+];
+
+export const HOME_CREATE_MAX = 4;
+
+export type QuickCreateLink = Extract<QuickCreateItem, { kind: 'link' }>;
+
+/** The 3 to 4 create links of the phone Home row, from the member's own quick-create items (so an app that is off or a viewer's role shows none). */
+export function homeCreateItems(items: readonly QuickCreateItem[], max = HOME_CREATE_MAX): QuickCreateLink[] {
+  const links = items.filter((item): item is QuickCreateLink => item.kind === 'link');
+  const picked: QuickCreateLink[] = [];
+  for (const id of HOME_CREATE_ORDER) {
+    const found = links.find((item) => item.id === id);
+    if (found) picked.push(found);
+    if (picked.length === max) break;
+  }
+  return picked;
+}
