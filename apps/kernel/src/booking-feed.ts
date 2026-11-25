@@ -7,6 +7,7 @@ import { sql } from 'kysely';
 import type { Runtime } from '@ludy/kernel-runtime';
 import { escapeText, foldLine, icsTime } from './calendar-feed.ts';
 import { DEFAULT_BRAND_NAME } from './config.ts';
+import { publicPageAllowed } from './public-page-gate.ts';
 
 const TOKEN = /^[A-Za-z0-9_-]{43}$/;
 
@@ -32,6 +33,7 @@ export interface BookingFeed {
 // null: a malformed token, or one that names no live feed (the same answer either way).
 export async function bookingFeed(runtime: Runtime, token: string): Promise<BookingFeed | null> {
   if (!TOKEN.test(token)) return null;
+  if (!(await publicPageAllowed(runtime, { module: 'crm', kind: 'booking_feed' }, token))) return null;
   return runtime.orgless(async (db) => {
     const { rows } = await sql<{ feed: BookingFeed | null }>`SELECT ludy_crm.booking_feed_events(${token}) AS feed`.execute(db);
     return rows[0]?.feed ?? null;
