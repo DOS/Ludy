@@ -59,7 +59,7 @@ const TICKET = /^[A-Za-z0-9_-]{43}$/;
 
 // The hints about one member's own rows, which only that member may read (own_notification, todo_read, note_read, own_member_home_layout): each
 // names its recipient and reaches only the streams of that user. ludy_kernel.stream_notify and member_home_layout_notify name these types
-// (20261104000000_crove_kernel_stream_notes_audience.sql, 20270326050000_ludy_kernel_member_home_layout.sql).
+// (20261104000000_crove_kernel_stream_notes_audience.sql, 20270326130000_ludy_kernel_member_home_layout.sql).
 export const RECIPIENT_HINT_TYPES: ReadonlySet<StreamHintType> = new Set<StreamHintType>(['notification', 'todo', 'note', 'home_layout']);
 // The hints that may add `+shared`: a shared note, which the members who read the org's shared notes may hear too.
 const SHARED_HINT_TYPES: ReadonlySet<StreamHintType> = new Set<StreamHintType>(['note']);
