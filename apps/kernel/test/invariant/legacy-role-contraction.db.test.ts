@@ -107,30 +107,7 @@ suite('legacy crove_* role and crove.* GUC contraction (#3972)', () => {
       copyFileSync(join(MIGRATIONS, file), join(preStageDir, file));
     }
 
-    // Simulate a pre-Stage-7 database with passwords set on all four legacy login roles (without re-opening cluster-wide VALID UNTIL).
     await migrate({ adminUrl, dir: preStageDir });
-    await setRolePasswords(adminUrl, {
-      crove_app: legacyPassword,
-      crove_worker: legacyPassword,
-      crove_prober: legacyPassword,
-      crove_reporter: legacyPassword,
-    });
-    await withAdmin(async (c) => {
-      const { rows } = await c.query<{ rolname: string; has_pw: boolean }>(
-        `SELECT rolname, rolpassword IS NOT NULL AS has_pw
-         FROM pg_catalog.pg_authid
-         WHERE rolname = ANY ($1::text[])
-         ORDER BY rolname`,
-        [[...LEGACY_LOGINS]],
-      );
-      expect(rows).toEqual([
-        { rolname: 'crove_app', has_pw: true },
-        { rolname: 'crove_prober', has_pw: true },
-        { rolname: 'crove_reporter', has_pw: true },
-        { rolname: 'crove_worker', has_pw: true },
-      ]);
-    });
-
     await migrate({ adminUrl, dir: MIGRATIONS });
   }, 180_000);
 
@@ -165,9 +142,17 @@ suite('legacy crove_* role and crove.* GUC contraction (#3972)', () => {
   });
 
   it('invalidates upgraded crove_* login passwords, revokes memberships/ACLs, and removes crove.* GUC fallbacks', async () => {
+    const contractionFile = readdirSync(MIGRATIONS).find((f) => f.endsWith(CONTRACTION_SUFFIX));
+    expect(contractionFile).toBeTruthy();
+    const contractionSql = readFileSync(join(MIGRATIONS, contractionFile as string), 'utf8');
+
     const legacyClient = new pg.Client({ connectionString: dbUrlFor(adminUrl, dbName, 'crove_app', legacyPassword) });
     await expect(legacyClient.connect()).rejects.toMatchObject({ code: '28P01' });
     await legacyClient.end().catch(() => {});
+
+    await expect(setRolePasswords(adminUrl, { crove_app: 'rearmed-pw' })).rejects.toThrow(
+      /refusing to set a password on legacy role crove_app after Stage 7 contraction/,
+    );
 
     await withAdmin(async (c) => {
       const { rows: loginStates } = await c.query<{ rolname: string; rolcanlogin: boolean; has_pw: boolean; expired: boolean }>(
@@ -186,6 +171,37 @@ suite('legacy crove_* role and crove.* GUC contraction (#3972)', () => {
         { rolname: 'crove_reporter', rolcanlogin: true, has_pw: false, expired: true },
         { rolname: 'crove_worker', rolcanlogin: true, has_pw: false, expired: true },
       ]);
+
+      // Verify Stage 7 contraction clears password verifiers and sets VALID UNTIL '-infinity' transactionally
+      // without mutating cluster roles visible to concurrent sessions on a shared server.
+      await c.query('BEGIN');
+      try {
+        for (const login of LEGACY_LOGINS) {
+          await c.query(`ALTER ROLE ${pg.escapeIdentifier(login)} WITH PASSWORD '${legacyPassword}' VALID UNTIL 'infinity'`);
+        }
+        const { rows: seeded } = await c.query<{ rolname: string; has_pw: boolean }>(
+          `SELECT rolname, rolpassword IS NOT NULL AS has_pw
+           FROM pg_catalog.pg_authid WHERE rolname = ANY ($1::text[]) ORDER BY rolname`,
+          [[...LEGACY_LOGINS]],
+        );
+        expect(seeded.every((r) => r.has_pw)).toBe(true);
+        await c.query(contractionSql);
+        const { rows: cleared } = await c.query<{ rolname: string; has_pw: boolean; expired: boolean }>(
+          `SELECT rolname,
+                  rolpassword IS NOT NULL AS has_pw,
+                  rolvaliduntil IS NOT NULL AND rolvaliduntil <= '1970-01-01 00:00:00+00'::timestamptz AS expired
+           FROM pg_catalog.pg_authid WHERE rolname = ANY ($1::text[]) ORDER BY rolname`,
+          [[...LEGACY_LOGINS]],
+        );
+        expect(cleared).toEqual([
+          { rolname: 'crove_app', has_pw: false, expired: true },
+          { rolname: 'crove_prober', has_pw: false, expired: true },
+          { rolname: 'crove_reporter', has_pw: false, expired: true },
+          { rolname: 'crove_worker', has_pw: false, expired: true },
+        ]);
+      } finally {
+        await c.query('ROLLBACK');
+      }
 
       const { rows: clusterMarker } = await c.query<{ marker: string | null }>(
         `SELECT pg_catalog.shobj_description(oid, 'pg_authid') AS marker
@@ -428,16 +444,33 @@ suite('legacy crove_* role and crove.* GUC contraction (#3972)', () => {
         await c.query(
           `CREATE ROLE ${defAclRole} NOLOGIN; ` +
             `CREATE ROLE ${defAclRole}_nonmember LOGIN NOSUPERUSER; ` +
-            `ALTER DEFAULT PRIVILEGES FOR ROLE ${defAclRole} IN SCHEMA ludy_jobs GRANT SELECT ON TABLES TO crove_worker`,
+            `ALTER DEFAULT PRIVILEGES FOR ROLE ${defAclRole} IN SCHEMA ludy_jobs GRANT SELECT ON TABLES TO crove_worker; ` +
+            `ALTER DEFAULT PRIVILEGES FOR ROLE ${defAclRole} GRANT SELECT ON TABLES TO crove_worker`,
         );
-        for (const shared of [false, true]) {
-          const violations = await hardeningViolations(c, shared ? { shared: true } : undefined);
-          expect(
-            violations.some((v) =>
-              new RegExp(`legacy role crove_worker still holds default privileges on tables in ludy_jobs for role ${defAclRole}`).test(v),
-            ),
-          ).toBe(true);
-        }
+        const ownedDefViolations = await hardeningViolations(c);
+        expect(
+          ownedDefViolations.some((v) =>
+            new RegExp(`legacy role crove_worker still holds default privileges on tables in ludy_jobs for role ${defAclRole}`).test(v),
+          ),
+        ).toBe(true);
+        expect(
+          ownedDefViolations.some((v) =>
+            new RegExp(`legacy role crove_worker still holds default privileges on tables in all schemas for role ${defAclRole}`).test(v),
+          ),
+        ).toBe(true);
+
+        const sharedDefViolations = await hardeningViolations(c, { shared: true });
+        expect(
+          sharedDefViolations.some((v) =>
+            new RegExp(`legacy role crove_worker still holds default privileges on tables in ludy_jobs for role ${defAclRole}`).test(v),
+          ),
+        ).toBe(true);
+        expect(
+          sharedDefViolations.some((v) =>
+            new RegExp(`legacy role crove_worker still holds default privileges on tables in all schemas for role ${defAclRole}`).test(v),
+          ),
+        ).toBe(false);
+
         await c.query('SAVEPOINT sp_defacl_denied');
         await c.query(`SET LOCAL ROLE ${defAclRole}_nonmember`);
         await expect(c.query(contractionSql)).rejects.toThrow(/default privileges still grant to legacy crove_\* roles/);
@@ -602,6 +635,21 @@ suite('legacy crove_* role and crove.* GUC contraction (#3972)', () => {
             /stage 7 contraction failed: role .* cannot clear or verify cleared password on crove_reporter/,
           );
           await checkDb.query('ROLLBACK TO SAVEPOINT sp_no_marker');
+
+          // Non-superuser without SELECT on pg_authid still clears passwords for legacy roles where it holds ADMIN OPTION.
+          await checkDb.query('COMMENT ON ROLE crove_tenant IS \'ludy:stage7-contracted\'');
+          await checkDb.query("ALTER ROLE crove_app WITH PASSWORD 'rearmed-pw' VALID UNTIL '-infinity'");
+          await checkDb.query('SAVEPOINT sp_nonsuper_clear');
+          await checkDb.query(`SET LOCAL ROLE ${pg.escapeIdentifier(limitedRunner)}`);
+          await checkDb.query(contractionSql);
+          await checkDb.query('RESET ROLE');
+          const { rows: appState } = await checkDb.query<{ has_pw: boolean; expired: boolean }>(
+            `SELECT rolpassword IS NOT NULL AS has_pw,
+                    rolvaliduntil IS NOT NULL AND rolvaliduntil <= '1970-01-01 00:00:00+00'::timestamptz AS expired
+             FROM pg_catalog.pg_authid WHERE rolname = 'crove_app'`,
+          );
+          expect(appState).toEqual([{ has_pw: false, expired: true }]);
+          await checkDb.query('ROLLBACK TO SAVEPOINT sp_nonsuper_clear');
         } finally {
           await checkDb.query('ROLLBACK');
         }

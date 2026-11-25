@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { applyConcurrentIndexes, CONCURRENT_INDEX_MARKER, concurrentIndexes, readMigrations, readSharedVariants, sharedDatabaseSetting, takeMigrateLock } from '../src/migrate.ts';
+import { applyConcurrentIndexes, classifyCoreCutoverState, CONCURRENT_INDEX_MARKER, concurrentIndexes, readMigrations, readSharedVariants, sharedDatabaseSetting, takeMigrateLock } from '../src/migrate.ts';
 
 describe('migration files', () => {
   it('hash the same with CRLF and LF line endings', async () => {
@@ -222,5 +222,57 @@ describe('shared-database mode (#2284)', () => {
       const code = variant.sql.split('\n').filter((l) => !l.trim().startsWith('--')).join('\n');
       expect(code, name).not.toMatch(/ON DATABASE|FROM PUBLIC|GRANT|REVOKE|CREATE ROLE|ALTER ROLE|EVENT TRIGGER|ALTER DEFAULT|CREATE EXTENSION/i);
     }
+  });
+});
+
+describe('classifyCoreCutoverState (#3972 Stage 7 replay guard)', () => {
+  it('distinguishes uncontracted clusters from Stage-7-contracted and wiped-marker states', () => {
+    expect(
+      classifyCoreCutoverState({
+        markerPresent: false,
+        hasLudyRoles: false,
+        hasTransitionalGrants: false,
+        allLegacyLoginsExpired: false,
+      }),
+    ).toBe('uncontracted');
+
+    // Uncontracted shared cluster where DB A already cut over cleanly, even if one legacy role was expired manually.
+    expect(
+      classifyCoreCutoverState({
+        markerPresent: false,
+        hasLudyRoles: true,
+        hasTransitionalGrants: true,
+        allLegacyLoginsExpired: false,
+      }),
+    ).toBe('uncontracted');
+
+    // Contracted cluster with explicit crove_tenant marker stays contracted even if one role was temporarily un-expired.
+    expect(
+      classifyCoreCutoverState({
+        markerPresent: true,
+        hasLudyRoles: true,
+        hasTransitionalGrants: false,
+        allLegacyLoginsExpired: false,
+      }),
+    ).toBe('contracted');
+
+    // Marker wiped after Stage 7 contraction fails closed instead of re-granting crove_* -> ludy_* memberships.
+    expect(
+      classifyCoreCutoverState({
+        markerPresent: false,
+        hasLudyRoles: true,
+        hasTransitionalGrants: false,
+        allLegacyLoginsExpired: false,
+      }),
+    ).toBe('wiped-marker');
+
+    expect(
+      classifyCoreCutoverState({
+        markerPresent: false,
+        hasLudyRoles: true,
+        hasTransitionalGrants: true,
+        allLegacyLoginsExpired: true,
+      }),
+    ).toBe('wiped-marker');
   });
 });

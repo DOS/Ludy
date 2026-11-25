@@ -16,6 +16,7 @@ DECLARE
   v_login text;
   v_remaining text;
   v_is_super boolean;
+  v_shared boolean := false;
   v_default_acls text;
   v_owned text;
   r record;
@@ -207,7 +208,11 @@ BEGIN
     EXECUTE pg_catalog.format('REVOKE %s ON SCHEMA %I FROM %I', r.privilege_type, r.schema_name, r.grantee);
   END LOOP;
 
-  -- Default privilege entries (pg_default_acl) across ludy_* schemas and global defaults for every grantor.
+  -- Default privilege entries (pg_default_acl) across ludy_* schemas (and global defaults in owned-database mode).
+  IF pg_catalog.to_regclass('ludy_meta.deployment') IS NOT NULL THEN
+    SELECT COALESCE(pg_catalog.bool_or(d.value = 'true'), false) INTO v_shared
+    FROM ludy_meta.deployment d WHERE d.key = 'shared_database';
+  END IF;
   SELECT COALESCE(ro.rolsuper, false) INTO v_is_super
   FROM pg_catalog.pg_roles ro WHERE ro.rolname = current_user;
   v_is_super := COALESCE(v_is_super, false);
@@ -228,7 +233,7 @@ BEGIN
     JOIN pg_catalog.pg_roles ow ON ow.oid = d.defaclrole
     CROSS JOIN LATERAL pg_catalog.aclexplode(d.defaclacl) a
     JOIN pg_catalog.pg_roles gr ON gr.oid = a.grantee
-    WHERE (d.defaclnamespace = 0 OR n.nspname LIKE 'ludy\_%')
+    WHERE (n.nspname LIKE 'ludy\_%' OR (NOT v_shared AND d.defaclnamespace = 0))
       AND gr.rolname = ANY (v_legacy_roles)
       AND (v_is_super OR ow.rolname = current_user OR pg_catalog.pg_has_role(current_user, ow.oid, 'SET'))
     ORDER BY ow.rolname, n.nspname NULLS FIRST, obj_kind, gr.rolname
@@ -270,7 +275,7 @@ BEGIN
     JOIN pg_catalog.pg_roles ow ON ow.oid = d.defaclrole
     CROSS JOIN LATERAL pg_catalog.aclexplode(d.defaclacl) a
     JOIN pg_catalog.pg_roles gr ON gr.oid = a.grantee
-    WHERE (d.defaclnamespace = 0 OR n.nspname LIKE 'ludy\_%')
+    WHERE (n.nspname LIKE 'ludy\_%' OR (NOT v_shared AND d.defaclnamespace = 0))
       AND gr.rolname = ANY (v_legacy_roles)
   ) remaining_defaults;
   IF v_default_acls IS NOT NULL THEN
