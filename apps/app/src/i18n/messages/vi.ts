@@ -4123,6 +4123,9 @@ export const vi = {
       closeLightbox: 'Đóng xem ảnh',
       loadingPreview: 'Đang tải xem trước...',
       previewFailed: 'Chưa tải được bản xem trước. Bạn vẫn có thể bấm Tải về.',
+      extractPolling: 'Đang chờ trích xuất chữ từ tệp đính kèm...',
+      extractPollPaused: 'Trích xuất chữ đang mất nhiều thời gian hơn bình thường. Đã tạm dừng tự động làm mới.',
+      extractPollRetry: 'Kiểm tra lại',
       status: {
         pending: 'Đang đọc chữ...',
         done: 'Đã lập chỉ mục tìm kiếm',

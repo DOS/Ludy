@@ -4126,6 +4126,9 @@ export const en = {
       closeLightbox: 'Close image preview',
       loadingPreview: 'Loading preview...',
       previewFailed: 'Could not load inline preview. You can still download the file.',
+      extractPolling: 'Waiting for attachment text extraction...',
+      extractPollPaused: 'Text extraction is taking longer than usual. Auto-refresh is paused.',
+      extractPollRetry: 'Check again',
       status: {
         pending: 'Extracting text...',
         done: 'Searchable',
