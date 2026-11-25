@@ -2,7 +2,7 @@
 // The pure parts of Vy's drafts and the saved replies (CV8, #2310): how a customer's words are read for matching (no diacritics, no case, whole words),
 // which saved replies answer them, and how far a sent reply is from the draft it began from.
 import { describe, expect, it } from 'vitest';
-import { editSize, matchSavedReplies, replyWords } from '../src/conversations.ts';
+import { draftEditSize, editSize, matchSavedReplies, replyWords } from '../src/conversations.ts';
 
 const reply = (title: string, keywords: string[], useCount = 0) => ({ title, keywords, useCount });
 
@@ -54,5 +54,16 @@ describe('editSize', () => {
   it('counts characters, not UTF-16 units, so Vietnamese and emoji are not counted twice', () => {
     expect(editSize('Dạ 😀 ạ', 'Dạ 😀😀 ạ')).toBe(1);
     expect(editSize('Dạ ạ', 'Dạ ơi ạ')).toBe(3);
+  });
+});
+
+describe('draftEditSize', () => {
+  it('fills {tên} before measuring edit distance so contact-name substitution is not counted as a person edit (#3105)', () => {
+    expect(draftEditSize('Chào {tên}, shop còn hàng ạ', 'Chào Chị Mai Hương, shop còn hàng ạ', 'Chị Mai Hương')).toBe(0);
+    expect(draftEditSize('Chào {tên}, giá [giá] ạ', 'Chào Lan, giá 150.000đ ạ', 'Lan')).toBe(8);
+    expect(draftEditSize('Chào {tên}, shop còn hàng ạ', 'Chào, shop còn hàng ạ', null)).toBe(0);
+    expect(draftEditSize('Chào {tên}, cảm ơn {tên} đã nhắn ạ', 'Chào Lan, cảm ơn Lan đã nhắn ạ', 'Lan')).toBe(0);
+    // Foreign brace placeholders are not treated as the known fill.
+    expect(draftEditSize('Chào {name}, shop còn hàng ạ', 'Chào Lan, shop còn hàng ạ', 'Lan')).toBe(6);
   });
 });

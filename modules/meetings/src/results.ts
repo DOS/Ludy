@@ -40,7 +40,7 @@ import { enqueueMinutesHook } from './hook.ts';
 import { vnDayStart } from './retention.ts';
 import { suggestAssignee, type Person, type Suggested } from './assignee-match.ts';
 import { attendeeNames, cleanName } from './speaker.ts';
-import { ROLES, draftLineState, missingAnchors, openMeeting, userOf } from './transcript.ts';
+import { ROLES, draftLineState, lockPublishedLines, missingAnchors, openMeeting, userOf } from './transcript.ts';
 
 // What code finds wrong with an item's text: a link, an email address or a phone number in a title (a task is read by every member, and a title the model
 // wrote from a transcript must not carry a way to reach someone off the page). Fixed words, never the text.
@@ -303,6 +303,8 @@ export const resultPublish = defineCommand({
     // The meeting row is held first, before any row of it is locked, in the order the personal-data erasure and a meeting's delete take (the meeting, then its rows), so a publish cannot deadlock with
     // them; meetings.chapters.save holds it too, so a save and this publish are one after the other.
     await ctx.trx.selectFrom('ludy_meetings.meeting').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).forNoKeyUpdate().execute();
+    // Then the published lines, exclusively: a highlight added at this moment (by a reader, who cannot hold the row) is checked against the lines before this publish or the ones it leaves, never half of each (#4971).
+    await lockPublishedLines(ctx.trx, ctx.orgId, input.meetingId, 'replace');
     // Text the model wrote is shared only after the recorder has read it (meetings.draft.review) or rewritten it; the database refuses it too.
     const unread = await ctx.trx
       .selectFrom('ludy_meetings.meeting_result')
@@ -374,6 +376,26 @@ export const resultPublish = defineCommand({
         .returning('id')
         .execute();
       chapters = flipped.length;
+    }
+    // A publish that replaces the lines and brings no new chapters leaves the chapters published before it where they are, so each must still start at a line of the transcript as it now stands (#4915): refused as a
+    // whole, as for a draft chapter above, and the recorder saves the chapters against the new lines and publishes once. A table of contents that points at a line that is no longer there is worse than a short refusal.
+    if (lines > 0 && draftChapters.length === 0) {
+      const kept = await ctx.trx.selectFrom('ludy_meetings.meeting_chapter').select('start_seconds').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'published').execute();
+      if ((await missingAnchors(ctx, input.meetingId, kept.map((c) => c.start_seconds))).length > 0) {
+        throw new DomainError('CHAPTER_ANCHOR_LOST', 409, 'A published chapter no longer starts at a line of the transcript (the lines changed): save the chapters again against the new lines, then share');
+      }
+    }
+    // The highlights readers marked (#4819) are an anchor in seconds and no text, so a replaced line leaves a mark that points at nothing (or, worse, at whichever new line starts at that second). A mark whose start or
+    // end second no longer starts a published line is removed with the lines it marked; the recorder may remove any mark of their meeting, and the people who made them find the others as they were.
+    if (lines > 0) {
+      await sql`
+          DELETE FROM ludy_meetings.meeting_highlight h
+           WHERE h.org_id = ${ctx.orgId}::uuid AND h.meeting_id = ${input.meetingId}::uuid
+             AND (
+               NOT EXISTS (SELECT 1 FROM ludy_meetings.transcript_segment s WHERE s.org_id = h.org_id AND s.meeting_id = h.meeting_id AND s.stage = 'published' AND pg_catalog.floor(s.start_seconds)::int = h.start_seconds)
+               OR NOT EXISTS (SELECT 1 FROM ludy_meetings.transcript_segment s WHERE s.org_id = h.org_id AND s.meeting_id = h.meeting_id AND s.stage = 'published' AND pg_catalog.floor(s.start_seconds)::int = h.end_seconds)
+             )
+          `.execute(ctx.trx);
     }
     if (results === 0 && items.length === 0 && chapters === 0 && lines === 0) throw new DomainError('NOTHING_TO_PUBLISH', 409, 'There is no draft to share');
     // The recorder's own webhook (A6, #3164): when they have one that stands, the event for this publish is stored in this same transaction, and nowhere else. No model, no other reader.
