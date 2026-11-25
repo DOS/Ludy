@@ -115,7 +115,7 @@ import {
   type SignAi,
 } from './sign-ai.ts';
 import { draftProjectAcceptanceSummary, signAcceptanceAi } from './sign-acceptance-ai.ts';
-import { adherenceStatusOf, runMeetingAdherence, assigneeStatusOf, runMeetingAssignee, briefStatusOf, digestStatusOf, followupNoteStatusOf, runMeetingBrief, runMeetingFollowupNote, runMeetingTitle, runMeetingDigest, askStatusOf, notesVyStatusOf, readNotesVyResults, runLiveNotes, runMeetingAsk, runMeetingChapters, runMeetingSummary, runMeetingTranslation, runNotesEnhance, runNotesOrganize, runNotesSuggestTodos, runNotesSummarize, runNotesTodoPlan, runProjectsTasksFromNote, runProjectsTasksFromSource, runTranscriptTranslation, tasksFromNoteStatusOf, tasksFromSourceStatusOf, transcriptTranslationStatusOf, translationStatusOf, type ModelPort, runMeetingCommitments, runMeetingOpenPoints , runMeetingTemplateSuggest } from './member-vy-ports.ts';
+import { dealUpdateStatusOf, runMeetingDealUpdate, adherenceStatusOf, runMeetingAdherence, assigneeStatusOf, runMeetingAssignee, briefStatusOf, digestStatusOf, followupNoteStatusOf, runMeetingBrief, runMeetingFollowupNote, runMeetingTitle, runMeetingDigest, askStatusOf, notesVyStatusOf, readNotesVyResults, runLiveNotes, runMeetingAsk, runMeetingChapters, runMeetingSummary, runMeetingTranslation, runNotesEnhance, runNotesOrganize, runNotesSuggestTodos, runNotesSummarize, runNotesTodoPlan, runProjectsTasksFromNote, runProjectsTasksFromSource, runTranscriptTranslation, tasksFromNoteStatusOf, tasksFromSourceStatusOf, transcriptTranslationStatusOf, translationStatusOf, type ModelPort, runMeetingCommitments, runMeetingOpenPoints , runMeetingTemplateSuggest } from './member-vy-ports.ts';
 import { draftReorder, stockAi, suggestItems, suggestMarketplaceItems } from './stock-ai.ts';
 import { MARKETPLACE_AUTHORIZED_ADAPTERS, MARKETPLACE_FEE_CYCLE_DAYS, misaChannelProvider, MarketplaceProviderError, SANDBOX_MARKETPLACE_SECRET, type EInvoiceSuggestSource, type MarketplaceProvider, type MarketplaceTestResult, type MarketplaceSuggestSource, type MarketplaceProposalFacts, type ReorderSource, type SuggestSource } from '@ludy/mod-finance';
 import { cashForecastAi, explainCashForecast } from './finance-cash-forecast-ai.ts';
@@ -1718,6 +1718,22 @@ export function createRpcHandler(
           const { idempotencyKey, ...rest } = input;
           return runtime.execute('meetings.followup.send', rest, { actor, orgId, idempotencyKey });
         })),
+      },
+      // Vy proposing the update of the deal a meeting is linked to (#4766): the status, the one model call (the recorder's own run and meter, counts only stored) and the recorder's confirm, which runs once
+      // per idempotency key (a double click or a retry gets the first answer, never a second task).
+      dealUpdate: {
+        status: os.meetings.dealUpdate.status.handler(({ context, input }) =>
+          inMeetings(context, (orgId, actor) => dealUpdateStatusOf({ runtime, model: summaryModel, meter: aiMeter ?? (() => null) }, orgId, actor, input.meetingId)),
+        ),
+        propose: os.meetings.dealUpdate.propose.handler(({ context, input }) =>
+          inMeetings(context, (orgId, actor) => runMeetingDealUpdate({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: summaries }, orgId, actor, input)),
+        ),
+        confirm: os.meetings.dealUpdate.confirm.handler(({ context, input }) =>
+          inMeetings(context, (orgId, actor) => {
+            const { idempotencyKey, ...rest } = input;
+            return runtime.execute('meetings.deal_update.confirm', rest, { actor, orgId, idempotencyKey });
+          }),
+        ),
       },
       // Minutes to a Slack or Teams channel (B4, #3168). The API only seals the pasted address and queues the recorder's click; the worker job (kernel-meeting-chat) opens the sealed address and posts (ADR-0025).
       chat: {
