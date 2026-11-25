@@ -98,6 +98,8 @@ function createStubRuntime() {
         text = JSON.stringify({ speakers: [{ label: 'Lan', lines: [{ kind: 'commitment', text: 'Gui bao cao truoc thu Sau.', second: 0 }] }] });
       } else if (feature === 'meetings.template_suggest') {
         text = JSON.stringify({ template: 'customer', reason: 'Gui bao gia cho khach.', second: 0 });
+      } else if (feature === 'meetings.open_points') {
+        text = JSON.stringify({ points: [{ kind: 'question', text: 'Ai se gui bao cao truoc thu Sau?', second: 0 }] });
       } else if (feature === 'meetings.followup_note') {
         text = JSON.stringify({
           body: 'Cam on ban da tham gia buoi trao doi ke hoach ban hang.\n\nLan se gui tai lieu ke hoach trong tuan sau.',

@@ -59,6 +59,8 @@ export const MEMBER_VY_FEATURES = {
   'meetings.followup_note': { module: 'meetings', expiryMinutes: 30 },
   // The recorder's Vy suggesting the minutes template of one meeting from its transcript when code could not tell, in the foreground (#4772): one model call, the member waiting for it, the answer shown and never stored (counts only). Its own key, so it never cuts off a transcription, a summary, a translation, a question, a brief, chapters, commitments or a title (#3029).
   'meetings.template_suggest': { module: 'meetings', expiryMinutes: 30 },
+  // The recorder's Vy listing what a meeting left open, questions asked and not answered and decisions raised and not taken, from the transcript in the foreground (#4768): one model call, the member waiting for it, the lines shown and never stored (counts only). Its own key, so it never cuts off a transcription, a summary, a translation, a question, a brief, chapters, commitments or a title (#3029).
+  'meetings.open_points': { module: 'meetings', expiryMinutes: 30 },
   'projects.tasks_from_note': { module: 'projects', expiryMinutes: 30 },
   'projects.tasks_from_source': { module: 'projects', expiryMinutes: 30 },
 } as const;

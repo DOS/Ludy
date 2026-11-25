@@ -702,6 +702,7 @@ import { zBriefAnswer, zBriefEmpty, zBriefFacts, zBriefStatus, zBriefTarget } fr
 import { zMeetingRename, zMeetingRenamed, zTitleAnswer } from './meeting-title.ts';
 import { zCommitmentsAnswer } from './meeting-commitments.ts';
 import { zTemplateSuggestion, zTemplateVyAnswer } from './meeting-template-suggest.ts';
+import { zOpenPointsAnswer } from './meeting-open-points.ts';
 import { zDigestAnswer, zDigestAsk, zDigestFacts, zDigestStatus } from './meeting-digest.ts';
 import { zMeetingsTodayFacts } from './meeting-today.ts';
 import { zMorningEmpty, zMorningSet, zMorningState } from './meeting-morning.ts';
@@ -1933,6 +1934,12 @@ export const contract = {
       suggest: oc.input(zSummaryRef).output(zTemplateSuggestion),
       status: oc.input(zSummaryRef).output(zSummaryStatus),
       vy: oc.input(zSummaryRef).output(zTemplateVyAnswer),
+    },
+    // What a meeting left open (#4768): `status` is the button (the same answer as the chapters'), `list` the click that has the recorder's own Vy list, from the transcript, the questions asked and not answered and the
+    // topics where a decision was raised and not taken, each with the second of the line it rests on. The lines go back to the browser and are stored nowhere; nothing is published or made a task from here.
+    openPoints: {
+      status: oc.input(zSummaryRef).output(zSummaryStatus),
+      list: oc.input(zSummaryRef).output(zOpenPointsAnswer),
     },
     // This week's decisions and what is still open, across the meetings the member reads (#3949): `facts` are read by code as the member (published decisions and open action items of the meetings that started in the
     // last 7, 14 or 30 days) and work with AI off; `status` is the button (may Vy be used now, the cost of one recap), `recap` the click that has the member's own Vy write two or three sentences from those facts. Nothing
