@@ -31,7 +31,10 @@ export type MeetingPlatformErrorCode =
   | 'no_transcript'
   // Microsoft Teams (C4): a tenant administrator has not turned on Graph access to meeting transcripts, or speaker names; only the administrator can fix either.
   | 'transcripts_disabled'
-  | 'speakers_disabled';
+  | 'speakers_disabled'
+  // Google Meet's Picker route (#3174): no pick, or a pick that is not the file Meet gave for the recording.
+  | 'pick_missing'
+  | 'pick_mismatch';
 
 export type MeetingPlatformCallPlatform = 'google_meet' | 'zoom' | 'microsoft_teams';
 
