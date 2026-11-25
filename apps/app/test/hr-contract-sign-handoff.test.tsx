@@ -494,6 +494,97 @@ describe('Ludy Nhan su -> Ludy eSign labor contract handoff (#3553)', () => {
     expect(canDownloadSealedHrContract(makeEnvelope('completed'))).toBe(true);
   });
 
+  it('gives the HrContractSignHandoff status link >= 44px mobile touch sizing inside stacked DataTable while preserving alignment (#4596)', () => {
+    seedSignEnabled(true);
+    state.client.setQueryData(['hr', 'payroll', 'employees', 'get', { employeeId: EMP_ID }], SAMPLE_EMPLOYEE);
+
+    const makeEnvelope = (status: SignEnvelopeBySourceItem['status']): SignEnvelopeBySourceItem => ({
+      sourceId: TERMS_ID,
+      envelopeId: state.createdEnvelopeId,
+      title: 'Hợp đồng lao động - Nguyễn Thị Minh Ánh (2026-11-01)',
+      status,
+      sealStatus: status === 'completed' ? 'sealed' : null,
+      sealedFileId: status === 'completed' ? SEALED_FILE_ID : null,
+      certificateCode: status === 'completed' ? 'CS-HR01-ABCD' : null,
+      completedAt: status === 'completed' ? '2026-11-17T08:15:00.000Z' : null,
+      signerCount: 1,
+      signedCount: status === 'completed' ? 1 : 0,
+      createdAt: '2026-11-17T08:00:00.000Z',
+      updatedAt: '2026-11-17T08:15:00.000Z',
+    });
+
+    const extractLinkClassTokens = (html: string): string[] => {
+      const linkMatch = /<a[^>]*data-testid="hr-contract-sign-status"[^>]*>/i.exec(html);
+      expect(linkMatch).not.toBeNull();
+      const classMatch = /\bclass="([^"]*)"/.exec(linkMatch![0]);
+      expect(classMatch).not.toBeNull();
+      return classMatch![1]!.split(/\s+/).filter(Boolean);
+    };
+
+    for (const status of ['draft', 'sent', 'completed', 'declined', 'voided'] as const) {
+      state.client.setQueryData(
+        ['sign', 'envelope', 'by_source', { sourceKind: 'hr_contract', sourceIds: [TERMS_ID] }],
+        { items: [makeEnvelope(status)] },
+      );
+
+      for (const locale of ['vi', 'en'] as const) {
+        const html = renderWithProviders(
+          <Detail employeeId={EMP_ID} owner={true} departments={[]} onClose={() => {}} />,
+          locale,
+        );
+        // Stacked DataTable rule targets direct child `>a`, while Detail wraps HrContractSignHandoff in a flex div for sibling alignment.
+        expect(html).toContain('max-sm:[&amp;_td:not([colspan])&gt;a]:min-h-11');
+        expect(html).toContain('data-testid="hr-terms-sign-cell"><div class="flex flex-wrap items-center gap-2"><a ');
+
+        const tokens = extractLinkClassTokens(html);
+        expect(tokens).toEqual(
+          expect.arrayContaining([
+            'inline-flex',
+            'min-h-7',
+            'min-w-7',
+            'items-center',
+            'justify-center',
+            'rounded-4xl',
+            'max-md:min-h-11',
+            'max-md:min-w-11',
+            'focus-visible:ring-3',
+            'focus-visible:outline-none',
+          ]),
+        );
+        expect(tokens.some((c) => c.startsWith('max-md:text-'))).toBe(false);
+
+        // Trailing contract PDF action column keeps desktop right alignment and >= 44px phone target.
+        expect(html).toMatch(/<td[^>]*class="[^"]*text-right[^"]*"[^>]*><button[^>]*data-testid="hr-terms-contract-pdf"/);
+        const pdfBtnMatch = /<button[^>]*data-testid="hr-terms-contract-pdf"[^>]*>/.exec(html);
+        expect(pdfBtnMatch?.[0]).toContain('max-md:min-h-11');
+
+        if (status === 'completed') {
+          const sealedBtnMatch = /<button[^>]*data-testid="hr-contract-download-sealed"[^>]*>/.exec(html);
+          expect(sealedBtnMatch?.[0]).toContain('max-md:min-h-11');
+        }
+        if (status === 'declined' || status === 'voided') {
+          const sendBtnMatch = /<button[^>]*data-testid="hr-contract-send-esign"[^>]*>/.exec(html);
+          expect(sendBtnMatch?.[0]).toContain('max-md:min-h-11');
+        }
+      }
+    }
+
+    // When a row has no contract and no envelope, the sign cell stays truly empty so stacked mobile `td:empty` hides it.
+    state.client.setQueryData(['hr', 'payroll', 'employees', 'get', { employeeId: EMP_ID }], {
+      ...SAMPLE_EMPLOYEE,
+      current: { ...SAMPLE_EMPLOYMENT, contractType: 'none' as const },
+      employments: [{ ...SAMPLE_EMPLOYMENT, contractType: 'none' as const }],
+    });
+    state.client.setQueryData(
+      ['sign', 'envelope', 'by_source', { sourceKind: 'hr_contract', sourceIds: [TERMS_ID] }],
+      { items: [] },
+    );
+    const noContractHtml = renderWithProviders(
+      <Detail employeeId={EMP_ID} owner={true} departments={[]} onClose={() => {}} />,
+    );
+    expect(noContractHtml).toMatch(/<td[^>]*data-testid="hr-terms-sign-cell"[^>]*><\/td>/);
+  });
+
   it('prefills hired candidate email + phone, falls back to link delivery, recovers unfinished retries, and auto-uses #3548 contractPdf when available', async () => {
     state.hiredCandidates = [
       {

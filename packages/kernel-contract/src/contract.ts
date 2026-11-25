@@ -699,7 +699,7 @@ import {
   zMinutesTemplates,
 } from './meeting-minutes-templates.ts';
 import { zMinutesVersionPublish, zMinutesVersionPublished, zMinutesVersionUnpublish, zMinutesVersionUnpublished, zMinutesVersions } from './meeting-minutes-version.ts';
-import { zAskAnswer, zAskEmpty, zAskInput, zAskStatus } from './meeting-ask.ts';
+import { zAskAnswer, zAskEmpty, zAskInput, zAskLines, zAskMeetingLinesInput, zAskStatus } from './meeting-ask.ts';
 import { zBriefAnswer, zBriefEmpty, zBriefFacts, zBriefStatus, zBriefTarget } from './meeting-brief.ts';
 import { zMeetingRename, zMeetingRenamed, zTitleAnswer } from './meeting-title.ts';
 import { zCommitmentsAnswer } from './meeting-commitments.ts';
@@ -891,6 +891,7 @@ import {
   zProjectTriageReopenInput,
   zProjectTriageSnoozeInput,
 } from './projects-triage.ts';
+import { zDealUpdateAnswer, zDealUpdateAsk, zDealUpdateConfirmCall, zDealUpdateConfirmed, zDealUpdateStatus } from './meeting-deal-update.ts';
 import { zFollowupDraft, zFollowupDraftAsk, zFollowupNoteAnswer, zFollowupNoteAsk, zFollowupNoteStatus, zFollowupSendCall, zFollowupSent, zFollowupWording, zFollowupWordingAsk } from './meeting-followup.ts';
 import { zChatChannelList, zChatChannelRemove, zChatChannelRemoved, zChatChannelSaveCall, zChatChannelSaved, zChatEmpty, zChatPostCall, zChatPosted, zChatPreview, zChatStatus, zChatStatusInput } from './meeting-chat.ts';
 import { zExtensionOrgToken, zExtensionToken, zExtensionTokenRevoke, zExtensionTokenRevoked, zExtensionTokenRevokedMember } from './extension.ts';
@@ -1861,6 +1862,13 @@ export const contract = {
       note: oc.input(zFollowupNoteAsk).output(zFollowupNoteAnswer),
       send: oc.input(zFollowupSendCall).output(zFollowupSent),
     },
+    // Vy proposing the update of the deal a meeting is linked to (#4766): the recorder of a meeting with published minutes asks their own Vy for the deal's next step and a short note, reads and
+    // edits them, and confirms; nothing is written before `confirm` (R1: a task, a line of the contact's timeline, the stale-deal reminder closed).
+    dealUpdate: {
+      status: oc.input(zMeetingRef).output(zDealUpdateStatus),
+      propose: oc.input(zDealUpdateAsk).output(zDealUpdateAnswer),
+      confirm: oc.input(zDealUpdateConfirmCall).output(zDealUpdateConfirmed),
+    },
     // Approved minutes posted to a Slack or Microsoft Teams channel (B4, #3168): an owner or admin pastes a webhook address (sealed, never shown again); the recorder of a meeting with a published result reads the
     // exact message (`preview`), picks a channel and presses "Gửi" (`post`, R2: queues the post, which the worker's job sends through the egress guard; no model).
     chat: {
@@ -1920,6 +1928,8 @@ export const contract = {
     ask: {
       status: oc.input(zAskEmpty).output(zAskStatus),
       ask: oc.input(zAskInput).output(zAskAnswer),
+      // The lines a question's search finds (with `meetingId`, in that meeting only): the plain list the box shows when Vy cannot be asked. No model.
+      lines: oc.input(zAskMeetingLinesInput).output(zAskLines),
     },
     // Vy's brief before a meeting (#3543): `facts` are read by code as the member (the decisions of the previous meeting of the series if they read it, the open items, the linked customer's open deals) and work with AI
     // off; `status` is the button (may Vy be used now, the cost of one brief), `write` the click that has the member's own Vy write two or three sentences from those facts. Nothing is stored or sent.
