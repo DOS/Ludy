@@ -241,6 +241,7 @@ export interface LudyMeetingsSchema {
   'ludy_meetings.meeting_video': MeetingsMeetingVideoTable;
   'ludy_meetings.minutes_link': MeetingsMinutesLinkTable;
   'ludy_meetings.minutes_template': MeetingsMinutesTemplateTable;
+  'ludy_meetings.minutes_version': MeetingsMinutesVersionTable;
   'ludy_meetings.morning_notice': MeetingsMorningNoticeTable;
   'ludy_meetings.tracker_term': MeetingsTrackerTermTable;
   'ludy_meetings.transcript_segment': MeetingsTranscriptSegmentTable;
@@ -3909,6 +3910,19 @@ export interface MeetingsMinutesTemplateTable {
   created_by: string;
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_meetings.minutes_version */
+export interface MeetingsMinutesVersionTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  meeting_id: ColumnType<string, string, NotGranted>;
+  language: ColumnType<string, string, NotGranted>;
+  source_hash: ColumnType<string, string, NotGranted>;
+  body: ColumnType<unknown, string, NotGranted>;
+  published_by: ColumnType<string, string, NotGranted>;
+  source_run_id: ColumnType<string | null, string | null, NotGranted>;
+  published_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
 /** ludy_meetings.morning_notice */
