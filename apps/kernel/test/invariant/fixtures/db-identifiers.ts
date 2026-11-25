@@ -62,9 +62,15 @@ const IS_CATALOG_QUERY_RE =
   /(?:\b(?:pg_catalog|pg_roles|pg_proc|pg_class|pg_namespace|pg_attribute|pg_trigger|pg_policy|pg_policies|pg_indexes|pg_tables|pg_event_trigger|pg_constraint|pg_auth_members|pg_get_functiondef|pg_get_userbyid|pg_get_expr|information_schema|has_function_privilege|has_table_privilege|has_schema_privilege|has_column_privilege|pg_has_role|to_regprocedure|to_regclass|to_regnamespace|current_user|session_user|set_config|current_setting)\b|::reg(?:procedure|class)\b|^\s*EXPLAIN\b)/i;
 const WRAPPED = new WeakSet<object>();
 const RAW_QUERY = new WeakMap<object, (...args: unknown[]) => unknown>();
+const SESSION_INIT = new WeakSet<object>();
 
 export interface WrapOptions {
   readonly canonicalizeCatalog?: boolean;
+}
+
+export interface DbPoolOptions extends WrapOptions {
+  /** Impersonates `crove_app` or `crove_worker` via `SET SESSION AUTHORIZATION` on each connection instead of password login. */
+  readonly sessionRole?: 'crove_app' | 'crove_worker';
 }
 
 export interface DbIdentifiers {
@@ -509,16 +515,52 @@ export function createDbClient(config: string | pg.ClientConfig, ids?: DbIdentif
   return wrapClient(new pg.Client(next), ids, options);
 }
 
-export function createDbPool(opts: PoolOptions, ids?: DbIdentifiers, options?: WrapOptions): pg.Pool {
-  if (!ids) return createPool(opts);
-  return wrapPool(
-    createPool({
-      ...opts,
-      connectionString: rewriteConnectionString(opts.connectionString, ids),
-    }),
-    ids,
-    options,
-  );
+export function createDbPool(opts: PoolOptions, ids?: DbIdentifiers, options?: DbPoolOptions): pg.Pool {
+  const sessionRole = options?.sessionRole;
+  const connectionString = !ids || sessionRole ? opts.connectionString : rewriteConnectionString(opts.connectionString, ids);
+  const pool = createPool({ ...opts, connectionString });
+  if (sessionRole) {
+    const targetRole = ids ? ids.roleName(sessionRole) : sessionRole;
+    const authSql = `SET SESSION AUTHORIZATION ${pg.escapeIdentifier(targetRole)}; SET search_path = pg_catalog, pg_temp`;
+    const initClient = async (client: pg.PoolClient) => {
+      if (!SESSION_INIT.has(client)) {
+        await client.query(authSql);
+        SESSION_INIT.add(client);
+      } else {
+        await client.query('SET search_path = pg_catalog, pg_temp');
+      }
+      return client;
+    };
+    const origConnect = pool.connect.bind(pool) as (...args: unknown[]) => unknown;
+    (pool as unknown as { connect: (...args: unknown[]) => unknown }).connect = (...args: unknown[]) => {
+      if (typeof args[0] === 'function') {
+        const cb = args[0] as (err: Error, client: pg.PoolClient, done: (release?: unknown) => void) => void;
+        return origConnect((err: Error, client: pg.PoolClient, done: (release?: unknown) => void) => {
+          if (err || !client) return cb(err, client, done);
+          void initClient(client).then(
+            (initialized) => cb(err, initialized, done),
+            (initErr: unknown) => {
+              const failure = initErr instanceof Error ? initErr : new Error(String(initErr));
+              done(failure);
+              cb(failure, undefined as unknown as pg.PoolClient, () => {});
+            },
+          );
+        });
+      }
+      const p = origConnect(...args) as Promise<pg.PoolClient>;
+      return p.then(async (client) => {
+        try {
+          return await initClient(client);
+        } catch (initErr) {
+          const failure = initErr instanceof Error ? initErr : new Error(String(initErr));
+          client.release(failure);
+          throw failure;
+        }
+      });
+    };
+  }
+  if (!ids) return pool;
+  return wrapPool(pool, ids, options);
 }
 
 export function createRawPool(config: pg.PoolConfig, ids?: DbIdentifiers, options?: WrapOptions): pg.Pool {

@@ -239,6 +239,37 @@ suite('the recorder publishes the transcript lines with the minutes (#4899)', ()
     expect((await get('reader', meetingId)).segments.map((s) => s.startSeconds)).toEqual([0, 12, 25]);
   });
 
+  it('a publish that replaces only the lines keeps published chapters and highlights that still start at a new line, and refuses or removes the ones that do not (#4915)', async () => {
+    const meetingId = await seedMeeting('Họp mục lục cũ', THREE);
+    await exec('recorder', 'meetings.chapters.save', { meetingId, chapters: [{ title: 'Báo giá', startSeconds: 10 }] });
+    expect(await publish('recorder', meetingId)).toMatchObject({ chapters: 1, lines: 3 });
+    // A reader marks the line at 0 and the one at 10; the recorder marks the one at 20.
+    await exec('reader', 'meetings.highlight.add', { meetingId, startSeconds: 0, endSeconds: 0 });
+    await exec('reader', 'meetings.highlight.add', { meetingId, startSeconds: 10, endSeconds: 10 });
+    await exec('recorder', 'meetings.highlight.add', { meetingId, startSeconds: 20, endSeconds: 20 });
+    const marks = async (who: string) => (await query<{ highlights: Array<{ startSeconds: number }> }>(who, 'meetings.highlight.list', { meetingId })).highlights.map((h) => h.startSeconds);
+    const chapterSeconds = async () => (await sqlAdmin<{ start_seconds: number; stage: string }>(`SELECT start_seconds, stage FROM ludy_meetings.meeting_chapter WHERE org_id = $1 AND meeting_id = $2 ORDER BY start_seconds`, [orgId, meetingId])).rows.map((r) => [r.stage, r.start_seconds]);
+    expect(await marks('reader')).toEqual([0, 10, 20]);
+    // A re-transcription whose lines start at 0, 10 and 20 again: nothing is lost, and the chapter and the three marks stay.
+    await store('recorder', meetingId, [{ at: 0, said: 'Một mới' }, { at: 10, said: 'Hai mới' }, { at: 20, said: 'Ba mới' }]);
+    expect(await publish('recorder', meetingId)).toMatchObject({ chapters: 0, lines: 3 });
+    expect(await chapterSeconds()).toEqual([['published', 10]]);
+    expect(await marks('reader')).toEqual([0, 10, 20]);
+    // Another whose lines start at 0, 12 and 25: the chapter at 10 would point at nothing, so the publish is refused as a whole and nothing changes.
+    await store('recorder', meetingId, [{ at: 0, said: 'Một khác' }, { at: 12, said: 'Hai khác' }, { at: 25, said: 'Ba khác' }]);
+    expect(await refuses(publish('recorder', meetingId))).toBe('CHAPTER_ANCHOR_LOST');
+    expect((await get('reader', meetingId)).segments.map((s) => s.startSeconds)).toEqual([0, 10, 20]);
+    expect(await chapterSeconds()).toEqual([['published', 10]]);
+    expect(await marks('reader')).toEqual([0, 10, 20]);
+    expect((await stored(meetingId, 'draft')).map((r) => r.text)).toEqual(['Một khác', 'Hai khác', 'Ba khác']);
+    // The chapters saved again against the new lines, the same publish goes through: the chapter moves, the marks at 10 and 20 lose their lines and go, the mark at 0 stays.
+    await exec('recorder', 'meetings.chapters.save', { meetingId, chapters: [{ title: 'Báo giá', startSeconds: 12 }] });
+    expect(await publish('recorder', meetingId)).toMatchObject({ chapters: 1, lines: 3 });
+    expect(await chapterSeconds()).toEqual([['published', 12]]);
+    expect(await marks('reader')).toEqual([0]);
+    expect(await marks('recorder')).toEqual([0]);
+  });
+
   it('shares the summary, the items and the lines in one publish, and counts each', async () => {
     const meetingId = await seedMeeting('Họp đủ phần', THREE);
     await exec('recorder', 'meetings.summary.save', { meetingId, summary: 'Chốt báo giá cho khách A.', decisions: ['Giữ giá cũ'] });

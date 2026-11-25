@@ -13,23 +13,28 @@ import type { MailEvent, MailProvider, WebhookRequest } from '@ludy/mail';
 import { WebhookRejected } from '@ludy/mail';
 import type { Runtime } from '@ludy/kernel-runtime';
 
-// A webhook delivery carries one event; this bounds what the API reads before checking its signature.
-export const MAX_MAIL_WEBHOOK_BYTES = 256 * 1024;
+// A webhook delivery carries one event (or one SNS notification envelope); this bounds what the API reads before checking its signature.
+export const MAX_MAIL_WEBHOOK_BYTES = 512 * 1024;
+
+const CAPACITY_RETRY_AFTER_SECONDS = 5;
 
 export type MailWebhookOutcome =
   | { status: 202; queued: number }
   | { status: 200; queued: 0 }
   | { status: 401; code: 'WEBHOOK_SIGNATURE' }
-  | { status: 400; code: 'WEBHOOK_MALFORMED' };
+  | { status: 400; code: 'WEBHOOK_MALFORMED' }
+  | { status: 503; code: 'WEBHOOK_CAPACITY'; retryAfterSeconds: number };
 
 export async function acceptMailWebhook(runtime: Runtime, provider: MailProvider, request: WebhookRequest, now: number = Date.now()): Promise<MailWebhookOutcome> {
   if (!provider.parseWebhook) throw new Error('the provider has no webhooks');
   let events: MailEvent[];
   try {
-    events = provider.parseWebhook(request, now);
+    events = await provider.parseWebhook(request, now);
   } catch (error) {
     if (!(error instanceof WebhookRejected)) throw error;
-    return error.reason === 'malformed' ? { status: 400, code: 'WEBHOOK_MALFORMED' } : { status: 401, code: 'WEBHOOK_SIGNATURE' };
+    if (error.reason === 'malformed') return { status: 400, code: 'WEBHOOK_MALFORMED' };
+    if (error.reason === 'capacity') return { status: 503, code: 'WEBHOOK_CAPACITY', retryAfterSeconds: CAPACITY_RETRY_AFTER_SECONDS };
+    return { status: 401, code: 'WEBHOOK_SIGNATURE' };
   }
   // An event type Ludy does not record: acknowledged, so the provider stops retrying it.
   if (events.length === 0) return { status: 200, queued: 0 };
