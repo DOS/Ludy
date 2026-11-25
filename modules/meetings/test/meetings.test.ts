@@ -229,6 +229,7 @@ describe('meetings commands and queries construction', () => {
       'meetings.tracker.list',
       'meetings.tracker.hits',
       'meetings.tracker.week',
+      'meetings.minutes_docx.download',
       'meetings.today.facts',
       'meetings.morning.get',
       'meetings.assignee.facts',

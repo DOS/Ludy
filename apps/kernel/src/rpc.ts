@@ -1776,6 +1776,9 @@ export function createRpcHandler(
         get: os.meetings.consentPolicy.get.handler(meetingsQuery('meetings.consent_policy.get')),
         set: os.meetings.consentPolicy.set.handler(meetingsCommand('meetings.consent_policy.set')),
       },
+      minutesDocx: {
+        download: os.meetings.minutesDocx.download.handler(meetingsQuery('meetings.minutes_docx.download')),
+      },
       minutesEsign: {
         get: os.meetings.minutesEsign.get.handler(meetingsQuery('meetings.minutes_esign.get')),
         set: os.meetings.minutesEsign.set.handler(meetingsCommand('meetings.minutes_esign.set')),

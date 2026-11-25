@@ -178,6 +178,7 @@ export * from './invisible-chars.ts';
 export * from './meeting-transcript-export.ts';
 export * from './meeting-glossary.ts';
 export * from './meeting-minutes-templates.ts';
+export * from './meeting-minutes-docx.ts';
 export * from './meeting-templates.ts';
 export * from './meeting-template-suggest.ts';
 export * from './meetings.ts';
