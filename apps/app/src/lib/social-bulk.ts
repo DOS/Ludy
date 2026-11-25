@@ -41,7 +41,7 @@ export interface BulkPost {
 const SIGNED_OFF = ['approved', 'scheduled', 'paused'];
 // What social.post.submit sends to review by default (#1178): drafts and channels sent back.
 const SUBMITTABLE = ['draft', 'changes_requested', 'rejected'];
-// What social.variant.retry publishes again now (#1456): channels that failed, and those Crove could not account for.
+// What social.variant.retry publishes again now (#1456): channels that failed, and those Ludy could not account for.
 const RETRYABLE = ['failed', 'needs_attention'];
 
 export type BulkRequest =

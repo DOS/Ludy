@@ -51,10 +51,10 @@ type OAuthProvider = (typeof OAUTH_CHANNEL_PROVIDERS)[number];
 type Slot = { weekday: number; minute: number; label?: string; labelId?: string | null };
 
 const CHANNEL_TONE = { active: 'success', expired: 'warning', error: 'destructive', revoked: 'outline' } as const;
-// Platforms whose tokens Crove cannot renew: the member reconnects before the date, and is warned two weeks ahead.
+// Platforms whose tokens Ludy cannot renew: the member reconnects before the date, and is warned two weeks ahead.
 const NO_RENEWAL: readonly string[] = ['linkedin', 'linkedin_page'];
 const WARN_BEFORE_MS = 14 * 86_400_000;
-// The time zones most Crove orgs post in; the queue keeps any IANA zone it already has.
+// The time zones most Ludy orgs post in; the queue keeps any IANA zone it already has.
 const ZONES = ['Asia/Ho_Chi_Minh', 'Asia/Bangkok', 'Asia/Singapore', 'Asia/Tokyo', 'Australia/Sydney', 'Europe/London', 'America/New_York', 'America/Los_Angeles', 'UTC'];
 const WEEKDAYS = [1, 2, 3, 4, 5, 6, 7] as const;
 const DAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as const;

@@ -203,7 +203,7 @@ function channelsOf(text: string, channels: readonly ImportChannel[], problems: 
   return ids;
 }
 
-// A cell as Crove's CSV exports wrote it (#978): the quote they put before a leading =, +, -, @, tab or carriage return,
+// A cell as Ludy's CSV exports wrote it (#978): the quote they put before a leading =, +, -, @, tab or carriage return,
 // so a spreadsheet keeps it as text, is dropped, and a plan exported and edited comes back with the text it had.
 export const unguard = (value: string) => (/^'[=+\-@\t\r]/.test(value) ? value.slice(1) : value);
 

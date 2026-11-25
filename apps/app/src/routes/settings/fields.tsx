@@ -497,7 +497,7 @@ export function AddressField({ address, canManage }: { address: string | null; c
   );
 }
 
-// The org's contact email (issue #669): where Crove sends the requests for missing purchase invoices. Owners and admins
+// The org's contact email (issue #669): where Ludy sends the requests for missing purchase invoices. Owners and admins
 // edit it; everyone else sees it.
 export function ContactEmailField({ email, canManage }: { email: string | null; canManage: boolean }) {
   const t = useTranslations('settings');

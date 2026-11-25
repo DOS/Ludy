@@ -202,7 +202,7 @@ function OrgNotFoundPage() {
   );
 }
 
-// A screen outside /o/$slug of a module this deployment leaves out (CROVE_MODULES) is not found (ADR-0031 §3, #1660):
+// A screen outside /o/$slug of a module this deployment leaves out (LUDY_MODULES) is not found (ADR-0031 §3, #1660):
 // its page would only fail, as the API answers the module's calls (the booking page, the review and report links) or as
 // no part of the app starts it (the share target and the channel OAuth callback, which only social's screens begin).
 // Before any sign-in, so a public link stays public. The module comes from the manifests, by the matched route's own
@@ -501,7 +501,7 @@ async function loadOrgApps(slug: string) {
   else await readOrgApps(slug);
 }
 
-// A screen of a module this deployment leaves out (CROVE_MODULES) sends you to the overview (ADR-0031 §3, #3225). The module of
+// A screen of a module this deployment leaves out (LUDY_MODULES) sends you to the overview (ADR-0031 §3, #3225). The module of
 // every screen comes from the manifests (#1652), so a new module's screens are guarded without a line here. The screen
 // is the matched route's own path ('/o/$slug/journal' for /o/acme/JOURNAL), not the address as typed.
 function requireInstalledScreen(slug: string, matches: readonly { fullPath: unknown }[]) {

@@ -1,5 +1,5 @@
 // The Apps of the shell (issue #1528; DESIGN.md 1.1: Suite -> App -> Feature Group -> Module). Each App has its own
-// menu of Feature Groups; the switcher lists Apps that have at least one active Module in the org (CROVE_MODULES,
+// menu of Feature Groups; the switcher lists Apps that have at least one active Module in the org (LUDY_MODULES,
 // ADR-0031, ADR-0053), and an item of an inactive Module is omitted. The org's own screens (Overview, Notifications,
 // Settings) belong to no App and sit on the shell rail; Settings shows its sub-pages in the secondary sidebar (#4499).
 // Modules declare screens and menu items through MODULE_SCREENS (#1652); the shell keeps presentation details

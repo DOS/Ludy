@@ -1,4 +1,4 @@
-// Posts a channel published outside Crove (#1054), next to Crove's own on the Metrics tab: one list, newest first, and
+// Posts a channel published outside Ludy (#1054), next to Ludy's own on the Metrics tab: one list, newest first, and
 // a link to the post only when it is an https page.
 
 export interface LudyPublished {
@@ -11,9 +11,9 @@ export interface OutsidePublished {
 }
 export type PublishedItem<C extends LudyPublished, O extends OutsidePublished> = { kind: 'ludy'; row: C } | { kind: 'outside'; row: O };
 
-// Crove's rows and the outside ones in one list, newest first. Both come newest first from the server; they are merged
-// without reordering either, so Crove's rows keep the server's order (with no outside post the list is Crove's as is),
-// and an outside post goes before the first Crove row published before it (a Crove row without a time counts as oldest).
+// Ludy's rows and the outside ones in one list, newest first. Both come newest first from the server; they are merged
+// without reordering either, so Ludy's rows keep the server's order (with no outside post the list is Ludy's as is),
+// and an outside post goes before the first Ludy row published before it (a Ludy row without a time counts as oldest).
 export function mergePublished<C extends LudyPublished, O extends OutsidePublished>(ludy: readonly C[], outside: readonly O[]): PublishedItem<C, O>[] {
   const at = (iso: string | null) => (iso ? Date.parse(iso) : Number.NEGATIVE_INFINITY);
   const out: PublishedItem<C, O>[] = [];
