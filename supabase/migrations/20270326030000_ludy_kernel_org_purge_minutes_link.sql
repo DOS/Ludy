@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
--- Issue #4822: restate ludy_kernel.org_purge from 20270324250100_ludy_kernel_org_purge_minutes_version (the newest body on main, which carries sign_deposit, tracker_term and minutes_version)
+-- Issue #4822: restate ludy_kernel.org_purge from 20270325060000_ludy_kernel_ai_budget_reservation (the newest body on main, which carries sign_deposit, tracker_term, minutes_version and ai_budget_reservation)
 -- with ONE change: delete ludy_meetings.minutes_link (the links to published minutes, token hashes only) ahead of the meeting rows it hangs on.
 SET LOCAL lock_timeout = '2s';
 
@@ -59,7 +59,7 @@ DECLARE
     'ludy_kernel.idempotency_key', 'ludy_kernel.extension_token', 'ludy_kernel.extension_auth_code', 'ludy_kernel.agent_wake_delivery', 'ludy_kernel.agent_wake_signal_seen', 'ludy_kernel.agent_grant_wake', 'ludy_kernel.agent_grant', 'ludy_kernel.oauth_state', 'ludy_kernel.outbox_pending', 'ludy_kernel.outbox_held',
     'ludy_kernel.proposal_policy', 'ludy_kernel.refusal_tally', 'ludy_kernel.tax_obligation_done',
     'ludy_kernel.tax_profile', 'ludy_kernel.usage_deferral', 'ludy_kernel.file_upload', 'ludy_kernel.record_le',
-    'ludy_kernel.budget_policy', 'ludy_kernel.kill_switch', 'ludy_kernel.credential', 'ludy_kernel.subject_key', 'ludy_kernel.calendar_credential',
+    'ludy_kernel.ai_budget_reservation', 'ludy_kernel.budget_policy', 'ludy_kernel.kill_switch', 'ludy_kernel.credential', 'ludy_kernel.subject_key', 'ludy_kernel.calendar_credential',
     'ludy_finance.vendor_account_rule', 'ludy_finance.categorization_rule', 'ludy_finance.stock_alias', 'ludy_finance.marketplace_column_profile', 'ludy_finance.marketplace_party', 'ludy_finance.einvoice_connection', 'ludy_finance.marketplace_hook_notice', 'ludy_finance.marketplace_hook', 'ludy_finance.marketplace_connection_file', 'ludy_finance.marketplace_vat_rate', 'ludy_finance.marketplace_connection', 'ludy_finance.marketplace_column_check', 'ludy_finance.misa_amis_match', 'ludy_finance.misa_amis_match_check', 'ludy_finance.misa_amis_push', 'ludy_finance.misa_amis_connection', 'ludy_finance.einvoice_series', 'ludy_finance.bank_party_rule', 'ludy_finance.customer_collection', 'ludy_finance.collection_setting', 'ludy_finance.bank_account_number', 'ludy_finance.bank_feed_webhook_notice', 'ludy_finance.bank_feed_hook', 'ludy_finance.bank_feed_account', 'ludy_finance.bank_feed_listed_account', 'ludy_crm.booking_feed', 'ludy_crm.booking', 'ludy_kernel.availability_rule',
     'ludy_kernel.calendar_event_link', 'ludy_kernel.calendar_event', 'ludy_kernel.calendar_connection', 'ludy_kernel.meeting_platform_recording', 'ludy_kernel.meeting_platform_credential', 'ludy_kernel.meeting_platform_connection', 'ludy_crm.sales_order_delivery', 'ludy_crm.sales_order_line', 'ludy_crm.sales_order', 'ludy_crm.quote_link', 'ludy_crm.quote_line', 'ludy_crm.quote', 'ludy_crm.quote_setting', 'ludy_crm.deal_next_step', 'ludy_crm.deal_setting', 'ludy_crm.deal', 'ludy_crm.pipeline_stage', 'ludy_crm.import_row', 'ludy_crm.import_batch', 'ludy_crm.event_type'];
   v_social text[] := ARRAY[

@@ -7,10 +7,12 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { AiBudgetExhaustedError, metered, withAiScope } from '@ludy/agent';
 import { createDb, createPool } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import { Runtime } from '@ludy/kernel-runtime';
+import { memberMeter } from '../src/ai-meter.ts';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
 import { contextToken } from './invariant/fixtures/context-token.ts';
 
@@ -289,5 +291,252 @@ suite('member Vy commands (ADR-0049 stage A slice 3)', () => {
     const declared = kernelQueries({ inboundDomain: 'in.test' }).filter((q) => q.name === 'kernel.member_vy.run.live' || q.name === 'kernel.member_vy.run.latest');
     expect(declared.map((q) => q.name).sort()).toEqual(['kernel.member_vy.run.latest', 'kernel.member_vy.run.live']);
     for (const q of declared) expect((q as { memberVy?: unknown }).memberVy ?? null, q.name).toBeNull();
+  });
+
+  it('keeps member-Vy hard-stop monthly caps strict under concurrent metered() calls and releases failed calls (#3979)', async () => {
+    await resetRuns();
+    const run = await start(users.alice);
+    const own = (await sqlAdmin<{ id: string }>(`SELECT id FROM ludy_kernel.agent WHERE org_id = $1 AND kind = 'member_vy' AND member_user_id = $2`, [orgId, users.alice]))[0]?.id;
+    expect(own).toBeTruthy();
+
+    await sqlAdmin(`DELETE FROM ludy_kernel.org_usage WHERE org_id = $1 AND metric = 'ai_cost'`, [orgId]);
+    await sqlAdmin(`DELETE FROM ludy_kernel.budget_policy WHERE org_id = $1`, [orgId]);
+    // Set an org hard-stop cap of 0.009500: two 0.004500 calls fit, the third is rejected.
+    await runtime.execute('kernel.agent.budget.set', { scope: 'org', target: '*', monthlyLimit: '0.009500' }, { actor: asMfa(users.owner), orgId });
+
+    const price = { inputPerMTok: '3', outputPerMTok: '15' };
+    const usage = { inputTokens: 1000, outputTokens: 100 };
+    const baseMeter = memberMeter(runtime, asUser(users.alice), { price });
+
+    let inFlight = 0;
+    let admitted = 0;
+    let rejectedCount = 0;
+    let released = false;
+    let releaseHold!: () => void;
+    const holdOpen = new Promise<void>((resolve) => {
+      releaseHold = resolve;
+    });
+    let resolveAllDecided!: () => void;
+    let rejectAllDecided!: (reason?: unknown) => void;
+    const allDecided = new Promise<void>((resolve, reject) => {
+      resolveAllDecided = resolve;
+      rejectAllDecided = reject;
+    });
+    const checkDecided = () => {
+      if (admitted + rejectedCount === 4 && inFlight + rejectedCount === 4) {
+        resolveAllDecided();
+      }
+    };
+
+    const settledPromise = Promise.allSettled(
+      Array.from({ length: 4 }, () => {
+        let rejectedInAdmit = false;
+        const meter: typeof baseMeter = {
+          admit: async (call) => {
+            try {
+              const reservationId = await baseMeter.admit(call);
+              admitted += 1;
+              checkDecided();
+              return reservationId;
+            } catch (error) {
+              rejectedInAdmit = true;
+              rejectedCount += 1;
+              checkDecided();
+              throw error;
+            }
+          },
+          record: (call, used, reservationId) => baseMeter.record(call, used, reservationId),
+          ...(baseMeter.release ? { release: (call, reservationId) => baseMeter.release!(call, reservationId) } : {}),
+        };
+        return withAiScope({ orgId, memberRunId: run.runId, meter }, () =>
+          metered(
+            'notes.summary',
+            async () => {
+              inFlight += 1;
+              checkDecided();
+              await holdOpen;
+              return { usage };
+            },
+            undefined,
+            usage,
+          ),
+        ).catch((error) => {
+          if (!released && !rejectedInAdmit) {
+            rejectAllDecided(error);
+          }
+          throw error;
+        });
+      }),
+    );
+
+    let settled: PromiseSettledResult<unknown>[];
+    try {
+      await allDecided;
+      expect(admitted).toBe(2);
+      expect(rejectedCount).toBe(2);
+      expect(inFlight).toBe(2);
+    } finally {
+      released = true;
+      releaseHold();
+      settled = await settledPromise;
+    }
+
+    expect(settled.filter((r) => r.status === 'fulfilled')).toHaveLength(2);
+    const rejected = settled.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+    expect(rejected).toHaveLength(2);
+    for (const r of rejected) expect(r.reason).toBeInstanceOf(AiBudgetExhaustedError);
+
+    expect(await sqlAdmin(`SELECT 1 FROM ludy_kernel.ai_budget_reservation WHERE org_id = $1`, [orgId])).toHaveLength(0);
+
+    // A failed call releases its hold immediately; another member cannot release Alice's reservation.
+    await sqlAdmin(`DELETE FROM ludy_kernel.org_usage WHERE org_id = $1 AND metric = 'ai_cost'`, [orgId]);
+    await expect(
+      withAiScope({ orgId, memberRunId: run.runId, meter: baseMeter }, () =>
+        metered(
+          'notes.summary',
+          async () => {
+            throw new Error('vy provider failed');
+          },
+          undefined,
+          usage,
+        ),
+      ),
+    ).rejects.toThrow('vy provider failed');
+    expect(await sqlAdmin(`SELECT 1 FROM ludy_kernel.ai_budget_reservation WHERE org_id = $1`, [orgId])).toHaveLength(0);
+
+    const held = await exec<{ allowed: true; reservationId: string }>(users.alice, 'kernel.member_vy.meter.reserve', {
+      feature: 'notes.summary',
+      projectedCost: '0.004500',
+    });
+    expect(held.allowed).toBe(true);
+    // Another member cannot release Alice's reservation.
+    expect(await exec(users.owner, 'kernel.member_vy.meter.release', { reservationId: held.reservationId })).toEqual({ released: false });
+    expect(await exec(users.alice, 'kernel.member_vy.meter.release', { reservationId: held.reservationId })).toEqual({ released: true });
+    await sqlAdmin(`DELETE FROM ludy_kernel.budget_policy WHERE org_id = $1`, [orgId]);
+  });
+
+  it('prevents cross-actor, viewer, and null-agent reservation deletion IDORs and enforces active member_vy agent (B1)', async () => {
+    await resetRuns();
+    // Ensure Alice has an active member_vy agent, while users.owner has no member_vy agent row.
+    await start(users.alice);
+    const aliceAgent = (await sqlAdmin<{ id: string }>(`SELECT id FROM ludy_kernel.agent WHERE org_id = $1 AND kind = 'member_vy' AND member_user_id = $2`, [orgId, users.alice]))[0]?.id;
+    expect(aliceAgent).toBeTruthy();
+
+    // Users without a member_vy agent cannot reserve via member_vy.meter.reserve.
+    await expect(exec(users.owner, 'kernel.member_vy.meter.reserve', { feature: 'notes.summary', projectedCost: '0.001000' })).rejects.toMatchObject({ code: 'VY_NOT_ALLOWED' });
+
+    // Create three distinct holds: Alice's member_vy hold, Alice's non-Vy member hold (agent_id NULL), and a system hold (actor_user_id NULL).
+    const aliceVyHold = await exec<{ allowed: true; reservationId: string }>(users.alice, 'kernel.member_vy.meter.reserve', {
+      feature: 'notes.summary',
+      projectedCost: '0.001000',
+    });
+    const aliceMemberHold = await exec<{ allowed: true; reservationId: string }>(users.alice, 'kernel.ai.budget.reserve_member', {
+      module: 'social',
+      agentId: null,
+      feature: 'social.draft',
+      projectedCost: '0.001000',
+    });
+    const appUrl = new URL(adminUrl);
+    appUrl.username = 'ludy_app';
+    appUrl.password = 'test-app-pw';
+    const appPool = createPool({ connectionString: appUrl.toString(), max: 1 });
+    const workerUrl = new URL(adminUrl);
+    workerUrl.username = 'ludy_worker';
+    workerUrl.password = 'test-worker-pw';
+    const workerPool = createPool({ connectionString: workerUrl.toString(), max: 2 });
+    const workerRuntime = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register({
+      commands: [...kernelCommands],
+      queries: [...kernelQueries({ inboundDomain: 'in.test' })],
+    });
+    try {
+      const viewerEmail = `viewer-no-agent-${randomUUID().slice(0, 8)}@vy.test`;
+      const viewerNoAgent = await upsertIdentity(createDb(appPool), {
+        issuer: 'test',
+        subject: randomUUID(),
+        email: viewerEmail,
+        name: 'Viewer Without Vy',
+      });
+      const viewerInvite = await runtime.execute<{ acceptPath: string }>(
+        'kernel.member.invite.create',
+        { email: viewerEmail, role: 'viewer' },
+        { actor: asMfa(users.owner), orgId },
+      );
+      await runtime.executeOrgless(
+        'kernel.member.invite.accept',
+        { token: viewerInvite.acceptPath.split('#')[1] ?? '' },
+        { actor: asUser(viewerNoAgent) },
+      );
+
+      const systemHold = await workerRuntime.execute<{ allowed: true; reservationId: string }>(
+        'kernel.ai.budget.reserve',
+        { module: 'social', agentId: null, feature: 'social.draft', projectedCost: '0.001000' },
+        { actor: { type: 'system', component: 'test' }, orgId },
+      );
+      expect(aliceVyHold.allowed && aliceMemberHold.allowed && systemHold.allowed).toBe(true);
+
+      // 1) A viewer (no vy.use, no member_vy agent) cannot reserve via member_vy.meter.reserve and cannot release any foreign/agent_id-IS-NULL hold via member_vy.meter.release.
+      await expect(exec(viewerNoAgent, 'kernel.member_vy.meter.reserve', { feature: 'notes.summary', projectedCost: '0.001000' })).rejects.toMatchObject({ code: 'VY_NOT_ALLOWED' });
+      expect(await exec(viewerNoAgent, 'kernel.member_vy.meter.release', { reservationId: aliceMemberHold.reservationId })).toEqual({ released: false });
+      expect(await exec(viewerNoAgent, 'kernel.member_vy.meter.release', { reservationId: systemHold.reservationId })).toEqual({ released: false });
+      expect(await exec(viewerNoAgent, 'kernel.member_vy.meter.release', { reservationId: aliceVyHold.reservationId })).toEqual({ released: false });
+
+      // 2) An owner with vy.use but no member_vy agent returns { released: false } without touching agent_id IS NULL holds.
+      expect(await exec(users.owner, 'kernel.member_vy.meter.release', { reservationId: aliceMemberHold.reservationId })).toEqual({ released: false });
+      expect(await exec(users.owner, 'kernel.member_vy.meter.release', { reservationId: systemHold.reservationId })).toEqual({ released: false });
+      expect(await exec(users.owner, 'kernel.member_vy.meter.release', { reservationId: aliceVyHold.reservationId })).toEqual({ released: false });
+
+      // 3) Another member cannot release or settle Alice's member_vy hold, Alice's non-Vy hold, or a system hold via *_member.
+      for (const id of [aliceVyHold.reservationId, aliceMemberHold.reservationId, systemHold.reservationId]) {
+        expect(await exec(users.owner, 'kernel.ai.budget.release_member', { reservationId: id })).toEqual({ released: false });
+        await exec(users.owner, 'kernel.ai.usage.record_member', {
+          feature: 'social.draft',
+          module: 'social',
+          agentId: null,
+          inputTokens: 1,
+          outputTokens: 1,
+          cost: '0',
+          reservationId: id,
+        });
+      }
+
+      // 4) Even Alice herself cannot cross-release her member_vy hold via release_member (requires agent_id IS NULL) or vice versa.
+      expect(await exec(users.alice, 'kernel.ai.budget.release_member', { reservationId: aliceVyHold.reservationId })).toEqual({ released: false });
+      expect(await exec(users.alice, 'kernel.member_vy.meter.release', { reservationId: aliceMemberHold.reservationId })).toEqual({ released: false });
+
+      // All three holds are still intact.
+      const intact = await sqlAdmin<{ id: string }>(
+        `SELECT id FROM ludy_kernel.ai_budget_reservation WHERE org_id = $1 AND id = ANY($2::uuid[])`,
+        [orgId, [aliceVyHold.reservationId, aliceMemberHold.reservationId, systemHold.reservationId]],
+      );
+      expect(intact).toHaveLength(3);
+
+      // 5) Paused member_vy agent cannot reserve via member_vy.meter.reserve.
+      await sqlAdmin(`UPDATE ludy_kernel.agent SET status = 'paused' WHERE org_id = $1 AND id = $2`, [orgId, aliceAgent]);
+      await expect(exec(users.alice, 'kernel.member_vy.meter.reserve', { feature: 'notes.summary', projectedCost: '0.001000' })).rejects.toMatchObject({ code: 'VY_NOT_ALLOWED' });
+      await sqlAdmin(`UPDATE ludy_kernel.agent SET status = 'active' WHERE org_id = $1 AND id = $2`, [orgId, aliceAgent]);
+
+      // Clean up each hold exclusively through its matching authority.
+      expect(await exec(users.alice, 'kernel.member_vy.meter.release', { reservationId: aliceVyHold.reservationId })).toEqual({ released: true });
+      expect(await exec(users.alice, 'kernel.ai.budget.release_member', { reservationId: aliceMemberHold.reservationId })).toEqual({ released: true });
+      expect(
+        await workerRuntime.execute('kernel.ai.budget.release', { reservationId: systemHold.reservationId }, { actor: { type: 'system', component: 'test' }, orgId }),
+      ).toEqual({ released: true });
+
+      // 6) Mid-flight vy.use revocation blocks new reserves but still lets the owning member release their own in-flight hold (while others still cannot).
+      const revokedHold = await exec<{ allowed: true; reservationId: string }>(users.alice, 'kernel.member_vy.meter.reserve', {
+        feature: 'notes.summary',
+        projectedCost: '0.001000',
+      });
+      await exec(users.owner, 'kernel.member.permission.set', { userId: users.alice, permission: 'vy.use', allowed: false });
+      try {
+        await expect(exec(users.alice, 'kernel.member_vy.meter.reserve', { feature: 'notes.summary', projectedCost: '0.001000' })).rejects.toMatchObject({ code: 'VY_NOT_ALLOWED' });
+        expect(await exec(users.owner, 'kernel.member_vy.meter.release', { reservationId: revokedHold.reservationId })).toEqual({ released: false });
+        expect(await exec(users.alice, 'kernel.member_vy.meter.release', { reservationId: revokedHold.reservationId })).toEqual({ released: true });
+      } finally {
+        await exec(users.owner, 'kernel.member.permission.set', { userId: users.alice, permission: 'vy.use', allowed: null });
+      }
+    } finally {
+      await Promise.all([appPool.end(), workerPool.end()]);
+    }
   });
 });

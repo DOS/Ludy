@@ -191,8 +191,13 @@ describe('draftProbationSummary kernel orchestration (#4448)', () => {
   });
 
   it('forwards runtime meterOptions price when charging monthly HR budget', async () => {
-    const query = vi.fn(async () => ({ allowed: true, hasOrgBudget: true }));
-    const execute = vi.fn(async () => ({}));
+    const query = vi.fn(async () => ({}));
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'kernel.ai.budget.reserve_member') {
+        return { allowed: true, reservationId: '00000000-0000-7000-8000-000000000101' };
+      }
+      return {};
+    });
     const runtimeStub: Pick<Runtime, 'execute' | 'query'> = { query, execute } as unknown as Pick<Runtime, 'execute' | 'query'>;
     const ports: HrProbationPorts = {
       read: async () => ({ preview: samplePreview(), aiStopped: false, aiBudgetSpent: false }),
@@ -223,7 +228,11 @@ describe('draftProbationSummary kernel orchestration (#4448)', () => {
     );
 
     expect(out.status).toBe('used');
-    expect(query).toHaveBeenCalledWith('kernel.ai.budget.check_member', { module: 'hr', agentId: null }, { actor: ACTOR, orgId: ORG_ID });
+    expect(execute).toHaveBeenCalledWith(
+      'kernel.ai.budget.reserve_member',
+      { module: 'hr', agentId: null, feature: 'hr.probation_summary', projectedCost: '0' },
+      { actor: ACTOR, orgId: ORG_ID },
+    );
     expect(execute).toHaveBeenCalledWith(
       'kernel.ai.usage.record_member',
       expect.objectContaining({
@@ -232,6 +241,7 @@ describe('draftProbationSummary kernel orchestration (#4448)', () => {
         inputTokens: 1_000_000,
         outputTokens: 500_000,
         cost: '5.000000',
+        reservationId: '00000000-0000-7000-8000-000000000101',
       }),
       { actor: ACTOR, orgId: ORG_ID },
     );
