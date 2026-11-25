@@ -12,6 +12,7 @@ import { chaptersCommands, chaptersQueries } from './chapters.ts';
 import { chaptersRunCommands, chaptersRunQueries } from './chapters-run.ts';
 import { titleCommands, titleQueries } from './title.ts';
 import { commitmentsCommands, commitmentsQueries } from './commitments.ts';
+import { templateSuggestCommands, templateSuggestQueries } from './template-suggest.ts';
 import { openPointsCommands, openPointsQueries } from './open-points.ts';
 import { notesCommands, notesQueries } from './notes.ts';
 import { resultCommands, resultQueries } from './results.ts';
@@ -1129,6 +1130,7 @@ export const meetingsCommands = [
   ...chaptersRunCommands,
   ...titleCommands,
   ...commitmentsCommands,
+  ...templateSuggestCommands,
   ...openPointsCommands,
   ...summaryCommands,
   ...speakerCommands,
@@ -1182,6 +1184,7 @@ export const meetingsQueries = [
   ...chaptersRunQueries,
   ...titleQueries,
   ...commitmentsQueries,
+  ...templateSuggestQueries,
   ...openPointsQueries,
   ...summaryQueries,
   ...seriesQueries,
