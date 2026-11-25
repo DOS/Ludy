@@ -635,7 +635,6 @@ import {
   zMeetingSearchResult,
   zMeetingSettingsSet,
   zMeetingListItem,
-  zMeetingSummary,
   zTranscript,
   zTranscriptCorrect,
   zTranscriptCorrected,
