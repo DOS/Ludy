@@ -100,7 +100,7 @@ export const weeklyNotice = defineCommand({
       SELECT meetings, decisions, open_items, overdue, cut, english
       FROM ludy_meetings.weekly_notices_due(1::int, ${ctx.orgId}::uuid, ${input.userId}::uuid, ${input.day}::date, ${input.at ?? null}::timestamptz)`.execute(ctx.trx);
     const due = found[0];
-    // Nothing due any more (a week with nothing to show, turned off, muted, left, told already): nothing is written, not even an audit row.
+    // Nothing due any more (a week with nothing to show, turned off, muted, left, told already): the handler writes nothing and calls no ctx.audit; the runtime still records its own ok audit row of the command (no day, no count).
     if (!due) return { notified: false, mailed: false };
     // The numbers are parsed against the card's own limits before anything is written, so a definer that ever returned more would roll the dispatch back instead of storing a number the mail refuses.
     const counts = zWeeklyCounts.parse({ meetings: due.meetings, decisions: due.decisions, open: due.open_items, overdue: due.overdue, cut: due.cut });

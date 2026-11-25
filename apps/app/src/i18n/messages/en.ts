@@ -20570,6 +20570,7 @@ export const en = {
         propose_ai: 'Save Vy proposed KYC attachment comparison on a signing envelope',
         run_deterministic: 'Run deterministic SHA-256 and identity field check on a signer KYC attachment',
         source: 'Read signer KYC attachment context for Vy review',
+        touch_pending: 'Refresh pending signer KYC inspection timestamps when signing resumes (system)',
       },
       mcp: {
         envelope_get: 'Let an AI app read masked signing progress and confirmed obligations of an envelope',
