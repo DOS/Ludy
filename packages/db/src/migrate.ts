@@ -203,12 +203,15 @@ function isConcurrentCatalogUpdateError(error: unknown): boolean {
 
 // Revokes direct privileges on ludy_* objects bestowed by another grantor (e.g., via WITH GRANT OPTION)
 // by switching to the grantor role via SET LOCAL ROLE so PostgreSQL 17's object-level REVOKE removes them
-// before 20270326210000's fail-closed ACL verification runs.
+// before 20270326210000's fail-closed ACL verification runs. Each object class drains leaf-first across
+// bounded passes without using CASCADE so non-legacy dependents are never stripped silently.
 async function revokeDelegatedLegacyObjectGrants(client: pg.ClientBase): Promise<void> {
   await client.query(`DO $$
     DECLARE
       v_orig_role text := current_user;
       v_is_super boolean;
+      v_pass integer;
+      v_progress boolean;
       v_legacy_roles constant text[] := ARRAY[
         'crove_tenant', 'crove_app', 'crove_worker', 'crove_prober', 'crove_reporter',
         'crove_auth_reader', 'crove_definer_tenant', 'crove_definer_einvoice', 'crove_definer_system'
@@ -220,170 +223,230 @@ async function revokeDelegatedLegacyObjectGrants(client: pg.ClientBase): Promise
       v_is_super := COALESCE(v_is_super, false);
 
       -- Columns first so table-level REVOKE never clears attacl independently.
-      FOR r IN
-        SELECT DISTINCT n.nspname AS schema_name, c.relname, att.attname, gr.rolname AS grantee, src.rolname AS grantor_name, a.privilege_type
-        FROM pg_catalog.pg_attribute att
-        JOIN pg_catalog.pg_class c ON c.oid = att.attrelid
-        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-        CROSS JOIN LATERAL pg_catalog.aclexplode(att.attacl) a
-        JOIN pg_catalog.pg_roles gr ON gr.oid = a.grantee
-        JOIN pg_catalog.pg_roles src ON src.oid = a.grantor
-        WHERE n.nspname LIKE 'ludy\\_%'
-          AND att.attnum > 0 AND NOT att.attisdropped
-          AND a.grantee <> c.relowner
-          AND gr.rolname = ANY (v_legacy_roles)
-          AND src.rolname <> v_orig_role
-          AND (v_is_super OR pg_catalog.pg_has_role(v_orig_role, a.grantor, 'SET'))
-        ORDER BY n.nspname, c.relname, att.attname, gr.rolname, src.rolname, a.privilege_type
+      v_pass := 0;
       LOOP
-        BEGIN
-          EXECUTE pg_catalog.format('SET LOCAL ROLE %I', r.grantor_name);
-          EXECUTE pg_catalog.format('REVOKE %s (%I) ON %I.%I FROM %I', r.privilege_type, r.attname, r.schema_name, r.relname, r.grantee);
-          IF v_orig_role = session_user THEN
-            RESET ROLE;
-          ELSE
-            EXECUTE pg_catalog.format('SET LOCAL ROLE %I', v_orig_role);
-          END IF;
-        EXCEPTION WHEN insufficient_privilege THEN
-          NULL;
-        END;
+        v_pass := v_pass + 1;
+        v_progress := false;
+        FOR r IN
+          SELECT DISTINCT n.nspname AS schema_name, c.relname, att.attname, gr.rolname AS grantee, src.rolname AS grantor_name, a.privilege_type, a.is_grantable
+          FROM pg_catalog.pg_attribute att
+          JOIN pg_catalog.pg_class c ON c.oid = att.attrelid
+          JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+          CROSS JOIN LATERAL pg_catalog.aclexplode(att.attacl) a
+          JOIN pg_catalog.pg_roles gr ON gr.oid = a.grantee
+          JOIN pg_catalog.pg_roles src ON src.oid = a.grantor
+          WHERE n.nspname LIKE 'ludy\\_%'
+            AND att.attnum > 0 AND NOT att.attisdropped
+            AND a.grantee <> c.relowner
+            AND gr.rolname = ANY (v_legacy_roles)
+            AND src.rolname <> v_orig_role
+            AND (v_is_super OR pg_catalog.pg_has_role(v_orig_role, a.grantor, 'SET'))
+          ORDER BY a.is_grantable ASC, n.nspname, c.relname, att.attname, gr.rolname, src.rolname, a.privilege_type
+        LOOP
+          BEGIN
+            EXECUTE pg_catalog.format('SET LOCAL ROLE %I', r.grantor_name);
+            EXECUTE pg_catalog.format('REVOKE %s (%I) ON %I.%I FROM %I', r.privilege_type, r.attname, r.schema_name, r.relname, r.grantee);
+            IF v_orig_role = session_user THEN
+              RESET ROLE;
+            ELSE
+              EXECUTE pg_catalog.format('SET LOCAL ROLE %I', v_orig_role);
+            END IF;
+            v_progress := true;
+          EXCEPTION
+            WHEN insufficient_privilege
+              OR dependent_objects_still_exist
+              OR dependent_privilege_descriptors_still_exist THEN
+              NULL;
+          END;
+        END LOOP;
+        EXIT WHEN NOT v_progress OR v_pass >= 16;
       END LOOP;
 
-      FOR r IN
-        SELECT DISTINCT n.nspname AS schema_name, c.relname, gr.rolname AS grantee, src.rolname AS grantor_name, a.privilege_type
-        FROM pg_catalog.pg_class c
-        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-        CROSS JOIN LATERAL pg_catalog.aclexplode(c.relacl) a
-        JOIN pg_catalog.pg_roles gr ON gr.oid = a.grantee
-        JOIN pg_catalog.pg_roles src ON src.oid = a.grantor
-        WHERE n.nspname LIKE 'ludy\\_%'
-          AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
-          AND a.grantee <> c.relowner
-          AND gr.rolname = ANY (v_legacy_roles)
-          AND src.rolname <> v_orig_role
-          AND (v_is_super OR pg_catalog.pg_has_role(v_orig_role, a.grantor, 'SET'))
-        ORDER BY n.nspname, c.relname, gr.rolname, src.rolname, a.privilege_type
+      v_pass := 0;
       LOOP
-        BEGIN
-          EXECUTE pg_catalog.format('SET LOCAL ROLE %I', r.grantor_name);
-          EXECUTE pg_catalog.format('REVOKE %s ON TABLE %I.%I FROM %I', r.privilege_type, r.schema_name, r.relname, r.grantee);
-          IF v_orig_role = session_user THEN
-            RESET ROLE;
-          ELSE
-            EXECUTE pg_catalog.format('SET LOCAL ROLE %I', v_orig_role);
-          END IF;
-        EXCEPTION WHEN insufficient_privilege THEN
-          NULL;
-        END;
+        v_pass := v_pass + 1;
+        v_progress := false;
+        FOR r IN
+          SELECT DISTINCT n.nspname AS schema_name, c.relname, gr.rolname AS grantee, src.rolname AS grantor_name, a.privilege_type, a.is_grantable
+          FROM pg_catalog.pg_class c
+          JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+          CROSS JOIN LATERAL pg_catalog.aclexplode(c.relacl) a
+          JOIN pg_catalog.pg_roles gr ON gr.oid = a.grantee
+          JOIN pg_catalog.pg_roles src ON src.oid = a.grantor
+          WHERE n.nspname LIKE 'ludy\\_%'
+            AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
+            AND a.grantee <> c.relowner
+            AND gr.rolname = ANY (v_legacy_roles)
+            AND src.rolname <> v_orig_role
+            AND (v_is_super OR pg_catalog.pg_has_role(v_orig_role, a.grantor, 'SET'))
+          ORDER BY a.is_grantable ASC, n.nspname, c.relname, gr.rolname, src.rolname, a.privilege_type
+        LOOP
+          BEGIN
+            EXECUTE pg_catalog.format('SET LOCAL ROLE %I', r.grantor_name);
+            EXECUTE pg_catalog.format('REVOKE %s ON TABLE %I.%I FROM %I', r.privilege_type, r.schema_name, r.relname, r.grantee);
+            IF v_orig_role = session_user THEN
+              RESET ROLE;
+            ELSE
+              EXECUTE pg_catalog.format('SET LOCAL ROLE %I', v_orig_role);
+            END IF;
+            v_progress := true;
+          EXCEPTION
+            WHEN insufficient_privilege
+              OR dependent_objects_still_exist
+              OR dependent_privilege_descriptors_still_exist THEN
+              NULL;
+          END;
+        END LOOP;
+        EXIT WHEN NOT v_progress OR v_pass >= 16;
       END LOOP;
 
-      FOR r IN
-        SELECT DISTINCT n.nspname AS schema_name, c.relname, gr.rolname AS grantee, src.rolname AS grantor_name, a.privilege_type
-        FROM pg_catalog.pg_class c
-        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-        CROSS JOIN LATERAL pg_catalog.aclexplode(c.relacl) a
-        JOIN pg_catalog.pg_roles gr ON gr.oid = a.grantee
-        JOIN pg_catalog.pg_roles src ON src.oid = a.grantor
-        WHERE n.nspname LIKE 'ludy\\_%'
-          AND c.relkind = 'S'
-          AND a.grantee <> c.relowner
-          AND gr.rolname = ANY (v_legacy_roles)
-          AND src.rolname <> v_orig_role
-          AND (v_is_super OR pg_catalog.pg_has_role(v_orig_role, a.grantor, 'SET'))
-        ORDER BY n.nspname, c.relname, gr.rolname, src.rolname, a.privilege_type
+      v_pass := 0;
       LOOP
-        BEGIN
-          EXECUTE pg_catalog.format('SET LOCAL ROLE %I', r.grantor_name);
-          EXECUTE pg_catalog.format('REVOKE %s ON SEQUENCE %I.%I FROM %I', r.privilege_type, r.schema_name, r.relname, r.grantee);
-          IF v_orig_role = session_user THEN
-            RESET ROLE;
-          ELSE
-            EXECUTE pg_catalog.format('SET LOCAL ROLE %I', v_orig_role);
-          END IF;
-        EXCEPTION WHEN insufficient_privilege THEN
-          NULL;
-        END;
+        v_pass := v_pass + 1;
+        v_progress := false;
+        FOR r IN
+          SELECT DISTINCT n.nspname AS schema_name, c.relname, gr.rolname AS grantee, src.rolname AS grantor_name, a.privilege_type, a.is_grantable
+          FROM pg_catalog.pg_class c
+          JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+          CROSS JOIN LATERAL pg_catalog.aclexplode(c.relacl) a
+          JOIN pg_catalog.pg_roles gr ON gr.oid = a.grantee
+          JOIN pg_catalog.pg_roles src ON src.oid = a.grantor
+          WHERE n.nspname LIKE 'ludy\\_%'
+            AND c.relkind = 'S'
+            AND a.grantee <> c.relowner
+            AND gr.rolname = ANY (v_legacy_roles)
+            AND src.rolname <> v_orig_role
+            AND (v_is_super OR pg_catalog.pg_has_role(v_orig_role, a.grantor, 'SET'))
+          ORDER BY a.is_grantable ASC, n.nspname, c.relname, gr.rolname, src.rolname, a.privilege_type
+        LOOP
+          BEGIN
+            EXECUTE pg_catalog.format('SET LOCAL ROLE %I', r.grantor_name);
+            EXECUTE pg_catalog.format('REVOKE %s ON SEQUENCE %I.%I FROM %I', r.privilege_type, r.schema_name, r.relname, r.grantee);
+            IF v_orig_role = session_user THEN
+              RESET ROLE;
+            ELSE
+              EXECUTE pg_catalog.format('SET LOCAL ROLE %I', v_orig_role);
+            END IF;
+            v_progress := true;
+          EXCEPTION
+            WHEN insufficient_privilege
+              OR dependent_objects_still_exist
+              OR dependent_privilege_descriptors_still_exist THEN
+              NULL;
+          END;
+        END LOOP;
+        EXIT WHEN NOT v_progress OR v_pass >= 16;
       END LOOP;
 
-      FOR r IN
-        SELECT DISTINCT p.oid::pg_catalog.regprocedure::text AS fn_sig, gr.rolname AS grantee, src.rolname AS grantor_name, a.privilege_type
-        FROM pg_catalog.pg_proc p
-        JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
-        CROSS JOIN LATERAL pg_catalog.aclexplode(p.proacl) a
-        JOIN pg_catalog.pg_roles gr ON gr.oid = a.grantee
-        JOIN pg_catalog.pg_roles src ON src.oid = a.grantor
-        WHERE n.nspname LIKE 'ludy\\_%'
-          AND a.grantee <> p.proowner
-          AND gr.rolname = ANY (v_legacy_roles)
-          AND src.rolname <> v_orig_role
-          AND (v_is_super OR pg_catalog.pg_has_role(v_orig_role, a.grantor, 'SET'))
-        ORDER BY p.oid::pg_catalog.regprocedure::text, gr.rolname, src.rolname, a.privilege_type
+      v_pass := 0;
       LOOP
-        BEGIN
-          EXECUTE pg_catalog.format('SET LOCAL ROLE %I', r.grantor_name);
-          EXECUTE pg_catalog.format('REVOKE %s ON ROUTINE %s FROM %I', r.privilege_type, r.fn_sig, r.grantee);
-          IF v_orig_role = session_user THEN
-            RESET ROLE;
-          ELSE
-            EXECUTE pg_catalog.format('SET LOCAL ROLE %I', v_orig_role);
-          END IF;
-        EXCEPTION WHEN insufficient_privilege THEN
-          NULL;
-        END;
+        v_pass := v_pass + 1;
+        v_progress := false;
+        FOR r IN
+          SELECT DISTINCT p.oid::pg_catalog.regprocedure::text AS fn_sig, gr.rolname AS grantee, src.rolname AS grantor_name, a.privilege_type, a.is_grantable
+          FROM pg_catalog.pg_proc p
+          JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+          CROSS JOIN LATERAL pg_catalog.aclexplode(p.proacl) a
+          JOIN pg_catalog.pg_roles gr ON gr.oid = a.grantee
+          JOIN pg_catalog.pg_roles src ON src.oid = a.grantor
+          WHERE n.nspname LIKE 'ludy\\_%'
+            AND a.grantee <> p.proowner
+            AND gr.rolname = ANY (v_legacy_roles)
+            AND src.rolname <> v_orig_role
+            AND (v_is_super OR pg_catalog.pg_has_role(v_orig_role, a.grantor, 'SET'))
+          ORDER BY a.is_grantable ASC, p.oid::pg_catalog.regprocedure::text, gr.rolname, src.rolname, a.privilege_type
+        LOOP
+          BEGIN
+            EXECUTE pg_catalog.format('SET LOCAL ROLE %I', r.grantor_name);
+            EXECUTE pg_catalog.format('REVOKE %s ON ROUTINE %s FROM %I', r.privilege_type, r.fn_sig, r.grantee);
+            IF v_orig_role = session_user THEN
+              RESET ROLE;
+            ELSE
+              EXECUTE pg_catalog.format('SET LOCAL ROLE %I', v_orig_role);
+            END IF;
+            v_progress := true;
+          EXCEPTION
+            WHEN insufficient_privilege
+              OR dependent_objects_still_exist
+              OR dependent_privilege_descriptors_still_exist THEN
+              NULL;
+          END;
+        END LOOP;
+        EXIT WHEN NOT v_progress OR v_pass >= 16;
       END LOOP;
 
-      FOR r IN
-        SELECT DISTINCT n.nspname AS schema_name, t.typname, gr.rolname AS grantee, src.rolname AS grantor_name, a.privilege_type
-        FROM pg_catalog.pg_type t
-        JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
-        CROSS JOIN LATERAL pg_catalog.aclexplode(t.typacl) a
-        JOIN pg_catalog.pg_roles gr ON gr.oid = a.grantee
-        JOIN pg_catalog.pg_roles src ON src.oid = a.grantor
-        WHERE n.nspname LIKE 'ludy\\_%'
-          AND t.typacl IS NOT NULL
-          AND a.grantee <> t.typowner
-          AND gr.rolname = ANY (v_legacy_roles)
-          AND src.rolname <> v_orig_role
-          AND (v_is_super OR pg_catalog.pg_has_role(v_orig_role, a.grantor, 'SET'))
-        ORDER BY n.nspname, t.typname, gr.rolname, src.rolname, a.privilege_type
+      v_pass := 0;
       LOOP
-        BEGIN
-          EXECUTE pg_catalog.format('SET LOCAL ROLE %I', r.grantor_name);
-          EXECUTE pg_catalog.format('REVOKE %s ON TYPE %I.%I FROM %I', r.privilege_type, r.schema_name, r.typname, r.grantee);
-          IF v_orig_role = session_user THEN
-            RESET ROLE;
-          ELSE
-            EXECUTE pg_catalog.format('SET LOCAL ROLE %I', v_orig_role);
-          END IF;
-        EXCEPTION WHEN insufficient_privilege THEN
-          NULL;
-        END;
+        v_pass := v_pass + 1;
+        v_progress := false;
+        FOR r IN
+          SELECT DISTINCT n.nspname AS schema_name, t.typname, gr.rolname AS grantee, src.rolname AS grantor_name, a.privilege_type, a.is_grantable
+          FROM pg_catalog.pg_type t
+          JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
+          CROSS JOIN LATERAL pg_catalog.aclexplode(t.typacl) a
+          JOIN pg_catalog.pg_roles gr ON gr.oid = a.grantee
+          JOIN pg_catalog.pg_roles src ON src.oid = a.grantor
+          WHERE n.nspname LIKE 'ludy\\_%'
+            AND t.typacl IS NOT NULL
+            AND a.grantee <> t.typowner
+            AND gr.rolname = ANY (v_legacy_roles)
+            AND src.rolname <> v_orig_role
+            AND (v_is_super OR pg_catalog.pg_has_role(v_orig_role, a.grantor, 'SET'))
+          ORDER BY a.is_grantable ASC, n.nspname, t.typname, gr.rolname, src.rolname, a.privilege_type
+        LOOP
+          BEGIN
+            EXECUTE pg_catalog.format('SET LOCAL ROLE %I', r.grantor_name);
+            EXECUTE pg_catalog.format('REVOKE %s ON TYPE %I.%I FROM %I', r.privilege_type, r.schema_name, r.typname, r.grantee);
+            IF v_orig_role = session_user THEN
+              RESET ROLE;
+            ELSE
+              EXECUTE pg_catalog.format('SET LOCAL ROLE %I', v_orig_role);
+            END IF;
+            v_progress := true;
+          EXCEPTION
+            WHEN insufficient_privilege
+              OR dependent_objects_still_exist
+              OR dependent_privilege_descriptors_still_exist THEN
+              NULL;
+          END;
+        END LOOP;
+        EXIT WHEN NOT v_progress OR v_pass >= 16;
       END LOOP;
 
-      FOR r IN
-        SELECT DISTINCT n.nspname AS schema_name, gr.rolname AS grantee, src.rolname AS grantor_name, a.privilege_type
-        FROM pg_catalog.pg_namespace n
-        CROSS JOIN LATERAL pg_catalog.aclexplode(n.nspacl) a
-        JOIN pg_catalog.pg_roles gr ON gr.oid = a.grantee
-        JOIN pg_catalog.pg_roles src ON src.oid = a.grantor
-        WHERE n.nspname LIKE 'ludy\\_%'
-          AND a.grantee <> n.nspowner
-          AND gr.rolname = ANY (v_legacy_roles)
-          AND src.rolname <> v_orig_role
-          AND (v_is_super OR pg_catalog.pg_has_role(v_orig_role, a.grantor, 'SET'))
-        ORDER BY n.nspname, gr.rolname, src.rolname, a.privilege_type
+      v_pass := 0;
       LOOP
-        BEGIN
-          EXECUTE pg_catalog.format('SET LOCAL ROLE %I', r.grantor_name);
-          EXECUTE pg_catalog.format('REVOKE %s ON SCHEMA %I FROM %I', r.privilege_type, r.schema_name, r.grantee);
-          IF v_orig_role = session_user THEN
-            RESET ROLE;
-          ELSE
-            EXECUTE pg_catalog.format('SET LOCAL ROLE %I', v_orig_role);
-          END IF;
-        EXCEPTION WHEN insufficient_privilege THEN
-          NULL;
-        END;
+        v_pass := v_pass + 1;
+        v_progress := false;
+        FOR r IN
+          SELECT DISTINCT n.nspname AS schema_name, gr.rolname AS grantee, src.rolname AS grantor_name, a.privilege_type, a.is_grantable
+          FROM pg_catalog.pg_namespace n
+          CROSS JOIN LATERAL pg_catalog.aclexplode(n.nspacl) a
+          JOIN pg_catalog.pg_roles gr ON gr.oid = a.grantee
+          JOIN pg_catalog.pg_roles src ON src.oid = a.grantor
+          WHERE n.nspname LIKE 'ludy\\_%'
+            AND a.grantee <> n.nspowner
+            AND gr.rolname = ANY (v_legacy_roles)
+            AND src.rolname <> v_orig_role
+            AND (v_is_super OR pg_catalog.pg_has_role(v_orig_role, a.grantor, 'SET'))
+          ORDER BY a.is_grantable ASC, n.nspname, gr.rolname, src.rolname, a.privilege_type
+        LOOP
+          BEGIN
+            EXECUTE pg_catalog.format('SET LOCAL ROLE %I', r.grantor_name);
+            EXECUTE pg_catalog.format('REVOKE %s ON SCHEMA %I FROM %I', r.privilege_type, r.schema_name, r.grantee);
+            IF v_orig_role = session_user THEN
+              RESET ROLE;
+            ELSE
+              EXECUTE pg_catalog.format('SET LOCAL ROLE %I', v_orig_role);
+            END IF;
+            v_progress := true;
+          EXCEPTION
+            WHEN insufficient_privilege
+              OR dependent_objects_still_exist
+              OR dependent_privilege_descriptors_still_exist THEN
+              NULL;
+          END;
+        END LOOP;
+        EXIT WHEN NOT v_progress OR v_pass >= 16;
       END LOOP;
     END $$`);
 }
@@ -913,16 +976,21 @@ export async function migrate(options: MigrateOptions): Promise<string[]> {
     }
     const modeSwitch = trimmedEnv('LUDY_SHARED_DATABASE_SWITCH');
     await recordDeploymentMode(client, shared, options.allowModeSwitch ?? modeSwitch === 'true', log);
-    const { rows } = await client.query<{ version: string; sha256: string }>(
-      `SELECT version, sha256 FROM ${meta}.schema_migrations`,
+    const { rows } = await client.query<{ version: string; name: string; sha256: string }>(
+      `SELECT version, name, sha256 FROM ${meta}.schema_migrations`,
     );
-    const ledger = new Map(rows.map((r) => [r.version, r.sha256]));
+    const ledger = new Map(rows.map((r) => [r.version, { name: r.name, sha256: r.sha256 }]));
     for (const file of files) {
       const known = ledger.get(file.version);
       const variantOf = variants.get(file.name);
       if (known !== undefined) {
-        if (known !== file.sha256 && known !== variantOf?.sha256) {
+        if (known.sha256 !== file.sha256 && known.sha256 !== variantOf?.sha256) {
           throw new Error(`migration ${file.name} was edited after it was applied; add a new migration instead`);
+        }
+        if (known.name !== file.name) {
+          throw new Error(
+            `migration ledger mismatch for version ${file.version}: recorded as ${known.name} but repository has ${file.name}`,
+          );
         }
         continue;
       }

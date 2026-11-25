@@ -670,13 +670,18 @@ suite('legacy crove_* role and crove.* GUC contraction (#3972)', () => {
            DROP POLICY IF EXISTS crove_auth_reader_select ON auth.mfa_factors;
            CREATE POLICY crove_auth_reader_select ON auth.mfa_factors AS PERMISSIVE FOR SELECT TO crove_auth_reader USING (true);
            CREATE ROLE ${secondGrantor} NOLOGIN;
-           GRANT USAGE ON SCHEMA ludy_kernel TO ${secondGrantor};
+           GRANT USAGE ON SCHEMA ludy_kernel TO ${secondGrantor} WITH GRANT OPTION;
            GRANT SELECT ON ludy_kernel.tenant TO ${secondGrantor} WITH GRANT OPTION;`,
         );
         await secondClient.query('BEGIN');
         try {
           await secondClient.query(`SET LOCAL ROLE ${secondGrantor}`);
-          await secondClient.query('GRANT SELECT ON ludy_kernel.tenant TO crove_app');
+          await secondClient.query('GRANT USAGE ON SCHEMA ludy_kernel TO crove_app WITH GRANT OPTION');
+          await secondClient.query('GRANT SELECT ON ludy_kernel.tenant TO crove_app WITH GRANT OPTION');
+          await secondClient.query('RESET ROLE');
+          await secondClient.query('SET LOCAL ROLE crove_app');
+          await secondClient.query('GRANT USAGE ON SCHEMA ludy_kernel TO crove_worker');
+          await secondClient.query('GRANT SELECT ON ludy_kernel.tenant TO crove_worker');
           await secondClient.query('COMMIT');
         } catch (error) {
           await secondClient.query('ROLLBACK');
@@ -720,6 +725,11 @@ suite('legacy crove_* role and crove.* GUC contraction (#3972)', () => {
            WHERE n.nspname = 'auth' AND a.grantee <> n.nspowner AND gr.rolname = 'crove_auth_reader'`,
         );
         expect(leftoverAuth).toEqual([]);
+
+        await bClient.query(
+          "UPDATE ludy_meta.schema_migrations SET name = '20270326210000_corrupted_stage7.sql' WHERE name LIKE '%\\_ludy\\_kernel\\_contract\\_crove\\_roles\\_and\\_gucs.sql'",
+        );
+        await expect(migrate({ adminUrl: dbBUrl, dir: MIGRATIONS })).rejects.toThrow(/migration ledger mismatch for version/);
       } finally {
         await bClient.end();
       }

@@ -14,6 +14,7 @@
 DO $$
 DECLARE
   v_login text;
+  v_active_sessions text;
   v_remaining text;
   v_is_super boolean;
   v_createrole boolean;
@@ -65,6 +66,26 @@ BEGIN
     IF v_prev_lock_timeout = '0' THEN
       PERFORM pg_catalog.set_config('lock_timeout', v_prev_lock_timeout, true);
     END IF;
+  END IF;
+
+  SELECT pg_catalog.string_agg(
+           pg_catalog.format(
+             'pid %s (%s on %s%s)',
+             a.pid,
+             a.usename,
+             COALESCE(a.datname, '<no database>'),
+             CASE WHEN NULLIF(a.application_name, '') IS NOT NULL THEN ', ' || a.application_name ELSE '' END
+           ),
+           ', ' ORDER BY a.datname NULLS FIRST, a.usename, a.pid
+         )
+  INTO v_active_sessions
+  FROM pg_catalog.pg_stat_activity a
+  WHERE a.pid <> pg_catalog.pg_backend_pid()
+    AND a.usename = ANY (v_legacy_roles);
+  IF v_active_sessions IS NOT NULL THEN
+    RAISE EXCEPTION
+      'stage 7 contraction failed: active PostgreSQL sessions still connected as legacy crove_* roles (%): disconnect those services and switch them to ludy_* roles before retrying',
+      v_active_sessions;
   END IF;
 
   FOR r IN
