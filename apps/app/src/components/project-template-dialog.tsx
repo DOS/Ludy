@@ -315,7 +315,7 @@ export function ProjectTemplateDialog(props: ProjectTemplateDialogProps) {
                                 {tpl.canManage && (
                                   <ConfirmDialog
                                     destructive
-                                    title={t('templates.archiveConfirmTitle')}
+                                    title={t('templates.archiveConfirmTitle', { name: tpl.name })}
                                     description={t('templates.archiveConfirmDesc')}
                                     confirm={t('templates.archiveConfirmBtn')}
                                     onConfirm={() =>
@@ -335,7 +335,7 @@ export function ProjectTemplateDialog(props: ProjectTemplateDialogProps) {
                                         size="icon-sm"
                                         variant="ghost"
                                         loading={archiveTemplate.isPending}
-                                        aria-label={t('templates.archiveBtn')}
+                                        aria-label={t('templates.archiveBtn', { name: tpl.name })}
                                       />
                                     }
                                   >

@@ -490,9 +490,17 @@ describe('projects templates & recurring UI (#2607)', () => {
       expect(html, locale).toContain('border-primary bg-primary/5 ring-1 ring-primary');
       expect(html, locale).toContain('text-foreground');
 
-      // 44px mobile touch targets on built-in radios, custom radios, and archive icon button.
-      expect(html, locale).toContain('min-h-11');
-      expect(html, locale).toContain('max-md:min-h-11 max-md:min-w-11');
+      // 44px mobile touch targets on every radio button (5 built-in + 1 custom) and distinct archive icon label.
+      const radioButtons = html.match(/<button[^>]*role="radio"[^>]*>/g) ?? [];
+      expect(radioButtons, locale).toHaveLength(6);
+      for (const radioButton of radioButtons) {
+        expect(radioButton, locale).toContain('min-h-11');
+      }
+      const archiveLabel =
+        locale === 'en' ? `Archive template ${customTemplate.name}` : `Lưu trữ mẫu ${customTemplate.name}`;
+      const archiveButton = html.match(new RegExp(`<button[^>]*aria-label="${archiveLabel}"[^>]*>`))?.[0];
+      expect(archiveButton, locale).toBeDefined();
+      expect(archiveButton, locale).toContain('max-md:min-h-11 max-md:min-w-11');
     }
   });
 });

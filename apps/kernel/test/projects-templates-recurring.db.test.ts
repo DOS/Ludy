@@ -283,6 +283,14 @@ suite('projects templates & recurring tasks on PostgreSQL (#2607)', () => {
     expect(swReviewCol).toBeDefined();
     expect(swBoard.tasks).toHaveLength(5);
     expect(swBoard.tasks.every((t) => t.columnId === swTodoCol?.id)).toBe(true);
+    await withAdmin(async (c) => {
+      const ptRows = await c.query<{ task_id: string; column_id: string | null }>(
+        'SELECT task_id, column_id FROM ludy_projects.project_task WHERE org_id = $1 AND project_id = $2',
+        [org.orgId, swCreated.projectId],
+      );
+      expect(ptRows.rows).toHaveLength(5);
+      expect(ptRows.rows.every((r) => r.column_id === swTodoCol?.id)).toBe(true);
+    });
     expect(swBoard.tasks[0]?.due).toBe('2026-12-02T16:59:00.000Z');
     expect(swBoard.tasks[4]?.due).toBe('2026-12-11T16:59:00.000Z');
 
