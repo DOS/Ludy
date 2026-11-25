@@ -162,6 +162,8 @@ suite('invariant (#2606): task checklist agent guardrails, cross-org RLS and le_
     const actor: AgentActor = { type: 'agent', agentId: installed.agentId, runId: started.runId as string };
 
     await workerRt.execute('kernel.task.checkout', { id: taskId }, { actor, orgId: org.orgId, idempotencyKey: randomUUID() });
+    const checkedOutTask = await query<{ task: { revision: number } }>(owner.userId, org.orgId, 'kernel.task.get', { id: taskId });
+    expect(checkedOutTask.task.revision).toBe(2);
 
     await expect(
       inAgentContext(org.orgId, actor, (c) =>
@@ -169,16 +171,23 @@ suite('invariant (#2606): task checklist agent guardrails, cross-org RLS and le_
       ),
     ).rejects.toMatchObject({ code: '42501', message: 'AGENT_TASK_FIELD' });
 
-    const escalationChecklist = await inAgentContext(org.orgId, actor, async (c) => {
-      const { rows } = await c.query<{ checklist: unknown }>(
-        `INSERT INTO crove_kernel.task (org_id, title, kind, assignee_position_id, parent_task_id, source, created_by_type, checklist)
-         VALUES ($1, 'Xin ý kiến chủ sở hữu', 'escalation', NULL, $2, 'agent', 'agent', '[{"text":"Không được phép","done":false}]'::jsonb)
-         RETURNING checklist`,
+    await expect(
+      inAgentContext(org.orgId, actor, (c) =>
+        c.query(`UPDATE crove_kernel.task SET revision = 999 WHERE org_id = $1 AND id = $2`, [org.orgId, taskId]),
+      ),
+    ).rejects.toMatchObject({ code: '42501', message: 'AGENT_TASK_FIELD' });
+
+    const escalationRow = await inAgentContext(org.orgId, actor, async (c) => {
+      const { rows } = await c.query<{ checklist: unknown; revision: number }>(
+        `INSERT INTO crove_kernel.task (org_id, title, kind, assignee_position_id, parent_task_id, source, created_by_type, checklist, revision)
+         VALUES ($1, 'Xin ý kiến chủ sở hữu', 'escalation', NULL, $2, 'agent', 'agent', '[{"text":"Không được phép","done":false}]'::jsonb, 42)
+         RETURNING checklist, revision`,
         [org.orgId, taskId],
       );
-      return rows[0]?.checklist;
+      return rows[0];
     });
-    expect(escalationChecklist).toEqual([]);
+    expect(escalationRow?.checklist).toEqual([]);
+    expect(escalationRow?.revision).toBe(1);
   });
 
   it('enforces viewer denial, cross-org RLS and legal-entity (le_scope) boundaries on task checklists', async () => {
