@@ -385,18 +385,15 @@ export const resultPublish = defineCommand({
     }
     // The highlights readers marked (#4819) are an anchor in seconds and no text, so a replaced line leaves a mark that points at nothing (or, worse, at whichever new line starts at that second). A mark whose start or
     // end second no longer starts a published line is removed with the lines it marked; the recorder may remove any mark of their meeting, and the people who made them find the others as they were.
-    let highlightsDropped = 0;
     if (lines > 0) {
-      highlightsDropped = (
-        await sql<{ id: string }>`
+      await sql`
           DELETE FROM ludy_meetings.meeting_highlight h
            WHERE h.org_id = ${ctx.orgId}::uuid AND h.meeting_id = ${input.meetingId}::uuid
              AND (
                NOT EXISTS (SELECT 1 FROM ludy_meetings.transcript_segment s WHERE s.org_id = h.org_id AND s.meeting_id = h.meeting_id AND s.stage = 'published' AND pg_catalog.floor(s.start_seconds)::int = h.start_seconds)
                OR NOT EXISTS (SELECT 1 FROM ludy_meetings.transcript_segment s WHERE s.org_id = h.org_id AND s.meeting_id = h.meeting_id AND s.stage = 'published' AND pg_catalog.floor(s.start_seconds)::int = h.end_seconds)
              )
-          RETURNING h.id`.execute(ctx.trx)
-      ).rows.length;
+          `.execute(ctx.trx);
     }
     if (results === 0 && items.length === 0 && chapters === 0 && lines === 0) throw new DomainError('NOTHING_TO_PUBLISH', 409, 'There is no draft to share');
     // The recorder's own webhook (A6, #3164): when they have one that stands, the event for this publish is stored in this same transaction, and nowhere else. No model, no other reader.
@@ -412,7 +409,7 @@ export const resultPublish = defineCommand({
     if (published !== null && (await meetingIsOrgVisible(ctx.trx, ctx.orgId, input.meetingId))) {
       await ctx.emit('meetings.minutes.published', zMinutesPublishedEvent.parse({ meetingId: input.meetingId, publishedAt: published.updated_at.toISOString() }));
     }
-    ctx.audit({ meetingId: input.meetingId, results, items: items.length, chapters, lines, highlightsDropped });
+    ctx.audit({ meetingId: input.meetingId, results, items: items.length, chapters, lines });
     return { meetingId: input.meetingId, results, items: items.length, chapters, lines };
   },
 });
