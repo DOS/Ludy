@@ -2546,6 +2546,8 @@ export const en = {
     unitLabel: 'Unit (optional)',
     unitPlaceholder: 'orders, clients, %, VND...',
     linkedProjectLabel: 'Link Ludy Projects project (optional)',
+    searchProjectsPlaceholder: 'Search projects by name...',
+    loadMoreProjectsBtn: 'Load more projects',
     noLinkedProject: 'No project link',
     linkedTasksLabel: 'Pick specific tasks (leave empty to track whole project)',
     loadingTasks: 'Loading project tasks...',
@@ -5276,6 +5278,28 @@ export const en = {
       longest: 'Longest stretch',
       line: 'Talk time: {list}',
       lineMore: 'Talk time: {list} and {count, plural, one {# other} other {# others}}',
+    },
+    highlights: {
+      title: 'Highlights',
+      desc: 'Lines of the transcript that people marked. Everyone who can read this meeting sees them. Click a time to go there.',
+      mark: 'Highlight',
+      marked: 'Highlighted',
+      markLine: 'Highlight the line at {time}',
+      unmarkLine: 'Remove your highlight of the line at {time}',
+      markHint: 'Highlight this line. Shift and click highlights everything from the line you clicked last.',
+      jump: 'Go to {time} in the transcript and the player',
+      markedBy: 'Marked by {who}',
+      you: 'you',
+      aMember: 'a member',
+      noLines: 'These lines are no longer in the transcript.',
+      moreLines: 'and {count, number} more lines',
+      copy: 'Copy the lines',
+      copied: 'Copied',
+      remove: 'Remove highlight',
+      errors: {
+        HIGHLIGHT_LIMIT: 'You can have at most 50 highlights in one meeting. Remove one first.',
+        HIGHLIGHT_NOT_ANCHORED: 'You can only highlight lines of the transcript you can read.',
+      },
     },
     chapters: {
       title: 'Chapters',
@@ -16470,6 +16494,7 @@ export const en = {
       HR_OKR_PARENT_ARCHIVED: 'Cannot align under an archived parent objective',
       HR_OKR_PARENT_SCOPE: 'Invalid parent objective level for this objective scope',
       HR_OKR_ARCHIVED: 'Archived objectives cannot be modified',
+      HR_OKR_OWNER_ERASED: 'Cannot reopen or modify an individual objective after employee erasure',
       HR_OKR_SELF_PARENT: 'An objective cannot align under itself',
       HR_OKR_HAS_CHILDREN_QUARTER: 'Cannot change quarter while child objectives align under this objective',
       HR_OKR_PROJECT_REQUIRED: 'Select a Ludy Projects project before selecting tasks',
@@ -19334,6 +19359,11 @@ export const en = {
       load: {
         week: 'See how much of a week each person spends in meetings and the recurring meetings that may be worth trimming, from the meetings you read',
       },
+      highlight: {
+        add: 'Mark a transcript line or range of a meeting as a highlight',
+        list: 'Read the highlights of a meeting',
+        remove: 'Remove a highlight of a meeting',
+      },
       assignee: {
         facts: 'See the name said for an action item and the people it may be given to',
         start: 'Ask Vy who an action item belongs to, from the name said in the meeting',
@@ -19665,6 +19695,7 @@ export const en = {
     },
     projects: {
       board: 'Read a project board and task list',
+      board_snapshots: 'Read batched project board column and task summaries',
       column: {
         create: 'Create a custom board column in a project',
         delete: 'Delete a custom board column in a project',

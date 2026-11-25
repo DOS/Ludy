@@ -307,6 +307,7 @@ import {
   bookingView,
 } from './booking-page.ts';
 import { STATUS_PAGE_CSP, readStatusFile, renderStatusPage, statusView, type ProbeStatus } from './status-page.ts';
+import { AUTH_MAIL_TEMPLATE_CSP, AUTH_MAIL_TEMPLATE_ROUTE, renderAuthMailTemplate } from './auth-mail-templates.ts';
 import { WEB_MANIFEST_PATH, brandedManifest } from './web-manifest.ts';
 import { opsAlert } from './ops-alert.ts';
 import { shortLinkTarget, SHORT_LINK_HITS_PER_MINUTE } from './short-link.ts';
@@ -1016,6 +1017,20 @@ export function createHttpApp(deps: HttpDeps) {
       return c.html(page, 200, { 'content-security-policy': STATUS_PAGE_CSP, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer' });
     });
   }
+
+  // Ludy-branded Supabase Auth email templates (#3577): served over HTTP inside the Compose network to the bundled
+  // auth service (GOTRUE_MAILER_TEMPLATES_* -> http://ludy:8080/auth-templates/<kind>.html). Strict 5-file allowlist,
+  // zero dynamic filesystem reads and zero tenant data.
+  app.get(AUTH_MAIL_TEMPLATE_ROUTE, (c) => {
+    const html = renderAuthMailTemplate(c.req.param('name'), config.BRAND_NAME);
+    if (html === null) return c.json({ code: 'NOT_FOUND' }, 404);
+    return c.html(html, 200, {
+      'content-security-policy': AUTH_MAIL_TEMPLATE_CSP,
+      'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff',
+      'referrer-policy': 'no-referrer',
+    });
+  });
 
   // Self-hosted Supabase Auth behind the same origin.
   if (config.AUTH_UPSTREAM_URL) {

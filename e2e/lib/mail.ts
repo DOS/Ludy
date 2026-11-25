@@ -8,15 +8,21 @@ interface Summary {
   Subject: string;
 }
 
+export interface AuthMail {
+  subject: string;
+  html: string;
+  link: string;
+}
+
 async function json<T>(path: string): Promise<T> {
   const response = await fetch(`${MAILPIT_URL}${path}`);
   if (!response.ok) throw new Error(`Mailpit ${path}: ${response.status}`);
   return (await response.json()) as T;
 }
 
-// Waits for the newest email to `to` whose subject matches, and returns the Supabase Auth link in it.
-export async function authLink(to: string, subject: RegExp): Promise<string> {
-  let link = '';
+// Waits for the newest email to `to` whose subject matches, and returns its subject, HTML body, and Supabase Auth link.
+export async function authMail(to: string, subject: RegExp): Promise<AuthMail> {
+  let result: AuthMail | null = null;
   await expect
     .poll(
       async () => {
@@ -24,11 +30,19 @@ export async function authLink(to: string, subject: RegExp): Promise<string> {
         const message = messages.find((m) => subject.test(m.Subject));
         if (!message) return '';
         const { HTML } = await json<{ HTML: string }>(`/api/v1/message/${message.ID}`);
-        link = /href="([^"]*\/verify\?[^"]*)"/.exec(HTML)?.[1]?.replaceAll('&amp;', '&') ?? '';
+        const link = /href="([^"]*\/verify\?[^"]*)"/.exec(HTML)?.[1]?.replaceAll('&amp;', '&') ?? '';
+        if (!link) return '';
+        result = { subject: message.Subject, html: HTML, link };
         return link;
       },
       { message: `email to ${to} matching ${subject}`, timeout: 30_000 },
     )
     .not.toBe('');
-  return link;
+  if (!result) throw new Error(`missing auth mail for ${to}`);
+  return result;
+}
+
+// Waits for the newest email to `to` whose subject matches, and returns the Supabase Auth link in it.
+export async function authLink(to: string, subject: RegExp): Promise<string> {
+  return (await authMail(to, subject)).link;
 }
