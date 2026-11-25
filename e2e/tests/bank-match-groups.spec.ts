@@ -52,7 +52,7 @@ test('a clean bank match is asked for and approved in one action, then listed wi
   });
 
   await test.step('import the statement: the line that pays the invoice is the clean group, the fee line is in none', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'crove-match-'));
+    const dir = mkdtempSync(join(tmpdir(), 'ludy-match-'));
     const path = join(dir, 'thang-11.csv');
     writeFileSync(path, `﻿${HEADER}\n${LINES.join('\n')}\nTổng cộng;;;1.991.000;;\n`);
     await page.getByRole('navigation').getByRole('link', { name: 'Tài chính', exact: true }).click();

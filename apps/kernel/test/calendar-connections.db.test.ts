@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Outside calendars (#2123, part of #1374) on PostgreSQL 17: a member connects an account, its tokens are sealed and only
 // the worker reads them, the sync replaces a connection's busy blocks as a set, and a block takes slots away without
-// carrying a title. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// carrying a title. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -13,7 +13,7 @@ import { GOOGLE_CALENDAR_EVENTS_READ_SCOPE, GOOGLE_CALENDAR_EVENTS_SCOPE, calend
 import { CredentialVault, Runtime, parseVaultKey } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const VN = 'Asia/Ho_Chi_Minh';
@@ -29,7 +29,7 @@ const at = (date: string, minute: number) => new Date(zonedInstant(VN, date, min
 const dayRange = (date: string) => ({ from: at(date, 0), to: at(date, 1440) });
 
 suite('outside calendars on PostgreSQL (#2123)', () => {
-  const dbName = `crove_test_calendar_conn_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_calendar_conn_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appPool: pg.Pool;
   let workerPool: pg.Pool;

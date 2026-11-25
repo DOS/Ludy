@@ -6,7 +6,7 @@ import { XConnector, XPublisher, XRefresher, comparableText, newOAuthAttempt, ty
 const APP = { clientId: 'M1M5R3BMVy13QmpScXkzTUt5OE46MTpjaQ', clientSecret: 'test-x-secret-not-real' };
 const USER = '1580661436147937281';
 const SECRET = JSON.stringify({ accessToken: 'x-access-1', refreshToken: 'x-refresh-1' });
-const REDIRECT = 'https://crove.example/channels/oauth/x/callback';
+const REDIRECT = 'https://ludy.example/channels/oauth/x/callback';
 const SCOPE = 'tweet.read tweet.write users.read media.write offline.access';
 
 type Answer = { status?: number; body?: unknown; headers?: Record<string, string> };
@@ -289,9 +289,9 @@ describe('XPublisher', () => {
     expect(await publisher.reconcile(window)).toEqual({ found: false });
     // A bare link X turned into t.co still matches; a host on a rare TLD makes a miss unknown, not missing.
     const bare = x({ 'GET api.x.com/2/users/1580661436147937281/tweets': [{ body: { data: [{ id: '1445880548472328193', text: 'ghé https://t.co/zz nhé', created_at: new Date().toISOString() }] } }, { body: { data: [] } }] });
-    const content = { body: 'ghé crove.vn/gia nhé', title: null, linkUrl: null, media: [] };
+    const content = { body: 'ghé ludy.vn/gia nhé', title: null, linkUrl: null, media: [] };
     expect(await new XPublisher(APP, bare.fetchImpl).reconcile({ ...window, content })).toMatchObject({ found: true, externalId: '1445880548472328193' });
-    expect(await new XPublisher(APP, bare.fetchImpl).reconcile({ ...window, content: { ...content, body: 'ghé crove.studio nhé' } })).toEqual({ found: 'unknown' });
+    expect(await new XPublisher(APP, bare.fetchImpl).reconcile({ ...window, content: { ...content, body: 'ghé ludy.studio nhé' } })).toEqual({ found: 'unknown' });
     // An image-only post has nothing to match by.
     expect(await publisher.reconcile({ ...window, content: { body: '', title: null, linkUrl: null, media: [image] } })).toEqual({ found: 'unknown' });
   });

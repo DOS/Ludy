@@ -23,7 +23,7 @@ import { DraftBudget } from '../src/ai-draft-limit.ts';
 import { prepareMonth, type PayrollReads } from '../src/payroll-coworker-ai.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -34,7 +34,7 @@ function shiftIsoDays(isoDate: string, deltaDays: number): string {
 }
 
 suite('HR labor contract tracking, probation compliance, and expiry alerts (#3384)', () => {
-  const dbName = `crove_test_hr2b3_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_hr2b3_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let rt: Runtime;

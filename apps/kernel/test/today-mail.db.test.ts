@@ -2,7 +2,7 @@
 // The daily "Hôm nay cần bạn" mail on PostgreSQL 17 (#2406): a member opts in and out of their own row alone; only the system
 // context writes last_sent_day; the send command claims the Vietnam day once per member, counts only what the member could see,
 // queues counts and links and nothing else, and sends nothing to a member owed nothing; the due-orgs function is the worker's alone.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -14,7 +14,7 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './manifests.ts';
 import { contextToken } from './context-token.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -24,7 +24,7 @@ const EARLY = new Date('2026-11-09T23:00:00Z');
 const NEXT_MORNING = new Date('2026-11-11T03:00:00Z');
 
 suite('the daily brief mail on PostgreSQL (#2406)', () => {
-  const dbName = `crove_test_today_mail_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_today_mail_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appUrl = '';
   let workerUrl = '';

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Stream hints of the CRM (issue #3293, crm.md section 5), on PostgreSQL 17: a deal or a contact's details that change
 // send `<org> crm_deal <id>` or `<org> crm_party <id>` on ludy_stream, the id only (never a title, an amount or a
-// name), to the streams of that org alone. A bulk delete of deals sends one hint per org. Set CROVE_TEST_ADMIN_URL to
+// name), to the streams of that org alone. A bulk delete of deals sends one hint per org. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to
 // a superuser URL; the run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -15,13 +15,13 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { StreamHub, parseHint, type HubSubscriber, type NotificationSource } from '../src/stream.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const DONE = 'crm-stream-hints:done';
 const suite = ADMIN ? describe : describe.skip;
 
 suite('stream hints of deals and contacts (#3293)', () => {
-  const dbName = `crove_test_crm_stream_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_crm_stream_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let app: Runtime;

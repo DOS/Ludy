@@ -39,7 +39,7 @@ import { createSessionStatusSource } from '../src/sessions.ts';
 import { runSignPdfSealJob } from '../src/sign-worker.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const JWT_SIGNING_KEY = 'test-only-jwt-key-sign-slice4d-3820-0123456789';
 const ISSUER = 'crove-auth';
@@ -117,7 +117,7 @@ function assertNoReferrerNoStore(res: Response) {
 }
 
 suite('eSign Slice 4d in-person signing and public template hub (#3820)', () => {
-  const dbName = `crove_test_sign_slice4d_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_sign_slice4d_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let tmpWebDist = '';
   let adminUrl = '';
   let pool: pg.Pool | undefined;

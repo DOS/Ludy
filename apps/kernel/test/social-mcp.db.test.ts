@@ -2,7 +2,7 @@
 // The two Social reads of the MCP endpoint (#3227, plan section 3.8) as the runtime runs them for a grant: `social.mcp.posts` and `social.mcp.review_queue`. A grant sees what the
 // consenting owner or admin sees in Social and no other org's rows; the test pins the exact keys of a post and of a channel, that every text is one plain line, that nothing
 // beyond them leaks (the author, the assignee, internal comments, the search text, the content hash), the filters, the review queue's two lists, and that a browser session,
-// a grant without the scope and a grant whose person is only a member are refused. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// a grant without the scope and a grant whose person is only a member are refused. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -14,7 +14,7 @@ import { DomainError, Runtime, type UserActor } from '@ludy/kernel-runtime';
 import { MCP_TEXT_MAX, socialCommands, socialQueries } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -57,7 +57,7 @@ interface Queue {
 }
 
 suite('the Social MCP reads (#3227)', () => {
-  const dbName = `crove_test_social_mcp_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_mcp_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let runtime: Runtime;

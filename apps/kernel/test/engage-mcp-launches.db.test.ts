@@ -2,7 +2,7 @@
 // The read of the ad launches that have started (`ads.mcp.launches`, tool `ludy_ads_launches`; epic #3857, E4b, issue #4147) and what an AI coworker does with its ids: it lists a live launch, asks for it to be
 // stopped or its budget lowered, nothing happens until a person approves, and then the original command runs once as that person. The projection is pinned here (the exact keys, amounts as decimal strings,
 // every text one plain line, only launches that have started, nothing of the plan, the platform's ids or the proposal); who may read is pinned with the other results reads in engage-mcp-results.db.test.ts.
-// The fixture is the live launch the invariants of the changes of a running ad build (apps/kernel/test/invariant/ads-manage.db.test.ts), as in engage-proposals-ads.db.test.ts. Set CROVE_TEST_ADMIN_URL to a
+// The fixture is the live launch the invariants of the changes of a running ad build (apps/kernel/test/invariant/ads-manage.db.test.ts), as in engage-proposals-ads.db.test.ts. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a
 // superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';

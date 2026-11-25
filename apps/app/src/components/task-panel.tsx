@@ -19,7 +19,7 @@ import { taskTitleHidden, taskTitleText } from '../lib/task-title.ts';
 import { useDebounced } from '../lib/use-debounced.ts';
 import { DateInput } from './date-input.tsx';
 import { DuplicateHint, FormPanel } from './form-panel.tsx';
-import { TaskChecklistEditor, hasBlankChecklistStep, normalizeChecklistSteps } from './task-checklist.tsx';
+import { TaskChecklistEditor, hasBlankChecklistStep, isTaskStaleRevision, normalizeChecklistSteps, taskRevisionPrecondition } from './task-checklist.tsx';
 import { ErrorText, FieldError, fieldControl, fieldHintId } from './ui.tsx';
 
 type Chart = Awaited<ReturnType<typeof orpc.chart.get.call>>;
@@ -244,11 +244,14 @@ function EditTaskForm({ task, chart, opener, onClose }: { task: TaskDetail; char
       return;
     }
     update.mutate(
-      { id: task.id, ...patch, idempotencyKey: key },
+      { id: task.id, ...patch, ...taskRevisionPrecondition(initial.revision), idempotencyKey: key },
       {
         onSuccess: () => {
           setKey(crypto.randomUUID());
           onClose();
+        },
+        onError: (err) => {
+          if (isTaskStaleRevision(err)) refresh();
         },
       },
     );

@@ -3,7 +3,7 @@
 // chatbot in Telegram before turning chats on in Ludy never sent Ludy the `business_connection` update, so a customer's message names a connection the
 // connection's list does not hold. The intake asks Telegram once with `getBusinessConnection` (a recorded answer here, never a live call), records an enabled
 // one exactly as the update would have (as an account nobody has allowed yet), and the account's chats are taken in once an owner allows it. A disabled, unknown
-// or failed answer records nothing; the same id is not asked twice in a window. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// or failed answer records nothing; the same id is not asked twice in a window. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -19,7 +19,7 @@ import { BUSINESS_LOOKUP_PER_CONNECTION, BUSINESS_LOOKUP_PER_PASS, BUSINESS_LOOK
 import { createHttpApp } from '../src/http.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const SECRET = 'test-only-jwt-secret-for-telegram-lookup-0123456789-abcdefghij';
@@ -50,7 +50,7 @@ class MemoryStore implements BlobStore {
 }
 
 suite('Telegram Business connection read back on PostgreSQL (#3224)', () => {
-  const dbName = `crove_test_telegram_lookup_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_telegram_lookup_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let app: ReturnType<typeof createHttpApp>;

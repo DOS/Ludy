@@ -76,7 +76,7 @@ const page = (locale: 'vi' | 'en', data: unknown) => render(locale, <SocialRepor
 describe('client report sections (#1259)', () => {
   const saved = (globalThis as { window?: unknown }).window;
   beforeAll(() => {
-    (globalThis as { window?: unknown }).window = { location: { hash: `#${TOKEN}`, origin: 'https://crove.example' }, localStorage: { getItem: () => null, setItem: () => undefined } };
+    (globalThis as { window?: unknown }).window = { location: { hash: `#${TOKEN}`, origin: 'https://ludy.example' }, localStorage: { getItem: () => null, setItem: () => undefined } };
   });
   afterAll(() => {
     (globalThis as { window?: unknown }).window = saved;

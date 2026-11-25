@@ -35,7 +35,7 @@ import {
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
 import { enterUser } from './invariant/fixtures/context-token.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -43,7 +43,7 @@ const SECRET_NOTE_MARKER = 'BI_MAT_NOTE_DO_NOT_LEAK_1677';
 const INJECTED_PHRASE = 'INJECTED_HTML_AND_LINK';
 
 suite('Notes N8: member-scoped Vy summary, suggested to-dos, and monotonic taint on PostgreSQL 17 (#1677)', () => {
-  const dbName = `crove_test_notes_n8_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_notes_n8_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let app: Runtime;
@@ -1137,5 +1137,138 @@ suite('Notes N8: member-scoped Vy summary, suggested to-dos, and monotonic taint
       workerRole: false,
       definerTenant: false,
     });
+  });
+
+  it('handles trashed, partially purged (seq=0 gone), concurrently accepted, and fully purged todo suggestion runs (#3522)', async () => {
+    const { orgId, alice, exec, query } = await setupOrg();
+    const model: ModelPort = {
+      generate: async (_who, prompt) => {
+        if (prompt.feature === 'notes.summary') {
+          return {
+            text: JSON.stringify({ summary: 'Tom tat ngan.', bullets: ['Muc 1'] }),
+            usage: { inputTokens: 15, outputTokens: 10 },
+          };
+        }
+        return {
+          text: JSON.stringify({
+            suggestions: [
+              { title: 'Viec 1 tu Vy', details: 'Chi tiet 1', dueOn: null },
+              { title: 'Viec 2 tu Vy', details: 'Chi tiet 2', dueOn: null },
+            ],
+          }),
+          usage: { inputTokens: 20, outputTokens: 20 },
+        };
+      },
+    };
+    const deps = makeDeps(model);
+
+    const { noteId } = await exec<NoteWritten>(alice.userId, 'notes.note.create', {
+      title: 'Ghi chu kiem tra purge run',
+      body: 'Goi dien cho khach hang A va gui bao gia B.',
+      visibility: 'private',
+    });
+
+    const suggested = await runNotesSuggestTodos(deps, orgId, asUser(alice.userId), { noteId });
+    expect(suggested.state).toBe('ready');
+    const runId = suggested.runId;
+
+    // 1. Concurrent double-accept on the same fresh runId: exactly one succeeds, the other gets VY_RUN_ALREADY_ACCEPTED.
+    const acceptPayload = {
+      noteId,
+      noteRevision: 1,
+      runId,
+      items: [{ title: 'Viec 1 tu Vy' }, { title: 'Viec 2 tu Vy' }],
+    };
+    const [raceA, raceB] = await Promise.allSettled([
+      exec<TodoAcceptSuggestionsResult>(alice.userId, 'notes.todo.accept_suggestions', acceptPayload),
+      exec<TodoAcceptSuggestionsResult>(alice.userId, 'notes.todo.accept_suggestions', acceptPayload),
+    ]);
+    const fulfilled = [raceA, raceB].filter((r): r is PromiseFulfilledResult<TodoAcceptSuggestionsResult> => r.status === 'fulfilled');
+    const rejected = [raceA, raceB].filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]!.reason).toMatchObject({ code: 'VY_RUN_ALREADY_ACCEPTED', status: 409 });
+
+    const createdIds = fulfilled[0]!.value.todoIds;
+    expect(createdIds).toHaveLength(2);
+    // todoAcceptSuggestions iterates items backwards, assigning source_run_seq=0 to the last item and 1 to the first.
+    const seqRows = await sqlAdmin<{ id: string; source_run_seq: number; tainted: boolean }>(
+      `SELECT id, source_run_seq, tainted FROM ludy_notes.todo WHERE org_id = $1 AND source_run_id = $2 ORDER BY source_run_seq`,
+      [orgId, runId],
+    );
+    expect(seqRows.rows.map((r) => [r.id, r.source_run_seq, r.tainted])).toEqual([
+      [createdIds[1]!, 0, true],
+      [createdIds[0]!, 1, true],
+    ]);
+
+    // 2. Soft-deleting all created to-dos keeps the run dismissed and replay blocked (rows stay in trash).
+    await exec(alice.userId, 'notes.todo.delete', { todoId: createdIds[0]! });
+    await exec(alice.userId, 'notes.todo.delete', { todoId: createdIds[1]! });
+    expect((await readNotesVyResults(deps, orgId, asUser(alice.userId), noteId)).todoSuggest).toBeNull();
+    await expect(
+      exec(alice.userId, 'notes.todo.accept_suggestions', acceptPayload),
+    ).rejects.toMatchObject({ code: 'VY_RUN_ALREADY_ACCEPTED', status: 409 });
+
+    // 3. Partial hard-purge: restore seq=1 and hard-purge only seq=0 via notes.trash.empty -> replay stays blocked (sequential & concurrent).
+    await exec(alice.userId, 'notes.todo.restore', { todoId: createdIds[0]! });
+    await sqlAdmin(`UPDATE ludy_notes.todo SET deleted_at = now() - interval '31 days' WHERE org_id = $1 AND id = $2`, [
+      orgId,
+      createdIds[1]!,
+    ]);
+    expect(
+      await worker.execute('notes.trash.empty', {}, { actor: { type: 'system', component: 'notes' }, orgId }),
+    ).toEqual({ removed: 1 });
+    expect((await readNotesVyResults(deps, orgId, asUser(alice.userId), noteId)).todoSuggest).toBeNull();
+    const partialConcurrent = await Promise.all([
+      exec(alice.userId, 'notes.todo.accept_suggestions', acceptPayload).then(() => 'ok', (e: { code?: string }) => e.code),
+      exec(alice.userId, 'notes.todo.accept_suggestions', acceptPayload).then(() => 'ok', (e: { code?: string }) => e.code),
+    ]);
+    expect(partialConcurrent).toEqual(['VY_RUN_ALREADY_ACCEPTED', 'VY_RUN_ALREADY_ACCEPTED']);
+
+    // 4. Full hard-purge: trash and purge the last surviving to-do after 31 days.
+    await exec(alice.userId, 'notes.todo.delete', { todoId: createdIds[0]! });
+    await sqlAdmin(`UPDATE ludy_notes.todo SET deleted_at = now() - interval '31 days' WHERE org_id = $1 AND id = $2`, [
+      orgId,
+      createdIds[0]!,
+    ]);
+    expect(
+      await worker.execute('notes.trash.empty', {}, { actor: { type: 'system', component: 'notes' }, orgId }),
+    ).toEqual({ removed: 1 });
+
+    // Under normal 30-day retention, once trash_empty can purge a run's to-do, the 30-day member_vy_result has also expired and is hidden.
+    await sqlAdmin(
+      `UPDATE ludy_kernel.member_vy_result SET created_at = now() - interval '31 days', expires_at = now() - interval '1 minute' WHERE org_id = $1 AND run_id = $2`,
+      [orgId, runId],
+    );
+    expect((await readNotesVyResults(deps, orgId, asUser(alice.userId), noteId)).todoSuggest).toBeNull();
+
+    // If an unpurged, unexpired member_vy_result remains after all created to-dos are gone, explicit user re-run cleanly creates a fresh batch from seq=0 and re-arms idempotency.
+    await sqlAdmin(
+      `UPDATE ludy_kernel.member_vy_result SET created_at = now() - interval '1 hour', expires_at = now() + interval '1 day' WHERE org_id = $1 AND run_id = $2`,
+      [orgId, runId],
+    );
+    expect((await readNotesVyResults(deps, orgId, asUser(alice.userId), noteId)).todoSuggest?.runId).toBe(runId);
+
+    const reaccepted = await exec<TodoAcceptSuggestionsResult>(alice.userId, 'notes.todo.accept_suggestions', acceptPayload);
+    expect(reaccepted.created).toBe(2);
+    expect(reaccepted.todoIds).toHaveLength(2);
+    expect(reaccepted.todoIds[0]).not.toBe(createdIds[0]);
+    expect((await readNotesVyResults(deps, orgId, asUser(alice.userId), noteId)).todoSuggest).toBeNull();
+    await expect(
+      exec(alice.userId, 'notes.todo.accept_suggestions', acceptPayload),
+    ).rejects.toMatchObject({ code: 'VY_RUN_ALREADY_ACCEPTED', status: 409 });
+
+    // 5. Expiring/purging member_vy_result does not remove or break live accepted to-dos and keeps replay blocked.
+    await sqlAdmin(
+      `UPDATE ludy_kernel.member_vy_result SET created_at = now() - interval '31 days', expires_at = now() - interval '1 minute' WHERE org_id = $1 AND run_id = $2`,
+      [orgId, runId],
+    );
+    await worker.execute('kernel.vy_data.results.expire', {}, { actor: { type: 'system', component: 'kernel' }, orgId });
+    const liveAfterResultPurge = await query<TodoSummary[]>(alice.userId, 'notes.todo.list', { view: 'open' });
+    expect(liveAfterResultPurge.map((t) => t.id).sort()).toEqual([...reaccepted.todoIds].sort());
+    expect(liveAfterResultPurge.every((t) => t.tainted)).toBe(true);
+    await expect(
+      exec(alice.userId, 'notes.todo.accept_suggestions', acceptPayload),
+    ).rejects.toMatchObject({ code: 'VY_RUN_ALREADY_ACCEPTED', status: 409 });
   });
 });

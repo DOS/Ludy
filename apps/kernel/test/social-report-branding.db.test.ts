@@ -3,7 +3,7 @@
 // low-contrast accent are refused, by the command and again by the table's CHECK; the public report and review views
 // return the brand of the link's own org only, and still return nothing for a revoked or expired link; the report mail
 // carries the agency's name and accent. The public side runs as the API login role with no org context, as the HTTP
-// edge does. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// edge does. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -20,7 +20,7 @@ import { reportView, type PageBrand } from '../src/report-link.ts';
 import { reviewView } from '../src/review-link.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -28,7 +28,7 @@ const png = (pad = 40) => `data:image/png;base64,${Buffer.from([0x89, 0x50, 0x4e
 const jpegBytes = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0x10, 0x4a, 0x46, 0x49, 0x46, 0, 1]).toString('base64');
 
 suite('white-label client reports on PostgreSQL (#1053)', () => {
-  const dbName = `crove_test_report_branding_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_report_branding_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

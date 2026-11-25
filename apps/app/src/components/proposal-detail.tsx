@@ -441,7 +441,7 @@ export function ProposalDetail({ slug, id, split = false, mode = 'page', onDone,
     ...orpc.inbox.get.queryOptions({ input: { id } }),
     refetchInterval: (query) => (query.state.data?.extraction?.inFlight ? pollEvery(live, 2000) : false),
   });
-  // The chart of accounts is the finance module's; without it (CROVE_MODULES) the screen does not ask for it.
+  // The chart of accounts is the finance module's; without it (LUDY_MODULES) the screen does not ask for it.
   useModulesVersion(); // the apps of the org can change while this screen is open
   const finance = installedModules().includes('finance');
   const accounts = useQuery({ ...orpc.accounts.list.queryOptions(), enabled: finance });

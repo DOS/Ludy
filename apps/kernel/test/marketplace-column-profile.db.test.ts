@@ -3,7 +3,7 @@
 // done, has parsed lines and the header digest, and is for the same platform and mapping), the profile's headers, header row and digest come from what the worker recorded and not from the caller, the file's
 // check row is deleted with it, the same mapping again adds nothing and a different one is a new row that wins, a mapping the header row refuses or a check that did not pass is never stored, an agent, the
 // system, a member and a viewer cannot save, an org reads only its own profile, the table keeps the shape, and no header text reaches the audit row.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -15,7 +15,7 @@ import { Runtime, type AgentActor } from '@ludy/kernel-runtime';
 import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -50,7 +50,7 @@ const mapping = (extra: Array<{ index: number; header: string; field: string }> 
 ];
 
 suite('the confirmed column mapping (#4037)', () => {
-  const dbName = `crove_test_column_profile_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_column_profile_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

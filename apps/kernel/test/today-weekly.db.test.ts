@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // "Tuần này" figures, end to end on PostgreSQL 17 (Vy plan C5, slice V6, #3257): the real `kernel.today_weekly.figures` over the real reads of Engage (CRM), Accounting and the kernel's tasks, for
 // a real owner, member and branch-limited member, with nothing stood in. The window is the last 7 days; the figures are computed by code from the lines' own reads in the member's own context, so a
-// member limited to part of the books gets figures only from what they can open. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// member limited to part of the books gets figures only from what they can open. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -15,14 +15,14 @@ import { crmCommands, crmQueries } from '@ludy/mod-crm';
 import { addDays, financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const TODAY = vietnamToday();
 const READ = 'kernel.today_weekly.figures';
 
 suite('"Tuần này" figures, end to end (#3257)', () => {
-  const dbName = `crove_test_today_weekly_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_today_weekly_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

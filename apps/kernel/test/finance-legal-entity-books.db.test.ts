@@ -3,7 +3,7 @@
 // refused), legal_entity_id never changes for any role, voucher numbers and period locks are kept per entity, a row's
 // parents must all be of its entity, sales invoice and bank line keys are per entity, and the finance queries resolve
 // the entity a call is for (finance.legal_entities.list, finance.period.lock_state, finance.period.lock).
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; the run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -17,14 +17,14 @@ import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 import { contextToken } from './context-token.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const RLS_DENIED = /new row violates row-level security policy/;
 
 const suite = ADMIN ? describe : describe.skip;
 
 suite('finance books per legal entity, part 2a (#1280)', () => {
-  const dbName = `crove_test_finance_le_books_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_finance_le_books_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appPool: pg.Pool;
   let workerPool: pg.Pool;

@@ -57,7 +57,7 @@ describe('RFC 8291 message encryption', () => {
     ua.generateKeys();
     const auth = randomBytes(16);
     const keys = { p256dh: ua.getPublicKey().toString('base64url'), auth: auth.toString('base64url') };
-    const payload = Buffer.from(JSON.stringify({ title: 'Crove', body: 'Có bài đang chờ bạn duyệt', url: '/o/acme/social/channels' }));
+    const payload = Buffer.from(JSON.stringify({ title: 'Ludy', body: 'Có bài đang chờ bạn duyệt', url: '/o/acme/social/channels' }));
     const a = encryptPush(payload, keys);
     const b = encryptPush(payload, keys);
     expect(a.equals(b)).toBe(false);
@@ -75,7 +75,7 @@ describe('RFC 8291 message encryption', () => {
 
 describe('VAPID (RFC 8292)', () => {
   const pair = generateVapidKeys();
-  const env = { VAPID_PUBLIC_KEY: pair.publicKey, VAPID_PRIVATE_KEY: pair.privateKey, VAPID_SUBJECT: 'mailto:ops@crove.test' };
+  const env = { VAPID_PUBLIC_KEY: pair.publicKey, VAPID_PRIVATE_KEY: pair.privateKey, VAPID_SUBJECT: 'mailto:ops@ludy.test' };
 
   it('signs an ES256 token for the push service origin that the public key verifies', () => {
     const keys = loadVapidKeys(env);
@@ -83,7 +83,7 @@ describe('VAPID (RFC 8292)', () => {
     const token = vapidToken(keys, 'https://fcm.googleapis.com', 1_800_000_000);
     const [header, claims, signature] = token.split('.') as [string, string, string];
     expect(JSON.parse(Buffer.from(header, 'base64url').toString())).toEqual({ typ: 'JWT', alg: 'ES256' });
-    expect(JSON.parse(Buffer.from(claims, 'base64url').toString())).toEqual({ aud: 'https://fcm.googleapis.com', exp: 1_800_000_000 + 12 * 3600, sub: 'mailto:ops@crove.test' });
+    expect(JSON.parse(Buffer.from(claims, 'base64url').toString())).toEqual({ aud: 'https://fcm.googleapis.com', exp: 1_800_000_000 + 12 * 3600, sub: 'mailto:ops@ludy.test' });
     const raw = b64(pair.publicKey);
     const pub = createPublicKey({ key: { kty: 'EC', crv: 'P-256', x: raw.subarray(1, 33).toString('base64url'), y: raw.subarray(33).toString('base64url') }, format: 'jwk' });
     expect(b64(signature)).toHaveLength(64);
@@ -97,15 +97,15 @@ describe('VAPID (RFC 8292)', () => {
     expect(() => loadVapidKeys({ VAPID_PUBLIC_KEY: pair.publicKey })).toThrow('together');
     expect(() => loadVapidKeys({ ...env, VAPID_PRIVATE_KEY: generateVapidKeys().privateKey })).toThrow('does not match');
     expect(() => loadVapidKeys({ ...env, VAPID_PUBLIC_KEY: randomBytes(65).toString('base64url') })).toThrow();
-    expect(() => loadVapidKeys({ ...env, VAPID_SUBJECT: 'ops@crove.test' })).toThrow('VAPID_SUBJECT');
-    expect(() => loadVapidKeys({ ...env, VAPID_SUBJECT: 'http://crove.test' })).toThrow('VAPID_SUBJECT');
-    expect(loadVapidKeys({ ...env, VAPID_SUBJECT: 'https://crove.test/contact' })?.publicKey).toBe(pair.publicKey);
+    expect(() => loadVapidKeys({ ...env, VAPID_SUBJECT: 'ops@ludy.test' })).toThrow('VAPID_SUBJECT');
+    expect(() => loadVapidKeys({ ...env, VAPID_SUBJECT: 'http://ludy.test' })).toThrow('VAPID_SUBJECT');
+    expect(loadVapidKeys({ ...env, VAPID_SUBJECT: 'https://ludy.test/contact' })?.publicKey).toBe(pair.publicKey);
   });
 });
 
 describe('the push sender', () => {
   const pair = generateVapidKeys();
-  const keys = loadVapidKeys({ VAPID_PUBLIC_KEY: pair.publicKey, VAPID_PRIVATE_KEY: pair.privateKey, VAPID_SUBJECT: 'mailto:ops@crove.test' });
+  const keys = loadVapidKeys({ VAPID_PUBLIC_KEY: pair.publicKey, VAPID_PRIVATE_KEY: pair.privateKey, VAPID_SUBJECT: 'mailto:ops@ludy.test' });
   if (!keys) throw new Error('no keys');
   const ua = createECDH('prime256v1');
   ua.generateKeys();
@@ -120,14 +120,14 @@ describe('the push sender', () => {
         return { url, status: 201, contentType: null, body: Buffer.alloc(0), truncated: false };
       },
     });
-    expect(await sender.send(sub, '{"title":"Crove"}')).toEqual({ outcome: 'sent', status: 201 });
+    expect(await sender.send(sub, '{"title":"Ludy"}')).toEqual({ outcome: 'sent', status: 201 });
     const [req] = seen;
     expect(req?.method).toBe('POST');
     expect(req?.headers).toMatchObject({ 'content-encoding': 'aes128gcm', 'content-type': 'application/octet-stream', ttl: '86400', urgency: 'normal' });
     expect(req?.headers.authorization).toMatch(new RegExp(`^vapid t=[\\w-]+\\.[\\w-]+\\.[\\w-]+, k=${pair.publicKey}$`));
     const claims = JSON.parse(Buffer.from(req?.headers.authorization?.split('.')[1] ?? '', 'base64url').toString());
     expect(claims.aud).toBe('https://updates.push.services.mozilla.com');
-    expect(decrypt(req?.body ?? Buffer.alloc(0), ua.getPrivateKey(), auth).toString()).toBe('{"title":"Crove"}');
+    expect(decrypt(req?.body ?? Buffer.alloc(0), ua.getPrivateKey(), auth).toString()).toBe('{"title":"Ludy"}');
   });
 
   it('reads 404 and 410 as gone, a refused address as gone, and anything else as failed', async () => {

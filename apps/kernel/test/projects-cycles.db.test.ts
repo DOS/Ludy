@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // PostgreSQL integration tests for Projects v2 Sprints / Cycles, Story points, Burndown/Velocity,
 // carryover atomicity, RBAC, agent refusal, PDPL erasure, offboarding export coverage, org_purge, and Vy Cycle Summary (#4361).
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -45,7 +45,7 @@ import { createSessionStatusSource } from '../src/sessions.ts';
 import { contextToken } from './context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-projects-cycles-0123456789';
 const ISSUER = 'crove-auth';
@@ -142,7 +142,7 @@ suite('Projects v2 Cycles & Story Points on PostgreSQL (#4361)', () => {
   }
 
   beforeAll(async () => {
-    dbName = `crove_test_cycles_${Date.now()}_${randomBytes(3).toString('hex')}`;
+    dbName = `ludy_test_cycles_${Date.now()}_${randomBytes(3).toString('hex')}`;
     const setup = new pg.Client({ connectionString: ADMIN });
     await setup.connect();
     try {

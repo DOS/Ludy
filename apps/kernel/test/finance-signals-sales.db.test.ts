@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // `finance.signals.sales`, Accounting's side of the first cross-app rule (Vy V4, #2967), on PostgreSQL 17: for the parties it is asked about, the day of the latest sales invoice and how many
 // there are; a voided invoice and a purchase do not count; a party and its duplicates are one customer; an empty answer means "none exists" because
-// the read REFUSES a caller whose books are only in part in view; the answer is the contract's and nothing else. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// the read REFUSES a caller whose books are only in part in view; the answer is the contract's and nothing else. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -14,13 +14,13 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const SECRET_NAME = 'Công ty bí mật của chị Lan';
 
 suite('finance.signals.sales on PostgreSQL (#2967)', () => {
-  const dbName = `crove_test_finance_sales_signals_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_finance_sales_signals_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The CRM twins an AI coworker asks with (epic #3857, E4, issue #3863; ADR-0051 decision 10): sending a quote and moving or cancelling a booking. For each: the call leaves one pending, tainted proposal and
 // changes nothing; a rejection changes nothing, ever; an approval runs the original command once, as the approver, with every check it has (a quote edited since is stale, a booking time that is taken or a booking
-// that is no longer changeable) judged then and leaving the proposal pending when it refuses. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// that is no longer changeable) judged then and leaving the proposal pending when it refuses. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { isVietnamHoliday, zonedDate, zonedInstant, type Deal, type EventType, type PipelineStage, type Quote } from '@ludy/kernel-contract';
 import { bookingRequest } from '../src/booking-page.ts';

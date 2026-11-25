@@ -197,7 +197,7 @@ describe('JSON log lines', () => {
     expect(parseLogFormat('')).toBe('text');
     expect(parseLogFormat('json')).toBe('json');
     expect(() => parseLogFormat('yaml')).toThrow(/LOG_FORMAT/);
-    const base = { DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: 'crove-auth' };
+    const base = { DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: 'ludy-auth' };
     expect(loadConfig(base)).toMatchObject({ LOG_FORMAT: 'text', DATABASE_POOL_MAX: 10, WORKER_DATABASE_POOL_MAX: 10 });
     expect(loadConfig({ ...base, LOG_FORMAT: 'json', DATABASE_POOL_MAX: '25', WORKER_DATABASE_POOL_MAX: '4' })).toMatchObject({ LOG_FORMAT: 'json', DATABASE_POOL_MAX: 25, WORKER_DATABASE_POOL_MAX: 4 });
     expect(() => loadConfig({ ...base, LOG_FORMAT: 'yaml' })).toThrow();
@@ -213,7 +213,7 @@ describe('the lines of an HTTP request (#2175)', () => {
   const user: AuthUser = { userId: randomUUID(), email: 'owner@example.com', name: 'Chủ Sở Hữu', aal: 'aal1', sessionId: randomUUID(), mfaAt: null };
   let failure: Error | null = null;
   const app = createHttpApp({
-    config: loadConfig({ DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: 'crove-auth', WEB_DIST: '/nonexistent' }),
+    config: loadConfig({ DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: 'ludy-auth', WEB_DIST: '/nonexistent' }),
     runtime: {
       installed: () => true,
       modules: () => ['kernel', 'finance'],

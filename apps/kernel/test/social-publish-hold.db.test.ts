@@ -2,7 +2,7 @@
 // whether set for a time or waiting in a queue slot, and no first comment, repost, auto-reply or evergreen repost runs;
 // another org goes on. On release the due posts go out once each, and one more than an hour past its time waits for a
 // person. Owners and admins hold and release; every member reads it; the team is told.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -15,7 +15,7 @@ import { CredentialVault, Runtime, parseVaultKey } from '@ludy/kernel-runtime';
 import { HELD_TOO_LONG, runCommentJob, runPublishJob, socialCommands, socialQueries, type NotificationItem, type PostView, type PublishHoldView } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -29,7 +29,7 @@ class Counting extends SandboxPublisher {
 }
 
 suite('social publishing hold on PostgreSQL (#946)', () => {
-  const dbName = `crove_test_social_hold_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_hold_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appPool: pg.Pool;
   let workerPool: pg.Pool;

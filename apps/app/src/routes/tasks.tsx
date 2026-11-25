@@ -452,7 +452,7 @@ export function TaskDetailPage() {
           <p className="text-xs text-subtle-foreground">{t('description')}</p>
           <p className="text-sm whitespace-pre-wrap text-foreground">{task.description ?? t('noDescription')}</p>
         </div>
-        <TaskChecklistSection key={task.id} taskId={task.id} checklist={task.checklist ?? []} checkedOut={task.checkedOut} readOnly={!perms.tasks || editing} />
+        <TaskChecklistSection key={task.id} taskId={task.id} checklist={task.checklist ?? []} revision={task.revision} checkedOut={task.checkedOut} readOnly={!perms.tasks || editing} />
         {proposal && (
           <p className="text-sm text-muted-foreground">
             {t('proposal', { title: proposal.title })}{' '}

@@ -4,7 +4,7 @@
 // purchase or sale document is posted once (#1928): its revision 2 is refused, and it shows once, voided.
 // The entries are written by the database owner, as the posting path would leave them (one refusal also goes through
 // the posting path, in the owner's context); the lists are read through the runtime as the org's owner.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; the run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -17,7 +17,7 @@ import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { enterUser } from './context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 
 type Line = [lineNo: number, account: string, debit: string, credit: string];
@@ -26,7 +26,7 @@ const mirror = (lines: Line[]): Line[] => lines.map(([n, account, debit, credit]
 const suite = ADMIN ? describe : describe.skip;
 
 suite('a re-posted source counts once in the finance lists (#1338)', () => {
-  const dbName = `crove_test_live_revision_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_live_revision_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let runtime: Runtime;

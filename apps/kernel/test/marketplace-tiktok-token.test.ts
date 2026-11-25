@@ -311,7 +311,7 @@ describe('TiktokRefresher', () => {
 });
 
 describe('where it is wired and what it may reach', () => {
-  const BASE = { DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: 'x'.repeat(32), AUTH_ISSUER: 'crove-auth', WEB_DIST: '/nonexistent' };
+  const BASE = { DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: 'x'.repeat(32), AUTH_ISSUER: 'ludy-auth', WEB_DIST: '/nonexistent' };
 
   it('is registered under the marketplace provider only where MARKETPLACE_PROVIDERS names tiktok_shop', () => {
     const named = channelRefreshers(loadConfig({ ...BASE, MARKETPLACE_PROVIDERS: 'sandbox, tiktok_shop' }));

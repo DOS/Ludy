@@ -57,7 +57,7 @@ const otHoursOnLine = (line: HrRunSheet['lines'][number] | undefined): number =>
   return bd?.pay.overtime.reduce((sum, item) => sum + Number(item.hours), 0) ?? 0;
 };
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -78,7 +78,7 @@ class MemoryStore implements BlobStore {
 }
 
 suite('HR Stage 5B onboarding, 2-level OT to payroll, and probation review (#4448)', () => {
-  const dbName = `crove_test_hr5b_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_hr5b_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let adminPool: pg.Pool;
   let appPool: pg.Pool;

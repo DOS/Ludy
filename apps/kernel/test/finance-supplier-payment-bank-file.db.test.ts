@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The bank file of approved supplier payments (#3113 S3, #3700) on a real PostgreSQL: `finance.supplier_payment.bank_file.get` opens the sealed holder and number of each payment's pinned account for an
-// owner or an admin with a fresh second factor, after its audit row, and refuses the whole file, naming the payment, for one it cannot carry. Set CROVE_TEST_ADMIN_URL to a superuser URL.
+// owner or an admin with a fresh second factor, after its audit row, and refuses the whole file, naming the payment, for one it cannot carry. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -13,7 +13,7 @@ import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { enterUser } from './context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -41,7 +41,7 @@ const expectNoAmount = (value: unknown, amounts: readonly string[]) => {
 };
 
 suite('the bank file of supplier payments (#3113 S3)', () => {
-  const dbName = `crove_test_supplier_payment_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_supplier_payment_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

@@ -16,7 +16,7 @@ import { numberReseedCommand } from '../src/restore-report.ts';
 // Every name the kernel's runtimes register: the modules' commands and queries with every module on, the operator's
 // org purge and number reseed, and the worker's meeting platform token renewal.
 function registeredNames(): string[] {
-  const config = loadConfig({ DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: 'unit-test-jwt-secret-0123456789abcdef', AUTH_ISSUER: 'crove-auth' });
+  const config = loadConfig({ DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: 'unit-test-jwt-secret-0123456789abcdef', AUTH_ISSUER: 'ludy-auth' });
   const { commands, queries } = moduleDefinitions(config);
   return [...commands, orgPurgeCommand({ store: {} as never }), numberReseedCommand(), meetingPlatformRefreshCommand({ broker: {} as never, adapters: {} }), ...queries].map((d) => d.name);
 }

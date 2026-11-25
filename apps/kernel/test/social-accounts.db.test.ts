@@ -1,7 +1,7 @@
 // Account growth of Social channels on PostgreSQL 17 (#645): the worker's daily sweep through the adapters'
 // accountMetrics, one snapshot per channel and day (a try without an answer kept too), and the trends the Metrics tab
 // reads; who follows each account (#1146), asked for once a week within that pass, and the column's shape check.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -14,7 +14,7 @@ import type { AccountMetricsInput, AccountMetricsResult, Publisher, PublishResul
 import { socialCommands, socialQueries, sweepAccounts, utcDay, type AccountTrend } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -36,7 +36,7 @@ class FakeAccounts implements Publisher {
 }
 
 suite('social account growth on PostgreSQL (#645)', () => {
-  const dbName = `crove_test_social_accounts_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_accounts_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appPool: pg.Pool;
   let workerPool: pg.Pool;

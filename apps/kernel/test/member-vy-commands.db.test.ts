@@ -2,7 +2,7 @@
 // The commands of Vy working for one member (ADR-0049 stage A, issue #2782): a run is started and its text stored only through the
 // member's own commands; vy.use, the kill switches, the budget and a removal are checked at every step; the meter's two doors derive the
 // agent; nothing private reaches an audit row. The invariants of who may read what are in test/invariant/member-vy-private.db.test.ts.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -14,13 +14,13 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
 import { contextToken } from './invariant/fixtures/context-token.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const SECRET = 'Tóm tắt riêng: khách đề nghị giảm giá 12%';
 
 suite('member Vy commands (ADR-0049 stage A slice 3)', () => {
-  const dbName = `crove_test_member_vy_cmd_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_member_vy_cmd_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let orgId = '';

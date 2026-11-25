@@ -1033,6 +1033,7 @@ export const updateTask = defineCommand({
     assigneePositionId: zId.nullable().optional(),
     due: z.iso.datetime().nullable().optional(),
     checklist: zTaskChecklist.optional(),
+    expectedRevision: z.number().int().positive().optional(),
   }),
   risk: 'R1',
   sideEffect: 'internal',
@@ -1052,6 +1053,14 @@ export const updateTask = defineCommand({
     if (!before) throw new DomainError('TASK_NOT_FOUND', 404, 'Không tìm thấy việc này');
     if (before.checkout_run_id && before.lock_expires_at && before.lock_expires_at.getTime() > ctx.now.getTime()) {
       throw new DomainError('TASK_CHECKED_OUT', 409, 'Việc này đang được xử lý');
+    }
+    if (input.expectedRevision !== undefined && before.revision !== input.expectedRevision) {
+      throw new DomainError(
+        'TASK_STALE_REVISION',
+        409,
+        'Việc này vừa được người khác cập nhật; hãy tải lại để xem bản mới',
+        { revision: before.revision },
+      );
     }
     const nextPositionId = input.assigneePositionId !== undefined ? input.assigneePositionId : before.assignee_position_id;
     const seatChanged = nextPositionId !== before.assignee_position_id;
@@ -1077,8 +1086,9 @@ export const updateTask = defineCommand({
       ...(nextDue !== beforeDue ? ['due'] : []),
       ...(beforeChecklistJson !== nextChecklistJson ? ['checklist'] : []),
     ];
+    let nextRevision = before.revision;
     if (changed.length > 0) {
-      await ctx.trx
+      const updated = await ctx.trx
         .updateTable('ludy_kernel.task')
         .set({
           title: nextTitle,
@@ -1091,7 +1101,9 @@ export const updateTask = defineCommand({
         })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', before.id)
-        .execute();
+        .returning(['revision'])
+        .executeTakeFirstOrThrow();
+      nextRevision = updated.revision;
     }
     if (seatChanged && !['done', 'cancelled'].includes(before.status)) {
       await requestWakeup(ctx, nextPositionId, { taskId: before.id, why: 'assigned' }, before.tainted, before.request_depth);
@@ -1100,6 +1112,7 @@ export const updateTask = defineCommand({
     ctx.audit({
       taskId: before.id,
       changed,
+      revision: nextRevision,
       title: auditValue(TASK_TABLE, 'title', nextTitle),
       description: auditValue(TASK_TABLE, 'description', nextDescription),
       assigneePositionId: nextPositionId,
@@ -1107,7 +1120,7 @@ export const updateTask = defineCommand({
       due: nextDue,
       checklist: auditValue(TASK_TABLE, 'checklist', nextChecklist.length > 0 ? nextChecklist : null),
     });
-    return { taskId: before.id };
+    return { taskId: before.id, revision: nextRevision };
   },
 });
 
@@ -1791,6 +1804,7 @@ function taskView(t: {
   created_by_type: string;
   due: Date | null;
   checklist: unknown;
+  revision: number;
   created_at: Date;
 }) {
   return {
@@ -1807,6 +1821,7 @@ function taskView(t: {
     createdByType: t.created_by_type,
     due: t.due?.toISOString() ?? null,
     checklist: parseTaskChecklist(t.checklist),
+    revision: t.revision,
     createdAt: t.created_at.toISOString(),
   };
 }

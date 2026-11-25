@@ -4,7 +4,7 @@
 // the invoice reader; a customer's reply joins the thread by the Message-IDs it names and by nothing else (a forged id, a matching subject
 // open a thread of their own); automated mail and mail from the deployment's own domain open nothing; a member's reply is a mail of the kernel
 // pipeline, threaded, whose outcome settles the message; the thread is read as a private message; no mail text reaches an audit row.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -20,7 +20,7 @@ import { processInboundEmail } from '../src/inbound.ts';
 import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const DOMAIN = 'in.test';
 // The receiving server's name in the Authentication-Results it writes (INBOUND_AUTHSERV_ID).
@@ -103,7 +103,7 @@ function raw(parts: MailParts): Uint8Array {
 }
 
 suite('customer email in the Inbox on PostgreSQL (#2439)', () => {
-  const dbName = `crove_test_conversations_email_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_conversations_email_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

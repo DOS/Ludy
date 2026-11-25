@@ -2,7 +2,7 @@
 // worker runs the due ones, queues one mail per recipient with the period's numbers and moves the next send on; the
 // mail goes out through the queue with a report link minted for that recipient (its token only in the mail), which
 // opens the report of the period; a test goes to the person who asks; mail off is recorded; other orgs and members see
-// nothing; a schedule's note, label and sections reach its mail and each mail's link (#1259). Set CROVE_TEST_ADMIN_URL
+// nothing; a schedule's note, label and sections reach its mail and each mail's link (#1259). Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL)
 // to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -19,7 +19,7 @@ import { runMailJob, sweepMail, type MailJob } from '../src/mail-queue.ts';
 import { reportView, type ReportPage } from '../src/report-link.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -29,7 +29,7 @@ function capturing(): { mailer: MailProvider; sent: OutboundMail[] } {
 }
 
 suite('scheduled client report mail on PostgreSQL (#704)', () => {
-  const dbName = `crove_test_report_schedule_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_report_schedule_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

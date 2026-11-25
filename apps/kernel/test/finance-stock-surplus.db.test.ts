@@ -4,7 +4,7 @@
 // with a supplier), tagged with the count. The lines and the amount come from the books, never from the request; the approval works the amount out again. Refused: a count that is not confirmed or has no
 // surplus, an account outside 711, 3388 and 331, 331 without a supplier and another account with one, a second request while one waits, a second resolution, a stored proposal that is not the voucher the
 // books call for. The database keeps the tag to an executing finance.journal_voucher.record proposal.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -17,12 +17,12 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('the resolution of the surplus of a count (#3712 slice 2a)', () => {
-  const dbName = `crove_test_stocksurplus_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_stocksurplus_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

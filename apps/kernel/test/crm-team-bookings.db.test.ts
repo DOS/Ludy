@@ -2,7 +2,7 @@
 // one host is free and books the free host with the fewest upcoming bookings; a collective type offers a time only
 // when every host is free and holds every host's calendar, so a cancel or a move acts on all of them. Concurrent
 // confirmations of one slot end with one booking, across overlapping teams too. Only owners and admins set up a
-// team. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// team. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -16,7 +16,7 @@ import { crmCommands, crmQueries } from '@ludy/mod-crm';
 import { bookingRequest, bookingView } from '../src/booking-page.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const VN = 'Asia/Ho_Chi_Minh';
@@ -32,7 +32,7 @@ const at = (date: string, minute: number) => new Date(zonedInstant(VN, date, min
 const dayRange = (date: string) => ({ from: at(date, 0), to: at(date, 1440) });
 
 suite('team event types on PostgreSQL (#1373)', () => {
-  const dbName = `crove_test_crm_team_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_crm_team_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appPool: pg.Pool;
   let workerPool: pg.Pool;

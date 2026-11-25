@@ -7,7 +7,7 @@ import { STAGING_MAX_AGE_MS } from '../src/retention.ts';
 const base = {
   DATABASE_URL: 'postgres://localhost/x',
   AUTH_JWT_SECRET: 'x'.repeat(32),
-  AUTH_ISSUER: 'crove-auth',
+  AUTH_ISSUER: 'ludy-auth',
   PUBLIC_URL: 'https://books.example.com',
   AUTH_UPSTREAM_URL: 'http://auth:9999',
 };

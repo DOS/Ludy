@@ -10,7 +10,7 @@
 // was posted in (#560). Every purchase document commits only with its journal entry (#560).
 // The dates are relative to today in Vietnam (the database clock decides the lock and the "not after today" bound, so
 // it cannot be pinned): the locked month is the one before last, the open month is last month.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -32,7 +32,7 @@ import { createSessionStatusSource } from '../src/sessions.ts';
 import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const FIXTURE = readFileSync(new URL('../../extract/test/fixtures/einvoice-basic.xml', import.meta.url), 'utf8');
 const SECRET = 'test-only-jwt-secret-for-late-invoice-0123456789';
@@ -84,7 +84,7 @@ const OPEN = monthFromNow(-1);
 const suite = ADMIN ? describe : describe.skip;
 
 suite('late purchase invoice in an open month (#478)', () => {
-  const dbName = `crove_test_late_invoice_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_late_invoice_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

@@ -4,7 +4,7 @@
 // without a contact email or with nothing missing), the mail the worker sends (To, Reply-To the org's inbound address,
 // the invoices), a suppressed address, the monthly reminder (on, once a month, off by itself when nothing is missing),
 // the worker's scan of due reminders, roles and the org boundary. The mail's wording is unit-tested in
-// modules/finance/test/missing-invoices.test.ts. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and
+// modules/finance/test/missing-invoices.test.ts. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and
 // drops its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -30,7 +30,7 @@ import { createSessionStatusSource } from '../src/sessions.ts';
 import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-missing-invoices-669-0123456789';
 const ISSUER = 'crove-auth';
@@ -79,7 +79,7 @@ function recordingMailer() {
 const suite = ADMIN ? describe : describe.skip;
 
 suite('missing invoice requests (#669)', () => {
-  const dbName = `crove_test_missing_inv_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_missing_inv_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

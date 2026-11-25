@@ -1,4 +1,4 @@
-// The request context on a hot standby (#105). Opt-in: needs CROVE_TEST_ADMIN_URL (superuser on the primary) and
+// The request context on a hot standby (#105). Opt-in: needs LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) (superuser on the primary) and
 // CROVE_TEST_STANDBY_URL (superuser on a streaming hot standby of that primary), so CI skips it. The run creates and
 // drops its own database on the primary and waits for the standby to replay it.
 //
@@ -14,14 +14,14 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './manifests.ts';
 import { contextToken } from './context-token.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const STANDBY = process.env.LUDY_TEST_STANDBY_URL ?? process.env.CROVE_TEST_STANDBY_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 
 const suite = ADMIN && STANDBY ? describe : describe.skip;
 
 suite('request context on a hot standby (#105)', () => {
-  const dbName = `crove_test_standby_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_standby_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let standbyAppUrl = '';
   let owner = '';
   let orgId = '';

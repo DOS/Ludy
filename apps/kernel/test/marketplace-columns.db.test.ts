@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The check of a column mapping on an unrecognised marketplace order report (#4036, slice 1c of #3850), on a real PostgreSQL 17: who may ask (importers, a person, never an agent), one row per file (a second press
 // returns the waiting one), what the worker may record (system only, an older request's record is dropped, a refusal and a preview never together), what the screen reads back, that a new request clears the
-// verdict and keeps the sheet, the nightly prune (worker only), and that an erasure of a person deletes the check whose preview quotes them. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and
+// verdict and keeps the sheet, the nightly prune (worker only), and that an erasure of a person deletes the check whose preview quotes them. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and
 // drops its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -20,7 +20,7 @@ import { createSessionStatusSource } from '../src/sessions.ts';
 import { contextToken } from './invariant/fixtures/context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-marketplace-columns-0123456789';
 const ISSUER = 'crove-auth';
@@ -70,7 +70,7 @@ const PREVIEW = {
 const MAPPING = { platform: 'shopee', assignments: [{ index: 0, field: 'orderNo' }, { index: 2, field: 'quantity' }] } as const;
 
 suite('Marketplace column check (#4036)', () => {
-  const dbName = `crove_test_marketplace_columns_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_marketplace_columns_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

@@ -5,7 +5,7 @@ import { PinterestConnector, PinterestPublisher, PinterestRefresher, type Fetch,
 const APP = { appId: '1500001', appSecret: 'test-pinterest-secret-not-real' };
 const BOARD = '549755885175';
 const SECRET = JSON.stringify({ accessToken: 'pina_access-1', refreshToken: 'pinr_refresh-1' });
-const REDIRECT = 'https://crove.example/channels/oauth/pinterest/callback';
+const REDIRECT = 'https://ludy.example/channels/oauth/pinterest/callback';
 const SCOPE = 'boards:read,pins:read,pins:write,user_accounts:read';
 
 type Answer = { status?: number; body?: unknown };

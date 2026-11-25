@@ -17361,6 +17361,7 @@ export const vi = {
       INVALID_TARGET: 'Phạm vi không hợp lệ',
       TASK_NOT_FOUND: 'Không tìm thấy việc này',
       TASK_CHECKED_OUT: 'Tác tử AI đang xử lý việc này nên chưa sửa được',
+      TASK_STALE_REVISION: 'Việc này vừa được người khác cập nhật; hãy tải lại để xem bản mới',
       OUTSIDE_LEGAL_ENTITY: 'Vị trí nhận việc không được xem pháp nhân của việc này',
       FILE_SOURCE_CONFLICT: 'Tệp này đã tồn tại với mục đích khác trong tổ chức; hãy tải lên tệp khác',
       SIGN_AI_SOURCE_TEXT_REQUIRED: 'Chưa đọc được nội dung văn bản từ tệp PDF nên không thể kiểm chứng gợi ý của AI',

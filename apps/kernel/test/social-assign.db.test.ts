@@ -1,5 +1,5 @@
 // A Social post's assignee and due date on PostgreSQL 17 (issue #640): who may set them, members only, the Mine list,
-// and no new revision. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// and no new revision. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -11,12 +11,12 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { socialCommands, socialQueries, type PostView } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('social post assignment on PostgreSQL (#640)', () => {
-  const dbName = `crove_test_social_assign_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_assign_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

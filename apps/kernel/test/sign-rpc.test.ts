@@ -22,8 +22,8 @@ const ANALYSIS_ID = '01900000-0000-7000-8000-000000000070';
 const KEY_ID = '01900000-0000-7000-8000-000000000080';
 const TEMPLATE_ID = '01900000-0000-7000-8000-000000000090';
 
-const WEB_DIST = mkdtempSync(join(tmpdir(), 'crove-sign-rpc-'));
-writeFileSync(join(WEB_DIST, 'index.html'), '<!doctype html><title>Crove</title>');
+const WEB_DIST = mkdtempSync(join(tmpdir(), 'ludy-sign-rpc-'));
+writeFileSync(join(WEB_DIST, 'index.html'), '<!doctype html><title>Ludy</title>');
 
 afterAll(() => {
   rmSync(WEB_DIST, { recursive: true, force: true });
@@ -44,7 +44,7 @@ function buildConfig() {
   return loadConfig({
     DATABASE_URL: 'postgres://localhost/x',
     AUTH_JWT_SECRET: 'x'.repeat(32),
-    AUTH_ISSUER: 'crove-auth',
+    AUTH_ISSUER: 'ludy-auth',
     AUTH_UPSTREAM_URL: 'http://127.0.0.1:9',
     STATUS_FILE: join(WEB_DIST, 'status.json').replace(/^[A-Za-z]:[\\/]/, '/').replace(/\\/g, '/'),
     WEB_DIST,
@@ -357,7 +357,7 @@ async function callRpc(app: ReturnType<typeof createHttpApp>, path: string, json
     method: 'POST',
     headers: {
       authorization: 'Bearer test-token',
-      'x-crove-org': 'acme',
+      'x-ludy-org': 'acme',
       'content-type': 'application/json',
     },
     body: JSON.stringify({ json }),

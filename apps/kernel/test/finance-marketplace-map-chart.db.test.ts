@@ -1,21 +1,21 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Every account of the shipped marketplace posting maps exists in the chart of its books regime (#3711 slice 4), on PostgreSQL 17: the TT133 map in ludy_finance.account (the TT133 2026.1 chart every org
 // shares) and the TT99 map in ludy_finance.chart_account (regime tt99, version 2026.1). A code that is not in its chart would be refused by the database when a posting names it
-// (ludy_finance.check_account_ref), at the day the accountant confirms the map; this pins it before then. Set CROVE_TEST_ADMIN_URL to a superuser URL; the run makes its own database.
+// (ludy_finance.check_account_ref), at the day the accountant confirms the map; this pins it before then. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; the run makes its own database.
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { migrate } from '@ludy/db/migrate';
 import { MARKETPLACE_POSTING_MAPS, type MarketplacePostingMap } from '@ludy/mod-finance';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 const ROWS = ['receivable', 'revenue', 'salesReturn', 'cash', 'feePayable', 'feeAwaitingInvoice', 'taxWithheld', 'vatPayable', 'pitPayable', 'pitOwnerEquity', 'feeExpense', 'accruedExpense', 'outputVat', 'feeInputVat', 'otherReceivable', 'assetAwaitingHandling', 'costOfGoods', 'otherIncome', 'otherExpense'] as const;
 
 suite('the marketplace posting maps against their charts on PostgreSQL (#3711)', () => {
-  const dbName = `crove_test_mkt_map_chart_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_mkt_map_chart_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const rows = async <T extends pg.QueryResultRow>(sql: string, params: unknown[] = []) => {
     const client = new pg.Client({ connectionString: adminUrl });

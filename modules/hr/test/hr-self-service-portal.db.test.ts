@@ -33,14 +33,14 @@ const setRuleStatus = (status: 'confirmed' | 'commentary') => {
   for (const row of PAYROLL_RULES) (row as { status: string }).status = status;
 };
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 type PoolHandle = ReturnType<typeof createPool>;
 
 suite('HR self-service portal & multi-level leave approval (#4300)', () => {
-  const dbName = `crove_test_hr_portal_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_hr_portal_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let adminPool: PoolHandle;
   let appPool: PoolHandle;

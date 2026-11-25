@@ -361,7 +361,7 @@ describe('Telegram team alerts (#863)', () => {
   });
 
   it('sends one line of plain text without a link preview, and reads back only a well-formed target', async () => {
-    const line = 'Bài «Khai trương» đang chờ duyệt: https://crove.example/o/shop/social/1';
+    const line = 'Bài «Khai trương» đang chờ duyệt: https://ludy.example/o/shop/social/1';
     const { fetchImpl, calls } = bot({ sendMessage: [ok({ message_id: 7 })] });
     await sendTelegramText({ botToken: TOKEN, chatId: '-4012345678' }, line, fetchImpl);
     expect(calls).toHaveLength(1);

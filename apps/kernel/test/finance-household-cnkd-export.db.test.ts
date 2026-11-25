@@ -2,7 +2,7 @@
 // The 01/CNKD worksheet's Excel download (#2518) through the HTTP route a user calls, on PostgreSQL 17: a household on the percentage method whose rows the accountant confirmed gets the file with its
 // exact figures and one audit row (the entity, the form, the quarter, the number of trade lines); a household with several trades is asked for the split (422) and gets the file with it; a household whose
 // rows are still `commentary` gets the file too, labelled provisional in its cells (#2518, owner's direction of 2026-11-17), and its audit row. The cells and the label are covered by the workbook unit tests and the figures by finance-household-return.db.test.ts; here
-// the route, the roles and the audit row. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// the route, the roles and the audit row. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
@@ -18,7 +18,7 @@ import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-cnkd-export-0123456789';
 const ISSUER = 'crove-auth';
@@ -37,7 +37,7 @@ class MemoryStore implements BlobStore {
 const suite = ADMIN ? describe : describe.skip;
 
 suite('the 01/CNKD worksheet download (#2518)', () => {
-  const dbName = `crove_test_cnkd_export_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_cnkd_export_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let app: ReturnType<typeof createHttpApp>;

@@ -2,7 +2,7 @@
 // The follow-up of a sent quote as a next step of its deal and the "Báo giá" report, on PostgreSQL 17 (#2699, docs/plan/crm-quotes.md section 7): a quote sent 5 days ago with no answer
 // raises quote_unanswered, one valid for 3 more days or fewer raises quote_expiring, both for the deal's owner, one step per deal; running the rule again raises
 // nothing and "done" is not raised again at once; a quote that was decided closes its step; a draft, a quote of a closed deal and a fresh quote raise nothing; the
-// Home read and the audit row hold no quote number, amount or text; crm.quote.report counts the quotes by status with decimal-string totals, over a period, for every role. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// Home read and the audit row hold no quote number, amount or text; crm.quote.report counts the quotes by status with decimal-string totals, over a period, for every role. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -15,7 +15,7 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { crmCommands, crmQueries } from '@ludy/mod-crm';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const SYSTEM = { type: 'system' as const, component: 'crm.deal_stale' };
@@ -36,7 +36,7 @@ interface StepRow {
 }
 
 suite('quote follow-up next steps and the quote report on PostgreSQL (#2699)', () => {
-  const dbName = `crove_test_crm_quote_steps_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_crm_quote_steps_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appUrl = '';
   let workerUrl = '';

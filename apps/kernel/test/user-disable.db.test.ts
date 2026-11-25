@@ -2,7 +2,7 @@
 // blocked and unblocked, the reason is kept on the account and each of its orgs gets an audit row with its code, without
 // the reason or the email (#1949), a repeated run is
 // noted as unchanged, and an unknown or ambiguous account changes nothing. Who may run it is in
-// test/invariant/user-disable.db.test.ts. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// test/invariant/user-disable.db.test.ts. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -14,12 +14,12 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { runUserDisable, setUserDisabled } from '../src/user-disable.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('user disable and enable on PostgreSQL (#985)', () => {
-  const dbName = `crove_test_userdis_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_userdis_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

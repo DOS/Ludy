@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The unanswered comment counts of a screen's posts on PostgreSQL 17 (#3298, plan docs/plan/conversations.md section 11): `kernel.conversation.post_counts` counts the
 // comment threads still New under each (channel, platform post) pair in one grouped read, by the reader's own rule (a member limited to other channels sees none of
-// this channel's), leaves out a post with none, and returns ids and a number only. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// this channel's), leaves out a post with none, and returns ids and a number only. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -13,13 +13,13 @@ import { CONVERSATION_POST_COUNTS_MAX, zConversationPostCounts, type Conversatio
 import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const SYSTEM = { type: 'system' as const, component: 'conversations' };
 
 suite('unanswered comment counts for a screen of posts (#3298)', () => {
-  const dbName = `crove_test_post_counts_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_post_counts_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

@@ -2,7 +2,7 @@
 // Rule 3 of V5 end to end (#3113 S4, #3701), on a real PostgreSQL: a supplier's bank account changed while a payment waits. The kernel's rule `kernel.signals.supplier_bank_changed` joins two finance reads,
 // `finance.signals.supplier_bank_changes` (suppliers whose account changed in the last 30 days) and `finance.signals.supplier_payments_waiting` (asked with those suppliers: how many payments wait and
 // their total, an approved payment not yet paid or a payment asked for and not yet approved). It flags with severity `block` when both hold, stays quiet when no payment waits or the change is older than
-// the window, and says it could not check (never an empty "all clear") when the caller sees only part of the books. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// the window, and says it could not check (never an empty "all clear") when the caller sees only part of the books. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -15,7 +15,7 @@ import { CredentialVault, Runtime, SUBJECT_WRAP_INFO, SubjectVault, parseVaultKe
 import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const NUMBER = '0123 4567 8901';
@@ -25,7 +25,7 @@ const RULE = 'kernel.signals.supplier_bank_changed';
 type Item = { id: string; kind: string; severity: string; count?: number; amount?: string; currency?: string; title: { key: string; params?: Record<string, unknown> } };
 
 suite('rule 3: a supplier bank account changed while a payment waits (#3113 S4)', () => {
-  const dbName = `crove_test_rule3_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_rule3_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

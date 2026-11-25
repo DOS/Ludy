@@ -1,6 +1,6 @@
 // Per-org abuse limits on PostgreSQL 17 (#675): the sliding 24-hour window of ludy_kernel.org_usage, what the worker
 // records, deferrals that keep an item and mail the owners once per metric a day, an inbound message and a document
-// kept for the org's next budget, and the use counted when they go through. Set CROVE_TEST_ADMIN_URL to a superuser
+// kept for the org's next budget, and the use counted when they go through. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser
 // URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -18,7 +18,7 @@ import { renderUsageDeferredMail } from '../src/usage-deferred-mail.ts';
 import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const FIXTURE = readFileSync(new URL('../../extract/test/fixtures/einvoice-basic.xml', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
@@ -67,7 +67,7 @@ describe('the abuse-limit mail (#675)', () => {
 });
 
 suite('per-org abuse limits on PostgreSQL (#675)', () => {
-  const dbName = `crove_test_usage_limits_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_usage_limits_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

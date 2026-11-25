@@ -3,7 +3,7 @@
 // is off on the claim's own transaction, the held sweep puts them back on the outbox oldest first once the app is on (its cursor goes on across sweeps, and an app switched on is
 // released at once for its org), one org's release leaves another's parked events alone, and the retention job drops a parked event with its day once the day is past the keep period
 // (a closed org's included, many held days included), one org's release and purge never overlapping. The definers' grants are test/invariant/outbox-held-definers.db.test.ts.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL.
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -21,12 +21,12 @@ import { archiveOutbox } from '../src/outbox-retention.ts';
 import { LocalArchiveStore } from '../src/worm.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('parked events of an app that is off (ADR-0053, C3b)', () => {
-  const dbName = `crove_test_outboxhold_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_outboxhold_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appPool: pg.Pool;
   let workerPool: pg.Pool;

@@ -6,7 +6,7 @@
 // gives the post back unchanged; and published archived posts still in the metrics. Also (#1361): out of the calendar
 // feed, the link in bio, the team report's assignments and the waiting count, an archived repeat copy done for its
 // source's scans with the source locked while archiving checks it, and a post restored in review reminded again. Set
-// CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -18,13 +18,13 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { socialCommands, socialQueries, type ActivityItem, type ArchiveResult, type BulkArchiveResult, type PostView } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const DAY = 86_400_000;
 
 suite('social archived posts on PostgreSQL (#1299)', () => {
-  const dbName = `crove_test_social_archive_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_archive_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

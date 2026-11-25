@@ -7,7 +7,7 @@
 // files of one name are ambiguous, and a member limited to some channels (#1081) neither finds another channel's own
 // media nor attaches it (MEDIA_NOT_ALLOWED), and the photo picker's list leaves it out (#1196). A 30-row import makes
 // 30 drafts with their media, alt texts, labels (one created) and first comment, and the plan export writes those
-// columns back. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// columns back. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -28,7 +28,7 @@ import { MediaUrlBudget, createMediaUrls } from '../src/media-urls.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-csv-media-0123456789';
 const ISSUER = 'crove-auth';
@@ -42,7 +42,7 @@ interface Account {
 }
 
 suite('images, labels and a first comment in the CSV import (#1258)', () => {
-  const dbName = `crove_test_social_csv_media_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_csv_media_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

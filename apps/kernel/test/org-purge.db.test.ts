@@ -2,7 +2,7 @@
 // keeps the books (the booked document's file and blob, its party anonymized) and what append-only rows pin, deletes
 // the rest with its blobs, closes the org and writes one audit row with counts and the reason, a rerun changes
 // nothing, a failed blob delete rolls everything back, held blobs stay, and another org is untouched. Who may run it is
-// in test/invariant/org-purge.db.test.ts. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// in test/invariant/org-purge.db.test.ts. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -18,7 +18,7 @@ import { inProcessExtract } from './extract-service.ts';
 import { KEPT, purgeCoverageProblems, readMigrations, readPurgeCatalog } from './org-purge-coverage.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const FIXTURE = readFileSync(new URL('../../extract/test/fixtures/einvoice-basic.xml', import.meta.url));
 const DAY = 24 * 60 * 60 * 1000;
@@ -44,7 +44,7 @@ class MemoryStore implements BlobStore {
 const suite = ADMIN ? describe : describe.skip;
 
 suite('org purge on PostgreSQL (#1024)', () => {
-  const dbName = `crove_test_orgpurge_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_orgpurge_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

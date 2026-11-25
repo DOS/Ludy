@@ -3540,6 +3540,7 @@ export interface KernelTaskTable {
   pending_draft: ColumnType<unknown, string | null | undefined, string | null>;
   checklist: ColumnType<unknown, string | undefined, string>;
   done_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  revision: Generated<number>;
 }
 
 /** ludy_kernel.tax_obligation_done */

@@ -15,7 +15,7 @@ import { crmCommands, crmQueries } from '@ludy/mod-crm';
 import { socialCommands, socialQueries } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-export const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+export const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 export const ENGAGE_SCOPE = 'ludy.engage.write';
 export const ADS_SCOPE = 'ludy.ads.draft';
@@ -51,8 +51,8 @@ export interface Harness {
 }
 
 export async function startHarness(prefix: string): Promise<Harness> {
-  if (!ADMIN) throw new Error('CROVE_TEST_ADMIN_URL is not set');
-  const dbName = `crove_test_${prefix}_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  if (!ADMIN) throw new Error('LUDY_TEST_ADMIN_URL / CROVE_TEST_ADMIN_URL is not set');
+  const dbName = `ludy_test_${prefix}_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   const root = new pg.Client({ connectionString: ADMIN });
   await root.connect();
   await root.query(`CREATE DATABASE ${dbName}`);

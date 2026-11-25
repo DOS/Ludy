@@ -36,7 +36,7 @@ import { createSessionStatusSource } from '../src/sessions.ts';
 import { enterUser } from './context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const JWT_SECRET = 'test-only-jwt-key-projects-triage-4493-0123456789';
 const ISSUER = 'crove-auth';
@@ -46,7 +46,7 @@ const SYSTEM = { type: 'system' as const, component: 'triage-test' };
 const shipped = ['projects', 'meetings', 'notes', 'crm', 'finance', 'hr', 'sign', 'ads', 'social'] as const;
 
 suite('Projects Triage Inbox Slice 2 (#4493)', () => {
-  const dbName = `crove_test_triage_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_triage_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appPool: pg.Pool | undefined;
   let workerPool: pg.Pool | undefined;

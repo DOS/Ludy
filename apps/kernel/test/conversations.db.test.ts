@@ -3,7 +3,7 @@
 // order under a thread of their own, the org comes from the stored connection and never from an event, a reply goes out
 // exactly once (a worker killed mid-call leaves a call row and no second send), a newer message refuses a reply, a comment
 // thread is read like the channel it is on and a private message only by owners and admins, and no customer text reaches an
-// audit row or an event. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// audit row or an event. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -16,7 +16,7 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './manifests.ts';
 import { contextToken } from './context-token.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const SYSTEM = { type: 'system' as const, component: 'conversations' };
@@ -24,7 +24,7 @@ const SYSTEM = { type: 'system' as const, component: 'conversations' };
 const SECRET_TEXT = 'số điện thoại 0912345678 của khách Nguyễn Văn Mẫu';
 
 suite('conversations on PostgreSQL (#2303)', () => {
-  const dbName = `crove_test_conversations_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_conversations_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appUrl = '';
   let pool: pg.Pool;

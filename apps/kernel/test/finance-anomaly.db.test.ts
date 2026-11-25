@@ -2,7 +2,7 @@
 // Anomaly flags on a purchase proposal (#2380) on PostgreSQL 17, through the proposal path: a vendor's first invoices raise
 // nothing, a new bank account, an unusual amount and a price jump are warnings with their reasons (and no account number),
 // the Inbox counts them, a flagged proposal is refused in a bulk approval item by item while a normal one is approved, and
-// a person may still approve the flagged one alone. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own
+// a person may still approve the flagged one alone. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own
 // database.
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -19,7 +19,7 @@ import type { ParsedInvoice } from '@ludy/l10n-vn';
 import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const PARSED = JSON.parse(readFileSync(new URL('../../../packages/l10n-vn/test/fixtures/einvoice-basic.parsed.json', import.meta.url), 'utf8')) as ParsedInvoice;
 const suite = ADMIN ? describe : describe.skip;
@@ -53,7 +53,7 @@ interface Row {
 }
 
 suite('anomaly flags on a purchase proposal (#2380)', () => {
-  const dbName = `crove_test_anomaly_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_anomaly_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

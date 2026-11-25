@@ -3,7 +3,7 @@
 // row still says which fields changed. A cleared value stays null. tenant_tax_code_requires_audit (20261103070000)
 // accepts the marker for a tax code that is set and still refuses a row naming another value, or a marker for a code
 // that is cleared. Their activity summaries name what happened and none of those values either (#1634). Set
-// CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database. The tax codes are made up and fail the MST
+// LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database. The tax codes are made up and fail the MST
 // checksum (#157).
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -17,7 +17,7 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './manifests.ts';
 import { contextToken } from './context-token.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -36,7 +36,7 @@ const PARTY_PHONE = '+84 24 3333 4444';
 const RAW_VALUES = [ORG_TAX_CODE, ORG_TAX_CODE_2, ENTITY_TAX_CODE, PARTY_TAX_CODE, ORG_ADDRESS, ENTITY_NAME, PARTY_NAME, PARTY_ADDRESS, PARTY_EMAIL, PARTY_PHONE, 'Cường', 'Bình'];
 
 suite('audit facts keep no classified value (#1626)', () => {
-  const dbName = `crove_test_audit_facts_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_audit_facts_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appUrl = '';
   let pool: pg.Pool;

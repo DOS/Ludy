@@ -255,7 +255,7 @@ function buildExcerptFromChars(
   return { before: '', match: matchText, after: '' };
 }
 
-// Builds a bounded context excerpt around a 1-based Unicode code point span returned by crove_kernel.text_detect.
+// Builds a bounded context excerpt around a 1-based Unicode code point span returned by ludy_kernel.text_detect.
 export function buildCandidateExcerpt(
   sourceText: string | undefined,
   startPos: number,

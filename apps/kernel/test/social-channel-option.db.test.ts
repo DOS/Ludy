@@ -2,7 +2,7 @@
 // read by the worker with the board's sealed token and recorded; only a new request is a member's to write; the
 // answer is the worker's; an org's requests are capped per minute; a member limited to some channels asks only for
 // those; and publishing lists the board's sections again before it pins. Pinterest answers are recorded shapes from
-// the API v5 docs; no live call. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// the API v5 docs; no live call. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -16,7 +16,7 @@ import { CHANNEL_OPTION_PER_MINUTE, runChannelOptionJob, runPublishJob, socialCo
 import { TEST_MANIFESTS } from './manifests.ts';
 import { contextToken } from './context-token.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -40,7 +40,7 @@ function pinterest(routes: Record<string, Answer[]>) {
 }
 
 suite('channel options on PostgreSQL (#1120)', () => {
-  const dbName = `crove_test_social_option_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_option_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

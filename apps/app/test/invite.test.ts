@@ -84,7 +84,7 @@ describe('pending invite storage', () => {
 // A sign-up from an accept link carries the token for the kernel's sign-up policy (#563): someone who only knows an
 // invited address cannot create that account first with their own password.
 describe('the invite token on a sign-up', () => {
-  const ORIGIN = 'https://crove.example.test';
+  const ORIGIN = 'https://ludy.example.test';
   let storage: MemoryStorage;
   let calls: { url: string; init: RequestInit | undefined }[];
   const base = (async (input: RequestInfo | URL, init?: RequestInit) => {

@@ -22,7 +22,7 @@ import {
 import { TEST_MANIFESTS } from "./invariant/fixtures/manifests.ts";
 import { contextToken } from "./invariant/fixtures/context-token.ts";
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(
   new URL("../../../supabase/migrations", import.meta.url),
 );
@@ -133,7 +133,7 @@ const QUERIES = [
 ];
 
 suite("member-scoped agent actor in the runtime", () => {
-  const dbName = `crove_test_member_vy_rt_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_member_vy_rt_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = "";
   let appUrl = "";
   let workerUrl = "";

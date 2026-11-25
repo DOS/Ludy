@@ -8,7 +8,7 @@
 //    missing, or disabled projects reject cleanly with full rollback.
 // 4) Leaving projects out of CROVE_MODULES marks projects.project links unavailable without breaking panels or gets, and
 //    refuses new project links.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -32,13 +32,13 @@ import { notesCommands, notesQueries } from '@ludy/mod-notes';
 import { projectsCommands, projectsQueries } from '@ludy/mod-projects';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SYSTEM = { type: 'system' as const, component: 'kernel.agent' };
 const suite = ADMIN ? describe : describe.skip;
 
 suite('projects P4: link notes and private to-dos to tasks and projects (#2595)', () => {
-  const dbName = `crove_test_proj_notes_links_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_proj_notes_links_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appUrl = '';
   let workerUrl = '';
@@ -86,7 +86,7 @@ suite('projects P4: link notes and private to-dos to tasks and projects (#2595)'
   }
 
   function contextToken(userId: string, orgId: string): string {
-    return mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', {
+    return mintContextToken(process.env.LUDY_CONTEXT_TOKEN_KEY ?? process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', {
       userId,
       orgId,
       sessionId: null,

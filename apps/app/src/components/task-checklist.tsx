@@ -261,14 +261,25 @@ export function TaskChecklistEditor({
   );
 }
 
+export function isTaskStaleRevision(error: unknown): boolean {
+  const err = error as { code?: unknown; data?: { code?: unknown } } | null | undefined;
+  return err?.code === 'TASK_STALE_REVISION' || err?.data?.code === 'TASK_STALE_REVISION';
+}
+
+export function taskRevisionPrecondition(revision: number | undefined): { expectedRevision?: number } {
+  return typeof revision === 'number' ? { expectedRevision: revision } : {};
+}
+
 export function TaskChecklistSection({
   taskId,
   checklist,
+  revision,
   checkedOut,
   readOnly = false,
 }: {
   taskId: string;
   checklist: readonly TaskChecklistStep[];
+  revision?: number | undefined;
   checkedOut: boolean;
   readOnly?: boolean;
 }) {
@@ -276,18 +287,30 @@ export function TaskChecklistSection({
   const [steps, setSteps] = useState<TaskChecklistStep[]>(() => [...checklist]);
   const [draft, setDraft] = useState('');
   const savedRef = useRef(serializeTaskChecklist(checklist));
+  const revisionRef = useRef<number | undefined>(revision);
+  const prevPropRevisionRef = useRef<number | undefined>(revision);
+
+  const invalidateTaskQueries = () =>
+    Promise.all([
+      queryClient.invalidateQueries({ queryKey: orpc.tasks.key() }),
+      queryClient.invalidateQueries({ queryKey: orpc.projects.key() }),
+      queryClient.invalidateQueries({ queryKey: orpc.notes.key() }),
+    ]);
 
   const update = useMutation(
     orpc.tasks.update.mutationOptions({
-      onSuccess: () =>
-        Promise.all([
-          queryClient.invalidateQueries({ queryKey: orpc.tasks.key() }),
-          queryClient.invalidateQueries({ queryKey: orpc.projects.key() }),
-          queryClient.invalidateQueries({ queryKey: orpc.notes.key() }),
-        ]),
-      onError: () => {
+      onSuccess: (result) => {
+        if (typeof result?.revision === 'number') {
+          revisionRef.current = result.revision;
+        }
+        return invalidateTaskQueries();
+      },
+      onError: (err) => {
         savedRef.current = serializeTaskChecklist(checklist);
         setSteps(checklist.map((step) => ({ ...step })));
+        if (isTaskStaleRevision(err)) {
+          void invalidateTaskQueries();
+        }
       },
     }),
   );
@@ -298,7 +321,13 @@ export function TaskChecklistSection({
       savedRef.current = incoming;
       setSteps(checklist.map((step) => ({ ...step })));
     }
-  }, [checklist, update.isPending]);
+    if (revision !== prevPropRevisionRef.current && !update.isPending) {
+      prevPropRevisionRef.current = revision;
+      if (revision === undefined || revisionRef.current === undefined || revision > revisionRef.current) {
+        revisionRef.current = revision;
+      }
+    }
+  }, [checklist, revision, update.isPending]);
 
   const commit = (next: TaskChecklistStep[]) => {
     if (readOnly) return;
@@ -308,7 +337,12 @@ export function TaskChecklistSection({
     }
     const normalized = normalizeChecklistSteps(next);
     setSteps(normalized);
-    update.mutate({ id: taskId, checklist: normalized, idempotencyKey: crypto.randomUUID() });
+    update.mutate({
+      id: taskId,
+      checklist: normalized,
+      ...taskRevisionPrecondition(revisionRef.current),
+      idempotencyKey: crypto.randomUUID(),
+    });
   };
 
   const disabled = checkedOut || readOnly || update.isPending;

@@ -1,6 +1,6 @@
 // Prober and alerting (plan §4.13, issue #39) against a real PostgreSQL 17: health() as ludy_prober, the worker
 // heartbeat, and a probe that delivers its alert to a real HTTP webhook. The privilege checks are in the invariant
-// suite (test/invariant/prober.db.test.ts). Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops
+// suite (test/invariant/prober.db.test.ts). Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; the run creates and drops
 // its own database.
 import { randomUUID } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
@@ -20,7 +20,7 @@ import { JOB_SCHEMA, QUEUES } from '../src/jobs-schema.ts';
 import { beat } from '../src/worker.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const limits = { outboxAgeSeconds: 300, jobAgeSeconds: 900, heartbeatAgeSeconds: 120, deadLetters: 0, notifyQueuePercent: 50 };
 const ALL_MODULES = [...AVAILABLE_MODULES];
@@ -28,7 +28,7 @@ const ALL_MODULES = [...AVAILABLE_MODULES];
 const suite = ADMIN ? describe : describe.skip;
 
 suite('prober on PostgreSQL', () => {
-  const dbName = `crove_test_prober_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_prober_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let proberUrl = '';
   let workerPool: pg.Pool;

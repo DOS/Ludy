@@ -34,7 +34,7 @@ import { createHttpApp } from '../src/http.ts';
 import type { ConversationReader } from '../src/conversations-ai.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -48,7 +48,7 @@ const MEMORY_STORE: BlobStore = {
 } as unknown as BlobStore;
 
 suite('HR lightweight recruiting, calendar interview, 1-click hire, and Ly brief (#3425)', () => {
-  const dbName = `crove_test_hrrec_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_hrrec_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appUrl = '';
   let pool: pg.Pool;

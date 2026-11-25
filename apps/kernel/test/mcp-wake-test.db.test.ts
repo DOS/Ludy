@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // "Send a test" of the wake-up webhook against a real database (ADR-0051 decision 4, issue #3024, step c2): a ping is stored as a delivery like any other, the sweep hands it
 // over at its next pass, only an owner or admin who is a person can ask (with a fresh second factor when they have one), and the database allows one a minute per grant.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -15,12 +15,12 @@ import { runWakeSweep, type SignalEvaluator } from '../src/mcp-wake-sweep.ts';
 import { wakeEvent, type WakeItem } from '../src/mcp-wake-body.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('the wake-up test ping (#3024, step c2)', () => {
-  const dbName = `crove_test_mcp_wake_test_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_mcp_wake_test_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let runtime: Runtime;

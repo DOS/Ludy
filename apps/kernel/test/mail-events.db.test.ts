@@ -1,7 +1,7 @@
 // Delivery events from the mail provider, Email E2 (#539), on a real PostgreSQL 17: the signed webhook refused when
 // forged, stale or malformed and then stored nowhere; a replayed event recorded once; the org found from the stored
 // mail; a hard bounce suppressing all mail to the address and a complaint suppressing marketing; three soft bounces
-// in 7 days pausing marketing for 30 days; and events written only in the system context. Set CROVE_TEST_ADMIN_URL to
+// in 7 days pausing marketing for 30 days; and events written only in the system context. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to
 // a superuser URL; each run creates and drops its own database.
 import { createHmac, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -20,7 +20,7 @@ import { createHttpApp } from '../src/http.ts';
 import { mailEventJob, processMailEvent, type MailEventJob, type MailEventRow } from '../src/mail-events.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const WEBHOOK_SECRET = `whsec_${Buffer.from('mail-events-test-signing-secret!').toString('base64')}`;
 const DAY = 24 * 60 * 60 * 1000;
@@ -52,7 +52,7 @@ const forgeEvent = defineCommand({
 });
 
 suite('mail delivery events (#539)', () => {
-  const dbName = `crove_test_mail_events_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_mail_events_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

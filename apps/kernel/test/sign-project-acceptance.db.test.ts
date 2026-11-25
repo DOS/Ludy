@@ -23,7 +23,7 @@ import { createHttpApp } from '../src/http.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const TEST_HMAC_KEY = 'x'.repeat(32);
 const ISSUER = 'crove-auth';
@@ -66,7 +66,7 @@ interface Account {
 const suite = ADMIN ? describe : describe.skip;
 
 suite('eSign Slice 3b project acceptance handoff & Vy draft summary on PostgreSQL (#3812)', () => {
-  const dbName = `crove_test_sign_acceptance_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_sign_acceptance_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

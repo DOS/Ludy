@@ -2,7 +2,7 @@
 // The AI coworker's campaign drafts on PostgreSQL 17 (ads W1b, #2295): a member asks, a system job writes a draft with origin `ai` through the AI budget
 // meter, and a request that gets no draft keeps a code that says why; nothing the member wrote reaches an audit row, an event or a log; the AI sets no money
 // (the budget and the dates are the module's rules over the caps in force); the request row is held by its guard (a member only asks, only the system
-// settles it, once); another org's requests are never seen. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// settles it, once); another org's requests are never seen. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -21,7 +21,7 @@ import { createSessionStatusSource } from '../src/sessions.ts';
 import { contextToken } from './context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const SYSTEM = { type: 'system' as const, component: 'ads' };
@@ -30,7 +30,7 @@ const SYSTEM = { type: 'system' as const, component: 'ads' };
 const BRIEF = 'Quán cà phê Mộc mở thêm chi nhánh ở Quận 3 (bí mật của quán qzk4242), cần thêm khách vào buổi sáng';
 
 suite('the AI coworker’s campaign drafts on PostgreSQL (ads W1b, #2295)', () => {
-  const dbName = `crove_test_ads_campaign_request_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_ads_campaign_request_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appUrl = '';
   let pool: pg.Pool;

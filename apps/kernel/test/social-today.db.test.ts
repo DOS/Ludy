@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // social.today (#2387), the Social line of Home's "Hôm nay cần bạn", on PostgreSQL 17 through the runtime as each member: the posts waiting for the
 // caller's approval, the channels to reconnect, the posts that failed or are paused, and the posts due in the next 24 hours that still wait for
-// approval; what a member limited to some channels (#1081) and a viewer do not get, and another org's nothing. Set CROVE_TEST_ADMIN_URL to a
+// approval; what a member limited to some channels (#1081) and a viewer do not get, and another org's nothing. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a
 // superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -15,14 +15,14 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { socialCommands, socialQueries, TODAY_SOCIAL_DUE } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const NOW = '2026-11-10T05:00:00.000Z';
 const hoursFromNow = (h: number) => new Date(Date.parse(NOW) + h * 3_600_000);
 
 suite('social.today: what needs the member in Social (#2387)', () => {
-  const dbName = `crove_test_social_today_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_today_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

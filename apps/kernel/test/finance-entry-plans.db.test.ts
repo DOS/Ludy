@@ -4,7 +4,7 @@
 // entry lookup must not scan the table per entry, and the document entry check at commit must find each entry by its
 // source key, not through journal_entry_legal_entity_idx: either one turns the load quadratic. Checked with the
 // transaction's own table and index counters, so the test does not depend on the machine's speed.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; the run creates and drops its own database.
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -14,14 +14,14 @@ import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/
 import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const ENTRIES = 2_000;
 
 const suite = ADMIN ? describe : describe.skip;
 
 suite('finance posting triggers under a bulk load (#1525)', () => {
-  const dbName = `crove_test_entry_plans_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_entry_plans_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let orgId = '';
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The 30/60/90-day cash forecast (#4391) on PostgreSQL 17, read from a real ledger: the booked cash as of day 0, the open sales invoices dated by their terms (an overdue one apart, not counted), the 331 balance laid
 // over the purchase invoices (a payment made by hand leaves it once, a debt no invoice covers is counted on day 0), an approved supplier payment counted once and capped by what is owed, one legal entity at a time, every
-// role able to read it, nothing written. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// role able to read it, nothing written. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -14,14 +14,14 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { addDays, financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const TODAY = vietnamToday();
 const day = (n: number) => addDays(TODAY, n);
 
 suite('the cash-flow forecast (#4391)', () => {
-  const dbName = `crove_test_cash_forecast_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_cash_forecast_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

@@ -1,5 +1,5 @@
 // Org offboarding with export (issue #38, plan §7.9) on a real PostgreSQL 17: the product flow. Access, status and
-// audit invariants live in test/invariant/offboarding.db.test.ts. Set CROVE_TEST_ADMIN_URL to a superuser
+// audit invariants live in test/invariant/offboarding.db.test.ts. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser
 // URL; the run creates and drops its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -22,7 +22,7 @@ import { exportCoverageProblems, exportedTables, omitProblems } from './org-expo
 import { readPurgeCatalog } from './org-purge-coverage.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 
 class MemoryStore implements BlobStore {
@@ -45,7 +45,7 @@ class MemoryStore implements BlobStore {
 const suite = ADMIN ? describe : describe.skip;
 
 suite('org offboarding on PostgreSQL (#38)', () => {
-  const dbName = `crove_test_offboard_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_offboard_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appUrl = '';
   let pool: pg.Pool;

@@ -2,7 +2,7 @@
 // org's tax code in Settings, an invoice whose seller is the org read as a sale (a customer party and Dr 131, Cr 511,
 // Cr 3331), duplicates refused, the sale in the documents list, the journal, the VAT working's output side and the MISA
 // sales export, and purchases kept apart from sales everywhere.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -24,7 +24,7 @@ import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 import { contextToken } from './context-token.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const FIXTURE = readFileSync(new URL('../../extract/test/fixtures/einvoice-basic.xml', import.meta.url)).toString('utf8');
 const SECRET = 'test-only-jwt-secret-for-sales-0123456789abc';
@@ -59,7 +59,7 @@ interface Account {
 const suite = ADMIN ? describe : describe.skip;
 
 suite('sales e-invoices (#313)', () => {
-  const dbName = `crove_test_sales_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_sales_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appUrl = '';
   let pool: pg.Pool;

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The S2e-HKD cash and bank book of a household business on the income method (#2517 slice 2e, plan stock-and-marketplaces.md sections 8.5 and 12 row 6), on PostgreSQL 17: one section per account of 111 and 112
 // (sub-accounts too) with its opening balance, one row per line, the running balance and the closing balance; the closings add up to the ledger's balance of 111 and 112; the days before the household's books
-// opened go into the opening balance; another entity's lines stay out; the label while the layout row is `commentary`; and the cases the book refuses. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// opened go into the opening balance; another entity's lines stay out; the label while the layout row is `commentary`; and the cases the book refuses. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -14,12 +14,12 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('the S2e-HKD cash and bank book of a household business (#2517 slice 2e)', () => {
-  const dbName = `crove_test_household_s2e_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_household_s2e_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

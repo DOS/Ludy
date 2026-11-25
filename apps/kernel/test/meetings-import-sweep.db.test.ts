@@ -2,7 +2,7 @@
 // Meeting platforms and the recordings they offer (meetings integrations C1, #3173) on a real database: a member connects (the offline sandbox) and sees only their own connection and
 // recordings, the worker's sweep replaces the suggestions through one definer, the import walks suggested -> importing -> staged -> claimed -> imported and refuses every other step, another member
 // cannot touch the row, the sweep expires what nobody claimed (a faked clock: the test moves the timestamps as the table owner), a disconnect waits for an import in flight and deletes everything it
-// listed, and the sealed credential reaches the worker alone, only while the member is still in the org. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// listed, and the sealed credential reaches the worker alone, only while the member is still in the org. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -21,7 +21,7 @@ import { runMeetingsImport, type MeetingsImportJob } from '../src/meetings-impor
 import { runMeetingsImportSweep } from '../src/meetings-import-sweep.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const SYSTEM = { type: 'system' as const, component: 'meeting-platform-test' };
@@ -75,7 +75,7 @@ const recordingRows = defineQuery({
 });
 
 suite('the meetings import sweep and job on PostgreSQL (meetings integrations C1, #3173)', () => {
-  const dbName = `crove_test_meetings_import_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_meetings_import_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let api: Runtime;

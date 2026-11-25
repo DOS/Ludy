@@ -1,6 +1,6 @@
 // The tax portal's purchase list (issue #465), end to end: set the org's tax code -> upload a purchase e-invoice (it
 // waits in the Inbox) -> on "Đối chiếu cổng thuế", upload the portal's list for September 2026 -> the list is read in
-// the parsing sandbox and compared: one invoice waiting in the Inbox, one the tax authority has that Crove lacks. A
+// the parsing sandbox and compared: one invoice waiting in the Inbox, one the tax authority has that Ludy lacks. A
 // file that is not the portal's list is kept with the reason it cannot be used, and a list can be removed. The company
 // is asked for the missing invoice by email (#669), once the owner has set its contact email.
 // The list is written with ExcelJS (shared strings, styled header), another writer than the portal's own (inline
@@ -80,7 +80,7 @@ async function choosePeriod(page: Page) {
   await page.getByRole('combobox', { name: 'Năm', exact: true }).selectOption('2026');
 }
 
-test('import the tax portal purchase list and see which invoices Crove lacks', async ({ page }) => {
+test('import the tax portal purchase list and see which invoices Ludy lacks', async ({ page }) => {
   await test.step('sign up, create the org and set its tax code', async () => {
     await page.goto('/');
     await signUp(page, newEmail('portal'));

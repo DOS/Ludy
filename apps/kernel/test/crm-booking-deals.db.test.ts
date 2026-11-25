@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // A booking linked to a deal (#3103, docs/plan/calendar.md "Deal links") on PostgreSQL 17: a person links and unlinks a booking with commands that leave audit events, a deal of
 // another org is refused, the deal panel lists the deal's bookings to the people who may read them, Dy's suggestion is a fixed rule over the guest's contact (a person
-// confirms it), a booking made from a deal's "Đặt lịch" link carries the deal, and a deleted deal leaves its bookings unlinked. Set CROVE_TEST_ADMIN_URL to a superuser URL;
+// confirms it), a booking made from a deal's "Đặt lịch" link carries the deal, and a deleted deal leaves its bookings unlinked. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL;
 // each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -16,7 +16,7 @@ import { crmCommands, crmQueries } from '@ludy/mod-crm';
 import { bookingRequest } from '../src/booking-page.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const VN = 'Asia/Ho_Chi_Minh';
@@ -32,7 +32,7 @@ function bookableDay(offset = 3): string {
 const at = (date: string, minute: number) => new Date(zonedInstant(VN, date, minute)).toISOString();
 
 suite('a booking linked to a deal on PostgreSQL (#3103)', () => {
-  const dbName = `crove_test_crm_booking_deals_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_crm_booking_deals_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appPool: pg.Pool;
   let workerPool: pg.Pool;

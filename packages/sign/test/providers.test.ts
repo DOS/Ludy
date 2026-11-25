@@ -52,7 +52,7 @@ function derTlv(tag: number, ...parts: readonly Uint8Array[]): Uint8Array {
   return out;
 }
 
-function createTestRsaIdentity(cn = 'Crove Test CA'): {
+function createTestRsaIdentity(cn = 'Ludy Test CA'): {
   certDer: Uint8Array;
   certB64: string;
   privateKey: KeyObject;
@@ -96,7 +96,7 @@ function createTestRsaCertAndRawSig(payload: Uint8Array): { certB64: string; raw
 
 const DIGEST = 'd'.repeat(64);
 const { certB64: TEST_CERT_B64, rawSigB64: RAW_RSA_SIG_B64 } = createTestRsaCertAndRawSig(Buffer.from(DIGEST, 'hex'));
-const { certB64: TEST_CA_CERT_B64 } = createTestRsaIdentity('Crove Test Intermediate CA');
+const { certB64: TEST_CA_CERT_B64 } = createTestRsaIdentity('Ludy Test Intermediate CA');
 const SAMPLE_CMS_B64 = Buffer.from(buildSandboxCmsDer(DIGEST, 'tx-recorded-1', 'cert-1')).toString('base64');
 const SAMPLE_TS_B64 = Buffer.from(new Uint8Array([0x30, 0x03, 0x02, 0x01, 0x01])).toString('base64');
 const SAMPLE_OCSP_B64 = Buffer.from(new Uint8Array([0x30, 0x03, 0x0a, 0x01, 0x00])).toString('base64');

@@ -27,7 +27,7 @@ import { DraftBudget } from '../src/ai-draft-limit.ts';
 import { runProjectsTasksFromNote, tasksFromNoteStatusOf, type MeetingSummaryDeps } from '../src/member-vy-ports.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const TODAY = '2026-11-16';
 const SECRET_MARKER = 'PRIVATE_NOTE_SECRET_9941';

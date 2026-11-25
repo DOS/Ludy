@@ -3,7 +3,7 @@
 // statement of 20261226000000 when 40 meetings were not enough. The proof is a comparison against that statement, kept here as a reference function of the test database only: the same
 // ids in the same order, for an owner, an admin, a recorder, a reader and a member who reads nothing, over common, rare and unreadable-only words, pages and offsets, with drafts and a meeting
 // past its text date; and a count of the readability checks (pg_stat_user_functions), so the saving is measured by the database and not by a clock.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -17,12 +17,12 @@ import { contextToken } from './invariant/fixtures/context-token.ts';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
 import { rewriteHistoricalCoreSql } from './pre-cutover-db.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('ludy_meetings.search_segment_ids reads the first page early and answers what it answered before (#3843)', () => {
-  const dbName = `crove_test_meetings_search_early_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_meetings_search_early_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appUrl = '';
   const pools: pg.Pool[] = [];

@@ -3,7 +3,7 @@
 // the count per AI coworker of the activity rows its commands left over the last day, for the rows the member can open (the
 // activity table's own policies: the org, minus legal entities outside the member's scope); a viewer's follows their access, a
 // row of another org never counts, a renamed coworker shows its new name, and the answer holds only counts, the coworker and a
-// link. Nothing in the read calls a model. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// link. Nothing in the read calls a model. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -15,7 +15,7 @@ import { zSinceYesterday, type SinceYesterday } from '@ludy/kernel-contract';
 import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const NOW = new Date('2026-11-15T03:00:00.000Z');
@@ -23,7 +23,7 @@ const hoursAgo = (h: number) => new Date(NOW.getTime() - h * 3_600_000);
 const TEMPLATE = 'finance.chief_accountant';
 
 suite('kernel.since_yesterday: what the AI coworkers prepared (#3256)', () => {
-  const dbName = `crove_test_today_since_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_today_since_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let rt: Runtime;

@@ -2,7 +2,7 @@
 // The delivery day of an order line (#2516, the rework to the AI consensus of 2026-11-15, slice B), on a real PostgreSQL 17 and the real parsing sandbox: the completion column of a Shopee
 // report is read, stored once on a delivered line (completed, or returned after it), never on a line that has not been delivered, a later report may give it to a line that has none and
 // never changes it, and the table holds the same rules (set once, only on a delivered line). The files are made in code with made-up buyers.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -17,7 +17,7 @@ import { buildXlsx, type XlsxCell } from '../../extract/test/xlsx-fixture.ts';
 import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -43,7 +43,7 @@ class MemoryStore implements BlobStore {
 }
 
 suite('the delivery day of an order line (#2516)', () => {
-  const dbName = `crove_test_delivered_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_delivered_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

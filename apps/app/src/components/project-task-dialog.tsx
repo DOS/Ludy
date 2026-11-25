@@ -40,7 +40,7 @@ import { ConfirmDialog } from './confirm-dialog.tsx';
 import { DateInput } from './date-input.tsx';
 import { FormDialog } from './form-dialog.tsx';
 import { FormPanel } from './form-panel.tsx';
-import { TaskChecklistEditor, hasBlankChecklistStep, normalizeChecklistSteps } from './task-checklist.tsx';
+import { TaskChecklistEditor, hasBlankChecklistStep, isTaskStaleRevision, normalizeChecklistSteps, taskRevisionPrecondition } from './task-checklist.tsx';
 import { ProjectDependencies } from './project-dependencies.tsx';
 import { TaskTimeTrackingPanel } from './project-time-panel.tsx';
 import { TaskRecurrenceControl } from './task-recurrence-control.tsx';
@@ -435,6 +435,7 @@ function EditProjectTaskPanel({
     assignee: task.assigneePositionId ?? '',
     dueOn: initialDueOn,
     checklistJson: serializeTaskChecklist(normalizeChecklistSteps(initialChecklist)),
+    revision: task.revision,
     cycleId: task.cycleId ?? null,
     points: task.storyPoints ?? null,
   };
@@ -554,7 +555,12 @@ function EditProjectTaskPanel({
       setIsSaving(true);
       try {
         if (Object.keys(patch).length > 0) {
-          await update.mutateAsync({ id: submitTaskId, ...patch, idempotencyKey: crypto.randomUUID() });
+          const updated = await update.mutateAsync({
+            id: submitTaskId,
+            ...patch,
+            ...taskRevisionPrecondition(baseline.revision),
+            idempotencyKey: crypto.randomUUID(),
+          });
           anyWriteSucceeded = true;
           if (activeRef.current) {
             setChecklist(effectiveChecklist);
@@ -567,6 +573,7 @@ function EditProjectTaskPanel({
               assignee: nextAssignee ?? '',
               dueOn,
               checklistJson: effectiveChecklistJson,
+              revision: updated?.revision ?? (prev.revision !== undefined ? prev.revision + 1 : undefined),
             }));
           }
         }
@@ -596,6 +603,10 @@ function EditProjectTaskPanel({
         }
         if (activeRef.current) {
           onOpenChange(false);
+        }
+      } catch (err) {
+        if (isTaskStaleRevision(err)) {
+          void refreshProjectQueries();
         }
       } finally {
         if (activeRef.current) setIsSaving(false);

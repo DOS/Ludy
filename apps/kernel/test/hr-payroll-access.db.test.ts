@@ -6,7 +6,7 @@
 // - an erasure after the retention (the date moved) deletes the person's key, so the two numbers can never be opened again, clears the name, the address and the dependents' names, and
 //   leaves the append-only employment rows readable as amounts;
 // - the employment rows are append-only.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; the run creates and drops its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -20,7 +20,7 @@ import { CredentialVault, DomainError, Runtime, STEP_UP_MAX_AGE_S, SUBJECT_WRAP_
 import { hrCommands, hrQueries, retentionEnds } from '@ludy/mod-hr';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -37,7 +37,7 @@ const DEPENDENT = 'Nguyễn Văn Con Canary';
 const TERMS = { effectiveFrom: '2026-01-01', contractType: 'indefinite' as const, region: 'I' as const, baseWage: '15000000' };
 
 suite('HR payroll people on PostgreSQL (#2530)', () => {
-  const dbName = `crove_test_hr_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_hr_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let rt: Runtime;

@@ -6,7 +6,7 @@ import { DEFAULT_INVITE_LIMITS, buildKernelCommands, inviteCreateCommand } from 
 import { loadConfig } from '../src/config.ts';
 import { moduleDefinitions } from '../src/kernel.ts';
 
-const base = { DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: 'unit-test-jwt-secret-0123456789abcdef', AUTH_ISSUER: 'crove-auth' };
+const base = { DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: 'unit-test-jwt-secret-0123456789abcdef', AUTH_ISSUER: 'ludy-auth' };
 
 describe('invite mail limits', () => {
   it('defaults to 5 invite mails per recipient in any 24 hours, and reads the limit from env', () => {

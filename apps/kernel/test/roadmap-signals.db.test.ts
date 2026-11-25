@@ -54,7 +54,7 @@ import { prepareRoadmapSignalMatch, projectRoadmapAi } from '../src/project-road
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SIGNING_PHRASE = 'x'.repeat(32);
 const ISSUER = 'crove-auth';

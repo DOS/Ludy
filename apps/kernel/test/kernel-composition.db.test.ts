@@ -1,6 +1,6 @@
 // The composition root on a real PostgreSQL 17 (ADR-0030): a kernel built by createKernel with replaced identity,
 // AI and storage adapters runs the api and worker roles, and every replaced port is the one the request and the
-// job use. Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its own database.
+// job use. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; the run creates and drops its own database.
 import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { createServer, type AddressInfo } from 'node:net';
@@ -21,7 +21,7 @@ import { createKernel, defaultAdapters, type IdentityPort } from '../src/kernel.
 import { startExtractService } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const FIXTURE = readFileSync(new URL('../../extract/test/fixtures/einvoice-basic.xml', import.meta.url));
 const PNG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
@@ -54,7 +54,7 @@ async function freePort(): Promise<number> {
 const suite = ADMIN ? describe : describe.skip;
 
 suite('composition root on PostgreSQL (ADR-0030)', () => {
-  const dbName = `crove_test_kernel_root_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_kernel_root_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl: string;
   let pool: pg.Pool;
   let stopExtract: (() => Promise<void>) | undefined;

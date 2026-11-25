@@ -2,7 +2,7 @@
 // A customer's photo to a Telegram bot as an image in Hộp thư, on PostgreSQL 17 (issue #3192, plan docs/plan/conversations-channels.md section 4.2): the route parks
 // the update, the worker stores the message with a pending image row that holds the photo's file id (a reference: no address, no token), the media job opens the
 // connection's sealed token inside the job, asks `getFile` and fetches the file from the Bot API host, and the bytes are stored as the message's image. The bot's
-// token and the file's address live in that job only: nothing the database holds ever names them. Business chats work the same. Set CROVE_TEST_ADMIN_URL to a
+// token and the file's address live in that job only: nothing the database holds ever names them. Business chats work the same. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a
 // superuser URL; each run makes its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -19,7 +19,7 @@ import { dueConversationAttachments, requestConversationAttachments, runConversa
 import { createHttpApp } from '../src/http.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const SECRET = 'test-only-jwt-secret-for-telegram-photos-0123456789-abcdef';
@@ -54,7 +54,7 @@ class MemoryStore implements BlobStore {
 }
 
 suite('Telegram photos as images on PostgreSQL (#3192)', () => {
-  const dbName = `crove_test_telegram_photos_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_telegram_photos_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   const store = new MemoryStore();

@@ -2,7 +2,7 @@
 // The sealed context of a member-bound MCP grant against a real database (ADR-0051 decision 2, ADR-0049; design note on #2975, slice 3, step 3b-1): who may enter it and what it refuses with
 // which code, what the entered context is (a null user, the member sealed, the member's live rights, read only) and, with three canary tables, that it is fail closed: it reads a table only
 // through the policy written for it, never one written for a user or for Vy in member mode, and it writes nothing guarded.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -13,12 +13,12 @@ import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/
 import { Runtime, type UserActor } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('the sealed context of a member-bound MCP grant (#2975, slice 3, step 3b-1)', () => {
-  const dbName = `crove_test_mcp_member_ctx_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_mcp_member_ctx_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let orgA = '';

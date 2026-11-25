@@ -3,7 +3,7 @@
 // changes and clears the label (the only thing stored) and the list filters by it; the database refuses every writer of it but the person it names;
 // the suggestion is read apart from the thread by a recorded model, never stored, for the threads the member may read only, with the model off, failing,
 // spent or answering nonsense leaving no suggestion and no error; the contact match is the phone the customer wrote first, then the names, ranked by the
-// model, and links nothing. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// model, and links nothing. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
@@ -29,7 +29,7 @@ import { createSessionStatusSource } from '../src/sessions.ts';
 import { contextToken } from './context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-conversation-intent-0123';
 const ISSUER = 'crove-auth';
@@ -45,7 +45,7 @@ interface Account {
 const account = (name: string): Account => ({ subject: randomUUID(), email: `${name}@intent.test`, session: randomUUID(), userId: '' });
 
 suite('the intent of a conversation and the likely contacts of a customer (CV3, #2306)', () => {
-  const dbName = `crove_test_conversations_intent_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_conversations_intent_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appUrl = '';
   let workerUrl = '';

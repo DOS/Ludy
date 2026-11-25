@@ -2,7 +2,7 @@
 // comments the pre-review and hands the decision to a human, and it never approves. The task, its comment and the
 // escalation say counts only, so a member limited to some channels (#1081) reads nothing of a post outside them in
 // kernel.task.list or kernel.task.get (#1193); the post page's pre-review keeps the findings for those who may see the
-// post. Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its own database.
+// post. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; the run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -14,13 +14,13 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { socialAgentPrograms, socialCommands, socialQueries, type PreReview } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SYSTEM = { type: 'system' as const, component: 'kernel.agent' };
 const suite = ADMIN ? describe : describe.skip;
 
 suite('the social.content_manager agent on PostgreSQL (#799)', () => {
-  const dbName = `crove_test_social_agent_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_agent_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let app: Runtime;

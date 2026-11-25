@@ -1,7 +1,7 @@
 // Crove Social publishing on PostgreSQL 17 (Social plan §3.4, step S4, issue #234): a due variant goes out exactly
 // once, a run that dies between the provider call and its result never posts again on its own, and every refusal
 // ends where the plan says (failed, a new attempt, paused until the channel is reconnected, or a person's decision).
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -15,7 +15,7 @@ import { captureKey, runCommentJob, runGateJob, runPinJob, runPlaylistJob, runPu
 import { shortLinkTarget } from '../src/short-link.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const noMedia = async (): Promise<Uint8Array> => {
@@ -57,7 +57,7 @@ class FakePlatform implements Publisher {
 }
 
 suite('social publishing on PostgreSQL (S4)', () => {
-  const dbName = `crove_test_social_publish_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_publish_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appPool: pg.Pool;
   let workerPool: pg.Pool;

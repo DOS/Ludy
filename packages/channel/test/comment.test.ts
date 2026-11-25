@@ -130,7 +130,7 @@ describe('first comments', () => {
     expect(calls[0]?.url.searchParams.get('appsecret_proof')).toMatch(/^[0-9a-f]{64}$/);
     expect(calls[0]?.url.toString()).not.toContain('page-token-111');
     for (const [answer, expected] of graphCases) expect(await new FacebookPagePublisher(META, fake({ [route]: [answer] }).fetchImpl).comment(post)).toMatchObject(expected);
-    // A Page connected before Crove asked for pages_manage_engagement: the post shows the comment failed, for a retry
+    // A Page connected before Ludy asked for pages_manage_engagement: the post shows the comment failed, for a retry
     // once the Page reconnects.
     const old = fake({ [route]: [graphError(400, 10, '(#10) This endpoint requires the pages_manage_engagement permission')] });
     expect(await new FacebookPagePublisher(META, old.fetchImpl).comment(post)).toMatchObject({ kind: 'rejected', error: 'permission', code: '10' });
@@ -150,7 +150,7 @@ describe('first comments', () => {
     expect(calls[0]?.body).toEqual({ message: '#khaitruong #quan3' });
     expect(calls[0]?.auth).toBe('Bearer page-token-111');
     for (const [answer, expected] of graphCases) expect(await new InstagramPublisher(META, fake({ [route]: [answer] }).fetchImpl).comment(media)).toMatchObject(expected);
-    // An account connected before Crove asked for instagram_manage_comments.
+    // An account connected before Ludy asked for instagram_manage_comments.
     const old = fake({ [route]: [graphError(403, 10, 'Application does not have permission for this action')] });
     expect(await new InstagramPublisher(META, old.fetchImpl).comment(media)).toMatchObject({ kind: 'rejected', error: 'permission', code: '10' });
     expect(await new InstagramPublisher(META, fetchImpl).comment({ ...media, externalId: 'abc' })).toMatchObject({ kind: 'rejected', error: 'bad_request', code: 'BAD_POST_ID' });
@@ -182,7 +182,7 @@ describe('first comments', () => {
     // The reply container is invisible, so a failure while making it posted nothing: an outage there is transient.
     const createCases: [Answer, Record<string, unknown>][] = [
       [threadsError(190, 401, 'Error validating access token'), { kind: 'rejected', error: 'token_expired', code: '190' }],
-      // A connection made before Crove asked for threads_manage_replies.
+      // A connection made before Ludy asked for threads_manage_replies.
       [threadsError(10, 403, 'Application does not have permission for this action'), { kind: 'rejected', error: 'permission', code: '10' }],
       [threadsError(2, 500, 'Service temporarily unavailable'), { kind: 'rejected', error: 'transient', code: '2' }],
       [{ network: true }, { kind: 'rejected', error: 'transient', code: 'NETWORK' }],

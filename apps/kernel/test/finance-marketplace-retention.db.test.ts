@@ -2,7 +2,7 @@
 // Retention of the original file of a decided marketplace report (#2516 step C-2b3, ADR-0045 point 8), on a real PostgreSQL and the real parsing sandbox: 90 days after a member imports
 // or skips an income report, the nightly job deletes the stored file and the staged read that holds the per-order amounts, and keeps the file row, its hash and the decision's summary. A report
 // still staged, a bank statement and an invoice file are never touched whatever their age, nothing before day 90, the object only when no other file row names it, a rerun after a crash
-// finishes the job, and the audit facts carry ids and counts only. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// finishes the job, and the audit facts carry ids and counts only. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -19,7 +19,7 @@ import { runMarketplaceRetention } from '../src/marketplace-retention.ts';
 import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -76,7 +76,7 @@ class MemoryStore implements BlobStore {
 }
 
 suite('retention of marketplace report originals (#2516, C-2b3)', () => {
-  const dbName = `crove_test_mkt_retention_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_mkt_retention_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // What the sales coworker may see for the lines of a quote (#2698) on PostgreSQL 17: crm.quote.suggest_source reads the deal, its customer's name, the customer's latest inbound messages as the member
 // may read them (a private message only for owners, admins and holders of the direct-message permission) and the latest line of each description of earlier quotes to the customer; it reads no
-// message while the org's switch for AI on customers' words is off; it is read only (viewers refused, another org's deal not found) and leaves no audit row. Set CROVE_TEST_ADMIN_URL to a superuser
+// message while the org's switch for AI on customers' words is off; it is read only (viewers refused, another org's deal not found) and leaves no audit row. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser
 // URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -15,13 +15,13 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { crmCommands, crmQueries, type QuoteSuggestSource } from '@ludy/mod-crm';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const SYSTEM = { type: 'system' as const, component: 'crm-quote-suggest-test' };
 
 suite('crm.quote.suggest_source on PostgreSQL (#2698)', () => {
-  const dbName = `crove_test_crm_quote_suggest_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_crm_quote_suggest_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

@@ -5,7 +5,7 @@ import { YouTubeConnector, YouTubePublisher, YouTubeRefresher, clipBytes, clipCo
 const APP = { clientId: '123456789012-abcdefgh12345678.apps.googleusercontent.com', clientSecret: 'test-google-secret-not-real' };
 const CHANNEL = 'UCabcdefghijklmnopqrstuv';
 const SECRET = JSON.stringify({ accessToken: 'ya29.token-1', refreshToken: '1//refresh-1' });
-const REDIRECT = 'https://crove.example/channels/oauth/youtube/callback';
+const REDIRECT = 'https://ludy.example/channels/oauth/youtube/callback';
 const SESSION = 'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&upload_id=xyz';
 
 type Answer = { status?: number; body?: unknown; headers?: Record<string, string> };

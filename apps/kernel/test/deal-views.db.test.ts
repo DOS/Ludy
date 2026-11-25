@@ -2,7 +2,7 @@
 // Saved views of the deals on PostgreSQL 17 (CRM K3, #2227): every operator of the `crm.deal` scope against real deals
 // through crm.deal.list, the sort and the cursor by deal id (with deals that have no expected close date), the same
 // result for a viewer who opens a shared view as for the filter typed by hand, and the limits of a view: it only narrows
-// what row-level security lets the member read, and a forged cursor is a 422. Set CROVE_TEST_ADMIN_URL to a superuser
+// what row-level security lets the member read, and a forged cursor is a 422. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser
 // URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -16,7 +16,7 @@ import { crmCommands, crmQueries } from '@ludy/mod-crm';
 import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -24,7 +24,7 @@ const suite = ADMIN ? describe : describe.skip;
 const day = (offset: number) => vietnamToday(new Date(Date.now() + offset * 86_400_000));
 
 suite('saved views of the deals on PostgreSQL (CRM K3, #2227)', () => {
-  const dbName = `crove_test_deal_views_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_deal_views_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

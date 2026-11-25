@@ -296,7 +296,7 @@ describe('HR Stage 5B UI & i18n (#4448)', () => {
         month: '2026-11',
         status: 'draft',
         legalEntityId: LE_ID,
-        employerName: 'Cty TNHH Crove',
+        employerName: 'Cty TNHH Ludy',
         workingDays: '26',
         approvedAt: null,
       },

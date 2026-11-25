@@ -3,7 +3,7 @@
 // verified against the connection's sealed secret and turned into ONE coalesced poll job per connection (S3a, #4344). Each slice has tests of its own; this one runs them TOGETHER, through the real app, the real definers,
 // a real credential vault and the worker's own relay steps (claim, verify, send, count; mirrored from the loop in startWorker, see below), so an incompatible change at any seam (a header the worker cannot read, a stored address that is not the one the platform
 // signed, a claim that does not reach verification, a poll job per push) fails here. The job queue is a recording fake: the poll job's shape is checked, not pg-boss.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
@@ -26,7 +26,7 @@ import type { MarketplacePollJob } from '../src/marketplace-poll-job.ts';
 import { relayBatch, type JobSender } from '../src/worker.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-marketplace-chain-0123456789';
 const ISSUER = 'crove-auth';
@@ -68,7 +68,7 @@ const tiktokSign = (body: string, secret = TIKTOK.appSecret) => marketplacePushS
 const shopeeSign = (body: string, address: string) => marketplacePushSignature('shopee', { key: SHOPEE.partnerKey, requestUrl: address }, new TextEncoder().encode(body));
 
 suite('Marketplace push chain (#4364)', () => {
-  const dbName = `crove_test_marketplace_chain_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_marketplace_chain_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

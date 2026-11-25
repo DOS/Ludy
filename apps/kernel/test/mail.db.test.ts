@@ -1,6 +1,6 @@
 // Outbound mail in the kernel, step E1a (#538), on a real PostgreSQL 17: the keyed address hash and its folding, the
 // suppression list (add, lift, complaints kept, scopes), the mail_message row a sending command writes, the narrow
-// record of a mail the request sent itself, and the guards on both tables. Set CROVE_TEST_ADMIN_URL to a superuser URL;
+// record of a mail the request sent itself, and the guards on both tables. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL;
 // each run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -13,7 +13,7 @@ import { createMailMessage, createOrg, kernelCommands, kernelQueries, upsertIden
 import { DomainError, Runtime, defineCommand, type UserActor } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 
 const suite = ADMIN ? describe : describe.skip;
@@ -37,7 +37,7 @@ const sendTest = defineCommand({
 });
 
 suite('outbound mail in the kernel (#538)', () => {
-  const dbName = `crove_test_mail_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_mail_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

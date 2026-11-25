@@ -1,6 +1,6 @@
 // Prober alert de-duplication (issue #151) against a real PostgreSQL 17: ludy_kernel.prober_alert_gate() as the
 // ludy_prober login, state that survives a restart, and two probers that never both send. The privilege checks are
-// in the invariant suite (test/invariant/prober.db.test.ts). Set CROVE_TEST_ADMIN_URL to a superuser URL; the run
+// in the invariant suite (test/invariant/prober.db.test.ts). Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; the run
 // creates and drops its own database.
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -11,7 +11,7 @@ import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { pgAlertGate } from '../src/alert-gate.ts';
 import { EXIT, probeOnce, type HealthSnapshot, type ProberConfig } from '../src/prober.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 
 const suite = ADMIN ? describe : describe.skip;
@@ -36,7 +36,7 @@ const healthy: HealthSnapshot = {
 const workerDown = { ...healthy, worker_heartbeat_age_seconds: 900 };
 
 suite('prober alert state on PostgreSQL', () => {
-  const dbName = `crove_test_alert_dedup_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_alert_dedup_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let proberUrl = '';
   let hook: Server;

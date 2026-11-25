@@ -2,7 +2,7 @@
 // membership on every context helper call (plan §4.5) would cost compared with today's seal-only check, and what
 // the pg_locks read of the re-entry guard (T10) costs under concurrency and with many unrelated locks held. Skipped
 // unless CROVE_BENCH=1, so CI never runs it. Run it with
-//   CROVE_BENCH=1 CROVE_TEST_ADMIN_URL=<superuser url> pnpm exec vitest run --project db apps/kernel/test/context-cost.db.test.ts
+//   CROVE_BENCH=1 LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL)=<superuser url> pnpm exec vitest run --project db apps/kernel/test/context-cost.db.test.ts
 // It creates and drops its own database and prints a table; the numbers depend on the machine and the network.
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -14,7 +14,7 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './manifests.ts';
 import { contextToken } from './context-token.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const ROUNDS = 5;
 

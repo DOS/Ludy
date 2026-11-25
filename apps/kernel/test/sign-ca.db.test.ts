@@ -54,7 +54,7 @@ import {
 } from '../src/sign-worker.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-sign-ca-3554-0123456789abcdef';
 const ISSUER = 'crove-auth';
@@ -112,7 +112,7 @@ function buildValidOnePagePdf(label: string): Uint8Array {
 const suite = ADMIN ? describe : describe.skip;
 
 suite('eSign Slice 2c PAdES worker + crove-extract + oRPC on PostgreSQL 17 (#3554)', () => {
-  const dbName = `crove_test_sign_ca_e2e_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_sign_ca_e2e_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;
@@ -860,7 +860,7 @@ suite('eSign Slice 2c PAdES worker + crove-extract + oRPC on PostgreSQL 17 (#355
       const appClient = await pool.connect();
       try {
         await appClient.query('BEGIN');
-        const ctxToken = mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', {
+        const ctxToken = mintContextToken(process.env.LUDY_CONTEXT_TOKEN_KEY ?? process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', {
           userId: unauthorized.userId,
           orgId: org.orgId,
           sessionId: null,

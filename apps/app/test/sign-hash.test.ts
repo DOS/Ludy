@@ -15,7 +15,7 @@ import {
   sha256Hex,
 } from '../src/lib/sign-hash.ts';
 
-const VALID_TOKEN = 'crove_sign_test_token_aaaaaaaaaaaaaaaaaaaaa';
+const VALID_TOKEN = 'ludy_sign_test_token_aaaaaaaaaaaaaaaaaaaaaa';
 
 afterEach(() => {
   vi.unstubAllGlobals();

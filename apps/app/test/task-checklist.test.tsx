@@ -55,8 +55,15 @@ vi.mock('@tanstack/react-router', async () => {
   };
 });
 
-const { TaskChecklistBadge, TaskChecklistEditor, TaskChecklistSection, hasBlankChecklistStep, normalizeChecklistSteps } =
-  await import('../src/components/task-checklist.tsx');
+const {
+  TaskChecklistBadge,
+  TaskChecklistEditor,
+  TaskChecklistSection,
+  hasBlankChecklistStep,
+  isTaskStaleRevision,
+  normalizeChecklistSteps,
+  taskRevisionPrecondition,
+} = await import('../src/components/task-checklist.tsx');
 const { ProjectBoardView } = await import('../src/components/project-board.tsx');
 const { EditProjectTaskDialog } = await import('../src/components/project-task-dialog.tsx');
 const { TaskDetailPage } = await import('../src/routes/tasks.tsx');
@@ -109,6 +116,12 @@ describe('task checklist contract & helpers (#2606)', () => {
     expect(parseTaskChecklist([{ text: 'Bước A', done: false, extra: 1 }, null, 'bad'])).toEqual([{ text: 'Bước A', done: false }]);
 
     expect(zTaskChecklist.safeParse([{ text: '   ', done: false }]).success).toBe(false);
+    expect(zTaskChecklist.safeParse([{ text: '\t\n\r\v\f', done: false }]).success).toBe(false);
+    expect(zTaskChecklist.safeParse([{ text: '\u00A0', done: false }]).success).toBe(false);
+    expect(zTaskChecklist.safeParse([{ text: '\u1680\u2003\u2028\u2029\u202F\u205F\u3000\uFEFF', done: false }]).success).toBe(false);
+    expect(zTaskChecklist.parse([{ text: '\u00A0\t Bước Unicode \u3000\uFEFF', done: false }])).toEqual([
+      { text: 'Bước Unicode', done: false },
+    ]);
     expect(zTaskChecklist.safeParse([{ text: 'a'.repeat(TASK_CHECKLIST_STEP_MAX + 1), done: false }]).success).toBe(false);
     expect(zTaskChecklist.safeParse([{ text: 'ok', done: false, extra: true }]).success).toBe(false);
     expect(
@@ -129,8 +142,21 @@ describe('task checklist contract & helpers (#2606)', () => {
 
   it('normalizes steps and detects blank step drafts', () => {
     expect(normalizeChecklistSteps([{ text: '  Bước 1  ', done: true }])).toEqual([{ text: 'Bước 1', done: true }]);
+    expect(normalizeChecklistSteps([{ text: '\u00A0Bước Unicode\t', done: false }])).toEqual([{ text: 'Bước Unicode', done: false }]);
     expect(hasBlankChecklistStep([{ text: '   ', done: false }])).toBe(true);
+    expect(hasBlankChecklistStep([{ text: '\u00A0\t\u3000\uFEFF', done: false }])).toBe(true);
     expect(hasBlankChecklistStep([{ text: 'Bước 1', done: false }])).toBe(false);
+  });
+
+  it('builds optional expectedRevision preconditions and recognizes TASK_STALE_REVISION across locales', () => {
+    expect(taskRevisionPrecondition(undefined)).toEqual({});
+    expect(taskRevisionPrecondition(3)).toEqual({ expectedRevision: 3 });
+    expect(isTaskStaleRevision({ code: 'TASK_STALE_REVISION' })).toBe(true);
+    expect(isTaskStaleRevision({ data: { code: 'TASK_STALE_REVISION' } })).toBe(true);
+    expect(isTaskStaleRevision({ code: 'TASK_CHECKED_OUT' })).toBe(false);
+    expect(isTaskStaleRevision(null)).toBe(false);
+    expect(viMessages.kernelErrors.codes.TASK_STALE_REVISION).toBeTruthy();
+    expect(enMessages.kernelErrors.codes.TASK_STALE_REVISION).toBeTruthy();
   });
 });
 
@@ -254,6 +280,7 @@ describe('task checklist UI (#2606)', () => {
         <TaskChecklistSection
           taskId={TASK_ID}
           checklist={[{ text: 'Chỉ xem', done: false }]}
+          revision={2}
           checkedOut={false}
           readOnly={true}
         />,

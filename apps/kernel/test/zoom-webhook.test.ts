@@ -38,7 +38,7 @@ function fakeRuntime(installed: readonly string[] = ['kernel', 'meetings']) {
   return { calls, runtime };
 }
 
-const config = loadConfig({ DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: 'x'.repeat(32), AUTH_ISSUER: 'crove-auth', WEB_DIST: '/nonexistent' });
+const config = loadConfig({ DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: 'x'.repeat(32), AUTH_ISSUER: 'ludy-auth', WEB_DIST: '/nonexistent' });
 function app(over: Partial<HttpDeps> = {}, installed?: readonly string[]) {
   const { calls, runtime } = fakeRuntime(installed);
   const authenticate = vi.fn(async () => {

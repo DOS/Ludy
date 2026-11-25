@@ -2,7 +2,7 @@
 // The conversation core's worker side on PostgreSQL 17 (#2303): a notice the webhook parked is stored under the org of its
 // connection and deleted at once (an unreadable one too, a poison one after five claims), a reply is sent once with the
 // credential the API sealed, a worker killed after the platform's answer never sends it twice, a refused token expires the
-// connection, and a hide is repeated safely. The sandbox platform stands in for a real one. Set CROVE_TEST_ADMIN_URL to a
+// connection, and a hide is repeated safely. The sandbox platform stands in for a real one. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a
 // superuser URL; each run makes its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -17,12 +17,12 @@ import { CredentialVault, parseVaultKey, Runtime } from '@ludy/kernel-runtime';
 import { failUnsendable, runConversationIntake, runConversationJob, sweepStaleReplies } from '../src/conversations-worker.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('conversations, the worker side, on PostgreSQL (#2303)', () => {
-  const dbName = `crove_test_conversations_worker_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_conversations_worker_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appUrl = '';
   let pool: pg.Pool;

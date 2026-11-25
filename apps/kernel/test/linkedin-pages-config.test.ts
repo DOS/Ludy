@@ -6,7 +6,7 @@ import { OAUTH_MAX_ACCOUNTS_PER_GRANT } from '@ludy/kernel-contract';
 import { loadConfig } from '../src/config.ts';
 import { channelConnectors, channelPublishers, channelRefreshers } from '../src/kernel.ts';
 
-const BASE = { DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: 'x'.repeat(32), AUTH_ISSUER: 'crove-auth', WEB_DIST: '/nonexistent' };
+const BASE = { DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: 'x'.repeat(32), AUTH_ISSUER: 'ludy-auth', WEB_DIST: '/nonexistent' };
 // A made-up app (the shape of a LinkedIn client id, nothing real).
 const APP_ID = ['86abcdefgh', '1234'].join('');
 const LINKEDIN = { CHANNEL_LINKEDIN_CLIENT_ID: APP_ID, CHANNEL_LINKEDIN_CLIENT_SECRET: 'test-only-not-real' };

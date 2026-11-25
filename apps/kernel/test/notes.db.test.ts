@@ -2,7 +2,7 @@
 // private note on a client and a shared one; other members read the shared one only; the audit rows keep markers, not
 // text; only the author edits, owners and admins pin a shared note; search finds words typed without marks; the trash
 // and a former member's private notes are emptied by the system; the org export carries the shared note and a count of
-// the private one. Set CROVE_TEST_ADMIN_URL to a superuser URL; the run makes its own database.
+// the private one. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; the run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -16,7 +16,7 @@ import { notesCommands, notesQueries } from '@ludy/mod-notes';
 import { sweepNotesFormerMembers } from '../src/notes-worker.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SYSTEM = { type: 'system' as const, component: 'notes' };
 const PRIVATE_TITLE = 'Mật khẩu cổng ngân hàng';
@@ -25,7 +25,7 @@ const SHARED_TITLE = 'Giám đốc chỉ nghe máy sau 15h';
 const suite = ADMIN ? describe : describe.skip;
 
 suite('notes on PostgreSQL (#1671)', () => {
-  const dbName = `crove_test_notes_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_notes_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let app: Runtime;

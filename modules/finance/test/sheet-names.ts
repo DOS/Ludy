@@ -1,4 +1,4 @@
-// Crove's own export sheets carry Vietnamese names with their diacritics (issue #365); sheet names an import template
+// Ludy's own export sheets carry Vietnamese names with their diacritics (issue #365); sheet names an import template
 // fixes (the MISA SME templates) are the template's. Either way a name must be one Excel accepts: at most 31
 // characters, none of \ / ? * [ ] :, no apostrophe at either end, not the reserved "History". Names are written in
 // NFC, so a name typed in a decomposed form never shows as two sheets that look alike.

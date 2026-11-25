@@ -42,7 +42,7 @@ describe('LocalDiskStore with tmp/', () => {
   let root = '';
   let store: LocalDiskStore;
   beforeAll(async () => {
-    root = await mkdtemp(join(tmpdir(), 'crove-tmp-key-'));
+    root = await mkdtemp(join(tmpdir(), 'ludy-tmp-key-'));
     store = new LocalDiskStore(root);
   });
   afterAll(async () => {

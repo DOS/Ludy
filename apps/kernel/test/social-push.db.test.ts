@@ -2,7 +2,7 @@
 // dispatch names the notifications to push, the push job sends to the member's devices and records the answers (404
 // and 410 delete, other failures count up to the limit), and a disabled account, a member who left, a read notice or a
 // kind that is not pushed get nothing. The push carries no post text. The sender is a fake that
-// records each request; the encryption is checked against RFC 8291 in web-push.test.ts. Set CROVE_TEST_ADMIN_URL to a
+// records each request; the encryption is checked against RFC 8291 in web-push.test.ts. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a
 // superuser URL; each run makes its own database.
 import { createECDH, randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -17,7 +17,7 @@ import { createPushSender, generateVapidKeys, loadVapidKeys, runPushJob, type Pu
 import { TEST_MANIFESTS } from './manifests.ts';
 import { contextToken } from './context-token.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -30,7 +30,7 @@ function browserKeys() {
 const endpoint = () => `https://push.example.com/send/${randomUUID()}`;
 
 suite('social browser push on PostgreSQL (#1238)', () => {
-  const dbName = `crove_test_social_push_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_push_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appUrl = '';
   let pool: pg.Pool;

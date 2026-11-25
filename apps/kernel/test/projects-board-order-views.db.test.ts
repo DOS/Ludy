@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Manual project board ordering (projects.task.reorder) and kernel.task saved-view filters/sort on PostgreSQL 17 (#2610).
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -20,7 +20,7 @@ import { financeCommands } from '@ludy/mod-finance';
 import { projectsCommands, projectsQueries } from '@ludy/mod-projects';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const DAY = 24 * 60 * 60 * 1000;
 const suite = ADMIN ? describe : describe.skip;
@@ -36,7 +36,7 @@ interface TaskListRow {
 }
 
 suite('project board ordering and kernel.task saved views on PostgreSQL (#2610)', () => {
-  const dbName = `crove_test_proj_order_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_proj_order_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // What the worker reads beyond the webhook (CV5b, #2329) on PostgreSQL 17: a customer's name asked once, an account's recent history stored
 // once through the same ingest with a gap recorded when it could not reach back, the due list for the worker login alone, and a read
-// that cannot bring back an erased customer. A fake adapter stands in for Zalo. Set CROVE_TEST_ADMIN_URL to a superuser URL.
+// that cannot bring back an erased customer. A fake adapter stands in for Zalo. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -15,12 +15,12 @@ import { CredentialVault, parseVaultKey, Runtime } from '@ludy/kernel-runtime';
 import { dueConversationSync, requestConversationSync, runConversationSync, type ConversationSyncJob } from '../src/conversations-worker.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('conversation sync (name and history) on PostgreSQL (CV5b, #2329)', () => {
-  const dbName = `crove_test_conversations_sync_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_conversations_sync_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

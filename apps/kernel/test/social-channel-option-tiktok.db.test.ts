@@ -2,7 +2,7 @@
 // #1120: asked for by a member, read by the worker from creator_info with the account's sealed token and recorded; a
 // spam-risk answer is kept as the try-later note; the list is fresh for minutes, not a day; and asking counts against
 // the org's budget. TikTok answers are recorded shapes from TikTok's Content Posting API reference; no live call. Set
-// CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -16,7 +16,7 @@ import { CHANNEL_OPTION_FRESH_MS, CHANNEL_OPTION_PER_MINUTE, runChannelOptionJob
 import { tiktokCreatorOf } from '@ludy/mod-social/contract';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -40,7 +40,7 @@ function platform(routes: Record<string, Answer[]>) {
 const creator = (data: Record<string, unknown>): Answer => ({ body: { data, error: ok } });
 
 suite('TikTok creator options as channel options on PostgreSQL (#1497)', () => {
-  const dbName = `crove_test_social_option_tiktok_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_option_tiktok_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

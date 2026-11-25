@@ -2,7 +2,7 @@
 // Issuing a sales e-invoice, the person's half (#2502, ADR-0044 points 3 and 4), on PostgreSQL 17: a draft is asked for approval with the hash of everything it is issued from, an owner
 // or an admin approves (never the one who asked when another can), and only that approval moves it to `submitting`, through the definer ludy_finance.einvoice_submit, for this draft,
 // this content and this total. A direct call, another org's draft, a draft changed after the request, a person's own UPDATE and the job's own move are all refused in SQL.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -16,7 +16,7 @@ import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { enterUser } from './context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -49,7 +49,7 @@ const form = (seriesId: string | null, extra: Record<string, unknown> = {}) => (
 });
 
 suite('issuing a sales e-invoice (#2502)', () => {
-  const dbName = `crove_test_einvoice_issue_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_einvoice_issue_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

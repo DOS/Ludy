@@ -1,7 +1,7 @@
 // Fiscal year archive packages (issue #922), on a real PostgreSQL 17, through the HTTP API: an owner asks for the
 // package of a year once every month is locked (R3), the worker builds it once, and owners download and verify it. A
 // part whose bytes change, or an original that disappears, fails the verification.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -22,7 +22,7 @@ import { runYearArchive, type YearArchiveManifest } from '../src/year-archive.ts
 import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const FIXTURE = readFileSync(new URL('../../extract/test/fixtures/einvoice-basic.xml', import.meta.url), 'utf8');
 const SECRET = 'test-only-jwt-secret-for-year-archive-0123456789';
@@ -56,7 +56,7 @@ interface Account {
 const suite = ADMIN ? describe : describe.skip;
 
 suite('fiscal year archive packages (#922)', () => {
-  const dbName = `crove_test_year_archive_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_year_archive_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

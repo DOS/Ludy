@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The sandbox meeting platform end to end (meetings integrations C1, #3173): the HTTP rpc `meetingPlatform/connectSandbox` seals a token, the worker's sweep lists the sandbox recordings, the member's
 // click begins one, the sweep hands it over and the download job opens the SAME sealed token and stages the sandbox audio. A reviewer found that the connection once sealed a non-JSON token the job could
-// never open, a seam the unit tests (which seal their own JSON) did not cross. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// never open, a seam the unit tests (which seal their own JSON) did not cross. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
@@ -23,7 +23,7 @@ import { runMeetingsImportSweep } from '../src/meetings-import-sweep.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-meeting-sandbox-0123456789';
 const ISSUER = 'crove-auth';
@@ -52,7 +52,7 @@ interface Account { subject: string; email: string; session: string; userId: str
 const account = (name: string): Account => ({ subject: randomUUID(), email: `${name}@mp-sandbox.test`, session: randomUUID(), userId: '' });
 
 suite('the sandbox meeting platform from the HTTP rpc to the staged bytes (meetings integrations C1, #3173)', () => {
-  const dbName = `crove_test_mp_sandbox_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_mp_sandbox_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let apps: Record<'on' | 'sandboxOff', ReturnType<typeof createHttpApp>>;

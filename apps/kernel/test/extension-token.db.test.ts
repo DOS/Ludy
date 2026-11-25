@@ -23,7 +23,7 @@ import { RateLimiter } from '../src/rate-limit.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-extension-secret-0123456789-abcdef';
 const ISSUER = 'crove-auth-extension';
@@ -55,7 +55,7 @@ const challengeOf = (verifier: string) => createHash('sha256').update(verifier).
 const webm = () => new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, ...Array.from({ length: 64 }, (_, i) => i)]);
 
 suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
-  const dbName = `crove_test_ext_http_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_ext_http_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let app: ReturnType<typeof createHttpApp>;

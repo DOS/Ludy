@@ -22,7 +22,7 @@ import { MEDIA_TICKET_KEY_LABEL, signMediaTicket, type MediaTicketPayload } from
 import { RateLimiter } from '../src/rate-limit.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-video-ticket-secret-0123456789-abcdef';
 const ISSUER = 'crove-auth-video-ticket';
@@ -71,7 +71,7 @@ class TestBlobStore implements BlobStore {
 const mp4 = (size: number) => Buffer.concat([Buffer.from([0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70]), randomBytes(size - 8)]);
 
 suite('meeting video tickets (#2703)', () => {
-  const dbName = `crove_test_video_ticket_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_video_ticket_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let store: TestBlobStore;

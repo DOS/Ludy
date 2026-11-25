@@ -73,7 +73,7 @@ describe('resubmitSource and mayResubmit (#876)', () => {
 
 describe('proposal reminder mail', () => {
   const input = (payload: Record<string, unknown>, subject: string | null = 'Đề xuất chờ bạn duyệt đã 3 ngày', brand = 'Crove') => ({
-    publicUrl: 'https://crove.example.com/',
+    publicUrl: 'https://ludy.example.com/',
     brand,
     subject,
     payload,
@@ -84,8 +84,8 @@ describe('proposal reminder mail', () => {
     const remind = await renderProposalReminderMail(input({ stage: 'remind', org: 'Công ty A', title: 'Hóa đơn 0001234', days: 3, path }) as never);
     expect(remind?.subject).toBe('Đề xuất chờ bạn duyệt đã 3 ngày');
     expect(remind?.text).toContain('Một đề xuất đang chờ bạn duyệt đã 3 ngày.');
-    expect(remind?.text).toContain(`Mở đề xuất: https://crove.example.com${path}`);
-    expect(remind?.html).toContain(`href="https://crove.example.com${path}"`);
+    expect(remind?.text).toContain(`Mở đề xuất: https://ludy.example.com${path}`);
+    expect(remind?.html).toContain(`href="https://ludy.example.com${path}"`);
     const escalate = await renderProposalReminderMail(input({ stage: 'escalate', org: 'Công ty A', title: null, days: 6, path }, null) as never);
     expect(escalate?.subject).toBe('Một đề xuất của tổ chức chưa được ai duyệt sau 6 ngày.');
     expect(escalate?.text).not.toContain('Đề xuất:');

@@ -4,7 +4,7 @@
 // token used twice is refused. The cases: a credential near its end is renewed and the pair stored; one that is not due is left alone; TWO RENEWALS AT ONCE call the provider once and both end with the
 // same valid pair (the new token is not lost); a refused grant expires the connection and keeps the stored pair; an unreachable provider changes nothing and the next try works; a crash after the provider
 // rotated the token (the seal fails) rolls everything back and the next try is refused (the documented window); and nothing but the system runs it. No token reaches the audit log.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -18,7 +18,7 @@ import { Runtime, type CredentialBroker } from '@ludy/kernel-runtime';
 import { meetingPlatformRefreshCommand, parseCredential, type RefreshOutcome } from '../src/meeting-platform-credential.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const SYSTEM = { type: 'system' as const, component: 'meeting-platform-refresh-test' };
@@ -69,7 +69,7 @@ function fakeZoom() {
 }
 
 suite('the renewal of a meeting platform token on PostgreSQL (issue #3878)', () => {
-  const dbName = `crove_test_mp_refresh_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_mp_refresh_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let api: Runtime;

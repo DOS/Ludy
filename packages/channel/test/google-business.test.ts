@@ -4,7 +4,7 @@ import { GoogleBusinessConnector, GoogleBusinessPublisher, GoogleBusinessRefresh
 
 const APP = { clientId: '123456789-testclientid0001.apps.googleusercontent.com', clientSecret: 'test-google-secret-not-real' };
 const SECRET = JSON.stringify({ accessToken: 'ya29.token-1', refreshToken: '1//refresh-1' });
-const REDIRECT = 'https://crove.example/channels/oauth/google_business/callback';
+const REDIRECT = 'https://ludy.example/channels/oauth/google_business/callback';
 const LOCATION = 'accounts/1001/locations/2002';
 
 function google(routes: Record<string, { status?: number; body: unknown }[]>) {

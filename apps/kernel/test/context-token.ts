@@ -1,11 +1,11 @@
 // A context token for a user in an org (#1822, ADR-0028 section 9), signed with the test suites' key
-// (CROVE_CONTEXT_TOKEN_KEY, vitest.config.ts), which the migration runner installs in every test database: what
+// (LUDY_CONTEXT_TOKEN_KEY / CROVE_CONTEXT_TOKEN_KEY, vitest.config.ts), which the migration runner installs in every test database: what
 // ludy_kernel.enter_user_context takes to enter that user's context.
 import type pg from 'pg';
 import { mintContextToken } from '@ludy/kernel-runtime';
 
 export function contextToken(userId: string, orgId: string, claims: { sessionId?: string | null; aal?: 'aal1' | 'aal2'; mfaAt?: number | null } = {}): string {
-  return mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', {
+  return mintContextToken(process.env.LUDY_CONTEXT_TOKEN_KEY ?? process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', {
     userId,
     orgId,
     sessionId: claims.sessionId ?? null,

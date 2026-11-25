@@ -34,7 +34,7 @@ import { buildPdfSealFields } from '../src/sealing.ts';
 
 type Pool = ReturnType<typeof createPool>;
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -84,7 +84,7 @@ const VALID_SIG_PNG = makePngBase64(160, 60, 20);
 const VALID_STAMP_PNG = makePngBase64(140, 100, 200);
 
 suite('eSign Slice 4a stamps & saved member signatures on PostgreSQL 17 (#3817)', () => {
-  const dbName = `crove_test_sign_s4a_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_sign_s4a_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let adminPool: Pool | undefined;
   let appPool: Pool | undefined;
@@ -239,7 +239,7 @@ suite('eSign Slice 4a stamps & saved member signatures on PostgreSQL 17 (#3817)'
       await client.query('BEGIN');
       await client.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [
         orgA,
-        mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', {
+        mintContextToken(process.env.LUDY_CONTEXT_TOKEN_KEY ?? process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', {
           userId: ownerA,
           orgId: orgA,
           sessionId: null,

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The facts behind the coworker's line on the Sàn screen (#2516 slice E), on PostgreSQL 17: finance.marketplace.facts counts the stored settlements that stand and have no posting voucher (a reversed
 // one and its reversal do not count, a posted one does not), and sums the balance rows (slice D). Every role reads it, another org sees nothing, an entity filter narrows it, and it writes nothing.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -14,12 +14,12 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('the Sàn line facts on PostgreSQL (#2516 slice E)', () => {
-  const dbName = `crove_test_mkt_facts_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_mkt_facts_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let rt: Runtime;
@@ -103,7 +103,7 @@ suite('the Sàn line facts on PostgreSQL (#2516 slice E)', () => {
     app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
-    rt = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS, contextTokenKey: process.env.CROVE_CONTEXT_TOKEN_KEY ?? null }).register({
+    rt = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS, contextTokenKey: process.env.LUDY_CONTEXT_TOKEN_KEY ?? process.env.CROVE_CONTEXT_TOKEN_KEY ?? null }).register({
       commands: [...kernelCommands, ...financeCommands],
       queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries],
     });

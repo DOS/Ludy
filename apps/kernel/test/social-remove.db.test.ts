@@ -1,7 +1,7 @@
 // Removing a published post from its platform on PostgreSQL 17 (#860): an owner asks, the remove job takes the post
 // down through the sandbox adapter as its own recorded call, and the channel shows when and by whom; members, viewers
 // and channels whose adapter cannot remove are refused, and asking twice changes nothing.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -14,14 +14,14 @@ import { CredentialVault, Runtime, parseVaultKey } from '@ludy/kernel-runtime';
 import { runPublishJob, runRemoveJob, socialCommands, socialQueries, type ActivityItem, type PostView } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 type Org = { orgId: string; owner: string };
 
 suite('removing a published post on PostgreSQL (#860)', () => {
-  const dbName = `crove_test_social_remove_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_remove_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appPool: pg.Pool;
   let workerPool: pg.Pool;

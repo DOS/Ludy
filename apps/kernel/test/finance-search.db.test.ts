@@ -2,7 +2,7 @@
 // tax codes, invoice numbers with or without their leading zeros, entry descriptions and amounts, the cap per group,
 // the org boundary, and the planner using the search indexes on an org of 50,000 documents within 200 ms at p95.
 // The amount reading is unit-tested in modules/finance/test/search.test.ts.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -14,7 +14,7 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { SEARCH_LIMIT, financeCommands, financeQueries, type SearchResult } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 // The seeded org's size, from the issue's acceptance criterion.
 const DOCUMENTS = 50_000;
@@ -23,7 +23,7 @@ const PARTIES = 2_000;
 const suite = ADMIN ? describe : describe.skip;
 
 suite('finance search (#673)', () => {
-  const dbName = `crove_test_search_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_search_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

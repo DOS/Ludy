@@ -2,7 +2,7 @@
 // with the inbound message (capped by its CHECK), listed for those who write posts, and read by the writer inside a
 // fence as untrusted data; the draft is a tainted post whose channels wait for review, an instruction in the mail ends
 // at most in that pending draft, and a mail of another org, an empty mail and a viewer are refused before the model is
-// asked. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// asked. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -25,7 +25,7 @@ import { socialDrafter } from '../src/kernel.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-ai-mail-0123456789ab';
 const ISSUER = 'crove-auth';
@@ -39,7 +39,7 @@ interface Account {
 }
 
 suite('AI drafts from a forwarded mail through the API (#779)', () => {
-  const dbName = `crove_test_social_ai_mail_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_ai_mail_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

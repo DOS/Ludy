@@ -1,11 +1,11 @@
 // The Phase 1 load test (issue #998) runs end to end on a small scale: its own database, the seeded parties, the
 // commands, queries, outbox and back-pressure phases (#1717), then the database dropped. The full size runs by hand (docs/runbooks/load-test.md).
-// Set CROVE_TEST_ADMIN_URL to a superuser URL.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL.
 import pg from 'pg';
 import { describe, expect, it } from 'vitest';
 import { judge, runLoad } from '../load/load-test.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const suite = ADMIN ? describe : describe.skip;
 
 suite('load test on PostgreSQL (#998)', () => {

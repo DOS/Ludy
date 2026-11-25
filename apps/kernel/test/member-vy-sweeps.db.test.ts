@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The daily sweeps of a member's private Vy data (ADR-0049 decision 3, #2822): results past their expires_at (every batch of 1,000, not one), and the results
 // and memory of a former member after 30 days, independent of Notes. The definers themselves are in member-vy-core.db.test.ts.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -14,12 +14,12 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { sweepMemberVyFormerMembers, sweepMemberVyResults } from '../src/member-vy-worker.ts';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('member Vy sweeps (ADR-0049 decision 3, #2822)', () => {
-  const dbName = `crove_test_member_vy_sweeps_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_member_vy_sweeps_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appUrl = '';
   let workerUrl = '';
