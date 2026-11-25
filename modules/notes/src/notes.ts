@@ -116,6 +116,17 @@ const notebookNotFound = () => new DomainError('NOTEBOOK_NOT_FOUND', 404, 'Khôn
 const sharedNotePrivateNotebook = () =>
   new DomainError('NOTES_SHARED_NOTE_PRIVATE_NOTEBOOK', 422, 'Ghi chú dùng chung không thể đặt trong sổ tay riêng; hãy chọn sổ tay dùng chung hoặc bỏ chọn sổ tay');
 
+function rethrowNotebookConstraintError(err: unknown): never {
+  const pgErr = err as { code?: string; message?: string } | null;
+  if (pgErr?.code === '23514' && pgErr.message?.includes('NOTES_SHARED_NOTE_PRIVATE_NOTEBOOK')) {
+    throw sharedNotePrivateNotebook();
+  }
+  if (pgErr?.code === '42501' && pgErr.message?.includes('NOTES_NOTEBOOK_NOT_ACCESSIBLE')) {
+    throw notebookNotFound();
+  }
+  throw err;
+}
+
 // Checks notebook readability under caller SELECT RLS with uniform 404 for missing or unreadable notebooks
 // so cross-member private notebook_id probing yields zero existence oracle, takes a shared per-notebook advisory
 // lock (SELECT FOR SHARE in PostgreSQL would apply UPDATE RLS and hide shared notebooks from plain members),
@@ -348,10 +359,11 @@ export const noteUpdate = defineCommand({
     else assertMayManage(ctx, peek, userId);
     assertNotInTrash(peek);
 
-    // Lock notebook FOR SHARE before locking note FOR UPDATE (canonical notebook -> note lock order).
-    if (input.notebookId !== undefined && input.notebookId !== null) {
-      await resolveNotebookForNote(ctx, input.notebookId, peek.author_user_id, peek.visibility);
-    }
+    // Acquire shared notebook advisory lock before locking note FOR UPDATE (canonical notebook -> note lock order).
+    const resolvedNotebook =
+      input.notebookId !== undefined && input.notebookId !== null
+        ? await resolveNotebookForNote(ctx, input.notebookId, peek.author_user_id, peek.visibility)
+        : null;
 
     const before = await load(ctx, input.noteId, true);
     if (editsText) assertAuthor(before, userId);
@@ -360,8 +372,8 @@ export const noteUpdate = defineCommand({
     if (before.revision !== input.revision) {
       throw new DomainError('NOTE_REVISION_CONFLICT', 409, 'Ghi chú vừa được sửa ở nơi khác; hãy tải lại trước khi lưu', { revision: before.revision });
     }
-    if (input.notebookId !== undefined && input.notebookId !== null && before.visibility !== peek.visibility) {
-      await resolveNotebookForNote(ctx, input.notebookId, before.author_user_id, before.visibility);
+    if (resolvedNotebook !== null && resolvedNotebook.visibility === 'private' && before.visibility === 'org') {
+      throw sharedNotePrivateNotebook();
     }
 
     const nextTitle = input.title ?? before.title;
@@ -382,21 +394,26 @@ export const noteUpdate = defineCommand({
     if (contentEdited || tagsChanged) {
       await recordNoteVersionSnapshot(ctx, before);
     }
-    const row = await ctx.trx
-      .updateTable('ludy_notes.note')
-      .set({
-        ...(input.title !== undefined ? { title: nextTitle } : {}),
-        ...(input.body !== undefined ? { body: nextBody } : {}),
-        ...(input.tags !== undefined ? { tags: nextTags } : {}),
-        ...(input.notebookId !== undefined ? { notebook_id: nextNotebookId } : {}),
-        ...(clearTaint ? { tainted: false } : {}),
-        revision: before.revision + 1,
-        updated_at: ctx.now,
-      })
-      .where('org_id', '=', ctx.orgId)
-      .where('id', '=', input.noteId)
-      .returning(['id', 'revision'])
-      .executeTakeFirstOrThrow();
+    let row: { id: string; revision: number };
+    try {
+      row = await ctx.trx
+        .updateTable('ludy_notes.note')
+        .set({
+          ...(input.title !== undefined ? { title: nextTitle } : {}),
+          ...(input.body !== undefined ? { body: nextBody } : {}),
+          ...(input.tags !== undefined ? { tags: nextTags } : {}),
+          ...(input.notebookId !== undefined ? { notebook_id: nextNotebookId } : {}),
+          ...(clearTaint ? { tainted: false } : {}),
+          revision: before.revision + 1,
+          updated_at: ctx.now,
+        })
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', input.noteId)
+        .returning(['id', 'revision'])
+        .executeTakeFirstOrThrow();
+    } catch (err) {
+      rethrowNotebookConstraintError(err);
+    }
     ctx.audit({
       noteId: row.id,
       revision: row.revision,
@@ -501,14 +518,7 @@ export const noteSetVisibility = defineCommand({
         .returning(['id', 'revision'])
         .executeTakeFirstOrThrow();
     } catch (err) {
-      const pgErr = err as { code?: string; message?: string } | null;
-      if (pgErr?.code === '23514' && pgErr.message?.includes('NOTES_SHARED_NOTE_PRIVATE_NOTEBOOK')) {
-        throw sharedNotePrivateNotebook();
-      }
-      if (pgErr?.code === '42501' && pgErr.message?.includes('NOTES_NOTEBOOK_NOT_ACCESSIBLE')) {
-        throw notebookNotFound();
-      }
-      throw err;
+      rethrowNotebookConstraintError(err);
     }
     ctx.audit({ noteId: row.id, visibility: input.visibility, previousVisibility: before.visibility });
     return written(row);
