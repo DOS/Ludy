@@ -82,10 +82,10 @@ test('Vy summarizes a stored transcript, the recorder reads, edits and shares it
       })
       .toBeGreaterThanOrEqual(1);
     await page.goto(`/o/${slug}/notifications`);
-    const notice = page.getByText('Bản nháp biên bản của cuộc họp bạn ghi đã sẵn sàng');
-    await expect(notice).toBeVisible();
-    // A notification is a button that opens what it is about.
-    await notice.click();
+    const row = page.getByTestId('notifications-feed').getByRole('button', { name: /Bản nháp biên bản của cuộc họp bạn ghi đã sẵn sàng/ });
+    await expect(row).toBeVisible();
+    await row.click();
+    await page.getByTestId('notification-primary-cta').click();
     await expect(page).toHaveURL(new RegExp(`/meetings/${meetingId}$`));
   });
 });
