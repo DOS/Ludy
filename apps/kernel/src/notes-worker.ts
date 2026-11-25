@@ -123,6 +123,7 @@ export async function runNotesMemberPurge(runtime: Runtime, job: { orgId: string
 }
 
 export const NOTE_ATTACHMENT_EXTRACT_RETRY_LIMIT = 3;
+export const NOTE_ATTACHMENT_EXTRACT_SINGLETON_SECONDS = 300;
 
 export interface NotesAttachmentExtractJob {
   orgId: string;
@@ -140,6 +141,7 @@ export function queueNoteAttachmentExtract(
     { orgId: row.org_id, attachmentId } satisfies NotesAttachmentExtractJob,
     {
       singletonKey: jobKey(row.org_id, QUEUES.notesAttachmentExtract, attachmentId),
+      singletonSeconds: NOTE_ATTACHMENT_EXTRACT_SINGLETON_SECONDS,
       retryLimit: NOTE_ATTACHMENT_EXTRACT_RETRY_LIMIT,
       retryDelay: 15,
       retryBackoff: true,
@@ -224,7 +226,8 @@ export async function runNoteAttachmentExtract(
 }
 
 // The attachments whose extraction never ran (dropped while Notes was off or the note was in the trash): asked for again,
-// for the orgs that have Notes on, on the reminders' 5-minute tick. The singleton key keeps one job per attachment.
+// for the orgs that have Notes on, on the reminders' 5-minute tick. Because notesAttachmentExtract uses pg-boss's standard
+// queue policy, singletonSeconds (300s) deduplicates repeated enqueues per attachment within each 5-minute slot.
 export async function requestDueNoteAttachmentExtracts(deps: { runtime: Runtime; workerDb: Db; boss: JobSender }): Promise<number> {
   const { rows } = await sql<{ org_id: string; id: string }>`
     SELECT org_id, id FROM ludy_notes.attachment_extract_due(200)
@@ -232,13 +235,13 @@ export async function requestDueNoteAttachmentExtracts(deps: { runtime: Runtime;
   let sent = 0;
   for (const row of rows) {
     if (!(await deps.runtime.appOn(row.org_id, 'notes').catch(() => false))) continue;
-    await queueNoteAttachmentExtract(deps.boss, {
+    const jobId = await queueNoteAttachmentExtract(deps.boss, {
       org_id: row.org_id,
       event_id: row.id,
       type: NOTE_ATTACHMENT_EXTRACT_QUEUED_EVENT,
       payload: { attachmentId: row.id },
     });
-    sent++;
+    if (jobId !== null) sent++;
   }
   return sent;
 }
