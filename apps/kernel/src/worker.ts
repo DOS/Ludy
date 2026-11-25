@@ -3366,6 +3366,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                 });
               }
               let signDocxRecoveryError: unknown;
+              let signKycRecoveryError: unknown;
               if (sign && row.type === 'kernel.org.apps_changed' && row.payload.module === 'sign' && row.payload.enabled === true) {
                 await sweepSignPendingWork({
                   workerDb: deps.workerDb,
@@ -3388,7 +3389,10 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                   bumpUpdatedAtOnRequeue: true,
                   enqueueKycInspect: (orgId, envelopeId, fieldId) =>
                     enqueueSignKycAttachmentInspect(boss, orgId, envelopeId, fieldId),
-                }).catch((error: unknown) => console.error('[relay] sign pending kyc on apps_changed', error));
+                }).catch((error: unknown) => {
+                  signKycRecoveryError = error;
+                  console.error('[relay] sign pending kyc on apps_changed', error);
+                });
                 await deps.runtime.query<Array<Omit<SignDocxConvertJob, 'orgId' | 'targetKind'>>>(
                   'sign.docx_convert.pending',
                   {},
@@ -3407,6 +3411,9 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
               // retry, so it never fails the relay step.
               if (row.type === 'kernel.org.apps_changed' && row.payload.enabled === true) {
                 await releaseHeldOfOrg(deps.workerDb, (orgId, app) => deps.runtime.appOn(orgId, app, { fresh: true }), row.org_id).catch((error: unknown) => console.error('[relay] held release on apps_changed', error));
+              }
+              if (signKycRecoveryError !== undefined) {
+                throw signKycRecoveryError;
               }
               if (signDocxRecoveryError !== undefined) {
                 throw signDocxRecoveryError;

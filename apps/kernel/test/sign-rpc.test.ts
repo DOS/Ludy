@@ -904,7 +904,7 @@ describe('os.sign RPC handlers (#3325)', () => {
     };
     const samsungSefTrailer = makeSamsungSefTrailer([
       { typeWord: 0x0a30_0000, key: 'MotionPhoto_Data', payload: validMotionMp4 },
-      { typeWord: 0x0a41_0000, key: 'Image_UTC_Data', payload: new TextEncoder().encode('1732520000000') },
+      { typeWord: 0x0a01_0000, key: 'Image_UTC_Data', payload: new TextEncoder().encode('1732520000000') },
     ]);
     expect(verifySignAttachmentBytes(concatBytes(validJpeg, samsungSefTrailer))).toBe('image/jpeg');
     expect(verifySignAttachmentBytes(concatBytes(validJpeg, new Uint8Array(16), samsungSefTrailer))).toBe('image/jpeg');
@@ -914,7 +914,7 @@ describe('os.sign RPC handlers (#3325)', () => {
       verifySignAttachmentBytes(
         concatBytes(
           validJpeg,
-          makeSamsungSefTrailer([{ typeWord: 0x0a41_0000, key: 'Image_UTC_Data', payload: new TextEncoder().encode('12345') }]),
+          makeSamsungSefTrailer([{ typeWord: 0x0a01_0000, key: 'Image_UTC_Data', payload: new TextEncoder().encode('12345') }]),
         ),
       ),
     ).toBeNull();
@@ -924,7 +924,7 @@ describe('os.sign RPC handlers (#3325)', () => {
           validJpeg,
           makeSamsungSefTrailer([
             { typeWord: 0x0a30_0000, key: 'MotionPhoto_Data', payload: validMotionMp4 },
-            { typeWord: 0x0a41_0000, key: 'Image_UTC_Data', payload: new TextEncoder().encode('<script>alert(1)</script>') },
+            { typeWord: 0x0a01_0000, key: 'Image_UTC_Data', payload: new TextEncoder().encode('<script>alert(1)</script>') },
           ]),
         ),
       ),
@@ -951,7 +951,7 @@ describe('os.sign RPC handlers (#3325)', () => {
         ),
       ),
     ).toBeNull();
-    // Reject unrecognized SEF entry names, mismatched typeWord, non-timestamp Image_UTC_Data, and wrong MotionPhoto typeWord.
+    // Reject unrecognized SEF entry names, mismatched typeWord (including BackupRestore_Data 0x0a41), non-timestamp Image_UTC_Data, and wrong MotionPhoto typeWord.
     expect(
       verifySignAttachmentBytes(
         concatBytes(
@@ -959,6 +959,28 @@ describe('os.sign RPC handlers (#3325)', () => {
           makeSamsungSefTrailer([
             { typeWord: 0x0a30_0000, key: 'MotionPhoto_Data', payload: validMotionMp4 },
             { typeWord: 0x0a41_0000, key: 'Unknown_Arbitrary_Tag', payload: new TextEncoder().encode('hello') },
+          ]),
+        ),
+      ),
+    ).toBeNull();
+    expect(
+      verifySignAttachmentBytes(
+        concatBytes(
+          validJpeg,
+          makeSamsungSefTrailer([
+            { typeWord: 0x0a30_0000, key: 'MotionPhoto_Data', payload: validMotionMp4 },
+            { typeWord: 0x0a41_0000, key: 'Image_UTC_Data', payload: new TextEncoder().encode('1732520000000') },
+          ]),
+        ),
+      ),
+    ).toBeNull();
+    expect(
+      verifySignAttachmentBytes(
+        concatBytes(
+          validJpeg,
+          makeSamsungSefTrailer([
+            { typeWord: 0x0a30_0000, key: 'MotionPhoto_Data', payload: validMotionMp4 },
+            { typeWord: 0x0a41, key: 'Image_UTC_Data', payload: new TextEncoder().encode('1732520000000') },
           ]),
         ),
       ),
@@ -980,7 +1002,7 @@ describe('os.sign RPC handlers (#3325)', () => {
           validJpeg,
           makeSamsungSefTrailer([
             { typeWord: 0x0a30_0000, key: 'MotionPhoto_Data', payload: validMotionMp4 },
-            { typeWord: 0x0a41_0000, key: 'Image_UTC_Data', payload: new TextEncoder().encode('not-epoch-ts') },
+            { typeWord: 0x0a01_0000, key: 'Image_UTC_Data', payload: new TextEncoder().encode('not-epoch-ts') },
           ]),
         ),
       ),
@@ -1357,12 +1379,17 @@ describe('os.sign RPC handlers (#3325)', () => {
         expect((await r2.read()).done).toBe(true);
         expect(releaseClose).not.toHaveBeenCalled();
 
-        closeListeners.get('close')?.();
-        closeListeners.get('finish')?.();
+        const onClose = closeListeners.get('close');
+        const onFinish = closeListeners.get('finish');
+        expect(onClose).toBeTypeOf('function');
+        expect(onFinish).toBeTypeOf('function');
+        onClose!();
+        expect(releaseClose).toHaveBeenCalledTimes(1);
+        expect(closeListeners.size).toBe(0);
+        onFinish!();
         abortController.abort();
         vi.advanceTimersByTime(120_000);
         expect(releaseClose).toHaveBeenCalledTimes(1);
-        expect(closeListeners.size).toBe(0);
       } finally {
         vi.useRealTimers();
       }
@@ -1431,18 +1458,25 @@ describe('os.sign RPC handlers (#3325)', () => {
         // EventTarget outgoing + abort signal.
         const releaseTarget = vi.fn();
         const target = new EventTarget();
+        const addTargetListenerSpy = vi.spyOn(target, 'addEventListener');
         const abortTarget = new AbortController();
+        const addAbortListenerSpy = vi.spyOn(abortTarget.signal, 'addEventListener');
         const targetCtx = {
           env: { outgoing: target },
           req: { raw: { signal: abortTarget.signal } },
         } as unknown as Parameters<typeof releaseOnResponseClose>[2];
         const targetStream = releaseOnResponseClose(bytes, releaseTarget, targetCtx);
+        expect(addTargetListenerSpy).toHaveBeenCalledWith('finish', expect.any(Function));
+        expect(addTargetListenerSpy).toHaveBeenCalledWith('close', expect.any(Function));
+        expect(addAbortListenerSpy).toHaveBeenCalledWith('abort', expect.any(Function), { once: true });
         const targetReader = targetStream.getReader();
         expect((await targetReader.read()).done).toBe(false);
         expect((await targetReader.read()).done).toBe(true);
         expect(releaseTarget).not.toHaveBeenCalled();
         abortTarget.abort();
+        expect(releaseTarget).toHaveBeenCalledTimes(1);
         target.dispatchEvent(new Event('finish'));
+        vi.advanceTimersByTime(120_000);
         expect(releaseTarget).toHaveBeenCalledTimes(1);
 
         // Pre-aborted signal and pre-finished outgoing release immediately once.

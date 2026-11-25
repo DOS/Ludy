@@ -971,15 +971,13 @@ describe('pdf_seal', () => {
         }),
       }),
     );
-    expect(orphanEdgeSealed.ok).toBe(true);
-    if (orphanEdgeSealed.ok && orphanEdgeSealed.kind === 'pdf_seal') {
-      const orphanBack = await readPdfBack(new Uint8Array(Buffer.from(orphanEdgeSealed.sealedPdfBase64, 'base64')));
-      for (const pageText of orphanBack.pageTexts.slice(1)) {
-        if (pageText.includes('DANH SÁCH NGƯỜI KÝ')) {
-          expect(pageText).toContain('1. 1 Nguyễn Văn Kiểm Tra Phân Trang');
-        }
-      }
+    if (!orphanEdgeSealed.ok || orphanEdgeSealed.kind !== 'pdf_seal') {
+      throw new Error(`expected pdf_seal result, got: ${JSON.stringify(orphanEdgeSealed)}`);
     }
+    const orphanBack = await readPdfBack(new Uint8Array(Buffer.from(orphanEdgeSealed.sealedPdfBase64, 'base64')));
+    const signersPageText = orphanBack.pageTexts.slice(1).find((pageText) => pageText.includes('DANH SÁCH NGƯỜI KÝ'));
+    expect(signersPageText).toBeDefined();
+    expect(signersPageText).toContain('1. 1 Nguyễn Văn Kiểm Tra Phân Trang');
   }, 20_000);
 
   it('skips Hidden/NoView widgets, normalizes /Fie#6cds keys, scales BBox to Rect, and rejects horizontal text overflow', async () => {
@@ -7239,8 +7237,14 @@ describe('pdf_seal', () => {
       };
     };
 
-    const assertRejectedBoth = async (pdfBytes: Uint8Array) => {
-      expect(await parse('pdf_inspect', pdfBytes)).toMatchObject({ ok: false, code: 'invalid' });
+    const assertRejectedBoth = async (pdfBytes: Uint8Array, expectedMessage?: string) => {
+      const inspectMatch = expectedMessage
+        ? { ok: false, code: 'invalid', message: expect.stringContaining(expectedMessage) }
+        : { ok: false, code: 'invalid' };
+      const sealMatch = expectedMessage
+        ? { ok: false, code: 'invalid', message: expect.stringContaining(expectedMessage) }
+        : { ok: false, code: 'invalid' };
+      expect(await parse('pdf_inspect', pdfBytes)).toMatchObject(inspectMatch);
       expect(
         await parse(
           'pdf_seal',
@@ -7250,7 +7254,7 @@ describe('pdf_seal', () => {
             certificate: makeCertificate(),
           }),
         ),
-      ).toMatchObject({ ok: false, code: 'invalid' });
+      ).toMatchObject(sealMatch);
     };
 
     // 1. Realistic Word/Excel-style hybrid /XRefStm PDF (compressed Font + StructTreeRoot + Info in /ObjStm, Predictor 12 /XRefStm).
@@ -7669,7 +7673,31 @@ describe('pdf_seal', () => {
         compressFontInObjStm: true,
         extraBodyAfterObjects: shadowedDecoyXref,
       }).bytes,
+      'luồng /XRef không thuộc chuỗi tham chiếu hoạt động',
     );
+    const indexedShadowedOverrideObj = '11 0 obj\n<< /Title (Harmless Override) >>\nendobj\n';
+    const indexedShadowedOverrideOff = indexedDecoyOffset + decoyXrefObjStr.length;
+    const indexedShadowedXrefStmOff = indexedShadowedOverrideOff + indexedShadowedOverrideObj.length;
+    const indexedShadowedRows = encodeXrefRows([
+      { kind: 2, objStmNum: 6, index: 0 },
+      { kind: 1, offset: validWordHybrid.offsets.get(6)!, gen: 0 },
+      { kind: 2, objStmNum: 6, index: 1 },
+      { kind: 2, objStmNum: 6, index: 2 },
+      { kind: 2, objStmNum: 6, index: 3 },
+      { kind: 1, offset: indexedShadowedXrefStmOff, gen: 0 },
+    ]);
+    const indexedShadowedCompressed = deflateSync(encodePngUp(indexedShadowedRows, 7));
+    const indexedShadowedXrefStmObj =
+      `10 0 obj\n<< /Type /XRef /Size 12 /Index [5 6] /W [1 4 2] /Root 1 0 R /Info 9 0 R /Filter /FlateDecode /DecodeParms << /Predictor 12 /Columns 7 >> /Length ${indexedShadowedCompressed.byteLength} >>\n` +
+      `stream\n${indexedShadowedCompressed.toString('latin1')}\nendstream\nendobj\n`;
+    const indexedShadowedClassicOff = indexedShadowedXrefStmOff + indexedShadowedXrefStmObj.length;
+    const indexedShadowedBytes = new Uint8Array(
+      Buffer.from(
+        `${baseStr.slice(0, indexedDecoyOffset)}${decoyXrefObjStr}${indexedShadowedOverrideObj}${indexedShadowedXrefStmObj}xref\n0 5\n${fmtEntry(0, 65535, 'f')}${fmtEntry(validWordHybrid.offsets.get(1)!, 0, 'n')}${fmtEntry(validWordHybrid.offsets.get(2)!, 0, 'n')}${fmtEntry(validWordHybrid.offsets.get(3)!, 0, 'n')}${fmtEntry(validWordHybrid.offsets.get(4)!, 0, 'n')}11 1\n${fmtEntry(indexedShadowedOverrideOff, 0, 'n')}trailer\n<< /Size 12 /Root 1 0 R /Info 9 0 R /XRefStm ${indexedShadowedXrefStmOff} >>\nstartxref\n${indexedShadowedClassicOff}\n%%EOF\n`,
+        'latin1',
+      ),
+    );
+    await assertRejectedBoth(indexedShadowedBytes, 'luồng /XRef không thuộc chuỗi tham chiếu hoạt động');
 
     const buildWsAliasedHybrid = (): Uint8Array => {
       const contentRaw = deflateSync(Buffer.from('BT\n/F1 12 Tf\n40 750 Td\n(WS_ALIAS) Tj\nET\n', 'latin1'));
@@ -7759,6 +7787,84 @@ describe('pdf_seal', () => {
       return new Uint8Array(Buffer.from(out, 'latin1'));
     };
     await assertRejectedBoth(buildNonZeroGenObjStmPdf());
+
+    // 7i. Explicit /Info null is treated as omitted across classic trailers and hybrid /XRefStm, while mismatched /Info in /XRefStm fails.
+    const buildHybridNullInfoPdf = (stmInfoClause: string): Uint8Array => {
+      const contentRaw = deflateSync(Buffer.from('BT\n/F1 12 Tf\n40 750 Td\n(NULL_INFO) Tj\nET\n', 'latin1'));
+      const offsets = new Map<number, number>();
+      let out = '%PDF-1.7\n%\xe2\xe3\xcf\xd3\n';
+      const push = (num: number, body: string): number => {
+        const off = out.length;
+        offsets.set(num, off);
+        out += `${num} 0 obj\n${body}\nendobj\n`;
+        return off;
+      };
+      push(1, '<< /Type /Catalog /Pages 2 0 R >>');
+      push(2, '<< /Type /Pages /Kids [3 0 R] /Count 1 >>');
+      push(3, '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>');
+      push(4, `<< /Filter /FlateDecode /Length ${contentRaw.byteLength} >>\nstream\n${contentRaw.toString('latin1')}\nendstream`);
+      const off6 = push(6, makeObjStm([{ num: 5, body: '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>' }], true));
+      const xrefStmOff = out.length;
+      const rows = encodeXrefRows([
+        { kind: 2, objStmNum: 6, index: 0 },
+        { kind: 1, offset: off6, gen: 0 },
+        { kind: 1, offset: xrefStmOff, gen: 0 },
+      ]);
+      const compressed = deflateSync(encodePngUp(rows, 7));
+      out += `7 0 obj\n<< /Type /XRef /Size 8 /Index [5 3] /W [1 4 2] /Root 1 0 R ${stmInfoClause}/Filter /FlateDecode /DecodeParms << /Predictor 12 /Columns 7 >> /Length ${compressed.byteLength} >>\nstream\n${compressed.toString('latin1')}\nendstream\nendobj\n`;
+      const classicOff = out.length;
+      out += `xref\n0 5\n${fmtEntry(0, 65535, 'f')}${fmtEntry(offsets.get(1)!, 0, 'n')}${fmtEntry(offsets.get(2)!, 0, 'n')}${fmtEntry(offsets.get(3)!, 0, 'n')}${fmtEntry(offsets.get(4)!, 0, 'n')}trailer\n<< /Size 8 /Root 1 0 R /Info null /XRefStm ${xrefStmOff} >>\nstartxref\n${classicOff}\n%%EOF\n`;
+      return new Uint8Array(Buffer.from(out, 'latin1'));
+    };
+    const hybridNullInfoBytes = buildHybridNullInfoPdf('/Info null ');
+    expect(await parse('pdf_inspect', hybridNullInfoBytes)).toMatchObject({ ok: true, pageCount: 1 });
+    expect(
+      await parse(
+        'pdf_seal',
+        encodePdfSealInput({
+          pdfBase64: Buffer.from(hybridNullInfoBytes).toString('base64'),
+          fields: [],
+          certificate: makeCertificate(),
+        }),
+      ),
+    ).toMatchObject({ ok: true });
+    await assertRejectedBoth(buildHybridNullInfoPdf('/Info 2 0 R '));
+
+    // 7j. /Type /XRef inside an array or non-/Type dictionary value inside an /XObject stream never triggers false inactive-xref rejection.
+    const xobjDoc = await PDFDocument.create();
+    const xobjPage = xobjDoc.addPage([595.28, 841.89]);
+    xobjPage.drawText('XObject array check', { x: 40, y: 760, size: 12 });
+    const xobjApRef = xobjDoc.context.register(
+      xobjDoc.context.flateStream(Buffer.from('q Q', 'latin1'), {
+        Type: PDFName.of('XObject'),
+        Subtype: PDFName.of('Form'),
+        BBox: [0, 0, 16, 16],
+        CustomNames: xobjDoc.context.obj([PDFName.of('Type'), PDFName.of('XRef')]),
+        MetaKey: PDFName.of('Type'),
+        XRef: PDFName.of('Ignored'),
+      }),
+    );
+    const xobjAnnotRef = xobjDoc.context.register(
+      xobjDoc.context.obj({
+        Type: PDFName.of('Annot'),
+        Subtype: PDFName.of('Square'),
+        Rect: [40, 620, 80, 660],
+        AP: { N: xobjApRef },
+      }),
+    );
+    xobjPage.node.set(PDFName.of('Annots'), xobjDoc.context.obj([xobjAnnotRef]));
+    const xobjPdfBytes = await xobjDoc.save({ useObjectStreams: false });
+    expect(await parse('pdf_inspect', xobjPdfBytes)).toMatchObject({ ok: true, pageCount: 1 });
+    expect(
+      await parse(
+        'pdf_seal',
+        encodePdfSealInput({
+          pdfBase64: Buffer.from(xobjPdfBytes).toString('base64'),
+          fields: [],
+          certificate: makeCertificate(),
+        }),
+      ),
+    ).toMatchObject({ ok: true });
   });
 
   it('maps per-part partIsolated pages into isolatedPages before stampFields in multi-doc packets', async () => {

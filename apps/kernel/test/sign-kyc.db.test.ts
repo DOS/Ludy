@@ -1369,7 +1369,7 @@ suite('eSign Slice 5e signer KYC attachment verification check (#4443)', () => {
       );
       await c.query('COMMIT');
     });
-    const appEnableRequeued: Array<{ orgId: string; envelopeId: string; fieldId: string }> = [];
+    const appEnableRequeued: Array<{ orgId: string; envelopeId: string; fieldId: string; updatedAtAtEnqueueMs: number }> = [];
     const appEnableRes = await sweepSignPendingKycWork({
       workerDb,
       runtime: workerRuntime,
@@ -1378,11 +1378,31 @@ suite('eSign Slice 5e signer KYC attachment verification check (#4443)', () => {
       timeoutBefore: new Date(0),
       bumpUpdatedAtOnRequeue: true,
       enqueueKycInspect: async (oId, envId, fId) => {
-        appEnableRequeued.push({ orgId: oId, envelopeId: envId, fieldId: fId });
+        const currentRow = await admin((c) =>
+          c.query<{ updated_at: Date }>(
+            `SELECT updated_at FROM ludy_sign.kyc_check WHERE org_id = $1 AND field_id = $2`,
+            [oId, fId],
+          ),
+        );
+        appEnableRequeued.push({
+          orgId: oId,
+          envelopeId: envId,
+          fieldId: fId,
+          updatedAtAtEnqueueMs: new Date(currentRow.rows[0]!.updated_at).getTime(),
+        });
       },
     });
     expect(appEnableRes).toEqual({ requeued: 1, timedOut: 0 });
-    expect(appEnableRequeued).toEqual([{ orgId: org.orgId, envelopeId: sweepSetup.envelopeId, fieldId: staleFieldId }]);
+    expect(appEnableRequeued).toEqual([
+      {
+        orgId: org.orgId,
+        envelopeId: sweepSetup.envelopeId,
+        fieldId: staleFieldId,
+        updatedAtAtEnqueueMs: expect.any(Number),
+      },
+    ]);
+    // touch_pending commits before enqueueKycInspect is invoked.
+    expect(appEnableRequeued[0]!.updatedAtAtEnqueueMs).toBeGreaterThanOrEqual(beforeReenableMs - 5_000);
 
     const touchedRow = await admin((c) =>
       c.query<{ status: string; updated_at: Date }>(

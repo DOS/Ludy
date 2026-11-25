@@ -1137,7 +1137,7 @@ const SEF_IMAGE_UTC_PAYLOAD_RE = /^\d{10,16}$/;
 function isAllowedSefEntry(key: string, typeWord: number, payload: Uint8Array): boolean {
   if (payload.byteLength > SEF_MAX_METADATA_BYTES) return false;
   if (key === 'Image_UTC_Data') {
-    if (typeWord !== 0x0a41_0000 && typeWord !== 0x0a41) return false;
+    if (typeWord !== 0x0a01_0000 && typeWord !== 0x0a01) return false;
     return SEF_IMAGE_UTC_PAYLOAD_RE.test(UTF8_DECODER.decode(payload));
   }
   return false;

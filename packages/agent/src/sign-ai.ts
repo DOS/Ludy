@@ -2829,7 +2829,7 @@ function splitSentenceClausesPreservingAbbreviations(text: string): string[] {
 
 function splitCurrencyClauses(preservedQuote: string): string[] {
   const rawChunks = preservedQuote
-    .split(/[\r\n;|/()]+|[ \t]+-[ \t]+|,\s+|\s+(?:or|and|và|hoặc|tương đương)\s+/iu)
+    .split(/(?:[\r\n;|()]+|(?<!\d)\/|\/(?!\d))+|[ \t]+-[ \t]+|,\s+|\s+(?:or|and|và|hoặc|tương đương)\s+/iu)
     .map((part) => part.trim())
     .filter((part) => part.length > 0);
   const out: string[] = [];
@@ -2912,6 +2912,7 @@ function extractBoundDecimalsForSpans(
       const scaleWord = allowWordScale ? leftMatch[2]?.toLowerCase() : undefined;
       const scale = scaleWord ? (DEPOSIT_WORD_SCALE_MAP[scaleWord] ?? 1) : 1;
       out.push(...candidateTokenDecimalValues(leftMatch[1]!, scale));
+      continue;
     }
 
     const rightSlice = clauseLineWise.slice(span.end);

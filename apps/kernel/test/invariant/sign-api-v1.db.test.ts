@@ -1642,7 +1642,12 @@ suite('eSign Slice 5c `/api/v1/sign/*` and scoped API key invariants (#4441)', (
     const fourV1Entered = new Promise<void>((resolve) => {
       notifyFourV1 = resolve;
     });
+    let unexpectedStoreRead: ((key: string) => void) | null = null;
     store.beforeGet = async (key: string) => {
+      if (unexpectedStoreRead) {
+        unexpectedStoreRead(key);
+        return;
+      }
       if (key === pubStorageKey) {
         pubReadsEntered += 1;
         if (pubReadsEntered === 2) notifyTwoIpv6();
@@ -1654,8 +1659,29 @@ suite('eSign Slice 5c `/api/v1/sign/*` and scoped API key invariants (#4441)', (
         await combinedBlobsHeld;
       }
     };
+    const runRefusalProbe = async (probe: () => Promise<Response>, label: string): Promise<Response> => {
+      let triggerUnexpected!: (err: Error) => void;
+      const unexpectedRead = new Promise<never>((_resolve, reject) => {
+        triggerUnexpected = reject;
+      });
+      unexpectedStoreRead = (key) => {
+        triggerUnexpected(new Error(`${label} unexpectedly entered store.beforeGet(${key})`));
+      };
+      const probePromise = probe();
+      try {
+        return await Promise.race([probePromise, unexpectedRead]);
+      } catch (err) {
+        await probePromise.then((r) => r.body?.cancel().catch(() => {}), () => {});
+        throw err;
+      } finally {
+        unexpectedStoreRead = null;
+      }
+    };
+    let ipv6Held: Array<Promise<Response>> = [];
+    let otherIpHeld: Array<Promise<Response>> = [];
+    let v1Simultaneous: Array<Promise<Response>> = [];
     try {
-      const ipv6Held = [
+      ipv6Held = [
         appDefaultPdfLimits.request('/api/sign/pdf', {
           method: 'POST',
           headers: {
@@ -1676,18 +1702,22 @@ suite('eSign Slice 5c `/api/v1/sign/*` and scoped API key invariants (#4441)', (
       await twoIpv6Entered;
 
       // 3rd concurrent public PDF from the same IPv6 /64 is refused while another IP still succeeds.
-      const thirdSameSlash64 = await appDefaultPdfLimits.request('/api/sign/pdf', {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'x-forwarded-for': '2001:db8:cafe:1::3',
-        },
-        body: JSON.stringify({ token: pubToken }),
-      });
+      const thirdSameSlash64 = await runRefusalProbe(
+        () =>
+          appDefaultPdfLimits.request('/api/sign/pdf', {
+            method: 'POST',
+            headers: {
+              'content-type': 'application/json',
+              'x-forwarded-for': '2001:db8:cafe:1::3',
+            },
+            body: JSON.stringify({ token: pubToken }),
+          }),
+        'thirdSameSlash64',
+      );
       expect(thirdSameSlash64.status).toBe(503);
       await expect(thirdSameSlash64.json()).resolves.toMatchObject({ code: 'SIGN_PDF_BUSY' });
 
-      const otherIpHeld = [
+      otherIpHeld = [
         appDefaultPdfLimits.request('/api/sign/pdf', {
           method: 'POST',
           headers: {
@@ -1708,18 +1738,22 @@ suite('eSign Slice 5c `/api/v1/sign/*` and scoped API key invariants (#4441)', (
       await fourPubEntered;
 
       // 5th public request across a new IP fails with 503 SIGN_PDF_BUSY, while 4 simultaneous v1 downloads succeed.
-      const fifthPublic = await appDefaultPdfLimits.request('/api/sign/pdf', {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'x-forwarded-for': '198.51.100.199',
-        },
-        body: JSON.stringify({ token: pubToken }),
-      });
+      const fifthPublic = await runRefusalProbe(
+        () =>
+          appDefaultPdfLimits.request('/api/sign/pdf', {
+            method: 'POST',
+            headers: {
+              'content-type': 'application/json',
+              'x-forwarded-for': '198.51.100.199',
+            },
+            body: JSON.stringify({ token: pubToken }),
+          }),
+        'fifthPublic',
+      );
       expect(fifthPublic.status).toBe(503);
       await expect(fifthPublic.json()).resolves.toMatchObject({ code: 'SIGN_PDF_BUSY' });
 
-      const v1Simultaneous = [
+      v1Simultaneous = [
         apiGet(`/api/v1/sign/envelopes/${ids.completedEnv}/sealed`, `Bearer ${readOnlySecret}`, appDefaultPdfLimits, '198.51.100.180'),
         apiGet(`/api/v1/sign/envelopes/${ids.completedEnv}/sealed`, `Bearer ${readOnlySecret}`, appDefaultPdfLimits, '198.51.100.181'),
         apiGet(`/api/v1/sign/envelopes/${orgBSealedEnv}/sealed`, `Bearer ${orgBReadSecret}`, appDefaultPdfLimits, '198.51.100.182'),
@@ -1728,11 +1762,15 @@ suite('eSign Slice 5c `/api/v1/sign/*` and scoped API key invariants (#4441)', (
       await fourV1Entered;
 
       // With 4 public + 4 v1 = 8 combined slots held, a 9th combined request (Org C) hits the 8-slot ceiling (503).
-      const ninthCombined = await apiGet(
-        `/api/v1/sign/envelopes/${orgCSealedEnv}/sealed`,
-        `Bearer ${orgCReadSecret}`,
-        appDefaultPdfLimits,
-        '198.51.100.184',
+      const ninthCombined = await runRefusalProbe(
+        () =>
+          apiGet(
+            `/api/v1/sign/envelopes/${orgCSealedEnv}/sealed`,
+            `Bearer ${orgCReadSecret}`,
+            appDefaultPdfLimits,
+            '198.51.100.184',
+          ),
+        'ninthCombined',
       );
       expect(ninthCombined.status).toBe(503);
       await expect(ninthCombined.json()).resolves.toMatchObject({ code: 'SIGN_PDF_BUSY' });
@@ -1743,8 +1781,15 @@ suite('eSign Slice 5c `/api/v1/sign/*` and scoped API key invariants (#4441)', (
         await r.arrayBuffer();
       }
     } finally {
+      unexpectedStoreRead = null;
       store.beforeGet = null;
       releaseCombinedBlobs();
+      const settled = await Promise.allSettled([...ipv6Held, ...otherIpHeld, ...v1Simultaneous]);
+      await Promise.all(
+        settled.map((entry) =>
+          entry.status === 'fulfilled' ? entry.value.body?.cancel().catch(() => {}) : Promise.resolve(),
+        ),
+      );
     }
 
     // Response-body lifetime check (#4682): unread 200 PDF responses continue holding their isolated pool slots

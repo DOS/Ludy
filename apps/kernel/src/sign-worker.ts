@@ -1425,7 +1425,7 @@ export async function sweepSignPendingKycWork(
 
   for (let page = 0; page < maxPages; page += 1) {
     const rows = await fetchKycRecoveryPage(deps.workerDb, olderThan, batchSize, deps.orgId ?? null, after);
-    const touchedIdsByOrg = new Map<string, string[]>();
+    const requeueByOrg = new Map<string, typeof rows>();
     for (const row of rows) {
       try {
         if (!(await isEnabled(row.org_id))) continue;
@@ -1448,24 +1448,37 @@ export async function sweepSignPendingKycWork(
             timedOut += 1;
           }
         } else {
-          await deps.enqueueKycInspect(row.org_id, row.envelope_id, row.field_id);
-          requeued += 1;
-          if (deps.bumpUpdatedAtOnRequeue) {
-            const list = touchedIdsByOrg.get(row.org_id) ?? [];
-            list.push(row.id);
-            touchedIdsByOrg.set(row.org_id, list);
-          }
+          const list = requeueByOrg.get(row.org_id) ?? [];
+          list.push(row);
+          requeueByOrg.set(row.org_id, list);
         }
       } catch (error) {
         log.error(`[sign-kyc-pending-work] org ${row.org_id.slice(0, 8)} failed`, sweepErrorLabel(error));
+        if (deps.orgId !== undefined) throw error;
       }
     }
-    if (deps.bumpUpdatedAtOnRequeue) {
-      for (const [touchOrgId, ids] of touchedIdsByOrg) {
+    for (const [touchOrgId, orgRows] of requeueByOrg) {
+      if (deps.bumpUpdatedAtOnRequeue) {
         try {
-          await touchPendingKycChecks(deps.runtime, touchOrgId, ids);
+          // Commit updated_at renewal before enqueueing jobs so neither workers nor timeout sweeps race stale timestamps.
+          await touchPendingKycChecks(
+            deps.runtime,
+            touchOrgId,
+            orgRows.map((row) => row.id),
+          );
         } catch (error) {
           log.error(`[sign-kyc-pending-work] touch org ${touchOrgId.slice(0, 8)} failed`, sweepErrorLabel(error));
+          if (deps.orgId !== undefined) throw error;
+          continue;
+        }
+      }
+      for (const row of orgRows) {
+        try {
+          await deps.enqueueKycInspect(row.org_id, row.envelope_id, row.field_id);
+          requeued += 1;
+        } catch (error) {
+          log.error(`[sign-kyc-pending-work] org ${row.org_id.slice(0, 8)} failed`, sweepErrorLabel(error));
+          if (deps.orgId !== undefined) throw error;
         }
       }
     }

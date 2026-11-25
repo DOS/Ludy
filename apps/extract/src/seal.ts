@@ -397,6 +397,7 @@ function inspectRawDictTopLevelNames(
   let expectLengthValue = false;
   let pos = 2;
   let depth = 1;
+  let arrayDepth = 0;
   const end = dictSlice.length - 2;
 
   while (pos < end && depth > 0) {
@@ -440,6 +441,22 @@ function inspectRawDictTopLevelNames(
     if (code === 0x3e && dictSlice.charCodeAt(pos + 1) === 0x3e) {
       depth -= 1;
       pos += 2;
+      expectTypeValue = false;
+      expectLengthValue = false;
+      continue;
+    }
+    if (code === 0x5b) {
+      arrayDepth += 1;
+      pos += 1;
+      expectTypeValue = false;
+      expectLengthValue = false;
+      continue;
+    }
+    if (code === 0x5d) {
+      if (arrayDepth > 0) arrayDepth -= 1;
+      pos += 1;
+      expectTypeValue = false;
+      expectLengthValue = false;
       continue;
     }
     if (code === 0x2f) {
@@ -460,7 +477,7 @@ function inspectRawDictTopLevelNames(
       ) {
         hasEscapedStructuralType = true;
       }
-      if (depth === 1) {
+      if (depth === 1 && arrayDepth === 0) {
         if (decoded === 'Encrypt') {
           hasEncryptKey = true;
         }
@@ -485,7 +502,7 @@ function inspectRawDictTopLevelNames(
       pos = nameEnd;
       continue;
     }
-    if (depth === 1 && expectLengthValue && isAsciiDigitCode(code)) {
+    if (depth === 1 && arrayDepth === 0 && expectLengthValue && isAsciiDigitCode(code)) {
       const numStart = pos;
       let numEnd = pos + 1;
       while (numEnd < end && isAsciiDigitCode(dictSlice.charCodeAt(numEnd))) {
@@ -2318,15 +2335,16 @@ function parseAndMergeHybridXrefStream(params: {
     }
   }
 
-  const stmInfoEntry = getRawDictEntryByDecodedName(stmResult.dict, 'Info', nameEscapes);
-  if (stmInfoEntry !== undefined) {
+  const stmInfoRaw = getRawDictEntryByDecodedName(stmResult.dict, 'Info', nameEscapes)?.raw;
+  if (stmInfoRaw !== undefined && stmInfoRaw !== PDFNull) {
     const trailerInfoRaw = getRawDictEntryByDecodedName(trailerDict, 'Info', nameEscapes)?.raw;
-    const expectedSectionInfo = trailerInfoRaw ?? infoRef;
+    const normalizedTrailerInfoRaw = trailerInfoRaw === PDFNull ? undefined : trailerInfoRaw;
+    const expectedSectionInfo = normalizedTrailerInfoRaw ?? infoRef;
     if (
-      !(stmInfoEntry.raw instanceof PDFRef) ||
+      !(stmInfoRaw instanceof PDFRef) ||
       !(expectedSectionInfo instanceof PDFRef) ||
-      stmInfoEntry.raw.objectNumber !== expectedSectionInfo.objectNumber ||
-      stmInfoEntry.raw.generationNumber !== expectedSectionInfo.generationNumber
+      stmInfoRaw.objectNumber !== expectedSectionInfo.objectNumber ||
+      stmInfoRaw.generationNumber !== expectedSectionInfo.generationNumber
     ) {
       throw new PdfSignError('Thông tin /Info trong luồng /XRefStm không khớp với trailer tham chiếu');
     }
@@ -2446,7 +2464,7 @@ function parseActiveXrefChain(
       throw new PdfSignError('Không xác định được gốc /Root của tài liệu PDF');
     }
     const infoEntry = getRawDictEntryByDecodedName(trailerDict, 'Info', nameEscapes);
-    if (infoEntry !== undefined) {
+    if (infoEntry !== undefined && infoEntry.raw !== PDFNull) {
       if (!(infoEntry.raw instanceof PDFRef)) {
         throw new PdfSignError('Trailer PDF chứa tham chiếu /Info không hợp lệ');
       }
@@ -2619,6 +2637,31 @@ function decodeObjectStreamEntries(stm: PDFRawStream, nameEscapes: RawPdfNameEsc
   return { decodedBytes, members, memberList };
 }
 
+function isConfirmedTopLevelXRefDict(
+  dictSlice: string,
+  emptyContext: PDFContext,
+  nameEscapes: RawPdfNameEscapes,
+): boolean {
+  let parsedDict: PDFObject;
+  try {
+    parsedDict = PDFObjectParser.forBytes(
+      Uint8Array.from(Buffer.from(dictSlice, 'latin1')),
+      emptyContext,
+      false,
+    ).parseObject();
+  } catch {
+    return true;
+  }
+  if (!(parsedDict instanceof PDFDict)) {
+    return true;
+  }
+  const typeEntry = getRawDictEntryByDecodedName(parsedDict, 'Type', nameEscapes);
+  if (!typeEntry || !(typeEntry.raw instanceof PDFName)) {
+    return false;
+  }
+  return decodeUnnormalizedPdfName(typeEntry.raw, nameEscapes) === 'XRef';
+}
+
 function scanRawTopLevelDefinitions(
   bytes: Uint8Array,
   raw: string,
@@ -2695,7 +2738,7 @@ function scanRawTopLevelDefinitions(
 
             if (currentObj !== null && !seenStreamInObj) {
               seenStreamInObj = true;
-              if (dictMeta.isXRefType) {
+              if (dictMeta.isXRefType && isConfirmedTopLevelXRefDict(dictInfo.slice, emptyContext, nameEscapes)) {
                 rawXrefStreams.push({ num: currentObj.num, gen: currentObj.gen, offset: currentObj.offset });
               }
               if (dictMeta.isObjStmType) {
@@ -2917,7 +2960,8 @@ function verifyPdfCrossReferenceConsistency(
     throw new PdfSignError('Đối tượng gốc /Root của tệp PDF không hợp lệ');
   }
 
-  const loadedInfo = pdfDoc.context.trailerInfo.Info;
+  const rawLoadedInfo = pdfDoc.context.trailerInfo.Info;
+  const loadedInfo = rawLoadedInfo === PDFNull ? undefined : rawLoadedInfo;
   if (infoRef === null) {
     if (loadedInfo !== undefined) {
       throw new PdfSignError('Thông tin /Info của tệp PDF không khớp với trailer tham chiếu');
@@ -2936,13 +2980,6 @@ function verifyPdfCrossReferenceConsistency(
     }
   }
 
-  for (const [ref] of pdfDoc.context.enumerateIndirectObjects()) {
-    const entry = entries.get(ref.objectNumber);
-    if (!entry || entry.kind === 'free' || entry.gen !== ref.generationNumber) {
-      throw new PdfSignError('Tệp PDF chứa đối tượng ẩn hoặc bị xóa không khớp bảng tham chiếu');
-    }
-  }
-
   const { topLevelHeaders, lastDef, rawXrefStreams } = scanRawTopLevelDefinitions(
     bytes,
     raw,
@@ -2956,6 +2993,13 @@ function verifyPdfCrossReferenceConsistency(
       )
     ) {
       throw new PdfSignError('Tệp PDF chứa luồng /XRef không thuộc chuỗi tham chiếu hoạt động');
+    }
+  }
+
+  for (const [ref] of pdfDoc.context.enumerateIndirectObjects()) {
+    const entry = entries.get(ref.objectNumber);
+    if (!entry || entry.kind === 'free' || entry.gen !== ref.generationNumber) {
+      throw new PdfSignError('Tệp PDF chứa đối tượng ẩn hoặc bị xóa không khớp bảng tham chiếu');
     }
   }
   for (const [objNum] of lastDef) {

@@ -610,7 +610,12 @@ describe('eSign Slice 4d in-person ceremony and public template hub UI (#3820)',
         'vi',
       );
       expect(afterHtml).not.toContain(`data-testid="ceremony-quick-saved-btn-${fieldId}"`);
+      const staleReloaded: unknown[] = [];
       secondMount.dispose();
+      await secondMount.reloadIfStillCurrent('Cong ty Sao Mai', (sigs) => {
+        staleReloaded.push(...sigs);
+      });
+      expect(staleReloaded).toEqual([]);
     } finally {
       syncer.dispose();
     }

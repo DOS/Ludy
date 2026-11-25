@@ -1152,6 +1152,102 @@ describe('checkSignObligationExtract (#3821)', () => {
     // Title Case ISO-qualified dollar prefixes ("Sgd $100") must not ground USD.
     expect(isCurrencyGroundedInText('USD', 'Fee: Sgd $100')).toBe(false);
     expect(isCurrencyGroundedInText('SGD', 'Fee: Sgd $100')).toBe(true);
+
+    // Preserving digit/digit ratios ("24/7") in clause splitting rejects "24 ALL", while detached trailing
+    // numbers after a left-bound currency ("200 USD 100 users.") never bind "100 USD".
+    const ratioClauseReq: SignObligationExtractRequest = {
+      envelopeTitle: 'Support SLA',
+      pageCount: 1,
+      pages: [
+        {
+          page: 1,
+          text: 'Bên B: Công ty ABC\nTotal: 100 EUR; Support: ALL 24/7; Contract value: 200 ALL.',
+        },
+      ],
+    };
+    expect(
+      checkSignObligationExtract(ratioClauseReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '24',
+        currency: 'ALL',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          {
+            field: 'contractValue',
+            pageNumber: 1,
+            quoteExcerpt: 'Total: 100 EUR; Support: ALL 24/7; Contract value: 200 ALL.',
+          },
+        ],
+        obligations: [],
+      }).proposal?.contractValue,
+    ).toBeNull();
+    expect(
+      checkSignObligationExtract(ratioClauseReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '200',
+        currency: 'ALL',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          {
+            field: 'contractValue',
+            pageNumber: 1,
+            quoteExcerpt: 'Total: 100 EUR; Support: ALL 24/7; Contract value: 200 ALL.',
+          },
+        ],
+        obligations: [],
+      }).proposal,
+    ).toMatchObject({ contractValue: '200', currency: 'ALL' });
+
+    const leftBoundTrailingCountReq: SignObligationExtractRequest = {
+      envelopeTitle: 'Seat Licensing Left-Bound',
+      pageCount: 1,
+      pages: [
+        {
+          page: 1,
+          text: 'Bên B: Công ty ABC\nFee: 100 EUR / 200 USD 100 users.',
+        },
+      ],
+    };
+    expect(
+      checkSignObligationExtract(leftBoundTrailingCountReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '100',
+        currency: 'USD',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: 'Fee: 100 EUR / 200 USD 100 users.' },
+        ],
+        obligations: [],
+      }).proposal?.contractValue,
+    ).toBeNull();
+    expect(
+      checkSignObligationExtract(leftBoundTrailingCountReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '200',
+        currency: 'USD',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: 'Fee: 100 EUR / 200 USD 100 users.' },
+        ],
+        obligations: [],
+      }).proposal,
+    ).toMatchObject({ contractValue: '200', currency: 'USD' });
   });
 });
 

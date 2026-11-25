@@ -1440,9 +1440,10 @@ export function SignCeremonyPage() {
             canSaveSignatureProfile={Boolean(workspaceOrgSlug)}
             onSaveSignatureProfile={async (input) => {
               if (!workspaceOrgSlug) return;
+              const sync = profileSyncRef.current;
               const ok = await saveCeremonyMemberSignature(workspaceOrgSlug, input);
               if (!ok) return;
-              await profileSyncRef.current?.reloadIfStillCurrent(viewState.orgName, setSavedSignatures);
+              await sync?.reloadIfStillCurrent(viewState.orgName, setSavedSignatures);
             }}
             setFieldCardRef={(fieldId, el) => {
               fieldCardRefs.current[fieldId] = el;
