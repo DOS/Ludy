@@ -312,6 +312,7 @@ export function moduleDefinitions(config: Config, billing: Billing = selfHostBil
         messageIdDomain: messageIdDomain(config),
         shippedModules: AVAILABLE_MODULES,
         appBusy: { meetings: meetingsBusy, ads: adsBusy },
+        apps: { deployment: config.LUDY_MODULES, entitlements: (orgId) => billing.entitlements(orgId) },
       }),
       queries: kernelQueries({
         inboundDomain: config.INBOUND_DOMAIN ?? null,

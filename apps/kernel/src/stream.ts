@@ -57,10 +57,10 @@ const UUID_ONLY = new RegExp(`^${UUID}$`);
 const TYPES: ReadonlySet<string> = new Set(STREAM_HINT_TYPES);
 const TICKET = /^[A-Za-z0-9_-]{43}$/;
 
-// The hints about one member's own rows, which only that member may read (own_notification, todo_read, note_read): each
-// names its recipient and reaches only the streams of that user. ludy_kernel.stream_notify names the same types
-// (20261104000000_crove_kernel_stream_notes_audience.sql).
-export const RECIPIENT_HINT_TYPES: ReadonlySet<StreamHintType> = new Set<StreamHintType>(['notification', 'todo', 'note']);
+// The hints about one member's own rows, which only that member may read (own_notification, todo_read, note_read, own_member_home_layout): each
+// names its recipient and reaches only the streams of that user. ludy_kernel.stream_notify and member_home_layout_notify name these types
+// (20261104000000_crove_kernel_stream_notes_audience.sql, 20270326130000_ludy_kernel_member_home_layout.sql).
+export const RECIPIENT_HINT_TYPES: ReadonlySet<StreamHintType> = new Set<StreamHintType>(['notification', 'todo', 'note', 'home_layout']);
 // The hints that may add `+shared`: a shared note, which the members who read the org's shared notes may hear too.
 const SHARED_HINT_TYPES: ReadonlySet<StreamHintType> = new Set<StreamHintType>(['note']);
 // The hints about rows of tables under the RESTRICTIVE le_scope policy, whose trigger names the row's legal entity
@@ -85,6 +85,7 @@ export const HINT_APPS: Readonly<Record<StreamHintType, string>> = {
   org_apps: 'kernel',
   crm_deal: 'crm',
   crm_party: 'crm',
+  home_layout: 'kernel',
 };
 // The apps whose hints a stream filters: the ones with entities on the stream.
 export const STREAM_FILTERED_APPS: readonly string[] = [...new Set(Object.values(HINT_APPS).filter((app) => app !== 'kernel'))];
