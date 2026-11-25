@@ -16,7 +16,12 @@ export const MEDIA_LIMITS = {
   minOpusBitrateKbps: 6,
   maxOpusBitrateKbps: 64,
   defaultOpusSampleRate: 48000, // standard Opus rate
+  // The parts of one recording /join-audio joins (a host who stops and starts a Zoom recording gets one file per segment; eight is far above what a meeting makes).
+  maxJoinParts: 8,
 } as const;
+
+// The frames of /join-audio (framing in join.ts): a 4-byte count, then each part as an 8-byte length and its bytes, all big-endian.
+export const MEDIA_JOIN_FRAME = { countBytes: 4, lengthBytes: 8 } as const;
 
 export const MEDIA_TIMING = {
   concurrency: 1,

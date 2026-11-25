@@ -18,6 +18,7 @@ import { notesCommands, notesQueries } from './notes.ts';
 import { resultCommands, resultQueries } from './results.ts';
 import { glossaryCommands, glossaryQueries } from './glossary.ts';
 import { minutesTemplateCommands, minutesTemplateQueries } from './minutes-templates.ts';
+import { minutesVersionCommands, minutesVersionQueries } from './minutes-version.ts';
 import { mcpMeetingsQueries } from './mcp.ts';
 import { seriesCommands, seriesQueries } from './series.ts';
 import { speakerCommands } from './speaker.ts';
@@ -32,6 +33,8 @@ import { briefCommands, briefQueries } from './brief.ts';
 import { digestCommands, digestQueries } from './digest.ts';
 import { highlightsCommands, highlightsQueries } from './highlights.ts';
 import { loadQueries } from './load.ts';
+import { trackersCommands, trackersQueries } from './trackers.ts';
+import { voiceCueCommands } from './voice-cue.ts';
 import { minutesDocxQueries } from './minutes-docx.ts';
 import { todayQueries } from './today.ts';
 import { morningCommands, morningQueries } from './morning.ts';
@@ -1130,6 +1133,7 @@ export const meetingsCommands = [
   ...resultCommands,
   ...notesCommands,
   ...chaptersCommands,
+  ...trackersCommands,
   ...highlightsCommands,
   ...chaptersRunCommands,
   ...titleCommands,
@@ -1140,6 +1144,7 @@ export const meetingsCommands = [
   ...speakerCommands,
   ...seriesCommands,
   ...minutesTemplateCommands,
+  ...minutesVersionCommands,
   ...glossaryCommands,
   ...summaryRunCommands,
   ...summaryReadyCommands,
@@ -1148,6 +1153,7 @@ export const meetingsCommands = [
   ...askRunCommands,
   ...briefCommands,
   ...digestCommands,
+  ...voiceCueCommands,
   ...morningCommands,
   ...assigneeCommands,
   ...adherenceCommands,
@@ -1193,6 +1199,7 @@ export const meetingsQueries = [
   ...summaryQueries,
   ...seriesQueries,
   ...minutesTemplateQueries,
+  ...minutesVersionQueries,
   ...glossaryQueries,
   ...summaryRunQueries,
   ...translateRunQueries,
@@ -1200,6 +1207,7 @@ export const meetingsQueries = [
   ...briefQueries,
   ...digestQueries,
   ...loadQueries,
+  ...trackersQueries,
   ...highlightsQueries,
   ...minutesDocxQueries,
   ...todayQueries,

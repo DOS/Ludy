@@ -65,7 +65,7 @@ import {
   type SignPlaybookSource,
 } from '@ludy/mod-sign';
 import type { DraftBudget } from './ai-draft-limit.ts';
-import { memberMeter, systemMeter, type MeterOptions } from './ai-meter.ts';
+import { guardAiMeter, memberMeter, systemMeter, type MeterOptions } from './ai-meter.ts';
 
 export type SignAiReaderPort = Pick<SignAiReader, 'proposeFields' | 'summarizeRiskClauses'> &
   Partial<
@@ -253,15 +253,10 @@ export async function proposeEnvelopeAnalysis(params: ProposeEnvelopeAnalysisPar
           ? memberMeter(runtime as Runtime, actor, params.meterOptions ?? {})
           : systemMeter(runtime as Runtime, params.meterOptions ?? {})
         : params.meter;
-    const guardedMeter: AiMeter = {
-      admit: async (call) => {
-        if (await isAiStopped()) {
-          throw new SignAiStoppedError();
-        }
-        return baseMeter.admit(call);
-      },
-      record: (call, usage) => baseMeter.record(call, usage),
-    };
+    const guardedMeter = guardAiMeter(baseMeter, {
+      isStopped: isAiStopped,
+      stoppedError: () => new SignAiStoppedError(),
+    });
     return withAiScope({ orgId, meter: guardedMeter }, fn);
   };
 
@@ -455,13 +450,10 @@ export async function compareSignPdfVersions(params: CompareSignPdfVersionsParam
     params.meter === 'runtime'
       ? memberMeter(runtime as Runtime, actor, params.meterOptions ?? {})
       : params.meter;
-  const guardedMeter: AiMeter = {
-    admit: async (call) => {
-      if (await isAiStopped()) throw new SignAiStoppedError();
-      return baseMeter.admit(call);
-    },
-    record: (call, usage) => baseMeter.record(call, usage),
-  };
+  const guardedMeter = guardAiMeter(baseMeter, {
+    isStopped: isAiStopped,
+    stoppedError: () => new SignAiStoppedError(),
+  });
 
   try {
     const changedHunks = diff.hunks
@@ -564,13 +556,10 @@ export async function proposeSignContractDraftClauses(
     params.meter === 'runtime'
       ? memberMeter(runtime as Runtime, actor, params.meterOptions ?? {})
       : params.meter;
-  const guardedMeter: AiMeter = {
-    admit: async (call) => {
-      if (await isAiStopped()) throw new SignAiStoppedError();
-      return baseMeter.admit(call);
-    },
-    record: (call, usage) => baseMeter.record(call, usage),
-  };
+  const guardedMeter = guardAiMeter(baseMeter, {
+    isStopped: isAiStopped,
+    stoppedError: () => new SignAiStoppedError(),
+  });
 
   try {
     const propose = ai.reader.proposeContractClauses.bind(ai.reader);
@@ -737,15 +726,10 @@ export async function proposeEnvelopeObligations(
           ? memberMeter(runtime as Runtime, actor, params.meterOptions ?? {})
           : systemMeter(runtime as Runtime, params.meterOptions ?? {})
         : params.meter;
-    const guardedMeter: AiMeter = {
-      admit: async (call) => {
-        if (await isAiStopped()) {
-          throw new SignAiStoppedError();
-        }
-        return baseMeter.admit(call);
-      },
-      record: (call, usage) => baseMeter.record(call, usage),
-    };
+    const guardedMeter = guardAiMeter(baseMeter, {
+      isStopped: isAiStopped,
+      stoppedError: () => new SignAiStoppedError(),
+    });
     return withAiScope({ orgId, meter: guardedMeter }, fn);
   };
 
@@ -864,13 +848,10 @@ export async function askSignVault(params: AskSignVaultParams): Promise<SignVaul
     params.meter === 'runtime'
       ? memberMeter(runtime as Runtime, actor, params.meterOptions ?? {})
       : params.meter;
-  const guardedMeter: AiMeter = {
-    admit: async (call) => {
-      if (await isAiStopped()) throw new SignAiStoppedError();
-      return baseMeter.admit(call);
-    },
-    record: (call, usage) => baseMeter.record(call, usage),
-  };
+  const guardedMeter = guardAiMeter(baseMeter, {
+    isStopped: isAiStopped,
+    stoppedError: () => new SignAiStoppedError(),
+  });
 
   try {
     const answerVault = ai.reader.answerVaultQuestion.bind(ai.reader);
@@ -1064,15 +1045,10 @@ export async function evaluateEnvelopePlaybook(
           ? memberMeter(runtime as Runtime, actor, params.meterOptions ?? {})
           : systemMeter(runtime as Runtime, params.meterOptions ?? {})
         : params.meter;
-    const guardedMeter: AiMeter = {
-      admit: async (call) => {
-        if (await isAiStopped()) {
-          throw new SignAiStoppedError();
-        }
-        return baseMeter.admit(call);
-      },
-      record: (call, usage) => baseMeter.record(call, usage),
-    };
+    const guardedMeter = guardAiMeter(baseMeter, {
+      isStopped: isAiStopped,
+      stoppedError: () => new SignAiStoppedError(),
+    });
     return withAiScope({ orgId, meter: guardedMeter }, fn);
   };
 
@@ -1279,15 +1255,10 @@ export async function proposeEnvelopeKycCheck(
       params.meter === 'runtime'
         ? memberMeter(runtime as Runtime, actor, params.meterOptions ?? {})
         : params.meter;
-    const guardedMeter: AiMeter = {
-      admit: async (call) => {
-        if (await isAiStopped()) {
-          throw new SignAiStoppedError();
-        }
-        return baseMeter.admit(call);
-      },
-      record: (call, usage) => baseMeter.record(call, usage),
-    };
+    const guardedMeter = guardAiMeter(baseMeter, {
+      isStopped: isAiStopped,
+      stoppedError: () => new SignAiStoppedError(),
+    });
     return withAiScope({ orgId, meter: guardedMeter }, fn);
   };
 
@@ -1506,15 +1477,10 @@ export async function analyzeSignPacketConsistency(
           ? memberMeter(runtime as Runtime, actor, params.meterOptions ?? {})
           : systemMeter(runtime as Runtime, params.meterOptions ?? {})
         : params.meter;
-    const guardedMeter: AiMeter = {
-      admit: async (call) => {
-        if (await isAiStopped()) {
-          throw new SignAiStoppedError();
-        }
-        return baseMeter.admit(call);
-      },
-      record: (call, usage) => baseMeter.record(call, usage),
-    };
+    const guardedMeter = guardAiMeter(baseMeter, {
+      isStopped: isAiStopped,
+      stoppedError: () => new SignAiStoppedError(),
+    });
     return withAiScope({ orgId, meter: guardedMeter }, fn);
   };
 

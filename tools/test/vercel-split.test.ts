@@ -64,6 +64,17 @@ describe('the build-time policy (apps/app/vite-csp.ts)', () => {
     }
   });
 
+  // #3174: with Google Picker on (the Meet audio route), both policies carry the same Google hosts and Trusted Types names, alone or with Turnstile; with it off they are the policies above.
+  it('equals the policy of the kernel with Google Picker on, with and without Turnstile', () => {
+    for (const turnstile of [false, true]) {
+      expect(together({ apiOrigin: API, turnstile, googlePicker: true }), `picker, turnstile ${turnstile}`).toEqual(
+        directives(contentSecurityPolicy(`${API}/auth/v1`, null, turnstile, API, null, null, true)),
+      );
+    }
+    expect(cspOriginsFromEnv({ VITE_API_URL: API, VITE_GOOGLE_PICKER: 'true' })?.googlePicker).toBe(true);
+    expect(cspOriginsFromEnv({ VITE_API_URL: API })?.googlePicker).toBe(false);
+  });
+
   // #2704: the hosted login's token endpoint is called by the browser, so its origin is in connect-src of both policies.
   it('allows the origin of the hosted login token endpoint in the kernel and in the build-time policy alike', () => {
     const hosted = 'https://login.example.com';
@@ -96,6 +107,7 @@ describe('the build-time policy (apps/app/vite-csp.ts)', () => {
       authOrigin: undefined,
       storageOrigin: 'https://files.example.com',
       turnstile: true,
+      googlePicker: false,
     });
     const plugin = cspMeta({});
     expect((plugin.transformIndexHtml as () => unknown)()).toBeUndefined();

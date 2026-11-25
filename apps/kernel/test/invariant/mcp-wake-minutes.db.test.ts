@@ -13,12 +13,14 @@
 // makes its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { sql } from 'kysely';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { z } from 'zod';
 import { createDb } from '@ludy/db';
 import { migrate } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
-import { CredentialVault, DomainError, Runtime, parseVaultKey, type UserActor } from '@ludy/kernel-runtime';
+import { CredentialVault, DomainError, Runtime, defineCommand, parseVaultKey, type UserActor } from '@ludy/kernel-runtime';
 import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
 import { wakeMinutesPublished } from '../../src/mcp-wake-minutes.ts';
 import { makeWakeSecret } from '../../src/mcp-wake-setup.ts';
@@ -45,6 +47,17 @@ const HOUR = 3_600_000;
 const CANARY_TITLE = 'BÍ MẬT-3803 họp giá';
 const CANARY_SUMMARY = 'BÍ MẬT-3803 tóm tắt';
 
+// A probe for the definer that lists the grants to wake (#4894): the system's own command, which asks it about any org id it is given, from the org context the runtime sets for the call. The
+// definer is asked this way (not from the worker's bare login) so that the case below holds before and after the definer is bound to the org of its transaction.
+const wakeTargetsProbe = defineCommand({
+  name: 'test.wake_targets_probe',
+  input: z.strictObject({ org: z.string(), limit: z.number().int() }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  handler: async (ctx, input) => (await sql<{ grant_id: string }>`SELECT * FROM ludy_kernel.mcp_wake_company_targets(${input.org}::uuid, ${input.limit}::int)`.execute(ctx.trx)).rows,
+});
+
 suite('the wake-up for published minutes of an org-visible meeting (#3803, invariants first)', () => {
   const dbName = `crove_test_mcp_wake_minutes_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
@@ -58,6 +71,7 @@ suite('the wake-up for published minutes of an org-visible meeting (#3803, invar
   const ids: Record<string, string> = {};
   const vault = new CredentialVault([parseVaultKey(randomBytes(32).toString('base64'))]);
   const browser = (userId: string): UserActor => ({ type: 'user', userId, aal: 'aal1' });
+  const systemOf = (orgId: string) => ({ actor: { type: 'system' as const, component: 'mcp-wake-minutes-test' }, orgId });
   const exec = (who: keyof typeof users, name: string, input: unknown, org = orgA) => runtime.execute(name, input, { actor: browser(users[who]), orgId: org });
 
   async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
@@ -147,7 +161,7 @@ suite('the wake-up for published minutes of an org-visible meeting (#3803, invar
     const appPool = createDbPool({ connectionString: login('crove_app', 'test-app-pw'), max: 6 }, dbIds);
     const workerPool = createDbPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 4 }, dbIds);
     pools.push(appPool, workerPool);
-    const defs = { commands: [...kernelCommands, ...meetingsCommands], queries: [...kernelQueries({ inboundDomain: 'in.test' }), ...meetingsQueries] };
+    const defs = { commands: [...kernelCommands, ...meetingsCommands, wakeTargetsProbe], queries: [...kernelQueries({ inboundDomain: 'in.test' }), ...meetingsQueries] };
     runtime = new Runtime(createDb(appPool), { manifests: TEST_MANIFESTS }).register(defs);
     worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register(defs);
     const db = createDb(appPool);
@@ -412,15 +426,10 @@ suite('the wake-up for published minutes of an org-visible meeting (#3803, invar
       const def = (await c.query(`SELECT pg_get_functiondef($1::regprocedure) AS def`, [fn])).rows[0].def as string;
       expect(def, 'it names no sealed kind').not.toMatch(/mcp_company|mcp_member/);
     });
-    const asWorker = createDbClient({ connectionString: (() => { const url = new URL(adminUrl); url.username = 'crove_worker'; url.password = 'test-worker-pw'; return url.toString(); })() }, dbIds);
-    await asWorker.connect();
-    try {
-      const listed = await asWorker.query(`SELECT * FROM crove_kernel.mcp_wake_company_targets($1::uuid, 100)`, [orgA]);
-      expect(listed.fields.map((f) => f.name)).toEqual(['grant_id']);
-      expect(listed.rows.map((r: { grant_id: string }) => r.grant_id).sort()).toEqual([ids.gOwner, ids.gAdmin].sort());
-    } finally {
-      await asWorker.end();
-    }
+    // Asked from the system's own context of the org (the context the worker's job runs in), it lists the org's two company grants, ids only: the row has the one column.
+    const listed = await worker.execute<Array<Record<string, string>>>('test.wake_targets_probe', { org: orgA, limit: 100 }, systemOf(orgA));
+    expect(listed.every((row) => Object.keys(row).join() === 'grant_id')).toBe(true);
+    expect(listed.map((row) => row.grant_id).sort()).toEqual([ids.gOwner, ids.gAdmin].sort());
   });
   it('lets the worker login alone execute the definer that re-checks the meeting, which pins its search path and answers one boolean (#4536)', async () => {
     const fn = 'crove_meetings.minutes_wake_open(uuid, uuid, timestamptz)';

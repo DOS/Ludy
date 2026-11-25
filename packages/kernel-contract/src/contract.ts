@@ -1,6 +1,7 @@
 import { oc } from '@orpc/contract';
 import { z } from 'zod';
 import { zTranscriptExport, zTranscriptExportInput } from './meeting-transcript-export.ts';
+import { ORG_KINDS } from './apps.ts';
 import { zChapters, zChaptersCopied, zChaptersCopy, zChaptersSave, zChaptersSaved } from './meeting-chapters.ts';
 import {
   zBulkApproveItems,
@@ -287,7 +288,7 @@ import { zTaxObligationMark, zTaxProfile } from './tax-calendar.ts';
 import { zSinceYesterday, zTodayBrief, zTodayBriefInput, zTodayList, zTodayMailSet, zTodayMailSetting, zTodayWeekly, zTodayWeeklyInput } from './today.ts';
 import { zBookEntity, zLegalEntity, zLegalEntityInput } from './legal-entity.ts';
 import { zBuiltinRoleKey, zMemberRoles, zRoleAssignInput } from './roles.ts';
-import { zMeetingPlatformConnectProvider, zMeetingPlatformConnectionRef, zMeetingPlatformConnectionView, zMeetingPlatformRecordingRef, zMeetingPlatformRecordingView } from './meeting-platform.ts';
+import { zMeetingPlatformConnectProvider, zMeetingPlatformConnectionRef, zMeetingPlatformConnectionView, zMeetingPlatformRecordingPick, zMeetingPlatformRecordingRef, zMeetingPlatformRecordingView } from './meeting-platform.ts';
 import { zCalendarConnectionView, zCalendarEventAdd, zCalendarEventCancel, zCalendarEventView, zCalendarRange, zCalendarSlot, zCalendarSlotsQuery, zCalendarOAuthProvider, zMyCalendar, zWorkingHours } from './calendar.ts';
 import { zEInvoiceDraftFromOrder, zOrderLineInvoiceStates, zOrderLineInvoiceStatesInput, zStockMoveFromOrderLine, zStockMoveFromOrderLineResult } from './finance-orders.ts';
 import { zQuoteAccept, zQuoteDecided, zQuoteDecline, zSalesOrder, zSalesOrderCancel, zSalesOrderDeliver, zSalesOrderDeliveryChanged, zSalesOrderHandoff, zSalesOrderListQuery, zSalesOrderPage, zSalesOrderRef, zSalesOrderSummary, zSalesOrderUndeliver } from './crm-sales-orders.ts';
@@ -383,6 +384,9 @@ import {
   zHrOvertimeList,
   zHrOvertimeRef,
   zHrOvertimeRequestView,
+  zHrOvertimeSettings,
+  zHrOvertimeSettingsGet,
+  zHrOvertimeSettingsSet,
   zHrSelfOvertimeList,
   zHrSelfOvertimeListResult,
   zHrSelfOvertimeSubmit,
@@ -681,6 +685,7 @@ import {
   zTranscriptTranslationStatus,
   zTranscriptTranslationView,
   zTranslationRef,
+  zTranslationSource,
   zTranscriptTranslationRef,
   zTranslationStatus,
   zTranslations,
@@ -698,15 +703,18 @@ import {
   zMinutesTemplateUpdate,
   zMinutesTemplates,
 } from './meeting-minutes-templates.ts';
+import { zMinutesVersionPublish, zMinutesVersionPublished, zMinutesVersionUnpublish, zMinutesVersionUnpublished, zMinutesVersions } from './meeting-minutes-version.ts';
 import { zMinutesDocx, zMinutesDocxInput } from './meeting-minutes-docx.ts';
 import { zAskAnswer, zAskEmpty, zAskInput, zAskLines, zAskMeetingLinesInput, zAskStatus } from './meeting-ask.ts';
 import { zBriefAnswer, zBriefEmpty, zBriefFacts, zBriefStatus, zBriefTarget } from './meeting-brief.ts';
 import { zMeetingRename, zMeetingRenamed, zTitleAnswer } from './meeting-title.ts';
 import { zCommitmentsAnswer } from './meeting-commitments.ts';
 import { zTemplateSuggestion, zTemplateVyAnswer } from './meeting-template-suggest.ts';
+import { zVoiceCueDraft, zVoiceCueDrafted } from './meeting-voice-cue.ts';
 import { zOpenPointsAnswer } from './meeting-open-points.ts';
 import { zDigestAnswer, zDigestAsk, zDigestFacts, zDigestStatus } from './meeting-digest.ts';
 import { zLoadWeek, zLoadWeekInput } from './meeting-load.ts';
+import { zTrackerAdd, zTrackerDone, zTrackerHits, zTrackerList, zTrackerMeetingInput, zTrackerRemove, zTrackerTerms, zTrackerWeek, zTrackerWeekInput } from './meeting-trackers.ts';
 import { zHighlightAdd, zHighlightAdded, zHighlightRemove, zHighlightRemoved, zHighlights } from './meeting-highlights.ts';
 import { zMeetingsTodayFacts } from './meeting-today.ts';
 import { zMorningEmpty, zMorningSet, zMorningState } from './meeting-morning.ts';
@@ -1108,8 +1116,9 @@ export const contract = {
     },
   },
   org: {
-    // A retry with the same idempotencyKey returns the org the first request created.
-    create: oc.input(z.object({ name: z.string().trim().min(1).max(200), idempotencyKey: zId })).output(zOrgSummary),
+    // A retry with the same idempotencyKey returns the org the first request created. `kind` (ORG_KINDS): 'solo' starts the org with only Tài chính, Cộng tác and Ludy AI on,
+    // 'team' (and no kind) with every app on (ADR-0053 amendment, #4802); the apps stay one switch each in Settings afterwards.
+    create: oc.input(z.object({ name: z.string().trim().min(1).max(200), idempotencyKey: zId, kind: z.enum(ORG_KINDS).optional() })).output(zOrgSummary),
     get: oc.output(zOrgDetail),
     // Every role (ADR-0053, #3313): the apps the org may switch, and for each whether the deployment runs it, the org holds
     // it and its owner or admin left it on. Owners and admins switch one with setApp (R2, audited); every app is on by default.
@@ -1236,6 +1245,8 @@ export const contract = {
     // Lists the member's connections again at the sweep's next pass (nothing is fetched by the request).
     refresh: oc.input(z.strictObject({ connectionId: zId.optional() })).output(z.strictObject({ refreshed: z.number().int() })),
     dismiss: oc.input(zMeetingPlatformRecordingRef).output(z.strictObject({ recordingId: zId, dismissed: z.literal(true) })),
+    // Google Meet's Picker route (#3174): the member picked the recording's file in Google Picker and sends the Drive file id (never a token); the worker's import job checks it against the id Meet gave.
+    pick: oc.input(zMeetingPlatformRecordingPick).output(z.strictObject({ recordingId: zId, picked: z.literal(true) })),
     disconnect: oc.input(zMeetingPlatformConnectionRef).output(z.strictObject({ connectionId: zId, disconnected: z.literal(true) })),
     connectSandbox: oc.input(z.strictObject({})).output(z.strictObject({ connectionId: zId, reconnected: z.boolean() })),
     // The platforms this deployment lets a member connect through the platform's own dialog (Zoom, C3): empty without the app credentials and a credential key, so the screen shows no connect button the
@@ -1569,6 +1580,10 @@ export const contract = {
       approveL1: oc.input(zHrOvertimeDecide).output(zHrOvertimeActionResult),
       approveFinal: oc.input(zHrOvertimeDecide).output(zHrOvertimeActionResult),
       reject: oc.input(zHrOvertimeDecide).output(zHrOvertimeActionResult),
+      settings: {
+        get: oc.input(zHrOvertimeSettingsGet).output(zHrOvertimeSettings),
+        set: oc.input(zHrOvertimeSettingsSet).output(zHrOvertimeSettings),
+      },
     },
     salaryAdvances: {
       list: oc.input(zHrAdvanceList).output(z.array(zHrAdvanceRequestView)),
@@ -1950,6 +1965,10 @@ export const contract = {
       status: oc.input(zSummaryRef).output(zSummaryStatus),
       suggest: oc.input(zSummaryRef).output(zTitleAnswer),
     },
+    // Spoken cues to Vy (#4807): the recorder's click finds "Vy ơi, ghi lại ..." in the transcript by code and drafts one marked action item for each, citing its line; nothing is published or made a task.
+    voiceCue: {
+      draft: oc.input(zVoiceCueDraft).output(zVoiceCueDrafted),
+    },
     // What each speaker committed to or decided (#3954): `status` is the button (the same answer as the chapters'), `list` the click that has the recorder's own Vy list, from the transcript, each speaker's commitments
     // and decisions with the second of the line each rests on. The lines go back to the browser and are stored nowhere; nothing is published or made a task from here.
     commitments: {
@@ -1981,6 +2000,15 @@ export const contract = {
     // extra right to read, no text, no model call, nothing stored).
     load: {
       week: oc.input(zLoadWeekInput).output(zLoadWeek),
+    },
+    // Keyword trackers (#4818): `list` the org's tracked words for every member, `add` and `remove` for an owner or an admin, `hits` what one meeting says (counts and seconds, from the lines the caller reads)
+    // and `week` the hits across the meetings the caller reads in a week. Counted by code, nothing stored, no model call.
+    tracker: {
+      list: oc.input(zTrackerList).output(zTrackerTerms),
+      add: oc.input(zTrackerAdd).output(zTrackerDone),
+      remove: oc.input(zTrackerRemove).output(zTrackerDone),
+      hits: oc.input(zTrackerMeetingInput).output(zTrackerHits),
+      week: oc.input(zTrackerWeekInput).output(zTrackerWeek),
     },
     // Highlights on a transcript line or range (#4819): `list` the marks of a meeting the caller may read, `add` and `remove` the caller's own (the recorder removes any mark of their meeting). A mark
     // is an anchor in seconds and who made it, no text: the lines are read from the transcript.
@@ -2079,12 +2107,21 @@ export const contract = {
       status: oc.input(zTranslationRef).output(zTranslationStatus),
       translate: oc.input(zTranslationRef).output(zTranslated),
       get: oc.input(zMeetingRef).output(zTranslations),
+      // The original the recorder reviews a version against: the published segments and the hash that names them (what `minutesVersion.publish` is held to).
+      source: oc.input(zTranslationRef).output(zTranslationSource),
       // The same for the transcript (E2, #3185): the member's own Vy translates the lines they read a few chunks at a time, in the request. `transcriptTranslate` is the click (the page asks
       // again while it is open), `transcriptStop` ends the member's own run, `transcriptStatus` is the button and the progress, and `transcriptGet` is the member's parts beside the lines.
       transcriptStatus: oc.input(zTranscriptTranslationRef).output(zTranscriptTranslationStatus),
       transcriptTranslate: oc.input(zTranscriptTranslationRef).output(zTranscriptTranslated),
       transcriptStop: oc.input(zMeetingRef).output(zTranscriptTranslateStopped),
       transcriptGet: oc.input(zTranscriptTranslationRef).output(zTranscriptTranslationView),
+    },
+    // The second-language version of the published minutes (#4777): the recorder's reviewed text, published beside the original by their click; every reader of the meeting reads it.
+    // MINUTES_NOT_PUBLISHED and MINUTES_VERSION_STALE (409), MINUTES_VERSION_SEGMENTS_INVALID and MINUTES_VERSION_TEXT_REJECTED (422), TRANSLATION_LANGUAGE_OFF (422), FORBIDDEN (403, not the recorder).
+    minutesVersion: {
+      get: oc.input(zMeetingRef).output(zMinutesVersions),
+      publish: oc.input(zMinutesVersionPublish).output(zMinutesVersionPublished),
+      unpublish: oc.input(zMinutesVersionUnpublish).output(zMinutesVersionUnpublished),
     },
     actionItems: {
       create: oc.input(zActionItemCreate).output(zActionItemCreated),

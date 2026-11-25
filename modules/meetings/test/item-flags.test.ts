@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The flags code puts on an action item's title (#2580): a way to reach someone off the page is flagged, and a hostile title costs linear time.
 import { describe, expect, it } from 'vitest';
-import { itemFlags } from '../src/results.ts';
+import { flagsAfterEdit, itemFlags } from '../src/results.ts';
 
 describe('itemFlags', () => {
   it('flags links, emails and phone-like runs, and leaves plain titles alone', () => {
@@ -30,5 +30,20 @@ describe('vnDayStart', () => {
     const { vnDayStart } = await import('../src/retention.ts');
     expect(vnDayStart('2026-11-13')).toBe('2026-11-12T17:00:00.000Z');
     expect(vnDayStart('2026-01-01')).toBe('2025-12-31T17:00:00.000Z');
+  });
+});
+
+describe('flagsAfterEdit', () => {
+  it('keeps the mark that an item was asked for out loud (#4807) whatever the title becomes', () => {
+    expect(flagsAfterEdit(['asked_aloud'], 'Gửi báo giá')).toEqual(['asked_aloud']);
+    expect(flagsAfterEdit(['asked_aloud', 'contact_in_title'], 'Gửi báo giá')).toEqual(['asked_aloud']);
+    expect(flagsAfterEdit(['asked_aloud'], 'Gọi 0912345678')).toEqual(['contact_in_title', 'asked_aloud']);
+  });
+
+  it('is what code finds in the title when the item was not asked for out loud', () => {
+    expect(flagsAfterEdit([], 'Gửi báo giá')).toEqual([]);
+    expect(flagsAfterEdit(['contact_in_title'], 'Gửi báo giá')).toEqual([]);
+    expect(flagsAfterEdit(null, 'Xem https://x.example/a')).toEqual(['contact_in_title']);
+    expect(flagsAfterEdit('asked_aloud', 'Gửi báo giá')).toEqual([]);
   });
 });

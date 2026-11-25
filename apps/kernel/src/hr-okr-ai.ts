@@ -15,7 +15,7 @@ import type { HrOkrDraftCheckinAsk, HrOkrDraftCheckinResult } from '@ludy/kernel
 import { DomainError, type Actor, type Runtime } from '@ludy/kernel-runtime';
 import type { HrOkrDraftSource } from '@ludy/mod-hr';
 import type { DraftBudget } from './ai-draft-limit.ts';
-import { memberMeter, type MeterOptions } from './ai-meter.ts';
+import { guardAiMeter, memberMeter, type MeterOptions } from './ai-meter.ts';
 
 export interface HrOkrAi {
   reader: Partial<Pick<InboxReader, 'hrOkrCheckinDraft'>> | null;
@@ -112,24 +112,12 @@ export async function draftOkrCheckinSummary(
   const baseMeter =
     meter === 'runtime' ? memberMeter(runtime as Runtime, actor, meterOptions ?? {}) : meter;
 
-  const guardedMeter: AiMeter = {
-    admit: async (call) => {
-      try {
-        if (await ports.isAiStopped()) {
-          throw new HrOkrAiStoppedError();
-        }
-        const admitted = await baseMeter.admit(call);
-        if (await ports.isAiStopped()) {
-          throw new HrOkrAiStoppedError();
-        }
-        return admitted;
-      } catch (error: unknown) {
-        ticket.refund?.();
-        throw error;
-      }
-    },
-    record: (call, usage) => baseMeter.record(call, usage),
-  };
+  const guardedMeter = guardAiMeter(baseMeter, {
+    isStopped: () => ports.isAiStopped(),
+    stoppedError: () => new HrOkrAiStoppedError(),
+    checkStoppedAfterAdmit: true,
+    onAdmitRejected: () => ticket.refund?.(),
+  });
 
   try {
     const out = await withAiScope({ orgId, meter: guardedMeter }, () =>

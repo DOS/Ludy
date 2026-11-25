@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { ADMIN_ITEMS, ALL_NAV, BELL_ITEM, APPS, SETTINGS_ITEMS, TAB_GROUPS, TOP_ITEMS, appOfPath, currentMenuItem, installedApps, isSettingsPath, tabGroupOfPath } from '../src/lib/apps.ts';
+import { MODULE_SCREENS, type ModuleScreens } from '@ludy/kernel-contract';
+import { ADMIN_ITEMS, ALL_NAV, BELL_ITEM, APPS, SETTINGS_ITEMS, TAB_GROUPS, TOP_ITEMS, appOfPath, buildApps, currentMenuItem, installedApps, isSettingsPath, tabGroupOfPath, type ModuleId } from '../src/lib/apps.ts';
 import { installedItems, screenInstalled } from '../src/lib/modules.ts';
 import { en as enMessages } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
@@ -168,5 +169,23 @@ describe('apps of the shell (#1528, #3225)', () => {
     expect(isSettingsPath('/o/acme/notifications')).toBe(false);
     expect(isSettingsPath('/o/acme/audit')).toBe(false);
     expect(isSettingsPath('/o/acme/settings-other')).toBe(false);
+  });
+  // The "Thêm" group (#4790): `more: true` on a nav declaration moves the item to the app's last group. The real manifests flag none until the per-app trims (F2 to F9), so this builds the apps from a copy that flags a few.
+  it('moves a flagged item to a last "Thêm" group of its app, in the manifests\' order, and adds none where nothing is flagged', () => {
+    expect(APPS.every((app) => app.groups.every((g) => g.id !== 'more' || app.groups.at(-1) === g))).toBe(true);
+    const flagged = (flags: readonly string[]): Array<[ModuleId, ModuleScreens]> =>
+      (Object.entries(MODULE_SCREENS) as Array<[ModuleId, ModuleScreens]>).map(([id, screens]) => [id, { ...screens, nav: screens.nav.map((nav) => (flags.includes(nav.path) ? { ...nav, more: true as const } : nav)) }]);
+    const none = buildApps(flagged([]));
+    expect(none.flatMap((a) => a.groups.map((g) => g.id))).not.toContain('more');
+    expect(none.map((a) => [a.id, a.groups.map((g) => [g.id, g.items.map((i) => i.to)])])).toEqual(APPS.map((a) => [a.id, a.groups.map((g) => [g.id, g.items.map((i) => i.to)])]));
+    // Two items of Tài chính flagged: they leave their groups for the last one, in the order ITEM_ORDER gives (the ledger before the VAT screen); a group left with no item is gone.
+    const finance = buildApps(flagged(['vat', 'ledger', 'journal', 'fixed-assets'])).find((a) => a.id === 'finance');
+    expect(finance?.groups.map((g) => g.id)).toEqual(['books', 'sell', 'buy', 'more']);
+    expect(finance?.groups.at(-1)?.items.map((i) => i.to)).toEqual(['/o/$slug/journal', '/o/$slug/ledger', '/o/$slug/fixed-assets', '/o/$slug/vat']);
+    // An app whose items are all flagged keeps just the one group, and still opens on a screen.
+    const sign = buildApps(flagged(['sign/envelopes', 'sign/templates', 'sign/verify', 'sign/settings'])).find((a) => a.id === 'sign');
+    expect(sign?.groups.map((g) => g.id)).toEqual(['more']);
+    // The flagged item carries the flag and the module filter is untouched: the apps still list only what the modules run.
+    expect(buildApps(flagged(['vat'])).find((a) => a.id === 'finance')?.groups.at(-1)?.items[0]).toMatchObject({ label: 'tax', module: 'finance', more: true });
   });
 });

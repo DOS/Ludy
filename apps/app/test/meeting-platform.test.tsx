@@ -13,7 +13,7 @@ import { vi as viMessages } from '../src/i18n/messages/vi.ts';
 import { catalog } from '../src/i18n/runtime.ts';
 
 const client = vi.hoisted(() => ({ current: null as unknown as import('@tanstack/react-query').QueryClient }));
-const config = vi.hoisted(() => ({ modules: ['kernel', 'meetings'] as string[], sandbox: true }));
+const config = vi.hoisted(() => ({ modules: ['kernel', 'meetings'] as string[], sandbox: true, googlePicker: null as { apiKey: string; appId: string; clientId: string } | null }));
 
 vi.mock('../src/lib/api.ts', async () => {
   const { QueryClient: QC } = await import('@tanstack/react-query');
@@ -28,7 +28,7 @@ vi.mock('../src/lib/api.ts', async () => {
     });
   return { orpc: node([]), client: node(['client']), getCurrentOrg: () => 'acme', queryClient: client.current, errorMessage: (e: unknown) => `ERR:${(e as Error).message}`, claimImportedMedia: vi.fn() };
 });
-vi.mock('../src/lib/auth.ts', () => ({ getConfig: () => ({ modules: config.modules, channels: { sandbox: config.sandbox } }) }));
+vi.mock('../src/lib/auth.ts', () => ({ getConfig: () => ({ modules: config.modules, channels: { sandbox: config.sandbox }, googlePicker: config.googlePicker }) }));
 vi.mock('@tanstack/react-router', async (importOriginal) => {
   const { createElement } = await import('react');
   return {
@@ -66,6 +66,7 @@ const recording = (over: Partial<MeetingPlatformRecordingView> = {}): MeetingPla
   hasVideo: false,
   hasTranscript: false,
   videoImportMaxBytes: null,
+  picked: false,
   status: 'suggested',
   meetingId: null,
   errorCode: null,
@@ -310,6 +311,42 @@ describe('PlatformRecordings (Meetings tab)', () => {
     client.current.setQueryData(KEYS.connections, [connection()]);
     failQuery(KEYS.recordings, 'down');
     expect(renderToStaticMarkup(wrap(<PlatformRecordings slug="acme" />))).toContain('ERR:down');
+  });
+
+  it('asks a Google Meet video recording to be picked in Google Drive first, then offers "Nhập" and a new pick, only where the deployment set the Picker (#3174)', () => {
+    reset();
+    client.current.setQueryData(KEYS.connections, [connection()]);
+    const meet = (over: Partial<MeetingPlatformRecordingView> = {}) => recording({ provider: 'google_meet', hasAudio: false, hasVideo: true, hasTranscript: false, videoImportMaxBytes: 2 * 1024 ** 3, ...over });
+    const text = en.meetings.platform.recordings;
+    try {
+      config.googlePicker = { apiKey: 'AIzaSyFakeKeyForTestsOnly000000000000', appId: '123456789012', clientId: '123456789012-abcdefghijklmnop.apps.googleusercontent.com' };
+      client.current.setQueryData(KEYS.recordings, [meet()]);
+      const notPicked = renderToStaticMarkup(wrap(<PlatformRecordings slug="acme" />));
+      expect(count(notPicked, 'data-testid="meeting-recording-pick"')).toBe(1);
+      expect(count(notPicked, 'data-testid="meeting-recording-import"')).toBe(0);
+      expect(notPicked).toContain(text.pick);
+      expect(count(notPicked, 'data-testid="meeting-recording-pick-note"')).toBe(1);
+      client.current.setQueryData(KEYS.recordings, [meet({ picked: true })]);
+      const picked = renderToStaticMarkup(wrap(<PlatformRecordings slug="acme" />));
+      expect(count(picked, 'data-testid="meeting-recording-import"')).toBe(1);
+      expect(count(picked, 'data-testid="meeting-recording-pick"')).toBe(1);
+      expect(picked).toContain(text.pickAgain);
+      expect(picked).toContain(text.pickedNote);
+      // A failed try that said "pick again" shows the pick and no retry.
+      client.current.setQueryData(KEYS.recordings, [meet({ status: 'failed', errorCode: 'pick_mismatch', meetingId: '0198a0b4-3c5d-7e6f-8a9b-0c1d2e3f4a5b' })]);
+      const failed = renderToStaticMarkup(wrap(<PlatformRecordings slug="acme" />));
+      expect(count(failed, 'data-testid="meeting-recording-pick"')).toBe(1);
+      expect(count(failed, 'data-testid="meeting-recording-retry"')).toBe(0);
+      // Another provider's video-only recording is untouched by the Picker.
+      client.current.setQueryData(KEYS.recordings, [recording({ provider: 'zoom', hasAudio: false, hasVideo: true, videoImportMaxBytes: 2 * 1024 ** 3 })]);
+      expect(count(renderToStaticMarkup(wrap(<PlatformRecordings slug="acme" />)), 'data-testid="meeting-recording-pick"')).toBe(0);
+      // Without the deployment's Picker keys there is no pick button.
+      config.googlePicker = null;
+      client.current.setQueryData(KEYS.recordings, [meet()]);
+      expect(count(renderToStaticMarkup(wrap(<PlatformRecordings slug="acme" />)), 'data-testid="meeting-recording-pick"')).toBe(0);
+    } finally {
+      config.googlePicker = null;
+    }
   });
 
   it('offers "Nhập" for a video-only recording where the server can take the audio out of it, says only the audio is kept, and blocks it where it cannot (C2a)', () => {

@@ -3,7 +3,7 @@
 // kernel.today, grouped by kind with flags first; each row links to the screen where the item is acted on. Nothing is
 // approved or sent from here: batch approval stays in the owning app's screen.
 import { useQuery } from '@tanstack/react-query';
-import { useRef, useState, type MouseEvent, type ReactNode } from 'react';
+import { useRef, useState, type MouseEvent } from 'react';
 import { Link, useRouter } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
 import { todayCoworkerKey, todayCount, type TodayCoworkers, type TodayItem, type TodaySeverity } from '@ludy/kernel-contract';
@@ -128,7 +128,7 @@ function TodayRow({
   );
 }
 
-export function TodayList({ slug, emptyContent }: { slug: string; emptyContent?: ReactNode }) {
+export function TodayList({ slug }: { slug: string }) {
   const t = useTranslations('today');
   const common = useTranslations('common');
   const f = useFormat();
@@ -185,21 +185,6 @@ export function TodayList({ slug, emptyContent }: { slug: string; emptyContent?:
   }
 
   if (groups.length === 0) {
-    if (emptyContent) {
-      return (
-        <section aria-labelledby="overview-today">
-          <Card className="block overflow-hidden p-0" data-testid="today-hero-card">
-            <div className="flex flex-wrap items-baseline justify-between gap-2 border-b px-4 py-3">
-              <h2 id="overview-today" className="text-base font-semibold text-foreground">
-                {t('title')}
-              </h2>
-              <span className="text-xs text-subtle-foreground">{t('empty')}</span>
-            </div>
-            {emptyContent}
-          </Card>
-        </section>
-      );
-    }
     return (
       <section aria-labelledby="overview-today">
         <h2 id="overview-today" className="flex items-baseline gap-2 text-base font-semibold text-foreground">
