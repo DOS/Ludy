@@ -48,6 +48,7 @@ describe('zMeetingPlatformRecordingView', () => {
     hasVideo: false,
     hasTranscript: false,
     videoImportMaxBytes: null,
+  picked: false,
     status: 'suggested' as const,
     meetingId: null,
     errorCode: null,

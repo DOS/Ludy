@@ -35,6 +35,9 @@ export const SHRED_REF_LOCK_DAYS = 90;
 // The first sync of a worker reads this far back, so a worker that was down still writes the references of deletions it missed.
 export const SHRED_REF_FIRST_LOOKBACK_DAYS = 45;
 export const SHRED_REF_PAGE = 10_000;
+// Unlinked cached calendar events not refreshed for this long (beyond the 1-day-back / 7-day-ahead sync window) belong
+// to connections the sweep no longer visits (expired, viewer-demoted, removed, or adapter off).
+export const CALENDAR_AGENDA_STALE_DAYS = 8;
 const DUE_BATCH = 200;
 const MAX_BATCHES = 50;
 const ORPHAN_BATCH = 100;
@@ -284,4 +287,14 @@ export async function replayShreds(deps: { runtime: Runtime; workerDb: Db; store
   if (out.failed > 0) (deps.alert ?? opsAlert)(`${REPLAY_TAG} ALERT ${out.failed} shred reference(s) could not be replayed; check the worker log and run main.ts shred-replay again`);
   log.log(`[shred-replay] references=${out.listed} meetings deleted again=${out.deleted} closed orgs skipped=${out.skipped} failed=${out.failed}`);
   return out;
+}
+
+/** Deletes stale unlinked rows from ludy_meetings.calendar_agenda for connections the sweep no longer visits. */
+export async function pruneStaleCalendarAgenda(deps: { workerDb: Db; now?: () => Date; log?: Log }): Promise<number> {
+  const cutoff = new Date((deps.now ?? (() => new Date()))().getTime() - CALENDAR_AGENDA_STALE_DAYS * 86_400_000);
+  const { rows } = await sql<{ n: number }>`
+    SELECT ludy_meetings.calendar_agenda_prune_stale(${cutoff.toISOString()}::timestamptz) AS n`.execute(deps.workerDb);
+  const deleted = Number(rows[0]?.n ?? 0);
+  if (deleted > 0) (deps.log ?? console).log(`[meetings-retention] stale calendar_agenda=${deleted}`);
+  return deleted;
 }

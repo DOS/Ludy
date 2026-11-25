@@ -68,6 +68,7 @@ interface ZoomFile {
   download_url?: unknown;
   status?: unknown;
   recording_type?: unknown;
+  recording_start?: unknown;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -77,17 +78,35 @@ const ymd = (date: Date) => date.toISOString().slice(0, 10);
 
 // The files that are finished (Zoom lists a file it is still processing with another status).
 const completed = (files: ZoomFile[]) => files.filter((f) => text(f.status).toLowerCase() === 'completed');
-// The one file of a kind, or undefined. A host who stops and starts recording gets one file PER SEGMENT of the same kind, and importing one of them would hand over a partial recording with no sign of it, so
-// a kind with more than one file counts as not importable here (joining the segments needs the audio extraction of crove-media, a later step).
+// The one file of a kind, or undefined: more than one file of a kind is a recording made in segments, which `partsOf` orders and the job joins (#3175).
 const only = (files: ZoomFile[]): ZoomFile | undefined => (files.length === 1 ? files[0] : undefined);
-// The audio-only file: the shared M4A Zoom makes when the host records audio-only files.
-const audioOf = (files: ZoomFile[]) => only(completed(files).filter((f) => text(f.recording_type) === 'audio_only' && (text(f.file_type).toUpperCase() === 'M4A' || text(f.file_extension).toUpperCase() === 'M4A')));
-// The video kinds, best first: the speaker view with the shared screen is the one a minutes taker wants; the first kind present is the one used, and it must be a single file.
+// The most parts one recording is joined from (the sandbox's own limit, packages/media-contract MEDIA_LIMITS.maxJoinParts): a call in more segments than this is not offered.
+export const ZOOM_PARTS_MAX = 8;
+const startOf = (file: ZoomFile): number => (typeof file.recording_start === 'string' ? Date.parse(file.recording_start) : Number.NaN);
+// The files of one kind in the order they were recorded. One file is its own list. Several files (the host stopped and started the recording, one file per segment) are a list only when every one says when it
+// started (Zoom's `recording_start`), no two are the same file, and there are at most ZOOM_PARTS_MAX of them: otherwise the order of the call is not known, joining them could scramble it, and the recording is not
+// offered by that kind at all (an empty list).
+const partsOf = (files: ZoomFile[]): ZoomFile[] => {
+  if (files.length <= 1) return files;
+  if (files.length > ZOOM_PARTS_MAX || files.some((f) => Number.isNaN(startOf(f)))) return [];
+  const ids = files.map((f) => text(f.id));
+  if (ids.some((id) => id === '') || new Set(ids).size !== ids.length) return [];
+  // Two files that began at the same moment are two views of one stretch of the call, not consecutive segments: joining them would say it twice.
+  if (new Set(files.map(startOf)).size !== files.length) return [];
+  return [...files].sort((a, b) => startOf(a) - startOf(b) || text(a.id).localeCompare(text(b.id)));
+};
+// A kind with a file Zoom is still processing is not offered yet: the finished ones alone would be a call with a segment missing, joined without a sign of the gap.
+const settled = (files: ZoomFile[]): ZoomFile[] => (completed(files).length === files.length ? files : []);
+// The audio-only files: the shared M4A Zoom makes when the host records audio-only files, in recording order.
+const audioParts = (files: ZoomFile[]) => partsOf(settled(files.filter((f) => text(f.recording_type) === 'audio_only' && (text(f.file_type).toUpperCase() === 'M4A' || text(f.file_extension).toUpperCase() === 'M4A'))));
+// The video kinds, best first: the speaker view with the shared screen is the one a minutes taker wants; the first kind present is the one used, in recording order.
 const VIDEO_KINDS = ['shared_screen_with_speaker_view', 'shared_screen_with_gallery_view', 'active_speaker', 'gallery_view', 'shared_screen'] as const;
-const videoOf = (files: ZoomFile[]) => {
-  const mp4s = completed(files).filter((f) => text(f.recording_type) !== 'audio_only' && (text(f.file_type).toUpperCase() === 'MP4' || text(f.file_extension).toUpperCase() === 'MP4'));
+const videoParts = (files: ZoomFile[]) => {
+  const mp4s = files.filter((f) => text(f.recording_type) !== 'audio_only' && (text(f.file_type).toUpperCase() === 'MP4' || text(f.file_extension).toUpperCase() === 'MP4'));
   const kind = VIDEO_KINDS.find((k) => mp4s.some((f) => text(f.recording_type) === k));
-  return kind ? only(mp4s.filter((f) => text(f.recording_type) === kind)) : only(mp4s);
+  if (kind) return partsOf(settled(mp4s.filter((f) => text(f.recording_type) === kind)));
+  // No known kind: one file is the recording; several files of a kind we do not know are as likely views of one stretch as segments, so they are not joined, and files of different kinds never are.
+  return mp4s.length === 1 ? partsOf(settled(mp4s)) : [];
 };
 const isTranscript = (f: ZoomFile) => text(f.recording_type) === 'audio_transcript' || text(f.file_type).toUpperCase() === 'TRANSCRIPT';
 // The one finished transcript file, or undefined: two of them are two parts of one call, and half a transcript is not offered as a whole.
@@ -140,15 +159,17 @@ function listedOf(meeting: Record<string, unknown>): MeetingPlatformListed | nul
   const started = new Date(text(meeting.start_time));
   if (Number.isNaN(started.getTime())) return null;
   const files = filesOf(meeting);
-  const audio = audioOf(files);
-  const video = videoOf(files);
+  const audio = audioParts(files);
+  const video = videoParts(files);
   const transcript = transcriptOf(files);
-  if (!audio && !video && !transcript) return null;
-  // Segments of the call's audio or video that cannot be joined yet (a later step) are not made up for by a transcript of one part of it, or of the whole: the recording waits for the join.
-  if (!audio && !video && segmented(files)) return null;
+  if (audio.length === 0 && video.length === 0 && !transcript) return null;
+  // Segments that cannot be joined (their order is unknown, or there are too many) are not made up for by a transcript of one part of the call, or of the whole: the recording is not offered.
+  if (audio.length === 0 && video.length === 0 && segmented(files)) return null;
   const minutes = Number(meeting.duration);
-  // The size of the file the job will fetch (audio when there is one, else the video), not of every file: the job refuses a declared size over its cap before any call.
-  const size = audio ? sizeOf(audio) : sizeOf(video);
+  // The size of the files the job will fetch (the audio parts when there are any, else the video parts), not of every file: the job refuses a declared size over its cap before any call. One part with no size makes the total unknown.
+  const chosen = audio.length > 0 ? audio : video;
+  const sizes = chosen.map(sizeOf);
+  const size = sizes.every((n) => n > 0) ? sizes.reduce((sum, n) => sum + n, 0) : 0;
   const call = zoomCallOf(meeting.id);
   return {
     id: uuid,
@@ -156,8 +177,8 @@ function listedOf(meeting: Record<string, unknown>): MeetingPlatformListed | nul
     startedAt: started.toISOString(),
     lengthSeconds: Number.isFinite(minutes) && minutes > 0 ? Math.round(minutes * 60) : null,
     sizeBytes: size > 0 ? size : null,
-    hasAudio: audio !== undefined,
-    hasVideo: video !== undefined,
+    hasAudio: audio.length > 0,
+    hasVideo: video.length > 0,
     hasTranscript: transcript !== undefined,
     ...(call ? { call } : {}),
   };
@@ -252,7 +273,8 @@ export class ZoomMeetingPlatform implements MeetingPlatformAdapter, MeetingPlatf
     if (recordingId === '' || recordingId === '.' || recordingId === '..') throw new MeetingPlatformError('recording_gone');
     const body = await this.get(`https://${ZOOM_API_HOST}/v2/meetings/${meetingPathId(recordingId)}/recordings`, credential, signal);
     const files = filesOf(body);
-    const file = format === 'audio' ? audioOf(files) : videoOf(files);
+    // One file only: a recording in segments is fetched by `prepareParts`.
+    const file = only(format === 'audio' ? audioParts(files) : videoParts(files));
     if (!file) throw new MeetingPlatformError(format === 'audio' ? 'no_audio' : 'platform_refused', `the recording has no ${format} file`);
     const target = zoomDownloadUrl(file.download_url);
     if (!target) throw new MeetingPlatformError('platform_refused', 'the recording file is not on a Zoom host');
@@ -267,6 +289,30 @@ export class ZoomMeetingPlatform implements MeetingPlatformAdapter, MeetingPlatf
       hosts: [target.host],
       hostSuffixes: [ZOOM_DOWNLOAD_SUFFIX],
     };
+  }
+
+  // The files of a recording made in segments, in the order they were recorded, each described the way a single file is (a fresh address at click time, the member's token as the bearer, the first host exact,
+  // redirects only inside zoom.us, its own size). Empty for a recording of one file (`prepareDownload` takes that one); the job joins two or more through crove-media (#3175).
+  async prepareParts(credential: MeetingPlatformCredential, recordingId: string, format: MeetingPlatformFormat, signal?: AbortSignal): Promise<MeetingPlatformDownload[]> {
+    if (recordingId === '' || recordingId === '.' || recordingId === '..') throw new MeetingPlatformError('recording_gone');
+    const body = await this.get(`https://${ZOOM_API_HOST}/v2/meetings/${meetingPathId(recordingId)}/recordings`, credential, signal);
+    const files = filesOf(body);
+    const parts = format === 'audio' ? audioParts(files) : videoParts(files);
+    if (parts.length < 2) return [];
+    return parts.map((file) => {
+      const target = zoomDownloadUrl(file.download_url);
+      if (!target) throw new MeetingPlatformError('platform_refused', 'a recording file is not on a Zoom host');
+      const size = sizeOf(file);
+      return {
+        url: target.url,
+        headers: { authorization: `Bearer ${credential.accessToken}` },
+        format,
+        contentType: format === 'audio' ? 'audio/mp4' : 'video/mp4',
+        sizeBytes: size > 0 ? size : null,
+        hosts: [target.host],
+        hostSuffixes: [ZOOM_DOWNLOAD_SUFFIX],
+      };
+    });
   }
 
   // The transcript file of one recording, described the way a recording's file is (a fresh address at click time, the member's token as the bearer, the first host exact, redirects only inside zoom.us). Only a single
