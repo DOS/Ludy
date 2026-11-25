@@ -121,4 +121,4 @@ GRANT EXECUTE ON FUNCTION
   ludy_kernel.meeting_result_export_rows(),
   ludy_kernel.meeting_action_item_export_rows(),
   ludy_kernel.meeting_reader_export_rows()
-  TO ludy_tenant;
+  TO ludy_worker;

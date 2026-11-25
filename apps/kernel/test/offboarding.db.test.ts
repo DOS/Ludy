@@ -1009,7 +1009,9 @@ suite('org offboarding on PostgreSQL (#38)', () => {
     const transcriptRows = await rowsOf('meetings.transcript_segment');
     expect(transcriptRows.map((r) => r.id).sort()).toEqual([ids.sharedSeg1, ids.sharedSeg2, ids.foreverSeg].sort());
     expect(transcriptRows.filter((r) => r.meeting_id === orgSharedId).map((r) => r.id)).toEqual([ids.sharedSeg1, ids.sharedSeg2]);
-    expect(transcriptRows.every((r) => !('search' in r))).toBe(true);
+    for (const seg of transcriptRows) {
+      expect(seg).not.toHaveProperty('search');
+    }
     expect(transcriptRows.every((r) => r.stage === 'published')).toBe(true);
 
     const resultRows = await rowsOf('meetings.result');
@@ -1041,34 +1043,15 @@ suite('org offboarding on PostgreSQL (#38)', () => {
     }
 
     // Security & caller guards on all 4 new definer functions:
-    // 1) search_path pinned, SECURITY DEFINER, zero PUBLIC execute, exact role execute parity with meeting_export_rows().
+    // 1) search_path pinned, SECURITY DEFINER, zero PUBLIC execute, strict worker-only EXECUTE ACL.
     const fnNames = [
       'ludy_kernel.meeting_transcript_export_rows()',
       'ludy_kernel.meeting_result_export_rows()',
       'ludy_kernel.meeting_action_item_export_rows()',
       'ludy_kernel.meeting_reader_export_rows()',
     ] as const;
-    const tenantInheritedRoles = [
-      'crove_tenant',
-      'crove_app',
-      'crove_worker',
-      'crove_definer_tenant',
-      'crove_definer_einvoice',
-    ] as const;
     await withAdmin(async (c) => {
       const dbIds = await resolveDbIdentifiers(adminUrl);
-      const baseline = await auditRoleFunctionExecute(
-        c,
-        dbIds,
-        'ludy_kernel.meeting_export_rows()',
-        tenantInheritedRoles,
-        'brand',
-      );
-      expect(baseline.rows.length).toBeGreaterThan(0);
-      for (const { rolname, ok, expected } of baseline.rows) {
-        expect(ok, `${rolname} on ludy_kernel.meeting_export_rows()`).toBe(expected);
-      }
-
       for (const sig of fnNames) {
         const meta = (
           await c.query<{ prosecdef: boolean; proconfig: string[] | null; pub: boolean }>(
@@ -1079,19 +1062,21 @@ suite('org offboarding on PostgreSQL (#38)', () => {
         ).rows[0]!;
         expect(meta, sig).toEqual({ prosecdef: true, proconfig: ['search_path=pg_catalog, pg_temp'], pub: false });
 
-        const { rows: roleRows, activeAllowed } = await auditRoleFunctionExecute(c, dbIds, sig, tenantInheritedRoles, 'brand');
+        const { rows: roleRows, activeAllowed } = await auditRoleFunctionExecute(c, dbIds, sig, ['crove_worker'], 'brand');
         expect(roleRows.length, sig).toBeGreaterThan(0);
         for (const allowedRole of activeAllowed) {
           expect(roleRows.some((r) => r.rolname === allowedRole && r.ok), `${allowedRole} on ${sig}`).toBe(true);
         }
+        for (const deniedRole of ['ludy_tenant', 'ludy_app', 'ludy_definer_tenant', 'ludy_definer_einvoice']) {
+          expect(roleRows.find((r) => r.rolname === deniedRole)?.ok, `${deniedRole} on ${sig}`).toBe(false);
+        }
         for (const { rolname, ok, expected } of roleRows) {
           expect(ok, `${rolname} on ${sig}`).toBe(expected);
         }
-        expect(roleRows, `${sig} role execute parity with meeting_export_rows()`).toEqual(baseline.rows);
       }
     });
 
-    // 2) Non-worker SQL callers (ludy_app with/without context) and worker outside system context (no context, or agent context) are refused with MEETINGS_WORKER_ONLY (42501).
+    // 2) Non-worker SQL callers (ludy_app with/without context) hit PostgreSQL ACL denial (permission denied), and worker outside system context (no context, or agent context) is refused with MEETINGS_WORKER_ONLY (42501).
     const probeAgent = await withAdmin(async (c) => {
       const a = await c.query<{ id: string }>(
         `INSERT INTO ludy_kernel.agent (org_id, template_key, display_name, created_by)
@@ -1118,13 +1103,18 @@ suite('org offboarding on PostgreSQL (#38)', () => {
       return { agentId, runId: run.rows[0]!.id };
     });
 
-    const callRefused = async (connectionString: string, setup: ((c: pg.Client) => Promise<void>) | null, fn: string) => {
+    const callRefused = async (
+      connectionString: string,
+      setup: ((c: pg.Client) => Promise<void>) | null,
+      fn: string,
+      messagePattern: RegExp,
+    ) => {
       const c = new pg.Client({ connectionString });
       await c.connect();
       try {
         await c.query('BEGIN');
         if (setup) await setup(c);
-        await expect(c.query(`SELECT * FROM ${fn}`)).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('MEETINGS_WORKER_ONLY') });
+        await expect(c.query(`SELECT * FROM ${fn}`)).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(messagePattern) });
       } finally {
         await c.query('ROLLBACK').catch(() => {});
         await c.end();
@@ -1137,13 +1127,19 @@ suite('org offboarding on PostgreSQL (#38)', () => {
       return url.toString();
     })();
     for (const fn of fnNames) {
-      await callRefused(appUrl, null, fn);
-      await callRefused(appUrl, (c) => c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [org.orgId, contextToken(owner.id, org.orgId)]).then(() => undefined), fn);
-      await callRefused(workerConn, null, fn);
+      await callRefused(appUrl, null, fn, /permission denied/i);
+      await callRefused(
+        appUrl,
+        (c) => c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [org.orgId, contextToken(owner.id, org.orgId)]).then(() => undefined),
+        fn,
+        /permission denied/i,
+      );
+      await callRefused(workerConn, null, fn, /MEETINGS_WORKER_ONLY/);
       await callRefused(
         workerConn,
         (c) => c.query('SELECT ludy_kernel.enter_agent_context($1::uuid, $2::uuid, $3::uuid)', [other.org.orgId, probeAgent.agentId, probeAgent.runId]).then(() => undefined),
         fn,
+        /MEETINGS_WORKER_ONLY/,
       );
     }
   });
