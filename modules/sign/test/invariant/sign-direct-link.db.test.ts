@@ -36,7 +36,7 @@ import { resolveDbIdentifiers, roleUrl, setActiveRolePasswords, wrapPool } from 
 
 type Pool = ReturnType<typeof createPool>;
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -385,7 +385,7 @@ suite('eSign Slice 2a A1 direct link & #3565 PostgreSQL security invariants (#35
         await client.query('BEGIN');
         await client.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [
           orgA,
-          mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', {
+          mintContextToken(process.env.LUDY_CONTEXT_TOKEN_KEY ?? process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', {
             userId: userA,
             orgId: orgA,
             sessionId: null,

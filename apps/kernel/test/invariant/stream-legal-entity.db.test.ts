@@ -32,7 +32,7 @@ import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
 import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
 const SECRET = 'stream-le-invariant-secret-0123456789-abcdefghij';
 const ISSUER = 'http://localhost:9999';
@@ -91,7 +91,7 @@ suite('invariant: invalidation hints honor the legal-entity scope', () => {
   async function rpc(path: string, name: string, input: unknown, org: string | null, mfa = false) {
     const response = await app.request(`/api/rpc/${path}`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${await token(name, mfa)}`, 'content-type': 'application/json', ...(org ? { 'x-crove-org': org } : {}) },
+      headers: { authorization: `Bearer ${await token(name, mfa)}`, 'content-type': 'application/json', ...(org ? { 'x-ludy-org': org } : {}) },
       body: JSON.stringify(input === undefined ? {} : { json: input }),
     });
     const body = (await response.json()) as { json?: Record<string, unknown> };
@@ -102,7 +102,7 @@ suite('invariant: invalidation hints honor the legal-entity scope', () => {
   async function streamFor(name: string) {
     const issued = await app.request('/api/stream/tickets', {
       method: 'POST',
-      headers: { authorization: `Bearer ${await token(name)}`, 'x-crove-org': slug },
+      headers: { authorization: `Bearer ${await token(name)}`, 'x-ludy-org': slug },
     });
     expect(issued.status).toBe(200);
     const { ticket } = (await issued.json()) as { ticket: string };
