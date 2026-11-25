@@ -60,6 +60,7 @@ const PUBLIC: Record<string, string> = {
   '/api/review/file': 'the same review link, for one file of the post under review',
   '/api/review/answer': "the reviewer's answer, through the same review link",
   '/api/quote/view': "a sent quote's page (#2694): a signed, expiring, revocable quote link is the credential; rate limited per client, it answers one quote document and nothing else",
+  '/api/minutes/view': "the published minutes of a meeting, for a person outside the org (#4822): the link's token is the credential, in the POST JSON body (never the URL), stored hashed, 30 day expiry, revocable; rate limited per client; one opaque 404 for an unknown, revoked, expired, switched-off or unpublished link; no-store, no-referrer and noindex; answers only the published summary, decisions and action items, never the transcript, a draft or the recording",
   '/api/quote/logo': "the logo of a sent quote's letterhead (#2814): the quote link's token is the credential, as for /api/quote/view; rate limited per client, it answers that one quote's seller logo and nothing else",
   '/api/sign/view': 'public eSign link view (#3324): single-use fragment token is the credential in the JSON body; rate limited per IP and token hash, enforces org_app_on and entitlement with opaque 404',
   '/api/sign/pdf': 'public eSign source PDF stream (#3324): same token in JSON body; enforces OTP gate (403 OTP_REQUIRED), bounded concurrency, and opaque 404',
@@ -116,7 +117,6 @@ const PUBLIC: Record<string, string> = {
 // here first, in a PR of its own; the PR that adds the route moves it into PUBLIC. A route here may be public and may
 // not exist yet; the stale-list check below skips it, and nothing else does.
 const PENDING: Record<string, string> = {
-  '/api/minutes/view': "the published minutes of a meeting, for a person outside the org (#4822): the token is in the POST JSON body (never the URL), stored hashed, 30 day expiry, revocable; answers one opaque 404 for an unknown, revoked, expired, switched-off or unpublished link; per-address rate limit; no-store, no-referrer and noindex; returns only the published summary, decisions and action items, never the transcript, a draft or the recording",
 };
 const isPublic = (path: string) => Object.hasOwn(PUBLIC, path) || Object.hasOwn(PENDING, path);
 

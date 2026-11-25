@@ -4,7 +4,7 @@
 // the caller then seals only that Opus as the recording, so the video is never stored. Whatever the sandbox says is untrusted: the client
 // validates it with a strict schema, and only a duration in range is accepted.
 import { randomBytes } from 'node:crypto';
-import { createMediaExtractClient, MEDIA_LIMITS, MEDIA_TIMING, MediaClientError, type MediaExtractClient } from '@ludy/media-contract/extract';
+import { createMediaExtractClient, createMediaJoinClient, MEDIA_LIMITS, MEDIA_TIMING, MediaClientError, type JoinPartSource, type MediaExtractClient, type MediaJoinClient } from '@ludy/media-contract/extract';
 import { DomainError, type BlobMediaBinding, type BlobStore } from '@ludy/kernel-runtime';
 import { decryptedWindows, failed, MEDIA_PROBE_FAILED, tooLong, unavailable } from './meetings-measure.ts';
 import { sealMedia } from './media-seal.ts';
@@ -23,6 +23,9 @@ export interface MediaAudioExtractor {
   readonly configured: boolean;
   // The Opus audio of the recording and its length in seconds. Throws a DomainError the caller returns as is.
   extract(source: AsyncIterable<Uint8Array>): Promise<{ audio: Uint8Array; durationSeconds: number }>;
+  // The parts of one recording (a Zoom call recorded in several segments, #3175) joined in order into one Opus: each part declares its length, the sandbox gets them as one framed body. Absent on a
+  // deployment whose sandbox predates the call (or in a test that does not use it): the recording is then refused like a video with no sandbox.
+  join?(parts: readonly JoinPartSource[]): Promise<{ audio: Uint8Array; durationSeconds: number }>;
 }
 
 // What a failed call to the sandbox means for the user: a file with no audio, a file it could not read, a file too large for it, a call that
@@ -39,36 +42,52 @@ function refusal(error: unknown): DomainError {
   return unavailable();
 }
 
-export function createMediaAudioExtractor(client: MediaExtractClient, options: { timeoutMs?: number } = {}): MediaAudioExtractor {
+export const MEDIA_JOIN_UNAVAILABLE = 'MEDIA_JOIN_UNAVAILABLE';
+
+export function createMediaAudioExtractor(client: MediaExtractClient & Partial<MediaJoinClient>, options: { timeoutMs?: number } = {}): MediaAudioExtractor {
   const timeoutMs = options.timeoutMs ?? EXTRACT_TIMEOUT_MS;
+  // A hard deadline over the whole call, whatever the client does: when it passes, the call is aborted (which closes the source).
+  async function guarded(run: (signal: AbortSignal) => Promise<{ audio: Uint8Array; durationSeconds: number }>): Promise<{ audio: Uint8Array; durationSeconds: number }> {
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        controller.abort();
+        reject(extractTimeout());
+      }, timeoutMs);
+    });
+    let out: { audio: Uint8Array; durationSeconds: number };
+    try {
+      const call = run(controller.signal);
+      // When the deadline wins, the call's own later rejection must not surface as an unhandled one.
+      call.catch(() => undefined);
+      out = await Promise.race([call, deadline]);
+    } catch (error) {
+      throw refusal(error);
+    } finally {
+      clearTimeout(timer);
+    }
+    // The sandbox's own tolerance for packetization and padding (60 s) is allowed, as in the measurer.
+    if (out.durationSeconds > MEDIA_LIMITS.maxDurationSeconds + 60) throw tooLong();
+    if (!(out.durationSeconds > 0) || out.audio.length === 0) throw new DomainError(MEDIA_PROBE_FAILED, 422, 'The recording could not be read as media (Không đọc được bản ghi)');
+    return out;
+  }
+  const joinAudio = client.joinAudio?.bind(client);
   return {
     configured: true,
-    async extract(source) {
-      // A hard deadline over the whole call, whatever the client does: when it passes, the call is aborted (which closes the source).
-      const controller = new AbortController();
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const deadline = new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => {
-          controller.abort();
-          reject(extractTimeout());
-        }, timeoutMs);
-      });
-      let out: { audio: Uint8Array; durationSeconds: number };
-      try {
-        const call = client.extractAudio(source, controller.signal);
-        // When the deadline wins, the call's own later rejection must not surface as an unhandled one.
-        call.catch(() => undefined);
-        out = await Promise.race([call, deadline]);
-      } catch (error) {
-        throw refusal(error);
-      } finally {
-        clearTimeout(timer);
-      }
-      // The sandbox's own tolerance for packetization and padding (60 s) is allowed, as in the measurer.
-      if (out.durationSeconds > MEDIA_LIMITS.maxDurationSeconds + 60) throw tooLong();
-      if (!(out.durationSeconds > 0) || out.audio.length === 0) throw new DomainError(MEDIA_PROBE_FAILED, 422, 'The recording could not be read as media (Không đọc được bản ghi)');
-      return out;
-    },
+    extract: (source) => guarded((signal) => client.extractAudio(source, signal)),
+    // A crove-media with no /join-audio answers 404: the same on every try, so it is a final refusal (MEDIA_JOIN_UNAVAILABLE), not the retried "unavailable" that would download every part again each time.
+    ...(joinAudio
+      ? {
+          join: (parts: readonly JoinPartSource[]) =>
+            guarded((signal) =>
+              joinAudio(parts, signal).catch((error: unknown) => {
+                if (error instanceof MediaClientError && error.status === 404) throw new DomainError(MEDIA_JOIN_UNAVAILABLE, 503, 'The media service cannot join the parts of a recording');
+                throw error;
+              }),
+            ),
+        }
+      : {}),
   };
 }
 
@@ -82,7 +101,8 @@ export function mediaAudioExtractorFor(url: string | undefined, timeoutMs?: numb
       },
     };
   }
-  return createMediaAudioExtractor(createMediaExtractClient(url, timeoutMs === undefined ? {} : { timeoutMs }), timeoutMs === undefined ? {} : { timeoutMs });
+  const clientOptions = timeoutMs === undefined ? {} : { timeoutMs };
+  return createMediaAudioExtractor({ ...createMediaExtractClient(url, clientOptions), ...createMediaJoinClient(url, clientOptions) }, clientOptions);
 }
 
 export interface VideoExtraction {
@@ -125,6 +145,66 @@ export async function extractAudioFromVideo(input: VideoExtraction): Promise<{ a
     return await input.extractor.extract(decryptedWindows(input.store, { storageKey: sealed.key, generation: sealed.generation, sizeBytes: sealed.size }, key, binding));
   } finally {
     if (stored?.created) await input.store.delete(stored.key).catch((err) => console.error('[meetings] temporary video cleanup failed', err));
+    key.fill(0);
+  }
+}
+
+export interface PartsJoin {
+  // The parts in the order they are to be joined. Each is OPENED when its turn comes (so no connection waits idle behind the parts before it) and gives its bytes as they arrive with the length it declared
+  // (checked while it streams); `release` closes it and is called when the part has been sealed or failed.
+  parts: ReadonlyArray<() => Promise<{ source: AsyncIterable<Uint8Array>; expectedLength: number; release: () => void }>>;
+  kind: 'audio' | 'video';
+  // The cap on the parts together, counted as each is sealed.
+  maxBytes: number;
+  store: BlobStore;
+  orgId: string;
+  meetingId: string;
+  extractor: MediaAudioExtractor;
+  // A test hook: the throwaway key (default 32 random bytes).
+  newKey?: () => Buffer;
+}
+
+// The audio of a recording that came in parts, with no part kept. Each part is sealed in turn under ONE throwaway key that exists only in this call's memory (the same discipline as the video of an upload:
+// never wrapped, never written to media_key, zeroed at the end, the sealed objects under tmp/ so a crash leaves only ciphertext the retention job sweeps), then the parts are read back in order, decrypted a
+// window at a time, into one framed call to the sandbox. The sealed parts are deleted when the call ends, on success and on every refusal. A part that fails fails the whole join: a partial recording is never returned.
+export async function joinAudioFromParts(input: PartsJoin): Promise<{ audio: Uint8Array; durationSeconds: number }> {
+  const join = input.extractor.join;
+  if (!join) throw unavailable();
+  // Refused before any part is fetched: a count the sandbox would refuse is not worth downloading the recording for, once per retry.
+  if (input.parts.length < 1 || input.parts.length > MEDIA_LIMITS.maxJoinParts) throw failed('media');
+  const key = (input.newKey ?? (() => randomBytes(32)))();
+  const binding: BlobMediaBinding = { orgId: input.orgId, meetingId: input.meetingId, kind: input.kind };
+  const stored: Array<{ key: string; created: boolean }> = [];
+  try {
+    const sealed: Array<{ key: string; generation: string | null; size: number; plaintextBytes: number }> = [];
+    let total = 0;
+    for (const open of input.parts) {
+      const part = await open();
+      try {
+        const one = await sealMedia({
+          source: part.source,
+          expectedLength: part.expectedLength,
+          kind: input.kind,
+          dataKey: key,
+          binding,
+          maxBytes: input.maxBytes - total,
+          store: input.store,
+          orgId: input.orgId,
+          temporary: true,
+        });
+        stored.push({ key: one.key, created: one.created });
+        total += one.plaintextBytes;
+        sealed.push(one);
+      } finally {
+        part.release();
+      }
+    }
+    return await join.call(
+      input.extractor,
+      sealed.map((one) => ({ length: one.plaintextBytes, source: decryptedWindows(input.store, { storageKey: one.key, generation: one.generation, sizeBytes: one.size }, key, binding) })),
+    );
+  } finally {
+    for (const one of stored) if (one.created) await input.store.delete(one.key).catch((err) => console.error('[meetings] temporary part cleanup failed', err));
     key.fill(0);
   }
 }

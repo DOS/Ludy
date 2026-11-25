@@ -99,6 +99,8 @@ export const zMeetingPlatformRecordingView = z.strictObject({
   // The most bytes of a video file this deployment can take the audio out of (C2a, #3306), or null when it cannot (no crove-media): a recording that has only a video file can then be imported when its
   // size fits; null, it is refused as before. It is the video cap lowered to crove-media's own input limit where the deployment sets one.
   videoImportMaxBytes: z.number().int().positive().nullable(),
+  // Google Meet's Picker route (#3174): the member has picked this recording's Drive file (kept on the row; the import job checks it). False for every row that needs no pick.
+  picked: z.boolean(),
   status: z.enum(MEETING_PLATFORM_RECORDING_STATUSES),
   meetingId: zId.nullable(),
   errorCode: z.string().nullable(),

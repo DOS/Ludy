@@ -72,6 +72,7 @@ import { parseInboxSearch } from './lib/review.ts';
 import { parseAuditSearch } from './lib/audit.ts';
 import { parsePeriodSearch } from './lib/vat.ts';
 import { parsePortalSearch } from './lib/portal-list.ts';
+import { parseNotificationsSearch } from './lib/notifications.ts';
 import { parseVouchersSearch } from './lib/vouchers.ts';
 import { SocialChannelsPage } from './routes/social-channels.tsx';
 import { OAuthCallbackPage } from './routes/social-oauth.tsx';
@@ -705,7 +706,7 @@ const personalDataRoute = createRoute({ getParentRoute: () => orgRoute, path: 'p
 const notificationsRoute = createRoute({
   getParentRoute: () => orgRoute,
   path: 'notifications',
-  validateSearch: parseTodayMailSearch,
+  validateSearch: parseNotificationsSearch,
   beforeLoad: ({ params, search }) => {
     if (search.todayMail === 'off') throw redirect({ to: SETTINGS_TAB_TO.notifications, params: { slug: (params as { slug: string }).slug }, search: { todayMail: 'off' as const }, hash: SETTINGS_CARD.todayMail, replace: true });
   },

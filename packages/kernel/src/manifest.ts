@@ -15,6 +15,7 @@ export const kernelManifest = defineModule({
       agent: columns(['org_id', 'id', 'template_key', 'display_name', 'runtime', 'model_alias', 'status', 'max_risk', 'daily_run_cap', 'created_by', 'created_at', 'updated_at', 'kind', 'member_user_id']),
       agent_template: columns(['key', 'module', 'title', 'role_key', 'max_risk', 'job_description', 'subscribes', 'daily_run_cap']),
       agent_wakeup: columns(['org_id', 'id', 'agent_id', 'status', 'reasons', 'request_count', 'tainted', 'request_depth', 'run_id', 'created_at', 'updated_at']),
+      ai_budget_reservation: columns(['org_id', 'id', 'module', 'agent_id', 'actor_user_id', 'feature', 'amount', 'expires_at', 'created_at']),
       ai_run: columns(['org_id', 'id', 'agent_id', 'module', 'status', 'tainted', 'request_depth', 'cost', 'started_at', 'expires_at', 'finished_at', 'error', 'private_read', 'feature']),
       approval_preset: columns(['key', 'ledger_chief_accountant_only']),
       archive_batch: columns(['seq', 'window_from', 'window_to', 'row_count', 'batch_sha256', 'chain_sha256', 'object_key', 'written_at']),
@@ -126,7 +127,7 @@ export const kernelManifest = defineModule({
       task_comment: columns(['org_id', 'id', 'task_id', 'author_type', 'author_id', 'run_id', 'tainted', 'created_at'], { body: 'pii' }),
       tax_obligation_done: columns(['org_id', 'id', 'obligation', 'period', 'done_by', 'done_at', 'legal_entity_id']),
       tax_profile: columns(['org_id', 'id', 'obligations', 'pit_filing_period', 'fiscal_year_end_month', 'updated_by', 'created_at', 'updated_at']),
-      tenant: columns(['org_id', 'slug', 'name', 'status', 'base_currency', 'created_by', 'created_at', 'vat_filing_period', 'missing_invoice_reminder_day', 'approval_preset', 'approval_policy_version', 'meeting_audio_retention_days', 'meeting_video_retention_days', 'meeting_text_retention_days', 'meeting_consent_policy', 'meeting_hooks', 'meeting_minutes_esign', 'hr_overtime_require_l1', 'mcp_member_grants', 'apps_off', 'apps_version'], { inbound_token: 'sensitive', conversation_token: 'sensitive', tax_code: 'national_id_if_individual', address: 'contact', contact_email: 'contact' }),
+      tenant: columns(['org_id', 'slug', 'name', 'status', 'base_currency', 'created_by', 'created_at', 'vat_filing_period', 'missing_invoice_reminder_day', 'approval_preset', 'approval_policy_version', 'meeting_audio_retention_days', 'meeting_video_retention_days', 'meeting_text_retention_days', 'meeting_consent_policy', 'meeting_hooks', 'meeting_minutes_esign', 'meeting_minutes_link', 'hr_overtime_require_l1', 'mcp_member_grants', 'apps_off', 'apps_version'], { inbound_token: 'sensitive', conversation_token: 'sensitive', tax_code: 'national_id_if_individual', address: 'contact', contact_email: 'contact' }),
       tenant_member: columns(['org_id', 'user_id', 'role', 'created_at']),
       // The members who opted in to the daily brief by email (#2406); last_sent_day is the Vietnam day of the last mail.
       today_mail: columns(['org_id', 'id', 'user_id', 'created_at', 'last_sent_day', 'language']),

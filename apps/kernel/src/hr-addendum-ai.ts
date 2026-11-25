@@ -19,7 +19,7 @@ import type {
 import { DomainError, type Actor, type Runtime } from '@ludy/kernel-runtime';
 import type { HrAddendumCheckSource } from '@ludy/mod-hr';
 import type { DraftBudget } from './ai-draft-limit.ts';
-import { memberMeter, type MeterOptions } from './ai-meter.ts';
+import { guardAiMeter, memberMeter, type MeterOptions } from './ai-meter.ts';
 
 export interface HrAddendumAi {
   reader: Partial<Pick<InboxReader, 'hrAddendumCheck'>> | null;
@@ -114,24 +114,12 @@ export async function checkAddendumDraft(
 
   const baseMeter =
     meter === 'runtime' ? memberMeter(runtime as Runtime, actor, meterOptions ?? {}) : meter;
-  const guardedMeter: AiMeter = {
-    admit: async (call) => {
-      try {
-        if (await ports.isAiStopped()) {
-          throw new HrAddendumAiStoppedError();
-        }
-        const admitted = await baseMeter.admit(call);
-        if (await ports.isAiStopped()) {
-          throw new HrAddendumAiStoppedError();
-        }
-        return admitted;
-      } catch (error: unknown) {
-        ticket.refund?.();
-        throw error;
-      }
-    },
-    record: (call, usage) => baseMeter.record(call, usage),
-  };
+  const guardedMeter = guardAiMeter(baseMeter, {
+    isStopped: () => ports.isAiStopped(),
+    stoppedError: () => new HrAddendumAiStoppedError(),
+    checkStoppedAfterAdmit: true,
+    onAdmitRejected: () => ticket.refund?.(),
+  });
 
   try {
     const out = await withAiScope({ orgId, meter: guardedMeter }, () =>

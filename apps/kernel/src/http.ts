@@ -195,6 +195,7 @@ import { DraftBudget } from './ai-draft-limit.ts';
 import { mountMcp, mountOauthProvider } from './mcp-endpoint.ts';
 import type { OauthServer } from './oauth-server.ts';
 import { reviewAnswer, reviewFile, reviewMedia, reviewView, REVIEW_ANSWERS_PER_MINUTE, REVIEW_FILES_PER_MINUTE, REVIEW_VIEWS_PER_MINUTE } from './review-link.ts';
+import { minutesView, MINUTES_VIEWS_PER_MINUTE } from './minutes-link.ts';
 import { quoteLogo, quoteView, readLogoFile, QUOTE_LOGO_READS_MAX, QUOTE_VIEWS_PER_MINUTE } from './quote-link.ts';
 import { reportView, REPORT_VIEWS_PER_MINUTE } from './report-link.ts';
 import {
@@ -450,6 +451,8 @@ export interface HttpDeps {
   reportLimit?: RateLimiter;
   // The public quote page's budget per client (#2694). Unset: QUOTE_VIEWS_PER_MINUTE.
   quoteLimit?: RateLimiter;
+  // The public minutes page's budget per client (#4822), apart from the quote page's. Unset: MINUTES_VIEWS_PER_MINUTE.
+  minutesLimit?: RateLimiter;
   // The public quote page's logo budget per client (#2814), apart from the page's. Unset: QUOTE_VIEWS_PER_MINUTE.
   quoteLogoLimit?: RateLimiter;
   // How many logo reads (a stored file read whole into memory) run at once in this process, across every client (#2814). Unset: QUOTE_LOGO_READS_MAX.
@@ -785,6 +788,15 @@ export const UPLOAD_BUSY_RETRY_SECONDS = 3;
 export const EXPORT_BUSY_RETRY_SECONDS = 5;
 // Cloudflare Turnstile's origin (#1353): its script and the iframe of its widget, on deployments that set the keys.
 export const TURNSTILE_ORIGIN = 'https://challenges.cloudflare.com';
+// Google Picker and Google Identity Services (#3174, ADR-0025 amendment of 2026-11-25), on deployments that set MEETINGS_GOOGLE_PICKER_API_KEY and its app id: the member picks a Meet recording in Google's Picker,
+// which needs Google's loader and its iframe, and a short-lived `drive.file` token minted by Google Identity Services. The lists follow Google's own documentation for the two products; the names of the Trusted Types
+// policies Google's scripts create are [unverified] until a real browser run (the owner's Google project, #3177), so a name may be added then. Off, nothing of Google's is allowed: the policy is exactly what it was.
+export const GOOGLE_PICKER_SCRIPT_SRC = ['https://apis.google.com', 'https://accounts.google.com/gsi/client'] as const;
+export const GOOGLE_PICKER_FRAME_SRC = ['https://docs.google.com', 'https://accounts.google.com/gsi/'] as const;
+export const GOOGLE_PICKER_CONNECT_SRC = ['https://accounts.google.com/gsi/'] as const;
+export const GOOGLE_PICKER_STYLE_SRC = ['https://accounts.google.com/gsi/style'] as const;
+// ludy-google is ours (apps/app/src/lib/google-picker.ts: the two script URLs, exactly); the other two are the policies Google's loaders are known to create.
+export const GOOGLE_PICKER_TRUSTED_TYPES = ['ludy-google', 'goog#html', 'gapi#gapi'] as const;
 // apiOrigin is the API's origin when the app is served apart from it (a split deployment), so its media (a meeting's video by
 // ticket) may be played; null when the kernel serves the app itself and 'self' is the API.
 // connectOrigin: one more origin the app calls (the hosted login's token endpoint, #2704), or null.
@@ -795,6 +807,7 @@ export function contentSecurityPolicy(
   apiOrigin: string | null = null,
   connectOrigin: string | null = null,
   frameAncestors: readonly string[] | null = null,
+  googlePicker = false,
 ): string {
   // Hosted Supabase Auth lives on another origin; the bundled one is proxied under /auth/v1. With presigned
   // transfers the app also posts uploads to, and fetches downloads from, the bucket's origin.
@@ -810,20 +823,20 @@ export function contentSecurityPolicy(
   // runs in an iframe of that origin; without them, nothing of Cloudflare's is allowed.
   return [
     "default-src 'self'",
-    turnstile ? `script-src 'self' ${TURNSTILE_ORIGIN}` : "script-src 'self'",
-    "style-src 'self'",
+    `script-src 'self'${turnstile ? ` ${TURNSTILE_ORIGIN}` : ''}${googlePicker ? ` ${GOOGLE_PICKER_SCRIPT_SRC.join(' ')}` : ''}`,
+    googlePicker ? `style-src 'self' ${GOOGLE_PICKER_STYLE_SRC.join(' ')}` : "style-src 'self'",
     "img-src 'self' blob: data:",
     // A meeting's audio plays from a blob URL the app makes, and its video from the stream route by ticket (#2703): media-src
     // would otherwise fall back to default-src, which refuses blob: and, apart from the API, the API's origin.
     `media-src 'self' blob:${apiOrigin ? ` ${apiOrigin}` : ''}`,
-    `connect-src 'self' ${[...new Set([authOrigin, ...(storageOrigin ? [storageOrigin] : []), ...(connectOrigin ? [connectOrigin] : [])])].join(' ')}`,
-    ...(turnstile ? [`frame-src ${TURNSTILE_ORIGIN}`] : []),
+    `connect-src 'self' ${[...new Set([authOrigin, ...(storageOrigin ? [storageOrigin] : []), ...(connectOrigin ? [connectOrigin] : []), ...(googlePicker ? GOOGLE_PICKER_CONNECT_SRC : [])])].join(' ')}`,
+    ...(turnstile || googlePicker ? [`frame-src ${[...(turnstile ? [TURNSTILE_ORIGIN] : []), ...(googlePicker ? GOOGLE_PICKER_FRAME_SRC : [])].join(' ')}`] : []),
     "object-src 'none'",
     "base-uri 'none'",
     "form-action 'self'",
     frameAncestors && frameAncestors.length > 0 ? `frame-ancestors ${frameAncestors.join(' ')}` : "frame-ancestors 'none'",
     "require-trusted-types-for 'script'",
-    turnstile ? 'trusted-types ludy-sw ludy-turnstile' : 'trusted-types ludy-sw',
+    `trusted-types ludy-sw${turnstile ? ' ludy-turnstile' : ''}${googlePicker ? ` ${GOOGLE_PICKER_TRUSTED_TYPES.join(' ')}` : ''}`,
   ].join('; ');
 }
 
@@ -882,7 +895,10 @@ export function createHttpApp(deps: HttpDeps) {
       }
     });
   });
-  app.use('*', secureHeaders({ crossOriginResourcePolicy: 'same-site' }));
+  // Google Identity Services opens its consent window with window.open and reads the answer through window.opener, which Hono's default Cross-Origin-Opener-Policy `same-origin` cuts (#3174). Only a deployment that
+  // set the Picker's keys relaxes it, to `same-origin-allow-popups` (the page still cannot be reached by a window that opened it). secureHeaders writes its headers after the handler, so it has to be set here, not per page.
+  const googlePickerOn = Boolean(config.MEETINGS_GOOGLE_PICKER_API_KEY && config.MEETINGS_GOOGLE_PICKER_APP_ID);
+  app.use('*', secureHeaders({ crossOriginResourcePolicy: 'same-site', ...(googlePickerOn ? { crossOriginOpenerPolicy: 'same-origin-allow-popups' } : {}) }));
   // A web app on another origin (APP_URL, #2261) calls this API cross-origin: the allowlisted origins get CORS headers and
   // their preflights are answered here, before the rate limit and the session check (a preflight carries no token).
   app.use('*', corsMiddleware(config.CORS_ALLOWED_ORIGINS));
@@ -974,6 +990,11 @@ export function createHttpApp(deps: HttpDeps) {
       supportUrl: config.SUPPORT_URL ?? null,
       // The booking page shows Cloudflare Turnstile with this site key (#1353); null shows none.
       turnstileSiteKey: config.TURNSTILE_SITE_KEY ?? null,
+      // Google Picker for the audio of a Meet recording (#3174): the browser's API key, the Google project number and the OAuth client id, public values; null when the operator set none.
+      googlePicker:
+        config.MEETINGS_GOOGLE_PICKER_API_KEY && config.MEETINGS_GOOGLE_PICKER_APP_ID && config.MEETINGS_GOOGLE_CLIENT_ID
+          ? { apiKey: config.MEETINGS_GOOGLE_PICKER_API_KEY, appId: config.MEETINGS_GOOGLE_PICKER_APP_ID, clientId: config.MEETINGS_GOOGLE_CLIENT_ID }
+          : null,
       // The product name users see (BRAND_NAME, #1040); the app fills its messages and the page title with it.
       brandName: config.BRAND_NAME,
       // The Ludy extension ids that may sign in (EXTENSION_IDS, #2740); the connect page refuses any other.
@@ -1734,6 +1755,30 @@ export function createHttpApp(deps: HttpDeps) {
         return problem(c, error);
       } finally {
         release();
+      }
+    });
+  }
+
+  // The published minutes a link shares with a person outside the org (#4822, meetings module): the same edge as the quote page, with its own budget per client. The link's token is the only
+  // credential; it comes in the body, never the URL. A bad, revoked or expired token, a switch or an app that is off and minutes that are not published all get the one refusal. The answer is
+  // never cached, never sends a referrer and tells search engines to keep it out of their index.
+  if (runtime.installed('meetings')) {
+    const minutesLimit = deps.minutesLimit ?? new RateLimiter({ perMinute: MINUTES_VIEWS_PER_MINUTE });
+    app.post('/api/minutes/view', bodyLimit({ maxSize: 1024 }), async (c) => {
+      const decision = minutesLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
+      c.header('cache-control', 'no-store');
+      c.header('referrer-policy', 'no-referrer');
+      c.header('x-robots-tag', 'noindex, nofollow');
+      if (!decision.allowed) {
+        warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
+        c.header('retry-after', String(decision.retryAfterSeconds));
+        return c.json({ code: 'RATE_LIMITED', message: 'Bạn gửi quá nhiều yêu cầu, hãy thử lại sau', retryAfterSeconds: decision.retryAfterSeconds }, 429);
+      }
+      try {
+        const view = await minutesView(runtime, await c.req.json().catch(() => null));
+        return view ? c.json(view) : c.json({ code: 'MINUTES_LINK_INVALID', message: 'Liên kết biên bản không hợp lệ, đã bị thu hồi hoặc đã hết hạn' }, 404);
+      } catch (error) {
+        return problem(c, error);
       }
     });
   }
@@ -5841,7 +5886,7 @@ export function createHttpApp(deps: HttpDeps) {
     const authOriginUrl = publicAuthUrl(config);
     const directOrigin = store.direct ? directTransferOrigin(config) : null;
     const hostedOrigin = hostedLoginTokenOrigin(config);
-    const csp = contentSecurityPolicy(authOriginUrl, directOrigin, Boolean(config.TURNSTILE_SITE_KEY), null, hostedOrigin);
+    const csp = contentSecurityPolicy(authOriginUrl, directOrigin, Boolean(config.TURNSTILE_SITE_KEY), null, hostedOrigin, null, googlePickerOn);
     const signCsp = contentSecurityPolicy(authOriginUrl, directOrigin, false, null, hostedOrigin);
     let indexHtml: string | null = null;
     app.get('*', async (c) => {
