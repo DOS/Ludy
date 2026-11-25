@@ -1069,11 +1069,11 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     const { rows } = await admin((c) =>
       c.query<{ n: string }>(
         `SELECT p.oid::regprocedure::text AS n FROM pg_proc p JOIN pg_namespace s ON s.oid = p.pronamespace
-         WHERE ${NON_SYSTEM} AND p.prokind IN ('f', 'p') AND pg_get_functiondef(p.oid) ~* 'ctx_mac\\s*\\(|context_key|crove\\.ctx_seal'
+         WHERE ${NON_SYSTEM} AND p.prokind IN ('f', 'p') AND pg_get_functiondef(p.oid) ~* 'ctx_mac\\s*\\(|context_key|(crove|ludy)\\.ctx_seal'
          ORDER BY 1`,
       ),
     );
-    // A function that computes the seal, reads the key or sets crove.ctx_seal could seal a member context of its own.
+    // A function that computes the seal, reads the key or sets ludy.ctx_seal or crove.ctx_seal could seal a member context of its own.
     expect(rows.map((r) => r.n)).toEqual(SEAL_TOUCHERS);
   });
 
