@@ -168,7 +168,7 @@ export class XConnector implements OAuthConnector {
     if (typeof answer.refresh_token !== 'string' || !answer.refresh_token) throw new ConnectorError('provider', 'X answered without a refresh token');
     const granted = typeof answer.scope === 'string' ? answer.scope.split(' ').filter(Boolean) : [];
     // All of them: posting, images, the account's own posts to reconcile, and renewal.
-    if (!X_SCOPES.every((s) => granted.includes(s))) throw new ConnectorError('denied', 'X did not grant the permissions Crove needs', 'MISSING_PERMISSION');
+    if (!X_SCOPES.every((s) => granted.includes(s))) throw new ConnectorError('denied', 'X did not grant the permissions Ludy needs', 'MISSING_PERMISSION');
     const me = await this.client.call<{ data?: { id?: unknown; name?: unknown; username?: unknown } }>('GET', '/users/me?user.fields=username,name', answer.access_token).catch((error: unknown) => {
       throw connectorError(error);
     });

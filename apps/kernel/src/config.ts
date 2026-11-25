@@ -981,7 +981,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (Boolean(config.S3_ACCESS_KEY_ID) !== Boolean(config.S3_SECRET_ACCESS_KEY)) {
     throw new Error('set both S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY, or neither to use the default credential chain');
   }
-  if (config.SMTP_HOST && !config.SMTP_FROM) throw new Error('SMTP_HOST needs SMTP_FROM, the sender address of Crove mails');
+  if (config.SMTP_HOST && !config.SMTP_FROM) throw new Error('SMTP_HOST needs SMTP_FROM, the sender address of Ludy mails');
   if (config.MAIL_PROVIDER === 'resend' && (!config.RESEND_API_KEY || !config.SMTP_FROM)) {
     throw new Error('MAIL_PROVIDER=resend needs RESEND_API_KEY and SMTP_FROM, the sender address on a domain verified at Resend');
   }
@@ -1188,25 +1188,25 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       // Compared as bytes, so the unpadded or base64url spelling of the test key is the test key too.
       const bytes = Buffer.from(config.LUDY_CONTEXT_TOKEN_KEY.trim(), 'base64');
       if (SAMPLE_CONTEXT_TOKEN_KEYS.some((sample) => sample.equals(bytes))) {
-        throw new Error('LUDY_CONTEXT_TOKEN_KEY is the test suite key; generate a random key before exposing Crove');
+        throw new Error('LUDY_CONTEXT_TOKEN_KEY is the test suite key; generate a random key before exposing Ludy');
       }
       // A key that decodes to printable text is a passphrase, not random bytes (one in about 10^14 random keys is).
       if (bytes.every((byte) => byte >= 0x20 && byte <= 0x7e)) {
-        throw new Error('LUDY_CONTEXT_TOKEN_KEY decodes to printable text; generate random bytes (openssl rand -base64 32) before exposing Crove');
+        throw new Error('LUDY_CONTEXT_TOKEN_KEY decodes to printable text; generate random bytes (openssl rand -base64 32) before exposing Ludy');
       }
     }
     if (config.AUTH_JWT_SECRET && SAMPLE_SECRETS.has(config.AUTH_JWT_SECRET)) {
-      throw new Error('AUTH_JWT_SECRET is a sample value; generate a random secret before exposing Crove');
+      throw new Error('AUTH_JWT_SECRET is a sample value; generate a random secret before exposing Ludy');
     }
     // docker-compose.yml falls back to these passwords when a variable is unset, so a deployment that forgot one would
     // otherwise run its database logins on a value this public repository publishes. Only the setting is named.
     for (const name of ['DATABASE_URL', 'WORKER_DATABASE_URL', 'ADMIN_DATABASE_URL', 'DATABASE_LISTEN_URL'] as const) {
       if (hasSampleDbPassword(config[name])) {
-        throw new Error(`${name} carries a database password shipped in .env.example or docker-compose.yml; set a random one (openssl rand -base64 24) before exposing Crove`);
+        throw new Error(`${name} carries a database password shipped in .env.example or docker-compose.yml; set a random one (openssl rand -base64 24) before exposing Ludy`);
       }
     }
     if ([config.TURNSTILE_SITE_KEY, config.TURNSTILE_SECRET].some((key) => key !== undefined && TURNSTILE_TEST_KEY.test(key))) {
-      throw new Error("TURNSTILE_SITE_KEY or TURNSTILE_SECRET is one of Cloudflare's test keys; use the widget's real keys before exposing Crove");
+      throw new Error("TURNSTILE_SITE_KEY or TURNSTILE_SECRET is one of Cloudflare's test keys; use the widget's real keys before exposing Ludy");
     }
     if (config.AUTH_AUTOCONFIRM === 'true') {
       throw new Error('AUTH_AUTOCONFIRM=true lets anyone claim any email address; set it to false and configure SMTP');

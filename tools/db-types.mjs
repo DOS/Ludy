@@ -2,22 +2,22 @@
 // migrations build (plan §2 DB row, issue #48). Run `pnpm db:types` after adding or changing a migration and commit
 // the result; CI runs it too and fails when the committed file is not current.
 //
-// Needs CROVE_TEST_ADMIN_URL (a superuser URL on PostgreSQL 17, as for `pnpm test:db`). The run creates a throwaway
+// Needs LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) (a superuser URL on PostgreSQL 17, as for `pnpm test:db`). The run creates a throwaway
 // database, applies supabase/migrations with the built-in runner, reads it with Kanel and kanel-kysely, and drops it.
 //
 // What is generated, and how it differs from Kanel's defaults:
-// - Only the tables the tenant role (crove_tenant) may SELECT. Control-plane tables (plan §3.6: user_account, sessions,
+// - Only the tables the tenant role (ludy_tenant) may SELECT. Control-plane tables (plan §3.6: user_account, sessions,
 //   inbound routing and the like) and definer-only tables have no Kysely type, so tenant code cannot name them in a
 //   query that compiles. The invariant test control-plane-reads.test.ts also scans this generated file.
 // - Plain column types instead of Kanel's branded identifier types; json/jsonb columns take JSON text on insert and
 //   update (code passes JSON.stringify output, never an object or array, to pg).
-// - Write types from the tenant role's privileges (issue #266): a column crove_tenant may not INSERT has the insert
+// - Write types from the tenant role's privileges (issue #266): a column ludy_tenant may not INSERT has the insert
 //   type NotGranted, one it may not UPDATE the update type NotGranted (has_column_privilege, which counts table and
 //   column grants alike). NotGranted is undefined, not never: Kysely drops a never column from Insertable and
 //   Updateable, and a table with no writable column would then take any object, while undefined keeps the column
 //   and refuses every value. So a forbidden write, such as an insert into outbox_event or an update of an
 //   append-only table, fails typecheck instead of at runtime (Kysely leaves an undefined value out of the statement).
-//   The login roles (crove_app, crove_worker) are members of crove_tenant with no table privilege of their own on
+//   The login roles (ludy_app, ludy_worker) are members of ludy_tenant with no table privilege of their own on
 //   these schemas. This covers values() and set() with a value; DELETE (not a column type), raw sql, insert ...
 //   select and an empty object are refused only by the database at runtime.
 // - One file, named exports, sorted, LF line endings, so the output depends only on the migrations.
@@ -55,7 +55,7 @@ const notGranted = {
   exportAs: 'named',
 };
 
-// Every column type in the Crove schemas, as the pool's type parsers return it (packages/db/src/index.ts): numeric,
+// Every column type in the Ludy schemas, as the pool's type parsers return it (packages/db/src/index.ts): numeric,
 // int8 and date stay strings, timestamptz is a Date, json and jsonb are parsed. A type missing here fails the run.
 const TYPE_MAP = {
   'pg_catalog.bool': 'boolean',
@@ -206,7 +206,7 @@ function render(text) {
   ].join('\n');
 }
 
-// The tables crove_tenant may SELECT, and the columns of those tables it may INSERT and UPDATE, as
+// The tables ludy_tenant may SELECT, and the columns of those tables it may INSERT and UPDATE, as
 // schema.table and schema.table.column.
 async function tenantPrivileges(dbUrl) {
   const client = new pg.Client({ connectionString: dbUrl });

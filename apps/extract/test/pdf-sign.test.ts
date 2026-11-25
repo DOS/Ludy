@@ -223,7 +223,7 @@ function makeRawXrefStreamPdf(
 
 function makeCertificate(overrides: Partial<PdfSealInput['certificate']> = {}): PdfSealInput['certificate'] {
   return {
-    certificateCode: 'CROVE-ESIGN-2026-0001',
+    certificateCode: 'LUDY-ESIGN-2026-0001',
     envelopeTitle: 'Hợp đồng dịch vụ kế toán Công ty Đặng Gia',
     sourceSha256: 'a'.repeat(64),
     completedAtIso: '2026-11-15T10:30:00.000Z',
@@ -539,7 +539,7 @@ describe('pdf_seal', () => {
     const certText = back.pageTexts[4] ?? '';
     expect(certText).toContain('CHỨNG NHẬN KÝ KẾT ĐIỆN TỬ');
     expect(certText).toContain('AUDIT CERTIFICATE');
-    expect(certText).toContain('CROVE-ESIGN-2026-0001');
+    expect(certText).toContain('LUDY-ESIGN-2026-0001');
     expect(certText).toContain('Hợp đồng dịch vụ kế toán Công ty Đặng Gia');
     expect(certText).toContain(sourceSha256);
     expect(certText).toContain('b'.repeat(64));
@@ -1223,7 +1223,7 @@ describe('pdf_seal', () => {
         fields: [],
         certificate: {
           ...baseCert,
-          certificateCode: 'CROVE\nESIGN\r\n001',
+          certificateCode: 'LUDY\nESIGN\r\n001',
           envelopeTitle: 'A\n'.repeat(100),
           signers: [
             {
@@ -1240,7 +1240,7 @@ describe('pdf_seal', () => {
     }
     expect(res.pageCount).toBe(2);
     const readBack = await readPdfBack(new Uint8Array(Buffer.from(res.sealedPdfBase64, 'base64')));
-    expect(readBack.pageTexts[1]).toContain('CROVE ESIGN 001');
+    expect(readBack.pageTexts[1]).toContain('LUDY ESIGN 001');
     expect(readBack.pageTexts[1]).toContain('Nguyễn Văn Ánh');
     expect(readBack.pageTexts[1]).toContain('DANH SÁCH NGƯỜI KÝ / SIGNERS (1)');
   });
@@ -1539,7 +1539,7 @@ describe('pdf_seal', () => {
         Subtype: 'Link',
         Rect: [40, 500, 180, 520],
         Border: [0, 0, 0],
-        A: { S: 'URI', URI: PDFString.of('https://crove.vn') },
+        A: { S: 'URI', URI: PDFString.of('https://ludy.example') },
       }),
     );
     const hiddenSquareRef = docWithAp.context.register(
@@ -5974,11 +5974,11 @@ describe('pdf_seal', () => {
     const benignOutlineMarker = 'STRIPPED_OUTLINE_MARKER_991';
     const benignLinkMarker = 'STRIPPED_HTTPS_LINK_MARKER_992';
     const benignPdf = makeRawPdf([
-      '<< /Type /Catalog /Pages 2 0 R /Outlines 4 0 R /Names << /Dests << >> >> /URI << /Base (https://crove.vn/) >> >>',
+      '<< /Type /Catalog /Pages 2 0 R /Outlines 4 0 R /Names << /Dests << >> >> /URI << /Base (https://ludy.example/) >> >>',
       '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
       '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Annots [5 0 R] >>',
       `<< /Type /Outlines /First 6 0 R /Last 6 0 R /Count 1 >>`,
-      `<< /Type /Annot /Subtype /Link /Rect [10 10 120 40] /A << /S /URI /URI (https://crove.vn/docs?ref=${benignLinkMarker}) >> >>`,
+      `<< /Type /Annot /Subtype /Link /Rect [10 10 120 40] /A << /S /URI /URI (https://ludy.example/docs?ref=${benignLinkMarker}) >> >>`,
       `<< /Title (${benignOutlineMarker}) /Parent 4 0 R /Dest [3 0 R /Fit] >>`,
     ]);
 
