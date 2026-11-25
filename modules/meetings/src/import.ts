@@ -130,8 +130,9 @@ export const meetingImportStart = defineCommand({
     // first, so a double click on the two buttons has one winner: the second start waits, then sees the first's status.
     const [keyA, keyB] = platformPairKeys(recording.external_id);
     const pair = await readPair(ctx.trx, ctx.orgId, userId, recording.connection_id, keyA, [keyA, keyB]);
-    if (pair.some((row) => row.id !== input.recordingId && (row.status === 'importing' || row.status === 'staged' || row.status === 'imported'))) {
-      throw new DomainError('MEETING_PLATFORM_STATE', 409, 'Cuộc họp này đã được nhập (hoặc đang được nhập) từ gợi ý kia, nên không nhập thêm lần nữa');
+    // Only a sibling that is merely suggested, failed or skipped leaves this row free: any other status (importing, staged, claimed while its bytes are taken, imported) means the call is taken.
+    if (pair.some((row) => row.id !== input.recordingId && row.status !== 'suggested' && row.status !== 'failed' && row.status !== 'dismissed')) {
+      throw new DomainError('MEETING_PLATFORM_PAIR_TAKEN', 409, 'Cuộc họp này đã được nhập (hoặc đang được nhập) từ mục còn lại của nó, nên không nhập thêm lần nữa');
     }
     // No audio file, no way to take the audio out of a video file and no transcript the platform's provider can hand over (C2, #3174: a recording with only a transcript): refused here, before a meeting is made for it.
     const transcriptOnly = !recording.has_audio && !recording.has_video && recording.has_transcript && hasTranscriptPath(recording.provider);

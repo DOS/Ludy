@@ -16725,6 +16725,7 @@ export const vi = {
       MEETING_PLATFORM_NOT_FOUND: 'Không tìm thấy bản ghi hoặc kết nối nền tảng họp này.',
       MEETING_PLATFORM_NO_AUDIO: 'Nền tảng chỉ có bản hình, chưa có tệp âm thanh để nhập.',
       MEETING_PLATFORM_OWNER_LEFT: 'Người đã kết nối nền tảng họp này không còn là thành viên của tổ chức.',
+      MEETING_PLATFORM_PAIR_TAKEN: 'Cuộc họp này đã được nhập (hoặc đang được nhập) từ mục còn lại của nó (video hoặc bản chép lời). Hãy mở cuộc họp trong danh sách của bạn.',
       MEETING_PLATFORM_STATE: 'Bản ghi này đang ở trạng thái không nhập được lúc này (đã nhập, đang nhập hoặc đã bỏ qua).',
       MEETING_SETTINGS_INVALID: 'Video không thể được lưu lâu hơn âm thanh.',
       INVALID_READER: 'Người xem phải là chủ sở hữu, quản trị viên hoặc thành viên đang hoạt động của tổ chức.',

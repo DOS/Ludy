@@ -16737,6 +16737,7 @@ export const en = {
       MEETING_PLATFORM_NOT_FOUND: 'This meeting platform connection or recording was not found.',
       MEETING_PLATFORM_NO_AUDIO: 'The platform offers only a video file, so there is no audio file to import.',
       MEETING_PLATFORM_OWNER_LEFT: 'The person who connected this meeting platform is no longer a member of the organization.',
+      MEETING_PLATFORM_PAIR_TAKEN: 'This meeting was already imported, or is being imported, from its other entry (the video or the transcript). Open the meeting in your list instead.',
       MEETING_PLATFORM_STATE: 'This recording cannot be imported in its current state (already imported, importing or skipped).',
       MEETING_SETTINGS_INVALID: 'A kept video cannot be kept longer than the audio.',
       FILE_TOO_LARGE: 'The uploaded meeting file exceeds the maximum allowed size (300 MB for audio, 2 GB for video).',
