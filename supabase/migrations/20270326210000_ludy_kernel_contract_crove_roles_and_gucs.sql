@@ -19,6 +19,7 @@ DECLARE
   v_createrole boolean;
   v_meta_oid oid;
   v_shared boolean := false;
+  v_prev_lock_timeout text;
   v_default_acls text;
   v_owned text;
   r record;
@@ -54,7 +55,14 @@ BEGIN
           OR (COALESCE(v_createrole, false)
               AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'crove_tenant' AND rolsuper)
               AND pg_catalog.pg_has_role(current_user, 'crove_tenant', 'MEMBER WITH ADMIN OPTION'))) THEN
+    v_prev_lock_timeout := pg_catalog.current_setting('lock_timeout');
+    IF v_prev_lock_timeout = '0' THEN
+      PERFORM pg_catalog.set_config('lock_timeout', '30s', true);
+    END IF;
     EXECUTE pg_catalog.format('ALTER ROLE %I NOLOGIN', 'crove_tenant');
+    IF v_prev_lock_timeout = '0' THEN
+      PERFORM pg_catalog.set_config('lock_timeout', v_prev_lock_timeout, true);
+    END IF;
   END IF;
 
   FOR r IN
@@ -801,7 +809,7 @@ GRANT EXECUTE ON FUNCTION ludy_kernel.conversation_address_rotate() TO ludy_app;
 
 -- ---------------------------------------------------------------------------
 -- 3. Remove remaining crove_reporter / crove_tenant compatibility branches
---    introduced during the 20270315090000 function rewrites while preserving
+--    and crove.sign_* GUC references across ludy_* routines while preserving
 --    exact owners, volatility, and grants.
 -- ---------------------------------------------------------------------------
 DO $$
@@ -809,6 +817,8 @@ DECLARE
   v_proc regprocedure;
   v_def text;
   v_new_def text;
+  v_remaining_gucs text;
+  r record;
 BEGIN
   v_proc := pg_catalog.to_regprocedure('ludy_kernel.usage_weekly(integer, boolean, text)');
   IF v_proc IS NOT NULL THEN
@@ -834,6 +844,46 @@ BEGIN
     IF v_new_def IS DISTINCT FROM v_def THEN
       EXECUTE v_new_def;
     END IF;
+  END IF;
+
+  FOR r IN
+    SELECT p.oid
+    FROM pg_catalog.pg_proc p
+    JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname LIKE 'ludy\_%'
+      AND p.prokind IN ('f', 'p')
+      AND NOT EXISTS (
+        SELECT 1 FROM pg_catalog.pg_depend d
+        WHERE d.classid = 'pg_catalog.pg_proc'::pg_catalog.regclass AND d.objid = p.oid AND d.deptype = 'e'
+      )
+      AND p.prosrc ~ '\ycrove\.(sign_template_inherit|sign_correct_signer|sign_correct_envelope|sign_personal_erase)(?![[:alnum:]_.])'
+    ORDER BY p.oid
+  LOOP
+    v_def := pg_catalog.pg_get_functiondef(r.oid);
+    v_new_def := pg_catalog.regexp_replace(
+      v_def,
+      '\ycrove\.(sign_template_inherit|sign_correct_signer|sign_correct_envelope|sign_personal_erase)(?![[:alnum:]_.])',
+      'ludy.\1',
+      'g'
+    );
+    IF v_new_def IS DISTINCT FROM v_def THEN
+      EXECUTE v_new_def;
+    END IF;
+  END LOOP;
+
+  SELECT pg_catalog.string_agg(p.oid::pg_catalog.regprocedure::text, ', ' ORDER BY 1)
+  INTO v_remaining_gucs
+  FROM pg_catalog.pg_proc p
+  JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+  WHERE n.nspname LIKE 'ludy\_%'
+    AND p.prokind IN ('f', 'p')
+    AND NOT EXISTS (
+      SELECT 1 FROM pg_catalog.pg_depend d
+      WHERE d.classid = 'pg_catalog.pg_proc'::pg_catalog.regclass AND d.objid = p.oid AND d.deptype = 'e'
+    )
+    AND p.prosrc ~* '(?:current_setting|set_config)\s*\(\s*''crove\.|\ySET\s+(?:LOCAL\s+|SESSION\s+)?crove\.';
+  IF v_remaining_gucs IS NOT NULL THEN
+    RAISE EXCEPTION 'stage 7 contraction failed: ludy_* routines still reference crove.* GUCs (%)', v_remaining_gucs;
   END IF;
 END $$;
 

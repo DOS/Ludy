@@ -316,6 +316,34 @@ suite('legacy crove_* role and crove.* GUC contraction (#3972)', () => {
           expect(row.def).not.toContain('crove_tenant');
         }
       }
+
+      const { rows: leftoverGucRoutines } = await c.query<{ fn: string }>(
+        `SELECT p.oid::pg_catalog.regprocedure::text AS fn
+         FROM pg_catalog.pg_proc p
+         JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+         WHERE n.nspname LIKE 'ludy\\_%'
+           AND p.prokind IN ('f', 'p')
+           AND NOT EXISTS (
+             SELECT 1 FROM pg_catalog.pg_depend d
+             WHERE d.classid = 'pg_catalog.pg_proc'::pg_catalog.regclass AND d.objid = p.oid AND d.deptype = 'e'
+           )
+           AND p.prosrc ~* '(?:current_setting|set_config)\\s*\\(\\s*''crove\\.|\\ySET\\s+(?:LOCAL\\s+|SESSION\\s+)?crove\\.'
+         ORDER BY 1`,
+      );
+      expect(leftoverGucRoutines).toEqual([]);
+
+      const { rows: signDefs } = await c.query<{ fn: string; def: string }>(
+        `SELECT p.oid::pg_catalog.regprocedure::text AS fn, pg_catalog.pg_get_functiondef(p.oid) AS def
+         FROM pg_catalog.pg_proc p
+         WHERE p.oid IN (
+           pg_catalog.to_regprocedure('ludy_sign.template_inherit_inspect(uuid, uuid)'),
+           pg_catalog.to_regprocedure('ludy_sign.envelope_guard()')
+         )`,
+      );
+      for (const row of signDefs) {
+        expect(row.def).toContain('ludy.sign_template_inherit');
+        expect(row.def).not.toContain('crove.sign_template_inherit');
+      }
     });
   });
 

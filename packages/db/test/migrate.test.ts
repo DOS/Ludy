@@ -226,12 +226,24 @@ describe('shared-database mode (#2284)', () => {
 });
 
 describe('classifyCoreCutoverState (#3972 Stage 7 replay guard)', () => {
-  it('distinguishes uncontracted clusters from Stage-7-contracted and wiped-marker states', () => {
+  it('distinguishes uncontracted and pre-created shared clusters from Stage-7-contracted and wiped-marker states', () => {
     expect(
       classifyCoreCutoverState({
         markerPresent: false,
         hasLudyRoles: false,
         hasTransitionalGrants: false,
+        anyLegacyLoginExpired: false,
+        allLegacyLoginsExpired: false,
+      }),
+    ).toBe('uncontracted');
+
+    // Pre-created shared-database roles (docs/runbooks/shared-database.md) before first cutover have no grants or expiries.
+    expect(
+      classifyCoreCutoverState({
+        markerPresent: false,
+        hasLudyRoles: true,
+        hasTransitionalGrants: false,
+        anyLegacyLoginExpired: false,
         allLegacyLoginsExpired: false,
       }),
     ).toBe('uncontracted');
@@ -242,6 +254,7 @@ describe('classifyCoreCutoverState (#3972 Stage 7 replay guard)', () => {
         markerPresent: false,
         hasLudyRoles: true,
         hasTransitionalGrants: true,
+        anyLegacyLoginExpired: true,
         allLegacyLoginsExpired: false,
       }),
     ).toBe('uncontracted');
@@ -252,16 +265,18 @@ describe('classifyCoreCutoverState (#3972 Stage 7 replay guard)', () => {
         markerPresent: true,
         hasLudyRoles: true,
         hasTransitionalGrants: false,
+        anyLegacyLoginExpired: false,
         allLegacyLoginsExpired: false,
       }),
     ).toBe('contracted');
 
-    // Marker wiped after Stage 7 contraction fails closed instead of re-granting crove_* -> ludy_* memberships.
+    // Marker wiped after Stage 7 contraction with expired legacy login(s) and no transitional grants fails closed.
     expect(
       classifyCoreCutoverState({
         markerPresent: false,
         hasLudyRoles: true,
         hasTransitionalGrants: false,
+        anyLegacyLoginExpired: true,
         allLegacyLoginsExpired: false,
       }),
     ).toBe('wiped-marker');
@@ -270,7 +285,19 @@ describe('classifyCoreCutoverState (#3972 Stage 7 replay guard)', () => {
       classifyCoreCutoverState({
         markerPresent: false,
         hasLudyRoles: true,
+        hasTransitionalGrants: false,
+        anyLegacyLoginExpired: true,
+        allLegacyLoginsExpired: true,
+      }),
+    ).toBe('wiped-marker');
+
+    // Marker wiped with transitional grants re-added while all legacy logins remain expired also fails closed.
+    expect(
+      classifyCoreCutoverState({
+        markerPresent: false,
+        hasLudyRoles: true,
         hasTransitionalGrants: true,
+        anyLegacyLoginExpired: true,
         allLegacyLoginsExpired: true,
       }),
     ).toBe('wiped-marker');
