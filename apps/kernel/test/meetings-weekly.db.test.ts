@@ -389,7 +389,13 @@ suite("the opt-in weekly notice of the week's meetings (#4967)", () => {
     const m = await meeting('Họp của quiet', 1, 'quiet', []);
     await result(m, ['Quyết định của quiet'], 'published');
     expect(await due('quiet')).not.toBeNull();
-    await sqlAdmin(`UPDATE ludy_kernel.tenant SET status = 'offboarding' WHERE org_id = $1`, [orgId]);
+    // Moved as staff, without the triggers (the move's own audit check is kernel.org.offboard's).
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query(`UPDATE ludy_kernel.tenant SET status = 'offboarding' WHERE org_id = $1`, [orgId]);
+      await c.query('COMMIT');
+    });
     expect(await due('quiet')).toBeNull();
     expect(await runMeetingsWeeklySweep({ runtime: worker, workerDb, at: AT })).toMatchObject({ found: 0, sent: 0 });
   });
