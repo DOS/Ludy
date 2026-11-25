@@ -1917,6 +1917,10 @@ export function createRpcHandler(
           inMeetings(context, (orgId, actor) => runMeetingAssignee({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: meetingAssignees, price: aiPrice }, orgId, actor, input)),
         ),
       },
+      // The week's meeting load for an owner or an admin (#4770): per member and the series worth trimming, read by code under the caller's own row security; see modules/meetings/src/load.ts.
+      load: {
+        week: os.meetings.load.week.handler(meetingsQuery('meetings.load.week')),
+      },
       // The Today view (#3955): the member's own agenda for today with the facts of each event's brief, read as the member in one call (no model, nothing in the background); see modules/meetings/src/today.ts.
       today: {
         facts: os.meetings.today.facts.handler(meetingsQuery('meetings.today.facts')),

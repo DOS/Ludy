@@ -4370,6 +4370,38 @@ export const vi = {
       chip: '{title}, {date}, {time}',
     },
     // "Tuần này" trên trang Cuộc họp (#3949): những việc đã chốt và việc còn dở của các cuộc họp người dùng được đọc, và vài câu của Vy khi bấm.
+    // Thời gian họp trong tuần (#4770): tính bằng code từ các cuộc họp người xem đọc được, không dùng AI.
+    load: {
+      title: 'Thời gian họp',
+      description: 'Mỗi người họp bao nhiêu trong tuần, và những cuộc họp lặp lại có thể bớt. Không dùng AI, không đọc nội dung cuộc họp.',
+      week: 'Tuần',
+      thisWeek: 'Tuần này',
+      lastWeek: 'Tuần trước',
+      weeksAgo: '{count, number} tuần trước',
+      range: 'Từ {from} đến {to}',
+      member: 'Thành viên',
+      meetings: 'Số cuộc họp',
+      time: 'Thời gian họp',
+      total: 'Cả nhóm (cộng của mọi người)',
+      someone: 'Một thành viên',
+      noMembers: 'Tuần này bạn không đọc được cuộc họp nào có ghi độ dài.',
+      basis: 'Chỉ tính các cuộc họp bạn đọc được. Người dự là người ghi và những người họ đã thêm vào; Ludy không biết ai thực sự vào cuộc gọi.',
+      minutes: '{minutes, number} phút',
+      hours: '{hours, number} giờ',
+      hoursMinutes: '{hours, number} giờ {minutes, number} phút',
+      trim: {
+        title: 'Họp lặp lại có thể bớt',
+        hint: 'Xét {weeks, number} tuần gần nhất, với nhóm có từ {min, number} cuộc họp. Đây chỉ là gợi ý để bạn xem lại: thẻ này không đổi gì.',
+        none: 'Chưa có cuộc họp lặp lại nào đáng xem lại.',
+        count: '{count, number} cuộc họp, trung bình {average}',
+        cut: 'Chỉ hiện các nhóm đáng xem nhất.',
+      },
+      signals: {
+        few_people: '{solo, number} trong {meetings, number} cuộc họp chỉ có người ghi, chưa thêm ai.',
+        no_minutes: 'Mới có {withMinutes, number} trong {meetings, number} cuộc họp xuất bản biên bản.',
+        items_piling: 'Việc còn mở dồn lại: {latest, number} ở cuộc họp gần nhất và {previous, number} ở cuộc trước đó.',
+      },
+    },
     digest: {
       title: 'Tuần này trong các cuộc họp của bạn',
       description: 'Những gì đã chốt và việc còn dở, theo từng cuộc họp.',
@@ -4501,6 +4533,7 @@ export const vi = {
       digest: 'Tuần này',
       ask: 'Hỏi Vy',
       search: 'Tìm nội dung',
+      load: 'Thời gian họp',
     },
     filters: {
       button: 'Lọc',
