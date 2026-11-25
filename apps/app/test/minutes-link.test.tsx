@@ -203,10 +203,10 @@ describe('the panel on the meeting page', () => {
   }
 
   it('shows to the recorder with published minutes, and to no one else, and not before anything is published', () => {
-    expect(results({ meetingId: 'm1', isRecorder: true, draft: null, published: publishedView, items: [] })).toContain('data-testid="minutes-link"');
-    expect(results({ meetingId: 'm1', isRecorder: false, draft: null, published: publishedView, items: [] })).not.toContain('data-testid="minutes-link"');
-    expect(results({ meetingId: 'm1', isRecorder: true, draft: draftView, published: null, items: [] })).not.toContain('data-testid="minutes-link"');
-    expect(results({ meetingId: 'm1', isRecorder: true, draft: null, published: null, items: [] })).not.toContain('data-testid="minutes-link"');
+    expect(results({ meetingId: 'm1', transcriptDraft: 0, transcriptUnread: 0, transcriptUnreadKey: '', isRecorder: true, draft: null, published: publishedView, items: [] })).toContain('data-testid="minutes-link"');
+    expect(results({ meetingId: 'm1', transcriptDraft: 0, transcriptUnread: 0, transcriptUnreadKey: '', isRecorder: false, draft: null, published: publishedView, items: [] })).not.toContain('data-testid="minutes-link"');
+    expect(results({ meetingId: 'm1', transcriptDraft: 0, transcriptUnread: 0, transcriptUnreadKey: '', isRecorder: true, draft: draftView, published: null, items: [] })).not.toContain('data-testid="minutes-link"');
+    expect(results({ meetingId: 'm1', transcriptDraft: 0, transcriptUnread: 0, transcriptUnreadKey: '', isRecorder: true, draft: null, published: null, items: [] })).not.toContain('data-testid="minutes-link"');
   });
 });
 
