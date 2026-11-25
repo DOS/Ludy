@@ -2,7 +2,7 @@
 // The Microsoft Outlook calendar adapter against recorded-shape answers (Microsoft identity platform and Graph; no live call): the connect dialog, the token exchange and its refusals (the
 // admin-consent one in particular), the rotating refresh token, the busy times, the events the app keeps (no description, attachment or invitee address), and what the adapter never asks for.
 import { describe, expect, it } from 'vitest';
-import { ConnectorError, MICROSOFT_CALENDAR_READ_SCOPE, MicrosoftCalendarAdapter, agendaEventOfGraph, aadstsOf, grantedScopesOf, idTokenClaims, microsoftCalendarSecretOf, needsAdminConsent, type Fetch } from '../src/index.ts';
+import { ConnectorError, MICROSOFT_CALENDAR_READ_SCOPE, MicrosoftCalendarAdapter, agendaEventOfGraph, aadstsOf, grantedScopesOf, idTokenClaims, joinUrlFromLocation, microsoftCalendarSecretOf, needsAdminConsent, type Fetch } from '../src/index.ts';
 
 const APP = { clientId: '00000000-0000-4000-8000-000000000001', clientSecret: 'test-microsoft-secret-not-real' };
 const SECRET = JSON.stringify({ accessToken: 'eyJ.access-1', refreshToken: 'M.refresh-1' });
@@ -200,9 +200,9 @@ describe('MicrosoftCalendarAdapter, events', () => {
     expect(calls[0]?.auth).toBe('Bearer eyJ.access-1');
     expect(calls[0]?.prefer).toContain('outlook.timezone="UTC"');
     const select = calls[0]?.url.searchParams.get('$select') ?? '';
-    // No body, location, organizer, attachment or extended property is asked for.
-    expect(select.split(',').sort()).toEqual(['attendees', 'end', 'id', 'isAllDay', 'isCancelled', 'onlineMeeting', 'responseStatus', 'seriesMasterId', 'start', 'subject']);
-    expect(select).not.toMatch(/body|location|organizer|attachments|extensions|bodyPreview/);
+    // `location` is selected solely to extract allowlisted Zoom, Meet or Teams join URLs in memory; no body, bodyPreview, organizer, attachment or extended property is asked for.
+    expect(select.split(',').sort()).toEqual(['attendees', 'end', 'id', 'isAllDay', 'isCancelled', 'location', 'onlineMeeting', 'responseStatus', 'seriesMasterId', 'start', 'subject']);
+    expect(select).not.toMatch(/body|organizer|attachments|extensions|bodyPreview/);
     expect(calls[0]?.url.searchParams.get('startDateTime')).toBe('2026-11-13T03:00:00.000Z');
     expect(calls[0]?.url.searchParams.get('endDateTime')).toBe('2026-11-21T03:00:00.000Z');
     // The token is in the header, never the address.
@@ -218,11 +218,73 @@ describe('MicrosoftCalendarAdapter, events', () => {
     expect('events' in answer && answer.events[0]?.invitees).toBe(3);
   });
 
-  it('keeps no invitee address, description or attachment in what it returns', async () => {
+  it('keeps no invitee address, description, raw location or attachment in what it returns', async () => {
     const event = graphEvent({ body: { content: 'PRIVATE DESCRIPTION', contentType: 'text' }, bodyPreview: 'PRIVATE', hasAttachments: true, attachments: [{ name: 'secret.pdf' }], location: { displayName: 'Phòng họp kín' } });
     const kept = JSON.stringify(agendaEventOfGraph(event));
     expect(kept).not.toMatch(/PRIVATE|secret\.pdf|khach@|dong\.nghiep@|congty\.example|kín/);
     expect(Object.keys(agendaEventOfGraph(event) ?? {}).sort()).toEqual(['endsAt', 'id', 'invitees', 'joinUrl', 'series', 'startsAt', 'timeZone', 'title']);
+    const withoutOnlineMeeting = agendaEventOfGraph({ ...event, onlineMeeting: null });
+    expect(withoutOnlineMeeting?.joinUrl).toBeNull();
+    expect(JSON.stringify(withoutOnlineMeeting)).not.toMatch(/Phòng họp kín|kín/);
+  });
+
+  it('extracts Zoom, Google Meet or Teams join links from location.displayName when onlineMeeting.joinUrl is missing, and gives onlineMeeting.joinUrl precedence (#3267)', async () => {
+    // onlineMeeting.joinUrl wins over location.displayName when both are valid.
+    const both = agendaEventOfGraph(graphEvent({ location: { displayName: 'https://meet.google.com/abc-defg-hij' } }));
+    expect(both?.joinUrl).toBe('https://teams.microsoft.com/l/meetup-join/19%3ameeting_abc/0?context=%7b%7d');
+
+    // When onlineMeeting is absent, null, or holds a non-allowlisted host, location.displayName is checked.
+    expect(agendaEventOfGraph(graphEvent({ onlineMeeting: null, location: { displayName: 'https://us02web.zoom.us/j/123456' } }))?.joinUrl).toBe('https://us02web.zoom.us/j/123456');
+    expect(agendaEventOfGraph(graphEvent({ onlineMeeting: undefined, location: { displayName: 'https://meet.google.com/abc-defg-hij' } }))?.joinUrl).toBe('https://meet.google.com/abc-defg-hij');
+    expect(agendaEventOfGraph(graphEvent({ onlineMeeting: { joinUrl: 'https://evil.example/fake' }, location: { displayName: 'https://teams.live.com/meet/938475612' } }))?.joinUrl).toBe('https://teams.live.com/meet/938475612');
+
+    // End-to-end through adapter.events() without leaking room text.
+    const { fetchImpl } = microsoft({
+      [VIEW]: [{ body: { value: [graphEvent({ onlineMeeting: null, location: { displayName: 'Phòng họp A - https://meet.google.com/abc-defg-hij' } })] } }],
+    });
+    const answer = await new MicrosoftCalendarAdapter(APP, fetchImpl).events(SECRET, new Date('2026-11-13T03:00:00Z'), new Date('2026-11-21T03:00:00Z'));
+    expect('events' in answer && answer.events[0]?.joinUrl).toBe('https://meet.google.com/abc-defg-hij');
+    expect(JSON.stringify(answer)).not.toContain('Phòng họp A');
+  });
+
+  it('extracts clean allowlisted join URLs from location.displayName and drops raw text, http links and non-allowlisted hosts (#3267)', () => {
+    // Bare URLs (including surrounding whitespace and case-insensitive scheme).
+    expect(joinUrlFromLocation({ displayName: '  https://zoom.us/j/987654321?pwd=abc  ' })).toBe('https://zoom.us/j/987654321?pwd=abc');
+    expect(joinUrlFromLocation({ displayName: 'https://us02web.zoom.us/j/123456' })).toBe('https://us02web.zoom.us/j/123456');
+    expect(joinUrlFromLocation({ displayName: 'https://meet.google.com/abc-defg-hij' })).toBe('https://meet.google.com/abc-defg-hij');
+    expect(joinUrlFromLocation({ displayName: 'HTTPS://MEET.GOOGLE.COM/abc-defg-hij' })).toBe('https://meet.google.com/abc-defg-hij');
+    expect(joinUrlFromLocation({ displayName: 'https://teams.microsoft.com/l/meetup-join/19%3ameeting_abc/0?context=%7b%7d' })).toBe('https://teams.microsoft.com/l/meetup-join/19%3ameeting_abc/0?context=%7b%7d');
+
+    // Mixed text and punctuation wrappers strip trailing punctuation and never keep surrounding room names or addresses.
+    expect(joinUrlFromLocation({ displayName: 'Phòng họp A - https://meet.google.com/abc-defg-hij' })).toBe('https://meet.google.com/abc-defg-hij');
+    expect(joinUrlFromLocation({ displayName: '(https://us02web.zoom.us/j/123456)' })).toBe('https://us02web.zoom.us/j/123456');
+    expect(joinUrlFromLocation({ displayName: '<https://meet.google.com/abc-defg-hij>,' })).toBe('https://meet.google.com/abc-defg-hij');
+    expect(joinUrlFromLocation({ displayName: '[https://us02web.zoom.us/j/123456];' })).toBe('https://us02web.zoom.us/j/123456');
+    expect(joinUrlFromLocation({ displayName: '"https://meet.google.com/abc-defg-hij".' })).toBe('https://meet.google.com/abc-defg-hij');
+    expect(joinUrlFromLocation({ displayName: "'https://meet.google.com/abc-defg-hij'" })).toBe('https://meet.google.com/abc-defg-hij');
+    expect(joinUrlFromLocation({ displayName: 'https://meet.google.com/abc-defg-hij (Tầng 3, 123 Nguyễn Huệ)' })).toBe('https://meet.google.com/abc-defg-hij');
+    expect(joinUrlFromLocation({ displayName: 'Phòng họp A; https://us02web.zoom.us/j/123456' })).toBe('https://us02web.zoom.us/j/123456');
+    expect(joinUrlFromLocation({ displayName: 'https://meet.google.com/abc-defg-hij\tRoom A' })).toBe('https://meet.google.com/abc-defg-hij');
+    expect(joinUrlFromLocation({ displayName: 'https://meet.google.com/abc-defg-hij\u0000Room A' })).toBe('https://meet.google.com/abc-defg-hij');
+    expect(joinUrlFromLocation({ displayName: 'https://evil.example.com/room https://meet.google.com/abc-defg-hij https://zoom.us/j/999' })).toBe('https://meet.google.com/abc-defg-hij');
+
+    // Plain addresses, http:// links, embedded credentials, non-allowlisted hosts, and other location fields return null.
+    expect(joinUrlFromLocation({ displayName: 'Tầng 3, 123 Nguyễn Huệ' })).toBeNull();
+    expect(joinUrlFromLocation({ displayName: 'http://meet.google.com/abc-defg-hij' })).toBeNull();
+    expect(joinUrlFromLocation({ displayName: 'http://us02web.zoom.us/j/123456' })).toBeNull();
+    expect(joinUrlFromLocation({ displayName: 'https://evil.example.com/meet.google.com/abc-defg-hij' })).toBeNull();
+    expect(joinUrlFromLocation({ displayName: 'https://evil.example.com/?next=https://meet.google.com/abc-defg-hij' })).toBeNull();
+    expect(joinUrlFromLocation({ displayName: 'https://user:pass@zoom.us/j/123456' })).toBeNull();
+    expect(joinUrlFromLocation({ displayName: 'https://zoom.us.evil.example/j/123456' })).toBeNull();
+    expect(joinUrlFromLocation({ locationUri: 'https://meet.google.com/abc-defg-hij' })).toBeNull();
+    expect(joinUrlFromLocation({ address: { street: 'https://meet.google.com/abc-defg-hij' } })).toBeNull();
+    expect(joinUrlFromLocation({ displayName: '' })).toBeNull();
+    expect(joinUrlFromLocation({ displayName: '   ' })).toBeNull();
+    expect(joinUrlFromLocation({ displayName: 123 })).toBeNull();
+    expect(joinUrlFromLocation(null)).toBeNull();
+    expect(joinUrlFromLocation(undefined)).toBeNull();
+    expect(joinUrlFromLocation('https://meet.google.com/abc-defg-hij')).toBeNull();
+    expect(joinUrlFromLocation(['https://meet.google.com/abc-defg-hij'])).toBeNull();
   });
 
   it('drops all-day, cancelled and declined events and ones without a usable time, and a join address that is not Teams, Zoom or Meet', () => {
@@ -308,9 +370,9 @@ describe('MicrosoftCalendarAdapter, busy times', () => {
         { start: '2026-11-14T10:00:00.000Z', end: '2026-11-14T11:00:00.000Z' },
       ],
     });
-    // The busy read never asks for a title, an attendee or a join address.
+    // The busy read never asks for a title, a location, an attendee or a join address.
     expect((calls[0]?.url.searchParams.get('$select') ?? '').split(',').sort()).toEqual(['end', 'isCancelled', 'showAs', 'start']);
-    expect(calls[0]?.url.search).not.toMatch(/subject|attendees|onlineMeeting|body|organizer/);
+    expect(calls[0]?.url.search).not.toMatch(/subject|attendees|onlineMeeting|location|body|organizer/);
   });
 
   it('fails, rather than answer a shorter list, when Graph points to a next page it will not be followed to', async () => {
