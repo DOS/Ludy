@@ -16,7 +16,7 @@ The code ships switched off and nothing here turns anything on in production. Th
 5. **Set the two settings** on the API **and** the worker (the worker needs them to renew tokens): `MEETINGS_GOOGLE_CLIENT_ID` and `MEETINGS_GOOGLE_CLIENT_SECRET`. Set both or neither; the server refuses to start with one. `CREDENTIAL_KEY` must be set too ([credential-key.md](credential-key.md)), or the connect button stays hidden.
 6. **Test with one real account**: a Google Workspace account whose meetings are transcribed. Organize a short Meet, turn on "Transcribe the meeting", end it, wait for Google to finish the transcript (a few minutes), connect in Settings, import, and read the result against what was said. Write what differs on [#3174](https://github.com/DOS/Ludy/issues/3174).
 
-The audio path (the recording file in the organizer's Drive, a **restricted** scope) is deliberately not built and has no setting.
+The audio path does not use a restricted scope. The owner chose the **Picker route** (2026-11-25, [ADR-0025 amendment](../adr/0025-channel-layer.md)): the member picks one recording in Google Picker (`drive.file`, non-sensitive) and Ludy reads only that file. Step 1, the adapter, is built and has no setting yet (`recordings` is off in the registry and nothing sets it): with it on, the adapter would also list the recording of a conference that has no transcript and read the picked file from Drive with the server's own token. The data and the pick command, the connect's `drive.file` grant and the app step come in later PRs; until the live run of #3177 confirms that a picked Meet recording can be read this way, none of it is switched on.
 
 ## What a member sees
 
@@ -47,5 +47,5 @@ The audio path (the recording file in the organizer's Drive, a **restricted** sc
 
 ## What is not built
 
-- The **audio path**: the recording file in the organizer's Drive needs `drive.meet.readonly`, a restricted scope (C-OA1, [#3177](https://github.com/DOS/Ludy/issues/3177)); there is no setting for it.
+- The **audio path**: the Picker route (see above) is being built in steps and is off; the restricted Drive scopes (`drive.readonly`, `drive.meet.readonly`) are never used (C-OA1, [#3177](https://github.com/DOS/Ludy/issues/3177)).
 - Google's push notification that a transcript is ready (Workspace Events); until then the listing runs about every 10 minutes and the member's "Refresh" button asks for one at the next pass.

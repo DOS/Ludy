@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Google Meet as a meeting platform (meetings integrations C2, issue #3174, plan docs/plan/meetings-integrations.md section 6.1): the TRANSCRIPT-ONLY half. The Meet REST API serves the text of a
 // conference's own transcript (`conferenceRecords.transcripts.entries`) with the sensitive scope `meetings.space.readonly`, so this adapter needs no Drive scope and no security assessment. The audio
-// path (the recording file in the organizer's Drive, `drive.meet.readonly`, a restricted scope) is NOT written here: the owner has not decided C-OA1 (#3177).
+// path (the recording file in the organizer's Drive) is not read with a restricted scope: the owner chose the Picker route (2026-11-25, ADR-0025 amendment). It is built here behind `recordings`, which nothing sets yet:
+// the member picks one recording in Google Picker (`drive.file`) and the server then reads only that file. Without `recordings` this adapter is transcript only, as before.
 //
 // Everything the adapter says about a transcript is GOOGLE's transcription, never Ludy's: the result carries `source: 'google_meet'` so the data and the screen can say so.
 //
@@ -20,6 +21,14 @@ export const GOOGLE_MEET_SPACE_READ_SCOPE = 'https://www.googleapis.com/auth/mee
 // What the connect dialog asks for: who the account is (`openid`, `email`) and the Meet transcript read. No Drive scope, no calendar scope: the recording file is not read (C-OA1, #3177).
 export const GOOGLE_MEET_AUTH_SCOPES = ['openid', 'email', GOOGLE_MEET_SPACE_READ_SCOPE] as const;
 
+// The scope of the Picker route (non-sensitive): the member gives this app access to the one recording file they pick in Google Picker, and the server's token then reads that file. Not part of
+// GOOGLE_MEET_AUTH_SCOPES until the connect asks for it (the pick-command step); the restricted Drive scopes (`drive.readonly`, `drive.meet.readonly`) are never used.
+export const GOOGLE_MEET_DRIVE_FILE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
+// Where a picked recording is downloaded from: the Drive API's media endpoint, the first host only (the bearer token goes there and nowhere else). A redirect may land on Google's content hosts; whether it
+// does is [unverified] until a live run (ADR-0025 amendment), and the guard never sends the token to a redirect target.
+export const GOOGLE_DRIVE_DOWNLOAD_HOST = 'www.googleapis.com';
+export const GOOGLE_DRIVE_REDIRECT_SUFFIX = 'googleusercontent.com';
+
 const API = 'https://meet.googleapis.com/v2';
 // Pages of conference records read per listing (100 each): the newest 300 conferences in the window are looked at, and at most MEETING_PLATFORM_LIST_MAX with a finished transcript are returned.
 const RECORD_PAGES = 3;
@@ -32,6 +41,9 @@ const NAME_MAX = 100;
 // Meet limits a conference to 24 hours: a line stamped later than that is bad data and is clamped, so no number downstream is enormous.
 const SECONDS_MAX = 24 * 3600;
 const SPACE_NAME = /^spaces\/[A-Za-z0-9_-]{1,128}$/;
+const RECORDING_NAME = /^conferenceRecords\/([A-Za-z0-9_-]{1,128})\/recordings\/([A-Za-z0-9_-]{1,128})$/;
+// A Drive file id: letters, digits, `-` and `_` (a longer or odd one is not a file id and never goes into a URL).
+const DRIVE_FILE_ID = /^[A-Za-z0-9_-]{10,128}$/;
 const TRANSCRIPT_NAME = /^conferenceRecords\/([A-Za-z0-9_-]{1,128})\/transcripts\/([A-Za-z0-9_-]{1,128})$/;
 // oxlint-disable-next-line no-control-regex
 const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g;
@@ -54,6 +66,9 @@ export interface GoogleMeetOptions {
   // The client of the connect dialog and the code exchange. Without it the adapter only reads conferences (a test of the reads); the registry always gives it.
   app?: GoogleMeetAppConfig | undefined;
   now?: (() => Date) | undefined;
+  // The Picker route (#3174, ADR-0025 amendment): offer the recording of a conference that has no transcript, and read a picked recording from Drive. Off unless the registry turns it on, so the listing and the
+  // download of an adapter made without it are exactly the transcript-only ones.
+  recordings?: boolean | undefined;
 }
 
 type Json = Record<string, unknown>;
@@ -85,6 +100,7 @@ export class GoogleMeetAdapter implements MeetingPlatformAdapter, MeetingPlatfor
   private readonly refresher: GoogleTokenRefresher;
   private readonly app: GoogleMeetAppConfig | undefined;
   private readonly now: () => Date;
+  private readonly recordings: boolean;
 
   constructor(options: GoogleMeetOptions) {
     this.fetch = allowlistedFetch(GOOGLE_MEET_HOSTS, options.fetch);
@@ -92,6 +108,7 @@ export class GoogleMeetAdapter implements MeetingPlatformAdapter, MeetingPlatfor
     this.refresher = options.refresher;
     this.app = options.app;
     this.now = options.now ?? (() => new Date());
+    this.recordings = options.recordings === true;
   }
 
   private requireApp(): GoogleMeetAppConfig {
@@ -254,17 +271,20 @@ export class GoogleMeetAdapter implements MeetingPlatformAdapter, MeetingPlatfor
         if (body === null) continue;
         const done = (Array.isArray(body.transcripts) ? body.transcripts : []).map(object).find((t) => t !== null && t.state === 'FILE_GENERATED' && TRANSCRIPT_NAME.test(text(t.name) ?? '') && (text(t.name) ?? '').startsWith(`${record.name}/transcripts/`));
         const name = text(done?.name);
-        if (name === null) continue;
+        // A conference with a finished transcript is offered as its transcript (free, nothing to pick). Only one without it may be offered as its recording file, when the Picker route is on.
+        const recording = name === null && this.recordings ? await this.recordingOf(record.name, credential, signal) : null;
+        const offered = name ?? recording?.name ?? null;
+        if (offered === null) continue;
         const call = record.space === null ? null : await spaceCall(record.space);
         found[index] = {
-          id: name,
+          id: offered,
           title: 'Google Meet',
           startedAt: new Date(record.start).toISOString(),
           lengthSeconds: Math.round((record.end - record.start) / 1000),
           sizeBytes: null,
           hasAudio: false,
-          hasVideo: false,
-          hasTranscript: true,
+          hasVideo: name === null,
+          hasTranscript: name !== null,
           ...(call ? { call } : {}),
         };
       }
@@ -273,9 +293,50 @@ export class GoogleMeetAdapter implements MeetingPlatformAdapter, MeetingPlatfor
     return found.filter((x): x is MeetingPlatformListed => x !== null).slice(0, MEETING_PLATFORM_LIST_MAX);
   }
 
-  // The audio path is deliberately not built (C-OA1, #3177): the recording file needs a restricted Drive scope.
-  async prepareDownload(_credential: MeetingPlatformCredential, _recordingId: string, _format: MeetingPlatformFormat, _signal?: AbortSignal): Promise<MeetingPlatformDownload> {
-    throw new MeetingPlatformError('platform_refused', 'Google Meet offers the transcript only');
+  // The finished recording of a conference and the Drive file it was written to, or null when there is none (or Google no longer shows the conference). `driveDestination.file` is the Drive file id;
+  // a state other than FILE_GENERATED has no file yet. A file id that is not one is dropped, so nothing odd is ever put into a URL.
+  private async recordingOf(conference: string, credential: MeetingPlatformCredential, signal?: AbortSignal): Promise<{ name: string; fileId: string } | null> {
+    const body = await this.get(`${conference}/recordings`, { pageSize: '10' }, credential, signal, true);
+    if (body === null) return null;
+    for (const item of Array.isArray(body.recordings) ? body.recordings : []) {
+      const recording = object(item);
+      const name = text(recording?.name);
+      const fileId = text(object(recording?.driveDestination)?.file);
+      if (recording?.state !== 'FILE_GENERATED' || name === null || fileId === null) continue;
+      if (!RECORDING_NAME.test(name) || !name.startsWith(`${conference}/recordings/`) || !DRIVE_FILE_ID.test(fileId)) continue;
+      return { name, fileId };
+    }
+    return null;
+  }
+
+  // The Drive file id Meet gave for one listed recording, asked of Meet now (never trusted from the client): the pick command compares the member's pick with it, so a member cannot make the server read a Drive file
+  // of their own choice. Null when the recording is gone, not finished, or the Picker route is off.
+  async recordingFile(credential: MeetingPlatformCredential, recordingId: string, signal?: AbortSignal): Promise<{ fileId: string } | null> {
+    if (!this.recordings) return null;
+    const match = RECORDING_NAME.exec(recordingId);
+    if (!match) return null;
+    const found = await this.recordingOf(`conferenceRecords/${match[1]}`, credential, signal);
+    return found !== null && found.name === recordingId ? { fileId: found.fileId } : null;
+  }
+
+  // The recording file of a conference, read from Drive with the server's own token: only the file Meet named for this recording (the member picked it in Google Picker, which is what lets `drive.file` read it).
+  // It is a video, so the job takes its audio out in crove-media (C2a). The bearer goes to the first host only. Without the Picker route, or for a transcript, there is nothing to download here.
+  async prepareDownload(credential: MeetingPlatformCredential, recordingId: string, format: MeetingPlatformFormat, signal?: AbortSignal): Promise<MeetingPlatformDownload> {
+    if (!this.recordings) throw new MeetingPlatformError('platform_refused', 'Google Meet offers the transcript only');
+    if (!RECORDING_NAME.test(recordingId)) throw new MeetingPlatformError('platform_refused', 'not a recording of Google Meet');
+    // A Meet recording is one video file: there is no audio file to fetch.
+    if (format === 'audio') throw new MeetingPlatformError('no_audio', 'a Google Meet recording is a video file');
+    const file = await this.recordingFile(credential, recordingId, signal);
+    if (file === null) throw new MeetingPlatformError('recording_gone', 'Google has no finished recording file for this');
+    return {
+      url: `https://${GOOGLE_DRIVE_DOWNLOAD_HOST}/drive/v3/files/${encodeURIComponent(file.fileId)}?alt=media`,
+      headers: { authorization: `Bearer ${credential.accessToken}` },
+      format: 'video',
+      contentType: 'video/mp4',
+      sizeBytes: null,
+      hosts: [GOOGLE_DRIVE_DOWNLOAD_HOST],
+      hostSuffixes: [GOOGLE_DRIVE_REDIRECT_SUFFIX],
+    };
   }
 
   // Google's transcript of one conference: its lines, in order, with the speakers' names where Google gives them. Times are seconds from the start of the conference.
