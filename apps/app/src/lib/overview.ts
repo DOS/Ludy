@@ -84,6 +84,8 @@ export function appsLayout<Id extends string>(apps: readonly { id: Id; figures: 
 
 export type QuickStartStepId =
   | 'uploadInvoice'
+  | 'vatPeriod'
+  | 'twoFactor'
   | 'connectChannel'
   | 'addContact'
   | 'createEnvelope'
@@ -95,6 +97,8 @@ export type QuickStartStepId =
 
 export type QuickStartTarget =
   | '/o/$slug/inbox'
+  | '/o/$slug/settings'
+  | '/o/$slug/settings/security'
   | '/o/$slug/social/channels'
   | '/o/$slug/contacts'
   | '/o/$slug/sign/envelopes'
@@ -107,16 +111,23 @@ export type QuickStartTarget =
 export interface QuickStartStep {
   readonly id: QuickStartStepId;
   readonly to: QuickStartTarget;
+  // A section of the target page (the tax profile in Settings).
+  readonly hash?: string;
   readonly icon: NavIconName;
 }
 
-// Builds up to 3 Day-1 SME quick-start steps filtered strictly to enabled org modules and the caller's role (#4644).
+// Builds up to 3 Day-1 SME quick-start steps filtered strictly to enabled org modules and the caller's role (#4644). With the accounting app on
+// the path is the one of the benchmark (docs/research/smb-suite-navigation-benchmark-2026-11.md L3, #4783): the first invoice, the VAT filing
+// period (owners and admins, until one is chosen) and two-factor sign-in; nothing in it is setup for its own sake.
 export function quickStartSteps({
   modules,
   role,
+  vatChosen = false,
 }: {
   modules: readonly string[];
   role: 'owner' | 'admin' | 'member' | 'viewer' | undefined;
+  // The org already has a VAT filing period, so that step is done.
+  vatChosen?: boolean;
 }): QuickStartStep[] {
   if (!role || role === 'viewer') return [];
   const has = (m: string) => modules.includes(m);
@@ -127,6 +138,13 @@ export function quickStartSteps({
       steps.push(step);
     }
   };
+
+  if (has('finance')) {
+    add({ id: 'uploadInvoice', to: '/o/$slug/inbox', icon: 'documents' });
+    if (canManage && !vatChosen) add({ id: 'vatPeriod', to: '/o/$slug/settings', hash: 'tax-profile', icon: 'vat' });
+    add({ id: 'twoFactor', to: '/o/$slug/settings/security', icon: 'settingsSecurity' });
+    if (steps.length >= 3) return steps;
+  }
 
   // Step 1: First concrete value action from the primary enabled business app.
   // Connecting social channels requires owner/admin permission, so members skip channel setup.
