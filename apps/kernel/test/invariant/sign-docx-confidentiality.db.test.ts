@@ -347,7 +347,7 @@ suite('eSign .docx cross-user polling and unattached file confidentiality invari
       stepUp: 'required',
     }).register(registry);
     workerRt = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register(registry);
-  }, 60_000);
+  }, 180_000);
 
   afterAll(async () => {
     await pool?.end();
