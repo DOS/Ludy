@@ -220,4 +220,27 @@ suite('ludy_meetings.search_segment_ids reads the first page early and answers w
     // Granted to its owner and ludy_tenant, and to nobody else (the reference function keeps the default grant to PUBLIC, which is why its ACL is not compared).
     expect(acl?.acl).toMatch(/^\{[a-z_]+=X\/[a-z_]+,ludy_tenant=X\/[a-z_]+\}$/);
   });
+  // #4940: the recorder is shown one stage of a meeting (their working draft while a draft line exists in it, else the published lines), in the old way of the fallback too. The meeting below holds
+  // published lines and a newer draft line, and is older than the 40 readable meetings the early way visits, so its rare words are answered only by the fallback.
+  it('shows the recorder one stage of a meeting in the fallback too, and a reader the published lines, for a meeting that holds both', async () => {
+    const [mixed] = await meetings(1, 'recorder', 'attendees', ['reader'], () => '2020-01-01T03:00:00Z', () => ['Xuất khẩu cà phê sang Nhật', 'Điều khoản thanh toán riêng']);
+    const draft = (
+      await sqlAdmin<{ id: string }>(
+        `INSERT INTO ludy_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, 10, 11, 'Hà', 'Xuất khẩu bản nháp sửa lại', 'draft') RETURNING id`,
+        [orgId, mixed],
+      )
+    ).rows[0]?.id as string;
+    const published = (await sqlAdmin<{ id: string; text: string }>(`SELECT id, text FROM ludy_meetings.transcript_segment WHERE org_id = $1 AND meeting_id = $2 AND stage = 'published' ORDER BY start_seconds`, [orgId, mixed])).rows;
+    const exportLine = published.find((r) => r.text.startsWith('Xuất khẩu'))?.id as string;
+    const paymentLine = published.find((r) => r.text.startsWith('Điều khoản'))?.id as string;
+    // The word is rare: more than 40 readable meetings are newer, so no page fills early and the old way answers.
+    expect(await asUser('recorder', (c) => ids(c, 'search_segment_ids', 'xuất khẩu', 21, 0))).toEqual([draft]);
+    expect(await asUser('reader', (c) => ids(c, 'search_segment_ids', 'xuất khẩu', 21, 0))).toEqual([exportLine]);
+    // A word only the published lines hold: the recorder looks at their working draft, which does not, so nothing; the reader finds it.
+    expect(await asUser('recorder', (c) => ids(c, 'search_segment_ids', 'thanh toán', 21, 0))).toEqual([]);
+    expect(await asUser('reader', (c) => ids(c, 'search_segment_ids', 'thanh toán', 21, 0))).toEqual([paymentLine]);
+    // Nobody else reads the meeting: the owner and an admin who are no readers find nothing of it.
+    expect(await asUser('owner', (c) => ids(c, 'search_segment_ids', 'xuất khẩu', 21, 0))).toEqual([]);
+    expect(await asUser('admin', (c) => ids(c, 'search_segment_ids', 'xuất khẩu', 21, 0))).toEqual([]);
+  }, 60_000);
 });
