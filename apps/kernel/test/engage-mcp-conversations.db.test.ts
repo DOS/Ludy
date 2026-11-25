@@ -184,7 +184,12 @@ suite('the Hộp thư MCP reads (#3860)', () => {
     expect(listed.conversations.map((c) => c.id)).toEqual(['a1c', 'a1d', 'a1e', 'a2c', 'a2d'].map((k) => conv[k]));
     expect(listed.more).toBe(false);
     expect(listed.next).toBeNull();
-    expect(JSON.stringify(listed)).not.toContain('b1c');
+    const listedJson = JSON.stringify(listed);
+    expect(listedJson).not.toContain(conv.b1c as string);
+    expect(listedJson).not.toContain('t-b1c');
+    expect(listedJson).not.toContain('u-b1c-12345678');
+    expect(listedJson).not.toContain(`${CANARY} b1c`);
+    expect(listedJson).not.toContain(' b1c');
     expect(keysOf(listed)).not.toContain('b1c');
     // An admin's company grant reads the same.
     expect((await list('admin', 'company')).conversations).toHaveLength(5);

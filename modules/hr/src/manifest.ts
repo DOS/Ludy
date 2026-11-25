@@ -28,6 +28,19 @@ export const hrManifest = defineModule({
         ['org_id', 'id', 'legal_entity_id', 'opening_id', 'stage', 'source', 'years_experience', 'matched_skills', 'planned_start_on', 'interview_event_id', 'interview_starts_at', 'interview_ends_at', 'hired_employee_id', 'hired_at', 'erased_at', 'created_by', 'created_at', 'updated_at'],
         { display_name: 'pii', email: 'contact', phone: 'contact', notes: 'pii', expected_wage: 'sensitive', agreed_wage: 'sensitive' },
       ),
+      // Append-only stage-entry transition history for recruiting funnel BI (#4487): internal IDs and stage codes only, readable by owners and admins only.
+      candidate_stage_transition: columns([
+        'org_id',
+        'id',
+        'seq',
+        'legal_entity_id',
+        'candidate_id',
+        'from_stage',
+        'to_stage',
+        'occurred_at',
+        'created_by',
+        'created_at',
+      ]),
       // Labor contract addendums (#4528 Stage 6C): owners/admins only; wage deltas are sensitive, free-text summaries/titles are PII.
       contract_addendum: columns(
         ['org_id', 'id', 'legal_entity_id', 'employee_id', 'employment_id', 'addendum_number', 'effective_on', 'status', 'issued_at', 'voided_at', 'created_by', 'created_at', 'updated_at'],
