@@ -90,7 +90,17 @@ const videoOf = (files: ZoomFile[]) => {
   return kind ? only(mp4s.filter((f) => text(f.recording_type) === kind)) : only(mp4s);
 };
 const isTranscript = (f: ZoomFile) => text(f.recording_type) === 'audio_transcript' || text(f.file_type).toUpperCase() === 'TRANSCRIPT';
-const transcriptOf = (files: ZoomFile[]) => completed(files).find(isTranscript);
+// The one finished transcript file, or undefined: two of them are two parts of one call, and half a transcript is not offered as a whole.
+const transcriptOf = (files: ZoomFile[]) => only(completed(files).filter(isTranscript));
+// A kind of audio or video file that Zoom made in several segments (the host stopped and started the recording). Such a recording has more of the call than any one file, so it is never offered by its transcript alone.
+const segmented = (files: ZoomFile[]) => {
+  const counts = new Map<string, number>();
+  for (const f of completed(files)) {
+    if (isTranscript(f) || !['MP4', 'M4A'].includes(text(f.file_type).toUpperCase())) continue;
+    counts.set(text(f.recording_type), (counts.get(text(f.recording_type)) ?? 0) + 1);
+  }
+  return [...counts.values()].some((n) => n > 1);
+};
 const sizeOf = (file: ZoomFile | undefined): number => (file && typeof file.file_size === 'number' && Number.isFinite(file.file_size) && file.file_size > 0 ? Math.floor(file.file_size) : 0);
 
 /**
@@ -134,6 +144,8 @@ function listedOf(meeting: Record<string, unknown>): MeetingPlatformListed | nul
   const video = videoOf(files);
   const transcript = transcriptOf(files);
   if (!audio && !video && !transcript) return null;
+  // Segments of the call's audio or video that cannot be joined yet (a later step) are not made up for by a transcript of one part of it, or of the whole: the recording waits for the join.
+  if (!audio && !video && segmented(files)) return null;
   const minutes = Number(meeting.duration);
   // The size of the file the job will fetch (audio when there is one, else the video), not of every file: the job refuses a declared size over its cap before any call.
   const size = audio ? sizeOf(audio) : sizeOf(video);

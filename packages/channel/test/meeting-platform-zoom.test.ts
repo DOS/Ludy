@@ -392,6 +392,20 @@ describe('ZoomMeetingPlatform connect (authorizeUrl and exchange)', () => {
   });
 });
 
+describe('a recording made in several segments is not offered by its transcript', () => {
+  const f = (id: string, type: string, kind: string) => ({ id, file_type: kind, file_extension: kind, file_size: 10, recording_type: type, status: 'completed', download_url: `https://us02web.zoom.us/rec/download/${id}` });
+  const one = async (files: unknown[]) => (await zoom([{ json: { meetings: [{ uuid: 'U', id: 1, start_time: '2026-11-17T02:00:00Z', duration: 5, recording_files: files }] } }]).adapter.list(CREDENTIAL, SINCE))[0];
+
+  it('lists neither two audio parts nor two video parts with a transcript as a transcript-only recording, and still lists a whole recording and a single transcript', async () => {
+    expect(await one([f('a1', 'audio_only', 'M4A'), f('a2', 'audio_only', 'M4A'), f('t', 'audio_transcript', 'TRANSCRIPT')])).toBeUndefined();
+    expect(await one([f('v1', 'active_speaker', 'MP4'), f('v2', 'active_speaker', 'MP4'), f('t', 'audio_transcript', 'TRANSCRIPT')])).toBeUndefined();
+    expect(await one([f('t', 'audio_transcript', 'TRANSCRIPT')])).toMatchObject({ hasAudio: false, hasVideo: false, hasTranscript: true });
+    expect(await one([f('a', 'audio_only', 'M4A'), f('t', 'audio_transcript', 'TRANSCRIPT')])).toMatchObject({ hasAudio: true, hasTranscript: true });
+    // Two transcript parts are not one transcript: nothing is offered by them.
+    expect(await one([f('t1', 'audio_transcript', 'TRANSCRIPT'), f('t2', 'audio_transcript', 'TRANSCRIPT')])).toBeUndefined();
+  });
+});
+
 describe('Zoom\'s transcript file', () => {
   const VTT = readFileSync(new URL('./fixtures/zoom/transcript.vtt', import.meta.url), 'utf8');
   const file = (over: Record<string, unknown> = {}) => ({ id: 'f-vtt', file_type: 'TRANSCRIPT', file_extension: 'VTT', file_size: 2000, recording_type: 'audio_transcript', status: 'completed', download_url: 'https://us02web.zoom.us/rec/download/f-vtt-fresh', ...over });
