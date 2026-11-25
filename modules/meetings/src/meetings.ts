@@ -18,6 +18,7 @@ import { notesCommands, notesQueries } from './notes.ts';
 import { resultCommands, resultQueries } from './results.ts';
 import { glossaryCommands, glossaryQueries } from './glossary.ts';
 import { minutesTemplateCommands, minutesTemplateQueries } from './minutes-templates.ts';
+import { minutesVersionCommands, minutesVersionQueries } from './minutes-version.ts';
 import { mcpMeetingsQueries } from './mcp.ts';
 import { seriesCommands, seriesQueries } from './series.ts';
 import { speakerCommands } from './speaker.ts';
@@ -1145,6 +1146,7 @@ export const meetingsCommands = [
   ...speakerCommands,
   ...seriesCommands,
   ...minutesTemplateCommands,
+  ...minutesVersionCommands,
   ...glossaryCommands,
   ...summaryRunCommands,
   ...summaryReadyCommands,
@@ -1200,6 +1202,7 @@ export const meetingsQueries = [
   ...summaryQueries,
   ...seriesQueries,
   ...minutesTemplateQueries,
+  ...minutesVersionQueries,
   ...glossaryQueries,
   ...summaryRunQueries,
   ...translateRunQueries,

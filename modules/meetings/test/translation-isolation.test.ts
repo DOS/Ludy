@@ -66,6 +66,7 @@ describe('a translation is never a source (E1, #3184)', () => {
 
   it('the follow-up mail, the search, the links, the retention and the result commands do not import the translation files', () => {
     const importers = files.filter((f) => /from\s+['"][^'"]*\/translate(?:-run)?\.ts['"]/.test(f.text)).map((f) => f.path);
-    expect(importers.sort()).toEqual(['modules/meetings/src/index.ts', 'modules/meetings/src/meetings.ts', 'modules/meetings/src/translate.ts']);
+    // minutes-version.ts (#4777) imports readTranslationSource, which reads the PUBLISHED ORIGINAL (summary, decisions, item titles) and its hash for the recorder's publish to be held to; it never reads the translation table.
+    expect(importers.sort()).toEqual(['modules/meetings/src/index.ts', 'modules/meetings/src/meetings.ts', 'modules/meetings/src/minutes-version.ts', 'modules/meetings/src/translate.ts']);
   });
 });
