@@ -3,7 +3,7 @@
 // their posts); the client sees the reply on the single-post page and the plan page signed by neither a member's name
 // nor id; the answer counts and the client's verdict stay as they were; ludy_tenant writes only the reply columns, and
 // only in its own member's name; a plan's body comes once per post; no tenant path adds a post to a frozen plan; and
-// the live link caps hold against links made at the same time. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run
+// the live link caps hold against links made at the same time. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run
 // makes its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -19,7 +19,7 @@ import { socialCommands, socialQueries, type PostView, type ReviewFeedbackView, 
 import { reviewView } from '../src/review-link.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const DAY = 86_400_000;
@@ -47,7 +47,7 @@ const rawSql = defineCommand({
 });
 
 suite('social review replies on PostgreSQL (#1301, #930)', () => {
-  const dbName = `crove_test_social_review_replies_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_review_replies_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

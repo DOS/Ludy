@@ -2,7 +2,7 @@
 // Rule 4 of Vy's cross-app alerts on Home, end to end on PostgreSQL 17 (Vy plan C4, rule 4, #3124): the real kernel.today over the real CRM open deals and the real inbox read, for a real owner and
 // members, with nothing stood in. A customer conversation (status new, the customer wrote last) unanswered for 24 hours or more whose contact has an open deal gives one flag per contact, linking to the
 // thread in Hộp thư. It fires on a seeded case (open deal, inbound unanswered 25 h) and not on its near misses (answered, 23 h, deal won or lost, a thread the member may not read, a resolved
-// thread), and no message text crosses into the item or the read's answer. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// thread), and no message text crosses into the item or the read's answer. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -15,14 +15,14 @@ import { DomainError, Runtime } from '@ludy/kernel-runtime';
 import { crmCommands, crmQueries } from '@ludy/mod-crm';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const RULE = 'signal:conversation-unanswered:';
 const SECRET = 'Anh Nam hỏi giá lô hàng bí mật';
 
 suite('the unanswered conversation rule on Home, end to end (#3124)', () => {
-  const dbName = `crove_test_signals_conversation_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_signals_conversation_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

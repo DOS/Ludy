@@ -2,7 +2,7 @@
 // The cross-app rules light up on Home, end to end on PostgreSQL 17 (Vy V4 and V5, #2967 and #2969): the real kernel.today of the kernel, over the real signals reads of Engage (CRM) and
 // Accounting, for a real owner, member and branch-limited member, with nothing stood in. Rule 1: a deal won 7 or more days ago whose customer has no sales invoice dated on or after the win. Rule 2: a
 // customer with a sales invoice past its due date and a deal still open. Each fires on a seeded case and not on its near misses, and a member who cannot see every book gets no flag, never a false one.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -16,7 +16,7 @@ import { crmCommands, crmQueries } from '@ludy/mod-crm';
 import { addDays, financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const TODAY = vietnamToday();
@@ -24,7 +24,7 @@ const RULE_1 = 'signal:won-deal-no-invoice:';
 const RULE_2 = 'signal:overdue-receivable-open-deal:';
 
 suite('the cross-app rules on Home, end to end (#2967, #2969)', () => {
-  const dbName = `crove_test_signals_home_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_signals_home_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

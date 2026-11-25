@@ -71,12 +71,12 @@ const setPayrollConfirmed = (confirmed: boolean) => {
   }
 };
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('HR Stage 6B salary advance, retro/offset adjustments, and business trips (#4527)', () => {
-  const dbName = `crove_test_hr6b_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_hr6b_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let adminPool: pg.Pool;
   let appPool: pg.Pool;

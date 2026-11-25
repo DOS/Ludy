@@ -2,7 +2,7 @@
 // The one MCP write (#3227, step 3; owner decision 2026-11-14): `social.mcp.draft_create` as the runtime runs it for a company grant that holds `ludy.social.draft`. The draft is an AI post made
 // over MCP (origin ai, actor_origin mcp, tainted, author the consenting user), a draft with draft channels, in the review queue's AI list, and nobody's approval is skipped. The refusal pins (no other
 // command runs for the grant, a grant without the scope cannot run this one, who may consent to the scope) are in test/invariant/mcp-draft-runtime.db.test.ts; this file keeps the draft's behavior:
-// what it creates, where it shows, the person's own limits, the audit row, the strict channel and the signature. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// what it creates, where it shows, the person's own limits, the audit row, the strict channel and the signature. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -14,7 +14,7 @@ import { DomainError, Runtime, type UserActor } from '@ludy/kernel-runtime';
 import { socialCommands, socialQueries } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -25,7 +25,7 @@ interface Created {
 }
 
 suite('the MCP draft command (#3227)', () => {
-  const dbName = `crove_test_social_mcp_draft_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_mcp_draft_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let runtime: Runtime;

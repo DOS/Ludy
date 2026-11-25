@@ -2,7 +2,7 @@
 // is engaged, the relay's claim (ludy_kernel.outbox_claim, what the worker's relay calls) leaves that type's outbox
 // rows pending and claims every other type, and the back-pressure lag does not age them; releasing the switch drains
 // them, in order. The claim marks a held row once and then passes it without touching it (#1713), so a large held
-// backlog does not slow every relay pass. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// backlog does not slow every relay pass. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
@@ -13,7 +13,7 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { outboxLagSeconds } from '../src/back-pressure.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -21,7 +21,7 @@ const HELD = 'test.relay.held';
 const OTHER = 'test.relay.other';
 
 suite('a kill switch per relay type on PostgreSQL (#1696)', () => {
-  const dbName = `crove_test_relay_kill_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_relay_kill_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appPool: pg.Pool;
   let workerPool: pg.Pool;

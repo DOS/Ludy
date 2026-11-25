@@ -1,7 +1,7 @@
 // Link preview cards of Crove Social on PostgreSQL 17 (#641): a request is cached per org and URL, queued for the
 // worker once, read through crove-extract (the real parser process) and recorded; failures say why; fresh answers
 // are reused for a day; an org's requests are capped per minute. The page fetch is a stub here (the egress guard has
-// its own tests). Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// its own tests). Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -16,12 +16,12 @@ import { runLinkPreviewJob } from '../src/link-preview.ts';
 import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('social link previews on PostgreSQL (#641)', () => {
-  const dbName = `crove_test_social_link_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_link_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

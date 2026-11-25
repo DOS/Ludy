@@ -2,7 +2,7 @@
 // the post. The table's CHECKs and its foreign key to the org's own files, the command's refusals (a file outside the
 // post or the channel, the wrong kind of pin, a viewer, a channel the member may not use), the pin in the timeline
 // and on an earlier image, no UPDATE of the pin columns for ludy_tenant, and the events of a comment left as they were.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -15,12 +15,12 @@ import { socialCommands, socialQueries, type ActivityItem, type PostView } from 
 import { mentionToken } from '@ludy/mod-social/contract';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('pinned internal comments on PostgreSQL (#1180)', () => {
-  const dbName = `crove_test_social_comment_pins_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_comment_pins_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

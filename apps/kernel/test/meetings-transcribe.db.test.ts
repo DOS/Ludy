@@ -27,7 +27,7 @@ import { mediaMeasurerFor, type MediaMeasurer } from '../src/meetings-measure.ts
 import { fakeMediaMeasurer } from './fake-media.ts';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -48,7 +48,7 @@ class MemoryStore implements BlobStore {
 }
 
 suite('transcription as the recorder\'s own Vy (#2578, M4b)', () => {
-  const dbName = `crove_test_transcribe_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_transcribe_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let orgId = '';

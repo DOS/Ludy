@@ -1,6 +1,6 @@
 // The crm module's event types (#1314) on PostgreSQL 17: who lists, creates and changes them, the host rules (a
 // member manages only what they host, a host may change their calendar), slugs unique per org, archiving instead of
-// deleting, and the database's own checks. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own
+// deleting, and the database's own checks. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own
 // database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -14,12 +14,12 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { crmCommands, crmQueries } from '@ludy/mod-crm';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('crm event types on PostgreSQL (#1314)', () => {
-  const dbName = `crove_test_crm_event_types_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_crm_event_types_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

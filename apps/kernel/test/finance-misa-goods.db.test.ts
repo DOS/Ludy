@@ -4,7 +4,7 @@
 // as a goods voucher (GET /api/export/misa/goods-purchases.xlsx) and a services voucher (/api/export/misa/purchases.xlsx),
 // each export audited and named in the document's history. The files' cells are covered by the unit tests
 // (modules/finance/test/misa.test.ts) and the Playwright spec; here the rows come from the same query and mapper the
-// routes use. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// routes use. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -33,7 +33,7 @@ import { createSessionStatusSource } from '../src/sessions.ts';
 import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const FIXTURE = readFileSync(new URL('../../extract/test/fixtures/einvoice-basic.xml', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-misa-goods-0123456789';
@@ -65,7 +65,7 @@ interface Account {
 const suite = ADMIN ? describe : describe.skip;
 
 suite('MISA SME goods purchases: codes per stock account and the goods template (#1398)', () => {
-  const dbName = `crove_test_misa_goods_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_misa_goods_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

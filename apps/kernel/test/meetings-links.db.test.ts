@@ -2,7 +2,7 @@
 // Links of a meeting to a party, a deal and a calendar event (L1, #2587, ADR-0024, ADR-0047) on PostgreSQL 17: the recorder sets and removes them (removal audited with
 // ids only), a deal is checked through the CRM module and cannot be linked without it, a meeting has at most one deal, a party's, a deal's or an event's page reads only
 // the meetings its viewer reads (a non-reader, a viewer and an agent get no row and no title of an attendees-only meeting), and deleting the meeting deletes its links.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -16,13 +16,13 @@ import { crmCommands, crmQueries } from '@ludy/mod-crm';
 import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const SECRET_TITLE = 'Họp kín về lương của anh Tuấn';
 
 suite('meeting links on PostgreSQL (#2587)', () => {
-  const dbName = `crove_test_meeting_links_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_meeting_links_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let rt: Runtime;

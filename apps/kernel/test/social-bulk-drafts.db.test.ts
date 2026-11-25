@@ -1,7 +1,7 @@
 // One draft per library file on PostgreSQL 17 (#1080): files in order become drafts in order, a file a channel cannot
 // take is reported per file with nothing saved, queueing takes the next free slots, and the refusals (another org's
 // file, a viewer, more than 50 files, a channel set over the per-post channel limit), and a draft failing mid-loop
-// leaves no draft and no slot held (#1088). Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own
+// leaves no draft and no slot held (#1088). Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own
 // database.
 import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -14,7 +14,7 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { socialCommands, socialQueries, type ActivityItem, type DraftsFromMediaResult, type PostView } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -22,7 +22,7 @@ type Created = Extract<DraftsFromMediaResult, { status: 'created' }>;
 type Invalid = Extract<DraftsFromMediaResult, { status: 'invalid' }>;
 
 suite('social drafts from library files on PostgreSQL (#1080)', () => {
-  const dbName = `crove_test_social_bulk_drafts_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_bulk_drafts_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

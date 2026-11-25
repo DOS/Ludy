@@ -3,7 +3,7 @@
 // invoice attachment whose text holds the seller's lookup link or code raises one item per hint, once per mail; only the
 // hint is stored; members read and dismiss them (a viewer, a member limited to some legal entities and another org do
 // not); the dead-letter items stay with owners and admins; and the lookup code appears in no audit row, log line or
-// error text. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// error text. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -19,7 +19,7 @@ import { processInboundEmail } from '../src/inbound.ts';
 import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const FIXTURE = readFileSync(new URL('../../extract/test/fixtures/einvoice-basic.xml', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
@@ -45,7 +45,7 @@ const CODE_A = '4F7K2M9QXA3';
 const CODE_B = 'EZ98YX76WV';
 
 suite('original-needed Inbox items on PostgreSQL (#2286)', () => {
-  const dbName = `crove_test_original_needed_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_original_needed_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

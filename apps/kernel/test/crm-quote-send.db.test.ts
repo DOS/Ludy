@@ -2,7 +2,7 @@
 // Sending a quote (#2694, docs/plan/crm-quotes.md step Q2) on PostgreSQL 17: the send by link and by email, the number from the kernel's yearly series, the buyer snapshot and
 // the issuing entity, the refusals, the public page of a link (a definer, one answer for every bad token, views counted), a link's revocation, a revision that keeps the number
 // and replaces the older quote and its links, and that the database itself (as the runtime's own login in an org context) lets a person make only those transitions and
-// freezes a sent quote and its lines. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// freezes a sent quote and its lines. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -19,7 +19,7 @@ import { quoteLogo, quoteView } from '../src/quote-link.ts';
 import { enterUser } from './context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -47,7 +47,7 @@ const JPEG_BYTES = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 16, 0x4a, 0x46, 0x
 const item = (over: Record<string, unknown> = {}) => ({ kind: 'item' as const, description: 'Gói kế toán năm', unit: 'gói', quantity: '2', unitPrice: '1500000', vatRate: '10%', ...over });
 
 suite('crm quote send on PostgreSQL (#2694)', () => {
-  const dbName = `crove_test_crm_quote_send_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_crm_quote_send_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

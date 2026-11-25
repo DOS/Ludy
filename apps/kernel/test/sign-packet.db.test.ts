@@ -47,7 +47,7 @@ type SignEnvelopeDetail = z.infer<typeof zSignEnvelopeDetail> & {
   documents: NonNullable<z.infer<typeof zSignEnvelopeDetail>['documents']>;
 };
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const JWT_SIGNING_KEY = 'test-only-jwt-key-for-sign-packet-4722-0123456789abcdef';
 const ISSUER = 'crove-auth';
@@ -181,7 +181,7 @@ const VALID_PNG_BASE64 = Buffer.from(makeValidPngBytes(96, 36, 'packet-sig')).to
 const suite = ADMIN ? describe : describe.skip;
 
 suite('eSign Slice 6c multi-document signing packet on PostgreSQL 17 (#4722)', () => {
-  const dbName = `crove_test_sign_packet_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_sign_packet_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appUrl = '';
   let workerUrl = '';

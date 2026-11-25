@@ -3,7 +3,7 @@
 // which is what text_mentions was before the prefilter (the pattern function is not touched); the cases are the shared table of the free-text matcher (pii-text-cases.ts), a hostile set of
 // Vietnamese phone formats, and a seeded random set of texts and values. A prefilter that rejects a text the pattern accepts would be a personal-data erasure that misses a phone number, so every
 // disagreement fails, and the sets are checked to hold both matches and non-matches (a test with only one kind of answer proves nothing).
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; the run makes its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; the run makes its own database.
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -11,7 +11,7 @@ import { migrate } from '@ludy/db/migrate';
 import { personalDataProbe } from '@ludy/kernel';
 import { PII_TEXT_CASES } from './pii-text-cases.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -35,7 +35,7 @@ function rng(seed: number): () => number {
 }
 
 suite('ludy_kernel.text_mentions with its prefilter (#3832)', () => {
-  const dbName = `crove_test_text_mentions_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_text_mentions_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let client: pg.Client;
 

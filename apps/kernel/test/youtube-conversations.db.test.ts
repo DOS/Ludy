@@ -18,7 +18,7 @@ import { dueConversationSync, runConversationDraft, runConversationJob, runConve
 import { systemMeter } from '../src/ai-meter.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -34,7 +34,7 @@ const SCOPES = ['https://www.googleapis.com/auth/youtube.upload', 'https://www.g
 const SYSTEM = { type: 'system' as const, component: 'conversations' };
 
 suite('YouTube comments on PostgreSQL (#3134)', () => {
-  const dbName = `crove_test_youtube_conv_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_youtube_conv_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

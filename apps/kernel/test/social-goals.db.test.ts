@@ -3,7 +3,7 @@
 // impressions, engagement and followers of the month in the goals' zone; another org sees and changes nothing of them;
 // a report link shows the goals only when its period is exactly one month, only its own org's and only for the
 // channels it covers; its note comes back as the plain text it was; the report mail of a month carries them.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -16,7 +16,7 @@ import { monthBounds, socialCommands, socialQueries, type GoalsProgressView, typ
 import { reportView } from '../src/report-link.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const HCM = 'Asia/Ho_Chi_Minh';
@@ -28,7 +28,7 @@ interface Page {
 }
 
 suite('social monthly goals on PostgreSQL (#1056)', () => {
-  const dbName = `crove_test_social_goals_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_goals_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

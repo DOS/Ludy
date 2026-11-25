@@ -2,7 +2,7 @@
 // A saved column mapping applied on import (#4037) on a real PostgreSQL 17 and the real parsing sandbox: a spreadsheet no built-in profile fits is read through the mapping the org saved for a file with the
 // same header row and STAGED like any order report (a member still confirms it, and the orders are stored then); another org's mapping, another header row and a mapping the file refuses read nothing; the
 // lookup is the worker's alone and the newest confirmation wins. The files are made in code with made-up buyers.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -17,7 +17,7 @@ import { buildXlsx, type XlsxCell } from '../../extract/test/xlsx-fixture.ts';
 import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -56,7 +56,7 @@ class MemoryStore implements BlobStore {
 }
 
 suite('a saved column mapping applied on import (#4037)', () => {
-  const dbName = `crove_test_column_apply_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_column_apply_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

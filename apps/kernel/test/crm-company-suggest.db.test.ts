@@ -2,7 +2,7 @@
 // The company a person may work at (#2438, PR 3) on PostgreSQL 17: the three rules of crm.contact.company_candidates (a tax code the person wrote in their
 // conversations, the same email domain, a name that carries the word at the heart of the domain), each read as the member and each company once, under the first
 // rule that found it; no suggestion for a person who has a company, for a company, for a merged party, across orgs or for a viewer. Nothing is written. Set
-// CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -15,7 +15,7 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { crmCommands, crmQueries } from '@ludy/mod-crm';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -23,7 +23,7 @@ const suite = ADMIN ? describe : describe.skip;
 const ACME_TAX = '0123456780';
 
 suite('the company a person may work at (#2438, PR 3)', () => {
-  const dbName = `crove_test_company_suggest_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_company_suggest_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

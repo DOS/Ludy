@@ -1,7 +1,7 @@
 // The posting calendar feed of Crove Social on PostgreSQL 17 (#862): who makes, replaces and revokes it, what its token
 // opens (the org's scheduled and published channel posts from 30 days back to 60 ahead, with a short title) and that
 // nothing else of the org is reachable through it, through the definer and through GET /cal/<token>.ics. The public
-// side runs as the API login role with no org context, as the HTTP edge does. Set CROVE_TEST_ADMIN_URL to a superuser
+// side runs as the API login role with no org context, as the HTTP edge does. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser
 // URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -19,13 +19,13 @@ import { createHttpApp } from '../src/http.ts';
 import { RateLimiter } from '../src/rate-limit.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const DAY = 86_400_000;
 const suite = ADMIN ? describe : describe.skip;
 
 suite('social calendar feed on PostgreSQL (#862)', () => {
-  const dbName = `crove_test_social_calfeed_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_calfeed_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

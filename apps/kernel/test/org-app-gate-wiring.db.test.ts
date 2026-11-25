@@ -2,7 +2,7 @@
 // The wiring of the per-org app gate in the server (ADR-0053 section 3, slice b step 2): createKernel hands the runtime the billing port's
 // entitlements, always, so a Cloud billing port that holds an org to some apps keeps it out of the others through the real HTTP edge, and
 // the self-host default (`full`) holds every app. A runtime built without the option would hold every app for every org, so this is the test
-// that a wiring mistake cannot quietly grant them. Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its own database.
+// that a wiring mistake cannot quietly grant them. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; the run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { createServer, type AddressInfo } from 'node:net';
 import { fileURLToPath } from 'node:url';
@@ -19,7 +19,7 @@ import { createKernel, defaultAdapters, moduleDefinitions, type Billing, type Id
 import { startExtractService } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SESSION = '5b2e1d7a-3c4f-4a9b-8d60-7e1f2a3b4c5d';
 
@@ -50,7 +50,7 @@ async function freePort(): Promise<number> {
 const suite = ADMIN ? describe : describe.skip;
 
 suite('the per-org app gate through createKernel (ADR-0053)', () => {
-  const dbName = `crove_test_gatewire_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_gatewire_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appUrl = '';
   let workerUrl = '';

@@ -1,6 +1,6 @@
 // An org's link-in-bio page on PostgreSQL 17 (#707): owners and admins save one page; the public definers show a
 // published page of an active org and nothing else (no button link, no file key), follow its buttons and posts while
-// counting people only, and hand out only the files the page shows. Set CROVE_TEST_ADMIN_URL to a superuser URL; each
+// counting people only, and hand out only the files the page shows. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each
 // run makes its own database.
 import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -14,12 +14,12 @@ import { socialCommands, socialQueries, type BioPage } from '@ludy/mod-social';
 import { bioGo, bioView, renderBioPage } from '../src/bio-page.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('social link-in-bio page on PostgreSQL (#707)', () => {
-  const dbName = `crove_test_social_bio_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_bio_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

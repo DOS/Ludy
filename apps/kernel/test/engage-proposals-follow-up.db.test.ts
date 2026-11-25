@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The team task an AI coworker asks for, linked to a thread (epic #3857, issue #4148; ADR-0051 decision 10): the call leaves one pending, tainted proposal and creates nothing, no event and no wake-up
 // (the sealed write context allows neither); a rejection creates nothing, ever; an approval runs kernel.conversation.follow_up once, as the approver, outside that context: the task is made tainted with the title
-// as stored, its event is written and the assignee's agent is woken, tainted too. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// as stored, its event is written and the assignee's agent is woken, tainted too. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { ConversationEvent, ConversationIngested } from '@ludy/kernel-contract';

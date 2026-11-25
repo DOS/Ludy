@@ -3,7 +3,7 @@
 // asked for from a line and approved like any voucher (R3, four-eyes), each line's state (open, proposed, matched),
 // one voucher proposal per line, a voucher that does not follow its line, a line settled since a proposal was made
 // (alone and in a bulk approval), a reversed voucher freeing its line, and the database rules every writer is held to.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -24,7 +24,7 @@ import { createSessionStatusSource } from '../src/sessions.ts';
 import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const FIXTURE = readFileSync(new URL('../../extract/test/fixtures/einvoice-basic.xml', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-bank-match-326';
@@ -57,7 +57,7 @@ const account = (name: string): Account => ({ subject: randomUUID(), email: `${n
 const suite = ADMIN ? describe : describe.skip;
 
 suite('bank statement lines to bank vouchers (#326)', () => {
-  const dbName = `crove_test_bank_match_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_bank_match_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

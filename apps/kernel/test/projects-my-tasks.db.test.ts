@@ -8,7 +8,7 @@
 // 4) Graceful degradation when projects is omitted from CROVE_MODULES OR turned off per org (ADR-0053 MODULE_OFF /
 //    entitlements): notes.my_work succeeds with projectsAvailable: false and project: null, while projects RPC returns
 //    404 MODULE_OFF; turning projects back on restores project chips immediately.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
@@ -27,14 +27,14 @@ import { createHttpApp } from '../src/http.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-projects-p3-0123456789';
 const ISSUER = 'crove-auth';
 const suite = ADMIN ? describe : describe.skip;
 
 suite('projects P3: my tasks across projects on PostgreSQL (#2593)', () => {
-  const dbName = `crove_test_proj_p3_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_proj_p3_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let db: Db;

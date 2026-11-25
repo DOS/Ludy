@@ -2,7 +2,7 @@
 // A run whose result is already stored `ready` is closed as succeeded, never cancelled or superseded (#3058, ADR-0049). A background run's text is stored in one transaction and the
 // worker's run.finish closes the run in another, so in between the run reads `running` beside a `ready` result. A new start of the same feature, a kill switch, a removal and a loss
 // of vy.use (member_vy_runs_cancel) used to cancel it all the same, leaving a cancelled run beside a ready result; now they close it as succeeded (with the result's private_read carried
-// over, as the finish does), cancel every other run as before, and a run that never gets its finish (a dead worker) no longer blocks its feature. Set CROVE_TEST_ADMIN_URL to a
+// over, as the finish does), cancel every other run as before, and a run that never gets its finish (a dead worker) no longer blocks its feature. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a
 // superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -14,12 +14,12 @@ import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/
 import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('a run beside a ready result is closed as succeeded (#3058)', () => {
-  const dbName = `crove_test_vy_ready_gap_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_vy_ready_gap_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let orgId = '';

@@ -3,7 +3,7 @@
 // MFA, four-eyes), the voucher numbers per org and type, the journal entry with the party on 131 and 331, payables and
 // receivables per party in the ledger reports, reversal through the existing path, and the database rules every writer
 // is held to (numbering, the cash account of the type, the entry by commit, append-only, tenancy).
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -24,7 +24,7 @@ import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 import { contextToken } from './context-token.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const FIXTURE = readFileSync(new URL('../../extract/test/fixtures/einvoice-basic.xml', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-cash-vouchers-327';
@@ -57,7 +57,7 @@ const account = (name: string): Account => ({ subject: randomUUID(), email: `${n
 const suite = ADMIN ? describe : describe.skip;
 
 suite('cash and bank vouchers (#327)', () => {
-  const dbName = `crove_test_vouchers_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_vouchers_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

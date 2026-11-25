@@ -51,7 +51,7 @@ import { createSessionStatusSource } from '../src/sessions.ts';
 import { enterUser } from './context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const JWT_SIGNING_KEY = 'test-only-jwt-key-projects-roadmap-4399-0123456789';
 const CREDENTIAL_KEY_B64 = randomBytes(32).toString('base64');
@@ -107,7 +107,7 @@ async function mintUserJwt(subject: string, email: string): Promise<string> {
 }
 
 suite('Projects Public Roadmap Slice 1 (#4399)', () => {
-  const dbName = `crove_test_roadmap_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_roadmap_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let tmpWebDist = '';
   let adminUrl = '';
   let appPool: pg.Pool | undefined;

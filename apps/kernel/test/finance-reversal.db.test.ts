@@ -3,7 +3,7 @@
 // reversal proposal in the Inbox, approving it, the reversal link both ways in the journal, and the purchase document
 // voided by the reversal, so the same supplier invoice can be recorded again while a duplicate of a document still in
 // force is refused. The ledger rules of reversals themselves are in test/invariant/ledger-reversal.db.test.ts.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -26,7 +26,7 @@ import { TEST_MANIFESTS } from './manifests.ts';
 import { contextToken } from './context-token.ts';
 import { rewriteHistoricalCoreSql } from './pre-cutover-db.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const FIXTURE = readFileSync(new URL('../../extract/test/fixtures/einvoice-basic.xml', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-reversals-0123456789';
@@ -61,7 +61,7 @@ interface Account {
 const suite = ADMIN ? describe : describe.skip;
 
 suite('journal reversal through the API, and voided purchase documents (#165)', () => {
-  const dbName = `crove_test_reversal_ui_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_reversal_ui_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appUrl = '';
   let pool: pg.Pool;

@@ -2,7 +2,7 @@
 // The sweep of contact import staging past its 7 days (#2251, docs/plan/crm.md step K5b) on PostgreSQL 17: the definer that
 // lists the orgs answers the worker login alone and only ids, the system command clears one org's batches without touching
 // another's, a younger or decided batch keeps what it has, and a whole pass reaches an org that never imports again. Set
-// CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { sql } from 'kysely';
@@ -17,13 +17,13 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { sweepCrmImports } from '../src/crm-worker.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const SYSTEM = { type: 'system' as const, component: 'crm.import' };
 
 suite('crm import staging sweep on PostgreSQL (#2251)', () => {
-  const dbName = `crove_test_crm_import_sweep_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_crm_import_sweep_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let app: Runtime;

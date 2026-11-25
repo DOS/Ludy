@@ -1,7 +1,7 @@
 // A member limited to one legal entity keeps sight of what it uploads (#1280 part 3a) on PostgreSQL 17: the worker's
 // first reading of its file takes the member's entity, so the member sees the reading in its file list, gets the
 // unreadable-file notice and reads the file again, while another member limited elsewhere sees none of it. Set
-// CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -16,7 +16,7 @@ import { extractAndPropose, financeCommands, financeQueries } from '@ludy/mod-fi
 import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SYSTEM = { type: 'system' as const, component: 'kernel.notify' };
 
@@ -46,7 +46,7 @@ interface FileStatus {
 const suite = ADMIN ? describe : describe.skip;
 
 suite('uploads of a member limited to a legal entity (#1280)', () => {
-  const dbName = `crove_test_le_upload_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_le_upload_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let runtime: Runtime;

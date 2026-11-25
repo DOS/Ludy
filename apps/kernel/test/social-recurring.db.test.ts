@@ -2,7 +2,7 @@
 // gets its next copy after the last one is done, planned for the occurrence in the post's time zone (across a DST
 // change) and sent to review; one copy at a time, none while the org's publishing is held, and the series stops at its
 // end. Only members of the org set it, and only the worker scans for due series.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -15,7 +15,7 @@ import { CredentialVault, Runtime, parseVaultKey } from '@ludy/kernel-runtime';
 import { localDate, localTime, nextOccurrence, runPublishJob, socialCommands, socialQueries, sweepRecurring, zonedToEpoch, type PostView, type Recurrence, type RecurringResult } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const NY = 'America/New_York';
@@ -41,7 +41,7 @@ class Platform implements Publisher {
 }
 
 suite('social recurring posts on PostgreSQL (#979)', () => {
-  const dbName = `crove_test_social_recurring_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_recurring_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appPool: pg.Pool;
   let workerPool: pg.Pool;

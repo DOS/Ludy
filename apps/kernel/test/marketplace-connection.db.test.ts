@@ -3,7 +3,7 @@
 // deployment offers (and the platforms with none, which stay on the report file), connect (the credential sealed at the edge, no secret in any answer, audit row or stored row), the test, the
 // poll that writes the offline provider's orders as a CSV and ingests it through the SAME intake as an upload (staged, no order stored until a member confirms; a poll twice stages once; the
 // cursor moves only after the ingest), a failed poll's state, a revoked connection left alone, who may do what, disconnect, and the database's own guards.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
@@ -30,7 +30,7 @@ import { enterUser } from './context-token.ts';
 import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-marketplace-connections-0123456789';
 const ISSUER = 'crove-auth';
@@ -75,7 +75,7 @@ const PLANTED = `planted-secret-${randomBytes(6).toString('hex')}`;
 const suite = ADMIN ? describe : describe.skip;
 
 suite('marketplace connections (#2519)', () => {
-  const dbName = `crove_test_marketplace_conn_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_marketplace_conn_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

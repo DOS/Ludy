@@ -6,7 +6,7 @@
 //   - the sweep sends each rule's event once per item per window (its own "seen" key, kept with the event), again for a new window, only to a company grant that holds the line's scope, and never a name,
 //     a message, a note or a deal's title: the bodies hold ids, days, amounts and enum words (the canary strings of the data never leave);
 //   - the database refuses what the sweep would never send: a key that is not the type's own, a second event for a seen key.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -23,7 +23,7 @@ import { adsItems, conversationItems, crmItems, engageWakeFeed, wakeKey } from '
 import { runWakeSweep, type LineWakeFeed } from '../src/mcp-wake-sweep.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const SYSTEM = { type: 'system' as const, component: 'crm.deal_stale' };
@@ -33,7 +33,7 @@ const DEAL_TITLE = 'Hợp đồng bí mật của anh Canary';
 const ALL_SCOPES = ['ludy.read', 'ludy.engage.write', 'ludy.social.draft', 'ludy.ads.draft'];
 
 suite('Engage wake rules on PostgreSQL (#3862)', () => {
-  const dbName = `crove_test_engage_wake_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_engage_wake_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let db: Db;

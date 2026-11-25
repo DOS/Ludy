@@ -6,7 +6,7 @@
 //    and exclusions (unassigned assignee_position_id NULL, agent-held seats, < 3 day waits, done/cancelled tasks,
 //    inactive/on_hold/done/archived projects, cross-org isolation).
 // 3) A viewer and an entity-limited (le_scope) member see only tasks they can open; zero rows are written.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -20,7 +20,7 @@ import { financeCommands } from '@ludy/mod-finance';
 import { projectsCommands, projectsQueries } from '@ludy/mod-projects';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -29,7 +29,7 @@ const NOW = '2026-11-10T03:00:00.000Z'; // 2026-11-10 10:00:00+07:00
 const NOW_MS = Date.parse(NOW);
 
 suite('projects.today on PostgreSQL (#2596)', () => {
-  const dbName = `crove_test_projects_today_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_projects_today_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

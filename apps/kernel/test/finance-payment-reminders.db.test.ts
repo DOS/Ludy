@@ -2,7 +2,7 @@
 // Customer payment reminders (#2488) on PostgreSQL 17: the overdue list (invoices past their due date with an amount left, the customer's 131 balance
 // laid over them newest first, partial payments counted), the draft, and the send: a mail queued to the customer's email, its facts rebuilt from the
 // books whatever words come with it, refused when the books moved since the draft, asked to confirm a second reminder of one level within three days,
-// audited, and out of reach for a viewer. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// audited, and out of reach for a viewer. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -15,7 +15,7 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { addDays, financeCommands, financeQueries, zPaymentReminderMail } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const TODAY = vietnamToday();
@@ -23,7 +23,7 @@ const TODAY = vietnamToday();
 const dated = (late: number) => addDays(TODAY, -(30 + late));
 
 suite('customer payment reminders (#2488)', () => {
-  const dbName = `crove_test_payment_reminders_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_payment_reminders_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

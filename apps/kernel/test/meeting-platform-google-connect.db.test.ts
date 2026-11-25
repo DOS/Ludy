@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Connecting Google Meet end to end through the HTTP rpc (meetings integrations C2, #3174, PR C): `meetingPlatform/providers`, `connectStart` and `connectFinish` against a REAL database and a Google Meet adapter
 // whose transport is a stub (no Google host is ever called). The state is single use and the member's own, the PKCE verifier reaches Google's token endpoint and matches the challenge of the dialog, the tokens are
-// sealed for the member's Google account in the shape the sweep and the refresh open, a grant without the Meet transcript permission is refused, and nothing the platform returned is ever in an answer. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own
+// sealed for the member's Google account in the shape the sweep and the refresh open, a grant without the Meet transcript permission is refused, and nothing the platform returned is ever in an answer. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own
 // database.
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -22,7 +22,7 @@ import { parseCredential } from '../src/meeting-platform-credential.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-meeting-google-0123456789';
 const ISSUER = 'crove-auth';
@@ -61,7 +61,7 @@ function googleStub() {
 }
 
 suite('Google Meet connect through the HTTP rpc (meetings integrations C2, #3174)', () => {
-  const dbName = `crove_test_mp_google_connect_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_mp_google_connect_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let apps: Record<'google' | 'noGoogle' | 'noKey', ReturnType<typeof createHttpApp>>;

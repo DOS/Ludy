@@ -5,7 +5,7 @@
 // connection, once; a reply goes out once with the sealed token inside the customer's 24 hours and never after them; a status `failed` marks the message; an
 // unclear send is never sent again by a button; an image arrives by media id and is stored through the attachment pipeline with the connection's token opened
 // inside the job; Dy's draft, the saved replies and the phone match work on the channel with a person pressing Send; erasure, retention, purge and export cover
-// the rows; and no phone number, body, media id or token reaches an audit row, an event, a job or a log. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run
+// the rows; and no phone number, body, media id or token reaches an audit row, an event, a job or a log. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run
 // makes its own database.
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -27,7 +27,7 @@ import { createSessionStatusSource } from '../src/sessions.ts';
 import { WhatsAppReplayCache } from '../src/whatsapp-webhook.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const SYSTEM = { type: 'system' as const, component: 'conversations' };
@@ -69,7 +69,7 @@ class MemoryStore implements BlobStore {
 const sign = (body: string, secret = APP_SECRET) => ({ 'x-hub-signature-256': `sha256=${createHmac('sha256', secret).update(Buffer.from(body, 'utf8')).digest('hex')}` });
 
 suite('WhatsApp conversations on PostgreSQL (#3131)', () => {
-  const dbName = `crove_test_whatsapp_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_whatsapp_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let db: Db;

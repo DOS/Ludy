@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // `crm.signals.open_deals`, the CRM's side of rule 2 (Vy V5, #2969), on PostgreSQL 17: the deals still in play (a stage that is neither won nor lost) as a deal id and a party id,
 // for every role the CRM lists, with no text a person typed and no amount; won and lost deals are not listed; the answer is the contract's and nothing else.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -14,7 +14,7 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { crmCommands, crmQueries } from '@ludy/mod-crm';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 // A title and a party name that name a person: neither may reach the answer.
@@ -22,7 +22,7 @@ const SECRET_TITLE = 'Hợp đồng bí mật của anh Bình 4242';
 const SECRET_PARTY = 'Công ty bí mật của chị Lan';
 
 suite('crm.signals.open_deals on PostgreSQL (#2969)', () => {
-  const dbName = `crove_test_crm_open_signals_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_crm_open_signals_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

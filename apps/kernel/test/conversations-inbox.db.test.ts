@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The Inbox of the conversation core on PostgreSQL 17 (CV3, #2306, plan docs/plan/conversations.md sections 5.5 and 8): the desk.agent seed, whom a new
 // conversation is told to (the assignee, else the available members who can read it, else owners and admins, by the database's own rule of who reads
-// what), the "you are replying" marker, the availability switch, the search, the customer's other threads, and the Home read. Set CROVE_TEST_ADMIN_URL
+// what), the "you are replying" marker, the availability switch, the search, the customer's other threads, and the Home read. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL)
 // to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -15,13 +15,13 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { contextToken } from './context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const SYSTEM = { type: 'system' as const, component: 'conversations' };
 
 suite('the Inbox: routing a new conversation, the replying marker, availability, search and the Home read (CV3, #2306)', () => {
-  const dbName = `crove_test_conversations_inbox_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_conversations_inbox_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appUrl = '';
   let workerUrl = '';

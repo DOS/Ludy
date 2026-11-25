@@ -6,7 +6,7 @@
 // hand; another live connection of the same person keeps the call from being made; connecting the account again cancels the revoke; the connection of a
 // member who left is closed by the sweep and revoked; and nothing of the token reaches an audit row, an event, an idempotency key or a job. The revoker
 // here is the sandbox's (no network) or a stand-in that fails as a platform does.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { sql } from 'kysely';
@@ -23,7 +23,7 @@ import { runAdsRevoke, type AdsRevokeResult } from '../src/ads-revoke.ts';
 import { noCredentialBroker } from '../src/credentials.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const ACCOUNT = 'sbxads-0123456789abcdef';
 const SYSTEM = { type: 'system' as const, component: 'test' };
@@ -31,7 +31,7 @@ const SYSTEM = { type: 'system' as const, component: 'test' };
 const suite = ADMIN ? describe : describe.skip;
 
 suite('the revoke at the platform of a closed ads connection token (#2296, W2-1)', () => {
-  const dbName = `crove_test_adsrevoke_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_adsrevoke_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appUrl = '';
   const pools: pg.Pool[] = [];
@@ -65,7 +65,7 @@ suite('the revoke at the platform of a closed ads connection token (#2296, W2-1)
     await c.connect();
     try {
       await c.query('BEGIN');
-      await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', { userId: owner, orgId, sessionId: null, aal: 'aal1', mfaAt: null })]);
+      await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, mintContextToken(process.env.LUDY_CONTEXT_TOKEN_KEY ?? process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', { userId: owner, orgId, sessionId: null, aal: 'aal1', mfaAt: null })]);
       await c.query('UPDATE ludy_ads.ad_org_setting SET write_enabled = true, launches_blocked = false WHERE org_id = $1', [orgId]);
       await c.query('COMMIT');
     } finally {

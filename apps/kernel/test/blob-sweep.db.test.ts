@@ -1,6 +1,6 @@
 // The inbound blob sweep (issue #212) on a real PostgreSQL 17 with the pg-boss schema and local disk: an old raw
 // message is deleted only when no inbound_pending row and no live job of the inbound queue references it. Set
-// CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its own database.
+// LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; the run creates and drops its own database.
 import { mkdtemp, rm, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -14,12 +14,12 @@ import { BlobNotFoundError, LocalDiskStore, inboundKey, newInboundBlobId, sha256
 import { INBOUND_BLOB_MAX_AGE_DAYS, sweepInboundBlobs } from '../src/retention.ts';
 import { QUEUES } from '../src/jobs-schema.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('inbound blob sweep on PostgreSQL (#212)', () => {
-  const dbName = `crove_test_blob_sweep_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_blob_sweep_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appPool: pg.Pool;
   let workerPool: pg.Pool;

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The settlement of an approved supplier payment by its bank statement line (#3113 S3c, #3700) on a real PostgreSQL: `finance.supplier_payment.settle.prepare` and `.record` (a ledger proposal) record a
 // bank voucher (Dr 331 / Cr the bank) that names the payment and move it to `paid` in one approved step. The conditions of the Accounting PO: the line's amount and the file's day, the beneficiary
-// account compared by keyed hash, a voucher unique per payment and not reversible while the payment is paid, and the database guards behind each. Set CROVE_TEST_ADMIN_URL to a superuser URL.
+// account compared by keyed hash, a voucher unique per payment and not reversible while the payment is paid, and the database guards behind each. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -13,7 +13,7 @@ import { CredentialVault, Runtime, SUBJECT_WRAP_INFO, SubjectVault, parseVaultKe
 import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -21,7 +21,7 @@ const NUMBER = '0123 4567 8901';
 const HOLDER = 'Nguyen Van Canary';
 
 suite('the settlement of a supplier payment by its bank line (#3113 S3c)', () => {
-  const dbName = `crove_test_supplier_payment_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_supplier_payment_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

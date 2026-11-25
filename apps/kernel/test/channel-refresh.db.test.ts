@@ -1,6 +1,6 @@
 // Token refresh on PostgreSQL 17 (Social plan S6.4, issue #374): connections whose access token expires soon are
 // renewed and their new tokens sealed in one transaction; a refused refresh marks the connection expired; one sweep
-// runs at a time; only the worker scans across orgs. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its
+// runs at a time; only the worker scans across orgs. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its
 // own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -21,13 +21,13 @@ import { SHOPEE_TOKEN_HOSTS, ShopeeRefresher } from '../src/marketplace-shopee-t
 import { fakeShopee } from './fake-shopee.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const HOUR = 3_600_000;
 
 suite('channel token refresh on PostgreSQL (S6.4)', () => {
-  const dbName = `crove_test_channel_refresh_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_channel_refresh_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appPool: pg.Pool;
   let workerPool: pg.Pool;

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The HTTP edge and the stream trigger of the per-org app switch (ADR-0053, slice c C2b), on PostgreSQL 17: switching an app off sends the org_apps hint on the
 // stream channel, the Meetings upload purposes answer as a purpose that is not installed (404) while Meetings is off, and the extension is offered no Meetings
-// feature or scope. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// feature or scope. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -17,12 +17,12 @@ import { createHttpApp } from '../src/http.ts';
 import { moduleDefinitions } from '../src/kernel.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('the HTTP edge and the stream of the per-org app switch (ADR-0053, C2b)', () => {
-  const dbName = `crove_test_appedge_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_appedge_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

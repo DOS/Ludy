@@ -18,7 +18,7 @@ import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { startWorker } from '../src/worker.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const FIXTURE = readFileSync(new URL('../../extract/test/fixtures/einvoice-basic.xml', import.meta.url));
 
@@ -41,7 +41,7 @@ class MemoryStore implements BlobStore {
 const suite = ADMIN ? describe : describe.skip;
 
 suite('parallel extraction on PostgreSQL (#2119)', () => {
-  const dbName = `crove_test_excc_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_excc_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl: string;
   let workerUrl: string;
   let pool: pg.Pool;

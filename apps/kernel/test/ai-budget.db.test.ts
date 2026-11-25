@@ -3,7 +3,7 @@
 // (ludy_kernel.budget_policy, set by an owner with a fresh second factor). At 100% of a budget that covers a call the
 // meter refuses the call; calls in flight finish. The core keeps working: XML e-invoices are read, a proposal is approved
 // and posted, the journal is exported, while a photo that needs the model waits in the Inbox and is read after the budget
-// is raised. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// is raised. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -20,7 +20,7 @@ import { memberMeter, systemMeter } from '../src/ai-meter.ts';
 import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const FIXTURE = readFileSync(new URL('../../extract/test/fixtures/einvoice-basic.xml', import.meta.url), 'utf8');
 const suite = ADMIN ? describe : describe.skip;
@@ -47,7 +47,7 @@ const CALL_COST = '0.004500';
 const usage = { inputTokens: 1000, outputTokens: 100 };
 
 suite('the AI budget meter on PostgreSQL (#2382)', () => {
-  const dbName = `crove_test_ai_budget_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_ai_budget_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

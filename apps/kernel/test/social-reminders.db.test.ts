@@ -1,7 +1,7 @@
 // Reminders of posts waiting for review on PostgreSQL 17 (#703): a review that has waited 24 hours, then a time less
 // than 24 hours away, each reminds the reviewers once per round, never one who already approved the current content;
 // a channel can turn them off; a reminder shows only while the post still waits; a new round starts the clock again.
-// The worker's sweep and dispatch are run here by hand. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes
+// The worker's sweep and dispatch are run here by hand. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes
 // its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -14,12 +14,12 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { socialCommands, socialQueries, sweepReminders, type NotificationItem, type PostView } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('social review reminders on PostgreSQL (#703)', () => {
-  const dbName = `crove_test_social_remind_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_remind_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

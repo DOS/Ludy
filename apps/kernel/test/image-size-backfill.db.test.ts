@@ -1,5 +1,5 @@
 // The backfill of Social image sizes (#668) on PostgreSQL 17: a pass reads the header of each Social image without a
-// size and records it once, skips what it cannot read, and pauses between rounds. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own
+// size and records it once, skips what it cannot read, and pauses between rounds. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own
 // database.
 import { randomUUID } from 'node:crypto';
 import { fileKey, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
@@ -14,12 +14,12 @@ import { backfillImageSizes } from '../src/image-size-backfill.ts';
 import { socialCommands, socialQueries } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('image size backfill on PostgreSQL (#668)', () => {
-  const dbName = `crove_test_image_sizes_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_image_sizes_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

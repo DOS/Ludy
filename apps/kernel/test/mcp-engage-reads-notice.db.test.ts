@@ -2,7 +2,7 @@
 // The one-time notice of the Engage reads (issue #4069, follow-up of #4068): a person who connected an AI app before the consent screen named the Hộp thư, bookings and ads reads is told once, in the
 // app. Who is told (a live grant made before the cutoff that holds `ludy.read`, its person a member now), what is not (a grant made after, a revoked one, a person who left), that it is once whatever the passes,
 // that it names no client, that a muted kind does not hide it, that it is a notice only (the grant, its scopes and its standing are as they were), and that only the system runs it.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { sweepMcpEngageReadsNotices, upsertIdentity, type NotificationItem } from '@ludy/kernel';

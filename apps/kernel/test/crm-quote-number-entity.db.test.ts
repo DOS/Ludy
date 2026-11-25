@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // A quote number is unique within the legal entity that issued it (#2832) on PostgreSQL 17: the same BG-YYYY-NNNN in two entities of one org is allowed, a duplicate within one
 // entity is still refused (by the constraint, named quote_number_entity_uq), and a revision keeps the entity whose series gave its number even when the org's default entity
-// has changed since. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// has changed since. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -14,14 +14,14 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { crmCommands, crmQueries } from '@ludy/mod-crm';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 const item = { kind: 'item' as const, description: 'Gói kế toán năm', unit: 'gói', quantity: '2', unitPrice: '1500000', vatRate: '10%' };
 
 suite('crm quote numbers per legal entity on PostgreSQL (#2832)', () => {
-  const dbName = `crove_test_crm_quote_number_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_crm_quote_number_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

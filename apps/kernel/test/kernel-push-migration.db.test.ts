@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The migration that moves browser push to the kernel (#3736) on PostgreSQL 17: a subscription a member made through Social before it ran is in the kernel's table afterwards with the same id,
-// endpoint, keys and dates and the old table is left in place (the contract step drops it later). Set CROVE_TEST_ADMIN_URL to a superuser URL; the run makes its
+// endpoint, keys and dates and the old table is left in place (the contract step drops it later). Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; the run makes its
 // own database and its own migrations folder (every file but the one under test first, then that one).
 import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -15,13 +15,13 @@ import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/
 import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const SOURCE = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const MIGRATION = readdirSync(SOURCE).find((f) => f.endsWith('_ludy_kernel_push_subscription.sql')) as string;
 const suite = ADMIN ? describe : describe.skip;
 
 suite('push subscription migration (#3736)', () => {
-  const dbName = `crove_test_push_move_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_push_move_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   const dir = mkdtempSync(join(tmpdir(), 'push-move-'));
   let adminUrl = '';
 

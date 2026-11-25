@@ -6,7 +6,7 @@
 // refused; the billing port's answer is cached for a minute and a failing port fails open to the last answer (full when there is none)
 // with a security event; a command that opens busy work and a switch meet on the tenant row; Runtime.effectiveModules gives the set.
 // The step 1 file (invariant/org-app-gate.db.test.ts) accepts both behaviors until a tests-only PR makes it strict.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; the run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -19,7 +19,7 @@ import { Runtime, defineCommand, defineQuery, mintContextToken, type AgentActor,
 import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const MEMBERS = ['owner', 'admin', 'member', 'viewer'] as const;
 const SHIPPED = ['kernel', 'finance', 'probe', 'other'] as const;
@@ -84,7 +84,7 @@ const kernelSysRead = defineQuery({ name: 'kernel.gate_sys_read', input: z.objec
 type Actor = { type: 'user'; userId: string; aal: 'aal1' | 'aal2'; sessionId?: string; mfaAt?: number };
 
 suite('the per-org app gate of the runtime (ADR-0053, slice b)', () => {
-  const dbName = `crove_test_orggate2_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_orggate2_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;
@@ -238,7 +238,7 @@ suite('the per-org app gate of the runtime (ADR-0053, slice b)', () => {
       await c.connect();
       try {
         await c.query('BEGIN');
-        await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', { userId: o.owner, orgId: o.orgId, sessionId: null, aal: 'aal1', mfaAt: null })]);
+        await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, mintContextToken(process.env.LUDY_CONTEXT_TOKEN_KEY ?? process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', { userId: o.owner, orgId: o.orgId, sessionId: null, aal: 'aal1', mfaAt: null })]);
         const { rows } = await c.query<{ id: string }>(
           `SELECT ludy_finance.post_journal_entry('2026-10-01'::date, 'test', 'test', $1::uuid, $2::jsonb) AS id`,
           [

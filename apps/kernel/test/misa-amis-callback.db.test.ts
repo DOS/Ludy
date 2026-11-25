@@ -3,7 +3,7 @@
 // organisations comes back as two rows, that an organisation whose Finance is off is not found, that a result taken and not done is taken again, that old results are purged) and the whole path, the route as the
 // API login and the relay as the worker login, against the real command and the real state graph (a signed result moves a sent or lost-answer row, a replay and an old failure after an acceptance change nothing, a
 // swapped company code, a refid of another organisation and a row still being sent move nothing, and an organisation whose Finance is off is acknowledged and dropped). The route's behaviour with a fake runtime is
-// in misa-amis-callback.test.ts and the relay's decisions in misa-amis-callback-relay.test.ts. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// in misa-amis-callback.test.ts and the relay's decisions in misa-amis-callback-relay.test.ts. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
@@ -23,7 +23,7 @@ import { createHttpApp } from '../src/http.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -51,7 +51,7 @@ class MemoryStore implements BlobStore {
 }
 
 suite('MISA AMIS callback (#3903)', () => {
-  const dbName = `crove_test_misa_amis_callback_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_misa_amis_callback_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let api: Runtime;

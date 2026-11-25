@@ -2,7 +2,7 @@
 // The doorbell definer of Zoom's webhook on a real database (meetings integrations C3, #3175): ludy_kernel.meeting_platform_ring(provider, account) clears the last listing time of the ACTIVE Zoom
 // connections of one Zoom user, so the sweep lists them again at its next pass, and nothing else. It rings only 'zoom', only an account of the shape of a Zoom user id, only active connections of an
 // active org whose Meetings app is on and whose member is still in the org, in any case of the id; it returns a count and never an id; the API login runs it and no other login can. Set
-// CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database. The route that calls it is tested without a database in zoom-webhook.test.ts.
+// LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database. The route that calls it is tested without a database in zoom-webhook.test.ts.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -14,12 +14,12 @@ import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/
 import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('meeting_platform_ring, the doorbell of Zoom\'s webhook (meetings integrations C3, #3175)', () => {
-  const dbName = `crove_test_mp_ring_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_mp_ring_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let workerUrl = '';
   const pools: pg.Pool[] = [];

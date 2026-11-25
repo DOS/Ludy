@@ -5,14 +5,14 @@
 // - Verifies exact 1-based Unicode character offsets (including emojis / surrogate pairs) and non-overlapping spans.
 // - Verifies span-verified redaction (selective confirmation, literal marks, untrusted client offsets rejected, 22023 checks).
 // - Verifies hardening, permissions, role isolation, and linear-time ReDoS safety.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; the run creates and drops its own database.
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { hardeningViolations, migrate, setRolePasswords } from '@ludy/db/migrate';
 import { PII_DETECT_CASES, type RedactionKind } from './pii-detect-cases.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -32,7 +32,7 @@ const MARK_BY_KIND: Record<RedactionKind, string> = {
 };
 
 suite('ludy_kernel.text_detect and text_redact_spans (#4001 Slice 1)', () => {
-  const dbName = `crove_test_text_detect_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_text_detect_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let client: pg.Client;
 
@@ -328,7 +328,7 @@ suite('ludy_kernel.text_detect and text_redact_spans (#4001 Slice 1)', () => {
 
   it('normalizes Vietnamese labels (SĐT, ĐỒNG, VNĐ) identically in a C-collation database', async () => {
     if (!ADMIN) return;
-    const cDbName = `crove_test_text_detect_c_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+    const cDbName = `ludy_test_text_detect_c_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
     const root = new pg.Client({ connectionString: ADMIN });
     await root.connect();
     try {

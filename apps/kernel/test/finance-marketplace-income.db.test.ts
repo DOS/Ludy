@@ -2,7 +2,7 @@
 // Marketplace income reports as files (#2516, ADR-0045 points 5 and 7), on a real PostgreSQL 17 and the real parsing sandbox: a Shopee income workbook (the per-order table on its second sheet)
 // is read and STAGED with nothing stored, a member confirms it and ONE settlement with its lines is stored (append-only, no buyer data anywhere, nothing of the file in the audit facts), and
 // each check that blocks confirming it is a clear refusal that stores nothing: a line with no payment date, lines that do not add up to the net the file states, an order the org does not
-// know, a period another settlement already covers, a sale line already stored. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// know, a period another settlement already covers, a sale line already stored. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -17,7 +17,7 @@ import { buildXlsx, type XlsxCell } from '../../extract/test/xlsx-fixture.ts';
 import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -76,7 +76,7 @@ interface Preview {
 }
 
 suite('marketplace income reports (#2516)', () => {
-  const dbName = `crove_test_income_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_income_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

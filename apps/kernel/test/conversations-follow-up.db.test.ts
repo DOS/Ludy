@@ -2,7 +2,7 @@
 // "Create task" from a conversation (CV3, #3295, plan docs/plan/conversations.md section 4 point 2) on PostgreSQL 17, through the API: a member makes an
 // ordinary kernel task that links back to the thread and the thread lists its open tasks; the conversation keeps its own status; a viewer, a member who cannot
 // read a private thread and another org find the way closed; a repeated click with the same key makes one task; neither the task nor the audit rows hold a
-// word of the customer's. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// word of the customer's. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
@@ -19,7 +19,7 @@ import { createHttpApp } from '../src/http.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-conversation-follow-up-0123';
 const ISSUER = 'crove-auth';
@@ -35,7 +35,7 @@ interface Account {
 const account = (name: string): Account => ({ subject: randomUUID(), email: `${name}@followup.test`, session: randomUUID(), userId: '' });
 
 suite('Create task from a conversation (CV3, #3295)', () => {
-  const dbName = `crove_test_conversations_follow_up_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_conversations_follow_up_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appUrl = '';
   let workerUrl = '';

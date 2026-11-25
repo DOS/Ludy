@@ -26,12 +26,12 @@ import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { notesCommands, notesQueries } from '@ludy/mod-notes';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('Notes v2 E1 (#3559): notebooks, 2-level stacks, checkbox updates, [[Note]] backlinks & PDPL on PG17', () => {
-  const dbName = `crove_test_notes_notebooks_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_notes_notebooks_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let runtime: Runtime;
   const pools: pg.Pool[] = [];

@@ -23,7 +23,7 @@ import { RateLimiter } from '../src/rate-limit.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-desktop-secret-0123456789-abcdef';
 const ISSUER = 'crove-auth-desktop';
@@ -65,7 +65,7 @@ const challengeOf = (verifier: string) => createHash('sha256').update(verifier).
 const webm = () => new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, 0x9f, 0x42, 0x86, 0x81, 0x01, 0x42, 0xf7, 0x81, ...Array.from({ length: 64 }, (_, i) => i)]);
 
 suite('Ludy Desktop token over HTTP (#4515, ADR-0055 slice 2 & slice 3 #4516)', () => {
-  const dbName = `crove_test_desktop_http_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_desktop_http_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appUrlString = '';
   let pool: pg.Pool;

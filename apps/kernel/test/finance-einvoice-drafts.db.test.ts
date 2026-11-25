@@ -2,7 +2,7 @@
 // Sales e-invoice drafts and their series (#2500, ADR-0044) on PostgreSQL 17: series are read from the offline provider by owners and admins only and the first is the
 // entity's default; a draft is saved with amounts computed by the server (a typed total is refused), with its issues shown and not blocking; it is edited and deleted
 // while a draft and refused after; a series of another entity is refused; a viewer reads and writes nothing; the row policies and the state guard hold in SQL; the audit
-// carries ids and counts, never the buyer. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// carries ids and counts, never the buyer. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -16,7 +16,7 @@ import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { enterUser } from './context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -60,7 +60,7 @@ const form = (seriesId: string | null, extra: Record<string, unknown> = {}) => (
 });
 
 suite('sales e-invoice drafts (#2500)', () => {
-  const dbName = `crove_test_einvoice_drafts_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_einvoice_drafts_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The household business kind (#2517, plan stock-and-marketplaces.md section 8.5), on PostgreSQL 17: the profile of an entity of kind household (a new dated row, never an edit; refused inside a
 // locked period, for another kind of entity and for a group and method that do not fit), the books each method requires, and the law as dated data (a new row changes the periods from its
-// date and none before; the seed rows the research of 2026-11-18 confirmed are `confirmed`, the rest still `commentary`, #3710). Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// date and none before; the seed rows the research of 2026-11-18 confirmed are `confirmed`, the rest still `commentary`, #3710). Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -14,12 +14,12 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('household business profile and rules (#2517)', () => {
-  const dbName = `crove_test_household_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_household_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

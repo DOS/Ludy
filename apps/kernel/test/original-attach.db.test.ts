@@ -3,7 +3,7 @@
 // docs/plan/einvoice-lookup.md section 7) on PostgreSQL 17: it is attached to the posted proposal as evidence, never read
 // into a second proposal and never posted again; the entry and the document are not touched; a difference in the amounts is
 // a warning a person sees, not a correction; reading the attached file again is refused; and the cases that stay as they
-// were (another legal entity, the invoice with two matches). Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes
+// were (another legal entity, the invoice with two matches). Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes
 // its own database.
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -21,7 +21,7 @@ import { enterUser } from './context-token.ts';
 import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const FIXTURE = readFileSync(new URL('../../extract/test/fixtures/einvoice-basic.xml', import.meta.url), 'utf8');
 const PARSED = JSON.parse(readFileSync(new URL('../../../packages/l10n-vn/test/fixtures/einvoice-basic.parsed.json', import.meta.url), 'utf8')) as ParsedInvoice;
@@ -56,7 +56,7 @@ interface Row {
 }
 
 suite('the original XML after the posting on PostgreSQL (#2320)', () => {
-  const dbName = `crove_test_original_attach_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_original_attach_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

@@ -1,6 +1,6 @@
 // The review checklist (#1105) on PostgreSQL 17: owners and admins keep up to 10 items in all, org-wide or per channel;
 // an approval needs every item of the channel's list ticked and keeps the items as the database holds them; a request
-// for changes or a rejection needs none; an org without a list approves as before. Set CROVE_TEST_ADMIN_URL to a
+// for changes or a rejection needs none; an org without a list approves as before. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a
 // superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -13,12 +13,12 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { socialCommands, socialQueries, type ActivityItem, type PostView, type ReviewCheck, type VersionView } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 suite('social review checklist on PostgreSQL (#1105)', () => {
-  const dbName = `crove_test_social_checklist_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_checklist_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

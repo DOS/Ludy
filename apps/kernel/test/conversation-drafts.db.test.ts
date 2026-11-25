@@ -2,7 +2,7 @@
 // Vy's reply drafts and the saved replies on PostgreSQL 17 (CV8, #2310): a member asks, a system job writes the tainted draft and a person decides; no
 // text of the customer or of Vy reaches an audit row, an event, a job or a log; the draft is read by those who read the thread and written by the system
 // alone (the guard trigger and the row policies); a new customer message makes it stale; a reply that began from it records only lengths; the draft is
-// deleted with its thread; the owner's switch and the model's absence leave a thread with no draft and no alarm. Set CROVE_TEST_ADMIN_URL to a
+// deleted with its thread; the owner's switch and the model's absence leave a thread with no draft and no alarm. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a
 // superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -21,7 +21,7 @@ import { createSessionStatusSource } from '../src/sessions.ts';
 import { contextToken } from './context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const SYSTEM = { type: 'system' as const, component: 'conversations' };
@@ -31,7 +31,7 @@ const CUSTOMER_TEXT = 'Áo thun cotton này giá bao nhiêu vậy shop? (bí m�
 const DRAFT_TEXT = 'Dạ áo thun cotton giá [giá] ạ, bạn cần size nào ạ?';
 
 suite('Vy’s drafts and the saved replies on PostgreSQL (CV8, #2310)', () => {
-  const dbName = `crove_test_conversation_drafts_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_conversation_drafts_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appUrl = '';
   let pool: pg.Pool;

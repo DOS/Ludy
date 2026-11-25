@@ -1,7 +1,7 @@
 // The crm.scheduler agent (#1434) on PostgreSQL 17: a booking the visitor cancels gives the agent a task, its run
 // comments the next free slots of the type and hands the task to a human; a host's cancel gives no task. The task, its
 // comment and the escalation carry the type and times only, never the visitor, since every member reads tasks; and the
-// agent can book, move or cancel nothing. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// agent can book, move or cancel nothing. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -15,7 +15,7 @@ import { crmAgentPrograms, crmCommands, crmQueries, proposalText, type NextSlots
 import { bookingManageAsk, bookingRequest } from '../src/booking-page.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const VN = 'Asia/Ho_Chi_Minh';
@@ -30,7 +30,7 @@ function bookableDay(offset: number): string {
 const at = (date: string, minute: number) => new Date(zonedInstant(VN, date, minute)).toISOString();
 
 suite('the crm.scheduler agent on PostgreSQL (#1434)', () => {
-  const dbName = `crove_test_crm_scheduler_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_crm_scheduler_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let app: Runtime;

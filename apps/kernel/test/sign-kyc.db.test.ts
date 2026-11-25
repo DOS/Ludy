@@ -29,7 +29,7 @@ import { proposeEnvelopeKycCheck, signAi } from '../src/sign-ai.ts';
 import { runSignPdfInspectJob, runSignPdfSealJob, sweepSignPendingKycWork } from '../src/sign-worker.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const JWT_SIGNING_KEY = 'test-only-jwt-key-for-sign-kyc-4443-0123456789abcdef';
 const ISSUER = 'crove-auth';
@@ -152,7 +152,7 @@ function buildValidSinglePagePdf(lines: readonly string[]): Uint8Array {
 const suite = ADMIN ? describe : describe.skip;
 
 suite('eSign Slice 5e signer KYC attachment verification check (#4443)', () => {
-  const dbName = `crove_test_sign_kyc_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_sign_kyc_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appUrl = '';
   let workerUrl = '';

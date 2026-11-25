@@ -3,7 +3,7 @@
 // OA secret key are set; it checks the signature before anything else and refuses a wrong one with one answer that says nothing; it caps
 // the body before reading it; it parks only a verified notice that carries a message, names no org in its path or answer, and writes no
 // tenant row; and the worker takes a parked notice into the thread of the customer under the org that holds the OA's connection, once,
-// whatever order and however many times Zalo sends it. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// whatever order and however many times Zalo sends it. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -21,7 +21,7 @@ import { createHttpApp } from '../src/http.ts';
 import { RateLimiter } from '../src/rate-limit.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const SECRET = 'test-only-jwt-secret-for-zalo-0123456789-abcdefghij';
@@ -51,7 +51,7 @@ class MemoryStore implements BlobStore {
 const mac = (body: string, timestamp: string, key = OA_KEY) => `mac=${createHash('sha256').update(APP_ID + body + timestamp + key).digest('hex')}`;
 
 suite('the Zalo OA webhook on PostgreSQL (#2304)', () => {
-  const dbName = `crove_test_zalo_webhook_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_zalo_webhook_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let app: ReturnType<typeof createHttpApp>;

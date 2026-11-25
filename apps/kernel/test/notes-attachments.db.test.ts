@@ -5,7 +5,7 @@
 // no-store, a sandbox CSP, inline only for raster images, PDF and safe audio, and one uniform 404 for an id that is foreign,
 // unknown, unreadable or in the trash. The worker extracts text through crove-extract (a stand-in here) and the note's search
 // finds it, an edit of the note keeping it. Every deletion path queues the blob for the worker's sweep. Set
-// CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
@@ -26,7 +26,7 @@ import { createHttpApp } from '../src/http.ts';
 import { requestDueNoteAttachmentExtracts, runNoteAttachmentExtract, sweepNoteAttachmentBlobs } from '../src/notes-worker.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const SYSTEM = { type: 'system' as const, component: 'notes' };
@@ -68,7 +68,7 @@ class FakeExtract implements ExtractClient {
 }
 
 suite('files attached to a note on PostgreSQL (#3561)', () => {
-  const dbName = `crove_test_notes_attachments_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_notes_attachments_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;

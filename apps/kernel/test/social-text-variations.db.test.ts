@@ -5,7 +5,7 @@
 // evergreen or series post, and the table refuses any other shape. Folded in from #1001: a sweep is no longer filled by
 // posts and series that only wait, a series whose original was taken down ends with that reason, and the first copy
 // keeps its distance from the original's publish.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -31,7 +31,7 @@ import {
 } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const HCM = 'Asia/Ho_Chi_Minh';
@@ -55,7 +55,7 @@ class Platform implements Publisher {
 }
 
 suite('social text variations on PostgreSQL (#1260, #1001)', () => {
-  const dbName = `crove_test_social_variations_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_variations_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appPool: pg.Pool;
   let workerPool: pg.Pool;

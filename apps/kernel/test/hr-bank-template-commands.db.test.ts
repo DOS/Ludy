@@ -4,7 +4,7 @@
 // - a name is unique per entity (create and edit say so); the same name in another entity is fine;
 // - a layout with an unknown column, a repeated one, five columns, a header too long or a brace form other than {month} is refused before anything is stored;
 // - a member and a viewer can call none of the four; a template of another org is not found; the audit rows hold ids and field names, never a header or a content text.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; the run creates and drops its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -16,7 +16,7 @@ import { CredentialVault, Runtime, SUBJECT_WRAP_INFO, SubjectVault, parseVaultKe
 import { hrCommands, hrQueries } from '@ludy/mod-hr';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -37,7 +37,7 @@ interface Template {
 }
 
 suite('saved bank templates through the commands (#2893)', () => {
-  const dbName = `crove_test_hr_bank_cmd_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_hr_bank_cmd_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let rt: Runtime;

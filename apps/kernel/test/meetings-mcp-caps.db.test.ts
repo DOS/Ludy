@@ -15,7 +15,7 @@ import { Runtime, type UserActor } from '@ludy/kernel-runtime';
 import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 // How many meetings `ludy_meetings_decisions` reads at most (DECISIONS_MEETINGS_MAX in modules/meetings/src/mcp.ts, a module-private constant): changing it fails this file, which is the point of it.
@@ -31,7 +31,7 @@ interface Search {
 }
 
 suite('the scan caps of the Meetings MCP reads (#4087)', () => {
-  const dbName = `crove_test_mcp_caps_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_mcp_caps_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let runtime: Runtime;

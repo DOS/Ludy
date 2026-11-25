@@ -5,7 +5,7 @@
 // adds them up in decimal, the roles, the org and the legal-entity scope are checked, a failed sync and a rate limit are
 // recorded, and nothing of the credential reaches an answer, an audit row or an event. The pure rules are unit-tested in
 // modules/ads/test/domain.test.ts and the adapter in packages/ad-platform/test/sandbox.test.ts.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
@@ -36,7 +36,7 @@ import { createHttpApp } from '../src/http.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-ads-0123456789-abcdefghij';
 const ISSUER = 'crove-auth';
@@ -112,7 +112,7 @@ const META_WRITE_CONNECTOR: OAuthConnector = {
 };
 
 suite('ads on PostgreSQL (#2217)', () => {
-  const dbName = `crove_test_ads_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_ads_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   const workerPools: pg.Pool[] = [];
@@ -810,7 +810,7 @@ suite('ads on PostgreSQL (#2217)', () => {
         await c.query('BEGIN');
         if (who === 'system') await c.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [orgId]);
         else {
-          const token = mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', { userId: who.userId, orgId, sessionId: null, aal: 'aal1', mfaAt: null });
+          const token = mintContextToken(process.env.LUDY_CONTEXT_TOKEN_KEY ?? process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', { userId: who.userId, orgId, sessionId: null, aal: 'aal1', mfaAt: null });
           await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, token]);
         }
         await c.query('INSERT INTO ludy_ads.ad_org_setting (org_id) VALUES ($1) ON CONFLICT DO NOTHING', [orgId]);
@@ -1222,7 +1222,7 @@ suite('ads on PostgreSQL (#2217)', () => {
             for (const authors of authorSets) {
               for (const who of [owner, adminAccount, member, viewer]) {
                 const ts = await appDb.transaction().execute(async (trx) => {
-                  const token = mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', { userId: who.userId, orgId, sessionId: null, aal: 'aal1', mfaAt: null });
+                  const token = mintContextToken(process.env.LUDY_CONTEXT_TOKEN_KEY ?? process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', { userId: who.userId, orgId, sessionId: null, aal: 'aal1', mfaAt: null });
                   await sql`SELECT ludy_kernel.enter_user_context(${orgId}::uuid, ${token}::text)`.execute(trx);
                   return decideApproval(trx, orgId, { type: 'user', userId: who.userId, aal: 'aal1', sessionId: randomUUID() }, { command, status: 'pending', eligible_approvers: snapshot, authors, co_authors: null }, { lock: false });
                 });
@@ -4857,7 +4857,7 @@ suite('ads on PostgreSQL (#2217)', () => {
         const c = await pool.connect();
         try {
           await c.query('BEGIN');
-          const token = mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', { userId: outsider.userId, orgId: otherOrgId, sessionId: null, aal: 'aal1', mfaAt: null });
+          const token = mintContextToken(process.env.LUDY_CONTEXT_TOKEN_KEY ?? process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', { userId: outsider.userId, orgId: otherOrgId, sessionId: null, aal: 'aal1', mfaAt: null });
           await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [otherOrgId, token]);
           await c.query('INSERT INTO ludy_ads.ad_org_setting (org_id) VALUES ($1) ON CONFLICT DO NOTHING', [otherOrgId]);
           await c.query(text, [otherOrgId, adAccountId, outsider.userId]);
@@ -5411,7 +5411,7 @@ suite('ads on PostgreSQL (#2217)', () => {
         const c = await pool.connect();
         try {
           await c.query('BEGIN');
-          const token = mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', { userId: owner.userId, orgId, sessionId: null, aal: 'aal1', mfaAt: null });
+          const token = mintContextToken(process.env.LUDY_CONTEXT_TOKEN_KEY ?? process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', { userId: owner.userId, orgId, sessionId: null, aal: 'aal1', mfaAt: null });
           await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, token]);
           await c.query('INSERT INTO ludy_ads.ad_org_setting (org_id) VALUES ($1) ON CONFLICT DO NOTHING', [orgId]);
           await c.query(text, params);
@@ -5591,7 +5591,7 @@ suite('ads on PostgreSQL (#2217)', () => {
           const c = await pool.connect();
           try {
             await c.query('BEGIN');
-            const ctxToken = mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', { userId: outsider.userId, orgId: otherOrgId, sessionId: null, aal: 'aal1', mfaAt: null });
+            const ctxToken = mintContextToken(process.env.LUDY_CONTEXT_TOKEN_KEY ?? process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', { userId: outsider.userId, orgId: otherOrgId, sessionId: null, aal: 'aal1', mfaAt: null });
             await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [otherOrgId, ctxToken]);
             await c.query('INSERT INTO ludy_ads.ad_org_setting (org_id) VALUES ($1) ON CONFLICT DO NOTHING', [otherOrgId]);
             await c.query(text, [otherOrgId]);

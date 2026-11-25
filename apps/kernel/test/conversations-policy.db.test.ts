@@ -7,7 +7,7 @@
 //   threads, through Social's own commands, and the rows an older database held in ludy_social.channel_access are copied
 //   when it migrates, with the Social table dropped;
 // - a notice waiting in the intake table longer than seven days is dropped with its body, and returned by id.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own databases.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own databases.
 import { randomUUID } from 'node:crypto';
 import { copyFileSync, mkdirSync, mkdtempSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -26,7 +26,7 @@ import { TEST_MANIFESTS } from './manifests.ts';
 import { contextToken } from './context-token.ts';
 import { createPreCutoverClient, createPreCutoverPool } from './pre-cutover-db.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const SYSTEM = { type: 'system' as const, component: 'conversations' };
@@ -34,7 +34,7 @@ const DESK_AGENT_PERMISSION = 'kernel.conversation.direct.read';
 
 suite('the conversation core: who reads what, the channel limit, the intake age (#2303)', () => {
   const stamp = `${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
-  const dbName = `crove_test_conversations_policy_${stamp}`;
+  const dbName = `ludy_test_conversations_policy_${stamp}`;
   let adminUrl = '';
   let appUrl = '';
   let workerUrl = '';

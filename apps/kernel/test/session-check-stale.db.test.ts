@@ -1,7 +1,7 @@
 // The obsolete 3-argument session_check from an early draft of the auth sessions migration is dropped (issue #92):
 // a dev database that applied the draft, then was recovered by deleting the draft's ledger row (the runner refuses
 // the changed checksum otherwise), must not keep a callable overload that skips the org-scoped revocation.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { copyFileSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,7 +10,7 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { migrate } from '@ludy/db/migrate';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const DROP_MIGRATION = '20261016120000_crove_kernel_session_check_drop_stale.sql';
 const CUTOVER_FILE = readdirSync(MIGRATIONS).find((n) => n.endsWith('_ludy_kernel_rebrand_core_schemas_roles_gucs.sql'));
@@ -20,7 +20,7 @@ const CUTOVER_VERSION = CUTOVER_FILE.slice(0, 14);
 const suite = ADMIN ? describe : describe.skip;
 
 suite('stale session_check overload', () => {
-  const dbName = `crove_test_session_check_stale_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_session_check_stale_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
 
   async function admin<T>(fn: (client: pg.Client) => Promise<T>, url = adminUrl): Promise<T> {

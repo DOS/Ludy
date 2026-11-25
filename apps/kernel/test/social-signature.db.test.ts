@@ -1,7 +1,7 @@
 // A default signature per channel (#1190) on PostgreSQL 17: owners and admins set it, a channel added to a post copies
 // it into the variant, the text sent ends with it, a later change leaves existing posts and their approvals alone,
 // leaving it off changes the content hash, Instagram's hashtag and @ tag caps are checked before review, and the client
-// review link shows the signature, so a client approves the whole text. Set CROVE_TEST_ADMIN_URL to a superuser URL;
+// review link shows the signature, so a client approves the whole text. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL;
 // each run makes its own database.
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -17,13 +17,13 @@ import { socialCommands, socialQueries, withSignature, type PostView } from '@lu
 import { TEST_MANIFESTS } from './manifests.ts';
 import { rewriteHistoricalCoreSql } from './pre-cutover-db.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const SIGNATURE = 'Hotline 0901 234 567\n12 Lê Lợi, Q.1\n#TiemBanhAnNhien';
 
 suite('social channel signatures on PostgreSQL (#1190)', () => {
-  const dbName = `crove_test_social_signature_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_signature_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

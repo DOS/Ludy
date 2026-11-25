@@ -1,7 +1,7 @@
 // The multi-client home screen (issue #318), on a real PostgreSQL 17, through the HTTP API: me.clients lists every org
 // the user belongs to, and only those, each with its own pending proposals, failed files, last activity and next VAT
 // deadline; owners and admins set the VAT filing period (audited); an org the user leaves drops off the list.
-// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -22,7 +22,7 @@ import { createSessionStatusSource } from '../src/sessions.ts';
 import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const FIXTURE = readFileSync(new URL('../../extract/test/fixtures/einvoice-basic.xml', import.meta.url)).toString('utf8');
 const SECRET = 'test-only-jwt-secret-for-clients-0123456789';
@@ -74,7 +74,7 @@ interface ClientRow {
 const suite = ADMIN ? describe : describe.skip;
 
 suite('multi-client home screen (#318)', () => {
-  const dbName = `crove_test_clients_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_clients_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

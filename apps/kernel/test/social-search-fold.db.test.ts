@@ -2,7 +2,7 @@
 // title, in a channel's own text and in media file names (NFD names from a Mac too); a search with marks still matches;
 // a term with nothing left once folded matches as typed; a member limited to some channels (#1081) finds nothing on
 // another channel, its own text or its own media; find and replace (#1144) stays exact; and a search over an org of
-// 5,000 posts answers within 200 ms at p95. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// 5,000 posts answers within 200 ms at p95. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
 import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -14,14 +14,14 @@ import { Runtime } from '@ludy/kernel-runtime';
 import { socialCommands, socialQueries, type LibraryItem, type PostView } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 // The seeded org's size, from the issue's acceptance criterion.
 const POSTS = 5_000;
 
 suite('social search without marks on PostgreSQL (#1360)', () => {
-  const dbName = `crove_test_social_search_fold_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_search_fold_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let db: Db;

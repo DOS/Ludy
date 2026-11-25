@@ -39,7 +39,7 @@ import { TEST_MANIFESTS } from './manifests.ts';
 
 
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 
@@ -67,7 +67,7 @@ interface Account {
 
 suite('social posts through the API', () => {
 
-  const dbName = `crove_test_social_api_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_social_api_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
 
   let adminUrl = '';
 

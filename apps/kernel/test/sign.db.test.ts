@@ -31,7 +31,7 @@ import { signMailTemplates } from '../src/sign-mail.ts';
 import { SIGN_ACTOR, runSignPdfInspectJob, runSignPdfSealJob, sweepSignCleanup, sweepSignExpire, sweepSignPendingWork } from '../src/sign-worker.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-sign-3323-0123456789abcdef';
 const ISSUER = 'crove-auth';
@@ -69,7 +69,7 @@ const pdfFixture = (tag: string) =>
 const suite = ADMIN ? describe : describe.skip;
 
 suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
-  const dbName = `crove_test_sign_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_sign_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appUrl = '';
   let workerUrl = '';
