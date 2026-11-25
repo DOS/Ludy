@@ -1621,6 +1621,115 @@ describe('checkSignObligationExtract (#3821)', () => {
         obligations: [],
       }).proposal?.contractValue,
     ).toBeNull();
+
+    const hardeningCases: ReadonlyArray<{
+      readonly title: string;
+      readonly quote: string;
+      readonly expectedValue: string;
+      readonly expectedCurrency: string;
+      readonly rejectedValue: string;
+    }> = [
+      {
+        title: 'Large Plain Package Count',
+        quote: 'Package 500 USD 100 users; equivalent: EUR 450.',
+        expectedValue: '500',
+        expectedCurrency: 'USD',
+        rejectedValue: '100',
+      },
+      {
+        title: 'Decimal Package Amount',
+        quote: 'Package 199.99 USD 100 users; equivalent: EUR 180.',
+        expectedValue: '199.99',
+        expectedCurrency: 'USD',
+        rejectedValue: '100',
+      },
+      {
+        title: 'Vietnamese Count Unit',
+        quote: 'Gói 500 USD 10 người; tương đương 12.500.000 VND.',
+        expectedValue: '500',
+        expectedCurrency: 'USD',
+        rejectedValue: '10',
+      },
+      {
+        title: 'Right Duration Quantity',
+        quote: 'Plan 200 USD 12 months; equivalent: EUR 180.',
+        expectedValue: '200',
+        expectedCurrency: 'USD',
+        rejectedValue: '12',
+      },
+      {
+        title: 'Slash Rate Before Amount',
+        quote: 'Fee: 100 EUR/month 200 USD 10 users; equivalent: GBP 160.',
+        expectedValue: '200',
+        expectedCurrency: 'USD',
+        rejectedValue: '10',
+      },
+      {
+        title: 'Schedule Year Label',
+        quote: 'Schedule A Year 2 USD 100; equivalent: EUR 90.',
+        expectedValue: '100',
+        expectedCurrency: 'USD',
+        rejectedValue: '2',
+      },
+      {
+        title: 'Unlisted Right Unit Word',
+        quote: 'Package 20 USD 10 widgets; equivalent: EUR 18.',
+        expectedValue: '20',
+        expectedCurrency: 'USD',
+        rejectedValue: '10',
+      },
+      {
+        title: 'Peso Prefix Symbol',
+        quote: '10 ₱500; equivalent: USD 10.',
+        expectedValue: '500',
+        expectedCurrency: 'PHP',
+        rejectedValue: '10',
+      },
+    ];
+    for (const testCase of hardeningCases) {
+      const req: SignObligationExtractRequest = {
+        envelopeTitle: testCase.title,
+        pageCount: 1,
+        pages: [
+          {
+            page: 1,
+            text: `Bên B: Công ty ABC\n${testCase.quote}`,
+          },
+        ],
+      };
+      expect(
+        checkSignObligationExtract(req, {
+          counterpartyName: 'Công ty ABC',
+          effectiveDate: null,
+          expiryDate: null,
+          renewalNoticeDays: null,
+          autoRenew: false,
+          contractValue: testCase.expectedValue,
+          currency: testCase.expectedCurrency,
+          citations: [
+            { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+            { field: 'contractValue', pageNumber: 1, quoteExcerpt: testCase.quote },
+          ],
+          obligations: [],
+        }).proposal,
+      ).toMatchObject({ contractValue: testCase.expectedValue, currency: testCase.expectedCurrency });
+      expect(
+        checkSignObligationExtract(req, {
+          counterpartyName: 'Công ty ABC',
+          effectiveDate: null,
+          expiryDate: null,
+          renewalNoticeDays: null,
+          autoRenew: false,
+          contractValue: testCase.rejectedValue,
+          currency: testCase.expectedCurrency,
+          citations: [
+            { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+            { field: 'contractValue', pageNumber: 1, quoteExcerpt: testCase.quote },
+          ],
+          obligations: [],
+        }).proposal?.contractValue,
+      ).toBeNull();
+    }
   });
 });
 

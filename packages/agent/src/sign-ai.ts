@@ -2843,7 +2843,16 @@ function splitCurrencyClauses(preservedQuote: string): string[] {
     /\b(AUD|CAD|HKD|NZD|SGD|TWD|USD|US)[ \t]*[\r\n]+[ \t]*(?=\$)/gi,
     '$1 ',
   );
-  const rawChunks = collapsedDollarBreaks
+  const separatedRateSuffixes = collapsedDollarBreaks
+    .replace(
+      /(?:^|(?<!\d))(\d+(?:[.,]\d+)*[ \t]*(?:[\p{L}]{2,4}|[$€£¥₫₩₹₽฿₱₺]))\/(year|yr|month|mo|quarter|qtr|week|wk|day|hour|hr|user|seat|unit|năm|nam|tháng|thang|quý|quy|tuần|tuan|ngày|ngay|giờ|gio|người|nguoi)(?![\p{L}\p{N}])/giu,
+      '$1 per $2; ',
+    )
+    .replace(
+      /(?<=[\p{L}$€£¥₫₩₹₽฿₱₺])\/(year|yr|month|mo|quarter|qtr|week|wk|day|hour|hr|user|seat|unit|năm|nam|tháng|thang|quý|quy|tuần|tuan|ngày|ngay|giờ|gio|người|nguoi)(?![\p{L}\p{N}])/giu,
+      ' per $1',
+    );
+  const rawChunks = separatedRateSuffixes
     .split(/(?:[\r\n;|()]+|(?<!\d)\/|\/(?!\d))+|[ \t]+-[ \t]+|,\s+|\s+(?:or|and|và|hoặc|tương đương)\s+/iu)
     .map((part) => part.trim())
     .filter((part) => part.length > 0);
@@ -2917,26 +2926,45 @@ const RIGHT_BOUND_PLAIN_NUM_RE = /^\s*[:=-]?\s*(\d+(?:[.,]\d+)*)(?![\p{L}\p{N}]|
 const RIGHT_BOUND_SCALED_NUM_RE =
   /^\s*[:=-]?\s*(\d+(?:[.,]\d+)*)(?:\s*(tỷ|ty|tỉ|ti|triệu|trieu|nghìn|ngàn|nghin|ngan|million|billion|thousand|mn|bn|tr|m|k)(?![\p{L}\p{N}]))?(?![\p{L}\p{N}]|[.,]\d)/iu;
 
+const CURRENCY_SYMBOL_END_RE = /[$€£¥₫₩₹₽฿₱₺]$/u;
+// Excludes ₫ so postfix "500₫ 10 users" keeps 500 VND unless tight-right "₫500".
+const PREFIX_PREFERRED_SYMBOL_END_RE = /[$€£¥₩₹₽฿₱₺]$/u;
+const RIGHT_NON_MONETARY_UNIT_AFTER_RE =
+  /^\s+(?:days?|weeks?|months?|years?|hours?|hrs?|minutes?|mins?|users?|seats?|licen[cs]es?|accounts?|units?|items?|copies|copy|devices?|endpoints?|nodes?|servers?|projects?|workspaces?|members?|employees?|staff|people|persons?|guests?|contacts?|records?|documents?|docs?|envelopes?|signatures?|pages?|gb|tb|mb|ngày|ngay|tuần|tuan|tháng|thang|năm|nam|giờ|gio|phút|phut|người|nguoi|tài khoản|tai khoan|ghế|ghe|giấy phép|giay phep|thiết bị|thiet bi|nhân viên|nhan vien|thành viên|thanh vien|hồ sơ|ho so|tài liệu|tai lieu|trang|đơn vị|don vi|sản phẩm|san pham|lần|lan)(?![\p{L}\p{N}])/iu;
+const RIGHT_PRICE_CONTINUATION_RE =
+  /^\s*(?:$|[.,;:!?)\]/+]|(?:per|for|each|net|only|total|flat|plus|excl\.?|excluding|incl\.?|including|ex|inc|vat|tax|monthly|annually|yearly|quarterly|weekly|daily|upfront|due|payable|paid|approx\.?|estimated|max\.?|min\.?|mỗi|moi|cho|trên|tren|chưa|chua|đã|da|bao gồm|bao gom|cộng|cong|thuế|thue|trọn gói|tron goi|tổng|tong|duy nhất|duy nhat|một lần|mot lan)(?![\p{L}\p{N}]))/iu;
 const LEFT_ORDINAL_LABEL_RE =
-  /(?:^|[^\p{L}])(tier|level|lvl|item|phase|step|option|plan|package|pack|pkg|part|batch|stage|milestone|tranche|bracket|category|cat|edition|line|row|grade|class|group|bundle|module|wave|round|lot|zone|band|rank|version|ver|no|num|number|article|art|section|sec|clause|cl|schedule|table|annex|appendix|year|yr|month|mo|quarter|qtr|week|wk|day|gói|goi|đợt|dot|bước|buoc|mục|muc|phần|phan|hạng|hang|cấp|cap|bậc|bac|lần|lan|điều|dieu|khoản|khoan|bảng|bang|số|so|phụ lục|phu luc|giai đoạn|giai doan|năm|nam|tháng|thang|quý|quy|tuần|tuan|ngày|ngay)\.?\s*$/iu;
+  /(?:^|[^\p{L}])(?:tier|level|lvl|item|phase|step|option|plan|package|pack|pkg|part|batch|stage|milestone|tranche|bracket|category|cat|edition|line|row|grade|class|group|bundle|module|wave|round|lot|zone|band|rank|version|ver|no|num|number|article|art|section|sec|clause|cl|schedule|table|annex|appendix|gói|goi|đợt|dot|bước|buoc|mục|muc|phần|phan|hạng|hang|cấp|cap|bậc|bac|lần|lan|điều|dieu|khoản|khoan|bảng|bang|số|so|phụ lục|phu luc|giai đoạn|giai doan)\.?\s*$/iu;
+const LEFT_YEAR_LABEL_RE = /(?:^|[^\p{L}])(?:year|yr|năm|nam)\.?\s*$/iu;
+const LEFT_SUBYEAR_PERIOD_LABEL_RE =
+  /(?:^|[^\p{L}])(?:month|mo|quarter|qtr|week|wk|day|tháng|thang|quý|quy|tuần|tuan|ngày|ngay)\.?\s*$/iu;
 const RATE_PREPOSITION_BEFORE_PERIOD_RE =
-  /(?:^|[^\p{L}])(?:per|every|each|a|mỗi|moi|hàng|hang)\s+(?:year|yr|month|mo|quarter|qtr|week|wk|day|năm|nam|tháng|thang|quý|quy|tuần|tuan|ngày|ngay)\s*$/iu;
+  /(?:^|[^\p{L}])(?:per|every|each|mỗi|moi|hàng|hang)\s+(?:year|yr|month|mo|quarter|qtr|week|wk|day|năm|nam|tháng|thang|quý|quy|tuần|tuan|ngày|ngay)\s*$/iu;
+const LOWERCASE_A_BEFORE_PERIOD_RE = /(?:^|[^\p{L}])a\s+(?:year|yr|month|mo|quarter|qtr|week|wk|day)\s*$/u;
+const SMALL_ORDINAL_INT_RE = /^(?:0|[1-9]\d?)$/;
+const YEAR_ORDINAL_INT_RE = /^(?:[1-9]\d?|(?:19|20)\d{2})$/;
 
 function isOrdinalLabelBeforeLeft(
   beforeLeftNum: string,
   leftNumToken: string,
   leftScaleWord: string | undefined,
 ): boolean {
-  if (leftScaleWord !== undefined || /[.,]\d{3}(?!\d)/.test(leftNumToken)) {
+  if (leftScaleWord !== undefined || !/^\d+$/.test(leftNumToken)) {
     return false;
   }
   if (/(?:^|[^\p{L}\p{N}])#\s*$/.test(beforeLeftNum)) {
-    return true;
+    return /^\d{1,3}$/.test(leftNumToken);
   }
-  if (RATE_PREPOSITION_BEFORE_PERIOD_RE.test(beforeLeftNum)) {
+  if (RATE_PREPOSITION_BEFORE_PERIOD_RE.test(beforeLeftNum) || LOWERCASE_A_BEFORE_PERIOD_RE.test(beforeLeftNum)) {
     return false;
   }
-  return LEFT_ORDINAL_LABEL_RE.test(beforeLeftNum);
+  if (LEFT_YEAR_LABEL_RE.test(beforeLeftNum)) {
+    return YEAR_ORDINAL_INT_RE.test(leftNumToken);
+  }
+  if (LEFT_SUBYEAR_PERIOD_LABEL_RE.test(beforeLeftNum)) {
+    return SMALL_ORDINAL_INT_RE.test(leftNumToken);
+  }
+  return LEFT_ORDINAL_LABEL_RE.test(beforeLeftNum) && SMALL_ORDINAL_INT_RE.test(leftNumToken);
 }
 
 // Binds adjacent numeric tokens to each currency span, resolving left-vs-right collisions (e.g.
@@ -2968,7 +2996,9 @@ function extractBoundDecimalsForSpans(
       scaleWord,
     };
   };
-  const matchRight = (rightSlice: string): { readonly decimals: InstanceType<typeof Decimal>[] } | null => {
+  const matchRight = (
+    rightSlice: string,
+  ): { readonly decimals: InstanceType<typeof Decimal>[]; readonly afterRight: string } | null => {
     const rightMatch = (allowWordScale ? RIGHT_BOUND_SCALED_NUM_RE : RIGHT_BOUND_PLAIN_NUM_RE).exec(rightSlice);
     if (!rightMatch) return null;
     const afterRight = rightSlice.slice(rightMatch[0].length);
@@ -2977,8 +3007,9 @@ function extractBoundDecimalsForSpans(
       allowWordScale &&
       ((!scaleWord && /^\/\d/.test(afterRight)) || DEPOSIT_DURATION_OR_PERCENT_AFTER_RE.test(afterRight));
     if (blockedByDurationOrRatio) return null;
+    if (!scaleWord && RIGHT_NON_MONETARY_UNIT_AFTER_RE.test(afterRight)) return null;
     const scale = scaleWord ? (DEPOSIT_WORD_SCALE_MAP[scaleWord] ?? 1) : 1;
-    return { decimals: candidateTokenDecimalValues(rightMatch[1]!, scale) };
+    return { decimals: candidateTokenDecimalValues(rightMatch[1]!, scale), afterRight };
   };
 
   for (const span of spans) {
@@ -2988,8 +3019,8 @@ function extractBoundDecimalsForSpans(
     const leftBound = matchLeft(leftSlice);
     const rightBound = matchRight(rightSlice);
     if (leftBound && rightBound) {
-      const isCurrencySymbol = /[$€£¥₫₩₹₽฿]$/u.test(tokenText);
-      const isPrefixPreferredSymbol = /[$€£¥₩₹₽฿]$/u.test(tokenText);
+      const isCurrencySymbol = CURRENCY_SYMBOL_END_RE.test(tokenText);
+      const isPrefixPreferredSymbol = PREFIX_PREFERRED_SYMBOL_END_RE.test(tokenText);
       const tightLeftOnly = isCurrencySymbol && /\d$/.test(leftSlice) && /^\s/.test(rightSlice);
       const tightRightOnly = isCurrencySymbol && !/\d$/.test(leftSlice) && /^\d/.test(rightSlice);
       const explicitRightSeparator = /^\s*[:=-]\s*\d/.test(rightSlice);
@@ -2998,7 +3029,8 @@ function extractBoundDecimalsForSpans(
         (tightRightOnly ||
           (isPrefixPreferredSymbol && /^\s*\d/.test(rightSlice)) ||
           explicitRightSeparator ||
-          isOrdinalLabelBeforeLeft(leftBound.beforeNum, leftBound.numToken, leftBound.scaleWord));
+          (isOrdinalLabelBeforeLeft(leftBound.beforeNum, leftBound.numToken, leftBound.scaleWord) &&
+            RIGHT_PRICE_CONTINUATION_RE.test(rightBound.afterRight)));
       out.push(...(preferRight ? rightBound.decimals : leftBound.decimals));
     } else if (leftBound) {
       out.push(...leftBound.decimals);
