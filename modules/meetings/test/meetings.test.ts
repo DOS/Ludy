@@ -146,6 +146,8 @@ describe('meetings commands and queries construction', () => {
       'meetings.link.remove',
       'meetings.followup.send',
       'meetings.followup.note_start',
+      'meetings.deal_update.start',
+      'meetings.deal_update.confirm',
       'meetings.live.chunk',
       'meetings.capture.heartbeat',
       'meetings.live.assemble_record',
@@ -243,6 +245,8 @@ describe('meetings commands and queries construction', () => {
       'meetings.link.suggest',
       'meetings.followup.draft',
       'meetings.followup.note_status',
+      'meetings.deal_update.status',
+      'meetings.deal_update.facts',
       'meetings.live.status',
       'meetings.live.notes_input',
       'meetings.live.assemble_plan',
@@ -256,6 +260,7 @@ describe('meetings commands and queries construction', () => {
       'meetings.mcp.decisions',
       'meetings.mcp.search',
       'meetings.mcp.visible_ids',
+      'meetings.transcript.download',
     ]);
 
     expect(meetingList.name).toBe('meetings.meeting.list');

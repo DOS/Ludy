@@ -6,7 +6,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useParams, useSearch } from '@tanstack/react-router';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import type { BankImportResult, BankLine, BankLineStatus, BankRowError } from '@ludy/kernel-contract';
+import type { BankImportResult, BankLine, BankLineStatus, BankLineVoucher, BankRowError, BankSignDepositCandidate } from '@ludy/kernel-contract';
 import { Alert, AlertDescription } from '@ludy/ui/components/alert';
 import { Badge } from '@ludy/ui/components/badge';
 import { Button, buttonVariants } from '@ludy/ui/components/button';
@@ -16,12 +16,14 @@ import { TableCell, TableRow } from '@ludy/ui/components/table';
 import { cn } from '@ludy/ui/lib/utils';
 import { BankMatchGroups } from '../components/bank-match-groups.tsx';
 import { BankPayrollLine } from '../components/bank-payroll-line.tsx';
+import { BankSignDepositLine } from '../components/bank-sign-deposit-line.tsx';
 import { BankSupplierLine } from '../components/bank-supplier-line.tsx';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
 import { DateInput } from '../components/date-input.tsx';
 import { CardSkeleton, DataTable, Empty, ErrorText, Notice, PageHeader, Spinner, TableSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { isZeroAmount } from '../lib/decimal.ts';
 import { canApproveProposals } from '../lib/review.ts';
 import { VoucherFormPanel } from './vouchers.tsx';
 import {
@@ -42,6 +44,8 @@ const NUM = 'text-right tabular-nums';
 const PREVIEW_ROWS = 300;
 // Owners and admins see the payroll payment an open money-out line may be for the first lines of the month only: one read per line, so a big month does not ask for hundreds at once.
 const PAYROLL_LINES_MAX = 50;
+// Members see eSign VietQR deposit matches on the first open money-in lines of the month (#4723).
+const SIGN_DEPOSIT_LINES_MAX = 50;
 
 type FileState =
   | { status: 'none' }
@@ -328,8 +332,17 @@ export function BankPage() {
           .map((l) => l.id)
       : [],
   );
+  const openInflowLines = new Set(
+    canImport
+      ? (lines.data?.lines ?? [])
+          .filter((l) => !l.amount.startsWith('-') && !isZeroAmount(l.amount) && l.state.status === 'open')
+          .slice(0, SIGN_DEPOSIT_LINES_MAX)
+          .map((l) => l.id)
+      : [],
+  );
   // The line whose voucher is being entered.
   const [entering, setEntering] = useState<BankLine | null>(null);
+  const [enteringDeposit, setEnteringDeposit] = useState<BankLineVoucher | null>(null);
 
   return (
     <>
@@ -391,6 +404,7 @@ export function BankPage() {
             <BankMatchGroups key={`${account}:${month}`} slug={slug} bankAccount={account} month={month} canApprove={canApproveProposals(org.data?.role, org.data?.permissions)} />
           )}
           {entering && <LineVoucher key={entering.id} slug={slug} line={entering} onClose={() => setEntering(null)} />}
+          {enteringDeposit && <VoucherFormPanel key={`deposit:${enteringDeposit.line.id}`} slug={slug} onClose={() => setEnteringDeposit(null)} fromLine={enteringDeposit} />}
           {lines.isLoading ? (
             <TableSkeleton columns={5} />
           ) : lines.error ? (
@@ -426,12 +440,41 @@ export function BankPage() {
                     )}
                     {openOutflowLines.has(line.id) && <BankPayrollLine slug={slug} line={line} bankAccount={account} />}
                     {openOutflowLines.has(line.id) && <BankSupplierLine slug={slug} line={line} />}
+                    {openInflowLines.has(line.id) && (
+                      <BankSignDepositLine
+                        line={line}
+                        onPrepareProposal={(pickedLine: BankLine, candidate: BankSignDepositCandidate) => {
+                          setEntering(null);
+                          setEnteringDeposit({
+                            bankAccount: account,
+                            line: pickedLine,
+                            voucher: {
+                              type: candidate.voucherType,
+                              date: pickedLine.date,
+                              amount: candidate.amount,
+                              description: `${candidate.memoToken} - ${candidate.title}`.slice(0, 300),
+                              counterAccount: candidate.suggestedCreditAccount,
+                            },
+                            suggested: null,
+                            candidates: [],
+                          });
+                        }}
+                      />
+                    )}
                   </TableCell>
                   <TableCell className={NUM}>{line.amount.startsWith('-') ? '' : f.money(line.amount)}</TableCell>
                   <TableCell className={NUM}>{line.amount.startsWith('-') ? f.money(line.amount.slice(1)) : ''}</TableCell>
                   <TableCell className={NUM}>{line.balance === null ? '' : f.money(line.balance)}</TableCell>
                   <TableCell className="text-xs">
-                    <LineState slug={slug} line={line} canEnter={canImport} onEnter={() => setEntering(line)} />
+                    <LineState
+                      slug={slug}
+                      line={line}
+                      canEnter={canImport}
+                      onEnter={() => {
+                        setEnteringDeposit(null);
+                        setEntering(line);
+                      }}
+                    />
                   </TableCell>
                 </TableRow>
               ))}

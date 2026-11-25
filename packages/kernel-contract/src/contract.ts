@@ -1,5 +1,6 @@
 import { oc } from '@orpc/contract';
 import { z } from 'zod';
+import { zTranscriptExport, zTranscriptExportInput } from './meeting-transcript-export.ts';
 import { zChapters, zChaptersCopied, zChaptersCopy, zChaptersSave, zChaptersSaved } from './meeting-chapters.ts';
 import {
   zBulkApproveItems,
@@ -698,7 +699,7 @@ import {
   zMinutesTemplates,
 } from './meeting-minutes-templates.ts';
 import { zMinutesDocx, zMinutesDocxInput } from './meeting-minutes-docx.ts';
-import { zAskAnswer, zAskEmpty, zAskInput, zAskStatus } from './meeting-ask.ts';
+import { zAskAnswer, zAskEmpty, zAskInput, zAskLines, zAskMeetingLinesInput, zAskStatus } from './meeting-ask.ts';
 import { zBriefAnswer, zBriefEmpty, zBriefFacts, zBriefStatus, zBriefTarget } from './meeting-brief.ts';
 import { zMeetingRename, zMeetingRenamed, zTitleAnswer } from './meeting-title.ts';
 import { zCommitmentsAnswer } from './meeting-commitments.ts';
@@ -890,6 +891,7 @@ import {
   zProjectTriageReopenInput,
   zProjectTriageSnoozeInput,
 } from './projects-triage.ts';
+import { zDealUpdateAnswer, zDealUpdateAsk, zDealUpdateConfirmCall, zDealUpdateConfirmed, zDealUpdateStatus } from './meeting-deal-update.ts';
 import { zFollowupDraft, zFollowupDraftAsk, zFollowupNoteAnswer, zFollowupNoteAsk, zFollowupNoteStatus, zFollowupSendCall, zFollowupSent, zFollowupWording, zFollowupWordingAsk } from './meeting-followup.ts';
 import { zChatChannelList, zChatChannelRemove, zChatChannelRemoved, zChatChannelSaveCall, zChatChannelSaved, zChatEmpty, zChatPostCall, zChatPosted, zChatPreview, zChatStatus, zChatStatusInput } from './meeting-chat.ts';
 import { zExtensionOrgToken, zExtensionToken, zExtensionTokenRevoke, zExtensionTokenRevoked, zExtensionTokenRevokedMember } from './extension.ts';
@@ -902,7 +904,7 @@ import { zAdsBoostDraftCall, zAdsBoostDrafted, zAdsBoostOptions, zAdsBoostStates
 import { zAdsBudgetLowerCall, zAdsManageCancelCall, zAdsManageChanged, zAdsManageStateView, zAdsManageSuggestion, zAdsObjectCall, zAdsScheduleShortenCall } from './ads-manage.ts';
 import { zAdsCampaignDraftDiscardCall, zAdsCampaignDraftSaveCall, zAdsCampaignDraftView, zAdsCampaignRequestAsked, zAdsCampaignRequestCall, zAdsCampaignRequestView, zAdsLaunchCancelCall, zAdsLaunchRetryCall, zAdsLaunchStopCall } from './ads-campaign.ts';
 import { zHouseholdCnkd, zHouseholdCnkdGet, zHouseholdProfileGet, zHouseholdS1a, zHouseholdS1aGet, zHouseholdS2a, zHouseholdS2aGet, zHouseholdS2b, zHouseholdS2bGet, zHouseholdS2c, zHouseholdS2cGet, zHouseholdS2d, zHouseholdS2dGet, zHouseholdS2e, zHouseholdS2eGet, zHouseholdProfileSet, zHouseholdProfileView, zHouseholdRules, zHouseholdRulesGet } from './household.ts';
-import { zBankCandidatesLine, zBankCandidatesLineAsk, zBankAccountNumberSet, zBankAccountNumberView, zBankFeedAccountView, zBankFeedConnectTingee, zBankFeedConnectionView, zBankFeedHookCreated, zBankFeedHookSet, zBankFeedHookStatus, zBankFeedMap, zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankMatchGroups, zBankMatched, zBankOpenLines, zBankPayrollExplainAsk, zBankPayrollExplanation, zBankPayrollMatch, zBankPlatformLines, zBankStatementImport, zStatementLines } from './bank-statement.ts';
+import { zBankCandidatesLine, zBankCandidatesLineAsk, zBankAccountNumberSet, zBankAccountNumberView, zBankFeedAccountView, zBankFeedConnectTingee, zBankFeedConnectionView, zBankFeedHookCreated, zBankFeedHookSet, zBankFeedHookStatus, zBankFeedMap, zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankMatchGroups, zBankMatched, zBankOpenLines, zBankPayrollExplainAsk, zBankPayrollExplanation, zBankPayrollMatch, zBankPlatformLines, zBankSignDepositExplainAsk, zBankSignDepositExplanation, zBankSignDepositMatch, zBankStatementImport, zStatementLines } from './bank-statement.ts';
 import { zTimeline } from './timeline.ts';
 import { zMisaCode, zMisaGoodsCode } from './misa-goods.ts';
 import { zAuditCursor, zAuditExport, zAuditFilter, zAuditPage } from './audit.ts';
@@ -921,7 +923,16 @@ import {
   zSignCaRequestListResult,
   zSignCaSettingsResult,
   zSignCaSigningRequestRecord,
+  zSignDepositProfile,
+  zSignDepositProfileClearInput,
+  zSignDepositProfileClearResult,
+  zSignDepositProfileGetResult,
+  zSignDepositProfileUpsertInput,
   zSignDiffCompareInput,
+  zSignEnvelopeDepositClearInput,
+  zSignEnvelopeDepositClearResult,
+  zSignEnvelopeDepositRecord,
+  zSignEnvelopeDepositSetInput,
   zSignDiffCompareResult,
   zSignDrafterProposeInput,
   zSignDrafterProposeResult,
@@ -1851,6 +1862,13 @@ export const contract = {
       note: oc.input(zFollowupNoteAsk).output(zFollowupNoteAnswer),
       send: oc.input(zFollowupSendCall).output(zFollowupSent),
     },
+    // Vy proposing the update of the deal a meeting is linked to (#4766): the recorder of a meeting with published minutes asks their own Vy for the deal's next step and a short note, reads and
+    // edits them, and confirms; nothing is written before `confirm` (R1: a task, a line of the contact's timeline, the stale-deal reminder closed).
+    dealUpdate: {
+      status: oc.input(zMeetingRef).output(zDealUpdateStatus),
+      propose: oc.input(zDealUpdateAsk).output(zDealUpdateAnswer),
+      confirm: oc.input(zDealUpdateConfirmCall).output(zDealUpdateConfirmed),
+    },
     // Approved minutes posted to a Slack or Microsoft Teams channel (B4, #3168): an owner or admin pastes a webhook address (sealed, never shown again); the recorder of a meeting with a published result reads the
     // exact message (`preview`), picks a channel and presses "Gửi" (`post`, R2: queues the post, which the worker's job sends through the egress guard; no model).
     chat: {
@@ -1915,6 +1933,8 @@ export const contract = {
     ask: {
       status: oc.input(zAskEmpty).output(zAskStatus),
       ask: oc.input(zAskInput).output(zAskAnswer),
+      // The lines a question's search finds (with `meetingId`, in that meeting only): the plain list the box shows when Vy cannot be asked. No model.
+      lines: oc.input(zAskMeetingLinesInput).output(zAskLines),
     },
     // Vy's brief before a meeting (#3543): `facts` are read by code as the member (the decisions of the previous meeting of the series if they read it, the open items, the linked customer's open deals) and work with AI
     // off; `status` is the button (may Vy be used now, the cost of one brief), `write` the click that has the member's own Vy write two or three sentences from those facts. Nothing is stored or sent.
@@ -2003,6 +2023,8 @@ export const contract = {
     // The transcript (#2578): the recorder's draft, read, replaced by a transcription run and corrected by hand.
     transcript: {
       get: oc.input(zMeetingRef).output(zTranscript),
+      // The transcript the caller reads as a plain text or SRT file (#4817): built on the server under the transcript page's reader rule; the file comes back in the answer. TRANSCRIPT_EXPORT_EMPTY (409) with no line.
+      download: oc.input(zTranscriptExportInput).output(zTranscriptExport),
       draftStore: oc.input(zTranscriptDraftStore).output(zTranscriptDraftStored),
       correct: oc.input(zTranscriptCorrect).output(zTranscriptCorrected),
       // The recorder's own Vy transcribes in the background; the recorder starts it, sees its state and copies the finished result into the draft (#2578, M4b).
@@ -3590,8 +3612,12 @@ export const contract = {
     payrollMatch: oc.input(z.object({ bankLineId: zId })).output(zBankPayrollMatch),
     // The approved supplier payments a money-out line may be, by amount and the rules of the payment (#3700 S3c); owners and admins. The settlement is asked for with inbox.request.
     supplierMatch: oc.input(z.object({ bankLineId: zId })).output(zBankSupplierMatch),
+    // Completed non-confidential eSign envelopes whose frozen deposit amount and CK-<CODE> memo match an open money-in bank line (#4723). Read-only prefill hint, zero auto-posting.
+    signDepositMatch: oc.input(z.object({ bankLineId: zId })).output(zBankSignDepositMatch),
     // The coworker's one line on why a line may be one of those payments (#2532): code decided, the model only words it; no text when AI is off, busy, over budget or refused.
     payrollExplain: oc.input(zBankPayrollExplainAsk).output(zBankPayrollExplanation),
+    // The coworker's one sentence on why a money-in bank line matches a signed envelope deposit (#4723), from non-PII facts only.
+    signDepositExplain: oc.input(zBankSignDepositExplainAsk).output(zBankSignDepositExplanation),
     // The coworker's one sentence on an open line the matcher could not settle: several candidates, or none stands out (#4219). Code listed the candidates, the model only words it; no text when AI is off, busy, over budget or refused.
     candidatesLine: oc.input(zBankCandidatesLineAsk).output(zBankCandidatesLine),
     // The open lines of an account and period whose party is named by its tax code or an invoice of the amount, with
@@ -4171,6 +4197,15 @@ export const contract = {
       list: oc.input(zSignApiKeyListInput).output(zSignApiKeyListResult),
       create: oc.input(zSignApiKeyCreateInput).output(zSignApiKeyCreateResult),
       revoke: oc.input(zSignApiKeyRevokeInput).output(zSignApiKeyRecord),
+    },
+    depositProfile: {
+      get: oc.output(zSignDepositProfileGetResult),
+      upsert: oc.input(zSignDepositProfileUpsertInput).output(zSignDepositProfile),
+      clear: oc.input(zSignDepositProfileClearInput).output(zSignDepositProfileClearResult),
+    },
+    deposit: {
+      set: oc.input(zSignEnvelopeDepositSetInput).output(zSignEnvelopeDepositRecord),
+      clear: oc.input(zSignEnvelopeDepositClearInput).output(zSignEnvelopeDepositClearResult),
     },
   },
 };

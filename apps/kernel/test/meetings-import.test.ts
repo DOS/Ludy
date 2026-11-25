@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { MeetingPlatformError, SandboxMeetingPlatform, ZoomMeetingPlatform, type MeetingPlatformAdapter, type MeetingPlatformDownload } from '@ludy/channel';
 import { MEETING_PLATFORM_IMPORT_MAX_BYTES } from '@ludy/kernel-contract';
 import { DomainError, EgressError, type EgressStream } from '@ludy/kernel-runtime';
-import { MEETINGS_IMPORT_CONCURRENCY, runMeetingsImport, type MeetingsImportDeps, type MeetingsImportJob } from '../src/meetings-import.ts';
+import { MEETINGS_IMPORT_CONCURRENCY, TRANSCRIPT_FILE_MAX_BYTES, runMeetingsImport, type MeetingsImportDeps, type MeetingsImportJob } from '../src/meetings-import.ts';
 
 const KEY = `staging/${'a'.repeat(64)}`;
 const job = (over: Partial<MeetingsImportJob> = {}): MeetingsImportJob => ({
@@ -390,5 +390,68 @@ describe('a Zoom recording download (the redirect rules)', () => {
       { host: 'us02web.zoom.us', path: '/rec/to-cdn', authorization: 'Bearer token-123' },
       { host: 'cdn.zoom.us', path: '/rec/ok', authorization: undefined },
     ]);
+  });
+});
+
+// Zoom's transcript is a FILE on Zoom's download hosts (#3175, gap 2): a recording with only that file is fetched through the guard under the transcript's own cap, read by the adapter and staged as the platform's lines.
+describe('a Zoom transcript-only recording', () => {
+  const VTT = 'WEBVTT\n\n1\n00:00:03.000 --> 00:00:05.000\nNguyen Van A: Xin chào.\n\n2\n00:00:06.000 --> 00:00:08.000\nTran Thi B: Chào anh.\n';
+  const transcriptJob = () => job({ provider: 'zoom', externalId: 'AAAAAAAAAAAAAAAAAAAAAA==', hasAudio: false, hasVideo: false });
+  const files = (extra: Record<string, unknown>[] = []) => ({ recording_files: [{ id: 'f-vtt', file_type: 'TRANSCRIPT', file_extension: 'VTT', file_size: VTT.length, recording_type: 'audio_transcript', status: 'completed', download_url: 'https://us02web.zoom.us/rec/download/f-vtt' }, ...extra] });
+  const zoom = (body: unknown = files()) =>
+    new ZoomMeetingPlatform({ clientId: 'zoom-client-id-0001', clientSecret: 'zoom-client-secret-not-real' }, { fetch: async () => new Response(JSON.stringify(body), { status: 200 }) });
+  const opened: Array<{ url: string; headers: unknown; firstHosts: unknown; maxBytes: unknown }> = [];
+  const stream = (text: string, headers: Record<string, string> = {}): NonNullable<MeetingsImportDeps['stream']> => async (url, init, options) => {
+    opened.push({ url: String(url), headers: (init as { headers?: unknown }).headers, firstHosts: (options as { firstHosts?: unknown }).firstHosts, maxBytes: (options as { maxBytes?: unknown }).maxBytes });
+    return { url: String(url), status: 200, headers, body: (async function* () { yield new TextEncoder().encode(text); })(), destroy: () => undefined } as EgressStream;
+  };
+
+  it('fetches the file from the first Zoom host with the member\'s token under the 8 MB cap, and stages the lines as JSON with the platform\'s speakers', async () => {
+    opened.length = 0;
+    const { deps, calls } = harness({ adapters: { zoom: zoom() }, stream: stream(VTT) });
+    expect(await runMeetingsImport(deps, transcriptJob(), attempt)).toBe('staged');
+    expect(opened).toEqual([{ url: 'https://us02web.zoom.us/rec/download/f-vtt', headers: { authorization: 'Bearer token-123' }, firstHosts: ['us02web.zoom.us'], maxBytes: TRANSCRIPT_FILE_MAX_BYTES }]);
+    const staged = JSON.parse(new TextDecoder().decode(calls.stored.get(KEY))) as { segments: Array<{ speakerLabel: string; text: string; startSeconds: number }> };
+    expect(staged.segments.map((s) => [s.startSeconds, s.speakerLabel, s.text])).toEqual([[3, 'Nguyen Van A', 'Xin chào.'], [6, 'Tran Thi B', 'Chào anh.']]);
+    expect(recorded(calls)).toEqual(['kernel.meeting_platform.import_staged:']);
+  });
+
+  it('records no_transcript for an empty file and for a recording with no transcript file or two of them, and too_large for a declared size over the cap, each without a retry', async () => {
+    const empty = harness({ adapters: { zoom: zoom() }, stream: stream('WEBVTT\n') });
+    expect(await runMeetingsImport(empty.deps, transcriptJob(), attempt)).toBe('failed');
+    expect(recorded(empty.calls)).toEqual([failedWith('no_transcript')]);
+    const none = harness({ adapters: { zoom: zoom({ recording_files: [] }) }, stream: stream(VTT) });
+    expect(await runMeetingsImport(none.deps, transcriptJob(), attempt)).toBe('failed');
+    expect(recorded(none.calls)).toEqual([failedWith('no_transcript')]);
+    const two = harness({ adapters: { zoom: zoom(files([{ id: 'f-vtt-2', file_type: 'TRANSCRIPT', recording_type: 'audio_transcript', status: 'completed', download_url: 'https://us02web.zoom.us/rec/download/f-vtt-2' }])) }, stream: stream(VTT) });
+    expect(await runMeetingsImport(two.deps, transcriptJob(), attempt)).toBe('failed');
+    expect(recorded(two.calls)).toEqual([failedWith('no_transcript')]);
+    const big = harness({ adapters: { zoom: zoom() }, stream: stream(VTT, { 'content-length': String(TRANSCRIPT_FILE_MAX_BYTES + 1) }) });
+    expect(await runMeetingsImport(big.deps, transcriptJob(), attempt)).toBe('failed');
+    expect(recorded(big.calls)).toEqual([failedWith('too_large')]);
+  });
+
+  it('counts the file against the transcript cap while it streams when no size is declared', async () => {
+    const huge: NonNullable<MeetingsImportDeps['stream']> = async (url) =>
+      ({ url: String(url), status: 200, headers: {}, body: (async function* () { yield new Uint8Array(TRANSCRIPT_FILE_MAX_BYTES); yield new Uint8Array(1); })(), destroy: () => undefined }) as EgressStream;
+    const { deps, calls } = harness({ adapters: { zoom: zoom() }, stream: huge });
+    expect(await runMeetingsImport(deps, transcriptJob(), attempt)).toBe('failed');
+    expect(recorded(calls)).toEqual([failedWith('too_large')]);
+  });
+
+  it('refuses a transcript address off Zoom\'s hosts before any connection', async () => {
+    opened.length = 0;
+    const off = harness({ adapters: { zoom: zoom({ recording_files: [{ ...files().recording_files[0], download_url: 'https://evil.example.test/rec/f' }] }) }, stream: stream(VTT) });
+    expect(await runMeetingsImport(off.deps, transcriptJob(), attempt)).toBe('failed');
+    expect(recorded(off.calls)).toEqual([failedWith('platform_refused')]);
+    expect(opened).toEqual([]);
+  });
+
+  it('keeps an audio or video recording of Zoom on its own path: the transcript file is only for a recording with nothing else', async () => {
+    opened.length = 0;
+    const withAudio = harness({ adapters: { zoom: zoom({ recording_files: [{ id: 'f-audio', file_type: 'M4A', file_size: 3, recording_type: 'audio_only', status: 'completed', download_url: 'https://us02web.zoom.us/rec/download/f-audio' }] }) }, stream: stream('abc') });
+    expect(await runMeetingsImport(withAudio.deps, job({ provider: 'zoom', externalId: 'U', hasAudio: true }), attempt)).toBe('staged');
+    expect(opened.map((o) => o.url)).toEqual(['https://us02web.zoom.us/rec/download/f-audio']);
+    expect(opened[0]?.maxBytes).toBe(MEETING_PLATFORM_IMPORT_MAX_BYTES);
   });
 });

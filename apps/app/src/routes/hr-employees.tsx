@@ -2104,6 +2104,8 @@ export function Detail({
       >
         {e.employments.map((row) => {
           const employerEntity = entities?.find((ent) => ent.id === e.legalEntityId);
+          const signEnvelope = signEnvelopesPending ? null : (signEnvelopeByEmployment.get(row.id) ?? null);
+          const hasSignCellContent = signEnvelope !== null || (active && row.contractType !== 'none');
           return (
             <TableRow key={row.id} data-testid="hr-terms-row">
               <TableCell data-label={t('effectiveFrom')} className="tabular-nums">{f.date(row.effectiveFrom)}</TableCell>
@@ -2126,31 +2128,33 @@ export function Detail({
               </TableCell>
               {!e.erased && signEnabled && (
                 <TableCell data-label={t('sign.column')} data-testid="hr-terms-sign-cell">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <HrContractSignHandoff
-                      source={{
-                        employment: row,
-                        employee: {
-                          id: e.id,
-                          displayName: e.displayName,
-                          legalEntityId: e.legalEntityId,
-                          departmentName: e.departmentName,
-                          jobTitle: e.jobTitle,
-                          address: e.address,
-                          birthDate: e.birthDate,
-                        },
-                        employer: employerEntity
-                          ? { name: employerEntity.name, taxCode: employerEntity.taxCode ?? orgTaxCode ?? null, address: orgAddress ?? null }
-                          : orgName
-                            ? { name: orgName, taxCode: orgTaxCode ?? null, address: orgAddress ?? null }
-                            : null,
-                      }}
-                      canEdit={active}
-                      signEnabled={signEnabled}
-                      envelope={signEnvelopesPending ? null : (signEnvelopeByEmployment.get(row.id) ?? null)}
-                      envelopeLoading={signEnvelopesPending || signEnvelopesError}
-                    />
-                  </div>
+                  {hasSignCellContent ? (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <HrContractSignHandoff
+                        source={{
+                          employment: row,
+                          employee: {
+                            id: e.id,
+                            displayName: e.displayName,
+                            legalEntityId: e.legalEntityId,
+                            departmentName: e.departmentName,
+                            jobTitle: e.jobTitle,
+                            address: e.address,
+                            birthDate: e.birthDate,
+                          },
+                          employer: employerEntity
+                            ? { name: employerEntity.name, taxCode: employerEntity.taxCode ?? orgTaxCode ?? null, address: orgAddress ?? null }
+                            : orgName
+                              ? { name: orgName, taxCode: orgTaxCode ?? null, address: orgAddress ?? null }
+                              : null,
+                        }}
+                        canEdit={active}
+                        signEnabled={signEnabled}
+                        envelope={signEnvelope}
+                        envelopeLoading={signEnvelopesPending || signEnvelopesError}
+                      />
+                    </div>
+                  ) : null}
                 </TableCell>
               )}
               {!e.erased && (

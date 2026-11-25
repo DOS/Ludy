@@ -645,14 +645,20 @@ export const zTodoComplete = z.strictObject({
   stopSeries: z.boolean().optional(),
 });
 export type TodoCompleteInput = z.input<typeof zTodoComplete>;
-export const zTodoReschedule = z.strictObject({
-  todoIds: z
-    .array(zId)
-    .min(1)
-    .max(TODO_RESCHEDULE_BATCH_MAX)
-    .transform((ids) => [...new Set(ids)]),
-  dueOn: zDay,
-});
+export const zTodoReschedule = z
+  .strictObject({
+    todoIds: z
+      .array(zId)
+      .min(1)
+      .max(TODO_RESCHEDULE_BATCH_MAX)
+      .transform((ids) => [...new Set(ids.map((id) => id.toLowerCase()))]),
+    dueOn: zDay,
+    expectedRevision: z.number().int().positive().optional(),
+  })
+  .refine((v) => v.expectedRevision === undefined || v.todoIds.length === 1, {
+    message: 'expectedRevision requires a single todoId',
+    path: ['expectedRevision'],
+  });
 export type TodoRescheduleInput = z.input<typeof zTodoReschedule>;
 // Moves a to-do right before or right after another of the owner's (the anchor) in their own order.
 export const zTodoReorder = z

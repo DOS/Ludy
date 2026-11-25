@@ -30,6 +30,8 @@ const ORG_LEVEL = new Map<string, string>([
   ['projects.roadmap_announcement', 'a public roadmap changelog announcement (published or subscriber notifications queued; org-wide)'],
   ['projects.roadmap_board', 'a public roadmap board (created and configuration updated; org-wide)'],
   ['projects.roadmap_item', 'a public roadmap item (created, moderated, merged, or converted to a task; org-wide)'],
+  ['sign.deposit_profile', 'org-wide VietQR receiving bank profile configured in eSign Settings (no legal_entity_id)'],
+  ['sign.envelope', 'signing envelope lifecycle and post-sign deposit configuration (org-wide in eSign; no legal_entity_id)'],
 ]);
 // Record types whose record names no entity, written with the entity the action was for at every call (#1725). Sorted.
 const ENTITY_NAMED = new Map<string, string>([

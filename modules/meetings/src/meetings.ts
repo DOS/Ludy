@@ -25,6 +25,7 @@ import { summaryCommands, summaryQueries } from './summary.ts';
 import { summaryReadyCommands } from './summary-ready.ts';
 import { summaryRunCommands, summaryRunQueries } from './summary-run.ts';
 import { dropDraftTranslationsForMember, translateCommands } from './translate.ts';
+import { transcriptExportQueries } from './transcript-export.ts';
 import { translateRunCommands, translateRunQueries } from './translate-run.ts';
 import { askRunCommands, askRunQueries } from './ask.ts';
 import { briefCommands, briefQueries } from './brief.ts';
@@ -49,6 +50,7 @@ import { createMeetingRow } from './meeting-core.ts';
 import { importCommands } from './import.ts';
 import { meetingMinutesEsignGet, meetingMinutesEsignSet } from './minutes-esign.ts';
 import { dropFollowupPayloads } from './followup-erase.ts';
+import { dealUpdateCommands, dealUpdateQueries } from './deal-update.ts';
 import { followupCommands, followupQueries } from './followup.ts';
 import {
   dayText,
@@ -1151,6 +1153,7 @@ export const meetingsCommands = [
   ...chatCommands,
   ...linkCommands,
   ...followupCommands,
+  ...dealUpdateCommands,
   ...liveCommands,
   ...captureCommands,
   ...liveAssembleCommands,
@@ -1204,8 +1207,10 @@ export const meetingsQueries = [
   ...chatQueries,
   ...linkQueries,
   ...followupQueries,
+  ...dealUpdateQueries,
   ...liveRunQueries,
   ...liveAssembleQueries,
   ...hookQueries,
   ...mcpMeetingsQueries,
+  ...transcriptExportQueries,
 ];

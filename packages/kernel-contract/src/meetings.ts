@@ -458,7 +458,7 @@ export type MeetingOrphanKeys = z.infer<typeof zMeetingOrphanKeys>;
 export const TRANSCRIPT_STAGES = ['draft', 'published'] as const;
 export type TranscriptStage = (typeof TRANSCRIPT_STAGES)[number];
 // Whose transcription a line is (C2, #3174; C4, #3176): Ludy's own, or the transcript Google Meet or Microsoft Teams wrote and the recorder imported. The screens label the others as the platform's.
-export const TRANSCRIPTION_MAKERS = ['ludy', 'google_meet', 'microsoft_teams'] as const;
+export const TRANSCRIPTION_MAKERS = ['ludy', 'google_meet', 'microsoft_teams', 'zoom'] as const;
 export type TranscriptionMaker = (typeof TRANSCRIPTION_MAKERS)[number];
 export const TRANSCRIPT_TEXT_MAX = 4000;
 export const TRANSCRIPT_SPEAKER_MAX = 80;

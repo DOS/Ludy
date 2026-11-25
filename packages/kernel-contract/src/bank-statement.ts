@@ -498,3 +498,43 @@ export const zBankCandidatesLineAsk = z.strictObject({ bankLineId: zId, lang: z.
 export type BankCandidatesLineAsk = z.infer<typeof zBankCandidatesLineAsk>;
 export const zBankCandidatesLine = z.strictObject({ ai: z.enum(['used', 'off', 'busy', 'budget', 'failed', 'none']), text: z.string().nullable() });
 export type BankCandidatesLine = z.infer<typeof zBankCandidatesLine>;
+
+// Post-sign VietQR deposit matching (#4723, eSign Slice 6d): completed non-confidential eSign envelopes whose frozen
+// deposit amount equals a money-in bank statement line and whose CK-<CODE> memo token matches case-insensitively as
+// a whole token in the statement description/reference. Read-only suggestion that prefills Báo Có without auto-posting.
+export const BANK_SIGN_DEPOSIT_REASONS = ['amount_memo', 'amount'] as const;
+export type BankSignDepositReason = (typeof BANK_SIGN_DEPOSIT_REASONS)[number];
+export const zBankSignDepositCandidate = z.strictObject({
+  envelopeId: zId,
+  title: z.string(),
+  completedAt: z.string(),
+  amount: zMoney,
+  currency: z.literal('VND'),
+  memoToken: z.string(),
+  financeBankAccount: z.string().nullable(),
+  signerName: z.string().nullable(),
+  signerNoticeAt: z.string().nullable(),
+  reason: z.enum(BANK_SIGN_DEPOSIT_REASONS),
+  voucherType: z.literal('bank_credit'),
+  suggestedDebitAccount: z.string(),
+  suggestedCreditAccount: z.string(),
+});
+export type BankSignDepositCandidate = z.infer<typeof zBankSignDepositCandidate>;
+export const zBankSignDepositMatch = z.strictObject({
+  bankLineId: zId,
+  date: zLocalDate,
+  candidates: z.array(zBankSignDepositCandidate),
+});
+export type BankSignDepositMatch = z.infer<typeof zBankSignDepositMatch>;
+
+export const zBankSignDepositExplainAsk = z.strictObject({
+  bankLineId: zId,
+  envelopeId: zId,
+  lang: z.enum(['vi', 'en']).optional(),
+});
+export type BankSignDepositExplainAsk = z.infer<typeof zBankSignDepositExplainAsk>;
+export const zBankSignDepositExplanation = z.strictObject({
+  ai: z.enum(['used', 'off', 'busy', 'budget', 'failed', 'none']),
+  text: z.string().nullable(),
+});
+export type BankSignDepositExplanation = z.infer<typeof zBankSignDepositExplanation>;

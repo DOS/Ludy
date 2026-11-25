@@ -21,6 +21,7 @@ import { EnvelopePlaybookCard } from '../components/sign/envelope-playbook-card.
 import { PdfCanvasViewer } from '../components/sign/pdf-canvas-viewer.tsx';
 import { SignPacketManager } from '../components/sign/sign-packet-manager.tsx';
 import { SignPacketTabs } from '../components/sign/sign-packet-tabs.tsx';
+import { SignDepositConfigCard } from '../components/sign/sign-deposit-config-card.tsx';
 import { SenderSharedSummaryEditor } from '../components/sign/shared-summary-card.tsx';
 import { SignerPanel, type AddSignerFormInput } from '../components/sign/signer-panel.tsx';
 import { SignQrModal } from '../components/sign/sign-qr-modal.tsx';
@@ -1679,6 +1680,16 @@ export function SignEnvelopeDetailPage() {
         </div>
 
         <div className="space-y-4">
+          <SignDepositConfigCard
+            slug={slug}
+            envelopeId={envelope.id}
+            envelopeStatus={envelope.status}
+            sourceKind={envelope.sourceKind}
+            canEditDraft={canEditDraft}
+            deposit={detailQuery.data?.deposit ?? null}
+            onDownloadFile={(fileId, filename) => handleDownload(fileId, filename)}
+          />
+
           {envelope.status === 'completed' ? (
             <EnvelopeObligationsCard
               envelopeId={envelope.id}
