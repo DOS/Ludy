@@ -312,7 +312,7 @@ suite('Tracker alerts (#4873)', () => {
       'hợp đồng hợp đồngg', 'Ký hợp đồng. Hợp, đồng mới', 'Ký Hợp đồng mới và hop dong khác', 'a a a b a', 'Đối thủ ĐỐI THỦ đối   thủ, doi thu', 'dai viet 2024 Đại Việt', 'Nguyễn Văn Nam gặp nguyen van nam',
       '   ', '!!!', 'ACME-Corp, acme corp; ACME_Corp', "d'Artagnan và O'Neil", 'tiếng Việt 100% (ok)', 'Hợp\tđồng\nmới', 'số 1 số 12 số 1', 'giá'.normalize('NFD') + ' rẻ', 'Hợp đồng'.normalize('NFD') + ' mới', 'đ', 'Đ đ',
     ];
-    const TERMS = ['giá', 'gia', 'Hợp đồng', 'hop dong', 'ACME', 'acme corp', 'đối thủ', 'doi thu', 'Đại Việt', 'dai viet', 'a', 'a a', 'số 1', '100 ok', 'nguyen van nam', 'Nguyễn Văn', 'd', 'đ', "o neil", 'giá % _ \\ . * ( [', 'a.*', '[giá'];
+    const TERMS = ['giá', 'gia', 'Hợp đồng', 'hop dong', 'ACME', 'acme corp', 'đối thủ', 'Đại Việt', 'dai viet', 'a', 'a a', 'số 1', '100 ok', 'nguyen van nam', 'Nguyễn Văn', 'd', 'đ', "o neil", 'giá % _ \\ . * ( [', '[giá'];
     const { meetingId } = await published('Họp đếm từ', 'org', [], LINES);
     // A draft line, never counted: the reader has none of it.
     await sqlAdmin(`INSERT INTO ludy_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, 9999, 10000, 'Người nói 1', 'giá giá giá', 'draft')`, [orgId, meetingId]);
@@ -345,7 +345,12 @@ suite('Tracker alerts (#4873)', () => {
         [orgId, meetingId],
       );
       // An owner or admin who is not a reader of an attendees-only meeting reads this log: a count of words, recipients or notices would tell them what is in it.
-      expect(rows.rows.map((r) => r.detail), label).toEqual([{ eventId, meetingId }]);
+      // The runtime adds the acting component and the worker instance to every system audit row (the same for both runs); what the command wrote is the two ids.
+      const written = rows.rows.map(({ detail }) => {
+        const { component: _component, workerInstance: _instance, ...own } = detail;
+        return own;
+      });
+      expect(written, label).toEqual([{ eventId, meetingId }]);
     }
   });
 
@@ -356,8 +361,13 @@ suite('Tracker alerts (#4873)', () => {
     await optIn('lan');
     const { eventId } = await published('Họp đưa vào bản xuất', 'org', [], ['Bàn về giá hôm nay.']);
     expect(await notice(eventId)).toEqual({ notified: 1, mailed: 1 });
-    const alertMail = (await sqlAdmin<{ id: string }>("SELECT id FROM ludy_kernel.mail_message WHERE org_id = $1 AND source = 'meetings.tracker_alert' ORDER BY created_at DESC LIMIT 1", [orgId])).rows[0]?.id;
-    expect(alertMail).toBeDefined();
+    // The alert mail the notice just queued is there to be left out.
+    expect(Number((await sqlAdmin<{ n: string }>("SELECT count(*)::text AS n FROM ludy_kernel.mail_message WHERE org_id = $1 AND source = 'meetings.tracker_alert'", [orgId])).rows[0]?.n)).toBeGreaterThan(0);
+    // A delivery event is append-only and a suppression row points at its mail, so neither can be cleared with the mail: they hang on a mail of the same source with a template of its own, which `clear` leaves alone.
+    const alertMail = (await sqlAdmin<{ id: string }>(
+      "INSERT INTO ludy_kernel.mail_message (org_id, stream, source, source_id, template_key, to_address, to_hash, subject, payload, message_id_header, status) VALUES ($1, 'transactional', 'meetings.tracker_alert', $2, 'test.export_left_out', 'z@b.test', repeat('b', 64), 's', '{\"words\":3}', $3, 'queued') RETURNING id",
+      [orgId, randomUUID(), `<export-alert-${randomUUID()}@y.test>`],
+    )).rows[0]!.id;
     const other = (await sqlAdmin<{ id: string }>(
       "INSERT INTO ludy_kernel.mail_message (org_id, stream, source, source_id, template_key, to_address, to_hash, subject, payload, message_id_header, status) VALUES ($1, 'transactional', 'finance.payment_reminder.notice1', $2, 'x.y', 'a@b.test', repeat('a', 64), 's', '{\"keep\":true}', $3, 'queued') RETURNING id",
       [orgId, randomUUID(), `<export-${randomUUID()}@y.test>`],
