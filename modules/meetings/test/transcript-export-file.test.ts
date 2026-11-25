@@ -98,7 +98,7 @@ function docxParts(bytes: Uint8Array): Map<string, string> {
   }
   return out;
 }
-const wordTexts = (bytes: Uint8Array): string[] => [...(docxParts(bytes).get('word/document.xml') ?? '').matchAll(/<w:t xml:space="preserve">([^<]*)<\/w:t>/gu)].map((m) => (m[1] as string).replace(/&amp;/gu, '&').replace(/&lt;/gu, '<').replace(/&gt;/gu, '>').replace(/&apos;/gu, "'").replace(/&quot;/gu, '"'));
+const wordTexts = (bytes: Uint8Array): string[] => [...(docxParts(bytes).get('word/document.xml') ?? '').matchAll(/<w:t xml:space="preserve">([^<]*)<\/w:t>/gu)].map((m) => (m[1] as string).replace(/&lt;/gu, '<').replace(/&gt;/gu, '>').replace(/&apos;/gu, "'").replace(/&quot;/gu, '"').replace(/&amp;/gu, '&'));
 
 describe('the Word file', () => {
   const meta = { title: 'Họp giao ban', day: '2026-11-15' };
