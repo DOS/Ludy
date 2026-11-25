@@ -77,15 +77,17 @@ describe('task filter (kernel.task, #2610)', () => {
     expect(sameFilter(taskFilterToAst(state), stored)).toBe(true);
 
     // Single-status `in` restores onto the Status select, and 7-day due onto Soon.
-    const single = astToTaskFilter({
-      v: 1,
+    const singleStored = {
+      v: 1 as const,
       all: [
         { field: 'status', op: 'in', value: ['done'] },
         { field: 'assignee', op: 'is', value: POS_2 },
         { field: 'due', op: 'within_next_days', value: TASK_SOON_DAYS },
       ],
-    });
+    };
+    const single = astToTaskFilter(singleStored);
     expect(single).toMatchObject({ status: 'done', assignee: POS_2, due: 'soon', rest: [] });
+    expect(sameFilter(taskFilterToAst(single), singleStored)).toBe(true);
     expect(astToTaskFilter({ v: 1, all: [{ field: 'due', op: 'within_next_days', value: 30 }] }).rest).toHaveLength(1);
 
     // Preserve single-item `status:in` in `rest` when `status:is` is also present so round-tripping never duplicates `status:is`.
@@ -252,5 +254,32 @@ describe('task filter (kernel.task, #2610)', () => {
     const inline = render(false, EMPTY_TASK_FILTER, null);
     for (const control of ['search', 'status', 'assignee', 'due', 'tainted', 'sort']) expect(inline).toContain(`data-testid="task-filter-${control}"`);
     expect(inline).not.toContain('data-testid="task-filter-button"');
+  });
+
+  it('treats singleton status:in as equivalent in sameFilter while flagging real edits and preserving multi-value status:in (#3457)', () => {
+    const apiView = { v: 1 as const, all: [{ field: 'status', op: 'in', value: ['done'] }] };
+    const loaded = astToTaskFilter(apiView);
+    expect(loaded).toMatchObject({ status: 'done', rest: [] });
+    const serialized = taskFilterToAst(loaded);
+    expect(serialized).toEqual({ v: 1, all: [{ field: 'status', op: 'is', value: 'done' }] });
+    expect(sameFilter(apiView, serialized)).toBe(true);
+    expect(sameFilter(serialized, apiView)).toBe(true);
+
+    // Real edits mark dirty.
+    const changedStatus = selectTaskStatus(loaded, 'todo');
+    expect(sameFilter(apiView, taskFilterToAst(changedStatus))).toBe(false);
+    expect(sameFilter(apiView, taskFilterToAst(selectTaskStatus(loaded, '')))).toBe(false);
+    expect(sameFilter(apiView, taskFilterToAst(selectTaskDue(loaded, 'overdue')))).toBe(false);
+    // Reverting the status back to the saved value clears the diff again.
+    expect(sameFilter(apiView, taskFilterToAst(selectTaskStatus(changedStatus, 'done')))).toBe(true);
+
+    // Multi-value status:in stays in rest and remains distinct from singleton status:is / status:in.
+    const multiView = { v: 1 as const, all: [{ field: 'status', op: 'in', value: ['todo', 'done'] }] };
+    const multiState = astToTaskFilter(multiView);
+    expect(multiState).toMatchObject({ status: '', rest: [{ field: 'status', op: 'in', value: ['todo', 'done'] }] });
+    expect(sameFilter(multiView, taskFilterToAst(multiState))).toBe(true);
+    expect(sameFilter(multiView, { v: 1, all: [{ field: 'status', op: 'is', value: 'done' }] })).toBe(false);
+    expect(sameFilter(multiView, { v: 1, all: [{ field: 'status', op: 'in', value: ['done'] }] })).toBe(false);
+    expect(sameFilter(multiView, taskFilterToAst(selectTaskStatus(multiState, 'waiting')))).toBe(false);
   });
 });
