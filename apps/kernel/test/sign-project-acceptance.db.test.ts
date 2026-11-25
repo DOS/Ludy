@@ -26,7 +26,7 @@ import { TEST_MANIFESTS } from './manifests.ts';
 const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const TEST_HMAC_KEY = 'x'.repeat(32);
-const ISSUER = 'crove-auth';
+const ISSUER = 'ludy-auth';
 const AI_PRICE = { inputPerMTok: '3', outputPerMTok: '15' };
 
 const acceptancePdfFixture = (tag: string) =>
@@ -135,7 +135,7 @@ suite('eSign Slice 3b project acceptance handoff & Vy draft summary on PostgreSQ
       headers: {
         authorization: `Bearer ${await tokenFor(who)}`,
         'content-type': 'application/json',
-        ...(slug ? { 'x-crove-org': slug } : {}),
+        ...(slug ? { 'x-ludy-org': slug } : {}),
       },
       body: JSON.stringify(input === undefined ? {} : { json: input }),
     });
@@ -149,7 +149,7 @@ suite('eSign Slice 3b project acceptance handoff & Vy draft summary on PostgreSQ
     form.append('purpose', 'sign_document');
     const res = await appAiOn.request('/api/files', {
       method: 'POST',
-      headers: { authorization: `Bearer ${await tokenFor(who)}`, 'x-crove-org': slug },
+      headers: { authorization: `Bearer ${await tokenFor(who)}`, 'x-ludy-org': slug },
       body: form,
     });
     const body = (await res.json().catch(() => null)) as Record<string, unknown> | null;
@@ -253,7 +253,7 @@ suite('eSign Slice 3b project acceptance handoff & Vy draft summary on PostgreSQ
         headers: {
           authorization: `Bearer ${await tokenFor(owner, { mfa: true })}`,
           'content-type': 'application/json',
-          'x-crove-org': org.slug,
+          'x-ludy-org': org.slug,
         },
         body: JSON.stringify({ json: { email: who.email, role } }),
       });

@@ -94,7 +94,7 @@ suite('Threads replies on PostgreSQL (#3133)', () => {
 
   const buildApp = () =>
     createHttpApp({
-      config: loadConfig({ DATABASE_URL: adminUrl, AUTH_JWT_SECRET: 'x'.repeat(32), AUTH_ISSUER: 'crove-auth' }),
+      config: loadConfig({ DATABASE_URL: adminUrl, AUTH_JWT_SECRET: 'x'.repeat(32), AUTH_ISSUER: 'ludy-auth' }),
       runtime: rt,
       store: {} as BlobStore,
       authenticate: async () => {

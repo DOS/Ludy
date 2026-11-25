@@ -21,7 +21,7 @@ import { TEST_MANIFESTS } from './manifests.ts';
 const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-channels-0123456789';
-const ISSUER = 'crove-auth';
+const ISSUER = 'ludy-auth';
 const suite = ADMIN ? describe : describe.skip;
 
 interface Account {
@@ -100,7 +100,7 @@ suite('channel connections through the API (ADR-0025)', () => {
     const slug = options.slug === undefined ? org.slug : options.slug;
     const response = await apps[options.app ?? 'on'].request(`/api/rpc/${path}`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...(slug ? { 'x-crove-org': slug } : {}) },
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...(slug ? { 'x-ludy-org': slug } : {}) },
       body: JSON.stringify(input === undefined ? {} : { json: input }),
     });
     const body = (await response.json().catch(() => null)) as ({ json?: unknown } & Record<string, unknown>) | null;
@@ -142,8 +142,8 @@ suite('channel connections through the API (ADR-0025)', () => {
     const make = (channels: { broker: typeof vault | typeof noCredentialBroker; sandbox: boolean; connectors?: Record<string, OAuthConnector>; publicUrl?: string }) =>
       createHttpApp({ config, runtime, store, authenticate: createAuthenticator(config, db), pool, aiEnabled: false, channels });
     apps = {
-      on: make({ broker: vault, sandbox: true, connectors: { facebook_page: fake.connector }, publicUrl: 'https://crove.example/' }),
-      noKey: make({ broker: noCredentialBroker, sandbox: true, connectors: { facebook_page: fake.connector }, publicUrl: 'https://crove.example/' }),
+      on: make({ broker: vault, sandbox: true, connectors: { facebook_page: fake.connector }, publicUrl: 'https://ludy.example/' }),
+      noKey: make({ broker: noCredentialBroker, sandbox: true, connectors: { facebook_page: fake.connector }, publicUrl: 'https://ludy.example/' }),
       sandboxOff: make({ broker: vault, sandbox: false }),
     };
 
@@ -241,7 +241,7 @@ suite('channel connections through the API (ADR-0025)', () => {
   });
 
   describe('connecting through an OAuth dialog (S6.1)', () => {
-    const REDIRECT = 'https://crove.example/channels/oauth/facebook_page/callback';
+    const REDIRECT = 'https://ludy.example/channels/oauth/facebook_page/callback';
     const start = async (who: Account = owner) => {
       const started = await rpc('channels/oauthStart', await tokenFor(who), { provider: 'facebook_page' });
       return started;

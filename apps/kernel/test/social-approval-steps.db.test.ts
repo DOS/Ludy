@@ -1,4 +1,4 @@
-// Multi-step approval of Crove Social posts on PostgreSQL 17 (Social plan S9, issue #394): a channel's review policy
+// Multi-step approval of Ludy Social posts on PostgreSQL 17 (Social plan S9, issue #394): a channel's review policy
 // asks for several different people to approve a variant's current content; each approval binds what its reviewer
 // saw, a request for changes or an edit starts the count again, and lowering the policy approves what already meets it.
 // Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.

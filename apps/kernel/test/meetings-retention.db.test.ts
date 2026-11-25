@@ -107,7 +107,7 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
   async function rpc(path: string, name: string, input: unknown, org: string | null = slug, mfa = false) {
     const response = await app.request(`/api/rpc/${path}`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${await token(name, mfa)}`, 'content-type': 'application/json', ...(org ? { 'x-crove-org': org } : {}) },
+      headers: { authorization: `Bearer ${await token(name, mfa)}`, 'content-type': 'application/json', ...(org ? { 'x-ludy-org': org } : {}) },
       body: JSON.stringify(input === undefined ? {} : { json: input }),
     });
     const body = (await response.json()) as { json?: Record<string, unknown> };
@@ -135,13 +135,13 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
     const form = new FormData();
     form.append('kind', kind);
     form.append('file', new Blob([bytes], { type: kind === 'audio' ? 'audio/ogg' : 'video/mp4' }), kind === 'audio' ? 'a.ogg' : 'v.mp4');
-    const res = await app.request(`/api/meetings/${meetingId}/media`, { method: 'POST', headers: { authorization: `Bearer ${await token(name)}`, 'x-crove-org': org }, body: form });
+    const res = await app.request(`/api/meetings/${meetingId}/media`, { method: 'POST', headers: { authorization: `Bearer ${await token(name)}`, 'x-ludy-org': org }, body: form });
     expect(res.status).toBe(200);
     return bytes;
   }
 
   const play = async (name: string, meetingId: string, kind: 'audio' | 'video', org = slug) =>
-    app.request(`/api/meetings/${meetingId}/${kind}`, { headers: { authorization: `Bearer ${await token(name)}`, 'x-crove-org': org } });
+    app.request(`/api/meetings/${meetingId}/${kind}`, { headers: { authorization: `Bearer ${await token(name)}`, 'x-ludy-org': org } });
 
   async function withWorker<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
     const url = new URL(adminUrl);
@@ -404,7 +404,7 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
     const form = new FormData();
     form.append('kind', 'audio');
     form.append('file', new Blob([Buffer.concat([OGG, Buffer.alloc(40, 1)])], { type: 'audio/ogg' }), 'again.ogg');
-    const again = await app.request(`/api/meetings/${meetingId}/media`, { method: 'POST', headers: { authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug }, body: form });
+    const again = await app.request(`/api/meetings/${meetingId}/media`, { method: 'POST', headers: { authorization: `Bearer ${await token('recorder')}`, 'x-ludy-org': slug }, body: form });
     expect(again.status).toBe(409);
     expect(store.storage.size).toBe(objectsBefore);
     expect(await count('SELECT 1 FROM ludy_meetings.media_key WHERE meeting_id = $1 AND kind = $2', [meetingId, 'audio'])).toBe(0);
@@ -665,7 +665,7 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
       const form = new FormData();
       form.append('kind', 'audio');
       form.append('file', new Blob([bytes], { type: 'audio/ogg' }), 'long.ogg');
-      const up = await app.request(`/api/meetings/${meetingId}/media`, { method: 'POST', headers: { authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug }, body: form });
+      const up = await app.request(`/api/meetings/${meetingId}/media`, { method: 'POST', headers: { authorization: `Bearer ${await token('recorder')}`, 'x-ludy-org': slug }, body: form });
       expect(up.status).toBe(200);
       const res = await play('recorder', meetingId, 'audio');
       expect(res.status).toBe(200);

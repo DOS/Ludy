@@ -39,7 +39,7 @@ import { TEST_MANIFESTS } from './manifests.ts';
 const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-ads-0123456789-abcdefghij';
-const ISSUER = 'crove-auth';
+const ISSUER = 'ludy-auth';
 
 class MemoryStore implements BlobStore {
   private readonly blobs = new Map<string, Uint8Array>();
@@ -177,7 +177,7 @@ suite('ads on PostgreSQL (#2217)', () => {
   async function rpc(path: string, token: string, input: unknown, org: string | null = slug) {
     const response = await app.request(`/api/rpc/${path}`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...(org ? { 'x-crove-org': org } : {}) },
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...(org ? { 'x-ludy-org': org } : {}) },
       body: JSON.stringify(input === undefined ? {} : { json: input }),
     });
     const body = (await response.json().catch(() => null)) as ({ json?: unknown } & Record<string, unknown>) | null;
@@ -5727,7 +5727,7 @@ suite('ads on PostgreSQL (#2217)', () => {
       });
       const response = await offApp.request('/api/rpc/channels/oauthStart', {
         method: 'POST',
-        headers: { authorization: `Bearer ${await tokenFor(owner)}`, 'content-type': 'application/json', 'x-crove-org': slug },
+        headers: { authorization: `Bearer ${await tokenFor(owner)}`, 'content-type': 'application/json', 'x-ludy-org': slug },
         body: JSON.stringify({ json: { provider: 'meta_ads' } }),
       });
       expect(response.status).toBe(404);

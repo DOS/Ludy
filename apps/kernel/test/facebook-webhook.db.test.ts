@@ -100,7 +100,7 @@ suite('Facebook Page conversations on PostgreSQL (#2307)', () => {
     const config = loadConfig({
       DATABASE_URL: adminUrl,
       AUTH_JWT_SECRET: 'x'.repeat(32),
-      AUTH_ISSUER: 'crove-auth',
+      AUTH_ISSUER: 'ludy-auth',
     });
     return createHttpApp({
       config,

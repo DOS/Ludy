@@ -53,7 +53,7 @@ suite('the HTTP edge and the stream of the per-org app switch (ADR-0053, C2b)', 
     const config = loadConfig({
       DATABASE_URL: app.toString(),
       AUTH_JWT_SECRET: 'test-only-jwt-secret-for-app-edge-0123456789',
-      AUTH_ISSUER: 'crove-auth',
+      AUTH_ISSUER: 'ludy-auth',
       AUTH_SESSION_CHECK: 'off',
       MIGRATIONS_DIR: MIGRATIONS,
       WEB_DIST: '/nonexistent',

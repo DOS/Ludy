@@ -95,7 +95,7 @@ suite('Notes v2 E4 (#3560): extension notes scope, Quick Capture & Web Clipper o
   const asBrowser = async (name: string, org: string | null = slug, mfa = false) => ({
     authorization: `Bearer ${await jwt(name, mfa)}`,
     'content-type': 'application/json',
-    ...(org ? { 'x-crove-org': org } : {}),
+    ...(org ? { 'x-ludy-org': org } : {}),
   });
   const asToken = (token: string) => ({ authorization: `Bearer ${token}`, 'content-type': 'application/json' });
 

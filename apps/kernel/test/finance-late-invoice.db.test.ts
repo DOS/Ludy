@@ -36,7 +36,7 @@ const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_UR
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const FIXTURE = readFileSync(new URL('../../extract/test/fixtures/einvoice-basic.xml', import.meta.url), 'utf8');
 const SECRET = 'test-only-jwt-secret-for-late-invoice-0123456789';
-const ISSUER = 'crove-auth';
+const ISSUER = 'ludy-auth';
 // The fixture's seller and buyer.
 const SELLER = '0101234564';
 const BUYER = '0309876546';
@@ -128,7 +128,7 @@ suite('late purchase invoice in an open month (#478)', () => {
   async function rpc(path: string, token: string, input: unknown, slug: string | null = org.slug) {
     const response = await app.request(`/api/rpc/${path}`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...(slug ? { 'x-crove-org': slug } : {}) },
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...(slug ? { 'x-ludy-org': slug } : {}) },
       body: JSON.stringify(input === undefined ? {} : { json: input }),
     });
     const body = (await response.json().catch(() => null)) as ({ json?: unknown } & Record<string, unknown>) | null;
@@ -341,7 +341,7 @@ suite('late purchase invoice in an open month (#478)', () => {
     expect((await rpc('org/setTaxCode', await tokenFor(owner), { taxCode: BUYER })).status).toBe(200);
     const exportXml = async (period: string) => {
       const response = await app.request(`/api/export/vat-01gtgt.xml?${new URLSearchParams({ period })}`, {
-        headers: { authorization: `Bearer ${await tokenFor(owner)}`, 'x-crove-org': org.slug },
+        headers: { authorization: `Bearer ${await tokenFor(owner)}`, 'x-ludy-org': org.slug },
       });
       expect(response.status, period).toBe(200);
       return response.text();
@@ -379,7 +379,7 @@ suite('late purchase invoice in an open month (#478)', () => {
       const form = new FormData();
       form.append('file', new File([Buffer.from(portalListXlsx(invoices))], `ds-${period}.xlsx`));
       form.append('purpose', 'import');
-      const uploaded = await app.request('/api/files', { method: 'POST', headers: { authorization: `Bearer ${await tokenFor(owner)}`, 'x-crove-org': org.slug }, body: form });
+      const uploaded = await app.request('/api/files', { method: 'POST', headers: { authorization: `Bearer ${await tokenFor(owner)}`, 'x-ludy-org': org.slug }, body: form });
       expect(uploaded.status).toBe(200);
       const fileId = ((await uploaded.json()) as { files: Array<{ fileId: string }> }).files[0]?.fileId;
       const imported = await rpc('portalList/import', await tokenFor(owner), { period, fileId });

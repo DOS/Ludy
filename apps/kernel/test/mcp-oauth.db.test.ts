@@ -106,7 +106,7 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
       .setExpirationTime('15m')
       .sign(new TextEncoder().encode(SECRET));
   }
-  const asBrowser = async (name: string, org: string | null = slug) => ({ authorization: `Bearer ${await jwt(name)}`, 'content-type': 'application/json', ...(org ? { 'x-crove-org': org } : {}) });
+  const asBrowser = async (name: string, org: string | null = slug) => ({ authorization: `Bearer ${await jwt(name)}`, 'content-type': 'application/json', ...(org ? { 'x-ludy-org': org } : {}) });
 
   async function rpc(path: string, headers: Record<string, string>, input: unknown) {
     const response = await fetch(`${base}/api/rpc/${path}`, { method: 'POST', headers, body: JSON.stringify(input === undefined ? {} : { json: input }) });

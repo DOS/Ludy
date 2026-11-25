@@ -1,4 +1,4 @@
-// The posting calendar feed of Crove Social on PostgreSQL 17 (#862): who makes, replaces and revokes it, what its token
+// The posting calendar feed of Ludy Social on PostgreSQL 17 (#862): who makes, replaces and revokes it, what its token
 // opens (the org's scheduled and published channel posts from 30 days back to 60 ahead, with a short title) and that
 // nothing else of the org is reachable through it, through the definer and through GET /cal/<token>.ics. The public
 // side runs as the API login role with no org context, as the HTTP edge does. Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser
@@ -92,7 +92,7 @@ suite('social calendar feed on PostgreSQL (#862)', () => {
     const config = loadConfig({
       DATABASE_URL: app.toString(),
       AUTH_JWT_SECRET: 'test-only-jwt-secret-for-calendar-feed-0123',
-      AUTH_ISSUER: 'crove-auth',
+      AUTH_ISSUER: 'ludy-auth',
       AUTH_SESSION_CHECK: 'off',
       MIGRATIONS_DIR: MIGRATIONS,
       WEB_DIST: '/nonexistent',

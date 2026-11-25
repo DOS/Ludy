@@ -31,7 +31,7 @@ const TOO_LARGE = 'Danh sách của kỳ này quá lớn để lấy một lần
 const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-portal-sync-0123456789';
-const ISSUER = 'crove-auth';
+const ISSUER = 'ludy-auth';
 const BUYER = '0309876546';
 const PERIOD = '2026-09';
 
@@ -114,7 +114,7 @@ suite('assisted tax portal sync (#325)', () => {
   async function rpc(path: string, who: Account, input: unknown, slug: string | null = org.slug, target = app) {
     const response = await target.request(`/api/rpc/${path}`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${await tokenFor(who, { mfa: path.startsWith('org/invite') })}`, 'content-type': 'application/json', ...(slug ? { 'x-crove-org': slug } : {}) },
+      headers: { authorization: `Bearer ${await tokenFor(who, { mfa: path.startsWith('org/invite') })}`, 'content-type': 'application/json', ...(slug ? { 'x-ludy-org': slug } : {}) },
       body: JSON.stringify(input === undefined ? {} : { json: input }),
     });
     const body = (await response.json().catch(() => null)) as ({ json?: unknown } & Record<string, unknown>) | null;

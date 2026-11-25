@@ -102,7 +102,7 @@ suite('meetings live notes capture on PostgreSQL (#3109)', () => {
   async function rpc(path: string, name: string, input: unknown, org: string | null = slug, mfa = false) {
     const response = await app.request(`/api/rpc/${path}`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${await token(name, mfa)}`, 'content-type': 'application/json', ...(org ? { 'x-crove-org': org } : {}) },
+      headers: { authorization: `Bearer ${await token(name, mfa)}`, 'content-type': 'application/json', ...(org ? { 'x-ludy-org': org } : {}) },
       body: JSON.stringify(input === undefined ? {} : { json: input }),
     });
     const body = (await response.json()) as { json?: Record<string, unknown> };
@@ -130,13 +130,13 @@ suite('meetings live notes capture on PostgreSQL (#3109)', () => {
     const form = new FormData();
     form.append('kind', kind);
     form.append('file', new Blob([bytes], { type: kind === 'audio' ? 'audio/ogg' : 'video/mp4' }), kind === 'audio' ? 'a.ogg' : 'v.mp4');
-    const res = await app.request(`/api/meetings/${meetingId}/media`, { method: 'POST', headers: { authorization: `Bearer ${await token(name)}`, 'x-crove-org': org }, body: form });
+    const res = await app.request(`/api/meetings/${meetingId}/media`, { method: 'POST', headers: { authorization: `Bearer ${await token(name)}`, 'x-ludy-org': org }, body: form });
     expect(res.status).toBe(200);
     return bytes;
   }
 
   const play = async (name: string, meetingId: string, kind: 'audio' | 'video', org = slug) =>
-    app.request(`/api/meetings/${meetingId}/${kind}`, { headers: { authorization: `Bearer ${await token(name)}`, 'x-crove-org': org } });
+    app.request(`/api/meetings/${meetingId}/${kind}`, { headers: { authorization: `Bearer ${await token(name)}`, 'x-ludy-org': org } });
 
   const yesterday = "(pg_catalog.timezone('Asia/Ho_Chi_Minh', pg_catalog.now()))::date - 1";
   const retention = () => runMeetingsRetention({ runtime: worker, workerDb, log: quiet });
@@ -213,7 +213,7 @@ suite('meetings live notes capture on PostgreSQL (#3109)', () => {
       method: 'POST',
       headers: {
         authorization: `Bearer ${opts.bearer ?? (await token(name))}`,
-        'x-crove-org': slug,
+        'x-ludy-org': slug,
         'content-type': opts.contentType ?? 'audio/webm',
         'content-length': opts.contentLength ?? String(bytes.byteLength),
       },
@@ -553,7 +553,7 @@ suite('meetings live notes capture on PostgreSQL (#3109)', () => {
     const create = async (bearer: string, liveNotes: boolean) => {
       const res = await app.request('/api/rpc/meetings/create', {
         method: 'POST',
-        headers: { authorization: `Bearer ${bearer}`, 'content-type': 'application/json', 'x-crove-org': slug },
+        headers: { authorization: `Bearer ${bearer}`, 'content-type': 'application/json', 'x-ludy-org': slug },
         body: JSON.stringify({ json: { title: 'Họp tuần', consentMethod: 'told_at_start', keepVideo: false, liveNotes } }),
       });
       expect(res.status).toBe(200);

@@ -1,4 +1,4 @@
-// Crove Social through the API (Social plan S3, the oRPC contract): connect the sandbox channel, compose, submit,
+// Ludy Social through the API (Social plan S3, the oRPC contract): connect the sandbox channel, compose, submit,
 
 // decide on what was seen, schedule; roles and the module switch hold at the RPC edge. The command rules are in
 
@@ -45,7 +45,7 @@ const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.
 
 const SECRET = 'test-only-jwt-secret-for-channels-0123456789';
 
-const ISSUER = 'crove-auth';
+const ISSUER = 'ludy-auth';
 
 const suite = ADMIN ? describe : describe.skip;
 
@@ -166,7 +166,7 @@ suite('social posts through the API', () => {
 
       method: 'POST',
 
-      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...(slug ? { 'x-crove-org': slug } : {}) },
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...(slug ? { 'x-ludy-org': slug } : {}) },
 
       body: JSON.stringify(input === undefined ? {} : { json: input }),
 

@@ -1,4 +1,4 @@
-// Crove Social reposts and evergreen posts on PostgreSQL 17 (Social plan S9, issue #393): a repost copies a published
+// Ludy Social reposts and evergreen posts on PostgreSQL 17 (Social plan S9, issue #393): a repost copies a published
 // post for the channels it went out on, an evergreen post gets one repost per period sent to review, never a second
 // while one is open, and a post whose channels are gone stops being evergreen.
 // Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.

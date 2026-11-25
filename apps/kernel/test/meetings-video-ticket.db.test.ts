@@ -121,7 +121,7 @@ suite('meeting video tickets (#2703)', () => {
   async function rpc(path: string, name: string, input: unknown, org: string | null = slug, mfa = false) {
     const response = await app.request(`/api/rpc/${path}`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${await token(name, mfa)}`, 'content-type': 'application/json', ...(org ? { 'x-crove-org': org } : {}) },
+      headers: { authorization: `Bearer ${await token(name, mfa)}`, 'content-type': 'application/json', ...(org ? { 'x-ludy-org': org } : {}) },
       body: JSON.stringify(input === undefined ? {} : { json: input }),
     });
     const body = (await response.json()) as { json?: Record<string, unknown> };
@@ -162,7 +162,7 @@ suite('meeting video tickets (#2703)', () => {
       );
       const claim = await app.request(`/api/meetings/${meetingId}/media`, {
         method: 'POST',
-        headers: { authorization: `Bearer ${await token('recorder')}`, 'content-type': 'application/json', 'x-crove-org': slug },
+        headers: { authorization: `Bearer ${await token('recorder')}`, 'content-type': 'application/json', 'x-ludy-org': slug },
         body: JSON.stringify({ uploadId, kind: 'video' }),
       });
       expect(claim.status).toBe(200);
@@ -173,7 +173,7 @@ suite('meeting video tickets (#2703)', () => {
   async function issue(name: string, meetingId: string, target = app) {
     const res = await target.request(`/api/meetings/${meetingId}/video/ticket`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${await token(name)}`, 'x-crove-org': slug },
+      headers: { authorization: `Bearer ${await token(name)}`, 'x-ludy-org': slug },
     });
     return { res, body: (await res.json()) as { ticket?: string; expiresInSeconds?: number; code?: string } };
   }
@@ -183,7 +183,7 @@ suite('meeting video tickets (#2703)', () => {
 
   const bearerPlay = async (name: string, meetingId: string, range?: string) =>
     app.request(`/api/meetings/${meetingId}/video`, {
-      headers: { authorization: `Bearer ${await token(name)}`, 'x-crove-org': slug, ...(range ? { range } : {}) },
+      headers: { authorization: `Bearer ${await token(name)}`, 'x-ludy-org': slug, ...(range ? { range } : {}) },
     });
 
   // A ticket signed as the server signs it, for what the issue route would never give (a stolen key, a forged payload).
@@ -278,7 +278,7 @@ suite('meeting video tickets (#2703)', () => {
     const anon = await app.request(`/api/meetings/${meetingId}/video/ticket`, { method: 'POST' });
     expect(anon.status).toBe(401);
     // The module is the same one the bearer route needs: a GET is no ticket request.
-    expect((await app.request(`/api/meetings/${meetingId}/video/ticket`, { headers: { authorization: `Bearer ${await token('attendee')}`, 'x-crove-org': slug } })).status).not.toBe(200);
+    expect((await app.request(`/api/meetings/${meetingId}/video/ticket`, { headers: { authorization: `Bearer ${await token('attendee')}`, 'x-ludy-org': slug } })).status).not.toBe(200);
   });
 
   it('is capped at the bearer token\'s own expiry', async () => {
@@ -437,7 +437,7 @@ suite('meeting video tickets (#2703)', () => {
       expect([401, 404]).toContain(res.status);
       expect(res.status === 200).toBe(false);
     }
-    const audioTicket = await app.request(`/api/meetings/${meetingId}/audio/ticket`, { method: 'POST', headers: { authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug } });
+    const audioTicket = await app.request(`/api/meetings/${meetingId}/audio/ticket`, { method: 'POST', headers: { authorization: `Bearer ${await token('recorder')}`, 'x-ludy-org': slug } });
     expect(audioTicket.status).not.toBe(200);
   });
 
@@ -445,7 +445,7 @@ suite('meeting video tickets (#2703)', () => {
     const meetingId = await videoMeeting(mp4(3000));
     const { body } = await issue('recorder', meetingId);
     const ticket = body.ticket!;
-    const asBearer = { authorization: `Bearer ${ticket}`, 'x-crove-org': slug };
+    const asBearer = { authorization: `Bearer ${ticket}`, 'x-ludy-org': slug };
     for (const [method, path] of [
       ['GET', `/api/meetings/${meetingId}/video`],
       ['POST', `/api/meetings/${meetingId}/video/ticket`],
@@ -462,7 +462,7 @@ suite('meeting video tickets (#2703)', () => {
       expect([401, 404, 405]).toContain(res.status);
     }
     // And with a real bearer, a ticket in the query of the bearer route changes nothing: the bearer decides.
-    const other = await app.request(`/api/meetings/${meetingId}/video?ticket=${ticket}`, { headers: { authorization: `Bearer ${await token('otherMember')}`, 'x-crove-org': slug } });
+    const other = await app.request(`/api/meetings/${meetingId}/video?ticket=${ticket}`, { headers: { authorization: `Bearer ${await token('otherMember')}`, 'x-ludy-org': slug } });
     expect(other.status).toBe((await bearerPlay('otherMember', meetingId)).status);
     expect(other.status).toBeGreaterThanOrEqual(400);
   });

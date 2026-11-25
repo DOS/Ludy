@@ -39,7 +39,7 @@ import { TEST_MANIFESTS } from './manifests.ts';
 const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const JWT_SECRET = 'test-only-jwt-key-projects-triage-4493-0123456789';
-const ISSUER = 'crove-auth';
+const ISSUER = 'ludy-auth';
 const suite = ADMIN ? describe : describe.skip;
 
 const SYSTEM = { type: 'system' as const, component: 'triage-test' };
@@ -368,7 +368,7 @@ suite('Projects Triage Inbox Slice 2 (#4493)', () => {
       headers: {
         authorization: `Bearer ${token}`,
         'content-type': 'application/json',
-        'x-crove-org': orgSlug,
+        'x-ludy-org': orgSlug,
       },
       body: JSON.stringify({ json: { itemId, language: 'vi' } }),
     });

@@ -97,7 +97,7 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
       .sign(new TextEncoder().encode(SECRET));
   }
 
-  const asBrowser = async (name: string, org: string | null = slug, mfa = false) => ({ authorization: `Bearer ${await jwt(name, mfa)}`, 'content-type': 'application/json', ...(org ? { 'x-crove-org': org } : {}) });
+  const asBrowser = async (name: string, org: string | null = slug, mfa = false) => ({ authorization: `Bearer ${await jwt(name, mfa)}`, 'content-type': 'application/json', ...(org ? { 'x-ludy-org': org } : {}) });
   const asToken = (token: string) => ({ authorization: `Bearer ${token}`, 'content-type': 'application/json' });
 
   async function rpc(path: string, headers: Record<string, string>, input: unknown) {
@@ -329,7 +329,7 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
     const anonymous = await app.request('/api/extension/authorize', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
     expect(anonymous.status).toBe(401);
     const { token } = await signedIn('recorder');
-    const byToken = await app.request('/api/extension/authorize', { method: 'POST', headers: { ...asToken(token), 'x-crove-org': slug }, body: JSON.stringify({ codeChallenge: challengeOf('v'.repeat(43)), codeChallengeMethod: 'S256', scopes: ['meetings'], deviceName: 'x' }) });
+    const byToken = await app.request('/api/extension/authorize', { method: 'POST', headers: { ...asToken(token), 'x-ludy-org': slug }, body: JSON.stringify({ codeChallenge: challengeOf('v'.repeat(43)), codeChallengeMethod: 'S256', scopes: ['meetings'], deviceName: 'x' }) });
     expect(byToken.status).toBe(403);
     const badShape = await app.request('/api/extension/authorize', { method: 'POST', headers: await asBrowser('recorder'), body: JSON.stringify({ codeChallenge: 'short', codeChallengeMethod: 'S256', scopes: ['meetings'], deviceName: 'x' }) });
     expect(badShape.status).toBe(422);
@@ -354,7 +354,7 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
     file.set('kind', 'audio');
     file.set('file', new Blob([webm()], { type: 'audio/webm' }), 'rec.webm');
     file.set('lengthSeconds', '60');
-    const upload = await app.request(`/api/meetings/${meetingId}/media`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'x-crove-org': slug }, body: file });
+    const upload = await app.request(`/api/meetings/${meetingId}/media`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'x-ludy-org': slug }, body: file });
     expect(upload.status).toBe(200);
     expect(await rpc('meetings/extensionStatus', asToken(token), { meetingId })).toMatchObject({ body: { hasAudio: true } });
     // What it cannot do: read the meeting, its media or any file, list meetings or devices, take another purpose.
@@ -372,7 +372,7 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
       ['POST', '/api/stream/tickets'],
       ['GET', '/api/org-export/x'],
     ] as const) {
-      const refused = await app.request(path, { method, headers: { authorization: `Bearer ${token}`, 'x-crove-org': slug } });
+      const refused = await app.request(path, { method, headers: { authorization: `Bearer ${token}`, 'x-ludy-org': slug } });
       expect(refused.status, `${method} ${path}`).toBe(403);
     }
     const grantFor = (purpose: string) => app.request('/api/files/uploads', { method: 'POST', headers: asToken(token), body: JSON.stringify({ purpose }) });
@@ -401,7 +401,7 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
       form.set('kind', 'audio');
       form.set('file', new Blob([webm()], { type: 'audio/webm' }), 'rec.webm');
       form.set('lengthSeconds', seconds);
-      const response = await app.request(`/api/meetings/${meetingId}/media`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'x-crove-org': slug }, body: form });
+      const response = await app.request(`/api/meetings/${meetingId}/media`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'x-ludy-org': slug }, body: form });
       return { status: response.status, body: (await response.json()) as { code?: string } };
     };
     const segment = () => admin(async (c) => (await c.query<{ file_id: string; joined: boolean }>('SELECT file_id, joined_from_pieces AS joined FROM ludy_meetings.audio_segment WHERE meeting_id = $1', [meetingId])).rows);
@@ -466,7 +466,7 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
     file.set('kind', 'audio');
     file.set('file', new Blob([webm()], { type: 'audio/webm' }), 'rec.webm');
     file.set('lengthSeconds', '60');
-    expect((await app.request(`/api/meetings/${recorded}/media`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'x-crove-org': slug }, body: file })).status).toBe(200);
+    expect((await app.request(`/api/meetings/${recorded}/media`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'x-ludy-org': slug }, body: file })).status).toBe(200);
     const uploaded = await row(recorded);
     expect(uploaded.ended).toBe(true);
     expect(await stopped(asToken(token), { meetingId: recorded, reason: 'unknown', lengthSeconds: 1 })).toMatchObject({ body: { ended: false } });
@@ -478,7 +478,7 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
     again.set('kind', 'audio');
     again.set('file', new Blob([webm()], { type: 'audio/webm' }), 'rec.webm');
     again.set('lengthSeconds', '60');
-    expect((await app.request(`/api/meetings/${legacy}/media`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'x-crove-org': slug }, body: again })).status).toBe(200);
+    expect((await app.request(`/api/meetings/${legacy}/media`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'x-ludy-org': slug }, body: again })).status).toBe(200);
     await admin(async (c) => void (await c.query('UPDATE ludy_meetings.meeting SET ended_at = NULL WHERE id = $1', [legacy])));
     expect(await stopped(asToken(token), { meetingId: legacy, lengthSeconds: 1 })).toMatchObject({ body: { ended: false } });
     expect((await row(legacy)).ended).toBe(false);

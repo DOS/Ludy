@@ -33,7 +33,7 @@ vi.mock('@ludy/l10n-vn', async (importOriginal) => {
 const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-bank-file-0123456789abcdef';
-const ISSUER = 'crove-auth';
+const ISSUER = 'ludy-auth';
 const suite = ADMIN ? describe : describe.skip;
 
 class MemoryStore implements BlobStore {
@@ -82,7 +82,7 @@ suite('the bank salary file of a pay run (#2532)', () => {
   const asUser = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal1' as const });
   const asMfa = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) });
   const exec = <O>(name: string, input: unknown, actor: ReturnType<typeof asUser> | ReturnType<typeof asMfa> = asUser(ownerId)) => rt.execute<O>(name, input, { actor, orgId, idempotencyKey: randomUUID() });
-  const get = async (path: string, mfa = true, method = 'GET') => app.request(path, { method, headers: { authorization: `Bearer ${await token(mfa)}`, 'x-crove-org': slug } });
+  const get = async (path: string, mfa = true, method = 'GET') => app.request(path, { method, headers: { authorization: `Bearer ${await token(mfa)}`, 'x-ludy-org': slug } });
   const rows = async <T extends pg.QueryResultRow>(sql: string, params: unknown[] = []) => {
     const c = new pg.Client({ connectionString: adminUrl });
     await c.connect();

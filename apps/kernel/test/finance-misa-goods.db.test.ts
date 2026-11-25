@@ -37,7 +37,7 @@ const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_UR
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const FIXTURE = readFileSync(new URL('../../extract/test/fixtures/einvoice-basic.xml', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-misa-goods-0123456789';
-const ISSUER = 'crove-auth';
+const ISSUER = 'ludy-auth';
 
 class MemoryStore implements BlobStore {
   private readonly blobs = new Map<string, Uint8Array>();
@@ -110,7 +110,7 @@ suite('MISA SME goods purchases: codes per stock account and the goods template 
   async function rpc(path: string, who: Account, input: unknown, slug: string | null = org.slug, options: { mfa?: boolean } = {}) {
     const response = await app.request(`/api/rpc/${path}`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${await tokenFor(who, options)}`, 'content-type': 'application/json', ...(slug ? { 'x-crove-org': slug } : {}) },
+      headers: { authorization: `Bearer ${await tokenFor(who, options)}`, 'content-type': 'application/json', ...(slug ? { 'x-ludy-org': slug } : {}) },
       body: JSON.stringify(input === undefined ? {} : { json: input }),
     });
     const body = (await response.json().catch(() => null)) as ({ json?: unknown } & Record<string, unknown>) | null;
@@ -119,7 +119,7 @@ suite('MISA SME goods purchases: codes per stock account and the goods template 
 
   // Downloads an export as a member would; answers its file name.
   async function download(path: string, who: Account = owner) {
-    const response = await app.request(path, { headers: { authorization: `Bearer ${await tokenFor(who)}`, 'x-crove-org': org.slug } });
+    const response = await app.request(path, { headers: { authorization: `Bearer ${await tokenFor(who)}`, 'x-ludy-org': org.slug } });
     expect(response.status).toBe(200);
     expect(response.headers.get('content-type')).toBe('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     const bytes = new Uint8Array(await response.arrayBuffer());

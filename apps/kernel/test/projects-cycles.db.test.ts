@@ -48,7 +48,7 @@ import { TEST_MANIFESTS } from './manifests.ts';
 const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-projects-cycles-0123456789';
-const ISSUER = 'crove-auth';
+const ISSUER = 'ludy-auth';
 const DAY = 24 * 60 * 60 * 1000;
 const suite = ADMIN ? describe : describe.skip;
 
@@ -120,7 +120,7 @@ suite('Projects v2 Cycles & Story Points on PostgreSQL (#4361)', () => {
       headers: {
         authorization: `Bearer ${jwt}`,
         'content-type': 'application/json',
-        ...(slug ? { 'x-crove-org': slug } : {}),
+        ...(slug ? { 'x-ludy-org': slug } : {}),
       },
       body: JSON.stringify(body === undefined ? {} : { json: body }),
     });

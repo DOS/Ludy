@@ -23,7 +23,7 @@ import { TEST_MANIFESTS } from './manifests.ts';
 const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-supplier-file-0123456789abcdef';
-const ISSUER = 'crove-auth';
+const ISSUER = 'ludy-auth';
 const suite = ADMIN ? describe : describe.skip;
 const NUMBER = '0123 4567 8901';
 const HOLDER = '=Nguyen Van Canary';
@@ -78,7 +78,7 @@ suite('the bank file of supplier payments over HTTP (#3113 S3b-2)', () => {
       .setIssuedAt()
       .setExpirationTime('15m')
       .sign(new TextEncoder().encode(SECRET));
-  const get = async (path: string, mfa = true, method = 'GET', org = slug) => app.request(path, { method, headers: { authorization: `Bearer ${await token(mfa)}`, 'x-crove-org': org } });
+  const get = async (path: string, mfa = true, method = 'GET', org = slug) => app.request(path, { method, headers: { authorization: `Bearer ${await token(mfa)}`, 'x-ludy-org': org } });
   const rows = async <T extends pg.QueryResultRow>(sql: string, params: unknown[] = []) => {
     const c = new pg.Client({ connectionString: adminUrl });
     await c.connect();

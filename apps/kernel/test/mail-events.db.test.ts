@@ -165,7 +165,7 @@ suite('mail delivery events (#539)', () => {
     const config = loadConfig({
       DATABASE_URL: login('ludy_app', 'test-app-pw'),
       AUTH_JWT_SECRET: 'test-only-jwt-secret-for-mail-events-0123456789',
-      AUTH_ISSUER: 'crove-auth',
+      AUTH_ISSUER: 'ludy-auth',
       AUTH_SESSION_CHECK: 'off',
       MIGRATIONS_DIR: MIGRATIONS,
       WEB_DIST: '/nonexistent',
@@ -212,7 +212,7 @@ suite('mail delivery events (#539)', () => {
     expect(await drain()).toEqual([{ recorded: false, status: 'delivered', suppressed: null }]);
     const events = await admin(async (c) => (await c.query('SELECT org_id, kind, provider_event_id FROM ludy_kernel.mail_event WHERE message_id = $1', [mail.id])).rows);
     expect(events).toEqual([{ org_id: orgId, kind: 'delivered', provider_event_id: 'msg_replayed' }]);
-    // An event type Crove does not record is acknowledged and dropped.
+    // An event type Ludy does not record is acknowledged and dropped.
     const opened = event('email.opened', mail.providerMessageId);
     expect(await post(opened, signed(opened))).toEqual({ status: 200, body: { queued: 0 } });
     expect(await pending()).toBe(0);

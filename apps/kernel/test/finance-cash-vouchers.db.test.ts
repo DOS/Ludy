@@ -28,7 +28,7 @@ const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_UR
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const FIXTURE = readFileSync(new URL('../../extract/test/fixtures/einvoice-basic.xml', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-cash-vouchers-327';
-const ISSUER = 'crove-auth';
+const ISSUER = 'ludy-auth';
 
 class MemoryStore implements BlobStore {
   private readonly blobs = new Map<string, Uint8Array>();
@@ -107,7 +107,7 @@ suite('cash and bank vouchers (#327)', () => {
   async function rpc(path: string, token: string, input: unknown, slug: string | null = org.slug) {
     const response = await app.request(`/api/rpc/${path}`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...(slug ? { 'x-crove-org': slug } : {}) },
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...(slug ? { 'x-ludy-org': slug } : {}) },
       body: JSON.stringify(input === undefined ? {} : { json: input }),
     });
     const body = (await response.json().catch(() => null)) as ({ json?: unknown } & Record<string, unknown>) | null;
@@ -656,7 +656,7 @@ suite('cash and bank vouchers (#327)', () => {
       ['receipts', 'ludy-misa-phieu-thu-', 'misa_sme_cash_receipts', 1],
       ['payments', 'ludy-misa-phieu-chi-', 'misa_sme_cash_payments', 1],
     ] as const) {
-      const response = await app.request(`/api/export/misa/${path}.xlsx?from=2026-11-01&to=2026-11-30`, { headers: { authorization: `Bearer ${await tokenFor(viewer)}`, 'x-crove-org': org.slug } });
+      const response = await app.request(`/api/export/misa/${path}.xlsx?from=2026-11-01&to=2026-11-30`, { headers: { authorization: `Bearer ${await tokenFor(viewer)}`, 'x-ludy-org': org.slug } });
       expect(response.status).toBe(200);
       expect(response.headers.get('content-disposition')).toContain(name);
       const bytes = new Uint8Array(await response.arrayBuffer());
@@ -667,9 +667,9 @@ suite('cash and bank vouchers (#327)', () => {
       expect(audits.map((a) => a.detail)).toContainEqual({ entries, format, from: '2026-11-01', to: '2026-11-30' });
     }
     // A bad date is refused before any file is built; another org's member gets nothing of this org.
-    const bad = await app.request('/api/export/misa/payments.xlsx?from=2026-13-01', { headers: { authorization: `Bearer ${await tokenFor(viewer)}`, 'x-crove-org': org.slug } });
+    const bad = await app.request('/api/export/misa/payments.xlsx?from=2026-13-01', { headers: { authorization: `Bearer ${await tokenFor(viewer)}`, 'x-ludy-org': org.slug } });
     expect(bad.status).toBe(422);
-    const foreign = await app.request('/api/export/misa/payments.xlsx', { headers: { authorization: `Bearer ${await tokenFor(outsider)}`, 'x-crove-org': org.slug } });
+    const foreign = await app.request('/api/export/misa/payments.xlsx', { headers: { authorization: `Bearer ${await tokenFor(outsider)}`, 'x-ludy-org': org.slug } });
     expect(foreign.status).toBe(403);
     // The other org's export holds its own posted vouchers only (rows written without an entry are not posted).
     const theirList = (await rpc('vouchers/list', await tokenFor(outsider), { type: 'cash_payment' }, other.slug)).body.items as any[];
@@ -738,7 +738,7 @@ suite('cash and bank vouchers (#327)', () => {
       ['bank-receipts', 'ludy-misa-bao-co-', 'misa_sme_bank_credits', 1],
       ['bank-payments', 'ludy-misa-bao-no-', 'misa_sme_bank_debits', 1],
     ] as const) {
-      const response = await app.request(`/api/export/misa/${path}.xlsx?from=2026-12-01&to=2026-12-31`, { headers: { authorization: `Bearer ${await tokenFor(viewer)}`, 'x-crove-org': org.slug } });
+      const response = await app.request(`/api/export/misa/${path}.xlsx?from=2026-12-01&to=2026-12-31`, { headers: { authorization: `Bearer ${await tokenFor(viewer)}`, 'x-ludy-org': org.slug } });
       expect(response.status).toBe(200);
       expect(response.headers.get('content-disposition')).toContain(name);
       const bytes = new Uint8Array(await response.arrayBuffer());
@@ -751,9 +751,9 @@ suite('cash and bank vouchers (#327)', () => {
     // A bad date is refused before any file is built; another org's member gets nothing of this org; the other org's
     // own export holds none of this org's vouchers.
     for (const path of ['bank-receipts', 'bank-payments']) {
-      const bad = await app.request(`/api/export/misa/${path}.xlsx?from=2026-13-01`, { headers: { authorization: `Bearer ${await tokenFor(viewer)}`, 'x-crove-org': org.slug } });
+      const bad = await app.request(`/api/export/misa/${path}.xlsx?from=2026-13-01`, { headers: { authorization: `Bearer ${await tokenFor(viewer)}`, 'x-ludy-org': org.slug } });
       expect(bad.status).toBe(422);
-      const foreign = await app.request(`/api/export/misa/${path}.xlsx`, { headers: { authorization: `Bearer ${await tokenFor(outsider)}`, 'x-crove-org': org.slug } });
+      const foreign = await app.request(`/api/export/misa/${path}.xlsx`, { headers: { authorization: `Bearer ${await tokenFor(outsider)}`, 'x-ludy-org': org.slug } });
       expect(foreign.status).toBe(403);
     }
     for (const type of ['bank_credit', 'bank_debit']) {
@@ -789,7 +789,7 @@ suite('cash and bank vouchers (#327)', () => {
     expect(rows.map((r) => r.voucherNo)).toEqual(vouchers.map((v) => `CRBC${v.numberPeriod}${v.code.slice(2)}`));
     expect(new Set(rows.map((r) => r.voucherNo)).size).toBe(1 + number);
     // The download of that range works, and a voucher keeps its number when the range shrinks to its own year.
-    const response = await app.request('/api/export/misa/bank-receipts.xlsx?from=2026-12-01&to=2027-01-31', { headers: { authorization: `Bearer ${await tokenFor(viewer)}`, 'x-crove-org': org.slug } });
+    const response = await app.request('/api/export/misa/bank-receipts.xlsx?from=2026-12-01&to=2027-01-31', { headers: { authorization: `Bearer ${await tokenFor(viewer)}`, 'x-ludy-org': org.slug } });
     expect(response.status).toBe(200);
     const only2027 = await runtime.query<CashVoucher[]>('finance.vouchers.cash', { from: '2027-01-01', to: '2027-01-31', type: 'bank_credit' }, asViewer);
     expect(only2027.flatMap(cashRows).map((r) => r.voucherNo)).toEqual(rows.slice(1).map((r) => r.voucherNo));

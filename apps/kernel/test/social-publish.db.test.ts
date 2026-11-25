@@ -1,4 +1,4 @@
-// Crove Social publishing on PostgreSQL 17 (Social plan §3.4, step S4, issue #234): a due variant goes out exactly
+// Ludy Social publishing on PostgreSQL 17 (Social plan §3.4, step S4, issue #234): a due variant goes out exactly
 // once, a run that dies between the provider call and its result never posts again on its own, and every refusal
 // ends where the plan says (failed, a new attempt, paused until the channel is reconnected, or a person's decision).
 // Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run makes its own database.
@@ -218,7 +218,7 @@ suite('social publishing on PostgreSQL (S4)', () => {
     await exec(o, 'social.variant.schedule', { postId, at: new Date(Date.now() + 3_600_000).toISOString() });
     await admin((c) => c.query("UPDATE ludy_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = $1", [postId]));
     const [short, other] = post.variants;
-    const deps = { runtime: worker, broker: vault, publishers: { sandbox: platform }, callTimeoutMs: 2_000, publicUrl: 'https://crove.example/' };
+    const deps = { runtime: worker, broker: vault, publishers: { sandbox: platform }, callTimeoutMs: 2_000, publicUrl: 'https://ludy.example/' };
     expect(await runPublishJob(deps, o.orgId, short?.id as string, 'sandbox')).toEqual({ action: 'call', status: 'published' });
     expect(await runPublishJob(deps, o.orgId, other?.id as string, 'sandbox')).toEqual({ action: 'call', status: 'published' });
 
@@ -229,7 +229,7 @@ suite('social publishing on PostgreSQL (S4)', () => {
     // The target is the link as the channel sends it (with its UTM tags when the post has some).
     expect(rows[0]?.target_url).toBe('https://tiembanh.example/uu-dai');
     // The shortened channel's text and link name the short link; the other channel's are its own.
-    expect(platform.posts[0]?.content).toMatchObject({ linkUrl: `https://crove.example/l/${code}` });
+    expect(platform.posts[0]?.content).toMatchObject({ linkUrl: `https://ludy.example/l/${code}` });
     expect(platform.posts[0]?.content.body).not.toContain('tiembanh.example');
     expect(platform.posts[1]?.content.linkUrl).toMatch(/^https:\/\/tiembanh\.example\/uu-dai/);
 
@@ -934,7 +934,7 @@ suite('social publishing on PostgreSQL (S4)', () => {
     expect(await runTikTok()).toEqual({ action: 'call', status: 'processing' });
     expect(sent.map((s) => s.settings)).toEqual([{ tiktokMode: 'inbox' }]);
 
-    // The status check ends at SEND_TO_USER_INBOX: published for Crove, but with no post id or address, and its note.
+    // The status check ends at SEND_TO_USER_INBOX: published for Ludy, but with no post id or address, and its note.
     statuses.push({ kind: 'accepted', externalId: 'v_inbox_file~v2.123456789', url: null, sentToApp: true });
     await admin((c) => c.query("UPDATE ludy_social.post_variant SET next_check_at = now() - interval '1 second' WHERE id = $1", [id]));
     expect(await runTikTok()).toEqual({ action: 'status', status: 'published' });

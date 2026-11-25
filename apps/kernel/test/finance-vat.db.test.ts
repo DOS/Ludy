@@ -29,7 +29,7 @@ const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_UR
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const FIXTURE = readFileSync(new URL('../../extract/test/fixtures/einvoice-basic.xml', import.meta.url), 'utf8');
 const SECRET = 'test-only-jwt-secret-for-vat-working-0123456789';
-const ISSUER = 'crove-auth';
+const ISSUER = 'ludy-auth';
 
 class MemoryStore implements BlobStore {
   private readonly blobs = new Map<string, Uint8Array>();
@@ -101,7 +101,7 @@ suite('VAT working per month or quarter (#316)', () => {
   async function rpc(path: string, token: string, input: unknown, slug: string | null = org.slug) {
     const response = await app.request(`/api/rpc/${path}`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...(slug ? { 'x-crove-org': slug } : {}) },
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...(slug ? { 'x-ludy-org': slug } : {}) },
       body: JSON.stringify(input === undefined ? {} : { json: input }),
     });
     const body = (await response.json().catch(() => null)) as ({ json?: unknown } & Record<string, unknown>) | null;
@@ -131,7 +131,7 @@ suite('VAT working per month or quarter (#316)', () => {
   }
 
   const exportFile = async (token: string, period: string, slug = org.slug) =>
-    app.request(`/api/export/vat.xlsx?${new URLSearchParams({ period })}`, { headers: { authorization: `Bearer ${token}`, 'x-crove-org': slug } });
+    app.request(`/api/export/vat.xlsx?${new URLSearchParams({ period })}`, { headers: { authorization: `Bearer ${token}`, 'x-ludy-org': slug } });
 
   const exportAudits = () =>
     admin(async (c) => (await c.query(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.vat.export' AND outcome = 'ok' ORDER BY occurred_at`, [org.orgId])).rows);
@@ -285,7 +285,7 @@ suite('VAT working per month or quarter (#316)', () => {
   // to be missing. The org is the fixture's buyer, so the recorded invoices stay purchases.
   const BUYER_TAX_CODE = '0309876546';
   const exportXml = async (token: string, period: string, slug = org.slug) =>
-    app.request(`/api/export/vat-01gtgt.xml?${new URLSearchParams({ period })}`, { headers: { authorization: `Bearer ${token}`, 'x-crove-org': slug } });
+    app.request(`/api/export/vat-01gtgt.xml?${new URLSearchParams({ period })}`, { headers: { authorization: `Bearer ${token}`, 'x-ludy-org': slug } });
   const xmlAudits = async () => (await exportAudits()).filter((row: { detail: { format?: string } }) => row.detail.format === 'htkk_01gtgt_xml');
   const valueOf = (xml: string, tag: string) => new RegExp(`<${tag}>([^<]*)</${tag}>`).exec(xml)?.[1];
 
@@ -339,7 +339,7 @@ suite('VAT working per month or quarter (#316)', () => {
     const allBefore = (await exportAudits()).length;
     for (const period of ['1999-01', '2101-Q1']) {
       expect((await exportXml(owned, period)).status, period).toBe(422);
-      const xlsx = await app.request(`/api/export/vat.xlsx?${new URLSearchParams({ period })}`, { headers: { authorization: `Bearer ${owned}`, 'x-crove-org': org.slug } });
+      const xlsx = await app.request(`/api/export/vat.xlsx?${new URLSearchParams({ period })}`, { headers: { authorization: `Bearer ${owned}`, 'x-ludy-org': org.slug } });
       expect(xlsx.status, period).toBe(422);
     }
     expect(await xmlAudits()).toHaveLength(xmlBefore);
@@ -356,7 +356,7 @@ suite('VAT working per month or quarter (#316)', () => {
     expect(quarter.headers.get('content-disposition')).toBeNull();
     expect((await exportXml(owned, '2026-09')).status).toBe(200);
     // The Excel working is an analysis tool, not a filing: any period stays allowed.
-    const xlsx = await app.request(`/api/export/vat.xlsx?period=2026-Q3`, { headers: { authorization: `Bearer ${owned}`, 'x-crove-org': org.slug } });
+    const xlsx = await app.request(`/api/export/vat.xlsx?period=2026-Q3`, { headers: { authorization: `Bearer ${owned}`, 'x-ludy-org': org.slug } });
     expect(xlsx.status).toBe(200);
 
     expect((await rpc('org/setVatFilingPeriod', owned, { vatFilingPeriod: 'quarter' }, org.slug)).status).toBe(200);
@@ -376,7 +376,7 @@ suite('VAT working per month or quarter (#316)', () => {
     const owned = await tokenFor(owner);
     const before = (await xmlAudits()).length;
     const deducted = await app.request(`/api/export/vat-01gtgt.xml?${new URLSearchParams({ period: '2026-09', deductInput: '1' })}`, {
-      headers: { authorization: `Bearer ${owned}`, 'x-crove-org': org.slug },
+      headers: { authorization: `Bearer ${owned}`, 'x-ludy-org': org.slug },
     });
     expect(deducted.status).toBe(200);
     const xml = await deducted.text();
@@ -386,7 +386,7 @@ suite('VAT working per month or quarter (#316)', () => {
     expect(xml).toContain('<dchiNNT/>');
     // Any other value of the parameter keeps [25] at 0.
     const plain = await app.request(`/api/export/vat-01gtgt.xml?${new URLSearchParams({ period: '2026-09', deductInput: 'true' })}`, {
-      headers: { authorization: `Bearer ${owned}`, 'x-crove-org': org.slug },
+      headers: { authorization: `Bearer ${owned}`, 'x-ludy-org': org.slug },
     });
     expect(valueOf(await plain.text(), 'ct25')).toBe('0');
 
@@ -411,7 +411,7 @@ suite('VAT working per month or quarter (#316)', () => {
     // The outsider's own org has no tax code: refused too, and neither attempt is recorded in this org.
     expect((await exportXml(await tokenFor(outsider), '2026-09', otherOrg.slug)).status).toBe(422);
     expect(await xmlAudits()).toHaveLength(before);
-    const unauthenticated = await app.request(`/api/export/vat-01gtgt.xml?period=2026-09`, { headers: { 'x-crove-org': org.slug } });
+    const unauthenticated = await app.request(`/api/export/vat-01gtgt.xml?period=2026-09`, { headers: { 'x-ludy-org': org.slug } });
     expect(unauthenticated.status).toBe(401);
   });
   // A sales invoice at 5% and 10% (#685): the org (BUYER_TAX_CODE since the test above) is the seller. 5% of 1,000,001
@@ -548,7 +548,7 @@ suite('VAT working per month or quarter (#316)', () => {
 
     // The HTKK XML takes the suggestion when asked, and the audit says so.
     const xml = await app.request(`/api/export/vat-01gtgt.xml?${new URLSearchParams({ period: '2026-05', deduct: 'suggested' })}`, {
-      headers: { authorization: `Bearer ${owned}`, 'x-crove-org': org.slug },
+      headers: { authorization: `Bearer ${owned}`, 'x-ludy-org': org.slug },
     });
     expect(xml.status).toBe(200);
     const text = await xml.text();
@@ -592,14 +592,14 @@ suite('VAT working per month or quarter (#316)', () => {
             )
           ).rows,
       );
-    const xmlWith = (params: Record<string, string>) => app.request(`/api/export/vat-01gtgt.xml?${new URLSearchParams(params)}`, { headers: { authorization: `Bearer ${owned}`, 'x-crove-org': org.slug } });
+    const xmlWith = (params: Record<string, string>) => app.request(`/api/export/vat-01gtgt.xml?${new URLSearchParams(params)}`, { headers: { authorization: `Bearer ${owned}`, 'x-ludy-org': org.slug } });
 
     // No return filed before May: [22] stays 0, and the report says none was found.
     const may = await period('2026-05');
     expect(may.carryForward).toEqual({ amount: '0', previous: null, lookedFor: ['2026-04'] });
     expect(may.filed).toBeNull();
 
-    // Marked done from the tax calendar: Crove's own working is recorded, [25] the suggestion, [43] by the formulas.
+    // Marked done from the tax calendar: Ludy's own working is recorded, [25] the suggestion, [43] by the formulas.
     expect((await rpc('org/markTaxObligation', owned, { obligation: 'vat_return', period: '2026-05', done: true })).body).toEqual({ obligation: 'vat_return', period: '2026-05', done: true });
     expect(await doneMarks()).toEqual(['2026-05']);
     expect((await period('2026-05')).filed).toMatchObject({ period: '2026-05', source: 'computed', carriedIn: '0', deductible: '2880000', carriedOut: '2880000' });

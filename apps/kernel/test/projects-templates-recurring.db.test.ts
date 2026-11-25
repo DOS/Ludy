@@ -35,7 +35,7 @@ import { TEST_MANIFESTS } from './manifests.ts';
 const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-projects-2607-0123456789';
-const ISSUER = 'crove-auth';
+const ISSUER = 'ludy-auth';
 const suite = ADMIN ? describe : describe.skip;
 
 class MemoryStore implements BlobStore {
@@ -114,7 +114,7 @@ suite('projects templates & recurring tasks on PostgreSQL (#2607)', () => {
       headers: {
         authorization: `Bearer ${await tokenFor(person)}`,
         'content-type': 'application/json',
-        ...(orgSlug ? { 'x-crove-org': orgSlug } : {}),
+        ...(orgSlug ? { 'x-ludy-org': orgSlug } : {}),
       },
       body: JSON.stringify(input === undefined ? {} : { json: input }),
     });

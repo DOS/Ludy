@@ -33,7 +33,7 @@ import { TEST_MANIFESTS } from './manifests.ts';
 const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-sign-3822-0123456789abcdef';
-const ISSUER = 'crove-auth';
+const ISSUER = 'ludy-auth';
 
 class MemoryStore implements BlobStore {
   readonly blobs = new Map<string, Uint8Array>();
@@ -148,7 +148,7 @@ suite('eSign Slice 4f on PostgreSQL 17 + crove-extract (#3822)', () => {
       headers: {
         authorization: `Bearer ${await tokenFor(who, options.mfa ? { mfa: true } : {})}`,
         'content-type': 'application/json',
-        ...(slug ? { 'x-crove-org': slug } : {}),
+        ...(slug ? { 'x-ludy-org': slug } : {}),
       },
       body: JSON.stringify(input === undefined ? {} : { json: input }),
     });
@@ -172,7 +172,7 @@ suite('eSign Slice 4f on PostgreSQL 17 + crove-extract (#3822)', () => {
     form.append('purpose', 'sign_document');
     const res = await appAiOff.request('/api/files', {
       method: 'POST',
-      headers: { authorization: `Bearer ${await tokenFor(who)}`, 'x-crove-org': org.slug },
+      headers: { authorization: `Bearer ${await tokenFor(who)}`, 'x-ludy-org': org.slug },
       body: form,
     });
     expect(res.status).toBe(200);
