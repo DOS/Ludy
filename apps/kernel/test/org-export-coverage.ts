@@ -72,8 +72,8 @@ export const NOT_EXPORTED: Readonly<Record<string, string>> = {
   'ludy_meetings.meeting_reader': "who may read a meeting: readable through is_meeting_reader only, which refuses the system context",
   'ludy_meetings.meeting_result': "the meeting's recorder, or its readers once it is shared and published: the system context is refused by is_meeting_reader, so it is not exported; a definer export of the published rows of shared meetings is #3388",
   'ludy_meetings.meeting_video': "the meeting's attendees only: no export carries a recording (ADR-0047 point 7)",
-  'ludy_meetings.transcript_segment': "the meeting's recorder, or its readers once it is shared and published: the system context is refused by is_meeting_reader, so it is not exported; a definer export of the published rows of shared meetings is #3388",
   'ludy_meetings.minutes_version': "the meeting's readers, once the minutes are shared and the recorder has published it: the system context is refused by is_meeting_reader, so it is not exported (the original minutes follow the same rule)",
+  'ludy_meetings.transcript_segment': "the meeting's recorder, or its readers once it is shared and published: the system context is refused by is_meeting_reader, so it is not exported; a definer export of the published rows of shared meetings is #3388",
   'ludy_meetings.translation': "private to the member who asked for it, within the meeting's attendees",
   // Exported by another route.
   'ludy_meetings.meeting': 'only the meetings shared with the org, through ludy_kernel.meeting_export_rows() (meetings.meeting); attendees-only ones are counted in meetings.private_count',
