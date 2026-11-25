@@ -34,6 +34,7 @@ import { askRunCommands, askRunQueries } from './ask.ts';
 import { briefCommands, briefQueries } from './brief.ts';
 import { digestCommands, digestQueries } from './digest.ts';
 import { highlightsCommands, highlightsQueries } from './highlights.ts';
+import { labelsCommands, labelsQueries } from './labels.ts';
 import { loadQueries } from './load.ts';
 import { trackersCommands, trackersQueries } from './trackers.ts';
 import { voiceCueCommands } from './voice-cue.ts';
@@ -1139,6 +1140,7 @@ export const meetingsCommands = [
   ...chaptersCommands,
   ...trackersCommands,
   ...highlightsCommands,
+  ...labelsCommands,
   ...chaptersRunCommands,
   ...titleCommands,
   ...commitmentsCommands,
@@ -1216,6 +1218,7 @@ export const meetingsQueries = [
   ...loadQueries,
   ...trackersQueries,
   ...highlightsQueries,
+  ...labelsQueries,
   ...minutesDocxQueries,
   ...todayQueries,
   ...morningQueries,

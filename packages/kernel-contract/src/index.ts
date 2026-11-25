@@ -168,6 +168,7 @@ export * from './meeting-load.ts';
 export * from './meeting-minutes-link.ts';
 export * from './meeting-trackers.ts';
 export * from './meeting-highlights.ts';
+export * from './meeting-labels.ts';
 export * from './meeting-today.ts';
 export * from './meeting-morning.ts';
 export * from './meeting-assignee.ts';

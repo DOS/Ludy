@@ -77,6 +77,7 @@ export const NOT_EXPORTED: Readonly<Record<string, string>> = {
   // Exported by another route.
   'ludy_meetings.meeting': 'only the meetings shared with the org, through ludy_kernel.meeting_export_rows() (meetings.meeting); attendees-only ones are counted in meetings.private_count',
   'ludy_meetings.meeting_link': 'the links of those shared meetings, through ludy_kernel.meeting_link_export_rows() (meetings.link)',
+  'ludy_meetings.meeting_label': 'the labels of those shared, unexpired meetings, through ludy_kernel.meeting_label_export_rows() (meetings.label)',
   'ludy_meetings.meeting_reader': 'the readers of those shared, unexpired meetings, through ludy_kernel.meeting_reader_export_rows() (meetings.reader)',
   'ludy_meetings.transcript_segment': 'the published transcript segments of those shared, unexpired meetings, through ludy_kernel.meeting_transcript_export_rows() (meetings.transcript_segment)',
   'ludy_meetings.meeting_result': 'the published summary and decisions of those shared, unexpired meetings, through ludy_kernel.meeting_result_export_rows() (meetings.result)',

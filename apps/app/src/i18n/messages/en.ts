@@ -5557,6 +5557,30 @@ export const en = {
         TRACKER_TERM_NOT_FOUND: 'This word is no longer tracked.',
       },
     },
+    labels: {
+      title: 'Labels',
+      none: 'No labels yet.',
+      add: 'Add a label',
+      addButton: 'Add',
+      remove: 'Remove the label {label}',
+      hint: 'A short plain text, at most {max} characters, to group meetings (for example a client or a project). Do not put names of people, e-mail addresses or phone numbers in it.',
+      full: 'This meeting has {max} labels, the most it can have. Remove one to add another.',
+      problem: {
+        empty: 'Type some text for the label.',
+        too_long: 'A label is at most {max} characters.',
+        control: 'A label is one line of plain text.',
+        address: 'A label is not a place for an e-mail address.',
+        digits: 'A label is not a place for a phone number or an ID.',
+      },
+      errors: {
+        MEETING_LABEL_INVALID: 'This text cannot be used as a label.',
+        MEETING_LABEL_LIMIT: 'A meeting can have at most 5 labels. Remove one first.',
+        MEETING_LABEL_NOT_FOUND: 'This label is already gone.',
+      },
+      filter: 'Label',
+      filterAll: 'All labels',
+      filterChip: 'Label: {value}',
+    },
     highlights: {
       title: 'Highlights',
       desc: 'Lines of the transcript that people marked. Everyone who can read this meeting sees them. Click a time to go there.',
@@ -19728,6 +19752,12 @@ export const en = {
         list: 'Read the words the organization tracks',
         remove: 'Stop tracking a word or phrase',
         week: 'See how often the tracked words came up in the meetings of a week',
+      },
+      label: {
+        add: 'Put a label on a meeting',
+        index: 'Read the labels across the meetings you can read',
+        list: 'Read the labels of a meeting',
+        remove: 'Take a label off a meeting',
       },
       highlight: {
         add: 'Mark a transcript line or range of a meeting as a highlight',
