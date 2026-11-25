@@ -25,6 +25,7 @@ import { MeetingZalo } from './meeting-zalo.tsx';
 import { MeetingChatPost } from './meeting-chat.tsx';
 import { MeetingTranslation } from './meeting-translation.tsx';
 import { MinutesVersionPublisher, MinutesVersionSwitch } from './meeting-minutes-version.tsx';
+import { MeetingVoiceCues } from './meeting-voice-cues.tsx';
 import { clock } from './meeting-transcript.tsx';
 import { TalkTimeLine } from './meeting-talk-time.tsx';
 import { notesInstalled } from './notes-panel.tsx';
@@ -313,6 +314,7 @@ function Item({ item, isRecorder, redactedEpoch = 0 }: { item: ActionItemView; i
         {item.who && <span>{item.who}</span>}
         {item.when && <span>{item.when}</span>}
         {item.flags.includes('contact_in_title') && <Badge variant="outline">{t('flagContact')}</Badge>}
+        {item.flags.includes('asked_aloud') && <Badge variant="outline">{t('flagAskedAloud')}</Badge>}
         {item.tainted && <Badge variant="outline">{t('fromVy')}</Badge>}
         {item.status === 'accepted' && <Badge>{t('accepted')}</Badge>}
         {item.stage === 'draft' && <Badge variant="secondary">{t('draft')}</Badge>}
@@ -705,6 +707,8 @@ export function MeetingResults({
         )}
         {isRecorder && (published || items.some((i) => i.stage === 'published')) && <MeetingChatPost meetingId={meetingId} />}
         {isRecorder && <TemplatePicker meetingId={meetingId} template={template} copy={minutesTemplate} />}
+        {/* Cues spoken to Vy in the meeting (#4807): the recorder's click drafts a marked item for each, found by code */}
+        {isRecorder && <MeetingVoiceCues key={`cues-${meetingId}`} meetingId={meetingId} />}
         {isRecorder && <VySummary key={`vy-${effectiveRedactedEpoch}`} meetingId={meetingId} hasModelDraft={(draft?.tainted ?? false) || items.some((i) => i.stage === 'draft' && i.tainted)} />}
         {isRecorder && (
           <section className="space-y-2">

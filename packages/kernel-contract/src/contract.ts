@@ -706,6 +706,7 @@ import { zBriefAnswer, zBriefEmpty, zBriefFacts, zBriefStatus, zBriefTarget } fr
 import { zMeetingRename, zMeetingRenamed, zTitleAnswer } from './meeting-title.ts';
 import { zCommitmentsAnswer } from './meeting-commitments.ts';
 import { zTemplateSuggestion, zTemplateVyAnswer } from './meeting-template-suggest.ts';
+import { zVoiceCueDraft, zVoiceCueDrafted } from './meeting-voice-cue.ts';
 import { zOpenPointsAnswer } from './meeting-open-points.ts';
 import { zDigestAnswer, zDigestAsk, zDigestFacts, zDigestStatus } from './meeting-digest.ts';
 import { zLoadWeek, zLoadWeekInput } from './meeting-load.ts';
@@ -1951,6 +1952,10 @@ export const contract = {
     title: {
       status: oc.input(zSummaryRef).output(zSummaryStatus),
       suggest: oc.input(zSummaryRef).output(zTitleAnswer),
+    },
+    // Spoken cues to Vy (#4807): the recorder's click finds "Vy ơi, ghi lại ..." in the transcript by code and drafts one marked action item for each, citing its line; nothing is published or made a task.
+    voiceCue: {
+      draft: oc.input(zVoiceCueDraft).output(zVoiceCueDrafted),
     },
     // What each speaker committed to or decided (#3954): `status` is the button (the same answer as the chapters'), `list` the click that has the recorder's own Vy list, from the transcript, each speaker's commitments
     // and decisions with the second of the line each rests on. The lines go back to the browser and are stored nowhere; nothing is published or made a task from here.

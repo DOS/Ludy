@@ -690,7 +690,8 @@ export const RESULT_DECISIONS_MAX = 50;
 export const ITEM_TITLE_MAX = 300;
 export const ITEM_TEXT_MAX = 200;
 export const ITEMS_PER_MEETING_MAX = 100;
-export const ITEM_FLAGS = ['contact_in_title'] as const;
+// `asked_aloud`: the item came from a cue spoken to Vy in the meeting (#4807). An item with any flag is never "clean", so the bulk accept leaves it for the recorder to confirm one by one.
+export const ITEM_FLAGS = ['contact_in_title', 'asked_aloud'] as const;
 export type ItemFlag = (typeof ITEM_FLAGS)[number];
 
 const zDay = z.iso.date();

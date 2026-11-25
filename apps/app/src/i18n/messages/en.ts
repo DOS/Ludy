@@ -222,6 +222,7 @@ export const en = {
       inbox: 'Inbox',
       crm: 'CRM',
       marketing: 'Marketing',
+      more: 'More',
     },
     notMember: 'You are not a member of this organization.',
     support: 'Feedback / Support',
@@ -5461,6 +5462,20 @@ export const en = {
       draft: 'Draft',
       accepted: 'Task made',
       flagContact: 'Has contact details',
+      flagAskedAloud: 'Asked aloud',
+      // Cues spoken to Vy in the meeting (#4807): found by code, no AI.
+      voiceCues: {
+        title: 'Cues spoken to Vy',
+        desc: 'When someone says "Vy ơi, ghi lại ..." or "Vy, note ...", Ludy finds those sentences in the transcript by code (no AI) and drafts an item for each, marked "Asked aloud" with the time it was said. A draft is not shared and not given to anyone: you review each one like any item Vy suggests.',
+        find: 'Find cues spoken to Vy',
+        none: 'The transcript has no sentence asking Vy to note or remind.',
+        nothingNew: 'No new draft items.',
+        created: '{count, plural, one {# draft item} other {# draft items}} added from the cues.',
+        left: 'Left out: {list}.',
+        duplicate: '{count, plural, one {# cue} other {# cues}} already had an item',
+        empty: '{count, plural, one {# cue} other {# cues}} with nothing to write down',
+        full: '{count, plural, one {# cue} other {# cues}} because the meeting has all the items it may hold',
+      },
       fromVy: 'Written by Vy',
       unknownMember: 'Former member',
       severalSeats: 'This attendee holds several seats. Pick the one that should do it.',
@@ -19375,6 +19390,9 @@ export const en = {
         facts: 'Read the points to cover and the transcript lines of a meeting you recorded, for Vy to check',
         start: 'Ask Vy whether a meeting covered the points it was meant to',
         status: 'See whether Vy can check the points of a meeting',
+      },
+      voice_cue: {
+        draft: 'Find the cues spoken to Vy in the transcript and draft an item for each',
       },
       digest: {
         facts: 'See what was decided and what is still open across the meetings you read, over the last week or longer',
