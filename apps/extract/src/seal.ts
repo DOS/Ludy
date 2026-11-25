@@ -397,6 +397,7 @@ function inspectRawDictTopLevelNames(
   let expectLengthValue = false;
   let pos = 2;
   let depth = 1;
+  let arrayDepth = 0;
   const end = dictSlice.length - 2;
 
   while (pos < end && depth > 0) {
@@ -440,6 +441,22 @@ function inspectRawDictTopLevelNames(
     if (code === 0x3e && dictSlice.charCodeAt(pos + 1) === 0x3e) {
       depth -= 1;
       pos += 2;
+      expectTypeValue = false;
+      expectLengthValue = false;
+      continue;
+    }
+    if (code === 0x5b) {
+      arrayDepth += 1;
+      pos += 1;
+      expectTypeValue = false;
+      expectLengthValue = false;
+      continue;
+    }
+    if (code === 0x5d) {
+      if (arrayDepth > 0) arrayDepth -= 1;
+      pos += 1;
+      expectTypeValue = false;
+      expectLengthValue = false;
       continue;
     }
     if (code === 0x2f) {
@@ -460,7 +477,7 @@ function inspectRawDictTopLevelNames(
       ) {
         hasEscapedStructuralType = true;
       }
-      if (depth === 1) {
+      if (depth === 1 && arrayDepth === 0) {
         if (decoded === 'Encrypt') {
           hasEncryptKey = true;
         }
@@ -485,7 +502,7 @@ function inspectRawDictTopLevelNames(
       pos = nameEnd;
       continue;
     }
-    if (depth === 1 && expectLengthValue && isAsciiDigitCode(code)) {
+    if (depth === 1 && arrayDepth === 0 && expectLengthValue && isAsciiDigitCode(code)) {
       const numStart = pos;
       let numEnd = pos + 1;
       while (numEnd < end && isAsciiDigitCode(dictSlice.charCodeAt(numEnd))) {
@@ -2256,6 +2273,8 @@ function parseAndMergeHybridXrefStream(params: {
   readonly nameEscapes: RawPdfNameEscapes;
   readonly trailerDict: PDFDict;
   readonly rootRef: PDFRef;
+  readonly infoRef: PDFRef | null;
+  readonly infoSeen: boolean;
   readonly xrefStmRaw: PDFObject;
   readonly expectedPrevXrefStmOffset: number | null;
   readonly visitedOffsets: Set<number>;
@@ -2270,6 +2289,8 @@ function parseAndMergeHybridXrefStream(params: {
     nameEscapes,
     trailerDict,
     rootRef,
+    infoRef,
+    infoSeen,
     xrefStmRaw,
     expectedPrevXrefStmOffset,
     visitedOffsets,
@@ -2282,13 +2303,17 @@ function parseAndMergeHybridXrefStream(params: {
     eofOffset,
     'Tham chiếu /XRefStm trong bảng tham chiếu PDF không hợp lệ',
   );
-  if (expectedPrevXrefStmOffset !== null && xrefStmOffset !== expectedPrevXrefStmOffset) {
+  const canonicalXrefStmOffset = skipAsciiPdfWhitespace(raw, xrefStmOffset, MAX_XREF_LEADING_WS);
+  if (
+    expectedPrevXrefStmOffset !== null &&
+    canonicalXrefStmOffset !== skipAsciiPdfWhitespace(raw, expectedPrevXrefStmOffset, MAX_XREF_LEADING_WS)
+  ) {
     throw new PdfSignError('Chuỗi tham chiếu lai /XRefStm không khớp với mục /Prev');
   }
-  if (visitedOffsets.has(xrefStmOffset)) {
+  if (visitedOffsets.has(canonicalXrefStmOffset)) {
     throw new PdfSignError('Chuỗi tham chiếu PDF chứa vòng lặp /XRefStm');
   }
-  visitedOffsets.add(xrefStmOffset);
+  visitedOffsets.add(canonicalXrefStmOffset);
 
   const stmResult = parseXrefStreamSection(raw, bytes, xrefStmOffset, emptyContext, nameEscapes);
   if (getRawDictEntryByDecodedName(stmResult.dict, 'Encrypt', nameEscapes)) {
@@ -2312,6 +2337,21 @@ function parseAndMergeHybridXrefStream(params: {
     }
   }
 
+  const stmInfoRaw = getRawDictEntryByDecodedName(stmResult.dict, 'Info', nameEscapes)?.raw;
+  if (stmInfoRaw !== undefined && stmInfoRaw !== PDFNull) {
+    const trailerInfoRaw = getRawDictEntryByDecodedName(trailerDict, 'Info', nameEscapes)?.raw;
+    const expectedSectionInfo =
+      trailerInfoRaw === PDFNull ? undefined : (trailerInfoRaw ?? (infoSeen ? infoRef : null));
+    if (
+      !(stmInfoRaw instanceof PDFRef) ||
+      !(expectedSectionInfo instanceof PDFRef) ||
+      stmInfoRaw.objectNumber !== expectedSectionInfo.objectNumber ||
+      stmInfoRaw.generationNumber !== expectedSectionInfo.generationNumber
+    ) {
+      throw new PdfSignError('Thông tin /Info trong luồng /XRefStm không khớp với trailer tham chiếu');
+    }
+  }
+
   let nextExpectedPrevXrefStmOffset: number | null = null;
   const stmPrevEntry = getRawDictEntryByDecodedName(stmResult.dict, 'Prev', nameEscapes);
   if (stmPrevEntry !== undefined) {
@@ -2320,7 +2360,8 @@ function parseAndMergeHybridXrefStream(params: {
       eofOffset,
       'Tham chiếu /Prev trong luồng /XRefStm không hợp lệ',
     );
-    if (visitedOffsets.has(stmPrevOffset)) {
+    const canonicalStmPrevOffset = skipAsciiPdfWhitespace(raw, stmPrevOffset, MAX_XREF_LEADING_WS);
+    if (visitedOffsets.has(canonicalStmPrevOffset)) {
       throw new PdfSignError('Luồng /XRefStm chứa vòng lặp /Prev');
     }
     nextExpectedPrevXrefStmOffset = stmPrevOffset;
@@ -2359,6 +2400,7 @@ function parseActiveXrefChain(
 ): {
   readonly entries: Map<number, ActiveXrefEntry>;
   readonly rootRef: PDFRef;
+  readonly infoRef: PDFRef | null;
   readonly xrefSections: ReadonlyArray<XrefStreamSectionInfo>;
   readonly tailSize: number;
 } {
@@ -2367,6 +2409,9 @@ function parseActiveXrefChain(
   const visitedOffsets = new Set<number>();
   const xrefSections: XrefStreamSectionInfo[] = [];
   let rootRef: PDFRef | null = null;
+  let infoRef: PDFRef | null = null;
+  let infoSeen = false;
+  let infoCleared = false;
   let tailSize = 0;
   let currentOffset: number | null = startXrefOffset;
   let expectedPrevXrefStmOffset: number | null = null;
@@ -2377,13 +2422,13 @@ function parseActiveXrefChain(
     if (sectionCount >= MAX_XREF_SECTIONS) {
       throw new PdfSignError('Chuỗi tham chiếu PDF có quá nhiều phiên bản');
     }
-    if (visitedOffsets.has(currentOffset)) {
+    const sectionStart = skipAsciiPdfWhitespace(raw, currentOffset, MAX_XREF_LEADING_WS);
+    if (visitedOffsets.has(sectionStart)) {
       throw new PdfSignError('Chuỗi tham chiếu PDF chứa vòng lặp /Prev');
     }
-    visitedOffsets.add(currentOffset);
+    visitedOffsets.add(sectionStart);
     sectionCount += 1;
 
-    const sectionStart = skipAsciiPdfWhitespace(raw, currentOffset, MAX_XREF_LEADING_WS);
     const isClassicSection =
       raw.startsWith('xref', sectionStart) &&
       sectionStart + 4 < raw.length &&
@@ -2422,6 +2467,28 @@ function parseActiveXrefChain(
     if (!rootRef) {
       throw new PdfSignError('Không xác định được gốc /Root của tài liệu PDF');
     }
+    const infoEntry = getRawDictEntryByDecodedName(trailerDict, 'Info', nameEscapes);
+    if (infoEntry !== undefined) {
+      if (infoEntry.raw === PDFNull) {
+        if (!infoSeen) {
+          infoSeen = true;
+          infoCleared = true;
+        }
+      } else {
+        if (!(infoEntry.raw instanceof PDFRef)) {
+          throw new PdfSignError('Trailer PDF chứa tham chiếu /Info không hợp lệ');
+        }
+        // pdf-lib's PDFDict.get() omits PDFNull, so classic PDFParser.maybeParseTrailerDict keeps an
+        // older revision's /Info ref while PDFXRefStreamParser clears it; fail closed to eliminate parser differentials.
+        if (infoCleared) {
+          throw new PdfSignError('Thông tin /Info của tệp PDF không khớp với trailer tham chiếu');
+        }
+        if (!infoSeen) {
+          infoSeen = true;
+          infoRef = infoEntry.raw;
+        }
+      }
+    }
 
     const xrefStmEntry = getRawDictEntryByDecodedName(trailerDict, 'XRefStm', nameEscapes);
     let nextExpectedPrevXrefStmOffset: number | null = null;
@@ -2441,6 +2508,8 @@ function parseActiveXrefChain(
         nameEscapes,
         trailerDict,
         rootRef,
+        infoRef,
+        infoSeen,
         xrefStmRaw: xrefStmEntry.raw,
         expectedPrevXrefStmOffset,
         visitedOffsets,
@@ -2470,7 +2539,11 @@ function parseActiveXrefChain(
         eofOffset,
         'Tham chiếu /Prev trong bảng tham chiếu PDF không hợp lệ',
       );
-      if (nextExpectedPrevXrefStmOffset !== null && nextExpectedPrevXrefStmOffset === currentOffset) {
+      if (
+        nextExpectedPrevXrefStmOffset !== null &&
+        skipAsciiPdfWhitespace(raw, nextExpectedPrevXrefStmOffset, MAX_XREF_LEADING_WS) ===
+          skipAsciiPdfWhitespace(raw, currentOffset, MAX_XREF_LEADING_WS)
+      ) {
         throw new PdfSignError('Chuỗi tham chiếu PDF chứa vòng lặp /Prev và /XRefStm');
       }
     } else {
@@ -2505,7 +2578,7 @@ function parseActiveXrefChain(
     }
   }
 
-  return { entries, rootRef, xrefSections, tailSize };
+  return { entries, rootRef, infoRef, xrefSections, tailSize };
 }
 
 function decodeObjectStreamEntries(stm: PDFRawStream, nameEscapes: RawPdfNameEscapes): DecodedObjStmInfo {
@@ -2553,6 +2626,7 @@ function decodeObjectStreamEntries(stm: PDFRawStream, nameEscapes: RawPdfNameEsc
   const memberList: Array<{ readonly index: number; readonly memberNum: number; readonly absOffset: number }> = [];
   const seenMemberNums = new Set<number>();
   let hPos = 0;
+  let prevRelOffset = -1;
 
   for (let i = 0; i < nCount; i += 1) {
     hPos = skipPdfWhitespaceAndComments(headerStr, hPos);
@@ -2562,9 +2636,10 @@ function decodeObjectStreamEntries(stm: PDFRawStream, nameEscapes: RawPdfNameEsc
     }
     hPos = skipPdfWhitespaceAndComments(headerStr, memberTok.nextPos);
     const relTok = parseNonNegIntAt(headerStr, hPos);
-    if (!relTok || firstOffset + relTok.value >= decodedBytes.byteLength) {
+    if (!relTok || relTok.value <= prevRelOffset || firstOffset + relTok.value >= decodedBytes.byteLength) {
       throw new PdfSignError('Độ lệch đối tượng trong /ObjStm không hợp lệ');
     }
+    prevRelOffset = relTok.value;
     hPos = relTok.nextPos;
 
     if (seenMemberNums.has(memberTok.value)) {
@@ -2580,6 +2655,31 @@ function decodeObjectStreamEntries(stm: PDFRawStream, nameEscapes: RawPdfNameEsc
   return { decodedBytes, members, memberList };
 }
 
+function isConfirmedTopLevelXRefDict(
+  dictSlice: string,
+  emptyContext: PDFContext,
+  nameEscapes: RawPdfNameEscapes,
+): boolean {
+  let parsedDict: PDFObject;
+  try {
+    parsedDict = PDFObjectParser.forBytes(
+      Uint8Array.from(Buffer.from(dictSlice, 'latin1')),
+      emptyContext,
+      false,
+    ).parseObject();
+  } catch {
+    return true;
+  }
+  if (!(parsedDict instanceof PDFDict)) {
+    return true;
+  }
+  const typeEntry = getRawDictEntryByDecodedName(parsedDict, 'Type', nameEscapes);
+  if (!typeEntry || !(typeEntry.raw instanceof PDFName)) {
+    return false;
+  }
+  return decodeUnnormalizedPdfName(typeEntry.raw, nameEscapes) === 'XRef';
+}
+
 function scanRawTopLevelDefinitions(
   bytes: Uint8Array,
   raw: string,
@@ -2588,10 +2688,12 @@ function scanRawTopLevelDefinitions(
 ): {
   readonly topLevelHeaders: Map<number, { readonly num: number; readonly gen: number; readonly bodyStart: number }>;
   readonly lastDef: Map<number, ObjectDefinitionLocation>;
+  readonly rawXrefStreams: ReadonlyArray<{ readonly num: number; readonly gen: number; readonly offset: number }>;
 } {
   const emptyContext = PDFContext.create();
   const topLevelHeaders = new Map<number, { readonly num: number; readonly gen: number; readonly bodyStart: number }>();
   const lastDef = new Map<number, ObjectDefinitionLocation>();
+  const rawXrefStreams: Array<{ readonly num: number; readonly gen: number; readonly offset: number }> = [];
   const parsedInts = new Map<string, number>();
   const recentTokens: RecentPdfToken[] = [];
   let currentObj: {
@@ -2654,6 +2756,9 @@ function scanRawTopLevelDefinitions(
 
             if (currentObj !== null && !seenStreamInObj) {
               seenStreamInObj = true;
+              if (dictMeta.isXRefType && isConfirmedTopLevelXRefDict(dictInfo.slice, emptyContext, nameEscapes)) {
+                rawXrefStreams.push({ num: currentObj.num, gen: currentObj.gen, offset: currentObj.offset });
+              }
               if (dictMeta.isObjStmType) {
                 let parsedStm: PDFObject;
                 try {
@@ -2793,7 +2898,7 @@ function scanRawTopLevelDefinitions(
     }
   }
 
-  return { topLevelHeaders, lastDef };
+  return { topLevelHeaders, lastDef, rawXrefStreams };
 }
 
 function arePdfObjectsStructurallyEqual(a: PDFObject | undefined, b: PDFObject | undefined, depth = 0): boolean {
@@ -2849,7 +2954,13 @@ function verifyPdfCrossReferenceConsistency(
 ): { readonly prevStartXrefOffset: number; readonly isXrefStream: boolean; readonly maxObjNum: number } {
   const raw = Buffer.from(bytes).toString('latin1');
   const { startXrefOffset, eofOffset } = parseTailStartXref(raw);
-  const { entries, rootRef, xrefSections, tailSize } = parseActiveXrefChain(bytes, raw, startXrefOffset, eofOffset, nameEscapes);
+  const { entries, rootRef, infoRef, xrefSections, tailSize } = parseActiveXrefChain(
+    bytes,
+    raw,
+    startXrefOffset,
+    eofOffset,
+    nameEscapes,
+  );
 
   const loadedRoot = pdfDoc.context.trailerInfo.Root;
   if (
@@ -2867,19 +2978,48 @@ function verifyPdfCrossReferenceConsistency(
     throw new PdfSignError('Đối tượng gốc /Root của tệp PDF không hợp lệ');
   }
 
+  const rawLoadedInfo = pdfDoc.context.trailerInfo.Info;
+  const loadedInfo = rawLoadedInfo === PDFNull ? undefined : rawLoadedInfo;
+  if (infoRef === null) {
+    if (loadedInfo !== undefined) {
+      throw new PdfSignError('Thông tin /Info của tệp PDF không khớp với trailer tham chiếu');
+    }
+  } else {
+    if (
+      !(loadedInfo instanceof PDFRef) ||
+      loadedInfo.objectNumber !== infoRef.objectNumber ||
+      loadedInfo.generationNumber !== infoRef.generationNumber
+    ) {
+      throw new PdfSignError('Thông tin /Info của tệp PDF không khớp với trailer tham chiếu');
+    }
+    const infoEntry = entries.get(infoRef.objectNumber);
+    if (!infoEntry || infoEntry.kind === 'free' || infoEntry.gen !== infoRef.generationNumber) {
+      throw new PdfSignError('Thông tin /Info của tệp PDF không hoạt động trong bảng tham chiếu');
+    }
+  }
+
+  const { topLevelHeaders, lastDef, rawXrefStreams } = scanRawTopLevelDefinitions(
+    bytes,
+    raw,
+    nameEscapes,
+    externalLengthLookup,
+  );
+  for (const rawXref of rawXrefStreams) {
+    if (
+      !xrefSections.some(
+        (sec) => sec.objNum === rawXref.num && sec.gen === rawXref.gen && sec.numStart === rawXref.offset,
+      )
+    ) {
+      throw new PdfSignError('Tệp PDF chứa luồng /XRef không thuộc chuỗi tham chiếu hoạt động');
+    }
+  }
+
   for (const [ref] of pdfDoc.context.enumerateIndirectObjects()) {
     const entry = entries.get(ref.objectNumber);
     if (!entry || entry.kind === 'free' || entry.gen !== ref.generationNumber) {
       throw new PdfSignError('Tệp PDF chứa đối tượng ẩn hoặc bị xóa không khớp bảng tham chiếu');
     }
   }
-
-  const { topLevelHeaders, lastDef } = scanRawTopLevelDefinitions(
-    bytes,
-    raw,
-    nameEscapes,
-    externalLengthLookup,
-  );
   for (const [objNum] of lastDef) {
     const entry = entries.get(objNum);
     if (!entry || entry.kind === 'free') {
@@ -2968,8 +3108,13 @@ function verifyPdfCrossReferenceConsistency(
             }
           }
         }
-        if (streamTypeName === 'ObjStm' && !decodedObjStmCache.has(objNum)) {
-          decodedObjStmCache.set(objNum, decodeObjectStreamEntries(directParsed, nameEscapes));
+        if (streamTypeName === 'ObjStm') {
+          if (entry.gen !== 0) {
+            throw new PdfSignError('Luồng đối tượng /ObjStm tham chiếu không hợp lệ');
+          }
+          if (!decodedObjStmCache.has(objNum)) {
+            decodedObjStmCache.set(objNum, decodeObjectStreamEntries(directParsed, nameEscapes));
+          }
         }
       }
     } else {
@@ -2977,7 +3122,7 @@ function verifyPdfCrossReferenceConsistency(
         throw new PdfSignError('Bảng tham chiếu PDF trỏ tới đối tượng không tồn tại trong /ObjStm');
       }
       const stmEntry = entries.get(entry.objStmNum);
-      if (!stmEntry || stmEntry.kind !== 'offset') {
+      if (!stmEntry || stmEntry.kind !== 'offset' || stmEntry.gen !== 0) {
         throw new PdfSignError('Luồng đối tượng /ObjStm tham chiếu không hợp lệ');
       }
       if (
@@ -8300,17 +8445,20 @@ async function appendAuditCertificatePages(
   }
 
   const firstCard = signerCards[0];
-  if (firstCard) {
-    const firstFitsSinglePage = firstCard.cardH <= freshPageAvailH;
-    const minFirstSliceH = measureSignerCardHeight(
-      firstCard.titleLines.length,
-      Math.min(1, firstCard.detailLines.length),
-    );
-    const minNeededForHeading = firstFitsSinglePage ? firstCard.cardH : minFirstSliceH;
-    if (state.cursorY - signerHeadingGap - minNeededForHeading < bottomLimit) {
-      state = await startPage(true);
-    }
+  const freshPageHeadingAvailH = freshPageAvailH - signerHeadingGap;
+  const canStartSignersOnPage = (cursorYBeforeHeading: number): boolean => {
+    const availAfterHeading = cursorYBeforeHeading - signerHeadingGap - bottomLimit;
+    if (!firstCard) return availAfterHeading >= 0;
+    if (firstCard.cardH <= availAfterHeading) return true;
+    if (firstCard.cardH <= freshPageHeadingAvailH) return false;
+    const baseOverheadH = measureSignerCardHeight(firstCard.titleLines.length, 0);
+    const minDetailBudget = firstCard.detailLines.length > 0 ? 1 : 0;
+    return Math.floor((availAfterHeading - baseOverheadH) / signerDetailStep) >= minDetailBudget;
+  };
+  if (!canStartSignersOnPage(state.cursorY)) {
+    state = await startPage(true);
   }
+  const signerHeadingPage = state.page;
 
   await fonts.drawText(state.page, `DANH SÁCH NGƯỜI KÝ / SIGNERS (${certificate.signers.length})`, {
     weight: 'bold',
@@ -8384,7 +8532,11 @@ async function appendAuditCertificatePages(
         break;
       }
 
-      if (!isContinuation && fullSliceH <= freshPageAvailH) {
+      const wholeCardFreshLimit =
+        card === firstCard && !isContinuation && state.page === signerHeadingPage
+          ? freshPageHeadingAvailH
+          : freshPageAvailH;
+      if (!isContinuation && fullSliceH <= wholeCardFreshLimit) {
         state = await startPage(true);
         continue;
       }

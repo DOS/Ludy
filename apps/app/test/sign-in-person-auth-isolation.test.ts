@@ -576,4 +576,63 @@ describe('In-person ceremony per-tab workspace auth isolation (#4278, #4394)', (
     ).rejects.toThrow('REDIRECT_LOGIN');
     expect(onAuthenticated).not.toHaveBeenCalled();
   });
+
+  it('catches synchronous dispose() stub errors, scrubs stray auth params on /-/sign, and clears caches on cross-tab storage sign-out (#4682)', async () => {
+    const storageListeners = new Set<(event: StorageEvent) => void>();
+    const { url } = setupBrowser('https://app.ludy.vn/-/sign?code=leaked-code&error=access_denied&keep=1#ceremonyTok99', {
+      'ludy-auth': SAMPLE_SESSION,
+    });
+    const winObj = (globalThis as unknown as { window: Record<string, unknown> }).window;
+    winObj.addEventListener = (type: string, cb: (event: StorageEvent) => void) => {
+      if (type === 'storage') storageListeners.add(cb);
+    };
+
+    const authMod = await import('../src/lib/auth.ts');
+    authMod.captureHostedCallback();
+    expect(url.pathname).toBe('/-/sign');
+    expect(url.search).toBe('?keep=1');
+    expect(url.hash).toBe('#ceremonyTok99');
+
+    // Non-isolated /-/sign boot still skips settleCallback/auth() while attaching storage sign-out listener.
+    const ceremonyBoot = await import('../src/lib/ceremony-boot.ts');
+    const apiMod = await import('../src/lib/api.ts');
+    apiMod.queryClient.setQueryData(['sign', 'test-key'], { ok: true });
+
+    const settleSpy = vi.fn(async () => {});
+    expect(await ceremonyBoot.bootWorkspaceAuthSession({ runSettleCallback: settleSpy })).toBe(false);
+    expect(settleSpy).not.toHaveBeenCalled();
+    expect(storageListeners.size).toBe(1);
+
+    for (const cb of storageListeners) {
+      cb({ key: authMod.AUTH_STORAGE_KEY, newValue: null } as unknown as StorageEvent);
+    }
+    expect(apiMod.queryClient.getQueryData(['sign', 'test-key'])).toBeUndefined();
+
+    // Sync-throwing dispose() stub must not throw when switching to isolated mode.
+    vi.resetModules();
+    setupBrowser('https://app.ludy.vn/o/acme/overview', {
+      'ludy-auth': SAMPLE_SESSION,
+    });
+    const nextHash = await import('../src/lib/sign-hash.ts');
+    const nextAuth = await import('../src/lib/auth.ts');
+    await nextAuth.loadConfig();
+    const activeClient = nextAuth.auth();
+    const throwingDispose = vi.spyOn(activeClient, 'dispose').mockImplementation(() => {
+      throw new Error('sync dispose failure');
+    });
+    expect(() => nextHash.markInPersonCeremonyIsolated()).not.toThrow();
+    expect(throwingDispose).toHaveBeenCalledTimes(1);
+    expect(nextHash.isInPersonCeremonyIsolated()).toBe(true);
+
+    // Isolated /-/sign?in_person=1 tabs ALSO scrub leaked code/error query params while preserving in_person=1 & #<token>.
+    vi.resetModules();
+    const inPersonUrlEnv = setupBrowser('https://app.ludy.vn/-/sign?in_person=1&code=leaked-in-person-code&error=access_denied#inPersonTok77', {
+      'ludy-auth': SAMPLE_SESSION,
+    });
+    const isoAuth = await import('../src/lib/auth.ts');
+    isoAuth.captureHostedCallback();
+    expect(inPersonUrlEnv.url.pathname).toBe('/-/sign');
+    expect(inPersonUrlEnv.url.search).toBe('?in_person=1');
+    expect(inPersonUrlEnv.url.hash).toBe('#inPersonTok77');
+  });
 });

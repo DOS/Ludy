@@ -1270,7 +1270,10 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
         `SELECT p.oid, p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
          WHERE n.nspname = 'crove_kernel' AND p.proname LIKE 'ext\\_device\\_%'`,
       );
-      // The routines exist once the lifecycle migration has run; before it there is nothing to check.
+      // The lifecycle migration (20261128080000) is on main and creates these seven, so a query that finds fewer is a broken query and not a clean check (#5033).
+      expect(routines.rows.map((r) => r.proname)).toEqual(
+        expect.arrayContaining(['ext_device_audit_revoke', 'ext_device_system_revoke', 'ext_device_member_demoted', 'ext_device_user_disabled', 'ext_device_member_removed', 'ext_device_caller_role', 'ext_device_backfill_suspended']),
+      );
       for (const r of routines.rows) {
         for (const role of ['public', 'crove_app', 'crove_worker', 'crove_tenant', 'crove_definer_tenant', 'crove_auth_reader', 'crove_prober', 'crove_reporter']) {
           const exec = await c.query<{ has_exec: boolean }>(`SELECT has_function_privilege($1, $2::oid, 'EXECUTE') AS has_exec`, [role, r.oid]);

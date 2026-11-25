@@ -86,7 +86,7 @@ export const summaryReadyNotice = defineCommand({
         })
       : null;
     const mailed = mail?.status === 'queued';
-    // Ids and a flag only: no address in the audit row.
+    // Ids and a flag only (#5018): owners and admins already see meeting existence and ids per ADR-0047 point 2, and no address or draft text goes into the audit row; the mail itself joins MAIL_SOURCES_LEFT_OUT so exports and finder results do not pair an attendees-only or deleted meeting link with to_address.
     ctx.audit({ meetingId: ready.meetingId, runId: ready.runId, mailed });
     return { notified: true, mailed };
   },

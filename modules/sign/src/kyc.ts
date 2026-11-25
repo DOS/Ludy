@@ -1143,6 +1143,7 @@ const zSignKycInspectCompleteInput = z.strictObject({
   outcome: z.enum(['passed', 'failed']),
   pages: z.array(zSignKycPageTextInput).max(SIGN_MAX_PAGES).optional(),
   error: z.string().max(500).optional(),
+  expectedUpdatedAtBefore: z.iso.datetime({ offset: true }).optional(),
 });
 
 export const signKycInspectComplete = defineCommand({
@@ -1171,6 +1172,13 @@ export const signKycInspectComplete = defineCommand({
       existing.file_sha256 !== input.fileSha256
     ) {
       return null;
+    }
+    if (input.expectedUpdatedAtBefore !== undefined) {
+      const expectedBeforeMs = new Date(input.expectedUpdatedAtBefore).getTime();
+      const updatedMs = new Date(existing.updated_at).getTime();
+      if (Number.isFinite(expectedBeforeMs) && Number.isFinite(updatedMs) && updatedMs > expectedBeforeMs) {
+        return null;
+      }
     }
 
     const field = await ctx.trx
@@ -1474,10 +1482,39 @@ export const signKycConfirm = defineCommand({
   },
 });
 
+const zSignKycTouchPendingInput = z.strictObject({
+  ids: z.array(zId).min(1).max(500),
+});
+
+export const signKycTouchPending = defineCommand({
+  name: 'sign.kyc.touch_pending',
+  input: zSignKycTouchPendingInput,
+  access: 'system',
+  risk: 'R1',
+  sideEffect: 'internal',
+  target: (input) => ({ type: 'sign.kyc_check', id: input.ids[0]! }),
+  writes: [tableWrite(signManifest.tables, 'ludy_sign', 'kyc_check', ['updated_at'])],
+  handler: async (ctx, input): Promise<{ updated: number }> => {
+    assertSystem(ctx);
+    const uniqueIds = Array.from(new Set(input.ids));
+    const updatedRows = await ctx.trx
+      .updateTable('ludy_sign.kyc_check')
+      .set({ updated_at: sql<Date>`pg_catalog.now()` })
+      .where('org_id', '=', ctx.orgId)
+      .where('status', '=', 'pending')
+      .where('mode', '=', 'deterministic')
+      .where('id', 'in', uniqueIds)
+      .returning(['id'])
+      .execute();
+    return { updated: updatedRows.length };
+  },
+});
+
 export const signKycQueries = [signKycList, signKycSource, signKycInspectJobData];
 export const signKycCommands = [
   signKycRunDeterministic,
   signKycInspectComplete,
+  signKycTouchPending,
   signKycProposeAi,
   signKycConfirm,
 ];

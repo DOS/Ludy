@@ -163,6 +163,16 @@ export const signDocxConvertComplete = defineCommand({
   },
 });
 
+export const signDocxConvertAuthorize = defineQuery({
+  name: 'sign.docx_convert.authorize',
+  input: z.strictObject({}),
+  access: SIGN_WRITERS,
+  handler: async (ctx): Promise<{ ok: true }> => {
+    assertUserQuery(ctx);
+    return { ok: true };
+  },
+});
+
 export const signDocxConvertStatus = defineQuery({
   name: 'sign.docx_convert.status',
   input: zSignDocxConvertStatusInput,
@@ -352,4 +362,4 @@ export async function verifySourceDocxProvenance(
 }
 
 export const signDocxConvertCommands = [signDocxConvertRequest, signDocxConvertComplete];
-export const signDocxConvertQueries = [signDocxConvertStatus, signDocxConvertPending];
+export const signDocxConvertQueries = [signDocxConvertAuthorize, signDocxConvertStatus, signDocxConvertPending];

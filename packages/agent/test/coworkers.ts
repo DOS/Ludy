@@ -90,6 +90,7 @@ import {
   planTodosForToday,
   proposeTasksFromNote,
   proposeTasksFromSource,
+  suggestMeetingLabels,
   suggestMeetingTitles,
   suggestTodosFromNote,
   summarizeMeeting,
@@ -106,6 +107,7 @@ import {
   type SummarySegment,
 } from '../src/member-vy/index.ts';
 import { INJECTION_CORPUS, type InjectionCorpusCase } from './fixtures/injection-corpus.ts';
+import { LABEL_RULES } from './fixtures/label-rules.ts';
 import { unmetered } from './support.ts';
 
 type AiModule = (typeof AI_FEATURES)[AiFeature];
@@ -236,6 +238,7 @@ const EXPECTED_REFUSAL_ERRORS = new Set([
   'PayrollPromptLeakError',
   'OpenPointsError',
   'SalesInsightError',
+  'LabelSuggestError',
   'TemplateSuggestError',
 ]);
 
@@ -1370,6 +1373,16 @@ export function buildCoworkerEvalCases(): CoworkerEvalCase[] {
           rt.memberPorts,
         ),
       ),
+    ),
+    cleanCase('meetings.label_suggest.clean', 'meetings.label_suggest', 'vi', (rt) =>
+      runCleanChecked(
+        () => suggestMeetingLabels({ title: 'Hop ke hoach ban hang thang 10', language: 'vi', existing: [], readable: ['Ke hoach', 'Hop tuan'], rules: LABEL_RULES }, rt.memberPorts),
+        (out) => isRecord(out) && isRecord(out.answer) && Array.isArray(out.answer.labels) && out.answer.labels.length > 0,
+        'meetings.label_suggest',
+      ),
+    ),
+    injCase('meetings.label_suggest.inj.11', 'meetings.label_suggest', 'en', (rt) =>
+      runInjectionSafe(() => suggestMeetingLabels({ title: corpusAt(11).untrustedInput, language: 'en', existing: [], readable: [corpusAt(12).untrustedInput], rules: LABEL_RULES }, rt.memberPorts)),
     ),
     cleanCase('meetings.commitments.clean', 'meetings.commitments', 'vi', (rt) =>
       runCleanChecked(

@@ -407,6 +407,26 @@ describe('QR Scan-to-Sign & Zalo OA Engage Handoff (Slice 6a, #4720)', () => {
     expect(closedHtml).toContain(viMessages.conversations.replyBlocked.window_closed);
     expect(closedHtml).toMatch(/disabled=""[^>]*data-testid="sign-zalo-open"|data-testid="sign-zalo-open"[^>]*disabled=""/);
 
+    // Worst-case signing URL length budget guard disables Open and surfaces tooLong when origin + fragment > 2000
+    seedConversationData(true, null, '2099-01-01T00:00:00.000Z');
+    vi.stubGlobal('window', {
+      location: { origin: `https://${'a'.repeat(1800)}.example.vn` },
+    });
+    const overBudgetHtml = renderLocale(
+      <SignZaloHandoffPanel
+        envelope={BASE_ENVELOPE}
+        signers={[SAMPLE_SIGNER]}
+        canManageLinks
+        mintedLinks={[]}
+      />,
+      'vi',
+    );
+    expect(overBudgetHtml).toContain(viMessages.sign.zaloHandoff.urlPlaceholder);
+    expect(overBudgetHtml).toContain(viMessages.sign.zaloHandoff.tooLong);
+    expect(overBudgetHtml).toContain('text-destructive');
+    expect(overBudgetHtml).toMatch(/disabled=""[^>]*data-testid="sign-zalo-open"|data-testid="sign-zalo-open"[^>]*disabled=""/);
+    vi.unstubAllGlobals();
+
     // Confidential sourceKinds & missing social module strictly return null
     expect(
       renderLocale(

@@ -731,7 +731,11 @@ const JPEG_MAX_IFD_ENTRIES = 64;
 const JPEG_MAX_XMP_ITEMS = 16;
 const JPEG_MAX_XMP_APP1_SEGMENTS = 4;
 const MP4_MAX_TOP_BOXES = 256;
+const SEF_MAX_DIRECTORY_ENTRIES = 32;
+const SEF_MAX_METADATA_BYTES = 4096;
 const MOTION_PHOTO_DATA_PREFIX = new TextEncoder().encode('MotionPhoto_Data');
+const SEFH_MAGIC = new TextEncoder().encode('SEFH');
+const SEFT_MAGIC = new TextEncoder().encode('SEFT');
 const MPF_APP2_PREFIX = new Uint8Array([0x4d, 0x50, 0x46, 0x00]); // "MPF\0"
 const XMP_APP1_PREFIX = new TextEncoder().encode('http://ns.adobe.com/xap/1.0/\0');
 const UTF8_DECODER = new TextDecoder('utf-8', { fatal: false });
@@ -1128,12 +1132,101 @@ function isValidMotionPhotoMp4Trailer(mp4Payload: Uint8Array): boolean {
   return at === mp4Bytes.byteLength && sawMoov && sawMdat && hasVideoTrack(mp4Bytes);
 }
 
+const SEF_IMAGE_UTC_PAYLOAD_RE = /^\d{10,16}$/;
+
+function isAllowedSefEntry(key: string, typeWord: number, payload: Uint8Array): boolean {
+  if (payload.byteLength > SEF_MAX_METADATA_BYTES) return false;
+  if (key === 'Image_UTC_Data') {
+    if (typeWord !== 0x0a01_0000 && typeWord !== 0x0a01) return false;
+    return SEF_IMAGE_UTC_PAYLOAD_RE.test(UTF8_DECODER.decode(payload));
+  }
+  return false;
+}
+
+function parseSefKeyName(bytes: Uint8Array, start: number, len: number): string | null {
+  if (len < 1 || len > 64 || start + len > bytes.byteLength) return null;
+  let key = '';
+  for (let i = 0; i < len; i += 1) {
+    const code = bytes[start + i]!;
+    const valid =
+      (code >= 0x30 && code <= 0x39) ||
+      (code >= 0x41 && code <= 0x5a) ||
+      (code >= 0x61 && code <= 0x7a) ||
+      code === 0x5f ||
+      code === 0x2d ||
+      code === 0x2e;
+    if (!valid) return null;
+    key += String.fromCharCode(code);
+  }
+  return key;
+}
+
+function isAllowedSamsungSefTrailer(bytes: Uint8Array): boolean {
+  if (bytes.byteLength < 28) return false;
+  if (!bytesEqualPrefix(bytes.subarray(bytes.byteLength - 4), SEFT_MAGIC)) return false;
+
+  const sefSize = readU32Order(bytes, bytes.byteLength - 8, true);
+  if (sefSize < 24 || sefSize % 12 !== 0) return false;
+  const sefhPos = bytes.byteLength - 8 - sefSize;
+  if (sefhPos <= 0) return false;
+  if (!bytesEqualPrefix(bytes.subarray(sefhPos, sefhPos + 4), SEFH_MAGIC)) return false;
+
+  const version = readU32Order(bytes, sefhPos + 4, true);
+  const count = readU32Order(bytes, sefhPos + 8, true);
+  if (version < 1 || version > 0x10_000) return false;
+  if (count < 1 || count > SEF_MAX_DIRECTORY_ENTRIES) return false;
+  if (12 + count * 12 !== sefSize) return false;
+
+  const intervals: Array<{ typeWord: number; start: number; end: number }> = [];
+  for (let i = 0; i < count; i += 1) {
+    const entryBase = sefhPos + 12 + i * 12;
+    const typeWord = readU32Order(bytes, entryBase, true);
+    const negOffset = readU32Order(bytes, entryBase + 4, true);
+    const chunkSize = readU32Order(bytes, entryBase + 8, true);
+    if (chunkSize < 8 || negOffset === 0 || negOffset > sefhPos) return false;
+    const start = sefhPos - negOffset;
+    const end = start + chunkSize;
+    if (end > sefhPos) return false;
+    intervals.push({ typeWord, start, end });
+  }
+
+  intervals.sort((a, b) => a.start - b.start);
+  let cursor = 0;
+  let motionPhotoCount = 0;
+  for (const chunk of intervals) {
+    if (chunk.start !== cursor) return false;
+    cursor = chunk.end;
+    if (readU32Order(bytes, chunk.start, true) !== chunk.typeWord) return false;
+    const keyLen = readU32Order(bytes, chunk.start + 4, true);
+    if (8 + keyLen > chunk.end - chunk.start) return false;
+    const key = parseSefKeyName(bytes, chunk.start + 8, keyLen);
+    if (!key) return false;
+    const payload = bytes.subarray(chunk.start + 8 + keyLen, chunk.end);
+    if (key === 'MotionPhoto_Data') {
+      if (chunk.typeWord !== 0x0a30_0000 && chunk.typeWord !== 0x0a30) return false;
+      if (!isValidMotionPhotoMp4Trailer(payload)) return false;
+      motionPhotoCount += 1;
+    } else if (!isAllowedSefEntry(key, chunk.typeWord, payload)) {
+      return false;
+    }
+  }
+
+  return cursor === sefhPos && motionPhotoCount >= 1;
+}
+
 function isAllowedJpegTrailer(trailer: Uint8Array): boolean {
   if (trailer.byteLength === 0) return true;
-  // Allow up to 64 leading 0x00 padding bytes alone or preceding MotionPhoto_Data / an MP4 ftyp box.
+  // Allow up to 64 leading 0x00 padding bytes alone or preceding MotionPhoto_Data / an MP4 ftyp box / Samsung SEF trailer.
   for (let pad = 0; pad <= JPEG_MAX_ZERO_PADDING && pad <= trailer.byteLength; pad += 1) {
     if (pad === trailer.byteLength) return true;
     const rest = trailer.subarray(pad);
+    if (
+      rest.byteLength >= 28 &&
+      bytesEqualPrefix(rest.subarray(rest.byteLength - 4), SEFT_MAGIC) &&
+      isAllowedSamsungSefTrailer(rest)
+    ) {
+      return true;
+    }
     if (bytesEqualPrefix(rest, MOTION_PHOTO_DATA_PREFIX)) {
       return isValidMotionPhotoMp4Trailer(rest);
     }

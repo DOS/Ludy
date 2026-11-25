@@ -288,6 +288,8 @@ suite('personal data in meeting text on PostgreSQL (#2594, ADR-0047)', () => {
         )
       ).rows,
     );
+    // The six listed definers all exist on main (the migrations that create them are named in #5033), so a query that matched none of them, or fewer, is a broken query and not a clean pin.
+    expect(present.map((r) => r.sig).sort(), 'the catalog query must find exactly the listed personal-data definers').toEqual(Object.keys(PERSONAL_DEFINERS).sort());
     // The names are part of the contract: a personal-data definer under another name than the listed ones is a new surface to review.
     for (const row of present) {
       expect(Object.keys(PERSONAL_DEFINERS), `an unlisted personal-data definer ${row.sig}`).toContain(row.sig);
