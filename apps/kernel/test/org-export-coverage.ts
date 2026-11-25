@@ -25,6 +25,7 @@ export const NOT_EXPORTED: Readonly<Record<string, string>> = {
   'ludy_kernel.notification_mute': "private to its member: a member's own mutes are readable by that member alone",
   'ludy_kernel.push_subscription': 'private to its member: a browser push subscription (endpoint and keys)',
   'ludy_kernel.today_mail': "private to its member: a member's own daily mail setting is readable by that member alone",
+  'ludy_kernel.member_home_layout': "private to its member: a member's own Global Home layout preference is readable by that member alone",
   'ludy_kernel.calendar_connection': "private to its member: a member's own connected calendar account is readable by that member alone",
   'ludy_kernel.meeting_platform_connection': "private to its member: a member's own connected meeting platform account is readable by that member alone",
   'ludy_crm.booking_feed': "a member's calendar feed token (hash): a credential",
