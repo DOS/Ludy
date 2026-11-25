@@ -479,8 +479,8 @@ suite('a Microsoft Teams recording from the connect to the staged bytes (meeting
     stub.calls.length = 0;
     stub.on('/v1.0/me/calendarView', () => new Response('{}', { status: 429 }));
     expect(await sweep()).toMatchObject({ failures: 1, listed: 0 });
-    // The list stopped at the calendar: no lookups were made, and nothing was replaced.
-    expect(stub.calls.map((c) => c.path)).toEqual(['/v1.0/me/calendarView']);
+    // The list stopped at the calendar: Graph is asked once more after its short wait (the answer carries no Retry-After, so the default second), then no lookups are made, and nothing was replaced.
+    expect(stub.calls.map((c) => c.path)).toEqual(['/v1.0/me/calendarView', '/v1.0/me/calendarView']);
     expect(await suggested()).toEqual(before);
     const after = await connectionRow();
     expect(after).toMatchObject({ status: 'active', status_reason: 'platform_unavailable' });
