@@ -230,6 +230,15 @@ function madeDuring(body: Json | null, occurrence: { start: number; end: number 
   });
 }
 
+// How long a recording or a transcript ran, in whole seconds, from its own start and end; null when either is missing or the span is not one the platform could have made (empty, or over a day).
+function lengthOf(file: Json | undefined): number | null {
+  if (!file) return null;
+  const from = Date.parse(text(file.createdDateTime));
+  const to = Date.parse(text(file.endDateTime));
+  if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from || to - from > 24 * 3_600_000) return null;
+  return Math.round((to - from) / 1000);
+}
+
 export class TeamsMeetingPlatform implements MeetingPlatformAdapter, MeetingPlatformOAuth {
   readonly provider = 'microsoft_teams' as const;
   readonly oauthProvider = 'teams_recordings' as const;
@@ -239,10 +248,12 @@ export class TeamsMeetingPlatform implements MeetingPlatformAdapter, MeetingPlat
   private readonly config: TeamsAppConfig;
   private readonly http: Fetch;
   private readonly now: () => Date;
+  private readonly timeoutMs: number;
 
   constructor(config: TeamsAppConfig, options: TeamsMeetingPlatformOptions = {}) {
     this.config = config;
     this.http = allowlistedFetch(TEAMS_HOSTS, options.fetch, options.timeoutMs);
+    this.timeoutMs = options.timeoutMs ?? 15_000;
     this.now = options.now ?? (() => new Date());
   }
 
@@ -250,7 +261,9 @@ export class TeamsMeetingPlatform implements MeetingPlatformAdapter, MeetingPlat
   private async read(url: string, credential: MeetingPlatformCredential, signal?: AbortSignal, accept = 'application/json'): Promise<{ status: number; response: Response }> {
     let response: Response;
     try {
-      response = await this.http(url, { method: 'GET', headers: { authorization: `Bearer ${credential.accessToken}`, accept, prefer: 'outlook.timezone="UTC"' }, ...(signal ? { signal } : {}) });
+      // The caller's signal replaces the transport's own timeout, so the request's timeout is joined to it here: one stalled Graph answer cannot hold a whole listing.
+      const bounded = signal ? AbortSignal.any([signal, AbortSignal.timeout(this.timeoutMs)]) : undefined;
+      response = await this.http(url, { method: 'GET', headers: { authorization: `Bearer ${credential.accessToken}`, accept, prefer: 'outlook.timezone="UTC"' }, ...(bounded ? { signal: bounded } : {}) });
     } catch {
       throw new MeetingPlatformError('platform_unavailable');
     }
@@ -349,16 +362,23 @@ export class TeamsMeetingPlatform implements MeetingPlatformAdapter, MeetingPlat
         const recordings = event.organizer ? await once(files, `${meeting}/recordings`, () => this.jsonOrNull(`${GRAPH}/me/onlineMeetings/${meeting}/recordings`, credential, stop.signal)) : null;
         const transcripts = await once(files, `${meeting}/transcripts`, () => this.jsonOrNull(`${GRAPH}/me/onlineMeetings/${meeting}/transcripts`, credential, stop.signal));
         const occurrence = { start: event.start, end: event.end };
-        const hasVideo = madeDuring(recordings, occurrence).length === 1;
-        const hasTranscript = madeDuring(transcripts, occurrence).length === 1;
+        const videos = madeDuring(recordings, occurrence);
+        const transcriptFiles = madeDuring(transcripts, occurrence);
+        const hasVideo = videos.length === 1;
+        const hasTranscript = transcriptFiles.length === 1;
         if (!hasVideo && !hasTranscript) continue;
         const parsedCall = meetingPlatformCallOf(event.joinUrl);
         const call = parsedCall?.platform === 'microsoft_teams' ? parsedCall : null;
+        // What was recorded: the recording's own span, else the transcript's, else the calendar slot (a two hour slot may hold forty minutes). The start and the length come from the SAME file, so
+        // they stay one interval (a call that began late is not placed at the slot's start), which is what the "already recorded" match and the imported meeting's end read.
+        const spanFile = [hasVideo ? videos[0] : undefined, hasTranscript ? transcriptFiles[0] : undefined].find((file) => lengthOf(file) !== null);
+        const length = lengthOf(spanFile);
         found[index] = {
+          // The id stays the occurrence's (meeting, slot start, slot end): the sweep keys its rows on it.
           id: keyOf(meeting, event.start, event.end),
           title: event.title,
-          startedAt: new Date(event.start).toISOString(),
-          lengthSeconds: Math.round((event.end - event.start) / 1000),
+          startedAt: new Date(spanFile && length !== null ? Date.parse(text(spanFile.createdDateTime)) : event.start).toISOString(),
+          lengthSeconds: length ?? Math.round((event.end - event.start) / 1000),
           sizeBytes: null,
           // A Teams recording is one MP4 with the sound in it; there is no audio-only file.
           hasAudio: false,

@@ -113,14 +113,17 @@ export function HrSelfOnboardingCard() {
     insuranceNumber.trim() !== '' ||
     note.trim() !== '';
 
-  const onSubmit = (event: FormEvent) => {
-    event.preventDefault();
-    if (!hasPayload || submit.isPending) return;
-    submit.mutate();
-  };
-
   const checklist = q.data?.checklist;
   const submissions = q.data?.submissions ?? [];
+  const hasPendingSubmission = submissions.some((s) => s.status === 'pending');
+  const bankPairMismatch = (bankCode !== '') !== (accountNumber.trim() !== '');
+  const canSubmitOnboarding = hasPayload && !hasPendingSubmission && !bankPairMismatch;
+
+  const onSubmit = (event: FormEvent) => {
+    event.preventDefault();
+    if (!canSubmitOnboarding || submit.isPending) return;
+    submit.mutate();
+  };
 
   return (
     <Card className="mt-6 block p-4" data-testid="hr-my-onboarding">
@@ -285,10 +288,21 @@ export function HrSelfOnboardingCard() {
           </div>
         </div>
 
+        {hasPendingSubmission && (
+          <p className="rounded-md border border-warning/30 bg-warning/10 p-2 text-xs text-warning" data-testid="hr-my-ob-pending-notice">
+            {t('pendingHint')}
+          </p>
+        )}
+        {bankPairMismatch && (
+          <p className="rounded-md border border-destructive/30 bg-destructive/10 p-2 text-xs text-destructive" data-testid="hr-my-ob-bank-pair-warning">
+            {t('bankPairHint')}
+          </p>
+        )}
+
         <Button
           type="submit"
           className={PHONE_TARGET}
-          disabled={!hasPayload}
+          disabled={!canSubmitOnboarding}
           loading={submit.isPending}
           data-testid="hr-my-onboarding-submit"
         >
@@ -558,6 +572,11 @@ export function HrSelfOvertimeCard({
               {t('capWarning', { month: lastSubmit.month, total: lastSubmit.monthHoursTotal })}
             </p>
           )}
+          {lastSubmit?.exceedsDailyCap && (
+            <p className="rounded-md border border-destructive/30 bg-destructive/10 p-2 text-xs text-destructive" data-testid="hr-my-ot-daily-warning">
+              {t('dailyCapWarning', { total: lastSubmit.dayHoursTotal })}
+            </p>
+          )}
 
           <Button
             type="submit"
@@ -611,7 +630,19 @@ export function HrSelfOvertimeCard({
                       </td>
                       <td className="py-2 pr-3 text-right tabular-nums">{t('hoursUnit', { hours: r.hours })}</td>
                       <td className="py-2 pr-3">
-                        <Badge variant={STATUS_BADGE[r.status]}>{t(`statuses.${r.status}`)}</Badge>
+                        <div className="flex flex-wrap items-center gap-1">
+                          <Badge variant={STATUS_BADGE[r.status]}>{t(`statuses.${r.status}`)}</Badge>
+                          {r.exceedsMonthlyCap && (
+                            <Badge variant="warning" data-testid="hr-my-ot-monthly-badge">
+                              {t('monthlyCapBadge', { total: r.monthHoursTotal })}
+                            </Badge>
+                          )}
+                          {r.exceedsDailyCap && (
+                            <Badge variant="destructive" data-testid="hr-my-ot-daily-badge">
+                              {t('dailyCapBadge', { total: r.dayHoursTotal })}
+                            </Badge>
+                          )}
+                        </div>
                       </td>
                       <td className="py-2 text-right">
                         {(r.status === 'pending_l1' || r.status === 'pending_final') && (
@@ -664,7 +695,17 @@ export function HrSelfOvertimeCard({
                     <span className="font-medium text-foreground">
                       {r.employeeName} · {f.date(r.workDate)} · {t('hoursUnit', { hours: r.hours })}
                     </span>
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {r.exceedsMonthlyCap && (
+                        <Badge variant="warning" data-testid="hr-my-ot-team-monthly-badge">
+                          {t('monthlyCapBadge', { total: r.monthHoursTotal })}
+                        </Badge>
+                      )}
+                      {r.exceedsDailyCap && (
+                        <Badge variant="destructive" data-testid="hr-my-ot-team-daily-badge">
+                          {t('dailyCapBadge', { total: r.dayHoursTotal })}
+                        </Badge>
+                      )}
                       <Badge variant="warning">{t(`statuses.${r.status}`)}</Badge>
                       <Button
                         type="button"
@@ -730,6 +771,12 @@ export function HrSelfOvertimeCard({
                 badges={
                   <>
                     <Badge variant="outline">{t(`dayTypes.${activeTeamOt.dayType}`)}</Badge>
+                    {activeTeamOt.exceedsMonthlyCap && (
+                      <Badge variant="warning">{t('monthlyCapBadge', { total: activeTeamOt.monthHoursTotal })}</Badge>
+                    )}
+                    {activeTeamOt.exceedsDailyCap && (
+                      <Badge variant="destructive">{t('dailyCapBadge', { total: activeTeamOt.dayHoursTotal })}</Badge>
+                    )}
                     <Badge variant="warning">{t(`statuses.${activeTeamOt.status}`)}</Badge>
                   </>
                 }
