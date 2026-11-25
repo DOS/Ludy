@@ -547,8 +547,7 @@ export const KERNEL_ERROR_CODES = [
   'MINUTES_TEMPLATE_NAME_TAKEN',
   'MINUTES_TEMPLATE_SECTIONS_INVALID',
   'MINUTES_TEMPLATES_MAX',
-  // The second-language version of the published minutes (#4777).
-  'MINUTES_NOT_PUBLISHED',
+  // The second-language version of the published minutes (#4777); MINUTES_NOT_PUBLISHED is the same code as the Word file's (#4774), below.
   'MINUTES_VERSION_STALE',
   'MINUTES_VERSION_SEGMENTS_INVALID',
   'MINUTES_VERSION_TEXT_REJECTED',
