@@ -125,7 +125,7 @@ function DealUpdateCard({ meetingId, status, onStale }: { meetingId: string; sta
       <p className="text-xs text-muted-foreground" role="status" aria-live="polite" data-testid="deal-update-state">
         {state === null ? '' : propose.data?.errorCode === 'DEAL_UPDATE_TOO_LONG' ? t('tooLong') : t(STATE[state])}
         {done !== null
-          ? [t('saved'), done.taskId !== null ? t('taskSaved') : null, done.noteSaved ? t('noteSaved') : null, done.remindersClosed > 0 ? t('remindersClosed') : null].filter(Boolean).join(' ')
+          ? [t('saved'), t('taskSaved'), done.noteSaved ? t('noteSaved') : null, done.remindersClosed > 0 ? t('remindersClosed') : null].filter(Boolean).join(' ')
           : ''}
       </p>
       {propose.error && <ErrorText>{errorMessage(propose.error)}</ErrorText>}

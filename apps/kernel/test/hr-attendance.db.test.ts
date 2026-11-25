@@ -22,6 +22,7 @@ import {
   type HrAttendanceLogView,
   type HrAttendanceQrRotateResult,
   type HrAttendanceRollupResult,
+  type HrEmployee,
   type HrRunSheet,
   type HrRunWritten,
   type HrSelfAttendanceListResult,
@@ -123,16 +124,20 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
     const query = <O>(userId: string, name: string, input: unknown = {}) =>
       rt.query<O>(name, input, { actor: asUser(userId), orgId });
 
-    const hire = async (name: string, opts: { payBasis?: 'monthly' | 'hourly'; wage?: string; hourlyRate?: string } = {}) =>
+    const hire = async (
+      name: string,
+      opts: { payBasis?: 'monthly' | 'hourly'; wage?: string; hourlyRate?: string; scheduledHoursPerDay?: string; effectiveFrom?: string } = {},
+    ) =>
       exec<HrWritten>(owner, 'hr.payroll.employee.add', {
         displayName: name,
         employment: {
-          effectiveFrom: '2026-01-01',
+          effectiveFrom: opts.effectiveFrom ?? '2026-01-01',
           contractType: 'indefinite',
           region: 'I',
           payBasis: opts.payBasis ?? 'monthly',
           baseWage: opts.wage ?? '15000000',
           ...(opts.hourlyRate ? { hourlyRate: opts.hourlyRate } : {}),
+          ...(opts.scheduledHoursPerDay ? { scheduledHoursPerDay: opts.scheduledHoursPerDay } : {}),
         },
       });
 
@@ -350,11 +355,37 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
     );
     expect(memberSqlRes.rowCount).toBe(1);
 
+    // Cross-member direct SQL INSERT is rejected with explicit 42501 (insufficient_privilege)
+    const crossMemberSqlErr = await runAsUserInOrg(o1.memberA, o1.orgId, (c) =>
+      c.query(
+        `INSERT INTO ludy_hr.attendance_log (org_id, legal_entity_id, employee_id, work_date, checked_in_at, check_in_method, status)
+         VALUES ($1, $2, $3, (pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date, pg_catalog.now(), 'web', 'missing_checkout')`,
+        [o1.orgId, empInfo.legal_entity_id, o1.empBId],
+      ),
+    ).catch((e: unknown) => e as { code?: string });
+    expect(crossMemberSqlErr).toMatchObject({ code: '42501' });
+
+    // Non-admin linked employee cannot clear an existing attendance note during direct SQL self check-out (42501)
+    await expect(
+      runAsUserInOrg(o1.memberA, o1.orgId, (c) =>
+        c.query(
+          `UPDATE ludy_hr.attendance_log
+           SET checked_out_at = pg_catalog.now(),
+               worked_minutes = LEAST(1440, GREATEST(0, pg_catalog.floor(pg_catalog.date_part('epoch', pg_catalog.now() - checked_in_at) / 60)))::integer,
+               status = CASE WHEN LEAST(1440, GREATEST(0, pg_catalog.floor(pg_catalog.date_part('epoch', pg_catalog.now() - checked_in_at) / 60)))::integer >= 360 THEN 'present' ELSE 'half_day' END,
+               note = NULL
+           WHERE org_id = $1 AND id = $2`,
+          [o1.orgId, checkInA.id],
+        ),
+      ),
+    ).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(/note/i) });
+
     // memberA check-out succeeds once, and double check-out fails
     const outA = await o1.exec<HrAttendanceLogView>(o1.memberA, 'hr.self.attendance.check_out', { workDate: today });
     expect(outA.checkedOutAt).not.toBeNull();
     expect(outA.workedMinutes).toBeGreaterThanOrEqual(0);
     expect(outA.status).toBe('half_day');
+    expect(outA.note).toBe('Làm tại văn phòng Q1');
     await expect(o1.exec(o1.memberA, 'hr.self.attendance.check_out', { workDate: today })).rejects.toMatchObject({
       code: 'HR_ATTENDANCE_ALREADY_CHECKED_OUT',
     });
@@ -367,7 +398,7 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
           [o1.orgId, checkInA.id],
         ),
       ),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({ code: '23514' });
 
     // B1 DB invariants: non-admin member cannot insert forged completed rows, bypass QR proof, or forge checkout duration/status in raw SQL
     await expect(
@@ -378,7 +409,7 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
           [o1.orgId, empInfo.legal_entity_id, o1.empAId],
         ),
       ),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({ code: '23514' });
 
     await expect(
       runAsUserInOrg(o1.memberA, o1.orgId, async (c) => {
@@ -389,7 +420,19 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
           [o1.orgId, empInfo.legal_entity_id, o1.empAId],
         );
       }),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({ code: '23514' });
+
+    // Same-day forged QR proof on an active linked employee hits explicit 42501 QR secret guard
+    await expect(
+      runAsUserInOrg(o1.memberA, o1.orgId, async (c) => {
+        await c.query(`SELECT pg_catalog.set_config('ludy_hr.qr_verified_hash', $1, true)`, ['f'.repeat(64)]);
+        await c.query(
+          `INSERT INTO ludy_hr.attendance_log (org_id, legal_entity_id, employee_id, work_date, checked_in_at, check_in_method, status)
+           VALUES ($1, $2, $3, (pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date, pg_catalog.now(), 'qr', 'missing_checkout')`,
+          [o1.orgId, empInfo.legal_entity_id, o1.empAId],
+        );
+      }),
+    ).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(/QR/i) });
 
     await expect(
       runAsUserInOrg(o1.memberB, o1.orgId, (c) =>
@@ -400,7 +443,7 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
           [o1.orgId, checkInB.id],
         ),
       ),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({ code: '23514' });
 
     // CHECK constraint rejects 'present' rows without checkout/worked_minutes even as admin
     await expect(
@@ -411,7 +454,7 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
           [o1.orgId, empInfo.legal_entity_id, o1.empAId],
         ),
       ),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({ code: '23514', constraint: 'attendance_log_completed_fields_ck' });
 
     // Overnight openLog: yesterday's missing_checkout surfaces in self.attendance.list when today has no log,
     // while stale (>= 2 days old) open shifts are rejected by attendance_log_update_guard (23514) and ended staff cannot check in/out via SQL
@@ -474,7 +517,7 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
           [o1.orgId, empInfo.legal_entity_id, o1.empBId],
         ),
       ),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({ code: '42501' });
     // Ended employee still reads historical attendance list via RPC/RLS, with yesterday's row unchanged
     const endedList = await o1.query<HrSelfAttendanceListResult>(o1.memberB, 'hr.self.attendance.list', {
       month: yesterdayVn.slice(0, 7),
@@ -830,7 +873,7 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
       withAdmin((c) =>
         c.query(`UPDATE ludy_hr.attendance_log SET worked_minutes = 120 WHERE org_id = $1 AND employee_id = $2`, [o.orgId, o.empAId]),
       ),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({ code: '23514', message: expect.stringMatching(/erased/i) });
     await expect(
       runAsUserInOrg(o.owner, o.orgId, (c) =>
         c.query(
@@ -839,7 +882,7 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
           [o.orgId, o.empAId],
         ),
       ),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(/erased/i) });
     await expect(
       runAsUserInOrg(o.admin, o.orgId, (c) =>
         c.query(
@@ -848,7 +891,7 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
           [o.orgId, o.empAId],
         ),
       ),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(/erased/i) });
 
     // Rotate QR so org has both attendance_log and attendance_qr_config before org_purge
     await o.exec(o.owner, 'hr.attendance.qr.rotate', {});
@@ -993,5 +1036,182 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
     });
     expect(cleared.checkedOutAt).toBeNull();
     expect(cleared.workedMinutes).toBeNull();
+
+    // Admin can still clear an active employee's note cleanly via hr.attendance.adjust
+    const noteCleared = await o.exec<HrAttendanceLogView>(o.admin, 'hr.attendance.adjust', {
+      employeeId: o.empAId,
+      workDate: openShift.workDate,
+      checkedInAt: cleared.checkedInAt,
+      checkedOutAt: null,
+      checkInMethod: 'web',
+      status: 'adjusted',
+      note: null,
+      expectedUpdatedAt: cleared.updatedAt,
+    });
+    expect(noteCleared.note).toBeNull();
+  });
+
+  it('persists scheduled_hours_per_day with DB CHECK guard and auto-credits Art. 112 hourly paid public holidays in payroll rollup (#4486)', async () => {
+    const o = await createAttendanceOrg();
+    const targetMonth = '2026-09'; // Includes National Day 2026-09-02 (Wednesday)
+
+    // 1. Part-time hourly worker hired before 2026-09-02 with contractual 4.5h/day schedule
+    const scheduledRes = await o.hire('Đặng Theo Giờ Lễ', {
+      payBasis: 'hourly',
+      wage: '0',
+      hourlyRate: '80000',
+      scheduledHoursPerDay: '4.5',
+      effectiveFrom: '2026-01-01',
+    });
+    const scheduledEmpId = scheduledRes.employeeId as string;
+
+    // 2. Hourly worker with contractual 4.5h/day hired AFTER 2026-09-02 (must get 0 paid holiday hours)
+    const lateHireRes = await o.hire('Đặng Vào Sau Lễ', {
+      payBasis: 'hourly',
+      wage: '0',
+      hourlyRate: '80000',
+      scheduledHoursPerDay: '4.5',
+      effectiveFrom: '2026-09-05',
+    });
+    const lateHireEmpId = lateHireRes.employeeId as string;
+
+    // Read back via hr.payroll.employee.get and verify employment.add persists updated schedule
+    const detailBefore = await o.query<HrEmployee>(o.owner, 'hr.payroll.employee.get', { employeeId: scheduledEmpId });
+    expect(detailBefore.current?.scheduledHoursPerDay).toBe('4.50');
+
+    await o.exec<HrWritten>(o.owner, 'hr.payroll.employment.add', {
+      employeeId: scheduledEmpId,
+      effectiveFrom: '2026-08-01',
+      contractType: 'indefinite',
+      region: 'I',
+      payBasis: 'hourly',
+      hourlyRate: '80000',
+      scheduledHoursPerDay: '5.5',
+    });
+    const detailAfter = await o.query<HrEmployee>(o.owner, 'hr.payroll.employee.get', { employeeId: scheduledEmpId });
+    expect(detailAfter.current?.scheduledHoursPerDay).toBe('5.50');
+
+    // DB CHECK constraint enforces scheduled_hours_per_day IN (0, 24]
+    await expect(
+      withAdmin((c) =>
+        c.query(
+          `INSERT INTO ludy_hr.payroll_employment (org_id, legal_entity_id, employee_id, effective_from, contract_type, region, base_wage, pay_basis, hourly_rate, scheduled_hours_per_day)
+           SELECT org_id, legal_entity_id, employee_id, '2026-10-01', 'indefinite', 'I', 0, 'hourly', 80000, 0
+           FROM ludy_hr.payroll_employment WHERE org_id = $1 AND employee_id = $2 LIMIT 1`,
+          [o.orgId, scheduledEmpId],
+        ),
+      ),
+    ).rejects.toMatchObject({ code: '23514', constraint: 'payroll_employment_scheduled_hours_per_day_ck' });
+    await expect(
+      withAdmin((c) =>
+        c.query(
+          `INSERT INTO ludy_hr.payroll_employment (org_id, legal_entity_id, employee_id, effective_from, contract_type, region, base_wage, pay_basis, hourly_rate, scheduled_hours_per_day)
+           SELECT org_id, legal_entity_id, employee_id, '2026-10-02', 'indefinite', 'I', 0, 'hourly', 80000, 24.01
+           FROM ludy_hr.payroll_employment WHERE org_id = $1 AND employee_id = $2 LIMIT 1`,
+          [o.orgId, scheduledEmpId],
+        ),
+      ),
+    ).rejects.toMatchObject({ code: '23514', constraint: 'payroll_employment_scheduled_hours_per_day_ck' });
+
+    // Record 1 normal 8h shift (2026-09-14) for scheduledEmp, lateHireEmp, and unscheduled empB
+    for (const empId of [scheduledEmpId, lateHireEmpId, o.empBId]) {
+      await o.exec(o.owner, 'hr.attendance.adjust', {
+        employeeId: empId,
+        workDate: '2026-09-14',
+        checkedInAt: '2026-09-14T01:30:00Z',
+        checkedOutAt: '2026-09-14T09:30:00Z',
+        status: 'present',
+      });
+    }
+
+    const run = await o.exec<HrRunWritten>(o.owner, 'hr.payroll.run.open', { month: targetMonth });
+    const rolled = await o.exec<HrAttendanceRollupResult>(o.owner, 'hr.attendance.rollup_to_payroll', {
+      runId: run.runId,
+    });
+    expect(rolled.updatedCount).toBe(3);
+
+    // scheduledEmp uses in-force 2026-08-01 terms (5.5h/day) -> 8h normal + 5.5h National Day = 13.5h
+    const rowScheduled = rolled.rows.find((r) => r.employeeId === scheduledEmpId)!;
+    expect(rowScheduled.workedHours).toBe('13.5');
+    expect(rowScheduled.overtimeHours).toBe('0');
+
+    // lateHireEmp hired 2026-09-05 (after 2026-09-02) -> 8h only, 0 paid holiday hours
+    const rowLate = rolled.rows.find((r) => r.employeeId === lateHireEmpId)!;
+    expect(rowLate.workedHours).toBe('8');
+
+    // empB has scheduled_hours_per_day = NULL -> backward-compatible 8h only
+    const rowUnscheduled = rolled.rows.find((r) => r.employeeId === o.empBId)!;
+    expect(rowUnscheduled.workedHours).toBe('8');
+
+    // Verify payroll sheet figures match calculatePayroll with workedHours = 13.5 via decimal.js
+    const sheet = await o.query<HrRunSheet>(o.owner, 'hr.payroll.run.sheet', { runId: run.runId });
+    const lineScheduled = sheet.lines.find((l) => l.employeeId === scheduledEmpId)!;
+    if (!lineScheduled.figures) throw new Error('expected payroll figures on scheduled hourly line');
+    const expectedScheduled = calculatePayroll(
+      { region: 'I', contract: 'indefinite', contractTermMonths: null, resident: true, insured: true, payBasis: 'hourly', hourlyRate: '80000', baseWage: '0', allowances: [] },
+      { month: targetMonth, standardWorkingDays: '26', workedHours: '13.5', unpaidLeaveDays: '24', overtime: [], nightHours: '0' },
+      PAYROLL_RULES,
+    );
+    expect(money(lineScheduled.figures.gross).eq(expectedScheduled.gross)).toBe(true);
+    expect(money(lineScheduled.figures.net).eq(expectedScheduled.net)).toBe(true);
+    expect(money(lineScheduled.figures.gross).eq(money('13.5').times('80000'))).toBe(true);
+  });
+
+  it('restricts erased-employee attendance note clearing strictly to org owner actor (42501) (#4486)', async () => {
+    const o = await createAttendanceOrg();
+    await o.exec(o.owner, 'hr.attendance.adjust', {
+      employeeId: o.empAId,
+      workDate: '2014-01-10',
+      checkedInAt: '2014-01-10T01:30:00Z',
+      checkedOutAt: '2014-01-10T10:30:00Z',
+      status: 'present',
+      note: 'Ghi chú nhạy cảm chờ xóa',
+    });
+
+    // Simulate the mid-erasure state right after payroll_employee.erased_at is stamped (retention > 10y passed)
+    // before attendance_log.note has been cleared.
+    await o.exec(o.owner, 'hr.payroll.employee.end', { employeeId: o.empAId, endedOn: '2026-08-20' });
+    await withAdmin((c) =>
+      c.query(
+        `UPDATE ludy_hr.payroll_employee
+         SET ended_on = ((now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - interval '10 years 1 day')::date,
+             erased_at = now()
+         WHERE org_id = $1 AND id = $2`,
+        [o.orgId, o.empAId],
+      ),
+    );
+
+    // Non-owner admin and uncontextualized SQL callers cannot clear notes of an erased employee (42501)
+    await expect(
+      runAsUserInOrg(o.admin, o.orgId, (c) =>
+        c.query(`UPDATE ludy_hr.attendance_log SET note = NULL WHERE org_id = $1 AND employee_id = $2`, [o.orgId, o.empAId]),
+      ),
+    ).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(/owner/i) });
+    await expect(
+      withAdmin((c) =>
+        c.query(`UPDATE ludy_hr.attendance_log SET note = NULL WHERE org_id = $1 AND employee_id = $2`, [o.orgId, o.empAId]),
+      ),
+    ).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(/owner/i) });
+
+    // Owner still cannot alter non-note columns on an erased employee (23514)
+    await expect(
+      runAsUserInOrg(o.owner, o.orgId, (c) =>
+        c.query(`UPDATE ludy_hr.attendance_log SET note = NULL, worked_minutes = 120 WHERE org_id = $1 AND employee_id = $2`, [o.orgId, o.empAId]),
+      ),
+    ).rejects.toMatchObject({ code: '23514', message: expect.stringMatching(/erased/i) });
+
+    // Org owner note-only wipe succeeds cleanly (preserving worked_minutes)
+    const ownerCleared = await runAsUserInOrg(o.owner, o.orgId, (c) =>
+      c.query(`UPDATE ludy_hr.attendance_log SET note = NULL WHERE org_id = $1 AND employee_id = $2`, [o.orgId, o.empAId]),
+    );
+    expect(ownerCleared.rowCount).toBe(1);
+    const afterRow = await withAdmin(async (c) => {
+      const { rows } = await c.query<{ note: string | null; worked_minutes: number | null }>(
+        'SELECT note, worked_minutes FROM ludy_hr.attendance_log WHERE org_id = $1 AND employee_id = $2',
+        [o.orgId, o.empAId],
+      );
+      return rows[0];
+    });
+    expect(afterRow).toEqual({ note: null, worked_minutes: 540 });
   });
 });

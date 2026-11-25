@@ -129,6 +129,8 @@ export const AI_FEATURES = {
   'meetings.title': 'meetings',
   // The recorder's Vy listing what each speaker committed to or decided (#3954): one call over the transcript, the member waiting for it, through their own meter.
   'meetings.commitments': 'meetings',
+  // The recorder's Vy listing what a meeting left open (#4768): one call over the transcript, the recorder waiting for it, through their own meter.
+  'meetings.open_points': 'meetings',
   // The recorder's Vy drafting a personal-note follow-up email from the meeting's facts (#4292): one call, the member waiting for it, through their own meter.
   'meetings.followup_note': 'meetings',
   // The recorder's Vy proposing the update of a deal after a meeting linked to it (#4766): one call over the published minutes, the recorder waiting for it, through their own meter.

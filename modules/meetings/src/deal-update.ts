@@ -206,9 +206,10 @@ export const dealUpdateConfirm = defineCommand({
   target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
   handler: async (ctx: CommandContext, input) => {
     const userId = userOf(ctx.actor);
-    // The meeting is held while the minutes are read and written against, so a republish cannot land between the key check and the write.
-    await lockMeeting(ctx.trx, ctx.orgId, input.meetingId);
+    // Who may touch the meeting first (a reader who did not record it is refused FORBIDDEN, one who cannot read it not found), then the meeting is held while the minutes are read and written against, so a
+    // republish cannot land between the key check and the write.
     await recorderOf(ctx, input.meetingId, userId);
+    await lockMeeting(ctx.trx, ctx.orgId, input.meetingId);
     const linked = await linkedDeal(ctx, input.meetingId);
     if (!linked.ok) throw noDeal(linked.reason);
     // The deal named on screen is the one the meeting is linked to now (a link moved since the proposal was shown is refused, never followed).
@@ -235,7 +236,7 @@ export const dealUpdateConfirm = defineCommand({
     }
     const due = dueOn === null ? null : new Date(zonedInstant('Asia/Ho_Chi_Minh', dueOn, 23 * 60 + 59)).toISOString();
 
-    const applied = await ctx.run<{ dealId: string; taskId: string | null; noteSaved: boolean; remindersClosed: number }>('crm.deal.meeting_update.apply', {
+    const applied = await ctx.run<{ dealId: string; taskId: string; noteSaved: boolean; remindersClosed: number }>('crm.deal.meeting_update.apply', {
       dealId: linked.deal.id,
       meetingId: input.meetingId,
       nextStep: stepText === null ? null : { text: stepText, dueOn },

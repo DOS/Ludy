@@ -24,19 +24,19 @@ export interface OfferedWindow {
   title: string;
 }
 
-const KNOWN_EXECUTABLES: Readonly<Record<string, { client: MeetingClientKind; appName: string }>> = {
-  'zoom.exe': { client: 'zoom', appName: 'Zoom' },
-  'ms-teams.exe': { client: 'teams', appName: 'Microsoft Teams' },
-  'teams.exe': { client: 'teams', appName: 'Microsoft Teams' },
-  'zalo.exe': { client: 'zalo', appName: 'Zalo PC' },
-  'slack.exe': { client: 'slack', appName: 'Slack' },
-};
+const KNOWN_EXECUTABLES = new Map<string, { client: MeetingClientKind; appName: string }>([
+  ['zoom.exe', { client: 'zoom', appName: 'Zoom' }],
+  ['ms-teams.exe', { client: 'teams', appName: 'Microsoft Teams' }],
+  ['teams.exe', { client: 'teams', appName: 'Microsoft Teams' }],
+  ['zalo.exe', { client: 'zalo', appName: 'Zalo PC' }],
+  ['slack.exe', { client: 'slack', appName: 'Slack' }],
+]);
 
 const IGNORED_TITLES = new Set(['msctfime ui', 'default ime', 'program manager']);
 
 export function classifyMeetingWindow(win: NativeWindowInfo): OfferedWindow | null {
   const exeKey = win.exe.trim().toLowerCase();
-  const match = KNOWN_EXECUTABLES[exeKey];
+  const match = KNOWN_EXECUTABLES.get(exeKey);
   if (!match || !Number.isInteger(win.pid) || win.pid <= 0) return null;
   const cleanTitle = win.title.replace(/\s+/g, ' ').trim().slice(0, 120);
   if (!cleanTitle || IGNORED_TITLES.has(cleanTitle.toLowerCase())) return null;

@@ -4,7 +4,8 @@
 // checks what only the CRM knows (the deal exists, is open and is the caller's to touch). Three things, in one transaction:
 //   - the next step as a human task (kernel.task.create_from_source, tainted, its source the meeting, due on the day the minutes wrote or none): the same command the projects module uses to turn a
 //     meeting into tasks, so the task shows where every task shows and needs no table of the CRM's own;
-//   - the note as a line of the contact's timeline (kind crm.deal.meeting_update), which the personal-data erase and the org purge already cover;
+//   - the note as a comment of that task (kernel.task.comment, by the recorder): free text stays on its record and out of the timeline (activity summaries keep none, #1825); a note with no next step
+//     gets a task of its own with fixed words for a title; the timeline gets one line of fixed words (kind crm.deal.meeting_update);
 //   - the stale-deal reminder (no activity, past close) closed (closeNextSteps; a quote reminder stays), so the daily rule does not raise one on top of a step a person just confirmed.
 // Who may do it is who may edit a deal (crm.deal.update): owner, admin and member, any deal they read. The audit row holds ids, flags and counts, never a text.
 import { DEAL_UPDATE_ACTIVITY_KIND, zDealMeetingUpdateApply, zDealUpdateConfirmed, type DealUpdateConfirmed } from '@ludy/kernel-contract';
@@ -18,6 +19,9 @@ interface LinkRead {
 }
 
 const EDITORS: readonly MemberRole[] = ['owner', 'admin', 'member'];
+// Fixed words: a note with no next step becomes a task with this title, and the contact's timeline gets this line (no deal title, no note: a summary there keeps no free text).
+const NOTE_ONLY_TITLE = 'Ghi chú sau cuộc họp';
+const ACTIVITY_SUMMARY = 'Cập nhật cơ hội sau cuộc họp';
 
 export const dealMeetingUpdateApply = defineCommand({
   name: 'crm.deal.meeting_update.apply',
@@ -46,23 +50,22 @@ export const dealMeetingUpdateApply = defineCommand({
       throw new DomainError('MEETING_NOT_LINKED', 409, 'Cuộc họp này không liên kết với cơ hội này');
     }
 
-    let taskId: string | null = null;
-    if (input.nextStep !== null) {
-      const created = await ctx.run<{ taskId: string }>('kernel.task.create_from_source', {
-        sourceType: 'meetings.meeting',
-        sourceId: input.meetingId,
-        title: input.nextStep.text,
-        positionId: null,
-        due: input.due,
-      });
-      taskId = created.taskId;
-    }
-    if (input.note !== null) {
-      await ctx.activity('kernel.party', deal.party_id, DEAL_UPDATE_ACTIVITY_KIND, `Sau cuộc họp, cơ hội "${deal.title}": ${input.note}`);
-    }
+    // The next step is a human task (tainted, its source the meeting). A note alone becomes a task too, with fixed words for a title, so the note has a record to live on.
+    const created = await ctx.run<{ taskId: string }>('kernel.task.create_from_source', {
+      sourceType: 'meetings.meeting',
+      sourceId: input.meetingId,
+      title: input.nextStep === null ? NOTE_ONLY_TITLE : input.nextStep.text,
+      positionId: null,
+      due: input.nextStep === null ? null : input.due,
+    });
+    const taskId = created.taskId;
+    // The note is free text a member confirmed: it stays on its record, a comment of the task, and out of the timeline (activity summaries keep no free text, #1825). The timeline gets a line of fixed words.
+    const hasNote = input.note !== null;
+    if (input.note !== null) await ctx.run('kernel.task.comment', { id: taskId, body: input.note });
+    await ctx.activity('kernel.party', deal.party_id, DEAL_UPDATE_ACTIVITY_KIND, ACTIVITY_SUMMARY);
     const remindersClosed = await closeNextSteps(ctx, deal.id, 'deal_edited', ['no_activity', 'past_close']);
-    ctx.audit({ dealId: deal.id, meetingId: input.meetingId, taskId, noteSaved: input.note !== null, remindersClosed });
-    return zDealUpdateConfirmed.parse({ dealId: deal.id, taskId, noteSaved: input.note !== null, remindersClosed });
+    ctx.audit({ dealId: deal.id, meetingId: input.meetingId, taskId, noteSaved: hasNote, remindersClosed });
+    return zDealUpdateConfirmed.parse({ dealId: deal.id, taskId, noteSaved: hasNote, remindersClosed });
   },
 });
 

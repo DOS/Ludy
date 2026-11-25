@@ -4,7 +4,7 @@
 //   meetings.deal_update.status   whether the button shows (a deal linked, minutes published, the deal open, Vy allowed now)
 //   meetings.deal_update.propose  the one model call (apps/kernel member-vy-ports.ts), the answer checked by code, nothing stored but counts
 //   meetings.deal_update.confirm  the recorder's command: re-reads the minutes and the link, checks the texts again, then crm.deal.meeting_update.apply writes the next step as a task, the note
-//                                 as a line of the contact's timeline, and closes the stale-deal reminder
+//                                 as a comment of that task, and closes the stale-deal reminder
 // The model never writes the day: it is the parsed date of the action item the next step is about.
 import { z } from 'zod';
 import { FOLLOWUP_NOTE_STATES, followupNoteProblem, type FollowupTextProblem } from './meeting-followup.ts';
@@ -13,7 +13,7 @@ import { zId } from './schemas.ts';
 
 export const DEAL_UPDATE_STEP_MAX = 160;
 export const DEAL_UPDATE_NOTE_MAX = 500;
-// The kind of the contact's timeline line the note becomes.
+// The kind of the one line of fixed words the update leaves on the contact's timeline.
 export const DEAL_UPDATE_ACTIVITY_KIND = 'crm.deal.meeting_update';
 
 const lengthOf = (text: string): number => Array.from(text).length;
@@ -84,7 +84,8 @@ export type DealMeetingUpdateApply = z.infer<typeof zDealMeetingUpdateApply>;
 
 export const zDealUpdateConfirmed = z.strictObject({
   dealId: zId,
-  taskId: zId.nullable(),
+  // The task the update became (the next step, or a task of fixed title that holds the note as a comment).
+  taskId: zId,
   noteSaved: z.boolean(),
   // How many open stale-deal reminders the update closed.
   remindersClosed: z.number().int().min(0).max(100),

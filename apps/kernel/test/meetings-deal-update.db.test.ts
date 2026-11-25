@@ -101,6 +101,7 @@ suite('the recorder\'s Vy updating the deal a meeting is linked to (#4766)', () 
     ).then((r) => r.rows);
   const activityOf = (partyId: string) =>
     sqlAdmin<{ summary: string }>(`SELECT summary FROM ludy_kernel.activity WHERE org_id = $1 AND record_id = $2 AND kind = 'crm.deal.meeting_update'`, [orgId, partyId]).then((r) => r.rows);
+  const commentsOf = (taskId: string) => sqlAdmin<{ body: string; author_type: string }>('SELECT body, author_type FROM ludy_kernel.task_comment WHERE org_id = $1 AND task_id = $2 ORDER BY created_at', [orgId, taskId]).then((r) => r.rows);
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -212,7 +213,7 @@ suite('the recorder\'s Vy updating the deal a meeting is linked to (#4766)', () 
     expect((await dealUpdateStatusOf({ ...deps(), model: null }, orgId, asUser('recorder'), meetingId)).reason).toBe('off');
   });
 
-  it('confirms in one transaction: a tainted task due on the minutes\' day, a line on the contact\'s timeline, the stale-deal reminder closed, ids and counts only in audit, once per key', async () => {
+  it('confirms in one transaction: a tainted task due on the minutes\' day with the note as its comment, a fixed line on the contact\'s timeline, the stale-deal reminder closed, ids and counts only in audit, once per key', async () => {
     const partyId = await party('Khách D');
     const deal = await makeDeal(partyId, 'Hợp đồng D');
     const meetingId = await seedMeeting();
@@ -228,10 +229,12 @@ suite('the recorder\'s Vy updating the deal a meeting is linked to (#4766)', () 
     expect(tasks[0]).toMatchObject({ id: done.taskId, title: STEP, tainted: true, source_ref: { type: 'meetings.meeting', id: meetingId } });
     // 23:59 on the 27th in Vietnam.
     expect(new Date(tasks[0]?.due as Date).toISOString()).toBe('2026-11-27T16:59:00.000Z');
+    // The note is a comment of the task, by the recorder; the timeline gets a line of fixed words and never the deal's title or the note (a summary keeps no free text).
+    expect(await commentsOf(done.taskId)).toEqual([{ body: NOTE, author_type: 'user' }]);
     const lines = await activityOf(partyId);
     expect(lines).toHaveLength(1);
-    expect(lines[0]?.summary).toContain('Hợp đồng D');
-    expect(lines[0]?.summary).toContain(NOTE);
+    expect(lines[0]?.summary).not.toContain('Hợp đồng D');
+    expect(lines[0]?.summary).not.toContain(NOTE);
     const step = await sqlAdmin<{ status: string; closed_reason: string | null }>('SELECT status, closed_reason FROM ludy_crm.deal_next_step WHERE org_id = $1 AND deal_id = $2', [orgId, deal.id]);
     expect(step.rows).toEqual([{ status: 'closed', closed_reason: 'deal_edited' }]);
     // The same click again is the same answer and no second task.
@@ -273,7 +276,7 @@ suite('the recorder\'s Vy updating the deal a meeting is linked to (#4766)', () 
     expect(await refuses(exec('other', 'crm.deal.meeting_update.apply', { dealId: deal.id, meetingId: stranger, nextStep: null, note: NOTE, due: null }))).toBe('MEETING_NOT_LINKED');
   });
 
-  it('works by hand with Vy off: a note alone, no day, no task', async () => {
+  it('works by hand with Vy off: a note alone, no day, a task of fixed title that holds it', async () => {
     const partyId = await party('Khách E');
     const deal = await makeDeal(partyId, 'Hợp đồng E');
     const meetingId = await seedMeeting();
@@ -281,8 +284,13 @@ suite('the recorder\'s Vy updating the deal a meeting is linked to (#4766)', () 
     setSummaryEnabled(false);
     const key = (await status(meetingId)).minutesKey as string;
     const done = await confirm(meetingId, deal.id, key, { nextStep: null, note: 'Khách hẹn gọi lại tuần sau.' });
-    expect(done).toMatchObject({ taskId: null, noteSaved: true });
-    expect(await tasksOf(meetingId)).toHaveLength(0);
+    expect(done).toMatchObject({ noteSaved: true });
+    // A note with no next step is a task of fixed title that holds the note as a comment.
+    const tasks = await tasksOf(meetingId);
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0]).toMatchObject({ id: done.taskId, title: 'Ghi chú sau cuộc họp', tainted: true });
+    expect(tasks[0]?.due).toBeNull();
+    expect(await commentsOf(done.taskId)).toEqual([{ body: 'Khách hẹn gọi lại tuần sau.', author_type: 'user' }]);
     expect(await activityOf(partyId)).toHaveLength(1);
   });
 

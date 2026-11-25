@@ -63,6 +63,18 @@ export const HR_ERASED_NAME = 'Đã xóa theo yêu cầu';
 
 // A wage as a decimal string of at most two decimals (VND has none in practice), never a JS number.
 export const zHrWage = z.string().regex(/^\d{1,16}(\.\d{1,2})?$/, 'decimal string');
+// Contractual scheduled hours per day for hourly/part-time workers (> 0 and <= 24, at most 2 decimals; VN Labor Code Art. 112 paid public holidays).
+export function isValidScheduledHoursPerDay(value: string): boolean {
+  const trimmed = value.trim();
+  if (!/^(?:0\.\d{1,2}|[1-9]\d?(?:\.\d{1,2})?)$/.test(trimmed)) return false;
+  const [wholeRaw = '0', fracRaw = ''] = trimmed.split('.');
+  const hundredths = Number(wholeRaw) * 100 + Number(fracRaw.padEnd(2, '0'));
+  return Number.isSafeInteger(hundredths) && hundredths > 0 && hundredths <= 2400;
+}
+export const zHrScheduledHoursPerDay = z
+  .string()
+  .trim()
+  .refine(isValidScheduledHoursPerDay, 'scheduledHoursPerDay must be > 0 and <= 24 (at most 2 decimals)');
 // An identity number (CCCD, CMND or passport) as the person writes it, and a bank account number: both go into the sealed columns.
 export const zHrIdentityNumber = z.string().trim().min(6).max(30).regex(/^[A-Za-z0-9][A-Za-z0-9 .-]*$/, 'identity number');
 export const zHrAccountNumber = z.string().trim().min(6).max(34).regex(/^[A-Za-z0-9][A-Za-z0-9 .-]*$/, 'account number');
@@ -162,6 +174,7 @@ const zHrEmploymentTermsShape = {
   payBasis: z.enum(HR_PAY_BASES).default('monthly'),
   hourlyRate: zHrWage.nullable().optional(),
   pieceRate: zHrWage.nullable().optional(),
+  scheduledHoursPerDay: zHrScheduledHoursPerDay.nullable().optional(),
   taxResident: z.boolean().default(true),
   contractForm: z.enum(HR_CONTRACT_FORMS).nullable().optional(),
   termMonths: z.number().int().min(1).max(36).nullable().optional(),
@@ -313,6 +326,7 @@ const zTerms = z.object({
   payBasis: z.enum(HR_PAY_BASES),
   hourlyRate: z.string().nullable(),
   pieceRate: z.string().nullable(),
+  scheduledHoursPerDay: z.string().nullable(),
   taxResident: z.boolean(),
   contractForm: z.enum(HR_CONTRACT_FORMS).nullable(),
   termMonths: z.number().int().nullable(),
