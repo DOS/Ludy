@@ -40,6 +40,13 @@ const codeOf = (fn: () => unknown) => {
 };
 
 describe('checkLabelSuggestions', () => {
+  it('clamps the dropped count at what an answer may report, so a long junk list cannot break the answer shape', () => {
+    const junk = Array.from({ length: 150 }, () => 0);
+    const out = checkLabelSuggestions(json({ labels: ['Hợp lệ', ...junk] }), [], RULES);
+    expect(out.labels).toEqual(['Hợp lệ']);
+    expect(out.dropped).toBe(LABEL_SUGGEST_LIMITS.droppedReported);
+  });
+
   it('keeps the suggestions in the model\'s order, cleaned like a typed label, at most three, and counts the rest as dropped', () => {
     const out = checkLabelSuggestions(json({ labels: ['  Khách   Hoa Sen ', 'Dự án website', 'Họp tuần', 'Báo giá', 'Hợp đồng'] }), [], RULES);
     expect(out.labels).toEqual(['Khách Hoa Sen', 'Dự án website', 'Họp tuần']);

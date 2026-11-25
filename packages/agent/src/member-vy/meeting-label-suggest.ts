@@ -18,6 +18,8 @@ export const LABEL_SUGGEST_LIMITS = {
   inUse: 30,
   // The meeting's title as the model reads it, in UTF-16 units (a title holds at most 200).
   titleChars: 200,
+  // The most dropped suggestions an answer reports: the model may write more entries than that, and the count is clamped (the contract's LABEL_SUGGEST_DROPPED_MAX; a kernel test ties the two).
+  droppedReported: 100,
 } as const;
 
 export type LabelSuggestErrorCode = 'LABEL_SUGGEST_UNPARSABLE' | 'LABEL_SUGGEST_EMPTY' | 'LABEL_SUGGEST_FULL';
@@ -106,7 +108,7 @@ export function checkLabelSuggestions(raw: string, existing: readonly string[], 
     labels.push(label);
   }
   if (labels.length === 0) throw new LabelSuggestError('LABEL_SUGGEST_EMPTY');
-  return { labels, dropped };
+  return { labels, dropped: Math.min(dropped, LABEL_SUGGEST_LIMITS.droppedReported) };
 }
 
 /**
