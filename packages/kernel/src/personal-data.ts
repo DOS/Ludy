@@ -47,6 +47,7 @@ import {
   type PersonalDataResult,
 } from '@ludy/kernel-contract';
 import { DomainError, defineCommand, type QueryContext } from '@ludy/kernel-runtime';
+import { MAIL_SOURCES_LEFT_OUT } from './offboarding.ts';
 
 const ADMINS: readonly MemberRole[] = ['owner', 'admin'];
 const OWNERS: readonly MemberRole[] = ['owner'];
@@ -1167,10 +1168,14 @@ async function findPersonalData(
       key === 'ludy_projects.roadmap_signal.quote_excerpt'
         ? sql`AND (t.source_type <> 'meetings.meeting' OR ${meetingSignalReadable('t')})`
         : sql``;
+    // A mail of a source in MAIL_SOURCES_LEFT_OUT (a follow-up mail, #4533) is found by its address but shown as its id, address, status and time only: its payload, subject and source id hold a meeting's text or
+    // counts, which an owner or admin who may not read an attendees-only meeting must not get through the finder. The row stays findable and erasable (the erasure works on the column, not on this view).
     const rowExpr =
       schema === 'ludy_projects' && table === 'roadmap_signal'
         ? roadmapSignalRowExpr('t')
-        : sql`pg_catalog.to_jsonb(t) - 'search'`;
+        : schema === 'ludy_kernel' && table === 'mail_message'
+          ? sql`CASE WHEN t.source IN (${sql.join(MAIL_SOURCES_LEFT_OUT)}) THEN pg_catalog.jsonb_build_object('id', t.id, 'to_address', t.to_address, 'status', t.status, 'created_at', t.created_at) ELSE pg_catalog.to_jsonb(t) - 'search' END`
+          : sql`pg_catalog.to_jsonb(t) - 'search'`;
     const isUnsealedExpr =
       schema === 'ludy_sign' && table === 'signer'
         ? sql<boolean>`EXISTS (
