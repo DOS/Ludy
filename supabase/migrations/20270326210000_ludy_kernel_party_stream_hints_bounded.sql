@@ -8,7 +8,7 @@
 -- a multi-statement write to the same row (such as INSERT followed by company_id UPDATE during import) counts once toward the 20-row threshold, and a single change still names its own party.
 -- The trigger functions are SECURITY DEFINER, so the helper, which names the org it notifies, is callable by nobody else (a tenant login could otherwise send a hint to another org's streams); the helper
 -- itself is not. The same rule for what a contact screen shows as before: INSERT, and an UPDATE that changes the kind, name, tax code, address, email, phone, company link, duplicate mark or version. Hint
--- payloads hold ids only. The helper is also used by the deals' triggers (20270326170000_ludy_crm_deal_stream_hints_bounded.sql). Idempotent; applied files stay untouched.
+-- payloads hold ids only. The helper is also used by the deals' triggers (20270326220000_ludy_crm_deal_stream_hints_bounded.sql). Idempotent; applied files stay untouched.
 SET LOCAL lock_timeout = '2s';
 
 -- Bounded hints for a statement batch: at most 20 distinct ids per org and type across the transaction, then the nil id on the 21st distinct id, nothing after.
