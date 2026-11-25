@@ -622,14 +622,62 @@ export async function splitJoinFrames(framedPath: string, dir: string, signal?: 
   }
 }
 
+// The ffmpeg demuxer to force on an input, from the container name the probe reported. Only the containers probeFile allows have one; any other name is refused here too, so an input can never be left to ffmpeg's own guess.
+const INPUT_DEMUXERS: ReadonlyMap<string, string> = new Map([
+  ['ogg', 'ogg'],
+  ['opus', 'ogg'],
+  ['matroska', 'matroska'],
+  ['webm', 'matroska'],
+  ['mov', 'mov'],
+  ['mp4', 'mov'],
+  ['m4a', 'mov'],
+  ['wav', 'wav'],
+  ['mp3', 'mp3'],
+  ['aac', 'aac'],
+  ['flac', 'flac'],
+]);
+export function demuxerOf(formatName: string): string {
+  const demuxer = INPUT_DEMUXERS.get(formatName.split(',')[0] ?? '');
+  if (!demuxer) throw new MediaExecutionError('malformed_media', 'Unsupported or unsafe media format');
+  return demuxer;
+}
+
+// The arguments of the join. ffmpeg applies -protocol_whitelist and -f to the NEXT input only, so every input carries its own (runCommand's one whitelist covers the first input alone): the file protocol only, and the
+// demuxer the probe named instead of one ffmpeg guesses from the bytes. Only our own temp file names reach ffmpeg.
+export function joinArgs(inputs: ReadonlyArray<{ path: string; format: string }>, graph: string, bitrateKbps: number, outputPath: string): string[] {
+  return [
+    '-y',
+    '-v',
+    'error',
+    ...inputs.flatMap((input) => ['-protocol_whitelist', 'file', '-f', demuxerOf(input.format), '-i', input.path]),
+    '-filter_complex',
+    graph,
+    '-map',
+    '[out]',
+    '-t',
+    String(MEDIA_LIMITS.maxDurationSeconds + 60),
+    '-c:a',
+    'libopus',
+    '-b:a',
+    `${bitrateKbps}k`,
+    '-ac',
+    '1',
+    '-ar',
+    String(MEDIA_LIMITS.defaultOpusSampleRate),
+    outputPath,
+  ];
+}
+
 export async function joinAudioFiles(framedPath: string, dir: string, outputPath: string, options?: NormalizeOptions): Promise<MediaNormalizeResult> {
   const parts = await splitJoinFrames(framedPath, dir, options?.signal);
   // The framed body was cut back to its first frame header as the parts were copied out; nothing of it is needed now.
   rmSync(framedPath, { force: true });
   // Each part must hold audio and be a container the sandbox allows (probeFile), and the length of the whole is what the parts really hold (measureFile decodes), against the same duration cap as one recording.
   let seconds = 0;
+  const formats: string[] = [];
   for (const part of parts) {
     const measured = await measureFile(part, options);
+    formats.push(demuxerOf(measured.format));
     if (!measured.hasAudio) throw new MediaExecutionError('no_audio_stream', 'A part of the recording contains no audio stream to join');
     seconds += measured.durationSeconds;
     if (seconds > MEDIA_LIMITS.maxDurationSeconds + 60) {
@@ -644,7 +692,7 @@ export async function joinAudioFiles(framedPath: string, dir: string, outputPath
     `${labels.join('')}concat=n=${parts.length}:v=0:a=1[out]`,
   ].join(';');
   // The timestamps of every part start at its own first sample (asetpts), so a gap or jump inside a part cannot stretch the output, and the output is cut at the duration cap as a second guard.
-  const args = ['-y', '-v', 'error', ...parts.flatMap((part) => ['-i', part]), '-filter_complex', graph, '-map', '[out]', '-t', String(MEDIA_LIMITS.maxDurationSeconds + 60), '-c:a', 'libopus', '-b:a', `${bitrateKbps}k`, '-ac', '1', '-ar', String(MEDIA_LIMITS.defaultOpusSampleRate), outputPath];
+  const args = joinArgs(parts.map((path, i) => ({ path, format: formats[i] as string })), graph, bitrateKbps, outputPath);
   await runCommand('ffmpeg', args, options);
   const outProbe = await probeFile(outputPath, options);
   return {
