@@ -63,11 +63,24 @@ export const labelAdd = defineCommand({
     const again = have.find((r) => labelKey(r.label) === labelKey(label));
     if (again) return zLabelAdded.parse({ meetingId: input.meetingId, labelId: again.id, label: again.label, created: false });
     if (have.length >= MEETING_LABELS_MAX) throw new DomainError('MEETING_LABEL_LIMIT', 422, `A meeting can have at most ${MEETING_LABELS_MAX} labels`);
+    // The unique index on the lower-cased text is the last word on "the same label": a spelling the code's comparison misses (a rare case fold) still lands on it, and is answered as "already there", not as a failure.
     const row = await ctx.trx
       .insertInto('ludy_meetings.meeting_label')
       .values({ org_id: ctx.orgId, meeting_id: input.meetingId, label, created_by: userId })
+      .onConflict((oc) => oc.doNothing())
       .returning('id')
-      .executeTakeFirstOrThrow();
+      .executeTakeFirst();
+    if (!row) {
+      const existing = await ctx.trx
+        .selectFrom('ludy_meetings.meeting_label')
+        .select(['id', 'label'])
+        .where('org_id', '=', ctx.orgId)
+        .where('meeting_id', '=', input.meetingId)
+        .where(sql<boolean>`pg_catalog.lower(label) = pg_catalog.lower(${label})`)
+        .executeTakeFirst();
+      if (!existing) throw new DomainError('MEETING_LABEL_INVALID', 422, 'This text cannot be used as a label');
+      return zLabelAdded.parse({ meetingId: input.meetingId, labelId: existing.id, label: existing.label, created: false });
+    }
     ctx.audit({ meetingId: input.meetingId, labelId: row.id, created: true });
     return zLabelAdded.parse({ meetingId: input.meetingId, labelId: row.id, label, created: true });
   },

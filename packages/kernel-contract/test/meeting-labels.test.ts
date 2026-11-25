@@ -34,8 +34,16 @@ describe('meeting label text (#4955)', () => {
     expect(labelProblem('Gọi 0901 234 567')).toBe('digits');
     expect(labelProblem('MST 0101.234.567')).toBe('digits');
     expect(labelProblem('1234567')).toBe('digits');
-    // Six digits are fine.
+    // Separators a phone number or an ID is written with do not hide the run: spaces, dots, dashes, slashes, brackets and a plus.
+    for (const bad of ['090-123-4567', '(090) 123 4567', '+84 90 123 4567', '090/123/4567', '0101-234-567']) expect(labelProblem(bad), bad).toBe('digits');
+    // Six digits are fine, and so is a month and year or a date without the year.
     expect(labelProblem('123456')).toBeNull();
+    expect(labelProblem('Tháng 12/2026')).toBeNull();
+    expect(labelProblem('Họp 25/11')).toBeNull();
+    // Invisible format characters are refused: bidi isolates, the soft hyphen, the Arabic letter mark, the Mongolian vowel separator, interlinear marks and tag characters.
+    for (const code of [0x2066, 0x2067, 0x2068, 0x2069, 0x00ad, 0x061c, 0x180e, 0xfff9, 0xfffa, 0xfffb, 0xe0001, 0xe0041, 0xe007f, 0xfeff]) {
+      expect(labelProblem(`ab${String.fromCodePoint(code)}cd`), code.toString(16)).toBe('control');
+    }
   });
 
   it('counts the characters of a label, not its UTF-16 units', () => {

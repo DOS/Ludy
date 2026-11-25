@@ -31,11 +31,26 @@ export function labelProblem(text: string): LabelProblem | null {
   if ([...clean].length > MEETING_LABEL_LENGTH_MAX) return 'too_long';
   for (const ch of clean) {
     const code = ch.codePointAt(0) ?? 0;
-    // Control characters, line and paragraph separators, zero-width and bidi marks (a label made of them would be invisible or would flip the text around it).
-    if (code < 0x20 || (code >= 0x7f && code <= 0x9f) || (code >= 0x200b && code <= 0x200f) || (code >= 0x2028 && code <= 0x202e) || (code >= 0x2060 && code <= 0x2064) || code === 0xfeff) return 'control';
+    // Control characters, line and paragraph separators, zero-width, soft-hyphen and bidi marks and isolates, the Arabic letter mark, the Mongolian vowel separator, the interlinear annotation marks and the
+    // tag characters (a label made of them would be invisible, or would flip or hide the text around it).
+    if (
+      code < 0x20 ||
+      (code >= 0x7f && code <= 0x9f) ||
+      code === 0x00ad ||
+      code === 0x061c ||
+      code === 0x180e ||
+      (code >= 0x200b && code <= 0x200f) ||
+      (code >= 0x2028 && code <= 0x202e) ||
+      (code >= 0x2060 && code <= 0x2069) ||
+      code === 0xfeff ||
+      (code >= 0xfff9 && code <= 0xfffb) ||
+      (code >= 0xe0000 && code <= 0xe007f)
+    ) {
+      return 'control';
+    }
   }
   if (clean.includes('@')) return 'address';
-  if (/\d(?:[\s.]?\d){6,}/.test(clean)) return 'digits';
+  if (/\d(?:[\s.\-/()+]?\d){6,}/.test(clean)) return 'digits';
   return null;
 }
 
