@@ -103,8 +103,14 @@ export const zHrOkrTreeResult = z.object({
 });
 export type HrOkrTreeResult = z.infer<typeof zHrOkrTreeResult>;
 
+export const HR_OKR_PROJECT_OPTIONS_LIMIT_DEFAULT = 50;
+export const HR_OKR_PROJECT_OPTIONS_LIMIT_MAX = 200;
+
 export const zHrOkrProjectOptionsAsk = z.strictObject({
   includeArchived: z.boolean().default(false),
+  search: z.string().trim().min(1).max(120).optional(),
+  cursor: zId.optional(),
+  limit: z.number().int().min(1).max(HR_OKR_PROJECT_OPTIONS_LIMIT_MAX).optional(),
 });
 export type HrOkrProjectOptionsAsk = z.input<typeof zHrOkrProjectOptionsAsk>;
 
@@ -121,6 +127,8 @@ export type HrOkrProjectOption = z.infer<typeof zHrOkrProjectOption>;
 export const zHrOkrProjectOptionsResult = z.object({
   projectsAvailable: z.boolean(),
   projects: z.array(zHrOkrProjectOption),
+  hasMore: z.boolean().optional(),
+  nextCursor: zId.nullable().optional(),
 });
 export type HrOkrProjectOptionsResult = z.infer<typeof zHrOkrProjectOptionsResult>;
 
