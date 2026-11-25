@@ -35,6 +35,7 @@ import { MeetingSearch } from '../components/meeting-search.tsx';
 import { MeetingAsk } from '../components/meeting-ask.tsx';
 import { MeetingDigest } from '../components/meeting-digest.tsx';
 import { MeetingLoad } from '../components/meeting-load.tsx';
+import { TrackersWeek } from '../components/meeting-trackers.tsx';
 import { TodayAgenda, UpcomingAgenda } from '../components/meeting-agenda.tsx';
 import { ImportAutoClaim } from '../components/meeting-import-claim.tsx';
 import { meetingsInstalled } from '../components/linked-meetings.tsx';
@@ -67,7 +68,7 @@ const STATUS_VARIANTS: Record<string, 'success' | 'secondary' | 'outline' | 'des
 };
 
 type MeetingsTab = 'recorded' | 'today' | 'upcoming';
-type UtilityTool = 'digest' | 'ask' | 'search' | 'load';
+type UtilityTool = 'digest' | 'ask' | 'search' | 'load' | 'trackers';
 
 // The org's three retention periods (ADR-0047 point 7, plan section 9). Everyone who reads meetings sees them; an owner or admin changes them. A change
 // applies to meetings recorded afterwards. The AI coworker has no part here: the periods are the org's own, and the core works with AI off.
@@ -647,6 +648,18 @@ export function MeetingsPage() {
               >
                 {t('tools.search')}
               </Button>
+              <Button
+                type="button"
+                variant={activeTool === 'trackers' ? 'secondary' : 'outline'}
+                size="sm"
+                className="max-md:min-h-11"
+                aria-expanded={activeTool === 'trackers'}
+                aria-controls="meetings-tool-panel-trackers"
+                data-testid="meetings-tool-trackers"
+                onClick={() => toggleTool('trackers')}
+              >
+                {t('tools.trackers')}
+              </Button>
               {canSeeLoad && (
                 <Button
                   type="button"
@@ -670,6 +683,9 @@ export function MeetingsPage() {
             </div>
             <div id="meetings-tool-panel-search" hidden={activeTool !== 'search'} className="rounded-lg border border-border bg-card p-4">
               {openedTools.has('search') && <MeetingSearch slug={slug} />}
+            </div>
+            <div id="meetings-tool-panel-trackers" hidden={activeTool !== 'trackers'}>
+              {openedTools.has('trackers') && <TrackersWeek slug={slug} />}
             </div>
             {canSeeLoad && (
               <div id="meetings-tool-panel-load" hidden={activeTool !== 'load'}>
