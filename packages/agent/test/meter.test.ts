@@ -122,6 +122,50 @@ describe('metered', () => {
     expect(a.admitted.map((c) => c.orgId)).toEqual(['org-a']);
     expect(b.admitted.map((c) => c.orgId)).toEqual(['org-b']);
   });
+
+  it('forwards reservation ids to record and releases early on failures without usage', async () => {
+    const events: string[] = [];
+    const meter: AiMeter = {
+      admit: async (call) => {
+        events.push(`admit:${call.feature}`);
+        return 'res-123';
+      },
+      record: async (_call, _usage, reservationId) => {
+        events.push(`record:${reservationId ?? 'none'}`);
+      },
+      release: async (_call, reservationId) => {
+        events.push(`release:${reservationId}`);
+      },
+    };
+
+    await withAiScope({ orgId: 'org-1', meter }, () => metered('social.draft', async () => answer));
+    expect(events).toEqual(['admit:social.draft', 'record:res-123']);
+
+    events.length = 0;
+    await expect(
+      withAiScope({ orgId: 'org-1', meter }, () =>
+        metered('social.draft', async () => {
+          throw new Error('provider 503');
+        }),
+      ),
+    ).rejects.toThrow('provider 503');
+    expect(events).toEqual(['admit:social.draft', 'release:res-123']);
+
+    const brokenRelease: AiMeter = {
+      admit: async () => 'res-456',
+      record: async () => {},
+      release: async () => {
+        throw new Error('release failed');
+      },
+    };
+    await expect(
+      withAiScope({ orgId: 'org-1', meter: brokenRelease }, () =>
+        metered('social.draft', async () => {
+          throw new Error('original error');
+        }),
+      ),
+    ).rejects.toThrow('original error');
+  });
 });
 
 describe('aiCost', () => {

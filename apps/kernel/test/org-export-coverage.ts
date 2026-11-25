@@ -90,6 +90,7 @@ export const NOT_EXPORTED: Readonly<Record<string, string>> = {
   'ludy_kernel.agent_wake_delivery': 'a wake-up delivery queue row: runtime machinery',
   'ludy_kernel.agent_wake_signal_seen': 'which wake-up signals were seen: runtime machinery',
   'ludy_kernel.agent_wakeup': 'agent wake-ups: runtime machinery (offboarding already says so)',
+  'ludy_kernel.ai_budget_reservation': 'short-lived in-flight AI budget reservation holds: runtime machinery',
   'ludy_kernel.ai_run': 'agent run records with their cost and status: runtime machinery',
   'ludy_kernel.auth_session_org': "a member's session in the org: session record, not tenant data",
   'ludy_kernel.calendar_event_link': 'the sync state between a calendar event and its external copy (hash, attempts): recomputed by the next sync',

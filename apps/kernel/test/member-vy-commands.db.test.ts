@@ -7,10 +7,12 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { AiBudgetExhaustedError, metered, withAiScope } from '@ludy/agent';
 import { createDb, createPool } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import { Runtime } from '@ludy/kernel-runtime';
+import { memberMeter } from '../src/ai-meter.ts';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
 import { contextToken } from './invariant/fixtures/context-token.ts';
 
@@ -289,5 +291,85 @@ suite('member Vy commands (ADR-0049 stage A slice 3)', () => {
     const declared = kernelQueries({ inboundDomain: 'in.test' }).filter((q) => q.name === 'kernel.member_vy.run.live' || q.name === 'kernel.member_vy.run.latest');
     expect(declared.map((q) => q.name).sort()).toEqual(['kernel.member_vy.run.latest', 'kernel.member_vy.run.live']);
     for (const q of declared) expect((q as { memberVy?: unknown }).memberVy ?? null, q.name).toBeNull();
+  });
+
+  it('keeps member-Vy hard-stop monthly caps strict under concurrent metered() calls and releases failed calls (#3979)', async () => {
+    await resetRuns();
+    const run = await start(users.alice);
+    const own = (await sqlAdmin<{ id: string }>(`SELECT id FROM ludy_kernel.agent WHERE org_id = $1 AND kind = 'member_vy' AND member_user_id = $2`, [orgId, users.alice]))[0]?.id;
+    expect(own).toBeTruthy();
+
+    await sqlAdmin(`DELETE FROM ludy_kernel.org_usage WHERE org_id = $1 AND metric = 'ai_cost'`, [orgId]);
+    await sqlAdmin(`DELETE FROM ludy_kernel.budget_policy WHERE org_id = $1`, [orgId]);
+    // Set an org hard-stop cap of 0.009500: two 0.004500 calls fit, the third is rejected.
+    await runtime.execute('kernel.agent.budget.set', { scope: 'org', target: '*', monthlyLimit: '0.009500' }, { actor: asMfa(users.owner), orgId });
+
+    const price = { inputPerMTok: '3', outputPerMTok: '15' };
+    const usage = { inputTokens: 1000, outputTokens: 100 };
+    const meter = memberMeter(runtime, asUser(users.alice), { price });
+
+    let inFlight = 0;
+    let releaseHold!: () => void;
+    const holdOpen = new Promise<void>((resolve) => {
+      releaseHold = resolve;
+    });
+
+    const settledPromise = Promise.allSettled(
+      Array.from({ length: 4 }, () =>
+        withAiScope({ orgId, memberRunId: run.runId, meter }, () =>
+          metered(
+            'notes.summary',
+            async () => {
+              inFlight += 1;
+              await holdOpen;
+              return { usage };
+            },
+            undefined,
+            usage,
+          ),
+        ),
+      ),
+    );
+
+    const deadline = Date.now() + 3000;
+    while (inFlight < 2 && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    await new Promise((r) => setTimeout(r, 100));
+    releaseHold();
+
+    const settled = await settledPromise;
+    expect(settled.filter((r) => r.status === 'fulfilled')).toHaveLength(2);
+    const rejected = settled.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+    expect(rejected).toHaveLength(2);
+    for (const r of rejected) expect(r.reason).toBeInstanceOf(AiBudgetExhaustedError);
+
+    expect(await sqlAdmin(`SELECT 1 FROM ludy_kernel.ai_budget_reservation WHERE org_id = $1`, [orgId])).toHaveLength(0);
+
+    // A failed call releases its hold immediately; another member cannot release Alice's reservation.
+    await sqlAdmin(`DELETE FROM ludy_kernel.org_usage WHERE org_id = $1 AND metric = 'ai_cost'`, [orgId]);
+    await expect(
+      withAiScope({ orgId, memberRunId: run.runId, meter }, () =>
+        metered(
+          'notes.summary',
+          async () => {
+            throw new Error('vy provider failed');
+          },
+          undefined,
+          usage,
+        ),
+      ),
+    ).rejects.toThrow('vy provider failed');
+    expect(await sqlAdmin(`SELECT 1 FROM ludy_kernel.ai_budget_reservation WHERE org_id = $1`, [orgId])).toHaveLength(0);
+
+    const held = await exec<{ allowed: true; reservationId: string }>(users.alice, 'kernel.member_vy.meter.reserve', {
+      feature: 'notes.summary',
+      projectedCost: '0.004500',
+    });
+    expect(held.allowed).toBe(true);
+    // Another member cannot release Alice's reservation.
+    expect(await exec(users.owner, 'kernel.member_vy.meter.release', { reservationId: held.reservationId })).toEqual({ released: false });
+    expect(await exec(users.alice, 'kernel.member_vy.meter.release', { reservationId: held.reservationId })).toEqual({ released: true });
+    await sqlAdmin(`DELETE FROM ludy_kernel.budget_policy WHERE org_id = $1`, [orgId]);
   });
 });

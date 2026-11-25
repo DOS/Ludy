@@ -347,7 +347,11 @@ suite('the AI budget meter on PostgreSQL (#2382)', () => {
     // The check before the read lets it through (the budget had room a moment ago); the call's own admission finds it spent.
     const real = systemMeter(worker, { price: PRICE });
     let asked = 0;
-    const racing: AiMeter = { admit: async (c) => (++asked === 1 ? undefined : real.admit(c)), record: (c, u) => real.record(c, u) };
+    const racing: AiMeter = {
+      admit: async (c) => (++asked === 1 ? undefined : real.admit(c)),
+      record: (c, u, reservationId) => real.record(c, u, reservationId),
+      release: (c, reservationId) => (real.release ? real.release(c, reservationId) : Promise.resolve()),
+    };
     let modelCalls = 0;
     const reader: InvoiceReader = {
       fromText: async () => null,
@@ -392,13 +396,147 @@ suite('the AI budget meter on PostgreSQL (#2382)', () => {
     const asMember = () => withAiScope({ orgId: o.orgId, meter: memberMeter(rt, asUser(o.owner), { price: PRICE }) }, () => metered('social.rewrite', async () => ({ usage })));
     await asMember();
     await expect(asMember()).rejects.toMatchObject({ name: 'AiBudgetExhaustedError', scope: 'org' });
-    // The commands the meter records with are for the meter: nobody calls one for itself, and no user calls the system's.
+    // The commands the meter reserves, releases and records with are for the meter: nobody calls one for itself, and no user calls the system's.
     await expect(rt.execute('kernel.ai.usage.record', { feature: 'social.draft', module: 'social', agentId: null, inputTokens: 1, outputTokens: 1, cost: '0' }, { actor: asUser(o.owner), orgId: o.orgId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(rt.execute('kernel.ai.budget.reserve', { feature: 'social.draft', module: 'social', agentId: null, projectedCost: '0' }, { actor: asUser(o.owner), orgId: o.orgId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(rt.execute('kernel.ai.budget.release', { reservationId: randomUUID() }, { actor: asUser(o.owner), orgId: o.orgId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
     await expect(rt.query('kernel.ai.budget.check', { module: 'social', agentId: null }, { actor: asUser(o.owner), orgId: o.orgId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
     await expect(worker.execute('kernel.ai.budget.ensure_default', { monthlyLimit: '9' }, { actor: asUser(o.owner), orgId: o.orgId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
 
     const report = await rt.query<{ spent: string; calls: number; byFeature: Array<{ feature: string; module: string; calls: number; inputTokens: number; outputTokens: number; cost: string }>; byAgent: unknown[] }>('kernel.ai.usage.report', {}, { actor: asUser(o.owner), orgId: o.orgId });
     expect(report).toMatchObject({ spent: CALL_COST, calls: 1, byAgent: [] });
     expect(report.byFeature).toEqual([{ feature: 'social.rewrite', module: 'social', calls: 1, inputTokens: 1000, outputTokens: 100, cost: CALL_COST }]);
+  });
+
+  it('keeps hard-stop monthly caps strict under concurrent metered() calls, releases on failures, and sweeps expired holds (#3979)', async () => {
+    const runConcurrentCapCheck = async (meterFactory: (o: { orgId: string; owner: string }) => AiMeter) => {
+      const o = await org();
+      // Budget allows 2 calls of 0.004500 (0.009000 < 0.009500) and blocks a 3rd (0.013500 >= 0.009500).
+      await setBudget(o, '0.009500');
+      const meter = meterFactory(o);
+
+      let inFlight = 0;
+      let releaseHold!: () => void;
+      const holdOpen = new Promise<void>((resolve) => {
+        releaseHold = resolve;
+      });
+
+      const resultsPromise = Promise.allSettled(
+        Array.from({ length: 4 }, () =>
+          withAiScope({ orgId: o.orgId, meter }, () =>
+            metered(
+              'social.draft',
+              async () => {
+                inFlight += 1;
+                await holdOpen;
+                return { usage };
+              },
+              undefined,
+              usage,
+            ),
+          ),
+        ),
+      );
+
+      // Give all 4 concurrent calls time to run admit(); release barrier once admitted calls sit in flight.
+      const deadline = Date.now() + 3000;
+      while (inFlight < 2 && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      await new Promise((r) => setTimeout(r, 100));
+      releaseHold();
+
+      const results = await resultsPromise;
+      const fulfilled = results.filter((r) => r.status === 'fulfilled');
+      const rejected = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+      expect(fulfilled).toHaveLength(2);
+      expect(rejected).toHaveLength(2);
+      for (const r of rejected) expect(r.reason).toBeInstanceOf(AiBudgetExhaustedError);
+
+      const rows = await ledger(o.orgId);
+      expect(rows).toHaveLength(2);
+      const left = await admin((c) => c.query<{ n: string }>('SELECT count(*)::text AS n FROM ludy_kernel.ai_budget_reservation WHERE org_id = $1', [o.orgId]).then((r) => r.rows[0]?.n));
+      expect(left).toBe('0');
+      return o;
+    };
+
+    const sysOrg = await runConcurrentCapCheck(() => systemMeter(worker, { price: PRICE }));
+    const memOrg = await runConcurrentCapCheck((o) => memberMeter(rt, asUser(o.owner), { price: PRICE }));
+
+    // A failed call releases its reservation immediately so the next call fits under the cap.
+    const failOrg = await org();
+    await setBudget(failOrg, '0.009000');
+    const memMeter = memberMeter(rt, asUser(failOrg.owner), { price: PRICE });
+    await expect(
+      withAiScope({ orgId: failOrg.orgId, meter: memMeter }, () =>
+        metered(
+          'social.draft',
+          async () => {
+            throw new Error('upstream timeout');
+          },
+          undefined,
+          usage,
+        ),
+      ),
+    ).rejects.toThrow('upstream timeout');
+    const leftAfterFail = await admin((c) => c.query<{ n: string }>('SELECT count(*)::text AS n FROM ludy_kernel.ai_budget_reservation WHERE org_id = $1', [failOrg.orgId]).then((r) => r.rows[0]?.n));
+    expect(leftAfterFail).toBe('0');
+    await expect(
+      withAiScope({ orgId: failOrg.orgId, meter: memMeter }, () => metered('social.draft', async () => ({ usage }), undefined, usage)),
+    ).resolves.toBeDefined();
+
+    // Expired reservations do not permanently block the budget and are swept automatically by the next reserve.
+    // memOrg has 0.009000 spent out of 0.009500 (0.000500 headroom); an expired 0.008000 hold must be ignored and swept.
+    const expiredId = randomUUID();
+    await admin((c) =>
+      c.query(
+        `INSERT INTO ludy_kernel.ai_budget_reservation (org_id, id, module, agent_id, feature, amount, expires_at)
+         VALUES ($1, $2, 'social', NULL, 'social.draft', 0.008000, pg_catalog.now() - pg_catalog.make_interval(mins => 1))`,
+        [memOrg.orgId, expiredId],
+      ),
+    );
+    const sweptRes = await rt.execute<{ allowed: true; reservationId: string }>(
+      'kernel.ai.budget.reserve_member',
+      { module: 'social', agentId: null, feature: 'social.draft', projectedCost: '0.000400' },
+      { actor: asUser(memOrg.owner), orgId: memOrg.orgId },
+    );
+    expect(sweptRes).toMatchObject({ allowed: true, reservationId: expect.any(String) });
+    const remainingIds = await admin((c) =>
+      c
+        .query<{ id: string }>('SELECT id FROM ludy_kernel.ai_budget_reservation WHERE org_id = $1', [memOrg.orgId])
+        .then((r) => r.rows.map((row) => row.id)),
+    );
+    expect(remainingIds).toEqual([sweptRes.reservationId]);
+    expect(await rt.execute('kernel.ai.budget.release_member', { reservationId: sweptRes.reservationId }, { actor: asUser(memOrg.owner), orgId: memOrg.orgId })).toEqual({ released: true });
+
+    // Cross-org isolation: one org cannot release another org's active reservation.
+    const activeRes = await worker.execute<{ allowed: boolean; reservationId?: string }>(
+      'kernel.ai.budget.reserve',
+      { module: 'social', agentId: null, feature: 'social.draft', projectedCost: '0.001000' },
+      { actor: system, orgId: sysOrg.orgId },
+    );
+    expect(activeRes).toMatchObject({ allowed: false }); // sysOrg already spent 0.009000 + 0.001000 >= 0.009500
+    const openOrg = await org();
+    await setBudget(openOrg, '5');
+    const held = await worker.execute<{ allowed: true; reservationId: string }>(
+      'kernel.ai.budget.reserve',
+      { module: 'social', agentId: null, feature: 'social.draft', projectedCost: '0.001000' },
+      { actor: system, orgId: openOrg.orgId },
+    );
+    expect(held.allowed).toBe(true);
+    expect(
+      await rt.execute('kernel.ai.budget.release_member', { reservationId: held.reservationId }, { actor: asUser(memOrg.owner), orgId: memOrg.orgId }),
+    ).toEqual({ released: false });
+    expect(
+      await worker.execute('kernel.ai.budget.release', { reservationId: held.reservationId }, { actor: system, orgId: openOrg.orgId }),
+    ).toEqual({ released: true });
+    // reserve_member refuses defaultMonthlyBudget via strict input check.
+    await expect(
+      rt.execute(
+        'kernel.ai.budget.reserve_member',
+        { module: 'social', agentId: null, feature: 'social.draft', projectedCost: '0', defaultMonthlyBudget: '99' },
+        { actor: asUser(openOrg.owner), orgId: openOrg.orgId },
+      ),
+    ).rejects.toMatchObject({ code: 'VALIDATION' });
   });
 });

@@ -6,10 +6,10 @@
 // factor). What a budget has spent is ludy_kernel.ai_budget_spent, the one function the agent run gates and this meter
 // read, so the numbers cannot disagree. The month is the calendar month in Asia/Ho_Chi_Minh.
 //
-// The worker (as the system) and the API (as the member who asked) ask the check before a model call and record what it
-// used after (@ludy/agent's metered(), through the AiMeter the caller's scope carries): one pair of definitions each,
-// since the API cannot enter the system context. At 100% of a hard-stop budget that covers the call the check says no;
-// calls in flight finish, so a budget can be passed by what was running. Nothing else is gated: posting, reading,
+// The worker (as the system) and the API (as the member who asked) reserve against covering hard-stop budgets under an
+// org-scoped advisory transaction lock before a model call begins (@ludy/agent's metered(), through the AiMeter the
+// caller's scope carries), release that reservation atomically when recording what the call used, and release it early
+// if the call fails without usage (unsettled holds expire after 10 minutes). Nothing else is gated: posting, reading,
 // approving, exports and the deterministic checks never ask.
 //
 // The worker's sweep tells the org's owners and admins once per budget, month and level when a budget crossed its
@@ -23,6 +23,7 @@ import {
   type CommandContext,
 } from "@ludy/kernel-runtime";
 import type { AgentScope, MemberRole } from "@ludy/db";
+import { acquireAdvisoryXactLock, advisoryLockKey } from "./advisory-lock.ts";
 import { notifyMembers, ownersAndAdmins } from "./notifications.ts";
 
 export const AI_BUDGET_NOTICE = "kernel.ai_budget";
@@ -39,12 +40,139 @@ const zModule = z
   .max(40)
   .regex(/^[a-z][a-z0-9_]*$/);
 const zAgentId = z.uuid();
+const zId = z.uuid();
 
 export type AiBudgetCheck =
   | { allowed: true; hasOrgBudget: boolean }
   | { allowed: false; scope: AgentScope; retryAt: string };
 
-// Whether the org may start a model call for a module (and an agent): no hard-stop budget that covers it is spent.
+export type AiBudgetReserve =
+  | { allowed: true; reservationId: string }
+  | { allowed: false; scope: AgentScope; retryAt: string };
+
+// Acquires the per-org advisory transaction lock for AI budget admission and default-budget seeding.
+export async function lockAiBudgetOrg(
+  trx: CommandContext["trx"],
+  orgId: string,
+): Promise<void> {
+  await sql`SET LOCAL lock_timeout = '3s'`.execute(trx);
+  await acquireAdvisoryXactLock(trx, advisoryLockKey("ai.budget", orgId));
+}
+
+// Atomically sweeps expired holds, seeds defaultMonthlyBudget if permitted and missing, checks all covering hard-stop
+// policies against spent + reserved + projectedCost, and inserts a 10-minute reservation hold when admitted.
+export async function reserveAiBudget(
+  trx: CommandContext["trx"],
+  params: {
+    orgId: string;
+    module: string;
+    agentId: string | null;
+    feature: string;
+    projectedCost: string;
+    defaultMonthlyBudget?: string | undefined;
+    allowDefaultSeed: boolean;
+  },
+): Promise<AiBudgetReserve> {
+  await lockAiBudgetOrg(trx, params.orgId);
+
+  await trx
+    .deleteFrom("ludy_kernel.ai_budget_reservation")
+    .where("org_id", "=", params.orgId)
+    .where("expires_at", "<=", sql<Date>`pg_catalog.now()`)
+    .execute();
+
+  const readCheck = async () => {
+    const { rows } = await sql<{
+      scope: AgentScope | null;
+      has_org: boolean;
+      retry_at: Date;
+    }>`
+      SELECT
+        (SELECT b.scope FROM ludy_kernel.budget_policy b
+         WHERE b.org_id = ${params.orgId}::uuid AND b.hard_stop
+           AND (b.scope = 'org' OR (b.scope = 'module' AND b.target = ${params.module}) OR (b.scope = 'agent' AND b.target = ${params.agentId}::text))
+           AND ludy_kernel.ai_budget_spent(b.org_id, b.scope, b.target)
+             + ludy_kernel.ai_budget_reserved(b.org_id, b.scope, b.target)
+             + ${params.projectedCost}::numeric >= b.monthly_limit
+         ORDER BY CASE b.scope WHEN 'agent' THEN 0 WHEN 'module' THEN 1 ELSE 2 END LIMIT 1) AS scope,
+        EXISTS (SELECT 1 FROM ludy_kernel.budget_policy o WHERE o.org_id = ${params.orgId}::uuid AND o.scope = 'org') AS has_org,
+        ((pg_catalog.date_trunc('month', pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh') + pg_catalog.make_interval(months => 1)) AT TIME ZONE 'Asia/Ho_Chi_Minh') AS retry_at`.execute(
+      trx,
+    );
+    const row = rows[0];
+    if (!row) throw new Error("budget reserve check returned no row");
+    return row;
+  };
+
+  let check = await readCheck();
+  if (
+    !check.scope &&
+    !check.has_org &&
+    params.allowDefaultSeed &&
+    params.defaultMonthlyBudget !== undefined
+  ) {
+    await trx
+      .insertInto("ludy_kernel.budget_policy")
+      .values({
+        org_id: params.orgId,
+        scope: "org",
+        target: "*",
+        monthly_limit: params.defaultMonthlyBudget,
+        warn_percent: 80,
+        hard_stop: true,
+        updated_by: DEPLOYMENT_DEFAULT_SETTER,
+      })
+      .onConflict((oc) => oc.columns(["org_id", "scope", "target"]).doNothing())
+      .execute();
+    check = await readCheck();
+  }
+
+  if (check.scope) {
+    return {
+      allowed: false,
+      scope: check.scope,
+      retryAt: check.retry_at.toISOString(),
+    };
+  }
+
+  const inserted = await trx
+    .insertInto("ludy_kernel.ai_budget_reservation")
+    .values({
+      org_id: params.orgId,
+      module: params.module,
+      agent_id: params.agentId,
+      feature: params.feature,
+      amount: params.projectedCost,
+      expires_at: sql<Date>`pg_catalog.now() + pg_catalog.make_interval(mins => 10)`,
+    })
+    .returning("id")
+    .executeTakeFirstOrThrow();
+
+  return { allowed: true, reservationId: inserted.id };
+}
+
+// Deletes one reservation hold inside the caller's org (and matching agent when scoped).
+export async function deleteAiBudgetReservation(
+  trx: CommandContext["trx"],
+  orgId: string,
+  reservationId: string,
+  agentId?: string | null,
+): Promise<boolean> {
+  let query = trx
+    .deleteFrom("ludy_kernel.ai_budget_reservation")
+    .where("org_id", "=", orgId)
+    .where("id", "=", reservationId);
+  if (agentId !== undefined) {
+    query =
+      agentId === null
+        ? query.where("agent_id", "is", null)
+        : query.where("agent_id", "=", agentId);
+  }
+  const deleted = await query.returning("id").executeTakeFirst();
+  return deleted !== undefined;
+}
+
+// Whether the org may start a model call for a module (and an agent): no hard-stop budget that covers it is spent or reserved.
 // hasOrgBudget says whether the org has a budget of its own, so the caller can give it the deployment's default.
 const checkQuery = (name: string, access: readonly MemberRole[] | "system") =>
   defineQuery({
@@ -61,7 +189,8 @@ const checkQuery = (name: string, access: readonly MemberRole[] | "system") =>
         (SELECT b.scope FROM ludy_kernel.budget_policy b
          WHERE b.org_id = ${ctx.orgId}::uuid AND b.hard_stop
            AND (b.scope = 'org' OR (b.scope = 'module' AND b.target = ${input.module}) OR (b.scope = 'agent' AND b.target = ${input.agentId}::text))
-           AND ludy_kernel.ai_budget_spent(b.org_id, b.scope, b.target) >= b.monthly_limit
+           AND ludy_kernel.ai_budget_spent(b.org_id, b.scope, b.target)
+             + ludy_kernel.ai_budget_reserved(b.org_id, b.scope, b.target) >= b.monthly_limit
          ORDER BY CASE b.scope WHEN 'agent' THEN 0 WHEN 'module' THEN 1 ELSE 2 END LIMIT 1) AS scope,
         EXISTS (SELECT 1 FROM ludy_kernel.budget_policy o WHERE o.org_id = ${ctx.orgId}::uuid AND o.scope = 'org') AS has_org,
         ((pg_catalog.date_trunc('month', pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh') + pg_catalog.make_interval(months => 1)) AT TIME ZONE 'Asia/Ho_Chi_Minh') AS retry_at`.execute(
@@ -89,6 +218,101 @@ export const aiBudgetCheckMember = checkQuery(
   AI_MEMBER_ROLES,
 );
 
+const zReserveSystemInput = z.strictObject({
+  module: zModule,
+  agentId: zAgentId.nullable(),
+  feature: zFeature,
+  projectedCost: zAmount,
+  defaultMonthlyBudget: zAmount.optional(),
+});
+
+const zReserveMemberInput = z.strictObject({
+  module: zModule,
+  agentId: zAgentId.nullable(),
+  feature: zFeature,
+  projectedCost: zAmount,
+});
+
+const reserveCommand = (
+  name: string,
+  access: readonly MemberRole[] | "system",
+) =>
+  defineCommand({
+    name,
+    input: access === "system" ? zReserveSystemInput : zReserveMemberInput,
+    risk: "R1",
+    sideEffect: "internal",
+    access,
+    handler: async (
+      ctx,
+      input: z.infer<typeof zReserveSystemInput>,
+    ): Promise<AiBudgetReserve> => {
+      const result = await reserveAiBudget(ctx.trx, {
+        orgId: ctx.orgId,
+        module: input.module,
+        agentId: input.agentId,
+        feature: input.feature,
+        projectedCost: input.projectedCost,
+        defaultMonthlyBudget:
+          access === "system" ? input.defaultMonthlyBudget : undefined,
+        allowDefaultSeed: access === "system",
+      });
+      ctx.audit({
+        feature: input.feature,
+        module: input.module,
+        agent: input.agentId,
+        projectedCost: input.projectedCost,
+        allowed: result.allowed,
+        ...(result.allowed
+          ? { reservationId: result.reservationId }
+          : { scope: result.scope }),
+      });
+      return result;
+    },
+  });
+
+export const aiBudgetReserve = reserveCommand(
+  "kernel.ai.budget.reserve",
+  "system",
+);
+export const aiBudgetReserveMember = reserveCommand(
+  "kernel.ai.budget.reserve_member",
+  AI_MEMBER_ROLES,
+);
+
+const releaseCommand = (
+  name: string,
+  access: readonly MemberRole[] | "system",
+) =>
+  defineCommand({
+    name,
+    input: z.strictObject({ reservationId: zId }),
+    risk: "R1",
+    sideEffect: "internal",
+    access,
+    handler: async (ctx, input): Promise<{ released: boolean }> => {
+      const released = await deleteAiBudgetReservation(
+        ctx.trx,
+        ctx.orgId,
+        input.reservationId,
+      );
+      ctx.audit({
+        reservationId: input.reservationId,
+        released,
+      });
+      return { released };
+    },
+  });
+
+export const aiBudgetRelease = releaseCommand(
+  "kernel.ai.budget.release",
+  "system",
+);
+export const aiBudgetReleaseMember = releaseCommand(
+  "kernel.ai.budget.release_member",
+  AI_MEMBER_ROLES,
+);
+
 // Gives an org that has no budget of its own the deployment's default (AI_DEFAULT_MONTHLY_BUDGET): the first time it uses
 // AI. It never changes a budget that exists, so it cannot raise one; an owner replaces it with kernel.agent.budget.set.
 export const aiBudgetEnsureDefault = defineCommand({
@@ -98,6 +322,7 @@ export const aiBudgetEnsureDefault = defineCommand({
   sideEffect: "internal",
   access: "system",
   handler: async (ctx, input) => {
+    await lockAiBudgetOrg(ctx.trx, ctx.orgId);
     const created = await ctx.trx
       .insertInto("ludy_kernel.budget_policy")
       .values({
@@ -157,10 +382,11 @@ const zRecordInput = z.strictObject({
   inputTokens: z.number().int().min(0).max(100_000_000),
   outputTokens: z.number().int().min(0).max(100_000_000),
   cost: zAmount,
+  reservationId: zId.optional(),
 });
 
 // What one model call used. The row holds the feature, the module, the agent, the tokens and the estimated cost, and
-// nothing the call read or wrote.
+// nothing the call read or wrote. Releases its in-flight reservation in the same transaction when provided.
 const recordCommand = (
   name: string,
   access: readonly MemberRole[] | "system",
@@ -185,6 +411,9 @@ const recordCommand = (
           output_tokens: input.outputTokens,
         })
         .execute();
+      if (input.reservationId) {
+        await deleteAiBudgetReservation(ctx.trx, ctx.orgId, input.reservationId);
+      }
       ctx.audit({
         feature: input.feature,
         module: input.module,
@@ -417,6 +646,10 @@ export async function releaseWaitingFiles(ctx: CommandContext): Promise<number> 
 
 export const aiBudgetCommands = [
   aiBudgetEnsureDefault,
+  aiBudgetReserve,
+  aiBudgetReserveMember,
+  aiBudgetRelease,
+  aiBudgetReleaseMember,
   aiBudgetNotify,
   aiUsageRecord,
   aiUsageRecordMember,

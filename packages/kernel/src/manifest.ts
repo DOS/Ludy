@@ -15,6 +15,7 @@ export const kernelManifest = defineModule({
       agent: columns(['org_id', 'id', 'template_key', 'display_name', 'runtime', 'model_alias', 'status', 'max_risk', 'daily_run_cap', 'created_by', 'created_at', 'updated_at', 'kind', 'member_user_id']),
       agent_template: columns(['key', 'module', 'title', 'role_key', 'max_risk', 'job_description', 'subscribes', 'daily_run_cap']),
       agent_wakeup: columns(['org_id', 'id', 'agent_id', 'status', 'reasons', 'request_count', 'tainted', 'request_depth', 'run_id', 'created_at', 'updated_at']),
+      ai_budget_reservation: columns(['org_id', 'id', 'module', 'agent_id', 'feature', 'amount', 'expires_at', 'created_at']),
       ai_run: columns(['org_id', 'id', 'agent_id', 'module', 'status', 'tainted', 'request_depth', 'cost', 'started_at', 'expires_at', 'finished_at', 'error', 'private_read', 'feature']),
       approval_preset: columns(['key', 'ledger_chief_accountant_only']),
       archive_batch: columns(['seq', 'window_from', 'window_to', 'row_count', 'batch_sha256', 'chain_sha256', 'object_key', 'written_at']),

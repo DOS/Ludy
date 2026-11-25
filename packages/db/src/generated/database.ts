@@ -147,6 +147,7 @@ export interface LudyKernelSchema {
   'ludy_kernel.agent': KernelAgentTable;
   'ludy_kernel.agent_template': KernelAgentTemplateTable;
   'ludy_kernel.agent_wakeup': KernelAgentWakeupTable;
+  'ludy_kernel.ai_budget_reservation': KernelAiBudgetReservationTable;
   'ludy_kernel.ai_run': KernelAiRunTable;
   'ludy_kernel.approval_preset': KernelApprovalPresetTable;
   'ludy_kernel.audit_event': KernelAuditEventTable;
@@ -2542,6 +2543,18 @@ export interface KernelAgentWakeupTable {
   run_id: string | null;
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_kernel.ai_budget_reservation */
+export interface KernelAiBudgetReservationTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  module: ColumnType<string, string, NotGranted>;
+  agent_id: ColumnType<string | null, string | null, NotGranted>;
+  feature: ColumnType<string, string, NotGranted>;
+  amount: ColumnType<string, string, NotGranted>;
+  expires_at: ColumnType<Date, Date | string, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
 /** ludy_kernel.ai_run */

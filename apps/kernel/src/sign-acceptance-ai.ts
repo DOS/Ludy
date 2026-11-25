@@ -16,7 +16,7 @@ import type { SignAcceptanceDraftResult, SignAcceptanceDraftStatus } from '@ludy
 import { DomainError, type Actor, type Runtime } from '@ludy/kernel-runtime';
 import type { SignAcceptanceAiStatus, SignAcceptanceSource } from '@ludy/mod-sign';
 import type { DraftBudget } from './ai-draft-limit.ts';
-import { memberMeter, type MeterOptions } from './ai-meter.ts';
+import { guardAiMeter, memberMeter, type MeterOptions } from './ai-meter.ts';
 
 export interface SignAcceptanceAi {
   reader: Partial<Pick<InboxReader, 'signAcceptanceDraft'>> | null;
@@ -93,15 +93,10 @@ export async function draftProjectAcceptanceSummary(
       ? memberMeter(runtime as Runtime, actor, params.meterOptions ?? {})
       : params.meter;
 
-  const guardedMeter: AiMeter = {
-    admit: async (call) => {
-      if (await isAiStopped()) {
-        throw new SignAcceptanceAiStoppedError();
-      }
-      return baseMeter.admit(call);
-    },
-    record: (call, usage) => baseMeter.record(call, usage),
-  };
+  const guardedMeter = guardAiMeter(baseMeter, {
+    isStopped: isAiStopped,
+    stoppedError: () => new SignAcceptanceAiStoppedError(),
+  });
 
   try {
     const out = await withAiScope({ orgId, meter: guardedMeter }, () =>

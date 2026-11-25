@@ -13,6 +13,7 @@ import { sql } from 'kysely';
 import { z } from 'zod';
 import { tableWrite, zId } from '@ludy/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
+import { deleteAiBudgetReservation, reserveAiBudget, type AiBudgetReserve } from './ai-budget.ts';
 import { kernelManifest } from './manifest.ts';
 
 const MEMBER_ROLES = ['owner', 'admin', 'member', 'viewer'] as const;
@@ -549,10 +550,30 @@ const ZERO_COST = /^0+(?:\.0+)?$/;
 
 export type MemberVyMeterCheck = { allowed: true } | { allowed: false; scope: 'org' | 'module' | 'agent'; retryAt: string };
 
+async function checkMemberVyKillSwitches(
+  ctx: Pick<QueryContext, 'trx' | 'orgId'>,
+  module: string,
+  agentId: string | null,
+): Promise<{ retryAt: string; blocked: { allowed: false; scope: 'org' | 'module' | 'agent'; retryAt: string } | null }> {
+  const retryAt = (
+    await sql<{ retry_at: Date }>`SELECT ((pg_catalog.date_trunc('month', pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh') + pg_catalog.make_interval(months => 1)) AT TIME ZONE 'Asia/Ho_Chi_Minh') AS retry_at`.execute(ctx.trx)
+  ).rows[0]?.retry_at.toISOString() as string;
+  // The four kill switches: the org's, the module's, the agent's and the operator's global switch for AI.
+  const { rows: switches } = await sql<{ scope: 'org' | 'module' | 'agent' | null; global: boolean }>`
+    SELECT (SELECT k.scope FROM ludy_kernel.kill_switch k
+            WHERE k.org_id = ${ctx.orgId}::uuid AND k.released_at IS NULL
+              AND (k.scope = 'org' OR (k.scope = 'module' AND k.target = ${module}) OR (k.scope = 'agent' AND k.target = ${agentId}::text))
+            ORDER BY CASE k.scope WHEN 'agent' THEN 0 WHEN 'module' THEN 1 ELSE 2 END LIMIT 1) AS scope,
+           ludy_kernel.global_kill_switch_on('ai') AS global`.execute(ctx.trx);
+  if (switches[0]?.scope) return { retryAt, blocked: { allowed: false, scope: switches[0].scope, retryAt } };
+  if (switches[0]?.global) return { retryAt, blocked: { allowed: false, scope: 'org', retryAt } };
+  return { retryAt, blocked: null };
+}
+
 export const memberVyMeterCheck = defineQuery({
   name: 'kernel.member_vy.meter.check',
   // A call that knows its cost (a transcript translation chunk, #3185) also sends that `projectedCost`, and the check refuses it before the call is made when it would REACH a
-  // hard-stop budget: the rule of run.check below (spent + projected >= the limit), here for the member's own request. A missing or zero projection is the check as it was.
+  // hard-stop budget: the rule of run.check below (spent + reserved + projected >= the limit), here for the member's own request. A missing or zero projection counts as zero.
   input: z.object({ feature: z.enum(FEATURE_KEYS), projectedCost: PROJECTED_COST.optional() }),
   access: MEMBER_ROLES,
   handler: async (ctx: QueryContext, input): Promise<MemberVyMeterCheck> => {
@@ -560,27 +581,56 @@ export const memberVyMeterCheck = defineQuery({
     if (!(await mayUseVy(ctx))) throw new DomainError('VY_NOT_ALLOWED', 403, 'Bạn chưa được phép làm việc với Vy');
     const module = MEMBER_VY_FEATURES[input.feature].module;
     const agentId = await ownAgent(ctx, userId);
-    const retryAt = (
-      await sql<{ retry_at: Date }>`SELECT ((pg_catalog.date_trunc('month', pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh') + pg_catalog.make_interval(months => 1)) AT TIME ZONE 'Asia/Ho_Chi_Minh') AS retry_at`.execute(ctx.trx)
-    ).rows[0]?.retry_at.toISOString() as string;
-    // The four kill switches: the org's, the module's, the agent's and the operator's global switch for AI.
-    const { rows: switches } = await sql<{ scope: 'org' | 'module' | 'agent' | null; global: boolean }>`
-      SELECT (SELECT k.scope FROM ludy_kernel.kill_switch k
-              WHERE k.org_id = ${ctx.orgId}::uuid AND k.released_at IS NULL
-                AND (k.scope = 'org' OR (k.scope = 'module' AND k.target = ${module}) OR (k.scope = 'agent' AND k.target = ${agentId}::text))
-              ORDER BY CASE k.scope WHEN 'agent' THEN 0 WHEN 'module' THEN 1 ELSE 2 END LIMIT 1) AS scope,
-             ludy_kernel.global_kill_switch_on('ai') AS global`.execute(ctx.trx);
-    if (switches[0]?.scope) return { allowed: false, scope: switches[0].scope, retryAt };
-    if (switches[0]?.global) return { allowed: false, scope: 'org', retryAt };
-    // The sum is decimal arithmetic in the database (numeric), never a JS number; no projection counts as zero (the entry's own rule: spent >= limit).
+    const { retryAt, blocked } = await checkMemberVyKillSwitches(ctx, module, agentId);
+    if (blocked) return blocked;
+    // The sum is decimal arithmetic in the database (numeric), never a JS number; no projection counts as zero (the entry's own rule: spent + reserved >= limit).
     const projected = input.projectedCost === undefined || ZERO_COST.test(input.projectedCost) ? '0' : input.projectedCost;
     const { rows } = await sql<{ scope: 'org' | 'module' | 'agent' | null }>`
       SELECT (SELECT b.scope FROM ludy_kernel.budget_policy b
               WHERE b.org_id = ${ctx.orgId}::uuid AND b.hard_stop
                 AND (b.scope = 'org' OR (b.scope = 'module' AND b.target = ${module}) OR (b.scope = 'agent' AND b.target = ${agentId}::text))
-                AND ludy_kernel.ai_budget_spent(b.org_id, b.scope, b.target) + ${projected}::numeric >= b.monthly_limit
+                AND ludy_kernel.ai_budget_spent(b.org_id, b.scope, b.target)
+                  + ludy_kernel.ai_budget_reserved(b.org_id, b.scope, b.target)
+                  + ${projected}::numeric >= b.monthly_limit
               ORDER BY CASE b.scope WHEN 'agent' THEN 0 WHEN 'module' THEN 1 ELSE 2 END LIMIT 1) AS scope`.execute(ctx.trx);
     return rows[0]?.scope ? { allowed: false, scope: rows[0].scope, retryAt } : { allowed: true };
+  },
+});
+
+export const memberVyMeterReserve = defineCommand({
+  name: 'kernel.member_vy.meter.reserve',
+  input: z.object({ feature: z.enum(FEATURE_KEYS), projectedCost: PROJECTED_COST.optional() }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: MEMBER_ROLES,
+  handler: async (ctx, input): Promise<AiBudgetReserve> => {
+    const userId = requireUser(ctx);
+    if (!(await mayUseVy(ctx))) throw new DomainError('VY_NOT_ALLOWED', 403, 'Bạn chưa được phép làm việc với Vy');
+    const module = MEMBER_VY_FEATURES[input.feature].module;
+    const agentId = await ownAgent(ctx, userId);
+    const { blocked } = await checkMemberVyKillSwitches(ctx, module, agentId);
+    if (blocked) {
+      ctx.audit({ feature: input.feature, module, agent: agentId, allowed: false, scope: blocked.scope });
+      return blocked;
+    }
+    const projected = input.projectedCost === undefined || ZERO_COST.test(input.projectedCost) ? '0' : input.projectedCost;
+    const result = await reserveAiBudget(ctx.trx, {
+      orgId: ctx.orgId,
+      module,
+      agentId,
+      feature: input.feature,
+      projectedCost: projected,
+      allowDefaultSeed: false,
+    });
+    ctx.audit({
+      feature: input.feature,
+      module,
+      agent: agentId,
+      projectedCost: projected,
+      allowed: result.allowed,
+      ...(result.allowed ? { reservationId: result.reservationId } : { scope: result.scope }),
+    });
+    return result;
   },
 });
 
@@ -591,6 +641,7 @@ export const memberVyMeterRecord = defineCommand({
     inputTokens: z.number().int().min(0).max(100_000_000),
     outputTokens: z.number().int().min(0).max(100_000_000),
     cost: z.string().regex(/^\d{1,12}(\.\d{1,6})?$/),
+    reservationId: zId.optional(),
   }),
   risk: 'R1',
   sideEffect: 'internal',
@@ -604,8 +655,26 @@ export const memberVyMeterRecord = defineCommand({
       .insertInto('ludy_kernel.org_usage')
       .values({ org_id: ctx.orgId, metric: 'ai_cost', amount: input.cost, feature: input.feature, module, agent_id: agentId, input_tokens: input.inputTokens, output_tokens: input.outputTokens })
       .execute();
+    if (input.reservationId) {
+      await deleteAiBudgetReservation(ctx.trx, ctx.orgId, input.reservationId, agentId);
+    }
     ctx.audit({ feature: input.feature, module, agent: agentId, inputTokens: input.inputTokens, outputTokens: input.outputTokens, cost: input.cost });
     return { recorded: true };
+  },
+});
+
+export const memberVyMeterRelease = defineCommand({
+  name: 'kernel.member_vy.meter.release',
+  input: z.object({ reservationId: zId }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: MEMBER_ROLES,
+  handler: async (ctx, input): Promise<{ released: boolean }> => {
+    const userId = requireUser(ctx);
+    const agentId = await ownAgent(ctx, userId);
+    const released = await deleteAiBudgetReservation(ctx.trx, ctx.orgId, input.reservationId, agentId);
+    ctx.audit({ agent: agentId, reservationId: input.reservationId, released });
+    return { released };
   },
 });
 
@@ -690,7 +759,9 @@ export const memberVyRunCheck = defineQuery({
       SELECT (SELECT b.scope FROM ludy_kernel.budget_policy b
               WHERE b.org_id = ${ctx.orgId}::uuid AND b.hard_stop
                 AND (b.scope = 'org' OR (b.scope = 'module' AND b.target = ${module}) OR (b.scope = 'agent' AND b.target = ${agentId}::text))
-                AND ludy_kernel.ai_budget_spent(b.org_id, b.scope, b.target) + ${projected}::numeric >= b.monthly_limit
+                AND ludy_kernel.ai_budget_spent(b.org_id, b.scope, b.target)
+                  + ludy_kernel.ai_budget_reserved(b.org_id, b.scope, b.target)
+                  + ${projected}::numeric >= b.monthly_limit
               ORDER BY CASE b.scope WHEN 'agent' THEN 0 WHEN 'module' THEN 1 ELSE 2 END LIMIT 1) AS scope`.execute(ctx.trx);
     const scope = rows[0]?.scope;
     if (scope) throw new DomainError('BUDGET_EXHAUSTED', 422, 'Vy đã hết ngân sách tháng này', { scope });
@@ -980,5 +1051,5 @@ export const memberVySubjectResultsDrop = defineCommand({
   },
 });
 
-export const memberVyCommands = [memberVyRunStart, memberVyRunCancel, memberVyResultStore, memberVyMemorySave, memberVyMemoryDelete, memberVyMeterRecord, memberVyRunFinish, memberVyMeetingAudioOpen, memberVyResultsExpire, memberVyMemberDataPurge, memberVySubjectResultsDrop];
+export const memberVyCommands = [memberVyRunStart, memberVyRunCancel, memberVyResultStore, memberVyMemorySave, memberVyMemoryDelete, memberVyMeterReserve, memberVyMeterRecord, memberVyMeterRelease, memberVyRunFinish, memberVyMeetingAudioOpen, memberVyResultsExpire, memberVyMemberDataPurge, memberVySubjectResultsDrop];
 export const memberVyQueries = [memberVyResultGet, memberVyMemoryList, memberVyMeterCheck, memberVyRunCheck, memberVyRunLive, memberVyRunLatest];
