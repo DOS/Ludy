@@ -319,7 +319,8 @@ export function createMediaApp(options: MediaAppOptions = {}): Hono {
   // its parts are checked while they are cut, and the answer is the normalize result.
   app.post('/join-audio', (c) => {
     const bitrateKbps = parseBitrate(c.req.query('bitrate_kbps'));
-    return handleOperation(c, maxInputBytes, async (inputPath, dir, signal) => joinAudioFiles(inputPath, dir, join(dir, 'joined.opus'), { signal, bitrateKbps, timeoutMs: processTimeoutMs }));
+    // Half the input cap: the sandbox's scratch is sized for one copy of the input cap, and the parts are copied out of the body (the disk holds the body and one part, at most the cap twice).
+    return handleOperation(c, Math.floor(maxInputBytes / 2), async (inputPath, dir, signal) => joinAudioFiles(inputPath, dir, join(dir, 'joined.opus'), { signal, bitrateKbps, timeoutMs: processTimeoutMs }));
   });
 
   app.post('/split', (c) => {

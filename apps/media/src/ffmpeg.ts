@@ -575,10 +575,11 @@ const JOIN_LENGTH_BYTES = MEDIA_JOIN_FRAME.lengthBytes;
 /**
  * Cuts a framed body (count, then length and bytes of each part) into `part-<i>.bin` files in `dir`, and returns their paths in order. The frame lengths are checked against the size of the
  * file as they are read, so a length that runs past the end, a count outside 1 to the maximum, a part of no bytes and any byte after the last part are all `bad_request`: nothing is guessed.
+ * The parts are copied out from the LAST to the first and the body is cut back after each copy, so the disk holds the body and one part at most, never the body twice.
  */
-export async function splitJoinFrames(framedPath: string, dir: string): Promise<string[]> {
+export async function splitJoinFrames(framedPath: string, dir: string, signal?: AbortSignal): Promise<string[]> {
   const total = statSync(framedPath).size;
-  const handle = await open(framedPath, 'r');
+  const handle = await open(framedPath, 'r+');
   const bad = (what: string) => new MediaExecutionError('bad_request', `The parts of the join are not framed correctly (${what})`);
   try {
     const read = async (at: number, bytes: number): Promise<Buffer> => {
@@ -590,18 +591,31 @@ export async function splitJoinFrames(framedPath: string, dir: string): Promise<
     };
     const count = (await read(0, JOIN_COUNT_BYTES)).readUInt32BE(0);
     if (count < 1 || count > MEDIA_LIMITS.maxJoinParts) throw bad(`${count} parts`);
+    // First every frame is read and checked (offsets only, nothing copied): the whole body must be framed exactly before a byte is written.
+    const frames: Array<{ start: number; length: number }> = [];
     let at = JOIN_COUNT_BYTES;
-    const paths: string[] = [];
     for (let i = 0; i < count; i++) {
       const length = Number((await read(at, JOIN_LENGTH_BYTES)).readBigUInt64BE(0));
       at += JOIN_LENGTH_BYTES;
       if (!Number.isSafeInteger(length) || length < 1 || at + length > total) throw bad(`part ${i + 1}`);
-      const path = join(dir, `part-${i}.bin`);
-      await pipeline(createReadStream(framedPath, { start: at, end: at + length - 1 }), createWriteStream(path, { mode: 0o600 }));
-      paths.push(path);
+      frames.push({ start: at, length });
       at += length;
     }
     if (at !== total) throw bad('bytes after the last part');
+    const paths = frames.map((_, i) => join(dir, `part-${i}.bin`));
+    try {
+      for (let i = frames.length - 1; i >= 0; i--) {
+        if (signal?.aborted) throw new MediaExecutionError('timeout', 'Request was aborted');
+        const frame = frames[i] as { start: number; length: number };
+        await pipeline(createReadStream(framedPath, { start: frame.start, end: frame.start + frame.length - 1 }), createWriteStream(paths[i] as string, { mode: 0o600 }));
+        // The tail that was just copied is not needed any more; the frame headers before it are untouched.
+        await handle.truncate(frame.start - JOIN_LENGTH_BYTES);
+      }
+    } catch (error) {
+      // The scratch of a sandbox is capped: a body that does not fit twice is too large for a join, not an internal error.
+      if ((error as { code?: string } | null)?.code === 'ENOSPC') throw new MediaExecutionError('too_large', 'The parts of the recording are too large to join here');
+      throw error;
+    }
     return paths;
   } finally {
     await handle.close().catch(() => undefined);
@@ -609,8 +623,8 @@ export async function splitJoinFrames(framedPath: string, dir: string): Promise<
 }
 
 export async function joinAudioFiles(framedPath: string, dir: string, outputPath: string, options?: NormalizeOptions): Promise<MediaNormalizeResult> {
-  const parts = await splitJoinFrames(framedPath, dir);
-  // The framed body is no longer needed once it is cut: the disk of a request holds each byte once more than the body, not twice.
+  const parts = await splitJoinFrames(framedPath, dir, options?.signal);
+  // The framed body was cut back to its first frame header as the parts were copied out; nothing of it is needed now.
   rmSync(framedPath, { force: true });
   // Each part must hold audio and be a container the sandbox allows (probeFile), and the length of the whole is what the parts really hold (measureFile decodes), against the same duration cap as one recording.
   let seconds = 0;
@@ -626,14 +640,16 @@ export async function joinAudioFiles(framedPath: string, dir: string, outputPath
   // Every part to the same rate and one channel first (the concat filter wants the same format on all inputs), then joined in order. Only our own temp file names reach ffmpeg.
   const labels = parts.map((_, i) => `[a${i}]`);
   const graph = [
-    ...parts.map((_, i) => `[${i}:a:0]aresample=${MEDIA_LIMITS.defaultOpusSampleRate},aformat=sample_fmts=fltp:channel_layouts=mono[a${i}]`),
+    ...parts.map((_, i) => `[${i}:a:0]aresample=${MEDIA_LIMITS.defaultOpusSampleRate},aformat=sample_fmts=fltp:channel_layouts=mono,asetpts=N/SR/TB[a${i}]`),
     `${labels.join('')}concat=n=${parts.length}:v=0:a=1[out]`,
   ].join(';');
-  const args = ['-y', '-v', 'error', ...parts.flatMap((part) => ['-i', part]), '-filter_complex', graph, '-map', '[out]', '-c:a', 'libopus', '-b:a', `${bitrateKbps}k`, '-ac', '1', '-ar', String(MEDIA_LIMITS.defaultOpusSampleRate), outputPath];
+  // The timestamps of every part start at its own first sample (asetpts), so a gap or jump inside a part cannot stretch the output, and the output is cut at the duration cap as a second guard.
+  const args = ['-y', '-v', 'error', ...parts.flatMap((part) => ['-i', part]), '-filter_complex', graph, '-map', '[out]', '-t', String(MEDIA_LIMITS.maxDurationSeconds + 60), '-c:a', 'libopus', '-b:a', `${bitrateKbps}k`, '-ac', '1', '-ar', String(MEDIA_LIMITS.defaultOpusSampleRate), outputPath];
   await runCommand('ffmpeg', args, options);
   const outProbe = await probeFile(outputPath, options);
   return {
-    durationSeconds: outProbe.durationSeconds > 0 ? outProbe.durationSeconds : seconds,
+    // What the parts really hold (measureFile decoded them), unless the output measures shorter; never the container's word for a longer one.
+    durationSeconds: outProbe.durationSeconds > 0 ? Math.min(outProbe.durationSeconds, seconds + 1) : seconds,
     format: 'opus',
     channels: 1,
     sampleRate: 48000,

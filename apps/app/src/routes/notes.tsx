@@ -13,6 +13,7 @@ import { useTranslations } from 'use-intl';
 import {
   NOTE_BODY_MAX,
   NOTE_LIST_VIEWS,
+  type EnexImportResult,
   type Note,
   type NoteLinkTargetInput,
   type NoteListView,
@@ -796,6 +797,25 @@ function Editor({
   );
 }
 
+export function resolveEnexPostImportSearch(
+  result: Pick<EnexImportResult, 'noteIds' | 'notebookIds'>,
+  targetNotebookId: string | null = null,
+): NotesSearch {
+  const targetNotebook =
+    result.notebookIds.length === 1 && result.notebookIds[0]
+      ? result.notebookIds[0]
+      : result.notebookIds.length === 0
+        ? targetNotebookId
+        : null;
+  if (result.noteIds.length === 1 && result.noteIds[0]) {
+    return { list: 'mine', ...(targetNotebook ? { notebook: targetNotebook } : {}), note: result.noteIds[0] };
+  }
+  if (targetNotebook) {
+    return { list: 'mine', notebook: targetNotebook };
+  }
+  return { list: 'mine' };
+}
+
 export function NotesPage() {
   const t = useTranslations('notes');
   const f = useFormat();
@@ -841,6 +861,25 @@ export function NotesPage() {
   const notes = search.q ? found : list;
   const open = useQuery({ ...orpc.notes.get.queryOptions({ input: { noteId: search.note ?? '' } }), enabled: Boolean(search.note) });
   const mineLinkable = useQuery({ ...orpc.notes.list.queryOptions({ input: { view: 'mine' } }), enabled: (Boolean(search.note) || importOpen) && role !== undefined });
+  const importMineNotes = useQuery({
+    ...orpc.notes.list.queryOptions({ input: { view: 'mine', limit: 200 } }),
+    enabled: writer && importOpen,
+  });
+  const importArchivedNotes = useQuery({
+    ...orpc.notes.list.queryOptions({ input: { view: 'archived', limit: 200 } }),
+    enabled: writer && importOpen,
+  });
+  const existingPrivateNotesForImport = useMemo(() => {
+    const active = importMineNotes.data ?? mineLinkable.data ?? (view === 'mine' ? all.data : undefined) ?? [];
+    const archived = importArchivedNotes.data ?? (view === 'archived' ? all.data : undefined) ?? [];
+    const byId = new Map<string, { title: string; notebookId: string | null }>();
+    for (const item of [...active, ...archived]) {
+      if (item.mine && item.visibility === 'private' && !byId.has(item.id)) {
+        byId.set(item.id, { title: item.title, notebookId: item.notebookId ?? null });
+      }
+    }
+    return [...byId.values()];
+  }, [importMineNotes.data, importArchivedNotes.data, mineLinkable.data, view, all.data]);
   const sharedLinkable = useQuery({
     ...orpc.notes.list.queryOptions({ input: { view: 'shared' } }),
     enabled: Boolean(search.note) && role !== undefined,
@@ -1088,17 +1127,11 @@ export function NotesPage() {
           onOpenChange={setImportOpen}
           slug={slug}
           notebooks={notebooksList}
-          existingNoteTitles={(mineLinkable.data ?? (view === 'mine' ? all.data : undefined) ?? []).filter((n) => n.visibility === 'private').map((n) => n.title)}
+          existingNotes={existingPrivateNotesForImport}
           defaultNotebookId={selectedNotebookObj?.id ?? null}
-          onImported={(result) => {
+          onImported={(result, meta) => {
             void refreshNotes();
-            if (result.noteIds.length === 1 && result.noteIds[0]) {
-              go({ list: 'mine', ...(result.notebookIds.length === 1 && result.notebookIds[0] ? { notebook: result.notebookIds[0] } : {}), note: result.noteIds[0] });
-            } else if (result.notebookIds.length === 1 && result.notebookIds[0]) {
-              go({ list: 'mine', notebook: result.notebookIds[0] });
-            } else {
-              go({ list: 'mine' });
-            }
+            go(resolveEnexPostImportSearch(result, meta?.targetNotebookId ?? null));
           }}
         />
       )}
