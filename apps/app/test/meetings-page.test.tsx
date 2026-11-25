@@ -173,6 +173,18 @@ describe('MeetingsPage (#4477)', () => {
     expect(htmlVi).toContain('3 người đọc');
   });
 
+  it('offers the week\'s meeting load (#4770) to an owner and an admin only', () => {
+    client.current.setQueryData(['meetings', 'list', { limit: 200 }], [summary()]);
+    for (const [role, shown] of [['owner', true], ['admin', true], ['member', false], ['viewer', false]] as const) {
+      client.current.setQueryData(['org', 'get'], { role, members: [] });
+      const html = renderPage('en');
+      expect(html.includes('data-testid="meetings-tool-load"')).toBe(shown);
+      expect(html.includes('id="meetings-tool-panel-load"')).toBe(shown);
+    }
+    client.current.removeQueries({ queryKey: ['org', 'get'] });
+    expect(renderPage('en')).not.toContain('data-testid="meetings-tool-load"');
+  });
+
   it('renders empty state when there are no recorded meetings and error state when loading fails', () => {
     client.current.setQueryData(['meetings', 'list', { limit: 200 }], []);
     const emptyHtml = renderPage('en');

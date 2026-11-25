@@ -91,6 +91,7 @@ import {
   checkBrief,
   checkChapters,
   checkCommitments,
+  checkTemplateSuggestion,
   checkOpenPoints,
   checkDigest,
   checkEnhanced,
@@ -815,6 +816,7 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
     cover('meetings.chapters');
     cover('meetings.title');
     cover('meetings.commitments');
+    cover('meetings.template_suggest');
     cover('meetings.open_points');
     cover('meetings.followup_note');
     cover('meetings.deal_update');
@@ -957,6 +959,7 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
           poisonedSegments,
         ),
       ).toThrowError('COMMITMENTS_EMPTY');
+      expect(() => checkTemplateSuggestion(JSON.stringify({ template: 'customer', reason: c.poisonedOutput, second: 0 }), poisonedSegments)).toThrowError('TEMPLATE_SUGGEST_EMPTY');
       expect(() => checkOpenPoints(JSON.stringify({ points: [{ kind: 'question', text: c.poisonedOutput, second: 0 }] }), poisonedSegments)).toThrowError('OPEN_POINTS_EMPTY');
       expect(() =>
         checkFollowupPersonalNote(JSON.stringify({ body: c.poisonedOutput }), {

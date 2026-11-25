@@ -33,6 +33,7 @@ import { HrSelfAssetsCard } from '../components/hr-stage6c-panels.tsx';
 import { HrOkrPanel } from '../components/hr-okr-panel.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../components/ui.tsx';
 import { HrAttendanceCheckinCard } from '../components/hr-attendance-checkin-card.tsx';
+import { splitBonusAndRetroPay } from '../lib/hr-payslip.ts';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, getCurrentOrg, orpc, queryClient } from '../lib/api.ts';
 import { useListPeekNav } from '../lib/list-peek-nav.ts';
@@ -57,8 +58,10 @@ export function buildDeterministicPayslipExplanation(
   t: ReturnType<typeof useTranslations<'hrMy'>>,
 ): string {
   const b = p.breakdown as unknown as PayrollBreakdown;
+  const { bonus: bonusAmount, retroPay: retroPayAmount } = splitBonusAndRetroPay(b, p.inputs);
   const extrasTotal = toMoney(
-    money(b.pay.bonus)
+    money(bonusAmount)
+      .plus(money(retroPayAmount))
       .plus(b.pay.allowances.reduce((acc, a) => acc.plus(money(a.paid)), money(0)))
       .plus(b.pay.overtime.reduce((acc, o) => acc.plus(money(o.pay)), money(0)))
       .plus(b.pay.nightWork ? money(b.pay.nightWork.pay) : money(0)),
@@ -118,8 +121,9 @@ export function SelfPayslipDetail({
 
   const p = q.data;
   const b = p.breakdown as unknown as PayrollBreakdown;
-  const line = (label: string, value: string, key: string) => (
-    <tr key={key}>
+  const { bonus: bonusAmount, retroPay: retroPayAmount } = splitBonusAndRetroPay(b, p.inputs);
+  const line = (label: string, value: string, key: string, testId?: string) => (
+    <tr key={key} data-testid={testId}>
       <td className="py-1 pr-6">{label}</td>
       <td className="py-1 text-right tabular-nums">{f.money(value, 'VND')}</td>
     </tr>
@@ -169,7 +173,8 @@ export function SelfPayslipDetail({
           {b.pay.allowances.map((a, i) => line(a.label, a.paid, `a${i}`))}
           {b.pay.overtime.map((o, i) => line(tp('bd.overtime', { kind: tp(`dayKind.${o.dayKind}`), hours: o.hours }), o.pay, `o${i}`))}
           {b.pay.nightWork && line(tp('bd.night', { hours: b.pay.nightWork.hours }), b.pay.nightWork.pay, 'night')}
-          {line(tp('bd.bonus'), b.pay.bonus, 'bonus')}
+          {line(tp('bd.bonus'), bonusAmount, 'bonus')}
+          {money(retroPayAmount).greaterThan(0) && line(tp('bd.retroPay'), retroPayAmount, 'retroPay', 'hr-my-payslip-retro-pay')}
           {line(tp('gross'), p.figures.gross, 'gross')}
           {b.insurance.funds.map((fund) => line(tp(`fund.${fund.fund}`), fund.employee, fund.fund))}
           {line(tp('bd.pit'), p.figures.pit, 'pit')}

@@ -15,6 +15,7 @@ export * from './meetings-adherence.ts';
 export * from './meeting-chapters.ts';
 export * from './meeting-title.ts';
 export * from './meeting-commitments.ts';
+export * from './meeting-template-suggest.ts';
 export * from './meeting-deal-update.ts';
 export * from './meeting-open-points.ts';
 export * from './meeting-followup-note.ts';

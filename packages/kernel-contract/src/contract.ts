@@ -324,7 +324,7 @@ import {
   zHrEmploymentAdd,
   zHrWritten,
 } from './hr.ts';
-import { zPayrollSettlement, zPayrollSettlementRef, zHrCoworkerAsk, zHrCoworkerExplained, zHrCoworkerFlagged, zHrCoworkerPayslipAsk, zHrCoworkerPrepared, zHrLineAdjust, zHrLineInputsSet, zHrPayrollDiffExplainAsk, zHrPayrollDiffExplained, zHrPayrollPreviewDiff, zHrPayrollPreviewDiffAsk, zHrPayslip, zHrPaymentRequest, zHrPostingRequest, zHrPayslipRef, zHrRunApplyThirteenthMonth, zHrRunApprove, zHrRunImportTimekeeping, zHrRunList, zHrRunOpen, zHrRunRecalculate, zHrRunRef, zHrRunSheet, zHrRunSummary, zHrRunThirteenthMonthPreview, zHrRunWritten, zHrThirteenthMonthPreviewResult } from './hr-payroll.ts';
+import { zPayrollSettlement, zPayrollSettlementRef, zHrCoworkerAsk, zHrCoworkerExplained, zHrCoworkerFlagged, zHrCoworkerPayslipAsk, zHrCoworkerPrepared, zHrLineAdjust, zHrLineInputsSet, zHrPayrollDiffExplainAsk, zHrPayrollDiffExplained, zHrPayrollPreviewDiff, zHrPayrollPreviewDiffAsk, zHrPayslip, zHrPaymentRequest, zHrPostingRequest, zHrPayslipRef, zHrRunApplyThirteenthMonth, zHrRunApprove, zHrRunImportTimekeeping, zHrRunList, zHrRunOpen, zHrRunRecalculate, zHrRunRef, zHrRunSheet, zHrRunSummary, zHrRunSyncStage6b, zHrRunThirteenthMonthPreview, zHrRunWritten, zHrThirteenthMonthPreviewResult } from './hr-payroll.ts';
 import { zHrBankTemplate, zHrBankTemplateCreate, zHrBankTemplateEdit, zHrBankTemplateList, zHrBankTemplateRef, zHrBankTemplateWritten } from './hr-bank-template.ts';
 import {
   zHrLeaveBalanceAsk,
@@ -701,8 +701,10 @@ import { zAskAnswer, zAskEmpty, zAskInput, zAskStatus } from './meeting-ask.ts';
 import { zBriefAnswer, zBriefEmpty, zBriefFacts, zBriefStatus, zBriefTarget } from './meeting-brief.ts';
 import { zMeetingRename, zMeetingRenamed, zTitleAnswer } from './meeting-title.ts';
 import { zCommitmentsAnswer } from './meeting-commitments.ts';
+import { zTemplateSuggestion, zTemplateVyAnswer } from './meeting-template-suggest.ts';
 import { zOpenPointsAnswer } from './meeting-open-points.ts';
 import { zDigestAnswer, zDigestAsk, zDigestFacts, zDigestStatus } from './meeting-digest.ts';
+import { zLoadWeek, zLoadWeekInput } from './meeting-load.ts';
 import { zMeetingsTodayFacts } from './meeting-today.ts';
 import { zMorningEmpty, zMorningSet, zMorningState } from './meeting-morning.ts';
 import { zAssigneeAnswer, zAssigneeAsk, zAssigneeStatus } from './meeting-assignee.ts';
@@ -1652,7 +1654,7 @@ export const contract = {
         applyThirteenthMonth: oc.input(zHrRunApplyThirteenthMonth).output(zHrRunWritten),
         syncLeave: oc.input(zHrRunRef).output(zHrRunWritten),
         syncOvertime: oc.input(zHrRunRef).output(zHrRunWritten),
-        syncStage6b: oc.input(zHrRunRef).output(zHrRunWritten),
+        syncStage6b: oc.input(zHrRunSyncStage6b).output(zHrRunWritten),
         approve: oc.input(zHrRunApprove).output(zHrRunWritten),
       },
       adjustments: {
@@ -1935,6 +1937,13 @@ export const contract = {
       status: oc.input(zSummaryRef).output(zSummaryStatus),
       list: oc.input(zSummaryRef).output(zCommitmentsAnswer),
     },
+    // Suggesting the minutes template from the meeting itself (#4772): `suggest` is code's answer (the series, a linked deal, words in the title, the number of people; no model), `status` is the button of Vy's fallback (the
+    // same answer as the chapters') and `vy` the click that has the recorder's own Vy read the transcript when code cannot tell. Nothing is stored; the recorder accepts with the existing `setTemplate`.
+    templateSuggest: {
+      suggest: oc.input(zSummaryRef).output(zTemplateSuggestion),
+      status: oc.input(zSummaryRef).output(zSummaryStatus),
+      vy: oc.input(zSummaryRef).output(zTemplateVyAnswer),
+    },
     // What a meeting left open (#4768): `status` is the button (the same answer as the chapters'), `list` the click that has the recorder's own Vy list, from the transcript, the questions asked and not answered and the
     // topics where a decision was raised and not taken, each with the second of the line it rests on. The lines go back to the browser and are stored nowhere; nothing is published or made a task from here.
     openPoints: {
@@ -1948,6 +1957,11 @@ export const contract = {
       facts: oc.input(zDigestAsk).output(zDigestFacts),
       status: oc.input(zBriefEmpty).output(zDigestStatus),
       recap: oc.input(zDigestAsk).output(zDigestAnswer),
+    },
+    // The week's meeting load (#4770), for an owner or an admin: per member the meetings and minutes of a week, and the recurring series that may be worth trimming, read by code from the meetings the caller reads (no
+    // extra right to read, no text, no model call, nothing stored).
+    load: {
+      week: oc.input(zLoadWeekInput).output(zLoadWeek),
     },
     // The Today view (#3955): the member's own agenda for today with the facts of each event's brief, read by code as the member in one call and working with AI off. Vy's sentences stay the brief's own click.
     today: {

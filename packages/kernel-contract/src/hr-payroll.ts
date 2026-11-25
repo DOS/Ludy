@@ -129,6 +129,12 @@ export const zHrRunOpen = z.strictObject({ month: zHrMonth, workingDays: zHrDays
 export type HrRunOpen = z.infer<typeof zHrRunOpen>;
 export const zHrRunRef = z.strictObject({ runId: zId });
 export type HrRunRef = z.infer<typeof zHrRunRef>;
+// Sync approved Stage 6B salary advances and retro/offset adjustments into a draft run; optional resetManualOverridesForLineId explicitly clears manual overrides on one line.
+export const zHrRunSyncStage6b = z.strictObject({
+  runId: zId,
+  resetManualOverridesForLineId: zId.optional(),
+});
+export type HrRunSyncStage6b = z.infer<typeof zHrRunSyncStage6b>;
 // Recalculate every line of a draft from the employment terms and dependents as they are now (and add a person hired since); optionally with other working days.
 export const zHrRunRecalculate = z.strictObject({ runId: zId, workingDays: zHrDays.optional() });
 export type HrRunRecalculate = z.infer<typeof zHrRunRecalculate>;
@@ -238,7 +244,12 @@ export const zHrPayslipRef = z.strictObject({ lineId: zId });
 export type HrPayslipRef = z.infer<typeof zHrPayslipRef>;
 
 // What a command returns: ids and counts, never a figure (idempotency rows keep results).
-export const zHrRunWritten = z.object({ runId: zId, lineId: zId.optional(), lines: z.number().int().optional() });
+export const zHrRunWritten = z.object({
+  runId: zId,
+  lineId: zId.optional(),
+  lines: z.number().int().optional(),
+  skippedManualOverrideLines: z.number().int().optional(),
+});
 export type HrRunWritten = z.infer<typeof zHrRunWritten>;
 
 export const zHrRunFigures = z.object({
@@ -268,8 +279,17 @@ export type HrRunSummary = z.infer<typeof zHrRunSummary>;
 
 // What the calculator's check says (the minimum wage, the cap on deductions), and the flags the sheet raises beside the figures: a failed check, a refused month, a person hired
 // or leaving this month (their days not employed are typed by the person).
-export const HR_LINE_FLAGS = ['check_minimum_wage', 'check_deduction_cap', 'check_overtime_cap', 'refused', 'new_hire', 'ends_this_month', 'probation_ends_this_month', 'fixed_term_months_missing', 'net_below_minimum', 'severance_check', 'annual_leave_exceeded', 'work_permit_expiring', 'bhxh_suspended_regime', 'non_resident_flat_pit'] as const;
+export const HR_LINE_FLAGS = ['check_minimum_wage', 'check_deduction_cap', 'check_overtime_cap', 'refused', 'new_hire', 'ends_this_month', 'probation_ends_this_month', 'fixed_term_months_missing', 'net_below_minimum', 'severance_check', 'annual_leave_exceeded', 'work_permit_expiring', 'bhxh_suspended_regime', 'non_resident_flat_pit', 'stage6b_manual_override'] as const;
 export type HrLineFlag = (typeof HR_LINE_FLAGS)[number];
+
+export const HR_STAGE6B_MANUAL_OVERRIDE_FIELDS = ['advance', 'retroPay', 'offsetDeduction'] as const;
+export type HrStage6bManualOverrideField = (typeof HR_STAGE6B_MANUAL_OVERRIDE_FIELDS)[number];
+export const zHrStage6bManualOverride = z.object({
+  field: z.enum(HR_STAGE6B_MANUAL_OVERRIDE_FIELDS),
+  lineAmount: z.string(),
+  approvedAmount: z.string(),
+});
+export type HrStage6bManualOverride = z.infer<typeof zHrStage6bManualOverride>;
 
 export const zHrCheck = z.object({ id: z.enum(['minimum_wage', 'deduction_cap', 'overtime_cap']), ok: z.boolean(), actual: z.string(), limit: z.string() });
 export type HrCheck = z.infer<typeof zHrCheck>;
@@ -296,6 +316,7 @@ export const zHrLineView = z.object({
   checks: z.array(zHrCheck),
   flags: z.array(z.enum(HR_LINE_FLAGS)),
   exceededAnnualDays: z.string().optional(),
+  stage6bManualOverrides: z.array(zHrStage6bManualOverride).optional(),
   note: z.string().nullable(),
   // The month an adjustment corrects.
   adjustsMonth: z.string().nullable(),
@@ -489,6 +510,8 @@ export const HR_PAYROLL_DIFF_REASONS = [
   'leave_change',
   'allowance_change',
   'deduction_change',
+  'retro_pay',
+  'offset_deduction',
 ] as const;
 export type HrPayrollDiffReason = (typeof HR_PAYROLL_DIFF_REASONS)[number];
 

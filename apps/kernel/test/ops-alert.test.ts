@@ -45,8 +45,8 @@ describe('opsAlert (#1993)', () => {
     opsAlert('[org-export] ALERT export of org 0b0d6f1e-3c1a-4d2e-9f00-0123456789ab failed after 4 attempts');
     opsAlert('[org-export] ALERT export of org 1c1d6f1e-3c1a-4d2e-9f00-0123456789ab failed after 2 attempts');
     // A Supabase Auth outage fails every sign-out: their sessions' prefixes make no new kind.
-    opsAlert('[signout] ALERT user sign-out of session 3fa9b2c1: Supabase Auth sign-out failed after 5 attempts; revoked in Crove only');
-    opsAlert('[signout] ALERT user sign-out of session c2ad398c: Supabase Auth sign-out failed after 5 attempts; revoked in Crove only');
+    opsAlert('[signout] ALERT user sign-out of session 3fa9b2c1: Supabase Auth sign-out failed after 5 attempts; revoked in Ludy only');
+    opsAlert('[signout] ALERT user sign-out of session c2ad398c: Supabase Auth sign-out failed after 5 attempts; revoked in Ludy only');
     opsAlert('[retention] ALERT mail purge cleared 0 rows while old ones remain: mail_event');
     await flushOpsAlerts();
     expect(post).toHaveBeenCalledTimes(3);

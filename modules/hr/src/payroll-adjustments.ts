@@ -210,12 +210,16 @@ export const adjustmentApprove = defineCommand({
       .executeTakeFirst();
     if (!updated) throw invalidAdjustmentState('Trạng thái khoản điều chỉnh đã thay đổi, vui lòng thử lại');
 
-    const payrollSynced = await syncEmployeeDraftPayrollStage6b(
+    const syncRes = await syncEmployeeDraftPayrollStage6b(
       ctx,
       existing.legal_entity_id,
       existing.month,
       existing.employee_id,
     );
+    const targetField = existing.kind === 'retro_pay' ? 'retroPay' : 'offsetDeduction';
+    const skippedByManualOverride = syncRes.skippedFields.includes(targetField);
+    const payrollSynced = !skippedByManualOverride && syncRes.syncedFields.includes(targetField);
+    const payrollSyncSkippedReason = skippedByManualOverride ? ('manual_override' as const) : undefined;
 
     ctx.audit({
       itemId: input.itemId,
@@ -225,8 +229,14 @@ export const adjustmentApprove = defineCommand({
       status: 'approved',
       selfApproved,
       payrollSynced,
+      ...(payrollSyncSkippedReason ? { payrollSyncSkippedReason } : {}),
     });
-    return { itemId: input.itemId, status: 'approved', payrollSynced };
+    return {
+      itemId: input.itemId,
+      status: 'approved',
+      payrollSynced,
+      ...(payrollSyncSkippedReason ? { payrollSyncSkippedReason } : {}),
+    };
   },
 });
 

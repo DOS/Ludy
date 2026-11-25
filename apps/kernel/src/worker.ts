@@ -896,7 +896,7 @@ export async function authSubject(workerDb: Db, userId: string): Promise<string 
 export async function runSignOut(revoker: SessionRevoker | null | undefined, target: SignOutTarget, retryCount: number): Promise<void> {
   const label = `${target.scope} sign-out of session ${target.sessionId.slice(0, 8)}`;
   if (!revoker) {
-    console.warn(`[signout] ${label}: no Supabase Auth sign-out configured; revoked in Crove only`);
+    console.warn(`[signout] ${label}: no Supabase Auth sign-out configured; revoked in Ludy only`);
     return;
   }
   try {
@@ -904,7 +904,7 @@ export async function runSignOut(revoker: SessionRevoker | null | undefined, tar
     console.log(`[signout] ${label} done in Supabase Auth`);
   } catch (error) {
     if (retryCount < SIGN_OUT_RETRY_LIMIT) throw error;
-    opsAlert(`[signout] ALERT ${label}: Supabase Auth sign-out failed after ${retryCount + 1} attempts; revoked in Crove only`, error);
+    opsAlert(`[signout] ALERT ${label}: Supabase Auth sign-out failed after ${retryCount + 1} attempts; revoked in Ludy only`, error);
   }
 }
 
@@ -1210,7 +1210,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     // A job the previous release's relay made from an event of this one has the subject `undefined` and no user: its
     // session cannot be signed out upstream.
     if (job.data.subject === 'undefined') {
-      opsAlert(`[signout] ALERT ${label}: the job names no account (made by the previous release from a newer event); revoked in Crove only`);
+      opsAlert(`[signout] ALERT ${label}: the job names no account (made by the previous release from a newer event); revoked in Ludy only`);
       return;
     }
     let subject: string | null;
@@ -1218,11 +1218,11 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       subject = job.data.subject ?? (job.data.userId ? await authSubject(deps.workerDb, job.data.userId) : null);
     } catch (error) {
       if (job.retryCount < SIGN_OUT_RETRY_LIMIT) throw error;
-      opsAlert(`[signout] ALERT ${label}: the account's subject could not be read after ${job.retryCount + 1} attempts; revoked in Crove only`, error);
+      opsAlert(`[signout] ALERT ${label}: the account's subject could not be read after ${job.retryCount + 1} attempts; revoked in Ludy only`, error);
       return;
     }
     if (!subject) {
-      console.warn(`[signout] ${label}: the account has no identity provider subject; revoked in Crove only`);
+      console.warn(`[signout] ${label}: the account has no identity provider subject; revoked in Ludy only`);
       return;
     }
     await runSignOut(deps.revoker, { subject, sessionId, scope }, job.retryCount);
