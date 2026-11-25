@@ -79,7 +79,7 @@ describe('Database', () => {
     const invite: Updateable<Database['ludy_kernel.member_invite']> = { email: 'a@b.c' };
     // A file row never changes (trigger file_guard): the refinement keeps the union and drops every update.
     expectTypeOf<Selectable<Database['ludy_kernel.file']>['source']>().toEqualTypeOf<
-      'upload' | 'email' | 'social' | 'import' | 'meeting_audio' | 'meeting_video' | 'sign_document' | 'sign_sealed' | 'sign_certificate' | 'sign_attachment' | 'agreement'
+      'upload' | 'email' | 'social' | 'import' | 'meeting_audio' | 'meeting_video' | 'sign_document' | 'sign_sealed' | 'sign_certificate' | 'sign_attachment' | 'sign_deposit_qr' | 'agreement'
     >();
     // @ts-expect-error ludy_tenant holds UPDATE on file only to lock the row
     const fileUpdate: Updateable<Database['ludy_kernel.file']> = { filename: 'renamed.pdf' };

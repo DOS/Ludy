@@ -30,7 +30,7 @@ const CRC_TABLE = (() => {
   return table;
 })();
 
-function crc32(buf: Uint8Array, start: number, end: number): number {
+export function crc32(buf: Uint8Array, start: number, end: number): number {
   let c = 0xffffffff;
   for (let i = start; i < end; i += 1) {
     c = (CRC_TABLE[(c ^ buf[i]!) & 0xff]! ^ (c >>> 8)) >>> 0;
@@ -42,7 +42,7 @@ function invalidPng(detail: string): never {
   throw new DomainError('SIGN_INVALID_SIGNATURE_PNG', 422, detail);
 }
 
-function validPngColorAndDepth(colorType: number, bitDepth: number): boolean {
+export function validPngColorAndDepth(colorType: number, bitDepth: number): boolean {
   switch (colorType) {
     case 0:
       return bitDepth === 1 || bitDepth === 2 || bitDepth === 4 || bitDepth === 8 || bitDepth === 16;
@@ -101,7 +101,7 @@ function pngPassRows(
   return passes;
 }
 
-function expectedPngIdatByteLength(width: number, height: number, colorType: number, bitDepth: number, interlace: number): number {
+export function expectedPngIdatByteLength(width: number, height: number, colorType: number, bitDepth: number, interlace: number): number {
   const bppBits = pngSamplesPerPixel(colorType) * bitDepth;
   if (bppBits <= 0) return 0;
   let total = 0;
@@ -111,7 +111,7 @@ function expectedPngIdatByteLength(width: number, height: number, colorType: num
   return total;
 }
 
-function validatePngScanlines(
+export function validatePngScanlines(
   inflated: Buffer,
   width: number,
   height: number,

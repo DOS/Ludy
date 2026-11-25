@@ -117,10 +117,13 @@ export interface MeetingPlatformCredential {
 
 export type MeetingPlatformFormat = 'audio' | 'video';
 
+// What a download is: a recording's audio or video, or (Zoom, #3175) the platform's own transcript as a small text file.
+export type MeetingPlatformDownloadFormat = MeetingPlatformFormat | 'transcript';
+
 export interface MeetingPlatformDownload {
   url: string;
   headers: Record<string, string>;
-  format: MeetingPlatformFormat;
+  format: MeetingPlatformDownloadFormat;
   contentType?: string | undefined;
   sizeBytes?: number | null | undefined;
   // The exact hosts the egress guard may talk to first.
@@ -142,7 +145,7 @@ export interface MeetingPlatformTranscriptEntry {
 // A platform's transcript of a call. `source` names who made it: this is the PLATFORM's transcription, never Ludy's, and the data and the screens say so. `truncated`: the platform's transcript was longer
 // than the adapter reads.
 export interface MeetingPlatformTranscript {
-  source: 'google_meet' | 'microsoft_teams';
+  source: 'google_meet' | 'microsoft_teams' | 'zoom';
   language: string | null;
   truncated: boolean;
   entries: MeetingPlatformTranscriptEntry[];
@@ -157,6 +160,10 @@ export interface MeetingPlatformAdapter {
   prepareDownload(credential: MeetingPlatformCredential, recordingId: string, format: MeetingPlatformFormat, signal?: AbortSignal): Promise<MeetingPlatformDownload>;
   // The platform's own transcript of one recording, for an adapter that has one (Google Meet, C2). The job never opens a transcript download: the adapter calls its own API hosts.
   transcript?(credential: MeetingPlatformCredential, recordingId: string, signal?: AbortSignal): Promise<MeetingPlatformTranscript>;
+  // The platform's own transcript when it is a FILE on the platform's download hosts (Zoom, #3175) and not an API answer: `transcriptFile` describes its download exactly as `prepareDownload` describes a recording's (the job
+  // fetches it through the egress guard under a small cap, the member's token goes only to the first host), and `parseTranscript` reads the bytes the job got. A transcript is the adapter's own when it has `transcript`, else this pair.
+  transcriptFile?(credential: MeetingPlatformCredential, recordingId: string, signal?: AbortSignal): Promise<MeetingPlatformDownload>;
+  parseTranscript?(bytes: Uint8Array): MeetingPlatformTranscript;
   // The Drive file a platform wrote one recording to, asked of the platform now (Google Meet's Picker route, #3174): the pick command checks the member's pick against it. Absent for an adapter with no such step.
   recordingFile?(credential: MeetingPlatformCredential, recordingId: string, signal?: AbortSignal): Promise<{ fileId: string } | null>;
   // `refused`: the platform will not renew the grant, the job expires the connection (an adapter may also throw `connection_expired` for the same). It renews ONE token under a lock, in a transaction the database ends if it

@@ -39,7 +39,14 @@ export {
   type MeetingEnvelopeVisibilityCtx,
   type MeetingEnvelopeVisibilityRow,
 } from './meeting-visibility.ts';
-export { validateSignaturePngBase64, type ValidatedSignaturePng } from './png.ts';
+export {
+  crc32 as pngCrc32,
+  expectedPngIdatByteLength,
+  validPngColorAndDepth,
+  validatePngScanlines,
+  validateSignaturePngBase64,
+  type ValidatedSignaturePng,
+} from './png.ts';
 export { signDirectPublicCommands } from './direct-public.ts';
 export {
   cleanUserAgent as sanitizeSignUserAgent,
@@ -285,3 +292,21 @@ export {
   type McpSignTemplateRow,
   type McpSignTemplatesResult,
 } from './mcp.ts';
+export {
+  buildVietQrEmvcoPayload,
+  computeEmvcoCrc16,
+  depositMatchCandidates,
+  depositProfileClear,
+  depositProfileGet,
+  depositProfileUpsert,
+  envelopeDepositClear,
+  envelopeDepositSet,
+  formatDepositProfile,
+  formatEnvelopeDeposit,
+  freezeEnvelopeDepositSnapshot,
+  parseDepositAmountDecimal,
+  signDepositCommands,
+  signDepositQueries,
+  trimDepositDecimalString,
+  type SignDepositMatchCandidate,
+} from './deposit.ts';

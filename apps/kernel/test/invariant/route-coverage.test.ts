@@ -107,14 +107,14 @@ const PUBLIC: Record<string, string> = {
   '/api/v1/sign/envelopes/:id/certificate': 'external eSign REST audit certificate download (#4438 / #4441): Bearer org API key hashed via SHA-256, enforces sign:read scope, org_app_on + entitlement opaque 404, completed status, and excludes hr_contract and meeting_minutes envelopes',
   '/api/v1/sign/templates': 'external eSign REST reusable template list (#4438 / #4441): Bearer org API key hashed via SHA-256, enforces sign:read scope, org_app_on + entitlement opaque 404, and never returns direct-link capability tokens',
   '/api/v1/sign/envelopes/from-template': 'external eSign REST draft-only envelope creation from template (#4438 / #4441): Bearer org API key hashed via SHA-256, enforces sign:draft scope, org_app_on + entitlement opaque 404, creates status = draft only for human review, and never auto-sends or mints signing tokens',
+  '/api/sign/deposit-qr': 'post-sign non-custodial VietQR PNG image (#4723, Slice 6d): requires signed unexpired token in POST JSON body, enforces org_app_on + entitlement opaque 404, excludes hr_contract and meeting_minutes envelopes, rate-limited, returns verified PNG <= 256 KB with nosniff and no-store',
+  '/api/sign/deposit-notice': 'post-sign non-blocking deposit transfer notice (#4723, Slice 6d): requires signed unexpired token, enforces org_app_on + entitlement opaque 404, excludes hr_contract and meeting_minutes envelopes, rate-limited, idempotent one-time notice/proof without altering signature validity',
 };
 
 // Public routes an open PR adds. CI runs the base branch's copy of this suite on a PR, so a new public route is listed
 // here first, in a PR of its own; the PR that adds the route moves it into PUBLIC. A route here may be public and may
 // not exist yet; the stale-list check below skips it, and nothing else does.
 const PENDING: Record<string, string> = {
-  '/api/sign/deposit-qr': 'post-sign non-custodial VietQR PNG image (#4723, Slice 6d): requires signed unexpired token in POST JSON body, enforces org_app_on + entitlement opaque 404, excludes hr_contract and meeting_minutes envelopes, rate-limited, returns verified PNG <= 256 KB with nosniff and no-store',
-  '/api/sign/deposit-notice': 'post-sign non-blocking deposit transfer notice (#4723, Slice 6d): requires signed unexpired token, enforces org_app_on + entitlement opaque 404, excludes hr_contract and meeting_minutes envelopes, rate-limited, idempotent one-time notice/proof without altering signature validity',
 };
 const isPublic = (path: string) => Object.hasOwn(PUBLIC, path) || Object.hasOwn(PENDING, path);
 

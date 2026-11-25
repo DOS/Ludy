@@ -21,6 +21,7 @@ import { DomainError, defineQuery, type QueryContext } from '@ludy/kernel-runtim
 import { isSignAiStoppedOnTrx } from './ai.ts';
 import { signApiKeyQueries } from './api-keys.ts';
 import { renderStarterContractPdf } from './contract-drafter.ts';
+import { formatEnvelopeDeposit, signDepositQueries } from './deposit.ts';
 import { signDocxConvertQueries } from './docx-convert.ts';
 import { signEnvelopeDocumentQueries } from './envelope-documents.ts';
 import { signMcpQueries } from './mcp.ts';
@@ -554,6 +555,16 @@ export const envelopeGet = defineQuery({
             ];
           })();
 
+    const depositRow =
+      env.source_kind === 'hr_contract' || env.source_kind === 'meeting_minutes'
+        ? undefined
+        : await ctx.trx
+            .selectFrom('ludy_sign.envelope_deposit')
+            .selectAll()
+            .where('org_id', '=', ctx.orgId)
+            .where('envelope_id', '=', env.id)
+            .executeTakeFirst();
+
     return {
       envelope: {
         id: env.id,
@@ -662,6 +673,7 @@ export const envelopeGet = defineQuery({
         updatedAt: new Date(f.updated_at).toISOString(),
       })),
       documents,
+      deposit: depositRow ? formatEnvelopeDeposit(depositRow) : null,
     };
   },
 });
@@ -1228,4 +1240,5 @@ export const signQueries = [
   ...signMcpQueries,
   ...signDocxConvertQueries,
   ...signEnvelopeDocumentQueries,
+  ...signDepositQueries,
 ];

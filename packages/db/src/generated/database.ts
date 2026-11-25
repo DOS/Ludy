@@ -276,7 +276,9 @@ export interface LudyProjectsSchema {
 export interface LudySignSchema {
   'ludy_sign.ai_analysis': SignAiAnalysisTable;
   'ludy_sign.ca_signing_request': SignCaSigningRequestTable;
+  'ludy_sign.deposit_profile': SignDepositProfileTable;
   'ludy_sign.envelope': SignEnvelopeTable;
+  'ludy_sign.envelope_deposit': SignEnvelopeDepositTable;
   'ludy_sign.envelope_document': SignEnvelopeDocumentTable;
   'ludy_sign.envelope_obligation': SignEnvelopeObligationTable;
   'ludy_sign.field': SignFieldTable;
@@ -4356,6 +4358,60 @@ export interface SignCaSigningRequestTable {
   next_poll_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   signed_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   created_by: string | null;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_sign.deposit_profile */
+export interface SignDepositProfileTable {
+  org_id: string;
+  id: Generated<string>;
+  bank_code: string;
+  bank_name: string;
+  account_number: string;
+  account_holder: string;
+  finance_bank_account: string | null;
+  vietqr_file_id: string | null;
+  vietqr_storage_key: string | null;
+  vietqr_generation: string | null;
+  vietqr_sha256: string | null;
+  is_default: Generated<boolean>;
+  created_by: string | null;
+  updated_by: string | null;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_sign.envelope_deposit */
+export interface SignEnvelopeDepositTable {
+  org_id: string;
+  id: Generated<string>;
+  envelope_id: string;
+  amount: string;
+  currency: Generated<string>;
+  memo_token: string;
+  due_days: number | null;
+  deposit_profile_id: string | null;
+  note: string | null;
+  snapshot_frozen_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  snapshot_bank_code: string | null;
+  snapshot_bank_name: string | null;
+  snapshot_account_number: string | null;
+  snapshot_account_holder: string | null;
+  snapshot_finance_bank_account: string | null;
+  snapshot_vietqr_file_id: string | null;
+  snapshot_vietqr_storage_key: string | null;
+  snapshot_vietqr_generation: string | null;
+  snapshot_vietqr_sha256: string | null;
+  snapshot_emvco_payload: string | null;
+  signer_notice_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  signer_notice_note: string | null;
+  signer_proof_file_id: string | null;
+  signer_proof_filename: string | null;
+  signer_proof_sha256: string | null;
+  signer_ip_hash: string | null;
+  created_by: string | null;
+  updated_by: string | null;
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }

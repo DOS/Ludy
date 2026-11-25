@@ -3,10 +3,16 @@
 // Reads tokens strictly from JSON POST bodies, checks org_app_on + billing entitlements inside orgless
 // SECURITY DEFINER resolution (returning an identical opaque 404 across invalid/expired/waiting/MODULE_OFF),
 // and enforces per-IP + per-token-hash rate limits plus bounded PDF read concurrency without CAPTCHA (#203).
+import { inflateSync } from 'node:zlib';
 import { sql } from 'kysely';
 import { EXTRACT_LIMITS } from '@ludy/extract-contract';
 import { DEFAULT_MESSAGE_ID_DOMAIN } from '@ludy/kernel';
 import {
+  SIGN_DEPOSIT_DUE_DAYS_MAX,
+  SIGN_DEPOSIT_MEMO_TOKEN_PATTERN,
+  SIGN_DEPOSIT_NOTE_MAX,
+  SIGN_DEPOSIT_PROOF_MAX_BYTES,
+  SIGN_SIGNATURE_PNG_MAX_BYTES,
   zSignPublicDeclineInput,
   zSignPublicDelegateInput,
   zSignPublicOtpRequestInput,
@@ -17,9 +23,12 @@ import {
   zSignPublicViewInput,
   zSignToken,
   type SignAttachmentContentType,
+  type SignDepositProofContentType,
   type SignPublicAttachmentUploadResult,
   type SignPublicDeclineResult,
   type SignPublicDelegateResult,
+  type SignPublicDepositNoticeResult,
+  type SignPublicDepositSummary,
   type SignPublicOtpRequestResult,
   type SignPublicOtpVerifyResult,
   type SignPublicSubmitResult,
@@ -28,9 +37,13 @@ import {
 } from '@ludy/kernel-contract';
 import { DomainError, entitledTo, fileKey, putFile, readVerified, sha256Hex, type BlobStore, type ErrorStatus, type Runtime } from '@ludy/kernel-runtime';
 import {
+  expectedPngIdatByteLength,
   normalizeSignPageDimensions,
   parseSharedSummary,
+  pngCrc32,
   sanitizeSignUserAgent,
+  validPngColorAndDepth,
+  validatePngScanlines,
   validateSignaturePngBase64,
 } from '@ludy/mod-sign';
 import { hasVideoTrack, imageSize, sniffVideo } from './media-probe.ts';
@@ -55,6 +68,11 @@ export const SIGN_ATTACHMENT_UPLOADS_MAX = 4;
 export const SIGN_ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
 export const SIGN_VERIFY_PER_MINUTE = 30;
 export const SIGN_PDF_MAX_BYTES = EXTRACT_LIMITS.maxFileBytes;
+export const SIGN_DEPOSIT_QR_PER_MINUTE = 30;
+export const SIGN_TOKEN_DEPOSIT_QR_PER_MINUTE = 20;
+export const SIGN_DEPOSIT_NOTICE_PER_MINUTE = 15;
+export const SIGN_TOKEN_DEPOSIT_NOTICE_PER_MINUTE = 10;
+export const SIGN_DEPOSIT_NOTICE_UPLOADS_MAX = 4;
 
 const SIGN_ATTACHMENT_MAX_IMAGE_DIMENSION = 20_000;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -288,7 +306,7 @@ export async function runSignView(
   if (decision && !decision.allowed) {
     return { status: 'rate_limited', retryAfterSeconds: decision.retryAfterSeconds };
   }
-  const resolved = await resolvePublicToken(runtime, billing, tokenHash, false);
+  const resolved = await resolvePublicToken(runtime, billing, tokenHash, true);
   if (!resolved) return { status: 'not_found' };
   const view = await runtime.orgless(async (db) => {
     const { rows } = await sql<{ view: SignPublicView | null }>`
@@ -301,7 +319,7 @@ export async function runSignView(
     return rows[0]?.view ?? null;
   });
   if (!view) return { status: 'not_found' };
-  const inPerson = Boolean(view.inPerson || resolved.inPerson);
+  const inPerson = Boolean(('inPerson' in view && view.inPerson) || resolved.inPerson);
   if (view.state === 'ready') {
     const sharedSummary = parseSharedSummary(view.sharedSummary ?? null, view.pageCount);
     const normalizedDocs = Array.isArray(view.documents)
@@ -319,6 +337,19 @@ export async function runSignView(
         ...(normalizedDocs ? { documents: normalizedDocs } : {}),
         sharedSummary,
         ...(inPerson ? { inPerson: true } : {}),
+      },
+    };
+  }
+  if (view.state === 'already_completed') {
+    const deposit = parsePublicDepositSummary((view as { deposit?: unknown }).deposit ?? null);
+    return {
+      status: 'ok',
+      view: {
+        state: 'already_completed',
+        title: view.title,
+        status: view.status,
+        signerRole: view.signerRole === 'approver' || resolved.signerRole === 'approver' ? 'approver' : 'signer',
+        deposit,
       },
     };
   }
@@ -495,6 +526,8 @@ export async function runSignSubmit(
   if (res.status === 'already_used') return { status: 'already_used' };
   if (res.status === 'error') throwSqlDomainError(res);
 
+  const deposit = parsePublicDepositSummary((res as { deposit?: unknown }).deposit ?? null);
+
   return {
     status: 'ok',
     result: {
@@ -504,6 +537,7 @@ export async function runSignSubmit(
       completed: res.completed,
       signedAt: res.signedAt,
       ...(res.inPerson || resolved.inPerson ? { inPerson: true } : {}),
+      ...(deposit ? { deposit } : {}),
     },
   };
 }
@@ -1334,4 +1368,402 @@ export async function runSignAttachmentUpload(
       uploadedAt: recorded.uploadedAt,
     },
   };
+}
+
+function parsePublicDepositSummary(raw: unknown): SignPublicDepositSummary | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = raw as Record<string, unknown>;
+  const amount = typeof obj.amount === 'string' ? obj.amount.trim() : '';
+  const memoToken = typeof obj.memoToken === 'string' ? obj.memoToken.trim() : '';
+  const bankCode = typeof obj.bankCode === 'string' ? obj.bankCode.trim() : '';
+  const bankName = typeof obj.bankName === 'string' ? obj.bankName.trim() : '';
+  const accountNumber = typeof obj.accountNumber === 'string' ? obj.accountNumber.trim() : '';
+  const accountHolder = typeof obj.accountHolder === 'string' ? obj.accountHolder.trim() : '';
+  if (
+    !amount ||
+    obj.currency !== 'VND' ||
+    !SIGN_DEPOSIT_MEMO_TOKEN_PATTERN.test(memoToken) ||
+    !bankCode ||
+    !bankName ||
+    !accountNumber ||
+    !accountHolder
+  ) {
+    return null;
+  }
+  const dueDays =
+    typeof obj.dueDays === 'number' &&
+    Number.isInteger(obj.dueDays) &&
+    obj.dueDays >= 0 &&
+    obj.dueDays <= SIGN_DEPOSIT_DUE_DAYS_MAX
+      ? obj.dueDays
+      : null;
+  return {
+    amount,
+    currency: 'VND',
+    memoToken,
+    dueDays,
+    note: typeof obj.note === 'string' ? obj.note : null,
+    bankCode,
+    bankName,
+    accountNumber,
+    accountHolder,
+    hasQrPng: Boolean(obj.hasQrPng),
+    emvcoPayload: typeof obj.emvcoPayload === 'string' && obj.emvcoPayload.length > 0 ? obj.emvcoPayload : null,
+    signerNoticeAt: typeof obj.signerNoticeAt === 'string' ? obj.signerNoticeAt : null,
+    signerNoticeNote: typeof obj.signerNoticeNote === 'string' ? obj.signerNoticeNote : null,
+    signerProofFilename: typeof obj.signerProofFilename === 'string' ? obj.signerProofFilename : null,
+    signerProofSha256: typeof obj.signerProofSha256 === 'string' ? obj.signerProofSha256 : null,
+  };
+}
+
+const PNG_MAGIC = Uint8Array.of(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a);
+const PNG_DEPOSIT_PROOF_MAX_DECOMPRESSED = 48 * 1024 * 1024;
+const PNG_ALLOWED_ANCILLARY_CHUNKS = new Set([
+  'iCCP',
+  'pHYs',
+  'sRGB',
+  'gAMA',
+  'cHRM',
+  'eXIf',
+  'tEXt',
+  'iTXt',
+  'zTXt',
+  'tRNS',
+  'bKGD',
+  'tIME',
+  'sBIT',
+]);
+
+function hasValidPngImageData(bytes: Uint8Array): boolean {
+  if (bytes.byteLength < 45) return false;
+  for (let i = 0; i < PNG_MAGIC.length; i += 1) {
+    if (bytes[i] !== PNG_MAGIC[i]) return false;
+  }
+  const buf = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let offset = PNG_MAGIC.length;
+  let chunkIndex = 0;
+  let width = 0;
+  let height = 0;
+  let bitDepth = 0;
+  let colorType = 0;
+  let interlace = 0;
+  let sawPlte = false;
+  let plteEntries = 0;
+  let sawIdat = false;
+  let totalIdat = 0;
+  let sawIend = false;
+  let lastChunkType = '';
+  const idatChunks: Buffer[] = [];
+
+  while (offset < buf.byteLength) {
+    if (sawIend) return false;
+    if (offset + 12 > buf.byteLength) return false;
+    const length = buf.readUInt32BE(offset);
+    if (length > buf.byteLength - (offset + 12)) return false;
+    const typeStart = offset + 4;
+    const dataStart = offset + 8;
+    const dataEnd = dataStart + length;
+    const crcOffset = dataEnd;
+    for (let i = typeStart; i < dataStart; i += 1) {
+      const byte = buf[i]!;
+      if (!((byte >= 0x41 && byte <= 0x5a) || (byte >= 0x61 && byte <= 0x7a))) {
+        return false;
+      }
+    }
+    const chunkType = buf.subarray(typeStart, dataStart).toString('latin1');
+    const expectedCrc = buf.readUInt32BE(crcOffset);
+    if (expectedCrc !== pngCrc32(buf, typeStart, dataEnd)) {
+      return false;
+    }
+
+    if (chunkIndex === 0) {
+      if (chunkType !== 'IHDR' || length !== 13) return false;
+      width = buf.readUInt32BE(dataStart);
+      height = buf.readUInt32BE(dataStart + 4);
+      bitDepth = buf[dataStart + 8]!;
+      colorType = buf[dataStart + 9]!;
+      const compression = buf[dataStart + 10]!;
+      const filter = buf[dataStart + 11]!;
+      interlace = buf[dataStart + 12]!;
+      if (
+        width < 1 ||
+        width > SIGN_ATTACHMENT_MAX_IMAGE_DIMENSION ||
+        height < 1 ||
+        height > SIGN_ATTACHMENT_MAX_IMAGE_DIMENSION ||
+        !validPngColorAndDepth(colorType, bitDepth) ||
+        compression !== 0 ||
+        filter !== 0 ||
+        (interlace !== 0 && interlace !== 1)
+      ) {
+        return false;
+      }
+    } else if (chunkType === 'IHDR') {
+      return false;
+    } else if (chunkType === 'PLTE') {
+      if (colorType === 0 || colorType === 4 || sawIdat || sawPlte || length < 3 || length > 256 * 3 || length % 3 !== 0) {
+        return false;
+      }
+      sawPlte = true;
+      plteEntries = length / 3;
+    } else if (chunkType === 'IDAT') {
+      if (sawIdat && lastChunkType !== 'IDAT') return false;
+      sawIdat = true;
+      if (length > 0) {
+        idatChunks.push(buf.subarray(dataStart, dataEnd));
+        totalIdat += length;
+      }
+    } else if (chunkType === 'IEND') {
+      if (length !== 0) return false;
+      sawIend = true;
+    } else if (!PNG_ALLOWED_ANCILLARY_CHUNKS.has(chunkType)) {
+      return false;
+    }
+
+    lastChunkType = chunkType;
+    offset = crcOffset + 4;
+    chunkIndex += 1;
+  }
+
+  if (!sawIend || offset !== buf.byteLength || totalIdat <= 0) return false;
+  if (colorType === 3 && (!sawPlte || plteEntries > 2 ** bitDepth)) return false;
+
+  const expectedBytes = expectedPngIdatByteLength(width, height, colorType, bitDepth, interlace);
+  if (expectedBytes <= 0 || expectedBytes > PNG_DEPOSIT_PROOF_MAX_DECOMPRESSED) return false;
+
+  let inflated: Buffer;
+  try {
+    inflated = inflateSync(Buffer.concat(idatChunks), { maxOutputLength: expectedBytes });
+  } catch {
+    return false;
+  }
+  if (inflated.byteLength !== expectedBytes) return false;
+  return validatePngScanlines(inflated, width, height, colorType, bitDepth, interlace);
+}
+
+export function verifySignDepositProofBytes(bytes: Uint8Array): SignDepositProofContentType | null {
+  if (bytes.byteLength < 1 || bytes.byteLength > SIGN_DEPOSIT_PROOF_MAX_BYTES) {
+    return null;
+  }
+  const detected = verifySignAttachmentBytes(bytes);
+  if (detected === 'image/png') {
+    return hasValidPngImageData(bytes) ? detected : null;
+  }
+  if (detected === 'image/jpeg') {
+    return detected;
+  }
+  return null;
+}
+
+export type SignDepositQrSource = {
+  storageKey: string;
+  generation: string;
+  sha256: string;
+};
+
+export type SignDepositQrLookup =
+  | { status: 'not_found' }
+  | { status: 'rate_limited'; retryAfterSeconds: number }
+  | { status: 'otp_required' }
+  | { status: 'ok'; source: SignDepositQrSource };
+
+export async function resolvePublicDepositQr(
+  runtime: Runtime,
+  billing: SignBilling,
+  body: unknown,
+  limitToken?: SignTokenLimiterFn,
+): Promise<SignDepositQrLookup> {
+  const parsed = zSignPublicPdfInput.safeParse(body);
+  if (!parsed.success) return { status: 'not_found' };
+  const tokenHash = tokenHashOf(parsed.data.token);
+  const decision = limitToken?.(tokenHash);
+  if (decision && !decision.allowed) {
+    return { status: 'rate_limited', retryAfterSeconds: decision.retryAfterSeconds };
+  }
+
+  const row = await runtime.orgless(async (db) => {
+    const { rows } = await sql<{
+      source: {
+        orgId: string;
+        otpRequired: boolean;
+        storageKey?: string;
+        generation?: string;
+        sha256?: string;
+      } | null;
+    }>`
+      SELECT ludy_sign.public_deposit_qr_source(${tokenHash}) AS source
+    `.execute(db);
+    return rows[0]?.source ?? null;
+  });
+
+  if (!row) return { status: 'not_found' };
+  if (!(await isEntitled(billing, row.orgId))) return { status: 'not_found' };
+  if (row.otpRequired) return { status: 'otp_required' };
+  if (!row.storageKey || !row.generation || !row.sha256) return { status: 'not_found' };
+
+  return {
+    status: 'ok',
+    source: {
+      storageKey: row.storageKey,
+      generation: row.generation,
+      sha256: row.sha256,
+    },
+  };
+}
+
+export async function readPublicDepositQrBytes(
+  store: BlobStore,
+  source: SignDepositQrSource,
+): Promise<Uint8Array | null> {
+  const bytes = await readVerified(
+    store,
+    { key: source.storageKey, generation: source.generation, sha256: source.sha256 },
+    SIGN_SIGNATURE_PNG_MAX_BYTES,
+  );
+  if (
+    bytes.byteLength < 45 ||
+    bytes[0] !== 0x89 ||
+    bytes[1] !== 0x50 ||
+    bytes[2] !== 0x4e ||
+    bytes[3] !== 0x47
+  ) {
+    return null;
+  }
+  return bytes;
+}
+
+export interface SignDepositNoticeInput {
+  token: unknown;
+  note: unknown;
+  filename: unknown;
+  bytes: Uint8Array | null;
+  oversize?: boolean;
+  invalidEncoding?: boolean;
+  emptyFile?: boolean;
+}
+
+export async function runSignDepositNotice(
+  runtime: Runtime,
+  store: BlobStore,
+  billing: SignBilling,
+  input: SignDepositNoticeInput,
+  meta: SignRequestMeta,
+  limitToken?: SignTokenLimiterFn,
+): Promise<
+  | { status: 'not_found' }
+  | { status: 'rate_limited'; retryAfterSeconds: number }
+  | { status: 'ok'; result: SignPublicDepositNoticeResult }
+> {
+  const parsedToken = zSignToken.safeParse(input.token);
+  if (!parsedToken.success) {
+    return { status: 'not_found' };
+  }
+  const tokenHash = tokenHashOf(parsedToken.data);
+  const decision = limitToken?.(tokenHash);
+  if (decision && !decision.allowed) {
+    return { status: 'rate_limited', retryAfterSeconds: decision.retryAfterSeconds };
+  }
+
+  type SqlNoticePreflightRow =
+    | { status: 'not_found' }
+    | { status: 'ok'; orgId: string; otpRequired: boolean; alreadyNoticed?: boolean; deposit?: unknown };
+
+  const preflight = await runtime.orgless(async (db) => {
+    const { rows } = await sql<{ result: SqlNoticePreflightRow }>`
+      SELECT ludy_sign.public_deposit_notice_preflight(${tokenHash}) AS result
+    `.execute(db);
+    return rows[0]?.result ?? { status: 'not_found' as const };
+  });
+
+  if (preflight.status === 'not_found') {
+    return { status: 'not_found' };
+  }
+  if (!(await isEntitled(billing, preflight.orgId))) {
+    return { status: 'not_found' };
+  }
+  if (preflight.otpRequired) {
+    throw new DomainError('SIGN_OTP_REQUIRED', 403, 'Email OTP verification is required before reporting transfer');
+  }
+  if (preflight.alreadyNoticed) {
+    const deposit = parsePublicDepositSummary(preflight.deposit);
+    if (deposit) {
+      return { status: 'ok', result: { deposit } };
+    }
+  }
+
+  let cleanNote: string | null = null;
+  if (input.note !== undefined && input.note !== null) {
+    if (typeof input.note !== 'string') {
+      throw new DomainError('VALIDATION', 422, 'Transfer note must be text');
+    }
+    if (input.note.includes('\u0000')) {
+      throw new DomainError('VALIDATION', 422, 'NUL is not allowed');
+    }
+    const stripped = input.note.replace(/\p{Cc}+/gu, ' ').trim();
+    if (stripped.length > SIGN_DEPOSIT_NOTE_MAX) {
+      throw new DomainError('VALIDATION', 422, `Transfer note must not exceed ${SIGN_DEPOSIT_NOTE_MAX} characters`);
+    }
+    cleanNote = stripped.length > 0 ? stripped : null;
+  }
+
+  if (input.oversize) {
+    throw new DomainError('TOO_LARGE', 413, 'Deposit transfer proof exceeds 2 MB');
+  }
+  if (input.invalidEncoding || input.emptyFile) {
+    throw new DomainError('UNSUPPORTED_TYPE', 415, 'Deposit transfer proof must be a valid PNG or JPEG image');
+  }
+
+  let proofFilename: string | null = null;
+  let proofContentType: SignDepositProofContentType | null = null;
+  let proofSizeBytes: number | null = null;
+  let proofSha256: string | null = null;
+  let proofStorageKey: string | null = null;
+  let proofGeneration: string | null = null;
+
+  if (input.bytes && input.bytes.byteLength > 0) {
+    if (input.bytes.byteLength > SIGN_DEPOSIT_PROOF_MAX_BYTES) {
+      throw new DomainError('TOO_LARGE', 413, 'Deposit transfer proof exceeds 2 MB');
+    }
+    const detected = verifySignDepositProofBytes(input.bytes);
+    if (!detected) {
+      throw new DomainError('UNSUPPORTED_TYPE', 415, 'Deposit transfer proof must be a valid PNG or JPEG image');
+    }
+    const rawFilename = typeof input.filename === 'string' && input.filename.trim() ? input.filename.trim() : 'deposit-proof';
+    if (rawFilename.includes('\u0000')) {
+      throw new DomainError('VALIDATION', 422, 'NUL is not allowed');
+    }
+    proofFilename = safeFilename(rawFilename, detected);
+    proofContentType = detected;
+    proofSizeBytes = input.bytes.byteLength;
+    proofSha256 = sha256Hex(input.bytes);
+    proofStorageKey = fileKey(preflight.orgId, proofSha256);
+    proofGeneration = await putFile(store, proofStorageKey, input.bytes, detected, proofSha256);
+  }
+
+  type SqlNoticeRow =
+    | { status: 'not_found' }
+    | SqlErrorPayload
+    | { status: 'ok'; orgId: string; deposit: unknown };
+
+  const recorded = await runtime.orgless(async (db) => {
+    const { rows } = await sql<{ result: SqlNoticeRow }>`
+      SELECT ludy_sign.public_record_deposit_notice(
+        ${tokenHash},
+        ${cleanNote},
+        ${proofFilename},
+        ${proofContentType},
+        ${proofSizeBytes},
+        ${proofSha256},
+        ${proofStorageKey},
+        ${proofGeneration},
+        ${signIpHash(meta.ip)}
+      ) AS result
+    `.execute(db);
+    return rows[0]?.result ?? { status: 'not_found' as const };
+  });
+
+  if (recorded.status === 'not_found') return { status: 'not_found' };
+  if (recorded.status === 'error') throwSqlDomainError(recorded);
+  const deposit = parsePublicDepositSummary(recorded.deposit);
+  if (!deposit) return { status: 'not_found' };
+  return { status: 'ok', result: { deposit } };
 }
