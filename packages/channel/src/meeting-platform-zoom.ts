@@ -81,7 +81,7 @@ const completed = (files: ZoomFile[]) => files.filter((f) => text(f.status).toLo
 // The one file of a kind, or undefined: more than one file of a kind is a recording made in segments, which `partsOf` orders and the job joins (#3175).
 const only = (files: ZoomFile[]): ZoomFile | undefined => (files.length === 1 ? files[0] : undefined);
 // The most parts one recording is joined from (the sandbox's own limit, packages/media-contract MEDIA_LIMITS.maxJoinParts): a call in more segments than this is not offered.
-export const ZOOM_PARTS_MAX = 16;
+export const ZOOM_PARTS_MAX = 8;
 const startOf = (file: ZoomFile): number => (typeof file.recording_start === 'string' ? Date.parse(file.recording_start) : Number.NaN);
 // The files of one kind in the order they were recorded. One file is its own list. Several files (the host stopped and started the recording, one file per segment) are a list only when every one says when it
 // started (Zoom's `recording_start`), no two are the same file, and there are at most ZOOM_PARTS_MAX of them: otherwise the order of the call is not known, joining them could scramble it, and the recording is not

@@ -530,13 +530,13 @@ describe('a recording made in several segments is offered as one, in the order i
     expect(await listed([part('v1', '2026-11-17T01:00:00Z', 100, 'shared_screen_with_speaker_view', 'MP4'), part('v2', '2026-11-17T01:30:00Z', 200, 'shared_screen_with_speaker_view', 'MP4')])).toMatchObject({ hasAudio: false, hasVideo: true, sizeBytes: 300 });
   });
 
-  it('does not offer parts whose order is not known, that are the same file twice, or that are more than sixteen', async () => {
+  it('does not offer parts whose order is not known, that are the same file twice, or that are more than eight', async () => {
     expect(await listed([part('a1', '2026-11-17T01:00:00Z', 10), part('a2', undefined, 10)])).toBeUndefined();
     expect(await listed([part('a1', '2026-11-17T01:00:00Z', 10), part('a2', 'not a date', 10)])).toBeUndefined();
     expect(await listed([part('a1', '2026-11-17T01:00:00Z', 10), part('a1', '2026-11-17T01:30:00Z', 10)])).toBeUndefined();
-    const many = Array.from({ length: 17 }, (_, i) => part(`a${i}`, `2026-11-17T01:${String(i).padStart(2, '0')}:00Z`, 1));
+    const many = Array.from({ length: 9 }, (_, i) => part(`a${i}`, `2026-11-17T01:${String(i).padStart(2, '0')}:00Z`, 1));
     expect(await listed(many)).toBeUndefined();
-    expect(await listed(many.slice(0, 16))).toMatchObject({ hasAudio: true, sizeBytes: 16 });
+    expect(await listed(many.slice(0, 8))).toMatchObject({ hasAudio: true, sizeBytes: 8 });
   });
 
   it('does not join two views of one stretch: files that began together, files of a kind outside the known ones, or files of different kinds', async () => {
