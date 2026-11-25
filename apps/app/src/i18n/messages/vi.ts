@@ -19336,6 +19336,10 @@ export const vi = {
       },
       member: {
         change_role: 'Đổi vai trò thành viên',
+        home_layout: {
+          get: 'Xem bố cục Trang chủ',
+          save: 'Lưu bố cục Trang chủ',
+        },
         invite: {
           accept: 'Nhận lời mời vào tổ chức',
           create: 'Mời thành viên',
