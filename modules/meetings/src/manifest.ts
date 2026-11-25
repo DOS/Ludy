@@ -109,8 +109,6 @@ export const meetingsManifest = defineModule({
       meeting_chapter: columns(['org_id', 'id', 'meeting_id', 'stage', 'position', 'start_seconds', 'tainted', 'source_run_id', 'created_at', 'updated_at'], { title: 'pii' }),
       // Links of a meeting to a party, a deal and a calendar event (L1, #2587): ids and a time, no text.
       meeting_link: columns(['org_id', 'id', 'meeting_id', 'party_id', 'deal_id', 'calendar_event_id', 'created_by', 'created_at']),
-      // The links to the published minutes for people outside the org (#4822): ids, times and a count; the token is kept only as a hash.
-      minutes_link: columns(['org_id', 'id', 'meeting_id', 'token_sha256', 'expires_at', 'created_by', 'created_at', 'revoked_at', 'revoked_by', 'first_viewed_at', 'views']),
       // The recorder's own rough notes of a meeting (A5, #3163): read, written and deleted by the recorder alone. Free text, personal data.
       meeting_note: columns(['org_id', 'id', 'meeting_id', 'created_at', 'updated_at'], { body: 'pii' }),
       meeting_reader: columns(['org_id', 'id', 'meeting_id', 'user_id', 'created_at']),
@@ -126,6 +124,8 @@ export const meetingsManifest = defineModule({
       ]),
       // A member's own webhook for the minutes they publish (A6, #3164): definer-only. The address can carry a token in its path and the sealed secret is the broker's envelope, so both are sensitive.
       member_hook: columns(['org_id', 'id', 'user_id', 'fields', 'enabled', 'paused_reason', 'secret_hint', 'previous_until', 'failing_since', 'consecutive_failures', 'last_delivery_at', 'last_status', 'created_at', 'updated_at'], { url: 'sensitive', secret_sealed: 'sensitive', previous_sealed: 'sensitive' }),
+      // The links to the published minutes for people outside the org (#4822): ids, times and a count; the token is kept only as a hash.
+      minutes_link: columns(['org_id', 'id', 'meeting_id', 'token_sha256', 'expires_at', 'created_by', 'created_at', 'revoked_at', 'revoked_by', 'first_viewed_at', 'views']),
       // The minutes templates an org's owner or admin writes (#3578): a name and 1 to 8 sections (title, hint for Vy). Layout the org wrote, not personal data; the settings screen asks for no
       // names or personal details in a template. The meeting's own copy of one is on the meeting row.
       minutes_template: columns(['org_id', 'id', 'name', 'sections', 'archived_at', 'created_by', 'created_at', 'updated_at']),

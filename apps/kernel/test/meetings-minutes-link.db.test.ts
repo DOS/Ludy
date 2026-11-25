@@ -29,6 +29,7 @@ suite('the minutes link for people outside the org (#4822)', () => {
   const users: Record<string, string> = {};
   const asUser = (who: string) => ({ type: 'user' as const, userId: users[who] as string, aal: 'aal1' as const });
   const exec = <O = unknown>(who: string, name: string, input: unknown) => runtime.execute<O>(name, input, { actor: asUser(who), orgId });
+  const ask = <O = unknown>(who: string, name: string, input: unknown) => runtime.query<O>(name, input, { actor: asUser(who), orgId });
   const refuses = (promise: Promise<unknown>) => promise.then(() => null, (error: unknown) => (error as { code?: string }).code ?? 'ERR');
   async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
     const c = new pg.Client({ connectionString: adminUrl });
@@ -102,7 +103,7 @@ suite('the minutes link for people outside the org (#4822)', () => {
 
   it('is off until an owner turns it on: no link is made while it is off, and only an owner or admin changes it', async () => {
     const id = await published();
-    expect(await exec('rec', 'meetings.minutes_link.switch.get', {})).toEqual({ enabled: false });
+    expect(await ask('rec', 'meetings.minutes_link.switch.get', {})).toEqual({ enabled: false });
     expect(await refuses(makeLink(id))).toBe('MINUTES_LINK_OFF');
     expect(await refuses(exec('rec', 'meetings.minutes_link.switch.set', { enabled: true }))).not.toBeNull();
     expect(await setSwitch(true)).toEqual({ enabled: true });
@@ -112,6 +113,9 @@ suite('the minutes link for people outside the org (#4822)', () => {
   it('lets only the recorder of a meeting with published minutes make a link, and at most 10 live ones', async () => {
     await setSwitch(true);
     const id = await published();
+    // A member who cannot read the meeting does not even find it; one who reads it (an attendee) is refused.
+    expect(await refuses(makeLink(id, 'other'))).toBe('MEETING_NOT_FOUND');
+    await sqlAdmin('INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)', [orgId, randomUUID(), id, users.other]);
     expect(await refuses(makeLink(id, 'other'))).toBe('FORBIDDEN');
     const draftOnly = await meeting('Chưa xuất bản');
     await result(draftOnly, 'draft', 'Bản nháp', []);
@@ -128,11 +132,11 @@ suite('the minutes link for people outside the org (#4822)', () => {
     expect(link.path).toBe(`/-/minutes#${link.token}`);
     const rows = await sqlAdmin<{ token_sha256: string }>('SELECT token_sha256 FROM ludy_meetings.minutes_link WHERE org_id = $1 AND id = $2', [orgId, link.linkId]);
     expect(rows.rows[0]?.token_sha256).toBe(minutesTokenHash(link.token));
-    const listed = await exec<{ items: Array<Record<string, unknown>> }>('rec', 'meetings.minutes_link.list', { meetingId: id });
+    const listed = await ask<{ items: Array<Record<string, unknown>> }>('rec', 'meetings.minutes_link.list', { meetingId: id });
     expect(JSON.stringify(listed)).not.toContain(link.token);
     const audit = await sqlAdmin<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_kernel.audit_event WHERE org_id = $1 AND audit_event::text LIKE '%' || $2 || '%'`, [orgId, link.token]);
     expect(audit.rows[0]?.n).toBe('0');
-    expect(await refuses(exec('other', 'meetings.minutes_link.list', { meetingId: id }))).toBe('FORBIDDEN');
+    expect(await refuses(ask('other', 'meetings.minutes_link.list', { meetingId: id }))).toBe('MEETING_NOT_FOUND');
   });
 
   it('answers the published summary, decisions and action items, counts the open, and never a draft or the transcript', async () => {
@@ -198,9 +202,9 @@ suite('the minutes link for people outside the org (#4822)', () => {
     const link = await makeLink(id);
     expect(await view(link.token)).not.toBeNull();
     // An owner who did not record the meeting lists its links (to end one) and a plain member who did not record it cannot.
-    const listed = await exec<{ items: Array<{ id: string }> }>('owner', 'meetings.minutes_link.list', { meetingId: id });
+    const listed = await ask<{ items: Array<{ id: string }> }>('owner', 'meetings.minutes_link.list', { meetingId: id });
     expect(listed.items.map((i) => i.id)).toContain(link.linkId);
-    expect(await refuses(exec('other', 'meetings.minutes_link.list', { meetingId: id }))).toBe('FORBIDDEN');
+    expect(await refuses(ask('other', 'meetings.minutes_link.list', { meetingId: id }))).toBe('MEETING_NOT_FOUND');
     // A meeting with no text retention date is kept until it is deleted, so its link still opens.
     await sqlAdmin(`UPDATE ludy_meetings.meeting SET text_retention_date = NULL WHERE org_id = $1 AND id = $2`, [orgId, id]);
     expect(await view(link.token)).not.toBeNull();
