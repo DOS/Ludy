@@ -83,9 +83,9 @@ export async function signIn(page: Page, email: string, password = PASSWORD): Pr
 export async function signOut(page: Page): Promise<void> {
   const insideOrg = /^\/o\/[^/]+(\/|$)/.test(new URL(page.url()).pathname);
   if (insideOrg) {
-    const sidebar = page.getByRole('complementary');
-    await sidebar.getByRole('button', { name: /^Tài khoản:/ }).click();
-    await sidebar.getByRole('button', { name: 'Đăng xuất', exact: true }).click();
+    const topBar = page.getByRole('banner');
+    await topBar.getByRole('button', { name: /^Tài khoản:/ }).click();
+    await topBar.getByRole('button', { name: 'Đăng xuất', exact: true }).click();
     return;
   }
   await page.getByRole('button', { name: 'Đăng xuất', exact: true }).click();

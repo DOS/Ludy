@@ -9,7 +9,7 @@ test('an owner gives the chief accountant role and takes it back', async ({ page
   const owner = newEmail('roles');
   await signUp(page, owner);
   await createOrg(page, 'Công ty phân quyền');
-  await page.getByRole('navigation').getByRole('link', { name: 'Cài đặt' }).click();
+  await page.getByRole('banner').getByRole('link', { name: 'Cài đặt', exact: true }).click();
 
   // Giving a role is R3: turn on the second factor first (Security tab), so the code is fresh.
   await openSettingsTab(page, 'security');

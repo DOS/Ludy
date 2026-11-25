@@ -364,6 +364,40 @@ describe('PlatformRecordings (Meetings tab)', () => {
     expect(off).not.toContain(en.meetings.platform.recordings.videoKeepsAudio);
   });
 
+  it('shows no "Nhập" on the row of a meeting whose other entry (its video or its transcript) is on its way or imported, says it is taken, and keeps "Bỏ qua" (ADR-0055)', () => {
+    const video = (over: Partial<MeetingPlatformRecordingView> = {}) => recording({ id: 'v', provider: 'microsoft_teams', hasAudio: false, hasVideo: true, hasTranscript: false, videoImportMaxBytes: 2 * 1024 ** 3, ...over });
+    const transcript = (over: Partial<MeetingPlatformRecordingView> = {}) => recording({ id: 't', provider: 'microsoft_teams', hasAudio: false, hasVideo: false, hasTranscript: true, ...over });
+    for (const locale of ['en', 'vi'] as const) {
+      const messages = locale === 'en' ? en : viMessages;
+      reset();
+      client.current.setQueryData(KEYS.connections, [connection()]);
+      // Neither is on its way: both offer "Nhập", and none says it is taken.
+      client.current.setQueryData(KEYS.recordings, [video(), transcript()]);
+      const open = renderToStaticMarkup(wrap(<PlatformRecordings slug="acme" />, locale));
+      expect(count(open, 'data-testid="meeting-recording-import"'), locale).toBe(2);
+      expect(count(open, 'data-testid="meeting-recording-pair-taken"'), locale).toBe(0);
+      // Each state that means "the call is taken" turns the other row into a note, and the row still offers "Bỏ qua".
+      for (const status of ['importing', 'staged', 'claimed', 'imported'] as const) {
+        client.current.setQueryData(KEYS.recordings, [video({ status, meetingId: 'm1' }), transcript()]);
+        const html = renderToStaticMarkup(wrap(<PlatformRecordings slug="acme" />, locale));
+        expect(count(html, 'data-testid="meeting-recording-import"'), `${locale} ${status}`).toBe(0);
+        expect(count(html, 'data-testid="meeting-recording-pair-taken"'), `${locale} ${status}`).toBe(1);
+        expect(html).toContain(esc(messages.meetings.platform.recordings.pairTaken));
+        expect(html).toContain(messages.meetings.platform.recordings.dismiss);
+        // The same the other way round: a transcript on its way takes the video's row.
+        client.current.setQueryData(KEYS.recordings, [video(), transcript({ status, meetingId: 'm1' })]);
+        const back = renderToStaticMarkup(wrap(<PlatformRecordings slug="acme" />, locale));
+        expect(count(back, 'data-testid="meeting-recording-import"'), `${locale} ${status} back`).toBe(0);
+        expect(count(back, 'data-testid="meeting-recording-pair-taken"'), `${locale} ${status} back`).toBe(1);
+      }
+      // A sibling that is only dismissed or failed leaves the row free; another meeting's row (a different start) is not its sibling.
+      client.current.setQueryData(KEYS.recordings, [video({ status: 'dismissed' }), transcript()]);
+      expect(count(renderToStaticMarkup(wrap(<PlatformRecordings slug="acme" />, locale)), 'data-testid="meeting-recording-import"'), locale).toBe(1);
+      client.current.setQueryData(KEYS.recordings, [video({ status: 'importing', meetingId: 'm1', startedAt: '2026-11-15T02:00:00.000Z' }), transcript()]);
+      expect(count(renderToStaticMarkup(wrap(<PlatformRecordings slug="acme" />, locale)), 'data-testid="meeting-recording-import"'), locale).toBe(1);
+    }
+  });
+
   it('offers "Nhập" for a recording that has only the platform\'s transcript, names the platform whose text it is in both languages, and blocks a provider with no transcript path (C2, #3174)', () => {
     for (const locale of ['en', 'vi'] as const) {
       const messages = locale === 'en' ? en : viMessages;
@@ -374,6 +408,8 @@ describe('PlatformRecordings (Meetings tab)', () => {
       expect(count(on, 'data-testid="meeting-recording-import"'), locale).toBe(1);
       expect(count(on, 'data-testid="meeting-recording-blocked"'), locale).toBe(0);
       expect(on).toContain(esc(messages.meetings.platform.recordings.transcriptKeepsText.replace('{platform}', 'Google Meet')));
+      // The buttons of a transcript row say so in their names: a meeting can be offered twice (video and transcript), and the two rows must not have identical buttons.
+      expect(on).toContain(esc(messages.meetings.platform.recordings.importOf.replace('{title}', `${recording().title} (${messages.meetings.platform.recordings.offerTranscript})`)));
       client.current.setQueryData(KEYS.recordings, [recording({ provider: 'another_platform' as never, hasAudio: false, hasVideo: false, hasTranscript: true })]);
       const off = renderToStaticMarkup(wrap(<PlatformRecordings slug="acme" />, locale));
       expect(count(off, 'data-testid="meeting-recording-import"'), locale).toBe(0);

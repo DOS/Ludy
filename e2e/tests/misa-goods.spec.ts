@@ -28,7 +28,7 @@ test('set the MISA codes of a stock account, book a stock line, and export it in
   const nav = page.getByRole('navigation');
 
   await test.step('the stock accounts show the default codes in Settings; set the codes of 156', async () => {
-    await nav.getByRole('link', { name: 'Cài đặt' }).click();
+    await page.getByRole('banner').getByRole('link', { name: 'Cài đặt', exact: true }).click();
     await openSettingsTab(page, 'accounting');
     const card = page.getByLabel('Mã hàng và mã kho cho MISA');
     await expect(card.getByText('Hóa đơn mua nguyên vật liệu, công cụ dụng cụ và hàng hóa', { exact: false })).toBeVisible();
