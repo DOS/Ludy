@@ -1,34 +1,37 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// WIP experiment 2 for #5026 (never merged in this form): which query call types at 300, 350 and 400 tables.
+// WIP experiment 3 for #5026 (never merged in this form): which part of the first headroom test hit TS2590 at 400 tables.
 import type { Kysely, Transaction } from 'kysely';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
+import type { Db } from '../src/index.ts';
+import type { Database } from '../src/schema.ts';
 
 type Digit = '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9';
-type Row = { id: string; name: string };
-type N300 = `t${'0' | '1' | '2'}${Digit}${Digit}`;
-type N350 = N300 | `t3${'0' | '1' | '2' | '3' | '4'}${Digit}`;
-type N400 = `t${'0' | '1' | '2' | '3'}${Digit}${Digit}`;
-type W300 = { [N in N300]: Row };
-type W350 = { [N in N350]: Row };
-type W400 = { [N in N400]: Row };
+type TableName = `t${'0' | '1' | '2' | '3'}${Digit}${Digit}`;
+type Wide = { [N in TableName]: { id: string; name: string } };
+type WideDb = Kysely<Wide> | Transaction<Wide>;
 
-export function queries(
-  k300: Kysely<W300>,
-  k350: Kysely<W350>,
-  k400: Kysely<W400>,
-  t400: Transaction<W400>,
-  u400: Kysely<W400> | Transaction<W400>,
-) {
-  const a = k300.selectFrom('t000').select('id');
-  const b = k350.selectFrom('t000').select('id');
-  const c = k400.selectFrom('t000').select('id');
-  const d = t400.selectFrom('t399').select('id');
-  const e = u400.selectFrom('t000').selectAll();
-  return [a, b, c, d, e] as const;
+function takesWide(_db: WideDb): void {}
+
+// F1: a function with a body, a transaction passed as the union handle.
+export function f1(tx: Transaction<Wide>) {
+  takesWide(tx);
+}
+// F2: the pool handle passed as the union handle.
+export function f2(pool: Kysely<Wide>) {
+  takesWide(pool);
+}
+// F3: queries through the transaction and through the union.
+export function f3(tx: Transaction<Wide>, handle: WideDb) {
+  return [tx.selectFrom('t399').select('id'), handle.selectFrom('t000').selectAll()] as const;
 }
 
-describe('experiment 2', () => {
+describe('experiment 3', () => {
   it('compiles', () => {
-    expect(typeof queries).toBe('function');
+    expect([f1, f2, f3].length).toBe(3);
+  });
+
+  // F4: the real Db pinned with the identity assertion of expect-type.
+  it('pins Db', () => {
+    expectTypeOf<Db>().toEqualTypeOf<Kysely<Database> | Transaction<Database>>();
   });
 });

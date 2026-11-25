@@ -4,7 +4,7 @@ import type { Database } from './schema.ts';
 
 export type { Database } from './schema.ts';
 export * from './schema.ts';
-export { singleCell, type CellResolver } from './cells.ts';
+export { singleCell, type CellResolver, type Db } from './cells.ts';
 
 // Money (numeric), int8 and dates stay strings end to end; timestamptz becomes a Date.
 const NUMERIC = 1700;
@@ -194,7 +194,6 @@ export function createDb(pool: pg.Pool): Kysely<Database> {
   return new Kysely<Database>({ dialect: new PostgresDialect({ pool }) });
 }
 
-export type { Db } from './handle.ts';
 
 // Row-level security is the tenant boundary, so the API and worker must never connect as a role that skips it.
 export async function assertRlsEnforced(pool: pg.Pool): Promise<void> {
