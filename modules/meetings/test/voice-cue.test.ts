@@ -118,6 +118,30 @@ describe('the due date', () => {
     expect(one('Vy ơi, ghi lại gọi khách')).toMatchObject({ when: '', whenDate: null });
   });
 
+  it('keeps the owner when the date comes first, and the date when the owner comes first', () => {
+    expect(one('Vy ơi, ghi lại gửi báo giá hạn thứ Sáu cho anh Nam')).toMatchObject({ title: 'gửi báo giá', who: 'anh Nam', whoUserId: 'u-nam', when: 'thứ Sáu', whenDate: '2026-11-27' });
+    expect(one('Vy ơi, ghi lại gửi báo giá cho anh Nam hạn thứ Sáu')).toMatchObject({ title: 'gửi báo giá', who: 'anh Nam', whoUserId: 'u-nam', when: 'thứ Sáu', whenDate: '2026-11-27' });
+    expect(one('Vy, note the report for Lan by Friday')).toMatchObject({ title: 'the report', who: 'Lan', whoUserId: 'u-lan', when: 'Friday', whenDate: '2026-11-27' });
+  });
+
+  it('does not take a phrase that is no time for the due clause', () => {
+    expect(one('Vy ơi, ghi lại gửi bản nháp trước cho chị Lan')).toMatchObject({ title: 'gửi bản nháp trước', who: 'chị Lan', whoUserId: 'u-lan', when: '' });
+    expect(one('Vy, note the report by Lan')).toMatchObject({ title: 'the report by Lan', when: '' });
+    expect(one('Vy, remind me to call the bank by phone')).toMatchObject({ title: 'call the bank by phone', when: '' });
+  });
+
+  it('keeps a vague time as said text for a person to read', () => {
+    expect(one('Vy ơi, ghi lại gửi báo giá, hạn cuối tháng')).toMatchObject({ title: 'gửi báo giá', when: 'cuối tháng', whenDate: null });
+    expect(one('Vy, note the report by next week')).toMatchObject({ title: 'the report', when: 'next week', whenDate: null });
+  });
+
+  it('means "hạn" and "cho", not words that fold to them', () => {
+    expect(one('Vy ơi, ghi lại gửi hàng Hàn Quốc')).toMatchObject({ title: 'gửi hàng Hàn Quốc', when: '' });
+    expect(one('Vy ơi, ghi lại chở anh Nam ra sân bay')).toMatchObject({ title: 'chở anh Nam ra sân bay', who: '', whoUserId: null });
+    expect(one('Vy ơi, ghi lại mua chó cho anh Nam')).toMatchObject({ title: 'mua chó', who: 'anh Nam', whoUserId: 'u-nam' });
+    expect(one('Vy ơi, ghi lại làm xong trúc bách thứ sáu')).toMatchObject({ when: '' });
+  });
+
   it('does not read a long phrase after "trước" as a due clause', () => {
     expect(one('Vy ơi, ghi lại làm xong hợp đồng trước khi khách gửi lại bản chỉnh sửa cuối cùng')).toMatchObject({ when: '' });
   });

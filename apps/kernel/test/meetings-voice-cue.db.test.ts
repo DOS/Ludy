@@ -51,7 +51,7 @@ suite('Spoken cues to Vy (#4807)', () => {
     return id;
   }
   const say = (meetingId: string, seconds: number, text: string, stage: 'draft' | 'published' = 'draft') =>
-    sqlAdmin(`INSERT INTO ludy_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, $3, $3 + 5, 'Người nói 1', $4, $5)`, [orgId, meetingId, seconds, text, stage]);
+    sqlAdmin(`INSERT INTO ludy_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, $3::numeric, $3::numeric + 5, 'Người nói 1', $4, $5::text)`, [orgId, meetingId, seconds, text, stage]);
   const items = (meetingId: string) =>
     sqlAdmin<{ title: string; who_drafted: string; who_parsed: string | null; when_drafted: string; when_parsed: string | null; transcript_seconds: number | null; stage: string; status: string; tainted: boolean; flags: string[]; source_run_id: string | null }>(
       `SELECT title, who_drafted, who_parsed, when_drafted, when_parsed::text, transcript_seconds, stage, status, tainted, flags, source_run_id FROM ludy_meetings.action_item WHERE org_id = $1 AND meeting_id = $2 ORDER BY transcript_seconds, created_at`,
@@ -124,6 +124,28 @@ suite('Spoken cues to Vy (#4807)', () => {
     // Nothing is shared: a reader sees no published item and no draft.
     const reader = await runtime.query<MeetingResults>('meetings.result.get', { meetingId: id }, { actor: asUser('lan'), orgId });
     expect(reader.items).toEqual([]);
+  });
+
+  it('keeps the mark when the recorder edits the item, so it stays unclean and is not drafted again', async () => {
+    const id = await meeting('Họp sửa việc');
+    await say(id, 40, 'Vy ơi, ghi lại gửi báo giá cho anh Nam, hạn thứ Sáu');
+    await draftCues('rec', id);
+    const itemId = (await sqlAdmin<{ id: string }>('SELECT id FROM ludy_meetings.action_item WHERE org_id = $1 AND meeting_id = $2', [orgId, id])).rows[0]?.id as string;
+    await runtime.execute('meetings.action_item.edit', { itemId, whenDate: '2026-11-28' }, { actor: asUser('rec'), orgId });
+    await runtime.execute('meetings.action_item.edit', { itemId, title: 'Gửi báo giá bản cuối' }, { actor: asUser('rec'), orgId });
+    const [row] = await items(id);
+    expect(row).toMatchObject({ title: 'Gửi báo giá bản cuối', when_parsed: '2026-11-28', flags: ['asked_aloud'] });
+    const view = await runtime.query<MeetingResults>('meetings.result.get', { meetingId: id }, { actor: asUser('rec'), orgId });
+    expect(view.items[0]).toMatchObject({ flags: ['asked_aloud'], clean: false });
+    expect(await draftCues('rec', id)).toMatchObject({ found: 1, created: 0, duplicate: 1 });
+  });
+
+  it('drafts two cues that start in the same second', async () => {
+    const id = await meeting('Họp nói chồng');
+    await say(id, 50.1, 'Vy ơi, ghi lại gọi khách');
+    await say(id, 50.6, 'Vy ơi, ghi lại gửi hợp đồng');
+    expect(await draftCues('rec', id)).toMatchObject({ found: 2, created: 2, duplicate: 0 });
+    expect((await items(id)).map((r) => r.title).sort()).toEqual(['gọi khách', 'gửi hợp đồng']);
   });
 
   it('is only for the recorder: a reader is refused, a member who does not read the meeting meets a 404', async () => {

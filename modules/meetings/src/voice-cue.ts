@@ -68,8 +68,13 @@ const VERB = '(ghi lai|ghi chu|ghi nho|luu lai|nhac nho|nhac viec|nhac|note|remi
 const CUE = new RegExp(`(?:^|[^a-z0-9])vy(?:\\s+oi(?![a-z0-9])[\\s,;:!.\\-]*|\\s*[,;:!\\-]+\\s*)${FILLER}${VERB}(?![a-z0-9])`, 'u');
 const PRONOUN = /^\s*(?:viec nay|cai nay|dieu nay|noi dung nay|viec do|cai do|this|that|it)(?![a-z0-9])/u;
 const LEAD_IN = /^[\s,;:-]*(?:(?:rang|la|that|to|nhe|nha)(?![a-z0-9])[\s,;:-]*)*/u;
-const DUE = /(?:^|[\s,;])(han chot|han|deadline|due|truoc|before|by)\s+([^,;]*)/du;
-const OWNER = /(?:^|[\s,;])(giao cho|cho|for)\s+([^,;]*)/du;
+const DUE = /(?:^|[\s,;])(han chot|han|deadline|due|truoc|before|by)\s+([^,;]*)/dgu;
+const OWNER = /(?:^|[\s,;])(giao cho|cho|for)\s+([^,;]*)/dgu;
+// The spellings, as said, that the keywords mean: "hạn" and "han", not "hàn" (Korea) or "hán"; "cho", not "chó", "chở" or "chợ"; "trước", not "trúc".
+const DUE_WORDS: ReadonlySet<string> = new Set(['hạn chót', 'han chot', 'hạn', 'han', 'deadline', 'due', 'trước', 'truoc', 'before', 'by']);
+const OWNER_WORDS: ReadonlySet<string> = new Set(['giao cho', 'cho', 'for']);
+// A phrase after a due keyword that reads like a time even when code cannot name the day ("tuần sau", "cuối tháng", "next week", a number); "by phone" and "trước cho chị Lan" are not.
+const DATELIKE = /(?:^|\s)(?:tuan|thang|ngay|thu|cuoi|som|asap|week|month|day|next|end|today|tonight|tomorrow|morning|afternoon|sang|chieu|toi|monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?![a-z0-9])|\d/u;
 const SENTENCE_END = /[.!?](?=\s|$)/u;
 const WORDS_MAX = 4;
 const HONORIFIC = /^(?:anh|chi|em|bac|co|chu|ong|ba|ban|mr|ms|mrs)$/u;
@@ -115,35 +120,54 @@ export function findVoiceCues(lines: readonly CueLine[], people: readonly Person
     const stop = SENTENCE_END.exec(restFolded);
     if (stop) restFolded = restFolded.slice(0, stop.index);
     let rest = line.text.slice(at, at + restFolded.length);
-    // A range taken out of the text is replaced by one space in both the text and its folded copy, so they stay the same length.
+    // A range taken out of the text is blanked with spaces of the same length in both copies, so every position found before stays valid.
     const take = (from: number, to: number) => {
-      rest = `${rest.slice(0, from)} ${rest.slice(to)}`;
-      restFolded = `${restFolded.slice(0, from)} ${restFolded.slice(to)}`;
+      const blank = ' '.repeat(to - from);
+      rest = `${rest.slice(0, from)}${blank}${rest.slice(to)}`;
+      restFolded = `${restFolded.slice(0, from)}${blank}${restFolded.slice(to)}`;
     };
+    // The first match of a keyword whose spelling, as said, is one the cue means.
+    const keywordMatch = (pattern: RegExp, spellings: ReadonlySet<string>) => {
+      // A match runs to the end of its phrase, so the search restarts one character after each start: a keyword inside an earlier match ("chó cho anh Nam") is found as well.
+      const re = new RegExp(pattern.source, pattern.flags);
+      for (let m = re.exec(restFolded); m !== null; m = re.exec(restFolded)) {
+        const at = m.indices?.[1];
+        if (at && spellings.has(rest.slice(at[0], at[1]).toLowerCase())) return m;
+        re.lastIndex = m.index + 1;
+      }
+      return null;
+    };
+    const due = keywordMatch(DUE, DUE_WORDS);
+    const dueKeyword = due?.indices?.[1];
+    const duePhrase = due?.indices?.[2];
+    const owner = keywordMatch(OWNER, OWNER_WORDS);
+    const ownerKeyword = owner?.indices?.[1];
+    const ownerPhrase = owner?.indices?.[2];
+    // Each clause stops where the other starts: "hạn thứ Sáu cho anh Nam" is a date and then an owner, and "cho anh Nam hạn thứ Sáu" an owner and then a date.
+    let dueEnd = duePhrase?.[1] ?? 0;
+    let ownerEnd = ownerPhrase?.[1] ?? 0;
+    if (dueKeyword && ownerKeyword) {
+      if (ownerKeyword[0] > dueKeyword[0] && ownerKeyword[0] < dueEnd) dueEnd = ownerKeyword[0];
+      if (dueKeyword[0] > ownerKeyword[0] && dueKeyword[0] < ownerEnd) ownerEnd = dueKeyword[0];
+    }
     // The due clause: a keyword and a short phrase, read against the meeting's own day.
     let when = '';
     let whenDate: string | null = null;
-    const due = DUE.exec(restFolded);
-    const dueKeyword = due?.indices?.[1];
-    const duePhrase = due?.indices?.[2];
     if (dueKeyword && duePhrase) {
-      const phrase = rest.slice(duePhrase[0], duePhrase[1]).trim();
+      const phrase = rest.slice(duePhrase[0], dueEnd).trim();
       const day = parseWhen(phrase, meetingDay);
-      if (phrase !== '' && (day !== null || phrase.split(/\s+/u).length <= WORDS_MAX)) {
+      if (phrase !== '' && (day !== null || (phrase.split(/\s+/u).length <= WORDS_MAX && DATELIKE.test(fold(phrase))))) {
         when = cut(phrase, ITEM_TEXT_MAX);
         whenDate = day;
-        take(dueKeyword[0], duePhrase[1]);
+        take(dueKeyword[0], dueEnd);
       }
     }
     if (whenDate === null) whenDate = parseWhen(rest, meetingDay);
     // The owner: after "cho", "giao cho" or "for"; or, for a reminder, right after the verb.
     let who = '';
     let whoUserId: string | null = null;
-    const owner = OWNER.exec(restFolded);
-    const ownerKeyword = owner?.indices?.[1];
-    const ownerPhrase = owner?.indices?.[2];
     if (ownerKeyword && ownerPhrase) {
-      const phrase = rest.slice(ownerPhrase[0], ownerPhrase[1]);
+      const phrase = rest.slice(ownerPhrase[0], ownerEnd);
       const matched = ownerPrefix(phrase, people);
       const spans = wordSpans(phrase);
       if (matched) {
@@ -153,7 +177,7 @@ export function findVoiceCues(lines: readonly CueLine[], people: readonly Person
       } else if (spans.length > 1 && spans.length <= WORDS_MAX - 1 && HONORIFIC.test(restFolded.slice(ownerPhrase[0], ownerPhrase[0] + (spans[0]?.word.length ?? 0)))) {
         // An honorific and a name nobody answers to ("anh Tuấn") is the said name, kept as text for a person to read; "cho khách" is no name and stays in the title.
         who = cut(phrase.trim(), ITEM_TEXT_MAX);
-        take(ownerKeyword[0], ownerPhrase[1]);
+        take(ownerKeyword[0], ownerEnd);
       }
     } else if (remind) {
       const start = restFolded.length - restFolded.trimStart().length;
@@ -217,7 +241,7 @@ export const voiceCueDraft = defineCommand({
     const people = await attendeeNames(ctx, input.meetingId, userId);
     const found = findVoiceCues(lines, people, vnDay(row.started_at ?? new Date()));
 
-    // One item for a cue: a line that already has an item of this kind is not made again.
+    // One item for a cue: a line that already had an item of this kind before this click is not made again (two cues that start in the same second are both made).
     const have = await ctx.trx
       .selectFrom('ludy_meetings.action_item')
       .select('transcript_seconds')
@@ -257,7 +281,6 @@ export const voiceCueDraft = defineCommand({
           tainted: true,
         })
         .execute();
-      seen.add(cue.seconds);
       room -= 1;
       created += 1;
     }
