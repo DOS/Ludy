@@ -47,7 +47,8 @@ const HOUR = 3_600_000;
 const CANARY_TITLE = 'BÍ MẬT-3803 họp giá';
 const CANARY_SUMMARY = 'BÍ MẬT-3803 tóm tắt';
 
-// A probe for the definer that lists the grants to wake (#4894): the system's own command, which asks it about any org id it is given, from the org context the runtime sets for the call.
+// A probe for the definer that lists the grants to wake (#4894): the system's own command, which asks it about any org id it is given, from the org context the runtime sets for the call. The
+// definer is asked this way (not from the worker's bare login) so that the case below holds before and after the definer is bound to the org of its transaction.
 const wakeTargetsProbe = defineCommand({
   name: 'test.wake_targets_probe',
   input: z.strictObject({ org: z.string(), limit: z.number().int() }),
