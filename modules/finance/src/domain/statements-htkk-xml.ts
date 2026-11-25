@@ -7,9 +7,9 @@
 // order. docs/integrations/htkk-bctc-xml.md lists every source and which facts are confirmed. The form constants are
 // data (HTKK_BCTC), so a new HTKK release is a change to the data.
 //
-// Crove fills the figures from its ledger: B01 at the year's end and at the previous year's end, B02 for the year and
+// Ludy fills the figures from its ledger: B01 at the year's end and at the previous year's end, B02 for the year and
 // the previous year (the builders of tt133-reports.ts, whose mapping an accountant still has to confirm, #154), and the
-// F01 rows of HTKK's fixed account list from the year's trial balance. What Crove does not hold stays empty for the
+// F01 rows of HTKK's fixed account list from the year's trial balance. What Ludy does not hold stays empty for the
 // accountant: the note references (Thuyết minh), the audit opinion, the signers. The cash flow statement (B03-DNN) is
 // optional in the schema and not written; the notes (B09-DNN) are not part of this file.
 import { Decimal, money, type DecimalValue, type Money } from '@ludy/l10n-vn';
@@ -24,7 +24,7 @@ export const HTKK_BCTC = {
   formName: 'Bộ báo cáo tài chính (B01a - DNN)(TT133/2016/TT-BTC)',
   formBasis: '(Ban hành theo Thông tư số 133/2016/TT-BTC ngày 26/8/2016 của Bộ Tài chính)',
   xmlVersion: '2.3.2',
-  // The software that made the file; Crove names itself rather than pose as HTKK (as for 01/GTGT).
+  // The software that made the file; Ludy names itself rather than pose as HTKK (as for 01/GTGT).
   service: { code: 'LUDY', name: 'Ludy', version: '1.0' },
 } as const;
 

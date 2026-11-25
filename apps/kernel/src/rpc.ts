@@ -278,7 +278,7 @@ function writerChannel(c: { id: string; provider: string; displayName: string })
 }
 
 // Why a Mastodon account did not connect, in words for the connect form; any other failure (the instance did not
-// answer, or the egress guard refused its address) is an instance Crove cannot reach.
+// answer, or the egress guard refused its address) is an instance Ludy cannot reach.
 function mastodonFailure(code: string | undefined): DomainError {
   if (code === 'MASTODON_INSTANCE_INVALID') return new DomainError('MASTODON_INSTANCE_INVALID', 422, 'Hãy nhập địa chỉ máy chủ Mastodon, ví dụ mastodon.social');
   if (code === 'MASTODON_TOKEN_INVALID') return new DomainError('MASTODON_TOKEN_INVALID', 422, 'Đây không phải mã truy cập Mastodon; hãy chép mã trong Cài đặt > Phát triển của máy chủ');
@@ -288,7 +288,7 @@ function mastodonFailure(code: string | undefined): DomainError {
 }
 
 // Why a WordPress site did not connect, in words for the connect form; any other failure (the site did not answer, or
-// the egress guard refused its address) is a site Crove cannot reach.
+// the egress guard refused its address) is a site Ludy cannot reach.
 function wordpressFailure(code: string | undefined): DomainError {
   if (code === 'WORDPRESS_SITE_INVALID') return new DomainError('WORDPRESS_SITE_INVALID', 422, 'Hãy nhập địa chỉ trang WordPress qua https, ví dụ https://tiemcuaban.vn');
   if (code === 'WORDPRESS_LOGIN_INVALID') return new DomainError('WORDPRESS_LOGIN_INVALID', 422, 'Hãy nhập tên người dùng và mật khẩu ứng dụng (24 chữ cái và chữ số) mà WordPress tạo cho bạn');
@@ -717,7 +717,7 @@ export function createRpcHandler(
       });
     }
   };
-  // A procedure of a module this deployment leaves out (CROVE_MODULES, plan Decision 12) answers like a route that
+  // A procedure of a module this deployment leaves out (LUDY_MODULES, plan Decision 12) answers like a route that
   // does not exist, before any database work. The contract is shared, so the procedure stays in the router.
   const finance = runtime.installed('finance');
   // A command that takes an idempotency key: the key travels in the options, never in the command's input.
@@ -1124,7 +1124,7 @@ export function createRpcHandler(
       taxProfile: os.org.taxProfile.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.tax_profile.get', {}, { actor, orgId }))),
       setTaxProfile: os.org.setTaxProfile.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.tax_profile.save', input, { actor, orgId }))),
       // The VAT return's done mark goes through finance when it is on (#1400): finance.vat.return_mark records the
-      // return as filed, with Crove's own figures, and writes the same done mark in the same transaction, so the next
+      // return as filed, with Ludy's own figures, and writes the same done mark in the same transaction, so the next
       // period's [22] has a [43] to start from.
       markTaxObligation: os.org.markTaxObligation.handler(({ context, input }) =>
         inOrg(context, async (orgId, actor) => {
@@ -3237,7 +3237,7 @@ export function createRpcHandler(
         }),
       ),
     },
-    // Org-less: the invite names the org, so the x-crove-org header is ignored here.
+    // Org-less: the invite names the org, so the x-ludy-org header is ignored here.
     invites: {
       peek: os.invites.peek.handler(({ context, input }) =>
         guard(() =>

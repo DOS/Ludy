@@ -1,5 +1,5 @@
 // Auto-replies on likes (#746). A published variant may carry one reply (settings.autoReply: { text, likes }) that
-// Crove posts under the post once the platform counts that many likes: a comment on Facebook Pages and LinkedIn, a
+// Ludy posts under the post once the platform counts that many likes: a comment on Facebook Pages and LinkedIn, a
 // reply in the thread on Threads, X and Bluesky. The metrics sweep reads the count; the reply is posted once, as its
 // own external_call step (autoreply), recorded before the call. No platform tells whether an unclear reply went
 // through, and nobody watches the counts, so a reply that failed or is unclear is not tried again: the post's activity
@@ -56,7 +56,7 @@ const requireSystem = (ctx: CommandContext) => {
 export const autoReplyBegin = defineCommand({
   name: 'social.auto_reply.begin',
   input: z.strictObject({ variantId: zId, likes: z.number().int().min(0).max(1e12) }),
-  // Commits the provider call as started; the worker then makes it, an effect outside Crove (#1578).
+  // Commits the provider call as started; the worker then makes it, an effect outside Ludy (#1578).
   risk: 'R2',
   sideEffect: 'external',
   access: 'system',

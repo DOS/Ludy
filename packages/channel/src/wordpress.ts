@@ -1,6 +1,6 @@
 // WordPress sites (#833), written from the WordPress REST API handbook (developer.wordpress.org/rest-api). A
 // self-hosted site or a WordPress.com Business site, no app of the deployment's own: the site's user makes an
-// application password in their profile (WordPress 5.6 and later) and gives Crove the site address, the user name and
+// application password in their profile (WordPress 5.6 and later) and gives Ludy the site address, the user name and
 // that password. It is sealed like any credential; the site's host and path are the account id.
 //
 // The site is the tenant's to name, so every call goes through the fetch the kernel hands in: the egress guard
@@ -102,7 +102,7 @@ export interface WordPressSecret {
   appPassword: string;
 }
 
-// The site as Crove keeps it: https on the default port, a host name and an optional path, nothing else.
+// The site as Ludy keeps it: https on the default port, a host name and an optional path, nothing else.
 export function wordpressSite(raw: string): string | null {
   // Trailing slashes cut by hand: a regular expression for them is slow on a long run of slashes.
   let trimmed = raw.trim();
@@ -440,7 +440,7 @@ export class WordPressPublisher implements Publisher {
     // Past the budget, a post could land after the job gave up on the call: retry instead, nothing is visible yet.
     if (Date.now() - started > this.callTimeoutMs - POST_CALL_MARGIN_MS) return { kind: 'rejected', error: 'transient', code: 'UPLOAD_BUDGET_SPENT' };
     const first = images[0];
-    // Only what the variant sets: without options the post is the one Crove always sent.
+    // Only what the variant sets: without options the post is the one Ludy always sent.
     const post = {
       status: options.status,
       title: escapeTitle(title),
@@ -454,7 +454,7 @@ export class WordPressPublisher implements Publisher {
       const answer = await this.client.call<{ id?: unknown; link?: unknown; status?: unknown }>(s, 'POST', '/wp/v2/posts', { json: post });
       const id = postId(answer.id);
       if (id === null) return { kind: 'unknown', code: 'NO_POST_ID' };
-      // A draft or a post pending review is on the site but not public: published for Crove, with no address and a
+      // A draft or a post pending review is on the site but not public: published for Ludy, with no address and a
       // note (as TikTok's inbox draft, #903). The site's own answer decides, since a review plugin may hold a post back.
       const held = unpublished(typeof answer.status === 'string' ? answer.status : options.status);
       if (held) return { kind: 'accepted', externalId: String(id), url: null, draft: held };
@@ -467,7 +467,7 @@ export class WordPressPublisher implements Publisher {
   // Moves the post to the site's trash (#1138): DELETE /wp/v2/posts/:id without force, so the site's owner can restore
   // it; WordPress answers the post with status trash. A post already in the trash (410 rest_already_trashed) or no
   // longer on the site (404 rest_post_invalid_id) is gone already. A site whose trash is off (501
-  // rest_trash_not_supported) would only delete it for good with force, which Crove never sends: a person deletes it on
+  // rest_trash_not_supported) would only delete it for good with force, which Ludy never sends: a person deletes it on
   // the site. A user who may not delete the post (rest_cannot_delete, rest_user_cannot_delete_post) is refused as
   // WORDPRESS_CANNOT_DELETE; any other 401 or 403 is a login to renew, as for publishing.
   async remove(input: RemoveInput): Promise<RemoveResult> {
@@ -535,7 +535,7 @@ export class WordPressPublisher implements Publisher {
 
   // The ids of the variant's categories and tags. A category must exist: an unknown one (or a name two categories share,
   // under different parents) fails the post with nothing sent, since a post filed in the wrong category is visible and
-  // Crove never makes categories (WordPress lets only editors and administrators do that). A missing tag is created;
+  // Ludy never makes categories (WordPress lets only editors and administrators do that). A missing tag is created;
   // when the site refuses (rest_cannot_create: the user lacks assign_post_tags), the post fails with nothing sent rather
   // than going out without a tag the person chose.
   private async terms(s: WordPressSecret, options: WordPressOptions): Promise<{ categories: number[]; tags: number[] } | { refused: PublishResult }> {

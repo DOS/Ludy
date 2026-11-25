@@ -42,7 +42,7 @@ export interface WriterChannel {
   provider: string;
   // How the channel is called in the prompt, e.g. "Facebook Page".
   label: string;
-  // How much text the channel takes, or null when it has no limit Crove knows, and in what unit: characters, or UTF-8
+  // How much text the channel takes, or null when it has no limit Ludy knows, and in what unit: characters, or UTF-8
   // bytes (YouTube descriptions), which Vietnamese text uses up faster.
   maxChars: number | null;
   unit?: 'characters' | 'bytes';

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Public signing link contracts for Crove eSign Slice 1b (#3324, docs/plan/esign.md).
+// Public signing link contracts for Ludy eSign Slice 1b (#3324, docs/plan/esign.md).
 // Screens belong in screens.ts (owned separately by #3325); keep only public route paths,
 // token patterns, PNG/input bounds, and request/response schemas here.
 import { z } from 'zod';

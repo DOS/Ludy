@@ -331,7 +331,7 @@ export const zExtractedArchive = z.strictObject({
 });
 export type ExtractedArchive = z.infer<typeof zExtractedArchive>;
 
-// The fields of the portal's invoice list Crove reads (#465). Required: the reader refuses a sheet whose header lacks
+// The fields of the portal's invoice list Ludy reads (#465). Required: the reader refuses a sheet whose header lacks
 // any of them. The others are read when their column is there.
 export const PORTAL_LIST_REQUIRED_FIELDS = ['sellerTaxCode', 'series', 'number', 'issueDate'] as const;
 export const PORTAL_LIST_FIELDS = [

@@ -295,10 +295,10 @@ export function threadsTopicTagOf(settings: Readonly<Record<string, unknown>>): 
 }
 
 // Who may reply to a Threads post (#983), in `settings.replySettings`, the field X's reply setting uses (#948), with
-// Crove's names mapped to Meta's reply_control values: everyone (the default, sent as nothing, as before), the accounts
+// Ludy's names mapped to Meta's reply_control values: everyone (the default, sent as nothing, as before), the accounts
 // the poster follows, the people the post mentions, or the poster's followers (Threads only). Meta sets it per post, on
 // the container that is published; thread parts are replies (comment()) and carry none. Meta's fifth value,
-// parent_post_author_only, concerns replies to someone else's post, which Crove does not make. null for everyone,
+// parent_post_author_only, concerns replies to someone else's post, which Ludy does not make. null for everyone,
 // 'invalid' for any other value.
 const REPLY_CONTROL: Readonly<Record<string, string>> = { following: 'accounts_you_follow', mentionedUsers: 'mentioned_only', followers: 'followers_only' };
 export function threadsReplyControlOf(settings: Readonly<Record<string, unknown>>): string | null | 'invalid' {
@@ -540,7 +540,7 @@ export class ThreadsPublisher implements Publisher {
 
   // A reply to the account's own post (#609), as the first comment. The reply container is invisible until published,
   // so any failure before threads_publish posted nothing; a container still processing when the short wait ends is
-  // transient, and the person retries. A connection made before Crove asked for threads_manage_replies is refused with
+  // transient, and the person retries. A connection made before Ludy asked for threads_manage_replies is refused with
   // a permission error and replies again once it reconnects.
   // A repost of the account's own post (#773): POST /{media_id}/repost, which answers with the repost's id.
   async repost(input: RepostInput): Promise<CommentResult> {

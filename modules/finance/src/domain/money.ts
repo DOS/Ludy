@@ -6,7 +6,7 @@
 // - Exchange rates are direct quotes: units of the book currency per 1 unit of the foreign currency.
 import { Decimal, money, type DecimalValue, type Money } from '@ludy/l10n-vn';
 
-// ISO 4217 minor units for the currencies Crove knows so far. VND has none.
+// ISO 4217 minor units for the currencies Ludy knows so far. VND has none.
 export const CURRENCY_MINOR_UNITS: Readonly<Record<string, number>> = {
   VND: 0,
   JPY: 0,

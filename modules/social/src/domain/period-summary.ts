@@ -15,7 +15,7 @@ import { goalEngagement, type GoalMetric, type GoalStatus } from './goals.ts';
 export interface SummaryTotals {
   posts: number;
   metrics: Readonly<Record<string, number>>;
-  // Clicks on Crove's short links, null when nothing went out with one.
+  // Clicks on Ludy's short links, null when nothing went out with one.
   clicks: number | null;
   rateBases: RateBases;
 }

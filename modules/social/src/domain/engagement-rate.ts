@@ -23,7 +23,7 @@ export interface EngagementRate {
 
 // What a rate is made of (#1164), per basis: the engagement and the denominator summed over the posts that report that
 // denominator above 0 and at least one engagement count. A channel's or a period's totals sum each count over all its
-// posts, so when some posts report reach and others do not (older captures, posts published outside Crove), the
+// posts, so when some posts report reach and others do not (older captures, posts published outside Ludy), the
 // summed engagement holds posts the summed reach does not, and a rate from the totals reads high: rates come from these
 // sums instead, which the totals query and the client report carry next to the plain sums.
 export interface RateSums {

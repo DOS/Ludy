@@ -46,7 +46,7 @@ const MAX_MENTION_LOOKUPS = 10;
 const MENTION_LOOKUP_MS = 5000;
 // A DID as a mention facet names it.
 const DID_SYNTAX = /^did:[a-z0-9]+:[A-Za-z0-9._:%-]{1,256}$/;
-// The post's languages (#906) when the variant names none: Crove's first market.
+// The post's languages (#906) when the variant names none: Ludy's first market.
 const DEFAULT_LANGS = ['vi'];
 const LANG_TAG = /^[a-z]{2,3}(?:-[A-Za-z0-9]{1,8}){0,3}$/;
 
@@ -65,7 +65,7 @@ function blueskyFetch(fetchImpl: Fetch = fetch, timeoutMs = 15_000): Fetch {
   };
 }
 
-// The origin of a PDS as Crove calls it: https on the default port, a host name and no path; null for anything else.
+// The origin of a PDS as Ludy calls it: https on the default port, a host name and no path; null for anything else.
 export function pdsOrigin(raw: unknown): string | null {
   if (typeof raw !== 'string' || raw.length > 300) return null;
   let url: URL;
@@ -265,7 +265,7 @@ class Xrpc {
     // A DID's document names its PDS and is read without the app password, so the login goes straight there: bsky.social
     // never sees the password of an account hosted elsewhere (#804). The lookup is kept for Bluesky-hosted accounts too,
     // so a refused password costs no directory read while it is fresh; an account that leaves Bluesky is found when its
-    // lookup expires. A document that cannot be read, or names no PDS Crove calls, sends the password nowhere: the
+    // lookup expires. A document that cannot be read, or names no PDS Ludy calls, sends the password nowhere: the
     // session fails as unclear and is tried again later.
     if (identifier.startsWith('did:')) {
       const kept = this.kept(identifier);
@@ -309,7 +309,7 @@ class Xrpc {
     // The PDS the session's DID document names, else the one resolved, else the entryway.
     const named = answer.didDoc ? pdsOf(answer.didDoc, answer.did) : null;
     const listed = answer.didDoc?.service?.some((x) => x.id === '#atproto_pds' || x.id === `${answer.did}#atproto_pds`);
-    // A PDS named in a form Crove does not call (another port, a path, an address): refused, not guessed.
+    // A PDS named in a form Ludy does not call (another port, a path, an address): refused, not guessed.
     if (listed && !named) throw new BlueskyError(400, 'UnsupportedPds', 'the account names a PDS Crove cannot call');
     const pds = named ?? own?.pds ?? ENTRYWAY;
     const host = new URL(pds).hostname;
@@ -340,7 +340,7 @@ export async function connectBluesky(input: { handle: string; appPassword: strin
   const { handle, appPassword } = blueskyLogin(input);
   const session = await new Xrpc(fetchImpl, egress).session(handle, appPassword);
   // The format check above cannot tell an account password shaped like an app password; the session can (#399). A
-  // privileged app password also reads direct messages, which Crove never needs. An unreadable scope is let through:
+  // privileged app password also reads direct messages, which Ludy never needs. An unreadable scope is let through:
   // the token format is Bluesky's to change.
   if (session.scope === 'com.atproto.access') throw new BlueskyError(400, 'NotAnAppPassword', 'use an app password, not the account password');
   if (session.scope === 'com.atproto.appPassPrivileged') throw new BlueskyError(400, 'PrivilegedAppPassword', 'use an app password without direct message access');

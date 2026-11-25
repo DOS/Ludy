@@ -1,5 +1,5 @@
 // A member's bookings as a feed (#1382, plan docs/plan/calendar.md §2): a member who hosts makes a secret address that
-// Google Calendar, Outlook or Apple Calendar subscribes to, and sees their Crove bookings next to their own events.
+// Google Calendar, Outlook or Apple Calendar subscribes to, and sees their Ludy bookings next to their own events.
 // Each member has one live feed, for their own bookings only; making a new one revokes the old, so a leaked address is
 // cut off by making another. The token is shown once, to the member; the database keeps only its SHA-256, as for the
 // posting calendar feed (#862). The public side is the migration's definer (booking_feed_events), which the HTTP edge
@@ -39,7 +39,7 @@ async function revokeLive(ctx: CommandContext, userId: string): Promise<boolean>
 export const bookingFeedCreate = defineCommand({
   name: 'crm.booking_feed.create',
   input: z.strictObject({}),
-  // A row of Crove, undone by a revoke; the token leaves only in the answer to the member (#1579).
+  // A row of Ludy, undone by a revoke; the token leaves only in the answer to the member (#1579).
   risk: 'R1',
   sideEffect: 'internal',
   access: HOSTS,

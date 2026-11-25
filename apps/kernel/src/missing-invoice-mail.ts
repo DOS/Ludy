@@ -1,5 +1,5 @@
 // The request for missing purchase invoices and its monthly reminder (#669, template finance.missing_invoices): the
-// invoices the tax portal lists and Crove lacks, as finance.missing_invoices.request or .remind stored them. The
+// invoices the tax portal lists and Ludy lacks, as finance.missing_invoices.request or .remind stored them. The
 // Reply-To is the org's inbound address when the deployment receives mail, so the company's reply, or the seller's
 // invoice mail it forwards, reaches the Inbox like any other mail with an invoice.
 import { sql } from 'kysely';

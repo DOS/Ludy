@@ -124,7 +124,7 @@ export async function shortOfPolicy(trx: Trx, orgId: string, v: Pick<VariantRow,
 export const policySet = defineCommand({
   name: 'social.channel.set_policy',
   input: z.strictObject({ connectionId: zId, approvalsRequired: z.number().int().min(1).max(MAX_APPROVALS) }),
-  // Posts it sends back to review alert the org's team chat, outside Crove (#1653).
+  // Posts it sends back to review alert the org's team chat, outside Ludy (#1653).
   risk: 'R2',
   sideEffect: 'external',
   access: ADMINS,
@@ -270,7 +270,7 @@ export const fourEyesSet = defineCommand({
   },
 });
 
-// Whether the channel's posts send their link through Crove's short links (#706), to count clicks; off unless turned on.
+// Whether the channel's posts send their link through Ludy's short links (#706), to count clicks; off unless turned on.
 // The link of a post that went out already stays as it went.
 export const shortLinksSet = defineCommand({
   name: 'social.channel.set_short_links',

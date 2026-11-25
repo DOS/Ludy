@@ -11,7 +11,7 @@
 //              (checkPortalList), stores the portal's answers as a JSON import file (evidence, ADR-0013) and files it as
 //              a list of the period; the worker records its rows with the same command as an uploaded list
 //              (importPortalList, finance.portal_list.record).
-// - fetchXml:  opens the session and downloads a few invoice XML files the list names and Crove lacks, each stored and
+// - fetchXml:  opens the session and downloads a few invoice XML files the list names and Ludy lacks, each stored and
 //              recorded as an uploaded document by this user (kernel.file.ingest): the worker reads it in the sandbox
 //              and it reaches the Inbox like any upload. Files are deduplicated by content.
 //
@@ -284,7 +284,7 @@ export function createPortalSync(deps: PortalSyncDeps): PortalSync {
           },
           (a) => String(a.reduce((n, q) => n + q.rows.length, 0)),
         );
-        // Normalized and checked before anything is stored: a list Crove cannot use is said at once, and nothing is
+        // Normalized and checked before anything is stored: a list Ludy cannot use is said at once, and nothing is
         // filed. The worker reads the stored answer again with the same rules when it records the list.
         const normalized = normalizeAnswers(answers, range);
         const checked = checkPortalList(normalized.list, orgTaxCode);
@@ -342,7 +342,7 @@ export function createPortalSync(deps: PortalSyncDeps): PortalSync {
             if (error instanceof DomainError && error.code === 'PORTAL_CALL_DONE') continue;
             // The member lost the right to do this (removed or made a viewer): stop.
             if (error instanceof DomainError && (error.status === 403 || error.code === 'NOT_A_MEMBER')) throw error;
-            // Anything else is this invoice's failure (an unreadable answer, a file Crove refuses): the others go on.
+            // Anything else is this invoice's failure (an unreadable answer, a file Ludy refuses): the others go on.
             if (error instanceof DomainError) {
               failed += 1;
               continue;

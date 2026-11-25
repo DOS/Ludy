@@ -1,18 +1,18 @@
 // The assisted purchase-invoice sync from the tax portal (issue #325, ADR-0036). The accountant starts it for one client
-// (the org) and one VAT period, solves the portal's CAPTCHA and types the portal password in Crove; the server logs in
+// (the org) and one VAT period, solves the portal's CAPTCHA and types the portal password in Ludy; the server logs in
 // to the portal and fetches that period's purchase list (and the invoice XML the portal has) into the reconciliation and
-// the Inbox. Crove never stores the password and never solves a CAPTCHA by software. These are the shapes the API and
+// the Inbox. Ludy never stores the password and never solves a CAPTCHA by software. These are the shapes the API and
 // the SPA share; the steps run in order, each one a bounded request:
 //   captcha   a CAPTCHA image from the portal and a sealed challenge bound to this user, org and period;
 //   login     the portal login with the challenge, the answer and the password; answers a sealed portal session
 //             (opaque to the browser, bound to this user, org and period, expiring) and nothing else;
 //   fetchList the period's purchase list through the session, filed as a list of the period (the worker records it);
-//   fetchXml  a few invoice XML files at a time, for invoices of that list Crove does not have yet.
+//   fetchXml  a few invoice XML files at a time, for invoices of that list Ludy does not have yet.
 import { z } from 'zod';
 import { zId, zVatPeriod } from './schemas.ts';
 
 // How long the sealed values stay usable. The portal's own CAPTCHA lasts about two minutes and its session token is
-// short-lived (docs/research/tax-portal-invoice-sync.md section 2.1); Crove's envelopes never outlive these.
+// short-lived (docs/research/tax-portal-invoice-sync.md section 2.1); Ludy's envelopes never outlive these.
 export const PORTAL_CHALLENGE_SECONDS = 120;
 export const PORTAL_SESSION_SECONDS = 20 * 60;
 // Invoice XML downloads per fetchXml request, and per sync in all (the rest waits for the next sync).
@@ -55,7 +55,7 @@ export const zPortalListResult = z.object({
   skipped: z.number().int().nonnegative(),
   ownSales: z.number().int().nonnegative(),
   otherBuyers: z.number().int().nonnegative(),
-  // Invoices of the list the portal has an XML for (fetchXml downloads those Crove has no invoice for yet).
+  // Invoices of the list the portal has an XML for (fetchXml downloads those Ludy has no invoice for yet).
   withXml: z.number().int().nonnegative(),
 });
 export type PortalListResult = z.infer<typeof zPortalListResult>;

@@ -1,6 +1,6 @@
 // The figures of a period for its AI summary (#1237): the Metrics tab's window (days) or a client report's period
 // (periodStart, periodEnd), on the channels the caller may use (#1081) and the ones they chose, with a label's posts
-// only, or with the posts published outside Crove. The totals are the tab's own (spanTotals), so the summary repeats
+// only, or with the posts published outside Ludy. The totals are the tab's own (spanTotals), so the summary repeats
 // the numbers and the engagement rate the tab and the report show; the goals are the report's (reportGoals), only for a
 // period of exactly one month and never under a label. The API turns the answer into the writer's figures
 // (periodSummaryInput); nothing is saved here.

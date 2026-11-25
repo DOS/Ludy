@@ -169,7 +169,7 @@ async function alertOf(ctx: CommandContext | QueryContext) {
 export const chatAlertTest = defineCommand({
   name: 'social.chat_alert.test',
   input: z.strictObject({}),
-  // The worker posts the test line to the org's chat from its event: an effect outside Crove (#1578).
+  // The worker posts the test line to the org's chat from its event: an effect outside Ludy (#1578).
   risk: 'R2',
   sideEffect: 'external',
   access: ADMINS,

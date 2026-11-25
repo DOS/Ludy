@@ -1,7 +1,7 @@
 // White-label client reports (#1053), the isomorphic part: the rules an org's report branding must meet, applied the
 // same by the save command and by the settings form as an owner or admin fills it in. A brand is a display name, a
 // logo kept as a small inline data URL (PNG, WebP or JPEG, never SVG, whose markup can carry script), one accent
-// colour and "hide Crove". The public report and review views return it from their definers, so no new public route
+// colour and "hide Ludy". The public report and review views return it from their definers, so no new public route
 // serves the logo.
 
 // The longest display name, in characters.

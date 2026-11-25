@@ -612,7 +612,7 @@ export interface WorkerDeps {
   // crove-extract (plan §7.6): every PDF, XML and MIME parse happens there, never in this process.
   extract: ExtractClient;
   inboundDomain: string | null;
-  // Supabase Auth sign-out after a Crove-side revoke (ADR-0028 section 4); null keeps revocation Crove-side only.
+  // Supabase Auth sign-out after a Ludy-side revoke (ADR-0028 section 4); null keeps revocation Ludy-side only.
   revoker?: SessionRevoker | null;
   // Names this worker in ludy_kernel.worker_heartbeat (default: the host name, the container id under Docker).
   instance?: string;
@@ -832,7 +832,7 @@ export function workerApplicationName(instance: string): string {
   return `crove-worker:${instance}`.slice(0, 63);
 }
 
-// The build a worker runs (#1952): CROVE_BUILD and CROVE_BUILD_TIME, null for a local build.
+// The build a worker runs (#1952): LUDY_BUILD and LUDY_BUILD_TIME, null for a local build.
 export interface WorkerBuild {
   id: string | null;
   time: string | null;
@@ -890,7 +890,7 @@ export async function authSubject(workerDb: Db, userId: string): Promise<string 
 
 /**
  * One attempt of the Supabase Auth sign-out job. Best effort: the revoked record already blocks the session in
- * Crove. A failure is rethrown so pg-boss retries it with backoff; the last one is logged as an ALERT for the
+ * Ludy. A failure is rethrown so pg-boss retries it with backoff; the last one is logged as an ALERT for the
  * operator, because the session's refresh tokens then live on upstream.
  */
 export async function runSignOut(revoker: SessionRevoker | null | undefined, target: SignOutTarget, retryCount: number): Promise<void> {
@@ -972,7 +972,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   const exportSealer = deps.exportSealer ?? new ExportSealer(null);
   if (!deps.exportSealer) console.warn('[org-export] no export sealer configured: exports are stored unencrypted');
 
-  // Jobs of a module this deployment leaves out are not worked and never queued (CROVE_MODULES, plan Decision 12).
+  // Jobs of a module this deployment leaves out are not worked and never queued (LUDY_MODULES, plan Decision 12).
   // Reading files is the finance module's job today: without it an uploaded file is stored and stays unread.
   const finance = deps.runtime.installed('finance');
   const social = deps.runtime.installed('social');
@@ -1153,7 +1153,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     await deps.store.delete(inboundKey(job.data.blobId));
   });
 
-  // A delivery event (#539): recorded in its mail's org, or dropped when no mail of Crove has the provider's id.
+  // A delivery event (#539): recorded in its mail's org, or dropped when no mail of Ludy has the provider's id.
   await boss.work<MailEventJob>(QUEUES.mailEvent, { batchSize: 1 }, async ([job]) => {
     if (!job) return;
     const label = `${job.data.provider}:${job.data.providerEventId.slice(0, 16)}`;
@@ -3048,7 +3048,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   const accountTimer = publishing.size > 0 ? setInterval(() => void accountSweep(), ACCOUNT_SWEEP_MS) : null;
   void accountSweep();
 
-  // Posts published outside Crove (#1054): every 15 minutes, the channels not listed for 6 hours are listed again, and
+  // Posts published outside Ludy (#1054): every 15 minutes, the channels not listed for 6 hours are listed again, and
   // the posts brought in whose counts are older than 6 hours are measured.
   let bringing = false;
   const externalSweep = async () => {

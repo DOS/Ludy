@@ -50,7 +50,7 @@ function tokenOf(address: string, domain: string): string | null {
   return TOKEN.test(token) ? token : null;
 }
 
-// The bounce token of bounce+<token>@domain (#539: the Return-Path of a mail Crove sent over SMTP), or null.
+// The bounce token of bounce+<token>@domain (#539: the Return-Path of a mail Ludy sent over SMTP), or null.
 const BOUNCE = /^bounce\+([0-9a-f]{48})$/;
 export function bounceTokenOf(address: string, domain: string): string | null {
   const suffix = `@${domain.toLowerCase()}`;
@@ -68,7 +68,7 @@ export interface InboundAcceptDeps {
 }
 
 // API side: no parsing and no tenant context. An envelope recipient on INBOUND_DOMAIN that cannot be a
-// Crove address is refused before anything is stored; the token itself is resolved by the worker. A
+// Ludy address is refused before anything is stored; the token itself is resolved by the worker. A
 // recipient on another domain is kept, and the worker falls back to the message headers, as before.
 // Each delivery gets its own blob; when the same message to the same recipient is already pending, or the
 // enqueue fails (503 past the backlog cap), the new blob is deleted again.
@@ -492,9 +492,9 @@ export interface BounceResult {
   bounce: 'bounce_hard' | 'bounce_soft' | 'deferred' | 'delivered';
 }
 
-// A DSN for one of Crove's SMTP mails (#539): parsed in the sandbox, matched to its mail by the token of the address
+// A DSN for one of Ludy's SMTP mails (#539): parsed in the sandbox, matched to its mail by the token of the address
 // it came to (a made-up or altered token finds nothing), and recorded as that mail's delivery event in the mail's org.
-// A report that is not a DSN, names no mail of Crove, or quotes another Message-ID is dropped.
+// A report that is not a DSN, names no mail of Ludy, or quotes another Message-ID is dropped.
 async function processBounceReport(deps: InboundProcessDeps, raw: Uint8Array, rawSha256: string, token: string, attempt: number): Promise<BounceResult> {
   const parsed = await deps.extract.extract('dsn', raw);
   if (!parsed.ok) {

@@ -11,7 +11,7 @@
 // tax-code.ts); the rest of its tax calendar (#921) by kernel.tax_profile.save (tax-calendar.ts).
 //
 // Modules add their own figures (#1261) through an overview contribution: a query the module registers, named to the
-// kernel by the composition root for the modules CROVE_MODULES enables, so the kernel never imports a module. Each runs
+// kernel by the composition root for the modules LUDY_MODULES enables, so the kernel never imports a module. Each runs
 // with ctx.query in the org's own transaction, as the member (their role, and whatever the module's own rules hide
 // from them), so its figures are the ones the member would see on that org's screens. An org whose figures cannot be
 // read (an error, the statement timeout) is one error row, not a failed screen (#495).

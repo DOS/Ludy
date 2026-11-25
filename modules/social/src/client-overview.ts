@@ -145,5 +145,5 @@ export const socialFigures = socialFiguresQuery();
 
 export const clientOverviewQueries = [socialFigures];
 
-// Registered by the composition root when CROVE_MODULES enables Social (#1261).
+// Registered by the composition root when LUDY_MODULES enables Social (#1261).
 export const socialOverviewContributions: readonly OverviewContribution[] = [{ module: 'social', query: socialFigures.name }];

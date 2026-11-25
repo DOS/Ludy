@@ -1,7 +1,7 @@
 // MISA SME item and warehouse codes for stock purchases (issue #1398), as pure functions shared by the finance module
 // and the SPA. A purchase line debited to a stock account (152 materials, 153 tools, 156 goods, or a sub-account of
 // one) goes to MISA's goods purchase template, which needs the MISA catalog code of the item ("Mã hàng (*)") and of the
-// warehouse ("Kho"). Crove cannot know a firm's MISA catalog, so each org keeps a small map from stock account to the
+// warehouse ("Kho"). Ludy cannot know a firm's MISA catalog, so each org keeps a small map from stock account to the
 // two codes (ludy_finance.misa_goods_code), editable in Settings, with the defaults below for accounts it has not set.
 import { z } from 'zod';
 import { zAccountCode } from './schemas.ts';

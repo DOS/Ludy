@@ -3,10 +3,10 @@
 // Both answer a total_value with one breakdown per call; only followers whose details the platform knows are counted,
 // so the shares can add up to fewer than the followers. Neither gives it under 100 followers.
 
-// The breakdowns Crove asks for, by the name the platforms use.
+// The breakdowns Ludy asks for, by the name the platforms use.
 export const AUDIENCE_BREAKDOWNS = ['age', 'gender', 'city', 'country'] as const;
 export type AudienceBreakdown = (typeof AUDIENCE_BREAKDOWNS)[number];
-// The platforms give no demographics below this many followers; Crove does not ask then.
+// The platforms give no demographics below this many followers; Ludy does not ask then.
 export const AUDIENCE_MIN_FOLLOWERS = 100;
 // Cities and countries kept, the largest first (the platforms give up to 45).
 export const AUDIENCE_TOP = 10;

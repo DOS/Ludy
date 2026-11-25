@@ -2,7 +2,7 @@
 // numbers the run stored and a link to the full report. The link is minted when the mail goes out
 // (social.report_schedule.mint_link), one per recipient, so its token is never in the mail queue. The org's white-label
 // branding (#1053) comes with the link: its name in the header and the footer, its accent on the header's rule (a
-// graphic, so 3:1 is enough; the link keeps its colour, which text needs at 4.5:1), and with hide Crove no "Crove" in
+// graphic, so 3:1 is enough; the link keeps its colour, which text needs at 4.5:1), and with hide Ludy no "Ludy" in
 // the footer. The logo stays on the report page: the mailer sends no inline images (CID attachments), and mail
 // clients block data URLs. A report of exactly one month carries a line of the org's monthly goals (#1056), as the
 // run worked them out. A schedule that chooses its report's sections (#1259) sends only theirs: without the totals, the

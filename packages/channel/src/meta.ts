@@ -392,7 +392,7 @@ export function graphPublishResult(error: unknown): PublishResult {
   if (!(error instanceof GraphError)) return { kind: 'unknown', code: 'NETWORK' };
   const code = error.code;
   const base = { code: code === undefined ? `HTTP_${error.status}` : String(code), message: error.message, httpStatus: error.status };
-  // A duplicate (506) may be of Crove's own earlier attempt, so it stays unclear, with a code that says what Meta said (#1156).
+  // A duplicate (506) may be of Ludy's own earlier attempt, so it stays unclear, with a code that says what Meta said (#1156).
   if (code === 506) return { kind: 'unknown', code: POSSIBLE_DUPLICATE, message: base.message };
   if (error.status >= 500 || (code !== undefined && UNCLEAR_CODES.has(code))) return { kind: 'unknown', code: base.code, message: base.message };
   if ((code !== undefined && TOKEN_CODES.has(code)) || error.status === 401) return { kind: 'rejected', error: 'token_expired', ...base };
@@ -458,7 +458,7 @@ export class FacebookPagePublisher implements Publisher {
   // (an inference from how Page post ids are formed, which the metrics read relies on).
   // The post's title and a cover image (#1499) go in the same request as `title` and `thumb`, the cover read before
   // anything is sent, like the video; without them the request is what it always was. Meta documents no limit for
-  // either: the Social module holds the title to 255 characters and the image to 10 MB, both Crove's caps [unverified].
+  // either: the Social module holds the title to 255 characters and the image to 10 MB, both Ludy's caps [unverified].
   private async publishVideo(input: PublishInput, token: string): Promise<PublishResult> {
     const media = input.content.media;
     const video = media[0];
@@ -594,7 +594,7 @@ export class FacebookPagePublisher implements Publisher {
   }
 
   // A comment by the Page under its own post (#609): `POST /{post-id}/comments` with the Page token. It needs
-  // pages_manage_engagement; a Page connected before Crove asked for it is refused with a permission error (code 10 or
+  // pages_manage_engagement; a Page connected before Ludy asked for it is refused with a permission error (code 10 or
   // 200) and comments again once it reconnects.
   async comment(input: CommentInput): Promise<CommentResult> {
     const token = pageToken(input.secret);
@@ -612,7 +612,7 @@ export class FacebookPagePublisher implements Publisher {
   }
 
   // Deletes the Page's own post (#1137): `DELETE /{page-post-id}` with the Page token (pages_manage_posts, which connect
-  // requires), answered { success: true }. Every post Crove makes is named as a Page post, <page>_<post>: a feed post
+  // requires), answered { success: true }. Every post Ludy makes is named as a Page post, <page>_<post>: a feed post
   // with photos (the photos were uploaded unpublished and belong to the post), a Story, and a video or Reel as
   // <page>_<video> (#443). Only an id of this Page is sent, so a bare object id never deletes something else. Meta
   // answers code 100 with subcode 33 both for a post it no longer has and for one it will not delete or let the token

@@ -751,7 +751,7 @@ export function hookSetFailure(e: unknown): DomainError | null {
 export const marketplaceConnectionPushHookSet = defineCommand({
   name: 'finance.marketplace_connection.push_hook_set',
   input: zMarketplacePushHookSet,
-  // A row of Crove that makes an address valid or stops the old one; it posts nothing, reaches no platform and moves no money. The key leaves only in the answer to the owner or admin: callers send no idempotency key,
+  // A row of Ludy that makes an address valid or stops the old one; it posts nothing, reaches no platform and moves no money. The key leaves only in the answer to the owner or admin: callers send no idempotency key,
   // so no replay hands it out again, and the audit row keeps the connection and a flag, never the key.
   risk: 'R1',
   sideEffect: 'internal',

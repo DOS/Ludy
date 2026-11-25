@@ -8,7 +8,7 @@
 // through kernel.channel.credential (credential_get), lists the options through the channel's adapter and records
 // them (social.channel_option.record). The token never reaches a command, an event, an error or an answer.
 //
-// The list is shown in Crove only, as names (third-party text, rendered as text). Publishing never trusts it: the
+// The list is shown in Ludy only, as names (third-party text, rendered as text). Publishing never trusts it: the
 // Pinterest adapter lists the board's sections again before it pins, and refuses a section the board no longer has;
 // YouTube refuses a playlist that is gone when the video is added to it, WordPress matches the names as before, and
 // TikTok's adapter reads creator_info again and refuses a privacy level or a length the account no longer allows.

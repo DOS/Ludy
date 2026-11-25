@@ -1,5 +1,5 @@
 // Outbound mail in the kernel, step E1a of the Email plan (docs/plan/email.md §3.2-3.3, ADR-0034, issue #538).
-// Every mail Crove sends gets a ludy_kernel.mail_message row in the transaction of the command that sends it, after a
+// Every mail Ludy sends gets a ludy_kernel.mail_message row in the transaction of the command that sends it, after a
 // check against the org's suppression list, so a mail to an address that bounced hard or was stopped by hand is
 // recorded as suppressed and never handed to a mailer. Addresses are matched by a keyed hash
 // (ludy_kernel.mail_address_hash), which outlives an erasure of the address.
@@ -633,7 +633,7 @@ export const queueContactMail = defineCommand({
       .refine((v) => !/[\p{Cc}\p{Zl}\p{Zp}]/u.test(v), 'one line'),
     payload: z.record(z.string().max(64), z.unknown()).refine((p) => Buffer.byteLength(JSON.stringify(p), 'utf8') <= MAIL_PAYLOAD_MAX_BYTES, 'too large'),
   }),
-  // A mail queued to a contact is an effect outside Crove (plan §4.7: a send derives at least R2; coordinator
+  // A mail queued to a contact is an effect outside Ludy (plan §4.7: a send derives at least R2; coordinator
   // decision on #1563, 2026-10-26): an agent may not queue one without review.
   risk: 'R2',
   sideEffect: 'external',

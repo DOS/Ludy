@@ -107,7 +107,7 @@ export async function buildVatWorkbook(report: VatReport, orgName: string, brand
   }
   const note = summary.addRow([]);
   setText(note.getCell('label'), 'Chỉ tiêu [25] (thuế GTGT được khấu trừ) do kế toán xác định; hàng hóa 8% kê khai thêm phụ lục giảm thuế GTGT.');
-  // Sales at a rate Crove cannot place are in the totals but in no indicator (issue #358).
+  // Sales at a rate Ludy cannot place are in the totals but in no indicator (issue #358).
   const otherSales = report.output.totals.byRate.find((r) => r.rate === 'other')?.taxable ?? '0';
   if (!money(otherSales).isZero()) {
     const row = summary.addRow([]);

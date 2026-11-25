@@ -1,4 +1,4 @@
-// Crove's own short links (#706): on a channel that turns them on, a post's link goes out as <PUBLIC_URL>/l/<code>,
+// Ludy's own short links (#706): on a channel that turns them on, a post's link goes out as <PUBLIC_URL>/l/<code>,
 // which redirects to the link with its UTM tags and counts the click (short_link_hit, the redirect's definer). The
 // code is made when the variant first goes out and kept for its revision, so a retry, a status check or a reconcile
 // sends the same link; the target is fixed then and never taken from a request.
@@ -64,7 +64,7 @@ export function shortenedSettings(settings: Record<string, unknown>, link: { tar
 }
 
 // The short link of a publish step: the variant's for its revision when it has one; on a first call, a new one when its
-// channel sends links through Crove and the post has a link.
+// channel sends links through Ludy and the post has a link.
 export async function withShortLink(ctx: CommandContext, w: PublishWork, revision: number): Promise<PublishWork> {
   const target = w.content.linkUrl;
   if (!target || !/^https?:\/\//.test(target) || target.length > 2048) return w;

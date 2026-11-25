@@ -89,7 +89,7 @@ function httpsUrl(url: string): boolean {
 // hideTotals? }, the shape X, Threads and Mastodon read). The post is then one sendPoll whose question is the post's
 // text with its link (1 to 300 characters), so it stays a single message that takes the buttons, silence, pin and
 // deletion of any post; options are 2 to 12 InputPollOption texts of 1 to 100 characters (Telegram takes one since
-// Bot API 10.0, Crove asks for two like every channel). durationMinutes goes as open_period in seconds (5 to 2,628,000
+// Bot API 10.0, Ludy asks for two like every channel). durationMinutes goes as open_period in seconds (5 to 2,628,000
 // allowed, so 1 to 43,800 minutes); unsaid, the poll stays open until stopped in Telegram. multiple goes as
 // allows_multiple_answers and hideTotals as hide_results_until_closes, each only when true. Always anonymous, as
 // Telegram defaults to: the docs do not say a channel takes a public poll. Never with media. null for none, 'invalid'

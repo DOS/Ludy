@@ -63,7 +63,7 @@ async function proposalEntity(ctx: CommandContext): Promise<string | undefined> 
   return row?.legal_entity_id ?? undefined;
 }
 
-// The party of the invoice in Crove's books: the supplier of a purchase, the customer of a sale. Matched by tax code,
+// The party of the invoice in Ludy's books: the supplier of a purchase, the customer of a sale. Matched by tax code,
 // or by name when the invoice gives none. Opening balances per party (#689) find or create theirs the same way.
 export async function upsertParty(ctx: CommandContext, ref: PurchaseProposal['seller'], direction: DocumentDirection): Promise<string> {
   const taxCode = parseTaxCode(ref.taxCode)?.normalized ?? null;

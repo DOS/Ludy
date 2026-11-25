@@ -37,7 +37,7 @@ export interface TaxBreakdown {
 // signature and, for an invoice with a tax authority code (MCCQT), the tax authority's. The same lists are the wire
 // contract in @ludy/extract-contract (its tests compare them).
 //   verified        every signature the invoice must carry is valid, covers the invoice data that was read, and its
-//                   certificate chains to a Vietnamese national root CA shipped with Crove (no revocation check)
+//                   certificate chains to a Vietnamese national root CA shipped with Ludy (no revocation check)
 //   unverified      a signature is missing, broken, does not cover the data, or its certificate is not trusted;
 //                   reason says which. A warning: the invoice is still read, and approving it asks for a confirmation
 //   not_applicable  nothing to verify: an invoice read by AI (an unsigned cash register invoice is unverified, with

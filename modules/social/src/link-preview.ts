@@ -2,7 +2,7 @@
 // a platform's link card. A member asks for a link (social.link_preview.request); a fresh answer (under a day old) or
 // a request in progress is returned as it is, else the request is queued for the worker. The worker fetches the page
 // through the kernel's egress guard, reads its head in crove-extract, and records what it found. The answer is shown
-// in Crove only: no adapter reads this table, so nothing fetched is ever sent to a platform.
+// in Ludy only: no adapter reads this table, so nothing fetched is ever sent to a platform.
 import { createHash } from 'node:crypto';
 import { sql } from 'kysely';
 import { z } from 'zod';

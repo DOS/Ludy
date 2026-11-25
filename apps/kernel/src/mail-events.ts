@@ -6,7 +6,7 @@
 //
 // Worker side: one job per event finds the mail by the provider's message id (the org comes from the stored mail,
 // never from the payload) and records the event with kernel.mail.event.record in that org's system context. An event
-// for a mail Crove does not know is dropped.
+// for a mail Ludy does not know is dropped.
 import { sql } from 'kysely';
 import type { Db } from '@ludy/db';
 import type { MailEvent, MailProvider, WebhookRequest } from '@ludy/mail';
@@ -31,7 +31,7 @@ export async function acceptMailWebhook(runtime: Runtime, provider: MailProvider
     if (!(error instanceof WebhookRejected)) throw error;
     return error.reason === 'malformed' ? { status: 400, code: 'WEBHOOK_MALFORMED' } : { status: 401, code: 'WEBHOOK_SIGNATURE' };
   }
-  // An event type Crove does not record: acknowledged, so the provider stops retrying it.
+  // An event type Ludy does not record: acknowledged, so the provider stops retrying it.
   if (events.length === 0) return { status: 200, queued: 0 };
   const queued = await runtime.orgless(async (db) => {
     const { rows } = await sql<{ queued: number }>`

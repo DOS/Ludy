@@ -156,7 +156,7 @@ interface WebhookEntry {
   changes?: WebhookChange[] | null;
   messaging?: MessagingItem[] | null;
   // Handover protocol standby events are received when Meta Business Suite / Page Inbox holds the primary thread receiver role.
-  // They are ignored here so Crove never double-stores or answers while standing by (plan section 6.2).
+  // They are ignored here so Ludy never double-stores or answers while standing by (plan section 6.2).
   standby?: unknown;
 }
 

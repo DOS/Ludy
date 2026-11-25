@@ -8,10 +8,10 @@
 // forms until the tax authority announces new ones. docs/integrations/htkk-01gtgt-xml.md lists every source and which
 // facts are confirmed. The form constants are data (HTKK_01GTGT), so a new HTKK release is a change to the data.
 //
-// Crove fills what it computes from invoices ([23], [24], [26] to [35], see form01Indicators) and the form's formulas
+// Ludy fills what it computes from invoices ([23], [24], [26] to [35], see form01Indicators) and the form's formulas
 // that follow from them. [22] is the previous return's [43] as marked filed (#1400), when the caller passes it. What
 // needs the accountant's judgement is 0: [21], [23a], [24a], [25] (so [36] equals [35] until the accountant enters
-// it), [37], [38], [39a], [40b] and [42]. So are the tax office and the signer, which Crove does not hold. The
+// it), [37], [38], [39a], [40b] and [42]. So are the tax office and the signer, which Ludy does not hold. The
 // accountant completes them in HTKK before filing.
 // Two choices of the accountant's (#692): the taxpayer's address is written when the org has one (#324), and [25]
 // may be filled with [24] (all input VAT deducted) for the accountant to reduce; it stays 0 unless asked.
@@ -26,7 +26,7 @@ export const HTKK_01GTGT = {
   formBasis: '(Ban hành kèm theo Thông tư số 80/2021/TT-BTC ngày 29 tháng 9 năm 2021 của Bộ trưởng Bộ Tài chính)',
   xmlVersion: '2.8.3',
   // The software that made the file. GDT's own services name themselves here (a return filed through the public
-  // service portal reads "TTGQ TTHC"); Crove names itself rather than pose as HTKK.
+  // service portal reads "TTGQ TTHC"); Ludy names itself rather than pose as HTKK.
   service: { code: 'LUDY', name: 'Ludy', version: '1.0' },
   // [01a] Ordinary production and business, the default line of business of the form.
   businessLine: { code: '00', name: 'Hoạt động sản xuất kinh doanh thông thường' },
@@ -47,14 +47,14 @@ export class HtkkAmountError extends Error {
   }
 }
 
-// Indicator codes of the form, in the form's order, with the value Crove writes for each.
+// Indicator codes of the form, in the form's order, with the value Ludy writes for each.
 export const FORM_01_CODES = [
   '21', '22', '23', '24', '23a', '24a', '25', '26', '27', '28', '29', '30', '31', '32', '33', '32a', '34', '35', '36',
   '37', '38', '39a', '40a', '40b', '40', '41', '42', '43',
 ] as const;
 export type Form01Code = (typeof FORM_01_CODES)[number];
 
-// The indicators Crove computes from invoices; the others start at 0 (see the header).
+// The indicators Ludy computes from invoices; the others start at 0 (see the header).
 const COMPUTED: ReadonlySet<string> = new Set(['23', '24', '26', '27', '28', '29', '30', '31', '32', '33', '32a', '34', '35']);
 
 export interface Vat01Input {

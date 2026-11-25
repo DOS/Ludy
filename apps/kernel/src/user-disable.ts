@@ -1,5 +1,5 @@
 // The `user-disable` and `user-enable` image roles (issue #985, ADR-0028 section 2): the deployment operator blocks a
-// user account in Crove, or unblocks it, without touching Supabase Auth. Run in the worker's container (the worker
+// user account in Ludy, or unblocks it, without touching Supabase Auth. Run in the worker's container (the worker
 // login is the only role that may execute ludy_kernel.user_set_disabled), like exports-rebind:
 //
 //   user-disable <account id or email> --reason <text> [--code security|abuse|request|offboarding|other]
