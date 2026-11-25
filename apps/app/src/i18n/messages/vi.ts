@@ -5264,7 +5264,7 @@ export const vi = {
       thisWeek: 'Tuần này',
       lastWeek: 'Tuần trước',
       weeksAgo: '{count, number} tuần trước',
-      range: '{from} đến {to}, đã đọc {meetings, number} cuộc họp',
+      range: '{from} đến {to}. Số cuộc họp được đếm: {meetings, number}',
       noneTracked: 'Chưa theo dõi từ khóa nào. Chủ sở hữu hoặc quản trị viên có thể thêm.',
       noneTrackedOwner: 'Chưa theo dõi từ khóa nào. Hãy thêm tên đối thủ hoặc những từ bạn muốn theo dõi ở bên dưới.',
       noHits: 'Tuần này không có từ khóa nào được nhắc trong những cuộc họp bạn đọc được.',
@@ -5273,7 +5273,7 @@ export const vi = {
       cut: 'Tuần này có nhiều cuộc họp hơn số được đếm ở đây; các cuộc họp sớm nhất được đếm.',
       words: {
         title: 'Từ khóa bạn theo dõi ({count, number}/{max, number})',
-        hint: 'Một từ hoặc cụm từ được tính theo từng từ nguyên vẹn, không phân biệt hoa thường hay dấu. Đếm từ những dòng mỗi người được đọc; không lưu gì về số đếm.',
+        hint: 'Một từ hoặc cụm từ được tính theo từng từ nguyên vẹn, không phân biệt hoa thường. Gõ có dấu (giá) thì chỉ tìm đúng cách viết đó; gõ không dấu (gia) thì tìm mọi cách viết. Đếm từ những dòng mỗi người được đọc; không lưu gì về số đếm.',
         label: 'Từ hoặc cụm từ cần theo dõi',
         placeholder: 'Ví dụ: tên đối thủ, giá, hợp đồng',
         add: 'Thêm',

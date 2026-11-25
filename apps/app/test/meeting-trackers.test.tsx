@@ -138,6 +138,7 @@ describe('the weekly tool', () => {
     expect(terms[0]).toContain(`href="/o/$slug/meetings/$id`.replace('$slug', 'acme').replace('$id', M1));
     expect(textOf(terms[0] ?? '')).toContain('and 3 more meetings');
     expect(textOf(html)).toContain('2026-11-23 to 2026-11-29');
+    expect(textOf(html)).toContain('Meetings counted: 2');
     // A title is text, not markup.
     expect(html).not.toContain('<b>Họp B</b>');
   });

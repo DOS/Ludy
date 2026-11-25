@@ -5,7 +5,7 @@
 // meetings.tracker.remove   deletes a term
 // meetings.tracker.list     the terms, for every member of the org (a viewer must know the words to read a count)
 // meetings.tracker.hits     for one meeting: each term that came up, how often and the seconds of the lines; read under the caller's own row security, so a reader counts the published lines and the
-//                           recorder the draft (as the transcript panel shows it); sensitive (an audit row names the meeting)
+//                           recorder the draft (as the transcript panel shows it); sensitive (an audit row names the meeting). A word typed with marks ("giá") is found with its marks only.
 // meetings.tracker.week     for a week: each term that came up in the meetings the caller reads, with the count and the meetings (title as the caller already reads it); sensitive
 //
 // Everything is counted by code in the caller's own transaction from lines the caller may read: nothing about a hit is stored, no meeting text is returned (only seconds, counts and titles), no model
@@ -32,12 +32,13 @@ import {
 import { DomainError, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { weekBounds } from './load.ts';
 import { vnDay, vnDayStart } from './retention.ts';
-import { countNeedle, needleOf, wordsOf } from './tracker-count.ts';
+import { countNeedle, lineWords, needleOf, type Needle } from './tracker-count.ts';
 import { ROLES, openMeeting, userOf } from './transcript.ts';
 
 type Trx = QueryContext['trx'];
 
-// The lines of a week or a meeting that a caller may read are read in one go; this is the most lines a week counts.
+// The most lines one meeting counts, and the most a week counts (the week says so when it hit the limit).
+const MEETING_LINES_MAX = 20_000;
 const WEEK_LINES_MAX = 60_000;
 
 const notFound = () => new DomainError('TRACKER_TERM_NOT_FOUND', 404, 'Term not found');
@@ -58,10 +59,10 @@ async function readTerms(trx: Trx, orgId: string): Promise<Array<{ id: string; t
 }
 
 // The needles of the terms, and the terms that have one.
-function needles(terms: ReadonlyArray<{ id: string; term: string }>): Array<{ id: string; term: string; needle: string }> {
+function needles(terms: ReadonlyArray<{ id: string; term: string }>): Array<{ id: string; term: string; target: Needle }> {
   return terms.flatMap((t) => {
-    const needle = needleOf(t.term);
-    return needle === null ? [] : [{ ...t, needle }];
+    const target = needleOf(t.term);
+    return target === null ? [] : [{ ...t, target }];
   });
 }
 
@@ -142,16 +143,16 @@ export const trackerHits = defineQuery({
       .where('meeting_id', '=', input.meetingId)
       .orderBy('start_seconds')
       .orderBy('id')
-      .limit(WEEK_LINES_MAX)
+      .limit(MEETING_LINES_MAX)
       .execute();
-    const lines = currentLines(rows).map((r) => ({ second: r.second, words: wordsOf(r.text) }));
+    const lines = currentLines(rows).map((r) => ({ second: r.second, words: lineWords(r.text) }));
     const hits = tracked.flatMap((t) => {
       let count = 0;
       let distinct = 0;
       let previous: number | null = null;
       const seconds: number[] = [];
       for (const line of lines) {
-        const n = countNeedle(line.words, t.needle);
+        const n = countNeedle(line.words, t.target);
         if (n === 0) continue;
         count += n;
         // The lines are in the order of the transcript, so lines of one second are next to each other.
@@ -202,15 +203,21 @@ export const trackerWeek = defineQuery({
       .select(['meeting_id', 'stage', 'text'])
       .where('org_id', '=', ctx.orgId)
       .where('meeting_id', 'in', counted.map((m) => m.id))
-      .limit(WEEK_LINES_MAX)
+      .orderBy('meeting_id')
+      .orderBy('start_seconds')
+      .orderBy('id')
+      .limit(WEEK_LINES_MAX + 1)
       .execute();
+    // More lines than the limit: the counts of the last meetings are partial, and the screen says so.
+    const linesCut = lines.length > WEEK_LINES_MAX;
+    if (linesCut) lines.length = WEEK_LINES_MAX;
     const byMeeting = new Map<string, Array<{ stage: string; text: string }>>();
     for (const l of lines) (byMeeting.get(l.meeting_id) ?? byMeeting.set(l.meeting_id, []).get(l.meeting_id))?.push({ stage: l.stage, text: l.text });
     const perTerm = new Map<string, Array<{ meetingId: string; title: string; count: number }>>();
     for (const m of counted) {
-      const words = currentLines(byMeeting.get(m.id) ?? []).map((l) => wordsOf(l.text));
+      const words = currentLines(byMeeting.get(m.id) ?? []).map((l) => lineWords(l.text));
       for (const t of tracked) {
-        const count = words.reduce((sum, w) => sum + countNeedle(w, t.needle), 0);
+        const count = words.reduce((sum, w) => sum + countNeedle(w, t.target), 0);
         if (count > 0) (perTerm.get(t.id) ?? perTerm.set(t.id, []).get(t.id))?.push({ meetingId: m.id, title: m.title, count });
       }
     }
@@ -229,7 +236,7 @@ export const trackerWeek = defineQuery({
       ];
     });
     result.sort((a, b) => b.count - a.count || (a.term.toLowerCase() < b.term.toLowerCase() ? -1 : 1));
-    return zTrackerWeek.parse({ ...empty, meetings: counted.length, cut, terms: result });
+    return zTrackerWeek.parse({ ...empty, meetings: counted.length, cut: cut || linesCut, terms: result });
   },
 });
 

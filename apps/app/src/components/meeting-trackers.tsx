@@ -4,7 +4,7 @@
 // remove. The counts are worked out by the kernel from the lines the person may read (a reader the published lines), so nothing here reads a line; no AI, nothing stored but the words an owner chose.
 import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
 import { TRACKER_TERMS_MAX, TRACKER_WEEKS_BACK_MAX } from '@ludy/kernel-contract';
 import { Button } from '@ludy/ui/components/button';
@@ -34,6 +34,13 @@ export function MeetingTrackerHits({ meetingId, onJump, redactedEpoch = 0 }: { m
   useEffect(() => {
     if (redactedEpoch > 0) void queryClient.invalidateQueries({ queryKey: orpc.meetings.tracker.hits.key() });
   }, [redactedEpoch]);
+  // So does a new transcript read (a new transcription, a publish): the counts follow the lines the transcript panel shows, with no read of their own on the first load.
+  const transcript = useQuery({ ...orpc.meetings.transcript.get.queryOptions({ input: { meetingId } }), ...READ_ONCE });
+  const seen = useRef<number | null>(null);
+  useEffect(() => {
+    if (seen.current !== null && seen.current !== 0 && seen.current !== transcript.dataUpdatedAt) void queryClient.invalidateQueries({ queryKey: orpc.meetings.tracker.hits.key() });
+    seen.current = transcript.dataUpdatedAt;
+  }, [transcript.dataUpdatedAt]);
   if (query.error || !query.data || query.data.hits.length === 0) return null;
   return (
     <Card data-testid="meeting-tracker-hits">
@@ -144,7 +151,7 @@ export function TrackersWeek({ slug }: { slug: string }) {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        {week.error && !data ? <ErrorText>{errorMessage(week.error)}</ErrorText> : null}
+        {week.error ? <ErrorText>{errorMessage(week.error)}</ErrorText> : null}
         {data && (
           <section className="space-y-2" aria-label={t('week')}>
             <p className="text-xs text-muted-foreground" data-testid="trackers-range">

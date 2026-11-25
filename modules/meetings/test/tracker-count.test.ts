@@ -1,33 +1,48 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Counting a tracked word or phrase in a transcript line (#4818): whole words only, case and marks ignored, punctuation read as a space, hits that share a space both counted.
+// Counting a tracked word or phrase in a transcript line (#4818): whole words only, case ignored, punctuation read as a space, hits that share a space both counted, and marks following what the
+// owner typed (a term with marks is found with its marks only, a term typed without marks is found whatever the marks of the line).
 import { describe, expect, it } from 'vitest';
-import { countNeedle, needleOf, wordsOf } from '../src/tracker-count.ts';
+import { countNeedle, hasMarks, lineWords, needleOf } from '../src/tracker-count.ts';
 
 const count = (text: string, term: string): number => {
-  const needle = needleOf(term);
-  return needle === null ? 0 : countNeedle(wordsOf(text), needle);
+  const target = needleOf(term);
+  return target === null ? 0 : countNeedle(lineWords(text), target);
 };
 
-describe('wordsOf and needleOf', () => {
-  it('turns a text into lower case words without marks, a space at each end', () => {
-    expect(wordsOf('  Hợp đồng, ĐÃ ký!  ')).toBe(' hop dong da ky ');
-    expect(wordsOf('')).toBe('  ');
+describe('lineWords and needleOf', () => {
+  it('turns a line into its words in two spellings, a space at each end', () => {
+    expect(lineWords('  Hợp đồng, ĐÃ ký!  ')).toEqual({ strict: ' hợp đồng đã ký ', loose: ' hop dong da ky ' });
+    expect(lineWords('')).toEqual({ strict: '  ', loose: '  ' });
   });
 
-  it('gives a term the same words, or no needle when no word is left', () => {
-    expect(needleOf('Hợp đồng')).toBe(' hop dong ');
+  it('gives a term the spelling it was typed in, or no needle when no word is left', () => {
+    expect(needleOf('Hợp đồng')).toEqual({ needle: ' hợp đồng ', loose: false });
+    expect(needleOf('Hop dong')).toEqual({ needle: ' hop dong ', loose: true });
     expect(needleOf('!!!')).toBeNull();
+  });
+
+  it('knows a term with marks, the letter đ included, from one without', () => {
+    expect([hasMarks('giá'), hasMarks('đối thủ'), hasMarks('gia'), hasMarks('Dai Viet 2')]).toEqual([true, true, false, false]);
   });
 });
 
 describe('countNeedle', () => {
-  it('finds a word whatever its case and marks', () => {
+  it('finds a word whatever its case', () => {
     expect(count('Giá này cao quá, GIÁ bên kia thấp hơn', 'giá')).toBe(2);
-    expect(count('gia ca', 'Giá')).toBe(1);
+  });
+
+  it('finds a term typed with marks with its marks only', () => {
+    expect(count('giá, già, giả và gia đình', 'giá')).toBe(1);
+    expect(count('hợp đồng, hop dong', 'hợp đồng')).toBe(1);
+  });
+
+  it('finds a term typed without marks whatever the marks of the line', () => {
+    expect(count('giá, già, giả và gia đình', 'gia')).toBe(4);
+    expect(count('Ký Hợp đồng mới', 'hop dong')).toBe(1);
   });
 
   it('finds whole words only', () => {
-    expect(count('giảm giá mạnh, giám đốc đồng ý', 'gia')).toBe(1);
+    expect(count('giảm giá mạnh, giám đốc đồng ý', 'giá')).toBe(1);
     expect(count('hợp đồng hợp đồngg', 'hợp đồng')).toBe(1);
   });
 
@@ -44,7 +59,12 @@ describe('countNeedle', () => {
 
   it('finds a competitor name written with the letter đ or a digit', () => {
     expect(count('Đối thủ Đại Việt 2 vừa giảm giá', 'đại việt 2')).toBe(1);
-    expect(count('dai viet 22', 'dai viet 2')).toBe(0);
+    expect(count('đại việt 22', 'đại việt 2')).toBe(0);
+  });
+
+  it('finds a name written in Unicode forms D and C alike', () => {
+    expect(count('Giá cao', 'giá')).toBe(1);
+    expect(count('giá cao', 'Giá')).toBe(1);
   });
 
   it('finds nothing in an empty line', () => {

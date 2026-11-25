@@ -5267,7 +5267,7 @@ export const en = {
       thisWeek: 'This week',
       lastWeek: 'Last week',
       weeksAgo: '{count, number} weeks ago',
-      range: '{from} to {to}. Meetings read: {meetings, number}',
+      range: '{from} to {to}. Meetings counted: {meetings, number}',
       noneTracked: 'No words are tracked yet. An owner or an admin can add them.',
       noneTrackedOwner: 'No words are tracked yet. Add the competitor names or the words you want to follow below.',
       noHits: 'None of the tracked words came up in the meetings you can read this week.',
@@ -5276,7 +5276,7 @@ export const en = {
       cut: 'The week has more meetings than are counted here; the earliest ones are counted.',
       words: {
         title: 'Words you track ({count, number}/{max, number})',
-        hint: 'A word or phrase counts as whole words, whatever its case or accents. Counted from the lines each person may read; nothing about a count is stored.',
+        hint: 'A word or phrase counts as whole words, whatever its case. Typed with accents (giá) it finds only that spelling; typed without (gia) it finds every spelling. Counted from the lines each person may read; nothing about a count is stored.',
         label: 'A word or phrase to track',
         placeholder: 'For example: a competitor, giá, hợp đồng',
         add: 'Add',
