@@ -513,6 +513,17 @@ async function nestedThreadId(ctx: CommandContext, connectionId: string, provide
   return row?.external_thread_id ?? event.threadId;
 }
 
+const SES_REWRITTEN_MESSAGE_ID = /^<([^<>\s@]+)@(?:[a-z0-9-]+\.)?amazonses\.com>$/i;
+
+function sesProviderIdsFromRefs(refs: readonly string[]): string[] {
+  const ids: string[] = [];
+  for (const ref of refs) {
+    const match = SES_REWRITTEN_MESSAGE_ID.exec(ref);
+    if (match?.[1]) ids.push(match[1]);
+  }
+  return [...new Set(ids)];
+}
+
 async function emailThreadId(ctx: CommandContext, connectionId: string, event: ConversationEvent): Promise<string> {
   const refs = [...new Set(event.refs ?? [])];
   // A sender the receiving server did not vouch for may be anyone writing as the customer: the mail opens a thread of its own.
@@ -532,7 +543,29 @@ async function emailThreadId(ctx: CommandContext, connectionId: string, event: C
     .orderBy('m.sent_at', 'desc')
     .limit(1)
     .executeTakeFirst();
-  return row?.external_thread_id ?? event.messageId;
+  if (row) return row.external_thread_id;
+
+  // Amazon SES replaces our outbound MIME Message-ID header with <providerMessageId@<region>.amazonses.com>;
+  // if a client replies carrying only In-Reply-To without earlier References, map back via mail_message.provider_message_id.
+  const sesIds = sesProviderIdsFromRefs(refs);
+  if (sesIds.length === 0) return event.messageId;
+  const sesRow = await ctx.trx
+    .selectFrom('ludy_kernel.mail_message as mm')
+    .innerJoin('ludy_kernel.conversation_message as m', (join) => join.onRef('m.org_id', '=', 'mm.org_id').onRef('m.id', '=', 'mm.source_id'))
+    .innerJoin('ludy_kernel.conversation as c', (join) => join.onRef('c.org_id', '=', 'm.org_id').onRef('c.id', '=', 'm.conversation_id'))
+    .innerJoin('ludy_kernel.conversation_identity as i', (join) => join.onRef('i.org_id', '=', 'c.org_id').onRef('i.id', '=', 'c.identity_id'))
+    .select('c.external_thread_id')
+    .where('mm.org_id', '=', ctx.orgId)
+    .where('mm.provider', '=', 'ses')
+    .where('mm.source', '=', 'kernel.conversation.reply')
+    .where('mm.provider_message_id', 'in', sesIds)
+    .where('m.channel_connection_id', '=', connectionId)
+    .where('c.kind', '=', 'email')
+    .where('i.external_user_id', '=', event.contact.id)
+    .orderBy('m.sent_at', 'desc')
+    .limit(1)
+    .executeTakeFirst();
+  return sesRow?.external_thread_id ?? event.messageId;
 }
 
 // A mail's image whose bytes the worker has yet to write: its reserved row and blob key (#2758).
