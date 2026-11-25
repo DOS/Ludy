@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // POST /join-audio (#3175): the parts of one recording (a Zoom call made in several segments) travel as one framed body and come back as ONE mono Opus, in order, whatever each part's format. The framing is
-// strict (a count outside 1 to 16, a part of no bytes, a length past the end of the body or a byte after the last part is a bad_request), a part with no audio is refused, and the body cap and the duration cap of the
+// strict (a count outside 1 to 8, a part of no bytes, a length past the end of the body or a byte after the last part is a bad_request), a part with no audio is refused, and the body cap and the duration cap of the
 // other audio endpoints hold. The join itself needs ffmpeg and is skipped where it is not installed; the framing needs none.
 import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -11,6 +11,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { framedParts, createMediaJoinClient, type JoinPartSource } from '@ludy/media-contract/extract';
 import { zMediaNormalizeResult } from '../src/types.ts';
 import { createMediaApp } from '../src/server.ts';
+import { demuxerOf, joinArgs } from '../src/ffmpeg.ts';
 
 const hasFfmpeg = spawnSync('ffmpeg', ['-version']).status === 0;
 const dir = mkdtempSync(join(tmpdir(), 'crove-join-audio-'));
@@ -55,12 +56,31 @@ describe('the framing', () => {
     expect([...framed]).toEqual([0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 3, 1, 2, 3, 0, 0, 0, 0, 0, 0, 0, 2, 4, 5]);
   });
 
-  it('refuses a part that produces another number of bytes than it declared, and a count outside 1 to 16', async () => {
+  it('refuses a part that produces another number of bytes than it declared, and a count outside 1 to 8', async () => {
     await expect(body([{ length: 5, source: once(new Uint8Array([1, 2, 3])) }])).rejects.toThrow('fewer');
     await expect(body([{ length: 2, source: once(new Uint8Array([1, 2, 3])) }])).rejects.toThrow('more');
     await expect(body([])).rejects.toThrow(RangeError);
-    await expect(body(Array.from({ length: 17 }, () => part(new Uint8Array([1]))))).rejects.toThrow(RangeError);
+    await expect(body(Array.from({ length: 9 }, () => part(new Uint8Array([1]))))).rejects.toThrow(RangeError);
     await expect(body([{ length: 0, source: once(new Uint8Array()) }])).rejects.toThrow(RangeError);
+  });
+});
+
+describe('the arguments of the join', () => {
+  const inputs = ['mov,mp4,m4a,3gp,3g2,mj2', 'wav', 'matroska,webm', 'ogg'].map((format, i) => ({ path: `/scratch/part-${i}.bin`, format }));
+  const args = joinArgs(inputs, '[0:a:0]anull[a0]', 48, '/scratch/out.opus');
+
+  it('puts the file-only protocol whitelist and the probed demuxer before EVERY input (ffmpeg applies both to the next input only)', () => {
+    const at = args.flatMap((arg, i) => (arg === '-i' ? [i] : []));
+    expect(at).toHaveLength(inputs.length);
+    for (const [n, i] of at.entries()) {
+      expect(args.slice(i - 4, i)).toEqual(['-protocol_whitelist', 'file', '-f', ['mov', 'wav', 'matroska', 'ogg'][n]]);
+      expect(args[i + 1]).toBe(`/scratch/part-${n}.bin`);
+    }
+  });
+
+  it('refuses a container name that has no allowed demuxer, so no input is left to ffmpeg\'s own guess', () => {
+    for (const name of ['concat', 'hls,applehttp', 'sdp', 'ffconcat', 'image2', 'lavfi', '']) expect(() => demuxerOf(name)).toThrow('Unsupported');
+    expect(() => joinArgs([{ path: '/x', format: 'concat' }], 'g', 48, '/o')).toThrow('Unsupported');
   });
 });
 
@@ -68,7 +88,7 @@ describe('POST /join-audio refuses a body that is not framed exactly', () => {
   const app = createMediaApp();
   for (const [name, bytes] of [
     ['a count of none', frames(0, [])],
-    ['seventeen parts', frames(17, Array.from({ length: 17 }, () => 4))],
+    ['nine parts', frames(9, Array.from({ length: 9 }, () => 4))],
     ['a body that ends inside the count', new Uint8Array([0, 0])],
     ['a length that runs past the end', (() => { const b = frames(1, [4]); return b.subarray(0, b.length - 1); })()],
     ['a part of no bytes', frames(1, [0])],
@@ -132,6 +152,32 @@ describe.skipIf(!hasFfmpeg)('POST /join-audio with ffmpeg', () => {
     const junk = await post(app, await body([part(audio), part(new Uint8Array(Buffer.from('this is not media at all, only text')))]));
     expect(junk.status).toBe(422);
     expect(((await junk.json()) as { code: string }).code).toBe('malformed_media');
+  });
+
+  // A part that is a playlist or a list of other inputs, not media: it must never reach the join, whatever position it has (a part after the first is the one a per-command whitelist would have left open).
+  const hostile: Array<[string, string]> = [
+    ['an ffconcat list', 'ffconcat version 1.0\nfile /etc/passwd\nfile concat:/etc/hosts\n'],
+    ['an HLS playlist', '#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:10\n#EXTINF:10,\nfile:///etc/passwd\n#EXT-X-ENDLIST\n'],
+    ['an SDP file', 'v=0\no=- 0 0 IN IP4 127.0.0.1\ns=x\nc=IN IP4 127.0.0.1\nt=0 0\nm=audio 5004 RTP/AVP 0\n'],
+  ];
+  for (const [name, text] of hostile) {
+    for (const position of [0, 1, 2]) {
+      it(`refuses ${name} as part ${position + 1} of 3`, async () => {
+        const ok = (n: string) => tone(n, 440, 1, ['-ar', '48000', '-ac', '1']);
+        const parts = [ok('h1.wav'), ok('h2.wav'), ok('h3.wav')].map((bytes) => part(bytes));
+        parts[position] = part(new Uint8Array(Buffer.from(text)));
+        const res = await post(app, await body(parts));
+        expect(res.status).toBe(422);
+        expect(((await res.json()) as { code: string }).code).toBe('malformed_media');
+      });
+    }
+  }
+
+  it('does not follow an ffconcat part that names another real part of the same join', async () => {
+    const real = tone('real.wav', 440, 2, ['-ar', '48000', '-ac', '1']);
+    const list = new Uint8Array(Buffer.from('ffconcat version 1.0\nfile part-0.bin\n'));
+    const res = await post(app, await body([part(real), part(list)]));
+    expect(res.status).toBe(422);
   });
 
   it('does not let a timestamp jump inside a part stretch the answer: the length is what the parts hold', async () => {
