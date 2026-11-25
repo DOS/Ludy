@@ -4828,6 +4828,7 @@ export const vi = {
     minutesLink: {
       title: 'Chia sẻ biên bản',
       hint: 'Tạo một liên kết cho người ngoài tổ chức xem phần tóm tắt, các quyết định và việc cần làm đã xuất bản. Họ không cần tài khoản và không sửa được gì. Họ không thấy bản ghi, video, các chương hay bản nháp.',
+      managerHint: 'Các liên kết người ghi cuộc họp đã tạo cho người ngoài tổ chức xem biên bản đã xuất bản. Là chủ sở hữu hoặc quản trị viên, bạn thu hồi được một liên kết khi cần; bạn không tạo liên kết ở đây.',
       offNote: 'Tổ chức chưa bật chia sẻ biên bản ra ngoài, nên chưa tạo được liên kết.',
       offAdmin: 'Bạn bật được ở trang Cuộc họp, mục Cài đặt, thẻ "Chia sẻ biên bản ra ngoài".',
       offAdminLink: 'Mở trang Cuộc họp',
@@ -4856,6 +4857,7 @@ export const vi = {
       revokeFor: 'Thu hồi liên kết tạo {at}',
       revokeTitle: 'Thu hồi liên kết này?',
       revokeConfirm: 'Người đang giữ liên kết sẽ không mở được biên bản nữa. Việc này không hoàn tác được; bạn vẫn tạo được liên kết mới.',
+      revokeConfirmManager: 'Người đang giữ liên kết sẽ không mở được biên bản nữa. Việc này không hoàn tác được; người ghi cuộc họp vẫn tạo được liên kết mới.',
       revoked: 'Đã thu hồi liên kết.',
     },
     // "Chia sẻ biên bản ra ngoài" (#4822): thẻ cài đặt của tổ chức; mặc định tắt, chủ sở hữu hoặc quản trị viên đổi.
