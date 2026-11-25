@@ -1,6 +1,7 @@
 import { oc } from '@orpc/contract';
 import { z } from 'zod';
 import { zTranscriptExport, zTranscriptExportInput } from './meeting-transcript-export.ts';
+import { zSalesInsightAnswer, zSalesInsightStatus } from './meeting-sales-insight.ts';
 import { ORG_KINDS } from './apps.ts';
 import { zChapters, zChaptersCopied, zChaptersCopy, zChaptersSave, zChaptersSaved } from './meeting-chapters.ts';
 import {
@@ -1987,6 +1988,12 @@ export const contract = {
     openPoints: {
       status: oc.input(zSummaryRef).output(zSummaryStatus),
       list: oc.input(zSummaryRef).output(zOpenPointsAnswer),
+    },
+    // Sales call insights for a meeting linked to an open deal (#4920, L26): `status` feeds the button (recorder + linked open deal + transcript), `analyze` runs the recorder's own Vy once to extract
+    // customer concerns, buying signals and agreed next steps citing existing transcript line IDs, plus code-computed customer talk-time share from mapped speakers. Results stay tainted and ephemeral.
+    salesInsight: {
+      status: oc.input(zSummaryRef).output(zSalesInsightStatus),
+      analyze: oc.input(zSummaryRef).output(zSalesInsightAnswer),
     },
     // This week's decisions and what is still open, across the meetings the member reads (#3949): `facts` are read by code as the member (published decisions and open action items of the meetings that started in the
     // last 7, 14 or 30 days) and work with AI off; `status` is the button (may Vy be used now, the cost of one recap), `recap` the click that has the member's own Vy write two or three sentences from those facts. Nothing

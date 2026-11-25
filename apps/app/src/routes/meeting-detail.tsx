@@ -25,6 +25,7 @@ import { MeetingCommitments } from '../components/meeting-commitments.tsx';
 import { MeetingTemplateSuggest } from '../components/meeting-template-suggest.tsx';
 import { MeetingAskThis } from '../components/meeting-ask-this.tsx';
 import { MeetingOpenPoints } from '../components/meeting-open-points.tsx';
+import { MeetingSalesInsight } from '../components/meeting-sales-insight.tsx';
 import { MeetingNotes } from '../components/meeting-notes.tsx';
 import {
   DraftRedactionDialog,
@@ -501,6 +502,8 @@ export function MeetingDetailPage() {
       <MeetingAskThis key={`ask-this-${id}-${redactedEpoch}`} meetingId={id} hasTranscript={hasTranscript} onJump={jumpTo} />
       {/* What the meeting left open (#4768): the recorder's own Vy on a click, questions not heard answered and decisions raised and not taken, each opens the transcript where it was said; kept in state only, so a redaction (the epoch) clears it */}
       <MeetingOpenPoints key={`open-points-${id}-${redactedEpoch}`} meetingId={id} isRecorder={meeting.isRecorder} hasTranscript={hasTranscript} onJump={jumpTo} />
+      {/* Sales call insights for a meeting linked to an open deal (#4920, L26): recorder-only, ephemeral and clears on redaction */}
+      <MeetingSalesInsight key={`sales-insight-${id}-${redactedEpoch}`} meetingId={id} isRecorder={meeting.isRecorder} hasTranscript={hasTranscript} onJump={jumpTo} />
       {/* The transcript: the recorder's draft, or what was shared with the meeting */}
       <MeetingTranscript
         key={`transcript-${id}`}
