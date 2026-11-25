@@ -20,6 +20,8 @@ import { ExportSealer, exportAad } from '../src/export-seal.ts';
 import { runOrgExport, type OrgExportManifest } from '../src/org-export.ts';
 import { exportCoverageProblems, exportedTables, omitProblems } from './org-export-coverage.ts';
 import { readPurgeCatalog } from './org-purge-coverage.ts';
+import { contextToken } from './invariant/fixtures/context-token.ts';
+import { auditRoleFunctionExecute, resolveDbIdentifiers } from './invariant/fixtures/db-identifiers.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
@@ -775,4 +777,370 @@ suite('org offboarding on PostgreSQL (#38)', () => {
     expect(names.has('Sau ảnh chụp')).toBe(false);
 
   }, 120_000);
+
+  it('exports published transcript segments, results, action items, and readers for shared unexpired meetings only, and enforces worker-only SQL guards (#3388)', async () => {
+    const other = await orgWithMember('Công ty Họp Khác');
+    const { org, owner, member } = await orgWithMember('Công ty Họp Xuất');
+    const adminUser = await newUser('meeting-admin');
+    await withAdmin((c) =>
+      c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin')", [org.orgId, adminUser.id]),
+    );
+    await runtime.execute('kernel.org.offboard', { confirmSlug: org.slug }, { actor: asMfa(owner.id), orgId: org.orgId });
+
+    const orgSharedId = randomUUID();
+    const orgKeepForeverId = randomUUID();
+    const orgExpiredTodayId = randomUUID();
+    const orgExpiredYesterdayId = randomUUID();
+    const attendeesOnlyId = randomUUID();
+    const foreignOrgMeetingId = randomUUID();
+
+    const ids = {
+      sharedSeg1: randomUUID(),
+      sharedSeg2: randomUUID(),
+      sharedSegDraft: randomUUID(),
+      foreverSeg: randomUUID(),
+      expiredTodaySeg: randomUUID(),
+      expiredYesterdaySeg: randomUUID(),
+      attendeesSeg: randomUUID(),
+      foreignSeg: randomUUID(),
+      sharedResultPub: randomUUID(),
+      sharedResultDraft: randomUUID(),
+      foreverResultPub: randomUUID(),
+      expiredTodayResult: randomUUID(),
+      expiredYesterdayResult: randomUUID(),
+      attendeesResult: randomUUID(),
+      foreignResult: randomUUID(),
+      sharedItemSuggested: randomUUID(),
+      sharedItemAccepted: randomUUID(),
+      sharedItemDraftSuggested: randomUUID(),
+      sharedItemDraftAccepted: randomUUID(),
+      foreverItemPub: randomUUID(),
+      expiredTodayItem: randomUUID(),
+      expiredYesterdayItem: randomUUID(),
+      attendeesItem: randomUUID(),
+      foreignItem: randomUUID(),
+      sharedReaderMember: randomUUID(),
+      sharedReaderAdmin: randomUUID(),
+      foreverReader: randomUUID(),
+      expiredTodayReader: randomUUID(),
+      expiredYesterdayReader: randomUUID(),
+      attendeesReader: randomUUID(),
+      foreignReader: randomUUID(),
+      acceptedTaskId: randomUUID(),
+      audioFileId: randomUUID(),
+      videoFileId: randomUUID(),
+    };
+
+    const canaries = [
+      'CANARY_DRAFT_SEG_ORG',
+      'CANARY_DRAFT_SUMMARY_ORG',
+      'CANARY_DRAFT_DECISION_ORG',
+      'CANARY_DRAFT_ITEM_SUGGESTED',
+      'CANARY_DRAFT_ITEM_ACCEPTED',
+      'CANARY_EXPIRED_TODAY_SEG',
+      'CANARY_EXPIRED_TODAY_RES',
+      'CANARY_EXPIRED_TODAY_ITEM',
+      'CANARY_EXPIRED_YESTERDAY_SEG',
+      'CANARY_EXPIRED_YESTERDAY_RES',
+      'CANARY_EXPIRED_YESTERDAY_ITEM',
+      'CANARY_ATTENDEES_ONLY',
+      'CANARY_FOREIGN_ORG',
+    ];
+
+    await withAdmin(async (c) => {
+      const vnToday = (await c.query<{ d: string }>("SELECT (pg_catalog.timezone('Asia/Ho_Chi_Minh', pg_catalog.now()))::date::text AS d")).rows[0]!.d;
+      const shiftDay = async (days: number) =>
+        (await c.query<{ d: string }>('SELECT ($1::date + $2::int)::text AS d', [vnToday, days])).rows[0]!.d;
+      const openDay = await shiftDay(30);
+      const yesterdayDay = await shiftDay(-1);
+
+      const insertMeeting = async (
+        targetOrgId: string,
+        meetingId: string,
+        recorderId: string,
+        visibility: 'org' | 'attendees',
+        title: string,
+        textRetentionDate: string | null,
+      ) => {
+        await c.query(
+          `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+           VALUES ($1, $2, $3, 'vi', now() - interval '2 hours', now() - interval '1 hour', 3600, $4, $5, 'completed', 'told_at_start', $4, now(), '1.0', $6::date, $7::date)`,
+          [targetOrgId, meetingId, title, recorderId, visibility, openDay, textRetentionDate],
+        );
+      };
+
+      await insertMeeting(org.orgId, orgSharedId, owner.id, 'org', 'Họp công khai toàn công ty', openDay);
+      await insertMeeting(org.orgId, orgKeepForeverId, owner.id, 'org', 'Họp lưu lâu dài', null);
+      await insertMeeting(org.orgId, orgExpiredTodayId, owner.id, 'org', 'Họp hết hạn hôm nay', vnToday);
+      await insertMeeting(org.orgId, orgExpiredYesterdayId, owner.id, 'org', 'Họp hết hạn hôm qua', yesterdayDay);
+      await insertMeeting(org.orgId, attendeesOnlyId, member.id, 'attendees', 'CANARY_ATTENDEES_ONLY_TITLE', openDay);
+      await insertMeeting(other.org.orgId, foreignOrgMeetingId, other.owner.id, 'org', 'CANARY_FOREIGN_ORG_TITLE', openDay);
+
+      // Readers across org-shared, keep-forever, expired, attendees-only, and foreign meetings.
+      await c.query(
+        `INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES
+         ($1, $2, $3, $4),
+         ($1, $5, $3, $6),
+         ($1, $7, $8, $4),
+         ($1, $9, $10, $4),
+         ($1, $11, $12, $4),
+         ($1, $13, $14, $15)`,
+        [
+          org.orgId,
+          ids.sharedReaderMember, orgSharedId, member.id,
+          ids.sharedReaderAdmin, adminUser.id,
+          ids.foreverReader, orgKeepForeverId,
+          ids.expiredTodayReader, orgExpiredTodayId,
+          ids.expiredYesterdayReader, orgExpiredYesterdayId,
+          ids.attendeesReader, attendeesOnlyId, owner.id,
+        ],
+      );
+      await c.query(
+        'INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)',
+        [other.org.orgId, ids.foreignReader, foreignOrgMeetingId, other.member.id],
+      );
+
+      // Transcript segments: published + drafts, open + null + expired + attendees-only + foreign.
+      await c.query(
+        `INSERT INTO ludy_meetings.transcript_segment (org_id, id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage, corrected, tainted, source) VALUES
+         ($1, $2, $3, 0, 5, 'Chủ tọa', 'Mở đầu cuộc họp công khai.', 'published', false, false, 'ludy'),
+         ($1, $4, $3, 5, 12, 'Thành viên', 'Thống nhất kế hoạch quý tới.', 'published', true, false, 'ludy'),
+         ($1, $5, $3, 12, 20, 'Chủ tọa', 'CANARY_DRAFT_SEG_ORG', 'draft', false, true, 'ludy'),
+         ($1, $6, $7, 0, 4, 'Chủ tọa', 'Nội dung lưu vô thời hạn.', 'published', false, false, 'ludy'),
+         ($1, $8, $9, 0, 4, 'Chủ tọa', 'CANARY_EXPIRED_TODAY_SEG', 'published', false, false, 'ludy'),
+         ($1, $10, $11, 0, 4, 'Chủ tọa', 'CANARY_EXPIRED_YESTERDAY_SEG', 'published', false, false, 'ludy'),
+         ($1, $12, $13, 0, 4, 'Thành viên', 'CANARY_ATTENDEES_ONLY_SEG', 'published', false, false, 'ludy')`,
+        [
+          org.orgId,
+          ids.sharedSeg1, orgSharedId,
+          ids.sharedSeg2,
+          ids.sharedSegDraft,
+          ids.foreverSeg, orgKeepForeverId,
+          ids.expiredTodaySeg, orgExpiredTodayId,
+          ids.expiredYesterdaySeg, orgExpiredYesterdayId,
+          ids.attendeesSeg, attendeesOnlyId,
+        ],
+      );
+      await c.query(
+        `INSERT INTO ludy_meetings.transcript_segment (org_id, id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage, tainted, source)
+         VALUES ($1, $2, $3, 0, 4, 'Khác', 'CANARY_FOREIGN_ORG_SEG', 'published', false, 'ludy')`,
+        [other.org.orgId, ids.foreignSeg, foreignOrgMeetingId],
+      );
+
+      // Results: published + draft.
+      await c.query(
+        `INSERT INTO ludy_meetings.meeting_result (org_id, id, meeting_id, summary, decisions, feature, stage, tainted) VALUES
+         ($1, $2, $3, 'Tóm tắt công khai đã duyệt', '["Chốt ngân sách"]'::jsonb, 'manual', 'published', false),
+         ($1, $4, $3, 'CANARY_DRAFT_SUMMARY_ORG', '["CANARY_DRAFT_DECISION_ORG"]'::jsonb, 'meetings.summary', 'draft', true),
+         ($1, $5, $6, 'Tóm tắt lưu lâu dài', '["Lưu trữ"]'::jsonb, 'manual', 'published', false),
+         ($1, $7, $8, 'CANARY_EXPIRED_TODAY_RES', '[]'::jsonb, 'manual', 'published', false),
+         ($1, $9, $10, 'CANARY_EXPIRED_YESTERDAY_RES', '[]'::jsonb, 'manual', 'published', false),
+         ($1, $11, $12, 'CANARY_ATTENDEES_ONLY_RES', '[]'::jsonb, 'manual', 'published', false)`,
+        [
+          org.orgId,
+          ids.sharedResultPub, orgSharedId,
+          ids.sharedResultDraft,
+          ids.foreverResultPub, orgKeepForeverId,
+          ids.expiredTodayResult, orgExpiredTodayId,
+          ids.expiredYesterdayResult, orgExpiredYesterdayId,
+          ids.attendeesResult, attendeesOnlyId,
+        ],
+      );
+      await c.query(
+        `INSERT INTO ludy_meetings.meeting_result (org_id, id, meeting_id, summary, decisions, feature, stage, tainted)
+         VALUES ($1, $2, $3, 'CANARY_FOREIGN_ORG_RES', '[]'::jsonb, 'manual', 'published', false)`,
+        [other.org.orgId, ids.foreignResult, foreignOrgMeetingId],
+      );
+
+      // Action items: published suggested, published accepted, draft suggested, draft accepted.
+      await c.query(
+        `INSERT INTO ludy_meetings.action_item (org_id, id, meeting_id, title, who_drafted, who_parsed, when_drafted, when_parsed, transcript_seconds, stage, status, flags, tainted, task_id, accepted_by, accepted_at) VALUES
+         ($1, $2, $3, 'Gửi báo cáo tuần', 'Thành viên', $4, 'Tuần sau', $5::date, 6, 'published', 'suggested', '[]'::jsonb, false, NULL, NULL, NULL),
+         ($1, $6, $3, 'Chốt hợp đồng', 'Chủ sở hữu', $7, 'Hôm nay', $5::date, 10, 'published', 'accepted', '["asked_aloud"]'::jsonb, false, $8, $7, now()),
+         ($1, $9, $3, 'CANARY_DRAFT_ITEM_SUGGESTED', 'Thành viên', $4, 'Mai', $5::date, 13, 'draft', 'suggested', '[]'::jsonb, true, NULL, NULL, NULL),
+         ($1, $10, $3, 'CANARY_DRAFT_ITEM_ACCEPTED', 'Chủ sở hữu', $7, 'Mai', $5::date, 14, 'draft', 'accepted', '[]'::jsonb, false, $8, $7, now()),
+         ($1, $11, $12, 'Việc lưu lâu dài', 'Thành viên', $4, 'Tháng sau', $5::date, 2, 'published', 'suggested', '[]'::jsonb, false, NULL, NULL, NULL),
+         ($1, $13, $14, 'CANARY_EXPIRED_TODAY_ITEM', 'Thành viên', $4, 'Mai', $5::date, 1, 'published', 'suggested', '[]'::jsonb, false, NULL, NULL, NULL),
+         ($1, $15, $16, 'CANARY_EXPIRED_YESTERDAY_ITEM', 'Thành viên', $4, 'Mai', $5::date, 1, 'published', 'suggested', '[]'::jsonb, false, NULL, NULL, NULL),
+         ($1, $17, $18, 'CANARY_ATTENDEES_ONLY_ITEM', 'Thành viên', $7, 'Mai', $5::date, 1, 'published', 'suggested', '[]'::jsonb, false, NULL, NULL, NULL)`,
+        [
+          org.orgId,
+          ids.sharedItemSuggested, orgSharedId, member.id, openDay,
+          ids.sharedItemAccepted, owner.id, ids.acceptedTaskId,
+          ids.sharedItemDraftSuggested,
+          ids.sharedItemDraftAccepted,
+          ids.foreverItemPub, orgKeepForeverId,
+          ids.expiredTodayItem, orgExpiredTodayId,
+          ids.expiredYesterdayItem, orgExpiredYesterdayId,
+          ids.attendeesItem, attendeesOnlyId,
+        ],
+      );
+      await c.query(
+        `INSERT INTO ludy_meetings.action_item (org_id, id, meeting_id, title, stage, status, flags, tainted)
+         VALUES ($1, $2, $3, 'CANARY_FOREIGN_ORG_ITEM', 'published', 'suggested', '[]'::jsonb, false)`,
+        [other.org.orgId, ids.foreignItem, foreignOrgMeetingId],
+      );
+
+      // Audio and video files/segments on the shared meeting: never exported.
+      await c.query(
+        `INSERT INTO ludy_kernel.file (org_id, id, filename, content_type, size_bytes, sha256, storage_key, source, created_by) VALUES
+         ($1, $2, 'meeting-audio.ogg', 'audio/ogg', 100, repeat('a', 64), $3, 'meeting_audio', $4),
+         ($1, $5, 'meeting-video.mp4', 'video/mp4', 200, repeat('b', 64), $6, 'meeting_video', $4)`,
+        [org.orgId, ids.audioFileId, `org/${org.orgId}/${'a'.repeat(64)}`, owner.id, ids.videoFileId, `org/${org.orgId}/${'b'.repeat(64)}`],
+      );
+      await c.query(
+        'INSERT INTO ludy_meetings.audio_segment (org_id, meeting_id, file_id, segment_order, start_offset_seconds, length_seconds) VALUES ($1, $2, $3, 0, 0, 60)',
+        [org.orgId, orgSharedId, ids.audioFileId],
+      );
+      await c.query(
+        'INSERT INTO ludy_meetings.meeting_video (org_id, meeting_id, file_id, length_seconds, video_retention_date) VALUES ($1, $2, $3, 60, $4::date)',
+        [org.orgId, orgSharedId, ids.videoFileId, openDay],
+      );
+    });
+
+    const record = await runOrgExport({ runtime: workerRuntime, store, sealer }, org.orgId);
+    const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
+    const parseLines = (text: string) => text.split('\n').filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>);
+    const rowsOf = async (table: string) => {
+      const found = record.parts.find((p) => p.table === table)!;
+      return parseLines(decode(sealer.open(await store.get(found.key), exportAad(org.orgId, found), 'aes-256-gcm')));
+    };
+
+    const transcriptRows = await rowsOf('meetings.transcript_segment');
+    expect(transcriptRows.map((r) => r.id).sort()).toEqual([ids.sharedSeg1, ids.sharedSeg2, ids.foreverSeg].sort());
+    expect(transcriptRows.filter((r) => r.meeting_id === orgSharedId).map((r) => r.id)).toEqual([ids.sharedSeg1, ids.sharedSeg2]);
+    for (const seg of transcriptRows) {
+      expect(seg).not.toHaveProperty('search');
+    }
+    expect(transcriptRows.every((r) => r.stage === 'published')).toBe(true);
+
+    const resultRows = await rowsOf('meetings.result');
+    expect(resultRows.map((r) => r.id).sort()).toEqual([ids.sharedResultPub, ids.foreverResultPub].sort());
+    expect(resultRows.find((r) => r.id === ids.sharedResultPub)).toMatchObject({
+      summary: 'Tóm tắt công khai đã duyệt',
+      decisions: ['Chốt ngân sách'],
+      stage: 'published',
+    });
+
+    const actionItemRows = await rowsOf('meetings.action_item');
+    expect(actionItemRows.map((r) => r.id).sort()).toEqual([ids.sharedItemSuggested, ids.sharedItemAccepted, ids.foreverItemPub].sort());
+    expect(actionItemRows.find((r) => r.id === ids.sharedItemAccepted)).toMatchObject({ status: 'accepted', stage: 'published' });
+
+    const readerRows = await rowsOf('meetings.reader');
+    expect(readerRows.map((r) => r.id).sort()).toEqual([ids.sharedReaderMember, ids.sharedReaderAdmin, ids.foreverReader].sort());
+
+    expect(await rowsOf('meetings.private_count')).toEqual([{ org_id: org.orgId, recorder_user_id: member.id, meetings: 1 }]);
+    expect((await rowsOf('kernel.file')).filter((f) => String(f.source).startsWith('meeting_'))).toEqual([]);
+    expect(EXPORT_TABLE_NAMES).not.toContain('meetings.audio_segment');
+    expect(EXPORT_TABLE_NAMES).not.toContain('meetings.meeting_video');
+
+    // No draft, expired, attendees-only, or foreign-org content leaks into any exported part.
+    for (const part of record.parts) {
+      const body = decode(sealer.open(await store.get(part.key), exportAad(org.orgId, part), 'aes-256-gcm'));
+      for (const canary of canaries) {
+        expect(body, `${part.table} leaked ${canary}`).not.toContain(canary);
+      }
+    }
+
+    // Security & caller guards on all 4 new definer functions:
+    // 1) search_path pinned, SECURITY DEFINER, zero PUBLIC execute, strict worker-only EXECUTE ACL.
+    const fnNames = [
+      'ludy_kernel.meeting_transcript_export_rows()',
+      'ludy_kernel.meeting_result_export_rows()',
+      'ludy_kernel.meeting_action_item_export_rows()',
+      'ludy_kernel.meeting_reader_export_rows()',
+    ] as const;
+    await withAdmin(async (c) => {
+      const dbIds = await resolveDbIdentifiers(adminUrl);
+      for (const sig of fnNames) {
+        const meta = (
+          await c.query<{ prosecdef: boolean; proconfig: string[] | null; pub: boolean }>(
+            `SELECT p.prosecdef, p.proconfig, pg_catalog.has_function_privilege('public', p.oid, 'EXECUTE') AS pub
+             FROM pg_catalog.pg_proc p WHERE p.oid = $1::regprocedure`,
+            [sig],
+          )
+        ).rows[0]!;
+        expect(meta, sig).toEqual({ prosecdef: true, proconfig: ['search_path=pg_catalog, pg_temp'], pub: false });
+
+        const { rows: roleRows, activeAllowed } = await auditRoleFunctionExecute(c, dbIds, sig, ['crove_worker'], 'brand');
+        expect(roleRows.length, sig).toBeGreaterThan(0);
+        for (const allowedRole of activeAllowed) {
+          expect(roleRows.some((r) => r.rolname === allowedRole && r.ok), `${allowedRole} on ${sig}`).toBe(true);
+        }
+        for (const deniedRole of ['ludy_tenant', 'ludy_app', 'ludy_definer_tenant', 'ludy_definer_einvoice']) {
+          expect(roleRows.find((r) => r.rolname === deniedRole)?.ok, `${deniedRole} on ${sig}`).toBe(false);
+        }
+        for (const { rolname, ok, expected } of roleRows) {
+          expect(ok, `${rolname} on ${sig}`).toBe(expected);
+        }
+      }
+    });
+
+    // 2) Non-worker SQL callers (ludy_app with/without context) hit PostgreSQL ACL denial (permission denied), and worker outside system context (no context, or agent context) is refused with MEETINGS_WORKER_ONLY (42501).
+    const probeAgent = await withAdmin(async (c) => {
+      const a = await c.query<{ id: string }>(
+        `INSERT INTO ludy_kernel.agent (org_id, template_key, display_name, created_by)
+         VALUES ($1::uuid, 'finance.chief_accountant', 'Export Guard Probe Agent', $2::uuid)
+         RETURNING id`,
+        [other.org.orgId, other.owner.id],
+      );
+      const agentId = a.rows[0]!.id;
+      const le = await c.query<{ id: string }>(
+        'SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1::uuid AND is_default LIMIT 1',
+        [other.org.orgId],
+      );
+      await c.query(
+        `INSERT INTO ludy_kernel.position (org_id, title, module, role_key, holder_agent_id, le_scope)
+         VALUES ($1::uuid, 'Export Guard Seat', 'finance', 'finance.chief_accountant', $2::uuid, ARRAY[$3::text])`,
+        [other.org.orgId, agentId, le.rows[0]!.id],
+      );
+      const run = await c.query<{ id: string }>(
+        `INSERT INTO ludy_kernel.ai_run (org_id, agent_id, module, status, expires_at)
+         VALUES ($1::uuid, $2::uuid, 'finance', 'running', now() + interval '10 minutes')
+         RETURNING id`,
+        [other.org.orgId, agentId],
+      );
+      return { agentId, runId: run.rows[0]!.id };
+    });
+
+    const callRefused = async (
+      connectionString: string,
+      setup: ((c: pg.Client) => Promise<void>) | null,
+      fn: string,
+      messagePattern: RegExp,
+    ) => {
+      const c = new pg.Client({ connectionString });
+      await c.connect();
+      try {
+        await c.query('BEGIN');
+        if (setup) await setup(c);
+        await expect(c.query(`SELECT * FROM ${fn}`)).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(messagePattern) });
+      } finally {
+        await c.query('ROLLBACK').catch(() => {});
+        await c.end();
+      }
+    };
+    const workerConn = (() => {
+      const url = new URL(adminUrl);
+      url.username = 'ludy_worker';
+      url.password = 'test-worker-pw';
+      return url.toString();
+    })();
+    for (const fn of fnNames) {
+      await callRefused(appUrl, null, fn, /permission denied/i);
+      await callRefused(
+        appUrl,
+        (c) => c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [org.orgId, contextToken(owner.id, org.orgId)]).then(() => undefined),
+        fn,
+        /permission denied/i,
+      );
+      await callRefused(workerConn, null, fn, /MEETINGS_WORKER_ONLY/);
+      await callRefused(
+        workerConn,
+        (c) => c.query('SELECT ludy_kernel.enter_agent_context($1::uuid, $2::uuid, $3::uuid)', [other.org.orgId, probeAgent.agentId, probeAgent.runId]).then(() => undefined),
+        fn,
+        /MEETINGS_WORKER_ONLY/,
+      );
+    }
+  });
 });

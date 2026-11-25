@@ -147,6 +147,7 @@ export interface LudyKernelSchema {
   'ludy_kernel.agent': KernelAgentTable;
   'ludy_kernel.agent_template': KernelAgentTemplateTable;
   'ludy_kernel.agent_wakeup': KernelAgentWakeupTable;
+  'ludy_kernel.ai_budget_reservation': KernelAiBudgetReservationTable;
   'ludy_kernel.ai_run': KernelAiRunTable;
   'ludy_kernel.approval_preset': KernelApprovalPresetTable;
   'ludy_kernel.audit_event': KernelAuditEventTable;
@@ -240,6 +241,7 @@ export interface LudyMeetingsSchema {
   'ludy_meetings.meeting_result': MeetingsMeetingResultTable;
   'ludy_meetings.meeting_video': MeetingsMeetingVideoTable;
   'ludy_meetings.minutes_template': MeetingsMinutesTemplateTable;
+  'ludy_meetings.minutes_version': MeetingsMinutesVersionTable;
   'ludy_meetings.morning_notice': MeetingsMorningNoticeTable;
   'ludy_meetings.tracker_term': MeetingsTrackerTermTable;
   'ludy_meetings.transcript_segment': MeetingsTranscriptSegmentTable;
@@ -2544,6 +2546,19 @@ export interface KernelAgentWakeupTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
+/** ludy_kernel.ai_budget_reservation */
+export interface KernelAiBudgetReservationTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  module: ColumnType<string, string, NotGranted>;
+  agent_id: ColumnType<string | null, string | null, NotGranted>;
+  actor_user_id: ColumnType<string | null, string | null, NotGranted>;
+  feature: ColumnType<string, string, NotGranted>;
+  amount: ColumnType<string, string, NotGranted>;
+  expires_at: ColumnType<Date, Date | string, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
 /** ludy_kernel.ai_run */
 export interface KernelAiRunTable {
   org_id: string;
@@ -3140,6 +3155,8 @@ export interface KernelMeetingPlatformRecordingTable {
   created_at: ColumnType<Date, NotGranted, NotGranted>;
   updated_at: ColumnType<Date, NotGranted, NotGranted>;
   meeting_key: ColumnType<string | null, NotGranted, NotGranted>;
+  picked_file_id: ColumnType<string | null, NotGranted, NotGranted>;
+  picked_at: ColumnType<Date | null, NotGranted, NotGranted>;
 }
 
 /** ludy_kernel.member_availability */
@@ -3892,6 +3909,19 @@ export interface MeetingsMinutesTemplateTable {
   created_by: string;
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_meetings.minutes_version */
+export interface MeetingsMinutesVersionTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  meeting_id: ColumnType<string, string, NotGranted>;
+  language: ColumnType<string, string, NotGranted>;
+  source_hash: ColumnType<string, string, NotGranted>;
+  body: ColumnType<unknown, string, NotGranted>;
+  published_by: ColumnType<string, string, NotGranted>;
+  source_run_id: ColumnType<string | null, string | null, NotGranted>;
+  published_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
 /** ludy_meetings.morning_notice */

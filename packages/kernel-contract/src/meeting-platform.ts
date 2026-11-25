@@ -73,6 +73,10 @@ export const MEETING_PLATFORM_ERROR_CODES = [
   // Microsoft Teams (C4): the customer's tenant administrator has not turned on Graph access to meeting transcripts, or the speaker names; only they can.
   'transcripts_disabled',
   'speakers_disabled',
+  // Google Meet's Picker route (#3174, ADR-0025 amendment): the recording needs the member to pick its file in Google Picker and none was picked (or the pick was taken away), or the file picked is not the one Meet gave
+  // for this recording. The member picks again.
+  'pick_missing',
+  'pick_mismatch',
 ] as const;
 export type MeetingPlatformErrorCode = (typeof MEETING_PLATFORM_ERROR_CODES)[number];
 export const zMeetingPlatformErrorCode = z.enum(MEETING_PLATFORM_ERROR_CODES);
@@ -104,6 +108,8 @@ export const zMeetingPlatformRecordingView = z.strictObject({
   // The most bytes of a video file this deployment can take the audio out of (C2a, #3306), or null when it cannot (no crove-media): a recording that has only a video file can then be imported when its
   // size fits; null, it is refused as before. It is the video cap lowered to crove-media's own input limit where the deployment sets one.
   videoImportMaxBytes: z.number().int().positive().nullable(),
+  // Google Meet's Picker route (#3174): the member has picked this recording's Drive file (kept on the row; the import job checks it). False for every row that needs no pick.
+  picked: z.boolean(),
   status: z.enum(MEETING_PLATFORM_RECORDING_STATUSES),
   meetingId: zId.nullable(),
   errorCode: z.string().nullable(),
@@ -113,6 +119,17 @@ export const zMeetingPlatformRecordingView = z.strictObject({
 export type MeetingPlatformRecordingView = z.infer<typeof zMeetingPlatformRecordingView>;
 
 export const zMeetingPlatformRecordingRef = z.strictObject({ recordingId: zId });
+
+// Google Meet's Picker route (#3174, ADR-0025 amendment of 2026-11-25). A Meet recording is a video file in the organizer's Drive, so the member picks it in Google Picker (scope `drive.file`, in their own browser)
+// and tells the API one thing: the Drive file id. A Drive file id is letters, digits, `-` and `_`. The import job compares it with the id Meet gave for the recording and downloads nothing on a mismatch.
+export const MEETING_PLATFORM_DRIVE_FILE_ID = /^[A-Za-z0-9_-]{10,128}$/;
+export const zMeetingPlatformRecordingPick = z.strictObject({ recordingId: zId, fileId: z.string().regex(MEETING_PLATFORM_DRIVE_FILE_ID) });
+export type MeetingPlatformRecordingPick = z.infer<typeof zMeetingPlatformRecordingPick>;
+
+// Whether a recording must be picked before it is imported: a Google Meet recording that has a video file and neither audio nor a transcript (a conference with a transcript is imported as its transcript, nothing to pick).
+export function meetingPlatformNeedsPick(provider: string, row: { hasAudio: boolean; hasVideo: boolean; hasTranscript: boolean }): boolean {
+  return provider === 'google_meet' && row.hasVideo && !row.hasAudio && !row.hasTranscript;
+}
 export const zMeetingPlatformConnectionRef = z.strictObject({ connectionId: zId });
 
 /** The binding a connection's tokens are sealed for (org, provider, account): the OAuth callback seals, the job opens. */

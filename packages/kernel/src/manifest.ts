@@ -15,6 +15,7 @@ export const kernelManifest = defineModule({
       agent: columns(['org_id', 'id', 'template_key', 'display_name', 'runtime', 'model_alias', 'status', 'max_risk', 'daily_run_cap', 'created_by', 'created_at', 'updated_at', 'kind', 'member_user_id']),
       agent_template: columns(['key', 'module', 'title', 'role_key', 'max_risk', 'job_description', 'subscribes', 'daily_run_cap']),
       agent_wakeup: columns(['org_id', 'id', 'agent_id', 'status', 'reasons', 'request_count', 'tainted', 'request_depth', 'run_id', 'created_at', 'updated_at']),
+      ai_budget_reservation: columns(['org_id', 'id', 'module', 'agent_id', 'actor_user_id', 'feature', 'amount', 'expires_at', 'created_at']),
       ai_run: columns(['org_id', 'id', 'agent_id', 'module', 'status', 'tainted', 'request_depth', 'cost', 'started_at', 'expires_at', 'finished_at', 'error', 'private_read', 'feature']),
       approval_preset: columns(['key', 'ledger_chief_accountant_only']),
       archive_batch: columns(['seq', 'window_from', 'window_to', 'row_count', 'batch_sha256', 'chain_sha256', 'object_key', 'written_at']),
@@ -80,8 +81,9 @@ export const kernelManifest = defineModule({
       meeting_platform_connection: columns(['org_id', 'id', 'user_id', 'provider', 'scopes', 'status', 'status_reason', 'expires_at', 'last_synced_at', 'connected_at', 'updated_at'], { external_account: 'contact', display_name: 'contact' }),
       meeting_platform_credential: columns(['org_id', 'id', 'key_id', 'created_at', 'sealed_at'], { envelope: 'sensitive' }),
       meeting_platform_recording: columns(
-        ['org_id', 'id', 'connection_id', 'user_id', 'external_id', 'started_at', 'length_seconds', 'size_bytes', 'has_audio', 'has_video', 'has_transcript', 'status', 'meeting_id', 'meeting_key', 'staged_at', 'error_code', 'created_at', 'updated_at'],
-        { title: 'pii', staging_key: 'sensitive' },
+        ['org_id', 'id', 'connection_id', 'user_id', 'external_id', 'started_at', 'length_seconds', 'size_bytes', 'has_audio', 'has_video', 'has_transcript', 'status', 'meeting_id', 'meeting_key', 'staged_at', 'error_code', 'created_at', 'updated_at', 'picked_at'],
+        // The Drive file id the member picked (#3174): sensitive like the staging key, it names a file in a member's Drive.
+        { title: 'pii', staging_key: 'sensitive', picked_file_id: 'sensitive' },
       ),
       member_availability: columns(['org_id', 'id', 'user_id', 'status', 'until', 'updated_at']),
       member_invite: columns(['org_id', 'id', 'role', 'token_sha256', 'status', 'invited_by', 'created_at', 'expires_at', 'accepted_at', 'accepted_by', 'revoked_at', 'revoked_by', 'legal_entity_ids', 'role_key', 'role_scope'], { email: 'contact' }),

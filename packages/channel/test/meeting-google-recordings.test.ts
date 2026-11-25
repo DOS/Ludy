@@ -3,7 +3,7 @@
 // Meet gave for it is what the pick command compares with, and the download is the Drive media URL with the bearer on the first host only. No Google call is ever made: a fake fetch answers in the shapes of
 // the Meet REST API v2 reference (conferenceRecords, transcripts, recordings with driveDestination) and fails on any other host, method or a request without the bearer token.
 import { afterEach, describe, expect, it } from 'vitest';
-import { GOOGLE_DRIVE_DOWNLOAD_HOST, GOOGLE_DRIVE_REDIRECT_SUFFIX, GOOGLE_MEET_AUTH_SCOPES, GOOGLE_MEET_DRIVE_FILE_SCOPE, GoogleMeetAdapter, type MeetingPlatformCredential } from '../src/index.ts';
+import { GOOGLE_DRIVE_DOWNLOAD_HOST, GOOGLE_DRIVE_REDIRECT_SUFFIX, GOOGLE_MEET_AUTH_SCOPES, GOOGLE_MEET_DRIVE_FILE_SCOPE, GOOGLE_MEET_PICKER_AUTH_SCOPES, GoogleMeetAdapter, type MeetingPlatformCredential } from '../src/index.ts';
 
 const CREDENTIAL: MeetingPlatformCredential = { accessToken: 'meet-access-token-not-real-0002', refreshToken: 'meet-refresh-token-not-real-0002' };
 const SINCE = new Date('2026-11-04T00:00:00Z');
@@ -168,5 +168,14 @@ describe('Google Meet recordings through the Picker route', () => {
     expect(GOOGLE_MEET_DRIVE_FILE_SCOPE).toBe('https://www.googleapis.com/auth/drive.file');
     expect(GOOGLE_MEET_AUTH_SCOPES).not.toContain(GOOGLE_MEET_DRIVE_FILE_SCOPE);
     for (const scope of GOOGLE_MEET_AUTH_SCOPES) expect(scope).not.toMatch(/drive\.(readonly|meet\.readonly)$/u);
+  });
+
+  it('asks the connect for drive.file, as a second permission line, only with the Picker route on', () => {
+    const app = { clientId: 'client-id', clientSecret: 'client-secret' };
+    const scopes = (adapter: GoogleMeetAdapter) => new URL(adapter.authorizeUrl({ state: 's', redirectUri: 'https://app.test/cb', codeChallenge: null })).searchParams.get('scope')?.split(' ');
+    expect(scopes(new GoogleMeetAdapter({ refresher, app }))).toEqual([...GOOGLE_MEET_AUTH_SCOPES]);
+    expect(scopes(new GoogleMeetAdapter({ refresher, app, recordings: true }))).toEqual([...GOOGLE_MEET_PICKER_AUTH_SCOPES]);
+    expect(GOOGLE_MEET_PICKER_AUTH_SCOPES).toContain(GOOGLE_MEET_DRIVE_FILE_SCOPE);
+    for (const scope of GOOGLE_MEET_PICKER_AUTH_SCOPES) expect(scope).not.toMatch(/drive\.(readonly|meet\.readonly)$/u);
   });
 });

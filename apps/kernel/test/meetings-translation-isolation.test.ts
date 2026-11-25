@@ -121,6 +121,10 @@ describe('a translation is never a source: the migrations (E1, #3184)', () => {
       'ludy_kernel_org_purge_sign_deposit.sql',
       // #4818 (keyword trackers): the purge restatement that adds ludy_meetings.tracker_term restates the whole list, the translation table included; its body is the previous one.
       'ludy_kernel_org_purge_tracker_term.sql',
+      // #4777 (bilingual minutes): the purge restatement that adds ludy_meetings.minutes_version restates the whole list, the translation table included; its body is the previous one.
+      'ludy_kernel_org_purge_minutes_version.sql',
+      // #3979 (AI meter concurrency): the purge restatement that adds ludy_kernel.ai_budget_reservation restates the whole list, the translation table included; its body is the previous one.
+      'ludy_kernel_ai_budget_reservation.sql',
     ]);
   });
 });

@@ -11,7 +11,7 @@
 //   (`kernel-meeting-import-sweep handler`, apps/kernel/test/invariant/job-egress.test.ts) is justified by this command.
 // - The bytes then wait in staging; the member's own request claims, seals and records them through POST /api/meetings/:id/media, so the sealing code is the one an upload uses.
 // - No AI part: the transcript and minutes of the imported meeting are the ordinary ones, started by the member. Audit rows hold ids and the provider, never a title or a platform text.
-import { MEETING_PLATFORM_TRANSCRIPT_PROVIDERS, platformPairKeys, zMeetingImportDiscarded, zMeetingImportDiscardEmpty, zMeetingImportStart, zMeetingTranscriptImport, type MeetingLanguage, type MeetingPlatformTranscriptProvider, type TranscriptionMaker } from '@ludy/kernel-contract';
+import { MEETING_PLATFORM_TRANSCRIPT_PROVIDERS, meetingPlatformNeedsPick, platformPairKeys, zMeetingImportDiscarded, zMeetingImportDiscardEmpty, zMeetingImportStart, zMeetingTranscriptImport, type MeetingLanguage, type MeetingPlatformTranscriptProvider, type TranscriptionMaker } from '@ludy/kernel-contract';
 import { DomainError, defineCommand, newStagingKey, type CommandContext } from '@ludy/kernel-runtime';
 import { sql } from 'kysely';
 import { createMeetingRow } from './meeting-core.ts';
@@ -137,6 +137,12 @@ export const meetingImportStart = defineCommand({
     // No audio file, no way to take the audio out of a video file and no transcript the platform's provider can hand over (C2, #3174: a recording with only a transcript): refused here, before a meeting is made for it.
     const transcriptOnly = !recording.has_audio && !recording.has_video && recording.has_transcript && hasTranscriptPath(recording.provider);
     if (!recording.has_audio && !(recording.has_video && videoImportOn) && !transcriptOnly) throw new DomainError('MEETING_PLATFORM_NO_AUDIO', 422, 'Nền tảng không có tệp âm thanh hay video cho bản ghi này');
+    // A Google Meet recording that is a video file only is the member's to pick in Google Picker first (#3174, ADR-0025 amendment): without a pick nothing is started, so no meeting is made and nothing is downloaded.
+    // The worker's job compares the pick with the id Meet gave and fails the import (`pick_mismatch`) if it is another file; a try that failed that way needs a new pick (the pick clears that code) before it starts again.
+    if (meetingPlatformNeedsPick(recording.provider, { hasAudio: recording.has_audio, hasVideo: recording.has_video, hasTranscript: recording.has_transcript })) {
+      const picked = await sql<{ picked: boolean }>`SELECT (picked_file_id IS NOT NULL AND coalesce(error_code, '') NOT IN ('pick_missing', 'pick_mismatch')) AS picked FROM ludy_kernel.meeting_platform_recording WHERE org_id = ${ctx.orgId}::uuid AND id = ${input.recordingId}::uuid`.execute(ctx.trx);
+      if (picked.rows[0]?.picked !== true) throw new DomainError('MEETING_PLATFORM_PICK_REQUIRED', 409, 'Hãy chọn tệp ghi hình trong Google Drive trước khi nhập bản ghi này');
+    }
     const title = (input.title ?? (recording.title.trim() === '' ? UNTITLED[input.language] : recording.title.trim())).slice(0, 200);
 
     // A retry of a failed try: the empty meeting that try made goes, by the recorder's own delete path (it also shreds the meeting's keys), so the list does not keep one empty meeting for each failed click.
