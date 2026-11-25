@@ -332,6 +332,8 @@ export function SignCeremonyDepositCard({ token, deposit: initialDeposit }: Sign
                 id={`${idPrefix}-proof`}
                 type="file"
                 accept="image/png,image/jpeg,.png,.jpg,.jpeg"
+                tabIndex={-1}
+                aria-hidden="true"
                 className="sr-only"
                 onChange={handleProofPick}
                 data-testid="sign-ceremony-deposit-proof-input"

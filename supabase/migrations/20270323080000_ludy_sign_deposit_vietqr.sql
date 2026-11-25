@@ -2849,13 +2849,21 @@ BEGIN
     AND ludy_sign.public_otp_verified_at_for_token(v_row.org_id, v_row.signer_id, v_row.token_id) IS NULL
   );
 
+  IF v_otp_required THEN
+    RETURN pg_catalog.jsonb_build_object(
+      'status', 'ok',
+      'orgId', v_row.org_id,
+      'otpRequired', true
+    );
+  END IF;
+
   RETURN pg_catalog.jsonb_build_object(
     'status', 'ok',
     'orgId', v_row.org_id,
-    'otpRequired', v_otp_required,
+    'otpRequired', false,
     'alreadyNoticed', (v_row.signer_notice_at IS NOT NULL),
     'deposit', CASE
-      WHEN NOT v_otp_required AND v_row.signer_notice_at IS NOT NULL
+      WHEN v_row.signer_notice_at IS NOT NULL
         THEN ludy_sign.deposit_public_summary_json(v_row.org_id, v_row.envelope_id)
       ELSE NULL
     END

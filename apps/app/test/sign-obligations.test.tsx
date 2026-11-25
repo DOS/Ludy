@@ -399,6 +399,10 @@ describe('EnvelopeObligationsCard and Renewals tab (#3821)', () => {
     );
     expect(htmlDepositOnly).not.toContain('sign-obligation-load-proposal-btn');
     expect(htmlDepositOnly).toContain('sign-obligation-dismiss-proposal-btn');
+    expect(htmlDepositOnly).toContain('Deposit clause detected:');
+    expect(htmlDepositOnly).not.toContain('₫ VND');
+    expect(htmlDepositOnly).not.toContain('5,000,000 VND');
+    expect(htmlDepositOnly).not.toContain('5.000.000 VND');
 
     expect(
       resolveProposalLoadIntoForm(depositOnlyRecord.proposal!, {

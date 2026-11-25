@@ -21015,7 +21015,7 @@ export const vi = {
       overdueCountBadge: '{count} nghĩa vụ quá hạn',
       pendingCountBadge: '{count} nghĩa vụ chờ',
       nextDueOn: 'Hạn gần nhất {date}',
-      depositProposalLabel: 'Gợi ý tiền cọc: {amount} VND',
+      depositProposalLabel: 'Gợi ý tiền cọc: {amount}',
       depositProposalDueDays: 'trong {days} ngày',
     },
     settings: {

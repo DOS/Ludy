@@ -1082,6 +1082,41 @@ suite('eSign Slice 6d post-sign VietQR deposit & accounting bridge (#4723)', () 
         { actor: asUser(owner), orgId: org.orgId },
       );
     }
+
+    // B1 OTP gate check: unverified OTP signer on an already-noticed deposit gets otpRequired=true without alreadyNoticed/deposit,
+    // and /api/sign/deposit-notice rejects with 403 SIGN_OTP_REQUIRED before revealing noticed state or storing blobs.
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query(
+        `UPDATE ludy_sign.signer SET require_email_otp = true WHERE org_id = $1 AND envelope_id = $2`,
+        [org.orgId, draftEnvId],
+      );
+      await c.query('COMMIT');
+    });
+    const depTokenHash = sha256Hex(depToken);
+    const otpPreflight = await admin(async (c) => {
+      const { rows } = await c.query<{ result: Record<string, unknown> }>(
+        `SELECT ludy_sign.public_deposit_notice_preflight($1) AS result`,
+        [depTokenHash],
+      );
+      return rows[0]!.result;
+    });
+    expect(otpPreflight).toEqual({
+      status: 'ok',
+      orgId: org.orgId,
+      otpRequired: true,
+    });
+    expect('alreadyNoticed' in otpPreflight).toBe(false);
+    expect('deposit' in otpPreflight).toBe(false);
+
+    const otpNoticeRes = await app.request('/api/sign/deposit-notice', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token: depToken, note: 'otp unverified probe' }),
+    });
+    expect(otpNoticeRes.status).toBe(403);
+    expect(((await otpNoticeRes.json()) as { code?: string }).code).toBe('SIGN_OTP_REQUIRED');
   });
 
   it('normalizes subaccount codes (1121.VCB), clears QR on bank change, preserves/demotes non-default profiles, and enforces integer VND numeric scale', async () => {

@@ -301,6 +301,8 @@ describe('eSign Slice 6d deposit UI components (#4723)', () => {
     expect(html).toContain('aria-label="Sao chép Số tài khoản"');
     expect(html).toContain('aria-label="Sao chép Số tiền"');
     expect(html).toContain('aria-label="Sao chép Nội dung chuyển khoản"');
+    expect(html.toLowerCase()).toContain('tabindex="-1"');
+    expect(html).toContain('aria-hidden="true"');
 
     const routerSrc = readFileSync(new URL('../src/router.tsx', import.meta.url), 'utf8');
     const orgLayoutSrc = readFileSync(new URL('../src/routes/org-layout.tsx', import.meta.url), 'utf8');

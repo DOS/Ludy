@@ -21016,7 +21016,7 @@ export const en = {
       overdueCountBadge: '{count} overdue',
       pendingCountBadge: '{count} pending',
       nextDueOn: 'Next due {date}',
-      depositProposalLabel: 'Deposit clause detected: {amount} VND',
+      depositProposalLabel: 'Deposit clause detected: {amount}',
       depositProposalDueDays: 'due in {days} days',
     },
     settings: {
