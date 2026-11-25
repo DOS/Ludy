@@ -220,6 +220,8 @@ export const vi = {
       inbox: 'Hộp thư',
       crm: 'CRM',
       marketing: 'Marketing',
+      // The foot of an app's menu: items a small business opens less than monthly (#4790).
+      more: 'Thêm',
     },
     notMember: 'Bạn không thuộc tổ chức này.',
     support: 'Góp ý / Hỗ trợ',

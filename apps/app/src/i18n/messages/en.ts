@@ -222,6 +222,7 @@ export const en = {
       inbox: 'Inbox',
       crm: 'CRM',
       marketing: 'Marketing',
+      more: 'More',
     },
     notMember: 'You are not a member of this organization.',
     support: 'Feedback / Support',

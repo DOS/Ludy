@@ -173,7 +173,11 @@ describe('module screens against the router (#1652)', () => {
       }
       // An app whose modules do not give the order of its groups names it, and names every group it has.
       const order = GROUP_ORDER[app.id];
-      if (order) expect(app.groups.map((g) => g.id), `order of the groups of ${app.id}`).toEqual(order);
+      if (order) expect(app.groups.filter((g) => g.id !== 'more').map((g) => g.id), `order of the groups of ${app.id}`).toEqual(order);
+      // The "Thêm" group (#4790), when an item is flagged `more`, is the app's last and holds exactly the flagged items.
+      const moreGroups = app.groups.filter((g) => g.id === 'more');
+      expect(moreGroups.length <= 1 && (moreGroups.length === 0 || app.groups.at(-1)?.id === 'more'), `the "Thêm" group of ${app.id} is last`).toBe(true);
+      for (const group of app.groups) expect(group.items.every((entry) => Boolean(entry.more) === (group.id === 'more')), `${app.id}/${group.id} holds flagged items only in "Thêm"`).toBe(true);
     }
   });
 
