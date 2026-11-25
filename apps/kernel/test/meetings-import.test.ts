@@ -397,7 +397,7 @@ describe('a Zoom recording download (the redirect rules)', () => {
 describe('a Zoom transcript-only recording', () => {
   const VTT = 'WEBVTT\n\n1\n00:00:03.000 --> 00:00:05.000\nNguyen Van A: Xin chào.\n\n2\n00:00:06.000 --> 00:00:08.000\nTran Thi B: Chào anh.\n';
   const transcriptJob = () => job({ provider: 'zoom', externalId: 'AAAAAAAAAAAAAAAAAAAAAA==', hasAudio: false, hasVideo: false });
-  const files = (extra: Record<string, unknown>[] = []) => ({ recording_files: [{ id: 'f-vtt', file_type: 'TRANSCRIPT', file_extension: 'VTT', file_size: VTT.length, recording_type: 'audio_transcript', status: 'completed', download_url: 'https://us02web.zoom.us/rec/download/f-vtt', ...{} }, ...extra] });
+  const files = (extra: Record<string, unknown>[] = []) => ({ recording_files: [{ id: 'f-vtt', file_type: 'TRANSCRIPT', file_extension: 'VTT', file_size: VTT.length, recording_type: 'audio_transcript', status: 'completed', download_url: 'https://us02web.zoom.us/rec/download/f-vtt' }, ...extra] });
   const zoom = (body: unknown = files()) =>
     new ZoomMeetingPlatform({ clientId: 'zoom-client-id-0001', clientSecret: 'zoom-client-secret-not-real' }, { fetch: async () => new Response(JSON.stringify(body), { status: 200 }) });
   const opened: Array<{ url: string; headers: unknown; firstHosts: unknown; maxBytes: unknown }> = [];
