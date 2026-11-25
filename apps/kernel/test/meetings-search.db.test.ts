@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Search across the meetings a member can read (#2589, meetings plan L2, ADR-0047 point 2), on a real database through the runtime: the folded search finds
-// "chiết khấu" by "chiet khau", only in the lines the caller reads (recorder: own drafts and published lines; attendee: published lines; an owner or admin who is
+// "chiết khấu" by "chiet khau", only in the lines the caller reads (recorder: the working draft of own meeting while one exists, else its published lines, #4940; attendee: published lines; an owner or admin who is
 // no reader and a member who is not named: nothing of an attendees-only meeting; a viewer: refused; another org: nothing), never in a purged, deleted, corrected or
 // erased text, paged and capped, with AI off. The security checks that must hold on every later change are also in test/invariant/meetings-search.db.test.ts.
 import { randomUUID } from 'node:crypto';
@@ -133,9 +133,8 @@ suite('search across readable meetings (#2589, L2)', () => {
     const shared = await meeting('recorder', 'Họp chung của công ty', 'org');
     await line(shared, 'Thưởng quý này chia đều', 'published', 7);
     await line(shared, 'Nháp riêng: thưởng thêm cho tôi', 'draft', 90);
-    const all = ['Nháp riêng: thưởng thêm cho tôi', 'Nháp: lương thưởng của chị Lan', 'Tăng lương thưởng cho nhóm bán hàng', 'Thưởng quý này chia đều'].sort();
-    // The recorder reads every stage of their own meetings.
-    expect(await found('recorder', 'thuong')).toEqual(all);
+    // The recorder reads one stage of each of their own meetings: the working draft while one exists (#4940).
+    expect(await found('recorder', 'thuong')).toEqual(['Nháp riêng: thưởng thêm cho tôi', 'Nháp: lương thưởng của chị Lan'].sort());
     // An attendee reads the published lines of the meeting they are named in, and of the shared one; no draft.
     expect(await found('attendee', 'thuong')).toEqual(['Tăng lương thưởng cho nhóm bán hàng', 'Thưởng quý này chia đều'].sort());
     // A member not named, an owner and an admin read only the meeting shared with the org: an attendees-only meeting is not theirs to read, whatever their role.
@@ -145,6 +144,28 @@ suite('search across readable meetings (#2589, L2)', () => {
     expect(await found('admin', 'lan')).toEqual([]);
     // A viewer reads no meeting.
     await expect(search('viewer', 'thuong')).rejects.toMatchObject({ status: 403 });
+  });
+
+  it('gives the recorder one stage of a meeting, the draft while one exists, else the published lines (#4940)', async () => {
+    const both = await meeting('recorder', 'Họp có hai bản', 'org', [], orgId, '2026-11-11T03:00:00Z');
+    await line(both, 'Onestagea giá công bố 9 triệu', 'published', 1);
+    await line(both, 'Onestagea giá nháp mới 7 triệu', 'draft', 2);
+    const only = await meeting('recorder', 'Họp chỉ có bản công bố', 'org', [], orgId, '2026-11-12T03:00:00Z');
+    await line(only, 'Onestagea giá công bố riêng 5 triệu', 'published', 1);
+    const draftOnly = await meeting('recorder', 'Họp chỉ có bản nháp', 'org', [], orgId, '2026-11-13T03:00:00Z');
+    await line(draftOnly, 'Onestagea giá nháp riêng 3 triệu', 'draft', 1);
+    // The recorder: the draft of the meeting that has one, the published lines of the one that has only those, and the draft of a draft-only meeting; never both stages of one meeting.
+    expect(await found('recorder', 'onestagea')).toEqual(['Onestagea giá nháp mới 7 triệu', 'Onestagea giá công bố riêng 5 triệu', 'Onestagea giá nháp riêng 3 triệu'].sort());
+    // A reader of the meetings (named or the org shares them): the published lines only, whatever drafts the recorder holds; a draft-only meeting gives them nothing.
+    for (const who of ['attendee', 'stranger']) expect(await found(who, 'onestagea'), who).toEqual(['Onestagea giá công bố 9 triệu', 'Onestagea giá công bố riêng 5 triệu'].sort());
+    // An owner or admin who is no reader, and a viewer: nothing of an attendees-only meeting; a viewer is refused.
+    const closed = await meeting('recorder', 'Họp kín hai bản', 'attendees', ['attendee'], orgId, '2026-11-14T03:00:00Z');
+    await line(closed, 'Onestagea kín công bố 1 triệu', 'published', 1);
+    await line(closed, 'Onestagea kín nháp 2 triệu', 'draft', 2);
+    expect(await found('recorder', 'onestagea kin')).toEqual(['Onestagea kín nháp 2 triệu']);
+    expect(await found('attendee', 'onestagea kin')).toEqual(['Onestagea kín công bố 1 triệu']);
+    for (const who of ['stranger', 'owner', 'admin']) expect(await found(who, 'onestagea kin'), who).toEqual([]);
+    await expect(search('viewer', 'onestagea')).rejects.toMatchObject({ status: 403 });
   });
 
   it('keeps another org out, both ways', async () => {
