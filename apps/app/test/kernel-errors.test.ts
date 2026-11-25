@@ -43,6 +43,10 @@ const NOT_SHOWN: Record<string, string> = {
   HIGHLIGHT_LIMIT: 'meetings highlights',
   HIGHLIGHT_NOT_ANCHORED: 'meetings highlights',
   HIGHLIGHT_NOT_FOUND: 'meetings highlights',
+  // The labels (#4955) word the refusals a person can cause themselves when typing a label (a text that cannot be one, the limit of five), and a label removed meanwhile.
+  MEETING_LABEL_INVALID: 'meetings labels',
+  MEETING_LABEL_LIMIT: 'meetings labels',
+  MEETING_LABEL_NOT_FOUND: 'meetings labels',
   // AI agents: codes only the worker and agent runs get; the agents screens (issue #258) word the others.
   AGENT_PROGRAM_MISSING: 'agents',
   AGENT_RUN_NOT_LIVE: 'agents',

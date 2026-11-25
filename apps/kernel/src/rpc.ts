@@ -2014,6 +2014,13 @@ export function createRpcHandler(
         add: os.meetings.highlight.add.handler(meetingsCommand('meetings.highlight.add')),
         remove: os.meetings.highlight.remove.handler(meetingsCommand('meetings.highlight.remove')),
       },
+      // Labels on a meeting (#4955): the labels of a meeting and across the readable meetings, and the recorder's add and remove, under the caller's own row security; see modules/meetings/src/labels.ts.
+      label: {
+        list: os.meetings.label.list.handler(meetingsQuery('meetings.label.list')),
+        index: os.meetings.label.index.handler(meetingsQuery('meetings.label.index')),
+        add: os.meetings.label.add.handler(meetingsCommand('meetings.label.add')),
+        remove: os.meetings.label.remove.handler(meetingsCommand('meetings.label.remove')),
+      },
       // The Today view (#3955): the member's own agenda for today with the facts of each event's brief, read as the member in one call (no model, nothing in the background); see modules/meetings/src/today.ts.
       today: {
         facts: os.meetings.today.facts.handler(meetingsQuery('meetings.today.facts')),

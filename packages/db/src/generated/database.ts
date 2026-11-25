@@ -236,6 +236,7 @@ export interface LudyMeetingsSchema {
   'ludy_meetings.meeting': MeetingsMeetingTable;
   'ludy_meetings.meeting_chapter': MeetingsMeetingChapterTable;
   'ludy_meetings.meeting_highlight': MeetingsMeetingHighlightTable;
+  'ludy_meetings.meeting_label': MeetingsMeetingLabelTable;
   'ludy_meetings.meeting_link': MeetingsMeetingLinkTable;
   'ludy_meetings.meeting_note': MeetingsMeetingNoteTable;
   'ludy_meetings.meeting_reader': MeetingsMeetingReaderTable;
@@ -3818,6 +3819,16 @@ export interface MeetingsMeetingHighlightTable {
   created_by: ColumnType<string, string, NotGranted>;
   start_seconds: ColumnType<number, number, NotGranted>;
   end_seconds: ColumnType<number, number, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** ludy_meetings.meeting_label */
+export interface MeetingsMeetingLabelTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  meeting_id: ColumnType<string, string, NotGranted>;
+  label: ColumnType<string, string, NotGranted>;
+  created_by: ColumnType<string, string, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
