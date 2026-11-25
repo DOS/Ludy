@@ -126,8 +126,8 @@ export const morningNotice = defineCommand({
         })
       : null;
     const mailed = mail?.status === 'queued';
-    // A day and a count and a flag: no address in the audit row.
-    ctx.audit({ day: input.day, count: events, mailed });
+    // A day and a flag only: no address and no per-member calendar count in the owner-visible audit row (#5018).
+    ctx.audit({ day: input.day, mailed });
     return { notified: true, mailed, notificationId: notice?.id ?? null };
   },
 });
