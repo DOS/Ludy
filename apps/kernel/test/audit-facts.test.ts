@@ -71,6 +71,13 @@ const ALLOWED: Record<string, Record<string, string>> = {
     "reason <- ' '": "why a proposal was not created or approved, a code written out at the call (a closed set)",
     'decision <- decision.reason': "the approval policy's decision code (a closed set), not free text",
   },
+  // Not classified before the labels of a meeting (ludy_meetings.meeting_label.label, personal data since #4964) made the name `label` one; none of these facts carries a meeting label.
+  'packages/kernel/src/conversations.ts': { 'label <- input.intent': 'the intent a conversation was set to, a closed set of codes (ludy_kernel.conversation.intent), written under the key label' },
+  'packages/kernel/src/mcp.ts': { 'label <- input.label': 'the label of an MCP pairing the member typed for their own device (ludy_kernel.mcp_pairing, internal), never a meeting label' },
+  'modules/social/src/review-checklist.ts': {
+    'label <- s.label': 'the text of an item of the review checklist of the org (ludy_social.review_check.label, internal)',
+    'items <- saved.map((s) => ({ id: s.id, connection_id: s.connectionId, label: s.label }))': 'the checklist items saved, by id and text (ludy_social.review_check.label, internal)',
+  },
   'modules/social/src/review-links.ts': {
     'cleared <- body === null': 'whether the reply was cleared, a boolean',
     'member <- userId = data.data.userId': "the removed member's user id, from the event's parsed payload (zod's .data)",

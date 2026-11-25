@@ -34,6 +34,7 @@ import { askRunCommands, askRunQueries } from './ask.ts';
 import { briefCommands, briefQueries } from './brief.ts';
 import { digestCommands, digestQueries } from './digest.ts';
 import { highlightsCommands, highlightsQueries } from './highlights.ts';
+import { labelsCommands, labelsQueries } from './labels.ts';
 import { loadQueries } from './load.ts';
 import { trackerAlertCommands, trackerAlertQueries } from './tracker-alerts.ts';
 import { trackersCommands, trackersQueries } from './trackers.ts';
@@ -1141,6 +1142,7 @@ export const meetingsCommands = [
   ...trackersCommands,
   ...trackerAlertCommands,
   ...highlightsCommands,
+  ...labelsCommands,
   ...chaptersRunCommands,
   ...titleCommands,
   ...commitmentsCommands,
@@ -1219,6 +1221,7 @@ export const meetingsQueries = [
   ...trackersQueries,
   ...trackerAlertQueries,
   ...highlightsQueries,
+  ...labelsQueries,
   ...minutesDocxQueries,
   ...todayQueries,
   ...morningQueries,
