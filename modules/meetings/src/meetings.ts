@@ -32,6 +32,7 @@ import { briefCommands, briefQueries } from './brief.ts';
 import { digestCommands, digestQueries } from './digest.ts';
 import { loadQueries } from './load.ts';
 import { voiceCueCommands } from './voice-cue.ts';
+import { minutesDocxQueries } from './minutes-docx.ts';
 import { todayQueries } from './today.ts';
 import { morningCommands, morningQueries } from './morning.ts';
 import { assigneeCommands, assigneeQueries } from './assignee.ts';
@@ -1199,6 +1200,7 @@ export const meetingsQueries = [
   ...briefQueries,
   ...digestQueries,
   ...loadQueries,
+  ...minutesDocxQueries,
   ...todayQueries,
   ...morningQueries,
   ...assigneeQueries,
