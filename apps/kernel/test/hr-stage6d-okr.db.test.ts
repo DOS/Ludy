@@ -317,7 +317,12 @@ suite('HR Stage 6D quarterly OKRs and Ludy Projects linkage (#4529)', () => {
     expect(mgrIndObj?.progressPct).toBe('75'); // (50 + 100) / 2
     const mgrPrivKr = mgrIndObj?.keyResults.find((k) => k.id === krPrivate.keyResultId);
     expect(mgrPrivKr?.linkedProjectAccessible).toBe(false);
+    expect(mgrPrivKr?.linkedTaskIds).toEqual([]);
     expect(mgrPrivKr?.linkedTasks).toEqual([]);
+    const ownerTree = await o.query<HrOkrTreeResult>(o.owner, 'hr.okr.tree', { quarter: '2026-Q4' });
+    const ownerPrivKr = ownerTree.objectives.find((x) => x.id === indObj.objectiveId)?.keyResults.find((k) => k.id === krPrivate.keyResultId);
+    expect(ownerPrivKr?.linkedProjectAccessible).toBe(true);
+    expect(ownerPrivKr?.linkedTaskIds).toEqual([privTask]);
 
     // StaffA completes task2 in Projects, then runs syncFromProjects on self check-in!
     await o.exec(o.owner, 'kernel.task.set_status', { id: task2, status: 'done' });
@@ -475,12 +480,35 @@ suite('HR Stage 6D quarterly OKRs and Ludy Projects linkage (#4529)', () => {
 
     await o.exec(o.owner, 'hr.payroll.employee.erase', { employeeId: empA }, asMfa(o.owner));
     const erasedObj = (
-      await adminPool.query<{ owner_employee_id: string | null; status: string }>(
-        `SELECT owner_employee_id, status FROM ludy_hr.okr_objective WHERE id = $1`,
+      await adminPool.query<{ owner_employee_id: string | null; status: string; title: string }>(
+        `SELECT owner_employee_id, status, title FROM ludy_hr.okr_objective WHERE id = $1`,
         [indObj.objectiveId],
       )
     ).rows[0];
-    expect(erasedObj).toEqual({ owner_employee_id: null, status: 'archived' });
+    expect(erasedObj).toEqual({ owner_employee_id: null, status: 'archived', title: '[erased]' });
+    const keptCompanyObj = (
+      await adminPool.query<{ title: string }>(`SELECT title FROM ludy_hr.okr_objective WHERE id = $1`, [companyObj.objectiveId])
+    ).rows[0];
+    expect(keptCompanyObj?.title).toBe('Tăng doanh thu bền vững Q4');
+
+    // Reopening a PDPL-erased individual objective is blocked in both command and DB trigger (#4679 item 6).
+    await expect(
+      o.exec(o.owner, 'hr.okr.objective.set_status', { objectiveId: indObj.objectiveId, status: 'active' }),
+    ).rejects.toMatchObject({ code: 'HR_OKR_OWNER_ERASED', status: 409 });
+    await expect(
+      o.exec(o.admin, 'hr.okr.objective.set_status', { objectiveId: indObj.objectiveId, status: 'draft' }),
+    ).rejects.toMatchObject({ code: 'HR_OKR_OWNER_ERASED', status: 409 });
+    const reopenSql = await appPool.connect();
+    try {
+      await reopenSql.query('BEGIN');
+      await enterUser(reopenSql, o.owner, o.orgId);
+      await expect(
+        reopenSql.query(`UPDATE ludy_hr.okr_objective SET status = 'active' WHERE org_id = $1 AND id = $2`, [o.orgId, indObj.objectiveId]),
+      ).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(/cannot reopen erased individual objective/) });
+      await reopenSql.query('ROLLBACK');
+    } finally {
+      reopenSql.release();
+    }
 
     const erasedKr = (
       await adminPool.query<{ last_checkin_note: string | null; progress_pct: string }>(
@@ -685,40 +713,133 @@ suite('HR Stage 6D quarterly OKRs and Ludy Projects linkage (#4529)', () => {
       });
     }
 
-    // (b1) L1 department manager raw SQL INSERT targeting an erased employee is refused by okr_objective_write_guard
-    // both with department_id set (passing RLS) and with department_id omitted.
+    // (b1) L1 department manager raw SQL INSERT targeting either an erased employee OR an active employee
+    // in another department fails uniformly BEFORE okr_employee_is_erased (#4679 item 7 / PRRT_kwDOT_fCws67uovu):
+    // - with department_id set (passing RLS): uniform department-alignment error (zero erasure oracle)
+    // - with department_id omitted: uniform RLS violation
+    const { departmentId: deptOtherMain } = await o.exec<HrDepartmentWritten>(o.owner, 'hr.department.add', {
+      name: 'Kinh doanh Trụ sở',
+      payFunction: 'sales',
+      legalEntityId: defaultEntityId,
+    });
+    const empOtherDeptActive = (
+      await o.exec<HrWritten>(
+        o.owner,
+        'hr.payroll.employee.add',
+        {
+          displayName: 'Nhân viên Phòng Khác Active',
+          legalEntityId: defaultEntityId,
+          departmentId: deptOtherMain,
+          jobTitle: 'Kinh doanh',
+          employment: { effectiveFrom: '2026-01-01', contractType: 'indefinite', region: 'I', baseWage: '15000000' },
+        },
+        asMfa(o.owner),
+      )
+    ).employeeId as string;
+
+    for (const targetEmpId of [empMainErased, empOtherDeptActive]) {
+      await withRolledBackTx(appPool, async (mgrClient) => {
+        await enterUser(mgrClient, o.manager, o.orgId);
+        await expect(
+          mgrClient.query(
+            `INSERT INTO ludy_hr.okr_objective (org_id, quarter, scope, title, department_id, owner_employee_id)
+             VALUES ($1, '2026-Q4', 'individual', 'Cross-dept or erased via dept', $2, $3)`,
+            [o.orgId, deptMain, targetEmpId],
+          ),
+        ).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(/individual objective owner must belong to target department/) });
+      });
+
+      await withRolledBackTx(appPool, async (mgrClient) => {
+        await enterUser(mgrClient, o.manager, o.orgId);
+        await expect(
+          mgrClient.query(
+            `INSERT INTO ludy_hr.okr_objective (org_id, quarter, scope, title, owner_employee_id)
+             VALUES ($1, '2026-Q4', 'individual', 'Cross-dept or erased without dept', $2)`,
+            [o.orgId, targetEmpId],
+          ),
+        ).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(/row-level security policy/) });
+      });
+
+      // Department-scope objective assigned by L1 manager to erased or out-of-department employee fails identically (#4679 review fix).
+      await withRolledBackTx(appPool, async (mgrClient) => {
+        await enterUser(mgrClient, o.manager, o.orgId);
+        await expect(
+          mgrClient.query(
+            `INSERT INTO ludy_hr.okr_objective (org_id, quarter, scope, title, department_id, owner_employee_id)
+             VALUES ($1, '2026-Q4', 'department', 'Dept OKR bad owner', $2, $3)`,
+            [o.orgId, deptMain, targetEmpId],
+          ),
+        ).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(/department objective owner must belong to target department/) });
+      });
+    }
+
+    // L1 manager inserting individual objective with department_id of another manager's dept and own dept's employee fails at DB layer.
     await withRolledBackTx(appPool, async (mgrClient) => {
       await enterUser(mgrClient, o.manager, o.orgId);
       await expect(
         mgrClient.query(
           `INSERT INTO ludy_hr.okr_objective (org_id, quarter, scope, title, department_id, owner_employee_id)
-           VALUES ($1, '2026-Q4', 'individual', 'Erased via dept', $2, $3)`,
+           VALUES ($1, '2026-Q4', 'individual', 'Cross-dept smuggling', $2, $3)`,
+          [o.orgId, deptOtherMain, empMainActive],
+        ),
+      ).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(/individual objective owner must belong to target department/) });
+    });
+
+    // L1 manager creating a department objective with own dept's active employee succeeds, while updating its owner to erased/out-of-dept fails uniformly.
+    const existingDeptObj = await o.exec<HrOkrObjectiveMutationResult>(o.manager, 'hr.okr.objective.create', {
+      quarter: '2026-Q4',
+      scope: 'department',
+      departmentId: deptMain,
+      ownerEmployeeId: empMainActive,
+      title: 'Mục tiêu phòng trụ sở có owner',
+      activate: true,
+    });
+    for (const targetEmpId of [empMainErased, empOtherDeptActive]) {
+      await withRolledBackTx(appPool, async (mgrClient) => {
+        await enterUser(mgrClient, o.manager, o.orgId);
+        await expect(
+          mgrClient.query(
+            `UPDATE ludy_hr.okr_objective SET owner_employee_id = $1 WHERE org_id = $2 AND id = $3`,
+            [targetEmpId, o.orgId, existingDeptObj.objectiveId],
+          ),
+        ).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(/department objective owner must belong to target department/) });
+      });
+    }
+
+    // Owner/admin targeting an erased employee still hits okr_employee_is_erased cleanly.
+    await withRolledBackTx(appPool, async (ownerClient) => {
+      await enterUser(ownerClient, o.owner, o.orgId);
+      await expect(
+        ownerClient.query(
+          `INSERT INTO ludy_hr.okr_objective (org_id, quarter, scope, title, department_id, owner_employee_id)
+           VALUES ($1, '2026-Q4', 'individual', 'Owner erased blocked', $2, $3)`,
           [o.orgId, deptMain, empMainErased],
         ),
       ).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(/cannot assign objective to erased employee/) });
     });
 
-    await withRolledBackTx(appPool, async (mgrClient) => {
-      await enterUser(mgrClient, o.manager, o.orgId);
-      await expect(
-        mgrClient.query(
-          `INSERT INTO ludy_hr.okr_objective (org_id, quarter, scope, title, owner_employee_id)
-           VALUES ($1, '2026-Q4', 'individual', 'Erased without dept', $2)`,
-          [o.orgId, empMainErased],
-        ),
-      ).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(/cannot assign objective to erased employee/) });
-    });
-
-    // (b2) L1 department manager raw SQL UPDATE targeting an erased employee is refused by okr_objective_write_guard,
+    // (b2) L1 department manager raw SQL UPDATE targeting an erased or out-of-department employee fails uniformly,
     // and clearing owner_employee_id on an active individual objective is also refused.
+    for (const targetEmpId of [empMainErased, empOtherDeptActive]) {
+      await withRolledBackTx(appPool, async (mgrClient) => {
+        await enterUser(mgrClient, o.manager, o.orgId);
+        await expect(
+          mgrClient.query(
+            `UPDATE ludy_hr.okr_objective SET owner_employee_id = $1 WHERE org_id = $2 AND id = $3`,
+            [targetEmpId, o.orgId, existingIndObj.objectiveId],
+          ),
+        ).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(/individual objective owner must belong to target department/) });
+      });
+    }
+
     await withRolledBackTx(appPool, async (mgrClient) => {
       await enterUser(mgrClient, o.manager, o.orgId);
       await expect(
         mgrClient.query(
-          `UPDATE ludy_hr.okr_objective SET owner_employee_id = $1 WHERE org_id = $2 AND id = $3`,
-          [empMainErased, o.orgId, existingIndObj.objectiveId],
+          `UPDATE ludy_hr.okr_objective SET department_id = $1 WHERE org_id = $2 AND id = $3`,
+          [deptOtherMain, o.orgId, existingIndObj.objectiveId],
         ),
-      ).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(/cannot assign objective to erased employee/) });
+      ).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(/individual objective owner must belong to target department/) });
     });
 
     await withRolledBackTx(appPool, async (mgrClient) => {
@@ -758,6 +879,12 @@ suite('HR Stage 6D quarterly OKRs and Ludy Projects linkage (#4529)', () => {
         [o.orgId, empMainErased],
       );
       expect(directErased.rows[0]?.erased).toBe(false);
+      const directDeptCheck = await mgrClient.query<{ ok1: boolean; ok2: boolean }>(
+        `SELECT ludy_hr.okr_employee_in_department($1::uuid, $2::uuid, $3::uuid) AS ok1,
+                ludy_hr.okr_department_owner_allowed($1::uuid, $2::uuid, $3::uuid) AS ok2`,
+        [o.orgId, deptMain, empMainActive],
+      );
+      expect(directDeptCheck.rows[0]).toEqual({ ok1: false, ok2: false });
     });
 
     // Non-manager member (staffB) probing an erased employee hits RLS rather than the erasure guard (no side-channel oracle).
@@ -836,6 +963,8 @@ suite('HR Stage 6D quarterly OKRs and Ludy Projects linkage (#4529)', () => {
     for (const fn of [
       'ludy_hr.okr_employee_legal_entity_id(uuid,uuid)',
       'ludy_hr.okr_employee_is_erased(uuid,uuid)',
+      'ludy_hr.okr_employee_in_department(uuid,uuid,uuid)',
+      'ludy_hr.okr_department_owner_allowed(uuid,uuid,uuid)',
     ]) {
       const meta = (
         await adminPool.query<{
@@ -877,6 +1006,7 @@ suite('HR Stage 6D quarterly OKRs and Ludy Projects linkage (#4529)', () => {
     for (const fn of [
       'ludy_hr.okr_objective_legal_entity_fill()',
       'ludy_hr.okr_objective_write_guard()',
+      'ludy_hr.okr_key_result_write_guard()',
     ]) {
       const meta = (
         await adminPool.query<{
@@ -901,5 +1031,340 @@ suite('HR Stage 6D quarterly OKRs and Ludy Projects linkage (#4529)', () => {
         tenant_exec: false,
       });
     }
+  });
+
+  it('covers Stage 6D review follow-ups: KR link validation, sync_projects note omission, transfer parity, picker pagination, batched snapshots, and last_checkin_by DB guard (#4679)', async () => {
+    const o = await setupOrg();
+
+    const { departmentId: deptTech } = await o.exec<HrDepartmentWritten>(o.owner, 'hr.department.add', {
+      name: 'Kỹ thuật 4679',
+      payFunction: 'production',
+    });
+    await o.exec(o.owner, 'hr.department.set_manager', { departmentId: deptTech, managerUserId: o.manager });
+
+    const { departmentId: deptSales } = await o.exec<HrDepartmentWritten>(o.owner, 'hr.department.add', {
+      name: 'Kinh doanh 4679',
+      payFunction: 'sales',
+    });
+    await o.exec(o.owner, 'hr.department.set_manager', { departmentId: deptSales, managerUserId: o.otherMgr });
+
+    const empId = (
+      await o.exec<HrWritten>(
+        o.owner,
+        'hr.payroll.employee.add',
+        {
+          displayName: 'Lê Minh C',
+          departmentId: deptTech,
+          jobTitle: 'Kỹ sư',
+          employment: { effectiveFrom: '2026-01-01', contractType: 'indefinite', region: 'I', baseWage: '15000000' },
+        },
+        asMfa(o.owner),
+      )
+    ).employeeId as string;
+    await o.exec(o.owner, 'hr.payroll.employee.link_member', { employeeId: empId, userId: o.staffA }, asMfa(o.owner));
+
+    // Create 3 active projects + 1 archived project + 1 private project hidden from manager.
+    const { projectId: projA } = await o.exec<{ projectId: string }>(o.owner, 'projects.project.create', { name: 'Alpha CRM', visibility: 'org' });
+    const { projectId: projB } = await o.exec<{ projectId: string }>(o.owner, 'projects.project.create', { name: 'Alpha ERP', visibility: 'org' });
+    const { projectId: projC } = await o.exec<{ projectId: string }>(o.owner, 'projects.project.create', { name: 'Beta Portal', visibility: 'org' });
+    const { projectId: projArchived } = await o.exec<{ projectId: string }>(o.owner, 'projects.project.create', { name: 'Legacy Archived', visibility: 'org' });
+    await o.exec(o.owner, 'projects.project.archive', { projectId: projArchived });
+    const { projectId: projPriv } = await o.exec<{ projectId: string }>(o.staffA, 'projects.project.create', {
+      name: 'Alpha Private',
+      visibility: 'private',
+      memberUserIds: [],
+    });
+
+    const { taskId: taskA1 } = await o.exec<{ taskId: string }>(o.owner, 'projects.task.create', { projectId: projA, title: 'Task A1', assigneePositionId: null, status: 'done' });
+    const { taskId: taskA2 } = await o.exec<{ taskId: string }>(o.owner, 'projects.task.create', { projectId: projA, title: 'Task A2', assigneePositionId: null, status: 'todo' });
+    const { taskId: taskB1 } = await o.exec<{ taskId: string }>(o.owner, 'projects.task.create', { projectId: projB, title: 'Task B1', assigneePositionId: null, status: 'done' });
+
+    // Item 4: project_options pagination + search + includeArchived filter.
+    const page1 = await o.query<HrOkrProjectOptionsResult>(o.manager, 'hr.okr.project_options', { limit: 2 });
+    expect(page1.projects).toHaveLength(2);
+    expect(page1.hasMore).toBe(true);
+    expect(page1.nextCursor).toBeTruthy();
+    expect(page1.projects.some((p) => p.id === projArchived)).toBe(false);
+
+    const page2 = await o.query<HrOkrProjectOptionsResult>(o.manager, 'hr.okr.project_options', {
+      limit: 2,
+      cursor: page1.nextCursor ?? undefined,
+    });
+    expect(page2.projects).toHaveLength(1);
+    expect(page2.hasMore).toBe(false);
+    expect(page2.nextCursor).toBeNull();
+    const combinedIds = [...page1.projects, ...page2.projects].map((p) => p.id).sort();
+    expect(combinedIds).toEqual([projA, projB, projC].sort());
+
+    const searched = await o.query<HrOkrProjectOptionsResult>(o.manager, 'hr.okr.project_options', { search: 'Alpha' });
+    expect(searched.projects.map((p) => p.id).sort()).toEqual([projA, projB].sort());
+    expect(searched.projects.some((p) => p.id === projPriv)).toBe(false);
+
+    const withArchived = await o.query<HrOkrProjectOptionsResult>(o.manager, 'hr.okr.project_options', {
+      includeArchived: true,
+      search: 'Legacy',
+    });
+    expect(withArchived.projects.map((p) => p.id)).toEqual([projArchived]);
+
+    // Item 1: hr.okr.kr.update rejects stray linkedTaskIds when nextLinkedProjectId === null.
+    const indObj = await o.exec<HrOkrObjectiveMutationResult>(o.manager, 'hr.okr.objective.create', {
+      quarter: '2026-Q4',
+      scope: 'individual',
+      ownerEmployeeId: empId,
+      title: 'Mục tiêu nhân viên C',
+      activate: true,
+    });
+    const manualKr = await o.exec<HrOkrKeyResultMutationResult>(o.manager, 'hr.okr.kr.add', {
+      objectiveId: indObj.objectiveId,
+      title: 'KR thủ công ban đầu',
+      metricType: 'number',
+      targetValue: '10',
+    });
+    await expect(
+      o.exec(o.manager, 'hr.okr.kr.update', { keyResultId: manualKr.keyResultId, linkedTaskIds: [taskA1] }),
+    ).rejects.toMatchObject({ code: 'HR_OKR_PROJECT_REQUIRED', status: 422 });
+
+    await o.exec(o.manager, 'hr.okr.kr.update', {
+      keyResultId: manualKr.keyResultId,
+      metricType: 'project_tasks',
+      linkedProjectId: projA,
+      linkedTaskIds: [taskA1, taskA2],
+    });
+    await expect(
+      o.exec(o.manager, 'hr.okr.kr.update', {
+        keyResultId: manualKr.keyResultId,
+        linkedProjectId: null,
+        linkedTaskIds: [taskA1],
+      }),
+    ).rejects.toMatchObject({ code: 'HR_OKR_PROJECT_REQUIRED', status: 422 });
+
+    // Explicit linkedProjectId: null clears linkedTaskIds: [] cleanly.
+    await o.exec(o.manager, 'hr.okr.kr.update', {
+      keyResultId: manualKr.keyResultId,
+      metricType: 'number',
+      targetValue: '10',
+      linkedProjectId: null,
+    });
+    const afterUnlink = (
+      await adminPool.query<{ linked_project_id: string | null; linked_task_ids: string[] }>(
+        `SELECT linked_project_id, linked_task_ids FROM ludy_hr.okr_key_result WHERE id = $1`,
+        [manualKr.keyResultId],
+      )
+    ).rows[0];
+    expect(afterUnlink).toEqual({ linked_project_id: null, linked_task_ids: [] });
+
+    // Item 2 & Item 9/10 batching: link two KRs to two distinct projects, check in with note, then sync_projects.
+    await o.exec(o.manager, 'hr.okr.kr.update', {
+      keyResultId: manualKr.keyResultId,
+      metricType: 'project_tasks',
+      linkedProjectId: projA,
+      linkedTaskIds: [taskA1, taskA2],
+    });
+    const krB = await o.exec<HrOkrKeyResultMutationResult>(o.manager, 'hr.okr.kr.add', {
+      objectiveId: indObj.objectiveId,
+      title: 'KR dự án B',
+      metricType: 'project_tasks',
+      linkedProjectId: projB,
+      linkedTaskIds: [taskB1],
+    });
+    await o.exec(o.staffA, 'hr.okr.kr.checkin', {
+      keyResultId: manualKr.keyResultId,
+      syncFromProjects: true,
+      note: 'Giữ nguyên ghi chú này khi sync_projects',
+    });
+    await o.exec(o.owner, 'kernel.task.set_status', { id: taskA2, status: 'done' });
+    const synced = await o.exec<HrOkrKeyResultMutationResult>(o.staffA, 'hr.okr.kr.sync_projects', {
+      keyResultId: manualKr.keyResultId,
+    });
+    expect(synced.currentValue).toBe('2');
+    expect(synced.progressPct).toBe('100');
+
+    const treeMulti = await o.query<HrOkrTreeResult>(o.manager, 'hr.okr.tree', { quarter: '2026-Q4' });
+    const krs = treeMulti.objectives.find((x) => x.id === indObj.objectiveId)?.keyResults ?? [];
+    expect(krs.find((k) => k.id === manualKr.keyResultId)?.lastCheckinNote).toBe('Giữ nguyên ghi chú này khi sync_projects');
+    expect(krs.find((k) => k.id === manualKr.keyResultId)?.linkedProjectName).toBe('Alpha CRM');
+    expect(krs.find((k) => k.id === krB.keyResultId)?.linkedProjectName).toBe('Alpha ERP');
+
+    // Item 8: last_checkin_by DB guard rejects spoofed user IDs / viewer / invalid member on INSERT and UPDATE,
+    // while allowing NULL on superuser maintenance.
+    const c = await appPool.connect();
+    try {
+      await c.query('BEGIN');
+      await enterUser(c, o.manager, o.orgId);
+      await expect(
+        c.query(
+          `INSERT INTO ludy_hr.okr_key_result (org_id, objective_id, title, metric_type, target_value, last_checkin_by)
+           VALUES ($1, $2, 'Spoof insert', 'percent', 100, $3)`,
+          [o.orgId, indObj.objectiveId, o.staffA],
+        ),
+      ).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(/last_checkin_by must match current user/) });
+      await c.query('ROLLBACK');
+
+      await c.query('BEGIN');
+      await enterUser(c, o.manager, o.orgId);
+      await expect(
+        c.query(
+          `UPDATE ludy_hr.okr_key_result SET last_checkin_by = $1 WHERE org_id = $2 AND id = $3`,
+          [o.staffA, o.orgId, krB.keyResultId],
+        ),
+      ).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(/last_checkin_by must match current user/) });
+      await c.query('ROLLBACK');
+
+      await c.query('BEGIN');
+      await enterUser(c, o.staffA, o.orgId);
+      await expect(
+        c.query(
+          `UPDATE ludy_hr.okr_key_result SET last_checkin_by = NULL, current_value = 1 WHERE org_id = $1 AND id = $2`,
+          [o.orgId, manualKr.keyResultId],
+        ),
+      ).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(/last_checkin_by must match current user/) });
+      await c.query('ROLLBACK');
+    } finally {
+      c.release();
+    }
+
+    const su = await adminPool.connect();
+    try {
+      await su.query('BEGIN');
+      await expect(
+        su.query(
+          `UPDATE ludy_hr.okr_key_result SET last_checkin_by = $1 WHERE org_id = $2 AND id = $3`,
+          [o.viewer, o.orgId, manualKr.keyResultId],
+        ),
+      ).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(/last_checkin_by must be an active org member/) });
+      await su.query('ROLLBACK');
+
+      await su.query('BEGIN');
+      const clearedCheckin = await su.query<{ last_checkin_by: string | null }>(
+        `UPDATE ludy_hr.okr_key_result SET last_checkin_by = NULL WHERE org_id = $1 AND id = $2 RETURNING last_checkin_by`,
+        [o.orgId, manualKr.keyResultId],
+      );
+      expect(clearedCheckin.rows[0]?.last_checkin_by).toBeNull();
+      await su.query('ROLLBACK');
+    } finally {
+      su.release();
+    }
+
+    // Item 3 & 7: Mid-quarter transfer moves empId to deptSales -> old manager blocked at DB, new manager must align departmentId.
+    await o.exec(
+      o.owner,
+      'hr.payroll.employee.edit',
+      { employeeId: empId, departmentId: deptSales },
+      asMfa(o.owner),
+    );
+    const oldMgrSql = await appPool.connect();
+    try {
+      await oldMgrSql.query('BEGIN');
+      await enterUser(oldMgrSql, o.manager, o.orgId);
+      await expect(
+        oldMgrSql.query(`UPDATE ludy_hr.okr_objective SET title = 'Old mgr tamper' WHERE org_id = $1 AND id = $2`, [o.orgId, indObj.objectiveId]),
+      ).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(/individual objective owner must belong to target department/) });
+      await oldMgrSql.query('ROLLBACK');
+    } finally {
+      oldMgrSql.release();
+    }
+
+    await expect(
+      o.exec(o.owner, 'hr.okr.objective.update', { objectiveId: indObj.objectiveId, title: 'Chưa đổi phòng ban' }),
+    ).rejects.toMatchObject({ code: 'HR_OKR_DEPT_MISMATCH', status: 409 });
+
+    await expect(
+      o.exec(o.otherMgr, 'hr.okr.objective.update', { objectiveId: indObj.objectiveId, title: 'Chưa đổi phòng ban' }),
+    ).rejects.toMatchObject({ code: 'HR_DEPARTMENT_NOT_FOUND', status: 404 });
+
+    await o.exec(o.otherMgr, 'hr.okr.objective.update', {
+      objectiveId: indObj.objectiveId,
+      departmentId: deptSales,
+      title: 'Đã chuyển sang phòng Kinh doanh',
+    });
+
+    // Item 6 extended: PDPL-erased individual objective (even if pre-erasure status was completed) cannot be edited or reassigned.
+    const empEraseComp = (
+      await o.exec<HrWritten>(
+        o.owner,
+        'hr.payroll.employee.add',
+        {
+          displayName: 'Nhân viên Hoàn thành rồi Xóa',
+          departmentId: deptSales,
+          jobTitle: 'Kinh doanh',
+          employment: { effectiveFrom: '2026-01-01', contractType: 'indefinite', region: 'I', baseWage: '15000000' },
+        },
+        asMfa(o.owner),
+      )
+    ).employeeId as string;
+    const compObj = await o.exec<HrOkrObjectiveMutationResult>(o.owner, 'hr.okr.objective.create', {
+      quarter: '2026-Q4',
+      scope: 'individual',
+      ownerEmployeeId: empEraseComp,
+      title: 'Mục tiêu đã hoàn thành',
+      activate: true,
+    });
+    await o.exec(o.owner, 'hr.okr.objective.set_status', { objectiveId: compObj.objectiveId, status: 'completed' });
+    await o.exec(o.owner, 'hr.payroll.employee.end', { employeeId: empEraseComp, endedOn: '2026-10-01' }, asMfa(o.owner));
+    const eraseBackdate = await adminPool.connect();
+    let eraseCommitted = false;
+    let eraseBroken = false;
+    try {
+      await eraseBackdate.query('BEGIN');
+      await eraseBackdate.query('SET LOCAL session_replication_role = replica');
+      await eraseBackdate.query(
+        `UPDATE ludy_hr.payroll_employee
+            SET ended_on = ((pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - interval '10 years 1 day')::date
+          WHERE id = $1`,
+        [empEraseComp],
+      );
+      await eraseBackdate.query('COMMIT');
+      eraseCommitted = true;
+    } catch (err) {
+      if (!eraseCommitted) await eraseBackdate.query('ROLLBACK').catch(() => { eraseBroken = true; });
+      throw err;
+    } finally {
+      eraseBackdate.release(eraseBroken);
+    }
+    // Completed individual objectives stay completed with owner_employee_id = NULL after erase and cannot be edited, reopened, or reassigned.
+    await o.exec(o.owner, 'hr.payroll.employee.erase', { employeeId: empEraseComp }, asMfa(o.owner));
+    await expect(
+      o.exec(o.owner, 'hr.okr.objective.update', {
+        objectiveId: compObj.objectiveId,
+        ownerEmployeeId: empId,
+        title: 'Gán lại chủ mới cho mục tiêu đã xóa',
+      }),
+    ).rejects.toMatchObject({ code: 'HR_OKR_OWNER_ERASED', status: 409 });
+    await expect(
+      o.exec(o.owner, 'hr.okr.objective.set_status', {
+        objectiveId: compObj.objectiveId,
+        status: 'active',
+      }),
+    ).rejects.toMatchObject({ code: 'HR_OKR_OWNER_ERASED', status: 409 });
+
+    const suReassign = await adminPool.connect();
+    let suReassignBroken = false;
+    try {
+      await suReassign.query('BEGIN');
+      await expect(
+        suReassign.query(
+          `UPDATE ludy_hr.okr_objective SET status = 'active', owner_employee_id = $1 WHERE org_id = $2 AND id = $3`,
+          [empId, o.orgId, compObj.objectiveId],
+        ),
+      ).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(/cannot reassign erased individual objective/) });
+      await suReassign.query('ROLLBACK');
+
+      await suReassign.query('BEGIN');
+      await expect(
+        suReassign.query(
+          `UPDATE ludy_hr.okr_objective SET status = 'active' WHERE org_id = $1 AND id = $2`,
+          [o.orgId, compObj.objectiveId],
+        ),
+      ).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(/cannot reopen erased individual objective/) });
+    } finally {
+      await suReassign.query('ROLLBACK').catch(() => { suReassignBroken = true; });
+      suReassign.release(suReassignBroken);
+    }
+
+    // Archiving a completed erased objective remains permitted.
+    await o.exec(o.owner, 'hr.okr.objective.set_status', {
+      objectiveId: compObj.objectiveId,
+      status: 'archived',
+    });
   });
 });

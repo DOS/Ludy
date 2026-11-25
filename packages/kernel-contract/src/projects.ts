@@ -10,6 +10,7 @@ export const PROJECT_NAME_MAX = 200;
 export const PROJECT_DESCRIPTION_MAX = 2000;
 export const PROJECT_BOARD_LIMIT = 300;
 export const PROJECT_LIST_LIMIT = 200;
+export const PROJECT_BOARD_SNAPSHOTS_MAX = 200;
 export const PROJECT_UNASSIGNED_LIMIT = 100;
 export const PROJECT_TASK_MAP_LIMIT = 500;
 export const PROJECT_NOTE_PROPOSAL_MAX = 20;
@@ -450,14 +451,52 @@ export type ProjectCycleFilter = z.infer<typeof zProjectCycleFilter>;
 
 export const zProjectListInput = z.strictObject({
   status: z.array(zProjectStatus).max(4).optional(),
+  search: z.string().trim().min(1).max(120).optional(),
+  cursor: zId.optional(),
+  limit: z.number().int().min(1).max(PROJECT_LIST_LIMIT).optional(),
 });
 
 export const zProjectListResult = z.object({
   projects: z.array(zProjectSummary),
   canWrite: z.boolean(),
   truncated: z.boolean(),
+  nextCursor: zId.nullable().optional(),
 });
 export type ProjectListResult = z.infer<typeof zProjectListResult>;
+
+export const zProjectBoardSnapshotsInput = z.strictObject({
+  projectIds: z.array(zId).max(PROJECT_BOARD_SNAPSHOTS_MAX),
+});
+export type ProjectBoardSnapshotsInput = z.infer<typeof zProjectBoardSnapshotsInput>;
+
+export const zProjectBoardSnapshotColumn = z.object({
+  id: zId,
+  name: z.string(),
+  taskStatus: zTaskStatus,
+});
+export type ProjectBoardSnapshotColumn = z.infer<typeof zProjectBoardSnapshotColumn>;
+
+export const zProjectBoardSnapshotTask = z.object({
+  id: zId,
+  title: z.string(),
+  status: zTaskStatus,
+  columnId: zId.nullable(),
+});
+export type ProjectBoardSnapshotTask = z.infer<typeof zProjectBoardSnapshotTask>;
+
+export const zProjectBoardSnapshot = z.object({
+  projectId: zId,
+  name: z.string(),
+  columns: z.array(zProjectBoardSnapshotColumn),
+  tasks: z.array(zProjectBoardSnapshotTask),
+  truncated: z.boolean(),
+});
+export type ProjectBoardSnapshot = z.infer<typeof zProjectBoardSnapshot>;
+
+export const zProjectBoardSnapshotsResult = z.object({
+  projects: z.array(zProjectBoardSnapshot),
+});
+export type ProjectBoardSnapshotsResult = z.infer<typeof zProjectBoardSnapshotsResult>;
 
 export const zProjectBoardInput = z.strictObject({
   projectId: zId,

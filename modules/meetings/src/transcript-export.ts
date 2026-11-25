@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The transcript of a meeting as a file (#4817, plan docs/plan/meetings.md L19), the module's side.
 //
-// meetings.transcript.download   the lines the caller may read, as plain text or SRT. A sensitive read: each one leaves an audit row naming the meeting, with no text in it.
+// meetings.transcript.download   the lines the caller may read, as plain text, SRT or a Word file. A sensitive read: each one leaves an audit row naming the meeting, with no text in it.
 //
 // The reader rule is the transcript page's (meetings.transcript.get): the meeting is opened under the caller's own row security and text period (a meeting the caller does not read, or whose
 // text has gone, is a 404), and the lines are read under the same row security, so a reader gets the published lines and the recorder their draft while one exists. Redaction rewrites the rows,
@@ -43,8 +43,8 @@ export const transcriptDownload = defineQuery({
       .map((r) => ({ startSeconds: Number(r.start_seconds), endSeconds: Number(r.end_seconds), speakerLabel: r.speaker_label, text: r.text }));
     const count = exportableCount(lines);
     if (count === 0) throw new DomainError('TRANSCRIPT_EXPORT_EMPTY', 409, 'There is no transcript to download');
-    const bytes = Buffer.from(transcriptFile(input.format, lines), 'utf8');
     const day = vnDay(new Date((meeting.started_at ?? meeting.created_at) as Date | string));
+    const bytes = Buffer.from(transcriptFile(input.format, lines, { title: meeting.title, day }));
     return zTranscriptExport.parse({
       format: input.format,
       filename: transcriptFilename(meeting.title, day, input.format),

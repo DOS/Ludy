@@ -58,7 +58,7 @@ test('an invited address signs up only from its accept link, and the invitee joi
   await memberPage.getByLabel('Mật khẩu').fill('member-password-0123');
   await memberPage.getByRole('button', { name: 'Tạo tài khoản' }).click();
   await expect(memberPage.getByText('Đã gửi email xác nhận')).toBeVisible();
-  await memberPage.goto(await authLink(member, /confirm/i));
+  await memberPage.goto(await authLink(member, /Xác nhận địa chỉ email/i));
   await expect(memberPage).toHaveURL(/\/-\/invite$/);
   await memberPage.getByRole('button', { name: 'Chấp nhận lời mời' }).click();
   await expect(memberPage).toHaveURL(new RegExp(`/o/${slug}/overview$`));

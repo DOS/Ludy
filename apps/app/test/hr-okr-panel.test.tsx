@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // SSR UI, i18n, and helper tests for HrOkrPanel (#4529, Stage 6D).
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -137,6 +139,8 @@ describe('HrOkrPanel SSR, i18n, and helpers (#4529 Stage 6D)', () => {
     expect(Object.keys(viMessages.hrOkr).sort()).toEqual(Object.keys(en.hrOkr).sort());
     expect(viMessages.aiMeter.features.hr_okr_checkin_draft).toBeTruthy();
     expect(en.aiMeter.features.hr_okr_checkin_draft).toBeTruthy();
+    expect(viMessages.commands.projects.board_snapshots).toBeTruthy();
+    expect(en.commands.projects.board_snapshots).toBeTruthy();
     expect(viMessages.audit.objects.hr.okr_objective).toBeTruthy();
     expect(en.audit.objects.hr.okr_key_result).toBeTruthy();
     const raw = JSON.stringify({ vi: viMessages.hrOkr, en: en.hrOkr });
@@ -223,5 +227,41 @@ describe('HrOkrPanel SSR, i18n, and helpers (#4529 Stage 6D)', () => {
     expect(selfHtml).toContain('Công tác đang tắt: cập nhật tiến độ thủ công');
     expect(selfHtml).toContain('data-testid="hr-okr-checkin-open-kr-1"');
     expect(selfHtml).not.toContain('hr-okr-new-objective-btn');
+  });
+
+  it('uses max-md:flex with max-md:min-h-11 on checkbox labels and hides reopen for erased individual objectives (#4679)', () => {
+    const q = currentDefaultQuarter();
+    const panelSrc = readFileSync(fileURLToPath(new URL('../src/components/hr-okr-panel.tsx', import.meta.url)), 'utf8');
+    const labelMatches = panelSrc.match(/<label[^>]*>/g) ?? [];
+    expect(labelMatches).toHaveLength(2);
+    for (const tag of labelMatches) {
+      expect(tag).toContain('max-md:flex');
+      expect(tag).toContain('max-md:min-h-11');
+      expect(tag).not.toContain('PHONE_TARGET');
+    }
+
+    const sampleTree: HrOkrTreeResult = {
+      quarter: q,
+      availableQuarters: [q],
+      projectsAvailable: true,
+      canManageAny: true,
+      selfEmployeeId: null,
+      manageableDepartments: [],
+      manageableEmployees: [],
+      objectives: [
+        makeObjective({
+          id: 'obj-erased',
+          quarter: q,
+          scope: 'individual',
+          ownerEmployeeId: null,
+          status: 'completed',
+          title: '[erased]',
+        }),
+      ],
+    };
+    cache.current.setQueryData(['hr', 'okr', 'tree', { quarter: q }], sampleTree);
+    const html = renderPanel('manager');
+    expect(html).not.toContain(viMessages.hrOkr.reopenBtn);
+    expect(html).toContain(viMessages.hrOkr.archiveBtn);
   });
 });
