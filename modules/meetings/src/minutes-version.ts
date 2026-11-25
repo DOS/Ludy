@@ -25,6 +25,8 @@ import { hasEmail, hasLink, hasPhone, recorderMeeting } from './results.ts';
 import { readTranslationSource } from './translate-run.ts';
 import { ROLES, lockMeeting, openMeeting, userOf } from './transcript.ts';
 
+// The most a version's segments may hold, in UTF-8 bytes of their JSON (the table allows 400000 bytes of jsonb).
+const VERSION_BYTES_MAX = 300_000;
 const notPublished = () => new DomainError('MINUTES_NOT_PUBLISHED', 409, 'The minutes are not published, so there is nothing to put a second version beside');
 
 const hasContact = (text: string): boolean => hasLink(text.toLowerCase()) || hasPhone(text) || text.toLowerCase().split(/\s+/).some((token) => hasEmail(token));
@@ -73,6 +75,8 @@ export const minutesVersionPublish = defineCommand({
       const problem = versionTextProblem(originalOf.get(segment.key) as string, segment.text);
       if (problem !== null) throw new DomainError('MINUTES_VERSION_TEXT_REJECTED', 422, `The text of segment ${segment.key} adds a figure or a contact that the original does not have (${problem})`);
     }
+    // The row holds at most this many bytes of text (the table's own CHECK is wider: jsonb overhead): refused whole, never cut.
+    if (Buffer.byteLength(JSON.stringify(input.segments), 'utf8') > VERSION_BYTES_MAX) throw new DomainError('MINUTES_VERSION_TOO_LARGE', 422, 'The translated text is larger than a version holds');
     // One version a language: a new one replaces the one before (the recorder published again).
     await ctx.trx.deleteFrom('ludy_meetings.minutes_version').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('language', '=', to).execute();
     await ctx.trx

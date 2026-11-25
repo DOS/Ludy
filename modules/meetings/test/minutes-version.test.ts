@@ -2,6 +2,7 @@
 // What code finds wrong with the reviewed text of a second-language version against the published original it sits beside (#4777): a figure the original does not hold, or a link, address or
 // phone number it does not hold. Separators of figures (1.500.000 and 1,500,000) and leading zeros are not a different figure.
 import { describe, expect, it } from 'vitest';
+import { zMinutesVersionSegment } from '@ludy/kernel-contract';
 import { versionTextProblem } from '../src/minutes-version.ts';
 
 describe('versionTextProblem', () => {
@@ -22,5 +23,15 @@ describe('versionTextProblem', () => {
     expect(versionTextProblem('Gửi báo giá', 'Call 0912 345 678')).toBe('INVENTED_NUMBER');
     expect(versionTextProblem('Gọi 0912 345 678', 'Call 0912 345 678')).toBeNull();
     expect(versionTextProblem('Gửi tới a@b.example', 'Send to a@b.example')).toBeNull();
+  });
+});
+
+describe('zMinutesVersionSegment', () => {
+  it('keeps the breaks of a summary and refuses a hidden character', () => {
+    expect(zMinutesVersionSegment.safeParse({ key: 'summary', text: 'Line one.\r\nLine two.\n\tIndented.' }).success).toBe(true);
+    expect(zMinutesVersionSegment.safeParse({ key: 'summary', text: 'Quote agreed\u202e.' }).success).toBe(false);
+    expect(zMinutesVersionSegment.safeParse({ key: 'summary', text: 'Quote\u200b agreed.' }).success).toBe(false);
+    expect(zMinutesVersionSegment.safeParse({ key: 'summary', text: 'Bell\u0007.' }).success).toBe(false);
+    expect(zMinutesVersionSegment.safeParse({ key: 'summary', text: '   ' }).success).toBe(false);
   });
 });

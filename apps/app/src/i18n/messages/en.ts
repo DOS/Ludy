@@ -16554,6 +16554,7 @@ export const en = {
       MINUTES_VERSION_STALE: 'The original minutes changed while you were reviewing the translation. Translate and review again.',
       MINUTES_VERSION_SEGMENTS_INVALID: 'A segment is not part of the original minutes, or it is repeated or out of order. Reload the page and review again.',
       MINUTES_VERSION_TEXT_REJECTED: 'A segment adds a figure, link, email or phone number that the original does not have. Fix that segment.',
+      MINUTES_VERSION_TOO_LARGE: 'The translation is longer than a version can hold. Shorten it or leave some segments out.',
       TRANSLATION_LANGUAGE_OFF: 'This translation language is not turned on here.',
       TRANSLATE_RUNNING: 'Another translation of yours is running. Wait for it to finish or stop it.',
       TRANSLATION_DONE: 'The whole transcript is translated.',

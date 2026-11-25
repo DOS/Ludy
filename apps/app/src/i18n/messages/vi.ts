@@ -16553,6 +16553,7 @@ export const vi = {
       MINUTES_VERSION_STALE: 'Biên bản gốc vừa được sửa trong lúc bạn duyệt bản dịch. Hãy dịch lại và duyệt lại.',
       MINUTES_VERSION_SEGMENTS_INVALID: 'Có một đoạn không thuộc biên bản gốc, bị trùng hoặc sai thứ tự. Hãy tải lại trang và duyệt lại.',
       MINUTES_VERSION_TEXT_REJECTED: 'Có một đoạn thêm số liệu, liên kết, email hoặc số điện thoại mà bản gốc không có. Hãy sửa lại đoạn đó.',
+      MINUTES_VERSION_TOO_LARGE: 'Bản dịch dài quá mức một bản lưu được. Hãy rút gọn hoặc bỏ bớt đoạn.',
       TRANSLATION_LANGUAGE_OFF: 'Hệ thống này chưa bật ngôn ngữ dịch này.',
       TRANSLATE_RUNNING: 'Bạn đang có một bản dịch khác chạy. Hãy đợi xong hoặc dừng nó.',
       TRANSLATION_DONE: 'Bản ghi lời đã được dịch hết.',

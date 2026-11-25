@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS ludy_meetings.minutes_version (
   -- when the original changes.
   source_hash text NOT NULL CHECK (source_hash ~ '^[0-9a-f]{64}$'),
   -- The reviewed segments [{key, text}]. Free text a person may be named in (the registry says so).
-  body jsonb NOT NULL CHECK (pg_catalog.jsonb_typeof(body) = 'array' AND pg_catalog.jsonb_array_length(body) BETWEEN 1 AND 100 AND pg_catalog.pg_column_size(body) <= 400000),
+  body jsonb NOT NULL CHECK (pg_catalog.jsonb_typeof(body) = 'array' AND pg_catalog.jsonb_array_length(body) BETWEEN 1 AND 151 AND pg_catalog.pg_column_size(body) <= 400000),
   -- The recorder who approved it, and the run of their Vy it began from (nullable: a row outlives its run row, and a recorder may write it all by hand).
   published_by uuid NOT NULL,
   source_run_id uuid,

@@ -5,7 +5,7 @@
 //   MinutesVersionPublisher  the recorder only: Vy's translation of the shared minutes (the card above, MeetingTranslation) becomes the draft they review segment by segment, edit, and
 //                            publish with one click. Nothing is published without it; a segment left empty is left out. The server holds the text to the original it was made from.
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useState, type ReactNode } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import { useTranslations } from 'use-intl';
 import type { MinutesVersion, TranslationSegment, TranslationTarget } from '@ludy/kernel-contract';
 import { Badge } from '@ludy/ui/components/badge';
@@ -124,6 +124,9 @@ export function MinutesVersionPublisher({ meetingId, original }: { meetingId: st
   const [open, setOpen] = useState(false);
   const [language, setLanguage] = useState<TranslationTarget | null>(null);
   const [draft, setDraft] = useState<Record<string, string>>({});
+  // The button that opened the review (or the one that took a version down) is gone when the work is done: focus goes to the card, so a keyboard user is not dropped at the top of the page.
+  const box = useRef<HTMLDivElement>(null);
+  const focusBox = () => queueMicrotask(() => box.current?.focus());
   const mine = useQuery({ ...orpc.meetings.translation.get.queryOptions({ input: { meetingId } }), staleTime: 60_000, refetchOnWindowFocus: false });
   const versions = useQuery({ ...orpc.meetings.minutesVersion.get.queryOptions({ input: { meetingId } }), staleTime: 0, refetchOnWindowFocus: false });
   // The translations of the shared stage the recorder has that are still of the text on screen.
@@ -143,11 +146,15 @@ export function MinutesVersionPublisher({ meetingId, original }: { meetingId: st
     onSuccess: () => {
       refreshVersions();
       setOpen(false);
+      focusBox();
     },
   });
   const unpublish = useMutation({
     mutationFn: (to: TranslationTarget) => orpc.meetings.minutesVersion.unpublish.call({ meetingId, language: to }),
-    onSuccess: refreshVersions,
+    onSuccess: () => {
+      refreshVersions();
+      focusBox();
+    },
   });
   const names: Record<TranslationTarget, string> = { en: tt('names.en'), vi: tt('names.vi'), zh: tt('names.zh'), ja: tt('names.ja'), ko: tt('names.ko') };
   const published = versions.data?.versions ?? [];
@@ -164,7 +171,7 @@ export function MinutesVersionPublisher({ meetingId, original }: { meetingId: st
   // Nothing to show to a recorder who has neither a translation to review nor a version to take down.
   if (published.length === 0 && ready.length === 0) return null;
   return (
-    <div className="space-y-2 rounded-lg border p-3" data-testid="minutes-version-publisher">
+    <div ref={box} tabIndex={-1} className="space-y-2 rounded-lg border p-3 outline-none" data-testid="minutes-version-publisher">
       <div className="flex flex-wrap items-center gap-2">
         <Badge variant="outline">{t('title')}</Badge>
         {published.map((v) => (
@@ -224,13 +231,14 @@ export function MinutesVersionPublisher({ meetingId, original }: { meetingId: st
             <Button size="sm" loading={publish.isPending} disabled={publish.isPending || nothingToPublish || !source.data} onClick={() => publish.mutate()}>
               {chosenIsPublished ? t('replace') : t('publish')}
             </Button>
-            <Button size="sm" variant="outline" disabled={publish.isPending} onClick={() => setOpen(false)}>
+            <Button size="sm" variant="outline" disabled={publish.isPending} onClick={() => {
+              setOpen(false);
+              focusBox();
+            }}>
               {t('cancel')}
             </Button>
             {nothingToPublish && (
-              <span className="text-xs text-muted-foreground" role="status">
-                {t('empty')}
-              </span>
+              <span className="text-xs text-muted-foreground">{t('empty')}</span>
             )}
           </div>
         </div>
