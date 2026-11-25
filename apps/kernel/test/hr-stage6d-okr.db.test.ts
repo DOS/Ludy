@@ -659,11 +659,21 @@ suite('HR Stage 6D quarterly OKRs and Ludy Projects linkage (#4529)', () => {
     }
     await o.exec(o.owner, 'hr.payroll.employee.erase', { employeeId: empMainErased }, asMfa(o.owner));
 
+    async function withRolledBackTx(pool: pg.Pool, fn: (client: pg.PoolClient) => Promise<void>) {
+      const client = await pool.connect();
+      let broken = false;
+      try {
+        await client.query('BEGIN');
+        await fn(client);
+      } finally {
+        await client.query('ROLLBACK').catch(() => { broken = true; });
+        client.release(broken);
+      }
+    }
+
     // (a) Raw SQL scope = 'company' insert with nonexistent or cross-org legal_entity_id fails okr_objective_entity_fk.
     for (const badEntityId of [randomUUID(), otherOrgEntityId]) {
-      const ownerClient = await appPool.connect();
-      try {
-        await ownerClient.query('BEGIN');
+      await withRolledBackTx(appPool, async (ownerClient) => {
         await enterUser(ownerClient, o.owner, o.orgId);
         await expect(
           ownerClient.query(
@@ -672,69 +682,49 @@ suite('HR Stage 6D quarterly OKRs and Ludy Projects linkage (#4529)', () => {
             [o.orgId, badEntityId],
           ),
         ).rejects.toMatchObject({ code: '23503', constraint: 'okr_objective_entity_fk' });
-        await ownerClient.query('ROLLBACK');
-      } finally {
-        ownerClient.release();
-      }
+      });
     }
 
     // (b1) L1 department manager raw SQL INSERT targeting an erased employee is refused by okr_objective_write_guard
     // both with department_id set (passing RLS) and with department_id omitted.
-    const mgrInsertWithDept = await appPool.connect();
-    try {
-      await mgrInsertWithDept.query('BEGIN');
-      await enterUser(mgrInsertWithDept, o.manager, o.orgId);
+    await withRolledBackTx(appPool, async (mgrClient) => {
+      await enterUser(mgrClient, o.manager, o.orgId);
       await expect(
-        mgrInsertWithDept.query(
+        mgrClient.query(
           `INSERT INTO ludy_hr.okr_objective (org_id, quarter, scope, title, department_id, owner_employee_id)
            VALUES ($1, '2026-Q4', 'individual', 'Erased via dept', $2, $3)`,
           [o.orgId, deptMain, empMainErased],
         ),
       ).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(/cannot assign objective to erased employee/) });
-      await mgrInsertWithDept.query('ROLLBACK');
-    } finally {
-      mgrInsertWithDept.release();
-    }
+    });
 
-    const mgrInsertNoDept = await appPool.connect();
-    try {
-      await mgrInsertNoDept.query('BEGIN');
-      await enterUser(mgrInsertNoDept, o.manager, o.orgId);
+    await withRolledBackTx(appPool, async (mgrClient) => {
+      await enterUser(mgrClient, o.manager, o.orgId);
       await expect(
-        mgrInsertNoDept.query(
+        mgrClient.query(
           `INSERT INTO ludy_hr.okr_objective (org_id, quarter, scope, title, owner_employee_id)
            VALUES ($1, '2026-Q4', 'individual', 'Erased without dept', $2)`,
           [o.orgId, empMainErased],
         ),
       ).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(/cannot assign objective to erased employee/) });
-      await mgrInsertNoDept.query('ROLLBACK');
-    } finally {
-      mgrInsertNoDept.release();
-    }
+    });
 
     // (b2) L1 department manager raw SQL UPDATE targeting an erased employee is refused by okr_objective_write_guard,
     // and clearing owner_employee_id on an active individual objective is also refused.
-    const mgrUpdateErased = await appPool.connect();
-    try {
-      await mgrUpdateErased.query('BEGIN');
-      await enterUser(mgrUpdateErased, o.manager, o.orgId);
+    await withRolledBackTx(appPool, async (mgrClient) => {
+      await enterUser(mgrClient, o.manager, o.orgId);
       await expect(
-        mgrUpdateErased.query(
+        mgrClient.query(
           `UPDATE ludy_hr.okr_objective SET owner_employee_id = $1 WHERE org_id = $2 AND id = $3`,
           [empMainErased, o.orgId, existingIndObj.objectiveId],
         ),
       ).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(/cannot assign objective to erased employee/) });
-      await mgrUpdateErased.query('ROLLBACK');
-    } finally {
-      mgrUpdateErased.release();
-    }
+    });
 
-    const mgrUpdateClear = await appPool.connect();
-    try {
-      await mgrUpdateClear.query('BEGIN');
-      await enterUser(mgrUpdateClear, o.manager, o.orgId);
+    await withRolledBackTx(appPool, async (mgrClient) => {
+      await enterUser(mgrClient, o.manager, o.orgId);
       await expect(
-        mgrUpdateClear.query(
+        mgrClient.query(
           `UPDATE ludy_hr.okr_objective SET owner_employee_id = NULL WHERE org_id = $1 AND id = $2`,
           [o.orgId, existingIndObj.objectiveId],
         ),
@@ -742,18 +732,13 @@ suite('HR Stage 6D quarterly OKRs and Ludy Projects linkage (#4529)', () => {
         code: '42501',
         message: expect.stringMatching(/individual objective requires owner_employee_id until employee erasure/),
       });
-      await mgrUpdateClear.query('ROLLBACK');
-    } finally {
-      mgrUpdateClear.release();
-    }
+    });
 
     // (b3) L1 department manager raw SQL INSERT with legal_entity_id IS NULL and department_id IS NULL
     // derives the employee's actual non-default legal_entity_id via SECURITY DEFINER helper instead of falling back to default.
-    const mgrFillClient = await appPool.connect();
-    try {
-      await mgrFillClient.query('BEGIN');
-      await enterUser(mgrFillClient, o.manager, o.orgId);
-      const inserted = await mgrFillClient.query<{ id: string; legal_entity_id: string }>(
+    await withRolledBackTx(appPool, async (mgrClient) => {
+      await enterUser(mgrClient, o.manager, o.orgId);
+      const inserted = await mgrClient.query<{ id: string; legal_entity_id: string }>(
         `INSERT INTO ludy_hr.okr_objective (org_id, quarter, scope, title, owner_employee_id)
          VALUES ($1, '2026-Q4', 'individual', 'Raw SQL derived branch LE', $2)
          RETURNING id, legal_entity_id`,
@@ -763,25 +748,20 @@ suite('HR Stage 6D quarterly OKRs and Ludy Projects linkage (#4529)', () => {
       expect(inserted.rows[0]?.legal_entity_id).not.toBe(defaultEntityId);
 
       // Direct top-level calls outside a trigger yield NULL / false (no direct-call oracle).
-      const directEntity = await mgrFillClient.query<{ le: string | null }>(
+      const directEntity = await mgrClient.query<{ le: string | null }>(
         `SELECT ludy_hr.okr_employee_legal_entity_id($1::uuid, $2::uuid) AS le`,
         [o.orgId, empBranchActive],
       );
       expect(directEntity.rows[0]?.le).toBeNull();
-      const directErased = await mgrFillClient.query<{ erased: boolean }>(
+      const directErased = await mgrClient.query<{ erased: boolean }>(
         `SELECT ludy_hr.okr_employee_is_erased($1::uuid, $2::uuid) AS erased`,
         [o.orgId, empMainErased],
       );
       expect(directErased.rows[0]?.erased).toBe(false);
-      await mgrFillClient.query('ROLLBACK');
-    } finally {
-      mgrFillClient.release();
-    }
+    });
 
     // Non-manager member (staffB) probing an erased employee hits RLS rather than the erasure guard (no side-channel oracle).
-    const unlinkedClient = await appPool.connect();
-    try {
-      await unlinkedClient.query('BEGIN');
+    await withRolledBackTx(appPool, async (unlinkedClient) => {
       await enterUser(unlinkedClient, o.staffB, o.orgId);
       await expect(
         unlinkedClient.query(
@@ -790,10 +770,67 @@ suite('HR Stage 6D quarterly OKRs and Ludy Projects linkage (#4529)', () => {
           [o.orgId, empMainErased],
         ),
       ).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(/row-level security policy/) });
-      await unlinkedClient.query('ROLLBACK');
-    } finally {
-      unlinkedClient.release();
-    }
+    });
+
+    // Manager of branchEntity only (otherMgr) probing an erased employee in defaultEntityId hits RLS, not trigger oracle.
+    const { departmentId: deptBranchOnly } = await o.exec<HrDepartmentWritten>(o.owner, 'hr.department.add', {
+      name: 'Kinh doanh Chi nhánh',
+      payFunction: 'sales',
+      legalEntityId: branchEntity.id,
+    });
+    await o.exec(o.owner, 'hr.department.set_manager', { departmentId: deptBranchOnly, managerUserId: o.otherMgr });
+    await withRolledBackTx(appPool, async (crossLeMgr) => {
+      await enterUser(crossLeMgr, o.otherMgr, o.orgId);
+      await expect(
+        crossLeMgr.query(
+          `INSERT INTO ludy_hr.okr_objective (org_id, quarter, scope, title, owner_employee_id)
+           VALUES ($1, '2026-Q4', 'individual', 'Cross-LE manager probe erased', $2)`,
+          [o.orgId, empMainErased],
+        ),
+      ).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(/row-level security policy/) });
+    });
+
+    // (c) Superuser / table-owner writes outside user context keep branch-LE auto-fill, erased-employee rejection,
+    // and PDPL owner_employee_id = NULL cleanup on an already-erased employee's individual objective.
+    await withRolledBackTx(adminPool, async (suClient) => {
+      const suBranchInsert = await suClient.query<{ id: string; legal_entity_id: string }>(
+        `INSERT INTO ludy_hr.okr_objective (org_id, quarter, scope, title, owner_employee_id)
+         VALUES ($1, '2026-Q4', 'individual', 'Superuser branch LE fill', $2)
+         RETURNING id, legal_entity_id`,
+        [o.orgId, empBranchActive],
+      );
+      expect(suBranchInsert.rows[0]?.legal_entity_id).toBe(branchEntity.id);
+    });
+
+    await withRolledBackTx(adminPool, async (suClient) => {
+      await expect(
+        suClient.query(
+          `INSERT INTO ludy_hr.okr_objective (org_id, quarter, scope, title, owner_employee_id)
+           VALUES ($1, '2026-Q4', 'individual', 'Superuser erased blocked', $2)`,
+          [o.orgId, empMainErased],
+        ),
+      ).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(/cannot assign objective to erased employee/) });
+    });
+
+    await withRolledBackTx(adminPool, async (suClient) => {
+      await suClient.query('SET LOCAL session_replication_role = replica');
+      await suClient.query(
+        `UPDATE ludy_hr.payroll_employee
+            SET status = 'ended',
+                ended_on = '2015-01-01',
+                erased_at = pg_catalog.now()
+          WHERE org_id = $1 AND id = $2`,
+        [o.orgId, empMainActive],
+      );
+      const cleared = await suClient.query<{ owner_employee_id: string | null }>(
+        `UPDATE ludy_hr.okr_objective
+            SET owner_employee_id = NULL, status = 'archived'
+          WHERE org_id = $1 AND id = $2
+          RETURNING owner_employee_id`,
+        [o.orgId, existingIndObj.objectiveId],
+      );
+      expect(cleared.rows[0]?.owner_employee_id).toBeNull();
+    });
 
     // Verify helper SECURITY DEFINER metadata, pinned search_path, and minimal EXECUTE grants (ludy_tenant only).
     for (const fn of [

@@ -2,11 +2,12 @@
 -- Ludy HR OKR defense-in-depth (#4676):
 -- 1. Enforce (org_id, legal_entity_id) via okr_objective_entity_fk on ludy_hr.okr_objective
 --    so scope = 'company' rows cannot bypass legal_entity existence under MATCH SIMPLE.
--- 2. Replace SECURITY INVOKER reads of ludy_hr.payroll_employee inside
+-- 2. Replace SECURITY INVOKER reads of ludy_hr.payroll_employee for user contexts inside
 --    ludy_hr.okr_objective_legal_entity_fill and ludy_hr.okr_objective_write_guard
 --    with narrow SECURITY DEFINER helpers so L1 department managers cannot bypass the
 --    erased-employee trigger guard or fall back to the default legal entity when
---    hr_employee_select hides non-self or erased employee rows.
+--    hr_employee_select hides non-self or erased employee rows, while preserving
+--    table-owner / superuser trigger behavior outside user contexts.
 -- Idempotent; applied files stay untouched.
 SET LOCAL lock_timeout = '2s';
 
@@ -111,15 +112,6 @@ BEGIN
   IF v_role IS NULL OR v_role NOT IN ('owner', 'admin', 'member') THEN
     RETURN false;
   END IF;
-  IF v_role = 'member' AND NOT EXISTS (
-    SELECT 1
-      FROM ludy_hr.department d
-     WHERE d.org_id = v_org
-       AND d.archived_at IS NULL
-       AND d.manager_user_id = v_user
-  ) THEN
-    RETURN false;
-  END IF;
   RETURN EXISTS (
     SELECT 1
       FROM ludy_hr.payroll_employee e
@@ -130,13 +122,26 @@ BEGIN
          '*' = ANY (v_le_scope)
          OR e.legal_entity_id::text = ANY (v_le_scope)
        )
+       AND (
+         v_role IN ('owner', 'admin')
+         OR EXISTS (
+           SELECT 1
+             FROM ludy_hr.department d
+            WHERE d.org_id = v_org
+              AND d.legal_entity_id = e.legal_entity_id
+              AND d.archived_at IS NULL
+              AND d.manager_user_id = v_user
+         )
+       )
   );
 END $$;
 REVOKE ALL ON FUNCTION ludy_hr.okr_employee_is_erased(uuid, uuid)
   FROM PUBLIC, ludy_tenant, ludy_app, ludy_worker, ludy_definer_tenant;
 GRANT EXECUTE ON FUNCTION ludy_hr.okr_employee_is_erased(uuid, uuid) TO ludy_tenant;
 
--- 3. Replace raw payroll_employee reads in OKR objective triggers with the narrow helpers.
+-- 3. Use narrow SECURITY DEFINER helpers for user contexts in OKR objective triggers.
+-- Outside user contexts (table owner / superuser maintenance or non-user tenant calls),
+-- fall back to SECURITY INVOKER reads where hr_employee_select still returns 0 rows for ludy_tenant.
 CREATE OR REPLACE FUNCTION ludy_hr.okr_objective_legal_entity_fill() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
@@ -151,7 +156,13 @@ BEGIN
      WHERE d.org_id = NEW.org_id AND d.id = NEW.department_id;
   END IF;
   IF v_entity IS NULL AND NEW.owner_employee_id IS NOT NULL THEN
-    v_entity := ludy_hr.okr_employee_legal_entity_id(NEW.org_id, NEW.owner_employee_id);
+    IF ludy_kernel.ctx_actor_type() = 'user' THEN
+      v_entity := ludy_hr.okr_employee_legal_entity_id(NEW.org_id, NEW.owner_employee_id);
+    ELSE
+      SELECT e.legal_entity_id INTO v_entity
+        FROM ludy_hr.payroll_employee e
+       WHERE e.org_id = NEW.org_id AND e.id = NEW.owner_employee_id;
+    END IF;
   END IF;
   IF v_entity IS NULL THEN
     SELECT le.id INTO v_entity
@@ -168,6 +179,7 @@ CREATE OR REPLACE FUNCTION ludy_hr.okr_objective_write_guard() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
   v_parent_scope text;
+  v_is_erased boolean := false;
 BEGIN
   IF NEW.scope = 'company' AND NEW.parent_objective_id IS NOT NULL THEN
     RAISE EXCEPTION 'company objective cannot have a parent objective' USING ERRCODE = '42501';
@@ -194,8 +206,21 @@ BEGIN
     IF NEW.scope = 'individual' AND NEW.owner_employee_id IS NULL THEN
       RAISE EXCEPTION 'individual objective requires owner_employee_id' USING ERRCODE = '23514';
     END IF;
-    IF NEW.owner_employee_id IS NOT NULL AND ludy_hr.okr_employee_is_erased(NEW.org_id, NEW.owner_employee_id) THEN
-      RAISE EXCEPTION 'cannot assign objective to erased employee' USING ERRCODE = '42501';
+    IF NEW.owner_employee_id IS NOT NULL THEN
+      IF ludy_kernel.ctx_actor_type() = 'user' THEN
+        v_is_erased := ludy_hr.okr_employee_is_erased(NEW.org_id, NEW.owner_employee_id);
+      ELSE
+        SELECT EXISTS (
+          SELECT 1
+            FROM ludy_hr.payroll_employee e
+           WHERE e.org_id = NEW.org_id
+             AND e.id = NEW.owner_employee_id
+             AND e.erased_at IS NOT NULL
+        ) INTO v_is_erased;
+      END IF;
+      IF v_is_erased THEN
+        RAISE EXCEPTION 'cannot assign objective to erased employee' USING ERRCODE = '42501';
+      END IF;
     END IF;
     RETURN NEW;
   END IF;
@@ -206,11 +231,35 @@ BEGIN
 
   -- Allow PDPL erasure to clear owner_employee_id after employee.erased_at is stamped.
   IF NEW.owner_employee_id IS NULL AND OLD.owner_employee_id IS NOT NULL THEN
-    IF OLD.scope = 'individual' AND NOT ludy_hr.okr_employee_is_erased(OLD.org_id, OLD.owner_employee_id) THEN
-      RAISE EXCEPTION 'individual objective requires owner_employee_id until employee erasure' USING ERRCODE = '42501';
+    IF OLD.scope = 'individual' THEN
+      IF ludy_kernel.ctx_actor_type() = 'user' THEN
+        v_is_erased := ludy_hr.okr_employee_is_erased(OLD.org_id, OLD.owner_employee_id);
+      ELSE
+        SELECT EXISTS (
+          SELECT 1
+            FROM ludy_hr.payroll_employee e
+           WHERE e.org_id = OLD.org_id
+             AND e.id = OLD.owner_employee_id
+             AND e.erased_at IS NOT NULL
+        ) INTO v_is_erased;
+      END IF;
+      IF NOT v_is_erased THEN
+        RAISE EXCEPTION 'individual objective requires owner_employee_id until employee erasure' USING ERRCODE = '42501';
+      END IF;
     END IF;
   ELSIF NEW.owner_employee_id IS NOT NULL AND NEW.owner_employee_id IS DISTINCT FROM OLD.owner_employee_id THEN
-    IF ludy_hr.okr_employee_is_erased(NEW.org_id, NEW.owner_employee_id) THEN
+    IF ludy_kernel.ctx_actor_type() = 'user' THEN
+      v_is_erased := ludy_hr.okr_employee_is_erased(NEW.org_id, NEW.owner_employee_id);
+    ELSE
+      SELECT EXISTS (
+        SELECT 1
+          FROM ludy_hr.payroll_employee e
+         WHERE e.org_id = NEW.org_id
+           AND e.id = NEW.owner_employee_id
+           AND e.erased_at IS NOT NULL
+      ) INTO v_is_erased;
+    END IF;
+    IF v_is_erased THEN
       RAISE EXCEPTION 'cannot assign objective to erased employee' USING ERRCODE = '42501';
     END IF;
   END IF;
