@@ -18,7 +18,6 @@
 // path), and an `auth` finding goes out after PROBER_AUTH_MISSES failed answers in a row. Before, nobody learned of an
 // Auth outage until a member could not sign in.
 import { createS3Client } from '@ludy/kernel-runtime';
-import { checkEnvPair } from '@ludy/db';
 import pg from 'pg';
 import { z } from 'zod';
 import { isHostedSupabase, modulesSetting } from './config.ts';
@@ -209,13 +208,10 @@ export interface Thresholds {
 }
 
 export function loadProberConfig(env: NodeJS.ProcessEnv = process.env, everySeconds: number | null = null): ProberConfig {
-  const modules = checkEnvPair(env, 'LUDY_MODULES', 'CROVE_MODULES');
-  if (!modules.ok) {
-    throw new Error(`invalid prober configuration: ${modules.error}`);
-  }
+  const rawModules = env.LUDY_MODULES?.trim();
   const normalizedEnv: Record<string, string | undefined> = { ...env };
-  if (modules.value !== undefined) {
-    normalizedEnv.LUDY_MODULES = modules.value;
+  if (rawModules) {
+    normalizedEnv.LUDY_MODULES = rawModules;
   } else {
     delete normalizedEnv.LUDY_MODULES;
   }

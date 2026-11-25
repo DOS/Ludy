@@ -47,7 +47,8 @@ const result = (over: Partial<LoadResult['outbox']> = {}, p95 = 20, failed = 0):
 
 describe('load test', () => {
   it('reads the flags, with the plan sizes by default, and needs an admin URL', () => {
-    expect(parseLoadArgs([], { CROVE_TEST_ADMIN_URL: 'postgres://x' })).toEqual({ adminUrl: 'postgres://x', ...DEFAULT_LOAD_ARGS });
+    expect(parseLoadArgs([], { LUDY_TEST_ADMIN_URL: 'postgres://x' })).toEqual({ adminUrl: 'postgres://x', ...DEFAULT_LOAD_ARGS });
+    expect(() => parseLoadArgs([], { CROVE_TEST_ADMIN_URL: 'postgres://x' })).toThrow(/admin-url/);
     expect(DEFAULT_LOAD_ARGS.parties).toBe(100_000);
     expect(parseLoadArgs(['--admin-url', 'postgres://y', '--parties', '500', '--rate', '80', '--keep'])).toMatchObject({ adminUrl: 'postgres://y', parties: 500, rate: 80, keep: true });
     // The worker's back-pressure threshold and check interval by default (OUTBOX_LAG_PAUSE_SECONDS, BACK_PRESSURE_CHECK_MS).

@@ -143,20 +143,7 @@ export function bearerIssuedToOAuthClient(authorization: string | null | undefin
   return issuedToOAuthClient(claims, acceptedClientId);
 }
 
-const BUNDLED_AUTH_ISSUERS: readonly [string, string] = ['ludy-auth', 'crove-auth'];
-
-function acceptedIssuers(configured: string): string | string[] {
-  return BUNDLED_AUTH_ISSUERS.includes(configured) ? [...BUNDLED_AUTH_ISSUERS] : configured;
-}
-
-// Canonicalizes bundled issuers so ludy-auth and crove-auth tokens map to one user_account row.
-export function canonicalIdentityIssuer(configured: string, verifiedIssuer: string): string {
-  return BUNDLED_AUTH_ISSUERS.includes(configured) && BUNDLED_AUTH_ISSUERS.includes(verifiedIssuer)
-    ? configured
-    : verifiedIssuer;
-}
-
-// Signature, algorithm family, issuer, audience and expiry, then the claims Crove relies on. Every failure is 401:
+// Signature, algorithm family, issuer, audience and expiry, then the claims Ludy relies on. Every failure is 401:
 // OAUTH_CLIENT_TOKEN_REFUSED for a token issued to an OAuth client other than the deployment's own, UNAUTHENTICATED otherwise.
 export function createTokenVerifier(config: Config, keys: { jwks?: JWTVerifyGetKey } = {}) {
   const jwks = keys.jwks ?? (config.AUTH_JWKS_URL ? createRemoteJWKSet(new URL(config.AUTH_JWKS_URL), { cacheMaxAge: 10 * 60_000 }) : null);
@@ -165,7 +152,7 @@ export function createTokenVerifier(config: Config, keys: { jwks?: JWTVerifyGetK
   // The one OAuth client whose tokens are accepted (AUTH_OAUTH_CLIENT_ID, issue #4704); null: none.
   const oauthClientId = config.AUTH_OAUTH_CLIENT_ID ?? null;
   const options = {
-    issuer: acceptedIssuers(config.AUTH_ISSUER),
+    issuer: config.AUTH_ISSUER,
     audience: config.AUTH_AUDIENCE,
     requiredClaims: ['iss', 'aud', 'exp', 'sub', 'session_id'],
     clockTolerance: CLOCK_TOLERANCE_S,
@@ -254,7 +241,7 @@ export function createAuthenticator(
       tokenExp: verified.expiresAt,
       ...(confirmLive ? { confirmLive } : {}),
     };
-    const issuer = canonicalIdentityIssuer(config.AUTH_ISSUER, verified.issuer);
+    const issuer = verified.issuer;
     const key = `${issuer}|${verified.subject}`;
     const hit = cache.get(key);
     if (hit && hit.expires > Date.now() && hit.user.email === verified.email) return { ...hit.user, ...perToken };

@@ -121,7 +121,7 @@ suite('meetings live pieces assembled on PostgreSQL (#3126)', () => {
   async function rpc(path: string, name: string, input: unknown, org: string | null = slug, mfa = false) {
     const response = await app.request(`/api/rpc/${path}`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${await token(name, mfa)}`, 'content-type': 'application/json', ...(org ? { 'x-crove-org': org } : {}) },
+      headers: { authorization: `Bearer ${await token(name, mfa)}`, 'content-type': 'application/json', ...(org ? { 'x-ludy-org': org } : {}) },
       body: JSON.stringify(input === undefined ? {} : { json: input }),
     });
     const body = (await response.json()) as { json?: Record<string, unknown> };
@@ -149,13 +149,13 @@ suite('meetings live pieces assembled on PostgreSQL (#3126)', () => {
     const form = new FormData();
     form.append('kind', kind);
     form.append('file', new Blob([bytes], { type: kind === 'audio' ? 'audio/ogg' : 'video/mp4' }), kind === 'audio' ? 'a.ogg' : 'v.mp4');
-    const res = await app.request(`/api/meetings/${meetingId}/media`, { method: 'POST', headers: { authorization: `Bearer ${await token(name)}`, 'x-crove-org': org }, body: form });
+    const res = await app.request(`/api/meetings/${meetingId}/media`, { method: 'POST', headers: { authorization: `Bearer ${await token(name)}`, 'x-ludy-org': org }, body: form });
     expect(res.status).toBe(200);
     return bytes;
   }
 
   const play = async (name: string, meetingId: string, kind: 'audio' | 'video', org = slug) =>
-    app.request(`/api/meetings/${meetingId}/${kind}`, { headers: { authorization: `Bearer ${await token(name)}`, 'x-crove-org': org } });
+    app.request(`/api/meetings/${meetingId}/${kind}`, { headers: { authorization: `Bearer ${await token(name)}`, 'x-ludy-org': org } });
 
   const yesterday = "(pg_catalog.timezone('Asia/Ho_Chi_Minh', pg_catalog.now()))::date - 1";
   const retention = () => runMeetingsRetention({ runtime: worker, workerDb, log: quiet });
@@ -231,7 +231,7 @@ suite('meetings live pieces assembled on PostgreSQL (#3126)', () => {
       method: 'POST',
       headers: {
         authorization: `Bearer ${opts.bearer ?? (await token(name))}`,
-        'x-crove-org': slug,
+        'x-ludy-org': slug,
         'content-type': opts.contentType ?? 'audio/webm',
         'content-length': opts.contentLength ?? String(bytes.byteLength),
       },
@@ -262,7 +262,7 @@ suite('meetings live pieces assembled on PostgreSQL (#3126)', () => {
 
   const windowPassed = (meetingId: string) => rows("UPDATE ludy_meetings.meeting SET started_at = now() - interval '5 hours' WHERE id = $1", [meetingId]);
   const click = async (name: string, meetingId: string, bearer?: string) => {
-    const res = await app.request(`/api/meetings/${meetingId}/live-assemble`, { method: 'POST', headers: { authorization: `Bearer ${bearer ?? (await token(name))}`, 'x-crove-org': slug } });
+    const res = await app.request(`/api/meetings/${meetingId}/live-assemble`, { method: 'POST', headers: { authorization: `Bearer ${bearer ?? (await token(name))}`, 'x-ludy-org': slug } });
     return { status: res.status, body: (await res.json().catch(() => ({}))) as Record<string, unknown> };
   };
   const liveStatus = async (name: string, meetingId: string) => (await rpc('meetings/liveStatus', name, { meetingId })).body as { assemble: { available: boolean; reason: string | null; pieces: number; missing: number[] } };
@@ -526,7 +526,7 @@ suite('meetings live pieces assembled on PostgreSQL (#3126)', () => {
   const lateUpload = async (meetingId: string, marker: string) =>
     app.request(`/api/meetings/${meetingId}/media?kind=audio`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug, 'content-type': 'audio/ogg', 'content-length': String(OGG.byteLength + 8 + marker.length) },
+      headers: { authorization: `Bearer ${await token('recorder')}`, 'x-ludy-org': slug, 'content-type': 'audio/ogg', 'content-length': String(OGG.byteLength + 8 + marker.length) },
       body: new Uint8Array(Buffer.concat([OGG, Buffer.alloc(8, 0), Buffer.from(marker)])),
     });
   const segmentOf = async (meetingId: string) => (await rows<{ file_id: string; joined: boolean }>('SELECT file_id, joined_from_pieces AS joined FROM ludy_meetings.audio_segment WHERE meeting_id = $1', [meetingId]))[0]!;
@@ -646,7 +646,7 @@ suite('meetings live pieces assembled on PostgreSQL (#3126)', () => {
       await holder.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`meetings.live:${orgId}:${meetingId}`]);
       const both = Promise.all([click('recorder', meetingId), (async () => ({ status: (await app.request(`/api/meetings/${meetingId}/media?kind=audio`, {
         method: 'POST',
-        headers: { authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug, 'content-type': 'audio/ogg', 'content-length': String(OGG.byteLength + 8 + 12) },
+        headers: { authorization: `Bearer ${await token('recorder')}`, 'x-ludy-org': slug, 'content-type': 'audio/ogg', 'content-length': String(OGG.byteLength + 8 + 12) },
         body: new Uint8Array(Buffer.concat([OGG, Buffer.alloc(8, 0), Buffer.from('racing-final')])),
       })).status }))()]);
       let waiting = 0;

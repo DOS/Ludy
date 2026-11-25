@@ -5,9 +5,11 @@ import { createServer, type IncomingHttpHeaders, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { CompiledQuery, Kysely, PostgresAdapter, PostgresIntrospector, PostgresQueryCompiler, type DatabaseConnection, type QueryResult } from 'kysely';
 import type pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { ORG_NOT_OFFBOARDING, type OrgExportView } from '@ludy/kernel';
+import type { Db } from '@ludy/db';
 import { DIRECT_UPLOAD_MAX_BYTES, MAX_UPLOAD_BYTES, ORG_HEADER } from '@ludy/kernel-contract';
 import {
   BlobConflictError,
@@ -81,7 +83,7 @@ describe('configuration guards', () => {
     const publicUrl = { PUBLIC_URL: 'https://books.example.com', PUBLIC_AUTH_URL: 'https://auth.example.com/auth/v1' };
     expect(() => loadConfig({ ...base, ADS_SANDBOX: 'true' })).not.toThrow();
     expect(() => loadConfig({ ...base, ADS_SANDBOX: 'true', PUBLIC_URL: 'https://books.example.com' })).toThrow(/ADS_SANDBOX/);
-    expect(() => loadConfig({ ...base, ...publicUrl, ADS_SANDBOX: 'true', CROVE_MODULES: 'finance,ads' })).toThrow(/ADS_SANDBOX/);
+    expect(() => loadConfig({ ...base, ...publicUrl, ADS_SANDBOX: 'true', LUDY_MODULES: 'finance,ads' })).toThrow(/ADS_SANDBOX/);
     // The sandbox e-invoice provider (ADR-0044 point 8, #2502): it issues made-up sales invoices into the books, so a deployment others reach that runs the finance module
     // does not set it to true, or leaves the module out.
     // Left out, it is on for a local URL and off for a public one.
@@ -89,11 +91,11 @@ describe('configuration guards', () => {
     expect(loadConfig({ ...base, ...publicUrl }).EINVOICE_SANDBOX).toBe('false');
     expect(() => loadConfig({ ...base, EINVOICE_SANDBOX: 'true' })).not.toThrow();
     expect(() => loadConfig({ ...base, ...publicUrl, ADS_SANDBOX: 'false', EINVOICE_SANDBOX: 'true' })).toThrow(/EINVOICE_SANDBOX/);
-    expect(() => loadConfig({ ...base, ...publicUrl, ADS_SANDBOX: 'false', EINVOICE_SANDBOX: 'true', CROVE_MODULES: 'finance' })).toThrow(/EINVOICE_SANDBOX/);
-    expect(() => loadConfig({ ...base, ...publicUrl, ADS_SANDBOX: 'false', EINVOICE_SANDBOX: 'true', CROVE_MODULES: 'social' })).not.toThrow();
+    expect(() => loadConfig({ ...base, ...publicUrl, ADS_SANDBOX: 'false', EINVOICE_SANDBOX: 'true', LUDY_MODULES: 'finance' })).toThrow(/EINVOICE_SANDBOX/);
+    expect(() => loadConfig({ ...base, ...publicUrl, ADS_SANDBOX: 'false', EINVOICE_SANDBOX: 'true', LUDY_MODULES: 'social' })).not.toThrow();
     expect(() => loadConfig({ ...base, ...publicUrl, ADS_SANDBOX: 'false', EINVOICE_SANDBOX: 'false' })).not.toThrow();
     expect(() => loadConfig({ ...base, ...publicUrl, ADS_SANDBOX: 'false' })).not.toThrow();
-    expect(() => loadConfig({ ...base, ...publicUrl, ADS_SANDBOX: 'true', EINVOICE_SANDBOX: 'false', CROVE_MODULES: 'finance' })).not.toThrow();
+    expect(() => loadConfig({ ...base, ...publicUrl, ADS_SANDBOX: 'true', EINVOICE_SANDBOX: 'false', LUDY_MODULES: 'finance' })).not.toThrow();
     expect(() => loadConfig({ ...base, PUBLIC_URL: 'https://books.example.com', PUBLIC_AUTH_URL: 'https://auth.example.com/auth/v1', EINVOICE_SANDBOX: 'false' })).not.toThrow();
   });
 
@@ -101,7 +103,7 @@ describe('configuration guards', () => {
   // for an unset one, which a public deployment with finance and ads refuses at boot. Compose now passes them through empty.
   it('boots on a public PUBLIC_URL with finance and ads on and the compose defaults (empty sandbox switches)', () => {
     const publicUrl = { PUBLIC_URL: 'https://books.example.com', PUBLIC_AUTH_URL: 'https://auth.example.com/auth/v1' };
-    const composeDefaults = { EINVOICE_SANDBOX: '', ADS_SANDBOX: '', BANK_FEED_SANDBOX: 'false', CHANNEL_SANDBOX: 'true', CROVE_MODULES: 'finance,ads' };
+    const composeDefaults = { EINVOICE_SANDBOX: '', ADS_SANDBOX: '', BANK_FEED_SANDBOX: 'false', CHANNEL_SANDBOX: 'true', LUDY_MODULES: 'finance,ads' };
     const config = loadConfig({ ...base, ...publicUrl, ...composeDefaults });
     expect(config.EINVOICE_SANDBOX).toBe('false');
     expect(config.ADS_SANDBOX).toBe('false');
@@ -114,7 +116,7 @@ describe('configuration guards', () => {
   // #2118: docker-compose.yml falls back to published passwords for an unset one; on a public URL the kernel refuses them.
   it('refuses a sample database password on a public PUBLIC_URL, naming the setting and never the value', () => {
     const publicBase = { ...base, PUBLIC_URL: 'https://books.example.com', PUBLIC_AUTH_URL: 'https://auth.example.com/auth/v1' };
-    const sample = (name: string, password: string) => ({ ...publicBase, [name]: `postgres://crove_x:${password}@db:5432/postgres` });
+    const sample = (name: string, password: string) => ({ ...publicBase, [name]: `postgres://ludy_x:${password}@db:5432/postgres` });
     for (const name of ['DATABASE_URL', 'WORKER_DATABASE_URL', 'ADMIN_DATABASE_URL', 'DATABASE_LISTEN_URL']) {
       for (const password of ['local-app-password', 'local-worker-password', 'local-postgres-password', 'change-me-app', 'my-Change-Me-pass', '%63hange-me-worker', 'change%2Dme-app']) {
         let message = '';
@@ -138,18 +140,17 @@ describe('configuration guards', () => {
   });
 
   // #2118: a missing compose.pilot.yml or a stray profile must not silently run the API on the worker's login.
-  it('starts the all role on a public PUBLIC_URL only with LUDY_ALLOW_ALL_IN_ONE=true / CROVE_ALLOW_ALL_IN_ONE=true', () => {
+  it('starts the all role on a public PUBLIC_URL only with LUDY_ALLOW_ALL_IN_ONE=true', () => {
     const publicConfig = (extra: Record<string, string> = {}) => loadConfig({ ...base, PUBLIC_URL: 'https://books.example.com', PUBLIC_AUTH_URL: 'https://auth.example.com/auth/v1', ...extra });
     expect(() => assertSplitRoles(publicConfig(), 'all')).toThrow(/LUDY_ALLOW_ALL_IN_ONE=true/);
-    expect(() => assertSplitRoles(publicConfig({ CROVE_ALLOW_ALL_IN_ONE: 'false' }), 'all')).toThrow(/separate processes/);
-    expect(() => assertSplitRoles(publicConfig({ CROVE_ALLOW_ALL_IN_ONE: '' }), 'all')).toThrow(/separate processes/);
-    expect(() => assertSplitRoles(publicConfig({ CROVE_ALLOW_ALL_IN_ONE: 'true' }), 'all')).not.toThrow();
+    expect(() => assertSplitRoles(publicConfig({ LUDY_ALLOW_ALL_IN_ONE: 'false' }), 'all')).toThrow(/separate processes/);
+    expect(() => assertSplitRoles(publicConfig({ LUDY_ALLOW_ALL_IN_ONE: '' }), 'all')).toThrow(/separate processes/);
+    expect(() => assertSplitRoles(publicConfig({ CROVE_ALLOW_ALL_IN_ONE: 'true' }), 'all')).toThrow(/separate processes/);
     expect(() => assertSplitRoles(publicConfig({ LUDY_ALLOW_ALL_IN_ONE: 'true' }), 'all')).not.toThrow();
     for (const role of ['api', 'worker'] as const) expect(() => assertSplitRoles(publicConfig(), role)).not.toThrow();
     // A laptop needs no opt-in.
     expect(() => assertSplitRoles(loadConfig(base), 'all')).not.toThrow();
-    expect(() => loadConfig({ ...base, CROVE_ALLOW_ALL_IN_ONE: 'yes' })).toThrow(/LUDY_ALLOW_ALL_IN_ONE/);
-    expect(() => loadConfig({ ...base, LUDY_ALLOW_ALL_IN_ONE: 'true', CROVE_ALLOW_ALL_IN_ONE: 'false' })).toThrow(/LUDY_ALLOW_ALL_IN_ONE and CROVE_ALLOW_ALL_IN_ONE are both set with conflicting values/);
+    expect(() => loadConfig({ ...base, LUDY_ALLOW_ALL_IN_ONE: 'yes' })).toThrow(/LUDY_ALLOW_ALL_IN_ONE/);
   });
 
   // #2133: keeping the worker's all-org login out of the API does not rest on how the container was composed.
@@ -164,7 +165,7 @@ describe('configuration guards', () => {
     expect(() => assertSplitRoles(publicConfig({ WORKER_DATABASE_URL: '' }), 'api')).not.toThrow();
     expect(() => assertSplitRoles(publicConfig(worker), 'worker')).not.toThrow();
     // The all role has it by design (the opt-in above governs it); a laptop's api may hold it.
-    expect(() => assertSplitRoles(publicConfig({ ...worker, CROVE_ALLOW_ALL_IN_ONE: 'true' }), 'all')).not.toThrow();
+    expect(() => assertSplitRoles(publicConfig({ ...worker, LUDY_ALLOW_ALL_IN_ONE: 'true' }), 'all')).not.toThrow();
     expect(() => assertSplitRoles(loadConfig({ ...base, ...worker }), 'api')).not.toThrow();
     expect(() => assertSplitRoles(loadConfig({ ...base, ...worker, PUBLIC_URL: 'http://127.0.0.1:8080' }), 'api')).not.toThrow();
   });
@@ -184,7 +185,7 @@ describe('configuration guards', () => {
     expect(() => assertSplitRoles(publicConfig({ ADMIN_DATABASE_URL: '', DATABASE_LISTEN_URL: '' }), 'api')).not.toThrow();
     // Not for the worker, not for the all role with its opt-in, and not on a laptop.
     expect(() => assertSplitRoles(publicConfig({ ...admin, ...listenWorker }), 'worker')).not.toThrow();
-    expect(() => assertSplitRoles(publicConfig({ ...admin, ...listenWorker, CROVE_ALLOW_ALL_IN_ONE: 'true' }), 'all')).not.toThrow();
+    expect(() => assertSplitRoles(publicConfig({ ...admin, ...listenWorker, LUDY_ALLOW_ALL_IN_ONE: 'true' }), 'all')).not.toThrow();
     expect(() => assertSplitRoles(loadConfig({ ...base, ...admin, ...listenWorker }), 'api')).not.toThrow();
   });
 
@@ -225,17 +226,16 @@ describe('configuration guards', () => {
   });
 
   // Plan Decision 12, ADR-0031.
-  it('enables every module by default, always keeps kernel and refuses an unknown module', () => {
-    expect(loadConfig(base).CROVE_MODULES).toEqual(['kernel', 'finance', 'social', 'ads', 'crm', 'notes', 'hr', 'meetings', 'projects', 'sign']);
-    expect(loadConfig({ ...base, CROVE_MODULES: '  ' }).CROVE_MODULES).toEqual(['kernel', 'finance', 'social', 'ads', 'crm', 'notes', 'hr', 'meetings', 'projects', 'sign']);
-    expect(loadConfig({ ...base, CROVE_MODULES: ',' }).CROVE_MODULES).toEqual(['kernel', 'finance', 'social', 'ads', 'crm', 'notes', 'hr', 'meetings', 'projects', 'sign']);
-    expect(loadConfig({ ...base, CROVE_MODULES: ' , ,' }).CROVE_MODULES).toEqual(['kernel', 'finance', 'social', 'ads', 'crm', 'notes', 'hr', 'meetings', 'projects', 'sign']);
-    expect(loadConfig({ ...base, CROVE_MODULES: 'kernel' }).CROVE_MODULES).toEqual(['kernel']);
-    expect(loadConfig({ ...base, CROVE_MODULES: ' Finance ' }).CROVE_MODULES).toEqual(['kernel', 'finance']);
-    expect(loadConfig({ ...base, CROVE_MODULES: 'finance,kernel' }).CROVE_MODULES).toEqual(['kernel', 'finance']);
-    expect(() => loadConfig({ ...base, CROVE_MODULES: 'kernel,service' })).toThrow(/LUDY_MODULES \(unknown module\(s\) service; available: kernel, finance, social, ads, crm, notes, hr, meetings, projects, sign\)/);
-    expect(loadConfig({ ...base, LUDY_MODULES: 'finance,crm', CROVE_MODULES: 'finance,crm' }).LUDY_MODULES).toEqual(['kernel', 'finance', 'crm']);
-    expect(() => loadConfig({ ...base, LUDY_MODULES: 'finance', CROVE_MODULES: 'crm' })).toThrow(/LUDY_MODULES and CROVE_MODULES are both set with conflicting values/);
+  it('enables every module by default, always keeps kernel, ignores retired CROVE_MODULES, and refuses an unknown module', () => {
+    expect(loadConfig(base).LUDY_MODULES).toEqual(['kernel', 'finance', 'social', 'ads', 'crm', 'notes', 'hr', 'meetings', 'projects', 'sign']);
+    expect(loadConfig({ ...base, LUDY_MODULES: '  ' }).LUDY_MODULES).toEqual(['kernel', 'finance', 'social', 'ads', 'crm', 'notes', 'hr', 'meetings', 'projects', 'sign']);
+    expect(loadConfig({ ...base, CROVE_MODULES: 'kernel' }).LUDY_MODULES).toEqual(['kernel', 'finance', 'social', 'ads', 'crm', 'notes', 'hr', 'meetings', 'projects', 'sign']);
+    expect(loadConfig({ ...base, LUDY_MODULES: ',' }).LUDY_MODULES).toEqual(['kernel', 'finance', 'social', 'ads', 'crm', 'notes', 'hr', 'meetings', 'projects', 'sign']);
+    expect(loadConfig({ ...base, LUDY_MODULES: ' , ,' }).LUDY_MODULES).toEqual(['kernel', 'finance', 'social', 'ads', 'crm', 'notes', 'hr', 'meetings', 'projects', 'sign']);
+    expect(loadConfig({ ...base, LUDY_MODULES: 'kernel' }).LUDY_MODULES).toEqual(['kernel']);
+    expect(loadConfig({ ...base, LUDY_MODULES: ' Finance ' }).LUDY_MODULES).toEqual(['kernel', 'finance']);
+    expect(loadConfig({ ...base, LUDY_MODULES: 'finance,kernel' }).LUDY_MODULES).toEqual(['kernel', 'finance']);
+    expect(() => loadConfig({ ...base, LUDY_MODULES: 'kernel,service' })).toThrow(/LUDY_MODULES \(unknown module\(s\) service; available: kernel, finance, social, ads, crm, notes, hr, meetings, projects, sign\)/);
   });
 
   it('never resolves the session check to "no check" by default', () => {
@@ -570,7 +570,7 @@ describe('GET /version', () => {
 
   it('answers the build and the committed migrations the ledger lacks, without a token', async () => {
     const full = ledger(['20260101000000', '20260102000000']);
-    const answer = await app({ CROVE_BUILD: '0123456789abcdef0123456789abcdef01234567' }, full.pool).request('/version');
+    const answer = await app({ LUDY_BUILD: '0123456789abcdef0123456789abcdef01234567' }, full.pool).request('/version');
     expect(answer.status).toBe(200);
     expect(await answer.json()).toEqual({ build: '0123456789abcdef0123456789abcdef01234567', migrationsMissing: [] });
     expect(full.released.count).toBe(1);
@@ -580,12 +580,12 @@ describe('GET /version', () => {
   });
 
   it('answers 503 with the build when the database cannot be reached or the ledger read fails', async () => {
-    const down = await app({ CROVE_BUILD: 'v1.2.3' }, { connect: async () => Promise.reject(new Error('refused')) } as unknown as Partial<pg.Pool>).request('/version');
+    const down = await app({ LUDY_BUILD: 'v1.2.3' }, { connect: async () => Promise.reject(new Error('refused')) } as unknown as Partial<pg.Pool>).request('/version');
     expect(down.status).toBe(503);
     expect(await down.json()).toEqual({ build: 'v1.2.3', migrationsMissing: null });
     const lost = Object.assign(new Error('Connection terminated unexpectedly'), { code: '57P01' });
     const dropped = { connect: async () => ({ query: async () => Promise.reject(lost), release: () => undefined }) } as unknown as Partial<pg.Pool>;
-    const midway = await app({ CROVE_BUILD: 'v1.2.3' }, dropped).request('/version');
+    const midway = await app({ LUDY_BUILD: 'v1.2.3' }, dropped).request('/version');
     expect(midway.status).toBe(503);
     expect(await midway.json()).toEqual({ build: 'v1.2.3', migrationsMissing: null });
     // A database no migration has run on misses every migration.
@@ -597,12 +597,11 @@ describe('GET /version', () => {
     });
   });
 
-  it('takes a build id of letters, digits, dot, dash and underscore only', () => {
+  it('takes a build id of letters, digits, dot, dash and underscore only and ignores retired CROVE_BUILD', () => {
     expect(loadConfig({ ...base, LUDY_BUILD: ' ' }).LUDY_BUILD).toBeUndefined();
-    expect(loadConfig({ ...base, CROVE_BUILD: 'abc-123' }).LUDY_BUILD).toBe('abc-123');
-    expect(loadConfig({ ...base, LUDY_BUILD: 'abc-123', CROVE_BUILD: 'abc-123' }).CROVE_BUILD).toBe('abc-123');
-    expect(() => loadConfig({ ...base, LUDY_BUILD: 'abc', CROVE_BUILD: 'def' })).toThrow(/LUDY_BUILD and CROVE_BUILD are both set with conflicting values/);
-    for (const bad of ['a b', '<script>', 'x'.repeat(65)]) expect(() => loadConfig({ ...base, CROVE_BUILD: bad }), bad).toThrow(/LUDY_BUILD/);
+    expect(loadConfig({ ...base, CROVE_BUILD: 'ignored-build' }).LUDY_BUILD).toBeUndefined();
+    expect(loadConfig({ ...base, LUDY_BUILD: 'abc-123' }).LUDY_BUILD).toBe('abc-123');
+    for (const bad of ['a b', '<script>', 'x'.repeat(65)]) expect(() => loadConfig({ ...base, LUDY_BUILD: bad }), bad).toThrow(/LUDY_BUILD/);
   });
 });
 
@@ -831,7 +830,7 @@ describe('inbound email on the API', () => {
 
   it('stores and enqueues the raw message and answers 202, without parsing it', async () => {
     touched = [];
-    const response = await deliver({ authorization: `Bearer ${INBOUND_SECRET}`, 'x-crove-recipient': `${'a'.repeat(24)}@in.test` });
+    const response = await deliver({ authorization: `Bearer ${INBOUND_SECRET}`, 'x-ludy-recipient': `${'a'.repeat(24)}@in.test` });
     expect(response.status).toBe(202);
     expect(touched).toEqual([expect.stringMatching(/^inbound\/[0-9a-f]{64}$/), 'enqueue']);
   });
@@ -858,7 +857,7 @@ describe('inbound email on the API', () => {
   });
 
   it('accepts the current and the previous secret during a rotation, and refuses any other value (#1214)', async () => {
-    const recipient = { 'x-crove-recipient': `${'a'.repeat(24)}@in.test` };
+    const recipient = { 'x-ludy-recipient': `${'a'.repeat(24)}@in.test` };
     for (const secret of [INBOUND_SECRET, INBOUND_SECRET_PREVIOUS]) {
       touched = [];
       expect((await deliver({ authorization: `Bearer ${secret}`, ...recipient })).status).toBe(202);
@@ -886,7 +885,7 @@ describe('inbound email on the API', () => {
     touched = [];
     expect((await deliver({ authorization: 'Bearer nope' })).status).toBe(401);
     expect((await deliver({ authorization: `Bearer ${INBOUND_SECRET}` }, '')).status).toBe(400);
-    expect((await deliver({ authorization: `Bearer ${INBOUND_SECRET}`, 'x-crove-recipient': 'not-a-token@in.test' })).status).toBe(404);
+    expect((await deliver({ authorization: `Bearer ${INBOUND_SECRET}`, 'x-ludy-recipient': 'not-a-token@in.test' })).status).toBe(404);
     expect(touched).toEqual([]);
   });
 
@@ -1303,37 +1302,36 @@ describe('org export owner-run route (#4137)', () => {
   });
 });
 
-describe('dual LUDY_* / CROVE_* env, dual headers and fail-closed conflicts (#3967)', () => {
+describe('LUDY_* env vars and x-ludy-* headers contract legacy shims (#3972)', () => {
   const base = { DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: 'ludy-auth', WEB_DIST: '/nonexistent' };
 
-  it('fails closed on conflicting LUDY_* vs CROVE_* env vars without echoing secret values', () => {
+  it('reads LUDY_* env vars and ignores retired CROVE_* fallback env vars', () => {
     const keyA = Buffer.alloc(32, 7).toString('base64');
-    const keyB = Buffer.alloc(32, 8).toString('base64');
-    let contextErr = '';
-    try {
-      loadConfig({ ...base, LUDY_CONTEXT_TOKEN_KEY: keyA, CROVE_CONTEXT_TOKEN_KEY: keyB });
-    } catch (error) {
-      contextErr = (error as Error).message;
-    }
-    expect(contextErr).toMatch(/LUDY_CONTEXT_TOKEN_KEY and CROVE_CONTEXT_TOKEN_KEY are both set with conflicting values/);
-    expect(contextErr).not.toContain(keyA);
-    expect(contextErr).not.toContain(keyB);
-    expect(() => loadConfig({ ...base, LUDY_BUILD_TIME: '2026-11-22T00:00:00Z', CROVE_BUILD_TIME: '2026-11-22T01:00:00Z' })).toThrow(
-      /LUDY_BUILD_TIME and CROVE_BUILD_TIME are both set with conflicting values/,
-    );
-    expect(loadConfig({ ...base, LUDY_CONTEXT_TOKEN_KEY: keyA, CROVE_CONTEXT_TOKEN_KEY: keyA }).LUDY_CONTEXT_TOKEN_KEY).toBe(keyA);
+    const cfg = loadConfig({ ...base, LUDY_CONTEXT_TOKEN_KEY: keyA, CROVE_CONTEXT_TOKEN_KEY: 'ignored', CROVE_BUILD_TIME: '2026-11-22T01:00:00Z' });
+    expect(cfg.LUDY_CONTEXT_TOKEN_KEY).toBe(keyA);
+    expect(cfg.LUDY_BUILD_TIME).toBeUndefined();
+    expect((cfg as Record<string, unknown>).CROVE_CONTEXT_TOKEN_KEY).toBeUndefined();
+    expect((cfg as Record<string, unknown>).CROVE_MODULES).toBeUndefined();
   });
 
-  it('accepts x-ludy-org and x-crove-org equally and rejects conflicting values on routes and /api/rpc/*', async () => {
+  it('requires x-ludy-org and ignores retired x-crove-org headers on routes and /api/rpc/*', async () => {
     const orgId = randomUUID();
+    const betaId = randomUUID();
+    const seenOrgIds: string[] = [];
     const owner: AuthUser = { userId: randomUUID(), email: 'owner@example.com', name: null, aal: 'aal1', sessionId: randomUUID(), mfaAt: null };
     const app = createHttpApp({
       config: loadConfig(base),
       runtime: {
         installed: () => true,
         modules: () => ['kernel'],
-        forUser: async () => [{ orgId, slug: 'acme', name: 'Acme', role: 'owner' }],
-        query: async () => ({ status: 'active', requestedAt: null, ownerRunTables: [], export: null }),
+        forUser: async () => [
+          { orgId, slug: 'acme', name: 'Acme', role: 'owner' },
+          { orgId: betaId, slug: 'beta', name: 'Beta', role: 'owner' },
+        ],
+        query: async (name: string, _input: unknown, ctx?: { orgId?: string }) => {
+          if (ctx?.orgId) seenOrgIds.push(ctx.orgId);
+          return name === 'kernel.member.invites.list' ? [] : { status: 'active', requestedAt: null, ownerRunTables: [], export: null };
+        },
         execute: async () => ({}),
       } as unknown as Runtime,
       store: {} as BlobStore,
@@ -1344,30 +1342,36 @@ describe('dual LUDY_* / CROVE_* env, dual headers and fail-closed conflicts (#39
 
     for (const headers of [
       { [ORG_HEADER]: 'acme' },
-      { 'x-crove-org': 'acme' },
-      { [ORG_HEADER]: 'acme', 'x-crove-org': 'acme' },
+      { [ORG_HEADER]: 'acme', 'x-crove-org': 'beta' },
     ]) {
       const response = await app.request('/api/org-export/meetings.glossary_term', { headers: { authorization: 'Bearer owner', ...headers } });
       expect(response.status, JSON.stringify(headers)).toBe(409);
       expect(await response.json()).toMatchObject({ code: ORG_NOT_OFFBOARDING });
     }
 
-    const routeConflict = await app.request('/api/org-export/meetings.glossary_term', {
-      headers: { authorization: 'Bearer owner', [ORG_HEADER]: 'acme', 'x-crove-org': 'beta' },
+    const legacyOnlyRoute = await app.request('/api/org-export/meetings.glossary_term', {
+      headers: { authorization: 'Bearer owner', 'x-crove-org': 'acme' },
     });
-    expect(routeConflict.status).toBe(400);
-    expect(await routeConflict.json()).toEqual({ code: 'ORG_HEADER_CONFLICT', message: 'Conflicting x-ludy-org and x-crove-org headers' });
+    expect(legacyOnlyRoute.status).toBe(400);
 
-    const rpcConflict = await app.request('/api/rpc/orgs/list', {
+    const primaryAndLegacyRpc = await app.request('/api/rpc/org/listInvites', {
       method: 'POST',
       headers: { authorization: 'Bearer owner', 'content-type': 'application/json', [ORG_HEADER]: 'acme', 'x-crove-org': 'beta' },
       body: '{}',
     });
-    expect(rpcConflict.status).toBe(400);
-    expect(await rpcConflict.json()).toEqual({ code: 'ORG_HEADER_CONFLICT', message: 'Conflicting x-ludy-org and x-crove-org headers' });
+    expect(primaryAndLegacyRpc.status).toBe(200);
+    expect(seenOrgIds.at(-1)).toBe(orgId);
+
+    const legacyOnlyRpc = await app.request('/api/rpc/org/listInvites', {
+      method: 'POST',
+      headers: { authorization: 'Bearer owner', 'content-type': 'application/json', 'x-crove-org': 'acme' },
+      body: '{}',
+    });
+    expect(legacyOnlyRpc.status).toBe(400);
+    expect(await legacyOnlyRpc.json()).toMatchObject({ json: { code: 'ORG_REQUIRED' } });
   });
 
-  it('accepts x-ludy-invite / x-crove-invite equally, fails closed on mismatch, and drops both before upstream forwarding', async () => {
+  it('reads x-ludy-invite only, ignores x-crove-invite, and drops x-ludy-invite before upstream forwarding', async () => {
     const seen: Array<{ path: string; headers: IncomingHttpHeaders }> = [];
     const upstream = createServer((req, res) => {
       seen.push({ path: req.url ?? '', headers: req.headers });
@@ -1412,25 +1416,19 @@ describe('dual LUDY_* / CROVE_* env, dual headers and fail-closed conflicts (#39
           body: JSON.stringify({ email: 'invited@example.test', password: 'correct-horse-battery-staple' }),
         });
 
-      for (const headers of [
-        { 'x-ludy-invite': validToken },
-        { 'x-crove-invite': validToken },
-        { 'x-ludy-invite': validToken, 'x-crove-invite': validToken },
-      ]) {
-        seen.length = 0;
-        checkedTokens = [];
-        const res = await signup(headers);
-        expect(res.status, JSON.stringify(headers)).toBe(200);
-        expect(checkedTokens).toEqual([validToken]);
-        expect(seen).toHaveLength(1);
-        expect(seen[0]?.headers['x-ludy-invite']).toBeUndefined();
-        expect(seen[0]?.headers['x-crove-invite']).toBeUndefined();
-      }
+      seen.length = 0;
+      checkedTokens = [];
+      const primaryRes = await signup({ 'x-ludy-invite': validToken, 'x-crove-invite': otherToken });
+      expect(primaryRes.status).toBe(200);
+      expect(checkedTokens).toEqual([validToken]);
+      expect(seen).toHaveLength(1);
+      expect(seen[0]?.headers['x-ludy-invite']).toBeUndefined();
+      expect(seen[0]?.headers['x-crove-invite']).toBeUndefined();
 
       seen.length = 0;
       checkedTokens = [];
-      const conflict = await signup({ 'x-ludy-invite': validToken, 'x-crove-invite': otherToken });
-      expect(conflict.status).toBe(403);
+      const legacyOnly = await signup({ 'x-crove-invite': validToken });
+      expect(legacyOnly.status).toBe(403);
       expect(checkedTokens).toEqual([]);
       expect(seen).toHaveLength(0);
 
@@ -1462,32 +1460,58 @@ describe('dual LUDY_* / CROVE_* env, dual headers and fail-closed conflicts (#39
           reserve: async () => ({ allowed: true, release: async () => {} }),
         },
         signupInviteChecks: {
-          held: async () => false,
+          held: async () => true,
           matches: async (_email, token) => token === validToken,
         },
       });
       seen.length = 0;
-      const allowlistConflict = await allowlistApp.request('/auth/v1/signup', {
+      const allowlistLegacy = await allowlistApp.request('/auth/v1/signup', {
         method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-ludy-invite': validToken, 'x-crove-invite': otherToken },
+        headers: { 'content-type': 'application/json', 'x-crove-invite': validToken },
         body: JSON.stringify({ email: 'newcomer@allowed.test', password: 'correct-horse-battery-staple' }),
       });
-      expect(allowlistConflict.status).toBe(403);
+      expect(allowlistLegacy.status).toBe(403);
       expect(seen).toHaveLength(0);
     } finally {
       await new Promise<void>((resolve) => upstream.close(() => resolve()));
     }
   });
 
-  it('accepts x-ludy-recipient and x-crove-recipient equally on inbound email and returns 400 on conflict', async () => {
+  it('reads x-ludy-recipient only and fails closed when only retired x-crove-recipient is sent', async () => {
     const INBOUND_SECRET = 'z'.repeat(32);
     const stored: string[] = [];
+    const seenRecipients: Array<string | null> = [];
+    const connection: DatabaseConnection = {
+      executeQuery: async <R>(query: CompiledQuery) => {
+        seenRecipients.push((query.parameters[3] as string | null) ?? null);
+        return { rows: [{ queued: true }] } as QueryResult<R>;
+      },
+      streamQuery: () => {
+        throw new Error('not used');
+      },
+    };
+    const fakeDb = new Kysely({
+      dialect: {
+        createAdapter: () => new PostgresAdapter(),
+        createDriver: () => ({
+          init: async () => {},
+          acquireConnection: async () => connection,
+          beginTransaction: async () => {},
+          commitTransaction: async () => {},
+          rollbackTransaction: async () => {},
+          releaseConnection: async () => {},
+          destroy: async () => {},
+        }),
+        createIntrospector: (k) => new PostgresIntrospector(k),
+        createQueryCompiler: () => new PostgresQueryCompiler(),
+      },
+    }) as unknown as Db;
     const app = createHttpApp({
       config: loadConfig({ ...base, INBOUND_DOMAIN: 'in.test', INBOUND_SECRET }),
       runtime: {
         installed: () => true,
         modules: () => ['kernel'],
-        orgless: async () => true,
+        orgless: async <T>(fn: (db: Db) => Promise<T>) => fn(fakeDb),
       } as unknown as Runtime,
       store: {
         put: async (key: string) => {
@@ -1504,6 +1528,7 @@ describe('dual LUDY_* / CROVE_* env, dual headers and fail-closed conflicts (#39
       aiEnabled: false,
     });
     const addr = `${'a'.repeat(24)}@in.test`;
+    const badAddr = 'bad@in.test';
     const send = (headers: Record<string, string>) =>
       app.request('/api/inbound/email', {
         method: 'POST',
@@ -1511,21 +1536,41 @@ describe('dual LUDY_* / CROVE_* env, dual headers and fail-closed conflicts (#39
         body: 'From: sender@example.test\r\nSubject: Hi\r\n\r\nBody',
       });
 
-    for (const headers of [
-      { 'x-ludy-recipient': addr },
-      { 'x-crove-recipient': addr },
-      { 'x-ludy-recipient': addr, 'x-crove-recipient': addr },
-    ]) {
-      stored.length = 0;
-      const res = await send(headers);
-      expect(res.status, JSON.stringify(headers)).toBe(202);
-      expect(stored).toHaveLength(1);
-    }
+    stored.length = 0;
+    seenRecipients.length = 0;
+    const primary = await send({ 'x-ludy-recipient': addr, 'x-crove-recipient': badAddr });
+    expect(primary.status).toBe(202);
+    expect(stored).toHaveLength(1);
+    expect(seenRecipients).toEqual([addr]);
 
     stored.length = 0;
-    const conflict = await send({ 'x-ludy-recipient': addr, 'x-crove-recipient': `${'b'.repeat(24)}@in.test` });
-    expect(conflict.status).toBe(400);
-    expect(await conflict.json()).toEqual({ code: 'RECIPIENT_HEADER_CONFLICT', message: 'Conflicting x-ludy-recipient and x-crove-recipient headers' });
+    seenRecipients.length = 0;
+    const badPrimary = await send({ 'x-ludy-recipient': badAddr, 'x-crove-recipient': addr });
+    expect(badPrimary.status).toBe(404);
     expect(stored).toHaveLength(0);
+    expect(seenRecipients).toEqual([]);
+
+    stored.length = 0;
+    seenRecipients.length = 0;
+    const legacyValid = await send({ 'x-crove-recipient': addr });
+    expect(legacyValid.status).toBe(400);
+    expect(await legacyValid.json()).toMatchObject({ code: 'LEGACY_RECIPIENT_HEADER' });
+    expect(stored).toHaveLength(0);
+    expect(seenRecipients).toEqual([]);
+
+    stored.length = 0;
+    seenRecipients.length = 0;
+    const legacyInvalid = await send({ 'x-crove-recipient': badAddr });
+    expect(legacyInvalid.status).toBe(400);
+    expect(await legacyInvalid.json()).toMatchObject({ code: 'LEGACY_RECIPIENT_HEADER' });
+    expect(stored).toHaveLength(0);
+    expect(seenRecipients).toEqual([]);
+
+    stored.length = 0;
+    seenRecipients.length = 0;
+    const headerless = await send({});
+    expect(headerless.status).toBe(202);
+    expect(stored).toHaveLength(1);
+    expect(seenRecipients).toEqual([null]);
   });
 });

@@ -13,7 +13,7 @@ import type { BlobStore, Runtime } from '@ludy/kernel-runtime';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 // Supabase Auth's GOTRUE_RATE_LIMIT_EMAIL_SENT in the fake, and the kernel's per-client cap (10 x 2 <= 20).
 const BUDGET = 20;

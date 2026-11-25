@@ -131,6 +131,7 @@ const PENDING_TABLES = new Set<string>([
   'crove_kernel.member_vy_memory',
   'crove_kernel.member_vy_result',
   'crove_meetings.live_line',
+  'crove_meetings.meeting_label',
   'crove_meetings.meeting_link',
   'crove_meetings.tracker_alert',
   'crove_notes.link',
@@ -232,6 +233,7 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   ['crove_meetings.meeting', () => 'false'], // As above.
   ['crove_meetings.meeting_chapter', () => 'false'], // The chapters of a meeting, read by the recorder and, once published, the readers of the meeting, users (meetings chapters, #3844).
   ['crove_meetings.meeting_highlight', () => 'false'], // The highlights of a meeting, read by its readers and recorder, users (meetings highlights, #4819).
+  ['crove_meetings.meeting_label', () => 'false'], // The labels the recorder puts on a meeting, read by the recorder and the readers of the meeting, users (meeting labels, #4955); an agent context reads none.
   ['crove_meetings.meeting_link', () => 'false'], // As above (a link is read through its meeting's readers, L1 #2587).
   ['crove_meetings.meeting_note', () => 'false'], // The recorder's own rough notes, read by the recorder, a user (meetings integrations A5, #3163).
   ['crove_meetings.meeting_reader', () => 'false'], // As above.
@@ -365,6 +367,8 @@ const AUTHOR_ONLY = new Map<string, string>([
   ['crove_meetings.meeting_chapter', 'false'],
   // The highlights of a meeting (meetings highlights, #4819): read by the readers and the recorder, written by them, users only; worker system context reads and writes nothing.
   ['crove_meetings.meeting_highlight', 'false'],
+  // The labels of a meeting (meeting labels, #4955): read by the recorder and the readers, written and deleted by the recorder, users only; worker system context reads and writes nothing.
+  ['crove_meetings.meeting_label', 'false'],
   // Meeting readers (ADR-0047 point 2): worker system context reads and writes nothing.
   ['crove_meetings.meeting_link', 'false'],
   // The recorder's own rough notes (meetings integrations A5, #3163): the recorder's alone; worker system context reads and writes nothing.
@@ -3597,6 +3601,18 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       return {
         setup: [{ table: 'crove_meetings.meeting', values: meeting }],
         row: { org_id: o.id, id: randomUUID(), meeting_id: meeting.id, created_by: o.owner, start_seconds: 0, end_seconds: 5 },
+      };
+    },
+  },
+  // #4955 (meeting labels): a short plain-text label the recorder puts on a meeting (at most 5 a meeting, 40 characters), so a business with no CRM can group its meetings. Read by the recorder and the
+  // readers of the meeting, inserted and deleted by the recorder (the org's owner is the recorder of the factory's meeting), all in a user context; the system context reads none. No UPDATE for a login
+  // role. Its factory lands before the table (PENDING_TABLES).
+  'crove_meetings.meeting_label': {
+    make: (o) => {
+      const meeting = meetingsMeetingRow(o);
+      return {
+        setup: [{ table: 'crove_meetings.meeting', values: meeting }],
+        row: { org_id: o.id, id: randomUUID(), meeting_id: meeting.id, label: 'RLS matrix label', created_by: o.owner },
       };
     },
   },

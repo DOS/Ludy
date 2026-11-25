@@ -1,6 +1,5 @@
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
-import { checkEnvPair } from '@ludy/db';
 import { EXTRACT_TIMING } from '@ludy/extract-contract';
 import { misaBlockers } from '@ludy/einvoice';
 import { MODULE_IDS, TRANSLATION_FLAGGED_TARGETS, zExtensionId, type ModuleId, type TranslationFlaggedTarget } from '@ludy/kernel-contract';
@@ -830,60 +829,21 @@ const schema = z.object({
 
 export type SessionCheckMode = 'db' | 'jwt' | 'off';
 
-const BRANDED_ENV_PAIRS = [
-  ['LUDY_MODULES', 'CROVE_MODULES'],
-  ['LUDY_SHARED_DATABASE', 'CROVE_SHARED_DATABASE'],
-  ['LUDY_SHARED_DATABASE_SWITCH', 'CROVE_SHARED_DATABASE_SWITCH'],
-  ['LUDY_CONTEXT_TOKEN_KEY', 'CROVE_CONTEXT_TOKEN_KEY'],
-  ['LUDY_BUILD', 'CROVE_BUILD'],
-  ['LUDY_BUILD_TIME', 'CROVE_BUILD_TIME'],
-  ['LUDY_ALLOW_ALL_IN_ONE', 'CROVE_ALLOW_ALL_IN_ONE'],
-  ['LUDY_APP_DB_PASSWORD', 'CROVE_APP_DB_PASSWORD'],
-  ['LUDY_WORKER_DB_PASSWORD', 'CROVE_WORKER_DB_PASSWORD'],
-  ['LUDY_PROBER_DB_PASSWORD', 'CROVE_PROBER_DB_PASSWORD'],
-  ['LUDY_REPORTER_DB_PASSWORD', 'CROVE_REPORTER_DB_PASSWORD'],
-] as const;
-
-function normalizeBrandedEnv(env: NodeJS.ProcessEnv): Record<string, string | undefined> {
-  const normalized: Record<string, string | undefined> = { ...env };
-  for (const [primary, legacy] of BRANDED_ENV_PAIRS) {
-    const resolved = checkEnvPair(env, primary, legacy);
-    if (!resolved.ok) {
-      throw new Error(`invalid configuration: ${resolved.error}`);
-    }
-    if (resolved.value !== undefined) {
-      normalized[primary] = resolved.value;
-    } else {
-      delete normalized[primary];
-    }
-  }
-  return normalized;
-}
-
-type LegacyBrandedConfig = {
-  readonly CROVE_MODULES: z.infer<typeof schema>['LUDY_MODULES'];
-  readonly CROVE_SHARED_DATABASE: 'true' | 'false';
-  readonly CROVE_SHARED_DATABASE_SWITCH: 'true' | 'false';
-  readonly CROVE_CONTEXT_TOKEN_KEY: string | undefined;
-  readonly CROVE_BUILD: string | undefined;
-  readonly CROVE_BUILD_TIME: string | undefined;
-  readonly CROVE_ALLOW_ALL_IN_ONE: 'true' | 'false' | undefined;
-  readonly CROVE_APP_DB_PASSWORD: string | undefined;
-  readonly CROVE_WORKER_DB_PASSWORD: string | undefined;
-  readonly CROVE_PROBER_DB_PASSWORD: string | undefined;
-  readonly CROVE_REPORTER_DB_PASSWORD: string | undefined;
+export type Config = Omit<z.infer<typeof schema>, 'AUTH_ISSUER' | 'AUTH_SESSION_CHECK' | 'EINVOICE_SANDBOX' | 'ADS_SANDBOX'> & {
+  AUTH_ISSUER: string;
+  AUTH_SESSION_CHECK: SessionCheckMode;
+  EINVOICE_SANDBOX: 'true' | 'false';
+  ADS_SANDBOX: 'true' | 'false';
 };
 
-export type Config = Omit<z.infer<typeof schema>, 'AUTH_ISSUER' | 'AUTH_SESSION_CHECK' | 'EINVOICE_SANDBOX' | 'ADS_SANDBOX'> &
-  LegacyBrandedConfig & {
-    AUTH_ISSUER: string;
-    AUTH_SESSION_CHECK: SessionCheckMode;
-    EINVOICE_SANDBOX: 'true' | 'false';
-    ADS_SANDBOX: 'true' | 'false';
-  };
-
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  const parsed = schema.safeParse(normalizeBrandedEnv(env));
+  if (env.CROVE_SHARED_DATABASE?.trim()) {
+    throw new Error('Invalid configuration: CROVE_SHARED_DATABASE has been retired; rename it to LUDY_SHARED_DATABASE');
+  }
+  if (env.CROVE_SHARED_DATABASE_SWITCH?.trim()) {
+    throw new Error('Invalid configuration: CROVE_SHARED_DATABASE_SWITCH has been retired; rename it to LUDY_SHARED_DATABASE_SWITCH');
+  }
+  const parsed = schema.safeParse(env);
   if (!parsed.success) {
     const fields = parsed.error.issues.map((i) => (i.code === 'custom' ? `${i.path.join('.')} (${i.message})` : i.path.join('.'))).join(', ');
     throw new Error(`invalid configuration: ${fields}`);
@@ -894,17 +854,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   }
   const config: Config = {
     ...raw,
-    CROVE_MODULES: raw.LUDY_MODULES,
-    CROVE_SHARED_DATABASE: raw.LUDY_SHARED_DATABASE,
-    CROVE_SHARED_DATABASE_SWITCH: raw.LUDY_SHARED_DATABASE_SWITCH,
-    CROVE_CONTEXT_TOKEN_KEY: raw.LUDY_CONTEXT_TOKEN_KEY,
-    CROVE_BUILD: raw.LUDY_BUILD,
-    CROVE_BUILD_TIME: raw.LUDY_BUILD_TIME,
-    CROVE_ALLOW_ALL_IN_ONE: raw.LUDY_ALLOW_ALL_IN_ONE,
-    CROVE_APP_DB_PASSWORD: raw.LUDY_APP_DB_PASSWORD,
-    CROVE_WORKER_DB_PASSWORD: raw.LUDY_WORKER_DB_PASSWORD,
-    CROVE_PROBER_DB_PASSWORD: raw.LUDY_PROBER_DB_PASSWORD,
-    CROVE_REPORTER_DB_PASSWORD: raw.LUDY_REPORTER_DB_PASSWORD,
     AUTH_ISSUER: raw.AUTH_ISSUER,
     AUTH_SESSION_CHECK: raw.AUTH_SESSION_CHECK ?? (raw.AUTH_UPSTREAM_URL ? 'db' : 'jwt'),
     EINVOICE_SANDBOX: raw.EINVOICE_SANDBOX ?? (isLocalUrl(raw.PUBLIC_URL) ? 'true' : 'false'),

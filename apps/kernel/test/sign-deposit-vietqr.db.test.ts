@@ -173,7 +173,7 @@ suite('eSign Slice 6d post-sign VietQR deposit & accounting bridge (#4723)', () 
       headers: {
         authorization: `Bearer ${await tokenFor(who)}`,
         'content-type': 'application/json',
-        ...(slug ? { 'x-crove-org': slug } : {}),
+        ...(slug ? { 'x-ludy-org': slug } : {}),
       },
       body: JSON.stringify(input === undefined ? {} : { json: input }),
     });
@@ -187,7 +187,7 @@ suite('eSign Slice 6d post-sign VietQR deposit & accounting bridge (#4723)', () 
     form.append('purpose', 'sign_document');
     const res = await app.request('/api/files', {
       method: 'POST',
-      headers: { authorization: `Bearer ${await tokenFor(who)}`, 'x-crove-org': slug },
+      headers: { authorization: `Bearer ${await tokenFor(who)}`, 'x-ludy-org': slug },
       body: form,
     });
     expect(res.status).toBe(200);
@@ -292,7 +292,7 @@ suite('eSign Slice 6d post-sign VietQR deposit & accounting bridge (#4723)', () 
         headers: {
           authorization: `Bearer ${await tokenFor(owner, { mfa: true })}`,
           'content-type': 'application/json',
-          'x-crove-org': org.slug,
+          'x-ludy-org': org.slug,
         },
         body: JSON.stringify({ json: { email: acct.email, role } }),
       });
@@ -373,12 +373,12 @@ suite('eSign Slice 6d post-sign VietQR deposit & accounting bridge (#4723)', () 
     expect((memberGet.body.profile as Record<string, unknown>).accountNumber).toBe('0123456789');
 
     const memberQrDownload = await app.request(`/api/files/${qrFileId}`, {
-      headers: { authorization: `Bearer ${await tokenFor(member)}`, 'x-crove-org': org.slug },
+      headers: { authorization: `Bearer ${await tokenFor(member)}`, 'x-ludy-org': org.slug },
     });
     expect(memberQrDownload.status).toBe(200);
 
     const viewerQrDownload = await app.request(`/api/files/${qrFileId}`, {
-      headers: { authorization: `Bearer ${await tokenFor(viewer)}`, 'x-crove-org': org.slug },
+      headers: { authorization: `Bearer ${await tokenFor(viewer)}`, 'x-ludy-org': org.slug },
     });
     expect(viewerQrDownload.status).toBe(404);
 
@@ -956,7 +956,7 @@ suite('eSign Slice 6d post-sign VietQR deposit & accounting bridge (#4723)', () 
     const proofFileId = (detailAfterNotice.body.deposit as { signerProofFileId: string | null }).signerProofFileId;
     expect(typeof proofFileId).toBe('string');
     const fileDownloadRes = await app.request(`/api/files/${proofFileId}`, {
-      headers: { authorization: `Bearer ${await tokenFor(member)}`, 'x-crove-org': org.slug },
+      headers: { authorization: `Bearer ${await tokenFor(member)}`, 'x-ludy-org': org.slug },
     });
     expect(fileDownloadRes.status).toBe(200);
 

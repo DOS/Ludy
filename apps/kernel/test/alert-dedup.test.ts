@@ -45,11 +45,11 @@ const EMPTY: GateState = { problem: null, startedAt: null, notifiedAt: null };
 // A probe harness: one gate (the shared state) and one outage gate across probes, a webhook that records texts.
 function harness(options: { repeatSeconds?: number; status?: () => number } = {}) {
   const texts: string[] = [];
-  const bodies: Array<{ text: string; crove: Record<string, unknown> }> = [];
+  const bodies: Array<{ text: string; ludy: Record<string, unknown>; crove?: unknown }> = [];
   const out: string[] = [];
   const err: string[] = [];
   const fetch = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
-    const body = JSON.parse(String(init?.body)) as { text: string; crove: Record<string, unknown> };
+    const body = JSON.parse(String(init?.body)) as { text: string; ludy: Record<string, unknown>; crove?: unknown };
     const status = options.status?.() ?? 200;
     if (status === 200) {
       texts.push(body.text);
@@ -141,15 +141,16 @@ describe('probes notify on news only', () => {
 
     expect(await h.probe(minutes(65), workerDown)).toBe(EXIT.unhealthy);
     expect(h.texts[1]).toBe('[Ludy] STILL FAILING on office for 1 h: 1 health check(s) failed.\n- last worker heartbeat was 900 s ago (limit 120 s): the worker is down');
-    expect(h.bodies[1]?.crove).toMatchObject({ kind: 'alert', state: 'repeat', severity: 'critical', since: '2026-10-16T12:05:00.000Z' });
+    expect(h.bodies[1]?.ludy).toMatchObject({ kind: 'alert', state: 'repeat', severity: 'critical', since: '2026-10-16T12:05:00.000Z' });
+    expect(h.bodies[1]?.crove).toBeUndefined();
 
     expect(await h.probe(minutes(70), workerAndRelayDown)).toBe(EXIT.unhealthy);
     expect(h.texts[2]).toMatch(/^\[Ludy\] ALERT on office: 2 health check\(s\) failed \(was: heartbeat\)\.\n- oldest unpublished outbox event/);
-    expect(h.bodies[2]?.crove).toMatchObject({ state: 'changed', previous: ['heartbeat'] });
+    expect(h.bodies[2]?.ludy).toMatchObject({ state: 'changed', previous: ['heartbeat'] });
 
     expect(await h.probe(minutes(80), healthy)).toBe(EXIT.ok);
     expect(h.texts[3]).toBe('[Ludy] RESOLVED on office: the failing health checks pass again after 1 h 15 min (heartbeat, outbox).');
-    expect(h.bodies[3]?.crove).toMatchObject({ kind: 'resolved', severity: 'info', findings: [], previous: ['heartbeat', 'outbox'] });
+    expect(h.bodies[3]?.ludy).toMatchObject({ kind: 'resolved', severity: 'info', findings: [], previous: ['heartbeat', 'outbox'] });
     expect(h.out).toContain('[prober] resolved notice sent to webhook at hooks.example.test');
 
     expect(await h.probe(minutes(85), healthy)).toBe(EXIT.ok);
