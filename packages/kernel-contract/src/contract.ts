@@ -708,6 +708,7 @@ import { zOpenPointsAnswer } from './meeting-open-points.ts';
 import { zDigestAnswer, zDigestAsk, zDigestFacts, zDigestStatus } from './meeting-digest.ts';
 import { zLoadWeek, zLoadWeekInput } from './meeting-load.ts';
 import { zTrackerAdd, zTrackerDone, zTrackerHits, zTrackerList, zTrackerMeetingInput, zTrackerRemove, zTrackerTerms, zTrackerWeek, zTrackerWeekInput } from './meeting-trackers.ts';
+import { zHighlightAdd, zHighlightAdded, zHighlightRemove, zHighlightRemoved, zHighlights } from './meeting-highlights.ts';
 import { zMeetingsTodayFacts } from './meeting-today.ts';
 import { zMorningEmpty, zMorningSet, zMorningState } from './meeting-morning.ts';
 import { zAssigneeAnswer, zAssigneeAsk, zAssigneeStatus } from './meeting-assignee.ts';
@@ -1990,6 +1991,13 @@ export const contract = {
       remove: oc.input(zTrackerRemove).output(zTrackerDone),
       hits: oc.input(zTrackerMeetingInput).output(zTrackerHits),
       week: oc.input(zTrackerWeekInput).output(zTrackerWeek),
+    },
+    // Highlights on a transcript line or range (#4819): `list` the marks of a meeting the caller may read, `add` and `remove` the caller's own (the recorder removes any mark of their meeting). A mark
+    // is an anchor in seconds and who made it, no text: the lines are read from the transcript.
+    highlight: {
+      list: oc.input(zMeetingRef).output(zHighlights),
+      add: oc.input(zHighlightAdd).output(zHighlightAdded),
+      remove: oc.input(zHighlightRemove).output(zHighlightRemoved),
     },
     // The Today view (#3955): the member's own agenda for today with the facts of each event's brief, read by code as the member in one call and working with AI off. Vy's sentences stay the brief's own click.
     today: {

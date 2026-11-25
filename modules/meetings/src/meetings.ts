@@ -30,6 +30,7 @@ import { translateRunCommands, translateRunQueries } from './translate-run.ts';
 import { askRunCommands, askRunQueries } from './ask.ts';
 import { briefCommands, briefQueries } from './brief.ts';
 import { digestCommands, digestQueries } from './digest.ts';
+import { highlightsCommands, highlightsQueries } from './highlights.ts';
 import { loadQueries } from './load.ts';
 import { trackersCommands, trackersQueries } from './trackers.ts';
 import { minutesDocxQueries } from './minutes-docx.ts';
@@ -1131,6 +1132,7 @@ export const meetingsCommands = [
   ...notesCommands,
   ...chaptersCommands,
   ...trackersCommands,
+  ...highlightsCommands,
   ...chaptersRunCommands,
   ...titleCommands,
   ...commitmentsCommands,
@@ -1201,6 +1203,7 @@ export const meetingsQueries = [
   ...digestQueries,
   ...loadQueries,
   ...trackersQueries,
+  ...highlightsQueries,
   ...minutesDocxQueries,
   ...todayQueries,
   ...morningQueries,
