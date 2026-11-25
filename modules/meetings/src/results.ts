@@ -304,7 +304,7 @@ export const resultPublish = defineCommand({
     // them; meetings.chapters.save holds it too, so a save and this publish are one after the other.
     await ctx.trx.selectFrom('ludy_meetings.meeting').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).forNoKeyUpdate().execute();
     // Then the published lines, exclusively: a highlight added at this moment (by a reader, who cannot hold the row) is checked against the lines before this publish or the ones it leaves, never half of each (#4971).
-    await lockPublishedLines(ctx.trx, input.meetingId, 'replace');
+    await lockPublishedLines(ctx.trx, ctx.orgId, input.meetingId, 'replace');
     // Text the model wrote is shared only after the recorder has read it (meetings.draft.review) or rewritten it; the database refuses it too.
     const unread = await ctx.trx
       .selectFrom('ludy_meetings.meeting_result')

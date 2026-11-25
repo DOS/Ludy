@@ -198,15 +198,15 @@ suite('Highlights (#4819)', () => {
     expect(text).toContain('startSeconds');
   });
 
-  // The order of a mark and a re-publish (#4971). A reader cannot hold the meeting row, so the add and the publish take one advisory lock of the meeting (key `meetings.lines:<id>`): the publish exclusively, the add shared.
-  const LINES_LOCK = "pg_catalog.hashtextextended('meetings.lines:' || $1::text, 0)";
+  // The order of a mark and a re-publish (#4971). A reader cannot hold the meeting row, so the add and the publish take one advisory lock of the meeting (key `meetings.lines:<org>:<meeting>`): the publish exclusively, the add shared.
+  const LINES_LOCK = "pg_catalog.hashtextextended('meetings.lines:' || lower($1::text) || ':' || lower($2::text), 0)";
   // A transaction of its own that holds the lock, to play the other side.
   async function holding<T>(meetingId: string, mode: 'pg_advisory_xact_lock' | 'pg_advisory_xact_lock_shared', during: (c: pg.Client) => Promise<T>, release: (c: pg.Client) => Promise<void>): Promise<T> {
     const c = new pg.Client({ connectionString: adminUrl });
     await c.connect();
     try {
       await c.query('BEGIN');
-      await c.query(`SELECT pg_catalog.${mode}(${LINES_LOCK})`, [meetingId]);
+      await c.query(`SELECT pg_catalog.${mode}(${LINES_LOCK})`, [orgId, meetingId]);
       const out = await during(c);
       await release(c);
       return out;
