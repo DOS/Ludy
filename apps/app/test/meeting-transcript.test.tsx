@@ -142,6 +142,49 @@ describe('MeetingTranscript', () => {
   });
 });
 
+describe('the filters above the lines (#4954)', () => {
+  const lines: Transcript = {
+    meetingId: 'm1',
+    isRecorder: false,
+    stage: 'published',
+    segments: [
+      segment('q', 0, 'Gói này giá bao nhiêu?', { stage: 'published' }),
+      segment('f', 5, 'Báo giá 2.500.000đ một tháng', { stage: 'published' }),
+      segment('d', 9, 'Em gửi hợp đồng vào thứ Sáu', { stage: 'published' }),
+      segment('x', 12, 'Cảm ơn anh', { stage: 'published' }),
+    ],
+  };
+
+  it('offers the three filters with how many lines each finds, and shows every line until one is picked', () => {
+    const html = render(lines);
+    expect(html).toContain('data-testid="transcript-filters"');
+    expect(html).toContain('Questions (1)');
+    expect(html).toContain('Figures (1)');
+    expect(html).toContain('Dates and deadlines (1)');
+    expect(html.match(/aria-pressed="false"[^>]*data-testid="transcript-filter-/g)).toHaveLength(3);
+    expect(html.match(/data-testid="transcript-line"/g)).toHaveLength(4);
+    expect(html).not.toContain('transcript-filter-note');
+  });
+
+  it('is worded in Vietnamese', () => {
+    const html = render(lines, 'vi');
+    expect(html).toContain('Câu hỏi (1)');
+    expect(html).toContain('Con số (1)');
+    expect(html).toContain('Hạn và ngày (1)');
+  });
+
+  it('is not shown when the reader has no lines to read', () => {
+    expect(render({ meetingId: 'm1', isRecorder: false, stage: 'none', segments: [] })).not.toContain('transcript-filters');
+  });
+
+  it('names nothing of a line the reader may not read: the counts come from the lines in the transcript the kernel returned', () => {
+    // The recorder's draft lines are the recorder's alone: another reader's transcript holds published lines only, so the counts are theirs.
+    const html = render({ ...lines, segments: [lines.segments[3] as (typeof lines.segments)[number]] });
+    expect(html).toContain('Questions (0)');
+    expect(html).toContain('Figures (0)');
+  });
+});
+
 describe('the time of a line (#4816)', () => {
   const transcript = (): Transcript => ({ meetingId: 'm1', isRecorder: false, stage: 'published', segments: [segment('s1', 65.4, 'Chào mọi người', { stage: 'published' }), segment('s2', 3725, 'Hẹn gặp lại', { stage: 'published' })] });
 
