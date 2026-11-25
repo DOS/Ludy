@@ -93,18 +93,16 @@ describe('the weekly notice text in the app (#4967)', () => {
     expect(text('vi', { ...base, cut: 'yes', overdue: 0 })).toContain('ít nhất 3 cuộc họp');
   });
 
-  it('adds the tracked-word clause only when the notice holds the number, "1 time" and "999+" right, in both languages (#5019)', () => {
+  it('adds the tracked-word clause only when the notice holds the number, "999+" and "at least" right, in both languages (#5019)', () => {
     const base = { meetings: 3, decisions: 4, open: 5, overdue: 2, cut: 'no' };
-    expect(text('en', { ...base, tracked: 12, trackedMore: 'no' })).toContain('2 overdue, tracked words came up 12 times. Open the meetings page');
-    expect(text('en', { ...base, tracked: 1, trackedMore: 'no' })).toContain('tracked words came up 1 time.');
-    expect(text('en', { ...base, tracked: 999, trackedMore: 'yes' })).toContain('tracked words came up 999+ times.');
-    expect(text('vi', { ...base, tracked: 12, trackedMore: 'no' })).toContain('2 việc quá hạn, từ khóa theo dõi xuất hiện 12 lần. Mở trang Cuộc họp');
-    expect(text('vi', { ...base, tracked: 999, trackedMore: 'yes' })).toContain('từ khóa theo dõi xuất hiện 999+ lần.');
-    expect(text('en', { ...base, cut: 'yes', tracked: 12, trackedMore: 'no' })).toContain('tracked words came up at least 12 times.');
-    expect(text('en', { ...base, cut: 'yes', tracked: 1, trackedMore: 'no' })).toContain('tracked words came up at least 1 time.');
-    expect(text('en', { ...base, cut: 'yes', tracked: 999, trackedMore: 'yes' })).toContain('tracked words came up at least 999+ times.');
-    expect(text('vi', { ...base, cut: 'yes', tracked: 12, trackedMore: 'no' })).toContain('từ khóa theo dõi xuất hiện ít nhất 12 lần.');
+    expect(text('en', { ...base, tracked: 12, trackedMore: 'no' })).toContain('2 overdue, tracked word mentions: 12. Open the meetings page');
+    expect(text('en', { ...base, tracked: 1, trackedMore: 'no' })).toContain('tracked word mentions: 1.');
+    expect(text('en', { ...base, tracked: 999, trackedMore: 'yes' })).toContain('tracked word mentions: 999+.');
+    expect(text('en', { ...base, cut: 'yes', tracked: 12, trackedMore: 'no' })).toContain('tracked word mentions: at least 12.');
+    expect(text('vi', { ...base, tracked: 12, trackedMore: 'no' })).toContain('2 việc quá hạn, số lần từ khóa theo dõi xuất hiện: 12. Mở trang Cuộc họp');
+    expect(text('vi', { ...base, tracked: 999, trackedMore: 'yes' })).toContain('số lần từ khóa theo dõi xuất hiện: 999+.');
+    expect(text('vi', { ...base, cut: 'yes', tracked: 12, trackedMore: 'no' })).toContain('số lần từ khóa theo dõi xuất hiện: ít nhất 12.');
     expect(text('vi', { ...base, tracked: 0, trackedMore: 'no' })).not.toContain('từ khóa');
-    expect(text('en', { ...base, tracked: 0, trackedMore: 'no' })).not.toContain('tracked words');
+    expect(text('en', { ...base, tracked: 0, trackedMore: 'no' })).not.toContain('tracked word');
   });
 });

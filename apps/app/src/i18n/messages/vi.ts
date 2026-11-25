@@ -1053,7 +1053,7 @@ export const vi = {
       tracker_alert: 'Trong bản ghi một cuộc họp mới: {words}. Mở cuộc họp để đọc.',
       tracker_alert_plain: 'Từ khóa bạn theo dõi có trong bản ghi một cuộc họp mới. Mở cuộc họp để đọc.',
       morning: 'Hôm nay bạn có {count, plural, other {# cuộc họp}}. Mở trang Cuộc họp để xem.',
-      weekly: '7 ngày qua: {cut, select, yes {ít nhất } other {}}{meetings, plural, other {# cuộc họp}} có kết quả đã công bố, {decisions, plural, other {# quyết định}} đã công bố, {open, plural, other {# việc còn mở}}{overdue, plural, =0 {} other {, # việc quá hạn}}{trackedMore, select, yes {, từ khóa theo dõi xuất hiện {cut, select, yes {ít nhất } other {}}{tracked}+ lần} other {{tracked, plural, =0 {} other {, từ khóa theo dõi xuất hiện {cut, select, yes {ít nhất } other {}}# lần}}}}. Mở trang Cuộc họp để xem tuần này.',
+      weekly: '7 ngày qua: {cut, select, yes {ít nhất } other {}}{meetings, plural, other {# cuộc họp}} có kết quả đã công bố, {decisions, plural, other {# quyết định}} đã công bố, {open, plural, other {# việc còn mở}}{overdue, plural, =0 {} other {, # việc quá hạn}}{tracked, plural, =0 {} other {, số lần từ khóa theo dõi xuất hiện: {cut, select, yes {ít nhất } other {}}#{trackedMore, select, yes {+} other {}}}}. Mở trang Cuộc họp để xem tuần này.',
       ai_budget_warn: 'Ngân sách AI đã dùng {percent}%. Hết ngân sách thì chỉ phần AI dừng, sổ sách vẫn chạy.',
       ai_budget_stop: 'Ngân sách AI tháng này đã hết. Việc cần AI sẽ chờ; hãy nâng ngân sách hoặc đợi sang tháng mới. Sổ sách vẫn chạy bình thường.',
       channel_expired: 'Một tài khoản quảng cáo bị tạm dừng cập nhật vì kết nối hết hạn hoặc bị từ chối. Hãy kết nối lại để lấy tiếp số liệu, không mất ngày nào.',
