@@ -52,7 +52,7 @@ suite('a kill switch per relay type on PostgreSQL (#1696)', () => {
       const { rows } = await c.query<{ id: string }>(
         `WITH e AS (INSERT INTO ludy_kernel.outbox_event (org_id, type, payload, created_at)
                     VALUES ($1, $2, '{}', now() - $3::interval) RETURNING org_id, id)
-         INSERT INTO ludy_kernel.outbox_pending (org_id, event_id) SELECT org_id, id FROM e RETURNING event_id AS id`,
+         INSERT INTO ludy_kernel.outbox_pending (org_id, event_id, enqueued_at) SELECT org_id, id, now() - $3::interval FROM e RETURNING event_id AS id`,
         [orgId, type, age],
       );
       return rows[0]?.id as string;
@@ -178,7 +178,7 @@ suite('a kill switch per relay type on PostgreSQL (#1696)', () => {
         `WITH e AS (INSERT INTO ludy_kernel.outbox_event (org_id, type, payload, created_at)
                     SELECT $1, $2, jsonb_build_object('i', g), now() - interval '1 hour' FROM generate_series(1, $3) g
                     RETURNING org_id, id)
-         INSERT INTO ludy_kernel.outbox_pending (org_id, event_id) SELECT org_id, id FROM e`,
+         INSERT INTO ludy_kernel.outbox_pending (org_id, event_id, enqueued_at) SELECT org_id, id, now() - interval '1 hour' FROM e`,
         [orgId, type, n],
       ),
     );
