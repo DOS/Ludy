@@ -95,7 +95,9 @@ suite('a Zoom cloud recording from the connect to the staged bytes (meetings int
   let workerDb: ReturnType<typeof createDb>;
   const vault = new CredentialVault([parseVaultKey(randomBytes(32).toString('base64'))]);
   const stub = zoom();
-  const adapter = new ZoomMeetingPlatform(ZOOM_APP, { fetch: stub.fetchImpl, now: () => FIXTURE_NOW });
+  // No `now` on the adapter: the token the connect seals must expire an hour after the REAL clock, which the download job reads (it renews a token that is about to expire, and this test registers no refresh command).
+  // The sweep's `now` alone fixes the 14 day window the recorded fixtures fit in (the adapter filters on the `since` it is given).
+  const adapter = new ZoomMeetingPlatform(ZOOM_APP, { fetch: stub.fetchImpl });
   const owner = account('owner');
   const member = account('member');
   let org = { slug: '', orgId: '' };
@@ -217,8 +219,10 @@ suite('a Zoom cloud recording from the connect to the staged bytes (meetings int
     expect(secret).toMatchObject({ accessToken: ACCESS, refreshToken: 'zoom-refresh-not-real-0001' });
   });
 
+  // The database's own sweep step deletes a suggestion older than 14 days by the real clock, and the fixtures are dated 2026-11-15 to 2026-11-17: from about 2026-11-29 a sweep that is not due would drop them, so every
+  // step below that needs the rows follows a ring (which makes the next sweep list again) or finds them already importing.
   it('lists the recordings Zoom has finished in the last 14 days, through the member\'s own sealed token, and nothing it has not finished', async () => {
-    await sweep();
+    expect(await sweep()).toMatchObject({ failures: 0 });
     expect(stub.listCalls()).toHaveLength(1);
     // The token the connect sealed, opened by the sweep, is the bearer of the list.
     expect(stub.listCalls()[0]?.authorization).toBe(`Bearer ${ACCESS}`);
@@ -240,7 +244,7 @@ suite('a Zoom cloud recording from the connect to the staged bytes (meetings int
   it('answers a signed notice with the same 200 for a known and an unknown host, and lists again only for the known one', async () => {
     // The connection was listed a moment ago, so the sweep leaves it alone until its 10 minutes are up.
     expect(await syncedAt()).not.toBeNull();
-    await sweep();
+    expect(await sweep()).toMatchObject({ failures: 0 });
     expect(stub.listCalls()).toHaveLength(1);
     const stranger = await notice('someone-elses-host-id');
     expect(stranger.status).toBe(200);
@@ -251,7 +255,7 @@ suite('a Zoom cloud recording from the connect to the staged bytes (meetings int
     expect(await ours.json()).toEqual({ ok: true });
     // The doorbell only clears the last listing time; the sweep then lists the same connection again with the same token.
     expect(await syncedAt()).toBeNull();
-    await sweep();
+    expect(await sweep()).toMatchObject({ failures: 0 });
     expect(stub.listCalls()).toHaveLength(2);
     expect(stub.listCalls()[1]?.authorization).toBe(`Bearer ${ACCESS}`);
     // The transcript notice rings the same way; a forged one (wrong secret) rings nothing and creates nothing.
