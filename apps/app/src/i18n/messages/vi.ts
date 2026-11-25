@@ -19311,6 +19311,9 @@ export const vi = {
         get: 'Xem quy định xác nhận trước khi ghi',
         set: 'Đổi quy định xác nhận trước khi ghi',
       },
+      minutes_docx: {
+        download: 'Tải biên bản đã chia sẻ của một cuộc họp về dạng tệp Word',
+      },
       minutes_esign: {
         get: 'Xem biên bản họp có được gửi đi ký hay không',
         set: 'Bật hoặc tắt việc ký biên bản họp',

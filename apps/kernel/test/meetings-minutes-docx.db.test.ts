@@ -197,6 +197,22 @@ suite('The published minutes as a Word file (#4774)', () => {
     expect(staleText.some((t) => /^\d+\. /u.test(t))).toBe(false);
   });
 
+  it('shows no content for the bare dash a decisions-only run stores, as the page does, and keeps a long display name whole', async () => {
+    const id = await meeting({ title: 'Họp chỉ có kết luận', template: 'briefing', readers: ['lan'] });
+    await result(id, 'published', '-', ['Kết luận duy nhất']);
+    const long = `Nguyễn ${'Văn '.repeat(30)}Lan`;
+    await sqlAdmin(`UPDATE ludy_kernel.user_account SET display_name = $2 WHERE id = $1`, [users.lan, long]);
+    try {
+      const text = wordText(await download('rec', id));
+      expect(text).toContain('Chưa có nội dung được chia sẻ.');
+      expect(text).toContain('• Kết luận duy nhất');
+      expect(text).not.toContain('-');
+      expect(text).toContain(`• ${long.replace(/\s+/gu, ' ').trim()}`);
+    } finally {
+      await sqlAdmin(`UPDATE ludy_kernel.user_account SET display_name = $2 WHERE id = $1`, [users.lan, NAMES.lan]);
+    }
+  });
+
   it('writes a dotted line for a place nobody typed, a member with no display name as "Thành viên", and an email address nowhere', async () => {
     const id = await meeting({ title: 'Họp không địa điểm', readers: ['lan'] });
     await result(id, 'published', 'Nội dung', []);

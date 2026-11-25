@@ -22,8 +22,7 @@ import {
   type MinutesDocx,
 } from '@ludy/kernel-contract';
 import { DomainError, defineQuery } from '@ludy/kernel-runtime';
-import { buildMinutesDocx, dueText, minutesFilename, vnMoment, type MinutesDoc, type MinutesDocSection } from './minutes-docx-file.ts';
-import { cleanName } from './speaker.ts';
+import { buildMinutesDocx, cleanLine, dueText, minutesFilename, vnMoment, type MinutesDoc, type MinutesDocSection } from './minutes-docx-file.ts';
 import { ROLES, openMeeting, userOf } from './transcript.ts';
 
 // A member with no display name (an email address is never a name) or no longer in the org.
@@ -71,7 +70,8 @@ export const minutesDocxDownload = defineQuery({
     const names = new Map<string, string>();
     if (wanted.length > 0) {
       const { rows } = await sql<{ user_id: string; display_name: string | null }>`SELECT user_id, display_name FROM ludy_kernel.member_profiles(${wanted}::uuid[])`.execute(ctx.trx);
-      for (const r of rows) names.set(r.user_id, cleanName(r.display_name));
+      // A name as the page shows it: one line, whitespace collapsed (the speaker label's length rule is not applied, so a long name is not lost).
+      for (const r of rows) names.set(r.user_id, cleanLine(r.display_name ?? '').replace(/\s+/gu, ' ').trim());
     }
     const nameOf = (userId: string) => (names.get(userId) || UNKNOWN_MEMBER);
 
@@ -87,7 +87,7 @@ export const minutesDocxDownload = defineQuery({
         ? parsed
             .filter((s) => s.text !== '')
             .map((s, i) => ({ heading: `${i + 1}. ${defs.find((d) => d.key === s.key)?.title ?? s.key}`, text: s.text }))
-        : result.summary.trim() === ''
+        : result.summary.trim() === '' || result.summary.trim() === '-'
           ? []
           : [{ heading: null, text: result.summary }];
     }

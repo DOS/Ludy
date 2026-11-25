@@ -104,6 +104,7 @@ describe('saving the file', () => {
     clicked.length = 0;
     revoked.length = 0;
     blob = null;
+    vi.useFakeTimers();
     vi.stubGlobal('URL', {
       createObjectURL: (b: Blob) => {
         blob = b;
@@ -119,7 +120,10 @@ describe('saving the file', () => {
       body: { appendChild: () => undefined },
     });
   });
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
 
   it('reads base64 into the bytes it stands for', () => {
     expect([...bytesOfBase64(Buffer.from([0x50, 0x4b, 0x03, 0x04, 0, 255]).toString('base64'))]).toEqual([0x50, 0x4b, 0x03, 0x04, 0, 255]);
@@ -130,6 +134,9 @@ describe('saving the file', () => {
     const file: MinutesDocx = { filename: 'Biên bản họp - Họp giao ban - 2026-11-14.docx', mimeType: MINUTES_DOCX_MIME, bytes: 4, contentBase64: Buffer.from([0x50, 0x4b, 0x03, 0x04]).toString('base64') };
     saveDocx(file);
     expect(clicked).toEqual([{ href: 'blob:minutes', download: 'Biên bản họp - Họp giao ban - 2026-11-14.docx' }]);
+    // The address is let go of a moment later, not before the browser has started the save.
+    expect(revoked).toEqual([]);
+    vi.advanceTimersByTime(10_000);
     expect(revoked).toEqual(['blob:minutes']);
     const saved = blob as unknown as Blob;
     expect(saved.type).toBe(MINUTES_DOCX_MIME);

@@ -29,7 +29,8 @@ export function saveDocx(file: MinutesDocx): void {
     link.click();
     link.remove();
   } finally {
-    URL.revokeObjectURL(url);
+    // Let go of the address a moment later: some browsers have not started the save when click() returns.
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
   }
 }
 

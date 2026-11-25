@@ -19312,6 +19312,9 @@ export const en = {
         get: 'Read the consent policy of meetings',
         set: 'Change the consent policy of meetings',
       },
+      minutes_docx: {
+        download: "Download a meeting's shared minutes as a Word file",
+      },
       minutes_esign: {
         get: 'Read whether meeting minutes can be sent for signing',
         set: 'Turn signing of meeting minutes on or off',
