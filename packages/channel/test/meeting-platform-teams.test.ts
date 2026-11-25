@@ -222,7 +222,7 @@ describe('TeamsMeetingPlatform.list', () => {
     }
     const evil = teams((url) => (url.pathname === '/v1.0/me/calendarView' ? { json: { ...fixture('calendar-view'), '@odata.nextLink': 'https://evil.example/v1.0/me/calendarView' } } : graph()(url)));
     expect(await codeOf(evil.adapter.list(CREDENTIAL, SINCE))).toBe('platform_unavailable');
-    expect(evil.calls.some((c) => c.url.includes('evil.example'))).toBe(false);
+    expect(evil.calls.some((c) => new URL(c.url).hostname === 'evil.example')).toBe(false);
   });
 
   it('skips one meeting whose files are refused or gone, and fails the whole call for a token or a busy service', async () => {
@@ -267,7 +267,8 @@ describe('TeamsMeetingPlatform.list', () => {
       const odd = teams((url) => split('recordings', 1, link)(url) ?? graph()(url));
       const shown = await odd.adapter.list(CREDENTIAL, SINCE);
       expect(shown.map((m) => [m.id, m.hasVideo]), link).toEqual([[OCC.A, true], [OCC.B, false], [OCC.S2, false], [OCC.S1, false]]);
-      expect(odd.calls.some((c) => c.url.includes('evil.example') || c.url.includes('login.microsoftonline.com') || c.url.includes(':8443') || c.url.includes('user:pw')), link).toBe(false);
+      // By the parsed address, not a substring: nothing was sent to another host, port, credentials or the sign-in host.
+      expect(odd.calls.filter((c) => { const u = new URL(c.url); return u.hostname !== TEAMS_GRAPH_HOST || u.port !== '' || u.username !== ''; }), link).toEqual([]);
       expect(await codeOf(odd.adapter.prepareDownload(CREDENTIAL, OCC.S1, 'video')), link).toBe('platform_unavailable');
     }
     // A later page that is refused or gone leaves the meeting out of the list too (the files seen so far may be only part), and a read of it is refused.
