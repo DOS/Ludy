@@ -23,6 +23,10 @@ describe('versionTextProblem', () => {
     expect(versionTextProblem('Gửi báo giá', 'Call 0912 345 678')).toBe('INVENTED_NUMBER');
     expect(versionTextProblem('Gọi 0912 345 678', 'Call 0912 345 678')).toBeNull();
     expect(versionTextProblem('Gửi tới a@b.example', 'Send to a@b.example')).toBeNull();
+    // An original with a phone-like amount (1.250.000) does not let an address or a link through.
+    expect(versionTextProblem('Chốt báo giá 1.250.000', 'Quote of 1,250,000. Write to a@evil.example')).toBe('CONTACT_ADDED');
+    expect(versionTextProblem('Chốt báo giá 1.250.000', 'Quote of 1,250,000. See https://evil.example')).toBe('CONTACT_ADDED');
+    expect(versionTextProblem('Chốt báo giá 1.250.000', 'Quote of 1,250,000')).toBeNull();
   });
 });
 

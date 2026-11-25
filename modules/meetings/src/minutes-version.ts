@@ -29,7 +29,9 @@ import { ROLES, lockMeeting, openMeeting, userOf } from './transcript.ts';
 const VERSION_BYTES_MAX = 300_000;
 const notPublished = () => new DomainError('MINUTES_NOT_PUBLISHED', 409, 'The minutes are not published, so there is nothing to put a second version beside');
 
-const hasContact = (text: string): boolean => hasLink(text.toLowerCase()) || hasPhone(text) || text.toLowerCase().split(/\s+/).some((token) => hasEmail(token));
+// One way to reach someone, by kind: an original that holds one kind (a Vietnamese amount such as 1.250.000 reads as a phone-like run) must not let another kind through.
+const hasEmailIn = (text: string): boolean => text.toLowerCase().split(/\s+/).some((token) => hasEmail(token));
+const contactKinds = (text: string): readonly boolean[] => [hasLink(text.toLowerCase()), hasPhone(text), hasEmailIn(text)];
 
 // The digit runs of a text, thousands separators and leading zeros set aside ("1.500.000" and "1,500,000" are the same three runs).
 function digitRuns(text: string): Set<string> {
@@ -42,7 +44,8 @@ function digitRuns(text: string): Set<string> {
 export function versionTextProblem(original: string, text: string): 'INVENTED_NUMBER' | 'CONTACT_ADDED' | null {
   const known = digitRuns(original);
   for (const run of digitRuns(text)) if (!known.has(run)) return 'INVENTED_NUMBER';
-  if (hasContact(text) && !hasContact(original)) return 'CONTACT_ADDED';
+  const had = contactKinds(original);
+  if (contactKinds(text).some((found, i) => found && !had[i])) return 'CONTACT_ADDED';
   return null;
 }
 
