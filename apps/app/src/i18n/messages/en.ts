@@ -5029,6 +5029,16 @@ export const en = {
       draftTitle: 'Draft transcript',
       draftNote: 'Only you see this draft. Check it and correct a line where the speech was misheard; nothing is shared with the other attendees from here.',
       publishedNote: 'The transcript the recorder shared with the meeting.',
+      // Find the questions, figures and dates (#4954).
+      filters: {
+        label: 'Find in the transcript',
+        question: 'Questions ({count})',
+        figure: 'Figures ({count})',
+        date: 'Dates and deadlines ({count})',
+        note: '{count, plural, one {# line that looks like it} other {# lines that look like it}}. Found by rules, not by AI, so check the line.',
+        none: 'No line looks like it.',
+        showInContext: 'Show in the transcript',
+      },
       // Download the transcript as a file (#4817).
       export: {
         label: 'Download the transcript',
