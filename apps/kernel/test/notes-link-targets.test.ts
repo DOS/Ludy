@@ -8,7 +8,7 @@ import { moduleDefinitions } from '../src/kernel.ts';
 
 describe('note link targets (#1672)', () => {
   it('checks every module target through a query the kernel registers', () => {
-    const config = loadConfig({ DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: 'unit-test-jwt-secret-0123456789abcdef', AUTH_ISSUER: 'crove-auth' });
+    const config = loadConfig({ DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: 'unit-test-jwt-secret-0123456789abcdef', AUTH_ISSUER: 'ludy-auth' });
     const queries = new Set(moduleDefinitions(config).queries.map((q) => q.name));
     const moduleTargets = NOTE_LINK_TARGETS.filter((t) => !t.startsWith('kernel.'));
     expect(Object.keys(NOTE_TARGET_QUERIES).sort()).toEqual([...moduleTargets].sort());

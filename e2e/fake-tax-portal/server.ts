@@ -1,4 +1,4 @@
-// A fake of the tax portal's lookup API (hoadondientu.gdt.gov.vn/api) for Crove's tests (issue #325). It answers the
+// A fake of the tax portal's lookup API (hoadondientu.gdt.gov.vn/api) for Ludy's tests (issue #325). It answers the
 // endpoints the assisted sync calls with the shapes public tools record (docs/integrations/tax-portal-sync.md), from a
 // small synthetic data set: no real taxpayer, no real portal, no network. Used by the kernel's unit and database tests
 // in-process, and by the end-to-end tests as a compose service (`node main.ts`, Node's type stripping: node: imports

@@ -56,7 +56,7 @@ describe('a Teams recording download (the redirect rules)', () => {
   };
 
   beforeAll(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'crove-import-teams-'));
+    dir = await mkdtemp(join(tmpdir(), 'ludy-import-teams-'));
     store = new LocalDiskStore(dir);
     server = createServer((req, res) => {
       const host = String(req.headers.host ?? '').split(':')[0] ?? '';

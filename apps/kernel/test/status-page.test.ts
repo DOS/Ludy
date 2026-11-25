@@ -17,7 +17,7 @@ const states = (view: ReturnType<typeof statusView>) => Object.fromEntries(view.
 
 let dir: string;
 beforeAll(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'crove-status-'));
+  dir = await mkdtemp(join(tmpdir(), 'ludy-status-'));
 });
 afterAll(() => rm(dir, { recursive: true, force: true }));
 
@@ -112,7 +112,7 @@ describe('prober', () => {
     webhookFormat: 'generic',
     telegramChatId: undefined,
     repeatSeconds: 3600,
-    instance: 'crove.example.test',
+    instance: 'ludy.example.test',
     thresholds: { outboxAgeSeconds: 300, jobAgeSeconds: 900, heartbeatAgeSeconds: 120, deadLetters: 0, notifyQueuePercent: 50 },
     deadLetterWindowSeconds: 300,
     statusFile: join(dir, 'probe', 'status.json'),
@@ -156,7 +156,7 @@ describe('prober', () => {
 });
 
 describe('/status', () => {
-  const base = { DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: 'x'.repeat(32), AUTH_ISSUER: 'crove-auth', WEB_DIST: '/nonexistent' };
+  const base = { DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: 'x'.repeat(32), AUTH_ISSUER: 'ludy-auth', WEB_DIST: '/nonexistent' };
   const app = (env: Record<string, string>) =>
     createHttpApp({
       config: loadConfig({ ...base, ...env }),

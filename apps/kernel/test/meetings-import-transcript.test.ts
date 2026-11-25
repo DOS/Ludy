@@ -31,7 +31,7 @@ const transcript = (entries: MeetingPlatformTranscriptEntry[]): MeetingPlatformT
 let dir: string;
 let store: LocalDiskStore;
 beforeAll(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'crove-import-transcript-'));
+  dir = await mkdtemp(join(tmpdir(), 'ludy-import-transcript-'));
   store = new LocalDiskStore(dir);
 });
 afterEach(async () => {

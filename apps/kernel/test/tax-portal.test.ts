@@ -136,10 +136,10 @@ describe('tax portal client', () => {
     // The real portal over plain http is refused; a look-alike is a test portal, never trusted as the real one.
     expect(() => createTaxPortalClient({ baseUrl: 'http://hoadondientu.gdt.gov.vn/api' })).toThrow(/https/);
     // A test portal only on a deployment served locally.
-    expect(testPortalAllowed('https://hoadondientu.gdt.gov.vn/api', 'https://crove.example.vn')).toBe(true);
+    expect(testPortalAllowed('https://hoadondientu.gdt.gov.vn/api', 'https://ludy.example.vn')).toBe(true);
     expect(testPortalAllowed('http://tax-portal:30000/api', 'http://localhost:8080')).toBe(true);
-    expect(testPortalAllowed('http://tax-portal:30000/api', 'https://crove.example.vn')).toBe(false);
-    expect(testPortalAllowed('https://hoadondientu.gdt.gov.vn.evil.test/api', 'https://crove.example.vn')).toBe(false);
+    expect(testPortalAllowed('http://tax-portal:30000/api', 'https://ludy.example.vn')).toBe(false);
+    expect(testPortalAllowed('https://hoadondientu.gdt.gov.vn.evil.test/api', 'https://ludy.example.vn')).toBe(false);
     expect(testPortalAllowed('https://hoadondientu.gdt.gov.vn.evil.test/api', 'https://localhost.evil.example')).toBe(false);
   });
 

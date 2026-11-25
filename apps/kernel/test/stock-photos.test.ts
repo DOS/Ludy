@@ -83,7 +83,7 @@ describe('Pexels stock photos with recorded answers (#1106)', () => {
   let dir = '';
   let store: LocalDiskStore;
   beforeAll(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'crove-pexels-'));
+    dir = await mkdtemp(join(tmpdir(), 'ludy-pexels-'));
     store = new LocalDiskStore(dir);
   });
   afterAll(async () => {

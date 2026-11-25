@@ -19,7 +19,7 @@ describe('brand name outside the app (#1045)', () => {
   it('says "Ludy" when no brand is given', () => {
     expect(renderStatusPage(statusView(probeStatus(NOW, []), NOW))).toContain('<title>Trạng thái hệ thống - Ludy</title>');
     expect(renderBioPage('tiem-banh', BIO)).toContain('<footer>Ludy</footer>');
-    expect(unfold(renderIcs(FEED, 'https://crove.example', NOW))).toContain('X-WR-CALNAME:Tiệm bánh - Ludy');
+    expect(unfold(renderIcs(FEED, 'https://ludy.example', NOW))).toContain('X-WR-CALNAME:Tiệm bánh - Ludy');
     expect(CHAT_ALERT_TEST_TEXT.startsWith('Ludy: tin thử.')).toBe(true);
   });
 
@@ -28,9 +28,9 @@ describe('brand name outside the app (#1045)', () => {
     const bio = renderBioPage('tiem-banh', BIO, 'Tên Mới');
     expect(bio).toContain('<footer>Tên Mới</footer>');
     expect(bio).not.toContain('Crove');
-    const ics = unfold(renderIcs(FEED, 'https://crove.example', NOW, 'Tên Mới'));
+    const ics = unfold(renderIcs(FEED, 'https://ludy.example', NOW, 'Tên Mới'));
     expect(ics).toContain('X-WR-CALNAME:Tiệm bánh - Tên Mới');
-    expect(ics).toContain('Mở trong Tên Mới: https://crove.example/o/tiem-banh/social/');
+    expect(ics).toContain('Mở trong Tên Mới: https://ludy.example/o/tiem-banh/social/');
     // PRODID and UID name the software that wrote the feed, not the product.
     expect(ics).toContain('PRODID:-//Ludy//Social//VI');
     expect(chatAlertTestText('Tên Mới')).toBe('Tên Mới: tin thử. Từ giờ nhóm sẽ nhận tin báo về bài đăng mạng xã hội tại đây.');

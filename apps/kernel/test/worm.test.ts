@@ -164,7 +164,7 @@ describe('S3 archive store versions (#2020)', () => {
 
 describe('local archive store', () => {
   it('writes read-only files once and lists them in key order', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'crove-worm-unit-'));
+    const dir = mkdtempSync(join(tmpdir(), 'ludy-worm-unit-'));
     try {
       const store = new LocalArchiveStore(dir);
       expect(await store.list('chain/v1/')).toEqual([]);

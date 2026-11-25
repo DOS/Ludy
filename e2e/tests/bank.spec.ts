@@ -21,7 +21,7 @@ test('import a bank statement, then an overlapping one, and find each line once'
   await page.goto('/');
   await signInNewUser(page, newEmail('bank'));
   const slug = await createOrg(page, 'Công ty Ngân hàng');
-  const dir = mkdtempSync(join(tmpdir(), 'crove-bank-'));
+  const dir = mkdtempSync(join(tmpdir(), 'ludy-bank-'));
   const write = (name: string, lines: string[]) => {
     const path = join(dir, name);
     writeFileSync(path, `﻿${HEADER}\n${lines.join('\n')}\nTổng cộng;;;19.811.000;50.000.000;\n`);

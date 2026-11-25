@@ -1,5 +1,5 @@
-// Crove Social flows past the basic publish (issue #590), on the offline sandbox channel: a channel that needs two
-// approvals, retrying a failed channel and settling channels Crove cannot account for, the media library, evergreen
+// Ludy Social flows past the basic publish (issue #590), on the offline sandbox channel: a channel that needs two
+// approvals, retrying a failed channel and settling channels Ludy cannot account for, the media library, evergreen
 // reposting, the metrics of a published post, and the AI drafting card on a server without a model. Each test has
 // its own users, created confirmed without the sign-up form (signInNewUser: the suite shares one sign-up budget), and
 // its own org. States the worker reaches only on a real platform (a refusal, an unknown outcome, a metrics
@@ -163,7 +163,7 @@ test('a channel that needs two approvals waits for a second admin, then is appro
   await reviewerContext.close();
 });
 
-test('retries a failed channel and settles the channels Crove could not account for', async ({ page }) => {
+test('retries a failed channel and settles the channels Ludy could not account for', async ({ page }) => {
   await signInNewUser(page, newEmail('social-retry'));
   await createOrg(page, 'Công ty Đăng Lại');
   const failed = 'Kênh Bị Từ Chối';

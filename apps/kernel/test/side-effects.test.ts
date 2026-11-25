@@ -106,7 +106,7 @@ describe('declared risk and side effects (#1563)', () => {
     ]) {
       expect(byName.get(name), name).toMatchObject({ risk: 'R2', sideEffect: 'external' });
     }
-    // What the worker records of a platform's answer is a write inside Crove, so R1, not R0.
+    // What the worker records of a platform's answer is a write inside Ludy, so R1, not R0.
     for (const name of ['social.external_post.import', 'social.external_post.record', 'social.late_id.record', 'social.metrics.record']) {
       expect(byName.get(name), name).toMatchObject({ risk: 'R1', sideEffect: 'internal' });
     }

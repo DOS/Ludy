@@ -1,4 +1,4 @@
-// Crove Social in the browser (Social plan S5, S4): connect the offline sandbox channel, give it a queue, compose a
+// Ludy Social in the browser (Social plan S5, S4): connect the offline sandbox channel, give it a queue, compose a
 // post, submit it, approve it on what is shown, schedule it in the next free slot, find it in the agenda, and see the
 // worker publish it to the sandbox once it is due. The channel rules run as the text is typed.
 import { expect, test } from '@playwright/test';
@@ -32,7 +32,7 @@ test('composes, reviews and schedules a post on the sandbox channel', async ({ p
   await page.getByLabel('Nội dung chung').fill('x'.repeat(1001));
   await expect(page.getByText('Nội dung dài 1.001 ký tự, kênh này cho tối đa 1.000')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Lưu và gửi duyệt' })).toBeDisabled();
-  await page.getByLabel('Nội dung chung').fill('Ra mắt Crove Social: soạn một lần, duyệt rồi đăng đúng giờ.');
+  await page.getByLabel('Nội dung chung').fill('Ra mắt Ludy Social: soạn một lần, duyệt rồi đăng đúng giờ.');
   await page.getByRole('button', { name: 'Lưu và gửi duyệt' }).click();
 
   await expect(page).toHaveURL(/\/social\/[0-9a-f-]{36}$/);
@@ -47,7 +47,7 @@ test('composes, reviews and schedules a post on the sandbox channel', async ({ p
   const postUrl = page.url();
   await page.getByRole('link', { name: 'Về Bài đăng' }).click();
   await expect(page.getByRole('tab', { name: 'Lịch đăng' })).toBeVisible();
-  await expect(page.getByText('Ra mắt Crove Social: soạn một lần, duyệt rồi đăng đúng giờ.')).toBeVisible();
+  await expect(page.getByText('Ra mắt Ludy Social: soạn một lần, duyệt rồi đăng đúng giờ.')).toBeVisible();
   await expect(page.getByText('09:00')).toBeVisible();
 
   // Its slot comes now instead of at 09:00: the worker's sweep finds it and publishes it to the sandbox, and the page

@@ -57,7 +57,7 @@ describe('a relay step of an app that is off', () => {
   });
 
   it('keeps ads.pause.queued and the member revocations on commands that declare runsWhenOff, so they never meet the drop', () => {
-    const config = loadConfig({ DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: 'unit-test-jwt-secret-0123456789abcdef', AUTH_ISSUER: 'crove-auth' });
+    const config = loadConfig({ DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: 'unit-test-jwt-secret-0123456789abcdef', AUTH_ISSUER: 'ludy-auth' });
     const { commands, queries } = moduleDefinitions(config);
     const keeping = new Map<string, string | undefined>([...commands, ...queries].map((d) => [d.name, (d as { runsWhenOff?: string }).runsWhenOff]));
     expect(Object.keys(KEEPING_EVENT_COMMANDS).sort()).toEqual(['ads.pause.queued', 'kernel.member.removed', 'kernel.member.role_changed']);
