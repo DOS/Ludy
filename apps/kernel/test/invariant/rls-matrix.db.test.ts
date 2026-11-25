@@ -127,6 +127,7 @@ const PENDING_TABLES = new Set<string>([
   'crove_kernel.agent_grant',
   'crove_kernel.agent_wake_delivery',
   'crove_kernel.agent_wake_signal_seen',
+  'crove_kernel.ai_budget_reservation',
   'crove_kernel.member_permission_override',
   'crove_kernel.member_vy_memory',
   'crove_kernel.member_vy_result',
@@ -2743,6 +2744,14 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       const agent = agentRow(o);
       return { setup: [{ table: 'crove_kernel.agent', values: agent }], row: { org_id: o.id, agent_id: agent.id } };
     },
+  },
+  // #3979: short-lived in-flight AI budget reservation holds created during concurrent admission under an org lock.
+  // Written and deleted by tenant/worker runtime commands (never edited in place: REVOKE UPDATE); agent_write_guard
+  // blocks org-chart and member_vy agent contexts. Its factory lands before the table (PENDING_TABLES, step 0).
+  'crove_kernel.ai_budget_reservation': {
+    make: (o) => ({
+      row: { org_id: o.id, id: randomUUID(), module: 'social', feature: 'social.draft', amount: '0.001000', expires_at: '2099-01-01T00:00:00Z' },
+    }),
   },
   'crove_kernel.ai_run': {
     make: (o) => {
