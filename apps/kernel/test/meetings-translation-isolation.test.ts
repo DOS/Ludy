@@ -129,6 +129,8 @@ describe('a translation is never a source: the migrations (E1, #3184)', () => {
       'ludy_kernel_org_purge_minutes_link.sql',
       // #4925 (Global Home layout): the purge restatement that adds ludy_kernel.member_home_layout restates the whole list, the translation table included; its body is the previous one.
       'ludy_kernel_member_home_layout.sql',
+      // #4857 (erasure drops the bilingual minutes version): ludy_meetings.personal_erase is restated with the one DELETE of minutes_version beside its existing translation DELETE, so the migration names the table; it is never read as a source.
+      'ludy_meetings_personal_erase_minutes_version.sql',
     ]);
   });
 });

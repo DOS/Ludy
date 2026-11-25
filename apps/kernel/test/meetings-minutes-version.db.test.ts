@@ -23,6 +23,7 @@ const DECISION = 'Giữ giá cũ cho khách A';
 const ITEM = 'Gửi báo giá cho khách A';
 const EN_SUMMARY = 'Quote of 1,250,000 agreed for customer A this week.';
 const EN_DECISION = 'Keep the old price for customer A';
+const PERSON = 'khach.hang.a@example.com';
 
 suite('the second-language version of the published minutes (#4777)', () => {
   const dbName = `ludy_test_minutes_version_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
@@ -48,7 +49,7 @@ suite('the second-language version of the published minutes (#4777)', () => {
   const stored = async (meetingId: string) => (await sqlAdmin<{ language: string }>('SELECT language FROM ludy_meetings.minutes_version WHERE org_id = $1 AND meeting_id = $2 ORDER BY language', [orgId, meetingId])).rows.map((r) => r.language);
 
   // A Vietnamese meeting of the recorder with the attendee as a reader (the outsider is a member who is not), its summary, one decision and one item published.
-  async function seedPublished(): Promise<string> {
+  async function seedPublished(summary: string = SUMMARY): Promise<string> {
     const meetingId = randomUUID();
     await sqlAdmin(
       `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
@@ -56,7 +57,7 @@ suite('the second-language version of the published minutes (#4777)', () => {
       [orgId, meetingId, users.recorder],
     );
     await sqlAdmin('INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)', [orgId, randomUUID(), meetingId, users.attendee]);
-    await exec('recorder', 'meetings.summary.save', { meetingId, summary: SUMMARY, decisions: [DECISION] });
+    await exec('recorder', 'meetings.summary.save', { meetingId, summary, decisions: [DECISION] });
     await exec('recorder', 'meetings.action_item.create', { meetingId, title: ITEM, who: 'Hà', whoUserId: null, when: '', whenDate: null, transcriptSeconds: 5 });
     await exec('recorder', 'meetings.result.publish', { meetingId, confirmed: true });
     return meetingId;
@@ -237,6 +238,26 @@ suite('the second-language version of the published minutes (#4777)', () => {
         expect(onlyInVersion, `${original} | ${version}`).toBe(true);
       }
     }
+  });
+
+  it('a personal-data erasure drops the version of every meeting it touches, directly, whether or not the original could be redacted (#4857)', async () => {
+    const touched = await seedPublished(`Chốt báo giá 1.250.000 cho ${PERSON} trong tuần này.`);
+    const untouched = await seedPublished();
+    await publish(touched);
+    await publish(untouched);
+    expect(await stored(touched)).toEqual(['en']);
+    expect(await stored(untouched)).toEqual(['en']);
+    // The owner is not the recorder, reads none of this meeting and no notice named it, so the erasure leaves the original text as it is: the triggers that drop a version when its original changes do
+    // not fire, and the version goes only if personal_erase drops it itself.
+    const owner = { type: 'user' as const, userId: users.owner as string, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) };
+    await runtime.execute('kernel.personal_data.erase', { value: PERSON }, { actor: owner, orgId, idempotencyKey: randomUUID() });
+    const original = await sqlAdmin<{ summary: string }>(`SELECT summary FROM ludy_meetings.meeting_result WHERE org_id = $1 AND meeting_id = $2 AND stage = 'published'`, [orgId, touched]);
+    expect(original.rows[0]?.summary).toContain(PERSON);
+    expect(await stored(touched)).toEqual([]);
+    // A meeting the value does not touch keeps its version, and the recorder can publish the touched one's again.
+    expect(await stored(untouched)).toEqual(['en']);
+    expect(await publish(touched)).toEqual({ meetingId: touched, language: 'en', segments: 2 });
+    expect(await stored(touched)).toEqual(['en']);
   });
 
   it('the table has no UPDATE for the tenant role (a replacement is a delete and an insert)', async () => {
