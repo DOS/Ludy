@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The files of a transcript export (#4817): plain text and SRT, made from lines already read under the caller's row security. Pure functions: no database, no clock. A line's text and speaker are
+// The files of a transcript export (#4817): plain text, SRT and Word, made from lines already read under the caller's row security. Pure functions: no database, no clock. A line's text and speaker are
 // untrusted (a person or a model wrote them): hidden and bidirectional characters are removed, a line break inside a line becomes a space (an SRT cue ends at an empty line, so a cue text can hold none),
 // and a line with no text left makes no entry.
 import { INVISIBLE_PATTERN, TRANSCRIPT_EXPORT_NAME_MAX, type TranscriptExportFormat } from '@ludy/kernel-contract';
+import { buildDocx, paragraph, run, text as wordText, wordDocument } from './minutes-docx-file.ts';
 
 export interface ExportLine {
   startSeconds: number;
@@ -76,8 +77,26 @@ export function transcriptSrt(lines: readonly ExportLine[]): string {
     .join('');
 }
 
-export function transcriptFile(format: TranscriptExportFormat, lines: readonly ExportLine[]): string {
-  return format === 'txt' ? transcriptText(lines) : transcriptSrt(lines);
+/**
+ * The Word file of the transcript, on the writer of the minutes (#4774): a heading, the meeting's title and day, then one paragraph for each line ("[HH:MM:SS] Speaker:" in bold, then the text). The
+ * same cleaning as the other formats comes first (and the writer drops what XML cannot hold and escapes the rest), so what a person or a model wrote cannot reach the markup.
+ */
+export function transcriptDocx(lines: readonly ExportLine[], meta: { title: string; day: string }): Uint8Array {
+  const [year, month, day] = meta.day.split('-');
+  const body = [
+    wordText('BẢN GHI LỜI CUỘC HỌP', { bold: true, size: 30 }, { align: 'center', before: 120, after: 40 }),
+    wordText(cleanLine(meta.title), { bold: true }, { align: 'center', after: 40 }),
+    wordText(`Ngày ${day}/${month}/${year}`, { italic: true }, { align: 'center', after: 200 }),
+    ...cleaned(lines).map((l) => paragraph(run(`[${clockText(l.start)}] ${l.who === '' ? '' : `${l.who}: `}`, { bold: true }) + run(l.text), { after: 60 })),
+    paragraph(''),
+  ].join('');
+  return buildDocx(wordDocument(body));
+}
+
+/** The file of a format, as bytes: plain text and SRT are UTF-8, the Word file is the zip of its parts. */
+export function transcriptFile(format: TranscriptExportFormat, lines: readonly ExportLine[], meta: { title: string; day: string }): Uint8Array {
+  if (format === 'docx') return transcriptDocx(lines, meta);
+  return new TextEncoder().encode(format === 'txt' ? transcriptText(lines) : transcriptSrt(lines));
 }
 
 /**

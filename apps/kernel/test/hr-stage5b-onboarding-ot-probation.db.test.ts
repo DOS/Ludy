@@ -14,7 +14,7 @@ import type { AiMeter } from '@ludy/agent';
 import { createDb, createPool } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
-import { vietnamToday } from '@ludy/kernel-contract';
+import { vietnamToday, zHrPayrollInputs } from '@ludy/kernel-contract';
 import type {
   HrAttendanceRollupResult,
   HrEmployee,
@@ -22,6 +22,7 @@ import type {
   HrOnboardingSubmissionView,
   HrOvertimeActionResult,
   HrOvertimeRequestView,
+  HrOvertimeSettings,
   HrProbationDecideResult,
   HrProbationPreviewResult,
   HrProbationReviewView,
@@ -34,8 +35,8 @@ import type {
   HrWritten,
 } from '@ludy/kernel-contract';
 import { CredentialVault, Runtime, SUBJECT_WRAP_INFO, SubjectVault, parseVaultKey, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
-import { PAYROLL_RULES, type PayrollBreakdown } from '@ludy/l10n-vn';
-import { hrCommands, hrQueries, type HrProbationBriefSource } from '@ludy/mod-hr';
+import { PAYROLL_RULES, money, type PayrollBreakdown } from '@ludy/l10n-vn';
+import { hrCommands, hrQueries, splitOvertimeHours, type HrProbationBriefSource } from '@ludy/mod-hr';
 import { projectsCommands, projectsQueries } from '@ludy/mod-projects';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
 import { draftProbationSummary, hrProbationAi } from '../src/hr-probation-ai.ts';
@@ -1337,5 +1338,646 @@ suite('HR Stage 5B onboarding, 2-level OT to payroll, and probation review (#444
     const lineAAfter = afterClientAttempt.lines.find((l) => l.id === lineA.id)!;
     expect(lineAAfter.inputs.overtimeFromRequests).toBe(false);
     expect(lineAAfter.inputs.overtime).toEqual([{ dayKind: 'normal_day', night: false, hours: '1' }]);
+  });
+
+  it('enforces optional strict L1-required OT org toggle via settings, approval, and SQL guard (#4488)', async () => {
+    const o = await setupOrg();
+    const { departmentId: deptA } = await o.exec<{ departmentId: string }>(
+      o.owner,
+      'hr.department.add',
+      { name: 'Phòng Kiểm soát OT', code: 'OTL1', payFunction: 'admin' },
+      asMfa(o.owner),
+    );
+    await o.exec(
+      o.owner,
+      'hr.department.set_manager',
+      { departmentId: deptA, managerUserId: o.manager },
+      asMfa(o.owner),
+    );
+    const empA = (
+      await o.exec<HrWritten>(
+        o.owner,
+        'hr.payroll.employee.add',
+        {
+          displayName: 'Nguyễn Minh OT',
+          departmentId: deptA,
+          employment: { effectiveFrom: '2026-08-01', contractType: 'indefinite', region: 'I', baseWage: '15000000' },
+        },
+        asMfa(o.owner),
+      )
+    ).employeeId as string;
+    await o.exec(o.owner, 'hr.payroll.employee.link_member', { employeeId: empA, userId: o.staffA }, asMfa(o.owner));
+
+    // Default false for all staff; viewer cannot read; member/viewer cannot set.
+    expect(await o.query<HrOvertimeSettings>(o.owner, 'hr.overtime.settings.get', {})).toEqual({ requireL1: false });
+    expect(await o.query<HrOvertimeSettings>(o.staffA, 'hr.overtime.settings.get', {})).toEqual({ requireL1: false });
+    await expect(o.query(o.viewer, 'hr.overtime.settings.get', {})).rejects.toMatchObject({ status: 403 });
+    await expect(o.exec(o.staffA, 'hr.overtime.settings.set', { requireL1: true })).rejects.toMatchObject({ status: 403 });
+
+    // DB trigger blocks member & worker system context from toggling hr_overtime_require_l1 directly.
+    const client = await appPool.connect();
+    try {
+      await client.query('BEGIN');
+      await enterUser(client, o.staffA, o.orgId);
+      await expect(
+        client.query('UPDATE ludy_kernel.tenant SET hr_overtime_require_l1 = true WHERE org_id = $1::uuid', [o.orgId]),
+      ).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(/HR_OVERTIME_REQUIRE_L1_FORBIDDEN/) });
+    } finally {
+      await client.query('ROLLBACK').catch(() => undefined);
+      client.release();
+    }
+
+    const wClient = await workerPool.connect();
+    try {
+      await wClient.query('BEGIN');
+      await wClient.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [o.orgId]);
+      await expect(
+        wClient.query('UPDATE ludy_kernel.tenant SET hr_overtime_require_l1 = true WHERE org_id = $1::uuid', [o.orgId]),
+      ).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(/HR_OVERTIME_REQUIRE_L1_FORBIDDEN/) });
+    } finally {
+      await wClient.query('ROLLBACK').catch(() => undefined);
+      wClient.release();
+    }
+
+    // With default requireL1=false, owner can final-approve pending_l1 directly.
+    const reqDirect = await o.exec<HrSelfOvertimeSubmitResult>(o.staffA, 'hr.self.overtime.submit', {
+      workDate: '2026-10-03',
+      hours: '2',
+      dayType: 'weekday',
+    });
+    expect(reqDirect.status).toBe('pending_l1');
+    const directDone = await o.exec<HrOvertimeActionResult>(o.owner, 'hr.overtime.approve_final', {
+      requestId: reqDirect.requestId,
+    });
+    expect(directDone.status).toBe('approved');
+
+    // Owner enables strict L1 gate.
+    expect(await o.exec<HrOvertimeSettings>(o.owner, 'hr.overtime.settings.set', { requireL1: true })).toEqual({
+      requireL1: true,
+    });
+    expect(await o.query<HrOvertimeSettings>(o.admin, 'hr.overtime.settings.get', {})).toEqual({ requireL1: true });
+
+    const reqStrict = await o.exec<HrSelfOvertimeSubmitResult>(o.staffA, 'hr.self.overtime.submit', {
+      workDate: '2026-10-04',
+      hours: '3',
+      dayType: 'weekend',
+    });
+    await expect(
+      o.exec(o.owner, 'hr.overtime.approve_final', { requestId: reqStrict.requestId }),
+    ).rejects.toMatchObject({ code: 'HR_OVERTIME_L1_REQUIRED', status: 409 });
+
+    // SQL trigger also blocks direct pending_l1 -> approved update when hr_overtime_require_l1 = true.
+    await expect(
+      adminPool.query(`UPDATE ludy_hr.overtime_request SET status = 'approved' WHERE org_id = $1 AND id = $2`, [
+        o.orgId,
+        reqStrict.requestId,
+      ]),
+    ).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(/L1 approval is required/) });
+
+    // Once L1 manager approves pending_l1 -> pending_final, final approval succeeds.
+    await o.exec(o.manager, 'hr.overtime.approve_l1', { requestId: reqStrict.requestId });
+    const strictApproved = await o.exec<HrOvertimeActionResult>(o.owner, 'hr.overtime.approve_final', {
+      requestId: reqStrict.requestId,
+    });
+    expect(strictApproved.status).toBe('approved');
+
+    // Admin can toggle strict L1 back off, restoring SME direct fallback.
+    const reqFallbackAgain = await o.exec<HrSelfOvertimeSubmitResult>(o.staffA, 'hr.self.overtime.submit', {
+      workDate: '2026-10-05',
+      hours: '2',
+      dayType: 'weekday',
+    });
+    expect(await o.exec<HrOvertimeSettings>(o.admin, 'hr.overtime.settings.set', { requireL1: false })).toEqual({
+      requireL1: false,
+    });
+    const afterOff = await o.exec<HrOvertimeActionResult>(o.owner, 'hr.overtime.approve_final', {
+      requestId: reqFallbackAgain.requestId,
+    });
+    expect(afterOff.status).toBe('approved');
+  });
+
+  it('surfaces OT 40h/24h flags, enforces SQL month/work_date parity, onboarding bank mask & single-pending, probationEndOn, and .max(30) (#4488)', async () => {
+    const o = await setupOrg();
+    const empA = (
+      await o.exec<HrWritten>(
+        o.owner,
+        'hr.payroll.employee.add',
+        {
+          displayName: 'Lê Thu Hà',
+          employment: {
+            effectiveFrom: '2026-09-01',
+            contractType: 'indefinite',
+            region: 'I',
+            baseWage: '22000000',
+            probationRoleTier: 'college_or_above',
+            probationEndOn: '2026-10-30',
+            probationWage: '18700000',
+          },
+        },
+        asMfa(o.owner),
+      )
+    ).employeeId as string;
+    await o.exec(o.owner, 'hr.payroll.employee.link_member', { employeeId: empA, userId: o.staffA }, asMfa(o.owner));
+
+    // 1. Onboarding: bankAccountMasked preview, single active pending constraint, and bidirectional bank pairing.
+    await expect(
+      o.exec(o.staffA, 'hr.self.onboarding.submit', { bankConfirmed: true, accountNumber: '190012345678' }),
+    ).rejects.toMatchObject({ status: 422 });
+    const firstPending = await o.exec<HrSelfOnboardingSubmitResult>(o.staffA, 'hr.self.onboarding.submit', {
+      bankConfirmed: true,
+      bankCode: 'VCB',
+      accountNumber: '190012345678',
+    });
+    const obViews = await o.query<HrOnboardingSubmissionView[]>(o.owner, 'hr.onboarding.list', {});
+    const pendingView = obViews.find((v) => v.id === firstPending.submissionId)!;
+    expect(pendingView.hasBankAccount).toBe(true);
+    expect(pendingView.bankAccountMasked).toBe('****5678');
+
+    // Second active pending submission rejected by server (409) and DB partial unique index (23505).
+    await expect(
+      o.exec(o.staffA, 'hr.self.onboarding.submit', { contactConfirmed: true }),
+    ).rejects.toMatchObject({ code: 'HR_ONBOARDING_INVALID_STATE', status: 409 });
+    await expect(
+      adminPool.query(
+        `INSERT INTO ludy_hr.onboarding_submission (org_id, employee_id, status, contact_confirmed, created_by)
+         VALUES ($1, $2, 'pending', true, $3)`,
+        [o.orgId, empA, o.staffA],
+      ),
+    ).rejects.toMatchObject({ code: '23505' });
+
+    await o.exec(o.staffA, 'hr.self.onboarding.cancel', { submissionId: firstPending.submissionId });
+    const secondAfterCancel = await o.exec<HrSelfOnboardingSubmitResult>(o.staffA, 'hr.self.onboarding.submit', {
+      contactConfirmed: true,
+    });
+    expect(secondAfterCancel.status).toBe('pending');
+
+    // 2. OT: same-day >24h multi-request warning + 40h/month warning surfaced on submit, list, and approve_final.
+    const sameDay1 = await o.exec<HrSelfOvertimeSubmitResult>(o.staffA, 'hr.self.overtime.submit', {
+      workDate: '2026-10-10',
+      hours: '15',
+      dayType: 'weekend',
+    });
+    expect(sameDay1.exceedsDailyCap).toBe(false);
+    const sameDay2 = await o.exec<HrSelfOvertimeSubmitResult>(o.staffA, 'hr.self.overtime.submit', {
+      workDate: '2026-10-10',
+      hours: '12',
+      dayType: 'weekend',
+    });
+    expect(sameDay2.dayHoursTotal).toBe('27');
+    expect(sameDay2.exceedsDailyCap).toBe(true);
+    expect(sameDay2.exceedsMonthlyCap).toBe(false);
+
+    const pushOver40 = await o.exec<HrSelfOvertimeSubmitResult>(o.staffA, 'hr.self.overtime.submit', {
+      workDate: '2026-10-11',
+      hours: '16',
+      dayType: 'weekend',
+    });
+    expect(pushOver40.monthHoursTotal).toBe('43');
+    expect(pushOver40.exceedsMonthlyCap).toBe(true);
+
+    // Cancelled request must not inflate monthly/daily totals.
+    const toCancelOt = await o.exec<HrSelfOvertimeSubmitResult>(o.staffA, 'hr.self.overtime.submit', {
+      workDate: '2026-10-10',
+      hours: '5',
+      dayType: 'weekend',
+    });
+    await o.exec(o.staffA, 'hr.self.overtime.cancel', { requestId: toCancelOt.requestId });
+
+    const adminList = await o.query<HrOvertimeRequestView[]>(o.owner, 'hr.overtime.list', { month: '2026-10' });
+    const rowSameDay = adminList.find((r) => r.id === sameDay1.requestId)!;
+    expect(rowSameDay).toMatchObject({
+      monthHoursTotal: '43',
+      exceedsMonthlyCap: true,
+      dayHoursTotal: '27',
+      exceedsDailyCap: true,
+    });
+    const finalRes = await o.exec<HrOvertimeActionResult>(o.owner, 'hr.overtime.approve_final', {
+      requestId: sameDay2.requestId,
+    });
+    expect(finalRes).toMatchObject({
+      status: 'approved',
+      monthHoursTotal: '43',
+      exceedsMonthlyCap: true,
+      dayHoursTotal: '27',
+      exceedsDailyCap: true,
+    });
+
+    // 3. SQL month vs work_date parity CHECK and (org_id, employee_id, month) index presence.
+    await expect(
+      adminPool.query(
+        `INSERT INTO ludy_hr.overtime_request (org_id, employee_id, month, work_date, hours, day_type, status, created_by)
+         VALUES ($1, $2, '2026-10', '2026-11-01', 2, 'weekday', 'pending_final', $3)`,
+        [o.orgId, empA, o.owner],
+      ),
+    ).rejects.toMatchObject({ code: '23514', constraint: 'overtime_request_month_work_date_parity_ck' });
+    const { rows: idxRows } = await adminPool.query<{ indexname: string }>(
+      `SELECT indexname FROM pg_indexes WHERE schemaname = 'ludy_hr' AND tablename = 'overtime_request' AND indexname = 'overtime_request_org_emp_month_idx'`,
+    );
+    expect(idxRows).toHaveLength(1);
+
+    // 4. Probation: server-side validation of probationEndOn and extendedUntil > resolvedProbationEndOn.
+    await expect(
+      o.exec(o.owner, 'hr.probation.decide', {
+        employeeId: empA,
+        periodStart: '2026-09-01',
+        periodEnd: '2026-10-30',
+        probationEndOn: '2026-10-25',
+        decision: 'pass',
+      }),
+    ).rejects.toMatchObject({ code: 'HR_PROBATION_PERIOD_INVALID', status: 422 });
+    await expect(
+      o.exec(o.owner, 'hr.probation.decide', {
+        employeeId: empA,
+        periodStart: '2026-09-01',
+        periodEnd: '2026-10-20',
+        probationEndOn: '2026-10-30',
+        decision: 'extend',
+        extendedUntil: '2026-10-28',
+      }),
+    ).rejects.toMatchObject({ code: 'HR_PROBATION_PERIOD_INVALID', status: 422 });
+    const probPass = await o.exec<HrProbationDecideResult>(o.owner, 'hr.probation.decide', {
+      employeeId: empA,
+      periodStart: '2026-09-01',
+      periodEnd: '2026-10-30',
+      probationEndOn: '2026-10-30',
+      decision: 'pass',
+    });
+    expect(probPass.decision).toBe('pass');
+
+    // 5. Legacy corrupt >29,999.70h bucket fails zHrPayrollInputs .max(30) cleanly without silent truncation.
+    const corruptChunks = splitOvertimeHours(money('30000'));
+    expect(corruptChunks.length).toBeGreaterThan(30);
+    const parsedCorrupt = zHrPayrollInputs.safeParse({
+      overtime: corruptChunks.map((hours) => ({ dayKind: 'normal_day' as const, night: false, hours })),
+    });
+    expect(parsedCorrupt.success).toBe(false);
+  });
+
+  it('exercises concurrent hr_ot_run/hr_emp_erase stress, L1 guard 403 zero-updated-rows race vs RLS 404, and cross-entity OT locks (#4488)', async () => {
+    const o = await setupOrg();
+    const { departmentId: deptA } = await o.exec<{ departmentId: string }>(
+      o.owner,
+      'hr.department.add',
+      { name: 'Phòng Concurrency', code: 'CONC', payFunction: 'admin' },
+      asMfa(o.owner),
+    );
+    await o.exec(
+      o.owner,
+      'hr.department.set_manager',
+      { departmentId: deptA, managerUserId: o.manager },
+      asMfa(o.owner),
+    );
+    const empA = (
+      await o.exec<HrWritten>(
+        o.owner,
+        'hr.payroll.employee.add',
+        {
+          displayName: 'Trần Concurrent',
+          departmentId: deptA,
+          employment: { effectiveFrom: '2026-08-01', contractType: 'indefinite', region: 'I', baseWage: '15000000' },
+        },
+        asMfa(o.owner),
+      )
+    ).employeeId as string;
+    await o.exec(o.owner, 'hr.payroll.employee.link_member', { employeeId: empA, userId: o.staffA }, asMfa(o.owner));
+
+    // A. Direct concurrency test for updatePendingL1WithGuard 403 zero-updated-rows path + post-commit 404 RLS isolation.
+    const raceOt = await o.exec<HrSelfOvertimeSubmitResult>(o.staffA, 'hr.self.overtime.submit', {
+      workDate: '2026-10-08',
+      hours: '4',
+      dayType: 'weekday',
+    });
+
+    const appUrl = new URL(adminUrl);
+    appUrl.username = 'ludy_app';
+    appUrl.password = 'test-app-pw';
+    const racePool = createPool({ connectionString: appUrl.toString(), max: 8 });
+    const raceRt = new Runtime(createDb(racePool), {
+      manifests: TEST_MANIFESTS,
+      sessions: createSessionStatusSource('off'),
+      subjectVault,
+      readAuditKey: randomBytes(32),
+      stepUp: 'required' as const,
+    }).register({
+      commands: [...kernelCommands, ...hrCommands, ...projectsCommands],
+      queries: [...kernelQueries({ inboundDomain: null }), ...hrQueries, ...projectsQueries],
+    });
+
+    const holder = await racePool.connect();
+    try {
+      // Lock the department row while revoking manager_user_id uncommitted so manager's assertL1Authority reads pre-commit manager,
+      // then blocks on updatePendingL1WithGuard(.forShare()) and sees 0 updated rows -> 403 FORBIDDEN on commit.
+      await holder.query('BEGIN');
+      await enterUser(holder, o.owner, o.orgId);
+      await holder.query(
+        'UPDATE ludy_hr.department SET manager_user_id = NULL, updated_at = now() WHERE org_id = $1::uuid AND id = $2::uuid',
+        [o.orgId, deptA],
+      );
+
+      const pendingL1Outcome = raceRt
+        .execute(
+          'hr.overtime.approve_l1',
+          { requestId: raceOt.requestId },
+          { actor: asUser(o.manager), orgId: o.orgId },
+        )
+        .then(
+          (value) => ({ ok: true as const, value }),
+          (reason: unknown) => ({ ok: false as const, reason }),
+        );
+
+      // Wait until the L1 transaction blocks on the department row lock before committing manager removal.
+      let blocked = false;
+      for (let i = 0; i < 40; i += 1) {
+        const { rows } = await adminPool.query<{ n: number }>(
+          `SELECT count(*)::int AS n FROM pg_stat_activity
+           WHERE datname = $1 AND state = 'active' AND wait_event_type = 'Lock' AND query LIKE '%overtime_request%'`,
+          [dbName],
+        );
+        if ((rows[0]?.n ?? 0) > 0) {
+          blocked = true;
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      await holder.query('COMMIT');
+      expect(blocked).toBe(true);
+
+      const outcome = await pendingL1Outcome;
+      expect(outcome.ok).toBe(false);
+      if (!outcome.ok) {
+        expect(outcome.reason).toMatchObject({ code: 'FORBIDDEN', status: 403 });
+      }
+
+      // Post-commit retry hits RLS SELECT policy directly -> 404 HR_OVERTIME_NOT_FOUND.
+      await expect(
+        raceRt.execute('hr.overtime.approve_l1', { requestId: raceOt.requestId }, { actor: asUser(o.manager), orgId: o.orgId }),
+      ).rejects.toMatchObject({ code: 'HR_OVERTIME_NOT_FOUND', status: 404 });
+
+      // B. Multi-session concurrency stress across hr_ot_run, hr_ot_emp, payroll run, and cross-entity transfer.
+      const branchEntity = await o.exec<{ id: string }>(
+        o.owner,
+        'kernel.legal_entity.create',
+        { name: 'Chi nhánh Đồng Thời', kind: 'branch', taxCode: null, parentId: null },
+        asMfa(o.owner),
+      );
+      const empB = (
+        await o.exec<HrWritten>(
+          o.owner,
+          'hr.payroll.employee.add',
+          {
+            displayName: 'Nguyễn Chi Nhánh',
+            employment: { effectiveFrom: '2026-08-01', contractType: 'indefinite', region: 'I', baseWage: '14000000' },
+          },
+          asMfa(o.owner),
+        )
+      ).employeeId as string;
+      await o.exec(o.owner, 'hr.payroll.employee.link_member', { employeeId: empB, userId: o.staffB }, asMfa(o.owner));
+
+      const batchOts = await Promise.all([
+        raceRt.execute<HrSelfOvertimeSubmitResult>(
+          'hr.self.overtime.submit',
+          { workDate: '2026-10-12', hours: '3', dayType: 'weekday' },
+          { actor: asUser(o.staffA), orgId: o.orgId },
+        ),
+        raceRt.execute<HrSelfOvertimeSubmitResult>(
+          'hr.self.overtime.submit',
+          { workDate: '2026-10-13', hours: '4', dayType: 'weekday' },
+          { actor: asUser(o.staffA), orgId: o.orgId },
+        ),
+        raceRt.execute<HrSelfOvertimeSubmitResult>(
+          'hr.self.overtime.submit',
+          { workDate: '2026-10-12', hours: '2', dayType: 'weekday' },
+          { actor: asUser(o.staffB), orgId: o.orgId },
+        ),
+      ]);
+
+      // Approve empA requests + race with approve_final + run.open across overlapping sessions (no deadlock).
+      const stressResults = await Promise.allSettled([
+        raceRt.execute<HrOvertimeActionResult>(
+          'hr.overtime.approve_final',
+          { requestId: batchOts[0].requestId },
+          { actor: asUser(o.owner), orgId: o.orgId },
+        ),
+        raceRt.execute<HrOvertimeActionResult>(
+          'hr.overtime.approve_final',
+          { requestId: batchOts[1].requestId },
+          { actor: asUser(o.admin), orgId: o.orgId },
+        ),
+        raceRt.execute<HrOvertimeActionResult>(
+          'hr.overtime.approve_final',
+          { requestId: batchOts[2].requestId },
+          { actor: asUser(o.owner), orgId: o.orgId },
+        ),
+        raceRt.execute<HrRunWritten>(
+          'hr.payroll.run.open',
+          { month: '2026-10', workingDays: '26' },
+          { actor: asMfa(o.owner), orgId: o.orgId },
+        ),
+      ]);
+      for (const res of stressResults) {
+        expect(res.status, res.status === 'rejected' ? String(res.reason) : 'ok').toBe('fulfilled');
+      }
+
+      // Cross-entity mid-month transfer + hr_emp_erase concurrency stress:
+      // end empB on default entity mid-month, hire into branchEntity, submit & concurrently run erasure + OT approval.
+      await o.exec(
+        o.owner,
+        'hr.payroll.employee.end',
+        { employeeId: empB, endedOn: '2026-10-15' },
+        asMfa(o.owner),
+      );
+      await o.exec(
+        o.owner,
+        'hr.payroll.employee.link_member',
+        { employeeId: empB, userId: null },
+        asMfa(o.owner),
+      );
+      const empBBranch = (
+        await o.exec<HrWritten>(
+          o.owner,
+          'hr.payroll.employee.add',
+          {
+            legalEntityId: branchEntity.id,
+            displayName: 'Nguyễn Chi Nhánh (Chuyển Pháp Nhân)',
+            employment: { effectiveFrom: '2026-10-16', contractType: 'indefinite', region: 'I', baseWage: '15000000' },
+          },
+          asMfa(o.owner),
+        )
+      ).employeeId as string;
+      await o.exec(o.owner, 'hr.payroll.employee.link_member', { employeeId: empBBranch, userId: o.staffB }, asMfa(o.owner));
+
+      const branchOt = await o.exec<HrSelfOvertimeSubmitResult>(o.staffB, 'hr.self.overtime.submit', {
+        workDate: '2026-10-20',
+        hours: '3.5',
+        dayType: 'weekday',
+      });
+      // Unlink / end empBBranch past 10-year Accounting Law window and erase concurrently with approve_final:
+      // hr_emp_erase and hr_ot_run/hr_ot_emp serialize safely without deadlock.
+      await o.exec(o.owner, 'hr.payroll.employee.end', { employeeId: empBBranch, endedOn: '2026-10-25' }, asMfa(o.owner));
+      const eraseBackdate = await adminPool.connect();
+      let eraseCommitted = false;
+      let eraseBroken = false;
+      try {
+        await eraseBackdate.query('BEGIN');
+        await eraseBackdate.query('SET LOCAL session_replication_role = replica');
+        await eraseBackdate.query(
+          `UPDATE ludy_hr.payroll_employee
+              SET ended_on = ((pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - interval '10 years 1 day')::date
+            WHERE id = $1`,
+          [empBBranch],
+        );
+        await eraseBackdate.query('COMMIT');
+        eraseCommitted = true;
+      } catch (err) {
+        if (!eraseCommitted) {
+          await eraseBackdate.query('ROLLBACK').catch(() => {
+            eraseBroken = true;
+          });
+        }
+        throw err;
+      } finally {
+        eraseBackdate.release(eraseBroken);
+      }
+      const eraseVsApprove = await Promise.allSettled([
+        raceRt.execute(
+          'hr.payroll.employee.erase',
+          { employeeId: empBBranch },
+          { actor: asMfa(o.owner), orgId: o.orgId },
+        ),
+        raceRt.execute(
+          'hr.overtime.approve_final',
+          { requestId: branchOt.requestId },
+          { actor: asUser(o.admin), orgId: o.orgId },
+        ),
+      ]);
+      expect(eraseVsApprove[0].status, eraseVsApprove[0].status === 'rejected' ? String(eraseVsApprove[0].reason) : 'ok').toBe('fulfilled');
+      if (eraseVsApprove[1].status === 'rejected') {
+        expect(eraseVsApprove[1].reason).toMatchObject({ code: 'HR_EMPLOYEE_ERASED', status: 409 });
+      } else {
+        // If approve_final won lock first, branch entity run and erasure both serialized safely without deadlock.
+        expect(eraseVsApprove[1].value).toMatchObject({ status: 'approved' });
+      }
+      // Run branch entity payroll safely and verify empB's default entity 2h OT remained isolated on default entity.
+      const branchRun = await o.exec<HrRunWritten>(
+        o.owner,
+        'hr.payroll.run.open',
+        { month: '2026-10', legalEntityId: branchEntity.id, workingDays: '26' },
+        asMfa(o.owner),
+      );
+      expect(branchRun.runId).toBeTruthy();
+    } finally {
+      await holder.query('ROLLBACK').catch(() => undefined);
+      holder.release();
+      await racePool.end();
+    }
+  });
+
+  it('enforces ctx_le_scope isolation in ludy_hr.lock_active_department_manager (#4488)', async () => {
+    const o = await setupOrg();
+    const branchEntity = await o.exec<{ id: string }>(
+      o.owner,
+      'kernel.legal_entity.create',
+      { name: 'Chi nhánh Scope Lock', kind: 'branch', taxCode: null, parentId: null },
+      asMfa(o.owner),
+    );
+    const { departmentId: deptHq } = await o.exec<{ departmentId: string }>(
+      o.owner,
+      'hr.department.add',
+      { name: 'Phòng Trụ sở Scope', code: 'HQSCOPE', payFunction: 'admin' },
+      asMfa(o.owner),
+    );
+    const { departmentId: deptBranch } = await o.exec<{ departmentId: string }>(
+      o.owner,
+      'hr.department.add',
+      {
+        legalEntityId: branchEntity.id,
+        name: 'Phòng Chi nhánh Scope',
+        code: 'BRSCOPE',
+        payFunction: 'admin',
+      },
+      asMfa(o.owner),
+    );
+    await o.exec(o.owner, 'hr.department.set_manager', { departmentId: deptHq, managerUserId: o.manager }, asMfa(o.owner));
+
+    // Create a second member restricted to branchEntity via entity-scoped role_assignment and make them manager of BOTH depts.
+    const scopedMgr = await upsertIdentity(createDb(appPool), {
+      issuer: 'hr5b',
+      subject: `scoped-mgr-${randomUUID().slice(0, 8)}`,
+      email: `scoped-mgr-${randomUUID().slice(0, 8)}@hr5b.test`,
+      name: 'Quản Lý Chi Nhánh',
+    });
+    await adminPool.query(
+      `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`,
+      [o.orgId, scopedMgr],
+    );
+    await adminPool.query(
+      `INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by)
+       VALUES ($1, $2, 'external_accountant', $3, $4)`,
+      [o.orgId, scopedMgr, branchEntity.id, o.owner],
+    );
+    await o.exec(o.owner, 'hr.department.set_manager', { departmentId: deptBranch, managerUserId: scopedMgr }, asMfa(o.owner));
+
+    const deptHq2 = (
+      await o.exec<{ departmentId: string }>(
+        o.owner,
+        'hr.department.add',
+        { name: 'Phòng Trụ sở Scoped Mgr', code: 'HQ2SCOPE', payFunction: 'admin' },
+        asMfa(o.owner),
+      )
+    ).departmentId;
+    await o.exec(o.owner, 'hr.department.set_manager', { departmentId: deptHq2, managerUserId: scopedMgr }, asMfa(o.owner));
+
+    // 1. NULL and empty ctx_le_scope() fail closed (false) even for active department manager.
+    const c = await adminPool.connect();
+    try {
+      for (const leScopeSql of ['NULL', `'[]'::jsonb`]) {
+        await c.query('BEGIN');
+        await c.query(
+          `SELECT ludy_kernel.ctx_write(jsonb_build_object(
+            'v', 1, 'org', $1::uuid, 'actor', 'user', 'user', $2::uuid, 'role', 'member', 'le_scope', ${leScopeSql}, 'flags', '[]'::jsonb
+          ))`,
+          [o.orgId, o.manager],
+        );
+        await c.query('SET LOCAL ROLE ludy_tenant');
+        const { rows } = await c.query<{ ok: boolean }>(
+          `SELECT ludy_hr.lock_active_department_manager($1::uuid, $2::uuid) AS ok`,
+          [o.orgId, deptHq],
+        );
+        expect(rows[0]?.ok).toBe(false);
+        await c.query('ROLLBACK');
+      }
+    } finally {
+      await c.query('ROLLBACK').catch(() => undefined);
+      c.release();
+    }
+
+    // 2. Scoped manager ([branchEntity.id]) is blocked (false) on default-entity deptHq2, allowed (true) on branch deptBranch.
+    const appClient = await appPool.connect();
+    try {
+      await appClient.query('BEGIN');
+      await enterUser(appClient, scopedMgr, o.orgId);
+      const resScoped = await appClient.query<{ scope: string[]; hqOk: boolean; branchOk: boolean }>(
+        `SELECT ludy_kernel.ctx_le_scope() AS scope,
+                ludy_hr.lock_active_department_manager($1::uuid, $2::uuid) AS "hqOk",
+                ludy_hr.lock_active_department_manager($1::uuid, $3::uuid) AS "branchOk"`,
+        [o.orgId, deptHq2, deptBranch],
+      );
+      expect(resScoped.rows[0]).toEqual({ scope: [branchEntity.id], hqOk: false, branchOk: true });
+      await appClient.query('ROLLBACK');
+
+      // 3. Unrestricted manager (['*']) succeeds (true) on default-entity deptHq.
+      await appClient.query('BEGIN');
+      await enterUser(appClient, o.manager, o.orgId);
+      const resWild = await appClient.query<{ scope: string[]; ok: boolean }>(
+        `SELECT ludy_kernel.ctx_le_scope() AS scope,
+                ludy_hr.lock_active_department_manager($1::uuid, $2::uuid) AS ok`,
+        [o.orgId, deptHq],
+      );
+      expect(resWild.rows[0]).toEqual({ scope: ['*'], ok: true });
+      await appClient.query('ROLLBACK');
+    } finally {
+      await appClient.query('ROLLBACK').catch(() => undefined);
+      appClient.release();
+    }
   });
 });

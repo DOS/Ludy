@@ -132,8 +132,9 @@ describe('TeamsMeetingPlatform.list', () => {
     expect(listed[0]).toEqual({
       id: OCC.A,
       title: 'Họp tuần (Teams)',
-      startedAt: '2026-11-17T02:00:00.000Z',
-      lengthSeconds: 3600,
+      // The recording began at 02:05 and ran 50 minutes inside the 02:00 to 03:00 slot; the id keeps the slot.
+      startedAt: '2026-11-17T02:05:00.000Z',
+      lengthSeconds: 3000,
       sizeBytes: null,
       hasAudio: false,
       hasVideo: true,
@@ -145,6 +146,39 @@ describe('TeamsMeetingPlatform.list', () => {
     // Not listed: a call with no online meeting, a cancelled one, one still running, one with two recordings and no transcript, one with nothing, one Graph does not know.
     expect(calls.every((c) => c.method === 'GET')).toBe(true);
     expect(calls.filter((c) => c.url.includes('/recordings')).map((c) => decodeURIComponent(c.url))).not.toContain(expect.stringContaining(IDS.BBBB));
+  });
+
+  it('gives a row the length of what was recorded, not of the calendar slot: the recording, else the transcript, else the slot', async () => {
+    const aaaa = `/v1.0/me/onlineMeetings/${IDS.AAAA}`;
+    // The slot is 02:00 to 03:00 (3600 seconds); the recording ran 40 minutes inside it.
+    const recording = (extra: Record<string, unknown>) => ({ json: { value: [{ id: RECORDING_ID, createdDateTime: '2026-11-17T02:10:00Z', recordingContentUrl: 'https://graph.microsoft.com/v1.0/$metadata#recording', ...extra }] } });
+    const lengthOfA = async (overrides: Record<string, Answer>) => (await teams(graph(overrides)).adapter.list(CREDENTIAL, SINCE)).find((m) => m.id === OCC.A)?.lengthSeconds;
+    expect(await lengthOfA({ [`${aaaa}/recordings`]: recording({ endDateTime: '2026-11-17T02:50:00Z' }) })).toBe(2400);
+    // The start follows the same file as the length: a call that began 40 minutes after the slot started is placed where it began, so the two stay one interval, and the id stays the slot's.
+    const late = (await teams(graph({ [`${aaaa}/recordings`]: recording({ createdDateTime: '2026-11-17T02:40:00Z', endDateTime: '2026-11-17T03:00:00Z' }) })).adapter.list(CREDENTIAL, SINCE)).find((m) => m.id === OCC.A);
+    expect(late).toMatchObject({ startedAt: '2026-11-17T02:40:00.000Z', lengthSeconds: 1200 });
+    // No end on the recording: the transcript's own span (02:05 to 02:55) is next.
+    expect(await lengthOfA({ [`${aaaa}/recordings`]: recording({}) })).toBe(3000);
+    // An end before the start, or a span of more than a day, is no length: the transcript's span again.
+    expect(await lengthOfA({ [`${aaaa}/recordings`]: recording({ endDateTime: '2026-11-17T02:00:00Z' }) })).toBe(3000);
+    expect(await lengthOfA({ [`${aaaa}/recordings`]: recording({ endDateTime: '2026-11-19T02:10:00Z' }) })).toBe(3000);
+    // Neither file has an end: the calendar slot.
+    const bare = { json: { value: [{ id: TRANSCRIPT_ID, createdDateTime: '2026-11-17T02:05:00Z', transcriptContentUrl: 'https://graph.microsoft.com/v1.0/$metadata#transcript' }] } };
+    expect(await lengthOfA({ [`${aaaa}/recordings`]: recording({}), [`${aaaa}/transcripts`]: bare })).toBe(3600);
+  });
+
+  it('stops a look-up that Graph never answers at the request timeout, so one stalled answer cannot hold the whole list', async () => {
+    const route = graph();
+    // Graph answers every call but the online meeting look-up, which it never answers: the request ends only when its signal aborts.
+    const routed: Fetch = (url, init) => {
+      const at = new URL(url);
+      if (at.pathname.endsWith('/onlineMeetings')) return new Promise<Response>((_resolve, reject) => init?.signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true }));
+      return Promise.resolve(new Response(JSON.stringify((route(at) as { json?: unknown }).json ?? {}), { status: 200, headers: { 'content-type': 'application/json' } }));
+    };
+    const adapter = new TeamsMeetingPlatform(APP, { fetch: routed, now: () => NOW, timeoutMs: 40 });
+    const started = Date.now();
+    expect(await codeOf(adapter.list(CREDENTIAL, SINCE))).toBe('platform_unavailable');
+    expect(Date.now() - started).toBeLessThan(5_000);
   });
 
   it('asks the calendar for the window in UTC, with the narrow field list, and never calls a bulk "all" API', async () => {
@@ -188,7 +222,7 @@ describe('TeamsMeetingPlatform.list', () => {
     }
     const evil = teams((url) => (url.pathname === '/v1.0/me/calendarView' ? { json: { ...fixture('calendar-view'), '@odata.nextLink': 'https://evil.example/v1.0/me/calendarView' } } : graph()(url)));
     expect(await codeOf(evil.adapter.list(CREDENTIAL, SINCE))).toBe('platform_unavailable');
-    expect(evil.calls.some((c) => c.url.includes('evil.example'))).toBe(false);
+    expect(evil.calls.some((c) => new URL(c.url).hostname === 'evil.example')).toBe(false);
   });
 
   it('skips one meeting whose files are refused or gone, and fails the whole call for a token or a busy service', async () => {
@@ -199,6 +233,58 @@ describe('TeamsMeetingPlatform.list', () => {
     expect(await codeOf(teams(graph({ '/v1.0/me/calendarView': { status: 503, json: {} } })).adapter.list(CREDENTIAL, SINCE))).toBe('platform_unavailable');
     expect(await codeOf(teams(graph({ '/v1.0/me/calendarView': new Error('socket hang up') })).adapter.list(CREDENTIAL, SINCE))).toBe('platform_unavailable');
     expect(await codeOf(teams(graph({ '/v1.0/me/calendarView': { text: 'not json at all' } })).adapter.list(CREDENTIAL, SINCE))).toBe('platform_unavailable');
+  });
+
+  it('follows the next page of the recordings and the transcripts of a meeting, so a long series is read whole, and never offers or imports a meeting whose list it could not read whole', async () => {
+    const base = `https://graph.microsoft.com/v1.0/me/onlineMeetings/${IDS.SSSS}`;
+    const split = (kind: 'recordings' | 'transcripts', first: number, link: string = `${base}/${kind}?page=2`) => {
+      const all = (fixture(`${kind}-series`).value as unknown[]) ?? [];
+      return (url: URL): Answer | null => {
+        if (url.pathname !== `/v1.0/me/onlineMeetings/${IDS.SSSS}/${kind}`) return null;
+        return url.searchParams.has('page') ? { json: { value: all.slice(first) } } : { json: { value: all.slice(0, first), '@odata.nextLink': link } };
+      };
+    };
+    const routes = [split('recordings', 1), split('transcripts', 1)];
+    const route = (url: URL): Answer => {
+      for (const r of routes) {
+        const answer = r(url);
+        if (answer) return answer;
+      }
+      return graph()(url);
+    };
+    // One file on the first page, the rest on the second: the list and the two reads still see all of them.
+    const { adapter, calls } = teams(route);
+    const listed = await adapter.list(CREDENTIAL, SINCE);
+    expect(listed.filter((m) => m.id.startsWith(`${IDS.SSSS}~`)).map((m) => [m.id, m.hasVideo, m.hasTranscript])).toEqual([
+      [OCC.S2, true, true],
+      [OCC.S1, true, true],
+    ]);
+    expect(calls.filter((c) => c.url.includes(`${IDS.SSSS}/recordings`))).toHaveLength(2);
+    expect((await adapter.prepareDownload(CREDENTIAL, OCC.S2, 'video')).url).toBe(`${base}/recordings/22222222-bc6e-4fd8-96c7-e01264e9b6f2/content`);
+    expect(await codeOf(adapter.prepareDownload(CREDENTIAL, OCC.S3, 'video'))).toBe('platform_refused');
+    // A next page that leaves Graph, the path or https is never followed (nothing is sent to it) and the meeting offers no video (its transcripts are a separate list), so one odd link does not break the member's whole list; a read of it is refused.
+    for (const link of ['https://evil.example/x', 'https://login.microsoftonline.com/v1.0/me/onlineMeetings', `${base}/transcripts?page=2`, `http://graph.microsoft.com/v1.0/me/onlineMeetings/${IDS.SSSS}/recordings?page=2`, `https://graph.microsoft.com:8443/v1.0/me/onlineMeetings/${IDS.SSSS}/recordings?page=2`, `https://user:pw@graph.microsoft.com/v1.0/me/onlineMeetings/${IDS.SSSS}/recordings?page=2`, 'not a url']) {
+      const odd = teams((url) => split('recordings', 1, link)(url) ?? graph()(url));
+      const shown = await odd.adapter.list(CREDENTIAL, SINCE);
+      expect(shown.map((m) => [m.id, m.hasVideo]), link).toEqual([[OCC.A, true], [OCC.B, false], [OCC.S2, false], [OCC.S1, false]]);
+      // By the parsed address, not a substring: nothing was sent to another host, port, credentials or the sign-in host.
+      expect(odd.calls.filter((c) => { const u = new URL(c.url); return u.hostname !== TEAMS_GRAPH_HOST || u.port !== '' || u.username !== ''; }), link).toEqual([]);
+      expect(await codeOf(odd.adapter.prepareDownload(CREDENTIAL, OCC.S1, 'video')), link).toBe('platform_unavailable');
+    }
+    // A later page that is refused or gone leaves the meeting out of the list too (the files seen so far may be only part), and a read of it is refused.
+    for (const status of [403, 404]) {
+      const gone = teams((url) => (url.pathname.endsWith(`${IDS.SSSS}/recordings`) && url.searchParams.has('page') ? { status, json: fixture('error-forbidden') } : (split('recordings', 1)(url) ?? graph()(url))));
+      expect((await gone.adapter.list(CREDENTIAL, SINCE)).filter((m) => m.hasVideo).map((m) => m.id), String(status)).toEqual([OCC.A]);
+      expect(['platform_refused', 'platform_unavailable', 'recording_gone']).toContain(await codeOf(gone.adapter.prepareDownload(CREDENTIAL, OCC.S1, 'video')));
+    }
+    // A link that never ends is read five pages and no further, and the meeting offers no video.
+    const endless = teams((url) => {
+      if (url.pathname !== `/v1.0/me/onlineMeetings/${IDS.SSSS}/recordings`) return graph()(url);
+      return { json: { value: [], '@odata.nextLink': `${base}/recordings?page=${(Number(url.searchParams.get('page') ?? '1') + 1).toString()}` } };
+    });
+    expect((await endless.adapter.list(CREDENTIAL, SINCE)).some((m) => m.id.startsWith(`${IDS.SSSS}~`) && m.hasVideo)).toBe(false);
+    expect(endless.calls.filter((c) => new URL(c.url).pathname.endsWith(`${IDS.SSSS}/recordings`))).toHaveLength(5);
+    expect(await codeOf(endless.adapter.prepareDownload(CREDENTIAL, OCC.S1, 'video'))).toBe('platform_unavailable');
   });
 
   it('lists each occurrence of a recurring series on its own, with the files made during it, and imports the right ones', async () => {
@@ -437,6 +523,19 @@ describe('TeamsMeetingPlatform OAuth', () => {
     expect(form.get('code')).toBe('the-code');
     expect(form.get('code_verifier')).toBe('verifier-0001');
     expect(form.get('client_secret')).toBe(APP.clientSecret);
+  });
+
+  it('refuses a grant that lacks one of the four Graph permissions (it would connect and then list nothing), and accepts a scope with its resource in front, in any case', async () => {
+    const input = { code: 'c', redirectUri: 'https://app.example/cb', codeVerifier: null };
+    const grant = (scope: string) => ({ ...fixture('token'), scope, id_token: idToken({ oid: OID, tid: TID }) });
+    for (const needed of ['Calendars.ReadBasic', 'OnlineMeetings.Read', 'OnlineMeetingRecording.Read.All', 'OnlineMeetingTranscript.Read.All']) {
+      const scope = ['openid', 'profile', 'offline_access', 'Calendars.ReadBasic', 'OnlineMeetings.Read', 'OnlineMeetingRecording.Read.All', 'OnlineMeetingTranscript.Read.All'].filter((s) => s !== needed).join(' ');
+      expect(await codeOf(teams(() => ({ json: grant(scope) })).adapter.exchange(input)), needed).toBe('platform_refused');
+    }
+    // A scope that only starts the same is not the permission.
+    expect(await codeOf(teams(() => ({ json: grant('openid Calendars.ReadBasic OnlineMeetings.ReadWrite OnlineMeetingRecording.Read.All OnlineMeetingTranscript.Read.All') })).adapter.exchange(input))).toBe('platform_refused');
+    const prefixed = 'openid https://graph.microsoft.com/Calendars.ReadBasic https://graph.microsoft.com/onlinemeetings.read https://graph.microsoft.com/OnlineMeetingRecording.Read.All https://graph.microsoft.com/OnlineMeetingTranscript.Read.All';
+    expect((await teams(() => ({ json: grant(prefixed) })).adapter.exchange(input)).externalAccount).toBe(`${TID}:${OID.toLowerCase()}`);
   });
 
   it('tells a tenant that needs its administrator apart from any other refusal at the token step, with no Microsoft words in the error', async () => {
