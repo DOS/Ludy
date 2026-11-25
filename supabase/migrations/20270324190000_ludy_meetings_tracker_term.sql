@@ -1,6 +1,6 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
 -- Meetings keyword trackers (#4818): the keywords and phrases an org keeps (competitor names, "giá", "hợp đồng") to see how often they come up in its meetings. Idempotent; applied files stay
--- untouched. The org_purge restatement that deletes the new table is its own file (20270324120000_ludy_kernel_org_purge_tracker_term.sql).
+-- untouched. The org_purge restatement that deletes the new table is its own file (20270324190100_ludy_kernel_org_purge_tracker_term.sql).
 --
 -- ludy_meetings.tracker_term  one keyword or phrase of an org: the same shape as a glossary term (ludy_meetings.glossary_term_ok: 1 to 40 characters of plain text, no address, no run of digits).
 --                             Every member of the org reads the list (a meeting shows its hits to whoever reads it, and a viewer must know the words to read the count), an owner or admin adds and
