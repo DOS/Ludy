@@ -4374,6 +4374,38 @@ export const en = {
       chip: '{title}, {date}, {time}',
     },
     // "This week" on the meetings page (#3949): the decisions and open items of the meetings the member reads, and Vy's few sentences on a click.
+    // The week's meeting load (#4770): worked out in code from the meetings the viewer reads, no AI.
+    load: {
+      title: 'Meeting time',
+      description: 'How much of the week each person spends in meetings, and the recurring meetings that may be worth trimming. No AI, and no meeting text is read.',
+      week: 'Week',
+      thisWeek: 'This week',
+      lastWeek: 'Last week',
+      weeksAgo: '{count, number} weeks ago',
+      range: 'From {from} to {to}',
+      member: 'Member',
+      meetings: 'Meetings',
+      time: 'Time in meetings',
+      total: 'Whole team (everyone added up)',
+      someone: 'A member',
+      noMembers: 'You read no meeting with a recorded length in this week.',
+      basis: 'Only the meetings you can read are counted. The people in a meeting are the recorder and the readers the recorder added to a private meeting; for an org-wide meeting only the recorder is counted, since Ludy does not know who joined the call.',
+      minutes: '{minutes, number} min',
+      hours: '{hours, number} h',
+      hoursMinutes: '{hours, number} h {minutes, number} min',
+      trim: {
+        title: 'Recurring meetings that may be worth trimming',
+        hint: 'Looks at the last {weeks, number} weeks (not the last 24 hours), for series with at least {min, number} meetings. A hint to look again, nothing more: this card changes nothing.',
+        none: 'No recurring meeting is worth a second look.',
+        count: '{count, number} meetings, {average} on average',
+        cut: 'Only the series most worth a look are shown.',
+      },
+      signals: {
+        few_people: '{solo, number} of {meetings, number} private meetings had only the recorder in them, nobody added.',
+        no_minutes: 'Only {withMinutes, number} of {meetings, number} meetings have published minutes.',
+        items_piling: 'Open items are piling up: {latest, number} after the latest meeting and {previous, number} after the one before.',
+      },
+    },
     digest: {
       title: 'This week in your meetings',
       description: 'What was decided and what is still open, meeting by meeting.',
@@ -4505,6 +4537,7 @@ export const en = {
       digest: 'This week',
       ask: 'Ask Vy',
       search: 'Search transcripts',
+      load: 'Meeting time',
     },
     filters: {
       button: 'Filter',
@@ -19158,6 +19191,9 @@ export const en = {
         facts: 'See what was decided and what is still open across the meetings you read, over the last week or longer',
         start: "Ask Vy to write a few sentences on the week's decisions and open items",
         status: 'See whether Vy can write the weekly recap',
+      },
+      load: {
+        week: 'See how much of a week each person spends in meetings and the recurring meetings that may be worth trimming, from the meetings you read',
       },
       assignee: {
         facts: 'See the name said for an action item and the people it may be given to',
