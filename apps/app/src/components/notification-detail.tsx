@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Inline detail pane and mobile Sheet body for a selected notification or grouped unread run (DESIGN.md §3.8, §5.5, §5.6).
+import { useQuery } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { Link } from '@tanstack/react-router';
 import { useLocale, useTranslations } from 'use-intl';
+import { parseTrackerAlertTerms } from '@ludy/kernel-contract';
 import { Badge } from '@ludy/ui/components/badge';
 import { Button, buttonVariants } from '@ludy/ui/components/button';
 import { cn } from '@ludy/ui/lib/utils';
 import { useFormat } from '../i18n/provider.tsx';
-import type { client } from '../lib/api.ts';
+import { orpc, type client } from '../lib/api.ts';
 import {
   formatRelativeNotificationTime,
   groupSubjectCount,
@@ -43,8 +45,10 @@ function formatPeriod(period: string | undefined, t: ReturnType<typeof useTransl
   return t(parts.kind === 'month' ? 'month' : 'quarter', { label: parts.label });
 }
 
-export function useNotificationLine() {
+// `wantsTrackerWords`: the page shows a tracker alert, whose words are written from the live list of tracked words (the notice keeps ids and counts only, so a deleted word is simply left out; #4873).
+export function useNotificationLine(wantsTrackerWords = false) {
   const t = useTranslations('notifications');
+  const trackerList = useQuery({ ...orpc.meetings.tracker.list.queryOptions({ input: {} }), enabled: wantsTrackerWords, staleTime: 60_000 });
   const f = useFormat();
   // An owner's notice before a personal-data erasure (#1678): how many of my private items, in the finder's words.
   const p = useTranslations('personalData');
@@ -97,6 +101,13 @@ export function useNotificationLine() {
           overdue: Number(n.detail.overdue ?? 0),
           cut: n.detail.cut === '1' ? 'yes' : 'no',
         });
+      case 'meetings.tracker_alert': {
+        const names = new Map((trackerList.data?.terms ?? []).map((w) => [w.id, w.term]));
+        const listed = parseTrackerAlertTerms(n.detail)
+          .flatMap((w) => (names.has(w.termId) ? [`${names.get(w.termId)} (${w.count})`] : []))
+          .join(', ');
+        return listed ? t('text.tracker_alert', { words: listed }) : t('text.tracker_alert_plain');
+      }
       case 'kernel.channel_expired':
         return t('text.channel_expired');
       case 'kernel.telegram_chat_displaced':
@@ -174,6 +185,8 @@ export function useNotificationTitle() {
         return titles('meetings_morning');
       case 'meetings.weekly':
         return titles('meetings_weekly');
+      case 'meetings.tracker_alert':
+        return titles('meetings_tracker_alert');
       default:
         return t('text.other');
     }
@@ -641,7 +654,7 @@ export function NotificationDetailBody({
   const t = useTranslations('notifications');
   const f = useFormat();
   const locale = useLocale() === 'en' ? 'en' : 'vi';
-  const line = useNotificationLine();
+  const line = useNotificationLine(row.type === 'group' ? row.items.some((n) => n.kind === 'meetings.tracker_alert') : row.item.kind === 'meetings.tracker_alert');
 
   if (row.type === 'group') {
     const count = groupSubjectCount(row.items);
@@ -698,7 +711,7 @@ export function NotificationDetailBody({
 }
 
 function SingleNotificationBody({ item }: { item: WorkNotification }) {
-  const line = useNotificationLine();
+  const line = useNotificationLine(item.kind === 'meetings.tracker_alert');
   const metadata = useMetadataEntries(item);
   return (
     <div className="space-y-4">

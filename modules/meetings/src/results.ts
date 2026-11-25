@@ -40,6 +40,7 @@ import { enqueueMinutesHook } from './hook.ts';
 import { vnDayStart } from './retention.ts';
 import { suggestAssignee, type Person, type Suggested } from './assignee-match.ts';
 import { attendeeNames, cleanName } from './speaker.ts';
+import { emitTrackerAlert } from './tracker-alerts.ts';
 import { ROLES, draftLineState, lockPublishedLines, missingAnchors, openMeeting, userOf } from './transcript.ts';
 
 // What code finds wrong with an item's text: a link, an email address or a phone number in a title (a task is read by every member, and a title the model
@@ -411,6 +412,9 @@ export const resultPublish = defineCommand({
     if (published !== null && (await meetingIsOrgVisible(ctx.trx, ctx.orgId, input.meetingId))) {
       await ctx.emit('meetings.minutes.published', zMinutesPublishedEvent.parse({ meetingId: input.meetingId, publishedAt: published.updated_at.toISOString() }));
     }
+    // The alert for a tracked word in the minutes (#4873): one event with the meeting's id and language when this call published a summary (a publish of items alone emits nothing). Who is told, and
+    // what they may read, is decided by the worker's dispatch when it runs.
+    if (published !== null) await emitTrackerAlert(ctx, input.meetingId);
     ctx.audit({ meetingId: input.meetingId, results, items: items.length, chapters, lines });
     return { meetingId: input.meetingId, results, items: items.length, chapters, lines };
   },

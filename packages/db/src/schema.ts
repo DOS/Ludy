@@ -1457,6 +1457,9 @@ export type MeetingsMeetingTable = Refine<
   }
 >;
 
+// A member's own opt-in to the alert when a tracked word comes up in a new meeting (#4873): the language of their mail is one of the two the CHECK allows.
+export type MeetingsTrackerAlertTable = Refine<G.MeetingsTrackerAlertTable, { language: Generated<MeetingLanguage> }>;
+
 // The transcript of a meeting (#2578): a segment is a draft, the recorder's own copy, until the recorder publishes it.
 export const TRANSCRIPT_STAGES = ['draft', 'published'] as const;
 export type TranscriptStageValue = (typeof TRANSCRIPT_STAGES)[number];
@@ -1927,6 +1930,7 @@ type Refined = Tables<{
   'ludy_meetings.meeting_chapter': MeetingsMeetingChapterTable;
   'ludy_meetings.meeting_result': MeetingsMeetingResultTable;
   'ludy_meetings.minutes_version': MeetingsMinutesVersionTable;
+  'ludy_meetings.tracker_alert': MeetingsTrackerAlertTable;
   'ludy_meetings.transcript_segment': MeetingsTranscriptSegmentTable;
   'ludy_meetings.translation': MeetingsTranslationTable;
   'ludy_notes.attachment': NotesAttachmentTable;

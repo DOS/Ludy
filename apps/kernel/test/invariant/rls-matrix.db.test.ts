@@ -132,6 +132,7 @@ const PENDING_TABLES = new Set<string>([
   'crove_meetings.live_line',
   'crove_meetings.meeting_link',
   'crove_meetings.tracker_alert',
+  'crove_meetings.weekly_notice',
   'crove_notes.link',
   'crove_notes.note',
 ]);
@@ -3752,7 +3753,7 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
     }),
   },
   // #4873 (meetings tracker alerts): a member's own opt-in to be told when a tracked keyword comes up in a meeting they may read, one row per member. Read, inserted and deleted by that member alone, all in a
-  // user context; the system context and an agent context read none. No UPDATE for a login role. Its factory lands before the table (PENDING_TABLES).
+  // user context; the system context and an agent context read none. No UPDATE for a login role. Its table landed in #4873 (step 2), which removed it from PENDING_TABLES.
   'crove_meetings.tracker_alert': {
     make: (o) => ({
       row: { org_id: o.id, id: randomUUID(), user_id: o.owner },
