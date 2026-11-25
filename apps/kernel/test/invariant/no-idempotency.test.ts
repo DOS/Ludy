@@ -87,8 +87,6 @@ interface PendingNoIdempotency {
   expires: string;
 }
 const PENDING_NO_IDEMPOTENCY_COMMANDS: Readonly<Record<string, PendingNoIdempotency>> = {
-  // The minutes link (#4822) shows its token once, at creation, and never stores it: a replayed answer would hand the plaintext to a second caller. The feature's PR (#4850) moves this into the pinned list.
-  'meetings.minutes_link.create': { reason: '#4822 (the minutes link create command returns the one-time link token; #4850 pins it)', expires: '2026-12-15' },
 };
 
 // What is wrong between the commands that declare noIdempotency and the two lists, one line each.
