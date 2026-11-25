@@ -4805,6 +4805,7 @@ export const vi = {
         label: 'Tải bản ghi lời về',
         txt: 'Văn bản (.txt)',
         srt: 'Phụ đề (.srt)',
+        docx: 'Word (.docx)',
         note: 'Tạo trên máy chủ từ các dòng bạn đang đọc ở đây. Không dùng AI.',
       },
       platformSource: 'Bản chép lời của {platform}: do nền tảng viết, không phải của Ludy.',
