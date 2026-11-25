@@ -428,8 +428,16 @@ export function MeetingsPage() {
   const meetingsOn = meetingsInstalled();
 
   const [activeTab, setActiveTab] = useState<MeetingsTab>('recorded');
-  const [activeTool, setActiveTool] = useState<UtilityTool | null>(null);
-  const [openedTools, setOpenedTools] = useState<ReadonlySet<UtilityTool>>(() => new Set());
+  // The weekly notice's mail and push open the page with ?tool=digest (#4967): the "this week" card is open on arrival. Any other value, or none, opens nothing.
+  const [startTool] = useState<UtilityTool | null>(() => {
+    try {
+      return new URLSearchParams(window.location.search).get('tool') === 'digest' ? 'digest' : null;
+    } catch {
+      return null;
+    }
+  });
+  const [activeTool, setActiveTool] = useState<UtilityTool | null>(startTool);
+  const [openedTools, setOpenedTools] = useState<ReadonlySet<UtilityTool>>(() => new Set(startTool ? [startTool] : []));
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [filter, setFilter] = useState<MeetingListFilter>(EMPTY_MEETING_FILTER);
   const [sort, setSort] = useState<MeetingSort>('started_desc');
@@ -454,7 +462,7 @@ export function MeetingsPage() {
   });
 
   // The labels the recorders put on the meetings the person reads (#4955): each row of the list carries them (#4966), so the list shows them, filters by them, offers the choices of the meetings it holds, and
-  // the search keeps the hits of the labelled meetings among them.
+  // the search asks the server for the lines of the labelled meetings (#4965).
   const allMeetings = meetingsQuery.data ?? [];
   const labelsByMeeting = useMemo(() => labelsByMeetingOf(allMeetings), [allMeetings]);
   const labelChoices = useMemo(() => labelChoicesOf(allMeetings), [allMeetings]);
@@ -696,7 +704,7 @@ export function MeetingsPage() {
               {openedTools.has('ask') && <MeetingAsk slug={slug} />}
             </div>
             <div id="meetings-tool-panel-search" hidden={activeTool !== 'search'} className="rounded-lg border border-border bg-card p-4">
-              {openedTools.has('search') && <MeetingSearch slug={slug} label={filter.label} labelsByMeeting={labelsByMeeting} />}
+              {openedTools.has('search') && <MeetingSearch slug={slug} label={filter.label} />}
             </div>
             <div id="meetings-tool-panel-trackers" hidden={activeTool !== 'trackers'}>
               {openedTools.has('trackers') && <TrackersWeek slug={slug} />}

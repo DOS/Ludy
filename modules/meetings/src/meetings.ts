@@ -43,6 +43,7 @@ import { voiceCueCommands } from './voice-cue.ts';
 import { minutesDocxQueries } from './minutes-docx.ts';
 import { todayQueries } from './today.ts';
 import { morningCommands, morningQueries } from './morning.ts';
+import { weeklyCommands, weeklyQueries } from './weekly.ts';
 import { assigneeCommands, assigneeQueries } from './assignee.ts';
 import { adherenceCommands, adherenceQueries } from './adherence.ts';
 import { agendaCommands, agendaQueries } from './agenda.ts';
@@ -1163,6 +1164,7 @@ export const meetingsCommands = [
   ...digestCommands,
   ...voiceCueCommands,
   ...morningCommands,
+  ...weeklyCommands,
   ...assigneeCommands,
   ...adherenceCommands,
   ...agendaCommands,
@@ -1224,6 +1226,7 @@ export const meetingsQueries = [
   ...minutesDocxQueries,
   ...todayQueries,
   ...morningQueries,
+  ...weeklyQueries,
   ...assigneeQueries,
   ...adherenceQueries,
   ...agendaQueries,

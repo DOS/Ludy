@@ -121,6 +121,7 @@ export interface LudyHrSchema {
   'ludy_hr.attendance_qr_config': HrAttendanceQrConfigTable;
   'ludy_hr.business_trip_request': HrBusinessTripRequestTable;
   'ludy_hr.candidate': HrCandidateTable;
+  'ludy_hr.candidate_stage_transition': HrCandidateStageTransitionTable;
   'ludy_hr.contract_addendum': HrContractAddendumTable;
   'ludy_hr.department': HrDepartmentTable;
   'ludy_hr.employee_asset_handover': HrEmployeeAssetHandoverTable;
@@ -250,6 +251,7 @@ export interface LudyMeetingsSchema {
   'ludy_meetings.tracker_term': MeetingsTrackerTermTable;
   'ludy_meetings.transcript_segment': MeetingsTranscriptSegmentTable;
   'ludy_meetings.translation': MeetingsTranslationTable;
+  'ludy_meetings.weekly_notice': MeetingsWeeklyNoticeTable;
 }
 
 export interface LudyNotesSchema {
@@ -2058,6 +2060,20 @@ export interface HrBusinessTripRequestTable {
   created_by: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_hr.candidate_stage_transition */
+export interface HrCandidateStageTransitionTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  seq: ColumnType<string, never, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  candidate_id: ColumnType<string, string, NotGranted>;
+  from_stage: ColumnType<string | null, string | null, NotGranted>;
+  to_stage: ColumnType<string, string, NotGranted>;
+  occurred_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
 /** ludy_hr.candidate */
@@ -4026,6 +4042,18 @@ export interface MeetingsTranslationTable {
   tainted: ColumnType<boolean, boolean | undefined, NotGranted>;
   source_run_id: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** ludy_meetings.weekly_notice */
+export interface MeetingsWeeklyNoticeTable {
+  org_id: string;
+  id: Generated<string>;
+  user_id: string;
+  send_minute: Generated<number>;
+  time_zone: string;
+  language: Generated<string>;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
 /** ludy_notes.attachment */

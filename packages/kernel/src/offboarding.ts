@@ -9,7 +9,7 @@
 import { sql } from 'kysely';
 import { z } from 'zod';
 import type { MemberRole } from '@ludy/db';
-import { FOLLOWUP_MAIL_SOURCE, TRACKER_ALERT_MAIL_SOURCE } from '@ludy/kernel-contract';
+import { FOLLOWUP_MAIL_SOURCE, TRACKER_ALERT_MAIL_SOURCE, WEEKLY_MAIL_SOURCE } from '@ludy/kernel-contract';
 import { DomainError, defineCommand, defineQuery, exportKey, GENERATION_PATTERN, type QueryContext } from '@ludy/kernel-runtime';
 
 const OWNERS: readonly MemberRole[] = ['owner'];
@@ -20,7 +20,7 @@ const OWNERS: readonly MemberRole[] = ['owner'];
  * list: the queries below) and out of the personal-data finder's rows, where the row shows only its id, address, status and time (findPersonalData). A new mail whose payload counts or quotes a meeting
  * adds its source here. Constant names, never input: the export queries take them as text.
  */
-export const MAIL_SOURCES_LEFT_OUT: readonly string[] = [FOLLOWUP_MAIL_SOURCE, TRACKER_ALERT_MAIL_SOURCE];
+export const MAIL_SOURCES_LEFT_OUT: readonly string[] = [FOLLOWUP_MAIL_SOURCE, WEEKLY_MAIL_SOURCE, TRACKER_ALERT_MAIL_SOURCE];
 const LEFT_OUT_LIST = MAIL_SOURCES_LEFT_OUT.map((source) => `'${source}'`).join(', ');
 
 // The tables an export contains, with the columns left out. Machinery (idempotency keys, outbox, session records,
@@ -77,7 +77,7 @@ export const EXPORT_TABLES = {
   // Outbound mail (#538): the mail log, its delivery events (#539) and the org's suppression list. The address hashes
   // are keyed by the deployment. The follow-up mails of a meeting (#4533, ADR-0047) are left out: each holds the meeting's summary, decisions and action items or a note about it (payload),
   // the subject the recorder typed and the recipients, and the meeting may be attendees-only, which the export leaves out. The mail log drops the payload 30 days after a mail reaches a final
-  // status (mail_retention_purge), but keeps the address and the subject for 13 months, so the rows stay out for as long as they exist. The delivery events (#4577) follow their mail: an event is
+  // status (mail_retention_purge), but keeps the address and the subject for 13 months, so the rows stay out for as long as they exist. The weekly meetings notice's mail (#4967, source meetings.weekly) is left out too: its payload holds the member's own counts of the attendees-only meetings and decisions they read, which the owner who exports must not learn. The delivery events (#4577) follow their mail: an event is
   // exported only when its mail is (a mail_event always has its message, by foreign key; the anti-join touches only the small follow-up set), so no event points at a message the snapshot does not hold. A suppression row (#4584) is kept whole except that its source_message_id is nulled when it names a follow-up mail (the scrub in the snapshot query below).
   'kernel.mail_message': { from: `(SELECT m.* FROM ludy_kernel.mail_message m WHERE m.source NOT IN (${LEFT_OUT_LIST}))`, omit: [] },
   'kernel.mail_suppression': { from: 'ludy_kernel.mail_suppression', omit: [] },
@@ -588,9 +588,10 @@ export const OWNER_RUN_EXPORT_TABLES = {
   'hr.employee_asset_handover': { from: 'ludy_hr.employee_asset_handover', omit: [] },
   'hr.okr_objective': { from: 'ludy_hr.okr_objective', omit: [] },
   'hr.okr_key_result': { from: 'ludy_hr.okr_key_result', omit: [] },
-  // Lightweight recruiting openings and candidates (#3425), readable by owners and admins only.
+  // Lightweight recruiting openings and candidates (#3425, #4487), readable by owners and admins only.
   'hr.job_opening': { from: 'ludy_hr.job_opening', omit: [] },
   'hr.candidate': { from: 'ludy_hr.candidate', omit: [] },
+  'hr.candidate_stage_transition': { from: 'ludy_hr.candidate_stage_transition', omit: [] },
   // The glossary the org keeps for Vy's spelling (#4043): plain text an owner or admin wrote (no personal data by its rules). Its owner_admin policy shows the system actor nothing, so the snapshot would
   // export an empty table: the owner's own session reads it here.
   'meetings.glossary_term': { from: 'ludy_meetings.glossary_term', omit: [] },

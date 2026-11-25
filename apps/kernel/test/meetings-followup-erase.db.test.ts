@@ -221,6 +221,23 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
     expect(ofOther!.row).toMatchObject({ id: other, subject: 'Nhac thanh toan', payload: { keep: true } });
   });
 
+  // The weekly meetings notice's mail (#4967) is a left-out source too: found by its address, shown as id, address, status and time only, so the member's counts in its payload and its subject do not reach an owner or admin.
+  it('shows a weekly notice mail found by its address as id, address, status and time only', async () => {
+    const address = `weekly-${randomUUID()}@finder.test`;
+    const COUNT_CANARY = 8_765_432;
+    const weekly = (await sqlAdmin<{ id: string }>(
+      "INSERT INTO ludy_kernel.mail_message (org_id, stream, source, source_id, template_key, to_address, to_hash, subject, payload, message_id_header, status) VALUES ($1, 'transactional', 'meetings.weekly', NULL, 'meetings.weekly', $2, repeat('e', 64), 'Tong ket tuan', $3::jsonb, $4, 'queued') RETURNING id",
+      [orgId, address, JSON.stringify({ lang: 'vi', org: 'X', meetings: 3, decisions: 4, open: 5, overdue: COUNT_CANARY, cut: false, path: '/o/x/meetings?tool=digest' }), `<finder-weekly-${randomUUID()}@y.test>`],
+    )).rows[0]!.id;
+    const found = await runtime.execute<PersonalDataResult>('kernel.personal_data.find', { value: address }, { actor: asUser('owner'), orgId, idempotencyKey: randomUUID() });
+    const ofWeekly = found.matches.filter((x) => x.column === 'ludy_kernel.mail_message.to_address').find((x) => x.rowId === weekly);
+    expect(ofWeekly).toMatchObject({ handling: 'erase' });
+    expect(Object.keys(ofWeekly!.row).sort()).toEqual(['created_at', 'id', 'status', 'to_address']);
+    expect(ofWeekly!.row).toMatchObject({ id: weekly, to_address: address, status: 'queued' });
+    expect(JSON.stringify(found)).not.toContain(String(COUNT_CANARY));
+    expect(JSON.stringify(found)).not.toContain('Tong ket tuan');
+  });
+
   // The delivery events of the mail log (#4577) follow their mail: an event of a left-out follow-up mail is left out too, so no exported event points at a message the snapshot does not hold.
   it('leaves the delivery events of the follow-up mails out of the org export and keeps those of every other mail', async () => {
     const m = await seedSent({});
@@ -250,6 +267,46 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
       messages.push(...(raw as { lines: string[] }).lines.map((l) => (JSON.parse(l) as { id: string }).id));
     });
     for (const l of lines) expect(messages).toContain((JSON.parse(l) as { message_id: string }).message_id);
+  });
+
+  // The weekly meetings notice (#4967): its mail's payload holds a member's own counts of the attendees-only meetings and decisions they read, so the owner's export leaves the mail, its delivery events and the pointer
+  // of a suppression row at it out, as it does for a follow-up mail, and keeps every other mail.
+  it('leaves the weekly notice mails, their delivery events and the pointers at them out of the org export', async () => {
+    const COUNT_CANARY = 7_654_321;
+    const weekly = (await sqlAdmin<{ id: string }>(
+      "INSERT INTO ludy_kernel.mail_message (org_id, stream, source, source_id, template_key, to_address, to_hash, subject, payload, message_id_header, status) VALUES ($1, 'transactional', 'meetings.weekly', NULL, 'meetings.weekly', 'w@b.test', repeat('7', 64), 'Tong ket', $2::jsonb, '<export-weekly@y.test>', 'queued') RETURNING id",
+      [orgId, JSON.stringify({ lang: 'vi', org: 'X', meetings: 3, decisions: 4, open: 5, overdue: COUNT_CANARY, cut: false, path: '/o/x/meetings?tool=digest' })],
+    )).rows[0]!.id;
+    const other = (await sqlAdmin<{ id: string }>(
+      "INSERT INTO ludy_kernel.mail_message (org_id, stream, source, source_id, template_key, to_address, to_hash, subject, payload, message_id_header, status) VALUES ($1, 'transactional', 'finance.payment_reminder.notice1', NULL, 'x.y', 'a@b.test', repeat('8', 64), 's', '{\"keep\":true}', '<export-weekly-other@y.test>', 'queued') RETURNING id",
+      [orgId],
+    )).rows[0]!.id;
+    const event = async (messageId: string) =>
+      (await sqlAdmin<{ id: string }>("INSERT INTO ludy_kernel.mail_event (org_id, message_id, provider, provider_event_id, kind, occurred_at) VALUES ($1, $2, 'test', $3, 'delivered', now()) RETURNING id", [orgId, messageId, randomUUID()])).rows[0]!.id;
+    const weeklyEvent = await event(weekly);
+    const otherEvent = await event(other);
+    const suppress = async (hash: string, sourceMessageId: string) =>
+      (await sqlAdmin<{ id: string }>("INSERT INTO ludy_kernel.mail_suppression (org_id, to_hash, scope, reason, source_message_id) VALUES ($1, repeat($2, 64), 'all', 'hard_bounce', $3) RETURNING id", [orgId, hash, sourceMessageId])).rows[0]!.id;
+    const ofWeekly = await suppress('9', weekly);
+    const ofOther = await suppress('a', other);
+    const dump = async (table: string) => {
+      const lines: string[] = [];
+      await worker.stream('kernel.org.export.snapshot', { table }, { actor: SYSTEM, orgId }, async (raw) => {
+        lines.push(...(raw as { lines: string[] }).lines);
+      });
+      return lines;
+    };
+    const messages = await dump('kernel.mail_message');
+    const messageIds = messages.map((l) => (JSON.parse(l) as { id: string }).id);
+    expect(messageIds).toContain(other);
+    expect(messageIds).not.toContain(weekly);
+    expect(messages.join('\n')).not.toContain(String(COUNT_CANARY));
+    const events = (await dump('kernel.mail_event')).map((l) => (JSON.parse(l) as { id: string }).id);
+    expect(events).toContain(otherEvent);
+    expect(events).not.toContain(weeklyEvent);
+    const suppressions = new Map((await dump('kernel.mail_suppression')).map((l) => JSON.parse(l) as { id: string; source_message_id: string | null }).map((r) => [r.id, r]));
+    expect(suppressions.get(ofWeekly)).toMatchObject({ reason: 'hard_bounce', source_message_id: null });
+    expect(suppressions.get(ofOther)).toMatchObject({ source_message_id: other });
   });
 
   // The suppression list (#4584): a hard bounce or a complaint of a follow-up mail suppresses the address and names that mail in source_message_id. The mail is left out of the export (#4533), so the pointer goes; the row stays.

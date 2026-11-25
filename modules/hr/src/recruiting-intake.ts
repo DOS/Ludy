@@ -59,6 +59,7 @@ export interface CvDraftProposerResult {
   yearsExperience: number | null;
   matchedSkills: string[];
   notes: string | null;
+  aiSummary: string | null;
   textPreview: string | null;
   extractedChars: number;
   sourceKind: CvSandboxKind;
@@ -169,6 +170,7 @@ export async function buildCvExtractDraft(deps: {
       matchedSkills: proposed.matchedSkills,
       suggestedSource,
       notes: proposed.notes,
+      aiSummary: proposed.aiSummary,
       sourceKind: deps.sourceKind,
       extractedChars: deps.text.length,
       textPreview: proposed.textPreview,
@@ -191,6 +193,7 @@ export async function buildCvExtractDraft(deps: {
     matchedSkills: deterministic.matchedSkills,
     suggestedSource,
     notes: deterministic.notes,
+    aiSummary: null,
     sourceKind: deps.sourceKind,
     extractedChars: deps.text.length,
     textPreview: deterministic.textPreview,
@@ -343,6 +346,26 @@ export const cvExtractCompleteCommand = defineCommand({
   access: 'system',
   writes: [],
   handler: async (ctx, input): Promise<{ ok: true }> => {
+    if (!input.ok) {
+      const priorSuccess = await sql<{ id: string }>`
+        SELECT id::text AS id
+        FROM ludy_kernel.audit_event
+        WHERE org_id = ${ctx.orgId}::uuid
+          AND command = 'hr.recruiting.cv_extract.complete'
+          AND outcome = 'ok'
+          AND detail ->> 'jobId' = ${input.jobId}
+          AND detail ->> 'ok' = 'true'
+          AND (detail ->> 'resultSha256') ~ '^[0-9a-f]{64}$'
+        LIMIT 1
+      `.execute(ctx.trx);
+      if (priorSuccess.rows.length > 0) {
+        ctx.audit({
+          jobId: input.jobId,
+          skippedLateFailure: true,
+        });
+        return { ok: true };
+      }
+    }
     ctx.audit({
       jobId: input.jobId,
       ok: input.ok,
@@ -384,7 +407,7 @@ export const cvExtractContextQuery = defineQuery({
         AND outcome = 'ok'
         AND occurred_at >= pg_catalog.now() - interval '24 hours'
       ORDER BY id DESC
-      LIMIT 10
+      LIMIT 25
     `.execute(ctx.trx);
 
     const req = eventsRes.rows.find((row) => row.command === 'hr.recruiting.cv_extract.request');
@@ -409,9 +432,17 @@ export const cvExtractContextQuery = defineQuery({
     const requestedEntityId = req.legal_entity_id ?? undefined;
     const resolved = await resolveOpeningContext(ctx, openingId, requestedEntityId);
 
-    const completeRow = eventsRes.rows.find((row) => row.command === 'hr.recruiting.cv_extract.complete');
+    const isValidSha = (sha: string | null | undefined): sha is string =>
+      typeof sha === 'string' && /^[0-9a-f]{64}$/.test(sha);
+    const completeRow =
+      eventsRes.rows.find(
+        (row) => row.command === 'hr.recruiting.cv_extract.complete' && row.complete_ok === 'true' && isValidSha(row.result_sha256),
+      ) ??
+      eventsRes.rows.find(
+        (row) => row.command === 'hr.recruiting.cv_extract.complete' && row.complete_ok !== null,
+      );
     const rawSha = completeRow?.result_sha256 ?? null;
-    const resultSha256 = rawSha && /^[0-9a-f]{64}$/.test(rawSha) ? rawSha : null;
+    const resultSha256 = isValidSha(rawSha) ? rawSha : null;
     const failedCode =
       completeRow && !resultSha256 ? (completeRow.complete_error_code ?? 'HR_CV_EXTRACT_FAILED') : null;
 

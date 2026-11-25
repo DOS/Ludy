@@ -173,6 +173,7 @@ export * from './meeting-highlights.ts';
 export * from './meeting-labels.ts';
 export * from './meeting-today.ts';
 export * from './meeting-morning.ts';
+export * from './meeting-weekly.ts';
 export * from './meeting-assignee.ts';
 export * from './meeting-adherence.ts';
 export * from './meeting-chapters.ts';

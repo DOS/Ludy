@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Unit checks for the kernel's pushed notification registry (#3736, #4082): event-driven kinds populate PUSH_EVENTS, while cron-triggered kinds (meetings.morning) register their fixed line and app path without an outbox event.
 import { describe, expect, it } from 'vitest';
-import { MORNING_KIND, SUMMARY_READY_EVENT, SUMMARY_READY_KIND, TRACKER_ALERT_EVENT, TRACKER_ALERT_KIND } from '@ludy/kernel-contract';
+import { MORNING_KIND, SUMMARY_READY_EVENT, SUMMARY_READY_KIND, TRACKER_ALERT_EVENT, TRACKER_ALERT_KIND, WEEKLY_KIND } from '@ludy/kernel-contract';
 import { PUSH_EVENTS, PUSH_KINDS } from '../src/push.ts';
 
 describe('kernel push kinds and events', () => {
@@ -34,9 +34,20 @@ describe('kernel push kinds and events', () => {
     expect(morning?.path('acme', { type: 'meetings.meeting', id: '0193b3a0-1c2d-7e4f-8a9b-0c1d2e3f4a5b' })).toBe('/o/acme/meetings');
   });
 
+  it('registers meetings.weekly with a fixed privacy-safe line (no number, no title) and the "this week" card path without an outbox event', () => {
+    const weekly = PUSH_KINDS.get(WEEKLY_KIND);
+    expect(weekly).toBeDefined();
+    expect(weekly?.event).toBeUndefined();
+    expect(weekly?.line).toBe('Tổng kết các cuộc họp tuần qua đã sẵn sàng');
+    expect(weekly?.line).not.toMatch(/\d/);
+    expect(weekly?.path('acme', { type: null, id: null })).toBe('/o/acme/meetings?tool=digest');
+    expect(weekly?.path('acme', { type: 'meetings.meeting', id: '0193b3a0-1c2d-7e4f-8a9b-0c1d2e3f4a5b' })).toBe('/o/acme/meetings?tool=digest');
+  });
+
   it('collects only defined outbox event strings in PUSH_EVENTS', () => {
     expect([...PUSH_EVENTS]).toEqual([SUMMARY_READY_EVENT, TRACKER_ALERT_EVENT]);
     expect(PUSH_EVENTS.has(MORNING_KIND)).toBe(false);
+    expect(PUSH_EVENTS.has(WEEKLY_KIND)).toBe(false);
     expect(PUSH_EVENTS.has(undefined as unknown as string)).toBe(false);
   });
 });

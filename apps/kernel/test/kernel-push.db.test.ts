@@ -10,7 +10,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool, type Db } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { PUSH_EVENTS, PUSH_KINDS, PUSH_MAX_AGE_HOURS, createOrg, kernelCommands, kernelQueries, upsertIdentity, type PushTargets } from '@ludy/kernel';
-import { MORNING_KIND, SUMMARY_READY_EVENT, SUMMARY_READY_KIND, TRACKER_ALERT_EVENT } from '@ludy/kernel-contract';
+import { MORNING_KIND, SUMMARY_READY_EVENT, SUMMARY_READY_KIND, TRACKER_ALERT_EVENT, WEEKLY_KIND } from '@ludy/kernel-contract';
 import { Runtime } from '@ludy/kernel-runtime';
 import { createPushSender, generateVapidKeys, loadVapidKeys, runPushJob, type PushSender } from '../src/web-push.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
@@ -186,6 +186,33 @@ suite('kernel browser push on PostgreSQL (#3736)', () => {
     await exec(o, o.member, 'kernel.notification.mute', { kind: MORNING_KIND, muted: false });
     expect(await targets(o, n.id)).not.toBeNull();
     // Marking the notice read skips push.
+    await exec(o, o.member, 'kernel.notification.read', { ids: [n.id] });
+    expect(await targets(o, n.id)).toBeNull();
+  });
+
+  it('pushes meetings.weekly with a fixed line and the "this week" card path, no number and no title in the push, and respects mute and read (#4967)', async () => {
+    const o = await org();
+    await subscribe(o, o.member);
+    const n = await notice(o, o.member, {
+      kind: WEEKLY_KIND,
+      eventId: null,
+      subjectType: null,
+      subjectId: null,
+      detail: { meetings: '3', decisions: '4', open: '5', overdue: '2', cut: '0', title: 'Secret Board Meeting' },
+    });
+    const t = await targets(o, n.id);
+    expect(t?.subscriptions).toHaveLength(1);
+    expect(t).toMatchObject({ line: 'Tổng kết các cuộc họp tuần qua đã sẵn sàng', path: `/o/${o.slug}/meetings?tool=digest`, tag: `${WEEKLY_KIND}:${n.id}` });
+    const service = fakeService();
+    expect(await push(service.sender, o, n.id)).toEqual({ sent: 1, gone: 0, failed: 0 });
+    const sentPayload = JSON.parse(service.payloads[0] as string) as { title: string; body: string; url: string; tag: string };
+    expect(sentPayload).toEqual({ title: 'Ludy', body: 'Tổng kết các cuộc họp tuần qua đã sẵn sàng', url: `/o/${o.slug}/meetings?tool=digest`, tag: `${WEEKLY_KIND}:${n.id}` });
+    expect(JSON.stringify(sentPayload)).not.toContain('Secret Board Meeting');
+    // Muting meetings.weekly skips push even for an existing unread notice; marking it read skips it too.
+    await exec(o, o.member, 'kernel.notification.mute', { kind: WEEKLY_KIND, muted: true });
+    expect(await targets(o, n.id)).toBeNull();
+    await exec(o, o.member, 'kernel.notification.mute', { kind: WEEKLY_KIND, muted: false });
+    expect(await targets(o, n.id)).not.toBeNull();
     await exec(o, o.member, 'kernel.notification.read', { ids: [n.id] });
     expect(await targets(o, n.id)).toBeNull();
   });

@@ -93,6 +93,14 @@ export function useNotificationLine(wantsTrackerWords = false) {
         return t('text.summary_ready');
       case 'meetings.morning':
         return t('text.morning', { count: Number(n.detail.count ?? 0) });
+      case 'meetings.weekly':
+        return t('text.weekly', {
+          meetings: Number(n.detail.meetings ?? 0),
+          decisions: Number(n.detail.decisions ?? 0),
+          open: Number(n.detail.open ?? 0),
+          overdue: Number(n.detail.overdue ?? 0),
+          cut: n.detail.cut === '1' ? 'yes' : 'no',
+        });
       case 'meetings.tracker_alert': {
         const names = new Map((trackerList.data?.terms ?? []).map((w) => [w.id, w.term]));
         const listed = parseTrackerAlertTerms(n.detail)
@@ -171,6 +179,8 @@ export function useNotificationTitle() {
         return titles('meetings_summary_ready');
       case 'meetings.morning':
         return titles('meetings_morning');
+      case 'meetings.weekly':
+        return titles('meetings_weekly');
       case 'meetings.tracker_alert':
         return titles('meetings_tracker_alert');
       default:

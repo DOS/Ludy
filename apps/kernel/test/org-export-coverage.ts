@@ -61,6 +61,7 @@ export const NOT_EXPORTED: Readonly<Record<string, string>> = {
   'ludy_notes.note_version': 'rolling 20-snapshot revision history of notes: current shared notes are exported in notes.note and private notes stay out (ADR-0037)',
   'ludy_meetings.calendar_agenda': "private to its member: a member's own agenda of upcoming meetings",
   'ludy_meetings.morning_notice': "private to its member: a member's own setting for the morning notice of the day's meetings (a time of day, a time zone, a language)",
+  'ludy_meetings.weekly_notice': "private to its member: a member's own setting for the weekly notice of the week's meetings (a Monday time of day, a time zone, a language)",
   'ludy_meetings.minutes_link': "a link to the published minutes for people outside the org (#4822): a token hash is a credential, and a link names a meeting that its reader may not be allowed to read",
   'ludy_meetings.chat_post': "readable by the meeting's recorder alone, as the author",
   'ludy_meetings.chat_post_body': "the body of those posts: readable by the meeting's recorder alone",

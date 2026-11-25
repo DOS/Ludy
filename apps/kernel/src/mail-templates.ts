@@ -17,6 +17,7 @@ import { QUOTE_MAIL_TEMPLATE, quoteMailTemplate } from './quote-mail.ts';
 import { reportMailTemplate } from './report-mail.ts';
 import { signMailTemplates } from './sign-mail.ts';
 import { morningMailTemplate } from './morning-mail.ts';
+import { weeklyMailTemplate } from './weekly-mail.ts';
 import { summaryReadyMailTemplate } from './summary-ready-mail.ts';
 import { trackerAlertMailTemplate } from './tracker-alert-mail.ts';
 import { todayMailTemplate } from './today-mail.ts';
@@ -52,6 +53,8 @@ export const MAIL_TEMPLATES: MailTemplates = {
   'meetings.tracker_alert': trackerAlertMailTemplate,
   // The member's opt-in morning mail of the day's meetings: a fixed line with the count and the link to the meetings page, no title (#3955).
   'meetings.morning': morningMailTemplate,
+  // The member's opt-in Monday mail of the week's meetings: a fixed line with four counts and the link to the "this week" card, no title (#4967).
+  'meetings.weekly': weeklyMailTemplate,
   // A project's weekly status shared by email to project members (#2609).
   'projects.weekly_status': projectWeeklyStatusMailTemplate,
   // Public roadmap 6-digit email OTP verification (#4399, ADR-0057).
