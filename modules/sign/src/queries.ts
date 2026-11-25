@@ -41,7 +41,14 @@ import {
 } from './meeting-visibility.ts';
 import type { SignFieldForSeal, SignSignerForSeal } from './sealing.ts';
 import { SIGN_PRE_EXPIRY_REMIND_MAIL_SOURCE } from './sign-mail.ts';
-import { SIGN_WRITERS, parseDetectedTags, parseFieldOptions, parsePageDimensions, parseSharedSummary } from './shared.ts';
+import {
+  SIGN_WRITERS,
+  parseDetectedTags,
+  parseFieldOptions,
+  parsePageDimensions,
+  parseSharedSummary,
+  resolvePrimaryEnvelopeDocMap,
+} from './shared.ts';
 import { signVaultQueries } from './vault.ts';
 
 const READERS: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -149,9 +156,16 @@ export const envelopeList = defineQuery({
       }
     }
 
+    const primaryDocs = await resolvePrimaryEnvelopeDocMap(
+      ctx.trx,
+      ctx.orgId,
+      rows.map((r) => r.id),
+    );
+
     return {
       items: rows.map((r) => {
         const counts = summaryByEnvelope.get(r.id);
+        const primaryDoc = primaryDocs.get(r.id);
         const envelopeActive = r.status === 'sent' || r.status === 'in_progress';
         return {
           id: r.id,
@@ -160,7 +174,7 @@ export const envelopeList = defineQuery({
           routingMode: r.routing_mode,
           sourceKind: r.source_kind,
           sourceId: r.source_id,
-          sourceFileId: r.source_file_id,
+          sourceFileId: primaryDoc?.fileId ?? r.source_file_id,
           inspectStatus: r.inspect_status,
           sealStatus: r.seal_status,
           certificateCode: r.certificate_code,
@@ -576,15 +590,15 @@ export const envelopeGet = defineQuery({
         allowDelegation: env.allow_delegation,
         sourceKind: env.source_kind,
         sourceId: env.source_id,
-        sourceFileId: env.source_file_id,
-        sourceSha256: env.source_sha256,
+        sourceFileId: docRows[0]?.file_id ?? env.source_file_id,
+        sourceSha256: docRows[0]?.source_sha256 ?? env.source_sha256,
         inspectStatus: env.inspect_status,
         inspectError: env.inspect_error,
         pageCount: env.page_count,
         pageDimensions: parsePageDimensions(env.page_dimensions_json),
         detectedTags: parseDetectedTags(env.detected_tags_json, env.page_count),
         shareSummaryWithSigners: Boolean(env.share_summary_with_signers),
-        sharedSummary: parseSharedSummary(env.shared_summary_json, env.page_count),
+        sharedSummary: parseSharedSummary(env.shared_summary_json, docRows[0]?.page_count ?? env.page_count),
         sealedFileId: env.sealed_file_id,
         sealedSha256: env.sealed_sha256,
         sealStatus: env.seal_status,
@@ -787,6 +801,8 @@ export const envelopeVerify = defineQuery({
       .select(['file_id', 'storage_key', 'generation', 'source_sha256'])
       .where('org_id', '=', ctx.orgId)
       .where('envelope_id', '=', env.id)
+      .orderBy('doc_index', 'asc')
+      .orderBy('id', 'asc')
       .execute();
 
     const fileIds = [
@@ -871,7 +887,7 @@ export const envelopeVerify = defineQuery({
       valid: chain.valid && pointersConsistent,
       eventChain: chain,
       files: {
-        sourceSha256: env.source_sha256,
+        sourceSha256: packetDocs[0]?.source_sha256 ?? env.source_sha256,
         sealedSha256: env.sealed_sha256,
         certificateSha256: env.certificate_sha256,
         certificateCode: env.certificate_code,

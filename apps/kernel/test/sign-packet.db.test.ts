@@ -12,6 +12,7 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { deflateSync, inflateSync } from 'node:zlib';
 import { SignJWT } from 'jose';
+import { sql } from 'kysely';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { z } from 'zod';
@@ -32,14 +33,14 @@ import {
   type BlobStore,
 } from '@ludy/kernel-runtime';
 import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
-import { signCommands, signQueries } from '@ludy/mod-sign';
+import { signAiCommands, signAiQueries, signCommands, signQueries, type SignObligationSource } from '@ludy/mod-sign';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
 import { createAuthenticator } from '../src/auth.ts';
 import { AVAILABLE_MODULES, loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
 import { orgPurgeCommand, runOrgPurge } from '../src/org-purge.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
-import { analyzeSignPacketConsistency, signAi } from '../src/sign-ai.ts';
+import { analyzeSignPacketConsistency, proposeEnvelopeAnalysis, signAi } from '../src/sign-ai.ts';
 import { runSignPdfInspectJob, runSignPdfSealJob } from '../src/sign-worker.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
@@ -334,18 +335,18 @@ suite('eSign Slice 6c multi-document signing packet on PostgreSQL 17 (#4722)', (
     workerDb = createDb(workerPool);
 
     const kernelCmds = buildKernelCommands({ shippedModules: AVAILABLE_MODULES });
-    const sharedQueries = [...kernelQueries({ inboundDomain: null }), ...signQueries, ...meetingsQueries];
+    const sharedQueries = [...kernelQueries({ inboundDomain: null }), ...signQueries, ...signAiQueries, ...meetingsQueries];
     runtime = new Runtime(db, {
       manifests: TEST_MANIFESTS,
       sessions: createSessionStatusSource('off'),
       stepUp: 'required',
     }).register({
-      commands: [...kernelCmds, ...signCommands, ...meetingsCommands],
+      commands: [...kernelCmds, ...signCommands, ...signAiCommands, ...meetingsCommands],
       queries: sharedQueries,
     });
 
     workerRuntime = new Runtime(workerDb, { manifests: TEST_MANIFESTS }).register({
-      commands: [...kernelCmds, ...signCommands, ...meetingsCommands, orgPurgeCommand({ store })],
+      commands: [...kernelCmds, ...signCommands, ...signAiCommands, ...meetingsCommands, orgPurgeCommand({ store })],
       queries: sharedQueries,
     });
 
@@ -1391,5 +1392,299 @@ suite('eSign Slice 6c multi-document signing packet on PostgreSQL 17 (#4722)', (
       c.query<{ count: string }>(`SELECT count(*)::text AS count FROM ludy_sign.envelope_document WHERE org_id = $1`, [purgeOrg.orgId]),
     );
     expect(Number(leftDocs.rows[0]?.count ?? '0')).toBe(0);
+  }, 60_000);
+
+  it('refreshes obligationSource and seal certificate sourceSha256 when original Doc 1 is removed from a draft packet (#4837 item 2)', async () => {
+    const doc1Bytes = buildValidMultiPagePdf([['Original Doc 1 Header']]);
+    const doc2Bytes = buildValidMultiPagePdf([['Replacement Doc 2 Page 1'], ['Replacement Doc 2 Page 2']]);
+    const d1 = await ingestPdfBytes(member, doc1Bytes, 'orig-doc-1.pdf');
+    const d2 = await ingestPdfBytes(member, doc2Bytes, 'replacement-doc-2.pdf');
+
+    const created = await runtime.execute<{ envelopeId: string }>(
+      'sign.envelope.create',
+      { title: 'Doc 1 Removal Packet', routingMode: 'parallel', sourceFileId: d1.fileId },
+      { actor: asUser(member), orgId: org.orgId },
+    );
+    await runSignPdfInspectJob(
+      { workerDb, runtime: workerRuntime, store, extract: realExtract },
+      { orgId: org.orgId, envelopeId: created.envelopeId },
+    );
+
+    const added2 = await runtime.execute<{ documentId: string }>(
+      'sign.envelope.document.add',
+      { envelopeId: created.envelopeId, sourceFileId: d2.fileId },
+      { actor: asUser(member), orgId: org.orgId },
+    );
+    await runSignPdfInspectJob(
+      { workerDb, runtime: workerRuntime, store, extract: realExtract },
+      { orgId: org.orgId, targetKind: 'envelope_document', envelopeId: created.envelopeId, documentId: added2.documentId },
+    );
+
+    const beforeRemove = await runtime.query<SignEnvelopeDetail>(
+      'sign.envelope.get',
+      { envelopeId: created.envelopeId },
+      { actor: asUser(member), orgId: org.orgId },
+    );
+    const origDoc1Id = beforeRemove.documents[0]!.id!;
+    expect(beforeRemove.documents[0]!.sourceSha256).toBe(d1.sha256);
+
+    await runtime.execute(
+      'sign.envelope.document.remove',
+      { envelopeId: created.envelopeId, documentId: origDoc1Id },
+      { actor: asUser(member), orgId: org.orgId },
+    );
+
+    const oblSrc = await runtime.query<SignObligationSource>(
+      'sign.obligation.source',
+      { envelopeId: created.envelopeId },
+      { actor: asUser(member), orgId: org.orgId },
+    );
+    expect(oblSrc.sourceFileId).toBe(d2.fileId);
+    expect(oblSrc.sourceSha256).toBe(d2.sha256);
+    expect(oblSrc.sourceSha256).not.toBe(d1.sha256);
+    expect(oblSrc.pageCount).toBe(2);
+
+    // AI analysis, Playbook check, and Counterparty shared summary also resolve active Doc 1 (d2) after draft Doc 1 removal.
+    const aiSrc = await runtime.query<{ sourceSha256: string; pageCount: number | null; inspectStatus: string }>(
+      'sign.ai_analysis.source',
+      { envelopeId: created.envelopeId },
+      { actor: asUser(member), orgId: org.orgId },
+    );
+    expect(aiSrc.sourceSha256).toBe(d2.sha256);
+    expect(aiSrc.pageCount).toBe(2);
+
+    await expect(
+      proposeEnvelopeAnalysis({
+        ai: signAi(null, new DraftBudget({ perUserPerMinute: 10, perOrgPerMinute: 20 })),
+        runtime,
+        orgId: org.orgId,
+        actor: asUser(member),
+        envelopeId: created.envelopeId,
+        expectedSourceSha256: d1.sha256,
+        pages: [{ page: 1, text: 'Stale Original Doc 1 Text' }],
+        meter: { admit: async () => {}, record: async () => {} },
+      }),
+    ).rejects.toMatchObject({ code: 'SIGN_PRIMARY_DOC_CHANGED', status: 409 });
+
+    await runtime.execute(
+      'sign.envelope.propose_fields',
+      {
+        envelopeId: created.envelopeId,
+        sourceSha256: d2.sha256,
+        status: 'completed',
+        proposedFields: [],
+        riskClauses: [
+          {
+            title: 'Replacement clause',
+            severity: 'medium',
+            pageNumber: 2,
+            quote: 'Replacement Doc 2 Page 2',
+            explanation: 'Clause on page 2',
+          },
+        ],
+        summaryText: 'Summary on replacement Doc 2',
+        promptVersion: 'v1',
+        extractedPages: [
+          { page: 1, text: 'Replacement Doc 2 Page 1' },
+          { page: 2, text: 'Replacement Doc 2 Page 2' },
+        ],
+      },
+      { actor: asUser(member), orgId: org.orgId },
+    );
+    const savedAi = await runtime.query<{ sourceSha256: string; riskClauses: Array<{ pageNumber: number | null }> } | null>(
+      'sign.ai_analysis.get',
+      { envelopeId: created.envelopeId },
+      { actor: asUser(member), orgId: org.orgId },
+    );
+    expect(savedAi?.sourceSha256).toBe(d2.sha256);
+    expect(savedAi?.riskClauses[0]?.pageNumber).toBe(2);
+
+    const pbSrc = await runtime.query<{ sourceSha256: string; pageCount: number | null }>(
+      'sign.playbook.source',
+      { envelopeId: created.envelopeId },
+      { actor: asUser(member), orgId: org.orgId },
+    );
+    expect(pbSrc.sourceSha256).toBe(d2.sha256);
+    expect(pbSrc.pageCount).toBe(2);
+
+    const recordedCheck = await runtime.execute<{ sourceSha256: string; isStale: boolean }>(
+      'sign.playbook.record_check',
+      {
+        envelopeId: created.envelopeId,
+        sourceSha256: d2.sha256,
+        mode: 'manual',
+        promptVersion: null,
+        extractedPages: [
+          { page: 1, text: 'Replacement Doc 2 Page 1' },
+          { page: 2, text: 'Replacement Doc 2 Page 2' },
+        ],
+      },
+      { actor: asUser(member), orgId: org.orgId },
+    );
+    expect(recordedCheck.sourceSha256).toBe(d2.sha256);
+    expect(recordedCheck.isStale).toBe(false);
+
+    await runtime.execute(
+      'sign.envelope.shared_summary_set',
+      {
+        envelopeId: created.envelopeId,
+        shareSummaryWithSigners: true,
+        sharedSummary: {
+          summaryText: 'Summary for replacement doc 1',
+          keyTerms: [{ label: 'Page two term', value: 'Present on page 2', pageNumber: 2, quoteExcerpt: null }],
+        },
+      },
+      { actor: asUser(member), orgId: org.orgId },
+    );
+    const afterSummary = await runtime.query<SignEnvelopeDetail>(
+      'sign.envelope.get',
+      { envelopeId: created.envelopeId },
+      { actor: asUser(member), orgId: org.orgId },
+    );
+    expect(afterSummary.envelope.sharedSummary?.keyTerms[0]?.pageNumber).toBe(2);
+    expect(afterSummary.envelope.sourceFileId).toBe(d2.fileId);
+    expect(afterSummary.envelope.sourceSha256).toBe(d2.sha256);
+
+    const listedAfterRemove = await runtime.query<{ items: Array<{ id: string; sourceFileId: string }> }>(
+      'sign.envelope.list',
+      { limit: 20 },
+      { actor: asUser(member), orgId: org.orgId },
+    );
+    expect(listedAfterRemove.items.find((item) => item.id === created.envelopeId)?.sourceFileId).toBe(d2.fileId);
+
+    await runtime.execute(
+      'sign.signer.add',
+      {
+        envelopeId: created.envelopeId,
+        signerRole: 'approver',
+        name: 'Approver Doc 2',
+        deliveryMode: 'link',
+        requireEmailOtp: false,
+      },
+      { actor: asUser(member), orgId: org.orgId },
+    );
+    const sent = await runtime.execute<{ links: Array<{ token: string }> }>(
+      'sign.envelope.send',
+      { envelopeId: created.envelopeId },
+      { actor: asUser(member), orgId: org.orgId },
+    );
+    const subRes = await postPublic('/api/sign/submit', {
+      token: sent.links[0]!.token,
+      consentAccepted: true,
+      fields: [],
+    });
+    expect(subRes.status).toBe(200);
+
+    const sealed = await runSignPdfSealJob(
+      { workerDb, runtime: workerRuntime, store, extract: realExtract },
+      { orgId: org.orgId, envelopeId: created.envelopeId },
+    );
+    expect(sealed.status).toBe('sealed');
+
+    const sealedDetail = await runtime.query<SignEnvelopeDetail>(
+      'sign.envelope.get',
+      { envelopeId: created.envelopeId },
+      { actor: asUser(member), orgId: org.orgId },
+    );
+    expect(sealedDetail.envelope.sealStatus).toBe('sealed');
+    expect(sealedDetail.envelope.sourceFileId).toBe(d2.fileId);
+    expect(sealedDetail.envelope.sourceSha256).toBe(d2.sha256);
+    const certKey = fileKey(org.orgId, sealedDetail.envelope.certificateSha256!);
+    const certJson = JSON.parse(Buffer.from(await store.get(certKey)).toString('utf8')) as {
+      sourceSha256: string;
+      documents?: Array<{ index: number; sourceSha256: string }>;
+    };
+    expect(certJson.sourceSha256).toBe(d2.sha256);
+    expect(certJson.documents?.[0]?.sourceSha256).toBe(d2.sha256);
+
+    const verifiedAfterSeal = await runtime.query<{
+      valid: boolean;
+      files: { sourceSha256: string; sealedSha256: string | null; certificateSha256: string | null };
+    }>('sign.envelope.verify', { envelopeId: created.envelopeId }, { actor: asUser(member), orgId: org.orgId });
+    expect(verifiedAfterSeal.valid).toBe(true);
+    expect(verifiedAfterSeal.files.sourceSha256).toBe(d2.sha256);
+    expect(verifiedAfterSeal.files.sourceSha256).not.toBe(d1.sha256);
+  }, 60_000);
+
+  it('recovers pending packet documents via work_recovery_candidates when an earlier doc failed and Sign toggles back on (#4837 item 7)', async () => {
+    const badBytes = Uint8Array.from(Buffer.from('not-a-valid-pdf-payload', 'utf8'));
+    const badSha = sha256Hex(badBytes);
+    const badKey = fileKey(org.orgId, badSha);
+    const badGen = await store.put(badKey, badBytes);
+    const badIngest = await runtime.execute<{ fileId: string }>(
+      'kernel.file.ingest',
+      {
+        filename: 'broken-doc1.pdf',
+        contentType: 'application/pdf',
+        sizeBytes: badBytes.byteLength,
+        sha256: badSha,
+        storageKey: badKey,
+        generation: badGen,
+        source: 'sign_document',
+      },
+      { actor: asUser(member), orgId: org.orgId },
+    );
+    const goodBytes = buildValidMultiPagePdf([['Valid Pending Doc 2']]);
+    const goodIngest = await ingestPdfBytes(member, goodBytes, 'good-doc2.pdf');
+
+    const envRes = await runtime.execute<{ envelopeId: string }>(
+      'sign.envelope.create',
+      { title: 'Failed Plus Pending Recovery', routingMode: 'parallel', sourceFileId: badIngest.fileId },
+      { actor: asUser(member), orgId: org.orgId },
+    );
+    const failedInspect = await runSignPdfInspectJob(
+      { workerDb, runtime: workerRuntime, store, extract: realExtract },
+      { orgId: org.orgId, envelopeId: envRes.envelopeId },
+    );
+    expect(failedInspect.status).toBe('failed');
+
+    const doc2Add = await runtime.execute<{ documentId: string }>(
+      'sign.envelope.document.add',
+      { envelopeId: envRes.envelopeId, sourceFileId: goodIngest.fileId },
+      { actor: asUser(member), orgId: org.orgId },
+    );
+
+    const beforeRecovery = await runtime.query<SignEnvelopeDetail>(
+      'sign.envelope.get',
+      { envelopeId: envRes.envelopeId },
+      { actor: asUser(member), orgId: org.orgId },
+    );
+    expect(beforeRecovery.envelope.inspectStatus).toBe('failed');
+    expect(beforeRecovery.documents.find((d) => d.id === doc2Add.documentId)?.inspectStatus).toBe('pending');
+
+    // Toggle Sign app off -> recovery yields nothing -> toggle Sign back on -> recovery picks up envRes despite envelope.inspect_status='failed'
+    await runtime.execute('kernel.org.set_app', { module: 'sign', enabled: false }, { actor: asUser(owner), orgId: org.orgId });
+    const futureCutoff = new Date(Date.now() + 60_000);
+    const whileOff = await sql<{ work_kind: string; envelope_id: string }>`
+      SELECT work_kind, envelope_id
+      FROM ludy_sign.work_recovery_candidates(${futureCutoff}::timestamptz, 100, ${org.orgId}::uuid, NULL, NULL, NULL)
+    `.execute(workerDb);
+    expect(whileOff.rows.some((r) => r.envelope_id === envRes.envelopeId)).toBe(false);
+
+    await runtime.execute('kernel.org.set_app', { module: 'sign', enabled: true }, { actor: asUser(owner), orgId: org.orgId });
+    const afterOn = await sql<{ work_kind: string; envelope_id: string }>`
+      SELECT work_kind, envelope_id
+      FROM ludy_sign.work_recovery_candidates(${futureCutoff}::timestamptz, 100, ${org.orgId}::uuid, NULL, NULL, NULL)
+    `.execute(workerDb);
+    expect(afterOn.rows.some((r) => r.work_kind === 'inspect' && r.envelope_id === envRes.envelopeId)).toBe(true);
+
+    // Worker recovery inspect pass processes pending doc 2 cleanly; envelope stays failed only due to doc 1, and recovery clears.
+    await runSignPdfInspectJob(
+      { workerDb, runtime: workerRuntime, store, extract: realExtract },
+      { orgId: org.orgId, envelopeId: envRes.envelopeId },
+    );
+    const afterInspect = await runtime.query<SignEnvelopeDetail>(
+      'sign.envelope.get',
+      { envelopeId: envRes.envelopeId },
+      { actor: asUser(member), orgId: org.orgId },
+    );
+    expect(afterInspect.documents.find((d) => d.id === doc2Add.documentId)?.inspectStatus).toBe('passed');
+    expect(afterInspect.envelope.inspectStatus).toBe('failed');
+
+    const afterDone = await sql<{ work_kind: string; envelope_id: string }>`
+      SELECT work_kind, envelope_id
+      FROM ludy_sign.work_recovery_candidates(${futureCutoff}::timestamptz, 100, ${org.orgId}::uuid, NULL, NULL, NULL)
+    `.execute(workerDb);
+    expect(afterDone.rows.some((r) => r.envelope_id === envRes.envelopeId)).toBe(false);
   }, 60_000);
 });

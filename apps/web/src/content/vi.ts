@@ -6,7 +6,7 @@ export type Tone = 'ok' | 'warn' | 'accent' | 'neutral';
 export const vi = {
   lang: 'vi',
   meta: {
-    title: 'Ludy: hệ điều hành doanh nghiệp trọn gói, mỗi phòng ban một đội AI',
+    title: 'Ludy: hệ điều hành doanh nghiệp trọn gói, có sẵn đội đồng nghiệp AI',
     description:
       `${N.gm} điều phối cả đội: ${N.finance} lo kế toán, ${N.sales} lo hộp thư, khách hàng và bán hàng, ${N.marketing} lo marketing. Bạn chỉ duyệt. Ludy là hệ điều hành doanh nghiệp mã nguồn mở, cài trên máy chủ của bạn.`,
   },
@@ -28,7 +28,7 @@ export const vi = {
   },
   hero: {
     title: 'Hệ\u00a0điều\u00a0hành doanh\u00a0nghiệp trọn\u00a0gói',
-    tagline: 'mỗi phòng\u00a0ban một đội\u00a0AI.',
+    tagline: 'có\u00a0sẵn đội đồng\u00a0nghiệp\u00a0AI.',
     lead: `${N.gm} điều phối cả đội: ${N.finance} lo kế\u00a0toán, ${N.sales} lo hộp\u00a0thư, khách\u00a0hàng và bán\u00a0hàng, ${N.marketing} lo marketing. Bạn chỉ duyệt.`,
     primary: 'Tự cài đặt miễn phí',
     secondary: 'Xem mã nguồn trên GitHub',

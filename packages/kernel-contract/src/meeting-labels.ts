@@ -10,9 +10,6 @@ import { zId } from './schemas.ts';
 // How many labels one meeting may have, and how long a label may be.
 export const MEETING_LABELS_MAX = 5;
 export const MEETING_LABEL_LENGTH_MAX = 40;
-// The most distinct labels and meetings the list of labels answers with.
-export const LABEL_INDEX_LABELS_MAX = 200;
-export const LABEL_INDEX_MEETINGS_MAX = 500;
 
 /** Collapses every run of spaces and tabs to one space and trims the ends; a line break is kept so the check below can refuse it. */
 export function cleanLabelText(text: string): string {
@@ -81,14 +78,3 @@ export type MeetingLabel = z.infer<typeof zMeetingLabel>;
 // The labels of one meeting the caller may read, in the order they were added.
 export const zMeetingLabels = z.strictObject({ meetingId: zId, labels: z.array(zMeetingLabel) });
 export type MeetingLabels = z.infer<typeof zMeetingLabels>;
-
-export const zLabelIndexInput = z.strictObject({});
-export type LabelIndexInput = z.infer<typeof zLabelIndexInput>;
-
-// The labels across the meetings the caller may read (past their text date and unreadable ones left out): each distinct label (the first spelling met) with the number of meetings that carry it, the most used first,
-// and the labels of each meeting, so the list can show them and filter by them without a read per meeting.
-export const zLabelIndex = z.strictObject({
-  labels: z.array(z.strictObject({ label: z.string(), count: z.number().int().min(1) })).max(LABEL_INDEX_LABELS_MAX),
-  meetings: z.array(z.strictObject({ meetingId: zId, labels: z.array(z.string()).min(1).max(MEETING_LABELS_MAX) })).max(LABEL_INDEX_MEETINGS_MAX),
-});
-export type LabelIndex = z.infer<typeof zLabelIndex>;

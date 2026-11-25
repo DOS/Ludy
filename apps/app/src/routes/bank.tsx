@@ -332,13 +332,19 @@ export function BankPage() {
           .map((l) => l.id)
       : [],
   );
-  const openInflowLines = new Set(
-    canImport
-      ? (lines.data?.lines ?? [])
-          .filter((l) => !l.amount.startsWith('-') && !isZeroAmount(l.amount) && l.state.status === 'open')
-          .slice(0, SIGN_DEPOSIT_LINES_MAX)
-          .map((l) => l.id)
-      : [],
+  const openInflowLineIds = canImport
+    ? (lines.data?.lines ?? [])
+        .filter((l) => !l.amount.startsWith('-') && !isZeroAmount(l.amount) && l.state.status === 'open')
+        .slice(0, SIGN_DEPOSIT_LINES_MAX)
+        .map((l) => l.id)
+    : [];
+  const openInflowLines = new Set(openInflowLineIds);
+  const signDepositMatches = useQuery({
+    ...orpc.bank.signDepositMatches.queryOptions({ input: { bankLineIds: openInflowLineIds } }),
+    enabled: openInflowLineIds.length > 0,
+  });
+  const signDepositCandidatesByLine = new Map(
+    (signDepositMatches.data?.matches ?? []).map((m) => [m.bankLineId, m.candidates]),
   );
   // The line whose voucher is being entered.
   const [entering, setEntering] = useState<BankLine | null>(null);
@@ -443,6 +449,7 @@ export function BankPage() {
                     {openInflowLines.has(line.id) && (
                       <BankSignDepositLine
                         line={line}
+                        candidates={signDepositCandidatesByLine.get(line.id) ?? []}
                         onPrepareProposal={(pickedLine: BankLine, candidate: BankSignDepositCandidate) => {
                           setEntering(null);
                           setEnteringDeposit({

@@ -5,28 +5,22 @@
 // A label goes with its meeting because the row cascades. At most five labels a meeting, counted under a transaction advisory lock keyed on the meeting (`label:<meeting id>`; not a lock on the meeting row, and the comment of 20270326270000, an applied file, says "a lock on the meeting" loosely), and the same label twice (whatever the case) is one label. An audit row carries the
 // meeting id and the label id, never the text.
 import {
-  LABEL_INDEX_LABELS_MAX,
-  LABEL_INDEX_MEETINGS_MAX,
   MEETING_LABELS_MAX,
   cleanLabelText,
   labelKey,
   labelProblem,
   zLabelAdd,
   zLabelAdded,
-  zLabelIndex,
-  zLabelIndexInput,
   zLabelRemove,
   zLabelRemoved,
   zMeetingLabels,
   zMeetingRef,
   type LabelAdded,
-  type LabelIndex,
   type LabelRemoved,
   type MeetingLabels,
 } from '@ludy/kernel-contract';
-import { DomainError, defineCommand, defineQuery } from '@ludy/kernel-runtime';
+import { DomainError, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { sql } from 'kysely';
-import { vnDay } from './retention.ts';
 import { ROLES, openMeeting, userOf } from './transcript.ts';
 
 const PROBLEM_TEXT = {
@@ -134,45 +128,27 @@ export const labelList = defineQuery({
   },
 });
 
-// The labels across the meetings the caller may read: each distinct label with the number of meetings that carry it (the most used first), and the labels of each meeting, newest meeting first. Rows the caller
-// cannot read are not there (the row policy), and a meeting past its text date is left out. Bounded: the 200 most used labels and the labels of the 500 most recent labelled meetings.
-export const labelIndex = defineQuery({
-  name: 'meetings.label.index',
-  input: zLabelIndexInput,
-  access: ROLES,
-  handler: async (ctx): Promise<LabelIndex> => {
-    userOf(ctx.actor);
-    const rows = await ctx.trx
-      .selectFrom('ludy_meetings.meeting_label as l')
-      .innerJoin('ludy_meetings.meeting as m', (join) => join.onRef('m.org_id', '=', 'l.org_id').onRef('m.id', '=', 'l.meeting_id'))
-      .select(['l.meeting_id', 'l.label'])
-      .where('l.org_id', '=', ctx.orgId)
-      .where((eb) => eb.or([eb('m.text_retention_date', 'is', null), eb('m.text_retention_date', '>', vnDay(new Date()))]))
-      .orderBy(sql`coalesce(m.started_at, m.created_at)`, 'desc')
-      .orderBy('l.meeting_id')
-      .orderBy('l.created_at')
-      .orderBy('l.id')
-      .limit(LABEL_INDEX_MEETINGS_MAX * MEETING_LABELS_MAX)
-      .execute();
-    const byMeeting = new Map<string, string[]>();
-    for (const r of rows) {
-      const list = byMeeting.get(r.meeting_id);
-      if (list) list.push(r.label);
-      else if (byMeeting.size < LABEL_INDEX_MEETINGS_MAX) byMeeting.set(r.meeting_id, [r.label]);
-    }
-    const counts = new Map<string, { label: string; count: number }>();
-    for (const labels of byMeeting.values()) {
-      for (const label of labels) {
-        const key = labelKey(label);
-        const seen = counts.get(key);
-        if (seen) seen.count += 1;
-        else counts.set(key, { label, count: 1 });
-      }
-    }
-    const labels = [...counts.values()].sort((a, b) => b.count - a.count || a.label.localeCompare(b.label)).slice(0, LABEL_INDEX_LABELS_MAX);
-    return zLabelIndex.parse({ labels, meetings: [...byMeeting].map(([meetingId, list]) => ({ meetingId, labels: list })) });
-  },
-});
+// The labels of the given meetings, by meeting id, in the order they were added (#4966): one read for a page of meetings, so the meetings list answers with each row's labels and no read per meeting. Under
+// the caller's own row security (the recorder and the readers of a meeting read its labels), so a meeting the caller cannot read has none here. At most five a meeting (the table's rule, checked on add).
+export async function labelsOfMeetings(trx: QueryContext['trx'], orgId: string, meetingIds: readonly string[]): Promise<Map<string, string[]>> {
+  const byMeeting = new Map<string, string[]>();
+  if (meetingIds.length === 0) return byMeeting;
+  const rows = await trx
+    .selectFrom('ludy_meetings.meeting_label')
+    .select(['meeting_id', 'label'])
+    .where('org_id', '=', orgId)
+    .where('meeting_id', 'in', meetingIds)
+    .orderBy('meeting_id')
+    .orderBy('created_at')
+    .orderBy('id')
+    .execute();
+  for (const r of rows) {
+    const list = byMeeting.get(r.meeting_id);
+    if (list) list.push(r.label);
+    else byMeeting.set(r.meeting_id, [r.label]);
+  }
+  return byMeeting;
+}
 
 export const labelsCommands = [labelAdd, labelRemove];
-export const labelsQueries = [labelList, labelIndex];
+export const labelsQueries = [labelList];

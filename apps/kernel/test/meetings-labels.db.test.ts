@@ -9,7 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
-import { MEETING_LABELS_MAX, type LabelAdded, type LabelIndex, type LabelRemoved, type MeetingLabels } from '@ludy/kernel-contract';
+import { MEETING_LABELS_MAX, type LabelAdded, type LabelRemoved, type MeetingLabels, type MeetingListItem } from '@ludy/kernel-contract';
 import { Runtime } from '@ludy/kernel-runtime';
 import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
@@ -30,7 +30,8 @@ suite('Meeting labels (#4955)', () => {
   const put = (who: string, meetingId: string, label: string) => runtime.execute<LabelAdded>('meetings.label.add', { meetingId, label }, { actor: asUser(who), orgId });
   const take = (who: string, meetingId: string, labelId: string) => runtime.execute<LabelRemoved>('meetings.label.remove', { meetingId, labelId }, { actor: asUser(who), orgId });
   const list = (who: string, meetingId: string) => runtime.query<MeetingLabels>('meetings.label.list', { meetingId }, { actor: asUser(who), orgId });
-  const index = (who: string) => runtime.query<LabelIndex>('meetings.label.index', {}, { actor: asUser(who), orgId });
+  // The meetings list: each row carries the labels of its meeting (#4966).
+  const rows = (who: string) => runtime.query<MeetingListItem[]>('meetings.meeting.list', { limit: 200 }, { actor: asUser(who), orgId });
   const texts = async (who: string, meetingId: string) => (await list(who, meetingId)).labels.map((l) => l.label);
   async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
     const c = new pg.Client({ connectionString: adminUrl });
@@ -132,34 +133,35 @@ suite('Meeting labels (#4955)', () => {
       await expect(list(who, id), `list ${who}`).rejects.toMatchObject({ code: 'MEETING_NOT_FOUND' });
       await expect(put(who, id, 'Chen vào'), `add ${who}`).rejects.toMatchObject({ code: 'MEETING_NOT_FOUND' });
       await expect(take(who, id, made.labelId), `remove ${who}`).rejects.toMatchObject({ code: 'MEETING_NOT_FOUND' });
-      expect((await index(who)).labels.map((l) => l.label), `index ${who}`).not.toContain('Bí mật nhóm');
+      expect((await rows(who)).flatMap((m) => m.labels), `list ${who}`).not.toContain('Bí mật nhóm');
     }
     expect(await texts('lan', id)).toEqual(['Bí mật nhóm']);
   });
 
-  it('lists the labels across the readable meetings with their counts, each meeting with its labels, and leaves out a meeting past its text date', async () => {
+  it('the meetings list carries each meeting\'s labels in the order they were added, an empty list for a meeting with none, and leaves out a meeting the caller cannot read or one past its text date (#4966)', async () => {
     const a = await meeting('Họp A', { readers: ['lan'] });
     const b = await meeting('Họp B', { readers: ['lan'] });
+    const bare = await meeting('Họp không nhãn', { readers: ['lan'] });
     const hidden = await meeting('Họp C của người khác', { readers: ['nam'] });
     const expired = await meeting('Họp D đã hết hạn', { readers: ['lan'], expired: true });
-    await put('rec', a, 'Chỉ ở chỉ mục');
-    await put('rec', b, 'chỉ ở chỉ mục');
+    await put('rec', a, 'Chỉ ở họp A');
+    await put('rec', b, 'chỉ ở họp A');
     await put('rec', b, 'Riêng họp B');
     await put('rec', hidden, 'Riêng của Nam');
     await sqlAdmin('INSERT INTO ludy_meetings.meeting_label (org_id, meeting_id, label, created_by) VALUES ($1, $2, $3, $4)', [orgId, expired, 'Đã hết hạn', users.rec]);
-    const seen = await index('lan');
-    // The same label in two spellings of the case is one label with two meetings (the first spelling met is shown).
-    expect(seen.labels.find((l) => l.label.toLowerCase() === 'chỉ ở chỉ mục')?.count).toBe(2);
-    expect(seen.labels.map((l) => l.label)).toContain('Riêng họp B');
-    expect(seen.labels.filter((l) => l.label.toLowerCase() === 'chỉ ở chỉ mục')).toHaveLength(1);
-    // Not a label of a meeting Lan does not read, and not one of a meeting past its text date.
-    expect(seen.labels.map((l) => l.label)).not.toContain('Riêng của Nam');
-    expect(seen.labels.map((l) => l.label)).not.toContain('Đã hết hạn');
-    expect(seen.meetings.find((m) => m.meetingId === b)?.labels).toEqual(['chỉ ở chỉ mục', 'Riêng họp B']);
-    expect(seen.meetings.find((m) => m.meetingId === hidden)).toBeUndefined();
-    expect(seen.meetings.find((m) => m.meetingId === expired)).toBeUndefined();
+    const seen = await rows('lan');
+    expect(seen.find((m) => m.id === a)?.labels).toEqual(['Chỉ ở họp A']);
+    expect(seen.find((m) => m.id === b)?.labels).toEqual(['chỉ ở họp A', 'Riêng họp B']);
+    expect(seen.find((m) => m.id === bare)?.labels).toEqual([]);
+    // Not the meeting nor its label when Lan does not read it, and not a meeting past its text date.
+    expect(seen.find((m) => m.id === hidden)).toBeUndefined();
+    expect(seen.find((m) => m.id === expired)).toBeUndefined();
+    expect(seen.flatMap((m) => m.labels)).not.toContain('Riêng của Nam');
+    expect(seen.flatMap((m) => m.labels)).not.toContain('Đã hết hạn');
     // The recorder reads the labels of all their meetings.
-    expect((await index('rec')).meetings.find((m) => m.meetingId === hidden)?.labels).toEqual(['Riêng của Nam']);
+    expect((await rows('rec')).find((m) => m.id === hidden)?.labels).toEqual(['Riêng của Nam']);
+    // Every meeting of the page answers with its own labels, however many are labelled: no cap besides the page.
+    for (const m of seen) expect(m.labels.length).toBeLessThanOrEqual(MEETING_LABELS_MAX);
   });
 
   it('the labels go with the meeting', async () => {

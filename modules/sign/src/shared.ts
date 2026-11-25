@@ -2,7 +2,7 @@
 // Shared validation, coordinate normalization, file lookup, and envelope send helpers for @ludy/mod-sign.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import type { MemberRole } from '@ludy/db';
+import type { MemberRole, SignInspectStatus } from '@ludy/db';
 import { EXTRACT_LIMITS } from '@ludy/extract-contract';
 import { kernelManifest } from '@ludy/kernel';
 import {
@@ -46,6 +46,83 @@ export function assertValidEnvelopeExpiry(expiresAt: Date | null, now: Date): vo
   if (expMs > nowMs + SIGN_MAX_LINK_TTL_MS) {
     throw new DomainError('SIGN_INVALID_EXPIRY', 422, 'expiresAt cannot exceed 30 days (720 hours)');
   }
+}
+
+export interface PrimaryEnvelopeDocMeta {
+  fileId: string;
+  sourceSha256: string;
+  inspectStatus: SignInspectStatus;
+  pageCount: number | null;
+}
+
+/**
+ * Resolves live Doc 1 metadata (doc_index = 1) for an envelope packet,
+ * falling back to top-level envelope columns if envelope_document rows are absent.
+ */
+export async function resolvePrimaryEnvelopeDocMeta(
+  trx: CommandContext['trx'],
+  orgId: string,
+  env: {
+    id: string;
+    source_file_id?: string | null;
+    source_sha256?: string | null;
+    inspect_status?: SignInspectStatus | null;
+    page_count?: number | null;
+  },
+): Promise<PrimaryEnvelopeDocMeta> {
+  const doc1 = await trx
+    .selectFrom('ludy_sign.envelope_document')
+    .select(['file_id', 'source_sha256', 'inspect_status', 'page_count'])
+    .where('org_id', '=', orgId)
+    .where('envelope_id', '=', env.id)
+    .orderBy('doc_index', 'asc')
+    .orderBy('id', 'asc')
+    .executeTakeFirst();
+  if (doc1) {
+    return {
+      fileId: doc1.file_id,
+      sourceSha256: doc1.source_sha256,
+      inspectStatus: doc1.inspect_status,
+      pageCount: doc1.page_count,
+    };
+  }
+  return {
+    fileId: env.source_file_id ?? '',
+    sourceSha256: env.source_sha256 ?? '',
+    inspectStatus: env.inspect_status ?? 'pending',
+    pageCount: env.page_count ?? null,
+  };
+}
+
+/**
+ * Batch-resolves active Doc 1 metadata across a set of envelope IDs in one indexed query.
+ */
+export async function resolvePrimaryEnvelopeDocMap(
+  trx: CommandContext['trx'],
+  orgId: string,
+  envelopeIds: readonly string[],
+): Promise<Map<string, PrimaryEnvelopeDocMeta>> {
+  const result = new Map<string, PrimaryEnvelopeDocMeta>();
+  if (envelopeIds.length === 0) return result;
+  const rows = await trx
+    .selectFrom('ludy_sign.envelope_document')
+    .select(['envelope_id', 'file_id', 'source_sha256', 'inspect_status', 'page_count'])
+    .where('org_id', '=', orgId)
+    .where('envelope_id', 'in', envelopeIds)
+    .orderBy('doc_index', 'asc')
+    .orderBy('id', 'asc')
+    .execute();
+  for (const row of rows) {
+    if (!result.has(row.envelope_id)) {
+      result.set(row.envelope_id, {
+        fileId: row.file_id,
+        sourceSha256: row.source_sha256,
+        inspectStatus: row.inspect_status,
+        pageCount: row.page_count,
+      });
+    }
+  }
+  return result;
 }
 
 export interface IssuedSigningLink {
