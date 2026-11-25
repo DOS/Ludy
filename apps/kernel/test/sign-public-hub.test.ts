@@ -14,8 +14,8 @@ import { resolvePublicHubPdf, runSignPublicHubAction, templateBucketOf } from '.
 
 const ORG_ID = '01900000-0000-7000-8000-000000000010';
 const DIRECT_LINK_ID = '01900000-0000-7000-8000-000000000020';
-const TEMPLATE_ID = '01900000-0000-7000-8000-000000000030';
-const TEMPLATE_ID_B = '01900000-0000-7000-8000-000000000031';
+const TEMPLATE_ID = '01900000-0000-7000-8000-00000000003a';
+const TEMPLATE_ID_B = '01900000-0000-7000-8000-00000000003b';
 const ENVELOPE_ID = '01900000-0000-7000-8000-000000000040';
 const SIGNER_ID = '01900000-0000-7000-8000-000000000050';
 const TOKEN_ID = '01900000-0000-7000-8000-000000000060';
@@ -206,6 +206,7 @@ describe('public eSign hub IP bucket normalization (#4636)', () => {
     expect(missingNull).toBe(missingMalformed);
     expect(missingNull).not.toBe(v4Plain);
 
+    expect(TEMPLATE_ID.toUpperCase()).not.toBe(TEMPLATE_ID);
     expect(templateBucketOf('2001:db8:1:2::1', 'ACME-SIGN', TEMPLATE_ID.toUpperCase())).toBe(v6a);
     expect(templateBucketOf('2001:db8:1:2::1', ORG_SLUG, TEMPLATE_ID_B)).not.toBe(v6a);
   });
