@@ -16,7 +16,12 @@ const client = vi.hoisted(() => ({ current: null as unknown as import('@tanstack
 vi.mock('../src/lib/api.ts', async () => {
   const { QueryClient: QC } = await import('@tanstack/react-query');
   client.current = new QC();
-  return { orpc: {}, client: {}, queryClient: client.current, errorMessage: (e: unknown) => String(e) };
+  // The coworker names read the chart: never answered here, so the roster's names stand.
+  const node = (path: string[]): unknown =>
+    new Proxy(() => undefined, {
+      get: (_t, prop: string) => (prop === 'queryOptions' ? () => ({ queryKey: path, queryFn: () => Promise.reject(new Error('not fetched')) }) : node([...path, prop])),
+    });
+  return { orpc: node([]), client: {}, queryClient: client.current, errorMessage: (e: unknown) => String(e) };
 });
 
 const { TodayWeekly, weeklyTiles } = await import('../src/components/today-weekly.tsx');
@@ -75,7 +80,9 @@ describe('TodayWeekly', () => {
     const html = render({ now: MONDAY, data: answer() });
     expect(html).toContain('data-testid="today-weekly"');
     expect(html).toContain('Tuần qua có 3 deal thắng.');
-    expect(html).toContain(catalog('en').today.weekly.aiBadge);
+    expect(html).toContain('data-testid="proposal-source-tag" data-source-tag="ai"');
+    expect(html).toContain('border-dashed');
+    expect(html).toContain('From Vy');
     expect(html).toContain(catalog('en').today.weekly.byVy);
     for (const key of ['dealsWon', 'dealsOpen', 'cash', 'receivables', 'payables', 'tasksLate']) expect(html).toContain(`data-testid="weekly-${key}"`);
     expect(html).not.toContain('data-testid="today-weekly-ask"');
@@ -93,14 +100,15 @@ describe('TodayWeekly', () => {
   it('says a template is automatic, with no AI mark', () => {
     const html = render({ now: MONDAY, data: answer({ writtenBy: 'template' }) });
     expect(html).toContain(catalog('en').today.weekly.byTemplate);
-    expect(html).not.toContain(catalog('en').today.weekly.aiBadge);
+    expect(html).not.toContain('data-testid="proposal-source-tag"');
+    expect(html).not.toContain('border-dashed');
   });
 
   it('shows the template, and says why Vy did not write, when the AI budget is spent or AI is off', () => {
     const html = render({ now: MONDAY, data: answer({ writtenBy: 'template', sentences: ['Trong 7 ngày qua có 3 deal thắng.'], budgetSpent: true, final: false }) });
     expect(html).toContain('data-testid="today-weekly"');
     expect(html).toContain('this summary is automatic');
-    expect(html).not.toContain(catalog('en').today.weekly.aiBadge);
+    expect(html).not.toContain('data-testid="proposal-source-tag"');
     expect(html).toContain('data-testid="weekly-cash"');
   });
 

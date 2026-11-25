@@ -78,6 +78,7 @@ export function DraftPanel({ detail, onUse, onUseSaved }: { detail: Conversation
             badgeLabel={t('draft.badge')}
             badgeTestId="conversation-draft-tainted"
             source={t('draft.hint')}
+            tag="ai"
           />
           <p className="whitespace-pre-wrap break-words text-sm text-foreground" data-testid="conversation-draft-text">
             {draft.body}

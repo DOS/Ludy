@@ -110,6 +110,7 @@ export function VyClauseSheet({
           <CoworkerAttribution
             coworker="gm"
             badgeLabel={hasAiSurface ? tp('proposedBadge') : undefined}
+            tag={hasAiSurface ? 'ai' : null}
             aside={
               panelProps.aiAnalysis?.riskLevel ? (
                 <Badge variant={RISK_VARIANT[panelProps.aiAnalysis.riskLevel]}>
@@ -269,6 +270,7 @@ export function VyClausePanel({
         title={t('title')}
         titleAs="h2"
         badgeLabel={hasAiOutput ? tp('proposedBadge') : undefined}
+        tag={hasAiOutput ? 'ai' : null}
         aside={
           aiAnalysis?.riskLevel ? (
             <Badge variant={RISK_VARIANT[aiAnalysis.riskLevel]}>{t(`riskLevel.${aiAnalysis.riskLevel}`)}</Badge>

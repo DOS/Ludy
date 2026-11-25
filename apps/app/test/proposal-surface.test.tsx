@@ -329,6 +329,75 @@ describe('ProposalSurface and CoworkerAttribution (#4643)', () => {
     expect(journalAgentHtml).not.toMatch(/\bshadow-/);
   });
 
+  it('shows a plain source tag from what the proposal recorded, and none where it recorded nothing', () => {
+    const tagged = (reason: 'tax_code' | 'learned' | 'account' | 'name') =>
+      renderTree(
+        <VoucherCard
+          voucher={sampleVoucher({ matchedBy: { kind: 'suggested', reason } })}
+          code={null}
+          slug="acme"
+          accountName={(c) => `TK ${c}`}
+          attribution={{ pending: true }}
+        />,
+      );
+    expect(tagged('tax_code')).toContain('data-source-tag="exact">Khớp chính xác<');
+    expect(tagged('learned')).toContain('data-source-tag="rule">Theo quy tắc<');
+    expect(tagged('account')).toContain('data-source-tag="history">Giống lần trước<');
+    expect(tagged('name')).not.toContain('data-testid="proposal-source-tag"');
+
+    const manual = renderTree(
+      <VoucherCard
+        voucher={sampleVoucher({ matchedBy: { kind: 'manual' } })}
+        code={null}
+        slug="acme"
+        accountName={(c) => `TK ${c}`}
+        attribution={{ pending: true }}
+      />,
+    );
+    expect(manual).not.toContain('data-testid="proposal-source-tag"');
+
+    const agent = renderTree(
+      <ReversalCard
+        reversal={{ entryId: '00000000-0000-4000-8000-000000000030', entryDate: '2026-11-01', reason: 'Sai tài khoản' }}
+        slug="acme"
+        attribution={{ pending: true, requestedByAgent: { id: 'agent-1', name: 'Sổ sách tự động' } }}
+      />,
+      'en',
+    );
+    expect(agent).toContain('data-source-tag="ai">AI suggested<');
+
+    const draft = renderTree(<DraftPanel detail={sampleConversationDetail()} onUse={() => {}} onUseSaved={() => {}} />);
+    expect(draft).toContain('data-source-tag="ai">AI đề xuất<');
+  });
+
+  it('shows the org’s current name of a coworker, never "assistant", wherever a roster key is given', () => {
+    cache.current.setQueryData(['chart', 'get'], {
+      agents: [
+        { id: 'a-1', templateKey: 'finance.bookkeeper', displayName: 'Hoa', status: 'active' },
+        { id: 'a-2', templateKey: 'crm.sales', displayName: 'Bảo', status: 'active' },
+      ],
+    });
+    cache.current.setQueryData(['chart', 'templates'], [
+      { key: 'finance.bookkeeper', module: 'finance' },
+      { key: 'crm.sales', module: 'crm' },
+    ]);
+    const voucher = renderTree(
+      <VoucherCard
+        voucher={sampleVoucher()}
+        code={null}
+        slug="acme"
+        accountName={(c) => `TK ${c}`}
+        attribution={{ pending: true }}
+      />,
+    );
+    expect(voucher).toContain('>Hoa<');
+    expect(voucher).not.toContain('>Ly<');
+    const draft = renderTree(<DraftPanel detail={sampleConversationDetail()} onUse={() => {}} onUseSaved={() => {}} />);
+    expect(draft).toContain('>Bảo<');
+    expect(draft).not.toContain('>Dy<');
+    expect(`${voucher}${draft}`.toLowerCase()).not.toMatch(/trợ lý|assistant/);
+  });
+
   it('applies ProposalSurface and Dy CoworkerAttribution in Conversation DraftPanel', () => {
     const html = renderTree(
       <DraftPanel detail={sampleConversationDetail()} onUse={() => {}} onUseSaved={() => {}} />,
