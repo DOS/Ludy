@@ -15,7 +15,7 @@
 import { createPublicKey } from 'node:crypto';
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { MORNING_KIND, SUMMARY_READY_EVENT, SUMMARY_READY_KIND, zId } from '@ludy/kernel-contract';
+import { MORNING_KIND, SUMMARY_READY_EVENT, SUMMARY_READY_KIND, WEEKLY_KIND, WEEKLY_LINK_QUERY, zId } from '@ludy/kernel-contract';
 import type { MemberRole } from '@ludy/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 
@@ -91,6 +91,8 @@ export const PUSH_KINDS: ReadonlyMap<string, PushKind> = new Map<string, PushKin
   [SUMMARY_READY_KIND, { event: SUMMARY_READY_EVENT, line: 'Bản nháp biên bản đã sẵn sàng để bạn xem', path: (slug, s) => (s.type === 'meetings.meeting' && s.id ? `/o/${slug}/meetings/${s.id}` : `/o/${slug}/meetings`) }],
   // The opt-in morning notice of the day's meetings (#3955, #4082): fixed line only (no title, name, time or count), opening the meetings page.
   [MORNING_KIND, { line: 'Hôm nay bạn có cuộc họp', path: (slug) => `/o/${slug}/meetings` }],
+  // The opt-in weekly notice of the week's meetings (#4967): fixed line only (no title, name or count), opening the "this week" card of the meetings page.
+  [WEEKLY_KIND, { line: 'Tổng kết các cuộc họp tuần qua đã sẵn sàng', path: (slug) => `/o/${slug}/meetings${WEEKLY_LINK_QUERY}` }],
 ]);
 
 // The outbox event types whose dispatch can write a pushed kind: the worker runs kernel.push.pending after these only, so no other notify job pays for it.

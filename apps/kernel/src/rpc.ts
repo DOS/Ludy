@@ -2035,6 +2035,11 @@ export function createRpcHandler(
         get: os.meetings.morning.get.handler(meetingsQuery('meetings.morning.get')),
         set: os.meetings.morning.set.handler(meetingsCommand('meetings.morning.set')),
       },
+      // The opt-in weekly notice of the week's meetings (#4967): the member's own setting; see modules/meetings/src/weekly.ts.
+      weekly: {
+        get: os.meetings.weekly.get.handler(meetingsQuery('meetings.weekly.get')),
+        set: os.meetings.weekly.set.handler(meetingsCommand('meetings.weekly.set')),
+      },
       // Agenda adherence (#3959): `agenda` is the open-item list the recorder sees before clicking (no model), `status` the button, `check` the click that has the recorder's own Vy compare the agenda with the transcript
       // and answer, per agenda line, covered with the transcript lines it cites, or not heard. Nothing is stored; see member-vy-ports.ts.
       adherence: {
