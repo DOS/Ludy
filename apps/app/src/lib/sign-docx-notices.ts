@@ -42,9 +42,24 @@ interface StoredPendingCreatedDocxNotice extends PendingCreatedDocxNotice {
 const fallbackDocxNotices = new Map<string, StoredDocxWarningNotice>();
 const fallbackDismissedNotices = new Map<string, number>();
 const pendingUnpersistedDocxNotices = new Map<string, StoredPendingCreatedDocxNotice>();
+const pendingNoticeListeners = new Set<() => void>();
 const knownStorageNoticeKeys = new Set<string>();
 let pendingSignOutClear = false;
 let docxNoticeAuthEpoch = 0;
+
+function notifyPendingNoticeListeners(): void {
+  for (const listener of Array.from(pendingNoticeListeners)) {
+    listener();
+  }
+}
+
+/** Subscribes to in-tab pending .docx list notice updates so newly mounted views see async completions (#4729). */
+export function subscribePendingDocxListNotices(listener: () => void): () => void {
+  pendingNoticeListeners.add(listener);
+  return () => {
+    pendingNoticeListeners.delete(listener);
+  };
+}
 
 /** Monotonic counter incremented on every sign-out cleanup so late in-flight creates cannot restore stale notices (#4729). */
 export function getDocxNoticeAuthEpoch(): number {
@@ -182,17 +197,23 @@ function readRawStorageResult(
   }
 }
 
+function tryClearPendingSignOutStorage(storage: Storage): boolean {
+  if (!pendingSignOutClear) return true;
+  try {
+    storage.removeItem(ENVELOPE_DOCX_WARNINGS_STORAGE_KEY);
+    knownStorageNoticeKeys.clear();
+    pendingSignOutClear = false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function flushPendingSignOutClear(): Storage | null {
   const storage = getDocxNoticeStorage();
   if (!storage) return null;
-  if (pendingSignOutClear) {
-    try {
-      storage.removeItem(ENVELOPE_DOCX_WARNINGS_STORAGE_KEY);
-      knownStorageNoticeKeys.clear();
-      pendingSignOutClear = false;
-    } catch {
-      return null;
-    }
+  if (!tryClearPendingSignOutStorage(storage)) {
+    return null;
   }
   return storage;
 }
@@ -220,16 +241,28 @@ function readMergedEntriesWithStorage(
   return { storageReadable, merged: [...byKey.values()] };
 }
 
-function readStoredDocxNotices(now: number): StoredDocxWarningNotice[] {
-  const storage = flushPendingSignOutClear();
+function readStoredDocxNoticesWithStatus(now: number): {
+  storageReadable: boolean;
+  notices: StoredDocxWarningNotice[];
+} {
+  const { available, storage } = tryAccessSessionStorage();
+  if (!available) {
+    return { storageReadable: false, notices: readFallbackDocxNotices(now) };
+  }
+  if (!storage) {
+    return { storageReadable: true, notices: readFallbackDocxNotices(now) };
+  }
+  if (!tryClearPendingSignOutStorage(storage)) {
+    return { storageReadable: false, notices: readFallbackDocxNotices(now) };
+  }
   const { storageReadable, merged } = readMergedEntriesWithStorage(storage, now);
-  if (storage && storageReadable && (fallbackDocxNotices.size > 0 || fallbackDismissedNotices.size > 0)) {
+  if (storageReadable && (fallbackDocxNotices.size > 0 || fallbackDismissedNotices.size > 0)) {
     if (tryPersistDocxNotices(storage, merged)) {
       fallbackDocxNotices.clear();
       fallbackDismissedNotices.clear();
     }
   }
-  return merged;
+  return { storageReadable, notices: merged };
 }
 
 function tryPersistDocxNotices(storage: Storage, entries: readonly StoredDocxWarningNotice[]): boolean {
@@ -293,17 +326,30 @@ export function saveCreatedDocxWarnings(
   return true;
 }
 
+/** Reads persisted post-creation .docx warnings plus whether sessionStorage was readable during this read (#4729). */
+export function readCreatedDocxWarningsWithStatus(
+  envelopeId: string,
+  scope?: CreatedDocxWarningScope,
+  now = Date.now(),
+): { storageReadable: boolean; warnings: SignDocxToPdfWarning[] } {
+  const norm = normalizeScope(scope);
+  if (!envelopeId || !norm) return { storageReadable: true, warnings: [] };
+  const key = noticeKey(envelopeId, norm);
+  const { storageReadable, notices } = readStoredDocxNoticesWithStatus(now);
+  const match = notices.find((entry) => noticeKey(entry.envelopeId, entry) === key);
+  return {
+    storageReadable,
+    warnings: match ? [...match.warnings] : [],
+  };
+}
+
 /** Reads persisted post-creation .docx warnings matching envelope, user, and org without consuming them. */
 export function readCreatedDocxWarnings(
   envelopeId: string,
   scope?: CreatedDocxWarningScope,
   now = Date.now(),
 ): SignDocxToPdfWarning[] {
-  const norm = normalizeScope(scope);
-  if (!envelopeId || !norm) return [];
-  const key = noticeKey(envelopeId, norm);
-  const match = readStoredDocxNotices(now).find((entry) => noticeKey(entry.envelopeId, entry) === key);
-  return match ? [...match.warnings] : [];
+  return readCreatedDocxWarningsWithStatus(envelopeId, scope, now).warnings;
 }
 
 /** Clears a dismissed envelope warning for the active user and org without holding unbounded IDs when storage is absent. */
@@ -346,12 +392,16 @@ export function clearCreatedDocxWarnings(
 /** Drops all persisted and in-memory .docx warnings when signing out of the workspace (#4729). */
 export function clearAllCreatedDocxWarnings(): void {
   docxNoticeAuthEpoch += 1;
+  const hadPending = pendingUnpersistedDocxNotices.size > 0;
   fallbackDocxNotices.clear();
   fallbackDismissedNotices.clear();
   pendingUnpersistedDocxNotices.clear();
   knownStorageNoticeKeys.clear();
   pendingSignOutClear = true;
   void flushPendingSignOutClear();
+  if (hadPending) {
+    notifyPendingNoticeListeners();
+  }
 }
 
 function stripTimestamp({ createdAt: _ignored, ...rest }: StoredPendingCreatedDocxNotice): PendingCreatedDocxNotice {
@@ -384,12 +434,16 @@ export function upsertPendingDocxListNotice(notice: PendingCreatedDocxNotice, no
   for (const [id, entry] of rebuilt) {
     pendingUnpersistedDocxNotices.set(id, entry);
   }
+  notifyPendingNoticeListeners();
   return [...pendingUnpersistedDocxNotices.values()].map(stripTimestamp);
 }
 
 /** Removes a single unpersisted pending .docx notice once persisted or explicitly dismissed (#4729). */
 export function removePendingDocxListNotice(envelopeId: string): PendingCreatedDocxNotice[] {
-  pendingUnpersistedDocxNotices.delete(envelopeId);
+  const removed = pendingUnpersistedDocxNotices.delete(envelopeId);
+  if (removed) {
+    notifyPendingNoticeListeners();
+  }
   return [...pendingUnpersistedDocxNotices.values()].map(stripTimestamp);
 }
 
@@ -403,25 +457,39 @@ export function clearPendingDocxListNotices(filter?: {
   mismatchSessionId?: string | null | undefined;
 }): PendingCreatedDocxNotice[] {
   if (!filter) {
+    const hadAny = pendingUnpersistedDocxNotices.size > 0;
     pendingUnpersistedDocxNotices.clear();
+    if (hadAny) {
+      notifyPendingNoticeListeners();
+    }
     return [];
   }
+  let changed = false;
   for (const [id, entry] of pendingUnpersistedDocxNotices) {
     if (filter.envelopeId && entry.envelopeId === filter.envelopeId) {
       pendingUnpersistedDocxNotices.delete(id);
+      changed = true;
     } else if (filter.sessionId) {
       if (entry.sessionId === filter.sessionId) {
         pendingUnpersistedDocxNotices.delete(id);
+        changed = true;
       }
     } else if (filter.userId && !entry.sessionId && entry.userId === filter.userId) {
       pendingUnpersistedDocxNotices.delete(id);
+      changed = true;
     } else if (filter.slug && entry.slug === filter.slug) {
       pendingUnpersistedDocxNotices.delete(id);
+      changed = true;
     } else if (filter.mismatchUserId !== undefined && entry.userId && entry.userId !== filter.mismatchUserId) {
       pendingUnpersistedDocxNotices.delete(id);
+      changed = true;
     } else if (filter.mismatchSessionId && entry.sessionId && entry.sessionId !== filter.mismatchSessionId) {
       pendingUnpersistedDocxNotices.delete(id);
+      changed = true;
     }
+  }
+  if (changed) {
+    notifyPendingNoticeListeners();
   }
   return [...pendingUnpersistedDocxNotices.values()].map(stripTimestamp);
 }

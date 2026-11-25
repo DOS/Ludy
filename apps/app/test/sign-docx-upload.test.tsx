@@ -77,8 +77,10 @@ const {
   hasLocalDocxNoticeCandidate,
   listPendingDocxListNotices,
   probeLocalDocxNoticeCandidate,
+  readCreatedDocxWarningsWithStatus,
   readPendingDocxListNotice,
   removePendingDocxListNotice,
+  subscribePendingDocxListNotices,
   upsertPendingDocxListNotice,
 } = await import('../src/lib/sign-docx-notices.ts');
 const { accessToken, auth } = await import('../src/lib/auth.ts');
@@ -1669,14 +1671,19 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
     expect(readPendingDocxListNotice(SECOND_ENV_ID, 'acme')).toBeNull();
     expect(readCreatedDocxWarnings(SECOND_ENV_ID, SCOPE_USER_A)).toEqual([]);
 
-    // Transient sessionStorage SecurityError on detail open returns retryable_error and recovers cleanly once storage is readable.
+    // Transient sessionStorage SecurityError skips auth/scope RPCs on initial probe, catches mid-read errors, and recovers cleanly.
     const flakyDetailStore = new Map<string, string>();
     let rejectDetailRead = false;
+    let remainingDetailReadThrows = 0;
     vi.stubGlobal('window', {
       location: { pathname: `/o/acme/sign/envelopes/${envDetailId}`, hash: '' },
       sessionStorage: {
         getItem: (k: string) => {
           if (rejectDetailRead) throw new DOMException('Blocked', 'SecurityError');
+          if (remainingDetailReadThrows > 0) {
+            remainingDetailReadThrows -= 1;
+            throw new DOMException('Flaky read', 'SecurityError');
+          }
           return flakyDetailStore.get(k) ?? null;
         },
         setItem: (k: string, v: string) => void flakyDetailStore.set(k, v),
@@ -1685,8 +1692,56 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
     });
     saveCreatedDocxWarnings(envDetailId, ['headers_footers_simplified'], SCOPE_USER_A);
     rejectDetailRead = true;
+    const detailSessionSpy = vi.fn(async () => 'sess-a');
+    const detailScopeSpy = vi.fn(async () => ({ orgId: ORG_A_ID, userId: USER_A_ID, sessionId: 'sess-a' }));
     expect(probeLocalDocxNoticeCandidate(envDetailId, 'acme')).toBe('storage_error');
     expect(hasLocalDocxNoticeCandidate(envDetailId, 'acme')).toBe(true);
+    expect(
+      await resolveDetailDocxWarnings({
+        envelopeId: envDetailId,
+        slug: 'acme',
+        noticeOrg: ORG_A_ID,
+        currentUserId: USER_A_ID,
+        resolveCurrentSessionId: detailSessionSpy,
+        resolveUserScope: detailScopeSpy,
+      }),
+    ).toEqual({ status: 'retryable_error' });
+    expect(detailSessionSpy).not.toHaveBeenCalled();
+    expect(detailScopeSpy).not.toHaveBeenCalled();
+    rejectDetailRead = false;
+
+    // If probe passes once and getItem fails inside readCreatedDocxWarningsWithStatus, return retryable_error without probing again.
+    remainingDetailReadThrows = 1;
+    expect(readCreatedDocxWarningsWithStatus(envDetailId, SCOPE_USER_A)).toEqual({
+      storageReadable: false,
+      warnings: [],
+    });
+    expect(probeLocalDocxNoticeCandidate(envDetailId, 'acme')).toBe('present');
+    expect(
+      await resolveDetailDocxWarnings({
+        envelopeId: envDetailId,
+        slug: 'acme',
+        noticeOrg: ORG_A_ID,
+        currentUserId: USER_A_ID,
+        resolveCurrentSessionId: detailSessionSpy,
+        resolveUserScope: detailScopeSpy,
+      }),
+    ).toEqual({ status: 'resolved', warnings: ['headers_footers_simplified'], org: ORG_A_ID, userId: USER_A_ID });
+
+    // Force probeLocalDocxNoticeCandidate to see present, then throw specifically on the scoped storage read.
+    let getItemCalls = 0;
+    vi.stubGlobal('window', {
+      location: { pathname: `/o/acme/sign/envelopes/${envDetailId}`, hash: '' },
+      sessionStorage: {
+        getItem: (k: string) => {
+          getItemCalls += 1;
+          if (getItemCalls === 2) throw new DOMException('Scoped read failed', 'SecurityError');
+          return flakyDetailStore.get(k) ?? null;
+        },
+        setItem: (k: string, v: string) => void flakyDetailStore.set(k, v),
+        removeItem: (k: string) => void flakyDetailStore.delete(k),
+      },
+    });
     expect(
       await resolveDetailDocxWarnings({
         envelopeId: envDetailId,
@@ -1697,22 +1752,66 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
         resolveUserScope: async () => ({ orgId: ORG_A_ID, userId: USER_A_ID, sessionId: 'sess-a' }),
       }),
     ).toEqual({ status: 'retryable_error' });
-    rejectDetailRead = false;
+    clearCreatedDocxWarnings(envDetailId, SCOPE_USER_A);
+
+    // Staying on list page because notice A is pending retains persisted notice B on list until B is opened or dismissed, and notifies subscribers.
+    clearPendingDocxListNotices();
+    const storeNotifyCalls: number[] = [];
+    const unsubscribeNotices = subscribePendingDocxListNotices(() => {
+      storeNotifyCalls.push(listPendingDocxListNotices('acme', null).length);
+    });
+    upsertPendingDocxListNotice({
+      envelopeId: envDetailId,
+      slug: 'acme',
+      orgId: null,
+      userId: null,
+      sessionId: 'sess-a',
+      envelopeTitle: 'Pending A',
+      warnings: ['images_skipped'],
+    });
+    let combinedPendingList = applyPendingDocxNoticeUpdate([], {
+      kind: 'upsert',
+      notice: readPendingDocxListNotice(envDetailId, 'acme')!,
+    });
+    const stayedNavSpy = vi.fn(async () => {});
+    await handleEnvelopeCreatedWithWarnings({
+      envelopeId: SECOND_ENV_ID,
+      envelopeTitle: 'Persisted B',
+      warnings: ['footnotes_skipped'],
+      slug: 'acme',
+      orgId: ORG_A_ID,
+      userId: USER_A_ID,
+      sessionId: 'sess-a',
+      resolveCurrentSessionId: async () => 'sess-a',
+      hasOtherPendingNotice: () => combinedPendingList.some((n) => n.envelopeId !== SECOND_ENV_ID),
+      onPendingNoticeAction: (action) => {
+        combinedPendingList = applyPendingDocxNoticeUpdate(combinedPendingList, action);
+      },
+      setCreateOpen,
+      setCreatedDocxNotice,
+      invalidateEnvelopes,
+      navigateToEnvelope: stayedNavSpy,
+    });
+    expect(stayedNavSpy).not.toHaveBeenCalled();
+    expect(readCreatedDocxWarnings(SECOND_ENV_ID, SCOPE_USER_A)).toEqual(['footnotes_skipped']);
+    expect(combinedPendingList.map((n) => n.envelopeId)).toEqual([SECOND_ENV_ID, envDetailId]);
+    expect(listPendingDocxListNotices('acme', null).map((n) => n.envelopeId)).toEqual([SECOND_ENV_ID, envDetailId]);
+    expect(storeNotifyCalls).toEqual([1, 2]);
+    // Opening persisted B cleanly resolves detail warnings and clears B from pending list store while leaving A intact.
     expect(
       await resolveDetailDocxWarnings({
-        envelopeId: envDetailId,
+        envelopeId: SECOND_ENV_ID,
         slug: 'acme',
         noticeOrg: ORG_A_ID,
         currentUserId: USER_A_ID,
         resolveCurrentSessionId: async () => 'sess-a',
         resolveUserScope: async () => ({ orgId: ORG_A_ID, userId: USER_A_ID, sessionId: 'sess-a' }),
       }),
-    ).toEqual({
-      status: 'resolved',
-      warnings: ['headers_footers_simplified'],
-      org: ORG_A_ID,
-      userId: USER_A_ID,
-    });
-    clearCreatedDocxWarnings(envDetailId, SCOPE_USER_A);
+    ).toEqual({ status: 'resolved', warnings: ['footnotes_skipped'], org: ORG_A_ID, userId: USER_A_ID });
+    expect(listPendingDocxListNotices('acme', null).map((n) => n.envelopeId)).toEqual([envDetailId]);
+    unsubscribeNotices();
+    clearPendingDocxListNotices();
+    expect(storeNotifyCalls).toEqual([1, 2, 1]);
+    clearCreatedDocxWarnings(SECOND_ENV_ID, SCOPE_USER_A);
   });
 });

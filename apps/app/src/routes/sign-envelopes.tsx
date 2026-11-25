@@ -31,6 +31,7 @@ import {
   listPendingDocxListNotices,
   removePendingDocxListNotice,
   sanitizeDocxWarnings,
+  subscribePendingDocxListNotices,
   upsertPendingDocxListNotice,
 } from '../lib/sign-docx-notices.ts';
 import { VersionDiffDialog } from '../components/sign/version-diff-dialog.tsx';
@@ -434,6 +435,10 @@ export async function handleEnvelopeCreatedWithWarnings(deps: {
     }
   };
 
+  const hasOtherPending = (): boolean =>
+    Boolean(deps.hasOtherPendingNotice?.()) ||
+    Boolean(deps.slug && listPendingDocxListNotices(deps.slug, null).some((n) => n.envelopeId !== deps.envelopeId));
+
   const showPendingOrNavigateClean = async (): Promise<void> => {
     const pendingNotice = cleanWarnings.length > 0 ? buildNotice() : null;
     if (pendingNotice) {
@@ -452,7 +457,7 @@ export async function handleEnvelopeCreatedWithWarnings(deps: {
     }
     deps.onPendingNoticeAction?.({ kind: 'remove', envelopeId: deps.envelopeId });
     deps.setCreatedDocxNotice(null);
-    if (deps.slug && !deps.hasOtherPendingNotice?.()) {
+    if (deps.slug && !hasOtherPending()) {
       await deps.navigateToEnvelope(deps.slug, deps.envelopeId);
     }
   };
@@ -536,9 +541,13 @@ export async function handleEnvelopeCreatedWithWarnings(deps: {
     }
   }
 
-  const unpersistedNotice = cleanWarnings.length > 0 && !persisted ? buildNotice() : null;
-  if (unpersistedNotice) {
-    applyPendingStore({ kind: 'upsert', notice: unpersistedNotice });
+  const willAutoNavigate =
+    Boolean(deps.slug) &&
+    (cleanWarnings.length === 0 || persisted) &&
+    !hasOtherPending();
+  const listNotice = cleanWarnings.length > 0 && (!persisted || !willAutoNavigate) ? buildNotice() : null;
+  if (listNotice) {
+    applyPendingStore({ kind: 'upsert', notice: listNotice });
   } else {
     applyPendingStore({ kind: 'remove', envelopeId: deps.envelopeId });
   }
@@ -547,14 +556,14 @@ export async function handleEnvelopeCreatedWithWarnings(deps: {
   if (!isStillCurrent()) {
     return;
   }
-  if (unpersistedNotice) {
-    deps.onPendingNoticeAction?.({ kind: 'upsert', notice: unpersistedNotice });
-    deps.setCreatedDocxNotice(unpersistedNotice);
+  if (listNotice) {
+    deps.onPendingNoticeAction?.({ kind: 'upsert', notice: listNotice });
+    deps.setCreatedDocxNotice(listNotice);
     return;
   }
   deps.onPendingNoticeAction?.({ kind: 'remove', envelopeId: deps.envelopeId });
   deps.setCreatedDocxNotice(cleanWarnings.length > 0 ? buildNotice() : null);
-  if (deps.slug && (cleanWarnings.length === 0 || persisted) && !deps.hasOtherPendingNotice?.()) {
+  if (willAutoNavigate) {
     await deps.navigateToEnvelope(deps.slug, deps.envelopeId);
   }
 }
@@ -1295,6 +1304,7 @@ export function SignEnvelopesPage() {
   const listContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    let cancelled = false;
     inPersonReqRef.current += 1;
     rowActionReqRef.current += 1;
     docxNoticeReqRef.current += 1;
@@ -1306,6 +1316,15 @@ export function SignEnvelopesPage() {
     setDiffOpen(false);
     setDrafterOpen(false);
     setPendingRowAction(null);
+    const unsubscribePendingStore = subscribePendingDocxListNotices(() => {
+      if (!cancelled && mountedRef.current) {
+        setPendingDocxNotices(listPendingDocxListNotices(slug, null));
+      }
+    });
+    return () => {
+      cancelled = true;
+      unsubscribePendingStore();
+    };
   }, [slug]);
 
   useEffect(() => {

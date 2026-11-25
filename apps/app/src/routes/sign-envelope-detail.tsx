@@ -18,7 +18,6 @@ import { FieldOverlayLayer } from '../components/sign/field-placer.tsx';
 import {
   DocxWarningsAlert,
   clearCreatedDocxWarnings,
-  readCreatedDocxWarnings,
   saveCreatedDocxWarnings,
 } from '../components/sign/docx-conversion-notice.tsx';
 import {
@@ -26,6 +25,7 @@ import {
   clearPendingDocxListNotices,
   hasLocalDocxNoticeCandidate,
   probeLocalDocxNoticeCandidate,
+  readCreatedDocxWarningsWithStatus,
   readPendingDocxListNotice,
   removePendingDocxListNotice,
   sanitizeDocxWarnings,
@@ -123,6 +123,9 @@ export async function resolveDetailDocxWarnings(deps: {
   if (initialProbe === 'none') {
     return { status: 'none' };
   }
+  if (initialProbe === 'storage_error') {
+    return { status: 'retryable_error' };
+  }
   if (deps.isStillValid && !deps.isStillValid()) return { status: 'none' };
 
   let liveSessionId: string | null;
@@ -178,14 +181,17 @@ export async function resolveDetailDocxWarnings(deps: {
     return { status: 'none' };
   }
 
-  const stored = readCreatedDocxWarnings(deps.envelopeId, {
+  const storedResult = readCreatedDocxWarningsWithStatus(deps.envelopeId, {
     org: resolvedOrgId,
     userId: resolvedUserId,
   });
-  if (stored.length > 0) {
+  if (storedResult.warnings.length > 0) {
+    if (usesLiveStore) {
+      removePendingDocxListNotice(deps.envelopeId);
+    }
     return {
       status: 'resolved',
-      warnings: stored,
+      warnings: storedResult.warnings,
       org: resolvedOrgId,
       userId: resolvedUserId,
     };
@@ -195,7 +201,7 @@ export async function resolveDetailDocxWarnings(deps: {
     ? readPendingDocxListNotice(deps.envelopeId, deps.slug)
     : deps.pendingNotice;
   if (!candidateNotice) {
-    if (usesLiveStore && probeLocalDocxNoticeCandidate(deps.envelopeId, deps.slug) === 'storage_error') {
+    if (!storedResult.storageReadable) {
       return { status: 'retryable_error' };
     }
     return { status: 'none' };
