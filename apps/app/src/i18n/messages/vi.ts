@@ -16583,6 +16583,9 @@ export const vi = {
       STALE_DEAL_UPDATE: 'Biên bản cuộc họp hoặc liên kết cơ hội đã thay đổi từ lúc bạn viết. Hãy kiểm tra lại nội dung rồi lưu lại.',
       DEAL_LOST_REASON_INVALID: 'Lý do chỉ ghi khi chuyển cơ hội sang giai đoạn thua',
       DEAL_NEIGHBOUR_INVALID: 'Cơ hội đứng cạnh không còn ở giai đoạn này; hãy tải lại trang',
+      MINUTES_LINK_OFF: 'Tổ chức chưa bật chia sẻ biên bản ra ngoài. Chủ sở hữu hoặc quản trị viên bật được trong phần cài đặt cuộc họp.',
+      MINUTES_LINK_LIMIT: 'Cuộc họp này đã có đủ số liên kết còn hạn. Hãy thu hồi bớt một liên kết.',
+      MINUTES_LINK_NOT_FOUND: 'Không tìm thấy liên kết này.',
       DEAL_DELETE_FORBIDDEN: 'Bạn chỉ xóa được cơ hội do chính mình tạo',
       DEAL_HAS_QUOTES: 'Cơ hội này đã có báo giá nên không xóa được',
       QUOTE_NOT_FOUND: 'Không tìm thấy báo giá này',
@@ -16931,7 +16934,7 @@ export const vi = {
       MEETING_TITLE_TOO_LONG: 'Tên cuộc họp dài tối đa 200 ký tự.',
       DIGEST_OFF: 'Hệ thống này chưa bật việc nhờ Vy tóm tắt tuần.',
       DIGEST_BUSY: 'Vy đang bận viết các bản tóm tắt. Hãy thử lại sau vài phút.',
-      MINUTES_NOT_PUBLISHED: 'Người ghi chưa chia sẻ biên bản, nên chưa có tệp để tải về và chưa có bản gốc để đặt bản dịch bên cạnh.',
+      MINUTES_NOT_PUBLISHED: 'Người ghi chưa xuất bản biên bản, nên chưa có tệp để tải về, chưa có liên kết để chia sẻ và chưa có bản gốc để đặt bản dịch bên cạnh.',
       ASSIGNEE_OFF: 'Hệ thống này chưa bật việc nhờ Vy xem một việc cần làm của ai.',
       ASSIGNEE_BUSY: 'Vy đang bận đọc tên. Hãy thử lại sau vài phút.',
       TRANSLATION_NOT_FOUND: 'Không có bản tóm tắt nào bạn đọc được để dịch.',
@@ -19684,6 +19687,15 @@ export const vi = {
       minutes_esign: {
         get: 'Xem biên bản họp có được gửi đi ký hay không',
         set: 'Bật hoặc tắt việc ký biên bản họp',
+      },
+      minutes_link: {
+        create: 'Tạo liên kết tới biên bản đã xuất bản cho người ngoài',
+        revoke: 'Thu hồi liên kết tới biên bản đã xuất bản',
+        list: 'Xem các liên kết tới biên bản đã xuất bản của một cuộc họp',
+        switch: {
+          get: 'Xem tổ chức có cho chia sẻ biên bản ra ngoài hay không',
+          set: 'Bật hoặc tắt việc chia sẻ biên bản ra ngoài',
+        },
       },
       minutes_version: {
         get: 'Xem các bản dịch của biên bản họp đã đăng',

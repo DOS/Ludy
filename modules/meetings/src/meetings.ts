@@ -53,6 +53,7 @@ import { lockMeetingMedia, recordSealedMedia } from './media-record.ts';
 import { createMeetingRow } from './meeting-core.ts';
 import { importCommands } from './import.ts';
 import { meetingMinutesEsignGet, meetingMinutesEsignSet } from './minutes-esign.ts';
+import { minutesLinkCommands, minutesLinkQueries } from './minutes-link.ts';
 import { dropFollowupPayloads } from './followup-erase.ts';
 import { dealUpdateCommands, dealUpdateQueries } from './deal-update.ts';
 import { followupCommands, followupQueries } from './followup.ts';
@@ -1122,6 +1123,7 @@ export const meetingsCommands = [
   meetingSettingsSet,
   meetingConsentPolicySet,
   meetingMinutesEsignSet,
+  ...minutesLinkCommands,
   meetingRetentionShred,
   meetingShredReplay,
   meetingMediaDiscard,
@@ -1183,6 +1185,7 @@ export const meetingsQueries = [
   meetingSettingsGet,
   meetingConsentPolicyGet,
   meetingMinutesEsignGet,
+  ...minutesLinkQueries,
   meetingMediaOrphanKeys,
   transcriptGet,
   ...redactQueries,

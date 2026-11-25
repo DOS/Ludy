@@ -16583,6 +16583,9 @@ export const en = {
       STALE_DEAL_UPDATE: 'The meeting minutes or the deal link changed since this was written. Check the text and save again.',
       DEAL_LOST_REASON_INVALID: 'A reason is only recorded when a deal moves to a lost stage.',
       DEAL_NEIGHBOUR_INVALID: 'The neighbouring deal is no longer in this stage; reload the page.',
+      MINUTES_LINK_OFF: 'Your organization has not turned on sharing minutes with people outside. An owner or admin can turn it on in the meeting settings.',
+      MINUTES_LINK_LIMIT: 'This meeting already has the most live links. Revoke one first.',
+      MINUTES_LINK_NOT_FOUND: 'This link was not found.',
       DEAL_DELETE_FORBIDDEN: 'You can only delete deals you created.',
       DEAL_HAS_QUOTES: 'This deal has a quote, so it cannot be deleted.',
       QUOTE_NOT_FOUND: 'This quote was not found.',
@@ -16933,7 +16936,7 @@ export const en = {
       MEETING_TITLE_TOO_LONG: 'A meeting title holds at most 200 characters.',
       DIGEST_OFF: 'Vy writing the weekly recap is not turned on on this system.',
       DIGEST_BUSY: 'Vy is busy writing recaps. Try again in a few minutes.',
-      MINUTES_NOT_PUBLISHED: 'The recorder has not shared the minutes yet, so there is no file to download and no original to put a translation beside.',
+      MINUTES_NOT_PUBLISHED: 'The recorder has not published the minutes yet, so there is no file to download, no link to share and no original to put a translation beside.',
       TRANSLATION_NOT_FOUND: 'There is no summary you can read to translate.',
       TRANSLATION_NOTHING: 'There is nothing to translate yet.',
       MINUTES_VERSION_STALE: 'The original minutes changed while you were reviewing the translation. Translate and review again.',
@@ -19684,6 +19687,15 @@ export const en = {
       minutes_esign: {
         get: 'Read whether meeting minutes can be sent for signing',
         set: 'Turn signing of meeting minutes on or off',
+      },
+      minutes_link: {
+        create: 'Make a link to the published minutes for people outside',
+        revoke: 'Revoke a link to the published minutes',
+        list: 'See the links to the published minutes of a meeting',
+        switch: {
+          get: 'Read whether minutes can be shared with people outside',
+          set: 'Turn sharing minutes with people outside on or off',
+        },
       },
       minutes_version: {
         get: 'Read the translated versions of published meeting minutes',
