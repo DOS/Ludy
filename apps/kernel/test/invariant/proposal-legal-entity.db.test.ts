@@ -104,8 +104,8 @@ suite('proposals per legal entity and agent position scopes on PostgreSQL (#1538
   }
 
   function connect(upgraded = false, inputHash: InputHashMode = 'keyed') {
-    const runtimeFor = (url: string) => {
-      const pool = createDbPool({ connectionString: url, max: 4 }, dbIds);
+    const runtimeFor = (url: string, sessionRole?: 'crove_app' | 'crove_worker') => {
+      const pool = createDbPool({ connectionString: url, max: 4 }, dbIds, sessionRole ? { sessionRole } : undefined);
       pools.push(pool);
       // Before the upgrade no context token key: the database is at a version before enter_user_context. After it the
       // suite's key (CROVE_CONTEXT_TOKEN_KEY, which migrate installed): #1822 step 2 revokes enter_context from crove_app.
@@ -114,8 +114,8 @@ suite('proposals per legal entity and agent position scopes on PostgreSQL (#1538
         queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries],
       });
     };
-    app = runtimeFor(appUrl);
-    worker = runtimeFor(workerUrl);
+    app = upgraded ? runtimeFor(appUrl) : runtimeFor(adminUrl, 'crove_app');
+    worker = upgraded ? runtimeFor(workerUrl) : runtimeFor(adminUrl, 'crove_worker');
   }
 
   // An agent installed from the template with the given scope (none named: the default), holding its own top-level
@@ -177,15 +177,6 @@ suite('proposals per legal entity and agent position scopes on PostgreSQL (#1538
     }
     await migrate({ adminUrl, dir: before });
     dbIds = await resolveDbIdentifiers(adminUrl);
-    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
-    const login = (user: string, password: string) => {
-      const url = new URL(adminUrl);
-      url.username = dbIds ? dbIds.roleName(user) : user;
-      url.password = password;
-      return url.toString();
-    };
-    appUrl = login('crove_app', 'test-app-pw');
-    workerUrl = login('crove_worker', 'test-worker-pw');
     connect();
 
     const db = createDb(pools[0] as pg.Pool);
@@ -241,6 +232,12 @@ suite('proposals per legal entity and agent position scopes on PostgreSQL (#1538
     await migrate({ adminUrl, dir: MIGRATIONS });
     dbIds = await resolveDbIdentifiers(adminUrl);
     await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
+    const login = (user: string, password: string) => {
+      const url = new URL(adminUrl);
+      url.username = dbIds ? dbIds.roleName(user) : user;
+      url.password = password;
+      return url.toString();
+    };
     appUrl = login('crove_app', 'test-app-pw');
     workerUrl = login('crove_worker', 'test-worker-pw');
     // Connections opened before the migration may hold plans of the tables as they were.

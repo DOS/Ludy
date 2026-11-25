@@ -127,13 +127,14 @@ const PENDING_TABLES = new Set<string>([
   'crove_kernel.agent_grant',
   'crove_kernel.agent_wake_delivery',
   'crove_kernel.agent_wake_signal_seen',
-  'crove_kernel.member_home_layout',
   'crove_kernel.member_permission_override',
   'crove_kernel.member_vy_memory',
   'crove_kernel.member_vy_result',
   'crove_meetings.live_line',
+  'crove_meetings.meeting_label',
   'crove_meetings.meeting_link',
   'crove_meetings.tracker_alert',
+  'crove_meetings.weekly_notice',
   'crove_notes.link',
   'crove_notes.note',
 ]);
@@ -233,6 +234,7 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   ['crove_meetings.meeting', () => 'false'], // As above.
   ['crove_meetings.meeting_chapter', () => 'false'], // The chapters of a meeting, read by the recorder and, once published, the readers of the meeting, users (meetings chapters, #3844).
   ['crove_meetings.meeting_highlight', () => 'false'], // The highlights of a meeting, read by its readers and recorder, users (meetings highlights, #4819).
+  ['crove_meetings.meeting_label', () => 'false'], // The labels the recorder puts on a meeting, read by the recorder and the readers of the meeting, users (meeting labels, #4955); an agent context reads none.
   ['crove_meetings.meeting_link', () => 'false'], // As above (a link is read through its meeting's readers, L1 #2587).
   ['crove_meetings.meeting_note', () => 'false'], // The recorder's own rough notes, read by the recorder, a user (meetings integrations A5, #3163).
   ['crove_meetings.meeting_reader', () => 'false'], // As above.
@@ -245,6 +247,7 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   ['crove_meetings.tracker_term', () => 'false'], // The org's tracked keywords, read by the members of the org, users (meetings trackers, #4818); an agent context reads none.
   ['crove_meetings.transcript_segment', () => 'false'], // As above (transcript segments, ADR-0047).
   ['crove_meetings.translation', () => 'false'], // A machine translation, read by the member who asked for it, a user (meetings integrations E1, #3184).
+  ['crove_meetings.weekly_notice', () => 'false'], // A member's own opt-in to the weekly digest of their meetings (counts and a link), read by that member, a user (meetings weekly digest, #4967); an agent context reads none.
   // Catalog 'read': the notes its member could read, own private and shared (the factory's private notes are the first owner's, not the member's, so only the shared ones).
   ['crove_notes.attachment', () => 'false'], // Not in member_vy_table; reads through parent note with ctx_agent_id() IS NULL.
   [
@@ -366,6 +369,8 @@ const AUTHOR_ONLY = new Map<string, string>([
   ['crove_meetings.meeting_chapter', 'false'],
   // The highlights of a meeting (meetings highlights, #4819): read by the readers and the recorder, written by them, users only; worker system context reads and writes nothing.
   ['crove_meetings.meeting_highlight', 'false'],
+  // The labels of a meeting (meeting labels, #4955): read by the recorder and the readers, written and deleted by the recorder, users only; worker system context reads and writes nothing.
+  ['crove_meetings.meeting_label', 'false'],
   // Meeting readers (ADR-0047 point 2): worker system context reads and writes nothing.
   ['crove_meetings.meeting_link', 'false'],
   // The recorder's own rough notes (meetings integrations A5, #3163): the recorder's alone; worker system context reads and writes nothing.
@@ -389,6 +394,8 @@ const AUTHOR_ONLY = new Map<string, string>([
   ['crove_meetings.transcript_segment', 'false'],
   // A machine translation of a summary (meetings integrations E1, #3184): the asker's alone; worker system context reads and writes nothing.
   ['crove_meetings.translation', 'false'],
+  // A member's own opt-in to the weekly digest (#4967): the member's alone; worker system context reads and writes nothing (its one reader is a definer).
+  ['crove_meetings.weekly_notice', 'false'],
   // An attachment reads through its parent note: the system context sees shared notes' attachments only (ADR-0037).
   [
     'crove_notes.attachment',
@@ -3150,11 +3157,11 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
     noInsertControl: 'one row per member (UNIQUE (org_id, user_id)); a member writes their own, through its command (conversations-inbox.db.test.ts tests it)',
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), user_id: o.owner, status: 'available' } }),
   },
-  // A member's own Global Home layout preference (#4923, #4925, step 0): one row per member (unique on (org_id, user_id)), under a restrictive
-  // own-member policy (and system context); agents read and write none. Its factory lands before the table (PENDING_TABLES).
+  // A member's own Global Home layout preference (#4923, #4925): one row per member (UNIQUE (org_id, user_id)), under a restrictive
+  // own-member policy (and system context); agents read and write none.
   'crove_kernel.member_home_layout': {
     update: { set: 'layout_json = layout_json' },
-    noInsertControl: 'one row per member (unique on (org_id, user_id)); a member writes their own through kernel.member.home_layout.save (tested in Step 1)',
+    noInsertControl: 'one row per member (UNIQUE (org_id, user_id)); a member writes their own through kernel.member.home_layout.save (home-layout.db.test.ts tests it)',
     make: (o) => ({
       row: {
         org_id: o.id,
@@ -3601,6 +3608,18 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
   },
+  // #4955 (meeting labels): a short plain-text label the recorder puts on a meeting (at most 5 a meeting, 40 characters), so a business with no CRM can group its meetings. Read by the recorder and the
+  // readers of the meeting, inserted and deleted by the recorder (the org's owner is the recorder of the factory's meeting), all in a user context; the system context reads none. No UPDATE for a login
+  // role. Its factory lands before the table (PENDING_TABLES).
+  'crove_meetings.meeting_label': {
+    make: (o) => {
+      const meeting = meetingsMeetingRow(o);
+      return {
+        setup: [{ table: 'crove_meetings.meeting', values: meeting }],
+        row: { org_id: o.id, id: randomUUID(), meeting_id: meeting.id, label: 'RLS matrix label', created_by: o.owner },
+      };
+    },
+  },
   // #2587 (L1): a meeting's link to a deal (the CRM module is reached through ctx.query, so the deal id has no foreign key).
   'crove_meetings.meeting_link': {
     make: (o) => {
@@ -3741,6 +3760,7 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
     make: (o) => ({
       row: { org_id: o.id, id: randomUUID(), user_id: o.owner },
     }),
+    noInsertControl: "one row per member (UNIQUE (org_id, user_id)) and the own-row policy admits only the acting member's own user id, so the seed already holds the owner's row and a second insert as that member would be a duplicate; the insert, the delete and a viewer's refusal are tested in meetings-tracker-alerts.db.test.ts",
   },
   // #4818 (meetings trackers): a keyword or phrase the org tracks across its meetings, at most 20 an org. Read by every member of the org and written and deleted by an owner or an admin (the factory's
   // owner is one), all in a user context; the system context reads none. No UPDATE for a login role. Its table landed in #4818 (step 2), which removed it from PENDING_TABLES.
@@ -3789,6 +3809,14 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
         },
       };
     },
+  },
+  // #4967 (meetings weekly digest): a member's own opt-in to the weekly digest of their meetings (a time of day on Monday, their zone and language), one row per member, read, written and deleted by that member
+  // alone, so the system context reads none. No UPDATE for a login role. Its factory lands before the table (PENDING_TABLES).
+  'crove_meetings.weekly_notice': {
+    noInsertControl: 'one row per member (UNIQUE (org_id, user_id)); a member inserts their own, through meetings.weekly.set (meetings-weekly.db.test.ts tests it)',
+    make: (o) => ({
+      row: { org_id: o.id, id: randomUUID(), user_id: o.owner, send_minute: 480, time_zone: 'Asia/Ho_Chi_Minh', language: 'vi' },
+    }),
   },
   // Notes and personal to-dos (ADR-0037, notes plan §3.4), in AUTHOR_ONLY. The matrix seeds as the superuser with no
   // context, so each factory names its author or owner: the org's owner, the user every member-context actor enters

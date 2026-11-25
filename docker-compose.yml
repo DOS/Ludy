@@ -231,10 +231,15 @@ services:
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASS: ${SMTP_PASS:-}
       SMTP_FROM: ${SMTP_FROM:-noreply@ludy.local}
-      # smtp (above) or resend: Crove's own mails through Resend's API, delivery events through its webhooks (#539).
+      # smtp (above), resend (RESEND_*) or ses (SES_*): Ludy's own mails and delivery event webhooks (#539, #4960).
       MAIL_PROVIDER: ${MAIL_PROVIDER:-smtp}
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       RESEND_WEBHOOK_SECRET: ${RESEND_WEBHOOK_SECRET:-}
+      SES_REGION: ${SES_REGION:-}
+      SES_ACCESS_KEY_ID: ${SES_ACCESS_KEY_ID:-}
+      SES_SECRET_ACCESS_KEY: ${SES_SECRET_ACCESS_KEY:-}
+      SES_CONFIGURATION_SET: ${SES_CONFIGURATION_SET:-}
+      SES_SNS_TOPIC_ARN: ${SES_SNS_TOPIC_ARN:-}
       TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-0}
       # Emails Supabase Auth sends per client address and per recipient (#190); the same budget as the auth service,
       # so a public deployment refuses to start when fewer than 10 client addresses could use it up.
@@ -279,7 +284,7 @@ services:
       AI_DEFAULT_MONTHLY_BUDGET: ${AI_DEFAULT_MONTHLY_BUDGET:-}
       API_RATE_LIMIT_PER_MINUTE: ${API_RATE_LIMIT_PER_MINUTE:-600}
       # The all-in-one role on a public PUBLIC_URL starts only with true (the pilot runs api and worker apart, #2118).
-      LUDY_ALLOW_ALL_IN_ONE: ${LUDY_ALLOW_ALL_IN_ONE:-${CROVE_ALLOW_ALL_IN_ONE:-}}
+      LUDY_ALLOW_ALL_IN_ONE: ${LUDY_ALLOW_ALL_IN_ONE:-}
       # Realtime invalidation over SSE (/api/stream): one LISTEN connection per API process (see .env.example).
       STREAM_MAX_CONNECTIONS: ${STREAM_MAX_CONNECTIONS:-500}
       STREAM_MAX_PER_USER: ${STREAM_MAX_PER_USER:-5}

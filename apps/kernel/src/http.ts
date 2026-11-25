@@ -23,7 +23,6 @@ import {
   MAX_SOCIAL_VIDEO_MS,
   MAX_UPLOAD_BYTES,
   ORG_HEADER,
-  LEGACY_ORG_HEADER,
   ROADMAP_VOTER_HEADER,
   SIGN_DEPOSIT_PROOF_MAX_BYTES,
   SIGN_DIRECT_PAGE_PATH,
@@ -143,7 +142,6 @@ import {
   emailChangeGate,
   emailChangeRefused,
   INVITE_TOKEN_HEADER,
-  LEGACY_INVITE_TOKEN_HEADER,
   limitInviteChecks,
   methodRefused,
   signupAllowed,
@@ -376,6 +374,8 @@ export interface HttpDeps {
   aiEnabled: boolean;
   // Outbound mail for invites (issue #129). Unset: off, and the inviter passes the one-time link on.
   mailer?: MailProvider;
+  // Refused requests per minute per client address on POST /webhooks/mail/:provider (counted on 400/401, peeked before bodyLimit).
+  mailWebhookLimit?: RateLimiter;
   // The bank feed adapters that take signed notices, by provider id (ADR-0039): POST /api/bank-feed/<id>/webhook exists
   // for these alone, with finance installed.
   bankFeedWebhooks?: Readonly<Record<string, BankFeedProvider>>;
@@ -725,7 +725,8 @@ const SPOOFABLE = new Set([
 // Dropped from every request the auth proxy forwards: the forwarding headers above, and the invite token a sign-up
 // carries for the sign-up policy (#563), which is the proxy's to read and none of Supabase Auth's business.
 const RECIPIENT_HEADER = 'x-ludy-recipient';
-const LEGACY_RECIPIENT_HEADER = 'x-crove-recipient';
+const RETIRED_RECIPIENT_HEADER = 'x-crove-recipient';
+const RETIRED_INVITE_HEADER = 'x-crove-invite';
 
 function normalizeHeaderValue(raw: string | undefined): string | null {
   if (raw === undefined) return null;
@@ -734,33 +735,24 @@ function normalizeHeaderValue(raw: string | undefined): string | null {
 }
 
 function readOrgHeader(c: Context): string | null {
-  const primary = normalizeHeaderValue(c.req.header(ORG_HEADER));
-  const legacy = normalizeHeaderValue(c.req.header(LEGACY_ORG_HEADER));
-  if (primary !== null && legacy !== null && primary !== legacy) {
-    throw new DomainError('ORG_HEADER_CONFLICT', 400, 'Conflicting x-ludy-org and x-crove-org headers');
-  }
-  return primary ?? legacy;
+  return normalizeHeaderValue(c.req.header(ORG_HEADER));
 }
 
-function readInviteHeader(c: Context): { ok: true; value: string | undefined } | { ok: false } {
-  const primary = normalizeHeaderValue(c.req.header(INVITE_TOKEN_HEADER));
-  const legacy = normalizeHeaderValue(c.req.header(LEGACY_INVITE_TOKEN_HEADER));
-  if (primary !== null && legacy !== null && primary !== legacy) {
-    return { ok: false };
-  }
-  return { ok: true, value: (primary ?? legacy) ?? undefined };
+function readInviteHeader(c: Context): string | undefined {
+  return normalizeHeaderValue(c.req.header(INVITE_TOKEN_HEADER)) ?? undefined;
 }
 
 function readRecipientHeader(c: Context): string | null {
   const primary = normalizeHeaderValue(c.req.header(RECIPIENT_HEADER));
-  const legacy = normalizeHeaderValue(c.req.header(LEGACY_RECIPIENT_HEADER));
-  if (primary !== null && legacy !== null && primary.toLowerCase() !== legacy.toLowerCase()) {
-    throw new DomainError('RECIPIENT_HEADER_CONFLICT', 400, 'Conflicting x-ludy-recipient and x-crove-recipient headers');
+  if (primary !== null) return primary;
+  if (normalizeHeaderValue(c.req.header(RETIRED_RECIPIENT_HEADER)) !== null) {
+    throw new DomainError('LEGACY_RECIPIENT_HEADER', 400, 'Header x-crove-recipient has been retired; send x-ludy-recipient instead');
   }
-  return primary ?? legacy;
+  return null;
 }
 
-const PROXY_DROPPED = new Set([...SPOOFABLE, INVITE_TOKEN_HEADER, LEGACY_INVITE_TOKEN_HEADER]);
+// Keep retired x-crove-invite scrubbed at proxy egress so dual-header requests never leak it upstream while only x-ludy-invite authorizes signup.
+const PROXY_DROPPED = new Set([...SPOOFABLE, INVITE_TOKEN_HEADER, RETIRED_INVITE_HEADER]);
 // Public Supabase Auth endpoints the web app needs. Everything else (notably /admin) is not reachable.
 const AUTH_PUBLIC_PATHS =
   /^\/(?:token|signup|verify|recover|user|logout|otp|resend|settings|health|authorize|callback|reauthenticate|factors(?:\/[\w-]+(?:\/(?:challenge|verify))?)?|\.well-known\/jwks\.json)$/;
@@ -768,6 +760,8 @@ const AUTH_PUBLIC_PATHS =
 const STATUS_CACHE_MS = 5_000;
 // Signed notices one client address may post a minute: a provider posts a few per bank event, from a handful of addresses.
 const BANK_FEED_WEBHOOKS_PER_MINUTE = 120;
+// Refused mail webhook requests per minute per client address (verified deliveries are not counted).
+const MAIL_WEBHOOKS_PER_MINUTE = 120;
 // Refused requests (a bad signature, a body that is no notice) one address may send a minute; verified notices are not counted.
 const ZALO_WEBHOOKS_PER_MINUTE = 120;
 const ZOOM_WEBHOOKS_PER_MINUTE = 120;
@@ -1110,9 +1104,7 @@ export function createHttpApp(deps: HttpDeps) {
       }
       if (gate.kind === 'check') {
         // The invite token the web app sends with a sign-up from an accept link (#563); the header is never forwarded.
-        const inviteHeader = readInviteHeader(c);
-        if (!inviteHeader.ok) return signupRefused();
-        const token = signupInviteToken(inviteHeader.value);
+        const token = signupInviteToken(readInviteHeader(c));
         // Each lookup of whether the address holds an invite takes a refusal slot of the client's IPv4 address or IPv6
         // /48 and of the deployment, given back when the sign-up is admitted (#564 item 1).
         // The refusal cap counts per client address too, so warn about a reverse proxy without TRUSTED_PROXY_HOPS
@@ -1158,24 +1150,48 @@ export function createHttpApp(deps: HttpDeps) {
     });
   }
 
-  // Delivery events from the mail provider (#539), when it has signed webhooks (Resend with RESEND_WEBHOOK_SECRET).
-  // Outside /api: the provider authenticates with its signature, not a session. Any other provider name is a 404.
+  // Delivery events from the mail provider (#539, #4960), when it has signed webhooks (Resend with RESEND_WEBHOOK_SECRET, Amazon SES with SES_SNS_TOPIC_ARN).
+  // Outside /api: the provider authenticates with its signature, not a session. Unknown providers and throttled probes are refused before bodyLimit;
+  // reserve atomically with take() ahead of bodyLimit and refund on verified 200/202 deliveries or transient 503 capacity so concurrent invalid bursts cannot bypass peek().
   const mailer = deps.mailer;
   if (mailer?.parseWebhook) {
-    app.post('/webhooks/mail/:provider', bodyLimit({ maxSize: MAX_MAIL_WEBHOOK_BYTES }), async (c) => {
-      if (c.req.param('provider') !== mailer.name) return c.json({ code: 'NOT_FOUND' }, 404);
-      try {
-        const headers: Record<string, string | undefined> = {};
-        c.req.raw.headers.forEach((value, name) => {
-          headers[name.toLowerCase()] = value;
-        });
-        const outcome = await acceptMailWebhook(runtime, mailer, { headers, body: await c.req.text() });
-        if (outcome.status === 401 || outcome.status === 400) return c.json({ code: outcome.code }, outcome.status);
-        return c.json({ queued: outcome.queued }, outcome.status);
-      } catch (error) {
-        return problem(c, error);
-      }
-    });
+    const mailLimit = deps.mailWebhookLimit ?? new RateLimiter({ perMinute: MAIL_WEBHOOKS_PER_MINUTE });
+    app.post(
+      '/webhooks/mail/:provider',
+      async (c, next) => {
+        if (c.req.param('provider') !== mailer.name) return c.json({ code: 'NOT_FOUND' }, 404);
+        const decision = mailLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
+        if (!decision.allowed) {
+          warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
+          c.header('retry-after', String(decision.retryAfterSeconds));
+          return c.json({ code: 'RATE_LIMITED', retryAfterSeconds: decision.retryAfterSeconds }, 429);
+        }
+        await next();
+      },
+      bodyLimit({ maxSize: MAX_MAIL_WEBHOOK_BYTES }),
+      async (c) => {
+        const bucket = clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS));
+        try {
+          const headers: Record<string, string | undefined> = {};
+          c.req.raw.headers.forEach((value, name) => {
+            headers[name.toLowerCase()] = value;
+          });
+          const outcome = await acceptMailWebhook(runtime, mailer, { headers, body: await c.req.text() });
+          if (outcome.status === 503) {
+            mailLimit.refund(bucket);
+            c.header('retry-after', String(outcome.retryAfterSeconds));
+            return c.json({ code: outcome.code }, 503);
+          }
+          if (outcome.status === 401 || outcome.status === 400) {
+            return c.json({ code: outcome.code }, outcome.status);
+          }
+          mailLimit.refund(bucket);
+          return c.json({ queued: outcome.queued }, outcome.status);
+        } catch (error) {
+          return problem(c, error);
+        }
+      },
+    );
   }
 
   // A bank feed provider's signed notice (ADR-0039, #2044): public like the mail provider's, checked by the adapter's

@@ -8,7 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { metered, type AiUsage, type ReplyDraftRequest, type ReplyDraftResult } from '@ludy/agent';
+import { ConversationWriter, metered, type AiUsage, type ReplyDraftRequest, type ReplyDraftResult } from '@ludy/agent';
 import { createDb, createPool, type Db } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { EXPORT_TABLE_NAMES, createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
@@ -509,6 +509,79 @@ suite('Vy’s drafts and the saved replies on PostgreSQL (CV8, #2310)', () => {
       await rt.execute('kernel.conversation.reply', { conversationId: id, body: 'Chào Lan, shop còn hàng ạ', lastSeenSeq: 1, draftId: asked.draftId, savedReplyId: saved.id }, { actor: asUser(o.owner), orgId: o.orgId });
       expect((await sent())[0]?.n).toBe('1');
       expect((await rt.query<SavedReplyListed>('kernel.conversation.saved_reply_list', {}, { actor: asUser(o.owner), orgId: o.orgId })).replies[0]?.useCount).toBe(1);
+    });
+
+    it('records edit_size against the {tên}-filled draft, prefers linked contact name, and refuses foreign draft placeholders (#3105)', async () => {
+      const o = await org();
+      const writerFor = (text: string) =>
+        new ConversationWriter({ baseURL: 'http://localhost:1/v1', apiKey: null, model: 'test' }, async () => ({
+          output: { body: text },
+          usage: { inputTokens: 100, outputTokens: 20 },
+        }));
+      // 1. ConversationWriter refuses foreign/nested placeholders via runConversationDraft (discarded as PLACEHOLDER, no live draft).
+      await ingest(o, [event('p-bad1'), event('p-bad2')]);
+      const [bad1, bad2] = [await threadOf(o, 'p-bad1'), await threadOf(o, 'p-bad2')];
+      const req1 = await request(o, bad1);
+      const req2 = await request(o, bad2);
+      expect(await run(o, writerFor('Chào {name}, shop còn hàng ạ'), req1.draftId, bad1)).toBe('none');
+      expect(await run(o, writerFor('Chào {{customer}}, shop còn hàng ạ'), req2.draftId, bad2)).toBe('none');
+      expect((await drafts(o)).map((d) => [d.state, d.body])).toEqual([['discarded', null], ['discarded', null]]);
+
+      // 2. Draft keeps `{tên}` and the person sends the filled text untouched -> edit_size is 0 (using identity display_name).
+      await ingest(o, [event('p-id')]);
+      const idThread = await threadOf(o, 'p-id');
+      const idDraft = await request(o, idThread);
+      const template = 'Chào {tên}, shop còn hàng ạ';
+      expect(await run(o, writerFor(template), idDraft.draftId, idThread)).toBe('written');
+      await rt.execute(
+        'kernel.conversation.reply',
+        { conversationId: idThread, body: 'Chào Khách p-id, shop còn hàng ạ', lastSeenSeq: 1, draftId: idDraft.draftId },
+        { actor: asUser(o.owner), orgId: o.orgId },
+      );
+
+      // 3. Linked party overrides display_name and only the person's own edit ("[giá]" -> "150.000đ" = 8 chars) is counted.
+      await ingest(o, [event('p-party')]);
+      const partyThread = await threadOf(o, 'p-party');
+      const { partyId } = await rt.execute<{ partyId: string }>('kernel.party.create', { kind: 'person', name: 'Chị Mai Hương' }, { actor: asUser(o.owner), orgId: o.orgId });
+      await rt.execute('kernel.conversation.link_contact', { conversationId: partyThread, partyId }, { actor: asUser(o.owner), orgId: o.orgId });
+      const partyDraft = await request(o, partyThread);
+      const bracketTemplate = 'Chào {tên}, giá [giá] ạ';
+      expect(await run(o, writerFor(bracketTemplate), partyDraft.draftId, partyThread)).toBe('written');
+      await rt.execute(
+        'kernel.conversation.reply',
+        { conversationId: partyThread, body: 'Chào Chị Mai Hương, giá 150.000đ ạ', lastSeenSeq: 1, draftId: partyDraft.draftId },
+        { actor: asUser(o.owner), orgId: o.orgId },
+      );
+
+      // 4. Thread with no usable name drops `{tên}` cleanly before comparing, and send treats only `{tên}` as the known fill (literal `{name}` is allowed).
+      await ingest(o, [{ ...event('p-noname'), contact: { id: 'u-p-noname' } }, { ...event('p-literal'), contact: { id: 'u-p-literal' } }]);
+      const [nonameThread, literalThread] = [await threadOf(o, 'p-noname'), await threadOf(o, 'p-literal')];
+      const [nonameDraft, literalDraft] = [await request(o, nonameThread), await request(o, literalThread)];
+      expect(await run(o, writerFor(template), nonameDraft.draftId, nonameThread)).toBe('written');
+      expect(await run(o, writerFor(template), literalDraft.draftId, literalThread)).toBe('written');
+      await rt.execute(
+        'kernel.conversation.reply',
+        { conversationId: nonameThread, body: 'Chào, shop còn hàng ạ', lastSeenSeq: 1, draftId: nonameDraft.draftId },
+        { actor: asUser(o.owner), orgId: o.orgId },
+      );
+      await rt.execute(
+        'kernel.conversation.reply',
+        { conversationId: literalThread, body: 'Chào, shop còn hàng ạ ({name})', lastSeenSeq: 1, draftId: literalDraft.draftId },
+        { actor: asUser(o.owner), orgId: o.orgId },
+      );
+
+      const byId = Object.fromEntries((await drafts(o)).map((d) => [d.id, d]));
+      expect([
+        [byId[idDraft.draftId]?.state, byId[idDraft.draftId]?.draft_length, byId[idDraft.draftId]?.edit_size],
+        [byId[partyDraft.draftId]?.state, byId[partyDraft.draftId]?.draft_length, byId[partyDraft.draftId]?.edit_size],
+        [byId[nonameDraft.draftId]?.state, byId[nonameDraft.draftId]?.draft_length, byId[nonameDraft.draftId]?.edit_size],
+        [byId[literalDraft.draftId]?.state, byId[literalDraft.draftId]?.draft_length, byId[literalDraft.draftId]?.edit_size],
+      ]).toEqual([
+        ['used', template.length, 0],
+        ['used', bracketTemplate.length, 8],
+        ['used', template.length, 0],
+        ['used', template.length, 9],
+      ]);
     });
   });
 

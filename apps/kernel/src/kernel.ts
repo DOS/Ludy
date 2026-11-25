@@ -264,9 +264,8 @@ export interface ModuleDefinitions {
 const OVERVIEW_CONTRIBUTIONS: Partial<Record<ModuleId, readonly OverviewContribution[]>> = { social: socialOverviewContributions };
 
 // The overview contributions of the modules LUDY_MODULES enables, which kernel.org.overview runs in each org.
-export function overviewContributions(config: Pick<Config, 'LUDY_MODULES'> | Pick<Config, 'CROVE_MODULES'>): OverviewContribution[] {
-  const modules = 'LUDY_MODULES' in config ? config.LUDY_MODULES : config.CROVE_MODULES;
-  return modules.flatMap((module) => OVERVIEW_CONTRIBUTIONS[module] ?? []);
+export function overviewContributions(config: Pick<Config, 'LUDY_MODULES'>): OverviewContribution[] {
+  return config.LUDY_MODULES.flatMap((module) => OVERVIEW_CONTRIBUTIONS[module] ?? []);
 }
 
 // Transcription of meetings is on only with MEETINGS_TRANSCRIBE=on and a provider (#2578, M4b); the module works with it off.
@@ -312,6 +311,7 @@ export function moduleDefinitions(config: Config, billing: Billing = selfHostBil
         messageIdDomain: messageIdDomain(config),
         shippedModules: AVAILABLE_MODULES,
         appBusy: { meetings: meetingsBusy, ads: adsBusy },
+        apps: { deployment: config.LUDY_MODULES, entitlements: (orgId) => billing.entitlements(orgId) },
       }),
       queries: kernelQueries({
         inboundDomain: config.INBOUND_DOMAIN ?? null,
@@ -357,9 +357,8 @@ const MODULE_MANIFESTS: Record<ModuleId, ModuleManifest> = {
   hr: hrManifest,
 };
 
-export function moduleManifests(config: Pick<Config, 'LUDY_MODULES'> | Pick<Config, 'CROVE_MODULES'>): ModuleManifest[] {
-  const modules = 'LUDY_MODULES' in config ? config.LUDY_MODULES : config.CROVE_MODULES;
-  return modules.map((module) => MODULE_MANIFESTS[module]);
+export function moduleManifests(config: Pick<Config, 'LUDY_MODULES'>): ModuleManifest[] {
+  return config.LUDY_MODULES.map((module) => MODULE_MANIFESTS[module]);
 }
 
 // The runtime of every server role, and the only place the server constructs one: the enabled modules' commands and

@@ -41,11 +41,43 @@ export async function openMeeting(trx: QueryContext['trx'], orgId: string, meeti
   return meeting;
 }
 
+/**
+ * Puts the published lines of a meeting in order with whatever is checked against them (#4971). The recorder's publish replaces the published lines (`transcript_publish`), and a highlight is checked
+ * against them when it is added by the recorder or by any reader of the meeting. A reader cannot hold the meeting row (the UPDATE policy of the table admits the recorder only, and every locking clause
+ * needs it), and the foreign key's FOR KEY SHARE does not conflict with the publish's FOR NO KEY UPDATE, so the two take this transaction-scoped advisory lock of the meeting instead (key `meetings.lines:<org>:<meeting>`, taken only after `openMeeting` has confirmed the caller reads the meeting, so a non-reader cannot hold it): the publish
+ * exclusively (`replace`), a check against the lines shared (`read`), so many adds run together and one publish waits for them or they wait for it. What runs after the lock is taken reads the lines as the
+ * other transaction left them (READ COMMITTED). The publish takes it after the meeting row and the add takes no row lock of the meeting stronger than the foreign key's KEY SHARE before it, so the two cannot deadlock.
+ */
+export async function lockPublishedLines(trx: QueryContext['trx'], orgId: string, meetingId: string, mode: 'replace' | 'read'): Promise<void> {
+  const key = sql`pg_catalog.hashtextextended(${`meetings.lines:${orgId.toLowerCase()}:${meetingId.toLowerCase()}`}, 0)`;
+  if (mode === 'replace') await sql`SELECT pg_catalog.pg_advisory_xact_lock(${key})`.execute(trx);
+  else await sql`SELECT pg_catalog.pg_advisory_xact_lock_shared(${key})`.execute(trx);
+}
+
 /** Holds the meeting row FOR NO KEY UPDATE before reading private results or mutating drafts (#4415, #3916). */
 export async function lockMeeting(trx: QueryContext['trx'], orgId: string, meetingId: string): Promise<void> {
   const held = await trx.selectFrom('ludy_meetings.meeting').select('id').where('org_id', '=', orgId).where('id', '=', meetingId).forNoKeyUpdate().executeTakeFirst();
   // A meeting deleted while this waited is gone, not a foreign key error or stale read below.
   if (!held) throw notFound();
+}
+
+/**
+ * The draft transcript lines of a meeting as the recorder's screen needs them (#4899): how many there are, how many a machine wrote and the recorder has not read, and a key over exactly those unread lines
+ * (the digest of their ids, empty when none). The review names that key, so it clears only the lines the screen showed. Row security lets only the recorder see a draft, so callers ask for the recorder.
+ */
+export async function draftLineState(trx: QueryContext['trx'], orgId: string, meetingId: string): Promise<{ draft: number; unread: number; key: string }> {
+  const row = await trx
+    .selectFrom('ludy_meetings.transcript_segment')
+    .select([
+      sql<string>`count(*)::text`.as('draft'),
+      sql<string>`(count(*) filter (where tainted))::text`.as('unread'),
+      sql<string | null>`md5(string_agg(id::text, ',' order by id) filter (where tainted))`.as('key'),
+    ])
+    .where('org_id', '=', orgId)
+    .where('meeting_id', '=', meetingId)
+    .where('stage', '=', 'draft')
+    .executeTakeFirstOrThrow();
+  return { draft: Number(row.draft), unread: Number(row.unread), key: row.key ?? '' };
 }
 
 // A new run replaces the earlier draft, corrections included: the recorder asked for it. The caller has checked that the caller is the recorder.
@@ -161,11 +193,14 @@ export const transcriptGet = defineQuery({
       .orderBy('id')
       .execute();
     const stage: Transcript['stage'] = rows.length === 0 ? 'none' : rows.some((r) => r.stage === 'draft') ? 'draft' : 'published';
+    // The recorder reads their working draft while one exists (a re-transcription after a publish, #4899): the lines published before it stay for the readers until the next publish replaces them, and are not
+    // listed again beside the draft that will replace them. A reader reads published lines only, so nothing changes for them.
+    const shown = stage === 'draft' ? rows.filter((r) => r.stage === 'draft') : rows;
     return {
       meetingId: input.meetingId,
       isRecorder: meeting.recorder_user_id === userId,
       stage,
-      segments: rows.map((r) => ({
+      segments: shown.map((r) => ({
         id: r.id,
         startSeconds: Number(r.start_seconds),
         endSeconds: Number(r.end_seconds),

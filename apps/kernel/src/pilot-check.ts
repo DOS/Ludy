@@ -7,9 +7,9 @@
 //
 // Exit codes: 0 every automatic check passed, 1 a check failed, 2 the check could not run (bad arguments).
 import { randomBytes } from 'node:crypto';
-import { checkEnvPair } from '@ludy/db';
 import { ORG_HEADER } from '@ludy/kernel-contract';
 import { S3BlobStore, parseVaultKey, type S3Sender } from '@ludy/kernel-runtime';
+import { SES_CONFIGURATION_SET_PATTERN, SES_REGION_PATTERN, SES_SNS_TOPIC_ARN_PATTERN } from '@ludy/mail';
 import { AVAILABLE_MODULES, SAMPLE_DB_PASSWORDS } from './config.ts';
 import { parseAllowedOrigins } from './cors.ts';
 import { parseExportKey } from './export-seal.ts';
@@ -34,6 +34,8 @@ export interface PilotArgs {
 
 export type Env = Readonly<Record<string, string | undefined>>;
 
+const SES_SMTP_PORTS = new Set(['25', '465', '587', '2465', '2587']);
+
 // Secrets every pilot deployment sets, with the sample values shipped in .env.example and the fallbacks
 // docker-compose.yml and docker-compose.split.yml use when a variable is unset. pilot-check.test.ts keeps these lists
 // in step with those files.
@@ -47,13 +49,6 @@ export const REQUIRED_SECRETS = [
   'AUTH_JWT_SECRET',
   'EXPORT_ENCRYPTION_KEY',
 ] as const;
-
-const LEGACY_SECRET_NAMES: Partial<Record<(typeof REQUIRED_SECRETS)[number], string>> = {
-  LUDY_APP_DB_PASSWORD: 'CROVE_APP_DB_PASSWORD',
-  LUDY_WORKER_DB_PASSWORD: 'CROVE_WORKER_DB_PASSWORD',
-  LUDY_PROBER_DB_PASSWORD: 'CROVE_PROBER_DB_PASSWORD',
-  LUDY_REPORTER_DB_PASSWORD: 'CROVE_REPORTER_DB_PASSWORD',
-};
 
 export const KNOWN_DEFAULTS: ReadonlySet<string> = new Set([
   // The database passwords of .env.example and the docker-compose.yml fallbacks, which the kernel also refuses in a
@@ -147,9 +142,7 @@ function list(raw: string | undefined, separator: RegExp): string[] {
 // docker compose names its roles in LUDY_ROLES. Names settings only, never a value.
 function rolesProblem(env: Env): string | null {
   // The kernel's own opt-in to run the all role on a public URL (config.ts assertSplitRoles).
-  const allowAll = checkEnvPair(env, 'LUDY_ALLOW_ALL_IN_ONE', 'CROVE_ALLOW_ALL_IN_ONE');
-  if (!allowAll.ok) return allowAll.error;
-  if (allowAll.value?.toLowerCase() === 'true') {
+  if (value(env, 'LUDY_ALLOW_ALL_IN_ONE')?.toLowerCase() === 'true') {
     return 'LUDY_ALLOW_ALL_IN_ONE is set: the kernel then accepts the all-in-one role (the API on the worker database login and every secret) on a public PUBLIC_URL; unset it and run api and worker apart (docs/runbooks/deploy.md)';
   }
   // `*` is every profile, the all-in-one service among them.
@@ -165,9 +158,7 @@ function rolesProblem(env: Env): string | null {
   if (composeFile !== undefined && !listsPilotFile) {
     return `COMPOSE_FILE does not list ${PILOT_COMPOSE_FILE}: docker compose then starts the all-in-one crove service (command all), with the API on the worker database login and every secret; list ${PILOT_COMPOSE_FILE} (docs/runbooks/deploy.md)`;
   }
-  const rolesPair = checkEnvPair(env, 'LUDY_ROLES', 'CROVE_ROLES');
-  if (!rolesPair.ok) return rolesPair.error;
-  const roles = list(rolesPair.value?.toLowerCase(), /[\s,]+/);
+  const roles = list(value(env, 'LUDY_ROLES')?.toLowerCase(), /[\s,]+/);
   if (roles.length > 0) {
     if (roles.includes('all')) return 'LUDY_ROLES includes all: run api and worker as separate processes (docs/runbooks/deploy.md)';
     return roles.includes('api') && roles.includes('worker') ? null : 'LUDY_ROLES must name both api and worker, each as its own container or service (docs/runbooks/deploy.md)';
@@ -178,9 +169,7 @@ function rolesProblem(env: Env): string | null {
 
 // LUDY_MODULES names the modules the pilot runs; empty runs every module, Social's public routes included.
 function modulesProblem(env: Env): string | null {
-  const modulesPair = checkEnvPair(env, 'LUDY_MODULES', 'CROVE_MODULES');
-  if (!modulesPair.ok) return modulesPair.error;
-  const names = list(modulesPair.value?.toLowerCase(), /,/);
+  const names = list(value(env, 'LUDY_MODULES')?.toLowerCase(), /,/);
   if (names.length === 0) {
     return `LUDY_MODULES is empty: the deployment then runs every module (${AVAILABLE_MODULES.join(', ')}), Social's public routes among them; set LUDY_MODULES=finance, or the modules the pilot uses (docs/runbooks/deploy.md)`;
   }
@@ -284,10 +273,7 @@ export function checkEnv(env: Env): CheckResult[] {
   // above already fails it.
   const publicDeployment = publicUrl !== undefined && URL.canParse(publicUrl) && !isLocalHost(new URL(publicUrl).hostname);
   if (publicDeployment) {
-    const modulesPair = checkEnvPair(env, 'LUDY_MODULES', 'CROVE_MODULES');
-    const modulesSummary = modulesPair.ok
-      ? `LUDY_MODULES=${list(modulesPair.value?.toLowerCase(), /,/).join(',')}: only those modules run (kernel is always on)`
-      : 'LUDY_MODULES and CROVE_MODULES conflict';
+    const modulesSummary = `LUDY_MODULES=${list(value(env, 'LUDY_MODULES')?.toLowerCase(), /,/).join(',')}: only those modules run (kernel is always on)`;
     add('Roles', [rolesProblem(env)], 'the API and the worker run as separate processes (api and worker), not as the all-in-one role');
     add('Modules', [modulesProblem(env)], modulesSummary);
     add('Transcription price', [transcribePriceProblem(env)], value(env, 'MEETINGS_TRANSCRIBE') === 'on' ? 'AI_PRICE_AUDIO_PER_MIN is set, so the AI budget counts transcription' : 'transcription is off');
@@ -304,13 +290,7 @@ export function checkEnv(env: Env): CheckResult[] {
 
   // Secrets: none left at a value this public repository ships.
   const secrets: (string | null)[] = REQUIRED_SECRETS.map((name) => {
-    const legacy = LEGACY_SECRET_NAMES[name];
     const minLen = name === 'AUTH_JWT_SECRET' ? MIN_TOKEN_SECRET_LENGTH : name === 'EXPORT_ENCRYPTION_KEY' ? 0 : MIN_PASSWORD_LENGTH;
-    if (legacy) {
-      const pair = checkEnvPair(env, name, legacy);
-      if (!pair.ok) return pair.error;
-      return secretProblem(name, pair.value, minLen);
-    }
     return secretProblem(name, value(env, name), minLen);
   });
   const exportKey = value(env, 'EXPORT_ENCRYPTION_KEY');
@@ -332,7 +312,7 @@ export function checkEnv(env: Env): CheckResult[] {
     else if (inboundPrevious === value(env, 'INBOUND_SECRET')) secrets.push('INBOUND_SECRET_PREVIOUS is the same as INBOUND_SECRET');
   }
   // Optional secrets: only a shipped sample value is wrong.
-  for (const name of ['INBOUND_SECRET', 'S3_SECRET_ACCESS_KEY', 'SMTP_PASS', 'AI_API_KEY', 'TRANSCRIBE_API_KEY', 'CREDENTIAL_KEY', 'CREDENTIAL_KEY_PREVIOUS', 'CHANNEL_META_APP_SECRET', 'CHANNEL_META_APP_SECRET_PREVIOUS', 'MISA_AMIS_CLIENT_ID', 'MISA_ASP_CLIENT_ID', 'CHANNEL_INSTAGRAM_APP_SECRET', 'CHANNEL_META_WEBHOOK_VERIFY_TOKEN', 'CHANNEL_ZALO_APP_SECRET', 'CHANNEL_ZALO_OA_SECRET_KEY', 'CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS', 'CHANNEL_WHATSAPP_APP_SECRET', 'CHANNEL_WHATSAPP_APP_SECRET_PREVIOUS', 'CHANNEL_WHATSAPP_VERIFY_TOKEN', 'CHANNEL_THREADS_APP_SECRET', 'CHANNEL_LINKEDIN_CLIENT_SECRET', 'CHANNEL_LINKEDIN_PAGE_CLIENT_SECRET', 'CHANNEL_GOOGLE_CLIENT_SECRET', 'CHANNEL_TIKTOK_CLIENT_SECRET', 'CHANNEL_X_CLIENT_SECRET', 'CHANNEL_PINTEREST_APP_SECRET', 'MEDIA_PEXELS_API_KEY', 'VAPID_PRIVATE_KEY']) {
+  for (const name of ['INBOUND_SECRET', 'S3_SECRET_ACCESS_KEY', 'SMTP_PASS', 'RESEND_API_KEY', 'RESEND_WEBHOOK_SECRET', 'SES_SECRET_ACCESS_KEY', 'AI_API_KEY', 'TRANSCRIBE_API_KEY', 'CREDENTIAL_KEY', 'CREDENTIAL_KEY_PREVIOUS', 'CHANNEL_META_APP_SECRET', 'CHANNEL_META_APP_SECRET_PREVIOUS', 'MISA_AMIS_CLIENT_ID', 'MISA_ASP_CLIENT_ID', 'CHANNEL_INSTAGRAM_APP_SECRET', 'CHANNEL_META_WEBHOOK_VERIFY_TOKEN', 'CHANNEL_ZALO_APP_SECRET', 'CHANNEL_ZALO_OA_SECRET_KEY', 'CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS', 'CHANNEL_WHATSAPP_APP_SECRET', 'CHANNEL_WHATSAPP_APP_SECRET_PREVIOUS', 'CHANNEL_WHATSAPP_VERIFY_TOKEN', 'CHANNEL_THREADS_APP_SECRET', 'CHANNEL_LINKEDIN_CLIENT_SECRET', 'CHANNEL_LINKEDIN_PAGE_CLIENT_SECRET', 'CHANNEL_GOOGLE_CLIENT_SECRET', 'CHANNEL_TIKTOK_CLIENT_SECRET', 'CHANNEL_X_CLIENT_SECRET', 'CHANNEL_PINTEREST_APP_SECRET', 'MEDIA_PEXELS_API_KEY', 'VAPID_PRIVATE_KEY']) {
     if (name === 'INBOUND_SECRET' && value(env, 'INBOUND_DOMAIN')) continue;
     const secret = value(env, name);
     if (secret && (KNOWN_DEFAULTS.has(secret) || /change-?me/i.test(secret))) secrets.push(`${name} still has a sample value`);
@@ -354,6 +334,11 @@ export function checkEnv(env: Env): CheckResult[] {
   add('Secrets', secrets, 'the database passwords, AUTH_JWT_SECRET and EXPORT_ENCRYPTION_KEY are set, and no secret is a shipped sample value');
 
   // Email confirmation and MFA step-up. docker-compose.yml falls back to AUTH_AUTOCONFIRM=true, so it must be set.
+  // A provider of the deployment's own (no bundled Supabase Auth, #2704): sign-up there is not Ludy's to close; what Ludy can
+  // limit is who may use this deployment, AUTH_ALLOWED_EMAILS.
+  // The upstream line must be present and empty: an absent line is compose's default, the bundled Supabase Auth.
+  const ownProvider = env['AUTH_UPSTREAM_URL'] !== undefined && env['AUTH_UPSTREAM_URL'].trim() === '' && value(env, 'PUBLIC_AUTH_URL') !== undefined;
+  const mailProvider = value(env, 'MAIL_PROVIDER') ?? 'smtp';
   const auth: (string | null)[] = [];
   const autoconfirm = value(env, 'AUTH_AUTOCONFIRM');
   if (autoconfirm !== 'false') {
@@ -364,12 +349,76 @@ export function checkEnv(env: Env): CheckResult[] {
     );
   }
   const smtpHost = value(env, 'SMTP_HOST');
-  if (!smtpHost || ['smtp.example.com', 'mailpit', 'mailhog'].includes(smtpHost) || isLocalHost(smtpHost)) {
-    auth.push(`SMTP_HOST is ${smtpHost ?? 'unset (docker compose then uses the local Mailpit)'}: with confirmations on, set a real SMTP server or nobody can confirm an email`);
+  if ((!ownProvider || mailProvider === 'smtp') && (!smtpHost || ['smtp.example.com', 'mailpit', 'mailhog'].includes(smtpHost) || isLocalHost(smtpHost))) {
+    auth.push(
+      mailProvider === 'ses'
+        ? `SMTP_HOST is ${smtpHost ?? 'unset (docker compose then uses the local Mailpit)'}: bundled Supabase Auth still sends confirmation and recovery emails over SMTP even when MAIL_PROVIDER=ses; set SMTP_HOST to Amazon SES SMTP (for example email-smtp.${value(env, 'SES_REGION') ?? 'ap-southeast-1'}.amazonaws.com)`
+        : `SMTP_HOST is ${smtpHost ?? 'unset (docker compose then uses the local Mailpit)'}: with confirmations on, set a real SMTP server or nobody can confirm an email`,
+    );
+  }
+  if (!ownProvider && smtpHost && /^email-smtp\.[a-z0-9-]+\.amazonaws\.com$/i.test(smtpHost)) {
+    if (!value(env, 'SMTP_USER') || !value(env, 'SMTP_PASS')) {
+      auth.push(`SMTP_HOST=${smtpHost} uses Amazon SES SMTP for bundled Supabase Auth, so SMTP_USER and SMTP_PASS (from SES SMTP credentials) must both be set`);
+    }
+    const smtpPort = value(env, 'SMTP_PORT');
+    if (!smtpPort || !SES_SMTP_PORTS.has(smtpPort)) {
+      auth.push(
+        `SMTP_HOST=${smtpHost} uses Amazon SES SMTP for bundled Supabase Auth, so SMTP_PORT must be explicitly set to a valid SES SMTP port (25, 465, 587, 2465, or 2587; docker compose defaults to 1025)`,
+      );
+    }
+  }
+  const rawSmtpFrom = value(env, 'SMTP_FROM');
+  if (!ownProvider && rawSmtpFrom && (rawSmtpFrom.includes('<') || rawSmtpFrom.includes('>'))) {
+    auth.push('SMTP_FROM must be a bare email address (for example noreply@example.com): bundled Supabase Auth already adds GOTRUE_SMTP_SENDER_NAME (BRAND_NAME)');
   }
   const stepUp = value(env, 'AUTH_STEP_UP');
   if (stepUp !== undefined && stepUp !== 'required') auth.push(`AUTH_STEP_UP=${stepUp}: approvals and member changes must need MFA; set AUTH_STEP_UP=required`);
   add('Email confirmation and MFA step-up', auth, 'AUTH_AUTOCONFIRM=false with an SMTP server, and AUTH_STEP_UP=required');
+
+  // Outbound mail provider checks for HTTP providers (Resend / Amazon SES v2).
+  if (mailProvider === 'ses') {
+    const sesProblems: (string | null)[] = [];
+    const sesRegion = value(env, 'SES_REGION');
+    if (!sesRegion) sesProblems.push('MAIL_PROVIDER=ses needs SES_REGION (for example ap-southeast-1)');
+    else if (!SES_REGION_PATTERN.test(sesRegion)) sesProblems.push('SES_REGION is not a valid AWS region (for example ap-southeast-1)');
+    if (!value(env, 'SES_ACCESS_KEY_ID')) sesProblems.push('MAIL_PROVIDER=ses needs SES_ACCESS_KEY_ID');
+    if (!value(env, 'SES_SECRET_ACCESS_KEY')) sesProblems.push('MAIL_PROVIDER=ses needs SES_SECRET_ACCESS_KEY');
+    const bareSmtpFrom = rawSmtpFrom ? (/<([^<>\s]+)>/.exec(rawSmtpFrom)?.[1] ?? rawSmtpFrom).trim().toLowerCase() : '';
+    if (!/^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/.test(bareSmtpFrom) || bareSmtpFrom.endsWith('.local')) {
+      sesProblems.push('MAIL_PROVIDER=ses needs SMTP_FROM set to a sender address on a domain verified in Amazon SES');
+    }
+    const configurationSet = value(env, 'SES_CONFIGURATION_SET');
+    if (configurationSet && !SES_CONFIGURATION_SET_PATTERN.test(configurationSet)) {
+      sesProblems.push('SES_CONFIGURATION_SET is invalid (at most 64 letters, digits, - and _)');
+    }
+    const snsTopicArn = value(env, 'SES_SNS_TOPIC_ARN');
+    if (snsTopicArn) {
+      if (!SES_SNS_TOPIC_ARN_PATTERN.test(snsTopicArn)) {
+        sesProblems.push('SES_SNS_TOPIC_ARN is not a valid Amazon SNS topic ARN (arn:aws:sns:<region>:<account>:<topic>)');
+      } else if (sesRegion && SES_REGION_PATTERN.test(sesRegion)) {
+        const snsRegion = snsTopicArn.split(':')[3];
+        if (snsRegion && snsRegion !== sesRegion) {
+          sesProblems.push(`SES_SNS_TOPIC_ARN region (${snsRegion}) must match SES_REGION (${sesRegion})`);
+        }
+      }
+    }
+    add(
+      'Outbound mail',
+      sesProblems,
+      snsTopicArn
+        ? configurationSet
+          ? `MAIL_PROVIDER=ses (${sesRegion ?? '?'}) with SNS delivery webhooks (configuration set ${configurationSet})`
+          : `MAIL_PROVIDER=ses (${sesRegion ?? '?'}) with SES_SNS_TOPIC_ARN configured (set SES_CONFIGURATION_SET unless a default configuration set is assigned on the verified SES identity)`
+        : `MAIL_PROVIDER=ses (${sesRegion ?? '?'})`,
+    );
+  } else if (mailProvider === 'resend') {
+    const resendProblems: (string | null)[] = [];
+    if (!value(env, 'RESEND_API_KEY')) resendProblems.push('MAIL_PROVIDER=resend needs RESEND_API_KEY');
+    if (!value(env, 'SMTP_FROM')) resendProblems.push('MAIL_PROVIDER=resend needs SMTP_FROM on a domain verified at Resend');
+    add('Outbound mail', resendProblems, 'MAIL_PROVIDER=resend');
+  } else if (mailProvider !== 'smtp') {
+    add('Outbound mail', [`MAIL_PROVIDER=${mailProvider} is unknown (expected smtp, resend or ses)`], 'MAIL_PROVIDER=smtp');
+  }
 
   // Ads live launch (ADR-0043, #2296 W2-3): with ADS_LIVE_LAUNCH on the worker creates campaign objects at Meta (every one paused). That is for the owner's own live
   // check, not for a deployment others reach, until the activation, the pause on switch-off (W2-4) and the live-check runbook (W2-5) are built. The kernel's own
@@ -387,10 +436,6 @@ export function checkEnv(env: Env): CheckResult[] {
   const policy = value(env, 'AUTH_SIGNUP_POLICY');
   const domains = value(env, 'AUTH_SIGNUP_ALLOWED_DOMAINS');
   const restricted = policy === 'invite_only' || (policy === 'allowlist' && domains !== undefined);
-  // A provider of the deployment's own (no bundled Supabase Auth, #2704): sign-up there is not Ludy's to close; what Ludy can
-  // limit is who may use this deployment, AUTH_ALLOWED_EMAILS.
-  // The upstream line must be present and empty: an absent line is compose's default, the bundled Supabase Auth.
-  const ownProvider = env['AUTH_UPSTREAM_URL'] !== undefined && env['AUTH_UPSTREAM_URL'].trim() === '' && value(env, 'PUBLIC_AUTH_URL') !== undefined;
   // An empty parse (`, ,`) lists nobody: the kernel refuses it at boot, and this check does not count it as a limit.
   const allowed = parseAllowedEmails(value(env, 'AUTH_ALLOWED_EMAILS') ?? '').entries.length > 0;
   add(
@@ -647,6 +692,17 @@ export function checkEnv(env: Env): CheckResult[] {
           ? 'confirm the files bucket has Object Lock enabled and the worker log shows no "[evidence-hold] ALERT" (docs/runbooks/evidence-holds.md)'
           : 'posted invoice files get no retention hold (STORAGE is not s3, or EVIDENCE_LOCK_DAYS=0): confirm the owner accepts that (docs/runbooks/evidence-holds.md)',
     },
+    ...(mailProvider === 'ses' && (!value(env, 'SES_SNS_TOPIC_ARN') || !value(env, 'SES_CONFIGURATION_SET'))
+      ? [
+          {
+            item: 'Outbound mail',
+            status: 'manual' as const,
+            message: !value(env, 'SES_SNS_TOPIC_ARN')
+              ? 'SES_SNS_TOPIC_ARN is unset: bounce and complaint webhooks (/webhooks/mail/ses) are off, so hard bounces and complaints will not update mail_suppression automatically; configure an SNS topic and SES Configuration Set (docs/runbooks/email-ses-pilot-cutover.md)'
+              : 'SES_SNS_TOPIC_ARN is set without SES_CONFIGURATION_SET: set SES_CONFIGURATION_SET to your event-publishing configuration set or confirm a default configuration set is assigned on the verified Amazon SES identity so bounce and complaint events are published to SNS (docs/runbooks/email-ses-pilot-cutover.md)',
+          },
+        ]
+      : []),
     { item: 'Owner sign-off', status: 'manual', message: 'the owner records the sign-off in issue #308' },
   );
   return results;
@@ -883,9 +939,7 @@ interface CheckRun {
 export async function probeBuildChecks(origin: string, env: Env, fetchFn: Fetch = fetch): Promise<CheckResult> {
   const manual = (why: string): CheckResult => ({ item: 'RLS matrix', status: 'manual', message: `${why}: ${RLS_MANUAL}` });
   const init = (extra: RequestInit = {}): RequestInit => ({ signal: AbortSignal.timeout(PROBE_TIMEOUT_MS), ...extra });
-  const repoPair = checkEnvPair(env, 'LUDY_SOURCE_REPO', 'CROVE_SOURCE_REPO');
-  if (!repoPair.ok) return { item: 'RLS matrix', status: 'fail', message: repoPair.error };
-  const repo = repoPair.value ?? DEFAULT_SOURCE_REPO;
+  const repo = value(env, 'LUDY_SOURCE_REPO') ?? DEFAULT_SOURCE_REPO;
   if (!/^(?!\.{1,2}\/)[A-Za-z0-9_.-]{1,100}\/(?!\.{1,2}$)[A-Za-z0-9_.-]{1,100}$/.test(repo)) return { item: 'RLS matrix', status: 'fail', message: `LUDY_SOURCE_REPO is owner/name of a GitHub repository, not ${repo}` };
   let build: string;
   try {

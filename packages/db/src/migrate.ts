@@ -5,7 +5,20 @@ import { createHash, createHmac } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import pg from 'pg';
-import { readEnvPair } from './env.ts';
+
+function trimmedEnv(name: string): string | undefined {
+  const raw = process.env[name]?.trim();
+  return raw ? raw : undefined;
+}
+
+function rejectLegacySharedDatabaseEnv(
+  name: 'CROVE_SHARED_DATABASE' | 'CROVE_SHARED_DATABASE_SWITCH',
+  canonical: 'LUDY_SHARED_DATABASE' | 'LUDY_SHARED_DATABASE_SWITCH',
+): void {
+  if (trimmedEnv(name) !== undefined) {
+    throw new Error(`${name} has been retired; rename it to ${canonical}`);
+  }
+}
 
 const FILE_PATTERN = /^(\d{14})_(?:crove|ludy)_[a-z0-9]+_[a-z0-9_]+\.sql$/;
 
@@ -43,14 +56,14 @@ async function resolveMetaSchema(client: pg.ClientBase): Promise<'ludy_meta' | '
 
 export const DATABASE_WIDE_MIGRATIONS: ReadonlySet<string> = new Set(['20261015120000_crove_kernel_revoke_temp.sql']);
 
-// CROVE_SHARED_DATABASE (#2284): Ludy lives in a database that other systems own schemas, roles and event triggers in
+// LUDY_SHARED_DATABASE (#2284): Ludy lives in a database that other systems own schemas, roles and event triggers in
 // (Ludy Cloud inside DOS's Supabase project). Only the exact value `true` turns it on; unset, empty and `false` are the
 // owned-database mode, the default, which keeps every guard.
 export function sharedDatabaseSetting(value: string | undefined): boolean {
   const v = (value ?? '').trim();
   if (v === '' || v === 'false') return false;
   if (v === 'true') return true;
-  throw new Error('LUDY_SHARED_DATABASE / CROVE_SHARED_DATABASE must be true or false');
+  throw new Error('LUDY_SHARED_DATABASE must be true or false');
 }
 
 export interface MigrateOptions {
@@ -216,8 +229,8 @@ async function recordDeploymentMode(client: pg.ClientBase, shared: boolean, allo
   if (known !== null && known !== wanted) {
     if (!allowSwitch) {
       throw new Error(
-        `this database was migrated in ${known === 'true' ? 'shared' : 'owned'}-database mode and LUDY_SHARED_DATABASE / CROVE_SHARED_DATABASE asks for ${shared ? 'shared' : 'owned'}: ` +
-          'the mode is locked to the database because the two differ in the guards they keep (docs/runbooks/shared-database.md, "Switching modes"); set LUDY_SHARED_DATABASE_SWITCH=true (or CROVE_SHARED_DATABASE_SWITCH=true) for a run that changes it on purpose',
+        `this database was migrated in ${known === 'true' ? 'shared' : 'owned'}-database mode and LUDY_SHARED_DATABASE asks for ${shared ? 'shared' : 'owned'}: ` +
+          'the mode is locked to the database because the two differ in the guards they keep (docs/runbooks/shared-database.md, "Switching modes"); set LUDY_SHARED_DATABASE_SWITCH=true for a run that changes it on purpose',
       );
     }
     log(`switching the database from ${known === 'true' ? 'shared' : 'owned'} to ${shared ? 'shared' : 'owned'}-database mode (LUDY_SHARED_DATABASE_SWITCH)`);
@@ -305,8 +318,8 @@ async function isolateFromForeignRoles(client: pg.ClientBase, log: (message: str
 export async function migrate(options: MigrateOptions): Promise<string[]> {
   const log = options.log ?? (() => {});
   const files = await readMigrations(options.dir);
-  const shared =
-    options.sharedDatabase ?? sharedDatabaseSetting(readEnvPair(process.env, 'LUDY_SHARED_DATABASE', 'CROVE_SHARED_DATABASE'));
+  if (options.sharedDatabase === undefined) rejectLegacySharedDatabaseEnv('CROVE_SHARED_DATABASE', 'LUDY_SHARED_DATABASE');
+  const shared = options.sharedDatabase ?? sharedDatabaseSetting(trimmedEnv('LUDY_SHARED_DATABASE'));
   const variantsDir = options.sharedVariantsDir ?? join(dirname(options.dir), 'shared-variants');
   // Read in both modes: a ledger hash of a database-wide migration may be the original's or its variant's.
   const variants = await readSharedVariants(variantsDir, files);
@@ -336,7 +349,10 @@ export async function migrate(options: MigrateOptions): Promise<string[]> {
         PRIMARY KEY (pid, backend_start)
       );`);
     await markPipelineSession(client, 'migrate');
-    const modeSwitch = readEnvPair(process.env, 'LUDY_SHARED_DATABASE_SWITCH', 'CROVE_SHARED_DATABASE_SWITCH');
+    if (options.allowModeSwitch === undefined) {
+      rejectLegacySharedDatabaseEnv('CROVE_SHARED_DATABASE_SWITCH', 'LUDY_SHARED_DATABASE_SWITCH');
+    }
+    const modeSwitch = trimmedEnv('LUDY_SHARED_DATABASE_SWITCH');
     await recordDeploymentMode(client, shared, options.allowModeSwitch ?? modeSwitch === 'true', log);
     const { rows } = await client.query<{ version: string; sha256: string }>(
       `SELECT version, sha256 FROM ${meta}.schema_migrations`,
@@ -440,8 +456,8 @@ export async function migrate(options: MigrateOptions): Promise<string[]> {
       throw new Error(`database hardening check failed (External-tenant gate T17):\n  - ${violations.join('\n  - ')}`);
     }
     const contextTokenKey = options.contextTokenKey === undefined
-    ? readEnvPair(process.env, 'LUDY_CONTEXT_TOKEN_KEY', 'CROVE_CONTEXT_TOKEN_KEY')
-    : options.contextTokenKey;
+      ? trimmedEnv('LUDY_CONTEXT_TOKEN_KEY')
+      : options.contextTokenKey;
     if (contextTokenKey?.trim()) await installContextTokenKey(client, contextTokenKey, log);
   } finally {
     // A run that failed halfway still leaves the tables it committed: the other system's default grants must not stay on them.
@@ -1223,8 +1239,9 @@ export async function applyAuthGrants(options: AuthGrantsOptions): Promise<void>
   const log = options.log ?? (() => {});
   // It adds policies and column grants to the tables of Supabase Auth: in a shared database those belong to the other
   // system, and its sessions are read by the JWT check (AUTH_SESSION_CHECK=jwt), which needs none of this (#2284).
-  if (options.sharedDatabase ?? sharedDatabaseSetting(readEnvPair(process.env, 'LUDY_SHARED_DATABASE', 'CROVE_SHARED_DATABASE'))) {
-    throw new Error('auth-grants is not available in a shared database (LUDY_SHARED_DATABASE=true / CROVE_SHARED_DATABASE=true): it would change the other system\'s auth tables; use AUTH_SESSION_CHECK=jwt');
+  if (options.sharedDatabase === undefined) rejectLegacySharedDatabaseEnv('CROVE_SHARED_DATABASE', 'LUDY_SHARED_DATABASE');
+  if (options.sharedDatabase ?? sharedDatabaseSetting(trimmedEnv('LUDY_SHARED_DATABASE'))) {
+    throw new Error('auth-grants is not available in a shared database (LUDY_SHARED_DATABASE=true): it would change the other system\'s auth tables; use AUTH_SESSION_CHECK=jwt');
   }
   const deadline = Date.now() + (options.timeoutMs ?? 120_000);
   const client = new pg.Client({ connectionString: options.adminUrl, application_name: 'ludy-auth-grants' });
@@ -1321,8 +1338,8 @@ export async function applyAuthGrants(options: AuthGrantsOptions): Promise<void>
 // In a shared database (#2284) a role that is not Ludy's (supabase_auth_admin, say) belongs to the other system: a password
 // for it is refused, never applied.
 export async function setRolePasswords(adminUrl: string, passwords: Record<string, string | undefined>, options: { sharedDatabase?: boolean } = {}): Promise<void> {
-  const shared =
-    options.sharedDatabase ?? sharedDatabaseSetting(readEnvPair(process.env, 'LUDY_SHARED_DATABASE', 'CROVE_SHARED_DATABASE'));
+  if (options.sharedDatabase === undefined) rejectLegacySharedDatabaseEnv('CROVE_SHARED_DATABASE', 'LUDY_SHARED_DATABASE');
+  const shared = options.sharedDatabase ?? sharedDatabaseSetting(trimmedEnv('LUDY_SHARED_DATABASE'));
   const client = new pg.Client({ connectionString: adminUrl, application_name: 'ludy-migrate' });
   await client.connect();
   try {

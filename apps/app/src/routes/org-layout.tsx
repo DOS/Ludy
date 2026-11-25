@@ -35,7 +35,7 @@ import { hasOpenModalDialog, isQuickCaptureShortcut } from '../lib/quick-add.ts'
 import { buildQuickCreateItems } from '../lib/quick-create.ts';
 import { currentScreenName, subscribeScreenName } from '../lib/screen-title.ts';
 import { documentNumber } from '../lib/search.ts';
-import { proposalName } from '../lib/review.ts';
+import { canApproveProposals, proposalName } from '../lib/review.ts';
 import { useThemeSetting } from '../lib/theme-runtime.ts';
 import { signOut } from '../lib/session-actions.ts';
 import { hasSecondaryNav, isSidebarToggleShortcut, useSidebarCollapsed } from '../lib/sidebar-rail.ts';
@@ -44,6 +44,7 @@ import { useScrollRoom } from '../lib/scroll-room.ts';
 import { SAFETY_POLL_MS, pollEvery, useInvalidationStream, useStreamLive } from '../lib/stream-hook.ts';
 import { unreadLabel } from '../lib/social-notifications.ts';
 import { canUseVy as hasVyPermission } from '../lib/vy.ts';
+import { OPEN_VY_DRAWER_EVENT, type OpenVyDrawerDetail } from '../lib/home-vy.ts';
 import { useNotifications } from './social-notifications.tsx';
 import { useWorkNotifications } from './notifications.tsx';
 
@@ -145,6 +146,7 @@ export function OrgLayout() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);
   const [vyDrawerOpen, setVyDrawerOpen] = useState(false);
+  const [vyPrompt, setVyPrompt] = useState<string | null>(null);
   const [userCollapsed, setUserCollapsed] = useSidebarCollapsed();
   const secondarySidebarRef = useRef<HTMLDivElement>(null);
   const sidebarToggleRef = useRef<HTMLButtonElement>(null);
@@ -152,7 +154,17 @@ export function OrgLayout() {
   const sidebarCollapsed = !hasSecondary || userCollapsed;
   useEffect(() => {
     setVyDrawerOpen(false);
+    setVyPrompt(null);
   }, [slug]);
+  useEffect(() => {
+    const onOpenVy = (event: Event) => {
+      const detail = (event as CustomEvent<OpenVyDrawerDetail>).detail;
+      setVyPrompt(detail?.prompt?.trim() ? detail.prompt.trim() : null);
+      setVyDrawerOpen(true);
+    };
+    window.addEventListener(OPEN_VY_DRAWER_EVENT, onOpenVy);
+    return () => window.removeEventListener(OPEN_VY_DRAWER_EVENT, onOpenVy);
+  }, []);
   // The org's search (#673): parties, documents and journal entries for what is typed in the palette, where finance runs;
   // and the notes the member may read, where notes runs (#1675).
   const financeOn = NAV.some((n) => n.module === 'finance');
@@ -538,7 +550,10 @@ export function OrgLayout() {
           quickCreateItems={quickCreateItems}
           onOpenQuickCapture={canQuickCapture ? () => setQuickCaptureOpen(true) : undefined}
           vyOpen={vyDrawerOpen}
-          onOpenVy={() => setVyDrawerOpen(true)}
+          onOpenVy={() => {
+            setVyPrompt(null);
+            setVyDrawerOpen(true);
+          }}
           canUseVy={canUseVy}
           gmName={gmName}
           unreadNotices={workUnread}
@@ -590,7 +605,10 @@ export function OrgLayout() {
           <VyDrawer
             slug={slug}
             open={vyDrawerOpen}
-            onOpenChange={setVyDrawerOpen}
+            onOpenChange={(open) => {
+              setVyDrawerOpen(open);
+              if (!open) setVyPrompt(null);
+            }}
             gmName={gmName}
             canUseVy={canUseVy}
             permissionsLoaded={orgDetail.isSuccess}
@@ -601,6 +619,10 @@ export function OrgLayout() {
             todayError={vyToday.isError ? errorMessage(vyToday.error) : null}
             role={roleHere}
             modules={installedModules()}
+            prompt={vyPrompt}
+            canApproveFinance={
+              roleHere !== 'viewer' && canApproveProposals(roleHere, orgDetail.data?.permissions)
+            }
           />
         </div>
       </div>
