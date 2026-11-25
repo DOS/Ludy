@@ -637,5 +637,43 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
     expect(setCreatedDocxNotice).not.toHaveBeenCalled();
     expect(staleNav).not.toHaveBeenCalled();
     clearCreatedDocxWarnings(envDetailId, scopeUserA);
+
+    // If org context changed BEFORE handleEnvelopeCreatedWithWarnings starts (submitContext reqId invalidated), it does not close dialog, save, or navigate.
+    setCreateOpen.mockClear();
+    setCreatedDocxNotice.mockClear();
+    await handleEnvelopeCreatedWithWarnings({
+      envelopeId: envDetailId,
+      warnings: ['images_skipped'],
+      slug: 'acme',
+      orgId,
+      userId: userAId,
+      isCurrentContext: () => false,
+      setCreateOpen,
+      setCreatedDocxNotice,
+      invalidateEnvelopes,
+      navigateToEnvelope: staleNav,
+    });
+    expect(setCreateOpen).not.toHaveBeenCalled();
+    expect(setCreatedDocxNotice).not.toHaveBeenCalled();
+    expect(staleNav).not.toHaveBeenCalled();
+    expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual([]);
+
+    // Dismissing while openCreatedDocxNoticeEnvelope is awaiting resolveUserScope cancels BEFORE saveCreatedDocxWarnings runs.
+    let dismissedMidFlight = false;
+    expect(
+      await openCreatedDocxNoticeEnvelope({
+        notice: unpersistedNotice,
+        userId: null,
+        resolveUserScope: async () => {
+          dismissedMidFlight = true;
+          return { orgId, userId: userAId };
+        },
+        isCurrentContext: () => !dismissedMidFlight,
+        setCreatedDocxNotice,
+        navigateToEnvelope: staleNav,
+      }),
+    ).toBe(false);
+    expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual([]);
+    expect(staleNav).not.toHaveBeenCalled();
   });
 });

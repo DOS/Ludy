@@ -124,6 +124,13 @@ export interface CreatedDocxListNotice {
   warnings: readonly SignDocxToPdfWarning[];
 }
 
+export interface CreatedEnvelopeSubmitContext {
+  slug: string;
+  orgId: string | null;
+  userId: string | null;
+  reqId: number;
+}
+
 export async function handleEnvelopeCreatedWithWarnings(deps: {
   envelopeId: string;
   warnings: readonly SignDocxToPdfWarning[];
@@ -137,6 +144,9 @@ export async function handleEnvelopeCreatedWithWarnings(deps: {
   invalidateEnvelopes: () => Promise<unknown>;
   navigateToEnvelope: (slug: string, envelopeId: string) => Promise<unknown>;
 }): Promise<void> {
+  if (deps.isCurrentContext && !deps.isCurrentContext()) {
+    return;
+  }
   deps.setCreateOpen(false);
   const cleanWarnings = sanitizeDocxWarnings(deps.warnings);
   let resolvedOrgId = deps.orgId ?? null;
@@ -152,15 +162,15 @@ export async function handleEnvelopeCreatedWithWarnings(deps: {
       // Non-fatal: fail closed by skipping cross-session storage if identity cannot be resolved.
     }
   }
+  if (deps.isCurrentContext && !deps.isCurrentContext()) {
+    return;
+  }
   const scope = { org: resolvedOrgId ?? (deps.slug || null), userId: resolvedUserId };
   let persisted = true;
   if (cleanWarnings.length > 0) {
     persisted = saveCreatedDocxWarnings(deps.envelopeId, cleanWarnings, scope);
   } else {
     clearCreatedDocxWarnings(deps.envelopeId, scope);
-  }
-  if (deps.isCurrentContext && !deps.isCurrentContext()) {
-    return;
   }
   deps.setCreatedDocxNotice(
     cleanWarnings.length > 0
@@ -184,6 +194,9 @@ export async function openCreatedDocxNoticeEnvelope(deps: {
   setCreatedDocxNotice: (notice: CreatedDocxListNotice | null) => void;
   navigateToEnvelope: (slug: string, envelopeId: string) => Promise<unknown>;
 }): Promise<boolean> {
+  if (deps.isCurrentContext && !deps.isCurrentContext()) {
+    return false;
+  }
   const cleanWarnings = sanitizeDocxWarnings(deps.notice.warnings);
   let resolvedOrgId = deps.notice.orgId;
   let resolvedUserId = deps.userId ?? null;
@@ -198,13 +211,17 @@ export async function openCreatedDocxNoticeEnvelope(deps: {
       return false;
     }
   }
+  // Check cancellation / dismissal strictly BEFORE writing warnings back to sessionStorage.
+  if (deps.isCurrentContext && !deps.isCurrentContext()) {
+    return false;
+  }
   const persisted =
     cleanWarnings.length === 0 ||
     saveCreatedDocxWarnings(deps.notice.envelopeId, cleanWarnings, {
       org: resolvedOrgId ?? (deps.notice.slug || null),
       userId: resolvedUserId,
     });
-  if (!persisted || (deps.isCurrentContext && !deps.isCurrentContext())) {
+  if (!persisted) {
     return false;
   }
   deps.setCreatedDocxNotice(null);
@@ -215,9 +232,15 @@ export async function openCreatedDocxNoticeEnvelope(deps: {
 export function CreateEnvelopeDialog({
   onClose,
   onCreated,
+  captureContext,
 }: {
   onClose: () => void;
-  onCreated: (envelopeId: string, warnings?: readonly SignDocxToPdfWarning[]) => Promise<void> | void;
+  onCreated: (
+    envelopeId: string,
+    warnings?: readonly SignDocxToPdfWarning[],
+    submitContext?: CreatedEnvelopeSubmitContext | null,
+  ) => Promise<void> | void;
+  captureContext?: (() => CreatedEnvelopeSubmitContext) | undefined;
 }) {
   const t = useTranslations('sign');
   const [title, setTitle] = useState('');
@@ -227,15 +250,23 @@ export function CreateEnvelopeDialog({
   const [docxStatus, setDocxStatus] = useState<DocxConversionStatus>('idle');
   const [docxResult, setDocxResult] = useState<SignDocxConvertCompletedResult | null>(null);
   const pickTokenRef = useRef(0);
+  const mountedRef = useRef(true);
 
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
+      mountedRef.current = false;
       pickTokenRef.current += 1;
     };
   }, []);
 
   const createMutation = useMutation({
-    mutationFn: async (input: { title: string; file: File; converted: SignDocxConvertCompletedResult | null }) => {
+    mutationFn: async (input: {
+      title: string;
+      file: File;
+      converted: SignDocxConvertCompletedResult | null;
+      submitContext: CreatedEnvelopeSubmitContext | null;
+    }) => {
       if (input.converted) {
         return {
           created: await signApi.createEnvelope({
@@ -245,6 +276,7 @@ export function CreateEnvelopeDialog({
             sourceDocxSha256: input.converted.sourceDocxSha256,
           }),
           warnings: input.converted.warnings,
+          submitContext: input.submitContext,
         };
       }
       if (isSignDocxFile(input.file)) {
@@ -258,14 +290,16 @@ export function CreateEnvelopeDialog({
           sourceFileId: uploaded.fileId,
         }),
         warnings: [],
+        submitContext: input.submitContext,
       };
     },
-    onSuccess: async ({ created, warnings }) => {
+    onSuccess: async ({ created, warnings, submitContext }) => {
+      if (!mountedRef.current) return;
       toast(warnings.length > 0 ? t('docxWarningBanner') : t('createdToast'));
-      await onCreated(created.envelopeId, warnings);
+      await onCreated(created.envelopeId, warnings, submitContext);
     },
     onError: (error) => {
-      setFormError(errorMessage(error));
+      if (mountedRef.current) setFormError(errorMessage(error));
     },
   });
 
@@ -322,7 +356,12 @@ export function CreateEnvelopeDialog({
       return;
     }
     const cleanTitle = title.trim() || selectedFile.name.replace(/\.(pdf|docx)$/i, '') || selectedFile.name;
-    createMutation.mutate({ title: cleanTitle, file: selectedFile, converted: docxResult });
+    createMutation.mutate({
+      title: cleanTitle,
+      file: selectedFile,
+      converted: docxResult,
+      submitContext: captureContext?.() ?? null,
+    });
   };
 
   return (
@@ -965,7 +1004,7 @@ export function SignEnvelopesPage() {
                 className="min-h-11"
                 data-testid="sign-docx-warning-open-envelope"
                 onClick={() => {
-                  const reqId = docxNoticeReqRef.current;
+                  const reqId = (docxNoticeReqRef.current += 1);
                   const targetSlug = createdDocxNotice.slug;
                   void openCreatedDocxNoticeEnvelope({
                     notice: createdDocxNotice,
@@ -982,6 +1021,10 @@ export function SignEnvelopesPage() {
                     setCreatedDocxNotice,
                     navigateToEnvelope: (navSlug, navId) =>
                       navigate({ to: '/o/$slug/sign/envelopes/$id', params: { slug: navSlug, id: navId } }),
+                  }).then((opened) => {
+                    if (!opened && docxNoticeReqRef.current === reqId) {
+                      toast(t('docxWarningOpenPending'), 'error');
+                    }
                   });
                 }}
               >
@@ -990,6 +1033,7 @@ export function SignEnvelopesPage() {
             ) : undefined
           }
           onDismiss={() => {
+            docxNoticeReqRef.current += 1;
             clearCreatedDocxWarnings(createdDocxNotice.envelopeId, {
               org: createdDocxNotice.orgId ?? (createdDocxNotice.slug || null),
               userId: currentUserId,
@@ -1414,33 +1458,41 @@ export function SignEnvelopesPage() {
       {createOpen ? (
         <CreateEnvelopeDialog
           key={slug}
+          captureContext={() => ({
+            slug,
+            orgId: currentOrgInfo?.orgId ?? null,
+            userId: currentUserId,
+            reqId: docxNoticeReqRef.current,
+          })}
           onClose={() => setCreateOpen(false)}
-          onCreated={async (envelopeId, warnings = []) => {
-            const capturedSlug = slug;
-            const capturedReqId = docxNoticeReqRef.current;
+          onCreated={async (envelopeId, warnings = [], submitContext) => {
+            const targetSlug = submitContext?.slug ?? slug;
+            const targetOrgId = submitContext ? submitContext.orgId : (currentOrgInfo?.orgId ?? null);
+            const targetUserId = submitContext ? submitContext.userId : currentUserId;
+            const targetReqId = submitContext?.reqId ?? docxNoticeReqRef.current;
             await handleEnvelopeCreatedWithWarnings({
               envelopeId,
               warnings,
-              slug: capturedSlug,
-              orgId: currentOrgInfo?.orgId ?? null,
-              userId: currentUserId,
+              slug: targetSlug,
+              orgId: targetOrgId,
+              userId: targetUserId,
               resolveUserScope:
-                currentUserId && currentOrgInfo?.orgId
+                targetUserId && targetOrgId
                   ? undefined
                   : async () => {
                       if (!hasMeQuery) return null;
                       const me = await queryClient.fetchQuery(orpc.me.get.queryOptions());
                       return {
                         userId: me.userId,
-                        orgId: me.orgs.find((o) => o.slug === capturedSlug)?.orgId ?? null,
+                        orgId: me.orgs.find((o) => o.slug === targetSlug)?.orgId ?? null,
                       };
                     },
-              isCurrentContext: () => docxNoticeReqRef.current === capturedReqId,
+              isCurrentContext: () => docxNoticeReqRef.current === targetReqId,
               setCreateOpen,
               setCreatedDocxNotice,
               invalidateEnvelopes: () => queryClient.invalidateQueries({ queryKey: ['sign', 'envelopes'] }),
-              navigateToEnvelope: (targetSlug, targetId) =>
-                navigate({ to: '/o/$slug/sign/envelopes/$id', params: { slug: targetSlug, id: targetId } }),
+              navigateToEnvelope: (navSlug, navId) =>
+                navigate({ to: '/o/$slug/sign/envelopes/$id', params: { slug: navSlug, id: navId } }),
             });
           }}
         />
