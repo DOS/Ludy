@@ -398,9 +398,11 @@ export function clearPendingDocxListNotices(filter?: {
   for (const [id, entry] of pendingUnpersistedDocxNotices) {
     if (filter.envelopeId && entry.envelopeId === filter.envelopeId) {
       pendingUnpersistedDocxNotices.delete(id);
-    } else if (filter.sessionId && entry.sessionId === filter.sessionId) {
-      pendingUnpersistedDocxNotices.delete(id);
-    } else if (filter.userId && entry.userId === filter.userId) {
+    } else if (filter.sessionId) {
+      if (entry.sessionId === filter.sessionId) {
+        pendingUnpersistedDocxNotices.delete(id);
+      }
+    } else if (filter.userId && !entry.sessionId && entry.userId === filter.userId) {
       pendingUnpersistedDocxNotices.delete(id);
     } else if (filter.slug && entry.slug === filter.slug) {
       pendingUnpersistedDocxNotices.delete(id);
@@ -411,6 +413,15 @@ export function clearPendingDocxListNotices(filter?: {
     }
   }
   return [...pendingUnpersistedDocxNotices.values()].map(stripTimestamp);
+}
+
+/** Returns true only when this tab holds any local persisted or pending .docx notice candidate for the envelope (#4729). */
+export function hasLocalDocxNoticeCandidate(envelopeId: string, slug: string, now = Date.now()): boolean {
+  if (!envelopeId) return false;
+  if (slug && readPendingDocxListNotice(envelopeId, slug, now)) {
+    return true;
+  }
+  return readStoredDocxNotices(now).some((entry) => entry.envelopeId === envelopeId);
 }
 
 /** Reads a single unpersisted pending .docx notice by envelope ID and workspace slug (#4729). */

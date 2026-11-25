@@ -24,6 +24,7 @@ import {
   type DocxConversionStatus,
 } from '../components/sign/docx-conversion-notice.tsx';
 import {
+  clearAllCreatedDocxWarnings,
   clearCreatedDocxWarnings,
   clearPendingDocxListNotices,
   listPendingDocxListNotices,
@@ -48,6 +49,7 @@ import {
   isSignDocxFile,
   readVerifiedSession,
   signApi,
+  subscribeSignAuthStateChange,
   uploadSignPdf,
   type SignAiAnalysis,
   type SignDocxConvertCompletedResult,
@@ -161,17 +163,47 @@ export function applyPendingDocxNoticeUpdate(
     case 'clear_all':
       return [];
     case 'clear_scope':
-      return prev.filter(
-        (item) =>
-          item.envelopeId !== action.envelopeId &&
-          !(action.sessionId && item.sessionId === action.sessionId) &&
-          !(action.userId && item.userId === action.userId),
-      );
+      return prev.filter((item) => {
+        if (item.envelopeId === action.envelopeId) return false;
+        if (action.sessionId) return item.sessionId !== action.sessionId;
+        if (action.userId) return Boolean(item.sessionId) || item.userId !== action.userId;
+        return true;
+      });
     case 'remove':
       return prev.filter((item) => item.envelopeId !== action.envelopeId);
     case 'upsert':
       return [action.notice, ...prev.filter((item) => item.envelopeId !== action.notice.envelopeId)].slice(0, 20);
   }
+}
+
+export async function reconcilePendingDocxNoticesWithSession(deps: {
+  pendingNotices: readonly CreatedDocxListNotice[];
+  currentUserId: string | null;
+  readVerifiedSessionId: () => Promise<string | null>;
+  onMismatchSessionId: (liveSessionId: string) => void;
+  onStaleUserCache: () => void;
+}): Promise<{ verifiedSessionId: string | null; liveSessionId: string | null }> {
+  const noticeSessions = new Set(
+    deps.pendingNotices.filter((n) => n.sessionId).map((n) => n.sessionId as string),
+  );
+  if (noticeSessions.size === 0) {
+    return { verifiedSessionId: null, liveSessionId: null };
+  }
+  const liveSessionId = await deps.readVerifiedSessionId();
+  if (!liveSessionId) {
+    return { verifiedSessionId: null, liveSessionId: null };
+  }
+  deps.onMismatchSessionId(liveSessionId);
+  const staleUserCache = deps.pendingNotices.some(
+    (n) => n.sessionId === liveSessionId && n.userId && deps.currentUserId !== null && n.userId !== deps.currentUserId,
+  );
+  if (staleUserCache) {
+    deps.onStaleUserCache();
+  }
+  return {
+    verifiedSessionId: noticeSessions.has(liveSessionId) ? liveSessionId : null,
+    liveSessionId,
+  };
 }
 
 export function isCreatedDocxListNoticeVisible(
@@ -376,8 +408,7 @@ export async function handleEnvelopeCreatedWithWarnings(deps: {
     const scopeAction: PendingDocxNoticeAction = {
       kind: 'clear_scope',
       envelopeId: deps.envelopeId,
-      ...(submitSessionId ? { sessionId: submitSessionId } : {}),
-      ...(deps.userId ? { userId: deps.userId } : {}),
+      ...(submitSessionId ? { sessionId: submitSessionId } : deps.userId ? { userId: deps.userId } : {}),
     };
     applyPendingStore(scopeAction);
     await deps.invalidateEnvelopes();
@@ -1195,6 +1226,7 @@ export function SignEnvelopesPage() {
   const [verifiedNoticeSessions, setVerifiedNoticeSessions] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
+  const [authVerifyEpoch, setAuthVerifyEpoch] = useState(0);
   const [diffOpen, setDiffOpen] = useState(false);
   const [drafterOpen, setDrafterOpen] = useState(false);
   const [sharedLinkDialog, setSharedLinkDialog] = useState<{ title: string; url: string } | null>(null);
@@ -1222,7 +1254,7 @@ export function SignEnvelopesPage() {
     setInPersonModal(null);
     setSharedLinkDialog(null);
     setCreateOpen(false);
-    setPendingDocxNotices(listPendingDocxListNotices(slug, prevUserIdRef.current));
+    setPendingDocxNotices(listPendingDocxListNotices(slug, null));
     setVerifiedNoticeSessions(new Set());
     setDiffOpen(false);
     setDrafterOpen(false);
@@ -1270,58 +1302,76 @@ export function SignEnvelopesPage() {
     prevUserIdRef.current = currentUserId;
     if (prev !== null && prev !== currentUserId) {
       docxNoticeReqRef.current += 1;
-      clearPendingDocxListNotices(currentUserId === null ? undefined : { mismatchUserId: currentUserId });
-      setPendingDocxNotices(listPendingDocxListNotices(slug, currentUserId));
       setVerifiedNoticeSessions(new Set());
-    } else if (currentUserId !== null) {
-      clearPendingDocxListNotices({ mismatchUserId: currentUserId });
-      setPendingDocxNotices((prevList) => {
-        const filtered = prevList.filter((n) => !n.userId || n.userId === currentUserId);
-        return filtered.length === prevList.length ? prevList : filtered;
-      });
     }
   }, [currentUserId, slug]);
 
   useEffect(() => {
-    const noticeSessions = new Set(
-      pendingDocxNotices.filter((n) => n.sessionId).map((n) => n.sessionId as string),
-    );
-    if (noticeSessions.size === 0) {
+    if (pendingDocxNotices.length === 0) {
       setVerifiedNoticeSessions((prev) => (prev.size === 0 ? prev : new Set()));
       return;
     }
     let cancelled = false;
     setVerifiedNoticeSessions(new Set());
-    void readVerifiedSession()
-      .then(({ sessionId: liveSessionId }) => {
-        if (cancelled) return;
-        if (liveSessionId && noticeSessions.has(liveSessionId)) {
-          setVerifiedNoticeSessions(new Set([liveSessionId]));
-        } else {
-          setVerifiedNoticeSessions(new Set());
-        }
-        if (liveSessionId) {
-          clearPendingDocxListNotices({ mismatchSessionId: liveSessionId });
+    void reconcilePendingDocxNoticesWithSession({
+      pendingNotices: pendingDocxNotices,
+      currentUserId,
+      readVerifiedSessionId: async () => (await readVerifiedSession()).sessionId,
+      onMismatchSessionId: (liveSessionId) => {
+        clearPendingDocxListNotices({ mismatchSessionId: liveSessionId });
+        if (!cancelled) {
           setPendingDocxNotices((prevList) => {
             const filtered = prevList.filter((n) => !n.sessionId || n.sessionId === liveSessionId);
             return filtered.length === prevList.length ? prevList : filtered;
           });
-          if (
-            pendingDocxNotices.some(
-              (n) => n.sessionId === liveSessionId && n.userId && currentUserId !== null && n.userId !== currentUserId,
-            )
-          ) {
-            void queryClient.invalidateQueries({ queryKey: orpc.me.get.queryKey() });
-          }
         }
+      },
+      onStaleUserCache: () => {
+        void queryClient.invalidateQueries({ queryKey: orpc.me.get.queryKey() });
+      },
+    })
+      .then(({ verifiedSessionId }) => {
+        if (cancelled) return;
+        setVerifiedNoticeSessions(verifiedSessionId ? new Set([verifiedSessionId]) : new Set());
       })
       .catch(() => {
         if (!cancelled) setVerifiedNoticeSessions(new Set());
       });
+
+    const unsubscribeAuth = subscribeSignAuthStateChange((event, nextSessionId) => {
+      if (cancelled) return;
+      if (event === 'SIGNED_OUT') {
+        clearAllCreatedDocxWarnings();
+        setVerifiedNoticeSessions(new Set());
+        setPendingDocxNotices([]);
+        return;
+      }
+      setVerifiedNoticeSessions(new Set());
+      if (nextSessionId) {
+        clearPendingDocxListNotices({ mismatchSessionId: nextSessionId });
+        setPendingDocxNotices((prevList) => {
+          const filtered = prevList.filter((n) => !n.sessionId || n.sessionId === nextSessionId);
+          return filtered.length === prevList.length ? prevList : filtered;
+        });
+      }
+      setAuthVerifyEpoch((v) => v + 1);
+    });
+    const onFocus = () => {
+      if (!cancelled) {
+        setAuthVerifyEpoch((v) => v + 1);
+      }
+    };
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+      window.addEventListener('focus', onFocus);
+    }
     return () => {
       cancelled = true;
+      unsubscribeAuth();
+      if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') {
+        window.removeEventListener('focus', onFocus);
+      }
     };
-  }, [pendingDocxNotices, currentUserId]);
+  }, [pendingDocxNotices, currentUserId, authVerifyEpoch]);
 
   const readCurrentSessionIdStrict = async (): Promise<string | null> => (await readVerifiedSession()).sessionId;
 
@@ -1605,8 +1655,10 @@ export function SignEnvelopesPage() {
   const pendingVerifiableNotices = pendingDocxNotices.filter(
     (n) =>
       n.slug === slug &&
-      (!n.userId || (currentUserId === null ? Boolean(n.sessionId) : n.userId === currentUserId)) &&
-      Boolean(n.userId || n.sessionId),
+      Boolean(n.userId || n.sessionId) &&
+      (!n.userId ||
+        n.userId === currentUserId ||
+        Boolean(n.sessionId && (currentUserId === null || verifiedNoticeSessions.has(n.sessionId)))),
   );
   const pendingNoticeByEnvelopeId = new Map(pendingVerifiableNotices.map((n) => [n.envelopeId, n] as const));
   const pendingEnvelopeIds = new Set(pendingNoticeByEnvelopeId.keys());
@@ -1777,14 +1829,12 @@ export function SignEnvelopesPage() {
       />
 
       {(() => {
-        const visibleNoticeIds: string[] = [];
         const verifyPendingIds: string[] = [];
         const visibleTitleTotals = new Map<string, number>();
         for (const notice of pendingVerifiableNotices) {
           const verifiedSession =
             notice.sessionId && verifiedNoticeSessions.has(notice.sessionId) ? notice.sessionId : null;
           if (isCreatedDocxListNoticeVisible(notice, slug, currentUserId, verifiedSession)) {
-            visibleNoticeIds.push(notice.envelopeId);
             const titleKey = notice.envelopeTitle ?? '';
             visibleTitleTotals.set(titleKey, (visibleTitleTotals.get(titleKey) ?? 0) + 1);
             continue;
@@ -1792,10 +1842,15 @@ export function SignEnvelopesPage() {
           const sessionStillPending =
             Boolean(notice.sessionId) && !verifiedNoticeSessions.has(notice.sessionId as string);
           const userStillPending =
-            Boolean(notice.userId) && currentUserId === null && Boolean(notice.sessionId);
+            Boolean(notice.userId) &&
+            Boolean(notice.sessionId) &&
+            (currentUserId === null || verifiedNoticeSessions.has(notice.sessionId as string));
           if (
             (sessionStillPending || userStillPending) &&
-            (!notice.userId || currentUserId === null || notice.userId === currentUserId)
+            (!notice.userId ||
+              currentUserId === null ||
+              notice.userId === currentUserId ||
+              Boolean(notice.sessionId && verifiedNoticeSessions.has(notice.sessionId)))
           ) {
             verifyPendingIds.push(notice.envelopeId);
           }

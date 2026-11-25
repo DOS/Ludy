@@ -567,6 +567,39 @@ export async function readVerifiedSession(): Promise<VerifiedSessionToken> {
   return { token, sessionId: sessionIdFromToken(token) };
 }
 
+export function subscribeSignAuthStateChange(
+  onChange: (event: string, sessionId: string | null) => void,
+): () => void {
+  const authFn = (authMod as { auth?: unknown }).auth;
+  if (typeof authFn !== 'function') {
+    return () => {};
+  }
+  let clientInstance: {
+    onAuthStateChange?: (
+      cb: (event: string, session?: { access_token?: string | null } | null) => void,
+    ) => { data?: { subscription?: { unsubscribe?: () => void } } };
+  } | null;
+  try {
+    clientInstance = (authFn as () => typeof clientInstance)();
+  } catch {
+    return () => {};
+  }
+  if (!clientInstance || typeof clientInstance.onAuthStateChange !== 'function') {
+    return () => {};
+  }
+  const res = clientInstance.onAuthStateChange((event, session) => {
+    const nextSessionId = session?.access_token ? sessionIdFromToken(session.access_token) : null;
+    onChange(event, nextSessionId);
+  });
+  return () => {
+    try {
+      res?.data?.subscription?.unsubscribe?.();
+    } catch {
+      // Ignore cleanup failures from mocked or disposed auth clients.
+    }
+  };
+}
+
 async function resolvePinnedRequestHeaders(
   orgSlug: string | null | undefined,
   expectedSessionId?: string | null,
