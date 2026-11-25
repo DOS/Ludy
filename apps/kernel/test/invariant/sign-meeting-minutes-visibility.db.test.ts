@@ -123,6 +123,40 @@ suite('eSign shared meeting minutes reader-scoped confidentiality invariants (#3
   });
   const asSystem = (component: string) => ({ type: 'system' as const, component });
   const ipHash = sha256Hex('203.0.113.88');
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+  async function probeMintTokenInSql(
+    who: { type: 'user'; userId: string } | { type: 'system' },
+    kind: 'signing' | 'in_person',
+    envelopeId: string,
+    signerId: string,
+  ): Promise<string> {
+    const client = who.type === 'system' ? await workerPool!.connect() : await appPool!.connect();
+    try {
+      await client.query('BEGIN');
+      if (who.type === 'system') {
+        await client.query('SELECT crove_kernel.enter_system_context($1::uuid)', [orgId]);
+      } else {
+        await client.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [
+          orgId,
+          contextToken(who.userId, orgId),
+        ]);
+      }
+      const sqlText =
+        kind === 'in_person'
+          ? `SELECT crove_sign.mint_in_person_signing_token($1::uuid, $2::uuid, $3::text, now() + interval '30 minutes') AS id`
+          : `SELECT crove_sign.mint_signing_token($1::uuid, $2::uuid, $3::text, now() + interval '1 day') AS id`;
+      const res = await client.query<{ id: string }>(sqlText, [
+        envelopeId,
+        signerId,
+        hashSigningToken(generateRawSigningToken()),
+      ]);
+      return res.rows[0]?.id ?? '';
+    } finally {
+      await client.query('ROLLBACK').catch(() => {});
+      client.release();
+    }
+  }
 
   async function ingestSignFile(
     actor: { type: 'user'; userId: string; aal: 'aal1' } | { type: 'system'; component: string },
@@ -911,6 +945,36 @@ suite('eSign shared meeting minutes reader-scoped confidentiality invariants (#3
       await activeProbeClient.query('ROLLBACK').catch(() => {});
       activeProbeClient.release();
     }
+
+    // #4558 Part 2 (SQL definer defense-in-depth): non-readers (owner, admin, outsider on attendees-only meeting)
+    // still get ENVELOPE_NOT_ACTIVE (no existence oracle leak), while a plain meeting reader (attendeeId) calling
+    // SQL mint_signing_token or mint_in_person_signing_token directly gets SIGN_FORBIDDEN (42501); creator and
+    // system (mint_signing_token only) still succeed.
+    for (const nonReaderId of [ownerId, adminId, outsiderMemberId]) {
+      for (const kind of ['signing', 'in_person'] as const) {
+        await expect(
+          probeMintTokenInSql({ type: 'user', userId: nonReaderId }, kind, recEnv.envelopeId, addedSigner.signerId),
+          `non-reader ${nonReaderId} ${kind}`,
+        ).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(/ENVELOPE_NOT_ACTIVE/) });
+      }
+    }
+    for (const kind of ['signing', 'in_person'] as const) {
+      await expect(
+        probeMintTokenInSql({ type: 'user', userId: attendeeId }, kind, recEnv.envelopeId, addedSigner.signerId),
+        `plain reader attendee ${kind}`,
+      ).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(/SIGN_FORBIDDEN/) });
+    }
+    for (const kind of ['signing', 'in_person'] as const) {
+      expect(
+        await probeMintTokenInSql({ type: 'user', userId: recorderId }, kind, recEnv.envelopeId, addedSigner.signerId),
+      ).toMatch(UUID_RE);
+    }
+    expect(
+      await probeMintTokenInSql({ type: 'system' }, 'signing', recEnv.envelopeId, addedSigner.signerId),
+    ).toMatch(UUID_RE);
+    await expect(
+      probeMintTokenInSql({ type: 'system' }, 'in_person', recEnv.envelopeId, addedSigner.signerId),
+    ).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(/SIGN_FORBIDDEN/) });
 
     // #4530: a permitted attendee who is not the creator, an owner or an admin can NOT start an in-person session (it mints a one-time signing token, the same power as create_link), remind the signers
     // (it mails them) or issue or rotate a signing link: 403 SIGN_FORBIDDEN (the attendee reads the envelope, so not 404). The recorder, who created the envelope, can start the session.
@@ -2525,6 +2589,188 @@ suite('eSign shared meeting minutes reader-scoped confidentiality invariants (#3
       await guardClient.query('ROLLBACK');
     } finally {
       guardClient.release();
+    }
+  }, 120_000);
+
+  it('enforces meeting_minutes actor guard for plain readers vs shared owner/admin, creator, and system in SQL token minting (#4558)', async () => {
+    const fnSpecs = [
+      'crove_sign.mint_signing_token(uuid,uuid,text,timestamptz)',
+      'crove_sign.mint_in_person_signing_token(uuid,uuid,text,timestamptz)',
+    ] as const;
+    const allowedLegacyRoles = [
+      'crove_tenant',
+      'crove_app',
+      'crove_worker',
+      'crove_definer_tenant',
+      'crove_definer_einvoice',
+    ] as const;
+
+    const grantClient = await adminPool!.connect();
+    try {
+      for (const sig of fnSpecs) {
+        const { rows: metaRows } = await grantClient.query<{
+          definer: boolean;
+          config: string[] | null;
+          public_exec: boolean;
+        }>(
+          `SELECT p.prosecdef AS definer,
+                  p.proconfig AS config,
+                  pg_catalog.has_function_privilege('public', p.oid, 'EXECUTE') AS public_exec
+             FROM pg_catalog.pg_proc p
+            WHERE p.oid = $1::regprocedure`,
+          [sig],
+        );
+        expect(metaRows, sig).toHaveLength(1);
+        expect(metaRows[0]!.definer, `${sig} prosecdef`).toBe(true);
+        expect(metaRows[0]!.config, `${sig} search_path`).toEqual(['search_path=pg_catalog, pg_temp']);
+        expect(metaRows[0]!.public_exec, `${sig} PUBLIC EXECUTE`).toBe(false);
+
+        const { rows: roleRows, activeAllowed } = await auditRoleFunctionExecute(
+          grantClient,
+          dbIds,
+          sig,
+          allowedLegacyRoles,
+          'brand',
+        );
+        expect(roleRows.length, `${sig} brand roles`).toBeGreaterThan(0);
+        for (const allowedRole of activeAllowed) {
+          expect(
+            roleRows.some((r) => r.rolname === allowedRole && r.ok),
+            `${allowedRole} EXECUTE on ${sig}`,
+          ).toBe(true);
+        }
+        for (const { rolname, ok, expected } of roleRows) {
+          expect(ok, `${rolname} EXECUTE on ${sig}`).toBe(expected);
+        }
+      }
+    } finally {
+      grantClient.release();
+    }
+
+    const createSentMinutesEnvelope = async (opts: {
+      visibility: 'attendees' | 'org';
+      readerUserIds?: string[];
+      tag: string;
+    }): Promise<{ envelopeId: string; signerId: string }> => {
+      const { meetingId } = await runtime.execute<{ meetingId: string }>(
+        'meetings.meeting.create',
+        {
+          title: `Mint Actor ${opts.tag}`,
+          language: 'vi',
+          visibility: opts.visibility,
+          keepVideo: false,
+          liveNotes: false,
+          summaryTemplate: 'general',
+          consentMethod: 'told_at_start',
+          ...(opts.readerUserIds ? { readerUserIds: opts.readerUserIds } : {}),
+        },
+        { actor: asUser(recorderId), orgId },
+      );
+      await runtime.execute(
+        'meetings.summary.save',
+        { meetingId, summary: `Noi dung ${opts.tag}.`, decisions: [`Quyet dinh ${opts.tag}`] },
+        { actor: asUser(recorderId), orgId },
+      );
+      await runtime.execute(
+        'meetings.result.publish',
+        { meetingId, confirmed: true },
+        { actor: asUser(recorderId), orgId },
+      );
+
+      const { fileId } = await ingestSignFile(asUser(recorderId), orgId, `mint-actor-${opts.tag}-${randomUUID()}`);
+      const env = await runtime.execute<{ envelopeId: string }>(
+        'sign.envelope.create',
+        {
+          title: `Bien ban ${opts.tag}`,
+          sourceKind: 'meeting_minutes',
+          sourceId: meetingId,
+          sourceFileId: fileId,
+        },
+        { actor: asUser(recorderId), orgId },
+      );
+      await workerRuntime.execute(
+        'sign.envelope.inspect_complete',
+        {
+          envelopeId: env.envelopeId,
+          outcome: 'passed',
+          pageCount: 1,
+          pageDimensions: [{ page: 1, widthPt: 595, heightPt: 842, rotation: 0 }],
+        },
+        { actor: asSystem('sign-pdf-inspect'), orgId },
+      );
+      const signer = await runtime.execute<{ signerId: string }>(
+        'sign.signer.add',
+        {
+          envelopeId: env.envelopeId,
+          signerRole: 'signer',
+          roleLabel: 'Nguoi ky',
+          name: `Signer ${opts.tag}`,
+          email: `mint-${opts.tag}@example.com`,
+          deliveryMode: 'link',
+        },
+        { actor: asUser(recorderId), orgId },
+      );
+      await runtime.execute(
+        'sign.field.set',
+        {
+          envelopeId: env.envelopeId,
+          fields: [{ signerId: signer.signerId, fieldType: 'signature', pageNumber: 1, xNorm: 0.1, yNorm: 0.7, wNorm: 0.25, hNorm: 0.08, required: true }],
+        },
+        { actor: asUser(recorderId), orgId },
+      );
+      await runtime.execute('sign.envelope.send', { envelopeId: env.envelopeId }, { actor: asUser(recorderId), orgId });
+      return { envelopeId: env.envelopeId, signerId: signer.signerId };
+    };
+
+    const sharedAttendeesEnv = await createSentMinutesEnvelope({
+      visibility: 'attendees',
+      readerUserIds: [ownerId, adminId, outsiderMemberId],
+      tag: 'shared-attendees',
+    });
+    const orgVisibleEnv = await createSentMinutesEnvelope({
+      visibility: 'org',
+      tag: 'org-visible',
+    });
+
+    for (const [label, target] of [
+      ['shared attendees', sharedAttendeesEnv],
+      ['org-visible', orgVisibleEnv],
+    ] as const) {
+      // Non-reader still gets ENVELOPE_NOT_ACTIVE (no existence oracle).
+      for (const kind of ['signing', 'in_person'] as const) {
+        await expect(
+          probeMintTokenInSql({ type: 'user', userId: entityLimitedMemberId }, kind, target.envelopeId, target.signerId),
+          `${label} non-reader ${kind}`,
+        ).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(/ENVELOPE_NOT_ACTIVE/) });
+      }
+
+      // Plain meeting reader (member, not creator, not owner/admin) gets SIGN_FORBIDDEN (42501).
+      for (const kind of ['signing', 'in_person'] as const) {
+        await expect(
+          probeMintTokenInSql({ type: 'user', userId: outsiderMemberId }, kind, target.envelopeId, target.signerId),
+          `${label} plain reader ${kind}`,
+        ).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(/SIGN_FORBIDDEN/) });
+      }
+
+      // Creator (recorderId), shared owner (ownerId), and shared admin (adminId) still succeed.
+      for (const allowedUserId of [recorderId, ownerId, adminId]) {
+        for (const kind of ['signing', 'in_person'] as const) {
+          expect(
+            await probeMintTokenInSql({ type: 'user', userId: allowedUserId }, kind, target.envelopeId, target.signerId),
+            `${label} ${allowedUserId} ${kind}`,
+          ).toMatch(UUID_RE);
+        }
+      }
+
+      // System actor still succeeds for mint_signing_token and is still refused for mint_in_person_signing_token.
+      expect(
+        await probeMintTokenInSql({ type: 'system' }, 'signing', target.envelopeId, target.signerId),
+        `${label} system signing`,
+      ).toMatch(UUID_RE);
+      await expect(
+        probeMintTokenInSql({ type: 'system' }, 'in_person', target.envelopeId, target.signerId),
+        `${label} system in_person`,
+      ).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(/SIGN_FORBIDDEN/) });
     }
   }, 120_000);
 });
