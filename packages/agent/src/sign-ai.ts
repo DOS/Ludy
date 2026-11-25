@@ -2917,48 +2917,94 @@ const RIGHT_BOUND_PLAIN_NUM_RE = /^\s*[:=-]?\s*(\d+(?:[.,]\d+)*)(?![\p{L}\p{N}]|
 const RIGHT_BOUND_SCALED_NUM_RE =
   /^\s*[:=-]?\s*(\d+(?:[.,]\d+)*)(?:\s*(tỷ|ty|tỉ|ti|triệu|trieu|nghìn|ngàn|nghin|ngan|million|billion|thousand|mn|bn|tr|m|k)(?![\p{L}\p{N}]))?(?![\p{L}\p{N}]|[.,]\d)/iu;
 
+const LEFT_ORDINAL_LABEL_RE =
+  /(?:^|[^\p{L}])(tier|level|lvl|item|phase|step|option|plan|package|pack|pkg|part|batch|stage|milestone|tranche|bracket|category|cat|edition|line|row|grade|class|group|bundle|module|wave|round|lot|zone|band|rank|version|ver|no|num|number|article|art|section|sec|clause|cl|schedule|table|annex|appendix|year|yr|month|mo|quarter|qtr|week|wk|day|gói|goi|đợt|dot|bước|buoc|mục|muc|phần|phan|hạng|hang|cấp|cap|bậc|bac|lần|lan|điều|dieu|khoản|khoan|bảng|bang|số|so|phụ lục|phu luc|giai đoạn|giai doan|năm|nam|tháng|thang|quý|quy|tuần|tuan|ngày|ngay)\.?\s*$/iu;
+const RATE_PREPOSITION_BEFORE_PERIOD_RE =
+  /(?:^|[^\p{L}])(?:per|every|each|a|mỗi|moi|hàng|hang)\s+(?:year|yr|month|mo|quarter|qtr|week|wk|day|năm|nam|tháng|thang|quý|quy|tuần|tuan|ngày|ngay)\s*$/iu;
+
+function isOrdinalLabelBeforeLeft(
+  beforeLeftNum: string,
+  leftNumToken: string,
+  leftScaleWord: string | undefined,
+): boolean {
+  if (leftScaleWord !== undefined || /[.,]\d{3}(?!\d)/.test(leftNumToken)) {
+    return false;
+  }
+  if (/(?:^|[^\p{L}\p{N}])#\s*$/.test(beforeLeftNum)) {
+    return true;
+  }
+  if (RATE_PREPOSITION_BEFORE_PERIOD_RE.test(beforeLeftNum)) {
+    return false;
+  }
+  return LEFT_ORDINAL_LABEL_RE.test(beforeLeftNum);
+}
+
+// Binds adjacent numeric tokens to each currency span, resolving left-vs-right collisions (e.g.
+// prefix symbols, tight postfix attachment, explicit separators, and ordinal labels like "Tier 2 USD 100").
 function extractBoundDecimalsForSpans(
   clauseLineWise: string,
   spans: ReadonlyArray<{ start: number; end: number }>,
   allowWordScale: boolean,
 ): InstanceType<typeof Decimal>[] {
   const out: InstanceType<typeof Decimal>[] = [];
-  const tryBindLeft = (leftSlice: string): boolean => {
+  const matchLeft = (
+    leftSlice: string,
+  ): {
+    readonly decimals: InstanceType<typeof Decimal>[];
+    readonly numToken: string;
+    readonly beforeNum: string;
+    readonly scaleWord: string | undefined;
+  } | null => {
     const leftMatch = (allowWordScale ? LEFT_BOUND_SCALED_NUM_RE : LEFT_BOUND_PLAIN_NUM_RE).exec(leftSlice);
-    if (!leftMatch) return false;
+    if (!leftMatch) return null;
+    const numToken = leftMatch[1]!;
+    const beforeNum = leftSlice.slice(0, leftMatch.index + leftMatch[0].indexOf(numToken));
     const scaleWord = allowWordScale ? leftMatch[2]?.toLowerCase() : undefined;
     const scale = scaleWord ? (DEPOSIT_WORD_SCALE_MAP[scaleWord] ?? 1) : 1;
-    out.push(...candidateTokenDecimalValues(leftMatch[1]!, scale));
-    return true;
+    return {
+      decimals: candidateTokenDecimalValues(numToken, scale),
+      numToken,
+      beforeNum,
+      scaleWord,
+    };
   };
-  const tryBindRight = (rightSlice: string): boolean => {
+  const matchRight = (rightSlice: string): { readonly decimals: InstanceType<typeof Decimal>[] } | null => {
     const rightMatch = (allowWordScale ? RIGHT_BOUND_SCALED_NUM_RE : RIGHT_BOUND_PLAIN_NUM_RE).exec(rightSlice);
-    if (!rightMatch) return false;
+    if (!rightMatch) return null;
     const afterRight = rightSlice.slice(rightMatch[0].length);
     const scaleWord = allowWordScale ? rightMatch[2]?.toLowerCase() : undefined;
     const blockedByDurationOrRatio =
       allowWordScale &&
       ((!scaleWord && /^\/\d/.test(afterRight)) || DEPOSIT_DURATION_OR_PERCENT_AFTER_RE.test(afterRight));
-    if (blockedByDurationOrRatio) return false;
+    if (blockedByDurationOrRatio) return null;
     const scale = scaleWord ? (DEPOSIT_WORD_SCALE_MAP[scaleWord] ?? 1) : 1;
-    out.push(...candidateTokenDecimalValues(rightMatch[1]!, scale));
-    return true;
+    return { decimals: candidateTokenDecimalValues(rightMatch[1]!, scale) };
   };
 
   for (const span of spans) {
     const leftSlice = clauseLineWise.slice(0, span.start);
     const rightSlice = clauseLineWise.slice(span.end);
     const tokenText = clauseLineWise.slice(span.start, span.end);
-    const isPrefixSymbol = /[$€£¥₫₩₹₽฿]$/u.test(tokenText);
-    if (isPrefixSymbol && /^\s*\d/.test(rightSlice)) {
-      if (tryBindRight(rightSlice)) {
-        continue;
-      }
+    const leftBound = matchLeft(leftSlice);
+    const rightBound = matchRight(rightSlice);
+    if (leftBound && rightBound) {
+      const isCurrencySymbol = /[$€£¥₫₩₹₽฿]$/u.test(tokenText);
+      const isPrefixPreferredSymbol = /[$€£¥₩₹₽฿]$/u.test(tokenText);
+      const tightLeftOnly = isCurrencySymbol && /\d$/.test(leftSlice) && /^\s/.test(rightSlice);
+      const tightRightOnly = isCurrencySymbol && !/\d$/.test(leftSlice) && /^\d/.test(rightSlice);
+      const explicitRightSeparator = /^\s*[:=-]\s*\d/.test(rightSlice);
+      const preferRight =
+        !tightLeftOnly &&
+        (tightRightOnly ||
+          (isPrefixPreferredSymbol && /^\s*\d/.test(rightSlice)) ||
+          explicitRightSeparator ||
+          isOrdinalLabelBeforeLeft(leftBound.beforeNum, leftBound.numToken, leftBound.scaleWord));
+      out.push(...(preferRight ? rightBound.decimals : leftBound.decimals));
+    } else if (leftBound) {
+      out.push(...leftBound.decimals);
+    } else if (rightBound) {
+      out.push(...rightBound.decimals);
     }
-    if (tryBindLeft(leftSlice)) {
-      continue;
-    }
-    tryBindRight(rightSlice);
   }
   return out;
 }

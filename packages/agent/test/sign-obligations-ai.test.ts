@@ -1392,6 +1392,235 @@ describe('checkSignObligationExtract (#3821)', () => {
         obligations: [],
       }).proposal,
     ).toMatchObject({ contractValue: '100', currency: 'USD' });
+
+    // [9] Disambiguate two-sided ISO/symbol bindings (ordinal labels, plain quantity after amount, tight postfix).
+    const tierIsoReq: SignObligationExtractRequest = {
+      envelopeTitle: 'Tier ISO Pricing',
+      pageCount: 1,
+      pages: [
+        {
+          page: 1,
+          text: 'Bên B: Công ty ABC\nTier 2 USD 100; equivalent: EUR 90.',
+        },
+      ],
+    };
+    expect(
+      checkSignObligationExtract(tierIsoReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '100',
+        currency: 'USD',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: 'Tier 2 USD 100; equivalent: EUR 90.' },
+        ],
+        obligations: [],
+      }).proposal,
+    ).toMatchObject({ contractValue: '100', currency: 'USD' });
+    expect(
+      checkSignObligationExtract(tierIsoReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '2',
+        currency: 'USD',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: 'Tier 2 USD 100; equivalent: EUR 90.' },
+        ],
+        obligations: [],
+      }).proposal?.contractValue,
+    ).toBeNull();
+    expect(
+      checkSignObligationExtract(tierIsoReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '90',
+        currency: 'USD',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: 'Tier 2 USD 100; equivalent: EUR 90.' },
+        ],
+        obligations: [],
+      }).proposal?.contractValue,
+    ).toBeNull();
+
+    const exactUserCountReq: SignObligationExtractRequest = {
+      envelopeTitle: 'Exact User Count',
+      pageCount: 1,
+      pages: [
+        {
+          page: 1,
+          text: 'Bên B: Công ty ABC\n200 USD 100 users; equivalent: EUR 180.',
+        },
+      ],
+    };
+    expect(
+      checkSignObligationExtract(exactUserCountReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '200',
+        currency: 'USD',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: '200 USD 100 users; equivalent: EUR 180.' },
+        ],
+        obligations: [],
+      }).proposal,
+    ).toMatchObject({ contractValue: '200', currency: 'USD' });
+    expect(
+      checkSignObligationExtract(exactUserCountReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '100',
+        currency: 'USD',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: '200 USD 100 users; equivalent: EUR 180.' },
+        ],
+        obligations: [],
+      }).proposal?.contractValue,
+    ).toBeNull();
+
+    for (const ordinalQuote of ['Gói 2 USD 100; equivalent: EUR 90.', '#2 USD 100; equivalent: EUR 90.'] as const) {
+      const ordinalReq: SignObligationExtractRequest = {
+        envelopeTitle: 'Ordinal Package',
+        pageCount: 1,
+        pages: [{ page: 1, text: `Bên B: Công ty ABC\n${ordinalQuote}` }],
+      };
+      expect(
+        checkSignObligationExtract(ordinalReq, {
+          counterpartyName: 'Công ty ABC',
+          effectiveDate: null,
+          expiryDate: null,
+          renewalNoticeDays: null,
+          autoRenew: false,
+          contractValue: '100',
+          currency: 'USD',
+          citations: [
+            { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+            { field: 'contractValue', pageNumber: 1, quoteExcerpt: ordinalQuote },
+          ],
+          obligations: [],
+        }).proposal,
+      ).toMatchObject({ contractValue: '100', currency: 'USD' });
+      expect(
+        checkSignObligationExtract(ordinalReq, {
+          counterpartyName: 'Công ty ABC',
+          effectiveDate: null,
+          expiryDate: null,
+          renewalNoticeDays: null,
+          autoRenew: false,
+          contractValue: '2',
+          currency: 'USD',
+          citations: [
+            { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+            { field: 'contractValue', pageNumber: 1, quoteExcerpt: ordinalQuote },
+          ],
+          obligations: [],
+        }).proposal?.contractValue,
+      ).toBeNull();
+    }
+
+    const groupedLeftReq: SignObligationExtractRequest = {
+      envelopeTitle: 'Grouped Package Amount',
+      pageCount: 1,
+      pages: [
+        {
+          page: 1,
+          text: 'Bên B: Công ty ABC\nPackage 1,500 USD 100 users; equivalent: EUR 1,350.',
+        },
+      ],
+    };
+    expect(
+      checkSignObligationExtract(groupedLeftReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '1500',
+        currency: 'USD',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: 'Package 1,500 USD 100 users; equivalent: EUR 1,350.' },
+        ],
+        obligations: [],
+      }).proposal,
+    ).toMatchObject({ contractValue: '1500', currency: 'USD' });
+    expect(
+      checkSignObligationExtract(groupedLeftReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '100',
+        currency: 'USD',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: 'Package 1,500 USD 100 users; equivalent: EUR 1,350.' },
+        ],
+        obligations: [],
+      }).proposal?.contractValue,
+    ).toBeNull();
+
+    const tightPostfixDongReq: SignObligationExtractRequest = {
+      envelopeTitle: 'Tight Postfix VND',
+      pageCount: 1,
+      pages: [
+        {
+          page: 1,
+          text: 'Bên B: Công ty ABC\n500₫ 10 users; equivalent: USD 1.',
+        },
+      ],
+    };
+    expect(
+      checkSignObligationExtract(tightPostfixDongReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '500',
+        currency: 'VND',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: '500₫ 10 users; equivalent: USD 1.' },
+        ],
+        obligations: [],
+      }).proposal,
+    ).toMatchObject({ contractValue: '500', currency: 'VND' });
+    expect(
+      checkSignObligationExtract(tightPostfixDongReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '10',
+        currency: 'VND',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: '500₫ 10 users; equivalent: USD 1.' },
+        ],
+        obligations: [],
+      }).proposal?.contractValue,
+    ).toBeNull();
   });
 });
 
