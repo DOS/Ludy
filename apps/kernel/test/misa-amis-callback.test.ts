@@ -60,7 +60,7 @@ function fixture(over: Partial<HttpDeps> = {}, installed: readonly string[] = ['
       throw new Error('the API must not execute a command for a callback');
     },
   } as unknown as Runtime;
-  const config = loadConfig({ DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: 'x'.repeat(32), AUTH_ISSUER: 'crove-auth', WEB_DIST: '/nonexistent' });
+  const config = loadConfig({ DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: 'x'.repeat(32), AUTH_ISSUER: 'ludy-auth', WEB_DIST: '/nonexistent' });
   const authenticate = vi.fn(async () => {
     throw new Error('the callback must not authenticate a user');
   });

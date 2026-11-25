@@ -25,7 +25,7 @@ function mail(brand: unknown, payload: Record<string, unknown> = {}, product = '
       engagement: 56,
       ...payload,
     },
-    publicUrl: 'https://crove.example/',
+    publicUrl: 'https://ludy.example/',
     brand: product,
     inboundAddress: null,
     execute: async <T,>(command: string) => {
@@ -44,7 +44,7 @@ describe('report mail branding (#1053)', () => {
       expect(out?.html).toContain('Thư này được Công ty Sao Mai gửi tự động qua Crove theo lịch gửi báo cáo.');
       expect(out?.text.split('\n')[0]).toBe('Báo cáo tuần');
       expect(out?.text).toContain('qua Crove');
-      expect(out?.html).toContain(`https://crove.example/-/report#${TOKEN}`);
+      expect(out?.html).toContain(`https://ludy.example/-/report#${TOKEN}`);
     }
     const anonymous = await mail(null, { orgName: undefined });
     expect(anonymous?.html).toContain('Thư này được gửi tự động từ Crove theo lịch gửi báo cáo.');
@@ -71,7 +71,7 @@ describe('report mail branding (#1053)', () => {
     expect(out?.html).not.toContain('Crove');
     expect(out?.text).not.toContain('Crove');
     // The link still goes to the deployment's report page.
-    expect(out?.html).toContain(`href="https://crove.example/-/report#${TOKEN}"`);
+    expect(out?.html).toContain(`href="https://ludy.example/-/report#${TOKEN}"`);
   });
 
   it('escapes the name and keeps anything but #rrggbb out of the style attribute', async () => {
@@ -114,7 +114,7 @@ function render(payload: Record<string, unknown>) {
     messageId: '00000000-0000-4000-8000-000000000001',
     subject: null,
     payload,
-    publicUrl: 'https://crove.example',
+    publicUrl: 'https://ludy.example',
     brand: 'Crove',
     inboundAddress: null,
     execute: async <T>() => ({ token: 'a'.repeat(43), expiresAt: '2026-11-15T00:00:00.000Z' }) as T,

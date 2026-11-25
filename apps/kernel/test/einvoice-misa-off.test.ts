@@ -8,7 +8,7 @@ import { loadConfig } from '../src/config.ts';
 import { einvoiceProvidersOf } from '../src/kernel.ts';
 import { misaTransport } from '../src/einvoice-transport.ts';
 
-const base = { DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: 'j'.repeat(40), AUTH_ISSUER: 'crove-auth' };
+const base = { DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: 'j'.repeat(40), AUTH_ISSUER: 'ludy-auth' };
 
 describe('EINVOICE_PROVIDERS=misa stays refused until its gates are written', () => {
   it('has both gates open today', () => {

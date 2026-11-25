@@ -41,7 +41,7 @@ describe('calendar feed (#862)', () => {
         { id: '01900000-0000-7000-8000-000000000002', postId: '01900000-0000-7000-8000-0000000000bb', provider: 'zalo_oa', at: '2026-10-01T09:30:00Z', status: 'published', title: '' },
       ],
     };
-    const text = renderIcs(feed, 'https://crove.example/', new Date('2026-10-21T08:00:00Z'));
+    const text = renderIcs(feed, 'https://ludy.example/', new Date('2026-10-21T08:00:00Z'));
     expect(text.endsWith('\r\n')).toBe(true);
     expect(text.replace(/\r\n/g, '')).not.toMatch(/[\r\n]/);
     const lines = unfold(text).split('\r\n');
@@ -57,8 +57,8 @@ describe('calendar feed (#862)', () => {
       'DTSTART:20261025T020000Z',
       'DURATION:PT15M',
       'SUMMARY:Facebook: Khai trương',
-      'DESCRIPTION:Trạng thái: Đã lên lịch\\nMở trong Ludy: https://crove.example/o/cua-hang/social/01900000-0000-7000-8000-0000000000aa',
-      'URL:https://crove.example/o/cua-hang/social/01900000-0000-7000-8000-0000000000aa',
+      'DESCRIPTION:Trạng thái: Đã lên lịch\\nMở trong Ludy: https://ludy.example/o/cua-hang/social/01900000-0000-7000-8000-0000000000aa',
+      'URL:https://ludy.example/o/cua-hang/social/01900000-0000-7000-8000-0000000000aa',
       'END:VEVENT',
     ]);
     // No title: the channel alone.

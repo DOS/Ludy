@@ -13,7 +13,7 @@ import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
 
 const SECRET = 'x'.repeat(32);
-const config = loadConfig({ DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: 'crove-auth', WEB_DIST: '/nonexistent', BRAND_NAME: 'Ludy' });
+const config = loadConfig({ DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: 'ludy-auth', WEB_DIST: '/nonexistent', BRAND_NAME: 'Ludy' });
 const orgId = randomUUID();
 const user: AuthUser = { userId: randomUUID(), email: 'viewer@example.com', name: null, aal: 'aal1', sessionId: randomUUID(), mfaAt: null };
 const headers = { authorization: 'Bearer t', [ORG_HEADER]: 'acme' };

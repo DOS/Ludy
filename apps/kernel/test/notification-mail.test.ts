@@ -9,7 +9,7 @@ const render = (payload: Record<string, unknown>) =>
     messageId: 'm1',
     subject: 'Hàng đợi của kênh Trang thử sắp hết bài',
     payload,
-    publicUrl: 'https://crove.example/',
+    publicUrl: 'https://ludy.example/',
     brand: 'Crove',
     inboundAddress: null,
     execute: () => Promise.reject(new Error('not used')),
@@ -21,7 +21,7 @@ describe('notification mail for a post doing much better than usual (#1132)', ()
     const mail = await render({ kind: 'post_outperforming', org: 'Cửa hàng A', post: 'Khai trương', channel: 'Trang thử', decision: null, ratio: '2.5', reach: '3', path: `/o/cua-hang-a/social/${POST}` });
     expect(mail?.text).toContain('bài đã được tương tác gấp 2,5 lần mức thường lệ');
     expect(mail?.text).toContain('lượt tiếp cận gấp 3 lần');
-    expect(mail?.text).toContain(`Mở bài viết: https://crove.example/o/cua-hang-a/social/${POST}`);
+    expect(mail?.text).toContain(`Mở bài viết: https://ludy.example/o/cua-hang-a/social/${POST}`);
     const plain = await render({ kind: 'post_outperforming', org: 'Cửa hàng A', post: 'Khai trương', channel: 'Trang thử', ratio: '2', reach: null, path: `/o/cua-hang-a/social/${POST}` });
     expect(plain?.text).toContain('gấp 2 lần');
     expect(plain?.text).not.toContain('tiếp cận');
@@ -43,9 +43,9 @@ describe('notification mail for a low queue (#1079)', () => {
   it('links to a new post for the channel and names the window', async () => {
     const mail = await render({ kind: 'queue_low', org: 'Cửa hàng A', post: null, channel: 'Trang thử', decision: null, days: '7', path: `/o/cua-hang-a/social/new?channel=${CHANNEL}` });
     expect(mail?.subject).toBe('Hàng đợi của kênh Trang thử sắp hết bài');
-    expect(mail?.text).toContain(`Viết bài cho kênh này: https://crove.example/o/cua-hang-a/social/new?channel=${CHANNEL}`);
+    expect(mail?.text).toContain(`Viết bài cho kênh này: https://ludy.example/o/cua-hang-a/social/new?channel=${CHANNEL}`);
     expect(mail?.text).toContain('7 ngày tới');
-    expect(mail?.html).toContain(`href="https://crove.example/o/cua-hang-a/social/new?channel=${CHANNEL}"`);
+    expect(mail?.html).toContain(`href="https://ludy.example/o/cua-hang-a/social/new?channel=${CHANNEL}"`);
   });
 
   it('refuses any other new-post path', async () => {
@@ -68,7 +68,7 @@ describe('notification mail for an assignment and its due date (#1359)', () => {
     const soon = await render({ kind: 'assignment_due', org: 'Cửa hàng A', post: 'Khai trương', stage: 'soon', due: '14:30 26/10/2026', path: `/o/cua-hang-a/social/${POST}` });
     expect(soon?.text).toContain('sẽ đến hạn trong vòng 24 giờ tới');
     expect(soon?.text).toContain('Hạn: 14:30 26/10/2026');
-    expect(soon?.text).toContain(`Mở bài viết: https://crove.example/o/cua-hang-a/social/${POST}`);
+    expect(soon?.text).toContain(`Mở bài viết: https://ludy.example/o/cua-hang-a/social/${POST}`);
     expect(soon?.html).toContain('Hạn: 14:30 26/10/2026');
     const overdue = await render({ kind: 'assignment_due', org: 'Cửa hàng A', post: 'Khai trương', stage: 'overdue', due: '14:30 26/10/2026', path: `/o/cua-hang-a/social/${POST}` });
     expect(overdue?.text).toContain('đã quá hạn mà vẫn chưa đăng');
@@ -81,11 +81,11 @@ describe('notification mail for an assignment and its due date (#1359)', () => {
   it('tells of an assignment, and of a bulk one with a link to the posts assigned to the reader', async () => {
     const one = await render({ kind: 'assigned', org: 'Cửa hàng A', post: 'Khai trương', path: `/o/cua-hang-a/social/${POST}` });
     expect(one?.text).toContain('Bạn vừa được giao một bài');
-    expect(one?.text).toContain(`Mở bài viết: https://crove.example/o/cua-hang-a/social/${POST}`);
+    expect(one?.text).toContain(`Mở bài viết: https://ludy.example/o/cua-hang-a/social/${POST}`);
     const many = await render({ kind: 'assigned', org: 'Cửa hàng A', count: '3', path: '/o/cua-hang-a/social?assignee=me' });
     expect(many?.text).toContain('Bạn vừa được giao 3 bài');
-    expect(many?.text).toContain('Xem các bài được giao cho bạn: https://crove.example/o/cua-hang-a/social?assignee=me');
-    expect(many?.html).toContain('href="https://crove.example/o/cua-hang-a/social?assignee=me"');
+    expect(many?.text).toContain('Xem các bài được giao cho bạn: https://ludy.example/o/cua-hang-a/social?assignee=me');
+    expect(many?.html).toContain('href="https://ludy.example/o/cua-hang-a/social?assignee=me"');
     // A count it did not write is not shown.
     expect((await render({ kind: 'assigned', org: 'Cửa hàng A', count: '<i>9</i>', path: '/o/cua-hang-a/social?assignee=me' }))?.text).toContain('Bạn vừa được giao một bài');
   });
@@ -104,7 +104,7 @@ describe('notification mail for the late posts a long switch-off failed (#3462)'
   it('says how many, and links to the posts that need a person', async () => {
     const mail = await render({ kind: 'failed', org: 'Cửa hàng A', post: null, channel: null, late: '1', count: '12', path: '/o/cua-hang-a/social?tab=attention' });
     expect(mail?.text).toContain('12 bài đăng không thành công vì đã quá giờ hẹn');
-    expect(mail?.text).toContain('Xem các bài cần xử lý: https://crove.example/o/cua-hang-a/social?tab=attention');
+    expect(mail?.text).toContain('Xem các bài cần xử lý: https://ludy.example/o/cua-hang-a/social?tab=attention');
     expect(mail?.html).toContain('12 bài đăng');
   });
 

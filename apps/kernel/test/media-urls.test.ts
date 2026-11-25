@@ -15,7 +15,7 @@ const actor = { type: 'user', userId: '22222222-2222-4222-8222-222222222222' } a
 describe('image URLs of the CSV import (#1258)', () => {
   let dir = '';
   beforeAll(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'crove-media-urls-'));
+    dir = await mkdtemp(join(tmpdir(), 'ludy-media-urls-'));
   });
   afterAll(async () => {
     if (dir) await rm(dir, { recursive: true, force: true });

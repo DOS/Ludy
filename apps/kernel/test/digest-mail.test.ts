@@ -35,7 +35,7 @@ const render = (payload: unknown, brand = 'Crove') =>
     messageId: 'm1',
     subject: 'Bản tin tuần 26/10 - 01/11 của Cửa hàng <A>',
     payload: payload as Record<string, unknown>,
-    publicUrl: 'https://crove.example/',
+    publicUrl: 'https://ludy.example/',
     brand,
     inboundAddress: null,
     execute: () => Promise.reject(new Error('not used')),
@@ -51,20 +51,20 @@ describe('weekly digest mail (#1104)', () => {
     expect(text).toContain('Đã đăng: 3 bài');
     expect(text).toContain('- Trang chính: 2 bài đã đăng, 1 bài không thành công');
     expect(text).toContain('- Kênh phụ: 1 bài đã đăng');
-    expect(text).toContain(`1. Khuyến mãi <b>lớn</b> (Trang chính, 1.234 lượt tương tác): https://crove.example/o/cua-hang-a/social/${POST}`);
+    expect(text).toContain(`1. Khuyến mãi <b>lớn</b> (Trang chính, 1.234 lượt tương tác): https://ludy.example/o/cua-hang-a/social/${POST}`);
     expect(text).toContain('Bài đăng không thành công: 7 bài');
     expect(text).toContain('- và 6 bài khác');
     expect(text).toContain('- Thứ Hai 26/10: 2 bài');
     expect(text).toContain('- Thứ Ba 27/10: chưa có bài');
     expect(text).toContain('- Kênh phụ: Thứ Năm 29/10, Thứ Bảy 31/10');
-    expect(text).toContain('Mở Crove: https://crove.example/o/cua-hang-a/social');
-    expect(text).toContain('Cài đặt thông báo: https://crove.example/o/cua-hang-a/social/notifications');
+    expect(text).toContain('Mở Crove: https://ludy.example/o/cua-hang-a/social');
+    expect(text).toContain('Cài đặt thông báo: https://ludy.example/o/cua-hang-a/social/notifications');
     expect(text).not.toContain('chờ bạn duyệt');
     // The HTML escapes what members wrote.
     expect(mail?.html).toContain('Khuyến mãi &lt;b&gt;lớn&lt;/b&gt;');
     expect(mail?.html).toContain('Cửa hàng &lt;A&gt;');
     expect(mail?.html).not.toContain('<b>lớn</b>');
-    expect(mail?.html).toContain(`href="https://crove.example/o/cua-hang-a/social/${POST}"`);
+    expect(mail?.html).toContain(`href="https://ludy.example/o/cua-hang-a/social/${POST}"`);
   });
 
   it('names the product it was given, and lists the reviews only when there are some', async () => {
@@ -74,7 +74,7 @@ describe('weekly digest mail (#1104)', () => {
     expect(mail?.text).toContain('Thư này được gửi từ Sổ Xanh cho Cửa hàng <A>');
     expect(mail?.text).not.toContain('Crove');
     expect(mail?.text).toContain('Bài đang chờ bạn duyệt: 2 bài');
-    expect(mail?.text).toContain(`- Chờ duyệt: https://crove.example/o/cua-hang-a/social/${POST}`);
+    expect(mail?.text).toContain(`- Chờ duyệt: https://ludy.example/o/cua-hang-a/social/${POST}`);
     expect(mail?.text).toContain('- và 1 bài khác');
     expect((await render({ ...base, review: { total: 0, items: [] } }))?.text).not.toContain('chờ bạn duyệt');
   });

@@ -28,7 +28,7 @@ describe('sealMedia', () => {
   const filesLeft = async () => readdir(join(root, 'org', orgId)).catch(() => [] as string[]);
 
   beforeAll(async () => {
-    root = await mkdtemp(join(tmpdir(), 'crove-media-seal-'));
+    root = await mkdtemp(join(tmpdir(), 'ludy-media-seal-'));
     store = new LocalDiskStore(root);
   });
   afterAll(async () => {

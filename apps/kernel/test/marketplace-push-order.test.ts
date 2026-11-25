@@ -24,7 +24,7 @@ function fixture(perMinute: number) {
       throw new Error('the database must not be reached by a refused request');
     },
   } as unknown as Runtime;
-  const config = loadConfig({ DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: 'x'.repeat(32), AUTH_ISSUER: 'crove-auth', WEB_DIST: '/nonexistent' });
+  const config = loadConfig({ DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: 'x'.repeat(32), AUTH_ISSUER: 'ludy-auth', WEB_DIST: '/nonexistent' });
   const http = createHttpApp({
     config,
     runtime,

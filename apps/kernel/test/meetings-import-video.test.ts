@@ -32,7 +32,7 @@ const attempt = { retryCount: 0, retryLimit: 3 };
 let dir: string;
 let store: LocalDiskStore;
 beforeAll(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'crove-import-video-'));
+  dir = await mkdtemp(join(tmpdir(), 'ludy-import-video-'));
   store = new LocalDiskStore(dir);
 });
 // Each test starts with nothing staged and no throwaway copy of a video on disk, whatever an earlier one left.

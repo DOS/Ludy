@@ -8,7 +8,7 @@ import { loadConfig } from '../src/config.ts';
 import { contentSecurityPolicy, createHttpApp } from '../src/http.ts';
 import { TURNSTILE_VERIFY_URL, createTurnstileVerifier, type TurnstileVerifier } from '../src/turnstile.ts';
 
-const base = { DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: 'x'.repeat(32), AUTH_ISSUER: 'crove-auth', WEB_DIST: '/nonexistent' };
+const base = { DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: 'x'.repeat(32), AUTH_ISSUER: 'ludy-auth', WEB_DIST: '/nonexistent' };
 const KEYS = { TURNSTILE_SITE_KEY: '0x4AAAAAAAtest', TURNSTILE_SECRET: '0x4AAAAAAAsecret' };
 const REQUEST = { startsAt: '2026-11-02T02:00:00.000Z', name: 'Nguyễn Văn Khách', email: 'khach@example.test', timeZone: 'Asia/Ho_Chi_Minh' };
 
@@ -39,7 +39,7 @@ describe('Turnstile on the booking form (#1353)', () => {
     // Cloudflare's test keys pass any token: fine locally, refused on a public URL.
     const TEST = { TURNSTILE_SITE_KEY: '1x00000000000000000000AA', TURNSTILE_SECRET: '1x0000000000000000000000000000000AA' };
     expect(loadConfig({ ...base, ...TEST }).TURNSTILE_SECRET).toBe(TEST.TURNSTILE_SECRET);
-    const pub = { ...base, PUBLIC_URL: 'https://crove.example.com' };
+    const pub = { ...base, PUBLIC_URL: 'https://ludy.example.com' };
     expect(() => loadConfig({ ...pub, ...TEST })).toThrow(/Cloudflare's test keys/);
     expect(() => loadConfig({ ...pub, ...KEYS, TURNSTILE_SECRET: '2x0000000000000000000000000000000AA' })).toThrow(/Cloudflare's test keys/);
     expect(() => loadConfig({ ...pub, ...KEYS, TURNSTILE_SITE_KEY: '3x00000000000000000000FF' })).toThrow(/Cloudflare's test keys/);

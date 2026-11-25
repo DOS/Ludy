@@ -9,7 +9,7 @@ import { acceptFacebookWebhook } from '../src/facebook-webhook.ts';
 import { channelConnectors, channelPublishers, instagramMetaApp, metaConversationSecrets, metaWriteAppShared } from '../src/kernel.ts';
 import { acceptMetaDeletion } from '../src/meta-deletion.ts';
 
-const BASE = { DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: 'x'.repeat(32), AUTH_ISSUER: 'crove-auth', WEB_DIST: '/nonexistent' };
+const BASE = { DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: 'x'.repeat(32), AUTH_ISSUER: 'ludy-auth', WEB_DIST: '/nonexistent' };
 // Made-up apps (the shape of a Meta app id and secret, nothing real).
 const PAGES = { CHANNEL_META_APP_ID: '1111111111', CHANNEL_META_APP_SECRET: 'pages-app-secret-0123456789abcdef' };
 const INSTAGRAM = { CHANNEL_INSTAGRAM_APP_ID: '2222222223', CHANNEL_INSTAGRAM_APP_SECRET: 'instagram-app-secret-0123456789ab' };

@@ -15,7 +15,7 @@ test('import opening balances from the Excel template', async ({ page }) => {
   await page.goto('/');
   await signUp(page, email);
   const slug = await createOrg(page, 'Công ty Số dư đầu kỳ');
-  const dir = mkdtempSync(join(tmpdir(), 'crove-opening-'));
+  const dir = mkdtempSync(join(tmpdir(), 'ludy-opening-'));
 
   const template = await test.step('open the screen from the journal and download the template', async () => {
     await page.getByRole('navigation').getByRole('link', { name: 'Tài chính', exact: true }).click();

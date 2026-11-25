@@ -6,7 +6,7 @@ import { toDomainError } from '@ludy/kernel-runtime';
 import { loadConfig } from '../src/config.ts';
 import { toORPCError } from '../src/rpc.ts';
 
-const base = { DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: 'unit-test-jwt-secret-0123456789abcdef', AUTH_ISSUER: 'crove-auth' };
+const base = { DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: 'unit-test-jwt-secret-0123456789abcdef', AUTH_ISSUER: 'ludy-auth' };
 
 describe('inbound address rotation limits', () => {
   it('defaults to 3 per 24 hours and 50 in total, and reads both from env', () => {

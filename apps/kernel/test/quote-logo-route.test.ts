@@ -14,7 +14,7 @@ import { createHttpApp } from '../src/http.ts';
 import { ConcurrencyLimiter } from '../src/concurrency.ts';
 import { RateLimiter } from '../src/rate-limit.ts';
 
-const config = loadConfig({ DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: 'x'.repeat(32), AUTH_ISSUER: 'crove-auth', WEB_DIST: '/nonexistent', BRAND_NAME: 'Ludy' });
+const config = loadConfig({ DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: 'x'.repeat(32), AUTH_ISSUER: 'ludy-auth', WEB_DIST: '/nonexistent', BRAND_NAME: 'Ludy' });
 const user: AuthUser = { userId: randomUUID(), email: 'a@example.com', name: null, aal: 'aal1', sessionId: randomUUID(), mfaAt: null };
 const TOKEN = 'q'.repeat(43);
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4, 5, 6, 7, 8]);
