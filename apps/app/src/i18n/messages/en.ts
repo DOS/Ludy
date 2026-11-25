@@ -19692,6 +19692,11 @@ export const en = {
         start: 'Ask Vy what a meeting left open',
         status: 'See whether Vy can list what a meeting left open',
       },
+      sales_insight: {
+        facts: 'Read the transcript and the linked open deal to analyze sales call insights',
+        start: 'Ask Vy to analyze sales call insights for a meeting linked to an open deal',
+        status: 'See whether Vy can analyze sales call insights for a meeting',
+      },
       chapters: {
         copy_result: 'Copy the chapters Vy finished for a meeting into the draft',
         get: 'Read the chapters (table of contents) of a meeting',

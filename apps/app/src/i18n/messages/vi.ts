@@ -19692,6 +19692,11 @@ export const vi = {
         start: 'Nhờ Vy liệt kê những gì cuộc họp còn bỏ ngỏ',
         status: 'Xem Vy có liệt kê được những gì cuộc họp còn bỏ ngỏ không',
       },
+      sales_insight: {
+        facts: 'Đọc bản ghi lời nói và cơ hội đang mở để phân tích cuộc gọi bán hàng',
+        start: 'Nhờ Vy phân tích nhận định cuộc gọi bán hàng gắn với cơ hội đang mở',
+        status: 'Xem Vy có phân tích được nhận định cuộc gọi bán hàng không',
+      },
       chapters: {
         copy_result: 'Chép mục lục Vy đã lập cho cuộc họp vào bản nháp',
         get: 'Xem mục lục của một cuộc họp',
