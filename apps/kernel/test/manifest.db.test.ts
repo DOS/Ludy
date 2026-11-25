@@ -44,6 +44,8 @@ const CONTROL_PLANE: ModuleManifest = {
       global_kill_switch: columns(['id', 'key', 'engaged', 'reason', 'changed_by', 'changed_at']),
       inbound_address: columns(['org_id', 'id', 'created_at', 'retired_at', 'kind'], { token: 'sensitive' }),
       inbound_pending: columns(['seq', 'blob_id', 'raw_sha256', 'size_bytes', 'received_at'], { recipient: 'sensitive' }),
+      // DB-backed rate limits for /oauth/* and /mcp across API replicas (#3978): keyed only by bucket and SHA-256 hash.
+      mcp_rate_limit: columns(['id', 'bucket', 'key_hash', 'created_at', 'expires_at']),
       // The embedded authorization server's records (#2975): the key is only a SHA-256, the payload holds the client's metadata and the consenting account id.
       oauth_record: columns(['model', 'grant_id', 'uid', 'created_at', 'expires_at', 'consumed_at'], { key_hash: 'sensitive', payload: 'sensitive' }),
       stream_ticket: columns(['ticket_hash', 'user_id', 'stream_org_id', 'session_id', 'aal', 'mfa_at', 'token_expires_at', 'expires_at', 'created_at']),
