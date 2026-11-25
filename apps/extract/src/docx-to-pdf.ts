@@ -1187,8 +1187,8 @@ function extractParagraphBlocks(pNode: XmlElement, ctx: ExtractContext): DocBloc
   flushRuns(segments.length === 0 && !hasSectionBreak);
 
   const blocks: DocBlock[] = [];
-  // Apply paragraph-level w:pageBreakBefore before any leading inline w:br type="page" in the same paragraph.
-  if (pMeta.pageBreakBefore === true && segments.length > 0) {
+  // Apply paragraph-level w:pageBreakBefore before any leading inline w:br type="page" (even on empty sectPr paragraphs).
+  if (pMeta.pageBreakBefore === true) {
     blocks.push({ kind: 'page_break_before' });
   }
   let isFirstParagraphSegment = true;

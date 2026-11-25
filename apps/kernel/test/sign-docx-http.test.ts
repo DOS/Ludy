@@ -354,7 +354,7 @@ describe('sign-docx-http authorization ordering and cache/limiter hardening (#47
     })) as SignDocxConvertCompletedResult;
     expect(firstPoll.status).toBe('completed');
     expect(firstPoll.filename).toBe('hop-dong-1.pdf');
-    expect(getSignDocxRuntimeStats(runtime)?.filenameEntries).toBe(0);
+    expect(getSignDocxRuntimeStats(runtime)?.filenameEntries).toBe(1);
 
     // Mutating returned result warnings never corrupts cached entries.
     firstPoll.warnings.push('footnotes_skipped');
@@ -377,7 +377,7 @@ describe('sign-docx-http authorization ordering and cache/limiter hardening (#47
       waitMs: 0,
     });
     if (failUpload.status !== 'pending') throw new Error('expected pending');
-    expect(getSignDocxRuntimeStats(runtime)?.filenameEntries).toBe(1);
+    expect(getSignDocxRuntimeStats(runtime)?.filenameEntries).toBe(2);
     statuses.set(failUpload.jobId, {
       status: 'failed',
       jobId: failUpload.jobId,
@@ -393,9 +393,11 @@ describe('sign-docx-http authorization ordering and cache/limiter hardening (#47
     await expect(
       handleSignDocxConvertPoll({ runtime, store, user, orgId, jobId: failUpload.jobId }),
     ).rejects.toMatchObject({ code: 'SIGN_DOCX_TRACK_CHANGES', status: 422 });
-    expect(getSignDocxRuntimeStats(runtime)?.filenameEntries).toBe(0);
+    // Failed poll deletes its filename entry, leaving only the earlier completed upload's filename until TTL/LRU expiry.
+    expect(getSignDocxRuntimeStats(runtime)?.filenameEntries).toBe(1);
 
-    // Fill finalized cache past SIGN_DOCX_FINALIZED_MAX_ENTRIES (256) and verify LRU keeps hot jobId #1.
+    // Fill finalized cache past SIGN_DOCX_FINALIZED_MAX_ENTRIES (256) with un-uploaded jobs so jobIds[1] is evicted from entries
+    // while retaining its filename entry, and verify LRU keeps hot uploaded.jobId in entries.
     const jobIds: string[] = [uploaded.jobId];
     const extraToFill = SIGN_DOCX_FINALIZED_MAX_ENTRIES - 1;
     for (let i = 0; i < extraToFill; i++) {
@@ -423,12 +425,53 @@ describe('sign-docx-http authorization ordering and cache/limiter hardening (#47
     await handleSignDocxConvertPoll({ runtime, store, user, orgId, jobId: jobIds[1]! });
     expect(ingestSeq).toBe(ingestsAfterOverflow + 1);
 
-    // Advancing past SIGN_DOCX_FINALIZED_TTL_MS expires cached entries so re-poll re-ingests cleanly.
+    // If a completed job is evicted from finalized entries before 10m TTL, re-polling without filename preserves original name.
+    const uploaded2 = await handleSignDocxConvertUpload({
+      runtime,
+      store,
+      user,
+      orgId,
+      req: makeUploadRequest('hop-dong-giu-ten.docx'),
+      waitMs: 0,
+    });
+    if (uploaded2.status !== 'pending') throw new Error('expected pending');
+    addCompletedJob(uploaded2.jobId);
+    const firstGiuTen = (await handleSignDocxConvertPoll({
+      runtime,
+      store,
+      user,
+      orgId,
+      jobId: uploaded2.jobId,
+    })) as SignDocxConvertCompletedResult;
+    expect(firstGiuTen.filename).toBe('hop-dong-giu-ten.pdf');
+    for (let i = 0; i < SIGN_DOCX_FINALIZED_MAX_ENTRIES; i++) {
+      const evictId = randomUUID();
+      addCompletedJob(evictId);
+      await handleSignDocxConvertPoll({ runtime, store, user, orgId, jobId: evictId });
+    }
+    const rematerializedGiuTen = (await handleSignDocxConvertPoll({
+      runtime,
+      store,
+      user,
+      orgId,
+      jobId: uploaded2.jobId,
+    })) as SignDocxConvertCompletedResult;
+    expect(rematerializedGiuTen.filename).toBe('hop-dong-giu-ten.pdf');
+
+    // Advancing past SIGN_DOCX_FINALIZED_TTL_MS expires cached entries and filenames so re-poll falls back cleanly.
     vi.advanceTimersByTime(SIGN_DOCX_FINALIZED_TTL_MS + 1);
     const ingestsBeforeExpiry = ingestSeq;
-    await handleSignDocxConvertPoll({ runtime, store, user, orgId, jobId: overflowJobId });
+    const expiredPoll = (await handleSignDocxConvertPoll({
+      runtime,
+      store,
+      user,
+      orgId,
+      jobId: uploaded2.jobId,
+    })) as SignDocxConvertCompletedResult;
     expect(ingestSeq).toBe(ingestsBeforeExpiry + 1);
+    expect(expiredPoll.filename).toBe('hop-dong.pdf');
     expect(getSignDocxRuntimeStats(runtime)?.finalizedEntries).toBe(1);
+    expect(getSignDocxRuntimeStats(runtime)?.filenameEntries).toBe(0);
   });
 
   it('caps concurrent inflight finalizations at SIGN_DOCX_INFLIGHT_MAX_ENTRIES with 503 UPLOAD_BUSY', async () => {

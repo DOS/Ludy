@@ -528,5 +528,27 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
     expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual(['images_skipped']);
     clearCreatedDocxWarnings(envDetailId, scopeUserA);
     expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual([]);
+
+    // If me.get was still pending when the envelope was created, resolveUserScope fetches user/org before persisting & navigating.
+    const resolveOrder: string[] = [];
+    await handleEnvelopeCreatedWithWarnings({
+      envelopeId: envDetailId,
+      warnings: ['ole_objects_skipped'],
+      slug: 'acme',
+      orgId: null,
+      userId: null,
+      resolveUserScope: async () => {
+        resolveOrder.push('resolve');
+        return { orgId, userId: userAId };
+      },
+      setCreateOpen,
+      setCreatedDocxNotice,
+      invalidateEnvelopes,
+      navigateToEnvelope: async () => {
+        resolveOrder.push(`nav:${readCreatedDocxWarnings(envDetailId, scopeUserA).join(',')}`);
+      },
+    });
+    expect(resolveOrder).toEqual(['resolve', 'nav:ole_objects_skipped']);
+    clearCreatedDocxWarnings(envDetailId, scopeUserA);
   });
 });

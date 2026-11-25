@@ -423,6 +423,23 @@ describe('docx_to_pdf conversion (#4721)', () => {
       expect(beforeAndInlineRes.pageCount).toBe(3);
       expect(drawn.find((d) => d.text === 'Sau hai ngắt')?.y).toBeCloseTo(p1!.y, 3);
 
+      // An empty paragraph carrying both w:pageBreakBefore and w:sectPr nextPage keeps both breaks (3 pages, middle page blank).
+      drawn.length = 0;
+      const emptyBothBreaksDocx = buildDocx({
+        'word/document.xml': [
+          '<?xml version="1.0" encoding="UTF-8"?>',
+          '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">',
+          '<w:body>',
+          '<w:p><w:r><w:t>Trước đoạn ngắt</w:t></w:r></w:p>',
+          '<w:p><w:pPr><w:pageBreakBefore/><w:sectPr><w:type w:val="nextPage"/></w:sectPr></w:pPr></w:p>',
+          '<w:p><w:r><w:t>Sau đoạn ngắt</w:t></w:r></w:p>',
+          '</w:body></w:document>',
+        ].join(''),
+      });
+      const emptyBothBreaksRes = await convertDocxToPdf(emptyBothBreaksDocx);
+      expect(emptyBothBreaksRes.pageCount).toBe(3);
+      expect(drawn.find((d) => d.text === 'Sau đoạn ngắt')?.y).toBeCloseTo(p1!.y, 3);
+
       // Plain empty <w:p/> without a page break still preserves intentional vertical spacer height.
       drawn.length = 0;
       const spacerDocx = buildDocx({

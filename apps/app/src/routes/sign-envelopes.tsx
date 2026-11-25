@@ -123,14 +123,28 @@ export async function handleEnvelopeCreatedWithWarnings(deps: {
   slug: string;
   orgId?: string | null;
   userId?: string | null;
+  resolveUserScope?: () => Promise<{ orgId?: string | null; userId?: string | null } | null>;
   setCreateOpen: (open: boolean) => void;
   setCreatedDocxNotice: (notice: { envelopeId: string; warnings: readonly SignDocxToPdfWarning[] } | null) => void;
   invalidateEnvelopes: () => Promise<unknown>;
   navigateToEnvelope: (slug: string, envelopeId: string) => Promise<unknown>;
 }): Promise<void> {
   deps.setCreateOpen(false);
-  const scope = { org: deps.orgId ?? (deps.slug || null), userId: deps.userId ?? null };
   const cleanWarnings = sanitizeDocxWarnings(deps.warnings);
+  let resolvedOrgId = deps.orgId ?? null;
+  let resolvedUserId = deps.userId ?? null;
+  if (cleanWarnings.length > 0 && (!resolvedUserId || !resolvedOrgId) && deps.resolveUserScope) {
+    try {
+      const fetched = await deps.resolveUserScope();
+      if (fetched) {
+        resolvedOrgId = resolvedOrgId ?? fetched.orgId ?? null;
+        resolvedUserId = resolvedUserId ?? fetched.userId ?? null;
+      }
+    } catch {
+      // Non-fatal: fail closed by skipping cross-session storage if identity cannot be resolved.
+    }
+  }
+  const scope = { org: resolvedOrgId ?? (deps.slug || null), userId: resolvedUserId };
   if (cleanWarnings.length > 0) {
     saveCreatedDocxWarnings(deps.envelopeId, cleanWarnings, scope);
     deps.setCreatedDocxNotice({ envelopeId: deps.envelopeId, warnings: cleanWarnings });
@@ -1321,6 +1335,17 @@ export function SignEnvelopesPage() {
               slug,
               orgId: currentOrgInfo?.orgId ?? null,
               userId: currentUserId,
+              resolveUserScope:
+                currentUserId && currentOrgInfo?.orgId
+                  ? undefined
+                  : async () => {
+                      if (!hasMeQuery) return null;
+                      const me = await queryClient.fetchQuery(orpc.me.get.queryOptions());
+                      return {
+                        userId: me.userId,
+                        orgId: me.orgs.find((o) => o.slug === slug)?.orgId ?? null,
+                      };
+                    },
               setCreateOpen,
               setCreatedDocxNotice,
               invalidateEnvelopes: () => queryClient.invalidateQueries({ queryKey: ['sign', 'envelopes'] }),

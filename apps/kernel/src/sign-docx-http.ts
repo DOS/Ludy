@@ -383,7 +383,6 @@ async function finalizeSignDocxResult(deps: {
     };
 
     state.entries.set(cacheKey, structuredClone(result), Date.now());
-    state.filenames.delete(cacheKey);
     return result;
   })();
 

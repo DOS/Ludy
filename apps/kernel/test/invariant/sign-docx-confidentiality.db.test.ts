@@ -169,8 +169,8 @@ suite('eSign .docx cross-user polling and unattached file confidentiality invari
     const { orgId: foreignOrgId, slug: foreignSlug } = await createOrg(rt, asUser(foreignOwner), `SignDocxOther ${tag}`);
     await withAdmin((c) =>
       c.query(
-        `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'viewer')`,
-        [orgId, admin, member, member2, viewer],
+        `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'viewer'), ($6, $3, 'member')`,
+        [orgId, admin, member, member2, viewer, foreignOrgId],
       ),
     );
     return { orgId, slug, foreignOrgId, foreignSlug, owner, admin, member, member2, viewer, foreignOwner };
@@ -413,6 +413,17 @@ suite('eSign .docx cross-user polling and unattached file confidentiality invari
     expect(completed.status).toBe(200);
     if (completed.body.status !== 'completed') throw new Error('expected completed');
     const { fileId } = completed.body;
+
+    // Even AFTER finalization warms the in-memory finalized cache, same-org peers AND the uploader in foreignOrgId still receive 404.
+    for (const outsider of [o.owner, o.admin, o.member2]) {
+      const warmDenied = await http.pollDocx(outsider, jobId);
+      expect(warmDenied.status).toBe(404);
+      expect(warmDenied.body).toMatchObject({ code: 'SIGN_DOCX_JOB_NOT_FOUND' });
+    }
+    const crossOrgSameUserPoll = await http.pollDocx(o.member, jobId, o.foreignSlug);
+    expect(crossOrgSameUserPoll.status).toBe(404);
+    expect(crossOrgSameUserPoll.body).toMatchObject({ code: 'SIGN_DOCX_JOB_NOT_FOUND' });
+    expect((await http.pollDocx(o.foreignOwner, jobId, o.foreignSlug)).status).toBe(404);
 
     const fileMeta = await withAdmin((c) =>
       c.query<{ created_by: string; source: string; content_type: string }>(
