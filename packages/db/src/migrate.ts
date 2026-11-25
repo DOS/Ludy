@@ -201,6 +201,149 @@ function isConcurrentCatalogUpdateError(error: unknown): boolean {
   return code === 'XX000' && typeof message === 'string' && message.includes('tuple concurrently updated');
 }
 
+// Revokes grants and RLS policies on Supabase Auth objects that owned-database applyAuthGrants()
+// gave crove_auth_reader prior to Stage 7 contraction. Never called in shared-database mode.
+async function revokeLegacyAuthReaderGrants(client: pg.ClientBase): Promise<void> {
+  await client.query(`DO $$
+    DECLARE
+      v_is_super boolean;
+      v_remaining text;
+      r record;
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'crove_auth_reader')
+         OR pg_catalog.to_regnamespace('auth') IS NULL THEN
+        RETURN;
+      END IF;
+      SELECT COALESCE(rolsuper, false) INTO v_is_super
+      FROM pg_catalog.pg_roles WHERE rolname = current_user;
+      v_is_super := COALESCE(v_is_super, false);
+
+      FOR r IN
+        SELECT n.nspname AS schema_name, c.relname, p.polname
+        FROM pg_catalog.pg_policy p
+        JOIN pg_catalog.pg_class c ON c.oid = p.polrelid
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'auth'
+          AND c.relname IN ('sessions', 'users', 'mfa_factors')
+          AND p.polname = 'crove_auth_reader_select'
+          AND (v_is_super OR pg_catalog.pg_has_role(current_user, c.relowner, 'USAGE'))
+        ORDER BY c.relname
+      LOOP
+        EXECUTE pg_catalog.format('DROP POLICY IF EXISTS %I ON %I.%I', r.polname, r.schema_name, r.relname);
+      END LOOP;
+
+      FOR r IN
+        SELECT DISTINCT n.nspname AS schema_name, c.relname, att.attname, src.rolname AS grantor_name, a.privilege_type
+        FROM pg_catalog.pg_attribute att
+        JOIN pg_catalog.pg_class c ON c.oid = att.attrelid
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        CROSS JOIN LATERAL pg_catalog.aclexplode(att.attacl) a
+        JOIN pg_catalog.pg_roles gr ON gr.oid = a.grantee
+        JOIN pg_catalog.pg_roles src ON src.oid = a.grantor
+        WHERE n.nspname = 'auth'
+          AND c.relname IN ('sessions', 'users', 'mfa_factors')
+          AND att.attnum > 0 AND NOT att.attisdropped
+          AND a.grantee <> c.relowner
+          AND gr.rolname = 'crove_auth_reader'
+          AND (v_is_super OR src.rolname = current_user OR pg_catalog.pg_has_role(current_user, a.grantor, 'USAGE'))
+        ORDER BY c.relname, att.attname, src.rolname, a.privilege_type
+      LOOP
+        EXECUTE pg_catalog.format(
+          'REVOKE %s (%I) ON %I.%I FROM %I GRANTED BY %I',
+          r.privilege_type, r.attname, r.schema_name, r.relname, 'crove_auth_reader', r.grantor_name
+        );
+      END LOOP;
+
+      FOR r IN
+        SELECT DISTINCT n.nspname AS schema_name, c.relname, src.rolname AS grantor_name, a.privilege_type
+        FROM pg_catalog.pg_class c
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        CROSS JOIN LATERAL pg_catalog.aclexplode(c.relacl) a
+        JOIN pg_catalog.pg_roles gr ON gr.oid = a.grantee
+        JOIN pg_catalog.pg_roles src ON src.oid = a.grantor
+        WHERE n.nspname = 'auth'
+          AND c.relname IN ('sessions', 'users', 'mfa_factors')
+          AND a.grantee <> c.relowner
+          AND gr.rolname = 'crove_auth_reader'
+          AND (v_is_super OR src.rolname = current_user OR pg_catalog.pg_has_role(current_user, a.grantor, 'USAGE'))
+        ORDER BY c.relname, src.rolname, a.privilege_type
+      LOOP
+        EXECUTE pg_catalog.format(
+          'REVOKE %s ON TABLE %I.%I FROM %I GRANTED BY %I',
+          r.privilege_type, r.schema_name, r.relname, 'crove_auth_reader', r.grantor_name
+        );
+      END LOOP;
+
+      FOR r IN
+        SELECT DISTINCT n.nspname AS schema_name, src.rolname AS grantor_name, a.privilege_type
+        FROM pg_catalog.pg_namespace n
+        CROSS JOIN LATERAL pg_catalog.aclexplode(n.nspacl) a
+        JOIN pg_catalog.pg_roles gr ON gr.oid = a.grantee
+        JOIN pg_catalog.pg_roles src ON src.oid = a.grantor
+        WHERE n.nspname = 'auth'
+          AND a.grantee <> n.nspowner
+          AND gr.rolname = 'crove_auth_reader'
+          AND (v_is_super OR src.rolname = current_user OR pg_catalog.pg_has_role(current_user, a.grantor, 'USAGE'))
+        ORDER BY src.rolname, a.privilege_type
+      LOOP
+        EXECUTE pg_catalog.format(
+          'REVOKE %s ON SCHEMA %I FROM %I GRANTED BY %I',
+          r.privilege_type, r.schema_name, 'crove_auth_reader', r.grantor_name
+        );
+      END LOOP;
+
+      SELECT pg_catalog.string_agg(desc_text, ', ' ORDER BY desc_text)
+      INTO v_remaining
+      FROM (
+        SELECT DISTINCT pg_catalog.format('policy %s on auth.%s', p.polname, c.relname) AS desc_text
+        FROM pg_catalog.pg_policy p
+        JOIN pg_catalog.pg_class c ON c.oid = p.polrelid
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'auth'
+          AND c.relname IN ('sessions', 'users', 'mfa_factors')
+          AND p.polname = 'crove_auth_reader_select'
+        UNION ALL
+        SELECT DISTINCT pg_catalog.format('column auth.%s.%s (granted by %s)', c.relname, att.attname, src.rolname)
+        FROM pg_catalog.pg_attribute att
+        JOIN pg_catalog.pg_class c ON c.oid = att.attrelid
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        CROSS JOIN LATERAL pg_catalog.aclexplode(att.attacl) a
+        JOIN pg_catalog.pg_roles gr ON gr.oid = a.grantee
+        JOIN pg_catalog.pg_roles src ON src.oid = a.grantor
+        WHERE n.nspname = 'auth'
+          AND c.relname IN ('sessions', 'users', 'mfa_factors')
+          AND att.attnum > 0 AND NOT att.attisdropped
+          AND a.grantee <> c.relowner
+          AND gr.rolname = 'crove_auth_reader'
+        UNION ALL
+        SELECT DISTINCT pg_catalog.format('table auth.%s (granted by %s)', c.relname, src.rolname)
+        FROM pg_catalog.pg_class c
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        CROSS JOIN LATERAL pg_catalog.aclexplode(c.relacl) a
+        JOIN pg_catalog.pg_roles gr ON gr.oid = a.grantee
+        JOIN pg_catalog.pg_roles src ON src.oid = a.grantor
+        WHERE n.nspname = 'auth'
+          AND c.relname IN ('sessions', 'users', 'mfa_factors')
+          AND a.grantee <> c.relowner
+          AND gr.rolname = 'crove_auth_reader'
+        UNION ALL
+        SELECT DISTINCT pg_catalog.format('schema auth (granted by %s)', src.rolname)
+        FROM pg_catalog.pg_namespace n
+        CROSS JOIN LATERAL pg_catalog.aclexplode(n.nspacl) a
+        JOIN pg_catalog.pg_roles gr ON gr.oid = a.grantee
+        JOIN pg_catalog.pg_roles src ON src.oid = a.grantor
+        WHERE n.nspname = 'auth'
+          AND a.grantee <> n.nspowner
+          AND gr.rolname = 'crove_auth_reader'
+      ) leftover_auth;
+      IF v_remaining IS NOT NULL THEN
+        RAISE EXCEPTION
+          'stage 7 contraction failed: legacy role crove_auth_reader still holds auth schema privileges or policies (%): revoke as the grantor/owner or superuser before retrying',
+          v_remaining;
+      END IF;
+    END $$`);
+}
+
 async function resolveMetaSchema(client: pg.ClientBase): Promise<'ludy_meta' | 'crove_meta'> {
   const { rows } = await client.query<{ ok: boolean }>("SELECT pg_catalog.to_regnamespace('ludy_meta') IS NOT NULL AS ok");
   return rows[0]?.ok ? 'ludy_meta' : 'crove_meta';
@@ -560,6 +703,9 @@ export async function migrate(options: MigrateOptions): Promise<string[]> {
             await lockClusterStage7Role(client, { lockWaitMs: options.lockWaitMs });
           }
           await client.query(variant?.sql ?? file.sql);
+          if (!shared && file.name.endsWith('_ludy_kernel_contract_crove_roles_and_gucs.sql')) {
+            await revokeLegacyAuthReaderGrants(client);
+          }
         if (!shared && file.name === '20261015120000_crove_kernel_revoke_temp.sql') {
           // Immutable 20261015120000 predates ADR-0054's ludy_* roles (its filter is NOT LIKE 'crove\_%'), so on a
           // cluster where ludy_* roles already exist it grants them TEMPORARY before revoking PUBLIC. Take TEMPORARY
@@ -1365,6 +1511,7 @@ async function listHardeningViolations(client: pg.ClientBase, shared: boolean): 
   let legacyClusterMarkerMissing = false;
   let legacyDefaultAcls: Array<{ owner: string; schema: string | null; kind: string; grantee: string }> = [];
   let legacyOwnedObjects: Array<{ schema: string; owner: string; kind: string; object: string }> = [];
+  let legacyAuthGrants: Array<{ kind: string; object: string }> = [];
   if (contracted) {
     const { rows: markerRows } = await client.query<{ missing: boolean }>(
       `SELECT NOT EXISTS (
@@ -1535,6 +1682,52 @@ async function listHardeningViolations(client: pg.ClientBase, shared: boolean): 
       [LEGACY_CROVE_ROLES],
     );
     legacyOwnedObjects = ownedObjects;
+    if (!shared) {
+      const { rows: authGrants } = await client.query<{ kind: string; object: string }>(
+        `SELECT DISTINCT x.kind, x.object
+         FROM (
+           SELECT 'policy'::text AS kind, pg_catalog.format('auth.%I (%s)', c.relname, p.polname) AS object
+           FROM pg_catalog.pg_policy p
+           JOIN pg_catalog.pg_class c ON c.oid = p.polrelid
+           JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+           WHERE n.nspname = 'auth'
+             AND c.relname IN ('sessions', 'users', 'mfa_factors')
+             AND p.polname = 'crove_auth_reader_select'
+           UNION ALL
+           SELECT 'column privilege'::text, pg_catalog.format('auth.%I.%I', c.relname, att.attname)
+           FROM pg_catalog.pg_attribute att
+           JOIN pg_catalog.pg_class c ON c.oid = att.attrelid
+           JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+           CROSS JOIN LATERAL pg_catalog.aclexplode(att.attacl) a
+           JOIN pg_catalog.pg_roles gr ON gr.oid = a.grantee
+           WHERE n.nspname = 'auth'
+             AND c.relname IN ('sessions', 'users', 'mfa_factors')
+             AND att.attnum > 0 AND NOT att.attisdropped
+             AND a.grantee <> c.relowner
+             AND gr.rolname = 'crove_auth_reader'
+           UNION ALL
+           SELECT 'table privilege'::text, pg_catalog.format('auth.%I', c.relname)
+           FROM pg_catalog.pg_class c
+           JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+           CROSS JOIN LATERAL pg_catalog.aclexplode(c.relacl) a
+           JOIN pg_catalog.pg_roles gr ON gr.oid = a.grantee
+           WHERE n.nspname = 'auth'
+             AND c.relname IN ('sessions', 'users', 'mfa_factors')
+             AND a.grantee <> c.relowner
+             AND gr.rolname = 'crove_auth_reader'
+           UNION ALL
+           SELECT 'schema privilege'::text, 'auth'::text
+           FROM pg_catalog.pg_namespace n
+           CROSS JOIN LATERAL pg_catalog.aclexplode(n.nspacl) a
+           JOIN pg_catalog.pg_roles gr ON gr.oid = a.grantee
+           WHERE n.nspname = 'auth'
+             AND a.grantee <> n.nspowner
+             AND gr.rolname = 'crove_auth_reader'
+         ) x
+         ORDER BY 1, 2`,
+      );
+      legacyAuthGrants = authGrants;
+    }
   }
   const { rows: dbRows } = await client.query<{ name: string }>('SELECT pg_catalog.quote_ident(pg_catalog.current_database()) AS name');
   const dbName = dbRows[0]?.name ?? 'current_database';
@@ -1575,6 +1768,11 @@ async function listHardeningViolations(client: pg.ClientBase, shared: boolean): 
       (p) =>
         `legacy role ${p.role} still holds direct ${p.kind} privileges in ${p.schema} after Stage 7 contraction; ` +
         `fix: revoke ${p.kind} privileges in ${quoteIdent(p.schema)} from ${quoteIdent(p.role)}`,
+    ),
+    ...legacyAuthGrants.map(
+      (a) =>
+        `legacy role crove_auth_reader still holds ${a.kind} on ${a.object} after Stage 7 contraction; ` +
+        `fix: revoke crove_auth_reader grants and drop crove_auth_reader_select policies on auth`,
     ),
     ...legacyOwnedObjects.map(
       (o) =>
@@ -1760,6 +1958,9 @@ export async function applyAuthGrants(options: AuthGrantsOptions): Promise<void>
             GRANT SELECT (oauth_client_id) ON auth.sessions TO ${readerRole};
           END IF;
         END $grant$;`);
+      if (readerRole === 'ludy_auth_reader') {
+        await revokeLegacyAuthReaderGrants(client);
+      }
       const { rows } = await client.query<{ ok: boolean; invites: boolean }>(
         `SELECT ${kernel}.auth_grants_ready() AS ok, ${kernel}.auth_email_check_ready() AS invites`,
       );

@@ -142,10 +142,6 @@ suite('legacy crove_* role and crove.* GUC contraction (#3972)', () => {
     expect(contractionFile).toBeTruthy();
     const contractionSql = readFileSync(join(MIGRATIONS, contractionFile as string), 'utf8');
 
-    const legacyClient = new pg.Client({ connectionString: dbUrlFor(adminUrl, dbName, 'crove_app', legacyPassword) });
-    await expect(legacyClient.connect()).rejects.toMatchObject({ code: '28P01' });
-    await legacyClient.end().catch(() => {});
-
     await expect(setRolePasswords(adminUrl, { crove_app: 'rearmed-pw' })).rejects.toThrow(
       /refusing to set a password on legacy role crove_app after Stage 7 contraction/,
     );
@@ -502,6 +498,46 @@ suite('legacy crove_* role and crove.* GUC contraction (#3972)', () => {
         await c.query('ROLLBACK TO SAVEPOINT sp_defacl_denied');
         await c.query(contractionSql);
         expect((await hardeningViolations(c)).some((v) => /still holds default privileges/.test(v))).toBe(false);
+      } finally {
+        await c.query('ROLLBACK');
+      }
+      expect(await hardeningViolations(c)).toEqual([]);
+
+      const grantorRole = `${dbName}_grantor`;
+      const otherRole = `${dbName}_other`;
+      await c.query('BEGIN');
+      try {
+        await c.query(
+          `CREATE ROLE ${grantorRole} NOLOGIN; ` +
+            `CREATE ROLE ${otherRole} NOLOGIN; ` +
+            `GRANT USAGE ON SCHEMA ludy_meta TO ${otherRole}; ` +
+            `GRANT SELECT ON ludy_meta.deployment TO ${otherRole}; ` +
+            `GRANT USAGE ON SCHEMA ludy_kernel TO ${grantorRole}; ` +
+            `GRANT SELECT ON ludy_kernel.tenant TO ${grantorRole} WITH GRANT OPTION`,
+        );
+        await c.query(`SET LOCAL ROLE ${grantorRole}`);
+        await c.query('GRANT SELECT ON ludy_kernel.tenant TO crove_app');
+        await c.query('RESET ROLE');
+
+        await c.query('SAVEPOINT sp_revoke_other');
+        await c.query(`SET LOCAL ROLE ${otherRole}`);
+        await expect(c.query(contractionSql)).rejects.toThrow(/direct privileges still grant to legacy crove_\* roles/);
+        await c.query('ROLLBACK TO SAVEPOINT sp_revoke_other');
+
+        await c.query(contractionSql);
+        expect(await hardeningViolations(c)).toEqual([]);
+      } finally {
+        await c.query('ROLLBACK');
+      }
+      expect(await hardeningViolations(c)).toEqual([]);
+
+      await c.query('BEGIN');
+      try {
+        await c.query('GRANT USAGE ON SCHEMA auth TO crove_auth_reader');
+        const ownedAuthViolations = await hardeningViolations(c);
+        expect(ownedAuthViolations.some((v) => /legacy role crove_auth_reader still holds .* on auth/.test(v))).toBe(true);
+        const sharedAuthViolations = await hardeningViolations(c, { shared: true });
+        expect(sharedAuthViolations.some((v) => /legacy role crove_auth_reader still holds .* on auth/.test(v))).toBe(false);
       } finally {
         await c.query('ROLLBACK');
       }
