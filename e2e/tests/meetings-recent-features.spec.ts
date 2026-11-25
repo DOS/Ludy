@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The Meetings screens that landed on 2026-11-25 without a real browser run, end to end with NO model (the default stack has none; the AI screens of the same day are in tests-ai/meetings-vy-ask-open-points.spec.ts):
-// "Ai đã nói" (#4765, talk time worked out in code), the suggestion of a minutes template from the meeting itself (#4772, code first), the download of the transcript as .txt and .srt (#4817), and the
+// "Ai đã nói" (#4765, talk time worked out in code), the suggestion of a minutes template from the meeting itself (#4772, code first), the download of the transcript as .txt, .srt and Word (#4817), and the
 // recording player's speed and the time of a transcript line that moves it (#4816). A meeting with a stored transcript is seeded straight into the database (e2e/lib/meetings-seed.ts: the three lines of the fake
 // model's transcript, Hà at 0 to 10 and 20 to 30 seconds, Nam at 10 to 20); the player needs a real recording, so that meeting is made from a WAV file as meetings-upload-publish.spec.ts does. Its own user and org,
 // created without the sign-up form.
 import { readFileSync } from 'node:fs';
+import { inflateRawSync } from 'node:zlib';
 import { expect, test, type Page } from '@playwright/test';
 import { exec, sql } from '../lib/db.ts';
 import { seedMeeting } from '../lib/meetings-seed.ts';
@@ -96,7 +97,29 @@ test('template suggestion: code reads the title and suggests the briefing templa
   });
 });
 
-test('transcript download: the recorder saves the transcript as plain text and as SRT, built on the server (#4817)', async ({ page }) => {
+// The parts of a .docx read back, by the zip's central directory (each entry inflated), and the paragraphs of its document as plain text (a paragraph's runs joined).
+function docxParts(bytes: Buffer): Map<string, string> {
+  const end = bytes.length - 22;
+  expect(bytes.readUInt32LE(end)).toBe(0x06054b50);
+  const out = new Map<string, string>();
+  let at = bytes.readUInt32LE(end + 16);
+  for (let i = 0; i < bytes.readUInt16LE(end + 10); i++) {
+    const packed = bytes.readUInt32LE(at + 20);
+    const nameLength = bytes.readUInt16LE(at + 28);
+    const local = bytes.readUInt32LE(at + 42);
+    const start = local + 30 + bytes.readUInt16LE(local + 26) + bytes.readUInt16LE(local + 28);
+    out.set(bytes.subarray(at + 46, at + 46 + nameLength).toString('utf8'), inflateRawSync(bytes.subarray(start, start + packed)).toString('utf8'));
+    at += 46 + nameLength;
+  }
+  return out;
+}
+const docxParagraphs = (document: string): string[] =>
+  document
+    .split('</w:p>')
+    .map((paragraph) => [...paragraph.matchAll(/<w:t xml:space="preserve">([^<]*)<\/w:t>/gu)].map((m) => m[1] as string).join(''))
+    .filter((line) => line !== '');
+
+test('transcript download: the recorder saves the transcript as plain text, as SRT and as a Word file, built on the server (#4817)', async ({ page }) => {
   const email = newEmail('meetings-export');
   await signInNewUser(page, email);
   const slug = await createOrg(page, 'Công ty Tải Bản Ghi');
@@ -133,6 +156,19 @@ test('transcript download: the recorder saves the transcript as plain text and a
         '3\n00:00:20,000 --> 00:00:30,000\nHà: Được, họp tiếp tuần sau.\n',
       ].join('\n') + '\n',
     );
+  });
+
+  await test.step('Word: a .docx file with the title, the date and one paragraph per line with its time and speaker', async () => {
+    const download = page.waitForEvent('download');
+    await page.getByTestId('transcript-export-docx').click();
+    const file = await download;
+    expect(file.suggestedFilename()).toMatch(/^Bản ghi - Họp tải bản ghi về - \d{4}-\d{2}-\d{2}\.docx$/);
+    const parts = docxParts(readFileSync(await file.path()));
+    expect([...parts.keys()]).toEqual(expect.arrayContaining(['[Content_Types].xml', 'word/document.xml']));
+    const paragraphs = docxParagraphs(parts.get('word/document.xml') ?? '');
+    expect(paragraphs[0]).toBe('BẢN GHI LỜI CUỘC HỌP');
+    expect(paragraphs[2]).toMatch(/^Ngày \d{2}\/\d{2}\/\d{4}$/);
+    expect(paragraphs.slice(3)).toEqual(['[00:00:00] Hà: Chúng ta chốt giá cũ cho khách A.', '[00:00:10] Nam: Em sẽ gửi báo giá vào thứ sáu.', '[00:00:20] Hà: Được, họp tiếp tuần sau.']);
   });
 
   await test.step('a meeting with no transcript has no download to offer', async () => {
