@@ -4,6 +4,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterAll, describe, expect, it } from 'vitest';
 import { MIN_NAMES, sampleSecrets, scanDir, scanText, secretNames } from '../ci/spa-secrets.mjs';
 
@@ -56,5 +57,10 @@ describe('SPA secret scan', () => {
     expect(scanDir(dir, config)).toEqual([]);
     writeFileSync(join(dir, 'assets', 'chunk.js'), `const t = "${jwt}";`);
     expect(scanDir(dir, config)).toEqual([{ file: join('assets', 'chunk.js'), kind: 'JWT', excerpt: 'eyJh***' }]);
+  });
+
+  it('finds no kernel secret or secret shape in the auth mail templates (#3577)', () => {
+    const templatesDir = fileURLToPath(new URL('../../apps/kernel/src/auth-templates', import.meta.url));
+    expect(scanDir(templatesDir, config)).toEqual([]);
   });
 });

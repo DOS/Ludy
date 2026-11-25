@@ -3,10 +3,13 @@
 // Runs isolated media operations in temporary directories with strict timeouts,
 // signal-based aborts, protocol restrictions, safe container allowlists, and clean error mapping.
 import { execFile } from 'node:child_process';
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { createReadStream, createWriteStream, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { open } from 'node:fs/promises';
+import { pipeline } from 'node:stream/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  MEDIA_JOIN_FRAME,
   MEDIA_LIMITS,
   MEDIA_TIMING,
   type MediaErrorCode,
@@ -561,3 +564,144 @@ export async function processMediaFile(
   };
 }
 
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------
+// Joining the parts of one recording (#3175): a call recorded in several segments arrives as ONE framed body (packages/media-contract/src/join.ts), is cut into one file per part here, and is joined with
+// ffmpeg's `concat` FILTER (not the concat demuxer, which reads file lists and is refused as dangerous above) into one mono Opus, so the answer has the shape and the caps of normalize.
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------
+
+const JOIN_COUNT_BYTES = MEDIA_JOIN_FRAME.countBytes;
+const JOIN_LENGTH_BYTES = MEDIA_JOIN_FRAME.lengthBytes;
+
+/**
+ * Cuts a framed body (count, then length and bytes of each part) into `part-<i>.bin` files in `dir`, and returns their paths in order. The frame lengths are checked against the size of the
+ * file as they are read, so a length that runs past the end, a count outside 1 to the maximum, a part of no bytes and any byte after the last part are all `bad_request`: nothing is guessed.
+ * The parts are copied out from the LAST to the first and the body is cut back after each copy, so the disk holds the body and one part at most, never the body twice.
+ */
+export async function splitJoinFrames(framedPath: string, dir: string, signal?: AbortSignal): Promise<string[]> {
+  const total = statSync(framedPath).size;
+  const handle = await open(framedPath, 'r+');
+  const bad = (what: string) => new MediaExecutionError('bad_request', `The parts of the join are not framed correctly (${what})`);
+  try {
+    const read = async (at: number, bytes: number): Promise<Buffer> => {
+      if (at + bytes > total) throw bad('the body ends inside a frame');
+      const out = Buffer.alloc(bytes);
+      const { bytesRead } = await handle.read(out, 0, bytes, at);
+      if (bytesRead !== bytes) throw bad('the body ends inside a frame');
+      return out;
+    };
+    const count = (await read(0, JOIN_COUNT_BYTES)).readUInt32BE(0);
+    if (count < 1 || count > MEDIA_LIMITS.maxJoinParts) throw bad(`${count} parts`);
+    // First every frame is read and checked (offsets only, nothing copied): the whole body must be framed exactly before a byte is written.
+    const frames: Array<{ start: number; length: number }> = [];
+    let at = JOIN_COUNT_BYTES;
+    for (let i = 0; i < count; i++) {
+      const length = Number((await read(at, JOIN_LENGTH_BYTES)).readBigUInt64BE(0));
+      at += JOIN_LENGTH_BYTES;
+      if (!Number.isSafeInteger(length) || length < 1 || at + length > total) throw bad(`part ${i + 1}`);
+      frames.push({ start: at, length });
+      at += length;
+    }
+    if (at !== total) throw bad('bytes after the last part');
+    const paths = frames.map((_, i) => join(dir, `part-${i}.bin`));
+    try {
+      for (let i = frames.length - 1; i >= 0; i--) {
+        if (signal?.aborted) throw new MediaExecutionError('timeout', 'Request was aborted');
+        const frame = frames[i] as { start: number; length: number };
+        await pipeline(createReadStream(framedPath, { start: frame.start, end: frame.start + frame.length - 1 }), createWriteStream(paths[i] as string, { mode: 0o600 }));
+        // The tail that was just copied is not needed any more; the frame headers before it are untouched.
+        await handle.truncate(frame.start - JOIN_LENGTH_BYTES);
+      }
+    } catch (error) {
+      // The scratch of a sandbox is capped: a body that does not fit twice is too large for a join, not an internal error.
+      if ((error as { code?: string } | null)?.code === 'ENOSPC') throw new MediaExecutionError('too_large', 'The parts of the recording are too large to join here');
+      throw error;
+    }
+    return paths;
+  } finally {
+    await handle.close().catch(() => undefined);
+  }
+}
+
+// The ffmpeg demuxer to force on an input, from the container name the probe reported. Only the containers probeFile allows have one; any other name is refused here too, so an input can never be left to ffmpeg's own guess.
+const INPUT_DEMUXERS: ReadonlyMap<string, string> = new Map([
+  ['ogg', 'ogg'],
+  ['opus', 'ogg'],
+  ['matroska', 'matroska'],
+  ['webm', 'matroska'],
+  ['mov', 'mov'],
+  ['mp4', 'mov'],
+  ['m4a', 'mov'],
+  ['wav', 'wav'],
+  ['mp3', 'mp3'],
+  ['aac', 'aac'],
+  ['flac', 'flac'],
+]);
+export function demuxerOf(formatName: string): string {
+  const demuxer = INPUT_DEMUXERS.get(formatName.split(',')[0] ?? '');
+  if (!demuxer) throw new MediaExecutionError('malformed_media', 'Unsupported or unsafe media format');
+  return demuxer;
+}
+
+// The arguments of the join. ffmpeg applies -protocol_whitelist and -f to the NEXT input only, so every input carries its own (runCommand's one whitelist covers the first input alone): the file protocol only, and the
+// demuxer the probe named instead of one ffmpeg guesses from the bytes. Only our own temp file names reach ffmpeg.
+export function joinArgs(inputs: ReadonlyArray<{ path: string; format: string }>, graph: string, bitrateKbps: number, outputPath: string): string[] {
+  return [
+    '-y',
+    '-v',
+    'error',
+    ...inputs.flatMap((input) => ['-protocol_whitelist', 'file', '-f', demuxerOf(input.format), '-i', input.path]),
+    '-filter_complex',
+    graph,
+    '-map',
+    '[out]',
+    '-t',
+    String(MEDIA_LIMITS.maxDurationSeconds + 60),
+    '-c:a',
+    'libopus',
+    '-b:a',
+    `${bitrateKbps}k`,
+    '-ac',
+    '1',
+    '-ar',
+    String(MEDIA_LIMITS.defaultOpusSampleRate),
+    outputPath,
+  ];
+}
+
+export async function joinAudioFiles(framedPath: string, dir: string, outputPath: string, options?: NormalizeOptions): Promise<MediaNormalizeResult> {
+  const parts = await splitJoinFrames(framedPath, dir, options?.signal);
+  // The framed body was cut back to its first frame header as the parts were copied out; nothing of it is needed now.
+  rmSync(framedPath, { force: true });
+  // Each part must hold audio and be a container the sandbox allows (probeFile), and the length of the whole is what the parts really hold (measureFile decodes), against the same duration cap as one recording.
+  let seconds = 0;
+  const formats: string[] = [];
+  for (const part of parts) {
+    const measured = await measureFile(part, options);
+    formats.push(demuxerOf(measured.format));
+    if (!measured.hasAudio) throw new MediaExecutionError('no_audio_stream', 'A part of the recording contains no audio stream to join');
+    seconds += measured.durationSeconds;
+    if (seconds > MEDIA_LIMITS.maxDurationSeconds + 60) {
+      throw new MediaExecutionError('too_large', `The parts add up to more than the maximum allowed duration (${MEDIA_LIMITS.maxDurationSeconds}s)`);
+    }
+  }
+  const bitrateKbps = options?.bitrateKbps ?? MEDIA_LIMITS.defaultOpusBitrateKbps;
+  // Every part to the same rate and one channel first (the concat filter wants the same format on all inputs), then joined in order. Only our own temp file names reach ffmpeg.
+  const labels = parts.map((_, i) => `[a${i}]`);
+  const graph = [
+    ...parts.map((_, i) => `[${i}:a:0]aresample=${MEDIA_LIMITS.defaultOpusSampleRate},aformat=sample_fmts=fltp:channel_layouts=mono,asetpts=N/SR/TB[a${i}]`),
+    `${labels.join('')}concat=n=${parts.length}:v=0:a=1[out]`,
+  ].join(';');
+  // The timestamps of every part start at its own first sample (asetpts), so a gap or jump inside a part cannot stretch the output, and the output is cut at the duration cap as a second guard.
+  const args = joinArgs(parts.map((path, i) => ({ path, format: formats[i] as string })), graph, bitrateKbps, outputPath);
+  await runCommand('ffmpeg', args, options);
+  const outProbe = await probeFile(outputPath, options);
+  return {
+    // What the parts really hold (measureFile decoded them), unless the output measures shorter; never the container's word for a longer one.
+    durationSeconds: outProbe.durationSeconds > 0 ? Math.min(outProbe.durationSeconds, seconds + 1) : seconds,
+    format: 'opus',
+    channels: 1,
+    sampleRate: 48000,
+    bitrateKbps,
+    audioBase64: readFileSync(outputPath).toString('base64'),
+  };
+}

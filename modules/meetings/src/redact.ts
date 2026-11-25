@@ -19,7 +19,7 @@ import {
   zTranscriptRedacted,
 } from '@ludy/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
-import { itemFlags } from './results.ts';
+import { flagsAfterEdit } from './results.ts';
 import { ROLES, openMeeting, userOf } from './transcript.ts';
 
 type Trx = QueryContext['trx'];
@@ -742,7 +742,7 @@ export function createRedactCommands(dropDraftTranslations: DropDraftTranslation
         title: nextTitle,
         whoDrafted: redactedByKey.get(`item.who:${itemId}`) ?? row.who_drafted,
         whenDrafted: redactedByKey.get(`item.when:${itemId}`) ?? row.when_drafted,
-        flags: redactedTitle !== undefined ? itemFlags(nextTitle) : existingFlags,
+        flags: redactedTitle !== undefined ? flagsAfterEdit(existingFlags, nextTitle) : existingFlags,
       });
     }
 
