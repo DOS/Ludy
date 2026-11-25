@@ -115,7 +115,7 @@ import {
   type SignAi,
 } from './sign-ai.ts';
 import { draftProjectAcceptanceSummary, signAcceptanceAi } from './sign-acceptance-ai.ts';
-import { dealUpdateStatusOf, runMeetingDealUpdate, adherenceStatusOf, runMeetingAdherence, assigneeStatusOf, runMeetingAssignee, briefStatusOf, digestStatusOf, followupNoteStatusOf, runMeetingBrief, runMeetingFollowupNote, runMeetingTitle, runMeetingDigest, askStatusOf, notesVyStatusOf, readNotesVyResults, runLiveNotes, runMeetingAsk, runMeetingChapters, runMeetingSummary, runMeetingTranslation, runNotesEnhance, runNotesOrganize, runNotesSuggestTodos, runNotesSummarize, runNotesTodoPlan, runProjectsTasksFromNote, runProjectsTasksFromSource, runTranscriptTranslation, tasksFromNoteStatusOf, tasksFromSourceStatusOf, transcriptTranslationStatusOf, translationStatusOf, type ModelPort, runMeetingCommitments, runMeetingOpenPoints, runMeetingSalesInsight, salesInsightStatusOf, runMeetingTemplateSuggest } from './member-vy-ports.ts';
+import { dealUpdateStatusOf, runMeetingDealUpdate, adherenceStatusOf, runMeetingAdherence, assigneeStatusOf, runMeetingAssignee, briefStatusOf, digestStatusOf, followupNoteStatusOf, runMeetingBrief, runMeetingFollowupNote, runMeetingTitle, runMeetingDigest, askStatusOf, notesVyStatusOf, readNotesVyResults, runLiveNotes, runMeetingAsk, runMeetingChapters, runMeetingSummary, runMeetingTranslation, runNotesEnhance, runNotesOrganize, runNotesSuggestTodos, runNotesSummarize, runNotesTodoPlan, runProjectsTasksFromNote, runProjectsTasksFromSource, runTranscriptTranslation, tasksFromNoteStatusOf, tasksFromSourceStatusOf, transcriptTranslationStatusOf, translationStatusOf, type ModelPort, runMeetingCommitments, runMeetingLabelSuggest, runMeetingOpenPoints, runMeetingSalesInsight, salesInsightStatusOf, runMeetingTemplateSuggest } from './member-vy-ports.ts';
 import { draftReorder, stockAi, suggestItems, suggestMarketplaceItems } from './stock-ai.ts';
 import { MARKETPLACE_AUTHORIZED_ADAPTERS, MARKETPLACE_FEE_CYCLE_DAYS, misaChannelProvider, MarketplaceProviderError, SANDBOX_MARKETPLACE_SECRET, type EInvoiceSuggestSource, type MarketplaceProvider, type MarketplaceTestResult, type MarketplaceSuggestSource, type MarketplaceProposalFacts, type ReorderSource, type SuggestSource } from '@ludy/mod-finance';
 import { cashForecastAi, explainCashForecast } from './finance-cash-forecast-ai.ts';
@@ -2021,6 +2021,12 @@ export function createRpcHandler(
         list: os.meetings.label.list.handler(meetingsQuery('meetings.label.list')),
         add: os.meetings.label.add.handler(meetingsCommand('meetings.label.add')),
         remove: os.meetings.label.remove.handler(meetingsCommand('meetings.label.remove')),
+        // The recorder's Vy suggesting up to three labels (#5010): `suggestStatus` feeds the button, `suggest` runs the recorder's own Vy once over the title and the labels the recorder already reads and returns the checked
+        // suggestions to the browser; nothing is stored. The pick is `add`. See member-vy-ports.ts.
+        suggestStatus: os.meetings.label.suggestStatus.handler(meetingsQuery('meetings.label.suggest_status')),
+        suggest: os.meetings.label.suggest.handler(({ context, input }) =>
+          inMeetings(context, (orgId, actor) => runMeetingLabelSuggest({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: summaries }, orgId, actor, input.meetingId)),
+        ),
       },
       // The Today view (#3955): the member's own agenda for today with the facts of each event's brief, read as the member in one call (no model, nothing in the background); see modules/meetings/src/today.ts.
       today: {

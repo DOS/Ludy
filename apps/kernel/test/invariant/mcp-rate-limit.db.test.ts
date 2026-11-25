@@ -76,13 +76,15 @@ describe.skipIf(!ADMIN)('mcp_rate_limit DB invariants (#3978)', () => {
   });
 
   it('locks down table privileges, enables RLS with zero policies, installs agent_write_guard, and grants execute only to app', async () => {
-    const { rows: execRows } = await auditRoleFunctionExecute(
+    const { rows: execRows, activeAllowed } = await auditRoleFunctionExecute(
       adminClient,
       dbIds,
       'crove_kernel.mcp_rate_limit_take(text,text,integer,integer)',
       ['crove_app'],
       'non_system',
     );
+    // The migration grants the function to the app login (20270324170000), so that role must show as able to run it: the audit saw the role and the function (#5033).
+    expect(execRows.some((r) => r.rolname === activeAllowed[0] && r.ok), `active role ${activeAllowed[0]} executes mcp_rate_limit_take`).toBe(true);
     expect(execRows.filter((r) => r.ok !== r.expected)).toEqual([]);
 
     const publicExec = await adminClient.query<{ ok: boolean }>(
@@ -97,6 +99,8 @@ describe.skipIf(!ADMIN)('mcp_rate_limit DB invariants (#3978)', () => {
       ['SELECT', 'INSERT', 'UPDATE', 'DELETE'],
       'non_system',
     );
+    // The audit covers every non-system role and the four rights (the app, worker and tenant logins exist in the test cluster), so it cannot come back empty (#5033).
+    expect(privRows.length).toBeGreaterThan(0);
     expect(privRows.filter((r) => r.ok)).toEqual([]);
 
     const proc = await adminClient.query<{ prosecdef: boolean; proconfig: string[] | null }>(

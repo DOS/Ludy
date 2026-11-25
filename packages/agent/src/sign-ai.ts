@@ -2436,29 +2436,51 @@ function normalizeDecimalAmount(raw: string | null | undefined): string | null {
   }
 }
 
-function parseQuoteDecimalCandidates(rawQuote: string): DecimalValue[] {
-  const norm = normalizeBaseText(rawQuote);
+function parseTokenDecimalCandidates(rawToken: string): DecimalValue[] {
+  const tok = rawToken.replace(/[.,]+$/, '');
+  if (!tok) return [];
+  const forms: string[] = [];
+  if (/^\d+(\.\d+)?$/.test(tok)) forms.push(tok);
+  if (/^\d+(,\d+)$/.test(tok)) forms.push(tok.replace(',', '.'));
+  if (/^\d{1,3}(\.\d{3})+$/.test(tok)) forms.push(tok.replace(/\./g, ''));
+  if (/^\d{1,3}(,\d{3})+$/.test(tok)) forms.push(tok.replace(/,/g, ''));
+  if (/^\d{1,3}(\.\d{3})+,\d+$/.test(tok)) forms.push(tok.replace(/\./g, '').replace(',', '.'));
+  if (/^\d{1,3}(,\d{3})+\.\d+$/.test(tok)) forms.push(tok.replace(/,/g, ''));
   const out: DecimalValue[] = [];
-  for (const m of norm.matchAll(/\d[\d.,]*/g)) {
-    const tok = m[0]?.replace(/[.,]+$/, '') ?? '';
-    if (!tok) continue;
-    const forms: string[] = [];
-    if (/^\d+(\.\d+)?$/.test(tok)) forms.push(tok);
-    if (/^\d+(,\d+)$/.test(tok)) forms.push(tok.replace(',', '.'));
-    if (/^\d{1,3}(\.\d{3})+$/.test(tok)) forms.push(tok.replace(/\./g, ''));
-    if (/^\d{1,3}(,\d{3})+$/.test(tok)) forms.push(tok.replace(/,/g, ''));
-    if (/^\d{1,3}(\.\d{3})+,\d+$/.test(tok)) forms.push(tok.replace(/\./g, '').replace(',', '.'));
-    if (/^\d{1,3}(,\d{3})+\.\d+$/.test(tok)) forms.push(tok.replace(/,/g, ''));
-    for (const f of forms) {
-      try {
-        const d = new Decimal(f);
-        if (d.isFinite() && !d.isNegative()) out.push(d);
-      } catch {
-        // Ignore unparseable token variant.
-      }
+  for (const f of forms) {
+    try {
+      const d = new Decimal(f);
+      if (d.isFinite() && !d.isNegative()) out.push(d);
+    } catch {
+      // Ignore unparseable token variant.
     }
   }
   return out;
+}
+
+function extractNumericTokenCandidateGroups(
+  rawQuote: string,
+  options?: { readonly excludePercentAndRatio?: boolean },
+): DecimalValue[][] {
+  const norm = normalizeBaseText(rawQuote);
+  const groups: DecimalValue[][] = [];
+  for (const m of norm.matchAll(/\d[\d.,]*/g)) {
+    const tok = m[0] ?? '';
+    if (options?.excludePercentAndRatio && m.index !== undefined) {
+      const before = norm.slice(0, m.index);
+      const after = norm.slice(m.index + tok.length);
+      if (/^(?:[ \t]*%|\/\d)/.test(after) || /\d\/$/.test(before)) {
+        continue;
+      }
+    }
+    const candidates = parseTokenDecimalCandidates(tok);
+    if (candidates.length > 0) groups.push(candidates);
+  }
+  return groups;
+}
+
+function parseQuoteDecimalCandidates(rawQuote: string): DecimalValue[] {
+  return extractNumericTokenCandidateGroups(rawQuote).flat();
 }
 
 export function isAmountGroundedInQuote(canonicalDecimalStr: string, rawQuote: string): boolean {
@@ -2511,8 +2533,9 @@ const ISO_CURRENCY_SET: ReadonlySet<string> = new Set([
 ]);
 
 // Uppercase ISO codes that also occur as everyday prose words or acronyms (e.g. "ALL RIGHTS RESERVED",
-// "bản vẽ CAD", "PHP developer", "ron cao su") are grounded ONLY via explicit currency symbols/names
-// or amount-adjacent tokens (e.g. "50,000 PHP", "CAD 100"), never from bare prose occurrences.
+// "bản vẽ CAD", "PHP developer", "ron cao su", or Vietnamese "HKD" = "Hộ kinh doanh" / household business)
+// are grounded ONLY via explicit currency symbols/names or amount-adjacent tokens (e.g. "50,000 PHP",
+// "CAD 100", "50,000 HKD", "HK$100"), never from bare prose occurrences.
 const PROSE_AMBIGUOUS_ISO_CODES: ReadonlySet<string> = new Set([
   ...Array.from(AMBIGUOUS_LOWERCASE_CURRENCIES, (c) => c.toUpperCase()),
   'AMD',
@@ -2524,6 +2547,7 @@ const PROSE_AMBIGUOUS_ISO_CODES: ReadonlySet<string> = new Set([
   'CAD',
   'CDF',
   'GIP',
+  'HKD',
   'IRR',
   'ISK',
   'KPW',
@@ -2546,21 +2570,20 @@ const PROSE_AMBIGUOUS_ISO_CODES: ReadonlySet<string> = new Set([
 const CURRENCY_MARKER_RES_BY_CODE: Readonly<Record<string, readonly RegExp[]>> = {
   USD: [
     /(?<![\p{L}])us\$(?![\p{L}])/u,
-    /(?<![\p{L}$])\$(?![\p{L}])/u,
     /(?<![\p{L}])(?:đô la mỹ|do la my|us dollars?|u\.s\. dollars?|american dollars?)(?![\p{L}])/u,
   ],
   EUR: [/€/u, /(?<![\p{L}])euros?(?![\p{L}])/u],
-  SGD: [/(?<![\p{L}])s\$(?![\p{L}])/u, /(?<![\p{L}])singapore dollars?(?![\p{L}])/u],
+  SGD: [/(?<![\p{L}])(?:s|sgd ?)\$(?![\p{L}])/u, /(?<![\p{L}])singapore dollars?(?![\p{L}])/u],
   JPY: [/¥/u, /(?<![\p{L}])(?:yên nhật|japanese yen|yen)(?![\p{L}])/u],
   GBP: [/£/u, /(?<![\p{L}])(?:british pounds?|pounds? sterling)(?![\p{L}])/u],
-  AUD: [/(?<![\p{L}])a\$(?![\p{L}])/u, /(?<![\p{L}])australian dollars?(?![\p{L}])/u],
+  AUD: [/(?<![\p{L}])(?:a|aud ?)\$(?![\p{L}])/u, /(?<![\p{L}])australian dollars?(?![\p{L}])/u],
   KRW: [/₩/u, /(?<![\p{L}])(?:south )?korean won(?![\p{L}])/u],
   CNY: [/(?<![\p{L}])(?:rmb|nhân dân tệ|nhan dan te|chinese yuan)(?![\p{L}])/u],
   THB: [/฿/u, /(?<![\p{L}])thai baht(?![\p{L}])/u],
-  CAD: [/(?<![\p{L}])c\$(?![\p{L}])/u, /(?<![\p{L}])canadian dollars?(?![\p{L}])/u],
-  HKD: [/(?<![\p{L}])hk\$(?![\p{L}])/u, /(?<![\p{L}])hong kong dollars?(?![\p{L}])/u],
-  NZD: [/(?<![\p{L}])nz\$(?![\p{L}])/u, /(?<![\p{L}])new zealand dollars?(?![\p{L}])/u],
-  TWD: [/(?<![\p{L}])nt\$(?![\p{L}])/u, /(?<![\p{L}])(?:ntd|new taiwan dollars?)(?![\p{L}])/u],
+  CAD: [/(?<![\p{L}])(?:c|cad ?)\$(?![\p{L}])/u, /(?<![\p{L}])canadian dollars?(?![\p{L}])/u],
+  HKD: [/(?<![\p{L}])(?:hk|hkd ?)\$(?![\p{L}])/u, /(?<![\p{L}])hong kong dollars?(?![\p{L}])/u],
+  NZD: [/(?<![\p{L}])(?:nz|nzd ?)\$(?![\p{L}])/u, /(?<![\p{L}])new zealand dollars?(?![\p{L}])/u],
+  TWD: [/(?<![\p{L}])(?:nt|twd ?)\$(?![\p{L}])/u, /(?<![\p{L}])(?:ntd|new taiwan dollars?)(?![\p{L}])/u],
   CHF: [/(?<![\p{L}])swiss francs?(?![\p{L}])/u],
   INR: [/₹/u, /(?<![\p{L}])indian rupees?(?![\p{L}])/u],
   NOK: [/(?<![\p{L}])norwegian kron(?:e|er)(?![\p{L}])/u],
@@ -2577,7 +2600,7 @@ const CURRENCY_MARKER_RES_BY_CODE: Readonly<Record<string, readonly RegExp[]>> =
 // may still match case-insensitively (e.g. "50,000 usd", "10,000 eur", "50,000 Usd").
 const CASE_INSENSITIVE_MAJOR_ISO_CODES: ReadonlySet<string> = new Set([
   'USD', 'EUR', 'SGD', 'JPY', 'GBP', 'AUD', 'KRW', 'CNY', 'THB',
-  'HKD', 'NZD', 'TWD', 'CHF', 'INR', 'NOK', 'MYR', 'IDR', 'SEK',
+  'NZD', 'TWD', 'CHF', 'INR', 'NOK', 'MYR', 'IDR', 'SEK',
   'DKK', 'PLN', 'CZK', 'HUF', 'MXN', 'BRL', 'ZAR', 'ILS', 'AED',
   'QAR', 'KWD',
 ]);
@@ -2592,8 +2615,43 @@ const MARKER_CURRENCY_ENTRIES = Object.entries(CURRENCY_MARKER_RES_BY_CODE);
 
 const LOWER_THREE_LETTER_TOKEN_RE = /(?<![\p{L}])[a-z]{3}(?![\p{L}])/gu;
 const UPPER_THREE_LETTER_TOKEN_RE = /(?<![\p{L}])[A-Z]{3}(?![\p{L}])/gu;
-const AMOUNT_BEFORE_ISO_RE = /(?<![\p{L}\p{N}.,/])\d+(?:[.,]\d+)* ?([A-Z]{3})(?![\p{L}])/gu;
-const ISO_BEFORE_AMOUNT_RE = /(?<![\p{L}])([A-Z]{3}) ?:? ?\d+(?:[.,]\d+)*(?![\p{L}\p{N}]|[.,]\d| ?%)/gu;
+const AMOUNT_BEFORE_ISO_RE = /(?<![\p{L}\p{N}.,/])\d+(?:[.,]\d+)* ?([A-Za-z]{3})(?![\p{L}])/gu;
+const ISO_BEFORE_AMOUNT_RE = /(?<![\p{L}])([A-Za-z]{3}) ?:? ?\d+(?:[.,]\d+)*(?![\p{L}\p{N}]|[.,]\d| ?%|\/\d)/gu;
+const BARE_DOLLAR_TOKEN_RE = /(?<![\p{L}$])\$(?![\p{L}])/gu;
+const DOLLAR_PROSE_QUALIFIER_ALLOW_LOWER = new Set(['CAD', 'HKD']);
+// Prose-ambiguous codes (such as HKD for Vietnamese "Hộ kinh doanh") still ground case-insensitively when directly
+// adjacent to an amount (e.g. "50,000 hkd." or "hkd 50,000"), never when appearing alone in prose.
+const PROSE_CASE_INSENSITIVE_AMOUNT_ADJACENT_CODES = new Set(['HKD']);
+
+function isMatchedAmountAdjacentIsoToken(rawToken: string): string | null {
+  const upper = rawToken.toUpperCase();
+  if (!ISO_CURRENCY_SET.has(upper)) return null;
+  if (rawToken === upper || PROSE_CASE_INSENSITIVE_AMOUNT_ADJACENT_CODES.has(upper)) {
+    return upper;
+  }
+  return null;
+}
+
+function findUnqualifiedUsdDollarSpans(preservedLineWise: string): Array<{ start: number; end: number }> {
+  const spans: Array<{ start: number; end: number }> = [];
+  for (const m of preservedLineWise.matchAll(BARE_DOLLAR_TOKEN_RE)) {
+    const idx = m.index ?? 0;
+    const before = preservedLineWise.slice(Math.max(0, idx - 16), idx);
+    const prefix = /(?<![\p{L}])([A-Za-z]{3})\s*$/u.exec(before)?.[1];
+    if (prefix) {
+      const up = prefix.toUpperCase();
+      if (
+        ISO_CURRENCY_SET.has(up) &&
+        up !== 'USD' &&
+        (prefix === up || !PROSE_AMBIGUOUS_ISO_CODES.has(up) || DOLLAR_PROSE_QUALIFIER_ALLOW_LOWER.has(up))
+      ) {
+        continue;
+      }
+    }
+    spans.push({ start: idx, end: idx + m[0].length });
+  }
+  return spans;
+}
 
 const EXPLICIT_VND_UNIT_RE =
   /(?<![\p{L}])(?:vnd|vnđ|việt nam đồng|viet nam dong|vietnam dong)(?![\p{L}])|(?<=\d(?: ?(?:nghìn|ngàn|nghin|ngan|triệu|trieu|tr|tỷ|ty|tỉ|ti|k|m|mn|bn|thousand|million|billion) ))đồng(?![\p{L}])(?! (?:tiền|ý|hồ|thời|nhất|loạt|lòng|bộ|chí)(?![\p{L}]))|(?<=\d ?)đồng(?![\p{L}])(?! (?:tiền|ý|hồ|thời|nhất|loạt|lòng|bộ|chí)(?![\p{L}]))|(?<=\d ?)đ(?![\p{L}])|₫/u;
@@ -2604,6 +2662,7 @@ function hasExplicitVnd(rawText: string): boolean {
 
 function extractCurrencySignals(rawText: string): {
   norm: string;
+  hasUnqualifiedUsdDollar: boolean;
   bareLowerTokens: Set<string>;
   bareUpperTokens: Set<string>;
   amountAdjacentUpperTokens: Set<string>;
@@ -2611,6 +2670,7 @@ function extractCurrencySignals(rawText: string): {
   const preserved = normalizePreservingCase(rawText);
   const preservedLineWise = preserved.replace(/[^\S\r\n]+/g, ' ');
   const norm = preservedLineWise.replace(/\s+/g, ' ').trim().replace(/\s*%/g, '%').toLowerCase();
+  const hasUnqualifiedUsdDollar = findUnqualifiedUsdDollarSpans(preservedLineWise).length > 0;
   const bareLowerTokens = new Set<string>();
   for (const m of norm.matchAll(LOWER_THREE_LETTER_TOKEN_RE)) {
     bareLowerTokens.add(m[0]!);
@@ -2621,23 +2681,29 @@ function extractCurrencySignals(rawText: string): {
   }
   const amountAdjacentUpperTokens = new Set<string>();
   for (const m of preservedLineWise.matchAll(AMOUNT_BEFORE_ISO_RE)) {
-    amountAdjacentUpperTokens.add(m[1]!);
+    const code = isMatchedAmountAdjacentIsoToken(m[1]!);
+    if (code) amountAdjacentUpperTokens.add(code);
   }
   for (const m of preservedLineWise.matchAll(ISO_BEFORE_AMOUNT_RE)) {
-    amountAdjacentUpperTokens.add(m[1]!);
+    const code = isMatchedAmountAdjacentIsoToken(m[1]!);
+    if (code) amountAdjacentUpperTokens.add(code);
   }
-  return { norm, bareLowerTokens, bareUpperTokens, amountAdjacentUpperTokens };
+  return { norm, hasUnqualifiedUsdDollar, bareLowerTokens, bareUpperTokens, amountAdjacentUpperTokens };
 }
 
 function isCurrencyGroundedInSignals(
   code: string,
   norm: string,
+  hasUnqualifiedUsdDollar: boolean,
   bareLowerTokens: ReadonlySet<string>,
   bareUpperTokens: ReadonlySet<string>,
   amountAdjacentUpperTokens: ReadonlySet<string>,
 ): boolean {
   if (code === 'VND') return true;
   if (!ISO_CURRENCY_SET.has(code)) return false;
+  if (code === 'USD' && hasUnqualifiedUsdDollar) {
+    return true;
+  }
   const markers = CURRENCY_MARKER_RES_BY_CODE[code];
   if (markers && markers.some((re) => re.test(norm))) {
     return true;
@@ -2655,13 +2721,25 @@ export function isCurrencyGroundedInText(currencyCode: string, rawText: string):
   const code = currencyCode.trim().toUpperCase();
   if (code === 'VND') return true;
   if (!ISO_CURRENCY_SET.has(code)) return false;
-  const { norm, bareLowerTokens, bareUpperTokens, amountAdjacentUpperTokens } = extractCurrencySignals(rawText);
-  return isCurrencyGroundedInSignals(code, norm, bareLowerTokens, bareUpperTokens, amountAdjacentUpperTokens);
+  const { norm, hasUnqualifiedUsdDollar, bareLowerTokens, bareUpperTokens, amountAdjacentUpperTokens } =
+    extractCurrencySignals(rawText);
+  return isCurrencyGroundedInSignals(
+    code,
+    norm,
+    hasUnqualifiedUsdDollar,
+    bareLowerTokens,
+    bareUpperTokens,
+    amountAdjacentUpperTokens,
+  );
 }
 
 function groundedForeignCurrencies(rawText: string): Set<string> {
-  const { norm, bareLowerTokens, bareUpperTokens, amountAdjacentUpperTokens } = extractCurrencySignals(rawText);
+  const { norm, hasUnqualifiedUsdDollar, bareLowerTokens, bareUpperTokens, amountAdjacentUpperTokens } =
+    extractCurrencySignals(rawText);
   const found = new Set<string>();
+  if (hasUnqualifiedUsdDollar) {
+    found.add('USD');
+  }
   for (const [code, markers] of MARKER_CURRENCY_ENTRIES) {
     if (markers.some((re) => re.test(norm))) {
       found.add(code);
@@ -2685,6 +2763,281 @@ function groundedForeignCurrencies(rawText: string): Set<string> {
   return found;
 }
 
+const SENTENCE_ABBREVIATIONS: ReadonlySet<string> = new Set([
+  'mr',
+  'mrs',
+  'ms',
+  'dr',
+  'prof',
+  'sr',
+  'jr',
+  'st',
+  'co',
+  'corp',
+  'inc',
+  'ltd',
+  'llc',
+  'no',
+  'nos',
+  'art',
+  'sec',
+  'cl',
+  'vol',
+  'approx',
+  'est',
+  'max',
+  'min',
+  'ref',
+  'etc',
+  'vs',
+  'tp',
+  'tt',
+  'cp',
+  'tnhh',
+  'mtv',
+  'qđ',
+]);
+
+function splitSentenceClausesPreservingAbbreviations(text: string): string[] {
+  const parts: string[] = [];
+  let start = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (ch !== '.' && ch !== '!' && ch !== '?') continue;
+    let end = i + 1;
+    while (end < text.length && (text[end] === '.' || text[end] === '!' || text[end] === '?')) {
+      end += 1;
+    }
+    if (end >= text.length || !/\s/.test(text[end]!)) {
+      i = end - 1;
+      continue;
+    }
+    if (ch === '.') {
+      const beforeDot = text.slice(start, i + 1);
+      // Skip dotted initialisms ("U.S.", "e.g."), single-letter initials ("P.", "Q."), and common abbreviations ("No.", "Co.").
+      if (/(?:^|[\s(])(?:\p{L}\.){1,}$/u.test(beforeDot)) {
+        i = end - 1;
+        continue;
+      }
+      const wordMatch = /([\p{L}]+)\.$/u.exec(beforeDot);
+      if (wordMatch && SENTENCE_ABBREVIATIONS.has(wordMatch[1]!.toLowerCase())) {
+        i = end - 1;
+        continue;
+      }
+    }
+    const piece = text.slice(start, end).trim();
+    if (piece.length > 0) parts.push(piece);
+    while (end < text.length && /\s/.test(text[end]!)) {
+      end += 1;
+    }
+    start = end;
+    i = end - 1;
+  }
+  const tail = text.slice(start).trim();
+  if (tail.length > 0) parts.push(tail);
+  return parts;
+}
+
+function splitCurrencyClauses(preservedQuote: string): string[] {
+  const collapsedDollarBreaks = preservedQuote.replace(
+    /\b(AUD|CAD|HKD|NZD|SGD|TWD|USD|US)[ \t]*[\r\n]+[ \t]*(?=\$)/gi,
+    '$1 ',
+  );
+  const separatedRateSuffixes = collapsedDollarBreaks.replace(
+    /(?<=[\p{L}\p{N}$€£¥₫₩₹₽฿₱₺])\/(year|yr|month|mo|quarter|qtr|week|wk|day|hour|hr|user|seat|unit|năm|nam|tháng|thang|quý|quy|tuần|tuan|ngày|ngay|giờ|gio|người|nguoi)(?![\p{L}\p{N}])([ \t]*[:=])?/giu,
+    (_match: string, unit: string, assignSep?: string) =>
+      assignSep ? ` per ${unit}${assignSep}` : ` per ${unit}; `,
+  );
+  const rawChunks = separatedRateSuffixes
+    .split(/(?:[\r\n;|()]+|(?<!\d)\/|\/(?!\d))+|[ \t]+-[ \t]+|,\s+|\s+(?:or|and|và|hoặc|tương đương)\s+/iu)
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+  const out: string[] = [];
+  for (const chunk of rawChunks) {
+    out.push(...splitSentenceClausesPreservingAbbreviations(chunk));
+  }
+  return out;
+}
+
+function findCurrencySpansInClause(
+  clauseLineWise: string,
+  candidateCurrency: string,
+): Array<{ start: number; end: number }> {
+  const spans: Array<{ start: number; end: number }> = [];
+  const addRegexMatches = (src: string, re: RegExp, caseInsensitive = false) => {
+    let flags = re.flags;
+    if (!flags.includes('g')) flags += 'g';
+    if (!flags.includes('u')) flags += 'u';
+    if (caseInsensitive && !flags.includes('i')) flags += 'i';
+    const cloned = new RegExp(re.source, flags);
+    for (const m of src.matchAll(cloned)) {
+      if (m.index !== undefined && m[0].length > 0) {
+        spans.push({ start: m.index, end: m.index + m[0].length });
+      }
+    }
+  };
+
+  if (candidateCurrency === 'VND') {
+    addRegexMatches(clauseLineWise, EXPLICIT_VND_UNIT_RE, true);
+    return spans;
+  }
+
+  if (candidateCurrency === 'USD') {
+    spans.push(...findUnqualifiedUsdDollarSpans(clauseLineWise));
+  }
+  const markers = CURRENCY_MARKER_RES_BY_CODE[candidateCurrency];
+  if (markers) {
+    for (const marker of markers) {
+      addRegexMatches(clauseLineWise, marker, true);
+    }
+  }
+  if (CASE_INSENSITIVE_MAJOR_ISO_CODES.has(candidateCurrency)) {
+    addRegexMatches(
+      clauseLineWise,
+      new RegExp(`(?<![\\p{L}])${candidateCurrency}(?![\\p{L}])`, 'giu'),
+      true,
+    );
+  } else if (KNOWN_STRICT_UPPER_FOREIGN_CODES.includes(candidateCurrency)) {
+    addRegexMatches(clauseLineWise, new RegExp(`(?<![\\p{L}])${candidateCurrency}(?![\\p{L}])`, 'gu'));
+  } else if (PROSE_AMBIGUOUS_ISO_CODES.has(candidateCurrency)) {
+    for (const m of clauseLineWise.matchAll(AMOUNT_BEFORE_ISO_RE)) {
+      if (isMatchedAmountAdjacentIsoToken(m[1]!) === candidateCurrency && m.index !== undefined) {
+        const end = m.index + m[0].length;
+        spans.push({ start: end - 3, end });
+      }
+    }
+    for (const m of clauseLineWise.matchAll(ISO_BEFORE_AMOUNT_RE)) {
+      if (isMatchedAmountAdjacentIsoToken(m[1]!) === candidateCurrency && m.index !== undefined) {
+        spans.push({ start: m.index, end: m.index + 3 });
+      }
+    }
+  }
+  return spans;
+}
+
+const LEFT_BOUND_PLAIN_NUM_RE = /(?:^|[^\p{L}\p{N}.,/])(\d+(?:[.,]\d+)*)\s*$/u;
+const LEFT_BOUND_SCALED_NUM_RE =
+  /(?:^|[^\p{L}\p{N}.,/])(\d+(?:[.,]\d+)*)(?:\s*(tỷ|ty|tỉ|ti|triệu|trieu|nghìn|ngàn|nghin|ngan|million|billion|thousand|mn|bn|tr|m|k))?\s*$/iu;
+const RIGHT_BOUND_PLAIN_NUM_RE = /^\s*[:=-]?\s*(\d+(?:[.,]\d+)*)(?![\p{L}\p{N}]|[.,]\d| ?%|\/\d)/u;
+const RIGHT_BOUND_SCALED_NUM_RE =
+  /^\s*[:=-]?\s*(\d+(?:[.,]\d+)*)(?:\s*(tỷ|ty|tỉ|ti|triệu|trieu|nghìn|ngàn|nghin|ngan|million|billion|thousand|mn|bn|tr|m|k)(?![\p{L}\p{N}]))?(?![\p{L}\p{N}]|[.,]\d)/iu;
+
+const CURRENCY_SYMBOL_END_RE = /[$€£¥₫₩₹₽฿₱₺]$/u;
+// Excludes ₫ so postfix "500₫ 10 users" keeps 500 VND unless tight-right "₫500".
+const PREFIX_PREFERRED_SYMBOL_END_RE = /[$€£¥₩₹₽฿₱₺]$/u;
+const RIGHT_NON_MONETARY_UNIT_AFTER_RE =
+  /^\s+(?:days?|weeks?|months?|years?|hours?|hrs?|minutes?|mins?|users?|seats?|licen[cs]es?|accounts?|units?|items?|copies|copy|devices?|endpoints?|nodes?|servers?|projects?|workspaces?|members?|employees?|staff|people|persons?|guests?|contacts?|records?|documents?|docs?|envelopes?|signatures?|pages?|gb|tb|mb|ngày|ngay|tuần|tuan|tháng|thang|năm|nam|giờ|gio|phút|phut|người|nguoi|tài khoản|tai khoan|ghế|ghe|giấy phép|giay phep|thiết bị|thiet bi|nhân viên|nhan vien|thành viên|thanh vien|hồ sơ|ho so|tài liệu|tai lieu|trang|đơn vị|don vi|sản phẩm|san pham|lần|lan)(?![\p{L}\p{N}])/iu;
+const RIGHT_PRICE_CONTINUATION_RE =
+  /^\s*(?:$|[.,;:!?)\]/+]|(?:per|for|each|net|only|total|flat|plus|excl\.?|excluding|incl\.?|including|ex|inc|vat|tax|monthly|annually|yearly|quarterly|weekly|daily|upfront|due|payable|paid|approx\.?|estimated|max\.?|min\.?|mỗi|moi|cho|trên|tren|chưa|chua|đã|da|bao gồm|bao gom|cộng|cong|thuế|thue|trọn gói|tron goi|tổng|tong|duy nhất|duy nhat|một lần|mot lan)(?![\p{L}\p{N}]))/iu;
+const LEFT_ORDINAL_LABEL_RE =
+  /(?:^|[^\p{L}])(?:tier|level|lvl|item|phase|step|option|plan|package|pack|pkg|part|batch|stage|milestone|tranche|bracket|category|cat|edition|line|row|grade|class|group|bundle|module|wave|round|lot|zone|band|rank|version|ver|no|num|number|article|art|section|sec|clause|cl|schedule|table|annex|appendix|gói|goi|đợt|dot|bước|buoc|mục|muc|phần|phan|hạng|hang|cấp|cap|bậc|bac|lần|lan|điều|dieu|khoản|khoan|bảng|bang|số|so|phụ lục|phu luc|giai đoạn|giai doan)\.?\s*$/iu;
+const LEFT_YEAR_LABEL_RE = /(?:^|[^\p{L}])(?:year|yr|năm|nam)\.?\s*$/iu;
+const LEFT_SUBYEAR_PERIOD_LABEL_RE =
+  /(?:^|[^\p{L}])(?:month|mo|quarter|qtr|week|wk|day|tháng|thang|quý|quy|tuần|tuan|ngày|ngay)\.?\s*$/iu;
+const RATE_PREPOSITION_BEFORE_PERIOD_RE =
+  /(?:^|[^\p{L}])(?:per|every|each|mỗi|moi|hàng|hang)\s+(?:year|yr|month|mo|quarter|qtr|week|wk|day|năm|nam|tháng|thang|quý|quy|tuần|tuan|ngày|ngay)\s*$/iu;
+const ARTICLE_A_BEFORE_PERIOD_RE = /(?:^|[^\p{L}])(a)\s+(?:year|yr|month|mo|quarter|qtr|week|wk|day)\s*$/iu;
+const SMALL_ORDINAL_INT_RE = /^(?:0|[1-9]\d?)$/;
+const YEAR_ORDINAL_INT_RE = /^(?:[1-9]\d?|(?:19|20)\d{2})$/;
+
+function isOrdinalLabelBeforeLeft(
+  beforeLeftNum: string,
+  leftNumToken: string,
+  leftScaleWord: string | undefined,
+): boolean {
+  if (leftScaleWord !== undefined || !/^\d+$/.test(leftNumToken)) {
+    return false;
+  }
+  if (/(?:^|[^\p{L}\p{N}])#\s*$/u.test(beforeLeftNum)) {
+    return /^\d{1,3}$/.test(leftNumToken);
+  }
+  const articleMatch = ARTICLE_A_BEFORE_PERIOD_RE.exec(beforeLeftNum);
+  if (RATE_PREPOSITION_BEFORE_PERIOD_RE.test(beforeLeftNum) || articleMatch?.[1] === 'a') {
+    return false;
+  }
+  if (LEFT_YEAR_LABEL_RE.test(beforeLeftNum)) {
+    return YEAR_ORDINAL_INT_RE.test(leftNumToken);
+  }
+  if (LEFT_SUBYEAR_PERIOD_LABEL_RE.test(beforeLeftNum)) {
+    return SMALL_ORDINAL_INT_RE.test(leftNumToken);
+  }
+  return LEFT_ORDINAL_LABEL_RE.test(beforeLeftNum) && SMALL_ORDINAL_INT_RE.test(leftNumToken);
+}
+
+// Binds adjacent numeric tokens to each currency span, resolving left-vs-right collisions (e.g.
+// prefix symbols, tight postfix attachment, explicit separators, and ordinal labels like "Tier 2 USD 100").
+function extractBoundDecimalsForSpans(
+  clauseLineWise: string,
+  spans: ReadonlyArray<{ start: number; end: number }>,
+  allowWordScale: boolean,
+): InstanceType<typeof Decimal>[] {
+  const out: InstanceType<typeof Decimal>[] = [];
+  const matchLeft = (
+    leftSlice: string,
+  ): {
+    readonly decimals: InstanceType<typeof Decimal>[];
+    readonly numToken: string;
+    readonly beforeNum: string;
+    readonly scaleWord: string | undefined;
+  } | null => {
+    const leftMatch = (allowWordScale ? LEFT_BOUND_SCALED_NUM_RE : LEFT_BOUND_PLAIN_NUM_RE).exec(leftSlice);
+    if (!leftMatch) return null;
+    const numToken = leftMatch[1]!;
+    const beforeNum = leftSlice.slice(0, leftMatch.index + leftMatch[0].indexOf(numToken));
+    const scaleWord = allowWordScale ? leftMatch[2]?.toLowerCase() : undefined;
+    const scale = scaleWord ? (DEPOSIT_WORD_SCALE_MAP[scaleWord] ?? 1) : 1;
+    return {
+      decimals: candidateTokenDecimalValues(numToken, scale),
+      numToken,
+      beforeNum,
+      scaleWord,
+    };
+  };
+  const matchRight = (
+    rightSlice: string,
+  ): { readonly decimals: InstanceType<typeof Decimal>[]; readonly afterRight: string } | null => {
+    const rightMatch = (allowWordScale ? RIGHT_BOUND_SCALED_NUM_RE : RIGHT_BOUND_PLAIN_NUM_RE).exec(rightSlice);
+    if (!rightMatch) return null;
+    const afterRight = rightSlice.slice(rightMatch[0].length);
+    const scaleWord = allowWordScale ? rightMatch[2]?.toLowerCase() : undefined;
+    const blockedByDurationOrRatio =
+      allowWordScale &&
+      ((!scaleWord && /^\/\d/.test(afterRight)) || DEPOSIT_DURATION_OR_PERCENT_AFTER_RE.test(afterRight));
+    if (blockedByDurationOrRatio) return null;
+    if (!scaleWord && RIGHT_NON_MONETARY_UNIT_AFTER_RE.test(afterRight)) return null;
+    const scale = scaleWord ? (DEPOSIT_WORD_SCALE_MAP[scaleWord] ?? 1) : 1;
+    return { decimals: candidateTokenDecimalValues(rightMatch[1]!, scale), afterRight };
+  };
+
+  for (const span of spans) {
+    const leftSlice = clauseLineWise.slice(0, span.start);
+    const rightSlice = clauseLineWise.slice(span.end);
+    const tokenText = clauseLineWise.slice(span.start, span.end);
+    const leftBound = matchLeft(leftSlice);
+    const rightBound = matchRight(rightSlice);
+    if (leftBound && rightBound) {
+      const isCurrencySymbol = CURRENCY_SYMBOL_END_RE.test(tokenText);
+      const isPrefixPreferredSymbol = PREFIX_PREFERRED_SYMBOL_END_RE.test(tokenText);
+      const tightLeftOnly = isCurrencySymbol && /\d$/.test(leftSlice) && /^\s/.test(rightSlice);
+      const tightRightOnly = isCurrencySymbol && !/\d$/.test(leftSlice) && /^\d/.test(rightSlice);
+      const explicitRightSeparator = /^\s*[:=-]\s*\d/.test(rightSlice);
+      const preferRight =
+        !tightLeftOnly &&
+        (tightRightOnly ||
+          (isPrefixPreferredSymbol && /^\s*\d/.test(rightSlice)) ||
+          explicitRightSeparator ||
+          (isOrdinalLabelBeforeLeft(leftBound.beforeNum, leftBound.numToken, leftBound.scaleWord) &&
+            RIGHT_PRICE_CONTINUATION_RE.test(rightBound.afterRight)));
+      out.push(...(preferRight ? rightBound.decimals : leftBound.decimals));
+    } else if (leftBound) {
+      out.push(...leftBound.decimals);
+    } else if (rightBound) {
+      out.push(...rightBound.decimals);
+    }
+  }
+  return out;
+}
+
 function isAmountWithCurrencyInLocalSpan(
   decStr: string,
   candidateCurrency: string,
@@ -2698,23 +3051,40 @@ function isAmountWithCurrencyInLocalSpan(
     return false;
   }
   const preservedQuote = normalizePreservingCase(rawQuote);
-  const clauses = preservedQuote
-    .split(/[\r\n;|/()]+|[ \t]+-[ \t]+|,\s+|\s+(?:or|and|và|hoặc|tương đương)\s+/iu)
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0);
+  const clauses = splitCurrencyClauses(preservedQuote);
   const candidateClauses = clauses.length > 0 ? clauses : [preservedQuote];
   for (const clause of candidateClauses) {
+    const clauseLineWise = clause.replace(/[^\S\r\n]+/g, ' ');
     const clauseMatches = allowWordScale
-      ? isDepositAmountWithoutDurationOrPercentCollision(decStr, clause)
-      : parseQuoteDecimalCandidates(clause).some((c) => c.equals(target));
+      ? isDepositAmountWithoutDurationOrPercentCollision(decStr, clauseLineWise)
+      : parseQuoteDecimalCandidates(clauseLineWise).some((c) => c.equals(target));
     if (!clauseMatches) {
       continue;
     }
-    const clauseForeign = groundedForeignCurrencies(clause);
-    const clauseVnd = hasExplicitVnd(clause);
-    if (candidateCurrency === 'VND') {
-      if (clauseVnd && clauseForeign.size === 0) return true;
-    } else if (clauseForeign.has(candidateCurrency) && clauseForeign.size === 1 && !clauseVnd) {
+    const clauseForeign = groundedForeignCurrencies(clauseLineWise);
+    const clauseVnd = hasExplicitVnd(clauseLineWise);
+    const currencyUniqueInClause =
+      candidateCurrency === 'VND'
+        ? clauseVnd && clauseForeign.size === 0
+        : clauseForeign.has(candidateCurrency) && clauseForeign.size === 1 && !clauseVnd;
+    if (!currencyUniqueInClause) {
+      continue;
+    }
+
+    const currencySpans = findCurrencySpansInClause(clauseLineWise, candidateCurrency);
+    const boundDecimals = extractBoundDecimalsForSpans(clauseLineWise, currencySpans, allowWordScale);
+    if (boundDecimals.length > 0) {
+      if (boundDecimals.some((d) => d.equals(target))) return true;
+      continue;
+    }
+    // Non-adjacent fallback ("Contract value in USD is 1,500"): accept only when every numeric token in the clause
+    // has at least one valid parsed decimal equal to target (allowing single ambiguous "1,500" = 1.5 | 1500 tokens).
+    if (!allowWordScale) {
+      const tokenGroups = extractNumericTokenCandidateGroups(clauseLineWise, { excludePercentAndRatio: true });
+      if (tokenGroups.length > 0 && tokenGroups.every((group) => group.some((n) => n.equals(target)))) {
+        return true;
+      }
+    } else {
       return true;
     }
   }

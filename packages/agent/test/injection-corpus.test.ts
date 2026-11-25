@@ -93,6 +93,7 @@ import {
   checkCommitments,
   checkTemplateSuggestion,
   checkOpenPoints,
+  checkLabelSuggestions,
   checkSalesInsight,
   checkDigest,
   checkEnhanced,
@@ -124,6 +125,7 @@ import {
   stripTrustedPhrases,
 } from '../src/injection-guards.ts';
 import { INJECTION_CORPUS } from './fixtures/injection-corpus.ts';
+import { LABEL_RULES } from './fixtures/label-rules.ts';
 
 const STUB_CONFIG: AiConfig = { baseURL: 'http://127.0.0.1:1/v1', apiKey: null, model: 'stub', maxRetries: 0 };
 
@@ -820,6 +822,7 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
     cover('meetings.template_suggest');
     cover('meetings.open_points');
     cover('meetings.sales_insight');
+    cover('meetings.label_suggest');
     cover('meetings.followup_note');
     cover('meetings.deal_update');
 
@@ -963,6 +966,12 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
       ).toThrowError('COMMITMENTS_EMPTY');
       expect(() => checkTemplateSuggestion(JSON.stringify({ template: 'customer', reason: c.poisonedOutput, second: 0 }), poisonedSegments)).toThrowError('TEMPLATE_SUGGEST_EMPTY');
       expect(() => checkOpenPoints(JSON.stringify({ points: [{ kind: 'question', text: c.poisonedOutput, second: 0 }] }), poisonedSegments)).toThrowError('OPEN_POINTS_EMPTY');
+      try {
+        const labels = checkLabelSuggestions(JSON.stringify({ labels: [c.poisonedOutput] }), [], LABEL_RULES);
+        expect(labels.labels, `label_suggest ${c.id}`).toEqual([]);
+      } catch (error) {
+        expect((error as Error).name).toBe('LabelSuggestError');
+      }
       const insightLineId = '99999999-9999-4999-8999-999999999999';
       const insightSegments = [{ id: insightLineId, startSeconds: 0, endSeconds: 10, speakerLabel: 'Lan', text: `Lan gui bao gia cho khach hang. ${nextCase.untrustedInput}` }];
       const checkedInsight = checkSalesInsight(

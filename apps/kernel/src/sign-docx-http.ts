@@ -32,10 +32,13 @@ import { RateLimiter } from './rate-limit.ts';
 
 export const SIGN_DOCX_WAIT_MS = 3_000;
 const SIGN_DOCX_POLL_INTERVAL_MS = 100;
-const SIGN_DOCX_PER_MINUTE = 20;
+export const SIGN_DOCX_PER_MINUTE = 20;
+export const SIGN_DOCX_RATE_LIMIT_MAX_KEYS = 4_096;
 const SIGN_DOCX_MAX_BODY_BYTES = SIGN_DOCX_MAX_BYTES + 128 * 1024;
-const FINALIZED_TTL_MS = 10 * 60_000;
-const FINALIZED_MAX_ENTRIES = 256;
+export const SIGN_DOCX_FINALIZED_TTL_MS = 10 * 60_000;
+export const SIGN_DOCX_FINALIZED_MAX_ENTRIES = 256;
+export const SIGN_DOCX_FILENAMES_MAX_ENTRIES = 256;
+export const SIGN_DOCX_INFLIGHT_MAX_ENTRIES = 64;
 
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 const ALLOWED_UPLOAD_MIMES = new Set(['', 'application/octet-stream', 'application/zip', 'application/x-zip-compressed', DOCX_MIME]);
@@ -77,20 +80,66 @@ const ERROR_MESSAGES: Readonly<Record<string, { status: 413 | 422; message: stri
   },
 };
 
-interface CachedResult {
-  expiresAt: number;
-  value: SignDocxConvertCompletedResult;
-}
+/** Bounded LRU cache with per-entry TTL cleanup so burst traffic cannot grow memory without bound. */
+export class ExpiringLruCache<T> {
+  private readonly map = new Map<string, { expiresAt: number; value: T }>();
+  private readonly maxEntries: number;
+  private readonly ttlMs: number;
 
-interface CachedFilename {
-  expiresAt: number;
-  filename: string;
+  constructor(maxEntries: number, ttlMs: number) {
+    if (!Number.isInteger(maxEntries) || maxEntries < 1) throw new Error('maxEntries must be a positive integer');
+    if (!Number.isFinite(ttlMs) || ttlMs <= 0) throw new Error('ttlMs must be a positive number');
+    this.maxEntries = maxEntries;
+    this.ttlMs = ttlMs;
+  }
+
+  get size(): number {
+    return this.map.size;
+  }
+
+  get(key: string, now = Date.now()): T | undefined {
+    const entry = this.map.get(key);
+    if (!entry) return undefined;
+    if (entry.expiresAt <= now) {
+      this.pruneExpired(now);
+      return undefined;
+    }
+    this.map.delete(key);
+    this.map.set(key, entry);
+    return entry.value;
+  }
+
+  set(key: string, value: T, now = Date.now()): void {
+    this.map.delete(key);
+    this.pruneExpired(now);
+    while (this.map.size >= this.maxEntries) {
+      const oldest = this.map.keys().next().value;
+      if (oldest === undefined) break;
+      this.map.delete(oldest);
+    }
+    this.map.set(key, { expiresAt: now + this.ttlMs, value });
+  }
+
+  delete(key: string): void {
+    this.map.delete(key);
+  }
+
+  pruneExpired(now = Date.now()): number {
+    let removed = 0;
+    for (const [key, entry] of this.map) {
+      if (entry.expiresAt <= now) {
+        this.map.delete(key);
+        removed += 1;
+      }
+    }
+    return removed;
+  }
 }
 
 interface RuntimeDocxState {
   limiter: RateLimiter;
-  entries: Map<string, CachedResult>;
-  filenames: Map<string, CachedFilename>;
+  entries: ExpiringLruCache<SignDocxConvertCompletedResult>;
+  filenames: ExpiringLruCache<string>;
   inflight: Map<string, Promise<SignDocxConvertCompletedResult>>;
 }
 
@@ -100,9 +149,9 @@ function getRuntimeState(runtime: Runtime): RuntimeDocxState {
   let state = stateByRuntime.get(runtime);
   if (!state) {
     state = {
-      limiter: new RateLimiter({ perMinute: SIGN_DOCX_PER_MINUTE }),
-      entries: new Map(),
-      filenames: new Map(),
+      limiter: new RateLimiter({ perMinute: SIGN_DOCX_PER_MINUTE, maxKeys: SIGN_DOCX_RATE_LIMIT_MAX_KEYS }),
+      entries: new ExpiringLruCache(SIGN_DOCX_FINALIZED_MAX_ENTRIES, SIGN_DOCX_FINALIZED_TTL_MS),
+      filenames: new ExpiringLruCache(SIGN_DOCX_FILENAMES_MAX_ENTRIES, SIGN_DOCX_FINALIZED_TTL_MS),
       inflight: new Map(),
     };
     stateByRuntime.set(runtime, state);
@@ -110,15 +159,24 @@ function getRuntimeState(runtime: Runtime): RuntimeDocxState {
   return state;
 }
 
-function pruneCache<T extends { expiresAt: number }>(entries: Map<string, T>, now: number): void {
-  for (const [key, entry] of entries) {
-    if (entry.expiresAt <= now) entries.delete(key);
-  }
-  while (entries.size >= FINALIZED_MAX_ENTRIES) {
-    const oldest = entries.keys().next().value;
-    if (oldest === undefined) break;
-    entries.delete(oldest);
-  }
+export function getSignDocxRuntimeStats(runtime: Runtime): {
+  rateLimiterKeys: number;
+  finalizedEntries: number;
+  filenameEntries: number;
+  inflightCount: number;
+} | null {
+  const state = stateByRuntime.get(runtime);
+  if (!state) return null;
+  return {
+    rateLimiterKeys: state.limiter.size,
+    finalizedEntries: state.entries.size,
+    filenameEntries: state.filenames.size,
+    inflightCount: state.inflight.size,
+  };
+}
+
+function jobCacheKey(orgId: string, userId: string, jobId: string): string {
+  return `${orgId.toLowerCase()}:${userId.toLowerCase()}:${jobId.toLowerCase()}`;
 }
 
 function startsWith(bytes: Uint8Array, prefix: readonly number[]): boolean {
@@ -258,11 +316,7 @@ async function readConvertedPdfBytes(
 }
 
 function resolveJobPdfFilename(state: RuntimeDocxState, cacheKey: string, hintFilename?: string): string {
-  const stored = state.filenames.get(cacheKey);
-  if (stored && stored.expiresAt > Date.now()) {
-    return stored.filename;
-  }
-  return pdfFilenameFromDocx(hintFilename);
+  return state.filenames.get(cacheKey, Date.now()) ?? pdfFilenameFromDocx(hintFilename);
 }
 
 async function finalizeSignDocxResult(deps: {
@@ -278,17 +332,20 @@ async function finalizeSignDocxResult(deps: {
     throw new DomainError('SIGN_DOCX_CONVERT_FAILED', 422, 'Kết quả chuyển đổi tệp Word không đầy đủ');
   }
 
-  const cacheKey = `${orgId}:${actor.userId}:${status.jobId}`;
+  const cacheKey = jobCacheKey(orgId, actor.userId, status.jobId);
   const state = getRuntimeState(runtime);
-  const now = Date.now();
-  const cached = state.entries.get(cacheKey);
-  if (cached && cached.expiresAt > now) {
-    return cached.value;
+  const cached = state.entries.get(cacheKey, Date.now());
+  if (cached) {
+    return structuredClone(cached);
   }
-  if (cached) state.entries.delete(cacheKey);
 
   const running = state.inflight.get(cacheKey);
-  if (running) return running;
+  if (running) {
+    return structuredClone(await running);
+  }
+  if (state.inflight.size >= SIGN_DOCX_INFLIGHT_MAX_ENTRIES) {
+    throw new DomainError('UPLOAD_BUSY', 503, 'Hệ thống đang bận xử lý chuyển đổi tệp Word; vui lòng thử lại sau ít giây');
+  }
 
   const pdfFilename = resolveJobPdfFilename(state, cacheKey, hintFilename);
 
@@ -322,19 +379,20 @@ async function finalizeSignDocxResult(deps: {
       filename: pdfFilename,
       pageCount: status.pageCount!,
       sourceDocxSha256: status.inputSha256,
-      warnings: status.warnings,
+      warnings: [...status.warnings],
     };
 
-    pruneCache(state.entries, Date.now());
-    state.entries.set(cacheKey, { expiresAt: Date.now() + FINALIZED_TTL_MS, value: result });
+    state.entries.set(cacheKey, structuredClone(result), Date.now());
     return result;
   })();
 
   state.inflight.set(cacheKey, work);
   try {
-    return await work;
+    return structuredClone(await work);
   } finally {
-    state.inflight.delete(cacheKey);
+    if (state.inflight.get(cacheKey) === work) {
+      state.inflight.delete(cacheKey);
+    }
   }
 }
 
@@ -351,6 +409,7 @@ async function resolveStatusResponse(deps: {
     return { status: 'pending', jobId: status.jobId };
   }
   if (status.status === 'failed') {
+    getRuntimeState(deps.runtime).filenames.delete(jobCacheKey(deps.orgId, deps.actor.userId, status.jobId));
     throw signDocxFailureError(status.errorCode);
   }
   return finalizeSignDocxResult(deps);
@@ -369,8 +428,12 @@ export async function handleSignDocxConvertUpload(deps: {
     throw new DomainError('FORBIDDEN', 403, 'Mã của tiện ích Ludy không được dùng cho việc này', { rule: 'extension_scope' });
   }
 
+  const actor = actorOf(deps.user);
+  // Check SIGN_WRITERS role, session standing, and MFA BEFORE rate-limit budget, reading upload bytes, or touching BlobStore.
+  await deps.runtime.query('sign.docx_convert.authorize', {}, { actor, orgId: deps.orgId });
+
   const state = getRuntimeState(deps.runtime);
-  const decision = state.limiter.take(`${deps.orgId}:${deps.user.userId}`);
+  const decision = state.limiter.take(`${deps.orgId.toLowerCase()}:${actor.userId.toLowerCase()}`);
   if (!decision.allowed) {
     deps.onRateLimited?.(decision.retryAfterSeconds);
     throw new DomainError('RATE_LIMITED', 429, 'Bạn chuyển đổi quá nhiều tệp Word; hãy thử lại sau ít phút');
@@ -380,12 +443,7 @@ export async function handleSignDocxConvertUpload(deps: {
   const sha256 = sha256Hex(bytes);
   const inputStorageKey = signDocxBlobKey(deps.orgId, sha256);
   const jobId = randomUUID();
-  const actor = actorOf(deps.user);
   const pdfName = pdfFilenameFromDocx(filename);
-
-  pruneCache(state.filenames, Date.now());
-  const cacheKey = `${deps.orgId}:${actor.userId}:${jobId}`;
-  state.filenames.set(cacheKey, { expiresAt: Date.now() + FINALIZED_TTL_MS, filename: pdfName });
 
   await deps.store.put(inputStorageKey, bytes, DOCX_MIME);
   await deps.runtime.execute(
@@ -397,6 +455,8 @@ export async function handleSignDocxConvertUpload(deps: {
     },
     { actor, orgId: deps.orgId },
   );
+
+  state.filenames.set(jobCacheKey(deps.orgId, actor.userId, jobId), pdfName, Date.now());
 
   const waitMs = Math.max(0, Math.min(30_000, deps.waitMs ?? SIGN_DOCX_WAIT_MS));
   const deadline = Date.now() + waitMs;

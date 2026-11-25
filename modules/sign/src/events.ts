@@ -2,9 +2,8 @@
 // Hash-chained signing audit ledger for ludy_sign.signing_event (#3323, ADR-0013). Every mutation on an envelope or
 // signer appends an event whose SHA-256 hash commits deterministically to the canonical event record and prev_event_hash.
 import { createHash } from 'node:crypto';
-import type { Database, SignActorType } from '@ludy/db';
+import type { Db, SignActorType } from '@ludy/db';
 import { SIGN_EVENT_TYPES, type SignEventType } from '@ludy/kernel-contract';
-import type { Kysely } from 'kysely';
 
 export { SIGN_EVENT_TYPES, type SignEventType };
 
@@ -149,7 +148,7 @@ export function computeSigningEventHash(input: SigningEventHashInput): string {
 
 // Appends a signing event onto the envelope's hash chain. Locks the parent envelope FOR UPDATE so concurrent writers
 // serialize seq numbers deterministically (lock order: envelope -> signing_event).
-export async function appendSigningEvent(trx: Kysely<Database>, input: AppendSigningEventInput): Promise<AppendedSigningEvent> {
+export async function appendSigningEvent(trx: Db, input: AppendSigningEventInput): Promise<AppendedSigningEvent> {
   await trx
     .selectFrom('ludy_sign.envelope')
     .select('id')
