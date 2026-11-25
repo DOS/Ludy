@@ -533,9 +533,8 @@ describe('Ludy Nhan su -> Ludy eSign labor contract handoff (#3553)', () => {
           locale,
         );
         // Stacked DataTable rule targets direct child `>a`, while Detail wraps HrContractSignHandoff in a flex div for sibling alignment.
-        const decoded = html.replaceAll('&amp;', '&').replaceAll('&gt;', '>');
-        expect(decoded).toContain('max-sm:[&_td:not([colspan])>a]:min-h-11');
-        expect(decoded).toContain('data-testid="hr-terms-sign-cell"><div class="flex flex-wrap items-center gap-2"><a ');
+        expect(html).toContain('max-sm:[&amp;_td:not([colspan])&gt;a]:min-h-11');
+        expect(html).toContain('data-testid="hr-terms-sign-cell"><div class="flex flex-wrap items-center gap-2"><a ');
 
         const tokens = extractLinkClassTokens(html);
         expect(tokens).toEqual(
