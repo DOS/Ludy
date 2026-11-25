@@ -128,6 +128,7 @@ describe('meetings commands and queries construction', () => {
       'meetings.ask.start',
       'meetings.brief.start',
       'meetings.digest.start',
+      'meetings.voice_cue.draft',
       'meetings.morning.set',
       'meetings.morning.notice',
       'meetings.assignee.start',

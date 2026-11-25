@@ -5382,6 +5382,20 @@ export const vi = {
       draft: 'Bản nháp',
       accepted: 'Đã tạo việc',
       flagContact: 'Có thông tin liên lạc',
+      flagAskedAloud: 'Nói với Vy',
+      // Lệnh đã nói với Vy trong cuộc họp (#4807): tìm bằng code, không dùng AI.
+      voiceCues: {
+        title: 'Lệnh đã nói với Vy',
+        desc: 'Khi có người nói "Vy ơi, ghi lại ..." hoặc "Vy, note ...", Ludy tìm những câu đó trong bản ghi lời bằng code (không dùng AI) và ghi thành việc nháp, có nhãn "Nói với Vy" và giờ đã nói. Việc nháp chưa được chia sẻ hay giao cho ai: bạn xem lại từng việc như mọi việc Vy gợi ý.',
+        find: 'Tìm lệnh đã nói với Vy',
+        none: 'Bản ghi lời không có câu nào gọi Vy ghi lại hay nhắc việc.',
+        nothingNew: 'Không có việc nháp mới.',
+        created: 'Đã thêm {count, number} việc nháp từ lệnh đã nói.',
+        left: 'Bỏ qua: {list}.',
+        duplicate: '{count, number} lệnh đã có việc',
+        empty: '{count, number} lệnh không có nội dung để ghi',
+        full: '{count, number} lệnh vì cuộc họp đã đủ số việc',
+      },
       fromVy: 'Vy đã viết',
       unknownMember: 'Thành viên đã rời',
       severalSeats: 'Người này giữ nhiều vị trí. Hãy chọn vị trí sẽ làm việc này.',
@@ -19228,6 +19242,9 @@ export const vi = {
         facts: 'Xem các mục định bàn và các dòng bản ghi của cuộc họp bạn ghi, để Vy kiểm tra',
         start: 'Nhờ Vy kiểm tra cuộc họp đã bàn đủ các mục định bàn chưa',
         status: 'Xem Vy có thể kiểm tra các mục định bàn của một cuộc họp hay không',
+      },
+      voice_cue: {
+        draft: 'Tìm những lệnh đã nói với Vy trong bản ghi lời và ghi thành việc nháp',
       },
       digest: {
         facts: 'Xem những gì đã chốt và việc còn dở trong các cuộc họp bạn được đọc, trong một tuần hoặc lâu hơn',

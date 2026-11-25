@@ -1886,6 +1886,9 @@ export function createRpcHandler(
       },
       // What each speaker committed to or decided (#3954): `status` feeds the button, `list` runs the recorder's own Vy once and returns the checked lines, grouped by speaker, to the browser; nothing is stored,
       // published or made a task. See member-vy-ports.ts.
+      voiceCue: {
+        draft: os.meetings.voiceCue.draft.handler(meetingsCommand('meetings.voice_cue.draft')),
+      },
       commitments: {
         status: os.meetings.commitments.status.handler(meetingsQuery('meetings.commitments.status')),
         list: os.meetings.commitments.list.handler(({ context, input }) =>

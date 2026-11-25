@@ -195,6 +195,8 @@ export const summaryCopyResult = defineCommand({
         .where('stage', '=', 'draft')
         .where('status', '=', 'suggested')
         .where('tainted', '=', true)
+        // An item drafted from a cue spoken to Vy (#4807) is not a summary run's suggestion and stays.
+        .where(sql<boolean>`NOT (flags @> '["asked_aloud"]'::jsonb)`)
         .execute();
     }
     if (summaryText !== '' || body.decisions.length > 0) {
