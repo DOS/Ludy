@@ -79,7 +79,7 @@ describe('the card', () => {
     const html = card(TWO);
     expect(html).toContain('data-testid="meeting-talk-time"');
     expect(html).toContain(en.meetings.talkTime.title);
-    expect(html).toContain(en.meetings.talkTime.desc.replace("'", '&#x27;'));
+    expect(html).toContain(en.meetings.talkTime.desc.replaceAll("'", '&#x27;'));
     expect(rows(html)).toEqual([
       ['Lan', '80%', '0:20', '2', '0:10'],
       ['Hùng', '20%', '0:05', '1', '0:05'],
