@@ -153,10 +153,9 @@ function flushPendingSignOutClear(): Storage | null {
   return storage;
 }
 
-function readStoredDocxNotices(now: number): StoredDocxWarningNotice[] {
+function readMergedEntriesWithStorage(storage: Storage | null, now: number): StoredDocxWarningNotice[] {
   pruneFallbackDismissed(now);
   const byKey = new Map<string, StoredDocxWarningNotice>();
-  const storage = flushPendingSignOutClear();
   if (storage) {
     for (const entry of readRawStorageNotices(storage, now)) {
       const key = noticeKey(entry.envelopeId, entry);
@@ -169,6 +168,18 @@ function readStoredDocxNotices(now: number): StoredDocxWarningNotice[] {
     byKey.set(noticeKey(fb.envelopeId, fb), fb);
   }
   return [...byKey.values()];
+}
+
+function readStoredDocxNotices(now: number): StoredDocxWarningNotice[] {
+  const storage = flushPendingSignOutClear();
+  const merged = readMergedEntriesWithStorage(storage, now);
+  if (storage && (fallbackDocxNotices.size > 0 || fallbackDismissedNotices.size > 0)) {
+    if (tryPersistDocxNotices(storage, merged)) {
+      fallbackDocxNotices.clear();
+      fallbackDismissedNotices.clear();
+    }
+  }
+  return merged;
 }
 
 function tryPersistDocxNotices(storage: Storage, entries: readonly StoredDocxWarningNotice[]): boolean {

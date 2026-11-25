@@ -2,7 +2,7 @@
 // eSign envelopes list route (/o/$slug/sign/envelopes): upload PDF, filter status tabs, copy Zalo link, remind, download (#3325).
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from '@tanstack/react-router';
-import { useEffect, useRef, useState, type FormEvent, type MouseEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
 import { COWORKER_ROSTER } from '@ludy/kernel-contract';
 import { Alert, AlertDescription } from '@ludy/ui/components/alert';
@@ -145,6 +145,36 @@ export function isCreatedDocxListNoticeVisible(
   if (!notice || notice.slug !== slug) return false;
   if (notice.userId) return notice.userId === currentUserId;
   return Boolean(notice.sessionId && verifiedAnonymousSessionId === notice.sessionId);
+}
+
+export async function captureEnvelopeSubmitContext(deps: {
+  slug: string;
+  reqId: number;
+  readSessionId: () => Promise<string | null>;
+  resolveScope: (
+    targetSlug: string,
+    expectedSessionId?: string | null,
+  ) => Promise<{ orgId: string | null; userId: string | null; sessionId: string | null } | null>;
+}): Promise<CreatedEnvelopeSubmitContext> {
+  const sessionId = await deps.readSessionId();
+  try {
+    const liveScope = await deps.resolveScope(deps.slug, sessionId);
+    return {
+      slug: deps.slug,
+      orgId: liveScope?.orgId ?? null,
+      userId: liveScope?.userId ?? null,
+      sessionId: liveScope?.sessionId ?? sessionId,
+      reqId: deps.reqId,
+    };
+  } catch {
+    return {
+      slug: deps.slug,
+      orgId: null,
+      userId: null,
+      sessionId,
+      reqId: deps.reqId,
+    };
+  }
 }
 
 type ResolvedScopeDecision =
@@ -1366,13 +1396,16 @@ export function SignEnvelopesPage() {
   const activeEnvelopeIsSealed = activeEnvelope
     ? activeEnvelope.status === 'completed' && activeEnvelope.sealStatus === 'sealed'
     : false;
+  const pendingVerifiableNotice =
+    createdDocxNotice &&
+    createdDocxNotice.slug === slug &&
+    Boolean(createdDocxNotice.userId || createdDocxNotice.sessionId)
+      ? createdDocxNotice
+      : null;
   const visibleCreatedDocxNotice =
     isCreatedDocxListNoticeVisible(createdDocxNotice, slug, currentUserId, verifiedAnonymousNoticeSession)
       ? createdDocxNotice
       : null;
-  const canVerifyPendingCreatedNotice = Boolean(
-    visibleCreatedDocxNotice && (visibleCreatedDocxNotice.userId || visibleCreatedDocxNotice.sessionId),
-  );
 
   const triggerOpenPendingNotice = (noticeSnapshot: CreatedDocxListNotice) => {
     const reqId = (docxNoticeReqRef.current += 1);
@@ -1396,24 +1429,66 @@ export function SignEnvelopesPage() {
     });
   };
 
-  const handlePendingEnvelopeLinkClick = (
-    event: MouseEvent<HTMLAnchorElement>,
-    envelopeId: string,
-  ) => {
-    if (
-      !visibleCreatedDocxNotice ||
-      !canVerifyPendingCreatedNotice ||
-      visibleCreatedDocxNotice.envelopeId !== envelopeId ||
-      event.metaKey ||
-      event.ctrlKey ||
-      event.shiftKey ||
-      event.altKey ||
-      event.button !== 0
-    ) {
-      return;
+  const dismissCreatedNotice = (noticeSnapshot: CreatedDocxListNotice) => {
+    docxNoticeReqRef.current += 1;
+    clearCreatedDocxWarnings(noticeSnapshot.envelopeId, {
+      org: noticeSnapshot.orgId,
+      userId: noticeSnapshot.userId ?? currentUserId,
+    });
+    setCreatedDocxNotice(null);
+  };
+
+  const renderEnvelopeTitleControl = (item: Pick<SignEnvelopeSummary, 'id' | 'title'>) => {
+    if (pendingVerifiableNotice && pendingVerifiableNotice.envelopeId === item.id) {
+      return (
+        <button
+          type="button"
+          onClick={() => triggerOpenPendingNotice(pendingVerifiableNotice)}
+          className="inline-flex max-md:min-h-11 items-center text-left font-medium text-foreground hover:underline focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+        >
+          {item.title}
+        </button>
+      );
     }
-    event.preventDefault();
-    triggerOpenPendingNotice(visibleCreatedDocxNotice);
+    return (
+      <Link
+        to="/o/$slug/sign/envelopes/$id"
+        params={{ slug, id: item.id }}
+        className="inline-flex max-md:min-h-11 items-center font-medium text-foreground hover:underline focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+      >
+        {item.title}
+      </Link>
+    );
+  };
+
+  const renderEnvelopeOpenControl = (
+    envelopeId: string,
+    variant: 'default' | 'secondary',
+    testId?: string,
+  ) => {
+    if (pendingVerifiableNotice && pendingVerifiableNotice.envelopeId === envelopeId) {
+      return (
+        <Button
+          type="button"
+          size="sm"
+          variant={variant}
+          onClick={() => triggerOpenPendingNotice(pendingVerifiableNotice)}
+          data-testid={testId}
+        >
+          {t('actions.open')}
+        </Button>
+      );
+    }
+    return (
+      <Link
+        to="/o/$slug/sign/envelopes/$id"
+        params={{ slug, id: envelopeId }}
+        className={buttonVariants({ size: 'sm', variant })}
+        data-testid={testId}
+      >
+        {t('actions.open')}
+      </Link>
+    );
   };
 
   return (
@@ -1458,7 +1533,7 @@ export function SignEnvelopesPage() {
         <DocxWarningsAlert
           warnings={visibleCreatedDocxNotice.warnings}
           action={
-            visibleCreatedDocxNotice.slug && canVerifyPendingCreatedNotice ? (
+            visibleCreatedDocxNotice.slug ? (
               <Button
                 type="button"
                 variant="outline"
@@ -1471,15 +1546,38 @@ export function SignEnvelopesPage() {
               </Button>
             ) : undefined
           }
-          onDismiss={() => {
-            docxNoticeReqRef.current += 1;
-            clearCreatedDocxWarnings(visibleCreatedDocxNotice.envelopeId, {
-              org: visibleCreatedDocxNotice.orgId,
-              userId: visibleCreatedDocxNotice.userId ?? currentUserId,
-            });
-            setCreatedDocxNotice(null);
-          }}
+          onDismiss={() => dismissCreatedNotice(visibleCreatedDocxNotice)}
         />
+      ) : pendingVerifiableNotice && !pendingVerifiableNotice.userId && pendingVerifiableNotice.sessionId ? (
+        <Alert data-testid="sign-docx-warning-verify-pending">
+          <AlertDescription className="space-y-1.5">
+            <div className="flex items-start justify-between gap-2">
+              <p className="text-sm text-foreground">{t('docxWarningOpenPending')}</p>
+              <button
+                type="button"
+                onClick={() => dismissCreatedNotice(pendingVerifiableNotice)}
+                aria-label={common('close')}
+                className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-md text-base text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <span aria-hidden="true">×</span>
+              </button>
+            </div>
+            {pendingVerifiableNotice.slug ? (
+              <div className="pt-1">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="min-h-11"
+                  data-testid="sign-docx-warning-open-envelope"
+                  onClick={() => triggerOpenPendingNotice(pendingVerifiableNotice)}
+                >
+                  {t('templates.openEnvelopeButton')}
+                </Button>
+              </div>
+            ) : null}
+          </AlertDescription>
+        </Alert>
       ) : null}
 
       <Tabs value={tab} onValueChange={(next) => setTab(next as EnvelopeFilterTab)}>
@@ -1553,14 +1651,7 @@ export function SignEnvelopesPage() {
                     >
                       <TableCell data-label={t('columns.title')}>
                         <span className="inline-flex flex-wrap items-center gap-1.5">
-                          <Link
-                            to="/o/$slug/sign/envelopes/$id"
-                            params={{ slug, id: item.id }}
-                            onClick={(event) => handlePendingEnvelopeLinkClick(event, item.id)}
-                            className="inline-flex max-md:min-h-11 items-center font-medium text-foreground hover:underline focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
-                          >
-                            {item.title}
-                          </Link>
+                          {renderEnvelopeTitleControl(item)}
                           {entry.overdueObligationCount > 0 ? (
                             <Badge variant="destructive">
                               {t('obligations.overdueCountBadge', { count: String(entry.overdueObligationCount) })}
@@ -1614,14 +1705,7 @@ export function SignEnvelopesPage() {
                               {t('actions.downloadSealed')}
                             </Button>
                           ) : null}
-                          <Link
-                            to="/o/$slug/sign/envelopes/$id"
-                            params={{ slug, id: item.id }}
-                            onClick={(event) => handlePendingEnvelopeLinkClick(event, item.id)}
-                            className={buttonVariants({ size: 'sm', variant: 'secondary' })}
-                          >
-                            {t('actions.open')}
-                          </Link>
+                          {renderEnvelopeOpenControl(item.id, 'secondary')}
                         </div>
                       </TableCell>
                     </TableRow>
@@ -1679,14 +1763,7 @@ export function SignEnvelopesPage() {
                     >
                       <TableCell data-label={t('columns.title')}>
                         <span className="inline-flex flex-wrap items-center gap-1.5">
-                          <Link
-                            to="/o/$slug/sign/envelopes/$id"
-                            params={{ slug, id: item.id }}
-                            onClick={(event) => handlePendingEnvelopeLinkClick(event, item.id)}
-                            className="inline-flex max-md:min-h-11 items-center font-medium text-foreground hover:underline focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
-                          >
-                            {item.title}
-                          </Link>
+                          {renderEnvelopeTitleControl(item)}
                           {item.certificateCode ? <span className="font-mono text-xs text-muted-foreground">{item.certificateCode}</span> : null}
                           {item.pageCount ? <span className="text-xs text-subtle-foreground">{t('pagesCount', { count: String(item.pageCount) })}</span> : null}
                         </span>
@@ -1764,14 +1841,7 @@ export function SignEnvelopesPage() {
                               {t('actions.downloadSealed')}
                             </Button>
                           ) : null}
-                          <Link
-                            to="/o/$slug/sign/envelopes/$id"
-                            params={{ slug, id: item.id }}
-                            onClick={(event) => handlePendingEnvelopeLinkClick(event, item.id)}
-                            className={buttonVariants({ size: 'sm', variant: 'secondary' })}
-                          >
-                            {t('actions.open')}
-                          </Link>
+                          {renderEnvelopeOpenControl(item.id, 'secondary')}
                         </div>
                       </TableCell>
                     </TableRow>
@@ -1868,15 +1938,7 @@ export function SignEnvelopesPage() {
                   {t('actions.downloadSealed')}
                 </Button>
               ) : null}
-              <Link
-                to="/o/$slug/sign/envelopes/$id"
-                params={{ slug, id: activeEnvelope.id }}
-                onClick={(event) => handlePendingEnvelopeLinkClick(event, activeEnvelope.id)}
-                className={buttonVariants({ size: 'sm', variant: 'default' })}
-                data-testid="sign-peek-open-link"
-              >
-                {t('actions.open')}
-              </Link>
+              {renderEnvelopeOpenControl(activeEnvelope.id, 'default', 'sign-peek-open-link')}
             </>
           }
         >
@@ -1903,17 +1965,14 @@ export function SignEnvelopesPage() {
         <CreateEnvelopeDialog
           key={slug}
           orgSlug={slug || undefined}
-          captureContext={async () => {
-            const reqId = docxNoticeReqRef.current;
-            const sessionId = await readCurrentSessionId();
-            return {
+          captureContext={() =>
+            captureEnvelopeSubmitContext({
               slug,
-              orgId: currentOrgId,
-              userId: currentUserId,
-              sessionId,
-              reqId,
-            };
-          }}
+              reqId: docxNoticeReqRef.current,
+              readSessionId: readCurrentSessionId,
+              resolveScope: resolveScopeForSlug,
+            })
+          }
           isContextValid={(ctx) => isSameActiveOrgContext(ctx.slug, ctx.reqId)}
           onClose={() => setCreateOpen(false)}
           onCreated={async (envelopeId, warnings = [], submitContext) => {

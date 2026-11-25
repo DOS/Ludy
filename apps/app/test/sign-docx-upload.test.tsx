@@ -65,6 +65,7 @@ const { orpc, queryClient } = await import('../src/lib/api.ts');
 const { ensureSignedOutListener } = await import('../src/lib/ceremony-boot.ts');
 const {
   CreateEnvelopeDialog,
+  captureEnvelopeSubmitContext,
   handleEnvelopeCreatedWithWarnings,
   isCreatedDocxListNoticeVisible,
   openCreatedDocxNoticeEnvelope,
@@ -1053,5 +1054,52 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
     allowSignOutRemove = true;
     expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual([]);
     expect(signOutStore.has('ludy.sign.created_docx_warnings')).toBe(false);
+
+    // Recovery after temporary storage block syncs both fallback dismissals and fallback saves directly onto sessionStorage.
+    saveCreatedDocxWarnings(envDetailId, ['images_skipped'], scopeUserA);
+    vi.stubGlobal('window', { location: { pathname: '/o/acme/sign/envelopes', hash: '' } });
+    clearCreatedDocxWarnings(envDetailId, scopeUserA);
+    const secondEnvId = '01900000-0000-7000-8000-0000000000ed';
+    saveCreatedDocxWarnings(secondEnvId, ['footnotes_skipped'], scopeUserA);
+    vi.stubGlobal('window', { location: { pathname: '/o/acme/sign/envelopes', hash: '' }, sessionStorage: flakyStorage });
+    expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual([]);
+    expect(readCreatedDocxWarnings(secondEnvId, scopeUserA)).toEqual(['footnotes_skipped']);
+    const syncedRaw = signOutStore.get('ludy.sign.created_docx_warnings') ?? '';
+    expect(syncedRaw).not.toContain(envDetailId);
+    expect(syncedRaw).toContain(secondEnvId);
+
+    // captureEnvelopeSubmitContext binds userId/orgId directly from live session me.get instead of stale cached UI identity.
+    const liveCaptured = await captureEnvelopeSubmitContext({
+      slug: 'acme',
+      reqId: 3,
+      readSessionId: async () => 'sess-b',
+      resolveScope: async (_targetSlug, expectedSession) => ({
+        orgId: '01900000-0000-7000-8000-0000000000b1',
+        userId: userBId,
+        sessionId: expectedSession ?? null,
+      }),
+    });
+    expect(liveCaptured).toEqual({
+      slug: 'acme',
+      orgId: '01900000-0000-7000-8000-0000000000b1',
+      userId: userBId,
+      sessionId: 'sess-b',
+      reqId: 3,
+    });
+    const offlineCaptured = await captureEnvelopeSubmitContext({
+      slug: 'acme',
+      reqId: 4,
+      readSessionId: async () => 'sess-b',
+      resolveScope: async () => {
+        throw new Error('me offline');
+      },
+    });
+    expect(offlineCaptured).toEqual({
+      slug: 'acme',
+      orgId: null,
+      userId: null,
+      sessionId: 'sess-b',
+      reqId: 4,
+    });
   });
 });
