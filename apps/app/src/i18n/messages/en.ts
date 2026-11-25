@@ -2547,6 +2547,8 @@ export const en = {
     unitLabel: 'Unit (optional)',
     unitPlaceholder: 'orders, clients, %, VND...',
     linkedProjectLabel: 'Link Ludy Projects project (optional)',
+    searchProjectsPlaceholder: 'Search projects by name...',
+    loadMoreProjectsBtn: 'Load more projects',
     noLinkedProject: 'No project link',
     linkedTasksLabel: 'Pick specific tasks (leave empty to track whole project)',
     loadingTasks: 'Loading project tasks...',
@@ -19560,6 +19562,7 @@ export const en = {
     },
     projects: {
       board: 'Read a project board and task list',
+      board_snapshots: 'Read batched project board column and task summaries',
       column: {
         create: 'Create a custom board column in a project',
         delete: 'Delete a custom board column in a project',

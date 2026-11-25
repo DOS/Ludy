@@ -14,6 +14,7 @@ import {
   zId,
   zProjectArchive,
   zProjectBoardInput,
+  zProjectBoardSnapshotsInput,
   zProjectCreate,
   zProjectListInput,
   zProjectMemberCompletedTasksAsk,
@@ -27,7 +28,10 @@ import {
   zProjectUpdate,
   type FilterAst,
   type ProjectBoard,
+  type ProjectBoardSnapshot,
+  type ProjectBoardSnapshotsResult,
   type ProjectCandidateTask,
+  type ProjectColumn,
   type ProjectDetail,
   type ProjectListResult,
   type ProjectMemberCompletedTasksResult,
@@ -43,7 +47,7 @@ import { filterCondition, sortTerms, taskFields, taskSortColumns } from '@ludy/k
 import { DomainError, defineCommand, defineQuery } from '@ludy/kernel-runtime';
 import { isValidScheduleRange } from './domain/timeline.ts';
 import { projectsManifest } from './manifest.ts';
-import { loadProjectColumns, placeProjectTaskBetween, resolveTaskColumnId, type ProjectOrderRow } from './columns.ts';
+import { loadColumnsForProjects, loadProjectColumns, placeProjectTaskBetween, resolveTaskColumnId, type ProjectOrderRow } from './columns.ts';
 import { loadActiveCycleView, loadCycle } from './cycles.ts';
 import { parseStoredRecurrence } from './recurring.ts';
 import {
@@ -758,6 +762,10 @@ export const projectTaskCreate = defineCommand({
   },
 });
 
+function escapeLikePattern(value: string): string {
+  return value.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+}
+
 export const projectList = defineQuery({
   name: 'projects.project.list',
   input: zProjectListInput,
@@ -766,8 +774,10 @@ export const projectList = defineQuery({
     const userId = userOf(ctx.actor);
     const canWrite = ctx.role !== null && ctx.role !== 'viewer';
     if (input.status !== undefined && input.status.length === 0) {
-      return { projects: [], canWrite, truncated: false };
+      return { projects: [], canWrite, truncated: false, nextCursor: null };
     }
+
+    const limit = input.limit ?? PROJECT_LIST_LIMIT;
 
     let q = ctx.trx
       .selectFrom('ludy_projects.project as p')
@@ -790,18 +800,34 @@ export const projectList = defineQuery({
     if (input.status !== undefined) {
       q = q.where('p.status', 'in', input.status);
     }
+    if (input.search !== undefined) {
+      const pattern = `%${escapeLikePattern(input.search)}%`;
+      q = q.where(sql<boolean>`p.name ILIKE ${pattern} ESCAPE '\\'`);
+    }
+    if (input.cursor !== undefined) {
+      q = q.where(
+        sql<boolean>`EXISTS (
+          SELECT 1 FROM ludy_projects.project cur
+           WHERE cur.org_id = ${ctx.orgId}::uuid
+             AND cur.id = ${input.cursor}::uuid
+             AND NOT cur.is_template
+             AND (p.updated_at, p.id) < (cur.updated_at, cur.id)
+        )`,
+      );
+    }
 
     const rows = await q
       .orderBy('p.updated_at', 'desc')
       .orderBy('p.id', 'desc')
-      .limit(PROJECT_LIST_LIMIT + 1)
+      .limit(limit + 1)
       .execute();
 
-    const truncated = rows.length > PROJECT_LIST_LIMIT;
-    const page = truncated ? rows.slice(0, PROJECT_LIST_LIMIT) : rows;
+    const truncated = rows.length > limit;
+    const page = truncated ? rows.slice(0, limit) : rows;
     if (page.length === 0) {
-      return { projects: [], canWrite, truncated: false };
+      return { projects: [], canWrite, truncated: false, nextCursor: null };
     }
+    const nextCursor = truncated ? (page[page.length - 1]?.id ?? null) : null;
 
     const projectIds = page.map((r) => r.id);
     const ownerIds = page.map((r) => r.owner_user_id).filter((id): id is string => id !== null);
@@ -849,7 +875,7 @@ export const projectList = defineQuery({
       };
     });
 
-    return { projects, canWrite, truncated };
+    return { projects, canWrite, truncated, nextCursor };
   },
 });
 
@@ -1263,6 +1289,109 @@ export const projectMemberCompletedTasks = defineQuery({
         projectName: r.project_name,
         completedAt: new Date(r.updated_at).toISOString(),
       })),
+    };
+  },
+});
+
+// Batched board summary across distinct projects (columns + active tasks up to PROJECT_BOARD_LIMIT per project).
+// Runs strictly under caller RLS (private projects and le_scope tasks outside caller access are omitted cleanly).
+export const projectBoardSnapshots = defineQuery({
+  name: 'projects.board_snapshots',
+  input: zProjectBoardSnapshotsInput,
+  access: READERS,
+  handler: async (ctx, input): Promise<ProjectBoardSnapshotsResult> => {
+    userOf(ctx.actor);
+    const projectIds = [...new Set(input.projectIds)];
+    if (projectIds.length === 0) {
+      return { projects: [] };
+    }
+
+    const projectRows = await ctx.trx
+      .selectFrom('ludy_projects.project as p')
+      .select(['p.id', 'p.name'])
+      .where('p.org_id', '=', ctx.orgId)
+      .where('p.is_template', '=', false)
+      .where('p.id', 'in', projectIds)
+      .execute();
+
+    if (projectRows.length === 0) {
+      return { projects: [] };
+    }
+
+    const accessibleIds = projectRows.map((p) => p.id);
+    const [columnRows, { rows: taskRows }] = await Promise.all([
+      loadColumnsForProjects(ctx.trx, ctx.orgId, accessibleIds),
+      sql<{
+        project_id: string;
+        id: string;
+        title: string;
+        status: string;
+        column_id: string | null;
+        rn: number;
+      }>`
+        WITH ranked AS (
+          SELECT pt.project_id,
+                 t.id,
+                 t.title,
+                 t.status,
+                 pt.column_id,
+                 pg_catalog.row_number() OVER (
+                   PARTITION BY pt.project_id
+                   ORDER BY pt.sort_key ASC NULLS LAST,
+                            t.due ASC NULLS LAST,
+                            t.created_at ASC,
+                            t.id ASC
+                 )::int AS rn
+            FROM ludy_projects.project_task pt
+            JOIN ludy_kernel.task t
+              ON t.org_id = pt.org_id AND t.id = pt.task_id
+           WHERE pt.org_id = ${ctx.orgId}::uuid
+             AND pt.project_id = ANY(${accessibleIds}::uuid[])
+             AND t.status <> 'cancelled'
+        )
+        SELECT project_id, id, title, status, column_id, rn
+          FROM ranked
+         WHERE rn <= ${PROJECT_BOARD_LIMIT + 1}
+         ORDER BY project_id ASC, rn ASC`.execute(ctx.trx),
+    ]);
+
+    const colsByProject = new Map<string, ProjectColumn[]>();
+    for (const col of columnRows) {
+      const list = colsByProject.get(col.projectId) ?? [];
+      list.push(col);
+      colsByProject.set(col.projectId, list);
+    }
+
+    const tasksByProject = new Map<string, ProjectBoardSnapshot['tasks']>();
+    const truncatedByProject = new Set<string>();
+    for (const t of taskRows) {
+      if (t.rn > PROJECT_BOARD_LIMIT) {
+        truncatedByProject.add(t.project_id);
+        continue;
+      }
+      const cols = colsByProject.get(t.project_id) ?? [];
+      const status = t.status as TaskStatus;
+      const list = tasksByProject.get(t.project_id) ?? [];
+      list.push({
+        id: t.id,
+        title: t.title,
+        status,
+        columnId: resolveTaskColumnId(cols, t.column_id, status),
+      });
+      tasksByProject.set(t.project_id, list);
+    }
+
+    return {
+      projects: projectRows.map((p) => {
+        const cols = colsByProject.get(p.id) ?? [];
+        return {
+          projectId: p.id,
+          name: p.name,
+          columns: cols.map((c) => ({ id: c.id, name: c.name, taskStatus: c.taskStatus })),
+          tasks: tasksByProject.get(p.id) ?? [],
+          truncated: truncatedByProject.has(p.id),
+        };
+      }),
     };
   },
 });

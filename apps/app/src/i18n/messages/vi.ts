@@ -2544,6 +2544,8 @@ export const vi = {
     unitLabel: 'Đơn vị (tùy chọn)',
     unitPlaceholder: 'đơn, khách, %, triệu...',
     linkedProjectLabel: 'Liên kết dự án Công tác (tùy chọn)',
+    searchProjectsPlaceholder: 'Tìm nhanh dự án theo tên...',
+    loadMoreProjectsBtn: 'Tải thêm dự án',
     noLinkedProject: 'Không liên kết dự án',
     linkedTasksLabel: 'Chọn công việc cụ thể (bỏ trống để tính cả dự án)',
     loadingTasks: 'Đang tải công việc...',
@@ -19559,6 +19561,7 @@ export const vi = {
     },
     projects: {
       board: 'Xem bảng và danh sách việc của dự án',
+      board_snapshots: 'Xem tóm tắt bảng và công việc của nhiều dự án',
       column: {
         create: 'Tạo cột tùy chỉnh trên bảng dự án',
         delete: 'Xóa cột tùy chỉnh trên bảng dự án',

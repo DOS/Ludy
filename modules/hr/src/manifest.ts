@@ -52,9 +52,10 @@ export const hrManifest = defineModule({
         ['org_id', 'id', 'legal_entity_id', 'objective_id', 'title', 'metric_type', 'target_value', 'current_value', 'unit', 'linked_project_id', 'linked_task_ids', 'progress_pct', 'last_checkin_at', 'last_checkin_by', 'created_by', 'created_at', 'updated_at'],
         { last_checkin_note: 'pii' },
       ),
-      // Lightweight quarterly OKR objectives in a Company -> Department -> Individual tree (#4529 Stage 6D).
+      // Lightweight quarterly OKR objectives in a Company -> Department -> Individual tree (#4529 Stage 6D); individual titles redacted on employee erasure.
       okr_objective: columns(
-        ['org_id', 'id', 'legal_entity_id', 'quarter', 'scope', 'title', 'owner_employee_id', 'department_id', 'parent_objective_id', 'status', 'created_by', 'created_at', 'updated_at'],
+        ['org_id', 'id', 'legal_entity_id', 'quarter', 'scope', 'owner_employee_id', 'department_id', 'parent_objective_id', 'status', 'created_by', 'created_at', 'updated_at'],
+        { title: 'pii' },
       ),
       // Employee self-service onboarding checklist and HR-reviewed PII updates (#4448 Stage 5B).
       onboarding_submission: columns(
