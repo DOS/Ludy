@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Search across meeting text (issue #2589, meetings plan L2, ADR-0047 point 2), on PostgreSQL 17. What must hold on every later change to it:
-// - The search finds a transcript line only for a caller who reads it: the recorder (every stage of their own meeting) and a reader of the meeting (published lines). An owner or
+// - The search finds a transcript line only for a caller who reads it: the recorder (one stage of their own meeting: the working draft while one exists, else the published lines, #4940) and a reader of the meeting (published lines). An owner or
 //   admin who is not a reader, a member who is not named, a draft that is not theirs, another org, and a meeting past its text date give no id; a viewer, an agent, the system context and
 //   a caller with no context are refused (42501) and an invalid page raises; the answer is the same for a word that is not there and a line that is not theirs.
 // - The folded words (transcript_segment.search) are a GENERATED column: nothing writes them, the database rebuilds them from the text on every update, so a correction or an erasure of
@@ -167,8 +167,8 @@ suite('search across meeting text on PostgreSQL (#2589, ADR-0047)', () => {
   it('names a line only to a caller who reads it', async () => {
     const recorder = member('the recorder', () => users.recorder);
     const attendee = member('an attendee', () => users.attendee);
-    // The recorder: every stage of their own meetings, and nothing past its text date or of another org.
-    expect((await idsFor(recorder, 'chiet khau')).sort()).toEqual([seg.hiddenPublished, seg.hiddenDraft, seg.sharedPublished, seg.sharedDraft].sort());
+    // The recorder: one stage of each of their own meetings, the working draft while one exists (#4940), and nothing past its text date or of another org.
+    expect((await idsFor(recorder, 'chiet khau')).sort()).toEqual([seg.hiddenDraft, seg.sharedDraft].sort());
     // A named attendee: published lines of the meeting they are named in and of the shared one; never a draft.
     expect((await idsFor(attendee, 'chiet khau')).sort()).toEqual([seg.hiddenPublished, seg.sharedPublished].sort());
     // A member not named, an owner and an admin who are no readers of the attendees-only meeting: only the shared meeting's published line.
