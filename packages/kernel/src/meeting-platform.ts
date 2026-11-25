@@ -291,7 +291,8 @@ export const meetingPlatformRecordingPick = defineCommand({
   access: EDITORS,
   target: (input) => ({ type: 'kernel.meeting_platform_recording', id: input.recordingId }),
   handler: async (ctx, input) => {
-    requireUser(ctx);
+    // A person picks, in their own browser: never an agent acting for one.
+    if (ctx.actor.type !== 'user' || ctx.actor.mcp) throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới chọn được tệp ghi hình');
     await sql`SELECT ludy_kernel.meeting_platform_recording_pick(${input.recordingId}::uuid, ${input.fileId}::text)`.execute(ctx.trx).catch(platformError);
     // The id of the recording only: a Drive file id names a file in a member's Drive, and an audit row never holds one.
     ctx.audit({ recording_id: input.recordingId });

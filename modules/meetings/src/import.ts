@@ -116,9 +116,9 @@ export const meetingImportStart = defineCommand({
     const transcriptOnly = !recording.has_audio && !recording.has_video && recording.has_transcript && hasTranscriptPath(recording.provider);
     if (!recording.has_audio && !(recording.has_video && videoImportOn) && !transcriptOnly) throw new DomainError('MEETING_PLATFORM_NO_AUDIO', 422, 'Nền tảng không có tệp âm thanh hay video cho bản ghi này');
     // A Google Meet recording that is a video file only is the member's to pick in Google Picker first (#3174, ADR-0025 amendment): without a pick nothing is started, so no meeting is made and nothing is downloaded.
-    // The worker's job compares the pick with the id Meet gave and fails the import (`pick_mismatch`) if it is another file.
+    // The worker's job compares the pick with the id Meet gave and fails the import (`pick_mismatch`) if it is another file; a try that failed that way needs a new pick (the pick clears that code) before it starts again.
     if (meetingPlatformNeedsPick(recording.provider, { hasAudio: recording.has_audio, hasVideo: recording.has_video, hasTranscript: recording.has_transcript })) {
-      const picked = await sql<{ picked: boolean }>`SELECT picked_file_id IS NOT NULL AS picked FROM ludy_kernel.meeting_platform_recording WHERE org_id = ${ctx.orgId}::uuid AND id = ${input.recordingId}::uuid`.execute(ctx.trx);
+      const picked = await sql<{ picked: boolean }>`SELECT (picked_file_id IS NOT NULL AND coalesce(error_code, '') NOT IN ('pick_missing', 'pick_mismatch')) AS picked FROM ludy_kernel.meeting_platform_recording WHERE org_id = ${ctx.orgId}::uuid AND id = ${input.recordingId}::uuid`.execute(ctx.trx);
       if (picked.rows[0]?.picked !== true) throw new DomainError('MEETING_PLATFORM_PICK_REQUIRED', 409, 'Hãy chọn tệp ghi hình trong Google Drive trước khi nhập bản ghi này');
     }
     const title = (input.title ?? (recording.title.trim() === '' ? UNTITLED[input.language] : recording.title.trim())).slice(0, 200);

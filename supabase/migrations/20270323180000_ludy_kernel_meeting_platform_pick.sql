@@ -36,7 +36,9 @@ BEGIN
     RAISE EXCEPTION 'MEETING_PLATFORM_INVALID' USING ERRCODE = '22023';
   END IF;
   UPDATE ludy_kernel.meeting_platform_recording r
-  SET picked_file_id = p_file, picked_at = pg_catalog.now(), updated_at = pg_catalog.now()
+  SET picked_file_id = p_file, picked_at = pg_catalog.now(), updated_at = pg_catalog.now(),
+      -- A try that failed because of the pick (none, or another file than Meet's) is answered by this new pick: the member may start it again.
+      error_code = CASE WHEN r.error_code IN ('pick_missing', 'pick_mismatch') THEN NULL ELSE r.error_code END
   WHERE r.org_id = v_org AND r.id = p_recording AND r.user_id = v_user AND r.status IN ('suggested', 'failed')
     AND r.has_video AND NOT r.has_audio AND NOT r.has_transcript
     AND EXISTS (SELECT 1 FROM ludy_kernel.meeting_platform_connection c WHERE c.org_id = r.org_id AND c.id = r.connection_id AND c.provider = 'google_meet');

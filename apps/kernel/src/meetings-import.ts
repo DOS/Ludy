@@ -302,13 +302,20 @@ export async function runMeetingsImport(deps: MeetingsImportDeps, job: MeetingsI
       if (job.sizeBytes !== null && job.sizeBytes > (format === 'video' ? MEETING_PLATFORM_VIDEO_MAX_BYTES : MEETING_PLATFORM_IMPORT_MAX_BYTES)) return await fail('too_large');
       if (format === null) return await fail('no_audio');
     }
+    // Google Meet's Picker route (#3174, ADR-0025 amendment): the recording is a Drive file the member picked in their browser. Nothing is downloaded unless the pick is the file Meet itself gave for this recording,
+    // asked of Meet now: a member cannot make the server read another Drive file. No pick (taken away since the click) or another file fails the import, and the member picks again. The row's own pick is read first
+    // (a database read), so a row with none costs no token renewal. `hasTranscript: false` is the row's: a Meet recording is offered as a video only when it has no transcript (the adapter never lists both, and the
+    // click and the pick definer use the row's real flag).
+    const needsPick = !transcriptOnly && meetingPlatformNeedsPick(job.provider, { hasAudio: job.hasAudio, hasVideo: job.hasVideo, hasTranscript: false });
+    let picked: string | null = null;
+    if (needsPick) {
+      if (!adapter.recordingFile) return await fail('platform_unavailable');
+      picked = await deps.runtime.query<string | null>('kernel.meeting_platform.import_pick', { recordingId: job.id, stagingKey: job.stagingKey }, ctx);
+      if (picked === null) return await fail('pick_missing');
+    }
     // The token in hand, renewed first when it is about to expire (a provider that rotates its refresh token: kernel.meeting_platform.credential_refresh, one transaction under the connection's lock).
     const credential = await freshCredential(deps, job.orgId, job.connectionId, adapter);
-    // Google Meet's Picker route (#3174, ADR-0025 amendment): the recording is a Drive file the member picked in their browser. Nothing is downloaded unless the pick is the file Meet itself gave for this recording,
-    // asked of Meet now: a member cannot make the server read another Drive file. No pick (taken away since the click) or another file fails the import, and the member picks again.
-    if (!transcriptOnly && adapter.recordingFile && meetingPlatformNeedsPick(job.provider, { hasAudio: job.hasAudio, hasVideo: job.hasVideo, hasTranscript: false })) {
-      const picked = await deps.runtime.query<string | null>('kernel.meeting_platform.import_pick', { recordingId: job.id, stagingKey: job.stagingKey }, ctx);
-      if (picked === null) return await fail('pick_missing');
+    if (needsPick && adapter.recordingFile) {
       const file = await adapter.recordingFile(credential, job.externalId, attempt.signal);
       if (file === null) return await fail('recording_gone');
       if (file.fileId !== picked) return await fail('pick_mismatch');

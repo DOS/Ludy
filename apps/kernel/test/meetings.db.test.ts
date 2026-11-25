@@ -1873,6 +1873,13 @@ suite('meetings module database integration tests (#2576)', () => {
       expect(await recordingRow(meet)).toMatchObject({ status: 'importing', meeting_id: meetingId });
       // Once importing, a pick is refused: it can no longer change what the job reads.
       expect(await refusedWith(pick('recorder', { recordingId: meet, fileId: `${PICK}X` }))).toBe('MEETING_PLATFORM_NOT_FOUND');
+      // A try that failed on the pick needs a new pick before it starts again (the old one is not trusted), and an agent cannot pick.
+      await admin((c) => c.query(`UPDATE ludy_kernel.meeting_platform_recording SET status = 'failed', staging_key = NULL, error_code = 'pick_mismatch' WHERE id = $1`, [meet]));
+      expect(await refusedWith(startImport('recorder', { recordingId: meet, language: 'vi', visibility: 'attendees' }))).toBe('MEETING_PLATFORM_PICK_REQUIRED');
+      await pick('recorder', { recordingId: meet, fileId: `${PICK}Y` });
+      expect((await recordingRow(meet)).error_code).toBeNull();
+      await startImport('recorder', { recordingId: meet, language: 'vi', visibility: 'attendees' });
+      expect((await recordingRow(meet)).status).toBe('importing');
       // The audit row names the recording, never the Drive file.
       const audits = await admin(async (c) => (await c.query<{ detail: unknown }>(`SELECT detail FROM ludy_kernel.audit_event WHERE command = 'kernel.meeting_platform.recording.pick'`)).rows);
       expect(audits.length).toBeGreaterThan(0);

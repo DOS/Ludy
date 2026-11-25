@@ -98,6 +98,25 @@ describe('the pick check of the import job', () => {
     expect(refused.touched).toEqual([]);
   });
 
+  it('fails closed when the provider\'s adapter cannot name the file, and a row with no pick costs no token renewal', async () => {
+    const run = setup({ picked: PICKED, meet: { fileId: PICKED } });
+    const bare = { ...run.deps.adapters.google_meet } as MeetingPlatformAdapter;
+    delete (bare as { recordingFile?: unknown }).recordingFile;
+    const deps = { ...run.deps, adapters: { google_meet: bare } } as MeetingsImportDeps;
+    expect(await runMeetingsImport(deps, job(), attempt)).toBe('failed');
+    expect(run.executed).toEqual(['kernel.meeting_platform.import_failed:platform_unavailable']);
+    expect(run.touched).toEqual([]);
+    const none = setup({ picked: null, meet: { fileId: PICKED } });
+    const credentials: string[] = [];
+    const query = none.deps.runtime.query.bind(none.deps.runtime);
+    (none.deps.runtime as { query: unknown }).query = async (name: string, ...rest: unknown[]) => {
+      credentials.push(name);
+      return (query as (name: string, ...rest: unknown[]) => Promise<unknown>)(name, ...rest);
+    };
+    expect(await runMeetingsImport(none.deps, job(), attempt)).toBe('failed');
+    expect(credentials).not.toContain('kernel.meeting_platform.credential');
+  });
+
   it('never asks for a pick of a recording that needs none: audio, another provider', async () => {
     const audio = setup({ picked: null, meet: null });
     expect(await runMeetingsImport(audio.deps, job({ hasAudio: true, hasVideo: false }), attempt)).toBe('staged');
