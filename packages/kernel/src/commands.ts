@@ -1298,7 +1298,9 @@ export function buildKernelCommands(
   } = {},
 ) {
   return [
-    options.orgCreateLimits ? orgCreateCommand(options.orgCreateLimits) : createOrgCommand,
+    options.orgCreateLimits || options.shippedModules
+      ? orgCreateCommand(options.orgCreateLimits, options.shippedModules ? { shipped: options.shippedModules } : {})
+      : createOrgCommand,
     options.inviteLimits || options.messageIdDomain
       ? inviteCreateCommand(options.inviteLimits, { messageIdDomain: options.messageIdDomain })
       : createInvite,

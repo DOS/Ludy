@@ -2,6 +2,7 @@
 import { sql } from 'kysely';
 import { z } from 'zod';
 import type { Db, MemberRole } from '@ludy/db';
+import { ORG_KINDS, ORG_KIND_APPS_OFF, type OrgKind } from '@ludy/kernel-contract';
 import { DomainError, defineCommand, type Runtime, type UserActor } from '@ludy/kernel-runtime';
 
 export interface VerifiedIdentity {
@@ -94,12 +95,18 @@ function assertLimit(name: string, value: number): void {
 // owner membership, or returns the org an earlier request with the same idempotency key created; the runtime
 // then enters it as the caller and writes the audit row and the idempotency key in the same transaction.
 // Over the limits the definer refuses with ORG_CREATE_RATE_LIMITED (429 RATE_LIMITED) before writing anything.
-export function orgCreateCommand(limits: OrgCreateLimits = DEFAULT_ORG_CREATE_LIMITS) {
+//
+// The org's type (ADR-0053 amendment, #4802): `kind` 'solo' starts the org with the modules a one-person company does not use switched off (ORG_KIND_APPS_OFF),
+// 'team' or no kind with every module on, as before. The switches are set here, in the same transaction, by running the audited kernel.org.set_app once per module
+// as the new org's owner: no new write path, and the tenant_apps_guard and tenant_apps_requires_audit triggers stay as they are (an INSERT carries only the defaults;
+// each switch is an owner's UPDATE with its own audit row). `shipped` is the module list of the build (as for set_app): a module the build does not ship is skipped.
+// Absent `shipped` (a test that registers the kernel alone) every listed module is switched.
+export function orgCreateCommand(limits: OrgCreateLimits = DEFAULT_ORG_CREATE_LIMITS, options: { shipped?: readonly string[] } = {}) {
   assertLimit('perDay', limits.perDay);
   assertLimit('total', limits.total);
   return defineCommand({
     name: 'kernel.org.create',
-    input: z.object({ name: z.string().trim().min(1).max(200) }),
+    input: z.object({ name: z.string().trim().min(1).max(200), kind: z.enum(ORG_KINDS).optional() }),
     risk: 'R1',
     sideEffect: 'internal',
     access: ['owner'],
@@ -113,13 +120,22 @@ export function orgCreateCommand(limits: OrgCreateLimits = DEFAULT_ORG_CREATE_LI
       if (!orgId) throw new DomainError('INTERNAL', 500, 'Không tạo được tổ chức');
       return orgId;
     },
-    handler: async (ctx): Promise<OrgSummary> => {
+    handler: async (ctx, input): Promise<OrgSummary> => {
       const tenant = await ctx.trx
         .selectFrom('ludy_kernel.tenant')
         .select(['org_id', 'slug', 'name'])
         .where('org_id', '=', ctx.orgId)
         .executeTakeFirstOrThrow();
-      ctx.audit({ slug: tenant.slug });
+      // The modules this type switches off that the build ships. With no type, or a type that switches nothing (team), nothing more is read: the old query only.
+      const wanted = (input.kind ? ORG_KIND_APPS_OFF[input.kind] : []).filter((module) => !options.shipped || options.shipped.includes(module));
+      // Only an org whose apps nobody has ever changed (version 1, as the INSERT leaves it): a replay that reached an org already changed by its owner switches nothing.
+      let off: readonly string[] = [];
+      if (wanted.length > 0) {
+        const apps = await ctx.trx.selectFrom('ludy_kernel.tenant').select('apps_version').where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
+        if (apps.apps_version === 1) off = wanted;
+      }
+      for (const module of off) await ctx.run('kernel.org.set_app', { module, enabled: false });
+      ctx.audit({ slug: tenant.slug, ...(input.kind ? { kind: input.kind, appsOff: off } : {}) });
       return { orgId: tenant.org_id, slug: tenant.slug, name: tenant.name, role: 'owner' };
     },
   });
@@ -127,6 +143,6 @@ export function orgCreateCommand(limits: OrgCreateLimits = DEFAULT_ORG_CREATE_LI
 
 export const createOrgCommand = orgCreateCommand();
 
-export function createOrg(runtime: Runtime, actor: UserActor, name: string, idempotencyKey?: string): Promise<OrgSummary> {
-  return runtime.executeOrgless<OrgSummary>('kernel.org.create', { name }, { actor, ...(idempotencyKey ? { idempotencyKey } : {}) });
+export function createOrg(runtime: Runtime, actor: UserActor, name: string, idempotencyKey?: string, kind?: OrgKind): Promise<OrgSummary> {
+  return runtime.executeOrgless<OrgSummary>('kernel.org.create', { name, ...(kind ? { kind } : {}) }, { actor, ...(idempotencyKey ? { idempotencyKey } : {}) });
 }

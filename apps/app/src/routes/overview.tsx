@@ -1,9 +1,11 @@
-// The org's overview (issue #1249, compressed action-first layout #4644):
-// Row 1: "Hôm nay cần bạn" hero card (with TodayBrief integrated or Day-1 SME quick-start on empty new orgs),
+// The org's overview (issue #1249, compressed action-first layout #4644, fixed create actions and the day-1 start card #4783):
+// Row 0: 3 to 4 fixed create actions named by the job (lib/home-actions.ts), for the apps that are on,
+// Row 1: "Hôm nay cần bạn" hero card with TodayBrief inside it, then the day-1 "Bắt đầu" card until the first invoice is approved or it is closed,
 // Row 2: compact operational strip merging waiting counts and SinceYesterday coworker recaps (hidden when empty),
 // Row 3: tax deadlines in the next 30 days beside "Tuần này" in a 2-column grid at lg (plus compact sales number gaps),
 // Row 4: quiet clickable app status links replacing tall duplicate cards.
 import { useMutation, useQuery } from '@tanstack/react-query';
+import { useEffect, useState } from 'react';
 import type { TaxDueView } from '@ludy/kernel-contract';
 import { Link, useParams } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
@@ -12,6 +14,7 @@ import { NavIcon, type NavIconName } from '@ludy/ui/components/nav-icon';
 import { TableCell, TableRow } from '@ludy/ui/components/table';
 import { cn } from '@ludy/ui/lib/utils';
 import { Day1QuickStart } from '../components/day1-quickstart.tsx';
+import { HomeActions } from '../components/home-actions.tsx';
 import { OrgNotesPanel } from '../components/notes-panel.tsx';
 import { SalesNumberGaps } from '../components/sales-number-gaps.tsx';
 import { SinceYesterday, useSinceYesterday } from '../components/since-yesterday.tsx';
@@ -25,6 +28,7 @@ import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { OPEN_TASK_STATUSES } from '../lib/agents.ts';
 import { installedApps, type AppId } from '../lib/apps.ts';
 import { deadlineTone } from '../lib/clients.ts';
+import { homeActions, readStartCardState, showStartCard, writeStartCardState, type StartCardState } from '../lib/home-actions.ts';
 import {
   WAITING_LINKS,
   allCounted,
@@ -288,7 +292,7 @@ export function OverviewPage() {
   const canChooseVat = financeOn && (role === 'owner' || role === 'admin');
   const noFilingPeriod = financeOn && overview.data !== undefined && overview.data.vatFilingPeriod === null;
 
-  const quickStart = quickStartSteps({ modules, role });
+  const quickStart = quickStartSteps({ modules, role, vatChosen: overview.data?.vatFilingPeriod != null });
   const waitingLoaded = allCounted(counts, ['failedFiles', 'notifications', 'tasks']);
   const day1Settled = me.isSuccess && today.isSuccess && overview.isSuccess && waitingLoaded && !since.isPending;
   const day1Error = Boolean(failed) || today.isError || me.isError;
@@ -310,17 +314,35 @@ export function OverviewPage() {
     });
   // Wait for Day-1 detection to settle before mounting TodayWeekly (avoids premature AI calls and Day-1 layout shift).
   const showWeekly = !day1Empty && (day1Settled || day1Error);
-  const showUpload = financeOn && role !== undefined && role !== 'viewer' && !day1Empty && (day1Settled || day1Error);
+
+  // The day-1 "Bắt đầu" card (#4783): gone by itself once the org has an approved invoice, or when the member closes it. The read is bounded:
+  // it runs only while neither has happened on this device, and its answer is kept so it is not asked again.
+  // Kept with the slug it was read for: the screen stays mounted when the member switches org, so another org's state is read afresh.
+  const [storedFor, setStoredFor] = useState<{ slug: string; value: StartCardState | null }>(() => ({ slug, value: readStartCardState(slug) }));
+  const stored = storedFor.slug === slug ? storedFor.value : readStartCardState(slug);
+  const setStored = (value: StartCardState) => setStoredFor({ slug, value });
+  const documents = useQuery({
+    ...orpc.documents.list.queryOptions({ input: {} }),
+    enabled: financeOn && role !== undefined && role !== 'viewer' && stored === null,
+    staleTime: 5 * 60_000,
+  });
+  const firstInvoiceApproved = documents.isSuccess ? documents.data.some((d) => d.voided === null) : undefined;
+  useEffect(() => {
+    if (firstInvoiceApproved !== true || stored !== null) return;
+    writeStartCardState(slug, 'done');
+    setStored('done');
+  }, [firstInvoiceApproved, stored, slug]);
+  const startCard = showStartCard({ steps: quickStart.length, stored, financeOn, firstInvoiceApproved, orgEmpty: day1Empty });
+  const dismissStart = () => {
+    writeStartCardState(slug, 'dismissed');
+    setStored('dismissed');
+  };
+  const createActions = homeActions(modules, role);
 
   // The choice is a button where the gap is (#3591), not a link in a sentence.
   const chooseVat = canChooseVat ? (
     <Link to="/o/$slug/settings" params={{ slug }} hash="tax-profile" className={buttonVariants({ variant: 'outline', size: 'sm' })}>
       {tcl('chooseFilingPeriod')}
-    </Link>
-  ) : undefined;
-  const uploadAction = showUpload ? (
-    <Link to="/o/$slug/inbox" params={{ slug }} className={buttonVariants()}>
-      {t('upload')}
     </Link>
   ) : undefined;
 
@@ -331,14 +353,14 @@ export function OverviewPage() {
       <PageHeader
         title={t('title')}
         subtitle={overview.data?.lastActivityAt ? t('lastActivity', { when: f.dateTime(overview.data.lastActivityAt) }) : t('subtitle')}
-        actions={uploadAction}
       />
 
-      {/* Row 1: Action queue with integrated TodayBrief, or 3-step Day-1 SME quick-start on empty new orgs (#2383, #4644). */}
-      <TodayList
-        slug={slug}
-        emptyContent={day1Empty ? <Day1QuickStart slug={slug} steps={quickStart} financeOn={financeOn} /> : undefined}
-      />
+      {/* Row 0: the fixed create actions, named by the job (#4783). */}
+      <HomeActions slug={slug} actions={createActions} />
+
+      {/* Row 1: the action queue with the coworker's brief inside the same card (#2383, #4644), then the day-1 start card (#4783). */}
+      <TodayList slug={slug} />
+      {startCard && <Day1QuickStart slug={slug} steps={quickStart} financeOn={financeOn} onDismiss={dismissStart} />}
 
       {/* Row 2: Compact operational strip combining Waiting counts + SinceYesterday coworker updates; hidden when empty (#4644). */}
       {hasOperationalStrip && (

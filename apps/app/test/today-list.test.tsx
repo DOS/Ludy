@@ -140,9 +140,12 @@ describe('TodayList', () => {
     expect(html).not.toContain(catalog('en').today.brief.aiBadge);
   });
 
-  it('shows the list alone when there is no brief (the month’s AI budget is spent), and a quiet placeholder while it loads', () => {
+  it('shows the list with one fixed sentence when the month’s AI budget is spent, and a quiet placeholder while it loads', () => {
     const spent = render({ data: { items: ITEMS, coworkers: NAMES, dropped: 0 }, brief: { writtenBy: null, sentences: [], budgetSpent: true, final: false } });
-    expect(spent).not.toContain('data-testid="today-brief"');
+    // AI off for the month: one fixed sentence from the list's own count, not an AI brief (#4783).
+    expect(spent).toContain('data-testid="today-brief"');
+    expect(spent).toContain(catalog('en').today.brief.byTemplate);
+    expect(spent).not.toContain(catalog('en').today.brief.aiBadge);
     expect(spent).toContain('A voucher does not balance');
     const loading = render({ data: { items: ITEMS, coworkers: NAMES, dropped: 0 } });
     expect(loading).toContain(catalog('en').today.brief.loading);
