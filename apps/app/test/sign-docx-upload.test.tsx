@@ -550,5 +550,28 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
     });
     expect(resolveOrder).toEqual(['resolve', 'nav:ole_objects_skipped']);
     clearCreatedDocxWarnings(envDetailId, scopeUserA);
+
+    // If me.get is unavailable AND resolveUserScope fails, keep the notice on the list page instead of auto-navigating away from warnings.
+    setCreatedDocxNotice.mockClear();
+    const unpersistedNav = vi.fn(async () => {});
+    await handleEnvelopeCreatedWithWarnings({
+      envelopeId: envDetailId,
+      warnings: ['images_skipped'],
+      slug: 'acme',
+      orgId: null,
+      userId: null,
+      resolveUserScope: async () => {
+        throw new Error('offline');
+      },
+      setCreateOpen,
+      setCreatedDocxNotice,
+      invalidateEnvelopes,
+      navigateToEnvelope: unpersistedNav,
+    });
+    expect(unpersistedNav).not.toHaveBeenCalled();
+    expect(setCreatedDocxNotice).toHaveBeenCalledWith({
+      envelopeId: envDetailId,
+      warnings: ['images_skipped'],
+    });
   });
 });

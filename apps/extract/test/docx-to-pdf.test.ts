@@ -440,6 +440,21 @@ describe('docx_to_pdf conversion (#4721)', () => {
       expect(emptyBothBreaksRes.pageCount).toBe(3);
       expect(drawn.find((d) => d.text === 'Sau đoạn ngắt')?.y).toBeCloseTo(p1!.y, 3);
 
+      // Two explicit page breaks before the first content paragraph skip only the first break and place content on page 2.
+      drawn.length = 0;
+      const leadingDoubleBreakDocx = buildDocx({
+        'word/document.xml': [
+          '<?xml version="1.0" encoding="UTF-8"?>',
+          '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">',
+          '<w:body>',
+          '<w:p><w:r><w:br w:type="page"/><w:br w:type="page"/><w:t>Đầu trang 2</w:t></w:r></w:p>',
+          '</w:body></w:document>',
+        ].join(''),
+      });
+      const leadingDoubleRes = await convertDocxToPdf(leadingDoubleBreakDocx);
+      expect(leadingDoubleRes.pageCount).toBe(2);
+      expect(drawn.find((d) => d.text === 'Đầu trang 2')?.y).toBeCloseTo(p1!.y, 3);
+
       // Plain empty <w:p/> without a page break still preserves intentional vertical spacer height.
       drawn.length = 0;
       const spacerDocx = buildDocx({

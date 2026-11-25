@@ -145,15 +145,16 @@ export async function handleEnvelopeCreatedWithWarnings(deps: {
     }
   }
   const scope = { org: resolvedOrgId ?? (deps.slug || null), userId: resolvedUserId };
+  let persisted = true;
   if (cleanWarnings.length > 0) {
-    saveCreatedDocxWarnings(deps.envelopeId, cleanWarnings, scope);
+    persisted = saveCreatedDocxWarnings(deps.envelopeId, cleanWarnings, scope);
     deps.setCreatedDocxNotice({ envelopeId: deps.envelopeId, warnings: cleanWarnings });
   } else {
     clearCreatedDocxWarnings(deps.envelopeId, scope);
     deps.setCreatedDocxNotice(null);
   }
   await deps.invalidateEnvelopes();
-  if (deps.slug) {
+  if (deps.slug && persisted) {
     await deps.navigateToEnvelope(deps.slug, deps.envelopeId);
   }
 }
@@ -902,6 +903,18 @@ export function SignEnvelopesPage() {
       {createdDocxNotice ? (
         <DocxWarningsAlert
           warnings={createdDocxNotice.warnings}
+          action={
+            slug ? (
+              <Link
+                to="/o/$slug/sign/envelopes/$id"
+                params={{ slug, id: createdDocxNotice.envelopeId }}
+                className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'min-h-11')}
+                data-testid="sign-docx-warning-open-envelope"
+              >
+                {t('templates.openEnvelopeButton')}
+              </Link>
+            ) : undefined
+          }
           onDismiss={() => {
             clearCreatedDocxWarnings(createdDocxNotice.envelopeId, {
               org: currentOrgInfo?.orgId ?? (slug || null),

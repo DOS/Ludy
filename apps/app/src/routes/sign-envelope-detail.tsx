@@ -430,9 +430,20 @@ export function SignEnvelopeDetailPage() {
   const roleHere = meQuery.data?.orgs.find((o) => o.slug === slug)?.role ?? orgQuery.data?.role;
   const currentUserId = meQuery.data?.userId ?? null;
   const noticeOrg = meQuery.data?.orgs.find((o) => o.slug === slug)?.orgId ?? (slug || null);
-  const [docxWarnings, setDocxWarnings] = useState<readonly SignDocxToPdfWarning[]>(() =>
-    id ? readCreatedDocxWarnings(id, { org: noticeOrg, userId: currentUserId }) : [],
-  );
+  const noticeScopeKey = `${noticeOrg ?? ''}\0${currentUserId ?? ''}\0${id}`;
+  const [docxWarningsState, setDocxWarningsState] = useState<{
+    key: string;
+    warnings: readonly SignDocxToPdfWarning[];
+  }>(() => ({
+    key: noticeScopeKey,
+    warnings: id ? readCreatedDocxWarnings(id, { org: noticeOrg, userId: currentUserId }) : [],
+  }));
+  const docxWarnings =
+    docxWarningsState.key === noticeScopeKey
+      ? docxWarningsState.warnings
+      : id
+        ? readCreatedDocxWarnings(id, { org: noticeOrg, userId: currentUserId })
+        : [];
   const canManageLinks = meQuery.data
     ? canManageEnvelopeLinks({
         role: roleHere,
@@ -484,8 +495,11 @@ export function SignEnvelopeDetailPage() {
   }, [id]);
 
   useEffect(() => {
-    setDocxWarnings(id ? readCreatedDocxWarnings(id, { org: noticeOrg, userId: currentUserId }) : []);
-  }, [id, noticeOrg, currentUserId]);
+    setDocxWarningsState({
+      key: noticeScopeKey,
+      warnings: id ? readCreatedDocxWarnings(id, { org: noticeOrg, userId: currentUserId }) : [],
+    });
+  }, [id, noticeOrg, currentUserId, noticeScopeKey]);
 
   useEffect(() => {
     if (!detailQuery.data || fieldsDirty) return;
@@ -1374,7 +1388,7 @@ export function SignEnvelopeDetailPage() {
           warnings={docxWarnings}
           onDismiss={() => {
             if (id) clearCreatedDocxWarnings(id, { org: noticeOrg, userId: currentUserId });
-            setDocxWarnings([]);
+            setDocxWarningsState({ key: noticeScopeKey, warnings: [] });
           }}
         />
       ) : null}

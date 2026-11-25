@@ -172,13 +172,13 @@ export function saveCreatedDocxWarnings(
   warnings: readonly SignDocxToPdfWarning[],
   scope?: CreatedDocxWarningScope,
   now = Date.now(),
-): void {
+): boolean {
   const norm = normalizeScope(scope);
-  if (!envelopeId || !norm) return;
+  if (!envelopeId || !norm) return false;
   const clean = sanitizeDocxWarnings(warnings);
   if (clean.length === 0) {
     clearCreatedDocxWarnings(envelopeId, norm, now);
-    return;
+    return true;
   }
   const key = noticeKey(envelopeId, norm);
   const nextEntry: StoredDocxWarningNotice = {
@@ -194,7 +194,7 @@ export function saveCreatedDocxWarnings(
   if (storage && tryPersistDocxNotices(storage, merged)) {
     fallbackDocxNotices.clear();
     fallbackDismissedNotices.clear();
-    return;
+    return true;
   }
   // Keep existing sessionStorage items intact on quota failures; track only the unpersisted update in memory.
   fallbackDismissedNotices.delete(key);
@@ -205,6 +205,7 @@ export function saveCreatedDocxWarnings(
     if (oldestKey === undefined) break;
     fallbackDocxNotices.delete(oldestKey);
   }
+  return true;
 }
 
 /** Reads persisted post-creation .docx warnings matching envelope, user, and org without consuming them. */

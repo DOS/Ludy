@@ -356,6 +356,7 @@ suite('eSign .docx cross-user polling and unattached file confidentiality invari
       body: unconsumedStream,
       duplex: 'half',
     } as RequestInit & { duplex: 'half' });
+    const statsBeforeUnauthorized = getSignDocxRuntimeStats(rt);
     await expect(
       handleSignDocxConvertUpload({
         runtime: rt,
@@ -369,14 +370,16 @@ suite('eSign .docx cross-user polling and unattached file confidentiality invari
     expect(bodyChunksRead).toBe(0);
     expect(unconsumedReq.bodyUsed).toBe(false);
     expect(putCalls).toEqual([]);
-    expect(getSignDocxRuntimeStats(rt)).toBeNull();
+    expect(getSignDocxRuntimeStats(rt)).toEqual(statsBeforeUnauthorized);
+    expect(getSignDocxRuntimeStats(rt)?.rateLimitBuckets ?? 0).toBe(0);
 
     const viewerHttp = await http.postDocx(o.viewer, confidentialDocx, 'viewer.docx');
     expect(viewerHttp.status).toBe(403);
     const extHttp = await http.postDocx('ext-user', confidentialDocx, 'ext.docx');
     expect(extHttp.status).toBe(403);
     expect(putCalls).toEqual([]);
-    expect(getSignDocxRuntimeStats(rt)).toBeNull();
+    expect(getSignDocxRuntimeStats(rt)).toEqual(statsBeforeUnauthorized);
+    expect(getSignDocxRuntimeStats(rt)?.rateLimitBuckets ?? 0).toBe(0);
 
     // 2. Uploader queues conversion.
     const queued = await http.postDocx(o.member, confidentialDocx, 'confidential.docx');

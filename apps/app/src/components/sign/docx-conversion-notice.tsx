@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Shared eSign .pdf / .docx validation + calm conversion status/warning banner (#4721).
+import type { ReactNode } from 'react';
 import { useTranslations } from 'use-intl';
 import { MAX_UPLOAD_BYTES } from '@ludy/kernel-contract';
 import { Alert, AlertDescription } from '@ludy/ui/components/alert';
@@ -63,9 +64,11 @@ export async function inspectSelectedSignUploadFile(file: File): Promise<SignFil
 export function DocxWarningsAlert({
   warnings,
   onDismiss,
+  action,
 }: {
   warnings: readonly SignDocxToPdfWarning[];
   onDismiss?: () => void;
+  action?: ReactNode | undefined;
 }) {
   const t = useTranslations('sign');
   const common = useTranslations('common');
@@ -92,6 +95,7 @@ export function DocxWarningsAlert({
             <li key={w}>{t(`docxWarnings.${w}`)}</li>
           ))}
         </ul>
+        {action ? <div className="pt-1">{action}</div> : null}
       </AlertDescription>
     </Alert>
   );
