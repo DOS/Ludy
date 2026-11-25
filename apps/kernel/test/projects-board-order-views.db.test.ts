@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Manual project board ordering (projects.task.reorder) and kernel.task saved-view filters/sort on PostgreSQL 17 (#2610).
+// RBAC, le_scope, archive-guard, and ctx.agent security invariants live in modules/projects/test/invariant/ (#3445).
 // Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -15,7 +16,7 @@ import {
   type SavedView,
   type SavedViewSort,
 } from '@ludy/kernel-contract';
-import { Runtime, type AgentActor } from '@ludy/kernel-runtime';
+import { Runtime } from '@ludy/kernel-runtime';
 import { financeCommands } from '@ludy/mod-finance';
 import { projectsCommands, projectsQueries } from '@ludy/mod-projects';
 import { TEST_MANIFESTS } from './manifests.ts';
@@ -39,10 +40,8 @@ suite('project board ordering and kernel.task saved views on PostgreSQL (#2610)'
   const dbName = `ludy_test_proj_order_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
-  let workerPool: pg.Pool;
   let db: Db;
   let rt: Runtime;
-  let workerRt: Runtime;
 
   const asUser = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal1' as const, sessionId: randomUUID() });
   const asMfa = (userId: string) => ({
@@ -84,22 +83,14 @@ suite('project board ordering and kernel.task saved views on PostgreSQL (#2610)'
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw' });
     const appUrl = new URL(adminUrl);
     appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
-    const workerUrl = new URL(adminUrl);
-    workerUrl.username = 'ludy_worker';
-    workerUrl.password = 'test-worker-pw';
 
     pool = createPool({ connectionString: appUrl.toString(), max: 6 });
-    workerPool = createPool({ connectionString: workerUrl.toString(), max: 2 });
     db = createDb(pool);
     rt = new Runtime(db, { manifests: TEST_MANIFESTS, stepUp: 'required' }).register({
-      commands: [...kernelCommands, ...projectsCommands, ...financeCommands],
-      queries: [...kernelQueries({ inboundDomain: null }), ...projectsQueries],
-    });
-    workerRt = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register({
       commands: [...kernelCommands, ...projectsCommands, ...financeCommands],
       queries: [...kernelQueries({ inboundDomain: null }), ...projectsQueries],
     });
@@ -107,7 +98,6 @@ suite('project board ordering and kernel.task saved views on PostgreSQL (#2610)'
 
   afterAll(async () => {
     await pool?.end();
-    await workerPool?.end();
     if (!ADMIN) return;
     const root = new pg.Client({ connectionString: ADMIN });
     await root.connect();
@@ -240,146 +230,7 @@ suite('project board ordering and kernel.task saved views on PostgreSQL (#2610)'
     expect(finalOrder).toHaveLength(5);
   });
 
-  it('enforces writer role, archive guard, project membership, and le_scope on projects.task.reorder', async () => {
-    const owner = await newPerson('sec-owner');
-    const viewer = await newPerson('sec-viewer');
-    const branchMember = await newPerson('sec-branch');
-    const outsider = await newPerson('sec-outsider');
-    const org = await createOrg(rt, asUser(owner.userId), 'Công ty Bảo mật');
-    const otherOrg = await createOrg(rt, asUser(outsider.userId), 'Công ty Khác');
-
-    for (const [person, role] of [
-      [viewer, 'viewer'],
-      [branchMember, 'member'],
-    ] as const) {
-      const inv = await rt.execute<{ acceptPath: string }>(
-        'kernel.member.invite.create',
-        { email: person.email, role },
-        { actor: asMfa(owner.userId), orgId: org.orgId, idempotencyKey: randomUUID() },
-      );
-      await rt.executeOrgless('kernel.member.invite.accept', { token: inv.acceptPath.split('#')[1] }, { actor: asUser(person.userId) });
-    }
-
-    let leA = '';
-    let leB = '';
-    let tA1 = '';
-    let tA2 = '';
-    let tB = '';
-    await withAdmin(async (c) => {
-      leA = (await c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [org.orgId])).rows[0]
-        ?.id as string;
-      leB = (
-        await c.query<{ id: string }>(
-          `INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh B', 'branch', $2) RETURNING id`,
-          [org.orgId, owner.userId],
-        )
-      ).rows[0]?.id as string;
-      await c.query(
-        `INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by)
-         VALUES ($1, $2, 'external_accountant', $3, $4)`,
-        [org.orgId, branchMember.userId, leA, owner.userId],
-      );
-      tA1 = (
-        await c.query<{ id: string }>(
-          `INSERT INTO ludy_kernel.task (org_id, title, source, created_by_type, legal_entity_id)
-           VALUES ($1, 'Việc A1', 'human', 'user', $2) RETURNING id`,
-          [org.orgId, leA],
-        )
-      ).rows[0]?.id as string;
-      tA2 = (
-        await c.query<{ id: string }>(
-          `INSERT INTO ludy_kernel.task (org_id, title, source, created_by_type, legal_entity_id)
-           VALUES ($1, 'Việc A2', 'human', 'user', $2) RETURNING id`,
-          [org.orgId, leA],
-        )
-      ).rows[0]?.id as string;
-      tB = (
-        await c.query<{ id: string }>(
-          `INSERT INTO ludy_kernel.task (org_id, title, source, created_by_type, legal_entity_id)
-           VALUES ($1, 'Việc B bí mật', 'human', 'user', $2) RETURNING id`,
-          [org.orgId, leB],
-        )
-      ).rows[0]?.id as string;
-    });
-
-    const { projectId } = await exec<{ projectId: string }>(owner.userId, org.orgId, 'projects.project.create', { name: 'Dự án LE' });
-    const { projectId: otherProjectId } = await exec<{ projectId: string }>(owner.userId, org.orgId, 'projects.project.create', {
-      name: 'Dự án khác',
-    });
-    const { taskId: tOtherProj } = await exec<{ taskId: string }>(owner.userId, org.orgId, 'projects.task.create', {
-      projectId: otherProjectId,
-      title: 'Việc dự án 2',
-      assigneePositionId: null,
-    });
-
-    await exec(owner.userId, org.orgId, 'projects.task.add', { projectId, taskId: tA1 });
-    await exec(owner.userId, org.orgId, 'projects.task.add', { projectId, taskId: tB });
-    await exec(owner.userId, org.orgId, 'projects.task.add', { projectId, taskId: tA2 });
-
-    // Viewer and agents cannot reorder.
-    await expect(
-      exec(viewer.userId, org.orgId, 'projects.task.reorder', { projectId, taskId: tA2, place: 'before', anchorId: tA1 }),
-    ).rejects.toMatchObject({ code: 'FORBIDDEN', status: 403 });
-
-    const installed = await rt.execute<{ agentId: string; positionId: string }>(
-      'kernel.agent.template.install',
-      { templateKey: 'finance.chief_accountant', displayName: 'Trợ lý' },
-      { actor: asMfa(owner.userId), orgId: org.orgId, idempotencyKey: randomUUID() },
-    );
-    await exec(owner.userId, org.orgId, 'kernel.task.create', {
-      title: 'Wake agent',
-      assigneePositionId: installed.positionId,
-    });
-    const started = await workerRt.execute<{ runId: string | null }>(
-      'kernel.agent.run.start',
-      { agentId: installed.agentId },
-      { actor: { type: 'system', component: 'test' }, orgId: org.orgId },
-    );
-    const agentActor: AgentActor = { type: 'agent', agentId: installed.agentId, runId: started.runId as string };
-    await expect(
-      rt.execute(
-        'projects.task.reorder',
-        { projectId, taskId: tA2, place: 'before', anchorId: tA1 },
-        { actor: agentActor, orgId: org.orgId, idempotencyKey: randomUUID() },
-      ),
-    ).rejects.toMatchObject({ status: 403 });
-
-    // Cross-org and self-anchor and wrong-project task are rejected.
-    await expect(
-      exec(outsider.userId, otherOrg.orgId, 'projects.task.reorder', { projectId, taskId: tA2, place: 'before', anchorId: tA1 }),
-    ).rejects.toMatchObject({ code: 'PROJECT_NOT_FOUND', status: 404 });
-    await expect(
-      exec(owner.userId, org.orgId, 'projects.task.reorder', { projectId, taskId: tA1, place: 'before', anchorId: tA1 }),
-    ).rejects.toMatchObject({ code: 'VALIDATION', status: 422 });
-    await expect(
-      exec(owner.userId, org.orgId, 'projects.task.reorder', { projectId, taskId: tA1, place: 'before', anchorId: tOtherProj }),
-    ).rejects.toMatchObject({ code: 'TASK_NOT_FOUND', status: 404 });
-
-    // le_scope: branchMember cannot see or reorder against tB, but CAN reorder visible tA2 before tA1.
-    await expect(
-      exec(branchMember.userId, org.orgId, 'projects.task.reorder', { projectId, taskId: tB, place: 'before', anchorId: tA1 }),
-    ).rejects.toMatchObject({ code: 'TASK_NOT_FOUND', status: 404 });
-    await expect(
-      exec(branchMember.userId, org.orgId, 'projects.task.reorder', { projectId, taskId: tA1, place: 'after', anchorId: tB }),
-    ).rejects.toMatchObject({ code: 'TASK_NOT_FOUND', status: 404 });
-
-    await exec(branchMember.userId, org.orgId, 'projects.task.reorder', { projectId, taskId: tA2, place: 'before', anchorId: tA1 });
-    const branchBoard = await query<ProjectBoard>(branchMember.userId, org.orgId, 'projects.board', { projectId });
-    expect(branchBoard.hiddenByEntityCount).toBe(1);
-    expect(branchBoard.tasks.map((t) => t.title)).toEqual(['Việc A2', 'Việc A1']);
-
-    // Owner still sees all three tasks including hidden tB.
-    const ownerBoard = await query<ProjectBoard>(owner.userId, org.orgId, 'projects.board', { projectId });
-    expect(ownerBoard.tasks.map((t) => t.id)).toContain(tB);
-
-    // Archived project blocks reorder.
-    await exec(owner.userId, org.orgId, 'projects.project.archive', { projectId });
-    await expect(
-      exec(owner.userId, org.orgId, 'projects.task.reorder', { projectId, taskId: tA1, place: 'before', anchorId: tA2 }),
-    ).rejects.toMatchObject({ code: 'PROJECT_ARCHIVED', status: 409 });
-  });
-
-  it('wires kernel.task saved views into kernel.task.list, projects.board, saved_view commands, and preserves caller/agent boundaries', async () => {
+  it('wires kernel.task saved views into kernel.task.list, projects.board, and saved_view commands', async () => {
     const owner = await newPerson('sv-owner');
     const member = await newPerson('sv-member');
     const org = await createOrg(rt, asUser(owner.userId), 'Công ty Bộ lọc');
@@ -415,7 +266,6 @@ suite('project board ordering and kernel.task saved views on PostgreSQL (#2610)'
       { templateKey: 'finance.chief_accountant', displayName: 'Vy Dự án' },
       { actor: asMfa(owner.userId), orgId: org.orgId, idempotencyKey: randomUUID() },
     );
-    const agentId = installedAgent.agentId;
     const posAgent = installedAgent.positionId;
 
     const { projectId } = await exec<{ projectId: string }>(owner.userId, org.orgId, 'projects.project.create', {
@@ -520,20 +370,5 @@ suite('project board ordering and kernel.task saved views on PostgreSQL (#2610)'
         sort: { field: 'priority', dir: 'asc' },
       }),
     ).rejects.toMatchObject({ code: 'VALIDATION', status: 422 });
-
-    // Agent run (untainted) still never sees tainted tasks or other positions even when filters ask for tainted: true.
-    const startedClean = await workerRt.execute<{ runId: string | null; tainted?: boolean }>(
-      'kernel.agent.run.start',
-      { agentId },
-      { actor: { type: 'system', component: 'test' }, orgId: org.orgId },
-    );
-    expect(startedClean).toMatchObject({ runId: expect.any(String), tainted: false });
-    const cleanAgentActor: AgentActor = { type: 'agent', agentId, runId: startedClean.runId as string };
-    const agentAttempt = await workerRt.query<{ tasks: TaskListRow[] }>(
-      'kernel.task.list',
-      { filters: { v: 1, all: [{ field: 'tainted', op: 'is', value: true }] } },
-      { actor: cleanAgentActor, orgId: org.orgId },
-    );
-    expect(agentAttempt.tasks).toEqual([]);
   });
 });
