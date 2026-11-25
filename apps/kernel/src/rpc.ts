@@ -1366,6 +1366,10 @@ export function createRpcHandler(
         approveL1: os.hr.overtimeRequests.approveL1.handler(hrCommand('hr.overtime.approve_l1')),
         approveFinal: os.hr.overtimeRequests.approveFinal.handler(hrCommand('hr.overtime.approve_final')),
         reject: os.hr.overtimeRequests.reject.handler(hrCommand('hr.overtime.reject')),
+        settings: {
+          get: os.hr.overtimeRequests.settings.get.handler(hrQuery('hr.overtime.settings.get')),
+          set: os.hr.overtimeRequests.settings.set.handler(hrCommand('hr.overtime.settings.set')),
+        },
       },
       salaryAdvances: {
         list: os.hr.salaryAdvances.list.handler(hrQuery('hr.salary_advance.list')),
@@ -1959,6 +1963,14 @@ export function createRpcHandler(
       // The week's meeting load for an owner or an admin (#4770): per member and the series worth trimming, read by code under the caller's own row security; see modules/meetings/src/load.ts.
       load: {
         week: os.meetings.load.week.handler(meetingsQuery('meetings.load.week')),
+      },
+      // Keyword trackers (#4818): the org's tracked words, and the hits counted by code under the caller's own row security; see modules/meetings/src/trackers.ts.
+      tracker: {
+        list: os.meetings.tracker.list.handler(meetingsQuery('meetings.tracker.list')),
+        add: os.meetings.tracker.add.handler(meetingsCommand('meetings.tracker.add')),
+        remove: os.meetings.tracker.remove.handler(meetingsCommand('meetings.tracker.remove')),
+        hits: os.meetings.tracker.hits.handler(meetingsQuery('meetings.tracker.hits')),
+        week: os.meetings.tracker.week.handler(meetingsQuery('meetings.tracker.week')),
       },
       // Highlights on a transcript line or range (#4819): the marks of a meeting, and the caller's own add and remove, under the caller's own row security; see modules/meetings/src/highlights.ts.
       highlight: {

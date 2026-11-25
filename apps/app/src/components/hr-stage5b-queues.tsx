@@ -84,7 +84,11 @@ export function HrOnboardingReviewQueue() {
       r.birthDate ? `${t('fieldBirthDate')}: ${f.date(r.birthDate)}` : null,
       r.hasIdentityNumber ? t('fieldIdentity') : null,
       r.bankCode ? `${t('fieldBank')}: ${r.bankCode}` : null,
-      r.hasBankAccount ? t('fieldAccount') : null,
+      r.bankAccountMasked
+        ? t('fieldAccountMasked', { masked: r.bankAccountMasked })
+        : r.hasBankAccount
+          ? t('fieldAccount')
+          : null,
       r.hasTaxCode ? t('fieldTaxCode') : null,
       r.hasInsuranceNumber ? t('fieldInsurance') : null,
     ].filter(Boolean);
@@ -306,6 +310,17 @@ export function HrOvertimeReviewQueue() {
     ...ONCE,
   });
 
+  const settingsQ = useQuery({
+    ...orpc.hr.overtimeRequests.settings.get.queryOptions({ input: {} }),
+    ...ONCE,
+  });
+  const requireL1 = settingsQ.data?.requireL1 ?? false;
+
+  const setRequireL1 = useMutation({
+    mutationFn: (next: boolean) => client.hr.overtimeRequests.settings.set({ requireL1: next }),
+    onSuccess: refreshHr,
+  });
+
   const approveL1 = useMutation({
     mutationFn: ({ requestId, note }: { requestId: string; note?: string }) =>
       client.hr.overtimeRequests.approveL1({ requestId, ...(note ? { note } : {}) }),
@@ -344,21 +359,40 @@ export function HrOvertimeReviewQueue() {
           <h2 className="text-base font-medium text-foreground">{t('title')}</h2>
           <p className="text-xs text-subtle-foreground">{t('subtitle')}</p>
         </div>
-        <NativeSelect
-          className={PHONE_SELECT_TARGET}
-          aria-label={t('filterLabel')}
-          value={statusFilter}
-          onChange={(ev) => setStatusFilter((ev.target.value || '') as HrOvertimeStatus | '')}
-          data-testid="hr-overtime-queue-filter"
-        >
-          <NativeSelectOption value="">{t('filterAll')}</NativeSelectOption>
-          {HR_OVERTIME_STATUSES.map((s) => (
-            <NativeSelectOption key={s} value={s}>
-              {t(`statuses.${s}`)}
-            </NativeSelectOption>
-          ))}
-        </NativeSelect>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant={requireL1 ? 'default' : 'outline'}
+            className={PHONE_TARGET}
+            aria-pressed={requireL1}
+            loading={setRequireL1.isPending}
+            disabled={settingsQ.isPending || setRequireL1.isPending}
+            onClick={() => setRequireL1.mutate(!requireL1)}
+            data-testid="hr-overtime-require-l1-toggle"
+          >
+            {t('requireL1Label')}: {requireL1 ? t('requireL1On') : t('requireL1Off')}
+          </Button>
+          <NativeSelect
+            className={PHONE_SELECT_TARGET}
+            aria-label={t('filterLabel')}
+            value={statusFilter}
+            onChange={(ev) => setStatusFilter((ev.target.value || '') as HrOvertimeStatus | '')}
+            data-testid="hr-overtime-queue-filter"
+          >
+            <NativeSelectOption value="">{t('filterAll')}</NativeSelectOption>
+            {HR_OVERTIME_STATUSES.map((s) => (
+              <NativeSelectOption key={s} value={s}>
+                {t(`statuses.${s}`)}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+        </div>
       </div>
+      <p className="text-xs text-subtle-foreground" data-testid="hr-overtime-require-l1-hint">
+        {t('requireL1Hint')}
+      </p>
+      {setRequireL1.error && <ErrorText>{errorMessage(setRequireL1.error)}</ErrorText>}
       {approveL1.error && <ErrorText>{errorMessage(approveL1.error)}</ErrorText>}
       {approveFinal.error && <ErrorText>{errorMessage(approveFinal.error)}</ErrorText>}
       {reject.error && <ErrorText>{errorMessage(reject.error)}</ErrorText>}
@@ -399,6 +433,16 @@ export function HrOvertimeReviewQueue() {
                     <Badge variant="warning" data-testid="hr-overtime-commentary-badge">
                       {t('commentaryBadge', { percent: String(r.multiplierPercent) })}
                     </Badge>
+                    {r.exceedsMonthlyCap && (
+                      <Badge variant="warning" data-testid="hr-overtime-monthly-cap-badge">
+                        {t('monthlyCapBadge', { month: r.month, total: r.monthHoursTotal })}
+                      </Badge>
+                    )}
+                    {r.exceedsDailyCap && (
+                      <Badge variant="destructive" data-testid="hr-overtime-daily-cap-badge">
+                        {t('dailyCapBadge', { total: r.dayHoursTotal })}
+                      </Badge>
+                    )}
                     <Badge variant={r.status === 'approved' ? 'success' : r.status === 'rejected' ? 'destructive' : 'secondary'}>
                       {t(`statuses.${r.status}`)}
                     </Badge>
@@ -446,7 +490,12 @@ export function HrOvertimeReviewQueue() {
                       size="sm"
                       className={PHONE_TARGET}
                       loading={approveFinal.isPending && approveFinal.variables?.requestId === r.id}
-                      disabled={approveL1.isPending || approveFinal.isPending || reject.isPending}
+                      disabled={
+                        approveL1.isPending ||
+                        approveFinal.isPending ||
+                        reject.isPending ||
+                        (requireL1 && r.status === 'pending_l1')
+                      }
                       onClick={() => approveFinal.mutate({ requestId: r.id, ...(note ? { note } : {}) })}
                       data-testid="hr-overtime-queue-approve-final"
                     >
@@ -484,6 +533,16 @@ export function HrOvertimeReviewQueue() {
               <>
                 <Badge variant="outline">{tm(`dayTypes.${activeRow.dayType}`)}</Badge>
                 <Badge variant="warning">{t('commentaryBadge', { percent: String(activeRow.multiplierPercent) })}</Badge>
+                {activeRow.exceedsMonthlyCap && (
+                  <Badge variant="warning" data-testid="hr-overtime-peek-monthly-cap-badge">
+                    {t('monthlyCapBadge', { month: activeRow.month, total: activeRow.monthHoursTotal })}
+                  </Badge>
+                )}
+                {activeRow.exceedsDailyCap && (
+                  <Badge variant="destructive" data-testid="hr-overtime-peek-daily-cap-badge">
+                    {t('dailyCapBadge', { total: activeRow.dayHoursTotal })}
+                  </Badge>
+                )}
                 <Badge variant={activeRow.status === 'approved' ? 'success' : activeRow.status === 'rejected' ? 'destructive' : 'secondary'}>
                   {t(`statuses.${activeRow.status}`)}
                 </Badge>
@@ -543,7 +602,11 @@ export function HrOvertimeReviewQueue() {
                     {
                       label: t('approveFinal'),
                       variant: 'default',
-                      disabled: approveL1.isPending || approveFinal.isPending || reject.isPending,
+                      disabled:
+                        approveL1.isPending ||
+                        approveFinal.isPending ||
+                        reject.isPending ||
+                        (requireL1 && activeRow.status === 'pending_l1'),
                       loading: approveFinal.isPending && approveFinal.variables?.requestId === activeRow.id,
                       onClick: () => approveFinal.mutate({ requestId: activeRow.id, ...(note ? { note } : {}) }),
                       testId: 'hr-overtime-peek-approve-final',
