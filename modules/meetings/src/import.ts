@@ -47,7 +47,7 @@ function importError(error: unknown): never {
 
 // Whose transcription a platform's transcript is, by the provider of the connection it came through (the sandbox is the offline test platform and labels like Google, as C2 did).
 // Typed on the contract's list of providers with a transcript path, so a provider added there cannot be left without its label.
-const TRANSCRIPT_SOURCE_OF: Record<MeetingPlatformTranscriptProvider, TranscriptionMaker> = { google_meet: 'google_meet', microsoft_teams: 'microsoft_teams', sandbox: 'google_meet' };
+const TRANSCRIPT_SOURCE_OF: Record<MeetingPlatformTranscriptProvider, TranscriptionMaker> = { google_meet: 'google_meet', microsoft_teams: 'microsoft_teams', zoom: 'zoom', sandbox: 'google_meet' };
 const hasTranscriptPath = (provider: string): provider is MeetingPlatformTranscriptProvider => (MEETING_PLATFORM_TRANSCRIPT_PROVIDERS as readonly string[]).includes(provider);
 
 type Trx = CommandContext['trx'];
