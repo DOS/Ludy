@@ -73,6 +73,7 @@ const {
 } = await import('../src/routes/sign-envelopes.tsx');
 const { SignEnvelopeDetailPage } = await import('../src/routes/sign-envelope-detail.tsx');
 const { CreateTemplateForm } = await import('../src/routes/sign-templates.tsx');
+const { ContractVaultBar } = await import('../src/components/sign/contract-vault-bar.tsx');
 
 function makeTestFile(bytes: Uint8Array, name: string, type = ''): File {
   return new File([new Uint8Array(bytes)], name, { type });
@@ -1197,5 +1198,124 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
     blockStorageAccess = false;
     expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual([]);
     expect(throwingStoreMap.has('ludy.sign.created_docx_warnings')).toBe(false);
+
+    // Capturing submit context flags null -> signed-in session changes, and org switch while reading session aborts writes.
+    let loginMidCapture = 0;
+    const loggedInMidCapture = await captureEnvelopeSubmitContext({
+      slug: 'acme',
+      reqId: 7,
+      readSessionId: async () => (loginMidCapture++ === 0 ? null : 'sess-new'),
+      resolveScope: async () => ({ orgId, userId: userAId, sessionId: 'sess-new' }),
+    });
+    expect(loggedInMidCapture.sessionChanged).toBe(true);
+
+    uploadCalls.length = 0;
+    createCalls.length = 0;
+    liveOrgSlug = 'org-a';
+    const switchedDuringSessionRead = await submitCreateEnvelopeFromDialog({
+      title: 'Hop dong switched during session check',
+      file: samplePdf,
+      converted: null,
+      orgSlug: 'org-a',
+      resolveSubmitContext: async () => ({
+        slug: 'org-a',
+        orgId,
+        userId: userAId,
+        sessionId: 'sess-a',
+        reqId: 8,
+      }),
+      readSessionId: async () => {
+        liveOrgSlug = 'org-b';
+        return 'sess-a';
+      },
+      isMounted: () => true,
+      isSubmitContextCurrent: (ctx) => ctx.slug === liveOrgSlug,
+      getLiveOrgSlug: () => liveOrgSlug,
+      docxRequiredMessage: 'PDF required',
+      uploadPdf: async (file, slugArg) => {
+        uploadCalls.push({ name: file.name, orgSlug: slugArg });
+        return { fileId: 'should-not-upload' };
+      },
+      createEnvelope: async (input, slugArg) => {
+        createCalls.push({ sourceFileId: input.sourceFileId, orgSlug: slugArg });
+        return { envelopeId: 'should-not-create' };
+      },
+    });
+    expect(switchedDuringSessionRead).toEqual({ cancelled: true });
+    expect(uploadCalls).toEqual([]);
+    expect(createCalls).toEqual([]);
+
+    // ContractVaultBar switches pending unpersisted envelope links to buttons so warning persistence precedes navigation.
+    const pendingVaultHtml = renderToStaticMarkup(
+      <IntlProvider locale="en" timeZone="Asia/Ho_Chi_Minh" messages={catalog('en')}>
+        <QueryClientProvider client={queryClient}>
+          <ContractVaultBar
+            slug="acme"
+            canAskVy={true}
+            initialQuestion="minh anh"
+            pendingEnvelopeId={envDetailId}
+            onOpenPendingEnvelope={() => {}}
+            initialResult={{
+              mode: 'ask',
+              ai: 'used',
+              items: [
+                {
+                  envelopeId: envDetailId,
+                  title: 'Pending Docx Contract',
+                  status: 'draft',
+                  sourceKind: 'standalone',
+                  pageCount: 1,
+                  completedAt: null,
+                  updatedAt: '2026-11-25T10:00:00.000Z',
+                  counterpartyName: null,
+                  effectiveDate: null,
+                  expiryDate: null,
+                  renewalNoticeDays: null,
+                  autoRenew: false,
+                  contractValue: null,
+                  currency: 'VND',
+                  score: 10,
+                  snippets: [],
+                },
+              ],
+              summary: {
+                answer: 'See citation',
+                proposedByAi: true,
+                citations: [
+                  {
+                    envelopeId: envDetailId,
+                    envelopeTitle: 'Pending Docx Contract',
+                    pageNumber: 1,
+                    quoteExcerpt: 'Excerpt',
+                  },
+                ],
+              },
+            }}
+          />
+        </QueryClientProvider>
+      </IntlProvider>,
+    );
+    expect(pendingVaultHtml).not.toContain('<a ');
+    expect(pendingVaultHtml).toContain(`data-testid="sign-vault-citation-link-${envDetailId}"`);
+    expect(pendingVaultHtml).toContain(`data-testid="sign-vault-open-${envDetailId}"`);
+
+    // saveCreatedDocxWarnings never overwrites existing sessionStorage notices when getItem fails transiently.
+    const preserveMap = new Map<string, string>();
+    let blockReadOnly = false;
+    const readFailStorage = {
+      getItem: (k: string) => {
+        if (blockReadOnly) throw new DOMException('Transient read error', 'SecurityError');
+        return preserveMap.get(k) ?? null;
+      },
+      setItem: (k: string, v: string) => void preserveMap.set(k, v),
+      removeItem: (k: string) => void preserveMap.delete(k),
+    };
+    vi.stubGlobal('window', { location: { pathname: '/o/acme/sign/envelopes', hash: '' }, sessionStorage: readFailStorage });
+    saveCreatedDocxWarnings(envDetailId, ['images_skipped'], scopeUserA);
+    blockReadOnly = true;
+    saveCreatedDocxWarnings(secondEnvId, ['footnotes_skipped'], scopeUserA);
+    blockReadOnly = false;
+    expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual(['images_skipped']);
+    expect(readCreatedDocxWarnings(secondEnvId, scopeUserA)).toEqual(['footnotes_skipped']);
   });
 });

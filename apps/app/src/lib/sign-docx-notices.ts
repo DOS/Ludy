@@ -102,9 +102,15 @@ function readRawStorageResult(
 ): { ok: true; entries: StoredDocxWarningNotice[] } | { ok: false; entries: StoredDocxWarningNotice[] } {
   try {
     const raw = storage.getItem(ENVELOPE_DOCX_WARNINGS_STORAGE_KEY);
-    if (!raw) return { ok: true, entries: [] };
+    if (!raw) {
+      knownStorageNoticeKeys.clear();
+      return { ok: true, entries: [] };
+    }
     const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) return { ok: true, entries: [] };
+    if (!Array.isArray(parsed)) {
+      knownStorageNoticeKeys.clear();
+      return { ok: true, entries: [] };
+    }
     const byKey = new Map<string, StoredDocxWarningNotice>();
     for (const item of parsed) {
       if (!item || typeof item !== 'object') continue;
@@ -126,7 +132,6 @@ function readRawStorageResult(
       if (warnings.length === 0) continue;
       const scope = { org: rec.org.trim(), userId: rec.userId.trim() };
       const entryKey = noticeKey(rec.envelopeId, scope);
-      knownStorageNoticeKeys.add(entryKey);
       byKey.set(entryKey, {
         envelopeId: rec.envelopeId,
         org: scope.org,
@@ -134,6 +139,10 @@ function readRawStorageResult(
         warnings,
         createdAt: rec.createdAt,
       });
+    }
+    knownStorageNoticeKeys.clear();
+    for (const k of byKey.keys()) {
+      knownStorageNoticeKeys.add(k);
     }
     return { ok: true, entries: [...byKey.values()] };
   } catch {
@@ -231,10 +240,11 @@ export function saveCreatedDocxWarnings(
     warnings: clean,
     createdAt: now,
   };
-  const merged = readStoredDocxNotices(now).filter((entry) => noticeKey(entry.envelopeId, entry) !== key);
-  merged.push(nextEntry);
   const storage = flushPendingSignOutClear();
-  if (storage && tryPersistDocxNotices(storage, merged)) {
+  const { storageReadable, merged } = readMergedEntriesWithStorage(storage, now);
+  const nextMerged = merged.filter((entry) => noticeKey(entry.envelopeId, entry) !== key);
+  nextMerged.push(nextEntry);
+  if (storage && storageReadable && tryPersistDocxNotices(storage, nextMerged)) {
     fallbackDocxNotices.clear();
     fallbackDismissedNotices.clear();
     return true;

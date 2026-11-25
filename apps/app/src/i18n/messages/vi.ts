@@ -20983,6 +20983,7 @@ export const vi = {
     docxConvertedReady: 'Đã chuyển đổi sang PDF A4 ({pages} trang): {filename}',
     docxWarningBanner: 'Đã chuyển đổi từ .docx; vui lòng kiểm tra lại bố cục trang PDF trước khi gửi ký',
     docxWarningOpenPending: 'Chưa xác minh được tài khoản lúc này; giữ cảnh báo trên danh sách để bạn thử mở lại.',
+    docxCreateIdentityPending: 'Chưa xác minh được tài khoản lúc này nên hồ sơ chưa được tạo. Vui lòng bấm Tạo lại để thử lại.',
     docxEmpty: 'Tệp Word (.docx) rỗng.',
     docxTooLarge: 'Tệp Word (.docx) vượt quá 10 MB.',
     docxInvalidType: 'Chỉ hỗ trợ tệp Word (.docx) chuẩn Office Open XML.',

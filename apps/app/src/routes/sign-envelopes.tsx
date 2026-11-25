@@ -165,7 +165,7 @@ export async function captureEnvelopeSubmitContext(deps: {
     liveScope = null;
   }
   const sessionAfter = await deps.readSessionId().catch(() => null);
-  if (sessionId && sessionAfter !== sessionId) {
+  if (sessionAfter !== sessionId || (liveScope?.sessionId != null && liveScope.sessionId !== sessionId)) {
     return {
       slug: deps.slug,
       orgId: null,
@@ -536,7 +536,7 @@ export async function submitCreateEnvelopeFromDialog(deps: {
   const readLiveOrg = deps.getLiveOrgSlug ?? getCurrentOrg;
   const isSessionConsistent = async (ctx: CreatedEnvelopeSubmitContext | null): Promise<boolean> => {
     if (ctx?.sessionChanged) return false;
-    if (ctx?.sessionId && deps.readSessionId) {
+    if (ctx && deps.readSessionId) {
       const liveSessionId = await deps.readSessionId().catch(() => null);
       if (liveSessionId !== ctx.sessionId) return false;
     }
@@ -554,10 +554,18 @@ export async function submitCreateEnvelopeFromDialog(deps: {
     if (liveOrg !== null && fallbackSlug && liveOrg !== fallbackSlug) return false;
     return true;
   };
+  const isReadyForWrite = async (
+    ctx: CreatedEnvelopeSubmitContext | null,
+    fallbackSlug: string | undefined,
+  ): Promise<boolean> => {
+    if (!isActiveFor(ctx, fallbackSlug)) return false;
+    if (!(await isSessionConsistent(ctx))) return false;
+    return isActiveFor(ctx, fallbackSlug);
+  };
 
   const submitContext = deps.resolveSubmitContext ? await deps.resolveSubmitContext() : null;
   const pinnedOrgSlug = submitContext?.slug || deps.orgSlug || undefined;
-  if (!isActiveFor(submitContext, pinnedOrgSlug) || !(await isSessionConsistent(submitContext))) {
+  if (!(await isReadyForWrite(submitContext, pinnedOrgSlug))) {
     return { cancelled: true };
   }
   if (
@@ -589,7 +597,7 @@ export async function submitCreateEnvelopeFromDialog(deps: {
     throw new Error(deps.docxRequiredMessage);
   }
   const uploaded = await deps.uploadPdf(deps.file, pinnedOrgSlug);
-  if (!isActiveFor(submitContext, pinnedOrgSlug) || !(await isSessionConsistent(submitContext))) {
+  if (!(await isReadyForWrite(submitContext, pinnedOrgSlug))) {
     return { cancelled: true };
   }
   return {
@@ -661,7 +669,7 @@ export function CreateEnvelopeDialog({
         isMounted: () => mountedRef.current,
         isSubmitContextCurrent: input.isSubmitContextCurrent,
         docxRequiredMessage: t('pdfRequired'),
-        verifyIdentityErrorMessage: t('docxWarningOpenPending'),
+        verifyIdentityErrorMessage: t('docxCreateIdentityPending'),
         uploadPdf: (file, targetSlug) => uploadSignPdf(file, targetSlug),
         createEnvelope: (payload, targetSlug) => signApi.createEnvelope(payload, targetSlug),
       }),
@@ -1428,6 +1436,7 @@ export function SignEnvelopesPage() {
   const pendingVerifiableNotice =
     createdDocxNotice &&
     createdDocxNotice.slug === slug &&
+    (!createdDocxNotice.userId || createdDocxNotice.userId === currentUserId) &&
     Boolean(createdDocxNotice.userId || createdDocxNotice.sessionId)
       ? createdDocxNotice
       : null;
@@ -1556,7 +1565,15 @@ export function SignEnvelopesPage() {
         }
       />
 
-      <ContractVaultBar key={slug} slug={slug} canAskVy={canAskVy} />
+      <ContractVaultBar
+        key={slug}
+        slug={slug}
+        canAskVy={canAskVy}
+        pendingEnvelopeId={pendingVerifiableNotice?.envelopeId ?? null}
+        onOpenPendingEnvelope={
+          pendingVerifiableNotice ? () => triggerOpenPendingNotice(pendingVerifiableNotice) : undefined
+        }
+      />
 
       {visibleCreatedDocxNotice ? (
         <DocxWarningsAlert

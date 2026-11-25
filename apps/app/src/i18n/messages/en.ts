@@ -20983,6 +20983,7 @@ export const en = {
     docxConvertedReady: 'Converted to A4 PDF ({pages} pages): {filename}',
     docxWarningBanner: 'Converted from .docx; please verify the PDF page layout before sending for signature.',
     docxWarningOpenPending: 'Could not verify your account yet; keeping the conversion warning here so you can retry opening.',
+    docxCreateIdentityPending: 'Could not verify your account yet, so the envelope was not created. Click Create again to retry.',
     docxEmpty: 'The Word (.docx) file is empty.',
     docxTooLarge: 'Word (.docx) file exceeds 10 MB.',
     docxInvalidType: 'Only Office Open XML (.docx) files are supported.',
