@@ -85,6 +85,12 @@ function findElements(node: ReactNode, testId: string): ReactElement<Record<stri
   return out;
 }
 
+function mustFindElement(node: ReactNode, testId: string): ReactElement<Record<string, unknown>> {
+  const [found] = findElements(node, testId);
+  if (!found) throw new Error(`Missing element with data-testid=${testId}`);
+  return found;
+}
+
 function renderPanel(props: {
   initialBlocks: readonly HomeLayoutBlock[];
   isPending?: boolean;
@@ -121,8 +127,8 @@ describe('HomeCustomizePanel interactions (#4928)', () => {
 
   it('disables row dragging when only one block exists', () => {
     const tree = renderPanel({ initialBlocks: [{ id: 'teamwork_my_work', visible: true }] });
-    const [row] = findElements(tree, 'home-customize-row-teamwork_my_work');
-    expect(row?.props.draggable).toBe(false);
+    const row = mustFindElement(tree, 'home-customize-row-teamwork_my_work');
+    expect(row.props.draggable).toBe(false);
   });
 
   it('blocks dragStart from [role="switch"], label, and button targets and clears the guard on pointerUp / dragEnd', () => {
@@ -131,12 +137,12 @@ describe('HomeCustomizePanel interactions (#4928)', () => {
       { id: 'teamwork_my_work', visible: true },
     ];
     const tree = renderPanel({ initialBlocks: blocks });
-    const [row] = findElements(tree, 'home-customize-row-finance_tax_deadlines');
-    expect(row?.props.draggable).toBe(true);
+    const row = mustFindElement(tree, 'home-customize-row-finance_tax_deadlines');
+    expect(row.props.draggable).toBe(true);
 
-    const onPointerDown = row?.props.onPointerDown as (e: { target: unknown }) => void;
-    const onPointerUp = row?.props.onPointerUp as () => void;
-    const onDragStart = row?.props.onDragStart as (e: { preventDefault: () => void; dataTransfer: { effectAllowed: string; setData: (t: string, v: string) => void } }) => void;
+    const onPointerDown = row.props.onPointerDown as (e: { target: unknown }) => void;
+    const onPointerUp = row.props.onPointerUp as () => void;
+    const onDragStart = row.props.onDragStart as (e: { preventDefault: () => void; dataTransfer: { effectAllowed: string; setData: (t: string, v: string) => void } }) => void;
 
     for (const selector of ['[role="switch"]', 'label', 'button']) {
       onPointerDown({ target: new FakeElement(selector) });
@@ -164,15 +170,15 @@ describe('HomeCustomizePanel interactions (#4928)', () => {
       { id: 'teamwork_my_work', visible: true },
     ];
     const tree = renderPanel({ initialBlocks: blocks, isPending: true });
-    const [row] = findElements(tree, 'home-customize-row-teamwork_my_work');
-    expect(row?.props.draggable).toBe(false);
+    const row = mustFindElement(tree, 'home-customize-row-teamwork_my_work');
+    expect(row.props.draggable).toBe(false);
 
     const overPrevent = vi.fn();
-    (row?.props.onDragOver as (e: { preventDefault: () => void }) => void)({ preventDefault: overPrevent });
+    (row.props.onDragOver as (e: { preventDefault: () => void }) => void)({ preventDefault: overPrevent });
     expect(overPrevent).not.toHaveBeenCalled();
 
     const dropPrevent = vi.fn();
-    (row?.props.onDrop as (e: { preventDefault: () => void; dataTransfer: { getData: () => string } }) => void)({
+    (row.props.onDrop as (e: { preventDefault: () => void; dataTransfer: { getData: () => string } }) => void)({
       preventDefault: dropPrevent,
       dataTransfer: { getData: () => 'finance_tax_deadlines' },
     });
@@ -195,26 +201,26 @@ describe('HomeCustomizePanel interactions (#4928)', () => {
       ['teamwork_my_work', downFocusSecond],
       ['esign_pending', vi.fn()],
     ] as const) {
-      const [downBtn] = findElements(tree1, `home-customize-down-${id}`);
-      (downBtn?.props.ref as ((el: { focus: typeof fn }) => void) | undefined)?.({ focus: fn });
+      const downBtn = mustFindElement(tree1, `home-customize-down-${id}`);
+      (downBtn.props.ref as ((el: { focus: typeof fn }) => void) | undefined)?.({ focus: fn });
     }
-    const [upBtnMiddle] = findElements(tree1, 'home-customize-up-teamwork_my_work');
-    (upBtnMiddle?.props.onClick as () => void)();
+    const upBtnMiddle = mustFindElement(tree1, 'home-customize-up-teamwork_my_work');
+    (upBtnMiddle.props.onClick as () => void)();
     expect(downFocusSecond).toHaveBeenCalledWith({ preventScroll: true });
 
     // Re-render updated order ([teamwork_my_work, finance_tax_deadlines, esign_pending]), then move finance_tax_deadlines down to last index.
     const tree2 = renderPanel({ initialBlocks: blocks });
-    const [upFirstAfterMove] = findElements(tree2, 'home-customize-up-teamwork_my_work');
-    expect(upFirstAfterMove?.props.disabled).toBe(true);
+    const upFirstAfterMove = mustFindElement(tree2, 'home-customize-up-teamwork_my_work');
+    expect(upFirstAfterMove.props.disabled).toBe(true);
 
-    const [upBtnMiddleAfter] = findElements(tree2, 'home-customize-up-finance_tax_deadlines');
-    (upBtnMiddleAfter?.props.ref as ((el: { focus: typeof upFocusSecond }) => void) | undefined)?.({ focus: upFocusSecond });
-    const [downBtnMiddleAfter] = findElements(tree2, 'home-customize-down-finance_tax_deadlines');
-    (downBtnMiddleAfter?.props.onClick as () => void)();
+    const upBtnMiddleAfter = mustFindElement(tree2, 'home-customize-up-finance_tax_deadlines');
+    (upBtnMiddleAfter.props.ref as ((el: { focus: typeof upFocusSecond }) => void) | undefined)?.({ focus: upFocusSecond });
+    const downBtnMiddleAfter = mustFindElement(tree2, 'home-customize-down-finance_tax_deadlines');
+    (downBtnMiddleAfter.props.onClick as () => void)();
     expect(upFocusSecond).toHaveBeenCalledWith({ preventScroll: true });
 
     const tree3 = renderPanel({ initialBlocks: blocks });
-    const [downLastAfterMove] = findElements(tree3, 'home-customize-down-finance_tax_deadlines');
-    expect(downLastAfterMove?.props.disabled).toBe(true);
+    const downLastAfterMove = mustFindElement(tree3, 'home-customize-down-finance_tax_deadlines');
+    expect(downLastAfterMove.props.disabled).toBe(true);
   });
 });
