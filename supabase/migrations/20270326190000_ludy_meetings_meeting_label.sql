@@ -29,8 +29,6 @@ CREATE TABLE IF NOT EXISTS ludy_meetings.meeting_label (
 
 -- The same label on the same meeting twice is one label, whatever the case.
 CREATE UNIQUE INDEX IF NOT EXISTS meeting_label_meeting_uq ON ludy_meetings.meeting_label (org_id, meeting_id, (pg_catalog.lower(label)));
--- The labels of the org's meetings, by label (the filter and the list of labels).
-CREATE INDEX IF NOT EXISTS meeting_label_label_idx ON ludy_meetings.meeting_label (org_id, (pg_catalog.lower(label)), meeting_id);
 
 SELECT ludy_kernel.apply_tenant_rls('ludy_meetings.meeting_label');
 -- A label is never edited.

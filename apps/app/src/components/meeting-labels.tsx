@@ -52,7 +52,7 @@ export function MeetingLabels({ meetingId, isRecorder }: { meetingId: string; is
     add.mutate(cleanLabelText(text));
   };
   return (
-    <section className="space-y-2" aria-label={t('title')} data-testid="meeting-labels">
+    <section className="space-y-2" data-testid="meeting-labels">
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="text-sm font-medium text-muted-foreground">{t('title')}</h2>
         {labels.length === 0 && <span className="text-xs text-muted-foreground">{t('none')}</span>}
@@ -63,7 +63,7 @@ export function MeetingLabels({ meetingId, isRecorder }: { meetingId: string; is
               {isRecorder && (
                 <Button
                   type="button"
-                  size="sm"
+                  size="icon"
                   variant="ghost"
                   aria-label={t('remove', { label: l.label })}
                   loading={remove.isPending && remove.variables === l.id}
@@ -97,7 +97,7 @@ export function MeetingLabels({ meetingId, isRecorder }: { meetingId: string; is
                 value={text}
                 maxLength={MEETING_LABEL_LENGTH_MAX + 40}
                 disabled={full}
-                aria-describedby={`meeting-label-hint-${meetingId}`}
+                aria-describedby={`meeting-label-hint-${meetingId}${problem !== null || refusal !== null ? ` meeting-label-error-${meetingId}` : ''}`}
                 aria-invalid={problem !== null}
                 onChange={(e) => {
                   setError(null);
@@ -112,8 +112,8 @@ export function MeetingLabels({ meetingId, isRecorder }: { meetingId: string; is
           <p id={`meeting-label-hint-${meetingId}`} className="text-xs text-muted-foreground">
             {full ? t('full', { max: String(MEETING_LABELS_MAX) }) : t('hint', { max: String(MEETING_LABEL_LENGTH_MAX) })}
           </p>
-          {problem !== null && <ErrorText>{t(`problem.${problem}`, { max: String(MEETING_LABEL_LENGTH_MAX) })}</ErrorText>}
-          {error !== null && error !== undefined && <ErrorText>{refusal ? t(`errors.${refusal}`) : errorMessage(error)}</ErrorText>}
+          {problem !== null && <ErrorText id={`meeting-label-error-${meetingId}`}>{t(`problem.${problem}`, { max: String(MEETING_LABEL_LENGTH_MAX) })}</ErrorText>}
+          {problem === null && error !== null && error !== undefined && <ErrorText id={`meeting-label-error-${meetingId}`}>{refusal ? t(`errors.${refusal}`) : errorMessage(error)}</ErrorText>}
         </form>
       )}
     </section>

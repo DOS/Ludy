@@ -31,7 +31,8 @@ export function labelProblem(text: string): LabelProblem | null {
   if ([...clean].length > MEETING_LABEL_LENGTH_MAX) return 'too_long';
   for (const ch of clean) {
     const code = ch.codePointAt(0) ?? 0;
-    if (code < 0x20 || (code >= 0x7f && code <= 0x9f) || code === 0x2028 || code === 0x2029) return 'control';
+    // Control characters, line and paragraph separators, zero-width and bidi marks (a label made of them would be invisible or would flip the text around it).
+    if (code < 0x20 || (code >= 0x7f && code <= 0x9f) || (code >= 0x200b && code <= 0x200f) || (code >= 0x2028 && code <= 0x202e) || (code >= 0x2060 && code <= 0x2064) || code === 0xfeff) return 'control';
   }
   if (clean.includes('@')) return 'address';
   if (/\d(?:[\s.]?\d){6,}/.test(clean)) return 'digits';

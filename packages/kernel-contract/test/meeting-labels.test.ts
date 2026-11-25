@@ -26,6 +26,9 @@ describe('meeting label text (#4955)', () => {
     expect(labelProblem('một\nhai')).toBe('control');
     expect(labelProblem('một\u0007hai')).toBe('control');
     expect(labelProblem('một hai')).toBe('control');
+    expect(labelProblem('m\u200bt')).toBe('control');
+    expect(labelProblem('\u202eabc')).toBe('control');
+    expect(labelProblem('\u200b')).toBe('control');
     expect(labelProblem('khach@example.com')).toBe('address');
     expect(labelProblem('0901234567')).toBe('digits');
     expect(labelProblem('Gọi 0901 234 567')).toBe('digits');

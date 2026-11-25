@@ -5606,7 +5606,7 @@ export const vi = {
         too_long: 'Một nhãn dài tối đa {max} ký tự.',
         control: 'Một nhãn chỉ là một dòng chữ thường.',
         address: 'Nhãn không phải chỗ để ghi địa chỉ email.',
-        digits: 'Nhãn không phải chỗ để ghi số điện thoại hay số định danh.',
+        digits: 'Nhãn không phải chỗ để ghi số điện thoại, số định danh hay một dãy số dài (hãy ghi ngày là 25/11/2026).',
       },
       errors: {
         MEETING_LABEL_INVALID: 'Không dùng được dòng chữ này làm nhãn.',

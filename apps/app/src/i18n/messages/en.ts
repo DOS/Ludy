@@ -5608,7 +5608,7 @@ export const en = {
         too_long: 'A label is at most {max} characters.',
         control: 'A label is one line of plain text.',
         address: 'A label is not a place for an e-mail address.',
-        digits: 'A label is not a place for a phone number or an ID.',
+        digits: 'A label is not a place for a phone number, an ID or a long run of digits (write a date as 25/11/2026).',
       },
       errors: {
         MEETING_LABEL_INVALID: 'This text cannot be used as a label.',
