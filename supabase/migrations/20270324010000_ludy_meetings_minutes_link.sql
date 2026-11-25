@@ -12,8 +12,10 @@ SET LOCAL lock_timeout = '2s';
 -- ---------------------------------------------------------------------------
 -- 1. The org setting
 -- ---------------------------------------------------------------------------
+-- migration-lint: cross-module #4822: the org setting for sharing minutes outside lives on ludy_kernel.tenant, like the minutes e-sign switch
 ALTER TABLE ludy_kernel.tenant ADD COLUMN IF NOT EXISTS meeting_minutes_link boolean NOT NULL DEFAULT false;
 
+-- migration-lint: cross-module #4822: the org setting for sharing minutes outside lives on ludy_kernel.tenant, like the minutes e-sign switch
 CREATE OR REPLACE FUNCTION ludy_kernel.tenant_meeting_minutes_link_guard()
 RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
@@ -42,9 +44,12 @@ BEGIN
   END IF;
   RETURN NEW;
 END $$;
+-- migration-lint: cross-module #4822: the org setting for sharing minutes outside lives on ludy_kernel.tenant, like the minutes e-sign switch
 DROP TRIGGER IF EXISTS tenant_meeting_minutes_link_guard ON ludy_kernel.tenant;
+-- migration-lint: cross-module #4822: the org setting for sharing minutes outside lives on ludy_kernel.tenant, like the minutes e-sign switch
 CREATE TRIGGER tenant_meeting_minutes_link_guard BEFORE UPDATE OF meeting_minutes_link ON ludy_kernel.tenant
   FOR EACH ROW EXECUTE FUNCTION ludy_kernel.tenant_meeting_minutes_link_guard();
+-- migration-lint: cross-module #4822: the org setting for sharing minutes outside lives on ludy_kernel.tenant, like the minutes e-sign switch
 REVOKE ALL ON FUNCTION ludy_kernel.tenant_meeting_minutes_link_guard() FROM PUBLIC, ludy_tenant, ludy_app, ludy_worker, ludy_definer_tenant;
 
 -- ---------------------------------------------------------------------------
@@ -74,7 +79,7 @@ CREATE INDEX IF NOT EXISTS minutes_link_meeting_idx ON ludy_meetings.minutes_lin
 SELECT ludy_kernel.apply_tenant_rls('ludy_meetings.minutes_link');
 REVOKE UPDATE, DELETE ON ludy_meetings.minutes_link FROM ludy_tenant;
 GRANT UPDATE (revoked_at, revoked_by) ON ludy_meetings.minutes_link TO ludy_tenant;
--- A member makes a link in their own name (the command checks that they recorded the meeting, that the published minutes exist and that the org setting is on) and revokes one.
+-- A member who recorded the meeting makes a link in their own name (the command also checks that the published minutes exist and that the org setting is on) and a member revokes one; only a user context writes a link (the system context writes none, and the public page's count is made by a definer).
 -- Only the org's own members (and the system context) read a link row: an agent context, the member-mode Vy included, reads none (the rls-matrix pins it).
 DROP POLICY IF EXISTS minutes_link_read ON ludy_meetings.minutes_link;
 CREATE POLICY minutes_link_read ON ludy_meetings.minutes_link AS RESTRICTIVE FOR SELECT TO ludy_tenant
@@ -83,18 +88,18 @@ CREATE POLICY minutes_link_read ON ludy_meetings.minutes_link AS RESTRICTIVE FOR
       AND EXISTS (SELECT 1 FROM ludy_kernel.tenant_member m WHERE m.org_id = minutes_link.org_id AND m.user_id = (SELECT ludy_kernel.ctx_user_id()) AND m.role IN ('owner', 'admin', 'member'))));
 DROP POLICY IF EXISTS minutes_link_insert ON ludy_meetings.minutes_link;
 CREATE POLICY minutes_link_insert ON ludy_meetings.minutes_link AS RESTRICTIVE FOR INSERT TO ludy_tenant
-  WITH CHECK ((SELECT ludy_kernel.ctx_actor_type()) = 'system'
-    OR (EXISTS (SELECT 1 FROM ludy_kernel.tenant_member m WHERE m.org_id = minutes_link.org_id AND m.user_id = (SELECT ludy_kernel.ctx_user_id()) AND m.role IN ('owner', 'admin', 'member'))
-      AND minutes_link.created_by = (SELECT ludy_kernel.ctx_user_id())
-      AND ludy_meetings.is_meeting_recorder(minutes_link.org_id, minutes_link.meeting_id)
-      AND minutes_link.created_at BETWEEN pg_catalog.now() - pg_catalog.make_interval(mins => 1) AND pg_catalog.now() + pg_catalog.make_interval(mins => 1)
-      AND minutes_link.revoked_at IS NULL AND minutes_link.first_viewed_at IS NULL AND minutes_link.views = 0));
+  WITH CHECK ((SELECT ludy_kernel.ctx_actor_type()) = 'user'
+    AND EXISTS (SELECT 1 FROM ludy_kernel.tenant_member m WHERE m.org_id = minutes_link.org_id AND m.user_id = (SELECT ludy_kernel.ctx_user_id()) AND m.role IN ('owner', 'admin', 'member'))
+    AND minutes_link.created_by = (SELECT ludy_kernel.ctx_user_id())
+    AND ludy_meetings.is_meeting_recorder(minutes_link.org_id, minutes_link.meeting_id)
+    AND minutes_link.created_at BETWEEN pg_catalog.now() - pg_catalog.make_interval(mins => 1) AND pg_catalog.now() + pg_catalog.make_interval(mins => 1)
+    AND minutes_link.revoked_at IS NULL AND minutes_link.first_viewed_at IS NULL AND minutes_link.views = 0);
 DROP POLICY IF EXISTS minutes_link_update ON ludy_meetings.minutes_link;
 CREATE POLICY minutes_link_update ON ludy_meetings.minutes_link AS RESTRICTIVE FOR UPDATE TO ludy_tenant
-  USING ((SELECT ludy_kernel.ctx_actor_type()) = 'system'
-    OR EXISTS (SELECT 1 FROM ludy_kernel.tenant_member m WHERE m.org_id = minutes_link.org_id AND m.user_id = (SELECT ludy_kernel.ctx_user_id()) AND m.role IN ('owner', 'admin', 'member')))
-  WITH CHECK ((SELECT ludy_kernel.ctx_actor_type()) = 'system'
-    OR EXISTS (SELECT 1 FROM ludy_kernel.tenant_member m WHERE m.org_id = minutes_link.org_id AND m.user_id = (SELECT ludy_kernel.ctx_user_id()) AND m.role IN ('owner', 'admin', 'member')));
+  USING ((SELECT ludy_kernel.ctx_actor_type()) = 'user'
+    AND EXISTS (SELECT 1 FROM ludy_kernel.tenant_member m WHERE m.org_id = minutes_link.org_id AND m.user_id = (SELECT ludy_kernel.ctx_user_id()) AND m.role IN ('owner', 'admin', 'member')))
+  WITH CHECK ((SELECT ludy_kernel.ctx_actor_type()) = 'user'
+    AND EXISTS (SELECT 1 FROM ludy_kernel.tenant_member m WHERE m.org_id = minutes_link.org_id AND m.user_id = (SELECT ludy_kernel.ctx_user_id()) AND m.role IN ('owner', 'admin', 'member')));
 
 -- A link is revoked once and in the revoker's own name; nothing else about it changes (the public page's count is made by a definer, in no user's context).
 CREATE OR REPLACE FUNCTION ludy_meetings.minutes_link_guard() RETURNS trigger

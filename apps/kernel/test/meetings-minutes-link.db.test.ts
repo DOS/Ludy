@@ -199,6 +199,9 @@ suite('the minutes link for people outside the org (#4822)', () => {
     const listed = await exec<{ items: Array<{ id: string }> }>('owner', 'meetings.minutes_link.list', { meetingId: id });
     expect(listed.items.map((i) => i.id)).toContain(link.linkId);
     expect(await refuses(exec('other', 'meetings.minutes_link.list', { meetingId: id }))).toBe('FORBIDDEN');
+    // A meeting with no text retention date is kept until it is deleted, so its link still opens.
+    await sqlAdmin(`UPDATE ludy_meetings.meeting SET text_retention_date = NULL WHERE org_id = $1 AND id = $2`, [orgId, id]);
+    expect(await view(link.token)).not.toBeNull();
     // Retention: the meeting's text period has ended, so the page is gone before the nightly shred runs.
     await sqlAdmin(`UPDATE ludy_meetings.meeting SET text_retention_date = current_date - 2 WHERE org_id = $1 AND id = $2`, [orgId, id]);
     expect(await view(link.token)).toBeNull();

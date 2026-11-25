@@ -37,10 +37,10 @@ BEGIN
   IF v_result.id IS NULL THEN
     RETURN;
   END IF;
-  -- A meeting past its text retention date is gone for the org's own members and so for the link; the nightly shred removes the rows later.
+  -- A meeting past its text retention date (a NULL one is kept until deleted) is gone for the org's own members and so for the link; the nightly shred removes the rows later.
   SELECT m.* INTO v_meeting FROM ludy_meetings.meeting m
   WHERE m.org_id = v_link.org_id AND m.id = v_link.meeting_id
-    AND m.text_retention_date > (pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date;
+    AND (m.text_retention_date IS NULL OR m.text_retention_date > (pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date);
   IF v_meeting.id IS NULL THEN
     RETURN;
   END IF;
