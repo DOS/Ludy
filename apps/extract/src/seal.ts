@@ -8007,7 +8007,7 @@ async function drawCertHeader(
     }
   }
   if (!continued) {
-    const subtitle = 'Crove eSign - Bằng chứng hoàn tất giao dịch ký số / Signing Completion Record';
+    const subtitle = 'Ludy eSign - Bằng chứng hoàn tất giao dịch ký số / Signing Completion Record';
     const subLayout = await fitWrappedTextInBox(
       fonts,
       subtitle,
@@ -8423,7 +8423,7 @@ async function appendAuditCertificatePages(
   for (let p = 0; p < certPages.length; p++) {
     const certPage = certPages[p];
     if (!certPage) continue;
-    const footerText = `Crove eSign | ${certificateCode} | Trang chứng nhận ${p + 1}/${certPages.length}`;
+    const footerText = `Ludy eSign | ${certificateCode} | Trang chứng nhận ${p + 1}/${certPages.length}`;
     const footerLayout = await fitWrappedTextInBox(
       fonts,
       footerText,
