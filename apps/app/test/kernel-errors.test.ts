@@ -35,6 +35,10 @@ const NOT_SHOWN: Record<string, string> = {
   CHAPTERS_ALREADY_COPIED: 'meetings chapters',
   CHAPTERS_STALE: 'meetings chapters',
   DRAFT_CHAPTERS_EXIST: 'meetings chapters',
+  // The tracked words (#4818) are worded by their editor itself (a word already tracked, the limit, a word removed meanwhile).
+  TRACKER_TERM_TAKEN: 'meetings trackers',
+  TRACKER_MAX: 'meetings trackers',
+  TRACKER_TERM_NOT_FOUND: 'meetings trackers',
   // AI agents: codes only the worker and agent runs get; the agents screens (issue #258) word the others.
   AGENT_PROGRAM_MISSING: 'agents',
   AGENT_RUN_NOT_LIVE: 'agents',
