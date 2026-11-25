@@ -2,7 +2,7 @@
 // The contact-name placeholder of a saved reply (#3102): `{tên}` is filled with the contact's name, and with no usable name it is dropped cleanly, so no
 // brace ever stays in a text that goes to a customer.
 import { describe, expect, it } from 'vitest';
-import { fillNamePlaceholder, hasNamePlaceholder, SAVED_REPLY_NAME_PLACEHOLDER } from '../src/index.ts';
+import { contactNameOf, fillNamePlaceholder, hasNamePlaceholder, SAVED_REPLY_NAME_PLACEHOLDER } from '../src/index.ts';
 
 describe('hasNamePlaceholder', () => {
   it('sees the placeholder in its spellings and nothing else', () => {
@@ -21,7 +21,18 @@ describe('hasNamePlaceholder', () => {
     expect(hasNamePlaceholder('Giá [giá] ạ')).toBe(false);
     expect(hasNamePlaceholder('{tên khách}')).toBe(false);
     expect(hasNamePlaceholder('{giá}')).toBe(false);
+    expect(hasNamePlaceholder('{name}')).toBe(false);
+    expect(hasNamePlaceholder('{customer}')).toBe(false);
+    expect(hasNamePlaceholder('{{foo}}')).toBe(false);
     expect(hasNamePlaceholder('')).toBe(false);
+  });
+});
+
+describe('contactNameOf', () => {
+  it('picks the linked contact name first, then displayName, and trims whitespace', () => {
+    expect(contactNameOf({ partyName: 'Chị Mai Hương', displayName: 'mai.huong.99' })).toBe('Chị Mai Hương');
+    expect(contactNameOf({ partyName: '   ', displayName: ' Lan ' })).toBe('Lan');
+    expect(contactNameOf({ partyName: null, displayName: '  ' })).toBeNull();
   });
 });
 

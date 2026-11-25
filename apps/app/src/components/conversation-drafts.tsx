@@ -7,6 +7,7 @@ import { useState, type FormEvent } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useTranslations } from 'use-intl';
 import {
+  contactNameOf,
   fillNamePlaceholder,
   SAVED_REPLY_BODY_MAX,
   SAVED_REPLY_NAME_PLACEHOLDER,
@@ -27,11 +28,7 @@ import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { getConfig } from '../lib/auth.ts';
 import { TOUCH_BUTTON } from '../lib/conversation-touch.ts';
 
-// The name a saved reply's `{tên}` is filled with (#3102): the linked contact's name when a person linked one, else the name the platform gave. Null when
-// the thread has neither (only a short tail of an id), and then the placeholder is dropped, never shown.
-export function contactNameOf(contact: Pick<ConversationDetail['conversation']['contact'], 'partyName' | 'displayName'>): string | null {
-  return contact.partyName?.trim() || contact.displayName?.trim() || null;
-}
+export { contactNameOf };
 
 // The text a saved reply or a draft puts in the reply box: its words with the contact's name in place of `{tên}`, so the person reads the final text
 // before pressing Send.
