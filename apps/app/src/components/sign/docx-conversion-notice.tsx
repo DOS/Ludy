@@ -27,6 +27,7 @@ interface StoredDocxWarningNotice {
 }
 
 const fallbackDocxNotices = new Map<string, StoredDocxWarningNotice>();
+let fallbackAuthoritative = false;
 
 function sanitizeDocxWarnings(raw: readonly unknown[]): SignDocxToPdfWarning[] {
   const seen = new Set<SignDocxToPdfWarning>();
@@ -47,25 +48,29 @@ function getDocxNoticeStorage(): Storage | null {
   }
 }
 
+function readFallbackDocxNotices(now: number): StoredDocxWarningNotice[] {
+  const valid: StoredDocxWarningNotice[] = [];
+  for (const [key, entry] of fallbackDocxNotices) {
+    if (now - entry.createdAt > DOCX_NOTICE_TTL_MS || now < entry.createdAt || entry.warnings.length === 0) {
+      fallbackDocxNotices.delete(key);
+    } else {
+      valid.push(entry);
+    }
+  }
+  return valid;
+}
+
 function readStoredDocxNotices(now: number): StoredDocxWarningNotice[] {
   const storage = getDocxNoticeStorage();
-  if (!storage) {
-    const valid: StoredDocxWarningNotice[] = [];
-    for (const [key, entry] of fallbackDocxNotices) {
-      if (now - entry.createdAt > DOCX_NOTICE_TTL_MS || now < entry.createdAt || entry.warnings.length === 0) {
-        fallbackDocxNotices.delete(key);
-      } else {
-        valid.push(entry);
-      }
-    }
-    return valid;
+  if (!storage || fallbackAuthoritative) {
+    return readFallbackDocxNotices(now);
   }
   try {
     const raw = storage.getItem(ENVELOPE_DOCX_WARNINGS_STORAGE_KEY);
-    if (!raw) return [];
+    if (!raw) return readFallbackDocxNotices(now);
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) return [];
-    const valid: StoredDocxWarningNotice[] = [];
+    const byId = new Map<string, StoredDocxWarningNotice>();
     for (const item of parsed) {
       if (!item || typeof item !== 'object') continue;
       const rec = item as Partial<StoredDocxWarningNotice>;
@@ -75,11 +80,14 @@ function readStoredDocxNotices(now: number): StoredDocxWarningNotice[] {
       if (now - rec.createdAt > DOCX_NOTICE_TTL_MS || now < rec.createdAt) continue;
       const warnings = sanitizeDocxWarnings(rec.warnings);
       if (warnings.length === 0) continue;
-      valid.push({ envelopeId: rec.envelopeId, warnings, createdAt: rec.createdAt });
+      byId.set(rec.envelopeId, { envelopeId: rec.envelopeId, warnings, createdAt: rec.createdAt });
     }
-    return valid;
+    for (const fb of readFallbackDocxNotices(now)) {
+      byId.set(fb.envelopeId, fb);
+    }
+    return [...byId.values()];
   } catch {
-    return [];
+    return readFallbackDocxNotices(now);
   }
 }
 
@@ -87,6 +95,7 @@ function writeStoredDocxNotices(entries: readonly StoredDocxWarningNotice[]): vo
   const bounded = entries.slice(-MAX_STORED_DOCX_NOTICES);
   const storage = getDocxNoticeStorage();
   if (!storage) {
+    fallbackAuthoritative = true;
     fallbackDocxNotices.clear();
     for (const entry of bounded) fallbackDocxNotices.set(entry.envelopeId, entry);
     return;
@@ -97,7 +106,15 @@ function writeStoredDocxNotices(entries: readonly StoredDocxWarningNotice[]): vo
     } else {
       storage.setItem(ENVELOPE_DOCX_WARNINGS_STORAGE_KEY, JSON.stringify(bounded));
     }
+    fallbackAuthoritative = false;
+    fallbackDocxNotices.clear();
   } catch {
+    fallbackAuthoritative = true;
+    try {
+      storage.removeItem(ENVELOPE_DOCX_WARNINGS_STORAGE_KEY);
+    } catch {
+      // Ignore cleanup failures when storage is read-only or restricted.
+    }
     fallbackDocxNotices.clear();
     for (const entry of bounded) fallbackDocxNotices.set(entry.envelopeId, entry);
   }

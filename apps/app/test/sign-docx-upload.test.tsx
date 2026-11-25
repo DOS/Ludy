@@ -400,5 +400,29 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
     });
     expect(readCreatedDocxWarnings(envDetailId)).toEqual([]);
     expect(setCreatedDocxNotice).toHaveBeenLastCalledWith(null);
+
+    // When sessionStorage.setItem throws QuotaExceededError while getItem still works, in-memory fallback stays authoritative for reads and clears.
+    const quotaStore = new Map<string, string>();
+    vi.stubGlobal('window', {
+      sessionStorage: {
+        getItem: (k: string) => quotaStore.get(k) ?? null,
+        setItem: () => {
+          throw new DOMException('Quota exceeded', 'QuotaExceededError');
+        },
+        removeItem: (k: string) => void quotaStore.delete(k),
+      },
+    });
+    saveCreatedDocxWarnings(envDetailId, ['images_skipped', 'complex_columns_simplified']);
+    expect(readCreatedDocxWarnings(envDetailId)).toEqual(['images_skipped', 'complex_columns_simplified']);
+    const quotaDetailHtml = renderToStaticMarkup(
+      <QueryClientProvider client={queryClient}>
+        <IntlProvider locale="vi" timeZone="Asia/Ho_Chi_Minh" messages={catalog('vi')}>
+          <SignEnvelopeDetailPage />
+        </IntlProvider>
+      </QueryClientProvider>,
+    );
+    expect(quotaDetailHtml).toContain('data-testid="sign-docx-warning-banner"');
+    clearCreatedDocxWarnings(envDetailId);
+    expect(readCreatedDocxWarnings(envDetailId)).toEqual([]);
   });
 });

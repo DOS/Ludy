@@ -37,7 +37,7 @@ import type { AuthUser } from '../../src/auth.ts';
 import { ConcurrencyLimiter } from '../../src/concurrency.ts';
 import { loadConfig } from '../../src/config.ts';
 import { createHttpApp } from '../../src/http.ts';
-import { handleSignDocxConvertUpload } from '../../src/sign-docx-http.ts';
+import { getSignDocxRuntimeStats, handleSignDocxConvertUpload } from '../../src/sign-docx-http.ts';
 import { runSignDocxConvertJob } from '../../src/sign-docx-worker.ts';
 import { enterUser } from './fixtures/context-token.ts';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
@@ -337,27 +337,46 @@ suite('eSign .docx cross-user polling and unattached file confidentiality invari
     const confidentialDocx = buildDocx('<w:p><w:r><w:t>Hợp đồng riêng tư chưa gửi ký</w:t></w:r></w:p>');
     const inputSha256 = sha256Hex(confidentialDocx);
 
-    // 1. Pre-storage authorization: viewer and extension actors fail 403 with zero BlobStore puts and zero audit rows.
+    // 1. Pre-storage authorization: viewer and extension actors fail 403 BEFORE reading body stream, spending limiter budget, staging to BlobStore, or writing audit rows.
     putCalls = [];
-    const viewerForm = new FormData();
-    viewerForm.append('file', new Blob([new Uint8Array(confidentialDocx)], { type: DOCX_MIME }), 'viewer.docx');
+    let bodyChunksRead = 0;
+    const unconsumedStream = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          bodyChunksRead += 1;
+          controller.enqueue(confidentialDocx);
+          controller.close();
+        },
+      },
+      { highWaterMark: 0 },
+    );
+    const unconsumedReq = new Request('http://localhost/api/sign/convert-docx', {
+      method: 'POST',
+      headers: { 'content-type': 'multipart/form-data; boundary=---test' },
+      body: unconsumedStream,
+      duplex: 'half',
+    } as RequestInit & { duplex: 'half' });
     await expect(
       handleSignDocxConvertUpload({
         runtime: rt,
         store,
         user: http.users.get(o.viewer)!,
         orgId: o.orgId,
-        req: new Request('http://localhost/api/sign/convert-docx', { method: 'POST', body: viewerForm }),
+        req: unconsumedReq,
         waitMs: 0,
       }),
     ).rejects.toMatchObject({ code: 'FORBIDDEN', status: 403 });
+    expect(bodyChunksRead).toBe(0);
+    expect(unconsumedReq.bodyUsed).toBe(false);
     expect(putCalls).toEqual([]);
+    expect(getSignDocxRuntimeStats(rt)).toBeNull();
 
     const viewerHttp = await http.postDocx(o.viewer, confidentialDocx, 'viewer.docx');
     expect(viewerHttp.status).toBe(403);
     const extHttp = await http.postDocx('ext-user', confidentialDocx, 'ext.docx');
     expect(extHttp.status).toBe(403);
     expect(putCalls).toEqual([]);
+    expect(getSignDocxRuntimeStats(rt)).toBeNull();
 
     // 2. Uploader queues conversion.
     const queued = await http.postDocx(o.member, confidentialDocx, 'confidential.docx');

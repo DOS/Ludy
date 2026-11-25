@@ -1634,7 +1634,7 @@ class PdfPaginator {
   private readonly warnings: Set<DocxToPdfWarning>;
   private page: PDFPage | null = null;
   private cursorY = A4_HEIGHT - MARGIN_TOP;
-  private pendingBreak = false;
+  private pendingBreaks = 0;
 
   constructor(pdfDoc: PDFDocument, fonts: PdfFontContext, warnings: Set<DocxToPdfWarning>) {
     this.pdfDoc = pdfDoc;
@@ -1648,25 +1648,31 @@ class PdfPaginator {
     }
     this.page = this.pdfDoc.addPage([A4_WIDTH, A4_HEIGHT]);
     this.cursorY = A4_HEIGHT - MARGIN_TOP;
-    this.pendingBreak = false;
+    this.pendingBreaks = 0;
     return this.page;
   }
 
   ensurePage(): PDFPage {
-    if (!this.page || this.pendingBreak) {
+    if (!this.page) {
       return this.allocatePage();
+    }
+    let breaks = this.pendingBreaks;
+    this.pendingBreaks = 0;
+    while (breaks > 0) {
+      this.allocatePage();
+      breaks -= 1;
     }
     return this.page;
   }
 
   requestPageBreak(): void {
     if (this.page) {
-      this.pendingBreak = true;
+      this.pendingBreaks += 1;
     }
   }
 
   remainingHeight(): number {
-    if (!this.page || this.pendingBreak) return USABLE_PAGE_HEIGHT;
+    if (!this.page || this.pendingBreaks > 0) return USABLE_PAGE_HEIGHT;
     return Math.max(0, this.cursorY - MARGIN_BOTTOM);
   }
 
