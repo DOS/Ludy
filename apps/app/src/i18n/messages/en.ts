@@ -17357,6 +17357,7 @@ export const en = {
       INVALID_TARGET: 'Invalid scope',
       TASK_NOT_FOUND: 'Task not found',
       TASK_CHECKED_OUT: 'An AI agent is working on this task, so it cannot be edited right now',
+      TASK_STALE_REVISION: 'Someone else updated this task. Reload to see the latest version.',
       OUTSIDE_LEGAL_ENTITY: 'The chosen position cannot view the legal entity of this task',
       FILE_SOURCE_CONFLICT: 'This file is already stored with a different purpose in this organization; upload a new file instead.',
       SIGN_AI_SOURCE_TEXT_REQUIRED: 'Extracted text from the PDF could not be read, so AI proposals cannot be verified.',

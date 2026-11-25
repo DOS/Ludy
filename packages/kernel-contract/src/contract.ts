@@ -3828,10 +3828,11 @@ export const contract = {
           assigneePositionId: zId.nullable().optional(),
           due: z.iso.datetime().nullable().optional(),
           checklist: zTaskChecklist.optional(),
+          expectedRevision: z.number().int().positive().optional(),
           idempotencyKey: zId,
         }),
       )
-      .output(z.object({ taskId: zId })),
+      .output(z.object({ taskId: zId, revision: z.number().int().positive().optional() })),
     comment: oc.input(z.object({ id: zId, body: z.string().trim().min(1).max(10000), idempotencyKey: zId })).output(z.object({ commentId: zId })),
     setStatus: oc.input(z.object({ id: zId, status: zTaskStatus, idempotencyKey: zId })).output(z.object({ taskId: zId, status: zTaskStatus })),
   },

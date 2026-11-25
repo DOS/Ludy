@@ -1589,6 +1589,7 @@ export const zTask = z.object({
   createdByType: z.string(),
   due: z.string().nullable(),
   checklist: z.array(zTaskChecklistStepView),
+  revision: z.number().int().positive().optional(),
   createdAt: z.string(),
 });
 
