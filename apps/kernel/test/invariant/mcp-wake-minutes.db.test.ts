@@ -441,6 +441,32 @@ suite('the wake-up for published minutes of an org-visible meeting (#3803, invar
     expect(listed.every((row) => Object.keys(row).join() === 'grant_id')).toBe(true);
     expect(listed.map((row) => row.grant_id).sort()).toEqual([ids.gOwner, ids.gAdmin].sort());
   });
+  // #4894 (the same gap as #4582 note 2): the definer took the org as an argument and trusted it. It now answers only inside the system's context of the same org: the org of its transaction must be p_org_id, and a call with no context raises.
+  it('holds the definer that lists the grants to wake to the org of its transaction: its own org is listed, another is refused, no context raises, and the worker path sets the context first (#4894)', async () => {
+    await reset();
+    const meetingId = await seedMeeting('wakeTargetsOrg', 'org', true);
+    const listedIds = (org: string, from: string) => worker.execute<Array<{ grant_id: string }>>('test.wake_targets_probe', { org, limit: 100 }, systemOf(from)).then((rows) => rows.map((row) => row.grant_id).sort());
+    // Its own org: listed.
+    expect(await listedIds(orgA, orgA)).toEqual([ids.gOwner, ids.gAdmin].sort());
+    // Another org's id from this org's context, and this org's id from another org's context: refused, and no grant id of either org comes back.
+    expect((await refusal(listedIds(orgB, orgA))).code).toBe('FORBIDDEN');
+    expect((await refusal(listedIds(orgA, orgB))).code).toBe('FORBIDDEN');
+    expect((await listedIds(orgB, orgB)).filter((id) => id === ids.gOwner || id === ids.gAdmin)).toEqual([]);
+    // No context at all (the worker's login straight on the database): raises NO_CONTEXT, whichever org is asked for.
+    const bare = createDbClient({ connectionString: (() => { const url = new URL(adminUrl); url.username = 'crove_worker'; url.password = 'test-worker-pw'; return url.toString(); })() }, dbIds);
+    await bare.connect();
+    try {
+      await expect(bare.query(`SELECT * FROM crove_kernel.mcp_wake_company_targets($1::uuid, 100)`, [orgA])).rejects.toThrow(/NO_CONTEXT/);
+      await expect(bare.query(`SELECT * FROM crove_kernel.mcp_wake_company_targets($1::uuid, 100)`, [orgB])).rejects.toThrow(/NO_CONTEXT/);
+    } finally {
+      await bare.end();
+    }
+    // The worker path that calls it (the job for the published event) sets the context first: the event still wakes the company grants that stand, so the check did not break it.
+    const [event] = await events(meetingId);
+    const result = await wake((event as { id: string }).id);
+    expect(result).toMatchObject({ off: false, dropped: false, stored: 2 });
+    await reset();
+  });
   it('lets the worker login alone execute the definer that re-checks the meeting, which pins its search path and answers one boolean (#4536)', async () => {
     const fn = 'crove_meetings.minutes_wake_open(uuid, uuid, timestamptz)';
     await admin(async (c) => {

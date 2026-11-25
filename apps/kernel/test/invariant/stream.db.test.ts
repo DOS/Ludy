@@ -32,7 +32,7 @@ import { StreamHub, createDbTicketStore, createPgNotificationSource, type Ticket
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
 const SECRET = 'stream-invariant-secret-0123456789-abcdefghij';
 const ISSUER = 'http://localhost:9999';
@@ -93,7 +93,7 @@ suite('invariant: the invalidation stream', () => {
   async function rpc(path: string, name: string, input: unknown, org: string | null, mfa = false) {
     const response = await app.request(`/api/rpc/${path}`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${await token(name, mfa)}`, 'content-type': 'application/json', ...(org ? { 'x-crove-org': org } : {}) },
+      headers: { authorization: `Bearer ${await token(name, mfa)}`, 'content-type': 'application/json', ...(org ? { 'x-ludy-org': org } : {}) },
       body: JSON.stringify(input === undefined ? {} : { json: input }),
     });
     const body = (await response.json()) as { json?: Record<string, unknown> };
@@ -113,7 +113,7 @@ suite('invariant: the invalidation stream', () => {
   async function ticket(name: string, slug: string, on = app): Promise<{ status: number; ticket?: string; body: Record<string, unknown> }> {
     const response = await on.request('/api/stream/tickets', {
       method: 'POST',
-      headers: { authorization: `Bearer ${await token(name)}`, 'x-crove-org': slug },
+      headers: { authorization: `Bearer ${await token(name)}`, 'x-ludy-org': slug },
     });
     const body = (await response.json()) as Record<string, unknown>;
     return { status: response.status, body, ...(typeof body.ticket === 'string' ? { ticket: body.ticket } : {}) };
@@ -359,13 +359,13 @@ suite('invariant: the invalidation stream', () => {
     expect((await open(t.ticket as string, '198.51.100.2', shortLived)).response.status).toBe(401);
     expect((await app.request('/api/stream?ticket=short')).status).toBe(401);
     expect((await app.request('/api/stream')).status).toBe(401);
-    expect((await app.request('/api/stream', { headers: { authorization: `Bearer ${await token('ownerA')}`, 'x-crove-org': a.slug } })).status).toBe(401);
+    expect((await app.request('/api/stream', { headers: { authorization: `Bearer ${await token('ownerA')}`, 'x-ludy-org': a.slug } })).status).toBe(401);
   });
 
   it('issues tickets only to members of the org, with a valid token', async () => {
     const b = orgs.get('ownerB') as { slug: string; orgId: string };
     expect((await ticket('ownerA', b.slug)).status).toBe(403);
-    const anonymous = await app.request('/api/stream/tickets', { method: 'POST', headers: { 'x-crove-org': b.slug } });
+    const anonymous = await app.request('/api/stream/tickets', { method: 'POST', headers: { 'x-ludy-org': b.slug } });
     expect(anonymous.status).toBe(401);
   });
 

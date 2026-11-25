@@ -324,18 +324,18 @@ describe('declared command writes against the manifests (#1697, #1710)', () => {
 
   it('refuses manifests that give one table twice', () => {
     expect(() => new Runtime(cells, { manifests: [kernelManifest.tables, kernelManifest.tables] })).toThrow(/in two manifests/);
-    expect(() => new Runtime(cells, { manifests: [{ crove_kernel: { party: { email: 'secret' } } }] })).toThrow(/unknown class/);
+    expect(() => new Runtime(cells, { manifests: [{ ludy_kernel: { party: { email: 'secret' } } }] })).toThrow(/unknown class/);
   });
 
   it('gives the server every enabled module its own manifest', () => {
-    expect(config.CROVE_MODULES.length).toBeGreaterThan(1);
-    expect(moduleManifests(config).map((m) => m.id)).toEqual([...config.CROVE_MODULES]);
+    expect(config.LUDY_MODULES.length).toBeGreaterThan(1);
+    expect(moduleManifests(config).map((m) => m.id)).toEqual([...config.LUDY_MODULES]);
   });
 
   it('builds the server runtime with the manifests, for every set of enabled modules', () => {
     const forgedCommand = def({ name: 'kernel.t1710_forged', writes: [forged({ ...PARTY, email: 'internal' })] });
     for (const modules of [undefined, 'finance', 'crm', 'notes', 'social']) {
-      const runtime = serverRuntime(cells, loadConfig({ ...CONFIG_ENV, ...(modules ? { CROVE_MODULES: modules } : {}) }), {});
+      const runtime = serverRuntime(cells, loadConfig({ ...CONFIG_ENV, ...(modules ? { LUDY_MODULES: modules } : {}) }), {});
       // Registered on it later, as createKernel registers the org purge, a forged write is refused too.
       expect(() => runtime.register({ commands: [forgedCommand] }), String(modules)).toThrow(/not its manifest's/);
     }

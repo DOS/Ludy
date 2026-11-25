@@ -26,7 +26,7 @@ import { createSessionStatusSource } from '../../src/sessions.ts';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { auditRoleFunctionExecute, createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
 const FN = 'crove_kernel.signup_invite_token_valid(text,text)';
 
@@ -98,7 +98,7 @@ suite('an invited address cannot be pre-claimed by an earlier sign-up (#563)', (
     app.fetch(
       new Request('http://localhost/auth/v1/signup', {
         method: 'POST',
-        headers: { 'content-type': 'application/json', ...(invite === undefined ? {} : { 'x-crove-invite': invite }) },
+        headers: { 'content-type': 'application/json', ...(invite === undefined ? {} : { 'x-ludy-invite': invite }) },
         body: JSON.stringify({ email, password }),
       }),
       { incoming: { socket: { remoteAddress: nextClient() } } },
@@ -189,7 +189,7 @@ suite('an invited address cannot be pre-claimed by an earlier sign-up (#563)', (
       let raw = '';
       req.on('data', (chunk: Buffer) => (raw += chunk.toString()));
       req.on('end', () => {
-        const header = req.headers['x-crove-invite'];
+        const header = req.headers['x-ludy-invite'];
         if (header !== undefined) leaked.push(String(header));
         void (async () => {
           if (req.url?.startsWith('/signup')) {
