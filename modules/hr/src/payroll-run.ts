@@ -188,11 +188,11 @@ export function figuresOf(person: Person, inputs: HrPayrollInputs, month: string
         ].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
       : c.rulesUsed;
     // Keep statutory BHXH/PIT calculation untouched (retroPay folds into PIT-taxable bonus outside BHXH base until accountant #61/#2535 confirms),
-    // while storing a dedicated retroPay breakdown line so payslips display bonus and retroactive pay separately.
-    const regularBonus = toMoney(money(inputs.bonus));
+    // while storing a dedicated retroPay breakdown line rounded to integer VND matching calculator.ts so payslips display bonus and retro pay separately.
+    const regularBonus = toMoney(money(inputs.bonus).toDecimalPlaces(0));
     const retroPayBreakdown = toMoney(money(c.breakdown.pay.bonus).minus(money(regularBonus)));
     const storedBreakdown: PayrollBreakdown =
-      money(inputs.retroPay).greaterThan(0) || money(retroPayBreakdown).greaterThan(0)
+      money(retroPayBreakdown).greaterThan(0)
         ? {
             ...c.breakdown,
             pay: {
@@ -495,6 +495,7 @@ function shouldSyncLineFlag(fromRequests: boolean | null | undefined, currentVal
 export async function loadApprovedStage6bByEmployee(
   ctx: Pick<QueryContext, 'trx' | 'orgId'>,
   employeeIds: readonly string[],
+  legalEntityId: string,
   month: string,
 ): Promise<Map<string, Stage6bApprovedSummary>> {
   const result = new Map<string, Stage6bApprovedSummary>();
@@ -511,6 +512,7 @@ export async function loadApprovedStage6bByEmployee(
     .selectFrom('ludy_hr.salary_advance_request')
     .select(['id', 'employee_id', 'amount'])
     .where('org_id', '=', ctx.orgId)
+    .where('legal_entity_id', '=', legalEntityId)
     .where('month', '=', month)
     .where('status', '=', 'approved')
     .where('employee_id', 'in', [...employeeIds])
@@ -524,6 +526,7 @@ export async function loadApprovedStage6bByEmployee(
     .selectFrom('ludy_hr.payroll_adjustment_item')
     .select(['id', 'employee_id', 'kind', 'amount'])
     .where('org_id', '=', ctx.orgId)
+    .where('legal_entity_id', '=', legalEntityId)
     .where('month', '=', month)
     .where('status', '=', 'approved')
     .where('employee_id', 'in', [...employeeIds])
@@ -793,6 +796,7 @@ export const runOpen = defineCommand({
     const stage6bByEmployee = await loadApprovedStage6bByEmployee(
       ctx,
       people.map((p) => p.employeeId),
+      entity.id,
       input.month,
     );
     const linkedAdvIds: string[] = [];
@@ -880,6 +884,7 @@ export const runRecalculate = defineCommand({
     const stage6bByEmployee = await loadApprovedStage6bByEmployee(
       ctx,
       people.map((p) => p.employeeId),
+      run.legal_entity_id,
       run.month,
     );
     const linkedAdvIds: string[] = [];
@@ -1546,7 +1551,7 @@ export const runSyncStage6b = defineCommand({
       }
     }
     const paidEmployeeIds = [...new Set(locked.filter((l) => people.has(l.employee_id)).map((l) => l.employee_id))];
-    const stage6bByEmployee = await loadApprovedStage6bByEmployee(ctx, paidEmployeeIds, payRun.month);
+    const stage6bByEmployee = await loadApprovedStage6bByEmployee(ctx, paidEmployeeIds, payRun.legal_entity_id, payRun.month);
     const updates: { lineId: string; employmentId: string; inputs: HrPayrollInputs; figures: LineFigures }[] = [];
     const linkedAdvIds: string[] = [];
     const linkedAdjIds: string[] = [];
@@ -1630,7 +1635,7 @@ export async function syncEmployeeDraftPayrollStage6b(
   const person = people.find((p) => p.employeeId === employeeId);
   if (!person) return { synced: false, syncedFields: [], skippedFields: [] };
   const parsed = parseInputs(line.inputs);
-  const stage6bByEmployee = await loadApprovedStage6bByEmployee(ctx, [employeeId], month);
+  const stage6bByEmployee = await loadApprovedStage6bByEmployee(ctx, [employeeId], legalEntityId, month);
   const s6b = syncStage6bPatch(parsed, stage6bByEmployee.get(employeeId));
   await linkSyncedStage6bRun(ctx, payRun.id, s6b.advanceIds, s6b.adjustmentIds);
   if (!s6b.changed) {
@@ -2052,7 +2057,7 @@ export const runSheet = defineQuery({
     const draft = run.status === 'draft';
     const stage6bByEmployee =
       draft && employeeIds.length > 0
-        ? await loadApprovedStage6bByEmployee(ctx, employeeIds, run.month)
+        ? await loadApprovedStage6bByEmployee(ctx, employeeIds, run.legal_entity_id, run.month)
         : new Map<string, Stage6bApprovedSummary>();
     const today = vietnamDay(new Date());
     const start = monthStart(run.month);

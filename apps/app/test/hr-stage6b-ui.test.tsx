@@ -532,6 +532,25 @@ describe('HR Stage 6B UI & i18n (#4527)', () => {
       bonus: '500000',
       retroPay: '800000',
     });
+    // Fractional legacy bonus must round to integer VND so zero/tiny retroPay never creates phantom or negative amounts.
+    expect(
+      splitBonusAndRetroPay(
+        { ...newBreakdown, pay: { ...legacyPayBase, bonus: '500001' } },
+        { bonus: '500000.6', retroPay: '0' },
+      ),
+    ).toEqual({ bonus: '500001', retroPay: '0' });
+    expect(
+      splitBonusAndRetroPay(
+        { ...newBreakdown, pay: { ...legacyPayBase, bonus: '500000' } },
+        { bonus: '500000.3', retroPay: '0.1' },
+      ),
+    ).toEqual({ bonus: '500000', retroPay: '0' });
+    expect(
+      splitBonusAndRetroPay(
+        { ...newBreakdown, pay: { ...legacyPayBase, bonus: '1300001' } },
+        { bonus: '500000.3', retroPay: '800000.5' },
+      ),
+    ).toEqual({ bonus: '500000', retroPay: '800001' });
 
     const lineId = '00000000-0000-7000-8000-000000000971';
     const sheet: HrRunSheet = {

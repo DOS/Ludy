@@ -391,6 +391,34 @@ describe('computePayrollDiff pure unit tests (#4445)', () => {
     expect(diff.rows.find((r) => r.employeeId === 'e1')?.reasons).toEqual(['retro_pay']);
     expect(diff.rows.find((r) => r.employeeId === 'e2')?.reasons).toEqual(['offset_deduction']);
     expect(diff.rows.find((r) => r.employeeId === 'e3')?.reasons).toEqual(['deduction_change', 'offset_deduction']);
+
+    // Implicit statutory deduction change in the same month as an offset deduction emits BOTH deduction_change & offset_deduction.
+    const implicitOverlap = computePayrollDiff({
+      mode: 'projected',
+      legalEntityId: 'entity-1',
+      legalEntityName: 'Công ty Thử Nghiệm',
+      month: '2026-10',
+      current: makeSnapshot('2026-10', [
+        makeSourceLine({
+          employeeId: 'e2',
+          inputs: zHrPayrollInputs.parse({ offsetDeduction: '250000' }),
+          figures: {
+            gross: '20000000',
+            employeeInsurance: '2100000',
+            employerInsurance: '4300000',
+            unionFee: '400000',
+            taxableIncome: '20000000',
+            pit: '350000', // +50k statutory PIT delta alongside +250k offset deduction
+            net: '17300000',
+            employerCost: '24700000',
+          },
+        }),
+      ]),
+      prior: makeSnapshot('2026-09', [makeSourceLine({ employeeId: 'e2' })], { runId: 'run-sep', status: 'approved' }),
+      employees: new Map([['e2', { displayName: 'Nhân viên 2', erased: false }]]),
+      includeUnchanged: false,
+    });
+    expect(implicitOverlap.rows.find((r) => r.employeeId === 'e2')?.reasons).toEqual(['deduction_change', 'offset_deduction']);
   });
 });
 

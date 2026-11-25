@@ -262,6 +262,7 @@ export function HrSelfAdvanceTripCards({ linked }: { linked: boolean }) {
 
   const handleSubmitAdvance = (e: FormEvent) => {
     e.preventDefault();
+    if (isAdvMonthLocked) return;
     submitAdvance.mutate();
   };
 
@@ -943,7 +944,7 @@ export function HrStage6bApprovalQueues(props: { entities?: readonly { id: strin
           {advList.error && <ErrorText>{errorMessage(advList.error)}</ErrorText>}
           {advSyncNotice && (
             <p
-              role={advSyncNotice === 'manual_override' ? 'status' : undefined}
+              role="status"
               className={
                 advSyncNotice === 'manual_override'
                   ? 'mb-3 rounded-md border border-warning/40 bg-warning/10 p-2.5 text-xs font-medium text-warning'
@@ -1391,7 +1392,7 @@ export function HrPayrollAdjustmentsPanel(props: {
       )}
       {syncNotice && (
         <p
-          role={syncNotice === 'manual_override' ? 'status' : undefined}
+          role="status"
           className={
             syncNotice === 'manual_override'
               ? 'mb-3 rounded-md border border-warning/40 bg-warning/10 p-2.5 text-xs font-medium text-warning'

@@ -654,6 +654,8 @@ suite('HR Stage 6B salary advance, retro/offset adjustments, and business trips 
     const mgrLockedList = await o.query<HrSelfAdvanceListResult>(o.mgr, 'hr.self.salary_advance.list', {});
     const mgrPendingRow = mgrLockedList.l1Queue.find((r) => r.id === advPendingL1.requestId);
     expect(mgrPendingRow?.payrollRunLocked).toBe(true);
+    const adminLockedList = await o.query<HrAdvanceRequestView[]>(o.owner, 'hr.salary_advance.list', { month });
+    expect(adminLockedList.find((r) => r.id === advPendingFinal.requestId)?.payrollRunLocked).toBe(true);
 
     // B4 Money guard: once month payroll run is approved (non-draft), no Stage 6B advance/adjustment can be submitted, created, or approved for that month.
     await expect(
@@ -1213,6 +1215,25 @@ suite('HR Stage 6B salary advance, retro/offset adjustments, and business trips 
       expect(lineWarn.stage6bManualOverrides).toEqual([
         { field: 'retroPay', lineAmount: '150000', approvedAmount: '300000' },
       ]);
+
+      // Fractional bonus with zero or sub-dong retroPay must never create phantom or negative breakdown.pay.retroPay!
+      await o.exec(o.owner, 'hr.payroll.line.inputs.set', {
+        lineId: line0.id,
+        inputs: { bonus: '500000.6', retroPay: '0' },
+      });
+      const sheetFracZero = await o.query<HrRunSheet>(o.owner, 'hr.payroll.run.sheet', { runId: run.runId });
+      const bdFracZero = sheetFracZero.lines.find((l) => l.id === line0.id)!.breakdown as unknown as PayrollBreakdown;
+      expect(bdFracZero.pay.bonus).toBe('500001');
+      expect(bdFracZero.pay.retroPay).toBeUndefined();
+
+      await o.exec(o.owner, 'hr.payroll.line.inputs.set', {
+        lineId: line0.id,
+        inputs: { bonus: '500000.3', retroPay: '0.1' },
+      });
+      const sheetFracTiny = await o.query<HrRunSheet>(o.owner, 'hr.payroll.run.sheet', { runId: run.runId });
+      const bdFracTiny = sheetFracTiny.lines.find((l) => l.id === line0.id)!.breakdown as unknown as PayrollBreakdown;
+      expect(bdFracTiny.pay.bonus).toBe('500000');
+      expect(bdFracTiny.pay.retroPay).toBeUndefined();
 
       // Restore sync for this specific line -> updates retroPay to 300000, links payroll_run_id, clears warning flag!
       const restored = await o.exec<HrRunWritten>(o.owner, 'hr.payroll.run.sync_stage6b', {

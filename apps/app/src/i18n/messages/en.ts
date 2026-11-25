@@ -1416,7 +1416,7 @@ export const en = {
       approvedManualOverride: 'Approved, but this employee\'s draft payroll line has a manual override so it was not auto-linked or deducted. Open the line details to review or restore sync.',
       approvedAwaitingSync: 'Approved. Open or recalculate the draft pay run to sync this line.',
       syncSkippedManualOverride: '{count} payroll line(s) have manual overrides on advances or adjustments and were skipped from auto-sync/linking. Open line details to review or restore sync.',
-      lineManualOverrideTitle: 'This payroll line uses manual overrides, so approved Stage 6B items were not auto-synced or linked:',
+      lineManualOverrideTitle: 'This payroll line uses manual overrides, so approved advance or adjustment items were not auto-synced or linked:',
       lineManualOverrideItem: '{field}: line has {lineAmount}, approved total is {approvedAmount}',
       restoreLineSyncBtn: 'Restore sync from approved items',
       kinds: {

@@ -363,7 +363,12 @@ function detectReasons(args: {
       (pTaxMode !== null && cTaxMode !== null && pTaxMode !== cTaxMode) ||
       !priorAdj.insuranceAndPit.equals(currAdj.insuranceAndPit);
 
-    if (explicitDeductionChanged || (!offsetDeductionChanged && money(grossDelta).isZero() && nonZeroMoney(employeeDeductionDelta))) {
+    const offsetDeductionDelta = money(cIn.offsetDeduction).toDecimalPlaces(0).minus(money(pIn.offsetDeduction).toDecimalPlaces(0));
+    const residualDeductionChange =
+      money(grossDelta).isZero() &&
+      nonZeroMoney(employeeDeductionDelta) &&
+      !money(employeeDeductionDelta).equals(offsetDeductionDelta);
+    if (explicitDeductionChanged || residualDeductionChange) {
       reasons.add('deduction_change');
     }
   } else {
@@ -616,7 +621,7 @@ async function buildProjectedSnapshot(
   const lastInputs = new Map(prevMonthLines.map((b) => [b.employee_id, { employment_id: b.employment_id, inputs: b.inputs }]));
 
   const bhxhByEmployee = await loadBhxhLeaveByEmployee(ctx, employeeIds, month);
-  const stage6bByEmployee = await loadApprovedStage6bByEmployee(ctx, employeeIds, month);
+  const stage6bByEmployee = await loadApprovedStage6bByEmployee(ctx, employeeIds, legalEntityId, month);
   const unpaidEntries =
     employeeIds.length === 0
       ? []

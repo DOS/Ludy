@@ -33,7 +33,7 @@ import { HrSelfAssetsCard } from '../components/hr-stage6c-panels.tsx';
 import { HrOkrPanel } from '../components/hr-okr-panel.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../components/ui.tsx';
 import { HrAttendanceCheckinCard } from '../components/hr-attendance-checkin-card.tsx';
-import { splitBonusAndRetroPay } from './hr-payroll.tsx';
+import { splitBonusAndRetroPay } from '../lib/hr-payslip.ts';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, getCurrentOrg, orpc, queryClient } from '../lib/api.ts';
 import { useListPeekNav } from '../lib/list-peek-nav.ts';

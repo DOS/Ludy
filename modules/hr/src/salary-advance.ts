@@ -255,7 +255,6 @@ export const selfSalaryAdvanceList = defineQuery({
           'r.department_id', 'd.name as department_name', 'r.month', 'r.amount', 'r.reason', 'r.status',
           'r.l1_approver_user_id', 'r.l1_acted_at', 'r.final_acted_by', 'r.final_acted_at',
           'r.decision_note', 'r.payroll_run_id',
-          sql<boolean>`ludy_hr.hr_stage6b_payroll_run_locked(r.org_id, r.legal_entity_id, r.month)`.as('payroll_run_locked'),
           'r.created_by', 'r.created_at', 'r.updated_at',
         ])
         .where('r.org_id', '=', ctx.orgId)
@@ -264,8 +263,18 @@ export const selfSalaryAdvanceList = defineQuery({
       if (emp) l1q = l1q.where('r.employee_id', '!=', emp.id);
       if (input.month) l1q = l1q.where('r.month', '=', input.month);
       const l1Rows = await l1q.orderBy('r.created_at', 'asc').limit(input.limit).execute();
+      const lockedMonthsByEntity = new Map<string, ReadonlySet<string>>();
+      if (emp) lockedMonthsByEntity.set(emp.legal_entity_id, lockedMonthSet);
+      for (const leId of new Set(l1Rows.map((row) => row.legal_entity_id))) {
+        if (!lockedMonthsByEntity.has(leId)) {
+          lockedMonthsByEntity.set(leId, new Set(await loadLockedPayrollMonths(ctx.trx, ctx.orgId, leId)));
+        }
+      }
       l1Queue = l1Rows.map((row) =>
-        mapAdvanceView(row, { callerUserId, callerRole: role, callerEmployeeId: emp?.id ?? null, managedDeptIds, soleOwnerOpc }),
+        mapAdvanceView(
+          { ...row, payroll_run_locked: lockedMonthsByEntity.get(row.legal_entity_id)?.has(row.month) ?? false },
+          { callerUserId, callerRole: role, callerEmployeeId: emp?.id ?? null, managedDeptIds, soleOwnerOpc },
+        ),
       );
     }
 
@@ -297,12 +306,19 @@ export const salaryAdvanceList = defineQuery({
       .selectFrom('ludy_hr.salary_advance_request as r')
       .leftJoin('ludy_hr.payroll_employee as e', (j) => j.onRef('e.org_id', '=', 'r.org_id').onRef('e.id', '=', 'r.employee_id'))
       .leftJoin('ludy_hr.department as d', (j) => j.onRef('d.org_id', '=', 'r.org_id').onRef('d.id', '=', 'r.department_id'))
+      .leftJoin('ludy_hr.payroll_run as pr', (j) =>
+        j
+          .onRef('pr.org_id', '=', 'r.org_id')
+          .onRef('pr.legal_entity_id', '=', 'r.legal_entity_id')
+          .onRef('pr.month', '=', 'r.month')
+          .on('pr.status', '!=', 'draft'),
+      )
       .select([
         'r.id', 'r.legal_entity_id', 'r.employee_id', 'e.display_name as employee_name',
         'r.department_id', 'd.name as department_name', 'r.month', 'r.amount', 'r.reason', 'r.status',
         'r.l1_approver_user_id', 'r.l1_acted_at', 'r.final_acted_by', 'r.final_acted_at',
         'r.decision_note', 'r.payroll_run_id',
-        sql<boolean>`ludy_hr.hr_stage6b_payroll_run_locked(r.org_id, r.legal_entity_id, r.month)`.as('payroll_run_locked'),
+        sql<boolean>`pr.id IS NOT NULL`.as('payroll_run_locked'),
         'r.created_by', 'r.created_at', 'r.updated_at',
       ])
       .where('r.org_id', '=', ctx.orgId);

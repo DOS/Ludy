@@ -40,6 +40,7 @@ import { StepUpPrompt } from '../components/two-factor.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, TOTAL_RULE, TableSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { apiFetch, client, errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
+import { splitBonusAndRetroPay } from '../lib/hr-payslip.ts';
 import { cashAccountChoices } from '../lib/vouchers.ts';
 
 const refresh = () => queryClient.invalidateQueries({ queryKey: orpc.hr.key() });
@@ -121,24 +122,7 @@ export const formOk = (s: InputsState) =>
   dayOk(s.unpaidLeaveDays) && bhxhDayOk(s.sicknessBhxhDays) && bhxhDayOk(s.maternityBhxhDays) && dayOk(s.daysNotEmployed) && (s.workedHours === '' || hoursOk(s.workedHours)) && (s.pieceCount === '' || workUnitsOk(s.pieceCount)) && amountOk(s.bonus) && amountOk(s.retroPay) && amountOk(s.advance) && amountOk(s.offsetDeduction) && hoursOk(s.nightHours) && (s.contractTermMonths === '' || /^\d{1,2}$/.test(s.contractTermMonths)) &&
   s.overtime.every((o) => hoursOk(o.hours)) && s.allowances.every((a) => a.label.trim() !== '' && amountOk(a.amount)) && s.deductions.every((d) => d.label.trim() !== '' && amountOk(d.amount));
 
-export function splitBonusAndRetroPay(
-  b: PayrollBreakdown,
-  inputs: Record<string, unknown>,
-): { bonus: string; retroPay: string } {
-  if (typeof b.pay.retroPay === 'string') {
-    return { bonus: b.pay.bonus, retroPay: b.pay.retroPay };
-  }
-  const inputRetro = typeof inputs.retroPay === 'string' ? inputs.retroPay : '0';
-  if (!money(inputRetro).greaterThan(0)) {
-    return { bonus: b.pay.bonus, retroPay: '0' };
-  }
-  const rawBonus = typeof inputs.bonus === 'string' ? toMoney(money(inputs.bonus)) : '0';
-  const retro = money(b.pay.bonus).minus(money(rawBonus));
-  if (retro.greaterThan(0)) {
-    return { bonus: rawBonus, retroPay: toMoney(retro) };
-  }
-  return { bonus: b.pay.bonus, retroPay: '0' };
-}
+export { splitBonusAndRetroPay };
 
 const isPositiveMoney = (value: string): boolean => money(value).greaterThan(0);
 
