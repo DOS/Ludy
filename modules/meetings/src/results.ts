@@ -40,7 +40,7 @@ import { enqueueMinutesHook } from './hook.ts';
 import { vnDayStart } from './retention.ts';
 import { suggestAssignee, type Person, type Suggested } from './assignee-match.ts';
 import { attendeeNames, cleanName } from './speaker.ts';
-import { ROLES, missingAnchors, openMeeting, userOf } from './transcript.ts';
+import { ROLES, draftLineState, missingAnchors, openMeeting, userOf } from './transcript.ts';
 
 // What code finds wrong with an item's text: a link, an email address or a phone number in a title (a task is read by every member, and a title the model
 // wrote from a transcript must not carry a way to reach someone off the page). Fixed words, never the text.
@@ -528,18 +528,8 @@ export const meetingResultGet = defineQuery({
       }
     }
     const seats = await seatsOf(ctx.trx, ctx.orgId, [...items.flatMap((i) => (i.who_parsed ? [i.who_parsed] : [])), ...[...suggestions.values()].map((s) => s.userId)]);
-    // The draft transcript lines a machine wrote that the recorder has not read (#4899): a count, never a line. Only the recorder has a draft to read, so the count is not even asked for anyone else (row security would test every line of the meeting for it).
-    const unreadLines =
-      meeting.recorder_user_id === userId
-        ? await ctx.trx
-            .selectFrom('ludy_meetings.transcript_segment')
-            .select(sql<string>`count(*)::text`.as('n'))
-            .where('org_id', '=', ctx.orgId)
-            .where('meeting_id', '=', input.meetingId)
-            .where('stage', '=', 'draft')
-            .where('tainted', '=', true)
-            .executeTakeFirstOrThrow()
-        : { n: '0' };
+    // The draft transcript lines (#4899): how many, how many a machine wrote that the recorder has not read, and a key over those unread ones that the review names. Counts and a key, never a line. Only the recorder has a draft, so nothing is asked for anyone else (row security would test every line of the meeting for it).
+    const lines = meeting.recorder_user_id === userId ? await draftLineState(ctx.trx, ctx.orgId, input.meetingId) : { draft: 0, unread: 0, key: '' };
     const view = (stage: 'draft' | 'published') => {
       const r = results.find((x) => x.stage === stage);
       return r ? { id: r.id, feature: r.feature as 'manual' | 'meetings.summary', stage, summary: r.summary, decisions: Array.isArray(r.decisions) ? (r.decisions as string[]) : [], tainted: r.tainted } : null;
@@ -549,7 +539,9 @@ export const meetingResultGet = defineQuery({
       isRecorder: meeting.recorder_user_id === userId,
       draft: view('draft'),
       published: view('published'),
-      transcriptUnread: Number(unreadLines.n),
+      transcriptDraft: lines.draft,
+      transcriptUnread: lines.unread,
+      transcriptUnreadKey: lines.key,
       items: items.map((i): ActionItemView => {
         const held = i.who_parsed ? (seats.get(i.who_parsed) ?? []) : [];
         const flags = (Array.isArray(i.flags) ? i.flags : []) as ItemFlag[];

@@ -52,7 +52,7 @@ const MEETING = {
   isRecorder: true,
 };
 const published = { id: 'r1', feature: 'manual' as const, stage: 'published' as const, summary: 'Đã giao hàng.', decisions: ['Giữ giá cũ'], tainted: false };
-const results = (over: Partial<MeetingResults>): MeetingResults => ({ meetingId: 'm1', isRecorder: true, draft: null, published: null, items: [], transcriptUnread: 0, ...over });
+const results = (over: Partial<MeetingResults>): MeetingResults => ({ meetingId: 'm1', isRecorder: true, draft: null, published: null, items: [], transcriptDraft: 0, transcriptUnread: 0, transcriptUnreadKey: '', ...over });
 
 const page = (res: MeetingResults, locale: 'en' | 'vi' = 'en') => {
   client.current.setQueryData(['meetings', 'get'], MEETING);

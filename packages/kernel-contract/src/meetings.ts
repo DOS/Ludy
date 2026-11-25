@@ -789,9 +789,12 @@ export const zMeetingResults = z.strictObject({
   draft: zMeetingResultView.nullable(),
   published: zMeetingResultView.nullable(),
   items: z.array(zActionItemView),
-  // The recorder's draft transcript lines that a machine wrote (a transcription, a platform's transcript) and they have not read yet (#4899): the publish shares the lines too, and only after they are read
-  // (the review with `transcript`). Zero for a reader, and for a transcript the recorder typed.
+  // The recorder's draft transcript lines (#4899): how many there are (the publish shares them too), how many of them a machine wrote (a transcription, a platform's transcript) and the recorder has not read
+  // yet (shared only after the review), and a key over exactly those unread lines that the review sends back so it clears only what this screen showed. Zero and empty for a reader, and for a transcript the
+  // recorder typed.
+  transcriptDraft: z.number().int().min(0),
   transcriptUnread: z.number().int().min(0),
+  transcriptUnreadKey: z.string().max(64),
 });
 export type MeetingResults = z.infer<typeof zMeetingResults>;
 export type ActionItemView = z.infer<typeof zActionItemView>;
@@ -886,8 +889,9 @@ export type NotesPreview = z.infer<typeof zNotesPreview>;
 // `transcript` (#4899): the same "I read this" for the draft transcript lines of the meeting that a machine wrote. They are too many to name one by one (an hour of talk is hundreds of lines), so the
 // command finds them itself, in the recorder's own meeting. Either some ids or `transcript` must be there.
 export const zDraftReview = z
-  .strictObject({ meetingId: zId, confirmed: z.literal(true), ids: z.array(zId).max(ITEMS_PER_MEETING_MAX + 1), transcript: z.boolean().default(false) })
-  .refine((v) => v.ids.length > 0 || v.transcript, { message: 'name what was read: ids, or the transcript' });
+  // `transcript` is the key the screen was given with `transcriptUnreadKey`: the review reads the unread transcript lines only while they are still exactly those (STALE_TRANSCRIPT_REVIEW otherwise).
+  .strictObject({ meetingId: zId, confirmed: z.literal(true), ids: z.array(zId).max(ITEMS_PER_MEETING_MAX + 1), transcript: z.string().min(1).max(64).optional() })
+  .refine((v) => v.ids.length > 0 || v.transcript !== undefined, { message: 'name what was read: ids, or the transcript' });
 export const zDraftReviewed = z.strictObject({ meetingId: zId, cleared: z.number().int().min(0) });
 
 // The recorder's Vy summarizing a meeting (#2580, M6 part B2). `start` is the module's own command (the route runs it first); `summarize` is the route the screen

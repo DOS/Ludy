@@ -16766,6 +16766,7 @@ export const vi = {
       CHAPTER_ANCHOR_LOST: 'Bản ghi lời nói đã thay đổi sau khi bạn lưu mục lục, nên có mục không còn bắt đầu ở một dòng của bản ghi. Hãy lưu lại mục lục rồi chia sẻ.',
       NO_CLEAN_ITEMS: 'Không có việc nào rõ ràng: hãy tự chọn người, ngày và vị trí cho từng việc.',
       DRAFT_NOT_REVIEWED: 'Còn mục do Vy gợi ý chưa được bạn xem lại. Hãy đọc và xác nhận trước khi chia sẻ.',
+      STALE_TRANSCRIPT_REVIEW: 'Bản ghi lời nói đã thay đổi từ lúc bạn mở màn hình này. Hãy xem lại các dòng mới rồi xác nhận lại.',
       DRAFT_SUMMARY_EXISTS: 'Bạn đã có bản tóm tắt nháp. Hãy chia sẻ hoặc lưu đè lên nó, rồi mới chép bản của Vy.',
       SUMMARY_BUSY: 'Vy đang bận tóm tắt. Hãy thử lại sau vài phút.',
       SUMMARY_ALREADY_COPIED: 'Bản tóm tắt này đã được chép vào bản nháp của bạn.',

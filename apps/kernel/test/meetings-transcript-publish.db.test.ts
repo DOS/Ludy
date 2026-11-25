@@ -169,23 +169,40 @@ suite('the recorder publishes the transcript lines with the minutes (#4899)', ()
         [orgId, meetingId, l.at, l.at + 5, l.said],
       );
     }
-    // The recorder's results read says how many are unread (a count, never a line), and a reader's is zero.
-    expect((await query<{ transcriptUnread: number }>('recorder', 'meetings.result.get', { meetingId })).transcriptUnread).toBe(3);
-    expect((await query<{ transcriptUnread: number }>('reader', 'meetings.result.get', { meetingId })).transcriptUnread).toBe(0);
+    // The recorder's results read says how many lines there are, how many are unread (counts, never a line) and a key over the unread ones; a reader's are zero and empty.
+    type Counts = { transcriptDraft: number; transcriptUnread: number; transcriptUnreadKey: string };
+    const seen = await query<Counts>('recorder', 'meetings.result.get', { meetingId });
+    expect([seen.transcriptDraft, seen.transcriptUnread]).toEqual([3, 3]);
+    expect(seen.transcriptUnreadKey).toMatch(/^[0-9a-f]{32}$/);
+    expect(await query<Counts>('reader', 'meetings.result.get', { meetingId })).toMatchObject({ transcriptDraft: 0, transcriptUnread: 0, transcriptUnreadKey: '' });
     expect(await refuses(publish('recorder', meetingId))).toBe('DRAFT_NOT_REVIEWED');
     // The refusal changed nothing: the lines are still the recorder's draft, and the reader reads none.
     expect((await stored(meetingId, 'draft')).length).toBe(3);
     expect(await stored(meetingId, 'published')).toEqual([]);
     expect(await get('reader', meetingId)).toMatchObject({ stage: 'none', segments: [] });
-    // The review names ids or the transcript: neither is refused; a reader of the meeting is no recorder.
+    // The review names ids or the transcript key: neither is refused; the old yes/no flag is no key; a reader of the meeting is no recorder.
     expect(await refuses(exec('recorder', 'meetings.draft.review', { meetingId, confirmed: true, ids: [] }))).toBe('VALIDATION');
-    expect(await refuses(exec('reader', 'meetings.draft.review', { meetingId, confirmed: true, ids: [], transcript: true }))).toBe('FORBIDDEN');
+    expect(await refuses(exec('recorder', 'meetings.draft.review', { meetingId, confirmed: true, ids: [], transcript: true }))).toBe('VALIDATION');
+    expect(await refuses(exec('reader', 'meetings.draft.review', { meetingId, confirmed: true, ids: [], transcript: seen.transcriptUnreadKey }))).toBe('FORBIDDEN');
     expect((await stored(meetingId, 'draft')).every((r) => r.tainted)).toBe(true);
-    // The recorder's review of the transcript clears every unread line of this meeting, and only those.
-    expect(await exec('recorder', 'meetings.draft.review', { meetingId, confirmed: true, ids: [], transcript: true })).toEqual({ meetingId, cleared: 3 });
-    expect((await query<{ transcriptUnread: number }>('recorder', 'meetings.result.get', { meetingId })).transcriptUnread).toBe(0);
-    expect(await publish('recorder', meetingId)).toMatchObject({ lines: 3 });
-    expect((await get('reader', meetingId)).segments.map((s) => s.text)).toEqual(THREE.map((l) => l.said));
+    // A line another tab copied or imported after this screen loaded changes the set: the review of the key the screen holds is refused and reads nothing, not even the three the screen showed.
+    await sqlAdmin(
+      `INSERT INTO ludy_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage, tainted) VALUES ($1, $2, 40, 45, 'Người nói 2', 'Dòng đến sau khi mở màn hình', 'draft', true)`,
+      [orgId, meetingId],
+    );
+    expect(await refuses(exec('recorder', 'meetings.draft.review', { meetingId, confirmed: true, ids: [], transcript: seen.transcriptUnreadKey }))).toBe('STALE_TRANSCRIPT_REVIEW');
+    expect((await stored(meetingId, 'draft')).every((r) => r.tainted)).toBe(true);
+    // A made-up key is refused the same way; the screen that reloads gets the new key and its review clears every unread line of this meeting, and only those.
+    expect(await refuses(exec('recorder', 'meetings.draft.review', { meetingId, confirmed: true, ids: [], transcript: 'f'.repeat(32) }))).toBe('STALE_TRANSCRIPT_REVIEW');
+    const reloaded = await query<Counts>('recorder', 'meetings.result.get', { meetingId });
+    expect([reloaded.transcriptDraft, reloaded.transcriptUnread]).toEqual([4, 4]);
+    expect(reloaded.transcriptUnreadKey).not.toBe(seen.transcriptUnreadKey);
+    expect(await exec('recorder', 'meetings.draft.review', { meetingId, confirmed: true, ids: [], transcript: reloaded.transcriptUnreadKey })).toEqual({ meetingId, cleared: 4 });
+    expect(await query<Counts>('recorder', 'meetings.result.get', { meetingId })).toMatchObject({ transcriptDraft: 4, transcriptUnread: 0, transcriptUnreadKey: '' });
+    // With nothing unread left, a review that names the key of lines that are gone is refused too.
+    expect(await refuses(exec('recorder', 'meetings.draft.review', { meetingId, confirmed: true, ids: [], transcript: reloaded.transcriptUnreadKey }))).toBe('STALE_TRANSCRIPT_REVIEW');
+    expect(await publish('recorder', meetingId)).toMatchObject({ lines: 4 });
+    expect((await get('reader', meetingId)).segments.map((s) => s.text)).toEqual([...THREE.map((l) => l.said), 'Dòng đến sau khi mở màn hình']);
   });
 
   it('replaces the shared lines at the next publish and keeps them for the readers while a new draft waits', async () => {

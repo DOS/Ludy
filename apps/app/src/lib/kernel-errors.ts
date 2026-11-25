@@ -532,6 +532,7 @@ export const KERNEL_ERROR_CODES = [
   'NO_CLEAN_ITEMS',
   // The recorder's Vy summarizing a meeting (#2580, M6 part B).
   'DRAFT_NOT_REVIEWED',
+  'STALE_TRANSCRIPT_REVIEW',
   'DRAFT_SUMMARY_EXISTS',
   'SUMMARY_BUSY',
   'SUMMARY_ALREADY_COPIED',

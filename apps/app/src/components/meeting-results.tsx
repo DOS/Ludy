@@ -619,7 +619,7 @@ export function MeetingResults({
       setFocusPublished(true);
     },
   });
-  const review = useMutation({ mutationFn: (read: { ids: string[]; transcript: boolean }) => orpc.meetings.results.review.call({ meetingId, confirmed: true, ids: read.ids, transcript: read.transcript }), onSuccess: refresh });
+  const review = useMutation({ mutationFn: (read: { ids: string[]; transcript: string | undefined }) => orpc.meetings.results.review.call({ meetingId, confirmed: true, ids: read.ids, transcript: read.transcript }), onSuccess: refresh, onError: refresh });
   const acceptClean = useMutation({ mutationFn: () => orpc.meetings.actionItems.acceptClean.call({ meetingId, confirmed: true }), onSuccess: refresh });
   if (query.isPending) return null;
   if (query.error) return <ErrorText>{errorMessage(query.error)}</ErrorText>;
@@ -628,6 +628,8 @@ export function MeetingResults({
   // A reader with nothing shared sees no panel at all.
   if (!isRecorder && !published && items.length === 0) return null;
   const hasDraft = draft !== null || items.some((i) => i.stage === 'draft');
+  // A meeting whose draft is only transcript lines (a transcription, or a new one after the minutes were shared) still has something to share (#4899).
+  const canPublish = hasDraft || data.transcriptDraft > 0;
   const hasPublishedSummary =
     published !== null && (published.summary.trim() !== '' || published.decisions.some((d) => d.trim() !== ''));
   const hasDraftSummary =
@@ -737,7 +739,7 @@ export function MeetingResults({
           </section>
         )}
         {isRecorder && <NewItem meetingId={meetingId} readers={readers} />}
-        {isRecorder && hasDraft && (
+        {isRecorder && canPublish && (
           <div className="space-y-2 border-t pt-3">
             <RedactionNudge
               count={redactCandidatesQuery.data?.candidates.length ?? 0}
@@ -771,7 +773,7 @@ export function MeetingResults({
                 {unreadIds.length > 0 && <p className="text-sm">{t('reviewNote')}</p>}
                 {unreadLines > 0 && <p className="text-sm">{t('reviewNoteTranscript', { count: String(unreadLines) })}</p>}
                 {review.error && <ErrorText>{errorMessage(review.error)}</ErrorText>}
-                <Button size="sm" variant="outline" loading={review.isPending} onClick={() => review.mutate({ ids: unreadIds, transcript: unreadLines > 0 })}>
+                <Button size="sm" variant="outline" loading={review.isPending} onClick={() => review.mutate({ ids: unreadIds, transcript: unreadLines > 0 ? data.transcriptUnreadKey : undefined })}>
                   {t('reviewed')}
                 </Button>
               </div>

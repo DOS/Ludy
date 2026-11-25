@@ -16766,6 +16766,7 @@ export const en = {
       CHAPTER_ANCHOR_LOST: 'The transcript changed after you saved the chapters, so a chapter no longer starts at a line of it. Save the chapters again, then share.',
       NO_CLEAN_ITEMS: 'No action item is clean: pick the person, the date and the seat of each one yourself.',
       DRAFT_NOT_REVIEWED: 'Some items Vy suggested have not been reviewed by you yet. Read and confirm them before sharing.',
+      STALE_TRANSCRIPT_REVIEW: 'The transcript changed since you opened this screen. Look over the new lines, then confirm again.',
       DRAFT_SUMMARY_EXISTS: 'You already have a summary draft. Share it or save over it, then copy Vy\'s summary.',
       SUMMARY_BUSY: 'Vy is busy summarizing. Try again in a few minutes.',
       SUMMARY_ALREADY_COPIED: 'This summary was already copied into your draft.',
