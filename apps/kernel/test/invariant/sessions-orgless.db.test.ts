@@ -21,7 +21,7 @@ import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
 import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-orgless-revoke-0123456789';
 const ISSUER = 'crove-auth';
@@ -78,7 +78,7 @@ suite('own session revoke without an org (issue #184)', () => {
       headers: {
         authorization: `Bearer ${token}`,
         'content-type': 'application/json',
-        ...(org ? { 'x-crove-org': org } : {}),
+        ...(org ? { 'x-ludy-org': org } : {}),
       },
       body: JSON.stringify(input === undefined ? {} : { json: input }),
     });

@@ -23,7 +23,7 @@ import { startWorker } from '../../src/worker.ts';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-sessions-0123456789';
 const ISSUER = 'crove-auth';
@@ -93,7 +93,7 @@ suite('sessions and revocation on PostgreSQL (ADR-0028, self-host db adapter)', 
       headers: {
         authorization: `Bearer ${token}`,
         'content-type': 'application/json',
-        ...(org ? { 'x-crove-org': org } : {}),
+        ...(org ? { 'x-ludy-org': org } : {}),
       },
       body: JSON.stringify(input === undefined ? {} : { json: input }),
     });

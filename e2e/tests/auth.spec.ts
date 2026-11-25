@@ -116,7 +116,7 @@ test('a user enrolls TOTP; sign-in and password recovery then ask for the code (
   await signUp(page, email);
   const slug = await createOrg(page, 'Công ty MFA');
 
-  await page.getByRole('navigation').getByRole('link', { name: 'Cài đặt' }).click();
+  await page.getByRole('banner').getByRole('link', { name: 'Cài đặt', exact: true }).click();
   await openSettingsTab(page, 'security');
   await page.getByRole('button', { name: 'Bật xác thực hai lớp' }).click();
   const secret = (await page.getByLabel('Khóa thiết lập').textContent())?.trim() ?? '';
@@ -209,7 +209,7 @@ test('managing members asks for two-factor first, then works once it is on', asy
   const owner = newEmail('owner');
   await signUp(page, owner);
   const slug = await createOrg(page, 'Công ty thành viên');
-  await page.getByRole('navigation').getByRole('link', { name: 'Cài đặt' }).click();
+  await page.getByRole('banner').getByRole('link', { name: 'Cài đặt', exact: true }).click();
   await openSettingsTab(page, 'members');
 
   // Inviting is R3, and the owner has no second factor yet.
@@ -269,7 +269,7 @@ test('managing members asks for two-factor first, then works once it is on', asy
 test('rotating the inbound address asks for two-factor first', async ({ page }) => {
   await signUp(page, newEmail('rotate'));
   await createOrg(page, 'Công ty đổi địa chỉ');
-  await page.getByRole('navigation').getByRole('link', { name: 'Cài đặt' }).click();
+  await page.getByRole('banner').getByRole('link', { name: 'Cài đặt', exact: true }).click();
   // The organization tab has no two-factor card, so the step-up prompt carries the enrollment and repeats the rotation.
   const before = (await page.getByText(/@in\.e2e\.test$/).first().textContent())?.trim() ?? '';
   expect(before).toMatch(/@in\.e2e\.test$/);
@@ -291,7 +291,7 @@ test('rotating the inbound address asks for two-factor first', async ({ page }) 
 test('closing the organization asks for two-factor first', async ({ page }) => {
   await signUp(page, newEmail('offboard'));
   const slug = await createOrg(page, 'Công ty đóng cửa');
-  await page.getByRole('navigation').getByRole('link', { name: 'Cài đặt' }).click();
+  await page.getByRole('banner').getByRole('link', { name: 'Cài đặt', exact: true }).click();
   await openSettingsTab(page, 'data');
 
   // Offboarding is R3 (#212): without a second factor the confirmation turns into the step-up prompt.

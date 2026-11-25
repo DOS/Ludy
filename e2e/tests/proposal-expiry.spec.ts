@@ -15,7 +15,7 @@ test('set an expiry, find an expired proposal with its reason and ask for it aga
   const slug = await createOrg(page, 'Công ty Hết Hạn');
 
   await test.step('expiry is offered only after the owners are told, and only for longer', async () => {
-    await page.getByRole('navigation').getByRole('link', { name: 'Cài đặt' }).click();
+    await page.getByRole('banner').getByRole('link', { name: 'Cài đặt', exact: true }).click();
     await openSettingsTab(page, 'members');
     // The reminders show their values with a "Sửa" button; the three selects appear after it and save on change.
     const reminders = page.locator('dt', { hasText: 'Nhắc duyệt đề xuất' }).locator('..');

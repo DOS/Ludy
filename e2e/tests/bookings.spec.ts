@@ -100,7 +100,7 @@ test('a visitor books on the public page, the host sees it in the app, cancels i
     const today = Date.now() + 7 * 3_600_000;
     const day = (offset: number) => new Date(today + offset * 86_400_000).toISOString().slice(0, 10);
     const dmy = (iso: string) => iso.split('-').reverse().join('/');
-    await page.getByRole('navigation').getByRole('link', { name: 'Cài đặt' }).click();
+    await page.getByRole('banner').getByRole('link', { name: 'Cài đặt', exact: true }).click();
     await openSettingsTab(page, 'bookings');
     // The host's hours run all day: from 00:00 to midnight at the end of the day, which reads 00:00 too.
     await expect(page.getByLabel('Giờ bắt đầu Thứ Hai')).toHaveValue('00:00');

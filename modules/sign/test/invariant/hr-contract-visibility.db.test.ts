@@ -33,7 +33,7 @@ import { resolveDbIdentifiers, roleUrl, setActiveRolePasswords, wrapPool } from 
 
 type Pool = ReturnType<typeof createPool>;
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
@@ -901,7 +901,7 @@ suite('eSign HR contract envelope confidentiality invariants (#3553, A4)', () =>
     try {
       for (const unauthorizedUserId of [memberId, viewerId]) {
         await appClient.query('BEGIN');
-        const ctxToken = mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', {
+        const ctxToken = mintContextToken(process.env.LUDY_CONTEXT_TOKEN_KEY ?? process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', {
           userId: unauthorizedUserId,
           orgId,
           sessionId: null,

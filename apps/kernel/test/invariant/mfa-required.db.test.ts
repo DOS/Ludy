@@ -21,7 +21,7 @@ import { createSessionStatusSource } from '../../src/sessions.ts';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-mfa-required-0123';
 const ISSUER = 'crove-auth';
@@ -78,7 +78,7 @@ suite('aal1 tokens of users with a verified MFA factor on PostgreSQL (issue #126
       headers: {
         authorization: `Bearer ${token}`,
         'content-type': 'application/json',
-        ...(org ? { 'x-crove-org': org } : {}),
+        ...(org ? { 'x-ludy-org': org } : {}),
       },
       body: JSON.stringify(input === undefined ? {} : { json: input }),
     });
@@ -89,7 +89,7 @@ suite('aal1 tokens of users with a verified MFA factor on PostgreSQL (issue #126
   async function upload(token: string, org: string) {
     const form = new FormData();
     form.append('file', new File([new TextEncoder().encode('<?xml version="1.0"?><HDon></HDon>')], 'hd.xml', { type: 'text/xml' }));
-    const response = await app.request('/api/files', { method: 'POST', headers: { authorization: `Bearer ${token}`, 'x-crove-org': org }, body: form });
+    const response = await app.request('/api/files', { method: 'POST', headers: { authorization: `Bearer ${token}`, 'x-ludy-org': org }, body: form });
     return { status: response.status, body: (await response.json().catch(() => null)) as Record<string, any> | null };
   }
 

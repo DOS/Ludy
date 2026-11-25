@@ -98,11 +98,11 @@ test.describe('screen titles, skip link and focus on navigation (#2115)', () => 
     await page.goto(`/o/${slug}/inbox`);
     await expect(page.locator('main h1').first()).toBeVisible();
     const sidebar = page.getByRole('complementary');
-    const settings = sidebar.getByRole('link', { name: 'Cài đặt', exact: true });
-    await settings.focus();
+    const ledger = sidebar.getByRole('link', { name: 'Sổ sách', exact: true });
+    await ledger.focus();
     expect(await where(page)).toMatch(/^sidebar:/);
     await page.keyboard.press('Enter');
-    await expect(page).toHaveURL(new RegExp(`/o/${slug}/settings$`));
+    await expect(page).toHaveURL(new RegExp(`/o/${slug}/ledger$`));
     await expect(page.locator('main h1').first()).toBeVisible();
     const heading = (await page.locator('main h1').first().innerText()).trim();
     // The new screen's own heading has the focus (not the old screen's, which is gone), and it stays there.
