@@ -4444,6 +4444,7 @@ export const en = {
         openMatched: 'Open meeting',
         openMatchedOf: 'Open meeting for {title}',
         failed: 'Could not import: {reason}',
+        pairTaken: 'The other entry of this meeting (video or transcript) is already imported or being imported.',
         viewerOnly: 'Only members can import recordings. Your role is view-only.',
       },
       errors: {
@@ -17108,6 +17109,7 @@ export const en = {
       MEETING_PLATFORM_NOT_FOUND: 'This meeting platform connection or recording was not found.',
       MEETING_PLATFORM_NO_AUDIO: 'The platform offers only a video file, so there is no audio file to import.',
       MEETING_PLATFORM_OWNER_LEFT: 'The person who connected this meeting platform is no longer a member of the organization.',
+      MEETING_PLATFORM_PAIR_TAKEN: 'This meeting was already imported, or is being imported, from its other entry (the video or the transcript). Open the meeting in your list instead.',
       MEETING_PLATFORM_PICK_REQUIRED: 'Choose this recording\'s file in Google Drive before you import it.',
       MEETING_PLATFORM_STATE: 'This recording cannot be imported in its current state (already imported, importing or skipped).',
       MEETING_SETTINGS_INVALID: 'A kept video cannot be kept longer than the audio.',

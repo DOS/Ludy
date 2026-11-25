@@ -256,15 +256,20 @@ function nextFilesPage(link: string, path: string): string {
 
 // What identifies one meeting in the list: the online meeting object, and the occurrence (start and end, whole seconds). A recurring series has one join address and one object whose files are those of
 // every occurrence, so a file belongs to an occurrence by the time it was made. `~` is outside the characters of a Graph id.
-const OCCURRENCE = /^([A-Za-z0-9_=-]{1,900})~(\d{9,11})~(\d{9,11})$/;
+// A meeting with both a recording and a transcript is offered as two suggestions, so the member can take Microsoft's free speaker-labelled transcript instead of the video: the video keeps the occurrence's
+// key, the transcript's is that key plus this suffix (`~` is outside the characters of a Graph id, so no id can end with it).
+// The same text as the contract's PLATFORM_TRANSCRIPT_KEY_SUFFIX (the channel does not depend on the contract; a kernel test keeps the two equal).
+export const TEAMS_TRANSCRIPT_KEY_SUFFIX = '~transcript';
+const TRANSCRIPT_SUFFIX = TEAMS_TRANSCRIPT_KEY_SUFFIX;
+const OCCURRENCE = /^([A-Za-z0-9_=-]{1,900})~(\d{9,11})~(\d{9,11})(~transcript)?$/;
 const SLACK_MS = 30 * 60_000;
 const keyOf = (meeting: string, start: number, end: number): string => `${meeting}~${Math.round(start / 1000)}~${Math.round(end / 1000)}`;
-function parseKey(key: string): { meeting: string; start: number; end: number } {
+function parseKey(key: string): { meeting: string; start: number; end: number; transcript: boolean } {
   const m = OCCURRENCE.exec(key);
   const start = Number(m?.[2]) * 1000;
   const end = Number(m?.[3]) * 1000;
   if (!m?.[1] || !Number.isFinite(start) || !Number.isFinite(end) || end < start || end - start > 24 * 3_600_000) throw new MeetingPlatformError('recording_gone');
-  return { meeting: m[1], start, end };
+  return { meeting: m[1], start, end, transcript: m[4] !== undefined };
 }
 // The files (recordings or transcripts) of an answer that were made during the occurrence, give or take the slack.
 function madeDuring(body: Json | null, occurrence: { start: number; end: number }): Json[] {
@@ -436,7 +441,7 @@ export class TeamsMeetingPlatform implements MeetingPlatformAdapter, MeetingPlat
       }
       return found;
     };
-    const found: Array<MeetingPlatformListed | null> = Array.from({ length: events.length }, () => null);
+    const found: MeetingPlatformListed[][] = Array.from({ length: events.length }, () => []);
     let next = 0;
     const worker = async (): Promise<void> => {
       for (;;) {
@@ -460,7 +465,7 @@ export class TeamsMeetingPlatform implements MeetingPlatformAdapter, MeetingPlat
         // they stay one interval (a call that began late is not placed at the slot's start), which is what the "already recorded" match and the imported meeting's end read.
         const spanFile = [hasVideo ? videos[0] : undefined, hasTranscript ? transcriptFiles[0] : undefined].find((file) => lengthOf(file) !== null);
         const length = lengthOf(spanFile);
-        found[index] = {
+        const row: MeetingPlatformListed = {
           // The id stays the occurrence's (meeting, slot start, slot end): the sweep keys its rows on it.
           id: keyOf(meeting, event.start, event.end),
           title: event.title,
@@ -473,6 +478,9 @@ export class TeamsMeetingPlatform implements MeetingPlatformAdapter, MeetingPlat
           hasTranscript,
           ...(call ? { call } : {}),
         };
+        // Both files: two suggestions (the video, and the transcript alone), so Microsoft's own transcript can be taken without the video processing the video needs. The video's row keeps its key and says it
+        // has no transcript, so each row offers one thing.
+        found[index] = hasVideo && hasTranscript ? [{ ...row, hasTranscript: false }, { ...row, id: `${row.id}${TRANSCRIPT_SUFFIX}`, hasVideo: false }] : [row];
       }
     };
     try {
@@ -484,14 +492,22 @@ export class TeamsMeetingPlatform implements MeetingPlatformAdapter, MeetingPlat
       signal?.removeEventListener('abort', onAbort);
     }
     const seen = new Set<string>();
-    return found
-      .filter((x): x is MeetingPlatformListed => x !== null)
-      .filter((x) => !seen.has(x.id) && seen.add(x.id))
-      .slice(0, MEETING_PLATFORM_LIST_MAX);
+    // Whole meetings only: a cut at the list's maximum never separates the two suggestions of one meeting.
+    const rows: MeetingPlatformListed[] = [];
+    for (const group of found) {
+      const fresh = group.filter((x) => !seen.has(x.id));
+      if (rows.length + fresh.length > MEETING_PLATFORM_LIST_MAX) break;
+      for (const x of fresh) {
+        seen.add(x.id);
+        rows.push(x);
+      }
+    }
+    return rows;
   }
 
   async prepareDownload(credential: MeetingPlatformCredential, recordingId: string, format: MeetingPlatformFormat, signal?: AbortSignal): Promise<MeetingPlatformDownload> {
     const occurrence = parseKey(recordingId);
+    if (occurrence.transcript) throw new MeetingPlatformError('platform_refused', 'this suggestion is the transcript, not the recording');
     if (format === 'audio') throw new MeetingPlatformError('no_audio', 'a Teams recording has no audio-only file');
     // The recording of this occurrence, asked again at the click: exactly one (an occurrence with several is not offered, nor imported).
     const body = await this.files(`/me/onlineMeetings/${occurrence.meeting}/recordings`, credential, signal, false);
