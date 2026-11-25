@@ -130,7 +130,9 @@ const PENDING_TABLES = new Set<string>([
   'crove_kernel.member_vy_memory',
   'crove_kernel.member_vy_result',
   'crove_meetings.live_line',
+  'crove_meetings.meeting_highlight',
   'crove_meetings.meeting_link',
+  'crove_meetings.minutes_link',
   'crove_meetings.minutes_version',
   'crove_notes.link',
   'crove_notes.note',
@@ -229,11 +231,13 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   ['crove_meetings.live_line', () => 'false'], // The live preview of a recording, read by the recorder, a user (ADR-0052 L4a, #3110).
   ['crove_meetings.meeting', () => 'false'], // As above.
   ['crove_meetings.meeting_chapter', () => 'false'], // The chapters of a meeting, read by the recorder and, once published, the readers of the meeting, users (meetings chapters, #3844).
+  ['crove_meetings.meeting_highlight', () => 'false'], // The highlights of a meeting, read by its readers and recorder, users (meetings highlights, #4819).
   ['crove_meetings.meeting_link', () => 'false'], // As above (a link is read through its meeting's readers, L1 #2587).
   ['crove_meetings.meeting_note', () => 'false'], // The recorder's own rough notes, read by the recorder, a user (meetings integrations A5, #3163).
   ['crove_meetings.meeting_reader', () => 'false'], // As above.
   ['crove_meetings.meeting_result', () => 'false'], // As above (summaries and decisions, ADR-0047).
   ['crove_meetings.meeting_video', () => 'false'], // As above.
+  ['crove_meetings.minutes_link', () => 'false'], // The recorder's own links to the published minutes, read by the recorder (and owners and admins), users (#4822); an agent context reads none.
   ['crove_meetings.minutes_version', () => 'false'], // The recorder's published second-language version of the minutes, read by the meeting's readers, users (#4777).
   ['crove_meetings.morning_notice', () => 'false'], // A member's own opt-in to the morning notice of the day's meetings, read by that member, a user (#3955).
   ['crove_meetings.transcript_segment', () => 'false'], // As above (transcript segments, ADR-0047).
@@ -357,6 +361,8 @@ const AUTHOR_ONLY = new Map<string, string>([
   ['crove_meetings.meeting', 'false'],
   // The chapters of a meeting (meetings chapters, #3844): the recorder reads every stage and the readers the published ones, users; worker system context reads and writes nothing.
   ['crove_meetings.meeting_chapter', 'false'],
+  // The highlights of a meeting (meetings highlights, #4819): read by the readers and the recorder, written by them, users only; worker system context reads and writes nothing.
+  ['crove_meetings.meeting_highlight', 'false'],
   // Meeting readers (ADR-0047 point 2): worker system context reads and writes nothing.
   ['crove_meetings.meeting_link', 'false'],
   // The recorder's own rough notes (meetings integrations A5, #3163): the recorder's alone; worker system context reads and writes nothing.
@@ -3553,6 +3559,18 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
   },
+  // #4819 (meetings highlights): a reader's or the recorder's mark on a transcript line or range, an anchor in seconds and who marked it, no text. Read by the meeting's readers and the recorder, inserted
+  // by either for themselves and deleted by the author or the recorder, all in a user context (the org's owner is the recorder of the factory's meeting); the system context reads none. No UPDATE for a
+  // login role. Its factory lands before the table (PENDING_TABLES).
+  'crove_meetings.meeting_highlight': {
+    make: (o) => {
+      const meeting = meetingsMeetingRow(o);
+      return {
+        setup: [{ table: 'crove_meetings.meeting', values: meeting }],
+        row: { org_id: o.id, id: randomUUID(), meeting_id: meeting.id, created_by: o.owner, start_seconds: 0, end_seconds: 5 },
+      };
+    },
+  },
   // #2587 (L1): a meeting's link to a deal (the CRM module is reached through ctx.query, so the deal id has no foreign key).
   'crove_meetings.meeting_link': {
     make: (o) => {
@@ -3642,6 +3660,16 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       setup: [],
       row: { org_id: o.id, user_id: o.owner, url: 'https://hooks.example.com/ludy-minutes', secret_sealed: '{"keyId":"k1","envelope":"AAAAAAAAAAAAAAAA"}', secret_hint: 'whk_00000000' },
     }),
+  },
+  // #4822 (step 0): a read-only link to the published minutes of a meeting for people outside the org. The token is stored only as a hash; the row cascades with its meeting.
+  'crove_meetings.minutes_link': {
+    make: (o) => {
+      const meeting = meetingsMeetingRow(o);
+      return {
+        setup: [{ table: 'crove_meetings.meeting', values: meeting }],
+        row: { org_id: o.id, id: randomUUID(), meeting_id: meeting.id, token_sha256: hex64(), expires_at: new Date(Date.now() + 86_400_000).toISOString(), created_by: o.owner },
+      };
+    },
   },
   // #3578 (meetings): a minutes template the org wrote. Every member of the org reads it; a RESTRICTIVE write policy lets an owner or admin write it (the factory's owner is one), and the
   // table grants no DELETE to a login role. Its factory landed before the table (#3625); the table is on main with the migration of #3578.

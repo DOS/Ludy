@@ -1461,7 +1461,7 @@ export type MeetingsMeetingTable = Refine<
 export const TRANSCRIPT_STAGES = ['draft', 'published'] as const;
 export type TranscriptStageValue = (typeof TRANSCRIPT_STAGES)[number];
 // Whose transcription a line is (C2, #3174; C4, #3176): Ludy's own (or typed by the recorder), or the one Google Meet or Microsoft Teams wrote.
-export const TRANSCRIPTION_MAKERS = ['ludy', 'google_meet', 'microsoft_teams'] as const;
+export const TRANSCRIPTION_MAKERS = ['ludy', 'google_meet', 'microsoft_teams', 'zoom'] as const;
 export type TranscriptionMakerValue = (typeof TRANSCRIPTION_MAKERS)[number];
 
 export type MeetingsTranscriptSegmentTable = Refine<
