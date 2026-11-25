@@ -131,7 +131,7 @@ suite('detective security alerts on PostgreSQL (#996)', () => {
     expect(first.posted[0]?.text).toMatch(/^\[Ludy\] Security alert from books\.example\.test: user /);
     const expected = { kind: 'security', signal: 'actor_many_orgs', subject: probe, value: 3 };
     expect(first.posted[0]?.ludy).toMatchObject(expected);
-    expect(first.posted[0]?.crove).toMatchObject(expected);
+    expect((first.posted[0] as Record<string, unknown> | undefined)?.crove).toBeUndefined();
     // The same signal stays quiet until the repeat interval.
     expect((await sweep()).found).toBe(0);
   });
@@ -146,7 +146,7 @@ suite('detective security alerts on PostgreSQL (#996)', () => {
     );
     const spike = await sweep();
     expect(spike.found).toBe(1);
-    expect(spike.posted[0]?.crove).toMatchObject({ signal: 'refusal_spike', subject: 'deployment', value: 60 });
+    expect(spike.posted[0]?.ludy).toMatchObject({ signal: 'refusal_spike', subject: 'deployment', value: 60 });
     expect((await sweep()).found).toBe(0);
   });
 
@@ -158,7 +158,7 @@ suite('detective security alerts on PostgreSQL (#996)', () => {
     const unchanged = await audit(a, probe, 'kernel.member.change_role', 'ok', { target_user: randomUUID(), role: 'owner', previous_role: 'owner' });
     const refused = await audit(a, probe, 'kernel.member.change_role', 'denied', { target_user: randomUUID(), role: 'owner', previous_role: 'admin' });
     const found = await sweep();
-    const subjects = found.posted.map((p) => p.crove.subject);
+    const subjects = found.posted.map((p) => p.ludy.subject);
     expect(subjects.sort()).toEqual([grant, joined].sort());
     for (const id of [member, unchanged, refused]) expect(subjects).not.toContain(id);
     expect(found.lines.join('\n')).toContain(`admin role given in org ${a} (audit row ${grant})`);

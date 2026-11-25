@@ -691,13 +691,7 @@ suite('sealed request context on PostgreSQL (§4.5 item 5, T11)', () => {
                     current_setting('application_name') AS app`,
           );
           // Startup values (statement_timeout, application_name) survive the reset.
-          expect(rows[0], poison).toEqual({
-            ctx: '',
-            ro: 'off',
-            sp: 'pg_catalog, pg_temp',
-            st: '15s',
-            app: expect.stringMatching(/^(?:crove|ludy)$/),
-          });
+          expect(rows[0], poison).toEqual({ ctx: '', ro: 'off', sp: 'pg_catalog, pg_temp', st: '15s', app: 'ludy' });
           expect(await enterOnPooled(next), poison).toEqual([{ name: 'party of A', who: 'crove_app', org: orgA }]);
         } finally {
           next.release();

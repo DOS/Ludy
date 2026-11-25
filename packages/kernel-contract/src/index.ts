@@ -60,7 +60,6 @@ export * from './projects-roadmap.ts';
 export * from './projects-triage.ts';
 
 export const ORG_HEADER = 'x-ludy-org';
-export const LEGACY_ORG_HEADER = 'x-crove-org';
 export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 // When the store takes presigned uploads, files of at most this size still go through the kernel (POST /api/files):
 // bulk intake (#314) sends a batch of 200 e-invoice XML files that way instead of opening 200 upload grants. The
