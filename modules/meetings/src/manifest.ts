@@ -137,6 +137,8 @@ export const meetingsManifest = defineModule({
       minutes_version: columns(['org_id', 'id', 'meeting_id', 'language', 'source_hash', 'published_by', 'source_run_id', 'published_at'], { body: 'pii' }),
       // A member's own opt-in to the morning notice of the day's meetings (#3955): a time of day, their time zone and the language of the mail. One row per member, theirs alone; no title, name or text of a meeting is in it.
       morning_notice: columns(['org_id', 'id', 'user_id', 'send_minute', 'time_zone', 'language', 'created_at', 'updated_at']),
+      // A member's own opt-in to the alert when a tracked word comes up in a new meeting (#4873): one row per member, theirs alone, and the language of their mail; no word, meeting or text.
+      tracker_alert: columns(['org_id', 'id', 'user_id', 'language', 'created_at']),
       // The words an org tracks across its meetings (#4818): a term an owner chose, plain text, like a glossary term; no meeting text.
       tracker_term: columns(['org_id', 'id', 'term', 'created_by', 'created_at']),
       // The transcript (#2578): what was said, who it is attributed to, when. Text and speaker label are personal data.

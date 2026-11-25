@@ -82,13 +82,13 @@ export function NotificationsPage() {
   const locale = useLocale() === 'en' ? 'en' : 'vi';
   const navigate = useNavigate();
   const isDesktop = useMediaQuery(LG_UP);
-  const line = useNotificationLine();
+  const list = useWorkNotifications();
+  const line = useNotificationLine((list.data?.items ?? []).some((n) => n.kind === 'meetings.tracker_alert'));
   const appLabel = useNotificationAppLabel();
   const titleOf = useNotificationTitle();
 
   useScreenTitle(t('title'));
 
-  const list = useWorkNotifications();
   const [pendingScope, setPendingScope] = useState<'all' | 'group' | string | null>(null);
   const read = useMutation({
     mutationFn: (input: { ids: string[] } | { all: true }) => client.notifications.read(input),

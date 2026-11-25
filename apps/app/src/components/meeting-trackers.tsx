@@ -5,7 +5,7 @@
 import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { useEffect, useRef, useState } from 'react';
-import { useTranslations } from 'use-intl';
+import { useLocale, useTranslations } from 'use-intl';
 import { TRACKER_TERMS_MAX, TRACKER_WEEKS_BACK_MAX } from '@ludy/kernel-contract';
 import { Button } from '@ludy/ui/components/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@ludy/ui/components/card';
@@ -25,6 +25,31 @@ const refusalOf = (error: unknown): (typeof REFUSALS)[number] | null => {
 };
 
 const refreshAll = () => queryClient.invalidateQueries({ queryKey: orpc.meetings.tracker.key() });
+
+/** The member's own switch for the alert when a tracked word comes up in a new meeting they read (#4873): off by default, theirs alone, no AI. A failed save shows its message and leaves the switch where it was. */
+function AlertSwitch() {
+  const t = useTranslations('meetings.trackers');
+  // The mail follows the language of the app the member turned the alert on in.
+  const language = useLocale() === 'en' ? 'en' : 'vi';
+  const state = useQuery({ ...orpc.meetings.tracker.alertGet.queryOptions({ input: {} }), ...READ_ONCE });
+  const set = useMutation({
+    mutationFn: (on: boolean) => orpc.meetings.tracker.alertSet.call({ on, language }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: orpc.meetings.tracker.alertGet.key() }),
+  });
+  if (state.isLoading || state.isError || !state.data) return null;
+  return (
+    <section className="space-y-1 border-t pt-3">
+      <label className="flex items-start gap-2 text-sm">
+        <input type="checkbox" className="mt-1" checked={state.data.on} disabled={set.isPending} onChange={(e) => set.mutate(e.target.checked)} />
+        <span>
+          <span className="font-medium">{t('alertLabel')}</span>
+          <span className="block text-xs text-muted-foreground">{t('alertHint')}</span>
+        </span>
+      </label>
+      {set.isError && <ErrorText>{errorMessage(set.error)}</ErrorText>}
+    </section>
+  );
+}
 
 /** The card of a meeting's page: the tracked words that came up in it. Absent when no word is tracked, none came up, or the read failed (as after the text retention date). */
 export function MeetingTrackerHits({ meetingId, onJump, redactedEpoch = 0 }: { meetingId: string; onJump: (seconds: number) => void; redactedEpoch?: number }) {
@@ -192,6 +217,7 @@ export function TrackersWeek({ slug }: { slug: string }) {
           </section>
         )}
         {canEdit && <TermEditor />}
+        <AlertSwitch />
       </CardContent>
     </Card>
   );

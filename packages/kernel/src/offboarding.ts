@@ -9,18 +9,19 @@
 import { sql } from 'kysely';
 import { z } from 'zod';
 import type { MemberRole } from '@ludy/db';
-import { FOLLOWUP_MAIL_SOURCE, MORNING_MAIL_SOURCE, SUMMARY_READY_MAIL_SOURCE, WEEKLY_MAIL_SOURCE } from '@ludy/kernel-contract';
+import { FOLLOWUP_MAIL_SOURCE, MORNING_MAIL_SOURCE, SUMMARY_READY_MAIL_SOURCE, TRACKER_ALERT_MAIL_SOURCE, WEEKLY_MAIL_SOURCE } from '@ludy/kernel-contract';
 import { DomainError, defineCommand, defineQuery, exportKey, GENERATION_PATTERN, type QueryContext } from '@ludy/kernel-runtime';
 
 const OWNERS: readonly MemberRole[] = ['owner'];
 const MAIL_SOURCE_NAME = /^[a-z0-9._]+$/;
 
 /**
- * Mail sources left out of what an owner or admin may read about the mail log (#4533, #4967, #5018):
+ * Mail sources left out of what an owner or admin may read about the mail log (#4533, #4967, #5018, #4873):
  * - meetings.followup: carries the meeting summary, decisions, action items (payload), recorder-typed subject and source_id = meetingId (attendees-only meetings stay out of exports and owner/admin finder reads).
  * - meetings.weekly: carries a member's own weekly counts of the attendees-only meetings, published decisions and open action items they read (#4967).
  * - meetings.summary_ready: carries source_id = meetingId and payload.path (/o/<slug>/meetings/<meetingId>) paired with the recorder's address, even for attendees-only or deleted meetings omitted from meeting_export_rows(); audit rows (meetings.summary.ready, meetings.summary.ready_notice) keep ids only per ADR-0047 point 2.
  * - meetings.morning: carries a member's private daily calendar event count (payload.count from per-member calendar_agenda) paired with their address; meetings.morning.notice also keeps count out of its audit row.
+ * - meetings.tracker_alert: carries the words of a member's tracked list that were found in a meeting (payload counts per word) paired with their address, and the meeting may be attendees-only (#4873); the audit row of the alert keeps ids only.
  * A source of this list is out of the owner's org export (the mail log, its delivery events and suppression pointers) and out of the personal-data finder's full rows, where it shows id, to_address, status and created_at only. Constant identifiers matching ^[a-z0-9._]+$ only, because export subqueries interpolate them as SQL string literals.
  */
 export const MAIL_SOURCES_LEFT_OUT: readonly string[] = Object.freeze([
@@ -28,6 +29,7 @@ export const MAIL_SOURCES_LEFT_OUT: readonly string[] = Object.freeze([
   WEEKLY_MAIL_SOURCE,
   SUMMARY_READY_MAIL_SOURCE,
   MORNING_MAIL_SOURCE,
+  TRACKER_ALERT_MAIL_SOURCE,
 ]);
 if (MAIL_SOURCES_LEFT_OUT.length === 0 || MAIL_SOURCES_LEFT_OUT.some((source) => !MAIL_SOURCE_NAME.test(source))) {
   throw new Error('MAIL_SOURCES_LEFT_OUT must be non-empty and match /^[a-z0-9._]+$/');
@@ -84,8 +86,9 @@ export const EXPORT_TABLES = {
   'kernel.conversation_draft': { from: 'ludy_kernel.conversation_draft', omit: [] },
   'kernel.saved_reply': { from: 'ludy_kernel.saved_reply', omit: [] },
   'kernel.conversation_note': { from: 'ludy_kernel.conversation_note', omit: [] },
+  // The mail sources left out below (MAIL_SOURCES_LEFT_OUT: the follow-up, weekly, summary-ready and morning meeting mails and the tracked-word alert, #4873) are treated alike in the three tables.
   // Outbound mail (#538): the mail log, its delivery events (#539) and the org's suppression list. The address hashes
-  // are keyed by the deployment. Left-out meeting mails (MAIL_SOURCES_LEFT_OUT, #4533, #4967, #5018) stay out: follow-up mails hold the meeting's summary/decisions/items and recorder-typed subject, weekly mails hold the member's own counts of attendees-only meetings and decisions they read, summary-ready mails link an address to an attendees-only or deleted meeting, and morning mails hold a member's private daily calendar count. The mail log drops the payload 30 days after a mail reaches a final
+  // are keyed by the deployment. Left-out meeting mails (MAIL_SOURCES_LEFT_OUT, #4533, #4967, #5018, #4873) stay out: follow-up mails hold the meeting's summary/decisions/items and recorder-typed subject, weekly mails hold the member's own counts of attendees-only meetings and decisions they read, summary-ready mails link an address to an attendees-only or deleted meeting, morning mails hold a member's private daily calendar count, and tracked-word alert mails count the words of a member's list found in a meeting. The mail log drops the payload 30 days after a mail reaches a final
   // status (mail_retention_purge), but keeps the address and the subject for 13 months, so the rows stay out for as long as they exist. The delivery events (#4577) follow their mail: an event is
   // exported only when its mail is (a mail_event always has its message, by foreign key; the anti-join touches only the small meeting-mail set), so no event points at a message the snapshot does not hold. A suppression row (#4584) is kept whole except that its source_message_id is nulled when it names a left-out mail (the scrub in the snapshot query below).
   'kernel.mail_message': { from: `(SELECT m.* FROM ludy_kernel.mail_message m WHERE m.source NOT IN (${LEFT_OUT_LIST}))`, omit: [] },
