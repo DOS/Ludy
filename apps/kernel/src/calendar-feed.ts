@@ -4,6 +4,7 @@
 import { sql } from 'kysely';
 import type { Runtime } from '@ludy/kernel-runtime';
 import { DEFAULT_BRAND_NAME } from './config.ts';
+import { publicPageAllowed } from './public-page-gate.ts';
 
 // Calendar apps fetch from shared provider addresses, so one client address may stand for many subscribers.
 export const CALENDAR_FEED_HITS_PER_MINUTE = 300;
@@ -29,6 +30,7 @@ export interface CalendarFeed {
 // null: a malformed token, or one that names no live feed (the same answer either way).
 export async function calendarFeed(runtime: Runtime, token: string): Promise<CalendarFeed | null> {
   if (!TOKEN.test(token)) return null;
+  if (!(await publicPageAllowed(runtime, { module: 'social', kind: 'calendar_feed' }, token))) return null;
   return runtime.orgless(async (db) => {
     const { rows } = await sql<{ feed: CalendarFeed | null }>`SELECT ludy_social.calendar_feed_events(${token}) AS feed`.execute(db);
     return rows[0]?.feed ?? null;
