@@ -250,6 +250,7 @@ export interface LudyMeetingsSchema {
   'ludy_meetings.tracker_term': MeetingsTrackerTermTable;
   'ludy_meetings.transcript_segment': MeetingsTranscriptSegmentTable;
   'ludy_meetings.translation': MeetingsTranslationTable;
+  'ludy_meetings.weekly_notice': MeetingsWeeklyNoticeTable;
 }
 
 export interface LudyNotesSchema {
@@ -4035,6 +4036,18 @@ export interface MeetingsTranslationTable {
   tainted: ColumnType<boolean, boolean | undefined, NotGranted>;
   source_run_id: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** ludy_meetings.weekly_notice */
+export interface MeetingsWeeklyNoticeTable {
+  org_id: string;
+  id: Generated<string>;
+  user_id: string;
+  send_minute: Generated<number>;
+  time_zone: string;
+  language: Generated<string>;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
 /** ludy_notes.attachment */

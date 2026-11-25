@@ -57,9 +57,9 @@ and it carries JOY's authority, so a change to it is a change to agent instructi
   `sub_sessions_normal` and `sub_sessions_max` to 5 concurrent sub-sessions
   per Product Owner across all lines, superseding the 2026-11-15 and
   2026-11-16 cap of 3 and Engage's 2026-11-08 cap of 4, while keeping the
-  2026-11-17 local-resources rules intact (one heavy command at a time per
-  session, scoped `--filter` typechecks and touched-file test runs only, and
-  the shared `ludy-pg17-shared` Postgres container).
+  local-resources rules intact (initially 2026-11-17, superseded on 2026-11-26
+  by the strict ban on local `tsc`/`typecheck`, `vitest`, and Playwright runs
+  below).
 - Owner decision 2026-11-21 (HRM PO chat,
   https://github.com/DOS/Ludy/issues/1210#issuecomment-7048935611): accepted
   merging PR #4191 (#2720) and PR #4194 (#2691) using their fresh-context
@@ -82,6 +82,20 @@ and it carries JOY's authority, so a change to it is a change to agent instructi
   flagship or Orchestrator models such as `Gemini 4 Carbon`, `Gemini 4 Neon`,
   `Orchestrator (Carbon)`, `Orchestrator (Neon)`, or `Claude Opus`, with no
   direct `Hydrogen` downgrade/bypass.
+- Owner decision 2026-11-26 (Antigravity Platform PO chat,
+  https://github.com/DOS/Ludy/issues/1210#issuecomment-7171329671, popup A1):
+  after 6 concurrent local `tsc --noEmit` processes and a DB `vitest` run
+  saturated CPU on the owner's shared machine, superseding the 2026-11-17
+  per-package local-resources allowance: ban all local `tsc`, `tsgo`,
+  `pnpm typecheck`, `pnpm --filter <package> typecheck`, `vitest`, `pnpm test`,
+  `pnpm test:db`, `*.db.test.ts`, and Playwright (`pnpm test:e2e`) runs on the
+  owner's shared machine, even for a single package or file. Every session
+  limits local checks strictly to fast, low-CPU tools (`oxlint --deny-warnings`,
+  `pnpm lint`, `pnpm docs:check`, `tools/ci/spdx-header.mjs`,
+  `tools/ci/pii-scan.mjs`, `tools/ui-colors.mjs`,
+  `tools/ci/migration-order.mjs origin/main`, `tools/ci/migration-lint.mjs`)
+  and pushes to GitHub Actions CI for typecheck and tests; `ludy-pg17-shared`
+  is reserved strictly for `pnpm db:types`.
 
 ## Board
 
@@ -364,13 +378,14 @@ naming the head it reviewed.
   án"; each PO keeps up to 5 concurrent sub-sessions running when independent
   tasks are ready, matching `sub_sessions_max: 5` and superseding the
   2026-11-15/2026-11-16 cap of 3, Engage's 2026-11-08 cap of 4, and the
-  2026-10-31 default of 1, while keeping AGENTS.md's 2026-11-17
-  local-resources rules: one heavy command at a time per session, scoped
-  `--filter` typechecks and touched-file tests only)
+  2026-10-31 default of 1, while keeping AGENTS.md's local-resources rules
+  intact (2026-11-26: zero local `tsc`/`typecheck`, `vitest`, or Playwright
+  runs; fast local lint and docs checks only, with CI running typecheck and
+  tests)
 - sub_sessions_max: 5 (owner decision 2026-11-18 in eSign PO chat, popup A2:
   up to 5 active sub-sessions + 1 PO session per line, superseding the
-  2026-11-15 cap of 3 and Engage's 2026-11-08 cap of 4; local-resources
-  discipline from 2026-11-17 still applies to every session)
+  2026-11-15 cap of 3 and Engage's 2026-11-08 cap of 4; AGENTS.md's 2026-11-26
+  no-local-typecheck/vitest/Playwright discipline applies to every session)
 - po_labels: claude: po:claude, agy: po:agy (owner decision 2026-11-24 in
   the Claude Platform PO chat with the popup answer "Chạy song song có nhãn,
   Khuyên dùng": a Claude Code PO and an Antigravity PO may run the same line
