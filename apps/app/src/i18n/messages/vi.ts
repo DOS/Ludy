@@ -18560,6 +18560,10 @@ export const vi = {
         approve_l1: 'Duyệt cấp 1 đơn làm thêm giờ của nhân viên',
         list: 'Xem danh sách đơn làm thêm giờ trong tổ chức',
         reject: 'Từ chối đơn làm thêm giờ của nhân viên',
+        settings: {
+          get: 'Xem cài đặt duyệt cấp 1 bắt buộc cho đơn làm thêm giờ',
+          set: 'Bật hoặc tắt chế độ bắt buộc duyệt cấp 1 trước khi duyệt chốt đơn làm thêm giờ',
+        },
       },
       salary_advance: {
         approve_final: 'Duyệt chính thức đơn tạm ứng lương và đồng bộ vào bảng lương nháp',

@@ -1871,4 +1871,113 @@ suite('HR Stage 5B onboarding, 2-level OT to payroll, and probation review (#444
       await racePool.end();
     }
   });
+
+  it('enforces ctx_le_scope isolation in ludy_hr.lock_active_department_manager (#4488)', async () => {
+    const o = await setupOrg();
+    const branchEntity = await o.exec<{ id: string }>(
+      o.owner,
+      'kernel.legal_entity.create',
+      { name: 'Chi nhánh Scope Lock', kind: 'branch', taxCode: null, parentId: null },
+      asMfa(o.owner),
+    );
+    const { departmentId: deptHq } = await o.exec<{ departmentId: string }>(
+      o.owner,
+      'hr.department.add',
+      { name: 'Phòng Trụ sở Scope', code: 'HQSCOPE', payFunction: 'admin' },
+      asMfa(o.owner),
+    );
+    const { departmentId: deptBranch } = await o.exec<{ departmentId: string }>(
+      o.owner,
+      'hr.department.add',
+      {
+        legalEntityId: branchEntity.id,
+        name: 'Phòng Chi nhánh Scope',
+        code: 'BRSCOPE',
+        payFunction: 'admin',
+      },
+      asMfa(o.owner),
+    );
+    await o.exec(o.owner, 'hr.department.set_manager', { departmentId: deptHq, managerUserId: o.manager }, asMfa(o.owner));
+
+    // Create a second member restricted to branchEntity via entity-scoped role_assignment and make them manager of BOTH depts.
+    const scopedMgr = await upsertIdentity(createDb(appPool), {
+      issuer: 'hr5b',
+      subject: `scoped-mgr-${randomUUID().slice(0, 8)}`,
+      email: `scoped-mgr-${randomUUID().slice(0, 8)}@hr5b.test`,
+      name: 'Quản Lý Chi Nhánh',
+    });
+    await adminPool.query(
+      `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`,
+      [o.orgId, scopedMgr],
+    );
+    await adminPool.query(
+      `INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by)
+       VALUES ($1, $2, 'external_accountant', $3, $4)`,
+      [o.orgId, scopedMgr, branchEntity.id, o.owner],
+    );
+    await o.exec(o.owner, 'hr.department.set_manager', { departmentId: deptBranch, managerUserId: scopedMgr }, asMfa(o.owner));
+
+    const deptHq2 = (
+      await o.exec<{ departmentId: string }>(
+        o.owner,
+        'hr.department.add',
+        { name: 'Phòng Trụ sở Scoped Mgr', code: 'HQ2SCOPE', payFunction: 'admin' },
+        asMfa(o.owner),
+      )
+    ).departmentId;
+    await o.exec(o.owner, 'hr.department.set_manager', { departmentId: deptHq2, managerUserId: scopedMgr }, asMfa(o.owner));
+
+    // 1. NULL and empty ctx_le_scope() fail closed (false) even for active department manager.
+    const c = await adminPool.connect();
+    try {
+      for (const leScopeSql of ['NULL', `'[]'::jsonb`]) {
+        await c.query('BEGIN');
+        await c.query(
+          `SELECT ludy_kernel.ctx_write(jsonb_build_object(
+            'v', 1, 'org', $1::uuid, 'actor', 'user', 'user', $2::uuid, 'role', 'member', 'le_scope', ${leScopeSql}, 'flags', '[]'::jsonb
+          ))`,
+          [o.orgId, o.manager],
+        );
+        await c.query('SET LOCAL ROLE ludy_tenant');
+        const { rows } = await c.query<{ ok: boolean }>(
+          `SELECT ludy_hr.lock_active_department_manager($1::uuid, $2::uuid) AS ok`,
+          [o.orgId, deptHq],
+        );
+        expect(rows[0]?.ok).toBe(false);
+        await c.query('ROLLBACK');
+      }
+    } finally {
+      await c.query('ROLLBACK').catch(() => undefined);
+      c.release();
+    }
+
+    // 2. Scoped manager ([branchEntity.id]) is blocked (false) on default-entity deptHq2, allowed (true) on branch deptBranch.
+    const appClient = await appPool.connect();
+    try {
+      await appClient.query('BEGIN');
+      await enterUser(appClient, scopedMgr, o.orgId);
+      const resScoped = await appClient.query<{ scope: string[]; hqOk: boolean; branchOk: boolean }>(
+        `SELECT ludy_kernel.ctx_le_scope() AS scope,
+                ludy_hr.lock_active_department_manager($1::uuid, $2::uuid) AS "hqOk",
+                ludy_hr.lock_active_department_manager($1::uuid, $3::uuid) AS "branchOk"`,
+        [o.orgId, deptHq2, deptBranch],
+      );
+      expect(resScoped.rows[0]).toEqual({ scope: [branchEntity.id], hqOk: false, branchOk: true });
+      await appClient.query('ROLLBACK');
+
+      // 3. Unrestricted manager (['*']) succeeds (true) on default-entity deptHq.
+      await appClient.query('BEGIN');
+      await enterUser(appClient, o.manager, o.orgId);
+      const resWild = await appClient.query<{ scope: string[]; ok: boolean }>(
+        `SELECT ludy_kernel.ctx_le_scope() AS scope,
+                ludy_hr.lock_active_department_manager($1::uuid, $2::uuid) AS ok`,
+        [o.orgId, deptHq],
+      );
+      expect(resWild.rows[0]).toEqual({ scope: ['*'], ok: true });
+      await appClient.query('ROLLBACK');
+    } finally {
+      await appClient.query('ROLLBACK').catch(() => undefined);
+      appClient.release();
+    }
+  });
 });

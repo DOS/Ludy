@@ -132,12 +132,16 @@ DECLARE
   v_org uuid := ludy_kernel.ctx_org_id();
   v_actor text := ludy_kernel.ctx_actor_type();
   v_user uuid := ludy_kernel.ctx_user_id();
+  v_le_scope text[] := ludy_kernel.ctx_le_scope();
   v_ok integer;
 BEGIN
   IF v_org IS NULL OR p_org_id IS DISTINCT FROM v_org OR p_department_id IS NULL THEN
     RETURN false;
   END IF;
   IF v_actor IS DISTINCT FROM 'user' OR v_user IS NULL THEN
+    RETURN false;
+  END IF;
+  IF v_le_scope IS NULL OR pg_catalog.cardinality(v_le_scope) = 0 THEN
     RETURN false;
   END IF;
   IF NOT EXISTS (
@@ -156,6 +160,10 @@ BEGIN
     AND d.id = p_department_id
     AND d.archived_at IS NULL
     AND d.manager_user_id = v_user
+    AND (
+      '*' = ANY (v_le_scope)
+      OR d.legal_entity_id::text = ANY (v_le_scope)
+    )
   FOR SHARE;
   RETURN COALESCE(v_ok = 1, false);
 END $$;

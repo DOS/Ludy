@@ -18561,6 +18561,10 @@ export const en = {
         approve_l1: 'Give level-1 manager approval to an overtime request',
         list: 'List overtime requests in the organization',
         reject: 'Reject an employee overtime request',
+        settings: {
+          get: 'View the required L1 overtime approval setting',
+          set: 'Toggle mandatory L1 approval before final overtime sign-off',
+        },
       },
       salary_advance: {
         approve_final: 'Final-approve a salary advance request and sync it into draft payroll runs',
