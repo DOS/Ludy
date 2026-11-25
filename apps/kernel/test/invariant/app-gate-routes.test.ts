@@ -26,6 +26,7 @@ const CLASSES: Record<string, { app: string; gate: Gate; why: string }> = {
   '/version': { app: 'kernel', gate: 'kernel', why: 'build id' },
   '/api/config': { app: 'kernel', gate: 'kernel', why: 'SPA config' },
   '/status': { app: 'kernel', gate: 'kernel', why: 'status page' },
+  '/auth-templates/:name': { app: 'kernel', gate: 'kernel', why: 'GoTrue auth email templates' },
   '/auth/v1/*': { app: 'kernel', gate: 'kernel', why: 'sign-in proxy' },
   '/webhooks/mail/:provider': { app: 'kernel', gate: 'kernel', why: 'mail delivery events' },
   '/api/inbound/email': { app: 'kernel', gate: 'kernel', why: 'inbound mail' },

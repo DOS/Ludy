@@ -538,4 +538,148 @@ suite('Notes v2 E5a (#3564): Evernote (.enex) and Todoist (.csv) importers on Po
       await rpc('org/setApp', ownerHeaders, { module: 'notes', enabled: true });
     }
   });
+
+  it('returns targetNotebookId in notebookIds and reusedNotebooks when importing into an explicit notebook', async () => {
+    const nbRes = await rpc('notes/notebooks/create', await asJsonHeaders('member'), { name: 'Target Book', visibility: 'private' });
+    expect(nbRes.status).toBe(200);
+    const targetNotebookId = String(nbRes.body.notebookId);
+
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<en-export>
+  <notebook>Ignored Book</notebook>
+  <note>
+    <title>Pinned To Target</title>
+    <content><![CDATA[<en-note><p>One</p></en-note>]]></content>
+  </note>
+  <note>
+    <title>Second In Target</title>
+    <content><![CDATA[<en-note><p>Two</p></en-note>]]></content>
+  </note>
+</en-export>`;
+
+    const res = await uploadEnex('member', xml, { targetNotebookId });
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(res.body).toMatchObject({
+      importedNotes: 2,
+      createdNotebooks: 0,
+      reusedNotebooks: 1,
+      skippedDuplicates: 0,
+      notebookIds: [targetNotebookId],
+    });
+
+    const listInNb = await rpc('notes/list', await asJsonHeaders('member'), { view: 'mine', notebookId: targetNotebookId });
+    expect(listInNb.status).toBe(200);
+    expect((listInNb.body as unknown as NoteSummary[]).map((n) => n.title).sort()).toEqual(['Pinned To Target', 'Second In Target']);
+
+    // Re-importing the exact notes into the target notebook with skipDuplicates=true skips them cleanly.
+    const dupRes = await uploadEnex('member', xml, { targetNotebookId, skipDuplicates: 'true' });
+    expect(dupRes.status).toBe(201);
+    expect(dupRes.body).toMatchObject({
+      importedNotes: 0,
+      reusedNotebooks: 0,
+      skippedDuplicates: 2,
+      notebookIds: [],
+    });
+  });
+
+  it('batches multi-hundred ENEX and Todoist inserts cleanly with rebalance, taint, RLS, and bounded stream caps', async () => {
+    const nbRes = await rpc('notes/notebooks/create', await asJsonHeaders('member'), { name: 'Bulk ENEX Book', visibility: 'private' });
+    expect(nbRes.status).toBe(200);
+    const bulkNotebookId = String(nbRes.body.notebookId);
+
+    const pngB64 = Buffer.from(tinyPng()).toString('base64');
+    const enexNotesXml = Array.from({ length: 210 }, (_, idx) => {
+      const resourceXml =
+        idx === 0 || idx === 205
+          ? `<resource><data encoding="base64">${pngB64}</data><mime>image/png</mime><resource-attributes><file-name>img-${idx}.png</file-name></resource-attributes></resource>`
+          : '';
+      return `<note><title>Bulk Note ${idx}</title><content><![CDATA[<en-note><p>Body ${idx}</p></en-note>]]></content>${resourceXml}</note>`;
+    }).join('');
+    const bulkEnex = `<?xml version="1.0" encoding="UTF-8"?><en-export>${enexNotesXml}</en-export>`;
+
+    const enexRes = await uploadEnex('member', bulkEnex, { targetNotebookId: bulkNotebookId });
+    expect(enexRes.status, JSON.stringify(enexRes.body)).toBe(201);
+    const enexBody = enexRes.body as unknown as EnexImportResult;
+    expect(enexBody).toMatchObject({
+      importedNotes: 210,
+      createdNotebooks: 0,
+      reusedNotebooks: 1,
+      attachmentsCount: 2,
+      notebookIds: [bulkNotebookId],
+    });
+    expect(enexBody.noteIds).toHaveLength(210);
+
+    const enexDbRows = await admin(async (c) =>
+      (await c.query<{ n: string }>(
+        `SELECT count(*)::text AS n FROM ludy_notes.note WHERE org_id = $1 AND notebook_id = $2 AND tainted = true AND visibility = 'private'`,
+        [orgId, bulkNotebookId],
+      )).rows,
+    );
+    expect(enexDbRows[0]?.n).toBe('210');
+
+    // 260 Todoist tasks cross INSERT_BATCH_SIZE (200) and trigger REBALANCE_AT (> 48 chars) sort_key spreading.
+    const todoistRows = Array.from({ length: 260 }, (_, idx) => `task,Bulk Todo ${String(idx).padStart(3, '0')},,${(idx % 4) + 1},1,,,`).join('\n');
+    const bulkCsv = `TYPE,CONTENT,DESCRIPTION,PRIORITY,INDENT,DATE,TIMEZONE,LABELS\n${todoistRows}\n`;
+
+    const todoRes = await uploadTodoist('member', bulkCsv, { filename: 'Bulk Sprint [99].csv' });
+    expect(todoRes.status, JSON.stringify(todoRes.body)).toBe(201);
+    const todoBody = todoRes.body as unknown as TodoistImportResult;
+    expect(todoBody).toMatchObject({
+      importedTodos: 260,
+      createdLists: 1,
+      skippedDuplicates: 0,
+    });
+    expect(todoBody.todoIds).toHaveLength(260);
+
+    const sortedRows = await admin(async (c) =>
+      (await c.query<{ id: string; sort_key: string; tainted: boolean }>(
+        `SELECT id, sort_key, tainted FROM ludy_notes.todo WHERE org_id = $1 AND id = ANY($2::uuid[]) ORDER BY sort_key ASC`,
+        [orgId, todoBody.todoIds],
+      )).rows,
+    );
+    expect(sortedRows).toHaveLength(260);
+    expect(sortedRows.every((r) => r.tainted)).toBe(true);
+    expect(sortedRows.map((r) => r.id)).toEqual(todoBody.todoIds);
+    expect(sortedRows.every((r) => r.sort_key.length <= 48)).toBe(true);
+
+    // Other member still cannot read any of the bulk-inserted rows.
+    const otherTodoRes = await rpc('notes/todos/get', await asJsonHeaders('other'), { todoId: todoBody.todoIds[259] });
+    expect(otherTodoRes.status).toBe(404);
+
+    // Chunked multipart stream without Content-Length exceeding Todoist cap returns 413 TOO_LARGE.
+    const boundary = '----LudyChunkedBoundary12345';
+    const preamble = `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="huge.csv"\r\nContent-Type: text/csv\r\n\r\nTYPE,CONTENT\n`;
+    const epilogue = `\r\n--${boundary}--\r\n`;
+    const fillerChunk = new Uint8Array(512 * 1024).fill(0x41);
+    const oversizedStream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(preamble));
+        for (let i = 0; i < 12; i += 1) controller.enqueue(fillerChunk);
+        controller.enqueue(new TextEncoder().encode(epilogue));
+        controller.close();
+      },
+    });
+    const authHdrs = await asAuthHeaders('member');
+    const streamRes = await app.request('/api/notes/import/todoist', {
+      method: 'POST',
+      headers: {
+        ...authHdrs,
+        'content-type': `multipart/form-data; boundary=${boundary}`,
+      },
+      body: oversizedStream,
+      // @ts-expect-error duplex is required by Node fetch for streaming Request bodies
+      duplex: 'half',
+    });
+    expect(streamRes.status).toBe(413);
+    expect(((await streamRes.json()) as { code?: string }).code).toBe('TOO_LARGE');
+
+    // Non-multipart raw upload with invalid UTF-8 fails closed with 400 NOTE_IMPORT_INVALID.
+    const rawBadUtf8 = await app.request('/api/notes/import/todoist?filename=raw.csv', {
+      method: 'POST',
+      headers: { ...authHdrs, 'content-type': 'text/csv' },
+      body: new Uint8Array([0xff, 0xfe, 0x00, 0x3c]),
+    });
+    expect(rawBadUtf8.status).toBe(400);
+    expect(((await rawBadUtf8.json()) as { code?: string }).code).toBe('NOTE_IMPORT_INVALID');
+  });
 });

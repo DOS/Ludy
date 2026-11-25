@@ -701,6 +701,7 @@ import {
   zMinutesTemplateUpdate,
   zMinutesTemplates,
 } from './meeting-minutes-templates.ts';
+import { zMinutesDocx, zMinutesDocxInput } from './meeting-minutes-docx.ts';
 import { zAskAnswer, zAskEmpty, zAskInput, zAskLines, zAskMeetingLinesInput, zAskStatus } from './meeting-ask.ts';
 import { zBriefAnswer, zBriefEmpty, zBriefFacts, zBriefStatus, zBriefTarget } from './meeting-brief.ts';
 import { zMeetingRename, zMeetingRenamed, zTitleAnswer } from './meeting-title.ts';
@@ -709,6 +710,7 @@ import { zTemplateSuggestion, zTemplateVyAnswer } from './meeting-template-sugge
 import { zOpenPointsAnswer } from './meeting-open-points.ts';
 import { zDigestAnswer, zDigestAsk, zDigestFacts, zDigestStatus } from './meeting-digest.ts';
 import { zLoadWeek, zLoadWeekInput } from './meeting-load.ts';
+import { zHighlightAdd, zHighlightAdded, zHighlightRemove, zHighlightRemoved, zHighlights } from './meeting-highlights.ts';
 import { zMeetingsTodayFacts } from './meeting-today.ts';
 import { zMorningEmpty, zMorningSet, zMorningState } from './meeting-morning.ts';
 import { zAssigneeAnswer, zAssigneeAsk, zAssigneeStatus } from './meeting-assignee.ts';
@@ -1917,6 +1919,11 @@ export const contract = {
       get: oc.input(zMeetingMinutesEsignGet).output(zMeetingMinutesEsign),
       set: oc.input(zMeetingMinutesEsign).output(zMeetingMinutesEsign),
     },
+    // The published biên bản as a Word file (#4774): built on the server from the published rows only, under the caller's own row security (the minutes page's reader rule); the file comes back in the answer.
+    // MINUTES_NOT_PUBLISHED (409) when nothing is shared yet.
+    minutesDocx: {
+      download: oc.input(zMinutesDocxInput).output(zMinutesDocx),
+    },
     // A member's own webhook for the minutes they publish (A6, #3164): the card reads `get`, `set` makes or changes it (the secret comes back once, when it is made), `rotateSecret`, `clear` and
     // `test` (a `ping` with no meeting data). The owner's `switch` (off by default) gates all of it; nothing is sent while it is off.
     hook: {
@@ -1981,6 +1988,13 @@ export const contract = {
     // extra right to read, no text, no model call, nothing stored).
     load: {
       week: oc.input(zLoadWeekInput).output(zLoadWeek),
+    },
+    // Highlights on a transcript line or range (#4819): `list` the marks of a meeting the caller may read, `add` and `remove` the caller's own (the recorder removes any mark of their meeting). A mark
+    // is an anchor in seconds and who made it, no text: the lines are read from the transcript.
+    highlight: {
+      list: oc.input(zMeetingRef).output(zHighlights),
+      add: oc.input(zHighlightAdd).output(zHighlightAdded),
+      remove: oc.input(zHighlightRemove).output(zHighlightRemoved),
     },
     // The Today view (#3955): the member's own agenda for today with the facts of each event's brief, read by code as the member in one call and working with AI off. Vy's sentences stay the brief's own click.
     today: {

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The answers of the fake model for the member-Vy features of the meetings line (#4050): title (#3947), commitments (#3954), agenda adherence (#3959), the weekly digest (#3949) and the brief (#3543, shown on the
-// Today view, #3955). The fake model is a mock of a model, not of the app: every answer is written the way a real model could write it, and every one holds BOTH sentences the app's checks keep and ones they
+// The answers of the fake model for the member-Vy features of the meetings line (#4050): title (#3947), commitments (#3954), agenda adherence (#3959), the weekly digest (#3949), the brief (#3543, shown on the
+// Today view, #3955), the question box (#3161, #4815), what a meeting left open (#4768) and the minutes template suggestion (#4772). The fake model is a mock of a model, not of the app: every answer is written the way a real model could write it, and every one holds BOTH sentences the app's checks keep and ones they
 // must drop (an invented figure, an email address, a link, a line the speaker did not say, a citation of a line that is not there), so a spec that shows the kept ones and counts the dropped ones proves the
 // checks ran on this answer. This file imports nothing: the container of the fake model mounts this directory and nothing else.
 //
@@ -15,7 +15,7 @@ export const TRANSCRIPT: ReadonlyArray<{ from: number; to: number; who: string; 
   { from: 20, to: 30, who: 'Hà', said: 'Được, họp tiếp tuần sau.' },
 ];
 
-export type Route = 'title' | 'commitments' | 'adherence' | 'digest' | 'brief' | 'todo_plan' | 'organize';
+export type Route = 'title' | 'commitments' | 'adherence' | 'digest' | 'brief' | 'todo_plan' | 'organize' | 'ask' | 'open_points' | 'template_suggest';
 export type Scenario = 'default' | 'bad' | 'garbage' | 'down';
 
 // A phrase of each feature's instruction, copied from the first line of its INSTRUCTION in the member-Vy feature files of the agent package; tools/test/fake-model.test.ts fails when a source stops holding its phrase, so the
@@ -28,6 +28,9 @@ export const ROUTE_MARKERS: Readonly<Record<Route, string>> = {
   brief: 'You prepare a person who is about to go into a meeting',
   todo_plan: 'You are Vy, a personal work planner coworker helping one member plan their day',
   organize: 'You are Vy, a notes organization coworker helping one member organize their unfiled inbox notes',
+  ask: 'You answer one question about meetings',
+  open_points: 'You list what one meeting left open',
+  template_suggest: 'You choose which minutes template best fits one meeting',
 };
 
 export const SCENARIO_TOKENS: Readonly<Record<Exclude<Scenario, 'default'>, string>> = { bad: '[fake:bad]', garbage: '[fake:garbage]', down: '[fake:down]' };
@@ -207,6 +210,44 @@ function organizeAnswer(subject: string, scenario: Scenario): string {
   return JSON.stringify({ suggestions });
 }
 
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------
+// ask (#3161, #4815): the data is {"question", "lines": [{"n", "meeting", "date", "at", "speaker", "text"}]}. The kept sentence cites the first line and says what it says; the dropped ones hold an invented figure
+// and an amount word, a bare link, and a citation of a line that is not there.
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------
+function askAnswer(subject: string, scenario: Scenario): string {
+  const first = listOf(dataOf(subject).lines)[0];
+  const n = typeof first?.n === 'number' ? first.n : 1;
+  const text = typeof first?.text === 'string' ? first.text : '';
+  const dropped = [
+    { text: 'Giá chốt là 999.000.000 đồng.', cites: [n] }, // a figure no cited line writes
+    { text: 'Xem thêm tại example.com/bao-gia.', cites: [n] }, // a link, never allowed
+    { text: 'Khách đã đồng ý với mọi điều khoản.', cites: [999] }, // a citation of a line that is not there
+  ];
+  if (scenario === 'bad') return JSON.stringify({ sentences: dropped });
+  return JSON.stringify({ sentences: [{ text: `Trong cuộc họp có nói: ${text}`, cites: [n] }, ...dropped] });
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------
+// open_points (#4768): the transcript the specs store has the lines at 0, 10 and 20 seconds. Two points are kept (a question at 10, a decision at 0); an address, a figure the cited line does not write and a
+// second no line starts at are dropped.
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------
+const OPEN_POINTS_DROPPED = [
+  { kind: 'question', text: 'Liên hệ nam@example.com để hỏi lại', second: 10 }, // an address
+  { kind: 'decision', text: 'Chốt giá 3.000.000 đồng cho khách A', second: 0 }, // a figure and an amount the line does not write
+  { kind: 'question', text: 'Ai sẽ trả lời khách A?', second: 90 }, // a second no line starts at
+];
+const OPEN_POINTS_DEFAULT = [
+  { kind: 'question', text: 'Khi nào gửi báo giá cho khách A?', second: 10 }, // kept
+  { kind: 'decision', text: 'Có giữ giá cũ cho khách A hay không?', second: 0 }, // kept
+  ...OPEN_POINTS_DROPPED,
+];
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------
+// template_suggest (#4772): the customer template with a one-line reason resting on the line at 10 seconds; "bad" is the model saying that no template fits clearly.
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------
+const TEMPLATE_DEFAULT = { template: 'customer', reason: 'Cuộc họp bàn giá và báo giá cho khách A.', second: 10 };
+const TEMPLATE_NONE = { template: null, reason: 'Chưa hợp loại nào.', second: 0 };
+
 /** What the model "writes" for one request: the answer text, or null when the scenario is a failed request (HTTP 500). */
 export function answerFor(route: Route, subject: string, scenario: Scenario): string | null {
   if (scenario === 'down') return null;
@@ -225,5 +266,11 @@ export function answerFor(route: Route, subject: string, scenario: Scenario): st
       return todoPlanAnswer(subject, scenario);
     case 'organize':
       return organizeAnswer(subject, scenario);
+    case 'ask':
+      return askAnswer(subject, scenario);
+    case 'open_points':
+      return JSON.stringify({ points: scenario === 'bad' ? OPEN_POINTS_DROPPED : OPEN_POINTS_DEFAULT });
+    case 'template_suggest':
+      return JSON.stringify(scenario === 'bad' ? TEMPLATE_NONE : TEMPLATE_DEFAULT);
   }
 }

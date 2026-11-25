@@ -2550,6 +2550,8 @@ export const vi = {
     unitLabel: 'Đơn vị (tùy chọn)',
     unitPlaceholder: 'đơn, khách, %, triệu...',
     linkedProjectLabel: 'Liên kết dự án Công tác (tùy chọn)',
+    searchProjectsPlaceholder: 'Tìm nhanh dự án theo tên...',
+    loadMoreProjectsBtn: 'Tải thêm dự án',
     noLinkedProject: 'Không liên kết dự án',
     linkedTasksLabel: 'Chọn công việc cụ thể (bỏ trống để tính cả dự án)',
     loadingTasks: 'Đang tải công việc...',
@@ -4155,6 +4157,7 @@ export const vi = {
       invalidSizeLimit: 'Tệp vừa chọn vượt quá giới hạn 50 MB.',
       invalidExtension: 'Hãy chọn đúng tệp Evernote có đuôi .enex.',
       invalidUtf8: 'Tệp không phải văn bản UTF-8 hợp lệ.',
+      noteTooLong: 'Nội dung ghi chú sau khi chuyển đổi vượt quá giới hạn 100.000 ký tự.',
       previewHeading: 'Xem trước trước khi nhập',
       summaryNotes: '{count, number} ghi chú',
       summaryAttachments: '{count, number} tệp đính kèm',
@@ -5284,6 +5287,28 @@ export const vi = {
       line: 'Thời gian nói: {list}',
       lineMore: 'Thời gian nói: {list} và {count, number} người khác',
     },
+    highlights: {
+      title: 'Đoạn nổi bật',
+      desc: 'Những dòng của bản ghi lời nói mà mọi người đã đánh dấu. Ai đọc được cuộc họp này đều thấy. Bấm vào giờ để đến đó.',
+      mark: 'Nổi bật',
+      marked: 'Đã đánh dấu',
+      markLine: 'Đánh dấu nổi bật dòng lúc {time}',
+      unmarkLine: 'Bỏ dấu nổi bật của bạn ở dòng lúc {time}',
+      markHint: 'Đánh dấu dòng này. Giữ Shift rồi bấm để đánh dấu từ dòng bạn bấm trước đó đến dòng này.',
+      jump: 'Đến {time} trong bản ghi và trình phát',
+      markedBy: 'Đánh dấu bởi {who}',
+      you: 'bạn',
+      aMember: 'một thành viên',
+      noLines: 'Các dòng này không còn trong bản ghi lời nói.',
+      moreLines: 'và {count, number} dòng nữa',
+      copy: 'Chép các dòng',
+      copied: 'Đã chép',
+      remove: 'Bỏ đánh dấu',
+      errors: {
+        HIGHLIGHT_LIMIT: 'Mỗi cuộc họp bạn chỉ đánh dấu được tối đa 50 đoạn. Hãy bỏ bớt một đoạn trước.',
+        HIGHLIGHT_NOT_ANCHORED: 'Bạn chỉ đánh dấu được những dòng của bản ghi mà bạn đọc được.',
+      },
+    },
     chapters: {
       title: 'Mục lục',
       readerNote: 'Các phần của cuộc họp, mỗi phần có giờ trong bản ghi lời nói. Bấm vào một phần để đến dòng đó.',
@@ -5369,6 +5394,7 @@ export const vi = {
       back: 'Về cuộc họp',
       pageTitle: 'Biên bản cuộc họp',
       print: 'In hoặc lưu PDF',
+      docx: 'Tải về Word (.docx)',
       printHint: 'Trình duyệt sẽ in trang này. Chọn "Lưu dưới dạng PDF" nếu bạn muốn có tệp.',
       placeLabel: 'Địa điểm họp',
       placeHint: 'Chỉ để in; không được lưu. Bỏ trống thì biên bản chừa dòng chấm để điền tay.',
@@ -16479,6 +16505,7 @@ export const vi = {
       HR_OKR_PARENT_ARCHIVED: 'Không thể liên kết vào mục tiêu cha đã lưu trữ',
       HR_OKR_PARENT_SCOPE: 'Cấp mục tiêu cha không hợp lệ cho mục tiêu đang tạo',
       HR_OKR_ARCHIVED: 'Mục tiêu đã lưu trữ không thể thay đổi',
+      HR_OKR_OWNER_ERASED: 'Không thể mở lại hoặc chỉnh sửa mục tiêu cá nhân của nhân viên đã xóa dữ liệu',
       HR_OKR_SELF_PARENT: 'Mục tiêu không thể tự liên kết lên chính nó',
       HR_OKR_HAS_CHILDREN_QUARTER: 'Không thể đổi quý khi mục tiêu đang có mục tiêu con liên kết',
       HR_OKR_PROJECT_REQUIRED: 'Cần chọn dự án Công tác trước khi gắn công việc',
@@ -16700,6 +16727,7 @@ export const vi = {
       MEETING_TITLE_TOO_LONG: 'Tên cuộc họp dài tối đa 200 ký tự.',
       DIGEST_OFF: 'Hệ thống này chưa bật việc nhờ Vy tóm tắt tuần.',
       DIGEST_BUSY: 'Vy đang bận viết các bản tóm tắt. Hãy thử lại sau vài phút.',
+      MINUTES_NOT_PUBLISHED: 'Người ghi chưa chia sẻ biên bản, nên chưa có tệp để tải về.',
       ASSIGNEE_OFF: 'Hệ thống này chưa bật việc nhờ Vy xem một việc cần làm của ai.',
       ASSIGNEE_BUSY: 'Vy đang bận đọc tên. Hãy thử lại sau vài phút.',
       TRANSLATION_NOT_FOUND: 'Không có bản tóm tắt nào bạn đọc được để dịch.',
@@ -19342,6 +19370,11 @@ export const vi = {
       load: {
         week: 'Xem mỗi người họp bao nhiêu trong một tuần và những cuộc họp lặp lại có thể bớt, từ các cuộc họp bạn được đọc',
       },
+      highlight: {
+        add: 'Đánh dấu nổi bật một dòng hoặc một đoạn của bản ghi cuộc họp',
+        list: 'Xem các đoạn nổi bật của một cuộc họp',
+        remove: 'Bỏ một đoạn nổi bật của cuộc họp',
+      },
       assignee: {
         facts: 'Xem tên được nhắc cho một việc cần làm và những người có thể nhận việc',
         start: 'Nhờ Vy xem một việc cần làm là của ai, theo tên được nhắc trong cuộc họp',
@@ -19413,6 +19446,9 @@ export const vi = {
       consent_policy: {
         get: 'Xem quy định xác nhận trước khi ghi',
         set: 'Đổi quy định xác nhận trước khi ghi',
+      },
+      minutes_docx: {
+        download: 'Tải biên bản đã chia sẻ của một cuộc họp về dạng tệp Word',
       },
       minutes_esign: {
         get: 'Xem biên bản họp có được gửi đi ký hay không',
@@ -19670,6 +19706,7 @@ export const vi = {
     },
     projects: {
       board: 'Xem bảng và danh sách việc của dự án',
+      board_snapshots: 'Xem tóm tắt bảng và công việc của nhiều dự án',
       column: {
         create: 'Tạo cột tùy chỉnh trên bảng dự án',
         delete: 'Xóa cột tùy chỉnh trên bảng dự án',

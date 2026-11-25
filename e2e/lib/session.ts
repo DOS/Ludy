@@ -17,7 +17,7 @@ export async function signUp(page: Page, email: string, password = PASSWORD): Pr
   await page.getByLabel('Mật khẩu').fill(password);
   await page.getByRole('button', { name: 'Tạo tài khoản' }).click();
   await expect(page.getByText('Đã gửi email xác nhận')).toBeVisible();
-  await page.goto(await authLink(email, /confirm/i));
+  await page.goto(await authLink(email, /Xác nhận địa chỉ email/i));
   await expect(page).toHaveURL(/\/onboarding$/);
 }
 
