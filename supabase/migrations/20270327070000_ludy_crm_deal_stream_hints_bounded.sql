@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
--- Ludy CRM (issue #3423): bound the `crm_deal` stream hints of a statement that writes many deals, as 20270326210000_ludy_kernel_party_stream_hints_bounded.sql does for contacts. The row-level trigger of
+-- Ludy CRM (issue #3423): bound the `crm_deal` stream hints of a statement that writes many deals, as 20270327060000_ludy_kernel_party_stream_hints_bounded.sql does for contacts. The row-level trigger of
 -- 20270105010000_crove_crm_stream_hints.sql sent one NOTIFY per deal, so a member's removal (owner_user_id set to NULL on each deal they owned) held PostgreSQL's cluster-wide NOTIFY lock for each.
 -- Now INSERT and UPDATE are statement-level triggers with a transition table, sending through ludy_kernel.stream_hint_bounded_batch (the first 20 distinct ids per org and type in a transaction name their deal,
 -- the 21st names the nil id, which a stream reads as "many deals changed", and the rest send nothing). The window sort runs once over the statement's transition table and caps rows passed per org at 21. The delete
