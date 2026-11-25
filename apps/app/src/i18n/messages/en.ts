@@ -4794,6 +4794,13 @@ export const en = {
       draftTitle: 'Draft transcript',
       draftNote: 'Only you see this draft. Check it and correct a line where the speech was misheard; nothing is shared with the other attendees from here.',
       publishedNote: 'The transcript the recorder shared with the meeting.',
+      // Download the transcript as a file (#4817).
+      export: {
+        label: 'Download the transcript',
+        txt: 'Text (.txt)',
+        srt: 'Captions (.srt)',
+        note: 'Made on the server from the lines you can read here. No AI.',
+      },
       platformSource: 'The {platform} transcript: written by the platform, not by Ludy.',
       // The platform said it cut the transcript, or sent more lines than a draft holds (#3922); the next line is the guess for a transcript imported before that was kept.
       platformCutKnown: 'The {platform} transcript was longer than Ludy can import, so only the first part is here.',
@@ -16607,6 +16614,7 @@ export const en = {
       NOTE_IMPORT_UNSAFE_XML: 'This Evernote file contains disallowed XML declarations (DTD/XXE/entities) and was blocked.',
       NOTE_IMPORT_EMPTY: 'This import file contains no notes or tasks to import.',
       MEETING_NOT_FOUND: 'Meeting not found.',
+      TRANSCRIPT_EXPORT_EMPTY: 'There is no transcript to download yet.',
       AGENDA_NOT_FOUND: 'That event is not in your calendar any more.',
       AGENDA_MEETING_LINKED: 'This meeting is already linked to a calendar event.',
       AGENDA_EVENT_LINKED: 'That event is already linked to another meeting. Remove the old link first.',
@@ -19524,6 +19532,7 @@ export const en = {
         cancel: 'Stop Vy transcribing your meeting',
         copy_result: 'Copy Vy\'s transcription into the draft transcript',
         correct: 'Correct a line of the draft transcript',
+        download: 'Download the transcript of a meeting as a text or caption file',
         draft_store: 'Store the draft transcript of a meeting',
         get: 'Read the transcript of a meeting',
         redact: 'Hide confirmed personal data in the draft meeting text',

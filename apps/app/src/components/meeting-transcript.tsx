@@ -16,6 +16,7 @@ import { Textarea } from '@ludy/ui/components/textarea';
 import { Empty, ErrorText } from './ui.tsx';
 import { DraftRedactionDialog, RedactionNudge, useRedactCandidatesQuery } from './meeting-redaction.tsx';
 import { TranscriptTranslationPanel, TranslatedLine, useTranscriptParts } from './meeting-transcript-translation.tsx';
+import { TranscriptExport } from './meeting-transcript-export.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { platformTranscript } from '../lib/meeting-platform.ts';
 import { focusedSegment, type TranscriptFocus } from '../lib/transcript-focus.ts';
@@ -313,6 +314,7 @@ export function MeetingTranscript({
             doneRef={localDoneRef}
           />
         )}
+        <TranscriptExport meetingId={meetingId} />
         {platform && (
           <p className="text-xs text-muted-foreground" data-testid="transcript-platform">
             {t('platformSource', { platform: tp(`provider.${platform.platform}`) })}
