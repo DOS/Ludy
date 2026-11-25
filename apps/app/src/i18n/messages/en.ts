@@ -5140,6 +5140,18 @@ export const en = {
         TITLE_BUSY: 'A suggestion is already running. Wait a moment.',
       },
     },
+    // Who spoke (#4765): worked out in code from the transcript lines the reader may read, no AI.
+    talkTime: {
+      title: 'Who spoke',
+      desc: 'Worked out from the transcript lines you can read: each speaker\'s talk time, turns and longest stretch. No AI.',
+      speaker: 'Speaker',
+      share: 'Share of talk time',
+      time: 'Talk time',
+      turns: 'Turns',
+      longest: 'Longest stretch',
+      line: 'Talk time: {list}',
+      lineMore: 'Talk time: {list} and {count, plural, one {# other} other {# others}}',
+    },
     chapters: {
       title: 'Chapters',
       readerNote: 'Parts of this meeting, each with the time in the transcript. Click one to go to that line.',
