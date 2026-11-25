@@ -123,11 +123,17 @@ export function orgCreateCommand(limits: OrgCreateLimits = DEFAULT_ORG_CREATE_LI
     handler: async (ctx, input): Promise<OrgSummary> => {
       const tenant = await ctx.trx
         .selectFrom('ludy_kernel.tenant')
-        .select(['org_id', 'slug', 'name', 'apps_version'])
+        .select(['org_id', 'slug', 'name'])
         .where('org_id', '=', ctx.orgId)
         .executeTakeFirstOrThrow();
+      // The modules this type switches off that the build ships. With no type, or a type that switches nothing (team), nothing more is read: the old query only.
+      const wanted = (input.kind ? ORG_KIND_APPS_OFF[input.kind] : []).filter((module) => !options.shipped || options.shipped.includes(module));
       // Only an org whose apps nobody has ever changed (version 1, as the INSERT leaves it): a replay that reached an org already changed by its owner switches nothing.
-      const off = (input.kind && tenant.apps_version === 1 ? ORG_KIND_APPS_OFF[input.kind] : []).filter((module) => !options.shipped || options.shipped.includes(module));
+      let off: readonly string[] = [];
+      if (wanted.length > 0) {
+        const apps = await ctx.trx.selectFrom('ludy_kernel.tenant').select('apps_version').where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
+        if (apps.apps_version === 1) off = wanted;
+      }
       for (const module of off) await ctx.run('kernel.org.set_app', { module, enabled: false });
       ctx.audit({ slug: tenant.slug, ...(input.kind ? { kind: input.kind, appsOff: off } : {}) });
       return { orgId: tenant.org_id, slug: tenant.slug, name: tenant.name, role: 'owner' };
