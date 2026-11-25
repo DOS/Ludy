@@ -157,6 +157,8 @@ export interface MeetingPlatformAdapter {
   prepareDownload(credential: MeetingPlatformCredential, recordingId: string, format: MeetingPlatformFormat, signal?: AbortSignal): Promise<MeetingPlatformDownload>;
   // The platform's own transcript of one recording, for an adapter that has one (Google Meet, C2). The job never opens a transcript download: the adapter calls its own API hosts.
   transcript?(credential: MeetingPlatformCredential, recordingId: string, signal?: AbortSignal): Promise<MeetingPlatformTranscript>;
+  // The Drive file a platform wrote one recording to, asked of the platform now (Google Meet's Picker route, #3174): the pick command checks the member's pick against it. Absent for an adapter with no such step.
+  recordingFile?(credential: MeetingPlatformCredential, recordingId: string, signal?: AbortSignal): Promise<{ fileId: string } | null>;
   // `refused`: the platform will not renew the grant, the job expires the connection (an adapter may also throw `connection_expired` for the same). It renews ONE token under a lock, in a transaction the database ends if it
   // idles too long: it must honour `signal` and return the NEW refresh token a provider rotates, with the new expiry; a failure to reach the platform throws `platform_unavailable` and changes nothing.
   refresh?(credential: MeetingPlatformCredential, signal?: AbortSignal): Promise<MeetingPlatformCredential | { refused: true }>;
@@ -334,6 +336,8 @@ export interface MeetingPlatformAdaptersConfig {
   // The Google Meet adapter (C2, #3174) is there only when the deployment has a Google OAuth client for it (MEETINGS_GOOGLE_CLIENT_ID and MEETINGS_GOOGLE_CLIENT_SECRET, a client of its own beside the calendar's);
   // without one the provider has no adapter at all. Token renewal goes through the calendar adapter's refresh, made with this client.
   google?: GoogleMeetAppConfig | undefined;
+  // The Picker route for the audio of a Meet recording (#3174, ADR-0025 amendment): with it, the Google adapter also offers and reads a recording of a conference that has no transcript. Off unless set; nothing sets it yet, and it must not be set before the pick command gates the start of an import for such a row (the job would otherwise read a Drive file the member never picked, and Drive would answer 404).
+  googleRecordings?: boolean | undefined;
   // The offline sandbox is on unless this is `false`.
   sandbox?: boolean | undefined;
   // A shared sandbox store (tests and the dev stack add fixtures to it); a fresh seeded one when omitted.
@@ -346,6 +350,6 @@ export function meetingPlatformAdapters(config: MeetingPlatformAdaptersConfig = 
   if (config.sandbox !== false) adapters.sandbox = config.sandboxPlatform ?? new SandboxMeetingPlatform();
   if (config.zoom) adapters.zoom = new ZoomMeetingPlatform(config.zoom);
   if (config.teams) adapters.microsoft_teams = new TeamsMeetingPlatform(config.teams);
-  if (config.google) adapters.google_meet = new GoogleMeetAdapter({ app: config.google, refresher: new GoogleCalendarAdapter(config.google) });
+  if (config.google) adapters.google_meet = new GoogleMeetAdapter({ app: config.google, refresher: new GoogleCalendarAdapter(config.google), recordings: config.googleRecordings === true });
   return adapters;
 }

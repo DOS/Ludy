@@ -22,6 +22,7 @@ import { MeetingSeries } from '../components/meeting-series.tsx';
 import { MeetingTitleSuggest } from '../components/meeting-title.tsx';
 import { MeetingChapters } from '../components/meeting-chapters.tsx';
 import { MeetingCommitments } from '../components/meeting-commitments.tsx';
+import { MeetingTemplateSuggest } from '../components/meeting-template-suggest.tsx';
 import { MeetingOpenPoints } from '../components/meeting-open-points.tsx';
 import { MeetingNotes } from '../components/meeting-notes.tsx';
 import {
@@ -30,6 +31,7 @@ import {
   canQueryRedactCandidates,
   useRedactCandidatesQuery,
 } from '../components/meeting-redaction.tsx';
+import { MeetingTalkTime } from '../components/meeting-talk-time.tsx';
 import { MeetingTranscript } from '../components/meeting-transcript.tsx';
 import type { TranscriptRedacted } from '@ludy/kernel-contract';
 import { RecordNotesPanel, notesInstalled } from '../components/notes-panel.tsx';
@@ -381,6 +383,8 @@ export function MeetingDetailPage() {
       <RecordingStoppedNote meeting={meeting} />
       {/* The recorder's own Vy offers up to three titles on a click (#3947); a pick renames the meeting, nothing changes before it */}
       <MeetingTitleSuggest key={`title-${id}-${redactedEpoch}`} meetingId={id} isRecorder={meeting.isRecorder} hasTranscript={hasTranscript} />
+      {/* The minutes template suggested from the meeting itself (#4772): code first, Vy on a click only when code cannot tell; one click takes it, nothing changes before it */}
+      <MeetingTemplateSuggest key={`template-suggest-${id}-${redactedEpoch}`} meetingId={id} isRecorder={meeting.isRecorder} hasTranscript={hasTranscript} template={meeting.summaryTemplate} onJump={jumpTo} />
       {meeting.isRecorder && ((!hasTranscriptDraft && !hasResultsDraft) || doneOrigin === 'detail') && (
         <RedactionNudge
           count={!hasTranscriptDraft && !hasResultsDraft ? (redactCandidatesQuery.data?.candidates.length ?? 0) : 0}
@@ -487,6 +491,8 @@ export function MeetingDetailPage() {
           redactedEpoch,
         }}
       />
+      {/* Who did the talking (#4765): talk time, turns and longest stretch per speaker, worked out in code from the lines above, no AI */}
+      <MeetingTalkTime key={`talk-time-${id}`} meetingId={id} />
       {/* Did the meeting cover its agenda (#3959): the recorder's own click, Vy compares the agenda with the transcript above and cites the lines */}
       <MeetingAdherence key={`adherence-${id}`} meetingId={id} isRecorder={meeting.isRecorder} onJump={jumpTo} redactedEpoch={redactedEpoch} />
       {/* The recorder's own rough notes (A5): theirs alone, so only the recorder gets the box */}

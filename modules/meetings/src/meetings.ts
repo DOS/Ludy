@@ -12,6 +12,7 @@ import { chaptersCommands, chaptersQueries } from './chapters.ts';
 import { chaptersRunCommands, chaptersRunQueries } from './chapters-run.ts';
 import { titleCommands, titleQueries } from './title.ts';
 import { commitmentsCommands, commitmentsQueries } from './commitments.ts';
+import { templateSuggestCommands, templateSuggestQueries } from './template-suggest.ts';
 import { openPointsCommands, openPointsQueries } from './open-points.ts';
 import { notesCommands, notesQueries } from './notes.ts';
 import { resultCommands, resultQueries } from './results.ts';
@@ -28,6 +29,7 @@ import { translateRunCommands, translateRunQueries } from './translate-run.ts';
 import { askRunCommands, askRunQueries } from './ask.ts';
 import { briefCommands, briefQueries } from './brief.ts';
 import { digestCommands, digestQueries } from './digest.ts';
+import { loadQueries } from './load.ts';
 import { todayQueries } from './today.ts';
 import { morningCommands, morningQueries } from './morning.ts';
 import { assigneeCommands, assigneeQueries } from './assignee.ts';
@@ -1127,6 +1129,7 @@ export const meetingsCommands = [
   ...chaptersRunCommands,
   ...titleCommands,
   ...commitmentsCommands,
+  ...templateSuggestCommands,
   ...openPointsCommands,
   ...summaryCommands,
   ...speakerCommands,
@@ -1179,6 +1182,7 @@ export const meetingsQueries = [
   ...chaptersRunQueries,
   ...titleQueries,
   ...commitmentsQueries,
+  ...templateSuggestQueries,
   ...openPointsQueries,
   ...summaryQueries,
   ...seriesQueries,
@@ -1189,6 +1193,7 @@ export const meetingsQueries = [
   ...askRunQueries,
   ...briefQueries,
   ...digestQueries,
+  ...loadQueries,
   ...todayQueries,
   ...morningQueries,
   ...assigneeQueries,

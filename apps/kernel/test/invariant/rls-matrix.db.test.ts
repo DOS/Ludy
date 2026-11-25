@@ -123,6 +123,7 @@ const PENDING_TABLES = new Set<string>([
   'crove_finance.stock_move',
   'crove_finance.stock_period',
   'crove_finance.stock_period_item',
+  'crove_hr.candidate_stage_transition',
   'crove_kernel.agent_grant',
   'crove_kernel.agent_wake_delivery',
   'crove_kernel.agent_wake_signal_seen',
@@ -131,6 +132,7 @@ const PENDING_TABLES = new Set<string>([
   'crove_kernel.member_vy_result',
   'crove_meetings.live_line',
   'crove_meetings.meeting_link',
+  'crove_meetings.minutes_version',
   'crove_notes.link',
   'crove_notes.note',
 ]);
@@ -176,6 +178,7 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   ['crove_hr.attendance_qr_config', () => 'false'], // HR, as above.
   ['crove_hr.business_trip_request', () => 'false'], // HR, as above.
   ['crove_hr.candidate', () => 'false'], // HR is for owners and admins in a user context (ADR-0046); an agent context reads none.
+  ['crove_hr.candidate_stage_transition', () => 'false'], // HR, as above.
   ['crove_hr.contract_addendum', () => 'false'], // HR, as above.
   ['crove_hr.department', () => 'false'], // HR, as above.
   ['crove_hr.employee_asset_handover', () => 'false'], // HR, as above.
@@ -232,6 +235,7 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   ['crove_meetings.meeting_reader', () => 'false'], // As above.
   ['crove_meetings.meeting_result', () => 'false'], // As above (summaries and decisions, ADR-0047).
   ['crove_meetings.meeting_video', () => 'false'], // As above.
+  ['crove_meetings.minutes_version', () => 'false'], // The recorder's published second-language version of the minutes, read by the meeting's readers, users (#4777).
   ['crove_meetings.morning_notice', () => 'false'], // A member's own opt-in to the morning notice of the day's meetings, read by that member, a user (#3955).
   ['crove_meetings.transcript_segment', () => 'false'], // As above (transcript segments, ADR-0047).
   ['crove_meetings.translation', () => 'false'], // A machine translation, read by the member who asked for it, a user (meetings integrations E1, #3184).
@@ -306,6 +310,7 @@ const AUTHOR_ONLY = new Map<string, string>([
   ['crove_hr.attendance_qr_config', 'false'],
   ['crove_hr.business_trip_request', 'false'],
   ['crove_hr.candidate', 'false'],
+  ['crove_hr.candidate_stage_transition', 'false'],
   ['crove_hr.contract_addendum', 'false'],
   ['crove_hr.department', 'false'],
   ['crove_hr.employee_asset_handover', 'false'],
@@ -362,6 +367,8 @@ const AUTHOR_ONLY = new Map<string, string>([
   ['crove_meetings.meeting_result', 'false'],
   // Meeting videos (ADR-0047 point 2): worker system context reads and writes nothing.
   ['crove_meetings.meeting_video', 'false'],
+  // The recorder's published second-language version of a meeting's minutes (#4777): read by the meeting's readers, users only; worker system context reads and writes nothing.
+  ['crove_meetings.minutes_version', 'false'],
   // A member's own morning notice setting (#3955): the member's alone; worker system context reads and writes nothing (its one reader is a definer).
   ['crove_meetings.morning_notice', 'false'],
   // Meeting transcript segments (ADR-0047 point 2): worker system context reads and writes nothing.
@@ -445,6 +452,8 @@ const APPEND_ONLY = new Set<string>([
   'crove_finance.marketplace_vat_rate',
   // #3113 S1: a change of a supplier's bank account is a new row; the history is never edited or deleted.
   'crove_finance.supplier_bank_account_change',
+  // #4487 (Stage 5D): append-only candidate stage-entry history for funnel BI (SELECT and INSERT only; no runtime role holds UPDATE or DELETE).
+  'crove_hr.candidate_stage_transition',
   // #3330 / #3323 (eSign): hash-chained signing ledger per envelope (SELECT and INSERT only; no runtime role holds UPDATE or DELETE).
   'crove_sign.signing_event',
 ]);
@@ -2309,6 +2318,16 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
     update: { set: 'display_name = display_name' },
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), display_name: 'RLS matrix candidate' } }),
   },
+  // #4487 (Stage 5D): append-only candidate stage-entry transition history for funnel BI attribution (owners and admins only, AUTHOR_ONLY, APPEND_ONLY).
+  'crove_hr.candidate_stage_transition': {
+    make: (o) => {
+      const candidate = randomUUID();
+      return {
+        setup: [{ table: 'crove_hr.candidate', values: { org_id: o.id, id: candidate, display_name: 'RLS matrix candidate' } }],
+        row: { org_id: o.id, id: randomUUID(), candidate_id: candidate, to_stage: 'applied' },
+      };
+    },
+  },
   // #4528 (Stage 6C): employment contract addendum (owners and admins in a user context; system and agent contexts read and write none).
   'crove_hr.contract_addendum': {
     update: { set: 'updated_at = updated_at' },
@@ -3631,6 +3650,25 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
     make: (o) => ({
       row: { org_id: o.id, id: randomUUID(), name: `RLS matrix template ${tag()}`, sections: JSON.stringify([{ key: 's1', title: 'Nội dung', hint: '' }]), created_by: o.owner },
     }),
+  },
+  // #4777 (bilingual minutes): the recorder's published second-language version of a meeting's minutes. Read by the meeting's readers and written and deleted by the recorder, both in a user
+  // context (the org's owner is the recorder of the factory's meeting); the system context reads none (is_meeting_reader answers false for it). No UPDATE for a login role.
+  'crove_meetings.minutes_version': {
+    make: (o) => {
+      const meeting = meetingsMeetingRow(o);
+      return {
+        setup: [{ table: 'crove_meetings.meeting', values: meeting }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          meeting_id: meeting.id,
+          language: 'en',
+          source_hash: 'b'.repeat(64),
+          body: '[{"key":"summary","text":"RLS matrix version"}]',
+          published_by: o.owner,
+        },
+      };
+    },
   },
   // #3955 (part B): a member's own opt-in to the morning notice of the day's meetings (a time of day, their zone and language), one row per member, read, written and deleted by that member alone, so the
   // system context reads none.

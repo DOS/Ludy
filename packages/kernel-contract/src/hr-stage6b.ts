@@ -24,6 +24,9 @@ export type HrPayrollAdjustmentStatus = (typeof HR_PAYROLL_ADJUSTMENT_STATUSES)[
 export const HR_BUSINESS_TRIP_STATUSES = ['pending_l1', 'pending_final', 'approved', 'rejected', 'cancelled'] as const;
 export type HrBusinessTripStatus = (typeof HR_BUSINESS_TRIP_STATUSES)[number];
 
+export const HR_STAGE6B_SYNC_SKIP_REASONS = ['manual_override'] as const;
+export type HrStage6bSyncSkipReason = (typeof HR_STAGE6B_SYNC_SKIP_REASONS)[number];
+
 export const zHrStage6bMoney = zHrWage.refine(withinNumeric14_2, 'amount exceeds numeric(14,2) range');
 export const zHrPositiveMoney = zHrStage6bMoney.refine(positiveDecimal, 'amount must be greater than zero');
 export const zHrStage6bReason = z.string().trim().min(1).max(2000).refine(noNul, 'no NUL character');
@@ -77,6 +80,7 @@ export const zHrAdvanceRequestView = z.object({
   canApproveL1: z.boolean(),
   canApproveFinal: z.boolean(),
   canCancel: z.boolean(),
+  payrollRunLocked: z.boolean().optional(),
 });
 export type HrAdvanceRequestView = z.infer<typeof zHrAdvanceRequestView>;
 
@@ -91,6 +95,7 @@ export const zHrSelfAdvanceListResult = z.object({
   employeeId: zId.nullable(),
   employeeName: z.string().nullable(),
   departmentId: zId.nullable(),
+  lockedMonths: z.array(zHrMonth).optional(),
   items: z.array(zHrAdvanceRequestView),
   l1Queue: z.array(zHrAdvanceRequestView),
 });
@@ -108,6 +113,7 @@ export const zHrAdvanceActionResult = z.object({
   requestId: zId,
   status: z.enum(HR_SALARY_ADVANCE_STATUSES),
   payrollSynced: z.boolean().optional(),
+  payrollSyncSkippedReason: z.enum(HR_STAGE6B_SYNC_SKIP_REASONS).optional(),
 });
 export type HrAdvanceActionResult = z.infer<typeof zHrAdvanceActionResult>;
 
@@ -167,6 +173,7 @@ export const zHrAdjustmentActionResult = z.object({
   itemId: zId,
   status: z.enum(HR_PAYROLL_ADJUSTMENT_STATUSES),
   payrollSynced: z.boolean().optional(),
+  payrollSyncSkippedReason: z.enum(HR_STAGE6B_SYNC_SKIP_REASONS).optional(),
 });
 export type HrAdjustmentActionResult = z.infer<typeof zHrAdjustmentActionResult>;
 

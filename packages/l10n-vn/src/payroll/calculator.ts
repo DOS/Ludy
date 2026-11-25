@@ -184,6 +184,7 @@ export interface PayrollBreakdown {
     overtime: OvertimeLine[];
     nightWork: { hours: string; pay: Money } | null;
     bonus: Money;
+    retroPay?: Money;
   };
   insurance: {
     /** The base wage (or earned hourly/piece pay) and the allowances named in the contract, before the floor and the cap. */
