@@ -5,6 +5,7 @@ import { sql } from 'kysely';
 import { z } from 'zod';
 import { QUOTE_LOGO_MAX_BYTES, QUOTE_LOGO_TYPES, QUOTE_TOKEN_PATTERN, type QuoteDocument } from '@ludy/kernel-contract';
 import { readVerified, type BlobStore, type Runtime } from '@ludy/kernel-runtime';
+import { publicPageAllowed } from './public-page-gate.ts';
 import { sniffType } from './sniff.ts';
 
 export const QUOTE_VIEWS_PER_MINUTE = 60;
@@ -17,6 +18,7 @@ const zView = z.strictObject({ token: z.string().regex(QUOTE_TOKEN_PATTERN) });
 export async function quoteView(runtime: Runtime, body: unknown): Promise<QuoteDocument | null> {
   const input = zView.safeParse(body);
   if (!input.success) return null;
+  if (!(await publicPageAllowed(runtime, { module: 'crm', kind: 'quote_link' }, input.data.token))) return null;
   return runtime.orgless(async (db) => {
     const { rows } = await sql<{ page: QuoteDocument | null }>`SELECT ludy_crm.quote_link_view(${input.data.token}) AS page`.execute(db);
     return rows[0]?.page ?? null;
@@ -38,6 +40,7 @@ export async function readLogoFile(store: BlobStore, file: { storageKey: string;
 export async function quoteLogo(runtime: Runtime, store: BlobStore, body: unknown): Promise<{ bytes: Uint8Array; contentType: string } | null> {
   const input = zView.safeParse(body);
   if (!input.success) return null;
+  if (!(await publicPageAllowed(runtime, { module: 'crm', kind: 'quote_link' }, input.data.token))) return null;
   const file = await runtime.orgless(async (db) => {
     const { rows } = await sql<{ logo: { storageKey: string; generation: string | null; sha256: string; contentType: string; sizeBytes: string | number } | null }>`
       SELECT ludy_crm.quote_link_logo(${input.data.token}) AS logo`.execute(db);
