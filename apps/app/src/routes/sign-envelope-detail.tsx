@@ -19,7 +19,16 @@ import {
   DocxWarningsAlert,
   clearCreatedDocxWarnings,
   readCreatedDocxWarnings,
+  saveCreatedDocxWarnings,
 } from '../components/sign/docx-conversion-notice.tsx';
+import {
+  clearPendingDocxListNotices,
+  readPendingDocxListNotice,
+  removePendingDocxListNotice,
+  sanitizeDocxWarnings,
+  type CreatedDocxWarningScope,
+  type PendingCreatedDocxNotice,
+} from '../lib/sign-docx-notices.ts';
 import { EnvelopeKycCard } from '../components/sign/envelope-kyc-card.tsx';
 import { EnvelopeObligationsCard } from '../components/sign/envelope-obligations-card.tsx';
 import { EnvelopePlaybookCard } from '../components/sign/envelope-playbook-card.tsx';
@@ -41,7 +50,9 @@ import {
   canVoidEnvelope,
   downloadSignFile,
   downloadSignPdfBytes,
+  fetchUserScopeForSession,
   normalizeAiAnalysis,
+  readVerifiedSession,
   signApi,
   type SignAiAnalysis,
   type SignDocxToPdfWarning,
@@ -74,6 +85,93 @@ import {
 import { buildInPersonSigningUrl, buildSigningUrl, copyTextToClipboard } from '../lib/sign-hash.ts';
 import { extractPdfPagesText } from '../lib/sign-pdf.ts';
 import { toast } from '../lib/toast.ts';
+
+export async function resolveDetailPendingDocxWarnings(deps: {
+  envelopeId: string;
+  slug: string;
+  noticeOrg: string | null;
+  currentUserId: string | null;
+  pendingNotice: PendingCreatedDocxNotice | null;
+  resolveCurrentSessionId: () => Promise<string | null>;
+  resolveUserScope?: (expectedSessionId?: string | null) => Promise<{
+    orgId?: string | null | undefined;
+    userId?: string | null | undefined;
+    sessionId?: string | null | undefined;
+  } | null>;
+}): Promise<{
+  warnings: readonly SignDocxToPdfWarning[];
+  org: string;
+  userId: string;
+} | null> {
+  if (!deps.envelopeId || !deps.slug || !deps.pendingNotice) return null;
+  if (deps.pendingNotice.envelopeId !== deps.envelopeId || deps.pendingNotice.slug !== deps.slug) return null;
+  if (!deps.pendingNotice.userId && !deps.pendingNotice.sessionId) return null;
+  const cleanWarnings = sanitizeDocxWarnings(deps.pendingNotice.warnings);
+  if (cleanWarnings.length === 0) return null;
+
+  let liveSessionId: string | null;
+  try {
+    liveSessionId = await deps.resolveCurrentSessionId();
+  } catch {
+    return null;
+  }
+  if (!liveSessionId) {
+    return null;
+  }
+  if (deps.pendingNotice.sessionId && liveSessionId !== deps.pendingNotice.sessionId) {
+    clearPendingDocxListNotices({ mismatchSessionId: liveSessionId });
+    return null;
+  }
+
+  let resolvedOrgId = deps.pendingNotice.orgId ?? deps.noticeOrg;
+  let resolvedUserId = deps.currentUserId;
+  if (
+    (!resolvedOrgId ||
+      !resolvedUserId ||
+      !deps.pendingNotice.userId ||
+      !deps.pendingNotice.sessionId ||
+      deps.pendingNotice.userId !== resolvedUserId) &&
+    deps.resolveUserScope
+  ) {
+    const fetched = await deps.resolveUserScope(liveSessionId).catch(() => null);
+    if (!fetched) return null;
+    if (fetched.sessionId && fetched.sessionId !== liveSessionId) {
+      return null;
+    }
+    resolvedOrgId = fetched.orgId ?? resolvedOrgId;
+    resolvedUserId = fetched.userId ?? null;
+  }
+
+  let finalSessionId: string | null;
+  try {
+    finalSessionId = await deps.resolveCurrentSessionId();
+  } catch {
+    return null;
+  }
+  if (!finalSessionId || finalSessionId !== liveSessionId) {
+    return null;
+  }
+  if (!resolvedOrgId || !resolvedUserId) {
+    return null;
+  }
+  if (deps.pendingNotice.userId && resolvedUserId !== deps.pendingNotice.userId) {
+    clearPendingDocxListNotices({ mismatchUserId: resolvedUserId });
+    return null;
+  }
+
+  const persisted = saveCreatedDocxWarnings(deps.envelopeId, cleanWarnings, {
+    org: resolvedOrgId,
+    userId: resolvedUserId,
+  });
+  if (persisted) {
+    removePendingDocxListNotice(deps.envelopeId);
+  }
+  return {
+    warnings: cleanWarnings,
+    org: resolvedOrgId,
+    userId: resolvedUserId,
+  };
+}
 
 function toDraftPlacements(fields: readonly SignFieldRecord[]): DraftFieldPlacement[] {
   return fields.map((f) => ({
@@ -433,11 +531,14 @@ export function SignEnvelopeDetailPage() {
     meQuery.data?.orgs.find((o) => o.slug === slug)?.orgId ??
     (orgQuery.data?.slug === slug ? orgQuery.data.orgId : null);
   const noticeScopeKey = `${noticeOrg ?? ''}\0${currentUserId ?? ''}\0${id}`;
+  const detailDocxNoticeReqRef = useRef(0);
   const [docxWarningsState, setDocxWarningsState] = useState<{
     key: string;
+    scope: CreatedDocxWarningScope | null;
     warnings: readonly SignDocxToPdfWarning[];
   }>(() => ({
     key: noticeScopeKey,
+    scope: noticeOrg && currentUserId ? { org: noticeOrg, userId: currentUserId } : null,
     warnings: id ? readCreatedDocxWarnings(id, { org: noticeOrg, userId: currentUserId }) : [],
   }));
   const docxWarnings =
@@ -497,11 +598,47 @@ export function SignEnvelopeDetailPage() {
   }, [id]);
 
   useEffect(() => {
+    const reqId = (detailDocxNoticeReqRef.current += 1);
+    const scope = noticeOrg && currentUserId ? { org: noticeOrg, userId: currentUserId } : null;
+    const stored = id ? readCreatedDocxWarnings(id, { org: noticeOrg, userId: currentUserId }) : [];
     setDocxWarningsState({
       key: noticeScopeKey,
-      warnings: id ? readCreatedDocxWarnings(id, { org: noticeOrg, userId: currentUserId }) : [],
+      scope,
+      warnings: stored,
     });
-  }, [id, noticeOrg, currentUserId, noticeScopeKey]);
+    if (stored.length > 0 || !id || !slug) {
+      return;
+    }
+    const pendingNotice = readPendingDocxListNotice(id, slug);
+    if (!pendingNotice) {
+      return;
+    }
+    let cancelled = false;
+    void resolveDetailPendingDocxWarnings({
+      envelopeId: id,
+      slug,
+      noticeOrg,
+      currentUserId,
+      pendingNotice,
+      resolveCurrentSessionId: async () => (await readVerifiedSession()).sessionId,
+      resolveUserScope: (expectedSessionId) => fetchUserScopeForSession(slug, expectedSessionId),
+    }).then((resolved) => {
+      if (cancelled || detailDocxNoticeReqRef.current !== reqId || !resolved) {
+        return;
+      }
+      if (currentUserId && resolved.userId !== currentUserId) {
+        return;
+      }
+      setDocxWarningsState({
+        key: noticeScopeKey,
+        scope: { org: resolved.org, userId: resolved.userId },
+        warnings: resolved.warnings,
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [id, slug, noticeOrg, currentUserId, noticeScopeKey]);
 
   useEffect(() => {
     if (!detailQuery.data || fieldsDirty) return;
@@ -1389,8 +1526,16 @@ export function SignEnvelopeDetailPage() {
         <DocxWarningsAlert
           warnings={docxWarnings}
           onDismiss={() => {
-            if (id) clearCreatedDocxWarnings(id, { org: noticeOrg, userId: currentUserId });
-            setDocxWarningsState({ key: noticeScopeKey, warnings: [] });
+            detailDocxNoticeReqRef.current += 1;
+            const activeScope = docxWarningsState.key === noticeScopeKey ? docxWarningsState.scope : null;
+            if (id) {
+              clearCreatedDocxWarnings(id, {
+                org: activeScope?.org ?? noticeOrg,
+                userId: activeScope?.userId ?? currentUserId,
+              });
+              removePendingDocxListNotice(id);
+            }
+            setDocxWarningsState({ key: noticeScopeKey, scope: activeScope, warnings: [] });
           }}
         />
       ) : null}

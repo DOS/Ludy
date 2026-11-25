@@ -72,6 +72,7 @@ const {
 const {
   clearPendingDocxListNotices,
   listPendingDocxListNotices,
+  readPendingDocxListNotice,
   removePendingDocxListNotice,
   upsertPendingDocxListNotice,
 } = await import('../src/lib/sign-docx-notices.ts');
@@ -87,7 +88,9 @@ const {
   openCreatedDocxNoticeEnvelope,
   submitCreateEnvelopeFromDialog,
 } = await import('../src/routes/sign-envelopes.tsx');
-const { SignEnvelopeDetailPage } = await import('../src/routes/sign-envelope-detail.tsx');
+const { SignEnvelopeDetailPage, resolveDetailPendingDocxWarnings } = await import(
+  '../src/routes/sign-envelope-detail.tsx'
+);
 const { CreateTemplateForm } = await import('../src/routes/sign-templates.tsx');
 const { ContractVaultBar } = await import('../src/components/sign/contract-vault-bar.tsx');
 
@@ -871,6 +874,14 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
     expect(isCreatedDocxListNoticeVisible(anonSessionNotice, 'acme', USER_B_ID, 'sess-b')).toBe(false);
     expect(isCreatedDocxListNoticeVisible({ ...anonSessionNotice, sessionId: null }, 'acme', USER_B_ID, 'sess-a')).toBe(false);
     expect(isCreatedDocxListNoticeVisible(anonSessionNotice, 'acme', USER_A_ID, 'sess-a')).toBe(true);
+    const userScopedSessionNotice = {
+      ...anonSessionNotice,
+      userId: USER_A_ID,
+      envelopeTitle: 'Secret Hợp đồng A',
+    };
+    expect(isCreatedDocxListNoticeVisible(userScopedSessionNotice, 'acme', USER_A_ID, null)).toBe(false);
+    expect(isCreatedDocxListNoticeVisible(userScopedSessionNotice, 'acme', USER_A_ID, 'sess-b')).toBe(false);
+    expect(isCreatedDocxListNoticeVisible(userScopedSessionNotice, 'acme', USER_A_ID, 'sess-a')).toBe(true);
 
     // fetchUserScopeForSession bypasses stale TanStack Query me.get cache and verifies token identity directly.
     queryClient.setQueryData(orpc.me.get.queryKey(), {
@@ -1284,5 +1295,97 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
     expect(uploadErr).toBeInstanceOf(SignSessionMismatchError);
     expect(fetchBusyMock).toHaveBeenCalledTimes(1);
     expect(seenAuthHeaders).toEqual([`Bearer ${jwtA}`]);
+  });
+
+  it('persists unpersisted pending warnings on unmount and promotes them cleanly on detail navigation (#4729)', async () => {
+    installMemorySessionStorage();
+    clearPendingDocxListNotices();
+    const setCreateOpen = vi.fn();
+    const setCreatedDocxNotice = vi.fn();
+    const invalidateEnvelopes = vi.fn(async () => {});
+    const navSpy = vi.fn(async () => {});
+
+    // Leaving list page mid-invalidation before orgId resolves still saves pending notice in module store.
+    await handleEnvelopeCreatedWithWarnings({
+      envelopeId: envDetailId,
+      envelopeTitle: 'Hợp đồng pending',
+      warnings: ['images_skipped'],
+      slug: 'acme',
+      orgId: null,
+      userId: USER_A_ID,
+      sessionId: 'sess-a',
+      resolveCurrentSessionId: async () => 'sess-a',
+      isCurrentContext: () => false,
+      setCreateOpen,
+      setCreatedDocxNotice,
+      invalidateEnvelopes,
+      navigateToEnvelope: navSpy,
+    });
+    expect(setCreatedDocxNotice).not.toHaveBeenCalled();
+    const savedPending = readPendingDocxListNotice(envDetailId, 'acme');
+    expect(savedPending).toEqual({
+      envelopeId: envDetailId,
+      slug: 'acme',
+      orgId: null,
+      userId: USER_A_ID,
+      sessionId: 'sess-a',
+      envelopeTitle: 'Hợp đồng pending',
+      warnings: ['images_skipped'],
+    });
+
+    // Session mismatch on direct detail open drops A's pending warning without promoting to B.
+    expect(
+      await resolveDetailPendingDocxWarnings({
+        envelopeId: envDetailId,
+        slug: 'acme',
+        noticeOrg: ORG_A_ID,
+        currentUserId: USER_B_ID,
+        pendingNotice: savedPending,
+        resolveCurrentSessionId: async () => 'sess-b',
+      }),
+    ).toBeNull();
+    expect(readPendingDocxListNotice(envDetailId, 'acme')).toBeNull();
+    expect(readCreatedDocxWarnings(envDetailId, SCOPE_USER_B)).toEqual([]);
+
+    // Valid matching session on direct detail open resolves scope even if cached currentUserId is stale and promotes cleanly.
+    upsertPendingDocxListNotice(savedPending!);
+    const promoted = await resolveDetailPendingDocxWarnings({
+      envelopeId: envDetailId,
+      slug: 'acme',
+      noticeOrg: null,
+      currentUserId: USER_B_ID,
+      pendingNotice: readPendingDocxListNotice(envDetailId, 'acme'),
+      resolveCurrentSessionId: async () => 'sess-a',
+      resolveUserScope: async (expectedSessionId) => {
+        expect(expectedSessionId).toBe('sess-a');
+        return { orgId: ORG_A_ID, userId: USER_A_ID, sessionId: 'sess-a' };
+      },
+    });
+    expect(promoted).toEqual({
+      warnings: ['images_skipped'],
+      org: ORG_A_ID,
+      userId: USER_A_ID,
+    });
+    expect(readPendingDocxListNotice(envDetailId, 'acme')).toBeNull();
+    expect(readCreatedDocxWarnings(envDetailId, SCOPE_USER_A)).toEqual(['images_skipped']);
+
+    // Session mismatch during mid-flight unmount also purges prior pending notices from module store.
+    upsertPendingDocxListNotice(savedPending!);
+    await handleEnvelopeCreatedWithWarnings({
+      envelopeId: SECOND_ENV_ID,
+      warnings: ['footnotes_skipped'],
+      slug: 'acme',
+      orgId: null,
+      userId: USER_A_ID,
+      sessionId: 'sess-a',
+      resolveCurrentSessionId: async () => 'sess-b',
+      isCurrentContext: () => false,
+      setCreateOpen,
+      setCreatedDocxNotice,
+      invalidateEnvelopes,
+      navigateToEnvelope: navSpy,
+    });
+    expect(readPendingDocxListNotice(envDetailId, 'acme')).toBeNull();
+    expect(readPendingDocxListNotice(SECOND_ENV_ID, 'acme')).toBeNull();
   });
 });

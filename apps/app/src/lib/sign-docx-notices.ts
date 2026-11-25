@@ -404,6 +404,19 @@ export function clearPendingDocxListNotices(filter?: {
   return [...pendingUnpersistedDocxNotices.values()].map(stripTimestamp);
 }
 
+/** Reads a single unpersisted pending .docx notice by envelope ID and workspace slug (#4729). */
+export function readPendingDocxListNotice(
+  envelopeId: string,
+  slug: string,
+  now = Date.now(),
+): PendingCreatedDocxNotice | null {
+  if (!envelopeId || !slug) return null;
+  pruneFreshPendingNotices(now);
+  const entry = pendingUnpersistedDocxNotices.get(envelopeId);
+  if (!entry || entry.slug !== slug) return null;
+  return stripTimestamp(entry);
+}
+
 /** Lists unpersisted pending .docx notices still valid for the given workspace slug and active user (#4729). */
 export function listPendingDocxListNotices(
   slug: string,
