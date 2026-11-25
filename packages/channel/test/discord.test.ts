@@ -22,7 +22,7 @@ function discord(answers: { status?: number; body: unknown; headers?: Record<str
   return { calls, fetchImpl };
 }
 
-const webhook = (over: Record<string, unknown> = {}) => ({ body: { type: 1, id: HOOK, name: ' Crove bot ', channel_id: CHANNEL, guild_id: GUILD, application_id: null, token: TOKEN, ...over } });
+const webhook = (over: Record<string, unknown> = {}) => ({ body: { type: 1, id: HOOK, name: ' Ludy bot ', channel_id: CHANNEL, guild_id: GUILD, application_id: null, token: TOKEN, ...over } });
 const fail = (status: number, code: number, message: string, extra: Record<string, unknown> = {}) => ({ status, body: { code, message, ...extra } });
 
 const input = (over: Partial<PublishInput> = {}): PublishInput => ({
@@ -67,7 +67,7 @@ describe('Discord connect', () => {
   it('checks the webhook is an incoming one of a server channel, then connects it by its id', async () => {
     const { fetchImpl, calls } = discord([webhook()]);
     const account = await connectDiscord(discordLogin({ webhookUrl: URL_OF }), fetchImpl);
-    expect(account).toEqual({ provider: 'discord', externalAccountId: HOOK, displayName: 'Crove bot', scopes: [], expiresAt: null, secret: SECRET });
+    expect(account).toEqual({ provider: 'discord', externalAccountId: HOOK, displayName: 'Ludy bot', scopes: [], expiresAt: null, secret: SECRET });
     expect(calls).toHaveLength(1);
     expect(calls[0]?.method).toBe('GET');
     expect(calls[0]?.url.host).toBe('discord.com');
@@ -339,7 +339,7 @@ describe('Discord forum posts and threads (#1103)', () => {
 
 describe('Discord team alerts (#863)', () => {
   it('sends one line with mentions off and no embeds, on the webhook', async () => {
-    const line = 'Bài «Khai trương» đã đăng lên Facebook: https://crove.example/o/shop/social/1';
+    const line = 'Bài «Khai trương» đã đăng lên Facebook: https://ludy.example/o/shop/social/1';
     const { fetchImpl, calls } = discord([{ body: { id: '1111111111111111111', channel_id: CHANNEL } }]);
     await sendDiscordText({ webhookId: HOOK, token: TOKEN }, line, fetchImpl);
     expect(calls).toHaveLength(1);

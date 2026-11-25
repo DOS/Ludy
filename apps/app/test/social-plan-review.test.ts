@@ -9,7 +9,7 @@ describe('client review of a content plan (#902)', () => {
   });
 
   it('keeps the token after the #', () => {
-    expect(reviewUrl('https://crove.example', 'a'.repeat(43))).toBe(`https://crove.example/-/review#${'a'.repeat(43)}`);
+    expect(reviewUrl('https://ludy.example', 'a'.repeat(43))).toBe(`https://ludy.example/-/review#${'a'.repeat(43)}`);
   });
 
   it('counts the posts answered with a verdict, leaving out the gone ones and comments', () => {

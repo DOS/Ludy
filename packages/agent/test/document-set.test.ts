@@ -73,7 +73,7 @@ describe('synthetic document set', () => {
 });
 
 describe('loadDocumentSet', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'crove-eval-'));
+  const dir = mkdtempSync(join(tmpdir(), 'ludy-eval-'));
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
   it('refuses a document without its expected answer, and an answer without its document', () => {

@@ -27,7 +27,7 @@ function invoice(id: string, rates: VatInvoiceView['rates']): VatInvoiceView {
     saleDate: null, id, issueDate: '2026-09-15', postingDate: '2026-09-15', series: 'C26TAB', number: id, partyName: 'Công ty TNHH ABC', partyTaxCode: '0101234564', subtotal: '0', vatAmount: '0', total: '0', rates, warnings: [] };
 }
 
-function declaration(period: string, input: VatInvoiceView[], output: VatInvoiceView[], name = 'Công ty TNHH Crove Demo', address: string | null = null): VatDeclaration {
+function declaration(period: string, input: VatInvoiceView[], output: VatInvoiceView[], name = 'Công ty TNHH Ludy Demo', address: string | null = null): VatDeclaration {
   const inputSide = { available: true, documents: input, totals: sideTotals(input) };
   const outputSide = { available: true, documents: output, totals: sideTotals(output) };
   return {
@@ -231,7 +231,7 @@ describe('form01XmlValues', () => {
     expect(v['34']).toBe('302');
   });
 
-  it('ignores the indicators Crove does not compute and refuses amounts HTKK cannot hold', () => {
+  it('ignores the indicators Ludy does not compute and refuses amounts HTKK cannot hold', () => {
     expect(form01XmlValues([{ code: '25', label: '', amount: '999' }])['25']).toBe('0');
     expect(() => form01XmlValues([{ code: '23', label: '', amount: '100000000000000' }])).toThrow(/HTKK/);
     // Through the export, a refusal the user can read (422), not a server error.
@@ -259,7 +259,7 @@ describe('buildVat01Xml', () => {
     expect(valueOf(xml, 'loaiTKhai')).toBe('C');
     expect(valueOf(xml, 'soLan')).toBe('0');
     expect(valueOf(xml, 'mst')).toBe('0101234564');
-    expect(valueOf(xml, 'tenNNT')).toBe('Công ty TNHH Crove Demo');
+    expect(valueOf(xml, 'tenNNT')).toBe('Công ty TNHH Ludy Demo');
     expect(valueOf(xml, 'tieuMucHachToan')).toBe('1701');
     expect(valueOf(xml, 'ngayLapTKhai')).toBe('2026-10-19');
     expect(valueOf(xml, 'ngayKy')).toBe('2026-10-19');
@@ -297,10 +297,10 @@ describe('buildVat01Xml', () => {
   it('writes the org address as one line when it has one, and an empty dchiNNT otherwise (#692)', () => {
     const none = build('month', declaration('2026-09', purchases, sales));
     expect(none).toContain('<dchiNNT/>');
-    const xml = build('address', declaration('2026-09', purchases, sales, 'Công ty TNHH Crove Demo', 'Số 1 Đường A,\n  Phường B & C, TP <Hà Nội>'));
+    const xml = build('address', declaration('2026-09', purchases, sales, 'Công ty TNHH Ludy Demo', 'Số 1 Đường A,\n  Phường B & C, TP <Hà Nội>'));
     expect(paths(xml)).toEqual(EXPECTED_ORDER);
     expect(read(xml).text.get(`${NNT}/dchiNNT`)).toBe('Số 1 Đường A, Phường B & C, TP <Hà Nội>');
-    // The other address and contact parts stay empty: Crove holds the address as one line.
+    // The other address and contact parts stay empty: Ludy holds the address as one line.
     for (const tag of ['phuongXa', 'tenHuyenNNT', 'tenTinhNNT', 'dthoaiNNT', 'emailNNT']) expect(xml).toContain(`<${tag}/>`);
   });
 

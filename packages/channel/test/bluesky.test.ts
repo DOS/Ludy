@@ -117,7 +117,7 @@ describe('Bluesky on its own PDS (#792)', () => {
     await expect(connectBluesky({ handle: 'quan-a.example.org', appPassword: APP_PASSWORD }, plain.bluesky.fetchImpl)).rejects.toMatchObject({ code: 'UnsupportedPds' });
     for (const pds of ['https://10.0.0.5', 'https://pds.example.org:8443', 'http://pds.example.org']) {
       const { bluesky, egress } = own(pds);
-      // The identity names no PDS Crove calls, so the login stays refused as bsky.social said.
+      // The identity names no PDS Ludy calls, so the login stays refused as bsky.social said.
       await expect(connectBluesky({ handle: 'quan-a.example.org', appPassword: APP_PASSWORD }, bluesky.fetchImpl, egress.fetchImpl)).rejects.toMatchObject({ status: 401 });
       expect(egress.calls).toHaveLength(0);
     }
@@ -148,7 +148,7 @@ describe('Bluesky on its own PDS (#792)', () => {
     expect(revoked.calls.map((c) => c.route)).toEqual([`GET plc.directory/${DID}`, 'POST bsky.social/xrpc/com.atproto.server.createSession', 'POST bsky.social/xrpc/com.atproto.server.createSession']);
   });
 
-  it('sends the password nowhere when the DID document cannot be read or names no PDS Crove calls', async () => {
+  it('sends the password nowhere when the DID document cannot be read or names no PDS Ludy calls', async () => {
     for (const answer of [{ status: 503, body: {} }, doc('https://10.0.0.5'), { body: { id: DID, service: [] } }]) {
       const down = xrpc({ [`GET plc.directory/${DID}`]: [answer], 'POST bsky.social/xrpc/com.atproto.server.createSession': [session()] });
       const egress = xrpc({});

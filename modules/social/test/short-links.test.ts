@@ -14,7 +14,7 @@ describe('short links (#706)', () => {
   });
 
   it('sends a Telegram button to the link of the post through its short link, and other buttons as they are (#1017)', () => {
-    const link = { target: 'https://shop.example/a?utm_source=telegram', url: 'https://crove.example/l/AbCdEfGhIjKl' };
+    const link = { target: 'https://shop.example/a?utm_source=telegram', url: 'https://ludy.example/l/AbCdEfGhIjKl' };
     const settings = { telegram: { pin: true, buttons: [[{ text: 'Mua ngay', url: link.target }], [{ text: 'Zalo', url: 'https://zalo.me/0901234567' }]] } };
     expect(shortenedSettings(settings, link)).toEqual({ telegram: { pin: true, buttons: [[{ text: 'Mua ngay', url: link.url }], [{ text: 'Zalo', url: 'https://zalo.me/0901234567' }]] } });
     const plain = { telegram: { silent: true } };
@@ -25,7 +25,7 @@ describe('short links (#706)', () => {
     // The short link's target is the link as sent (withShortLink stores the work's linkUrl, which withSentLink made).
     const post = 'https://shop.example/pho';
     const settings = { utm: { campaign: 'he' }, telegram: { buttons: [[{ text: 'Xem', url: post }]] } };
-    const url = 'https://crove.example/l/AbCdEfGhIjKl';
+    const url = 'https://ludy.example/l/AbCdEfGhIjKl';
     for (const body of ['Phở mới', `Phở mới ${post}`]) {
       const sent = sentLink('telegram', post, settings, body) as string;
       const out = shortenedSettings(sentSettings('telegram', settings, { plain: post, sent }), { target: sent, url });
@@ -34,15 +34,15 @@ describe('short links (#706)', () => {
   });
 
   it('sends the short link in place of the link, in the text too', () => {
-    const link = { target: 'https://shop.example/a?utm_source=facebook', url: shortUrl('https://crove.example/', 'AbCdEfGhIjKl') };
-    expect(link.url).toBe('https://crove.example/l/AbCdEfGhIjKl');
-    expect(shortened({ body: 'Xem tại https://shop.example/a?utm_source=facebook nhé', linkUrl: link.target }, link)).toEqual({ body: 'Xem tại https://crove.example/l/AbCdEfGhIjKl nhé', linkUrl: link.url });
+    const link = { target: 'https://shop.example/a?utm_source=facebook', url: shortUrl('https://ludy.example/', 'AbCdEfGhIjKl') };
+    expect(link.url).toBe('https://ludy.example/l/AbCdEfGhIjKl');
+    expect(shortened({ body: 'Xem tại https://shop.example/a?utm_source=facebook nhé', linkUrl: link.target }, link)).toEqual({ body: 'Xem tại https://ludy.example/l/AbCdEfGhIjKl nhé', linkUrl: link.url });
     expect(shortened({ body: 'Không có liên kết', linkUrl: null }, link)).toEqual({ body: 'Không có liên kết', linkUrl: null });
     // A longer link the target begins, and the target inside a word, stay as they are; the whole link, even in brackets
     // or before a full stop, is replaced.
-    const site = { target: 'https://shop.example', url: 'https://crove.example/l/AbCdEfGhIjKl' };
+    const site = { target: 'https://shop.example', url: 'https://ludy.example/l/AbCdEfGhIjKl' };
     expect(shortened({ body: 'Trang chủ https://shop.example. Bài https://shop.example/a và (https://shop.example) xhttps://shop.example', linkUrl: site.target }, site).body).toBe(
-      'Trang chủ https://crove.example/l/AbCdEfGhIjKl. Bài https://shop.example/a và (https://crove.example/l/AbCdEfGhIjKl) xhttps://shop.example',
+      'Trang chủ https://ludy.example/l/AbCdEfGhIjKl. Bài https://shop.example/a và (https://ludy.example/l/AbCdEfGhIjKl) xhttps://shop.example',
     );
   });
 });

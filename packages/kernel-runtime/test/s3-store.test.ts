@@ -70,7 +70,7 @@ function fakeStore(answer: (command: Command) => unknown, options: S3BlobStoreOp
       return answer(command);
     },
   } as unknown as S3Sender;
-  return { store: new S3BlobStore(client, 'crove-files', options), sent };
+  return { store: new S3BlobStore(client, 'ludy-files', options), sent };
 }
 
 const orgId = randomUUID();
@@ -90,8 +90,8 @@ describe('evidence holds with a mocked client (#1009)', () => {
     });
     await expect(store.holds.hold(ref, until)).resolves.toEqual(until);
     expect(sent.map((c) => c.constructor.name)).toEqual(['GetObjectRetentionCommand', 'PutObjectRetentionCommand']);
-    expect(sent[0]?.input).toEqual({ Bucket: 'crove-files', Key: key, VersionId: 'v1' });
-    expect(sent[1]?.input).toEqual({ Bucket: 'crove-files', Key: key, VersionId: 'v1', Retention: { Mode: 'GOVERNANCE', RetainUntilDate: until } });
+    expect(sent[0]?.input).toEqual({ Bucket: 'ludy-files', Key: key, VersionId: 'v1' });
+    expect(sent[1]?.input).toEqual({ Bucket: 'ludy-files', Key: key, VersionId: 'v1', Retention: { Mode: 'GOVERNANCE', RetainUntilDate: until } });
   });
 
   it('keeps a retention at least as long, and lengthens a shorter one without weakening COMPLIANCE', async () => {
@@ -134,7 +134,7 @@ describe('evidence holds with a mocked client (#1009)', () => {
     const on = fakeStore(() => ({ ObjectLockConfiguration: { ObjectLockEnabled: 'Enabled' } }));
     await expect(on.store.holds.available()).resolves.toBe(true);
     expect(on.sent[0]).toBeInstanceOf(GetObjectLockConfigurationCommand);
-    expect(on.sent[0]?.input).toEqual({ Bucket: 'crove-files' });
+    expect(on.sent[0]?.input).toEqual({ Bucket: 'ludy-files' });
     await expect(fakeStore(() => ({ ObjectLockConfiguration: {} })).store.holds.available()).resolves.toBe(false);
     const off = fakeStore(() => {
       throw s3Error('ObjectLockConfigurationNotFoundError', 404);
@@ -163,7 +163,7 @@ describe('S3BlobStore with a mocked client', () => {
     expect(sent).toHaveLength(1);
     expect(sent[0]).toBeInstanceOf(PutObjectCommand);
     expect(sent[0]?.input).toMatchObject({
-      Bucket: 'crove-files',
+      Bucket: 'ludy-files',
       Key: key,
       Body: bytes,
       ContentType: 'application/xml',
@@ -319,7 +319,7 @@ describe('S3BlobStore with a mocked client', () => {
     expect(failure).not.toBeInstanceOf(BlobNotFoundError);
     expect(failure).toMatchObject({ key, cause: denied });
     expect((failure as Error).message).toMatch(/s3:ListBucket/);
-    expect((failure as Error).message).toContain('crove-files');
+    expect((failure as Error).message).toContain('ludy-files');
   });
 
   it('deletes idempotently', async () => {
@@ -345,7 +345,7 @@ describe('retention delete on a versioned bucket (#2789)', () => {
     await store.delete(key, { retention: 'expire' });
     expect(names(sent)).toEqual(['PutObjectTaggingCommand', 'DeleteObjectCommand']);
     expect(sent[0]).toBeInstanceOf(PutObjectTaggingCommand);
-    expect(sent[0]?.input).toEqual({ Bucket: 'crove-files', Key: key, Tagging: { TagSet: [{ Key: RETENTION_TAG_KEY, Value: RETENTION_TAG_VALUE }] } });
+    expect(sent[0]?.input).toEqual({ Bucket: 'ludy-files', Key: key, Tagging: { TagSet: [{ Key: RETENTION_TAG_KEY, Value: RETENTION_TAG_VALUE }] } });
     expect([RETENTION_TAG_KEY, RETENTION_TAG_VALUE]).toEqual(['ludy-retention', 'expired']);
   });
 
@@ -549,7 +549,7 @@ describe('generations (ADR-0013)', () => {
     const slice = await store.getRange(key, 10, 20, 's3:v1');
     expect(slice).toEqual(bytes.subarray(10, 21));
     expect(sent[0]?.input).toMatchObject({
-      Bucket: 'crove-files',
+      Bucket: 'ludy-files',
       Key: key,
       VersionId: 'v1',
       Range: 'bytes=10-20',
@@ -627,7 +627,7 @@ describe('read caps that are not a whole number of bytes (#1189)', () => {
   });
 
   it('are refused by a staged read before any request', async () => {
-    const presigner = createS3Client({ bucket: 'crove-files', region: 'us-east-1', accessKeyId: 'k', secretAccessKey: 's' });
+    const presigner = createS3Client({ bucket: 'ludy-files', region: 'us-east-1', accessKeyId: 'k', secretAccessKey: 's' });
     const { store, sent } = fakeStore(() => ({ Body: body(bytes), ContentLength: bytes.byteLength }), { presigner });
     const staging = newStagingKey();
     for (const cap of BAD_CAPS) await expect(store.direct?.readStaged(staging, cap), String(cap)).rejects.toThrow(/invalid read cap/);
@@ -641,14 +641,14 @@ describe('staged reads (plan §7.6 step 2)', () => {
   it('streams the staged object through sha256', async () => {
     const half = bytes.byteLength >> 1;
     const { store } = fakeStore(() => ({ Body: body(bytes, [bytes.slice(0, half), bytes.slice(half)]), ContentLength: bytes.byteLength }), {
-      presigner: createS3Client({ bucket: 'crove-files', region: 'us-east-1', accessKeyId: 'k', secretAccessKey: 's' }),
+      presigner: createS3Client({ bucket: 'ludy-files', region: 'us-east-1', accessKeyId: 'k', secretAccessKey: 's' }),
     });
     const staged = await store.direct?.readStaged(staging, 1024);
     expect(staged).toEqual({ bytes, sha256 });
   });
 
   it('refuses more than the grant allows, by the declared length or while streaming', async () => {
-    const presigner = createS3Client({ bucket: 'crove-files', region: 'us-east-1', accessKeyId: 'k', secretAccessKey: 's' });
+    const presigner = createS3Client({ bucket: 'ludy-files', region: 'us-east-1', accessKeyId: 'k', secretAccessKey: 's' });
     const declared = fakeStore(() => ({ Body: body(bytes), ContentLength: bytes.byteLength }), { presigner });
     await expect(declared.store.direct?.readStaged(staging, bytes.byteLength - 1)).rejects.toBeInstanceOf(BlobTooLargeError);
     // A server that does not declare the length (or lies) is cut off at the cap.
@@ -657,7 +657,7 @@ describe('staged reads (plan §7.6 step 2)', () => {
   });
 
   it('reads only staging keys', async () => {
-    const presigner = createS3Client({ bucket: 'crove-files', region: 'us-east-1', accessKeyId: 'k', secretAccessKey: 's' });
+    const presigner = createS3Client({ bucket: 'ludy-files', region: 'us-east-1', accessKeyId: 'k', secretAccessKey: 's' });
     const { store, sent } = fakeStore(() => ({ Body: body(bytes) }), { presigner });
     await expect(store.direct?.readStaged(key, 1024)).rejects.toThrow(/invalid staging key/);
     await expect(store.direct?.readStaged(inboundKey(newInboundBlobId()), 1024)).rejects.toThrow(/invalid staging key/);
@@ -687,13 +687,13 @@ describe('staging sweep', () => {
     await expect(store.sweepStaging(before, 100)).resolves.toEqual({ deleted: 2, more: false });
     const lists = sent.filter((c) => c instanceof ListObjectsV2Command);
     expect(lists.map((c) => c.input)).toEqual([
-      { Bucket: 'crove-files', Prefix: 'staging/', MaxKeys: 100 },
-      { Bucket: 'crove-files', Prefix: 'staging/', MaxKeys: 96, ContinuationToken: 'next-1' },
+      { Bucket: 'ludy-files', Prefix: 'staging/', MaxKeys: 100 },
+      { Bucket: 'ludy-files', Prefix: 'staging/', MaxKeys: 96, ContinuationToken: 'next-1' },
     ]);
-    // Never a version delete: Crove holds no s3:DeleteObjectVersion and never removes a version of anything.
+    // Never a version delete: Ludy holds no s3:DeleteObjectVersion and never removes a version of anything.
     expect(sent.filter((c) => c instanceof DeleteObjectCommand).map((c) => c.input)).toEqual([
-      { Bucket: 'crove-files', Key: a },
-      { Bucket: 'crove-files', Key: d },
+      { Bucket: 'ludy-files', Key: a },
+      { Bucket: 'ludy-files', Key: d },
     ]);
   });
 
@@ -714,7 +714,7 @@ describe('staging sweep', () => {
 
 describe('presigned transfers (plan §7.6), signed offline', () => {
   const options = {
-    bucket: 'crove-files',
+    bucket: 'ludy-files',
     region: 'us-east-1',
     endpoint: 'https://s3.example.test',
     accessKeyId: 'AKIDEXAMPLE',
@@ -745,7 +745,7 @@ describe('presigned transfers (plan §7.6), signed offline', () => {
     const policy = JSON.parse(Buffer.from(form.fields.Policy ?? '', 'base64').toString('utf8')) as { expiration: string; conditions: unknown[] };
     expect(policy.conditions).toContainEqual(['content-length-range', 1, 25 * 1024 * 1024]);
     expect(policy.conditions).toContainEqual({ key: a });
-    expect(policy.conditions).toContainEqual({ bucket: 'crove-files' });
+    expect(policy.conditions).toContainEqual({ bucket: 'ludy-files' });
     // No tagging field: S3 refuses a form field the policy does not name, so a browser upload cannot set the retention tag (#2789).
     expect(Object.keys(form.fields).filter((k) => /tagging/i.test(k))).toEqual([]);
     expect(JSON.stringify(policy.conditions)).not.toMatch(/tagging/i);
@@ -772,7 +772,7 @@ describe('presigned transfers (plan §7.6), signed offline', () => {
     });
     if (!url) throw new Error('no presigned url');
     const parsed = new URL(url);
-    expect(parsed.pathname).toBe(`/crove-files/${key}`);
+    expect(parsed.pathname).toBe(`/ludy-files/${key}`);
     expect(parsed.searchParams.get('versionId')).toBe('3HL4kqtJlcpXroDTDmJ+rmSpXd3dIbrHY');
     expect(parsed.searchParams.get('X-Amz-Expires')).toBe(String(DOWNLOAD_TTL_SECONDS));
     expect(parsed.searchParams.get('response-content-disposition')).toBe(`attachment; filename*=UTF-8''${encodeURIComponent('hóa đơn.pdf')}`);
@@ -802,7 +802,7 @@ describe('presigned transfers (plan §7.6), signed offline', () => {
 // (Cloudflare R2 refuses presigned POST) still has to sign reads.
 describe('platform fetch URLs (#2192), signed offline', () => {
   const r2 = {
-    bucket: 'crove-files',
+    bucket: 'ludy-files',
     region: 'auto',
     endpoint: 'https://acc0unt.r2.cloudflarestorage.com',
     accessKeyId: 'AKIDEXAMPLE',
@@ -812,7 +812,7 @@ describe('platform fetch URLs (#2192), signed offline', () => {
     presign: false,
   };
   const file = { filename: 'anh bia.jpg', contentType: 'image/jpeg' };
-  const signer = () => createS3Client({ bucket: 'crove-files', region: 'auto', endpoint: 'https://acc0unt.r2.cloudflarestorage.com', accessKeyId: 'AKIDEXAMPLE', secretAccessKey: 'example-secret', forcePathStyle: true });
+  const signer = () => createS3Client({ bucket: 'ludy-files', region: 'auto', endpoint: 'https://acc0unt.r2.cloudflarestorage.com', accessKeyId: 'AKIDEXAMPLE', secretAccessKey: 'example-secret', forcePathStyle: true });
 
   it('exists with browser transfers off, and never offers a browser a write', () => {
     const store = S3BlobStore.connect(r2);
@@ -837,7 +837,7 @@ describe('platform fetch URLs (#2192), signed offline', () => {
     const url = await store.fetchUrls?.presign({ key, generation: 's3:3HL4kqtJlcpXroDTDmJ+rmSpXd3dIbrHY', sha256 }, file);
     const parsed = new URL(url ?? '');
     expect(parsed.hostname).toBe('acc0unt.r2.cloudflarestorage.com');
-    expect(parsed.pathname).toBe(`/crove-files/${key}`);
+    expect(parsed.pathname).toBe(`/ludy-files/${key}`);
     expect(parsed.searchParams.get('versionId')).toBe('3HL4kqtJlcpXroDTDmJ+rmSpXd3dIbrHY');
     expect(parsed.searchParams.get('X-Amz-Expires')).toBe(String(DOWNLOAD_TTL_SECONDS));
     expect(parsed.searchParams.get('X-Amz-Signature')).toMatch(/^[0-9a-f]{64}$/);
@@ -902,7 +902,7 @@ describe('platform fetch URLs (#2192), signed offline', () => {
         return { Body: body(bytes), ContentLength: bytes.byteLength };
       },
     } as unknown as S3Sender;
-    const store = new S3BlobStore(client, 'crove-files', { versioning: 'off', fetchSigner: signer() });
+    const store = new S3BlobStore(client, 'ludy-files', { versioning: 'off', fetchSigner: signer() });
     await store.fetchUrls?.presign({ key, generation: null, sha256 }, file);
     expect(seen).toBeInstanceOf(AbortSignal);
     expect(seen?.aborted).toBe(false);

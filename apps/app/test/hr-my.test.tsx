@@ -116,7 +116,7 @@ describe('HR self-service portal UI (#4300)', () => {
       employeeId: EMP_ID,
       displayName: 'Nguyễn Văn Tự Phục Vụ',
       legalEntityId: LE_ID,
-      legalEntityName: 'Công ty TNHH Crove',
+      legalEntityName: 'Công ty TNHH Ludy',
       departmentId: DEPT_ID,
       departmentName: 'Kỹ thuật',
       departmentManagerName: 'Trần Quản Lý',
@@ -224,7 +224,7 @@ describe('HR self-service portal UI (#4300)', () => {
       runId: RUN_ID,
       month: '2026-10',
       status: 'approved',
-      employerName: 'Công ty TNHH Crove',
+      employerName: 'Công ty TNHH Ludy',
       employeeName: 'Nguyễn Văn Tự Phục Vụ',
       figures: {
         gross: '20000000',

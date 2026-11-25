@@ -338,7 +338,7 @@ describe('TasksPage P3 SSR (#2593)', () => {
   });
 
   it('degrades smoothly when projects is omitted from modules OR returns MODULE_OFF (ADR-0053)', async () => {
-    // 1) CROVE_MODULES omits projects
+    // 1) LUDY_MODULES omits projects
     authState.modules = ['notes'];
     routerState.search = { project: P1 };
     seedTasksBase();
@@ -348,7 +348,7 @@ describe('TasksPage P3 SSR (#2593)', () => {
     expect(htmlNotInstalled).toContain('Kiểm tra sổ sách');
     expect(htmlNotInstalled).toContain('Việc độc lập');
 
-    // 2) CROVE_MODULES includes projects, but org switched projects off -> MODULE_OFF
+    // 2) LUDY_MODULES includes projects, but org switched projects off -> MODULE_OFF
     authState.modules = ['projects', 'notes'];
     routerState.search = { project: P1 };
     seedTasksBase();

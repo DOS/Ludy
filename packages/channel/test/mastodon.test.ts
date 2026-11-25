@@ -62,7 +62,7 @@ describe('Mastodon connect', () => {
     await expect(connectMastodon(login, instance({ [route]: [{ status: 401, body: { error: 'The access token is invalid' } }] }).fetchImpl)).rejects.toMatchObject({ code: 'MASTODON_TOKEN_REFUSED' });
     await expect(connectMastodon(login, instance({ [route]: [{ status: 404, body: {} }] }).fetchImpl)).rejects.toMatchObject({ code: 'MASTODON_NOT_AN_INSTANCE' });
     await expect(connectMastodon(login, instance({ [route]: [{ body: { hello: 'world' } }] }).fetchImpl)).rejects.toMatchObject({ code: 'MASTODON_NOT_AN_INSTANCE' });
-    // The egress guard refusing the address, or no answer: an instance Crove cannot reach.
+    // The egress guard refusing the address, or no answer: an instance Ludy cannot reach.
     const refused: Fetch = async () => Promise.reject(new Error('not a public address'));
     await expect(connectMastodon(login, refused)).rejects.toMatchObject({ kind: 'provider' });
   });

@@ -106,7 +106,7 @@ describe.skipIf(!config)('AI endpoint conformance', () => {
   });
 
   it.skipIf(!cfg.apiKey)('maps a wrong API key to an auth error', async () => {
-    const wrongKey = chatModel({ ...cfg, apiKey: 'crove-conformance-invalid-key' });
+    const wrongKey = chatModel({ ...cfg, apiKey: 'ludy-conformance-invalid-key' });
     const info = await failure(() => generateText({ model: wrongKey, prompt: 'ping', maxRetries: 0 }));
     expect(info).toMatchObject({ kind: 'auth', retryable: false });
   });
@@ -114,7 +114,7 @@ describe.skipIf(!config)('AI endpoint conformance', () => {
   // Required: an endpoint that answers any model name (some single-model servers do) could silently serve the wrong
   // model behind an alias, so it does not conform.
   it('maps an unknown model to a 4xx that is not retried', async () => {
-    const unknown = chatModel({ ...cfg, model: 'crove-conformance-no-such-model' });
+    const unknown = chatModel({ ...cfg, model: 'ludy-conformance-no-such-model' });
     const info = await failure(() => generateText({ model: unknown, prompt: 'ping', maxRetries: 0 }));
     expect(info.retryable, JSON.stringify(info)).toBe(false);
     expect(info.status).toBeGreaterThanOrEqual(400);

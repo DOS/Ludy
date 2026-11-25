@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { allowlistedFetch, ConnectorError, FacebookPageConnector, newOAuthAttempt, oauthStateHash, platformUserHash, type Fetch } from '../src/index.ts';
 
 const APP = { appId: '1234567890', appSecret: 'test-app-secret-not-real' };
-const REDIRECT = 'https://crove.example/channels/oauth/facebook_page/callback';
+const REDIRECT = 'https://ludy.example/channels/oauth/facebook_page/callback';
 
 interface Seen {
   url: URL;

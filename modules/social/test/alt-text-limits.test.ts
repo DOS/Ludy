@@ -30,7 +30,7 @@ describe('alt-text limits', () => {
 
   // The limits are copied from the adapters by hand (the contract runs in the browser, which does not load them); this
   // is where the two must agree (#1126). An adapter that starts or stops cutting alt text fails here until both follow.
-  it('matches the alt text each Crove adapter sends', () => {
+  it('matches the alt text each Ludy adapter sends', () => {
     expect(ALT_TEXT_LIMITS).toEqual({
       x: X_ALT_TEXT_MAX,
       facebook_page: FACEBOOK_ALT_TEXT_MAX,

@@ -16,14 +16,14 @@ import type {
 import { CredentialVault, DomainError, Runtime, SUBJECT_WRAP_INFO, SubjectVault, parseVaultKey } from '@ludy/kernel-runtime';
 import { hrCommands, hrManifest, hrQueries } from '../src/index.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 type PoolHandle = ReturnType<typeof createPool>;
 
 suite('hr.employee.contract_pdf sensitive query (#3548)', () => {
-  const dbName = `crove_test_hr_cpdf_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const dbName = `ludy_test_hr_cpdf_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let adminPool: PoolHandle;
   let appPool: PoolHandle;

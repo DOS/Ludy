@@ -19,7 +19,7 @@ describe('LocalDiskStore.list', () => {
   const exports: string[] = [];
 
   beforeAll(async () => {
-    root = await mkdtemp(join(tmpdir(), 'crove-blob-list-'));
+    root = await mkdtemp(join(tmpdir(), 'ludy-blob-list-'));
     store = new LocalDiskStore(root);
     for (let i = 0; i < 7; i++) {
       const key = inboundKey(newInboundBlobId());
@@ -107,7 +107,7 @@ describe('S3BlobStore.list', () => {
         };
       },
     } as unknown as S3Sender;
-    return { store: new S3BlobStore(client, 'crove-files'), sent };
+    return { store: new S3BlobStore(client, 'ludy-files'), sent };
   }
 
   it('lists page by page from the cursor and skips keys outside the pattern', async () => {
@@ -118,8 +118,8 @@ describe('S3BlobStore.list', () => {
       next: null,
     });
     expect(sent.map((command) => command.input)).toEqual([
-      { Bucket: 'crove-files', Prefix: 'inbound/', MaxKeys: 100 },
-      { Bucket: 'crove-files', Prefix: 'inbound/', MaxKeys: 97, ContinuationToken: 't1' },
+      { Bucket: 'ludy-files', Prefix: 'inbound/', MaxKeys: 100 },
+      { Bucket: 'ludy-files', Prefix: 'inbound/', MaxKeys: 97, ContinuationToken: 't1' },
     ]);
   });
 
@@ -128,7 +128,7 @@ describe('S3BlobStore.list', () => {
     const { store, sent } = fake([{ keys: [...keys, 'export/x'], next: 'more' }]);
     const page = await store.list('export/', keys[0] as string, 4);
     expect(page).toEqual({ blobs: keys.map((key) => ({ key, lastModified: when })), next: 'export/x' });
-    expect(sent[0]?.input).toEqual({ Bucket: 'crove-files', Prefix: 'export/', MaxKeys: 4, StartAfter: keys[0] });
+    expect(sent[0]?.input).toEqual({ Bucket: 'ludy-files', Prefix: 'export/', MaxKeys: 4, StartAfter: keys[0] });
   });
 
   it('never lists staging or org keys, whatever the server returns', async () => {
@@ -141,7 +141,7 @@ describe('S3BlobStore.list', () => {
     const keys = [tmpKey(org, sha256Hex('1')), tmpKey(randomUUID(), sha256Hex('2'))].sort();
     const { store, sent } = fake([{ keys: [keys[0], `tmp/${org}/not-a-hash`, fileKey(org, sha256Hex('3')), exportKey(org, sha256Hex('4')), newStagingKey(), keys[1]] }]);
     expect(await store.list('tmp/', null, 100)).toEqual({ blobs: keys.map((key) => ({ key, lastModified: when })), next: null });
-    expect(sent[0]?.input).toEqual({ Bucket: 'crove-files', Prefix: 'tmp/', MaxKeys: 100 });
+    expect(sent[0]?.input).toEqual({ Bucket: 'ludy-files', Prefix: 'tmp/', MaxKeys: 100 });
   });
 
   it('stops on an empty page that still claims more', async () => {

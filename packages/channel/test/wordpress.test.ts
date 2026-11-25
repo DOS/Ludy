@@ -97,7 +97,7 @@ describe('WordPress connect', () => {
     await expect(connectWordPress(login, site({ [ME]: [{ status: 404, body: '<html>Not found</html>' }] }).fetchImpl)).rejects.toMatchObject({ code: 'WORDPRESS_NO_REST_API' });
     await expect(connectWordPress(login, site({ [ME]: [{ body: '<!doctype html><title>Shop</title>' }] }).fetchImpl)).rejects.toMatchObject({ code: 'WORDPRESS_NO_REST_API' });
     await expect(connectWordPress(login, site({ [ME]: [{ status: 301, body: '' }] }).fetchImpl)).rejects.toMatchObject({ code: 'WORDPRESS_SITE_REDIRECTS' });
-    // The egress guard refusing the address, or no answer: a site Crove cannot reach.
+    // The egress guard refusing the address, or no answer: a site Ludy cannot reach.
     const refused: Fetch = async () => Promise.reject(new Error('not a public address'));
     await expect(connectWordPress(login, refused)).rejects.toMatchObject({ kind: 'provider' });
   });
@@ -346,13 +346,13 @@ describe('WordPress categories, tags, excerpt and status (#981)', () => {
     const result = await new WordPressPublisher(missing.fetchImpl).publish(wp({ categories: ['Tin tức'], tags: ['bánh mì'] }, [image('f1', null)]));
     expect(result).toEqual({ kind: 'rejected', error: 'bad_request', code: 'WORDPRESS_CATEGORY_NOT_FOUND', message: 'Tin tức' });
     expect(missing.calls.map((c) => c.route)).toEqual([CATEGORIES]);
-    // The same name under two parents: Crove cannot tell which one the person meant.
+    // The same name under two parents: Ludy cannot tell which one the person meant.
     const twice = site({ [CATEGORIES]: [{ body: [{ id: 5, name: 'Tin tức' }, { id: 6, name: 'Tin tức' }] }] });
     expect(await new WordPressPublisher(twice.fetchImpl).publish(wp({ categories: ['Tin tức'] }))).toMatchObject({ kind: 'rejected', error: 'bad_request', code: 'WORDPRESS_CATEGORY_AMBIGUOUS' });
     expect(twice.calls.some((c) => c.route === POSTS)).toBe(false);
   });
 
-  // An Author may publish and assign the site's categories but not create them (manage_categories), which is why Crove
+  // An Author may publish and assign the site's categories but not create them (manage_categories), which is why Ludy
   // never creates a category. WordPress core lets anyone who can assign tags create one (assign_post_tags, since 4.9.8);
   // a site whose roles were narrowed answers the create with 403 rest_cannot_create, recorded here.
   it('posts nothing when the site will not let the user create a tag, and takes a tag made meanwhile', async () => {

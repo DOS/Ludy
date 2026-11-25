@@ -47,15 +47,15 @@ describe('missing invoice mail (#669)', () => {
   });
 
   it('lists the invoices of the period and asks for a reply to the inbound address', () => {
-    const mail = renderMissingInvoiceMail(request, { replyTo: 'abc123@in.crove.example' });
-    expect(mail.replyTo).toBe('abc123@in.crove.example');
+    const mail = renderMissingInvoiceMail(request, { replyTo: 'abc123@in.ludy.example' });
+    expect(mail.replyTo).toBe('abc123@in.ludy.example');
     expect(mail.text).toContain('Kính gửi Quý công ty Công ty Người Mua Mẫu,');
     expect(mail.text).toContain('chưa nhận được 2 hóa đơn đầu vào dưới đây của tháng 9/2026');
     expect(mail.text).toContain(
       '1. Công ty TNHH Văn phòng phẩm Hồng Hà (MST 0101234564): hóa đơn số 9007, ký hiệu 1C26TAB, ngày 05/09/2026, tổng tiền 1.980.000 đồng',
     );
     expect(mail.text).toContain('2. Công ty TNHH Văn phòng phẩm Hồng Hà (MST 0101234564): hóa đơn số 9008, ký hiệu 1C26TAB, ngày 05/09/2026\n');
-    expect(mail.text).toContain('chuyển tiếp thư của người bán tới địa chỉ abc123@in.crove.example');
+    expect(mail.text).toContain('chuyển tiếp thư của người bán tới địa chỉ abc123@in.ludy.example');
     expect(mail.html).toContain('<td style="padding:6px 8px;border-bottom:1px solid #d0d7de;white-space:nowrap;text-align:right">1.980.000 đồng</td>');
   });
 

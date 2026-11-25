@@ -5,7 +5,7 @@ import { TikTokConnector, TikTokPublisher, TikTokRefresher, type Fetch, type Pub
 const APP = { clientKey: 'awtestclientkey01', clientSecret: 'test-tiktok-secret-not-real' };
 const OPEN_ID = '-000OpenIdOfTheCreator';
 const SECRET = JSON.stringify({ accessToken: 'act.token-1', refreshToken: 'rft.token-1' });
-const REDIRECT = 'https://crove.example/channels/oauth/tiktok/callback';
+const REDIRECT = 'https://ludy.example/channels/oauth/tiktok/callback';
 const UPLOAD = 'https://open-upload.tiktokapis.com/video/?upload_id=67890&upload_token=Xza123';
 const ok = { code: 'ok', message: '', log_id: 'log-1' };
 
@@ -124,12 +124,12 @@ describe('TikTokPublisher', () => {
       { fileId: 'f-1', mime: 'image/jpeg', sizeBytes: 4, altText: null },
       { fileId: 'f-2', mime: 'image/webp', sizeBytes: 4, altText: null },
     ];
-    const url = async (fileId: string) => `https://media.crove.example/${fileId}`;
+    const url = async (fileId: string) => `https://media.ludy.example/${fileId}`;
     const content = { body: 'Bộ ảnh bánh mới', title: null, linkUrl: 'https://tiembanh.example/', media: photos };
     expect(await new TikTokPublisher(APP, fetchImpl).publish(input({ content, mediaUrl: url, settings: { privacyLevel: 'PUBLIC_TO_EVERYONE', allowComments: true } }))).toEqual({ kind: 'pending', externalRef: 'p_pub_url~v2.123', checkAfterSeconds: 30 });
     expect(calls[1]?.body).toEqual({
       post_info: { description: 'Bộ ảnh bánh mới\n\nhttps://tiembanh.example/', privacy_level: 'PUBLIC_TO_EVERYONE', disable_comment: false, auto_add_music: false },
-      source_info: { source: 'PULL_FROM_URL', photo_cover_index: 0, photo_images: ['https://media.crove.example/f-1', 'https://media.crove.example/f-2'] },
+      source_info: { source: 'PULL_FROM_URL', photo_cover_index: 0, photo_images: ['https://media.ludy.example/f-1', 'https://media.ludy.example/f-2'] },
       post_mode: 'DIRECT_POST',
       media_type: 'PHOTO',
     });
@@ -277,10 +277,10 @@ describe('TikTokPublisher content disclosure', () => {
     });
     const content = { body: 'Bộ ảnh bánh mới', title: null, linkUrl: null, media: [{ fileId: 'f-1', mime: 'image/jpeg', sizeBytes: 4, altText: null }] };
     const settings = { privacyLevel: 'MUTUAL_FOLLOW_FRIENDS', tiktok: { commercial: true, yourBrand: true, brandedContent: true, aiGenerated: true } };
-    expect(await new TikTokPublisher(APP, fetchImpl).publish(input({ content, settings, mediaUrl: async (id) => `https://media.crove.example/${id}` }))).toMatchObject({ kind: 'pending', externalRef: 'p_pub_url~v2.201' });
+    expect(await new TikTokPublisher(APP, fetchImpl).publish(input({ content, settings, mediaUrl: async (id) => `https://media.ludy.example/${id}` }))).toMatchObject({ kind: 'pending', externalRef: 'p_pub_url~v2.201' });
     expect(calls[1]?.body).toEqual({
       post_info: { description: 'Bộ ảnh bánh mới', privacy_level: 'MUTUAL_FOLLOW_FRIENDS', disable_comment: true, auto_add_music: false, brand_content_toggle: true, brand_organic_toggle: true },
-      source_info: { source: 'PULL_FROM_URL', photo_cover_index: 0, photo_images: ['https://media.crove.example/f-1'] },
+      source_info: { source: 'PULL_FROM_URL', photo_cover_index: 0, photo_images: ['https://media.ludy.example/f-1'] },
       post_mode: 'DIRECT_POST',
       media_type: 'PHOTO',
       is_aigc: true,
@@ -385,12 +385,12 @@ describe('TikTokPublisher in inbox mode', () => {
   it('sends photos to the inbox with MEDIA_UPLOAD and their description only', async () => {
     const { fetchImpl, calls } = tiktok({ 'POST open.tiktokapis.com/v2/post/publish/content/init/': [{ body: { data: { publish_id: 'p_inbox_url~v2.1' }, error: ok } }] });
     const content = { body: 'Bộ ảnh bánh mới', title: null, linkUrl: null, media: [{ fileId: 'f-1', mime: 'image/jpeg', sizeBytes: 4, altText: null }] };
-    const result = await new TikTokPublisher(INBOX_APP, fetchImpl).publish(inbox({ content, mediaUrl: async (id) => `https://media.crove.example/${id}` }));
+    const result = await new TikTokPublisher(INBOX_APP, fetchImpl).publish(inbox({ content, mediaUrl: async (id) => `https://media.ludy.example/${id}` }));
     expect(result).toEqual({ kind: 'pending', externalRef: 'p_inbox_url~v2.1', checkAfterSeconds: 30 });
     expect(calls).toHaveLength(1);
     expect(calls[0]?.body).toEqual({
       post_info: { description: 'Bộ ảnh bánh mới' },
-      source_info: { source: 'PULL_FROM_URL', photo_cover_index: 0, photo_images: ['https://media.crove.example/f-1'] },
+      source_info: { source: 'PULL_FROM_URL', photo_cover_index: 0, photo_images: ['https://media.ludy.example/f-1'] },
       post_mode: 'MEDIA_UPLOAD',
       media_type: 'PHOTO',
     });
@@ -497,7 +497,7 @@ describe('TikTokPublisher.options (#1497)', () => {
     });
     expect(await new TikTokPublisher(APP, fetchImpl).options(ask())).toEqual({
       options: [
-        // The name kept without invisible marks; a level TikTok adds later is not listed until Crove knows it.
+        // The name kept without invisible marks; a level TikTok adds later is not listed until Ludy knows it.
         { id: 'nickname', name: 'Tiệm Bánh B' },
         { id: 'privacy_MUTUAL_FOLLOW_FRIENDS', name: 'MUTUAL_FOLLOW_FRIENDS' },
         { id: 'privacy_SELF_ONLY', name: 'SELF_ONLY' },

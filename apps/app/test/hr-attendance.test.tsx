@@ -306,7 +306,7 @@ describe('HR Stage 5C Attendance UI (#4447)', () => {
     ];
 
     cache.current.setQueryData(['me', 'get', {}], { orgs: [{ slug: 'demo-org', role: 'admin' }] });
-    cache.current.setQueryData(['legalEntities', 'list', {}], [{ id: leId, name: 'Công ty TNHH Crove', isDefault: true }]);
+    cache.current.setQueryData(['legalEntities', 'list', {}], [{ id: leId, name: 'Công ty TNHH Ludy', isDefault: true }]);
     cache.current.setQueryData(['hr', 'attendance', 'list', { month, anomaliesOnly: false }], adminList);
     cache.current.setQueryData(['hr', 'payroll', 'employees', 'list', {}], employees);
     cache.current.setQueryData(['hr', 'payroll', 'runs', 'list', { limit: 60 }], runs);

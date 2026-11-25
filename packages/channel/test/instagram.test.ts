@@ -6,7 +6,7 @@ import { InstagramConnector, InstagramPublisher, platformUserHash, type Fetch, t
 const APP = { appId: '1234567890', appSecret: 'test-app-secret-not-real' };
 const IG = '17841400000000001';
 const SECRET = JSON.stringify({ accessToken: 'page-token-1', pageId: '111' });
-const REDIRECT = 'https://crove.example/channels/oauth/instagram/callback';
+const REDIRECT = 'https://ludy.example/channels/oauth/instagram/callback';
 
 // Answers per "METHOD /path" in order; records every call with its form.
 function graph(routes: Record<string, { status?: number; body: unknown }[]>) {
@@ -341,7 +341,7 @@ describe('InstagramPublisher', () => {
     expect(await sent({ instagram: { reelFeed: 'trial' } })).toEqual({ media_type: 'REELS', video_url: url, trial_params: '{"graduation_strategy":"MANUAL"}', caption: 'Khai trương!' });
     expect(await sent({ instagram: { reelFeed: 'trial', trialGraduation: 'manual' } })).toEqual({ media_type: 'REELS', video_url: url, trial_params: '{"graduation_strategy":"MANUAL"}', caption: 'Khai trương!' });
     expect(await sent({ instagram: { reelFeed: 'trial', trialGraduation: 'performance' } })).toEqual({ media_type: 'REELS', video_url: url, trial_params: '{"graduation_strategy":"SS_PERFORMANCE"}', caption: 'Khai trương!' });
-    // The same on a Reel whose bytes Crove uploads (#772), with collaborators.
+    // The same on a Reel whose bytes Ludy uploads (#772), with collaborators.
     const noUrls = { mediaUrl: async () => null, readMedia: async () => new Uint8Array(16) };
     expect(await sent({ instagram: { reelFeed: 'reels_only' }, collaborators: ['partner'] }, noUrls)).toEqual({ media_type: 'REELS', upload_type: 'resumable', share_to_feed: 'false', caption: 'Khai trương!', collaborators: '["partner"]' });
     expect(await sent({ instagram: { reelFeed: 'trial', trialGraduation: 'performance' } }, noUrls)).toEqual({ media_type: 'REELS', upload_type: 'resumable', trial_params: '{"graduation_strategy":"SS_PERFORMANCE"}', caption: 'Khai trương!' });

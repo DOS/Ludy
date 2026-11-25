@@ -18,7 +18,7 @@ describe('LocalDiskStore', () => {
   const filesNextTo = async (key: string) => readdir(dirname(join(root, key)));
 
   beforeAll(async () => {
-    root = await mkdtemp(join(tmpdir(), 'crove-local-store-'));
+    root = await mkdtemp(join(tmpdir(), 'ludy-local-store-'));
     store = new LocalDiskStore(root);
   });
 
@@ -167,7 +167,7 @@ describe('LocalDiskStore', () => {
   });
 
   it('sweeps temporary files older than the cutoff and nothing else', async () => {
-    const sweepRoot = await mkdtemp(join(tmpdir(), 'crove-local-sweep-'));
+    const sweepRoot = await mkdtemp(join(tmpdir(), 'ludy-local-sweep-'));
     try {
       const sweeper = new LocalDiskStore(sweepRoot);
       const blob = encode('raw');

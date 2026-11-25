@@ -23,7 +23,7 @@ describe('EDIT_READY and editRefusal (#1223)', () => {
     expect(editRefusal('facebook_page', { postType: 'story' }, ['image'])).toBe('post_type');
     expect(editRefusal('facebook_page', { postType: 'reel' }, ['video'])).toBe('post_type');
     expect(editRefusal('facebook_page', {}, ['video'])).toBe('video');
-    // A Zalo video article (#1429, #1430): its update needs the video_id, which Crove does not keep. An article of
+    // A Zalo video article (#1429, #1430): its update needs the video_id, which Ludy does not keep. An article of
     // images is corrected.
     expect(editRefusal('zalo_oa', {}, ['video'])).toBe('video');
     expect(editRefusal('zalo_oa', {}, ['image', 'image'])).toBeNull();
