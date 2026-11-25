@@ -3810,7 +3810,7 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
     },
   },
   // #4967 (meetings weekly digest): a member's own opt-in to the weekly digest of their meetings (a time of day on Monday, their zone and language), one row per member, read, written and deleted by that member
-  // alone, so the system context reads none. No UPDATE for a login role. Its factory lands before the table (PENDING_TABLES).
+  // alone, so the system context reads none. The member's own upsert (meetings.weekly.set) updates their row, guarded by the own-row policy (user_id = the member). Its table landed in #4967 (step 1), which removed it from PENDING_TABLES.
   'crove_meetings.weekly_notice': {
     noInsertControl: 'one row per member (UNIQUE (org_id, user_id)); a member inserts their own, through meetings.weekly.set (meetings-weekly.db.test.ts tests it)',
     make: (o) => ({

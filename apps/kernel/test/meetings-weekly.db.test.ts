@@ -134,15 +134,16 @@ suite("the opt-in weekly notice of the week's meetings (#4967)", () => {
     const registry = { commands: [...kernelCommands, ...meetingsCommands], queries: [...kernelQueries({ inboundDomain: null }), ...meetingsQueries] };
     runtime = new Runtime(createDb(appPool), { manifests: TEST_MANIFESTS }).register(registry);
     worker = new Runtime(workerDb, { manifests: TEST_MANIFESTS }).register(registry);
-    for (const key of ['owner', 'rec', 'lan', 'ltd', 'other', 'muted', 'odd', 'gone', 'disabled', 'late', 'early', 'sunday', 'sweepy', 'big', 'quiet']) {
+    for (const key of ['owner', 'rec', 'lan', 'ltd', 'other', 'muted', 'odd', 'gone', 'disabled', 'late', 'early', 'sunday', 'sweepy', 'big', 'quiet', 'hid', 'hidltd']) {
       users[key] = await upsertIdentity(createDb(appPool), { issuer: 'weekly', subject: key, email: `${key}@weekly.test`, name: key });
     }
     orgId = (await createOrg(runtime, asUser('owner'), 'Công ty Tổng Kết Tuần')).orgId;
-    const members = ['rec', 'lan', 'ltd', 'other', 'muted', 'odd', 'gone', 'disabled', 'late', 'early', 'sunday', 'sweepy', 'big', 'quiet'];
+    const members = ['rec', 'lan', 'ltd', 'other', 'muted', 'odd', 'gone', 'disabled', 'late', 'early', 'sunday', 'sweepy', 'big', 'quiet', 'hid', 'hidltd'];
     await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) SELECT $1, u, 'member' FROM unnest($2::uuid[]) u`, [orgId, members.map((m) => users[m])]);
     // ltd reads one legal entity only (the scope enter_context seals for a member whose only assignments name an entity), so an org-visible meeting is not theirs.
     const branch = (await sqlAdmin<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id`, [orgId, users.owner])).rows[0]?.id;
     await sqlAdmin(`INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [orgId, users.ltd, branch, users.owner]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [orgId, users.hidltd, branch, users.owner]);
     // The Monday: the latest one at 01:30 UTC (08:30 in Vietnam) that is not more than a day ahead of now.
     AT = (await sqlAdmin<{ at: string }>(`SELECT to_char(date_trunc('week', now() AT TIME ZONE 'UTC') + interval '90 minutes', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS at`)).rows[0]?.at ?? '';
     AT_DAY = AT.slice(0, 10);
@@ -321,6 +322,8 @@ suite("the opt-in weekly notice of the week's meetings (#4967)", () => {
     expect(await due('disabled')).not.toBeNull();
     // Left the org: the membership row goes (its trigger deletes the setting too).
     await sqlAdmin(`DELETE FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2`, [orgId, users.gone]);
+    // The setting goes with the membership (a trigger), so a member who comes back finds the switch off.
+    expect((await sqlAdmin(`SELECT 1 FROM ludy_meetings.weekly_notice WHERE org_id = $1 AND user_id = $2`, [orgId, users.gone])).rowCount).toBe(0);
     expect(await due('gone')).toBeNull();
     // A disabled account.
     await sqlAdmin(`UPDATE ludy_kernel.user_account SET disabled_at = now() WHERE id = $1`, [users.disabled]);
@@ -342,6 +345,40 @@ suite("the opt-in weekly notice of the week's meetings (#4967)", () => {
     expect(await runMeetingsWeeklySweep({ runtime: worker, workerDb, at: AT })).toMatchObject({ found: 0, sent: 0, failures: 0 });
     // The worker's own clock reads the real week: it finds nothing wrong, whatever day it is.
     expect((await runMeetingsWeeklySweep({ runtime: worker, workerDb })).failures).toBe(0);
+  });
+
+  it('reads a task the way the member\'s own row security shows it: one in another legal entity or in a private project they are not part of is absent, so its item counts as open, as on the card', async () => {
+    // A closed task of another legal entity, a closed task of a private project the owner runs, and an item with no task, all on one meeting that hid (the whole org) and hidltd (one entity) read.
+    const branch2 = (await sqlAdmin<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh hai', 'branch', $2) RETURNING id`, [orgId, users.owner])).rows[0]?.id;
+    const project = (await sqlAdmin<{ id: string }>(`INSERT INTO ludy_projects.project (org_id, name, visibility, owner_user_id, created_by) VALUES ($1, 'Dự án riêng', 'private', $2, $2) RETURNING id`, [orgId, users.owner])).rows[0]?.id;
+    const task = async (title: string, over: { entity?: string; project?: string }) => {
+      const id = randomUUID();
+      await sqlAdmin(`INSERT INTO ludy_kernel.task (org_id, id, title, source, created_by_type, status, legal_entity_id) VALUES ($1, $2, $3, 'human', 'system', 'done', $4)`, [orgId, id, title, over.entity ?? null]);
+      if (over.project) await sqlAdmin(`INSERT INTO ludy_projects.project_task (org_id, project_id, task_id, added_by) VALUES ($1, $2, $3, $4)`, [orgId, over.project, id, users.owner]);
+      return id;
+    };
+    const m = await meeting('Họp có việc ở nơi khác', 1, 'rec', ['hid', 'hidltd']);
+    await result(m, ['Quyết định chung'], 'published');
+    const itemOf = async (title: string, taskId: string | null) =>
+      sqlAdmin(
+        `INSERT INTO ludy_meetings.action_item (org_id, id, meeting_id, title, who_drafted, who_parsed, when_drafted, stage, status, task_id, tainted, transcript_seconds) VALUES ($1, $2, $3, $4, 'Lan', $5, 'thứ sáu', 'published', $6, $7, false, 10)`,
+        [orgId, randomUUID(), m, title, users.lan, taskId === null ? 'suggested' : 'accepted', taskId],
+      );
+    await itemOf('Việc của chi nhánh hai', await task('Việc chi nhánh hai', { entity: branch2 as string }));
+    await itemOf('Việc trong dự án riêng', await task('Việc dự án riêng', { project: project as string }));
+    await itemOf('Việc chưa có task', null);
+    for (const who of ['hid', 'hidltd']) await sqlAdmin(`INSERT INTO ludy_meetings.weekly_notice (org_id, user_id, send_minute, time_zone, language) VALUES ($1, $2, 480, $3, 'vi')`, [orgId, users[who], ZONE]);
+    // The card, as each member reads it: the whole-org member sees the other entity's closed task (so it is not open) but not the private project's (so it is); the one-entity member sees neither.
+    const titles = async (who: string) => (await facts(who)).meetings.flatMap((x) => x.items.map((i) => i.title)).sort();
+    expect(await titles('hid')).toEqual(['Việc chưa có task', 'Việc trong dự án riêng']);
+    expect(await titles('hidltd')).toEqual(['Việc chưa có task', 'Việc của chi nhánh hai', 'Việc trong dự án riêng']);
+    for (const who of ['hid', 'hidltd']) {
+      const row = await due(who);
+      expect(row, who).not.toBeNull();
+      expect(row && numbersOf(row), who).toEqual(await cardNumbers(who));
+    }
+    expect(numbersOf((await due('hid'))!)).toMatchObject({ meetings: 1, decisions: 1, open: 2 });
+    expect(numbersOf((await due('hidltd'))!)).toMatchObject({ meetings: 1, decisions: 1, open: 3 });
   });
 
   it('sends nothing for an org that is closing', async () => {

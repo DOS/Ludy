@@ -11,6 +11,8 @@
 --   meetings, of published decisions, of open items and of overdue ones, whether a limit cut them, and the language. No title, no id of a meeting, no text, no jsonb (a definer returns no text to the worker).
 --   It leaves out a member who left the org, a disabled account, an org with Meetings off, an org that is not active (offboarding), a member who muted the kind, a member already told for that Monday (the notice's own key,
 --   'weekly:<monday>', which is also what makes a second dispatch write nothing), and a week with nothing L9 would show.
+-- A task's status is read the way the member's own row security shows it (the card reads tasks as the member): a task outside their legal-entity scope or in a private project they are not part of is treated as absent,
+-- so the numbers never tell a member whether a task they cannot read was closed or is overdue.
 -- The limits are L9's (50 meetings, 30 decisions and 30 open items in all, newest meeting first, 100 items of one meeting): counts that were cut say so, so the mail can say "at least".
 -- p_now is the instant the rule is read at (the clock when it is NULL, which is all the sweep ever passes): it lets the tests read the week at a Monday. It names no row and widens nothing: the function is
 -- worker-only, and the one command that calls it with an instant runs only in the system's context.
@@ -114,7 +116,7 @@ LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS 
   readable AS (
     -- The meetings L9 would list for this member (days = 7): readable, started in the last seven days, not past the text date, with a published result or a published action item; newest first, one more
     -- than the limit is ranked so a cut is known.
-    SELECT s.org_id, s.user_id, s.day, s.language, s.time_zone, mt.id AS meeting_id,
+    SELECT s.org_id, s.user_id, s.day, s.language, s.time_zone, s.whole_org, mt.id AS meeting_id,
            pg_catalog.row_number() OVER (PARTITION BY s.org_id, s.user_id ORDER BY mt.started_at DESC, mt.id) AS rn
     FROM scoped s
     JOIN ludy_meetings.meeting mt ON mt.org_id = s.org_id
@@ -144,6 +146,16 @@ LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS 
              SELECT pg_catalog.count(*)
              FROM ludy_meetings.action_item i
              LEFT JOIN ludy_kernel.task t ON t.org_id = i.org_id AND t.id = i.task_id
+             -- Only a task the member's own row security shows them (the task policies le_scope and private_project_scope): one they cannot see is absent, so its item counts as open, as it does on the card.
+             AND (t.legal_entity_id IS NULL OR r.whole_org OR EXISTS (SELECT 1 FROM ludy_kernel.role_assignment ra WHERE ra.org_id = t.org_id AND ra.user_id = r.user_id AND ra.legal_entity_id = t.legal_entity_id))
+             AND NOT EXISTS (
+               SELECT 1 FROM ludy_projects.project_task pt
+               JOIN ludy_projects.project pr ON pr.org_id = pt.org_id AND pr.id = pt.project_id
+               WHERE pt.org_id = t.org_id AND pt.task_id = t.id AND pr.visibility <> 'org'
+                 AND pr.owner_user_id IS DISTINCT FROM r.user_id
+                 AND NOT EXISTS (SELECT 1 FROM ludy_projects.project_member pm WHERE pm.org_id = pr.org_id AND pm.project_id = pr.id AND pm.user_id = r.user_id)
+                 AND NOT EXISTS (SELECT 1 FROM ludy_kernel.tenant_member tm WHERE tm.org_id = t.org_id AND tm.user_id = r.user_id AND tm.role IN ('owner', 'admin'))
+             )
              WHERE i.org_id = r.org_id AND i.meeting_id = r.meeting_id AND i.stage = 'published'
                AND (t.status IS NULL OR t.status IN ('todo', 'in_progress', 'waiting', 'in_review'))
            ), 0))::integer AS o,
@@ -152,6 +164,16 @@ LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS 
              SELECT pg_catalog.count(*)
              FROM ludy_meetings.action_item i
              LEFT JOIN ludy_kernel.task t ON t.org_id = i.org_id AND t.id = i.task_id
+             -- Only a task the member's own row security shows them (the task policies le_scope and private_project_scope): one they cannot see is absent, so its item counts as open, as it does on the card.
+             AND (t.legal_entity_id IS NULL OR r.whole_org OR EXISTS (SELECT 1 FROM ludy_kernel.role_assignment ra WHERE ra.org_id = t.org_id AND ra.user_id = r.user_id AND ra.legal_entity_id = t.legal_entity_id))
+             AND NOT EXISTS (
+               SELECT 1 FROM ludy_projects.project_task pt
+               JOIN ludy_projects.project pr ON pr.org_id = pt.org_id AND pr.id = pt.project_id
+               WHERE pt.org_id = t.org_id AND pt.task_id = t.id AND pr.visibility <> 'org'
+                 AND pr.owner_user_id IS DISTINCT FROM r.user_id
+                 AND NOT EXISTS (SELECT 1 FROM ludy_projects.project_member pm WHERE pm.org_id = pr.org_id AND pm.project_id = pr.id AND pm.user_id = r.user_id)
+                 AND NOT EXISTS (SELECT 1 FROM ludy_kernel.tenant_member tm WHERE tm.org_id = t.org_id AND tm.user_id = r.user_id AND tm.role IN ('owner', 'admin'))
+             )
              WHERE i.org_id = r.org_id AND i.meeting_id = r.meeting_id AND i.stage = 'published'
                AND (t.status IS NULL OR t.status IN ('todo', 'in_progress', 'waiting', 'in_review'))
                AND COALESCE((t.due AT TIME ZONE 'Asia/Ho_Chi_Minh')::date, i.when_parsed) < (COALESCE(p_now, pg_catalog.now()) AT TIME ZONE 'Asia/Ho_Chi_Minh')::date
