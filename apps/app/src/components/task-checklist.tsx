@@ -323,7 +323,9 @@ export function TaskChecklistSection({
     }
     if (revision !== prevPropRevisionRef.current && !update.isPending) {
       prevPropRevisionRef.current = revision;
-      revisionRef.current = revision;
+      if (revision === undefined || revisionRef.current === undefined || revision > revisionRef.current) {
+        revisionRef.current = revision;
+      }
     }
   }, [checklist, revision, update.isPending]);
 
