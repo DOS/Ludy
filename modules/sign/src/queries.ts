@@ -40,7 +40,7 @@ import {
 } from './meeting-visibility.ts';
 import type { SignFieldForSeal, SignSignerForSeal } from './sealing.ts';
 import { SIGN_PRE_EXPIRY_REMIND_MAIL_SOURCE } from './sign-mail.ts';
-import { SIGN_WRITERS, parseDetectedTags, parseFieldOptions, parseSharedSummary } from './shared.ts';
+import { SIGN_WRITERS, parseDetectedTags, parseFieldOptions, parsePageDimensions, parseSharedSummary } from './shared.ts';
 import { signVaultQueries } from './vault.ts';
 
 const READERS: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -522,7 +522,7 @@ export const envelopeGet = defineQuery({
             inspectStatus: d.inspect_status,
             inspectError: d.inspect_error,
             pageCount: d.page_count,
-            pageDimensions: parseEventPayload(d.page_dimensions_json),
+            pageDimensions: parsePageDimensions(d.page_dimensions_json),
             detectedTags: parseDetectedTags(d.detected_tags_json, d.page_count),
             sizeBytes: Number.isFinite(Number(d.size_bytes)) ? Number(d.size_bytes) : null,
             createdAt: new Date(d.created_at).toISOString(),
@@ -545,7 +545,7 @@ export const envelopeGet = defineQuery({
                 inspectStatus: env.inspect_status,
                 inspectError: env.inspect_error,
                 pageCount: env.page_count,
-                pageDimensions: parseEventPayload(env.page_dimensions_json),
+                pageDimensions: parsePageDimensions(env.page_dimensions_json),
                 detectedTags: parseDetectedTags(env.detected_tags_json, env.page_count),
                 sizeBytes: baseFile && Number.isFinite(Number(baseFile.size_bytes)) ? Number(baseFile.size_bytes) : null,
                 createdAt: new Date(env.created_at).toISOString(),
@@ -570,7 +570,7 @@ export const envelopeGet = defineQuery({
         inspectStatus: env.inspect_status,
         inspectError: env.inspect_error,
         pageCount: env.page_count,
-        pageDimensions: parseEventPayload(env.page_dimensions_json),
+        pageDimensions: parsePageDimensions(env.page_dimensions_json),
         detectedTags: parseDetectedTags(env.detected_tags_json, env.page_count),
         shareSummaryWithSigners: Boolean(env.share_summary_with_signers),
         sharedSummary: parseSharedSummary(env.shared_summary_json, env.page_count),
