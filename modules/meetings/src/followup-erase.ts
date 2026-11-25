@@ -5,10 +5,14 @@
 // The mail table lets a payload only be dropped (never changed): the guard trigger refuses any other change, and the tenant role holds UPDATE on the column for exactly this.
 // A mail still queued then fails to render (the queue records TEMPLATE_DATA) rather than send the text of a meeting that no longer exists.
 import { sql } from 'kysely';
-import { FOLLOWUP_MAIL_SOURCE } from '@ludy/kernel-contract';
+import { FOLLOWUP_MAIL_SOURCE, TRACKER_ALERT_MAIL_SOURCE } from '@ludy/kernel-contract';
 import type { QueryContext } from '@ludy/kernel-runtime';
 
 type Ctx = { trx: QueryContext['trx']; orgId: string };
+
+// The mail sources whose payload copies a meeting's text or what it holds, and so goes with the meeting: the follow-up mail (#3016) and the tracked-word alert (#5012: its payload holds the count of
+// words found in the meeting, the meeting's link and the org's name, until the generic mail retention ends it). The alert mail is queued by the alert job under the same lock (tracker-alerts.ts).
+const MEETING_COPY_MAIL_SOURCES = [FOLLOWUP_MAIL_SOURCE, TRACKER_ALERT_MAIL_SOURCE];
 
 /** The lock one meeting's follow-up send and the drop below share: a send running while the meeting is deleted either finishes first (its mails are then seen and dropped) or
  * waits and finds the meeting gone, so no mail with the text outlives the delete. Held to the end of the transaction. The id is lowercased, as the database writes a uuid, so an upper case id of a command input takes the same lock. */
@@ -16,14 +20,14 @@ export async function lockFollowup(ctx: Ctx, meetingId: string): Promise<void> {
   await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`meetings.followup:${ctx.orgId}:${meetingId.toLowerCase()}`}, 0))`.execute(ctx.trx);
 }
 
-/** Drops the payload and the subject of every follow-up mail of the meeting (the recorder can type meeting content into the subject); answers how many mails were changed (a count for the audit row, never text). */
+/** Drops the payload and the subject of every follow-up mail and every tracked-word alert mail of the meeting (the recorder can type meeting content into a follow-up subject); answers how many mails were changed (a count for the audit row, never text). */
 export async function dropFollowupPayloads(ctx: Ctx, meetingId: string): Promise<number> {
   await lockFollowup(ctx, meetingId);
   const result = await ctx.trx
     .updateTable('ludy_kernel.mail_message')
     .set({ payload: null, subject: null })
     .where('org_id', '=', ctx.orgId)
-    .where('source', '=', FOLLOWUP_MAIL_SOURCE)
+    .where('source', 'in', MEETING_COPY_MAIL_SOURCES)
     .where('source_id', '=', meetingId)
     .where((eb) => eb.or([eb('payload', 'is not', null), eb('subject', 'is not', null)]))
     .executeTakeFirst();
