@@ -96,6 +96,8 @@ const CLASSES: Record<string, { app: string; gate: Gate; why: string }> = {
   // #4723 (eSign Slice 6d): ludy_sign.public_deposit_qr_source and public_record_deposit_notice enforce org_app_on + entitlement -> opaque 404.
   '/api/sign/deposit-qr': { app: 'sign', gate: 'sql', why: 'crove_sign.public_deposit_qr_source checks org_app_on + entitlement -> 404 (#4723)' },
   '/api/sign/deposit-notice': { app: 'sign', gate: 'sql', why: 'crove_sign.public_record_deposit_notice checks org_app_on + entitlement -> 404 (#4723)' },
+  // #4822 (meetings, minutes link for outsiders): step 0 pre-registration; the PR that adds the route moves it from 'pending' to 'sql' (ludy_meetings.minutes_link_view gates org_app_on and the org's switch, opaque 404).
+  '/api/minutes/view': { app: 'meetings', gate: 'pending', why: '#4822 (published minutes link pre-registration; gated in SQL via the minutes_link_view definer + org_app_on + the org switch -> 404)' },
 };
 
 // The paths of the two lists of route-coverage.test.ts: a key at the start of a line inside `const PUBLIC` or `const PENDING`. A line at the key indent that

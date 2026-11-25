@@ -4384,6 +4384,16 @@ export const en = {
       },
       chip: '{title}, {date}, {time}',
     },
+    askThis: {
+      label: 'Ask about this meeting',
+      placeholder: 'For example: What price did customer A agree to?',
+      hint: 'Vy reads only the transcript lines of this meeting that you can read (up to 40 lines), sent to the AI provider of this system. The answer is shown only to you and is not saved.',
+      submitSearch: 'Search this transcript',
+      plainNote: 'Without Vy, this box lists the lines of this meeting that hold the main words of your question.',
+      none: 'Nothing found in the transcript of this meeting',
+      private: 'Only you see this answer and it is not saved. Press the time under each sentence to open the transcript line and check it, especially figures and names.',
+      open: 'Open the transcript at {time}',
+    },
     // "This week" on the meetings page (#3949): the decisions and open items of the meetings the member reads, and Vy's few sentences on a click.
     // The week's meeting load (#4770): worked out in code from the meetings the viewer reads, no AI.
     load: {
@@ -4784,6 +4794,13 @@ export const en = {
       draftTitle: 'Draft transcript',
       draftNote: 'Only you see this draft. Check it and correct a line where the speech was misheard; nothing is shared with the other attendees from here.',
       publishedNote: 'The transcript the recorder shared with the meeting.',
+      // Download the transcript as a file (#4817).
+      export: {
+        label: 'Download the transcript',
+        txt: 'Text (.txt)',
+        srt: 'Captions (.srt)',
+        note: 'Made on the server from the lines you can read here. No AI.',
+      },
       platformSource: 'The {platform} transcript: written by the platform, not by Ludy.',
       // The platform said it cut the transcript, or sent more lines than a draft holds (#3922); the next line is the guess for a transcript imported before that was kept.
       platformCutKnown: 'The {platform} transcript was longer than Ludy can import, so only the first part is here.',
@@ -4866,6 +4883,7 @@ export const en = {
       text: 'What was said',
       edit: 'Correct',
       editLine: 'Correct the line at {time}',
+      seekTo: 'Move the recording to {time}',
       save: 'Save',
       cancel: 'Cancel',
       corrected: 'Corrected',
@@ -5591,6 +5609,8 @@ export const en = {
       aiOffCardTitle: 'Artificial Intelligence (AI) is off',
       aiOffCardDesc: 'This meeting only stores encrypted audio and video files. AI transcription and summarization are not enabled for this meeting.',
       audioPlayerTitle: 'Audio recording (Decrypted)',
+      playbackSpeed: 'Playback speed',
+      seekedTo: 'Recording moved to {time}.',
       videoPlayerTitle: 'Video recording (Decrypted)',
       consentRecord: 'Recording consent record',
       readersTitle: 'Meeting readers ({count})',
@@ -16619,6 +16639,7 @@ export const en = {
       NOTE_IMPORT_UNSAFE_XML: 'This Evernote file contains disallowed XML declarations (DTD/XXE/entities) and was blocked.',
       NOTE_IMPORT_EMPTY: 'This import file contains no notes or tasks to import.',
       MEETING_NOT_FOUND: 'Meeting not found.',
+      TRANSCRIPT_EXPORT_EMPTY: 'There is no transcript to download yet.',
       AGENDA_NOT_FOUND: 'That event is not in your calendar any more.',
       AGENDA_MEETING_LINKED: 'This meeting is already linked to a calendar event.',
       AGENDA_EVENT_LINKED: 'That event is already linked to another meeting. Remove the old link first.',
@@ -19541,6 +19562,7 @@ export const en = {
         cancel: 'Stop Vy transcribing your meeting',
         copy_result: 'Copy Vy\'s transcription into the draft transcript',
         correct: 'Correct a line of the draft transcript',
+        download: 'Download the transcript of a meeting as a text or caption file',
         draft_store: 'Store the draft transcript of a meeting',
         get: 'Read the transcript of a meeting',
         redact: 'Hide confirmed personal data in the draft meeting text',
