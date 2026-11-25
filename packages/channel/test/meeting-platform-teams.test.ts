@@ -235,6 +235,48 @@ describe('TeamsMeetingPlatform.list', () => {
     expect(await codeOf(teams(graph({ '/v1.0/me/calendarView': { text: 'not json at all' } })).adapter.list(CREDENTIAL, SINCE))).toBe('platform_unavailable');
   });
 
+  it('follows the next page of the recordings and the transcripts of a meeting, so a long series is read whole, refuses a link that leaves Graph or the path, and stops at five pages', async () => {
+    const base = `https://graph.microsoft.com/v1.0/me/onlineMeetings/${IDS.SSSS}`;
+    const split = (kind: 'recordings' | 'transcripts', first: number, link: string = `${base}/${kind}?page=2`) => {
+      const all = (fixture(`${kind}-series`).value as unknown[]) ?? [];
+      return (url: URL): Answer | null => {
+        if (url.pathname !== `/v1.0/me/onlineMeetings/${IDS.SSSS}/${kind}`) return null;
+        return url.searchParams.has('page') ? { json: { value: all.slice(first) } } : { json: { value: all.slice(0, first), '@odata.nextLink': link } };
+      };
+    };
+    const routes = [split('recordings', 1), split('transcripts', 1)];
+    const route = (url: URL): Answer => {
+      for (const r of routes) {
+        const answer = r(url);
+        if (answer) return answer;
+      }
+      return graph()(url);
+    };
+    // One file on the first page, the rest on the second: the list and the two reads still see all of them.
+    const { adapter, calls } = teams(route);
+    const listed = await adapter.list(CREDENTIAL, SINCE);
+    expect(listed.filter((m) => m.id.startsWith(`${IDS.SSSS}~`)).map((m) => [m.id, m.hasVideo, m.hasTranscript])).toEqual([
+      [OCC.S2, true, true],
+      [OCC.S1, true, true],
+    ]);
+    expect(calls.filter((c) => c.url.includes(`${IDS.SSSS}/recordings`))).toHaveLength(2);
+    expect((await adapter.prepareDownload(CREDENTIAL, OCC.S2, 'video')).url).toBe(`${base}/recordings/22222222-bc6e-4fd8-96c7-e01264e9b6f2/content`);
+    expect(await codeOf(adapter.prepareDownload(CREDENTIAL, OCC.S3, 'video'))).toBe('platform_refused');
+    // A next page that leaves Graph, the path or https fails the call, and nothing is sent to it.
+    for (const link of ['https://evil.example/x', 'https://login.microsoftonline.com/v1.0/me/onlineMeetings', `${base}/transcripts?page=2`, `http://graph.microsoft.com/v1.0/me/onlineMeetings/${IDS.SSSS}/recordings?page=2`, 'not a url']) {
+      const odd = teams((url) => split('recordings', 1, link)(url) ?? graph()(url));
+      expect(await codeOf(odd.adapter.list(CREDENTIAL, SINCE)), link).toBe('platform_unavailable');
+      expect(odd.calls.some((c) => c.url.includes('evil.example') || c.url.includes('login.microsoftonline.com')), link).toBe(false);
+    }
+    // A link that never ends is read five pages and no further.
+    const endless = teams((url) => {
+      if (url.pathname !== `/v1.0/me/onlineMeetings/${IDS.SSSS}/recordings`) return graph()(url);
+      return { json: { value: [], '@odata.nextLink': `${base}/recordings?page=${(Number(url.searchParams.get('page') ?? '1') + 1).toString()}` } };
+    });
+    await endless.adapter.list(CREDENTIAL, SINCE);
+    expect(endless.calls.filter((c) => new URL(c.url).pathname.endsWith(`${IDS.SSSS}/recordings`))).toHaveLength(5);
+  });
+
   it('lists each occurrence of a recurring series on its own, with the files made during it, and imports the right ones', async () => {
     const { adapter, calls } = teams(graph());
     const listed = await adapter.list(CREDENTIAL, SINCE);
@@ -471,6 +513,19 @@ describe('TeamsMeetingPlatform OAuth', () => {
     expect(form.get('code')).toBe('the-code');
     expect(form.get('code_verifier')).toBe('verifier-0001');
     expect(form.get('client_secret')).toBe(APP.clientSecret);
+  });
+
+  it('refuses a grant that lacks one of the four Graph permissions (it would connect and then list nothing), and accepts a scope with its resource in front, in any case', async () => {
+    const input = { code: 'c', redirectUri: 'https://app.example/cb', codeVerifier: null };
+    const grant = (scope: string) => ({ ...fixture('token'), scope, id_token: idToken({ oid: OID, tid: TID }) });
+    for (const needed of ['Calendars.ReadBasic', 'OnlineMeetings.Read', 'OnlineMeetingRecording.Read.All', 'OnlineMeetingTranscript.Read.All']) {
+      const scope = ['openid', 'profile', 'offline_access', 'Calendars.ReadBasic', 'OnlineMeetings.Read', 'OnlineMeetingRecording.Read.All', 'OnlineMeetingTranscript.Read.All'].filter((s) => s !== needed).join(' ');
+      expect(await codeOf(teams(() => ({ json: grant(scope) })).adapter.exchange(input)), needed).toBe('platform_refused');
+    }
+    // A scope that only starts the same is not the permission.
+    expect(await codeOf(teams(() => ({ json: grant('openid Calendars.ReadBasic OnlineMeetings.ReadWrite OnlineMeetingRecording.Read.All OnlineMeetingTranscript.Read.All') })).adapter.exchange(input))).toBe('platform_refused');
+    const prefixed = 'openid https://graph.microsoft.com/Calendars.ReadBasic https://graph.microsoft.com/onlinemeetings.read https://graph.microsoft.com/OnlineMeetingRecording.Read.All https://graph.microsoft.com/OnlineMeetingTranscript.Read.All';
+    expect((await teams(() => ({ json: grant(prefixed) })).adapter.exchange(input)).externalAccount).toBe(`${TID}:${OID.toLowerCase()}`);
   });
 
   it('tells a tenant that needs its administrator apart from any other refusal at the token step, with no Microsoft words in the error', async () => {

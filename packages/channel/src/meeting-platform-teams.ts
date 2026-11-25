@@ -36,6 +36,8 @@ export const TEAMS_HOSTS = [TEAMS_GRAPH_HOST, TEAMS_LOGIN_HOST] as const;
 // A recording's bytes may be handed over by a redirect to the organizer's OneDrive or the channel's SharePoint; nothing else is allowed.
 export const TEAMS_DOWNLOAD_SUFFIX = 'sharepoint.com';
 // The delegated permissions of the app, in the order the consent dialog shows them. Two of them need a tenant administrator (docs/runbooks/meetings-teams.md).
+// The Graph permissions the listing and the import need (the others are for sign-in and the refresh token).
+export const TEAMS_GRAPH_SCOPES = ['Calendars.ReadBasic', 'OnlineMeetings.Read', 'OnlineMeetingRecording.Read.All', 'OnlineMeetingTranscript.Read.All'] as const;
 export const TEAMS_SCOPES = ['openid', 'profile', 'offline_access', 'Calendars.ReadBasic', 'OnlineMeetings.Read', 'OnlineMeetingRecording.Read.All', 'OnlineMeetingTranscript.Read.All'] as const;
 
 const GRAPH = `https://${TEAMS_GRAPH_HOST}/v1.0`;
@@ -47,6 +49,8 @@ const EVENT_PAGE_SIZE = 50;
 // The meetings looked up one by one (three calls each); the newest ones first.
 const LOOKUP_MAX = 60;
 const LOOKUP_PARALLEL = 4;
+// The pages read of one meeting's recordings or transcripts: a daily series keeps the files of every occurrence in one meeting object, so a long one can span pages.
+const FILE_PAGES = 5;
 const TITLE_MAX = 200;
 export const TEAMS_TRANSCRIPT_MAX_ENTRIES = 5000;
 // A transcript file larger than this is refused unread (5000 lines of 4000 characters would be about 20 MB; a real one is far smaller).
@@ -210,6 +214,18 @@ function nextCalendarPage(link: string): string {
   return url.toString();
 }
 
+// Graph's next-page link of one meeting's files, or a refusal: the bearer goes with it, so it must be Graph's own over https and the same path as the first page, with no port or credentials.
+function nextFilesPage(link: string, path: string): string {
+  let url: URL;
+  try {
+    url = new URL(link);
+  } catch {
+    throw new MeetingPlatformError('platform_unavailable');
+  }
+  if (url.protocol !== 'https:' || url.hostname !== TEAMS_GRAPH_HOST || url.port !== '' || url.username !== '' || url.password !== '' || url.pathname !== path) throw new MeetingPlatformError('platform_unavailable');
+  return url.toString();
+}
+
 // What identifies one meeting in the list: the online meeting object, and the occurrence (start and end, whole seconds). A recurring series has one join address and one object whose files are those of
 // every occurrence, so a file belongs to an occurrence by the time it was made. `~` is outside the characters of a Graph id.
 const OCCURRENCE = /^([A-Za-z0-9_=-]{1,900})~(\d{9,11})~(\d{9,11})$/;
@@ -291,6 +307,22 @@ export class TeamsMeetingPlatform implements MeetingPlatformAdapter, MeetingPlat
     return body;
   }
 
+  // The recordings or transcripts of one online meeting, every page up to FILE_PAGES, as one `{ value }`. With `skipMissing`, a 403 or 404 on the first page is `null` (as jsonOrNull); a refusal later keeps the pages read.
+  private async files(path: string, credential: MeetingPlatformCredential, signal: AbortSignal | undefined, skipMissing: boolean): Promise<Json | null> {
+    const first = `${GRAPH}${path}`;
+    const expected = new URL(first).pathname;
+    const value: Json[] = [];
+    let url: string | null = first;
+    for (let page = 0; url !== null && page < FILE_PAGES; page += 1) {
+      const body: Json | null = skipMissing ? await this.jsonOrNull(url, credential, signal) : await this.json(url, credential, signal);
+      if (body === null) return page === 0 ? null : { value };
+      value.push(...list(body.value));
+      const next = text(body['@odata.nextLink']);
+      url = next === '' ? null : nextFilesPage(next, expected);
+    }
+    return { value };
+  }
+
   // The finished online meetings of the member's calendar in the window, newest first: the calendar event (title, times, whether the member organized it) and the join address.
   private async events(credential: MeetingPlatformCredential, since: Date, signal?: AbortSignal) {
     const now = this.now();
@@ -359,8 +391,8 @@ export class TeamsMeetingPlatform implements MeetingPlatformAdapter, MeetingPlat
         const meeting = await once(meetings, event.joinUrl, () => this.meetingId(credential, event.joinUrl, stop.signal));
         if (meeting === null) continue;
         // A recording only for a meeting the member organized (Microsoft lets only the organizer download it). A transcript is looked for in every meeting; a refusal there is not an error of the list.
-        const recordings = event.organizer ? await once(files, `${meeting}/recordings`, () => this.jsonOrNull(`${GRAPH}/me/onlineMeetings/${meeting}/recordings`, credential, stop.signal)) : null;
-        const transcripts = await once(files, `${meeting}/transcripts`, () => this.jsonOrNull(`${GRAPH}/me/onlineMeetings/${meeting}/transcripts`, credential, stop.signal));
+        const recordings = event.organizer ? await once(files, `${meeting}/recordings`, () => this.files(`/me/onlineMeetings/${meeting}/recordings`, credential, stop.signal, true)) : null;
+        const transcripts = await once(files, `${meeting}/transcripts`, () => this.files(`/me/onlineMeetings/${meeting}/transcripts`, credential, stop.signal, true));
         const occurrence = { start: event.start, end: event.end };
         const videos = madeDuring(recordings, occurrence);
         const transcriptFiles = madeDuring(transcripts, occurrence);
@@ -407,7 +439,7 @@ export class TeamsMeetingPlatform implements MeetingPlatformAdapter, MeetingPlat
     const occurrence = parseKey(recordingId);
     if (format === 'audio') throw new MeetingPlatformError('no_audio', 'a Teams recording has no audio-only file');
     // The recording of this occurrence, asked again at the click: exactly one (an occurrence with several is not offered, nor imported).
-    const body = await this.json(`${GRAPH}/me/onlineMeetings/${occurrence.meeting}/recordings`, credential, signal);
+    const body = await this.files(`/me/onlineMeetings/${occurrence.meeting}/recordings`, credential, signal, false);
     const recordings = madeDuring(body, occurrence);
     const only = recordings.length === 1 ? recordings[0] : undefined;
     const file = text(only?.id);
@@ -427,7 +459,7 @@ export class TeamsMeetingPlatform implements MeetingPlatformAdapter, MeetingPlat
   // Microsoft's transcript of one meeting: its lines, in order, with the speakers' names where the tenant lets Graph give them.
   async transcript(credential: MeetingPlatformCredential, recordingId: string, signal?: AbortSignal): Promise<MeetingPlatformTranscript> {
     const occurrence = parseKey(recordingId);
-    const body = await this.json(`${GRAPH}/me/onlineMeetings/${occurrence.meeting}/transcripts`, credential, signal);
+    const body = await this.files(`/me/onlineMeetings/${occurrence.meeting}/transcripts`, credential, signal, false);
     const transcripts = madeDuring(body, occurrence);
     const only = transcripts.length === 1 ? transcripts[0] : undefined;
     const file = text(only?.id);
@@ -531,6 +563,9 @@ export class TeamsMeetingPlatform implements MeetingPlatformAdapter, MeetingPlat
       .split(/\s+/)
       .filter((s) => s !== '' && s.length <= 200)
       .slice(0, 20);
+    // A grant without one of the Graph permissions would connect and then show empty lists (a 403 on the files reads as "none"), so it is refused now. Microsoft may name a scope with its resource in front.
+    const granted = new Set(text(body.scope).split(/\s+/).map((s) => (s.split('/').pop() ?? '').toLowerCase()));
+    if (TEAMS_GRAPH_SCOPES.some((needed) => !granted.has(needed.toLowerCase()))) throw new MeetingPlatformError('platform_refused', 'Microsoft did not grant every permission this app needs');
     return {
       externalAccount: `${tid}:${oid}`,
       displayName: name,
