@@ -25,7 +25,7 @@ import { createSessionStatusSource } from '../../src/sessions.ts';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-oauth-client-tokens-0123';
 const ISSUER = 'crove-auth';
@@ -103,7 +103,7 @@ suite('tokens issued to OAuth clients by Supabase Auth on PostgreSQL (issue #272
     const app = apps.get(mode) as ReturnType<typeof createHttpApp>;
     const response = await app.request(`/api/rpc/${path}`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...(org ? { 'x-crove-org': org } : {}) },
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...(org ? { 'x-ludy-org': org } : {}) },
       body: JSON.stringify(input === undefined ? {} : { json: input }),
     });
     // oRPC answers in its envelope ({ json }); the auth middleware answers plain JSON before oRPC runs.
