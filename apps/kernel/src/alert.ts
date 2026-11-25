@@ -78,7 +78,6 @@ export interface AlertPayload {
   text: string;
   content: string;
   ludy: AlertPayloadData;
-  crove: AlertPayloadData;
 }
 
 export const WEBHOOK_FORMATS = ['generic', 'slack', 'discord', 'telegram'] as const;
@@ -154,7 +153,6 @@ export function alertPayload(alert: Alert): AlertPayload {
     text,
     content: text,
     ludy: data,
-    crove: data,
   };
 }
 
@@ -193,12 +191,11 @@ export function detectWebhookFormat(url: string): WebhookFormat {
 
 /**
  * One message for the alert webhook: the plain text every format sends, and the structured object only a generic
- * receiver gets (as `ludy`, plus legacy `crove` alias during rollout).
+ * receiver gets (as `ludy`).
  */
 export interface WebhookMessage {
   text: string;
   ludy?: Record<string, unknown>;
-  crove?: Record<string, unknown>;
 }
 
 /** The JSON body for one message in a given format. telegramChatId is required for 'telegram'. */
@@ -212,8 +209,7 @@ export function messageBody(message: WebhookMessage, format: WebhookFormat, tele
       if (!telegramChatId) throw new Error('a Telegram webhook needs ALERT_TELEGRAM_CHAT_ID');
       return { chat_id: telegramChatId, text: message.text, link_preview_options: { is_disabled: true } };
     case 'generic': {
-      const data = message.ludy ?? message.crove ?? {};
-      return { text: message.text, content: message.text, ludy: data, crove: data };
+      return { text: message.text, content: message.text, ludy: message.ludy ?? {} };
     }
   }
 }
@@ -221,7 +217,7 @@ export function messageBody(message: WebhookMessage, format: WebhookFormat, tele
 /** The JSON body for one alert in a given format. telegramChatId is required for 'telegram'. */
 export function webhookBody(alert: Alert, format: WebhookFormat, telegramChatId?: string): Record<string, unknown> {
   const payload = alertPayload(alert);
-  return messageBody({ text: payload.text, ludy: payload.ludy as unknown as Record<string, unknown>, crove: payload.crove as unknown as Record<string, unknown> }, format, telegramChatId);
+  return messageBody({ text: payload.text, ludy: payload.ludy as unknown as Record<string, unknown> }, format, telegramChatId);
 }
 
 export interface AlertSinkOptions {
@@ -309,7 +305,7 @@ export async function deliverAlert(alert: Alert, options: AlertSinkOptions): Pro
     log(payload.text);
     return { channel: 'stdout', ok: true };
   }
-  const delivery = await postMessage({ text: payload.text, ludy: payload.ludy as unknown as Record<string, unknown>, crove: payload.crove as unknown as Record<string, unknown> }, options);
+  const delivery = await postMessage({ text: payload.text, ludy: payload.ludy as unknown as Record<string, unknown> }, options);
   if (!delivery.ok) log(payload.text);
   return delivery;
 }

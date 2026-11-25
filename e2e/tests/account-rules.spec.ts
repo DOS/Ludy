@@ -56,7 +56,7 @@ test('an approver teaches a line rule, Settings lists and removes rules, and the
   const card = page.locator('[aria-label="Quy tắc định khoản đã học"]');
 
   await test.step('Settings lists the learned rule with its provenance', async () => {
-    await page.getByRole('navigation').getByRole('link', { name: 'Cài đặt' }).click();
+    await page.getByRole('banner').getByRole('link', { name: 'Cài đặt', exact: true }).click();
     await openSettingsTab(page, 'accounting');
     const rule = card.getByRole('listitem').filter({ hasText: 'Cước dịch vụ internet tháng 9/2026' });
     await expect(rule).toBeVisible();

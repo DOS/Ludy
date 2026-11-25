@@ -12,12 +12,12 @@ test('every sub-page of Settings sits in the left sidebar, has its own address, 
   await page.setViewportSize({ width: 1440, height: 900 });
   await signUp(page, newEmail('settings-tabs'));
   const slug = await createOrg(page, 'Công ty chia thẻ');
-  const railSettings = page.getByRole('navigation').getByRole('link', { name: 'Cài đặt', exact: true });
-  await railSettings.click();
+  const topBarSettings = page.getByRole('banner').getByRole('link', { name: 'Cài đặt', exact: true });
+  await topBarSettings.click();
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/settings$`));
 
   await expect(page.getByRole('list', { name: 'Các thẻ của màn hình' })).toHaveCount(0);
-  await expect(railSettings).toHaveAttribute('aria-current', 'true');
+  await expect(topBarSettings).toHaveAttribute('aria-current', 'true');
   const menu = page.getByRole('navigation').getByRole('region', { name: 'Cài đặt', exact: true });
   await expect(menu.getByRole('link')).toHaveText(Object.values(SETTINGS_TAB));
   await expect(menu.getByRole('link', { name: SETTINGS_TAB.org, exact: true })).toHaveAttribute('aria-current', 'page');
@@ -25,7 +25,7 @@ test('every sub-page of Settings sits in the left sidebar, has its own address, 
   for (const tab of Object.keys(TAB_PATHS) as Array<keyof typeof TAB_PATHS>) {
     await openSettingsTab(page, tab);
     await expect(page).toHaveURL(new RegExp(`/o/${slug}/settings${TAB_PATHS[tab]}$`));
-    await expect(railSettings).toHaveAttribute('aria-current', 'true');
+    await expect(topBarSettings).toHaveAttribute('aria-current', 'true');
     await expect(menu.getByRole('link', { name: SETTINGS_TAB[tab], exact: true })).toHaveAttribute('aria-current', 'page');
     await expect(menu.locator('[aria-current="page"]')).toHaveCount(1);
     // One column of cards: the heading of the screen, then the cards, no two-column grid.

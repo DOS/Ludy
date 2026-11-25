@@ -20,7 +20,7 @@ test('lists the customer of an approved sale with its receivable, edits it, and 
   });
   const slug = await createOrg(page, 'Công ty Khách hàng E2E');
   const nav = page.getByRole('navigation');
-  await nav.getByRole('link', { name: 'Cài đặt' }).click();
+  await page.getByRole('banner').getByRole('link', { name: 'Cài đặt', exact: true }).click();
   await page.getByRole('button', { name: 'Nhập', exact: true }).click();
   const taxForm = page.getByRole('form', { name: 'Mã số thuế' });
   await taxForm.getByLabel('Mã số thuế').fill(SELLER_TAX_CODE);

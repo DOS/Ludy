@@ -33,7 +33,7 @@ test('export the VAT return of a month as the HTKK XML of form 01/GTGT', async (
   });
 
   await test.step('set the org tax code in Settings', async () => {
-    await nav.getByRole('link', { name: 'Cài đặt' }).click();
+    await page.getByRole('banner').getByRole('link', { name: 'Cài đặt', exact: true }).click();
     await page.getByRole('button', { name: 'Nhập', exact: true }).click();
     const form = page.getByRole('form', { name: 'Mã số thuế' });
     await form.getByLabel('Mã số thuế').fill(SELLER_TAX_CODE);

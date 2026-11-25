@@ -18,7 +18,7 @@ test('an accountant sees every company on one screen and opens one with a click'
   await test.step('the first company files quarterly and has an invoice waiting', async () => {
     await page.locator('input[type=file]').setInputFiles(INVOICE);
     await expect(page.getByRole('link', { name: SELLER })).toBeVisible({ timeout: 60_000 });
-    await page.getByRole('navigation').getByRole('link', { name: 'Cài đặt' }).click();
+    await page.getByRole('banner').getByRole('link', { name: 'Cài đặt', exact: true }).click();
     // The period shows its value with a "Sửa" button; the select appears after it, saves on change and closes.
     const vat = page.locator('dt', { hasText: 'Kỳ khai thuế GTGT' }).locator('..');
     await vat.getByRole('button', { name: 'Sửa' }).click();
@@ -50,9 +50,9 @@ test('an accountant sees every company on one screen and opens one with a click'
   await test.step('one click opens a company, and the sidebar leads back', async () => {
     await page.getByRole('link', { name: 'Công ty Bình Minh' }).click();
     await expect(page).toHaveURL(new RegExp(`/o/${second}/overview$`));
-    const sidebar = page.getByRole('complementary');
-    await sidebar.getByRole('button', { name: /^Tài khoản:/ }).click();
-    await sidebar.getByRole('link', { name: 'Tất cả doanh nghiệp' }).click();
+    const topBar = page.getByRole('banner');
+    await topBar.getByRole('button', { name: /^Tài khoản:/ }).click();
+    await topBar.getByRole('link', { name: 'Tất cả doanh nghiệp' }).click();
     await expect(page).toHaveURL(/\/clients$/);
     await page.getByRole('row').filter({ hasText: 'Công ty An Bình' }).getByRole('link', { name: '1', exact: true }).click();
     await expect(page).toHaveURL(new RegExp(`/o/${first}/inbox$`));

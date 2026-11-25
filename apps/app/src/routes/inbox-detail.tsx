@@ -32,7 +32,7 @@ function InboxQueue({ slug, current }: { slug: string; current: string }) {
   const pending = useQuery(orpc.inbox.list.queryOptions({ input: { status: 'pending' } }));
   const items = pending.data ?? [];
   return (
-    <section aria-label={t('queue')} className="sticky top-6 max-h-[calc(100dvh-3rem)] overflow-y-auto rounded-lg border bg-card">
+    <section aria-label={t('queue')} className="sticky top-16 max-h-[calc(100dvh-5rem)] overflow-y-auto rounded-lg border bg-card">
       <p className="border-b px-3 py-2 text-xs font-medium text-subtle-foreground">{t('queue')}</p>
       {pending.isPending ? (
         <div className="px-3">

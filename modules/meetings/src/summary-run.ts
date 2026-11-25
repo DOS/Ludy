@@ -6,7 +6,7 @@ import { sql } from 'kysely';
 import { zDraftReview, zDraftReviewed, zSummaryStart, zSummaryStarted, zSummaryStatus, zSummaryRef } from '@ludy/kernel-contract';
 import { DomainError, defineCommand, defineQuery } from '@ludy/kernel-runtime';
 import { lockMeetingMedia, markAudioUsed } from './media-record.ts';
-import { ROLES, openMeeting, userOf } from './transcript.ts';
+import { ROLES, draftLineState, lockMeeting, openMeeting, userOf } from './transcript.ts';
 
 export const SUMMARY_FEATURE = 'meetings.summary';
 const FEATURE = SUMMARY_FEATURE;
@@ -79,7 +79,20 @@ export const draftReview = defineCommand({
     userOf(ctx.actor);
     const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
     if (meeting.recorder_user_id !== userOf(ctx.actor)) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can review its draft');
-    const { rows } = await sql<{ n: number }>`SELECT ludy_meetings.draft_review(${ctx.orgId}::uuid, ${input.meetingId}::uuid, ${sql.val(input.ids)}::uuid[]) AS n`.execute(ctx.trx);
+    // The draft transcript lines a machine wrote (#4899) are read in the same click, but only the ones the screen showed: they are too many to name one by one, so the screen sends the key of the set it
+    // showed (a digest of their ids), and with the meeting held the lines are found here and read only when they are still exactly that set. A line another tab copied or imported after this screen loaded
+    // changes the key, and the review is refused (STALE_TRANSCRIPT_REVIEW) instead of reading what nobody looked at.
+    let lines: string[] = [];
+    if (input.transcript !== undefined) {
+      await lockMeeting(ctx.trx, ctx.orgId, input.meetingId);
+      const now = await draftLineState(ctx.trx, ctx.orgId, input.meetingId);
+      if (now.unread === 0 || now.key !== input.transcript) {
+        throw new DomainError('STALE_TRANSCRIPT_REVIEW', 409, 'Bản ghi lời nói đã thay đổi từ lúc bạn mở màn hình này; hãy mở lại để xem các dòng mới trước khi xác nhận');
+      }
+      lines = (await ctx.trx.selectFrom('ludy_meetings.transcript_segment').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').where('tainted', '=', true).execute()).map((r) => r.id);
+    }
+    const ids = [...new Set([...input.ids, ...lines])];
+    const { rows } = await sql<{ n: number }>`SELECT ludy_meetings.draft_review(${ctx.orgId}::uuid, ${input.meetingId}::uuid, ${sql.val(ids)}::uuid[]) AS n`.execute(ctx.trx);
     const cleared = rows[0]?.n ?? 0;
     ctx.audit({ meetingId: input.meetingId, count: cleared });
     return zDraftReviewed.parse({ meetingId: input.meetingId, cleared });

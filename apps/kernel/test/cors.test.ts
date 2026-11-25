@@ -113,7 +113,8 @@ describe('corsMiddleware', () => {
     expect(answer.headers.get('access-control-allow-origin')).toBe(APP);
     expect(answer.headers.get('access-control-allow-methods')).toContain('POST');
     const headers = answer.headers.get('access-control-allow-headers') ?? '';
-    for (const name of ['authorization', 'content-type', ORG_HEADER, 'x-crove-org', 'apikey', 'x-ludy-invite', 'x-crove-invite', 'x-ludy-voter-token']) expect(headers).toContain(name);
+    for (const name of ['authorization', 'content-type', ORG_HEADER, 'apikey', 'x-ludy-invite', 'x-ludy-voter-token']) expect(headers).toContain(name);
+    for (const legacy of ['x-crove-org', 'x-crove-invite']) expect(headers).not.toContain(legacy);
     expect(headers).not.toContain('*');
     expect(answer.headers.get('access-control-allow-credentials')).toBeNull();
   });

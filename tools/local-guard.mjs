@@ -5,7 +5,7 @@
 //
 // In CI (CI=true) the command runs as given. Elsewhere it runs only with targets (the files or projects you touched, which
 // pnpm appends after `--`); with none it stops and says what to run instead. With no command (`typecheck`), it only checks.
-// LUDY_FULL_LOCAL=1 (or legacy CROVE_FULL_LOCAL=1) lifts the stop for a person who wants a full run on their own machine.
+// LUDY_FULL_LOCAL=1 lifts the stop for a person who wants a full run on their own machine.
 import { spawnSync } from 'node:child_process';
 
 const [name = 'this script', ...rest] = process.argv.slice(2);
@@ -13,11 +13,11 @@ const sep = rest.indexOf('--');
 const command = sep === -1 ? rest : rest.slice(0, sep);
 const targets = (sep === -1 ? [] : rest.slice(sep + 1)).filter((arg, i) => !(i === 0 && arg === '--'));
 
-const full = process.env.CI === 'true' || process.env.LUDY_FULL_LOCAL === '1' || process.env.CROVE_FULL_LOCAL === '1';
+const full = process.env.CI === 'true' || process.env.LUDY_FULL_LOCAL === '1';
 const instead = {
   typecheck: 'pnpm --filter <package> typecheck (each package you changed)',
   test: 'pnpm test <test files you touched>',
-  'test:db': 'pnpm test:db <db test files you touched> (with LUDY_TEST_ADMIN_URL or CROVE_TEST_ADMIN_URL set, or the run is skipped, not passed)',
+  'test:db': 'pnpm test:db <db test files you touched> (with LUDY_TEST_ADMIN_URL set, or the run is skipped, not passed)',
   'test:e2e': 'pnpm test:e2e <spec files you touched>, against the one shared stack',
 };
 

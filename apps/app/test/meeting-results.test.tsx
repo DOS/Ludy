@@ -48,8 +48,8 @@ const item = (id: string, over: Partial<ActionItemView> = {}): ActionItemView =>
 const view = (stage: 'draft' | 'published', summary: string) => ({ id: `r-${stage}`, feature: 'manual' as const, stage, summary, decisions: ['Giữ giá cũ'], tainted: false });
 
 const READER = '0198a0b4-3c5d-7e6f-8a9b-0c1d2e3f4a5b';
-function render(results: Results, summaryEnabled = false, template: 'general' | 'briefing' | 'customer' = 'general') {
-  client.current.setQueryData(['meetings', 'results', 'get'], results);
+function render(results: Omit<Results, 'transcriptDraft' | 'transcriptUnread' | 'transcriptUnreadKey'> & { transcriptDraft?: number; transcriptUnread?: number; transcriptUnreadKey?: string }, summaryEnabled = false, template: 'general' | 'briefing' | 'customer' = 'general') {
+  client.current.setQueryData(['meetings', 'results', 'get'], { transcriptDraft: 0, transcriptUnread: 0, transcriptUnreadKey: '', ...results });
   client.current.setQueryData(['meetings', 'results', 'summaryStatus'], { meetingId: 'm1', enabled: summaryEnabled });
   client.current.setQueryData(['org', 'get'], { members: [{ userId: READER, email: 'lan@example.com', displayName: 'Chị Lan', role: 'member' }] });
   return renderToStaticMarkup(
@@ -73,6 +73,43 @@ describe('MeetingResults', () => {
     expect(html).toContain(en.meetings.results.delete);
     expect(html.match(/data-testid="action-item"/g)).toHaveLength(1);
     expect(html).toContain(en.meetings.results.draftExpiry);
+  });
+
+  it('asks the recorder to read a machine transcript before sharing, names the lines in the notice, and keeps the share button off until it is read (#4899)', () => {
+    const base = { meetingId: 'm1', isRecorder: true, draft: view('draft', 'Chốt báo giá'), published: null, items: [] };
+    // Nothing unread: no notice, the button is on.
+    const clean = render({ ...base, transcriptUnread: 0 });
+    expect(clean).not.toContain('data-testid="vy-review"');
+    // The model's summary is already read but 12 transcript lines are not: the notice names the transcript with its count, and says nothing of the summary.
+    const lines = render({ ...base, transcriptUnread: 12 });
+    expect(lines).toContain('data-testid="vy-review"');
+    expect(lines).toContain(en.meetings.results.reviewNoteTranscript.replace('{count}', '12'));
+    expect(lines).not.toContain(en.meetings.results.reviewNote);
+    expect(lines).toContain(en.meetings.results.reviewed);
+    expect(lines).toMatch(/<button[^>]*disabled[^>]*>\s*(?:<[^>]*>\s*)*Share/);
+    // Both unread: both notes are there, one button.
+    const both = render({ ...base, draft: { ...view('draft', 'Chốt báo giá'), tainted: true }, transcriptUnread: 3 });
+    expect(both).toContain(en.meetings.results.reviewNote);
+    expect(both).toContain(en.meetings.results.reviewNoteTranscript.replace('{count}', '3'));
+    expect(both.match(/data-testid="vy-review"/g)).toHaveLength(1);
+  });
+
+  it('offers the share button when the only draft is transcript lines, with no summary and no item (#4899)', () => {
+    const base = { meetingId: 'm1', isRecorder: true, draft: null, published: view('published', 'Đã chia sẻ'), items: [] };
+    // No draft of any kind: nothing to share, no share button.
+    expect(render({ ...base })).not.toContain(`>${en.meetings.results.publish}<`);
+    // Typed (read) transcript lines only: the share button is on and the share note says the transcript goes too.
+    const typed = render({ ...base, transcriptDraft: 5 });
+    const typedButton = /<button[^>]*>Share with the attendees<\/button>/.exec(typed)?.[0] ?? '';
+    expect(typedButton).not.toBe('');
+    expect(typedButton).not.toContain('disabled=""');
+    expect(typed).toContain(en.meetings.results.publishNote);
+    expect(typed).not.toContain('data-testid="vy-review"');
+    // A new machine transcription after the minutes were shared: the notice names the lines, the button waits for the review.
+    const unread = render({ ...base, transcriptDraft: 5, transcriptUnread: 5, transcriptUnreadKey: 'k'.repeat(32) });
+    expect(unread).toContain('data-testid="vy-review"');
+    expect(unread).toContain(en.meetings.results.reviewNoteTranscript.replace('{count}', '5'));
+    expect(unread).toMatch(/<button[^>]*disabled[^>]*>\s*(?:<[^>]*>\s*)*Share/);
   });
 
   it('names people and never shows an id: the attendee picker lists names, and a member who left reads as a plain fallback', () => {
@@ -165,7 +202,7 @@ describe('MeetingResults', () => {
   });
 
   it('shows the Vy summary box to the recorder only when the system lets Vy summarize', () => {
-    const results: Results = { meetingId: 'm1', isRecorder: true, draft: null, published: null, items: [] };
+    const results: Results = { meetingId: 'm1', isRecorder: true, draft: null, published: null, items: [], transcriptDraft: 0, transcriptUnread: 0, transcriptUnreadKey: '' };
     expect(render(results, false)).not.toContain('data-testid="vy-summary"');
     const on = render(results, true);
     expect(on).toContain('data-testid="vy-summary"');
