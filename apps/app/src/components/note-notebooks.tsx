@@ -494,6 +494,33 @@ export function NoteNotebookPicker({
   );
 }
 
+export function wikiComboboxAriaProps(opts: {
+  open: boolean;
+  listboxId: string;
+  activeIndex: number;
+  matchCount: number;
+}): {
+  role?: 'combobox';
+  'aria-autocomplete'?: 'list';
+  'aria-controls'?: string;
+  'aria-expanded'?: boolean;
+  'aria-activedescendant'?: string;
+} {
+  if (!opts.open) return {};
+  const hasMatches = opts.matchCount > 0;
+  return {
+    role: 'combobox',
+    'aria-autocomplete': 'list',
+    'aria-expanded': hasMatches,
+    ...(hasMatches
+      ? {
+          'aria-controls': opts.listboxId,
+          'aria-activedescendant': `${opts.listboxId}-opt-${opts.activeIndex}`,
+        }
+      : {}),
+  };
+}
+
 export function NoteWikiAutocomplete({
   listboxId,
   query,
@@ -525,43 +552,45 @@ export function NoteWikiAutocomplete({
 
   return (
     <div
-      id={listboxId}
-      role="listbox"
-      aria-label={t('wikiLinks.suggestionsLabel')}
       data-testid="note-wiki-autocomplete"
       className="rounded-md border bg-popover p-1.5 text-xs shadow-sm"
     >
       <p className="px-2 py-0.5 text-[11px] text-subtle-foreground">{t('wikiLinks.hint')}</p>
       {filtered.length === 0 ? (
-        <p className="px-2 py-1 text-subtle-foreground">{t('wikiLinks.noMatches')}</p>
+        <p role="status" className="px-2 py-1 text-subtle-foreground">
+          {t('wikiLinks.noMatches')}
+        </p>
       ) : (
-        <ul className="mt-1 space-y-0.5">
-          {filtered.map((item, idx) => {
-            const selected = idx === activeIndex;
-            const duplicateTitle = (titleCounts.get(normalizeWikiTitle(item.title)) ?? 0) > 1;
-            return (
-              <li key={item.id}>
-                <button
-                  id={listboxId ? `${listboxId}-opt-${idx}` : undefined}
-                  type="button"
-                  role="option"
-                  aria-selected={selected}
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => onPick(item, duplicateTitle)}
-                  data-testid="note-wiki-option"
-                  className={
-                    selected
-                      ? 'flex w-full items-center justify-between gap-2 rounded bg-muted px-2 py-1 text-left font-medium text-foreground max-md:min-h-11'
-                      : 'flex w-full items-center justify-between gap-2 rounded px-2 py-1 text-left text-foreground hover:bg-muted/50 max-md:min-h-11'
-                  }
-                >
-                  <span className="truncate">{item.title}</span>
-                  <VisibilityBadge note={item} />
-                </button>
-              </li>
-            );
-          })}
-        </ul>
+        <div id={listboxId} role="listbox" aria-label={t('wikiLinks.suggestionsLabel')}>
+          <ul role="none" className="mt-1 space-y-0.5">
+            {filtered.map((item, idx) => {
+              const selected = idx === activeIndex;
+              const duplicateTitle = (titleCounts.get(normalizeWikiTitle(item.title)) ?? 0) > 1;
+              return (
+                <li key={item.id} role="none">
+                  <button
+                    id={listboxId ? `${listboxId}-opt-${idx}` : undefined}
+                    type="button"
+                    role="option"
+                    tabIndex={-1}
+                    aria-selected={selected}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => onPick(item, duplicateTitle)}
+                    data-testid="note-wiki-option"
+                    className={
+                      selected
+                        ? 'flex w-full items-center justify-between gap-2 rounded bg-muted px-2 py-1 text-left font-medium text-foreground max-md:min-h-11'
+                        : 'flex w-full items-center justify-between gap-2 rounded px-2 py-1 text-left text-foreground hover:bg-muted/50 max-md:min-h-11'
+                    }
+                  >
+                    <span className="truncate">{item.title}</span>
+                    <VisibilityBadge note={item} />
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
       )}
     </div>
   );

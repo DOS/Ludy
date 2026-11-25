@@ -3,7 +3,7 @@
 // [[Note]] wiki-links (autocomplete, preview rendering, backlinks), and Markdown export.
 import { QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
-import type { ReactNode } from 'react';
+import { isValidElement, type ReactElement, type ReactNode } from 'react';
 import { IntlProvider } from 'use-intl';
 import { describe, expect, it, vi } from 'vitest';
 import {
@@ -13,9 +13,9 @@ import {
   type NotebookSummary,
   type NotesExport,
 } from '@ludy/kernel-contract';
-import { groupNotebooks } from '../src/components/note-notebooks.tsx';
+import { groupNotebooks, NoteWikiAutocomplete, wikiComboboxAriaProps } from '../src/components/note-notebooks.tsx';
 import { catalog } from '../src/i18n/runtime.ts';
-import { Markdown, toggleMarkdownTaskLine } from '../src/lib/markdown.tsx';
+import { Markdown, parseBlocks, toggleMarkdownTaskLine } from '../src/lib/markdown.tsx';
 import { notesMarkdown } from '../src/lib/notes-export.ts';
 import {
   cleanNoteLineText,
@@ -123,6 +123,93 @@ describe('interactive preview checkboxes and fenced code blocks (#3559)', () => 
     );
     expect(toggleMarkdownTaskLine(body, 0, true)).toBeNull();
     expect(toggleMarkdownTaskLine('- [ ] Mot\r\n- [x] Hai\r\n', 0, true)).toBe('- [x] Mot\r\n- [x] Hai\r\n');
+
+    // Standalone \r normalizes consistently between parseBlocks and toggleMarkdownTaskLine (#4211).
+    const crBody = '# Tieu de\r- [ ] Mot\r- [ ] Hai\r\n```md\r- [ ] Trong ma\r```\r- [ ] Ba';
+    const blocks = parseBlocks(crBody);
+    const listItems = blocks.flatMap((b) => (b.kind === 'list' ? b.items : []));
+    expect(listItems.map((item) => item.lineIndex)).toEqual([1, 2, 6]);
+    expect(toggleMarkdownTaskLine(crBody, 2, true)).toBe('# Tieu de\n- [ ] Mot\n- [x] Hai\r\n```md\n- [ ] Trong ma\n```\n- [ ] Ba');
+    expect(toggleMarkdownTaskLine(crBody, 4, true)).toBeNull();
+    expect(toggleMarkdownTaskLine(crBody, 6, true)).toBe('# Tieu de\n- [ ] Mot\n- [ ] Hai\r\n```md\n- [ ] Trong ma\n```\n- [x] Ba');
+  });
+
+  it('prevents clicking a rendered wiki-link or external link inside a task label from toggling its checkbox (#4211)', () => {
+    const findAll = (node: ReactNode, pred: (el: ReactElement<Record<string, unknown>>) => boolean): ReactElement<Record<string, unknown>>[] => {
+      const out: ReactElement<Record<string, unknown>>[] = [];
+      const walk = (n: ReactNode) => {
+        if (Array.isArray(n)) {
+          for (const child of n) walk(child);
+          return;
+        }
+        if (!isValidElement(n)) return;
+        const el = n as ReactElement<Record<string, unknown>>;
+        if (pred(el)) out.push(el);
+        if (el.props.children !== undefined) walk(el.props.children as ReactNode);
+      };
+      walk(node);
+      return out;
+    };
+
+    const onToggleTask = vi.fn();
+    const onWikiClick = vi.fn();
+    let labelEl: ReactElement<Record<string, unknown>> | null = null;
+
+    function CaptureTask() {
+      const tree = Markdown({
+        text: '- [ ] Xem [[Ke hoach Q4]] va [Tai lieu](https://example.com)',
+        onToggleTask,
+        resolveWikiLink: () => ({
+          href: `/o/acme/notes?list=mine&note=${NOTE_A}`,
+          label: 'Ke hoach Q4',
+          available: true,
+          onClick: onWikiClick,
+        }),
+      });
+      const taskItem = findAll(tree, (el) => typeof el.type === 'function' && el.props.lineIndex === 0)[0]!;
+      labelEl = (taskItem.type as (props: Record<string, unknown>) => ReactElement<Record<string, unknown>>)(taskItem.props);
+      return labelEl;
+    }
+
+    renderToStaticMarkup(<CaptureTask />);
+    expect(labelEl).not.toBeNull();
+    const label = labelEl!;
+    const checkbox = findAll(label, (el) => el.type === 'input')[0]!;
+    const span = findAll(label, (el) => el.type === 'span')[0]!;
+    const wikiAnchor = findAll(label, (el) => el.type === 'a' && el.props['data-testid'] === 'note-wiki-link')[0]!;
+    const externalAnchor = findAll(label, (el) => el.type === 'a' && el.props.href === 'https://example.com')[0]!;
+
+    // Clicking the rendered wiki-link stops propagation, prevents default, navigates, and suppresses any synthetic checkbox toggle.
+    const stopPropagation = vi.fn();
+    const preventDefault = vi.fn();
+    const anchorTarget = { closest: (sel: string) => (sel === 'a' ? wikiAnchor : null) };
+    (span.props.onClickCapture as (e: unknown) => void)({ target: anchorTarget });
+    (wikiAnchor.props.onClick as (e: unknown) => void)({ stopPropagation, preventDefault });
+    expect(stopPropagation).toHaveBeenCalledTimes(1);
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(onWikiClick).toHaveBeenCalledTimes(1);
+
+    const syntheticCheckbox = { checked: true };
+    (checkbox.props.onChange as (e: unknown) => void)({ target: syntheticCheckbox, currentTarget: syntheticCheckbox });
+    expect(onToggleTask).not.toHaveBeenCalled();
+    expect(syntheticCheckbox.checked).toBe(false);
+
+    // Clicking an external link inside the task label stops propagation without blocking external navigation or toggling.
+    const extStop = vi.fn();
+    const extPrevent = vi.fn();
+    const externalTarget = { closest: (sel: string) => (sel === 'a' ? externalAnchor : null) };
+    (span.props.onClickCapture as (e: unknown) => void)({ target: externalTarget });
+    (externalAnchor.props.onClick as (e: unknown) => void)({ stopPropagation: extStop, preventDefault: extPrevent });
+    expect(extStop).toHaveBeenCalledTimes(1);
+    expect(extPrevent).not.toHaveBeenCalled();
+    (checkbox.props.onChange as (e: unknown) => void)({ target: syntheticCheckbox, currentTarget: syntheticCheckbox });
+    expect(onToggleTask).not.toHaveBeenCalled();
+
+    // Direct pointer/checkbox interaction outside <a> toggles normally.
+    const plainTarget = { closest: () => null };
+    (label.props.onPointerDownCapture as (e: unknown) => void)({ target: plainTarget });
+    (checkbox.props.onChange as (e: unknown) => void)({ target: { checked: true }, currentTarget: { checked: true } });
+    expect(onToggleTask).toHaveBeenCalledWith(0, true);
   });
 
   it('renders interactive checkboxes only when onToggleTask is provided and skips fenced code blocks', () => {
@@ -390,5 +477,100 @@ describe('NotesPage notebooks, stacks, picker & backlinks SSR (#3559)', () => {
     const enSharedHtml = wrap('en', <NotesPage />);
     expect(enSharedHtml).toContain('Kinh doanh / Khach VIP');
     expect(enSharedHtml).not.toContain('Nhan su / So luong rieng');
+    // When wiki autocomplete is closed, the editor keeps its implicit textbox role without combobox attributes.
+    expect(enSharedHtml).not.toContain('role="combobox"');
+  });
+
+  it('aligns ARIA combobox and listbox roles for wiki-link autocomplete (#4211)', () => {
+    expect(
+      wikiComboboxAriaProps({ open: false, listboxId: 'note-wiki-listbox-1', activeIndex: 0, matchCount: 2 }),
+    ).toEqual({});
+
+    expect(
+      wikiComboboxAriaProps({ open: true, listboxId: 'note-wiki-listbox-1', activeIndex: 0, matchCount: 0 }),
+    ).toEqual({
+      role: 'combobox',
+      'aria-autocomplete': 'list',
+      'aria-expanded': false,
+    });
+
+    expect(
+      wikiComboboxAriaProps({ open: true, listboxId: 'note-wiki-listbox-1', activeIndex: 1, matchCount: 3 }),
+    ).toEqual({
+      role: 'combobox',
+      'aria-autocomplete': 'list',
+      'aria-expanded': true,
+      'aria-controls': 'note-wiki-listbox-1',
+      'aria-activedescendant': 'note-wiki-listbox-1-opt-1',
+    });
+
+    const candidates: NoteSummary[] = [
+      {
+        id: NOTE_A,
+        authorUserId: 'u-1',
+        mine: true,
+        visibility: 'private',
+        notebookId: null,
+        title: 'Ke hoach Q4',
+        tags: [],
+        pinned: false,
+        tainted: false,
+        revision: 1,
+        createdAt: '2026-11-18T00:00:00.000Z',
+        updatedAt: '2026-11-18T00:00:00.000Z',
+        archivedAt: null,
+        deletedAt: null,
+      },
+      {
+        id: NOTE_B,
+        authorUserId: 'u-2',
+        mine: false,
+        visibility: 'org',
+        notebookId: null,
+        title: 'Bao cao tuan',
+        tags: [],
+        pinned: false,
+        tainted: false,
+        revision: 1,
+        createdAt: '2026-11-18T00:00:00.000Z',
+        updatedAt: '2026-11-18T00:00:00.000Z',
+        archivedAt: null,
+        deletedAt: null,
+      },
+    ];
+
+    const populatedHtml = wrap(
+      'vi',
+      <NoteWikiAutocomplete
+        listboxId="note-wiki-listbox-1"
+        query=""
+        candidates={candidates}
+        activeIndex={0}
+        onPick={() => undefined}
+      />,
+    );
+    expect(populatedHtml).toContain('<div id="note-wiki-listbox-1" role="listbox"');
+    expect(populatedHtml).toContain('<ul role="none"');
+    expect(populatedHtml).toContain('<li role="none"');
+    expect(populatedHtml).toContain('role="option"');
+    expect(populatedHtml).toContain('tabindex="-1"');
+    // Hint paragraph sits outside role="listbox" so listbox owns only role="none" -> role="option" children.
+    const listboxStart = populatedHtml.indexOf('role="listbox"');
+    const hintStart = populatedHtml.indexOf(catalog('vi').notes.wikiLinks.hint);
+    expect(hintStart).toBeGreaterThan(-1);
+    expect(hintStart).toBeLessThan(listboxStart);
+
+    const emptyHtml = wrap(
+      'vi',
+      <NoteWikiAutocomplete
+        listboxId="note-wiki-listbox-1"
+        query="khong-khop"
+        candidates={candidates}
+        activeIndex={0}
+        onPick={() => undefined}
+      />,
+    );
+    expect(emptyHtml).not.toContain('role="listbox"');
+    expect(emptyHtml).toContain('role="status"');
   });
 });

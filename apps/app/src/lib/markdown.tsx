@@ -2,7 +2,7 @@
 // A note's Markdown (issue #1671, #3559, notes plan §3.6, notes-v2.md V2-4): headings, paragraphs, fenced code blocks,
 // lists, interactive checklists, [[Note]] wiki-links, bold, italics, inline code and safe external links, rendered as
 // React elements. Nothing is parsed as HTML, so raw HTML in a note shows as its text (trusted-types.test.ts).
-import type { ReactNode } from 'react';
+import { useRef, type ReactNode } from 'react';
 import { Button } from '@ludy/ui/components/button';
 import {
   INLINE_MARKDOWN,
@@ -36,7 +36,14 @@ function renderFormattedSpan(text: string, keyPrefix: string, startIndex: number
     else if (m[3] !== undefined && m[4] !== undefined) {
       nodes.push(
         SAFE_URL.test(m[4]) ? (
-          <a key={key} href={m[4]} target="_blank" rel="noopener noreferrer nofollow" className="text-link underline">
+          <a
+            key={key}
+            href={m[4]}
+            target="_blank"
+            rel="noopener noreferrer nofollow"
+            onClick={(e) => e.stopPropagation()}
+            className="text-link underline"
+          >
             {m[3]}
           </a>
         ) : (
@@ -106,6 +113,7 @@ export function renderInline(text: string, keyPrefix = 'i', resolveWikiLink?: Wi
                 key={key}
                 href={resolved.href ?? '#'}
                 onClick={(e) => {
+                  e.stopPropagation();
                   if (resolved.onClick) {
                     e.preventDefault();
                     resolved.onClick();
@@ -150,7 +158,8 @@ const TASK = /^\[( |x|X)\]\s+(.*)$/;
 // Deterministic O(n) toggle of a single task-list line in Markdown source, ignoring fenced code blocks.
 export function toggleMarkdownTaskLine(body: string, lineIndex: number, nextChecked: boolean): string | null {
   if (!Number.isInteger(lineIndex) || lineIndex < 0) return null;
-  const lines = body.split('\n');
+  // Normalize standalone \r consistently with parseBlocks while keeping \r\n pairs intact.
+  const lines = body.replace(/\r\n|\r/g, (m) => (m === '\r\n' ? '\r\n' : '\n')).split('\n');
   if (lineIndex >= lines.length) return null;
 
   let activeFence: { char: '`' | '~'; len: number } | null = null;
@@ -283,6 +292,70 @@ function MakeTodoButton({
   );
 }
 
+function isAnchorEventTarget(target: EventTarget | null): boolean {
+  const closest = (target as { closest?: (selector: string) => unknown } | null)?.closest;
+  return typeof closest === 'function' && closest.call(target, 'a') != null;
+}
+
+function TaskCheckboxItem({
+  checked,
+  lineIndex,
+  disabled,
+  onToggleTask,
+  children,
+}: {
+  checked: boolean;
+  lineIndex: number;
+  disabled?: boolean | undefined;
+  onToggleTask: (lineIndex: number, nextChecked: boolean) => void;
+  children: ReactNode;
+}) {
+  const suppressToggleRef = useRef(false);
+  const clearIfOutsideLink = (target: EventTarget | null) => {
+    if (!isAnchorEventTarget(target)) {
+      suppressToggleRef.current = false;
+    }
+  };
+
+  return (
+    <label
+      onPointerDownCapture={(e) => clearIfOutsideLink(e.target)}
+      onKeyDownCapture={(e) => clearIfOutsideLink(e.target)}
+      className="flex cursor-pointer items-start gap-2 max-md:min-h-11 max-md:items-center"
+    >
+      <input
+        type="checkbox"
+        checked={checked}
+        disabled={disabled}
+        onChange={(e) => {
+          if (suppressToggleRef.current) {
+            suppressToggleRef.current = false;
+            e.currentTarget.checked = checked;
+            return;
+          }
+          onToggleTask(lineIndex, e.target.checked);
+        }}
+        data-testid="note-task-checkbox"
+        data-line-index={lineIndex}
+        className="mt-1 accent-primary max-md:mt-0 max-md:size-5"
+      />
+      <span
+        className={checked ? 'text-muted-foreground line-through' : undefined}
+        onClickCapture={(e) => {
+          if (isAnchorEventTarget(e.target)) {
+            suppressToggleRef.current = true;
+            setTimeout(() => {
+              suppressToggleRef.current = false;
+            }, 0);
+          }
+        }}
+      >
+        {children}
+      </span>
+    </label>
+  );
+}
+
 export function Markdown({
   text,
   onMakeTodo,
@@ -324,20 +397,14 @@ export function Markdown({
               item.checked === null ? (
                 renderInline(item.text, `l${i}-${j}`, resolveWikiLink)
               ) : onToggleTask ? (
-                <label className="flex cursor-pointer items-start gap-2 max-md:min-h-11 max-md:items-center">
-                  <input
-                    type="checkbox"
-                    checked={item.checked}
-                    disabled={toggleTaskDisabled}
-                    onChange={(e) => onToggleTask(item.lineIndex, e.target.checked)}
-                    data-testid="note-task-checkbox"
-                    data-line-index={item.lineIndex}
-                    className="mt-1 accent-primary max-md:mt-0 max-md:size-5"
-                  />
-                  <span className={item.checked ? 'text-muted-foreground line-through' : undefined}>
-                    {renderInline(item.text, `l${i}-${j}`, resolveWikiLink)}
-                  </span>
-                </label>
+                <TaskCheckboxItem
+                  checked={item.checked}
+                  lineIndex={item.lineIndex}
+                  disabled={toggleTaskDisabled}
+                  onToggleTask={onToggleTask}
+                >
+                  {renderInline(item.text, `l${i}-${j}`, resolveWikiLink)}
+                </TaskCheckboxItem>
               ) : (
                 // A labelled, read-only checkbox: a screen reader hears the step and whether it is done.
                 <label className="flex items-start gap-2 max-md:min-h-11 max-md:items-center">

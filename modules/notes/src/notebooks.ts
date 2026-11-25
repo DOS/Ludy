@@ -325,16 +325,25 @@ export const notebookCreate = defineCommand({
       SELECT pg_catalog.max(sort_key) AS last FROM ludy_notes.notebook WHERE org_id = ${ctx.orgId}::uuid`.execute(ctx.trx);
     let sortKey = keyBetween(lastRows[0]?.last ?? null, null);
     if (sortKey.length > REBALANCE_AT) {
-      const fresh = spreadKeys(existing.length + 1);
-      for (let i = 0; i < existing.length; i++) {
-        await ctx.trx
-          .updateTable('ludy_notes.notebook')
-          .set({ sort_key: fresh[i] as string })
-          .where('org_id', '=', ctx.orgId)
-          .where('id', '=', existing[i]!.id)
-          .execute();
+      await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`notes.notebook.reorder:${ctx.orgId}`}, 0))`.execute(ctx.trx);
+      const lockedExisting = await ctx.trx
+        .selectFrom('ludy_notes.notebook')
+        .select(['id', 'sort_key'])
+        .where('org_id', '=', ctx.orgId)
+        .where('author_user_id', '=', userId)
+        .orderBy('id')
+        .forUpdate()
+        .execute();
+      lockedExisting.sort((a, b) => (a.sort_key < b.sort_key ? -1 : a.sort_key > b.sort_key ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+      const fresh = spreadKeys(lockedExisting.length + 1);
+      if (lockedExisting.length > 0) {
+        const ids = lockedExisting.map((r) => r.id);
+        const keys = fresh.slice(0, lockedExisting.length);
+        await sql`UPDATE ludy_notes.notebook AS n SET sort_key = v.key
+          FROM unnest(${ids}::uuid[], ${keys}::text[]) AS v(id, key)
+          WHERE n.org_id = ${ctx.orgId}::uuid AND n.id = v.id`.execute(ctx.trx);
       }
-      sortKey = fresh[existing.length] as string;
+      sortKey = fresh[lockedExisting.length] as string;
     }
 
     const row = await ctx.trx
@@ -365,6 +374,167 @@ export const notebookCreate = defineCommand({
   },
 });
 
+export interface RebalanceRow {
+  id: string;
+  editable: boolean;
+  sortKey: string;
+}
+
+function hasGapBetween(lo: string | null, hi: string | null): boolean {
+  if (lo === null) return hi === null || !/^0+$/.test(hi);
+  if (hi === null) return true;
+  if (!(lo < hi)) return false;
+  return !(hi.startsWith(lo) && /^0+$/.test(hi.slice(lo.length)));
+}
+
+function fillBalancedKeys(lo: string | null, hi: string | null, out: string[], start: number, end: number): void {
+  if (start >= end) return;
+  const mid = (start + end) >>> 1;
+  const key = keyBetween(lo, hi);
+  out[mid] = key;
+  fillBalancedKeys(lo, key, out, start, mid);
+  fillBalancedKeys(key, hi, out, mid + 1, end);
+}
+
+export function spreadKeysBetween(lo: string | null, hi: string | null, count: number): string[] {
+  if (count <= 0) return [];
+  if (!hasGapBetween(lo, hi)) throw new Error('spreadKeysBetween: no key gap between bounds');
+  if (lo === null && hi === null) return spreadKeys(count);
+  const upper = hi === null ? null : hi.replace(/0+$/, '');
+  const out = Array.from({ length: count }, () => '');
+  fillBalancedKeys(lo, upper, out, 0, count);
+  return out;
+}
+
+// Rewrites editable sibling sort keys inside their non-editable shared-notebook intervals so fixed neighbors
+// keep their exact sort keys and relative positions, placing `movingId` at `place` relative to `anchorId`.
+export function planNotebookRebalance(
+  others: readonly RebalanceRow[],
+  movingId: string,
+  place: 'before' | 'after',
+  anchorId: string,
+): { movingKey: string; updates: Array<{ id: string; sortKey: string }> } {
+  const anchorIdx = others.findIndex((r) => r.id === anchorId);
+  if (anchorIdx === -1) throw notebookNotFound();
+
+  const anchorKey = others[anchorIdx]!.sortKey;
+  let insertAt = place === 'before' ? anchorIdx : anchorIdx + 1;
+
+  type SeqEntry = { id: string; editable: boolean; sortKey: string; moving: boolean };
+  const buildSequence = (at: number): SeqEntry[] => {
+    const seq: SeqEntry[] = others.map((r) => ({ ...r, moving: false }));
+    seq.splice(at, 0, { id: movingId, editable: true, sortKey: '', moving: true });
+    return seq;
+  };
+
+  let sequence = buildSequence(insertAt);
+  const runBoundsOf = (seq: readonly SeqEntry[], pos: number) => {
+    let start = pos;
+    while (start > 0 && seq[start - 1]!.editable) start--;
+    let end = pos;
+    while (end + 1 < seq.length && seq[end + 1]!.editable) end++;
+    return {
+      start,
+      end,
+      lo: start > 0 ? seq[start - 1]!.sortKey : null,
+      hi: end + 1 < seq.length ? seq[end + 1]!.sortKey : null,
+    };
+  };
+
+  const initialRun = runBoundsOf(sequence, insertAt);
+  if (!hasGapBetween(initialRun.lo, initialRun.hi)) {
+    // Adjacent fixed shared notebooks share zero gap (even across interleaved editable siblings);
+    // step outside the entire tied/zero-gap fixed block so movingId lands in a valid gap.
+    const stepAfterZeroGap = (fromPos: number, boundKey: string): number => {
+      let gapFixedIdx = fromPos;
+      while (
+        gapFixedIdx < others.length &&
+        (others[gapFixedIdx]!.editable || !hasGapBetween(boundKey, others[gapFixedIdx]!.sortKey))
+      ) {
+        gapFixedIdx++;
+      }
+      let lastZeroGapFixed = gapFixedIdx - 1;
+      while (lastZeroGapFixed >= fromPos && others[lastZeroGapFixed]!.editable) {
+        lastZeroGapFixed--;
+      }
+      return lastZeroGapFixed + 1;
+    };
+
+    if (place === 'before') {
+      let gapFixedIdx = initialRun.start - 1;
+      while (
+        gapFixedIdx >= 0 &&
+        (others[gapFixedIdx]!.editable || !hasGapBetween(others[gapFixedIdx]!.sortKey, anchorKey))
+      ) {
+        gapFixedIdx--;
+      }
+      let firstZeroGapFixed = gapFixedIdx + 1;
+      while (firstZeroGapFixed < initialRun.start && others[firstZeroGapFixed]!.editable) {
+        firstZeroGapFixed++;
+      }
+      insertAt = firstZeroGapFixed;
+      sequence = buildSequence(insertAt);
+      const afterBeforeSlide = runBoundsOf(sequence, insertAt);
+      if (!hasGapBetween(afterBeforeSlide.lo, afterBeforeSlide.hi)) {
+        // Only possible when non-editable notebooks occupy the '0'+ floor (no key < '0' exists).
+        insertAt = stepAfterZeroGap(afterBeforeSlide.end, anchorKey);
+        sequence = buildSequence(insertAt);
+      }
+    } else {
+      insertAt = stepAfterZeroGap(initialRun.end, anchorKey);
+      sequence = buildSequence(insertAt);
+    }
+  }
+
+  let movingKey = '';
+  const updates: Array<{ id: string; sortKey: string }> = [];
+
+  let i = 0;
+  while (i < sequence.length) {
+    if (!sequence[i]!.editable) {
+      i++;
+      continue;
+    }
+    const start = i;
+    while (i < sequence.length && sequence[i]!.editable) i++;
+    const end = i;
+
+    const loKey = start > 0 ? sequence[start - 1]!.sortKey : null;
+    const hiKey = end < sequence.length ? sequence[end]!.sortKey : null;
+    const run = sequence.slice(start, end);
+    const hasMoving = run.some((item) => item.moving);
+
+    if (!hasGapBetween(loKey, hiKey)) continue;
+
+    const alreadyClean =
+      !hasMoving &&
+      run.every(
+        (item, idx) =>
+          item.sortKey.length <= REBALANCE_AT &&
+          (loKey === null || loKey < item.sortKey) &&
+          (hiKey === null || item.sortKey < hiKey) &&
+          (idx === 0 || run[idx - 1]!.sortKey < item.sortKey),
+      );
+    if (alreadyClean) continue;
+
+    const fresh = spreadKeysBetween(loKey, hiKey, run.length);
+    for (let k = 0; k < run.length; k++) {
+      const entry = run[k]!;
+      const nextKey = fresh[k] as string;
+      if (entry.moving) {
+        movingKey = nextKey;
+      } else if (entry.sortKey !== nextKey) {
+        updates.push({ id: entry.id, sortKey: nextKey });
+      }
+    }
+  }
+
+  if (movingKey === '') {
+    throw new Error('planNotebookRebalance: failed to assign a non-empty sort key');
+  }
+  return { movingKey, updates };
+}
+
 async function computeReorderedSortKey(
   ctx: CommandContext,
   userId: string,
@@ -373,14 +543,16 @@ async function computeReorderedSortKey(
   place: 'before' | 'after',
   anchorId: string,
 ): Promise<string> {
-  const rows = await ctx.trx
-    .selectFrom('ludy_notes.notebook')
-    .select(['id', 'author_user_id', 'visibility', 'sort_key'])
-    .where('org_id', '=', ctx.orgId)
-    .orderBy('sort_key')
-    .orderBy('id')
-    .execute();
+  const loadOrderedRows = () =>
+    ctx.trx
+      .selectFrom('ludy_notes.notebook')
+      .select(['id', 'author_user_id', 'visibility', 'sort_key'])
+      .where('org_id', '=', ctx.orgId)
+      .orderBy('sort_key')
+      .orderBy('id')
+      .execute();
 
+  const rows = await loadOrderedRows();
   const others = rows.filter((r) => r.id !== movingId);
   const anchorIdx = others.findIndex((r) => r.id === anchorId);
   if (anchorIdx === -1) throw notebookNotFound();
@@ -390,24 +562,44 @@ async function computeReorderedSortKey(
   const leftKey = leftIdx >= 0 ? (others[leftIdx]?.sort_key ?? null) : null;
   const rightKey = rightIdx < others.length ? (others[rightIdx]?.sort_key ?? null) : null;
 
-  // Rewrites the keys of the notebooks the caller may manage, with the moving one at its place among them.
+  // Locks editable sibling rows in deterministic id order and spaces keys around non-editable shared notebooks.
   const rebalance = async (): Promise<string> => {
-    const editable = others.filter((r) => canManageNotebook(r, userId, ctx.role, wholeOrg));
-    const editableAnchorIdx = editable.findIndex((r) => r.id === anchorId);
-    const insertAt = editableAnchorIdx === -1 ? editable.length : place === 'before' ? editableAnchorIdx : editableAnchorIdx + 1;
-    const fresh = spreadKeys(editable.length + 1);
-    let cursor = 0;
-    for (let i = 0; i < editable.length; i++) {
-      if (cursor === insertAt) cursor++;
+    const lockedIds = new Set<string>();
+    let lockedRows = rows;
+    while (true) {
+      const toLock = lockedRows
+        .filter((r) => r.id !== movingId && !lockedIds.has(r.id) && canManageNotebook(r, userId, ctx.role, wholeOrg))
+        .map((r) => r.id)
+        .sort();
+      if (toLock.length === 0) break;
       await ctx.trx
-        .updateTable('ludy_notes.notebook')
-        .set({ sort_key: fresh[cursor] as string })
+        .selectFrom('ludy_notes.notebook')
+        .select(['id'])
         .where('org_id', '=', ctx.orgId)
-        .where('id', '=', editable[i]!.id)
+        .where('id', 'in', toLock)
+        .orderBy('id')
+        .forUpdate()
         .execute();
-      cursor++;
+      for (const id of toLock) lockedIds.add(id);
+      lockedRows = await loadOrderedRows();
     }
-    return fresh[insertAt] as string;
+
+    const lockedOthers = lockedRows
+      .filter((r) => r.id !== movingId)
+      .map((r) => ({
+        id: r.id,
+        editable: canManageNotebook(r, userId, ctx.role, wholeOrg),
+        sortKey: r.sort_key,
+      }));
+    const plan = planNotebookRebalance(lockedOthers, movingId, place, anchorId);
+    if (plan.updates.length > 0) {
+      const ids = plan.updates.map((u) => u.id);
+      const keys = plan.updates.map((u) => u.sortKey);
+      await sql`UPDATE ludy_notes.notebook AS n SET sort_key = v.key
+        FROM unnest(${ids}::uuid[], ${keys}::text[]) AS v(id, key)
+        WHERE n.org_id = ${ctx.orgId}::uuid AND n.id = v.id`.execute(ctx.trx);
+    }
+    return plan.movingKey;
   };
 
   // Keys repeat across authors (each author's first notebook gets the same key), and the caller may not rewrite the
@@ -423,12 +615,17 @@ async function computeReorderedSortKey(
     } else {
       upper = others.find((r) => r.sort_key > anchorKey)?.sort_key ?? null;
     }
-    const nextToAnchor = keyBetween(lower, upper);
-    return nextToAnchor.length <= REBALANCE_AT ? nextToAnchor : rebalance();
+    if (hasGapBetween(lower, upper)) {
+      const nextToAnchor = keyBetween(lower, upper);
+      if (nextToAnchor.length <= REBALANCE_AT) return nextToAnchor;
+    }
+    return rebalance();
   }
 
-  const candidate = keyBetween(leftKey, rightKey);
-  if (candidate.length <= REBALANCE_AT) return candidate;
+  if (hasGapBetween(leftKey, rightKey)) {
+    const candidate = keyBetween(leftKey, rightKey);
+    if (candidate.length <= REBALANCE_AT) return candidate;
+  }
   return rebalance();
 }
 
@@ -461,6 +658,9 @@ export const notebookUpdate = defineCommand({
       throw new DomainError('FORBIDDEN', 403, 'Thành viên giới hạn theo pháp nhân không chia sẻ được sổ tay dùng chung');
     }
 
+    if (input.reorder) {
+      await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`notes.notebook.reorder:${ctx.orgId}`}, 0))`.execute(ctx.trx);
+    }
     await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`notes.notebook:${ctx.orgId}:${input.notebookId}`}, 0))`.execute(ctx.trx);
 
     const before = await ctx.trx
