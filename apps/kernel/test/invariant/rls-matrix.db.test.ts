@@ -134,6 +134,7 @@ const PENDING_TABLES = new Set<string>([
   'crove_meetings.meeting_label',
   'crove_meetings.meeting_link',
   'crove_meetings.tracker_alert',
+  'crove_meetings.weekly_notice',
   'crove_notes.link',
   'crove_notes.note',
 ]);
