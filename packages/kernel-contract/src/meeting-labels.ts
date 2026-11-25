@@ -78,3 +78,24 @@ export type MeetingLabel = z.infer<typeof zMeetingLabel>;
 // The labels of one meeting the caller may read, in the order they were added.
 export const zMeetingLabels = z.strictObject({ meetingId: zId, labels: z.array(zMeetingLabel) });
 export type MeetingLabels = z.infer<typeof zMeetingLabels>;
+
+// Vy's label suggestions (#5010): the recorder's own Vy offers up to three short labels, shown as plain text and stored nowhere (the run's result row holds counts only); the recorder's click on one runs `label.add`.
+export const LABEL_SUGGEST_MAX = 3;
+// The most dropped suggestions an answer reports (a count; the model may write more entries than that, and the count is clamped).
+export const LABEL_SUGGEST_DROPPED_MAX = 100;
+export const LABEL_SUGGEST_STATES = ['suggested', 'none', 'failed'] as const;
+// A label's length is counted in code points (labelProblem, the database's char_length), so an astral character is one: the schema bounds the UTF-16 length loosely (two units a character at most) and counts code points.
+export const zLabelValue = z
+  .string()
+  .min(1)
+  .max(MEETING_LABEL_LENGTH_MAX * 2)
+  .refine((text) => [...text].length <= MEETING_LABEL_LENGTH_MAX);
+export const zLabelSuggestAnswer = z.strictObject({
+  state: z.enum(LABEL_SUGGEST_STATES),
+  // The fixed code of a failure, a name and never the model's or the provider's words.
+  errorCode: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/).nullable(),
+  labels: z.array(zLabelValue).max(LABEL_SUGGEST_MAX),
+  // How many suggestions code removed (a count, never the text).
+  dropped: z.number().int().min(0).max(LABEL_SUGGEST_DROPPED_MAX),
+});
+export type LabelSuggestAnswer = z.infer<typeof zLabelSuggestAnswer>;

@@ -136,6 +136,8 @@ suite('meeting platform definers return no meeting text (#3173)', () => {
 
   it('returns no text-like column from any worker-facing definer except the pinned technical ones (ids, provider, platform id, staging key, key id)', async () => {
     const { rows } = await functions();
+    // Every definer of RETURNS exists on main (the test above pins the exact set), so a query that finds fewer is broken, not clean (#5033).
+    expect(rows.map((r) => r.proname)).toEqual(expect.arrayContaining(Object.keys(RETURNS)));
     const technical = new Set(['key_id', 'envelope', 'provider', 'external_account', 'external_id', 'staging_key', 'code_verifier']);
     for (const row of rows) {
       const m = /^TABLE\((.*)\)$/.exec(row.result);

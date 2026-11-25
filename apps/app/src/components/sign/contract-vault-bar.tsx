@@ -43,6 +43,8 @@ export interface ContractVaultBarProps {
   canAskVy?: boolean;
   initialQuestion?: string;
   initialResult?: ContractVaultBarResultState | null;
+  pendingEnvelopeIds?: ReadonlySet<string> | undefined;
+  onOpenPendingEnvelope?: ((envelopeId: string) => void) | undefined;
 }
 
 export function ContractVaultBar({
@@ -50,9 +52,46 @@ export function ContractVaultBar({
   canAskVy = true,
   initialQuestion = '',
   initialResult = null,
+  pendingEnvelopeIds,
+  onOpenPendingEnvelope,
 }: ContractVaultBarProps) {
   const t = useTranslations('sign');
   const f = useFormat();
+
+  const renderEnvelopeAction = ({
+    envelopeId,
+    label,
+    className,
+    testId,
+  }: {
+    envelopeId: string;
+    label: string;
+    className: string;
+    testId?: string | undefined;
+  }) => {
+    if (pendingEnvelopeIds?.has(envelopeId) && onOpenPendingEnvelope) {
+      return (
+        <button
+          type="button"
+          onClick={() => onOpenPendingEnvelope(envelopeId)}
+          className={`${className} text-left`}
+          data-testid={testId}
+        >
+          {label}
+        </button>
+      );
+    }
+    return (
+      <Link
+        to="/o/$slug/sign/envelopes/$id"
+        params={{ slug, id: envelopeId }}
+        className={className}
+        data-testid={testId}
+      >
+        {label}
+      </Link>
+    );
+  };
   const [question, setQuestion] = useState(initialQuestion);
   const [result, setResult] = useState<ContractVaultBarResultState | null>(initialResult);
   const [activeError, setActiveError] = useState<string | null>(null);
@@ -218,14 +257,13 @@ export function ContractVaultBar({
                   >
                     <div className="min-w-0 space-y-1">
                       <div className="flex flex-wrap items-center gap-1.5">
-                        <Link
-                          to="/o/$slug/sign/envelopes/$id"
-                          params={{ slug, id: cite.envelopeId }}
-                          className="inline-flex items-center rounded-sm text-xs font-semibold text-foreground underline underline-offset-4 hover:opacity-80 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none max-md:min-h-11"
-                          data-testid={`sign-vault-citation-link-${cite.envelopeId}`}
-                        >
-                          {cite.envelopeTitle}
-                        </Link>
+                        {renderEnvelopeAction({
+                          envelopeId: cite.envelopeId,
+                          label: cite.envelopeTitle,
+                          className:
+                            'inline-flex items-center rounded-sm text-xs font-semibold text-foreground underline underline-offset-4 hover:opacity-80 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none max-md:min-h-11',
+                          testId: `sign-vault-citation-link-${cite.envelopeId}`,
+                        })}
                         {cite.pageNumber !== null ? (
                           <Badge variant="secondary">
                             {t('vault.pageBadge', { page: String(cite.pageNumber) })}
@@ -234,13 +272,11 @@ export function ContractVaultBar({
                       </div>
                       <p className="text-xs text-muted-foreground">{cite.quoteExcerpt}</p>
                     </div>
-                    <Link
-                      to="/o/$slug/sign/envelopes/$id"
-                      params={{ slug, id: cite.envelopeId }}
-                      className={`${buttonVariants({ variant: 'ghost', size: 'sm' })} shrink-0 max-md:min-h-11`}
-                    >
-                      {t('vault.openEnvelopeLink')}
-                    </Link>
+                    {renderEnvelopeAction({
+                      envelopeId: cite.envelopeId,
+                      label: t('vault.openEnvelopeLink'),
+                      className: `${buttonVariants({ variant: 'ghost', size: 'sm' })} shrink-0 max-md:min-h-11`,
+                    })}
                   </div>
                 ))}
               </div>
@@ -267,13 +303,12 @@ export function ContractVaultBar({
                   >
                     <div className="min-w-0 space-y-1.5">
                       <div className="flex flex-wrap items-center gap-2">
-                        <Link
-                          to="/o/$slug/sign/envelopes/$id"
-                          params={{ slug, id: item.envelopeId }}
-                          className="inline-flex items-center truncate rounded-sm text-sm font-semibold text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none max-md:min-h-11"
-                        >
-                          {item.title}
-                        </Link>
+                        {renderEnvelopeAction({
+                          envelopeId: item.envelopeId,
+                          label: item.title,
+                          className:
+                            'inline-flex items-center truncate rounded-sm text-sm font-semibold text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none max-md:min-h-11',
+                        })}
                         <Badge variant={STATUS_BADGE_VARIANT[item.status]}>
                           {t(`statuses.${item.status}`)}
                         </Badge>
@@ -318,14 +353,12 @@ export function ContractVaultBar({
                       ) : null}
                     </div>
 
-                    <Link
-                      to="/o/$slug/sign/envelopes/$id"
-                      params={{ slug, id: item.envelopeId }}
-                      className={`${buttonVariants({ variant: 'outline', size: 'sm' })} shrink-0 max-md:min-h-11`}
-                      data-testid={`sign-vault-open-${item.envelopeId}`}
-                    >
-                      {t('vault.openEnvelopeLink')}
-                    </Link>
+                    {renderEnvelopeAction({
+                      envelopeId: item.envelopeId,
+                      label: t('vault.openEnvelopeLink'),
+                      className: `${buttonVariants({ variant: 'outline', size: 'sm' })} shrink-0 max-md:min-h-11`,
+                      testId: `sign-vault-open-${item.envelopeId}`,
+                    })}
                   </div>
                 ))}
               </div>

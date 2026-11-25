@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from 'vitest';
-import { MEETING_LABEL_LENGTH_MAX, cleanLabelText, labelKey, labelProblem, zLabelAdd, zMeetingListItem } from '../src/index.ts';
+import { LABEL_SUGGEST_DROPPED_MAX, MEETING_LABEL_LENGTH_MAX, cleanLabelText, labelKey, labelProblem, zLabelAdd, zLabelSuggestAnswer, zMeetingListItem } from '../src/index.ts';
 
 describe('meeting label text (#4955)', () => {
   it('collapses runs of spaces and tabs and trims the ends', () => {
@@ -85,8 +85,30 @@ describe('meeting label text (#4955)', () => {
     expect(zMeetingListItem.safeParse({ ...row, labels: [] }).success).toBe(true);
     expect(zMeetingListItem.safeParse({ ...row, labels: ['A', 'B', 'C', 'D', 'E'] }).success).toBe(true);
     expect(zMeetingListItem.safeParse({ ...row, labels: ['A', 'B', 'C', 'D', 'E', 'F'] }).success).toBe(false);
+    // A label of 40 code points with an emoji is 41 UTF-16 units: the row must hold it, as labelProblem and the database do (#5010 review).
+    expect(zMeetingListItem.safeParse({ ...row, labels: [`${'x'.repeat(MEETING_LABEL_LENGTH_MAX - 1)}\u{1f4cc}`] }).success).toBe(true);
     expect(zMeetingListItem.safeParse({ ...row, labels: ['x'.repeat(MEETING_LABEL_LENGTH_MAX + 1)] }).success).toBe(false);
     // The list says what each meeting carries: a row without the field is refused.
     expect(zMeetingListItem.safeParse(row).success).toBe(false);
+  });
+});
+
+describe('label length counts code points everywhere a label is shown (#5010 review)', () => {
+  // 39 letters and one emoji: 40 code points as labelProblem and the database count them, 41 UTF-16 units.
+  const astral = `${'x'.repeat(MEETING_LABEL_LENGTH_MAX - 1)}\u{1f4cc}`;
+  const answer = (labels: string[], dropped = 0) => ({ state: 'suggested' as const, errorCode: null, labels, dropped });
+
+  it('lets a label that labelProblem accepts through the suggestion answer, the list row and a refusal of 41 code points', () => {
+    expect(labelProblem(astral)).toBeNull();
+    expect(astral.length).toBe(MEETING_LABEL_LENGTH_MAX + 1);
+    expect(zLabelSuggestAnswer.safeParse(answer([astral])).success).toBe(true);
+    const over = `${astral}y`;
+    expect(labelProblem(over)).toBe('too_long');
+    expect(zLabelSuggestAnswer.safeParse(answer([over])).success).toBe(false);
+  });
+
+  it('bounds the dropped count of a suggestion answer at its ceiling', () => {
+    expect(zLabelSuggestAnswer.safeParse(answer([], LABEL_SUGGEST_DROPPED_MAX)).success).toBe(true);
+    expect(zLabelSuggestAnswer.safeParse(answer([], LABEL_SUGGEST_DROPPED_MAX + 1)).success).toBe(false);
   });
 });

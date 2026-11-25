@@ -292,6 +292,9 @@ suite('what a company MCP grant reads of Meetings (#3731, invariants first)', ()
       )
     ).rows;
     const naming = policies.filter((p) => p.text.includes('mcp_company'));
+    // The three read policies of 20270115200000 name the company kind on main, and the module has write policies (meeting_reader_insert and _delete), so neither set below may be empty (#5033).
+    expect(naming.map((p) => p.policyname).sort()).toEqual(expect.arrayContaining(['action_item_read', 'meeting_read', 'meeting_result_read']));
+    expect(policies.filter((x) => x.cmd !== 'SELECT').length, 'the module has write policies').toBeGreaterThan(0);
     for (const p of naming) {
       expect(OPEN_TABLES, `${p.tablename}.${p.policyname}`).toContain(p.tablename);
       expect(p.cmd, `${p.tablename}.${p.policyname}`).toBe('SELECT');
