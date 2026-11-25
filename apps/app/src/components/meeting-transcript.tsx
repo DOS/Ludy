@@ -16,6 +16,7 @@ import { Textarea } from '@ludy/ui/components/textarea';
 import { Empty, ErrorText } from './ui.tsx';
 import { DraftRedactionDialog, RedactionNudge, useRedactCandidatesQuery } from './meeting-redaction.tsx';
 import { TranscriptTranslationPanel, TranslatedLine, useTranscriptParts } from './meeting-transcript-translation.tsx';
+import { TranscriptExport } from './meeting-transcript-export.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { platformTranscript } from '../lib/meeting-platform.ts';
 import { focusedSegment, type TranscriptFocus } from '../lib/transcript-focus.ts';
@@ -33,7 +34,7 @@ export function clock(seconds: number): string {
   return h > 0 ? `${h}:${two(m)}:${two(s)}` : `${m}:${two(s)}`;
 }
 
-function Line({ segment, editable, focused, focusToken, translation }: { segment: TranscriptSegment; editable: boolean; focused: boolean; focusToken?: number | undefined; translation?: { part: Parameters<typeof TranslatedLine>[0]['part']; to: string } | undefined }) {
+function Line({ segment, editable, focused, focusToken, translation, onSeek }: { segment: TranscriptSegment; editable: boolean; focused: boolean; focusToken?: number | undefined; onSeek?: ((second: number) => void) | undefined; translation?: { part: Parameters<typeof TranslatedLine>[0]['part']; to: string } | undefined }) {
   const t = useTranslations('meetings.transcript');
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(segment.text);
@@ -72,7 +73,14 @@ function Line({ segment, editable, focused, focusToken, translation }: { segment
   return (
     <li ref={ref} className={focused ? 'space-y-1 rounded-md bg-warning/15 px-2 py-2 text-sm' : 'space-y-1 py-2 text-sm'} data-testid="transcript-line" {...(focused ? { 'aria-current': 'location' as const, 'data-focused': 'true' } : {})}>
       <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-        <span className="font-mono">{clock(segment.startSeconds)}</span>
+        {onSeek ? (
+          // The time of a line goes to the start of the line in the recording (#4816); it only moves the player, playing stays the person's own click.
+          <button type="button" className="rounded px-1 font-mono underline-offset-2 hover:underline focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none max-md:min-h-11" aria-label={t('seekTo', { time: clock(segment.startSeconds) })} onClick={() => onSeek(segment.startSeconds)} data-testid="transcript-seek">
+            {clock(segment.startSeconds)}
+          </button>
+        ) : (
+          <span className="font-mono">{clock(segment.startSeconds)}</span>
+        )}
         {editing ? (
           <Input aria-label={t('speaker')} value={speaker} maxLength={80} onChange={(e) => setSpeaker(e.target.value)} className="h-7 w-44 text-xs" />
         ) : (
@@ -230,9 +238,12 @@ export function MeetingTranscript({
   focusSegmentId,
   focusSecond,
   platformCut = false,
+  onSeek,
   redaction,
 }: {
   meetingId: string;
+  // Given when a recording is loaded on the page (#4816): the time of each line becomes a button that moves the player to the start of the line.
+  onSeek?: ((second: number) => void) | undefined;
   focusSegmentId?: string;
   focusSecond?: TranscriptFocus | undefined;
   platformCut?: boolean;
@@ -313,6 +324,7 @@ export function MeetingTranscript({
             doneRef={localDoneRef}
           />
         )}
+        <TranscriptExport meetingId={meetingId} />
         {platform && (
           <p className="text-xs text-muted-foreground" data-testid="transcript-platform">
             {t('platformSource', { platform: tp(`provider.${platform.platform}`) })}
@@ -333,6 +345,7 @@ export function MeetingTranscript({
               editable={transcript.isRecorder}
               focused={segment.id === focusedId}
               focusToken={focusSecond?.token}
+              onSeek={onSeek}
               translation={translated.parts.has(segment.id) ? { part: translated.parts.get(segment.id) as Parameters<typeof TranslatedLine>[0]['part'], to: translated.to } : undefined}
             />
           ))}

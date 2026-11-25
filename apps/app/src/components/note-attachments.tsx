@@ -33,6 +33,15 @@ const SAFE_AUDIO_TYPES: ReadonlySet<string> = new Set([
 ]);
 
 const AUTO_PREVIEW_PDF_MAX_BYTES = 10 * 1024 * 1024;
+export const NOTE_ATTACHMENT_POLL_INITIAL_MS = 2_000;
+export const NOTE_ATTACHMENT_POLL_MAX_MS = 30_000;
+export const NOTE_ATTACHMENT_POLL_MAX_ATTEMPTS = 10;
+
+export function nextNoteAttachmentPollDelayMs(attempt: number): number {
+  if (!Number.isFinite(attempt)) return NOTE_ATTACHMENT_POLL_INITIAL_MS;
+  const safeAttempt = Math.min(20, Math.max(0, Math.floor(attempt)));
+  return Math.min(NOTE_ATTACHMENT_POLL_MAX_MS, NOTE_ATTACHMENT_POLL_INITIAL_MS * 2 ** safeAttempt);
+}
 
 const EXT_BY_MIME: Readonly<Record<string, string>> = {
   'image/png': 'png',
@@ -386,15 +395,72 @@ export function NoteAttachments({
   const [lightbox, setLightbox] = useState<{ url: string; filename: string } | null>(null);
   const [openPdfs, setOpenPdfs] = useState<Record<string, boolean>>({});
 
-  // Poll while any attachment is waiting on crove-extract so the status badge updates automatically.
-  const hasPending = attachments.some((att) => att.extractStatus === 'pending');
+  // Poll with bounded exponential backoff while any attachment waits on crove-extract, then pause with manual recovery.
+  const pendingIdsKey = attachments
+    .filter((att) => att.extractStatus === 'pending')
+    .map((att) => att.id)
+    .sort()
+    .join(',');
+  const hasPending = pendingIdsKey !== '';
+  const [pollCycle, setPollCycle] = useState(0);
+  const [pollPaused, setPollPaused] = useState(false);
+  const [retryingPoll, setRetryingPoll] = useState(false);
+
   useEffect(() => {
-    if (!hasPending) return;
-    const timer = setInterval(() => {
-      void refreshNotes();
-    }, 2000);
-    return () => clearInterval(timer);
-  }, [hasPending]);
+    if (!hasPending) {
+      setPollPaused((prev) => (prev ? false : prev));
+      return;
+    }
+    setPollPaused((prev) => (prev ? false : prev));
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let attempt = 0;
+
+    const scheduleNext = () => {
+      if (cancelled) return;
+      if (attempt >= NOTE_ATTACHMENT_POLL_MAX_ATTEMPTS) {
+        setPollPaused(true);
+        return;
+      }
+      const delay = nextNoteAttachmentPollDelayMs(attempt);
+      attempt += 1;
+      timer = setTimeout(() => {
+        void runPoll();
+      }, delay);
+    };
+
+    const runPoll = async () => {
+      if (cancelled) return;
+      try {
+        await refreshNotes();
+      } catch {
+        // Transient refresh errors do not break the bounded backoff; manual retry surfaces errors if persistent.
+      }
+      scheduleNext();
+    };
+
+    scheduleNext();
+
+    return () => {
+      cancelled = true;
+      if (timer !== null) clearTimeout(timer);
+    };
+  }, [hasPending, pendingIdsKey, pollCycle]);
+
+  const handleRetryPoll = async () => {
+    if (retryingPoll) return;
+    setActionError(null);
+    setRetryingPoll(true);
+    try {
+      await refreshNotes();
+      setPollPaused(false);
+      setPollCycle((c) => c + 1);
+    } catch (err) {
+      setActionError(err);
+    } finally {
+      setRetryingPoll(false);
+    }
+  };
 
   const removeMutation = useMutation({
     mutationFn: (attachmentId: string) => api.notes.attachments.delete({ attachmentId }),
@@ -501,6 +567,34 @@ export function NoteAttachments({
 
       {uploader.uploadError !== null && <ErrorText>{errorMessage(uploader.uploadError)}</ErrorText>}
       {actionError !== null && <ErrorText>{errorMessage(actionError)}</ErrorText>}
+
+      {hasPending && (
+        <div
+          role="status"
+          aria-live="polite"
+          data-testid={pollPaused ? 'note-attachment-poll-paused' : 'note-attachment-poll-active'}
+          className={
+            pollPaused
+              ? 'flex flex-wrap items-center justify-between gap-2 rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground'
+              : 'sr-only'
+          }
+        >
+          <span>{pollPaused ? t('extractPollPaused') : t('extractPolling')}</span>
+          {pollPaused && (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              loading={retryingPoll}
+              disabled={retryingPoll}
+              onClick={() => void handleRetryPoll()}
+              data-testid="note-attachment-poll-retry"
+            >
+              {t('extractPollRetry')}
+            </Button>
+          )}
+        </div>
+      )}
 
       {attachments.length > 0 && (
         <ul className="space-y-3" data-testid="note-attachment-list">
