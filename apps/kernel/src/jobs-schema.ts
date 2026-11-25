@@ -85,7 +85,7 @@ export const QUEUES = {
   meetingsSeriesNudge: 'meetings-series-nudge',
   // Created by the morning notice migration (20270120110000): the sweep, every 5 minutes, of the opt-in notices of the day's meetings (a count and a link, never a title; #3955).
   meetingsMorning: 'meetings-morning',
-  // Created by the weekly notice migration (20270326210000): the sweep, every 5 minutes, of the opt-in Monday notices of the week's meetings (counts and a link, never a title; #4967).
+  // Created by the weekly notice migration (20270326300000): the sweep, every 5 minutes, of the opt-in Monday notices of the week's meetings (counts and a link, never a title; #4967).
   meetingsWeekly: 'meetings-weekly',
   // Meeting platform recordings (meetings integrations C1, #3173): one download of a recording the member chose to import, and the sweep that hands them over, lists suggestions and expires.
   meetingsImport: 'kernel-meeting-import',
