@@ -1,4 +1,4 @@
-// Which modules this deployment runs (CROVE_MODULES, plan Decision 12, ADR-0031), from /api/config. A screen or
+// Which modules this deployment runs (LUDY_MODULES, plan Decision 12, ADR-0031), from /api/config. A screen or
 // menu item of another module asks for its slot and gets a typed not_installed answer instead of failing.
 import { MODULE_SCREENS, type ModuleScreens } from '@ludy/kernel-contract';
 

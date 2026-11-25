@@ -96,7 +96,7 @@ export function providerName(provider: string): string {
   return isProvider(provider) && provider !== 'sandbox' ? PROVIDER_NAMES[provider] : (MESSAGING_PROVIDER_NAMES[provider] ?? provider);
 }
 
-// The platforms the channels screen lists to connect, in the order Crove adds them (Social plan §6). A platform the
+// The platforms the channels screen lists to connect, in the order Ludy adds them (Social plan §6). A platform the
 // deployment has not set up shows as not configured, except LinkedIn Company Pages, which wait on LinkedIn approving
 // the app for the Community Management API (#1077) and are listed only where the deployment offers them.
 const CONNECT_PLATFORMS = ['facebook_page', 'instagram', 'zalo_oa', 'threads', 'linkedin', 'linkedin_page', 'youtube', 'tiktok', 'x', 'google_business', 'pinterest'] as const;

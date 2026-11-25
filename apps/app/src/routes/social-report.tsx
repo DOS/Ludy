@@ -1,7 +1,7 @@
 // The client report page (#643): /-/report#<token>, opened from a link the agency sent, with no account. It shows what
 // went out in the period on the link's channels, the totals, the counts per channel and the posts that did best, and
 // prints cleanly to PDF from the browser. The token stays after the # and goes to the API in a POST body only.
-// With the org's white-label branding (#1053) it shows the agency's logo, name and accent instead of Crove's logo. A
+// With the org's white-label branding (#1053) it shows the agency's logo, name and accent instead of Ludy's logo. A
 // link may carry the agency's note, shown as plain text, and a report of exactly one month shows the monthly goals
 // (#1056), and who follows each channel, from the latest weekly capture in the period (#1146). The engagement rate
 // (#1157) of the period, each channel and each best post is worked out on the page from the counts it already gets.

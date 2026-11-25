@@ -1,7 +1,7 @@
 // Bank statements (issue #326): import a bank's Excel or CSV export into one bank account's statement lines, checked
 // line by line before anything is stored (new, already there, needs a look, unreadable), then read the account's lines
 // per month. Each line shows its voucher (stage 2a): none yet, a báo Có or báo Nợ waiting for approval, or the posted
-// one; "Enter voucher" opens the voucher form prefilled from the line, with the party Crove suggests.
+// one; "Enter voucher" opens the voucher form prefilled from the line, with the party Ludy suggests.
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useParams, useSearch } from '@tanstack/react-router';
 import { useEffect, useRef, useState } from 'react';
@@ -239,7 +239,7 @@ function StatementImport({ bankAccount, onImported }: { bankAccount: string; onI
   );
 }
 
-// The voucher form for one line, once Crove has read what the line makes.
+// The voucher form for one line, once Ludy has read what the line makes.
 function LineVoucher({ slug, line, onClose }: { slug: string; line: BankLine; onClose: () => void }) {
   const t = useTranslations('vouchers');
   const made = useQuery(orpc.bank.lineVoucher.queryOptions({ input: { bankLineId: line.id } }));

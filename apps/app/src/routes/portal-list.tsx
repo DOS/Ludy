@@ -125,7 +125,7 @@ function Section({ outcome, items, total, folded, slug, direction }: { outcome: 
 
 const REMINDER_DAYS = Array.from({ length: 28 }, (_, i) => i + 1);
 
-// Asking the company for the invoices the portal lists and Crove lacks (issue #669): one email for the period, to the
+// Asking the company for the invoices the portal lists and Ludy lacks (issue #669): one email for the period, to the
 // company's contact email (Settings), and an optional monthly reminder. Editors send and set the reminder; everyone
 // sees what was sent.
 function MissingInvoiceRequest({ period, missing, editor, canManage, slug }: { period: string; missing: number; editor: boolean; canManage: boolean; slug: string }) {
@@ -230,7 +230,7 @@ function MissingInvoiceRequest({ period, missing, editor, canManage, slug }: { p
 }
 
 // Reconciliation with the tax portal's purchase list (issue #465): pick the period, upload the .xlsx exported from
-// hoadondientu.gdt.gov.vn, and see which invoices the tax authority has that Crove lacks, and the other way round.
+// hoadondientu.gdt.gov.vn, and see which invoices the tax authority has that Ludy lacks, and the other way round.
 export function PortalListPage() {
   const t = useTranslations('portalList');
   const tv = useTranslations('vat');

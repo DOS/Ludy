@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The apps the current org has (ADR-0053, slice d of #3307): the deployment's CROVE_MODULES from /api/config, cut by the org's own choice and
+// The apps the current org has (ADR-0053, slice d of #3307): the deployment's LUDY_MODULES from /api/config, cut by the org's own choice and
 // entitlements as `kernel.org.apps` answers them. Every menu, screen and "is this app installed" question inside an org reads installedModules(),
 // so a switch-off reaches them all with no line in each. Outside an org (the multi-client table, the share target, onboarding) the deployment's
 // list stands, as before. The router fills the store before a screen opens and the shell refills it when the stream says the apps changed.
