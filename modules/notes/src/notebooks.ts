@@ -363,11 +363,25 @@ export interface RebalanceRow {
   sortKey: string;
 }
 
+function isAllZeros(value: string, fromIndex = 0): boolean {
+  if (fromIndex >= value.length) return false;
+  for (let i = fromIndex; i < value.length; i++) {
+    if (value[i] !== '0') return false;
+  }
+  return true;
+}
+
+function trimTrailingZeros(value: string): string {
+  let end = value.length;
+  while (end > 0 && value[end - 1] === '0') end--;
+  return value.slice(0, end);
+}
+
 function hasGapBetween(lo: string | null, hi: string | null): boolean {
-  if (lo === null) return hi === null || !/^0+$/.test(hi);
+  if (lo === null) return hi === null || !isAllZeros(hi);
   if (hi === null) return true;
   if (!(lo < hi)) return false;
-  return !(hi.startsWith(lo) && /^0+$/.test(hi.slice(lo.length)));
+  return !(hi.startsWith(lo) && isAllZeros(hi, lo.length));
 }
 
 function fillBalancedKeys(lo: string | null, hi: string | null, out: string[], start: number, end: number): void {
@@ -383,7 +397,7 @@ export function spreadKeysBetween(lo: string | null, hi: string | null, count: n
   if (count <= 0) return [];
   if (!hasGapBetween(lo, hi)) throw new Error('spreadKeysBetween: no key gap between bounds');
   if (lo === null && hi === null) return spreadKeys(count);
-  const upper = hi === null ? null : hi.replace(/0+$/, '');
+  const upper = hi === null ? null : trimTrailingZeros(hi);
   const out = Array.from({ length: count }, () => '');
   fillBalancedKeys(lo, upper, out, 0, count);
   return out;
