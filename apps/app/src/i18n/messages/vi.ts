@@ -19806,6 +19806,9 @@ export const vi = {
         name: 'Đặt tên người dự họp cho một người nói trong bản ghi lời nháp',
         suggestions: 'Xem tên người nói Vy gợi ý sau khi tóm tắt',
       },
+      speaking_style: {
+        get: 'Xem cách nói của từng người trong cuộc họp: tốc độ, từ đệm và đoạn nói liền dài nhất',
+      },
       deal_update: {
         confirm: 'Lưu phần cập nhật cơ hội của người ghi biên bản cuộc họp',
         facts: 'Đọc biên bản đã chia sẻ và cơ hội được liên kết để đề xuất cập nhật cơ hội',

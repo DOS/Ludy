@@ -19806,6 +19806,9 @@ export const en = {
         name: 'Name a speaker of the draft transcript after a person in the meeting',
         suggestions: 'See the speaker names Vy suggested after a summary',
       },
+      speaking_style: {
+        get: 'See how each speaker spoke in a meeting: pace, filler words and longest stretch',
+      },
       deal_update: {
         confirm: 'Save the recorder\'s update of the deal a meeting is linked to',
         facts: 'Read the published minutes and the linked deal to propose a deal update',
