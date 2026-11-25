@@ -131,6 +131,8 @@ const OTHER_SENDS: Readonly<Record<string, { command: string } | { reason: strin
   'kernel-meeting-import-sweep handler': { command: 'meetings.import.start' },
   // The morning notice sweep (every 5 minutes) queues browser push jobs for new morning notices; each notice is written by meetings.morning.notice, which declares the external effect (#4082).
   'meetings-morning handler': { command: 'meetings.morning.notice' },
+  // The weekly notice sweep (every 5 minutes) queues browser push jobs for new weekly notices; each notice is written by meetings.weekly.notice, which declares the external effect (#4967).
+  'meetings-weekly handler': { command: 'meetings.weekly.notice' },
   // The sweep (every minute) hands queued eSign outbound webhook deliveries to sign-hook-deliver; each exists only for an endpoint an owner or admin configured through sign.webhook.create,
   // which declares the external effect (eSign Slice 5b, #4438 / #4440).
   'sign-hook-sweep handler': { command: 'sign.webhook.create' },

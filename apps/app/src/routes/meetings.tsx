@@ -425,8 +425,16 @@ export function MeetingsPage() {
   const meetingsOn = meetingsInstalled();
 
   const [activeTab, setActiveTab] = useState<MeetingsTab>('recorded');
-  const [activeTool, setActiveTool] = useState<UtilityTool | null>(null);
-  const [openedTools, setOpenedTools] = useState<ReadonlySet<UtilityTool>>(() => new Set());
+  // The weekly notice's mail and push open the page with ?tool=digest (#4967): the "this week" card is open on arrival. Any other value, or none, opens nothing.
+  const [startTool] = useState<UtilityTool | null>(() => {
+    try {
+      return new URLSearchParams(window.location.search).get('tool') === 'digest' ? 'digest' : null;
+    } catch {
+      return null;
+    }
+  });
+  const [activeTool, setActiveTool] = useState<UtilityTool | null>(startTool);
+  const [openedTools, setOpenedTools] = useState<ReadonlySet<UtilityTool>>(() => new Set(startTool ? [startTool] : []));
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [filter, setFilter] = useState<MeetingListFilter>(EMPTY_MEETING_FILTER);
   const [sort, setSort] = useState<MeetingSort>('started_desc');

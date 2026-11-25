@@ -722,6 +722,7 @@ import { zTrackerAdd, zTrackerDone, zTrackerHits, zTrackerList, zTrackerMeetingI
 import { zHighlightAdd, zHighlightAdded, zHighlightRemove, zHighlightRemoved, zHighlights } from './meeting-highlights.ts';
 import { zMeetingsTodayFacts } from './meeting-today.ts';
 import { zMorningEmpty, zMorningSet, zMorningState } from './meeting-morning.ts';
+import { zWeeklyEmpty, zWeeklySet, zWeeklyState } from './meeting-weekly.ts';
 import { zAssigneeAnswer, zAssigneeAsk, zAssigneeStatus } from './meeting-assignee.ts';
 import { zAdherenceAgenda, zAdherenceAnswer, zAdherenceAsk, zAdherenceRef, zAdherenceStatus } from './meeting-adherence.ts';
 import { zCaptureHeartbeat, zCaptureHeartbeatDone } from './meeting-capture.ts';
@@ -2055,6 +2056,12 @@ export const contract = {
     morning: {
       get: oc.input(zMorningEmpty).output(zMorningState),
       set: oc.input(zMorningSet).output(zMorningState),
+    },
+    // The opt-in weekly notice of the week's meetings (#4967): the member's own setting (off until they turn it on, a Monday time in their own zone); the worker sends one in-app notice and one mail a week with the
+    // counts of the "this week" card and a link to it, never a title.
+    weekly: {
+      get: oc.input(zWeeklyEmpty).output(zWeeklyState),
+      set: oc.input(zWeeklySet).output(zWeeklyState),
     },
     // Who an action item belongs to, by Vy, when code found nobody (#3921, step 2): `status` is the button (may Vy be used now), `suggest` the click that has the member's own Vy pick one of the people they may give
     // the work to from the name said in the meeting, or nobody. The model sees names only; the answer is a number the route maps to a person; nothing is stored, and a person still picks the seat and makes the task.

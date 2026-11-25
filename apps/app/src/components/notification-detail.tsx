@@ -89,6 +89,14 @@ export function useNotificationLine() {
         return t('text.summary_ready');
       case 'meetings.morning':
         return t('text.morning', { count: Number(n.detail.count ?? 0) });
+      case 'meetings.weekly':
+        return t('text.weekly', {
+          meetings: Number(n.detail.meetings ?? 0),
+          decisions: Number(n.detail.decisions ?? 0),
+          open: Number(n.detail.open ?? 0),
+          overdue: Number(n.detail.overdue ?? 0),
+          cut: n.detail.cut === '1' ? 'yes' : 'no',
+        });
       case 'kernel.channel_expired':
         return t('text.channel_expired');
       case 'kernel.ai_budget':
@@ -160,6 +168,8 @@ export function useNotificationTitle() {
         return titles('meetings_summary_ready');
       case 'meetings.morning':
         return titles('meetings_morning');
+      case 'meetings.weekly':
+        return titles('meetings_weekly');
       default:
         return t('text.other');
     }

@@ -278,6 +278,14 @@ describe('the notifications tab of Settings', () => {
     expect(render(<NotificationPreferences />, {})).not.toContain('morning-notice-setting');
   });
 
+  it('holds the weekly notice of the meetings beside the morning one, where the meetings app runs (#4967)', () => {
+    state.modules = ['kernel', 'meetings'];
+    expect(render(<NotificationPreferences />, {})).toContain('data-testid="weekly-notice-setting"');
+    expect(render(<NotificationsPage />, {})).not.toContain('weekly-notice-setting');
+    state.modules = ['kernel'];
+    expect(render(<NotificationPreferences />, {})).not.toContain('weekly-notice-setting');
+  });
+
   it('leaves out the kinds of an app the org does not run', () => {
     state.modules = ['kernel'];
     expect(render(<NotificationPreferences />, {})).not.toContain(catalog('en').notifications.kinds.finance_bank_attention);
