@@ -426,6 +426,18 @@ suite('Tracker alerts (#4873)', () => {
     expect(ofOther!.row).toMatchObject({ id: other, subject: 'Nhac thanh toan', payload: { keep: true } });
   });
 
+  // The two definers read other members' rows (recipients) and the transcript lines of a meeting (counting): the worker alone may run them, and no login of the API or of a tenant, nor a definer role, may.
+  it('keeps the recipients and hits definers to the worker alone', async () => {
+    for (const signature of ['ludy_meetings.tracker_alert_recipients(uuid, uuid, timestamptz, uuid, integer)', 'ludy_meetings.tracker_alert_hits(uuid, uuid, timestamptz)']) {
+      const { rows } = await sqlAdmin<{ role: string }>(
+        "SELECT r AS role FROM unnest(ARRAY['ludy_app', 'ludy_tenant', 'ludy_definer_tenant', 'ludy_worker']) r WHERE has_function_privilege(r, $1, 'EXECUTE') ORDER BY 1",
+        [signature],
+      );
+      expect(rows.map((r) => r.role), signature).toEqual(['ludy_worker']);
+      expect((await sqlAdmin<{ ok: boolean }>("SELECT has_function_privilege('public', $1, 'EXECUTE') AS ok", [signature])).rows[0]?.ok, `${signature} for public`).toBe(false);
+    }
+  });
+
   it('returns the recipients a page at a time in id order, and the page is clamped', async () => {
     await clear();
     await addTerm('giá');
