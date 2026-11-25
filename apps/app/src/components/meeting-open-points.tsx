@@ -84,14 +84,14 @@ function Section({ kind, points, meetingId, onJump }: { kind: 'question' | 'deci
       <h3 className="text-sm font-semibold">{t(`${kind}s`)}</h3>
       <ul className="space-y-1">
         {points.map((point, index) => (
-          <Point key={`${point.seconds}-${index}`} kind={kind} point={point} meetingId={meetingId} onJump={onJump} />
+          <Point key={`${point.seconds}-${index}`} kind={kind} index={index} point={point} meetingId={meetingId} onJump={onJump} />
         ))}
       </ul>
     </section>
   );
 }
 
-function Point({ kind, point, meetingId, onJump }: { kind: 'question' | 'decision'; point: OpenPoint; meetingId: string; onJump: (seconds: number) => void }) {
+function Point({ kind, index, point, meetingId, onJump }: { kind: 'question' | 'decision'; index: number; point: OpenPoint; meetingId: string; onJump: (seconds: number) => void }) {
   const t = useTranslations('meetings.openPoints');
   const [full, setFull] = useState(false);
   const carry = useMutation({
@@ -107,10 +107,14 @@ function Point({ kind, point, meetingId, onJump }: { kind: 'question' | 'decisio
       return orpc.meetings.results.notesSave.call({ meetingId, body: next });
     },
     onSuccess: (done) => {
-      if (done) void queryClient.invalidateQueries({ queryKey: orpc.meetings.results.notesGet.key() });
+      if (!done) return;
+      void queryClient.invalidateQueries({ queryKey: orpc.meetings.results.notesGet.key() });
+      // The button that held the focus is gone: the focus goes to its result.
+      requestAnimationFrame(() => document.getElementById(`${id}-carried`)?.focus());
     },
   });
-  const id = `open-point-${kind}-${point.seconds}`;
+  // The index keeps the id unique when two points rest on the same transcript line.
+  const id = `open-point-${kind}-${index}`;
   return (
     <li className="flex flex-wrap items-baseline gap-2 text-sm" data-testid="open-points-line" data-kind={kind}>
       {/* Plain text: the line is the model's words, never markup. */}
@@ -130,7 +134,7 @@ function Point({ kind, point, meetingId, onJump }: { kind: 'question' | 'decisio
           {t('carry')}
         </Button>
       )}
-      <span role="status" className="text-xs text-muted-foreground">
+      <span id={`${id}-carried`} tabIndex={-1} role="status" className="text-xs text-muted-foreground">
         {carry.isSuccess && carry.data ? t('carried') : null}
       </span>
       {full && <ErrorText>{t('notesFull')}</ErrorText>}
