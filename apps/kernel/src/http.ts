@@ -23,7 +23,6 @@ import {
   MAX_SOCIAL_VIDEO_MS,
   MAX_UPLOAD_BYTES,
   ORG_HEADER,
-  LEGACY_ORG_HEADER,
   ROADMAP_VOTER_HEADER,
   SIGN_DEPOSIT_PROOF_MAX_BYTES,
   SIGN_DIRECT_PAGE_PATH,
@@ -143,7 +142,6 @@ import {
   emailChangeGate,
   emailChangeRefused,
   INVITE_TOKEN_HEADER,
-  LEGACY_INVITE_TOKEN_HEADER,
   limitInviteChecks,
   methodRefused,
   signupAllowed,
@@ -725,7 +723,8 @@ const SPOOFABLE = new Set([
 // Dropped from every request the auth proxy forwards: the forwarding headers above, and the invite token a sign-up
 // carries for the sign-up policy (#563), which is the proxy's to read and none of Supabase Auth's business.
 const RECIPIENT_HEADER = 'x-ludy-recipient';
-const LEGACY_RECIPIENT_HEADER = 'x-crove-recipient';
+const RETIRED_RECIPIENT_HEADER = 'x-crove-recipient';
+const RETIRED_INVITE_HEADER = 'x-crove-invite';
 
 function normalizeHeaderValue(raw: string | undefined): string | null {
   if (raw === undefined) return null;
@@ -734,33 +733,24 @@ function normalizeHeaderValue(raw: string | undefined): string | null {
 }
 
 function readOrgHeader(c: Context): string | null {
-  const primary = normalizeHeaderValue(c.req.header(ORG_HEADER));
-  const legacy = normalizeHeaderValue(c.req.header(LEGACY_ORG_HEADER));
-  if (primary !== null && legacy !== null && primary !== legacy) {
-    throw new DomainError('ORG_HEADER_CONFLICT', 400, 'Conflicting x-ludy-org and x-crove-org headers');
-  }
-  return primary ?? legacy;
+  return normalizeHeaderValue(c.req.header(ORG_HEADER));
 }
 
-function readInviteHeader(c: Context): { ok: true; value: string | undefined } | { ok: false } {
-  const primary = normalizeHeaderValue(c.req.header(INVITE_TOKEN_HEADER));
-  const legacy = normalizeHeaderValue(c.req.header(LEGACY_INVITE_TOKEN_HEADER));
-  if (primary !== null && legacy !== null && primary !== legacy) {
-    return { ok: false };
-  }
-  return { ok: true, value: (primary ?? legacy) ?? undefined };
+function readInviteHeader(c: Context): string | undefined {
+  return normalizeHeaderValue(c.req.header(INVITE_TOKEN_HEADER)) ?? undefined;
 }
 
 function readRecipientHeader(c: Context): string | null {
   const primary = normalizeHeaderValue(c.req.header(RECIPIENT_HEADER));
-  const legacy = normalizeHeaderValue(c.req.header(LEGACY_RECIPIENT_HEADER));
-  if (primary !== null && legacy !== null && primary.toLowerCase() !== legacy.toLowerCase()) {
-    throw new DomainError('RECIPIENT_HEADER_CONFLICT', 400, 'Conflicting x-ludy-recipient and x-crove-recipient headers');
+  if (primary !== null) return primary;
+  if (normalizeHeaderValue(c.req.header(RETIRED_RECIPIENT_HEADER)) !== null) {
+    throw new DomainError('LEGACY_RECIPIENT_HEADER', 400, 'Header x-crove-recipient has been retired; send x-ludy-recipient instead');
   }
-  return primary ?? legacy;
+  return null;
 }
 
-const PROXY_DROPPED = new Set([...SPOOFABLE, INVITE_TOKEN_HEADER, LEGACY_INVITE_TOKEN_HEADER]);
+// Keep retired x-crove-invite scrubbed at proxy egress so dual-header requests never leak it upstream while only x-ludy-invite authorizes signup.
+const PROXY_DROPPED = new Set([...SPOOFABLE, INVITE_TOKEN_HEADER, RETIRED_INVITE_HEADER]);
 // Public Supabase Auth endpoints the web app needs. Everything else (notably /admin) is not reachable.
 const AUTH_PUBLIC_PATHS =
   /^\/(?:token|signup|verify|recover|user|logout|otp|resend|settings|health|authorize|callback|reauthenticate|factors(?:\/[\w-]+(?:\/(?:challenge|verify))?)?|\.well-known\/jwks\.json)$/;
@@ -1110,9 +1100,7 @@ export function createHttpApp(deps: HttpDeps) {
       }
       if (gate.kind === 'check') {
         // The invite token the web app sends with a sign-up from an accept link (#563); the header is never forwarded.
-        const inviteHeader = readInviteHeader(c);
-        if (!inviteHeader.ok) return signupRefused();
-        const token = signupInviteToken(inviteHeader.value);
+        const token = signupInviteToken(readInviteHeader(c));
         // Each lookup of whether the address holds an invite takes a refusal slot of the client's IPv4 address or IPv6
         // /48 and of the deployment, given back when the sign-up is admitted (#564 item 1).
         // The refusal cap counts per client address too, so warn about a reverse proxy without TRUSTED_PROXY_HOPS

@@ -296,7 +296,7 @@ describe.each(backends)('files survive a restart on $name, from the API and the 
     orgless.push(true);
     const accepted = await apiProcess(recordingStore).request('/api/inbound/email', {
       method: 'POST',
-      headers: { authorization: `Bearer ${INBOUND_SECRET}`, 'x-crove-recipient': `${token}@in.test` },
+      headers: { authorization: `Bearer ${INBOUND_SECRET}`, 'x-ludy-recipient': `${token}@in.test` },
       body: mime,
     });
     expect(accepted.status).toBe(202);

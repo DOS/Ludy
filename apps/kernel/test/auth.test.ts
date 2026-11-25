@@ -6,7 +6,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { Kysely, PostgresAdapter, PostgresIntrospector, PostgresQueryCompiler, type CompiledQuery, type DatabaseConnection, type QueryResult } from 'kysely';
 import { hasFreshMfa, toDomainError } from '@ludy/kernel-runtime';
 import type { Db } from '@ludy/db';
-import { canonicalIdentityIssuer, createAuthenticator, createTokenVerifier, mfaTimestamp } from '../src/auth.ts';
+import { createAuthenticator, createTokenVerifier, mfaTimestamp } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createLiveCheck, createSessionStatusSource, createSupabaseLiveCheck, createSupabaseSessionRevoker } from '../src/sessions.ts';
 import { runSignOut } from '../src/worker.ts';
@@ -402,11 +402,12 @@ describe('bundled vs custom AUTH_ISSUER dual acceptance', () => {
       .sign(KEY);
   };
 
-  it('accepts both ludy-auth and crove-auth when AUTH_ISSUER is bundled (either spelling)', async () => {
-    for (const configured of ['ludy-auth', 'crove-auth']) {
+  it('requires exact AUTH_ISSUER for bundled issuers too (no cross-aliasing)', async () => {
+    for (const configured of ['ludy-auth', 'crove-auth'] as const) {
+      const other = configured === 'ludy-auth' ? 'crove-auth' : 'ludy-auth';
       const verifier = createTokenVerifier(loadConfig({ DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: configured }));
-      await expect(verifier(await mintWithIssuer('ludy-auth'))).resolves.toMatchObject({ issuer: 'ludy-auth', subject: SUBJECT });
-      await expect(verifier(await mintWithIssuer('crove-auth'))).resolves.toMatchObject({ issuer: 'crove-auth', subject: SUBJECT });
+      await expect(verifier(await mintWithIssuer(configured))).resolves.toMatchObject({ issuer: configured, subject: SUBJECT });
+      await expect(verifier(await mintWithIssuer(other))).rejects.toMatchObject({ code: 'UNAUTHENTICATED', status: 401 });
       await expect(verifier(await mintWithIssuer('other-auth'))).rejects.toMatchObject({ code: 'UNAUTHENTICATED', status: 401 });
     }
   });
@@ -449,28 +450,19 @@ describe('bundled vs custom AUTH_ISSUER dual acceptance', () => {
     return { db, seenIssuers };
   };
 
-  it('canonicalizes bundled issuer spelling in canonicalIdentityIssuer and createAuthenticator without splitting user_account or cache', async () => {
-    expect(canonicalIdentityIssuer('crove-auth', 'ludy-auth')).toBe('crove-auth');
-    expect(canonicalIdentityIssuer('crove-auth', 'crove-auth')).toBe('crove-auth');
-    expect(canonicalIdentityIssuer('ludy-auth', 'crove-auth')).toBe('ludy-auth');
-    expect(canonicalIdentityIssuer('ludy-auth', 'ludy-auth')).toBe('ludy-auth');
-    expect(canonicalIdentityIssuer('https://idp.test/auth/v1', 'https://idp.test/auth/v1')).toBe('https://idp.test/auth/v1');
-    expect(canonicalIdentityIssuer('https://idp.test/auth/v1', 'crove-auth')).toBe('crove-auth');
-
+  it('requires exact configured AUTH_ISSUER without cross-aliasing crove-auth and ludy-auth', async () => {
     const userId = '00000000-0000-4000-8000-000000000123';
-    for (const configured of ['crove-auth', 'ludy-auth']) {
+    for (const configured of ['crove-auth', 'ludy-auth'] as const) {
       const { db, seenIssuers } = fakeResolveDb(userId);
       const cfg = loadConfig({ DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: configured });
       const authenticate = createAuthenticator(cfg, db, undefined, null);
       const other = configured === 'crove-auth' ? 'ludy-auth' : 'crove-auth';
 
-      const first = await authenticate(`Bearer ${await mintWithIssuer(other)}`);
-      expect(first.userId).toBe(userId);
-      expect(seenIssuers).toEqual([configured]);
+      await expect(authenticate(`Bearer ${await mintWithIssuer(other)}`)).rejects.toMatchObject({ code: 'UNAUTHENTICATED', status: 401 });
+      expect(seenIssuers).toEqual([]);
 
-      // A second token with the configured bundled spelling hits the same cache entry for the same subject.
-      const second = await authenticate(`Bearer ${await mintWithIssuer(configured)}`);
-      expect(second.userId).toBe(userId);
+      const matched = await authenticate(`Bearer ${await mintWithIssuer(configured)}`);
+      expect(matched.userId).toBe(userId);
       expect(seenIssuers).toEqual([configured]);
     }
 

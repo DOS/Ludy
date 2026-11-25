@@ -5041,6 +5041,16 @@ export const en = {
       draftTitle: 'Draft transcript',
       draftNote: 'Only you see this draft. Check it and correct a line where the speech was misheard; nothing is shared with the other attendees from here.',
       publishedNote: 'The transcript the recorder shared with the meeting.',
+      // Find the questions, figures and dates (#4954).
+      filters: {
+        label: 'Find in the transcript',
+        question: 'Questions ({count})',
+        figure: 'Figures ({count})',
+        date: 'Dates and deadlines ({count})',
+        note: '{count, plural, one {# line that looks like it} other {# lines that look like it}}. Found by rules, not by AI, so check the line.',
+        none: 'No line looks like it.',
+        showInContext: 'Show in the transcript',
+      },
       // Download the transcript as a file (#4817).
       export: {
         label: 'Download the transcript',
@@ -5826,7 +5836,7 @@ export const en = {
       },
       acceptClean: 'Make {count} clear tasks',
       publish: 'Share with the attendees',
-      publishNote: 'Sharing shows the summary and the items to everyone who can read this meeting. The transcript is shared separately.',
+      publishNote: 'Sharing shows the summary, the items and the transcript to everyone who can read this meeting.',
       vy: {
         title: 'Vy summarizes this meeting',
         desc: 'Vy reads the transcript and proposes a summary, the decisions and the action items, for you only. It uses your AI budget and takes up to a minute. Nothing is shared until you have read it and decide.',
@@ -5917,6 +5927,7 @@ export const en = {
         stale: 'This translation is older than the original minutes; translate again.',
       },
       reviewNote: 'Some of this draft was written by Vy and you have not marked it as read. Read it, correct what is wrong, then confirm to be able to share it.',
+      reviewNoteTranscript: 'The transcript ({count} lines) was written by a machine and you have not marked it as read. Sharing lets the readers of the meeting see it, so look it over before you confirm.',
       reviewed: 'I have read it',
       saveAsNote: 'Save as shared note',
       saveAsNoteConfirmTitle: 'Save this summary as a shared note?',
@@ -17065,6 +17076,7 @@ export const en = {
       CHAPTER_ANCHOR_LOST: 'The transcript changed after you saved the chapters, so a chapter no longer starts at a line of it. Save the chapters again, then share.',
       NO_CLEAN_ITEMS: 'No action item is clean: pick the person, the date and the seat of each one yourself.',
       DRAFT_NOT_REVIEWED: 'Some items Vy suggested have not been reviewed by you yet. Read and confirm them before sharing.',
+      STALE_TRANSCRIPT_REVIEW: 'The transcript changed since you opened this screen. Look over the new lines, then confirm again.',
       DRAFT_SUMMARY_EXISTS: 'You already have a summary draft. Share it or save over it, then copy Vy\'s summary.',
       SUMMARY_BUSY: 'Vy is busy summarizing. Try again in a few minutes.',
       SUMMARY_ALREADY_COPIED: 'This summary was already copied into your draft.',
@@ -19925,7 +19937,7 @@ export const en = {
       },
       result: {
         get: 'Read the summary and the action items of a meeting',
-        publish: 'Share the summary and the action items with the meeting\'s attendees',
+        publish: 'Share the summary, the action items and the transcript with the meeting\'s attendees',
       },
       title: {
         start: 'Ask Vy to suggest a title for a meeting',

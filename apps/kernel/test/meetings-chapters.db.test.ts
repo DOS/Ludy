@@ -180,7 +180,7 @@ suite('the chapters of a meeting (#3844)', () => {
       ).rejects.toMatchObject({ code: '42501' });
     }
     // Publish (with no summary: the chapters alone are something to share).
-    expect(await exec('recorder', 'meetings.result.publish', { meetingId, confirmed: true })).toEqual({ meetingId, results: 0, items: 0, chapters: 2 });
+    expect(await exec('recorder', 'meetings.result.publish', { meetingId, confirmed: true })).toEqual({ meetingId, results: 0, items: 0, chapters: 2, lines: 4 });
     const asReader = await get('reader', meetingId);
     expect(titles(asReader.published)).toEqual(['Mở đầu', 'Báo giá']);
     expect(asReader.draft).toEqual([]);
@@ -214,7 +214,7 @@ suite('the chapters of a meeting (#3844)', () => {
     expect(await get('reader', meetingId)).toEqual({ meetingId, draft: [], published: [] });
     // Saved again at a second a line starts at, the same publish goes through.
     await save('recorder', meetingId, [{ title: 'Mở đầu', startSeconds: 0 }, { title: 'Kế hoạch', startSeconds: 40 }]);
-    expect(await exec('recorder', 'meetings.result.publish', { meetingId, confirmed: true })).toEqual({ meetingId, results: 0, items: 0, chapters: 2 });
+    expect(await exec('recorder', 'meetings.result.publish', { meetingId, confirmed: true })).toEqual({ meetingId, results: 0, items: 0, chapters: 2, lines: 2 });
     expect(titles((await get('reader', meetingId)).published)).toEqual(['Mở đầu', 'Kế hoạch']);
   });
 

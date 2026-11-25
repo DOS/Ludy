@@ -284,14 +284,14 @@ suite('shared-database mode beside a foreign schema and role (Supabase Postgres 
   };
 
   it('locks the mode to the database: a run that asks for the other mode is refused unless a switch is set, both ways', async () => {
-    await expect(migrate({ adminUrl: sharedUrl, dir: MIGRATIONS, sharedDatabase: false })).rejects.toThrow(/migrated in shared-database mode and LUDY_SHARED_DATABASE \/ CROVE_SHARED_DATABASE asks for owned/);
+    await expect(migrate({ adminUrl: sharedUrl, dir: MIGRATIONS, sharedDatabase: false })).rejects.toThrow(/migrated in shared-database mode and LUDY_SHARED_DATABASE asks for owned/);
     expect((await client.query("SELECT value FROM ludy_meta.deployment WHERE key = 'shared_database'")).rows).toEqual([{ value: 'true' }]);
     // The switch is explicit; the run that makes it is logged. The recorded mode follows, and so does the lock.
     logs.length = 0;
     try {
       await migrate({ adminUrl: sharedUrl, dir: MIGRATIONS, sharedDatabase: false, allowModeSwitch: true, log: (m) => logs.push(m) }).catch(() => undefined);
       expect(logs.some((l) => l.includes('switching the database from shared to owned-database mode'))).toBe(true);
-      await expect(migrateShared()).rejects.toThrow(/migrated in owned-database mode and LUDY_SHARED_DATABASE \/ CROVE_SHARED_DATABASE asks for shared/);
+      await expect(migrateShared()).rejects.toThrow(/migrated in owned-database mode and LUDY_SHARED_DATABASE asks for shared/);
     } finally {
       await migrateShared({ allowModeSwitch: true });
     }

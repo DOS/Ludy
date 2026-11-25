@@ -41,7 +41,7 @@ describe('AUTH_HOSTED_LOGIN_*', () => {
   });
 
   it('refuses a localhost address on a public deployment', () => {
-    const publicDeployment = { PUBLIC_URL: 'https://books.example.com', PUBLIC_AUTH_URL: 'https://auth.example.com/auth/v1', CROVE_CONTEXT_TOKEN_KEY: Buffer.alloc(48, 5).toString('base64'), EXPORT_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString('base64'), AUTH_AUTOCONFIRM: 'false' };
+    const publicDeployment = { PUBLIC_URL: 'https://books.example.com', PUBLIC_AUTH_URL: 'https://auth.example.com/auth/v1', LUDY_CONTEXT_TOKEN_KEY: Buffer.alloc(48, 5).toString('base64'), EXPORT_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString('base64'), AUTH_AUTOCONFIRM: 'false' };
     const local = { AUTH_HOSTED_LOGIN_URL: 'http://localhost:4000/login', AUTH_HOSTED_LOGIN_TOKEN_URL: 'http://localhost:4000/token' };
     expect(() => loadConfig({ ...BASE, ...publicDeployment, ...URLS })).not.toThrow();
     expect(() => loadConfig({ ...BASE, ...publicDeployment, ...local })).toThrow(/localhost address on a public PUBLIC_URL/);

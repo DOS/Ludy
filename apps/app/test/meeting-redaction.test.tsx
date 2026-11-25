@@ -256,6 +256,7 @@ describe('meeting redaction SSR components (#4001 Slice 3)', () => {
   it('shows quiet pre-publish nudge with count and truncated 2000+ without blocking publish, and hides for 0 candidates or non-recorder', () => {
     const draftResults: ResultsData = {
       meetingId: UUID_MEETING,
+      transcriptDraft: 0, transcriptUnread: 0, transcriptUnreadKey: '',
       isRecorder: true,
       draft: { id: UUID_RES, feature: 'manual', stage: 'draft', summary: 'Gọi 0912 345 678', decisions: [], tainted: false },
       published: null,
