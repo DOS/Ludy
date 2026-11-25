@@ -23,6 +23,7 @@ import { DraftRedactionDialog, RedactionNudge, useRedactCandidatesQuery } from '
 import { MeetingZalo } from './meeting-zalo.tsx';
 import { MeetingChatPost } from './meeting-chat.tsx';
 import { MeetingTranslation } from './meeting-translation.tsx';
+import { MinutesVersionPublisher, MinutesVersionSwitch } from './meeting-minutes-version.tsx';
 import { clock } from './meeting-transcript.tsx';
 import { notesInstalled } from './notes-panel.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
@@ -636,6 +637,8 @@ export function MeetingResults({
   const unreadIds = [...(draft?.tainted ? [draft.id] : []), ...items.filter((i) => i.stage === 'draft' && i.tainted).map((i) => i.id)];
   const unread = unreadIds.length > 0;
   const cleanCount = items.filter((i) => i.clean).length;
+  // The shared text as the translation reads it (the summary, the decisions and the titles of the shared items).
+  const publishedOriginal = { summary: published?.summary ?? '', decisions: published?.decisions ?? [], items: items.filter((i) => i.stage === 'published') };
   const effectiveRedactedEpoch = redaction ? redaction.redactedEpoch : localRedactedEpoch;
   return (
     <Card data-testid="meeting-results">
@@ -654,8 +657,12 @@ export function MeetingResults({
                 {t('publishedTitle')}
               </h3>
             )}
-            <SummaryText summary={published.summary} decisions={published.decisions} template={template} copy={minutesTemplate} />
-            <MeetingTranslation meetingId={meetingId} stage="published" original={{ summary: published.summary, decisions: published.decisions, items: items.filter((i) => i.stage === 'published') }} />
+            {/* The second-language version the recorder published (#4777): readers switch between the original and it; the original shows first. */}
+            <MinutesVersionSwitch meetingId={meetingId} original={publishedOriginal}>
+              <SummaryText summary={published.summary} decisions={published.decisions} template={template} copy={minutesTemplate} />
+            </MinutesVersionSwitch>
+            <MeetingTranslation meetingId={meetingId} stage="published" original={publishedOriginal} />
+            {isRecorder && <MinutesVersionPublisher meetingId={meetingId} original={publishedOriginal} />}
           </section>
         )}
         {canSaveAsNote && <SaveSummaryAsNote key={meetingId} meetingId={meetingId} visibility={visibility} slug={slug} />}

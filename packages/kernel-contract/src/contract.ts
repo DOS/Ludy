@@ -680,6 +680,7 @@ import {
   zTranscriptTranslationStatus,
   zTranscriptTranslationView,
   zTranslationRef,
+  zTranslationSource,
   zTranscriptTranslationRef,
   zTranslationStatus,
   zTranslations,
@@ -697,6 +698,7 @@ import {
   zMinutesTemplateUpdate,
   zMinutesTemplates,
 } from './meeting-minutes-templates.ts';
+import { zMinutesVersionPublish, zMinutesVersionPublished, zMinutesVersionUnpublish, zMinutesVersionUnpublished, zMinutesVersions } from './meeting-minutes-version.ts';
 import { zAskAnswer, zAskEmpty, zAskInput, zAskStatus } from './meeting-ask.ts';
 import { zBriefAnswer, zBriefEmpty, zBriefFacts, zBriefStatus, zBriefTarget } from './meeting-brief.ts';
 import { zMeetingRename, zMeetingRenamed, zTitleAnswer } from './meeting-title.ts';
@@ -2022,12 +2024,21 @@ export const contract = {
       status: oc.input(zTranslationRef).output(zTranslationStatus),
       translate: oc.input(zTranslationRef).output(zTranslated),
       get: oc.input(zMeetingRef).output(zTranslations),
+      // The original the recorder reviews a version against: the published segments and the hash that names them (what `minutesVersion.publish` is held to).
+      source: oc.input(zTranslationRef).output(zTranslationSource),
       // The same for the transcript (E2, #3185): the member's own Vy translates the lines they read a few chunks at a time, in the request. `transcriptTranslate` is the click (the page asks
       // again while it is open), `transcriptStop` ends the member's own run, `transcriptStatus` is the button and the progress, and `transcriptGet` is the member's parts beside the lines.
       transcriptStatus: oc.input(zTranscriptTranslationRef).output(zTranscriptTranslationStatus),
       transcriptTranslate: oc.input(zTranscriptTranslationRef).output(zTranscriptTranslated),
       transcriptStop: oc.input(zMeetingRef).output(zTranscriptTranslateStopped),
       transcriptGet: oc.input(zTranscriptTranslationRef).output(zTranscriptTranslationView),
+    },
+    // The second-language version of the published minutes (#4777): the recorder's reviewed text, published beside the original by their click; every reader of the meeting reads it.
+    // MINUTES_NOT_PUBLISHED and MINUTES_VERSION_STALE (409), MINUTES_VERSION_SEGMENTS_INVALID and MINUTES_VERSION_TEXT_REJECTED (422), TRANSLATION_LANGUAGE_OFF (422), FORBIDDEN (403, not the recorder).
+    minutesVersion: {
+      get: oc.input(zMeetingRef).output(zMinutesVersions),
+      publish: oc.input(zMinutesVersionPublish).output(zMinutesVersionPublished),
+      unpublish: oc.input(zMinutesVersionUnpublish).output(zMinutesVersionUnpublished),
     },
     actionItems: {
       create: oc.input(zActionItemCreate).output(zActionItemCreated),
