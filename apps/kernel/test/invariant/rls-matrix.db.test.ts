@@ -127,11 +127,11 @@ const PENDING_TABLES = new Set<string>([
   'crove_kernel.agent_grant',
   'crove_kernel.agent_wake_delivery',
   'crove_kernel.agent_wake_signal_seen',
+  'crove_kernel.ai_budget_reservation',
   'crove_kernel.member_permission_override',
   'crove_kernel.member_vy_memory',
   'crove_kernel.member_vy_result',
   'crove_meetings.live_line',
-  'crove_meetings.meeting_highlight',
   'crove_meetings.meeting_link',
   'crove_meetings.minutes_link',
   'crove_meetings.tracker_term',
@@ -374,6 +374,8 @@ const AUTHOR_ONLY = new Map<string, string>([
   ['crove_meetings.meeting_result', 'false'],
   // Meeting videos (ADR-0047 point 2): worker system context reads and writes nothing.
   ['crove_meetings.meeting_video', 'false'],
+  // The recorder's links to the published minutes for people outside the org (#4822): written by the recorder and read by the org's members, users only; worker system context reads and writes nothing (the page's count is made by a definer).
+  ['crove_meetings.minutes_link', 'false'],
   // The recorder's published second-language version of a meeting's minutes (#4777): read by the meeting's readers, users only; worker system context reads and writes nothing.
   ['crove_meetings.minutes_version', 'false'],
   // A member's own morning notice setting (#3955): the member's alone; worker system context reads and writes nothing (its one reader is a definer).
@@ -2743,6 +2745,14 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       return { setup: [{ table: 'crove_kernel.agent', values: agent }], row: { org_id: o.id, agent_id: agent.id } };
     },
   },
+  // #3979: short-lived in-flight AI budget reservation holds created during concurrent admission under an org lock.
+  // Written and deleted by tenant/worker runtime commands (never edited in place: REVOKE UPDATE); agent_write_guard
+  // blocks org-chart and member_vy agent contexts. Its factory lands before the table (PENDING_TABLES, step 0).
+  'crove_kernel.ai_budget_reservation': {
+    make: (o) => ({
+      row: { org_id: o.id, id: randomUUID(), module: 'social', feature: 'social.draft', amount: '0.001000', expires_at: '2099-01-01T00:00:00Z' },
+    }),
+  },
   'crove_kernel.ai_run': {
     make: (o) => {
       const agent = agentRow(o);
@@ -3565,7 +3575,7 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   },
   // #4819 (meetings highlights): a reader's or the recorder's mark on a transcript line or range, an anchor in seconds and who marked it, no text. Read by the meeting's readers and the recorder, inserted
   // by either for themselves and deleted by the author or the recorder, all in a user context (the org's owner is the recorder of the factory's meeting); the system context reads none. No UPDATE for a
-  // login role. Its factory lands before the table (PENDING_TABLES).
+  // login role. Its table landed in #4819 (step 2), which removed it from PENDING_TABLES.
   'crove_meetings.meeting_highlight': {
     make: (o) => {
       const meeting = meetingsMeetingRow(o);
