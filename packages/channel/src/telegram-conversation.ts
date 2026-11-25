@@ -292,7 +292,8 @@ export function telegramBusinessState(update: unknown): ConversationBusinessStat
   const rights = objectOf(connection.rights);
   const name = accountNameOf(user);
   const username = typeof user.username === 'string' && /^[A-Za-z0-9_]{1,64}$/.test(user.username) ? user.username : null;
-  return { id, userId, ...(name ? { name } : {}), ...(username ? { username } : {}), canReply: rights?.can_reply === true || connection.can_reply === true, enabled: connection.is_enabled === true };
+  const date = typeof connection.date === 'number' && Number.isSafeInteger(connection.date) && connection.date >= 0 && connection.date <= 10_000_000_000 ? connection.date : undefined;
+  return { id, userId, ...(name ? { name } : {}), ...(username ? { username } : {}), ...(date !== undefined ? { date } : {}), canReply: rights?.can_reply === true || connection.can_reply === true, enabled: connection.is_enabled === true };
 }
 
 // The notice the route parked: its hook is the account id, which the worker maps to a connection (ADR-0039: it names no org). Malformed JSON, a

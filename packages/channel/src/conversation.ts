@@ -44,6 +44,8 @@ export interface ConversationBusinessState {
   name?: string | undefined;
   // The account's @username (unique on Telegram), so an owner can tell their own account from a stranger who wears the same name.
   username?: string | undefined;
+  // Telegram's event timestamp in Unix seconds, used to ignore older out-of-order updates.
+  date?: number | undefined;
   canReply: boolean;
   enabled: boolean;
 }

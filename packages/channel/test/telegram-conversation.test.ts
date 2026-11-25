@@ -417,10 +417,13 @@ describe('the state of a business connection', () => {
   });
 
   it('reads a connection: the account, whether it is on and whether the bot may reply', () => {
-    expect(telegramBusinessState(connection())).toEqual({ id: CONN, userId: String(OWNER), name: 'Lan Trần', canReply: true, enabled: true });
-    expect(telegramBusinessState(connection({ rights: {}, is_enabled: false }))).toEqual({ id: CONN, userId: String(OWNER), name: 'Lan Trần', canReply: false, enabled: false });
-    // No `is_enabled` means off, never on; no rights means the bot may not reply.
+    expect(telegramBusinessState(connection())).toEqual({ id: CONN, userId: String(OWNER), name: 'Lan Trần', date: DATE, canReply: true, enabled: true });
+    expect(telegramBusinessState(connection({ rights: {}, is_enabled: false }))).toEqual({ id: CONN, userId: String(OWNER), name: 'Lan Trần', date: DATE, canReply: false, enabled: false });
+    // No `is_enabled` means off, never on; no rights means the bot may not reply; invalid or missing dates are omitted.
     expect(telegramBusinessState(connection({ is_enabled: undefined, rights: undefined }))).toMatchObject({ enabled: false, canReply: false });
+    expect(telegramBusinessState(connection({ date: undefined }))).not.toHaveProperty('date');
+    expect(telegramBusinessState(connection({ date: -1 }))).not.toHaveProperty('date');
+    expect(telegramBusinessState(connection({ date: 1.5 }))).not.toHaveProperty('date');
   });
 
   it('is nothing for an update that is no whole connection', () => {
@@ -458,7 +461,7 @@ describe('the state of a business connection', () => {
   it('is carried by the notice beside the business connection of the events, and a bot chat\'s message carries neither', () => {
     const hook = newTelegramHookId();
     const parse = (update: unknown) => parseTelegramChatNotice(wrapTelegramChatNotice(hook, Buffer.from(JSON.stringify(update), 'utf8')));
-    expect(parse(connection())).toEqual({ accountId: hook, events: [], businessState: { id: CONN, userId: String(OWNER), name: 'Lan Trần', canReply: true, enabled: true } });
+    expect(parse(connection())).toEqual({ accountId: hook, events: [], businessState: { id: CONN, userId: String(OWNER), name: 'Lan Trần', date: DATE, canReply: true, enabled: true } });
     const business = parse(businessMessage());
     expect(business.businessConnectionId).toBe(CONN);
     expect(business.events).toHaveLength(1);
@@ -719,7 +722,7 @@ describe('reading a business connection back', () => {
 
   it('asks getBusinessConnection with the id, through the Bot API host, the token in the path only, and reads the answer as the update would be read', async () => {
     const { result, hits } = await lookup(connectionAnswer());
-    expect(result).toEqual({ kind: 'ok', state: { id: LOOKED_UP, userId: '900', name: 'Lan Trần', username: 'lan_tran', canReply: true, enabled: true } });
+    expect(result).toEqual({ kind: 'ok', state: { id: LOOKED_UP, userId: '900', name: 'Lan Trần', username: 'lan_tran', date: DATE, canReply: true, enabled: true } });
     expect(hits).toHaveLength(1);
     expect(hits[0]).toMatchObject({ method: 'POST', url: `https://api.telegram.org/bot${TOKEN}/getBusinessConnection` });
     expect(JSON.parse(hits[0]?.body ?? '{}')).toEqual({ business_connection_id: LOOKED_UP });

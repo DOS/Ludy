@@ -2725,6 +2725,7 @@ export interface KernelChannelConnectionTable {
   history_next_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   history_idle_polls: Generated<number>;
   chat_business: ColumnType<unknown, string | undefined, string>;
+  chat_hook_key_id: string | null;
 }
 
 /** ludy_kernel.conversation_attachment */

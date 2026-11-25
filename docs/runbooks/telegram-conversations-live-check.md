@@ -21,7 +21,7 @@ The worker calls `setWebhook` with the url `<PUBLIC_URL>/api/channels/telegram/w
 ### The hook and the secret: where they live, and a key rotation
 
 - **Variable:** none. The route `POST /api/channels/telegram/webhook/:hook` exists where `CHANNEL_TELEGRAM=true` and the credential key can derive keys; the secret is derived from `CREDENTIAL_KEY` (and `CREDENTIAL_KEY_PREVIOUS` while a rotation is under way, so webhooks keep working).
-- **After `CREDENTIAL_KEY` is replaced** and the old key removed from `CREDENTIAL_KEY_PREVIOUS`, every webhook's secret changes and Telegram's requests are refused (401): turn chats off and on again on each Telegram connection (or reconnect it), which sets the webhook with the new key. Keep the old key in `CREDENTIAL_KEY_PREVIOUS` until that is done.
+- **After `CREDENTIAL_KEY` is replaced**, keep the old key in `CREDENTIAL_KEY_PREVIOUS` until the worker's 10-minute sweep (`[telegram-webhook-rekey]`, or `telegram-webhook-rekey` run on demand in the worker container) has re-registered every live Telegram webhook under the new key and shows `0 active` left under older keys ([credential-key.md](credential-key.md)). If `CREDENTIAL_KEY_PREVIOUS` is removed before a connection is re-registered, Telegram's requests to that webhook are refused (`401`) until chats are turned off and on again (or the channel is reconnected).
 - **A leaked hook** (a proxy log, say) is not enough to post anything: the secret header is also needed and cannot be computed without the deployment's key. Turn chats off and on to rotate both anyway.
 - **Never to appear:** the hook, the secret and the bot token in chat, issues, pull requests or runbook results. Write "chats on" and "rotated on <date>".
 

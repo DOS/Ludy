@@ -5,6 +5,7 @@ import { useTranslations } from 'use-intl';
 import { Button } from '@ludy/ui/components/button';
 import { ErrorText } from './ui.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { PHONE_TARGET } from '../lib/touch-target.ts';
 
 // A switch the server has not finished after this long was lost (a job that died): the screen offers it again.
 export const TELEGRAM_CHATS_STUCK_MS = 90_000;
@@ -28,17 +29,19 @@ export function TelegramChats({ channel, canEdit, active = true, now = Date.now(
   const failure =
     channel.chatError === 'BOT_IN_USE'
       ? t('telegramChatsBotInUse')
-      : channel.chatError === 'WEBHOOK_NEEDS_HTTPS'
-        ? t('telegramChatsNeedsHttps')
-        : channel.chatError === 'TELEGRAM_TOKEN_REFUSED'
-          ? t('telegramChatsTokenRefused')
-          : channel.chatError === 'TELEGRAM_WEBHOOK_REFUSED'
-            ? t('telegramChatsAddressRefused')
-            : channel.chatError === 'CHANNEL_NOT_CONFIGURED'
-              ? t('telegramChatsNoWorker')
-              : channel.chatError === 'NO_HOOK_KEY'
-                ? t('telegramChatsNoKey')
-                : t('telegramChatsFailedOther', { code: channel.chatError ?? '' });
+      : channel.chatError === 'BOT_TAKEN_OVER'
+        ? t('telegramChatsBotTakenOver')
+        : channel.chatError === 'WEBHOOK_NEEDS_HTTPS'
+          ? t('telegramChatsNeedsHttps')
+          : channel.chatError === 'TELEGRAM_TOKEN_REFUSED'
+            ? t('telegramChatsTokenRefused')
+            : channel.chatError === 'TELEGRAM_WEBHOOK_REFUSED'
+              ? t('telegramChatsAddressRefused')
+              : channel.chatError === 'CHANNEL_NOT_CONFIGURED'
+                ? t('telegramChatsNoWorker')
+                : channel.chatError === 'NO_HOOK_KEY'
+                  ? t('telegramChatsNoKey')
+                  : t('telegramChatsFailedOther', { code: channel.chatError ?? '' });
   const setChats = useMutation({
     mutationFn: (on: boolean) => client.channels.setTelegramChats({ connectionId: channel.id, on }),
     onSuccess: () => {
@@ -75,7 +78,7 @@ export function TelegramChats({ channel, canEdit, active = true, now = Date.now(
         </Button>
       )}
       {setChats.error && <ErrorText>{errorMessage(setChats.error)}</ErrorText>}
-      {channel.chatState === 'on' && <TelegramBusiness connectionId={channel.id} accounts={channel.chatBusiness ?? []} canEdit={canEdit} />}
+      {canEdit && channel.chatState === 'on' && <TelegramBusiness connectionId={channel.id} accounts={channel.chatBusiness ?? []} canEdit={canEdit} />}
     </div>
   );
 }
@@ -90,7 +93,8 @@ export function TelegramBusiness({ connectionId, accounts, canEdit, initialConfi
   // (`initialConfirm` is for the tests, which cannot click.)
   const [confirming, setConfirming] = useState<string | null>(initialConfirm);
   const allow = useMutation({
-    mutationFn: (v: { ref: string; allow: boolean }) => client.channels.setTelegramBusiness({ connectionId, ref: v.ref, allow: v.allow }),
+    mutationFn: (v: { ref: string; allow: boolean; dismiss?: boolean }) =>
+      client.channels.setTelegramBusiness({ connectionId, ref: v.ref, allow: v.allow, ...(v.dismiss ? { dismiss: true } : {}) }),
     onSuccess: () => {
       setConfirming(null);
       void queryClient.invalidateQueries({ queryKey: orpc.channels.list.key() });
@@ -112,19 +116,32 @@ export function TelegramBusiness({ connectionId, accounts, canEdit, initialConfi
                 <p>
                   <span>{a.name ?? t('telegramBusinessUnnamed')}</span> <span data-testid="telegram-business-username">{a.username ? `${t('telegramBusinessUsername')} @${a.username}` : t('telegramBusinessNoUsername')}</span>: {status(a)}
                 </p>
-                {canEdit && a.enabled && !a.approved && confirming !== a.ref && (
-                  <Button variant="outline" size="sm" onClick={() => setConfirming(a.ref)}>
-                    {t('telegramBusinessAllow')}
-                  </Button>
+                {canEdit && !a.approved && confirming !== a.ref && (
+                  <div className="flex flex-wrap gap-2">
+                    {a.enabled && (
+                      <Button variant="outline" size="sm" className={PHONE_TARGET} onClick={() => setConfirming(a.ref)}>
+                        {t('telegramBusinessAllow')}
+                      </Button>
+                    )}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className={PHONE_TARGET}
+                      loading={allow.isPending && allow.variables?.ref === a.ref && allow.variables?.dismiss === true}
+                      onClick={() => allow.mutate({ ref: a.ref, allow: false, dismiss: true })}
+                    >
+                      {t('telegramBusinessDismiss')}
+                    </Button>
+                  </div>
                 )}
                 {canEdit && a.enabled && !a.approved && confirming === a.ref && (
                   <div className="space-y-1" data-testid="telegram-business-confirm">
                     <p className="text-warning">{a.username ? t('telegramBusinessConfirm', { username: a.username }) : t('telegramBusinessConfirmNoUsername')}</p>
                     <div className="flex gap-2">
-                      <Button variant="outline" size="sm" loading={allow.isPending && allow.variables?.ref === a.ref} onClick={() => allow.mutate({ ref: a.ref, allow: true })}>
+                      <Button variant="outline" size="sm" className={PHONE_TARGET} loading={allow.isPending && allow.variables?.ref === a.ref && allow.variables?.allow === true} onClick={() => allow.mutate({ ref: a.ref, allow: true })}>
                         {t('telegramBusinessConfirmYes')}
                       </Button>
-                      <Button variant="ghost" size="sm" onClick={() => setConfirming(null)}>
+                      <Button variant="ghost" size="sm" className={PHONE_TARGET} onClick={() => setConfirming(null)}>
                         {t('telegramBusinessConfirmNo')}
                       </Button>
                     </div>
@@ -132,7 +149,7 @@ export function TelegramBusiness({ connectionId, accounts, canEdit, initialConfi
                 )}
                 {/* An allowed account can be stopped whether or not it is connected now: a reconnect must not resume it unasked. */}
                 {canEdit && a.approved && (
-                  <Button variant="outline" size="sm" loading={allow.isPending && allow.variables?.ref === a.ref} onClick={() => allow.mutate({ ref: a.ref, allow: false })}>
+                  <Button variant="outline" size="sm" className={PHONE_TARGET} loading={allow.isPending && allow.variables?.ref === a.ref && !allow.variables?.dismiss} onClick={() => allow.mutate({ ref: a.ref, allow: false })}>
                     {t('telegramBusinessStop')}
                   </Button>
                 )}

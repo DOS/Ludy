@@ -118,6 +118,7 @@ import { webhookTarget, type WebhookTarget } from './alert.ts';
 import type { SecurityThresholds } from './security-signals.ts';
 import { orgPurgeCommand, runOrgPurge } from './org-purge.ts';
 import { replayShreds, runMeetingsRetention, sweepMeetingMedia } from './meetings-retention.ts';
+import { rekeyTelegramWebhooks as runTelegramWebhookRekey } from './conversations-worker.ts';
 import { runUserDisable } from './user-disable.ts';
 import { ConcurrencyLimiter, Semaphore } from './concurrency.ts';
 import { createOauthServer } from './oauth-server.ts';
@@ -248,6 +249,8 @@ export interface Kernel {
   restoreReport(argv: readonly string[]): Promise<number>;
   // After a restore (#2579): deletes again the meetings the shred references name, re-runs the retention and removes the objects that leaves; 0 or 1.
   shredReplay(): Promise<number>;
+  // After a CREDENTIAL_KEY rotation (#3150 item 1): re-registers live Telegram webhooks under the current credential key; 0 or 1.
+  rekeyTelegramWebhooks(): Promise<number>;
 }
 
 // No-op defaults for the optional ports: nothing can be bound, no connector is installed, every module is on.
@@ -1075,7 +1078,36 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
     }
   }
 
-  return { config, modules: config.LUDY_MODULES, adapters: resolved, start, rebindExports, setUserStatus, purgeOrg, restoreReport, shredReplay };
+  // Re-registers live Telegram webhooks under the current CREDENTIAL_KEY (#3150 item 1). Also runs automatically in the worker's reseal sweep.
+  async function rekeyTelegramWebhooks(): Promise<number> {
+    const workerUrl = config.WORKER_DATABASE_URL;
+    if (!workerUrl) throw new Error('WORKER_DATABASE_URL is required for telegram-webhook-rekey; run it in the worker container');
+    if (config.CHANNEL_TELEGRAM !== 'true' || !config.PUBLIC_URL?.startsWith('https://')) {
+      console.log('[telegram-webhook-rekey] skipped (Telegram channel disabled or PUBLIC_URL is not https)');
+      return 0;
+    }
+    const { pool, db, runtime } = buildRuntime(workerUrl, 'ludy-telegram-rekey', config.WORKER_DATABASE_POOL_MAX, 'worker');
+    try {
+      await assertRlsEnforced(pool);
+      await assertSystemContextAccess(pool, 'granted');
+      const publishers = channelPublishers(config);
+      const outcome = await runTelegramWebhookRekey({
+        runtime,
+        broker: resolved.broker,
+        workerDb: db,
+        adapter: (provider: string) => (Object.hasOwn(publishers, provider) ? publishers[provider]?.conversations : undefined),
+        baseUrl: config.PUBLIC_URL,
+      });
+      console.log(
+        `[telegram-webhook-rekey] rekeyed ${outcome.rekeyed}, failed ${outcome.failed}; left under an older key: ${outcome.leftActive} active, ${outcome.leftInactive} to reconnect`,
+      );
+      return outcome.failed > 0 ? 1 : 0;
+    } finally {
+      await pool.end().catch((error: unknown) => console.error('[telegram-webhook-rekey] could not close the pool', error));
+    }
+  }
+
+  return { config, modules: config.LUDY_MODULES, adapters: resolved, start, rebindExports, setUserStatus, purgeOrg, restoreReport, shredReplay, rekeyTelegramWebhooks };
 }
 
 // The Social writer as the API uses it: drafts, rewrites, hashtags, post ideas (#1181) and period summaries (#1237) as

@@ -24,6 +24,8 @@
 //                 above the archive (issue #2007); tools/backup/restore.sh runs it in the worker's container
 //   shred-replay  after a restore: delete again every meeting a shred reference of the archive store names, and remove the objects and file rows that
 //                 leaves (issue #2579, ADR-0017 section 8); the worker does the same at start; run it in the worker's container
+//   telegram-webhook-rekey
+//                 after rotating CREDENTIAL_KEY: re-register live Telegram webhooks under the current key without waiting for the next worker sweep (#3150)
 //   vapid-keys    print a new VAPID key pair for browser push (issue #1238): VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY
 //   context-token-key  print a new context token key (#1822): LUDY_CONTEXT_TOKEN_KEY, for migrate and the kernel
 // It wires the open-source default adapters into the composition root (createKernel, ADR-0030).
@@ -39,8 +41,8 @@ import { describeStorage } from './storage.ts';
 import { runUsageReport } from './usage-report.ts';
 import { generateVapidKeys } from './web-push.ts';
 
-type Role = 'migrate' | 'auth-grants' | 'prober' | 'usage-report' | 'pilot-check' | 'exports-rebind' | 'user-disable' | 'user-enable' | 'org-purge' | 'restore-report' | 'shred-replay' | 'vapid-keys' | 'context-token-key' | ServerRole;
-const ROLES: readonly Role[] = ['migrate', 'auth-grants', 'api', 'worker', 'all', 'prober', 'usage-report', 'pilot-check', 'exports-rebind', 'user-disable', 'user-enable', 'org-purge', 'restore-report', 'shred-replay', 'vapid-keys', 'context-token-key'];
+type Role = 'migrate' | 'auth-grants' | 'prober' | 'usage-report' | 'pilot-check' | 'exports-rebind' | 'user-disable' | 'user-enable' | 'org-purge' | 'restore-report' | 'shred-replay' | 'telegram-webhook-rekey' | 'vapid-keys' | 'context-token-key' | ServerRole;
+const ROLES: readonly Role[] = ['migrate', 'auth-grants', 'api', 'worker', 'all', 'prober', 'usage-report', 'pilot-check', 'exports-rebind', 'user-disable', 'user-enable', 'org-purge', 'restore-report', 'shred-replay', 'telegram-webhook-rekey', 'vapid-keys', 'context-token-key'];
 
 async function runMigrate(config: Config) {
   const adminUrl = config.ADMIN_DATABASE_URL;
@@ -115,6 +117,7 @@ VAPID_PRIVATE_KEY=${keys.privateKey}`);
   if (role === 'org-purge') process.exit(await createKernel(config, defaultAdapters(config)).purgeOrg(process.argv.slice(3)));
   if (role === 'restore-report') process.exit(await createKernel(config, defaultAdapters(config)).restoreReport(process.argv.slice(3)));
   if (role === 'shred-replay') process.exit(await createKernel(config, defaultAdapters(config)).shredReplay());
+  if (role === 'telegram-webhook-rekey') process.exit(await createKernel(config, defaultAdapters(config)).rekeyTelegramWebhooks());
   const live = config.AUTH_SESSION_CHECK === 'jwt' ? liveAuthUrl(config) : null;
   console.log(
     `[auth] session check: ${config.AUTH_SESSION_CHECK}, step-up for R3: ${config.AUTH_STEP_UP}` +

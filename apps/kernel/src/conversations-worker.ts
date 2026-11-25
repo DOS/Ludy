@@ -174,8 +174,8 @@ async function readBackBusinessConnection(deps: IntakeDeps, lookup: BusinessLook
   // A `business_connection` update may have been recorded while Telegram was asked: it is newer than this answer, and the account is no longer unknown.
   const again = await deps.runtime.query<{ lookup: boolean }>('kernel.channel.telegram_business_known', { connectionId: target.connectionId, id }, options);
   if (!again.lookup) return 'known';
-  const { userId, name, username, canReply, enabled } = answer.state;
-  const recorded = await deps.runtime.execute<{ applied: boolean }>('kernel.channel.telegram_business_record', { connectionId: target.connectionId, account: { id: answer.state.id, userId, name: name ?? null, username: username ?? null, canReply, enabled } }, options);
+  const { userId, name, username, date, canReply, enabled } = answer.state;
+  const recorded = await deps.runtime.execute<{ applied: boolean }>('kernel.channel.telegram_business_record', { connectionId: target.connectionId, account: { id: answer.state.id, userId, name: name ?? null, username: username ?? null, ...(date !== undefined ? { date } : {}), canReply, enabled } }, options);
   return recorded.applied ? 'recorded' : 'not_recorded';
 }
 
@@ -222,14 +222,20 @@ export async function runConversationIntake(deps: IntakeDeps): Promise<{ stored:
     let failed = false;
     for (const parsed of nonEmpty) {
       const targets = (await connectionsFor(deps.workerDb, notice.provider, parsed.accountId)).filter((t) => !parsed.connectionId || t.connectionId === parsed.connectionId);
+      // Fail closed if a hook lookup ever matches more than one connection across orgs or rows (#3150 item 4): never park into either org.
+      if (HOOK_PROVIDERS.has(notice.provider) && targets.length > 1) {
+        log(`dropped notice ${notice.seq} (${notice.provider}): refused ambiguous hook match (${targets.length} connections)`);
+        out.dropped++;
+        continue;
+      }
       // No active connection holds this account (expired, revoked, offboarding, or none): the platforms keep no history to pull, so the
       // notice is gone; the count says so.
       if (targets.length === 0) log(`notice ${notice.seq} (${notice.provider}) names no active connection: dropped after storing nothing`);
       for (const target of targets) {
         try {
           if (parsed.businessState) {
-            const { id, userId, name, username, canReply, enabled } = parsed.businessState;
-            await deps.runtime.execute('kernel.channel.telegram_business_record', { connectionId: target.connectionId, account: { id, userId, name: name ?? null, username: username ?? null, canReply, enabled } }, { actor: SYSTEM, orgId: target.orgId });
+            const { id, userId, name, username, date, canReply, enabled } = parsed.businessState;
+            await deps.runtime.execute('kernel.channel.telegram_business_record', { connectionId: target.connectionId, account: { id, userId, name: name ?? null, username: username ?? null, ...(date !== undefined ? { date } : {}), canReply, enabled } }, { actor: SYSTEM, orgId: target.orgId });
           }
           if (parsed.events.length === 0) continue;
           if (parsed.businessConnectionId && !parsed.businessState && deps.businessLookup && notice.provider === 'telegram_chat') {
@@ -304,6 +310,38 @@ export interface ChatHookDeps {
   adapter: (provider: string) => ConversationAdapter | undefined;
   // The API's public origin (PUBLIC_URL, where webhooks are answered): the webhook is `<baseUrl>/api/channels/telegram/webhook/<hook>`. Telegram only takes https.
   baseUrl: string;
+  // Worker DB connection for checking whether another org previously held the same Telegram bot's webhook (#3150 item 2).
+  workerDb?: Db;
+}
+
+const currentKeyOfBroker = (broker: CredentialBroker): string | undefined => {
+  const id = (broker as { keyId?: unknown }).keyId;
+  return typeof id === 'string' && id ? id : undefined;
+};
+
+// When one org registers Telegram's webhook for a bot token, Telegram replaces any webhook another org had set for the
+// same bot. Mark those other orgs' connections off and notify their admins via SYSTEM without revealing which org took it (#3150 item 2).
+async function displaceOtherTelegramOrgs(
+  runtime: Runtime,
+  workerDb: Db | undefined,
+  excludeOrgId: string,
+  botId: string | null | undefined,
+  takenAt: string | null,
+): Promise<void> {
+  if (!workerDb || !botId) return;
+  const { rows } = await sql<{ org_id: string; connection_id: string }>`
+    SELECT org_id, connection_id FROM ludy_kernel.telegram_chat_other_orgs_with_bot(${botId}, ${excludeOrgId}::uuid)`.execute(workerDb);
+  for (const other of rows) {
+    try {
+      await runtime.execute(
+        'kernel.channel.telegram_chat_displaced',
+        { connectionId: other.connection_id, botId, ...(takenAt ? { takenAt } : {}) },
+        { actor: SYSTEM, orgId: other.org_id },
+      );
+    } catch (error) {
+      console.error(`[conversations] displace ${other.connection_id.slice(0, 8)}`, error instanceof Error ? error.name : typeof error);
+    }
+  }
 }
 
 // Sets or deletes the connection's webhook and records the outcome. The returned text is for the log: a state or a code, nothing a platform
@@ -318,8 +356,12 @@ export async function runTelegramChatHook(deps: ChatHookDeps, job: ConversationC
   for (let round = 0; round < 3; round++) {
     const work = await deps.runtime.query<TelegramChatWork>('kernel.channel.telegram_chat_work', { connectionId: job.connectionId, action, ...(usedHookFp ? { usedHookFp } : {}) }, options);
     if (work.action !== 'call' || (job.on && !work.hook)) return last;
-    const record = (outcome: 'done' | 'failed', extra: { botId?: string; code?: string } = {}) =>
-      deps.runtime.execute<{ applied: boolean; hookChanged: boolean }>('kernel.channel.telegram_chat_record', { connectionId: job.connectionId, action, outcome, ...(work.hookFp ? { hookFp: work.hookFp } : {}), ...extra }, options);
+    const record = (outcome: 'done' | 'failed', extra: { botId?: string; code?: string; hookKeyId?: string } = {}) =>
+      deps.runtime.execute<{ applied: boolean; hookChanged: boolean; chatState: string | null; changedAt: string | null }>(
+        'kernel.channel.telegram_chat_record',
+        { connectionId: job.connectionId, action, outcome, ...(work.hookFp ? { hookFp: work.hookFp } : {}), ...extra },
+        options,
+      );
     const failed = async (code: string): Promise<{ text: string; again: boolean }> => {
       const recorded = await record('failed', { code });
       return { text: `failed:${code}`, again: recorded.hookChanged };
@@ -340,16 +382,24 @@ export async function runTelegramChatHook(deps: ChatHookDeps, job: ConversationC
       } else if (opened.kind === 'refused') {
         outcome = await failed(opened.code);
       } else {
+        const derived = deps.broker.deriveKeys?.(TELEGRAM_HOOK_KEY_INFO)[0];
         let answer;
         try {
-          answer = await adapter.chatHook({ secret: opened.secret, on: job.on, hook: work.hook ?? '', baseUrl: deps.baseUrl, key: deps.broker.deriveKeys?.(TELEGRAM_HOOK_KEY_INFO)[0]?.key ?? null, takenBotIds: work.takenBotIds ?? [] });
+          answer = await adapter.chatHook({ secret: opened.secret, on: job.on, hook: work.hook ?? '', baseUrl: deps.baseUrl, key: derived?.key ?? null, takenBotIds: work.takenBotIds ?? [] });
         } catch {
           answer = { kind: 'failed' as const, retry: true, code: 'ADAPTER_ERROR' };
         }
         if (answer.kind === 'failed') {
           outcome = await failed(answer.code);
         } else {
-          const recorded = await record('done', job.on && answer.botId ? { botId: answer.botId } : {});
+          const hookKeyId = job.on ? (derived?.id ?? currentKeyOfBroker(deps.broker)) : undefined;
+          const recorded = await record('done', {
+            ...(job.on && answer.botId ? { botId: answer.botId } : {}),
+            ...(hookKeyId ? { hookKeyId } : {}),
+          });
+          if (job.on && recorded.applied && recorded.chatState === 'on') {
+            await displaceOtherTelegramOrgs(deps.runtime, deps.workerDb, job.orgId, answer.botId, recorded.changedAt);
+          }
           outcome = { text: job.on ? 'on' : 'off', again: recorded.hookChanged };
         }
       }
@@ -359,6 +409,102 @@ export async function runTelegramChatHook(deps: ChatHookDeps, job: ConversationC
     usedHookFp = work.hookFp;
   }
   return `${last}:busy`;
+}
+
+const REKEY_ACTOR = { type: 'system' as const, component: 'kernel.telegram_webhook.rekey' };
+const REKEY_LOCK_KEY = 'ludy.telegram-webhook-rekey';
+const REKEY_LIMIT = 200;
+const REKEY_PAGES = 5;
+
+export interface TelegramWebhookRekeyDeps {
+  runtime: Runtime;
+  broker: CredentialBroker;
+  workerDb: Db;
+  adapter: (provider: string) => ConversationAdapter | undefined;
+  baseUrl: string;
+}
+
+export interface TelegramWebhookRekeyOutcome {
+  rekeyed: number;
+  failed: number;
+  leftActive: number;
+  leftInactive: number;
+  skipped: boolean;
+}
+
+// Re-registers live Telegram webhooks under the current credential key after CREDENTIAL_KEY rotates (#3150 item 1).
+// Leaves failed connections in chat_state='on' (and keeps chat_hook_key_id unchanged) so working webhooks under
+// CREDENTIAL_KEY_PREVIOUS stay live and retry on the next pass.
+export async function rekeyTelegramWebhooks(deps: TelegramWebhookRekeyDeps): Promise<TelegramWebhookRekeyOutcome> {
+  const outcome: TelegramWebhookRekeyOutcome = { rekeyed: 0, failed: 0, leftActive: 0, leftInactive: 0, skipped: false };
+  const adapter = deps.adapter('telegram');
+  const derived = deps.broker.deriveKeys?.(TELEGRAM_HOOK_KEY_INFO)[0];
+  const current = derived?.id ?? currentKeyOfBroker(deps.broker) ?? null;
+  if (!adapter?.chatHook || !current || !derived?.key || !deps.baseUrl.startsWith('https://')) {
+    return { ...outcome, skipped: true };
+  }
+  return deps.workerDb.connection().execute(async (db) => {
+    const { rows: lock } = await sql<{ locked: boolean }>`SELECT pg_catalog.pg_try_advisory_lock(pg_catalog.hashtextextended(${REKEY_LOCK_KEY}, 0)) AS locked`.execute(db);
+    if (!lock[0]?.locked) return { ...outcome, skipped: true };
+    try {
+      let after = null as { orgId: string; id: string } | null;
+      for (let page = 0; page < REKEY_PAGES; page += 1) {
+        const { rows } = await sql<{ org_id: string; connection_id: string }>`
+          SELECT org_id, connection_id FROM ludy_kernel.telegram_chat_hook_rekey_due(${current}, ${REKEY_LIMIT}::int, ${after?.orgId ?? null}::uuid, ${after?.id ?? null}::uuid)`.execute(db);
+        for (const row of rows) {
+          const result = await rekeyOneTelegramWebhook(deps, adapter, current, derived.key, row).catch((error: unknown) => {
+            console.error(`[telegram-webhook-rekey] connection ${row.connection_id.slice(0, 8)}`, error instanceof Error ? error.name : typeof error);
+            return 'failed' as const;
+          });
+          if (result === 'rekeyed') outcome.rekeyed += 1;
+          else if (result === 'failed') outcome.failed += 1;
+        }
+        const last = rows.at(-1);
+        if (!last || rows.length < REKEY_LIMIT) break;
+        after = { orgId: last.org_id, id: last.connection_id };
+      }
+      const { rows: counts } = await sql<{ key_id: string; active: string; inactive: string }>`
+        SELECT key_id, active, inactive FROM ludy_kernel.telegram_chat_hook_rekey_counts()`.execute(db);
+      for (const c of counts) {
+        if (c.key_id === current) continue;
+        outcome.leftActive += Number(c.active);
+        outcome.leftInactive += Number(c.inactive);
+      }
+      return outcome;
+    } finally {
+      await sql`SELECT pg_catalog.pg_advisory_unlock(pg_catalog.hashtextextended(${REKEY_LOCK_KEY}, 0))`.execute(db);
+    }
+  });
+}
+
+async function rekeyOneTelegramWebhook(
+  deps: TelegramWebhookRekeyDeps,
+  adapter: ConversationAdapter,
+  currentKeyId: string,
+  derivedKey: Buffer,
+  row: { org_id: string; connection_id: string },
+): Promise<'rekeyed' | 'failed' | 'skipped'> {
+  if (!adapter.chatHook) return 'skipped';
+  const options = { actor: REKEY_ACTOR, orgId: row.org_id };
+  const work = await deps.runtime.query<TelegramChatWork>('kernel.channel.telegram_chat_work', { connectionId: row.connection_id, action: 'enable', rekey: true }, options);
+  if (work.action !== 'call' || !work.hook || !work.hookFp) return 'skipped';
+  const opened = await open({ runtime: deps.runtime, broker: deps.broker }, { orgId: row.org_id, connectionId: row.connection_id });
+  if (opened.kind === 'refused') return 'failed';
+  const answer = await adapter.chatHook({ secret: opened.secret, on: true, hook: work.hook, baseUrl: deps.baseUrl, key: derivedKey, takenBotIds: work.takenBotIds ?? [] });
+  if (answer.kind === 'failed') {
+    console.error(`[telegram-webhook-rekey] connection ${row.connection_id.slice(0, 8)} ${answer.code}`);
+    return 'failed';
+  }
+  const recorded = await deps.runtime.execute<{ applied: boolean }>(
+    'kernel.channel.telegram_chat_rekey_record',
+    { connectionId: row.connection_id, hookFp: work.hookFp, hookKeyId: currentKeyId, ...(answer.botId ? { botId: answer.botId } : {}) },
+    options,
+  );
+  if (recorded.applied) {
+    await displaceOtherTelegramOrgs(deps.runtime, deps.workerDb, row.org_id, answer.botId, null);
+    return 'rekeyed';
+  }
+  return 'skipped';
 }
 
 // A chat switch queued where this worker has no channel to make the call through: the attempt is recorded as failed, so the screen says so and

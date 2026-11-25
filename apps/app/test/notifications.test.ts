@@ -45,9 +45,11 @@ describe('notificationKinds', () => {
     }
     expect(isKnownKind('finance.period_closing')).toBe(true);
     expect(isKnownKind('social.comment')).toBe(false);
-    // The Engage reads notice (#4069) is shown but never listed among the kinds a member turns off: it is about their own consent.
+    // The Engage reads notice (#4069) and displaced Telegram bot notice (#3150) are shown and cannot be muted.
     expect(isKnownKind('kernel.mcp_engage_reads')).toBe(true);
+    expect(isKnownKind('kernel.telegram_chat_displaced')).toBe(true);
     expect(notificationKinds(['finance', 'notes', 'ads', 'projects', 'meetings'])).not.toContain('kernel.mcp_engage_reads');
+    expect(notificationKinds(['finance', 'notes', 'ads', 'projects', 'meetings'])).not.toContain('kernel.telegram_chat_displaced');
   });
 });
 
@@ -79,6 +81,7 @@ describe('notificationTarget', () => {
     expect(notificationTarget({ kind: 'projects.weekly_status', subjectId: id, detail: {} })).toEqual({ to: 'project', id });
     expect(notificationTarget({ kind: 'projects.weekly_status', subjectId: null, detail: {} })).toEqual({ to: 'projects' });
     expect(notificationTarget({ kind: 'kernel.channel_expired', subjectId: id, detail: { provider: 'meta_ads' } })).toEqual({ to: 'ads' });
+    expect(notificationTarget({ kind: 'kernel.telegram_chat_displaced', subjectId: id, detail: {} })).toEqual({ to: 'channels' });
     expect(notificationTarget({ kind: 'later.kind', subjectId: null, detail: {} })).toBeNull();
   });
 });
@@ -181,6 +184,7 @@ describe('app mapping, filtering, and master-detail selection', () => {
     expect(notificationApp('meetings.summary_ready')).toBe('teamwork');
     expect(notificationApp('kernel.conversation_new')).toBe('engage');
     expect(notificationApp('kernel.channel_expired')).toBe('engage');
+    expect(notificationApp('kernel.telegram_chat_displaced')).toBe('engage');
     expect(notificationApp('kernel.ai_budget')).toBe('ai');
     expect(notificationApp('kernel.personal_data_notice')).toBe('kernel');
     expect(notificationApp('hr.leave_requested')).toBe('hr');

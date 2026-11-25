@@ -92,14 +92,14 @@ suite('Telegram Business mode on PostgreSQL (#3191)', () => {
   const intake = () => runConversationIntake({ workerDb, runtime: worker });
   const asOwner = (o: Org) => ({ actor: { type: 'user' as const, userId: o.ownerId, aal: 'aal1' as const }, orgId: o.orgId });
 
-  const connection = (o: { id?: string; enabled?: boolean; canReply?: boolean; name?: string } = {}) =>
+  const connection = (o: { id?: string; enabled?: boolean; canReply?: boolean; name?: string; userId?: number; username?: string; date?: number } = {}) =>
     JSON.stringify({
       update_id: updateId++,
       business_connection: {
         id: o.id ?? CONN,
-        user: { id: OWNER_TG, first_name: o.name ?? 'Lan', last_name: 'Trần', username: 'lan_tran' },
-        user_chat_id: OWNER_TG,
-        date: nowSec(),
+        user: { id: o.userId ?? OWNER_TG, first_name: o.name ?? 'Lan', last_name: 'Trần', username: o.username ?? 'lan_tran' },
+        user_chat_id: o.userId ?? OWNER_TG,
+        date: o.date ?? nowSec(),
         rights: o.canReply === false ? {} : { can_reply: true },
         is_enabled: o.enabled ?? true,
       },
@@ -211,7 +211,7 @@ suite('Telegram Business mode on PostgreSQL (#3191)', () => {
     // It is state, not a message: nothing is stored in a thread, and the connection now lists the account, which nobody has allowed yet.
     expect(await intake()).toEqual({ stored: 0, dropped: 0 });
     expect(await rows('SELECT 1 FROM ludy_kernel.conversation WHERE org_id = $1', [a.orgId])).toHaveLength(0);
-    expect(await accountsOf(a)).toEqual([{ id: CONN, userId: String(OWNER_TG), name: 'Lan Trần', username: 'lan_tran', canReply: true, enabled: true, approved: false }]);
+    expect(await accountsOf(a)).toEqual([{ id: CONN, userId: String(OWNER_TG), name: 'Lan Trần', username: 'lan_tran', date: expect.any(Number), canReply: true, enabled: true, approved: false }]);
     // The screen's list names the account and what the bot may do, with a fingerprint to name it by, and never the platform's ids.
     const list = await api.query<Array<{ id: string; chatBusiness: Array<{ ref: string }> }>>('kernel.channel.list', {}, asOwner(a));
     const shown = list.find((c) => c.id === a.connectionId)?.chatBusiness;
@@ -501,29 +501,48 @@ suite('Telegram Business mode on PostgreSQL (#3191)', () => {
     expect((await accountsOf(b)).map((x) => x.id)).toEqual(['x1']);
     // The account list is a person's data: a user cannot write it, only the system command can.
     await expect(api.execute('kernel.channel.telegram_business_record', { connectionId: b.connectionId, account: { id: 'x3', userId: '3', name: null, username: null, canReply: true, enabled: true } }, asOwner(b))).rejects.toMatchObject({ status: 403 });
-    // Ten accounts at most. A stranger's account (nobody allowed it) must not keep the org's own out: when the list is full the oldest account nobody
-    // allowed goes first.
+    // Ten accounts at most. Deduplicate unapproved slots by userId, protect approved and pending enabled slots against
+    // later stranger connects, and only evict !approved && !enabled slots when full (#3150 item 7).
     await api.execute('kernel.channel.telegram_chat_set', { connectionId: b.connectionId, on: true }, asOwner(b));
     expect(await runTelegramChatHook({ runtime: worker, broker: vault, adapter: (p: string) => (p === 'telegram' ? adapter : undefined), baseUrl: APP_URL }, { orgId: b.orgId, connectionId: b.connectionId, action: 'chat', on: true })).toBe('on');
-    const record = (id: string, enabled: boolean) => worker.execute<{ applied: boolean }>('kernel.channel.telegram_business_record', { connectionId: b.connectionId, account: { id, userId: '5', name: null, username: null, canReply: true, enabled } }, { actor: { type: 'system', component: 'test' }, orgId: b.orgId });
-    for (let i = 2; i <= 10; i++) expect((await record(`x${i}`, true)).applied).toBe(true);
+    const record = (id: string, enabled: boolean, userId = id, date?: number) =>
+      worker.execute<{ applied: boolean }>(
+        'kernel.channel.telegram_business_record',
+        { connectionId: b.connectionId, account: { id, userId, name: null, username: null, ...(date !== undefined ? { date } : {}), canReply: true, enabled } },
+        { actor: { type: 'system', component: 'test' }, orgId: b.orgId },
+      );
+    // Same unapproved userId reconnecting under new connection ids updates its single slot instead of taking extra slots.
+    expect((await record('x1_re1', false, '1')).applied).toBe(true);
+    expect((await record('x1_re2', true, '1')).applied).toBe(true);
+    expect((await accountsOf(b)).map((x) => x.id)).toEqual(['x1_re2']);
+    for (let i = 2; i <= 10; i++) expect((await record(`x${i}`, true, String(i))).applied).toBe(true);
     expect((await accountsOf(b)).length).toBe(10);
     expect((await accountsOf(b)).every((x) => !x.approved)).toBe(true);
-    expect((await record('x11', true)).applied).toBe(true);
-    expect((await accountsOf(b)).map((x) => x.id)).toEqual(['x2', 'x3', 'x4', 'x5', 'x6', 'x7', 'x8', 'x9', 'x10', 'x11']);
-    // The owner allows every one that is there: a full list of allowed, enabled accounts takes no newcomer.
+    // While all 10 unapproved accounts are enabled, an 11th newcomer is refused so earlier pending accounts (e.g. the owner) are not pushed out.
+    expect((await record('x11', true, '11')).applied).toBe(false);
+    // Once an unapproved account disconnects in Telegram (!approved && !enabled), a newcomer can reuse its slot.
+    expect((await record('x2', false, '2')).applied).toBe(true);
+    expect((await record('x11', true, '11')).applied).toBe(true);
+    expect((await accountsOf(b)).map((x) => x.id)).toEqual(['x1_re2', 'x3', 'x4', 'x5', 'x6', 'x7', 'x8', 'x9', 'x10', 'x11']);
+    // The owner allows every one that is there: a full list of allowed accounts never evicts an approved entry even when disconnected.
     const refs = ((await api.query<Array<{ id: string; chatBusiness: Array<{ ref: string }> }>>('kernel.channel.list', {}, asOwner(b))).find((c) => c.id === b.connectionId)?.chatBusiness ?? []).map((x) => x.ref);
     expect(refs).toHaveLength(10);
     for (const r of refs) await api.execute('kernel.channel.telegram_business_allow', { connectionId: b.connectionId, ref: r, allow: true }, asOwner(b));
     expect((await accountsOf(b)).every((x) => x.approved)).toBe(true);
-    expect((await record('x12', true)).applied).toBe(false);
-    // One of them goes off in Telegram: it is the one a newcomer replaces, and the newcomer starts not allowed.
-    expect((await record('x4', false)).applied).toBe(true);
+    expect((await record('x12', true, '12')).applied).toBe(false);
+    expect((await record('x4', false, '4')).applied).toBe(true);
     expect((await accountsOf(b)).find((x) => x.id === 'x4')).toMatchObject({ enabled: false, approved: true });
-    expect((await record('x12', true)).applied).toBe(true);
-    expect((await accountsOf(b)).map((x) => x.id)).not.toContain('x4');
-    expect((await accountsOf(b)).find((x) => x.id === 'x12')).toMatchObject({ enabled: true, approved: false });
+    expect((await record('x12', true, '12')).applied).toBe(false);
+    expect((await accountsOf(b)).map((x) => x.id)).toContain('x4');
     expect((await accountsOf(b)).length).toBe(10);
+    // Stopping x4 sets approved=false, allowing dismiss to free the slot for a newcomer.
+    const x4Ref = ((await api.query<Array<{ id: string; chatBusiness: Array<{ ref: string; enabled: boolean }> }>>('kernel.channel.list', {}, asOwner(b))).find((c) => c.id === b.connectionId)?.chatBusiness ?? []).find((x) => !x.enabled)?.ref as string;
+    await expect(api.execute('kernel.channel.telegram_business_allow', { connectionId: b.connectionId, ref: x4Ref, allow: false, dismiss: true }, asOwner(b))).rejects.toMatchObject({ code: 'BUSINESS_ACCOUNT_APPROVED', status: 409 });
+    await expect(api.execute('kernel.channel.telegram_business_allow', { connectionId: b.connectionId, ref: x4Ref, allow: true, dismiss: true }, asOwner(b))).rejects.toMatchObject({ status: 422 });
+    expect(await api.execute('kernel.channel.telegram_business_allow', { connectionId: b.connectionId, ref: x4Ref, allow: false }, asOwner(b))).toEqual({ approved: false });
+    expect(await api.execute('kernel.channel.telegram_business_allow', { connectionId: b.connectionId, ref: x4Ref, allow: false, dismiss: true }, asOwner(b))).toEqual({ approved: false });
+    expect((await record('x12', true, '12')).applied).toBe(true);
+    expect((await accountsOf(b)).map((x) => x.id)).toContain('x12');
     // Disconnecting forgets the accounts: chats turned off first, as for the hook.
     await api.execute('kernel.channel.telegram_chat_set', { connectionId: b.connectionId, on: false }, asOwner(b));
     expect(await runTelegramChatHook({ runtime: worker, broker: vault, adapter: (p: string) => (p === 'telegram' ? adapter : undefined), baseUrl: APP_URL }, { orgId: b.orgId, connectionId: b.connectionId, action: 'chat', on: false })).toBe('off');
@@ -553,5 +572,38 @@ suite('Telegram Business mode on PostgreSQL (#3191)', () => {
     expect((await post(a.hook, deleted({ chat: 2402, ids: [7] }))).status).toBe(200);
     await intake();
     expect(await threadRow(a, `b:2402:${CONN}`)).toMatchObject({ status: 'resolved' });
+  });
+
+  it('ignores stale business_connection updates dated earlier than the stored state (#3150 item 6) and hides chatBusiness from non-admins (#3150 item 9)', async () => {
+    const t0 = nowSec() - 100;
+    const t1 = nowSec() - 50;
+    const t2 = nowSec();
+    expect((await post(a.hook, connection({ enabled: true, date: t1 }))).status).toBe(200);
+    await intake();
+    expect((await post(a.hook, connection({ enabled: false, date: t2 }))).status).toBe(200);
+    await intake();
+    expect((await accountsOf(a)).find((x) => x.id === CONN)).toMatchObject({ enabled: false, approved: true, date: t2 });
+
+    // Stale enabled=true update dated before the disconnect is rejected; newer update succeeds.
+    expect((await post(a.hook, connection({ enabled: true, date: t0 }))).status).toBe(200);
+    await intake();
+    expect((await accountsOf(a)).find((x) => x.id === CONN)).toMatchObject({ enabled: false, approved: true, date: t2 });
+    expect((await post(a.hook, connection({ enabled: true, date: t2 + 10 }))).status).toBe(200);
+    await intake();
+    expect((await accountsOf(a)).find((x) => x.id === CONN)).toMatchObject({ enabled: true, approved: true, date: t2 + 10 });
+
+    // Only owners and admins see chatBusiness and its @username in kernel.channel.list; members and viewers see [].
+    const adminId = (await upsertIdentity(createDb(pools[0] as pg.Pool), { issuer: 'test', subject: randomUUID(), email: `admin-vis-${randomUUID().slice(0, 8)}@telegram-business.test`, name: null })) as string;
+    await rows("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin')", [a.orgId, adminId]);
+    const adminList = await api.query<Array<{ id: string; chatBusiness: Array<{ username: string | null }> }>>('kernel.channel.list', {}, { actor: { type: 'user', userId: adminId, aal: 'aal1' }, orgId: a.orgId });
+    expect(adminList.find((c) => c.id === a.connectionId)?.chatBusiness[0]?.username).toBe('lan_tran');
+
+    const members = await rows<{ user_id: string; role: string }>("SELECT user_id, role FROM ludy_kernel.tenant_member WHERE org_id = $1 AND role IN ('member', 'viewer')", [a.orgId]);
+    expect(members.length).toBeGreaterThanOrEqual(2);
+    for (const m of members) {
+      const memberList = await api.query<Array<{ id: string; chatBusiness: unknown[] }>>('kernel.channel.list', {}, { actor: { type: 'user', userId: m.user_id, aal: 'aal1' }, orgId: a.orgId });
+      expect(memberList.find((c) => c.id === a.connectionId)?.chatBusiness).toEqual([]);
+      expect(JSON.stringify(memberList)).not.toContain('lan_tran');
+    }
   });
 });

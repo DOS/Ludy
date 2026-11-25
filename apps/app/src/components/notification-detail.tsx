@@ -91,6 +91,8 @@ export function useNotificationLine() {
         return t('text.morning', { count: Number(n.detail.count ?? 0) });
       case 'kernel.channel_expired':
         return t('text.channel_expired');
+      case 'kernel.telegram_chat_displaced':
+        return t('text.telegram_chat_displaced');
       case 'kernel.ai_budget':
         return n.detail.level === 'stop' ? t('text.ai_budget_stop') : t('text.ai_budget_warn', { percent: n.detail.percent ?? '' });
       case 'kernel.mcp_engage_reads':
@@ -140,6 +142,8 @@ export function useNotificationTitle() {
         return titles('kernel_conversation_new');
       case 'kernel.channel_expired':
         return titles('kernel_channel_expired');
+      case 'kernel.telegram_chat_displaced':
+        return titles('kernel_telegram_chat_displaced');
       case 'kernel.mcp_engage_reads':
         return titles('kernel_mcp_engage_reads');
       case 'kernel.personal_data_notice':
@@ -280,6 +284,12 @@ export function NotificationTargetLink({
     case 'ads':
       return (
         <Link to="/o/$slug/ads" params={{ slug }} {...shared}>
+          {children}
+        </Link>
+      );
+    case 'channels':
+      return (
+        <Link to="/o/$slug/social/channels" params={{ slug }} {...shared}>
           {children}
         </Link>
       );
