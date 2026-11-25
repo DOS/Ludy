@@ -211,7 +211,7 @@ suite('a Microsoft Teams recording from the connect to the staged bytes (meeting
   }) as never;
   const jobDeps = (over: Record<string, unknown> = {}) => ({ runtime: worker, broker: vault, store, adapters: { microsoft_teams: adapter }, extractor: null, stream: noDownload, ...over }) as never;
   const attempt = { retryCount: 0, retryLimit: 3 };
-  const loggedText = () => logs.flatMap((spy) => spy.mock.calls.flat().map((a) => (a instanceof Error ? `${a.name}: ${a.message}` : String(a)))).join('\n');
+  const loggedText = () => logs.flatMap((spy) => spy.mock.calls.flat().map((a: unknown) => (a instanceof Error ? `${a.name}: ${a.message}` : String(a)))).join('\n');
   async function claimTranscript(meetingId: string, importId: string) {
     const response = await http.request(`/api/meetings/${meetingId}/transcript-import`, {
       method: 'POST',
@@ -274,8 +274,11 @@ suite('a Microsoft Teams recording from the connect to the staged bytes (meeting
 
   afterEach(() => {
     // The stub throws on an address it does not know, and an adapter may turn that into a short code: the log says it happened.
-    expect(stub.unexpected).toEqual([]);
+    // Emptied after the check, so one stray address fails its own test and not every later one.
+    const unexpected = [...stub.unexpected];
+    stub.unexpected.length = 0;
     stub.clear();
+    expect(unexpected).toEqual([]);
   });
 
   afterAll(async () => {
@@ -491,6 +494,8 @@ suite('a Microsoft Teams recording from the connect to the staged bytes (meeting
     expect(await connectionRow()).toMatchObject({ status: 'expired', status_reason: 'connection_expired' });
     // An expired connection is not the member's to refresh and is not listed: the next pass makes no call to Graph.
     expect((await rpc('meetingPlatform/refresh', member, { connectionId })).body).toEqual({ refreshed: 0 });
+    // The failed pass stamped last_synced_at, which alone would keep the connection out of the due list for 10 minutes: clear it, so only the expired status can.
+    await sqlAdmin('UPDATE ludy_kernel.meeting_platform_connection SET last_synced_at = NULL WHERE id = $1', [connectionId]);
     stub.calls.length = 0;
     expect(await sweepOnly()).toMatchObject({ failures: 0, listed: 0 });
     expect(stub.calls).toEqual([]);
