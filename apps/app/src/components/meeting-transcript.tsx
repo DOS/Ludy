@@ -5,7 +5,7 @@
 // recorder's own click copies it here as the draft. Without AI (or with transcription off) there is no button and no
 // transcript, and the recording and its playback work as before.
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useEffect, useRef, useState, type RefObject } from 'react';
+import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { useTranslations } from 'use-intl';
 import { TRANSCRIPT_SEGMENTS_MAX, type TranscriptRedacted, type TranscriptSegment, type TranslationTarget } from '@ludy/kernel-contract';
 import { Badge } from '@ludy/ui/components/badge';
@@ -110,7 +110,7 @@ function Line({ segment, editable, focused, focusToken, translation, onSeek, mar
         {segment.corrected && <Badge variant="outline">{t('corrected')}</Badge>}
         {onShow && (
           // In a filtered view (#4954): back to the full transcript at this line.
-          <Button size="xs" variant="ghost" className="ml-auto" data-testid="transcript-show-in-context" onClick={onShow}>
+          <Button size="xs" variant="ghost" className="ml-auto max-md:min-h-11" data-testid="transcript-show-in-context" onClick={onShow}>
             {t('filters.showInContext')}
           </Button>
         )}
@@ -321,6 +321,11 @@ export function MeetingTranscript({
   const [lineFilter, setLineFilter] = useState<LineFilter | null>(null);
   // The line "show in context" opened: marked and scrolled to in the full transcript; `token` changes on each click.
   const [shown, setShown] = useState<{ id: string; token: number; since: number | undefined } | null>(null);
+  // A chapter, search or commitment jump leaves the filtered view: the line it names may not pass the filter.
+  useEffect(() => {
+    setLineFilter(null);
+  }, [focusSecond?.token, focusSegmentId]);
+  const counts = useMemo(() => filterCounts(query.data?.segments ?? []), [query.data?.segments]);
   if (query.isPending) return null;
   if (query.error) return <ErrorText>{errorMessage(query.error)}</ErrorText>;
   const transcript = query.data;
@@ -337,7 +342,6 @@ export function MeetingTranscript({
   // Lines a meeting platform wrote (C2, #3174): said in words, with the platform's name, that they are not Ludy's (#3922: and that they may be cut at the limit of a draft).
   const platform = platformTranscript(transcript.segments);
   const focusedId = (shown && shown.since === focusSecond?.token ? shown.id : undefined) ?? (focusSecond ? focusedSegment(transcript.segments, focusSecond)?.id : focusSegmentId);
-  const counts = filterCounts(transcript.segments);
   const visible = lineFilter ? transcript.segments.filter((segment) => lineMatches(lineFilter, segment.text)) : transcript.segments;
   return (
     <div className="space-y-3">
@@ -394,6 +398,7 @@ export function MeetingTranscript({
             <Button
               key={filter}
               size="sm"
+              className="max-md:min-h-11"
               variant={lineFilter === filter ? 'default' : 'outline'}
               aria-pressed={lineFilter === filter}
               data-testid={`transcript-filter-${filter}`}
@@ -406,11 +411,10 @@ export function MeetingTranscript({
             </Button>
           ))}
         </div>
-        {lineFilter && (
-          <p className="mb-1 text-xs text-muted-foreground" role="status" data-testid="transcript-filter-note">
-            {visible.length === 0 ? t('filters.none') : t('filters.note', { count: visible.length })}
-          </p>
-        )}
+        {/* Always in the page, so a screen reader announces the text when it changes. */}
+        <p className="mb-1 text-xs text-muted-foreground empty:hidden" role="status" data-testid="transcript-filter-note">
+          {lineFilter ? (visible.length === 0 ? t('filters.none') : t('filters.note', { count: visible.length })) : null}
+        </p>
         <ul className="divide-y">
           {visible.map((segment) => (
             <Line

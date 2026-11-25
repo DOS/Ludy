@@ -64,7 +64,7 @@ const NOT_ASKING_BEFORE = ['không', 'bất cứ', 'bất kỳ', 'bất kể', '
 const EN_OPENING = ['what', 'when', 'where', 'why', 'how', 'who', 'whom', 'whose', 'which'];
 const EN_AUX = ['do you', 'does it', 'does he', 'does she', 'did you', 'can you', 'could you', 'would you', 'will you', 'are you', 'is it', 'is there', 'are there', 'have you', 'should we', 'shall we'];
 
-function viAsks(words: string): boolean {
+function viAsks(words: string, stated: boolean): boolean {
   for (const phrase of VI_ASKING) {
     let from = 0;
     for (;;) {
@@ -80,8 +80,9 @@ function viAsks(words: string): boolean {
       return true;
     }
   }
-  const last = words.trim().split(' ').at(-1);
-  return last !== undefined && VI_LAST_WORD.includes(last);
+  // A bare answer ("Dạ không.", "Em chưa.") is not a question: the last-word rule needs at least three words.
+  const parts = words.trim().split(' ');
+  return !stated && parts.length >= 3 && VI_LAST_WORD.includes(parts[parts.length - 1] as string);
 }
 
 function enAsks(words: string): boolean {
@@ -94,8 +95,11 @@ export function looksLikeQuestion(text: string): boolean {
   return sentences(text).some((sentence) => {
     // A closing quote or bracket after the mark: "...đúng không?"
     if (/\?[\s"'”’)\]»]*$/u.test(sentence)) return true;
-    const words = wordsOf(sentence);
-    return viAsks(words) || enAsks(words);
+    // A full stop or a bang ends a statement; the last-word rule below is for a sentence with no mark.
+    const stated = /[.!…][\s"'”’)\]»]*$/u.test(sentence);
+    // "AI" in capitals is the product word, not "ai" (who).
+    const words = wordsOf(sentence.replace(/(?<![\p{L}\p{N}])AI(?![\p{L}\p{N}])/gu, ' '));
+    return viAsks(words, stated) || enAsks(words);
   });
 }
 
@@ -103,7 +107,7 @@ export function looksLikeQuestion(text: string): boolean {
 // Figures: money, percentages, quantities
 
 const NUMBER_WORDS = '(?:một|hai|ba|bốn|tư|năm|sáu|bảy|tám|chín|mười|mươi|vài|trăm|rưỡi)';
-const AMOUNT = String.raw`\d{1,3}(?:[.,]\d{3})+(?:[.,]\d+)?|\d+(?:[.,]\d+)?`;
+const AMOUNT = String.raw`\d{1,3}(?:[.,]\d{3})+(?:[.,]\d+)?|\d{1,15}(?:[.,]\d+)?`;
 const CURRENCY_UNIT = String.raw`(?:đ|₫|vnd|vnđ|đồng|usd|đô la|đô|dollars?|euros?|eur)`;
 const MAGNITUDE = String.raw`(?:triệu|tỷ|tỉ|nghìn|ngàn|k|tr)`;
 const QUANTITY_UNIT = String.raw`(?:cái|chiếc|người|bộ|hộp|thùng|gói|suất|lô|đơn|hợp đồng|khách|nhân viên|kg|kí|ký|gam|lít|mét|cm|km|m2|m²|users?|seats?|licen[cs]es?|items?|units?|pieces?|pcs|orders?|people|hours?|minutes?|days?|weeks?|months?|giờ|phút|ngày|tuần|tháng(?!\s*\d))`;
@@ -132,7 +136,7 @@ function bareFigure(text: string): boolean {
     const value = match[1] as string;
     const at = match.index ?? 0;
     const before = scrubbed.slice(0, at).toLowerCase().trimEnd();
-    const isYear = /^\d{4}$/u.test(value) && /(?:năm|in|since|until|đến|từ|vào)$/u.test(before);
+    const isYear = /^\d{4}$/u.test(value) && /(?:^|\s)(?:năm|in|since|until|đến|từ|vào)$/u.test(before);
     if (isYear) continue;
     if (/[.,]/u.test(value) || value.length >= 3) return true;
   }
@@ -211,8 +215,8 @@ const DEADLINE = ['hạn chót', 'hạn cuối', 'hạn nộp', 'hạn thanh to�
 const MONTHS_EN = String.raw`(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)`;
 
 const DATE_RULES: readonly RegExp[] = [
-  // 15/12, 15/12/2026, 15-12-2026, 2026-12-15
-  /(?<![\p{L}\p{N}/.:-])(?:[0-3]?\d[/-][01]?\d(?:[/-](?:\d{4}|\d{2}))?|\d{4}-[01]\d-[0-3]\d)(?![\p{L}\p{N}/:-])/u,
+  // 15/12/2026, 15-12-2026, 15.12.2026, 2026-12-15: a date with its year. A bare "15/12" is read by `slashDate`, since "1/2", "10/10" and "3-5" are also fractions, scores and ranges.
+  /(?<![\p{L}\p{N}/.:-])(?:(?:0?[1-9]|[12]\d|3[01])[/.-](?:0?[1-9]|1[0-2])[/.-](?:\d{4}|\d{2})|\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01]))(?![\p{L}\p{N}/:-])/u,
   // ngày 15, ngày 15 tháng 12, ngày 15/12, mùng 5, mồng 5
   /(?<![\p{L}\p{N}])(?:ngày|mùng|mồng)\s+[0-3]?\d(?![\p{L}\p{N}])/iu,
   // 15 tháng 12, tháng 12, quý 3
@@ -225,11 +229,24 @@ const DATE_RULES: readonly RegExp[] = [
   // 9h, 9h30, 9:30 only count with a day word (handled by RELATIVE and WEEKDAYS), so no rule for a clock time alone
 ];
 
+// The words before a bare "15/12" that say it is a date; a day above 12 ("20/10") needs none, since it cannot be a fraction.
+const DATE_LEAD = ['ngày', 'vào', 'trước', 'đến', 'tới', 'hạn', 'chốt', 'hẹn', 'on', 'by', 'before', 'until', 'due', 'from', 'từ'];
+// "1/2 ngày", "10/10 người": a slash pair followed by a count word is a ratio.
+const SLASH_PAIR = /(?<![\p{L}\p{N}/.:-])(0?[1-9]|[12]\d|3[01])\/(0?[1-9]|1[0-2])(?![\p{L}\p{N}/:-])(?!\s*(?:%|ngày|tuần|tháng|người|giờ|phút|days?|weeks?|months?|people|hours?))/gu;
+function slashDate(text: string): boolean {
+  for (const match of text.matchAll(SLASH_PAIR)) {
+    if (Number(match[1]) > 12) return true;
+    const lead = text.slice(0, match.index ?? 0).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim().split(' ').at(-1);
+    if (lead !== undefined && DATE_LEAD.includes(lead)) return true;
+  }
+  return false;
+}
+
 /** True when the line names a day, a date or a deadline: a weekday, "ngày mai", "15/12", "ngày 15", "cuối tháng", "hạn chót", "next week". */
 export function hasDate(text: string): boolean {
   // "24/7" is a round-the-clock service, not the 24th of July.
   const flat = text.normalize('NFC').replace(/(?<![\p{L}\p{N}/])24\/7(?![\p{L}\p{N}/])/gu, ' ');
-  if (DATE_RULES.some((rule) => rule.test(flat))) return true;
+  if (DATE_RULES.some((rule) => rule.test(flat)) || slashDate(flat)) return true;
   const words = wordsOf(flat);
   return hasAny(words, WEEKDAYS) || hasAny(words, RELATIVE) || hasAny(words, DEADLINE);
 }

@@ -163,7 +163,8 @@ describe('the filters above the lines (#4954)', () => {
     expect(html).toContain('Dates and deadlines (1)');
     expect(html.match(/aria-pressed="false"[^>]*data-testid="transcript-filter-/g)).toHaveLength(3);
     expect(html.match(/data-testid="transcript-line"/g)).toHaveLength(4);
-    expect(html).not.toContain('transcript-filter-note');
+    // The status note is always in the page (so a screen reader announces its text) and empty until a filter is picked.
+    expect(html).toContain('data-testid="transcript-filter-note"></p>');
   });
 
   it('is worded in Vietnamese', () => {

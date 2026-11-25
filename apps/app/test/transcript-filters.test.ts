@@ -39,6 +39,11 @@ describe('looksLikeQuestion', () => {
       'Anh ấy ở đâu cũng làm việc được',
       'Em sẽ gửi báo giá trong ngày mai.',
       'Cảm ơn anh, hẹn gặp lại',
+      'Mình dùng AI để tóm tắt cuộc họp',
+      'Ludy AI làm việc nhanh hơn',
+      'Dạ không.',
+      'Em chưa.',
+      'Không',
       'We will send the contract tomorrow',
       'The price is fine',
       'Giá 3.5 triệu, không giảm',
@@ -71,6 +76,8 @@ describe('hasFigure', () => {
       'Tổng là 12500000',
       'Giá 2tr5',
       'Doanh thu 1.250',
+      'Tôi login 5000 lần',
+      'Plan 2026 có 5000 khách',
     ],
     [
       'Cảm ơn anh nhiều',
@@ -98,6 +105,11 @@ describe('hasDate', () => {
       'Giao trước ngày 15',
       'Chốt ngày 15/12',
       'Hợp đồng ký ngày 15-12-2026',
+      'Hợp đồng ký 15.12.2026',
+      'Chốt 15/12',
+      'Giao trước 20/10',
+      'Hẹn vào 5/11',
+      'Due by 3/12',
       'Hẹn mùng 5 tháng sau',
       'Tuần sau mình họp',
       'Họp vào thứ 3',
@@ -117,8 +129,24 @@ describe('hasDate', () => {
       'The meeting is due to the weather',
       'Mình ngày nào cũng làm',
       'Anh Mai nói là được',
+      'Giao trong 3-5 ngày',
+      'Mất 2-3 tuần',
+      'Tăng 10-15%',
+      'Giảm 1/2',
+      'Tỷ lệ 10/10',
+      'Tỷ số 2-1',
+      'Còn 1/2 ngày nữa',
     ],
   );
+});
+
+describe('long lines', () => {
+  it('stay fast on a 4000 character line of digits, of words and of mixed text', () => {
+    const lines = ['1'.repeat(4000), 'bao nhiêu '.repeat(400), '12.500.000đ ngày 15/12 '.repeat(180)];
+    const started = performance.now();
+    for (const line of lines) filterCounts([{ text: line }]);
+    expect(performance.now() - started).toBeLessThan(1500);
+  });
 });
 
 describe('filterCounts and lineMatches', () => {
