@@ -465,6 +465,8 @@ export const KERNEL_ERROR_CODES = [
   'NOTE_IMPORT_EMPTY',
   // AI Meeting Notes (#2576).
   'MEETING_NOT_FOUND',
+  // The transcript as a file (#4817).
+  'TRANSCRIPT_EXPORT_EMPTY',
   'AGENDA_NOT_FOUND',
   'AGENDA_MEETING_LINKED',
   'AGENDA_EVENT_LINKED',

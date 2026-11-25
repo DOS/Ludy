@@ -1,5 +1,6 @@
 import { oc } from '@orpc/contract';
 import { z } from 'zod';
+import { zTranscriptExport, zTranscriptExportInput } from './meeting-transcript-export.ts';
 import { zChapters, zChaptersCopied, zChaptersCopy, zChaptersSave, zChaptersSaved } from './meeting-chapters.ts';
 import {
   zBulkApproveItems,
@@ -1997,6 +1998,8 @@ export const contract = {
     // The transcript (#2578): the recorder's draft, read, replaced by a transcription run and corrected by hand.
     transcript: {
       get: oc.input(zMeetingRef).output(zTranscript),
+      // The transcript the caller reads as a plain text or SRT file (#4817): built on the server under the transcript page's reader rule; the file comes back in the answer. TRANSCRIPT_EXPORT_EMPTY (409) with no line.
+      download: oc.input(zTranscriptExportInput).output(zTranscriptExport),
       draftStore: oc.input(zTranscriptDraftStore).output(zTranscriptDraftStored),
       correct: oc.input(zTranscriptCorrect).output(zTranscriptCorrected),
       // The recorder's own Vy transcribes in the background; the recorder starts it, sees its state and copies the finished result into the draft (#2578, M4b).
