@@ -96,7 +96,6 @@ const shell = (
   extra?: {
     mode?: 'sidebar' | 'drawer';
     secondaryCollapsed?: boolean;
-    onToggleSecondary?: () => void;
     onOpenQuickCapture?: () => void;
   },
 ) => {
@@ -450,7 +449,6 @@ describe('SH-8: Persistent 48px Global Top Bar, fixed-padding 64px rail, and con
     (path) => {
       const desktopRail = shell(path, 'vi', undefined, undefined, {
         mode: 'sidebar',
-        onToggleSecondary: () => undefined,
         onOpenQuickCapture: () => undefined,
       });
       // Fixed 64px rail padding with zero vertical shift, no secondary 224px column, and no duplicate utilities.
@@ -541,7 +539,6 @@ describe('SH-8: Persistent 48px Global Top Bar, fixed-padding 64px rail, and con
       const drawer = shell(path, 'vi', undefined, undefined, {
         mode: 'drawer',
         secondaryCollapsed: true,
-        onToggleSecondary: () => undefined,
         onOpenQuickCapture: () => undefined,
       });
       expect(drawer).toContain(viMessages.palette.open);

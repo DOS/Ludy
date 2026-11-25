@@ -146,6 +146,8 @@ export function OrgLayout() {
   const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);
   const [vyDrawerOpen, setVyDrawerOpen] = useState(false);
   const [userCollapsed, setUserCollapsed] = useSidebarCollapsed();
+  const secondarySidebarRef = useRef<HTMLDivElement>(null);
+  const sidebarToggleRef = useRef<HTMLButtonElement>(null);
   const hasSecondary = hasSecondaryNav(screenApp, apps, pathname);
   const sidebarCollapsed = !hasSecondary || userCollapsed;
   useEffect(() => {
@@ -264,16 +266,24 @@ export function OrgLayout() {
         setQuickCaptureOpen(true);
         return;
       }
+      const activeElement = typeof document !== 'undefined' ? document.activeElement : null;
       if (
         isSidebarToggleShortcut(event, {
           hasSecondary,
           modalOpen: paletteOpen || quickCaptureOpen || menuOpen || vyDrawerOpen || hasOpenModalDialog(typeof document !== 'undefined' ? document : null),
           isDesktop: typeof window === 'undefined' || !window.matchMedia ? true : window.matchMedia('(min-width: 768px)').matches,
-          activeElement: typeof document !== 'undefined' ? document.activeElement : null,
+          activeElement,
         })
       ) {
         event.preventDefault();
+        const collapsingFromSecondary =
+          !sidebarCollapsed &&
+          Boolean(activeElement) &&
+          Boolean(secondarySidebarRef.current?.contains(activeElement));
         setUserCollapsed((prev) => !prev);
+        if (collapsingFromSecondary) {
+          requestAnimationFrame(() => sidebarToggleRef.current?.focus());
+        }
       }
     };
     window.addEventListener('keydown', onKey);
@@ -479,7 +489,7 @@ export function OrgLayout() {
       orgs={me.data?.orgs ?? []}
       email={me.data?.email}
       mode={mode}
-      {...(mode === 'sidebar' ? { secondaryCollapsed: sidebarCollapsed } : {})}
+      {...(mode === 'sidebar' ? { secondaryCollapsed: sidebarCollapsed, secondaryRef: secondarySidebarRef } : {})}
       onOpenPalette={() => {
         onNavigate?.();
         setPaletteOpen(true);
@@ -522,6 +532,7 @@ export function OrgLayout() {
           hasSecondary={hasSecondary}
           secondaryCollapsed={sidebarCollapsed}
           onToggleSecondary={hasSecondary ? () => setUserCollapsed((prev) => !prev) : undefined}
+          toggleRef={sidebarToggleRef}
           onOpenPalette={() => setPaletteOpen(true)}
           paletteKeys={paletteKeys}
           quickCreateItems={quickCreateItems}

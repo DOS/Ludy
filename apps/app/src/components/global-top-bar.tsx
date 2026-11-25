@@ -37,6 +37,7 @@ export interface GlobalTopBarProps {
   orgs: readonly { orgId: string; slug: string; name: string }[];
   email: string | undefined;
   headerRef?: Ref<HTMLElement>;
+  toggleRef?: Ref<HTMLButtonElement>;
 }
 
 const iconLinkClass = (active: boolean) =>
@@ -76,6 +77,7 @@ export function GlobalTopBar({
   orgs,
   email,
   headerRef,
+  toggleRef,
 }: GlobalTopBarProps) {
   const t = useTranslations('nav');
   const tp = useTranslations('palette');
@@ -121,6 +123,7 @@ export function GlobalTopBar({
         </Link>
         {hasSecondary && onToggleSecondary && (
           <Button
+            ref={toggleRef}
             type="button"
             variant="ghost"
             size="icon"
@@ -144,7 +147,7 @@ export function GlobalTopBar({
           aria-label={`${tp('open')} (${paletteKeys})`}
           title={`${tp('open')} (${paletteKeys})`}
           data-testid="topbar-search-btn"
-          className="flex h-8 w-full max-w-md items-center justify-between gap-2 rounded-lg border border-field-border bg-background px-3 text-left text-sm text-subtle-foreground hover:border-border hover:text-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+          className="flex h-8 w-full max-w-md items-center justify-between gap-2 rounded-lg border border-field-border bg-background px-3 text-left text-sm text-subtle-foreground hover:text-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
         >
           <span className="flex min-w-0 items-center gap-2">
             <NavIcon name="search" className="size-4 shrink-0" />
@@ -248,7 +251,6 @@ export function GlobalTopBar({
           ) : (
             <span
               title={aiPillTitle}
-              aria-label={aiPillTitle}
               data-testid="topbar-ai-meter"
               data-state={aiMeter.state}
               className={cn(
@@ -257,7 +259,8 @@ export function GlobalTopBar({
               )}
             >
               <NavIcon name="appAi" className="size-3.5" />
-              <span>{t('aiPill.short', { percent: String(aiMeter.percent) })}</span>
+              <span aria-hidden="true">{t('aiPill.short', { percent: String(aiMeter.percent) })}</span>
+              <span className="sr-only">{aiPillTitle}</span>
             </span>
           ))}
 

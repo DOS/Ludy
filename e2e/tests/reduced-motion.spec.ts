@@ -86,8 +86,12 @@ test('nothing on the sidebar screens slides, zooms, fades or pulses when the sys
   for (let i = 0; i < appCount; i++) {
     await apps.getByRole('link').nth(i).click();
     await page.waitForLoadState('networkidle');
-    const paths = await sidebar.getByRole('link').evaluateAll((anchors) => anchors.filter((a) => (a as HTMLAnchorElement).origin === location.origin).map((a) => (a as HTMLAnchorElement).pathname));
-    for (const path of paths) links.add(path);
+    for (const container of [topBar, sidebar]) {
+      const paths = await container
+        .getByRole('link')
+        .evaluateAll((anchors) => anchors.filter((a) => (a as HTMLAnchorElement).origin === location.origin).map((a) => (a as HTMLAnchorElement).pathname));
+      for (const path of paths) links.add(path);
+    }
   }
   expect(links.size).toBeGreaterThan(5);
 

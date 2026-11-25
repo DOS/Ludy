@@ -220,6 +220,13 @@ describe('GlobalTopBar and VyDrawerBody SSR', () => {
     expect(memberHtml).not.toContain('data-testid="shell-quick-capture-btn"');
     expect(memberHtml).toContain('data-testid="topbar-ai-meter"');
     expect(memberHtml).not.toContain('href="/o/acme/ai-usage"');
+    const meterSpan = memberHtml.match(/<span[^>]*data-testid="topbar-ai-meter"[^>]*>.*?<\/span><\/span>/s)?.[0]
+      ?? memberHtml.slice(memberHtml.indexOf('<span title="Monthly AI budget: 42%"'));
+    expect(meterSpan).toContain('data-testid="topbar-ai-meter"');
+    expect(meterSpan).not.toMatch(/<span[^>]*data-testid="topbar-ai-meter"[^>]*aria-label=/);
+    expect(meterSpan).toContain('title="Monthly AI budget: 42%"');
+    expect(meterSpan).toContain('<span aria-hidden="true">AI 42%</span>');
+    expect(meterSpan).toContain('<span class="sr-only">Monthly AI budget: 42%</span>');
 
     const aiOffHtml = render(
       'vi',

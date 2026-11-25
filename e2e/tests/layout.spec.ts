@@ -61,8 +61,19 @@ test('the top bar and sidebar stay fixed without vertical icon shift, and each a
   await expect(sidebar.getByRole('link', { name: 'Sổ sách' })).toBeVisible();
   await expect(sidebar.getByRole('link', { name: 'Việc nhóm' })).toHaveCount(0);
 
-  // Activating the collapse toggle keeps keyboard focus on the counterpart button and persists across reload (#4519).
   const toggleBtn = topBar.getByTestId('sidebar-toggle-btn');
+  // Pressing `[` while focus sits inside the secondary sidebar restores focus to sidebar-toggle-btn instead of dropping to body.
+  const ledgerLink = sidebar.getByRole('link', { name: 'Sổ sách', exact: true });
+  await ledgerLink.focus();
+  await page.keyboard.press('[');
+  await expect(sidebar.getByRole('link', { name: 'Sổ sách' })).toHaveCount(0);
+  await expect.poll(sidebarWidth).toBe(64);
+  await expect(toggleBtn).toBeFocused();
+  await page.keyboard.press('[');
+  await expect(ledgerLink).toBeVisible();
+  await expect.poll(sidebarWidth).toBe(288);
+
+  // Activating the collapse toggle keeps keyboard focus on the counterpart button and persists across reload (#4519).
   await toggleBtn.focus();
   await page.keyboard.press('Enter');
   await expect(sidebar.getByRole('link', { name: 'Sổ sách' })).toHaveCount(0);
@@ -104,7 +115,13 @@ test('the top bar and sidebar stay fixed without vertical icon shift, and each a
     } else {
       expect(await menuScrolls(), `app ${i}`).toBe(false);
     }
-    for (const path of await desktopSidebar.getByRole('link').evaluateAll((anchors) => anchors.map((a) => (a as HTMLAnchorElement).pathname))) links.add(path);
+    for (const container of [topBar, desktopSidebar]) {
+      for (const path of await container
+        .getByRole('link')
+        .evaluateAll((anchors) => anchors.filter((a) => (a as HTMLAnchorElement).origin === location.origin).map((a) => (a as HTMLAnchorElement).pathname))) {
+        links.add(path);
+      }
+    }
   }
   expect(links.size).toBeGreaterThan(5);
   await page.setViewportSize({ width: 1280, height: 600 });
@@ -124,6 +141,7 @@ test('the top bar and sidebar stay fixed without vertical icon shift, and each a
 // The paths of every app's menu, gathered at desktop width where the sidebar shows: the app's own screens only, since
 // the sidebar also links out (the support address).
 async function appScreens(page: Page): Promise<string[]> {
+  const topBar = page.getByRole('banner');
   const sidebar = page.getByRole('complementary');
   const apps = sidebar.getByRole('list', { name: 'Ứng dụng' });
   const links = new Set<string>();
@@ -134,8 +152,12 @@ async function appScreens(page: Page): Promise<string[]> {
   for (let i = 0; i < appCount; i++) {
     await apps.getByRole('link').nth(i).click();
     await page.waitForLoadState('networkidle');
-    const paths = await sidebar.getByRole('link').evaluateAll((anchors) => anchors.filter((a) => (a as HTMLAnchorElement).origin === location.origin).map((a) => (a as HTMLAnchorElement).pathname));
-    for (const path of paths) links.add(path);
+    for (const container of [topBar, sidebar]) {
+      const paths = await container
+        .getByRole('link')
+        .evaluateAll((anchors) => anchors.filter((a) => (a as HTMLAnchorElement).origin === location.origin).map((a) => (a as HTMLAnchorElement).pathname));
+      for (const path of paths) links.add(path);
+    }
   }
   expect(links.size).toBeGreaterThan(5);
   return [...links];

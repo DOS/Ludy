@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode, type Ref } from 'react';
 import { Link, useLocation, useNavigate } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
 import { Button } from '@ludy/ui/components/button';
@@ -72,6 +72,7 @@ export interface ShellNavProps {
   // Mobile drawer mode always stays expanded with full labels, Bell, Settings, Search, `+`, AccountPopover, and 44px targets.
   mode?: 'sidebar' | 'drawer';
   secondaryCollapsed?: boolean;
+  secondaryRef?: Ref<HTMLDivElement>;
 }
 
 const railItemClass = (selected: boolean) =>
@@ -96,6 +97,7 @@ export function ShellNav({
   onNavigate,
   mode = 'sidebar',
   secondaryCollapsed = false,
+  secondaryRef,
 }: ShellNavProps) {
   const t = useTranslations('nav');
   const tp = useTranslations('palette');
@@ -224,7 +226,7 @@ export function ShellNav({
           )}
         </div>
         {!railOnly && (
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 px-3 py-0 md:py-3">
+          <div ref={secondaryRef} className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 px-3 py-0 md:py-3">
             {isDrawer && (
               <div className="flex items-center gap-1.5">
                 <button
