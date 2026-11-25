@@ -139,10 +139,10 @@ describe('a translation is never a source: the migrations (E1, #3184)', () => {
       'ludy_kernel_org_purge_hr_stage5d.sql',
       // #4967 (weekly meetings notice): the purge restatement that adds ludy_meetings.weekly_notice restates the whole list, the translation table included; its body is the previous one.
       'ludy_kernel_org_purge_weekly_notice.sql',
-      // #5014 (the place of a meeting is personal data): ludy_meetings.personal_erase is restated with the place lines, so the migration names the table in its translation DELETE; it is never read as a source.
-      'ludy_meetings_personal_data_meeting_place.sql',
       // #4873 (tracker alerts): the purge restatement that adds ludy_meetings.tracker_alert restates the whole list, the translation table included; its body is the previous one.
       'ludy_kernel_org_purge_tracker_alert.sql',
+      // #5014 (the place of a meeting is personal data): ludy_meetings.personal_erase is restated with the place lines, so the migration names the table in its translation DELETE; it is never read as a source.
+      'ludy_meetings_personal_data_meeting_place.sql',
     ]);
   });
 });
