@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { deflateSync } from 'node:zlib';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool, type Db } from '@ludy/db';
@@ -63,6 +64,49 @@ class MemoryStore implements BlobStore {
 
 const makePdf = (tag: string): Uint8Array =>
   Uint8Array.from(Buffer.from(`%PDF-1.4\n% 4d-inv-${tag}\n1 0 obj\n<< /Type /Catalog >>\nendobj\ntrailer\n<<>>\n%%EOF\n`, 'utf8'));
+
+const CRC_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let i = 0; i < 256; i++) {
+    let c = i;
+    for (let k = 0; k < 8; k++) {
+      c = (c & 1) !== 0 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    }
+    table[i] = c >>> 0;
+  }
+  return table;
+})();
+
+function pngChunk(type: string, data: Uint8Array): Buffer {
+  const out = Buffer.alloc(12 + data.length);
+  out.writeUInt32BE(data.length, 0);
+  out.write(type, 4, 4, 'ascii');
+  Buffer.from(data).copy(out, 8);
+  let crc = 0xffffffff;
+  for (const byte of out.subarray(4, 8 + data.length)) {
+    crc = CRC_TABLE[(crc ^ byte) & 0xff]! ^ (crc >>> 8);
+  }
+  out.writeUInt32BE((crc ^ 0xffffffff) >>> 0, 8 + data.length);
+  return out;
+}
+
+const VALID_PNG_BASE64 = (() => {
+  const width = 200;
+  const height = 80;
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 6;
+  const rawBytes = Buffer.alloc(height * (1 + width * 4), 0);
+  const idat = pngChunk('IDAT', deflateSync(rawBytes));
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk('IHDR', ihdr),
+    idat,
+    pngChunk('IEND', Buffer.alloc(0)),
+  ]).toString('base64');
+})();
 
 function assertNoReferrerNoStore(res: Response) {
   expect(res.headers.get('referrer-policy')).toBe('no-referrer');
@@ -760,5 +804,175 @@ suite('eSign Slice 4d in-person & public hub security invariants (#3820, #4278)'
     expect((await postJson(tightApp, `/api/sign/public-hub/${orgSlug}`, { action: 'view', templateId: tplA.templateId }, '198.51.100.81')).status).toBe(200);
     // Same IP on a different template ALSO succeeds.
     expect((await postJson(tightApp, `/api/sign/public-hub/${orgSlug}`, { action: 'view', templateId: tplOtp.templateId }, '198.51.100.80')).status).toBe(200);
+  });
+
+  it('re-evaluates clock_timestamp() after lock wait in public_submit and requires rows=1 + signer signed state on valid control (P9MX, P9Me)', async () => {
+    const expTpl = await setupTemplate({
+      title: 'Mau Het Han Khi Ky Invariant',
+      requireEmailOtp: false,
+      listedOnPublicHub: true,
+    });
+    async function waitForPublicSubmitFieldLock(): Promise<void> {
+      const waitUntil = Date.now() + 5000;
+      while (Date.now() < waitUntil) {
+        const waiting = await admin(async (c) => {
+          const r = await c.query<{ cnt: number }>(
+            `SELECT count(*)::int AS cnt
+             FROM pg_stat_activity
+             WHERE datname = current_database()
+               AND pid <> pg_backend_pid()
+               AND state = 'active'
+               AND wait_event_type = 'Lock'
+               AND query LIKE '%public_submit%'`,
+          );
+          return r.rows[0]?.cnt ?? 0;
+        });
+        if (waiting > 0) return;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      throw new Error('public_submit did not block on field lock within 5000ms');
+    }
+
+    // Case 1: Enter public_submit while valid, block on ludy_sign.field lock until past deadline, then release -> 404 + used_at IS NULL.
+    const expDeadlineMs = Date.now() + 3500;
+    await runtime.execute(
+      'sign.template.direct_link_set',
+      {
+        templateId: expTpl.templateId,
+        enabled: true,
+        requireEmailOtp: false,
+        listedOnPublicHub: true,
+        expiresAt: new Date(expDeadlineMs).toISOString(),
+      },
+      { actor: asOwner(), orgId },
+    );
+    const startExp = await postJson(
+      app,
+      `/api/sign/public-hub/${orgSlug}`,
+      { action: 'start', templateId: expTpl.templateId, name: 'Khach Het Han Inv', email: 'exp-submit-inv@example.com' },
+      '198.51.100.71',
+    );
+    expect(startExp.status).toBe(200);
+    const expStarted = (await startExp.json()) as { signingToken: string; envelopeId: string };
+    const expView = (await (await postJson(app, '/api/sign/view', { token: expStarted.signingToken }, '198.51.100.71')).json()) as {
+      fields: Array<{ id: string }>;
+    };
+
+    const expLockClient = new pg.Client({ connectionString: adminUrl });
+    await expLockClient.connect();
+    let expSubmitPromise: Promise<Response> | null = null;
+    try {
+      await expLockClient.query('BEGIN');
+      await expLockClient.query(
+        'SELECT 1 FROM ludy_sign.field WHERE org_id = $1 AND envelope_id = $2 FOR UPDATE',
+        [orgId, expStarted.envelopeId],
+      );
+      expect(Date.now()).toBeLessThan(expDeadlineMs - 500);
+      expSubmitPromise = postJson(
+        app,
+        '/api/sign/submit',
+        {
+          token: expStarted.signingToken,
+          consentAccepted: true,
+          signatureKind: 'draw',
+          fields: [{ fieldId: expView.fields[0]!.id, signaturePngBase64: VALID_PNG_BASE64 }],
+        },
+        '198.51.100.71',
+      );
+      await waitForPublicSubmitFieldLock();
+      const remainingMs = expDeadlineMs + 300 - Date.now();
+      if (remainingMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, remainingMs));
+      }
+      await expLockClient.query('COMMIT');
+    } finally {
+      await expLockClient.query('ROLLBACK').catch(() => {});
+      await expLockClient.end().catch(() => {});
+      await expSubmitPromise?.catch(() => {});
+    }
+    const expSubmit = await expSubmitPromise!;
+    expect(expSubmit.status).toBe(404);
+    const expHash = sha256Hex(Buffer.from(expStarted.signingToken, 'utf8'));
+    await admin(async (c) => {
+      const tokLeft = await c.query<{ used_at: string | null }>(
+        'SELECT used_at FROM ludy_sign.signing_token WHERE org_id = $1 AND token_sha256 = $2',
+        [orgId, expHash],
+      );
+      expect(tokLeft.rows).toHaveLength(1);
+      expect(tokLeft.rows[0]?.used_at).toBeNull();
+    });
+
+    // Case 2 (control): Same lock mechanism released BEFORE deadline succeeds -> 200 + 1 consumed token row + signer status = signed.
+    const ctrlDeadlineMs = Date.now() + 8000;
+    await runtime.execute(
+      'sign.template.direct_link_set',
+      {
+        templateId: expTpl.templateId,
+        enabled: true,
+        requireEmailOtp: false,
+        listedOnPublicHub: true,
+        expiresAt: new Date(ctrlDeadlineMs).toISOString(),
+      },
+      { actor: asOwner(), orgId },
+    );
+    const startCtrl = await postJson(
+      app,
+      `/api/sign/public-hub/${orgSlug}`,
+      { action: 'start', templateId: expTpl.templateId, name: 'Khach Con Han Inv', email: 'ctrl-submit-inv@example.com' },
+      '198.51.100.72',
+    );
+    expect(startCtrl.status).toBe(200);
+    const ctrlStarted = (await startCtrl.json()) as { signingToken: string; envelopeId: string };
+    const ctrlView = (await (await postJson(app, '/api/sign/view', { token: ctrlStarted.signingToken }, '198.51.100.72')).json()) as {
+      fields: Array<{ id: string }>;
+    };
+
+    const ctrlLockClient = new pg.Client({ connectionString: adminUrl });
+    await ctrlLockClient.connect();
+    let ctrlSubmitPromise: Promise<Response> | null = null;
+    try {
+      await ctrlLockClient.query('BEGIN');
+      await ctrlLockClient.query(
+        'SELECT 1 FROM ludy_sign.field WHERE org_id = $1 AND envelope_id = $2 FOR UPDATE',
+        [orgId, ctrlStarted.envelopeId],
+      );
+      ctrlSubmitPromise = postJson(
+        app,
+        '/api/sign/submit',
+        {
+          token: ctrlStarted.signingToken,
+          consentAccepted: true,
+          signatureKind: 'draw',
+          fields: [{ fieldId: ctrlView.fields[0]!.id, signaturePngBase64: VALID_PNG_BASE64 }],
+        },
+        '198.51.100.72',
+      );
+      await waitForPublicSubmitFieldLock();
+      expect(Date.now()).toBeLessThan(ctrlDeadlineMs - 1000);
+      await ctrlLockClient.query('COMMIT');
+    } finally {
+      await ctrlLockClient.query('ROLLBACK').catch(() => {});
+      await ctrlLockClient.end().catch(() => {});
+      await ctrlSubmitPromise?.catch(() => {});
+    }
+    const ctrlSubmit = await ctrlSubmitPromise!;
+    expect(ctrlSubmit.status).toBe(200);
+    const ctrlHash = sha256Hex(Buffer.from(ctrlStarted.signingToken, 'utf8'));
+    await admin(async (c) => {
+      const tokDone = await c.query<{ used_at: string | null; signer_id: string }>(
+        'SELECT used_at, signer_id FROM ludy_sign.signing_token WHERE org_id = $1 AND token_sha256 = $2',
+        [orgId, ctrlHash],
+      );
+      expect(tokDone.rows).toHaveLength(1);
+      expect(tokDone.rows[0]?.used_at).not.toBeNull();
+
+      const signerDone = await c.query<{ status: string; signed_at: string | null }>(
+        'SELECT status, signed_at FROM ludy_sign.signer WHERE org_id = $1 AND id = $2',
+        [orgId, tokDone.rows[0]!.signer_id],
+      );
+      expect(signerDone.rows).toHaveLength(1);
+      expect(signerDone.rows[0]?.status).toBe('signed');
+      expect(signerDone.rows[0]?.signed_at).not.toBeNull();
+    });
   });
 });

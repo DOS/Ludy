@@ -1390,9 +1390,19 @@ export interface SignKycPendingWorkDeps {
   orgId?: string;
   olderThan?: Date;
   timeoutBefore?: Date;
+  bumpUpdatedAtOnRequeue?: boolean;
   batchSize?: number;
   maxPages?: number;
   log?: Pick<Console, 'error'>;
+}
+
+async function touchPendingKycChecks(
+  runtime: Pick<Runtime, 'execute'>,
+  orgId: string,
+  ids: readonly string[],
+): Promise<void> {
+  if (ids.length === 0) return;
+  await runtime.execute('sign.kyc.touch_pending', { ids: [...ids] }, { actor: SIGN_ACTOR, orgId });
 }
 
 export async function sweepSignPendingKycWork(
@@ -1402,6 +1412,7 @@ export async function sweepSignPendingKycWork(
   const nowMs = Date.now();
   const olderThan = deps.olderThan ?? new Date(nowMs - 60_000);
   const timeoutBefore = deps.timeoutBefore ?? new Date(nowMs - DEFAULT_KYC_PENDING_TIMEOUT_MS);
+  const expectedUpdatedAtBefore = timeoutBefore.toISOString();
   const batchSize = Math.min(Math.max(Math.trunc(deps.batchSize ?? SWEEP_ORG_BATCH), 1), 500);
   const maxPages = Math.max(Math.trunc(deps.maxPages ?? MAX_RECOVERY_PAGES), 1);
   const resolvedAppOn =
@@ -1414,12 +1425,13 @@ export async function sweepSignPendingKycWork(
 
   for (let page = 0; page < maxPages; page += 1) {
     const rows = await fetchKycRecoveryPage(deps.workerDb, olderThan, batchSize, deps.orgId ?? null, after);
+    const requeueByOrg = new Map<string, typeof rows>();
     for (const row of rows) {
       try {
         if (!(await isEnabled(row.org_id))) continue;
         const updatedMs = new Date(row.updated_at_cursor).getTime();
         if (Number.isFinite(updatedMs) && updatedMs <= timeoutBefore.getTime()) {
-          await deps.runtime.execute(
+          const completed = await deps.runtime.execute<unknown>(
             'sign.kyc.inspect_complete',
             {
               envelopeId: row.envelope_id,
@@ -1428,16 +1440,46 @@ export async function sweepSignPendingKycWork(
               fileSha256: row.file_sha256,
               outcome: 'failed',
               error: 'KYC attachment inspection timed out after repeated worker sweeps',
+              expectedUpdatedAtBefore,
             },
             { actor: SIGN_ACTOR, orgId: row.org_id },
           );
-          timedOut += 1;
+          if (completed) {
+            timedOut += 1;
+          }
         } else {
-          await deps.enqueueKycInspect(row.org_id, row.envelope_id, row.field_id);
-          requeued += 1;
+          const list = requeueByOrg.get(row.org_id) ?? [];
+          list.push(row);
+          requeueByOrg.set(row.org_id, list);
         }
       } catch (error) {
         log.error(`[sign-kyc-pending-work] org ${row.org_id.slice(0, 8)} failed`, sweepErrorLabel(error));
+        if (deps.orgId !== undefined) throw error;
+      }
+    }
+    for (const [touchOrgId, orgRows] of requeueByOrg) {
+      if (deps.bumpUpdatedAtOnRequeue) {
+        try {
+          // Commit updated_at renewal before enqueueing jobs so neither workers nor timeout sweeps race stale timestamps.
+          await touchPendingKycChecks(
+            deps.runtime,
+            touchOrgId,
+            orgRows.map((row) => row.id),
+          );
+        } catch (error) {
+          log.error(`[sign-kyc-pending-work] touch org ${touchOrgId.slice(0, 8)} failed`, sweepErrorLabel(error));
+          if (deps.orgId !== undefined) throw error;
+          continue;
+        }
+      }
+      for (const row of orgRows) {
+        try {
+          await deps.enqueueKycInspect(row.org_id, row.envelope_id, row.field_id);
+          requeued += 1;
+        } catch (error) {
+          log.error(`[sign-kyc-pending-work] org ${row.org_id.slice(0, 8)} failed`, sweepErrorLabel(error));
+          if (deps.orgId !== undefined) throw error;
+        }
       }
     }
     const last = rows.at(-1);

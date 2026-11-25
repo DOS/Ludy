@@ -838,6 +838,1033 @@ describe('checkSignObligationExtract (#3821)', () => {
       expect(edgeRes.proposal?.contractValue).toBe('250000000');
       expect(edgeRes.proposal?.currency).toBe('VND');
     }
+
+    // 13. #4682 (Items 6-9 from #4633): "ALL 24/7" ratio lookahead, "HKD" ("Hộ kinh doanh") prose guard,
+    //     ISO-qualified "$" (SGD $100 / AUD $100) exclusion from USD, sentence boundary splitting,
+    //     and binding target amount to nearby currency token ("100 EUR / USD 200 for 100 users.").
+    for (const textBlock of [
+      'Hỗ trợ khách hàng ALL 24/7.\nBên B: Công ty ABC\nGiá trị hợp đồng: 250.000.000.',
+      'Bên B: HKD Nguyễn Văn A\nGiá trị hợp đồng: 250.000.000.',
+    ]) {
+      const vnReq: SignObligationExtractRequest = {
+        envelopeTitle: 'Hợp đồng dịch vụ',
+        pageCount: 1,
+        pages: [{ page: 1, text: textBlock }],
+      };
+      const vnKeep = checkSignObligationExtract(vnReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '250000000',
+        currency: 'VND',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: textBlock.includes('HKD') ? 'Bên B: HKD Nguyễn Văn A' : 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: 'Giá trị hợp đồng: 250.000.000.' },
+        ],
+        obligations: [],
+      });
+      expect(vnKeep.proposal?.contractValue).toBe('250000000');
+      expect(vnKeep.proposal?.currency).toBe('VND');
+    }
+
+    // Amount-adjacent HKD / HK$ still grounds HKD and blocks VND downgrade.
+    const hkdExplicitReq: SignObligationExtractRequest = {
+      envelopeTitle: 'Hong Kong Supply',
+      pageCount: 1,
+      pages: [{ page: 1, text: 'Bên B: Công ty ABC\nGiá trị hợp đồng: 50,000 HKD.' }],
+    };
+    expect(
+      checkSignObligationExtract(hkdExplicitReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '50000',
+        currency: 'HKD',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: 'Giá trị hợp đồng: 50,000 HKD.' },
+        ],
+        obligations: [],
+      }).proposal?.currency,
+    ).toBe('HKD');
+
+    // P9Mu: SGD $100 / AUD $100 must not emit USD evidence.
+    for (const [isoDollarQuote, expectedIso] of [
+      ['Total: SGD $100.', 'SGD'],
+      ['Total: AUD $100.', 'AUD'],
+    ] as const) {
+      const isoDollarReq: SignObligationExtractRequest = {
+        envelopeTitle: `${expectedIso} Contract`,
+        pageCount: 1,
+        pages: [{ page: 1, text: `Bên B: Công ty ABC\n${isoDollarQuote}` }],
+      };
+      expect(
+        checkSignObligationExtract(isoDollarReq, {
+          counterpartyName: 'Công ty ABC',
+          effectiveDate: null,
+          expiryDate: null,
+          renewalNoticeDays: null,
+          autoRenew: false,
+          contractValue: '100',
+          currency: 'USD',
+          citations: [
+            { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+            { field: 'contractValue', pageNumber: 1, quoteExcerpt: isoDollarQuote },
+          ],
+          obligations: [],
+        }).proposal?.contractValue,
+      ).toBeNull();
+      const isoOk = checkSignObligationExtract(isoDollarReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '100',
+        currency: expectedIso,
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: isoDollarQuote },
+        ],
+        obligations: [],
+      });
+      expect(isoOk.proposal?.contractValue).toBe('100');
+      expect(isoOk.proposal?.currency).toBe(expectedIso);
+    }
+
+    // P9M7: sentence-boundary splitting separates "Total: 100 USD. Equivalent: 90 EUR." while keeping "100.50 U.S. dollars." intact.
+    const sentenceSplitReq: SignObligationExtractRequest = {
+      envelopeTitle: 'Multi-Sentence Fee',
+      pageCount: 1,
+      pages: [
+        {
+          page: 1,
+          text: 'Bên B: Công ty ABC\nTotal: 100 USD. Equivalent: 90 EUR.\nFee: 100.50 U.S. dollars.',
+        },
+      ],
+    };
+    expect(
+      checkSignObligationExtract(sentenceSplitReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '100',
+        currency: 'USD',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: 'Total: 100 USD. Equivalent: 90 EUR.' },
+        ],
+        obligations: [],
+      }).proposal?.contractValue,
+    ).toBe('100');
+    expect(
+      checkSignObligationExtract(sentenceSplitReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '100.5',
+        currency: 'USD',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: 'Fee: 100.50 U.S. dollars.' },
+        ],
+        obligations: [],
+      }).proposal?.contractValue,
+    ).toBe('100.5');
+
+    // P9M-: target amount must bind to nearby currency token, not unrelated quantities ("100 users").
+    const userCountReq: SignObligationExtractRequest = {
+      envelopeTitle: 'Seat Licensing',
+      pageCount: 1,
+      pages: [
+        {
+          page: 1,
+          text: 'Bên B: Công ty ABC\nFee: 100 EUR / USD 200 for 100 users.',
+        },
+      ],
+    };
+    expect(
+      checkSignObligationExtract(userCountReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '100',
+        currency: 'USD',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: '100 EUR / USD 200 for 100 users.' },
+        ],
+        obligations: [],
+      }).proposal?.contractValue,
+    ).toBeNull();
+    expect(
+      checkSignObligationExtract(userCountReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '200',
+        currency: 'USD',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: '100 EUR / USD 200 for 100 users.' },
+        ],
+        obligations: [],
+      }).proposal?.contractValue,
+    ).toBe('200');
+
+    // Lowercase "50,000 hkd." grounds HKD (rejecting VND downgrade and accepting HKD) while bare "HKD" in
+    // "HKD Nguyen Van A" remains treated as a Vietnamese acronym ("Ho kinh doanh").
+    const hkdLowerReq: SignObligationExtractRequest = {
+      envelopeTitle: 'Service Fee',
+      pageCount: 1,
+      pages: [
+        {
+          page: 1,
+          text: 'Bên B: Công ty ABC\nTotal: 50,000 hkd.',
+        },
+      ],
+    };
+    expect(
+      checkSignObligationExtract(hkdLowerReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '50000',
+        currency: 'VND',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: 'Total: 50,000 hkd.' },
+        ],
+        obligations: [],
+      }).proposal?.contractValue,
+    ).toBeNull();
+    expect(
+      checkSignObligationExtract(hkdLowerReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '50000',
+        currency: 'HKD',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: 'Total: 50,000 hkd.' },
+        ],
+        obligations: [],
+      }).proposal,
+    ).toMatchObject({ contractValue: '50000', currency: 'HKD' });
+
+    const hoKinhDoanhReq: SignObligationExtractRequest = {
+      envelopeTitle: 'Hợp đồng mua bán',
+      pageCount: 1,
+      pages: [
+        {
+          page: 1,
+          text: 'Bên B: HKD Nguyễn Văn A\nTổng giá trị thanh toán: 50.000.000',
+        },
+      ],
+    };
+    expect(
+      checkSignObligationExtract(hoKinhDoanhReq, {
+        counterpartyName: 'HKD Nguyễn Văn A',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '50000000',
+        currency: 'HKD',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: HKD Nguyễn Văn A' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: 'Tổng giá trị thanh toán: 50.000.000' },
+        ],
+        obligations: [],
+      }).proposal?.contractValue,
+    ).toBeNull();
+
+    // Ambiguous formatting on a single number token ("1,500" = 1.5 | 1500) in non-adjacent prose is accepted
+    // when it is the clause's only numeric token, and competing currency clauses still reject cross-currency swap.
+    const equivReq: SignObligationExtractRequest = {
+      envelopeTitle: 'Master Agreement',
+      pageCount: 1,
+      pages: [
+        {
+          page: 1,
+          text: 'Party B: Công ty ABC\nContract value in USD is 1,500; equivalent: 1,300 EUR.',
+        },
+      ],
+    };
+    expect(
+      checkSignObligationExtract(equivReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '1500',
+        currency: 'USD',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Party B: Công ty ABC' },
+          {
+            field: 'contractValue',
+            pageNumber: 1,
+            quoteExcerpt: 'Contract value in USD is 1,500; equivalent: 1,300 EUR.',
+          },
+        ],
+        obligations: [],
+      }).proposal,
+    ).toMatchObject({ contractValue: '1500', currency: 'USD' });
+    expect(
+      checkSignObligationExtract(equivReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '1300',
+        currency: 'USD',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Party B: Công ty ABC' },
+          {
+            field: 'contractValue',
+            pageNumber: 1,
+            quoteExcerpt: 'Contract value in USD is 1,500; equivalent: 1,300 EUR.',
+          },
+        ],
+        obligations: [],
+      }).proposal?.contractValue,
+    ).toBeNull();
+
+    // Title Case ISO-qualified dollar prefixes ("Sgd $100") must not ground USD.
+    expect(isCurrencyGroundedInText('USD', 'Fee: Sgd $100')).toBe(false);
+    expect(isCurrencyGroundedInText('SGD', 'Fee: Sgd $100')).toBe(true);
+
+    // Preserving digit/digit ratios ("24/7") in clause splitting rejects "24 ALL", while detached trailing
+    // numbers after a left-bound currency ("200 USD 100 users.") never bind "100 USD".
+    const ratioClauseReq: SignObligationExtractRequest = {
+      envelopeTitle: 'Support SLA',
+      pageCount: 1,
+      pages: [
+        {
+          page: 1,
+          text: 'Bên B: Công ty ABC\nTotal: 100 EUR; Support: ALL 24/7; Contract value: 200 ALL.',
+        },
+      ],
+    };
+    expect(
+      checkSignObligationExtract(ratioClauseReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '24',
+        currency: 'ALL',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          {
+            field: 'contractValue',
+            pageNumber: 1,
+            quoteExcerpt: 'Total: 100 EUR; Support: ALL 24/7; Contract value: 200 ALL.',
+          },
+        ],
+        obligations: [],
+      }).proposal?.contractValue,
+    ).toBeNull();
+    expect(
+      checkSignObligationExtract(ratioClauseReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '200',
+        currency: 'ALL',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          {
+            field: 'contractValue',
+            pageNumber: 1,
+            quoteExcerpt: 'Total: 100 EUR; Support: ALL 24/7; Contract value: 200 ALL.',
+          },
+        ],
+        obligations: [],
+      }).proposal,
+    ).toMatchObject({ contractValue: '200', currency: 'ALL' });
+
+    const leftBoundTrailingCountReq: SignObligationExtractRequest = {
+      envelopeTitle: 'Seat Licensing Left-Bound',
+      pageCount: 1,
+      pages: [
+        {
+          page: 1,
+          text: 'Bên B: Công ty ABC\nFee: 100 EUR / 200 USD 100 users.',
+        },
+      ],
+    };
+    expect(
+      checkSignObligationExtract(leftBoundTrailingCountReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '100',
+        currency: 'USD',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: 'Fee: 100 EUR / 200 USD 100 users.' },
+        ],
+        obligations: [],
+      }).proposal?.contractValue,
+    ).toBeNull();
+    expect(
+      checkSignObligationExtract(leftBoundTrailingCountReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '200',
+        currency: 'USD',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: 'Fee: 100 EUR / 200 USD 100 users.' },
+        ],
+        obligations: [],
+      }).proposal,
+    ).toMatchObject({ contractValue: '200', currency: 'USD' });
+
+    // [5] Collapse newline between ISO dollar qualifier and '$' ("SGD\n$100").
+    const splitDollarLineReq: SignObligationExtractRequest = {
+      envelopeTitle: 'Wrapped Dollar Prefix',
+      pageCount: 1,
+      pages: [
+        {
+          page: 1,
+          text: 'Bên B: Công ty ABC\nSGD\n$100; equivalent: USD 75.',
+        },
+      ],
+    };
+    expect(
+      checkSignObligationExtract(splitDollarLineReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '100',
+        currency: 'USD',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: 'SGD\n$100; equivalent: USD 75.' },
+        ],
+        obligations: [],
+      }).proposal?.contractValue,
+    ).toBeNull();
+    expect(
+      checkSignObligationExtract(splitDollarLineReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '100',
+        currency: 'SGD',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: 'SGD\n$100; equivalent: USD 75.' },
+        ],
+        obligations: [],
+      }).proposal,
+    ).toMatchObject({ contractValue: '100', currency: 'SGD' });
+
+    // [6] Exclude percentage and ratio numbers from non-adjacent fallback ("Discount rate in USD: 10%.").
+    const nonAdjPercentReq: SignObligationExtractRequest = {
+      envelopeTitle: 'Discount Term',
+      pageCount: 1,
+      pages: [
+        {
+          page: 1,
+          text: 'Bên B: Công ty ABC\nTotal: 200 EUR. Discount rate in USD: 10%.',
+        },
+      ],
+    };
+    expect(
+      checkSignObligationExtract(nonAdjPercentReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '10',
+        currency: 'USD',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: 'Total: 200 EUR. Discount rate in USD: 10%.' },
+        ],
+        obligations: [],
+      }).proposal?.contractValue,
+    ).toBeNull();
+
+    // [7] Direct matching without toLowerCase() avoids UTF-16 offset shift after Turkish dotted 'İ'.
+    const istanbulReq: SignObligationExtractRequest = {
+      envelopeTitle: 'Istanbul Quote',
+      pageCount: 1,
+      pages: [
+        {
+          page: 1,
+          text: 'Bên B: Công ty ABC\nİstanbul: US$100; equivalent: 90 EUR.',
+        },
+      ],
+    };
+    expect(
+      checkSignObligationExtract(istanbulReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '100',
+        currency: 'USD',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: 'İstanbul: US$100; equivalent: 90 EUR.' },
+        ],
+        obligations: [],
+      }).proposal,
+    ).toMatchObject({ contractValue: '100', currency: 'USD' });
+
+    // [8] Prefix currency symbols ("Tier 2 $100") bind right-side amount first instead of preceding tier index.
+    const prefixSymbolTierReq: SignObligationExtractRequest = {
+      envelopeTitle: 'Tier Pricing',
+      pageCount: 1,
+      pages: [
+        {
+          page: 1,
+          text: 'Bên B: Công ty ABC\nTier 2 $100; equivalent: 90 EUR.',
+        },
+      ],
+    };
+    expect(
+      checkSignObligationExtract(prefixSymbolTierReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '2',
+        currency: 'USD',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: 'Tier 2 $100; equivalent: 90 EUR.' },
+        ],
+        obligations: [],
+      }).proposal?.contractValue,
+    ).toBeNull();
+    expect(
+      checkSignObligationExtract(prefixSymbolTierReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '100',
+        currency: 'USD',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: 'Tier 2 $100; equivalent: 90 EUR.' },
+        ],
+        obligations: [],
+      }).proposal,
+    ).toMatchObject({ contractValue: '100', currency: 'USD' });
+
+    // [9] Disambiguate two-sided ISO/symbol bindings (ordinal labels, plain quantity after amount, tight postfix).
+    const tierIsoReq: SignObligationExtractRequest = {
+      envelopeTitle: 'Tier ISO Pricing',
+      pageCount: 1,
+      pages: [
+        {
+          page: 1,
+          text: 'Bên B: Công ty ABC\nTier 2 USD 100; equivalent: EUR 90.',
+        },
+      ],
+    };
+    expect(
+      checkSignObligationExtract(tierIsoReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '100',
+        currency: 'USD',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: 'Tier 2 USD 100; equivalent: EUR 90.' },
+        ],
+        obligations: [],
+      }).proposal,
+    ).toMatchObject({ contractValue: '100', currency: 'USD' });
+    expect(
+      checkSignObligationExtract(tierIsoReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '2',
+        currency: 'USD',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: 'Tier 2 USD 100; equivalent: EUR 90.' },
+        ],
+        obligations: [],
+      }).proposal?.contractValue,
+    ).toBeNull();
+    expect(
+      checkSignObligationExtract(tierIsoReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '90',
+        currency: 'USD',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: 'Tier 2 USD 100; equivalent: EUR 90.' },
+        ],
+        obligations: [],
+      }).proposal?.contractValue,
+    ).toBeNull();
+
+    const exactUserCountReq: SignObligationExtractRequest = {
+      envelopeTitle: 'Exact User Count',
+      pageCount: 1,
+      pages: [
+        {
+          page: 1,
+          text: 'Bên B: Công ty ABC\n200 USD 100 users; equivalent: EUR 180.',
+        },
+      ],
+    };
+    expect(
+      checkSignObligationExtract(exactUserCountReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '200',
+        currency: 'USD',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: '200 USD 100 users; equivalent: EUR 180.' },
+        ],
+        obligations: [],
+      }).proposal,
+    ).toMatchObject({ contractValue: '200', currency: 'USD' });
+    expect(
+      checkSignObligationExtract(exactUserCountReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '100',
+        currency: 'USD',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: '200 USD 100 users; equivalent: EUR 180.' },
+        ],
+        obligations: [],
+      }).proposal?.contractValue,
+    ).toBeNull();
+
+    for (const ordinalQuote of ['Gói 2 USD 100; equivalent: EUR 90.', '#2 USD 100; equivalent: EUR 90.'] as const) {
+      const ordinalReq: SignObligationExtractRequest = {
+        envelopeTitle: 'Ordinal Package',
+        pageCount: 1,
+        pages: [{ page: 1, text: `Bên B: Công ty ABC\n${ordinalQuote}` }],
+      };
+      expect(
+        checkSignObligationExtract(ordinalReq, {
+          counterpartyName: 'Công ty ABC',
+          effectiveDate: null,
+          expiryDate: null,
+          renewalNoticeDays: null,
+          autoRenew: false,
+          contractValue: '100',
+          currency: 'USD',
+          citations: [
+            { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+            { field: 'contractValue', pageNumber: 1, quoteExcerpt: ordinalQuote },
+          ],
+          obligations: [],
+        }).proposal,
+      ).toMatchObject({ contractValue: '100', currency: 'USD' });
+      expect(
+        checkSignObligationExtract(ordinalReq, {
+          counterpartyName: 'Công ty ABC',
+          effectiveDate: null,
+          expiryDate: null,
+          renewalNoticeDays: null,
+          autoRenew: false,
+          contractValue: '2',
+          currency: 'USD',
+          citations: [
+            { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+            { field: 'contractValue', pageNumber: 1, quoteExcerpt: ordinalQuote },
+          ],
+          obligations: [],
+        }).proposal?.contractValue,
+      ).toBeNull();
+    }
+
+    const groupedLeftReq: SignObligationExtractRequest = {
+      envelopeTitle: 'Grouped Package Amount',
+      pageCount: 1,
+      pages: [
+        {
+          page: 1,
+          text: 'Bên B: Công ty ABC\nPackage 1,500 USD 100 users; equivalent: EUR 1,350.',
+        },
+      ],
+    };
+    expect(
+      checkSignObligationExtract(groupedLeftReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '1500',
+        currency: 'USD',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: 'Package 1,500 USD 100 users; equivalent: EUR 1,350.' },
+        ],
+        obligations: [],
+      }).proposal,
+    ).toMatchObject({ contractValue: '1500', currency: 'USD' });
+    expect(
+      checkSignObligationExtract(groupedLeftReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '100',
+        currency: 'USD',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: 'Package 1,500 USD 100 users; equivalent: EUR 1,350.' },
+        ],
+        obligations: [],
+      }).proposal?.contractValue,
+    ).toBeNull();
+
+    const tightPostfixDongReq: SignObligationExtractRequest = {
+      envelopeTitle: 'Tight Postfix VND',
+      pageCount: 1,
+      pages: [
+        {
+          page: 1,
+          text: 'Bên B: Công ty ABC\n500₫ 10 users; equivalent: USD 1.',
+        },
+      ],
+    };
+    expect(
+      checkSignObligationExtract(tightPostfixDongReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '500',
+        currency: 'VND',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: '500₫ 10 users; equivalent: USD 1.' },
+        ],
+        obligations: [],
+      }).proposal,
+    ).toMatchObject({ contractValue: '500', currency: 'VND' });
+    expect(
+      checkSignObligationExtract(tightPostfixDongReq, {
+        counterpartyName: 'Công ty ABC',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: '10',
+        currency: 'VND',
+        citations: [
+          { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+          { field: 'contractValue', pageNumber: 1, quoteExcerpt: '500₫ 10 users; equivalent: USD 1.' },
+        ],
+        obligations: [],
+      }).proposal?.contractValue,
+    ).toBeNull();
+
+    const hardeningCases: ReadonlyArray<{
+      readonly title: string;
+      readonly quote: string;
+      readonly expectedValue: string;
+      readonly expectedCurrency: string;
+      readonly rejectedValue: string;
+    }> = [
+      {
+        title: 'Large Plain Package Count',
+        quote: 'Package 500 USD 100 users; equivalent: EUR 450.',
+        expectedValue: '500',
+        expectedCurrency: 'USD',
+        rejectedValue: '100',
+      },
+      {
+        title: 'Decimal Package Amount',
+        quote: 'Package 199.99 USD 100 users; equivalent: EUR 180.',
+        expectedValue: '199.99',
+        expectedCurrency: 'USD',
+        rejectedValue: '100',
+      },
+      {
+        title: 'Vietnamese Count Unit',
+        quote: 'Gói 500 USD 10 người; tương đương 12.500.000 VND.',
+        expectedValue: '500',
+        expectedCurrency: 'USD',
+        rejectedValue: '10',
+      },
+      {
+        title: 'Right Duration Quantity',
+        quote: 'Plan 200 USD 12 months; equivalent: EUR 180.',
+        expectedValue: '200',
+        expectedCurrency: 'USD',
+        rejectedValue: '12',
+      },
+      {
+        title: 'Slash Rate Before Amount',
+        quote: 'Fee: 100 EUR/month 200 USD 10 users; equivalent: GBP 160.',
+        expectedValue: '200',
+        expectedCurrency: 'USD',
+        rejectedValue: '10',
+      },
+      {
+        title: 'Schedule Year Label',
+        quote: 'Schedule A Year 2 USD 100; equivalent: EUR 90.',
+        expectedValue: '100',
+        expectedCurrency: 'USD',
+        rejectedValue: '2',
+      },
+      {
+        title: 'Unlisted Right Unit Word',
+        quote: 'Package 20 USD 10 widgets; equivalent: EUR 18.',
+        expectedValue: '20',
+        expectedCurrency: 'USD',
+        rejectedValue: '10',
+      },
+      {
+        title: 'Peso Prefix Symbol',
+        quote: '10 ₱500; equivalent: USD 10.',
+        expectedValue: '500',
+        expectedCurrency: 'PHP',
+        rejectedValue: '10',
+      },
+      {
+        title: 'Turkish Lira Prefix Symbol',
+        quote: '10 ₺500; equivalent: USD 10.',
+        expectedValue: '500',
+        expectedCurrency: 'TRY',
+        rejectedValue: '10',
+      },
+      {
+        title: 'Lowercase Article Before Capitalized Period',
+        quote: 'a Year 50 USD 10; equivalent: EUR 45.',
+        expectedValue: '50',
+        expectedCurrency: 'USD',
+        rejectedValue: '10',
+      },
+      {
+        title: 'Rate Preposition Before Period',
+        quote: 'per year 100 USD 50; equivalent: EUR 90.',
+        expectedValue: '100',
+        expectedCurrency: 'USD',
+        rejectedValue: '50',
+      },
+      {
+        title: 'Numeric Denominator After Currency',
+        quote: '100 EUR/24; equivalent: USD 110.',
+        expectedValue: '100',
+        expectedCurrency: 'EUR',
+        rejectedValue: '24',
+      },
+    ];
+    for (const testCase of hardeningCases) {
+      const req: SignObligationExtractRequest = {
+        envelopeTitle: testCase.title,
+        pageCount: 1,
+        pages: [
+          {
+            page: 1,
+            text: `Bên B: Công ty ABC\n${testCase.quote}`,
+          },
+        ],
+      };
+      expect(
+        checkSignObligationExtract(req, {
+          counterpartyName: 'Công ty ABC',
+          effectiveDate: null,
+          expiryDate: null,
+          renewalNoticeDays: null,
+          autoRenew: false,
+          contractValue: testCase.expectedValue,
+          currency: testCase.expectedCurrency,
+          citations: [
+            { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+            { field: 'contractValue', pageNumber: 1, quoteExcerpt: testCase.quote },
+          ],
+          obligations: [],
+        }).proposal,
+      ).toMatchObject({ contractValue: testCase.expectedValue, currency: testCase.expectedCurrency });
+      expect(
+        checkSignObligationExtract(req, {
+          counterpartyName: 'Công ty ABC',
+          effectiveDate: null,
+          expiryDate: null,
+          renewalNoticeDays: null,
+          autoRenew: false,
+          contractValue: testCase.rejectedValue,
+          currency: testCase.expectedCurrency,
+          citations: [
+            { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+            { field: 'contractValue', pageNumber: 1, quoteExcerpt: testCase.quote },
+          ],
+          obligations: [],
+        }).proposal?.contractValue,
+      ).toBeNull();
+    }
+
+    const slashRateCrossCases: ReadonlyArray<{
+      readonly title: string;
+      readonly quote: string;
+      readonly accepted: ReadonlyArray<{ readonly value: string; readonly currency: string }>;
+      readonly rejected: ReadonlyArray<{ readonly value: string; readonly currency: string }>;
+    }> = [
+      {
+        title: 'Vietnamese Dong Slash Month Before USD',
+        quote: 'Phí: 500.000đ/tháng 200 USD',
+        accepted: [
+          { value: '500000', currency: 'VND' },
+          { value: '200', currency: 'USD' },
+        ],
+        rejected: [{ value: '200', currency: 'VND' }],
+      },
+      {
+        title: 'US Dollar Sign Slash Month Before EUR',
+        quote: 'Fee: 100 US$/month 200 EUR',
+        accepted: [
+          { value: '100', currency: 'USD' },
+          { value: '200', currency: 'EUR' },
+        ],
+        rejected: [{ value: '200', currency: 'USD' }],
+      },
+      {
+        title: 'Euros Word Slash Month Before USD',
+        quote: 'Fee: 100 euros/month 200 USD',
+        accepted: [
+          { value: '100', currency: 'EUR' },
+          { value: '200', currency: 'USD' },
+        ],
+        rejected: [{ value: '100', currency: 'USD' }],
+      },
+      {
+        title: 'Assigned Rate Unit With Colon Separator',
+        quote: 'USD/month: 100; equivalent: 90 EUR.',
+        accepted: [{ value: '100', currency: 'USD' }],
+        rejected: [{ value: '90', currency: 'USD' }],
+      },
+      {
+        title: 'Assigned Rate Units With Equals Separator',
+        quote: 'EUR/year = 1,200; USD/year = 1,300.',
+        accepted: [
+          { value: '1200', currency: 'EUR' },
+          { value: '1300', currency: 'USD' },
+        ],
+        rejected: [{ value: '1300', currency: 'EUR' }],
+      },
+      {
+        title: 'Vietnamese Assigned Rate Unit With Colon Separator',
+        quote: 'VND/tháng: 5.000.000; tương đương: 200 USD.',
+        accepted: [
+          { value: '5000000', currency: 'VND' },
+          { value: '200', currency: 'USD' },
+        ],
+        rejected: [{ value: '200', currency: 'VND' }],
+      },
+    ];
+    for (const testCase of slashRateCrossCases) {
+      const req: SignObligationExtractRequest = {
+        envelopeTitle: testCase.title,
+        pageCount: 1,
+        pages: [
+          {
+            page: 1,
+            text: `Bên B: Công ty ABC\n${testCase.quote}`,
+          },
+        ],
+      };
+      for (const expected of testCase.accepted) {
+        expect(
+          checkSignObligationExtract(req, {
+            counterpartyName: 'Công ty ABC',
+            effectiveDate: null,
+            expiryDate: null,
+            renewalNoticeDays: null,
+            autoRenew: false,
+            contractValue: expected.value,
+            currency: expected.currency,
+            citations: [
+              { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+              { field: 'contractValue', pageNumber: 1, quoteExcerpt: testCase.quote },
+            ],
+            obligations: [],
+          }).proposal,
+        ).toMatchObject({ contractValue: expected.value, currency: expected.currency });
+      }
+      for (const bad of testCase.rejected) {
+        expect(
+          checkSignObligationExtract(req, {
+            counterpartyName: 'Công ty ABC',
+            effectiveDate: null,
+            expiryDate: null,
+            renewalNoticeDays: null,
+            autoRenew: false,
+            contractValue: bad.value,
+            currency: bad.currency,
+            citations: [
+              { field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Bên B: Công ty ABC' },
+              { field: 'contractValue', pageNumber: 1, quoteExcerpt: testCase.quote },
+            ],
+            obligations: [],
+          }).proposal?.contractValue,
+        ).toBeNull();
+      }
+    }
   });
 });
 

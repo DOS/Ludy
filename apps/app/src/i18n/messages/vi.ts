@@ -20560,6 +20560,7 @@ export const vi = {
         propose_ai: 'Lưu đề xuất đối chiếu chứng từ định danh của Vy cho hồ sơ ký',
         run_deterministic: 'Chạy kiểm tra tự động mã băm và trường định danh trên chứng từ KYC',
         source: 'Đọc thông tin chứng từ đính kèm để Vy đối chiếu định danh người ký',
+        touch_pending: 'Làm mới mốc thời gian chờ kiểm tra chứng từ KYC khi bật lại ký kết (hệ thống)',
       },
       mcp: {
         envelope_get: 'Cho ứng dụng AI xem tiến độ ký và nghĩa vụ đã xác nhận của một hồ sơ',
