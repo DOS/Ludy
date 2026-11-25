@@ -19900,7 +19900,6 @@ export const vi = {
       },
       label: {
         add: 'Gắn nhãn cho một cuộc họp',
-        index: 'Xem các nhãn trong những cuộc họp bạn đọc được',
         list: 'Xem các nhãn của một cuộc họp',
         remove: 'Bỏ nhãn khỏi một cuộc họp',
       },

@@ -19900,7 +19900,6 @@ export const en = {
       },
       label: {
         add: 'Put a label on a meeting',
-        index: 'Read the labels across the meetings you can read',
         list: 'Read the labels of a meeting',
         remove: 'Take a label off a meeting',
       },
