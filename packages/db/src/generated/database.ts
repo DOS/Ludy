@@ -234,11 +234,11 @@ export interface LudyMeetingsSchema {
   'ludy_meetings.meeting': MeetingsMeetingTable;
   'ludy_meetings.meeting_chapter': MeetingsMeetingChapterTable;
   'ludy_meetings.meeting_link': MeetingsMeetingLinkTable;
-  'ludy_meetings.minutes_link': MeetingsMinutesLinkTable;
   'ludy_meetings.meeting_note': MeetingsMeetingNoteTable;
   'ludy_meetings.meeting_reader': MeetingsMeetingReaderTable;
   'ludy_meetings.meeting_result': MeetingsMeetingResultTable;
   'ludy_meetings.meeting_video': MeetingsMeetingVideoTable;
+  'ludy_meetings.minutes_link': MeetingsMinutesLinkTable;
   'ludy_meetings.minutes_template': MeetingsMinutesTemplateTable;
   'ludy_meetings.morning_notice': MeetingsMorningNoticeTable;
   'ludy_meetings.transcript_segment': MeetingsTranscriptSegmentTable;
@@ -3792,21 +3792,6 @@ export interface MeetingsMeetingLinkTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
-/** ludy_meetings.minutes_link */
-export interface MeetingsMinutesLinkTable {
-  org_id: ColumnType<string, string, NotGranted>;
-  id: ColumnType<string, string | undefined, NotGranted>;
-  meeting_id: ColumnType<string, string, NotGranted>;
-  token_sha256: ColumnType<string, string, NotGranted>;
-  expires_at: ColumnType<Date, Date | string, NotGranted>;
-  created_by: ColumnType<string, string, NotGranted>;
-  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
-  revoked_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
-  revoked_by: string | null;
-  first_viewed_at: ColumnType<Date | null, Date | string | null, NotGranted>;
-  views: ColumnType<number, number | undefined, NotGranted>;
-}
-
 /** ludy_meetings.meeting_note */
 export interface MeetingsMeetingNoteTable {
   org_id: ColumnType<string, string, NotGranted>;
@@ -3883,6 +3868,21 @@ export interface MeetingsMeetingVideoTable {
   length_seconds: ColumnType<number, number, NotGranted>;
   video_retention_date: ColumnType<string, string, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** ludy_meetings.minutes_link */
+export interface MeetingsMinutesLinkTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  meeting_id: ColumnType<string, string, NotGranted>;
+  token_sha256: ColumnType<string, string, NotGranted>;
+  expires_at: ColumnType<Date, Date | string, NotGranted>;
+  created_by: ColumnType<string, string, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  revoked_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  revoked_by: string | null;
+  first_viewed_at: ColumnType<Date | null, Date | string | null, NotGranted>;
+  views: ColumnType<number, number | undefined, NotGranted>;
 }
 
 /** ludy_meetings.minutes_template */
