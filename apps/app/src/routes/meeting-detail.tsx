@@ -35,6 +35,7 @@ import {
 } from '../components/meeting-redaction.tsx';
 import { MeetingHighlights } from '../components/meeting-highlights.tsx';
 import { MeetingLabels } from '../components/meeting-labels.tsx';
+import { MeetingLabelSuggest } from '../components/meeting-label-suggest.tsx';
 import { MeetingSpeakingStyle } from '../components/meeting-speaking-style.tsx';
 import { MeetingTalkTime } from '../components/meeting-talk-time.tsx';
 import { MeetingTrackerHits } from '../components/meeting-trackers.tsx';
@@ -402,6 +403,8 @@ export function MeetingDetailPage() {
       )}
       {/* The labels the recorder put on the meeting (#4955): up to five short plain texts, shown to every reader, added and removed by the recorder; no AI */}
       <MeetingLabels key={`labels-${id}`} meetingId={id} isRecorder={meeting.isRecorder} />
+      {/* The recorder's own Vy offers up to three labels on a click (#5010), from the title and the labels already in use, no transcript; a click on one adds it, nothing changes before it */}
+      <MeetingLabelSuggest key={`label-suggest-${id}`} meetingId={id} isRecorder={meeting.isRecorder} />
       {/* A recording that ended without the recorder's click leaves a visible line (A1, #3159): when it stopped and why, in plain words. */}
       <RecordingStoppedNote meeting={meeting} />
       {/* The recorder's own Vy offers up to three titles on a click (#3947); a pick renames the meeting, nothing changes before it */}

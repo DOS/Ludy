@@ -44,6 +44,8 @@ export const MEMBER_VY_FEATURE_TABLE = {
   'meetings.open_points': { module: 'meetings', expiryMinutes: 30 },
   // The recorder's Vy extracting sales call insights (customer concerns, buying signals, agreed next steps with cited transcript line IDs) for a meeting linked to an open deal (#4920): one foreground model call, results returned to the recorder alone and stored as counts only.
   'meetings.sales_insight': { module: 'meetings', expiryMinutes: 30 },
+  // The recorder's Vy suggesting up to three labels for one meeting from its title and the labels the recorder already reads, no transcript, in the foreground (#5010): one short model call, the recorder waiting for it, the labels shown and never stored (counts only). Its own key, so it never cuts off a transcription, a summary, a translation, a question, a brief, chapters or a title (#3029).
+  'meetings.label_suggest': { module: 'meetings', expiryMinutes: 30 },
   // The member's Vy writing the few sentences of the weekly digest across the meetings the member reads (#3949): one model call over at most 60 short facts the member's own reads found, the member waiting for it.
   // Its own key, so it never cuts off a transcription, a summary, a translation, a question, a brief or live notes (#3029); the run's result row holds counts only.
   'meetings.digest': { module: 'meetings', expiryMinutes: 30 },

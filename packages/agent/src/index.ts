@@ -69,6 +69,7 @@ export * from './template-suggest-model.ts';
 export * from './deal-update-model.ts';
 export * from './open-points-model.ts';
 export * from './sales-insight-model.ts';
+export * from './label-suggest-model.ts';
 export * from './followup-note-model.ts';
 export * from './tasks-from-note-model.ts';
 export * from './note-ai-model.ts';
