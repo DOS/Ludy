@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
--- Ludy kernel (issue #4955, ADR-0047 point 7): the worker-only org export reader for the labels of the meetings shared with the whole org (ludy_meetings.meeting_label, 20270326190000), as
+-- Ludy kernel (issue #4955, ADR-0047 point 7): the worker-only org export reader for the labels of the meetings shared with the whole org (ludy_meetings.meeting_label, 20270326270000), as
 -- ludy_kernel.meeting_link_export_rows() does for the links. Only meetings with visibility = 'org' whose text retention period has not ended (text_retention_date IS NULL or strictly after today in
 -- Asia/Ho_Chi_Minh) are included; the labels of an attendees-only meeting stay out. Idempotent; applied files stay untouched.
 SET LOCAL lock_timeout = '2s';
