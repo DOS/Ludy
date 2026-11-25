@@ -133,6 +133,8 @@ describe('a translation is never a source: the migrations (E1, #3184)', () => {
       'ludy_meetings_personal_erase_minutes_version.sql',
       // #4955 (meeting labels): the purge restatement that adds ludy_meetings.meeting_label restates the whole list, the translation table included; its body is the previous one.
       'ludy_kernel_org_purge_meeting_label.sql',
+      // #4964 (meeting labels are personal data): ludy_meetings.personal_erase is restated with the label lines, so the migration names the table in its translation DELETE; it is never read as a source.
+      'ludy_meetings_personal_data_meeting_label.sql',
     ]);
   });
 });
