@@ -131,6 +131,7 @@ const PENDING_TABLES = new Set<string>([
   'crove_kernel.member_vy_memory',
   'crove_kernel.member_vy_result',
   'crove_meetings.live_line',
+  'crove_meetings.meeting_highlight',
   'crove_meetings.meeting_link',
   'crove_meetings.minutes_version',
   'crove_notes.link',
@@ -230,6 +231,7 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   ['crove_meetings.live_line', () => 'false'], // The live preview of a recording, read by the recorder, a user (ADR-0052 L4a, #3110).
   ['crove_meetings.meeting', () => 'false'], // As above.
   ['crove_meetings.meeting_chapter', () => 'false'], // The chapters of a meeting, read by the recorder and, once published, the readers of the meeting, users (meetings chapters, #3844).
+  ['crove_meetings.meeting_highlight', () => 'false'], // The highlights of a meeting, read by its readers and recorder, users (meetings highlights, #4819).
   ['crove_meetings.meeting_link', () => 'false'], // As above (a link is read through its meeting's readers, L1 #2587).
   ['crove_meetings.meeting_note', () => 'false'], // The recorder's own rough notes, read by the recorder, a user (meetings integrations A5, #3163).
   ['crove_meetings.meeting_reader', () => 'false'], // As above.
@@ -358,6 +360,8 @@ const AUTHOR_ONLY = new Map<string, string>([
   ['crove_meetings.meeting', 'false'],
   // The chapters of a meeting (meetings chapters, #3844): the recorder reads every stage and the readers the published ones, users; worker system context reads and writes nothing.
   ['crove_meetings.meeting_chapter', 'false'],
+  // The highlights of a meeting (meetings highlights, #4819): read by the readers and the recorder, written by them, users only; worker system context reads and writes nothing.
+  ['crove_meetings.meeting_highlight', 'false'],
   // Meeting readers (ADR-0047 point 2): worker system context reads and writes nothing.
   ['crove_meetings.meeting_link', 'false'],
   // The recorder's own rough notes (meetings integrations A5, #3163): the recorder's alone; worker system context reads and writes nothing.
@@ -3551,6 +3555,18 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       return {
         setup: [{ table: 'crove_meetings.meeting', values: meeting }],
         row: { org_id: o.id, id: randomUUID(), meeting_id: meeting.id, stage: 'draft', position: 1, title: 'RLS matrix chapter', start_seconds: 0, tainted: 'true' },
+      };
+    },
+  },
+  // #4819 (meetings highlights): a reader's or the recorder's mark on a transcript line or range, an anchor in seconds and who marked it, no text. Read by the meeting's readers and the recorder, inserted
+  // by either for themselves and deleted by the author or the recorder, all in a user context (the org's owner is the recorder of the factory's meeting); the system context reads none. No UPDATE for a
+  // login role. Its factory lands before the table (PENDING_TABLES).
+  'crove_meetings.meeting_highlight': {
+    make: (o) => {
+      const meeting = meetingsMeetingRow(o);
+      return {
+        setup: [{ table: 'crove_meetings.meeting', values: meeting }],
+        row: { org_id: o.id, id: randomUUID(), meeting_id: meeting.id, created_by: o.owner, start_seconds: 0, end_seconds: 5 },
       };
     },
   },
