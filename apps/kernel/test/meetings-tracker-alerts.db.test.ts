@@ -329,7 +329,53 @@ suite('Tracker alerts (#4873)', () => {
     }
     // The answer is ids and numbers: no word, no line.
     expect(JSON.stringify([...inSql])).not.toMatch(/Khách|hợp đồng|ACME/);
+    // The shared helper (#5019) is the one statement of the rule both the alert and the weekly notice use: asked directly (the owner of the database is the one role that may), it says the same as the alert's
+    // definer and as the TypeScript count, term by term, so a change to either the SQL or tracker-count.ts fails here for both features.
+    const direct = new Map((await sqlAdmin<{ term_id: string; hits: number }>('SELECT term_id, hits FROM ludy_meetings.tracker_hits_in($1::uuid, $2::uuid)', [orgId, meetingId])).rows.map((r) => [r.term_id, r.hits]));
+    expect([...direct].sort()).toEqual([...inSql].sort());
+    for (const term of TERMS) {
+      const target = needleOf(term);
+      const inTs = target === null ? 0 : LINES.reduce((sum, line) => sum + countNeedle(lineWords(line), target), 0);
+      expect(direct.get(ids.get(term) as string) ?? 0, `the helper's count of ${JSON.stringify(term)}`).toBe(inTs);
+    }
   }, 60_000);
+
+  it('keeps the counting helper out of every role: only the two definers reach it, as their owner (#5019)', async () => {
+    const fn = 'ludy_meetings.tracker_hits_in(uuid, uuid)';
+    const [shape] = (await sqlAdmin<{ secdef: boolean; config: string[] | null; public_exec: boolean; grantees: number }>(
+      `SELECT p.prosecdef AS secdef, p.proconfig AS config,
+              EXISTS (SELECT 1 FROM pg_catalog.aclexplode(COALESCE(p.proacl, pg_catalog.acldefault('f', p.proowner))) a WHERE a.grantee = 0 AND a.privilege_type = 'EXECUTE') AS public_exec,
+              (SELECT pg_catalog.count(*)::int FROM pg_catalog.aclexplode(COALESCE(p.proacl, pg_catalog.acldefault('f', p.proowner))) a WHERE a.grantee <> p.proowner) AS grantees
+       FROM pg_catalog.pg_proc p WHERE p.oid = $1::regprocedure`,
+      [fn],
+    )).rows;
+    // SECURITY INVOKER, a pinned search_path, no EXECUTE for PUBLIC and none for anybody but its owner.
+    expect(shape?.secdef).toBe(false);
+    expect(shape?.config ?? []).toContain('search_path=pg_catalog, pg_temp');
+    expect(shape?.public_exec).toBe(false);
+    expect(shape?.grantees).toBe(0);
+    for (const role of ['ludy_app', 'ludy_tenant', 'ludy_worker', 'ludy_definer_tenant']) {
+      expect((await sqlAdmin<{ ok: boolean }>('SELECT pg_catalog.has_function_privilege($1, $2::regprocedure, \'EXECUTE\') AS ok', [role, fn])).rows[0]?.ok, `${role} calls the helper`).toBe(false);
+    }
+    // The two definers that use it stay worker-only: ludy_worker may call them, the other roles may not.
+    for (const definer of ['ludy_meetings.tracker_alert_hits(uuid, uuid, timestamptz)', 'ludy_meetings.weekly_notices_due(integer, uuid, uuid, date, timestamptz)']) {
+      expect((await sqlAdmin<{ ok: boolean }>('SELECT pg_catalog.has_function_privilege(\'ludy_worker\', $1::regprocedure, \'EXECUTE\') AS ok', [definer])).rows[0]?.ok, definer).toBe(true);
+      for (const role of ['ludy_app', 'ludy_tenant', 'ludy_definer_tenant']) {
+        expect((await sqlAdmin<{ ok: boolean }>('SELECT pg_catalog.has_function_privilege($1, $2::regprocedure, \'EXECUTE\') AS ok', [role, definer])).rows[0]?.ok, `${role} calls ${definer}`).toBe(false);
+      }
+    }
+    // And the worker's login really is refused when it asks the helper itself, while it may ask the definers (they say NO_CONTEXT only for want of an org context).
+    await clear();
+    const { meetingId } = await published('Họp để hỏi trợ giúp', 'org', [], ['Bàn về giá.']);
+    const bare = new pg.Client({ connectionString: (() => { const url = new URL(adminUrl); url.username = 'ludy_worker'; url.password = 'test-worker-pw'; return url.toString(); })() });
+    await bare.connect();
+    try {
+      await expect(bare.query('SELECT * FROM ludy_meetings.tracker_hits_in($1::uuid, $2::uuid)', [orgId, meetingId])).rejects.toThrow(/permission denied for function tracker_hits_in/);
+      await expect(bare.query('SELECT * FROM ludy_meetings.tracker_alert_hits($1::uuid, $2::uuid, now())', [orgId, meetingId])).rejects.toThrow(/NO_CONTEXT/);
+    } finally {
+      await bare.end();
+    }
+  });
 
   it('writes the same audit detail whether or not a tracked word was found: the event and the meeting, nothing else', async () => {
     await clear();

@@ -86,10 +86,19 @@ describe('the weekly notice text in the app (#4967)', () => {
   const text = (locale: 'en' | 'vi', values: Record<string, string | number>) => createTranslator({ locale, messages: catalog(locale), namespace: 'notifications' })('text.weekly' as never, values as never) as string;
 
   it('says the four numbers and "at least" when a limit cut them, in both languages, and nothing else', () => {
-    const base = { meetings: 3, decisions: 4, open: 5, overdue: 2, cut: 'no' };
+    const base = { meetings: 3, decisions: 4, open: 5, overdue: 2, cut: 'no', trackedText: 'none' };
     expect(text('en', base)).toContain('Last 7 days: 3 meetings with a published result, 4 decisions published, 5 open action items, 2 overdue.');
     expect(text('en', { ...base, cut: 'yes', meetings: 1, decisions: 1, open: 1, overdue: 0 })).toContain('at least 1 meeting with a published result, 1 decision published, 1 open action item.');
     expect(text('vi', base)).toContain('7 ngày qua: 3 cuộc họp có kết quả đã công bố, 4 quyết định đã công bố, 5 việc còn mở, 2 việc quá hạn.');
     expect(text('vi', { ...base, cut: 'yes', overdue: 0 })).toContain('ít nhất 3 cuộc họp');
+  });
+
+  it('adds the tracked-word clause only when the notice holds the number, "999+" at the most, in both languages (#5019)', () => {
+    const base = { meetings: 3, decisions: 4, open: 5, overdue: 2, cut: 'no' };
+    expect(text('en', { ...base, trackedText: '12' })).toContain('2 overdue, tracked words came up 12 times. Open the meetings page');
+    expect(text('en', { ...base, trackedText: '999+' })).toContain('tracked words came up 999+ times.');
+    expect(text('vi', { ...base, trackedText: '12' })).toContain('2 việc quá hạn, từ khóa theo dõi xuất hiện 12 lần. Mở trang Cuộc họp');
+    expect(text('vi', { ...base, trackedText: 'none' })).not.toContain('từ khóa');
+    expect(text('en', { ...base, trackedText: 'none' })).not.toContain('tracked words');
   });
 });

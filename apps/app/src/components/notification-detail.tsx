@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { Link } from '@tanstack/react-router';
 import { useLocale, useTranslations } from 'use-intl';
-import { parseTrackerAlertTerms } from '@ludy/kernel-contract';
+import { parseTrackerAlertTerms, WEEKLY_TRACKED_MAX } from '@ludy/kernel-contract';
 import { Badge } from '@ludy/ui/components/badge';
 import { Button, buttonVariants } from '@ludy/ui/components/button';
 import { cn } from '@ludy/ui/lib/utils';
@@ -100,6 +100,8 @@ export function useNotificationLine(wantsTrackerWords = false) {
           open: Number(n.detail.open ?? 0),
           overdue: Number(n.detail.overdue ?? 0),
           cut: n.detail.cut === '1' ? 'yes' : 'no',
+          // The tracked-word number (#5019), only when the notice holds one: "none" drops the clause, 999 is the most the definer says ("999+").
+          trackedText: n.detail.tracked === undefined ? 'none' : `${Math.min(Number(n.detail.tracked), WEEKLY_TRACKED_MAX)}${Number(n.detail.tracked) >= WEEKLY_TRACKED_MAX ? '+' : ''}`,
         });
       case 'meetings.tracker_alert': {
         const names = new Map((trackerList.data?.terms ?? []).map((w) => [w.id, w.term]));

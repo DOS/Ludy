@@ -13,6 +13,8 @@ export const WEEKLY_KIND = 'meetings.weekly';
 export const WEEKLY_MAIL_TEMPLATE = 'meetings.weekly';
 export const WEEKLY_MAIL_SOURCE = 'meetings.weekly';
 export const WEEKLY_DEFAULT_MINUTE = 8 * 60;
+// The most the tracked-word number says (#5019): the definer clamps there and the text says "at least" from it.
+export const WEEKLY_TRACKED_MAX = 999;
 
 export const zWeeklySet = z.strictObject({
   enabled: z.boolean(),
@@ -34,13 +36,15 @@ export const zWeeklyNotice = z.strictObject({ userId: z.uuid(), day: z.iso.date(
 export type WeeklyNotice = z.infer<typeof zWeeklyNotice>;
 
 // The notice's own numbers and the mail's merge data. They are the card's: at most as many meetings, decisions and open items as the card lists (DIGEST_*_MAX), and `cut` says a limit held some back, so the
-// text says "at least". The overdue count is part of the open one. No other key can be stored.
+// text says "at least". The overdue count is part of the open one. `tracked` (#5019) is how often the org's tracked words came up in those meetings' published lines: absent when the org keeps none or none
+// came up, a number and never a word, a line or a meeting. No other key can be stored.
 export const zWeeklyCounts = z.strictObject({
   meetings: z.number().int().min(1).max(DIGEST_MEETINGS_MAX),
   decisions: z.number().int().min(0).max(DIGEST_DECISIONS_MAX),
   open: z.number().int().min(0).max(DIGEST_ITEMS_MAX),
   overdue: z.number().int().min(0).max(DIGEST_ITEMS_MAX),
   cut: z.boolean(),
+  tracked: z.number().int().min(1).max(WEEKLY_TRACKED_MAX).optional(),
 });
 export type WeeklyCounts = z.infer<typeof zWeeklyCounts>;
 

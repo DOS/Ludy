@@ -42,6 +42,21 @@ describe('the weekly mail', () => {
     expect(weeklyLines({ ...base, lang: 'en', cut: true } as never)[0]).toBe('At least 3 meetings with a published result');
   });
 
+  it('adds the tracked-word line only when the merge data holds the number, "999+" at the most, and refuses a number past the limit or a word (#5019)', async () => {
+    // No number, no line: an org with no tracked word, or none that came up, gets the three lines it always had.
+    expect(weeklyLines({ ...base, lang: 'vi' } as never)).toHaveLength(3);
+    expect(weeklyLines({ ...base, lang: 'vi', tracked: 12 } as never)[3]).toBe('Từ khóa theo dõi của tổ chức xuất hiện 12 lần');
+    expect(weeklyLines({ ...base, lang: 'en', tracked: 1 } as never)[3]).toBe("The organization's tracked words came up 1 time");
+    expect(weeklyLines({ ...base, lang: 'en', tracked: 999 } as never)[3]).toBe("The organization's tracked words came up 999+ times");
+    const mail = await weeklyMailTemplate.render(input({ ...base, tracked: 7 }));
+    expect(mail?.text).toContain('Từ khóa theo dõi của tổ chức xuất hiện 7 lần');
+    expect(mail?.html).toContain('<li>Từ khóa theo dõi của tổ chức xuất hiện 7 lần</li>');
+    await expect(weeklyMailTemplate.render(input({ ...base, tracked: 1000 }))).rejects.toThrow();
+    await expect(weeklyMailTemplate.render(input({ ...base, tracked: 0 }))).rejects.toThrow();
+    await expect(weeklyMailTemplate.render(input({ ...base, tracked: 'giá' }))).rejects.toThrow();
+    await expect(weeklyMailTemplate.render(input({ ...base, tracked: 3, term: 'giá' }))).rejects.toThrow();
+  });
+
   it('refuses merge data with a key it does not use (a title, a decision) or a link that is not the "this week" card', async () => {
     await expect(weeklyMailTemplate.render(input({ ...base, title: 'Họp lương' }))).rejects.toThrow();
     await expect(weeklyMailTemplate.render(input({ ...base, decisions_text: ['Chốt giá'] }))).rejects.toThrow();
