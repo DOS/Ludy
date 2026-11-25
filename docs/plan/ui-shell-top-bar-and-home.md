@@ -180,11 +180,13 @@ File path convention (Phase 1): `supabase/migrations/<14-digit UTC>_ludy_kernel_
 2. **Table `ludy_kernel.member_home_layout`:**
    ```sql
    CREATE TABLE IF NOT EXISTS ludy_kernel.member_home_layout (
+     id uuid NOT NULL DEFAULT ludy_kernel.uuid_v7(),
      org_id uuid NOT NULL REFERENCES ludy_kernel.tenant (org_id) ON DELETE CASCADE,
      user_id uuid NOT NULL,
      layout_json jsonb NOT NULL CHECK (ludy_kernel.member_home_layout_ok(layout_json)),
      updated_at timestamptz NOT NULL DEFAULT pg_catalog.now(),
-     PRIMARY KEY (org_id, user_id),
+     PRIMARY KEY (org_id, id),
+     CONSTRAINT member_home_layout_user_uq UNIQUE (org_id, user_id),
      CONSTRAINT member_home_layout_member_fk
        FOREIGN KEY (org_id, user_id) REFERENCES ludy_kernel.tenant_member (org_id, user_id) ON DELETE CASCADE
    );

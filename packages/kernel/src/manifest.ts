@@ -86,6 +86,7 @@ export const kernelManifest = defineModule({
         { title: 'pii', staging_key: 'sensitive', picked_file_id: 'sensitive' },
       ),
       member_availability: columns(['org_id', 'id', 'user_id', 'status', 'until', 'updated_at']),
+      member_home_layout: columns(['org_id', 'id', 'user_id', 'layout_json', 'updated_at']),
       member_invite: columns(['org_id', 'id', 'role', 'token_sha256', 'status', 'invited_by', 'created_at', 'expires_at', 'accepted_at', 'accepted_by', 'revoked_at', 'revoked_by', 'legal_entity_ids', 'role_key', 'role_scope'], { email: 'contact' }),
       member_permission_override: columns(['org_id', 'id', 'user_id', 'permission', 'allowed', 'set_by', 'set_by_owner', 'set_at']),
       member_vy_memory: columns(['org_id', 'id', 'member_user_id', 'created_at', 'updated_at'], { body: 'pii' }),
