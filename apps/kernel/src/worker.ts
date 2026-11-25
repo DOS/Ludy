@@ -72,6 +72,7 @@ import {
   SIGN_CLEANUP_CRON,
   SIGN_EXPIRE_SWEEP_CRON,
   SIGN_JOB_RETRY_LIMIT,
+  isSignEnvelopeDocumentInspectJob,
   isSignTemplateInspectJob,
   runSignCaReconcileJob,
   runSignPdfInspectJob,
@@ -82,6 +83,7 @@ import {
   sweepSignPendingWork,
   sweepSignPreExpiryReminders,
   type SignCaReconcileJob,
+  type SignEnvelopeDocumentInspectJob,
   type SignEnvelopeJob,
   type SignKycAttachmentInspectJob,
   type SignPdfInspectJob,
@@ -452,6 +454,24 @@ async function enqueueSignInspect(boss: JobSender, orgId: string, envelopeId: st
     { orgId, envelopeId } satisfies SignEnvelopeJob,
     {
       singletonKey: jobKey(orgId, QUEUES.signPdfInspect, envelopeId),
+      retryLimit: SIGN_JOB_RETRY_LIMIT,
+      retryDelay: 20,
+      retryBackoff: true,
+    },
+  );
+}
+
+async function enqueueSignDocumentInspect(
+  boss: JobSender,
+  orgId: string,
+  envelopeId: string,
+  documentId: string,
+): Promise<void> {
+  await boss.send(
+    QUEUES.signPdfInspect,
+    { orgId, targetKind: 'envelope_document', envelopeId, documentId } satisfies SignEnvelopeDocumentInspectJob,
+    {
+      singletonKey: jobKey(orgId, QUEUES.signPdfInspect, `doc-${documentId}`),
       retryLimit: SIGN_JOB_RETRY_LIMIT,
       retryDelay: 20,
       retryBackoff: true,
@@ -1524,7 +1544,11 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
           job.data,
         );
         if (done.status !== 'skipped_not_pending') {
-          const id = isSignTemplateInspectJob(job.data) ? job.data.templateId : job.data.envelopeId;
+          const id = isSignTemplateInspectJob(job.data)
+            ? job.data.templateId
+            : isSignEnvelopeDocumentInspectJob(job.data)
+              ? job.data.documentId
+              : job.data.envelopeId;
           console.log(`[sign-inspect] ${id.slice(0, 8)}: ${done.status}`);
         }
       },
@@ -3282,6 +3306,14 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
               }
               if (sign && row.type === 'sign.envelope.inspect_queued') {
                 await enqueueSignInspect(boss, row.org_id, String(row.payload.envelopeId));
+              }
+              if (sign && row.type === 'sign.envelope.document_inspect_queued') {
+                await enqueueSignDocumentInspect(
+                  boss,
+                  row.org_id,
+                  String(row.payload.envelopeId),
+                  String(row.payload.documentId),
+                );
               }
               if (sign && row.type === 'sign.template.inspect_queued') {
                 await enqueueSignTemplateInspect(boss, row.org_id, String(row.payload.templateId));

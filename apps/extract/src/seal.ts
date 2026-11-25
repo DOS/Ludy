@@ -7,6 +7,7 @@ import {
   type PdfInspectPage,
   type PdfInspectResult,
   type PdfSealCertificate,
+  type PdfSealCertificateDocument,
   type PdfSealField,
   type PdfSealOtpStatus,
   type PdfSealResult,
@@ -8142,15 +8143,93 @@ async function appendAuditCertificatePages(
   const cardTopPad = Math.round(15 * vScale);
   const cardGap = Math.round(8 * vScale);
 
+  const measureSignerCardHeight = (titleCount: number, detailCount: number): number =>
+    Math.round(16 * vScale) + titleCount * signerTitleStep + detailCount * signerDetailStep + Math.round(6 * vScale);
+
+  const continuedHeaderH = Math.round(52 * vScale);
+  const continuedPageStartY = pageH - continuedHeaderH - Math.round(22 * vScale);
+  const freshPageAvailH = continuedPageStartY - bottomLimit;
+
+  const certDocuments = certificate.documents ?? [];
+  if (certDocuments.length > 0) {
+    const docCardRows: Array<{ readonly titleLines: readonly string[]; readonly detailLines: readonly string[]; readonly cardH: number }> = [];
+    for (const docMeta of certDocuments) {
+      const titleText = `${docMeta.index}. ${collapseSingleLineText(docMeta.title)}`;
+      const titleLines = await fonts.wrapLines(titleText, 'bold', signerTitleSize, innerTextW);
+      const detailLines = await fonts.wrapLines(
+        `Trang / Pages: ${docMeta.startPage}-${docMeta.endPage} (${docMeta.pageCount} trang) | SHA-256: ${collapseSingleLineText(docMeta.sourceSha256)}`,
+        'regular',
+        signerDetailSize,
+        innerTextW,
+      );
+      docCardRows.push({
+        titleLines,
+        detailLines,
+        cardH: measureSignerCardHeight(titleLines.length, detailLines.length),
+      });
+    }
+
+    const firstDoc = docCardRows[0];
+    if (firstDoc && state.cursorY - signerHeadingGap - firstDoc.cardH < bottomLimit) {
+      state = await startPage(true);
+    }
+
+    await fonts.drawText(state.page, `TÀI LIỆU TRONG HỒ SƠ / PACKET DOCUMENTS (${certDocuments.length})`, {
+      weight: 'bold',
+      sizePt: signerHeadingSize,
+      color: COLOR_NAVY,
+      x: marginX,
+      y: state.cursorY,
+    });
+    state.cursorY -= signerHeadingGap;
+
+    for (const docCard of docCardRows) {
+      if (state.cursorY - docCard.cardH < bottomLimit) {
+        state = await startPage(true);
+      }
+      state.page.drawRectangle({
+        x: marginX,
+        y: state.cursorY - docCard.cardH,
+        width: contentW,
+        height: docCard.cardH,
+        color: COLOR_CARD_BG,
+        borderColor: COLOR_BORDER,
+        borderWidth: 0.75,
+      });
+      let y = state.cursorY - cardTopPad;
+      for (const line of docCard.titleLines) {
+        await fonts.drawText(state.page, line, {
+          weight: 'bold',
+          sizePt: signerTitleSize,
+          color: COLOR_INK,
+          x: marginX + cardPadX,
+          y,
+        });
+        y -= signerTitleStep;
+      }
+      y -= Math.max(1, Math.round(2 * vScale));
+      for (const line of docCard.detailLines) {
+        await fonts.drawText(state.page, line, {
+          weight: 'regular',
+          sizePt: signerDetailSize,
+          color: COLOR_MUTED,
+          x: marginX + cardPadX,
+          y,
+        });
+        y -= signerDetailStep;
+      }
+      state.cursorY -= docCard.cardH + Math.max(4, Math.round(cardGap * 0.75));
+    }
+
+    state.cursorY -= Math.round(8 * vScale);
+  }
+
   const signerCards: Array<{
     readonly titleLines: readonly string[];
     readonly continuedTitleLines: readonly string[];
     readonly detailLines: readonly string[];
     readonly cardH: number;
   }> = [];
-
-  const measureSignerCardHeight = (titleCount: number, detailCount: number): number =>
-    Math.round(16 * vScale) + titleCount * signerTitleStep + detailCount * signerDetailStep + Math.round(6 * vScale);
 
   for (let i = 0; i < certificate.signers.length; i++) {
     const signer = certificate.signers[i];
@@ -8219,10 +8298,6 @@ async function appendAuditCertificatePages(
     const cardH = measureSignerCardHeight(titleLines.length, detailLines.length);
     signerCards.push({ titleLines, continuedTitleLines, detailLines, cardH });
   }
-
-  const continuedHeaderH = Math.round(52 * vScale);
-  const continuedPageStartY = pageH - continuedHeaderH - Math.round(22 * vScale);
-  const freshPageAvailH = continuedPageStartY - bottomLimit;
 
   const firstCard = signerCards[0];
   if (firstCard) {
@@ -8373,22 +8448,151 @@ async function appendAuditCertificatePages(
   }
 }
 
+function attachPacketOutlines(
+  pdfDoc: PDFDocument,
+  bookmarks: readonly { readonly title: string; readonly pageRef: PDFRef }[],
+): void {
+  if (bookmarks.length === 0) return;
+  const outlinesRef = pdfDoc.context.nextRef();
+  const itemRefs = bookmarks.map(() => pdfDoc.context.nextRef());
+  for (let i = 0; i < bookmarks.length; i++) {
+    const bm = bookmarks[i];
+    const itemRef = itemRefs[i];
+    if (!bm || !itemRef) continue;
+    const itemDict = pdfDoc.context.obj({
+      Title: PDFHexString.fromText(bm.title),
+      Parent: outlinesRef,
+      Dest: pdfDoc.context.obj([bm.pageRef, PDFName.of('Fit')]),
+    });
+    const prevRef = i > 0 ? itemRefs[i - 1] : undefined;
+    const nextRef = i + 1 < bookmarks.length ? itemRefs[i + 1] : undefined;
+    if (prevRef) itemDict.set(PDFName.of('Prev'), prevRef);
+    if (nextRef) itemDict.set(PDFName.of('Next'), nextRef);
+    pdfDoc.context.assign(itemRef, itemDict);
+  }
+  const firstRef = itemRefs[0];
+  const lastRef = itemRefs[itemRefs.length - 1];
+  if (!firstRef || !lastRef) return;
+  pdfDoc.context.assign(
+    outlinesRef,
+    pdfDoc.context.obj({
+      Type: PDFName.of('Outlines'),
+      First: firstRef,
+      Last: lastRef,
+      Count: PDFNumber.of(bookmarks.length),
+    }),
+  );
+  pdfDoc.catalog.set(PDFName.of('Outlines'), outlinesRef);
+}
+
 export async function sealPdf(bytes: Uint8Array): Promise<PdfSealResult> {
   const input = decodePdfSealInput(bytes);
-  const pdfBytes = decodeStrictBase64(input.pdfBase64, 'Tài liệu PDF');
-  const pdfDoc = await loadValidatedPdf(pdfBytes);
-  const sourcePageCount = pdfDoc.getPageCount();
-  const certPageSize = resolveCertificatePageSize(pdfDoc, sourcePageCount);
-
-  const fonts = await PdfFontContext.create(pdfDoc);
-  for (const page of pdfDoc.getPages()) {
-    clonePageSharedContainers(pdfDoc, page);
-  }
+  let pdfDoc: PDFDocument;
+  let sourcePageCount = 0;
   const isolatedPages = new Set<number>();
-  await flattenAcroFormAndAnnotations(pdfDoc, fonts, sourcePageCount, isolatedPages);
+  let certificateForAudit: PdfSealCertificate = input.certificate;
+  const outlineBookmarks: Array<{ readonly title: string; readonly pageRef: PDFRef }> = [];
+
+  if (input.documents !== undefined) {
+    const unifiedDoc = await PDFDocument.create();
+    const measuredDocs: PdfSealCertificateDocument[] = [];
+    let totalPartBytes = 0;
+
+    for (let i = 0; i < input.documents.length; i++) {
+      const partInput = input.documents[i];
+      if (!partInput) continue;
+      const partBytes = decodeStrictBase64(partInput.pdfBase64, `Tài liệu PDF #${i + 1}`);
+      totalPartBytes += partBytes.byteLength;
+      if (totalPartBytes > EXTRACT_LIMITS.maxFileBytes) {
+        throw new PdfSignError('Tổng dung lượng tệp PDF gốc vượt quá giới hạn 25 MiB cho phép');
+      }
+      const partSha = createHash('sha256').update(partBytes).digest('hex');
+      if (partSha !== partInput.sourceSha256) {
+        throw new PdfSignError(`Mã băm SHA-256 của tài liệu #${i + 1} không khớp`);
+      }
+
+      const partDoc = await loadValidatedPdf(partBytes);
+      const partPages = partDoc.getPageCount();
+      if (sourcePageCount + partPages > EXTRACT_LIMITS.maxPdfSignPages) {
+        throw new PdfSignError(`Tổng số trang của bộ tài liệu vượt quá giới hạn ${EXTRACT_LIMITS.maxPdfSignPages} trang`);
+      }
+
+      const partFonts = await PdfFontContext.create(partDoc);
+      for (const partPage of partDoc.getPages()) {
+        clonePageSharedContainers(partDoc, partPage);
+      }
+      const partIsolated = new Set<number>();
+      // Flatten AcroForm and annotations per part before merging so widget names/refs never collide across PDFs.
+      await flattenAcroFormAndAnnotations(partDoc, partFonts, partPages, partIsolated);
+      stripInteractiveElements(partDoc);
+
+      const copiedPages = await unifiedDoc.copyPages(partDoc, partDoc.getPageIndices());
+      const startPage = sourcePageCount + 1;
+      for (let p = 0; p < copiedPages.length; p++) {
+        const copiedPage = copiedPages[p];
+        if (!copiedPage) continue;
+        unifiedDoc.addPage(copiedPage);
+        if (p === 0) {
+          outlineBookmarks.push({
+            title: collapseSingleLineText(partInput.title) || `Tài liệu ${i + 1}`,
+            pageRef: copiedPage.ref,
+          });
+        }
+      }
+      sourcePageCount += copiedPages.length;
+      measuredDocs.push({
+        index: i + 1,
+        title: partInput.title,
+        startPage,
+        endPage: sourcePageCount,
+        pageCount: copiedPages.length,
+        sourceSha256: partInput.sourceSha256,
+      });
+    }
+
+    if (input.certificate.documents !== undefined) {
+      if (input.certificate.documents.length !== measuredDocs.length) {
+        throw new PdfSignError('Danh sách tài liệu trong chứng nhận không khớp với số tệp đầu vào');
+      }
+      for (let i = 0; i < measuredDocs.length; i++) {
+        const expected = measuredDocs[i];
+        const actual = input.certificate.documents[i];
+        if (
+          !expected ||
+          !actual ||
+          actual.index !== expected.index ||
+          actual.startPage !== expected.startPage ||
+          actual.endPage !== expected.endPage ||
+          actual.pageCount !== expected.pageCount ||
+          actual.sourceSha256 !== expected.sourceSha256
+        ) {
+          throw new PdfSignError('Phạm vi trang hoặc mã băm tài liệu trong chứng nhận không khớp');
+        }
+      }
+    } else {
+      certificateForAudit = { ...input.certificate, documents: measuredDocs };
+    }
+
+    pdfDoc = unifiedDoc;
+  } else {
+    const pdfBytes = decodeStrictBase64(input.pdfBase64!, 'Tài liệu PDF');
+    pdfDoc = await loadValidatedPdf(pdfBytes);
+    sourcePageCount = pdfDoc.getPageCount();
+    const singleFonts = await PdfFontContext.create(pdfDoc);
+    for (const page of pdfDoc.getPages()) {
+      clonePageSharedContainers(pdfDoc, page);
+    }
+    await flattenAcroFormAndAnnotations(pdfDoc, singleFonts, sourcePageCount, isolatedPages);
+  }
+
+  const certPageSize = resolveCertificatePageSize(pdfDoc, sourcePageCount);
+  const fonts = await PdfFontContext.create(pdfDoc);
   await stampFields(pdfDoc, fonts, input.fields, sourcePageCount, isolatedPages);
-  await appendAuditCertificatePages(pdfDoc, fonts, input.certificate, certPageSize);
+  await appendAuditCertificatePages(pdfDoc, fonts, certificateForAudit, certPageSize);
   stripInteractiveElements(pdfDoc);
+  if (outlineBookmarks.length > 0) {
+    attachPacketOutlines(pdfDoc, outlineBookmarks);
+  }
   await pdfDoc.flush();
   pruneUnreferencedIndirectObjects(pdfDoc);
 

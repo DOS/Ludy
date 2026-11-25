@@ -1687,6 +1687,9 @@ export const SIGN_ACTOR_TYPES = ['user', 'signer', 'system', 'ai'] as const;
 export type SignActorType = (typeof SIGN_ACTOR_TYPES)[number];
 export const SIGN_EVENT_TYPES = [
   'envelope_created',
+  'document_added',
+  'document_removed',
+  'documents_reordered',
   'document_inspected',
   'document_inspect_failed',
   'envelope_updated',
@@ -1760,6 +1763,13 @@ export type SignEnvelopeTable = Refine<
     source_kind: Generated<SignSourceKind>;
     inspect_status: Generated<SignInspectStatus>;
     seal_status: SignSealStatus | null;
+  }
+>;
+
+export type SignEnvelopeDocumentTable = Refine<
+  G.SignEnvelopeDocumentTable,
+  {
+    inspect_status: Generated<SignInspectStatus>;
   }
 >;
 
@@ -1916,6 +1926,7 @@ type Refined = Tables<{
   'ludy_sign.ai_analysis': SignAiAnalysisTable;
   'ludy_sign.ca_signing_request': SignCaSigningRequestTable;
   'ludy_sign.envelope': SignEnvelopeTable;
+  'ludy_sign.envelope_document': SignEnvelopeDocumentTable;
   'ludy_sign.envelope_obligation': SignEnvelopeObligationTable;
   'ludy_sign.field': SignFieldTable;
   'ludy_sign.kyc_check': SignKycCheckTable;

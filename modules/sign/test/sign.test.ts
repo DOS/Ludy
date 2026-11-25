@@ -370,6 +370,7 @@ describe('sign sealing payloads and certificate artifacts', () => {
       'ca_connection',
       'ca_signing_request',
       'envelope',
+      'envelope_document',
       'envelope_obligation',
       'field',
       'kyc_check',

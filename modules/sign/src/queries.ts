@@ -22,6 +22,7 @@ import { isSignAiStoppedOnTrx } from './ai.ts';
 import { signApiKeyQueries } from './api-keys.ts';
 import { renderStarterContractPdf } from './contract-drafter.ts';
 import { signDocxConvertQueries } from './docx-convert.ts';
+import { signEnvelopeDocumentQueries } from './envelope-documents.ts';
 import { signMcpQueries } from './mcp.ts';
 import type { SigningEventChainRow } from './events.ts';
 import { parseEventPayload, verifyEventChain } from './events.ts';
@@ -453,6 +454,7 @@ export const envelopeGet = defineQuery({
       .select([
         'id',
         'envelope_id',
+        'document_id',
         'signer_id',
         'field_type',
         'page_number',
@@ -482,6 +484,75 @@ export const envelopeGet = defineQuery({
       .orderBy('created_at', 'asc')
       .orderBy('id', 'asc')
       .execute();
+
+    const docRows = await ctx.trx
+      .selectFrom('ludy_sign.envelope_document as ed')
+      .innerJoin('ludy_kernel.file as f', (join) =>
+        join.onRef('f.org_id', '=', 'ed.org_id').onRef('f.id', '=', 'ed.file_id'),
+      )
+      .select([
+        'ed.id',
+        'ed.doc_index',
+        'ed.title',
+        'ed.file_id',
+        'ed.source_sha256',
+        'ed.inspect_status',
+        'ed.inspect_error',
+        'ed.page_count',
+        'ed.page_dimensions_json',
+        'ed.detected_tags_json',
+        'ed.created_at',
+        'ed.updated_at',
+        'f.size_bytes',
+      ])
+      .where('ed.org_id', '=', ctx.orgId)
+      .where('ed.envelope_id', '=', env.id)
+      .orderBy('ed.doc_index', 'asc')
+      .orderBy('ed.id', 'asc')
+      .execute();
+
+    const documents =
+      docRows.length > 0
+        ? docRows.map((d) => ({
+            id: d.id,
+            docIndex: d.doc_index,
+            title: d.title,
+            fileId: d.file_id,
+            sourceSha256: d.source_sha256,
+            inspectStatus: d.inspect_status,
+            inspectError: d.inspect_error,
+            pageCount: d.page_count,
+            pageDimensions: parseEventPayload(d.page_dimensions_json),
+            detectedTags: parseDetectedTags(d.detected_tags_json, d.page_count),
+            sizeBytes: Number.isFinite(Number(d.size_bytes)) ? Number(d.size_bytes) : null,
+            createdAt: new Date(d.created_at).toISOString(),
+            updatedAt: new Date(d.updated_at).toISOString(),
+          }))
+        : await (async () => {
+            const baseFile = await ctx.trx
+              .selectFrom('ludy_kernel.file')
+              .select(['size_bytes'])
+              .where('org_id', '=', ctx.orgId)
+              .where('id', '=', env.source_file_id)
+              .executeTakeFirst();
+            return [
+              {
+                id: null,
+                docIndex: 1,
+                title: env.title,
+                fileId: env.source_file_id,
+                sourceSha256: env.source_sha256,
+                inspectStatus: env.inspect_status,
+                inspectError: env.inspect_error,
+                pageCount: env.page_count,
+                pageDimensions: parseEventPayload(env.page_dimensions_json),
+                detectedTags: parseDetectedTags(env.detected_tags_json, env.page_count),
+                sizeBytes: baseFile && Number.isFinite(Number(baseFile.size_bytes)) ? Number(baseFile.size_bytes) : null,
+                createdAt: new Date(env.created_at).toISOString(),
+                updatedAt: new Date(env.updated_at).toISOString(),
+              },
+            ];
+          })();
 
     return {
       envelope: {
@@ -566,6 +637,7 @@ export const envelopeGet = defineQuery({
       })),
       fields: fields.map((f) => ({
         id: f.id,
+        documentId: f.document_id ?? null,
         signerId: f.signer_id,
         fieldType: f.field_type,
         pageNumber: f.page_number,
@@ -589,6 +661,7 @@ export const envelopeGet = defineQuery({
         createdAt: new Date(f.created_at).toISOString(),
         updatedAt: new Date(f.updated_at).toISOString(),
       })),
+      documents,
     };
   },
 });
@@ -697,10 +770,18 @@ export const envelopeVerify = defineQuery({
       .where('attachment_file_id', 'is not', null)
       .execute();
 
+    const packetDocs = await ctx.trx
+      .selectFrom('ludy_sign.envelope_document')
+      .select(['file_id', 'storage_key', 'generation', 'source_sha256'])
+      .where('org_id', '=', ctx.orgId)
+      .where('envelope_id', '=', env.id)
+      .execute();
+
     const fileIds = [
       env.source_file_id,
       env.sealed_file_id,
       env.certificate_file_id,
+      ...packetDocs.map((d) => d.file_id),
       ...attachmentFields.map((f) => f.attachment_file_id),
     ].filter((id): id is string => id !== null);
     const fileRows = await ctx.trx
@@ -712,12 +793,23 @@ export const envelopeVerify = defineQuery({
     const byId = new Map(fileRows.map((f) => [f.id, f]));
 
     const srcFile = byId.get(env.source_file_id);
-    const sourceConsistent =
+    const rootSourceConsistent =
       srcFile !== undefined &&
       srcFile.source === 'sign_document' &&
       srcFile.storage_key === env.source_storage_key &&
       srcFile.generation === env.source_generation &&
       srcFile.sha256 === env.source_sha256;
+    const docsConsistent = packetDocs.every((d) => {
+      const f = byId.get(d.file_id);
+      return (
+        f !== undefined &&
+        f.source === 'sign_document' &&
+        f.storage_key === d.storage_key &&
+        f.generation === d.generation &&
+        f.sha256 === d.source_sha256
+      );
+    });
+    const sourceConsistent = rootSourceConsistent && docsConsistent;
 
     const sealedConsistent =
       env.sealed_file_id === null
@@ -777,13 +869,34 @@ export const envelopeVerify = defineQuery({
   },
 });
 
+export interface SignInspectJobDocumentData {
+  id: string;
+  docIndex: number;
+  inspectStatus: string;
+  sourceStorageKey: string;
+  sourceGeneration: string;
+  sourceSha256: string;
+}
+
 export interface SignInspectJobData {
   id: string;
+  documentId?: string;
   status: string;
   inspectStatus: string;
   sourceStorageKey: string;
   sourceGeneration: string;
   sourceSha256: string;
+  pendingDocuments?: SignInspectJobDocumentData[];
+}
+
+export interface SignSealJobDocument {
+  id: string;
+  docIndex: number;
+  title: string;
+  storageKey: string;
+  generation: string;
+  sourceSha256: string;
+  pageCount: number | null;
 }
 
 export interface SignSealJobData {
@@ -798,6 +911,7 @@ export interface SignSealJobData {
     sealStatus: string | null;
     completedAtIso: string | null;
   };
+  documents: SignSealJobDocument[];
   signers: SignSignerForSeal[];
   fields: SignFieldForSeal[];
   events: SigningEventChainRow[];
@@ -805,7 +919,7 @@ export interface SignSealJobData {
 
 export const envelopeInspectJobData = defineQuery({
   name: 'sign.envelope.inspect_job_data',
-  input: z.strictObject({ envelopeId: zId }),
+  input: z.strictObject({ envelopeId: zId, documentId: zId.optional() }),
   access: 'system',
   handler: async (ctx, input): Promise<SignInspectJobData | null> => {
     assertSystem(ctx);
@@ -823,6 +937,34 @@ export const envelopeInspectJobData = defineQuery({
       .where('id', '=', input.envelopeId)
       .executeTakeFirst();
     if (!row) return null;
+    if (input.documentId) {
+      const doc = await ctx.trx
+        .selectFrom('ludy_sign.envelope_document')
+        .select(['id', 'inspect_status', 'storage_key', 'generation', 'source_sha256'])
+        .where('org_id', '=', ctx.orgId)
+        .where('envelope_id', '=', row.id)
+        .where('id', '=', input.documentId)
+        .executeTakeFirst();
+      if (!doc) return null;
+      return {
+        id: row.id,
+        documentId: doc.id,
+        status: row.status,
+        inspectStatus: doc.inspect_status,
+        sourceStorageKey: doc.storage_key,
+        sourceGeneration: doc.generation,
+        sourceSha256: doc.source_sha256,
+      };
+    }
+    const pendingDocs = await ctx.trx
+      .selectFrom('ludy_sign.envelope_document')
+      .select(['id', 'doc_index', 'inspect_status', 'storage_key', 'generation', 'source_sha256'])
+      .where('org_id', '=', ctx.orgId)
+      .where('envelope_id', '=', row.id)
+      .where('inspect_status', '=', 'pending')
+      .orderBy('doc_index', 'asc')
+      .orderBy('id', 'asc')
+      .execute();
     return {
       id: row.id,
       status: row.status,
@@ -830,6 +972,18 @@ export const envelopeInspectJobData = defineQuery({
       sourceStorageKey: row.source_storage_key,
       sourceGeneration: row.source_generation,
       sourceSha256: row.source_sha256,
+      ...(pendingDocs.length > 0
+        ? {
+            pendingDocuments: pendingDocs.map((d) => ({
+              id: d.id,
+              docIndex: d.doc_index,
+              inspectStatus: d.inspect_status,
+              sourceStorageKey: d.storage_key,
+              sourceGeneration: d.generation,
+              sourceSha256: d.source_sha256,
+            })),
+          }
+        : {}),
     };
   },
 });
@@ -886,10 +1040,20 @@ export const envelopeSealJobData = defineQuery({
       .orderBy('id', 'asc')
       .execute();
 
+    const documents = await ctx.trx
+      .selectFrom('ludy_sign.envelope_document')
+      .select(['id', 'doc_index', 'title', 'storage_key', 'generation', 'source_sha256', 'page_count'])
+      .where('org_id', '=', ctx.orgId)
+      .where('envelope_id', '=', env.id)
+      .orderBy('doc_index', 'asc')
+      .orderBy('id', 'asc')
+      .execute();
+
     const fields = await ctx.trx
       .selectFrom('ludy_sign.field')
       .select([
         'id',
+        'document_id',
         'signer_id',
         'field_type',
         'page_number',
@@ -935,6 +1099,15 @@ export const envelopeSealJobData = defineQuery({
         sealStatus: env.seal_status,
         completedAtIso: isoOrNull(env.completed_at),
       },
+      documents: documents.map((d) => ({
+        id: d.id,
+        docIndex: d.doc_index,
+        title: d.title,
+        storageKey: d.storage_key,
+        generation: d.generation,
+        sourceSha256: d.source_sha256,
+        pageCount: d.page_count,
+      })),
       signers,
       fields,
       events,
@@ -1054,4 +1227,5 @@ export const signQueries = [
   ...signApiKeyQueries,
   ...signMcpQueries,
   ...signDocxConvertQueries,
+  ...signEnvelopeDocumentQueries,
 ];

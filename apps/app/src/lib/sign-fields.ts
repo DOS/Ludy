@@ -50,6 +50,7 @@ export interface NormalizedBox {
 
 export interface DraftFieldPlacement extends NormalizedBox {
   localId: string;
+  documentId?: string | null | undefined;
   signerId: string;
   fieldType: SignFieldType;
   pageNumber: number;
@@ -183,14 +184,22 @@ export type SendReadinessIssue =
   | 'MISSING_SIGNATURE_FIELD'
   | 'MISSING_CHOICE_OPTIONS';
 
-// Mirrors server-side sign.envelope.send preconditions (#3323, #3818) so the UI informs before submission.
+// Mirrors server-side sign.envelope.send preconditions (#3323, #3818, #4722) so the UI informs before submission.
 export function checkSendReadiness(input: {
   inspectStatus: string;
+  documents?: readonly { inspectStatus: string; pageCount: number | null }[];
   signers: readonly { id: string; signerRole: string }[];
   fields: readonly { signerId: string; fieldType: string; options?: readonly string[] | null | undefined }[];
 }): SendReadinessIssue | null {
-  if (input.inspectStatus === 'failed') return 'INSPECT_FAILED';
-  if (input.inspectStatus !== 'passed') return 'NOT_INSPECTED';
+  if (input.inspectStatus === 'failed' || input.documents?.some((d) => d.inspectStatus === 'failed')) {
+    return 'INSPECT_FAILED';
+  }
+  if (
+    input.inspectStatus !== 'passed' ||
+    input.documents?.some((d) => d.inspectStatus !== 'passed' || !d.pageCount || d.pageCount < 1)
+  ) {
+    return 'NOT_INSPECTED';
+  }
   const activeSigners = input.signers.filter((s) => s.signerRole !== 'cc');
   if (activeSigners.length === 0) return 'NO_SIGNERS';
   const sigCountBySigner = new Map<string, number>();

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Typed eSign API client aligned with #3323 core commands/queries, #3324 public ceremony routes, and #3351 Vy AI (#3325).
 import {
+  SIGN_MAX_PACKET_DOCS,
+  SIGN_MAX_PAGES,
   SIGN_WEBHOOK_EVENT_TYPES,
   type SignApiKeyRecord,
   type SignApiKeyScope,
@@ -13,11 +15,14 @@ import {
   type SignDrafterProposeInput,
   type SignDrafterProposeResult,
   type SignDrafterRenderPdfResult,
+  type SignEnvelopeDocumentSummary,
   type SignEnvelopeObligationRecordContract,
   type SignKycAttachmentSlotContract,
   type SignKycListResultContract,
   type SignObligationProposalContract,
   type SignObligationRenewalListItem,
+  type SignPacketConsistencyCheckInput,
+  type SignPacketConsistencyCheckResult,
   type SignPlaybookAiOutcome,
   type SignPlaybookFindingContract,
   type SignPlaybookGetResult,
@@ -25,6 +30,7 @@ import {
   type SignPlaybookRulesListResult,
   type SignPlaybookSeverityContract,
   type SignPlaybookVerdictContract,
+  type SignPublicDocument,
   type SignSharedKeyTerm,
   type SignSharedSummary,
   type SignVaultAskResult,
@@ -60,7 +66,8 @@ import type {
   SignSignerStatus,
 } from './sign-fields.ts';
 
-export { SIGN_WEBHOOK_EVENT_TYPES };
+export { SIGN_MAX_PACKET_DOCS, SIGN_MAX_PAGES, SIGN_WEBHOOK_EVENT_TYPES };
+export const SIGN_PACKET_MAX_BYTES = 25 * 1024 * 1024;
 export type {
   SignContractDraftVariables,
   SignDiffCompareInput,
@@ -70,6 +77,10 @@ export type {
   SignDrafterProposeInput,
   SignDrafterProposeResult,
   SignDrafterRenderPdfResult,
+  SignEnvelopeDocumentSummary,
+  SignPacketConsistencyCheckInput,
+  SignPacketConsistencyCheckResult,
+  SignPublicDocument,
   SignSharedKeyTerm,
   SignSharedSummary,
   SignWebhookDeliveryRecord,
@@ -186,6 +197,7 @@ export interface SignSignerRecord {
 
 export interface SignFieldRecord {
   id: string;
+  documentId?: string | null | undefined;
   signerId: string;
   fieldType: SignFieldType;
   pageNumber: number;
@@ -360,6 +372,7 @@ export interface PublicSignFieldAttachment {
 
 export interface PublicSignField {
   id: string;
+  documentId?: string | null | undefined;
   fieldType: SignFieldType;
   pageNumber: number;
   xNorm: number;
@@ -386,6 +399,7 @@ export type PublicSignViewState =
       expiresAt: string;
       pageCount: number;
       pageDimensions?: Array<{ pageNumber: number; widthPt: number; heightPt: number }>;
+      documents?: readonly SignPublicDocument[] | undefined;
       requireEmailOtp?: boolean;
       otpVerified?: boolean;
       allowDelegation?: boolean | undefined;
@@ -563,6 +577,18 @@ export const signApi = {
     client.sign.envelope.void({ envelopeId, ...(reason ? { reason } : {}), idempotencyKey: crypto.randomUUID() }),
   acknowledgeDecline: (envelopeId: string) =>
     client.sign.envelope.acknowledge_decline({ envelopeId, idempotencyKey: crypto.randomUUID() }),
+  addEnvelopeDocument: (input: {
+    envelopeId: string;
+    sourceFileId: string;
+    title?: string;
+    sourceDocxSha256?: string;
+  }) => client.sign.envelope.document.add({ ...input, idempotencyKey: crypto.randomUUID() }),
+  removeEnvelopeDocument: (input: { envelopeId: string; documentId: string }) =>
+    client.sign.envelope.document.remove({ ...input, idempotencyKey: crypto.randomUUID() }),
+  reorderEnvelopeDocuments: (input: { envelopeId: string; documentIds: string[] }) =>
+    client.sign.envelope.document.reorder({ ...input, idempotencyKey: crypto.randomUUID() }),
+  checkPacketConsistency: (input: SignPacketConsistencyCheckInput): Promise<SignPacketConsistencyCheckResult> =>
+    client.sign.packet.consistency_check(input),
   addSigner: (input: {
     envelopeId: string;
     routingOrder?: number;
@@ -594,6 +620,7 @@ export const signApi = {
   setFields: (
     envelopeId: string,
     fields: Array<{
+      documentId?: string | null;
       signerId: string;
       fieldType: SignFieldType;
       pageNumber: number;
@@ -1232,6 +1259,7 @@ function normalizePublicField(raw: Record<string, unknown>): PublicSignField {
       : null;
   return {
     id: String(raw.id ?? ''),
+    documentId: typeof raw.documentId === 'string' ? raw.documentId : null,
     fieldType: (raw.fieldType as SignFieldType) ?? 'signature',
     pageNumber: Number(raw.pageNumber ?? 1),
     xNorm: Number(raw.xNorm ?? 0),
@@ -1279,6 +1307,27 @@ export const publicSignApi = {
     if (raw.state === 'ready') {
       const legacySigner = (raw.signer && typeof raw.signer === 'object' ? raw.signer : null) as Record<string, unknown> | null;
       const rawFields = Array.isArray(raw.fields) ? (raw.fields as Array<Record<string, unknown>>) : [];
+      const rawDocs = Array.isArray(raw.documents) ? (raw.documents as Array<Record<string, unknown>>) : null;
+      const documents = rawDocs
+        ? rawDocs.flatMap((d): SignPublicDocument[] => {
+            const docIndex = Number(d.docIndex ?? 0);
+            const rawPageCount = Number(d.pageCount ?? 1);
+            if (!Number.isInteger(docIndex) || docIndex < 1) return [];
+            const pageDimensions = Array.isArray(d.pageDimensions)
+              ? (d.pageDimensions as Array<{ pageNumber: number; widthPt: number; heightPt: number }>)
+              : [];
+            return [
+              {
+                id: typeof d.id === 'string' ? d.id : null,
+                docIndex,
+                title: String(d.title ?? ''),
+                pageCount: Number.isInteger(rawPageCount) && rawPageCount >= 1 ? rawPageCount : 1,
+                pageDimensions,
+                sourceSha256: typeof d.sourceSha256 === 'string' ? d.sourceSha256 : '',
+              },
+            ];
+          })
+        : undefined;
       const sharedSummary = normalizePublicSharedSummary(raw.sharedSummary);
       return {
         state: 'ready',
@@ -1291,6 +1340,7 @@ export const publicSignApi = {
         expiresAt: typeof raw.expiresAt === 'string' ? raw.expiresAt : '',
         pageCount: Number(raw.pageCount ?? 1),
         ...(Array.isArray(raw.pageDimensions) ? { pageDimensions: raw.pageDimensions as Array<{ pageNumber: number; widthPt: number; heightPt: number }> } : {}),
+        ...(documents && documents.length > 0 ? { documents } : {}),
         ...(typeof raw.requireEmailOtp === 'boolean' ? { requireEmailOtp: raw.requireEmailOtp } : {}),
         ...(typeof raw.otpVerified === 'boolean' ? { otpVerified: raw.otpVerified } : {}),
         ...(typeof raw.allowDelegation === 'boolean' ? { allowDelegation: raw.allowDelegation } : {}),
@@ -1306,8 +1356,11 @@ export const publicSignApi = {
     return raw as unknown as PublicSignViewState;
   },
 
-  pdf: async (token: string): Promise<Uint8Array> => {
-    const response = await postPublicResponse('/api/sign/pdf', { token });
+  pdf: async (token: string, documentId?: string | null): Promise<Uint8Array> => {
+    const response = await postPublicResponse('/api/sign/pdf', {
+      token,
+      ...(documentId ? { documentId } : {}),
+    });
     if (!response.ok) {
       const data = (await response.json().catch(() => ({}))) as { code?: string; message?: string };
       throw new PublicSignError(response.status, data.code ?? 'SIGN_PDF_UNAVAILABLE', data.message);

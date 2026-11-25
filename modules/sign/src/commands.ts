@@ -31,6 +31,7 @@ import {
 import { signApiKeyCommands } from './api-keys.ts';
 import { signDirectPublicCommands } from './direct-public.ts';
 import { signDocxConvertCommands, verifySourceDocxProvenance } from './docx-convert.ts';
+import { signEnvelopeDocumentCommands } from './envelope-documents.ts';
 import { appendSigningEvent } from './events.ts';
 import { assertCanAccessEnvelopeRow, assertCanCreateEnvelopeForSource } from './hr-visibility.ts';
 import { signInPersonCommands } from './in-person.ts';
@@ -59,6 +60,7 @@ import {
   SIGNING_TOKEN_WRITE,
   SIGN_MAX_LINK_HOURS,
   WEBHOOK_DELIVERY_ENQUEUE_WRITE,
+  assertSignSourceFileConfidentiality,
   assertValidEnvelopeExpiry,
   requireSignSourceFile,
   sanitizeSharedSummaryForWrite,
@@ -211,48 +213,14 @@ export const envelopeCreate = defineCommand({
     await assertCanUseProjectAcceptanceSource(ctx, input.sourceKind, sourceId);
 
     const file = await requireSignSourceFile(ctx, input.sourceFileId);
-    if (input.sourceKind === 'hr_contract' || input.sourceKind === 'meeting_minutes') {
-      const { rows: attachCheck } = await sql<{ allowed: boolean }>`
-        SELECT ludy_sign.can_attach_confidential_source_file(
-          ${ctx.orgId}::uuid,
-          ${file.id}::uuid,
-          ${input.sourceKind},
-          ${sourceId}::uuid,
-          ${ctx.now}::timestamptz,
-          false
-        ) AS allowed
-      `.execute(ctx.trx);
-      if (!attachCheck[0]?.allowed) {
-        throw new DomainError(
-          'SIGN_FORBIDDEN',
-          403,
-          'Existing template or non-matching envelope source files cannot be reused on confidential envelopes',
-        );
-      }
-    } else {
-      const { rows: confidentialRefs } = await sql<{ restricted: boolean }>`
-        SELECT (
-          EXISTS (
-            SELECT 1 FROM ludy_sign.envelope e
-            WHERE e.org_id = ${ctx.orgId}::uuid
-              AND e.source_file_id = ${file.id}::uuid
-              AND e.source_kind IN ('hr_contract', 'meeting_minutes')
-          )
-          AND NOT EXISTS (
-            SELECT 1 FROM ludy_sign.template t
-            WHERE t.org_id = ${ctx.orgId}::uuid
-              AND t.source_file_id = ${file.id}::uuid
-          )
-        ) AS restricted
-      `.execute(ctx.trx);
-      if (confidentialRefs[0]?.restricted) {
-        throw new DomainError(
-          'SIGN_FORBIDDEN',
-          403,
-          'Confidential HR contract or meeting minutes source files cannot be reused on non-confidential envelopes',
-        );
-      }
-    }
+    await assertSignSourceFileConfidentiality(ctx, {
+      fileId: file.id,
+      storageKey: file.storage_key,
+      sourceKind: input.sourceKind,
+      sourceId,
+      envelopeCreatedAt: ctx.now,
+      allowTemplate: false,
+    });
 
     if (input.sourceDocxSha256) {
       await verifySourceDocxProvenance(ctx, input.sourceDocxSha256, file.sha256);
@@ -327,6 +295,7 @@ const zPageDimension = z.strictObject({
 const zEnvelopeInspectComplete = z.discriminatedUnion('outcome', [
   z.strictObject({
     envelopeId: zId,
+    documentId: zId.optional(),
     outcome: z.literal('passed'),
     pageCount: z.number().int().min(1).max(EXTRACT_LIMITS.maxPdfSignPages),
     pageDimensions: z.array(zPageDimension).min(1).max(EXTRACT_LIMITS.maxPdfSignPages),
@@ -334,6 +303,7 @@ const zEnvelopeInspectComplete = z.discriminatedUnion('outcome', [
   }),
   z.strictObject({
     envelopeId: zId,
+    documentId: zId.optional(),
     outcome: z.literal('failed'),
     error: z.string().min(1).max(500),
   }),
@@ -356,11 +326,158 @@ export const envelopeInspectComplete = defineCommand({
       'version',
       'updated_at',
     ]),
+    tableWrite(signManifest.tables, 'ludy_sign', 'envelope_document', [
+      'inspect_status',
+      'inspect_error',
+      'page_count',
+      'page_dimensions_json',
+      'detected_tags_json',
+      'updated_at',
+    ]),
     SIGNING_EVENT_WRITE,
   ],
   handler: async (ctx, input) => {
     assertSystem(ctx);
     const row = await lockEnvelope(ctx, input.envelopeId);
+    let resolvedDocumentId = input.documentId;
+    if (!resolvedDocumentId) {
+      const materializedDoc = await ctx.trx
+        .selectFrom('ludy_sign.envelope_document')
+        .select(['id'])
+        .where('org_id', '=', ctx.orgId)
+        .where('envelope_id', '=', row.id)
+        .where('file_id', '=', row.source_file_id)
+        .orderBy('doc_index', 'asc')
+        .orderBy('id', 'asc')
+        .forUpdate()
+        .executeTakeFirst();
+      if (materializedDoc) {
+        resolvedDocumentId = materializedDoc.id;
+      }
+    }
+    if (resolvedDocumentId) {
+      const doc = await ctx.trx
+        .selectFrom('ludy_sign.envelope_document')
+        .select(['id', 'doc_index', 'source_sha256', 'inspect_status', 'page_count'])
+        .where('org_id', '=', ctx.orgId)
+        .where('envelope_id', '=', row.id)
+        .where('id', '=', resolvedDocumentId)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!doc) {
+        throw new DomainError('SIGN_DOCUMENT_NOT_FOUND', 404, 'Packet document not found');
+      }
+      if (row.status !== 'draft' || doc.inspect_status !== 'pending') {
+        ctx.audit({
+          envelopeId: row.id,
+          documentId: doc.id,
+          status: row.status,
+          inspectStatus: doc.inspect_status,
+          alreadyHandled: true,
+          idempotent: doc.inspect_status !== 'pending',
+        });
+        return { envelopeId: row.id, inspectStatus: row.inspect_status, pageCount: row.page_count };
+      }
+
+      if (input.outcome === 'passed') {
+        if (input.pageDimensions.length !== input.pageCount) {
+          throw new DomainError('SIGN_INVALID_INSPECT', 422, 'pageDimensions length must equal pageCount');
+        }
+        for (const tag of input.detectedTags) {
+          if (tag.pageNumber > input.pageCount) {
+            throw new DomainError(
+              'SIGN_INVALID_INSPECT',
+              422,
+              `Detected tag pageNumber ${tag.pageNumber} exceeds pageCount ${input.pageCount}`,
+            );
+          }
+        }
+        await ctx.trx
+          .updateTable('ludy_sign.envelope_document')
+          .set({
+            inspect_status: 'passed',
+            inspect_error: null,
+            page_count: input.pageCount,
+            page_dimensions_json: JSON.stringify(input.pageDimensions),
+            detected_tags_json: JSON.stringify(input.detectedTags),
+            updated_at: ctx.now,
+          })
+          .where('org_id', '=', ctx.orgId)
+          .where('id', '=', doc.id)
+          .execute();
+        const synced = await ctx.trx
+          .selectFrom('ludy_sign.envelope')
+          .select(['inspect_status', 'page_count', 'version'])
+          .where('org_id', '=', ctx.orgId)
+          .where('id', '=', row.id)
+          .executeTakeFirstOrThrow();
+        await ctx.trx
+          .updateTable('ludy_sign.envelope')
+          .set({ version: synced.version + 1, updated_at: ctx.now })
+          .where('org_id', '=', ctx.orgId)
+          .where('id', '=', row.id)
+          .execute();
+        await appendSigningEvent(ctx.trx, {
+          orgId: ctx.orgId,
+          envelopeId: row.id,
+          eventType: 'document_inspected',
+          actorType: 'system',
+          actorLabel: actorLabelOf(ctx),
+          documentSha256: doc.source_sha256,
+          payloadJson: {
+            documentId: doc.id,
+            docIndex: doc.doc_index,
+            pageCount: input.pageCount,
+            detectedTagCount: input.detectedTags.length,
+          },
+          occurredAt: ctx.now,
+        });
+        ctx.audit({
+          envelopeId: row.id,
+          documentId: doc.id,
+          inspectStatus: synced.inspect_status,
+          pageCount: input.pageCount,
+          detectedTagCount: input.detectedTags.length,
+        });
+        return { envelopeId: row.id, inspectStatus: synced.inspect_status, pageCount: synced.page_count };
+      }
+
+      await ctx.trx
+        .updateTable('ludy_sign.envelope_document')
+        .set({
+          inspect_status: 'failed',
+          inspect_error: input.error,
+          detected_tags_json: null,
+          updated_at: ctx.now,
+        })
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', doc.id)
+        .execute();
+      const synced = await ctx.trx
+        .selectFrom('ludy_sign.envelope')
+        .select(['inspect_status', 'page_count', 'version'])
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', row.id)
+        .executeTakeFirstOrThrow();
+      await ctx.trx
+        .updateTable('ludy_sign.envelope')
+        .set({ version: synced.version + 1, updated_at: ctx.now })
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', row.id)
+        .execute();
+      await appendSigningEvent(ctx.trx, {
+        orgId: ctx.orgId,
+        envelopeId: row.id,
+        eventType: 'document_inspect_failed',
+        actorType: 'system',
+        actorLabel: actorLabelOf(ctx),
+        documentSha256: doc.source_sha256,
+        payloadJson: { documentId: doc.id, docIndex: doc.doc_index, error: input.error },
+        occurredAt: ctx.now,
+      });
+      ctx.audit({ envelopeId: row.id, documentId: doc.id, inspectStatus: 'failed' });
+      return { envelopeId: row.id, inspectStatus: synced.inspect_status, pageCount: synced.page_count };
+    }
     if (row.status !== 'draft' || row.inspect_status !== 'pending') {
       ctx.audit({
         envelopeId: row.id,
@@ -816,6 +933,7 @@ export const signerReorder = defineCommand({
 
 const zFieldItem = z
   .strictObject({
+    documentId: zId.nullable().optional(),
     signerId: zId,
     fieldType: z.enum(SIGN_FIELD_TYPES),
     pageNumber: z.number().int().min(1).max(EXTRACT_LIMITS.maxPdfSignPages),
@@ -878,6 +996,7 @@ export const fieldSet = defineCommand({
     tableWrite(signManifest.tables, 'ludy_sign', 'field', [
       'org_id',
       'envelope_id',
+      'document_id',
       'signer_id',
       'field_type',
       'page_number',
@@ -905,6 +1024,18 @@ export const fieldSet = defineCommand({
       throw new DomainError('SIGN_INSPECT_FAILED', 409, 'Cannot place fields on a document whose PDF inspection failed');
     }
 
+    const packetDocs = await ctx.trx
+      .selectFrom('ludy_sign.envelope_document')
+      .select(['id', 'doc_index', 'inspect_status', 'page_count'])
+      .where('org_id', '=', ctx.orgId)
+      .where('envelope_id', '=', row.id)
+      .orderBy('doc_index', 'asc')
+      .orderBy('id', 'asc')
+      .forShare()
+      .execute();
+    const docById = new Map(packetDocs.map((d) => [d.id, d]));
+    const firstDoc = packetDocs[0] ?? null;
+
     const signers = await ctx.trx
       .selectFrom('ludy_sign.signer')
       .select(['id', 'signer_role'])
@@ -922,12 +1053,31 @@ export const fieldSet = defineCommand({
       if (role === 'cc') {
         throw new DomainError('SIGN_INVALID_FIELD', 422, 'Fields cannot be assigned to CC recipients');
       }
-      if (row.page_count !== null && f.pageNumber > row.page_count) {
-        throw new DomainError(
-          'SIGN_FIELD_OUT_OF_BOUNDS',
-          422,
-          `Field pageNumber ${f.pageNumber} exceeds document page count ${row.page_count}`,
-        );
+      const targetDocId = f.documentId ?? null;
+      if (targetDocId !== null) {
+        const targetDoc = docById.get(targetDocId);
+        if (!targetDoc) {
+          throw new DomainError('SIGN_DOCUMENT_NOT_FOUND', 404, `Document ${targetDocId} does not belong to envelope ${row.id}`);
+        }
+        if (targetDoc.inspect_status === 'failed') {
+          throw new DomainError('SIGN_INSPECT_FAILED', 409, 'Cannot place fields on a packet document whose inspection failed');
+        }
+        if (targetDoc.page_count !== null && f.pageNumber > targetDoc.page_count) {
+          throw new DomainError(
+            'SIGN_FIELD_OUT_OF_BOUNDS',
+            422,
+            `Field pageNumber ${f.pageNumber} exceeds document page count ${targetDoc.page_count}`,
+          );
+        }
+      } else {
+        const effectivePages = firstDoc ? firstDoc.page_count : row.page_count;
+        if (effectivePages !== null && f.pageNumber > effectivePages) {
+          throw new DomainError(
+            'SIGN_FIELD_OUT_OF_BOUNDS',
+            422,
+            `Field pageNumber ${f.pageNumber} exceeds document page count ${effectivePages}`,
+          );
+        }
       }
     }
 
@@ -956,6 +1106,7 @@ export const fieldSet = defineCommand({
           input.fields.map((f) => ({
             org_id: ctx.orgId,
             envelope_id: row.id,
+            document_id: f.documentId ?? firstDoc?.id ?? null,
             signer_id: f.signerId,
             field_type: f.fieldType,
             page_number: f.pageNumber,
@@ -1051,7 +1202,7 @@ export const envelopeSend = defineCommand({
 
     const fields = await ctx.trx
       .selectFrom('ludy_sign.field')
-      .select(['id', 'signer_id', 'field_type', 'page_number'])
+      .select(['id', 'document_id', 'signer_id', 'field_type', 'page_number'])
       .where('org_id', '=', ctx.orgId)
       .where('envelope_id', '=', row.id)
       .forShare()
@@ -2069,4 +2220,5 @@ export const signCommands = [
   ...signPlaybookCommands,
   ...signApiKeyCommands,
   ...signDocxConvertCommands,
+  ...signEnvelopeDocumentCommands,
 ];

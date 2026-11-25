@@ -1875,16 +1875,25 @@ export const playbookSource = defineQuery({
         revision: computePlaybookRuleRevision(r),
       }));
 
+    const doc1 = await ctx.trx
+      .selectFrom('ludy_sign.envelope_document')
+      .select(['source_sha256', 'file_id', 'storage_key', 'generation', 'inspect_status', 'page_count'])
+      .where('org_id', '=', ctx.orgId)
+      .where('envelope_id', '=', env.id)
+      .orderBy('doc_index', 'asc')
+      .orderBy('id', 'asc')
+      .executeTakeFirst();
+
     return {
       envelopeId: env.id,
       status: env.status,
-      inspectStatus: env.inspect_status,
-      sourceSha256: env.source_sha256,
-      sourceFileId: env.source_file_id,
-      sourceStorageKey: env.source_storage_key,
-      sourceGeneration: env.source_generation,
+      inspectStatus: doc1 ? doc1.inspect_status : env.inspect_status,
+      sourceSha256: doc1 ? doc1.source_sha256 : env.source_sha256,
+      sourceFileId: doc1 ? doc1.file_id : env.source_file_id,
+      sourceStorageKey: doc1 ? doc1.storage_key : env.source_storage_key,
+      sourceGeneration: doc1 ? doc1.generation : env.source_generation,
       title: cleanSingleLine(env.title, 300),
-      pageCount: env.page_count,
+      pageCount: doc1 ? doc1.page_count : env.page_count,
       aiStopped,
       activeRules,
     };

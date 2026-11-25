@@ -460,6 +460,7 @@ const UNIONS = unions({
   'ludy_sign.envelope.routing_mode': SIGN_ROUTING_MODES,
   'ludy_sign.envelope.source_kind': SIGN_SOURCE_KINDS,
   'ludy_sign.envelope.inspect_status': SIGN_INSPECT_STATUSES,
+  'ludy_sign.envelope_document.inspect_status': SIGN_INSPECT_STATUSES,
   'ludy_sign.envelope.seal_status': SIGN_SEAL_STATUSES,
   'ludy_sign.signer.signer_role': SIGN_SIGNER_ROLES,
   'ludy_sign.signer.delivery_mode': SIGN_DELIVERY_MODES,

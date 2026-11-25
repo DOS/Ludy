@@ -1516,6 +1516,7 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
     cover('sign.vault_qa');
     cover('sign.playbook_check');
     cover('sign.kyc_check');
+    cover('sign.packet_consistency');
 
     const page = { page: 1, widthPt: 595, heightPt: 842, text: 'Ben A va Ben B ky hop dong dich vu tri gia 10.000.000 VND ngay 2026-10-01.' };
     const pageV2 = { page: 1, widthPt: 595, heightPt: 842, text: 'Ben A va Ben B ky hop dong dich vu tri gia 12.000.000 VND.' };
@@ -1716,6 +1717,41 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
       });
       expect(kycRes.kind, `kycCheck.kind ${c.id}`).toBe('none');
       expect(kycRes.proposal, `kycCheck.proposal ${c.id}`).toBeNull();
+
+      const packetReader = new SignAiReader(STUB_CONFIG, {
+        packetConsistency: async () => ({
+          output: {
+            summaryText: c.poisonedOutput,
+            findings: [
+              {
+                kind: 'mismatched_total',
+                severity: 'warn',
+                title: c.poisonedOutput,
+                explanation: c.poisonedOutput,
+                docIndex: 1,
+                documentTitle: 'Hop dong chinh.pdf',
+                pageNumber: 1,
+                quoteExcerpt: page.text,
+              },
+            ],
+          },
+          usage: zeroUsage,
+        }),
+      });
+      const packetRes = await packetReader.checkPacketConsistency({
+        envelopeTitle: 'Bo ho so hop dong',
+        documents: [
+          {
+            documentId: '11111111-1111-4111-8111-111111111111',
+            docIndex: 1,
+            title: 'Hop dong chinh.pdf',
+            pageCount: 1,
+            pages: [poisonedPage],
+          },
+        ],
+      });
+      expect(packetRes.findings, `packetConsistency.findings ${c.id}`).toEqual([]);
+      expect(packetRes.summaryText, `packetConsistency.summaryText ${c.id}`).toBeNull();
     }
   });
 

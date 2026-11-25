@@ -19,6 +19,8 @@ import { EnvelopeKycCard } from '../components/sign/envelope-kyc-card.tsx';
 import { EnvelopeObligationsCard } from '../components/sign/envelope-obligations-card.tsx';
 import { EnvelopePlaybookCard } from '../components/sign/envelope-playbook-card.tsx';
 import { PdfCanvasViewer } from '../components/sign/pdf-canvas-viewer.tsx';
+import { SignPacketManager } from '../components/sign/sign-packet-manager.tsx';
+import { SignPacketTabs } from '../components/sign/sign-packet-tabs.tsx';
 import { SenderSharedSummaryEditor } from '../components/sign/shared-summary-card.tsx';
 import { SignerPanel, type AddSignerFormInput } from '../components/sign/signer-panel.tsx';
 import { SignQrModal } from '../components/sign/sign-qr-modal.tsx';
@@ -36,6 +38,7 @@ import {
   normalizeAiAnalysis,
   signApi,
   type SignAiAnalysis,
+  type SignEnvelopeDocumentSummary,
   type SignFieldRecord,
   type SignProposedField,
   type SignSharedSummary,
@@ -68,6 +71,7 @@ import { toast } from '../lib/toast.ts';
 function toDraftPlacements(fields: readonly SignFieldRecord[]): DraftFieldPlacement[] {
   return fields.map((f) => ({
     localId: f.id,
+    documentId: f.documentId ?? null,
     signerId: f.signerId,
     fieldType: f.fieldType,
     pageNumber: f.pageNumber,
@@ -265,6 +269,7 @@ export function SignEnvelopeDetailPage() {
 
   const [pageNumber, setPageNumber] = useState(1);
   const [scale, setScale] = useState(1.0);
+  const [activeDocKey, setActiveDocKey] = useState('doc-1');
   const [detectedPages, setDetectedPages] = useState<number | null>(null);
   const [activeSignerId, setActiveSignerId] = useState<string | null>(null);
   const [selectedFieldId, setSelectedFieldId] = useState<string | null>(null);
@@ -354,7 +359,8 @@ export function SignEnvelopeDetailPage() {
     refetchInterval: (query) => {
       const env = query.state.data?.envelope;
       if (!env) return false;
-      if (env.inspectStatus === 'pending') return 3000;
+      const anyDocPending = Boolean(query.state.data?.documents?.some((d) => d.inspectStatus === 'pending'));
+      if (env.inspectStatus === 'pending' || anyDocPending) return 3000;
       if (env.status === 'completed' && (env.sealStatus === null || env.sealStatus === 'pending')) return 3000;
       if (env.status === 'sent' || env.status === 'in_progress') return 8000;
       return false;
@@ -362,6 +368,29 @@ export function SignEnvelopeDetailPage() {
   });
 
   const envelope = detailQuery.data?.envelope ?? null;
+  const documents = useMemo<readonly SignEnvelopeDocumentSummary[]>(() => {
+    const rawDocs = detailQuery.data?.documents;
+    if (rawDocs && rawDocs.length > 0) return rawDocs;
+    if (!envelope) return [];
+    return [
+      {
+        id: null,
+        docIndex: 1,
+        title: envelope.title,
+        fileId: envelope.sourceFileId,
+        sourceSha256: envelope.sourceSha256,
+        inspectStatus: envelope.inspectStatus,
+        inspectError: envelope.inspectError,
+        pageCount: envelope.pageCount,
+        pageDimensions: envelope.pageDimensions,
+        detectedTags: envelope.detectedTags ?? [],
+        sizeBytes: null,
+        createdAt: envelope.createdAt,
+        updatedAt: envelope.updatedAt,
+      },
+    ];
+  }, [detailQuery.data?.documents, envelope]);
+  const doc1Id = documents[0]?.id ?? null;
   const signers = useMemo(() => detailQuery.data?.signers ?? [], [detailQuery.data?.signers]);
   const assignableSigners = useMemo(() => signers.filter((s) => s.signerRole !== 'cc'), [signers]);
   const isDraft = envelope?.status === 'draft';
@@ -409,6 +438,7 @@ export function SignEnvelopeDetailPage() {
     setSelectedFieldId(null);
     setDismissedProposalIds([]);
     setAiAnalysisOverride(null);
+    setActiveDocKey('doc-1');
     setDetectedPages(null);
     setPageNumber(1);
     setMintedLinks([]);
@@ -452,7 +482,14 @@ export function SignEnvelopeDetailPage() {
     }
   }, [assignableSigners, activeSignerId]);
 
-  const pdfFileId = envelope?.sealedFileId ?? envelope?.sourceFileId ?? null;
+  const activeDoc = useMemo(
+    () => documents.find((d) => (d.id ?? 'doc-1') === activeDocKey) ?? documents[0] ?? null,
+    [documents, activeDocKey],
+  );
+  const activeDocId = activeDoc?.id ?? null;
+  const resolvedActiveDocKey = activeDoc ? (activeDoc.id ?? 'doc-1') : 'doc-1';
+  const isViewingSealedUnified = Boolean(envelope?.sealedFileId);
+  const pdfFileId = envelope?.sealedFileId ?? activeDoc?.fileId ?? envelope?.sourceFileId ?? null;
   const pdfQuery = useQuery({
     queryKey: ['sign', 'pdf', pdfFileId],
     queryFn: () => downloadSignPdfBytes(pdfFileId!),
@@ -538,6 +575,7 @@ export function SignEnvelopeDetailPage() {
       const result = await signApi.setFields(
         id,
         fieldsToSave.map((fItem) => ({
+          ...(fItem.documentId ? { documentId: fItem.documentId } : {}),
           signerId: fItem.signerId,
           fieldType: fItem.fieldType,
           pageNumber: fItem.pageNumber,
@@ -644,7 +682,13 @@ export function SignEnvelopeDetailPage() {
 
   const analyzeMutation = useMutation({
     mutationFn: async () => {
-      const rawPdf = pdfQuery.data ?? (pdfFileId ? await downloadSignPdfBytes(pdfFileId) : null);
+      const doc1FileId = documents[0]?.fileId ?? envelope?.sourceFileId ?? null;
+      const rawPdf =
+        !isViewingSealedUnified && activeDoc?.docIndex === 1 && pdfQuery.data
+          ? pdfQuery.data
+          : doc1FileId
+            ? await downloadSignPdfBytes(doc1FileId)
+            : null;
       let pages: Array<{ page: number; text: string }> | undefined;
       if (rawPdf) {
         try {
@@ -830,27 +874,72 @@ export function SignEnvelopeDetailPage() {
     [effectiveAi, signers, dismissedProposalIds],
   );
 
-  const effectivePageCount = Math.max(1, envelope?.pageCount ?? detectedPages ?? 1);
+  const effectivePageCount = Math.max(
+    1,
+    (isViewingSealedUnified
+      ? envelope?.pageCount
+      : activeDoc?.pageCount ?? (activeDoc?.docIndex === 1 ? envelope?.pageCount : null)) ??
+      detectedPages ??
+      1,
+  );
+  const fieldsForActiveDoc = useMemo(() => {
+    if (isViewingSealedUnified) return [];
+    return draftFields.filter((f) => (f.documentId ?? doc1Id ?? null) === activeDocId);
+  }, [draftFields, doc1Id, activeDocId, isViewingSealedUnified]);
+  const sealedOverlayFields = useMemo(() => {
+    if (!isViewingSealedUnified) return [];
+    let offset = 0;
+    const offsetByKey = new Map<string, number>();
+    for (const doc of documents) {
+      offsetByKey.set(doc.id ?? 'doc-1', offset);
+      offset += Math.max(0, doc.pageCount ?? 0);
+    }
+    return draftFields.map((f) => ({
+      ...f,
+      pageNumber: (offsetByKey.get(f.documentId ?? doc1Id ?? 'doc-1') ?? 0) + f.pageNumber,
+    }));
+  }, [isViewingSealedUnified, documents, draftFields, doc1Id]);
+  const viewerFields = isViewingSealedUnified ? sealedOverlayFields : fieldsForActiveDoc;
   const selectedField = draftFields.find((item) => item.localId === selectedFieldId) ?? null;
-  const detectedTags = envelope?.detectedTags ?? [];
+  const detectedTags = useMemo(
+    () =>
+      isViewingSealedUnified
+        ? []
+        : activeDoc?.detectedTags ?? (activeDoc?.docIndex === 1 ? envelope?.detectedTags ?? [] : []),
+    [isViewingSealedUnified, activeDoc, envelope?.detectedTags],
+  );
   const tagPlan = useMemo(
     () =>
       planDetectedTagsForSigners({
         detectedTags,
         signers,
-        existingFields: draftFields,
+        existingFields: fieldsForActiveDoc,
         pageCount: effectivePageCount,
       }),
-    [detectedTags, signers, draftFields, effectivePageCount],
+    [detectedTags, signers, fieldsForActiveDoc, effectivePageCount],
   );
 
   const readinessIssue = envelope
     ? checkSendReadiness({
         inspectStatus: envelope.inspectStatus,
+        documents,
         signers,
         fields: draftFields,
       })
     : 'NOT_INSPECTED';
+
+  const handleSelectDocument = (documentId: string | null, _docIndex: number, targetPage = 1) => {
+    setActiveDocKey(documentId ?? 'doc-1');
+    setDetectedPages(null);
+    setSelectedFieldId(null);
+    setPageNumber(Math.max(1, targetPage));
+  };
+
+  useEffect(() => {
+    if (pageNumber > effectivePageCount) {
+      setPageNumber(effectivePageCount);
+    }
+  }, [pageNumber, effectivePageCount]);
 
   const updateDraftFields = (updater: (prev: DraftFieldPlacement[]) => DraftFieldPlacement[]) => {
     fieldsEditRevRef.current += 1;
@@ -869,7 +958,7 @@ export function SignEnvelopeDetailPage() {
   const handleAddField = (fieldType: SignFieldType, coords?: { pageNumber: number; xCenterNorm: number; yCenterNorm: number }) => {
     if (!canEditDraft || !activeSignerId) return;
     const targetPage = coords?.pageNumber ?? pageNumber;
-    const existingOnPageCount = draftFields.filter((item) => item.pageNumber === targetPage).length;
+    const existingOnPageCount = fieldsForActiveDoc.filter((item) => item.pageNumber === targetPage).length;
     const box = createPlacedFieldBox({
       fieldType,
       ...(coords ? { xCenterNorm: coords.xCenterNorm, yCenterNorm: coords.yCenterNorm } : {}),
@@ -880,6 +969,7 @@ export function SignEnvelopeDetailPage() {
       ...prev,
       {
         localId,
+        documentId: activeDocId,
         signerId: activeSignerId,
         fieldType,
         pageNumber: targetPage,
@@ -898,7 +988,7 @@ export function SignEnvelopeDetailPage() {
     const plan = planInitialAllPrecedingPages({
       signerId: activeSignerId,
       pageCount: effectivePageCount,
-      existingFields: draftFields,
+      existingFields: fieldsForActiveDoc,
       position: initialAllPosition,
     });
     if (plan.added.length === 0) {
@@ -907,6 +997,7 @@ export function SignEnvelopeDetailPage() {
     }
     const placed: DraftFieldPlacement[] = plan.added.map((item) => ({
       localId: `draft-${globalThis.crypto.randomUUID()}`,
+      documentId: activeDocId,
       signerId: item.signerId,
       fieldType: 'initials',
       pageNumber: item.pageNumber,
@@ -942,13 +1033,15 @@ export function SignEnvelopeDetailPage() {
     const box = clampFieldBox(adjustedBox ?? proposal);
     const localId = `prop-${globalThis.crypto.randomUUID()}`;
     const cleanedOpts = isChoiceFieldType(proposal.fieldType) ? normalizeChoiceOptions(proposal.options) : [];
+    const doc1PageCount = Math.max(1, documents[0]?.pageCount ?? envelope?.pageCount ?? effectivePageCount);
     updateDraftFields((prev) => [
       ...prev,
       {
         localId,
+        documentId: doc1Id,
         signerId,
         fieldType: proposal.fieldType,
-        pageNumber: Math.min(effectivePageCount, Math.max(1, proposal.pageNumber)),
+        pageNumber: Math.min(doc1PageCount, Math.max(1, proposal.pageNumber)),
         ...box,
         label: proposal.label,
         required: proposal.required,
@@ -966,6 +1059,7 @@ export function SignEnvelopeDetailPage() {
     if (!canEditDraft || pendingProposals.length === 0) return;
     const nextFields: DraftFieldPlacement[] = [];
     const appliedIds: string[] = [];
+    const doc1PageCount = Math.max(1, documents[0]?.pageCount ?? envelope?.pageCount ?? effectivePageCount);
     for (const proposal of pendingProposals) {
       const signerId = resolveProposalSignerId(proposal.signerId);
       if (!signerId) continue;
@@ -973,9 +1067,10 @@ export function SignEnvelopeDetailPage() {
       const cleanedOpts = isChoiceFieldType(proposal.fieldType) ? normalizeChoiceOptions(proposal.options) : [];
       nextFields.push({
         localId: `prop-${globalThis.crypto.randomUUID()}`,
+        documentId: doc1Id,
         signerId,
         fieldType: proposal.fieldType,
-        pageNumber: Math.min(effectivePageCount, Math.max(1, proposal.pageNumber)),
+        pageNumber: Math.min(doc1PageCount, Math.max(1, proposal.pageNumber)),
         ...box,
         label: proposal.label,
         required: proposal.required,
@@ -995,6 +1090,7 @@ export function SignEnvelopeDetailPage() {
     if (!canEditDraft || tagPlan.applicable.length === 0) return;
     const placed: DraftFieldPlacement[] = tagPlan.applicable.map((item) => ({
       localId: `tag-${globalThis.crypto.randomUUID()}`,
+      documentId: activeDocId,
       signerId: item.signerId,
       fieldType: item.fieldType,
       pageNumber: item.pageNumber,
@@ -1207,7 +1303,9 @@ export function SignEnvelopeDetailPage() {
         analyzing={analyzeMutation.isPending}
         onAnalyze={() => analyzeMutation.mutate()}
         onJumpToPage={(targetPage) => {
-          setPageNumber(Math.min(effectivePageCount, Math.max(1, targetPage)));
+          const doc1Pages = Math.max(1, documents[0]?.pageCount ?? envelope.pageCount ?? effectivePageCount);
+          setActiveDocKey(doc1Id ?? 'doc-1');
+          setPageNumber(Math.min(doc1Pages, Math.max(1, targetPage)));
           setVyOpen(false);
         }}
         onApplyAllProposals={handleApplyAllProposals}
@@ -1251,6 +1349,22 @@ export function SignEnvelopeDetailPage() {
 
       <div className="grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)_300px]">
         <div className="space-y-4">
+          <SignPacketManager
+            envelopeId={envelope.id}
+            canEditDraft={canEditDraft}
+            canRunConsistency={canRemind}
+            documents={documents}
+            activeDocumentKey={resolvedActiveDocKey}
+            fields={draftFields}
+            onSelectDocument={handleSelectDocument}
+            onBeforeMutatePacket={async () => {
+              if (fieldsDirty) {
+                await saveFieldsMutation.mutateAsync(draftFields);
+              }
+            }}
+            onPacketChanged={invalidateAll}
+          />
+
           <SignerPanel
             envelopeStatus={envelope.status}
             canEditDraft={canChangeDraft}
@@ -1519,6 +1633,25 @@ export function SignEnvelopeDetailPage() {
             </Card>
           ) : null}
 
+          {!isViewingSealedUnified && documents.length > 1 ? (
+            <SignPacketTabs
+              items={documents.map((doc) => ({
+                key: doc.id ?? 'doc-1',
+                documentId: doc.id,
+                docIndex: doc.docIndex,
+                title: doc.title,
+                pageCount: doc.pageCount,
+                inspectStatus: doc.inspectStatus,
+                badgeCount: draftFields.filter((f) => (f.documentId ?? doc1Id ?? null) === (doc.id ?? null)).length,
+              }))}
+              activeKey={resolvedActiveDocKey}
+              onSelect={(key) => {
+                const match = documents.find((d) => (d.id ?? 'doc-1') === key);
+                if (match) handleSelectDocument(match.id, match.docIndex, 1);
+              }}
+            />
+          ) : null}
+
           <PdfCanvasViewer
             pdfBytes={pdfQuery.data ?? null}
             pageNumber={pageNumber}
@@ -1530,11 +1663,11 @@ export function SignEnvelopeDetailPage() {
             renderOverlay={(page) => (
               <FieldOverlayLayer
                 pageNumber={page}
-                fields={draftFields}
-                proposals={canEditDraft ? pendingProposals : []}
+                fields={viewerFields}
+                proposals={canEditDraft && !isViewingSealedUnified && (activeDoc?.docIndex ?? 1) === 1 ? pendingProposals : []}
                 signers={signers}
                 selectedFieldId={selectedFieldId}
-                editable={canEditDraft}
+                editable={canEditDraft && !isViewingSealedUnified}
                 onSelectField={setSelectedFieldId}
                 onUpdateFieldBox={handleUpdateFieldBox}
                 onDeleteField={handleDeleteField}
@@ -1555,7 +1688,11 @@ export function SignEnvelopeDetailPage() {
                   ? null
                   : (pdfQuery.data ?? null)
               }
-              onJumpToPage={(targetPage) => setPageNumber(Math.min(effectivePageCount, Math.max(1, targetPage)))}
+              onJumpToPage={(targetPage) => {
+              const doc1Pages = Math.max(1, documents[0]?.pageCount ?? envelope.pageCount ?? effectivePageCount);
+              setActiveDocKey(doc1Id ?? 'doc-1');
+              setPageNumber(Math.min(doc1Pages, Math.max(1, targetPage)));
+            }}
             />
           ) : null}
 
@@ -1576,7 +1713,11 @@ export function SignEnvelopeDetailPage() {
                 ? null
                 : (pdfQuery.data ?? null)
             }
-            onJumpToPage={(targetPage) => setPageNumber(Math.min(effectivePageCount, Math.max(1, targetPage)))}
+            onJumpToPage={(targetPage) => {
+              const doc1Pages = Math.max(1, documents[0]?.pageCount ?? envelope.pageCount ?? effectivePageCount);
+              setActiveDocKey(doc1Id ?? 'doc-1');
+              setPageNumber(Math.min(doc1Pages, Math.max(1, targetPage)));
+            }}
           />
 
           {canEditSharedSummary || Boolean(envelope.sharedSummary) || Boolean(envelope.shareSummaryWithSigners) ? (

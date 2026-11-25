@@ -277,6 +277,7 @@ export interface LudySignSchema {
   'ludy_sign.ai_analysis': SignAiAnalysisTable;
   'ludy_sign.ca_signing_request': SignCaSigningRequestTable;
   'ludy_sign.envelope': SignEnvelopeTable;
+  'ludy_sign.envelope_document': SignEnvelopeDocumentTable;
   'ludy_sign.envelope_obligation': SignEnvelopeObligationTable;
   'ludy_sign.field': SignFieldTable;
   'ludy_sign.kyc_check': SignKycCheckTable;
@@ -4357,6 +4358,26 @@ export interface SignCaSigningRequestTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
+/** ludy_sign.envelope_document */
+export interface SignEnvelopeDocumentTable {
+  org_id: string;
+  id: Generated<string>;
+  envelope_id: string;
+  doc_index: number;
+  title: string;
+  file_id: string;
+  storage_key: string;
+  generation: string;
+  source_sha256: string;
+  inspect_status: Generated<string>;
+  inspect_error: string | null;
+  page_count: number | null;
+  page_dimensions_json: ColumnType<unknown, string | null | undefined, string | null>;
+  detected_tags_json: ColumnType<unknown, string | null | undefined, string | null>;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
 /** ludy_sign.envelope_obligation */
 export interface SignEnvelopeObligationTable {
   org_id: string;
@@ -4463,6 +4484,7 @@ export interface SignFieldTable {
   attachment_content_type: string | null;
   attachment_size_bytes: number | null;
   attachment_sha256: string | null;
+  document_id: string | null;
 }
 
 /** ludy_sign.kyc_check */

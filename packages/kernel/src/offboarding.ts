@@ -307,6 +307,10 @@ export const EXPORT_TABLES = {
     from: '(SELECT e.* FROM ludy_sign.envelope e WHERE ludy_sign.is_exportable_envelope_id(e.org_id, e.id))',
     omit: [],
   },
+  'sign.envelope_document': {
+    from: '(SELECT ed.* FROM ludy_sign.envelope_document ed WHERE ludy_sign.is_exportable_envelope_id(ed.org_id, ed.envelope_id))',
+    omit: [],
+  },
   'sign.envelope_obligation': {
     from: '(SELECT o.* FROM ludy_sign.envelope_obligation o WHERE ludy_sign.is_exportable_envelope_id(o.org_id, o.envelope_id))',
     omit: [],
