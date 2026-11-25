@@ -66,6 +66,7 @@ const { ensureSignedOutListener } = await import('../src/lib/ceremony-boot.ts');
 const {
   CreateEnvelopeDialog,
   handleEnvelopeCreatedWithWarnings,
+  isCreatedDocxListNoticeVisible,
   openCreatedDocxNoticeEnvelope,
   submitCreateEnvelopeFromDialog,
 } = await import('../src/routes/sign-envelopes.tsx');
@@ -982,5 +983,75 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
     expect(abortedBeforeCreate).toEqual({ cancelled: true });
     expect(uploadCalls).toEqual([{ name: 'hop-dong.pdf', orgSlug: 'org-a' }]);
     expect(createCalls).toEqual([]);
+
+    // resolveUserScope returning a different userId is treated as an account mismatch and never adopts fetched.orgId.
+    setCreatedDocxNotice.mockClear();
+    invalidateEnvelopes.mockClear();
+    await handleEnvelopeCreatedWithWarnings({
+      envelopeId: envDetailId,
+      warnings: ['images_skipped'],
+      slug: 'acme',
+      orgId: null,
+      userId: userAId,
+      resolveUserScope: async () => ({ orgId: '01900000-0000-7000-8000-0000000000b1', userId: userBId }),
+      setCreateOpen,
+      setCreatedDocxNotice,
+      invalidateEnvelopes,
+      navigateToEnvelope: staleNav,
+    });
+    expect(setCreatedDocxNotice).toHaveBeenLastCalledWith(null);
+    expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual([]);
+    expect(readCreatedDocxWarnings(envDetailId, { org: '01900000-0000-7000-8000-0000000000b1', userId: userAId })).toEqual([]);
+    expect(readCreatedDocxWarnings(envDetailId, { org: '01900000-0000-7000-8000-0000000000b1', userId: userBId })).toEqual([]);
+
+    setCreatedDocxNotice.mockClear();
+    expect(
+      await openCreatedDocxNoticeEnvelope({
+        notice: { ...unpersistedNotice, orgId: null, userId: userAId, sessionId: null },
+        currentUserId: userAId,
+        resolveUserScope: async () => ({ orgId: '01900000-0000-7000-8000-0000000000b2', userId: userBId }),
+        setCreatedDocxNotice,
+        navigateToEnvelope: staleNav,
+      }),
+    ).toBe(false);
+    expect(setCreatedDocxNotice).toHaveBeenCalledWith(null);
+    expect(readCreatedDocxWarnings(envDetailId, { org: '01900000-0000-7000-8000-0000000000b2', userId: userAId })).toEqual([]);
+
+    // Notice banner details with missing userId stay hidden until sessionId verification matches live session.
+    const anonSessionNotice = {
+      envelopeId: envDetailId,
+      slug: 'acme',
+      orgId: null,
+      userId: null,
+      sessionId: 'sess-a',
+      warnings: ['images_skipped'] as const,
+    };
+    expect(isCreatedDocxListNoticeVisible(anonSessionNotice, 'acme', userBId, null)).toBe(false);
+    expect(isCreatedDocxListNoticeVisible(anonSessionNotice, 'acme', userBId, 'sess-b')).toBe(false);
+    expect(isCreatedDocxListNoticeVisible({ ...anonSessionNotice, sessionId: null }, 'acme', userBId, 'sess-a')).toBe(false);
+    expect(isCreatedDocxListNoticeVisible(anonSessionNotice, 'acme', userAId, 'sess-a')).toBe(true);
+
+    // If sessionStorage.removeItem fails or storage is unavailable during sign-out, recovery wipes stale notices before returning or writing.
+    const signOutStore = new Map<string, string>();
+    let allowSignOutRemove = true;
+    const flakyStorage = {
+      getItem: (k: string) => signOutStore.get(k) ?? null,
+      setItem: (k: string, v: string) => void signOutStore.set(k, v),
+      removeItem: (k: string) => {
+        if (!allowSignOutRemove) {
+          throw new DOMException('Blocked during signout', 'SecurityError');
+        }
+        signOutStore.delete(k);
+      },
+    };
+    vi.stubGlobal('window', { location: { pathname: '/o/acme/sign/envelopes', hash: '' }, sessionStorage: flakyStorage });
+    saveCreatedDocxWarnings(envDetailId, ['images_skipped'], scopeUserA);
+    expect(signOutStore.has('ludy.sign.created_docx_warnings')).toBe(true);
+    allowSignOutRemove = false;
+    clearAllCreatedDocxWarnings();
+    expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual([]);
+    allowSignOutRemove = true;
+    expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual([]);
+    expect(signOutStore.has('ludy.sign.created_docx_warnings')).toBe(false);
   });
 });

@@ -136,6 +136,48 @@ export interface CreatedEnvelopeSubmitContext {
   reqId: number;
 }
 
+export function isCreatedDocxListNoticeVisible(
+  notice: CreatedDocxListNotice | null,
+  slug: string,
+  currentUserId: string | null,
+  verifiedAnonymousSessionId: string | null,
+): boolean {
+  if (!notice || notice.slug !== slug) return false;
+  if (notice.userId) return notice.userId === currentUserId;
+  return Boolean(notice.sessionId && verifiedAnonymousSessionId === notice.sessionId);
+}
+
+type ResolvedScopeDecision =
+  | { kind: 'ok'; orgId: string | null; userId: string | null }
+  | { kind: 'mismatch' }
+  | { kind: 'unverified' };
+
+function mergeFetchedUserScope(input: {
+  expectedUserId: string | null;
+  currentOrgId: string | null;
+  fetched: { orgId?: string | null | undefined; userId?: string | null | undefined } | null;
+}): ResolvedScopeDecision {
+  if (!input.fetched) {
+    return { kind: 'ok', orgId: input.currentOrgId, userId: input.expectedUserId };
+  }
+  const fetchedUserId = input.fetched.userId ?? null;
+  if (input.expectedUserId) {
+    if (fetchedUserId && fetchedUserId !== input.expectedUserId) {
+      return { kind: 'mismatch' };
+    }
+    if (!fetchedUserId) {
+      return input.currentOrgId
+        ? { kind: 'ok', orgId: input.currentOrgId, userId: input.expectedUserId }
+        : { kind: 'unverified' };
+    }
+  }
+  return {
+    kind: 'ok',
+    orgId: input.currentOrgId ?? input.fetched.orgId ?? null,
+    userId: input.expectedUserId ?? fetchedUserId,
+  };
+}
+
 type LiveSessionState = 'match' | 'unverified' | 'mismatch' | 'aborted';
 
 async function checkLiveSessionState(deps: {
@@ -231,6 +273,7 @@ export async function handleEnvelopeCreatedWithWarnings(deps: {
     return;
   }
 
+  let scopeResolutionUnverified = false;
   if (
     hasSubmitActorProof &&
     cleanWarnings.length > 0 &&
@@ -239,11 +282,21 @@ export async function handleEnvelopeCreatedWithWarnings(deps: {
   ) {
     try {
       const fetched = await deps.resolveUserScope();
-      if (fetched) {
-        resolvedOrgId = resolvedOrgId ?? fetched.orgId ?? null;
-        if (!resolvedUserId) {
-          resolvedUserId = fetched.userId ?? null;
-        }
+      const decision = mergeFetchedUserScope({
+        expectedUserId: deps.userId ?? resolvedUserId,
+        currentOrgId: resolvedOrgId,
+        fetched,
+      });
+      if (decision.kind === 'mismatch') {
+        await deps.invalidateEnvelopes();
+        if (isStillCurrent()) deps.setCreatedDocxNotice(null);
+        return;
+      }
+      if (decision.kind === 'unverified') {
+        scopeResolutionUnverified = true;
+      } else {
+        resolvedOrgId = decision.orgId;
+        resolvedUserId = decision.userId;
       }
     } catch {
       // Non-fatal: keep banner on list page when still active until orgId + userId resolve.
@@ -266,7 +319,7 @@ export async function handleEnvelopeCreatedWithWarnings(deps: {
     if (isStillCurrent()) deps.setCreatedDocxNotice(null);
     return;
   }
-  if (finalSessionState === 'unverified') {
+  if (finalSessionState === 'unverified' || scopeResolutionUnverified) {
     await showPendingOrNavigateClean();
     return;
   }
@@ -356,12 +409,20 @@ export async function openCreatedDocxNoticeEnvelope(deps: {
   if (cleanWarnings.length > 0 && (!resolvedUserId || !resolvedOrgId) && deps.resolveUserScope) {
     try {
       const fetched = await deps.resolveUserScope();
-      if (fetched) {
-        resolvedOrgId = resolvedOrgId ?? fetched.orgId ?? null;
-        if (!resolvedUserId) {
-          resolvedUserId = fetched.userId ?? null;
-        }
+      const decision = mergeFetchedUserScope({
+        expectedUserId: deps.notice.userId ?? resolvedUserId,
+        currentOrgId: resolvedOrgId,
+        fetched,
+      });
+      if (decision.kind === 'mismatch') {
+        deps.setCreatedDocxNotice(null);
+        return false;
       }
+      if (decision.kind === 'unverified') {
+        return false;
+      }
+      resolvedOrgId = decision.orgId;
+      resolvedUserId = decision.userId;
     } catch {
       return false;
     }
@@ -892,6 +953,7 @@ export function SignEnvelopesPage() {
   const [tab, setTab] = useState<EnvelopeFilterTab>('all');
   const [createOpen, setCreateOpen] = useState(false);
   const [createdDocxNotice, setCreatedDocxNotice] = useState<CreatedDocxListNotice | null>(null);
+  const [verifiedAnonymousNoticeSession, setVerifiedAnonymousNoticeSession] = useState<string | null>(null);
   const [diffOpen, setDiffOpen] = useState(false);
   const [drafterOpen, setDrafterOpen] = useState(false);
   const [sharedLinkDialog, setSharedLinkDialog] = useState<{ title: string; url: string } | null>(null);
@@ -920,6 +982,7 @@ export function SignEnvelopesPage() {
     setSharedLinkDialog(null);
     setCreateOpen(false);
     setCreatedDocxNotice(null);
+    setVerifiedAnonymousNoticeSession(null);
     setDiffOpen(false);
     setDrafterOpen(false);
     setPendingRowAction(null);
@@ -975,17 +1038,29 @@ export function SignEnvelopesPage() {
   }, [currentUserId, createdDocxNotice]);
 
   useEffect(() => {
-    if (!createdDocxNotice || createdDocxNotice.userId || !createdDocxNotice.sessionId || !currentUserId) return;
+    if (!createdDocxNotice || createdDocxNotice.userId || !createdDocxNotice.sessionId) {
+      setVerifiedAnonymousNoticeSession(null);
+      return;
+    }
     let cancelled = false;
+    setVerifiedAnonymousNoticeSession(null);
     void accessToken()
       .then((tok) => sessionIdFromToken(tok))
       .then((liveSessionId) => {
-        if (!cancelled && liveSessionId && liveSessionId !== createdDocxNotice.sessionId) {
-          docxNoticeReqRef.current += 1;
-          setCreatedDocxNotice(null);
+        if (cancelled) return;
+        if (liveSessionId === createdDocxNotice.sessionId) {
+          setVerifiedAnonymousNoticeSession(liveSessionId);
+        } else {
+          setVerifiedAnonymousNoticeSession(null);
+          if (liveSessionId) {
+            docxNoticeReqRef.current += 1;
+            setCreatedDocxNotice(null);
+          }
         }
       })
-      .catch(() => undefined);
+      .catch(() => {
+        if (!cancelled) setVerifiedAnonymousNoticeSession(null);
+      });
     return () => {
       cancelled = true;
     };
@@ -1292,9 +1367,7 @@ export function SignEnvelopesPage() {
     ? activeEnvelope.status === 'completed' && activeEnvelope.sealStatus === 'sealed'
     : false;
   const visibleCreatedDocxNotice =
-    createdDocxNotice &&
-    createdDocxNotice.slug === slug &&
-    (!createdDocxNotice.userId || createdDocxNotice.userId === currentUserId)
+    isCreatedDocxListNoticeVisible(createdDocxNotice, slug, currentUserId, verifiedAnonymousNoticeSession)
       ? createdDocxNotice
       : null;
   const canVerifyPendingCreatedNotice = Boolean(

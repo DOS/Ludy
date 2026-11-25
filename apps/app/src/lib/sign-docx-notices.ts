@@ -28,6 +28,7 @@ interface StoredDocxWarningNotice {
 const fallbackDocxNotices = new Map<string, StoredDocxWarningNotice>();
 const fallbackDismissedNotices = new Map<string, number>();
 const knownStorageNoticeKeys = new Set<string>();
+let pendingSignOutClear = false;
 
 function normalizeScope(scope?: CreatedDocxWarningScope): NormalizedScope | null {
   const org = typeof scope?.org === 'string' ? scope.org.trim() : '';
@@ -137,10 +138,25 @@ function readRawStorageNotices(storage: Storage, now: number): StoredDocxWarning
   }
 }
 
+function flushPendingSignOutClear(): Storage | null {
+  const storage = getDocxNoticeStorage();
+  if (!storage) return null;
+  if (pendingSignOutClear) {
+    try {
+      storage.removeItem(ENVELOPE_DOCX_WARNINGS_STORAGE_KEY);
+      knownStorageNoticeKeys.clear();
+      pendingSignOutClear = false;
+    } catch {
+      return null;
+    }
+  }
+  return storage;
+}
+
 function readStoredDocxNotices(now: number): StoredDocxWarningNotice[] {
   pruneFallbackDismissed(now);
   const byKey = new Map<string, StoredDocxWarningNotice>();
-  const storage = getDocxNoticeStorage();
+  const storage = flushPendingSignOutClear();
   if (storage) {
     for (const entry of readRawStorageNotices(storage, now)) {
       const key = noticeKey(entry.envelopeId, entry);
@@ -197,7 +213,7 @@ export function saveCreatedDocxWarnings(
   };
   const merged = readStoredDocxNotices(now).filter((entry) => noticeKey(entry.envelopeId, entry) !== key);
   merged.push(nextEntry);
-  const storage = getDocxNoticeStorage();
+  const storage = flushPendingSignOutClear();
   if (storage && tryPersistDocxNotices(storage, merged)) {
     fallbackDocxNotices.clear();
     fallbackDismissedNotices.clear();
@@ -238,7 +254,7 @@ export function clearCreatedDocxWarnings(
   if (!envelopeId || !norm) return;
   const key = noticeKey(envelopeId, norm);
   fallbackDocxNotices.delete(key);
-  const storage = getDocxNoticeStorage();
+  const storage = flushPendingSignOutClear();
   if (!storage) {
     if (knownStorageNoticeKeys.has(key)) {
       markFallbackDismissed(key, now);
@@ -266,11 +282,6 @@ export function clearAllCreatedDocxWarnings(): void {
   fallbackDocxNotices.clear();
   fallbackDismissedNotices.clear();
   knownStorageNoticeKeys.clear();
-  const storage = getDocxNoticeStorage();
-  if (!storage) return;
-  try {
-    storage.removeItem(ENVELOPE_DOCX_WARNINGS_STORAGE_KEY);
-  } catch {
-    // Ignore cleanup failures when storage is restricted or read-only.
-  }
+  pendingSignOutClear = true;
+  void flushPendingSignOutClear();
 }
