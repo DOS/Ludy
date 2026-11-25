@@ -137,8 +137,6 @@ export const meetingsManifest = defineModule({
       minutes_version: columns(['org_id', 'id', 'meeting_id', 'language', 'source_hash', 'published_by', 'source_run_id', 'published_at'], { body: 'pii' }),
       // A member's own opt-in to the morning notice of the day's meetings (#3955): a time of day, their time zone and the language of the mail. One row per member, theirs alone; no title, name or text of a meeting is in it.
       morning_notice: columns(['org_id', 'id', 'user_id', 'send_minute', 'time_zone', 'language', 'created_at', 'updated_at']),
-      // A member's own opt-in to the weekly notice of the week's meetings (#4967): a Monday time of day, their time zone and the language of the mail. One row per member, theirs alone; no title, name or text of a meeting is in it.
-      weekly_notice: columns(['org_id', 'id', 'user_id', 'send_minute', 'time_zone', 'language', 'created_at', 'updated_at']),
       // The words an org tracks across its meetings (#4818): a term an owner chose, plain text, like a glossary term; no meeting text.
       tracker_term: columns(['org_id', 'id', 'term', 'created_by', 'created_at']),
       // The transcript (#2578): what was said, who it is attributed to, when. Text and speaker label are personal data.
@@ -148,6 +146,8 @@ export const meetingsManifest = defineModule({
       ),
       // The machine translation of a meeting's summary (meetings integrations E1, #3184): private to the member who asked, tainted. The body (the translated text) is personal data.
       translation: columns(['org_id', 'id', 'meeting_id', 'member_user_id', 'kind', 'target_language', 'source_stage', 'source_hash', 'tainted', 'source_run_id', 'created_at'], { body: 'pii' }),
+      // A member's own opt-in to the weekly notice of the week's meetings (#4967): a Monday time of day, their time zone and the language of the mail. One row per member, theirs alone; no title, name or text of a meeting is in it.
+      weekly_notice: columns(['org_id', 'id', 'user_id', 'send_minute', 'time_zone', 'language', 'created_at', 'updated_at']),
     },
   },
   permissions: [],
