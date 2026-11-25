@@ -59,6 +59,8 @@ const OCC = {
   S2: occ(IDS.SSSS, '2026-11-12T09:00:00', '2026-11-12T10:00:00'),
   S3: occ(IDS.SSSS, '2026-11-13T09:00:00', '2026-11-13T10:00:00'),
 };
+// The transcript's own suggestion of a meeting that has a recording too (a meeting with both is offered as two rows).
+const TR = (key: string) => `${key}~transcript`;
 const A_RECORDING = '7e31db25-bc6e-4fd8-96c7-e01264e9b6fc';
 // The transcript of the meeting someone else organized (transcripts-one-b.json) and the address of its lines.
 const B_TRANSCRIPT = 'MSMjMCMjZDAwYWU3NjUtNmM2Yi00NjQxLTgwMWQtMTkzMmFmMjEzNzdi';
@@ -191,6 +193,15 @@ suite('a Microsoft Teams recording from the connect to the staged bytes (meeting
   const rowOf = async (id: string) => (await sqlAdmin<{ status: string; error_code: string | null; staging_key: string | null; meeting_id: string | null }>('SELECT status, error_code, staging_key, meeting_id FROM ludy_kernel.meeting_platform_recording WHERE id = $1', [id])).rows[0];
   const idOf = async (externalId: string) => (await sqlAdmin<{ id: string }>('SELECT id FROM ludy_kernel.meeting_platform_recording WHERE connection_id = $1 AND external_id = $2', [connectionId, externalId])).rows[0]?.id as string;
   const connectionRow = async () => (await sqlAdmin<{ status: string; status_reason: string | null; last_synced_at: Date | null }>('SELECT status, status_reason, last_synced_at FROM ludy_kernel.meeting_platform_connection WHERE id = $1', [connectionId])).rows[0] as { status: string; status_reason: string | null; last_synced_at: Date | null };
+  // The code a refused promise carries, or null when it was not refused.
+  const refusal = async (promise: Promise<unknown>): Promise<string | null> => {
+    try {
+      await promise;
+      return null;
+    } catch (error) {
+      return String((error as { code?: unknown }).code ?? error);
+    }
+  };
   // The member's click on "Nhập": the meetings module's own command makes the meeting with the platform-notice consent and begins the row.
   const click = (recordingId: string) =>
     clicker.execute<{ meetingId: string }>(
@@ -327,16 +338,20 @@ suite('a Microsoft Teams recording from the connect to the staged bytes (meeting
     expect(sent).toEqual([]);
 
     const stored = await sqlAdmin<{ external_id: string; title: string; status: string; has_audio: boolean; has_video: boolean; has_transcript: boolean; length_seconds: number; size_bytes: string | null; user_id: string }>(
-      'SELECT external_id, title, status, has_audio, has_video, has_transcript, length_seconds, size_bytes, user_id FROM ludy_kernel.meeting_platform_recording WHERE connection_id = $1 ORDER BY started_at DESC',
+      'SELECT external_id, title, status, has_audio, has_video, has_transcript, length_seconds, size_bytes, user_id FROM ludy_kernel.meeting_platform_recording WHERE connection_id = $1 ORDER BY started_at DESC, external_id',
       [connectionId],
     );
     // Newest first. The meeting with two recordings (E) and the occurrence of the series with two recordings in its window (S3) are not offered, nor the meetings with no files, the cancelled one, the one still running,
     // the call of another service and the one Graph does not know.
     expect(stored.rows.map((r) => [r.external_id, r.title, r.status, r.has_audio, r.has_video, r.has_transcript, r.length_seconds, r.size_bytes])).toEqual([
-      [OCC.A, 'Họp tuần (Teams)', 'suggested', false, true, true, 3600, null],
+      // A meeting with a recording AND a transcript is two rows (the video, and Microsoft's own transcript alone, so it can be taken without the video processing); each offers one thing.
+      [OCC.A, 'Họp tuần (Teams)', 'suggested', false, true, false, 3600, null],
+      [TR(OCC.A), 'Họp tuần (Teams)', 'suggested', false, false, true, 3600, null],
       [OCC.B, 'Product review (organized by someone else)', 'suggested', false, false, true, 3600, null],
-      [OCC.S2, 'Weekly sync (second time)', 'suggested', false, true, true, 3600, null],
-      [OCC.S1, 'Weekly sync (first time)', 'suggested', false, true, true, 3600, null],
+      [OCC.S2, 'Weekly sync (second time)', 'suggested', false, true, false, 3600, null],
+      [TR(OCC.S2), 'Weekly sync (second time)', 'suggested', false, false, true, 3600, null],
+      [OCC.S1, 'Weekly sync (first time)', 'suggested', false, true, false, 3600, null],
+      [TR(OCC.S1), 'Weekly sync (first time)', 'suggested', false, false, true, 3600, null],
     ]);
     expect(stored.rows.every((r) => r.user_id === member.userId)).toBe(true);
     const ids = stored.rows.map((r) => r.external_id);
@@ -434,6 +449,11 @@ suite('a Microsoft Teams recording from the connect to the staged bytes (meeting
   it('imports a video row of the organizer\'s meeting: the job asks the guarded transfer for the recording\'s content address with the member\'s bearer token, opened from the same sealed credential, and stages the audio taken out of it', async () => {
     const id = await idOf(OCC.A);
     const { meetingId } = await click(id);
+    // The meeting is on its way as a video, so its transcript's own row is taken (ADR-0055: one call, one meeting): refused with its own code, no second meeting and the row left as it was.
+    const meetingsBefore = (await sqlAdmin<{ n: string }>('SELECT count(*) AS n FROM ludy_meetings.meeting WHERE org_id = $1', [org.orgId])).rows[0]?.n;
+    expect(await refusal(click(await idOf(TR(OCC.A))))).toBe('MEETING_PLATFORM_PAIR_TAKEN');
+    expect((await sqlAdmin<{ n: string }>('SELECT count(*) AS n FROM ludy_meetings.meeting WHERE org_id = $1', [org.orgId])).rows[0]?.n).toBe(meetingsBefore);
+    expect(await rowOf(await idOf(TR(OCC.A)))).toMatchObject({ status: 'suggested', meeting_id: null });
     const job = await jobOf(id);
     expect(job).toMatchObject({ id, connectionId, provider: 'microsoft_teams', externalId: OCC.A, hasAudio: false, hasVideo: true, sizeBytes: null });
     const mp4 = new Uint8Array(3000);
@@ -466,12 +486,33 @@ suite('a Microsoft Teams recording from the connect to the staged bytes (meeting
     expect((await recordings()).find((r) => r.id === id)).toMatchObject({ status: 'staged', hasVideo: true, hasAudio: false, errorCode: null });
   });
 
+  it('lets only one of the two rows of a meeting be imported when both are clicked at once: one meeting, the other refused', async () => {
+    // The two rows of the first occurrence of the series, clicked in the same instant (a double click on both buttons, or two tabs).
+    const video = await idOf(OCC.S1);
+    const transcript = await idOf(TR(OCC.S1));
+    const title = 'Weekly sync (first time)';
+    const count = async () => Number((await sqlAdmin<{ n: string }>('SELECT count(*) AS n FROM ludy_meetings.meeting WHERE org_id = $1 AND title = $2', [org.orgId, title])).rows[0]?.n);
+    expect(await count()).toBe(0);
+    const results = await Promise.all([refusal(click(video)), refusal(click(transcript))]);
+    // Exactly one start won and exactly one was refused for the pair; whichever won, one meeting was made and one row is on its way.
+    expect(results.filter((r) => r === null)).toHaveLength(1);
+    expect(results.filter((r) => r === 'MEETING_PLATFORM_PAIR_TAKEN')).toHaveLength(1);
+    expect(await count()).toBe(1);
+    const states = [await rowOf(video), await rowOf(transcript)].map((r) => r?.status).sort();
+    expect(states).toEqual(['importing', 'suggested']);
+    // Asked again, the loser is still refused, and the winner's row is not started twice.
+    const loser = (await rowOf(video))?.status === 'suggested' ? video : transcript;
+    expect(await refusal(click(loser))).toBe('MEETING_PLATFORM_PAIR_TAKEN');
+    expect(await count()).toBe(1);
+  });
+
   it('keeps the old suggestions when Graph is busy (429): platform_unavailable, the connection stays active and waits for its next turn', async () => {
-    // The suggestions of this connection (the two occurrences of the series) are dated like the fixtures; moved to today so the database's own 14 day cut by the real clock leaves them in place.
+    // The suggestions of this connection are dated like the fixtures; moved to today so the database's own 14 day cut by the real clock leaves them in place.
     await sqlAdmin("UPDATE ludy_kernel.meeting_platform_recording SET started_at = now() WHERE connection_id = $1 AND status = 'suggested'", [connectionId]);
     const suggested = async () => (await recordings()).filter((r) => r.status === 'suggested').map((r) => r.id).sort();
     const before = await suggested();
-    expect(before).toHaveLength(2);
+    // What is left to suggest: the transcript row of the imported video (A), the loser of the race, and the other occurrence of the series with its transcript row.
+    expect(before).toHaveLength(4);
     const synced = (await connectionRow()).last_synced_at as Date;
     stub.calls.length = 0;
     stub.on('/v1.0/me/calendarView', () => new Response('{}', { status: 429 }));
