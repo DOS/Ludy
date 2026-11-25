@@ -92,6 +92,7 @@ describe('module screens against the router (#1652)', () => {
       '/-/b/$org/$type',
       '/-/extension/connect',
       '/-/invite',
+      '/-/minutes',
       '/-/quote',
       '/-/report',
       '/-/review',
@@ -122,6 +123,7 @@ describe('module screens against the router (#1652)', () => {
       '/-/report': 'social',
       '/-/b/$org/$type': 'crm',
       '/-/quote': 'crm',
+      '/-/minutes': 'meetings',
       '/login': 'kernel',
     });
   });
@@ -456,11 +458,11 @@ describe('a module turned off, outside /o/$slug (ADR-0031 §3, #1660)', () => {
     session.token = null;
     try {
       const publicRoutes = (Object.values(MODULE_SCREENS) as ModuleScreens[]).flatMap((m) => (m.outside ?? []).filter((r) => r.public).map((r) => r.path)).sort();
-      expect(publicRoutes).toEqual(['/-/b/$org/$type', '/-/quote', '/-/report', '/-/review', '/-/roadmap/$orgSlug/$boardSlug', '/-/sign', '/-/sign/d', '/-/sign/p/$orgSlug']);
-      session.modules = ['kernel', 'social', 'crm', 'sign', 'projects'];
-      for (const address of ['/-/review', '/-/report', '/-/quote', '/-/roadmap/acme/main', '/-/sign', '/-/sign/d', '/-/sign/p/acme', BOOKING]) expect(await answer(address), address).toEqual({ path: address, notFound: false });
+      expect(publicRoutes).toEqual(['/-/b/$org/$type', '/-/minutes', '/-/quote', '/-/report', '/-/review', '/-/roadmap/$orgSlug/$boardSlug', '/-/sign', '/-/sign/d', '/-/sign/p/$orgSlug']);
+      session.modules = ['kernel', 'social', 'crm', 'sign', 'projects', 'meetings'];
+      for (const address of ['/-/review', '/-/report', '/-/quote', '/-/minutes', '/-/roadmap/acme/main', '/-/sign', '/-/sign/d', '/-/sign/p/acme', BOOKING]) expect(await answer(address), address).toEqual({ path: address, notFound: false });
       session.modules = ['kernel'];
-      for (const address of ['/-/review', '/-/report', '/-/quote', '/-/roadmap/acme/main', '/-/sign', '/-/sign/d', '/-/sign/p/acme', BOOKING]) expect(await answer(address), address).toEqual({ path: address, notFound: true });
+      for (const address of ['/-/review', '/-/report', '/-/quote', '/-/minutes', '/-/roadmap/acme/main', '/-/sign', '/-/sign/d', '/-/sign/p/acme', BOOKING]) expect(await answer(address), address).toEqual({ path: address, notFound: true });
       // A signed-in screen still asks for a sign-in where its module runs.
       session.modules = ['kernel', 'social'];
       expect((await answer('/channels/oauth/x/callback')).path).toBe('/login');

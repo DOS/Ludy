@@ -10,7 +10,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { GATE_FILE, layoutViolations, listTests, pgtapDatabase, problemsOf, runTap, runTestFile, type PgtapDatabase } from './pgtap/runner.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 // The gate files that must be there: removing one fails the run instead of shrinking it.
 const REQUIRED = ['_conformance.test.sql', '_rls_matrix.test.sql'];
 

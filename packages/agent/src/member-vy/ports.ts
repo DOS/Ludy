@@ -51,6 +51,7 @@ export type ModelFeature =
   | 'meetings.commitments'
   | 'meetings.template_suggest'
   | 'meetings.open_points'
+  | 'meetings.sales_insight'
   | 'meetings.followup_note'
   | 'meetings.deal_update'
   | 'projects.tasks_from_note'

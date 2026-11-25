@@ -35,7 +35,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { installDdlWatch, migrate } from '../../src/migrate.ts';
 import { resolveDbIdentifiers, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
-const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
 
 // The org itself: the only table a tenant foreign key may reference by org_id alone.
@@ -48,44 +48,25 @@ const CANONICAL_MONEY_COLUMNS = ['crove_kernel.budget_policy.monthly_limit'];
 // Tenant tables whose primary key is not (org_id, id), with the key they have. Every one still leads with org_id
 // except outbox_pending, which is keyed by its global sequence.
 const PK_EXCEPTIONS: Record<string, { pk: string; reason: string }> = {
-  'crove_ads.ad_token_seal': { pk: 'org_id,revoke_id', reason: 'The sealed copy of the token of one closed ads connection, kept for its revoke (#2296, ADR-0025 amendment): the revoke is the key.' },
-  'crove_finance.journal_line': { pk: 'org_id,entry_id,line_no', reason: 'A line of an append-only journal entry, keyed by its entry and line number.' },
-  'crove_finance.portal_invoice_row': { pk: 'org_id,list_id,row_no', reason: 'A row of an imported tax-portal invoice list, keyed by its list and row number.' },
-  'crove_finance.purchase_document_void': { pk: 'org_id,document_id', reason: 'At most one void per purchase document: the document is the key.' },
-  'crove_finance.purchase_line': { pk: 'org_id,document_id,line_no', reason: 'A line of a purchase document, keyed by its document and line number.' },
-  'crove_finance.purchase_tax_rate': { pk: 'org_id,document_id,row_no', reason: 'A VAT rate row of a purchase document, keyed by its document and line number.' },
-  'crove_finance.vendor_account_rule': { pk: 'org_id,party_id', reason: 'One posting rule per vendor: the party is the key.' },
-  'crove_kernel.auth_session_org': { pk: 'org_id,user_id,session_id', reason: 'Which org a login session acts in: a pairing of session, user and org.' },
-  'crove_kernel.credential': { pk: 'org_id,connection_id', reason: 'The sealed secret of one channel connection (ADR-0025): the connection is the key.' },
-  'crove_kernel.idempotency_key': { pk: 'org_id,actor_key,key', reason: 'A command idempotency key is unique per org and actor; it has no id of its own.' },
-  'crove_kernel.inbound_drop': { pk: 'org_id,address_id', reason: 'The drop counter of one inbound address (#37): the address is the key.' },
-  'crove_kernel.notification_mute': { pk: 'org_id,user_id,kind', reason: 'A mute is a set membership of (user, notification kind).' },
-  'crove_kernel.outbox_archive': { pk: 'org_id,day', reason: 'One archive batch per org and day.' },
-  'crove_kernel.outbox_pending': { pk: 'seq', reason: 'The global outbox hand-off queue, ordered by its sequence; definer-only machinery.' },
-  'crove_kernel.refusal_tally': { pk: 'org_id,window_start,actor_key,command,code', reason: 'A refusal counter per time window, actor, command and code.' },
-  'crove_kernel.tenant': { pk: 'org_id', reason: 'The org itself: its id is org_id.' },
-  'crove_kernel.tenant_member': { pk: 'org_id,user_id', reason: 'Membership is a pairing of org and user.' },
-  'crove_social.chat_alert_target': { pk: 'org_id,alert_id', reason: 'The sealed target of one team chat alert (#863): the alert is the key.' },
-  'crove_social.notification_mute': { pk: 'org_id,user_id,kind', reason: 'A mute is a set membership of (user, notification kind).' },
-  'ludy_ads.ad_token_seal': { pk: 'org_id,revoke_id', reason: 'The sealed copy of the token of one closed ads connection, kept for its revoke (#2296, ADR-0025 amendment, ADR-0054 twin): the revoke is the key.' },
-  'ludy_finance.journal_line': { pk: 'org_id,entry_id,line_no', reason: 'A line of an append-only journal entry, keyed by its entry and line number (ADR-0054 twin).' },
-  'ludy_finance.portal_invoice_row': { pk: 'org_id,list_id,row_no', reason: 'A row of an imported tax-portal invoice list, keyed by its list and row number (ADR-0054 twin).' },
-  'ludy_finance.purchase_document_void': { pk: 'org_id,document_id', reason: 'At most one void per purchase document: the document is the key (ADR-0054 twin).' },
-  'ludy_finance.purchase_line': { pk: 'org_id,document_id,line_no', reason: 'A line of a purchase document, keyed by its document and line number (ADR-0054 twin).' },
-  'ludy_finance.purchase_tax_rate': { pk: 'org_id,document_id,row_no', reason: 'A VAT rate row of a purchase document, keyed by its document and row number (ADR-0054 twin).' },
-  'ludy_finance.vendor_account_rule': { pk: 'org_id,party_id', reason: 'One posting rule per vendor: the party is the key (ADR-0054 twin).' },
-  'ludy_kernel.auth_session_org': { pk: 'org_id,user_id,session_id', reason: 'Which org a login session acts in: a pairing of session, user and org (ADR-0054 twin).' },
-  'ludy_kernel.credential': { pk: 'org_id,connection_id', reason: 'The sealed secret of one channel connection (ADR-0025, ADR-0054 twin): the connection is the key.' },
-  'ludy_kernel.idempotency_key': { pk: 'org_id,actor_key,key', reason: 'A command idempotency key is unique per org and actor; it has no id of its own (ADR-0054 twin).' },
-  'ludy_kernel.inbound_drop': { pk: 'org_id,address_id', reason: 'The drop counter of one inbound address (#37, ADR-0054 twin): the address is the key.' },
-  'ludy_kernel.notification_mute': { pk: 'org_id,user_id,kind', reason: 'A mute is a set membership of (user, notification kind) (ADR-0054 twin).' },
-  'ludy_kernel.outbox_archive': { pk: 'org_id,day', reason: 'One archive batch per org and day (ADR-0054 twin).' },
-  'ludy_kernel.outbox_pending': { pk: 'seq', reason: 'The global outbox hand-off queue, ordered by its sequence; definer-only machinery (ADR-0054 twin).' },
-  'ludy_kernel.refusal_tally': { pk: 'org_id,window_start,actor_key,command,code', reason: 'A refusal counter per time window, actor, command and code (ADR-0054 twin).' },
-  'ludy_kernel.tenant': { pk: 'org_id', reason: 'The org itself: its id is org_id (ADR-0054 twin).' },
-  'ludy_kernel.tenant_member': { pk: 'org_id,user_id', reason: 'Membership is a pairing of org and user (ADR-0054 twin).' },
-  'ludy_social.chat_alert_target': { pk: 'org_id,alert_id', reason: 'The sealed target of one team chat alert (#863, ADR-0054 twin): the alert is the key.' },
-  'ludy_social.notification_mute': { pk: 'org_id,user_id,kind', reason: 'A mute is a set membership of (user, notification kind) (ADR-0054 twin).' },
+  'ludy_ads.ad_token_seal': { pk: 'org_id,revoke_id', reason: 'The sealed copy of the token of one closed ads connection, kept for its revoke (#2296, ADR-0025 amendment): the revoke is the key.' },
+  'ludy_finance.journal_line': { pk: 'org_id,entry_id,line_no', reason: 'A line of an append-only journal entry, keyed by its entry and line number.' },
+  'ludy_finance.portal_invoice_row': { pk: 'org_id,list_id,row_no', reason: 'A row of an imported tax-portal invoice list, keyed by its list and row number.' },
+  'ludy_finance.purchase_document_void': { pk: 'org_id,document_id', reason: 'At most one void per purchase document: the document is the key.' },
+  'ludy_finance.purchase_line': { pk: 'org_id,document_id,line_no', reason: 'A line of a purchase document, keyed by its document and line number.' },
+  'ludy_finance.purchase_tax_rate': { pk: 'org_id,document_id,row_no', reason: 'A VAT rate row of a purchase document, keyed by its document and row number.' },
+  'ludy_finance.vendor_account_rule': { pk: 'org_id,party_id', reason: 'One posting rule per vendor: the party is the key.' },
+  'ludy_kernel.auth_session_org': { pk: 'org_id,user_id,session_id', reason: 'Which org a login session acts in: a pairing of session, user and org.' },
+  'ludy_kernel.credential': { pk: 'org_id,connection_id', reason: 'The sealed secret of one channel connection (ADR-0025): the connection is the key.' },
+  'ludy_kernel.idempotency_key': { pk: 'org_id,actor_key,key', reason: 'A command idempotency key is unique per org and actor; it has no id of its own.' },
+  'ludy_kernel.inbound_drop': { pk: 'org_id,address_id', reason: 'The drop counter of one inbound address (#37): the address is the key.' },
+  'ludy_kernel.notification_mute': { pk: 'org_id,user_id,kind', reason: 'A mute is a set membership of (user, notification kind).' },
+  'ludy_kernel.outbox_archive': { pk: 'org_id,day', reason: 'One archive batch per org and day.' },
+  'ludy_kernel.outbox_pending': { pk: 'seq', reason: 'The global outbox hand-off queue, ordered by its sequence; definer-only machinery.' },
+  'ludy_kernel.refusal_tally': { pk: 'org_id,window_start,actor_key,command,code', reason: 'A refusal counter per time window, actor, command and code.' },
+  'ludy_kernel.tenant': { pk: 'org_id', reason: 'The org itself: its id is org_id.' },
+  'ludy_kernel.tenant_member': { pk: 'org_id,user_id', reason: 'Membership is a pairing of org and user.' },
+  'ludy_social.chat_alert_target': { pk: 'org_id,alert_id', reason: 'The sealed target of one team chat alert (#863): the alert is the key.' },
+  'ludy_social.notification_mute': { pk: 'org_id,user_id,kind', reason: 'A mute is a set membership of (user, notification kind).' },
 };
 // Tenant foreign keys (<table>.<constraint>) that have no supporting index, with their columns. None today: #1212
 // added the last missing ones.
@@ -93,82 +74,25 @@ const FK_INDEX_EXCEPTIONS: Record<string, { cols: string; reason: string }> = {}
 // Columns of the vendored pg-boss schema (`pnpm db:vendor:pgboss`) that break a column rule, with their type. Its
 // DDL is pg-boss's; its runtime partitions (job_common, queue_stats_<day>) are skipped with every partition.
 const COLUMN_EXCEPTIONS: Record<string, { rule: 'timestamp' | 'money'; type: string; reason: string }> = {
-  'crove_jobs.instance.pool_total': { rule: 'money', type: 'integer', reason: 'pg-boss: the size of a worker connection pool, a count and not money.' },
-  'crove_jobs.job.singleton_on': { rule: 'timestamp', type: 'timestamp without time zone', reason: 'pg-boss: the singleton time slot, set and compared by pg-boss itself.' },
-  'ludy_jobs.instance.pool_total': { rule: 'money', type: 'integer', reason: 'pg-boss: the size of a worker connection pool, a count and not money (ADR-0054 twin).' },
-  'ludy_jobs.job.singleton_on': { rule: 'timestamp', type: 'timestamp without time zone', reason: 'pg-boss: the singleton time slot, set and compared by pg-boss itself (ADR-0054 twin).' },
+  'ludy_jobs.instance.pool_total': { rule: 'money', type: 'integer', reason: 'pg-boss: the size of a worker connection pool, a count and not money.' },
+  'ludy_jobs.job.singleton_on': { rule: 'timestamp', type: 'timestamp without time zone', reason: 'pg-boss: the singleton time slot, set and compared by pg-boss itself.' },
 };
 // Event triggers that run a crove_* or ludy_* function, with their event, function, enabled state
 // (pg_event_trigger.evtenabled: O origin, A always, R replica, D disabled) and command tags, or all.
 const EVENT_TRIGGER_EXCEPTIONS: Record<string, { shape: string; reason: string }> = {
-  crove_ddl_watch: {
-    shape: 'ddl_command_end crove_kernel.ddl_watch() A all',
-    reason: 'The DDL watch (#1202): records DDL run outside the migration pipeline; installDdlWatch attaches it.',
-  },
-  crove_ddl_watch_drop: {
-    shape: 'sql_drop crove_kernel.ddl_watch() A all',
-    reason: 'The DDL watch (#1202) for dropped objects; installDdlWatch attaches it.',
-  },
   ludy_ddl_watch: {
     shape: 'ddl_command_end ludy_kernel.ddl_watch() A all',
-    reason: 'The DDL watch (#1202, ADR-0054 twin): records DDL run outside the migration pipeline; installDdlWatch attaches it.',
+    reason: 'The DDL watch (#1202): records DDL run outside the migration pipeline; installDdlWatch attaches it.',
   },
   ludy_ddl_watch_drop: {
     shape: 'sql_drop ludy_kernel.ddl_watch() A all',
-    reason: 'The DDL watch (#1202, ADR-0054 twin) for dropped objects; installDdlWatch attaches it.',
+    reason: 'The DDL watch (#1202) for dropped objects; installDdlWatch attaches it.',
   },
 };
-// Exceptions whose object an open PR adds, fixes, or renames (ADR-0054 twins). CI runs main's copy of this file on
-// that PR, so both crove_* and ludy_* twins stay listed until #3972 removes the legacy crove_* keys.
-// One key per line, sorted, with a trailing comma.
-const PENDING_EXCEPTIONS = new Set<string>([
-  'crove_ads.ad_token_seal',
-  'crove_ddl_watch',
-  'crove_ddl_watch_drop',
-  'crove_finance.journal_line',
-  'crove_finance.portal_invoice_row',
-  'crove_finance.purchase_document_void',
-  'crove_finance.purchase_line',
-  'crove_finance.purchase_tax_rate',
-  'crove_finance.vendor_account_rule',
-  'crove_jobs.instance.pool_total',
-  'crove_jobs.job.singleton_on',
-  'crove_kernel.auth_session_org',
-  'crove_kernel.credential',
-  'crove_kernel.idempotency_key',
-  'crove_kernel.inbound_drop',
-  'crove_kernel.notification_mute',
-  'crove_kernel.outbox_archive',
-  'crove_kernel.outbox_pending',
-  'crove_kernel.refusal_tally',
-  'crove_kernel.tenant',
-  'crove_kernel.tenant_member',
-  'crove_social.chat_alert_target',
-  'crove_social.notification_mute',
-  'ludy_ads.ad_token_seal',
-  'ludy_ddl_watch',
-  'ludy_ddl_watch_drop',
-  'ludy_finance.journal_line',
-  'ludy_finance.portal_invoice_row',
-  'ludy_finance.purchase_document_void',
-  'ludy_finance.purchase_line',
-  'ludy_finance.purchase_tax_rate',
-  'ludy_finance.vendor_account_rule',
-  'ludy_jobs.instance.pool_total',
-  'ludy_jobs.job.singleton_on',
-  'ludy_kernel.auth_session_org',
-  'ludy_kernel.credential',
-  'ludy_kernel.idempotency_key',
-  'ludy_kernel.inbound_drop',
-  'ludy_kernel.notification_mute',
-  'ludy_kernel.outbox_archive',
-  'ludy_kernel.outbox_pending',
-  'ludy_kernel.refusal_tally',
-  'ludy_kernel.tenant',
-  'ludy_kernel.tenant_member',
-  'ludy_social.chat_alert_target',
-  'ludy_social.notification_mute',
-]);
+// Exceptions whose object an open PR adds, fixes, or renames. CI runs main's copy of this file on that PR, so both
+// the old and new keys stay listed until that PR merges and this set is emptied again. One key per line, sorted, with
+// a trailing comma.
+const PENDING_EXCEPTIONS = new Set<string>([]);
 
 type Rule = 'pk' | 'fk-shape' | 'fk-index' | 'timestamp' | 'money' | 'cross-module' | 'trigger' | 'event-trigger';
 interface Violation {
@@ -385,7 +309,7 @@ suite('tenant schema conformance (G3)', () => {
     url.pathname = `/${dbName}`;
     await migrate({ adminUrl: url.toString(), dir: MIGRATIONS });
     // As the kernel does at start (apps/kernel/src/main.ts), so the event-trigger rule sees what a deployment has.
-    expect(await installDdlWatch({ adminUrl: url.toString() }), 'CROVE_TEST_ADMIN_URL must be a superuser to attach the DDL watch').toBe('installed');
+    expect(await installDdlWatch({ adminUrl: url.toString() }), 'LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) must be a superuser to attach the DDL watch').toBe('installed');
     admin = new pg.Client({ connectionString: url.toString() });
     await admin.connect();
     ids = await resolveDbIdentifiers(admin);
