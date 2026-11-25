@@ -2543,6 +2543,8 @@ export const vi = {
     unitLabel: 'Đơn vị (tùy chọn)',
     unitPlaceholder: 'đơn, khách, %, triệu...',
     linkedProjectLabel: 'Liên kết dự án Công tác (tùy chọn)',
+    searchProjectsPlaceholder: 'Tìm nhanh dự án theo tên...',
+    loadMoreProjectsBtn: 'Tải thêm dự án',
     noLinkedProject: 'Không liên kết dự án',
     linkedTasksLabel: 'Chọn công việc cụ thể (bỏ trống để tính cả dự án)',
     loadingTasks: 'Đang tải công việc...',
@@ -16468,6 +16470,7 @@ export const vi = {
       HR_OKR_PARENT_ARCHIVED: 'Không thể liên kết vào mục tiêu cha đã lưu trữ',
       HR_OKR_PARENT_SCOPE: 'Cấp mục tiêu cha không hợp lệ cho mục tiêu đang tạo',
       HR_OKR_ARCHIVED: 'Mục tiêu đã lưu trữ không thể thay đổi',
+      HR_OKR_OWNER_ERASED: 'Không thể mở lại hoặc chỉnh sửa mục tiêu cá nhân của nhân viên đã xóa dữ liệu',
       HR_OKR_SELF_PARENT: 'Mục tiêu không thể tự liên kết lên chính nó',
       HR_OKR_HAS_CHILDREN_QUARTER: 'Không thể đổi quý khi mục tiêu đang có mục tiêu con liên kết',
       HR_OKR_PROJECT_REQUIRED: 'Cần chọn dự án Công tác trước khi gắn công việc',
@@ -19663,6 +19666,7 @@ export const vi = {
     },
     projects: {
       board: 'Xem bảng và danh sách việc của dự án',
+      board_snapshots: 'Xem tóm tắt bảng và công việc của nhiều dự án',
       column: {
         create: 'Tạo cột tùy chỉnh trên bảng dự án',
         delete: 'Xóa cột tùy chỉnh trên bảng dự án',

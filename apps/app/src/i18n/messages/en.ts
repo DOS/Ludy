@@ -2546,6 +2546,8 @@ export const en = {
     unitLabel: 'Unit (optional)',
     unitPlaceholder: 'orders, clients, %, VND...',
     linkedProjectLabel: 'Link Ludy Projects project (optional)',
+    searchProjectsPlaceholder: 'Search projects by name...',
+    loadMoreProjectsBtn: 'Load more projects',
     noLinkedProject: 'No project link',
     linkedTasksLabel: 'Pick specific tasks (leave empty to track whole project)',
     loadingTasks: 'Loading project tasks...',
@@ -16469,6 +16471,7 @@ export const en = {
       HR_OKR_PARENT_ARCHIVED: 'Cannot align under an archived parent objective',
       HR_OKR_PARENT_SCOPE: 'Invalid parent objective level for this objective scope',
       HR_OKR_ARCHIVED: 'Archived objectives cannot be modified',
+      HR_OKR_OWNER_ERASED: 'Cannot reopen or modify an individual objective after employee erasure',
       HR_OKR_SELF_PARENT: 'An objective cannot align under itself',
       HR_OKR_HAS_CHILDREN_QUARTER: 'Cannot change quarter while child objectives align under this objective',
       HR_OKR_PROJECT_REQUIRED: 'Select a Ludy Projects project before selecting tasks',
@@ -19664,6 +19667,7 @@ export const en = {
     },
     projects: {
       board: 'Read a project board and task list',
+      board_snapshots: 'Read batched project board column and task summaries',
       column: {
         create: 'Create a custom board column in a project',
         delete: 'Delete a custom board column in a project',

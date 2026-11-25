@@ -5,6 +5,8 @@ import { sql } from 'kysely';
 import type { MemberRole } from '@ludy/db';
 import { memberProfiles } from '@ludy/kernel';
 import {
+  HR_OKR_PROJECT_OPTIONS_LIMIT_DEFAULT,
+  PROJECT_BOARD_SNAPSHOTS_MAX,
   auditValue,
   tableWrite,
   vietnamToday,
@@ -36,9 +38,10 @@ import {
   type HrOkrScope,
   type HrOkrStatus,
   type HrOkrTreeResult,
-  type ProjectBoard,
+  type ProjectBoardSnapshot,
+  type ProjectBoardSnapshotsResult,
   type ProjectListResult,
-  type ProjectSummary,
+  type ProjectStatus,
 } from '@ludy/kernel-contract';
 import { money } from '@ludy/l10n-vn';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
@@ -242,40 +245,33 @@ async function resolveDefaultLegalEntity(ctx: QueryContext): Promise<string> {
 
 type ProjectsSnapshot = {
   projectsAvailable: boolean;
-  projectsById: Map<string, ProjectSummary>;
-  boardsById: Map<string, ProjectBoard>;
+  snapshotsById: Map<string, ProjectBoardSnapshot>;
 };
 
 async function loadProjectsSnapshot(ctx: QueryContext, projectIds: readonly string[]): Promise<ProjectsSnapshot> {
-  const listRes = await ctx.query<ProjectListResult>('projects.project.list', {});
-  if (listRes.status !== 'ok') {
+  const uniqueProjectIds = uniqueIds(projectIds);
+  if (uniqueProjectIds.length === 0) {
+    const probe = await ctx.query<ProjectBoardSnapshotsResult>('projects.board_snapshots', { projectIds: [] });
     return {
-      projectsAvailable: false,
-      projectsById: new Map(),
-      boardsById: new Map(),
+      projectsAvailable: probe.status === 'ok',
+      snapshotsById: new Map(),
     };
   }
-  const projectsById = new Map<string, ProjectSummary>();
-  for (const proj of listRes.value.projects) {
-    projectsById.set(proj.id, proj);
-  }
-  const boardsById = new Map<string, ProjectBoard>();
-  const uniqueProjectIds = uniqueIds(projectIds);
-  for (const projectId of uniqueProjectIds) {
-    if (!projectsById.has(projectId)) continue;
-    try {
-      const boardRes = await ctx.query<ProjectBoard>('projects.board', { projectId });
-      if (boardRes.status === 'ok') {
-        boardsById.set(projectId, boardRes.value);
-      }
-    } catch (err) {
-      if (err instanceof DomainError && (err.status === 403 || err.status === 404)) {
-        continue;
-      }
-      throw err;
+  const snapshotsById = new Map<string, ProjectBoardSnapshot>();
+  for (let i = 0; i < uniqueProjectIds.length; i += PROJECT_BOARD_SNAPSHOTS_MAX) {
+    const batch = uniqueProjectIds.slice(i, i + PROJECT_BOARD_SNAPSHOTS_MAX);
+    const res = await ctx.query<ProjectBoardSnapshotsResult>('projects.board_snapshots', { projectIds: batch });
+    if (res.status !== 'ok') {
+      return {
+        projectsAvailable: false,
+        snapshotsById: new Map(),
+      };
+    }
+    for (const snap of res.value.projects) {
+      snapshotsById.set(snap.projectId, snap);
     }
   }
-  return { projectsAvailable: true, projectsById, boardsById };
+  return { projectsAvailable: true, snapshotsById };
 }
 
 function summarizeLinkedTasks(
@@ -298,11 +294,10 @@ function summarizeLinkedTasks(
       totalLinkedTasks: linkedTaskIds.length,
     };
   }
-  const summary = projects.projectsById.get(linkedProjectId);
-  const board = projects.boardsById.get(linkedProjectId);
-  if (!summary || !board) {
+  const board = projects.snapshotsById.get(linkedProjectId);
+  if (!board) {
     return {
-      linkedProjectName: summary?.name ?? null,
+      linkedProjectName: null,
       linkedProjectAccessible: false,
       linkedTasks: [],
       completedLinkedTasks: 0,
@@ -310,7 +305,7 @@ function summarizeLinkedTasks(
     };
   }
   const colNames = new Map<string, string>();
-  for (const col of board.columns ?? []) {
+  for (const col of board.columns) {
     colNames.set(col.id, col.name);
   }
   const tasksById = new Map(board.tasks.map((t) => [t.id, t]));
@@ -332,7 +327,7 @@ function summarizeLinkedTasks(
       });
     }
     return {
-      linkedProjectName: summary.name,
+      linkedProjectName: board.name,
       linkedProjectAccessible: true,
       linkedTasks,
       completedLinkedTasks: completed,
@@ -350,7 +345,7 @@ function summarizeLinkedTasks(
     statusName: (t.columnId ? colNames.get(t.columnId) : null) ?? t.status,
   }));
   return {
-    linkedProjectName: summary.name,
+    linkedProjectName: board.name,
     linkedProjectAccessible: true,
     linkedTasks,
     completedLinkedTasks: completed,
@@ -455,7 +450,7 @@ export const hrOkrTree = defineQuery({
         linkedProjectId: kr.linked_project_id,
         linkedProjectName: projSummary.linkedProjectName,
         linkedProjectAccessible: projSummary.linkedProjectAccessible,
-        linkedTaskIds: [...kr.linked_task_ids],
+        linkedTaskIds: projSummary.linkedProjectAccessible ? [...kr.linked_task_ids] : [],
         linkedTasks: projSummary.linkedTasks,
         completedLinkedTasks: projSummary.completedLinkedTasks,
         totalLinkedTasks: projSummary.totalLinkedTasks,
@@ -530,21 +525,33 @@ export const hrOkrProjectOptions = defineQuery({
   access: STAFF_ROLES,
   handler: async (ctx, input): Promise<HrOkrProjectOptionsResult> => {
     userOf(ctx.actor);
-    const listRes = await ctx.query<ProjectListResult>('projects.project.list', {});
+    const limit = input.limit ?? HR_OKR_PROJECT_OPTIONS_LIMIT_DEFAULT;
+    const statuses: ProjectStatus[] = input.includeArchived
+      ? ['active', 'on_hold', 'done', 'archived']
+      : ['active', 'on_hold', 'done'];
+    const listRes = await ctx.query<ProjectListResult>('projects.project.list', {
+      status: statuses,
+      limit,
+      ...(input.search !== undefined ? { search: input.search } : {}),
+      ...(input.cursor !== undefined ? { cursor: input.cursor } : {}),
+    });
     if (listRes.status !== 'ok') {
-      return { projectsAvailable: false, projects: [] };
+      return { projectsAvailable: false, projects: [], hasMore: false, nextCursor: null };
     }
-    const projects: HrOkrProjectOption[] = listRes.value.projects
-      .filter((p) => input.includeArchived || p.status !== 'archived')
-      .map((p) => ({
-        id: p.id,
-        name: p.name,
-        status: p.status,
-        archived: p.status === 'archived',
-        openTaskCount: p.openTaskCount,
-        doneTaskCount: p.doneTaskCount,
-      }));
-    return { projectsAvailable: true, projects };
+    const projects: HrOkrProjectOption[] = listRes.value.projects.map((p) => ({
+      id: p.id,
+      name: p.name,
+      status: p.status,
+      archived: p.status === 'archived',
+      openTaskCount: p.openTaskCount,
+      doneTaskCount: p.doneTaskCount,
+    }));
+    return {
+      projectsAvailable: true,
+      projects,
+      hasMore: listRes.value.truncated,
+      nextCursor: listRes.value.nextCursor ?? null,
+    };
   },
 });
 
@@ -558,12 +565,12 @@ export const hrOkrProjectTasks = defineQuery({
     if (!snapshot.projectsAvailable) {
       return { projectsAvailable: false, projectAccessible: false, tasks: [] };
     }
-    const board = snapshot.boardsById.get(input.projectId);
+    const board = snapshot.snapshotsById.get(input.projectId);
     if (!board) {
       return { projectsAvailable: true, projectAccessible: false, tasks: [] };
     }
     const colNames = new Map<string, string>();
-    for (const col of board.columns ?? []) {
+    for (const col of board.columns) {
       colNames.set(col.id, col.name);
     }
     const tasks: HrOkrLinkedTaskView[] = board.tasks
@@ -759,6 +766,9 @@ export const hrOkrObjectiveUpdate = defineCommand({
     if (existing.status === 'archived') {
       throw new DomainError('HR_OKR_ARCHIVED', 409, 'Mục tiêu đã lưu trữ không thể chỉnh sửa');
     }
+    if (existing.scope === 'individual' && existing.owner_employee_id === null) {
+      throw new DomainError('HR_OKR_OWNER_ERASED', 409, 'Không thể chỉnh sửa mục tiêu cá nhân của nhân viên đã xóa dữ liệu');
+    }
 
     const nextQuarter = input.quarter ?? existing.quarter;
     if (nextQuarter !== existing.quarter) {
@@ -834,6 +844,9 @@ export const hrOkrObjectiveSetStatus = defineCommand({
       .executeTakeFirst();
     if (!existing) throw objectiveNotFound();
     if (!canManageObjective(caller, existing)) throw okrForbidden();
+    if (existing.scope === 'individual' && existing.owner_employee_id === null && input.status !== 'archived') {
+      throw new DomainError('HR_OKR_OWNER_ERASED', 409, 'Không thể mở lại mục tiêu cá nhân khi dữ liệu nhân viên đã được xóa');
+    }
 
     const updated = await ctx.trx
       .updateTable('ludy_hr.okr_objective')
@@ -883,7 +896,7 @@ async function validateAndMeasureProjectLink(
   if (!snapshot.projectsAvailable) {
     throw new DomainError('HR_OKR_PROJECTS_OFF', 409, 'Ứng dụng Công tác chưa bật cho tổ chức này; hãy dùng chỉ số thủ công');
   }
-  const board = snapshot.boardsById.get(linkedProjectId);
+  const board = snapshot.snapshotsById.get(linkedProjectId);
   if (!board) {
     throw new DomainError('HR_OKR_PROJECT_NOT_FOUND', 404, 'Bạn không có quyền truy cập dự án Công tác này hoặc dự án không tồn tại');
   }
@@ -1008,10 +1021,10 @@ export const hrOkrKeyResultUpdate = defineCommand({
     const nextMetricType = input.metricType ?? existing.metric_type;
     const nextLinkedProjectId = input.linkedProjectId === undefined ? existing.linked_project_id : input.linkedProjectId;
     const nextLinkedTaskIds =
-      input.linkedProjectId === null
-        ? []
-        : input.linkedTaskIds !== undefined
-          ? input.linkedTaskIds
+      input.linkedTaskIds !== undefined
+        ? input.linkedTaskIds
+        : input.linkedProjectId === null
+          ? []
           : existing.linked_task_ids;
 
     const projectChanged =
@@ -1023,13 +1036,13 @@ export const hrOkrKeyResultUpdate = defineCommand({
     let projectAccessible = false;
     let finalTaskIds = uniqueIds(nextLinkedTaskIds);
 
-    if (projectChanged && nextLinkedProjectId !== null) {
+    if (projectChanged) {
       const measured = await validateAndMeasureProjectLink(ctx, nextLinkedProjectId, finalTaskIds);
       finalTaskIds = measured.linkedTaskIds;
       completedLinkedTasks = measured.completedLinkedTasks;
       totalLinkedTasks = measured.totalLinkedTasks;
-      projectsAvailable = measured.projectsAvailable;
-      projectAccessible = measured.projectAccessible;
+      projectsAvailable = nextLinkedProjectId !== null ? measured.projectsAvailable : false;
+      projectAccessible = nextLinkedProjectId !== null ? measured.projectAccessible : false;
     } else if (nextLinkedProjectId !== null) {
       const snapshot = await loadProjectsSnapshot(ctx, [nextLinkedProjectId]);
       const summary = summarizeLinkedTasks(nextLinkedProjectId, finalTaskIds, snapshot);
@@ -1193,7 +1206,6 @@ async function applyProjectSyncAndCheckin(
   }
 
   const nextProgress = computeKrProgressPct(existing.metric_type, nextCurrent, nextTarget);
-  const nextNote = options.lastCheckinNote === undefined ? existing.last_checkin_note : options.lastCheckinNote;
 
   // Non-manager self check-in must never modify target_value (enforced by okr_key_result_write_guard trigger).
   await ctx.trx
@@ -1202,7 +1214,7 @@ async function applyProjectSyncAndCheckin(
       ...(isManager && nextTarget !== formatOkrDecimal(money(existing.target_value)) ? { target_value: nextTarget } : {}),
       current_value: nextCurrent,
       progress_pct: nextProgress,
-      last_checkin_note: nextNote,
+      ...(options.lastCheckinNote !== undefined ? { last_checkin_note: options.lastCheckinNote } : {}),
       last_checkin_at: ctx.now,
       last_checkin_by: caller.userId,
       updated_at: ctx.now,
@@ -1300,7 +1312,7 @@ export const hrOkrDraftRead = defineQuery({
     const projects =
       kr.linked_project_id !== null
         ? await loadProjectsSnapshot(ctx, [kr.linked_project_id])
-        : { projectsAvailable: false, projectsById: new Map<string, ProjectSummary>(), boardsById: new Map<string, ProjectBoard>() };
+        : { projectsAvailable: false, snapshotsById: new Map<string, ProjectBoardSnapshot>() };
     const summary = summarizeLinkedTasks(kr.linked_project_id, kr.linked_task_ids, projects);
 
     const { rows: metaRows } = await sql<{ ai_stopped: boolean; budget_spent: boolean }>`
