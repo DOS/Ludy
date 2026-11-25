@@ -145,8 +145,12 @@ suite('the opt-in morning notice of the day\'s meetings (#3955)', () => {
     expect(sent).toHaveLength(1);
     expect(sent[0]).toMatchObject({ to_address: 'lan@morning.test', source: 'meetings.morning', source_id: null, status: 'queued' });
     expect(sent[0]?.payload).toEqual({ lang: 'vi', org: 'Công ty Buổi Sáng', count: 2, path: expect.stringMatching(/^\/o\/[a-z0-9-]+\/meetings$/) });
-    // No title, no name, no time: not in the notice, the mail, or the audit rows of the command.
-    const audit = (await sqlAdmin<{ detail: unknown }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.morning.notice'`, [orgId])).rows;
+    // No title, no name, no time, and no per-member calendar count (#5018): not in the notice, the mail, or the audit rows of the command.
+    const audit = (await sqlAdmin<{ detail: Record<string, unknown> }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.morning.notice'`, [orgId])).rows;
+    expect(audit).toHaveLength(1);
+    expect(audit[0]?.detail).toMatchObject({ day: now.day, mailed: true });
+    expect(audit[0]?.detail).not.toHaveProperty('count');
+    expect(Object.keys(audit[0]!.detail).filter((k) => k !== 'component' && k !== 'workerInstance').sort()).toEqual(['day', 'mailed']);
     for (const text of [JSON.stringify(mine), JSON.stringify(sent), JSON.stringify(audit)]) expect(text).not.toMatch(/Họp kín|Á Châu|hợp đồng|thứ hai/u);
     // The same day again: nothing new, by the sweep or by a dispatch of the same row.
     expect(await sweep()).toMatchObject({ found: 0, sent: 0 });
