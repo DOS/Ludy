@@ -431,9 +431,17 @@ describe('a Zoom transcript-only recording', () => {
     expect(recorded(big.calls)).toEqual([failedWith('too_large')]);
   });
 
+  it('counts the file against the transcript cap while it streams when no size is declared', async () => {
+    const huge: NonNullable<MeetingsImportDeps['stream']> = async (url) =>
+      ({ url: String(url), status: 200, headers: {}, body: (async function* () { yield new Uint8Array(TRANSCRIPT_FILE_MAX_BYTES); yield new Uint8Array(1); })(), destroy: () => undefined }) as EgressStream;
+    const { deps, calls } = harness({ adapters: { zoom: zoom() }, stream: huge });
+    expect(await runMeetingsImport(deps, transcriptJob(), attempt)).toBe('failed');
+    expect(recorded(calls)).toEqual([failedWith('too_large')]);
+  });
+
   it('refuses a transcript address off Zoom\'s hosts before any connection', async () => {
     opened.length = 0;
-    const off = harness({ adapters: { zoom: zoom(files().recording_files[0] ? { recording_files: [{ ...files().recording_files[0], download_url: 'https://evil.example.test/rec/f' }] } : {}) }, stream: stream(VTT) });
+    const off = harness({ adapters: { zoom: zoom({ recording_files: [{ ...files().recording_files[0], download_url: 'https://evil.example.test/rec/f' }] }) }, stream: stream(VTT) });
     expect(await runMeetingsImport(off.deps, transcriptJob(), attempt)).toBe('failed');
     expect(recorded(off.calls)).toEqual([failedWith('platform_refused')]);
     expect(opened).toEqual([]);
