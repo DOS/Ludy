@@ -2,6 +2,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { HOME_ACTIONS, HOME_ACTIONS_MAX, homeActions, showStartCard } from '../src/lib/home-actions.ts';
 import { WAITING_LINKS, allCounted, appsLayout, gapsFromYear, isDay1Empty, quickStartSteps, shellBadges, tasksNotListed, unreadNotices, waitingItems } from '../src/lib/overview.ts';
 
 describe('org overview', () => {
@@ -89,11 +90,16 @@ describe('org overview', () => {
   it('builds up to 3 Day-1 quick-start steps gated strictly by enabled org modules and role (#4644)', () => {
     expect(
       quickStartSteps({ modules: ['finance', 'notes', 'sign', 'social', 'crm'], role: 'owner' }).map((s) => s.id),
-    ).toEqual(['uploadInvoice', 'configureApps', 'createNote']);
+    ).toEqual(['uploadInvoice', 'vatPeriod', 'twoFactor']);
 
     expect(
       quickStartSteps({ modules: ['finance', 'sign'], role: 'admin' }).map((s) => s.id),
-    ).toEqual(['uploadInvoice', 'configureApps', 'createEnvelope']);
+    ).toEqual(['uploadInvoice', 'vatPeriod', 'twoFactor']);
+
+    // The VAT period is chosen already: that step is done, and the next fill takes its place (#4783).
+    expect(
+      quickStartSteps({ modules: ['finance', 'notes'], role: 'owner', vatChosen: true }).map((s) => s.id),
+    ).toEqual(['uploadInvoice', 'twoFactor', 'configureApps']);
 
     // Finance disabled: never recommends uploading invoices.
     expect(
@@ -108,7 +114,7 @@ describe('org overview', () => {
     // Member skips owner/admin settings and social channel-connect steps; viewer gets no write CTAs.
     expect(
       quickStartSteps({ modules: ['finance', 'notes'], role: 'member' }).map((s) => s.id),
-    ).toEqual(['uploadInvoice', 'createNote', 'createTask']);
+    ).toEqual(['uploadInvoice', 'twoFactor', 'createNote']);
     expect(
       quickStartSteps({ modules: ['kernel', 'social'], role: 'member' }).map((s) => s.id),
     ).toEqual(['createTask']);
@@ -116,6 +122,12 @@ describe('org overview', () => {
       quickStartSteps({ modules: ['kernel', 'social', 'crm', 'sign'], role: 'member' }).map((s) => s.id),
     ).toEqual(['addContact', 'createEnvelope', 'createDeal']);
     expect(quickStartSteps({ modules: ['finance', 'notes'], role: 'viewer' })).toEqual([]);
+  });
+
+  it('keeps the VAT step to owners and admins, with its own settings section (#4783)', () => {
+    const owner = quickStartSteps({ modules: ['finance'], role: 'owner' }).find((s) => s.id === 'vatPeriod');
+    expect(owner).toMatchObject({ to: '/o/$slug/settings', hash: 'tax-profile' });
+    expect(quickStartSteps({ modules: ['finance'], role: 'member' }).map((s) => s.id)).not.toContain('vatPeriod');
   });
 
   it('detects Day-1 empty orgs only once reads settle with zero activity, waiting items, or tax dues (#4644)', () => {
@@ -143,5 +155,32 @@ describe('org overview', () => {
     expect(isDay1Empty({ ...base, taxDuesCount: 1 })).toBe(false);
     expect(isDay1Empty({ ...base, waitingCount: 1 })).toBe(false);
     expect(isDay1Empty({ ...base, sinceCount: 1 })).toBe(false);
+  });
+
+  it('lists 3 to 4 fixed create actions, only for the apps that are on and never for a viewer (#4783)', () => {
+    expect(HOME_ACTIONS.length).toBeGreaterThanOrEqual(3);
+    expect(HOME_ACTIONS.length).toBeLessThanOrEqual(HOME_ACTIONS_MAX);
+    expect(homeActions(['finance', 'crm'], 'owner').map((a) => a.id)).toEqual(['uploadInvoice', 'recordExpense', 'createSalesInvoice', 'addCustomer']);
+    expect(homeActions(['finance'], 'member').map((a) => a.id)).toEqual(['uploadInvoice', 'recordExpense', 'createSalesInvoice']);
+    expect(homeActions(['crm'], 'admin').map((a) => a.id)).toEqual(['addCustomer']);
+    expect(homeActions(['kernel', 'notes'], 'owner')).toEqual([]);
+    expect(homeActions(['finance', 'crm'], 'viewer')).toEqual([]);
+    expect(homeActions(['finance', 'crm'], undefined)).toEqual([]);
+  });
+
+  it('shows the day-1 start card by the first approved invoice, a close, and the empty-org rule where finance is off (#4783)', () => {
+    const base = { steps: 3, stored: null, financeOn: true, firstInvoiceApproved: false, orgEmpty: false } as const;
+    expect(showStartCard(base)).toBe(true);
+    // Not before the read answers, and not after the first approved invoice.
+    expect(showStartCard({ ...base, firstInvoiceApproved: undefined })).toBe(false);
+    expect(showStartCard({ ...base, firstInvoiceApproved: true })).toBe(false);
+    // Closed, or done on this device.
+    expect(showStartCard({ ...base, stored: 'dismissed' })).toBe(false);
+    expect(showStartCard({ ...base, stored: 'done' })).toBe(false);
+    // No steps for this role.
+    expect(showStartCard({ ...base, steps: 0 })).toBe(false);
+    // Accounting off: no invoice to wait for, so only an empty org sees it.
+    expect(showStartCard({ ...base, financeOn: false, firstInvoiceApproved: undefined, orgEmpty: true })).toBe(true);
+    expect(showStartCard({ ...base, financeOn: false, firstInvoiceApproved: undefined, orgEmpty: false })).toBe(false);
   });
 });
