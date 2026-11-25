@@ -121,9 +121,9 @@ export async function handleEnvelopeCreatedWithWarnings(deps: {
   envelopeId: string;
   warnings: readonly SignDocxToPdfWarning[];
   slug: string;
-  orgId?: string | null;
-  userId?: string | null;
-  resolveUserScope?: () => Promise<{ orgId?: string | null; userId?: string | null } | null>;
+  orgId?: string | null | undefined;
+  userId?: string | null | undefined;
+  resolveUserScope?: (() => Promise<{ orgId?: string | null | undefined; userId?: string | null | undefined } | null>) | undefined;
   setCreateOpen: (open: boolean) => void;
   setCreatedDocxNotice: (notice: { envelopeId: string; warnings: readonly SignDocxToPdfWarning[] } | null) => void;
   invalidateEnvelopes: () => Promise<unknown>;
