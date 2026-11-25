@@ -23,6 +23,7 @@ import {
   type WorkingHours,
 } from '@ludy/kernel-contract';
 import { DomainError, type Runtime } from '@ludy/kernel-runtime';
+import { publicPageAllowed } from './public-page-gate.ts';
 
 export const BOOKING_VIEWS_PER_MINUTE = 60;
 export const BOOKING_REQUESTS_PER_MINUTE = 5;
@@ -81,6 +82,7 @@ export async function bookingView(runtime: Runtime, org: string, type: string, r
   const s = slugs(org, type);
   const parsed = zRange.safeParse(range);
   if (!parsed.success) throw invalid();
+  if (!(await publicPageAllowed(runtime, { module: 'crm', kind: 'booking_page' }, `${s.org}/${s.type}`))) return null;
   const from = new Date(parsed.data.from);
   const to = new Date(parsed.data.to);
   const row = await runtime.orgless(async (db) => {
@@ -134,6 +136,7 @@ export async function bookingRequest(runtime: Runtime, org: string, type: string
   const s = slugs(org, type);
   const parsed = zRequest.safeParse(body);
   if (!parsed.success) throw invalid();
+  if (!(await publicPageAllowed(runtime, { module: 'crm', kind: 'booking_page' }, `${s.org}/${s.type}`))) return null;
   const r = parsed.data;
   const token = randomBytes(32).toString('base64url');
   const id = await runtime.orgless(async (db) => {
@@ -162,6 +165,7 @@ export async function bookingStatus(runtime: Runtime, org: string, type: string,
   const s = slugs(org, type);
   const parsed = z.strictObject({ token: zToken }).safeParse(body);
   if (!parsed.success) return null;
+  if (!(await publicPageAllowed(runtime, { module: 'crm', kind: 'booking_page' }, `${s.org}/${s.type}`))) return null;
   const row = await runtime.orgless(async (db) => {
     const { rows } = await sql<{ status: unknown }>`SELECT ludy_crm.booking_status(${s.org}, ${s.type}, ${sha256(parsed.data.token)}) AS status`.execute(db);
     return rows[0]?.status ?? null;
@@ -182,6 +186,7 @@ export async function bookingManageView(runtime: Runtime, org: string, type: str
   const s = slugs(org, type);
   const parsed = z.strictObject({ manage: z.string().max(100) }).safeParse(body);
   if (!parsed.success) return null;
+  if (!(await publicPageAllowed(runtime, { module: 'crm', kind: 'booking_manage' }, `${s.org}/${s.type}/${parsed.data.manage}`))) return null;
   const row = await runtime.orgless(async (db) => {
     const { rows } = await sql<{ view: Record<string, unknown> | null }>`SELECT ludy_crm.booking_manage_view(${s.org}, ${s.type}, ${parsed.data.manage}) AS view`.execute(db);
     return rows[0]?.view ?? null;
@@ -199,6 +204,7 @@ export async function bookingManageAsk(runtime: Runtime, org: string, type: stri
   const parsed = zBookingManageAsk.safeParse(body);
   if (!parsed.success) throw invalid();
   const ask = parsed.data;
+  if (!(await publicPageAllowed(runtime, { module: 'crm', kind: 'booking_manage' }, `${s.org}/${s.type}/${ask.manage}`))) return null;
   const startsAt = ask.action === 'move' ? new Date(ask.startsAt) : null;
   const id = await runtime.orgless(async (db) => {
     try {

@@ -6,6 +6,7 @@
 // crm-quote-send.db.test.ts on PostgreSQL.
 import { randomUUID } from 'node:crypto';
 import type pg from 'pg';
+import { PostgresQueryCompiler } from 'kysely';
 import { describe, expect, it, vi } from 'vitest';
 import { sha256Hex, type BlobStore, type Runtime } from '@ludy/kernel-runtime';
 import type { AuthUser } from '../src/auth.ts';
@@ -23,15 +24,33 @@ const INVALID = { code: 'QUOTE_LINK_INVALID', message: 'Liên kết báo giá kh
 
 const ref = (bytes: Uint8Array, contentType = 'image/png') => ({ storageKey: 'org/logo', generation: null, sha256: sha256Hex(bytes), contentType, sizeBytes: bytes.byteLength });
 
+const compiler = new PostgresQueryCompiler();
+const ORG_ID = randomUUID();
+
 // `found` is what the definer answers for the token: null for every refusal it has, else the logo's reference.
-function appWith(options: { crm?: boolean; found?: ReturnType<typeof ref> | null; stored?: Uint8Array; perMinute?: number; get?: () => Promise<Uint8Array>; reads?: ConcurrencyLimiter } = {}) {
+function appWith(options: { crm?: boolean; entitled?: boolean; found?: ReturnType<typeof ref> | null; stored?: Uint8Array; perMinute?: number; get?: () => Promise<Uint8Array>; reads?: ConcurrencyLimiter } = {}) {
+  const logoCalled = vi.fn();
+  const fakeDb = {
+    getExecutor: () => ({
+      compileQuery: (node: Parameters<PostgresQueryCompiler['compileQuery']>[0], queryId: Parameters<PostgresQueryCompiler['compileQuery']>[1]) => compiler.compileQuery(node, queryId),
+      executeQuery: async (compiled: { sql: string }) => {
+        if (compiled.sql.includes('public_page_org')) {
+          return { rows: [{ org_id: options.found ? ORG_ID : null }] };
+        }
+        logoCalled();
+        return { rows: [{ logo: options.found ?? null }] };
+      },
+      transformQuery: (node: unknown) => node,
+    }),
+  };
   const runtime = {
     installed: (module: string) => (module === 'crm' ? (options.crm ?? true) : true),
     modules: () => ['kernel', 'crm'],
-    orgless: async () => options.found ?? null,
+    appOn: async (_orgId: string, module: string) => (module === 'crm' ? (options.entitled ?? true) : true),
+    orgless: async <O>(fn: (db: unknown) => Promise<O>) => fn(fakeDb),
   } as unknown as Runtime;
   const store = { put: async () => '', get: options.get ?? (async () => options.stored ?? PNG), delete: async () => undefined } as unknown as BlobStore;
-  return createHttpApp({
+  const http = createHttpApp({
     config,
     runtime,
     store,
@@ -41,6 +60,7 @@ function appWith(options: { crm?: boolean; found?: ReturnType<typeof ref> | null
     quoteLogoLimit: new RateLimiter({ perMinute: options.perMinute ?? 100 }),
     ...(options.reads ? { quoteLogoReads: options.reads } : {}),
   });
+  return Object.assign(http, { logoCalled });
 }
 
 const post = (app: ReturnType<typeof appWith>, body: string | null, contentType = 'application/json') =>
@@ -106,7 +126,12 @@ describe('POST /api/quote/logo (#2814)', () => {
     expect(reads.inUse).toBe(0);
   });
 
-  it('is not there without the CRM module, and takes no GET', async () => {
+  it('is not there without the CRM module or CRM entitlement, and takes no GET', async () => {
+    const unentitled = appWith({ entitled: false, found: ref(PNG) });
+    const unentitledRes = await post(unentitled, JSON.stringify({ token: TOKEN }));
+    expect(unentitledRes.status).toBe(404);
+    expect(await unentitledRes.json()).toEqual(INVALID);
+    expect(unentitled.logoCalled).not.toHaveBeenCalled();
     expect((await post(appWith({ crm: false, found: ref(PNG) }), JSON.stringify({ token: TOKEN }))).status).toBe(404);
     expect((await appWith({ found: ref(PNG) }).request('/api/quote/logo', { method: 'GET' })).status).toBeGreaterThanOrEqual(404);
   });
