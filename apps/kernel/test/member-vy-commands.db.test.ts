@@ -311,39 +311,44 @@ suite('member Vy commands (ADR-0049 stage A slice 3)', () => {
     let inFlight = 0;
     let admitted = 0;
     let rejectedCount = 0;
+    let released = false;
     let releaseHold!: () => void;
     const holdOpen = new Promise<void>((resolve) => {
       releaseHold = resolve;
     });
     let resolveAllDecided!: () => void;
-    const allDecided = new Promise<void>((resolve) => {
+    let rejectAllDecided!: (reason?: unknown) => void;
+    const allDecided = new Promise<void>((resolve, reject) => {
       resolveAllDecided = resolve;
+      rejectAllDecided = reject;
     });
     const checkDecided = () => {
       if (admitted + rejectedCount === 4 && inFlight + rejectedCount === 4) {
         resolveAllDecided();
       }
     };
-    const meter: typeof baseMeter = {
-      admit: async (call) => {
-        try {
-          const reservationId = await baseMeter.admit(call);
-          admitted += 1;
-          checkDecided();
-          return reservationId;
-        } catch (error) {
-          rejectedCount += 1;
-          checkDecided();
-          throw error;
-        }
-      },
-      record: (call, used, reservationId) => baseMeter.record(call, used, reservationId),
-      ...(baseMeter.release ? { release: (call, reservationId) => baseMeter.release!(call, reservationId) } : {}),
-    };
 
     const settledPromise = Promise.allSettled(
-      Array.from({ length: 4 }, () =>
-        withAiScope({ orgId, memberRunId: run.runId, meter }, () =>
+      Array.from({ length: 4 }, () => {
+        let rejectedInAdmit = false;
+        const meter: typeof baseMeter = {
+          admit: async (call) => {
+            try {
+              const reservationId = await baseMeter.admit(call);
+              admitted += 1;
+              checkDecided();
+              return reservationId;
+            } catch (error) {
+              rejectedInAdmit = true;
+              rejectedCount += 1;
+              checkDecided();
+              throw error;
+            }
+          },
+          record: (call, used, reservationId) => baseMeter.record(call, used, reservationId),
+          ...(baseMeter.release ? { release: (call, reservationId) => baseMeter.release!(call, reservationId) } : {}),
+        };
+        return withAiScope({ orgId, memberRunId: run.runId, meter }, () =>
           metered(
             'notes.summary',
             async () => {
@@ -355,8 +360,13 @@ suite('member Vy commands (ADR-0049 stage A slice 3)', () => {
             undefined,
             usage,
           ),
-        ),
-      ),
+        ).catch((error) => {
+          if (!released && !rejectedInAdmit) {
+            rejectAllDecided(error);
+          }
+          throw error;
+        });
+      }),
     );
 
     let settled: PromiseSettledResult<unknown>[];
@@ -366,6 +376,7 @@ suite('member Vy commands (ADR-0049 stage A slice 3)', () => {
       expect(rejectedCount).toBe(2);
       expect(inFlight).toBe(2);
     } finally {
+      released = true;
       releaseHold();
       settled = await settledPromise;
     }
@@ -380,7 +391,7 @@ suite('member Vy commands (ADR-0049 stage A slice 3)', () => {
     // A failed call releases its hold immediately; another member cannot release Alice's reservation.
     await sqlAdmin(`DELETE FROM ludy_kernel.org_usage WHERE org_id = $1 AND metric = 'ai_cost'`, [orgId]);
     await expect(
-      withAiScope({ orgId, memberRunId: run.runId, meter }, () =>
+      withAiScope({ orgId, memberRunId: run.runId, meter: baseMeter }, () =>
         metered(
           'notes.summary',
           async () => {
@@ -463,10 +474,11 @@ suite('member Vy commands (ADR-0049 stage A slice 3)', () => {
       );
       expect(aliceVyHold.allowed && aliceMemberHold.allowed && systemHold.allowed).toBe(true);
 
-      // 1) A viewer (no vy.use, no member_vy agent) cannot reserve or release an agent_id IS NULL hold via member_vy.meter.*.
+      // 1) A viewer (no vy.use, no member_vy agent) cannot reserve via member_vy.meter.reserve and cannot release any foreign/agent_id-IS-NULL hold via member_vy.meter.release.
       await expect(exec(viewerNoAgent, 'kernel.member_vy.meter.reserve', { feature: 'notes.summary', projectedCost: '0.001000' })).rejects.toMatchObject({ code: 'VY_NOT_ALLOWED' });
-      await expect(exec(viewerNoAgent, 'kernel.member_vy.meter.release', { reservationId: aliceMemberHold.reservationId })).rejects.toMatchObject({ code: 'VY_NOT_ALLOWED' });
-      await expect(exec(viewerNoAgent, 'kernel.member_vy.meter.release', { reservationId: systemHold.reservationId })).rejects.toMatchObject({ code: 'VY_NOT_ALLOWED' });
+      expect(await exec(viewerNoAgent, 'kernel.member_vy.meter.release', { reservationId: aliceMemberHold.reservationId })).toEqual({ released: false });
+      expect(await exec(viewerNoAgent, 'kernel.member_vy.meter.release', { reservationId: systemHold.reservationId })).toEqual({ released: false });
+      expect(await exec(viewerNoAgent, 'kernel.member_vy.meter.release', { reservationId: aliceVyHold.reservationId })).toEqual({ released: false });
 
       // 2) An owner with vy.use but no member_vy agent returns { released: false } without touching agent_id IS NULL holds.
       expect(await exec(users.owner, 'kernel.member_vy.meter.release', { reservationId: aliceMemberHold.reservationId })).toEqual({ released: false });
@@ -509,6 +521,20 @@ suite('member Vy commands (ADR-0049 stage A slice 3)', () => {
       expect(
         await workerRuntime.execute('kernel.ai.budget.release', { reservationId: systemHold.reservationId }, { actor: { type: 'system', component: 'test' }, orgId }),
       ).toEqual({ released: true });
+
+      // 6) Mid-flight vy.use revocation blocks new reserves but still lets the owning member release their own in-flight hold (while others still cannot).
+      const revokedHold = await exec<{ allowed: true; reservationId: string }>(users.alice, 'kernel.member_vy.meter.reserve', {
+        feature: 'notes.summary',
+        projectedCost: '0.001000',
+      });
+      await exec(users.owner, 'kernel.member.permission.set', { userId: users.alice, permission: 'vy.use', allowed: false });
+      try {
+        await expect(exec(users.alice, 'kernel.member_vy.meter.reserve', { feature: 'notes.summary', projectedCost: '0.001000' })).rejects.toMatchObject({ code: 'VY_NOT_ALLOWED' });
+        expect(await exec(users.owner, 'kernel.member_vy.meter.release', { reservationId: revokedHold.reservationId })).toEqual({ released: false });
+        expect(await exec(users.alice, 'kernel.member_vy.meter.release', { reservationId: revokedHold.reservationId })).toEqual({ released: true });
+      } finally {
+        await exec(users.owner, 'kernel.member.permission.set', { userId: users.alice, permission: 'vy.use', allowed: null });
+      }
     } finally {
       await Promise.all([appPool.end(), workerPool.end()]);
     }

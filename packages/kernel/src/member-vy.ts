@@ -606,17 +606,18 @@ export const memberVyMeterReserve = defineCommand({
   handler: async (ctx, input): Promise<AiBudgetReserve> => {
     const userId = requireUser(ctx);
     if (!(await mayUseVy(ctx))) throw new DomainError('VY_NOT_ALLOWED', 403, 'Bạn chưa được phép làm việc với Vy');
+    const module = MEMBER_VY_FEATURES[input.feature].module;
+    // Acquire the per-org AI budget lock before locking the member_vy agent row and reading kill switches so pause/retire and budget checks serialize cleanly.
+    await lockAiBudgetOrg(ctx.trx, ctx.orgId);
     const agent = await ctx.trx
       .selectFrom('ludy_kernel.agent')
       .select(['id', 'status'])
       .where('org_id', '=', ctx.orgId)
       .where('kind', '=', 'member_vy')
       .where('member_user_id', '=', userId)
+      .forShare()
       .executeTakeFirst();
     if (!agent || agent.status !== 'active') throw new DomainError('VY_NOT_ALLOWED', 403, 'Bạn chưa được phép làm việc với Vy');
-    const module = MEMBER_VY_FEATURES[input.feature].module;
-    // Acquire the per-org AI budget lock before reading kill switches so switch + budget checks serialize cleanly.
-    await lockAiBudgetOrg(ctx.trx, ctx.orgId);
     const { blocked } = await checkMemberVyKillSwitches(ctx, module, agent.id);
     if (blocked) {
       ctx.audit({ feature: input.feature, module, agent: agent.id, allowed: false, scope: blocked.scope });
@@ -681,7 +682,6 @@ export const memberVyMeterRelease = defineCommand({
   access: MEMBER_ROLES,
   handler: async (ctx, input): Promise<{ released: boolean }> => {
     const userId = requireUser(ctx);
-    if (!(await mayUseVy(ctx))) throw new DomainError('VY_NOT_ALLOWED', 403, 'Bạn chưa được phép làm việc với Vy');
     const agentId = await ownAgent(ctx, userId);
     if (!agentId) {
       ctx.audit({ agent: null, reservationId: input.reservationId, released: false });

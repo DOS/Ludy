@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The AI budget meter's door (#2382): what metered() asks before a call and tells after it.
 import { NoObjectGeneratedError } from 'ai';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { AiBudgetExhaustedError, AiMeterMissingError, aiCost, metered, withAiScope, type AiCall, type AiMeter, type AiUsage } from '../src/index.ts';
 
 function recorder(admit?: (call: AiCall) => void) {
@@ -175,17 +175,15 @@ describe('metered', () => {
       },
     };
     events.length = 0;
+    const onUsage = vi.fn(() => {
+      throw new Error('onUsage boom');
+    });
     await expect(
       withAiScope({ orgId: 'org-1', meter: brokenOnUsage }, () =>
-        metered(
-          'social.draft',
-          async () => answer,
-          () => {
-            throw new Error('onUsage boom');
-          },
-        ),
+        metered('social.draft', async () => answer, onUsage),
       ),
     ).resolves.toBe(answer);
+    expect(onUsage).toHaveBeenCalledTimes(1);
     expect(events).toEqual(['record:res-789']);
   });
 });

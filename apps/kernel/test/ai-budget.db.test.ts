@@ -419,39 +419,44 @@ suite('the AI budget meter on PostgreSQL (#2382)', () => {
       let inFlight = 0;
       let admitted = 0;
       let rejectedCount = 0;
+      let released = false;
       let releaseHold!: () => void;
       const holdOpen = new Promise<void>((resolve) => {
         releaseHold = resolve;
       });
       let resolveAllDecided!: () => void;
-      const allDecided = new Promise<void>((resolve) => {
+      let rejectAllDecided!: (reason?: unknown) => void;
+      const allDecided = new Promise<void>((resolve, reject) => {
         resolveAllDecided = resolve;
+        rejectAllDecided = reject;
       });
       const checkDecided = () => {
         if (admitted + rejectedCount === 4 && inFlight + rejectedCount === 4) {
           resolveAllDecided();
         }
       };
-      const barrierMeter: AiMeter = {
-        admit: async (call) => {
-          try {
-            const reservationId = await meter.admit(call);
-            admitted += 1;
-            checkDecided();
-            return reservationId;
-          } catch (error) {
-            rejectedCount += 1;
-            checkDecided();
-            throw error;
-          }
-        },
-        record: (call, used, reservationId) => meter.record(call, used, reservationId),
-        ...(meter.release ? { release: (call, reservationId) => meter.release!(call, reservationId) } : {}),
-      };
 
       const resultsPromise = Promise.allSettled(
-        Array.from({ length: 4 }, () =>
-          withAiScope({ orgId: o.orgId, meter: barrierMeter }, () =>
+        Array.from({ length: 4 }, () => {
+          let rejectedInAdmit = false;
+          const barrierMeter: AiMeter = {
+            admit: async (call) => {
+              try {
+                const reservationId = await meter.admit(call);
+                admitted += 1;
+                checkDecided();
+                return reservationId;
+              } catch (error) {
+                rejectedInAdmit = true;
+                rejectedCount += 1;
+                checkDecided();
+                throw error;
+              }
+            },
+            record: (call, used, reservationId) => meter.record(call, used, reservationId),
+            ...(meter.release ? { release: (call, reservationId) => meter.release!(call, reservationId) } : {}),
+          };
+          return withAiScope({ orgId: o.orgId, meter: barrierMeter }, () =>
             metered(
               'social.draft',
               async () => {
@@ -463,8 +468,13 @@ suite('the AI budget meter on PostgreSQL (#2382)', () => {
               undefined,
               usage,
             ),
-          ),
-        ),
+          ).catch((error) => {
+            if (!released && !rejectedInAdmit) {
+              rejectAllDecided(error);
+            }
+            throw error;
+          });
+        }),
       );
 
       let results: PromiseSettledResult<unknown>[];
@@ -474,6 +484,7 @@ suite('the AI budget meter on PostgreSQL (#2382)', () => {
         expect(rejectedCount).toBe(2);
         expect(inFlight).toBe(2);
       } finally {
+        released = true;
         releaseHold();
         results = await resultsPromise;
       }
@@ -540,7 +551,7 @@ suite('the AI budget meter on PostgreSQL (#2382)', () => {
     expect(remainingIds).toEqual([sweptRes.reservationId]);
     expect(await rt.execute('kernel.ai.budget.release_member', { reservationId: sweptRes.reservationId }, { actor: asUser(memOrg.owner), orgId: memOrg.orgId })).toEqual({ released: true });
 
-    // Cross-org isolation: one org cannot release another org's active reservation.
+    // Cross-org isolation: one org cannot release another org's active reservation (system release and member release_member).
     const activeRes = await worker.execute<{ allowed: boolean; reservationId?: string }>(
       'kernel.ai.budget.reserve',
       { module: 'social', agentId: null, feature: 'social.draft', projectedCost: '0.001000' },
@@ -556,7 +567,7 @@ suite('the AI budget meter on PostgreSQL (#2382)', () => {
     );
     expect(held.allowed).toBe(true);
     expect(
-      await rt.execute('kernel.ai.budget.release_member', { reservationId: held.reservationId }, { actor: asUser(memOrg.owner), orgId: memOrg.orgId }),
+      await worker.execute('kernel.ai.budget.release', { reservationId: held.reservationId }, { actor: system, orgId: memOrg.orgId }),
     ).toEqual({ released: false });
     // Same-org user cannot release or settle a system hold via release_member / record_member.
     expect(
@@ -570,6 +581,19 @@ suite('the AI budget meter on PostgreSQL (#2382)', () => {
     expect(await admin((c) => c.query('SELECT 1 FROM ludy_kernel.ai_budget_reservation WHERE org_id = $1 AND id = $2', [openOrg.orgId, held.reservationId]).then((r) => r.rowCount))).toBe(1);
     expect(
       await worker.execute('kernel.ai.budget.release', { reservationId: held.reservationId }, { actor: system, orgId: openOrg.orgId }),
+    ).toEqual({ released: true });
+    // Cross-org isolation for member holds via release_member.
+    const memberHeld = await rt.execute<{ allowed: true; reservationId: string }>(
+      'kernel.ai.budget.reserve_member',
+      { module: 'social', agentId: null, feature: 'social.draft', projectedCost: '0.001000' },
+      { actor: asUser(openOrg.owner), orgId: openOrg.orgId },
+    );
+    expect(memberHeld.allowed).toBe(true);
+    expect(
+      await rt.execute('kernel.ai.budget.release_member', { reservationId: memberHeld.reservationId }, { actor: asUser(memOrg.owner), orgId: memOrg.orgId }),
+    ).toEqual({ released: false });
+    expect(
+      await rt.execute('kernel.ai.budget.release_member', { reservationId: memberHeld.reservationId }, { actor: asUser(openOrg.owner), orgId: openOrg.orgId }),
     ).toEqual({ released: true });
     // reserve_member refuses defaultMonthlyBudget and refuses non-null agentId via strict input schema.
     await expect(
