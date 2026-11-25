@@ -17,7 +17,7 @@ const full = process.env.CI === 'true' || process.env.LUDY_FULL_LOCAL === '1' ||
 const instead = {
   typecheck: 'pnpm --filter <package> typecheck (each package you changed)',
   test: 'pnpm test <test files you touched>',
-  'test:db': 'pnpm test:db <db test files you touched> (with CROVE_TEST_ADMIN_URL set, or the run is skipped, not passed)',
+  'test:db': 'pnpm test:db <db test files you touched> (with LUDY_TEST_ADMIN_URL or CROVE_TEST_ADMIN_URL set, or the run is skipped, not passed)',
   'test:e2e': 'pnpm test:e2e <spec files you touched>, against the one shared stack',
 };
 

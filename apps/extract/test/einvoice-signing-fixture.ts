@@ -137,15 +137,15 @@ let cached: TestPki | null = null;
 // The test PKI, generated once per test file (RSA key generation takes a moment).
 export function testPki(): TestPki {
   if (cached) return cached;
-  const root = issue({ subject: { commonName: 'TEST ONLY Root CA', organization: 'Crove test fixtures' }, ca: true });
-  const intermediate = issue({ subject: { commonName: 'TEST ONLY Signing CA', organization: 'Crove test fixtures' }, issuer: root, ca: true });
+  const root = issue({ subject: { commonName: 'TEST ONLY Root CA', organization: 'Ludy test fixtures' }, ca: true });
+  const intermediate = issue({ subject: { commonName: 'TEST ONLY Signing CA', organization: 'Ludy test fixtures' }, issuer: root, ca: true });
   const seller = issue({
     subject: { commonName: 'TEST ONLY CÔNG TY TNHH DỊCH VỤ MẪU', uid: `MST:${TEST_SELLER_TAX_CODE}` },
     issuer: intermediate,
     ca: false,
   });
   const taxAuthority = issue({ subject: { commonName: 'TEST ONLY CỤC THUẾ', organization: 'TEST ONLY BỘ TÀI CHÍNH' }, issuer: intermediate, ca: false });
-  const otherRoot = issue({ subject: { commonName: 'TEST ONLY Untrusted CA', organization: 'Crove test fixtures' }, ca: true });
+  const otherRoot = issue({ subject: { commonName: 'TEST ONLY Untrusted CA', organization: 'Ludy test fixtures' }, ca: true });
   const otherSeller = issue({ subject: { commonName: 'TEST ONLY Untrusted seller', uid: `MST:${TEST_SELLER_TAX_CODE}` }, issuer: otherRoot, ca: false });
   // The test tax authority's certificate is pinned, as trust/tax-authority.crt pins the real one.
   const trust = { roots: [root.cert], intermediates: [intermediate.cert], taxAuthorities: [taxAuthority.cert] };

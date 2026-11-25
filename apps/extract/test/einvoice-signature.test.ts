@@ -225,7 +225,7 @@ describe('e-invoice signature verification', () => {
     });
   });
 
-  it('trusts only the national roots shipped with Crove by default', () => {
+  it('trusts only the national roots shipped with Ludy by default', () => {
     expect(parseEInvoiceXml(bytes(fullySigned)).signature).toMatchObject({ status: 'unverified', reason: 'untrusted_certificate' });
     // The committed TEST ONLY signed fixture the container smoke test sends: intact, but from an untrusted test CA.
     // A Windows checkout may turn its line ends into CRLF; the signature was made over LF.

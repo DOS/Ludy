@@ -877,7 +877,7 @@ export async function runSignCaReconcileJob(
       throw error;
     }
     const subFilter = padesSubFilterForProvider(begin.provider);
-    const signerName = `Crove eSign (${begin.provider})`;
+    const signerName = `Ludy eSign (${begin.provider})`;
     const reason = `PAdES seal for ${begin.envelopeTitle.slice(0, 120)}`;
     const fieldName = `CroveCA_${begin.requestId.replace(/-/g, '').slice(0, 16)}`;
     const prepPayload = encodePdfEmbedCmsInput({
@@ -1164,7 +1164,7 @@ export async function runSignCaReconcileJob(
       pdfBase64: Buffer.from(sealedPdfBytes).toString('base64'),
       cmsDerBase64: Buffer.from(signedCms.cmsDer).toString('base64'),
       placeholderBytes: PADES_PLACEHOLDER_BYTES,
-      signerName: `Crove eSign (${begin.provider})`,
+      signerName: `Ludy eSign (${begin.provider})`,
       reason: `PAdES seal for ${begin.envelopeTitle.slice(0, 120)}`,
       signedAtIso: begin.requestCreatedAtIso,
       fieldName: `CroveCA_${begin.requestId.replace(/-/g, '').slice(0, 16)}`,

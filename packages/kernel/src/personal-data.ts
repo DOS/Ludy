@@ -125,7 +125,7 @@ export const PERSONAL_DATA_COLUMNS = {
   'ludy_kernel.mail_message.to_address': {
     kind: 'email',
     handling: 'erase',
-    reason: 'The recipient of a mail Crove sent; the keyed hash stays so a suppression still holds. A mail already delivered cannot be recalled: the erasure drops the copy Crove holds (and, for a meeting follow-up mail, the copy of its text), not the copies in the recipients\' mailboxes',
+    reason: 'The recipient of a mail Ludy sent; the keyed hash stays so a suppression still holds. A mail already delivered cannot be recalled: the erasure drops the copy Ludy holds (and, for a meeting follow-up mail, the copy of its text), not the copies in the recipients\' mailboxes',
   },
   'ludy_kernel.mail_message.to_hash': { kind: 'other', handling: 'hashed', reason: 'Keyed hash of the recipient (ludy_kernel.mail_address_hash), not the address' },
   'ludy_kernel.mail_suppression.to_hash': { kind: 'other', handling: 'hashed', reason: 'Keyed hash; keeps a bounced or unsubscribed address suppressed after erasure' },
@@ -1278,13 +1278,13 @@ export const MEETING_TEXT_SHORT_NUMBER_REASON =
 export const FOLLOWUP_MAIL_SKIPPED_REASON =
   'The follow-up mails of this organization were too many to search in time, so their own text was not searched (the mails of meetings whose rows changed were still handled): erase again, or ask support, before relying on this erasure for follow-up mails';
 export const FOLLOWUP_MAIL_DELIVERED_REASON =
-  'Follow-up mails of a meeting that were already handed to their recipients (delivered, or possibly delivered) cannot be recalled: the erasure dropped the copy of the text that Crove holds, not the copies in the recipients\' mailboxes';
+  'Follow-up mails of a meeting that were already handed to their recipients (delivered, or possibly delivered) cannot be recalled: the erasure dropped the copy of the text that Ludy holds, not the copies in the recipients\' mailboxes';
 export const PROJECT_WEEKLY_MAIL_REASON =
   "Text or subject of a project's weekly status email (#2609); erased by dropping the mail's payload and subject (the keyed recipient hash stays so suppressions still hold)";
 export const PROJECT_WEEKLY_MAIL_SHORT_NUMBER_REASON =
   'Project weekly status mails whose text holds a number of fewer than 10 digits: such a number may as well be a date, task count or figure, and dropping a mail cannot be undone, so the erasure leaves these mails as they are; check them and tell the person, or ask for a longer value';
 export const PROJECT_WEEKLY_MAIL_DELIVERED_REASON =
-  'Project weekly status mails that were already handed to their recipients (delivered, or possibly delivered) cannot be recalled: the erasure dropped the copy of the text that Crove holds, not the copies in the recipients\' mailboxes';
+  'Project weekly status mails that were already handed to their recipients (delivered, or possibly delivered) cannot be recalled: the erasure dropped the copy of the text that Ludy holds, not the copies in the recipients\' mailboxes';
 export const MEMBER_VY_RESULT_REASON =
   "Answers of each member's Vy (the row count is all of the organization's, not this person's) are held privately for that member and cannot be read here; they expire on their own (at most 31 days) and are never sent anywhere";
 // What the owner is told when a member's private meeting rows are counted, not read (#3584): a member's machine translations of meetings and the live preview lines of the meetings they recorded
@@ -1304,7 +1304,7 @@ export function meetingMediaReason(kind: 'audio' | 'video', dates: readonly stri
 // Why an erasure keeps the original files of posted invoices (issue #1009), with the end of their retention hold.
 export function heldFilesReason(until: Date | null): string {
   const kept = until ? `held in storage until ${new Date(until).toISOString().slice(0, 10)}` : 'kept for the legal period';
-  return `Original files behind posted entries that name this party: accounting evidence, ${kept} and never deleted by Crove (Accounting Law 88/2015, Art. 41)`;
+  return `Original files behind posted entries that name this party: accounting evidence, ${kept} and never deleted by Ludy (Accounting Law 88/2015, Art. 41)`;
 }
 
 // The fewest digits a value needs before the erasure replaces it inside activity lines and tasks (#1948, #1961): a

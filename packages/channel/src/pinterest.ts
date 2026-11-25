@@ -202,7 +202,7 @@ export class PinterestConnector implements OAuthConnector {
     if (typeof answer.access_token !== 'string' || !answer.access_token) throw new ConnectorError('provider', 'Pinterest answered without an access token');
     if (typeof answer.refresh_token !== 'string' || !answer.refresh_token) throw new ConnectorError('provider', 'Pinterest answered without a refresh token');
     const granted = typeof answer.scope === 'string' ? answer.scope.split(/[ ,]+/).filter(Boolean) : [];
-    if (!PINTEREST_SCOPES.every((s) => granted.includes(s))) throw new ConnectorError('denied', 'Pinterest did not grant the permissions Crove needs', 'MISSING_PERMISSION');
+    if (!PINTEREST_SCOPES.every((s) => granted.includes(s))) throw new ConnectorError('denied', 'Pinterest did not grant the permissions Ludy needs', 'MISSING_PERMISSION');
     const token = answer.access_token;
     const fail = (error: unknown) => {
       throw connectorError(error);
