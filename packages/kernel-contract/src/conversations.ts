@@ -309,6 +309,11 @@ const NAME_PLACEHOLDER = /\{{1,2}[^\S\n]*t[eê]n[^\S\n]*\}{1,2}/giu;
 // The longest name that is put into a reply: a platform name is untrusted text of any length.
 const FILLED_NAME_MAX = 100;
 
+/** Picks the contact name used to fill `{tên}`: the linked contact's name first, else the name the platform gave, or null when neither is usable. */
+export function contactNameOf(contact: { partyName: string | null | undefined; displayName: string | null | undefined }): string | null {
+  return contact.partyName?.trim() || contact.displayName?.trim() || null;
+}
+
 /** Whether the text still holds the contact-name placeholder (a reply with one is refused by the send command). */
 export function hasNamePlaceholder(text: string): boolean {
   return new RegExp(NAME_PLACEHOLDER.source, NAME_PLACEHOLDER.flags).test(text.normalize('NFC'));

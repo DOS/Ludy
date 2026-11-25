@@ -473,6 +473,21 @@ suite('customer email in the Inbox on PostgreSQL (#2439)', () => {
     expect((await threads(o))[0]).toMatchObject({ status: 'new', last_seq: 3 });
   });
 
+  it('joins the existing email thread when a customer reply carries only the rewritten SES Message-ID (#4960)', async () => {
+    const o = await org();
+    await deliver(o.address, raw({ to: o.address, messageId: '<ses-in-1@mau.test>', subject: 'Hỏi báo giá', body: 'Báo giá giúp tôi.' }));
+    const [thread] = await threads(o);
+    const reply = await exec<{ messageId: string }>(o, o.owner, 'kernel.conversation.reply', { conversationId: thread?.id, lastSeenSeq: 1, body: 'Dạ em gửi báo giá ạ.' });
+    const [sesMail] = await rows<{ id: string }>('SELECT id FROM ludy_kernel.mail_message WHERE org_id = $1 AND source_id = $2', [o.orgId, reply.messageId]);
+    const sesBegun = await sys<{ action: string; attempt: number }>(o, 'kernel.mail.queue.begin', { messageId: sesMail?.id, provider: 'ses', safety: 'never' });
+    expect(sesBegun.action).toBe('send');
+    await sys(o, 'kernel.mail.queue.record', { messageId: sesMail?.id, attempt: sesBegun.attempt, outcome: 'sent', providerMessageId: '010f019abc-ses-msg-id' });
+    const sesMsgId = `<010f019abc-ses-msg-id@${['ap-southeast-1', 'amazonses.com'].join('.')}>`;
+    await deliver(o.address, raw({ to: o.address, messageId: '<ses-in-2@mau.test>', inReplyTo: sesMsgId, subject: 'Re: Hỏi báo giá', body: 'Cảm ơn em, chốt nhé.' }));
+    expect((await threads(o)).length).toBe(1);
+    expect((await threads(o))[0]).toMatchObject({ status: 'new', last_seq: 3 });
+  });
+
   it('settles a failed or unknown send on the message, and a stopped address fails it at once', async () => {
     const o = await org();
     await deliver(o.address, raw({ to: o.address, messageId: '<s1@mau.test>', from: 'bounce@mau.test' }));

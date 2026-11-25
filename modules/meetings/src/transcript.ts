@@ -41,6 +41,19 @@ export async function openMeeting(trx: QueryContext['trx'], orgId: string, meeti
   return meeting;
 }
 
+/**
+ * Puts the published lines of a meeting in order with whatever is checked against them (#4971). The recorder's publish replaces the published lines (`transcript_publish`), and a highlight is checked
+ * against them when it is added by the recorder or by any reader of the meeting. A reader cannot hold the meeting row (the UPDATE policy of the table admits the recorder only, and every locking clause
+ * needs it), and the foreign key's FOR KEY SHARE does not conflict with the publish's FOR NO KEY UPDATE, so the two take this transaction-scoped advisory lock of the meeting instead (key `meetings.lines:<org>:<meeting>`, taken only after `openMeeting` has confirmed the caller reads the meeting, so a non-reader cannot hold it): the publish
+ * exclusively (`replace`), a check against the lines shared (`read`), so many adds run together and one publish waits for them or they wait for it. What runs after the lock is taken reads the lines as the
+ * other transaction left them (READ COMMITTED). The publish takes it after the meeting row and the add takes no row lock of the meeting stronger than the foreign key's KEY SHARE before it, so the two cannot deadlock.
+ */
+export async function lockPublishedLines(trx: QueryContext['trx'], orgId: string, meetingId: string, mode: 'replace' | 'read'): Promise<void> {
+  const key = sql`pg_catalog.hashtextextended(${`meetings.lines:${orgId.toLowerCase()}:${meetingId.toLowerCase()}`}, 0)`;
+  if (mode === 'replace') await sql`SELECT pg_catalog.pg_advisory_xact_lock(${key})`.execute(trx);
+  else await sql`SELECT pg_catalog.pg_advisory_xact_lock_shared(${key})`.execute(trx);
+}
+
 /** Holds the meeting row FOR NO KEY UPDATE before reading private results or mutating drafts (#4415, #3916). */
 export async function lockMeeting(trx: QueryContext['trx'], orgId: string, meetingId: string): Promise<void> {
   const held = await trx.selectFrom('ludy_meetings.meeting').select('id').where('org_id', '=', orgId).where('id', '=', meetingId).forNoKeyUpdate().executeTakeFirst();
