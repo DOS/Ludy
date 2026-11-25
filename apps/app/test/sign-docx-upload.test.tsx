@@ -58,13 +58,20 @@ const {
   saveCreatedDocxWarnings,
 } = await import('../src/components/sign/docx-conversion-notice.tsx');
 const { catalog } = await import('../src/i18n/runtime.ts');
-const { SIGN_DOCX_MAX_BYTES, SIGN_DOCX_MIME, SIGN_UPLOAD_ACCEPT, convertSignDocx } = await import(
-  '../src/lib/sign-api.ts'
-);
+const {
+  SIGN_DOCX_MAX_BYTES,
+  SIGN_DOCX_MIME,
+  SIGN_UPLOAD_ACCEPT,
+  SignSessionMismatchError,
+  convertSignDocx,
+  uploadSignPdf,
+} = await import('../src/lib/sign-api.ts');
+const { accessToken } = await import('../src/lib/auth.ts');
 const { orpc, queryClient } = await import('../src/lib/api.ts');
 const { ensureSignedOutListener } = await import('../src/lib/ceremony-boot.ts');
 const {
   CreateEnvelopeDialog,
+  applyPendingDocxNoticeUpdate,
   captureEnvelopeSubmitContext,
   handleEnvelopeCreatedWithWarnings,
   isCreatedDocxListNoticeVisible,
@@ -1253,7 +1260,7 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
             slug="acme"
             canAskVy={true}
             initialQuestion="minh anh"
-            pendingEnvelopeId={envDetailId}
+            pendingEnvelopeIds={new Set([envDetailId])}
             onOpenPendingEnvelope={() => {}}
             initialResult={{
               mode: 'ask',
@@ -1317,5 +1324,127 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
     blockReadOnly = false;
     expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual(['images_skipped']);
     expect(readCreatedDocxWarnings(secondEnvId, scopeUserA)).toEqual(['footnotes_skipped']);
+
+    // Corrupt JSON in readable sessionStorage is treated as empty so saveCreatedDocxWarnings can overwrite and repair it.
+    preserveMap.set('ludy.sign.created_docx_warnings', '{corrupt-json');
+    expect(saveCreatedDocxWarnings(envDetailId, ['images_skipped'], scopeUserA)).toBe(true);
+    expect(preserveMap.get('ludy.sign.created_docx_warnings')).toContain(envDetailId);
+    expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual(['images_skipped']);
+
+    // captureEnvelopeSubmitContext skips resolveScope (me.get) when includeUserScope=false for fast PDF submits.
+    const resolveScopeSpy = vi.fn(async () => ({ orgId, userId: userAId, sessionId: 'sess-a' }));
+    const fastPdfContext = await captureEnvelopeSubmitContext({
+      slug: 'acme',
+      reqId: 9,
+      includeUserScope: false,
+      readSessionId: async () => 'sess-a',
+      resolveScope: resolveScopeSpy,
+    });
+    expect(resolveScopeSpy).not.toHaveBeenCalled();
+    expect(fastPdfContext).toEqual({
+      slug: 'acme',
+      orgId: null,
+      userId: null,
+      sessionId: 'sess-a',
+      reqId: 9,
+    });
+
+    // Transient readSessionId error throws verifyIdentityErrorMessage in dialog instead of cancelling silently.
+    await expect(
+      submitCreateEnvelopeFromDialog({
+        title: 'Hop dong transient session fail',
+        file: samplePdf,
+        converted: null,
+        orgSlug: 'acme',
+        resolveSubmitContext: async () => fastPdfContext,
+        readSessionId: async () => {
+          throw new Error('session storage offline');
+        },
+        isMounted: () => true,
+        getLiveOrgSlug: () => 'acme',
+        docxRequiredMessage: 'PDF required',
+        verifyIdentityErrorMessage: 'Retry identity verification',
+        uploadPdf: async () => ({ fileId: 'unused' }),
+        createEnvelope: async () => ({ envelopeId: 'unused' }),
+      }),
+    ).rejects.toThrow('Retry identity verification');
+
+    // Pending unpersisted warnings remain preserved across additional unpersisted .docx or clean PDF creations.
+    let pendingList = applyPendingDocxNoticeUpdate([], {
+      kind: 'upsert',
+      notice: {
+        envelopeId: envDetailId,
+        slug: 'acme',
+        orgId: null,
+        userId: null,
+        sessionId: 'sess-a',
+        warnings: ['images_skipped'],
+      },
+    });
+    await handleEnvelopeCreatedWithWarnings({
+      envelopeId: secondEnvId,
+      warnings: ['footnotes_skipped'],
+      slug: 'acme',
+      orgId: null,
+      userId: null,
+      sessionId: 'sess-a',
+      resolveCurrentSessionId: async () => null,
+      hasOtherPendingNotice: () => pendingList.some((n) => n.envelopeId !== secondEnvId),
+      onPendingNoticeAction: (action) => {
+        pendingList = applyPendingDocxNoticeUpdate(pendingList, action);
+      },
+      setCreateOpen,
+      setCreatedDocxNotice,
+      invalidateEnvelopes,
+      navigateToEnvelope: staleNav,
+    });
+    expect(pendingList.map((n) => n.envelopeId)).toEqual([secondEnvId, envDetailId]);
+
+    const pdfEnvId = '01900000-0000-7000-8000-0000000000ef';
+    staleNav.mockClear();
+    await handleEnvelopeCreatedWithWarnings({
+      envelopeId: pdfEnvId,
+      warnings: [],
+      slug: 'acme',
+      orgId: null,
+      userId: null,
+      sessionId: 'sess-a',
+      hasOtherPendingNotice: () => pendingList.some((n) => n.envelopeId !== pdfEnvId),
+      onPendingNoticeAction: (action) => {
+        pendingList = applyPendingDocxNoticeUpdate(pendingList, action);
+      },
+      setCreateOpen,
+      setCreatedDocxNotice,
+      invalidateEnvelopes,
+      navigateToEnvelope: staleNav,
+    });
+    expect(pendingList.map((n) => n.envelopeId)).toEqual([secondEnvId, envDetailId]);
+    expect(staleNav).not.toHaveBeenCalled();
+
+    // uploadSignPdf aborts UPLOAD_BUSY retry before sending if live session token switched mid-backoff.
+    const makeJwt = (sessionId: string) =>
+      `hdr.${btoa(JSON.stringify({ session_id: sessionId })).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_')}.sig`;
+    const jwtA = makeJwt('sess-a');
+    const jwtB = makeJwt('sess-b');
+    let activeJwt = jwtA;
+    vi.mocked(accessToken).mockImplementation(async () => activeJwt);
+    const seenAuthHeaders: string[] = [];
+    const fetchBusyMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const hdrs = init?.headers as Record<string, string> | undefined;
+      seenAuthHeaders.push(hdrs?.authorization ?? '');
+      activeJwt = jwtB;
+      return new Response(JSON.stringify({ code: 'UPLOAD_BUSY', message: 'busy' }), {
+        status: 503,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+    vi.stubGlobal('fetch', fetchBusyMock);
+    vi.useFakeTimers();
+    const uploadErrPromise = uploadSignPdf(samplePdf, 'acme', 'sess-a').catch((err: unknown) => err);
+    await vi.advanceTimersByTimeAsync(1_100);
+    const uploadErr = await uploadErrPromise;
+    expect(uploadErr).toBeInstanceOf(SignSessionMismatchError);
+    expect(fetchBusyMock).toHaveBeenCalledTimes(1);
+    expect(seenAuthHeaders).toEqual([`Bearer ${jwtA}`]);
   });
 });

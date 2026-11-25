@@ -43,7 +43,7 @@ export interface ContractVaultBarProps {
   canAskVy?: boolean;
   initialQuestion?: string;
   initialResult?: ContractVaultBarResultState | null;
-  pendingEnvelopeId?: string | null | undefined;
+  pendingEnvelopeIds?: ReadonlySet<string> | undefined;
   onOpenPendingEnvelope?: ((envelopeId: string) => void) | undefined;
 }
 
@@ -52,7 +52,7 @@ export function ContractVaultBar({
   canAskVy = true,
   initialQuestion = '',
   initialResult = null,
-  pendingEnvelopeId = null,
+  pendingEnvelopeIds,
   onOpenPendingEnvelope,
 }: ContractVaultBarProps) {
   const t = useTranslations('sign');
@@ -69,7 +69,7 @@ export function ContractVaultBar({
     className: string;
     testId?: string | undefined;
   }) => {
-    if (pendingEnvelopeId === envelopeId && onOpenPendingEnvelope) {
+    if (pendingEnvelopeIds?.has(envelopeId) && onOpenPendingEnvelope) {
       return (
         <button
           type="button"

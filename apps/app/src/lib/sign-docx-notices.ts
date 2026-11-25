@@ -100,12 +100,17 @@ function readRawStorageResult(
   storage: Storage,
   now: number,
 ): { ok: true; entries: StoredDocxWarningNotice[] } | { ok: false; entries: StoredDocxWarningNotice[] } {
+  let raw: string | null;
   try {
-    const raw = storage.getItem(ENVELOPE_DOCX_WARNINGS_STORAGE_KEY);
-    if (!raw) {
-      knownStorageNoticeKeys.clear();
-      return { ok: true, entries: [] };
-    }
+    raw = storage.getItem(ENVELOPE_DOCX_WARNINGS_STORAGE_KEY);
+  } catch {
+    return { ok: false, entries: [] };
+  }
+  if (!raw) {
+    knownStorageNoticeKeys.clear();
+    return { ok: true, entries: [] };
+  }
+  try {
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) {
       knownStorageNoticeKeys.clear();
@@ -146,7 +151,9 @@ function readRawStorageResult(
     }
     return { ok: true, entries: [...byKey.values()] };
   } catch {
-    return { ok: false, entries: [] };
+    // Storage itself is readable; treat malformed JSON as empty so future saves can repair it.
+    knownStorageNoticeKeys.clear();
+    return { ok: true, entries: [] };
   }
 }
 

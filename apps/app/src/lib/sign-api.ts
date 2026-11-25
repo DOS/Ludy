@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Typed eSign API client aligned with #3323 core commands/queries, #3324 public ceremony routes, and #3351 Vy AI (#3325).
+import { createORPCClient } from '@orpc/client';
+import { RPCLink } from '@orpc/client/fetch';
+import type { ContractRouterClient } from '@orpc/contract';
 import {
   SIGN_DEPOSIT_DUE_DAYS_MAX,
   SIGN_DEPOSIT_MEMO_TOKEN_PATTERN,
@@ -8,6 +11,7 @@ import {
   SIGN_MAX_PACKET_DOCS,
   SIGN_MAX_PAGES,
   SIGN_WEBHOOK_EVENT_TYPES,
+  type contract,
   type SignApiKeyRecord,
   type SignApiKeyScope,
   type SignContractDraftVariables,
@@ -52,10 +56,11 @@ import {
   type SignWebhookRecord,
 } from '@ludy/kernel-contract';
 import { apiFetch, client, clientForOrg, fetchFile, getCurrentOrg, orglessClient, uploadFiles } from './api.ts';
-import { apiUrl } from './api-base.ts';
-import { accessToken } from './auth.ts';
+import { apiUrl, serverOrigin } from './api-base.ts';
+import { accessToken, getConfig } from './auth.ts';
 import {
   ClientError,
+  apiErrorFromResponse,
   isMfaRequired,
   isModuleOff,
   isOrgAccessRevoked,
@@ -65,6 +70,8 @@ import {
   retryWhileBusy,
 } from './errors.ts';
 import { isNetworkFailure } from './network-error.ts';
+import { requestHeaders } from './org-access.ts';
+import { sessionIdFromToken } from './sessions.ts';
 import type {
   SignDeliveryMode,
   SignDetectedTag,
@@ -486,9 +493,94 @@ export interface PublicCertificateVerifyResponse {
   eventCount?: number;
 }
 
-export async function uploadSignPdf(file: File, orgSlug?: string | null): Promise<{ fileId: string }> {
-  const result = await uploadFiles([file], 'sign_document', orgSlug);
-  const uploaded = result.files[0];
+export class SignSessionMismatchError extends Error {
+  constructor() {
+    super('SIGN_SESSION_MISMATCH');
+    this.name = 'SignSessionMismatchError';
+  }
+}
+
+export class SignSessionUnverifiedError extends Error {
+  constructor() {
+    super('SIGN_SESSION_UNVERIFIED');
+    this.name = 'SignSessionUnverifiedError';
+  }
+}
+
+async function resolvePinnedRequestHeaders(
+  orgSlug: string | null | undefined,
+  expectedSessionId?: string | null,
+): Promise<Record<string, string>> {
+  let token: string | null;
+  try {
+    token = await accessToken();
+  } catch {
+    throw new SignSessionUnverifiedError();
+  }
+  if (expectedSessionId !== undefined && sessionIdFromToken(token) !== expectedSessionId) {
+    throw new SignSessionMismatchError();
+  }
+  const resolvedOrg = orgSlug === undefined ? getCurrentOrg() : orgSlug;
+  return requestHeaders(token, resolvedOrg);
+}
+
+export async function uploadSignPdf(
+  file: File,
+  orgSlug?: string | null,
+  expectedSessionId?: string | null,
+): Promise<{ fileId: string }> {
+  if (expectedSessionId === undefined) {
+    const result = await uploadFiles([file], 'sign_document', orgSlug);
+    const uploaded = result.files[0];
+    if (!uploaded) throw new Error('UPLOAD_FAILED');
+    return { fileId: uploaded.fileId };
+  }
+  const resolvedOrg = orgSlug === undefined ? getCurrentOrg() : orgSlug;
+  const uploadsMode = typeof getConfig === 'function' ? getConfig().uploads : 'local';
+  if (uploadsMode === 'presigned') {
+    const grantHeaders = await resolvePinnedRequestHeaders(resolvedOrg, expectedSessionId);
+    const grantRes = await fetch(apiUrl('/api/files/uploads'), {
+      method: 'POST',
+      headers: { ...grantHeaders, 'content-type': 'application/json' },
+      body: JSON.stringify({ purpose: 'sign_document' }),
+    });
+    if (!grantRes.ok) throw await apiErrorFromResponse(grantRes);
+    const grant = (await grantRes.json()) as {
+      uploadId: string;
+      url: string;
+      fields: Record<string, string>;
+    };
+    await resolvePinnedRequestHeaders(resolvedOrg, expectedSessionId);
+    const bucketForm = new FormData();
+    for (const [name, value] of Object.entries(grant.fields)) bucketForm.append(name, value);
+    bucketForm.append('file', file);
+    const stored = await fetch(grant.url, { method: 'POST', body: bucketForm, credentials: 'omit' }).catch(() => null);
+    if (!stored?.ok) {
+      throw new ClientError('inbox.storageUploadFailed', (t) => t('inbox.storageUploadFailed', { name: file.name }));
+    }
+    const completed = await retryWhileBusy(async () => {
+      const completeHeaders = await resolvePinnedRequestHeaders(resolvedOrg, expectedSessionId);
+      const res = await fetch(apiUrl(`/api/files/uploads/${grant.uploadId}/complete`), {
+        method: 'POST',
+        headers: { ...completeHeaders, 'content-type': 'application/json' },
+        body: JSON.stringify({ filename: file.name, purpose: 'sign_document' }),
+      });
+      if (!res.ok) throw await apiErrorFromResponse(res);
+      return (await res.json()) as { fileId: string };
+    });
+    if (!completed.fileId) throw new Error('UPLOAD_FAILED');
+    return { fileId: completed.fileId };
+  }
+  const data = await retryWhileBusy(async () => {
+    const headers = await resolvePinnedRequestHeaders(resolvedOrg, expectedSessionId);
+    const form = new FormData();
+    form.append('purpose', 'sign_document');
+    form.append('file', file);
+    const res = await fetch(apiUrl('/api/files'), { method: 'POST', headers, body: form });
+    if (!res.ok) throw await apiErrorFromResponse(res);
+    return (await res.json()) as { files: Array<{ fileId: string }> };
+  });
+  const uploaded = data.files[0];
   if (!uploaded) throw new Error('UPLOAD_FAILED');
   return { fileId: uploaded.fileId };
 }
@@ -588,8 +680,19 @@ export const signApi = {
       autoRemindBeforeExpiry?: boolean;
     },
     orgSlug?: string | null,
+    expectedSessionId?: string | null,
   ) => {
-    const scopedClient = orgSlug && typeof clientForOrg === 'function' ? clientForOrg(orgSlug) : client;
+    const scopedClient =
+      expectedSessionId !== undefined
+        ? createORPCClient<ContractRouterClient<typeof contract>>(
+            new RPCLink({
+              url: `${serverOrigin()}/api/rpc`,
+              headers: () => resolvePinnedRequestHeaders(orgSlug, expectedSessionId),
+            }),
+          )
+        : orgSlug && typeof clientForOrg === 'function'
+          ? clientForOrg(orgSlug)
+          : client;
     return scopedClient.sign.envelope.create({
       ...input,
       sourceKind: 'standalone',
