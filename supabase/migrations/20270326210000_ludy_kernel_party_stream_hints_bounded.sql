@@ -67,7 +67,7 @@ BEGIN
 
   FOR v_batch IN
     SELECT t.org_id, pg_catalog.array_agg(t.id ORDER BY t.ord) AS ids
-    FROM pg_catalog.unnest(p_orgs, p_ids) WITH ORDINALITY AS t(org_id, id, ord)
+    FROM ROWS FROM (pg_catalog.unnest(p_orgs), pg_catalog.unnest(p_ids)) WITH ORDINALITY AS t(org_id, id, ord)
     WHERE t.org_id IS NOT NULL AND t.id IS NOT NULL
     GROUP BY t.org_id
     ORDER BY t.org_id
@@ -129,7 +129,7 @@ BEGIN
   IF COALESCE(pg_catalog.cardinality(v_patch_keys), 0) > 0 THEN
     SELECT pg_catalog.jsonb_object_agg(u.k, u.v)
     INTO v_patch
-    FROM pg_catalog.unnest(v_patch_keys, v_patch_vals) AS u(k, v);
+    FROM ROWS FROM (pg_catalog.unnest(v_patch_keys), pg_catalog.unnest(v_patch_vals)) AS u(k, v);
     PERFORM pg_catalog.set_config(
       'ludy.stream_hint_counts',
       pg_catalog.jsonb_concat(v_counts, v_patch)::text,
