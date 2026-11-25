@@ -215,6 +215,7 @@ export interface ComputedEmployeeAttendanceRollup {
   workedDays: string;
   paidLeaveDays: string;
   unpaidLeaveDays: string;
+  paidHolidayHours: string;
   workedHours: string | null;
   overtimeHours: string;
   nightHours: string;
@@ -236,6 +237,7 @@ export function computeEmployeeAttendanceRollup(args: {
   month: string;
   workingDays: string;
   payBasis: HrPayBasis;
+  scheduledHoursPerDay?: string | null | undefined;
   existingInputs: HrPayrollInputs;
   paidLeaveDays: string;
   hireDate?: string | null | undefined;
@@ -350,15 +352,29 @@ export function computeEmployeeAttendanceRollup(args: {
   }
 
   const nightHoursDec = money(ordinaryNightMinutes).div(60).toDecimalPlaces(2);
+  // VN Labor Code Art. 112: hourly employments with a contractual daily schedule receive paid public holiday hours
+  // for Mon-Sat public holidays inside [hireDate, endedOn], kept separate from holiday overtime (Art. 98).
+  const scheduledHoursDec =
+    args.scheduledHoursPerDay !== null && args.scheduledHoursPerDay !== undefined
+      ? money(args.scheduledHoursPerDay)
+      : null;
+  const paidHolidayHoursDec =
+    args.payBasis === 'hourly' &&
+    scheduledHoursDec !== null &&
+    scheduledHoursDec.gt(0) &&
+    paidHolidayDays > 0
+      ? money(paidHolidayDays).times(scheduledHoursDec)
+      : money('0');
   const workedHoursStr =
     args.payBasis === 'hourly'
-      ? formatDecimalString(money(normalRegularMinutes).div(60).toDecimalPlaces(2), 2)
+      ? formatDecimalString(money(normalRegularMinutes).div(60).plus(paidHolidayHoursDec).toDecimalPlaces(2), 2)
       : null;
 
   return {
     workedDays: formatDecimalString(workedDaysDec, 1),
     paidLeaveDays: formatDecimalString(paidLeaveDec, 1),
     unpaidLeaveDays: formatDecimalString(unpaidLeaveDec, 1),
+    paidHolidayHours: formatDecimalString(paidHolidayHoursDec, 2),
     workedHours: workedHoursStr,
     overtimeHours: formatDecimalString(totalOtHoursDec, 2),
     nightHours: formatDecimalString(nightHoursDec, 2),
@@ -1095,6 +1111,7 @@ export const attendanceRollupToPayroll = defineCommand({
     const empIds = [...people.keys()];
     const nameByEmpId = new Map<string, string>();
     const firstHireByEmpId = new Map<string, string>();
+    const scheduledHoursByEmploymentId = new Map<string, string | null>();
     if (empIds.length > 0) {
       const empRows = await ctx.trx
         .selectFrom('ludy_hr.payroll_employee')
@@ -1106,7 +1123,7 @@ export const attendanceRollupToPayroll = defineCommand({
 
       const employmentRows = await ctx.trx
         .selectFrom('ludy_hr.payroll_employment')
-        .select(['employee_id', 'effective_from'])
+        .select(['id', 'employee_id', 'effective_from', 'scheduled_hours_per_day'])
         .where('org_id', '=', ctx.orgId)
         .where('employee_id', 'in', empIds)
         .orderBy('effective_from', 'asc')
@@ -1115,6 +1132,7 @@ export const attendanceRollupToPayroll = defineCommand({
         if (!firstHireByEmpId.has(em.employee_id)) {
           firstHireByEmpId.set(em.employee_id, isoDateOnly(em.effective_from));
         }
+        scheduledHoursByEmploymentId.set(em.id, em.scheduled_hours_per_day);
       }
     }
 
@@ -1212,6 +1230,7 @@ export const attendanceRollupToPayroll = defineCommand({
         month: payRun.month,
         workingDays: payRun.working_days,
         payBasis: person.terms.payBasis,
+        scheduledHoursPerDay: scheduledHoursByEmploymentId.get(person.terms.id) ?? null,
         existingInputs: existing,
         paidLeaveDays,
         hireDate: firstHireByEmpId.get(line.employee_id) ?? person.terms.effectiveFrom,

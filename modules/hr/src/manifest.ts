@@ -100,7 +100,7 @@ export const hrManifest = defineModule({
         work_permit_number_sealed: 'national_id',
       }),
       payroll_employment: columns(
-        ['org_id', 'id', 'legal_entity_id', 'employee_id', 'effective_from', 'contract_type', 'contract_form', 'term_months', 'contract_end_on', 'fixed_term_sequence', 'probation_role_tier', 'probation_end_on', 'region', 'pay_function', 'pay_basis', 'tax_resident', 'created_by', 'created_at'],
+        ['org_id', 'id', 'legal_entity_id', 'employee_id', 'effective_from', 'contract_type', 'contract_form', 'term_months', 'contract_end_on', 'fixed_term_sequence', 'probation_role_tier', 'probation_end_on', 'region', 'pay_function', 'pay_basis', 'scheduled_hours_per_day', 'tax_resident', 'created_by', 'created_at'],
         { base_wage: 'sensitive', probation_wage: 'sensitive', hourly_rate: 'sensitive', piece_rate: 'sensitive' },
       ),
       // Monthly employee leave ledger (#3394, #3411, #2540 slice 1c-2): opening balance, annual leave, personal paid leave and unpaid leave.

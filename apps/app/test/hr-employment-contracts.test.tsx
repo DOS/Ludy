@@ -205,6 +205,7 @@ describe('HR labor contract & probation UI (#3384)', () => {
       payBasis: 'monthly' as const,
       hourlyRate: null,
       pieceRate: null,
+      scheduledHoursPerDay: null,
       taxResident: true,
       contractForm: 'written' as const,
       termMonths: 12,

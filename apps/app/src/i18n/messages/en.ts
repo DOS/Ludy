@@ -1992,7 +1992,12 @@ export const en = {
     },
     hourlyRate: 'Hourly rate (VND/hour)',
     pieceRate: 'Piece rate (VND/unit)',
+    scheduledHoursPerDay: 'Holiday schedule (hrs/day)',
+    scheduledHoursPerDayPlaceholder: 'e.g. 4 or 8 (optional)',
+    scheduledHoursPerDayHint: 'Auto-credits Art. 112 paid public holiday hours during attendance rollup.',
+    scheduledHoursPerDayError: 'Enter hours above 0 and at most 24 (up to 2 decimal places).',
     hourlyRateUnit: '{rate}/hr',
+    hourlyRateWithSchedule: '{base} ({hours}h/holiday)',
     pieceRateUnit: '{rate}/unit',
     taxResidency: 'Tax residency',
     taxResidencyOptions: {

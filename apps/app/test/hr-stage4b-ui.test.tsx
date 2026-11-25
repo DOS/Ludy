@@ -101,6 +101,11 @@ describe('HR Stage 4B UI & i18n (#4301)', () => {
 
     for (const locale of [viMessages, en]) {
       for (const basis of HR_PAY_BASES) expect(locale.hrEmployees.payBases[basis]).toBeTruthy();
+      expect(locale.hrEmployees.scheduledHoursPerDay).toBeTruthy();
+      expect(locale.hrEmployees.scheduledHoursPerDayPlaceholder).toBeTruthy();
+      expect(locale.hrEmployees.scheduledHoursPerDayHint).toBeTruthy();
+      expect(locale.hrEmployees.scheduledHoursPerDayError).toBeTruthy();
+      expect(locale.hrEmployees.hourlyRateWithSchedule).toBeTruthy();
       expect(locale.hrEmployees.leave.kinds.sickness_bhxh).toBeTruthy();
       expect(locale.hrEmployees.leave.kinds.maternity_bhxh).toBeTruthy();
       expect(locale.hrEmployees.alerts.work_permit_expired).toBeTruthy();
@@ -121,11 +126,22 @@ describe('HR Stage 4B UI & i18n (#4301)', () => {
   });
 
   it('supports hourly/piece_rate terms validation, payloads, and foreign worker UI controls with 44px touch targets', () => {
-    const hourly = { ...blankTerms(), effectiveFrom: '2026-08-01', payBasis: 'hourly' as const, hourlyRate: '50000', taxResident: false };
+    const hourly = { ...blankTerms(), effectiveFrom: '2026-08-01', payBasis: 'hourly' as const, hourlyRate: '50000', scheduledHoursPerDay: '4.5', taxResident: false };
     expect(termsValid(hourly)).toBe(true);
+    expect(termsValid({ ...hourly, scheduledHoursPerDay: '' })).toBe(true);
+    expect(termsValid({ ...hourly, scheduledHoursPerDay: '0' })).toBe(false);
+    expect(termsValid({ ...hourly, scheduledHoursPerDay: '24.01' })).toBe(false);
+    expect(termsValid({ ...hourly, scheduledHoursPerDay: '24' })).toBe(true);
     expect(termsValid({ ...hourly, baseWage: 'stale-or-invalid' })).toBe(true);
     expect(termsValid({ ...hourly, hourlyRate: '0' })).toBe(false);
-    expect(buildEmploymentPayload({ ...hourly, baseWage: '25000000' })).toMatchObject({ payBasis: 'hourly', hourlyRate: '50000', baseWage: '0', taxResident: false });
+    expect(buildEmploymentPayload({ ...hourly, baseWage: '25000000' })).toMatchObject({
+      payBasis: 'hourly',
+      hourlyRate: '50000',
+      scheduledHoursPerDay: '4.5',
+      baseWage: '0',
+      taxResident: false,
+    });
+    expect(buildEmploymentPayload({ ...hourly, scheduledHoursPerDay: '' })).not.toHaveProperty('scheduledHoursPerDay');
     expect(previewContractCheck({ ...hourly, probationRoleTier: 'college_or_above', probationEndOn: '2026-08-30', probationWage: '42500' })).toEqual([]);
     expect(previewContractCheck({ ...hourly, probationRoleTier: 'college_or_above', probationEndOn: '2026-08-30', probationWage: '40000' }).map((f) => f.code)).toContain('probation_wage_below_85_percent');
 
@@ -141,10 +157,17 @@ describe('HR Stage 4B UI & i18n (#4301)', () => {
     const hourlyHtml = wrap(<TermsFields id="hr-test" value={hourly} onChange={() => {}} />, 'vi');
     expect(hourlyHtml).toContain('data-testid="hr-terms-pay-basis"');
     expect(hourlyHtml).toContain('data-testid="hr-terms-hourly-rate"');
+    expect(hourlyHtml).toContain('data-testid="hr-terms-scheduled-hours"');
+    expect(hourlyHtml).toContain('max-md:min-h-11');
     expect(hourlyHtml).toContain('data-testid="hr-terms-tax-resident"');
+
+    const invalidSchedHtml = wrap(<TermsFields id="hr-test" value={{ ...hourly, scheduledHoursPerDay: '25' }} onChange={() => {}} />, 'en');
+    expect(invalidSchedHtml).toContain('aria-invalid="true"');
+    expect(invalidSchedHtml).toContain(en.hrEmployees.scheduledHoursPerDayError);
 
     const pieceHtml = wrap(<TermsFields id="hr-test" value={piece} onChange={() => {}} />, 'en');
     expect(pieceHtml).toContain('data-testid="hr-terms-piece-rate"');
+    expect(pieceHtml).not.toContain('data-testid="hr-terms-scheduled-hours"');
 
     const addHtml = wrap(<AddForm onClose={() => {}} />, 'vi');
     expect(addHtml).toContain('data-testid="hr-add-is-foreign"');
@@ -182,6 +205,7 @@ describe('HR Stage 4B UI & i18n (#4301)', () => {
         payBasis: 'hourly',
         hourlyRate: '75000.00',
         pieceRate: null,
+        scheduledHoursPerDay: '4.50',
         taxResident: false,
         contractForm: null,
         termMonths: null,
@@ -225,6 +249,7 @@ describe('HR Stage 4B UI & i18n (#4301)', () => {
     expect(detailHtml).toContain('****9876');
     expect(detailHtml).toContain('data-testid="hr-contract-alert-work_permit_expiring_soon"');
     expect(detailHtml).toContain('Theo giờ');
+    expect(detailHtml).toContain('4.5 giờ/ngày lễ');
     expect(detailHtml).toContain('không cư trú');
 
     const editHtml = wrap(

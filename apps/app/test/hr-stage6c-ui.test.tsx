@@ -165,6 +165,7 @@ const SAMPLE_EMPLOYEE: HrEmployee = {
       baseWage: '18000000',
       hourlyRate: null,
       pieceRate: null,
+      scheduledHoursPerDay: null,
       probationRoleTier: null,
       probationEndOn: null,
       probationWage: null,

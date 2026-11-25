@@ -89,6 +89,7 @@ const SAMPLE_EMPLOYMENT: HrEmploymentView = {
   payBasis: 'monthly',
   hourlyRate: null,
   pieceRate: null,
+  scheduledHoursPerDay: null,
   taxResident: true,
   contractForm: 'electronic',
   termMonths: 12,
