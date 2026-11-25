@@ -5,7 +5,7 @@
 import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { useEffect, useRef, useState } from 'react';
-import { useTranslations } from 'use-intl';
+import { useLocale, useTranslations } from 'use-intl';
 import { TRACKER_TERMS_MAX, TRACKER_WEEKS_BACK_MAX } from '@ludy/kernel-contract';
 import { Button } from '@ludy/ui/components/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@ludy/ui/components/card';
@@ -26,12 +26,14 @@ const refusalOf = (error: unknown): (typeof REFUSALS)[number] | null => {
 
 const refreshAll = () => queryClient.invalidateQueries({ queryKey: orpc.meetings.tracker.key() });
 
-/** The member's own switch for the alert when a tracked word comes up in the minutes of a new meeting they read (#4873): off by default, theirs alone, no AI. A failed save shows its message and leaves the switch where it was. */
+/** The member's own switch for the alert when a tracked word comes up in a new meeting they read (#4873): off by default, theirs alone, no AI. A failed save shows its message and leaves the switch where it was. */
 function AlertSwitch() {
   const t = useTranslations('meetings.trackers');
+  // The mail follows the language of the app the member turned the alert on in.
+  const language = useLocale() === 'en' ? 'en' : 'vi';
   const state = useQuery({ ...orpc.meetings.tracker.alertGet.queryOptions({ input: {} }), ...READ_ONCE });
   const set = useMutation({
-    mutationFn: (on: boolean) => orpc.meetings.tracker.alertSet.call({ on }),
+    mutationFn: (on: boolean) => orpc.meetings.tracker.alertSet.call({ on, language }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: orpc.meetings.tracker.alertGet.key() }),
   });
   if (state.isLoading || state.isError || !state.data) return null;

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Alerts when a tracked keyword comes up in a new meeting (#4873, builds on the keyword trackers of #4818). A member opts in (off by default); when a recorder publishes the minutes of a meeting
-// the member reads, the worker counts the org's tracked words in the published transcript lines, in code, and writes one notice per meeting that lists the words that came up and how often. The notice holds term
+// the member reads, the worker counts the org's tracked words in the published transcript lines, inside the database (no text leaves it), and writes one notice per meeting that lists the words that came up and how often. The notice holds term
 // ids and counts only: no word, no title, no text of the transcript (the app writes the words from the live term list when it shows the notice, so a deleted term disappears and no competitor's name is copied
 // into a row a purge would have to chase). No model call.
 //
@@ -18,12 +18,14 @@ export const TRACKER_ALERT_TERMS_MAX = 5;
 
 // A member's own switch.
 export const zTrackerAlertGet = z.strictObject({});
-export const zTrackerAlertSet = z.strictObject({ on: z.boolean() });
+// `language`: the language of the member's mail, taken from the app they turn it on in (stored on their own row, as the morning notice does).
+export const zTrackerAlertSet = z.strictObject({ on: z.boolean(), language: z.enum(['vi', 'en']).default('vi') });
+export type TrackerAlertSetInput = z.input<typeof zTrackerAlertSet>;
 export const zTrackerAlertState = z.strictObject({ on: z.boolean() });
 export type TrackerAlertState = z.infer<typeof zTrackerAlertState>;
 
-// The outbox event: the meeting's id and its language, never a word. Who is told is decided by the worker's dispatch when it runs, not copied here.
-export const zTrackerAlertEvent = z.strictObject({ meetingId: zId, language: z.enum(['vi', 'en']) });
+// The outbox event: the meeting's id, never a word. Who is told, and in which language, is decided by the worker's dispatch when it runs, not copied here.
+export const zTrackerAlertEvent = z.strictObject({ meetingId: zId });
 export type TrackerAlertEvent = z.infer<typeof zTrackerAlertEvent>;
 // The worker's dispatch is told the event's id only and reads the event itself.
 export const zTrackerAlertDispatch = z.strictObject({ eventId: zId });

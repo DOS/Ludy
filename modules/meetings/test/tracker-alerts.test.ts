@@ -1,43 +1,40 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The counting of tracked words in the published transcript lines for the alert (#4873): the same counting as the Trackers card, the busiest words first, at most five, none for a word that does not come up.
+// What the alert does with the counts the counting definer returns (#4873): the busiest words first, at most five, none for a word that does not come up. The counting itself is held to the Trackers card's
+// (tracker-count.ts) by the database test, which runs the same fixtures through the SQL and through the TS.
 import { describe, expect, it } from 'vitest';
 import { encodeTrackerAlertTerms, parseTrackerAlertTerms, TRACKER_ALERT_TERMS_MAX } from '@ludy/kernel-contract';
-import { countTrackerHits } from '../src/tracker-alerts.ts';
+import { topTrackerHits } from '../src/tracker-alerts.ts';
 
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 
-describe('countTrackerHits', () => {
-  const terms = [
-    { id: id(1), term: 'giá' },
-    { id: id(2), term: 'Hợp đồng' },
-    { id: id(3), term: 'ACME' },
-    { id: id(4), term: 'đối thủ' },
-  ];
-
-  it('counts whole words over all the texts, the busiest first, and leaves out a word that does not come up', () => {
-    const hits = countTrackerHits(terms, ['Khách hỏi giá và hợp đồng, giá cao.', 'Quyết định: gửi hợp đồng cho ACME.', 'Việc: báo giá']);
-    expect(hits).toEqual([
+describe('topTrackerHits', () => {
+  it('orders the words by how often they came up, the busiest first', () => {
+    expect(
+      topTrackerHits([
+        { term_id: id(2), hits: 2 },
+        { term_id: id(1), hits: 3 },
+        { term_id: id(3), hits: 1 },
+      ]),
+    ).toEqual([
       { termId: id(1), count: 3 },
       { termId: id(2), count: 2 },
       { termId: id(3), count: 1 },
     ]);
   });
 
-  it('finds a term typed with marks with its marks only, and one typed without marks whatever the line has', () => {
-    expect(countTrackerHits([{ id: id(1), term: 'giá' }], ['già, giả, gia đình'])).toEqual([]);
-    expect(countTrackerHits([{ id: id(1), term: 'gia' }], ['giá, già, giả'])).toEqual([{ termId: id(1), count: 3 }]);
+  it('leaves out a word that did not come up', () => {
+    expect(topTrackerHits([{ term_id: id(1), hits: 0 }, { term_id: id(2), hits: 4 }])).toEqual([{ termId: id(2), count: 4 }]);
   });
 
   it('breaks a tie by id and keeps at most five words', () => {
-    const many = Array.from({ length: 8 }, (_, i) => ({ id: id(i + 1), term: `tu${String.fromCharCode(97 + i)}` }));
-    const hits = countTrackerHits(many, [many.map((m) => m.term).join(' ')]);
+    const rows = Array.from({ length: 8 }, (_, i) => ({ term_id: id(8 - i), hits: 1 }));
+    const hits = topTrackerHits(rows);
     expect(hits).toHaveLength(TRACKER_ALERT_TERMS_MAX);
     expect(hits.map((h) => h.termId)).toEqual([id(1), id(2), id(3), id(4), id(5)]);
   });
 
-  it('is empty with no text or no word', () => {
-    expect(countTrackerHits(terms, [])).toEqual([]);
-    expect(countTrackerHits([], ['giá'])).toEqual([]);
+  it('is empty when no word came up', () => {
+    expect(topTrackerHits([])).toEqual([]);
   });
 });
 

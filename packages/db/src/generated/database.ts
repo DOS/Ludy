@@ -3942,6 +3942,7 @@ export interface MeetingsTrackerAlertTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
   user_id: ColumnType<string, string, NotGranted>;
+  language: ColumnType<string, string | undefined, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 

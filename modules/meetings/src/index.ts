@@ -8,6 +8,8 @@ export * from './live-notes.ts';
 export * from './live-run.ts';
 export * from './transcribe.ts';
 export * from './transcribe-run.ts';
+// The pure counting of a tracked word in a line (#4818), exported so the database counting of the tracker alerts (#4873) can be held to it by a test.
+export { countNeedle, lineWords, needleOf } from './tracker-count.ts';
 export { itemFlags, itemIsClean } from './results.ts';
 export { matchAttendee, parseWhen, plainName } from './summary.ts';
 export { ASSIGNEE_CONNECTORS, ASSIGNEE_HONORIFICS } from './assignee-match.ts';
