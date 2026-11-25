@@ -15,6 +15,11 @@ import { Label } from '@ludy/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { FieldOptionsAndAttachmentEditor } from '../components/sign/field-options-editor.tsx';
 import { FieldOverlayLayer } from '../components/sign/field-placer.tsx';
+import {
+  DocxWarningsAlert,
+  clearCreatedDocxWarnings,
+  readCreatedDocxWarnings,
+} from '../components/sign/docx-conversion-notice.tsx';
 import { EnvelopeKycCard } from '../components/sign/envelope-kyc-card.tsx';
 import { EnvelopeObligationsCard } from '../components/sign/envelope-obligations-card.tsx';
 import { EnvelopePlaybookCard } from '../components/sign/envelope-playbook-card.tsx';
@@ -39,6 +44,7 @@ import {
   normalizeAiAnalysis,
   signApi,
   type SignAiAnalysis,
+  type SignDocxToPdfWarning,
   type SignEnvelopeDocumentSummary,
   type SignFieldRecord,
   type SignProposedField,
@@ -312,6 +318,9 @@ export function SignEnvelopeDetailPage() {
   const pendingActiveSignerIdRef = useRef<string | null>(null);
   const [dismissedProposalIds, setDismissedProposalIds] = useState<string[]>([]);
   const [aiAnalysisOverride, setAiAnalysisOverride] = useState<SignAiAnalysis | null>(null);
+  const [docxWarnings, setDocxWarnings] = useState<readonly SignDocxToPdfWarning[]>(() =>
+    id ? readCreatedDocxWarnings(id) : [],
+  );
 
   const [titleInput, setTitleInput] = useState('');
   const [subjectInput, setSubjectInput] = useState('');
@@ -465,6 +474,7 @@ export function SignEnvelopeDetailPage() {
     setSelectedFieldId(null);
     setDismissedProposalIds([]);
     setAiAnalysisOverride(null);
+    setDocxWarnings(id ? readCreatedDocxWarnings(id) : []);
     setActiveDocKey('doc-1');
     setDetectedPages(null);
     setPageNumber(1);
@@ -1353,6 +1363,16 @@ export function SignEnvelopeDetailPage() {
           <AlertTitle>{t('hrContractNd337.title')}</AlertTitle>
           <AlertDescription>{t('hrContractNd337.body')}</AlertDescription>
         </Alert>
+      ) : null}
+
+      {docxWarnings.length > 0 ? (
+        <DocxWarningsAlert
+          warnings={docxWarnings}
+          onDismiss={() => {
+            if (id) clearCreatedDocxWarnings(id);
+            setDocxWarnings([]);
+          }}
+        />
       ) : null}
 
       {envelope.inspectStatus === 'pending' ? (

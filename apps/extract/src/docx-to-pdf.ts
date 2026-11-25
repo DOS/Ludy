@@ -1094,8 +1094,10 @@ function extractParagraphBlocks(pNode: XmlElement, ctx: ExtractContext): DocBloc
     currentRuns.push({ text: listPrefix, bold: defaultBold, fontSizePt: defaultFontSizePt });
   }
 
-  const flushRuns = () => {
-    segments.push({ kind: 'runs', runs: currentRuns });
+  const flushRuns = (keepIfEmpty = false) => {
+    if (currentRuns.length > 0 || keepIfEmpty) {
+      segments.push({ kind: 'runs', runs: currentRuns });
+    }
     currentRuns = [];
   };
 
@@ -1128,7 +1130,7 @@ function extractParagraphBlocks(pNode: XmlElement, ctx: ExtractContext): DocBloc
         appendRunText('-', bold, fontSizePt);
       } else if (ch.name === 'w:br' || ch.name === 'w:cr') {
         if (ch.name === 'w:br' && ch.attrs['w:type'] === 'page') {
-          flushRuns();
+          flushRuns(false);
           segments.push({ kind: 'page_break' });
         } else {
           appendRunText('\n', bold, fontSizePt);
@@ -1174,8 +1176,12 @@ function extractParagraphBlocks(pNode: XmlElement, ctx: ExtractContext): DocBloc
     }
   };
 
+  const pSectPr = pPr ? findChild(pPr, 'w:sectPr') : undefined;
+  const hasSectionBreak = Boolean(pSectPr && isSectionPageBreak(pSectPr));
+
   walkContainer(pNode);
-  flushRuns();
+  // Keep empty <w:p/> spacer paragraphs when they do not carry a page or section break; standalone breaks emit only DocPageBreak.
+  flushRuns(segments.length === 0 && !hasSectionBreak);
 
   const blocks: DocBlock[] = [];
   let isFirstParagraphSegment = true;
@@ -1201,10 +1207,9 @@ function extractParagraphBlocks(pNode: XmlElement, ctx: ExtractContext): DocBloc
   }
 
   // Section break inside paragraph properties ends the section after the paragraph.
-  const pSectPr = pPr ? findChild(pPr, 'w:sectPr') : undefined;
   if (pSectPr) {
     collectSectionWarnings(pSectPr, ctx.hasHeaderOrFooterParts, ctx.hasNonEmptyHeaderFooterPart, ctx.warnings);
-    if (isSectionPageBreak(pSectPr)) {
+    if (hasSectionBreak) {
       blocks.push({ kind: 'page_break' });
     }
   }
@@ -1539,21 +1544,23 @@ async function wrapParagraphLayout(
       continue;
     }
 
-    let lineTokens: RenderToken[] = [];
+    let lineTokens: Array<{ token: RenderToken; widthPt: number }> = [];
     let lineWidth = 0;
 
     const flushLine = () => {
-      while (lineTokens.length > 0 && lineTokens[lineTokens.length - 1]!.whitespace) {
-        lineTokens.pop();
+      while (lineTokens.length > 0 && lineTokens[lineTokens.length - 1]!.token.whitespace) {
+        const popped = lineTokens.pop()!;
+        lineWidth = Math.max(0, lineWidth - popped.widthPt);
       }
-      const { spans, hasTag } = mergeLineSpans(lineTokens);
+      const trimmedWidth = lineTokens.reduce((sum, item) => sum + item.widthPt, 0);
+      const { spans, hasTag } = mergeLineSpans(lineTokens.map((item) => item.token));
       let maxFont = paragraph.defaultFontSizePt;
       for (const s of spans) {
         if (s.sizePt > maxFont) maxFont = s.sizePt;
       }
       wrappedLines.push({
         spans,
-        widthPt: spans.length === 0 ? 0 : lineWidth,
+        widthPt: spans.length === 0 ? 0 : trimmedWidth,
         fontSizePt: maxFont,
         hasTag,
       });
@@ -1575,9 +1582,9 @@ async function wrapParagraphLayout(
 
       if (lineTokens.length > 0 && lineWidth + tokWidth > safeMax) {
         // Trim width before flushing if trailing whitespace exists.
-        while (lineTokens.length > 0 && lineTokens[lineTokens.length - 1]!.whitespace) {
+        while (lineTokens.length > 0 && lineTokens[lineTokens.length - 1]!.token.whitespace) {
           const popped = lineTokens.pop()!;
-          lineWidth -= await fonts.measureWidth(popped.text, popped.weight, popped.sizePt);
+          lineWidth = Math.max(0, lineWidth - popped.widthPt);
         }
         if (lineTokens.length > 0) flushLine();
         if (tok.whitespace) continue;
@@ -1588,14 +1595,20 @@ async function wrapParagraphLayout(
         for (let pIdx = 0; pIdx < pieces.length; pIdx++) {
           const piece = pieces[pIdx]!;
           const pieceWidth = await fonts.measureWidth(piece, tok.weight, tokSize);
-          lineTokens = [{ text: piece, weight: tok.weight, sizePt: tokSize, whitespace: false, isTag: false }];
+          lineTokens = [
+            {
+              token: { text: piece, weight: tok.weight, sizePt: tokSize, whitespace: false, isTag: false },
+              widthPt: pieceWidth,
+            },
+          ];
           lineWidth = pieceWidth;
           if (pIdx < pieces.length - 1) flushLine();
         }
         continue;
       }
 
-      lineTokens.push(tokSize === tok.sizePt ? tok : { ...tok, sizePt: tokSize });
+      const sizedTok = tokSize === tok.sizePt ? tok : { ...tok, sizePt: tokSize };
+      lineTokens.push({ token: sizedTok, widthPt: tokWidth });
       lineWidth += tokWidth;
     }
 

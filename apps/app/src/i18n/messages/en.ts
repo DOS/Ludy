@@ -20475,6 +20475,7 @@ export const en = {
         otp_mail_data: 'Prepare a direct signing link OTP email message (system)',
       },
       docx_convert: {
+        authorize: 'Check permission to upload a Word (.docx) document for eSign',
         complete: 'Record sandbox .docx to PDF conversion result from worker',
         pending: 'Read pending .docx to PDF conversion requests for worker sweep recovery',
         request: 'Queue a sandboxed .docx to PDF conversion request',

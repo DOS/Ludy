@@ -18,7 +18,10 @@ import { ContractDrafterDialog } from '../components/sign/contract-drafter-dialo
 import { ContractVaultBar } from '../components/sign/contract-vault-bar.tsx';
 import {
   DocxConversionNotice,
+  DocxWarningsAlert,
+  clearCreatedDocxWarnings,
   inspectSelectedSignUploadFile,
+  saveCreatedDocxWarnings,
   type DocxConversionStatus,
 } from '../components/sign/docx-conversion-notice.tsx';
 import { VersionDiffDialog } from '../components/sign/version-diff-dialog.tsx';
@@ -37,6 +40,7 @@ import {
   uploadSignPdf,
   type SignAiAnalysis,
   type SignDocxConvertCompletedResult,
+  type SignDocxToPdfWarning,
   type SignEnvelopeSummary,
   type SignObligationRenewalListItem,
 } from '../lib/sign-api.ts';
@@ -112,12 +116,35 @@ function triggerBlobDownload(blob: Blob, filename: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+export async function handleEnvelopeCreatedWithWarnings(deps: {
+  envelopeId: string;
+  warnings: readonly SignDocxToPdfWarning[];
+  slug: string;
+  setCreateOpen: (open: boolean) => void;
+  setCreatedDocxNotice: (notice: { envelopeId: string; warnings: readonly SignDocxToPdfWarning[] } | null) => void;
+  invalidateEnvelopes: () => Promise<unknown>;
+  navigateToEnvelope: (slug: string, envelopeId: string) => Promise<unknown>;
+}): Promise<void> {
+  deps.setCreateOpen(false);
+  if (deps.warnings.length > 0) {
+    saveCreatedDocxWarnings(deps.envelopeId, deps.warnings);
+    deps.setCreatedDocxNotice({ envelopeId: deps.envelopeId, warnings: [...deps.warnings] });
+  } else {
+    clearCreatedDocxWarnings(deps.envelopeId);
+    deps.setCreatedDocxNotice(null);
+  }
+  await deps.invalidateEnvelopes();
+  if (deps.slug) {
+    await deps.navigateToEnvelope(deps.slug, deps.envelopeId);
+  }
+}
+
 export function CreateEnvelopeDialog({
   onClose,
   onCreated,
 }: {
   onClose: () => void;
-  onCreated: (envelopeId: string) => Promise<void> | void;
+  onCreated: (envelopeId: string, warnings?: readonly SignDocxToPdfWarning[]) => Promise<void> | void;
 }) {
   const t = useTranslations('sign');
   const [title, setTitle] = useState('');
@@ -162,7 +189,7 @@ export function CreateEnvelopeDialog({
     },
     onSuccess: async ({ created, warnings }) => {
       toast(warnings.length > 0 ? t('docxWarningBanner') : t('createdToast'));
-      await onCreated(created.envelopeId);
+      await onCreated(created.envelopeId, warnings);
     },
     onError: (error) => {
       setFormError(errorMessage(error));
@@ -493,6 +520,10 @@ export function SignEnvelopesPage() {
 
   const [tab, setTab] = useState<EnvelopeFilterTab>('all');
   const [createOpen, setCreateOpen] = useState(false);
+  const [createdDocxNotice, setCreatedDocxNotice] = useState<{
+    envelopeId: string;
+    warnings: readonly SignDocxToPdfWarning[];
+  } | null>(null);
   const [diffOpen, setDiffOpen] = useState(false);
   const [drafterOpen, setDrafterOpen] = useState(false);
   const [sharedLinkDialog, setSharedLinkDialog] = useState<{ title: string; url: string } | null>(null);
@@ -514,6 +545,7 @@ export function SignEnvelopesPage() {
     setInPersonModal(null);
     setSharedLinkDialog(null);
     setCreateOpen(false);
+    setCreatedDocxNotice(null);
     setDiffOpen(false);
     setDrafterOpen(false);
     setPendingRowAction(null);
@@ -847,6 +879,16 @@ export function SignEnvelopesPage() {
       />
 
       <ContractVaultBar key={slug} slug={slug} canAskVy={canAskVy} />
+
+      {createdDocxNotice ? (
+        <DocxWarningsAlert
+          warnings={createdDocxNotice.warnings}
+          onDismiss={() => {
+            clearCreatedDocxWarnings(createdDocxNotice.envelopeId);
+            setCreatedDocxNotice(null);
+          }}
+        />
+      ) : null}
 
       <Tabs value={tab} onValueChange={(next) => setTab(next as EnvelopeFilterTab)}>
         <TabsList className="flex max-w-full flex-wrap group-data-horizontal/tabs:h-auto">
@@ -1264,12 +1306,17 @@ export function SignEnvelopesPage() {
         <CreateEnvelopeDialog
           key={slug}
           onClose={() => setCreateOpen(false)}
-          onCreated={async (envelopeId) => {
-            setCreateOpen(false);
-            await queryClient.invalidateQueries({ queryKey: ['sign', 'envelopes'] });
-            if (slug) {
-              await navigate({ to: '/o/$slug/sign/envelopes/$id', params: { slug, id: envelopeId } });
-            }
+          onCreated={async (envelopeId, warnings = []) => {
+            await handleEnvelopeCreatedWithWarnings({
+              envelopeId,
+              warnings,
+              slug,
+              setCreateOpen,
+              setCreatedDocxNotice,
+              invalidateEnvelopes: () => queryClient.invalidateQueries({ queryKey: ['sign', 'envelopes'] }),
+              navigateToEnvelope: (targetSlug, targetId) =>
+                navigate({ to: '/o/$slug/sign/envelopes/$id', params: { slug: targetSlug, id: targetId } }),
+            });
           }}
         />
       ) : null}

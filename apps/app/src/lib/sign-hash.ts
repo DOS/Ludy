@@ -8,6 +8,7 @@ import { promoteMigratedItem, readLegacyAwareItem, removeMigratedItem, writeMigr
 export const SIGN_PAGE_PATH = '/-/sign';
 export const SIGN_DIRECT_PAGE_PATH = '/-/sign/d';
 export const SIGN_PUBLIC_HUB_PAGE_PREFIX = '/-/sign/p';
+export const SIGN_TOKEN_LENGTH = 43;
 export const SIGN_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 export const SIGN_IN_PERSON_ISOLATED_SESSION_KEY = 'ludy.sign.in_person.isolated';
 

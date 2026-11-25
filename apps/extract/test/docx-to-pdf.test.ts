@@ -4,6 +4,7 @@ import { PDFDocument } from 'pdf-lib';
 import { EXTRACT_LIMITS } from '@ludy/extract-contract';
 import { DocxError } from '../src/docx-text.ts';
 import { MAX_DOCX_PARAGRAPH_CHARS, convertDocxToPdf } from '../src/docx-to-pdf.ts';
+import { PdfFontContext } from '../src/fonts.ts';
 import { parse } from '../src/parse.ts';
 import { createExtractApp } from '../src/server.ts';
 import { buildZip } from './zip-fixture.ts';
@@ -324,6 +325,120 @@ describe('docx_to_pdf conversion (#4721)', () => {
       expect(await parse('docx_to_pdf', tinyDoc)).toMatchObject({ ok: false, code: 'too_large' });
     } finally {
       saveSpy.mockRestore();
+    }
+  });
+
+  it('omits empty spacer blocks for standalone page-break runs without adding EOF blank pages or top-of-page vertical gaps (#4729)', async () => {
+    const drawn: Array<{ text: string; x: number; y: number }> = [];
+    const origDrawText = PdfFontContext.prototype.drawText;
+    const drawSpy = vi.spyOn(PdfFontContext.prototype, 'drawText').mockImplementation(async function (this: PdfFontContext, page, raw, options) {
+      drawn.push({ text: raw, x: options.x, y: options.y });
+      return origDrawText.call(this, page, raw, options);
+    });
+
+    try {
+      const docxWithBreaks = buildDocx({
+        'word/document.xml': [
+          '<?xml version="1.0" encoding="UTF-8"?>',
+          '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">',
+          '<w:body>',
+          '<w:p><w:r><w:t>Trang 1</w:t></w:r></w:p>',
+          '<w:p><w:r><w:br w:type="page"/></w:r></w:p>',
+          '<w:p><w:r><w:t>Trang 2</w:t></w:r></w:p>',
+          '<w:p><w:r><w:br w:type="page"/></w:r></w:p>',
+          '</w:body></w:document>',
+        ].join(''),
+      });
+      const res = await convertDocxToPdf(docxWithBreaks);
+      expect(res.pageCount).toBe(2);
+      const p1 = drawn.find((d) => d.text === 'Trang 1');
+      const p2 = drawn.find((d) => d.text === 'Trang 2');
+      expect(p1).toBeDefined();
+      expect(p2).toBeDefined();
+      expect(p2!.y).toBeCloseTo(p1!.y, 3);
+
+      // Leading page break and trailing inline break do not create extra blank pages.
+      drawn.length = 0;
+      const singlePageDocx = buildDocx({
+        'word/document.xml': [
+          '<?xml version="1.0" encoding="UTF-8"?>',
+          '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">',
+          '<w:body>',
+          '<w:p><w:r><w:br w:type="page"/></w:r></w:p>',
+          '<w:p><w:r><w:t>Duy nhất</w:t><w:br w:type="page"/></w:r></w:p>',
+          '</w:body></w:document>',
+        ].join(''),
+      });
+      const singleRes = await convertDocxToPdf(singlePageDocx);
+      expect(singleRes.pageCount).toBe(1);
+      expect(drawn.find((d) => d.text === 'Duy nhất')?.y).toBeCloseTo(p1!.y, 3);
+
+      // Plain empty <w:p/> without a page break still preserves intentional vertical spacer height.
+      drawn.length = 0;
+      const spacerDocx = buildDocx({
+        'word/document.xml': [
+          '<?xml version="1.0" encoding="UTF-8"?>',
+          '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">',
+          '<w:body>',
+          '<w:p><w:r><w:t>Trên</w:t></w:r></w:p>',
+          '<w:p/>',
+          '<w:p><w:r><w:t>Dưới</w:t></w:r></w:p>',
+          '</w:body></w:document>',
+        ].join(''),
+      });
+      await convertDocxToPdf(spacerDocx);
+      const topY = drawn.find((d) => d.text === 'Trên')!.y;
+      const bottomY = drawn.find((d) => d.text === 'Dưới')!.y;
+      expect(topY - bottomY).toBeGreaterThan(30);
+    } finally {
+      drawSpy.mockRestore();
+    }
+  });
+
+  it('subtracts trimmed trailing whitespace width in flushLine so center and right aligned lines stay aligned (#4729)', async () => {
+    const drawn: Array<{ text: string; x: number; y: number }> = [];
+    const origDrawText = PdfFontContext.prototype.drawText;
+    const drawSpy = vi.spyOn(PdfFontContext.prototype, 'drawText').mockImplementation(async function (this: PdfFontContext, page, raw, options) {
+      drawn.push({ text: raw, x: options.x, y: options.y });
+      return origDrawText.call(this, page, raw, options);
+    });
+
+    try {
+      const docx = buildDocx({
+        'word/document.xml': [
+          '<?xml version="1.0" encoding="UTF-8"?>',
+          '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">',
+          '<w:body>',
+          '<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:t>CỘNG HÒA</w:t></w:r></w:p>',
+          '<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:t xml:space="preserve">CỘNG HÒA            </w:t><w:tab/></w:r></w:p>',
+          '<w:p><w:pPr><w:jc w:val="right"/></w:pPr><w:r><w:t>Bên A</w:t></w:r></w:p>',
+          '<w:p><w:pPr><w:jc w:val="right"/></w:pPr><w:r><w:t xml:space="preserve">Bên A            </w:t><w:tab/></w:r></w:p>',
+          '<w:tbl>',
+          '  <w:tblGrid><w:gridCol w:w="4500"/><w:gridCol w:w="4500"/></w:tblGrid>',
+          '  <w:tr>',
+          '    <w:tc><w:p><w:pPr><w:jc w:val="right"/></w:pPr><w:r><w:t>Ô bảng</w:t></w:r></w:p></w:tc>',
+          '    <w:tc><w:p><w:pPr><w:jc w:val="right"/></w:pPr><w:r><w:t xml:space="preserve">Ô bảng          </w:t><w:tab/></w:r></w:p></w:tc>',
+          '  </w:tr>',
+          '</w:tbl>',
+          '</w:body></w:document>',
+        ].join(''),
+      });
+      await convertDocxToPdf(docx);
+
+      const centered = drawn.filter((d) => d.text === 'CỘNG HÒA');
+      expect(centered).toHaveLength(2);
+      expect(centered[1]!.x).toBeCloseTo(centered[0]!.x, 4);
+
+      const rightAligned = drawn.filter((d) => d.text === 'Bên A');
+      expect(rightAligned).toHaveLength(2);
+      expect(rightAligned[1]!.x).toBeCloseTo(rightAligned[0]!.x, 4);
+
+      const tableCells = drawn.filter((d) => d.text === 'Ô bảng');
+      expect(tableCells).toHaveLength(2);
+      // Second column starts half a page right of first column, so subtract half CONTENT_WIDTH (241.64 pt).
+      expect(tableCells[1]!.x - tableCells[0]!.x).toBeCloseTo((595.28 - 112) / 2, 1);
+    } finally {
+      drawSpy.mockRestore();
     }
   });
 });

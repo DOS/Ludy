@@ -10,7 +10,7 @@ vi.mock('../src/lib/auth.ts', () => ({
   accessToken: vi.fn(async () => 'test-token'),
   afterMfaRefusal: vi.fn(),
   auth: vi.fn(),
-  getConfig: vi.fn(() => ({ uploads: 'local' })),
+  getConfig: vi.fn(() => ({ uploads: 'local', modules: ['kernel', 'sign'] })),
   secondFactorStillOwed: vi.fn(async () => false),
 }));
 
@@ -27,6 +27,7 @@ vi.mock('@ludy/ui/components/dialog', async () => {
       createElement(tag, null, children);
   return {
     Dialog: wrap('div'),
+    DialogClose: wrap('button'),
     DialogContent: wrap('div'),
     DialogDescription: wrap('p'),
     DialogFooter: wrap('div'),
@@ -35,25 +36,33 @@ vi.mock('@ludy/ui/components/dialog', async () => {
   };
 });
 
+const envDetailId = '01900000-0000-7000-8000-0000000000ec';
+
 vi.mock('@tanstack/react-router', async (importOriginal) => {
   const { createElement } = await import('react');
   return {
     ...(await importOriginal<object>()),
     Link: ({ children, to }: { children?: ReactNode; to: string }) => createElement('a', { href: to }, children),
-    useParams: () => ({ slug: 'acme' }),
+    useParams: () => ({ slug: 'acme', id: envDetailId }),
     useNavigate: () => vi.fn(),
   };
 });
 
-const { DocxConversionNotice, DocxWarningsAlert, inspectSelectedSignUploadFile } = await import(
-  '../src/components/sign/docx-conversion-notice.tsx'
-);
+const {
+  DocxConversionNotice,
+  DocxWarningsAlert,
+  clearCreatedDocxWarnings,
+  inspectSelectedSignUploadFile,
+  readCreatedDocxWarnings,
+  saveCreatedDocxWarnings,
+} = await import('../src/components/sign/docx-conversion-notice.tsx');
 const { catalog } = await import('../src/i18n/runtime.ts');
 const { SIGN_DOCX_MAX_BYTES, SIGN_DOCX_MIME, SIGN_UPLOAD_ACCEPT, convertSignDocx } = await import(
   '../src/lib/sign-api.ts'
 );
 const { queryClient } = await import('../src/lib/api.ts');
-const { CreateEnvelopeDialog } = await import('../src/routes/sign-envelopes.tsx');
+const { CreateEnvelopeDialog, handleEnvelopeCreatedWithWarnings } = await import('../src/routes/sign-envelopes.tsx');
+const { SignEnvelopeDetailPage } = await import('../src/routes/sign-envelope-detail.tsx');
 const { CreateTemplateForm } = await import('../src/routes/sign-templates.tsx');
 
 function makeTestFile(bytes: Uint8Array, name: string, type = ''): File {
@@ -271,5 +280,125 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
     expect(await caught).toMatchObject({ name: 'ClientError', message: 'sign.docxTimedOut' });
     expect(seenPollSignal).toBeDefined();
     expect(seenPollSignal?.aborted).toBe(true);
+  });
+
+  it('persists dismissible DocxWarningsAlert across envelope creation navigation and clears on dismiss (#4729)', async () => {
+    const store = new Map<string, string>();
+    vi.stubGlobal('window', {
+      sessionStorage: {
+        getItem: (k: string) => store.get(k) ?? null,
+        setItem: (k: string, v: string) => void store.set(k, v),
+        removeItem: (k: string) => void store.delete(k),
+      },
+    });
+
+    const setCreateOpen = vi.fn();
+    const setCreatedDocxNotice = vi.fn();
+    const invalidateEnvelopes = vi.fn(async () => {});
+    const navigateToEnvelope = vi.fn(async () => {});
+
+    await handleEnvelopeCreatedWithWarnings({
+      envelopeId: envDetailId,
+      warnings: ['images_skipped', 'footnotes_skipped'],
+      slug: 'acme',
+      setCreateOpen,
+      setCreatedDocxNotice,
+      invalidateEnvelopes,
+      navigateToEnvelope,
+    });
+
+    expect(setCreateOpen).toHaveBeenCalledWith(false);
+    expect(setCreatedDocxNotice).toHaveBeenCalledWith({
+      envelopeId: envDetailId,
+      warnings: ['images_skipped', 'footnotes_skipped'],
+    });
+    expect(invalidateEnvelopes).toHaveBeenCalledTimes(1);
+    expect(navigateToEnvelope).toHaveBeenCalledWith('acme', envDetailId);
+    expect(readCreatedDocxWarnings(envDetailId)).toEqual(['images_skipped', 'footnotes_skipped']);
+    // Reading does not auto-consume so the banner persists across detail reloads until dismissed.
+    expect(readCreatedDocxWarnings(envDetailId)).toEqual(['images_skipped', 'footnotes_skipped']);
+
+    queryClient.setQueryData(['sign', 'envelope', envDetailId], {
+      envelope: {
+        id: envDetailId,
+        title: 'Hợp đồng từ Word',
+        subject: null,
+        message: null,
+        status: 'draft',
+        routingMode: 'parallel',
+        sourceKind: 'standalone',
+        sourceId: null,
+        sourceFileId: '01900000-0000-7000-8000-0000000000f1',
+        sourceSha256: 'c'.repeat(64),
+        inspectStatus: 'pending',
+        inspectError: null,
+        pageCount: null,
+        pageDimensions: null,
+        detectedTags: [],
+        shareSummaryWithSigners: false,
+        sharedSummary: null,
+        allowDelegation: true,
+        sealedFileId: null,
+        sealedSha256: null,
+        sealStatus: null,
+        certificateFileId: null,
+        certificateSha256: null,
+        certificateCode: null,
+        expiresAt: null,
+        autoRemindBeforeExpiry: true,
+        sentAt: null,
+        completedAt: null,
+        declinedAt: null,
+        declineAcknowledgedAt: null,
+        voidedAt: null,
+        voidedBy: null,
+        voidReason: null,
+        expiredAt: null,
+        version: 1,
+        createdBy: '01900000-0000-7000-8000-000000000088',
+        createdAt: '2026-11-25T00:00:00.000Z',
+        updatedAt: '2026-11-25T00:00:00.000Z',
+      },
+      signers: [],
+      fields: [],
+    });
+
+    const detailHtml = renderToStaticMarkup(
+      <QueryClientProvider client={queryClient}>
+        <IntlProvider locale="vi" timeZone="Asia/Ho_Chi_Minh" messages={catalog('vi')}>
+          <SignEnvelopeDetailPage />
+        </IntlProvider>
+      </QueryClientProvider>,
+    );
+    expect(detailHtml).toContain('data-testid="sign-docx-warning-banner"');
+    expect(detailHtml).toContain('aria-label="Đóng"');
+    expect(detailHtml).toContain('min-h-11 min-w-11');
+    expect(detailHtml).toContain('footnote/endnote');
+
+    // Dismissing clears persisted warnings so re-rendering SignEnvelopeDetailPage no longer shows the alert.
+    clearCreatedDocxWarnings(envDetailId);
+    expect(readCreatedDocxWarnings(envDetailId)).toEqual([]);
+    const afterDismissHtml = renderToStaticMarkup(
+      <QueryClientProvider client={queryClient}>
+        <IntlProvider locale="vi" timeZone="Asia/Ho_Chi_Minh" messages={catalog('vi')}>
+          <SignEnvelopeDetailPage />
+        </IntlProvider>
+      </QueryClientProvider>,
+    );
+    expect(afterDismissHtml).not.toContain('data-testid="sign-docx-warning-banner"');
+
+    // Creating a clean envelope with zero warnings clears any prior stored notice.
+    saveCreatedDocxWarnings(envDetailId, ['images_skipped']);
+    await handleEnvelopeCreatedWithWarnings({
+      envelopeId: envDetailId,
+      warnings: [],
+      slug: '',
+      setCreateOpen,
+      setCreatedDocxNotice,
+      invalidateEnvelopes,
+      navigateToEnvelope,
+    });
+    expect(readCreatedDocxWarnings(envDetailId)).toEqual([]);
+    expect(setCreatedDocxNotice).toHaveBeenLastCalledWith(null);
   });
 });

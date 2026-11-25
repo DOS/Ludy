@@ -20475,6 +20475,7 @@ export const vi = {
         otp_mail_data: 'Chuẩn bị dữ liệu email gửi mã xác thực OTP cho liên kết ký trực tiếp (hệ thống)',
       },
       docx_convert: {
+        authorize: 'Kiểm tra quyền tải lên tệp Word (.docx) cho hồ sơ ký',
         complete: 'Ghi nhận kết quả chuyển đổi tệp Word (.docx) sang PDF từ hộp cát worker',
         pending: 'Đọc danh sách yêu cầu chuyển đổi tệp Word (.docx) đang chờ xử lý lại cho worker',
         request: 'Đưa yêu cầu chuyển đổi tệp Word (.docx) sang PDF vào hàng đợi hộp cát',
