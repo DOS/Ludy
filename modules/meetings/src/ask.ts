@@ -60,7 +60,7 @@ const MEETING_LINES_READ_MAX = 4000;
 /**
  * The lines of ONE meeting for a question about it (#4815): the lines the caller reads, read under row security as for the search (the recorder reads their own draft lines and every published one,
  * a reader only the published lines of a meeting they read, an owner or admin who is no reader none, and a meeting past its text date none; a meeting the caller cannot read is "no lines", not an error).
- * The recorder's working draft while one exists, else the published lines (the stage a reader reads): the rule of the transcript page, the file and the search (#4910). With words in the question only the lines holding at least one of them are given (none: no line, so nothing to
+ * The recorder's working draft while one exists, else the published lines (the stage a reader reads): the rule of the transcript page and the file (#4910). With words in the question only the lines holding at least one of them are given (none: no line, so nothing to
  * answer from); a question with no usable word (a general one) gets lines spread evenly over the meeting. At most ASK_LINES_MAX lines, those holding the most words first, handed over in the order of the transcript.
  */
 export async function linesOfMeeting(trx: QueryContext['trx'], orgId: string, meetingId: string, words: readonly string[]): Promise<MeetingSearchHit[]> {

@@ -432,7 +432,7 @@ suite("the member's Vy answering across meetings (A3, #3161)", () => {
     // Spread over the meeting: the last line given is from its last part, not the first minutes.
     expect(texts[39]).toBe('Dòng số 97 của buổi họp dài');
     expect(texts[0]).toBe('Dòng số 0 của buổi họp dài');
-    // The recorder with a newer working draft beside the shared lines is given the draft alone, as the transcript page, the file and the search show it (#4910), not the older shared text.
+    // The recorder with a newer working draft beside the shared lines is given the draft alone, as the transcript page and the file show it (#4910), not the older shared text.
     await askThis('recorder', m, 'What is this meeting about?', { model: pick });
     expect(lastData?.lines.map((l) => l.text)).toEqual(['Dòng nháp của người ghi']);
     const expired = await meeting('recorder', 'Họp hết hạn một mình', 'attendees', ['attendee'], '2026-10-01T03:00:00Z', 'current_date - 1');

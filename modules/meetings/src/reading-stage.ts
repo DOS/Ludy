@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Which stage of a meeting's transcript lines the caller reads (#4910, point 2 and 3): the recorder's working draft while one exists, else the published lines. It is the rule of the
-// transcript page (meetings.transcript.get), the file (meetings.transcript.download), the search and the talk-time and speaking-style cards, kept in one place for the reads that
+// transcript page (meetings.transcript.get) and the file (meetings.transcript.download), kept in one place for the reads that
 // derive something from the lines (Ask Vy about a meeting, the link suggestion). Row security does the rest: only the recorder is shown a draft line, so for every other reader this is
 // always the published lines. The stage is found with a small read, so the caller then reads one stage only, never a mix of the shared text and a newer draft of it.
 import type { QueryContext } from '@ludy/kernel-runtime';
