@@ -604,6 +604,8 @@ export interface WorkerDeps {
   extractor: InvoiceReader | null;
   // The audio extraction of crove-media for a video-only meeting platform recording (C2a, #3306); null runs without it (such a recording fails `no_audio`).
   meetingsImportExtractor?: MediaAudioExtractor | null;
+  // crove-media's own MEDIA_MAX_INPUT_BYTES (config.MEDIA_MAX_INPUT_BYTES): bounds the parts of a joined platform recording (#3175).
+  meetingsImportMediaInputBytes?: number;
   // Vy's reply drafts (CV8, #2310): the model that reads a conversation's text and writes a draft; null runs without AI (a draft asked for is settled as none).
   conversationWriter?: Pick<ConversationWriter, 'draft'> | null;
   // The AI coworker's campaign drafts (ads W1b, #2295): the model that reads a member's brief and writes the creative part of a campaign; null runs without
@@ -1819,7 +1821,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   if (deps.runtime.installed('meetings') && meetingPlatforms && Object.keys(meetingPlatforms).length > 0 && wakeBroker && wakeBroker.id !== 'none') {
     // The renewal of a token that is about to expire (issue #3878): a command that closes over this worker's broker and adapters, so only this runtime registers it.
     deps.runtime.register({ commands: [meetingPlatformRefreshCommand({ broker: wakeBroker, adapters: meetingPlatforms })] });
-    const importDeps = { runtime: deps.runtime, broker: wakeBroker, store: deps.store, adapters: meetingPlatforms, extractor: deps.meetingsImportExtractor ?? null };
+    const importDeps = { runtime: deps.runtime, broker: wakeBroker, store: deps.store, adapters: meetingPlatforms, extractor: deps.meetingsImportExtractor ?? null, mediaInputBytes: deps.meetingsImportMediaInputBytes };
     await boss.work<MeetingsImportJob>(QUEUES.meetingsImport, { batchSize: 1, localConcurrency: MEETINGS_IMPORT_CONCURRENCY, includeMetadata: true }, async ([job]) => {
       if (!job) return;
       // Every call of an import is a kernel command, which no gate refuses: an org whose Meetings is off (ADR-0053) downloads nothing.
