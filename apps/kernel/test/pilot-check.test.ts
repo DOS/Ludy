@@ -434,6 +434,78 @@ describe('pilot-check settings', () => {
     expect(failing({ ...READY, INBOUND_DOMAIN: 'in.example.com' })).toEqual([expect.stringContaining('INBOUND_SECRET is unset')]);
     expect(failing({ ...READY, INBOUND_DOMAIN: 'in.example.com', INBOUND_SECRET: 'z'.repeat(40) })).toEqual([]);
     expect(failing({ ...READY, S3_SECRET_ACCESS_KEY: 'crove-split-minio-secret' })).toEqual([expect.stringContaining('S3_SECRET_ACCESS_KEY still has a sample value')]);
+    expect(failing({ ...READY, SES_SECRET_ACCESS_KEY: 'change-me-ses-secret' })).toEqual([expect.stringContaining('SES_SECRET_ACCESS_KEY still has a sample value')]);
+  });
+
+  it('checks MAIL_PROVIDER=ses settings, SNS topic readiness, and bundled Auth SMTP (#4960)', () => {
+    const sesBase: Env = {
+      ...READY,
+      MAIL_PROVIDER: 'ses',
+      SES_REGION: 'ap-southeast-1',
+      SES_ACCESS_KEY_ID: fake('ses-key'),
+      SES_SECRET_ACCESS_KEY: fake('ses-secret', 32),
+      SMTP_FROM: 'noreply@mail.example.com',
+      SMTP_HOST: 'email-smtp.ap-southeast-1.amazonaws.com',
+      SMTP_PORT: '587',
+      SMTP_USER: fake('ses-smtp-user'),
+      SMTP_PASS: fake('ses-smtp-pass', 32),
+    };
+    expect(failing(sesBase)).toEqual([]);
+    expect(checkEnv(sesBase).find((r) => r.item === 'Outbound mail' && r.status === 'manual')?.message).toContain('SES_SNS_TOPIC_ARN is unset');
+
+    const sesSnsNoConfigSet: Env = {
+      ...sesBase,
+      SES_SNS_TOPIC_ARN: 'arn:aws:sns:ap-southeast-1:123456789012:ludy-pilot-ses-events',
+    };
+    expect(failing(sesSnsNoConfigSet)).toEqual([]);
+    expect(checkEnv(sesSnsNoConfigSet).find((r) => r.item === 'Outbound mail' && r.status === 'pass')?.message).toContain('SES_SNS_TOPIC_ARN configured');
+    expect(checkEnv(sesSnsNoConfigSet).find((r) => r.item === 'Outbound mail' && r.status === 'manual')?.message).toContain('without SES_CONFIGURATION_SET');
+
+    const sesWithSns: Env = {
+      ...sesSnsNoConfigSet,
+      SES_CONFIGURATION_SET: 'ludy-pilot',
+    };
+    expect(failing(sesWithSns)).toEqual([]);
+    expect(checkEnv(sesWithSns).some((r) => r.item === 'Outbound mail' && r.status === 'manual')).toBe(false);
+    expect(checkEnv(sesWithSns).find((r) => r.item === 'Outbound mail' && r.status === 'pass')?.message).toContain('with SNS delivery webhooks (configuration set ludy-pilot)');
+
+    expect(failing({ ...READY, MAIL_PROVIDER: 'ses' })).toEqual([
+      expect.stringContaining('SES_REGION'),
+      expect.stringContaining('SES_ACCESS_KEY_ID'),
+      expect.stringContaining('SES_SECRET_ACCESS_KEY'),
+      expect.stringContaining('SMTP_FROM'),
+    ]);
+    expect(failing({ ...sesBase, SES_REGION: 'bad-region' })).toEqual([expect.stringContaining('SES_REGION is not a valid AWS region')]);
+    expect(failing({ ...sesBase, SES_CONFIGURATION_SET: 'bad name!' })).toEqual([expect.stringContaining('SES_CONFIGURATION_SET is invalid')]);
+    expect(failing({ ...sesBase, SES_SNS_TOPIC_ARN: 'arn:aws:sns:us-east-1:123456789012:topic' })).toEqual([expect.stringContaining('must match SES_REGION')]);
+    expect(failing({ ...sesBase, SMTP_HOST: 'mailpit' })).toEqual([expect.stringContaining('bundled Supabase Auth still sends confirmation and recovery emails over SMTP')]);
+    expect(failing({ ...sesBase, SMTP_USER: undefined })).toEqual([expect.stringContaining('SMTP_USER and SMTP_PASS')]);
+    expect(failing({ ...sesBase, SMTP_PASS: undefined })).toEqual([expect.stringContaining('SMTP_USER and SMTP_PASS')]);
+    expect(failing({ ...sesBase, SMTP_PORT: undefined })).toEqual([expect.stringContaining('SMTP_PORT must be explicitly set')]);
+    expect(failing({ ...sesBase, SMTP_PORT: '1025' })).toEqual([expect.stringContaining('SMTP_PORT must be explicitly set')]);
+    expect(failing({ ...sesBase, SMTP_PORT: '465' })).toEqual([]);
+    expect(failing({ ...sesBase, SMTP_FROM: 'Ludy <noreply@ludy.local>' })).toEqual([
+      expect.stringContaining('SMTP_FROM must be a bare email address'),
+      expect.stringContaining('SMTP_FROM set to a sender address'),
+    ]);
+    expect(failing({ ...sesBase, SMTP_FROM: 'Ludy <noreply@mail.example.com>' })).toEqual([
+      expect.stringContaining('SMTP_FROM must be a bare email address'),
+    ]);
+    // With a remote IdP (no bundled Supabase Auth), MAIL_PROVIDER=ses does not require SMTP_HOST or SES SMTP credentials/port.
+    expect(
+      failing({
+        ...sesWithSns,
+        SMTP_HOST: undefined,
+        SMTP_PORT: undefined,
+        SMTP_USER: undefined,
+        SMTP_PASS: undefined,
+        AUTH_DISABLE_SIGNUP: undefined,
+        AUTH_UPSTREAM_URL: '',
+        PUBLIC_AUTH_URL: 'https://idp.example.test/auth/v1',
+        AUTH_ALLOWED_EMAILS: 'owner@example.test',
+      }),
+    ).toEqual([]);
+    expect(failing({ ...READY, MAIL_PROVIDER: 'postmark' })).toEqual([expect.stringContaining('MAIL_PROVIDER=postmark is unknown')]);
   });
 
   it('requires email confirmation with a real SMTP server and MFA step-up', () => {

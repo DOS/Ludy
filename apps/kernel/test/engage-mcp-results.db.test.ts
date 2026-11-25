@@ -449,10 +449,28 @@ suite('the results MCP reads: Social metrics and Ads spend, flags and today (#38
     });
 
     it('counts nothing of another org', async () => {
-      const mine = JSON.stringify(await totals({ days: 365, includeExternal: true }));
-      expect(mine).not.toContain('7000');
-      expect(mine).not.toContain('5000');
-      expect(mine).not.toContain(conn.b1 as string);
+      const mine = await totals({ days: 365, includeExternal: true });
+      // Assert the structured totals (including rateBases) and channel ids directly rather than substring-checking serialized JSON
+      // for '7000' or '5000', which can collide with random UUIDs inside channels[].connectionId (#4876, #4173).
+      expect(mine).toMatchObject({
+        days: 365,
+        posts: 5,
+        metrics: { reach: 756, reactions: 30, views: 4 },
+        clicks: 5,
+        rateBases: { reach: { engagement: 30, denominator: 600 } },
+        channelsTruncated: false,
+        previous: { posts: 0, metrics: {}, clicks: null, rateBases: {}, channelsTruncated: false },
+      });
+      expect(mine.channels.map((c) => [c.connectionId, c.provider, c.posts, c.metrics, c.clicks, c.rateBases])).toEqual([
+        [conn.a1, 'sandbox', 4, { reach: 716, reactions: 30 }, 5, { reach: { engagement: 30, denominator: 600 } }],
+        [conn.a2, 'sandbox', 1, { reach: 40, views: 4 }, null, {}],
+      ]);
+      expect(mine.previous.channels.map((c) => [c.connectionId, c.posts, c.metrics, c.clicks, c.rateBases])).toEqual([
+        [conn.a1, 0, {}, null, {}],
+        [conn.a2, 0, {}, null, {}],
+      ]);
+      expect(mine.channels.map((c) => c.connectionId)).not.toContain(conn.b1);
+      expect(mine.previous.channels.map((c) => c.connectionId)).not.toContain(conn.b1);
       expect(await totals({ days: 30, includeExternal: true }, 'foreign', orgs.b)).toMatchObject({ posts: 2, metrics: { reach: 12000, reactions: 700 }, clicks: 70 });
       expect(await totals({ days: 30 }, 'foreign', orgs.b)).toMatchObject({ posts: 1, metrics: { reach: 7000, reactions: 700 } });
     });

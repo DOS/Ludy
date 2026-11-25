@@ -1,8 +1,20 @@
-// The org overview's waiting list (issue #1249): what it lists, in which order, and when it may say nothing waits.
+// The org overview's waiting list (issue #1249) and Role x Enabled-App modular Home helpers (#4928).
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { HOME_ACTIONS, HOME_ACTIONS_MAX, homeActions, showStartCard } from '../src/lib/home-actions.ts';
+import { PROPOSAL_APPROVE_PERMISSION } from '@ludy/kernel-contract';
+import { showStartCard } from '../src/lib/home-actions.ts';
+import {
+  buildFallbackHomeLayout,
+  eligibleHomeBlocks,
+  isBlockModuleEnabled,
+  moveHomeBlock,
+  reorderHomeBlockById,
+  toHomeLayoutDraft,
+  toggleHomeBlockVisibility,
+  visibleHomeBlocks,
+} from '../src/lib/home-layout.ts';
+import { buildHomeVyChips, countMatchingTodayForPrompt, matchHomeVyTargets } from '../src/lib/home-vy.ts';
 import { WAITING_LINKS, allCounted, appsLayout, gapsFromYear, isDay1Empty, quickStartSteps, shellBadges, tasksNotListed, unreadNotices, waitingItems } from '../src/lib/overview.ts';
 
 describe('org overview', () => {
@@ -157,17 +169,6 @@ describe('org overview', () => {
     expect(isDay1Empty({ ...base, sinceCount: 1 })).toBe(false);
   });
 
-  it('lists 3 to 4 fixed create actions, only for the apps that are on and never for a viewer (#4783)', () => {
-    expect(HOME_ACTIONS.length).toBeGreaterThanOrEqual(3);
-    expect(HOME_ACTIONS.length).toBeLessThanOrEqual(HOME_ACTIONS_MAX);
-    expect(homeActions(['finance', 'crm'], 'owner').map((a) => a.id)).toEqual(['uploadInvoice', 'recordExpense', 'createSalesInvoice', 'addCustomer']);
-    expect(homeActions(['finance'], 'member').map((a) => a.id)).toEqual(['uploadInvoice', 'recordExpense', 'createSalesInvoice']);
-    expect(homeActions(['crm'], 'admin').map((a) => a.id)).toEqual(['addCustomer']);
-    expect(homeActions(['kernel', 'notes'], 'owner')).toEqual([]);
-    expect(homeActions(['finance', 'crm'], 'viewer')).toEqual([]);
-    expect(homeActions(['finance', 'crm'], undefined)).toEqual([]);
-  });
-
   it('shows the day-1 start card by the first approved invoice, a close, and the empty-org rule where finance is off (#4783)', () => {
     const base = { steps: 3, stored: null, financeOn: true, firstInvoiceApproved: false, orgEmpty: false } as const;
     expect(showStartCard(base)).toBe(true);
@@ -182,5 +183,176 @@ describe('org overview', () => {
     // Accounting off: no invoice to wait for, so only an empty org sees it.
     expect(showStartCard({ ...base, financeOn: false, firstInvoiceApproved: undefined, orgEmpty: true })).toBe(true);
     expect(showStartCard({ ...base, financeOn: false, firstInvoiceApproved: undefined, orgEmpty: false })).toBe(false);
+  });
+});
+
+describe('Role x Enabled-App Home layout & customize helpers (#4928)', () => {
+  const ALL_MODULES = ['kernel', 'finance', 'notes', 'projects', 'meetings', 'social', 'crm', 'ads', 'hr', 'sign'];
+
+  it('computes deterministic Role x Enabled-App fallback defaults mirroring kernel policy', () => {
+    const owner = buildFallbackHomeLayout({ modules: ALL_MODULES, role: 'owner' });
+    expect(owner.blocks.map((b) => [b.id, b.visible])).toEqual([
+      ['finance_tax_deadlines', true],
+      ['finance_approvals', true],
+      ['teamwork_my_work', true],
+      ['engage_pipeline', true],
+      ['hr_pending', true],
+      ['esign_pending', true],
+    ]);
+
+    const financeMember = buildFallbackHomeLayout({
+      modules: ALL_MODULES,
+      role: 'member',
+      permissions: [PROPOSAL_APPROVE_PERMISSION],
+    });
+    expect(financeMember.blocks.map((b) => [b.id, b.visible])).toEqual([
+      ['finance_tax_deadlines', true],
+      ['finance_approvals', true],
+      ['teamwork_my_work', true],
+      ['engage_pipeline', true],
+      ['hr_pending', true],
+      ['esign_pending', true],
+    ]);
+
+    const regularMember = buildFallbackHomeLayout({ modules: ALL_MODULES, role: 'member' });
+    expect(regularMember.blocks.map((b) => [b.id, b.visible])).toEqual([
+      ['finance_tax_deadlines', false],
+      ['teamwork_my_work', true],
+      ['engage_pipeline', true],
+      ['hr_pending', true],
+      ['esign_pending', true],
+    ]);
+
+    const viewerNotesOn = buildFallbackHomeLayout({ modules: ALL_MODULES, role: 'viewer' });
+    expect(viewerNotesOn.blocks.map((b) => [b.id, b.visible])).toEqual([['teamwork_my_work', true]]);
+
+    const viewerNotesOff = buildFallbackHomeLayout({ modules: ['kernel', 'finance', 'hr'], role: 'viewer' });
+    expect(viewerNotesOff.blocks).toEqual([]);
+
+    expect(buildFallbackHomeLayout({ modules: ALL_MODULES, role: undefined }).blocks).toEqual([]);
+  });
+
+  it('filters eligible and visible blocks strictly by server flags and ADR-0053 reactive modules', () => {
+    expect(isBlockModuleEnabled('engage_pipeline', ['kernel', 'ads'])).toBe(false);
+    expect(isBlockModuleEnabled('engage_pipeline', ['kernel', 'crm'])).toBe(true);
+    expect(isBlockModuleEnabled('hr_pending', ['kernel', 'hr'])).toBe(true);
+    expect(isBlockModuleEnabled('esign_pending', ['kernel'])).toBe(false);
+
+    const serverLayout = {
+      customized: true,
+      blocks: [
+        { id: 'esign_pending' as const, visible: true, moduleEnabled: true, permitted: true },
+        { id: 'finance_approvals' as const, visible: true, moduleEnabled: false, permitted: true },
+        { id: 'hr_pending' as const, visible: true, moduleEnabled: true, permitted: false },
+        { id: 'teamwork_my_work' as const, visible: false, moduleEnabled: true, permitted: true },
+        { id: 'engage_pipeline' as const, visible: true, moduleEnabled: true, permitted: true },
+      ],
+      defaults: [],
+    };
+    // Even if server cache still had sign enabled, disabling `sign` locally hides esign_pending at once.
+    const eligible = eligibleHomeBlocks(serverLayout, ['kernel', 'crm'], 'member');
+    expect(eligible.map((b) => [b.id, b.visible])).toEqual([
+      ['teamwork_my_work', false],
+      ['engage_pipeline', true],
+    ]);
+    expect(visibleHomeBlocks(eligible).map((b) => b.id)).toEqual(['engage_pipeline']);
+  });
+
+  it('reorders via Move Up / Move Down, drag-drop, and Switch visibility without losing bounds', () => {
+    const draft = toHomeLayoutDraft(buildFallbackHomeLayout({ modules: ALL_MODULES, role: 'owner' }).blocks);
+    expect(moveHomeBlock(draft, 0, -1).map((b) => b.id)).toEqual(draft.map((b) => b.id));
+    expect(moveHomeBlock(draft, draft.length - 1, 1).map((b) => b.id)).toEqual(draft.map((b) => b.id));
+
+    const movedUp = moveHomeBlock(draft, 1, -1);
+    expect(movedUp.slice(0, 2).map((b) => b.id)).toEqual(['finance_approvals', 'finance_tax_deadlines']);
+
+    const movedDown = moveHomeBlock(movedUp, 0, 1);
+    expect(movedDown.slice(0, 2).map((b) => b.id)).toEqual(['finance_tax_deadlines', 'finance_approvals']);
+
+    const dragged = reorderHomeBlockById(draft, 'esign_pending', 'finance_approvals');
+    expect(dragged.map((b) => b.id)).toEqual([
+      'finance_tax_deadlines',
+      'esign_pending',
+      'finance_approvals',
+      'teamwork_my_work',
+      'engage_pipeline',
+      'hr_pending',
+    ]);
+
+    const toggled = toggleHomeBlockVisibility(dragged, 'hr_pending', false);
+    expect(toggled.find((b) => b.id === 'hr_pending')?.visible).toBe(false);
+    expect(toggled.find((b) => b.id === 'esign_pending')?.visible).toBe(true);
+  });
+
+  it('filters inline Vy quick-ask chips and prompt matches by modules, role, and permissions', () => {
+    expect(
+      buildHomeVyChips({
+        modules: ['kernel', 'finance', 'notes', 'crm'],
+        role: 'owner',
+        canApproveFinance: true,
+      }).map((c) => c.id),
+    ).toEqual(['pendingApprovals', 'planToday', 'openTasks']);
+
+    expect(
+      buildHomeVyChips({
+        modules: ['kernel', 'finance', 'notes', 'crm'],
+        role: 'member',
+        canApproveFinance: false,
+      }).map((c) => c.id),
+    ).toEqual(['planToday', 'openTasks', 'upcomingBookings']);
+
+    expect(
+      buildHomeVyChips({
+        modules: ['kernel', 'finance', 'notes'],
+        role: 'viewer',
+        canApproveFinance: false,
+      }).map((c) => c.id),
+    ).toEqual(['sharedNotes', 'openTasks']);
+
+    expect(
+      matchHomeVyTargets('duyet hoa don thang 11', {
+        modules: ['kernel', 'finance', 'notes'],
+        role: 'owner',
+        canApproveFinance: true,
+      })[0]?.id,
+    ).toBe('pendingApprovals');
+
+    // Viewers typing finance approval words never receive approval shortcut chips.
+    expect(
+      matchHomeVyTargets('duyet hoa don', {
+        modules: ['kernel', 'finance', 'notes'],
+        role: 'viewer',
+        canApproveFinance: false,
+      }).map((c) => c.id),
+    ).not.toContain('pendingApprovals');
+
+    // Short tokens like `ky` or `vat` use word boundaries and never trigger on substrings like `kyc` or `vatexample`.
+    expect(
+      matchHomeVyTargets('vatexample task list', {
+        modules: ['kernel', 'finance', 'projects'],
+        role: 'owner',
+        canApproveFinance: true,
+      })[0]?.id,
+    ).toBe('openTasks');
+    expect(
+      matchHomeVyTargets('kyc task check', {
+        modules: ['kernel', 'sign', 'projects'],
+        role: 'member',
+        canApproveFinance: false,
+      })[0]?.id,
+    ).toBe('openTasks');
+
+    // Grounded count matches caller's scoped today items cleanly.
+    expect(
+      countMatchingTodayForPrompt(
+        'Toi co bao nhieu hoa don cho duyet?',
+        [
+          { app: 'finance', kind: 'proposal', id: 'p1', count: 3, title: { key: 'finance.vendor' }, href: '/inbox' },
+          { app: 'finance', kind: 'flag', id: 'f1', annotates: 'proposal', count: 1, title: { key: 'finance.flag' }, href: '/inbox' },
+          { app: 'projects', kind: 'deadline', id: 't1', count: 2, title: { key: 'projects.due' }, href: '/tasks' },
+        ],
+        { modules: ['kernel', 'finance', 'projects'], role: 'owner', canApproveFinance: true },
+      ),
+    ).toBe(3);
   });
 });

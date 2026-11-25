@@ -184,13 +184,14 @@ suite('the Hộp thư MCP reads (#3860)', () => {
     expect(listed.conversations.map((c) => c.id)).toEqual(['a1c', 'a1d', 'a1e', 'a2c', 'a2d'].map((k) => conv[k]));
     expect(listed.more).toBe(false);
     expect(listed.next).toBeNull();
-    // The other org's thread is absent by its whole id and identifiers: a short fragment of a random UUID can turn up in any answer by chance (#4876, #4487).
+    // Neither org B's thread id nor any of its seeded text (which names its key after a space) leaves. A bare 'b1c' would also match
+    // inside a random UUID of org A's own rows, so the check names the id and the text instead (#4173, #4935).
     const listedJson = JSON.stringify(listed);
     expect(listedJson).not.toContain(conv.b1c as string);
-    expect(listedJson).not.toContain('t-b1c');
-    expect(listedJson).not.toContain('u-b1c-12345678');
-    expect(listedJson).not.toContain(`${CANARY} b1c`);
     expect(listedJson).not.toContain(' b1c');
+    // Its platform ids carry the key after a letter that is not hex, so no UUID can match them.
+    expect(listedJson).not.toContain('t-b1c');
+    expect(listedJson).not.toContain('u-b1c-');
     expect(keysOf(listed)).not.toContain('b1c');
     // An admin's company grant reads the same.
     expect((await list('admin', 'company')).conversations).toHaveLength(5);

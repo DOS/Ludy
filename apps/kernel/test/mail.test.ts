@@ -4,8 +4,10 @@ import { createServer, type AddressInfo, type Server, type Socket } from 'node:n
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { loadConfig } from '../src/config.ts';
 import { acceptUrl, createInviteMailSender, inviteMail, type InviteMailInput } from '../src/invite-mail.ts';
-import { classifySmtpError, createLogProvider, createSmtpProvider, type MailProvider, type OutboundMail, type SendResult } from '@ludy/mail';
-import { createMailer, deliver, describeMailError } from '../src/mail.ts';
+import { classifySmtpError, createLogProvider, createSmtpProvider, WebhookRejected, type MailProvider, type OutboundMail, type SendResult } from '@ludy/mail';
+import { createMailer, deliver, describeMailError, describeMailer } from '../src/mail.ts';
+import { acceptMailWebhook } from '../src/mail-events.ts';
+import type { Runtime } from '@ludy/kernel-runtime';
 
 const TOKEN = 'T0kenT0kenT0kenT0kenT0kenT0kenT0kenT0kenT0k';
 const INVITE: InviteMailInput = {
@@ -379,11 +381,113 @@ describe('mail configuration', () => {
     expect(loadConfig(base).MAIL_PROVIDER).toBe('smtp');
     expect(() => loadConfig({ ...base, MAIL_PROVIDER: 'resend' })).toThrow(/RESEND_API_KEY/);
     expect(() => loadConfig({ ...base, MAIL_PROVIDER: 'resend', RESEND_API_KEY: 're_test' })).toThrow(/SMTP_FROM/);
-    expect(() => loadConfig({ ...base, MAIL_PROVIDER: 'ses' })).toThrow(/MAIL_PROVIDER/);
+    expect(() => loadConfig({ ...base, MAIL_PROVIDER: 'postmark' })).toThrow(/MAIL_PROVIDER/);
     expect(() => loadConfig({ ...base, RESEND_WEBHOOK_SECRET: 'not-a-secret' })).toThrow(/RESEND_WEBHOOK_SECRET/);
     const resend = loadConfig({ ...base, MAIL_PROVIDER: 'resend', RESEND_API_KEY: 're_test', SMTP_FROM: 'noreply@mail.example.com', RESEND_WEBHOOK_SECRET: `whsec_${Buffer.alloc(24, 1).toString('base64')}` });
     const provider = createMailer(resend);
     expect(provider).toMatchObject({ name: 'resend', enabled: true, sendRetrySafety: 'idempotent' });
     expect(provider.parseWebhook).toBeTypeOf('function');
+  });
+
+  it('sends through Amazon SES with MAIL_PROVIDER=ses and optional SNS webhook verification (#4960)', () => {
+    expect(() => loadConfig({ ...base, MAIL_PROVIDER: 'ses' })).toThrow(/SES_REGION/);
+    expect(() => loadConfig({ ...base, MAIL_PROVIDER: 'ses', SES_REGION: 'bad-region' })).toThrow(/SES_REGION/);
+    expect(() => loadConfig({ ...base, SES_SNS_TOPIC_ARN: 'arn:aws:s3:::bucket' })).toThrow(/SES_SNS_TOPIC_ARN/);
+    expect(() => loadConfig({ ...base, SES_CONFIGURATION_SET: 'bad name!' })).toThrow(/SES_CONFIGURATION_SET/);
+    expect(() =>
+      loadConfig({
+        ...base,
+        MAIL_PROVIDER: 'ses',
+        SES_REGION: 'ap-southeast-1',
+        SES_ACCESS_KEY_ID: 'AKIAEXAMPLE123456',
+        SES_SECRET_ACCESS_KEY: 'secret-example-key',
+        SMTP_FROM: 'noreply@mail.example.com',
+        SES_SNS_TOPIC_ARN: 'arn:aws:sns:us-east-1:123456789012:other-region-topic',
+      }),
+    ).toThrow(/must match SES_REGION/);
+
+    const sesNoWebhook = loadConfig({
+      ...base,
+      MAIL_PROVIDER: 'ses',
+      SES_REGION: 'ap-southeast-1',
+      SES_ACCESS_KEY_ID: 'AKIAEXAMPLE123456',
+      SES_SECRET_ACCESS_KEY: 'secret-example-key',
+      SMTP_FROM: 'noreply@mail.example.com',
+    });
+    const noHookProvider = createMailer(sesNoWebhook);
+    expect(noHookProvider).toMatchObject({ name: 'ses', enabled: true, sendRetrySafety: 'never' });
+    expect(noHookProvider.parseWebhook).toBeUndefined();
+    expect(describeMailer(sesNoWebhook)).toBe('Amazon SES (ap-southeast-1)');
+    expect(describeMailer(sesNoWebhook)).not.toContain('AKIAEXAMPLE123456');
+
+    const sesWithWebhook = loadConfig({
+      ...base,
+      MAIL_PROVIDER: 'ses',
+      SES_REGION: 'ap-southeast-1',
+      SES_ACCESS_KEY_ID: 'AKIAEXAMPLE123456',
+      SES_SECRET_ACCESS_KEY: 'secret-example-key',
+      SES_CONFIGURATION_SET: 'ludy-pilot',
+      SES_SNS_TOPIC_ARN: 'arn:aws:sns:ap-southeast-1:123456789012:ludy-pilot-ses-events',
+      SMTP_FROM: 'noreply@mail.example.com',
+    });
+    const hookProvider = createMailer(sesWithWebhook);
+    expect(hookProvider).toMatchObject({ name: 'ses', enabled: true, sendRetrySafety: 'never' });
+    expect(hookProvider.parseWebhook).toBeTypeOf('function');
+  });
+
+  it('awaits async MailProvider.parseWebhook in acceptMailWebhook (#4960)', async () => {
+    const runtime = { orgless: async () => 1 } as unknown as Runtime;
+    const provider = (parseWebhook: NonNullable<MailProvider['parseWebhook']>): MailProvider => ({
+      name: 'ses',
+      enabled: true,
+      sendRetrySafety: 'never',
+      send: async () => ({ status: 'accepted' }),
+      parseWebhook,
+    });
+    const req = { headers: {}, body: '{}' };
+    expect(await acceptMailWebhook(runtime, provider(async () => []), req)).toEqual({ status: 200, queued: 0 });
+    expect(
+      await acceptMailWebhook(
+        runtime,
+        provider(async () => [{ providerEventId: 'e1', providerMessageId: 'm1', kind: 'delivered', occurredAt: '2026-11-25T12:00:00.000Z', detail: {} }]),
+        req,
+      ),
+    ).toEqual({ status: 202, queued: 1 });
+    expect(
+      await acceptMailWebhook(
+        runtime,
+        provider(async () => {
+          throw new WebhookRejected('signature');
+        }),
+        req,
+      ),
+    ).toEqual({ status: 401, code: 'WEBHOOK_SIGNATURE' });
+    expect(
+      await acceptMailWebhook(
+        runtime,
+        provider(async () => {
+          throw new WebhookRejected('stale');
+        }),
+        req,
+      ),
+    ).toEqual({ status: 401, code: 'WEBHOOK_SIGNATURE' });
+    expect(
+      await acceptMailWebhook(
+        runtime,
+        provider(async () => {
+          throw new WebhookRejected('malformed');
+        }),
+        req,
+      ),
+    ).toEqual({ status: 400, code: 'WEBHOOK_MALFORMED' });
+    expect(
+      await acceptMailWebhook(
+        runtime,
+        provider(async () => {
+          throw new WebhookRejected('capacity');
+        }),
+        req,
+      ),
+    ).toEqual({ status: 503, code: 'WEBHOOK_CAPACITY', retryAfterSeconds: 5 });
   });
 });
