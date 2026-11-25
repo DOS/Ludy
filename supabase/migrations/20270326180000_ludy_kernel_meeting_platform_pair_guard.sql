@@ -60,3 +60,15 @@ BEGIN
   SET status = 'importing', meeting_id = p_meeting, staging_key = p_staging_key, staged_at = NULL, error_code = NULL, updated_at = pg_catalog.now()
   WHERE r.org_id = v_org AND r.id = p_recording;
 END $$;
+
+-- The execute matrix of the last definition, stated again: the app role alone (the click's command runs as it); nobody else, no tenant, worker or definer role.
+REVOKE ALL ON FUNCTION ludy_kernel.meeting_platform_recording_begin(uuid, uuid, text) FROM PUBLIC;
+DO $$
+DECLARE
+  r record;
+BEGIN
+  FOR r IN SELECT rolname FROM pg_catalog.pg_roles WHERE (rolname LIKE 'ludy\_%' OR rolname LIKE 'crove\_%') AND rolname <> current_user LOOP
+    EXECUTE pg_catalog.format('REVOKE ALL ON FUNCTION ludy_kernel.meeting_platform_recording_begin(uuid, uuid, text) FROM %I', r.rolname);
+  END LOOP;
+END $$;
+GRANT EXECUTE ON FUNCTION ludy_kernel.meeting_platform_recording_begin(uuid, uuid, text) TO ludy_app;
