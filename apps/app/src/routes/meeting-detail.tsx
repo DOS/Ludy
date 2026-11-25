@@ -30,6 +30,7 @@ import {
   canQueryRedactCandidates,
   useRedactCandidatesQuery,
 } from '../components/meeting-redaction.tsx';
+import { MeetingTalkTime } from '../components/meeting-talk-time.tsx';
 import { MeetingTranscript } from '../components/meeting-transcript.tsx';
 import type { TranscriptRedacted } from '@ludy/kernel-contract';
 import { RecordNotesPanel, notesInstalled } from '../components/notes-panel.tsx';
@@ -487,6 +488,8 @@ export function MeetingDetailPage() {
           redactedEpoch,
         }}
       />
+      {/* Who did the talking (#4765): talk time, turns and longest stretch per speaker, worked out in code from the lines above, no AI */}
+      <MeetingTalkTime key={`talk-time-${id}`} meetingId={id} />
       {/* Did the meeting cover its agenda (#3959): the recorder's own click, Vy compares the agenda with the transcript above and cites the lines */}
       <MeetingAdherence key={`adherence-${id}`} meetingId={id} isRecorder={meeting.isRecorder} onJump={jumpTo} redactedEpoch={redactedEpoch} />
       {/* The recorder's own rough notes (A5): theirs alone, so only the recorder gets the box */}
