@@ -185,7 +185,6 @@ interface DocParagraph {
   indentLeftPt: number;
   indentRightPt: number;
   headingLevel: number | undefined;
-  pageBreakBefore: boolean;
 }
 
 interface TableCellEdgeBorders {
@@ -210,7 +209,11 @@ interface DocPageBreak {
   kind: 'page_break';
 }
 
-type DocBlock = DocParagraph | DocTable | DocPageBreak;
+interface DocPageBreakBefore {
+  kind: 'page_break_before';
+}
+
+type DocBlock = DocParagraph | DocTable | DocPageBreak | DocPageBreakBefore;
 
 interface RenderToken {
   text: string;
@@ -1094,8 +1097,10 @@ function extractParagraphBlocks(pNode: XmlElement, ctx: ExtractContext): DocBloc
     currentRuns.push({ text: listPrefix, bold: defaultBold, fontSizePt: defaultFontSizePt });
   }
 
-  const flushRuns = () => {
-    segments.push({ kind: 'runs', runs: currentRuns });
+  const flushRuns = (keepIfEmpty = false) => {
+    if (currentRuns.length > 0 || keepIfEmpty) {
+      segments.push({ kind: 'runs', runs: currentRuns });
+    }
     currentRuns = [];
   };
 
@@ -1128,7 +1133,7 @@ function extractParagraphBlocks(pNode: XmlElement, ctx: ExtractContext): DocBloc
         appendRunText('-', bold, fontSizePt);
       } else if (ch.name === 'w:br' || ch.name === 'w:cr') {
         if (ch.name === 'w:br' && ch.attrs['w:type'] === 'page') {
-          flushRuns();
+          flushRuns(false);
           segments.push({ kind: 'page_break' });
         } else {
           appendRunText('\n', bold, fontSizePt);
@@ -1174,10 +1179,18 @@ function extractParagraphBlocks(pNode: XmlElement, ctx: ExtractContext): DocBloc
     }
   };
 
+  const pSectPr = pPr ? findChild(pPr, 'w:sectPr') : undefined;
+  const hasSectionBreak = Boolean(pSectPr && isSectionPageBreak(pSectPr));
+
   walkContainer(pNode);
-  flushRuns();
+  // Keep empty <w:p/> spacer paragraphs when they do not carry a page or section break; standalone breaks emit only DocPageBreak.
+  flushRuns(segments.length === 0 && !hasSectionBreak);
 
   const blocks: DocBlock[] = [];
+  // Apply paragraph-level w:pageBreakBefore before any leading inline w:br type="page" (even on empty sectPr paragraphs).
+  if (pMeta.pageBreakBefore === true) {
+    blocks.push({ kind: 'page_break_before' });
+  }
   let isFirstParagraphSegment = true;
   for (const seg of segments) {
     if (seg.kind === 'page_break') {
@@ -1194,17 +1207,15 @@ function extractParagraphBlocks(pNode: XmlElement, ctx: ExtractContext): DocBloc
       indentLeftPt,
       indentRightPt,
       headingLevel,
-      pageBreakBefore: isFirstParagraphSegment && pMeta.pageBreakBefore === true,
     };
     blocks.push(pBlock);
     isFirstParagraphSegment = false;
   }
 
   // Section break inside paragraph properties ends the section after the paragraph.
-  const pSectPr = pPr ? findChild(pPr, 'w:sectPr') : undefined;
   if (pSectPr) {
     collectSectionWarnings(pSectPr, ctx.hasHeaderOrFooterParts, ctx.hasNonEmptyHeaderFooterPart, ctx.warnings);
-    if (isSectionPageBreak(pSectPr)) {
+    if (hasSectionBreak) {
       blocks.push({ kind: 'page_break' });
     }
   }
@@ -1539,21 +1550,23 @@ async function wrapParagraphLayout(
       continue;
     }
 
-    let lineTokens: RenderToken[] = [];
+    let lineTokens: Array<{ token: RenderToken; widthPt: number }> = [];
     let lineWidth = 0;
 
     const flushLine = () => {
-      while (lineTokens.length > 0 && lineTokens[lineTokens.length - 1]!.whitespace) {
-        lineTokens.pop();
+      while (lineTokens.length > 0 && lineTokens[lineTokens.length - 1]!.token.whitespace) {
+        const popped = lineTokens.pop()!;
+        lineWidth = Math.max(0, lineWidth - popped.widthPt);
       }
-      const { spans, hasTag } = mergeLineSpans(lineTokens);
+      const trimmedWidth = lineTokens.reduce((sum, item) => sum + item.widthPt, 0);
+      const { spans, hasTag } = mergeLineSpans(lineTokens.map((item) => item.token));
       let maxFont = paragraph.defaultFontSizePt;
       for (const s of spans) {
         if (s.sizePt > maxFont) maxFont = s.sizePt;
       }
       wrappedLines.push({
         spans,
-        widthPt: spans.length === 0 ? 0 : lineWidth,
+        widthPt: spans.length === 0 ? 0 : trimmedWidth,
         fontSizePt: maxFont,
         hasTag,
       });
@@ -1575,9 +1588,9 @@ async function wrapParagraphLayout(
 
       if (lineTokens.length > 0 && lineWidth + tokWidth > safeMax) {
         // Trim width before flushing if trailing whitespace exists.
-        while (lineTokens.length > 0 && lineTokens[lineTokens.length - 1]!.whitespace) {
+        while (lineTokens.length > 0 && lineTokens[lineTokens.length - 1]!.token.whitespace) {
           const popped = lineTokens.pop()!;
-          lineWidth -= await fonts.measureWidth(popped.text, popped.weight, popped.sizePt);
+          lineWidth = Math.max(0, lineWidth - popped.widthPt);
         }
         if (lineTokens.length > 0) flushLine();
         if (tok.whitespace) continue;
@@ -1588,14 +1601,20 @@ async function wrapParagraphLayout(
         for (let pIdx = 0; pIdx < pieces.length; pIdx++) {
           const piece = pieces[pIdx]!;
           const pieceWidth = await fonts.measureWidth(piece, tok.weight, tokSize);
-          lineTokens = [{ text: piece, weight: tok.weight, sizePt: tokSize, whitespace: false, isTag: false }];
+          lineTokens = [
+            {
+              token: { text: piece, weight: tok.weight, sizePt: tokSize, whitespace: false, isTag: false },
+              widthPt: pieceWidth,
+            },
+          ];
           lineWidth = pieceWidth;
           if (pIdx < pieces.length - 1) flushLine();
         }
         continue;
       }
 
-      lineTokens.push(tokSize === tok.sizePt ? tok : { ...tok, sizePt: tokSize });
+      const sizedTok = tokSize === tok.sizePt ? tok : { ...tok, sizePt: tokSize };
+      lineTokens.push({ token: sizedTok, widthPt: tokWidth });
       lineWidth += tokWidth;
     }
 
@@ -1621,7 +1640,7 @@ class PdfPaginator {
   private readonly warnings: Set<DocxToPdfWarning>;
   private page: PDFPage | null = null;
   private cursorY = A4_HEIGHT - MARGIN_TOP;
-  private pendingBreak = false;
+  private pendingBreaks = 0;
 
   constructor(pdfDoc: PDFDocument, fonts: PdfFontContext, warnings: Set<DocxToPdfWarning>) {
     this.pdfDoc = pdfDoc;
@@ -1635,25 +1654,35 @@ class PdfPaginator {
     }
     this.page = this.pdfDoc.addPage([A4_WIDTH, A4_HEIGHT]);
     this.cursorY = A4_HEIGHT - MARGIN_TOP;
-    this.pendingBreak = false;
+    this.pendingBreaks = 0;
     return this.page;
   }
 
   ensurePage(): PDFPage {
-    if (!this.page || this.pendingBreak) {
-      return this.allocatePage();
+    let breaks = this.pendingBreaks;
+    this.pendingBreaks = 0;
+    if (!this.page) {
+      this.allocatePage();
     }
-    return this.page;
+    while (breaks > 0) {
+      this.allocatePage();
+      breaks -= 1;
+    }
+    return this.page!;
   }
 
   requestPageBreak(): void {
-    if (this.page) {
-      this.pendingBreak = true;
+    this.pendingBreaks += 1;
+  }
+
+  ensureNewPage(): void {
+    if (this.page && this.pendingBreaks === 0 && this.cursorY < A4_HEIGHT - MARGIN_TOP) {
+      this.pendingBreaks = 1;
     }
   }
 
   remainingHeight(): number {
-    if (!this.page || this.pendingBreak) return USABLE_PAGE_HEIGHT;
+    if (!this.page || this.pendingBreaks > 0) return USABLE_PAGE_HEIGHT;
     return Math.max(0, this.cursorY - MARGIN_BOTTOM);
   }
 
@@ -1665,8 +1694,20 @@ class PdfPaginator {
     this.cursorY -= delta;
   }
 
-  ensureAtLeast1Page(): void {
+  finalizePages(): void {
     if (this.pdfDoc.getPageCount() === 0) {
+      // Skip the first pending break before any content page; allocate any intentional blank pages between trailing breaks.
+      const extraBlankPages = Math.max(0, this.pendingBreaks - 1);
+      this.allocatePage();
+      for (let i = 0; i < extraBlankPages; i++) {
+        this.allocatePage();
+      }
+      return;
+    }
+    // Omit any blank page after the final EOF break while preserving blank pages between consecutive trailing breaks.
+    const trailingBlankPages = Math.max(0, this.pendingBreaks - 1);
+    this.pendingBreaks = 0;
+    for (let i = 0; i < trailingBlankPages; i++) {
       this.allocatePage();
     }
   }
@@ -1976,6 +2017,10 @@ export async function convertDocxToPdf(bytes: Uint8Array): Promise<DocxToPdfResu
   const paginator = new PdfPaginator(pdfDoc, fonts, warnings);
 
   for (const block of blocks) {
+    if (block.kind === 'page_break_before') {
+      paginator.ensureNewPage();
+      continue;
+    }
     if (block.kind === 'page_break') {
       paginator.requestPageBreak();
       continue;
@@ -1984,14 +2029,11 @@ export async function convertDocxToPdf(bytes: Uint8Array): Promise<DocxToPdfResu
       await paginator.drawTable(block);
       continue;
     }
-    if (block.pageBreakBefore) {
-      paginator.requestPageBreak();
-    }
     const layout = await wrapParagraphLayout(fonts, block, CONTENT_WIDTH);
     await paginator.drawParagraph(layout);
   }
 
-  paginator.ensureAtLeast1Page();
+  paginator.finalizePages();
 
   const pdfBytes = await pdfDoc.save({ useObjectStreams: true, updateFieldAppearances: false });
   if (pdfBytes.byteLength > EXTRACT_LIMITS.maxFileBytes) {

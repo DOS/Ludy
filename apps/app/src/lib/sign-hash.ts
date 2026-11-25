@@ -8,6 +8,7 @@ import { promoteMigratedItem, readLegacyAwareItem, removeMigratedItem, writeMigr
 export const SIGN_PAGE_PATH = '/-/sign';
 export const SIGN_DIRECT_PAGE_PATH = '/-/sign/d';
 export const SIGN_PUBLIC_HUB_PAGE_PREFIX = '/-/sign/p';
+export const SIGN_TOKEN_LENGTH = 43;
 export const SIGN_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 export const SIGN_IN_PERSON_ISOLATED_SESSION_KEY = 'ludy.sign.in_person.isolated';
 
@@ -187,17 +188,17 @@ export function subscribeToHash(onStoreChange: () => void): () => void {
   return () => window.removeEventListener('hashchange', onStoreChange);
 }
 
-export function buildSigningUrl(token: string, origin = typeof window !== 'undefined' ? window.location.origin : ''): string {
+export function buildSigningUrl(token: string, origin = typeof window !== 'undefined' ? (window.location?.origin ?? '') : ''): string {
   const cleanToken = token.trim();
   return `${origin}${SIGN_PAGE_PATH}#${cleanToken}`;
 }
 
-export function buildDirectSigningUrl(token: string, origin = typeof window !== 'undefined' ? window.location.origin : ''): string {
+export function buildDirectSigningUrl(token: string, origin = typeof window !== 'undefined' ? (window.location?.origin ?? '') : ''): string {
   const cleanToken = token.trim();
   return `${origin}${SIGN_DIRECT_PAGE_PATH}#${cleanToken}`;
 }
 
-export function buildInPersonSigningUrl(token: string, origin = typeof window !== 'undefined' ? window.location.origin : ''): string {
+export function buildInPersonSigningUrl(token: string, origin = typeof window !== 'undefined' ? (window.location?.origin ?? '') : ''): string {
   const cleanToken = token.trim();
   return `${origin}${SIGN_PAGE_PATH}?in_person=1#${cleanToken}`;
 }

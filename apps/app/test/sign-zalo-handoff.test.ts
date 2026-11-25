@@ -8,6 +8,7 @@ import { hasNamePlaceholder } from '@ludy/kernel-contract';
 import {
   SIGN_ZALO_DRAFT_MAX,
   buildSignZaloDraft,
+  buildSignZaloPreviewDraft,
   canOfferSignZaloHandoff,
   getEligibleSignZaloSigners,
   isConfidentialSignSourceKind,
@@ -220,5 +221,38 @@ describe('sign-zalo-handoff pure helpers (#4720)', () => {
     });
     expect(missingUrl.fits).toBe(false);
     expect(missingUrl.text).toBe('');
+  });
+
+  it('guards SignZalo preview against worst-case minted signing URL exceeding SIGN_ZALO_DRAFT_MAX (#4729)', () => {
+    const placeholder = '[liên kết ký bảo mật sẽ được tạo khi mở Hộp thư]';
+    const longWorstCaseUrl = `https://${'a'.repeat(1750)}.example.vn/-/sign#${'X'.repeat(43)}`;
+    const preview = buildSignZaloPreviewDraft({
+      envelopeTitle: 'Hợp đồng dịch vụ',
+      signerName: 'Nguyễn Thị Lan',
+      mintedUrl: null,
+      placeholderUrl: placeholder,
+      worstCaseUrl: longWorstCaseUrl,
+      requireEmailOtp: true,
+      expiresAtText: '30/11/2026 17:00',
+    });
+
+    expect(preview.text).toContain(placeholder);
+    expect(preview.text).not.toContain('X'.repeat(43));
+    expect(preview.fits).toBe(false);
+    expect(preview.length).toBeGreaterThan(SIGN_ZALO_DRAFT_MAX);
+    expect(preview.max).toBe(SIGN_ZALO_DRAFT_MAX);
+
+    // When a minted URL already exists, exact minted URL length controls fits and text.
+    const shortMintedUrl = `https://app.ludy.vn/-/sign#${'Y'.repeat(43)}`;
+    const mintedPreview = buildSignZaloPreviewDraft({
+      envelopeTitle: 'Hợp đồng dịch vụ',
+      signerName: 'Nguyễn Thị Lan',
+      mintedUrl: shortMintedUrl,
+      placeholderUrl: placeholder,
+      worstCaseUrl: longWorstCaseUrl,
+    });
+    expect(mintedPreview.fits).toBe(true);
+    expect(mintedPreview.text).toContain(shortMintedUrl);
+    expect(mintedPreview.length).toBe(mintedPreview.text.length);
   });
 });

@@ -20502,6 +20502,7 @@ export const vi = {
         otp_mail_data: 'Chuẩn bị dữ liệu email gửi mã xác thực OTP cho liên kết ký trực tiếp (hệ thống)',
       },
       docx_convert: {
+        authorize: 'Kiểm tra quyền tải lên tệp Word (.docx) cho hồ sơ ký',
         complete: 'Ghi nhận kết quả chuyển đổi tệp Word (.docx) sang PDF từ hộp cát worker',
         pending: 'Đọc danh sách yêu cầu chuyển đổi tệp Word (.docx) đang chờ xử lý lại cho worker',
         request: 'Đưa yêu cầu chuyển đổi tệp Word (.docx) sang PDF vào hàng đợi hộp cát',
@@ -21008,6 +21009,8 @@ export const vi = {
     docxConverting: 'Đang chuyển đổi tệp Word (.docx) sang PDF A4...',
     docxConvertedReady: 'Đã chuyển đổi sang PDF A4 ({pages} trang): {filename}',
     docxWarningBanner: 'Đã chuyển đổi từ .docx; vui lòng kiểm tra lại bố cục trang PDF trước khi gửi ký',
+    docxWarningOpenPending: 'Chưa xác minh được tài khoản lúc này; giữ cảnh báo trên danh sách để bạn thử mở lại.',
+    docxCreateIdentityPending: 'Chưa xác minh được tài khoản lúc này nên hồ sơ nháp chưa được tạo. Vui lòng bấm Tạo hồ sơ nháp để thử lại.',
     docxEmpty: 'Tệp Word (.docx) rỗng.',
     docxTooLarge: 'Tệp Word (.docx) vượt quá 10 MB.',
     docxInvalidType: 'Chỉ hỗ trợ tệp Word (.docx) chuẩn Office Open XML.',

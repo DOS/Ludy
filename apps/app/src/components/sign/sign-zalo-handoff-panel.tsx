@@ -16,10 +16,11 @@ import { errorMessage, orpc } from '../../lib/api.ts';
 import { installedModules, useModulesVersion } from '../../lib/org-modules.ts';
 import { putReplyHandoff } from '../../lib/reply-handoff.ts';
 import { signApi, type SignSignerRecord } from '../../lib/sign-api.ts';
-import { buildSigningUrl } from '../../lib/sign-hash.ts';
+import { SIGN_TOKEN_LENGTH, buildSigningUrl } from '../../lib/sign-hash.ts';
 import {
   SIGN_ZALO_DRAFT_MAX,
   buildSignZaloDraft,
+  buildSignZaloPreviewDraft,
   canOfferSignZaloHandoff,
   getEligibleSignZaloSigners,
   zaloDirectThreadsOf,
@@ -31,7 +32,8 @@ const WINDOW_POLL_MS = 60_000;
 
 function safeInstalledModules(): string[] {
   try {
-    return installedModules();
+    const mods = installedModules();
+    return Array.isArray(mods) ? mods : [];
   } catch {
     return [];
   }
@@ -181,10 +183,13 @@ function SignZaloHandoffInner({
     (onMintedLink ? null : (localMintedUrls[selectedSigner.id] ?? null));
 
   const expiresAtText = envelope.expiresAt ? f.dateTime(envelope.expiresAt) : null;
-  const previewDraft = buildSignZaloDraft({
+  const worstCaseSigningUrl = buildSigningUrl('X'.repeat(SIGN_TOKEN_LENGTH));
+  const previewDraft = buildSignZaloPreviewDraft({
     envelopeTitle: envelope.title,
     signerName: selectedSigner.name,
-    signingUrl: existingMintedUrl ?? t('urlPlaceholder'),
+    mintedUrl: existingMintedUrl,
+    placeholderUrl: t('urlPlaceholder'),
+    worstCaseUrl: worstCaseSigningUrl,
     requireEmailOtp: selectedSigner.requireEmailOtp,
     expiresAtText,
   });
