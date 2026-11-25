@@ -260,10 +260,10 @@ export interface ReplyInsert {
 
 // In the conversation's contact panel: the customer's sent quotes that still open, each with a button that makes a link and puts the message into the reply box. Where the
 // conversation cannot be answered from here (the platform's window is closed), the email way of the quote is the offer.
-export function QuoteReplyInsert({ conversationId, partyId, canReply }: { conversationId: string; partyId: string; canReply: boolean }) {
+export function QuoteReplyInsert({ conversationId, partyId, canReply, paused = false }: { conversationId: string; partyId: string; canReply: boolean; paused?: boolean }) {
   const t = useTranslations('quotes.send');
   const f = useFormat();
-  const list = useQuery(orpc.crm.quotes.list.queryOptions({ input: { partyId, status: 'sent', limit: 5 } }));
+  const list = useQuery({ ...orpc.crm.quotes.list.queryOptions({ input: { partyId, status: 'sent', limit: 5 } }), enabled: !paused });
   const insert = useMutation({
     mutationFn: async (quote: QuoteSummary) => {
       const link = await client.crm.quotes.createLink({ quoteId: quote.id });

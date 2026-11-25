@@ -6,6 +6,7 @@
 // capture) are written with SQL, as social.spec.ts moves a slot forward.
 import { randomUUID } from 'node:crypto';
 import { crc32, deflateSync } from 'node:zlib';
+import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { exec, sql } from '../lib/db.ts';
 import { createOrg, newEmail, signInNewUser } from '../lib/session.ts';
@@ -694,13 +695,17 @@ test('puts the connect card first on a phone and folds the general settings belo
   // The settings of the whole line are one folded group, under the connect card.
   const settings = page.getByRole('button', { name: /Cài đặt chung/ });
   await expect(settings).toHaveAttribute('aria-expanded', 'false');
-  await expect(page.getByTestId('conversation-replies-card')).toBeHidden();
+  await expect(page.getByTestId('channels-inbox-settings-card')).toBeHidden();
+  await expect(page.getByTestId('saved-replies')).toHaveCount(0);
+  await expect(page.getByTestId('auto-draft')).toHaveCount(0);
   const cardBox = await connect.boundingBox();
   const settingsBox = await settings.boundingBox();
   expect(cardBox && settingsBox && cardBox.y < settingsBox.y).toBe(true);
   await settings.click();
   await expect(settings).toHaveAttribute('aria-expanded', 'true');
-  await expect(page.getByTestId('conversation-replies-card')).toBeVisible();
+  await expect(page.getByTestId('channels-inbox-settings-card')).toBeVisible();
+  const inboxLinkBox = await page.getByTestId('channels-inbox-settings-link').boundingBox();
+  expect(inboxLinkBox?.height ?? 0).toBeGreaterThanOrEqual(44);
   // With a channel connected, the connect card is still above it on a phone.
   await page.getByLabel('Tên kênh thử').fill('Trang Kết Nối Trước');
   await page.getByRole('button', { name: 'Kết nối kênh thử' }).click();
@@ -712,6 +717,93 @@ test('puts the connect card first on a phone and folds the general settings belo
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.reload();
   await expect(page.getByRole('button', { name: /Cài đặt chung/ })).toHaveAttribute('aria-expanded', 'true');
+});
+
+test('moves saved replies and auto-draft from Channels to the Inbox settings drawer (#3673)', async ({ page }) => {
+  await signInNewUser(page, newEmail('inbox-settings-move'));
+  const slug = await createOrg(page, 'Công ty Cài Đặt Hộp Thư');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`/o/${slug}/social/channels`);
+  await page.getByRole('button', { name: /Cài đặt chung/ }).click();
+  await expect(page.getByTestId('saved-replies')).toHaveCount(0);
+  await expect(page.getByTestId('auto-draft')).toHaveCount(0);
+
+  const link = page.getByTestId('channels-inbox-settings-link');
+  await expect(link).toBeVisible();
+  expect((await link.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44);
+  await link.click();
+
+  await expect(page).toHaveURL(new RegExp(`/o/${slug}/social/inbox\\?settings=true`));
+  const sheet = page.getByTestId('inbox-settings-sheet');
+  await expect(sheet).toBeVisible();
+  await expect.poll(() => sheet.evaluate((el) => el.contains(document.activeElement))).toBe(true);
+  await expect(sheet.getByTestId('saved-replies')).toBeVisible();
+  expect((await sheet.getByTestId('saved-reply-add').boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44);
+
+  const phoneScan = await new AxeBuilder({ page }).include('[data-testid="inbox-settings-sheet"]').withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa']).analyze();
+  expect(phoneScan.violations.filter((v) => v.impact === 'serious' || v.impact === 'critical')).toEqual([]);
+
+  // Typing across title, body and keywords must keep focus in each field (no keystroke focus jump), and Escape inside the sub-form cancels only the form.
+  await sheet.getByTestId('saved-reply-add').click();
+  await expect(sheet.locator('#saved-title')).toBeFocused();
+  await sheet.locator('#saved-title').fill('Cảm ơn');
+  await sheet.locator('#saved-body').click();
+  await sheet.locator('#saved-body').pressSequentially('Cảm ơn bạn đã nhắn shop.');
+  await sheet.locator('#saved-keywords').click();
+  await sheet.locator('#saved-keywords').pressSequentially('cảm ơn, thanks');
+  await expect(sheet.locator('#saved-title')).toHaveValue('Cảm ơn');
+  await expect(sheet.locator('#saved-body')).toHaveValue('Cảm ơn bạn đã nhắn shop.');
+  await expect(sheet.locator('#saved-keywords')).toHaveValue('cảm ơn, thanks');
+  await sheet.getByTestId('saved-reply-save').click();
+  await expect(sheet.getByTestId('saved-reply').filter({ hasText: 'Cảm ơn' })).toBeVisible();
+  await sheet.getByTestId('saved-reply').getByRole('button', { name: 'Sửa' }).click();
+  await expect(sheet.locator('#saved-title')).toBeFocused();
+  // First Escape immediately after IME compositionend (Safari event order) must not discard the draft or close the drawer; dispatch both atomically in-page so CI speed cannot exceed the 100 ms guard.
+  await sheet.locator('#saved-title').evaluate((el) => {
+    el.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true }));
+    el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  });
+  await expect(sheet.getByTestId('saved-reply-form')).toBeVisible();
+  await expect(sheet.locator('#saved-title')).toHaveValue('Cảm ơn');
+  await expect(sheet).toBeVisible();
+  // Second Escape with composition settled cancels only the sub-form and returns focus to Edit.
+  await page.keyboard.press('Escape');
+  await expect(sheet.getByTestId('saved-reply-form')).toHaveCount(0);
+  await expect(sheet.getByTestId('saved-reply').getByRole('button', { name: 'Sửa' })).toBeFocused();
+  await expect(sheet).toBeVisible();
+
+  // Closing the drawer while editing preserves the draft across reopen and returns Escape focus to the edited row's Edit button.
+  await sheet.getByTestId('saved-reply').getByRole('button', { name: 'Sửa' }).click();
+  await sheet.locator('#saved-title').fill('Cảm ơn đã sửa');
+  await sheet.getByRole('button', { name: 'Đóng' }).click();
+  await expect(sheet).toBeHidden();
+  await page.getByTestId('inbox-settings-trigger').click();
+  await expect(sheet).toBeVisible();
+  await expect(sheet.locator('#saved-title')).toHaveValue('Cảm ơn đã sửa');
+  await page.keyboard.press('Escape');
+  await expect(sheet.getByTestId('saved-reply-form')).toHaveCount(0);
+  await expect(sheet.getByTestId('saved-reply').getByRole('button', { name: 'Sửa' })).toBeFocused();
+
+  // Deleting the reply that is currently being edited closes the form and focuses Add without dropping focus onto the removed row.
+  await sheet.getByTestId('saved-reply').getByRole('button', { name: 'Sửa' }).click();
+  await expect(sheet.getByTestId('saved-reply-form')).toBeVisible();
+  await sheet.getByTestId('saved-reply').getByRole('button', { name: 'Xóa' }).click();
+  await expect(sheet.getByTestId('saved-reply')).toHaveCount(0);
+  await expect(sheet.getByTestId('saved-reply-form')).toHaveCount(0);
+  await expect(sheet.getByTestId('saved-reply-add')).toBeFocused();
+
+  await page.keyboard.press('Escape');
+  await expect(sheet).toBeHidden();
+  await expect(page).not.toHaveURL(/settings=true/);
+  const trigger = page.getByTestId('inbox-settings-trigger');
+  await expect(trigger).toBeFocused();
+  expect((await trigger.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44);
+
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await trigger.click();
+  await expect(sheet).toBeVisible();
+  const desktopScan = await new AxeBuilder({ page }).include('[data-testid="inbox-settings-sheet"]').withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa']).analyze();
+  expect(desktopScan.violations.filter((v) => v.impact === 'serious' || v.impact === 'critical')).toEqual([]);
 });
 
 test('opens Posts on the post waiting for review, and the schedule tab shows an action when empty (#3654)', async ({ page }) => {

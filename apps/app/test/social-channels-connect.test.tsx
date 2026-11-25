@@ -38,7 +38,12 @@ describe('what the connect card offers', () => {
       for (const key of ['adminsConnect', 'sandboxTitle', 'nothingToConnect', 'otherPlatforms', 'otherPlatformsHint', 'generalSettingsTitle', 'generalSettingsHint', 'noChannelsMember', 'whatsappAccessToken', 'whatsappPhoneNumberId', 'whatsappWabaId', 'telegramBotToken', 'discordWebhook', 'mastodonToken'] as const) {
         expect(copy[key], key).not.toMatch(/token|WABA|webhook|system user|Phone number ID|[A-Z]{3,}_[A-Z_]+/i);
       }
+      for (const key of ['title', 'hint', 'hintNoAi', 'link'] as const) {
+        expect(copy.inboxSettingsCard[key], `inboxSettingsCard.${key}`).not.toMatch(/token|WABA|webhook|system user|Phone number ID|[A-Z]{3,}_[A-Z_]+/i);
+      }
     }
+    expect(vi.social.generalSettingsHint).not.toContain('mẫu trả lời');
+    expect(en.social.generalSettingsHint).not.toContain('saved replies');
     expect(vi.social.telegramBotToken).toContain('@BotFather');
   });
 });

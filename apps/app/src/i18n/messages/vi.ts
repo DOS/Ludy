@@ -6517,6 +6517,13 @@ export const vi = {
       },
       pageTitle: 'Hộp thư',
       pageSubtitle: 'Bình luận trên bài đăng và tin nhắn riêng của khách, ở mọi kênh, trong một nơi. Tin nhắn riêng chỉ người được phép đọc mới thấy.',
+      settingsTrigger: 'Cài đặt Hộp thư',
+      settingsDrawer: {
+        title: 'Cài đặt Hộp thư',
+        description: 'Câu trả lời mẫu và tùy chọn tự soạn nháp cho hội thoại khách hàng.',
+        descriptionNoAi: 'Câu trả lời mẫu cho hội thoại khách hàng.',
+        close: 'Đóng',
+      },
       searchLabel: 'Tìm hội thoại',
       searchPlaceholder: 'Tên khách hoặc nội dung',
       noMatch: 'Không có hội thoại nào khớp.',
@@ -6550,6 +6557,7 @@ export const vi = {
       connectChannel: 'Kết nối kênh',
       orForward: 'hoặc chuyển tiếp email tới địa chỉ này:',
       retry: 'Thử lại',
+      verifyingOffline: 'Đang chờ kết nối mạng để xác minh lại dữ liệu…',
     },
     // The intent of a conversation (CV3, #2306): the label a person applies, and the AI's suggestion beside it, which a click applies.
     intent: {
@@ -16188,7 +16196,13 @@ export const vi = {
     otherPlatforms: 'Nền tảng khác (chưa dùng được)',
     otherPlatformsHint: 'Các nền tảng này chưa bật trên bản này. Khi bật, chúng hiện thành nút kết nối ở trên.',
     generalSettingsTitle: 'Cài đặt chung',
-    generalSettingsHint: 'Giọng văn, dấu mờ, từ cấm, người duyệt, mẫu trả lời và các cài đặt dùng cho mọi kênh.',
+    generalSettingsHint: 'Giọng văn, dấu mờ, từ cấm, người duyệt và các cài đặt dùng cho mọi kênh.',
+    inboxSettingsCard: {
+      title: 'Cài đặt Hộp thư',
+      hint: 'Câu trả lời mẫu và tùy chọn tự soạn nháp cho hội thoại khách hàng đã chuyển sang màn hình Hộp thư.',
+      hintNoAi: 'Câu trả lời mẫu cho hội thoại khách hàng đã chuyển sang màn hình Hộp thư.',
+      link: 'Mở cài đặt Hộp thư',
+    },
     connectSandbox: 'Kết nối kênh thử',
     adminsConnect: 'Chỉ chủ sở hữu hoặc quản trị viên kết nối kênh. Hãy nhờ họ kết nối giúp.',
     aiDraftTitle: 'Soạn cùng {marketing}, đồng nghiệp AI phụ trách đăng bài',

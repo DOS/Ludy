@@ -6519,6 +6519,13 @@ export const en = {
       },
       pageTitle: 'Inbox',
       pageSubtitle: 'Comments on your posts and customers’ private messages, from every channel, in one place. A private message is seen only by those allowed to read it.',
+      settingsTrigger: 'Inbox settings',
+      settingsDrawer: {
+        title: 'Inbox settings',
+        description: 'Saved replies and the auto-draft option for customer conversations.',
+        descriptionNoAi: 'Saved replies for customer conversations.',
+        close: 'Close',
+      },
       searchLabel: 'Search conversations',
       searchPlaceholder: 'Customer name or words',
       noMatch: 'No conversation matches.',
@@ -6552,6 +6559,7 @@ export const en = {
       connectChannel: 'Connect a channel',
       orForward: 'or forward an email to this address:',
       retry: 'Try again',
+      verifyingOffline: 'Waiting for network connection to verify access…',
     },
     // The intent of a conversation (CV3, #2306): the label a person applies, and the AI's suggestion beside it, which a click applies.
     intent: {
@@ -16188,7 +16196,13 @@ export const en = {
     otherPlatforms: 'Other platforms (not available yet)',
     otherPlatformsHint: 'These platforms are not turned on in this version. When they are, they appear as connect buttons above.',
     generalSettingsTitle: 'General settings',
-    generalSettingsHint: 'Voice, watermark, banned words, reviewers, saved replies and other settings for every channel.',
+    generalSettingsHint: 'Voice, watermark, banned words, reviewers and other settings for every channel.',
+    inboxSettingsCard: {
+      title: 'Inbox settings',
+      hint: 'Saved replies and the auto-draft option for customer conversations have moved to the Inbox screen.',
+      hintNoAi: 'Saved replies for customer conversations have moved to the Inbox screen.',
+      link: 'Open Inbox settings',
+    },
     connectSandbox: 'Connect test channel',
     adminsConnect: 'Only an owner or admin can connect a channel. Ask one of them to connect it.',
     aiDraftTitle: 'Write with {marketing}, the AI coworker for posting',

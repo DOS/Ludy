@@ -29,10 +29,15 @@ const refresh = () => {
   void queryClient.invalidateQueries({ queryKey: orpc.tasks.key() });
 };
 
-function NewTask({ conversationId, channelName, onDone }: { conversationId: string; channelName: string; onDone: () => void }) {
+function NewTask({ conversationId, channelName, onDone, paused = false }: { conversationId: string; channelName: string; onDone: () => void; paused?: boolean }) {
   const t = useTranslations('conversations.contact.tasks');
   const tt = useTranslations('tasks');
-  const chart = useQuery(orpc.chart.get.queryOptions());
+  const chart = useQuery({
+    ...orpc.chart.get.queryOptions(),
+    enabled: !paused,
+    refetchOnWindowFocus: !paused,
+    refetchOnReconnect: !paused,
+  });
   // A fixed default (the org's own channel name, never a word of the customer's), so two clicks make a task; a person can change it.
   const [title, setTitle] = useState(() => t('defaultTitle', { channel: channelName }));
   const [assignee, setAssignee] = useState('');
@@ -92,13 +97,19 @@ function NewTask({ conversationId, channelName, onDone }: { conversationId: stri
   );
 }
 
-export function ConversationTasks({ conversationId, channelName, canWrite }: { conversationId: string; channelName: string; canWrite: boolean }) {
+export function ConversationTasks({ conversationId, channelName, canWrite, paused = false }: { conversationId: string; channelName: string; canWrite: boolean; paused?: boolean }) {
   const t = useTranslations('conversations.contact.tasks');
   const tt = useTranslations('tasks');
   const f = useFormat();
   const { slug } = useParams({ strict: false }) as { slug: string };
   const [adding, setAdding] = useState(false);
-  const list = useQuery({ ...orpc.conversations.tasks.queryOptions({ input: { conversationId } }), refetchInterval: TASKS_POLL_MS });
+  const list = useQuery({
+    ...orpc.conversations.tasks.queryOptions({ input: { conversationId } }),
+    enabled: !paused,
+    refetchInterval: paused ? false : TASKS_POLL_MS,
+    refetchOnWindowFocus: !paused,
+    refetchOnReconnect: !paused,
+  });
   const tasks = list.data?.tasks ?? [];
   return (
     <div className="space-y-1" data-testid="conversation-tasks">
@@ -129,20 +140,22 @@ export function ConversationTasks({ conversationId, channelName, canWrite }: { c
       )}
       {canWrite &&
         (adding ? (
-          <NewTask conversationId={conversationId} channelName={channelName} onDone={() => setAdding(false)} />
+          <NewTask conversationId={conversationId} channelName={channelName} onDone={() => setAdding(false)} paused={paused} />
         ) : (
           <div className="flex flex-wrap items-center gap-2">
             <Button type="button" size="sm" className={TOUCH_BUTTON} variant="outline" onClick={() => setAdding(true)}>
               {t('add')}
             </Button>
-            <SendToTriageDialog
-              slug={slug}
-              sourceType="kernel.conversation"
-              sourceId={conversationId}
-              defaultTitle={channelName}
-              canWrite={canWrite}
-              buttonTestId="conversation-send-to-triage-btn"
-            />
+            {!paused && (
+              <SendToTriageDialog
+                slug={slug}
+                sourceType="kernel.conversation"
+                sourceId={conversationId}
+                defaultTitle={channelName}
+                canWrite={canWrite}
+                buttonTestId="conversation-send-to-triage-btn"
+              />
+            )}
           </div>
         ))}
     </div>
