@@ -1,6 +1,6 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
 -- Meetings L2 (#2589), A3 (#3161), #4940: the search across meetings (and Ask Vy without a meeting) shows the recorder one stage of a meeting, as the transcript page and the file do.
---   ludy_meetings.search_segment_ids(q, limit, offset)   restated from 20270117140000 (as the schema rebrand left it) with the same signature, owner, search_path, grants, checks and order; only which stage's lines are returned changes.
+--   ludy_meetings.search_segment_ids(q, limit, offset)   restated from 20270117140000 (as the schema rebrand left it) with the same signature, owner, search_path, owner, search_path, grants (now on ludy_tenant, as the role rename left them), checks and order; only which stage's lines are returned changes.
 -- Why: the recorder was given the lines of both stages of their own meeting, so a draft line and an older published line of one meeting came back side by side (#4940), while the page, the file (#4910) and
 -- Ask Vy about one meeting read one stage. The rule is now one per meeting: the recorder's working draft while a draft line exists in the meeting, else the published lines; any other reader the published
 -- lines (a draft is the recorder's alone, as before). Which meetings, the text date, the order and the paging are unchanged. Numbers and ids only, as before. A restated function: the applied file is untouched.
@@ -108,5 +108,18 @@ BEGIN
    OFFSET p_offset LIMIT p_limit;
 END;
 $$;
-REVOKE ALL ON FUNCTION ludy_meetings.search_segment_ids(text, integer, integer) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
-GRANT EXECUTE ON FUNCTION ludy_meetings.search_segment_ids(text, integer, integer) TO crove_tenant;
+REVOKE ALL ON FUNCTION ludy_meetings.search_segment_ids(text, integer, integer) FROM PUBLIC;
+DO $$
+DECLARE
+  r record;
+BEGIN
+  FOR r IN
+    SELECT rolname
+    FROM pg_catalog.pg_roles
+    WHERE (rolname LIKE 'ludy\_%' OR rolname LIKE 'crove\_%')
+      AND rolname <> current_user
+  LOOP
+    EXECUTE pg_catalog.format('REVOKE ALL ON FUNCTION ludy_meetings.search_segment_ids(text, integer, integer) FROM %I', r.rolname);
+  END LOOP;
+END $$;
+GRANT EXECUTE ON FUNCTION ludy_meetings.search_segment_ids(text, integer, integer) TO ludy_tenant;
