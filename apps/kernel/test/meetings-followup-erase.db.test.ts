@@ -10,7 +10,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
-import type { FollowupDraft, PersonalDataErasure, PersonalDataResult } from '@ludy/kernel-contract';
+import { MORNING_MAIL_SOURCE, SUMMARY_READY_MAIL_SOURCE, type FollowupDraft, type PersonalDataErasure, type PersonalDataResult } from '@ludy/kernel-contract';
 import { Runtime } from '@ludy/kernel-runtime';
 import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
@@ -91,11 +91,11 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
     const registry = { commands: [...kernelCommands, ...meetingsCommands], queries: [...kernelQueries({ inboundDomain: null }), ...meetingsQueries] };
     runtime = new Runtime(createDb(appPool), { manifests: TEST_MANIFESTS }).register(registry);
     worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register(registry);
-    for (const key of ['owner', 'recorder', 'attendee']) {
+    for (const key of ['owner', 'admin', 'recorder', 'attendee']) {
       users[key] = await upsertIdentity(createDb(appPool), { issuer: 'erase', subject: key, email: `${key}@erase.test`, name: null });
     }
     orgId = (await createOrg(runtime, asUser('owner'), 'Công ty Xóa')).orgId;
-    await sqlAdmin("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member')", [orgId, users.recorder, users.attendee]);
+    await sqlAdmin("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'admin')", [orgId, users.recorder, users.attendee, users.admin]);
   }, 300_000);
 
   afterAll(async () => {
@@ -343,6 +343,102 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
     // Every pointer left in the snapshot names a mail the snapshot holds.
     const messageIds = new Set((await dump('kernel.mail_message')).map((r) => r.id as string));
     for (const r of rows) if (r.source_message_id !== null) expect(messageIds.has(r.source_message_id as string), String(r.id)).toBe(true);
+  });
+
+  // Summary-ready and morning meeting mails (#5018) join MAIL_SOURCES_LEFT_OUT: omitted from the org export (mail_message, mail_event, and mail_suppression.source_message_id) and shown in personal_data.find as id, to_address, status and created_at only for both owner and admin.
+  it('leaves summary_ready and morning mails out of the org export and limits finder rows for both owner and admin (#5018)', async () => {
+    const meetingId = randomUUID();
+    const address = `leftout-${randomUUID()}@erase.test`;
+    const SUMMARY_SECRET = `Tom-tat-san-sang-${randomUUID()}`;
+    const MORNING_SECRET = `Lich-hop-sang-${randomUUID()}`;
+    const insertMail = async (source: string, sourceId: string | null, templateKey: string, subject: string, payload: unknown) =>
+      (await sqlAdmin<{ id: string }>(
+        "INSERT INTO ludy_kernel.mail_message (org_id, stream, source, source_id, template_key, to_address, to_hash, subject, payload, message_id_header, status) VALUES ($1, 'transactional', $2, $3, $4, $5, repeat('1', 64), $6, $7::jsonb, '<' || gen_random_uuid()::text || '@erase.test>', 'queued') RETURNING id",
+        [orgId, source, sourceId, templateKey, address, subject, JSON.stringify(payload)],
+      )).rows[0]!.id;
+    const summaryReadyId = await insertMail(
+      SUMMARY_READY_MAIL_SOURCE,
+      meetingId,
+      SUMMARY_READY_MAIL_SOURCE,
+      SUMMARY_SECRET,
+      { lang: 'vi', org: 'Công ty Xóa', path: `/o/cong-ty-xoa/meetings/${meetingId}` },
+    );
+    const morningId = await insertMail(
+      MORNING_MAIL_SOURCE,
+      null,
+      MORNING_MAIL_SOURCE,
+      MORNING_SECRET,
+      { lang: 'vi', org: 'Công ty Xóa', count: 7, path: '/o/cong-ty-xoa/meetings' },
+    );
+    const controlId = await insertMail(
+      'finance.payment_reminder.notice1',
+      randomUUID(),
+      'x.y',
+      'Nhac thanh toan',
+      { keep: true },
+    );
+    const insertEvent = async (messageId: string) =>
+      (await sqlAdmin<{ id: string }>(
+        "INSERT INTO ludy_kernel.mail_event (org_id, message_id, provider, provider_event_id, kind, occurred_at) VALUES ($1, $2, 'test', $3, 'delivered', now()) RETURNING id",
+        [orgId, messageId, randomUUID()],
+      )).rows[0]!.id;
+    const summaryEventId = await insertEvent(summaryReadyId);
+    const morningEventId = await insertEvent(morningId);
+    const controlEventId = await insertEvent(controlId);
+    const insertSuppression = async (hashChar: string, sourceMessageId: string) =>
+      (await sqlAdmin<{ id: string }>(
+        "INSERT INTO ludy_kernel.mail_suppression (org_id, to_hash, scope, reason, source_message_id) VALUES ($1, repeat($2, 64), 'all', 'hard_bounce', $3) RETURNING id",
+        [orgId, hashChar, sourceMessageId],
+      )).rows[0]!.id;
+    const summarySupId = await insertSuppression('2', summaryReadyId);
+    const morningSupId = await insertSuppression('3', morningId);
+    const controlSupId = await insertSuppression('4', controlId);
+
+    const dump = async (table: string) => {
+      const lines: string[] = [];
+      await worker.stream('kernel.org.export.snapshot', { table }, { actor: SYSTEM, orgId }, async (raw) => {
+        lines.push(...(raw as { lines: string[] }).lines);
+      });
+      return lines.map((l) => JSON.parse(l) as Record<string, unknown>);
+    };
+
+    const exportedMessages = await dump('kernel.mail_message');
+    const exportedMessageIds = new Set(exportedMessages.map((r) => r.id as string));
+    expect(exportedMessageIds.has(summaryReadyId)).toBe(false);
+    expect(exportedMessageIds.has(morningId)).toBe(false);
+    expect(exportedMessageIds.has(controlId)).toBe(true);
+
+    const exportedEvents = await dump('kernel.mail_event');
+    const exportedEventIds = new Set(exportedEvents.map((r) => r.id as string));
+    expect(exportedEventIds.has(summaryEventId)).toBe(false);
+    expect(exportedEventIds.has(morningEventId)).toBe(false);
+    expect(exportedEventIds.has(controlEventId)).toBe(true);
+
+    const exportedSuppressions = new Map((await dump('kernel.mail_suppression')).map((r) => [r.id as string, r]));
+    expect(exportedSuppressions.get(summarySupId)).toMatchObject({ to_hash: '2'.repeat(64), source_message_id: null });
+    expect(exportedSuppressions.get(morningSupId)).toMatchObject({ to_hash: '3'.repeat(64), source_message_id: null });
+    expect(exportedSuppressions.get(controlSupId)).toMatchObject({ to_hash: '4'.repeat(64), source_message_id: controlId });
+
+    for (const caller of ['owner', 'admin'] as const) {
+      const found = await runtime.execute<PersonalDataResult>('kernel.personal_data.find', { value: address }, { actor: asUser(caller), orgId, idempotencyKey: randomUUID() });
+      const mails = found.matches.filter((x) => x.column === 'ludy_kernel.mail_message.to_address');
+      const ofSummaryReady = mails.find((x) => x.rowId === summaryReadyId);
+      const ofMorning = mails.find((x) => x.rowId === morningId);
+      const ofControl = mails.find((x) => x.rowId === controlId);
+      expect(ofSummaryReady).toMatchObject({ handling: 'erase' });
+      expect(Object.keys(ofSummaryReady!.row).sort()).toEqual(['created_at', 'id', 'status', 'to_address']);
+      expect(ofSummaryReady!.row).toMatchObject({ id: summaryReadyId, to_address: address, status: 'queued' });
+      expect(ofMorning).toMatchObject({ handling: 'erase' });
+      expect(Object.keys(ofMorning!.row).sort()).toEqual(['created_at', 'id', 'status', 'to_address']);
+      expect(ofMorning!.row).toMatchObject({ id: morningId, to_address: address, status: 'queued' });
+      const serialized = JSON.stringify(found);
+      expect(serialized).not.toContain(meetingId);
+      expect(serialized).not.toContain('/o/cong-ty-xoa/meetings');
+      expect(serialized).not.toContain('"count"');
+      expect(serialized).not.toContain(SUMMARY_SECRET);
+      expect(serialized).not.toContain(MORNING_SECRET);
+      expect(ofControl!.row).toMatchObject({ id: controlId, subject: 'Nhac thanh toan', payload: { keep: true } });
+    }
   });
 
   // The erasure of a mention (#3020, ADR-0047 point 7): kernel.personal_data.erase redacts the meeting's rows, and the copy in its follow-up mails goes with them.

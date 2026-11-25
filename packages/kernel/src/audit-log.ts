@@ -88,10 +88,16 @@ function flatten(value: unknown, prefix: string, out: string[], depth: number): 
 // An audit row's detail as one line of key=value pairs, at most DETAIL_MAX characters; null when it holds nothing.
 // The worker process a system row names (workerInstance, #1951) is the deployment's, for its operators' alerts, never
 // shown to the org: a host or pod name says nothing to members and something about the infrastructure.
-export function auditDetailLine(detail: unknown): string | null {
+// Legacy meetings.morning.notice rows written before #5018 also held a member's private calendar count in detail.count,
+// so count is filtered out on read for that command as well (without modifying audit_event).
+export function auditDetailLine(detail: unknown, command?: string): string | null {
   const raw = typeof detail === 'string' ? safeParse(detail) : detail;
   if (raw === null || raw === undefined) return null;
-  const parsed = typeof raw === 'object' && !Array.isArray(raw) ? Object.fromEntries(Object.entries(raw).filter(([k]) => k !== 'workerInstance')) : raw;
+  const hiddenForCommand = command === 'meetings.morning.notice';
+  const parsed =
+    typeof raw === 'object' && !Array.isArray(raw)
+      ? Object.fromEntries(Object.entries(raw).filter(([k]) => k !== 'workerInstance' && !(hiddenForCommand && k === 'count')))
+      : raw;
   const out: string[] = [];
   flatten(parsed, '', out, 0);
   if (out.length === 0) return null;
@@ -182,7 +188,7 @@ function entry(r: AuditRow, names: ReadonlyMap<string, string>): AuditEntry {
     targetId: r.target_id,
     proposalId: r.proposal_id,
     via: auditVia(r.detail),
-    detail: auditDetailLine(r.detail),
+    detail: auditDetailLine(r.detail, r.command),
   };
 }
 

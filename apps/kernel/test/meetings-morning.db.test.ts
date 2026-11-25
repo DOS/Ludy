@@ -145,8 +145,12 @@ suite('the opt-in morning notice of the day\'s meetings (#3955)', () => {
     expect(sent).toHaveLength(1);
     expect(sent[0]).toMatchObject({ to_address: 'lan@morning.test', source: 'meetings.morning', source_id: null, status: 'queued' });
     expect(sent[0]?.payload).toEqual({ lang: 'vi', org: 'Công ty Buổi Sáng', count: 2, path: expect.stringMatching(/^\/o\/[a-z0-9-]+\/meetings$/) });
-    // No title, no name, no time: not in the notice, the mail, or the audit rows of the command.
-    const audit = (await sqlAdmin<{ detail: unknown }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.morning.notice'`, [orgId])).rows;
+    // No title, no name, no time, and no per-member calendar count (#5018): not in the notice, the mail, or the audit rows of the command.
+    const audit = (await sqlAdmin<{ detail: Record<string, unknown> }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.morning.notice'`, [orgId])).rows;
+    expect(audit).toHaveLength(1);
+    expect(audit[0]?.detail).toMatchObject({ day: now.day, mailed: true });
+    expect(audit[0]?.detail).not.toHaveProperty('count');
+    expect(Object.keys(audit[0]!.detail).filter((k) => k !== 'component' && k !== 'workerInstance').sort()).toEqual(['day', 'mailed']);
     for (const text of [JSON.stringify(mine), JSON.stringify(sent), JSON.stringify(audit)]) expect(text).not.toMatch(/Họp kín|Á Châu|hợp đồng|thứ hai/u);
     // The same day again: nothing new, by the sweep or by a dispatch of the same row.
     expect(await sweep()).toMatchObject({ found: 0, sent: 0 });
@@ -412,5 +416,36 @@ suite('the opt-in morning notice of the day\'s meetings (#3955)', () => {
     expect(warnings[0]).toContain('TypeError');
     expect(warnings[0]).not.toContain('secret-endpoint-leak');
     expect(warnings[0]).not.toContain(SECRET_TITLE);
+  });
+
+  it('strips count and workerInstance from legacy meetings.morning.notice audit rows on read and org export (#5018)', async () => {
+    const legacyId = (await sqlAdmin<{ id: string }>(
+      `INSERT INTO ludy_kernel.audit_event (org_id, actor_type, command, command_id, outcome, input_sha256, detail)
+       VALUES ($1, 'system', 'meetings.morning.notice', gen_random_uuid(), 'ok', repeat('0', 64), '{"day":"2026-11-20","count":9,"mailed":true,"workerInstance":"legacy-pod"}'::jsonb)
+       RETURNING id`,
+      [orgId],
+    )).rows[0]!.id;
+    const controlId = (await sqlAdmin<{ id: string }>(
+      `INSERT INTO ludy_kernel.audit_event (org_id, actor_type, command, command_id, outcome, input_sha256, detail)
+       VALUES ($1, 'user', 'meetings.meeting.delete', gen_random_uuid(), 'ok', repeat('0', 64), '{"count":3}'::jsonb)
+       RETURNING id`,
+      [orgId],
+    )).rows[0]!.id;
+
+    const morningPage = await runtime.query<{ items: Array<{ id: string; detail: string | null }> }>('kernel.audit.list', { command: 'meetings.morning.notice' }, { actor: asUser('owner'), orgId });
+    const legacyListed = morningPage.items.find((item) => item.id === legacyId);
+    expect(legacyListed?.detail).toBe('day=2026-11-20; mailed=true');
+    expect(legacyListed?.detail).not.toContain('count');
+    expect(legacyListed?.detail).not.toContain('workerInstance');
+
+    const controlPage = await runtime.query<{ items: Array<{ id: string; detail: string | null }> }>('kernel.audit.list', { command: 'meetings.meeting.delete' }, { actor: asUser('owner'), orgId });
+    expect(controlPage.items.find((item) => item.id === controlId)?.detail).toBe('count=3');
+
+    const exported: Array<{ id: string; detail: unknown }> = [];
+    await worker.stream('kernel.org.export.snapshot', { table: 'kernel.audit_event' }, { actor: SYSTEM, orgId }, async (raw) => {
+      for (const line of (raw as { lines: string[] }).lines) exported.push(JSON.parse(line) as { id: string; detail: unknown });
+    });
+    expect(exported.find((row) => row.id === legacyId)?.detail).toEqual({ day: '2026-11-20', mailed: true });
+    expect(exported.find((row) => row.id === controlId)?.detail).toEqual({ count: 3 });
   });
 });

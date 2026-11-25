@@ -194,6 +194,7 @@ export function createDb(pool: pg.Pool): Kysely<Database> {
   return new Kysely<Database>({ dialect: new PostgresDialect({ pool }) });
 }
 
+
 // Row-level security is the tenant boundary, so the API and worker must never connect as a role that skips it.
 export async function assertRlsEnforced(pool: pg.Pool): Promise<void> {
   const { rows } = await pool.query<{ rolname: string; rolsuper: boolean; rolbypassrls: boolean }>(
