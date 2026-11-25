@@ -1402,74 +1402,91 @@ suite('eSign Slice 5c `/api/v1/sign/*` and scoped API key invariants (#4441)', (
       releaseSlot?.();
     }
 
-    // Production default ConcurrencyLimiter({ total: SIGN_PDF_READS_MAX }) caps perKey below total (4 < 8):
-    // saturating Org A's perKey slots returns 503 SIGN_PDF_BUSY for Org A while Org B still returns 200.
-    const sealedOrgARow = await admin(async (c) =>
+    // Seed a third sealed org (Org C) so we can verify both the 2-per-org limit AND the 4-slot v1 cap across orgs.
+    const orgC = await createOrg(runtime, asUser(foreignOwner), 'Cong ty Sign API C');
+    const orgCSealedDoc = await ingestPdf(orgC.orgId, foreignOwner, 'org-c-sealed');
+    const orgCSealedEnv = (
+      await runtime.execute<{ envelopeId: string }>(
+        'sign.envelope.create',
+        { title: 'Hop dong cong ty C da dong dau', sourceFileId: orgCSealedDoc.fileId, routingMode: 'parallel' },
+        { actor: asUser(foreignOwner), orgId: orgC.orgId },
+      )
+    ).envelopeId;
+    await workerRuntime.execute(
+      'sign.envelope.inspect_complete',
+      {
+        envelopeId: orgCSealedEnv,
+        outcome: 'passed',
+        pageCount: 1,
+        pageDimensions: [{ page: 1, widthPt: 595, heightPt: 842, rotation: 0 }],
+      },
+      { actor: asSystem, orgId: orgC.orgId },
+    );
+    const orgCSigner = await runtime.execute<{ signerId: string }>(
+      'sign.signer.add',
+      {
+        envelopeId: orgCSealedEnv,
+        routingOrder: 1,
+        signerRole: 'signer',
+        roleLabel: 'Ben C',
+        name: 'Dai dien Cong ty C',
+        email: 'signer-c@sign-v1.test',
+        deliveryMode: 'link',
+        requireEmailOtp: false,
+      },
+      { actor: asUser(foreignOwner), orgId: orgC.orgId },
+    );
+    await runtime.execute(
+      'sign.field.set',
+      {
+        envelopeId: orgCSealedEnv,
+        fields: [
+          {
+            signerId: orgCSigner.signerId,
+            fieldType: 'signature',
+            pageNumber: 1,
+            xNorm: 0.15,
+            yNorm: 0.7,
+            wNorm: 0.25,
+            hNorm: 0.1,
+            required: true,
+          },
+        ],
+      },
+      { actor: asUser(foreignOwner), orgId: orgC.orgId },
+    );
+    const orgCSent = await runtime.execute<{ links: Array<{ token: string }> }>(
+      'sign.envelope.send',
+      { envelopeId: orgCSealedEnv },
+      { actor: asUser(foreignOwner), orgId: orgC.orgId },
+    );
+    const orgCFieldRow = await admin(async (c) =>
       (
-        await c.query<{ sealed_storage_key: string }>(
-          `SELECT sealed_storage_key FROM ludy_sign.envelope WHERE org_id = $1 AND id = $2`,
-          [orgA.orgId, ids.completedEnv],
-        )
+        await c.query<{ id: string }>('SELECT id FROM ludy_sign.field WHERE org_id = $1 AND envelope_id = $2', [
+          orgC.orgId,
+          orgCSealedEnv,
+        ])
       ).rows[0]!,
     );
-    let releaseOrgABlobs!: () => void;
-    const orgABlobsHeld = new Promise<void>((resolve) => {
-      releaseOrgABlobs = resolve;
-    });
-    let orgAReadsEntered = 0;
-    let notifyFourEntered!: () => void;
-    const fourEntered = new Promise<void>((resolve) => {
-      notifyFourEntered = resolve;
-    });
-    store.beforeGet = async (key: string) => {
-      if (key === sealedOrgARow.sealed_storage_key) {
-        orgAReadsEntered += 1;
-        if (orgAReadsEntered === 4) notifyFourEntered();
-        await orgABlobsHeld;
-      }
-    };
-    try {
-      const heldDownloads = Array.from({ length: 4 }, (_, idx) =>
-        apiGet(
-          `/api/v1/sign/envelopes/${ids.completedEnv}/sealed`,
-          `Bearer ${readOnlySecret}`,
-          appDefaultPdfLimits,
-          `198.51.100.${40 + idx}`,
-        ),
-      );
-      await fourEntered;
+    await admin((c) =>
+      c.query(
+        `SELECT ludy_sign.public_submit($1, true, 'draw', NULL, $2::jsonb, NULL, 'SignApiV1Inv/1.0', NULL)`,
+        [sha256Hex(orgCSent.links[0]!.token), JSON.stringify([{ fieldId: orgCFieldRow.id, signaturePngBase64: VALID_PNG_BASE64 }])],
+      ),
+    );
+    await runSignPdfSealJob(
+      { workerDb, runtime: workerRuntime, store, extract: mockExtract },
+      { orgId: orgC.orgId, envelopeId: orgCSealedEnv },
+    );
+    const orgCKeyRes = await rpc<{ secret: string }>(
+      'sign/api_keys/create',
+      foreignOwner,
+      { name: 'Org C Read Key', scopes: ['sign:read'] },
+      orgC.slug,
+    );
+    expect(orgCKeyRes.status).toBe(200);
+    const orgCReadSecret = orgCKeyRes.body.secret;
 
-      const fifthOrgA = await apiGet(
-        `/api/v1/sign/envelopes/${ids.completedEnv}/sealed`,
-        `Bearer ${readOnlySecret}`,
-        appDefaultPdfLimits,
-        '198.51.100.44',
-      );
-      expect(fifthOrgA.status).toBe(503);
-      await expect(fifthOrgA.json()).resolves.toMatchObject({ code: 'SIGN_PDF_BUSY' });
-
-      const orgBConcurrent = await apiGet(
-        `/api/v1/sign/envelopes/${orgBSealedEnv}/sealed`,
-        `Bearer ${orgBReadSecret}`,
-        appDefaultPdfLimits,
-        '198.51.100.99',
-      );
-      expect(orgBConcurrent.status).toBe(200);
-      expect(orgBConcurrent.headers.get('content-type')).toContain('application/pdf');
-      await orgBConcurrent.arrayBuffer();
-
-      releaseOrgABlobs();
-      const finished = await Promise.all(heldDownloads);
-      for (const r of finished) {
-        expect(r.status).toBe(200);
-        await r.arrayBuffer();
-      }
-    } finally {
-      store.beforeGet = null;
-      releaseOrgABlobs();
-    }
-
-    // Combined process PDF pool ceiling (#4682): public /api/sign/pdf + /api/v1/sign/*/sealed share SIGN_PDF_READS_MAX (8).
     const pubDoc = await ingestPdf(orgA.orgId, adminUser, 'pub-pool-doc');
     const pubEnvId = (
       await runtime.execute<{ envelopeId: string }>(
@@ -1529,120 +1546,294 @@ suite('eSign Slice 5c `/api/v1/sign/*` and scoped API key invariants (#4441)', (
     const pubToken = pubSent.links[0]!.token;
     const pubStorageKey = fileKey(orgA.orgId, pubDoc.sha256);
 
-    let releasePoolBlobs!: () => void;
-    const poolBlobsHeld = new Promise<void>((resolve) => {
-      releasePoolBlobs = resolve;
+    // Production default v1 pool enforces 2 per org and 4 across orgs (100 MiB) without starving public PDFs (#4682).
+    const sealedOrgARow = await admin(async (c) =>
+      (
+        await c.query<{ sealed_storage_key: string }>(
+          `SELECT sealed_storage_key FROM ludy_sign.envelope WHERE org_id = $1 AND id = $2`,
+          [orgA.orgId, ids.completedEnv],
+        )
+      ).rows[0]!,
+    );
+    const sealedOrgBRow = await admin(async (c) =>
+      (
+        await c.query<{ sealed_storage_key: string }>(
+          `SELECT sealed_storage_key FROM ludy_sign.envelope WHERE org_id = $1 AND id = $2`,
+          [orgB.orgId, orgBSealedEnv],
+        )
+      ).rows[0]!,
+    );
+    let releaseV1Blobs!: () => void;
+    const v1BlobsHeld = new Promise<void>((resolve) => {
+      releaseV1Blobs = resolve;
     });
-    let poolEntered = 0;
-    let notifyEightEntered!: () => void;
-    const eightEntered = new Promise<void>((resolve) => {
-      notifyEightEntered = resolve;
+    let orgAReadsEntered = 0;
+    let notifyTwoOrgA!: () => void;
+    const twoOrgAEntered = new Promise<void>((resolve) => {
+      notifyTwoOrgA = resolve;
+    });
+    let v1TotalEntered = 0;
+    let notifyFourV1!: () => void;
+    const fourV1Entered = new Promise<void>((resolve) => {
+      notifyFourV1 = resolve;
     });
     store.beforeGet = async (key: string) => {
-      if (key === sealedOrgARow.sealed_storage_key || key === pubStorageKey) {
-        poolEntered += 1;
-        if (poolEntered === 8) notifyEightEntered();
-        await poolBlobsHeld;
+      if (key === sealedOrgARow.sealed_storage_key || key === sealedOrgBRow.sealed_storage_key) {
+        if (key === sealedOrgARow.sealed_storage_key) {
+          orgAReadsEntered += 1;
+          if (orgAReadsEntered === 2) notifyTwoOrgA();
+        }
+        v1TotalEntered += 1;
+        if (v1TotalEntered === 4) notifyFourV1();
+        await v1BlobsHeld;
       }
     };
     try {
-      const pubHeld = Array.from({ length: 4 }, (_, idx) =>
-        appDefaultPdfLimits.request('/api/sign/pdf', {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            'x-forwarded-for': `198.51.100.${110 + idx}`,
-          },
-          body: JSON.stringify({ token: pubToken }),
-        }),
-      );
-      const v1Held = Array.from({ length: 4 }, (_, idx) =>
+      const orgAHeld = Array.from({ length: 2 }, (_, idx) =>
         apiGet(
           `/api/v1/sign/envelopes/${ids.completedEnv}/sealed`,
           `Bearer ${readOnlySecret}`,
           appDefaultPdfLimits,
-          `198.51.100.${120 + idx}`,
+          `198.51.100.${40 + idx}`,
         ),
       );
-      await eightEntered;
+      await twoOrgAEntered;
 
-      const ninthOrgB = await apiGet(
-        `/api/v1/sign/envelopes/${orgBSealedEnv}/sealed`,
-        `Bearer ${orgBReadSecret}`,
+      const thirdOrgA = await apiGet(
+        `/api/v1/sign/envelopes/${ids.completedEnv}/sealed`,
+        `Bearer ${readOnlySecret}`,
         appDefaultPdfLimits,
-        '198.51.100.199',
+        '198.51.100.44',
       );
-      expect(ninthOrgB.status).toBe(503);
-      await expect(ninthOrgB.json()).resolves.toMatchObject({ code: 'SIGN_PDF_BUSY' });
+      expect(thirdOrgA.status).toBe(503);
+      await expect(thirdOrgA.json()).resolves.toMatchObject({ code: 'SIGN_PDF_BUSY' });
 
-      releasePoolBlobs();
-      for (const r of await Promise.all([...pubHeld, ...v1Held])) {
+      const orgBHeld = Array.from({ length: 2 }, (_, idx) =>
+        apiGet(
+          `/api/v1/sign/envelopes/${orgBSealedEnv}/sealed`,
+          `Bearer ${orgBReadSecret}`,
+          appDefaultPdfLimits,
+          `198.51.100.${90 + idx}`,
+        ),
+      );
+      await fourV1Entered;
+
+      // 5th v1 download across a third org hits the 4-slot v1 ceiling while public PDF reads remain unblocked.
+      const fifthOrgC = await apiGet(
+        `/api/v1/sign/envelopes/${orgCSealedEnv}/sealed`,
+        `Bearer ${orgCReadSecret}`,
+        appDefaultPdfLimits,
+        '198.51.100.99',
+      );
+      expect(fifthOrgC.status).toBe(503);
+      await expect(fifthOrgC.json()).resolves.toMatchObject({ code: 'SIGN_PDF_BUSY' });
+
+      const publicWhileV1Full = await appDefaultPdfLimits.request('/api/sign/pdf', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-forwarded-for': '198.51.100.105',
+        },
+        body: JSON.stringify({ token: pubToken }),
+      });
+      expect(publicWhileV1Full.status).toBe(200);
+      await publicWhileV1Full.arrayBuffer();
+
+      releaseV1Blobs();
+      for (const r of await Promise.all([...orgAHeld, ...orgBHeld])) {
         expect(r.status).toBe(200);
         await r.arrayBuffer();
       }
     } finally {
       store.beforeGet = null;
-      releasePoolBlobs();
+      releaseV1Blobs();
     }
 
-    // Response-body lifetime check (#4682): unread 200 PDF responses continue holding process pool slots
-    // until consumed (.arrayBuffer()) or canceled (.body.cancel()).
-    const unreadHeld: Response[] = [];
+    // Isolated public PDF pool (#4682): 2 per IP / IPv6 /64, 4 across IPs (100 MiB), and saturating all 4
+    // public slots never blocks authenticated /api/v1/sign/* downloads (total process worst-case = 4 + 4 = 8 = 200 MiB).
+    let releasePubBlobs!: () => void;
+    const pubBlobsHeld = new Promise<void>((resolve) => {
+      releasePubBlobs = resolve;
+    });
+    let pubReadsEntered = 0;
+    let notifyFourPub!: () => void;
+    const fourPubEntered = new Promise<void>((resolve) => {
+      notifyFourPub = resolve;
+    });
+    let notifyTwoIpv6!: () => void;
+    const twoIpv6Entered = new Promise<void>((resolve) => {
+      notifyTwoIpv6 = resolve;
+    });
+    store.beforeGet = async (key: string) => {
+      if (key === pubStorageKey) {
+        pubReadsEntered += 1;
+        if (pubReadsEntered === 2) notifyTwoIpv6();
+        if (pubReadsEntered === 4) notifyFourPub();
+        await pubBlobsHeld;
+      }
+    };
     try {
-      for (let idx = 0; idx < 4; idx += 1) {
+      const ipv6Held = [
+        appDefaultPdfLimits.request('/api/sign/pdf', {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-forwarded-for': '2001:db8:cafe:1::1',
+          },
+          body: JSON.stringify({ token: pubToken }),
+        }),
+        appDefaultPdfLimits.request('/api/sign/pdf', {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-forwarded-for': '2001:db8:cafe:1::2',
+          },
+          body: JSON.stringify({ token: pubToken }),
+        }),
+      ];
+      await twoIpv6Entered;
+
+      // 3rd concurrent public PDF from the same IPv6 /64 is refused while another IP still succeeds.
+      const thirdSameSlash64 = await appDefaultPdfLimits.request('/api/sign/pdf', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-forwarded-for': '2001:db8:cafe:1::3',
+        },
+        body: JSON.stringify({ token: pubToken }),
+      });
+      expect(thirdSameSlash64.status).toBe(503);
+      await expect(thirdSameSlash64.json()).resolves.toMatchObject({ code: 'SIGN_PDF_BUSY' });
+
+      const otherIpHeld = [
+        appDefaultPdfLimits.request('/api/sign/pdf', {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-forwarded-for': '198.51.100.111',
+          },
+          body: JSON.stringify({ token: pubToken }),
+        }),
+        appDefaultPdfLimits.request('/api/sign/pdf', {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-forwarded-for': '198.51.100.112',
+          },
+          body: JSON.stringify({ token: pubToken }),
+        }),
+      ];
+      await fourPubEntered;
+
+      // 5th public request across a new IP fails with 503 SIGN_PDF_BUSY, while authenticated v1 still serves 200.
+      const fifthPublic = await appDefaultPdfLimits.request('/api/sign/pdf', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-forwarded-for': '198.51.100.199',
+        },
+        body: JSON.stringify({ token: pubToken }),
+      });
+      expect(fifthPublic.status).toBe(503);
+      await expect(fifthPublic.json()).resolves.toMatchObject({ code: 'SIGN_PDF_BUSY' });
+
+      const v1WhilePublicFull = await apiGet(
+        `/api/v1/sign/envelopes/${orgBSealedEnv}/sealed`,
+        `Bearer ${orgBReadSecret}`,
+        appDefaultPdfLimits,
+        '198.51.100.180',
+      );
+      expect(v1WhilePublicFull.status).toBe(200);
+      await v1WhilePublicFull.arrayBuffer();
+
+      releasePubBlobs();
+      for (const r of await Promise.all([...ipv6Held, ...otherIpHeld])) {
+        expect(r.status).toBe(200);
+        await r.arrayBuffer();
+      }
+    } finally {
+      store.beforeGet = null;
+      releasePubBlobs();
+    }
+
+    // Response-body lifetime check (#4682): unread 200 PDF responses continue holding their isolated pool slots
+    // until consumed (.arrayBuffer()) or canceled (.body.cancel()).
+    const unreadPubHeld: Response[] = [];
+    const unreadV1Held: Response[] = [];
+    try {
+      for (const ip of ['198.51.100.130', '198.51.100.130', '198.51.100.131', '198.51.100.131']) {
         const pubRes = await appDefaultPdfLimits.request('/api/sign/pdf', {
           method: 'POST',
           headers: {
             'content-type': 'application/json',
-            'x-forwarded-for': `198.51.100.${130 + idx}`,
+            'x-forwarded-for': ip,
           },
           body: JSON.stringify({ token: pubToken }),
         });
         expect(pubRes.status).toBe(200);
-        unreadHeld.push(pubRes);
-
+        unreadPubHeld.push(pubRes);
+      }
+      for (const [secret, envId, ip] of [
+        [readOnlySecret, ids.completedEnv!, '198.51.100.140'],
+        [readOnlySecret, ids.completedEnv!, '198.51.100.141'],
+        [orgBReadSecret, orgBSealedEnv, '198.51.100.142'],
+        [orgBReadSecret, orgBSealedEnv, '198.51.100.143'],
+      ] as const) {
         const v1Res = await apiGet(
-          `/api/v1/sign/envelopes/${ids.completedEnv}/sealed`,
-          `Bearer ${readOnlySecret}`,
+          `/api/v1/sign/envelopes/${envId}/sealed`,
+          `Bearer ${secret}`,
           appDefaultPdfLimits,
-          `198.51.100.${140 + idx}`,
+          ip,
         );
         expect(v1Res.status).toBe(200);
-        unreadHeld.push(v1Res);
+        unreadV1Held.push(v1Res);
       }
 
-      const saturatedUnread = await apiGet(
-        `/api/v1/sign/envelopes/${orgBSealedEnv}/sealed`,
-        `Bearer ${orgBReadSecret}`,
+      const saturatedUnreadPub = await appDefaultPdfLimits.request('/api/sign/pdf', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-forwarded-for': '198.51.100.132',
+        },
+        body: JSON.stringify({ token: pubToken }),
+      });
+      expect(saturatedUnreadPub.status).toBe(503);
+      await expect(saturatedUnreadPub.json()).resolves.toMatchObject({ code: 'SIGN_PDF_BUSY' });
+
+      const saturatedUnreadV1 = await apiGet(
+        `/api/v1/sign/envelopes/${orgCSealedEnv}/sealed`,
+        `Bearer ${orgCReadSecret}`,
         appDefaultPdfLimits,
         '198.51.100.200',
       );
-      expect(saturatedUnread.status).toBe(503);
-      await expect(saturatedUnread.json()).resolves.toMatchObject({ code: 'SIGN_PDF_BUSY' });
+      expect(saturatedUnreadV1.status).toBe(503);
+      await expect(saturatedUnreadV1.json()).resolves.toMatchObject({ code: 'SIGN_PDF_BUSY' });
 
-      // Canceling one unread public PDF response frees its process slot immediately.
-      await unreadHeld[0]!.body?.cancel();
-      const afterCancel = await apiGet(
-        `/api/v1/sign/envelopes/${orgBSealedEnv}/sealed`,
-        `Bearer ${orgBReadSecret}`,
-        appDefaultPdfLimits,
-        '198.51.100.201',
-      );
-      expect(afterCancel.status).toBe(200);
-      await afterCancel.arrayBuffer();
+      // Canceling one unread public PDF response frees both its per-IP slot and public pool slot immediately.
+      await unreadPubHeld[0]!.body?.cancel();
+      const afterPubCancel = await appDefaultPdfLimits.request('/api/sign/pdf', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-forwarded-for': '198.51.100.130',
+        },
+        body: JSON.stringify({ token: pubToken }),
+      });
+      expect(afterPubCancel.status).toBe(200);
+      await afterPubCancel.arrayBuffer();
 
-      // Consuming one unread v1 sealed response also frees a slot immediately.
-      await unreadHeld[1]!.arrayBuffer();
-      const afterConsume = await apiGet(
-        `/api/v1/sign/envelopes/${orgBSealedEnv}/sealed`,
-        `Bearer ${orgBReadSecret}`,
+      // Consuming one unread v1 sealed response frees a v1 slot immediately for Org C.
+      await unreadV1Held[0]!.arrayBuffer();
+      const afterV1Consume = await apiGet(
+        `/api/v1/sign/envelopes/${orgCSealedEnv}/sealed`,
+        `Bearer ${orgCReadSecret}`,
         appDefaultPdfLimits,
         '198.51.100.202',
       );
-      expect(afterConsume.status).toBe(200);
-      await afterConsume.arrayBuffer();
+      expect(afterV1Consume.status).toBe(200);
+      await afterV1Consume.arrayBuffer();
     } finally {
-      await Promise.all(unreadHeld.map((r) => r.body?.cancel().catch(() => {})));
+      await Promise.all([...unreadPubHeld, ...unreadV1Held].map((r) => r.body?.cancel().catch(() => {})));
     }
 
     // HEAD requests on /sealed and /certificate must release PDF pool slots immediately (Hono drops inner body on HEAD).

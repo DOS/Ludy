@@ -653,7 +653,7 @@ function body(bytes: Uint8Array): ArrayBuffer {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }
 
-const PDF_STREAM_LEASE_MS = 5 * 60_000;
+const PDF_STREAM_LEASE_MS = 60_000;
 
 interface OutgoingResponseTarget {
   readonly writableFinished?: boolean;
@@ -668,7 +668,7 @@ interface OutgoingResponseTarget {
 }
 
 // Keep PDF read pool slots held until Node finishes flushing or closes the socket (or until the in-memory Web
-// stream finishes/cancels when no Node outgoing response is attached), bounded by a 5-minute lease timer (#4682).
+// stream finishes/cancels when no Node outgoing response is attached), bounded by a 60-second lease timer (#4682).
 export function releaseOnResponseClose(bytes: Uint8Array, release: () => void, c?: Context): ReadableStream<Uint8Array> {
   let released = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -1890,27 +1890,39 @@ export function createHttpApp(deps: HttpDeps) {
     const signTokenViewLimit = deps.signLimits?.tokenViews ?? new RateLimiter({ perMinute: SIGN_TOKEN_VIEWS_PER_MINUTE });
     const signPdfLimit = deps.signLimits?.pdfs ?? new RateLimiter({ perMinute: SIGN_PDFS_PER_MINUTE });
     const signTokenPdfLimit = deps.signLimits?.tokenPdfs ?? new RateLimiter({ perMinute: SIGN_TOKEN_PDFS_PER_MINUTE });
-    const signPdfReads = deps.signLimits?.pdfReads ?? new ConcurrencyLimiter({ total: SIGN_PDF_READS_MAX, perKey: SIGN_PDF_READS_MAX });
-    // Shared per-process PDF memory ceiling (SIGN_PDF_READS_MAX * 25 MiB = 200 MiB) across public links
-    // and /api/v1/sign/* so separate pools cannot double peak buffered PDF memory to 400 MiB (#4682).
-    const signProcessPdfPool = new ConcurrencyLimiter({ total: SIGN_PDF_READS_MAX, perKey: SIGN_PDF_READS_MAX });
+    // Split 200 MiB PDF budget (SIGN_PDF_READS_MAX = 8 slots * 25 MiB) into two isolated 4-slot (100 MiB)
+    // pools so anonymous public slow readers (capped at 2 per IP / IPv6 /64) cannot starve /api/v1/sign/* (#4682).
+    const publicPdfSlots = Math.max(2, Math.floor(SIGN_PDF_READS_MAX / 2));
+    const v1PdfSlots = Math.max(2, SIGN_PDF_READS_MAX - publicPdfSlots);
+    const signPdfReads = deps.signLimits?.pdfReads ?? new ConcurrencyLimiter({ total: publicPdfSlots, perKey: publicPdfSlots });
+    const signPublicPdfPool = new ConcurrencyLimiter({ total: publicPdfSlots, perKey: publicPdfSlots });
+    const signPublicPdfPerIp = new ConcurrencyLimiter({ total: publicPdfSlots, perKey: 2 });
     const usePublicSignPdfPool = !deps.signLimits?.pdfReads;
     const useApiV1PdfPool = !deps.signApiV1Limits?.pdfReads;
-    const tryAcquireSignPdfSlot = (
-      limiter: ConcurrencyLimiter,
-      key: string,
-      useProcessPool: boolean,
+    const tryAcquirePublicSignPdfSlot = (
+      c: Context,
+      routeKey: 'sign-pdf' | 'sign-deposit-qr',
     ): (() => void) | null => {
-      const releaseLimiter = limiter.tryAcquire(key);
+      const releaseLimiter = signPdfReads.tryAcquire(routeKey);
       if (!releaseLimiter) return null;
-      if (!useProcessPool) return releaseLimiter;
-      const releasePool = signProcessPdfPool.tryAcquire('process');
-      if (!releasePool) {
+      if (!usePublicSignPdfPool) return releaseLimiter;
+      const releaseIp = signPublicPdfPerIp.tryAcquire(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
+      if (!releaseIp) {
         releaseLimiter();
         return null;
       }
+      const releasePool = signPublicPdfPool.tryAcquire('public-pdf-pool');
+      if (!releasePool) {
+        releaseIp();
+        releaseLimiter();
+        return null;
+      }
+      let released = false;
       return () => {
+        if (released) return;
+        released = true;
         releasePool();
+        releaseIp();
         releaseLimiter();
       };
     };
@@ -1988,7 +2000,7 @@ export function createHttpApp(deps: HttpDeps) {
         if (lookup.status === 'otp_required') {
           return c.json({ code: 'OTP_REQUIRED', message: 'Email OTP verification is required before viewing document' }, 403);
         }
-        const release = tryAcquireSignPdfSlot(signPdfReads, 'sign-pdf', usePublicSignPdfPool);
+        const release = tryAcquirePublicSignPdfSlot(c, 'sign-pdf');
         if (!release) {
           c.header('retry-after', '2');
           return c.json({ code: 'SIGN_PDF_BUSY', message: 'Máy chủ đang bận, hãy thử lại sau vài giây' }, 503);
@@ -2171,7 +2183,7 @@ export function createHttpApp(deps: HttpDeps) {
         if (lookup.status === 'otp_required') {
           return c.json({ code: 'OTP_REQUIRED', message: 'Email OTP verification is required before viewing deposit QR' }, 403);
         }
-        const release = tryAcquireSignPdfSlot(signPdfReads, 'sign-deposit-qr', usePublicSignPdfPool);
+        const release = tryAcquirePublicSignPdfSlot(c, 'sign-deposit-qr');
         if (!release) {
           c.header('retry-after', '2');
           return c.json({ code: 'SIGN_PDF_BUSY', message: 'Máy chủ đang bận, hãy thử lại sau vài giây' }, 503);
@@ -2311,7 +2323,7 @@ export function createHttpApp(deps: HttpDeps) {
         if (lookup.status === 'otp_required') {
           return c.json({ code: 'OTP_REQUIRED', message: 'Email OTP verification is required before viewing document' }, 403);
         }
-        const release = tryAcquireSignPdfSlot(signPdfReads, 'sign-pdf', usePublicSignPdfPool);
+        const release = tryAcquirePublicSignPdfSlot(c, 'sign-pdf');
         if (!release) {
           c.header('retry-after', '2');
           return c.json({ code: 'SIGN_PDF_BUSY', message: 'Máy chủ đang bận, hãy thử lại sau vài giây' }, 503);
@@ -2410,7 +2422,7 @@ export function createHttpApp(deps: HttpDeps) {
           if (lookup.status === 'otp_required') {
             return c.json({ code: 'OTP_REQUIRED', message: 'Email OTP verification is required before viewing document' }, 403);
           }
-          const release = tryAcquireSignPdfSlot(signPdfReads, 'sign-pdf', usePublicSignPdfPool);
+          const release = tryAcquirePublicSignPdfSlot(c, 'sign-pdf');
           if (!release) {
             c.header('retry-after', '2');
             return c.json({ code: 'SIGN_PDF_BUSY', message: 'Máy chủ đang bận, hãy thử lại sau vài giây' }, 503);
@@ -2461,7 +2473,26 @@ export function createHttpApp(deps: HttpDeps) {
     const signApiV1IpLimit = deps.signApiV1Limits?.ip ?? new RateLimiter({ perMinute: SIGN_API_V1_IP_PER_MINUTE });
     const signApiV1KeyReadLimit = deps.signApiV1Limits?.keyRead ?? new RateLimiter({ perMinute: SIGN_API_V1_KEY_READ_PER_MINUTE });
     const signApiV1KeyDraftLimit = deps.signApiV1Limits?.keyDraft ?? new RateLimiter({ perMinute: SIGN_API_V1_KEY_DRAFT_PER_MINUTE });
-    const signApiV1PdfReads = deps.signApiV1Limits?.pdfReads ?? new ConcurrencyLimiter({ total: SIGN_PDF_READS_MAX });
+    const signApiV1PdfReads =
+      deps.signApiV1Limits?.pdfReads ?? new ConcurrencyLimiter({ total: v1PdfSlots, perKey: 2 });
+    const signApiV1PdfPool = new ConcurrencyLimiter({ total: v1PdfSlots, perKey: v1PdfSlots });
+    const tryAcquireApiV1SignPdfSlot = (orgId: string): (() => void) | null => {
+      const releaseLimiter = signApiV1PdfReads.tryAcquire(orgId);
+      if (!releaseLimiter) return null;
+      if (!useApiV1PdfPool) return releaseLimiter;
+      const releasePool = signApiV1PdfPool.tryAcquire('v1-pdf-pool');
+      if (!releasePool) {
+        releaseLimiter();
+        return null;
+      }
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        releasePool();
+        releaseLimiter();
+      };
+    };
 
     const signApiV1Guard: MiddlewareHandler = async (c, next) => {
       setSignSecurityHeaders(c);
@@ -2545,7 +2576,7 @@ export function createHttpApp(deps: HttpDeps) {
           (hash) => signApiV1KeyReadLimit.peek(hash),
         );
         if (lookup.status !== 'ok') return replySignApiV1NonOk(c, lookup);
-        const release = tryAcquireSignPdfSlot(signApiV1PdfReads, lookup.data.orgId, useApiV1PdfPool);
+        const release = tryAcquireApiV1SignPdfSlot(lookup.data.orgId);
         if (!release) {
           c.header('retry-after', '2');
           return c.json({ code: 'SIGN_PDF_BUSY', message: 'Server is busy, please retry shortly' }, 503);
@@ -2588,7 +2619,7 @@ export function createHttpApp(deps: HttpDeps) {
           (hash) => signApiV1KeyReadLimit.peek(hash),
         );
         if (lookup.status !== 'ok') return replySignApiV1NonOk(c, lookup);
-        const release = tryAcquireSignPdfSlot(signApiV1PdfReads, lookup.data.orgId, useApiV1PdfPool);
+        const release = tryAcquireApiV1SignPdfSlot(lookup.data.orgId);
         if (!release) {
           c.header('retry-after', '2');
           return c.json({ code: 'SIGN_PDF_BUSY', message: 'Server is busy, please retry shortly' }, 503);

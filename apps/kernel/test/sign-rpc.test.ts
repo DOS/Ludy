@@ -1330,9 +1330,9 @@ describe('os.sign RPC handlers (#3325)', () => {
         expect(outgoingFinish.listenerCount('finish')).toBe(0);
         expect(outgoingFinish.listenerCount('close')).toBe(0);
 
-        // Subsequent close event and advancing beyond the 5-minute lease timer must not double-release.
+        // Subsequent close event and advancing beyond the 60-second lease timer must not double-release.
         outgoingFinish.emit('close');
-        vi.advanceTimersByTime(10 * 60_000);
+        vi.advanceTimersByTime(120_000);
         expect(releaseFinish).toHaveBeenCalledTimes(1);
 
         // Also test close-first ordering, plus minimal once/off stubs and abort signal.
@@ -1360,7 +1360,7 @@ describe('os.sign RPC handlers (#3325)', () => {
         closeListeners.get('close')?.();
         closeListeners.get('finish')?.();
         abortController.abort();
-        vi.advanceTimersByTime(10 * 60_000);
+        vi.advanceTimersByTime(120_000);
         expect(releaseClose).toHaveBeenCalledTimes(1);
         expect(closeListeners.size).toBe(0);
       } finally {
@@ -1368,7 +1368,7 @@ describe('os.sign RPC handlers (#3325)', () => {
       }
     });
 
-    it('releases stalled outgoing/unread streams automatically via the 5-minute lease timer without double-releasing', async () => {
+    it('releases stalled outgoing/unread streams automatically via the 60-second lease timer without double-releasing', async () => {
       vi.useFakeTimers();
       try {
         const bytes = new Uint8Array([9, 8, 7]);
@@ -1385,7 +1385,7 @@ describe('os.sign RPC handlers (#3325)', () => {
         expect((await reader.read()).done).toBe(false);
         expect((await reader.read()).done).toBe(true);
 
-        vi.advanceTimersByTime(5 * 60_000 - 1);
+        vi.advanceTimersByTime(60_000 - 1);
         expect(releaseStalled).not.toHaveBeenCalled();
 
         vi.advanceTimersByTime(1);
@@ -1417,7 +1417,7 @@ describe('os.sign RPC handlers (#3325)', () => {
         expect((await memReader.read()).done).toBe(true);
         expect(releaseMem).toHaveBeenCalledTimes(1);
         await memStream.cancel().catch(() => {});
-        vi.advanceTimersByTime(10 * 60_000);
+        vi.advanceTimersByTime(120_000);
         expect(releaseMem).toHaveBeenCalledTimes(1);
 
         // Without outgoing: unread stream cancelled explicitly releases once.
@@ -1425,7 +1425,7 @@ describe('os.sign RPC handlers (#3325)', () => {
         const cancelStream = releaseOnResponseClose(bytes, releaseCancel);
         await cancelStream.cancel();
         expect(releaseCancel).toHaveBeenCalledTimes(1);
-        vi.advanceTimersByTime(10 * 60_000);
+        vi.advanceTimersByTime(120_000);
         expect(releaseCancel).toHaveBeenCalledTimes(1);
 
         // EventTarget outgoing + abort signal.
