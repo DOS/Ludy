@@ -25,6 +25,8 @@ const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', impo
 const SYSTEM = { type: 'system' as const, component: 'kernel.agent' };
 const suite = ADMIN ? describe : describe.skip;
 const SEARCH = 'crove_meetings.search_segment_ids(text, integer, integer)';
+// The same search with a label filter (#4965, step 0 of 2): the migration that adds it lands after this file accepts both sets of search definers, so main is green before and after.
+const SEARCH_WITH_LABEL = 'crove_meetings.search_segment_ids(text, integer, integer, text)';
 
 suite('search across meeting text on PostgreSQL (#2589, ADR-0047)', () => {
   const dbName = `crove_test_meetings_search_inv_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
@@ -219,7 +221,8 @@ suite('search across meeting text on PostgreSQL (#2589, ADR-0047)', () => {
       ).rows,
     );
     // The names are part of the contract: another search definer is a new surface to review.
-    expect(rows.map((r) => r.sig)).toEqual([SEARCH]);
+    // (#4965) Either the one search definer, or it and the same search with a label: both are reviewed, the checks on every row below hold for each.
+    expect([[SEARCH], [SEARCH, SEARCH_WITH_LABEL].sort()]).toContainEqual(rows.map((r) => r.sig).sort());
     for (const row of rows) {
       expect(row.secdef).toBe(true);
       expect(row.config?.some((s) => s === 'search_path=pg_catalog, pg_temp')).toBe(true);
