@@ -260,10 +260,10 @@ suite("the opt-in weekly notice of the week's meetings (#4967)", () => {
     const audit = (await sqlAdmin<{ detail: unknown }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.weekly.notice'`, [orgId])).rows;
     for (const text of [JSON.stringify(mine), JSON.stringify(sent), JSON.stringify(rendered), JSON.stringify(audit)]) expect(text).not.toMatch(CANARY);
     // The audit row names the Monday and nothing that varies (no number, not whether a mail was queued): an owner or admin reads the audit log and must not learn what a member reads.
-    // (A system audit row may also name the worker process that ran it, `workerInstance`: the deployment's, not the member's; it is left out of the comparison.)
+    // (The runtime adds the acting component to every system audit row, and the worker process that ran it, `workerInstance`: the deployment's, not the member's; both are left out of the comparison, so the rest is exactly what the command wrote.)
     expect(audit.length).toBeGreaterThan(0);
     for (const row of audit) {
-      const { workerInstance: _worker, ...rest } = (row.detail ?? {}) as Record<string, unknown>;
+      const { workerInstance: _worker, component: _component, ...rest } = (row.detail ?? {}) as Record<string, unknown>;
       expect(rest).toEqual({ day: AT_DAY });
     }
     expect(rendered?.text).toContain('2 cuộc họp');
