@@ -2,7 +2,7 @@
 // Envelope detail, pure-JS PDF field placer, Vy AI proposal overlays, send confirmation, and audit evidence (#3325).
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type RefObject } from 'react';
 import { useTranslations } from 'use-intl';
 import { Alert, AlertDescription, AlertTitle } from '@ludy/ui/components/alert';
 import { Badge } from '@ludy/ui/components/badge';
@@ -119,6 +119,31 @@ export function fromDatetimeLocalValue(raw: string): string | null {
 }
 
 export { canManageEnvelopeLinks, canVoidEnvelope };
+
+/**
+ * Resolves active Doc 1 source file ID, SHA-256, and reusable in-memory bytes for
+ * evidence/obligation/playbook actions when original Doc 1 was removed from a draft packet.
+ */
+export function resolvePrimaryEnvelopeSource(
+  envelope: { sourceFileId: string; sourceSha256: string; sealedFileId: string | null },
+  documents: ReadonlyArray<{ fileId: string; sourceSha256: string; docIndex: number }>,
+  activeDoc: { docIndex: number } | null,
+  loadedPdfBytes: Uint8Array | null,
+): {
+  sourceFileId: string;
+  sourceSha256: string;
+  reusableDoc1Bytes: Uint8Array | null;
+} {
+  const doc1 = documents[0] ?? null;
+  const sourceFileId = doc1?.fileId ?? envelope.sourceFileId;
+  const sourceSha256 = doc1?.sourceSha256 ?? envelope.sourceSha256;
+  const viewingDoc1Original = !envelope.sealedFileId && activeDoc?.docIndex === 1;
+  return {
+    sourceFileId,
+    sourceSha256,
+    reusableDoc1Bytes: viewingDoc1Original ? loadedPdfBytes : null,
+  };
+}
 
 export function filterPendingProposalsForSigners(
   proposals: readonly SignProposedField[],
@@ -336,6 +361,7 @@ export function SignEnvelopeDetailPage() {
     };
   }, [id, selectInPersonDialogSigner]);
 
+  const packetPanelId = `${useId()}-packet-panel`;
   const hasMeQuery = Boolean((orpc as { me?: { get?: { queryOptions?: () => unknown } } }).me?.get?.queryOptions);
   const meQuery = useQuery(
     hasMeQuery
@@ -497,6 +523,9 @@ export function SignEnvelopeDetailPage() {
     enabled: Boolean(pdfFileId),
     staleTime: 5 * 60_000,
   });
+  const primarySource = envelope
+    ? resolvePrimaryEnvelopeSource(envelope, documents, activeDoc, pdfQuery.data ?? null)
+    : null;
 
   const aiQuery = useQuery({
     queryKey: ['sign', 'ai', id],
@@ -683,13 +712,15 @@ export function SignEnvelopeDetailPage() {
 
   const analyzeMutation = useMutation({
     mutationFn: async () => {
-      const doc1FileId = documents[0]?.fileId ?? envelope?.sourceFileId ?? null;
+      const resolved = envelope
+        ? resolvePrimaryEnvelopeSource(envelope, documents, activeDoc, pdfQuery.data ?? null)
+        : null;
+      const doc1FileId = resolved?.sourceFileId ?? null;
       const rawPdf =
-        !isViewingSealedUnified && activeDoc?.docIndex === 1 && pdfQuery.data
-          ? pdfQuery.data
-          : doc1FileId
-            ? await downloadSignPdfBytes(doc1FileId)
-            : null;
+        resolved?.reusableDoc1Bytes ??
+        (doc1FileId
+          ? await downloadSignPdfBytes(doc1FileId)
+          : null);
       let pages: Array<{ page: number; text: string }> | undefined;
       if (rawPdf) {
         try {
@@ -699,7 +730,7 @@ export function SignEnvelopeDetailPage() {
           // Fall back cleanly if client PDF text extraction fails on a malformed file.
         }
       }
-      return signApi.analyzeAi(id, pages);
+      return signApi.analyzeAi(id, pages, resolved?.sourceSha256);
     },
     onSuccess: (res) => {
       if (res) {
@@ -707,7 +738,12 @@ export function SignEnvelopeDetailPage() {
         setDismissedProposalIds([]);
       }
     },
-    onError: (err) => toast(errorMessage(err), 'error'),
+    onError: (err) => {
+      toast(errorMessage(err), 'error');
+      if (typeof err === 'object' && err !== null && 'status' in err && (err as { status?: unknown }).status === 409) {
+        void detailQuery.refetch();
+      }
+    },
   });
 
   const sendMutation = useMutation({
@@ -1636,6 +1672,8 @@ export function SignEnvelopeDetailPage() {
 
           {!isViewingSealedUnified && documents.length > 1 ? (
             <SignPacketTabs
+              idPrefix={packetPanelId}
+              panelId={packetPanelId}
               items={documents.map((doc) => ({
                 key: doc.id ?? 'doc-1',
                 documentId: doc.id,
@@ -1654,6 +1692,13 @@ export function SignEnvelopeDetailPage() {
           ) : null}
 
           <PdfCanvasViewer
+            panelId={!isViewingSealedUnified && documents.length > 1 ? packetPanelId : undefined}
+            panelRole={!isViewingSealedUnified && documents.length > 1 ? 'tabpanel' : undefined}
+            panelAriaLabelledBy={
+              !isViewingSealedUnified && documents.length > 1
+                ? `${packetPanelId}-tab-${resolvedActiveDocKey}`
+                : undefined
+            }
             pdfBytes={pdfQuery.data ?? null}
             pageNumber={pageNumber}
             pageCount={effectivePageCount}
@@ -1693,12 +1738,8 @@ export function SignEnvelopeDetailPage() {
           {envelope.status === 'completed' ? (
             <EnvelopeObligationsCard
               envelopeId={envelope.id}
-              sourceFileId={envelope.sourceFileId}
-              pdfBytes={
-                envelope.sealedFileId && envelope.sealedFileId !== envelope.sourceFileId
-                  ? null
-                  : (pdfQuery.data ?? null)
-              }
+              sourceFileId={primarySource?.sourceFileId ?? envelope.sourceFileId}
+              pdfBytes={primarySource?.reusableDoc1Bytes ?? null}
               onJumpToPage={(targetPage) => {
               const doc1Pages = Math.max(1, documents[0]?.pageCount ?? envelope.pageCount ?? effectivePageCount);
               setActiveDocKey(doc1Id ?? 'doc-1');
@@ -1717,13 +1758,9 @@ export function SignEnvelopeDetailPage() {
 
           <EnvelopePlaybookCard
             envelopeId={envelope.id}
-            sourceFileId={envelope.sourceFileId}
+            sourceFileId={primarySource?.sourceFileId ?? envelope.sourceFileId}
             inspectStatus={envelope.inspectStatus}
-            pdfBytes={
-              envelope.sealedFileId && envelope.sealedFileId !== envelope.sourceFileId
-                ? null
-                : (pdfQuery.data ?? null)
-            }
+            pdfBytes={primarySource?.reusableDoc1Bytes ?? null}
             onJumpToPage={(targetPage) => {
               const doc1Pages = Math.max(1, documents[0]?.pageCount ?? envelope.pageCount ?? effectivePageCount);
               setActiveDocKey(doc1Id ?? 'doc-1');
@@ -1736,7 +1773,7 @@ export function SignEnvelopeDetailPage() {
               recordKey={`env-${envelope.id}`}
               initialShare={Boolean(envelope.shareSummaryWithSigners)}
               initialSummary={envelope.sharedSummary ?? null}
-              pageCount={envelope.pageCount ?? detectedPages}
+              pageCount={documents[0]?.pageCount ?? envelope.pageCount ?? detectedPages}
               aiAnalysis={effectiveAi}
               editable={canEditSharedSummary}
               saving={sharedSummaryMutation.isPending}
@@ -1920,8 +1957,13 @@ export function SignEnvelopeDetailPage() {
                 <div className="space-y-1">
                   <span className="block text-muted-foreground">{t('evidence.sourceSha256')}</span>
                   <div className="flex items-center justify-between gap-2 rounded bg-muted/50 px-2 py-1 font-mono">
-                    <span className="truncate">{envelope.sourceSha256}</span>
-                    <Button type="button" size="sm" variant="ghost" onClick={() => void copyDigest(envelope.sourceSha256)}>
+                    <span className="truncate">{primarySource?.sourceSha256 ?? envelope.sourceSha256}</span>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => void copyDigest(primarySource?.sourceSha256 ?? envelope.sourceSha256)}
+                    >
                       {t('evidence.copyDigest')}
                     </Button>
                   </div>
@@ -1944,7 +1986,9 @@ export function SignEnvelopeDetailPage() {
                     type="button"
                     size="sm"
                     variant="outline"
-                    onClick={() => void handleDownload(envelope.sourceFileId, `${envelope.id}-source.pdf`)}
+                    onClick={() =>
+                      void handleDownload(primarySource?.sourceFileId ?? envelope.sourceFileId, `${envelope.id}-source.pdf`)
+                    }
                   >
                     {t('actions.downloadOriginal')}
                   </Button>

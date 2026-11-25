@@ -2,7 +2,10 @@
 // Unit tests for project starter templates, calendar/month-end recurrence math, and schemas (#2607).
 import { describe, expect, it } from 'vitest';
 import {
+  BOARD_TASK_STATUSES,
   BUILTIN_PROJECT_TEMPLATE_KEYS,
+  PROJECT_COLUMN_COLORS,
+  PROJECT_COLUMN_NAME_MAX,
   PROJECT_TEMPLATE_TASKS_MAX,
   zProjectCreateFromTemplateInput,
   zProjectTaskRecurrence,
@@ -16,24 +19,60 @@ import {
   starterProjectTemplates,
 } from '../src/index.ts';
 
-describe('project templates & recurring task rules (#2607)', () => {
-  it('ships 3 localized starter templates within DB limits', () => {
+describe('project templates & recurring task rules (#2607, #4908)', () => {
+  it('ships 5 localized starter templates in exact order within DB and custom-column limits', () => {
+    expect([...BUILTIN_PROJECT_TEMPLATE_KEYS]).toEqual([
+      'software-project',
+      'marketing-project',
+      'monthly-close',
+      'client-onboarding',
+      'campaign-launch',
+    ]);
+
     for (const language of ['vi', 'en'] as const) {
       const starters = starterProjectTemplates(language);
       expect(starters.map((s) => s.builtinKey)).toEqual([...BUILTIN_PROJECT_TEMPLATE_KEYS]);
+      expect(starters).toHaveLength(5);
+
       for (const tpl of starters) {
         expect(tpl.source).toBe('builtin');
         expect(tpl.name.trim().length).toBeGreaterThan(0);
+        expect(tpl.name).not.toMatch(/[\u2013\u2014]/);
+        expect(tpl.description?.trim().length).toBeGreaterThan(0);
+        expect(tpl.description).not.toMatch(/[\u2013\u2014]/);
         expect(tpl.tasks.length).toBeGreaterThan(0);
         expect(tpl.tasks.length).toBeLessThanOrEqual(PROJECT_TEMPLATE_TASKS_MAX);
         for (const item of tpl.tasks) {
           expect(item.title.trim().length).toBeGreaterThan(0);
+          expect(item.title).not.toMatch(/[\u2013\u2014]/);
+          if (item.description) {
+            expect(item.description).not.toMatch(/[\u2013\u2014]/);
+          }
           if (item.dueOffsetDays !== undefined && item.dueOffsetDays !== null) {
             expect(item.dueOffsetDays).toBeGreaterThanOrEqual(0);
             expect(item.dueOffsetDays).toBeLessThanOrEqual(365);
           }
         }
       }
+
+      const software = starters[0]!;
+      expect(software.builtinKey).toBe('software-project');
+      expect(software.name).toBe(language === 'vi' ? 'Dự án phần mềm' : 'Software project');
+      expect(software.tasks.map((t) => t.dueOffsetDays)).toEqual([1, 3, 7, 9, 10]);
+      expect(software.defaultColumns).toBeDefined();
+      expect(software.defaultColumns?.map((c) => c.taskStatus)).toEqual([...BOARD_TASK_STATUSES]);
+      for (const col of software.defaultColumns ?? []) {
+        expect(col.name.trim().length).toBeGreaterThan(0);
+        expect(col.name.length).toBeLessThanOrEqual(PROJECT_COLUMN_NAME_MAX);
+        expect(col.name).not.toMatch(/[\u2013\u2014]/);
+        expect(PROJECT_COLUMN_COLORS).toContain(col.color);
+      }
+
+      const marketing = starters[1]!;
+      expect(marketing.builtinKey).toBe('marketing-project');
+      expect(marketing.name).toBe(language === 'vi' ? 'Dự án Marketing' : 'Marketing project');
+      expect(marketing.tasks.map((t) => t.dueOffsetDays)).toEqual([1, 4, 6, 10, 14]);
+      expect(marketing.defaultColumns).toBeUndefined();
     }
   });
 
@@ -110,7 +149,9 @@ describe('project templates & recurring task rules (#2607)', () => {
       }).success,
     ).toBe(false);
 
-    expect(zProjectCreateFromTemplateInput.safeParse({ builtinKey: 'monthly-close' }).success).toBe(true);
+    for (const key of BUILTIN_PROJECT_TEMPLATE_KEYS) {
+      expect(zProjectCreateFromTemplateInput.safeParse({ builtinKey: key }).success, key).toBe(true);
+    }
     expect(zProjectCreateFromTemplateInput.safeParse({}).success).toBe(false);
   });
 });

@@ -888,6 +888,32 @@ describe('kernel sign-ai orchestration', () => {
     expect(conflictOut.analysis).toEqual(priorCompleted);
     expect(conflictOut.summaryText).toBe('Confidentiality term lasts 24 months.');
     expect(executedOnConflict).toEqual(['sign.envelope.propose_fields']);
+
+    const staleHashCalls: string[] = [];
+    await expect(
+      proposeEnvelopeAnalysis({
+        ai: signAi(readerNormal, new DraftBudget()),
+        runtime: {
+          query: async () => ({ ...SOURCE, aiStopped: false }),
+          execute: async (name: string) => {
+            staleHashCalls.push(name);
+            return null;
+          },
+        } as unknown as Runtime,
+        orgId: ORG_ID,
+        actor: USER,
+        envelopeId: ENVELOPE_ID,
+        expectedSourceSha256: 'f'.repeat(64),
+        pages: PAGES,
+        meter: {
+          admit: async () => {
+            staleHashCalls.push('meter.admit');
+          },
+          record: async () => {},
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'SIGN_PRIMARY_DOC_CHANGED', status: 409 });
+    expect(staleHashCalls).toEqual([]);
   });
 
   it('askSignVault (#4439) preserves 100% AI-off parity, skips LLM on no_matches, meters sign.vault_qa, handles budget/busy/kill-switch, and propagates 403 viewer refusal', async () => {

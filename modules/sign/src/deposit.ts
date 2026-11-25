@@ -46,11 +46,7 @@ const EMVCO_BIN_PATTERN = /^[0-9]{6}$/;
 const EMVCO_AMOUNT_MAX_CHARS = 13;
 const DEPOSIT_MATCH_LIMIT = 200;
 
-const ALLOWED_QR_FILE_SOURCES = new Set([
-  'sign_deposit_qr',
-  'upload',
-  'social',
-]);
+const ALLOWED_QR_FILE_SOURCES = new Set(['sign_deposit_qr']);
 const GATED_SIGN_FILE_SOURCES = new Set([
   'sign_document',
   'sign_sealed',
@@ -569,6 +565,19 @@ export const depositProfileUpsert = defineCommand({
         vietqr_generation: null,
         vietqr_sha256: null,
       };
+    } else if (
+      input.vietqrFileId &&
+      existing &&
+      !destinationChanged &&
+      existing.vietqr_file_id &&
+      input.vietqrFileId.toLowerCase() === existing.vietqr_file_id.toLowerCase()
+    ) {
+      qrColumns = {
+        vietqr_file_id: existing.vietqr_file_id,
+        vietqr_storage_key: existing.vietqr_storage_key,
+        vietqr_generation: existing.vietqr_generation,
+        vietqr_sha256: existing.vietqr_sha256,
+      };
     } else if (input.vietqrFileId) {
       qrColumns = await resolveProfileQrFile(ctx, input.vietqrFileId);
     } else if (existing && !destinationChanged) {
@@ -724,11 +733,12 @@ export const depositProfileClear = defineCommand({
     if (candidateRows.length > 0) {
       const envelopeIds = [...new Set(candidateRows.map((row) => row.envelope_id))].sort();
       // Lock envelopes deterministically before mutating envelope_deposit to match sendDraftEnvelope's lock order.
+      // Use = ANY(uuid[]) instead of IN (...) to avoid PostgreSQL's 65,535 bind-parameter ceiling (#4837).
       await ctx.trx
         .selectFrom('ludy_sign.envelope')
         .select('id')
         .where('org_id', '=', ctx.orgId)
-        .where('id', 'in', envelopeIds)
+        .where(sql<boolean>`id = ANY(${sql.val(envelopeIds)}::uuid[])`)
         .orderBy('id', 'asc')
         .forUpdate()
         .execute();
@@ -742,7 +752,7 @@ export const depositProfileClear = defineCommand({
           updated_at: ctx.now,
         })
         .where('org_id', '=', ctx.orgId)
-        .where('envelope_id', 'in', envelopeIds)
+        .where(sql<boolean>`envelope_id = ANY(${sql.val(envelopeIds)}::uuid[])`)
         .where('deposit_profile_id', '=', existing.id)
         .where('snapshot_frozen_at', 'is', null)
         .execute();

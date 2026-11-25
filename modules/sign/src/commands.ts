@@ -64,6 +64,7 @@ import {
   assertSignSourceFileConfidentiality,
   assertValidEnvelopeExpiry,
   requireSignSourceFile,
+  resolvePrimaryEnvelopeDocMeta,
   sanitizeSharedSummaryForWrite,
   sendDraftEnvelope,
   serializeFieldOptionsForType,
@@ -2143,7 +2144,8 @@ export const envelopeSharedSummarySet = defineCommand({
       throw new DomainError('SIGN_VERSION_CONFLICT', 409, 'Envelope version conflict');
     }
 
-    const cleanSummary = sanitizeSharedSummaryForWrite(input.sharedSummary, row.page_count);
+    const primary = await resolvePrimaryEnvelopeDocMeta(ctx.trx, ctx.orgId, row);
+    const cleanSummary = sanitizeSharedSummaryForWrite(input.sharedSummary, primary.pageCount);
     if (input.shareSummaryWithSigners && cleanSummary === null) {
       throw new DomainError('VALIDATION', 422, 'sharedSummary is required when shareSummaryWithSigners is true');
     }

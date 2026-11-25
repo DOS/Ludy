@@ -1,6 +1,6 @@
 # Ludy CRM, slice 1: deals, one pipeline board, saved views, contact import
 
-> Plan for the first slice of the CRM module (`crm`, product name "Ludy CRM"), 2026-11-01. Owner decision of 2026-11-01 ([#2223](https://github.com/DOS/Ludy/issues/2223), kernel plan Decision 21): open the first CRM slice now, as an exception to Decision 2 for this slice only, like Decision 20 did for Calendar. It follows the shape of [calendar.md](calendar.md). The recommendation it carries out is decision 1 of the [CRM reference study](../research/crm-reference-study.md) (#2122); the study's decisions 2 to 4 (AI agents, capture from email and calendar, Vietnamese channels) are **not** part of this slice and wait for the owner. Focus per the owner's decision of 2026-10-31: one-person companies and SMEs first, no enterprise features. Vietnamese summary for the owner: [crm.vi.md](crm.vi.md).
+> Plan for the first slice of the CRM module (`crm`, product name "Ludy CRM"), 2026-11-01. Owner decision of 2026-11-01 ([#2223](https://github.com/DOS/Ludy/issues/2223), kernel plan Decision 21): open the first CRM slice now, as an exception to Decision 2 for this slice only, like Decision 20 did for Calendar. It follows the shape of [calendar.md](calendar.md). The recommendation it carries out is decision 1 of the [CRM reference study](../research/crm-reference-study.md) (#2122); the study's decisions 2 to 4 (AI agents, capture from email and calendar, Vietnamese channels) are **not** part of this slice and wait for the owner, except the three ideas the owner took from Clay on 2026-11-25 (tax-code fill, pre-meeting research, signals), which are in section 10. Focus per the owner's decision of 2026-10-31: one-person companies and SMEs first, no enterprise features. Vietnamese summary for the owner: [crm.vi.md](crm.vi.md).
 
 ## 1. Goal
 
@@ -245,3 +245,95 @@ Open questions, each with the default the build takes if nobody answers:
 | CRM-Q4 | Is a pipeline of four open stages the right default for Vietnamese SMEs, and do we want a fixed list of lost reasons? | PO | The four stages of 4.1 and a free-text reason |
 | CRM-Q5 | Should a person be linked to the company they work for? | PO | Answered yes by the design owner's layout of the one app (#2435, #2438): a person works at one company, section 4.6. Not in slice 1 |
 | CRM-Q6 | Should the contact list hide vendors that only exist from purchase invoices? | PO | No: it shows every party; the `has_open_deal` filter and views cover the rest |
+
+## 10. Owner decision 2026-11-25: tax-code fill, pre-meeting research, signals
+
+On 2026-11-25 the owner (JOY), in the Claude Platform PO's chat, looked at Clay (clay.com: waterfall enrichment, the Claygent research agent, signals and intent, MCP for reps) and decided to bring three ideas into this plan, in the lean form: one-person companies and SMEs first, the smallest slice, enterprise extras to the Icebox ([#4987](https://github.com/DOS/Ludy/issues/4987)). Items 2 and 3 are the part of decisions 2 and 3 of the [study](../research/crm-reference-study.md) (section 9) that the owner approved in this scope only; the rest of those decisions still waits. All steps below are P2, labels `crm` and `line:notes-crm`, and **no milestone**, like K1 to K7 (section 7). AI rules hold throughout: model calls only in `packages/agent` through the AI budget meter; the core works with AI off; AI output is tainted data and code decides; a person approves every write, message and spend. Vietnamese summary: [crm.vi.md](crm.vi.md).
+
+### 10.1 Tax-code fill
+
+**Scope.** On `kernel.party.create` and edit (the contact form, the add-contact panel, the deal form's "Thêm liên hệ mới") and in the import preview, a 10-digit or 13-digit (10-3, a branch) tax code looks up the company's name, address and operating status from a public source. The result is a **proposal**: shown beside the form, filled field by field by the person, and never written over a non-empty field. A 12-digit code is a citizen ID (the company-suggest read of #2438 already refuses to look one up): it is never sent anywhere.
+
+**Sources researched** (read 2026-11-25; "not read" means the page could not be opened from here, not that it has no terms):
+
+| Source | What it is | Usable? |
+|---|---|---|
+| Casso Open Platform, IDKit business lookup ([VietQR's lookup page](https://www.vietqr.io/tra-cuu-mst), [Open Platform](https://open.casso.vn)) | `GET openapi.casso.vn/idkit/v1/business/{taxCode}`; OAuth2 client credentials, a JWT of about 15 minutes, 30 token requests per minute per IP. Answers tax code, name, address, tax office, status and a `source` field. Takes 10 digits, 10-3 digits (branch) and, on another route, 12-digit household codes. Free quota stated as 1,000 calls (individuals, households) and 5,000 (enterprises) per private key, not refilled monthly; nothing is said about price after that | **Yes, the first provider.** Terms: no terms page written for the Open Platform was found; its home page says "Cache MST 24h"; the general [Casso software terms](https://casso.vn/thoa-thuan-su-dung-phan-mem/) (2021) are for another product. It does not name where the data comes from. A person must ask Casso in writing (the support contact is on its [privacy page](https://casso.vn/chinh-sach-bao-mat-thong-tin/)) about caching, redistribution, source and household data before the docs recommend turning it on |
+| VietQR legacy `GET api.vietqr.io/v2/business/{taxCode}` | The older free endpoint, no key, answers name, international name, short name, address | **No.** The page says it is kept for existing systems only and is shut off on 2026-12-31 |
+| Casso's published "Public Starter Key" | A shared key printed on the lookup page | **Never used.** A shared key is another party's quota and not ours to embed; each deployment brings its own |
+| GDT taxpayer lookup (`tracuunnt.gdt.gov.vn`) | The tax authority's own page; it asks for an image CAPTCHA (a bank's guide shows the "Mã xác nhận" field) | **No.** Ludy never solves a CAPTCHA (ADR-0036, ADR-0042). The page's own terms could not be read (TLS error from here) |
+| National business registration portal (`dangkykinhdoanh.gov.vn`) | Public company search | **No.** [Its terms](http://dangkykinhdoanh.gov.vn/vn/gioi-thieu/1763/dieu-khoan-su-sung.aspx) (2017) bar trading in registration information without the issuing agency's approval and bar unauthorized access to the system; no API is documented. The Ministry (the support address is on that terms page) is the one to ask if a registry source is wanted later |
+| masothue.com and similar aggregators | Commercial sites that republish registry data | **No.** The site refused our fetch (403), its terms were not read, and its robots.txt disallows `/Ajax/*`; scraping a third party is not a design |
+
+Decree 168/2025/NĐ-CP (business registration) and its amendment of 2026-07-23 are listed on the portal, but their text on access to registry data could not be read here; if a registry source is wanted, a person reads them first.
+
+**Design.**
+- **A pluggable provider behind a config switch.** `TaxLookupProvider` in `packages/kernel` with `off` (the default: no network, the lookup is hidden, `/api/config` says so, as ADR-0042 does for its fetch) and `casso`. `TAX_LOOKUP_PROVIDER=off|casso`; the app id and secret come from the deployment environment, never the repository. A deployment of the private Crove Cloud layer may plug its own provider behind the same interface; nothing here names a DOS service, so `docker compose up` works with no account and no network. A second switch per org (owner or admin, default off) says in words that the tax code is sent to the provider.
+- **The call.** A command `kernel.party.tax_lookup` (members, admins, owners; refuses agents) declared `sideEffect: 'external'`, which writes nothing to `party` and answers the proposal. It goes out only through `guardedRequest` (`packages/kernel-runtime/src/egress.ts`) to the provider's fixed host, https, 64 KB, 5 s, no redirects. A 429, a timeout or an error is "tạm thời không tra được" and never blocks saving.
+- **Rate limit and cache.** Per org: 30 lookups an hour and 200 a day, per member 10 a minute; a provider 429 backs the whole deployment off for 60 seconds; the deployment warns the owner at 80% of the provider's quota. A per-org cache (`ludy_kernel.tax_lookup_cache`, 24 hours for a hit, as the provider advises, and 1 hour for "not found") means a repeated lookup makes no call and does not count against the limit.
+- **Personal data (Law 91/2025/QH15 and Decree 356/2025/NĐ-CP, in force 2026-01-01, which replaced the Decree 13/2023/NĐ-CP the owner named; see [payroll.md](payroll.md) row 21; a lawyer, #62, confirms).** A company's name, address and tax code are not personal data. A household business (hộ kinh doanh) is run under its owner's personal tax code and its name often carries the owner's name, so its answer can identify a person. So: (a) a 12-digit code is never sent; (b) a result that names a household business (a name that starts with "Hộ kinh doanh" or "HKD", or a provider flag) is shown once and **never cached or stored**; (c) what is stored is only the cache row above (tax code, name, address, status, fetched time), with class markers in the personal data registry, and the cache rows are deleted when the party is erased, with the org purge, and by the daily sweep when they expire; (d) the audit row says that a lookup ran and the tax code's class, never a name or an address; (e) the status is shown with its date and **not saved** anywhere (the party has no status column). The party itself is as today: the person's accepted values are written by their own `kernel.party.create` or `update`.
+- **Import.** The preview looks up at most 50 rows per batch, cache first; the rest say "chưa tra". An accepted value goes into the staged row (the 7-day expiry of section 4.4 already covers it) and only into an empty field.
+
+**The AI coworker.** None. The lookup is deterministic and the core works with AI off. Tidying the address with a model (street, ward, province) is a later extra in the Icebox (section 10.4): its output would be checked by code to carry the same digits and words, and a person would accept it.
+
+| Step | Issue | Smallest slice | Acceptance in brief | Files | Protected |
+|---|---|---|---|---|---|
+| TC1 | [#4988](https://github.com/DOS/Ludy/issues/4988) | The provider interface, `off` and `casso`, the command, the org switch, the guarded call, the rate limit, the cache table | Off by default and no request leaves; 10 and 13 digits answer, 12 is refused before a call; redirects and private addresses refused; limit and cache proven; household result never cached; cache erased with party and org; Casso's written terms asked for | `packages/kernel/src/tax-lookup.ts`, `personal-data.ts`, `manifest.ts`, `kernel-contract`, `apps/kernel/src/config.ts`, one migration, self-host docs | yes (migration) |
+| TC2 | [#4989](https://github.com/DOS/Ludy/issues/4989) | The card on the party forms: fill per field, never over text, a status chip | Two clicks fill an empty form; non-empty untouched; off or failing shows one line and the form works; taken code still names the party; keyboard and 375 px | `party-edit.tsx`, `add-contact-panel.tsx`, `deal-party-new.tsx`, `tax-lookup-card.tsx`, i18n | no |
+| TC3 | [#4990](https://github.com/DOS/Ludy/issues/4990) | A suggestion on preview rows with a code and a missing name or address, 50 per batch | 120 codes make at most 50 calls, a rerun makes none; no overwrite; lookup off leaves the wizard unchanged; staging still vanishes | `contact-import.tsx`, `modules/crm/src/import.ts`, i18n | no |
+
+Milestone: none. Priority: P2.
+
+### 10.2 Pre-meeting research
+
+**Scope.** Today a brief exists only for a confirmed booking linked to a deal (#3115, [calendar.md](calendar.md) "Meeting brief as built"), and Meetings has Vy's brief for a series (L7). This adds the same preparation for any upcoming calendar or meeting event with a contact: the deals, quotes, invoices and recent conversations, and optionally the company's public website, ending as a **draft** in the meeting's notes. A person sees it; nothing is sent.
+
+**Smallest slice, in two steps.**
+1. **PM1, facts by code.** `crm.contact.meeting_facts` finds the contacts an event names (an attendee email equal to a party's email, case-folded, at most 3 per event) and reads, under the member's own row security: open deals, the latest sent quote, the invoices as counts, dates and amounts only (a finance read declared in `@ludy/kernel-contract`, so the CRM reads no finance table), and the newest 5 inbound messages the member may read (while the org lets customers' words reach a model, as in #3115). A card on the event lists them; "Giữ làm bản nháp" stores them as the member's own draft on the meeting (the draft rows of Vy's other results, ADR-0049 option (a)); a second click puts the draft into the notes.
+2. **PM2, Dy's words and the website.** On one click of the member ("Nhờ Dy chuẩn bị", so the person approves the spend) Dy writes a summary and 2 to 3 points to raise. One metered call, outside any transaction, feature key `crm.meeting_research`: its own line in `AI_FEATURES`, counted in the CRM's budget. The website is read only if the member confirms its address (taken from the email domain; a free-mail domain gives none): one GET of the home page through `guardedFetch` (https, 200 KB, 5 s, no redirects off the host), text extracted by code, at most 3,000 characters to the model, fenced as untrusted data (ADR-0018, `tools: []`), and nothing stored but what the draft quotes.
+
+**The AI coworker.** Dy (the sales coworker) writes the words; code builds every fact. The output is tainted: the whole brief is refused, never repaired, when it holds a figure, link, handle or capitalised name that the facts and the page do not hold, and a line taken from the page must be a verbatim phrase of the fetched text (at most 2, each marked "từ trang web của họ"). With AI off, no endpoint, the budget spent, too many asks, a failed call or a refused brief, the card shows the PM1 facts and one line saying which, and no call is made. Personal data: the draft carries the contact's deal and message facts, is erased with the contact, and the page text is not kept.
+
+| Step | Issue | Acceptance in brief | Files | Protected |
+|---|---|---|---|---|
+| PM1 | [#4991](https://github.com/DOS/Ludy/issues/4991) | A matching attendee shows facts, none shows nothing; row security decides; no email, phone, address, tax code or bank account; the draft is private until put in the notes and erased with the contact; the same with AI off | `modules/crm/src/meeting-facts.ts`, `kernel-contract`, a finance read, `modules/meetings` drafts, `meeting-brief.tsx`, `meeting-detail.tsx` | only if it adds a migration |
+| PM2 | [#4992](https://github.com/DOS/Ludy/issues/4992) | Fallback to the facts on every failure; an injection fixture changes nothing; a private address, redirect, 403, 429 or challenge page stops the fetch only; metered under `crm.meeting_research`, `meter-coverage` passes; the member sees the address before the fetch | `packages/agent/src/meeting-research.ts`, `meter.ts`, `apps/kernel/src/crm-meeting-research-ai.ts`, `meeting-brief.tsx` | no |
+
+Milestone: none. Priority: P2.
+
+### 10.3 Signals: attention list
+
+**Scope.** A small list ("Cần chú ý") on the contact, and later on Home, that tells the member when a customer acts, built only from events Ludy already records. No external intent data, no bought data, no third-party tracking (no email open pixels): those are in the Icebox.
+
+**What exists and is reused.** The next steps of stale deals and unanswered or expiring quotes (4.4a, raised daily); Home's "Hôm nay cần bạn"; Vy's cross-app signal rules and their reads (V4, V5, rule 4: [vy.md](vy.md) C4), joined by party id without one app reading another's tables; the quote link's `first_viewed_at` and `views` ([crm-quotes.md](crm-quotes.md) 4.5); the sign module's `link_viewed` event; the follow-up draft `crm.followup.source` and `crm.next_step.draft` (4.4b).
+
+**Smallest slice, in two steps.**
+1. **SG1, on the contact.** `crm.party.attention` (R0, refuses agents) answers up to 10 items for one party, computed on read under the member's row security, newest first: `quote_viewed` (the customer opened a sent quote in the last 7 days and has not answered), `quote_expiring` and `quote_unanswered` (the existing open next steps), `customer_replied` (an inbound message after 7 or more quiet days; a constant, as the Vy rules use). An item is a kind, a date and ids, never text. A small per-member table records "Đã xem" so an item returns only on a newer event.
+2. **SG2, on Home.** The same items across contacts (at most 5, one per contact) in "Hôm nay cần bạn", through the kernel's signals composition (Platform's shared core), with two more items joined by party id: `invoice_overdue` from `finance.signals.overdue_receivables` and `envelope_opened`, a new read `sign.signals.opened` (ids and dates; a signer's email equal to the party's email; no matching party, no item).
+
+**The AI coworker.** Dy may suggest the next step: "Gợi ý bước tiếp" opens the existing follow-up draft, which gains the reasons `quote_viewed` and `customer_replied` (wording only; code supplies the facts). The member edits and sends it. The list and Home call no model, so the core works with AI off.
+
+| Step | Issue | Acceptance in brief | Files | Protected |
+|---|---|---|---|---|
+| SG1 | [#4993](https://github.com/DOS/Ludy/issues/4993) | Each kind tested on real rows; an unreadable conversation gives no reply item; "Đã xem" is per member and clears on a newer event; no customer IP or agent read; the table has tenancy, purge and manifest entries | `modules/crm/src/attention.ts`, `followup-source.ts`, `kernel-contract`, a migration, `contact-attention.tsx`, `contacts.tsx`, `packages/agent/src/crm-followup.ts` | yes (migration) |
+| SG2 | [#4994](https://github.com/DOS/Ludy/issues/4994) | No finance or sign access, no item; strict schemas carry no text; capped and cut before listing; one batched read per source; `unchecked` over a grant that cannot read the books | `packages/kernel/src/signals.ts`, `kernel-contract/src/signals.ts`, `modules/sign`, `today-list.tsx` | shared core: Platform PO review |
+
+Milestone: none. Priority: P2.
+
+### 10.4 Not taken from Clay
+
+| Not taken | Why |
+|---|---|
+| A data marketplace or waterfall over several paid providers, credits | Enterprise scale, and a paid third-party data bill nobody asked for; the lean rule |
+| Bought or scraped lists; job-change, funding and website-visitor intent signals | Personal data of people with no relationship to the org: Law 91/2025/QH15 and Decree 356/2025/NĐ-CP (earlier Decree 13/2023/NĐ-CP) ask for a lawful basis and purpose that a bought list does not have; not a monthly task of a small business |
+| Third-party tracking (email open pixels, visitor identification) | Same reason; the signals above use only events on Ludy's own links |
+| Automatic outbound sequences, unattended sending | A person approves every message (AGENTS.md) |
+| Syncing contacts to ad audiences | The ad platforms' terms and the same personal-data limits; Ads has its own plan |
+| A research agent that browses many sites by itself | PM2 reads one page a person confirmed, fenced as untrusted |
+| Enrichment tables of thousands of rows | Enterprise scale; TC3 stops at 50 rows a batch |
+
+Filed as one Icebox issue, P3: [#4995](https://github.com/DOS/Ludy/issues/4995), together with the small extras that may come later on a real request (address tidy-up with the model, a wake-driven preparation of the meeting draft by Dy as a connected coworker, a second tax-code provider behind the TC1 interface, a setting for the 7 quiet days).
+
+### 10.5 Order and what a person must do
+
+Order: TC1, then TC2 and TC3; PM1, then PM2; SG1, then SG2. The three lines are independent and may run in parallel; each step is one PR, end to end. Three things only a person can do: ask Casso in writing for the Open Platform's terms (caching, redistribution, data source, household data) before the docs recommend `casso`; a lawyer (#62) checks the household-business handling against the personal data law; and an owner or admin of a deployment brings their own provider key.

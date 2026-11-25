@@ -11,7 +11,7 @@
 //   (`kernel-meeting-import-sweep handler`, apps/kernel/test/invariant/job-egress.test.ts) is justified by this command.
 // - The bytes then wait in staging; the member's own request claims, seals and records them through POST /api/meetings/:id/media, so the sealing code is the one an upload uses.
 // - No AI part: the transcript and minutes of the imported meeting are the ordinary ones, started by the member. Audit rows hold ids and the provider, never a title or a platform text.
-import { MEETING_PLATFORM_TRANSCRIPT_PROVIDERS, meetingPlatformNeedsPick, platformPairKeys, zMeetingImportDiscarded, zMeetingImportDiscardEmpty, zMeetingImportStart, zMeetingTranscriptImport, type MeetingLanguage, type MeetingPlatformTranscriptProvider, type TranscriptionMaker } from '@ludy/kernel-contract';
+import { MEETING_PLATFORM_TRANSCRIPT_PROVIDERS, meetingPlatformNeedsPick, zMeetingImportDiscarded, zMeetingImportDiscardEmpty, zMeetingImportStart, zMeetingTranscriptImport, type MeetingLanguage, type MeetingPlatformTranscriptProvider, type TranscriptionMaker } from '@ludy/kernel-contract';
 import { DomainError, defineCommand, newStagingKey, type CommandContext } from '@ludy/kernel-runtime';
 import { sql } from 'kysely';
 import { createMeetingRow } from './meeting-core.ts';
@@ -28,6 +28,9 @@ export function setMeetingVideoImport(enabled: boolean): void {
 // What a recording without a title is called, until the member renames the meeting.
 const UNTITLED: Record<MeetingLanguage, string> = { vi: 'Cuộc họp đã nhập', en: 'Imported meeting' };
 
+// The refusal of the second entry of one meeting (the definer's).
+const PAIR_TAKEN_WORDS = 'Cuộc họp này đã được nhập (hoặc đang được nhập) từ mục còn lại của nó, nên không nhập thêm lần nữa';
+
 // The definers' own words, as the member reads them.
 function importError(error: unknown): never {
   const message = (error as { message?: unknown } | null)?.message;
@@ -38,6 +41,8 @@ function importError(error: unknown): never {
       throw new DomainError('MEETING_PLATFORM_STATE', 409, 'Bản ghi này đã được nhập hoặc đang được nhập');
     case 'MEETING_PLATFORM_NO_AUDIO':
       throw new DomainError('MEETING_PLATFORM_NO_AUDIO', 422, 'Nền tảng không có tệp âm thanh hay video cho bản ghi này');
+    case 'MEETING_PLATFORM_PAIR_TAKEN':
+      throw new DomainError('MEETING_PLATFORM_PAIR_TAKEN', 409, PAIR_TAKEN_WORDS);
     case 'MEETING_PLATFORM_FORBIDDEN':
       throw new DomainError('FORBIDDEN', 403, 'Bạn không nhập được bản ghi trong tổ chức này');
     default:
@@ -56,25 +61,11 @@ async function readOwnRecording(trx: Trx, orgId: string, userId: string, recordi
   return trx
     .selectFrom('ludy_kernel.meeting_platform_recording as r')
     .innerJoin('ludy_kernel.meeting_platform_connection as c', (join) => join.onRef('c.org_id', '=', 'r.org_id').onRef('c.id', '=', 'r.connection_id'))
-    .select(['r.status', 'r.title', 'r.started_at', 'r.meeting_id', 'r.has_audio', 'r.has_video', 'r.has_transcript', 'r.connection_id', 'r.external_id', 'c.provider'])
+    .select(['r.status', 'r.title', 'r.started_at', 'r.meeting_id', 'r.has_audio', 'r.has_video', 'r.has_transcript', 'c.provider'])
     .where('r.org_id', '=', orgId)
     .where('r.id', '=', recordingId)
     .where('r.user_id', '=', userId)
     .executeTakeFirst();
-}
-
-// The member's recordings of one connection with these keys (the rows of one pair). The pair is serialized first by a transaction advisory lock on its base key (the tenant role may not lock rows it cannot
-// update): a second start of the pair waits for the first's commit, and its read then sees the first's status.
-async function readPair(trx: Trx, orgId: string, userId: string, connectionId: string, base: string, keys: string[]) {
-  await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`meetings.import.pair:${orgId}:${connectionId}:${base}`}, 0))`.execute(trx);
-  return trx
-    .selectFrom('ludy_kernel.meeting_platform_recording as r')
-    .select(['r.id', 'r.status'])
-    .where('r.org_id', '=', orgId)
-    .where('r.connection_id', '=', connectionId)
-    .where('r.user_id', '=', userId)
-    .where('r.external_id', 'in', keys)
-    .execute();
 }
 
 // Whether a meeting is the importer's own, unedited and holds nothing yet: the empty meeting a failed try left behind. Read as the importer, so row security shows what they may see of it (they
@@ -126,14 +117,8 @@ export const meetingImportStart = defineCommand({
     if (recording.status !== 'suggested' && recording.status !== 'failed') {
       throw new DomainError('MEETING_PLATFORM_STATE', 409, 'Bản ghi này đã được nhập hoặc đang được nhập');
     }
-    // One meeting offered as two suggestions (a video and a transcript, ADR-0055): once one is on its way or done, the other is refused, so one member's two entries of a call do not both become meetings. This is a check in this command, not a guard in the database function that begins the row (a later step moves it there); two members importing the same call each get their own meeting, as before. The pair is serialized by an advisory lock
-    // first, so a double click on the two buttons has one winner: the second start waits, then sees the first's status.
-    const [keyA, keyB] = platformPairKeys(recording.external_id);
-    const pair = await readPair(ctx.trx, ctx.orgId, userId, recording.connection_id, keyA, [keyA, keyB]);
-    // Only a sibling that is merely suggested, failed or skipped leaves this row free: any other status (importing, staged, claimed while its bytes are taken, imported) means the call is taken.
-    if (pair.some((row) => row.id !== input.recordingId && row.status !== 'suggested' && row.status !== 'failed' && row.status !== 'dismissed')) {
-      throw new DomainError('MEETING_PLATFORM_PAIR_TAKEN', 409, 'Cuộc họp này đã được nhập (hoặc đang được nhập) từ mục còn lại của nó, nên không nhập thêm lần nữa');
-    }
+    // One meeting offered as two suggestions (a video and a transcript, ADR-0055): once one is on its way or done, the other is refused with MEETING_PLATFORM_PAIR_TAKEN. The database function that begins the row
+    // below takes the pair's lock and makes that check (#4943), so it holds for every caller; two members importing the same call each get their own meeting, as before.
     // No audio file, no way to take the audio out of a video file and no transcript the platform's provider can hand over (C2, #3174: a recording with only a transcript): refused here, before a meeting is made for it.
     const transcriptOnly = !recording.has_audio && !recording.has_video && recording.has_transcript && hasTranscriptPath(recording.provider);
     if (!recording.has_audio && !(recording.has_video && videoImportOn) && !transcriptOnly) throw new DomainError('MEETING_PLATFORM_NO_AUDIO', 422, 'Nền tảng không có tệp âm thanh hay video cho bản ghi này');

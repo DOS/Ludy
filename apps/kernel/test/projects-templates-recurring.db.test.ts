@@ -17,10 +17,13 @@ import type {
   PersonalDataErasure,
   PersonalDataResult,
   ProjectBoard,
+  ProjectColumnInitDefaultsResult,
   ProjectCreateFromTemplateResult,
   ProjectListResult,
+  ProjectTaskMoveColumnResult,
   ProjectTaskRecurrenceView,
   ProjectTemplateListResult,
+  ProjectWeeklyStatus,
 } from '@ludy/kernel-contract';
 import { Runtime, type AgentActor, type BlobStore, sha256Hex } from '@ludy/kernel-runtime';
 import { financeCommands } from '@ludy/mod-finance';
@@ -194,7 +197,15 @@ suite('projects templates & recurring tasks on PostgreSQL (#2607)', () => {
     const tplRes = await rpc('projects/listTemplates', owner, { language: 'vi' }, org.slug);
     expect(tplRes.status).toBe(200);
     const listed = tplRes.body as unknown as ProjectTemplateListResult;
-    expect(listed.templates.filter((t) => t.source === 'builtin')).toHaveLength(3);
+    const builtins = listed.templates.filter((t) => t.source === 'builtin');
+    expect(builtins).toHaveLength(5);
+    expect(builtins.map((t) => t.builtinKey)).toEqual([
+      'software-project',
+      'marketing-project',
+      'monthly-close',
+      'client-onboarding',
+      'campaign-launch',
+    ]);
     expect(listed.canWrite).toBe(true);
 
     const createdRes = await rpc(
@@ -216,10 +227,160 @@ suite('projects templates & recurring tasks on PostgreSQL (#2607)', () => {
 
     const board = await query<ProjectBoard>(owner.userId, org.orgId, 'projects.board', { projectId: created.projectId });
     expect(board.project.name).toBe('Khóa sổ T12/2026');
+    expect(board.columns).toEqual([]);
     expect(board.tasks).toHaveLength(5);
+    expect(board.tasks.every((t) => t.columnId === null)).toBe(true);
     // monthly-close offsets: +1, +3, +4, +5, +7 from 2026-12-01 (Asia/Ho_Chi_Minh -> 2026-12-02 23:59+07:00 = 2026-12-02T16:59:00Z).
     expect(board.tasks[0]?.due).toBe('2026-12-02T16:59:00.000Z');
     expect(board.tasks[4]?.due).toBe('2026-12-08T16:59:00.000Z');
+  });
+
+  it('creates software-project with #2605 custom columns and marketing-project with zero-setup defaults (AI off)', async () => {
+    const owner = await newPerson('sw-mkt-owner');
+    const otherMember = await newPerson('sw-mkt-other');
+    const org = await createOrg(rt, asUser(owner.userId), 'Công ty Phần mềm & Marketing');
+    const inv = await rt.execute<{ acceptPath: string }>(
+      'kernel.member.invite.create',
+      { email: otherMember.email, role: 'member' },
+      { actor: asMfa(owner.userId), orgId: org.orgId, idempotencyKey: randomUUID() },
+    );
+    await rt.executeOrgless(
+      'kernel.member.invite.accept',
+      { token: inv.acceptPath.split('#')[1] },
+      { actor: asUser(otherMember.userId) },
+    );
+
+    // 1) Software project in Vietnamese seeds 5 custom columns compatible with #2605 and assigns tasks to Backlog.
+    const swRes = await rpc(
+      'projects/createFromTemplate',
+      owner,
+      {
+        builtinKey: 'software-project',
+        startDate: '2026-12-01',
+        timeZone: 'Asia/Ho_Chi_Minh',
+        language: 'vi',
+        idempotencyKey: randomUUID(),
+      },
+      org.slug,
+    );
+    expect(swRes.status).toBe(200);
+    const swCreated = swRes.body as unknown as ProjectCreateFromTemplateResult;
+    expect(swCreated.taskIds).toHaveLength(5);
+
+    const swBoard = await query<ProjectBoard>(owner.userId, org.orgId, 'projects.board', { projectId: swCreated.projectId });
+    expect(swBoard.project.name).toBe('Dự án phần mềm');
+    expect(swBoard.columns?.map((c) => c.taskStatus)).toEqual(['todo', 'in_progress', 'waiting', 'in_review', 'done']);
+    expect(swBoard.columns?.map((c) => c.name)).toEqual([
+      'Cần làm (Backlog)',
+      'Đang phát triển',
+      'Đang chờ / Bị chặn',
+      'Kiểm thử / Review',
+      'Đã xong',
+    ]);
+    const swTodoCol = swBoard.columns?.[0];
+    const swReviewCol = swBoard.columns?.[3];
+    expect(swTodoCol).toBeDefined();
+    expect(swReviewCol).toBeDefined();
+    expect(swBoard.tasks).toHaveLength(5);
+    expect(swBoard.tasks.every((t) => t.columnId === swTodoCol?.id)).toBe(true);
+    await withAdmin(async (c) => {
+      const ptRows = await c.query<{ task_id: string; column_id: string | null }>(
+        'SELECT task_id, column_id FROM ludy_projects.project_task WHERE org_id = $1 AND project_id = $2',
+        [org.orgId, swCreated.projectId],
+      );
+      expect(ptRows.rows).toHaveLength(5);
+      expect(ptRows.rows.every((r) => r.column_id === swTodoCol?.id)).toBe(true);
+    });
+    expect(swBoard.tasks[0]?.due).toBe('2026-12-02T16:59:00.000Z');
+    expect(swBoard.tasks[4]?.due).toBe('2026-12-11T16:59:00.000Z');
+
+    // #2605 init_defaults is idempotent on software-project and move_column updates both columnId and task status.
+    const initAgain = await exec<ProjectColumnInitDefaultsResult>(owner.userId, org.orgId, 'projects.column.init_defaults', {
+      projectId: swCreated.projectId,
+      language: 'vi',
+    });
+    expect(initAgain.initialized).toBe(false);
+    expect(initAgain.columns).toHaveLength(5);
+
+    const moved = await exec<ProjectTaskMoveColumnResult>(owner.userId, org.orgId, 'projects.task.move_column', {
+      projectId: swCreated.projectId,
+      taskId: swCreated.taskIds[0]!,
+      columnId: swReviewCol!.id,
+    });
+    expect(moved.status).toBe('in_review');
+    expect(moved.columnId).toBe(swReviewCol!.id);
+
+    // AI off weekly status remains deterministic with all 5 custom columns included.
+    const swWeeklyRes = await rpc('projects/weeklyStatus', owner, { projectId: swCreated.projectId, language: 'vi' }, org.slug);
+    expect(swWeeklyRes.status).toBe(200);
+    const swWeekly = swWeeklyRes.body as unknown as ProjectWeeklyStatus;
+    expect(swWeekly.ai).toBe('off');
+    expect(swWeekly.counts.totalVisible).toBe(5);
+    expect(swWeekly.columns).toHaveLength(5);
+    expect(swWeekly.columns?.find((c) => c.id === swReviewCol!.id)?.taskCount).toBe(1);
+    expect(swWeekly.columns?.find((c) => c.id === swTodoCol!.id)?.taskCount).toBe(4);
+
+    // 2) Software project in English localizes both tasks and default columns.
+    const swEnCreated = await exec<ProjectCreateFromTemplateResult>(owner.userId, org.orgId, 'projects.project.create_from_template', {
+      builtinKey: 'software-project',
+      startDate: '2026-12-01',
+      timeZone: 'Asia/Ho_Chi_Minh',
+      language: 'en',
+    });
+    const swEnBoard = await query<ProjectBoard>(owner.userId, org.orgId, 'projects.board', { projectId: swEnCreated.projectId });
+    expect(swEnBoard.project.name).toBe('Software project');
+    expect(swEnBoard.columns?.map((c) => c.name)).toEqual([
+      'Backlog',
+      'In progress',
+      'Blocked / Waiting',
+      'QA / In review',
+      'Done',
+    ]);
+
+    // 3) Marketing project in English creates 5 tasks with zero-setup canonical columns and supports opt-in #2605 init_defaults.
+    const mktRes = await rpc(
+      'projects/createFromTemplate',
+      owner,
+      {
+        builtinKey: 'marketing-project',
+        startDate: '2026-12-01',
+        timeZone: 'Asia/Ho_Chi_Minh',
+        language: 'en',
+        idempotencyKey: randomUUID(),
+      },
+      org.slug,
+    );
+    expect(mktRes.status).toBe(200);
+    const mktCreated = mktRes.body as unknown as ProjectCreateFromTemplateResult;
+    expect(mktCreated.taskIds).toHaveLength(5);
+
+    const mktBoard = await query<ProjectBoard>(owner.userId, org.orgId, 'projects.board', { projectId: mktCreated.projectId });
+    expect(mktBoard.project.name).toBe('Marketing project');
+    expect(mktBoard.columns).toEqual([]);
+    expect(mktBoard.tasks).toHaveLength(5);
+    expect(mktBoard.tasks.every((t) => t.columnId === null)).toBe(true);
+    expect(mktBoard.tasks[0]?.due).toBe('2026-12-02T16:59:00.000Z');
+    expect(mktBoard.tasks[4]?.due).toBe('2026-12-15T16:59:00.000Z');
+
+    const mktInit = await exec<ProjectColumnInitDefaultsResult>(owner.userId, org.orgId, 'projects.column.init_defaults', {
+      projectId: mktCreated.projectId,
+      language: 'en',
+    });
+    expect(mktInit.initialized).toBe(true);
+    expect(mktInit.columns).toHaveLength(5);
+
+    // 4) Private software-project creates 5 columns under project_visibility RLS and stays hidden from non-members.
+    const privateSw = await exec<ProjectCreateFromTemplateResult>(owner.userId, org.orgId, 'projects.project.create_from_template', {
+      builtinKey: 'software-project',
+      visibility: 'private',
+      language: 'vi',
+    });
+    const privateBoard = await query<ProjectBoard>(owner.userId, org.orgId, 'projects.board', { projectId: privateSw.projectId });
+    expect(privateBoard.project.visibility).toBe('private');
+    expect(privateBoard.columns).toHaveLength(5);
+    await expect(
+      query(otherMember.userId, org.orgId, 'projects.board', { projectId: privateSw.projectId }),
+    ).rejects.toMatchObject({ code: 'PROJECT_NOT_FOUND' });
   });
 
   it('saves custom templates scoped by caller le_scope, enforces archive & 50-task limit, and isolates is_template rows', async () => {

@@ -38,8 +38,14 @@ vi.mock('../src/lib/api.ts', async () => {
 import type { PublicSignViewState, SignEnvelopeDocumentSummary } from '../src/lib/sign-api.ts';
 
 const { SignPacketTabs } = await import('../src/components/sign/sign-packet-tabs.tsx');
-const { SignPacketManager } = await import('../src/components/sign/sign-packet-manager.tsx');
-const { planCachedDocumentSelect, SignCeremonyReadyView } = await import('../src/routes/sign-ceremony.tsx');
+const { SignPacketManager, executePacketConsistencyCheck } = await import('../src/components/sign/sign-packet-manager.tsx');
+const {
+  jumpToCounterpartySummaryPage,
+  planCachedDocumentSelect,
+  runCeremonyDocumentSelect,
+  SignCeremonyReadyView,
+} = await import('../src/routes/sign-ceremony.tsx');
+const { resolvePrimaryEnvelopeSource } = await import('../src/routes/sign-envelope-detail.tsx');
 const { checkSendReadiness } = await import('../src/lib/sign-fields.ts');
 const { publicSignApi } = await import('../src/lib/sign-api.ts');
 
@@ -469,5 +475,251 @@ describe('Multi-document signing packet frontend (#4722)', () => {
         pdfRendered: true,
       }),
     ).toEqual({ action: 'fetch', targetPage: 2 });
+  });
+
+  it('links SignPacketTabs aria-controls with PdfCanvasViewer role=tabpanel aria-labelledby and scopes summary pageCount to Doc 1 (#4837 items 4, 5)', () => {
+    const viewState: Extract<PublicSignViewState, { state: 'ready' }> = {
+      state: 'ready',
+      orgName: 'Cong ty TNHH ABC',
+      title: 'Bo hop dong hai tai lieu',
+      message: null,
+      signerName: 'Nguyen Van A',
+      roleLabel: 'Ben A',
+      signerRole: 'signer',
+      expiresAt: '2026-12-30T00:00:00Z',
+      pageCount: 4,
+      pageDimensions: [{ pageNumber: 1, widthPt: 595, heightPt: 842 }],
+      otpVerified: true,
+      sharedSummary: {
+        summaryText: 'Tom tat dieu khoan tren Doc 1 trang 3.',
+        keyTerms: [{ label: 'Gia tri', value: '100tr', pageNumber: 3, quoteExcerpt: null }],
+      },
+      documents: [
+        {
+          id: DOC_1_ID,
+          docIndex: 1,
+          title: 'Hop dong chinh',
+          pageCount: 3,
+          pageDimensions: [],
+          sourceSha256: 'a'.repeat(64),
+        },
+        {
+          id: DOC_2_ID,
+          docIndex: 2,
+          title: 'Phu luc 01',
+          pageCount: 1,
+          pageDimensions: [],
+          sourceSha256: 'b'.repeat(64),
+        },
+      ],
+      fields: [],
+    };
+
+    // Viewing Doc 2 (pageCount = 1), Doc 1 summary still keeps page 3 link active and switches to Doc 1.
+    const htmlOnDoc2 = renderVi(
+      <SignCeremonyReadyView
+        viewState={viewState}
+        answers={{}}
+        activeDocumentKey={DOC_2_ID}
+        pdfBytes={null}
+        loadingPdf={false}
+        pdfError={null}
+        viewerRenderError={null}
+        pageNumber={1}
+        scale={1}
+        consentChecked={false}
+        canSubmit={false}
+        submitting={false}
+        submitError={null}
+        declineOpen={false}
+        declineReason=""
+        declining={false}
+        declineError={null}
+        padFieldId={null}
+        onPageChange={vi.fn()}
+        onScaleChange={vi.fn()}
+        onRenderStatusChange={vi.fn()}
+        onJumpToNext={vi.fn()}
+        onOpenPad={vi.fn()}
+        onUpdateAnswer={vi.fn()}
+        onConsentChange={vi.fn()}
+        onSubmit={vi.fn()}
+        onDeclineOpenChange={vi.fn()}
+        onDeclineReasonChange={vi.fn()}
+        onDeclineSubmit={vi.fn()}
+      />,
+    );
+
+    expect(htmlOnDoc2).toContain('role="tabpanel"');
+    const controlsMatch = htmlOnDoc2.match(/aria-controls="([^"]+)"/);
+    expect(controlsMatch?.[1]).toBeTruthy();
+    const panelId = controlsMatch![1]!;
+    expect(htmlOnDoc2).toContain(`id="${panelId}"`);
+    const doc2TabId = panelId.replace(/-packet-panel$/, `-packet-panel-tab-${DOC_2_ID}`);
+    expect(htmlOnDoc2).toContain(`id="${doc2TabId}"`);
+    expect(htmlOnDoc2).toContain(`aria-labelledby="${doc2TabId}"`);
+    // Doc 1 has 3 pages even though active Doc 2 has 1 page -> "Trang 3" remains rendered as a jump link.
+    expect(htmlOnDoc2).toContain('Trang 3');
+
+    const jumped: Array<[string, number | undefined]> = [];
+    jumpToCounterpartySummaryPage((docKey, page) => {
+      jumped.push([docKey, page]);
+    }, DOC_1_ID, 3);
+    expect(jumped).toEqual([[DOC_1_ID, 3]]);
+  });
+
+  it('flushes onBeforeMutatePacket before running Vy cross-doc consistency check (#4837 item 3)', async () => {
+    const order: string[] = [];
+    let checkedDocs = 0;
+    const result = await executePacketConsistencyCheck({
+      envelopeId: '01900000-0000-7000-8000-000000000099',
+      documents: [{ id: DOC_1_ID, fileId: '01900000-0000-7000-8000-000000000010', inspectStatus: 'passed' }],
+      onBeforeCheck: async () => {
+        await Promise.resolve();
+        order.push('flush');
+      },
+      downloadBytes: async () => {
+        order.push('download');
+        return new Uint8Array([1, 2, 3]);
+      },
+      extractPages: async () => [{ page: 1, text: 'Noi dung' }],
+      checkConsistency: async (input) => {
+        order.push('check');
+        checkedDocs = input.documents?.length ?? 0;
+        return {
+          envelopeId: input.envelopeId,
+          ai: 'used',
+          summaryText: 'Checked',
+          findings: [],
+        };
+      },
+    });
+    expect(order).toEqual(['flush', 'download', 'check']);
+    expect(checkedDocs).toBe(1);
+    expect(result.summaryText).toBe('Checked');
+  });
+
+  it('clears loadingPdf and invalidates stale in-flight fetch when switching back to cached tab (#4837 item 6)', async () => {
+    const doc1Bytes = new Uint8Array([1, 2, 3]);
+    const doc2Bytes = new Uint8Array([4, 5, 6]);
+    let gen = 1;
+    let loadingPdf = false;
+    let activeDocKey = DOC_1_ID;
+    let currentBytes: Uint8Array | null = doc1Bytes;
+    let pdfRendered = true;
+    let pageNumber = 1;
+
+    let resolveDoc2!: (bytes: Uint8Array) => void;
+    const doc2Promise = new Promise<Uint8Array>((resolve) => {
+      resolveDoc2 = resolve;
+    });
+
+    // 1. Start fetching uncached Doc 2.
+    const inFlightDoc2 = runCeremonyDocumentSelect({
+      docKey: DOC_2_ID,
+      nextPage: 1,
+      currentPageNumber: pageNumber,
+      pdfBytes: currentBytes,
+      cachedPdfBytes: undefined,
+      pdfRendered,
+      bumpGen: () => (gen += 1),
+      getGen: () => gen,
+      setLoadingPdf: (v) => {
+        loadingPdf = v;
+      },
+      setActiveDocKey: (k) => {
+        activeDocKey = k;
+      },
+      setPageNumber: (p) => {
+        pageNumber = p;
+      },
+      clearErrors: () => {},
+      setPdfRendered: (r) => {
+        pdfRendered = r;
+      },
+      setPdfBytes: (b) => {
+        currentBytes = b;
+      },
+      fetchPdfBytes: () => doc2Promise,
+      onFetched: () => {},
+      onFetchError: () => {},
+    });
+    expect(loadingPdf).toBe(true);
+    expect(activeDocKey).toBe(DOC_2_ID);
+
+    // 2. User immediately switches back to cached Doc 1 while Doc 2 fetch is still pending.
+    await runCeremonyDocumentSelect({
+      docKey: DOC_1_ID,
+      nextPage: 1,
+      currentPageNumber: pageNumber,
+      pdfBytes: currentBytes,
+      cachedPdfBytes: doc1Bytes,
+      pdfRendered,
+      bumpGen: () => (gen += 1),
+      getGen: () => gen,
+      setLoadingPdf: (v) => {
+        loadingPdf = v;
+      },
+      setActiveDocKey: (k) => {
+        activeDocKey = k;
+      },
+      setPageNumber: (p) => {
+        pageNumber = p;
+      },
+      clearErrors: () => {},
+      setPdfRendered: (r) => {
+        pdfRendered = r;
+      },
+      setPdfBytes: (b) => {
+        currentBytes = b;
+      },
+      fetchPdfBytes: async () => doc1Bytes,
+      onFetched: () => {},
+      onFetchError: () => {},
+    });
+    expect(loadingPdf).toBe(false);
+    expect(activeDocKey).toBe(DOC_1_ID);
+    expect(currentBytes).toBe(doc1Bytes);
+
+    // 3. Stale Doc 2 response arrives later and must NOT overwrite Doc 1 bytes or toggle loadingPdf.
+    resolveDoc2(doc2Bytes);
+    await inFlightDoc2;
+    expect(loadingPdf).toBe(false);
+    expect(activeDocKey).toBe(DOC_1_ID);
+    expect(currentBytes).toBe(doc1Bytes);
+  });
+
+  it('resolves live Doc 1 source file and bytes safely for obligations/playbook/evidence after draft Doc 1 removal (#4837 item 2)', () => {
+    const doc1Bytes = new Uint8Array([9, 8, 7]);
+    const doc2Bytes = new Uint8Array([4, 5, 6]);
+    const staleOriginEnvelope = {
+      sourceFileId: '01900000-0000-7000-8000-000000000090',
+      sourceSha256: 'a'.repeat(64),
+      sealedFileId: null as string | null,
+    };
+    const docsAfterRemoval = [
+      { fileId: '01900000-0000-7000-8000-000000000091', sourceSha256: 'b'.repeat(64), docIndex: 1 },
+      { fileId: '01900000-0000-7000-8000-000000000092', sourceSha256: 'c'.repeat(64), docIndex: 2 },
+    ];
+
+    const onDoc1 = resolvePrimaryEnvelopeSource(staleOriginEnvelope, docsAfterRemoval, { docIndex: 1 }, doc1Bytes);
+    expect(onDoc1.sourceFileId).toBe('01900000-0000-7000-8000-000000000091');
+    expect(onDoc1.sourceSha256).toBe('b'.repeat(64));
+    expect(onDoc1.reusableDoc1Bytes).toBe(doc1Bytes);
+
+    // Viewing Doc 2 must never pass Doc 2 PDF bytes to Doc 1 obligations/playbook fallback.
+    const onDoc2 = resolvePrimaryEnvelopeSource(staleOriginEnvelope, docsAfterRemoval, { docIndex: 2 }, doc2Bytes);
+    expect(onDoc2.sourceFileId).toBe('01900000-0000-7000-8000-000000000091');
+    expect(onDoc2.reusableDoc1Bytes).toBeNull();
+
+    // Sealed unified packet must not pass the merged+certificate PDF as Doc 1 original bytes.
+    const sealed = resolvePrimaryEnvelopeSource(
+      { ...staleOriginEnvelope, sealedFileId: '01900000-0000-7000-8000-000000000099' },
+      docsAfterRemoval,
+      { docIndex: 1 },
+      doc1Bytes,
+    );
+    expect(sealed.sourceFileId).toBe('01900000-0000-7000-8000-000000000091');
+    expect(sealed.reusableDoc1Bytes).toBeNull();
   });
 });

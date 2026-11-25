@@ -16,6 +16,7 @@ import { ErrorText } from './ui.tsx';
 import { clock } from './meeting-transcript.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc } from '../lib/api.ts';
+import { hasLabel } from '../lib/meetings-list.ts';
 import { markMatches } from '../lib/search-fold.ts';
 
 export const SEARCH_PAGE = 20;
@@ -81,7 +82,7 @@ export function SearchResults({ slug, result, typed, page, onPage }: { slug: str
   );
 }
 
-export function MeetingSearch({ slug }: { slug: string }) {
+export function MeetingSearch({ slug, label = '', labelsByMeeting }: { slug: string; label?: string; labelsByMeeting?: ReadonlyMap<string, readonly string[]> }) {
   const t = useTranslations('meetings.contentSearch');
   const [text, setText] = useState('');
   const [asked, setAsked] = useState<{ q: string; offset: number } | null>(null);
@@ -109,7 +110,9 @@ export function MeetingSearch({ slug }: { slug: string }) {
     setText('');
     setTooShort(false);
   };
-  const result = asked ? query.data : undefined;
+  // A label chosen in the list's filter keeps the hits of the meetings that carry it (#4955), from the labels the list already read; a page may then hold fewer hits, and "next" still pages the search.
+  const answered = asked ? query.data : undefined;
+  const result = answered && label !== '' && labelsByMeeting ? { ...answered, hits: answered.hits.filter((h) => hasLabel(labelsByMeeting, h.meetingId, label)) } : answered;
   const page = asked ? Math.floor(asked.offset / SEARCH_PAGE) + 1 : 1;
 
   return (

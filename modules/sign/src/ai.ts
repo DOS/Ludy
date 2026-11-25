@@ -22,6 +22,7 @@ import { z } from 'zod';
 import { assertCanAccessEnvelopeRow } from './hr-visibility.ts';
 import { assertCanAccessMeetingMinutesEnvelopeRow, assertCanActOnMeetingMinutesEnvelope } from './meeting-visibility.ts';
 import { signManifest } from './manifest.ts';
+import { resolvePrimaryEnvelopeDocMeta } from './shared.ts';
 
 const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 const READERS: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -1347,13 +1348,14 @@ async function recordAiAnalysisRow(
   if (options.requireDraft && env.status !== 'draft') {
     throw new DomainError('SIGN_ENVELOPE_NOT_DRAFT', 409, 'AI field proposals can only be saved for draft envelopes');
   }
-  if (env.source_sha256 !== input.sourceSha256) {
+  const primary = await resolvePrimaryEnvelopeDocMeta(ctx.trx, ctx.orgId, env);
+  if (primary.sourceSha256 !== input.sourceSha256) {
     throw new DomainError('SIGN_VERSION_CONFLICT', 409, 'Envelope document changed before AI analysis was saved');
   }
   if (input.expectedVersion !== undefined && env.version !== input.expectedVersion) {
     throw new DomainError('SIGN_VERSION_CONFLICT', 409, 'Envelope signers or layout changed before AI analysis was saved');
   }
-  if (input.status === 'completed' && env.inspect_status !== 'passed') {
+  if (input.status === 'completed' && primary.inspectStatus !== 'passed') {
     throw new DomainError('SIGN_DOCUMENT_NOT_INSPECTED', 409, 'PDF inspection must pass before storing completed AI proposals');
   }
   if (input.status !== 'failed' && (await isSignAiStoppedOnTrx(ctx.trx, ctx.orgId))) {
@@ -1363,7 +1365,7 @@ async function recordAiAnalysisRow(
     (p) =>
       Number.isInteger(p.page) &&
       p.page >= 1 &&
-      (env.page_count ?? 0) >= p.page &&
+      (primary.pageCount ?? 0) >= p.page &&
       stripFormatControl(p.text).trim().length > 0,
   );
   if (
@@ -1392,7 +1394,7 @@ async function recordAiAnalysisRow(
   const sanitized =
     input.status === 'completed'
       ? sanitizeSignAiProposals({
-          pageCount: env.page_count,
+          pageCount: primary.pageCount,
           signers,
           proposedFields: input.proposedFields,
           riskClauses: input.riskClauses,
@@ -1420,7 +1422,7 @@ async function recordAiAnalysisRow(
     .values({
       org_id: ctx.orgId,
       envelope_id: env.id,
-      source_sha256: env.source_sha256,
+      source_sha256: primary.sourceSha256,
       status: input.status,
       proposed_fields_json: JSON.stringify(sanitized.proposedFields),
       risk_clauses_json: JSON.stringify(sanitized.riskClauses),
@@ -1568,7 +1570,7 @@ export const aiAnalysisGet = defineQuery({
   handler: async (ctx, input): Promise<SignAiAnalysisRecord | null> => {
     const env = await ctx.trx
       .selectFrom('ludy_sign.envelope')
-      .select(['id', 'status', 'source_kind', 'source_id', 'created_by', 'retained_org_visible', 'retained_reader_ids', 'source_sha256'])
+      .select(['id', 'status', 'source_kind', 'source_id', 'created_by', 'retained_org_visible', 'retained_reader_ids', 'source_sha256', 'page_count'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.envelopeId)
       .executeTakeFirst();
@@ -1578,13 +1580,16 @@ export const aiAnalysisGet = defineQuery({
     assertCanAccessEnvelopeRow(ctx, env, 'Signing envelope not found');
     await assertCanAccessMeetingMinutesEnvelopeRow(ctx, env, 'Signing envelope not found');
 
-    const activeSigners = await ctx.trx
-      .selectFrom('ludy_sign.signer')
-      .select(['id'])
-      .where('org_id', '=', ctx.orgId)
-      .where('envelope_id', '=', env.id)
-      .where('signer_role', '!=', 'cc')
-      .execute();
+    const [primary, activeSigners] = await Promise.all([
+      resolvePrimaryEnvelopeDocMeta(ctx.trx, ctx.orgId, env),
+      ctx.trx
+        .selectFrom('ludy_sign.signer')
+        .select(['id'])
+        .where('org_id', '=', ctx.orgId)
+        .where('envelope_id', '=', env.id)
+        .where('signer_role', '!=', 'cc')
+        .execute(),
+    ]);
     const activeSignerIds = new Set(activeSigners.map((s) => s.id));
 
     const completed = await ctx.trx
@@ -1592,7 +1597,7 @@ export const aiAnalysisGet = defineQuery({
       .selectAll()
       .where('org_id', '=', ctx.orgId)
       .where('envelope_id', '=', env.id)
-      .where('source_sha256', '=', env.source_sha256)
+      .where('source_sha256', '=', primary.sourceSha256)
       .where('status', '=', 'completed')
       .orderBy('created_at', 'desc')
       .orderBy('id', 'desc')
@@ -1606,7 +1611,7 @@ export const aiAnalysisGet = defineQuery({
       .selectAll()
       .where('org_id', '=', ctx.orgId)
       .where('envelope_id', '=', env.id)
-      .where('source_sha256', '=', env.source_sha256)
+      .where('source_sha256', '=', primary.sourceSha256)
       .orderBy('created_at', 'desc')
       .orderBy('id', 'desc')
       .executeTakeFirst();

@@ -24,7 +24,7 @@ import { bankImport, bankIngest, bankLines, bankPlatformLines, bankPreview } fro
 import { bankAccountNumberCommands, bankAccountNumberQueries } from './bank-account-number.ts';
 import { bankFeedCommands, bankFeedQueries } from './bank-feed.ts';
 import { bankStatementConfirm, bankStatementLines, bankStatementReject, bankStatementStage } from './bank-statement-file.ts';
-import { bankLineVoucher, bankOpenLines, bankPayrollMatch, bankSignDepositMatch, bankSuggestions } from './bank-match.ts';
+import { bankLineVoucher, bankOpenLines, bankPayrollMatch, bankSignDepositMatch, bankSignDepositMatches, bankSuggestions } from './bank-match.ts';
 import { bankGroupQueries } from './bank-groups.ts';
 import { bankPartyRuleCommands, bankPartyRuleQueries } from './bank-rules.ts';
 import { financeToday } from './today.ts';
@@ -355,6 +355,7 @@ export const financeQueries = [
   bankSuggestions,
   bankPayrollMatch,
   bankSignDepositMatch,
+  bankSignDepositMatches,
   bankOpenLines,
   ...bankGroupQueries,
   ...bankPartyRuleQueries,

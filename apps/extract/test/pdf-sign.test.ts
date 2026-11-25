@@ -7563,6 +7563,84 @@ describe('pdf_seal', () => {
       new Uint8Array(Buffer.from(baseStr.replace('/Type /XRef', '/Type /XRe#66'), 'latin1')),
     );
   });
+
+  it('maps per-part partIsolated pages into isolatedPages before stampFields in multi-doc packets', async () => {
+    const { createHash } = await import('node:crypto');
+
+    const doc1 = await PDFDocument.create();
+    doc1.addPage([595.28, 841.89]);
+    const doc1Bytes = await doc1.save();
+
+    const doc2 = await PDFDocument.create();
+    const doc2Page = doc2.addPage([595.28, 841.89]);
+    doc2Page.drawText('Existing doc2 body', { x: 40, y: 780, size: 12 });
+    const apStream = doc2.context.stream('q 0.9 0.9 0.9 rg 0 0 100 40 re f Q', {
+      Type: 'XObject',
+      Subtype: 'Form',
+      BBox: [0, 0, 100, 40],
+    });
+    const apRef = doc2.context.register(apStream);
+    const annotRef = doc2.context.register(
+      doc2.context.obj({
+        Type: 'Annot',
+        Subtype: 'Square',
+        Rect: [40, 620, 140, 660],
+        AP: { N: apRef },
+      }),
+    );
+    doc2Page.node.set(PDFName.of('Annots'), doc2.context.obj([annotRef]));
+    const doc2Bytes = await doc2.save();
+
+    const doc1Sha = createHash('sha256').update(doc1Bytes).digest('hex');
+    const doc2Sha = createHash('sha256').update(doc2Bytes).digest('hex');
+    const baseCert = makeCertificate();
+    const sealed = await parse(
+      'pdf_seal',
+      Buffer.from(
+        JSON.stringify({
+          documents: [
+            { title: 'Doc 1', pdfBase64: Buffer.from(doc1Bytes).toString('base64'), sourceSha256: doc1Sha },
+            { title: 'Doc 2', pdfBase64: Buffer.from(doc2Bytes).toString('base64'), sourceSha256: doc2Sha },
+          ],
+          fields: [
+            {
+              type: 'text',
+              page: 2,
+              xNorm: 0.1,
+              yNorm: 0.2,
+              wNorm: 0.4,
+              hNorm: 0.08,
+              text: 'Doc 2 field',
+            },
+          ],
+          certificate: { ...baseCert, sourceSha256: doc1Sha },
+        }),
+        'utf8',
+      ),
+    );
+    if (!sealed.ok || sealed.kind !== 'pdf_seal') {
+      throw new Error(`expected multi-doc seal to succeed, got: ${JSON.stringify(sealed)}`);
+    }
+
+    const sealedDoc = await PDFDocument.load(new Uint8Array(Buffer.from(sealed.sealedPdfBase64, 'base64')));
+    const page2 = sealedDoc.getPage(1);
+    const contents = page2.node.Contents();
+    if (!(contents instanceof PDFArray)) {
+      throw new Error('expected page 2 contents array');
+    }
+    const isolationEndMarkers: number[] = [];
+    for (let i = 0; i < contents.size(); i++) {
+      const streamObj = sealedDoc.context.lookup(contents.get(i));
+      if (streamObj instanceof PDFStream) {
+        const decoded = Buffer.from(decodePDFRawStream(streamObj as never).decode()).toString('latin1');
+        if (decoded === '\nn\nQ\n') {
+          isolationEndMarkers.push(i);
+        }
+      }
+    }
+    // Flattening isolated doc2 page 1 (packet page 2) once; stampFields must NOT wrap it a second time.
+    expect(isolationEndMarkers).toHaveLength(1);
+  });
 });
 
 function cbOcDocStream(doc: PDFDocument): PDFRef {

@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from 'vitest';
-import type { MeetingSummary } from '@ludy/kernel-contract';
+import type { MeetingListItem, MeetingSummary } from '@ludy/kernel-contract';
 import {
   EMPTY_MEETING_FILTER,
   countActiveMeetingFilters,
   filterAndSortMeetings,
   formatMeetingDuration,
   hasActiveMeetingFilter,
+  hasLabel,
+  labelChoicesOf,
+  labelsByMeetingOf,
 } from '../src/lib/meetings-list.ts';
 
 function meeting(over: Partial<MeetingSummary> = {}): MeetingSummary {
@@ -102,6 +105,41 @@ describe('meetings-list helpers (#4477)', () => {
     ]);
   });
 
+  it('filters by a label of the meeting, whatever the case, and keeps every meeting with no label chosen (#4955)', () => {
+    const labels = new Map<string, readonly string[]>([
+      ['00000000-0000-4000-8000-000000000001', ['Khách Hoa Sen', 'Họp tuần']],
+      ['00000000-0000-4000-8000-000000000003', ['khách hoa sen']],
+    ]);
+    const ids = (label: string) => filterAndSortMeetings(sample, { ...EMPTY_MEETING_FILTER, label }, 'started_desc', labels).map((m) => m.id);
+    expect(ids('KHÁCH HOA SEN').sort()).toEqual(['00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000003']);
+    expect(ids('Họp tuần')).toEqual(['00000000-0000-4000-8000-000000000001']);
+    expect(ids('Không có')).toEqual([]);
+    expect(ids('')).toHaveLength(sample.length);
+    // With no labels read yet, a chosen label shows nothing rather than every meeting.
+    expect(filterAndSortMeetings(sample, { ...EMPTY_MEETING_FILTER, label: 'Họp tuần' }, 'started_desc')).toEqual([]);
+    expect(hasLabel(labels, '00000000-0000-4000-8000-000000000003', 'Khách Hoa Sen')).toBe(true);
+    expect(hasLabel(labels, '00000000-0000-4000-8000-000000000002', 'Khách Hoa Sen')).toBe(false);
+  });
+
+  it('takes the labels and the label choices from the rows of the list, the same label whatever the case being one choice, the most used first (#4966)', () => {
+    const rows: MeetingListItem[] = [
+      { ...meeting({ id: '00000000-0000-4000-8000-000000000001' }), labels: ['Khách Hoa Sen', 'Họp tuần'] },
+      { ...meeting({ id: '00000000-0000-4000-8000-000000000002' }), labels: ['khách hoa sen'] },
+      { ...meeting({ id: '00000000-0000-4000-8000-000000000003' }), labels: [] },
+    ];
+    expect(labelsByMeetingOf(rows).get('00000000-0000-4000-8000-000000000002')).toEqual(['khách hoa sen']);
+    expect(labelsByMeetingOf(rows).get('00000000-0000-4000-8000-000000000003')).toEqual([]);
+    expect(labelChoicesOf(rows)).toEqual([
+      { label: 'Khách Hoa Sen', count: 2 },
+      { label: 'Họp tuần', count: 1 },
+    ]);
+    expect(labelChoicesOf([])).toEqual([]);
+    // The filter keeps the rows that carry the chosen label, and the rows keep their labels.
+    const kept = filterAndSortMeetings(rows, { ...EMPTY_MEETING_FILTER, label: 'KHÁCH HOA SEN' }, 'started_desc', labelsByMeetingOf(rows));
+    expect(kept.map((m) => m.id).sort()).toEqual(['00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000002']);
+    expect(kept.every((m) => Array.isArray(m.labels))).toBe(true);
+  });
+
   it('sorts across all 4 modes without mutating input', () => {
     const before = sample.map((m) => m.id);
     expect(filterAndSortMeetings(sample, EMPTY_MEETING_FILTER, 'started_desc').map((m) => m.id)).toEqual([
@@ -139,8 +177,10 @@ describe('meetings-list helpers (#4477)', () => {
         visibility: 'org',
         media: 'transcript',
         platform: 'meet',
+        label: '',
       }),
     ).toBe(4);
+    expect(countActiveMeetingFilters({ ...EMPTY_MEETING_FILTER, label: 'Khách Hoa Sen' })).toBe(1);
   });
 
   it('formats meeting duration across seconds, minutes, hours, and empty values', () => {
