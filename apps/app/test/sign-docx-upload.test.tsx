@@ -538,7 +538,21 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
     clearCreatedDocxWarnings(envDetailId, scopeUserA);
     expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual([]);
 
-    // If me.get was still pending when the envelope was created, resolveUserScope fetches user/org before persisting & navigating.
+    // If a persisted notice was dismissed while sessionStorage became temporarily inaccessible, re-enabling storage keeps it suppressed.
+    const transientStore = new Map<string, string>();
+    const workingStorage = {
+      getItem: (k: string) => transientStore.get(k) ?? null,
+      setItem: (k: string, v: string) => void transientStore.set(k, v),
+      removeItem: (k: string) => void transientStore.delete(k),
+    };
+    vi.stubGlobal('window', { location: { pathname: '/o/acme/sign/envelopes', hash: '' }, sessionStorage: workingStorage });
+    saveCreatedDocxWarnings(envDetailId, ['images_skipped'], scopeUserA);
+    vi.stubGlobal('window', { location: { pathname: '/o/acme/sign/envelopes', hash: '' } });
+    clearCreatedDocxWarnings(envDetailId, scopeUserA);
+    vi.stubGlobal('window', { location: { pathname: '/o/acme/sign/envelopes', hash: '' }, sessionStorage: workingStorage });
+    expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual([]);
+
+    // If me.get was still pending when the envelope was created, verified sessionId lets resolveUserScope fetch user/org before persisting & navigating.
     const resolveOrder: string[] = [];
     await handleEnvelopeCreatedWithWarnings({
       envelopeId: envDetailId,
@@ -546,6 +560,8 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
       slug: 'acme',
       orgId: null,
       userId: null,
+      sessionId: 'sess-a',
+      resolveCurrentSessionId: async () => 'sess-a',
       resolveUserScope: async () => {
         resolveOrder.push('resolve');
         return { orgId, userId: userAId };
@@ -559,6 +575,61 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
     });
     expect(resolveOrder).toEqual(['resolve', 'nav:ole_objects_skipped']);
     clearCreatedDocxWarnings(envDetailId, scopeUserA);
+
+    // Anonymous submit missing both userId and sessionId cannot attribute warnings to a post-login user returned by resolveUserScope.
+    setCreatedDocxNotice.mockClear();
+    const unverifiedNav = vi.fn(async () => {});
+    await handleEnvelopeCreatedWithWarnings({
+      envelopeId: envDetailId,
+      warnings: ['images_skipped'],
+      slug: 'acme',
+      orgId: null,
+      userId: null,
+      sessionId: null,
+      resolveUserScope: async () => ({ orgId, userId: userBId, sessionId: 'sess-b' }),
+      setCreateOpen,
+      setCreatedDocxNotice,
+      invalidateEnvelopes,
+      navigateToEnvelope: unverifiedNav,
+    });
+    expect(unverifiedNav).not.toHaveBeenCalled();
+    expect(readCreatedDocxWarnings(envDetailId, scopeUserB)).toEqual([]);
+    expect(setCreatedDocxNotice).toHaveBeenCalledWith({
+      envelopeId: envDetailId,
+      slug: 'acme',
+      orgId: null,
+      userId: null,
+      sessionId: null,
+      warnings: ['images_skipped'],
+    });
+
+    // When readCurrentSessionId transiently returns null after creation, still invalidate the list and keep the pending notice visible.
+    setCreatedDocxNotice.mockClear();
+    invalidateEnvelopes.mockClear();
+    await handleEnvelopeCreatedWithWarnings({
+      envelopeId: envDetailId,
+      warnings: ['images_skipped'],
+      slug: 'acme',
+      orgId,
+      userId: userAId,
+      sessionId: 'sess-a',
+      resolveCurrentSessionId: async () => null,
+      setCreateOpen,
+      setCreatedDocxNotice,
+      invalidateEnvelopes,
+      navigateToEnvelope: unverifiedNav,
+    });
+    expect(invalidateEnvelopes).toHaveBeenCalledTimes(1);
+    expect(unverifiedNav).not.toHaveBeenCalled();
+    expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual([]);
+    expect(setCreatedDocxNotice).toHaveBeenCalledWith({
+      envelopeId: envDetailId,
+      slug: 'acme',
+      orgId,
+      userId: userAId,
+      sessionId: 'sess-a',
+      warnings: ['images_skipped'],
+    });
 
     // If me.get is unavailable AND resolveUserScope fails, keep the notice on the list page instead of auto-navigating away from warnings.
     setCreatedDocxNotice.mockClear();

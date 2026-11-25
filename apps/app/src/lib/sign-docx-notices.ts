@@ -27,6 +27,7 @@ interface StoredDocxWarningNotice {
 
 const fallbackDocxNotices = new Map<string, StoredDocxWarningNotice>();
 const fallbackDismissedNotices = new Map<string, number>();
+const knownStorageNoticeKeys = new Set<string>();
 
 function normalizeScope(scope?: CreatedDocxWarningScope): NormalizedScope | null {
   const org = typeof scope?.org === 'string' ? scope.org.trim() : '';
@@ -120,7 +121,9 @@ function readRawStorageNotices(storage: Storage, now: number): StoredDocxWarning
       const warnings = sanitizeDocxWarnings(rec.warnings);
       if (warnings.length === 0) continue;
       const scope = { org: rec.org.trim(), userId: rec.userId.trim() };
-      byKey.set(noticeKey(rec.envelopeId, scope), {
+      const entryKey = noticeKey(rec.envelopeId, scope);
+      knownStorageNoticeKeys.add(entryKey);
+      byKey.set(entryKey, {
         envelopeId: rec.envelopeId,
         org: scope.org,
         userId: scope.userId,
@@ -159,6 +162,10 @@ function tryPersistDocxNotices(storage: Storage, entries: readonly StoredDocxWar
       storage.removeItem(ENVELOPE_DOCX_WARNINGS_STORAGE_KEY);
     } else {
       storage.setItem(ENVELOPE_DOCX_WARNINGS_STORAGE_KEY, JSON.stringify(bounded));
+    }
+    knownStorageNoticeKeys.clear();
+    for (const entry of bounded) {
+      knownStorageNoticeKeys.add(noticeKey(entry.envelopeId, entry));
     }
     return true;
   } catch {
@@ -232,7 +239,12 @@ export function clearCreatedDocxWarnings(
   const key = noticeKey(envelopeId, norm);
   fallbackDocxNotices.delete(key);
   const storage = getDocxNoticeStorage();
-  if (!storage) return;
+  if (!storage) {
+    if (knownStorageNoticeKeys.has(key)) {
+      markFallbackDismissed(key, now);
+    }
+    return;
+  }
 
   const remainingMerged = readStoredDocxNotices(now).filter((entry) => noticeKey(entry.envelopeId, entry) !== key);
   if (tryPersistDocxNotices(storage, remainingMerged)) {
@@ -253,6 +265,7 @@ export function clearCreatedDocxWarnings(
 export function clearAllCreatedDocxWarnings(): void {
   fallbackDocxNotices.clear();
   fallbackDismissedNotices.clear();
+  knownStorageNoticeKeys.clear();
   const storage = getDocxNoticeStorage();
   if (!storage) return;
   try {

@@ -136,6 +136,38 @@ export interface CreatedEnvelopeSubmitContext {
   reqId: number;
 }
 
+type LiveSessionState = 'match' | 'unverified' | 'mismatch' | 'aborted';
+
+async function checkLiveSessionState(deps: {
+  expectedSessionId?: string | null | undefined;
+  noticeHasUserId: boolean;
+  resolveCurrentSessionId?: (() => Promise<string | null>) | undefined;
+  isCurrentContext?: (() => boolean) | undefined;
+}): Promise<LiveSessionState> {
+  if (!deps.expectedSessionId) {
+    return 'match';
+  }
+  if (!deps.resolveCurrentSessionId) {
+    return deps.noticeHasUserId ? 'match' : 'unverified';
+  }
+  let liveSessionId: string | null;
+  try {
+    liveSessionId = await deps.resolveCurrentSessionId();
+  } catch {
+    return 'unverified';
+  }
+  if (deps.isCurrentContext && !deps.isCurrentContext()) {
+    return 'aborted';
+  }
+  if (!liveSessionId) {
+    return 'unverified';
+  }
+  if (liveSessionId !== deps.expectedSessionId) {
+    return 'mismatch';
+  }
+  return 'match';
+}
+
 export async function handleEnvelopeCreatedWithWarnings(deps: {
   envelopeId: string;
   warnings: readonly SignDocxToPdfWarning[];
@@ -158,28 +190,53 @@ export async function handleEnvelopeCreatedWithWarnings(deps: {
   const cleanWarnings = sanitizeDocxWarnings(deps.warnings);
   let resolvedOrgId = deps.orgId ?? null;
   let resolvedUserId = deps.userId ?? null;
-  let resolvedSessionId = deps.sessionId ?? null;
-  const hasActorProof = Boolean(resolvedUserId || resolvedSessionId);
+  // Identity proof comes strictly from the submit-time actor or session, never a post-fetch lookup alone.
+  const submitSessionId = deps.sessionId ?? null;
+  const hasSubmitActorProof = Boolean(deps.userId || submitSessionId);
 
-  const initialSessionOk = await verifyLiveSessionMatch({
-    expectedSessionId: resolvedSessionId,
-    noticeHasUserId: Boolean(resolvedUserId),
+  const showPendingOrNavigateClean = async (): Promise<void> => {
+    await deps.invalidateEnvelopes();
+    if (!isStillCurrent()) {
+      return;
+    }
+    deps.setCreatedDocxNotice(
+      cleanWarnings.length > 0
+        ? {
+            envelopeId: deps.envelopeId,
+            slug: deps.slug,
+            orgId: resolvedOrgId,
+            userId: resolvedUserId,
+            sessionId: submitSessionId,
+            warnings: cleanWarnings,
+          }
+        : null,
+    );
+    if (deps.slug && cleanWarnings.length === 0) {
+      await deps.navigateToEnvelope(deps.slug, deps.envelopeId);
+    }
+  };
+
+  const initialSessionState = await checkLiveSessionState({
+    expectedSessionId: submitSessionId,
+    noticeHasUserId: Boolean(deps.userId),
     resolveCurrentSessionId: deps.resolveCurrentSessionId,
-    onSessionMismatch: () => {
-      if (isStillCurrent()) deps.setCreatedDocxNotice(null);
-    },
   });
-  if (!initialSessionOk) {
+  if (initialSessionState === 'mismatch') {
+    await deps.invalidateEnvelopes();
+    if (isStillCurrent()) deps.setCreatedDocxNotice(null);
+    return;
+  }
+  if (initialSessionState === 'unverified') {
+    await showPendingOrNavigateClean();
     return;
   }
 
-  const shouldResolveScope =
+  if (
+    hasSubmitActorProof &&
     cleanWarnings.length > 0 &&
     (!resolvedUserId || !resolvedOrgId) &&
-    Boolean(deps.resolveUserScope) &&
-    (isStillCurrent() || hasActorProof);
-
-  if (shouldResolveScope && deps.resolveUserScope) {
+    deps.resolveUserScope
+  ) {
     try {
       const fetched = await deps.resolveUserScope();
       if (fetched) {
@@ -187,38 +244,42 @@ export async function handleEnvelopeCreatedWithWarnings(deps: {
         if (!resolvedUserId) {
           resolvedUserId = fetched.userId ?? null;
         }
-        resolvedSessionId = resolvedSessionId ?? fetched.sessionId ?? null;
       }
     } catch {
       // Non-fatal: keep banner on list page when still active until orgId + userId resolve.
     }
   }
 
-  let persisted = false;
   if (deps.userId && resolvedUserId && deps.userId !== resolvedUserId) {
     await deps.invalidateEnvelopes();
+    if (isStillCurrent()) deps.setCreatedDocxNotice(null);
     return;
   }
 
-  const finalSessionOk = await verifyLiveSessionMatch({
-    expectedSessionId: resolvedSessionId,
-    noticeHasUserId: Boolean(resolvedUserId),
+  const finalSessionState = await checkLiveSessionState({
+    expectedSessionId: submitSessionId,
+    noticeHasUserId: Boolean(deps.userId),
     resolveCurrentSessionId: deps.resolveCurrentSessionId,
-    onSessionMismatch: () => {
-      if (isStillCurrent()) deps.setCreatedDocxNotice(null);
-    },
   });
-  if (!finalSessionOk) {
+  if (finalSessionState === 'mismatch') {
+    await deps.invalidateEnvelopes();
+    if (isStillCurrent()) deps.setCreatedDocxNotice(null);
+    return;
+  }
+  if (finalSessionState === 'unverified') {
+    await showPendingOrNavigateClean();
     return;
   }
 
-  const canPersistForActor = isStillCurrent() || Boolean(deps.userId || resolvedSessionId);
-  const scope = { org: resolvedOrgId, userId: resolvedUserId };
-  if (canPersistForActor && cleanWarnings.length > 0) {
-    persisted = saveCreatedDocxWarnings(deps.envelopeId, cleanWarnings, scope);
-  } else if (canPersistForActor && resolvedOrgId && resolvedUserId) {
-    clearCreatedDocxWarnings(deps.envelopeId, scope);
-    persisted = true;
+  let persisted = false;
+  if (hasSubmitActorProof) {
+    const scope = { org: resolvedOrgId, userId: resolvedUserId };
+    if (cleanWarnings.length > 0) {
+      persisted = saveCreatedDocxWarnings(deps.envelopeId, cleanWarnings, scope);
+    } else if (resolvedOrgId && resolvedUserId) {
+      clearCreatedDocxWarnings(deps.envelopeId, scope);
+      persisted = true;
+    }
   }
 
   await deps.invalidateEnvelopes();
@@ -232,7 +293,7 @@ export async function handleEnvelopeCreatedWithWarnings(deps: {
           slug: deps.slug,
           orgId: resolvedOrgId,
           userId: resolvedUserId,
-          sessionId: resolvedSessionId,
+          sessionId: submitSessionId,
           warnings: cleanWarnings,
         }
       : null,
@@ -249,29 +310,12 @@ async function verifyLiveSessionMatch(deps: {
   isCurrentContext?: (() => boolean) | undefined;
   onSessionMismatch: () => void;
 }): Promise<boolean> {
-  if (!deps.expectedSessionId) {
-    return true;
-  }
-  if (!deps.resolveCurrentSessionId) {
-    return deps.noticeHasUserId;
-  }
-  let liveSessionId: string | null;
-  try {
-    liveSessionId = await deps.resolveCurrentSessionId();
-  } catch {
-    return false;
-  }
-  if (deps.isCurrentContext && !deps.isCurrentContext()) {
-    return false;
-  }
-  if (!liveSessionId) {
-    return false;
-  }
-  if (liveSessionId !== deps.expectedSessionId) {
+  const state = await checkLiveSessionState(deps);
+  if (state === 'mismatch') {
     deps.onSessionMismatch();
     return false;
   }
-  return true;
+  return state === 'match';
 }
 
 export async function openCreatedDocxNoticeEnvelope(deps: {
