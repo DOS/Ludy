@@ -135,7 +135,6 @@ const PENDING_TABLES = new Set<string>([
   'crove_meetings.meeting_link',
   'crove_meetings.minutes_link',
   'crove_meetings.minutes_version',
-  'crove_meetings.tracker_term',
   'crove_notes.link',
   'crove_notes.note',
 ]);
@@ -3566,7 +3565,7 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   },
   // #4819 (meetings highlights): a reader's or the recorder's mark on a transcript line or range, an anchor in seconds and who marked it, no text. Read by the meeting's readers and the recorder, inserted
   // by either for themselves and deleted by the author or the recorder, all in a user context (the org's owner is the recorder of the factory's meeting); the system context reads none. No UPDATE for a
-  // login role. Its factory lands before the table (PENDING_TABLES).
+  // login role. Its table landed in #4818 (step 2), which removed it from PENDING_TABLES.
   'crove_meetings.meeting_highlight': {
     make: (o) => {
       const meeting = meetingsMeetingRow(o);
@@ -3711,7 +3710,7 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
     }),
   },
   // #4818 (meetings trackers): a keyword or phrase the org tracks across its meetings, at most 20 an org. Read by every member of the org and written and deleted by an owner or an admin (the factory's
-  // owner is one), all in a user context; the system context reads none. No UPDATE for a login role. Its factory lands before the table (PENDING_TABLES).
+  // owner is one), all in a user context; the system context reads none. No UPDATE for a login role. Its table landed in #4818 (step 2), which removed it from PENDING_TABLES.
   'crove_meetings.tracker_term': {
     make: (o) => ({
       row: { org_id: o.id, id: randomUUID(), term: `Tracker${Array.from(randomBytes(6), (b) => String.fromCharCode(97 + (b % 26))).join('')}`, created_by: o.owner },
