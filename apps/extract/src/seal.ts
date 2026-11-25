@@ -8612,6 +8612,9 @@ export async function sealPdf(bytes: Uint8Array): Promise<PdfSealResult> {
       stripInteractiveElements(partDoc);
 
       const copiedPages = await unifiedDoc.copyPages(partDoc, partDoc.getPageIndices());
+      for (const partPageOneBased of partIsolated) {
+        isolatedPages.add(sourcePageCount + partPageOneBased);
+      }
       const startPage = sourcePageCount + 1;
       for (let p = 0; p < copiedPages.length; p++) {
         const copiedPage = copiedPages[p];

@@ -42,6 +42,7 @@ import { isSignAiStoppedOnTrx } from './ai.ts';
 import { assertCanAccessEnvelopeRow } from './hr-visibility.ts';
 import { signManifest } from './manifest.ts';
 import { assertCanAccessMeetingMinutesEnvelopeRow } from './meeting-visibility.ts';
+import { resolvePrimaryEnvelopeDocMeta } from './shared.ts';
 
 const PLAYBOOK_ADMINS: readonly MemberRole[] = ['owner', 'admin'];
 const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
@@ -1804,7 +1805,8 @@ export const playbookGet = defineQuery({
     assertCanAccessEnvelopeRow(ctx, env, 'Signing envelope not found');
     await assertCanAccessMeetingMinutesEnvelopeRow(ctx, env, 'Signing envelope not found');
 
-    const [row, effectiveRules] = await Promise.all([
+    const [primary, row, effectiveRules] = await Promise.all([
+      resolvePrimaryEnvelopeDocMeta(ctx.trx, ctx.orgId, env),
       ctx.trx
         .selectFrom('ludy_sign.playbook_check')
         .selectAll()
@@ -1817,7 +1819,7 @@ export const playbookGet = defineQuery({
     const activeRulesCount = effectiveRules.items.filter((r) => r.active).length;
 
     return {
-      check: row ? toPlaybookCheckRecord(row, env.source_sha256, effectiveRules.items) : null,
+      check: row ? toPlaybookCheckRecord(row, primary.sourceSha256, effectiveRules.items) : null,
       canEdit: ctx.role === 'owner' || ctx.role === 'admin' || ctx.role === 'member',
       activeRulesCount,
     };
@@ -2148,10 +2150,11 @@ export const playbookRecordCheck = defineCommand({
     assertCanAccessEnvelopeRow(ctx, env, 'Signing envelope not found');
     await assertCanAccessMeetingMinutesEnvelopeRow(ctx, env, 'Signing envelope not found');
 
-    if (env.source_sha256 !== input.sourceSha256) {
+    const primary = await resolvePrimaryEnvelopeDocMeta(ctx.trx, ctx.orgId, env);
+    if (primary.sourceSha256 !== input.sourceSha256) {
       throw new DomainError('SIGN_PLAYBOOK_STALE_SOURCE', 409, 'Envelope PDF changed during playbook evaluation');
     }
-    const pageCount = Math.max(1, env.page_count ?? 1);
+    const pageCount = Math.max(1, primary.pageCount ?? 1);
 
     const effectiveRules = await listEffectivePlaybookRulesOnTrx(ctx.trx, ctx.orgId);
     const activeRules: SignPlaybookSourceRule[] = effectiveRules.items
@@ -2196,7 +2199,7 @@ export const playbookRecordCheck = defineCommand({
       .executeTakeFirst();
 
     if (input.preserveExistingFresh && lockedExisting) {
-      const existingRecord = toPlaybookCheckRecord(lockedExisting, env.source_sha256, effectiveRules.items);
+      const existingRecord = toPlaybookCheckRecord(lockedExisting, primary.sourceSha256, effectiveRules.items);
       if (!existingRecord.isStale && (existingRecord.mode === 'manual' || existingRecord.mode === 'ai')) {
         ctx.audit({
           action: 'sign.playbook.record_check',
@@ -2294,7 +2297,7 @@ export const playbookRecordCheck = defineCommand({
           .updateTable('ludy_sign.playbook_check')
           .set({
             id: nextCheckId,
-            source_sha256: env.source_sha256,
+            source_sha256: primary.sourceSha256,
             mode: effectiveMode,
             findings_json: serializedFindings,
             prompt_version: effectivePromptVersion,
@@ -2311,7 +2314,7 @@ export const playbookRecordCheck = defineCommand({
             org_id: ctx.orgId,
             id: nextCheckId,
             envelope_id: env.id,
-            source_sha256: env.source_sha256,
+            source_sha256: primary.sourceSha256,
             mode: effectiveMode,
             findings_json: serializedFindings,
             prompt_version: effectivePromptVersion,
@@ -2336,7 +2339,7 @@ export const playbookRecordCheck = defineCommand({
         throw new DomainError('INTERNAL', 500, 'Failed to save playbook check');
       }
       if (input.preserveExistingFresh) {
-        const racedRecord = toPlaybookCheckRecord(racedRow, env.source_sha256, effectiveRules.items);
+        const racedRecord = toPlaybookCheckRecord(racedRow, primary.sourceSha256, effectiveRules.items);
         if (!racedRecord.isStale && (racedRecord.mode === 'manual' || racedRecord.mode === 'ai')) {
           ctx.audit({
             action: 'sign.playbook.record_check',
@@ -2353,7 +2356,7 @@ export const playbookRecordCheck = defineCommand({
         .updateTable('ludy_sign.playbook_check')
         .set({
           id: nextCheckId,
-          source_sha256: env.source_sha256,
+          source_sha256: primary.sourceSha256,
           mode: effectiveMode,
           findings_json: serializedFindings,
           prompt_version: effectivePromptVersion,
@@ -2378,7 +2381,7 @@ export const playbookRecordCheck = defineCommand({
       aiFindingCount: mergedFindingsWithRevisions.filter((item) => item.finding.proposedByAi).length,
     });
 
-    return toPlaybookCheckRecord(saved, env.source_sha256, effectiveRules.items);
+    return toPlaybookCheckRecord(saved, primary.sourceSha256, effectiveRules.items);
   },
 });
 
@@ -2404,7 +2407,8 @@ export const playbookOverrideFinding = defineCommand({
     assertCanAccessEnvelopeRow(ctx, env, 'Signing envelope not found');
     await assertCanAccessMeetingMinutesEnvelopeRow(ctx, env, 'Signing envelope not found');
 
-    const [existing, effectiveRules] = await Promise.all([
+    const [primary, existing, effectiveRules] = await Promise.all([
+      resolvePrimaryEnvelopeDocMeta(ctx.trx, ctx.orgId, env),
       ctx.trx
         .selectFrom('ludy_sign.playbook_check')
         .selectAll()
@@ -2418,7 +2422,7 @@ export const playbookOverrideFinding = defineCommand({
       throw new DomainError('SIGN_PLAYBOOK_CHECK_NOT_FOUND', 404, 'Playbook check not found for this envelope');
     }
 
-    const existingRecord = toPlaybookCheckRecord(existing, env.source_sha256, effectiveRules.items);
+    const existingRecord = toPlaybookCheckRecord(existing, primary.sourceSha256, effectiveRules.items);
     if (input.checkRevision !== existingRecord.revision) {
       throw new DomainError(
         'SIGN_PLAYBOOK_STALE_CHECK',
@@ -2479,7 +2483,7 @@ export const playbookOverrideFinding = defineCommand({
       hasNote: cleanedNote !== null,
     });
 
-    return toPlaybookCheckRecord(updated, env.source_sha256, effectiveRules.items);
+    return toPlaybookCheckRecord(updated, primary.sourceSha256, effectiveRules.items);
   },
 });
 

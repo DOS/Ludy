@@ -509,13 +509,15 @@ export async function runSignPdfSealJob(
     }
   }
 
+  const effectiveSourceSha256 = certDocuments?.[0]?.sourceSha256 ?? envelope.sourceSha256;
+
   let certificate;
   let sealInputBytes: Uint8Array;
   try {
     certificate = buildPdfSealCertificate({
       certificateCode,
       envelopeTitle: envelope.title,
-      sourceSha256: envelope.sourceSha256,
+      sourceSha256: effectiveSourceSha256,
       completedAtIso,
       eventChainTipHash: chain.tipHash,
       ...(certDocuments ? { documents: certDocuments } : {}),
@@ -578,7 +580,7 @@ export async function runSignPdfSealJob(
     orgId: job.orgId,
     certificateCode,
     envelopeTitle: envelope.title,
-    sourceSha256: envelope.sourceSha256,
+    sourceSha256: effectiveSourceSha256,
     sealedSha256,
     completedAtIso,
     eventChainTipHash: chain.tipHash,

@@ -21,6 +21,7 @@ import {
 import { extractPdfPagesText } from '../../lib/sign-pdf.ts';
 import { toast } from '../../lib/toast.ts';
 import { ErrorText } from '../ui.tsx';
+import { CoworkerAttribution, ProposalSurface } from '../proposal-surface.tsx';
 
 export interface EnvelopeObligationsCardProps {
   envelopeId: string;
@@ -397,17 +398,18 @@ export function EnvelopeObligationsCard({
         ) : null}
 
         {canEdit && proposal ? (
-          <div
-            className="space-y-2.5 rounded-md border border-dashed border-proposal bg-proposal/10 p-2.5"
+          <ProposalSurface
+            proposed
+            className="space-y-2.5 p-2.5"
             data-testid="sign-obligation-proposal-banner"
           >
-            <div className="space-y-1">
-              <div className="flex flex-wrap items-center justify-between gap-1.5 max-md:gap-2">
-                <span className="font-semibold text-foreground">{t('proposalTitle')}</span>
-                <Badge variant="warning">{t('statusProposed')}</Badge>
-              </div>
-              <p className="text-muted-foreground">{t('proposalHint')}</p>
-            </div>
+            <CoworkerAttribution
+              coworker="gm"
+              label={t('proposalTitle')}
+              badgeLabel={t('statusProposed')}
+              badgeVariant="proposal"
+              source={t('proposalHint')}
+            />
 
             {proposal.citations.length > 0 ? (
               <ul className="space-y-1.5" data-testid="sign-obligation-citations-list">
@@ -502,7 +504,7 @@ export function EnvelopeObligationsCard({
                 {t('dismissProposal')}
               </Button>
             </div>
-          </div>
+          </ProposalSurface>
         ) : null}
 
         {canEdit ? (

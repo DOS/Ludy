@@ -1254,6 +1254,7 @@ export const zSignAiAnalysisRecord = z.strictObject({
 
 export const zSignAiAnalyzeInput = z.strictObject({
   envelopeId: zId,
+  expectedSourceSha256: z.string().regex(SIGN_SHA256_HEX_PATTERN).optional(),
   pages: z
     .array(z.strictObject({ page: z.number().int().min(1).max(SIGN_MAX_PAGES), text: z.string().max(250_000) }))
     .max(SIGN_MAX_PAGES)

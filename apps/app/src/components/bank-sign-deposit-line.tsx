@@ -85,13 +85,18 @@ function DepositCandidate({
 
 export function BankSignDepositLine({
   line,
+  candidates: prefetchedCandidates,
   onPrepareProposal,
 }: {
   line: BankLine;
+  candidates?: readonly BankSignDepositCandidate[];
   onPrepareProposal: (line: BankLine, candidate: BankSignDepositCandidate) => void;
 }) {
-  const match = useQuery(orpc.bank.signDepositMatch.queryOptions({ input: { bankLineId: line.id } }));
-  const candidates = match.data?.candidates ?? [];
+  const match = useQuery({
+    ...orpc.bank.signDepositMatch.queryOptions({ input: { bankLineId: line.id } }),
+    enabled: prefetchedCandidates === undefined,
+  });
+  const candidates = prefetchedCandidates ?? match.data?.candidates ?? [];
   if (candidates.length === 0) return null;
 
   return (

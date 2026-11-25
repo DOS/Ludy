@@ -10,6 +10,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@ludy
 import { Input } from '@ludy/ui/components/input';
 import { Label } from '@ludy/ui/components/label';
 import { ErrorText } from '../ui.tsx';
+import { useFormat } from '../../i18n/provider.tsx';
 import { safeQrSvgPath } from '../../lib/qr-svg.ts';
 import {
   publicSignApi,
@@ -21,13 +22,6 @@ import {
 import { copyTextToClipboard } from '../../lib/sign-hash.ts';
 import { toast } from '../../lib/toast.ts';
 import { SIGN_QR_QUIET_ZONE } from './sign-qr-modal.tsx';
-
-function formatVndMoney(amount: string): string {
-  const [wholeRaw = '0', frac] = amount.split('.');
-  const grouped = wholeRaw.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
-  if (!frac || /^0+$/.test(frac)) return `${grouped} VND`;
-  return `${grouped},${frac.replace(/0+$/, '')} VND`;
-}
 
 export interface SignCeremonyDepositCardProps {
   token: string;
@@ -51,6 +45,7 @@ export function resolveNoticeErrorMessage(
 ): string {
   if (error instanceof PublicSignError) {
     if (error.status === 404 || error.code === 'NOT_FOUND') return t('noticeNotFound');
+    if (error.status === 413) return t('proofTooLarge');
     switch (error.code) {
       case 'UNSUPPORTED_TYPE':
       case 'SIGN_INVALID_SIGNATURE_PNG':
@@ -77,6 +72,7 @@ export function resolveNoticeErrorMessage(
 
 export function SignCeremonyDepositCard({ token, deposit: initialDeposit }: SignCeremonyDepositCardProps) {
   const t = useTranslations('sign.ceremonyDeposit');
+  const f = useFormat();
   const idPrefix = useId();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -250,7 +246,7 @@ export function SignCeremonyDepositCard({ token, deposit: initialDeposit }: Sign
             <dt className="text-xs text-muted-foreground">{t('amountLabel')}</dt>
             <dd className="flex items-center gap-1.5">
               <span className="font-mono font-semibold text-foreground" data-testid="sign-ceremony-deposit-amount">
-                {formatVndMoney(deposit.amount)}
+                {f.money(deposit.amount)}
               </span>
               <Button
                 type="button"

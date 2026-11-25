@@ -5,7 +5,7 @@
   </picture>
 </h1>
 
-<p align="center"><b>The open-source, AI-native Business OS for one-person companies, solo founders and small businesses.</b><br>
+<p align="center"><b>The open-source, all-in-one Business OS with a built-in AI team, for one-person companies, solo founders and small businesses.</b><br>
 Your books, customers, bookings and meetings in one place. AI coworkers do the work. You approve.</p>
 
 <p align="center"><a href="#quick-start">Quick start</a> · <a href="#how-it-works">How it works</a> · <a href="#in-numbers">In numbers</a> · <a href="#roadmap">Roadmap</a> · <a href="docs/self-host/README.md">Self-host</a> · <a href="docs/runbooks/mcp-connect-claude-chatgpt.md">Connect Claude or ChatGPT</a></p>

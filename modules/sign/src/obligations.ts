@@ -46,6 +46,7 @@ import {
 } from './hr-visibility.ts';
 import { assertCanAccessMeetingMinutesEnvelopeRow } from './meeting-visibility.ts';
 import { signManifest } from './manifest.ts';
+import { resolvePrimaryEnvelopeDocMap, resolvePrimaryEnvelopeDocMeta } from './shared.ts';
 
 const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 const READERS: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -705,7 +706,8 @@ export const obligationPropose = defineCommand({
       );
     }
 
-    const sanitized = sanitizeIncomingProposal(input.proposal, env.page_count, input.extractedPages);
+    const primary = await resolvePrimaryEnvelopeDocMeta(ctx.trx, ctx.orgId, env);
+    const sanitized = sanitizeIncomingProposal(input.proposal, primary.pageCount, input.extractedPages);
     const existing = await ctx.trx
       .selectFrom('ludy_sign.envelope_obligation')
       .selectAll()
@@ -827,7 +829,8 @@ export const obligationUpsert = defineCommand({
     const now = new Date();
     const nowIso = now.toISOString();
     const usedIds = new Set<string>();
-    const maxPage = env.page_count ?? SIGN_MAX_PAGES;
+    const primary = await resolvePrimaryEnvelopeDocMeta(ctx.trx, ctx.orgId, env);
+    const maxPage = primary.pageCount ?? SIGN_MAX_PAGES;
     const obligations: SignObligationItemContract[] = input.obligations.map((item) => {
       let id = item.id ? cleanLine(item.id, 80) : '';
       if (!id || usedIds.has(id)) {
@@ -1124,16 +1127,27 @@ export const obligationSource = defineQuery({
     assertCanAccessEnvelopeRow(ctx, env, 'Signing envelope not found');
     await assertCanAccessMeetingMinutesEnvelopeRow(ctx, env, 'Signing envelope not found');
 
+    // Refresh Doc 1 file/hash/page metadata from envelope_document so removing the original Doc 1 in a draft packet
+    // does not leave obligation extraction pinned to stale envelope.source_* columns (#4837).
+    const doc1 = await ctx.trx
+      .selectFrom('ludy_sign.envelope_document')
+      .select(['file_id', 'storage_key', 'generation', 'source_sha256', 'inspect_status', 'page_count'])
+      .where('org_id', '=', ctx.orgId)
+      .where('envelope_id', '=', env.id)
+      .orderBy('doc_index', 'asc')
+      .orderBy('id', 'asc')
+      .executeTakeFirst();
+
     return {
       envelopeId: env.id,
       status: env.status,
-      inspectStatus: env.inspect_status,
-      sourceSha256: env.source_sha256,
-      sourceFileId: env.source_file_id,
-      sourceStorageKey: env.source_storage_key,
-      sourceGeneration: env.source_generation,
+      inspectStatus: doc1 ? doc1.inspect_status : env.inspect_status,
+      sourceSha256: doc1 ? doc1.source_sha256 : env.source_sha256,
+      sourceFileId: doc1 ? doc1.file_id : env.source_file_id,
+      sourceStorageKey: doc1 ? doc1.storage_key : env.source_storage_key,
+      sourceGeneration: doc1 ? doc1.generation : env.source_generation,
       title: cleanLine(env.title, 300),
-      pageCount: env.page_count,
+      pageCount: doc1 ? doc1.page_count : env.page_count,
       aiStopped: await isSignAiStoppedOnTrx(ctx.trx, ctx.orgId),
     };
   },
@@ -1285,17 +1299,17 @@ export const obligationRenewalsList = defineQuery({
       return { items: [] };
     }
 
-    const signerRows = await ctx.trx
-      .selectFrom('ludy_sign.signer')
-      .select(['envelope_id', 'status'])
-      .where('org_id', '=', ctx.orgId)
-      .where(
-        'envelope_id',
-        'in',
-        accessibleRows.map((r) => r.envelope_id),
-      )
-      .where('signer_role', '!=', 'cc')
-      .execute();
+    const accessibleIds = accessibleRows.map((r) => r.envelope_id);
+    const [signerRows, primaryDocByEnvelope] = await Promise.all([
+      ctx.trx
+        .selectFrom('ludy_sign.signer')
+        .select(['envelope_id', 'status'])
+        .where('org_id', '=', ctx.orgId)
+        .where('envelope_id', 'in', accessibleIds)
+        .where('signer_role', '!=', 'cc')
+        .execute(),
+      resolvePrimaryEnvelopeDocMap(ctx.trx, ctx.orgId, accessibleIds),
+    ]);
 
     const summaryByEnvelope = new Map<string, { total: number; signed: number }>();
     for (const signer of signerRows) {
@@ -1313,6 +1327,7 @@ export const obligationRenewalsList = defineQuery({
       const obligation = toObligationRecord(row);
       const summary = summarizeObligationUrgency(obligation, todayVn);
       const counts = summaryByEnvelope.get(row.envelope_id);
+      const primary = primaryDocByEnvelope.get(row.envelope_id);
       ranked.push({
         rank: summary.urgencyRank,
         dayEpoch: summary.urgencyDayEpoch,
@@ -1324,11 +1339,11 @@ export const obligationRenewalsList = defineQuery({
             routingMode: row.env_routing_mode,
             sourceKind: row.env_source_kind,
             sourceId: row.env_source_id,
-            sourceFileId: row.env_source_file_id,
-            inspectStatus: row.env_inspect_status,
+            sourceFileId: primary?.fileId ?? row.env_source_file_id,
+            inspectStatus: primary?.inspectStatus ?? row.env_inspect_status,
             sealStatus: row.env_seal_status,
             certificateCode: row.env_certificate_code,
-            pageCount: row.env_page_count,
+            pageCount: primary?.pageCount ?? row.env_page_count,
             expiresAt: isoOrNull(row.env_expires_at),
             sentAt: isoOrNull(row.env_sent_at),
             completedAt: isoOrNull(row.env_completed_at),

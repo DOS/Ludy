@@ -49,6 +49,42 @@ function formatMegabytes(bytes: number): string {
   return mb >= 10 ? mb.toFixed(1) : mb.toFixed(2);
 }
 
+export async function executePacketConsistencyCheck(params: {
+  envelopeId: string;
+  documents: readonly Pick<SignEnvelopeDocumentSummary, 'id' | 'fileId' | 'inspectStatus'>[];
+  onBeforeCheck?: (() => Promise<void>) | undefined;
+  downloadBytes?: ((fileId: string) => Promise<Uint8Array>) | undefined;
+  extractPages?: ((bytes: Uint8Array) => Promise<Array<{ page: number; text: string }>>) | undefined;
+  checkConsistency?: ((input: {
+    envelopeId: string;
+    documents?: Array<{ documentId?: string | null; pages: Array<{ page: number; text: string }> }>;
+  }) => Promise<SignPacketConsistencyCheckResult>) | undefined;
+}): Promise<SignPacketConsistencyCheckResult> {
+  // Flush any dirty unsaved draft fields before asking Vy to audit cross-doc placement & totals (#4837).
+  await params.onBeforeCheck?.();
+  const downloadBytes = params.downloadBytes ?? downloadSignPdfBytes;
+  const extractPages = params.extractPages ?? extractPdfPagesText;
+  const checkConsistency = params.checkConsistency ?? signApi.checkPacketConsistency;
+  const passedDocs = params.documents.filter((d) => d.inspectStatus === 'passed');
+  const extractedDocs: Array<{
+    documentId?: string | null;
+    pages: Array<{ page: number; text: string }>;
+  }> = [];
+  for (const doc of passedDocs) {
+    try {
+      const bytes = await downloadBytes(doc.fileId);
+      const pages = await extractPages(bytes);
+      extractedDocs.push({ documentId: doc.id, pages });
+    } catch {
+      extractedDocs.push({ documentId: doc.id, pages: [] });
+    }
+  }
+  return checkConsistency({
+    envelopeId: params.envelopeId,
+    ...(extractedDocs.length > 0 ? { documents: extractedDocs } : {}),
+  });
+}
+
 export function SignPacketManager({
   envelopeId,
   canEditDraft,
@@ -136,26 +172,12 @@ export function SignPacketManager({
   });
 
   const consistencyMutation = useMutation({
-    mutationFn: async () => {
-      const passedDocs = documents.filter((d) => d.inspectStatus === 'passed');
-      const extractedDocs: Array<{
-        documentId?: string | null;
-        pages: Array<{ page: number; text: string }>;
-      }> = [];
-      for (const doc of passedDocs) {
-        try {
-          const bytes = await downloadSignPdfBytes(doc.fileId);
-          const pages = await extractPdfPagesText(bytes);
-          extractedDocs.push({ documentId: doc.id, pages });
-        } catch {
-          extractedDocs.push({ documentId: doc.id, pages: [] });
-        }
-      }
-      return signApi.checkPacketConsistency({
+    mutationFn: () =>
+      executePacketConsistencyCheck({
         envelopeId,
-        ...(extractedDocs.length > 0 ? { documents: extractedDocs } : {}),
-      });
-    },
+        documents,
+        onBeforeCheck: onBeforeMutatePacket,
+      }),
     onSuccess: (res) => {
       setConsistencyResult(res);
     },

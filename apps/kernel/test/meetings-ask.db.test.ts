@@ -162,7 +162,8 @@ suite("the member's Vy answering across meetings (A3, #3161)", () => {
     await ask('attendee', 'Draftthree là gì?', { model: pick });
     expect(lastData?.lines.map((l) => l.text)).toEqual(['Draftthree chiết khấu chính thức 9% phần trăm']);
     await ask('recorder', 'Draftthree là gì?', { model: pick });
-    expect((lastData?.lines.map((l) => l.text) ?? []).sort()).toEqual(['Draftthree chiết khấu bản nháp 7% phần trăm', 'Draftthree chiết khấu chính thức 9% phần trăm'].sort());
+    // One stage of a meeting for the recorder (#4940): the draft while one exists, so the older published line is not set beside it.
+    expect(lastData?.lines.map((l) => l.text)).toEqual(['Draftthree chiết khấu bản nháp 7% phần trăm']);
     expect(JSON.stringify(lastData)).not.toContain('chiết khấu cũ');
   });
 

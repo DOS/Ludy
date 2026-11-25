@@ -6,7 +6,7 @@ import { N, team } from './roster';
 export const en: Dictionary = {
   lang: 'en',
   meta: {
-    title: 'Ludy: the all-in-one Business OS, with an AI team for every department',
+    title: 'Ludy: the all-in-one Business OS with a built-in AI team',
     description:
       `${N.gm} runs the team: ${N.finance} keeps your books, ${N.sales} works your inbox, customers and sales, ${N.marketing} runs marketing. You approve. Ludy is an open-source business OS you run on your own server.`,
   },
@@ -28,7 +28,7 @@ export const en: Dictionary = {
   },
   hero: {
     title: 'All-in-one Business OS',
-    tagline: 'with an AI team for every department.',
+    tagline: 'with a built-in AI team.',
     lead: `${N.gm} runs the team: ${N.finance} keeps your books, ${N.sales} works your inbox, customers and sales, ${N.marketing} runs marketing. You approve.`,
     primary: 'Self-host for free',
     secondary: 'View the source on GitHub',

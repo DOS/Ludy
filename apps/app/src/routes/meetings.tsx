@@ -54,6 +54,8 @@ import {
   filterAndSortMeetings,
   formatMeetingDuration,
   hasActiveMeetingFilter,
+  labelChoicesOf,
+  labelsByMeetingOf,
   type MeetingListFilter,
   type MeetingMediaFilter,
   type MeetingSort,
@@ -419,6 +421,7 @@ export function NewMeetingFormPanel({
 
 export function MeetingsPage() {
   const t = useTranslations('meetings');
+  const tLabels = useTranslations('meetings.labels');
   const f = useFormat();
   const navigate = useNavigate();
   const { slug } = useParams({ strict: false }) as { slug: string };
@@ -450,8 +453,12 @@ export function MeetingsPage() {
     refetchOnWindowFocus: false,
   });
 
+  // The labels the recorders put on the meetings the person reads (#4955): each row of the list carries them (#4966), so the list shows them, filters by them, offers the choices of the meetings it holds, and
+  // the search keeps the hits of the labelled meetings among them.
   const allMeetings = meetingsQuery.data ?? [];
-  const filteredMeetings = useMemo(() => filterAndSortMeetings(allMeetings, filter, sort), [allMeetings, filter, sort]);
+  const labelsByMeeting = useMemo(() => labelsByMeetingOf(allMeetings), [allMeetings]);
+  const labelChoices = useMemo(() => labelChoicesOf(allMeetings), [allMeetings]);
+  const filteredMeetings = useMemo(() => filterAndSortMeetings(allMeetings, filter, sort, labelsByMeeting), [allMeetings, filter, sort, labelsByMeeting]);
   const activeFilterCount = countActiveMeetingFilters(filter);
   const filterOrSearchActive = hasActiveMeetingFilter(filter);
 
@@ -529,6 +536,13 @@ export function MeetingsPage() {
       key: 'media',
       label: `${t('filters.media')}: ${mediaLabel}`,
       clear: () => setFilter((cur) => ({ ...cur, media: 'all' })),
+    });
+  }
+  if (filter.label !== '') {
+    activeChips.push({
+      key: 'label',
+      label: tLabels('filterChip', { value: filter.label }),
+      clear: () => setFilter((cur) => ({ ...cur, label: '' })),
     });
   }
   if (filter.platform !== 'all') {
@@ -682,7 +696,7 @@ export function MeetingsPage() {
               {openedTools.has('ask') && <MeetingAsk slug={slug} />}
             </div>
             <div id="meetings-tool-panel-search" hidden={activeTool !== 'search'} className="rounded-lg border border-border bg-card p-4">
-              {openedTools.has('search') && <MeetingSearch slug={slug} />}
+              {openedTools.has('search') && <MeetingSearch slug={slug} label={filter.label} labelsByMeeting={labelsByMeeting} />}
             </div>
             <div id="meetings-tool-panel-trackers" hidden={activeTool !== 'trackers'}>
               {openedTools.has('trackers') && <TrackersWeek slug={slug} />}
@@ -780,6 +794,29 @@ export function MeetingsPage() {
                         <NativeSelectOption value="transcript">{t('badgeTranscript')}</NativeSelectOption>
                       </NativeSelect>
                     </div>
+
+                    {(labelChoices.length > 0 || filter.label !== '') && (
+                      <div className="flex flex-col gap-1">
+                        <Label htmlFor="meeting-filter-label" className="text-xs text-subtle-foreground">
+                          {tLabels('filter')}
+                        </Label>
+                        <NativeSelect
+                          id="meeting-filter-label"
+                          size="sm"
+                          className="w-full [&_select]:max-md:min-h-11"
+                          value={filter.label}
+                          onChange={(e) => setFilter((cur) => ({ ...cur, label: e.target.value }))}
+                        >
+                          <NativeSelectOption value="">{tLabels('filterAll')}</NativeSelectOption>
+                          {filter.label !== '' && !labelChoices.some((c) => c.label === filter.label) && <NativeSelectOption value={filter.label}>{filter.label}</NativeSelectOption>}
+                          {labelChoices.map((c) => (
+                            <NativeSelectOption key={c.label} value={c.label}>
+                              {`${c.label} (${c.count})`}
+                            </NativeSelectOption>
+                          ))}
+                        </NativeSelect>
+                      </div>
+                    )}
 
                     <div className="flex flex-col gap-1">
                       <Label htmlFor="meeting-filter-platform" className="text-xs text-subtle-foreground">
@@ -911,6 +948,11 @@ export function MeetingsPage() {
                           </Link>
                           <Badge variant={STATUS_VARIANTS[m.status] ?? 'outline'}>{t(`status.${m.status}`)}</Badge>
                           {m.platform && <Badge variant="outline">{t(`agenda.service.${m.platform}`)}</Badge>}
+                          {(labelsByMeeting.get(m.id) ?? []).map((label) => (
+                            <Badge key={label} variant="secondary" data-testid="meeting-row-label">
+                              {label}
+                            </Badge>
+                          ))}
                         </div>
                       </TableCell>
                       <TableCell data-label={t('table.colWhen')} className="text-xs text-muted-foreground tabular-nums">

@@ -827,6 +827,13 @@ suite('org offboarding on PostgreSQL (#38)', () => {
       attendeesReader: randomUUID(),
       foreignReader: randomUUID(),
       acceptedTaskId: randomUUID(),
+      sharedLabel1: randomUUID(),
+      sharedLabel2: randomUUID(),
+      foreverLabel: randomUUID(),
+      attendeesLabel: randomUUID(),
+      expiredTodayLabel: randomUUID(),
+      expiredYesterdayLabel: randomUUID(),
+      foreignLabel: randomUUID(),
       audioFileId: randomUUID(),
       videoFileId: randomUUID(),
     };
@@ -845,6 +852,11 @@ suite('org offboarding on PostgreSQL (#38)', () => {
       'CANARY_EXPIRED_YESTERDAY_ITEM',
       'CANARY_ATTENDEES_ONLY',
       'CANARY_FOREIGN_ORG',
+      // The labels of a meeting that is not shared with the whole org, one past its text date, and one of another org (#4955).
+      'CANARY_LABEL_ATTENDEES',
+      'CANARY_LABEL_EXPIRED_TODAY',
+      'CANARY_LABEL_EXPIRED_YESTERDAY',
+      'CANARY_LABEL_FOREIGN',
     ];
 
     await withAdmin(async (c) => {
@@ -996,6 +1008,31 @@ suite('org offboarding on PostgreSQL (#38)', () => {
         'INSERT INTO ludy_meetings.meeting_video (org_id, meeting_id, file_id, length_seconds, video_retention_date) VALUES ($1, $2, $3, 60, $4::date)',
         [org.orgId, orgSharedId, ids.videoFileId, openDay],
       );
+
+      // The labels of the meetings (#4955): two on the org-shared meeting and one on the keep-forever one are exported; the labels of the attendees-only meeting, of the two expired ones and of the
+      // foreign org's meeting are canaries and must not be.
+      await c.query(
+        `INSERT INTO ludy_meetings.meeting_label (org_id, id, meeting_id, label, created_by) VALUES
+         ($1, $2, $3, 'Khách Hoa Sen', $4),
+         ($1, $5, $3, 'Họp tuần', $4),
+         ($1, $6, $7, 'Lưu lâu dài', $4),
+         ($1, $8, $9, 'CANARY_LABEL_ATTENDEES', $10),
+         ($1, $11, $12, 'CANARY_LABEL_EXPIRED_TODAY', $4),
+         ($1, $13, $14, 'CANARY_LABEL_EXPIRED_YESTERDAY', $4)`,
+        [
+          org.orgId,
+          ids.sharedLabel1, orgSharedId, owner.id,
+          ids.sharedLabel2,
+          ids.foreverLabel, orgKeepForeverId,
+          ids.attendeesLabel, attendeesOnlyId, member.id,
+          ids.expiredTodayLabel, orgExpiredTodayId,
+          ids.expiredYesterdayLabel, orgExpiredYesterdayId,
+        ],
+      );
+      await c.query(
+        `INSERT INTO ludy_meetings.meeting_label (org_id, id, meeting_id, label, created_by) VALUES ($1, $2, $3, 'CANARY_LABEL_FOREIGN', $4)`,
+        [other.org.orgId, ids.foreignLabel, foreignOrgMeetingId, other.owner.id],
+      );
     });
 
     const record = await runOrgExport({ runtime: workerRuntime, store, sealer }, org.orgId);
@@ -1029,6 +1066,12 @@ suite('org offboarding on PostgreSQL (#38)', () => {
     const readerRows = await rowsOf('meetings.reader');
     expect(readerRows.map((r) => r.id).sort()).toEqual([ids.sharedReaderMember, ids.sharedReaderAdmin, ids.foreverReader].sort());
 
+    // The labels of a meeting shared with the whole org whose text period has not ended (#4955); none of the canary labels (the loop over the parts below also looks for them in every part).
+    const labelRows = await rowsOf('meetings.label');
+    expect(labelRows.map((r) => r.id).sort()).toEqual([ids.sharedLabel1, ids.sharedLabel2, ids.foreverLabel].sort());
+    expect(labelRows.find((r) => r.id === ids.sharedLabel1)).toMatchObject({ meeting_id: orgSharedId, label: 'Khách Hoa Sen' });
+    expect(labelRows.find((r) => r.id === ids.foreverLabel)).toMatchObject({ meeting_id: orgKeepForeverId, label: 'Lưu lâu dài' });
+
     expect(await rowsOf('meetings.private_count')).toEqual([{ org_id: org.orgId, recorder_user_id: member.id, meetings: 1 }]);
     expect((await rowsOf('kernel.file')).filter((f) => String(f.source).startsWith('meeting_'))).toEqual([]);
     expect(EXPORT_TABLE_NAMES).not.toContain('meetings.audio_segment');
@@ -1042,13 +1085,14 @@ suite('org offboarding on PostgreSQL (#38)', () => {
       }
     }
 
-    // Security & caller guards on all 4 new definer functions:
+    // Security & caller guards on all 5 new definer functions:
     // 1) search_path pinned, SECURITY DEFINER, zero PUBLIC execute, strict worker-only EXECUTE ACL.
     const fnNames = [
       'ludy_kernel.meeting_transcript_export_rows()',
       'ludy_kernel.meeting_result_export_rows()',
       'ludy_kernel.meeting_action_item_export_rows()',
       'ludy_kernel.meeting_reader_export_rows()',
+      'ludy_kernel.meeting_label_export_rows()',
     ] as const;
     await withAdmin(async (c) => {
       const dbIds = await resolveDbIdentifiers(adminUrl);
