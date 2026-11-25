@@ -24,7 +24,7 @@ test('set the tax code, upload a sales e-invoice, approve it, then find it in th
   const nav = page.getByRole('navigation');
 
   await test.step('set the org tax code in Settings', async () => {
-    await nav.getByRole('link', { name: 'Cài đặt' }).click();
+    await page.getByRole('banner').getByRole('link', { name: 'Cài đặt', exact: true }).click();
     await expect(page.getByText('Chưa nhập', { exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Nhập', exact: true }).click();
     const form = page.getByRole('form', { name: 'Mã số thuế' });

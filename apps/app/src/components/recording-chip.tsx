@@ -39,7 +39,7 @@ export function RecordingChip() {
   // Stopped and being saved (the Stop button, the maximum length, a sign-out or an org switch): say so while the upload runs, wherever the member is.
   if (saving && local === null) {
     return (
-      <div role="status" data-testid="recording-saving" className="fixed top-14 right-3 z-40 flex items-center gap-2 rounded-full border border-border bg-background px-3 py-1 text-xs font-medium text-foreground shadow-sm md:top-3">
+      <div role="status" data-testid="recording-saving" className="fixed top-14 right-3 z-40 flex items-center gap-2 rounded-full border border-border bg-background px-3 py-1 text-xs font-medium text-foreground shadow-sm">
         <span className="inline-block size-2 animate-pulse rounded-full bg-muted-foreground" aria-hidden="true" />
         <span>{t('chip.saving')}</span>
       </div>
@@ -52,7 +52,7 @@ export function RecordingChip() {
       <div
         data-testid="recording-chip"
         data-source="app"
-        className="fixed top-14 right-3 z-40 flex items-center gap-2 rounded-full border border-destructive/40 bg-background py-1 pr-1 pl-3 text-xs font-medium text-foreground shadow-sm md:top-3"
+        className="fixed top-14 right-3 z-40 flex items-center gap-2 rounded-full border border-destructive/40 bg-background py-1 pr-1 pl-3 text-xs font-medium text-foreground shadow-sm"
       >
         <Link to="/o/$slug/meetings/record" params={{ slug: orgSlug }} className="flex items-center gap-2">
           <span className={`inline-block size-2 rounded-full ${local.paused ? 'bg-muted-foreground' : 'animate-pulse bg-destructive'}`} aria-hidden="true" />
@@ -76,7 +76,7 @@ export function RecordingChip() {
       params={{ slug, id: recording.meetingId }}
       data-testid="recording-chip"
       data-source="extension"
-      className="fixed top-14 right-3 z-40 flex items-center gap-2 rounded-full border border-destructive/40 bg-background px-3 py-1 text-xs font-medium text-foreground shadow-sm md:top-3"
+      className="fixed top-14 right-3 z-40 flex items-center gap-2 rounded-full border border-destructive/40 bg-background px-3 py-1 text-xs font-medium text-foreground shadow-sm"
     >
       <span className="inline-block size-2 animate-pulse rounded-full bg-destructive" aria-hidden="true" />
       <span>{t('chip.recording', { time: formatClock(Date.now() - new Date(recording.startedAt).getTime()) })}</span>

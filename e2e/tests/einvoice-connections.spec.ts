@@ -9,7 +9,7 @@ test('connects the offline e-invoice provider from Settings, tests it, picks the
   await page.goto('/');
   await signUp(page, newEmail('einvoice-connect'));
   await createOrg(page, 'Công ty Kết nối E2E');
-  await page.getByRole('navigation').getByRole('link', { name: 'Cài đặt' }).click();
+  await page.getByRole('banner').getByRole('link', { name: 'Cài đặt', exact: true }).click();
   await openSettingsTab(page, 'connections');
   const card = page.getByLabel('Hóa đơn điện tử: nhà cung cấp của bạn');
 
@@ -62,7 +62,7 @@ test('connects the offline e-invoice provider from Settings, tests it, picks the
   });
 
   await test.step('disconnecting asks first, then drops the connection and keeps the series', async () => {
-    await page.getByRole('navigation').getByRole('link', { name: 'Cài đặt' }).click();
+    await page.getByRole('banner').getByRole('link', { name: 'Cài đặt', exact: true }).click();
     await openSettingsTab(page, 'connections');
     await card.getByRole('button', { name: 'Ngắt kết nối' }).click();
     await card.getByRole('button', { name: 'Ngắt kết nối' }).last().click();
