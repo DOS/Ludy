@@ -634,7 +634,7 @@ import {
   zMeetingSearchInput,
   zMeetingSearchResult,
   zMeetingSettingsSet,
-  zMeetingSummary,
+  zMeetingListItem,
   zTranscript,
   zTranscriptCorrect,
   zTranscriptCorrected,
@@ -720,7 +720,7 @@ import { zDigestAnswer, zDigestAsk, zDigestFacts, zDigestStatus } from './meetin
 import { zLoadWeek, zLoadWeekInput } from './meeting-load.ts';
 import { zTrackerAdd, zTrackerDone, zTrackerHits, zTrackerList, zTrackerMeetingInput, zTrackerRemove, zTrackerTerms, zTrackerWeek, zTrackerWeekInput } from './meeting-trackers.ts';
 import { zHighlightAdd, zHighlightAdded, zHighlightRemove, zHighlightRemoved, zHighlights } from './meeting-highlights.ts';
-import { zLabelAdd, zLabelAdded, zLabelIndex, zLabelIndexInput, zLabelRemove, zLabelRemoved, zMeetingLabels } from './meeting-labels.ts';
+import { zLabelAdd, zLabelAdded, zLabelRemove, zLabelRemoved, zMeetingLabels } from './meeting-labels.ts';
 import { zMeetingsTodayFacts } from './meeting-today.ts';
 import { zMorningEmpty, zMorningSet, zMorningState } from './meeting-morning.ts';
 import { zAssigneeAnswer, zAssigneeAsk, zAssigneeStatus } from './meeting-assignee.ts';
@@ -1841,7 +1841,7 @@ export const contract = {
   },
   // AI Meeting Notes (issue #2576, ADR-0047, meetings plan M2).
   meetings: {
-    list: oc.input(zMeetingListInput).output(z.array(zMeetingSummary)),
+    list: oc.input(zMeetingListInput).output(z.array(zMeetingListItem)),
     get: oc.input(zMeetingRef).output(zMeetingDetail),
     create: oc.input(zMeetingCreate).output(zMeetingCreated),
     // The click on "Nhập" for a recording a meeting platform finished (C1, #3173): makes the meeting with its consent record and starts the download. The app then claims the staged bytes through the media route.
@@ -2047,10 +2047,9 @@ export const contract = {
       add: oc.input(zHighlightAdd).output(zHighlightAdded),
       remove: oc.input(zHighlightRemove).output(zHighlightRemoved),
     },
-    // Labels on a meeting (#4955): `list` the labels of one meeting the caller may read, `index` the labels across the meetings the caller reads (for the list's filter), and the recorder's `add` and `remove`.
+    // Labels on a meeting (#4955): `list` the labels of one meeting the caller may read, and the recorder's `add` and `remove`. The labels of the meetings on the list come with the list itself (#4966).
     label: {
       list: oc.input(zMeetingRef).output(zMeetingLabels),
-      index: oc.input(zLabelIndexInput).output(zLabelIndex),
       add: oc.input(zLabelAdd).output(zLabelAdded),
       remove: oc.input(zLabelRemove).output(zLabelRemoved),
     },

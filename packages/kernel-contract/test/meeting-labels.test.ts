@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from 'vitest';
-import { MEETING_LABEL_LENGTH_MAX, cleanLabelText, labelKey, labelProblem, zLabelAdd, zLabelIndex } from '../src/index.ts';
+import { MEETING_LABEL_LENGTH_MAX, cleanLabelText, labelKey, labelProblem, zLabelAdd, zMeetingListItem } from '../src/index.ts';
 
 describe('meeting label text (#4955)', () => {
   it('collapses runs of spaces and tabs and trims the ends', () => {
@@ -58,10 +58,35 @@ describe('meeting label text (#4955)', () => {
     expect(zLabelAdd.safeParse({ meetingId: 'x', label: 'Họp tuần' }).success).toBe(false);
   });
 
-  it('bounds the list of labels', () => {
-    const meetingId = '0190b1c2-0000-7000-8000-000000000001';
-    expect(zLabelIndex.safeParse({ labels: [{ label: 'A', count: 1 }], meetings: [{ meetingId, labels: ['A'] }] }).success).toBe(true);
-    expect(zLabelIndex.safeParse({ labels: [], meetings: [{ meetingId, labels: [] }] }).success).toBe(false);
-    expect(zLabelIndex.safeParse({ labels: [], meetings: [{ meetingId, labels: ['1', '2', '3', '4', '5', '6'] }] }).success).toBe(false);
+  it('bounds the labels of a row of the meetings list (#4966): at most five, each a label-sized text, and required', () => {
+    const row = {
+      id: '0190b1c2-0000-7000-8000-000000000001',
+      title: 'Weekly sync',
+      language: 'vi',
+      visibility: 'attendees',
+      status: 'ready',
+      recorderUserId: '0190b1c2-0000-7000-8000-000000000002',
+      startedAt: '2026-11-23T02:00:00.000Z',
+      endedAt: null,
+      lengthSeconds: 1800,
+      keepVideo: false,
+      liveNotes: false,
+      summaryTemplate: 'general',
+      audioRetentionDate: '2026-12-23',
+      textRetentionDate: null,
+      hasAudio: true,
+      hasVideo: false,
+      hasTranscript: true,
+      platform: null,
+      readersCount: 2,
+      createdAt: '2026-11-23T02:00:00.000Z',
+      updatedAt: '2026-11-23T02:00:00.000Z',
+    };
+    expect(zMeetingListItem.safeParse({ ...row, labels: [] }).success).toBe(true);
+    expect(zMeetingListItem.safeParse({ ...row, labels: ['A', 'B', 'C', 'D', 'E'] }).success).toBe(true);
+    expect(zMeetingListItem.safeParse({ ...row, labels: ['A', 'B', 'C', 'D', 'E', 'F'] }).success).toBe(false);
+    expect(zMeetingListItem.safeParse({ ...row, labels: ['x'.repeat(MEETING_LABEL_LENGTH_MAX + 1)] }).success).toBe(false);
+    // The list says what each meeting carries: a row without the field is refused.
+    expect(zMeetingListItem.safeParse(row).success).toBe(false);
   });
 });

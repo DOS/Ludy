@@ -4,6 +4,7 @@ import { sql } from 'kysely';
 import type { MemberRole } from '@ludy/db';
 import { CONSENT_NOTICE_VERSION, MEETING } from './manifest.ts';
 import { meetingSearch } from './search.ts';
+import { labelsOfMeetings } from './labels.ts';
 import { transcriptCorrect, transcriptDraftStore, transcriptGet } from './transcript.ts';
 import { createRedactCommands, redactQueries } from './redact.ts';
 import { transcribeCommandList } from './transcribe.ts';
@@ -105,6 +106,7 @@ import {
   type MeetingOwnerList,
   type MeetingOwnerListItem,
   type MeetingStatus,
+  type MeetingListItem,
   type MeetingSummary,
   type MeetingVisibility,
 } from '@ludy/kernel-contract';
@@ -657,7 +659,7 @@ export const meetingList = defineQuery({
   name: 'meetings.meeting.list',
   input: zMeetingListInput,
   access: READERS,
-  handler: async (ctx, input): Promise<MeetingSummary[]> => {
+  handler: async (ctx, input): Promise<MeetingListItem[]> => {
     const userId = userOf(ctx.actor);
     let query = ctx.trx
       .selectFrom('ludy_meetings.meeting')
@@ -678,6 +680,9 @@ export const meetingList = defineQuery({
     if (rows.length === 0) return [];
 
     const meetingIds = rows.map((r) => r.id);
+
+    // The labels of the page (#4966): one read, under the caller's row security.
+    const labelMap = await labelsOfMeetings(ctx.trx, ctx.orgId, meetingIds);
 
     const readers = await ctx.trx
       .selectFrom('ludy_meetings.meeting_reader')
@@ -730,16 +735,10 @@ export const meetingList = defineQuery({
       if (platform !== null) platformMap.set(row.meeting_id, platform);
     }
 
-    return rows.map((r) =>
-      toSummary(
-        r,
-        readersMap.get(r.id) ?? 0,
-        audioSet.has(r.id),
-        videoSet.has(r.id),
-        transcriptSet.has(r.id),
-        platformMap.get(r.id) ?? null,
-      ),
-    );
+    return rows.map((r) => ({
+      ...toSummary(r, readersMap.get(r.id) ?? 0, audioSet.has(r.id), videoSet.has(r.id), transcriptSet.has(r.id), platformMap.get(r.id) ?? null),
+      labels: labelMap.get(r.id) ?? [],
+    }));
   },
 });
 

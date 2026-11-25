@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { MeetingSummary } from '@ludy/kernel-contract';
+import type { MeetingListItem } from '@ludy/kernel-contract';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
 import { catalog } from '../src/i18n/runtime.ts';
@@ -54,7 +54,7 @@ vi.mock('@tanstack/react-router', async (importOriginal) => {
 
 const { MeetingsPage } = await import('../src/routes/meetings.tsx');
 
-const summary = (over: Partial<MeetingSummary> = {}): MeetingSummary => ({
+const summary = (over: Partial<MeetingListItem> = {}): MeetingListItem => ({
   id: '00000000-0000-4000-8000-000000000001',
   title: 'Họp giao ban tuần',
   language: 'vi',
@@ -76,6 +76,8 @@ const summary = (over: Partial<MeetingSummary> = {}): MeetingSummary => ({
   readersCount: 3,
   createdAt: '2026-11-23T02:00:00.000Z',
   updatedAt: '2026-11-23T02:45:00.000Z',
+  // The labels of the meeting, which the list answers with (#4966).
+  labels: [],
   ...over,
 });
 
@@ -92,6 +94,17 @@ function renderPage(locale: 'en' | 'vi' = 'en') {
 describe('MeetingsPage (#4477)', () => {
   beforeEach(() => {
     client.current.clear();
+  });
+
+  it('shows the labels each row of the list carries, from the list itself and with no read of its own (#4966)', () => {
+    client.current.setQueryData(['meetings', 'list', { limit: 200 }], [
+      summary({ labels: ['Khách Hoa Sen', 'Họp tuần'] }),
+      summary({ id: '00000000-0000-4000-8000-000000000002', title: 'Review khách hàng', labels: [] }),
+    ]);
+    const html = renderPage('vi');
+    expect(html).toContain('Khách Hoa Sen');
+    expect(html).toContain('Họp tuần');
+    expect(html).toContain('Review khách hàng');
   });
 
   it('renders tabs with count badges, settings trigger, collapsed utility strip, toolbar, and DataTable rows', () => {

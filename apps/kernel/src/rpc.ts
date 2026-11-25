@@ -2014,10 +2014,9 @@ export function createRpcHandler(
         add: os.meetings.highlight.add.handler(meetingsCommand('meetings.highlight.add')),
         remove: os.meetings.highlight.remove.handler(meetingsCommand('meetings.highlight.remove')),
       },
-      // Labels on a meeting (#4955): the labels of a meeting and across the readable meetings, and the recorder's add and remove, under the caller's own row security; see modules/meetings/src/labels.ts.
+      // Labels on a meeting (#4955): the labels of a meeting and the recorder's add and remove (the labels of the meetings on the list come with the list, #4966), under the caller's own row security; see modules/meetings/src/labels.ts.
       label: {
         list: os.meetings.label.list.handler(meetingsQuery('meetings.label.list')),
-        index: os.meetings.label.index.handler(meetingsQuery('meetings.label.index')),
         add: os.meetings.label.add.handler(meetingsCommand('meetings.label.add')),
         remove: os.meetings.label.remove.handler(meetingsCommand('meetings.label.remove')),
       },

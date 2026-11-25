@@ -18,8 +18,10 @@ const refusalOf = (error: unknown): (typeof REFUSALS)[number] | null => {
   return REFUSALS.find((r) => r === code) ?? null;
 };
 
-/** Both the labels of a meeting and the labels across meetings (the list's filter) follow an add or a remove. */
-export const refreshLabels = () => queryClient.invalidateQueries({ queryKey: orpc.meetings.label.key() });
+/** Both the labels of a meeting and the rows of the meetings list, which carry the labels of their meetings (#4966), follow an add or a remove: the list does not wait for its stale time to show the change. */
+export const refreshLabels = async (): Promise<void> => {
+  await Promise.all([queryClient.invalidateQueries({ queryKey: orpc.meetings.label.key() }), queryClient.invalidateQueries({ queryKey: orpc.meetings.list.key() })]);
+};
 
 /** The labels of a meeting the caller may read; absent for a reader of a meeting with none, and when the read failed (as after the text retention date). */
 export function MeetingLabels({ meetingId, isRecorder }: { meetingId: string; isRecorder: boolean }) {
