@@ -154,6 +154,9 @@ suite('eSign meeting_minutes module-boundary security invariants (#3811)', () =>
       'crove_sign.can_attach_template_source(uuid,uuid,uuid,text)',
       'crove_sign.can_read_sign_file(uuid)',
       'crove_sign.mint_in_person_signing_token(uuid,uuid,text,timestamptz)',
+      'crove_sign.meeting_minutes_revision_raw(uuid,uuid)',
+      'crove_sign.meeting_minutes_revision(uuid)',
+      'crove_sign.envelope_minutes_revision()',
     ] as const;
 
     const { rows } = await adminPool!.query<{
@@ -178,6 +181,8 @@ suite('eSign meeting_minutes module-boundary security invariants (#3811)', () =>
       'crove_sign.is_meeting_minutes_reader_record(uuid,uuid,boolean,uuid[])',
       'crove_sign.has_shared_meeting_minutes(uuid,uuid)',
       'crove_sign.cleanup_meeting_minutes_envelopes(uuid,uuid,boolean,uuid[])',
+      'crove_sign.meeting_minutes_revision_raw(uuid,uuid)',
+      'crove_sign.envelope_minutes_revision()',
     ]);
     const expectedCallers = ['crove_app', 'crove_definer_tenant', 'crove_tenant', 'crove_worker'] as const;
     const checkedCanonicalRoles = [
@@ -188,7 +193,7 @@ suite('eSign meeting_minutes module-boundary security invariants (#3811)', () =>
       'crove_auth_reader',
     ] as const;
 
-    expect(rows).toHaveLength(15);
+    expect(rows).toHaveLength(18);
     for (const row of rows) {
       const canonicalFn = ids.toCanonicalTable(row.fn);
       expect(row.definer, canonicalFn).toBe(true);
