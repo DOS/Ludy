@@ -11,6 +11,7 @@ import {
   type HrOkrKeyResultView,
   type HrOkrMetricType,
   type HrOkrObjectiveView,
+  type HrOkrProjectOption,
   type HrOkrScope,
   type HrOkrStatus,
 } from '@ludy/kernel-contract';
@@ -132,6 +133,9 @@ export function HrOkrPanel({ mode }: { mode: 'manager' | 'self' }) {
   const [krTarget, setKrTarget] = useState('100');
   const [krUnit, setKrUnit] = useState('');
   const [krProjectId, setKrProjectId] = useState('');
+  const [krProjectSearch, setKrProjectSearch] = useState('');
+  const [krProjectCursor, setKrProjectCursor] = useState<string | undefined>(undefined);
+  const [krProjectPages, setKrProjectPages] = useState<HrOkrProjectOption[]>([]);
   const [krTaskIds, setKrTaskIds] = useState<string[]>([]);
 
   // Check-in panel state (keyed by keyResultId)
@@ -155,11 +159,30 @@ export function HrOkrPanel({ mode }: { mode: 'manager' | 'self' }) {
 
   const tree = treeQ.data;
 
+  const trimmedProjectSearch = krProjectSearch.trim();
   const projectOptionsQ = useQuery({
-    ...orpc.hr.okr.projectOptions.queryOptions({ input: { includeArchived: false } }),
+    ...orpc.hr.okr.projectOptions.queryOptions({
+      input: {
+        includeArchived: false,
+        ...(trimmedProjectSearch !== '' ? { search: trimmedProjectSearch } : {}),
+        ...(krProjectCursor !== undefined ? { cursor: krProjectCursor } : {}),
+      },
+    }),
     enabled: Boolean(addKrObjectiveId && tree?.projectsAvailable),
     ...ONCE,
   });
+
+  const mergedProjectOptions: HrOkrProjectOption[] = (() => {
+    const seen = new Set<string>();
+    const out: HrOkrProjectOption[] = [];
+    for (const p of [...krProjectPages, ...(projectOptionsQ.data?.projects ?? [])]) {
+      if (!seen.has(p.id)) {
+        seen.add(p.id);
+        out.push(p);
+      }
+    }
+    return out;
+  })();
 
   const projectTasksQ = useQuery({
     ...orpc.hr.okr.projectTasks.queryOptions({ input: { projectId: krProjectId } }),
@@ -215,6 +238,9 @@ export function HrOkrPanel({ mode }: { mode: 'manager' | 'self' }) {
       setKrTarget('100');
       setKrUnit('');
       setKrProjectId('');
+      setKrProjectSearch('');
+      setKrProjectCursor(undefined);
+      setKrProjectPages([]);
       setKrTaskIds([]);
       await refreshTree();
     },
@@ -549,6 +575,9 @@ export function HrOkrPanel({ mode }: { mode: 'manager' | 'self' }) {
                           setKrTarget('100');
                           setKrUnit('');
                           setKrProjectId('');
+                          setKrProjectSearch('');
+                          setKrProjectCursor(undefined);
+                          setKrProjectPages([]);
                           setKrTaskIds([]);
                         }}
                       >
@@ -576,7 +605,7 @@ export function HrOkrPanel({ mode }: { mode: 'manager' | 'self' }) {
                           {t('completeBtn')}
                         </Button>
                       )}
-                      {obj.status === 'completed' && (
+                      {obj.status === 'completed' && !(obj.scope === 'individual' && obj.ownerEmployeeId === null) && (
                         <Button
                           type="button"
                           variant="outline"
@@ -677,11 +706,26 @@ export function HrOkrPanel({ mode }: { mode: 'manager' | 'self' }) {
                       />
                     </div>
                     {tree?.projectsAvailable && (
-                      <div className="sm:col-span-2">
+                      <div className="sm:col-span-2 space-y-2">
                         <Label htmlFor={`hr-okr-kr-project-${obj.id}`} className="text-xs">
                           {t('linkedProjectLabel')}
                         </Label>
-                        <div className={`mt-1 ${PHONE_SELECT}`}>
+                        <Input
+                          id={`hr-okr-kr-project-search-${obj.id}`}
+                          aria-label={t('searchProjectsPlaceholder')}
+                          className={PHONE_TARGET}
+                          value={krProjectSearch}
+                          onChange={(e) => {
+                            setKrProjectSearch(e.target.value);
+                            setKrProjectCursor(undefined);
+                            setKrProjectPages([]);
+                            setKrProjectId('');
+                            setKrTaskIds([]);
+                          }}
+                          placeholder={t('searchProjectsPlaceholder')}
+                          data-testid="hr-okr-project-search"
+                        />
+                        <div className={PHONE_SELECT}>
                           <NativeSelect
                             id={`hr-okr-kr-project-${obj.id}`}
                             value={krProjectId}
@@ -691,13 +735,31 @@ export function HrOkrPanel({ mode }: { mode: 'manager' | 'self' }) {
                             }}
                           >
                             <NativeSelectOption value="">{t('noLinkedProject')}</NativeSelectOption>
-                            {(projectOptionsQ.data?.projects ?? []).map((p) => (
+                            {mergedProjectOptions.map((p) => (
                               <NativeSelectOption key={p.id} value={p.id}>
                                 {p.name}
                               </NativeSelectOption>
                             ))}
                           </NativeSelect>
                         </div>
+                        {projectOptionsQ.data?.hasMore && projectOptionsQ.data.nextCursor && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className={PHONE_TARGET}
+                            disabled={projectOptionsQ.isFetching}
+                            onClick={() => {
+                              const next = projectOptionsQ.data?.nextCursor;
+                              if (!next) return;
+                              setKrProjectPages(mergedProjectOptions);
+                              setKrProjectCursor(next);
+                            }}
+                            data-testid="hr-okr-project-load-more"
+                          >
+                            {t('loadMoreProjectsBtn')}
+                          </Button>
+                        )}
                       </div>
                     )}
                   </div>
@@ -709,7 +771,7 @@ export function HrOkrPanel({ mode }: { mode: 'manager' | 'self' }) {
                       ) : (
                         <div className="mt-1 max-h-40 space-y-1 overflow-y-auto rounded border border-border bg-background p-2">
                           {(projectTasksQ.data?.tasks ?? []).map((task) => (
-                            <label key={task.id} className={`flex items-center gap-2 text-xs ${PHONE_TARGET}`}>
+                            <label key={task.id} className="flex items-center gap-2 text-xs max-md:flex max-md:min-h-11">
                               <input
                                 type="checkbox"
                                 checked={krTaskIds.includes(task.id)}
@@ -829,7 +891,7 @@ export function HrOkrPanel({ mode }: { mode: 'manager' | 'self' }) {
                         >
                           <div className="text-xs font-medium text-foreground">{t('checkinTitle')}</div>
                           {kr.linkedProjectAccessible && (
-                            <label className={`flex items-center gap-2 text-xs text-foreground ${PHONE_TARGET}`}>
+                            <label className="flex items-center gap-2 text-xs text-foreground max-md:flex max-md:min-h-11">
                               <input
                                 type="checkbox"
                                 checked={checkinSyncProjects}

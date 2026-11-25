@@ -1,14 +1,41 @@
 // Supabase Auth flows in the SPA (Decision 6, issue #32): email confirmation and recovery callbacks (PKCE),
 // TOTP enrollment and the sign-in challenge, token refresh and sign-out.
 import { expect, test } from '@playwright/test';
-import { authLink } from '../lib/mail.ts';
+import { authLink, authMail, type AuthMail } from '../lib/mail.ts';
 import { PASSWORD, claims, createOrg, newEmail, signIn, signOut, signUp, storedSession } from '../lib/session.ts';
 import { openSettingsTab } from '../lib/settings.ts';
 import { nextTotp } from '../lib/totp.ts';
 
+function expectBrandedAuthMail(
+  mail: AuthMail,
+  expected: { subject: RegExp; heading: string; english: string; forbidden: string[]; tokens?: string[] },
+): void {
+  expect(mail.subject).toMatch(expected.subject);
+  expect(mail.html).toContain(expected.heading);
+  expect(mail.html).toContain('Lưu ý bảo mật');
+  expect(mail.html).toContain('trình duyệt');
+  expect(mail.html).toContain('bỏ qua thư này');
+  expect(mail.html).toContain('<div lang="en"');
+  expect(mail.html).toContain('English:');
+  expect(mail.html).toContain(expected.english);
+  expect(mail.html).toContain('#612BD3');
+  expect(mail.html).toContain('#0F8F7A');
+  for (const token of expected.tokens ?? []) expect(mail.html).toContain(token);
+  for (const fallback of expected.forbidden) expect(mail.html).not.toContain(fallback);
+  expect(new URL(mail.link).pathname).toBe('/auth/v1/verify');
+}
+
 test('the confirmation link signs the new user in, and a used link shows why it failed', async ({ page }) => {
   const email = newEmail('confirm');
   await signUp(page, email);
+  const confirmMail = await authMail(email, /Xác nhận địa chỉ email/i);
+  expectBrandedAuthMail(confirmMail, {
+    subject: /^Xác nhận địa chỉ email - Ludy$/,
+    heading: 'Xác nhận địa chỉ email của bạn',
+    english: 'Confirm your Ludy email address',
+    forbidden: ['Confirm your signup', '<h2>Confirm your email address</h2>'],
+    tokens: [email],
+  });
   const session = await storedSession(page);
   expect(session && claims(session.access_token).email).toBe(email);
 
@@ -16,7 +43,7 @@ test('the confirmation link signs the new user in, and a used link shows why it 
   await expect(page).toHaveURL(/\/login$/);
   // Help is in the same place as in the app, before anyone is signed in (DESIGN.md §7, 3.2.6; #1516).
   await expect(page.getByRole('link', { name: 'Góp ý / Hỗ trợ' })).toHaveAttribute('href', 'mailto:support@e2e.test');
-  await page.goto(await authLink(email, /confirm/i));
+  await page.goto(await authLink(email, /Xác nhận địa chỉ email/i));
   await expect(page).toHaveURL(/\/login$/);
   await expect(page.getByRole('alert')).toContainText('Liên kết đã hết hạn hoặc đã được dùng');
 
@@ -62,7 +89,15 @@ test('password recovery sets a new password through the emailed link', async ({ 
   await page.getByRole('button', { name: 'Quên mật khẩu' }).click();
   await expect(page.getByText('thư đặt lại mật khẩu đã được gửi')).toBeVisible();
 
-  await page.goto(await authLink(email, /reset/i));
+  const resetMail = await authMail(email, /Đặt lại mật khẩu/i);
+  expectBrandedAuthMail(resetMail, {
+    subject: /^Đặt lại mật khẩu - Ludy$/,
+    heading: 'Đặt lại mật khẩu',
+    english: 'Reset your Ludy password',
+    forbidden: ['Reset Password', '<h2>Reset your password</h2>'],
+    tokens: [email],
+  });
+  await page.goto(resetMail.link);
   await expect(page).toHaveURL(/\/reset-password$/);
   await page.getByLabel('Mật khẩu mới', { exact: true }).fill(newPassword);
   await page.getByLabel('Nhập lại mật khẩu mới').fill(newPassword);
@@ -121,7 +156,15 @@ test('a user enrolls TOTP; sign-in and password recovery then ask for the code (
   await page.getByLabel('Email').fill(email);
   await page.getByRole('button', { name: 'Quên mật khẩu' }).click();
   await expect(page.getByText('thư đặt lại mật khẩu đã được gửi')).toBeVisible();
-  await page.goto(await authLink(email, /reset/i));
+  const resetMail = await authMail(email, /Đặt lại mật khẩu/i);
+  expectBrandedAuthMail(resetMail, {
+    subject: /^Đặt lại mật khẩu - Ludy$/,
+    heading: 'Đặt lại mật khẩu',
+    english: 'Reset your Ludy password',
+    forbidden: ['Reset Password', '<h2>Reset your password</h2>'],
+    tokens: [email],
+  });
+  await page.goto(resetMail.link);
   await expect(page).toHaveURL(/\/reset-password$/);
   await expect(page.getByText('Nhập mã trước khi đặt mật khẩu mới')).toBeVisible();
   await expect(page.getByLabel('Mật khẩu mới', { exact: true })).toHaveCount(0);
@@ -262,4 +305,46 @@ test('closing the organization asks for two-factor first', async ({ page }) => {
   await page.getByRole('button', { name: 'Xác nhận', exact: true }).click();
 
   await expect(page.getByText('Tổ chức đang được đóng. Chỉ chủ sở hữu còn truy cập được.')).toBeVisible();
+});
+
+test('email change sends a Ludy-branded Vietnamese confirmation mail and updates the login email (#3577)', async ({ page, request }) => {
+  const currentEmail = newEmail('email-change');
+  await signUp(page, currentEmail);
+  const session = await storedSession(page);
+  if (!session) throw new Error('no session after sign-up');
+
+  const nextEmail = newEmail('email-changed');
+  const change = await request.put('/auth/v1/user', {
+    headers: { authorization: `Bearer ${session.access_token}` },
+    data: { email: nextEmail },
+  });
+  expect(change.status()).toBe(200);
+
+  const currentMail = await authMail(currentEmail, /Xác nhận đổi email/i);
+  const nextMail = await authMail(nextEmail, /Xác nhận đổi email/i);
+  for (const mail of [currentMail, nextMail]) {
+    expectBrandedAuthMail(mail, {
+      subject: /^Xác nhận đổi email - Ludy$/,
+      heading: 'Xác nhận đổi địa chỉ email',
+      english: 'Confirm changing your Ludy email',
+      forbidden: ['Confirm Change of Email', '<h2>Confirm your new email address</h2>'],
+      tokens: [currentEmail, nextEmail],
+    });
+    expect(new URL(mail.link).searchParams.get('type')).toBe('email_change');
+  }
+
+  for (const mail of [currentMail, nextMail]) {
+    const verifyUrl = new URL(mail.link);
+    const verified = await request.get(`${verifyUrl.pathname}${verifyUrl.search}`, { maxRedirects: 0 });
+    expect([302, 303]).toContain(verified.status());
+    const location = verified.headers()['location'] ?? '';
+    expect(location).not.toBe('');
+    expect(location).not.toMatch(/error=/);
+  }
+
+  await signOut(page);
+  await signIn(page, nextEmail, PASSWORD);
+  await expect(page).toHaveURL(/\/onboarding$/);
+  const updated = await storedSession(page);
+  expect(updated && claims(updated.access_token).email).toBe(nextEmail);
 });
