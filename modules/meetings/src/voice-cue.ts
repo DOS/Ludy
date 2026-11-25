@@ -19,7 +19,7 @@ import { matchAssignee, type Person } from './assignee-match.ts';
 import { itemFlags } from './results.ts';
 import { vnDay } from './retention.ts';
 import { attendeeNames } from './speaker.ts';
-import { parseWhen } from './summary.ts';
+import { parseWhen } from './when.ts';
 import { ROLES, lockMeeting, openMeeting, userOf } from './transcript.ts';
 
 export const VOICE_CUE_FLAG = 'asked_aloud';
