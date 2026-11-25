@@ -37,7 +37,7 @@ type Trx = QueryContext['trx'];
 // recorder can still ask Vy.
 const TITLE_WORDS: Readonly<Record<SuggestableTemplate, readonly string[]>> = {
   briefing: ['giao ban', 'stand up', 'standup', 'stand-up', 'daily', 'weekly', 'sprint', 'hop tuan'],
-  one_on_one: ['1:1', '1-1', '1on1', '1 on 1', 'one on one', 'one-on-one', 'mot kem mot', 'gap rieng'],
+  one_on_one: ['1:1', '1on1', '1 on 1', 'one on one', 'one-on-one', 'mot kem mot', 'gap rieng'],
   customer: ['khach hang', 'bao gia', 'demo', 'tu van', 'ban hang', 'sales', 'customer', 'client'],
   supplier: ['nha cung cap', 'ncc', 'nhap hang', 'dat hang', 'giao hang', 'cung ung', 'nguyen lieu', 'supplier', 'vendor'],
 };
@@ -98,7 +98,7 @@ export const templateSuggest = defineQuery({
       seriesTemplate: await seriesTemplateOf(ctx.trx, ctx.orgId, input.meetingId, row.series_id, row.at),
       hasDeal: (await ctx.trx.selectFrom('ludy_meetings.meeting_link').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('deal_id', 'is not', null).limit(1).executeTakeFirst()) !== undefined,
       title: row.title,
-      people: await peopleOf(ctx.trx, ctx.orgId, input.meetingId),
+      people: await peopleOf(ctx.trx, ctx.orgId, input.meetingId, meeting.recorder_user_id),
     });
     return zTemplateSuggestion.parse({ meetingId: input.meetingId, ...answer });
   },
@@ -114,8 +114,14 @@ async function seriesTemplateOf(trx: Trx, orgId: string, meetingId: string, seri
 }
 
 // The recorder and the people who may read the meeting, counted once each.
-async function peopleOf(trx: Trx, orgId: string, meetingId: string): Promise<number> {
-  const readers = await trx.selectFrom('ludy_meetings.meeting_reader').select(sql<string>`count(distinct user_id)::text`.as('n')).where('org_id', '=', orgId).where('meeting_id', '=', meetingId).executeTakeFirstOrThrow();
+async function peopleOf(trx: Trx, orgId: string, meetingId: string, recorderId: string): Promise<number> {
+  const readers = await trx
+    .selectFrom('ludy_meetings.meeting_reader')
+    .select(sql<string>`count(distinct user_id)::text`.as('n'))
+    .where('org_id', '=', orgId)
+    .where('meeting_id', '=', meetingId)
+    .where('user_id', '<>', recorderId)
+    .executeTakeFirstOrThrow();
   return 1 + Number(readers.n);
 }
 

@@ -11,7 +11,8 @@ describe('titleTemplates', () => {
     expect(titleTemplates('GIAO BAN tuần 47')).toEqual(['briefing']);
     expect(titleTemplates('Daily stand-up')).toEqual(['briefing']);
     expect(titleTemplates('1:1 với Lan')).toEqual(['one_on_one']);
-    expect(titleTemplates('1-1 Nam')).toEqual(['one_on_one']);
+    // A date is no 1:1: "1-1" is left out of the list.
+    expect(titleTemplates('Họp ngày 1-1')).toEqual([]);
     expect(titleTemplates('One on one')).toEqual(['one_on_one']);
     expect(titleTemplates('Báo giá cho khách A')).toEqual(['customer']);
     expect(titleTemplates('Demo sản phẩm')).toEqual(['customer']);

@@ -48,11 +48,11 @@ export function MeetingTemplateSuggest({ meetingId, isRecorder, hasTranscript, t
             </Button>
             <span className="text-xs text-muted-foreground">{t('unknown')}</span>
           </div>
-          {/* One live region that is always in the page, so the changes are announced. */}
-          <div role="status" aria-live="polite" className="empty:hidden">
+          {/* One live region that is always in the page and holds the answer too, so the running word and the result are announced. */}
+          <div role="status" aria-live="polite" className="space-y-2 empty:hidden">
             {ask.isPending && <p className="text-xs">{t('running')}</p>}
+            {vy && !ask.isPending && <VyResult answer={vy} taking={take.isPending} onTake={(next) => take.mutate(next)} onJump={onJump} />}
           </div>
-          {vy && !ask.isPending && <VyResult answer={vy} taking={take.isPending} onTake={(next) => take.mutate(next)} onJump={onJump} />}
           {ask.error && <ErrorText>{errorMessage(ask.error)}</ErrorText>}
         </div>
       )}

@@ -19313,6 +19313,7 @@ export const en = {
         archive: 'Archive a minutes template of the organization',
         create: 'Write a minutes template for the organization',
         list: 'See the minutes templates of the organization',
+        suggest: 'See which minutes template fits a meeting, from the meeting itself',
         update: 'Edit a minutes template of the organization',
       },
       speaker: {

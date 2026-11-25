@@ -19312,6 +19312,7 @@ export const vi = {
         archive: 'Lưu trữ một mẫu biên bản của tổ chức',
         create: 'Viết mẫu biên bản cho tổ chức',
         list: 'Xem các mẫu biên bản của tổ chức',
+        suggest: 'Xem mẫu biên bản nào hợp với cuộc họp, từ chính cuộc họp',
         update: 'Sửa một mẫu biên bản của tổ chức',
       },
       speaker: {
