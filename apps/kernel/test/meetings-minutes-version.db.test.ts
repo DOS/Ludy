@@ -241,7 +241,7 @@ suite('the second-language version of the published minutes (#4777)', () => {
   });
 
   it('a personal-data erasure drops the version of every meeting it touches, directly, whether or not the original could be redacted (#4857)', async () => {
-    const touched = await seedPublished(`Gửi báo giá cho ${PERSON} vào sáng mai.`);
+    const touched = await seedPublished(`Chốt báo giá 1.250.000 cho ${PERSON} trong tuần này.`);
     const untouched = await seedPublished();
     await publish(touched);
     await publish(untouched);
