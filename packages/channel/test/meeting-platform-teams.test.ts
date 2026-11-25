@@ -133,7 +133,7 @@ describe('TeamsMeetingPlatform.list', () => {
       id: OCC.A,
       title: 'Họp tuần (Teams)',
       startedAt: '2026-11-17T02:00:00.000Z',
-      lengthSeconds: 3600,
+      lengthSeconds: 3000,
       sizeBytes: null,
       hasAudio: false,
       hasVideo: true,
@@ -145,6 +145,36 @@ describe('TeamsMeetingPlatform.list', () => {
     // Not listed: a call with no online meeting, a cancelled one, one still running, one with two recordings and no transcript, one with nothing, one Graph does not know.
     expect(calls.every((c) => c.method === 'GET')).toBe(true);
     expect(calls.filter((c) => c.url.includes('/recordings')).map((c) => decodeURIComponent(c.url))).not.toContain(expect.stringContaining(IDS.BBBB));
+  });
+
+  it('gives a row the length of what was recorded, not of the calendar slot: the recording, else the transcript, else the slot', async () => {
+    const aaaa = `/v1.0/me/onlineMeetings/${IDS.AAAA}`;
+    // A two hour slot of 01:00 to 03:00 would be 7200 seconds; the recording ran 40 minutes inside it.
+    const recording = (extra: Record<string, unknown>) => ({ json: { value: [{ id: RECORDING_ID, createdDateTime: '2026-11-17T02:10:00Z', recordingContentUrl: 'https://graph.microsoft.com/v1.0/$metadata#recording', ...extra }] } });
+    const lengthOfA = async (overrides: Record<string, Answer>) => (await teams(graph(overrides)).adapter.list(CREDENTIAL, SINCE)).find((m) => m.id === OCC.A)?.lengthSeconds;
+    expect(await lengthOfA({ [`${aaaa}/recordings`]: recording({ endDateTime: '2026-11-17T02:50:00Z' }) })).toBe(2400);
+    // No end on the recording: the transcript's own span (02:05 to 02:55) is next.
+    expect(await lengthOfA({ [`${aaaa}/recordings`]: recording({}) })).toBe(3000);
+    // An end before the start, or a span of more than a day, is no length: the transcript's span again.
+    expect(await lengthOfA({ [`${aaaa}/recordings`]: recording({ endDateTime: '2026-11-17T02:00:00Z' }) })).toBe(3000);
+    expect(await lengthOfA({ [`${aaaa}/recordings`]: recording({ endDateTime: '2026-11-19T02:10:00Z' }) })).toBe(3000);
+    // Neither file has an end: the calendar slot.
+    const bare = { json: { value: [{ id: TRANSCRIPT_ID, createdDateTime: '2026-11-17T02:05:00Z', transcriptContentUrl: 'https://graph.microsoft.com/v1.0/$metadata#transcript' }] } };
+    expect(await lengthOfA({ [`${aaaa}/recordings`]: recording({}), [`${aaaa}/transcripts`]: bare })).toBe(3600);
+  });
+
+  it('stops a look-up that Graph never answers at the request timeout, so one stalled answer cannot hold the whole list', async () => {
+    const route = graph();
+    // Graph answers every call but the online meeting look-up, which it never answers: the request ends only when its signal aborts.
+    const routed: Fetch = (url, init) => {
+      const at = new URL(url);
+      if (at.pathname.endsWith('/onlineMeetings')) return new Promise<Response>((_resolve, reject) => init?.signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true }));
+      return Promise.resolve(new Response(JSON.stringify((route(at) as { json?: unknown }).json ?? {}), { status: 200, headers: { 'content-type': 'application/json' } }));
+    };
+    const adapter = new TeamsMeetingPlatform(APP, { fetch: routed, now: () => NOW, timeoutMs: 40 });
+    const started = Date.now();
+    expect(await codeOf(adapter.list(CREDENTIAL, SINCE))).toBe('platform_unavailable');
+    expect(Date.now() - started).toBeLessThan(5_000);
   });
 
   it('asks the calendar for the window in UTC, with the narrow field list, and never calls a bulk "all" API', async () => {
