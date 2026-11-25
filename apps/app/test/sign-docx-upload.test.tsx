@@ -63,9 +63,12 @@ const { SIGN_DOCX_MAX_BYTES, SIGN_DOCX_MIME, SIGN_UPLOAD_ACCEPT, convertSignDocx
 );
 const { orpc, queryClient } = await import('../src/lib/api.ts');
 const { ensureSignedOutListener } = await import('../src/lib/ceremony-boot.ts');
-const { CreateEnvelopeDialog, handleEnvelopeCreatedWithWarnings, openCreatedDocxNoticeEnvelope } = await import(
-  '../src/routes/sign-envelopes.tsx'
-);
+const {
+  CreateEnvelopeDialog,
+  handleEnvelopeCreatedWithWarnings,
+  openCreatedDocxNoticeEnvelope,
+  submitCreateEnvelopeFromDialog,
+} = await import('../src/routes/sign-envelopes.tsx');
 const { SignEnvelopeDetailPage } = await import('../src/routes/sign-envelope-detail.tsx');
 const { CreateTemplateForm } = await import('../src/routes/sign-templates.tsx');
 
@@ -726,5 +729,149 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
     ).toBe(false);
     expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual([]);
     expect(staleNav).not.toHaveBeenCalled();
+
+    // Dismissing during the final resolveCurrentSessionId verification also aborts before saving or navigating.
+    setCreatedDocxNotice.mockClear();
+    let sessionCallCount = 0;
+    let dismissedOnFinalSessionCheck = false;
+    expect(
+      await openCreatedDocxNoticeEnvelope({
+        notice: { ...unpersistedNotice, orgId },
+        currentUserId: userAId,
+        resolveCurrentSessionId: async () => {
+          sessionCallCount += 1;
+          if (sessionCallCount === 2) {
+            dismissedOnFinalSessionCheck = true;
+          }
+          return 'sess-a';
+        },
+        isCurrentContext: () => !dismissedOnFinalSessionCheck,
+        setCreatedDocxNotice,
+        navigateToEnvelope: staleNav,
+      }),
+    ).toBe(false);
+    expect(sessionCallCount).toBe(2);
+    expect(setCreatedDocxNotice).not.toHaveBeenCalled();
+    expect(readCreatedDocxWarnings(envDetailId, scopeUserA)).toEqual([]);
+    expect(staleNav).not.toHaveBeenCalled();
+
+    // If sessionId cannot be resolved (null), keep notice pending for retry instead of attributing to cached currentUserId.
+    setCreatedDocxNotice.mockClear();
+    expect(
+      await openCreatedDocxNoticeEnvelope({
+        notice: { ...unpersistedNotice, orgId, userId: null },
+        currentUserId: userBId,
+        resolveCurrentSessionId: async () => null,
+        setCreatedDocxNotice,
+        navigateToEnvelope: staleNav,
+      }),
+    ).toBe(false);
+    expect(setCreatedDocxNotice).not.toHaveBeenCalled();
+    expect(readCreatedDocxWarnings(envDetailId, { org: orgId, userId: userBId })).toEqual([]);
+    expect(staleNav).not.toHaveBeenCalled();
+
+    // CreateEnvelopeDialog pins submitContext.slug to uploadPdf and createEnvelope, and aborts if org switches mid-flight.
+    const uploadCalls: Array<{ name: string; orgSlug: string | null | undefined }> = [];
+    const createCalls: Array<{ sourceFileId: string; orgSlug: string | null | undefined }> = [];
+    const samplePdf = makeTestFile(new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d]), 'hop-dong.pdf', 'application/pdf');
+    let liveOrgSlug = 'org-a';
+    const pinnedOutcome = await submitCreateEnvelopeFromDialog({
+      title: 'Hop dong A',
+      file: samplePdf,
+      converted: null,
+      orgSlug: 'org-a',
+      resolveSubmitContext: async () => ({
+        slug: 'org-a',
+        orgId,
+        userId: userAId,
+        sessionId: 'sess-a',
+        reqId: 1,
+      }),
+      isMounted: () => true,
+      isSubmitContextCurrent: (ctx) => ctx.slug === liveOrgSlug,
+      getLiveOrgSlug: () => liveOrgSlug,
+      docxRequiredMessage: 'PDF required',
+      uploadPdf: async (file, slugArg) => {
+        uploadCalls.push({ name: file.name, orgSlug: slugArg });
+        return { fileId: 'file-org-a' };
+      },
+      createEnvelope: async (input, slugArg) => {
+        createCalls.push({ sourceFileId: input.sourceFileId, orgSlug: slugArg });
+        return { envelopeId: 'env-org-a' };
+      },
+    });
+    expect(pinnedOutcome).toMatchObject({ cancelled: false, created: { envelopeId: 'env-org-a' } });
+    expect(uploadCalls).toEqual([{ name: 'hop-dong.pdf', orgSlug: 'org-a' }]);
+    expect(createCalls).toEqual([{ sourceFileId: 'file-org-a', orgSlug: 'org-a' }]);
+
+    // Switching org while resolveSubmitContext awaits aborts before any upload or create request runs.
+    uploadCalls.length = 0;
+    createCalls.length = 0;
+    liveOrgSlug = 'org-a';
+    const abortedBeforeUpload = await submitCreateEnvelopeFromDialog({
+      title: 'Hop dong stale',
+      file: samplePdf,
+      converted: null,
+      orgSlug: 'org-a',
+      resolveSubmitContext: async () => {
+        liveOrgSlug = 'org-b';
+        return {
+          slug: 'org-a',
+          orgId,
+          userId: userAId,
+          sessionId: 'sess-a',
+          reqId: 1,
+        };
+      },
+      isMounted: () => true,
+      isSubmitContextCurrent: (ctx) => ctx.slug === liveOrgSlug,
+      getLiveOrgSlug: () => liveOrgSlug,
+      docxRequiredMessage: 'PDF required',
+      uploadPdf: async (file, slugArg) => {
+        uploadCalls.push({ name: file.name, orgSlug: slugArg });
+        return { fileId: 'should-not-upload' };
+      },
+      createEnvelope: async (input, slugArg) => {
+        createCalls.push({ sourceFileId: input.sourceFileId, orgSlug: slugArg });
+        return { envelopeId: 'should-not-create' };
+      },
+    });
+    expect(abortedBeforeUpload).toEqual({ cancelled: true });
+    expect(uploadCalls).toEqual([]);
+    expect(createCalls).toEqual([]);
+
+    // Switching org while uploadPdf is in flight aborts before createEnvelope executes.
+    uploadCalls.length = 0;
+    createCalls.length = 0;
+    liveOrgSlug = 'org-a';
+    const abortedBeforeCreate = await submitCreateEnvelopeFromDialog({
+      title: 'Hop dong stale post-upload',
+      file: samplePdf,
+      converted: null,
+      orgSlug: 'org-a',
+      resolveSubmitContext: async () => ({
+        slug: 'org-a',
+        orgId,
+        userId: userAId,
+        sessionId: 'sess-a',
+        reqId: 1,
+      }),
+      isMounted: () => true,
+      isSubmitContextCurrent: (ctx) => ctx.slug === liveOrgSlug,
+      getLiveOrgSlug: () => liveOrgSlug,
+      docxRequiredMessage: 'PDF required',
+      uploadPdf: async (file, slugArg) => {
+        uploadCalls.push({ name: file.name, orgSlug: slugArg });
+        liveOrgSlug = 'org-b';
+        return { fileId: 'uploaded-a-then-switched' };
+      },
+      createEnvelope: async (input, slugArg) => {
+        createCalls.push({ sourceFileId: input.sourceFileId, orgSlug: slugArg });
+        return { envelopeId: 'should-not-create' };
+      },
+    });
+    expect(abortedBeforeCreate).toEqual({ cancelled: true });
+    expect(uploadCalls).toEqual([{ name: 'hop-dong.pdf', orgSlug: 'org-a' }]);
+    expect(createCalls).toEqual([]);
   });
 });

@@ -331,7 +331,7 @@ describe('sign-docx-http authorization ordering and cache/limiter hardening (#47
       });
     };
 
-    // Upload 1 job so filename cache gets populated, then finalize -> filename entry is cleared immediately.
+    // Upload 1 job so filename cache gets populated, then finalize -> filename entry remains until TTL/LRU expiry.
     const uploaded = await handleSignDocxConvertUpload({
       runtime,
       store,

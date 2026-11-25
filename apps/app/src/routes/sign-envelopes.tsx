@@ -47,7 +47,7 @@ import {
   type SignEnvelopeSummary,
   type SignObligationRenewalListItem,
 } from '../lib/sign-api.ts';
-import type { SignEnvelopeStatus } from '../lib/sign-fields.ts';
+import type { SignEnvelopeStatus, SignRoutingMode } from '../lib/sign-fields.ts';
 import { buildInPersonSigningUrl, buildSigningUrl, copyTextToClipboard } from '../lib/sign-hash.ts';
 import { toast } from '../lib/toast.ts';
 import { DataTable, Empty, ErrorText, PageHeader, PeekSheet, TableSkeleton } from '../components/ui.tsx';
@@ -201,6 +201,38 @@ export async function handleEnvelopeCreatedWithWarnings(deps: {
   }
 }
 
+async function verifyLiveSessionMatch(deps: {
+  expectedSessionId?: string | null | undefined;
+  noticeHasUserId: boolean;
+  resolveCurrentSessionId?: (() => Promise<string | null>) | undefined;
+  isCurrentContext?: (() => boolean) | undefined;
+  onSessionMismatch: () => void;
+}): Promise<boolean> {
+  if (!deps.expectedSessionId) {
+    return true;
+  }
+  if (!deps.resolveCurrentSessionId) {
+    return deps.noticeHasUserId;
+  }
+  let liveSessionId: string | null;
+  try {
+    liveSessionId = await deps.resolveCurrentSessionId();
+  } catch {
+    return false;
+  }
+  if (deps.isCurrentContext && !deps.isCurrentContext()) {
+    return false;
+  }
+  if (!liveSessionId) {
+    return false;
+  }
+  if (liveSessionId !== deps.expectedSessionId) {
+    deps.onSessionMismatch();
+    return false;
+  }
+  return true;
+}
+
 export async function openCreatedDocxNoticeEnvelope(deps: {
   notice: CreatedDocxListNotice;
   currentUserId?: string | null | undefined;
@@ -218,16 +250,15 @@ export async function openCreatedDocxNoticeEnvelope(deps: {
     deps.setCreatedDocxNotice(null);
     return false;
   }
-  if (deps.notice.sessionId && deps.resolveCurrentSessionId) {
-    try {
-      const liveSessionId = await deps.resolveCurrentSessionId();
-      if (liveSessionId && liveSessionId !== deps.notice.sessionId) {
-        deps.setCreatedDocxNotice(null);
-        return false;
-      }
-    } catch {
-      return false;
-    }
+  const initialSessionOk = await verifyLiveSessionMatch({
+    expectedSessionId: deps.notice.sessionId,
+    noticeHasUserId: Boolean(deps.notice.userId),
+    resolveCurrentSessionId: deps.resolveCurrentSessionId,
+    isCurrentContext: deps.isCurrentContext,
+    onSessionMismatch: () => deps.setCreatedDocxNotice(null),
+  });
+  if (!initialSessionOk) {
+    return false;
   }
   const cleanWarnings = sanitizeDocxWarnings(deps.notice.warnings);
   let resolvedOrgId = deps.notice.orgId;
@@ -253,16 +284,18 @@ export async function openCreatedDocxNoticeEnvelope(deps: {
     deps.setCreatedDocxNotice(null);
     return false;
   }
-  if (deps.notice.sessionId && deps.resolveCurrentSessionId) {
-    try {
-      const liveSessionId = await deps.resolveCurrentSessionId();
-      if (liveSessionId && liveSessionId !== deps.notice.sessionId) {
-        deps.setCreatedDocxNotice(null);
-        return false;
-      }
-    } catch {
-      return false;
-    }
+  const finalSessionOk = await verifyLiveSessionMatch({
+    expectedSessionId: deps.notice.sessionId,
+    noticeHasUserId: Boolean(deps.notice.userId),
+    resolveCurrentSessionId: deps.resolveCurrentSessionId,
+    isCurrentContext: deps.isCurrentContext,
+    onSessionMismatch: () => deps.setCreatedDocxNotice(null),
+  });
+  if (!finalSessionOk) {
+    return false;
+  }
+  if (deps.isCurrentContext && !deps.isCurrentContext()) {
+    return false;
   }
   const persisted =
     cleanWarnings.length === 0 ||
@@ -278,10 +311,100 @@ export async function openCreatedDocxNoticeEnvelope(deps: {
   return true;
 }
 
+export type CreateEnvelopeMutationOutcome =
+  | {
+      cancelled: true;
+    }
+  | {
+      cancelled: false;
+      created: { envelopeId: string };
+      warnings: readonly SignDocxToPdfWarning[];
+      submitContext: CreatedEnvelopeSubmitContext | null;
+    };
+
+export async function submitCreateEnvelopeFromDialog(deps: {
+  title: string;
+  file: File;
+  converted: SignDocxConvertCompletedResult | null;
+  orgSlug?: string | undefined;
+  resolveSubmitContext?: (() => CreatedEnvelopeSubmitContext | Promise<CreatedEnvelopeSubmitContext>) | undefined;
+  isMounted?: (() => boolean) | undefined;
+  isSubmitContextCurrent?: ((ctx: CreatedEnvelopeSubmitContext) => boolean) | undefined;
+  getLiveOrgSlug?: (() => string | null) | undefined;
+  docxRequiredMessage: string;
+  uploadPdf: (file: File, orgSlug?: string | null) => Promise<{ fileId: string }>;
+  createEnvelope: (
+    input: {
+      title: string;
+      routingMode: SignRoutingMode;
+      sourceFileId: string;
+      sourceDocxSha256?: string;
+    },
+    orgSlug?: string | null,
+  ) => Promise<{ envelopeId: string }>;
+}): Promise<CreateEnvelopeMutationOutcome> {
+  const readLiveOrg = deps.getLiveOrgSlug ?? getCurrentOrg;
+  const isActiveFor = (ctx: CreatedEnvelopeSubmitContext | null, fallbackSlug: string | undefined): boolean => {
+    if (deps.isMounted && !deps.isMounted()) return false;
+    const liveOrg = typeof readLiveOrg === 'function' ? readLiveOrg() : null;
+    if (ctx) {
+      if (deps.isSubmitContextCurrent && !deps.isSubmitContextCurrent(ctx)) return false;
+      if (liveOrg !== null && ctx.slug && liveOrg !== ctx.slug) return false;
+      return true;
+    }
+    if (liveOrg !== null && fallbackSlug && liveOrg !== fallbackSlug) return false;
+    return true;
+  };
+
+  const submitContext = deps.resolveSubmitContext ? await deps.resolveSubmitContext() : null;
+  const pinnedOrgSlug = submitContext?.slug || deps.orgSlug || undefined;
+  if (!isActiveFor(submitContext, pinnedOrgSlug)) {
+    return { cancelled: true };
+  }
+  if (deps.converted) {
+    return {
+      cancelled: false,
+      created: await deps.createEnvelope(
+        {
+          title: deps.title,
+          routingMode: 'parallel',
+          sourceFileId: deps.converted.fileId,
+          sourceDocxSha256: deps.converted.sourceDocxSha256,
+        },
+        pinnedOrgSlug,
+      ),
+      warnings: deps.converted.warnings,
+      submitContext,
+    };
+  }
+  if (isSignDocxFile(deps.file)) {
+    throw new Error(deps.docxRequiredMessage);
+  }
+  const uploaded = await deps.uploadPdf(deps.file, pinnedOrgSlug);
+  if (!isActiveFor(submitContext, pinnedOrgSlug)) {
+    return { cancelled: true };
+  }
+  return {
+    cancelled: false,
+    created: await deps.createEnvelope(
+      {
+        title: deps.title,
+        routingMode: 'parallel',
+        sourceFileId: uploaded.fileId,
+      },
+      pinnedOrgSlug,
+    ),
+    warnings: [],
+    submitContext,
+  };
+}
+
 export function CreateEnvelopeDialog({
   onClose,
   onCreated,
+  orgSlug,
   captureContext,
+  isContextValid,
 }: {
   onClose: () => void;
   onCreated: (
@@ -289,7 +412,9 @@ export function CreateEnvelopeDialog({
     warnings?: readonly SignDocxToPdfWarning[],
     submitContext?: CreatedEnvelopeSubmitContext | null,
   ) => Promise<void> | void;
+  orgSlug?: string | undefined;
   captureContext?: (() => CreatedEnvelopeSubmitContext | Promise<CreatedEnvelopeSubmitContext>) | undefined;
+  isContextValid?: ((ctx: CreatedEnvelopeSubmitContext) => boolean) | undefined;
 }) {
   const t = useTranslations('sign');
   const [title, setTitle] = useState('');
@@ -314,39 +439,26 @@ export function CreateEnvelopeDialog({
       title: string;
       file: File;
       converted: SignDocxConvertCompletedResult | null;
+      pinnedOrgSlug: string | undefined;
       resolveSubmitContext: (() => CreatedEnvelopeSubmitContext | Promise<CreatedEnvelopeSubmitContext>) | undefined;
-    }) => {
-      const submitContext = input.resolveSubmitContext ? await input.resolveSubmitContext() : null;
-      if (input.converted) {
-        return {
-          created: await signApi.createEnvelope({
-            title: input.title,
-            routingMode: 'parallel',
-            sourceFileId: input.converted.fileId,
-            sourceDocxSha256: input.converted.sourceDocxSha256,
-          }),
-          warnings: input.converted.warnings,
-          submitContext,
-        };
-      }
-      if (isSignDocxFile(input.file)) {
-        throw new Error(t('pdfRequired'));
-      }
-      const uploaded = await uploadSignPdf(input.file);
-      return {
-        created: await signApi.createEnvelope({
-          title: input.title,
-          routingMode: 'parallel',
-          sourceFileId: uploaded.fileId,
-        }),
-        warnings: [],
-        submitContext,
-      };
-    },
-    onSuccess: async ({ created, warnings, submitContext }) => {
-      if (!mountedRef.current) return;
-      toast(warnings.length > 0 ? t('docxWarningBanner') : t('createdToast'));
-      await onCreated(created.envelopeId, warnings, submitContext);
+      isSubmitContextCurrent: ((ctx: CreatedEnvelopeSubmitContext) => boolean) | undefined;
+    }) =>
+      submitCreateEnvelopeFromDialog({
+        title: input.title,
+        file: input.file,
+        converted: input.converted,
+        orgSlug: input.pinnedOrgSlug,
+        resolveSubmitContext: input.resolveSubmitContext,
+        isMounted: () => mountedRef.current,
+        isSubmitContextCurrent: input.isSubmitContextCurrent,
+        docxRequiredMessage: t('pdfRequired'),
+        uploadPdf: (file, targetSlug) => uploadSignPdf(file, targetSlug),
+        createEnvelope: (payload, targetSlug) => signApi.createEnvelope(payload, targetSlug),
+      }),
+    onSuccess: async (outcome) => {
+      if (outcome.cancelled || !mountedRef.current) return;
+      toast(outcome.warnings.length > 0 ? t('docxWarningBanner') : t('createdToast'));
+      await onCreated(outcome.created.envelopeId, outcome.warnings, outcome.submitContext);
     },
     onError: (error) => {
       if (mountedRef.current) setFormError(errorMessage(error));
@@ -366,7 +478,7 @@ export function CreateEnvelopeDialog({
     }
     setInspectingFile(true);
     const checked = await inspectSelectedSignUploadFile(file);
-    if (pickTokenRef.current !== token) return;
+    if (!mountedRef.current || pickTokenRef.current !== token) return;
     setInspectingFile(false);
     if (!checked.ok) {
       setFormError(t(checked.errorKey));
@@ -378,12 +490,12 @@ export function CreateEnvelopeDialog({
     if (checked.kind === 'docx') {
       setDocxStatus('converting');
       try {
-        const converted = await convertSignDocx(file);
-        if (pickTokenRef.current !== token) return;
+        const converted = await convertSignDocx(file, orgSlug || undefined);
+        if (!mountedRef.current || pickTokenRef.current !== token) return;
         setDocxResult(converted);
         setDocxStatus('ready');
       } catch (error) {
-        if (pickTokenRef.current !== token) return;
+        if (!mountedRef.current || pickTokenRef.current !== token) return;
         setSelectedFile(null);
         setDocxStatus('error');
         setFormError(errorMessage(error));
@@ -410,7 +522,9 @@ export function CreateEnvelopeDialog({
       title: cleanTitle,
       file: selectedFile,
       converted: docxResult,
+      pinnedOrgSlug: orgSlug || undefined,
       resolveSubmitContext: captureContext,
+      isSubmitContextCurrent: isContextValid,
     });
   };
 
@@ -796,7 +910,7 @@ export function SignEnvelopesPage() {
   ): Promise<{ orgId: string | null; userId: string | null; sessionId: string | null } | null> => {
     const me = hasMeQuery ? await queryClient.fetchQuery({ ...orpc.me.get.queryOptions(), staleTime: 0 }) : null;
     const afterSessionId = await readCurrentSessionId();
-    if (expectedSessionId && afterSessionId && afterSessionId !== expectedSessionId) {
+    if (expectedSessionId && (!afterSessionId || afterSessionId !== expectedSessionId)) {
       return null;
     }
     let orgId = me?.orgs.find((o) => o.slug === targetSlug)?.orgId ?? null;
@@ -1583,13 +1697,19 @@ export function SignEnvelopesPage() {
       {createOpen ? (
         <CreateEnvelopeDialog
           key={slug}
-          captureContext={async () => ({
-            slug,
-            orgId: currentOrgId,
-            userId: currentUserId,
-            sessionId: await readCurrentSessionId(),
-            reqId: docxNoticeReqRef.current,
-          })}
+          orgSlug={slug || undefined}
+          captureContext={async () => {
+            const reqId = docxNoticeReqRef.current;
+            const sessionId = await readCurrentSessionId();
+            return {
+              slug,
+              orgId: currentOrgId,
+              userId: currentUserId,
+              sessionId,
+              reqId,
+            };
+          }}
+          isContextValid={(ctx) => isSameActiveOrgContext(ctx.slug, ctx.reqId)}
           onClose={() => setCreateOpen(false)}
           onCreated={async (envelopeId, warnings = [], submitContext) => {
             const targetSlug = submitContext?.slug ?? slug;

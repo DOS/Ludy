@@ -575,17 +575,27 @@ export const signApi = {
   getEnvelope: (envelopeId: string) => client.sign.envelope.get({ envelopeId }),
   getEnvelopeEvents: (envelopeId: string) => client.sign.envelope.events({ envelopeId }),
   verifyEnvelope: (envelopeId: string) => client.sign.envelope.verify({ envelopeId }),
-  createEnvelope: (input: {
-    title: string;
-    subject?: string;
-    message?: string;
-    routingMode: SignRoutingMode;
-    allowDelegation?: boolean;
-    sourceFileId: string;
-    sourceDocxSha256?: string;
-    expiresAt?: string | null;
-    autoRemindBeforeExpiry?: boolean;
-  }) => client.sign.envelope.create({ ...input, sourceKind: 'standalone', idempotencyKey: crypto.randomUUID() }),
+  createEnvelope: (
+    input: {
+      title: string;
+      subject?: string;
+      message?: string;
+      routingMode: SignRoutingMode;
+      allowDelegation?: boolean;
+      sourceFileId: string;
+      sourceDocxSha256?: string;
+      expiresAt?: string | null;
+      autoRemindBeforeExpiry?: boolean;
+    },
+    orgSlug?: string | null,
+  ) => {
+    const scopedClient = orgSlug && typeof clientForOrg === 'function' ? clientForOrg(orgSlug) : client;
+    return scopedClient.sign.envelope.create({
+      ...input,
+      sourceKind: 'standalone',
+      idempotencyKey: crypto.randomUUID(),
+    });
+  },
   updateEnvelope: (input: {
     envelopeId: string;
     expectedVersion?: number;
