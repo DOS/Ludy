@@ -105,7 +105,8 @@ test('transcript download: the recorder saves the transcript as plain text and a
 
   const box = page.getByTestId('transcript-export');
   await expect(box).toBeVisible();
-  await expect(box.getByRole('group', { name: 'Tải bản ghi lời về' })).toBeVisible();
+  // The box is itself the labelled group.
+  await expect(page.getByRole('group', { name: 'Tải bản ghi lời về' })).toBeVisible();
   await expect(box).toContainText('Không dùng AI.');
 
   const saved = async (format: 'txt' | 'srt'): Promise<{ name: string; text: string }> => {

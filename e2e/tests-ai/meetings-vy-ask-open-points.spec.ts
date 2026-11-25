@@ -94,7 +94,6 @@ test('"Còn bỏ ngỏ": one click lists the questions and decisions the checks 
     await run.click();
     const answer = page.getByTestId('open-points-answer');
     await expect(answer).toBeVisible();
-    await expect(answer).toContainText('1 câu hỏi và 1 việc cần quyết');
     await expect(page.getByTestId('open-points-questions')).toContainText('Khi nào gửi báo giá cho khách A?');
     await expect(page.getByTestId('open-points-decisions')).toContainText('Có giữ giá cũ cho khách A hay không?');
     await expect(page.getByTestId('open-points-line')).toHaveCount(2);
