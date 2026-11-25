@@ -141,8 +141,9 @@ export const weeklyNotice = defineCommand({
         })
       : null;
     const mailed = mail?.status === 'queued';
-    // A Monday and a flag, the same shape every time: no count, no address (an owner or admin reads the audit log and could probe meetings they cannot read by the numbers; the numbers are the member's own notice and mail only).
-    ctx.audit({ day: input.day, mailed });
+    // The Monday and nothing else, the same shape every time: no count, no address, not even whether a mail was queued (an owner or admin reads the audit log and could probe what a member reads by anything that varies;
+    // the numbers are the member's own notice and mail only). The row is written only when a notice was, and nothing is written when none is due.
+    ctx.audit({ day: input.day });
     return { notified: true, mailed, notificationId: notice?.id ?? null };
   },
 });
