@@ -454,7 +454,7 @@ export function MeetingsPage() {
   });
 
   // The labels the recorders put on the meetings the person reads (#4955): each row of the list carries them (#4966), so the list shows them, filters by them, offers the choices of the meetings it holds, and
-  // the search keeps the hits of the labelled meetings among them.
+  // the search asks the server for the lines of the labelled meetings (#4965).
   const allMeetings = meetingsQuery.data ?? [];
   const labelsByMeeting = useMemo(() => labelsByMeetingOf(allMeetings), [allMeetings]);
   const labelChoices = useMemo(() => labelChoicesOf(allMeetings), [allMeetings]);
@@ -696,7 +696,7 @@ export function MeetingsPage() {
               {openedTools.has('ask') && <MeetingAsk slug={slug} />}
             </div>
             <div id="meetings-tool-panel-search" hidden={activeTool !== 'search'} className="rounded-lg border border-border bg-card p-4">
-              {openedTools.has('search') && <MeetingSearch slug={slug} label={filter.label} labelsByMeeting={labelsByMeeting} />}
+              {openedTools.has('search') && <MeetingSearch slug={slug} label={filter.label} />}
             </div>
             <div id="meetings-tool-panel-trackers" hidden={activeTool !== 'trackers'}>
               {openedTools.has('trackers') && <TrackersWeek slug={slug} />}

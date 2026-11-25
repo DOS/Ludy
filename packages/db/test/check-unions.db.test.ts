@@ -337,6 +337,8 @@ const unions = <const M extends Unions<M> & Readonly<Record<string, readonly str
 const UNIONS = unions({
   'ludy_hr.candidate.source': HR_CANDIDATE_SOURCES,
   'ludy_hr.candidate.stage': HR_CANDIDATE_STAGES,
+  'ludy_hr.candidate_stage_transition.from_stage': HR_CANDIDATE_STAGES,
+  'ludy_hr.candidate_stage_transition.to_stage': HR_CANDIDATE_STAGES,
   'ludy_hr.department.pay_function': HR_PAY_FUNCTIONS,
   'ludy_hr.job_opening.contract_type': HR_CONTRACT_TYPES,
   'ludy_hr.job_opening.pay_function': HR_PAY_FUNCTIONS,

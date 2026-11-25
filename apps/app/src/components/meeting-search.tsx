@@ -5,7 +5,7 @@
 // row, so it runs when the member asks (Enter or the button), not on every key.
 import { useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
 import { MEETING_SEARCH_HITS_MAX, type MeetingSearchHit, type MeetingSearchResult } from '@ludy/kernel-contract';
 import { Badge } from '@ludy/ui/components/badge';
@@ -16,7 +16,6 @@ import { ErrorText } from './ui.tsx';
 import { clock } from './meeting-transcript.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc } from '../lib/api.ts';
-import { hasLabel } from '../lib/meetings-list.ts';
 import { markMatches } from '../lib/search-fold.ts';
 
 export const SEARCH_PAGE = 20;
@@ -82,13 +81,14 @@ export function SearchResults({ slug, result, typed, page, onPage }: { slug: str
   );
 }
 
-export function MeetingSearch({ slug, label = '', labelsByMeeting }: { slug: string; label?: string; labelsByMeeting?: ReadonlyMap<string, readonly string[]> }) {
+// `label` is the label chosen in the list's filter ('' for none): the search asks the server for the lines of the meetings that carry it (#4965), so a page is filled with them and paged by the server.
+export function MeetingSearch({ slug, label = '' }: { slug: string; label?: string }) {
   const t = useTranslations('meetings.contentSearch');
   const [text, setText] = useState('');
-  const [asked, setAsked] = useState<{ q: string; offset: number } | null>(null);
+  const [asked, setAsked] = useState<{ q: string; offset: number; label: string } | null>(null);
   const [tooShort, setTooShort] = useState(false);
   const query = useQuery({
-    ...orpc.meetings.search.queryOptions({ input: { q: asked?.q ?? '-', limit: SEARCH_PAGE, offset: asked?.offset ?? 0 } }),
+    ...orpc.meetings.search.queryOptions({ input: { q: asked?.q ?? '-', limit: SEARCH_PAGE, offset: asked?.offset ?? 0, ...(asked && asked.label !== '' ? { label: asked.label } : {}) } }),
     enabled: asked !== null,
     // Each search leaves an audit row: asking again for the same page within half a minute shows what is held; a removed reader loses the text on the next ask after that.
     staleTime: 30_000,
@@ -103,16 +103,18 @@ export function MeetingSearch({ slug, label = '', labelsByMeeting }: { slug: str
       return;
     }
     setTooShort(false);
-    setAsked({ q, offset: 0 });
+    setAsked({ q, offset: 0, label });
   };
   const clear = () => {
     setAsked(null);
     setText('');
     setTooShort(false);
   };
-  // A label chosen in the list's filter keeps the hits of the meetings that carry it (#4955), from the labels the list already read; a page may then hold fewer hits, and "next" still pages the search.
-  const answered = asked ? query.data : undefined;
-  const result = answered && label !== '' && labelsByMeeting ? { ...answered, hits: answered.hits.filter((h) => hasLabel(labelsByMeeting, h.meetingId, label)) } : answered;
+  // The answer shown is the one for the label asked with: when the list's label filter changes, it ends, and a new search is the member's own click (each search leaves an audit row, so it never runs by itself).
+  useEffect(() => {
+    setAsked((a) => (a !== null && a.label !== label ? null : a));
+  }, [label]);
+  const result = asked ? query.data : undefined;
   const page = asked ? Math.floor(asked.offset / SEARCH_PAGE) + 1 : 1;
 
   return (
@@ -143,7 +145,7 @@ export function MeetingSearch({ slug, label = '', labelsByMeeting }: { slug: str
           result={result}
           typed={asked.q}
           page={page}
-          onPage={(delta) => setAsked({ q: asked.q, offset: asked.offset + delta * SEARCH_PAGE })}
+          onPage={(delta) => setAsked({ q: asked.q, offset: asked.offset + delta * SEARCH_PAGE, label: asked.label })}
         />
       )}
       </div>

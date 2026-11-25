@@ -486,9 +486,27 @@ function isRetryableCvPollError(error: unknown): boolean {
   return code === 'UPLOAD_BUSY' || (typeof status === 'number' && status >= 500) || isNetworkFailure(error);
 }
 
+async function waitForPollDelay(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) {
+    throw signal.reason ?? new DOMException('Aborted', 'AbortError');
+  }
+  if (ms <= 0) return;
+  await new Promise<void>((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal?.reason ?? new DOMException('Aborted', 'AbortError'));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
 export async function extractRecruitingCv(
   file: File,
-  options: { openingId?: string; legalEntityId?: string; lang?: 'vi' | 'en'; useAi?: boolean; orgSlug?: string | null } = {},
+  options: { openingId?: string; legalEntityId?: string; lang?: 'vi' | 'en'; useAi?: boolean; orgSlug?: string | null; signal?: AbortSignal } = {},
 ): Promise<HrCvExtractDraft> {
   if (file.size === 0) {
     throw new ClientError('hrRecruiting.cvExtract.emptyFile', (t) => t('hrRecruiting.cvExtract.emptyFile'));
@@ -508,6 +526,7 @@ export async function extractRecruitingCv(
     apiFetch('/api/hr/recruiting/cv-extract', {
       method: 'POST',
       body: form,
+      ...(options.signal ? { signal: options.signal } : {}),
       ...orgOpt,
     }),
   );
@@ -527,17 +546,34 @@ export async function extractRecruitingCv(
   for (let attempt = 0; attempt < 25; attempt += 1) {
     const remaining = deadline - Date.now();
     if (remaining <= 0) break;
-    await new Promise((resolve) => setTimeout(resolve, Math.min(CV_EXTRACT_POLL_INTERVAL_MS, remaining)));
+    await waitForPollDelay(Math.min(CV_EXTRACT_POLL_INTERVAL_MS, remaining), options.signal);
+    const attemptRemaining = deadline - Date.now();
+    if (attemptRemaining <= 0) break;
+    const timeoutController = new AbortController();
+    const timeoutTimer = setTimeout(() => {
+      timeoutController.abort(new DOMException('CV extract poll timed out', 'TimeoutError'));
+    }, attemptRemaining);
+    const pollSignal = options.signal
+      ? AbortSignal.any([options.signal, timeoutController.signal])
+      : timeoutController.signal;
     try {
-      const pollRes = await apiFetch(pollPath, orgOpt);
+      const pollRes = await apiFetch(pollPath, { ...orgOpt, signal: pollSignal });
       lastTransientError = null;
       payload = (await pollRes.json()) as HrCvExtractResponse;
       if (payload.status === 'ready') return payload.draft;
     } catch (error) {
+      if (options.signal?.aborted) {
+        throw error;
+      }
+      if (timeoutController.signal.aborted) {
+        break;
+      }
       if (!isRetryableCvPollError(error)) {
         throw error;
       }
       lastTransientError = error;
+    } finally {
+      clearTimeout(timeoutTimer);
     }
   }
 
