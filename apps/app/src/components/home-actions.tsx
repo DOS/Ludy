@@ -14,7 +14,7 @@ export function HomeActions({ slug, actions }: { slug: string; actions: readonly
   const t = useTranslations('overview.actions');
   if (actions.length === 0) return null;
   return (
-    <nav aria-label={t('label')} data-testid="home-actions" className="mb-4">
+    <div role="group" aria-label={t('label')} data-testid="home-actions" className="mb-4">
       {/* Two to a line on a phone (44 px targets within thumb reach), one row from sm. */}
       <ul className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
         {actions.map((action, index) => (
@@ -32,6 +32,6 @@ export function HomeActions({ slug, actions }: { slug: string; actions: readonly
           </li>
         ))}
       </ul>
-    </nav>
+    </div>
   );
 }

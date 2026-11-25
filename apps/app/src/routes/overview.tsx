@@ -317,7 +317,10 @@ export function OverviewPage() {
 
   // The day-1 "Bắt đầu" card (#4783): gone by itself once the org has an approved invoice, or when the member closes it. The read is bounded:
   // it runs only while neither has happened on this device, and its answer is kept so it is not asked again.
-  const [stored, setStored] = useState<StartCardState | null>(() => readStartCardState(slug));
+  // Kept with the slug it was read for: the screen stays mounted when the member switches org, so another org's state is read afresh.
+  const [storedFor, setStoredFor] = useState<{ slug: string; value: StartCardState | null }>(() => ({ slug, value: readStartCardState(slug) }));
+  const stored = storedFor.slug === slug ? storedFor.value : readStartCardState(slug);
+  const setStored = (value: StartCardState) => setStoredFor({ slug, value });
   const documents = useQuery({
     ...orpc.documents.list.queryOptions({ input: {} }),
     enabled: financeOn && role !== undefined && role !== 'viewer' && stored === null,
