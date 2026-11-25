@@ -113,6 +113,7 @@ describe('meetings commands and queries construction', () => {
       'meetings.commitments.start',
       'meetings.template_suggest.start',
       'meetings.open_points.start',
+      'meetings.sales_insight.start',
       'meetings.summary.copy_result',
       'meetings.chapters.copy_result',
       'meetings.speaker.name',
@@ -215,6 +216,8 @@ describe('meetings commands and queries construction', () => {
       'meetings.template.suggest',
       'meetings.template_suggest.status',
       'meetings.open_points.status',
+      'meetings.sales_insight.status',
+      'meetings.sales_insight.facts',
       'meetings.notes.preview',
       'meetings.summary.attendees',
       'meetings.speaker.suggestions',
@@ -278,6 +281,7 @@ describe('meetings commands and queries construction', () => {
       'meetings.mcp.search',
       'meetings.mcp.visible_ids',
       'meetings.transcript.download',
+      'meetings.speaking_style.get',
     ]);
 
     expect(meetingList.name).toBe('meetings.meeting.list');

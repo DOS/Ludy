@@ -100,6 +100,26 @@ function createStubRuntime() {
         text = JSON.stringify({ template: 'customer', reason: 'Gui bao gia cho khach.', second: 0 });
       } else if (feature === 'meetings.open_points') {
         text = JSON.stringify({ points: [{ kind: 'question', text: 'Ai se gui bao cao truoc thu Sau?', second: 0 }] });
+      } else if (feature === 'meetings.sales_insight') {
+        if (prompt.user.includes('11111111-1111-4111-8111-111111111102')) {
+          text = JSON.stringify({
+            concerns: [{ text: 'Khách thấy phí triển khai ban đầu hơi cao so với dự kiến.', lineIds: ['11111111-1111-4111-8111-111111111102'] }],
+            buyingSignals: [{ text: 'Có ngân sách 120 triệu và kỳ vọng chốt trong tháng 12 nếu giám đốc duyệt.', lineIds: ['11111111-1111-4111-8111-111111111103'] }],
+            nextSteps: [{ text: 'Gửi lại bảng báo giá chi tiết chiều nay.', owner: 'Lan', lineIds: ['11111111-1111-4111-8111-111111111104'] }],
+          });
+        } else if (prompt.user.includes('22222222-2222-4222-8222-222222222202')) {
+          text = JSON.stringify({
+            concerns: [{ text: 'Lo ngại sai lệch số liệu khi chuyển tồn kho từ phần mềm cũ.', lineIds: ['22222222-2222-4222-8222-222222222202'] }],
+            buyingSignals: [{ text: 'Đề nghị sắp xếp buổi demo riêng cho kế toán trưởng vào tuần sau.', lineIds: ['22222222-2222-4222-8222-222222222203'] }],
+            nextSteps: [{ text: 'Đặt lịch demo cho kế toán trưởng vào thứ Ba tuần sau.', owner: 'Huy', lineIds: ['22222222-2222-4222-8222-222222222204'] }],
+          });
+        } else {
+          text = JSON.stringify({
+            concerns: [{ text: 'Khách cần thêm thông tin trước khi quyết định.', lineIds: ['33333333-3333-4333-8333-333333333301'] }],
+            buyingSignals: [],
+            nextSteps: [],
+          });
+        }
       } else if (feature === 'meetings.followup_note') {
         text = JSON.stringify({
           body: 'Cam on ban da tham gia buoi trao doi ke hoach ban hang.\n\nLan se gui tai lieu ke hoach trong tuan sau.',
