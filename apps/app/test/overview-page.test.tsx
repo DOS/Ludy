@@ -154,8 +154,12 @@ const WEEKLY: Weekly = {
   final: true,
 };
 
+// A recorded (approved) invoice of the org: the day-1 card goes away once one exists (#4783).
+const APPROVED_DOC = { id: 'doc-1', voided: null };
+
 interface SeedOptions {
   locale?: 'vi' | 'en';
+  documents?: Array<{ id: string; voided: null | { reversalEntryId: string } }>;
   role?: 'owner' | 'admin' | 'member' | 'viewer';
   overview?: OrgOverview;
   todayItems?: TodayItem[];
@@ -196,6 +200,8 @@ function renderOverview(opts: SeedOptions = {}): string {
     orgs: [{ orgId: 'org-1', slug: 'acme', name: 'Gạo Sạch Mekong', role }],
   });
   qc.setQueryData(['org', 'overview'], opts.overview ?? EMPTY_OVERVIEW);
+  // An org with activity has its first invoice approved unless a test says otherwise; an empty org has none.
+  qc.setQueryData(['documents', 'list'], opts.documents ?? (opts.overview?.lastActivityAt ? [APPROVED_DOC] : []));
   qc.setQueryData(['notifications', 'list'], { items: [], unreadWork: opts.unreadWork ?? 0 });
   qc.setQueryData(['tasks', 'list'], opts.tasks ?? []);
   qc.setQueryData(['today', 'list'], { items: todayItems, coworkers: COWORKERS, dropped: 0, truncated: 0, failed: 0 });
@@ -233,12 +239,23 @@ function renderOverview(opts: SeedOptions = {}): string {
   );
 }
 
+const storage = new Map<string, string>();
+
 beforeEach(() => {
+  storage.clear();
+  vi.stubGlobal('localStorage', {
+    getItem: (k: string) => storage.get(k) ?? null,
+    setItem: (k: string, v: string) => void storage.set(k, v),
+    removeItem: (k: string) => void storage.delete(k),
+  });
   vi.useFakeTimers({ toFake: ['Date'] });
   state.client.clear();
   state.modules = ['kernel', 'finance', 'notes', 'projects', 'meetings', 'social', 'crm', 'ads', 'hr', 'sign'];
 });
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
 
 describe('OverviewPage layout compression and Day-1 SME quick-start (#4644)', () => {
   it('renders compressed Row 1-4 layout for an active SME org in vi and en', () => {
@@ -318,9 +335,11 @@ describe('OverviewPage layout compression and Day-1 SME quick-start (#4644)', ()
 
     expect(html).not.toContain('data-testid="overview-operational-strip"');
     expect(html).not.toContain('data-testid="since-yesterday-strip"');
-    // AI-off fallback keeps TodayList queue visible and omits TodayBrief cleanly.
+    // AI-off fallback keeps TodayList queue visible and the brief falls back to one fixed sentence from the list's own count (#4783).
     expect(html).toContain('data-testid="today-hero-card"');
-    expect(html).not.toContain('data-testid="today-brief"');
+    expect(html).toContain('data-testid="today-brief"');
+    expect(html).toContain('Hôm nay có 2 việc cần bạn xem');
+    expect(html).not.toContain('today-brief-coworker');
     expect(html).toContain('data-testid="today-weekly"');
   });
 
@@ -337,12 +356,14 @@ describe('OverviewPage layout compression and Day-1 SME quick-start (#4644)', ()
     expect(html).toContain('data-testid="overview-quickstart"');
     expect(html).toContain('Bắt đầu nhanh trong 3 bước');
     expect(html).toContain(viMessages.today.empty);
+    // With the accounting app on: the first invoice, the VAT period and two-factor sign-in (benchmark L3).
     expect(html).toContain('data-testid="quickstart-step-uploadInvoice"');
-    expect(html).toContain('data-testid="quickstart-step-configureApps"');
-    expect(html).toContain('data-testid="quickstart-step-createNote"');
+    expect(html).toContain('data-testid="quickstart-step-vatPeriod"');
+    expect(html).toContain('data-testid="quickstart-step-twoFactor"');
     expect(html).toContain('href="/o/acme/inbox"');
-    expect(html).toContain('href="/o/acme/settings/apps"');
-    expect(html).toContain('href="/o/acme/notes"');
+    expect(html).toContain('href="/o/acme/settings#tax-profile"');
+    expect(html).toContain('href="/o/acme/settings/security"');
+    expect(html).toContain('data-testid="quickstart-dismiss"');
     expect(html).toContain('href="/o/acme/guide"');
     expect(html).toContain('max-md:min-h-11');
     // Preserves TaxCalendar + quiet AppCards links expected by E2E.
@@ -368,7 +389,7 @@ describe('OverviewPage layout compression and Day-1 SME quick-start (#4644)', ()
     const viewer = renderOverview({ role: 'viewer', overview: EMPTY_OVERVIEW, todayItems: [] });
     expect(viewer).not.toContain('data-testid="overview-quickstart"');
     expect(viewer).toContain(viMessages.today.empty);
-    expect(viewer).not.toContain(viMessages.overview.upload);
+    expect(viewer).not.toContain('data-testid="home-actions"');
 
     // Members never receive admin-only channel-connect quick-start CTAs.
     state.modules = ['kernel', 'social'];
@@ -397,7 +418,7 @@ describe('OverviewPage layout compression and Day-1 SME quick-start (#4644)', ()
       </I18nProvider>,
     );
     expect(loadingHtml).not.toContain('data-weekly-slot=""');
-    expect(loadingHtml).not.toContain(viMessages.overview.upload);
+    expect(loadingHtml).not.toContain('data-testid="home-actions"');
     // Loading spinner inside AppCards link is wrapped aria-hidden so link accessible text stays clean.
     expect(loadingHtml).toMatch(/<span aria-hidden="true"[^>]*><svg[^>]*data-slot="spinner"/);
   });
@@ -423,5 +444,71 @@ describe('OverviewPage layout compression and Day-1 SME quick-start (#4644)', ()
       expect(slice, locale).not.toMatch(/[\u2013\u2014]/);
       expect(slice, locale).not.toMatch(/assistant|trợ lý/i);
     }
+  });
+  it('opens with the fixed create actions named by the job, only for the apps that are on (#4783)', () => {
+    const all = renderOverview({ overview: ACTIVE_OVERVIEW, todayItems: TODAY_ITEMS });
+    expect(all).toContain('data-testid="home-actions"');
+    for (const [id, name, href] of [
+      ['uploadInvoice', 'Tải hóa đơn', '/o/acme/inbox'],
+      ['recordExpense', 'Ghi khoản chi', '/o/acme/vouchers'],
+      ['createSalesInvoice', 'Tạo hóa đơn bán', '/o/acme/sales-invoices'],
+      ['addCustomer', 'Thêm khách', '/o/acme/contacts'],
+    ] as const) {
+      expect(all).toContain(`data-testid="home-action-${id}"`);
+      expect(all).toContain(name);
+      expect(all).toContain(`href="${href}`);
+    }
+    // The row comes before the queue; each target keeps the 44 px phone height.
+    expect(all.indexOf('data-testid="home-actions"')).toBeLessThan(all.indexOf('data-testid="today-hero-card"'));
+    expect(all).toMatch(/data-testid="home-action-uploadInvoice"[^>]*max-md:min-h-11/);
+
+    // The accounting app off: only the customer remains; both off: no row at all.
+    state.modules = ['kernel', 'crm'];
+    const crmOnly = renderOverview({ overview: ACTIVE_OVERVIEW, todayItems: TODAY_ITEMS });
+    expect(crmOnly).toContain('data-testid="home-action-addCustomer"');
+    expect(crmOnly).not.toContain('data-testid="home-action-uploadInvoice"');
+    state.modules = ['kernel', 'notes'];
+    expect(renderOverview({ overview: ACTIVE_OVERVIEW, todayItems: TODAY_ITEMS })).not.toContain('data-testid="home-actions"');
+  });
+
+  it('shows the day-1 start card until the first invoice is approved, and not after it or after it is closed (#4783)', () => {
+    const empty = renderOverview({ overview: EMPTY_OVERVIEW, todayItems: [] });
+    expect(empty).toContain('data-testid="overview-quickstart"');
+    // The queue is first and the start card sits under it.
+    expect(empty.indexOf('data-testid="overview-quickstart"')).toBeGreaterThan(empty.indexOf('id="overview-today"'));
+
+    // An org with activity but no approved invoice still sees it (the card follows the invoice, not the empty queue).
+    const noInvoiceYet = renderOverview({ overview: ACTIVE_OVERVIEW, todayItems: TODAY_ITEMS, documents: [] });
+    expect(noInvoiceYet).toContain('data-testid="overview-quickstart"');
+
+    // The first approved invoice: gone by itself. A voided one does not count.
+    const approved = renderOverview({ overview: EMPTY_OVERVIEW, todayItems: [], documents: [APPROVED_DOC] });
+    expect(approved).not.toContain('data-testid="overview-quickstart"');
+    const voided = renderOverview({ overview: EMPTY_OVERVIEW, todayItems: [], documents: [{ id: 'doc-2', voided: { reversalEntryId: 'e1' } }] });
+    expect(voided).toContain('data-testid="overview-quickstart"');
+
+    // Closed on this device: it stays closed.
+    storage.set('ludy.home.start.acme', 'dismissed');
+    expect(renderOverview({ overview: EMPTY_OVERVIEW, todayItems: [] })).not.toContain('data-testid="overview-quickstart"');
+  });
+
+  it('does not show the start card before the invoice read answers, so it never flashes', () => {
+    vi.setSystemTime(MONDAY);
+    const qc = state.client;
+    qc.clear();
+    qc.setQueryData(['me', 'get'], { userId: 'u', email: 'o@example.com', orgs: [{ orgId: 'org-1', slug: 'acme', name: 'A', role: 'owner' }] });
+    qc.setQueryData(['org', 'overview'], EMPTY_OVERVIEW);
+    qc.setQueryData(['today', 'list'], { items: [], coworkers: COWORKERS, dropped: 0, truncated: 0, failed: 0 });
+    setActiveLocale('vi');
+    const html = renderToStaticMarkup(
+      <I18nProvider>
+        <QueryClientProvider client={qc}>
+          <IntlProvider locale="vi" messages={catalog('vi') as never} timeZone="Asia/Ho_Chi_Minh">
+            <OverviewPage />
+          </IntlProvider>
+        </QueryClientProvider>
+      </I18nProvider>,
+    );
+    expect(html).not.toContain('data-testid="overview-quickstart"');
   });
 });
