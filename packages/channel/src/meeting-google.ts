@@ -21,9 +21,10 @@ export const GOOGLE_MEET_SPACE_READ_SCOPE = 'https://www.googleapis.com/auth/mee
 // What the connect dialog asks for: who the account is (`openid`, `email`) and the Meet transcript read. No Drive scope, no calendar scope: the recording file is not read (C-OA1, #3177).
 export const GOOGLE_MEET_AUTH_SCOPES = ['openid', 'email', GOOGLE_MEET_SPACE_READ_SCOPE] as const;
 
-// The scope of the Picker route (non-sensitive): the member gives this app access to the one recording file they pick in Google Picker, and the server's token then reads that file. Not part of
-// GOOGLE_MEET_AUTH_SCOPES until the connect asks for it (the pick-command step); the restricted Drive scopes (`drive.readonly`, `drive.meet.readonly`) are never used.
+// The scope of the Picker route (non-sensitive): the member gives this app access to the one recording file they pick in Google Picker, and the server's token then reads that file. The connect asks for it
+// only with the Picker route on (GOOGLE_MEET_PICKER_AUTH_SCOPES, below); the restricted Drive scopes (`drive.readonly`, `drive.meet.readonly`) are never used.
 export const GOOGLE_MEET_DRIVE_FILE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
+export const GOOGLE_MEET_PICKER_AUTH_SCOPES = ['openid', 'email', GOOGLE_MEET_SPACE_READ_SCOPE, GOOGLE_MEET_DRIVE_FILE_SCOPE] as const;
 // Where a picked recording is downloaded from: the Drive API's media endpoint, the first host only (the bearer token goes there and nowhere else). A redirect may land on Google's content hosts; whether it
 // does is [unverified] until a live run (ADR-0025 amendment), and the guard never sends the token to a redirect target.
 export const GOOGLE_DRIVE_DOWNLOAD_HOST = 'www.googleapis.com';
@@ -126,7 +127,7 @@ export class GoogleMeetAdapter implements MeetingPlatformAdapter, MeetingPlatfor
     url.searchParams.set('client_id', app.clientId);
     url.searchParams.set('redirect_uri', input.redirectUri);
     url.searchParams.set('response_type', 'code');
-    url.searchParams.set('scope', GOOGLE_MEET_AUTH_SCOPES.join(' '));
+    url.searchParams.set('scope', (this.recordings ? GOOGLE_MEET_PICKER_AUTH_SCOPES : GOOGLE_MEET_AUTH_SCOPES).join(' '));
     url.searchParams.set('state', input.state);
     url.searchParams.set('access_type', 'offline');
     url.searchParams.set('prompt', 'consent');

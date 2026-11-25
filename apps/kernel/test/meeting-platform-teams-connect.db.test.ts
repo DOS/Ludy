@@ -37,13 +37,15 @@ const account = (name: string): Account => ({ subject: randomUUID(), email: `${n
 
 // A Microsoft token endpoint that answers from a script and remembers what it was asked. The id_token carries only the claims the adapter reads (no signature check is needed for a token received directly).
 interface Seen { url: string; body: URLSearchParams | null }
+// A full grant: the four Graph permissions the listing and the import read with (a grant without one of them is refused at connect, so a stub that gives less would make every connect fail).
+const FULL_SCOPE = 'openid profile offline_access Calendars.ReadBasic OnlineMeetings.Read OnlineMeetingRecording.Read.All OnlineMeetingTranscript.Read.All';
 const idToken = (claims: Record<string, unknown>) => `e30.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.sig`;
 function teamsStub() {
   const seen: Seen[] = [];
   let answer: { status: number; body: Record<string, unknown> } = { status: 200, body: {} };
   const ok = () => ({
     status: 200,
-    body: { access_token: 'teams-access-not-real-0001', refresh_token: 'teams-refresh-not-real-0001', expires_in: 3599, scope: 'openid profile Calendars.ReadBasic OnlineMeetingRecording.Read.All', id_token: idToken({ oid: OID, tid: TID, name: 'Linh Nguyen' }) },
+    body: { access_token: 'teams-access-not-real-0001', refresh_token: 'teams-refresh-not-real-0001', expires_in: 3599, scope: FULL_SCOPE, id_token: idToken({ oid: OID, tid: TID, name: 'Linh Nguyen' }) },
   });
   answer = ok();
   const fetchImpl: Fetch = async (url, init) => {
@@ -252,9 +254,11 @@ suite('Microsoft Teams connect through the HTTP rpc (meetings integrations C4, #
     };
     await refuse(400, { error: 'invalid_grant', error_description: 'AADSTS70000: secret-reason-not-real' }, { status: 400, body: { code: 'OAUTH_CODE_REJECTED' } });
     await refuse(503, {}, { status: 503, body: { code: 'OAUTH_PROVIDER_FAILED' } });
-    const ok = { access_token: 'teams-access-not-real-0001', expires_in: 3599, id_token: idToken({ oid: OID, tid: TID }) };
+    const ok = { access_token: 'teams-access-not-real-0001', expires_in: 3599, scope: FULL_SCOPE, id_token: idToken({ oid: OID, tid: TID }) };
     await refuse(200, ok, { status: 400, body: { code: 'OAUTH_CODE_REJECTED' } });
     await refuse(200, { ...ok, refresh_token: 'teams-refresh-not-real-0001', id_token: idToken({}) }, { status: 400, body: { code: 'OAUTH_CODE_REJECTED' } });
+    // A grant that lacks one of the four Graph permissions (here the transcripts) is refused too, instead of connecting and listing nothing; the same grant with all four connects (the cases above).
+    await refuse(200, { ...ok, refresh_token: 'teams-refresh-not-real-0001', scope: FULL_SCOPE.replace(' OnlineMeetingTranscript.Read.All', '') }, { status: 400, body: { code: 'OAUTH_CODE_REJECTED' } });
     stub.reset();
     expect(await connections()).toHaveLength(connectionsBefore);
   });
