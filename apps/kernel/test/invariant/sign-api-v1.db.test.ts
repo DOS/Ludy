@@ -1659,7 +1659,7 @@ suite('eSign Slice 5c `/api/v1/sign/*` and scoped API key invariants (#4441)', (
         await combinedBlobsHeld;
       }
     };
-    const runRefusalProbe = async (probe: () => Promise<Response>, label: string): Promise<Response> => {
+    const runRefusalProbe = async (probe: () => Promise<Response> | Response, label: string): Promise<Response> => {
       let triggerUnexpected!: (err: Error) => void;
       const unexpectedRead = new Promise<never>((_resolve, reject) => {
         triggerUnexpected = reject;
@@ -1667,7 +1667,7 @@ suite('eSign Slice 5c `/api/v1/sign/*` and scoped API key invariants (#4441)', (
       unexpectedStoreRead = (key) => {
         triggerUnexpected(new Error(`${label} unexpectedly entered store.beforeGet(${key})`));
       };
-      const probePromise = probe();
+      const probePromise = Promise.resolve(probe());
       try {
         return await Promise.race([probePromise, unexpectedRead]);
       } catch (err) {
@@ -1677,9 +1677,9 @@ suite('eSign Slice 5c `/api/v1/sign/*` and scoped API key invariants (#4441)', (
         unexpectedStoreRead = null;
       }
     };
-    let ipv6Held: Array<Promise<Response>> = [];
-    let otherIpHeld: Array<Promise<Response>> = [];
-    let v1Simultaneous: Array<Promise<Response>> = [];
+    let ipv6Held: Array<Promise<Response> | Response> = [];
+    let otherIpHeld: Array<Promise<Response> | Response> = [];
+    let v1Simultaneous: Array<Promise<Response> | Response> = [];
     try {
       ipv6Held = [
         appDefaultPdfLimits.request('/api/sign/pdf', {
