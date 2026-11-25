@@ -156,8 +156,11 @@ suite('The week\'s meeting load (#4770)', () => {
     const piling = randomUUID();
     const tooFew = randomUUID();
     const hidden = randomUUID();
-    // Four meetings with nobody but the recorder and no minutes: two signals.
-    await weekly('Họp tuần một mình', quiet, 4, { recorder: 'rec', visibility: 'org', seconds: 1800 });
+    // Four attendees-only meetings with nobody but the recorder (the owner, so the owner reads them) and no minutes: two signals. An admin is no reader of them.
+    await weekly('Họp tuần một mình', quiet, 4, { recorder: 'owner', visibility: 'attendees', seconds: 1800 });
+    // Org-wide meetings have no reader rows (everyone reads them), so who attended is unknown: with minutes published each time there is nothing to say, and above all no "only the recorder" signal.
+    const orgWide = randomUUID();
+    for (const id of await weekly('Họp cả tổ chức', orgWide, 4, { recorder: 'rec', visibility: 'org', seconds: 1800 })) await published(id);
     // Readers added and minutes published each time, no open item: nothing to say.
     for (const id of await weekly('Họp khỏe', healthy, 3, { recorder: 'rec', readers: ['lan'], visibility: 'org', seconds: 2700 })) await published(id);
     // Readers and minutes, but the last two meetings each leave three open items.
@@ -179,9 +182,9 @@ suite('The week\'s meeting load (#4770)', () => {
     expect(owner.seriesCut).toBe(false);
     // No text of a result or an item and no title of a meeting the owner does not read.
     const answer = JSON.stringify(owner);
-    for (const secret of ['bí mật', 'Họp kín', 'Họp khỏe', 'Họp hai lần']) expect(answer, secret).not.toContain(secret);
-    // An admin reads the same; a member is refused.
-    expect((await load('adm')).series).toEqual(owner.series);
+    for (const secret of ['bí mật', 'Họp kín', 'Họp khỏe', 'Họp hai lần', 'Họp cả tổ chức']) expect(answer, secret).not.toContain(secret);
+    // An admin has the same row security: the series they read (the org-wide one that piles up), not the owner's own attendees-only one.
+    expect((await load('adm')).series).toEqual([owner.series[1]]);
     await expect(load('lan')).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 

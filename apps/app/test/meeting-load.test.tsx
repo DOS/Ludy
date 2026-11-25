@@ -145,7 +145,7 @@ describe('the recurring meetings that may be worth trimming', () => {
     const text = textOf(html);
     expect(text).toContain('Họp giao ban tuần');
     expect(text).toContain('5 meetings, 45 min on average');
-    expect(text).toContain('3 of 5 meetings had only the recorder in them, nobody added.');
+    expect(text).toContain('3 of 5 private meetings had only the recorder in them, nobody added.');
     expect(text).toContain('Only 1 of 5 meetings have published minutes.');
     expect(text).toContain('Open items are piling up: 4 after the latest meeting and 3 after the one before.');
     expect(text).toContain(en.meetings.load.trim.hint.replace('{weeks, number}', '8').replace('{min, number}', '3'));
@@ -175,7 +175,7 @@ describe('Vietnamese', () => {
     expect(html).toContain(viMessages.meetings.load.trim.title);
     expect(textOf(html)).toContain('Lan');
     expect(textOf(html)).toContain('2 giờ 30 phút');
-    expect(textOf(html)).toContain('3 trong 5 cuộc họp chỉ có người ghi, chưa thêm ai.');
+    expect(textOf(html)).toContain('3 trong 5 cuộc họp riêng chỉ có người ghi, chưa thêm ai.');
     const keys = (o: object): string[] => Object.entries(o).flatMap(([k, v]) => (typeof v === 'object' && v !== null ? keys(v).map((s) => `${k}.${s}`) : [k]));
     expect(keys(viMessages.meetings.load).sort()).toEqual(keys(en.meetings.load).sort());
     expect(viMessages.meetings.tools.load).toBeTruthy();

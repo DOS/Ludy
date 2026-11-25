@@ -2,12 +2,12 @@
 // The week's meeting load for an owner or an admin (#4770, plan docs/plan/meetings.md L16): how many meetings and minutes each member spent in a week, and the recurring series that may be worth trimming.
 //
 // meetings.load.week   for a week (this one, or up to 12 back; Monday to Sunday, Vietnam time): per member the meetings they were in (as the recorder, or a reader the recorder added) and the minutes those
-//                      took (an overlap counted once), most first; and the series (the meetings of one recurring event, see series.ts) with at least 3 meetings in the last 8 weeks and at least one signal
-//                      code decides from fixed numbers: nobody but the recorder in half of them or more, published minutes in fewer than half, open published items piling up (3 or more in each of the last two).
+//                      took (an overlap counted once), most first; and the series (the meetings of one recurring event, see series.ts) with at least 3 meetings in the last 8 weeks (the last day left out: its minutes may not be out yet) and at least one signal
+//                      code decides from fixed numbers: nobody but the recorder in half of them or more (only an attendees-only meeting can be told so: an org-wide one is read by everyone and has no reader rows), published minutes in fewer than half, open published items piling up (3 or more in each of the last two).
 //
 // Everything is read in the caller's own transaction, so the row security every member has applies to an owner and an admin as well: a meeting the caller is no reader of is not counted, not even that it exists (an
-// owner's compliance list, meetings.meeting.owner_list, is metadata for deleting a meeting and shows no reader or length). Attendance is only what Ludy knows, the recorder and the readers the recorder added; who
-// joined the call is not known. A meeting with no length (not recorded, or not ended) and one past its text date (gone for every reader) count for nothing. A series is told by its latest meeting's title and id,
+// owner's compliance list, meetings.meeting.owner_list, is metadata for deleting a meeting and shows no reader or length). Attendance is only what Ludy knows, the recorder and the readers the recorder added to an
+// attendees-only meeting; for an org-wide meeting only the recorder is counted, and who joined the call is not known. A meeting with no length (not recorded, or not ended) and one past its text date (gone for every reader) count for nothing. A series is told by its latest meeting's title and id,
 // which a reader of that meeting already has; no transcript, summary, decision or item text is read into the answer. No model call, nothing stored; the read is a sensitive one, so it leaves an audit row (who asked, a hash of the input) before it runs.
 import {
   LOAD_ITEMS_PILING,
@@ -86,7 +86,9 @@ export function memberFigures(meetings: readonly HeldMeeting[], readersOf: Reado
 /** A meeting of a series, as the signals need it. */
 export interface SeriesMeeting extends HeldMeeting {
   title: string;
-  // Readers the recorder added (the recorder is not counted).
+  // An org-wide meeting is read by everyone, so it has no reader rows and who attended is unknown: it never counts as one the recorder sat alone in.
+  orgWide: boolean;
+  // Readers the recorder added to an attendees-only meeting (the recorder is not counted).
   readers: number;
   // Whether anything is published for it: a summary, a decision or an action item.
   published: boolean;
@@ -99,7 +101,7 @@ export function assessSeries(seriesId: string, meetings: readonly SeriesMeeting[
   if (meetings.length < LOAD_SERIES_MIN_MEETINGS) return null;
   const latest = [...meetings].sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime() || (a.id < b.id ? 1 : -1))[0];
   if (!latest) return null;
-  const soloMeetings = meetings.filter((m) => m.readers === 0).length;
+  const soloMeetings = meetings.filter((m) => !m.orgWide && m.readers === 0).length;
   const withMinutes = meetings.filter((m) => m.published).length;
   const signals: LoadSignal[] = [];
   if (soloMeetings * 2 >= meetings.length) signals.push('few_people');
@@ -148,7 +150,7 @@ export const loadWeek = defineQuery({
     const base = () =>
       ctx.trx
         .selectFrom('ludy_meetings.meeting as m')
-        .select(['m.id', 'm.recorder_user_id', 'm.title', 'm.series_id', 'm.started_at', 'm.ended_at', 'm.length_seconds'])
+        .select(['m.id', 'm.recorder_user_id', 'm.title', 'm.visibility', 'm.series_id', 'm.started_at', 'm.ended_at', 'm.length_seconds'])
         .where('m.org_id', '=', ctx.orgId)
         .where('m.started_at', 'is not', null)
         .where((eb) => eb.or([eb('m.text_retention_date', 'is', null), eb('m.text_retention_date', '>', today)]));
@@ -169,7 +171,7 @@ export const loadWeek = defineQuery({
     const seriesRows = await base()
       .where('m.series_id', 'is not', null)
       .where('m.started_at', '>=', new Date(now.getTime() - LOAD_SERIES_WEEKS * WEEK_DAYS * DAY_MS))
-      .where('m.started_at', '<=', now)
+      .where('m.started_at', '<=', new Date(now.getTime() - DAY_MS))
       .orderBy('m.started_at', 'desc')
       .orderBy('m.id')
       .limit(SERIES_ROWS_MAX)
@@ -201,7 +203,7 @@ export const loadWeek = defineQuery({
     const members = memberFigures(weekMeetings, readers);
     const series: LoadSeries[] = [];
     for (const [seriesId, rows] of candidates) {
-      const meetings: SeriesMeeting[] = rows.map((row) => ({ ...held(row), title: row.title, readers: new Set(readers.get(row.id) ?? []).size, published: published.has(row.id) }));
+      const meetings: SeriesMeeting[] = rows.map((row) => ({ ...held(row), title: row.title, orgWide: row.visibility === 'org', readers: new Set(readers.get(row.id) ?? []).size, published: published.has(row.id) }));
       const [first, second] = [...meetings].sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime() || (a.id < b.id ? 1 : -1));
       const open: [number, number] = [first ? (await openItemsOf(ctx.trx, ctx.orgId, first.id)).length : 0, second ? (await openItemsOf(ctx.trx, ctx.orgId, second.id)).length : 0];
       const assessed = assessSeries(seriesId, meetings, open);

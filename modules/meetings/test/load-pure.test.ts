@@ -61,9 +61,10 @@ describe('memberFigures', () => {
   });
 });
 
-const meeting = (n: number, readerCount: number, published: boolean, minutes = 30): SeriesMeeting => ({
+const meeting = (n: number, readerCount: number, published: boolean, minutes = 30, orgWide = false): SeriesMeeting => ({
   ...held(`m${n}`, 'lan', `2026-11-${String(10 + n).padStart(2, '0')}T02:00:00Z`, minutes),
   title: `Họp tuần ${n}`,
+  orgWide,
   readers: readerCount,
   published,
 });
@@ -82,6 +83,14 @@ describe('assessSeries', () => {
     expect(series?.signals).toEqual(['few_people']);
     expect(series?.soloMeetings).toBe(2);
     expect(assessSeries('s1', [meeting(1, 0, true), meeting(2, 2, true), meeting(3, 2, true), meeting(4, 3, true)], [0, 0])).toBeNull();
+  });
+
+  it('never counts an org-wide meeting as one the recorder sat alone in, since it has no readers and who attended is unknown', () => {
+    const orgWide = [1, 2, 3, 4].map((n) => meeting(n, 0, true, 30, true));
+    expect(assessSeries('s1', orgWide, [0, 0])).toBeNull();
+    const mixed = assessSeries('s1', [meeting(1, 0, true, 30, true), meeting(2, 0, true), meeting(3, 0, true, 30, true), meeting(4, 0, true)], [0, 0]);
+    expect(mixed?.signals).toEqual(['few_people']);
+    expect(mixed?.soloMeetings).toBe(2);
   });
 
   it('flags a series with published minutes in fewer than half of its meetings', () => {

@@ -16,7 +16,7 @@ export const LOAD_SERIES_MAX = 20;
 // "Open items piling up" means each of the last two meetings of a series still has at least this many open published items.
 export const LOAD_ITEMS_PILING = 3;
 
-// Why a series may be worth trimming. `few_people`: in at least half of its meetings nobody but the recorder is in the meeting (no reader added). `no_minutes`: fewer than half of its meetings have published
+// Why a series may be worth trimming. `few_people`: in at least half of its meetings nobody but the recorder is in the meeting (an attendees-only meeting with no reader added; an org-wide meeting is read by everyone, so who attended is unknown and it never counts). `no_minutes`: fewer than half of its meetings have published
 // minutes (a published summary, decision or action item). `items_piling`: open published items stay open meeting after meeting.
 export const LOAD_SIGNALS = ['few_people', 'no_minutes', 'items_piling'] as const;
 export type LoadSignal = (typeof LOAD_SIGNALS)[number];
