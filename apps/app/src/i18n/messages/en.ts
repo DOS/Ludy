@@ -18196,6 +18196,7 @@ export const en = {
       SIGN_PACKET_MIN_DOCS: 'A signing packet must keep at least 1 PDF document.',
       SIGN_PACKET_PAGE_LIMIT: 'Combined packet pages cannot exceed 200 pages.',
       SIGN_PACKET_SIZE_LIMIT: 'Combined PDF file sizes in a packet cannot exceed 25 MB.',
+      SIGN_PRIMARY_DOC_CHANGED: 'The primary document in this packet changed; refresh and run the analysis again.',
       SIGN_CONFIDENTIAL_DEPOSIT_FORBIDDEN: 'Post-sign deposit requests are not permitted on HR contracts or meeting minutes envelopes.',
       SIGN_DEPOSIT_EMVCO_INVALID: 'The VietQR EMVCo payload could not be generated with valid fields.',
       SIGN_DEPOSIT_FROZEN: 'The envelope deposit snapshot is already frozen after sending and cannot be changed.',

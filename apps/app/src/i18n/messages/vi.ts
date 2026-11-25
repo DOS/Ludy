@@ -18196,6 +18196,7 @@ export const vi = {
       SIGN_PACKET_MIN_DOCS: 'Bộ hồ sơ ký phải giữ lại ít nhất 1 tài liệu PDF',
       SIGN_PACKET_PAGE_LIMIT: 'Tổng số trang của tất cả tài liệu trong bộ không được vượt quá 200 trang',
       SIGN_PACKET_SIZE_LIMIT: 'Tổng dung lượng các tệp PDF trong bộ hồ sơ không được vượt quá 25 MB',
+      SIGN_PRIMARY_DOC_CHANGED: 'Tài liệu đầu tiên trong bộ hồ sơ vừa thay đổi; hãy tải lại rồi chạy lại phân tích',
       SIGN_CONFIDENTIAL_DEPOSIT_FORBIDDEN: 'Không thể bật yêu cầu đặt cọc trên hồ sơ hợp đồng nhân sự hoặc biên bản cuộc họp',
       SIGN_DEPOSIT_EMVCO_INVALID: 'Chuỗi dữ liệu mã VietQR EMVCo không hợp lệ',
       SIGN_DEPOSIT_FROZEN: 'Thông tin yêu cầu đặt cọc của hồ sơ đã được chốt cố định sau khi gửi và không thể thay đổi',
