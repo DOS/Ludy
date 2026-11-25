@@ -4,6 +4,7 @@ import { auth } from './auth.ts';
 import { forgetInvite } from './invite.ts';
 import { clearRecentItems } from './palette-recents.ts';
 import { forgetPushDevice } from './push.ts';
+import { clearAllCreatedDocxWarnings } from './sign-docx-notices.ts';
 import { forgetShare } from './social-share.ts';
 import { stopAndSave } from './recording-controller.ts';
 import { sessionIdFromToken } from './sessions.ts';
@@ -21,6 +22,7 @@ export async function signOut(options: { keepInvite?: boolean } = {}): Promise<v
   if (!options.keepInvite) forgetInvite();
   forgetShare();
   clearRecentItems();
+  clearAllCreatedDocxWarnings();
   await forgetPushDevice((endpoint) => client.notifications.push.unsubscribe({ endpoint }));
   return signOutWithRevoke({
     // The kernel's user id (me.get), not Supabase Auth's: a revoke names the Ludy user (issue #184).

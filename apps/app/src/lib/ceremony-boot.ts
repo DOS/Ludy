@@ -6,6 +6,7 @@ import { accessToken, auth, getConfig, settleCallback } from './auth.ts';
 import { clearRecentItems } from './palette-recents.ts';
 import { forgetPushDevice } from './push.ts';
 import { stopAndSave } from './recording-controller.ts';
+import { clearAllCreatedDocxWarnings } from './sign-docx-notices.ts';
 import { isInPersonCeremonyIsolated, isSignCeremonyPathname } from './sign-hash.ts';
 import { forgetShare } from './social-share.ts';
 
@@ -35,6 +36,7 @@ export function ensureSignedOutListener(
       // Signed out here, in another tab or by expiry: a share waiting in this tab is not the next person's.
       forgetShare();
       clearRecentItems();
+      clearAllCreatedDocxWarnings();
       // Nor are this browser's push notices (#1238); the session is gone, so only the browser's subscription ends.
       void forgetPushDevice();
       // The session is gone: a recording still running here ends and keeps its copy on the device (the upload cannot go out), so the microphone stops (#3197).
