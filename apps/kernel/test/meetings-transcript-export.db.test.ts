@@ -4,6 +4,7 @@
 // made harmless in both formats, and the audit row names the meeting and holds none of its text.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { inflateRawSync } from 'node:zlib';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool } from '@ludy/db';
@@ -23,6 +24,25 @@ const decode = (file: TranscriptExport): string => {
   expect(buf.length).toBe(file.bytes);
   return buf.toString('utf8');
 };
+// The text of every run of the Word file's document part, in order (the zip's central directory read back, each entry inflated).
+function wordRuns(file: TranscriptExport): string[] {
+  const buf = Buffer.from(file.contentBase64, 'base64');
+  expect(buf.length).toBe(file.bytes);
+  const end = buf.length - 22;
+  expect(buf.readUInt32LE(end)).toBe(0x06054b50);
+  let at = buf.readUInt32LE(end + 16);
+  for (let i = 0; i < buf.readUInt16LE(end + 10); i++) {
+    const packed = buf.readUInt32LE(at + 20);
+    const nameLength = buf.readUInt16LE(at + 28);
+    const local = buf.readUInt32LE(at + 42);
+    const start = local + 30 + buf.readUInt16LE(local + 26) + buf.readUInt16LE(local + 28);
+    if (buf.subarray(at + 46, at + 46 + nameLength).toString('utf8') === 'word/document.xml') {
+      return [...inflateRawSync(buf.subarray(start, start + packed)).toString('utf8').matchAll(/<w:t xml:space="preserve">([^<]*)<\/w:t>/gu)].map((m) => m[1] as string);
+    }
+    at += 46 + nameLength;
+  }
+  return [];
+}
 const refuses = (promise: Promise<unknown>) => promise.then(() => null, (error: unknown) => (error as { code?: string }).code ?? 'ERR');
 
 suite('The transcript as a file (#4817)', () => {
@@ -105,6 +125,20 @@ suite('The transcript as a file (#4817)', () => {
     expect(srt.filename).toBe('Bản ghi - Họp giao ban - 2026-11-15.srt');
     expect(decode(srt)).toBe('1\n00:00:05,000 --> 00:00:09,000\nMinh: Chào mọi người\n\n2\n00:12:34,000 --> 00:12:40,500\nHà: Khách A đồng ý chiết khấu 8%\n\n');
     expect(decode(txt)).not.toContain('nháp bí mật');
+  });
+
+  it('gives a reader the published lines as a Word file with the .docx name and type, and never the recorder\'s draft', async () => {
+    const id = await meeting({ title: 'Họp giao ban', readers: ['lan'] });
+    await line(id, 754, 760.5, 'Hà', 'Khách A đồng ý chiết khấu 8%', 'published');
+    await line(id, 5, 9, 'Minh', 'Chào mọi người', 'published');
+    await line(id, 20, 22, 'Hà', 'Dòng nháp bí mật', 'draft');
+    const docx = await download('lan', id, 'docx');
+    expect(docx.format).toBe('docx');
+    expect(docx.mimeType).toBe('application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    expect(docx.filename).toBe('Bản ghi - Họp giao ban - 2026-11-15.docx');
+    expect(docx.lines).toBe(2);
+    expect(wordRuns(docx)).toEqual(['BẢN GHI LỜI CUỘC HỌP', 'Họp giao ban', 'Ngày 15/11/2026', '[00:00:05] Minh: ', 'Chào mọi người', '[00:12:34] Hà: ', 'Khách A đồng ý chiết khấu 8%']);
+    expect(await refuses(download('other', id, 'docx'))).toBe('MEETING_NOT_FOUND');
   });
 
   it('gives the recorder their draft while one exists, and the published lines when there is none', async () => {

@@ -3605,6 +3605,7 @@ export interface KernelTenantTable {
   apps_off: Generated<string[]>;
   apps_version: Generated<number>;
   meeting_minutes_esign: Generated<boolean>;
+  hr_overtime_require_l1: Generated<boolean>;
 }
 
 /** ludy_kernel.today_mail */

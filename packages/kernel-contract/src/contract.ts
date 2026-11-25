@@ -383,6 +383,9 @@ import {
   zHrOvertimeList,
   zHrOvertimeRef,
   zHrOvertimeRequestView,
+  zHrOvertimeSettings,
+  zHrOvertimeSettingsGet,
+  zHrOvertimeSettingsSet,
   zHrSelfOvertimeList,
   zHrSelfOvertimeListResult,
   zHrSelfOvertimeSubmit,
@@ -1572,6 +1575,10 @@ export const contract = {
       approveL1: oc.input(zHrOvertimeDecide).output(zHrOvertimeActionResult),
       approveFinal: oc.input(zHrOvertimeDecide).output(zHrOvertimeActionResult),
       reject: oc.input(zHrOvertimeDecide).output(zHrOvertimeActionResult),
+      settings: {
+        get: oc.input(zHrOvertimeSettingsGet).output(zHrOvertimeSettings),
+        set: oc.input(zHrOvertimeSettingsSet).output(zHrOvertimeSettings),
+      },
     },
     salaryAdvances: {
       list: oc.input(zHrAdvanceList).output(z.array(zHrAdvanceRequestView)),
