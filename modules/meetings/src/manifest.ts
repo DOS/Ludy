@@ -127,6 +127,8 @@ export const meetingsManifest = defineModule({
       // The minutes templates an org's owner or admin writes (#3578): a name and 1 to 8 sections (title, hint for Vy). Layout the org wrote, not personal data; the settings screen asks for no
       // names or personal details in a template. The meeting's own copy of one is on the meeting row.
       minutes_template: columns(['org_id', 'id', 'name', 'sections', 'archived_at', 'created_by', 'created_at', 'updated_at']),
+      // The recorder's published second-language version of a meeting's minutes (#4777): read by the meeting's readers. The body (the reviewed translated text) is personal data.
+      minutes_version: columns(['org_id', 'id', 'meeting_id', 'language', 'source_hash', 'published_by', 'source_run_id', 'published_at'], { body: 'pii' }),
       // A member's own opt-in to the morning notice of the day's meetings (#3955): a time of day, their time zone and the language of the mail. One row per member, theirs alone; no title, name or text of a meeting is in it.
       morning_notice: columns(['org_id', 'id', 'user_id', 'send_minute', 'time_zone', 'language', 'created_at', 'updated_at']),
       // The transcript (#2578): what was said, who it is attributed to, when. Text and speaker label are personal data.
@@ -134,8 +136,6 @@ export const meetingsManifest = defineModule({
         ['org_id', 'id', 'meeting_id', 'start_seconds', 'end_seconds', 'stage', 'corrected', 'tainted', 'source_run_id', 'source', 'created_at', 'updated_at'],
         { speaker_label: 'pii', text: 'pii', search: 'pii' },
       ),
-      // The recorder's published second-language version of a meeting's minutes (#4777): read by the meeting's readers. The body (the reviewed translated text) is personal data.
-      minutes_version: columns(['org_id', 'id', 'meeting_id', 'language', 'source_hash', 'published_by', 'source_run_id', 'published_at'], { body: 'pii' }),
       // The machine translation of a meeting's summary (meetings integrations E1, #3184): private to the member who asked, tainted. The body (the translated text) is personal data.
       translation: columns(['org_id', 'id', 'meeting_id', 'member_user_id', 'kind', 'target_language', 'source_stage', 'source_hash', 'tainted', 'source_run_id', 'created_at'], { body: 'pii' }),
     },
