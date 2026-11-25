@@ -143,16 +143,30 @@ const EVENT_FIELDS = 'id,subject,seriesMasterId,start,end,isAllDay,isCancelled,l
 const BUSY_FIELDS = 'start,end,showAs,isCancelled';
 
 // Trailing punctuation stripped from https:// URL candidates in free-form `location.displayName` text.
-const TRAILING_URL_PUNCTUATION = /[>),.;"'\]]+$/;
+const TRAILING_URL_PUNCTUATION = new Set(['>', ')', ']', ',', '.', ';', '"', "'", '”', '’', '!', ':']);
 
-// Replaces ASCII control characters with spaces so they separate URL tokens cleanly and never enter URL parsing.
+// Replaces ASCII control and zero-width/format characters with spaces so they separate URL tokens cleanly and never stick onto URLs.
 function sanitizeLocationText(text: string): string {
   let out = '';
   for (let i = 0; i < text.length; i += 1) {
     const code = text.charCodeAt(i);
-    out += code <= 0x1f || code === 0x7f ? ' ' : text[i]!;
+    const invisible =
+      code <= 0x1f ||
+      (code >= 0x7f && code <= 0x9f) ||
+      (code >= 0x200b && code <= 0x200f) ||
+      (code >= 0x2028 && code <= 0x202e) ||
+      code === 0x2060 ||
+      (code >= 0x2066 && code <= 0x2069) ||
+      code === 0xfeff;
+    out += invisible ? ' ' : text.charAt(i);
   }
   return out.trim();
+}
+
+function trimTrailingPunctuation(candidate: string): string {
+  let end = candidate.length;
+  while (end > 0 && TRAILING_URL_PUNCTUATION.has(candidate.charAt(end - 1))) end -= 1;
+  return end === candidate.length ? candidate : candidate.slice(0, end);
 }
 
 // Reads ONLY `location.displayName` in memory and returns the first valid allowlisted https Zoom, Google Meet or Teams join URL, or null; raw location text, street addresses, room names and non-allowlisted hosts are never returned.
@@ -162,12 +176,8 @@ export function joinUrlFromLocation(location: unknown): string | null {
   if (typeof displayName !== 'string') return null;
   const clean = sanitizeLocationText(displayName);
   if (clean === '') return null;
-  if (!/\s/.test(clean)) {
-    const direct = joinUrlOf(clean.replace(TRAILING_URL_PUNCTUATION, ''));
-    if (direct !== null && direct.length <= 500) return direct;
-  }
   for (const match of clean.matchAll(/https:\/\/\S+/gi)) {
-    const candidate = match[0].replace(TRAILING_URL_PUNCTUATION, '');
+    const candidate = trimTrailingPunctuation(match[0]);
     const joinUrl = joinUrlOf(candidate);
     if (joinUrl !== null && joinUrl.length <= 500) return joinUrl;
   }

@@ -262,11 +262,22 @@ describe('MicrosoftCalendarAdapter, events', () => {
     expect(joinUrlFromLocation({ displayName: '[https://us02web.zoom.us/j/123456];' })).toBe('https://us02web.zoom.us/j/123456');
     expect(joinUrlFromLocation({ displayName: '"https://meet.google.com/abc-defg-hij".' })).toBe('https://meet.google.com/abc-defg-hij');
     expect(joinUrlFromLocation({ displayName: "'https://meet.google.com/abc-defg-hij'" })).toBe('https://meet.google.com/abc-defg-hij');
+    expect(joinUrlFromLocation({ displayName: '“https://meet.google.com/abc-defg-hij”!' })).toBe('https://meet.google.com/abc-defg-hij');
+    expect(joinUrlFromLocation({ displayName: '‘https://us02web.zoom.us/j/123456’:' })).toBe('https://us02web.zoom.us/j/123456');
     expect(joinUrlFromLocation({ displayName: 'https://meet.google.com/abc-defg-hij (Tầng 3, 123 Nguyễn Huệ)' })).toBe('https://meet.google.com/abc-defg-hij');
     expect(joinUrlFromLocation({ displayName: 'Phòng họp A; https://us02web.zoom.us/j/123456' })).toBe('https://us02web.zoom.us/j/123456');
     expect(joinUrlFromLocation({ displayName: 'https://meet.google.com/abc-defg-hij\tRoom A' })).toBe('https://meet.google.com/abc-defg-hij');
     expect(joinUrlFromLocation({ displayName: 'https://meet.google.com/abc-defg-hij\u0000Room A' })).toBe('https://meet.google.com/abc-defg-hij');
+    expect(joinUrlFromLocation({ displayName: '\u200bhttps://meet.google.com/abc-defg-hij\u200b\ufeff' })).toBe('https://meet.google.com/abc-defg-hij');
+    expect(joinUrlFromLocation({ displayName: 'https://zoom.us/j/123456\u200d(Phòng B)' })).toBe('https://zoom.us/j/123456');
     expect(joinUrlFromLocation({ displayName: 'https://evil.example.com/room https://meet.google.com/abc-defg-hij https://zoom.us/j/999' })).toBe('https://meet.google.com/abc-defg-hij');
+
+    // Adversarial long trailing-punctuation input runs in linear time (no regex backtracking).
+    const startMs = performance.now();
+    expect(joinUrlFromLocation({ displayName: '.'.repeat(50_000) })).toBeNull();
+    expect(joinUrlFromLocation({ displayName: `https://meet.google.com/abc-defg-hij${'.'.repeat(50_000)}` })).toBe('https://meet.google.com/abc-defg-hij');
+    expect(joinUrlFromLocation({ displayName: `https://evil.example.com/${'.'.repeat(50_000)}` })).toBeNull();
+    expect(performance.now() - startMs).toBeLessThan(100);
 
     // Plain addresses, http:// links, embedded credentials, non-allowlisted hosts, and other location fields return null.
     expect(joinUrlFromLocation({ displayName: 'Tầng 3, 123 Nguyễn Huệ' })).toBeNull();
