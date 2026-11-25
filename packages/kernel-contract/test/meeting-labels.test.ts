@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from 'vitest';
-import { LABEL_SUGGEST_DROPPED_MAX, MEETING_LABEL_LENGTH_MAX, cleanLabelText, labelKey, labelProblem, zLabelAdd, zLabelSuggestAnswer, zMeetingListItem } from '../src/index.ts';
+import { LABEL_SUGGEST_DROPPED_MAX, MEETING_LABEL_LENGTH_MAX, cleanLabelText, labelKey, labelProblem, zLabelAdd, zLabelSuggestAnswer, zMeetingListItem, zMeetingSearchInput } from '../src/index.ts';
 
 describe('meeting label text (#4955)', () => {
   it('collapses runs of spaces and tabs and trims the ends', () => {
@@ -110,5 +110,18 @@ describe('label length counts code points everywhere a label is shown (#5010 rev
   it('bounds the dropped count of a suggestion answer at its ceiling', () => {
     expect(zLabelSuggestAnswer.safeParse(answer([], LABEL_SUGGEST_DROPPED_MAX)).success).toBe(true);
     expect(zLabelSuggestAnswer.safeParse(answer([], LABEL_SUGGEST_DROPPED_MAX + 1)).success).toBe(false);
+  });
+
+  it('enforces the 40-code-point bound on search filter labels with astral characters (#5039)', () => {
+    const fortyEmoji = '😀'.repeat(MEETING_LABEL_LENGTH_MAX);
+    expect(fortyEmoji.length).toBe(MEETING_LABEL_LENGTH_MAX * 2);
+    expect([...fortyEmoji].length).toBe(MEETING_LABEL_LENGTH_MAX);
+    expect(zMeetingSearchInput.safeParse({ q: 'họp', label: fortyEmoji }).success).toBe(true);
+    const trimmed = zMeetingSearchInput.parse({ q: 'họp', label: `  ${fortyEmoji}  ` });
+    expect(trimmed.label).toBe(fortyEmoji);
+    expect(zMeetingSearchInput.safeParse({ q: 'họp' }).success).toBe(true);
+    expect(zMeetingSearchInput.safeParse({ q: 'họp', label: '😀'.repeat(MEETING_LABEL_LENGTH_MAX + 1) }).success).toBe(false);
+    expect(zMeetingSearchInput.safeParse({ q: 'họp', label: 'x'.repeat(MEETING_LABEL_LENGTH_MAX + 1) }).success).toBe(false);
+    expect(zMeetingSearchInput.safeParse({ q: 'họp', label: '   ' }).success).toBe(false);
   });
 });

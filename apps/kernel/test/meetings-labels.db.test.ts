@@ -9,7 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
-import { MEETING_LABELS_MAX, type LabelAdded, type LabelRemoved, type MeetingLabels, type MeetingListItem } from '@ludy/kernel-contract';
+import { MEETING_LABELS_MAX, type LabelAdded, type LabelRemoved, type MeetingLabels, type MeetingLabelsInUse, type MeetingListItem } from '@ludy/kernel-contract';
 import { Runtime } from '@ludy/kernel-runtime';
 import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
@@ -25,11 +25,12 @@ suite('Meeting labels (#4955)', () => {
   let orgId = '';
   let runtime: Runtime;
   const users: Record<string, string> = {};
-  const NAMES: Record<string, string> = { owner: 'Chủ Công Ty', rec: 'Phạm Quang Minh', lan: 'Trần Thị Lan', nam: 'Nguyễn Văn Nam', other: 'Bạn Không Đọc' };
+  const NAMES: Record<string, string> = { owner: 'Chủ Công Ty', rec: 'Phạm Quang Minh', lan: 'Trần Thị Lan', nam: 'Nguyễn Văn Nam', other: 'Bạn Không Đọc', solo: 'Thành Viên Riêng', viewer: 'Người Xem' };
   const asUser = (who: string) => ({ type: 'user' as const, userId: users[who] as string, aal: 'aal1' as const });
   const put = (who: string, meetingId: string, label: string) => runtime.execute<LabelAdded>('meetings.label.add', { meetingId, label }, { actor: asUser(who), orgId });
   const take = (who: string, meetingId: string, labelId: string) => runtime.execute<LabelRemoved>('meetings.label.remove', { meetingId, labelId }, { actor: asUser(who), orgId });
   const list = (who: string, meetingId: string) => runtime.query<MeetingLabels>('meetings.label.list', { meetingId }, { actor: asUser(who), orgId });
+  const inUse = (who: string, limit?: number) => runtime.query<MeetingLabelsInUse>('meetings.label.in_use', limit === undefined ? {} : { limit }, { actor: asUser(who), orgId });
   // The meetings list: each row carries the labels of its meeting (#4966).
   const rows = (who: string) => runtime.query<MeetingListItem[]>('meetings.meeting.list', { limit: 200 }, { actor: asUser(who), orgId });
   const texts = async (who: string, meetingId: string) => (await list(who, meetingId)).labels.map((l) => l.label);
@@ -45,12 +46,12 @@ suite('Meeting labels (#4955)', () => {
   const sqlAdmin = <R extends pg.QueryResultRow = pg.QueryResultRow>(text: string, params: unknown[] = []) => admin((c) => c.query<R>(text, params));
 
   // A meeting held on Wednesday 25 November 2026 (Vietnam time), recorded by `rec` and read by `lan` and `nam`; its text period ends in a year, or yesterday for an expired one.
-  async function meeting(title: string, opts: { readers?: string[]; expired?: boolean; visibility?: 'attendees' | 'org' } = {}): Promise<string> {
+  async function meeting(title: string, opts: { readers?: string[]; expired?: boolean; visibility?: 'attendees' | 'org'; startedAt?: string } = {}): Promise<string> {
     const id = randomUUID();
     await sqlAdmin(
       `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
-       VALUES ($1, $2, $4, 'vi', '2026-11-25T03:00:00Z', '2026-11-25T04:00:00Z', 3600, $3, $5, 'ready', 'told_at_start', $3, now(), '1.0', current_date - 1, ${opts.expired ? 'current_date - 1' : 'current_date + 365'})`,
-      [orgId, id, users.rec, title, opts.visibility ?? 'attendees'],
+       VALUES ($1, $2, $4, 'vi', $6::timestamptz, $6::timestamptz + interval '1 hour', 3600, $3, $5, 'ready', 'told_at_start', $3, now(), '1.0', current_date - 1, ${opts.expired ? 'current_date - 1' : 'current_date + 365'})`,
+      [orgId, id, users.rec, title, opts.visibility ?? 'attendees', opts.startedAt ?? '2026-11-25T03:00:00Z'],
     );
     for (const reader of opts.readers ?? ['lan', 'nam']) await sqlAdmin('INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)', [orgId, randomUUID(), id, users[reader]]);
     return id;
@@ -75,7 +76,7 @@ suite('Meeting labels (#4955)', () => {
     runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...meetingsCommands], queries: [...kernelQueries({ inboundDomain: null }), ...meetingsQueries] });
     for (const key of Object.keys(NAMES)) users[key] = await upsertIdentity(db, { issuer: 'lb', subject: key, email: `${key}@lb.test`, name: NAMES[key] as string });
     orgId = (await createOrg(runtime, asUser('owner'), 'Công ty Nhãn Họp')).orgId;
-    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member')`, [orgId, users.rec, users.lan, users.nam, users.other]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member'), ($1, $6, 'member'), ($1, $7, 'viewer')`, [orgId, users.rec, users.lan, users.nam, users.other, users.solo, users.viewer]);
   }, 300_000);
 
   afterAll(async () => {
@@ -198,5 +199,51 @@ suite('Meeting labels (#4955)', () => {
               pg_catalog.has_function_privilege('public', 'ludy_kernel.meeting_label_export_rows()', 'EXECUTE') AS public_exec`,
     );
     expect(privileges.rows[0]).toEqual({ tenant_update: false, tenant_exec: false, worker_exec: true, public_exec: false });
+  });
+
+  it('lists distinct labels in use on readable non-expired meetings, grouped case-insensitively and sorted most used first, enforcing RLS and limits (#5039)', async () => {
+    const oldMeeting = await meeting('Họp cũ', { readers: ['solo'], startedAt: '2026-11-20T03:00:00Z' });
+    const midMeeting = await meeting('Họp giữa', { readers: ['solo'], startedAt: '2026-11-22T03:00:00Z' });
+    const newMeeting = await meeting('Họp mới', { readers: ['solo'], startedAt: '2026-11-24T03:00:00Z' });
+    const hidden = await meeting('Họp kín của Nam', { readers: ['nam'], startedAt: '2026-11-25T03:00:00Z' });
+    const expired = await meeting('Họp hết hạn của Solo', { readers: ['solo'], expired: true, startedAt: '2026-11-25T05:00:00Z' });
+
+    await put('rec', oldMeeting, 'Khách A');
+    await put('rec', oldMeeting, 'Nhãn Cũ');
+    await put('rec', midMeeting, 'khách a');
+    await put('rec', newMeeting, 'KHÁCH A');
+    await put('rec', newMeeting, 'Nhãn Mới');
+    await put('rec', hidden, 'Bí mật riêng');
+    await sqlAdmin('INSERT INTO ludy_meetings.meeting_label (org_id, meeting_id, label, created_by) VALUES ($1, $2, $3, $4)', [orgId, expired, 'Nhãn Hết Hạn', users.rec]);
+
+    // Grouped case-insensitively with newest meeting spelling on ties, sorted count DESC then started_at DESC then lower(label) ASC; hides hidden and expired meetings.
+    expect(await inUse('solo')).toEqual({
+      labels: [
+        { label: 'KHÁCH A', count: 3 },
+        { label: 'Nhãn Mới', count: 1 },
+        { label: 'Nhãn Cũ', count: 1 },
+      ],
+    });
+    expect(await inUse('solo', 2)).toEqual({
+      labels: [
+        { label: 'KHÁCH A', count: 3 },
+        { label: 'Nhãn Mới', count: 1 },
+      ],
+    });
+
+    // Owner cannot read attendees-only meetings' labels (not even Solo's or Nam's).
+    const ownerLabels = (await inUse('owner')).labels.map((l) => l.label);
+    expect(ownerLabels).not.toContain('KHÁCH A');
+    expect(ownerLabels).not.toContain('Bí mật riêng');
+    expect(ownerLabels).not.toContain('Nhãn Hết Hạn');
+
+    // Recorder still reads their hidden meeting's label (minus expired).
+    const recLabels = (await inUse('rec')).labels.map((l) => l.label);
+    expect(recLabels).toContain('Bí mật riêng');
+    expect(recLabels).not.toContain('Nhãn Hết Hạn');
+
+    // Viewer and system context are refused.
+    await expect(inUse('viewer')).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(runtime.query('meetings.label.in_use', {}, { actor: { type: 'system', component: 'test.label-in-use' }, orgId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 });

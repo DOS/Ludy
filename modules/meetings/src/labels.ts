@@ -14,13 +14,17 @@ import {
   zLabelRemove,
   zLabelRemoved,
   zMeetingLabels,
+  zMeetingLabelsInUse,
+  zMeetingLabelsInUseInput,
   zMeetingRef,
   type LabelAdded,
   type LabelRemoved,
   type MeetingLabels,
+  type MeetingLabelsInUse,
 } from '@ludy/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { sql } from 'kysely';
+import { vnDay } from './retention.ts';
 import { ROLES, openMeeting, userOf } from './transcript.ts';
 
 const PROBLEM_TEXT = {
@@ -150,5 +154,31 @@ export async function labelsOfMeetings(trx: QueryContext['trx'], orgId: string, 
   return byMeeting;
 }
 
+// Distinct labels in use on the non-expired meetings the caller can read, most used first (#5039):
+// one grouped read under the caller's own row security (meeting and meeting_label RLS) instead of listing 200 full meeting rows.
+export const labelInUse = defineQuery({
+  name: 'meetings.label.in_use',
+  input: zMeetingLabelsInUseInput,
+  access: ROLES,
+  handler: async (ctx, input): Promise<MeetingLabelsInUse> => {
+    userOf(ctx.actor);
+    const today = vnDay(new Date());
+    const { rows } = await sql<{ label: string; uses: number }>`
+      SELECT
+        (pg_catalog.array_agg(l.label ORDER BY m.started_at DESC NULLS LAST, l.created_at ASC, l.id ASC))[1] AS label,
+        pg_catalog.count(*)::int AS uses
+      FROM ludy_meetings.meeting_label l
+      INNER JOIN ludy_meetings.meeting m
+        ON m.org_id = l.org_id AND m.id = l.meeting_id
+      WHERE l.org_id = ${ctx.orgId}::uuid
+        AND m.org_id = ${ctx.orgId}::uuid
+        AND (m.text_retention_date IS NULL OR m.text_retention_date > ${today}::date)
+      GROUP BY pg_catalog.lower(l.label)
+      ORDER BY pg_catalog.count(*) DESC, pg_catalog.max(m.started_at) DESC NULLS LAST, pg_catalog.lower(l.label) ASC
+      LIMIT ${input.limit}::int`.execute(ctx.trx);
+    return zMeetingLabelsInUse.parse({ labels: rows.map((r) => ({ label: r.label, count: r.uses })) });
+  },
+});
+
 export const labelsCommands = [labelAdd, labelRemove];
-export const labelsQueries = [labelList];
+export const labelsQueries = [labelList, labelInUse];

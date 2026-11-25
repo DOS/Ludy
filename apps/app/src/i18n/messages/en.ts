@@ -19944,6 +19944,7 @@ export const en = {
       },
       label: {
         add: 'Put a label on a meeting',
+        in_use: 'Read labels in use on readable meetings',
         list: 'Read the labels of a meeting',
         remove: 'Take a label off a meeting',
         suggest_start: 'Ask Vy to suggest labels for a meeting',
