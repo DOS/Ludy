@@ -3142,6 +3142,8 @@ export interface KernelMeetingPlatformRecordingTable {
   created_at: ColumnType<Date, NotGranted, NotGranted>;
   updated_at: ColumnType<Date, NotGranted, NotGranted>;
   meeting_key: ColumnType<string | null, NotGranted, NotGranted>;
+  picked_file_id: ColumnType<string | null, NotGranted, NotGranted>;
+  picked_at: ColumnType<Date | null, NotGranted, NotGranted>;
 }
 
 /** ludy_kernel.member_availability */
