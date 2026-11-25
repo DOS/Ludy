@@ -269,9 +269,10 @@ async function audioOfParts(deps: MeetingsImportDeps, job: MeetingsImportJob, pa
   const extractor = deps.extractor;
   if (!extractor?.configured || !extractor.join) throw new MeetingPlatformError('no_audio');
   const cap = joinPartsBudget(format, deps.mediaInputBytes, parts.length);
-  // The sizes the platform listed, added up, over the cap: refused before any file is opened.
-  const listed = parts.map((part) => part.sizeBytes ?? null);
-  if (listed.every((n): n is number => n !== null) && listed.reduce((sum, n) => sum + n, 0) > cap) throw new MeetingPlatformError('too_large');
+  // The sizes the platform listed, added up, over the cap: refused before any file is opened. A part that listed no usable size adds nothing, so the sum of the known ones is a lower bound of the whole: over the cap
+  // already, the whole is over it whatever the rest holds.
+  const listedLowerBound = parts.reduce((sum, part) => sum + (typeof part.sizeBytes === 'number' && part.sizeBytes > 0 ? part.sizeBytes : 0), 0);
+  if (listedLowerBound > cap) throw new MeetingPlatformError('too_large');
   // Each part is opened when its turn comes and closed once it is sealed, so only one connection is open at a time (a part that waited open and idle behind the others could be cut by the platform).
   let declaredTotal = 0;
   const opens = parts.map((part) => async () => {

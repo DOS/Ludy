@@ -237,6 +237,13 @@ describe('a recording in several parts', () => {
     expect(await runMeetingsImport(listed.deps, job(), attempt)).toBe('failed');
     expect(listed.executed).toEqual([failedWith('too_large')]);
     expect(listed.calls.opened).toBe(0);
+    // A part with no listed size (or a zero one) adds nothing, so the known sizes alone are a lower bound: over the cap already, refused before any connection (Refs #3175).
+    for (const unknown of [null, 0]) {
+      const partial = setup({ parts: [{ bytes: mp4(2000, 1), listed: MEETING_PLATFORM_IMPORT_MAX_BYTES }, { bytes: mp4(2000, 2), listed: unknown }] });
+      expect(await runMeetingsImport(partial.deps, job(), attempt)).toBe('failed');
+      expect(partial.executed).toEqual([failedWith('too_large')]);
+      expect(partial.calls.opened).toBe(0);
+    }
     // Listed small, but the second answer declares more than what is left under the cap: refused as that part is opened.
     const declared = setup({ parts: [{ bytes: mp4(2000, 1), declared: 2000, listed: 1000 }, { bytes: mp4(2000, 2), declared: MEETING_PLATFORM_IMPORT_MAX_BYTES, listed: 1000 }] });
     expect(await runMeetingsImport(declared.deps, job(), attempt)).toBe('failed');
