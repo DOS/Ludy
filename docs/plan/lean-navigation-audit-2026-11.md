@@ -1,6 +1,6 @@
 # Lean navigation audit for OPC and SME (2026-11-25)
 
-Status: proposal for the owner and the line POs. Docs only: no code, no issue, no feature removed. Every "Later" and "Merge" below changes where an entry is shown, never whether it exists, and each routes through `docs/product/scope.md` (gate 1, fit: a task a small business does at least monthly). Anything that removes a feature or changes a written decision is listed as a question in section 7, not decided here.
+Status: owner decisions recorded in section 9 (2026-11-25); the proposals below are approved. Docs only: no code, no issue, no feature removed. Every "Later" and "Merge" below changes where an entry is shown, never whether it exists, and each routes through `docs/product/scope.md` (gate 1, fit: a task a small business does at least monthly). Anything that removes a feature or changes a written decision is listed as a question in section 7, not decided here.
 
 ## Tóm tắt cho chủ sở hữu (JOY)
 
@@ -9,6 +9,7 @@ Status: proposal for the owner and the line POs. Docs only: no code, no issue, n
 - Việc đếm click của SME: tải hóa đơn mua 3 click để bắt đầu; ra hóa đơn bán 4 click để có bản nháp; khai thuế GTGT 3 click; trả nhà cung cấp tệ nhất, khoảng 9 click qua 3 màn hình (Xin chi, duyệt trong Chứng từ, quay lại tải file chuyển khoản). Trang chủ chưa có nút tạo nhanh nào.
 - Không sao chép của QuickBooks: Mileage, 1099s, Contractors (thuế Mỹ), Lending, Sales channels, Integration transactions, Payouts, Bill payments (Ludy không giữ hay chuyển tiền), "All apps" và nhãn nâng cấp (đã để Icebox).
 - Mười một đề xuất việc tiếp theo, chỉ đổi giao diện, không xóa tính năng và không đổi dữ liệu. Chưa tạo issue; PO sẽ mở sau khi anh đồng ý. Có 5 câu cần anh quyết (mục 7), quan trọng nhất: ADR-0053 đang bật mọi ứng dụng cho tổ chức mới, có nên bật sẵn chỉ Tài chính, Cộng tác và AI cho một người một công ty (OPC) không.
+- Đã quyết (2026-11-25, mục 9): duyệt toàn bộ đề xuất gọn; tổ chức mới chọn kiểu khi tạo ("Một mình tôi" hoặc "Có nhân viên"); Sổ sách, Tuyển dụng, Hàng hóa, Lịch hẹn, Quảng cáo vào "Thêm".
 - Hạn chế: số click là đếm theo mã nguồn (đường đi ngắn nhất từ Trang chủ), chưa đo trên người dùng thật; phần duyệt đề xuất ghi là ước lượng.
 
 ## 1. What a signed-in owner sees today
@@ -221,3 +222,15 @@ Each changes a written decision or removes something from view for a kind of bus
 - No measurement with real users; counts come from the code (section 2). The pilot partners' own order of work may differ.
 - Phone drawer layout (P2-3) and the Home money tiles (#4785) are other issues; this audit only keeps their links consistent.
 - The benchmark this builds on is `docs/research/smb-suite-navigation-benchmark-2026-11.md` ([PR #4780](https://github.com/DOS/Ludy/pull/4780), not on `main` when this was written); QuickBooks entries come from the owner's screenshots of 2026-11-25.
+
+## 9. Owner decisions (2026-11-25)
+
+JOY answered the section 7 questions in the PO chat on 2026-11-25. Quoted as given:
+
+- Proposals: "Duyệt các đề xuất gọn (Khuyên dùng)". All UI-only lean proposals (F1 to F11) are approved.
+- Q1: "Có, chọn kiểu khi tạo (Khuyên dùng)". A new org picks a type at creation: "Một mình tôi" turns on only Tài chính, Cộng tác and Ludy AI; "Có nhân viên" also turns on Nhân sự, eSign and Engage. ADR-0053 is amended for this (one platform issue; today every module starts on).
+- Q2: "Vào 'Thêm', hiện cho kế toán sau (Khuyên dùng)". Sổ sách goes to "Thêm" for everyone now; showing it by default to a bookkeeper role is a later P3 issue in the Icebox.
+- Q3 and Q4 follow the recommendations: Tuyển dụng (Nhân sự) and Hàng hóa (Tài chính) go into "Thêm" for everyone.
+- Q5: pilot segment "Thương mại, dịch vụ chung". Lịch hẹn and Quảng cáo (Engage) go into "Thêm".
+
+Effect on the follow-ups of section 6: F2 to F9 are as written, and "Thêm" (F1) is their prerequisite. The org-type choice is one new platform issue, not a UI-only one: it changes which modules an org starts with, so it carries the ADR-0053 amendment. Its approach is settled in that issue (ADR-0053 says the tenant guard trigger lets an insert through only with the defaults, so the creation path may need a migration there). Nothing is removed and no existing org's data changes.
