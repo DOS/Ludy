@@ -19953,6 +19953,7 @@ export const vi = {
       },
       label: {
         add: 'Gắn nhãn cho một cuộc họp',
+        in_use: 'Xem các nhãn đang dùng trên các cuộc họp được đọc',
         list: 'Xem các nhãn của một cuộc họp',
         remove: 'Bỏ nhãn khỏi một cuộc họp',
         suggest_start: 'Nhờ Vy gợi ý nhãn cho một cuộc họp',
