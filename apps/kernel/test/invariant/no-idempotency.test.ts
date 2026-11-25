@@ -118,6 +118,7 @@ describe('commands that declare noIdempotency (#3428)', () => {
     'finance.bank_feed.hook_set',
     'finance.marketplace_connection.push_hook_set',
     'hr.attendance.qr.rotate',
+    'meetings.minutes_link.create',
     'sign.direct.otp_mail_data',
     'sign.envelope.send',
     'sign.public.otp_mail_data',
