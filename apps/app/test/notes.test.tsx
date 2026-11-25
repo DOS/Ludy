@@ -40,6 +40,7 @@ describe('note Markdown (#1671)', () => {
 describe('note helpers (#1671)', () => {
   it('parses tags as the server keeps them', () => {
     expect(parseTags(' Ngân hàng, thuế,, ngân hàng ,')).toEqual(['ngân hàng', 'thuế']);
+    expect(parseTags('#ngân hàng, thuế')).toEqual(['#ngân hàng', 'thuế']);
     expect(parseTags('')).toEqual([]);
     expect(parseTags(Array.from({ length: 30 }, (_, i) => `t${i}`).join(','))).toHaveLength(20);
   });
