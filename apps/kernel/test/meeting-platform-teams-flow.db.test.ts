@@ -349,7 +349,8 @@ suite('a Microsoft Teams recording from the connect to the staged bytes (meeting
     expect(shown.every((r) => r.provider === 'microsoft_teams' && r.connectionId === connectionId && r.status === 'suggested' && r.sizeBytes === null && r.errorCode === null)).toBe(true);
     const transcriptOnly = shown.find((r) => r.title === 'Product review (organized by someone else)');
     expect(transcriptOnly).toMatchObject({ hasAudio: false, hasVideo: false, hasTranscript: true, lengthSeconds: 3000 });
-    expect(new Date(String(transcriptOnly?.startedAt)).toISOString()).toBe('2026-11-16T07:00:00.000Z');
+    // It starts when its transcript started (07:05), not at the calendar slot's 07:00: the start and the length come from the same file (#4867).
+    expect(new Date(String(transcriptOnly?.startedAt)).toISOString()).toBe('2026-11-16T07:05:00.000Z');
     expect(shown.filter((r) => r.hasVideo).map((r) => r.title)).toEqual(['Họp tuần (Teams)', 'Weekly sync (second time)', 'Weekly sync (first time)']);
   });
 
