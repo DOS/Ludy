@@ -10,6 +10,7 @@ import type { MeetingSummaryTemplate } from '@ludy/kernel-contract';
 import { Button } from '@ludy/ui/components/button';
 import { Input } from '@ludy/ui/components/input';
 import { Label } from '@ludy/ui/components/label';
+import { MinutesDocxButton } from '../components/meeting-minutes-docx.tsx';
 import { canCreateMeetingMinutesEnvelope, MeetingMinutesSignHandoff } from '../components/meeting-minutes-sign-handoff.tsx';
 import { memberLabel } from '../components/meeting-results.tsx';
 import { ErrorText, ListSkeleton } from '../components/ui.tsx';
@@ -189,6 +190,8 @@ export function MeetingMinutesPage() {
             <p className="text-xs text-muted-foreground">{t('minutes.placeHint')}</p>
           </div>
           <Button onClick={() => window.print()}>{t('minutes.print')}</Button>
+          {/* The published minutes as a Word file (#4774): built on the server from the published rows only. */}
+          {model.published && <MinutesDocxButton meetingId={id} place={place} />}
           {model.published && (
             <MeetingMinutesSignHandoff
               source={{

@@ -5358,6 +5358,7 @@ export const vi = {
       back: 'Về cuộc họp',
       pageTitle: 'Biên bản cuộc họp',
       print: 'In hoặc lưu PDF',
+      docx: 'Tải về Word (.docx)',
       printHint: 'Trình duyệt sẽ in trang này. Chọn "Lưu dưới dạng PDF" nếu bạn muốn có tệp.',
       placeLabel: 'Địa điểm họp',
       placeHint: 'Chỉ để in; không được lưu. Bỏ trống thì biên bản chừa dòng chấm để điền tay.',
@@ -16688,6 +16689,7 @@ export const vi = {
       MEETING_TITLE_TOO_LONG: 'Tên cuộc họp dài tối đa 200 ký tự.',
       DIGEST_OFF: 'Hệ thống này chưa bật việc nhờ Vy tóm tắt tuần.',
       DIGEST_BUSY: 'Vy đang bận viết các bản tóm tắt. Hãy thử lại sau vài phút.',
+      MINUTES_NOT_PUBLISHED: 'Người ghi chưa chia sẻ biên bản, nên chưa có tệp để tải về.',
       ASSIGNEE_OFF: 'Hệ thống này chưa bật việc nhờ Vy xem một việc cần làm của ai.',
       ASSIGNEE_BUSY: 'Vy đang bận đọc tên. Hãy thử lại sau vài phút.',
       TRANSLATION_NOT_FOUND: 'Không có bản tóm tắt nào bạn đọc được để dịch.',
@@ -19401,6 +19403,9 @@ export const vi = {
       consent_policy: {
         get: 'Xem quy định xác nhận trước khi ghi',
         set: 'Đổi quy định xác nhận trước khi ghi',
+      },
+      minutes_docx: {
+        download: 'Tải biên bản đã chia sẻ của một cuộc họp về dạng tệp Word',
       },
       minutes_esign: {
         get: 'Xem biên bản họp có được gửi đi ký hay không',
