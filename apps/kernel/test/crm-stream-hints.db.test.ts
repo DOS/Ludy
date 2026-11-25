@@ -199,6 +199,13 @@ suite('stream hints of deals and contacts (#3293)', () => {
       await c.query(`UPDATE ludy_kernel.party SET verified_at = now() WHERE org_id = $1 AND id = $2`, [orgId, partyId]);
     });
     expect(quiet).toEqual([]);
+
+    // Updating the primary key id along with contact details still notifies the new party id (LEFT JOIN old_rows).
+    const replacementId = randomUUID();
+    const renamedWithId = await hintsOf((c) =>
+      c.query(`UPDATE ludy_kernel.party SET id = $3, name = 'Đổi mã' WHERE org_id = $1 AND id = $2`, [orgId, partyId, replacementId]),
+    );
+    expect(renamedWithId).toEqual([`${orgId} crm_party ${replacementId}`]);
   });
 
   // #3423: a transaction that writes many contacts or deals sends a bounded number of hints (the first 20 name their row, the 21st the nil id), not one NOTIFY per row.
@@ -421,41 +428,62 @@ suite('stream hints of deals and contacts (#3293)', () => {
     expect(payloads).toHaveLength(84);
     expect(perOrgValues.every((v) => v === null || v === '')).toBe(true);
     expect(JSON.parse(gucDuringTx!)).toEqual({
-      [`crm_party:${first}`]: 'many',
-      [`crm_party:${second}`]: 'many',
-      [`crm_deal:${first}`]: 'many',
-      [`crm_deal:${second}`]: 'many',
+      tx: expect.stringMatching(/^[0-9]+$/),
+      counts: {
+        [`crm_party:${first}`]: 'many',
+        [`crm_party:${second}`]: 'many',
+        [`crm_deal:${first}`]: 'many',
+        [`crm_deal:${second}`]: 'many',
+      },
     });
     expect(gucAfterTx === null || gucAfterTx === '').toBe(true);
   });
 
-  it('fails closed on malformed, non-object, or out-of-range values in ludy.stream_hint_counts (#3423)', async () => {
+  it('fails closed on malformed, non-object, stale-tx, or out-of-range values in ludy.stream_hint_counts (#3423)', async () => {
     const orgId = await org();
     const uuidList = (n: number) => Array.from({ length: n }, () => randomUUID());
-    for (const bad of [
-      '{not-json',
-      'null',
-      '[]',
-      '123',
-      `{"crm_party:${orgId}":"oops"}`,
-      `{"crm_party:${orgId}":"5"}`,
-      `{"crm_party:${orgId}":22}`,
-      `{"crm_party:${orgId}":-5}`,
-      `{"crm_party:${orgId}":["not-a-uuid"]}`,
-      `{"crm_party:${orgId}":[null]}`,
-      JSON.stringify({ [`crm_party:${orgId}`]: uuidList(21) }),
-      JSON.stringify({ [`crm_party:${orgId}`]: uuidList(22) }),
-    ]) {
+    const badRaw: Array<{ label: string; make: (tx: string) => string }> = [
+      { label: 'not-json', make: () => '{not-json' },
+      { label: 'null', make: () => 'null' },
+      { label: 'array', make: () => '[]' },
+      { label: 'number', make: () => '123' },
+      { label: 'legacy-map', make: () => JSON.stringify({ [`crm_party:${orgId}`]: 'many' }) },
+      { label: 'stale-tx', make: () => JSON.stringify({ tx: '0', counts: { [`crm_party:${orgId}`]: 'many' } }) },
+      { label: 'non-object-counts', make: (tx) => JSON.stringify({ tx, counts: [] }) },
+      { label: 'string-entry', make: (tx) => JSON.stringify({ tx, counts: { [`crm_party:${orgId}`]: 'oops' } }) },
+      { label: 'numeric-string-entry', make: (tx) => JSON.stringify({ tx, counts: { [`crm_party:${orgId}`]: '5' } }) },
+      { label: 'int-entry', make: (tx) => JSON.stringify({ tx, counts: { [`crm_party:${orgId}`]: 22 } }) },
+      { label: 'neg-entry', make: (tx) => JSON.stringify({ tx, counts: { [`crm_party:${orgId}`]: -5 } }) },
+      { label: 'bad-uuid-entry', make: (tx) => JSON.stringify({ tx, counts: { [`crm_party:${orgId}`]: ['not-a-uuid'] } }) },
+      { label: 'null-elem-entry', make: (tx) => JSON.stringify({ tx, counts: { [`crm_party:${orgId}`]: [null] } }) },
+      { label: 'over-20-uuids-21', make: (tx) => JSON.stringify({ tx, counts: { [`crm_party:${orgId}`]: uuidList(21) } }) },
+      { label: 'over-20-uuids-22', make: (tx) => JSON.stringify({ tx, counts: { [`crm_party:${orgId}`]: uuidList(22) } }) },
+    ];
+    for (const item of badRaw) {
       let id = '';
       const payloads = await hintsOf(async (c) => {
         await c.query('BEGIN');
-        await c.query(`SELECT pg_catalog.set_config('ludy.stream_hint_counts', $1, true)`, [bad]);
+        const tx = (await c.query<{ tx: string }>('SELECT pg_catalog.pg_current_xact_id()::text AS tx')).rows[0]!.tx;
+        await c.query(`SELECT pg_catalog.set_config('ludy.stream_hint_counts', $1, true)`, [item.make(tx)]);
         id = (await c.query<{ id: string }>(`INSERT INTO ludy_kernel.party (org_id, kind, name) VALUES ($1, 'person', 'Khách lỗi JSON') RETURNING id`, [orgId])).rows[0]!.id;
         await c.query('COMMIT');
       });
-      expect(payloads, `bad GUC: ${bad}`).toEqual([`${orgId} crm_party ${id}`]);
+      expect(payloads, `bad GUC (${item.label})`).toEqual([`${orgId} crm_party ${id}`]);
     }
-    // Pre-seeded valid 20-UUID list: touching one of the already-seen ids does not trigger nil; a new 21st distinct id emits nil and flips to 'many'.
+    // A session-level set_config(..., false) left behind from an earlier transaction does not silence a new transaction.
+    let nextId = '';
+    const afterSessionLeak = await hintsOf(async (c) => {
+      await c.query('BEGIN');
+      const oldTx = (await c.query<{ tx: string }>('SELECT pg_catalog.pg_current_xact_id()::text AS tx')).rows[0]!.tx;
+      await c.query(`SELECT pg_catalog.set_config('ludy.stream_hint_counts', $1, false)`, [JSON.stringify({ tx: oldTx, counts: { [`crm_party:${orgId}`]: 'many' } })]);
+      await c.query('COMMIT');
+      await c.query('BEGIN');
+      nextId = (await c.query<{ id: string }>(`INSERT INTO ludy_kernel.party (org_id, kind, name) VALUES ($1, 'person', 'Sau phiên') RETURNING id`, [orgId])).rows[0]!.id;
+      await c.query('COMMIT');
+    });
+    expect(afterSessionLeak).toEqual([`${orgId} crm_party ${nextId}`]);
+
+    // Pre-seeded valid 20-UUID list in current tx: touching one of the already-seen ids does not trigger nil; a new 21st distinct id emits nil and flips to 'many'.
     const seen = await admin(
       async (c) =>
         (
@@ -465,7 +493,8 @@ suite('stream hints of deals and contacts (#3293)', () => {
     let newIds: string[] = [];
     const seeded = await hintsOf(async (c) => {
       await c.query('BEGIN');
-      await c.query(`SELECT pg_catalog.set_config('ludy.stream_hint_counts', $1, true)`, [JSON.stringify({ [`crm_party:${orgId}`]: seen })]);
+      const tx = (await c.query<{ tx: string }>('SELECT pg_catalog.pg_current_xact_id()::text AS tx')).rows[0]!.tx;
+      await c.query(`SELECT pg_catalog.set_config('ludy.stream_hint_counts', $1, true)`, [JSON.stringify({ tx, counts: { [`crm_party:${orgId}`]: seen } })]);
       await c.query(`UPDATE ludy_kernel.party SET name = 'Sửa lại' WHERE org_id = $1 AND id = $2`, [orgId, seen[0]]);
       newIds = (
         await c.query<{ id: string }>(`INSERT INTO ludy_kernel.party (org_id, kind, name) SELECT $1::uuid, 'person', 'Mới ' || i FROM generate_series(1, 5) i RETURNING id`, [orgId])
@@ -495,11 +524,12 @@ suite('stream hints of deals and contacts (#3293)', () => {
       await c.query('COMMIT');
     });
 
-    const gucMap = JSON.parse(gucMapRaw) as Record<string, unknown>;
-    expect(Object.keys(gucMap)).toHaveLength(30);
+    const gucEnvelope = JSON.parse(gucMapRaw) as { tx: string; counts: Record<string, unknown> };
+    expect(gucEnvelope.tx).toMatch(/^[0-9]+$/);
+    expect(Object.keys(gucEnvelope.counts)).toHaveLength(30);
     for (const row of singleRowPayloads) {
       expect(multiPayloads).toContain(`${row.org_id} crm_party ${row.id}`);
-      expect(gucMap[`crm_party:${row.org_id}`]).toEqual([row.id]);
+      expect(gucEnvelope.counts[`crm_party:${row.org_id}`]).toEqual([row.id]);
     }
 
     const three = orgs.slice(0, 3);

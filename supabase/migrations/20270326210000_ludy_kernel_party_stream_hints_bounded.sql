@@ -20,7 +20,10 @@ CREATE OR REPLACE FUNCTION ludy_kernel.stream_hint_bounded_batch(
 ) RETURNS void
 LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
+  v_tx text;
   v_raw text;
+  v_envelope pg_catalog.jsonb;
+  v_counts_raw pg_catalog.jsonb;
   v_counts pg_catalog.jsonb;
   v_batch record;
   v_key text;
@@ -51,18 +54,23 @@ BEGIN
   IF pg_catalog.array_ndims(p_orgs) <> 1 OR pg_catalog.array_ndims(p_ids) <> 1 THEN
     RAISE EXCEPTION 'STREAM_HINT_INVALID' USING ERRCODE = '22023';
   END IF;
-  -- One static transaction-local JSONB map keyed by <type>:<org_id> avoids allocating per-org GUC entries
-  -- in GUCMemoryContext across pooled backend lifetimes. Each entry holds at most 20 distinct row UUIDs or
-  -- 'many' once the 21st distinct id triggers the nil sentinel. Empty, malformed, or out-of-range values fail
-  -- closed to an empty list so writes never fail or get silenced.
+  -- One static transaction-local JSONB envelope (`{"tx": "<xid8>", "counts": {"<type>:<org_id>": ...}}`)
+  -- avoids allocating per-org GUC entries in GUCMemoryContext across pooled backend lifetimes and prevents
+  -- stale session-level GUC values from silencing hints in a later transaction. Each entry holds at most 20
+  -- distinct row UUIDs or 'many' once the 21st distinct id triggers the nil sentinel. Empty, malformed, stale-tx,
+  -- or out-of-range values fail closed to an empty map so writes never fail or get silenced.
+  v_tx := pg_catalog.pg_current_xact_id()::text;
   v_raw := NULLIF(pg_catalog.current_setting('ludy.stream_hint_counts', true), '');
+  v_counts := '{}'::pg_catalog.jsonb;
   IF v_raw IS NOT NULL AND pg_catalog.pg_input_is_valid(v_raw, 'jsonb') THEN
-    v_counts := v_raw::pg_catalog.jsonb;
-    IF pg_catalog.jsonb_typeof(v_counts) IS DISTINCT FROM 'object' THEN
-      v_counts := '{}'::pg_catalog.jsonb;
+    v_envelope := v_raw::pg_catalog.jsonb;
+    IF pg_catalog.jsonb_typeof(v_envelope) = 'object'
+       AND pg_catalog.jsonb_extract_path_text(v_envelope, 'tx') IS NOT DISTINCT FROM v_tx THEN
+      v_counts_raw := pg_catalog.jsonb_extract_path(v_envelope, 'counts');
+      IF v_counts_raw IS NOT NULL AND pg_catalog.jsonb_typeof(v_counts_raw) = 'object' THEN
+        v_counts := v_counts_raw;
+      END IF;
     END IF;
-  ELSE
-    v_counts := '{}'::pg_catalog.jsonb;
   END IF;
 
   FOR v_batch IN
@@ -132,7 +140,7 @@ BEGIN
     FROM ROWS FROM (pg_catalog.unnest(v_patch_keys), pg_catalog.unnest(v_patch_vals)) AS u(k, v);
     PERFORM pg_catalog.set_config(
       'ludy.stream_hint_counts',
-      pg_catalog.jsonb_concat(v_counts, v_patch)::text,
+      pg_catalog.jsonb_build_object('tx', v_tx, 'counts', pg_catalog.jsonb_concat(v_counts, v_patch))::text,
       true
     );
   END IF;
@@ -199,10 +207,13 @@ BEGIN
   INTO v_orgs, v_ids
   FROM (
     SELECT n.org_id, n.id, pg_catalog.row_number() OVER (PARTITION BY n.org_id ORDER BY n.id) AS rn
-    FROM new_rows n JOIN old_rows o ON o.org_id = n.org_id AND o.id = n.id
+    FROM new_rows n LEFT JOIN old_rows o ON o.org_id = n.org_id AND o.id = n.id
     WHERE n.org_id IS NOT NULL AND n.id IS NOT NULL
-      AND (o.kind, o.name, o.tax_code, o.address, o.email, o.phone, o.company_id, o.duplicate_of, o.version)
-          IS DISTINCT FROM (n.kind, n.name, n.tax_code, n.address, n.email, n.phone, n.company_id, n.duplicate_of, n.version)
+      AND (
+        o.id IS NULL
+        OR (o.kind, o.name, o.tax_code, o.address, o.email, o.phone, o.company_id, o.duplicate_of, o.version)
+            IS DISTINCT FROM (n.kind, n.name, n.tax_code, n.address, n.email, n.phone, n.company_id, n.duplicate_of, n.version)
+      )
   ) x
   WHERE x.rn <= 21;
   IF v_orgs IS NOT NULL THEN
