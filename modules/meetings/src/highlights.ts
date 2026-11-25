@@ -21,7 +21,7 @@ import {
 import { DomainError, defineCommand, defineQuery } from '@ludy/kernel-runtime';
 import { sql } from 'kysely';
 import { cleanName } from './speaker.ts';
-import { ROLES, openMeeting, userOf } from './transcript.ts';
+import { ROLES, lockPublishedLines, openMeeting, userOf } from './transcript.ts';
 
 export const highlightAdd = defineCommand({
   name: 'meetings.highlight.add',
@@ -39,6 +39,9 @@ export const highlightAdd = defineCommand({
     const mine = () => base().select(['id', 'start_seconds', 'end_seconds']);
     const again = await mine().where('start_seconds', '=', input.startSeconds).where('end_seconds', '=', input.endSeconds).executeTakeFirst();
     if (again) return zHighlightAdded.parse({ meetingId: input.meetingId, highlightId: again.id, created: false });
+    // The published lines are held steady while they are read: a publish that replaces them waits for this transaction, or has finished and the lines read below are its new ones (#4971). The meeting row
+    // itself cannot be locked here (a reader may add, and only the recorder may update the row), so the lock is the advisory one the publish takes too.
+    await lockPublishedLines(ctx.trx, input.meetingId, 'read');
     // Both ends must be the start (to the whole second) of a PUBLISHED line: the readers of the meeting read published lines only, so a mark on a draft line would tell them where the recorder's draft
     // lines are, and a re-transcription would leave it pointing at nothing. The transcript's row security still decides which lines the caller reads.
     const found = await sql<{ second: number }>`

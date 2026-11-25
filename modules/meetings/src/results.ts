@@ -40,7 +40,7 @@ import { enqueueMinutesHook } from './hook.ts';
 import { vnDayStart } from './retention.ts';
 import { suggestAssignee, type Person, type Suggested } from './assignee-match.ts';
 import { attendeeNames, cleanName } from './speaker.ts';
-import { ROLES, draftLineState, missingAnchors, openMeeting, userOf } from './transcript.ts';
+import { ROLES, draftLineState, lockPublishedLines, missingAnchors, openMeeting, userOf } from './transcript.ts';
 
 // What code finds wrong with an item's text: a link, an email address or a phone number in a title (a task is read by every member, and a title the model
 // wrote from a transcript must not carry a way to reach someone off the page). Fixed words, never the text.
@@ -303,6 +303,8 @@ export const resultPublish = defineCommand({
     // The meeting row is held first, before any row of it is locked, in the order the personal-data erasure and a meeting's delete take (the meeting, then its rows), so a publish cannot deadlock with
     // them; meetings.chapters.save holds it too, so a save and this publish are one after the other.
     await ctx.trx.selectFrom('ludy_meetings.meeting').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).forNoKeyUpdate().execute();
+    // Then the published lines, exclusively: a highlight added at this moment (by a reader, who cannot hold the row) is checked against the lines before this publish or the ones it leaves, never half of each (#4971).
+    await lockPublishedLines(ctx.trx, input.meetingId, 'replace');
     // Text the model wrote is shared only after the recorder has read it (meetings.draft.review) or rewritten it; the database refuses it too.
     const unread = await ctx.trx
       .selectFrom('ludy_meetings.meeting_result')
