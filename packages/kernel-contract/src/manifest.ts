@@ -119,7 +119,9 @@ export interface RouteDeclaration {
 // An item with no app sits in the shell's own places (#3225): `top` is the overview, first in the switcher, `bell` the notifications bell and `foot` the org's own screens (Settings) at its foot.
 export type NavDeclaration =
   // `modules`: the item shows only where one of these modules runs, when its screen is another module's (the kernel's Inbox, in Finance's menu as "Chứng từ").
-  | { readonly app: string; readonly group: string; readonly path: string; readonly label: string; readonly modules?: readonly string[] }
+  // `more`: a screen a small business opens less than monthly (lean navigation F1, #4790). The shell draws it in the "Thêm" group at the foot of the app's menu, collapsed until the current screen is one of them; its address, its
+  // place in Ctrl K and the role and module filters stay as they are. Its `group` still names where it would sit, and the shell ignores it for the menu.
+  | { readonly app: string; readonly group: string; readonly path: string; readonly label: string; readonly modules?: readonly string[]; readonly more?: true }
   | { readonly app: null; readonly rail: 'top' | 'bell' | 'foot'; readonly path: string; readonly label: string };
 
 // A screen of the app outside /o/$slug (#1660): a share target, an OAuth callback, a link sent outside the org. A
