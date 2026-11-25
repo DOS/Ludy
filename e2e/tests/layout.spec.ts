@@ -23,34 +23,46 @@ const INVOICE = fileURLToPath(new URL('../../apps/extract/test/fixtures/einvoice
 const SELLER_TAX_CODE = '0101234564';
 const BUYER = 'CÔNG TY CỔ PHẦN NGƯỜI MUA MẪU';
 
-test('the sidebar keeps sign-out and Settings in view on a short window, and each app has its own short menu', async ({ page }) => {
+test('the top bar and sidebar stay fixed without vertical icon shift, and each app has its own short menu', async ({ page }) => {
   const violations = await collectCspViolations(page);
   await signUp(page, newEmail('layout'));
   const slug = await createOrg(page, 'Công ty Màn hình nhỏ');
+  const topBar = page.getByRole('banner');
   const sidebar = page.getByRole('complementary');
   const desktopSidebar = page.getByTestId('desktop-sidebar');
-  const account = sidebar.getByRole('button', { name: /^Tài khoản:/ });
+  const account = topBar.getByRole('button', { name: /^Tài khoản:/ });
   await expect(account).toBeInViewport();
-  await expect(sidebar.getByRole('link', { name: 'Cài đặt' })).toBeInViewport();
-  // A new org opens on the overview, which belongs to no app: the 64px rail shows with no 224px secondary panel (#3588, #4519).
+  await expect(topBar.getByTestId('topbar-home-link')).toBeInViewport();
+  await expect(topBar.getByTestId('topbar-search-btn')).toBeInViewport();
+  await expect(topBar.getByTestId('topbar-vy-btn')).toBeInViewport();
+  await expect(topBar.getByTestId('shell-quick-capture-btn')).toBeInViewport();
+  await expect(topBar.getByTestId('topbar-notifications-link')).toBeInViewport();
+  await expect(topBar.getByRole('link', { name: 'Cài đặt', exact: true })).toBeInViewport();
+  // A new org opens on the overview, which belongs to no app: the 64px rail shows with no 224px secondary panel (#3588, #4519, #4926).
   const sidebarWidth = () => desktopSidebar.boundingBox().then((box) => Math.round(box?.width ?? 0));
   await expect.poll(sidebarWidth).toBe(64);
-  await expect(sidebar.getByTestId('rail-search-btn')).toBeInViewport();
-  await expect(sidebar.getByTestId('sidebar-toggle-btn')).toHaveCount(0);
+  await expect(topBar.getByTestId('sidebar-toggle-btn')).toHaveCount(0);
   await expect(sidebar.getByRole('list', { name: 'Ứng dụng' })).toBeVisible();
   await expect(sidebar.getByRole('link', { name: 'Việc nhóm' })).toHaveCount(0);
   await expect(sidebar.getByRole('list', { name: 'Ứng dụng' }).locator('[aria-current="true"]')).toHaveCount(0);
 
-  // A deep link opens with its app selected, and only that app's menu shows (288px expanded sidebar).
   const apps = sidebar.getByRole('list', { name: 'Ứng dụng' });
+  const overviewY = Math.round((await apps.getByRole('link', { name: 'Tổng quan', exact: true }).boundingBox())?.y ?? -1);
+  const financeY = Math.round((await apps.getByRole('link', { name: 'Tài chính', exact: true }).boundingBox())?.y ?? -1);
+  const settingsLinkX = Math.round((await topBar.getByTestId('topbar-settings-link').boundingBox())?.x ?? -1);
+
+  // A deep link opens with its app selected, and only that app's menu shows (288px expanded sidebar) with 0px rail icon jump.
   await page.goto(`/o/${slug}/journal`);
   await expect(apps.getByRole('link', { name: 'Tài chính', exact: true })).toHaveAttribute('aria-current', 'true');
   await expect.poll(sidebarWidth).toBe(288);
+  expect(Math.round((await apps.getByRole('link', { name: 'Tổng quan', exact: true }).boundingBox())?.y ?? -1)).toBe(overviewY);
+  expect(Math.round((await apps.getByRole('link', { name: 'Tài chính', exact: true }).boundingBox())?.y ?? -1)).toBe(financeY);
+  expect(Math.round((await topBar.getByTestId('topbar-settings-link').boundingBox())?.x ?? -1)).toBe(settingsLinkX);
   await expect(sidebar.getByRole('link', { name: 'Sổ sách' })).toBeVisible();
   await expect(sidebar.getByRole('link', { name: 'Việc nhóm' })).toHaveCount(0);
 
   // Activating the collapse toggle keeps keyboard focus on the counterpart button and persists across reload (#4519).
-  const toggleBtn = sidebar.getByTestId('sidebar-toggle-btn');
+  const toggleBtn = topBar.getByTestId('sidebar-toggle-btn');
   await toggleBtn.focus();
   await page.keyboard.press('Enter');
   await expect(sidebar.getByRole('link', { name: 'Sổ sách' })).toHaveCount(0);
@@ -105,7 +117,7 @@ test('the sidebar keeps sign-out and Settings in view on a short window, and eac
   // Back to the home screen: some linked screens have their own layout without this sidebar.
   await page.goto('/');
   await account.click();
-  await sidebar.getByRole('button', { name: 'Đăng xuất', exact: true }).click();
+  await topBar.getByRole('button', { name: 'Đăng xuất', exact: true }).click();
   await expect(page).toHaveURL(/\/login$/);
 });
 
@@ -179,7 +191,7 @@ test('every sidebar screen and the detail pages pass the 360px and axe walk on a
   const problems: string[] = [];
 
   await test.step('make the org the invoice seller, so the invoice is a sale and its buyer a customer', async () => {
-    await page.getByRole('navigation').getByRole('link', { name: 'Cài đặt' }).click();
+    await page.getByRole('banner').getByRole('link', { name: 'Cài đặt', exact: true }).click();
     await page.getByRole('button', { name: 'Nhập', exact: true }).click();
     const taxForm = page.getByRole('form', { name: 'Mã số thuế' });
     await taxForm.getByLabel('Mã số thuế').fill(SELLER_TAX_CODE);
@@ -249,7 +261,7 @@ test('the agents screen with its legal-entity pickers passes the 360px and axe w
   test.setTimeout(120_000);
   await signInNewUser(page, newEmail('layout-a11y-entities'));
   const slug = await createOrg(page, 'Công ty Hai pháp nhân');
-  await page.getByRole('navigation').getByRole('link', { name: 'Cài đặt' }).click();
+  await page.getByRole('banner').getByRole('link', { name: 'Cài đặt', exact: true }).click();
   await page.getByRole('button', { name: 'Thêm pháp nhân' }).click();
   const add = page.getByRole('form', { name: 'Thêm pháp nhân' });
   await add.getByLabel('Tên pháp nhân').fill('Chi nhánh Đà Nẵng');

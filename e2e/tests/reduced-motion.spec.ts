@@ -53,7 +53,7 @@ const motion = (page: Page) => page.evaluate(() => [...(window as unknown as { _
 
 // Moves the pointer over the screen's buttons and links, one after another, so their hover transitions run.
 async function hoverControls(page: Page, max = 12): Promise<void> {
-  const controls = page.locator('main button:visible, main a[href]:visible, aside a[href]:visible');
+  const controls = page.locator('header a[href]:visible, header button:visible, main button:visible, main a[href]:visible, aside a[href]:visible');
   const count = Math.min(await controls.count(), max);
   for (let i = 0; i < count; i++) await controls.nth(i).hover({ timeout: 2_000 }).catch(() => undefined);
   await page.mouse.move(0, 0);
@@ -74,12 +74,13 @@ test('nothing on the sidebar screens slides, zooms, fades or pulses when the sys
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await signInNewUser(page, newEmail('reduced-motion'));
   await createOrg(page, 'Công ty Giảm chuyển động');
+  const topBar = page.getByRole('banner');
   const sidebar = page.getByRole('complementary');
   const apps = sidebar.getByRole('list', { name: 'Ứng dụng' });
   const links = new Set<string>();
   // The switcher renders Overview (.first()) immediately and fills role-filtered apps once org.apps and me.get finish: wait for both before counting.
   await expect(apps.getByRole('link').nth(1)).toBeVisible();
-  await expect(sidebar.getByRole('button', { name: /^Tài khoản: .*@/ })).toBeVisible();
+  await expect(topBar.getByRole('button', { name: /^Tài khoản: .*@/ })).toBeVisible();
   const appCount = await apps.getByRole('link').count();
   expect(appCount).toBeGreaterThan(1);
   for (let i = 0; i < appCount; i++) {
@@ -102,8 +103,8 @@ test('nothing on the sidebar screens slides, zooms, fades or pulses when the sys
     if (first) {
       first = false;
       await openPaletteAndClose(page);
-      await sidebar.getByRole('button', { name: /^Tài khoản:/ }).click();
-      await expect(sidebar.getByTestId('account-popover')).toBeVisible();
+      await topBar.getByRole('button', { name: /^Tài khoản:/ }).click();
+      await expect(topBar.getByTestId('account-popover')).toBeVisible();
       await page.waitForTimeout(300);
       await page.keyboard.press('Escape');
       expect(await probeSeen(page), 'the stylesheet cuts the probe short').toBe(false);
