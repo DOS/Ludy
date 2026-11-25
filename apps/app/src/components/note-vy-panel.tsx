@@ -7,7 +7,6 @@ import { Badge } from '@ludy/ui/components/badge';
 import { Button } from '@ludy/ui/components/button';
 import { Checkbox } from '@ludy/ui/components/checkbox';
 import { Input } from '@ludy/ui/components/input';
-import { NavIcon } from '@ludy/ui/components/nav-icon';
 import { Textarea } from '@ludy/ui/components/textarea';
 import { useState } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
@@ -28,6 +27,7 @@ import { browserTimeZone } from '../lib/my-work.ts';
 import { toast } from '../lib/toast.ts';
 import { DateInput } from './date-input.tsx';
 import { refreshNotes } from './notes-panel.tsx';
+import { CoworkerAttribution, ProposalSurface } from './proposal-surface.tsx';
 import { TimeInput } from './time-input.tsx';
 import { ErrorText } from './ui.tsx';
 
@@ -361,20 +361,21 @@ export function NoteVyPanel({
   const todosStale = visibleTodos ? visibleTodos.stale || visibleTodos.noteRevision !== note.revision : false;
 
   return (
-    <section
-      className="space-y-3 rounded-lg border bg-card p-3"
+    <ProposalSurface
+      as="section"
+      proposed={false}
+      className="space-y-3 rounded-lg p-3"
       aria-label={t('title')}
       data-testid="note-vy-panel"
     >
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <NavIcon name="appAi" className="text-proposal" />
-          <h3 className="text-sm font-medium text-foreground">{t('title')}</h3>
-        </div>
-        <Badge variant="proposal" data-testid="note-vy-ai-badge">
-          {t('aiBadge')}
-        </Badge>
-      </div>
+      <CoworkerAttribution
+        coworker="gm"
+        title={t('title')}
+        titleAs="h3"
+        badgeLabel={t('aiBadge')}
+        badgeTestId="note-vy-ai-badge"
+        showRole={false}
+      />
       <p className="text-xs text-muted-foreground">{t('hint')}</p>
 
       {blockedMessage && (
@@ -445,7 +446,7 @@ export function NoteVyPanel({
           onAccept={(rows) => acceptTodos.mutate({ rows, runId: visibleTodos.runId })}
         />
       )}
-    </section>
+    </ProposalSurface>
   );
 }
 
@@ -475,10 +476,7 @@ function NoteSummaryDraftBox({
   const summaryHasContent = summaryDraft.trim().length > 0 || textToBullets(bulletsDraft).length > 0;
 
   return (
-    <div
-      className="space-y-2.5 rounded-lg border border-dashed border-proposal/60 bg-background p-3"
-      data-testid="note-vy-summary-draft"
-    >
+    <ProposalSurface className="space-y-2.5 rounded-lg bg-background p-3" data-testid="note-vy-summary-draft">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs font-medium text-foreground">{t('summaryHeading')}</span>
@@ -569,7 +567,7 @@ function NoteSummaryDraftBox({
           </p>
         </div>
       )}
-    </div>
+    </ProposalSurface>
   );
 }
 
@@ -596,10 +594,7 @@ function NoteTodosDraftBox({
   const emptyTitleSelected = selectedTodos.some((row) => row.title.trim().length === 0);
 
   return (
-    <div
-      className="space-y-2.5 rounded-lg border border-dashed border-proposal/60 bg-background p-3"
-      data-testid="note-vy-todos-draft"
-    >
+    <ProposalSurface className="space-y-2.5 rounded-lg bg-background p-3" data-testid="note-vy-todos-draft">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs font-medium text-foreground">{t('todosHeading')}</span>
@@ -748,6 +743,6 @@ function NoteTodosDraftBox({
           </div>
         </>
       )}
-    </div>
+    </ProposalSurface>
   );
 }

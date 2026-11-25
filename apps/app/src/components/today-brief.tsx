@@ -71,6 +71,7 @@ export function TodayBrief({
         labelTestId="today-brief-coworker"
         showIcon={isAi}
         showRole={isAi}
+        tag={isAi ? 'ai' : null}
       />
       <p className="mt-2 text-sm text-foreground">{sentences.join(' ')}</p>
       <p className="mt-2 text-xs text-muted-foreground">{isAi ? t('byVy') : t('byTemplate')}</p>

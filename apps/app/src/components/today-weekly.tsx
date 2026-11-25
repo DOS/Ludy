@@ -6,13 +6,14 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
 import type { WeeklyFigures } from '@ludy/kernel-contract';
-import { Badge } from '@ludy/ui/components/badge';
 import { Button } from '@ludy/ui/components/button';
 import { Card } from '@ludy/ui/components/card';
 import { useFormat, useLocaleSetting } from '../i18n/provider.tsx';
 import { client } from '../lib/api.ts';
+import { useCoworkerNames } from '../lib/coworker-names.ts';
 import { briefDay } from '../lib/today-brief.ts';
 import { weeklyAutoShown, weeklyCacheKey } from '../lib/today-weekly.ts';
+import { CoworkerAttribution, ProposalSurface } from './proposal-surface.tsx';
 
 type Tile = { key: 'dealsWon' | 'dealsOpen' | 'cash' | 'receivables' | 'payables' | 'tasksLate'; value: string; kind: 'money' | 'number'; hint?: string };
 
@@ -39,6 +40,8 @@ export function weeklyTiles(figures: WeeklyFigures): Tile[] {
 
 export function TodayWeekly({ slug }: { slug: string }) {
   const t = useTranslations('today.weekly');
+  const today = useTranslations('today');
+  const gmName = useCoworkerNames().gm;
   const f = useFormat();
   const { locale } = useLocaleSetting();
   const language = locale === 'en' ? 'en' : 'vi';
@@ -88,14 +91,22 @@ export function TodayWeekly({ slug }: { slug: string }) {
   const tiles = weeklyTiles(figures);
   // Nothing the member can open to count: no card.
   if (tiles.length === 0) return null;
+  // Vy's sentences are model-written, so the card is a proposal-style surface; the template's own sentence, with the figures, is a solid card.
+  const isAi = writtenBy === 'vy';
   return (
-    <section data-weekly-slot="" aria-labelledby="overview-weekly">
-      <Card className="block p-4" data-testid="today-weekly">
-        <div className="flex flex-wrap items-center gap-2">
-          <h2 id="overview-weekly" className="text-sm font-semibold">{t('title')}</h2>
-          <span className="text-xs text-subtle-foreground">{t('window')}</span>
-          {writtenBy === 'vy' && <Badge variant="proposal">{t('aiBadge')}</Badge>}
-        </div>
+    <section data-weekly-slot="" aria-label={t('title')}>
+      <ProposalSurface proposed={isAi} className="p-4" data-testid="today-weekly">
+        <CoworkerAttribution
+          coworker="gm"
+          name={gmName}
+          title={t('title')}
+          titleAs="h2"
+          label={today('from', { name: gmName })}
+          showIcon={isAi}
+          showRole={false}
+          tag={isAi ? 'ai' : null}
+          aside={<span className="text-xs text-subtle-foreground">{t('window')}</span>}
+        />
         {sentences.length > 0 && <p className="mt-2 text-sm text-foreground">{sentences.join(' ')}</p>}
         <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2.5 text-sm xl:grid-cols-3">
           {tiles.map((tile) => (
@@ -107,7 +118,7 @@ export function TodayWeekly({ slug }: { slug: string }) {
           ))}
         </dl>
         <p className="mt-3 text-xs text-subtle-foreground">{writtenBy === 'vy' ? t('byVy') : budgetSpent ? t('budgetSpent') : t('byTemplate')}</p>
-      </Card>
+      </ProposalSurface>
     </section>
   );
 }

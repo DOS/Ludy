@@ -3,9 +3,14 @@
 // carries no "all checks pass" success badge beside it; a standing posting keeps it.
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
-import { describe, expect, it } from 'vitest';
-import { ProposalBadges, type ProposalBadgesItem } from '../src/components/proposal-badges.tsx';
+import { describe, expect, it, vi } from 'vitest';
+import type { ProposalBadgesItem } from '../src/components/proposal-badges.tsx';
 import { catalog } from '../src/i18n/runtime.ts';
+
+// proposal-badges re-exports the attribution header, which reads the coworkers' names from the chart: no network here.
+vi.mock('../src/lib/api.ts', () => ({ orpc: {}, client: {}, queryClient: {}, errorMessage: (e: unknown) => String(e) }));
+
+const { ProposalBadges } = await import('../src/components/proposal-badges.tsx');
 
 const posted: ProposalBadgesItem = {
   kind: 'finance.purchase',
