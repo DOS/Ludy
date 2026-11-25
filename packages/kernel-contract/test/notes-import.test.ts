@@ -225,6 +225,85 @@ describe('Evernote .enex importer', () => {
     expect(parseEnexTimestamp('20240615T123045Z')).toBe('2024-06-15T12:30:45.000Z');
     expect(parseEnexTimestamp('invalid')).toBeNull();
   });
+
+  it('scopes dry-run duplicates per (notebook, title) while preserving legacy flat title list compatibility', () => {
+    const multiBookXml = `<?xml version="1.0" encoding="UTF-8"?>
+<en-export>
+  <note>
+    <title>Shared Title</title>
+    <notebook>Work</notebook>
+    <content><![CDATA[<en-note><p>Work copy</p></en-note>]]></content>
+  </note>
+  <note>
+    <title>Shared Title</title>
+    <notebook>Personal</notebook>
+    <content><![CDATA[<en-note><p>Personal copy</p></en-note>]]></content>
+  </note>
+  <note>
+    <title>Loose Note</title>
+    <content><![CDATA[<en-note><p>Unfiled copy</p></en-note>]]></content>
+  </note>
+</en-export>`;
+    const parsed = parseEnexImport(multiBookXml);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+
+    const notebooks = [
+      { id: 'nb-work', name: 'Work' },
+      { id: 'nb-personal', name: 'Personal' },
+    ];
+    // Existing 'Shared Title' is only in Personal and 'Loose Note' is unfiled (notebookId: null).
+    const existing = [
+      { title: 'Shared Title', notebookId: 'nb-personal' },
+      { title: 'Loose Note', notebookId: null },
+      { title: 'Only In Work', notebookId: 'nb-work' },
+    ];
+
+    const autoPreview = buildEnexDryRunPreview(parsed, notebooks, existing);
+    expect(autoPreview.duplicateTitles).toBe(2);
+    expect(autoPreview.notebooksExisting).toEqual(['Work', 'Personal']);
+
+    // Forcing all notes into 'Work' avoids colliding with Personal or unfiled, but intra-batch 'Shared Title' x2 counts 1 dup.
+    const workPreview = buildEnexDryRunPreview(parsed, notebooks, existing, {
+      targetNotebookId: 'nb-work',
+      overrideNotebookName: 'Work',
+    });
+    expect(workPreview.duplicateTitles).toBe(1);
+    expect(workPreview.notebooksExisting).toEqual([]);
+    expect(workPreview.notebooksNew).toEqual([]);
+
+    // Forcing unfiled matches only existing unfiled 'Loose Note' + intra-batch duplicate 'Shared Title' -> 2 dups.
+    const unfiledPreview = buildEnexDryRunPreview(parsed, notebooks, existing, { unfiled: true });
+    expect(unfiledPreview.duplicateTitles).toBe(2);
+
+    // Existing unfiled note does not collide when targeting nb-work.
+    const noMatchXml = `<en-export><note><title>Loose Note</title><notebook>Work</notebook><content><![CDATA[<en-note>x</en-note>]]></content></note></en-export>`;
+    const noMatch = parseEnexImport(noMatchXml);
+    expect(noMatch.ok).toBe(true);
+    if (noMatch.ok) {
+      expect(buildEnexDryRunPreview(noMatch, notebooks, existing).duplicateTitles).toBe(0);
+      // Backwards-compatible legacy string[] matches globally as before.
+      expect(buildEnexDryRunPreview(noMatch, notebooks, ['Loose Note']).duplicateTitles).toBe(1);
+    }
+  });
+
+  it('normalizes trailing spaces/tabs before newlines in O(n) without polynomial regex backtracking', () => {
+    const html = `<en-note><p>Line 1   \t </p><p>   </p><p>Line 2\t</p></en-note>`;
+    const out = convertEnmlToSafeMarkdown(html, new Map());
+    expect('markdown' in out).toBe(true);
+    if ('markdown' in out) {
+      expect(out.markdown).toBe('Line 1\n\nLine 2');
+    }
+
+    const hugeSpaces = `<en-note><p>${' '.repeat(80_000)}tail</p></en-note>`;
+    const start = Date.now();
+    const fastOut = convertEnmlToSafeMarkdown(hugeSpaces, new Map());
+    expect(Date.now() - start).toBeLessThan(500);
+    expect('markdown' in fastOut).toBe(true);
+    if ('markdown' in fastOut) {
+      expect(fastOut.markdown).toBe('tail');
+    }
+  });
 });
 
 describe('Todoist .csv importer', () => {
@@ -356,5 +435,44 @@ describe('Todoist .csv importer', () => {
     const taskOver = parseTodoistCsv(tooManyTasks);
     expect(taskOver.ok).toBe(false);
     if (!taskOver.ok) expect(taskOver.code).toBe('TOO_LARGE');
+  });
+
+  it('scopes Todoist dry-run duplicates per (list, title) while preserving legacy flat title list compatibility', () => {
+    const csv = [
+      'TYPE,CONTENT',
+      'list,Work',
+      'task,Standup',
+      'list,Personal',
+      'task,Standup',
+      'task,Pay rent',
+    ].join('\n');
+    const parsed = parseTodoistCsv(csv);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+
+    const lists = [
+      { id: 'list-work', name: 'Work' },
+      { id: 'list-personal', name: 'Personal' },
+    ];
+    const existing = [
+      { title: 'Standup', listId: 'list-personal' },
+      { title: 'Pay rent', listId: null },
+    ];
+
+    // Only Personal has 'Standup'; Work 'Standup' and Personal 'Pay rent' (existing is in Inbox) do not collide.
+    const preview = buildTodoistDryRunPreview(parsed, lists, existing);
+    expect(preview.duplicateTitles).toBe(1);
+
+    // Explicit targetListId or useInbox for file without explicit TYPE=list scopes accurately.
+    const plain = parseTodoistCsv('TYPE,CONTENT\ntask,Pay rent\ntask,New thing\n', {
+      defaultListName: 'Personal',
+    });
+    expect(plain.ok).toBe(true);
+    if (plain.ok) {
+      expect(buildTodoistDryRunPreview(plain, lists, existing).duplicateTitles).toBe(0);
+      expect(buildTodoistDryRunPreview(plain, lists, existing, { targetListId: 'list-work' }).duplicateTitles).toBe(0);
+      expect(buildTodoistDryRunPreview(plain, lists, existing, { useInbox: true }).duplicateTitles).toBe(1);
+      expect(buildTodoistDryRunPreview(plain, lists, ['Pay rent']).duplicateTitles).toBe(1);
+    }
   });
 });

@@ -1245,6 +1245,19 @@ function ListEditDialog({
 }
 
 type MyWorkTab = TodoListView | 'upcoming';
+export function collectTodosForImportPreview(
+  openTodos: ReadonlyArray<Pick<TodoSummary, 'id' | 'title' | 'listId'>>,
+  doneTodos: ReadonlyArray<Pick<TodoSummary, 'id' | 'title' | 'listId'>>,
+): Array<{ title: string; listId: string | null }> {
+  const byId = new Map<string, { title: string; listId: string | null }>();
+  for (const item of [...openTodos, ...doneTodos]) {
+    if (!byId.has(item.id)) {
+      byId.set(item.id, { title: item.title, listId: item.listId ?? null });
+    }
+  }
+  return [...byId.values()];
+}
+
 export function MyWorkPage() {
   const { slug } = useParams({ strict: false }) as { slug: string };
   const t = useTranslations('myWork');
@@ -1316,8 +1329,22 @@ export function MyWorkPage() {
     }),
     [listView, effectiveListFilter, tagFilter, priorityFilter],
   );
-  const work = useQuery({ ...orpc.notes.todos.myWork.queryOptions({ input: myWorkInput }), refetchInterval, enabled: needsWork || importOpen });
+  const work = useQuery({ ...orpc.notes.todos.myWork.queryOptions({ input: myWorkInput }), refetchInterval, enabled: needsWork });
   const closed = useQuery({ ...orpc.notes.todos.list.queryOptions({ input: closedInput }), refetchInterval, enabled: view === 'done' || view === 'trash' });
+  const hasTodoFilters = effectiveListFilter !== 'all' || tagFilter !== '' || priorityFilter !== null;
+  const importOpenTodos = useQuery({
+    ...orpc.notes.todos.list.queryOptions({ input: { view: 'open', limit: 500 } }),
+    enabled: writer && importOpen && (!needsWork || hasTodoFilters),
+  });
+  const importDoneTodos = useQuery({
+    ...orpc.notes.todos.list.queryOptions({ input: { view: 'done', limit: 500 } }),
+    enabled: writer && importOpen && !(view === 'done' && !hasTodoFilters),
+  });
+  const existingTodosForImport = useMemo(() => {
+    const openItems = !hasTodoFilters && needsWork ? (work.data?.todos ?? []) : (importOpenTodos.data ?? []);
+    const doneItems = view === 'done' && !hasTodoFilters ? (closed.data ?? []) : (importDoneTodos.data ?? []);
+    return collectTodosForImportPreview(openItems, doneItems);
+  }, [hasTodoFilters, needsWork, work.data?.todos, importOpenTodos.data, view, closed.data, importDoneTodos.data]);
   const list = needsWork ? work : closed;
   const chart = useQuery({ ...orpc.chart.get.queryOptions(), enabled: (work.data?.tasks.length ?? 0) > 0 });
   const todos = useMemo(() => (needsWork ? (work.data?.todos ?? []) : (closed.data ?? [])), [needsWork, work.data, closed.data]);
@@ -2311,7 +2338,7 @@ export function MyWorkPage() {
           onOpenChange={setImportOpen}
           slug={slug}
           todoLists={personalLists}
-          existingTodoTitles={(work.data?.todos ?? []).map((item) => item.title)}
+          existingTodos={existingTodosForImport}
           defaultListId={activeList?.id ?? null}
           timeZone={viewerTz}
           onImported={(result) => {
