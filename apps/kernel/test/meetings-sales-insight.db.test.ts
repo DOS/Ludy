@@ -220,6 +220,8 @@ suite('sales call insights for a meeting linked to an open deal (#4920)', () => 
 
     // 1. AI off (deployment switch & null model)
     setSummaryEnabled(false);
+    // Even with AI off, start refuses non-recorders with 404 MEETING_NOT_FOUND before SUMMARY_OFF.
+    expect(await refuses(exec('attendee', 'meetings.sales_insight.start', { meetingId }))).toMatchObject({ code: 'MEETING_NOT_FOUND', status: 404 });
     expect(await salesInsightStatusOf(deps(), orgId, asUser('recorder'), meetingId)).toMatchObject({ available: true, enabled: false, reason: 'off' });
     expect(await runMeetingSalesInsight(deps(), orgId, asUser('recorder'), meetingId)).toMatchObject({ state: 'off', errorCode: 'SUMMARY_OFF', concerns: [] });
     setSummaryEnabled(true);
@@ -350,6 +352,18 @@ suite('sales call insights for a meeting linked to an open deal (#4920)', () => 
     modelReply = JSON.stringify({ concerns: [{ text: 'Khách lo ngại phí triển khai 120 triệu hơi cao.', lineIds: [generic.segIds[1]] }], buyingSignals: [], nextSteps: [] });
     const genericOut = await runMeetingSalesInsight(deps(), orgId, asUser('recorder'), generic.meetingId);
     expect(genericOut.customerTalkShare).toBeNull();
+
+    // Unparsable model output returns 'none' cleanly while preserving code-computed customerTalkShare.
+    modelReply = 'không phải JSON';
+    const unparsableOut = await runMeetingSalesInsight(deps(), orgId, asUser('recorder'), meetingId);
+    expect(unparsableOut).toMatchObject({
+      state: 'none',
+      errorCode: null,
+      concerns: [],
+      buyingSignals: [],
+      nextSteps: [],
+      customerTalkShare: { customerPercent: 50, internalPercent: 50 },
+    });
 
     // No transcript or insight prose leaked to console logs.
     expect(logged.join('\n')).not.toContain('Hoàng Minh');

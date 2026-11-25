@@ -191,8 +191,8 @@ export const salesInsightStart = defineCommand({
   target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
   handler: async (ctx, input) => {
     const userId = userOf(ctx.actor);
-    if (!isSummaryEnabled()) throw new DomainError('SUMMARY_OFF', 422, 'Vy is not turned on here');
     await recorderOf(ctx, input.meetingId, userId);
+    if (!isSummaryEnabled()) throw new DomainError('SUMMARY_OFF', 422, 'Vy is not turned on here');
     const linked = await linkedOpenDeal(ctx, input.meetingId);
     if (!linked.ok) throw noOpenDeal(linked.reason);
     await lockMeetingMedia(ctx, input.meetingId);

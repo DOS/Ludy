@@ -17,7 +17,10 @@ import { ErrorText } from './ui.tsx';
 import { installedModules } from '../lib/org-modules.ts';
 
 const crmInstalled = (): boolean => installedModules().includes('crm');
-const refresh = () => queryClient.invalidateQueries({ queryKey: orpc.meetings.links.key() });
+const refresh = () => {
+  void queryClient.invalidateQueries({ queryKey: orpc.meetings.links.key() });
+  void queryClient.invalidateQueries({ queryKey: orpc.meetings.salesInsight.key() });
+};
 
 function DealName({ dealId, fallback }: { dealId: string; fallback: string }) {
   const deal = useQuery({ ...orpc.crm.deals.get.queryOptions({ input: { dealId } }), enabled: crmInstalled(), retry: false });
