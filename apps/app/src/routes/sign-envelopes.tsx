@@ -180,6 +180,7 @@ export async function reconcilePendingDocxNoticesWithSession(deps: {
   pendingNotices: readonly CreatedDocxListNotice[];
   currentUserId: string | null;
   readVerifiedSessionId: () => Promise<string | null>;
+  isStillCurrent?: (() => boolean) | undefined;
   onMismatchSessionId: (liveSessionId: string) => void;
   onStaleUserCache: () => void;
 }): Promise<{ verifiedSessionId: string | null; liveSessionId: string | null }> {
@@ -190,14 +191,14 @@ export async function reconcilePendingDocxNoticesWithSession(deps: {
     return { verifiedSessionId: null, liveSessionId: null };
   }
   const liveSessionId = await deps.readVerifiedSessionId();
-  if (!liveSessionId) {
+  if (!liveSessionId || (deps.isStillCurrent && !deps.isStillCurrent())) {
     return { verifiedSessionId: null, liveSessionId: null };
   }
   deps.onMismatchSessionId(liveSessionId);
   const staleUserCache = deps.pendingNotices.some(
     (n) => n.sessionId === liveSessionId && n.userId && deps.currentUserId !== null && n.userId !== deps.currentUserId,
   );
-  if (staleUserCache) {
+  if (staleUserCache && (!deps.isStillCurrent || deps.isStillCurrent())) {
     deps.onStaleUserCache();
   }
   return {
@@ -570,11 +571,6 @@ export async function openCreatedDocxNoticeEnvelope(deps: {
     deps.setCreatedDocxNotice(null);
     return false;
   }
-  // Never reuse another account's identity to persist or open a previous user's notice.
-  if (deps.notice.userId && deps.currentUserId && deps.notice.userId !== deps.currentUserId) {
-    deps.setCreatedDocxNotice(null);
-    return false;
-  }
   const initialSessionOk = await verifyLiveSessionMatch({
     expectedSessionId: deps.notice.sessionId,
     noticeHasUserId: Boolean(deps.notice.userId),
@@ -587,25 +583,34 @@ export async function openCreatedDocxNoticeEnvelope(deps: {
   }
   const cleanWarnings = sanitizeDocxWarnings(deps.notice.warnings);
   let resolvedOrgId = deps.notice.orgId;
-  let resolvedUserId = deps.notice.userId ?? deps.currentUserId ?? null;
-  if (cleanWarnings.length > 0 && (!resolvedUserId || !resolvedOrgId) && deps.resolveUserScope) {
-    try {
-      const fetched = await deps.resolveUserScope();
-      const decision = mergeFetchedUserScope({
-        expectedUserId: deps.notice.userId ?? resolvedUserId,
-        currentOrgId: resolvedOrgId,
-        fetched,
-      });
-      if (decision.kind === 'mismatch') {
-        deps.setCreatedDocxNotice(null);
+  // Never adopt stale cached meQuery userId when resolveUserScope can verify the live user directly.
+  let resolvedUserId = deps.notice.userId ?? (!deps.resolveUserScope ? (deps.currentUserId ?? null) : null);
+  const cacheDisagreesWithNotice = Boolean(
+    deps.notice.userId && deps.currentUserId && deps.notice.userId !== deps.currentUserId,
+  );
+  if ((cleanWarnings.length > 0 && (!resolvedUserId || !resolvedOrgId)) || cacheDisagreesWithNotice) {
+    if (deps.resolveUserScope) {
+      try {
+        const fetched = await deps.resolveUserScope();
+        const decision = mergeFetchedUserScope({
+          expectedUserId: deps.notice.userId ?? resolvedUserId,
+          currentOrgId: resolvedOrgId,
+          fetched,
+        });
+        if (decision.kind === 'mismatch') {
+          deps.setCreatedDocxNotice(null);
+          return false;
+        }
+        if (decision.kind === 'unverified') {
+          return false;
+        }
+        resolvedOrgId = decision.orgId;
+        resolvedUserId = decision.userId;
+      } catch {
         return false;
       }
-      if (decision.kind === 'unverified') {
-        return false;
-      }
-      resolvedOrgId = decision.orgId;
-      resolvedUserId = decision.userId;
-    } catch {
+    } else if (cacheDisagreesWithNotice) {
+      // Cannot confirm whether cache mismatch is stale or real without live scope lookup -> abort without clearing notice.
       return false;
     }
   }
@@ -1312,29 +1317,36 @@ export function SignEnvelopesPage() {
       return;
     }
     let cancelled = false;
+    let verifying = true;
+    let activeVerifiedSessionId: string | null = null;
     setVerifiedNoticeSessions(new Set());
     void reconcilePendingDocxNoticesWithSession({
       pendingNotices: pendingDocxNotices,
       currentUserId,
       readVerifiedSessionId: async () => (await readVerifiedSession()).sessionId,
+      isStillCurrent: () => !cancelled,
       onMismatchSessionId: (liveSessionId) => {
+        if (cancelled) return;
         clearPendingDocxListNotices({ mismatchSessionId: liveSessionId });
-        if (!cancelled) {
-          setPendingDocxNotices((prevList) => {
-            const filtered = prevList.filter((n) => !n.sessionId || n.sessionId === liveSessionId);
-            return filtered.length === prevList.length ? prevList : filtered;
-          });
-        }
+        setPendingDocxNotices((prevList) => {
+          const filtered = prevList.filter((n) => !n.sessionId || n.sessionId === liveSessionId);
+          return filtered.length === prevList.length ? prevList : filtered;
+        });
       },
       onStaleUserCache: () => {
+        if (cancelled) return;
         void queryClient.invalidateQueries({ queryKey: orpc.me.get.queryKey() });
       },
     })
       .then(({ verifiedSessionId }) => {
+        verifying = false;
         if (cancelled) return;
+        activeVerifiedSessionId = verifiedSessionId;
         setVerifiedNoticeSessions(verifiedSessionId ? new Set([verifiedSessionId]) : new Set());
       })
       .catch(() => {
+        verifying = false;
+        activeVerifiedSessionId = null;
         if (!cancelled) setVerifiedNoticeSessions(new Set());
       });
 
@@ -1346,6 +1358,7 @@ export function SignEnvelopesPage() {
         setPendingDocxNotices([]);
         return;
       }
+      activeVerifiedSessionId = null;
       setVerifiedNoticeSessions(new Set());
       if (nextSessionId) {
         clearPendingDocxListNotices({ mismatchSessionId: nextSessionId });
@@ -1357,9 +1370,31 @@ export function SignEnvelopesPage() {
       setAuthVerifyEpoch((v) => v + 1);
     });
     const onFocus = () => {
-      if (!cancelled) {
-        setAuthVerifyEpoch((v) => v + 1);
-      }
+      if (cancelled || verifying) return;
+      void readVerifiedSession()
+        .then(({ sessionId: liveSessionId }) => {
+          if (cancelled) return;
+          if (liveSessionId && activeVerifiedSessionId === liveSessionId) {
+            return;
+          }
+          activeVerifiedSessionId = null;
+          setVerifiedNoticeSessions(new Set());
+          if (liveSessionId) {
+            clearPendingDocxListNotices({ mismatchSessionId: liveSessionId });
+            setPendingDocxNotices((prevList) => {
+              const filtered = prevList.filter((n) => !n.sessionId || n.sessionId === liveSessionId);
+              return filtered.length === prevList.length ? prevList : filtered;
+            });
+          }
+          setAuthVerifyEpoch((v) => v + 1);
+        })
+        .catch(() => {
+          if (!cancelled) {
+            activeVerifiedSessionId = null;
+            setVerifiedNoticeSessions(new Set());
+            setAuthVerifyEpoch((v) => v + 1);
+          }
+        });
     };
     if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
       window.addEventListener('focus', onFocus);

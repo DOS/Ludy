@@ -67,6 +67,8 @@ const {
   convertSignDocx,
   fetchUserScopeForSession,
   readVerifiedSession,
+  signApi,
+  subscribeSignAuthStateChange,
   uploadSignPdf,
 } = await import('../src/lib/sign-api.ts');
 const {
@@ -842,6 +844,36 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
         navigateToEnvelope: unverifiedNav,
       }),
     ).toBe(false);
+    // Stale currentUserId cache never blocks or deletes User A's notice when live session + resolveUserScope prove User A.
+    const preserveSpy = vi.fn();
+    expect(
+      await openCreatedDocxNoticeEnvelope({
+        notice: unpersistedNotice,
+        currentUserId: USER_B_ID,
+        resolveCurrentSessionId: async () => 'sess-a',
+        resolveUserScope: async () => ({ orgId: ORG_A_ID, userId: USER_A_ID, sessionId: 'sess-a' }),
+        setCreatedDocxNotice: preserveSpy,
+        navigateToEnvelope: async (navSlug, navId) => {
+          navCalls.push(`stale-ok:${navSlug}:${navId}:${readCreatedDocxWarnings(envDetailId, SCOPE_USER_A).join(',')}`);
+        },
+      }),
+    ).toBe(true);
+    expect(navCalls.pop()).toBe(`stale-ok:acme:${envDetailId}:images_skipped`);
+    clearCreatedDocxWarnings(envDetailId, SCOPE_USER_A);
+
+    // Without live resolveUserScope, mismatched currentUserId refuses without deleting notice cleanly.
+    const noDeleteSpy = vi.fn();
+    expect(
+      await openCreatedDocxNoticeEnvelope({
+        notice: unpersistedNotice,
+        currentUserId: USER_B_ID,
+        resolveCurrentSessionId: async () => 'sess-a',
+        setCreatedDocxNotice: noDeleteSpy,
+        navigateToEnvelope: unverifiedNav,
+      }),
+    ).toBe(false);
+    expect(noDeleteSpy).not.toHaveBeenCalled();
+
     expect(
       await openCreatedDocxNoticeEnvelope({
         notice: { ...unpersistedNotice, userId: null },
@@ -1482,6 +1514,55 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
     expect(mismatchSessionSpy).toHaveBeenCalledWith('sess-a');
     expect(invalidateCacheSpy).toHaveBeenCalledTimes(1);
     expect(readPendingDocxListNotice(envDetailId, 'acme')).not.toBeNull();
+
+    // Cancelled slow reconciliation never wipes newer session notices or fires stale invalidations.
+    let activeFlag = true;
+    const cancelledMismatchSpy = vi.fn();
+    const cancelledInvalidateSpy = vi.fn();
+    expect(
+      await reconcilePendingDocxNoticesWithSession({
+        pendingNotices: [savedPending!],
+        currentUserId: USER_B_ID,
+        readVerifiedSessionId: async () => {
+          activeFlag = false;
+          return 'sess-a';
+        },
+        isStillCurrent: () => activeFlag,
+        onMismatchSessionId: cancelledMismatchSpy,
+        onStaleUserCache: cancelledInvalidateSpy,
+      }),
+    ).toEqual({ verifiedSessionId: null, liveSessionId: null });
+    expect(cancelledMismatchSpy).not.toHaveBeenCalled();
+    expect(cancelledInvalidateSpy).not.toHaveBeenCalled();
+
+    // subscribeSignAuthStateChange ignores Supabase INITIAL_SESSION emissions while relaying real SIGNED_IN/SIGNED_OUT events.
+    const seenAuthEvents: Array<{ event: string; sessionId: string | null }> = [];
+    const unsubscribeSpy = vi.fn();
+    vi.mocked(auth).mockImplementation(
+      () =>
+        ({
+          onAuthStateChange: (
+            cb: (event: string, session?: { access_token?: string | null } | null) => void,
+          ) => {
+            cb('INITIAL_SESSION', { access_token: makeTestJwt('sess-init') });
+            queueMicrotask(() => cb('INITIAL_SESSION', { access_token: makeTestJwt('sess-init-async') }));
+            cb('SIGNED_IN', { access_token: makeTestJwt('sess-b') });
+            cb('SIGNED_OUT', null);
+            return { data: { subscription: { unsubscribe: unsubscribeSpy } } };
+          },
+        }) as unknown as ReturnType<typeof auth>,
+    );
+    const stopSub = subscribeSignAuthStateChange((event, sessionId) => {
+      seenAuthEvents.push({ event, sessionId });
+    });
+    await Promise.resolve();
+    stopSub();
+    expect(seenAuthEvents).toEqual([
+      { event: 'SIGNED_IN', sessionId: 'sess-b' },
+      { event: 'SIGNED_OUT', sessionId: null },
+    ]);
+    expect(unsubscribeSpy).toHaveBeenCalledTimes(1);
+    expect(signApi).toBeDefined();
 
     // List page keeps generic verify-pending banner (never leaking contract title) when userId verification is still pending.
     queryClient.clear();

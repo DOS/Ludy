@@ -588,6 +588,7 @@ export function subscribeSignAuthStateChange(
     return () => {};
   }
   const res = clientInstance.onAuthStateChange((event, session) => {
+    if (event === 'INITIAL_SESSION') return;
     const nextSessionId = session?.access_token ? sessionIdFromToken(session.access_token) : null;
     onChange(event, nextSessionId);
   });

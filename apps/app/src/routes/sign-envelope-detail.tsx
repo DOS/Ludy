@@ -669,6 +669,8 @@ export function SignEnvelopeDetailPage() {
       return;
     }
     let cancelled = false;
+    let verifying = true;
+    let activeVerifiedScopeKey: string | null = null;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
     const scheduleRetry = () => {
       if (cancelled || detailDocxNoticeReqRef.current !== reqId) return;
@@ -687,18 +689,46 @@ export function SignEnvelopeDetailPage() {
         setDetailDocxVerifyEpoch((v) => v + 1);
       }
     };
+    const handleOnline = () => {
+      if (cancelled || detailDocxNoticeReqRef.current !== reqId) return;
+      detailDocxRetryCountRef.current = 0;
+      triggerReverify();
+    };
+    const handleFocus = () => {
+      if (cancelled || verifying || detailDocxNoticeReqRef.current !== reqId) return;
+      void readVerifiedSession()
+        .then(({ sessionId: liveSessionId }) => {
+          if (cancelled || detailDocxNoticeReqRef.current !== reqId) return;
+          if (liveSessionId && activeVerifiedScopeKey === liveSessionId) {
+            return;
+          }
+          activeVerifiedScopeKey = null;
+          detailDocxRetryCountRef.current = 0;
+          setDocxWarningsState({ key: noticeScopeKey, scope: null, warnings: [] });
+          triggerReverify();
+        })
+        .catch(() => {
+          if (!cancelled && detailDocxNoticeReqRef.current === reqId) {
+            activeVerifiedScopeKey = null;
+            detailDocxRetryCountRef.current = 0;
+            setDocxWarningsState({ key: noticeScopeKey, scope: null, warnings: [] });
+            triggerReverify();
+          }
+        });
+    };
     const unsubscribeAuth = subscribeSignAuthStateChange((event) => {
       if (cancelled) return;
       if (event === 'SIGNED_OUT') {
         clearAllCreatedDocxWarnings();
       }
+      activeVerifiedScopeKey = null;
       detailDocxRetryCountRef.current = 0;
       setDocxWarningsState({ key: noticeScopeKey, scope: null, warnings: [] });
       triggerReverify();
     });
     if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
-      window.addEventListener('online', triggerReverify);
-      window.addEventListener('focus', triggerReverify);
+      window.addEventListener('online', handleOnline);
+      window.addEventListener('focus', handleFocus);
     }
 
     void resolveDetailDocxWarnings({
@@ -706,14 +736,20 @@ export function SignEnvelopeDetailPage() {
       slug,
       noticeOrg,
       currentUserId,
-      resolveCurrentSessionId: async () => (await readVerifiedSession()).sessionId,
+      resolveCurrentSessionId: async () => {
+        const verified = await readVerifiedSession();
+        activeVerifiedScopeKey = verified.sessionId;
+        return verified.sessionId;
+      },
       resolveUserScope: (expectedSessionId) => fetchUserScopeForSession(slug, expectedSessionId),
       isStillValid: () => !cancelled && detailDocxNoticeReqRef.current === reqId,
     }).then((result) => {
+      verifying = false;
       if (cancelled || detailDocxNoticeReqRef.current !== reqId) {
         return;
       }
       if (result.status === 'retryable_error') {
+        activeVerifiedScopeKey = null;
         scheduleRetry();
         return;
       }
@@ -722,6 +758,7 @@ export function SignEnvelopeDetailPage() {
         return;
       }
       if (currentUserId && result.userId !== currentUserId) {
+        activeVerifiedScopeKey = null;
         void queryClient.invalidateQueries({ queryKey: orpc.me.get.queryKey() });
         setDocxWarningsState({ key: noticeScopeKey, scope: null, warnings: [] });
         return;
@@ -737,8 +774,8 @@ export function SignEnvelopeDetailPage() {
       if (retryTimer !== null) clearTimeout(retryTimer);
       unsubscribeAuth();
       if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') {
-        window.removeEventListener('online', triggerReverify);
-        window.removeEventListener('focus', triggerReverify);
+        window.removeEventListener('online', handleOnline);
+        window.removeEventListener('focus', handleFocus);
       }
     };
   }, [id, slug, noticeOrg, currentUserId, noticeScopeKey, detailDocxVerifyEpoch]);
