@@ -117,6 +117,8 @@ describe('a translation is never a source: the migrations (E1, #3184)', () => {
       'ludy_kernel_org_purge_projects_cycles_history.sql',
       // #4722 (eSign Slice 6c multi-document signing packet): the purge restatement that adds ludy_sign.envelope_document restates the whole list, the translation table included; its body is the previous one.
       'ludy_kernel_org_purge_sign_envelope_documents.sql',
+      // #4723 (eSign Slice 6d): the purge restatement that adds ludy_sign.envelope_deposit and ludy_sign.deposit_profile restates the whole list, the translation table included; its body is the previous one.
+      'ludy_kernel_org_purge_sign_deposit.sql',
       // #4487 (HR Stage 5D follow-ups): the purge restatement that adds ludy_hr.candidate_stage_transition restates the whole list, the translation table included; its body is the previous one.
       'ludy_kernel_org_purge_hr_stage5d.sql',
     ]);

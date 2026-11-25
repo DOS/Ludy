@@ -266,13 +266,27 @@ suite('Notes v2 Vy daily planner & inbox organizer PG17 integration (#3563)', ()
     expect(beforeReschedule.dueOn).toBe(yesterday);
     expect(beforeReschedule.revision).toBe(1);
 
-    // 2. Alice applies proposed reschedule via caller's own notes.todo.reschedule command.
-    await exec(alice.userId, 'notes.todo.reschedule', { todoIds: [aliceOverdueId], dueOn: tomorrow });
+    // 2. Alice applies proposed reschedule via caller's own notes.todo.reschedule command with expectedRevision.
+    const plannedRevision = planRes.reschedules[0]!.revision;
+    await exec(alice.userId, 'notes.todo.reschedule', {
+      todoIds: [aliceOverdueId],
+      dueOn: tomorrow,
+      expectedRevision: plannedRevision,
+    });
     const afterReschedule = await query<{ dueOn: string | null; revision: number }>(alice.userId, 'notes.todo.get', {
       todoId: aliceOverdueId,
     });
     expect(afterReschedule.dueOn).toBe(tomorrow);
     expect(afterReschedule.revision).toBe(2);
+
+    // Re-submitting with stale plannedRevision rejects with 409 TODO_REVISION_CONFLICT without overwriting.
+    await expect(
+      exec(alice.userId, 'notes.todo.reschedule', {
+        todoIds: [aliceOverdueId],
+        dueOn: today,
+        expectedRevision: plannedRevision,
+      }),
+    ).rejects.toMatchObject({ code: 'TODO_REVISION_CONFLICT', status: 409 });
 
     // 3. Alice runs organize: prompts never saw Carol's secret note OR Owner's org note (Alice is member, not owner/admin).
     seenPrompts.length = 0;

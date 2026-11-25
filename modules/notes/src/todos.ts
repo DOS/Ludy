@@ -1137,6 +1137,9 @@ export const todoReschedule = defineCommand({
     if (rows.length !== input.todoIds.length) throw notFound();
     for (const row of rows) {
       assertNotInTrash(row);
+      if (input.expectedRevision !== undefined && row.revision !== input.expectedRevision) {
+        throw revisionConflict(row.revision);
+      }
       if (row.status !== 'open') throw new DomainError('TODO_NOT_CHANGEABLE', 409, 'Chỉ đổi lịch được việc chưa xong');
     }
     const springSeriesIds = [

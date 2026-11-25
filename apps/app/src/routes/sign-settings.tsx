@@ -16,6 +16,7 @@ import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-sel
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@ludy/ui/components/tabs';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { PlaybookRulesCard } from '../components/sign/playbook-rules-card.tsx';
+import { SignDepositProfileSettingsCard } from '../components/sign/sign-deposit-profile-card.tsx';
 import { SignaturePadModal } from '../components/sign/signature-pad-modal.tsx';
 import { SignWebhooksSection } from '../components/sign/sign-webhooks-card.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
@@ -1558,6 +1559,7 @@ export function SignSettingsPage() {
   return (
     <div className="space-y-8">
       {canRenderProfilesSection ? <SignMemberSignaturesAndStampsSection slug={slug} /> : null}
+      {canRenderProfilesSection ? <SignDepositProfileSettingsCard slug={slug} /> : null}
       <PlaybookRulesCard slug={slug} role={orgQuery.data?.role} />
       <SignApiKeysSection slug={slug} role={orgQuery.data?.role} />
       {orgQuery.isPending || settingsQuery.isPending ? (

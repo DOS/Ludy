@@ -16,6 +16,7 @@ import { Textarea } from '@ludy/ui/components/textarea';
 import { ConfirmDialog } from './confirm-dialog.tsx';
 import { DateInput } from './date-input.tsx';
 import { ErrorText } from './ui.tsx';
+import { MeetingDealUpdate } from './meeting-deal-update.tsx';
 import { MeetingFollowup } from './meeting-followup.tsx';
 import { MeetingMinutesSignHandoff, type MeetingSignMemberInfo } from './meeting-minutes-sign-handoff.tsx';
 import { useMinutesEsign } from './minutes-esign.tsx';
@@ -689,6 +690,8 @@ export function MeetingResults({
           (published !== null ||
             items.some((i) => i.stage === 'published') ||
             (!unread && (draft !== null || items.some((i) => i.stage === 'draft')))) && <MeetingFollowup meetingId={meetingId} />}
+        {/* #4766: with a linked open deal and published minutes, the recorder updates the deal (next step and a note), by hand or from Vy's proposal; nothing is written before Save. */}
+        {isRecorder && (published !== null || items.some((i) => i.stage === 'published')) && <MeetingDealUpdate meetingId={meetingId} />}
         {/* B5 (#3169): only a published result can be offered to a customer, and only the lines the recorder ticks; the draft is never read here. */}
         {isRecorder && title !== '' && (published || items.some((i) => i.stage === 'published')) && (
           <MeetingZalo meetingId={meetingId} title={title} summary={published?.summary ?? null} decisions={published?.decisions ?? []} items={items.filter((i) => i.stage === 'published')} />

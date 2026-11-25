@@ -45,6 +45,7 @@ import { useReviewShortcuts, type ReviewHandlers } from '../lib/review-shortcuts
 import { pollEvery, useStreamLive } from '../lib/stream-hook.ts';
 import { installedModules, useModulesVersion } from '../lib/org-modules.ts';
 import { AiWrittenBadge } from './ai-written-badge.tsx';
+import { bankMatchTag } from '../lib/proposal-source.ts';
 import { CoworkerAttribution, ProposalSurface } from './proposal-surface.tsx';
 
 const CHECK_TONE = { pass: 'success', warn: 'warning', fail: 'destructive' } as const;
@@ -79,6 +80,7 @@ function CardProposalHeader({
         role={tp('mcpRole')}
         badgeLabel={badgeLabel}
         source={t('mcpProposed', { client: mcp.client, host: mcp.host })}
+        tag="ai"
       />
     );
   }
@@ -89,6 +91,7 @@ function CardProposalHeader({
         role={tp('agentRole')}
         badgeLabel={badgeLabel}
         source={t('agentProposed', { name: agent.name })}
+        tag="ai"
       />
     );
   }
@@ -97,7 +100,7 @@ function CardProposalHeader({
     const source = reason
       ? tp('bankMatchSuggestedWithReason', { reason: tp(`bankMatchReasons.${reason}`) })
       : tp('bankMatchSuggested');
-    return <CoworkerAttribution coworker="finance" badgeLabel={badgeLabel} source={source} />;
+    return <CoworkerAttribution coworker="finance" badgeLabel={badgeLabel} source={source} tag={bankMatchTag(matchedBy)} />;
   }
   const source =
     variant === 'reversal'

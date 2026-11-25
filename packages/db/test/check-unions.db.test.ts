@@ -305,6 +305,7 @@ import {
   SIGN_PLAYBOOK_SEVERITIES,
   SIGN_KYC_CHECK_STATUSES,
   SIGN_KYC_CHECK_MODES,
+  SIGN_DEPOSIT_CURRENCIES,
   type Database,
 } from '../src/schema.ts';
 
@@ -483,6 +484,7 @@ const UNIONS = unions({
   'ludy_sign.ca_signing_request.retry_safety': SIGN_CA_RETRY_SAFETIES,
   'ludy_sign.ca_signing_request.sub_filter': SIGN_CA_SUBFILTERS,
   'ludy_sign.envelope_obligation.status': SIGN_OBLIGATION_STATUSES,
+  'ludy_sign.envelope_deposit.currency': SIGN_DEPOSIT_CURRENCIES,
   'ludy_sign.kyc_check.status': SIGN_KYC_CHECK_STATUSES,
   'ludy_sign.kyc_check.mode': SIGN_KYC_CHECK_MODES,
   'ludy_sign.member_signature.kind': SIGN_MEMBER_SIGNATURE_KINDS,

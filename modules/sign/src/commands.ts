@@ -58,6 +58,7 @@ import {
   SIGNING_EVENT_WRITE,
   SIGNING_OTP_INVALIDATE_WRITE,
   SIGNING_TOKEN_WRITE,
+  ENVELOPE_DEPOSIT_FREEZE_WRITE,
   SIGN_MAX_LINK_HOURS,
   WEBHOOK_DELIVERY_ENQUEUE_WRITE,
   assertSignSourceFileConfidentiality,
@@ -69,6 +70,7 @@ import {
   zSignInspectDetectedTags,
   type IssuedSigningLink,
 } from './shared.ts';
+import { signDepositCommands } from './deposit.ts';
 import { signCaCommands } from './ca.ts';
 import { signKycCommands } from './kyc.ts';
 import { signObligationCommands } from './obligations.ts';
@@ -1183,6 +1185,7 @@ export const envelopeSend = defineCommand({
     SIGNING_EVENT_WRITE,
     MAIL_MESSAGE_WRITE,
     WEBHOOK_DELIVERY_ENQUEUE_WRITE,
+    ENVELOPE_DEPOSIT_FREEZE_WRITE,
   ],
   handler: async (ctx, input) => {
     const userId = userOf(ctx);
@@ -2221,4 +2224,5 @@ export const signCommands = [
   ...signApiKeyCommands,
   ...signDocxConvertCommands,
   ...signEnvelopeDocumentCommands,
+  ...signDepositCommands,
 ];

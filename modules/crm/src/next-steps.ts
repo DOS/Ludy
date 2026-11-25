@@ -58,15 +58,18 @@ export async function staleDays(ctx: Pick<QueryContext, 'trx' | 'orgId'>): Promi
   return row ? { staleDays: row.stale_days, isDefault: false } : { staleDays: DEAL_STALE_DAYS_DEFAULT, isDefault: true };
 }
 
-// Closes the open next step of a deal whose own change made it moot, in the transaction of the command that changed it.
-export async function closeNextSteps(ctx: CommandContext, dealId: string, reason: 'deal_edited' | 'deal_moved' | 'deal_closed'): Promise<void> {
-  await ctx.trx
+// Closes the open next step of a deal whose own change made it moot, in the transaction of the command that changed it. Answers how many it closed (the commands that edit, move or close a deal ignore it); `only` limits it to steps of those reasons.
+export async function closeNextSteps(ctx: CommandContext, dealId: string, reason: 'deal_edited' | 'deal_moved' | 'deal_closed', only?: readonly DealNextStepReason[]): Promise<number> {
+  let update = ctx.trx
     .updateTable('ludy_crm.deal_next_step')
     .set({ status: 'closed', closed_reason: reason, resolved_at: ctx.now, snoozed_until: null })
     .where('org_id', '=', ctx.orgId)
     .where('deal_id', '=', dealId)
-    .where('status', '=', 'open')
-    .execute();
+    .where('status', '=', 'open');
+  // `only` keeps the steps of other reasons open (a quote reminder is not about what a meeting said).
+  if (only) update = update.where('reason', 'in', [...only]);
+  const closed = await update.returning('id').execute();
+  return closed.length;
 }
 
 // The daily rule in one org (the definer ludy_crm.deal_stale_orgs lists the orgs): the system context shows this org's rows alone. Counts only

@@ -1,7 +1,27 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
--- Issue #4487: restate ludy_kernel.org_purge from 20270323040100_ludy_kernel_org_purge_sign_envelope_documents
--- to delete append-only ludy_hr.candidate_stage_transition under the purge guard ahead of ludy_hr.candidate.
+-- Issue #4487: restate ludy_kernel.org_purge from 20270323150000_ludy_kernel_org_purge_sign_deposit,
+-- keeping ludy_sign.envelope_document, ludy_sign.envelope_deposit, and ludy_sign.deposit_profile,
+-- and deleting append-only ludy_hr.candidate_stage_transition under the purge guard ahead of ludy_hr.candidate.
 SET LOCAL lock_timeout = '2s';
+
+ALTER TABLE ludy_kernel.file DROP CONSTRAINT IF EXISTS file_source_check;
+ALTER TABLE ludy_kernel.file
+  ADD CONSTRAINT file_source_check CHECK (
+    source IN (
+      'upload',
+      'email',
+      'social',
+      'import',
+      'meeting_audio',
+      'meeting_video',
+      'sign_document',
+      'sign_sealed',
+      'sign_certificate',
+      'sign_attachment',
+      'sign_deposit_qr',
+      'agreement'
+    )
+  );
 
 CREATE OR REPLACE FUNCTION ludy_kernel.org_purge(p_min_days integer)
  RETURNS TABLE(outcome text, counts jsonb, blob_keys text[])
@@ -41,7 +61,7 @@ DECLARE
     'ludy_sign.envelope_obligation',
     'ludy_sign.ca_signing_request', 'ludy_sign.ca_connection',
     'ludy_sign.template_direct_link', 'ludy_sign.template_field', 'ludy_sign.template_role', 'ludy_sign.template',
-    'ludy_sign.signing_otp', 'ludy_sign.signing_token', 'ludy_sign.ai_analysis', 'ludy_sign.field', 'ludy_sign.signer', 'ludy_sign.envelope_document', 'ludy_sign.envelope',
+    'ludy_sign.signing_otp', 'ludy_sign.signing_token', 'ludy_sign.ai_analysis', 'ludy_sign.field', 'ludy_sign.signer', 'ludy_sign.envelope_document', 'ludy_sign.envelope_deposit', 'ludy_sign.deposit_profile', 'ludy_sign.envelope',
     'ludy_kernel.member_vy_memory', 'ludy_kernel.member_vy_result',
     'ludy_hr.candidate', 'ludy_hr.job_opening',
     'ludy_hr.payroll_bank_template', 'ludy_hr.payroll_dependent', 'ludy_hr.attendance_log', 'ludy_hr.attendance_qr_config', 'ludy_hr.onboarding_submission', 'ludy_hr.overtime_request', 'ludy_hr.probation_review', 'ludy_hr.leave_request', 'ludy_hr.payroll_leave_entry', 'ludy_hr.employee_asset_handover', 'ludy_hr.okr_key_result', 'ludy_hr.okr_objective', 'ludy_hr.payroll_employee', 'ludy_hr.department',
