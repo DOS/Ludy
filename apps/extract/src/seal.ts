@@ -2411,6 +2411,7 @@ function parseActiveXrefChain(
   let rootRef: PDFRef | null = null;
   let infoRef: PDFRef | null = null;
   let infoSeen = false;
+  let infoCleared = false;
   let tailSize = 0;
   let currentOffset: number | null = startXrefOffset;
   let expectedPrevXrefStmOffset: number | null = null;
@@ -2471,10 +2472,16 @@ function parseActiveXrefChain(
       if (infoEntry.raw === PDFNull) {
         if (!infoSeen) {
           infoSeen = true;
+          infoCleared = true;
         }
       } else {
         if (!(infoEntry.raw instanceof PDFRef)) {
           throw new PdfSignError('Trailer PDF chứa tham chiếu /Info không hợp lệ');
+        }
+        // pdf-lib's PDFDict.get() omits PDFNull, so classic PDFParser.maybeParseTrailerDict keeps an
+        // older revision's /Info ref while PDFXRefStreamParser clears it; fail closed to eliminate parser differentials.
+        if (infoCleared) {
+          throw new PdfSignError('Thông tin /Info của tệp PDF không khớp với trailer tham chiếu');
         }
         if (!infoSeen) {
           infoSeen = true;

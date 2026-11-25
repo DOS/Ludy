@@ -7819,7 +7819,7 @@ describe('pdf_seal', () => {
     };
     await assertRejectedBoth(buildEmptyNonZeroGenObjStmPdf(), 'Luồng đối tượng /ObjStm tham chiếu không hợp lệ');
 
-    // 7i. Explicit /Info null clears prior /Info across incremental updates and is treated as omitted across classic trailers and hybrid /XRefStm, while mismatched /Info in /XRefStm fails.
+    // 7i. Single-revision /Info null is treated as omitted across classic trailers and hybrid /XRefStm, while clearing an earlier revision's /Info via /Info null or mismatching /Info in /XRefStm fails closed.
     const buildHybridNullInfoPdf = (stmInfoClause: string): Uint8Array => {
       const contentRaw = deflateSync(Buffer.from('BT\n/F1 12 Tf\n40 750 Td\n(NULL_INFO) Tj\nET\n', 'latin1'));
       const offsets = new Map<number, number>();
@@ -7885,17 +7885,7 @@ describe('pdf_seal', () => {
       return new Uint8Array(Buffer.from(out, 'latin1'));
     };
     const incClearedInfoBytes = buildIncrementalClearedInfoPdf();
-    expect(await parse('pdf_inspect', incClearedInfoBytes)).toMatchObject({ ok: true, pageCount: 1 });
-    expect(
-      await parse(
-        'pdf_seal',
-        encodePdfSealInput({
-          pdfBase64: Buffer.from(incClearedInfoBytes).toString('base64'),
-          fields: [],
-          certificate: makeCertificate(),
-        }),
-      ),
-    ).toMatchObject({ ok: true });
+    await assertRejectedBoth(incClearedInfoBytes, 'Thông tin /Info của tệp PDF không khớp với trailer tham chiếu');
 
     // 7j. /Type /XRef inside an array or non-/Type dictionary value inside an /XObject stream never triggers false inactive-xref rejection.
     const xobjDoc = await PDFDocument.create();
