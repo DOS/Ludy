@@ -29,6 +29,7 @@ import { DomainError, defineCommand, defineQuery, type QueryContext } from '@lud
 import { findSearchHits } from './search.ts';
 import { vnDay } from './retention.ts';
 import { isSummaryEnabled } from './summary-run.ts';
+import { readingStage } from './reading-stage.ts';
 import { ROLES, userOf } from './transcript.ts';
 
 export const ASK_FEATURE = 'meetings.ask';
@@ -59,13 +60,12 @@ const MEETING_LINES_READ_MAX = 4000;
 /**
  * The lines of ONE meeting for a question about it (#4815): the lines the caller reads, read under row security as for the search (the recorder reads their own draft lines and every published one,
  * a reader only the published lines of a meeting they read, an owner or admin who is no reader none, and a meeting past its text date none; a meeting the caller cannot read is "no lines", not an error).
- * The published lines when there are any (the stage a reader reads), else the draft. With words in the question only the lines holding at least one of them are given (none: no line, so nothing to
+ * The recorder's working draft while one exists, else the published lines (the stage a reader reads): the rule of the transcript page, the file and the search (#4910). With words in the question only the lines holding at least one of them are given (none: no line, so nothing to
  * answer from); a question with no usable word (a general one) gets lines spread evenly over the meeting. At most ASK_LINES_MAX lines, those holding the most words first, handed over in the order of the transcript.
  */
 export async function linesOfMeeting(trx: QueryContext['trx'], orgId: string, meetingId: string, words: readonly string[]): Promise<MeetingSearchHit[]> {
-  // The stage first (a small read), so the cap below counts only the lines that are given: the published lines when the caller reads any, else the draft.
-  const published = await trx.selectFrom('ludy_meetings.transcript_segment').select('id').where('org_id', '=', orgId).where('meeting_id', '=', meetingId).where('stage', '=', 'published').limit(1).executeTakeFirst();
-  const stage: TranscriptStage = published ? 'published' : 'draft';
+  // The stage first (a small read), so the cap below counts only the lines that are given: the recorder's working draft while one exists, else the published lines (#4910).
+  const stage = await readingStage(trx, orgId, meetingId);
   const rows = await trx
     .selectFrom('ludy_meetings.transcript_segment as s')
     .innerJoin('ludy_meetings.meeting as m', (join) => join.onRef('m.org_id', '=', 's.org_id').onRef('m.id', '=', 's.meeting_id'))
