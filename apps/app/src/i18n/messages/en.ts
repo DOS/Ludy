@@ -885,6 +885,12 @@ export const en = {
     contactPlaceholder: 'accounts@company.vn',
     nameRequired: 'Enter the company or household business name.',
     contactInvalid: 'Enter an email address such as accounts@company.vn.',
+    kindLegend: 'How does your company use {brand}?',
+    kindSolo: 'Just me',
+    kindSoloHint: 'Starts with only Finance, Teamwork and Ludy AI on, to keep it simple.',
+    kindTeam: 'I have staff',
+    kindTeamHint: 'Also turns on HR, eSign and Engage.',
+    kindLater: 'Turn any app on or off later in Settings, under Apps & Modules. No data is lost.',
     back: 'Back',
   },
   clients: {

@@ -883,6 +883,12 @@ export const vi = {
     contactPlaceholder: 'ketoan@congty.vn',
     nameRequired: 'Hãy nhập tên công ty hoặc hộ kinh doanh.',
     contactInvalid: 'Email chưa đúng định dạng, ví dụ ketoan@congty.vn.',
+    kindLegend: 'Công ty bạn dùng {brand} thế nào?',
+    kindSolo: 'Một mình tôi',
+    kindSoloHint: 'Chỉ bật Tài chính, Cộng tác và Ludy AI cho gọn.',
+    kindTeam: 'Có nhân viên',
+    kindTeamHint: 'Bật thêm Nhân sự, eSign và Engage.',
+    kindLater: 'Bật hoặc tắt từng ứng dụng sau trong Cài đặt, mục Ứng dụng & Phân hệ. Dữ liệu không mất.',
     back: 'Quay lại',
   },
   clients: {
