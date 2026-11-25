@@ -750,4 +750,61 @@ suite('Notes v2 E1 (#3559): notebooks, 2-level stacks, checkbox updates, [[Note]
     expect(idx(bobB.notebookId)).toBeLessThan(idx(bobA.notebookId));
     expect(idx(bobA.notebookId)).toBeLessThan(idx(sharedRight.notebookId));
   });
+
+  it('notebookCreate respects non-editable shared org notebooks when >80-char sort_key triggers rebalance on PG17 (#4211)', async () => {
+    const sharedOrg = await runtime.execute<NotebookWritten>(
+      'notes.notebook.create',
+      { name: 'Dung chung Dai', visibility: 'org' },
+      { actor: asUser(users.owner), orgId },
+    );
+    const bobBefore = await runtime.execute<NotebookWritten>(
+      'notes.notebook.create',
+      { name: 'Bob Truoc', visibility: 'private' },
+      { actor: asUser(users.bob), orgId },
+    );
+
+    const deepSharedKey = 'z'.repeat(80);
+    await admin(async (c) => {
+      await c.query(`UPDATE ludy_notes.notebook SET sort_key = '5' WHERE org_id = $1 AND id = $2`, [orgId, bobBefore.notebookId]);
+      await c.query(`UPDATE ludy_notes.notebook SET sort_key = $3 WHERE org_id = $1 AND id = $2`, [orgId, sharedOrg.notebookId, deepSharedKey]);
+    });
+
+    // Bob cannot edit sharedOrg; creating a notebook must leave sharedOrg untouched and place the new notebook after it.
+    const createdAfterShared = await runtime.execute<NotebookWritten>(
+      'notes.notebook.create',
+      { name: 'Bob Sau Dung Chung', visibility: 'private' },
+      { actor: asUser(users.bob), orgId },
+    );
+    const list1 = await runtime.query<NotebooksResponse>('notes.notebook.list', {}, { actor: asUser(users.bob), orgId });
+    const byId1 = new Map(list1.notebooks.map((b) => [b.id, b]));
+    expect(byId1.get(sharedOrg.notebookId)?.sortKey).toBe(deepSharedKey);
+    expect(byId1.get(sharedOrg.notebookId)?.revision).toBe(1);
+    expect(byId1.get(bobBefore.notebookId)?.sortKey).toBe('5');
+    expect(byId1.get(createdAfterShared.notebookId)!.sortKey > deepSharedKey).toBe(true);
+
+    // When Bob's own trailing notebook reaches >=80 chars after a short sharedOrg ('V'), rebalance shrinks Bob's run > 'V'.
+    await admin(async (c) => {
+      await c.query(`UPDATE ludy_notes.notebook SET sort_key = 'V' WHERE org_id = $1 AND id = $2`, [orgId, sharedOrg.notebookId]);
+      await c.query(`UPDATE ludy_notes.notebook SET sort_key = $3 WHERE org_id = $1 AND id = $2`, [
+        orgId,
+        createdAfterShared.notebookId,
+        deepSharedKey,
+      ]);
+    });
+    const createdCompacted = await runtime.execute<NotebookWritten>(
+      'notes.notebook.create',
+      { name: 'Bob Rut Gon', visibility: 'private' },
+      { actor: asUser(users.bob), orgId },
+    );
+    const list2 = await runtime.query<NotebooksResponse>('notes.notebook.list', {}, { actor: asUser(users.bob), orgId });
+    const byId2 = new Map(list2.notebooks.map((b) => [b.id, b]));
+    expect(byId2.get(sharedOrg.notebookId)?.sortKey).toBe('V');
+    expect(byId2.get(bobBefore.notebookId)?.sortKey).toBe('5');
+    const compactedPrev = byId2.get(createdAfterShared.notebookId)!.sortKey;
+    const compactedNew = byId2.get(createdCompacted.notebookId)!.sortKey;
+    expect(compactedPrev.length).toBeLessThan(10);
+    expect(compactedNew.length).toBeLessThan(10);
+    expect(compactedPrev > 'V').toBe(true);
+    expect(compactedNew > compactedPrev).toBe(true);
+  });
 });

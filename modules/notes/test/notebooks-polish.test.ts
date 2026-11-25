@@ -15,7 +15,7 @@ import {
 import { describe, expect, it } from 'vitest';
 import type { Database, MemberRole } from '@ludy/db';
 import type { CommandContext } from '@ludy/kernel-runtime';
-import { notebookUpdate, planNotebookRebalance, spreadKeysBetween } from '../src/notebooks.ts';
+import { notebookCreate, notebookUpdate, planNotebookRebalance, spreadKeysBetween } from '../src/notebooks.ts';
 import { noteUpdate } from '../src/notes.ts';
 
 const ORG = '00000000-0000-4000-8000-000000000001';
@@ -365,5 +365,128 @@ describe('notebook rebalance around non-editable shared notebooks & sibling row 
     expect(siblingLockQuery!.parameters).not.toContain(NB_4);
     expect(batchUpdateQuery).toBeDefined();
     expect(batchUpdateQuery!.parameters[0]).toEqual([NB_2, NB_5]);
+  });
+
+  it('notebookCreate rebalances around non-editable shared org notebooks without mutating them and keeps new sort_key after them (#4211)', async () => {
+    const deepSharedKey = 'z'.repeat(80);
+    const sharedOrg = {
+      id: NB_1,
+      author_user_id: OTHER,
+      visibility: 'org' as const,
+      sort_key: deepSharedKey,
+    };
+    const mineBefore = {
+      id: NB_2,
+      author_user_id: USER,
+      visibility: 'private' as const,
+      sort_key: 'V',
+    };
+
+    let insertedSortKey = '';
+    const { trx, queries } = createMockTrx((compiled) => {
+      const sqlLower = compiled.sql.toLowerCase();
+      if (sqlLower.includes('ctx_le_scope')) {
+        return { rows: [{ whole: true }] };
+      }
+      if (sqlLower.includes('pg_catalog.max(sort_key)')) {
+        return { rows: [{ last: deepSharedKey }] };
+      }
+      if (sqlLower.includes('from "ludy_notes"."notebook"') && sqlLower.includes('where "org_id" = $1 and "author_user_id" = $2')) {
+        return { rows: [mineBefore] };
+      }
+      if (sqlLower.includes('from "ludy_notes"."notebook"') && sqlLower.includes('for update')) {
+        return { rows: [{ id: NB_2 }] };
+      }
+      if (sqlLower.includes('from "ludy_notes"."notebook"')) {
+        return { rows: [mineBefore, sharedOrg] };
+      }
+      if (sqlLower.startsWith('insert into "ludy_notes"."notebook"')) {
+        // sort_key is the 7th column in notebookCreate's VALUES(...)
+        insertedSortKey = String(compiled.parameters[6] ?? '');
+        return { rows: [{ id: NB_3, visibility: 'private', revision: 1 }] };
+      }
+      return { rows: [] };
+    });
+
+    const created = await notebookCreate.handler(makeCtx(trx, USER, 'member'), {
+      name: 'So moi cua thanh vien',
+      stackName: null,
+      visibility: 'private',
+      pinned: false,
+    });
+    expect(created).toEqual({ notebookId: NB_3, revision: 1 });
+    expect(insertedSortKey > deepSharedKey).toBe(true);
+
+    const reorderLock = queries.find((q) => q.parameters.includes(`notes.notebook.reorder:${ORG}`));
+    const siblingLockQuery = queries.find(
+      (q) =>
+        q.sql.toLowerCase().includes('from "ludy_notes"."notebook"') &&
+        q.sql.toLowerCase().includes('order by "id"') &&
+        q.sql.toLowerCase().includes('for update'),
+    );
+    const batchUpdateQuery = queries.find((q) => q.sql.toLowerCase().includes('unnest('));
+
+    expect(reorderLock).toBeDefined();
+    expect(siblingLockQuery).toBeDefined();
+    expect(siblingLockQuery!.parameters).toContain(NB_2);
+    expect(siblingLockQuery!.parameters).not.toContain(NB_1);
+    // mineBefore ('V') sits cleanly inside (null, deepSharedKey) and sharedOrg is untouched, so no unnest update is needed.
+    expect(batchUpdateQuery).toBeUndefined();
+  });
+
+  it('notebookCreate compacts caller trailing editable notebooks after a non-editable shared notebook while keeping order (#4211)', async () => {
+    const sharedOrg = {
+      id: NB_1,
+      author_user_id: OTHER,
+      visibility: 'org' as const,
+      sort_key: 'V',
+    };
+    const mineTail = {
+      id: NB_2,
+      author_user_id: USER,
+      visibility: 'private' as const,
+      sort_key: 'z'.repeat(80),
+    };
+
+    let insertedSortKey = '';
+    const { trx, queries } = createMockTrx((compiled) => {
+      const sqlLower = compiled.sql.toLowerCase();
+      if (sqlLower.includes('ctx_le_scope')) {
+        return { rows: [{ whole: true }] };
+      }
+      if (sqlLower.includes('pg_catalog.max(sort_key)')) {
+        return { rows: [{ last: mineTail.sort_key }] };
+      }
+      if (sqlLower.includes('from "ludy_notes"."notebook"') && sqlLower.includes('where "org_id" = $1 and "author_user_id" = $2')) {
+        return { rows: [mineTail] };
+      }
+      if (sqlLower.includes('from "ludy_notes"."notebook"') && sqlLower.includes('for update')) {
+        return { rows: [{ id: NB_2 }] };
+      }
+      if (sqlLower.includes('from "ludy_notes"."notebook"')) {
+        return { rows: [sharedOrg, mineTail] };
+      }
+      if (sqlLower.startsWith('insert into "ludy_notes"."notebook"')) {
+        insertedSortKey = String(compiled.parameters[6] ?? '');
+        return { rows: [{ id: NB_3, visibility: 'private', revision: 1 }] };
+      }
+      return { rows: [] };
+    });
+
+    await notebookCreate.handler(makeCtx(trx, USER, 'member'), {
+      name: 'So moi sau shared',
+      stackName: null,
+      visibility: 'private',
+      pinned: false,
+    });
+
+    const batchUpdateQuery = queries.find((q) => q.sql.toLowerCase().includes('unnest('));
+    expect(batchUpdateQuery).toBeDefined();
+    expect(batchUpdateQuery!.parameters[0]).toEqual([NB_2]);
+    const compactedTailKey = (batchUpdateQuery!.parameters[1] as string[])[0]!;
+    expect(compactedTailKey.length).toBeLessThan(10);
+    expect(compactedTailKey > 'V').toBe(true);
+    expect(insertedSortKey.length).toBeLessThan(10);
+    expect(insertedSortKey > compactedTailKey).toBe(true);
   });
 });

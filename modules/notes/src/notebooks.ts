@@ -326,24 +326,7 @@ export const notebookCreate = defineCommand({
     let sortKey = keyBetween(lastRows[0]?.last ?? null, null);
     if (sortKey.length > REBALANCE_AT) {
       await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`notes.notebook.reorder:${ctx.orgId}`}, 0))`.execute(ctx.trx);
-      const lockedExisting = await ctx.trx
-        .selectFrom('ludy_notes.notebook')
-        .select(['id', 'sort_key'])
-        .where('org_id', '=', ctx.orgId)
-        .where('author_user_id', '=', userId)
-        .orderBy('id')
-        .forUpdate()
-        .execute();
-      lockedExisting.sort((a, b) => (a.sort_key < b.sort_key ? -1 : a.sort_key > b.sort_key ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-      const fresh = spreadKeys(lockedExisting.length + 1);
-      if (lockedExisting.length > 0) {
-        const ids = lockedExisting.map((r) => r.id);
-        const keys = fresh.slice(0, lockedExisting.length);
-        await sql`UPDATE ludy_notes.notebook AS n SET sort_key = v.key
-          FROM unnest(${ids}::uuid[], ${keys}::text[]) AS v(id, key)
-          WHERE n.org_id = ${ctx.orgId}::uuid AND n.id = v.id`.execute(ctx.trx);
-      }
-      sortKey = fresh[lockedExisting.length] as string;
+      sortKey = await rebalanceEditableNotebooks(ctx, userId, wholeOrg, null, 'after', null);
     }
 
     const row = await ctx.trx
@@ -535,6 +518,68 @@ export function planNotebookRebalance(
   return { movingKey, updates };
 }
 
+async function loadOrderedNotebooks(ctx: CommandContext) {
+  return ctx.trx
+    .selectFrom('ludy_notes.notebook')
+    .select(['id', 'author_user_id', 'visibility', 'sort_key'])
+    .where('org_id', '=', ctx.orgId)
+    .orderBy('sort_key')
+    .orderBy('id')
+    .execute();
+}
+
+// Locks editable sibling rows in deterministic id order and spaces keys around non-editable shared notebooks.
+async function rebalanceEditableNotebooks(
+  ctx: CommandContext,
+  userId: string,
+  wholeOrg: boolean,
+  movingId: string | null,
+  place: 'before' | 'after',
+  anchorId: string | null,
+  initialRows?: Awaited<ReturnType<typeof loadOrderedNotebooks>>,
+): Promise<string> {
+  const lockedIds = new Set<string>();
+  let lockedRows = initialRows ?? (await loadOrderedNotebooks(ctx));
+  while (true) {
+    const toLock = lockedRows
+      .filter((r) => (movingId === null || r.id !== movingId) && !lockedIds.has(r.id) && canManageNotebook(r, userId, ctx.role, wholeOrg))
+      .map((r) => r.id)
+      .sort();
+    if (toLock.length === 0) break;
+    await ctx.trx
+      .selectFrom('ludy_notes.notebook')
+      .select(['id'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', 'in', toLock)
+      .orderBy('id')
+      .forUpdate()
+      .execute();
+    for (const id of toLock) lockedIds.add(id);
+    lockedRows = await loadOrderedNotebooks(ctx);
+  }
+
+  const lockedOthers = lockedRows
+    .filter((r) => movingId === null || r.id !== movingId)
+    .map((r) => ({
+      id: r.id,
+      editable: canManageNotebook(r, userId, ctx.role, wholeOrg),
+      sortKey: r.sort_key,
+    }));
+  if (anchorId === null && lockedOthers.length === 0) {
+    return keyBetween(null, null);
+  }
+  const targetAnchorId = anchorId ?? lockedOthers[lockedOthers.length - 1]!.id;
+  const plan = planNotebookRebalance(lockedOthers, movingId ?? '__new__', place, targetAnchorId);
+  if (plan.updates.length > 0) {
+    const ids = plan.updates.map((u) => u.id);
+    const keys = plan.updates.map((u) => u.sortKey);
+    await sql`UPDATE ludy_notes.notebook AS n SET sort_key = v.key
+      FROM unnest(${ids}::uuid[], ${keys}::text[]) AS v(id, key)
+      WHERE n.org_id = ${ctx.orgId}::uuid AND n.id = v.id`.execute(ctx.trx);
+  }
+  return plan.movingKey;
+}
+
 async function computeReorderedSortKey(
   ctx: CommandContext,
   userId: string,
@@ -543,16 +588,7 @@ async function computeReorderedSortKey(
   place: 'before' | 'after',
   anchorId: string,
 ): Promise<string> {
-  const loadOrderedRows = () =>
-    ctx.trx
-      .selectFrom('ludy_notes.notebook')
-      .select(['id', 'author_user_id', 'visibility', 'sort_key'])
-      .where('org_id', '=', ctx.orgId)
-      .orderBy('sort_key')
-      .orderBy('id')
-      .execute();
-
-  const rows = await loadOrderedRows();
+  const rows = await loadOrderedNotebooks(ctx);
   const others = rows.filter((r) => r.id !== movingId);
   const anchorIdx = others.findIndex((r) => r.id === anchorId);
   if (anchorIdx === -1) throw notebookNotFound();
@@ -562,45 +598,7 @@ async function computeReorderedSortKey(
   const leftKey = leftIdx >= 0 ? (others[leftIdx]?.sort_key ?? null) : null;
   const rightKey = rightIdx < others.length ? (others[rightIdx]?.sort_key ?? null) : null;
 
-  // Locks editable sibling rows in deterministic id order and spaces keys around non-editable shared notebooks.
-  const rebalance = async (): Promise<string> => {
-    const lockedIds = new Set<string>();
-    let lockedRows = rows;
-    while (true) {
-      const toLock = lockedRows
-        .filter((r) => r.id !== movingId && !lockedIds.has(r.id) && canManageNotebook(r, userId, ctx.role, wholeOrg))
-        .map((r) => r.id)
-        .sort();
-      if (toLock.length === 0) break;
-      await ctx.trx
-        .selectFrom('ludy_notes.notebook')
-        .select(['id'])
-        .where('org_id', '=', ctx.orgId)
-        .where('id', 'in', toLock)
-        .orderBy('id')
-        .forUpdate()
-        .execute();
-      for (const id of toLock) lockedIds.add(id);
-      lockedRows = await loadOrderedRows();
-    }
-
-    const lockedOthers = lockedRows
-      .filter((r) => r.id !== movingId)
-      .map((r) => ({
-        id: r.id,
-        editable: canManageNotebook(r, userId, ctx.role, wholeOrg),
-        sortKey: r.sort_key,
-      }));
-    const plan = planNotebookRebalance(lockedOthers, movingId, place, anchorId);
-    if (plan.updates.length > 0) {
-      const ids = plan.updates.map((u) => u.id);
-      const keys = plan.updates.map((u) => u.sortKey);
-      await sql`UPDATE ludy_notes.notebook AS n SET sort_key = v.key
-        FROM unnest(${ids}::uuid[], ${keys}::text[]) AS v(id, key)
-        WHERE n.org_id = ${ctx.orgId}::uuid AND n.id = v.id`.execute(ctx.trx);
-    }
-    return plan.movingKey;
-  };
+  const rebalance = () => rebalanceEditableNotebooks(ctx, userId, wholeOrg, movingId, place, anchorId, rows);
 
   // Keys repeat across authors (each author's first notebook gets the same key), and the caller may not rewrite the
   // keys of notebooks it cannot manage. Then the notebook goes strictly next to its anchor: just below the anchor's
