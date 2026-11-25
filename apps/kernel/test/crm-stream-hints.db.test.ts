@@ -306,7 +306,7 @@ suite('stream hints of deals and contacts (#3293)', () => {
         const kept = (
           await c.query<{ id: string }>(
             `INSERT INTO ludy_kernel.party (org_id, kind, name, email, phone, address, company_id, duplicate_of)
-             VALUES ($1, 'person', $2, $3, '0900000002', 'TP HCM', $4, $5) RETURNING id`,
+             VALUES ($1, 'person', $2, $3, '+84-900-000-002', 'TP HCM', $4, $5) RETURNING id`,
             [orgId, `Khách giữ ${i}`, `giu${i}@purge.test`, company, primary],
           )
         ).rows[0]!.id;
