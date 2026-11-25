@@ -409,6 +409,17 @@ suite('eSign Slice 6d post-sign VietQR deposit & accounting bridge (#4723)', () 
   });
 
   it('hard-blocks hr_contract and meeting_minutes deposits at command, RLS, and SQL trigger layers', async () => {
+    const profileCheck = await rpc('sign/depositProfile/get', owner, {});
+    expect(profileCheck.status).toBe(200);
+    if (!(profileCheck.body.profile as { vietqrFileId?: string | null } | null)?.vietqrFileId) {
+      const seededProfile = await rpc('sign/depositProfile/upsert', owner, {
+        bankCode: 'vcb',
+        accountNumber: '0123456789',
+        accountHolder: 'CONG TY TNHH TEST DEPOSIT',
+        vietqrPngBase64: TINY_PNG_BASE64,
+      });
+      expect(seededProfile.status, JSON.stringify(seededProfile.body)).toBe(200);
+    }
     const hrEnvId = await createInspectedDraft(owner, { title: 'HR Contract Confidential', sourceKind: 'hr_contract' });
     const mtgCreated = await runtime.execute<{ meetingId: string }>(
       'meetings.meeting.create',
@@ -628,6 +639,62 @@ suite('eSign Slice 6d post-sign VietQR deposit & accounting bridge (#4723)', () 
     const depToken = sentWithDep.links[0]!.token;
     const noDepToken = sentNoDep.links[0]!.token;
 
+    // Prepare a draft envelope with a deposit before clearing the org profile so BLOCKER-1 SQL tests
+    // have an active deposit_profile when checking draft pre-freeze and non-system EMVCo payload rejection
+    const draftPreFreezeEnvId = await createInspectedDraft(owner, { title: 'Draft Pre-Freeze Guard Env' });
+    const setPreFreeze = await rpc('sign/deposit/set', owner, {
+      envelopeId: draftPreFreezeEnvId,
+      amount: '1500000',
+      memoToken: 'CK-PREFRZ1',
+    });
+    expect(setPreFreeze.status, JSON.stringify(setPreFreeze.body)).toBe(200);
+
+    const preClearClient = await pool.connect();
+    try {
+      await preClearClient.query('BEGIN');
+      await preClearClient.query('SELECT ludy_kernel.enter_context($1::uuid, $2::uuid)', [member.userId, org.orgId]);
+      await expect(
+        preClearClient.query(
+          `SELECT ludy_sign.freeze_envelope_deposit_snapshot($1::uuid, $2::uuid, NULL, $3::uuid, now())`,
+          [org.orgId, draftPreFreezeEnvId, member.userId],
+        ),
+      ).rejects.toThrow(/SIGN_DEPOSIT_FROZEN/);
+      await preClearClient.query('ROLLBACK');
+
+      await admin(async (c) => {
+        await c.query(
+          `UPDATE ludy_sign.envelope SET status = 'sent', sent_at = now() WHERE org_id = $1 AND id = $2`,
+          [org.orgId, draftPreFreezeEnvId],
+        );
+      });
+      await preClearClient.query('BEGIN');
+      await preClearClient.query('SELECT ludy_kernel.enter_context($1::uuid, $2::uuid)', [member.userId, org.orgId]);
+      const forgedEmvco =
+        '00020101021238540010A00000072701240006970436011001234567890208QRIBFTTA53037045802VN62130809CK-PREFRZ16304ABCD';
+      const emvcoRes = await preClearClient.query<{ freeze_envelope_deposit_snapshot: { frozen?: boolean; error?: string } }>(
+        `SELECT ludy_sign.freeze_envelope_deposit_snapshot($1::uuid, $2::uuid, $3, $4::uuid, now()) AS freeze_envelope_deposit_snapshot`,
+        [org.orgId, draftPreFreezeEnvId, forgedEmvco, member.userId],
+      );
+      expect(emvcoRes.rows[0]?.freeze_envelope_deposit_snapshot).toEqual({
+        frozen: false,
+        error: 'SIGN_DEPOSIT_EMVCO_INVALID',
+      });
+      const afterEmvco = await preClearClient.query<{ snapshot_emvco_payload: string | null }>(
+        `SELECT snapshot_emvco_payload FROM ludy_sign.envelope_deposit WHERE org_id = $1 AND envelope_id = $2`,
+        [org.orgId, draftPreFreezeEnvId],
+      );
+      expect(afterEmvco.rows[0]?.snapshot_emvco_payload).toBeNull();
+      await preClearClient.query('ROLLBACK');
+    } finally {
+      preClearClient.release();
+      await admin(async (c) => {
+        await c.query(`DELETE FROM ludy_sign.envelope_deposit WHERE org_id = $1 AND envelope_id = $2`, [
+          org.orgId,
+          draftPreFreezeEnvId,
+        ]);
+      });
+    }
+
     // Verify snapshot frozen cleanly; clearing org profile must NOT mutate sent envelope snapshot!
     const clearProfile = await rpc('sign/depositProfile/clear', owner, {});
     expect(clearProfile.status).toBe(200);
@@ -662,7 +729,7 @@ suite('eSign Slice 6d post-sign VietQR deposit & accounting bridge (#4723)', () 
       ).rejects.toThrow(/SIGN_DEPOSIT_FROZEN/);
       await guardClient.query('ROLLBACK');
 
-      // Direct freeze definer call on sent envelope must fail (BLOCK-2)
+      // Direct freeze definer call on sent already-frozen envelope must fail (BLOCK-1 / BLOCK-2)
       await guardClient.query('BEGIN');
       await guardClient.query('SELECT ludy_kernel.enter_context($1::uuid, $2::uuid)', [member.userId, org.orgId]);
       await expect(
@@ -931,6 +998,150 @@ suite('eSign Slice 6d post-sign VietQR deposit & accounting bridge (#4723)', () 
         { module: 'sign', enabled: true },
         { actor: asUser(owner), orgId: org.orgId },
       );
+    }
+  });
+
+  it('normalizes subaccount codes (1121.VCB), clears QR on bank change, preserves/demotes non-default profiles, and enforces integer VND numeric scale', async () => {
+    const p1 = await rpc('sign/depositProfile/upsert', owner, {
+      bankCode: 'vcb',
+      accountNumber: '0123456789',
+      accountHolder: 'CONG TY DEFAULT',
+      financeBankAccount: ' 1121.vcb ',
+      vietqrPngBase64: TINY_PNG_BASE64,
+    });
+    expect(p1.status, JSON.stringify(p1.body)).toBe(200);
+    const p1Id = String(p1.body.id);
+    const p1QrId = String(p1.body.vietqrFileId);
+    expect(p1.body.financeBankAccount).toBe('1121.VCB');
+    expect(p1.body.isDefault).toBe(true);
+    expect(typeof p1.body.vietqrFileId).toBe('string');
+
+    // Holder-only edit preserves existing QR image
+    const p1HolderEdit = await rpc('sign/depositProfile/upsert', owner, {
+      id: p1Id,
+      bankCode: 'vcb',
+      accountNumber: '0123456789',
+      accountHolder: 'CONG TY DEFAULT UPDATED',
+    });
+    expect(p1HolderEdit.status, JSON.stringify(p1HolderEdit.body)).toBe(200);
+    expect(p1HolderEdit.body.vietqrFileId).toBe(p1QrId);
+
+    // Bank or account change without new QR clears stale QR image
+    const p1AccountChange = await rpc('sign/depositProfile/upsert', owner, {
+      id: p1Id,
+      bankCode: 'vcb',
+      accountNumber: '0999111222',
+      accountHolder: 'CONG TY DEFAULT UPDATED',
+    });
+    expect(p1AccountChange.status, JSON.stringify(p1AccountChange.body)).toBe(200);
+    expect(p1AccountChange.body.hasQrPng).toBe(false);
+    expect(p1AccountChange.body.vietqrFileId).toBeNull();
+
+    // Create a second non-default profile with QR PNG + Finance subaccount
+    const p2Id = randomUUID();
+    const p2Inserted = await runtime.execute<{ id: string; isDefault: boolean; financeBankAccount: string | null }>(
+      'sign.deposit_profile.upsert',
+      {
+        bankCode: 'acb',
+        accountNumber: '8888777766',
+        accountHolder: 'CONG TY PHU',
+        financeBankAccount: '1121.ACB',
+        isDefault: false,
+      },
+      { actor: asUser(owner), orgId: org.orgId },
+    );
+    expect(p2Inserted.isDefault).toBe(false);
+    expect(p2Inserted.financeBankAccount).toBe('1121.ACB');
+    void p2Id;
+
+    // Editing a non-default profile without passing isDefault preserves is_default = false
+    const p2Edited = await runtime.execute<{ id: string; isDefault: boolean }>(
+      'sign.deposit_profile.upsert',
+      {
+        id: p2Inserted.id,
+        bankCode: 'acb',
+        accountNumber: '8888777766',
+        accountHolder: 'CONG TY PHU V2',
+      },
+      { actor: asUser(owner), orgId: org.orgId },
+    );
+    expect(p2Edited.isDefault).toBe(false);
+
+    // Attach non-default profile to draft envelope, then edit amount omitting depositProfileId -> preserves p2Inserted.id
+    const subEnvId = await createInspectedDraft(owner, { title: 'Non-Default Deposit Profile Env' });
+    const attachedNonDefault = await runtime.execute<{ depositProfileId: string | null; amount: string }>(
+      'sign.envelope.deposit.set',
+      {
+        envelopeId: subEnvId,
+        amount: '2000000',
+        memoToken: 'CK-NONDEF1',
+        depositProfileId: p2Inserted.id,
+      },
+      { actor: asUser(owner), orgId: org.orgId },
+    );
+    expect(attachedNonDefault.depositProfileId).toBe(p2Inserted.id);
+
+    const amountOnlyEdit = await runtime.execute<{ depositProfileId: string | null; amount: string }>(
+      'sign.envelope.deposit.set',
+      {
+        envelopeId: subEnvId,
+        amount: '3000000',
+      },
+      { actor: asUser(owner), orgId: org.orgId },
+    );
+    expect(amountOnlyEdit.depositProfileId).toBe(p2Inserted.id);
+    expect(amountOnlyEdit.amount).toBe('3000000');
+
+    // Promoting p2Inserted to default atomically demotes p1 cleanly
+    const p2Promoted = await runtime.execute<{ id: string; isDefault: boolean }>(
+      'sign.deposit_profile.upsert',
+      {
+        id: p2Inserted.id,
+        bankCode: 'acb',
+        accountNumber: '8888777766',
+        accountHolder: 'CONG TY PHU V2',
+        isDefault: true,
+      },
+      { actor: asUser(owner), orgId: org.orgId },
+    );
+    expect(p2Promoted.isDefault).toBe(true);
+    await admin(async (c) => {
+      const { rows } = await c.query<{ id: string; is_default: boolean }>(
+        `SELECT id, is_default FROM ludy_sign.deposit_profile WHERE org_id = $1 AND id IN ($2, $3)`,
+        [org.orgId, p1Id, p2Inserted.id],
+      );
+      const map = new Map(rows.map((r) => [r.id, r.is_default]));
+      expect(map.get(p1Id)).toBe(false);
+      expect(map.get(p2Inserted.id)).toBe(true);
+    });
+
+    // numeric column without fixed (20,4) scale rejects 100.00001 while accepting 100.0000
+    const scaleEnvId = await createInspectedDraft(owner, { title: 'Numeric Scale Check Env' });
+    const c = await pool.connect();
+    try {
+      await c.query('BEGIN');
+      await c.query('SELECT ludy_kernel.enter_context($1::uuid, $2::uuid)', [owner.userId, org.orgId]);
+      await expect(
+        c.query(
+          `INSERT INTO ludy_sign.envelope_deposit (org_id, envelope_id, amount, currency, memo_token, deposit_profile_id, created_by, updated_by)
+           VALUES ($1, $2, 100.00001, 'VND', 'CK-SCALE1', $3, $4, $4)`,
+          [org.orgId, scaleEnvId, p2Inserted.id, owner.userId],
+        ),
+      ).rejects.toThrow(/envelope_deposit_vnd_integer_ck/);
+      await c.query('ROLLBACK');
+
+      await c.query('BEGIN');
+      await c.query('SELECT ludy_kernel.enter_context($1::uuid, $2::uuid)', [owner.userId, org.orgId]);
+      await expect(
+        c.query(
+          `INSERT INTO ludy_sign.envelope_deposit (org_id, envelope_id, amount, currency, memo_token, deposit_profile_id, created_by, updated_by)
+           VALUES ($1, $2, 100.0000, 'VND', 'CK-SCALE2', $3, $4, $4)`,
+          [org.orgId, scaleEnvId, p2Inserted.id, owner.userId],
+        ),
+      ).resolves.toBeDefined();
+      await c.query('ROLLBACK');
+    } finally {
+      c.release();
     }
   });
 

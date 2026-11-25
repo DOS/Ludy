@@ -3,8 +3,9 @@
 // Screens belong in screens.ts (owned separately by #3325); keep only public route paths,
 // token patterns, PNG/input bounds, and request/response schemas here.
 import { z } from 'zod';
+import { normalizeAccountCode } from './accounts.ts';
 import { zMcpWakeUrl } from './mcp.ts';
-import { zId } from './schemas.ts';
+import { zAccountCode, zId } from './schemas.ts';
 
 export const SIGN_PAGE_PATH = '/-/sign';
 export const SIGN_DIRECT_PAGE_PATH = '/-/sign/d';
@@ -754,7 +755,7 @@ export const zSignDepositProfileUpsertInput = z
     bankName: z.string().trim().min(1).max(200).optional(),
     accountNumber: z.string().trim().min(4).max(34),
     accountHolder: z.string().trim().min(1).max(200),
-    financeBankAccount: z.string().trim().regex(/^[0-9]{3,16}$/).nullable().optional(),
+    financeBankAccount: z.string().transform(normalizeAccountCode).pipe(zAccountCode).nullable().optional(),
     vietqrFileId: zId.nullable().optional(),
     vietqrPngBase64: z.string().min(1).max(SIGN_SIGNATURE_PNG_BASE64_MAX).optional(),
     clearVietqr: z.boolean().optional(),

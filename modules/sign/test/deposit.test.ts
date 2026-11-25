@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Pure unit tests for eSign VietQR EMVCo TLV + CRC-16/CCITT-FALSE builder and VND decimal validation (#4723).
 import { describe, expect, it } from 'vitest';
+import { zSignDepositProfileUpsertInput } from '@ludy/kernel-contract';
 import {
   buildVietQrEmvcoPayload,
   computeEmvcoCrc16,
@@ -69,5 +70,41 @@ describe('eSign VietQR deposit helpers (#4723)', () => {
     expect(() => parseDepositAmountDecimal('-1000')).toThrow();
     expect(() => parseDepositAmountDecimal('5.12345')).toThrow();
     expect(() => parseDepositAmountDecimal('1e6')).toThrow();
+  });
+
+  it('accepts dot-suffixed Finance subaccount codes and rejects malformed codes', () => {
+    const normalized = zSignDepositProfileUpsertInput.parse({
+      bankCode: 'vcb',
+      accountNumber: '0123456789',
+      accountHolder: 'CONG TY TEST',
+      financeBankAccount: ' 1121.vcb ',
+    });
+    expect(normalized.financeBankAccount).toBe('1121.VCB');
+
+    const parent = zSignDepositProfileUpsertInput.parse({
+      bankCode: 'vcb',
+      accountNumber: '0123456789',
+      accountHolder: 'CONG TY TEST',
+      financeBankAccount: '1121',
+    });
+    expect(parent.financeBankAccount).toBe('1121');
+
+    expect(() =>
+      zSignDepositProfileUpsertInput.parse({
+        bankCode: 'vcb',
+        accountNumber: '0123456789',
+        accountHolder: 'CONG TY TEST',
+        financeBankAccount: '1121.',
+      }),
+    ).toThrow();
+
+    expect(() =>
+      zSignDepositProfileUpsertInput.parse({
+        bankCode: 'vcb',
+        accountNumber: '0123456789',
+        accountHolder: 'CONG TY TEST',
+        financeBankAccount: '12',
+      }),
+    ).toThrow();
   });
 });

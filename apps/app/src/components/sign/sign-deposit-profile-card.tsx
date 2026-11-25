@@ -4,6 +4,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useId, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
+import { ACCOUNT_CODE_PATTERN, normalizeAccountCode } from '@ludy/kernel-contract';
 import { bankByCode } from '@ludy/l10n-vn';
 import { Alert, AlertDescription } from '@ludy/ui/components/alert';
 import { Badge } from '@ludy/ui/components/badge';
@@ -86,7 +87,7 @@ function ProfileFormBody({
       const trimmedAccount = accountNumber.trim();
       const trimmedHolder = accountHolder.trim();
       const trimmedBankName = bankName.trim();
-      const trimmedFinanceAcc = financeBankAccount.trim();
+      const trimmedFinanceAcc = normalizeAccountCode(financeBankAccount);
       return signApi.upsertDepositProfile({
         ...(profile?.id ? { id: profile.id } : {}),
         bankCode,
@@ -162,8 +163,8 @@ function ProfileFormBody({
       setLocalError(t('accountHolderRequired'));
       return;
     }
-    const glCode = financeBankAccount.trim();
-    if (glCode.length > 0 && !/^[0-9]{3,16}$/.test(glCode)) {
+    const glCode = normalizeAccountCode(financeBankAccount);
+    if (glCode.length > 0 && !ACCOUNT_CODE_PATTERN.test(glCode)) {
       setLocalError(t('invalidFinanceAccount'));
       return;
     }

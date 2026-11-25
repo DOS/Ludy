@@ -6,9 +6,11 @@ import { sql } from 'kysely';
 import { z } from 'zod';
 import type { MemberRole } from '@ludy/db';
 import {
+  ACCOUNT_CODE_PATTERN,
   SIGN_DEPOSIT_MEMO_TOKEN_PATTERN,
   SIGN_SIGNATURE_PNG_MAX_BYTES,
   auditValue,
+  normalizeAccountCode,
   tableWrite,
   zSignDepositProfileUpsertInput,
   zSignEnvelopeDepositClearInput,
@@ -35,7 +37,6 @@ const MEMO_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const MEMO_CODE_LEN = 8;
 const MEMO_MAX_ATTEMPTS = 12;
 const ACCOUNT_NUMBER_PATTERN = /^[A-Za-z0-9]{4,34}$/;
-const FINANCE_ACCOUNT_PATTERN = /^[0-9]{3,16}$/;
 const EMVCO_NAPAS_GUID = 'A000000727';
 const EMVCO_NAPAS_SERVICE_CODE = 'QRIBFTTA';
 const EMVCO_CURRENCY_VND = '704';
@@ -347,6 +348,14 @@ async function resolveProfileQrFile(
             .whereRef('fld.envelope_id', '=', 'e.id')
             .where('fld.attachment_file_id', '=', fileId),
         ),
+        eb.exists(
+          eb
+            .selectFrom('ludy_sign.envelope_document as doc')
+            .select('doc.id')
+            .whereRef('doc.org_id', '=', 'e.org_id')
+            .whereRef('doc.envelope_id', '=', 'e.id')
+            .where('doc.file_id', '=', fileId),
+        ),
       ]),
     )
     .limit(1)
@@ -490,14 +499,19 @@ export const depositProfileUpsert = defineCommand({
     if (!accountHolder || accountHolder.length > 200) {
       throw new DomainError('SIGN_INVALID_BANK_ACCOUNT', 422, 'Account holder name must be 1 to 200 characters');
     }
-    const financeBankAccount =
+    const rawFinanceBankAccount =
       input.financeBankAccount !== undefined
         ? input.financeBankAccount === null
           ? null
-          : input.financeBankAccount.trim()
+          : normalizeAccountCode(input.financeBankAccount)
         : undefined;
-    if (financeBankAccount && !FINANCE_ACCOUNT_PATTERN.test(financeBankAccount)) {
-      throw new DomainError('SIGN_INVALID_BANK_ACCOUNT', 422, 'Finance bank account code must be 3 to 16 digits');
+    const financeBankAccount = rawFinanceBankAccount === '' ? null : rawFinanceBankAccount;
+    if (financeBankAccount && !ACCOUNT_CODE_PATTERN.test(financeBankAccount)) {
+      throw new DomainError(
+        'SIGN_INVALID_BANK_ACCOUNT',
+        422,
+        'Finance bank account code must match accounting subaccount format',
+      );
     }
 
     if (input.vietqrPngBase64 !== undefined) {
@@ -521,17 +535,24 @@ export const depositProfileUpsert = defineCommand({
           .where('id', '=', input.id)
           .forUpdate()
           .executeTakeFirst()
-      : await ctx.trx
-          .selectFrom('ludy_sign.deposit_profile')
-          .selectAll()
-          .where('org_id', '=', ctx.orgId)
-          .where('is_default', '=', true)
-          .forUpdate()
-          .executeTakeFirst();
+      : input.isDefault === false
+        ? undefined
+        : await ctx.trx
+            .selectFrom('ludy_sign.deposit_profile')
+            .selectAll()
+            .where('org_id', '=', ctx.orgId)
+            .where('is_default', '=', true)
+            .forUpdate()
+            .executeTakeFirst();
 
     if (input.id && !existing) {
       throw new DomainError('SIGN_DEPOSIT_PROFILE_NOT_FOUND', 404, 'Deposit profile not found');
     }
+
+    const destinationChanged = Boolean(
+      existing && (existing.bank_code !== bank.code || existing.account_number !== accountNumber),
+    );
+    const nextIsDefault = input.isDefault ?? (existing ? existing.is_default : true);
 
     let qrColumns: {
       vietqr_file_id: string | null;
@@ -549,7 +570,7 @@ export const depositProfileUpsert = defineCommand({
       };
     } else if (input.vietqrFileId) {
       qrColumns = await resolveProfileQrFile(ctx, input.vietqrFileId);
-    } else if (existing) {
+    } else if (existing && !destinationChanged) {
       qrColumns = {
         vietqr_file_id: existing.vietqr_file_id,
         vietqr_storage_key: existing.vietqr_storage_key,
@@ -572,6 +593,19 @@ export const depositProfileUpsert = defineCommand({
     const nextFinanceBankAccount =
       financeBankAccount !== undefined ? financeBankAccount : (existing?.finance_bank_account ?? null);
 
+    if (nextIsDefault && !existing?.is_default) {
+      await ctx.trx
+        .updateTable('ludy_sign.deposit_profile')
+        .set({
+          is_default: false,
+          updated_by: userId,
+          updated_at: ctx.now,
+        })
+        .where('org_id', '=', ctx.orgId)
+        .where('is_default', '=', true)
+        .execute();
+    }
+
     let saved: DepositProfileRow;
     if (existing) {
       saved = await ctx.trx
@@ -586,7 +620,7 @@ export const depositProfileUpsert = defineCommand({
           vietqr_storage_key: qrColumns.vietqr_storage_key,
           vietqr_generation: qrColumns.vietqr_generation,
           vietqr_sha256: qrColumns.vietqr_sha256,
-          is_default: input.isDefault ?? true,
+          is_default: nextIsDefault,
           updated_by: userId,
           updated_at: ctx.now,
         })
@@ -608,7 +642,7 @@ export const depositProfileUpsert = defineCommand({
           vietqr_storage_key: qrColumns.vietqr_storage_key,
           vietqr_generation: qrColumns.vietqr_generation,
           vietqr_sha256: qrColumns.vietqr_sha256,
-          is_default: input.isDefault ?? true,
+          is_default: nextIsDefault,
           created_by: userId,
           updated_by: userId,
           created_at: ctx.now,
@@ -632,7 +666,7 @@ export const depositProfileUpsert = defineCommand({
       'sign.deposit_profile',
       saved.id,
       existing ? 'sign.deposit_profile.updated' : 'sign.deposit_profile.configured',
-      `Updated eSign VietQR deposit bank profile (${saved.bank_name})`,
+      existing ? 'Updated org eSign VietQR deposit bank profile' : 'Configured org eSign VietQR deposit bank profile',
     );
 
     return formatDepositProfile(saved);
@@ -738,19 +772,40 @@ export const envelopeDepositSet = defineCommand({
       throw new DomainError('VALIDATION', 422, 'NUL characters are not permitted');
     }
 
-    const profile = input.depositProfileId
-      ? await ctx.trx
+    const existing = await ctx.trx
+      .selectFrom('ludy_sign.envelope_deposit')
+      .selectAll()
+      .where('org_id', '=', ctx.orgId)
+      .where('envelope_id', '=', env.id)
+      .forUpdate()
+      .executeTakeFirst();
+
+    let profile: { id: string } | undefined;
+    if (input.depositProfileId) {
+      profile = await ctx.trx
+        .selectFrom('ludy_sign.deposit_profile')
+        .select('id')
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', input.depositProfileId)
+        .executeTakeFirst();
+    } else {
+      if (existing?.deposit_profile_id) {
+        profile = await ctx.trx
           .selectFrom('ludy_sign.deposit_profile')
           .select('id')
           .where('org_id', '=', ctx.orgId)
-          .where('id', '=', input.depositProfileId)
-          .executeTakeFirst()
-      : await ctx.trx
+          .where('id', '=', existing.deposit_profile_id)
+          .executeTakeFirst();
+      }
+      if (!profile) {
+        profile = await ctx.trx
           .selectFrom('ludy_sign.deposit_profile')
           .select('id')
           .where('org_id', '=', ctx.orgId)
           .where('is_default', '=', true)
           .executeTakeFirst();
+      }
+    }
 
     if (!profile) {
       throw new DomainError(
@@ -759,14 +814,6 @@ export const envelopeDepositSet = defineCommand({
         'Configure an organization VietQR deposit profile in eSign Settings before attaching a deposit request',
       );
     }
-
-    const existing = await ctx.trx
-      .selectFrom('ludy_sign.envelope_deposit')
-      .selectAll()
-      .where('org_id', '=', ctx.orgId)
-      .where('envelope_id', '=', env.id)
-      .forUpdate()
-      .executeTakeFirst();
 
     let memoToken: string;
     if (input.memoToken) {
@@ -845,7 +892,7 @@ export const envelopeDepositSet = defineCommand({
       'sign.envelope',
       env.id,
       'sign.envelope.deposit_set',
-      `Configured post-sign deposit request ${saved.memo_token} on "${env.title}"`,
+      'Configured post-sign VietQR deposit request on signing envelope',
     );
 
     return formatEnvelopeDeposit(saved);
@@ -903,7 +950,7 @@ export const envelopeDepositClear = defineCommand({
         'sign.envelope',
         env.id,
         'sign.envelope.deposit_cleared',
-        `Removed post-sign deposit request ${deleted.memo_token} from "${env.title}"`,
+        'Removed post-sign VietQR deposit request from signing envelope',
       );
     }
 
@@ -948,23 +995,7 @@ export async function freezeEnvelopeDepositSnapshot(
     );
   }
   if (deposit.snapshot_frozen_at) {
-    return {
-      frozen: true,
-      memoToken: deposit.memo_token,
-      amount: trimDepositDecimalString(deposit.amount),
-      auditRedacted: {
-        snapshot_account_number: auditValue(
-          SIGN_ENVELOPE_DEPOSIT_TABLE,
-          'snapshot_account_number',
-          deposit.snapshot_account_number ?? '',
-        ),
-        snapshot_account_holder: auditValue(
-          SIGN_ENVELOPE_DEPOSIT_TABLE,
-          'snapshot_account_holder',
-          deposit.snapshot_account_holder ?? '',
-        ),
-      },
-    };
+    throw new DomainError('SIGN_DEPOSIT_FROZEN', 409, 'Deposit snapshot is already frozen');
   }
 
   const profile = deposit.deposit_profile_id

@@ -9,6 +9,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { describe, expect, it, vi } from 'vitest';
 import { catalog } from '../src/i18n/runtime.ts';
+import { PublicSignError } from '../src/lib/sign-api.ts';
 
 const testState = vi.hoisted(() => ({
   qc: null as unknown as QueryClient,
@@ -54,9 +55,14 @@ vi.mock('../src/lib/api.ts', async () => {
   };
 });
 
-const { SignCeremonyDepositCard } = await import('../src/components/sign/sign-ceremony-deposit-card.tsx');
-const { SignDepositConfigCard } = await import('../src/components/sign/sign-deposit-config-card.tsx');
+const { SignCeremonyDepositCard, resolveNoticeErrorMessage } = await import(
+  '../src/components/sign/sign-ceremony-deposit-card.tsx'
+);
+const { SignDepositConfigCard, shouldSyncDepositConfigForm, signEnvelopeDetailQueryKey } = await import(
+  '../src/components/sign/sign-deposit-config-card.tsx'
+);
 const { BankSignDepositLine } = await import('../src/components/bank-sign-deposit-line.tsx');
+const { submitCeremonyWithGenerationGuard } = await import('../src/routes/sign-ceremony.tsx');
 
 function wrap(node: React.ReactElement, locale: 'vi' | 'en' = 'vi', qc = testState.qc) {
   return renderToStaticMarkup(
@@ -284,5 +290,115 @@ describe('eSign Slice 6d deposit UI components (#4723)', () => {
     const orgLayoutSrc = readFileSync(new URL('../src/routes/org-layout.tsx', import.meta.url), 'utf8');
     expect(routerSrc).toContain('<Toaster');
     expect(orgLayoutSrc).not.toContain('Toaster');
+  });
+
+  it('invalidates the exact sign-envelope-detail query key and preserves dirty form state across refetches', () => {
+    const envelopeId = '01900000-0000-7000-8000-000000000999';
+    expect(signEnvelopeDetailQueryKey(envelopeId)).toEqual(['sign', 'envelope', envelopeId]);
+    const detailSrc = readFileSync(new URL('../src/routes/sign-envelope-detail.tsx', import.meta.url), 'utf8');
+    expect(detailSrc).toContain("queryKey: ['sign', 'envelope', id]");
+
+    expect(
+      shouldSyncDepositConfigForm({ prevEnvelopeId: envelopeId, envelopeId, dirty: true }),
+    ).toBe(false);
+    expect(
+      shouldSyncDepositConfigForm({ prevEnvelopeId: envelopeId, envelopeId, dirty: false }),
+    ).toBe(true);
+    expect(
+      shouldSyncDepositConfigForm({
+        prevEnvelopeId: envelopeId,
+        envelopeId: '01900000-0000-7000-8000-000000000998',
+        dirty: true,
+      }),
+    ).toBe(true);
+  });
+
+  it('translates PublicSignError codes for transfer notices in both Vietnamese and English without raw English leaks', () => {
+    const viMsgs = catalog('vi').sign.ceremonyDeposit;
+    const enMsgs = catalog('en').sign.ceremonyDeposit;
+    const tVi = (key: keyof typeof viMsgs) => viMsgs[key];
+    const tEn = (key: keyof typeof enMsgs) => enMsgs[key];
+
+    const cases: Array<[number, string, keyof typeof viMsgs & keyof typeof enMsgs]> = [
+      [415, 'SIGN_INVALID_SIGNATURE_PNG', 'invalidProofType'],
+      [413, 'SIGN_DEPOSIT_PROOF_TOO_LARGE', 'proofTooLarge'],
+      [503, 'SIGN_ATTACHMENT_BUSY', 'noticeBusy'],
+      [429, 'RATE_LIMITED', 'noticeRateLimited'],
+      [409, 'FILE_SOURCE_CONFLICT', 'noticeFileConflict'],
+      [403, 'SIGN_CONFIDENTIAL_DEPOSIT_FORBIDDEN', 'noticeConfidentialForbidden'],
+      [404, 'NOT_FOUND', 'noticeNotFound'],
+      [500, 'UNEXPECTED_RAW_CODE', 'noticeFailed'],
+    ];
+
+    for (const [status, code, expectedKey] of cases) {
+      const err = new PublicSignError(status, code, 'Raw English server message should never surface in Vietnamese UI');
+      expect(resolveNoticeErrorMessage(err, tVi)).toBe(tVi(expectedKey));
+      expect(resolveNoticeErrorMessage(err, tVi)).not.toContain('Raw English server message');
+      expect(resolveNoticeErrorMessage(err, tEn)).toBe(tEn(expectedKey));
+    }
+  });
+
+  it('ignores stale ceremony submit success and error callbacks when generation advances', async () => {
+    let gen = 1;
+    let onSuccessCalled = false;
+    let onErrorCalled = false;
+    let onSettledCalled = false;
+
+    await submitCeremonyWithGenerationGuard({
+      getGeneration: () => gen,
+      runSubmit: async () => {
+        gen += 1;
+        return { ok: true };
+      },
+      onSuccess: () => {
+        onSuccessCalled = true;
+      },
+      onError: () => {
+        onErrorCalled = true;
+      },
+      onSettled: () => {
+        onSettledCalled = true;
+      },
+    });
+    expect(onSuccessCalled).toBe(false);
+    expect(onErrorCalled).toBe(false);
+    expect(onSettledCalled).toBe(false);
+
+    await submitCeremonyWithGenerationGuard({
+      getGeneration: () => gen,
+      runSubmit: async () => {
+        gen += 1;
+        throw new Error('stale failure');
+      },
+      onSuccess: () => {
+        onSuccessCalled = true;
+      },
+      onError: () => {
+        onErrorCalled = true;
+      },
+      onSettled: () => {
+        onSettledCalled = true;
+      },
+    });
+    expect(onSuccessCalled).toBe(false);
+    expect(onErrorCalled).toBe(false);
+    expect(onSettledCalled).toBe(false);
+
+    await submitCeremonyWithGenerationGuard({
+      getGeneration: () => gen,
+      runSubmit: async () => ({ ok: true }),
+      onSuccess: () => {
+        onSuccessCalled = true;
+      },
+      onError: () => {
+        onErrorCalled = true;
+      },
+      onSettled: () => {
+        onSettledCalled = true;
+      },
+    });
+    expect(onSuccessCalled).toBe(true);
+    expect(onErrorCalled).toBe(false);
+    expect(onSettledCalled).toBe(true);
   });
 });

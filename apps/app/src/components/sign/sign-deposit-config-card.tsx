@@ -3,7 +3,7 @@
 // plus signer transfer confirmation/receipt after send (#4723). Hidden on hr_contract and meeting_minutes envelopes.
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
-import { useEffect, useId, useState, type FormEvent } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
 import { Alert, AlertDescription } from '@ludy/ui/components/alert';
 import { Badge } from '@ludy/ui/components/badge';
@@ -37,6 +37,18 @@ export interface SignDepositConfigCardProps {
   onDownloadFile?: (fileId: string, filename: string) => void;
 }
 
+export function signEnvelopeDetailQueryKey(envelopeId: string): readonly ['sign', 'envelope', string] {
+  return ['sign', 'envelope', envelopeId];
+}
+
+export function shouldSyncDepositConfigForm(params: {
+  prevEnvelopeId: string;
+  envelopeId: string;
+  dirty: boolean;
+}): boolean {
+  return params.prevEnvelopeId !== params.envelopeId || !params.dirty;
+}
+
 export function SignDepositConfigCard({
   slug,
   envelopeId,
@@ -61,6 +73,8 @@ export function SignDepositConfigCard({
   });
 
   const [editing, setEditing] = useState(Boolean(deposit));
+  const [dirty, setDirty] = useState(false);
+  const prevEnvelopeIdRef = useRef(envelopeId);
   const [amountInput, setAmountInput] = useState(deposit?.amount ?? '');
   const [dueDaysInput, setDueDaysInput] = useState(deposit?.dueDays !== null && deposit?.dueDays !== undefined ? String(deposit.dueDays) : '');
   const [memoTokenInput, setMemoTokenInput] = useState(deposit?.memoToken ?? '');
@@ -68,16 +82,24 @@ export function SignDepositConfigCard({
   const [localError, setLocalError] = useState<string | null>(null);
 
   useEffect(() => {
+    const shouldSync = shouldSyncDepositConfigForm({
+      prevEnvelopeId: prevEnvelopeIdRef.current,
+      envelopeId,
+      dirty,
+    });
+    prevEnvelopeIdRef.current = envelopeId;
+    if (!shouldSync) return;
+    setDirty(false);
     setEditing(Boolean(deposit));
     setAmountInput(deposit?.amount ?? '');
     setDueDaysInput(deposit?.dueDays !== null && deposit?.dueDays !== undefined ? String(deposit.dueDays) : '');
     setMemoTokenInput(deposit?.memoToken ?? '');
     setNoteInput(deposit?.note ?? '');
     setLocalError(null);
-  }, [deposit]);
+  }, [envelopeId, deposit, dirty]);
 
   const invalidateEnvelope = async () => {
-    await queryClient.invalidateQueries({ queryKey: ['sign', 'envelope', slug, envelopeId] });
+    await queryClient.invalidateQueries({ queryKey: signEnvelopeDetailQueryKey(envelopeId) });
   };
 
   const saveMutation = useMutation({
@@ -95,6 +117,7 @@ export function SignDepositConfigCard({
       });
     },
     onSuccess: async () => {
+      setDirty(false);
       toast(t('savedToast'));
       await invalidateEnvelope();
     },
@@ -104,6 +127,7 @@ export function SignDepositConfigCard({
   const clearMutation = useMutation({
     mutationFn: () => signApi.clearEnvelopeDeposit(envelopeId),
     onSuccess: async () => {
+      setDirty(false);
       toast(t('clearedToast'));
       setEditing(false);
       setAmountInput('');
@@ -269,7 +293,10 @@ export function SignDepositConfigCard({
             variant="outline"
             size="sm"
             className="w-full max-md:min-h-11"
-            onClick={() => setEditing(true)}
+            onClick={() => {
+              setDirty(true);
+              setEditing(true);
+            }}
             data-testid="sign-deposit-enable-btn"
           >
             {t('enableButton')}
@@ -303,7 +330,10 @@ export function SignDepositConfigCard({
                   value={amountInput}
                   placeholder="5000000"
                   disabled={saveMutation.isPending}
-                  onChange={(e) => setAmountInput(e.target.value)}
+                  onChange={(e) => {
+                    setDirty(true);
+                    setAmountInput(e.target.value);
+                  }}
                   data-testid="sign-deposit-amount-input"
                 />
               </div>
@@ -322,7 +352,10 @@ export function SignDepositConfigCard({
                     value={dueDaysInput}
                     placeholder="3"
                     disabled={saveMutation.isPending}
-                    onChange={(e) => setDueDaysInput(e.target.value)}
+                    onChange={(e) => {
+                      setDirty(true);
+                      setDueDaysInput(e.target.value);
+                    }}
                     data-testid="sign-deposit-due-days-input"
                   />
                 </div>
@@ -337,7 +370,10 @@ export function SignDepositConfigCard({
                     placeholder="CK-..."
                     maxLength={15}
                     disabled={saveMutation.isPending}
-                    onChange={(e) => setMemoTokenInput(e.target.value)}
+                    onChange={(e) => {
+                      setDirty(true);
+                      setMemoTokenInput(e.target.value);
+                    }}
                     data-testid="sign-deposit-memo-input"
                   />
                 </div>
@@ -354,7 +390,10 @@ export function SignDepositConfigCard({
                   maxLength={SIGN_DEPOSIT_NOTE_MAX}
                   placeholder={t('notePlaceholder')}
                   disabled={saveMutation.isPending}
-                  onChange={(e) => setNoteInput(e.target.value)}
+                  onChange={(e) => {
+                    setDirty(true);
+                    setNoteInput(e.target.value);
+                  }}
                   data-testid="sign-deposit-note-input"
                 />
               </div>
@@ -391,7 +430,10 @@ export function SignDepositConfigCard({
                     variant="ghost"
                     className="max-md:min-h-11"
                     disabled={saveMutation.isPending}
-                    onClick={() => setEditing(false)}
+                    onClick={() => {
+                      setDirty(false);
+                      setEditing(false);
+                    }}
                   >
                     {common('cancel')}
                   </Button>

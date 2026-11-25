@@ -13,6 +13,7 @@ import { ErrorText } from '../ui.tsx';
 import { safeQrSvgPath } from '../../lib/qr-svg.ts';
 import {
   publicSignApi,
+  PublicSignError,
   SIGN_DEPOSIT_NOTE_MAX,
   SIGN_DEPOSIT_PROOF_MAX_BYTES,
   type SignPublicDepositSummary,
@@ -31,6 +32,47 @@ function formatVndMoney(amount: string): string {
 export interface SignCeremonyDepositCardProps {
   token: string;
   deposit: SignPublicDepositSummary;
+}
+
+type CeremonyDepositErrorKey =
+  | 'invalidProofType'
+  | 'proofTooLarge'
+  | 'noticeBusy'
+  | 'noticeRateLimited'
+  | 'noticeOtpRequired'
+  | 'noticeFileConflict'
+  | 'noticeConfidentialForbidden'
+  | 'noticeNotFound'
+  | 'noticeFailed';
+
+export function resolveNoticeErrorMessage(
+  error: unknown,
+  t: (key: CeremonyDepositErrorKey) => string,
+): string {
+  if (error instanceof PublicSignError) {
+    if (error.status === 404 || error.code === 'NOT_FOUND') return t('noticeNotFound');
+    switch (error.code) {
+      case 'UNSUPPORTED_TYPE':
+      case 'SIGN_INVALID_SIGNATURE_PNG':
+        return t('invalidProofType');
+      case 'TOO_LARGE':
+      case 'SIGN_DEPOSIT_PROOF_TOO_LARGE':
+        return t('proofTooLarge');
+      case 'SIGN_ATTACHMENT_BUSY':
+        return t('noticeBusy');
+      case 'RATE_LIMITED':
+        return t('noticeRateLimited');
+      case 'SIGN_OTP_REQUIRED':
+        return t('noticeOtpRequired');
+      case 'FILE_SOURCE_CONFLICT':
+        return t('noticeFileConflict');
+      case 'SIGN_CONFIDENTIAL_DEPOSIT_FORBIDDEN':
+        return t('noticeConfidentialForbidden');
+      default:
+        return t('noticeFailed');
+    }
+  }
+  return t('noticeFailed');
 }
 
 export function SignCeremonyDepositCard({ token, deposit: initialDeposit }: SignCeremonyDepositCardProps) {
@@ -125,7 +167,7 @@ export function SignCeremonyDepositCard({ token, deposit: initialDeposit }: Sign
       setNoticeFile(null);
       toast(t('noticeSavedToast'));
     } catch (error) {
-      const msg = error instanceof Error ? error.message : t('noticeFailed');
+      const msg = resolveNoticeErrorMessage(error, t);
       setNoticeError(msg);
       toast(msg, 'error');
     } finally {

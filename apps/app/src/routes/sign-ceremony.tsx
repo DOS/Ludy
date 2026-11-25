@@ -68,6 +68,28 @@ export function isTerminalCeremonyViewState(view: PublicSignViewState): boolean 
   );
 }
 
+export async function submitCeremonyWithGenerationGuard<T>(params: {
+  getGeneration: () => number;
+  runSubmit: () => Promise<T>;
+  onSuccess: (result: T) => void;
+  onError: (error: unknown) => void;
+  onSettled: () => void;
+}): Promise<void> {
+  const submitGeneration = params.getGeneration();
+  try {
+    const result = await params.runSubmit();
+    if (params.getGeneration() !== submitGeneration) return;
+    params.onSuccess(result);
+  } catch (error) {
+    if (params.getGeneration() !== submitGeneration) return;
+    params.onError(error);
+  } finally {
+    if (params.getGeneration() === submitGeneration) {
+      params.onSettled();
+    }
+  }
+}
+
 /** Polls public ceremony status while the desktop QR modal stays open, pausing on hidden tabs and capping at 15 min. */
 export function startCeremonyQrPolling(params: {
   token: string;
@@ -466,6 +488,7 @@ export function SignCeremonyPage() {
     setOtpCode('');
     setOtpError(null);
     setSubmitError(null);
+    setSubmitting(false);
     setDeclineOpen(false);
     setDeclineReason('');
     setDeclineError(null);
@@ -509,6 +532,7 @@ export function SignCeremonyPage() {
   const loadView = useCallback(async (activeToken: string) => {
     const requestId = ++requestGenRef.current;
     setLoadingView(true);
+    setSubmitting(false);
     setViewError(null);
     setPdfError(null);
     setPdfBytes(null);
@@ -860,54 +884,60 @@ export function SignCeremonyPage() {
     }
     setSubmitting(true);
     setSubmitError(null);
-    try {
-      const submitRes = await publicSignApi.submit(
-        buildSignSubmitPayload({
-          token,
-          fields: viewState.fields,
-          answers,
-        }),
-      );
-      const wasInPerson = Boolean(inPersonMode || viewState.inPerson || submitRes.inPerson);
-      if (wasInPerson) {
-        setInPersonMode(true);
-      }
-      const keepDepositToken = !wasInPerson && Boolean(submitRes.deposit);
-      if (!keepDepositToken) {
-        forgetSignToken();
-      }
-      toast(t(isApproverCeremony ? 'approverSubmitSuccessToast' : 'submitSuccessToast'));
-      setViewState({
-        state: 'already_completed',
-        title: viewState.title,
-        status: 'completed',
-        signerRole: isApproverCeremony ? 'approver' : 'signer',
-        ...(wasInPerson ? { inPerson: true } : {}),
-        ...(keepDepositToken ? { deposit: submitRes.deposit ?? null } : {}),
-      });
-      setPdfBytes(null);
-    } catch (error) {
-      if (isOtpRequiredError(error)) {
-        setOtpSent(false);
-        setOtpCode('');
-        setOtpError(error.message || t('otpInvalid'));
-        setPdfBytes(null);
-        setViewState(
-          buildOtpRequiredViewState({
-            orgName: viewState.orgName,
-            title: viewState.title,
-            inPerson: Boolean(inPersonMode || viewState.inPerson),
+    await submitCeremonyWithGenerationGuard({
+      getGeneration: () => requestGenRef.current,
+      runSubmit: () =>
+        publicSignApi.submit(
+          buildSignSubmitPayload({
+            token,
+            fields: viewState.fields,
+            answers,
           }),
-        );
-        toast(t('otpInvalid'), 'error');
-      } else {
-        const msg = error instanceof Error ? error.message : t('invalidTitle');
-        setSubmitError(msg);
-        toast(msg, 'error');
-      }
-    } finally {
-      setSubmitting(false);
-    }
+        ),
+      onSuccess: (submitRes) => {
+        const wasInPerson = Boolean(inPersonMode || viewState.inPerson || submitRes.inPerson);
+        if (wasInPerson) {
+          setInPersonMode(true);
+        }
+        const keepDepositToken = !wasInPerson && Boolean(submitRes.deposit);
+        if (!keepDepositToken) {
+          forgetSignToken();
+        }
+        toast(t(isApproverCeremony ? 'approverSubmitSuccessToast' : 'submitSuccessToast'));
+        setViewState({
+          state: 'already_completed',
+          title: viewState.title,
+          status: 'completed',
+          signerRole: isApproverCeremony ? 'approver' : 'signer',
+          ...(wasInPerson ? { inPerson: true } : {}),
+          ...(keepDepositToken ? { deposit: submitRes.deposit ?? null } : {}),
+        });
+        setPdfBytes(null);
+      },
+      onError: (error) => {
+        if (isOtpRequiredError(error)) {
+          setOtpSent(false);
+          setOtpCode('');
+          setOtpError(error.message || t('otpInvalid'));
+          setPdfBytes(null);
+          setViewState(
+            buildOtpRequiredViewState({
+              orgName: viewState.orgName,
+              title: viewState.title,
+              inPerson: Boolean(inPersonMode || viewState.inPerson),
+            }),
+          );
+          toast(t('otpInvalid'), 'error');
+        } else {
+          const msg = error instanceof Error ? error.message : t('invalidTitle');
+          setSubmitError(msg);
+          toast(msg, 'error');
+        }
+      },
+      onSettled: () => {
+        setSubmitting(false);
+      },
+    });
   };
 
   const handleDecline = async (event: React.FormEvent<HTMLFormElement>) => {

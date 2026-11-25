@@ -91,6 +91,137 @@ describe('Vy depositProposal extraction checks (#4723)', () => {
     expect(res.proposal?.depositProposal).toBeUndefined();
     expect(res.droppedCount).toBe(1);
   });
+
+  it('requires integer VND, rejects duration/percent unit collisions, and enforces local VND currency spans (#4723)', () => {
+    const viDurationReq: SignObligationExtractRequest = {
+      envelopeTitle: 'Hop dong dat coc',
+      pageCount: 1,
+      pages: [{ page: 1, text: 'Ben B: Cong ty ABC\nDat coc 5.000.000 VND trong vong 5 ngay.' }],
+    };
+    const viOk = checkSignObligationExtract(viDurationReq, {
+      counterpartyName: 'Cong ty ABC',
+      effectiveDate: null,
+      expiryDate: null,
+      renewalNoticeDays: null,
+      autoRenew: false,
+      contractValue: null,
+      currency: 'VND',
+      citations: [{ field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Ben B: Cong ty ABC' }],
+      obligations: [],
+      depositProposal: {
+        amount: '5000000',
+        dueDays: 5,
+        pageNumber: 1,
+        quoteExcerpt: 'Dat coc 5.000.000 VND trong vong 5 ngay.',
+      },
+    });
+    expect(viOk.proposal?.depositProposal?.amount).toBe('5000000');
+
+    const enDurationReq: SignObligationExtractRequest = {
+      envelopeTitle: 'Deposit agreement',
+      pageCount: 1,
+      pages: [{ page: 1, text: 'Party B: ABC Co\nDeposit: 5000000 VND, due in 5 days.' }],
+    };
+    const enOk = checkSignObligationExtract(enDurationReq, {
+      counterpartyName: 'ABC Co',
+      effectiveDate: null,
+      expiryDate: null,
+      renewalNoticeDays: null,
+      autoRenew: false,
+      contractValue: null,
+      currency: 'VND',
+      citations: [{ field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Party B: ABC Co' }],
+      obligations: [],
+      depositProposal: {
+        amount: '5000000',
+        dueDays: 5,
+        pageNumber: 1,
+        quoteExcerpt: 'Deposit: 5000000 VND, due in 5 days.',
+      },
+    });
+    expect(enOk.proposal?.depositProposal?.amount).toBe('5000000');
+
+    // Duration token "5 days" or "5 ngay" must never pass as deposit amount "5"
+    for (const [req, quote] of [
+      [viDurationReq, 'Dat coc 5.000.000 VND trong vong 5 ngay.'],
+      [enDurationReq, 'Deposit: 5000000 VND, due in 5 days.'],
+    ] as const) {
+      const bogusDays = checkSignObligationExtract(req, {
+        counterpartyName: req === viDurationReq ? 'Cong ty ABC' : 'ABC Co',
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: null,
+        currency: 'VND',
+        citations: [
+          {
+            field: 'counterpartyName',
+            pageNumber: 1,
+            quoteExcerpt: req === viDurationReq ? 'Ben B: Cong ty ABC' : 'Party B: ABC Co',
+          },
+        ],
+        obligations: [],
+        depositProposal: {
+          amount: '5',
+          dueDays: 5,
+          pageNumber: 1,
+          quoteExcerpt: quote,
+        },
+      });
+      expect(bogusDays.proposal?.depositProposal).toBeUndefined();
+    }
+
+    // Fractional VND deposit is rejected
+    const fracReq: SignObligationExtractRequest = {
+      envelopeTitle: 'Hop dong le',
+      pageCount: 1,
+      pages: [{ page: 1, text: 'Ben B: Cong ty ABC\nDat coc 5000000.50 VND.' }],
+    };
+    const fracRes = checkSignObligationExtract(fracReq, {
+      counterpartyName: 'Cong ty ABC',
+      effectiveDate: null,
+      expiryDate: null,
+      renewalNoticeDays: null,
+      autoRenew: false,
+      contractValue: null,
+      currency: 'VND',
+      citations: [{ field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Ben B: Cong ty ABC' }],
+      obligations: [],
+      depositProposal: {
+        amount: '5000000.50',
+        dueDays: null,
+        pageNumber: 1,
+        quoteExcerpt: 'Dat coc 5000000.50 VND.',
+      },
+    });
+    expect(fracRes.proposal?.depositProposal).toBeUndefined();
+
+    // Percentage token "5%" cannot pass as deposit amount "5"
+    const pctReq: SignObligationExtractRequest = {
+      envelopeTitle: 'Hop dong dat coc phan tram',
+      pageCount: 1,
+      pages: [{ page: 1, text: 'Ben B: Cong ty ABC\nDat coc 5% gia tri trong 5 ngay.' }],
+    };
+    const pctRes = checkSignObligationExtract(pctReq, {
+      counterpartyName: 'Cong ty ABC',
+      effectiveDate: null,
+      expiryDate: null,
+      renewalNoticeDays: null,
+      autoRenew: false,
+      contractValue: null,
+      currency: 'VND',
+      citations: [{ field: 'counterpartyName', pageNumber: 1, quoteExcerpt: 'Ben B: Cong ty ABC' }],
+      obligations: [],
+      depositProposal: {
+        amount: '5',
+        dueDays: 5,
+        pageNumber: 1,
+        quoteExcerpt: 'Dat coc 5% gia tri trong 5 ngay.',
+      },
+    });
+    expect(pctRes.proposal?.depositProposal).toBeUndefined();
+  });
 });
 
 describe('checkSignDepositMatchSentence (#4723)', () => {

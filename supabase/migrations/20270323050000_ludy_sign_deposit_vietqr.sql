@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS ludy_sign.deposit_profile (
   bank_name text NOT NULL CHECK (pg_catalog.length(pg_catalog.btrim(bank_name)) BETWEEN 1 AND 200),
   account_number text NOT NULL CHECK (account_number ~ '^[A-Za-z0-9]{4,34}$'),
   account_holder text NOT NULL CHECK (pg_catalog.length(pg_catalog.btrim(account_holder)) BETWEEN 1 AND 200),
-  finance_bank_account text CHECK (finance_bank_account IS NULL OR finance_bank_account ~ '^[0-9]{3,16}$'),
+  finance_bank_account text CHECK (finance_bank_account IS NULL OR finance_bank_account ~ '^[0-9]{3,10}(\.[A-Z0-9]{1,20})?$'),
   vietqr_file_id uuid,
   vietqr_storage_key text,
   vietqr_generation text,
@@ -268,7 +268,7 @@ CREATE TABLE IF NOT EXISTS ludy_sign.envelope_deposit (
   org_id uuid NOT NULL,
   id uuid NOT NULL DEFAULT ludy_kernel.uuid_v7(),
   envelope_id uuid NOT NULL,
-  amount numeric(20,4) NOT NULL CHECK (amount > 0 AND amount <= 9999999999999999.9999),
+  amount numeric NOT NULL CHECK (amount > 0 AND amount <= 9999999999999999.9999),
   currency text NOT NULL DEFAULT 'VND' CHECK (currency = 'VND'),
   memo_token text NOT NULL CHECK (memo_token ~ '^CK-[A-Z0-9]{6,12}$'),
   due_days smallint CHECK (due_days IS NULL OR due_days BETWEEN 0 AND 365),
@@ -279,7 +279,7 @@ CREATE TABLE IF NOT EXISTS ludy_sign.envelope_deposit (
   snapshot_bank_name text,
   snapshot_account_number text,
   snapshot_account_holder text,
-  snapshot_finance_bank_account text CHECK (snapshot_finance_bank_account IS NULL OR snapshot_finance_bank_account ~ '^[0-9]{3,16}$'),
+  snapshot_finance_bank_account text CHECK (snapshot_finance_bank_account IS NULL OR snapshot_finance_bank_account ~ '^[0-9]{3,10}(\.[A-Z0-9]{1,20})?$'),
   snapshot_vietqr_file_id uuid,
   snapshot_vietqr_storage_key text,
   snapshot_vietqr_generation text,
@@ -443,7 +443,7 @@ BEGIN
     RAISE EXCEPTION 'MODULE_OFF' USING ERRCODE = '42501';
   END IF;
 
-  SELECT e.id, e.status, e.source_kind
+  SELECT e.id, e.status, e.source_kind, e.sent_at
   INTO v_env
   FROM ludy_sign.envelope e
   WHERE e.org_id = p_org_id
@@ -460,10 +460,14 @@ BEGIN
             DETAIL = 'deposit requests are forbidden on hr_contract and meeting_minutes envelopes';
   END IF;
 
-  IF v_env.status IS DISTINCT FROM 'draft' THEN
+  IF v_env.status IS DISTINCT FROM 'sent' OR v_env.sent_at IS NULL THEN
     RAISE EXCEPTION 'SIGN_DEPOSIT_FROZEN'
       USING ERRCODE = '42501',
-            DETAIL = 'deposit snapshot can only be frozen while envelope is draft';
+            DETAIL = 'deposit snapshot can only be frozen when sending an envelope';
+  END IF;
+
+  IF v_actor <> 'system' THEN
+    v_now := pg_catalog.date_trunc('milliseconds', COALESCE(v_env.sent_at, pg_catalog.clock_timestamp()));
   END IF;
 
   SELECT ed.*
@@ -478,13 +482,9 @@ BEGIN
   END IF;
 
   IF v_dep.snapshot_frozen_at IS NOT NULL THEN
-    RETURN pg_catalog.jsonb_build_object(
-      'frozen', true,
-      'memoToken', v_dep.memo_token,
-      'amount', v_dep.amount::text,
-      'accountNumber', v_dep.snapshot_account_number,
-      'accountHolder', v_dep.snapshot_account_holder
-    );
+    RAISE EXCEPTION 'SIGN_DEPOSIT_FROZEN'
+      USING ERRCODE = '42501',
+            DETAIL = 'deposit snapshot is already frozen';
   END IF;
 
   IF v_dep.deposit_profile_id IS NOT NULL THEN
@@ -529,6 +529,12 @@ BEGIN
   END IF;
 
   IF v_emvco IS NOT NULL THEN
+    IF v_actor <> 'system' THEN
+      RETURN pg_catalog.jsonb_build_object(
+        'frozen', false,
+        'error', 'SIGN_DEPOSIT_EMVCO_INVALID'
+      );
+    END IF;
     IF pg_catalog.char_length(v_emvco) > 512
        OR v_emvco !~ '^000201010212.*5303704.*5802VN.*6304[0-9A-F]{4}$'
        OR pg_catalog.strpos(v_emvco, v_profile.account_number) = 0
@@ -652,6 +658,20 @@ DECLARE
   v_env_source_kind text;
   v_env_sealed_file_id uuid;
 BEGIN
+  IF TG_OP = 'UPDATE' THEN
+    NEW.updated_at := pg_catalog.now();
+  END IF;
+
+  IF v_actor IS NOT NULL AND v_actor <> 'system' THEN
+    IF v_actor = 'agent' THEN
+      RAISE EXCEPTION 'AGENT_FORBIDDEN' USING ERRCODE = '42501';
+    END IF;
+
+    IF TG_OP IN ('INSERT', 'UPDATE') AND NEW.org_id IS DISTINCT FROM ludy_kernel.ctx_org_id() THEN
+      RETURN NEW;
+    END IF;
+  END IF;
+
   SELECT e.status, e.source_kind, e.sealed_file_id
   INTO v_env_status, v_env_source_kind, v_env_sealed_file_id
   FROM ludy_sign.envelope e
@@ -664,21 +684,9 @@ BEGIN
             DETAIL = 'deposit requests are forbidden on hr_contract and meeting_minutes envelopes';
   END IF;
 
-  IF TG_OP = 'UPDATE' THEN
-    NEW.updated_at := pg_catalog.now();
-  END IF;
-
   IF v_actor IS NULL OR v_actor = 'system' THEN
     IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
     RETURN NEW;
-  END IF;
-
-  IF TG_OP IN ('INSERT', 'UPDATE') AND NEW.org_id IS DISTINCT FROM ludy_kernel.ctx_org_id() THEN
-    RETURN NEW;
-  END IF;
-
-  IF v_actor = 'agent' THEN
-    RAISE EXCEPTION 'AGENT_FORBIDDEN' USING ERRCODE = '42501';
   END IF;
 
   IF TG_OP = 'UPDATE' AND (NEW.org_id, NEW.id, NEW.envelope_id, NEW.created_at) IS DISTINCT FROM (OLD.org_id, OLD.id, OLD.envelope_id, OLD.created_at) THEN
@@ -727,7 +735,7 @@ BEGIN
   IF TG_OP = 'UPDATE'
      AND OLD.snapshot_frozen_at IS NULL
      AND NEW.snapshot_frozen_at IS NOT NULL
-     AND v_env_status = 'draft'
+     AND v_env_status = 'sent'
      AND pg_catalog.current_setting('ludy.sign_deposit_freeze', true) = OLD.envelope_id::text THEN
     IF (NEW.amount, NEW.currency, NEW.memo_token, NEW.due_days, NEW.deposit_profile_id, NEW.note,
         NEW.signer_notice_at, NEW.signer_notice_note, NEW.signer_proof_file_id,
@@ -3021,6 +3029,12 @@ BEGIN
                  WHERE fld.org_id = ce.org_id
                    AND fld.envelope_id = ce.id
                    AND fld.attachment_file_id = v_existing_file.id
+               )
+               OR EXISTS (
+                 SELECT 1 FROM ludy_sign.envelope_document doc
+                 WHERE doc.org_id = ce.org_id
+                   AND doc.envelope_id = ce.id
+                   AND doc.file_id = v_existing_file.id
                )
              )
          ) THEN

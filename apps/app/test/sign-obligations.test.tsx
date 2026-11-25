@@ -59,7 +59,11 @@ vi.mock('../src/lib/api.ts', async () => {
   };
 });
 
-const { EnvelopeObligationsCard } = await import('../src/components/sign/envelope-obligations-card.tsx');
+const {
+  EnvelopeObligationsCard,
+  hasVisibleObligationProposalFields,
+  resolveProposalLoadIntoForm,
+} = await import('../src/components/sign/envelope-obligations-card.tsx');
 const { SignEnvelopesPage } = await import('../src/routes/sign-envelopes.tsx');
 
 function renderVi(node: ReactNode, client = new QueryClient()): string {
@@ -334,5 +338,93 @@ describe('EnvelopeObligationsCard and Renewals tab (#3821)', () => {
     for (const control of jsxControls) {
       expect(control).toContain('max-md:min-h-11');
     }
+  });
+
+  it('hides sign-obligation-load-proposal-btn when only depositProposal is present and preserves autoRenew/currency (#4723)', () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const depositOnlyRecord: SignEnvelopeObligationRecordContract = {
+      id: '01900000-0000-7000-8000-000000000445',
+      orgId: ORG_ID,
+      envelopeId: '01900000-0000-7000-8000-000000000444',
+      status: 'confirmed',
+      counterpartyName: 'Công ty ABC',
+      effectiveDate: null,
+      expiryDate: null,
+      renewalNoticeDays: null,
+      autoRenew: true,
+      contractValue: '1500',
+      currency: 'USD',
+      obligations: [],
+      proposal: {
+        counterpartyName: null,
+        effectiveDate: null,
+        expiryDate: null,
+        renewalNoticeDays: null,
+        autoRenew: false,
+        contractValue: null,
+        currency: 'VND',
+        citations: [],
+        obligations: [],
+        depositProposal: {
+          amount: '5000000',
+          currency: 'VND',
+          dueDays: 5,
+          pageNumber: 1,
+          quoteExcerpt: 'Đặt cọc 5.000.000 VNĐ',
+          proposedByAi: true,
+        },
+        proposedByAi: true,
+      },
+      promptVersion: 'v1',
+      confirmedBy: ORG_ID,
+      confirmedAt: '2026-11-24T10:05:00.000Z',
+      createdBy: ORG_ID,
+      createdAt: '2026-11-24T10:00:00.000Z',
+      updatedAt: '2026-11-24T10:05:00.000Z',
+    };
+    qc.setQueryData(['sign', 'obligation', depositOnlyRecord.envelopeId], {
+      canEdit: true,
+      obligation: depositOnlyRecord,
+    });
+
+    expect(hasVisibleObligationProposalFields(depositOnlyRecord.proposal)).toBe(false);
+    const htmlDepositOnly = renderEn(
+      <EnvelopeObligationsCard
+        envelopeId={depositOnlyRecord.envelopeId}
+        sourceFileId="01900000-0000-7000-8000-000000000020"
+        pdfBytes={null}
+        onJumpToPage={() => {}}
+      />,
+      qc,
+    );
+    expect(htmlDepositOnly).not.toContain('sign-obligation-load-proposal-btn');
+    expect(htmlDepositOnly).toContain('sign-obligation-dismiss-proposal-btn');
+
+    expect(
+      resolveProposalLoadIntoForm(depositOnlyRecord.proposal!, {
+        contractValue: '1500',
+        savedContractValue: '1500',
+      }),
+    ).toEqual({
+      autoRenewUpdate: null,
+      contractValueUpdate: null,
+      currencyUpdate: null,
+    });
+
+    expect(
+      resolveProposalLoadIntoForm(
+        {
+          ...depositOnlyRecord.proposal!,
+          autoRenew: true,
+          contractValue: '24000000',
+          currency: 'VND',
+        },
+        { contractValue: '1500', savedContractValue: '1500' },
+      ),
+    ).toEqual({
+      autoRenewUpdate: true,
+      contractValueUpdate: '24000000',
+      currencyUpdate: 'VND',
+    });
   });
 });

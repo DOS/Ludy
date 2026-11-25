@@ -2749,6 +2749,70 @@ export function signObligationExtractPrompt(request: SignObligationExtractReques
   ].join('\n');
 }
 
+const DEPOSIT_DURATION_OR_PERCENT_AFTER_RE =
+  /^(?:\s*%|\s*(?:ngày|ngay|days?|tuần|tuan|weeks?|tháng|thang|months?|năm|nam|years?)(?![\p{L}\p{N}]))/iu;
+
+const DEPOSIT_WORD_SCALE_MAP: Record<string, number> = {
+  nghìn: 1e3,
+  ngàn: 1e3,
+  nghin: 1e3,
+  ngan: 1e3,
+  thousand: 1e3,
+  triệu: 1e6,
+  trieu: 1e6,
+  million: 1e6,
+  tỷ: 1e9,
+  tỉ: 1e9,
+  billion: 1e9,
+};
+
+function candidateTokenDecimalValues(rawNumToken: string, scale: number): InstanceType<typeof Decimal>[] {
+  const candidates = new Set<string>();
+  for (const cand of canonicalizeNumericToken(rawNumToken)) {
+    const d = normalizeDecimalAmount(cand);
+    if (d) candidates.add(d);
+  }
+  if (GROUPED_DOT_INT_RE.test(rawNumToken)) {
+    const d = normalizeDecimalAmount(rawNumToken.replace(/\./g, ''));
+    if (d) candidates.add(d);
+  }
+  if (GROUPED_COMMA_INT_RE.test(rawNumToken)) {
+    const d = normalizeDecimalAmount(rawNumToken.replace(/,/g, ''));
+    if (d) candidates.add(d);
+  }
+  const decimals: InstanceType<typeof Decimal>[] = [];
+  for (const s of candidates) {
+    decimals.push(new Decimal(s).mul(scale));
+  }
+  return decimals;
+}
+
+function isDepositAmountWithoutDurationOrPercentCollision(canonicalDecimalStr: string, rawQuote: string): boolean {
+  let target: InstanceType<typeof Decimal>;
+  try {
+    target = new Decimal(canonicalDecimalStr);
+  } catch {
+    return false;
+  }
+  if (!target.isInteger() || target.lte(0)) return false;
+
+  const norm = normalizeContractText(rawQuote);
+  const tokenRe =
+    /(?<![\p{L}\p{N}.,/])(\d+(?:[.,]\d+)*)(?:\s*(tỷ|tỉ|triệu|trieu|nghìn|ngàn|nghin|ngan|million|billion|thousand)(?![\p{L}\p{N}]))?/giu;
+  for (const m of norm.matchAll(tokenRe)) {
+    const numStr = m[1]!;
+    const scaleWord = m[2]?.toLowerCase();
+    const scale = scaleWord ? (DEPOSIT_WORD_SCALE_MAP[scaleWord] ?? 1) : 1;
+    const after = norm.slice((m.index ?? 0) + m[0].length);
+    if (!scaleWord && /^\/\d/.test(after)) continue;
+    if (DEPOSIT_DURATION_OR_PERCENT_AFTER_RE.test(after)) continue;
+    for (const val of candidateTokenDecimalValues(numStr, scale)) {
+      if (val.eq(target)) return true;
+    }
+  }
+  return false;
+}
+
 export function checkSignObligationExtract(
   request: SignObligationExtractRequest,
   raw: SignObligationExtractModelOutput | null | undefined,
@@ -2979,10 +3043,9 @@ export function checkSignObligationExtract(
     const depQuoteForeign = groundedForeignCurrencies(depQuoteRaw);
     const depHasExplicitVnd = hasExplicitVnd(depQuoteRaw);
     const depDocForeign = groundedForeignCurrencies(combinedSourceRaw);
-    const depVndValid =
-      depQuoteForeign.size === 0
-        ? depHasExplicitVnd || depDocForeign.size === 0
-        : isAmountWithCurrencyInLocalSpan(depAmountDec ?? '', 'VND', depQuoteRaw);
+    const depVndValid = depHasExplicitVnd
+      ? depAmountDec !== null && isAmountWithCurrencyInLocalSpan(depAmountDec, 'VND', depQuoteRaw)
+      : depQuoteForeign.size === 0 && depDocForeign.size === 0;
 
     let depDueDays: number | null = null;
     let depDueValid = true;
@@ -3000,8 +3063,10 @@ export function checkSignObligationExtract(
     if (
       depPage !== null &&
       depAmountDec !== null &&
+      new Decimal(depAmountDec).isInteger() &&
       new Decimal(depAmountDec).gt(0) &&
       isAmountGroundedInQuote(depAmountDec, depQuoteRaw) &&
+      isDepositAmountWithoutDurationOrPercentCollision(depAmountDec, depQuoteRaw) &&
       isCurrencyGroundedInText('VND', depQuoteRaw) &&
       depVndValid &&
       depDueValid

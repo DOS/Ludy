@@ -639,12 +639,6 @@ export async function sendDraftEnvelope(
   const dueNow = row.routing_mode === 'parallel' ? sortedActive : sortedActive.filter((s) => s.routing_order === minOrder);
   const dueIds = dueNow.map((s) => s.id);
 
-  const depositFreeze = await freezeEnvelopeDepositSnapshot(ctx, {
-    envelopeId: row.id,
-    sourceKind: row.source_kind,
-    userId: input.userId,
-  });
-
   const nextVersion = row.version + 1;
   await ctx.trx
     .updateTable('ludy_sign.envelope')
@@ -657,6 +651,12 @@ export async function sendDraftEnvelope(
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', row.id)
     .execute();
+
+  const depositFreeze = await freezeEnvelopeDepositSnapshot(ctx, {
+    envelopeId: row.id,
+    sourceKind: row.source_kind,
+    userId: input.userId,
+  });
 
   await ctx.trx
     .updateTable('ludy_sign.signer')

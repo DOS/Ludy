@@ -2007,12 +2007,20 @@ export function createHttpApp(deps: HttpDeps) {
       }
     });
 
-    app.post('/api/sign/deposit-notice', signEdgeGuard(signDepositNoticeLimit), signBodyLimit(SIGN_DEPOSIT_PROOF_MAX_BYTES + 1024 * 1024), async (c) => {
+    const signDepositNoticeSlot: MiddlewareHandler = async (c, next) => {
       const release = signDepositNoticeUploads.tryAcquire('sign-deposit-notice');
       if (!release) {
         c.header('retry-after', '2');
         return c.json({ code: 'SIGN_ATTACHMENT_BUSY', message: 'Máy chủ đang xử lý nhiều yêu cầu, hãy thử lại sau vài giây' }, 503);
       }
+      try {
+        await next();
+      } finally {
+        release();
+      }
+    };
+
+    app.post('/api/sign/deposit-notice', signEdgeGuard(signDepositNoticeLimit), signDepositNoticeSlot, signBodyLimit(SIGN_DEPOSIT_PROOF_MAX_BYTES + 1024 * 1024), async (c) => {
       try {
         const ct = (c.req.header('content-type') ?? '').toLowerCase();
         let token: unknown = null;
@@ -2072,8 +2080,6 @@ export function createHttpApp(deps: HttpDeps) {
         return c.json(res.result);
       } catch (error) {
         return problem(c, error);
-      } finally {
-        release();
       }
     });
 

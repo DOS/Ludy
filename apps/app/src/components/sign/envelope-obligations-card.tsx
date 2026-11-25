@@ -56,6 +56,40 @@ function toDraftRowsFromRecord(record: SignEnvelopeObligationRecordContract | nu
   }));
 }
 
+export function hasVisibleObligationProposalFields(
+  proposal: SignObligationProposalContract | null | undefined,
+): boolean {
+  return Boolean(
+    proposal &&
+      (proposal.counterpartyName !== null ||
+        proposal.effectiveDate !== null ||
+        proposal.expiryDate !== null ||
+        proposal.renewalNoticeDays !== null ||
+        proposal.autoRenew ||
+        proposal.contractValue !== null ||
+        proposal.obligations.length > 0),
+  );
+}
+
+export function resolveProposalLoadIntoForm(
+  prop: SignObligationProposalContract,
+  current: { contractValue: string; savedContractValue: string | null },
+): {
+  autoRenewUpdate: true | null;
+  contractValueUpdate: string | null;
+  currencyUpdate: string | null;
+} {
+  return {
+    autoRenewUpdate: prop.autoRenew ? true : null,
+    contractValueUpdate: prop.contractValue,
+    currencyUpdate:
+      prop.currency &&
+      (prop.contractValue !== null || (!current.savedContractValue && current.contractValue.trim() === ''))
+        ? prop.currency
+        : null,
+  };
+}
+
 export function EnvelopeObligationsCard({
   envelopeId,
   sourceFileId,
@@ -88,6 +122,7 @@ export function EnvelopeObligationsCard({
   const record = obligationQuery.data?.obligation ?? null;
   const canEdit = obligationQuery.data?.canEdit ?? false;
   const proposal = record?.proposal ?? null;
+  const hasObligationProposalFields = hasVisibleObligationProposalFields(proposal);
   const effectiveCurrency = dirty ? currency : (record?.currency || currency);
   const savedItemIds = useMemo(
     () => new Set(record?.status === 'confirmed' ? record.obligations.map((i) => i.id) : []),
@@ -263,9 +298,13 @@ export function EnvelopeObligationsCard({
     if (prop.effectiveDate !== null) setEffectiveDate(prop.effectiveDate);
     if (prop.expiryDate !== null) setExpiryDate(prop.expiryDate);
     if (prop.renewalNoticeDays !== null) setRenewalNoticeDays(String(prop.renewalNoticeDays));
-    setAutoRenew(prop.autoRenew);
-    if (prop.contractValue !== null) setContractValue(prop.contractValue);
-    if (prop.currency) setCurrency(prop.currency);
+    const merged = resolveProposalLoadIntoForm(prop, {
+      contractValue,
+      savedContractValue: record?.contractValue ?? null,
+    });
+    if (merged.autoRenewUpdate) setAutoRenew(true);
+    if (merged.contractValueUpdate !== null) setContractValue(merged.contractValueUpdate);
+    if (merged.currencyUpdate) setCurrency(merged.currencyUpdate);
     if (prop.obligations.length > 0) {
       setRows(
         prop.obligations.map((item) => ({
@@ -441,15 +480,17 @@ export function EnvelopeObligationsCard({
             ) : null}
 
             <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                size="sm"
-                variant="secondary"
-                onClick={() => handleLoadProposalIntoForm(proposal)}
-                data-testid="sign-obligation-load-proposal-btn"
-              >
-                {t('applyProposalToForm')}
-              </Button>
+              {hasObligationProposalFields ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => handleLoadProposalIntoForm(proposal)}
+                  data-testid="sign-obligation-load-proposal-btn"
+                >
+                  {t('applyProposalToForm')}
+                </Button>
+              ) : null}
               <Button
                 type="button"
                 size="sm"
