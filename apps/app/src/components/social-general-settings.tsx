@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// "Cài đặt chung" of the Channels screen (#3651): the settings of the whole Engage line (voice, watermark, report branding,
-// publish hold, banned words, review checklist, channel access, chat alert, share, channel sets, saved replies) sit below
-// the channel list in one group, so the first thing on a phone is the connect card and the channels, not a pile of
+// "Cài đặt chung" of the Channels screen (#3651): the settings of the whole Engage publishing line (voice, watermark, report branding,
+// publish hold, banned words, review checklist, channel access, chat alert, share, channel sets) sit below
+// the channel list in one group (saved replies and auto-draft moved to Inbox settings in #3673, with a link left here),
+// so the first thing on a phone is the connect card and the channels, not a pile of
 // settings. Folded on a phone, open from 1024 px up (where it sits under the channels, out of the way of the connect card).
 // The cards stay mounted while folded, so a half-typed setting is kept.
 import { useId, useState, type ReactNode } from 'react';

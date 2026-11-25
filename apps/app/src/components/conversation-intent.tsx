@@ -5,7 +5,7 @@
 // suggestion, and no error: the Inbox works as it did. Nothing is routed, assigned, resolved or hidden by an intent (a spam suggestion only shows a hint
 // beside the Hide button of a comment, #3808: a person clicks).
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
 import { CONVERSATION_INTENT_BATCH_MAX, CONVERSATION_INTENTS, type ConversationIntent, type ConversationSummary } from '@ludy/kernel-contract';
 import { Badge } from '@ludy/ui/components/badge';
@@ -13,6 +13,7 @@ import { Button } from '@ludy/ui/components/button';
 import { NativeSelect } from '@ludy/ui/components/native-select';
 import { ErrorText } from './ui.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { getConfig } from '../lib/auth.ts';
 import { shownIntent } from '../lib/conversation-intent.ts';
 import { TOUCH_BUTTON } from '../lib/conversation-touch.ts';
 
@@ -29,26 +30,84 @@ const suggestOptions = {
   refetchOnWindowFocus: false,
 } as const;
 
+export function applyIntentSuggestionBatch(
+  previous: ReadonlyMap<string, ConversationIntent | null>,
+  data: { ai?: string | null; suggestions?: readonly { conversationId: string; intent: ConversationIntent | null }[] } | undefined,
+): ReadonlyMap<string, ConversationIntent | null> {
+  if (!data) return previous;
+  if (data.ai === 'off') return previous.size === 0 ? previous : new Map();
+  const next = new Map(previous);
+  for (const s of data.suggestions ?? []) next.set(s.conversationId, s.intent);
+  return next;
+}
+
+const EMPTY_INTENTS: ReadonlyMap<string, ConversationIntent | null> = new Map();
+
+export type CustomerAiState = 'on' | 'off' | 'pending';
+
+// Observes the org's customer-AI switch (#3673) from one screen/thread root, distinguishing loading ('pending') from 'on'/'off'
+// so AI-only calls wait until settings settle while cross-session toggles refresh on focus or new activity when AI is off.
+export function useCustomerAiState(enabled = false, refreshKey: string | number | null = null): CustomerAiState {
+  const systemAiOn = getConfig().aiEnabled === true;
+  const active = enabled && systemAiOn;
+  const opts = orpc.conversations?.autoDraft?.queryOptions?.({ input: {} });
+  const current = useQuery({
+    ...(opts ?? { queryKey: ['conversations', 'autoDraft'] as const, queryFn: () => Promise.resolve(undefined as { autoDraft: boolean } | undefined) }),
+    enabled: active,
+    staleTime: 30_000,
+    refetchOnWindowFocus: active ? 'always' : false,
+  });
+  const aiState: CustomerAiState = !systemAiOn || current.data?.autoDraft === false
+    ? 'off'
+    : active && current.data === undefined
+      ? 'pending'
+      : 'on';
+  const { refetch } = current;
+  const checkedKeyRef = useRef<string | number | null | undefined>(undefined);
+  useEffect(() => {
+    if (!active || (aiState !== 'off' && !(aiState === 'pending' && current.isError)) || refreshKey === null || refreshKey === '') {
+      checkedKeyRef.current = refreshKey;
+      return;
+    }
+    if (checkedKeyRef.current === undefined) {
+      checkedKeyRef.current = refreshKey;
+      return;
+    }
+    if (checkedKeyRef.current === refreshKey) return;
+    checkedKeyRef.current = refreshKey;
+    void refetch({ cancelRefetch: false });
+  }, [active, aiState, current.isError, refreshKey, refetch]);
+  return aiState;
+}
+
 // The suggestions for the top of a list: the threads with no label yet, at most one call's worth, for a member who may write them. The answers of earlier
 // pages stay, so a thread that slides down the list keeps its suggestion. `ai` says why there is none, for the one case worth a line (the budget).
-export function useIntentSuggestions(items: readonly ConversationSummary[], enabled: boolean): { suggested: ReadonlyMap<string, ConversationIntent | null>; ai: string | null } {
+export function useIntentSuggestions(
+  items: readonly ConversationSummary[],
+  enabled: boolean,
+  trackAiOff = false,
+): { suggested: ReadonlyMap<string, ConversationIntent | null>; ai: string | null } {
   const asked = items.filter((c) => c.intent === null).slice(0, CONVERSATION_INTENT_BATCH_MAX);
   const key = asked.map((c) => `${c.id}:${c.lastSeq}`).join(',');
+  const aiState = useCustomerAiState(trackAiOff, enabled && asked.length > 0 ? key : null);
+  const aiOff = aiState === 'off';
   const result = useQuery({
     queryKey: ['conversation-intents', key],
     queryFn: () => client.conversations.suggestIntents({ conversationIds: asked.map((c) => c.id) }),
-    enabled: enabled && asked.length > 0,
+    enabled: enabled && aiState === 'on' && asked.length > 0,
     ...suggestOptions,
   });
   const [known, setKnown] = useState<ReadonlyMap<string, ConversationIntent | null>>(new Map());
   useEffect(() => {
+    if (aiOff) {
+      setKnown((previous) => (previous.size === 0 ? previous : new Map()));
+      return;
+    }
     if (!result.data) return;
-    setKnown((previous) => {
-      const next = new Map(previous);
-      for (const s of result.data?.suggestions ?? []) next.set(s.conversationId, s.intent);
-      return next;
-    });
-  }, [result.data]);
+    setKnown((previous) => applyIntentSuggestionBatch(previous, result.data));
+  }, [aiOff, result.data]);
+  if (aiOff) return { suggested: EMPTY_INTENTS, ai: 'off' };
+  if (aiState !== 'on') return { suggested: EMPTY_INTENTS, ai: null };
   return { suggested: known, ai: result.data?.ai ?? null };
 }
 
@@ -80,15 +139,15 @@ export function useSpamSuggested(c: ConversationSummary): boolean {
 
 // In the thread's header, for a member who may write it: the label a person applied (changed or cleared from the list), or the suggestion with one click
 // to apply it. The thread's own suggestion is read for this thread alone (the server answers from what it said a moment ago when the list asked).
-export function IntentBar({ conversation: c }: { conversation: ConversationSummary }) {
+export function IntentBar({ conversation: c, paused = false, aiOff = false }: { conversation: ConversationSummary; paused?: boolean; aiOff?: boolean }) {
   const t = useTranslations('conversations.intent');
   const suggestion = useQuery({
     ...threadSuggestionOptions(c),
-    // Only a thread waiting for an answer (New) is read by the model: clicking through the other tabs costs nothing.
-    enabled: c.intent === null && c.status === 'new',
+    // Only a thread waiting for an answer (New) is read by the model: clicking through the other tabs costs nothing, and opening Settings pauses new suggestions behind the drawer.
+    enabled: !paused && !aiOff && c.intent === null && c.status === 'new',
   });
   const set = useMutation({ mutationFn: (intent: ConversationIntent | null) => client.conversations.setIntent({ conversationId: c.id, intent }), onSuccess: refresh });
-  const suggested = suggestion.data?.suggestions.find((s) => s.conversationId === c.id)?.intent ?? null;
+  const suggested = paused || aiOff ? null : (suggestion.data?.suggestions.find((s) => s.conversationId === c.id)?.intent ?? null);
   const shown = shownIntent({ id: c.id, intent: c.intent }, new Map([[c.id, suggested]]));
   return (
     <div className="flex flex-wrap items-center gap-2 text-sm" data-testid="intent-bar">
@@ -108,7 +167,7 @@ export function IntentBar({ conversation: c }: { conversation: ConversationSumma
           </Button>
         </>
       )}
-      {suggestion.data?.ai === 'budget' && c.intent === null && (
+      {!aiOff && suggestion.data?.ai === 'budget' && c.intent === null && (
         <span className="text-xs text-muted-foreground" role="status">
           {t('budget')}
         </span>

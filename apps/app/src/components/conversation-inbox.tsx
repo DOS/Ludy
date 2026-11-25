@@ -4,7 +4,7 @@
 // hide a comment, note). Social passes the comment kind (the comment inbox, and the threads under one post); Service will
 // pass the direct kind. What a viewer may read is the database's decision, not this screen's: a thread the reader may not
 // read is simply not in the list. A reply carries the last message its sender saw, so a newer one asks them to read it first.
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent, type RefObject } from 'react';
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
 import { useTranslations } from 'use-intl';
 import { CONVERSATION_FACEBOOK_DIRECT_MAX, CONVERSATION_INSTAGRAM_COMMENT_MAX, CONVERSATION_INSTAGRAM_DIRECT_MAX, CONVERSATION_NOTE_MAX, CONVERSATION_REPLY_MAX, CONVERSATION_THREADS_REPLY_MAX, CONVERSATION_WHATSAPP_REPLY_MAX, conversationCanResendUnknown, conversationRules, type ConversationAttachmentView, type ConversationDetail, type ConversationIntent, type ConversationKind, type ConversationMessage, type ConversationStatus, type ConversationSummary } from '@ludy/kernel-contract';
@@ -19,12 +19,13 @@ import { useFormat } from '../i18n/provider.tsx';
 import { splitQuoted } from '../lib/email-text.ts';
 import { channelsOfPosts, INBOX_PAGE_SIZE, inboxListInput, mergeConversationPages, nextConversationCursor } from '../lib/conversation-inbox.ts';
 import { client, errorMessage, fetchConversationImage, orpc, queryClient } from '../lib/api.ts';
+import { getConfig } from '../lib/auth.ts';
 import { appendQuoteMessage, canInsertQuoteLink } from '../lib/quote-reply.ts';
 import { takeReplyHandoff } from '../lib/reply-handoff.ts';
 import { TOUCH_BUTTON } from '../lib/conversation-touch.ts';
 import { PersonalDataSection } from './conversation-erase.tsx';
 import { DraftPanel, replyTextFor } from './conversation-drafts.tsx';
-import { IntentBadge, IntentBar, useSpamSuggested } from './conversation-intent.tsx';
+import { IntentBadge, IntentBar, useCustomerAiState, useSpamSuggested } from './conversation-intent.tsx';
 import { PaneError, ThreadSkeleton } from './conversation-states.tsx';
 import { REPLY_INSERT_EVENT, type ReplyInsert } from './quote-send.tsx';
 import { AiWrittenBadge } from './ai-written-badge.tsx';
@@ -42,6 +43,17 @@ export interface PostRef {
 
 // The kernel's code of a refused call.
 const codeOf = (error: unknown): string | null => ((error as { code?: unknown } | null)?.code as string | undefined) ?? null;
+
+export function isConversationAccessDenied(error: unknown): boolean {
+  const err = error as { code?: unknown; status?: unknown } | null;
+  const code = typeof err?.code === 'string' ? err.code : null;
+  // MFA_REQUIRED also returns HTTP 401, but means second-factor verification is owed rather than permission revocation:
+  // keep the query in its error state (transiently unmounting PII) so afterMfaRefusal can auto-refetch once verified (#3673).
+  if (code === 'MFA_REQUIRED') return false;
+  if (code === 'CONVERSATION_NOT_FOUND' || code === 'FORBIDDEN' || code === 'UNAUTHORIZED' || code === 'NOT_FOUND') return true;
+  const status = typeof err?.status === 'number' ? err.status : null;
+  return status === 401 || status === 403 || status === 404;
+}
 
 // The codes a failed or unclear send is worded for; any other is shown as it is.
 // The mark of an email whose sender the receiving server did not vouch for (#2439): the name and address in From may be anyone's. The server sends `senderUnverified`
@@ -93,20 +105,533 @@ export function useContactName() {
 
 type ListInput = ReturnType<typeof inboxListInput> & { posts?: Array<{ connectionId: string; externalPostId: string }> };
 
+export interface VerifyQueryState {
+  isFetching?: boolean | undefined;
+  fetchStatus?: string | undefined;
+  dataUpdateCount?: number | undefined;
+  errorUpdateCount?: number | undefined;
+  hasError?: boolean | undefined;
+  dataUpdatedAt?: number | undefined;
+}
+
+export function isVerifyWaitingOffline(
+  fetchStatus?: string,
+  onLine: boolean | undefined = typeof navigator === 'undefined' ? undefined : navigator.onLine,
+): boolean {
+  return fetchStatus === 'paused' || onLine === false;
+}
+
+export function OfflineVerifyNotice({ testId = 'verify-offline' }: { testId?: string }) {
+  const t = useTranslations('conversations.inbox');
+  return (
+    <div role="status" className="rounded-md border border-border bg-muted px-3 py-2 text-sm text-muted-foreground" data-testid={testId}>
+      {t('verifyingOffline')}
+    </div>
+  );
+}
+
+const activeFreshVerifies = new Map<string, { promise: Promise<unknown>; currentTick: boolean }>();
+
+// Cancels an already in-flight stale request (only when cancelExisting is true) and starts or joins a fresh post-unpause
+// verification fetch, sharing that single promise between sibling panes observing the same queryKey (#3673).
+export function verifySharedRefetch(
+  queryKey: readonly unknown[],
+  refetch: () => Promise<unknown>,
+  cancelExisting = false,
+): Promise<unknown> {
+  const keyId = JSON.stringify(queryKey);
+  const existing = activeFreshVerifies.get(keyId);
+  if (existing && (!cancelExisting || existing.currentTick)) return existing.promise;
+  const qc = queryClient as { cancelQueries?: (filters: { queryKey: readonly unknown[]; exact: boolean }) => Promise<void> };
+  const start = cancelExisting && typeof qc.cancelQueries === 'function' ? qc.cancelQueries({ queryKey, exact: true }).then(() => refetch()) : refetch();
+  const entry: { promise: Promise<unknown>; currentTick: boolean } = {
+    currentTick: true,
+    promise: Promise.resolve(),
+  };
+  entry.promise = start.finally(() => {
+    if (activeFreshVerifies.get(keyId) === entry) activeFreshVerifies.delete(keyId);
+  });
+  activeFreshVerifies.set(keyId, entry);
+  queueMicrotask(() => {
+    entry.currentTick = false;
+  });
+  return entry.promise;
+}
+
+export function verifyUpdateTotal(state: VerifyQueryState | undefined): number | null {
+  if (!state || state.dataUpdateCount === undefined || state.errorUpdateCount === undefined) return null;
+  return state.dataUpdateCount + state.errorUpdateCount;
+}
+
+// Reads counters and live fetchStatus from queryClient.getQueryState without reading tracked fields on QueryObserverResult during normal polling (#3673).
+export function readVerifyQueryState(queryKey: readonly unknown[] | undefined, resultFetching?: boolean): VerifyQueryState | undefined {
+  const cacheState = queryKey
+    ? (
+        queryClient as {
+          getQueryState?: (key: readonly unknown[]) =>
+            | {
+                dataUpdateCount?: number;
+                errorUpdateCount?: number;
+                fetchStatus?: string;
+                status?: string;
+                error?: unknown;
+                dataUpdatedAt?: number;
+              }
+            | undefined;
+        }
+      ).getQueryState?.(queryKey)
+    : undefined;
+  if (cacheState && cacheState.dataUpdateCount !== undefined && cacheState.errorUpdateCount !== undefined) {
+    return {
+      isFetching: Boolean(resultFetching) || cacheState.fetchStatus === 'fetching',
+      fetchStatus: cacheState.fetchStatus,
+      dataUpdateCount: cacheState.dataUpdateCount,
+      errorUpdateCount: cacheState.errorUpdateCount,
+      hasError: cacheState.status === 'error' || Boolean(cacheState.error),
+      dataUpdatedAt: cacheState.dataUpdatedAt,
+    };
+  }
+  return resultFetching !== undefined ? { isFetching: resultFetching } : undefined;
+}
+
+export function hasVerifySettled({
+  state,
+  minUpdates,
+  refetchSettled,
+}: {
+  state: VerifyQueryState | undefined;
+  minUpdates: number | null;
+  refetchSettled: boolean;
+}): boolean {
+  if (!refetchSettled || state?.isFetching) return false;
+  const total = verifyUpdateTotal(state);
+  if (total !== null && minUpdates !== null) return total >= minUpdates;
+  return true;
+}
+
+export function shouldMarkConversationRead(args: {
+  threadVisible: boolean;
+  unread: boolean;
+  seen: number | null;
+  lastMarkedSeq: number | null;
+  inFlightSeq: number | null;
+}): boolean {
+  const highWater = Math.max(args.lastMarkedSeq ?? -1, args.inFlightSeq ?? -1);
+  return args.threadVisible && args.unread && args.seen !== null && args.seen > highWater;
+}
+
+// Preserves the nearest scrollable containers' scrollTop (and optional window scrollY on narrow viewports) across
+// temporary hidden/skeleton states without O(N) DOM measurements on scroll.
+export function usePreserveParentScroll(
+  contentRef: RefObject<HTMLElement | null>,
+  hidden: boolean,
+  mounted: boolean,
+  scrollOnWindow = false,
+): void {
+  const savedTopsRef = useRef<number[]>([]);
+  const savedWindowYRef = useRef(0);
+  const wasHiddenRef = useRef(hidden);
+
+  useEffect(() => {
+    if (!mounted) return;
+    const content = contentRef.current;
+    const parents = [content?.parentElement ?? null, content?.parentElement?.parentElement ?? null].filter(
+      (el): el is HTMLElement => el !== null,
+    );
+    const onScroll = () => {
+      if (hidden) return;
+      savedTopsRef.current = parents.map((p) => p.scrollTop);
+      if (scrollOnWindow && typeof window !== 'undefined') savedWindowYRef.current = window.scrollY;
+    };
+    for (const p of parents) p.addEventListener('scroll', onScroll, { passive: true });
+    if (scrollOnWindow && typeof window !== 'undefined') window.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      for (const p of parents) p.removeEventListener('scroll', onScroll);
+      if (scrollOnWindow && typeof window !== 'undefined') window.removeEventListener('scroll', onScroll);
+    };
+  }, [contentRef, hidden, mounted, scrollOnWindow]);
+
+  useEffect(() => {
+    if (wasHiddenRef.current && !hidden && mounted) {
+      const content = contentRef.current;
+      const parents = [content?.parentElement ?? null, content?.parentElement?.parentElement ?? null];
+      savedTopsRef.current.forEach((top, i) => {
+        const target = parents[i];
+        if (target && top > 0) target.scrollTop = top;
+      });
+      if (scrollOnWindow && typeof window !== 'undefined' && savedWindowYRef.current > 0) {
+        window.scrollTo({ top: savedWindowYRef.current, behavior: 'instant' });
+      }
+    }
+    if (hidden) wasHiddenRef.current = true;
+    else if (mounted) wasHiddenRef.current = false;
+  }, [contentRef, hidden, mounted, scrollOnWindow]);
+}
+
+export const isThreadContentVisible = ({
+  paused,
+  verifyingAccess,
+  isPending,
+  error,
+  hasData,
+}: {
+  paused: boolean;
+  verifyingAccess: boolean;
+  isPending: boolean;
+  error: unknown;
+  hasData: boolean;
+}): boolean => !paused && !verifyingAccess && !isPending && !error && hasData;
+
+// Re-verifies access before exposing stale cached data when a pane or list resumes from a paused state or deferred deep link (#3673).
+// Subscribes to QueryCache only while verifying so normal polling never re-renders components on isFetching/dataUpdatedAt changes.
+export function useVerifyUnpauseState(
+  paused: boolean,
+  refetch: (cancelExisting?: boolean) => Promise<unknown>,
+  active = true,
+  verifyOnMount = false,
+  queryKey?: readonly unknown[],
+  onBeforeRefetch?: () => number,
+  hasData = true,
+): { verifying: boolean; offline: boolean } {
+  const queryKeyId = queryKey ? JSON.stringify(queryKey) : '';
+  const liveState = readVerifyQueryState(queryKey);
+  const initialTotal = verifyUpdateTotal(liveState);
+  const [prevPaused, setPrevPaused] = useState(paused);
+  const [verifyKeyId, setVerifyKeyId] = useState(queryKeyId);
+  const [verifying, setVerifying] = useState(() => verifyOnMount && !paused && active && hasData);
+  const [offline, setOffline] = useState(false);
+  const [minUpdates, setMinUpdates] = useState<number | null>(() => (verifyOnMount && !paused && active && hasData && initialTotal !== null ? initialTotal + 1 : null));
+  const [cancelExisting, setCancelExisting] = useState(() => verifyOnMount && !paused && active && hasData && liveState?.isFetching === true);
+  const [verifyEpoch, setVerifyEpoch] = useState(() => (verifyOnMount && !paused && active && hasData ? 1 : 0));
+
+  if (verifyKeyId !== queryKeyId) {
+    setVerifyKeyId(queryKeyId);
+    if (verifying && active) {
+      // Keep verifying against the new queryKey's baseline so switching tabs/filters mid-verification never exposes unverified cache.
+      setMinUpdates(initialTotal !== null ? initialTotal + 1 : null);
+      setCancelExisting(liveState?.isFetching === true);
+      setVerifyEpoch((n) => n + 1);
+    } else if (verifying) {
+      setVerifying(false);
+      setOffline(false);
+      setMinUpdates(null);
+      setCancelExisting(false);
+    }
+  }
+  if (prevPaused !== paused) {
+    setPrevPaused(paused);
+    if (prevPaused && !paused && active) {
+      setVerifying(true);
+      setMinUpdates(initialTotal !== null ? initialTotal + 1 : null);
+      setCancelExisting(liveState?.isFetching === true);
+      setVerifyEpoch((n) => n + 1);
+    } else if (paused) {
+      setVerifying(false);
+      setOffline(false);
+      setMinUpdates(null);
+      setCancelExisting(false);
+    }
+  }
+  if (!active && verifying) {
+    setVerifying(false);
+    setOffline(false);
+    setMinUpdates(null);
+    setCancelExisting(false);
+  }
+  const refetchNow = useRef(refetch);
+  refetchNow.current = refetch;
+  const beforeRef = useRef(onBeforeRefetch);
+  beforeRef.current = onBeforeRefetch;
+  const queryKeyRef = useRef(queryKey);
+  queryKeyRef.current = queryKey;
+  const minUpdatesRef = useRef(minUpdates);
+  minUpdatesRef.current = minUpdates;
+  const cancelExistingRef = useRef(cancelExisting);
+  cancelExistingRef.current = cancelExisting;
+
+  useEffect(() => {
+    if (!verifying) {
+      setOffline(false);
+      return;
+    }
+    let cancelled = false;
+    let attempts = 0;
+    let refetchSettled = false;
+    const targetKey = queryKeyRef.current;
+    const targetKeyId = verifyKeyId;
+    const extraUpdates = beforeRef.current?.() ?? 0;
+    const forceCancelOnTrim = extraUpdates > 0;
+    if (extraUpdates > 0 && minUpdatesRef.current !== null) {
+      const adjusted = minUpdatesRef.current + extraUpdates;
+      minUpdatesRef.current = adjusted;
+      setMinUpdates(adjusted);
+    }
+    const syncOffline = (state = readVerifyQueryState(targetKey)) => {
+      if (!cancelled) setOffline(isVerifyWaitingOffline(state?.fetchStatus));
+    };
+    syncOffline();
+    const settleIfReady = (resFetching?: boolean): boolean => {
+      const latest = readVerifyQueryState(targetKey, resFetching);
+      if (hasVerifySettled({ state: latest, minUpdates: minUpdatesRef.current, refetchSettled })) {
+        setVerifying(false);
+        setOffline(false);
+        return true;
+      }
+      syncOffline(latest);
+      return false;
+    };
+    const onConn = () => syncOffline();
+    if (typeof window !== 'undefined') {
+      window.addEventListener('online', onConn);
+      window.addEventListener('offline', onConn);
+    }
+    const unsubscribe = (
+      queryClient as {
+        getQueryCache?: () => { subscribe: (listener: (event: { query?: { queryKey?: readonly unknown[] } }) => void) => () => void };
+      }
+    )
+      .getQueryCache?.()
+      ?.subscribe((event) => {
+        if (cancelled || !event.query?.queryKey || !targetKeyId) return;
+        if (JSON.stringify(event.query.queryKey) === targetKeyId) {
+          settleIfReady();
+        }
+      });
+    const runVerify = () => {
+      attempts += 1;
+      void refetchNow
+        .current(attempts === 1 && (cancelExistingRef.current || forceCancelOnTrim))
+        .then((res) => {
+          if (cancelled) return;
+          const resFetching = (res as { isFetching?: boolean } | undefined)?.isFetching;
+          refetchSettled = true;
+          if (settleIfReady(resFetching)) return;
+          const latest = readVerifyQueryState(targetKey, resFetching);
+          if (!latest?.isFetching && verifyUpdateTotal(latest) !== null && minUpdatesRef.current !== null && attempts < 3) {
+            runVerify();
+          }
+        })
+        .catch(() => {
+          if (cancelled) return;
+          const latest = readVerifyQueryState(targetKey);
+          if (!latest?.isFetching && verifyUpdateTotal(latest) === null) {
+            setVerifying(false);
+            setOffline(false);
+          }
+        });
+    };
+    runVerify();
+    return () => {
+      cancelled = true;
+      unsubscribe?.();
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('online', onConn);
+        window.removeEventListener('offline', onConn);
+      }
+      if (targetKeyId) activeFreshVerifies.delete(targetKeyId);
+    };
+  }, [verifying, verifyEpoch, verifyKeyId]);
+
+  useEffect(() => {
+    if (verifying) return;
+    if (paused || !active || hasData) {
+      setOffline(false);
+      return;
+    }
+    let cancelled = false;
+    const targetKey = queryKeyRef.current;
+    const targetKeyId = verifyKeyId;
+    const syncColdOffline = () => {
+      if (cancelled) return;
+      const latest = readVerifyQueryState(targetKey);
+      setOffline(!latest?.hasError && isVerifyWaitingOffline(latest?.fetchStatus));
+    };
+    syncColdOffline();
+    if (typeof window !== 'undefined') {
+      window.addEventListener('online', syncColdOffline);
+      window.addEventListener('offline', syncColdOffline);
+    }
+    const unsubscribe = (
+      queryClient as {
+        getQueryCache?: () => { subscribe: (listener: (event: { query?: { queryKey?: readonly unknown[] } }) => void) => () => void };
+      }
+    )
+      .getQueryCache?.()
+      ?.subscribe((event) => {
+        if (cancelled || !event.query?.queryKey || !targetKeyId) return;
+        if (JSON.stringify(event.query.queryKey) === targetKeyId) {
+          syncColdOffline();
+        }
+      });
+    return () => {
+      cancelled = true;
+      unsubscribe?.();
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('online', syncColdOffline);
+        window.removeEventListener('offline', syncColdOffline);
+      }
+    };
+  }, [verifying, paused, active, hasData, verifyKeyId]);
+
+  return { verifying, offline };
+}
+
+export function useVerifyOnUnpause(
+  paused: boolean,
+  refetch: (cancelExisting?: boolean) => Promise<unknown>,
+  active = true,
+  verifyOnMount = false,
+  queryKey?: readonly unknown[],
+  onBeforeRefetch?: () => number,
+  hasData = true,
+): boolean {
+  return useVerifyUnpauseState(paused, refetch, active, verifyOnMount, queryKey, onBeforeRefetch, hasData).verifying;
+}
+
+export function shouldTrimPausedPages(paused: boolean, enabled: boolean, pageCount: number, hasError = false): boolean {
+  return (paused || !enabled) && pageCount > 1 && !hasError;
+}
+
+export function trimInfinitePagesToFirst<T extends { pages: unknown[]; pageParams: unknown[] }>(data: T | undefined): { next: T | undefined; trimmed: boolean } {
+  if (!data || data.pages.length <= 1) return { next: data, trimmed: false };
+  return {
+    next: { ...data, pages: data.pages.slice(0, 1), pageParams: data.pageParams.slice(0, 1) },
+    trimmed: true,
+  };
+}
+
+const EMPTY_CONVERSATION_PAGES: ConversationSummary[] = [];
+
 // The threads of a list as pages (#2339): the first page and every older page asked for with "load older", each read again every POLL_MS so the
 // list stays live. A page starts after the last thread of the one before it (last message time and id), so a thread that moves up between two
 // reads can land on two pages: it is shown once (mergeConversationPages).
-export function useConversationPages(input: ListInput) {
-  const pages = useInfiniteQuery({
-    ...orpc.conversations.list.infiniteOptions({
-      input: (cursor: { at: string | null; id: string } | undefined) => ({ ...input, ...(cursor ? { before: cursor } : {}) }),
-      initialPageParam: undefined as { at: string | null; id: string } | undefined,
-      getNextPageParam: nextConversationCursor,
-    }),
-    refetchInterval: POLL_MS,
+export function useConversationPages(input: ListInput, { enabled = true, paused = false }: { enabled?: boolean; paused?: boolean } = {}) {
+  const listOptions = orpc.conversations.list.infiniteOptions({
+    input: (cursor: { at: string | null; id: string } | undefined) => ({ ...input, ...(cursor ? { before: cursor } : {}) }),
+    initialPageParam: undefined as { at: string | null; id: string } | undefined,
+    getNextPageParam: nextConversationCursor,
   });
-  const items = useMemo(() => mergeConversationPages(pages.data?.pages ?? []), [pages.data]);
-  return { items, loaded: pages.data !== undefined, isPending: pages.isPending, error: pages.error, hasMore: pages.hasNextPage, loadingMore: pages.isFetchingNextPage, loadFailed: pages.isFetchNextPageError, loadMore: () => void pages.fetchNextPage(), retry: () => void pages.refetch() };
+  const listKeyId = JSON.stringify(listOptions.queryKey);
+  const [denied, setDenied] = useState<{ id: string; error: Error } | null>(null);
+  const currentDenied = denied?.id === listKeyId ? denied.error : null;
+  const pages = useInfiniteQuery({
+    ...listOptions,
+    enabled: enabled && !paused && !currentDenied,
+    refetchInterval: enabled && !paused && !currentDenied ? POLL_MS : false,
+    refetchOnWindowFocus: enabled && !paused && !currentDenied,
+    refetchOnReconnect: enabled && !paused && !currentDenied,
+  });
+  const effectiveError = pages.error ?? (pages.data ? null : currentDenied);
+  const accessDenied = isConversationAccessDenied(effectiveError);
+  // Verify on unpause or deferred activation: trim any previously loaded older pages down to page 1 even when enabled is still false
+  // (?settings=true return) so re-enabling only requests page 1, then users load older pages on demand.
+  // Never run setQueryData over an errored list query (which in TanStack Query resets status='error' to 'success');
+  // purge denied caches cleanly in two commits (disable observers first so cache removal never re-triggers a fetch)
+  // and leave transient errors intact so subsequent visits still see the error until refetched (#3673).
+  const applyPageTrim = (state = readVerifyQueryState(listOptions.queryKey)) => {
+    let trimmed = false;
+    const opts = typeof state?.dataUpdatedAt === 'number' && state.dataUpdatedAt > 0 ? { updatedAt: state.dataUpdatedAt } : {};
+    queryClient.setQueryData(
+      listOptions.queryKey,
+      (old) => {
+        const res = trimInfinitePagesToFirst(old);
+        if (res.trimmed) trimmed = true;
+        return res.next;
+      },
+      opts,
+    );
+    return trimmed;
+  };
+  const trimCachedPagesToFirst = () => {
+    const state = readVerifyQueryState(listOptions.queryKey);
+    if ((pages.data?.pages.length ?? 0) <= 1 || pages.error || state?.hasError) return 0;
+    return applyPageTrim(state) ? 1 : 0;
+  };
+  useEffect(() => {
+    let cancelled = false;
+    const qc = queryClient as {
+      cancelQueries?: (filters: { queryKey: readonly unknown[]; exact: boolean }) => Promise<void>;
+      getQueryData?: (queryKey: readonly unknown[]) => unknown;
+    };
+    const purgeDenied = () => {
+      if (cancelled) return;
+      queryClient.removeQueries({ queryKey: listOptions.queryKey, exact: true });
+    };
+    if (!pages.error && pages.data && currentDenied) {
+      setDenied(null);
+      return;
+    }
+    if (currentDenied) {
+      const live = readVerifyQueryState(listOptions.queryKey);
+      if (pages.data !== undefined || isConversationAccessDenied(pages.error)) {
+        if (live?.isFetching && typeof qc.cancelQueries === 'function') {
+          void qc.cancelQueries({ queryKey: listOptions.queryKey, exact: true }).then(purgeDenied);
+        } else {
+          purgeDenied();
+        }
+      }
+      return () => {
+        cancelled = true;
+      };
+    }
+    if (pages.error && isConversationAccessDenied(pages.error)) {
+      setDenied({ id: listKeyId, error: pages.error });
+      return;
+    }
+    if (!paused && enabled) return;
+    const trimIfAllowed = () => {
+      if (cancelled) return;
+      const state = readVerifyQueryState(listOptions.queryKey);
+      if (pages.error || state?.hasError) return;
+      const cachedLen =
+        (typeof qc.getQueryData === 'function'
+          ? (qc.getQueryData(listOptions.queryKey) as { pages?: unknown[] } | undefined)?.pages?.length
+          : pages.data?.pages.length) ?? 0;
+      if (cachedLen > 1) applyPageTrim(state);
+    };
+    const live = readVerifyQueryState(listOptions.queryKey);
+    if (live?.isFetching && typeof qc.cancelQueries === 'function') {
+      void qc.cancelQueries({ queryKey: listOptions.queryKey, exact: true }).then(trimIfAllowed);
+    } else if (shouldTrimPausedPages(paused, enabled, pages.data?.pages.length ?? 0, Boolean(pages.error) || Boolean(live?.hasError))) {
+      trimIfAllowed();
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [listKeyId, paused, enabled, currentDenied, pages.data?.pages.length, pages.error]); // eslint-disable-line react-hooks/exhaustive-deps
+  const { verifying, offline: verifyingOffline } = useVerifyUnpauseState(
+    paused || !enabled || Boolean(currentDenied),
+    (cancelExisting) => verifySharedRefetch(listOptions.queryKey, () => pages.refetch({ cancelRefetch: false }), cancelExisting),
+    enabled,
+    false,
+    listOptions.queryKey,
+    trimCachedPagesToFirst,
+    pages.data !== undefined,
+  );
+  const mergedItems = useMemo(() => mergeConversationPages(pages.data?.pages ?? []), [pages.data]);
+  const items = accessDenied ? EMPTY_CONVERSATION_PAGES : mergedItems;
+  const pageCount = accessDenied ? 0 : (pages.data?.pages.length ?? 0);
+  return {
+    items,
+    pageCount,
+    loaded: !accessDenied && enabled && pages.data !== undefined && !verifying,
+    isPending: !accessDenied && (!enabled || (pages.data === undefined && pages.isPending) || verifying),
+    verifying,
+    verifyingOffline,
+    error: effectiveError,
+    hasMore: accessDenied ? false : pages.hasNextPage,
+    loadingMore: accessDenied ? false : pages.isFetchingNextPage,
+    loadFailed: !accessDenied && pages.isFetchNextPageError,
+    loadMore: () => void pages.fetchNextPage(),
+    retry: () => {
+      if (currentDenied) {
+        queryClient.removeQueries({ queryKey: listOptions.queryKey, exact: true });
+        setDenied(null);
+      } else {
+        void pages.refetch();
+      }
+    },
+  };
 }
 
 // "Load older conversations" under a list: shown only while the server says there are more.
@@ -183,7 +708,7 @@ export function ConversationInbox({ kind, posts, empty }: { kind: ConversationKi
           </TabsList>
         </Tabs>
         {list.isPending && <Spinner />}
-        {list.error && <PaneError message={errorMessage(list.error)} onRetry={list.retry} testId="inbox-list-error" />}
+        {Boolean(list.error) && <PaneError message={errorMessage(list.error)} onRetry={list.retry} testId="inbox-list-error" />}
         {list.loaded && items.length === 0 && <Empty title={empty ?? t(`empty.${status}`)} />}
         <ul className="divide-y divide-border rounded-md border border-border">
           {items.map((c) => (
@@ -206,7 +731,7 @@ export function ConversationListItem({ conversation: c, open, onOpen, suggested 
   const contactName = useContactName();
   const { members } = useMe();
   return (
-    <li>
+    <li data-conversation-id={c.id}>
       <button
         type="button"
         data-testid="conversation-item"
@@ -263,99 +788,219 @@ function ComposingNote({ userIds, members }: { userIds: readonly string[]; membe
 }
 
 // `showErase`: draws the personal-data section (erasing the customer) under the thread, for a screen that has no contact panel beside it.
-export function ConversationThread({ conversationId, onGone, onOpenConversation, showErase = false }: { conversationId: string; onGone: () => void; onOpenConversation?: ((id: string) => void) | undefined; showErase?: boolean }) {
+// `paused`: holds auto-marking the thread read while a modal drawer covers the screen (#3673).
+export function ConversationThread({
+  conversationId,
+  onGone,
+  onOpenConversation,
+  showErase = false,
+  paused = false,
+  verifyOnMount = false,
+}: {
+  conversationId: string;
+  onGone: () => void;
+  onOpenConversation?: ((id: string) => void) | undefined;
+  showErase?: boolean;
+  paused?: boolean;
+  verifyOnMount?: boolean;
+}) {
   const t = useTranslations('conversations');
   const f = useFormat();
   const contactName = useContactName();
   const { userId, members, canWrite, isAdmin } = useMe();
-  const detail = useQuery({ ...orpc.conversations.get.queryOptions({ input: { conversationId } }), refetchInterval: POLL_MS });
+  const detailOptions = orpc.conversations.get.queryOptions({ input: { conversationId } });
+  const [denied, setDenied] = useState<{ id: string; error: Error } | null>(null);
+  const currentDenied = denied?.id === conversationId ? denied.error : null;
+  const detail = useQuery({
+    ...detailOptions,
+    enabled: !paused && !currentDenied,
+    refetchInterval: paused || currentDenied ? false : POLL_MS,
+    refetchOnWindowFocus: !paused && !currentDenied,
+    refetchOnReconnect: !paused && !currentDenied,
+  });
   const data = detail.data;
+  // Re-verify access with a fresh post-unpause request (shared with ContactPanel via verifySharedRefetch) before showing private messages,
+  // while keeping ReplyBox mounted across verifying/error states so typed text and live send mutations survive.
+  const { verifying: verifyingAccess, offline: verifyingOffline } = useVerifyUnpauseState(
+    paused || Boolean(currentDenied),
+    (cancelExisting) => verifySharedRefetch(detailOptions.queryKey, () => detail.refetch({ cancelRefetch: false }), cancelExisting),
+    true,
+    verifyOnMount,
+    detailOptions.queryKey,
+    undefined,
+    data !== undefined,
+  );
   // The last message the sender has seen: where the thread stood when it was opened, and what they have since acknowledged.
   const [seen, setSeen] = useState<number | null>(null);
+  const [markedConversationId, setMarkedConversationId] = useState(conversationId);
+  const lastMarkedReadSeq = useRef<number | null>(null);
+  const inFlightReadSeq = useRef<number | null>(null);
+  if (markedConversationId !== conversationId) {
+    setMarkedConversationId(conversationId);
+    lastMarkedReadSeq.current = null;
+    inFlightReadSeq.current = null;
+  }
   const lastSeq = data?.conversation.lastSeq ?? null;
+  const aiState = useCustomerAiState(!paused && canWrite && getConfig().aiEnabled === true, lastSeq);
+  const aiOff = aiState === 'off';
+  const threadVisible = isThreadContentVisible({ paused, verifyingAccess, isPending: detail.isPending, error: detail.error, hasData: data !== undefined });
   useEffect(() => {
-    if (seen === null && lastSeq !== null) setSeen(lastSeq);
-  }, [seen, lastSeq]);
-  // Opening a thread reads it, for this member.
-  const markRead = useMutation({ mutationFn: (seq: number) => client.conversations.markRead({ conversationId, seq }), onSuccess: refresh });
+    if (threadVisible && seen === null && lastSeq !== null) setSeen(lastSeq);
+  }, [threadVisible, seen, lastSeq]);
+  // Opening a thread reads it, for this member. Remember both committed and in-flight seqs so closing/reopening Settings or mobile back
+  // never fires duplicate markRead mutations while still allowing retries after failures and updates when "Đã xem" advances `seen`.
+  const markRead = useMutation({
+    mutationFn: (seq: number) => {
+      inFlightReadSeq.current = Math.max(inFlightReadSeq.current ?? -1, seq);
+      return client.conversations.markRead({ conversationId, seq });
+    },
+    onSuccess: (_done, seq) => {
+      lastMarkedReadSeq.current = Math.max(lastMarkedReadSeq.current ?? -1, seq);
+      if (inFlightReadSeq.current !== null && inFlightReadSeq.current <= seq) inFlightReadSeq.current = null;
+      refresh();
+    },
+    onError: (_err, seq) => {
+      if (inFlightReadSeq.current !== null && inFlightReadSeq.current <= seq) inFlightReadSeq.current = null;
+    },
+  });
   const unread = data?.conversation.unread ?? false;
   // Marks what the member has seen, not what has arrived: a message that comes in while the thread is open stays unread until they
   // acknowledge it ("Đã xem"), which moves `seen`.
   useEffect(() => {
-    if (unread && seen !== null) markRead.mutate(seen);
-  }, [unread, seen]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (
+      shouldMarkConversationRead({
+        threadVisible,
+        unread,
+        seen,
+        lastMarkedSeq: lastMarkedReadSeq.current,
+        inFlightSeq: inFlightReadSeq.current,
+      }) &&
+      seen !== null
+    ) {
+      markRead.mutate(seen);
+    }
+  }, [threadVisible, unread, seen]); // eslint-disable-line react-hooks/exhaustive-deps
+  const effectiveError = detail.error ?? (data ? null : currentDenied);
+  const accessDenied = isConversationAccessDenied(effectiveError);
   useEffect(() => {
-    // A thread the reader may no longer read is gone from their screen.
-    if (codeOf(detail.error) === 'CONVERSATION_NOT_FOUND') onGone();
-  }, [detail.error]); // eslint-disable-line react-hooks/exhaustive-deps
-  if (detail.isPending) return <ThreadSkeleton />;
-  if (detail.error || !data) return <PaneError message={errorMessage(detail.error)} onRetry={() => void detail.refetch()} testId="thread-error" />;
+    // A thread the reader may no longer read is removed from their screen and cache in two commits:
+    // commit 1 pins `denied` across siblings so every observer passes `enabled: false`; commit 2 purges the cache
+    // entry without triggering a sibling `QueryObserver.setOptions` refetch.
+    if (!detail.error && data && currentDenied) {
+      setDenied(null);
+      return;
+    }
+    if (currentDenied) {
+      if (data !== undefined || isConversationAccessDenied(detail.error)) {
+        queryClient.removeQueries({ queryKey: detailOptions.queryKey, exact: true });
+      }
+      return;
+    }
+    if (detail.error && isConversationAccessDenied(detail.error)) {
+      setDenied({ id: conversationId, error: detail.error });
+    }
+    if (codeOf(detail.error) === 'CONVERSATION_NOT_FOUND') {
+      onGone();
+      void Promise.resolve().then(() => queryClient.removeQueries({ queryKey: detailOptions.queryKey, exact: true }));
+    }
+  }, [conversationId, data, currentDenied, detail.error]); // eslint-disable-line react-hooks/exhaustive-deps
+  const hideThreadContent = paused || verifyingAccess || Boolean(effectiveError);
+  const threadRef = useRef<HTMLDivElement>(null);
+  usePreserveParentScroll(threadRef, hideThreadContent, data !== undefined && !accessDenied, true);
+  if (!accessDenied && (detail.isPending || ((paused || verifyingAccess) && !data))) {
+    return !paused && verifyingOffline ? <OfflineVerifyNotice testId="thread-offline" /> : <ThreadSkeleton />;
+  }
+  if (!data || accessDenied) {
+    return (
+      <PaneError
+        message={errorMessage(effectiveError)}
+        onRetry={() => {
+          if (currentDenied) setDenied(null);
+          else void detail.refetch();
+        }}
+        testId="thread-error"
+      />
+    );
+  }
   const c = data.conversation;
   const newer = seen !== null && c.lastSeq > seen;
+  const showPrivateThread = !effectiveError;
   return (
-    <div className="space-y-4" data-testid="conversation-thread">
-      <header className="flex flex-wrap items-center justify-between gap-2">
-        <div className="min-w-0">
-          <h2 className="truncate text-base font-semibold text-foreground">{contactName(c.contact)}</h2>
-          {c.kind === 'email' && (
-            <p className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-muted-foreground" data-testid="conversation-address">
-              <span className="truncate">{c.contact.address}</span>
-              {c.senderUnverified && <UnverifiedMark explain />}
+    <>
+      {(paused || verifyingAccess) && (verifyingAccess && !paused && verifyingOffline ? <OfflineVerifyNotice testId="thread-offline" /> : <ThreadSkeleton />)}
+      {!paused && !verifyingAccess && detail.error && <PaneError message={errorMessage(detail.error)} onRetry={() => void detail.refetch()} testId="thread-error" />}
+      <div ref={threadRef} className={hideThreadContent ? 'hidden' : 'space-y-4'} data-testid="conversation-thread">
+      {showPrivateThread && (
+        <>
+          <header className="flex flex-wrap items-center justify-between gap-2">
+            <div className="min-w-0">
+              <h2 className="truncate text-base font-semibold text-foreground">{contactName(c.contact)}</h2>
+              {c.kind === 'email' && (
+                <p className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-muted-foreground" data-testid="conversation-address">
+                  <span className="truncate">{c.contact.address}</span>
+                  {c.senderUnverified && <UnverifiedMark explain />}
+                </p>
+              )}
+              {c.kind === 'email' && c.subject && (
+                <p className="truncate text-sm text-foreground" data-testid="conversation-subject">
+                  {c.subject}
+                </p>
+              )}
+              <p className="truncate text-xs text-muted-foreground">
+                {c.channel.displayName}
+                {c.contact.partyName && c.contact.displayName ? ` · ${c.contact.displayName}` : ''}
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant={c.status === 'new' ? 'default' : 'outline'} data-testid="conversation-status">
+                {t(`status.${c.status}`)}
+              </Badge>
+              {/* A one-person org has no one else to hand a thread to (#3637), so the control appears with two members or more, or when the thread already has someone in charge (who can then be changed or cleared). */}
+              {canWrite && (members.length >= 2 || c.assigneeUserId !== null) && <AssignSelect conversation={c} members={members} />}
+              {canWrite && <ResolveButton conversation={c} />}
+            </div>
+          </header>
+          {canWrite ? <IntentBar conversation={c} paused={paused || hideThreadContent || aiState === 'pending'} aiOff={aiOff} /> : c.intent ? <IntentBadge intent={c.intent} applied /> : null}
+          {data.parentId && (
+            <div className="flex items-center justify-between gap-2 rounded-md border border-border bg-muted px-3 py-2 text-xs text-muted-foreground" data-testid="conversation-parent-link">
+              <span>{t('fromComment')}</span>
+              {onOpenConversation && (
+                <Button type="button" size="sm" className={TOUCH_BUTTON} variant="ghost" onClick={() => onOpenConversation(data.parentId as string)}>
+                  {t('openParentComment')}
+                </Button>
+              )}
+            </div>
+          )}
+          {data.gap && (
+            <p role="note" className="rounded-md border border-border bg-muted px-3 py-2 text-sm text-muted-foreground" data-testid="conversation-gap">
+              {t('gap', { from: f.dateTime(data.gap.from), to: f.dateTime(data.gap.to) })}
             </p>
           )}
-          {c.kind === 'email' && c.subject && (
-            <p className="truncate text-sm text-foreground" data-testid="conversation-subject">
-              {c.subject}
-            </p>
+          {newer && (
+            <div role="status" className="flex items-center justify-between gap-2 rounded-md border border-border bg-muted px-3 py-2 text-sm" data-testid="conversation-newer">
+              <span>{t('newer')}</span>
+              <Button type="button" size="sm" className={TOUCH_BUTTON} variant="outline" onClick={() => setSeen(c.lastSeq)}>
+                {t('seenIt')}
+              </Button>
+            </div>
           )}
-          <p className="truncate text-xs text-muted-foreground">
-            {c.channel.displayName}
-            {c.contact.partyName && c.contact.displayName ? ` · ${c.contact.displayName}` : ''}
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge variant={c.status === 'new' ? 'default' : 'outline'} data-testid="conversation-status">
-            {t(`status.${c.status}`)}
-          </Badge>
-          {/* A one-person org has no one else to hand a thread to (#3637), so the control appears with two members or more, or when the thread already has someone in charge (who can then be changed or cleared). */}
-          {canWrite && (members.length >= 2 || c.assigneeUserId !== null) && <AssignSelect conversation={c} members={members} />}
-          {canWrite && <ResolveButton conversation={c} />}
-        </div>
-      </header>
-      {canWrite ? <IntentBar conversation={c} /> : c.intent ? <IntentBadge intent={c.intent} applied /> : null}
-      {data.parentId && (
-        <div className="flex items-center justify-between gap-2 rounded-md border border-border bg-muted px-3 py-2 text-xs text-muted-foreground" data-testid="conversation-parent-link">
-          <span>{t('fromComment')}</span>
-          {onOpenConversation && (
-            <Button type="button" size="sm" className={TOUCH_BUTTON} variant="ghost" onClick={() => onOpenConversation(data.parentId as string)}>
-              {t('openParentComment')}
-            </Button>
-          )}
-        </div>
+          <ol className="space-y-2" aria-label={t('messages')}>
+            {data.messages.map((m) => (
+              <MessageRow key={m.id} message={m} detail={data} members={members} userId={userId} canWrite={canWrite} contact={contactName(c.contact)} aiOff={aiOff} imageEnabled={!hideThreadContent} onOpenConversation={onOpenConversation} />
+            ))}
+          </ol>
+          {c.composing.length > 0 && <ComposingNote userIds={c.composing} members={members} />}
+        </>
       )}
-      {data.gap && (
-        <p role="note" className="rounded-md border border-border bg-muted px-3 py-2 text-sm text-muted-foreground" data-testid="conversation-gap">
-          {t('gap', { from: f.dateTime(data.gap.from), to: f.dateTime(data.gap.to) })}
-        </p>
+      {canWrite && <ReplyBox detail={data} seen={seen ?? c.lastSeq} masked={Boolean(effectiveError)} onMoved={(seq) => setSeen(seq)} />}
+      {showPrivateThread && (
+        <>
+          <Notes detail={data} members={members} canWrite={canWrite} />
+          {showErase && isAdmin && !hideThreadContent && <PersonalDataSection detail={data} contactName={contactName(c.contact)} onErased={onGone} />}
+        </>
       )}
-      {newer && (
-        <div role="status" className="flex items-center justify-between gap-2 rounded-md border border-border bg-muted px-3 py-2 text-sm" data-testid="conversation-newer">
-          <span>{t('newer')}</span>
-          <Button type="button" size="sm" className={TOUCH_BUTTON} variant="outline" onClick={() => setSeen(c.lastSeq)}>
-            {t('seenIt')}
-          </Button>
-        </div>
-      )}
-      <ol className="space-y-2" aria-label={t('messages')}>
-        {data.messages.map((m) => (
-          <MessageRow key={m.id} message={m} detail={data} members={members} userId={userId} canWrite={canWrite} contact={contactName(c.contact)} onOpenConversation={onOpenConversation} />
-        ))}
-      </ol>
-      {c.composing.length > 0 && <ComposingNote userIds={c.composing} members={members} />}
-      {canWrite && <ReplyBox detail={data} seen={seen ?? c.lastSeq} onMoved={(seq) => setSeen(seq)} />}
-      <Notes detail={data} members={members} canWrite={canWrite} />
-      {showErase && isAdmin && <PersonalDataSection detail={data} contactName={contactName(c.contact)} onErased={onGone} />}
-    </div>
+      </div>
+    </>
   );
 }
 
@@ -396,9 +1041,9 @@ function ResolveButton({ conversation }: { conversation: ConversationSummary }) 
 
 // A customer's image, fetched with the member's own session (the route answers 404 to one who may not read the thread) and drawn as an image
 // from an object URL: never as HTML. While it loads, or when it cannot be read, nothing is drawn and the message's placeholder text stands.
-function MessageImage({ attachment }: { attachment: ConversationAttachmentView }) {
+function MessageImage({ attachment, enabled = true }: { attachment: ConversationAttachmentView; enabled?: boolean }) {
   const t = useTranslations('conversations');
-  const blob = useQuery({ queryKey: ['conversation-image', attachment.id], queryFn: () => fetchConversationImage(attachment.id), staleTime: Infinity, retry: false });
+  const blob = useQuery({ queryKey: ['conversation-image', attachment.id], queryFn: () => fetchConversationImage(attachment.id), enabled, staleTime: Infinity, retry: false });
   const [url, setUrl] = useState<string | null>(null);
   useEffect(() => {
     if (!blob.data) return;
@@ -420,7 +1065,7 @@ function MessageImage({ attachment }: { attachment: ConversationAttachmentView }
   );
 }
 
-export function MessageRow({ message: m, detail, members, userId, canWrite, contact, onOpenConversation }: { message: ConversationMessage; detail: ConversationDetail; members: readonly Member[]; userId: string | null; canWrite: boolean; contact: string; onOpenConversation?: ((id: string) => void) | undefined }) {
+export function MessageRow({ message: m, detail, members, userId, canWrite, contact, aiOff = false, imageEnabled = true, onOpenConversation }: { message: ConversationMessage; detail: ConversationDetail; members: readonly Member[]; userId: string | null; canWrite: boolean; contact: string; aiOff?: boolean; imageEnabled?: boolean; onOpenConversation?: ((id: string) => void) | undefined }) {
   const t = useTranslations('conversations');
   const f = useFormat();
   const mine = m.direction === 'out';
@@ -446,7 +1091,8 @@ export function MessageRow({ message: m, detail, members, userId, canWrite, cont
   // Dy's suggestion that this thread is spam (read from the header's cache, no new model call): only a hint beside the button, a person clicks.
   // The suggestion is read for the thread's last customer message, so only that comment carries the hint.
   const lastCustomer = [...detail.messages].reverse().find((x) => x.direction === 'in' && !x.removed);
-  const spamSuggested = useSpamSuggested(detail.conversation) && (lastCustomer?.id ?? m.id) === m.id;
+  const cachedSpam = useSpamSuggested(detail.conversation);
+  const spamSuggested = !aiOff && cachedSpam && (lastCustomer?.id ?? m.id) === m.id;
   const supportsPrivateReply =
     detail.conversation.kind === 'comment_thread' &&
     !mine &&
@@ -473,7 +1119,7 @@ export function MessageRow({ message: m, detail, members, userId, canWrite, cont
             {showQuoted && <p className="whitespace-pre-wrap break-words border-l-2 border-border pl-2 text-muted-foreground" data-testid="conversation-quoted">{email.quoted}</p>}
           </>
         )}
-        {!m.removed && m.attachments.map((a) => <MessageImage key={a.id} attachment={a} />)}
+        {!m.removed && m.attachments.map((a) => <MessageImage key={a.id} attachment={a} enabled={imageEnabled} />)}
         <div className="flex flex-wrap items-center gap-2 text-xs">
           {m.sendState && m.sendState !== 'sent' && (
             <Badge variant={m.sendState === 'failed' || m.sendState === 'unknown' ? 'destructive' : 'outline'} data-testid="conversation-send-state">
@@ -574,8 +1220,10 @@ export function MessageRow({ message: m, detail, members, userId, canWrite, cont
   );
 }
 
-export function ReplyBox({ detail, seen, onMoved }: { detail: ConversationDetail; seen: number; onMoved: (seq: number) => void }) {
+export function ReplyBox({ detail, seen, masked = false, onMoved }: { detail: ConversationDetail; seen: number; masked?: boolean; onMoved: (seq: number) => void }) {
   const t = useTranslations('conversations');
+  const id = detail.conversation.id;
+  const kind = detail.conversation.kind;
   const [text, setText] = useState('');
   const [movedNote, setMovedNote] = useState(false);
   // "Linh is replying": typing marks the thread for the others (the server keeps a mark for 60 seconds and takes one in 20; asking every 25 here is
@@ -584,8 +1232,6 @@ export function ReplyBox({ detail, seen, onMoved }: { detail: ConversationDetail
   // The draft or the saved reply the text in the box began from: the reply names it, so the draft is marked used (its length and the size of the
   // edit are kept, never the text) and the saved reply is counted. Typing everything away forgets it.
   const [from, setFrom] = useState<{ draftId?: string; savedReplyId?: string }>({});
-  const id = detail.conversation.id;
-  const kind = detail.conversation.kind;
   // The longest reply this channel takes: the box stops typing there, and a quote message put in by code is checked against it too (#2827).
   const replyMax =
     detail.conversation.channel.provider === 'instagram'
@@ -655,39 +1301,43 @@ export function ReplyBox({ detail, seen, onMoved }: { detail: ConversationDetail
   });
   const reason = detail.reply.reason;
   // Past WhatsApp's 24 hours there is no Send button, and the reason says why (Ludy sends no paid template).
-  if (!detail.reply.allowed) return <p className="rounded-md border border-border bg-muted px-3 py-2 text-sm text-muted-foreground">{t(reason === 'window_closed' && detail.conversation.channel.provider === 'whatsapp' ? 'replyBlocked.window_closed_whatsapp' : `replyBlocked.${reason ?? 'not_supported'}`)}</p>;
+  if (!detail.reply.allowed) return masked ? null : <p className="rounded-md border border-border bg-muted px-3 py-2 text-sm text-muted-foreground">{t(reason === 'window_closed' && detail.conversation.channel.provider === 'whatsapp' ? 'replyBlocked.window_closed_whatsapp' : `replyBlocked.${reason ?? 'not_supported'}`)}</p>;
   const submit = (e: FormEvent) => {
     e.preventDefault();
     if (text.trim()) send.mutate();
   };
   return (
     <form onSubmit={submit} className="space-y-2" aria-label={t('replyLabel')}>
-      <p className="text-xs text-muted-foreground">
-        {detail.conversation.kind === 'email'
-          ? detail.conversation.contact.address
-            ? t('replyEmailTo', { address: detail.conversation.contact.address })
-            : t('replyEmail')
-          : t(detail.conversation.kind === 'direct' ? 'replyPrivate' : 'replyPublic', { channel: detail.conversation.channel.displayName })}
-      </p>
-      {detail.conversation.kind === 'email' && detail.conversation.senderUnverified && (
-        <p className="text-xs text-muted-foreground" data-testid="reply-unverified-note">
-          {t('replyEmailUnverified')}
-        </p>
+      {!masked && (
+        <>
+          <p className="text-xs text-muted-foreground">
+            {detail.conversation.kind === 'email'
+              ? detail.conversation.contact.address
+                ? t('replyEmailTo', { address: detail.conversation.contact.address })
+                : t('replyEmail')
+              : t(detail.conversation.kind === 'direct' ? 'replyPrivate' : 'replyPublic', { channel: detail.conversation.channel.displayName })}
+          </p>
+          {detail.conversation.kind === 'email' && detail.conversation.senderUnverified && (
+            <p className="text-xs text-muted-foreground" data-testid="reply-unverified-note">
+              {t('replyEmailUnverified')}
+            </p>
+          )}
+          <DraftPanel
+            detail={detail}
+            onUse={(draft) => {
+              // A draft may keep the saved reply's `{tên}` as a fill (#3102): it is filled here, as for a saved reply.
+              setText(replyTextFor(draft.body ?? '', detail));
+              setFrom({ draftId: draft.id });
+            }}
+            onUseSaved={(reply) => {
+              // `{tên}` becomes the contact's name here, in the box, before Send (#3102); with no name it is dropped.
+              setText(replyTextFor(reply.body, detail));
+              // The text is now the saved reply's, so it no longer began from a draft.
+              setFrom({ savedReplyId: reply.id });
+            }}
+          />
+        </>
       )}
-      <DraftPanel
-        detail={detail}
-        onUse={(draft) => {
-          // A draft may keep the saved reply's `{tên}` as a fill (#3102): it is filled here, as for a saved reply.
-          setText(replyTextFor(draft.body ?? '', detail));
-          setFrom({ draftId: draft.id });
-        }}
-        onUseSaved={(reply) => {
-          // `{tên}` becomes the contact's name here, in the box, before Send (#3102); with no name it is dropped.
-          setText(replyTextFor(reply.body, detail));
-          // The text is now the saved reply's, so it no longer began from a draft.
-          setFrom({ savedReplyId: reply.id });
-        }}
-      />
       <Textarea
         aria-label={t('replyLabel')}
         rows={3}
