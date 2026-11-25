@@ -16345,6 +16345,10 @@ export const vi = {
       STALE_DEAL_UPDATE: 'Biên bản cuộc họp hoặc liên kết cơ hội đã thay đổi từ lúc bạn viết. Hãy kiểm tra lại nội dung rồi lưu lại.',
       DEAL_LOST_REASON_INVALID: 'Lý do chỉ ghi khi chuyển cơ hội sang giai đoạn thua',
       DEAL_NEIGHBOUR_INVALID: 'Cơ hội đứng cạnh không còn ở giai đoạn này; hãy tải lại trang',
+      MINUTES_LINK_OFF: 'Tổ chức chưa bật chia sẻ biên bản ra ngoài. Chủ sở hữu hoặc quản trị viên bật được trong phần cài đặt cuộc họp.',
+      MINUTES_LINK_LIMIT: 'Cuộc họp này đã có đủ số liên kết còn hạn. Hãy thu hồi bớt một liên kết.',
+      MINUTES_LINK_NOT_FOUND: 'Không tìm thấy liên kết này.',
+      MINUTES_NOT_PUBLISHED: 'Cuộc họp này chưa có biên bản đã xuất bản để chia sẻ.',
       DEAL_DELETE_FORBIDDEN: 'Bạn chỉ xóa được cơ hội do chính mình tạo',
       DEAL_HAS_QUOTES: 'Cơ hội này đã có báo giá nên không xóa được',
       QUOTE_NOT_FOUND: 'Không tìm thấy báo giá này',
@@ -19413,6 +19417,15 @@ export const vi = {
       minutes_esign: {
         get: 'Xem biên bản họp có được gửi đi ký hay không',
         set: 'Bật hoặc tắt việc ký biên bản họp',
+      },
+      minutes_link: {
+        create: 'Tạo liên kết tới biên bản đã xuất bản cho người ngoài',
+        revoke: 'Thu hồi liên kết tới biên bản đã xuất bản',
+        list: 'Xem các liên kết tới biên bản đã xuất bản của một cuộc họp',
+        switch: {
+          get: 'Xem tổ chức có cho chia sẻ biên bản ra ngoài hay không',
+          set: 'Bật hoặc tắt việc chia sẻ biên bản ra ngoài',
+        },
       },
       retention: {
         shred: 'Tiêu hủy âm thanh hoặc video, hoặc xóa cuộc họp, khi hết hạn lưu',

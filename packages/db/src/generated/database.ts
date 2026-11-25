@@ -234,6 +234,7 @@ export interface LudyMeetingsSchema {
   'ludy_meetings.meeting': MeetingsMeetingTable;
   'ludy_meetings.meeting_chapter': MeetingsMeetingChapterTable;
   'ludy_meetings.meeting_link': MeetingsMeetingLinkTable;
+  'ludy_meetings.minutes_link': MeetingsMinutesLinkTable;
   'ludy_meetings.meeting_note': MeetingsMeetingNoteTable;
   'ludy_meetings.meeting_reader': MeetingsMeetingReaderTable;
   'ludy_meetings.meeting_result': MeetingsMeetingResultTable;
@@ -3603,6 +3604,7 @@ export interface KernelTenantTable {
   apps_off: Generated<string[]>;
   apps_version: Generated<number>;
   meeting_minutes_esign: Generated<boolean>;
+  meeting_minutes_link: Generated<boolean>;
 }
 
 /** ludy_kernel.today_mail */
@@ -3788,6 +3790,21 @@ export interface MeetingsMeetingLinkTable {
   calendar_event_id: ColumnType<string | null, string | null, NotGranted>;
   created_by: ColumnType<string, string, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** ludy_meetings.minutes_link */
+export interface MeetingsMinutesLinkTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  meeting_id: ColumnType<string, string, NotGranted>;
+  token_sha256: ColumnType<string, string, NotGranted>;
+  expires_at: ColumnType<Date, Date | string, NotGranted>;
+  created_by: ColumnType<string, string, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  revoked_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  revoked_by: string | null;
+  first_viewed_at: ColumnType<Date | null, Date | string | null, NotGranted>;
+  views: ColumnType<number, number | undefined, NotGranted>;
 }
 
 /** ludy_meetings.meeting_note */

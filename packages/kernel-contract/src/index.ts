@@ -165,6 +165,7 @@ export * from './meeting-ask.ts';
 export * from './meeting-brief.ts';
 export * from './meeting-digest.ts';
 export * from './meeting-load.ts';
+export * from './meeting-minutes-link.ts';
 export * from './meeting-today.ts';
 export * from './meeting-morning.ts';
 export * from './meeting-assignee.ts';

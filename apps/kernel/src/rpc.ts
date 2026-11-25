@@ -1783,6 +1783,15 @@ export function createRpcHandler(
         get: os.meetings.minutesEsign.get.handler(meetingsQuery('meetings.minutes_esign.get')),
         set: os.meetings.minutesEsign.set.handler(meetingsCommand('meetings.minutes_esign.set')),
       },
+      minutesLink: {
+        switch: {
+          get: os.meetings.minutesLink.switch.get.handler(meetingsQuery('meetings.minutes_link.switch.get')),
+          set: os.meetings.minutesLink.switch.set.handler(meetingsCommand('meetings.minutes_link.switch.set')),
+        },
+        create: os.meetings.minutesLink.create.handler(meetingsCommand('meetings.minutes_link.create')),
+        revoke: os.meetings.minutesLink.revoke.handler(meetingsCommand('meetings.minutes_link.revoke')),
+        list: os.meetings.minutesLink.list.handler(meetingsQuery('meetings.minutes_link.list')),
+      },
       search: os.meetings.search.handler(meetingsQuery('meetings.search')),
       transcript: {
         get: os.meetings.transcript.get.handler(meetingsQuery('meetings.transcript.get')),

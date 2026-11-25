@@ -176,6 +176,11 @@ export const KERNEL_ERROR_CODES = [
   'MEETING_NOT_LINKED',
   'MEETING_NO_DEAL',
   'STALE_DEAL_UPDATE',
+  // The link to the published minutes for people outside the org (#4822).
+  'MINUTES_LINK_OFF',
+  'MINUTES_LINK_LIMIT',
+  'MINUTES_LINK_NOT_FOUND',
+  'MINUTES_NOT_PUBLISHED',
   'DEAL_DELETE_FORBIDDEN',
   'DEAL_HAS_QUOTES',
   'QUOTE_NOT_FOUND',

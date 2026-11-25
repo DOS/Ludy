@@ -109,6 +109,8 @@ export const meetingsManifest = defineModule({
       meeting_chapter: columns(['org_id', 'id', 'meeting_id', 'stage', 'position', 'start_seconds', 'tainted', 'source_run_id', 'created_at', 'updated_at'], { title: 'pii' }),
       // Links of a meeting to a party, a deal and a calendar event (L1, #2587): ids and a time, no text.
       meeting_link: columns(['org_id', 'id', 'meeting_id', 'party_id', 'deal_id', 'calendar_event_id', 'created_by', 'created_at']),
+      // The links to the published minutes for people outside the org (#4822): ids, times and a count; the token is kept only as a hash.
+      minutes_link: columns(['org_id', 'id', 'meeting_id', 'token_sha256', 'expires_at', 'created_by', 'created_at', 'revoked_at', 'revoked_by', 'first_viewed_at', 'views']),
       // The recorder's own rough notes of a meeting (A5, #3163): read, written and deleted by the recorder alone. Free text, personal data.
       meeting_note: columns(['org_id', 'id', 'meeting_id', 'created_at', 'updated_at'], { body: 'pii' }),
       meeting_reader: columns(['org_id', 'id', 'meeting_id', 'user_id', 'created_at']),

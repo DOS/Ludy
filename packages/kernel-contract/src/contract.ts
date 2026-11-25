@@ -1,4 +1,5 @@
 import { oc } from '@orpc/contract';
+import { zMinutesLinkCreate, zMinutesLinkCreated, zMinutesLinkItems, zMinutesLinkList, zMinutesLinkRevoke, zMinutesLinkRevoked, zMinutesLinkSwitch, zMinutesLinkSwitchGet } from './meeting-minutes-link.ts';
 import { z } from 'zod';
 import { zTranscriptExport, zTranscriptExportInput } from './meeting-transcript-export.ts';
 import { zChapters, zChaptersCopied, zChaptersCopy, zChaptersSave, zChaptersSaved } from './meeting-chapters.ts';
@@ -1915,6 +1916,16 @@ export const contract = {
     // MINUTES_NOT_PUBLISHED (409) when nothing is shared yet.
     minutesDocx: {
       download: oc.input(zMinutesDocxInput).output(zMinutesDocx),
+    },
+    // The link to the published minutes for people outside the org (#4822): the recorder makes it (the token comes back once), lists and revokes; an owner or admin switches the feature (off by default).
+    minutesLink: {
+      switch: {
+        get: oc.input(zMinutesLinkSwitchGet).output(zMinutesLinkSwitch),
+        set: oc.input(zMinutesLinkSwitch).output(zMinutesLinkSwitch),
+      },
+      create: oc.input(zMinutesLinkCreate).output(zMinutesLinkCreated),
+      revoke: oc.input(zMinutesLinkRevoke).output(zMinutesLinkRevoked),
+      list: oc.input(zMinutesLinkList).output(zMinutesLinkItems),
     },
     // A member's own webhook for the minutes they publish (A6, #3164): the card reads `get`, `set` makes or changes it (the secret comes back once, when it is made), `rotateSecret`, `clear` and
     // `test` (a `ping` with no meeting data). The owner's `switch` (off by default) gates all of it; nothing is sent while it is off.

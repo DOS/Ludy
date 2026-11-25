@@ -16346,6 +16346,10 @@ export const en = {
       STALE_DEAL_UPDATE: 'The meeting minutes or the deal link changed since this was written. Check the text and save again.',
       DEAL_LOST_REASON_INVALID: 'A reason is only recorded when a deal moves to a lost stage.',
       DEAL_NEIGHBOUR_INVALID: 'The neighbouring deal is no longer in this stage; reload the page.',
+      MINUTES_LINK_OFF: 'Your organization has not turned on sharing minutes with people outside. An owner or admin can turn it on in the meeting settings.',
+      MINUTES_LINK_LIMIT: 'This meeting already has the most live links. Revoke one first.',
+      MINUTES_LINK_NOT_FOUND: 'This link was not found.',
+      MINUTES_NOT_PUBLISHED: 'This meeting has no published minutes to share yet.',
       DEAL_DELETE_FORBIDDEN: 'You can only delete deals you created.',
       DEAL_HAS_QUOTES: 'This deal has a quote, so it cannot be deleted.',
       QUOTE_NOT_FOUND: 'This quote was not found.',
@@ -19414,6 +19418,15 @@ export const en = {
       minutes_esign: {
         get: 'Read whether meeting minutes can be sent for signing',
         set: 'Turn signing of meeting minutes on or off',
+      },
+      minutes_link: {
+        create: 'Make a link to the published minutes for people outside',
+        revoke: 'Revoke a link to the published minutes',
+        list: 'See the links to the published minutes of a meeting',
+        switch: {
+          get: 'Read whether minutes can be shared with people outside',
+          set: 'Turn sharing minutes with people outside on or off',
+        },
       },
       retention: {
         shred: 'Shred meeting audio or video, or delete a meeting, at its retention date',
