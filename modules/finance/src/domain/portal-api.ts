@@ -1,4 +1,4 @@
-// The tax portal's lookup API rows as Crove reads them (issue #325, ADR-0036): pure, so the API (before it stores the
+// The tax portal's lookup API rows as Ludy reads them (issue #325, ADR-0036): pure, so the API (before it stores the
 // portal's answer) and the worker (when it records the list) apply the same rules. The portal's JSON is untrusted: it
 // is parsed with numbers kept as their text, checked with loose shapes, and turned into the list the manual Excel import
 // reads (ExtractedPortalList), so checkPortalList and finance.portal_list.record treat both the same way.

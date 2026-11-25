@@ -6,7 +6,7 @@
 // the VAT working of every month or quarter of the year (by the org's filing period) and, when the org has a tax code,
 // its 01/GTGT XML. Each part is stored once under archive/<org_id>/<year>/<sha256> (content addressed, create-only;
 // on S3 with S3_ARCHIVE_LOCK_DAYS it is locked). The manifest lists every part and the original file of every
-// document of the year (by storage key, version and sha256; the originals stay where they are, Crove never deletes
+// document of the year (by storage key, version and sha256; the originals stay where they are, Ludy never deletes
 // them) and names the command that asked for the build; it is stored the same way and recorded by
 // finance.archive.record, whose audit row is the build's.
 //
@@ -178,7 +178,7 @@ export async function readYearArchiveManifest(store: BlobStore, archive: Recorde
   } catch {
     // Reported below like any other manifest of another shape.
   }
-  // The hash matches the record, so this is what the build wrote; a manifest of another format is not one Crove reads.
+  // The hash matches the record, so this is what the build wrote; a manifest of another format is not one Ludy reads.
   if (manifest?.format !== ARCHIVE_FORMAT || !Array.isArray(manifest.parts) || !Array.isArray(manifest.documents)) {
     throw new ArchiveManifestFormatError(archive.manifestKey);
   }

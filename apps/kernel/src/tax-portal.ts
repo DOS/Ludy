@@ -215,7 +215,7 @@ export function createTaxPortalClient(options: TaxPortalOptions = {}): TaxPortal
         // The refusal's words decide its class; they are read here and dropped.
         const words = fold(r.body.subarray(0, 4096).toString('utf8'));
         // A refusal that names the account or the password is a wrong password even when it also asks for a new CAPTCHA:
-        // Crove's guard counts it then (fails closed).
+        // Ludy's guard counts it then (fails closed).
         if (/bi khoa|tam khoa|locked/.test(words)) throw new TaxPortalError('ACCOUNT_LOCKED');
         if (/mat khau|password|ten dang nhap|tai khoan|username/.test(words)) throw new TaxPortalError('WRONG_PASSWORD');
         if (/captcha|ma xac (nhan|thuc)|ma kiem tra|ma bao ve/.test(words)) throw new TaxPortalError('WRONG_CAPTCHA');

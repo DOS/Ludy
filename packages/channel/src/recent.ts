@@ -1,5 +1,5 @@
 // Listing an account's own recent posts (#1054): the bounds every adapter keeps and the checks on what a platform
-// answers, so a post published outside Crove comes in with a real date, an id of a known shape and a link that can be
+// answers, so a post published outside Ludy comes in with a real date, an id of a known shape and a link that can be
 // shown to a client.
 
 // How far back an account's posts are listed, at most.

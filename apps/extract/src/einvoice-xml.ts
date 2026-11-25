@@ -129,7 +129,7 @@ function related(general: Node): RelatedInvoice | null {
 }
 
 export interface EInvoiceParseOptions {
-  // The certificates signatures are checked against; the national roots shipped with Crove unless a test passes its own.
+  // The certificates signatures are checked against; the national roots shipped with Ludy unless a test passes its own.
   trust?: TrustStore;
 }
 

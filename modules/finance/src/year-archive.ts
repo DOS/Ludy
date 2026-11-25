@@ -8,7 +8,7 @@
 // - finance.archive.record: the worker records the built package (system only): the manifest's key, version and
 //   sha256, as the audit row of the build. A second record of the same year is ignored.
 // - finance.archive.list and finance.archive.get: owners read the packages, from those audit rows.
-// The package's parts are content-addressed blobs under archive/<org_id>/<year>/ (never listed, never deleted by Crove).
+// The package's parts are content-addressed blobs under archive/<org_id>/<year>/ (never listed, never deleted by Ludy).
 import { sql } from 'kysely';
 import { z } from 'zod';
 import type { MemberRole } from '@ludy/db';
@@ -131,7 +131,7 @@ export const yearArchiveBuild = defineCommand({
   name: 'finance.archive.build',
   input: z.object({ year: zArchiveYear }),
   risk: 'R3',
-  // Asks for the year's legal retention package (Accounting Law Art. 41), built once and never deleted by Crove.
+  // Asks for the year's legal retention package (Accounting Law Art. 41), built once and never deleted by Ludy.
   sideEffect: 'legal',
   access: OWNERS,
   handler: async (ctx, input): Promise<YearArchive> => {

@@ -1,6 +1,6 @@
 // Reading the times a client asks for in a message (#1440, plan docs/plan/calendar.md §1 "Later": AI that proposes
 // slots from an email or a chat message, always a proposal a human approves). A member pastes a mail or a chat line; the
-// model only says which days and times of day it asks for. Crove then picks real free slots inside them with the
+// model only says which days and times of day it asks for. Ludy then picks real free slots inside them with the
 // deterministic slot function, and the member decides what to send. The output is tainted: the message is data, never
 // instructions, and every window is checked here after the call (a real date in the range offered, minutes of a day,
 // start before end), so a model that answers anything else adds nothing.

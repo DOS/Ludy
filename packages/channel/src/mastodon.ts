@@ -1,6 +1,6 @@
 // Mastodon accounts (#748), written from the Mastodon API docs (docs.joinmastodon.org/methods). Any instance, no app
 // review: the account owner makes an application in their instance's settings (Preferences > Development > New
-// application, scopes read and write) and gives Crove its access token with the instance address. The token is sealed
+// application, scopes read and write) and gives Ludy its access token with the instance address. The token is sealed
 // like any credential; the account id with the instance's host is the account id.
 //
 // The instance is the tenant's to name, so every call goes through the fetch the kernel hands in: the egress guard
@@ -34,7 +34,7 @@ export interface MastodonSecret {
   accessToken: string;
 }
 
-// The instance as Crove keeps it: https on the default port, a host name and nothing else.
+// The instance as Ludy keeps it: https on the default port, a host name and nothing else.
 export function mastodonInstance(raw: string): string | null {
   // Trailing slashes cut by hand: a regular expression for them is slow on a long run of slashes.
   let trimmed = raw.trim();

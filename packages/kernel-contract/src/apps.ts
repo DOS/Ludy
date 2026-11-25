@@ -2,7 +2,7 @@
 // Canonical hierarchy across Ludy (Suite -> App -> Feature Group -> Module):
 // - App (AppId): a top-level user workspace in the shell switcher and on ludy.vn.
 // - Feature Group: a sidebar section inside an App (defined in screens.ts / apps.ts).
-// - Module (ModuleId): an independently deployed (CROVE_MODULES) and org-toggleable (ADR-0053) unit.
+// - Module (ModuleId): an independently deployed (LUDY_MODULES) and org-toggleable (ADR-0053) unit.
 
 // The six Apps in switcher order (#3225): Teamwork, Finance, Engage, HR, eSign, Ludy AI.
 export const APP_IDS = ['teamwork', 'finance', 'engage', 'hr', 'sign', 'ai'] as const;
@@ -50,7 +50,7 @@ for (const id of MODULE_IDS) {
   }
 }
 
-/** Return true when `id` is a canonical module shipped by the codebase, regardless of whether it is enabled in `CROVE_MODULES`. */
+/** Return true when `id` is a canonical module shipped by the codebase, regardless of whether it is enabled in `LUDY_MODULES`. */
 export function isKnownModule(id: string): id is ModuleId {
   return (MODULE_IDS as readonly string[]).includes(id);
 }

@@ -293,7 +293,7 @@ const SCHEDULE_COLUMNS = ['id', 'name', 'cadence', 'weekday', 'month_day', 'send
 export const reportScheduleRun = defineCommand({
   name: 'social.report_schedule.run',
   input: z.strictObject({ scheduleId: zId }),
-  // Queues mail through the kernel pipeline in its transaction: a send, an effect outside Crove (#1578).
+  // Queues mail through the kernel pipeline in its transaction: a send, an effect outside Ludy (#1578).
   risk: 'R2',
   sideEffect: 'external',
   access: 'system',
@@ -326,7 +326,7 @@ export const reportScheduleRun = defineCommand({
 export const reportScheduleTest = defineCommand({
   name: 'social.report_schedule.test',
   input: z.strictObject({ scheduleId: zId }),
-  // Queues mail through the kernel pipeline in its transaction: a send, an effect outside Crove (#1578).
+  // Queues mail through the kernel pipeline in its transaction: a send, an effect outside Ludy (#1578).
   risk: 'R2',
   sideEffect: 'external',
   access: ADMINS,

@@ -1,4 +1,4 @@
-// Crove Social posts (Social plan §3.2-3.3, step S3, issue #233): compose a post for several channel connections,
+// Ludy Social posts (Social plan §3.2-3.3, step S3, issue #233): compose a post for several channel connections,
 // edit it, submit it for review, decide per variant, schedule, cancel. Every write goes through these commands;
 // publishing itself is the publish job's (S4).
 //

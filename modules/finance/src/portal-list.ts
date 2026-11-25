@@ -12,7 +12,7 @@
 // - finance.portal_list.remove (owners, admins, members; R1) takes a list out of its period (a wrong file, an older
 //   export); it is kept, never deleted.
 // - finance.portal_list.reconcile (every role) compares the rows of the period's lists with the purchase documents
-//   Crove recorded and the purchase proposals waiting in the Inbox (domain/portal-reconcile.ts).
+//   Ludy recorded and the purchase proposals waiting in the Inbox (domain/portal-reconcile.ts).
 // A period's lists of the two directions never mix: each has its own list limit, row limit and reconciliation.
 import { sql } from 'kysely';
 import { z } from 'zod';
@@ -378,7 +378,7 @@ function addDays(date: string, days: number): string {
   return new Date(Date.parse(`${date}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
 }
 
-// Crove's purchases dated in [from, to]: the recorded documents that are not voided, and the purchase proposals waiting
+// Ludy's purchases dated in [from, to]: the recorded documents that are not voided, and the purchase proposals waiting
 // in the Inbox. Also the documents dated before the period but posted in it (#478): the VAT working declares them in
 // the period of their posting date, so the reconciliation reports them there (declared_late, #560). Each document
 // carries its posting date, the date of its own journal entry (every document has one: purchase_document_entry). All of
@@ -545,12 +545,12 @@ export async function reconcilePeriod(
           status: r.status,
           statusLabel: r.status_label,
         }));
-  // Rows dated outside the period are still matched, so Crove's side is read for every date the rows have, and a
+  // Rows dated outside the period are still matched, so Ludy's side is read for every date the rows have, and a
   // month around it (an invoice booked on a slightly different date than the portal shows still counts).
   const dates = rows.map((r) => r.issueDate).sort();
   const from = addDays([period.from, dates[0] ?? period.from].sort()[0] ?? period.from, -31);
   const to = addDays([period.to, dates.at(-1) ?? period.to].sort().at(-1) ?? period.to, 31);
-  // Without a list there is nothing to compare: Crove's invoices are not all reported as "not on the portal".
+  // Without a list there is nothing to compare: Ludy's invoices are not all reported as "not on the portal".
   const reconciliation = done.length === 0 ? reconcilePortalList([], [], period) : reconcilePortalList(rows, await ludyInvoices(ctx, from, to, period, legalEntityId, direction), period);
   return { period, lists, reconciliation };
 }

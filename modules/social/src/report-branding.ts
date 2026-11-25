@@ -1,6 +1,6 @@
 // White-label client reports (#1053), as Metricool's, Agorapulse's and Sprout's agency plans brand them: an org's report
-// branding, a display name, a logo, one accent colour and "hide Crove". The public report and review pages and the plan
-// print show it instead of Crove's logo, and the report mail uses the accent and the name. Owners and admins save and
+// branding, a display name, a logo, one accent colour and "hide Ludy". The public report and review pages and the plan
+// print show it instead of Ludy's logo, and the report mail uses the accent and the name. Owners and admins save and
 // remove it (social.report_branding.save, social.report_branding.remove, R2 since the public pages show it, #1578, audited without the logo's bytes); every
 // member reads it (social.report_branding.get), for the settings and the plan print.
 //
@@ -49,7 +49,7 @@ async function lockBranding(ctx: CommandContext) {
 export const reportBrandingSave = defineCommand({
   name: 'social.report_branding.save',
   input: zReportBrandingSave,
-  // Changes what the public page shows at once: visible to customers, an effect outside Crove (#1578).
+  // Changes what the public page shows at once: visible to customers, an effect outside Ludy (#1578).
   risk: 'R2',
   sideEffect: 'external',
   access: ADMINS,
@@ -91,7 +91,7 @@ export const reportBrandingSave = defineCommand({
 export const reportBrandingRemove = defineCommand({
   name: 'social.report_branding.remove',
   input: z.strictObject({}),
-  // Changes what the public page shows at once: visible to customers, an effect outside Crove (#1578).
+  // Changes what the public page shows at once: visible to customers, an effect outside Ludy (#1578).
   risk: 'R2',
   sideEffect: 'external',
   access: ADMINS,

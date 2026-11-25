@@ -86,7 +86,7 @@ export interface VatInvoiceView {
 }
 
 export interface VatSide {
-  // false: Crove has no source for this side: the output side until the org sets its tax code (#313). The documents
+  // false: Ludy has no source for this side: the output side until the org sets its tax code (#313). The documents
   // and totals are then empty.
   available: boolean;
   documents: VatInvoiceView[];
@@ -486,7 +486,7 @@ export async function loadVatReport(ctx: QueryContext, periodText: string, legal
     true,
     purchases.map((p) => p.view),
   );
-  // Sales are told apart by the org's tax code (#313). Without one Crove cannot know them, so the output side says it
+  // Sales are told apart by the org's tax code (#313). Without one Ludy cannot know them, so the output side says it
   // is not available, unless sales were recorded while a tax code was set (they stay in the books and count).
   const org = await ctx.trx.selectFrom('ludy_kernel.tenant').select('tax_code').where('org_id', '=', ctx.orgId).executeTakeFirst();
   const allSalesRows = await periodInvoices(ctx, period, 'sale', legalEntityId);
@@ -779,7 +779,7 @@ const FILERS: readonly MemberRole[] = ['owner', 'admin'];
 // Marks the period's VAT return filed (#1400), with the tax calendar's done mark hung on it: one appended row of
 // ludy_finance.vat_return_filed with [22], [25] and [43] as filed, and kernel.tax_obligation.done for vat_return in
 // the same transaction. With figures (the VAT screen) they are recorded as entered. Without them (the tax calendar's
-// done button) Crove records its own working: [22] from the return before, [25] the suggested deduction (#917) and
+// done button) Ludy records its own working: [22] from the return before, [25] the suggested deduction (#917) and
 // the [43] the form's formulas give; a period already marked filed keeps its figures. done false takes both marks
 // back (a withdrawn row, then kernel.tax_obligation.undo). The audit row holds the period, the choice and the source,
 // never the figures.

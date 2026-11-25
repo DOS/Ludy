@@ -1726,7 +1726,7 @@ async function executeAndStoreProposalRun(params: {
 
 function runtimeQueryFn(runtime: Runtime, as: { actor: UserActor; orgId: string }): SourceQueryFn {
   return async <T>(name: string, input: Record<string, unknown>) => {
-    // Check deployment-level module registration (CROVE_MODULES) before Runtime.query to avoid QUERY_NOT_FOUND.
+    // Check deployment-level module registration (LUDY_MODULES) before Runtime.query to avoid QUERY_NOT_FOUND.
     if (name.startsWith('notes.') && !runtime.installed('notes')) return { status: 'not_installed' as const };
     if (name.startsWith('meetings.') && !runtime.installed('meetings')) return { status: 'not_installed' as const };
     try {

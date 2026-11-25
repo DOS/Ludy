@@ -183,7 +183,7 @@ export const publishingHoldGet = defineQuery({
 export const publishFailLate = defineCommand({
   name: 'social.publish.fail_late',
   input: z.strictObject({}),
-  // Its event goes to the team chat alert, a post outside Crove (#1578).
+  // Its event goes to the team chat alert, a post outside Ludy (#1578).
   risk: 'R2',
   sideEffect: 'external',
   access: 'system',

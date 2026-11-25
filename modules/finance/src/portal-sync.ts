@@ -4,13 +4,13 @@
 // - finance.portal_sync.call / call_end (owners, admins, members; call R2 since #1577, call_end R1) record each call to the portal in
 //   ludy_kernel.external_call before and after it is made (ADR-0025 decision 5): who, which step, the outcome class.
 //   Never a password, a CAPTCHA answer, a token or a response body. The login step is refused after repeated wrong
-//   passwords for the org, so Crove never locks the client's portal account by retrying.
+//   passwords for the org, so Ludy never locks the client's portal account by retrying.
 // - finance.portal_sync.list (owners, admins, members; R1) files the stored JSON answer as a pending list of the
 //   period, in place of the period's earlier synced lists (Excel imports stay), and asks the worker to record it, as
 //   finance.portal_list.import does for an upload: the worker reads the evidence file (importPortalList), checks it with
 //   the same rules and records the rows with finance.portal_list.record, the one write path for portal rows.
 // - finance.portal_sync.xml_plan (same roles, read only) lists the invoices of a synced list the portal has an XML for
-//   and Crove has no invoice for yet, minus those already fetched for that list.
+//   and Ludy has no invoice for yet, minus those already fetched for that list.
 import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
 import { z } from 'zod';
@@ -27,7 +27,7 @@ const EDITORS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 export const PORTAL_SYNC_TARGET = 'gdt_einvoice';
 const KEY_PREFIX = 'finance.portal_sync:';
 // Logins of one org that did not succeed (other than a refused CAPTCHA) since its last successful login, within a day,
-// before the login step is refused (the portal locks an account after a few wrong passwords; Crove stops first), and
+// before the login step is refused (the portal locks an account after a few wrong passwords; Ludy stops first), and
 // logins of any outcome per org per hour.
 export const PORTAL_WRONG_PASSWORD_LIMIT = 3;
 export const PORTAL_LOGINS_PER_HOUR = 20;
@@ -73,7 +73,7 @@ export const portalSyncCall = defineCommand({
     z.object({ step: z.literal('xml'), listId: zId, invoice: zInvoiceKey }),
   ]),
   // Commits the call to the tax portal that the API makes next, with the client's portal account (a login attempt
-  // counts toward the portal's own lockout): an effect outside Crove (#1577). call_end and list only record what came
+  // counts toward the portal's own lockout): an effect outside Ludy (#1577). call_end and list only record what came
   // back.
   risk: 'R2',
   sideEffect: 'external',
@@ -98,7 +98,7 @@ export const portalSyncCall = defineCommand({
       // Serializes the org's logins, so two at once cannot both pass the count below.
       await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`finance.portal_sync.login:${ctx.orgId}`}, 0))`.execute(ctx.trx);
       // Fails closed: every login since the client's last successful one (within a day) that did not succeed counts,
-      // unless the portal clearly refused only the CAPTCHA: a wrong password, a locked account, an answer Crove could not
+      // unless the portal clearly refused only the CAPTCHA: a wrong password, a locked account, an answer Ludy could not
       // read, an outage, and a login still in flight may all have reached the password check.
       const recent = await ctx.trx
         .selectFrom('ludy_kernel.external_call')

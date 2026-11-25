@@ -1,9 +1,9 @@
-// Posts a connected account published outside Crove (#1054). Agencies often post part of their content straight on
-// Facebook or Instagram, and the Metrics tab and the client report count only what Crove published. The worker lists
+// Posts a connected account published outside Ludy (#1054). Agencies often post part of their content straight on
+// Facebook or Instagram, and the Metrics tab and the client report count only what Ludy published. The worker lists
 // each connected account's own posts of the last 30 days through its adapter (listRecentPosts), keeps the ones that are
-// not a variant Crove published on that channel (ludy_social.external_post), and reads their counts through the same
+// not a variant Ludy published on that channel (ludy_social.external_post), and reads their counts through the same
 // metrics() the published variants use. Every read leaves out a post whose id is (by then) a variant's, so a post is
-// never counted twice. The Metrics tab counts them only when asked ("Tính cả bài đăng ngoài Crove"), and a report link
+// never counted twice. The Metrics tab counts them only when asked ("Tính cả bài đăng ngoài Ludy"), and a report link
 // only when it was made with that option; otherwise every total stays as it was.
 //
 // Credentials stay in the worker (ADR-0025): the sweep opens a connection's token with kernel.channel.credential and
@@ -11,10 +11,10 @@
 // token the platform refuses marks the connection expired, so an owner or admin reconnects it, as publishing does.
 //
 // TikTok (#1476) gives a public post's id only after its moderation, and an inbox draft becomes a post only when the
-// creator posts it in the app (#1475), so for a while a Crove video can be on TikTok while its variant still holds a
+// creator posts it in the app (#1475), so for a while a Ludy video can be on TikTok while its variant still holds a
 // publish_id, or no id at all. While a TikTok variant of the channel may be in that state (publishing, waiting for its
 // status, or still asked about by the late-id sweep), the bring-in holds back every listed video created since a day
-// before it went out (tiktokHeldFrom): such a video comes in at a later bring-in, once the late id has made it Crove's
+// before it went out (tiktokHeldFrom): such a video comes in at a later bring-in, once the late id has made it Ludy's
 // (and external_post_is_crove drops it) or the asking has ended.
 import { sql } from 'kysely';
 import { z } from 'zod';
@@ -91,14 +91,14 @@ function requireSystem(ctx: { actor: { type: string } }): void {
 // How long before a TikTok variant went out its video may have been created: the status check of a direct post runs
 // for up to a day after the upload, and published_at is when it ended.
 const TIKTOK_HOLD_MARGIN_MS = 86_400_000;
-// The variant statuses during which a TikTok post may already be on TikTok before Crove records it as published.
+// The variant statuses during which a TikTok post may already be on TikTok before Ludy records it as published.
 const TIKTOK_ON_ITS_WAY = ['publishing', 'processing'] as const;
 
 // From when the listed videos of a TikTok channel are held back (#1476), or null when nothing is: a day before the
-// earliest of its variants that may be on TikTok without the public id Crove will record. That is a variant on its way
+// earliest of its variants that may be on TikTok without the public id Ludy will record. That is a variant on its way
 // (publishing, or waiting for TikTok's status) that can become public (an inbox draft, or a direct post to
 // PUBLIC_TO_EVERYONE; any other direct post never shows in video/list), or a published one the late-id sweep still asks
-// about (lateIdWait, within its 7 days). Once the late id lands, external_post_is_crove makes the video Crove's at the
+// about (lateIdWait, within its 7 days). Once the late id lands, external_post_is_crove makes the video Ludy's at the
 // import and at every read; once the asking ends without one, the hold lifts.
 async function tiktokHeldFrom(trx: CommandContext['trx'], orgId: string, connectionId: string, now: Date): Promise<Date | null> {
   const rows = await trx
@@ -124,7 +124,7 @@ async function tiktokHeldFrom(trx: CommandContext['trx'], orgId: string, connect
   return from === null ? null : new Date(from - TIKTOK_HOLD_MARGIN_MS);
 }
 
-// One bring-in of a channel's recent posts: the ones Crove did not publish on it are kept (their text and link
+// One bring-in of a channel's recent posts: the ones Ludy did not publish on it are kept (their text and link
 // refreshed when already there), and the channel's last bring-in is noted, with why nothing came when nothing did.
 export const externalPostImport = defineCommand({
   name: 'social.external_post.import',
@@ -133,7 +133,7 @@ export const externalPostImport = defineCommand({
     posts: z.array(zBroughtPost).max(RECENT_POSTS_MAX),
     error: z.enum(['no_answer', 'token_expired', 'permission']).optional(),
   }),
-  // Writes what the platform reported into Crove: internal, so R1 (#1578).
+  // Writes what the platform reported into Ludy: internal, so R1 (#1578).
   risk: 'R1',
   sideEffect: 'internal',
   access: 'system',
@@ -144,8 +144,8 @@ export const externalPostImport = defineCommand({
     if (!connection) throw new DomainError('CHANNEL_NOT_FOUND', 404, 'Không tìm thấy kênh đã kết nối này');
     const byId = new Map(input.posts.map((p) => [p.externalId, p] as const));
     const listed = [...byId.values()];
-    // What Crove published on this channel (a published variant with the platform id, or with the same page address:
-    // a Facebook video or Reel Crove stored as <page>_<video> may be listed under another post id) is counted as the
+    // What Ludy published on this channel (a published variant with the platform id, or with the same page address:
+    // a Facebook video or Reel Ludy stored as <page>_<video> may be listed under another post id) is counted as the
     // variant, never again as an outside post. The same check every read makes (ludy_social.external_post_is_crove).
     const crove =
       listed.length === 0
@@ -156,7 +156,7 @@ export const externalPostImport = defineCommand({
               WHERE ludy_social.external_post_is_crove(${ctx.orgId}::uuid, ${connection.id}::uuid, p.id, p.link)`.execute(ctx.trx)
           ).rows;
     for (const v of crove) byId.delete(v.id);
-    // A TikTok video that may be a Crove post still without its public id waits for a later bring-in (#1476).
+    // A TikTok video that may be a Ludy post still without its public id waits for a later bring-in (#1476).
     const heldFrom = connection.provider === 'tiktok' ? await tiktokHeldFrom(ctx.trx, ctx.orgId, connection.id, ctx.now) : null;
     let held = 0;
     if (heldFrom) {
@@ -202,7 +202,7 @@ export const externalPostImport = defineCommand({
 export const externalPostRecord = defineCommand({
   name: 'social.external_post.record',
   input: z.strictObject({ externalId: zId, metrics: zMetrics.optional(), gone: z.literal(true).optional() }),
-  // Writes what the platform reported into Crove: internal, so R1 (#1578).
+  // Writes what the platform reported into Ludy: internal, so R1 (#1578).
   risk: 'R1',
   sideEffect: 'internal',
   access: 'system',
@@ -255,9 +255,9 @@ export interface ExternalPostRow {
   capturedAt: string | null;
 }
 
-// The posts published outside Crove in the window, newest first, with their latest counts (#1054): what the Metrics
-// tab lists beside Crove's own when its switch is on. A post that is (by now) Crove's own (external_post_is_crove) is
-// left out, so it shows once, as Crove's.
+// The posts published outside Ludy in the window, newest first, with their latest counts (#1054): what the Metrics
+// tab lists beside Ludy's own when its switch is on. A post that is (by now) Ludy's own (external_post_is_crove) is
+// left out, so it shows once, as Ludy's.
 export const metricsExternal = defineQuery({
   name: 'social.metrics.external',
   input: z.object({ days: z.number().int().min(1).max(365).optional() }),

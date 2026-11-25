@@ -1,6 +1,6 @@
 // A post that does much better than usual (#1132), as Sprout and Later point them out. A published variant's 24-hour
 // capture (its first capture with counts taken at least 24 hours after it went out) is set against the latest counts of
-// its channel's last OUTPERFORM_HISTORY published Crove posts before it: when its engagement is OUTPERFORM_RATIO times
+// its channel's last OUTPERFORM_HISTORY published Ludy posts before it: when its engagement is OUTPERFORM_RATIO times
 // their median or more, the author and the assignee are told once. Engagement is engagementOf (reactions, comments,
 // shares and saves), which every platform reports; reach is compared too when the post and enough of the posts before
 // it report it, and shown with the notice, but it does not decide it. A channel with fewer than OUTPERFORM_MIN_HISTORY

@@ -2,7 +2,7 @@
 // The check before a MISA SME voucher export (#3848, plan docs/plan/accounting-software-sync.md "The AI part"): what MISA's import will refuse or cut, found by code over the very rows the file is
 // built from, and listed before the download. The check only warns; it never blocks the export. Findings are grouped by kind and column with a count and the first examples, because the services,
 // sales and cash templates leave catalog codes blank on purpose and a line per row would warn on every row. No party name, invoice number, amount or bank detail is in a finding: a voucher
-// number (Crove's own, `CRMDV...`) and a line number name the row.
+// number (Ludy's own, `CRMDV...`) and a line number name the row.
 import { z } from 'zod';
 import { zId, zLocalDate } from './schemas.ts';
 

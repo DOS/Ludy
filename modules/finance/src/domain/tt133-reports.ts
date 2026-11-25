@@ -124,7 +124,7 @@ export const B01_LINES: readonly ReportLineDef[] = [
 ];
 
 // B02-DNN (TT133). Codes and mapping: DRAFT, see the header. Code 23 (interest expense, part of 22) reads
-// the detail account 6351: TT133 has no standard sub-account for it, so this is a Crove convention the
+// the detail account 6351: TT133 has no standard sub-account for it, so this is a Ludy convention the
 // accountant must confirm.
 export const B02_LINES: readonly ReportLineDef[] = [
   { code: '01', label: 'Doanh thu bán hàng và cung cấp dịch vụ', rules: [{ prefixes: ['511'], take: 'creditTurnover' }] },

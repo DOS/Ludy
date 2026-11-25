@@ -149,7 +149,7 @@ export const variantEditPublished = defineCommand({
     body: z.string().max(EDIT_BODY_MAX),
     checks: z.array(zId).max(SOCIAL_REVIEW_CHECKS_MAX).optional(),
   }),
-  // The worker corrects the published text from its event: an effect outside Crove (#1653).
+  // The worker corrects the published text from its event: an effect outside Ludy (#1653).
   risk: 'R2',
   sideEffect: 'external',
   access: ADMINS,
@@ -239,7 +239,7 @@ export const editBegin = defineCommand({
   name: 'social.edit.begin',
   // after: the last edit call the ask saw (null: none was made).
   input: z.strictObject({ variantId: zId, provider: z.string().min(1).max(32), after: z.string().min(1).max(300).nullable() }),
-  // Commits the provider call as started; the worker then makes it, an effect outside Crove (#1578).
+  // Commits the provider call as started; the worker then makes it, an effect outside Ludy (#1578).
   risk: 'R2',
   sideEffect: 'external',
   access: 'system',

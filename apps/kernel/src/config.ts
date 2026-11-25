@@ -27,12 +27,12 @@ const optional = z
   .optional()
   .transform((v) => (v && v.trim() !== '' ? v.trim() : undefined));
 
-// Modules this build ships (plan Decision 12, ADR-0031). kernel is always on; the others are on unless CROVE_MODULES
+// Modules this build ships (plan Decision 12, ADR-0031). kernel is always on; the others are on unless LUDY_MODULES
 // leaves them out.
 export const AVAILABLE_MODULES = MODULE_IDS;
 export type { ModuleId };
 
-// CROVE_MODULES: a comma-separated list such as `finance`. Unset or empty enables every available module; kernel is
+// LUDY_MODULES: a comma-separated list such as `finance`. Unset or empty enables every available module; kernel is
 // added when missing. An unknown name stops the boot, so a typo never silently turns a module off. The prober reads it
 // too, as the modules the deployment runs (#1894).
 export const modulesSetting = optional.transform((value, ctx): readonly ModuleId[] => {
@@ -59,7 +59,7 @@ const schema = z.object({
   PORT: z.coerce.number().int().positive().default(8080),
   // Loopback by default; the Docker image sets 0.0.0.0 and compose publishes the port on loopback.
   HOST: z.string().default('127.0.0.1'),
-  // Number of reverse proxies in front of Crove whose X-Forwarded-For entries are trusted (0 = none).
+  // Number of reverse proxies in front of Ludy whose X-Forwarded-For entries are trusted (0 = none).
   TRUSTED_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(0),
   // Where the API answers: the auth proxy (`/auth/v1`), webhooks, short links (`/l/<code>`), link-in-bio pages and
   // feeds. With the web app served from the same origin (self-host) it is also where people open the app.
@@ -113,7 +113,7 @@ const schema = z.object({
   LOG_FORMAT: z.enum(['json', 'text']).default('text'),
   ADMIN_DATABASE_URL: optional,
   // The database holds other systems' schemas, roles and event triggers beside Ludy's (Ludy Cloud inside DOS's Supabase
-  // project, #2284): `migrate` then limits every effect to the `crove_*` roles and schemas (docs/runbooks/shared-database.md).
+  // project, #2284): `migrate` then limits every effect to the `ludy_*` roles and schemas (docs/runbooks/shared-database.md).
   // false (the default, and every self-host) keeps every database-wide guard.
   LUDY_SHARED_DATABASE: optional.pipe(z.enum(['true', 'false']).default('false')),
   // The mode is locked to the database once `migrate` has recorded it: a run that asks for the other one is refused unless
@@ -149,7 +149,7 @@ const schema = z.object({
   S3_VERSIONING: z.enum(['required', 'off']).default('required'),
   // Browsers upload to a staging key and download through presigned URLs (plan §7.6). The bucket needs a CORS rule
   // for PUBLIC_URL (POST and GET). false keeps every transfer streaming through the kernel; Cloudflare R2 needs false
-  // (it has no POST policy uploads, so Crove refuses to start with true on an R2 endpoint). It does not switch off the
+  // (it has no POST policy uploads, so Ludy refuses to start with true on an R2 endpoint). It does not switch off the
   // signed reads Zalo OA, Instagram and Threads fetch media by (#2192): those need an https endpoint, not this setting.
   S3_PRESIGNED_URLS: z.enum(['true', 'false']).default('true'),
   // The S3 endpoint browsers reach, when it differs from S3_ENDPOINT (presigned URLs are signed for this host). On a
@@ -223,8 +223,8 @@ const schema = z.object({
   AUTH_ISSUER: optional,
   AUTH_AUDIENCE: z.string().default('authenticated'),
   // Session status source (ADR-0028): db reads Supabase Auth's tables in the shared database (self-host); jwt
-  // (Crove Cloud, or any remote Supabase Auth) trusts the verified token until its exp, plus Crove's own session
-  // records, and confirms every R3 command live with Supabase Auth; off checks only Crove's own records and never
+  // (Ludy Cloud, or any remote Supabase Auth) trusts the verified token until its exp, plus Ludy's own session
+  // records, and confirms every R3 command live with Supabase Auth; off checks only Ludy's own records and never
   // calls Auth (local URLs only). Unset: db when AUTH_UPSTREAM_URL is set (bundled Supabase Auth), jwt otherwise.
   // Empty counts as unset (compose passes the line through empty), so the derived default below applies.
   AUTH_SESSION_CHECK: z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), z.enum(['db', 'jwt', 'off']).optional()),
@@ -424,7 +424,7 @@ const schema = z.object({
     .default('')
     .refine((value) => value.split(',').every((id) => id.trim() === '' || /^[a-z][a-z0-9_]{0,21}$/.test(id.trim())), 'a comma-separated list of adapter ids'),
   // The integrator's ClientID that MISA issued for the MISA AMIS Kế toán API (#3854): a SECRET of the deployment (it is also the key that signs the callbacks of AMIS), never logged, never in an
-  // error or an audit row. Unset, the connector is off: the card says so and no route that uses it is reachable. Crove Cloud sets DOS's own; a self-hoster sets the one MISA issued to their app.
+  // error or an audit row. Unset, the connector is off: the card says so and no route that uses it is reachable. Ludy Cloud sets DOS's own; a self-hoster sets the one MISA issued to their app.
   MISA_AMIS_CLIENT_ID: optional.pipe(z.string().regex(/^[0-9A-Za-z._-]{8,128}$/, 'MISA_AMIS_CLIENT_ID is not in the shape of a ClientID').optional()),
   // The push of vouchers to MISA AMIS (S3b, #3902) is OFF unless this is `on`, and it needs MISA_AMIS_CLIENT_ID. It stays off until the sandbox check (docs/runbooks/misa-amis-sandbox-check.md) has confirmed what the push assumes; only the coordinator runs that check and sets this.
   MISA_AMIS_PUSH: optional.pipe(z.enum(['on', 'off']).optional()),
@@ -707,7 +707,7 @@ const schema = z.object({
   SMTP_USER: optional,
   SMTP_PASS: optional,
   SMTP_FROM: optional,
-  // The provider of Crove's own mails (#539, Email plan §3.9): smtp (the settings above; off without SMTP_HOST) or
+  // The provider of Ludy's own mails (#539, Email plan §3.9): smtp (the settings above; off without SMTP_HOST) or
   // resend (RESEND_API_KEY; SMTP_FROM, on a domain verified at Resend, stays the sender). RESEND_WEBHOOK_SECRET
   // (whsec_...) checks the signature of Resend's delivery webhooks.
   MAIL_PROVIDER: z.preprocess((v) => (v === '' ? undefined : v), z.enum(['smtp', 'resend']).default('smtp')),
@@ -744,7 +744,7 @@ const schema = z.object({
       .optional(),
   ),
   // The product name users see (#1040): in the app, the page title and the product's own mails (sender name and texts). Code,
-  // schemas, logs and the AGPL source notice keep "Crove". Plain text of 1 to 40 characters (letters, digits, spaces
+  // schemas, logs and the AGPL source notice keep "Ludy". Plain text of 1 to 40 characters (letters, digits, spaces
   // and . , & ' + _ ! ( ) -), so it needs no escaping in HTML, ICU messages or a mail's From header. Browsers read it
   // from /api/config.
   BRAND_NAME: optional.pipe(
@@ -762,7 +762,7 @@ const schema = z.object({
   // prober writes as PROBER_STATUS_FILE, on a volume both share. Unset: no /status page and no link to it in the app.
   STATUS_FILE: optional.pipe(z.string().refine((p) => p.startsWith('/') || /^[A-Za-z]:[\\/]/.test(p), 'STATUS_FILE is an absolute path').optional()),
   // Stock photos from Pexels in the Social media library and the composer (#1106): the API key of a Pexels account
-  // (https://www.pexels.com/api/). Unset: nothing is offered and Crove never calls Pexels. The key stays on the server;
+  // (https://www.pexels.com/api/). Unset: nothing is offered and Ludy never calls Pexels. The key stays on the server;
   // searches and image downloads go through the API, so browsers never reach Pexels.
   MEDIA_PEXELS_API_KEY: optional.pipe(z.string().regex(/^[A-Za-z0-9]{20,100}$/, 'MEDIA_PEXELS_API_KEY is the key Pexels shows under Your API key: letters and digits').optional()),
   // Browser push for the Social notifications someone must act on (#1238): the deployment's VAPID key pair (RFC 8292),
@@ -787,7 +787,7 @@ const schema = z.object({
       .optional(),
   ),
   // The assisted purchase-invoice sync from the tax portal (issue #325, ADR-0036): the accountant types the client's
-  // portal password and solves the portal's CAPTCHA in Crove, and the API fetches the period's purchase list and invoice
+  // portal password and solves the portal's CAPTCHA in Ludy, and the API fetches the period's purchase list and invoice
   // XML from hoadondientu.gdt.gov.vn. Off unless true: it logs in to a government portal on a client's behalf, which
   // the deployment opts into (docs/integrations/tax-portal-sync.md). Needs the credential key (CREDENTIAL_KEY).
   TAX_PORTAL_SYNC: z.enum(['true', 'false']).default('false'),
@@ -1385,7 +1385,7 @@ export function assertExportKey(config: Pick<Config, 'PUBLIC_URL' | 'EXPORT_ENCR
   }
 }
 
-// The all role refuses to start on a public PUBLIC_URL unless CROVE_ALLOW_ALL_IN_ONE=true (#2118): the API would run on
+// The all role refuses to start on a public PUBLIC_URL unless LUDY_ALLOW_ALL_IN_ONE=true (#2118): the API would run on
 // the worker's database login, which enters the system context of every org, and on every secret. A missing
 // compose.pilot.yml, or a stray profile, would otherwise do that silently. Run api and worker as two processes
 // (docs/runbooks/deploy.md, "The pilot layout"). Checked when a role starts, like the export key above.

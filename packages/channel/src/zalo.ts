@@ -59,11 +59,11 @@ const CHECK_AFTER_SECONDS = 20;
 const TITLE_MAX = 150;
 const DESCRIPTION_MAX = 300;
 const AUTHOR_MAX = 50;
-// Images per article (#943): Zalo's article docs set no count, so this is Crove's cap, kept in step with the zalo_oa
+// Images per article (#943): Zalo's article docs set no count, so this is Ludy's cap, kept in step with the zalo_oa
 // media rule of @ludy/mod-social. Zalo refuses an image file over 1 MB.
 const IMAGES_MAX = 10;
 const IMAGE_MAX_BYTES = 1024 * 1024;
-// A video article's file (#1429): Zalo takes MP4 and AVI up to 50 MB; Crove's uploads are MP4 or QuickTime, so MP4.
+// A video article's file (#1429): Zalo takes MP4 and AVI up to 50 MB; Ludy's uploads are MP4 or QuickTime, so MP4.
 const VIDEO_MAX_BYTES = 50 * 1024 * 1024;
 // The upload of a video of up to 50 MB; with the processing wait it stays inside callTimeoutMs.
 const VIDEO_UPLOAD_TIMEOUT_MS = 180_000;
@@ -663,7 +663,7 @@ export class ZaloOaPublisher implements Publisher {
         }
         const dead = VIDEO_DEAD[status];
         if (dead) return { kind: 'rejected', error: 'bad_request', code: dead, ...(typeof got?.status_message === 'string' ? { message: got.status_message.slice(0, 500) } : {}) };
-        // 3 (processing), 0 (unknown) or a status Crove does not know: asked again until the wait ends.
+        // 3 (processing), 0 (unknown) or a status Ludy does not know: asked again until the wait ends.
         if (Date.now() >= deadline) return processing();
         await sleep(Math.min(this.pollMs, Math.max(0, deadline - Date.now())));
       }
@@ -846,7 +846,7 @@ export class ZaloOaPublisher implements Publisher {
   // from fresh URLs asked for right before the call (a presigned URL lives a minute). Zalo answers a token, which
   // article/verify turns into the article's id once processed; the edit waits EDIT_WAIT_MS for that. Nothing after the
   // token is a rejection: the update was taken, and an answer that does not come in time is unclear. A video article
-  // (#1429) is refused before any call, as the module refuses it first: its update needs the video_id, which Crove does
+  // (#1429) is refused before any call, as the module refuses it first: its update needs the video_id, which Ludy does
   // not keep.
   async edit(input: EditInput): Promise<EditResult> {
     const s = zaloSecretOf(input.secret);

@@ -1,7 +1,7 @@
 // Outbound mail (issue #129). The providers live in @ludy/mail (Email plan §3.9): SMTP, configured by SMTP_HOST,
 // SMTP_PORT, SMTP_USER, SMTP_PASS and SMTP_FROM (the settings the bundled Supabase Auth uses for its own mails;
 // Mailpit locally), or Resend with MAIL_PROVIDER=resend (#539). Without a provider, mail is off: send() logs one line
-// naming the subject and sends nothing. Crove Cloud may plug its own provider.
+// naming the subject and sends nothing. Ludy Cloud may plug its own provider.
 //
 // Mail bodies may carry secrets (an invite's accept link), so nothing here logs a body, a recipient or an error
 // message: failures are reported by error code only.
@@ -30,7 +30,7 @@ export function createMailer(config: MailConfig): MailProvider {
   return createSmtpProvider({ host: config.SMTP_HOST, port: config.SMTP_PORT, user: config.SMTP_USER, pass: config.SMTP_PASS, from: config.SMTP_FROM, senderName: config.BRAND_NAME });
 }
 
-// The right-hand side of the Message-ID of the mail Crove sends (#538): the domain of SMTP_FROM, else the host of
+// The right-hand side of the Message-ID of the mail Ludy sends (#538): the domain of SMTP_FROM, else the host of
 // PUBLIC_URL. Mail systems weigh a Message-ID whose domain matches the sender's.
 export function messageIdDomain(config: Pick<Config, 'SMTP_FROM' | 'PUBLIC_URL'>): string {
   const from = config.SMTP_FROM?.match(/@([^@\s>]+)>?\s*$/)?.[1];

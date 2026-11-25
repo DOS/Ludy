@@ -1,5 +1,5 @@
 // The Social notification mail (#579, template social.notification): what happened, to which post or channel, and a
-// link that opens it in Crove. The subject was written with the notification; nothing secret is in the mail.
+// link that opens it in Ludy. The subject was written with the notification; nothing secret is in the mail.
 import type { MailTemplate, MailTemplateInput } from './mail-queue.ts';
 
 const escapeHtml = (text: string) => text.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] as string);

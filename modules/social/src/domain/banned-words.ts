@@ -1,6 +1,6 @@
 // Banned and sensitive words (#1055): an org's list of words or phrases it does not want in its posts, each a warning
 // or a block, for every channel or some. Pure and isomorphic: the composer marks matches as a person types with the same
-// rules the commands apply before review, approval and scheduling. Crove ships no list of its own; a preset based on
+// rules the commands apply before review, approval and scheduling. Ludy ships no list of its own; a preset based on
 // advertising law needs a lawyer's review first.
 //
 // Matching works on units: a character with the combining marks that follow it, so a letter typed decomposed (a + ́)

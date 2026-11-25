@@ -1064,7 +1064,7 @@ export const zProposalPolicy = z.object({
 export const AI_DRAFT_IMAGES_MAX = 4;
 export const AI_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 
-// The org for org-scoped procedures comes from the `x-crove-org` header (slug), never from input.
+// The org for org-scoped procedures comes from the `x-ludy-org` header (slug), never from input.
 export const contract = {
   me: {
     get: oc.output(zMe),
@@ -1352,7 +1352,7 @@ export const contract = {
         }),
       ),
   },
-  // Crove CRM's booking slice (issue #1314), when the deployment runs the crm module: the org's event types, which
+  // Ludy CRM's booking slice (issue #1314), when the deployment runs the crm module: the org's event types, which
   // everyone reads; owners and admins manage them all, a member those they host.
   crm: {
     eventTypes: {
@@ -2042,7 +2042,7 @@ export const contract = {
       remove: oc.input(zMeetingReaderRemove).output(zMeetingReaderResult),
     },
   },
-  // Crove Social (Social plan §3.3), when the deployment runs the social module.
+  // Ludy Social (Social plan §3.3), when the deployment runs the social module.
   social: {
     posts: {
       list: oc
@@ -2258,11 +2258,11 @@ export const contract = {
       summary: oc.input(z.object({ days: z.number().int().min(1).max(365).optional(), postId: zId.optional(), labelId: zId.optional() })).output(z.array(zSocialMetricsRow)),
       // The window's totals over every published channel (#397), summed by the server, and per channel; previous: the
       // same for the window of the same length just before (#947).
-      // includeExternal (#1054): with the posts each channel published outside Crove (none under a label filter).
+      // includeExternal (#1054): with the posts each channel published outside Ludy (none under a label filter).
       totals: oc
         .input(z.object({ days: z.number().int().min(1).max(365).optional(), labelId: zId.optional(), includeExternal: z.boolean().optional() }))
         .output(zSocialWindowTotals.extend({ previous: zSocialWindowTotals })),
-      // The posts the channels published outside Crove in the window (#1054), newest first, with their latest counts.
+      // The posts the channels published outside Ludy in the window (#1054), newest first, with their latest counts.
       external: oc.input(z.object({ days: z.number().int().min(1).max(365).optional() })).output(z.array(zSocialExternalPost)),
       // What works (#705): each channel's posts against its own median, by label, format, weekday, hour and hashtag.
       insights: oc
@@ -2504,13 +2504,13 @@ export const contract = {
       remove: oc.input(z.strictObject({ scheduleId: zId })).output(z.object({ scheduleId: zId })),
       test: oc.input(z.strictObject({ scheduleId: zId })).output(z.object({ runId: zId, mails: z.number().int(), suppressed: z.number().int() })),
     },
-    // Link preview cards (#641): what a link's page says, read by the worker; shown in Crove only.
+    // Link preview cards (#641): what a link's page says, read by the worker; shown in Ludy only.
     linkPreviews: {
       request: oc.input(z.strictObject({ url: z.string().min(1).max(2048) })).output(zSocialLinkPreview),
       get: oc.input(z.object({ url: z.string().min(1).max(2048) })).output(zSocialLinkPreview.nullable()),
     },
     // A channel's options for the composer (#1120): a Pinterest board's sections, read by the worker with the
-    // channel's token; shown in Crove only.
+    // channel's token; shown in Ludy only.
     channelOptions: {
       request: oc.input(z.strictObject({ connectionId: zId })).output(zSocialChannelOptions),
       get: oc.input(z.strictObject({ connectionId: zId })).output(zSocialChannelOptions.nullable()),
@@ -2648,7 +2648,7 @@ export const contract = {
         .output(z.object({ connectionId: zId, approvalsRequired: z.number().int(), approved: z.array(zId) })),
       // Whether the channel's reviewers are reminded of posts waiting for review (#703).
       setReminders: oc.input(z.strictObject({ connectionId: zId, reviewReminders: z.boolean() })).output(z.object({ connectionId: zId, reviewReminders: z.boolean() })),
-      // Whether the channel's links go through Crove's short links, to count clicks (#706).
+      // Whether the channel's links go through Ludy's short links, to count clicks (#706).
       setShortLinks: oc.input(z.strictObject({ connectionId: zId, shortLinks: z.boolean() })).output(z.object({ connectionId: zId, shortLinks: z.boolean() })),
       // Four-eyes (#740): owners only.
       setFourEyes: oc.input(z.strictObject({ connectionId: zId, fourEyes: z.boolean() })).output(z.object({ connectionId: zId, fourEyes: z.boolean() })),
@@ -2769,7 +2769,7 @@ export const contract = {
     // Asks for a proposal that no file produced (kernel.proposal.request; owners, admins and members): reversing a
     // posted journal entry (#138, #165), or a cash or bank voucher entered by hand (#327). It posts nothing; the
     // proposal is approved like any other (R3, P10 four-eyes, P11 step-up). Reversing a purchase entry also voids
-    // Crove's record of the document on approval; approving a voucher numbers it and posts it. A retry with the same
+    // Ludy's record of the document on approval; approving a voucher numbers it and posts it. A retry with the same
     // idempotencyKey returns the first proposal.
     request: oc
       .input(
@@ -3424,14 +3424,14 @@ export const contract = {
       )
       .output(z.object({ documentId: zId, outcome: zInputVatCheckOutcome })),
     // markReturn (owners, admins, members; R1, audited; #1400): marks the period's VAT return filed with [22], [25] and
-    // [43] as filed (figures; without them Crove's own working is recorded) and the tax calendar's done mark with it,
+    // [43] as filed (figures; without them Ludy's own working is recorded) and the tax calendar's done mark with it,
     // or takes both back (done false). The next period's [22] is prefilled from this [43].
     markReturn: oc.input(zVatReturnMark).output(z.object({ period: zVatPeriod, done: z.boolean() })),
   },
   // The tax portal's invoice list (issue #465) for one VAT period. direction 'purchase' (the default) is the "mua vào"
-  // export compared with Crove's purchases; 'sale' (#2141) is the "bán ra" export compared with the recorded sales, so a
+  // export compared with Ludy's purchases; 'sale' (#2141) is the "bán ra" export compared with the recorded sales, so a
   // sale missing from the books or booked with another amount is flagged. reconcile: every role; the lists of the
-  // period and how their invoices compare with Crove's. import (owners, admins, members; R1): files an .xlsx
+  // period and how their invoices compare with Ludy's. import (owners, admins, members; R1): files an .xlsx
   // uploaded with purpose 'import' as a list of the period; the worker reads it (poll reconcile until no list is
   // pending). remove (owners, admins, members; R1): takes a list out of its period; it is kept.
   portalList: {
@@ -3448,7 +3448,7 @@ export const contract = {
     fetchList: oc.input(z.object({ period: zVatPeriod, session: zPortalSession.shape.session })).output(zPortalListResult),
     fetchXml: oc.input(z.object({ period: zVatPeriod, session: zPortalSession.shape.session, listId: zId })).output(zPortalXmlResult),
   },
-  // Asking the client company for the purchase invoices the portal lists and Crove lacks (issue #669). status: every
+  // Asking the client company for the purchase invoices the portal lists and Ludy lacks (issue #669). status: every
   // role. request (owners, admins, members; R1): one mail listing a period's missing invoices to the org's contact email,
   // queued and sent by the worker; CONTACT_EMAIL_REQUIRED (409) without a contact email, NOTHING_MISSING (409),
   // REQUEST_TOO_SOON (409) within an hour of the last request for the period; status 'suppressed' when the org stopped
@@ -3835,7 +3835,7 @@ export const contract = {
     comment: oc.input(z.object({ id: zId, body: z.string().trim().min(1).max(10000), idempotencyKey: zId })).output(z.object({ commentId: zId })),
     setStatus: oc.input(z.object({ id: zId, status: zTaskStatus, idempotencyKey: zId })).output(z.object({ taskId: zId, status: zTaskStatus })),
   },
-  // Projects and a task board on kernel tasks (#2591, ADR-0048). Off-switchable via CROVE_MODULES.
+  // Projects and a task board on kernel tasks (#2591, ADR-0048). Off-switchable via LUDY_MODULES.
   projects: {
     list: oc.input(zProjectListInput).output(zProjectListResult),
     get: oc.input(z.strictObject({ id: zId })).output(zProjectDetail),
@@ -4023,7 +4023,7 @@ export const contract = {
       assist: oc.input(zProjectTriageAssistInput).output(zProjectTriageAssistResult),
     },
   },
-  // Electronic signatures (docs/plan/esign.md, #3325). Off-switchable via CROVE_MODULES and org_app_on.
+  // Electronic signatures (docs/plan/esign.md, #3325). Off-switchable via LUDY_MODULES and org_app_on.
   sign: {
     envelope: {
       list: oc.input(zSignEnvelopeListInput).output(zSignEnvelopeListResult),

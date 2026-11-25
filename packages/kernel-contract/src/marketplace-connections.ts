@@ -129,7 +129,7 @@ export type MarketplaceAuthorizeStarted = z.infer<typeof zMarketplaceAuthorizeSt
 export const zMarketplaceAuthorizeReturn = z.strictObject({ state: z.string().min(16).max(200), code: z.string().min(1).max(400) });
 export type MarketplaceAuthorizeReturn = z.infer<typeof zMarketplaceAuthorizeReturn>;
 
-// The marketplaces whose platform pushes (webhooks) a seller's own app to Crove (#4348, S3b of #4315): the adapters the push route (POST /api/marketplace/<adapter>/webhook/<hookKey>) and the worker's verifiers know.
+// The marketplaces whose platform pushes (webhooks) a seller's own app to Ludy (#4348, S3b of #4315): the adapters the push route (POST /api/marketplace/<adapter>/webhook/<hookKey>) and the worker's verifiers know.
 export const MARKETPLACE_PUSH_ADAPTERS = ['tiktok_shop', 'shopee', 'lazada'] as const;
 export const MARKETPLACE_HOOK_KEY_LENGTH = 22;
 

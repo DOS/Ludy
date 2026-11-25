@@ -66,7 +66,7 @@ const requireSystem = (ctx: CommandContext) => {
 export const gateBegin = defineCommand({
   name: 'social.gate.begin',
   input: z.strictObject({ variantId: zId, provider: z.string().min(1).max(32) }),
-  // Commits the provider call as started; the worker then makes it, an effect outside Crove (#1578).
+  // Commits the provider call as started; the worker then makes it, an effect outside Ludy (#1578).
   risk: 'R2',
   sideEffect: 'external',
   access: 'system',

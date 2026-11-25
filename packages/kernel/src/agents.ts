@@ -178,7 +178,7 @@ async function stopAgentRuns(trx: Trx, orgId: string, agentIds: string[], reason
 // one pending row, which collects the reasons. The event goes out on every request: the worker's queue keeps at most
 // one queued and one active job per agent, so repeats cost nothing, and a pending row whose run was refused earlier
 // (daily cap, kill switch, budget) is picked up again. A tainted task makes the wake-up, and so the run that claims
-// it, tainted. An agent of a module this deployment does not enable (CROVE_MODULES) keeps its pending request but is
+// it, tainted. An agent of a module this deployment does not enable (LUDY_MODULES) keeps its pending request but is
 // not woken: no run starts until the module is enabled again, when the sweep finds the request. The same for an app the org switched
 // off (ADR-0053, slice e): the task and the pending request are kept, nothing wakes, and no event is lost.
 async function requestWakeup(ctx: CommandContext, positionId: string | null, reason: { taskId: string; why: string }, tainted: boolean, depth: number) {
@@ -393,7 +393,7 @@ export const assignPosition = defineCommand({
 });
 
 // Installs a module's agent template: an agent and a position it holds, from the template's data. Refused when this
-// deployment does not enable the template's module (CROVE_MODULES, ADR-0031): its program and role keys are not here.
+// deployment does not enable the template's module (LUDY_MODULES, ADR-0031): its program and role keys are not here.
 export const installAgentTemplate = defineCommand({
   name: 'kernel.agent.template.install',
   input: z.object({
@@ -953,7 +953,7 @@ export const createTaskFromRoadmap = defineCommand({
 });
 
 // Tasks accepted from the Projects Triage Inbox (#4493, ADR-0058): projects.triage.accept invokes this via ctx.run
-// before locking crove_projects.project FOR SHARE (`position -> project` canonical lock order). Re-checks conversation
+// before locking ludy_projects.project FOR SHARE (`position -> project` canonical lock order). Re-checks conversation
 // RLS when sourceType is `kernel.conversation`. No RPC route exposes this directly.
 export const createTaskFromTriage = defineCommand({
   name: 'kernel.task.create_from_triage',
@@ -1922,7 +1922,7 @@ export const taskGet = defineQuery({
   },
 });
 
-// The agent templates modules declare, and whether this deployment enables each one's module (CROVE_MODULES,
+// The agent templates modules declare, and whether this deployment enables each one's module (LUDY_MODULES,
 // ADR-0031): installing a template of a module that is off is refused with MODULE_DISABLED.
 export const templateList = defineQuery({
   name: 'kernel.agent.templates.list',

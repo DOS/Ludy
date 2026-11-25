@@ -2,7 +2,7 @@
 // - finance.bank_attention: a bank statement import left lines that need a look (ambiguous ones: the bank's file could
 //   not tell them apart from lines already there). The owners and admins, never the person who imported it.
 // - finance.portal_attention: the tax portal's purchase (or, with detail.direction 'sale', sales, #2141) list of a period was read, and the period has invoices the
-//   portal lists and Crove does not, or whose amounts differ; or the list could not be read. The member who imported
+//   portal lists and Ludy does not, or whose amounts differ; or the list could not be read. The member who imported
 //   it, and the owners and admins.
 // - finance.period_closing: the VAT return of a period is due within PERIOD_CLOSING_DAYS days and the period is not
 //   locked yet. The owners and admins, once per period, from an hourly sweep (sweepPeriodClosing).
@@ -64,7 +64,7 @@ export const notificationDispatch = defineCommand({
           });
           if (found.status !== 'ok') return { sent: 0 };
           const { missing, amountMismatch } = found.value.summary;
-          // Everything on the portal is in Crove: nothing to look at.
+          // Everything on the portal is in Ludy: nothing to look at.
           if (missing + amountMismatch === 0) return { sent: 0 };
           detail = { period: list.period, missing: String(missing), amountMismatch: String(amountMismatch), ...(list.direction === 'sale' ? { direction: 'sale' } : {}) };
         }

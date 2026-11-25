@@ -1,6 +1,6 @@
 // Reposts when a post takes off (#773, plan §1 Later: post-publish actions). A published variant may carry one repost
 // rule (settings.repost: { likes?, afterHours? }): once the platform counts that many likes, or that many hours after it
-// went out, Crove reposts it on its own account (a repost on Threads and Bluesky, a boost on Mastodon). The metrics
+// went out, Ludy reposts it on its own account (a repost on Threads and Bluesky, a boost on Mastodon). The metrics
 // sweep reads the count and checks the time; the repost is made once, as its own external_call step (repost), recorded
 // before the call. An unclear or failed repost is not tried again by itself: the post's activity shows it.
 import { sql } from 'kysely';
@@ -54,7 +54,7 @@ const requireSystem = (ctx: CommandContext) => {
 export const repostBegin = defineCommand({
   name: 'social.repost.begin',
   input: z.strictObject({ variantId: zId, likes: z.number().int().min(0).max(1e12).nullable() }),
-  // Commits the provider call as started; the worker then makes it, an effect outside Crove (#1578).
+  // Commits the provider call as started; the worker then makes it, an effect outside Ludy (#1578).
   risk: 'R2',
   sideEffect: 'external',
   access: 'system',

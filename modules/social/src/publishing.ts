@@ -93,7 +93,7 @@ export interface PublishWork {
   // What the platform granted the connection (#903): the job checks a permission the variant needs against it
   // (scopeNeeded) before calling, and pauses the variant for a reconnect when it is missing.
   scopes: string[];
-  // The post's link as Crove shortened it (#706): its code, and the link it stands for (content.linkUrl).
+  // The post's link as Ludy shortened it (#706): its code, and the link it stands for (content.linkUrl).
   shortLink?: { code: string; target: string };
 }
 
@@ -310,7 +310,7 @@ async function limitedUntil(ctx: CommandContext, v: VariantRow): Promise<Date | 
 export const publishBegin = defineCommand({
   name: 'social.publish.begin',
   input: z.strictObject({ variantId: zId, provider: z.string().min(1).max(32), safety: zSafety, staleSeconds: z.number().int().min(60).max(86_400).optional() }),
-  // Commits the provider call as started; the worker then makes it, an effect outside Crove (#1578).
+  // Commits the provider call as started; the worker then makes it, an effect outside Ludy (#1578).
   risk: 'R2',
   sideEffect: 'external',
   access: 'system',
@@ -366,7 +366,7 @@ export const publishBegin = defineCommand({
           result = none('paused');
           break;
         }
-        // A channel whose limit Crove counts itself (#775): with the account's posts in the window used up, the variant
+        // A channel whose limit Ludy counts itself (#775): with the account's posts in the window used up, the variant
         // waits until one leaves it, with nothing sent.
         const wait = await limitedUntil(ctx, v);
         if (wait) {

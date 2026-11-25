@@ -8,9 +8,9 @@
 // The database enforces the rules for every writer (20261016210000): one reversal per entry, a reversal cannot be
 // reversed (post a new entry instead), no reversal dated before the original, and an exact mirror over every line.
 // A request is refused while another reversal of the same entry waits for approval (#254).
-// Reversing the entry of a purchase document also voids Crove's record of that document (#165, 20261018000000): an
+// Reversing the entry of a purchase document also voids Ludy's record of that document (#165, 20261018000000): an
 // append-only void row naming the reversal, in the same transaction, so the same supplier invoice can be recorded
-// again with the right accounts. It corrects Crove's records only, never the supplier's e-invoice. The database holds
+// again with the right accounts. It corrects Ludy's records only, never the supplier's e-invoice. The database holds
 // every writer to both directions: a void names the reversal of its document's entry, and such a reversal commits
 // only with its void (20261018150000).
 import { sql } from 'kysely';
@@ -225,7 +225,7 @@ export async function postReversal(
     }
     throw error;
   });
-  // A purchase entry: void Crove's record of its document, naming this reversal (the database checks the link).
+  // A purchase entry: void Ludy's record of its document, naming this reversal (the database checks the link).
   const voidedDocumentId = entry.source_type === PURCHASE_SOURCE ? entry.source_id : null;
   let stockReversed = 0;
   if (voidedDocumentId) {

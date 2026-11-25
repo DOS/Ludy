@@ -1,7 +1,7 @@
 // A module's manifest (plan §5.2, #1588, #1599, #1630, #1652, #1656, #1651): the module, the modules it imports, the
 // database tables it owns, per schema, with every column of each table and its data class, the permissions it owns, its screens in the app with
 // their menu items, and its entities. A database test (apps/kernel/test/manifest.db.test.ts) checks the manifests
-// against the catalog after the migrations: every table of a crove_* schema belongs to exactly one manifest, every
+// against the catalog after the migrations: every table of a ludy_* schema belongs to exactly one manifest, every
 // column of it is classified, every table and column a manifest names exists, every permission a role grants or
 // something checks is declared, with the roles that grant it, and every entity matches its table and numbering series.
 // apps/app/test/module-screens.test.ts checks the screens against the app's router, and `pnpm depcruise`

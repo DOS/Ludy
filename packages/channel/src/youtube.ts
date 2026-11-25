@@ -13,7 +13,7 @@
 // Playlists (#1018): once the video is out, playlistItems.insert puts it into each of the channel's playlists the
 // variant names (settings.youtube.playlistIds, at most 5), one call each (50 quota units), with the force-ssl scope too.
 // A refused insert (a playlist deleted since) never touches the video. Removing a post (#1137): videos.delete (50 quota
-// units), with the force-ssl scope Crove already asks for. playlists() lists the channel's own playlists
+// units), with the force-ssl scope Ludy already asks for. playlists() lists the channel's own playlists
 // (playlists.list mine=true, one quota unit a page) for the composer's picker, through options() (#1131). Correcting a
 // published video's description (#1474): videos.list reads the live snippet (one quota unit), then
 // videos.update part=snippet (50 quota units) sends it back with the new description, with the force-ssl

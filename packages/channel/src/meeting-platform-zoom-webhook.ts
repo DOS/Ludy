@@ -25,7 +25,7 @@ const TIMESTAMP = /^[0-9]{1,13}$/;
 const HOST_ID = /^[A-Za-z0-9_-]{1,200}$/;
 
 // THE KEY OF A ZOOM ACCOUNT. Zoom user ids are case-sensitive, but Ludy keys a connection by the id in lower case: the connect step (meeting-platform-zoom.ts) stores it so, a notice's host id is read
-// so (parseZoomNotice), and crove_kernel.meeting_platform_ring compares it so. This one function is the rule for the two sides in this package, so they cannot drift (a test ties them by behaviour); the connect command's schema in
+// so (parseZoomNotice), and ludy_kernel.meeting_platform_ring compares it so. This one function is the rule for the two sides in this package, so they cannot drift (a test ties them by behaviour); the connect command's schema in
 // packages/kernel/src/meeting-platform.ts lowers once more on purpose (the kernel cannot import this package), and the SQL side lowers the same way, held to it by apps/kernel/test/meeting-platform-ring.db.test.ts. Decision of #4011 (point 2, from the shared-core review of #3939): keep the folding. Two Zoom users whose ids differ only in case
 // would share a key, and the only effect is that the sweep lists the other one's connection early, with that member's own sealed token; no recording, name or token crosses. Storing the id as Zoom sends
 // it would be exact, but the case of every stored id is already lost, so each member would have to connect again, and the notices of the old connections would be missed until they did.

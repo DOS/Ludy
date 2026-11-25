@@ -9,7 +9,7 @@
 // reads accounts by code prefix (B01-DNN, B02-DNN) counts a sub-account under its TT133 parent, and the sub-account
 // takes that parent's type and normal balance.
 
-// Any account code Crove accepts: a TT133 code (3 to 5 digits), a digit sub-account (up to 10 digits) or a tagged one.
+// Any account code Ludy accepts: a TT133 code (3 to 5 digits), a digit sub-account (up to 10 digits) or a tagged one.
 export const ACCOUNT_CODE_PATTERN = /^[0-9]{3,10}(\.[A-Z0-9]{1,20})?$/;
 const SUFFIX_PATTERN = /^([0-9]{1,5}|\.[A-Z0-9]{1,20})$/;
 

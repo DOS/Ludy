@@ -90,7 +90,7 @@ export const reportLinkCreate = defineCommand({
     connectionIds: z.array(zId).max(50).optional(),
     title: z.string().trim().min(1).max(120).optional(),
     days: z.number().int().min(1).max(REPORT_LINK_MAX_DAYS).optional(),
-    // Count the posts the channels published outside Crove (#1054); fixed for the link's life.
+    // Count the posts the channels published outside Ludy (#1054); fixed for the link's life.
     includeExternal: z.boolean().optional(),
     note: zReportNote.optional(),
     // Only the posts with this label of the org (#1159), in both periods; no outside posts and no goals then.

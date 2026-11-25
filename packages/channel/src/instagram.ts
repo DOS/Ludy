@@ -207,7 +207,7 @@ export function quotaExhausted(answer: { data?: { quota_usage?: unknown; config?
 export class InstagramPublisher implements Publisher {
   readonly provider = 'instagram' as const;
   readonly publishSafety: RetrySafety = 'reconcile_only';
-  // A video uploaded by Crove (#772) takes minutes; the job waits as long as for the other video adapters.
+  // A video uploaded by Ludy (#772) takes minutes; the job waits as long as for the other video adapters.
   readonly callTimeoutMs = 420_000;
   readonly conversations: InstagramConversations;
   private readonly graph: Graph;
@@ -352,7 +352,7 @@ export class InstagramPublisher implements Publisher {
   }
 
   // A comment by the account under its own post (#609): `POST /{ig-media-id}/comments` with the Page token. It needs
-  // instagram_manage_comments; an account connected before Crove asked for it is refused with a permission error and
+  // instagram_manage_comments; an account connected before Ludy asked for it is refused with a permission error and
   // comments again once it reconnects.
   async comment(input: CommentInput): Promise<CommentResult> {
     const s = secretOf(input.secret);
@@ -371,10 +371,10 @@ export class InstagramPublisher implements Publisher {
   }
 
   // Likes and comments are fields of the post; reach, saves, shares and views come from its insights, which need
-  // instagram_manage_insights (an account connected before Crove asked for it has none) and exist only for posts made
+  // instagram_manage_insights (an account connected before Ludy asked for it has none) and exist only for posts made
   // after the account became professional. Without insights the plain counts are still reported.
   // The account's followers and yesterday's reach (#645), and who follows it when asked (#1146). The reach and the
-  // audience need instagram_manage_insights; an account connected before Crove asked for it reports followers only.
+  // audience need instagram_manage_insights; an account connected before Ludy asked for it reports followers only.
   async accountMetrics(input: AccountMetricsInput): Promise<AccountMetricsResult> {
     const s = secretOf(input.secret);
     if (!s) return { refused: 'token_expired' };

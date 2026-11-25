@@ -10,7 +10,7 @@
 // has not audited can only post SELF_ONLY. A post is visible only after the bytes are in, so a failure before then
 // posted nothing; after init, the publish_id says where it stands.
 // Photo posts (#710): 1 to 35 JPEG or WebP images through content/init with media_type PHOTO, which TikTok pulls from
-// Crove's presigned URLs (PULL_FROM_URL; the URL's domain must be verified for the TikTok app, or TikTok answers
+// Ludy's presigned URLs (PULL_FROM_URL; the URL's domain must be verified for the TikTok app, or TikTok answers
 // url_ownership_unverified). The text goes as the description; the status check is the same as for a video.
 // Inbox mode (#903, settings.tiktokMode 'inbox'; 'direct', the default, is the above): TikTok's Upload API sends the
 // video to the creator's TikTok inbox as a draft, where they add sound, write the caption and post it inside TikTok.
@@ -18,7 +18,7 @@
 // it also works for an app TikTok has not audited, whose direct posts stay SELF_ONLY. The init call is
 // inbox/video/init with source_info alone, the chunks are the same, and the status check ends at SEND_TO_USER_INBOX:
 // the draft is in the app, not public, with no post id yet. Photos go through content/init with post_mode
-// MEDIA_UPLOAD and their description. It needs the video.upload scope, which Crove asks for only when the deployment
+// MEDIA_UPLOAD and their description. It needs the video.upload scope, which Ludy asks for only when the deployment
 // sets CHANNEL_TIKTOK_INBOX (its TikTok app must be approved for it), and which connections made before then lack.
 // Late ids (#1475): TikTok gives a public post's id (publicaly_available_post_id) only once its moderation passes, which
 // may come after PUBLISH_COMPLETE, and an inbox draft moves on to PUBLISH_COMPLETE once the creator posts it in TikTok.
@@ -307,7 +307,7 @@ const INBOX_HINTS: Readonly<Record<string, string>> = {
 };
 
 // inbox: the call was one of inbox mode's, where scope_not_authorized means the connection lacks video.upload (it was
-// made before Crove asked for it): a refusal that asks for a reconnect, never an expired token, so the connection's
+// made before Ludy asked for it): a refusal that asks for a reconnect, never an expired token, so the connection's
 // direct posts go on.
 function publishResult(error: unknown, inbox = false): PublishResult {
   if (!(error instanceof TikTokError)) return { kind: 'unknown', code: 'NETWORK' };
@@ -495,9 +495,9 @@ export class TikTokPublisher implements Publisher {
   // The account's own public videos since a date (#1476): `POST /v2/video/list/` under video.list (the Display API),
   // which lists the user's public videos newest first by create_time, at most 20 a page (max_count), paged by a cursor
   // (a create time in milliseconds) sent back while has_more is true. Only fields of the documented Video Object are
-  // asked for. A connection without video.list (Crove asks for it only where CHANNEL_TIKTOK_VIDEO_LIST is set) is not
+  // asked for. A connection without video.list (Ludy asks for it only where CHANNEL_TIKTOK_VIDEO_LIST is set) is not
   // asked at all: the answer is the missing permission. Ids are the numeric video ids publish stores once TikTok gives
-  // them (#1475), so external_post_is_crove drops Crove's own posts; the excerpt is the longer of the title and the
+  // them (#1475), so external_post_is_crove drops Ludy's own posts; the excerpt is the longer of the title and the
   // description, the time create_time, and the permalink share_url on tiktok.com only. A refused token is said on the
   // first page (a missing scope, which TikTok also answers with 401, is the permission, never an expired token); any
   // failure after it ends the listing with what came before it.

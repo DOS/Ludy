@@ -203,7 +203,7 @@ export const eventTypeList = defineQuery({
 export const eventTypeCreate = defineCommand({
   name: 'crm.event_type.create',
   input: zEventTypeInput,
-  // It changes what the public booking page shows customers (visible outside Crove derives R2; #1579). No agent runs
+  // It changes what the public booking page shows customers (visible outside Ludy derives R2; #1579). No agent runs
   // it.
   risk: 'R2',
   sideEffect: 'external',
@@ -231,7 +231,7 @@ export const eventTypeCreate = defineCommand({
 export const eventTypeUpdate = defineCommand({
   name: 'crm.event_type.update',
   input: zEventTypeUpdate,
-  // It changes what the public booking page shows customers (visible outside Crove derives R2; #1579). No agent runs
+  // It changes what the public booking page shows customers (visible outside Ludy derives R2; #1579). No agent runs
   // it.
   risk: 'R2',
   sideEffect: 'external',
@@ -281,7 +281,7 @@ export const eventTypeUpdate = defineCommand({
 export const eventTypeSetActive = defineCommand({
   name: 'crm.event_type.set_active',
   input: zEventTypeSetActive,
-  // It opens or closes a type on the public booking page (visible outside Crove derives R2; #1579). No agent runs it.
+  // It opens or closes a type on the public booking page (visible outside Ludy derives R2; #1579). No agent runs it.
   risk: 'R2',
   sideEffect: 'external',
   access: EDITORS,

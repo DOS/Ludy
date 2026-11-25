@@ -1,4 +1,4 @@
-// Crove kernel entry point. One image, several roles:
+// Ludy kernel entry point. One image, several roles:
 //   migrate      apply SQL migrations (the job schema included), set role passwords and install the DDL watch's
 //                event triggers (#1202) where the admin role may
 //   auth-grants  after Supabase Auth has started: let the session check read auth.sessions, auth.users and
@@ -13,7 +13,7 @@
 //   exports-rebind <org id>...  after a restore into a new bucket, re-records each org's export with the restored
 //                 object versions (issue #351; tools/backup/restore.sh runs it in the worker's container)
 //   user-disable | user-enable <account id or email> --reason <text> [--code <code>]
-//                 block or unblock a user account in Crove, audited in each of its orgs (issue #985); run it in the
+//                 block or unblock a user account in Ludy, audited in each of its orgs (issue #985); run it in the
 //                 worker's container
 //   org-purge <org slug or id> --reason <text>
 //                 apply the offboarding deletion map to an org in offboarding whose export is old enough, and close
@@ -25,7 +25,7 @@
 //   shred-replay  after a restore: delete again every meeting a shred reference of the archive store names, and remove the objects and file rows that
 //                 leaves (issue #2579, ADR-0017 section 8); the worker does the same at start; run it in the worker's container
 //   vapid-keys    print a new VAPID key pair for browser push (issue #1238): VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY
-//   context-token-key  print a new context token key (#1822): CROVE_CONTEXT_TOKEN_KEY, for migrate and the kernel
+//   context-token-key  print a new context token key (#1822): LUDY_CONTEXT_TOKEN_KEY, for migrate and the kernel
 // It wires the open-source default adapters into the composition root (createKernel, ADR-0030).
 import { randomBytes } from 'node:crypto';
 import { applyAuthGrants, installDdlWatch, migrate, setRolePasswords } from '@ludy/db/migrate';

@@ -66,7 +66,7 @@ export type IssueCode =
   | 'VIDEO_TOO_LARGE'
   | 'VIDEO_TOO_LONG'
   | 'VIDEO_LENGTH_UNKNOWN'
-  // The platform takes video, Crove's adapter for it does not yet.
+  // The platform takes video, Ludy's adapter for it does not yet.
   | 'VIDEO_NOT_SUPPORTED_YET'
   // Documents (#1119): a PDF on a channel that shows none (only LinkedIn does); a document beside other files (a
   // document is the post's only file); one over the channel's size (limit, actual: bytes).
@@ -101,7 +101,7 @@ export type IssueCode =
   | 'TIKTOK_COMMERCIAL_CHOOSE'
   | 'TIKTOK_BRANDED_PRIVATE'
   | 'TIKTOK_DISCLOSURE_INBOX'
-  // The platform takes photos, Crove's adapter for it posts only video.
+  // The platform takes photos, Ludy's adapter for it posts only video.
   | 'IMAGES_NOT_SUPPORTED_YET'
   | 'TOO_MANY_LINKS'
   // The first comment (#587): too long for the channel, or a channel that takes none yet.
@@ -128,7 +128,7 @@ export type IssueCode =
   // The repost rule (#773): not a like count and/or hours in range; a channel that reposts nothing.
   | 'REPOST_INVALID'
   | 'REPOST_NOT_SUPPORTED'
-  // The planned takedown (#861): not a full ISO 8601 time with Z or an offset; a channel (or a Story) Crove cannot
+  // The planned takedown (#861): not a full ISO 8601 time with Z or an offset; a channel (or a Story) Ludy cannot
   // take down.
   | 'REMOVE_AT_INVALID'
   | 'REMOVE_AT_NOT_SUPPORTED'
