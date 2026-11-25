@@ -237,9 +237,9 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   ['crove_meetings.meeting_reader', () => 'false'], // As above.
   ['crove_meetings.meeting_result', () => 'false'], // As above (summaries and decisions, ADR-0047).
   ['crove_meetings.meeting_video', () => 'false'], // As above.
+  ['crove_meetings.minutes_version', () => 'false'], // The recorder's published second-language version of the minutes, read by the meeting's readers, users (#4777).
   ['crove_meetings.morning_notice', () => 'false'], // A member's own opt-in to the morning notice of the day's meetings, read by that member, a user (#3955).
   ['crove_meetings.transcript_segment', () => 'false'], // As above (transcript segments, ADR-0047).
-  ['crove_meetings.minutes_version', () => 'false'], // The recorder's published second-language version of the minutes, read by the meeting's readers, users (#4777).
   ['crove_meetings.translation', () => 'false'], // A machine translation, read by the member who asked for it, a user (meetings integrations E1, #3184).
   // Catalog 'read': the notes its member could read, own private and shared (the factory's private notes are the first owner's, not the member's, so only the shared ones).
   ['crove_notes.attachment', () => 'false'], // Not in member_vy_table; reads through parent note with ctx_agent_id() IS NULL.
@@ -369,12 +369,12 @@ const AUTHOR_ONLY = new Map<string, string>([
   ['crove_meetings.meeting_result', 'false'],
   // Meeting videos (ADR-0047 point 2): worker system context reads and writes nothing.
   ['crove_meetings.meeting_video', 'false'],
+  // The recorder's published second-language version of a meeting's minutes (#4777): read by the meeting's readers, users only; worker system context reads and writes nothing.
+  ['crove_meetings.minutes_version', 'false'],
   // A member's own morning notice setting (#3955): the member's alone; worker system context reads and writes nothing (its one reader is a definer).
   ['crove_meetings.morning_notice', 'false'],
   // Meeting transcript segments (ADR-0047 point 2): worker system context reads and writes nothing.
   ['crove_meetings.transcript_segment', 'false'],
-  // The recorder's published second-language version of a meeting's minutes (#4777): read by the meeting's readers, users only; worker system context reads and writes nothing.
-  ['crove_meetings.minutes_version', 'false'],
   // A machine translation of a summary (meetings integrations E1, #3184): the asker's alone; worker system context reads and writes nothing.
   ['crove_meetings.translation', 'false'],
   // An attachment reads through its parent note: the system context sees shared notes' attachments only (ADR-0037).
@@ -3653,6 +3653,25 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       row: { org_id: o.id, id: randomUUID(), name: `RLS matrix template ${tag()}`, sections: JSON.stringify([{ key: 's1', title: 'Nội dung', hint: '' }]), created_by: o.owner },
     }),
   },
+  // #4777 (bilingual minutes): the recorder's published second-language version of a meeting's minutes. Read by the meeting's readers and written and deleted by the recorder, both in a user
+  // context (the org's owner is the recorder of the factory's meeting); the system context reads none (is_meeting_reader answers false for it). No UPDATE for a login role.
+  'crove_meetings.minutes_version': {
+    make: (o) => {
+      const meeting = meetingsMeetingRow(o);
+      return {
+        setup: [{ table: 'crove_meetings.meeting', values: meeting }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          meeting_id: meeting.id,
+          language: 'en',
+          source_hash: 'b'.repeat(64),
+          body: '[{"key":"summary","text":"RLS matrix version"}]',
+          published_by: o.owner,
+        },
+      };
+    },
+  },
   // #3955 (part B): a member's own opt-in to the morning notice of the day's meetings (a time of day, their zone and language), one row per member, read, written and deleted by that member alone, so the
   // system context reads none.
   'crove_meetings.morning_notice': {
@@ -3676,25 +3695,6 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
           speaker_label: 'Người nói 1',
           text: 'Xin chào',
           stage: 'draft',
-        },
-      };
-    },
-  },
-  // #4777 (bilingual minutes): the recorder's published second-language version of a meeting's minutes. Read by the meeting's readers and written and deleted by the recorder, both in a user
-  // context (the org's owner is the recorder of the factory's meeting); the system context reads none (is_meeting_reader answers false for it). No UPDATE for a login role.
-  'crove_meetings.minutes_version': {
-    make: (o) => {
-      const meeting = meetingsMeetingRow(o);
-      return {
-        setup: [{ table: 'crove_meetings.meeting', values: meeting }],
-        row: {
-          org_id: o.id,
-          id: randomUUID(),
-          meeting_id: meeting.id,
-          language: 'en',
-          source_hash: 'b'.repeat(64),
-          body: '[{"key":"summary","text":"RLS matrix version"}]',
-          published_by: o.owner,
         },
       };
     },
