@@ -598,6 +598,8 @@ export const KERNEL_ERROR_CODES = [
   'TEMPLATE_SUGGEST_NOT_NEEDED',
   // Vy listing what a meeting left open (#4768).
   'OPEN_POINTS_BUSY',
+  // Sales call insights (#4920).
+  'SALES_INSIGHT_BUSY',
   'MEETING_TITLE_EMPTY',
   'MEETING_TITLE_TOO_LONG',
   // The weekly digest across meetings (#3949).
