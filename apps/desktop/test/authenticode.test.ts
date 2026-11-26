@@ -50,7 +50,7 @@ function buildMinimalSignedPe(cmsDer: Buffer): Buffer {
 function buildValidSha256Rfc3161CmsDer(): Buffer {
   const tlv = (tag: number, content: Buffer): Buffer => {
     const len = content.length;
-    const hdr = len < 0x80 ? Buffer.from([tag, len]) : Buffer.from([tag, 0x81, len]);
+    const hdr = len < 0x80 ? Buffer.from([tag, len]) : len < 256 ? Buffer.from([tag, 0x81, len]) : Buffer.from([tag, 0x82, len >> 8, len & 0xff]);
     return Buffer.concat([hdr, content]);
   };
   const oidTlv = (dotted: string): Buffer => {
