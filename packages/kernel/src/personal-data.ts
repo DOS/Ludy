@@ -1983,11 +1983,12 @@ export const personalDataErase = defineCommand({
          AND n.visibility = 'org'
          AND a.extract_status = 'pending'`.execute(ctx.trx);
     const pendingSharedAttachments = Number(pendingSharedAttRows[0]?.pending ?? 0);
+    const { rows: privateRows } = await sql<{ notes: string; todos: string; untold_notes: string; untold_todos: string; note_ids: string[]; todo_ids: string[] }>`
+      SELECT notes, todos, untold_notes, untold_todos, note_ids, todo_ids FROM ludy_notes.private_erase(${probe.kind}, ${probeValue(probe)})`.execute(ctx.trx);
+    // Count still-pending private attachments after private_erase so erased pending rows are not falsely reported in kept[].
     const { rows: pendingPrivateAttRows } = await sql<{ pending: string }>`
       SELECT ludy_notes.private_pending_attachment_count()::text AS pending`.execute(ctx.trx);
     const pendingPrivateAttachments = Number(pendingPrivateAttRows[0]?.pending ?? 0);
-    const { rows: privateRows } = await sql<{ notes: string; todos: string; untold_notes: string; untold_todos: string; note_ids: string[]; todo_ids: string[] }>`
-      SELECT notes, todos, untold_notes, untold_todos, note_ids, todo_ids FROM ludy_notes.private_erase(${probe.kind}, ${probeValue(probe)})`.execute(ctx.trx);
     const sum = (key: 'notes' | 'todos' | 'untold_notes' | 'untold_todos') => privateRows.reduce((n, r) => n + Number(r[key]), 0);
     const privateDeleted = { notes: sum('notes'), todos: sum('todos') };
     const untold = { notes: sum('untold_notes'), todos: sum('untold_todos') };

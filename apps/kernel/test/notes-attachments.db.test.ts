@@ -1133,5 +1133,41 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
     );
     expect(remaining).toEqual([]);
     expect(await doomed(o)).toContain(`notes/${o.orgId}/${privPendingAtt.id}`);
+
+    // A still-pending private attachment deleted by private_erase (via filename match) must not linger in kept[].
+    const privNameEmail = 'private-pending-name@example.com';
+    const privNameNote = await createNote(o, o.author, 'private', 'Ghi chú giữ lại');
+    const privNameAtt = await attached(o, o.author, privNameNote, pdf('pending-name'), `${privNameEmail}.pdf`);
+    await rt.execute<PersonalDataNotice>(
+      'kernel.personal_data.notify',
+      { value: privNameEmail },
+      { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() },
+    );
+    const [notifiedNameEvent] = await rows<{ id: string }>(
+      `SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.personal_data.notified' ORDER BY id DESC LIMIT 1`,
+      [o.orgId],
+    );
+    await worker.execute('kernel.notification.dispatch', { eventId: notifiedNameEvent?.id }, { actor: SYSTEM, orgId: o.orgId });
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query(
+        `UPDATE ludy_kernel.audit_event SET occurred_at = occurred_at - interval '25 hours' WHERE org_id = $1 AND command = 'kernel.personal_data.notify'`,
+        [o.orgId],
+      );
+      await c.query(
+        `UPDATE ludy_kernel.notification SET created_at = created_at - interval '25 hours' WHERE org_id = $1 AND kind = 'kernel.personal_data_notice'`,
+        [o.orgId],
+      );
+      await c.query('COMMIT');
+    });
+    const erasedByName = await rt.execute<PersonalDataErasure>(
+      'kernel.personal_data.erase',
+      { value: privNameEmail },
+      { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() },
+    );
+    expect(erasedByName.erased).toContainEqual({ column: 'ludy_notes.note', rows: 1 });
+    expect(erasedByName.kept).toEqual([]);
+    expect(await doomed(o)).toContain(`notes/${o.orgId}/${privNameAtt.id}`);
   });
 });
