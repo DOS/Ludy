@@ -782,6 +782,7 @@ export type ConversationPersonalDataItem = z.infer<typeof zConversationPersonalD
 export const zConversationPersonalDataResult = z.strictObject({
   kind: z.enum(['email', 'digits']),
   items: z.array(zConversationPersonalDataItem),
+  totalMessages: z.number().int().min(0),
   truncated: z.boolean(),
 });
 export type ConversationPersonalDataResult = z.infer<typeof zConversationPersonalDataResult>;

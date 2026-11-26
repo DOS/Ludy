@@ -2955,7 +2955,7 @@ export const conversationPersonalDataFind = defineCommand({
     const picked = candidates.rows.slice(0, CONVERSATION_PERSONAL_DATA_MATCH_MAX);
     if (picked.length === 0) {
       ctx.audit({ kind: probe.kind, matches: 0, truncated: false });
-      return { kind: probe.kind, items: [], truncated: false };
+      return { kind: probe.kind, items: [], totalMessages: 0, truncated: false };
     }
 
     const ids = picked.map((r) => r.id);
@@ -2969,6 +2969,7 @@ export const conversationPersonalDataFind = defineCommand({
       target_conversation_id: string | null;
       target_message_id: string | null;
       linked_contact_names: string[];
+      total_messages: number;
     }>`
       WITH target_ids AS (
         SELECT pg_catalog.unnest(${ids}::uuid[]) AS identity_id
@@ -3023,6 +3024,20 @@ export const conversationPersonalDataFind = defineCommand({
           AND c.identity_id IS DISTINCT FROM m.author_identity_id
         GROUP BY m.author_identity_id
       ),
+      unique_msg_count AS (
+        SELECT count(*)::int AS total_messages
+        FROM (
+          SELECT m.id
+          FROM owned_convs oc
+          JOIN ludy_kernel.conversation_message m
+            ON m.org_id = ${ctx.orgId}::uuid AND m.conversation_id = oc.id
+          UNION
+          SELECT m.id
+          FROM ludy_kernel.conversation_message m
+          WHERE m.org_id = ${ctx.orgId}::uuid
+            AND m.author_identity_id = ANY(${ids}::uuid[])
+        ) u
+      ),
       newest_authored AS (
         SELECT DISTINCT ON (m.author_identity_id)
           m.author_identity_id AS identity_id,
@@ -3068,7 +3083,8 @@ export const conversationPersonalDataFind = defineCommand({
         COALESCE(no.channel_name, na.channel_name) AS channel_name,
         CASE WHEN COALESCE(otc.threads, 0) > 0 THEN no.conversation_id ELSE na.conversation_id END AS target_conversation_id,
         CASE WHEN COALESCE(otc.threads, 0) > 0 THEN NULL ELSE na.message_id END AS target_message_id,
-        COALESCE(lpn.names, '{}'::text[]) AS linked_contact_names
+        COALESCE(lpn.names, '{}'::text[]) AS linked_contact_names,
+        (SELECT total_messages FROM unique_msg_count)::int AS total_messages
       FROM target_ids t
       LEFT JOIN owned_thread_counts otc ON otc.identity_id = t.identity_id
       LEFT JOIN owned_msg_counts omc ON omc.identity_id = t.identity_id
@@ -3104,8 +3120,9 @@ export const conversationPersonalDataFind = defineCommand({
         },
       });
     }
+    const totalMessages = Number(stats.rows[0]?.total_messages ?? 0);
     ctx.audit({ kind: probe.kind, matches: items.length, truncated });
-    return { kind: probe.kind, items, truncated };
+    return { kind: probe.kind, items, totalMessages, truncated };
   },
 });
 

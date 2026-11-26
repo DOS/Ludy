@@ -77,10 +77,9 @@ export function PersonalDataConversations({
   const totals = data.items.reduce(
     (acc, item) => ({
       threads: acc.threads + item.threads,
-      messages: acc.messages + item.messages,
       notes: acc.notes + item.notes,
     }),
-    { threads: 0, messages: 0, notes: 0 },
+    { threads: 0, notes: 0 },
   );
 
   const stepUpAttempt = erase.error && isStepUpRequired(erase.error) ? activeAttempt : null;
@@ -111,7 +110,7 @@ export function PersonalDataConversations({
             {t('title')}
           </h2>
           <p className="text-xs text-muted-foreground" data-testid="personal-data-conversations-summary">
-            {t('summary', { identities: data.items.length, threads: totals.threads, messages: totals.messages, notes: totals.notes })}
+            {t('summary', { identities: data.items.length, threads: totals.threads, messages: data.totalMessages, notes: totals.notes })}
           </p>
         </div>
         <p className="text-xs text-muted-foreground">{t('hint')}</p>
@@ -125,7 +124,7 @@ export function PersonalDataConversations({
       {stepUpAttempt && (
         <StepUpPrompt
           action={t('stepUp', { name: labelOf(stepUpAttempt.item) })}
-          onVerified={() => erase.mutate(stepUpAttempt)}
+          onVerified={() => erase.mutateAsync(stepUpAttempt).then(() => undefined).catch(() => undefined)}
           onCancel={() => {
             erase.reset();
             setActiveAttempt(null);

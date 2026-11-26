@@ -64,6 +64,7 @@ function renderSection(
 
 const sampleResult: ConversationPersonalDataResult = {
   kind: 'digits',
+  totalMessages: 9,
   truncated: true,
   items: [
     {
@@ -138,8 +139,8 @@ describe('the conversations pointer and lookup section on the personal-data page
   it('renders matched direct, linked-contact, email, and commenter-only identities with mobile touch targets in Vietnamese and English', () => {
     const vi = renderSection('vi', { data: sampleResult });
     expect(vi).toContain('data-testid="personal-data-conversations-results"');
-    expect(vi).toContain('3 khách · 3 hội thoại · 10 tin nhắn · 2 ghi chú nội bộ');
-    expect(vi).toContain('Khớp quá 50 khách');
+    expect(vi).toContain('3 khách · 3 hội thoại · 9 tin nhắn · 2 ghi chú nội bộ');
+    expect(vi).toContain('Có hơn 50 danh tính khớp nên chỉ hiện 50 kết quả gần đây nhất');
     expect(vi).toContain('Chị Lan');
     expect(vi).toContain('WhatsApp Cửa Hàng · WhatsApp');
     expect(vi).toContain('Trực tiếp');
@@ -153,8 +154,8 @@ describe('the conversations pointer and lookup section on the personal-data page
     expect(vi).not.toContain('>Xóa tất cả<');
 
     const en = renderSection('en', { data: sampleResult });
-    expect(en).toContain('3 customers · 3 threads · 10 messages · 2 internal notes');
-    expect(en).toContain('More than 50 identities match');
+    expect(en).toContain('3 customers · 3 threads · 9 messages · 2 internal notes');
+    expect(en).toContain('More than 50 identities match, so only the 50 most recent are shown');
     expect(en).toContain('Direct');
     expect(en).toContain('Linked contact');
     expect(en).toContain('Contact: Công ty ABC');

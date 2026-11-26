@@ -82,7 +82,11 @@ export function PersonalDataPage() {
   const privateItems = found.data?.privateItems ?? [];
   const hasPrivate = privateItems.length > 0;
   const meetingText = found.data?.meetingText ?? [];
+  const convLoading = socialInstalled && conversations.isFetching;
+  const linkedConversationsCount = socialInstalled ? (conversations.data?.items.filter((item) => item.matchSource === 'linked_contact').length ?? 0) : 0;
   const hasConversations = socialInstalled && (conversations.data?.items.length ?? 0) > 0;
+  // Hide duplicate 422 PERSONAL_DATA_QUERY error when the main personal-data query already shows the exact same validation text.
+  const convError = conversations.error && (!found.error || errorMessage(conversations.error) !== errorMessage(found.error)) ? conversations.error : null;
   // Meeting text the owner reads is redacted in place by the erasure; the rest waits for the notice (#2594).
   const hasErasable = (found.data?.matches.some((m) => m.handling === 'erase') ?? false) || hasPrivate || meetingText.length > 0;
   const hasAny = (found.data?.matches.length ?? 0) > 0 || hasPrivate || meetingText.length > 0 || hasConversations;
@@ -178,12 +182,17 @@ export function PersonalDataPage() {
       {isOwner && hasErasable && !erase.data && (
         <div className="mb-4 max-w-3xl space-y-2">
           {!confirming ? (
-            <Button variant="destructive" onClick={() => setConfirming(true)}>
+            <Button variant="destructive" disabled={convLoading} onClick={() => setConfirming(true)}>
               {t('erase')}
             </Button>
           ) : (
             <div className="space-y-2 rounded-lg border border-destructive p-3">
               <p className="text-sm text-foreground">{t('eraseConfirm', { value })}</p>
+              {linkedConversationsCount > 0 && (
+                <p className="text-xs font-medium text-warning" data-testid="personal-data-linked-erase-warning">
+                  {t('eraseLinkedConversationsWarning', { count: linkedConversationsCount })}
+                </p>
+              )}
               <div className="flex gap-2">
                 <Button loading={erase.isPending} variant="destructive" onClick={eraseNow}>
                   {t('eraseNow')}
@@ -263,7 +272,7 @@ export function PersonalDataPage() {
         </>
       )}
       {socialInstalled && value.length >= 3 && (
-        <PersonalDataConversations key={searchRun} data={conversations.data} isFetching={conversations.isFetching} error={conversations.error} />
+        <PersonalDataConversations key={searchRun} data={conversations.data} isFetching={conversations.isFetching} error={convError} />
       )}
       {/* A separate section: the owner's compliance deletion of meetings, which never shows a meeting's title or text. */}
       {isOwner && installedModules().includes('meetings') && <MeetingOwnerDeletion nameOf={nameOf} />}

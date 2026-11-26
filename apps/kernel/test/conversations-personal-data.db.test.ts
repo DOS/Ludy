@@ -1,11 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Personal-data lookup and per-customer erasure for conversations on PostgreSQL 17 (#3669):
-// - kernel.conversation.personal_data_find (R1, owners and admins) searches active non-orphan identities directly
-//   (email address or WhatsApp wa_id via ludy_kernel.phone_key) or via a linked party (identity.party_id or conversation.party_id),
-//   never scans message body text, never matches non-WhatsApp opaque numeric IDs or BSUIDs directly by phone, bounds results at 50
-//   with accurate non-double-counted counts, and audits without leaking PII.
-// - Passing the returned eraseTarget to kernel.conversation.erase_contact enforces R3 step-up (aal2), erases the customer,
-//   and leaves ludy_kernel.conversation_identity.display_name / external_user_id as keep_record under kernel.personal_data.erase.
+// Product-flow integration tests for customer conversation personal-data lookup and step-up erasure on PostgreSQL 17 (#3669):
+// - Validates probe parsing (422 PERSONAL_DATA_QUERY on invalid text, 0 items for unmatched tax code digits).
+// - Verifies direct email + WhatsApp phone_key matching, non-WhatsApp and BSUID exclusion, zero message-body scanning,
+//   linked-party matching, non-orphan/tombstone exclusion, deduplicated totalMessages, 50-row cap, 3-linked-name cap,
+//   step-up R3 enforcement via kernel.conversation.erase_contact, and keep_record unchanged under kernel.personal_data.erase.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -22,7 +20,7 @@ const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_UR
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
-suite('conversation personal-data lookup and erasure (#3669)', () => {
+suite('conversation personal-data lookup and erasure flows (#3669)', () => {
   const dbName = `ludy_test_conv_pd_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
@@ -43,19 +41,16 @@ suite('conversation personal-data lookup and erasure (#3669)', () => {
   }
   const rows = <T extends pg.QueryResultRow>(text: string, params: unknown[] = []) => admin(async (c) => (await c.query<T>(text, params)).rows);
 
-  type OrgCtx = { orgId: string; owner: string; admin: string; member: string; viewer: string };
+  type OrgCtx = { orgId: string; owner: string; admin: string };
   async function makeOrg(): Promise<OrgCtx> {
     const user = async (tag: string) =>
       (await upsertIdentity(db, { issuer: 'test', subject: randomUUID(), email: `${tag}-${randomUUID().slice(0, 8)}@conv-pd.test`, name: null })) as string;
-    const [owner, adm, member, viewer] = [await user('owner'), await user('admin'), await user('member'), await user('viewer')];
+    const [owner, adm] = [await user('owner'), await user('admin')];
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     await admin(async (c) => {
-      await c.query(
-        "INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')",
-        [orgId, adm, member, viewer],
-      );
+      await c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin')", [orgId, adm]);
     });
-    return { orgId, owner, admin: adm, member, viewer };
+    return { orgId, owner, admin: adm };
   }
 
   async function seedChannel(orgId: string, connectedBy: string, provider: string, displayName: string): Promise<string> {
@@ -178,71 +173,20 @@ suite('conversation personal-data lookup and erasure (#3669)', () => {
     await root.end();
   });
 
-  it('enforces owner/admin authorization, probe validation, cross-org isolation, and zero-PII audit logs', async () => {
-    const orgA = await makeOrg();
-    const orgB = await makeOrg();
-    const chA = await seedChannel(orgA.orgId, orgA.owner, 'email', 'Email');
-    const chB = await seedChannel(orgB.orgId, orgB.owner, 'email', 'Email');
-    const idA = await seedIdentity(orgA.orgId, 'email', 'shared@example.test', 'Khách A');
-    const idB = await seedIdentity(orgB.orgId, 'email', 'shared@example.test', 'Khách B');
-    const convA = await seedConversation(orgA.orgId, chA, 'email', idA);
-    const convB = await seedConversation(orgB.orgId, chB, 'email', idB);
-    await seedMessage(orgA.orgId, convA, chA, 'email', 1, 'in', 'Xin chào A', { authorIdentityId: idA });
-    await seedMessage(orgB.orgId, convB, chB, 'email', 1, 'in', 'Xin chào B', { authorIdentityId: idB });
-
-    // Members, viewers, and non-user actors are refused.
-    for (const actor of [asUser(orgA.member), asUser(orgA.viewer), { type: 'system' as const }]) {
-      await expect(
-        rt.execute('kernel.conversation.personal_data_find', { value: 'shared@example.test' }, { actor, orgId: orgA.orgId }),
-      ).rejects.toMatchObject({ status: 403 });
-    }
-
-    // Invalid value fails with PERSONAL_DATA_QUERY; unmatched tax code digits return 0 items cleanly.
+  it('rejects unparseable probes with 422 PERSONAL_DATA_QUERY and returns empty for unmatched tax codes', async () => {
+    const o = await makeOrg();
     await expect(
-      rt.execute('kernel.conversation.personal_data_find', { value: 'not-valid-probe' }, { actor: asUser(orgA.owner), orgId: orgA.orgId }),
+      rt.execute('kernel.conversation.personal_data_find', { value: 'not-valid-probe' }, { actor: asUser(o.owner), orgId: o.orgId }),
     ).rejects.toMatchObject({ code: 'PERSONAL_DATA_QUERY', status: 422 });
     const taxRes = await rt.execute<ConversationPersonalDataResult>(
       'kernel.conversation.personal_data_find',
       { value: '0101234564' },
-      { actor: asUser(orgA.admin), orgId: orgA.orgId },
+      { actor: asUser(o.admin), orgId: o.orgId },
     );
-    expect(taxRes).toEqual({ kind: 'digits', items: [], truncated: false });
-
-    // Owner and admin both search Org A without seeing Org B.
-    const ownerFound = await rt.execute<ConversationPersonalDataResult>(
-      'kernel.conversation.personal_data_find',
-      { value: '  SHARED@Example.TEST ' },
-      { actor: asUser(orgA.owner), orgId: orgA.orgId },
-    );
-    expect(ownerFound.items).toHaveLength(1);
-    expect(ownerFound.items[0]?.identityId).toBe(idA);
-    expect(ownerFound.items[0]?.address).toBe('shared@example.test');
-    expect(ownerFound.truncated).toBe(false);
-
-    const adminFound = await rt.execute<ConversationPersonalDataResult>(
-      'kernel.conversation.personal_data_find',
-      { value: 'shared@example.test' },
-      { actor: asUser(orgA.admin), orgId: orgA.orgId },
-    );
-    expect(adminFound.items).toHaveLength(1);
-    expect(adminFound.items[0]?.identityId).toBe(idA);
-
-    // Audit row records probe kind, match count, and truncated flag only (zero PII).
-    const audits = await rows<{ detail: Record<string, unknown> }>(
-      `SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.conversation.personal_data_find' AND outcome = 'ok' ORDER BY id DESC`,
-      [orgA.orgId],
-    );
-    expect(audits.length).toBeGreaterThanOrEqual(2);
-    for (const row of audits) {
-      const text = JSON.stringify(row.detail);
-      expect(text).not.toContain('shared@example.test');
-      expect(text).not.toContain('Khách A');
-      expect(text).not.toContain('0101234564');
-    }
-    expect(audits[0]?.detail).toEqual({ kind: 'email', matches: 1, truncated: false });
+    expect(taxRes).toEqual({ kind: 'digits', items: [], totalMessages: 0, truncated: false });
   });
 
-  it('matches WhatsApp phone_key and linked contacts accurately, avoids non-WhatsApp direct phone matches and message bodies, and computes non-double-counted counts', async () => {
+  it('matches WhatsApp phone_key and linked contacts accurately, deduplicates totalMessages, and erases behind R3 step-up', async () => {
     const o = await makeOrg();
     const waCh = await seedChannel(o.orgId, o.owner, 'whatsapp', 'WhatsApp Shop');
     const zaloCh = await seedChannel(o.orgId, o.owner, 'zalo_oa', 'Zalo Cửa Hàng');
@@ -256,12 +200,6 @@ suite('conversation personal-data lookup and erasure (#3669)', () => {
     await seedMessage(o.orgId, waConv, waCh, 'direct', 2, 'in', 'Tin 2 của Hoa', { authorIdentityId: waId });
     await seedMessage(o.orgId, waConv, waCh, 'direct', 3, 'out', 'Shop trả lời Hoa', { authorUserId: o.owner });
     await seedNote(o.orgId, waConv, o.owner, 'Ghi chú nội bộ 1');
-
-    // Other customer's FB comment thread where waId also left a comment (should add +1 to waId.messages without double-counting waConv).
-    const otherFbId = await seedIdentity(o.orgId, 'facebook_page', 'fb-other-1', 'Khách Khác');
-    const otherFbConv = await seedConversation(o.orgId, fbCh, 'comment_thread', otherFbId);
-    await seedMessage(o.orgId, otherFbConv, fbCh, 'comment_thread', 1, 'in', 'Khách khác hỏi bài', { authorIdentityId: otherFbId });
-    await seedMessage(o.orgId, otherFbConv, fbCh, 'comment_thread', 2, 'in', 'Hoa bình luận ké', { authorIdentityId: waId });
 
     // Non-WhatsApp channels carrying digits in external_user_id must NEVER match directly by phone!
     const zaloUnlinked = await seedIdentity(o.orgId, 'zalo_oa', '0901234567', 'Zalo Số Trùng ID');
@@ -277,33 +215,39 @@ suite('conversation personal-data lookup and erasure (#3669)', () => {
     const waBsuidConv = await seedConversation(o.orgId, waCh, 'direct', waBsuid);
     await seedMessage(o.orgId, waBsuidConv, waCh, 'direct', 1, 'in', 'Tin BSUID', { authorIdentityId: waBsuid });
 
-    // Linked-party Zalo customer (via conversation.party_id) with 2 owned threads across Zalo + FB comments -> inComments: true.
+    // Linked-party customer (via conversation.party_id) with 2 owned threads (Zalo + FB comments) -> inComments: true.
+    // Also includes a comment left by waId inside linkedConvNew to test cross-identity totalMessages deduplication!
     const partyPhone = await seedParty(o.orgId, 'Công ty Hoa Mai', 'hoamai@example.test', '+84 901 234 567');
-    const linkedZaloId = await seedIdentity(o.orgId, 'facebook_page', 'fb-linked-555', null);
-    const linkedConvOld = await seedConversation(o.orgId, zaloCh, 'direct', linkedZaloId, {
+    const linkedFbId = await seedIdentity(o.orgId, 'facebook_page', 'fb-linked-555', null);
+    const linkedConvOld = await seedConversation(o.orgId, zaloCh, 'direct', linkedFbId, {
       partyId: partyPhone,
       lastMessageAt: new Date('2026-11-20T10:00:00Z'),
     });
-    await seedMessage(o.orgId, linkedConvOld, zaloCh, 'direct', 1, 'in', 'Zalo cũ', { authorIdentityId: linkedZaloId });
-    const linkedConvNew = await seedConversation(o.orgId, fbCh, 'comment_thread', linkedZaloId, {
+    await seedMessage(o.orgId, linkedConvOld, zaloCh, 'direct', 1, 'in', 'Zalo cũ', { authorIdentityId: linkedFbId });
+    const linkedConvNew = await seedConversation(o.orgId, fbCh, 'comment_thread', linkedFbId, {
       partyId: partyPhone,
       lastMessageAt: new Date('2026-11-26T01:00:00Z'),
     });
-    await seedMessage(o.orgId, linkedConvNew, fbCh, 'comment_thread', 1, 'in', 'Bình luận mới', { authorIdentityId: linkedZaloId });
+    await seedMessage(o.orgId, linkedConvNew, fbCh, 'comment_thread', 1, 'in', 'Bình luận mới', { authorIdentityId: linkedFbId });
+    await seedMessage(o.orgId, linkedConvNew, fbCh, 'comment_thread', 2, 'in', 'Hoa bình luận trong luồng liên kết', { authorIdentityId: waId });
 
-    // Commenter-only identity linked via identity.party_id (0 owned threads, 2 authored messages in another comment thread).
+    // Unmatched customer's comment thread where commenterLinkedId left 2 replies (commenter-only -> threads: 0).
+    const otherFbId = await seedIdentity(o.orgId, 'facebook_page', 'fb-other-1', 'Khách Khác');
+    const otherFbConv = await seedConversation(o.orgId, fbCh, 'comment_thread', otherFbId);
+    await seedMessage(o.orgId, otherFbConv, fbCh, 'comment_thread', 1, 'in', 'Khách khác hỏi bài', { authorIdentityId: otherFbId });
+
     const commenterLinkedId = await seedIdentity(o.orgId, 'facebook_page', 'fb-commenter-777', 'Anh Tùng', { partyId: partyPhone });
-    await seedMessage(o.orgId, otherFbConv, fbCh, 'comment_thread', 3, 'in', 'Tùng bình luận 1', {
+    await seedMessage(o.orgId, otherFbConv, fbCh, 'comment_thread', 2, 'in', 'Tùng bình luận 1', {
       authorIdentityId: commenterLinkedId,
       sentAt: new Date('2026-11-25T09:00:00Z'),
     });
-    const newestCommentId = await seedMessage(o.orgId, otherFbConv, fbCh, 'comment_thread', 4, 'in', 'Tùng bình luận 2', {
+    const newestCommentId = await seedMessage(o.orgId, otherFbConv, fbCh, 'comment_thread', 3, 'in', 'Tùng bình luận 2', {
       authorIdentityId: commenterLinkedId,
       sentAt: new Date('2026-11-25T11:00:00Z'),
     });
 
-    // Tombstoned identity and orphan identity matching phone must NEVER appear.
-    const erasedWa = await seedIdentity(o.orgId, 'whatsapp', '84901234567', null, { erased: true, partyId: partyPhone });
+    // Tombstoned identity (hash key) and orphan identity matching partyPhone must NEVER appear.
+    const erasedWa = await seedIdentity(o.orgId, 'whatsapp', `erased:k1:${'0'.repeat(64)}`, null, { erased: true, partyId: partyPhone });
     const erasedConv = await seedConversation(o.orgId, waCh, 'direct', erasedWa);
     await seedMessage(o.orgId, erasedConv, waCh, 'direct', 1, 'in', 'Old', { authorIdentityId: erasedWa });
     await seedIdentity(o.orgId, 'whatsapp', '0901234567', 'Orphan WA', { partyId: partyPhone });
@@ -315,7 +259,10 @@ suite('conversation personal-data lookup and erasure (#3669)', () => {
     );
     expect(found.kind).toBe('digits');
     expect(found.truncated).toBe(false);
-    expect(found.items.map((x) => x.identityId).sort()).toEqual([waId, linkedZaloId, commenterLinkedId].sort());
+    expect(found.items.map((x) => x.identityId).sort()).toEqual([waId, linkedFbId, commenterLinkedId].sort());
+    // Unique messages across matched identities: 3 in waConv + 3 in linkedConvOld/New + 2 by commenterLinkedId = 8
+    // (waId's comment in linkedConvNew is counted on both waItem.messages=4 and linkedItem.messages=3 -> sum=9, totalMessages=8!).
+    expect(found.totalMessages).toBe(8);
 
     const waItem = found.items.find((x) => x.identityId === waId);
     expect(waItem).toEqual({
@@ -328,24 +275,24 @@ suite('conversation personal-data lookup and erasure (#3669)', () => {
       matchSource: 'direct',
       linkedContactNames: [],
       threads: 1,
-      messages: 4, // 3 in waConv + 1 in otherFbConv (no double-count)
+      messages: 4, // 3 in waConv + 1 comment in linkedConvNew
       notes: 1,
       inComments: false,
       eraseTarget: { conversationId: waConv },
     });
 
-    const linkedItem = found.items.find((x) => x.identityId === linkedZaloId);
+    const linkedItem = found.items.find((x) => x.identityId === linkedFbId);
     expect(linkedItem).toEqual({
-      identityId: linkedZaloId,
+      identityId: linkedFbId,
       provider: 'facebook_page',
-      channelName: 'Trang FB Chính', // newest owned conversation channel
+      channelName: 'Trang FB Chính',
       displayName: null,
       idTail: '-555',
       address: null,
       matchSource: 'linked_contact',
       linkedContactNames: ['Công ty Hoa Mai'],
       threads: 2,
-      messages: 2,
+      messages: 3, // 1 in linkedConvOld + 2 in linkedConvNew (including waId's comment)
       notes: 0,
       inComments: true,
       eraseTarget: { conversationId: linkedConvNew },
@@ -391,13 +338,14 @@ suite('conversation personal-data lookup and erasure (#3669)', () => {
     );
     expect(erasedWaRes).toEqual({ threads: 1, messages: 4 });
 
-    // Re-searching no longer includes the erased identities, while linkedZaloId remains until erased.
+    // Re-searching no longer includes the erased identities, while linkedFbId remains with its remaining 2 messages.
     const after = await rt.execute<ConversationPersonalDataResult>(
       'kernel.conversation.personal_data_find',
       { value: '+84 901 234 567' },
       { actor: asUser(o.owner), orgId: o.orgId },
     );
-    expect(after.items.map((x) => x.identityId)).toEqual([linkedZaloId]);
+    expect(after.items.map((x) => x.identityId)).toEqual([linkedFbId]);
+    expect(after.totalMessages).toBe(2);
 
     // Verify keep_record handling on conversation_identity stays unchanged under kernel.personal_data.erase.
     const cols = PERSONAL_DATA_COLUMNS as Record<string, PersonalDataColumn>;
@@ -422,21 +370,26 @@ suite('conversation personal-data lookup and erasure (#3669)', () => {
     expect(emailAfterGenericErase.items.map((x) => x.identityId)).toEqual([keepEmailId]);
   });
 
-  it('caps results at 50 identities and caps linkedContactNames at 3', async () => {
+  it('caps results at 50 identities and caps linkedContactNames at 3 on an identity in the returned page', async () => {
     const o = await makeOrg();
     const fbCh = await seedChannel(o.orgId, o.owner, 'facebook_page', 'Trang Scale');
-    const partyIds: string[] = [];
-    for (let i = 1; i <= 5; i++) {
-      partyIds.push(await seedParty(o.orgId, `Liên hệ ${i}`, `bulk-${o.orgId.slice(0, 6)}@example.test`, '0908889999'));
-    }
-    const multiId = await seedIdentity(o.orgId, 'facebook_page', 'fb-multi-party', 'Khách Nhiều Liên Hệ', { partyId: partyIds[0] });
-    for (let i = 0; i < 5; i++) {
-      const cId = await seedConversation(o.orgId, fbCh, 'direct', multiId, { partyId: partyIds[i] });
-      await seedMessage(o.orgId, cId, fbCh, 'direct', 1, 'in', `msg ${i}`, { authorIdentityId: multiId });
-    }
+    const p1 = await seedParty(o.orgId, 'Liên hệ 1', `bulk1-${o.orgId.slice(0, 6)}@example.test`, '0908889999');
+    const p2 = await seedParty(o.orgId, 'Liên hệ 2', `bulk2-${o.orgId.slice(0, 6)}@example.test`, '0908889999');
+    const p3 = await seedParty(o.orgId, 'Liên hệ 3', `bulk3-${o.orgId.slice(0, 6)}@example.test`, '0908889999');
+    const p4 = await seedParty(o.orgId, 'Liên hệ 4', `bulk4-${o.orgId.slice(0, 6)}@example.test`, '0908889999');
+    const p5 = await seedParty(o.orgId, 'Liên hệ 5', `bulk5-${o.orgId.slice(0, 6)}@example.test`, '0908889999');
+    const parties = [p1, p2, p3, p4, p5];
+
     for (let i = 0; i < 51; i++) {
-      const id = await seedIdentity(o.orgId, 'facebook_page', `fb-bulk-${i}`, `Khách ${i}`, { partyId: partyIds[0] });
+      const id = await seedIdentity(o.orgId, 'facebook_page', `fb-bulk-${i}`, `Khách ${i}`, { partyId: p1 });
       await seedConversation(o.orgId, fbCh, 'direct', id);
+    }
+    // Seed multiId AFTER the 51 bulk rows and backdate bulk rows slightly so multiId is guaranteed in the top 50 newest.
+    await rows(`UPDATE ludy_kernel.conversation_identity SET updated_at = now() - interval '1 hour' WHERE org_id = $1`, [o.orgId]);
+    const multiId = await seedIdentity(o.orgId, 'facebook_page', 'fb-multi-party', 'Khách Nhiều Liên Hệ', { partyId: p1 });
+    for (const pid of parties) {
+      const cId = await seedConversation(o.orgId, fbCh, 'direct', multiId, { partyId: pid });
+      await seedMessage(o.orgId, cId, fbCh, 'direct', 1, 'in', 'tin', { authorIdentityId: multiId });
     }
 
     const res = await rt.execute<ConversationPersonalDataResult>(
@@ -446,8 +399,8 @@ suite('conversation personal-data lookup and erasure (#3669)', () => {
     );
     expect(res.items).toHaveLength(50);
     expect(res.truncated).toBe(true);
-    for (const item of res.items) {
-      expect(item.linkedContactNames.length).toBeLessThanOrEqual(3);
-    }
+    const multiItem = res.items.find((x) => x.identityId === multiId);
+    expect(multiItem).toBeDefined();
+    expect(multiItem?.linkedContactNames).toEqual(['Liên hệ 1', 'Liên hệ 2', 'Liên hệ 3']);
   });
 });

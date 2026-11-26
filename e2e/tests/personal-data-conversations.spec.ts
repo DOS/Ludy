@@ -34,7 +34,7 @@ test('finds customer conversations by phone and email on Settings > Dữ liệu 
      ),
      ch_wa AS (
        INSERT INTO ludy_kernel.channel_connection (org_id, provider, external_account_id, display_name, status, connected_by)
-       SELECT org_id, 'whatsapp', 'wa-e2e-1', 'WhatsApp Hỗ Trợ', 'active', owner_id FROM o RETURNING org_id, id
+       SELECT org_id, 'whatsapp', 'wa-' || :'slug', 'WhatsApp Hỗ Trợ', 'active', owner_id FROM o RETURNING org_id, id
      ),
      ch_fb AS (
        INSERT INTO ludy_kernel.channel_connection (org_id, provider, external_account_id, display_name, status, connected_by)
@@ -102,7 +102,7 @@ test('finds customer conversations by phone and email on Settings > Dữ liệu 
 
   // Searching an email present only in Email conversation shows Hội thoại and must NOT render the empty-state banner.
   await input.fill('khach-e2e@example.test');
-  await page.getByRole('button', { name: 'Tìm' }).click();
+  await page.getByRole('button', { name: 'Tìm', exact: true }).click();
   const section = page.getByTestId('personal-data-conversations-results');
   await expect(section).toBeVisible();
   await expect(page.getByText('Không tìm thấy dữ liệu nào khớp')).toHaveCount(0);
@@ -130,9 +130,9 @@ test('finds customer conversations by phone and email on Settings > Dữ liệu 
   ).toBe('0');
 
   // Searching the phone number shows both Direct WhatsApp and Linked-contact Facebook rows, passes axe & 44 px tap targets on mobile,
-  // and erases WhatsApp cleanly within the active aal2 window without re-prompting MFA.
+  // warns before erasing the linked CRM party first, and erases WhatsApp cleanly within the active aal2 window without re-prompting MFA.
   await input.fill('0901 234 567');
-  await page.getByRole('button', { name: 'Tìm' }).click();
+  await page.getByRole('button', { name: 'Tìm', exact: true }).click();
   await expect(section.getByTestId('personal-data-conversation-row')).toHaveCount(2);
   await expect(section).toContainText('Chị Lan WhatsApp');
   await expect(section).toContainText('Trực tiếp');
@@ -140,6 +140,10 @@ test('finds customer conversations by phone and email on Settings > Dữ liệu 
   await expect(section).toContainText('Qua liên hệ');
   await expect(section).toContainText('Công ty Lan Hương');
   await expect(section).not.toContainText('Khách Chỉ Nhắc Trong Tin');
+
+  await page.getByRole('button', { name: 'Xóa dữ liệu của người này', exact: true }).click();
+  await expect(page.getByTestId('personal-data-linked-erase-warning')).toBeVisible();
+  await page.getByRole('button', { name: 'Hủy', exact: true }).click();
 
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 900 });
