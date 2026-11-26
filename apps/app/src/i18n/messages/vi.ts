@@ -16833,7 +16833,11 @@ export const vi = {
       UNAUTHENTICATED: 'Phiên đăng nhập đã hết hiệu lực, hãy đăng nhập lại',
       OAUTH_CLIENT_TOKEN_REFUSED: 'Mã truy cập này được cấp cho một ứng dụng bên thứ ba, không dùng để đăng nhập {brand}',
       MFA_REQUIRED: 'Tài khoản này đã bật xác thực hai lớp (MFA): hãy nhập mã xác thực để tiếp tục',
+      SESSION_REQUIRED: 'Phiên đăng nhập không hợp lệ để thực hiện thao tác này, hãy đăng nhập lại',
+      SESSION_REVOKED: 'Phiên đăng nhập này đã bị thu hồi, hãy đăng nhập lại',
       SESSION_REVOKED_IN_ORG: 'Phiên đăng nhập này đã bị thu hồi trong tổ chức này',
+      NATIVE_PUSH_DISABLED: 'Thông báo đẩy trên ứng dụng di động chưa được bật trên máy chủ này',
+      NATIVE_PUSH_DEVICE_LIMIT: 'Mỗi tài khoản chỉ đăng ký tối đa 10 thiết bị nhận thông báo trong một tổ chức',
       STEP_UP_REQUIRED: 'Cần xác thực hai lớp (MFA) trong 5 phút gần nhất để thực hiện việc này',
       NOT_A_MEMBER: 'Bạn không thuộc tổ chức này',
       USER_DISABLED: 'Tài khoản của bạn đã bị khóa',
@@ -19785,6 +19789,13 @@ export const vi = {
         roles: {
           list: 'Xem vai trò của thành viên',
         },
+      },
+      native_push: {
+        devices: 'Xem thiết bị nhận thông báo đẩy di động',
+        record: 'Ghi kết quả gửi thông báo đẩy di động',
+        register: 'Đăng ký thiết bị nhận thông báo đẩy di động',
+        targets: 'Đọc nơi nhận thông báo đẩy di động của một thông báo',
+        unregister: 'Hủy đăng ký thiết bị nhận thông báo đẩy di động',
       },
       notification: {
         dispatch: 'Gửi thông báo',

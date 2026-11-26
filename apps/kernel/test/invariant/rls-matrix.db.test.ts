@@ -114,10 +114,7 @@ const MACHINERY = new Set([
 // runs main's copy of this file on the PR that adds a table with org_id, so the factory has to be on main first;
 // until the table exists, neither its factory nor its MACHINERY entry is stale. Remove an entry once its table is on
 // main. One table per line, sorted, with a trailing comma, so PRs adding different tables touch different lines.
-const PENDING_TABLES = new Set<string>([
-  'crove_kernel.native_push_device',
-  'crove_kernel.native_push_sent',
-]);
+const PENDING_TABLES = new Set<string>([]);
 // Tables whose rows belong to one member (ADR-0037, notes plan §3.6 and step N1): unlike saved_view and notification,
 // the system context reads only what the value's predicate selects (over alias t, operators schema-qualified so a
 // migration cannot skew this oracle through search_path) and writes none of its org's rows, since the worker reaches
@@ -3209,7 +3206,7 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
     },
   },
   // #4883 (mobile native push): a member's own APNs/FCM registration bound to their signed-in session_id, under a restrictive policy like push_subscription.
-  // One row per session/token; the device token is sensitive and never returned by member queries or audit rows. Lands in PENDING_TABLES before its migration.
+  // One row per session/token; the device token is sensitive and never returned by member queries or audit rows.
   'crove_kernel.native_push_device': {
     make: (o) => ({
       row: {
@@ -3223,7 +3220,7 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       },
     }),
   },
-  // #4883 (mobile native push): worker-only delivery ledger tracking notifications already handed to QUEUES.nativePush; definer-only MACHINERY (zero login role grants). Lands in PENDING_TABLES before its migration.
+  // #4883 (mobile native push): worker-only delivery ledger tracking notifications already handed to QUEUES.nativePush; definer-only MACHINERY (zero login role grants).
   'crove_kernel.native_push_sent': {
     make: (o) => {
       const notification = { org_id: o.id, id: randomUUID(), user_id: o.owner, kind: 'kernel.conversation_new', dedupe_key: `rls-np-${tag()}` };

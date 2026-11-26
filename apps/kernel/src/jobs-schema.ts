@@ -42,6 +42,8 @@ export const QUEUES = {
   socialPush: 'social-push',
   // Created by the generic push subscription migration (20270317160000): the push job of a kernel notification (#3736).
   kernelPush: 'kernel-push',
+  // Created by the native push migration (20270329010000): mobile native push job of a kernel notification (#4883).
+  nativePush: 'kernel-native-push',
   // Created by the team chat alert migration (20261023143000).
   socialChatAlert: 'social-chat-alert',
   // Created by the WORM archive migration (20261023230000).
@@ -202,6 +204,8 @@ const QUEUE_EGRESS: { readonly [Q in QueueName]: JobEgress } = {
   // A browser's push service endpoint, through guardedRequest (web-push.ts).
   [QUEUES.socialPush]: ['tenant_url'],
   [QUEUES.kernelPush]: ['tenant_url'],
+  // Mobile native push (#4883): optional open NativePushSender interface (unset on self-host), content-free payloads only.
+  [QUEUES.nativePush]: ['provider:native_push'],
   [QUEUES.socialChatAlert]: ['provider:telegram', 'provider:discord'],
   [QUEUES.archiveWrite]: 'none',
   [QUEUES.archiveVerify]: 'none',
