@@ -84,3 +84,16 @@ describe('zHrOpeningAdd & zHrOpeningEdit budget range guard (#3425)', () => {
     expect(zHrOpeningAdd.safeParse({ title: 'Kế toán', budgetMinWage: '15000000', budgetMaxWage: '20000000' }).success).toBe(true);
   });
 });
+
+describe('channels.setTelegramBusiness (#5028)', () => {
+  const id = '0190a3c4-0000-7000-8000-000000000001';
+  const ref = '0123456789ab';
+
+  it('rejects allow and dismiss together at the contract boundary', () => {
+    const input = contract.channels.setTelegramBusiness['~orpc'].inputSchema;
+    expect(input?.['~standard'].validate({ connectionId: id, ref, allow: true, dismiss: true })).toHaveProperty('issues');
+    expect(input?.['~standard'].validate({ connectionId: id, ref, allow: false, dismiss: true })).not.toHaveProperty('issues');
+    expect(input?.['~standard'].validate({ connectionId: id, ref, allow: true, dismiss: false })).not.toHaveProperty('issues');
+    expect(input?.['~standard'].validate({ connectionId: id, ref, allow: true })).not.toHaveProperty('issues');
+  });
+});

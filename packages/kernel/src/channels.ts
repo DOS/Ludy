@@ -875,7 +875,13 @@ export const channelTelegramChatDisplaced = defineCommand({
       .where('id', '=', input.connectionId)
       .forUpdate()
       .executeTakeFirst();
-    if (!row || row.provider !== 'telegram' || row.status !== 'active' || (row.chat_bot_id !== null && row.chat_bot_id !== input.botId) || (row.chat_state !== 'on' && row.chat_state !== 'enabling' && row.chat_state !== 'disabling')) {
+    if (
+      !row ||
+      row.provider !== 'telegram' ||
+      row.status !== 'active' ||
+      (row.chat_bot_id !== input.botId && !(row.chat_bot_id === null && row.chat_state === 'on')) ||
+      (row.chat_state !== 'on' && row.chat_state !== 'enabling' && row.chat_state !== 'disabling')
+    ) {
       return { displaced: false };
     }
     if (input.takenAt && row.chat_changed_at && row.chat_changed_at.getTime() > Date.parse(input.takenAt)) {
