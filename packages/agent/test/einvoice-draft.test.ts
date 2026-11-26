@@ -2141,5 +2141,49 @@ describe('per-clause figure and VAT rate binding (#4119)', () => {
         answer([line({ description: 'Áo size M', unit: null, quantity: '2', unitPrice: '50000', vatRate: null })], null),
       ),
     ).toEqual({ kind: 'none', code: 'FIGURES' });
+
+    // Consecutive tables reset column mappings on unrecognized/amount-only headers, leading "Đã gồm VAT 8%" covers tables, bad VAT cells ("5 USD") and ungrounded units ("tấn") fail closed, and unaccented vs accented siblings, SL(m²), and "TP." abbreviations work cleanly.
+    expect(
+      checkEInvoiceDraft(
+        req('Tên hàng\tSL\tĐơn giá (nghìn đồng)\nBút\t2\t50\nTên hàng\tSL\tThành tiền (VND)\tKho\nGạo\t3\t20\tA'),
+        answer([line({ description: 'Gạo', unit: null, quantity: '3', unitPrice: '20000', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(
+      checkEInvoiceDraft(
+        req('Đã gồm VAT 8%\nTên hàng\tSL\tĐơn giá (nghìn đồng)\nBút\t2\t50'),
+        answer([line({ description: 'Bút', unit: null, quantity: '2', unitPrice: '50000', vatRate: '8%' })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(
+      checkEInvoiceDraft(
+        req('Tên hàng\tSL\tĐơn giá (nghìn đồng)\tVAT\nBia\t2\t50\t5 USD'),
+        answer([line({ description: 'Bia', unit: null, quantity: '2', unitPrice: '50000', vatRate: '5%' })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'RATE' });
+    expect(
+      checkEInvoiceDraft(
+        req('Tên hàng\tSL\tĐơn giá (nghìn đồng)\nGạo\t2\t50'),
+        answer([line({ description: 'Gạo', unit: 'tấn', quantity: '2', unitPrice: '50000', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(
+      checkEInvoiceDraft(
+        req('2 hop tra gia 50k; 3 hộp trà giá 70k'),
+        answer([line({ description: 'Trà', unit: 'hộp', quantity: '2', unitPrice: '50000', vatRate: null })], null),
+      ).kind,
+    ).toBe('proposal');
+    expect(
+      checkEInvoiceDraft(
+        req('Tên hàng\tSL (m²)\tĐơn giá\nThảm\t3\t50000'),
+        answer([line({ description: 'Thảm', unit: 'm²', quantity: '3', unitPrice: '50000', vatRate: null })], null),
+      ).kind,
+    ).toBe('proposal');
+    expect(
+      checkEInvoiceDraft(
+        req('- Dịch vụ tại TP. HCM, đơn vị gói, số lượng 2, đơn giá 50000'),
+        answer([line({ description: 'Dịch vụ tại TP. HCM', unit: 'gói', quantity: '2', unitPrice: '50000', vatRate: null })], null),
+      ).kind,
+    ).toBe('proposal');
   });
 });

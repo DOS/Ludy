@@ -877,7 +877,13 @@ function splitSentenceSegments(body: string): RawSegment[] {
     const idx = match.index ?? 0;
     if (match[0] === '.') {
       const prefix = body.slice(start, idx);
-      if (/^\s*(?:[-*•]\s*)?\d{1,2}$/u.test(prefix)) continue;
+      if (
+        /^\s*(?:[-*•]\s*)?\d{1,2}$/u.test(prefix) ||
+        /(?:^|[\s.(])(?:tp|q|p|tx|tt|mr|mrs|ms|dr|st|no|co|ltd|inc)$/iu.test(prefix) ||
+        (/(?:^|\s)[-*•]\s+/u.test(prefix) && !/\d/u.test(prefix))
+      ) {
+        continue;
+      }
     }
     pushSegment(body.slice(start, idx), afterNewline);
     afterNewline = match[0].includes('\n');
@@ -1098,7 +1104,12 @@ function buildTableRowClause(rawCells: readonly string[], cols: readonly TableCo
         }
       }
     } else if (col.role === 'vat' && /(?:\d|kct|kkknt|không\s+chịu|khong\s+chiu|không\s+kê|khong\s+ke)/iu.test(cell)) {
-      const taxText = /^(?:vat|gtgt|thuế|thue|kct|kkknt|không)/iu.test(cell) ? cell : `vat ${cell}`;
+      if (UNSUPPORTED_CELL_CURRENCY.test(cell)) continue;
+      const strippedVat = collapseGroupedSpaces(cell.replace(/\([^()]*\)/gu, ' ').trim());
+      if (!/^(?:(?:vat|gtgt|thuế(?:\s+(?:suất|gtgt|vat))?|thue(?:\s+(?:suat|gtgt|vat))?)\s*(?:[:=]\s*)?)?(?:(?:\d{1,2}(?:[.,]\d+)?)\s*%?|(?:không\s+chịu|khong\s+chiu)(?:\s+(?:thuế|thue|vat|gtgt))?|kct|(?:không\s+kê\s+khai|khong\s+ke\s+khai)(?:\s+(?:tính\s+)?(?:nộp\s+)?(?:thuế|thue))?|kkknt)$/iu.test(strippedVat)) {
+        continue;
+      }
+      const taxText = /^(?:vat|gtgt|thuế|thue|kct|kkknt|không)/iu.test(strippedVat) ? strippedVat : `vat ${strippedVat}`;
       for (const r of ratesInBody(collapseGroupedSpaces(taxText))) vatRates.add(r);
     }
     // ignore, total, discount, and note columns never emit usable qty, unitPrice, or VAT tokens.
@@ -1152,9 +1163,10 @@ function buildTableRowClause(rawCells: readonly string[], cols: readonly TableCo
   return clause;
 }
 
-function hasScaledMoneyHeader(cells: readonly string[]): boolean {
+function isTableHeaderCandidate(cells: readonly string[]): boolean {
   if (cells.length < 2) return false;
-  let sawScaledPrice = false;
+  let recognizedCount = 0;
+  let sawScaledPriceOrTotal = false;
   for (const rawCell of cells) {
     const cleaned = foldDiacritics(rawCell)
       .replace(/\([^)]*\)/gu, '')
@@ -1162,13 +1174,15 @@ function hasScaledMoneyHeader(cells: readonly string[]): boolean {
       .replace(/[:=?]+/gu, ' ')
       .replace(/\s+/gu, ' ')
       .trim();
+    if (cleaned === '') continue;
     if (/\d/u.test(cleaned)) return false;
     const role = TABLE_HEADER_ROLE[cleaned] ?? null;
+    if (role !== null && role !== 'ignore') recognizedCount += 1;
     if ((role === 'price' || role === 'total') && /(?:\([^()]+\)|\/\s*[\p{L}\d.,%]+)/u.test(rawCell)) {
-      sawScaledPrice = true;
+      sawScaledPriceOrTotal = true;
     }
   }
-  return sawScaledPrice;
+  return recognizedCount >= 2 || sawScaledPriceOrTotal;
 }
 
 type SourceBlock = { kind: 'table'; clauses: SourceClause[] } | { kind: 'prose'; text: string };
@@ -1211,8 +1225,9 @@ function splitSourceBlocks(body: string): SourceBlock[] {
       flushProse();
       continue;
     }
-    if (activeCols === null && hasScaledMoneyHeader(trimmedHeaderCells)) {
-      // Fail closed on unresolvable scaled-money table headers rather than stripping their scale in prose mode.
+    if (isTableHeaderCandidate(trimmedHeaderCells)) {
+      // Drop any previous table column mapping on a new unrecognized or amount-only table header so subsequent rows fail closed instead of inheriting stale scaling.
+      activeCols = null;
       rejectedScaledTable = true;
       flushProse();
       continue;
@@ -1357,6 +1372,11 @@ function parseSourceClauses(source: string): { clauses: SourceClause[]; sharedRa
           if (prevClause) {
             markPricesTaxInclusive(prevClause);
             anyLocalVatSeen = true;
+            continue;
+          }
+          if (!anyItemSeen) {
+            for (const r of rates) leadingShared.add(r);
+            leadingPriceTaxInclusive = true;
             continue;
           }
         }
@@ -1571,10 +1591,14 @@ function clauseAcceptsFigures(clause: SourceClause, quantity: string, unitPrice:
       }
       if (normLineUnit !== null) {
         if (qTok.countUnit !== undefined && !lineUnitMatches(qTok.countUnit)) continue;
+        if (qTok.countUnit === undefined && clause.explicitUnits.size > 0 && ![...clause.explicitUnits].some((eu) => lineUnitMatches(eu))) {
+          continue;
+        }
         if (
           qTok.countUnit === undefined &&
-          clause.explicitUnits.size > 0 &&
-          ![...clause.explicitUnits].some((eu) => lineUnitMatches(eu))
+          clause.explicitUnits.size === 0 &&
+          pTok.priceUnit === undefined &&
+          ![...clause.unitTokens].some((cu) => lineUnitMatches(cu))
         ) {
           continue;
         }
@@ -1588,13 +1612,27 @@ function clauseAcceptsFigures(clause: SourceClause, quantity: string, unitPrice:
   return false;
 }
 
+function tokensAccentCompatible(tok: string, exactSet: ReadonlySet<string>, foldedSet: ReadonlySet<string>): boolean {
+  if (exactSet.has(tok)) return true;
+  const folded = foldDiacritics(tok);
+  if (!foldedSet.has(folded)) return false;
+  // Unaccented source/line text matches its accented form ("tra" <-> "trà"), whereas disagreeing accented words ("bò" vs "bơ") never match.
+  if (tok === folded) return true;
+  return exactSet.has(folded);
+}
+
 function clauseAcceptsLineText(clause: SourceClause, description: string, unit: string | null): boolean {
-  const scope = [clause.plainText];
+  const descScope = [clause.plainText];
   const clauseHasScaleWords = hasUngroundedMoneyOrScaleWords(clause.plainText);
-  for (const text of [description, unit ?? '']) {
-    if (text === '') continue;
-    if (draftFiguresOutside(text, scope).length > 0) return false;
-    if (!clauseHasScaleWords && hasUngroundedMoneyOrScaleWords(text)) return false;
+  if (description !== '') {
+    if (draftFiguresOutside(description, descScope).length > 0) return false;
+    if (!clauseHasScaleWords && hasUngroundedMoneyOrScaleWords(description)) return false;
+  }
+  if (unit !== null && unit !== '') {
+    const headerUnitScope = clause.usable.flatMap((t) => [t.countUnit ?? '', t.priceUnit ?? '']).filter(Boolean);
+    const unitScope = [clause.plainText, ...clause.explicitUnits, ...headerUnitScope];
+    if (draftFiguresOutside(unit, unitScope).length > 0) return false;
+    if (!clauseHasScaleWords && hasUngroundedMoneyOrScaleWords(unit)) return false;
   }
   const desc = descriptionTokens(description);
   const clauseHasProductName = [...clause.exactTokens].some((t) => !UNIT_ONLY_EXACT.has(t) && !ATTRIBUTE_ONLY_EXACT.has(t));
@@ -1602,14 +1640,14 @@ function clauseAcceptsLineText(clause: SourceClause, description: string, unit: 
     for (const tok of desc.exact) {
       if (tok === 'size' || tok === 'cỡ') continue;
       if (clauseHasProductName && UNIT_ONLY_EXACT.has(tok) && !ATTRIBUTE_ONLY_EXACT.has(tok)) continue;
-      if (!clause.exactTokens.has(tok) && !clause.foldedTokens.has(foldDiacritics(tok))) return false;
+      if (!tokensAccentCompatible(tok, clause.exactTokens, clause.foldedTokens)) return false;
     }
   }
   if (clause.conjunctionParts.length > 0) {
     for (const part of clause.conjunctionParts) {
       let covered = false;
       for (const tok of desc.exact) {
-        if (part.exact.has(tok) || part.folded.has(foldDiacritics(tok))) {
+        if (tokensAccentCompatible(tok, part.exact, part.folded)) {
           covered = true;
           break;
         }
@@ -1633,13 +1671,9 @@ function scoreClauseMatch(description: string, unit: string | null, clause: Sour
   let matchedCount = 0;
   for (const tok of exact) {
     const isUnit = UNIT_ONLY_EXACT.has(tok);
-    if (clause.exactTokens.has(tok)) {
+    if (tokensAccentCompatible(tok, clause.exactTokens, clause.foldedTokens)) {
       overlap += 2;
       if (!isUnit) productOverlap += 2;
-      matchedCount += 1;
-    } else if (clause.foldedTokens.has(foldDiacritics(tok))) {
-      overlap += 1;
-      if (!isUnit) productOverlap += 1;
       matchedCount += 1;
     }
   }
@@ -1647,7 +1681,7 @@ function scoreClauseMatch(description: string, unit: string | null, clause: Sour
   if (overlap === 0 || (clauseHasProductName && productOverlap === 0)) return 0;
   let matchedCoreCount = 0;
   for (const ct of clause.coreExactTokens) {
-    if (exact.has(ct) || [...exact].some((lt) => foldDiacritics(lt) === foldDiacritics(ct))) {
+    if (tokensAccentCompatible(ct, exact, new Set([...exact].map(foldDiacritics)))) {
       matchedCoreCount += 1;
     }
   }
@@ -1657,10 +1691,10 @@ function scoreClauseMatch(description: string, unit: string | null, clause: Sour
   if (unit !== null && clause.unitTokens.size > 0) {
     const lineUnits = read(unit).match(/[\p{L}\p{N}]+/gu) ?? [];
     if (lineUnits.length > 0) {
+      const clauseFoldedUnits = new Set([...clause.unitTokens].map(foldDiacritics));
       let matchedUnit = 0;
       for (const uTok of lineUnits) {
-        if (clause.unitTokens.has(uTok)) matchedUnit = Math.max(matchedUnit, 4);
-        else if ([...clause.unitTokens].some((cu) => foldDiacritics(cu) === foldDiacritics(uTok))) matchedUnit = Math.max(matchedUnit, 2);
+        if (tokensAccentCompatible(uTok, clause.unitTokens, clauseFoldedUnits)) matchedUnit = Math.max(matchedUnit, 4);
       }
       unitScore = matchedUnit > 0 ? matchedUnit : -4;
     }
