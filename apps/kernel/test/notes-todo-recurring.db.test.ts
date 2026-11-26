@@ -1059,7 +1059,7 @@ suite('personal to-do recurrence and reschedule on PostgreSQL (#3557)', () => {
     await o.exec<TodoWritten>(o.mine, 'notes.todo.delete', { todoId: nyRoot.todoId });
 
     // Seed (placing nyRoot 4h before nyDay2 so every intermediate row sits strictly at created_at <= nyDay2.created_at):
-    // 1) 70 active historical siblings (incl. row 1 with an older non-DST 01:15 due_at) + 1 active sibling occupying 2026-03-09 (trashed nyRoot at 02:30 is newer so must beat older active 01:15!)
+    // 1) 70 active historical siblings (incl. row 1 with an older non-DST 03:30 due_at) + 1 active sibling occupying 2026-03-09 (trashed nyRoot at 02:30 is newer so must beat older active 03:30!)
     // 2) 70 older trashed siblings before nyRoot + 70 unusable newer rows (NULL due_on/due_at or other tz) + 70 newer spring-forward rows between nyRoot and nyDay2 (forcing >64 keyset pagination without crowding out nyRoot)
     await admin(async (c) => {
       await c.query(
@@ -1073,8 +1073,8 @@ suite('personal to-do recurrence and reschedule on PostgreSQL (#3557)', () => {
          )
          SELECT
            t.org_id, gen_random_uuid(), t.owner_user_id, t.title, t.details, t.checklist, 'done', t.priority, t.tags,
-           CASE WHEN g.n = 71 THEN DATE '2026-03-09' ELSE (DATE '2025-01-01' + g.n)::date END,
-           CASE WHEN g.n = 1 THEN TIMESTAMPTZ '2026-03-06T06:15:00Z' ELSE NULL END,
+           CASE WHEN g.n = 71 THEN DATE '2026-03-09' WHEN g.n = 1 THEN DATE '2026-03-06' ELSE (DATE '2025-01-01' + g.n)::date END,
+           CASE WHEN g.n = 1 THEN TIMESTAMPTZ '2026-03-06T08:30:00Z' ELSE NULL END,
            t.time_zone, t.sort_key, t.series_id, t.tainted,
            t.created_at - ((1000 - g.n) * interval '1 minute'),
            t.created_at - ((1000 - g.n) * interval '1 minute'),
@@ -1236,7 +1236,7 @@ suite('personal to-do recurrence and reschedule on PostgreSQL (#3557)', () => {
     expect(pairA.dueTime).toBe('02:30');
     expect(pairB.dueTime).toBe('02:30');
 
-    // Newer active 02:45 row beats an older trashed 02:30 row on spring-forward completion.
+    // Newer active non-DST 03:30 row beats an older trashed 02:30 row on spring-forward completion (keeping 03:30 rather than reverting to 02:30).
     const revRoot = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', {
       title: 'NY active beats older trash',
       dueOn: '2026-03-07',
@@ -1259,7 +1259,7 @@ suite('personal to-do recurrence and reschedule on PostgreSQL (#3557)', () => {
          )
          SELECT
            r.org_id, gen_random_uuid(), r.owner_user_id, r.title, r.details, r.checklist, 'done', r.priority, r.tags,
-           DATE '2026-03-06', TIMESTAMPTZ '2026-03-06T07:45:00Z', r.time_zone, r.sort_key, r.series_id, r.tainted,
+           DATE '2026-03-06', TIMESTAMPTZ '2026-03-06T08:30:00Z', r.time_zone, r.sort_key, r.series_id, r.tainted,
            r.created_at + interval '1 hour', r.created_at + interval '1 hour', r.created_at + interval '1 hour', NULL
          FROM ludy_notes.todo r
          WHERE r.org_id = $1 AND r.id = $2`,
@@ -1286,6 +1286,6 @@ suite('personal to-do recurrence and reschedule on PostgreSQL (#3557)', () => {
     });
     const revDay3Res = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: revDay2Id });
     const revDay3 = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: revDay3Res.nextTodoId as string });
-    expect(revDay3.dueTime).toBe('02:45');
+    expect(revDay3.dueTime).toBe('03:30');
   });
 });
