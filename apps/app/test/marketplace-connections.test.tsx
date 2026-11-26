@@ -225,7 +225,7 @@ describe('MarketplaceConnectionsCard', () => {
     expect(controlByLabel(real, 'Password')).toContain('type="password"');
     expect(controlByLabel(real, 'Username')).toContain('type="text"');
     const odd = card('owner', { providers: { ...offered, adapters: [{ id: 'shopee_api', offline: false, push: false, connectFields: ['zzField'], platforms: ['shopee'] }] }, connections: [] });
-    expect(controlByLabel(odd, 'zzField')).toContain('type="text"');
+    expect(controlByLabel(odd, 'zzField')).toContain('type="password"');
     expect(real).not.toMatch(/<label[^>]*class="[^"]*sr-only/);
     expect(real).toContain(en.marketplaceConnections.fieldsNote);
     expect(real).not.toContain(en.marketplaceConnections.offlineNote);
