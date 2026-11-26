@@ -310,25 +310,26 @@ export const todoAcceptSuggestions = defineCommand({
       await lockTodoSortOrder(ctx, userId);
     }
     const assertSourceNoteCurrent = async () => {
-      const note = await ctx.trx
+      const current = await ctx.trx
         .selectFrom('ludy_notes.note')
         .select(['id', 'revision', 'deleted_at'])
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.noteId)
         .executeTakeFirst();
-      if (!note) {
+      if (!current) {
         throw new DomainError('NOTE_NOT_FOUND', 404, 'Không tìm thấy ghi chú');
       }
-      if (note.deleted_at !== null) {
+      if (current.deleted_at !== null) {
         throw new DomainError('NOTE_IN_TRASH', 409, 'Ghi chú đang ở thùng rác; hãy khôi phục trước');
       }
-      if (note.revision !== input.noteRevision) {
+      if (current.revision !== input.noteRevision) {
         throw new DomainError('NOTE_REVISION_CONFLICT', 409, 'Ghi chú vừa được sửa ở nơi khác; hãy tải lại trước khi lưu', {
-          revision: note.revision,
+          revision: current.revision,
         });
       }
+      return current;
     };
-    await assertSourceNoteCurrent();
+    let note = await assertSourceNoteCurrent();
     if (input.runId !== undefined) {
       // Any surviving to-do from this run (live or in trash, at any source_run_seq) blocks replay; if every
       // created to-do was permanently purged (which in normal retention happens >= 30 days after deletion, once
@@ -350,7 +351,7 @@ export const todoAcceptSuggestions = defineCommand({
     if (input.items.length > 0) {
       sortKeys = await placeFrontBatch(ctx, input.items.length);
       // Re-verify right before inserts so concurrent edits/trashes while rebalancing abort before writing todos.
-      await assertSourceNoteCurrent();
+      note = await assertSourceNoteCurrent();
     }
     for (let i = input.items.length - 1; i >= 0; i -= 1) {
       const item = input.items[i]!;
