@@ -457,12 +457,19 @@ suite("the opt-in weekly notice of the week's meetings (#4967)", () => {
     }
     const tracky = (await notices('tracky'))[0];
     expect(tracky?.detail).toMatchObject({ tracked: '3' });
+    // Exactly the card's numbers and the tracked number: an extra key (a meeting, a term, a per-term count) fails here.
+    expect(Object.keys((tracky?.detail ?? {}) as Record<string, unknown>).sort()).toEqual(['cut', 'decisions', 'meetings', 'open', 'overdue', 'tracked']);
     const sent = (await mails()).find((m) => m.to_address === 'tracky@weekly.test');
     expect(sent?.payload).toMatchObject({ tracked: 3 });
+    expect(Object.keys((sent?.payload ?? {}) as Record<string, unknown>).sort()).toEqual(['cut', 'decisions', 'lang', 'meetings', 'open', 'org', 'overdue', 'path', 'tracked']);
     const rendered = await weeklyMailTemplate.render({ messageId: randomUUID(), subject: 'x', payload: zWeeklyMail.parse(sent?.payload), publicUrl: 'https://ludy.test', inboundAddress: null, brand: 'Ludy', execute: async () => undefined as never });
     expect(rendered?.text).toContain('xuất hiện 3 lần');
     const audit = (await sqlAdmin<{ detail: unknown; outcome: string }>(`SELECT detail, outcome FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.weekly.notice'`, [orgId])).rows;
-    for (const text of [JSON.stringify(await notices('tracky')), JSON.stringify(sent), JSON.stringify(rendered), JSON.stringify(audit), logged]) expect(text).not.toMatch(TRACKED);
+    for (const text of [JSON.stringify(await notices('tracky')), JSON.stringify(sent), JSON.stringify(rendered), JSON.stringify(audit), logged]) {
+      expect(text).not.toMatch(TRACKED);
+      // No seeded meeting id either (the notice names no meeting).
+      for (const id of [mine, calm, hidden, old, expired]) expect(text).not.toContain(id);
+    }
     // The audit detail is still the Monday and nothing else (no number, not whether a word was found).
     for (const row of audit.filter((r) => r.outcome === 'ok' && (r.detail as Record<string, unknown> | null)?.day !== undefined)) {
       const { workerInstance: _worker, component: _component, ...rest } = (row.detail ?? {}) as Record<string, unknown>;
