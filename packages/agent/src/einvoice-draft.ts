@@ -260,7 +260,7 @@ const BARE_UNACCENTED_PRICE_PREFIX = /(?<![\p{L}])gia\s*(?:[:=]\s*)?$/iu;
 const COMPOUND_GIA_BEFORE = /(?<![\p{L}])(?:chuyên|chuyen|quốc|quoc|hoàng|hoang|tham|thương|thuong)\s+gia\s*$/iu;
 const DEAL_VALUE_PREFIX = /(?<![\p{L}])(?:giá\s+trị|gia\s+tri)(?:\s+(?:là|la|is)(?![\p{L}]))?\s*(?:[:=]\s*)?$/iu;
 const PRICE_PREFIX = /(?:(?<![\p{L}])(?:đơn\s+giá|don\s+gia|giá\s+bán|gia\s+ban|giá\s+trị|gia\s+tri|giá|unit\s+price|price)(?:\s+(?:bán|lẻ|sỉ|mới|cũ))?(?:\s+(?:(?:(?:chưa|chua|không|khong|đã|da|trước|truoc|sau)\s+)?(?:(?:bao\s+)?(?:gồm|gom|tính|tinh|có|co)\s+)?(?:thuế(?:\s+(?:gtgt|vat))?|thue(?:\s+(?:gtgt|vat))?|vat|gtgt|tax)|trước\s+thuế|truoc\s+thue|sau\s+thuế|sau\s+thue|dự\s+kiến|khoảng|tầm))?(?:\s+(?:là|la|is)(?![\p{L}]))?|@)\s*(?:[:=]\s*)?$/iu;
-const TAX_INCLUSIVE_BEFORE = /(?:^|\s)((?:chưa|không|chua|khong|trước|truoc|not\s+including|excl(?:uding)?\.?)(?:\s+(?:tính|tinh))?\s+)?(?:(?:đã|da)\s+(?:bao\s+)?(?:gồm|gom|có|co)|gồm|gom|bao\s+gồm|bao\s+gom|có\s+cả|co\s+ca|sau|incl(?:uding)?\.?)\s+(?:\d{1,2}(?:[.,]\d+)?\s*%\s*)?(?:vat|gtgt|thuế(?:\s+(?:gtgt|vat))?|thue(?:\s+(?:gtgt|vat))?|tax)(?:\s+\d{1,2}(?:[.,]\d+)?\s*%)?(?:\s+(?:là|la|is)(?![\p{L}]))?\s*(?:[:=]\s*)?$/iu;
+const TAX_INCLUSIVE_BEFORE = /(?:^|[\s(])((?:chưa|không|chua|khong|trước|truoc|not\s+including|excl(?:uding)?\.?)(?:\s+(?:tính|tinh))?\s+)?(?:(?:đã|da)\s+(?:bao\s+)?(?:gồm|gom|có|co)|gồm|gom|bao\s+gồm|bao\s+gom|có\s+cả|co\s+ca|sau|incl(?:uding)?\.?)\s+(?:\d{1,2}(?:[.,]\d+)?\s*%\s*)?(?:vat|gtgt|thuế(?:\s+(?:gtgt|vat))?|thue(?:\s+(?:gtgt|vat))?|tax)(?:\s+\d{1,2}(?:[.,]\d+)?\s*%)?(?:\s+(?:là|la|is)(?![\p{L}]))?\s*\)?\s*(?:[:=]\s*)?$/iu;
 const PRICE_SUBJECT_OPT = String.raw`(?:(?:(?:đơn\s+)?giá|don\s+gia|gia|unit\s+price|price)(?:\s+(?:bán|lẻ|sỉ|trên|này|đó|ban|le|si|tren|nay|do|nêu\s+trên|neu\s+tren))?\s+)?`;
 const TAX_INCLUSIVE_VERB = String.raw`(?:(?:đã|da)\s+(?:bao\s+)?(?:gồm|gom|có|co)|gồm|gom|bao\s+gồm|bao\s+gom|có\s+cả|co\s+ca|sau|incl(?:uding)?\.?)`;
 const TAX_INCLUSIVE_AFTER = new RegExp(
@@ -356,7 +356,7 @@ const STRIP_MONEY_OR_LABELED = new RegExp(
     PERCENT_ANY.source,
     RATE_AFTER_WORD.source,
     String.raw`(?<![\p{L}])(?:tổng\s+cộng|tong\s+cong|thành\s+tiền|thanh\s+tien|tổng\s+tiền(?:\s+hàng)?|tong\s+tien(?:\s+hang)?|tổng\s+thanh\s+toán|tong\s+thanh\s+toan|tổng\s+giá\s+trị|tong\s+gia\s+tri|tổng\s+số\s+lượng|tong\s+so\s+luong|tiền\s+thuế(?:\s+(?:gtgt|vat))?|tien\s+thue(?:\s+(?:gtgt|vat))?|trả\s+trước|tra\s+truoc|đặt\s+cọc|dat\s+coc|cọc|đã\s+trả|da\s+tra|còn\s+lại|con\s+lai|thanh\s+toán|thanh\s+toan|giảm(?:\s+giá)?|giam(?:\s+gia)?|chiết\s+khấu|chiet\s+khau|ck(?![\p{L}])|discount|off|trừ|bớt|đơn\s+giá|don\s+gia|giá\s+bán|gia\s+ban|giá\s+trị|gia\s+tri|giá|(?<!(?:chuyên|chuyen|quốc|quoc|hoàng|hoang|tham|thương|thuong)\s+)gia|unit\s+price|price|số\s+lượng|so\s+luong|sl(?![\p{L}])|qty(?![\p{L}])|quantity|tổng|total|amount)(?:\s+(?:là|la|is)(?![\p{L}]))?\s*(?:[:=]\s*)?\d+(?:[.,]\d+)*(?:\s*(?:tr(?:iệu|ieu)?|tỷ|ty|k|nghìn|nghin|ngàn|ngan)(?![\p{L}])\d*)?(?:\s*(?:đồng|dong|vnđ|vnd|đ|₫)(?![\p{L}]))?`,
-    String.raw`(?<![\p{L}])(?:xuất\s+hóa\s+đơn|xuat\s+hoa\s+don|hóa\s+đơn(?:\s+trước)?|hoa\s+don(?:\s+truoc)?|(?:gửi\s+)?cùng\s+khách|gui\s+cung\s+khach|giao(?:\s+(?:hàng|hang))?\s+(?:cho|tới|đến)\s+(?:anh|chị|chi|cô|co|chú|chu|bác|bac|ông|ong|bà|ba|em|khách|khach|người|công\s+ty|cty)(?![\p{L}])(?:\s+[\p{L}]+){0,4}|giao(?:\s+(?:hàng|hang))?\s+(?:cho|tới|đến)|cho\s+(?:anh|chị|chi|cô|co|chú|chu|bác|bac|ông|ong|bà|ba|em|khách|khach|người\s+mua|công\s+ty|cty)(?![\p{L}])(?:\s+[\p{L}]+){0,4}\s*$|cho\s+(?:anh|chị|chi|cô|co|chú|chu|bác|bac|ông|ong|bà|ba|em|khách(?:\s+(?:hàng|quen|lẻ))?|công\s+ty|cty)(?![\p{L}])(?:\s+[\p{L}]+){0,2}|(?:khách(?:\s+(?:hàng|quen|lẻ|mua))?|khach(?:\s+(?:hang|quen|le|mua))?|người\s+mua|nguoi\s+mua)\s+(?:đặt|dat|mua|lấy|lay|chốt|chot|gửi|gui|order)|ngày\s+hôm\s+nay|ngay\s+hom\s+nay|ngày\s+hôm\s+qua|ngay\s+hom\s+qua|hôm\s+nay|hom\s+nay|hôm\s+qua|hom\s+qua|hôm\s+kia|hom\s+kia|ngày\s+mai|ngay\s+mai|sáng\s+nay|sang\s+nay|chiều\s+nay|chieu\s+nay|tuần\s+này|tuan\s+nay|tuần\s+trước|tuan\s+truoc|tháng\s+này|thang\s+nay|tháng\s+trước|thang\s+truoc|today|yesterday|cơ\s+hội|co\s+hoi|đơn\s+vị|don\s+vi|khách\s+(?:hàng|quen|lẻ)|khach\s+(?:hang|quen|le)|người\s+mua|nguoi\s+mua|chiết\s+khấu|chiet\s+khau|giảm\s+giá|giam\s+gia|thuế\s+suất|thue\s+suat|(?:không|khong|chưa|chua)\s+(?:(?:bao\s+)?(?:gồm|tính)\s+)?(?:\d{1,2}(?:[.,]\d+)?\s*%\s*)?(?:vat|gtgt|thuế(?:\s+(?:gtgt|vat|suất|suat))?|thue(?:\s+(?:gtgt|vat|suat))?|tax)|(?:không|khong)\s+chịu(?:\s+(?:thuế(?:\s+(?:gtgt|vat))?|thue(?:\s+(?:gtgt|vat))?|vat|gtgt))?|(?:không|khong)\s+kê\s+khai(?:\s+(?:tính\s+)?(?:nộp\s+)?(?:thuế|thue))?|tổng\s+giá\s+trị|tong\s+gia\s+tri|tổng\s+số\s+lượng|tong\s+so\s+luong|tổng\s+cộng|tong\s+cong|thành\s+tiền|thanh\s+tien|tổng\s+tiền|tong\s+tien)(?![\p{L}])`,
+    String.raw`(?<![\p{L}])(?:xuất\s+hóa\s+đơn|xuat\s+hoa\s+don|hóa\s+đơn(?:\s+trước)?|hoa\s+don(?:\s+truoc)?|(?:gửi\s+)?cùng\s+khách|gui\s+cung\s+khach|giao(?:\s+(?:hàng|hang))?\s+(?:cho|tới|đến)\s+(?:anh|chị|chi|cô|co|chú|chu|bác|bac|ông|ong|bà|ba|em|khách|khach|người|công\s+ty|cty)(?![\p{L}])(?:\s+[\p{L}]+){0,4}|giao(?:\s+(?:hàng|hang))?\s+(?:cho|tới|đến)|cho\s+(?:anh|chị|chi|cô|co|chú|chu|bác|bac|ông|ong|bà|ba|em|khách|khach|người\s+mua|công\s+ty|cty)(?![\p{L}])(?:\s+[\p{L}]+){0,4}\s*$|cho\s+(?:anh|chị|chi|cô|co|chú|chu|bác|bac|ông|ong|bà|ba|em|khách(?:\s+(?:hàng|quen|lẻ))?|công\s+ty|cty)(?![\p{L}])(?:\s+[\p{L}]+){0,2}|(?:khách(?:\s+(?:hàng|quen|lẻ|mua))?|khach(?:\s+(?:hang|quen|le|mua))?|người\s+mua|nguoi\s+mua)\s+(?:đặt|dat|mua|lấy|lay|chốt|chot|gửi|gui|order)|ngày\s+hôm\s+nay|ngay\s+hom\s+nay|ngày\s+hôm\s+qua|ngay\s+hom\s+qua|hôm\s+nay|hom\s+nay|hôm\s+qua|hom\s+qua|hôm\s+kia|hom\s+kia|ngày\s+mai|ngay\s+mai|sáng\s+nay|sang\s+nay|chiều\s+nay|chieu\s+nay|tuần\s+này|tuan\s+nay|tuần\s+trước|tuan\s+truoc|tháng\s+này|thang\s+nay|tháng\s+trước|thang\s+truoc|today|yesterday|cơ\s+hội|co\s+hoi|đơn\s+vị|don\s+vi|khách\s+(?:hàng|quen|lẻ)|khach\s+(?:hang|quen|le)|người\s+mua|nguoi\s+mua|chiết\s+khấu|chiet\s+khau|giảm\s+giá|giam\s+gia|thuế\s+suất|thue\s+suat|(?:không|khong|chưa|chua)\s+(?:(?:bao\s+)?(?:gồm|gom|tính|tinh|có|co)\s+)?(?:\d{1,2}(?:[.,]\d+)?\s*%\s*)?(?:vat|gtgt|thuế(?:\s+(?:gtgt|vat|suất|suat))?|thue(?:\s+(?:gtgt|vat|suat))?|tax)|(?:không|khong)\s+chịu(?:\s+(?:thuế(?:\s+(?:gtgt|vat))?|thue(?:\s+(?:gtgt|vat))?|vat|gtgt))?|(?:không|khong)\s+kê\s+khai(?:\s+(?:tính\s+)?(?:nộp\s+)?(?:thuế|thue))?|tổng\s+giá\s+trị|tong\s+gia\s+tri|tổng\s+số\s+lượng|tong\s+so\s+luong|tổng\s+cộng|tong\s+cong|thành\s+tiền|thanh\s+tien|tổng\s+tiền|tong\s+tien)(?![\p{L}])`,
     String.raw`\d+(?:[.,]\d+)*\s*(?:tr(?:iệu|ieu)?|tỷ|ty|k|nghìn|nghin|ngàn|ngan)(?![\p{L}])\d*(?:\s*(?:đồng|dong|vnđ|vnd|đ|₫)(?![\p{L}]))?`,
     String.raw`\d+(?:[.,]\d+)*\s*(?:đồng|dong|vnđ|vnd|đ|₫)(?![\p{L}])`,
   ].join('|'),
@@ -432,7 +432,7 @@ const ALLOWED_VN_VAT_TEXT = new Set(['0%', '5%', '8%', '10%', 'KCT', 'KKKNT']);
 const hasUnsupportedVatText = (rawText: string): boolean => {
   const text = stripTaxAmountNotes(rawText);
   for (const m of text.matchAll(
-    /(?<![\p{L}])(?:thuế(?:\s+(?:suất|gtgt|vat))?|thue(?:\s+(?:suat|gtgt|vat))?|vat|gtgt)\s*(?:[:=]\s*)?(?:(\d+(?:[.,]\d+)?)\s*%|(\d{1,2})(?![\d.,])(?!\s*(?:tr(?:iệu|ieu)?|tỷ|ty|k|nghìn|nghin|ngàn|ngan|đồng|dong|vnđ|vnd|đ|₫)(?![\p{L}])))|(?<![\p{L}])(\d+(?:[.,]\d+)?)\s*%\s*(?:vat|gtgt|thuế|thue)(?![\p{L}])/giu,
+    /(?<![\p{L}])(?:thuế(?:\s+(?:suất|gtgt|vat))?|thue(?:\s+(?:suat|gtgt|vat))?|vat|gtgt)\s*(?:[:=]\s*)?(?:(\d+(?:[.,]\d+)?)\s*%|(\d{1,3}(?:[.,]\d+)?)(?![\d.,])(?!\s*(?:tr(?:iệu|ieu)?|tỷ|ty|k|nghìn|nghin|ngàn|ngan|đồng|dong|vnđ|vnd|đ|₫)(?![\p{L}])))|(?<![\p{L}])(\d+(?:[.,]\d+)?)\s*%\s*(?:vat|gtgt|thuế|thue)(?![\p{L}])/giu,
   )) {
     const rawRate = m[1] ?? m[2] ?? m[3];
     if (rawRate === undefined) continue;
@@ -899,7 +899,7 @@ function coreProductTokens(basisText: string, tokens: readonly FigureToken[] = [
     qtyTok !== undefined &&
     qtyTok.start > 0 &&
     qtyTok.end <= afterQtyEnd &&
-    /^\s*(?:mua|bán|ban|xuất|xuat|đặt|dat|lấy|lay|chốt|chot|gửi|gui|giao|thêm|them|kèm|kem|cộng|cong|nhập|nhap|lô|lo|đợt|dot|chuyến|chuyen|lần|lan|khách(?:\s+(?:hàng|quen|lẻ|mua))?(?:\s+(?:đặt|dat|mua|lấy|lay|chốt|chot|gửi|gui|order))?|khach(?:\s+(?:hang|quen|le|mua))?(?:\s+(?:dat|mua|lay|chot|gui|order))?|người\s+mua|nguoi\s+mua|bổ\s+sung|bo\s+sung|order|buy|sell|sold|bought|purchased|invoiced|plus|add)(?![\p{L}])/iu.test(
+    /^\s*(?:mua|bán|ban|xuất|xuat|đặt|dat|lấy|lay|chốt|chot|gửi|gui|giao|thêm|them|kèm|kem|cộng|cong|nhập|nhap|lô|lo|đợt|dot|chuyến|chuyen|lần|lan|khách(?:\s+(?:hàng|quen|lẻ|mua)\s*$|(?:\s+(?:hàng|quen|lẻ|mua))?\s+(?:đặt|dat|mua|lấy|lay|chốt|chot|gửi|gui|order))|khach(?:\s+(?:hang|quen|le|mua)\s*$|(?:\s+(?:hang|quen|le|mua))?\s+(?:dat|mua|lay|chot|gui|order))|người\s+mua|nguoi\s+mua|bổ\s+sung|bo\s+sung|order|buy|sell|sold|bought|purchased|invoiced|plus|add)(?![\p{L}])/iu.test(
       effectiveText.slice(0, qtyTok.start),
     ) &&
     nonAttrProductGroup(descriptionTokens(collapseGroupedSpaces(readPlain(effectiveText.slice(qtyTok.end, afterQtyEnd))), false).exact, false).exact.size > 0
@@ -1056,6 +1056,8 @@ interface TableColSpec {
 
 const UNSUPPORTED_CELL_CURRENCY = /(?<![\p{L}])(?:usd|eur|gbp|jpy|cny|rmb|aud|cad|sgd|thb|krw|twd|hkd|myr|chf|nzd|inr|php|idr|rub|sek|nok|dkk|pln|aed|sar|bnd|khr|lak|mmk)(?![\p{L}])|[$€£¥₩]/iu;
 const PLAIN_SCALED_PRICE_CELL = /^[\d.,\s]+(?:\s*\/\s*(?:1\s+)?[\p{L}]+)?$/u;
+const PLAIN_UNSCALED_PRICE_CELL =
+  /^\s*(?:(?:đơn\s+giá|don\s+gia|giá(?:\s+bán)?|gia(?:\s+ban)?|unit\s+price|price)\s*(?:[:=]\s*)?)?\d+(?:[., ]\d+)*(?:\s*(?:tr(?:iệu|ieu)?|tỷ|ty|k|nghìn|nghin|ngàn|ngan)(?![\p{L}])\d*)?(?:\s*(?:đồng|dong|vnđ|vnd|đ|₫)(?![\p{L}]))?(?:\s*(?:\/\s*(?:1\s+)?[\p{L}][\p{L}\p{N}]*|(?:mỗi|moi|per)\s+[\p{L}][\p{L}\p{N}]*))?(?:\s*\(\s*(?:chưa|chua|không|khong)\s+(?:(?:bao\s+)?(?:gồm|gom|tính|tinh|có|co)\s+)?(?:vat|gtgt|thuế|thue|tax)\s*\))?\s*$/iu;
 const TAX_EXCLUSIVE_MODIFIER = /^(?:chưa|không|chua|khong|trước|truoc|not\s+including|excl(?:uding)?\.?)(?:\s+(?:tính|bao\s+gồm|gồm|gom))?\s*(?:vat|gtgt|thuế(?:\s+(?:gtgt|vat))?|thue(?:\s+(?:gtgt|vat))?|tax)$/iu;
 
 function parseMoneyColumnScale(rawModifier: string): string | null {
@@ -1251,7 +1253,7 @@ function buildTableRowClause(rawCells: readonly string[], cols: readonly TableCo
       }
     } else if (col.role === 'price' && /\d/u.test(cell) && col.scale !== null) {
       if (/^\s*[-−]/u.test(cell) || UNSUPPORTED_CELL_CURRENCY.test(cell)) continue;
-      if (col.scale !== '1' && !PLAIN_SCALED_PRICE_CELL.test(cell)) continue;
+      if (col.scale === '1' ? !PLAIN_UNSCALED_PRICE_CELL.test(cell) : !PLAIN_SCALED_PRICE_CELL.test(cell.trim())) continue;
       const pToks = extractFigureTokens(collapseGroupedSpaces(`đơn giá ${cell}`));
       const usablePrice = pToks.filter((t) => t.role === 'price' && !t.embeddedInProduct && !t.packagingSpec);
       if (usablePrice.length === 1 && pToks.length === 1) {
@@ -1331,6 +1333,12 @@ function buildTableRowClause(rawCells: readonly string[], cols: readonly TableCo
   });
 }
 
+const VAT_CELL_LABEL = String.raw`(?:vat|gtgt|thuế(?:\s+(?:suất|gtgt|vat))?|thue(?:\s+(?:suat|gtgt|vat))?)`;
+const STRUCTURED_VAT_CELL = new RegExp(
+  String.raw`^(?:(?:${VAT_CELL_LABEL}\s*(?:[:=]\s*)?)?(?:\d{1,3}(?:[.,]\d+)?\s*%?|(?:không\s+chịu|khong\s+chiu)(?:\s+(?:thuế|thue|vat|gtgt))?|kct|(?:không\s+kê\s+khai|khong\s+ke\s+khai)(?:\s+(?:tính\s+)?(?:nộp\s+)?(?:thuế|thue))?|kkknt)|\d{1,3}(?:[.,]\d+)?\s*%\s*${VAT_CELL_LABEL})$`,
+  'iu',
+);
+
 function parseStructuredVatField(cell: string): { rates: string[]; taxInclusive: boolean; ambiguous: boolean } {
   if (UNSUPPORTED_CELL_CURRENCY.test(cell)) {
     return { rates: [], taxInclusive: false, ambiguous: true };
@@ -1339,16 +1347,14 @@ function parseStructuredVatField(cell: string): { rates: string[]; taxInclusive:
     /(?:(?:đã|da)\s+(?:bao\s+)?(?:gồm|gom|có|co)|có\s+cả|co\s+ca|incl(?:uding)?\.?)/iu.test(cell) &&
     !/(?:chưa|chua|không|khong)\s+(?:(?:bao\s+)?(?:gồm|gom|tính|tinh|có|co)\s+)?(?:vat|gtgt|thuế|thue|tax)?/iu.test(cell);
   const strippedVat = collapseGroupedSpaces(
-    cell.replace(/\((?:đã\s+(?:bao\s+)?gồm|chưa\s+(?:bao\s+)?gồm)[^()\d]*\)/giu, ' ').trim(),
+    cell.replace(/\((?:đã\s+(?:bao\s+)?(?:gồm|có)|chưa\s+(?:bao\s+)?(?:gồm|có))[^()\d]*\)/giu, ' ').trim(),
   );
-  if (
-    !/^(?:(?:vat|gtgt|thuế(?:\s+(?:suất|gtgt|vat))?|thue(?:\s+(?:suat|gtgt|vat))?)\s*(?:[:=]\s*)?)?(?:(?:\d{1,2}(?:[.,]\d+)?)\s*%?|(?:không\s+chịu|khong\s+chiu)(?:\s+(?:thuế|thue|vat|gtgt))?|kct|(?:không\s+kê\s+khai|khong\s+ke\s+khai)(?:\s+(?:tính\s+)?(?:nộp\s+)?(?:thuế|thue))?|kkknt)$/iu.test(
-      strippedVat,
-    )
-  ) {
+  if (!STRUCTURED_VAT_CELL.test(strippedVat)) {
     return { rates: [], taxInclusive, ambiguous: true };
   }
-  const taxText = /^(?:vat|gtgt|thuế|thue|kct|kkknt|không)/iu.test(strippedVat) ? strippedVat : `vat ${strippedVat}`;
+  const taxText = /^(?:vat|gtgt|thuế|thue|kct|kkknt|không)|\d+(?:[.,]\d+)?\s*%\s*(?:vat|gtgt|thuế|thue)/iu.test(strippedVat)
+    ? strippedVat
+    : `vat ${strippedVat}`;
   const extractedRates = ratesInBody(collapseGroupedSpaces(taxText));
   if (extractedRates.size === 0) return { rates: [], taxInclusive, ambiguous: true };
   return { rates: [...extractedRates], taxInclusive, ambiguous: false };
@@ -1387,28 +1393,9 @@ function buildLockedItemClause(input: {
 }
 
 const DECIMAL = /^\d{1,12}(\.\d{1,6})?$/;
-// Machine decimals from money(...).toFixed() never keep trailing fractional zeros (never ".000" as in human grouped "50.000").
-const CANONICAL_MACHINE_DECIMAL = /^\d{1,12}(?:\.\d{0,5}[1-9])?$/;
 const PREVIOUS_INVOICE_HEADER = /^\s*hóa\s+đơn\s+trước\s+gửi\s+cùng\s+khách\s*:\s*$/iu;
 const STRUCTURED_INVOICE_ROW =
   /^\s*-\s+(.+?)(?:,\s*(?:đơn\s+vị|don\s+vi)\s+([^,\r\n]+?))?,\s*(?:số\s+lượng|so\s+luong)\s+([^,\r\n]+?),\s*(?:đơn\s+giá|don\s+gia)\s+([^,\r\n]+?)(?:,\s*(?:vat|gtgt)\s+([^,\r\n]+?))?\s*$/iu;
-
-function makeStructuredDecimalToken(value: string, role: 'qty' | 'price'): FigureToken {
-  return {
-    value: money(value).toFixed(),
-    role,
-    embeddedInProduct: false,
-    packagingSpec: false,
-    labeledPrice: role === 'price',
-    dealValueOnly: false,
-    afterUnit: false,
-    countUnit: undefined,
-    priceUnit: undefined,
-    wordAfter: undefined,
-    start: 0,
-    end: 0,
-  };
-}
 
 function buildStructuredInvoiceRowClause(rawLine: string): SourceClause | null {
   const m = STRUCTURED_INVOICE_ROW.exec(rawLine);
@@ -1439,10 +1426,8 @@ function buildStructuredInvoiceRowClause(rawLine: string): SourceClause | null {
     UNSUPPORTED_CELL_CURRENCY.test(rawQty) ||
     UNSUPPORTED_CELL_CURRENCY.test(rawPrice);
   if (!hasForeignCurrency) {
-    // Canonical numbers produced by issuedLines()/invoiceSourceText() ("1.125", "50000") have no trailing fractional zeros and always use dot as a decimal point.
-    if (CANONICAL_MACHINE_DECIMAL.test(rawQty)) {
-      tokens.push(makeStructuredDecimalToken(rawQty, 'qty'));
-    } else if (!/^\s*[-−]/u.test(rawQty)) {
+    // Parse figures with the same extractFigureTokens/canon rules as ordinary text so a hand-typed header never alters dot-grouping semantics ("12.345" -> "12345").
+    if (!/^\s*[-−]/u.test(rawQty)) {
       const qtyCellMatch = PLAIN_QTY_CELL.exec(rawQty);
       if (qtyCellMatch) {
         const qToks = extractFigureTokens(collapseGroupedSpaces(`số lượng ${rawQty}`));
@@ -1455,9 +1440,7 @@ function buildStructuredInvoiceRowClause(rawLine: string): SourceClause | null {
         }
       }
     }
-    if (CANONICAL_MACHINE_DECIMAL.test(rawPrice)) {
-      tokens.push(makeStructuredDecimalToken(rawPrice, 'price'));
-    } else if (!/^\s*[-−]/u.test(rawPrice)) {
+    if (!/^\s*[-−]/u.test(rawPrice) && PLAIN_UNSCALED_PRICE_CELL.test(rawPrice)) {
       const pToks = extractFigureTokens(collapseGroupedSpaces(`đơn giá ${rawPrice}`));
       if (pToks.length === 1 && pToks[0]!.role === 'price' && !pToks[0]!.embeddedInProduct && !pToks[0]!.packagingSpec) {
         const tok = pToks[0]!;
@@ -1961,9 +1944,11 @@ function clauseAcceptsFigures(clause: SourceClause, quantity: string, unitPrice:
   if (clause.taxInclusive) return false;
   const usable = clause.usable;
   if (usable.length < 2) return false;
+  const distinctExplicitQtyValues = new Set(usable.filter((t) => t.role === 'qty').map((t) => t.value));
   const distinctPriceValues = new Set(usable.filter((t) => t.role === 'price').map((t) => t.value));
   const distinctLabeledPrices = new Set(usable.filter((t) => t.role === 'price' && t.labeledPrice).map((t) => t.value));
-  // Fail closed when multiple price candidates appear in one clause without a unique explicit price label disambiguating them.
+  // Fail closed when multiple distinct explicit quantities or ambiguous/conflicting price candidates appear in one clause.
+  if (distinctExplicitQtyValues.size > 1) return false;
   if (distinctLabeledPrices.size > 1) return false;
   if (distinctPriceValues.size > 1 && distinctLabeledPrices.size === 0) return false;
   const hasExplicitQty = usable.some((t) => t.role === 'qty');
@@ -2088,23 +2073,32 @@ function scoreClauseMatch(description: string, unit: string | null, clause: Sour
   const clauseHasProductName = [...clause.exactTokens].some((t) => !UNIT_ONLY_EXACT.has(t));
   if (overlap === 0 || (clauseHasProductName && productOverlap === 0)) return 0;
   let matchedCoreCount = 0;
+  let matchedDescCoreCount = 0;
   for (const ct of clause.coreExactTokens) {
-    if (tokensAccentCompatible(ct, exact, folded) || lineUnitFolded.has(foldDiacritics(ct))) {
+    const descMatched = tokensAccentCompatible(ct, exact, folded);
+    if (descMatched) matchedDescCoreCount += 1;
+    if (descMatched || lineUnitFolded.has(foldDiacritics(ct))) {
       matchedCoreCount += 1;
     }
   }
+  if (clause.coreExactTokens.size > 0 && matchedDescCoreCount === 0) return 0;
   const missingFromLine = clause.coreExactTokens.size - matchedCoreCount;
   const extraInLine = Math.max(0, exact.size - matchedCount);
   let unitScore = 0;
   if (unit !== null && clause.unitTokens.size > 0) {
-    const lineUnits = read(unit).match(/[\p{L}\p{N}]+/gu) ?? [];
-    if (lineUnits.length > 0) {
-      const clauseFoldedUnits = new Set([...clause.unitTokens].map(foldDiacritics));
-      let matchedUnit = 0;
-      for (const uTok of lineUnits) {
-        if (tokensAccentCompatible(uTok, clause.unitTokens, clauseFoldedUnits)) matchedUnit = Math.max(matchedUnit, 4);
+    const trimmedUnit = collapseGroupedSpaces(readPlain(unit));
+    const clauseUnits = [...clause.unitTokens];
+    if (trimmedUnit !== '' && clauseUnits.some((cu) => unitsAccentCompatible(trimmedUnit, cu))) {
+      unitScore = 4;
+    } else {
+      const lineUnits = read(unit).match(/[\p{L}\p{N}]+/gu) ?? [];
+      if (lineUnits.length > 0) {
+        let matchedUnit = 0;
+        for (const uTok of lineUnits) {
+          if (clauseUnits.some((cu) => unitsAccentCompatible(uTok, cu))) matchedUnit = Math.max(matchedUnit, 4);
+        }
+        unitScore = matchedUnit > 0 ? matchedUnit : -4;
       }
-      unitScore = matchedUnit > 0 ? matchedUnit : -4;
     }
   }
   return Math.max(1, overlap * 16 - missingFromLine * 2 - extraInLine * 2 + unitScore);
