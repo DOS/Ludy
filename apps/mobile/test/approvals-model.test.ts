@@ -304,7 +304,7 @@ describe('cross-app queue aggregation and AI coworker attribution', () => {
 
     const snap = await loadApprovalsSnapshot({ client, serverUrl: SERVER, orgSlug: 'demo', now: () => 5000 });
     expect(snap.savedAt).toBe(5000);
-    expect(snap.items).toHaveLength(6);
+    expect(snap.items).toHaveLength(7);
 
     // Supplier payment must open web instead of blind mobile approval (missing vendor/bank details).
     const payment = snap.items.find((i) => i.key === itemKey('inbox', 'p-1'));
