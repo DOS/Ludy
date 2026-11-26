@@ -248,13 +248,26 @@ suite('Telegram inbox, cross-org displacement, hook uniqueness, and redaction in
       );
       expect(lockRls.rows).toEqual([{ rls: true }]);
 
+      const tableAcl = await c.query<{ grantee: string; privilege_type: string }>(
+        `SELECT COALESCE(r.rolname, 'PUBLIC') AS grantee, a.privilege_type
+           FROM pg_catalog.pg_class c
+           CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(c.relacl, pg_catalog.acldefault('r', c.relowner))) a
+           LEFT JOIN pg_catalog.pg_roles r ON r.oid = a.grantee
+          WHERE c.oid = pg_catalog.to_regclass($1)
+            AND a.grantee <> c.relowner
+          ORDER BY 1, 2`,
+        [dbIds.table('crove_kernel.telegram_webhook_lock')],
+      );
+      expect(tableAcl.rows).toEqual([]);
+
       const tablePrivs = await auditRoleTablePrivileges(
         c,
         dbIds,
         'crove_kernel.telegram_webhook_lock',
-        ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE'],
-        'brand',
+        ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER', 'MAINTAIN'],
+        'non_system',
       );
+      expect(tablePrivs.length).toBeGreaterThan(0);
       expect(tablePrivs.filter((r) => r.ok)).toEqual([]);
 
       const expectedGrants: Array<[string, readonly string[]]> = [
@@ -371,7 +384,21 @@ suite('Telegram inbox, cross-org displacement, hook uniqueness, and redaction in
     expect((await rows<{ chat_state: string }>('SELECT chat_state FROM crove_kernel.channel_connection WHERE org_id = $1 AND id = $2', [second.orgId, second.connectionId]))[0]?.chat_state).toBe('on');
 
     // Null chat_bot_id displacement guard (#5028): refuses 'enabling'/'disabling', allows legacy 'on'.
-    await rows("UPDATE crove_kernel.channel_connection SET chat_state = 'enabling', chat_bot_id = NULL WHERE org_id = $1 AND id = $2", [
+    await rows("UPDATE crove_kernel.channel_connection SET chat_state = 'enabling', chat_hook_next = $3, chat_bot_id = NULL WHERE org_id = $1 AND id = $2", [
+      second.orgId,
+      second.connectionId,
+      randomBytes(32).toString('base64url'),
+    ]);
+    expect(
+      (
+        await worker.execute<{ displaced: boolean }>(
+          'kernel.channel.telegram_chat_displaced',
+          { connectionId: second.connectionId, botId: '811111111' },
+          { actor: SYSTEM, orgId: second.orgId },
+        )
+      ).displaced,
+    ).toBe(false);
+    await rows("UPDATE crove_kernel.channel_connection SET chat_state = 'disabling', chat_hook_next = NULL, chat_bot_id = NULL WHERE org_id = $1 AND id = $2", [
       second.orgId,
       second.connectionId,
     ]);
@@ -384,7 +411,7 @@ suite('Telegram inbox, cross-org displacement, hook uniqueness, and redaction in
         )
       ).displaced,
     ).toBe(false);
-    await rows("UPDATE crove_kernel.channel_connection SET chat_state = 'disabling', chat_bot_id = NULL WHERE org_id = $1 AND id = $2", [
+    await rows("UPDATE crove_kernel.channel_connection SET chat_state = 'on', chat_hook_next = NULL, chat_bot_id = NULL WHERE org_id = $1 AND id = $2", [
       second.orgId,
       second.connectionId,
     ]);
@@ -396,16 +423,12 @@ suite('Telegram inbox, cross-org displacement, hook uniqueness, and redaction in
           { actor: SYSTEM, orgId: second.orgId },
         )
       ).displaced,
-    ).toBe(false);
-    await rows("UPDATE crove_kernel.channel_connection SET chat_state = 'on', chat_bot_id = '811111111' WHERE org_id = $1 AND id = $2", [
-      second.orgId,
-      second.connectionId,
-    ]);
+    ).toBe(true);
 
     // Concurrent disable skips deleteWebhook when another org already holds live URL on Telegram.
     const nextFirstHook = await turnOn(first);
     expect(liveUrls.get(sharedToken)).toBe(`${APP_URL}${BASE}/${nextFirstHook}`);
-    await rows("UPDATE crove_kernel.channel_connection SET chat_state = 'on', chat_hook = $3, chat_bot_id = '811111111', chat_error = NULL WHERE org_id = $1 AND id = $2", [
+    await rows("UPDATE crove_kernel.channel_connection SET chat_state = 'on', chat_hook = $3, chat_hook_next = NULL, chat_bot_id = '811111111', chat_error = NULL WHERE org_id = $1 AND id = $2", [
       second.orgId,
       second.connectionId,
       secondHook,

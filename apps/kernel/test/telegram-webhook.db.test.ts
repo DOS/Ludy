@@ -1102,7 +1102,7 @@ suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
 
     const otherKey = parseVaultKey(randomBytes(32).toString('base64'));
     const wrongBroker = new CredentialVault([otherKey]);
-    const happyBase = new TelegramPublisher(undefined, new TelegramConversations({ fetch: telegram().fetchImpl })).conversations;
+    const happyBase = new TelegramConversations({ fetch: telegram().fetchImpl });
 
     // 1) open() throws on an un-openable envelope: advances chat_hook_rekey_after instead of keeping NULL.
     await rows("UPDATE ludy_kernel.channel_connection SET chat_hook_key_id = $1 WHERE chat_state = 'on'", [otherKey.id]);
@@ -1119,6 +1119,8 @@ suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
     // Untouched row sorts ahead of the failed row in telegram_chat_hook_rekey_due.
     await rows("UPDATE ludy_kernel.channel_connection SET chat_hook_key_id = 'stale-key', chat_hook_rekey_after = NULL WHERE org_id = $1 AND id = $2", [tOk.orgId, tOk.connectionId]);
     const dueIds = (await rows<{ connection_id: string }>('SELECT connection_id FROM ludy_kernel.telegram_chat_hook_rekey_due($1, 200, NULL, NULL, NULL)', [vaultKey1.id])).map((r) => r.connection_id);
+    expect(dueIds).toContain(tOk.connectionId);
+    expect(dueIds).toContain(tErr.connectionId);
     expect(dueIds.indexOf(tOk.connectionId)).toBeLessThan(dueIds.indexOf(tErr.connectionId));
 
     // Keep only tErr due under vaultKey1 while testing chatHookInfo, chatHook, and TELEGRAM_BOT_LOCK_BUSY throws.
@@ -1211,7 +1213,13 @@ suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
     await turnOn(tGuard);
 
     for (const state of ['enabling', 'disabling'] as const) {
-      await rows('UPDATE ludy_kernel.channel_connection SET chat_state = $1, chat_bot_id = NULL WHERE org_id = $2 AND id = $3', [state, tGuard.orgId, tGuard.connectionId]);
+      const hookNext = state === 'enabling' ? randomBytes(32).toString('base64url') : null;
+      await rows('UPDATE ludy_kernel.channel_connection SET chat_state = $1, chat_hook_next = $2, chat_bot_id = NULL WHERE org_id = $3 AND id = $4', [
+        state,
+        hookNext,
+        tGuard.orgId,
+        tGuard.connectionId,
+      ]);
       const res = await worker.execute<{ displaced: boolean }>(
         'kernel.channel.telegram_chat_displaced',
         { connectionId: tGuard.connectionId, botId: '633333333' },
@@ -1222,7 +1230,7 @@ suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
     }
 
     // Legacy pre-chat_bot_id connection in chat_state='on' with NULL chat_bot_id is still displaced cleanly.
-    await rows("UPDATE ludy_kernel.channel_connection SET chat_state = 'on', chat_bot_id = NULL WHERE org_id = $1 AND id = $2", [tGuard.orgId, tGuard.connectionId]);
+    await rows("UPDATE ludy_kernel.channel_connection SET chat_state = 'on', chat_hook_next = NULL, chat_bot_id = NULL WHERE org_id = $1 AND id = $2", [tGuard.orgId, tGuard.connectionId]);
     const legacyDisplaced = await worker.execute<{ displaced: boolean }>(
       'kernel.channel.telegram_chat_displaced',
       { connectionId: tGuard.connectionId, botId: '633333333' },
