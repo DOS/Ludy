@@ -344,8 +344,8 @@ line):
 - authentication and the HTTP edge: `auth*.ts`, `sessions*.ts`, `http.ts`,
   any `auth/` directory, `approval.ts`, `identity.ts`;
 - kernel SQL: a migration that creates or replaces a function in
-  `crove_kernel` (`apply_tenant_rls`, `org_purge` and the like), changes
-  roles or grants on `crove_kernel` objects, or changes another line's
+  `ludy_kernel` (`apply_tenant_rls`, `org_purge` and the like), changes
+  roles or grants on `ludy_kernel` objects, or changes another line's
   tables;
 - the gate: `.github/workflows/**`, `tools/ci/**`, `tools/deploy/**`, git
   hooks, the pgTAP runner, and any change to an invariant file
