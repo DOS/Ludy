@@ -5,6 +5,7 @@
 import { describe, expect, it } from 'vitest';
 import { ADJUST_REPLACE_REASON_CODES, EInvoiceProviderError, MISA_GATES, MISA_GATES_DONE, MISA_HOSTS, createMisaEInvoiceProvider, isEInvoiceProvider, misaBlockers } from '../src/index.ts';
 import type { MisaRequest } from '../src/index.ts';
+import { Num, createMisaEInvoiceProviderForTest } from '../src/misa.ts';
 import { DRAFT_ID, REF, SECRET, answers, invoiceXml, lost, replay, request, type Step } from './misa-recorded.ts';
 
 const fixedNow = () => new Date('2026-11-03T03:00:00Z');
@@ -16,7 +17,7 @@ const TEST_CODES = [
 ] as const;
 const make = (script: Record<string, Step[]>) => {
   const r = replay({ [T]: [answers.token()], ...script });
-  return { ...r, provider: createMisaEInvoiceProvider({ transport: r.transport, now: fixedNow, reasonCodes: TEST_CODES }) };
+  return { ...r, provider: createMisaEInvoiceProviderForTest({ transport: r.transport, now: fixedNow, reasonCodes: TEST_CODES }) };
 };
 const bodyOf = (call: { body: string | null } | undefined): Record<string, unknown> => JSON.parse(call?.body ?? 'null') as Record<string, unknown>;
 const publishing = (calls: readonly MisaRequest[]) => calls.filter((c) => c.url.endsWith('/invoice/publishing'));
@@ -39,9 +40,74 @@ describe('MISA adapter: it is off until its gates are written', () => {
   it('names #2506 and #2507 as blockers and has none of them done', () => {
     expect(MISA_GATES.map((g) => g.issue)).toEqual([2506, 2507]);
     expect(MISA_GATES_DONE).toEqual([]);
+    expect(Object.isFrozen(MISA_GATES_DONE)).toBe(true);
     expect(misaBlockers().map((g) => g.issue)).toEqual([2506, 2507]);
     expect(misaBlockers([2506]).map((g) => g.issue)).toEqual([2507]);
     expect(misaBlockers([2506, 2507])).toEqual([]);
+  });
+
+  it('refuses construction in createMisaEInvoiceProvider while any blocker is active', () => {
+    const r = replay({});
+    expect(() => createMisaEInvoiceProvider({ transport: r.transport, now: fixedNow })).toThrow(/MISA meInvoice adapter is refused until #2506 and #2507 are done and written in issue #2503/);
+    expect(() => createMisaEInvoiceProviderForTest({ transport: r.transport }, [])).toThrow(/#2506 and #2507/);
+    let singleError = '';
+    try {
+      createMisaEInvoiceProviderForTest({ transport: r.transport }, [2506]);
+    } catch (error) {
+      singleError = (error as Error).message;
+    }
+    expect(singleError).toContain('#2507');
+    expect(singleError).not.toContain('#2506');
+    expect(() => createMisaEInvoiceProviderForTest({ transport: r.transport }, [2507])).toThrow(/#2506/);
+    expect(createMisaEInvoiceProviderForTest({ transport: r.transport }, [2506, 2507]).id).toBe('misa');
+    expect(r.calls).toEqual([]);
+  });
+});
+
+describe('MISA adapter: Num decimal validation', () => {
+  it('accepts valid decimal strings and freezes the instance', () => {
+    for (const valid of ['0', '-0', '1', '100', '-250.75', '0.00000001', '12345678901234.12345678', '9999999999999999.99999999']) {
+      const value = new Num(valid);
+      expect(value.text).toBe(valid);
+      expect(Object.isFrozen(value)).toBe(true);
+    }
+  });
+
+  it('rejects invalid strings, NaN, and non-string runtime values without echoing the input', () => {
+    const invalidStrings = [
+      '',
+      ' ',
+      ' 1',
+      '1 ',
+      '01',
+      '-01',
+      '.5',
+      '1.',
+      '+1',
+      '1e3',
+      '12,5',
+      '1_000',
+      'NaN',
+      'Infinity',
+      '-Infinity',
+      '12345678901234567',
+      '0.123456789',
+      '100"injected',
+      'secret-decimal-input',
+    ];
+    for (const bad of invalidStrings) {
+      expect(() => new Num(bad), bad).toThrow(RangeError);
+    }
+    for (const bad of [NaN, 100, 0, Infinity, -Infinity, null, undefined, true, { toString: () => '100' }]) {
+      expect(() => new Num(bad as never), String(bad)).toThrow(RangeError);
+    }
+    let message = '';
+    try {
+      new Num('secret-decimal-input');
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect(message).not.toContain('secret-decimal-input');
   });
 });
 
@@ -156,7 +222,9 @@ describe('MISA adapter: issue', () => {
     expect(await provider.issue(SECRET, request({ symbol: 'XX' }))).toEqual({ state: 'rejected', ref: null, code: 'series_unknown' });
     expect(await provider.issue(SECRET, request({ lines: [{ ...line, vatRate: 'abc' }] }))).toEqual({ state: 'rejected', ref: null, code: 'invalid_data' });
     expect(await provider.issue(SECRET, request({ lines: [{ ...line, amount: '1e3' }] }))).toEqual({ state: 'rejected', ref: null, code: 'invalid_data' });
+    expect(await provider.issue(SECRET, request({ lines: [{ ...line, amount: NaN as never }] }))).toEqual({ state: 'rejected', ref: null, code: 'invalid_data' });
     expect(await provider.issue(SECRET, request({ total: '12,5' }))).toEqual({ state: 'rejected', ref: null, code: 'invalid_data' });
+    expect(await provider.issue(SECRET, request({ total: 100 as never }))).toEqual({ state: 'rejected', ref: null, code: 'invalid_data' });
     expect(calls).toHaveLength(0);
   });
 
@@ -324,7 +392,7 @@ describe('MISA adapter: adjustment and replacement', () => {
 
   it('refuses every adjustment and replacement while the real list is empty (no code is invented)', async () => {
     const r = replay({ [T]: [answers.token()], '/invoice/publishing': [answers.published({ InvCode: 'C' })] });
-    const provider = createMisaEInvoiceProvider({ transport: r.transport, now: fixedNow });
+    const provider = createMisaEInvoiceProviderForTest({ transport: r.transport, now: fixedNow });
     expect(ADJUST_REPLACE_REASON_CODES.codes).toEqual([]);
     expect(await provider.adjust(SECRET, { ...request(), original: { ...original, kind: 'adjustment' } })).toEqual({ state: 'rejected', ref: null, code: 'invalid_data' });
     expect(r.calls).toEqual([]);
