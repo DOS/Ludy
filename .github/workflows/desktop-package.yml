@@ -19,10 +19,10 @@ on:
         options: [dry-run, signed]
         default: dry-run
       platform:
-        description: Target platforms to package (all, windows, or macos)
+        description: Target platforms to package (windows, macos, or all)
         type: choice
-        options: [all, windows, macos]
-        default: all
+        options: [windows, macos, all]
+        default: windows
       version:
         description: Version X.Y.Z for dry-run builds
         type: string
@@ -82,7 +82,7 @@ jobs:
 
           build_windows='false'
           build_macos='false'
-          case "${INPUT_PLATFORM:-all}" in
+          case "${INPUT_PLATFORM:-windows}" in
             all)
               build_windows='true'
               build_macos='true'
@@ -141,7 +141,7 @@ jobs:
           echo "sha=$target_sha" >> "$GITHUB_OUTPUT"
           echo "build_windows=$build_windows" >> "$GITHUB_OUTPUT"
           echo "build_macos=$build_macos" >> "$GITHUB_OUTPUT"
-          echo "### Ludy Desktop release ($mode, platform=${INPUT_PLATFORM:-all}): $version (${tag:-no tag}, $target_sha)" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Ludy Desktop release ($mode, platform=${INPUT_PLATFORM:-windows}): $version (${tag:-no tag}, $target_sha)" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Required CI checks are green on the release commit
         if: steps.target.outputs.mode == 'signed'
@@ -692,8 +692,13 @@ jobs:
           chmod 600 "$p12_file"
           echo "APPLE_CERT_P12_FILE=$p12_file" >> "$GITHUB_ENV"
 
-          keychain_file="$RUNNER_TEMP/ludy-signing-${RUN_ID}-${RUN_ATTEMPT}.keychain-db"
+          kc_dir="$(mktemp -d "$RUNNER_TEMP/ludy-mac-kc-XXXXXX")"
+          chmod 700 "$kc_dir"
+          keychain_file="$kc_dir/ephemeral.keychain-db"
+          owner_marker="$RUNNER_TEMP/ludy-kc-owner.txt"
+          rm -f "$owner_marker"
           echo "LUDY_MAC_EPHEMERAL_KEYCHAIN=$keychain_file" >> "$GITHUB_ENV"
+          echo "LUDY_MAC_KEYCHAIN_OWNER_MARKER=$owner_marker" >> "$GITHUB_ENV"
 
           raw_api_p8="${APPLE_NOTARY_API_KEY_P8_BASE64:-}"
           if [ -n "${raw_api_p8//[[:space:]]/}" ]; then
@@ -759,7 +764,11 @@ jobs:
         run: |
           set -euo pipefail
           cleanup_failed=0
-          if [ -n "${LUDY_MAC_EPHEMERAL_KEYCHAIN:-}" ]; then
+          owned_kc=''
+          if [ -n "${LUDY_MAC_KEYCHAIN_OWNER_MARKER:-}" ] && [ -s "$LUDY_MAC_KEYCHAIN_OWNER_MARKER" ]; then
+            owned_kc="$(cat "$LUDY_MAC_KEYCHAIN_OWNER_MARKER")"
+          fi
+          if [ -n "${LUDY_MAC_EPHEMERAL_KEYCHAIN:-}" ] && [ "$owned_kc" = "$LUDY_MAC_EPHEMERAL_KEYCHAIN" ]; then
             if [ -e "$LUDY_MAC_EPHEMERAL_KEYCHAIN" ]; then
               security delete-keychain "$LUDY_MAC_EPHEMERAL_KEYCHAIN" || cleanup_failed=1
               rm -f "$LUDY_MAC_EPHEMERAL_KEYCHAIN" || cleanup_failed=1
@@ -772,7 +781,9 @@ jobs:
               echo "::error::Ephemeral Keychain file remained on disk: $LUDY_MAC_EPHEMERAL_KEYCHAIN"
               cleanup_failed=1
             fi
+            rmdir "$(dirname "$LUDY_MAC_EPHEMERAL_KEYCHAIN")" 2>/dev/null || true
           fi
+          rm -f "$RUNNER_TEMP/ludy-kc-owner.txt" || true
           for temp_secret in "$RUNNER_TEMP/ludy-apple-devid.p12" "$RUNNER_TEMP/ludy-notary-key.p8"; do
             if [ -e "$temp_secret" ]; then
               rm -f "$temp_secret" || cleanup_failed=1

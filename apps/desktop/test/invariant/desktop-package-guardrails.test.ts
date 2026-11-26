@@ -244,8 +244,9 @@ describe('desktop-package workflow guardrails', () => {
       }
     }
 
-    // desktop-package.yml must preserve platform choices, macOS dry-run, and macOS signed gating in desktop-release.
-    expect(workflow).toContain('options: [all, windows, macos]');
+    // desktop-package.yml must preserve platform choices (defaulting to windows so existing signed runs stay scoped), macOS dry-run, and macOS signed gating in desktop-release.
+    expect(workflow).toContain('options: [windows, macos, all]');
+    expect(workflow).toContain('default: windows');
     expect(workflow).toContain("'macOS build (unsigned, arm64 & x64), tests and size'");
     expect(workflow).toContain('build-mac-dry-run:');
     expect(workflow).toContain('node apps/desktop/scripts/package-mac.mjs --version "$VERSION" --arch all');
@@ -269,6 +270,7 @@ describe('desktop-package workflow guardrails', () => {
     expect(macSignedBlock).toContain('xcrun stapler validate');
     expect(macSignedBlock).toContain('spctl -a -t open --context context:primary-signature -vv');
     expect(macSignedBlock).toContain('if: always()');
+    expect(macSignedBlock).toContain('LUDY_MAC_KEYCHAIN_OWNER_MARKER');
     expect(macSignedBlock).toContain('security delete-keychain "$LUDY_MAC_EPHEMERAL_KEYCHAIN"');
     expect(macSignedBlock).toContain('$RUNNER_TEMP/ludy-apple-devid.p12');
     expect(macSignedBlock).toContain('$RUNNER_TEMP/ludy-notary-key.p8');

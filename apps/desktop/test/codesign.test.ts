@@ -10,6 +10,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { crc32 as zlibCrc32 } from 'node:zlib';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   APPLE_BUNDLE_ID,
@@ -119,8 +120,10 @@ function buildSyntheticZip(
     const nameBuf = Buffer.from(entry.name, 'utf8');
     const size = entry.dataSize ?? 4;
     const localHeader = Buffer.alloc(30 + nameBuf.length + size);
+    const payloadCrc = size > 0 ? zlibCrc32(localHeader.subarray(30 + nameBuf.length)) >>> 0 : 0;
     localHeader.writeUInt32LE(0x04034b50, 0);
     localHeader.writeUInt16LE(20, 4);
+    localHeader.writeUInt32LE(payloadCrc, 14);
     localHeader.writeUInt32LE(size, 18);
     localHeader.writeUInt32LE(size, 22);
     localHeader.writeUInt16LE(nameBuf.length, 26);
@@ -130,6 +133,7 @@ function buildSyntheticZip(
     cdHeader.writeUInt32LE(0x02014b50, 0);
     cdHeader.writeUInt16LE(20, 4);
     cdHeader.writeUInt16LE(20, 6);
+    cdHeader.writeUInt32LE(payloadCrc, 16);
     cdHeader.writeUInt32LE(entry.compressedSizeOverride ?? size, 20);
     cdHeader.writeUInt32LE(entry.uncompressedSizeOverride ?? size, 24);
     cdHeader.writeUInt16LE(nameBuf.length, 28);

@@ -43,13 +43,13 @@ How CI handles credentials safely: `desktop-package.yml` decodes the `.p12` (and
 
 ## Step 3. Run dry-run check first (no secrets)
 
-1. Trigger **desktop-package** (`desktop-package.yml`) manually on `main` with `mode=dry-run`, `platform=macos` (or `all`), and `version=0.1.0` (matching `apps/desktop/package.json`).
+1. Trigger **desktop-package** (`desktop-package.yml`) manually on `main` with `mode=dry-run`, `platform=macos` (or `all`; `platform` defaults to `windows`), and `version=0.1.0` (matching `apps/desktop/package.json`).
 2. Confirm `build-mac-dry-run` passes typecheck, unit tests, and outputs `LudyDesktop-0.1.0-darwin-arm64.dmg`, `LudyDesktop-0.1.0-darwin-arm64.zip`, `LudyDesktop-0.1.0-darwin-x64.dmg`, `LudyDesktop-0.1.0-darwin-x64.zip`, `release-manifest.json` (`signed: false`), and `SHA256SUMS.txt`.
 
 ## Step 4. Cut and verify a signed and notarized macOS release (owner-approved run)
 
 1. Bump `"version"` in `apps/desktop/package.json` on `main` via a merged PR and confirm `Lint, typecheck, unit tests`, `Windows build (unsigned)`, `Windows install smoke`, and `macOS build (unsigned, arm64 & x64), tests and size` are green on that commit (if the commit did not touch desktop path triggers, run `desktop-build.yml` manually on that commit first).
-2. Create and push tag `desktop-vX.Y.Z` on that `main` commit, then trigger **desktop-package** (`desktop-package.yml`) on `main` with `mode=signed`, `platform=all` (or `macos`), and `tag=desktop-vX.Y.Z`.
+2. Create and push tag `desktop-vX.Y.Z` on that `main` commit, then trigger **desktop-package** (`desktop-package.yml`) on `main` with `mode=signed`, `platform=macos` (or `all`; `platform` defaults to `windows`), and `tag=desktop-vX.Y.Z`.
 3. Approve the pending `desktop-release` environment gate in GitHub Actions.
 4. Confirm `build-mac-signed` passes every check:
    - `codesign --verify --deep --strict --verbose=2` and `codesign --display --verbose=4` confirm `Identifier=vn.ludy.desktop`, `TeamIdentifier=<APPLE_TEAM_ID>`, Hardened Runtime (`runtime`), SHA-256 CodeDirectory, `Developer ID Application:` chain, and Apple timestamp.
@@ -81,10 +81,10 @@ Before publishing the draft release or pointing users to a new macOS release:
    - Apple Silicon: `https://updates.example.vn/ludy-desktop/darwin-arm64`
    - Intel Mac: `https://updates.example.vn/ludy-desktop/darwin-x64`
    HTTPS is mandatory (private/SSRF IPs, HTML, redirects, and cross-origin paths are blocked by `apps/desktop/src/update-feed.ts`).
-2. Inside each arch directory, upload the `.zip` and `.dmg` **before** updating `release-manifest.json` (and `SHA256SUMS.txt`) so clients never fetch a manifest before its archive is live:
-   - `LudyDesktop-X.Y.Z-darwin-<arch>.zip` (from `darwin-<arch>/`)
+2. Inside each arch directory, upload the `.zip` and `.dmg` **before** updating `release-manifest.json` (and `SHA256SUMS.txt`) so clients never fetch a manifest before its archive is live. Copy directly from the `ludy-desktop-signed-darwin` workflow artifact (`darwin-<arch>/`) so `SHA256SUMS.txt` references `release-manifest.json` verbatim (if copying from GitHub Release assets and renaming `release-manifest-darwin-<arch>.json` to `release-manifest.json`, regenerate `shasum -a 256 LudyDesktop-X.Y.Z-darwin-<arch>.dmg LudyDesktop-X.Y.Z-darwin-<arch>.zip release-manifest.json > SHA256SUMS.txt` after renaming):
+   - `LudyDesktop-X.Y.Z-darwin-<arch>.zip`
    - `LudyDesktop-X.Y.Z-darwin-<arch>.dmg` (optional on feed host, keeps archive complete)
-   - `release-manifest.json` (note: rename `release-manifest-darwin-<arch>.json` back to `release-manifest.json` if copying from GitHub Release assets, or upload directly from the `ludy-desktop-signed-darwin` workflow artifact)
+   - `release-manifest.json`
    - `SHA256SUMS.txt`
 3. How macOS client update verification works: `apps/desktop/src/update-feed.ts` and `apps/desktop/src/codesign.ts` fetch `release-manifest.json` over DNS-pinned non-redirecting HTTPS, verify `platform: "darwin"`, `arch`, `signed: true`, `hardenedRuntime: true`, `notarized: true`, `bundleId: "vn.ludy.desktop"`, and matching `teamId` (pinned via `LUDY_DESKTOP_UPDATE_TEAM_ID` or extracted from the running signed `Ludy Desktop.app`), download the `.zip` once, verify streaming SHA-256 + byte size, inspect ZIP central directory bounds/paths, extract with `ditto` into an isolated temp directory, reject escaping symlinks, run `codesign --verify --deep --strict`, `codesign --display` (Team ID + Hardened Runtime + SHA-256 + timestamp), and `spctl -a -t exec -vv`, and only then serve the verified `.zip` to Squirrel.Mac over `127.0.0.1`.
 4. Publish the draft GitHub release with the verified checksums.

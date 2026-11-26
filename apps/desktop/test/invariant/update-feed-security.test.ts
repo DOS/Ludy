@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync 
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { deflateRawSync } from 'node:zlib';
+import { crc32 as zlibCrc32, deflateRawSync } from 'node:zlib';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   formatSignedReleaseManifestScript,
@@ -821,8 +821,10 @@ describe('macOS update feed, Team ID pinning, ZIP safety, and Gatekeeper invaria
       const nameBuf = Buffer.from(entry.name, 'utf8');
       const size = entry.dataSize ?? 4;
       const lh = Buffer.alloc(30 + nameBuf.length + size);
+      const crc = size > 0 ? zlibCrc32(lh.subarray(30 + nameBuf.length)) >>> 0 : 0;
       lh.writeUInt32LE(0x04034b50, 0);
       lh.writeUInt16LE(20, 4);
+      lh.writeUInt32LE(crc, 14);
       lh.writeUInt32LE(size, 18);
       lh.writeUInt32LE(size, 22);
       lh.writeUInt16LE(nameBuf.length, 26);
@@ -832,6 +834,7 @@ describe('macOS update feed, Team ID pinning, ZIP safety, and Gatekeeper invaria
       cd.writeUInt32LE(0x02014b50, 0);
       cd.writeUInt16LE(20, 4);
       cd.writeUInt16LE(20, 6);
+      cd.writeUInt32LE(crc, 16);
       cd.writeUInt32LE(size, 20);
       cd.writeUInt32LE(entry.uncompressedSizeOverride ?? size, 24);
       cd.writeUInt16LE(nameBuf.length, 28);
@@ -1064,12 +1067,15 @@ describe('macOS update feed, Team ID pinning, ZIP safety, and Gatekeeper invaria
     ).toThrow(/safety limit/);
 
     // Forged Central Directory claiming 64 bytes while compressed deflate stream actually expands to 2 MiB.
-    const realBombPayload = deflateRawSync(Buffer.alloc(2 * 1024 * 1024, 0x41));
+    const rawBombBytes = Buffer.alloc(2 * 1024 * 1024, 0x41);
+    const realBombPayload = deflateRawSync(rawBombBytes);
+    const bombCrc = zlibCrc32(rawBombBytes) >>> 0;
     const nameBuf = Buffer.from(`${MAC_APP_BUNDLE_NAME}/Contents/Resources/payload`, 'utf8');
     const bombLh = Buffer.alloc(30 + nameBuf.length);
     bombLh.writeUInt32LE(0x04034b50, 0);
     bombLh.writeUInt16LE(20, 4);
     bombLh.writeUInt16LE(8, 8);
+    bombLh.writeUInt32LE(bombCrc, 14);
     bombLh.writeUInt32LE(realBombPayload.length, 18);
     bombLh.writeUInt32LE(64, 22);
     bombLh.writeUInt16LE(nameBuf.length, 26);
@@ -1079,6 +1085,7 @@ describe('macOS update feed, Team ID pinning, ZIP safety, and Gatekeeper invaria
     bombCd.writeUInt16LE(20, 4);
     bombCd.writeUInt16LE(20, 6);
     bombCd.writeUInt16LE(8, 10);
+    bombCd.writeUInt32LE(bombCrc, 16);
     bombCd.writeUInt32LE(realBombPayload.length, 20);
     bombCd.writeUInt32LE(64, 24);
     bombCd.writeUInt16LE(nameBuf.length, 28);
@@ -1096,6 +1103,19 @@ describe('macOS update feed, Team ID pinning, ZIP safety, and Gatekeeper invaria
     await expect(
       verifyZipDecompressedSizeBounds(forgedDeflateBomb, { maxTotalUncompressedBytes: 1024 * 1024 }),
     ).rejects.toThrow(/actual decompressed size exceeds safety limit/);
+
+    // Local File Header mismatch vs Central Directory (name mismatch & size mismatch) must fail before extraction.
+    const mismatchBuf = buildTestZip([{ name: `${MAC_APP_BUNDLE_NAME}/Contents/Info.plist`, dataSize: 8 }]);
+    mismatchBuf.write('Evil.app', 30, 'utf8');
+    const lfhNameMismatchZip = join(dir, 'lfh-name-mismatch.zip');
+    writeFileSync(lfhNameMismatchZip, mismatchBuf);
+    await expect(verifyZipDecompressedSizeBounds(lfhNameMismatchZip)).rejects.toThrow(/local header filename mismatch/);
+
+    const sizeMismatchBuf = buildTestZip([{ name: `${MAC_APP_BUNDLE_NAME}/Contents/Info.plist`, dataSize: 8 }]);
+    sizeMismatchBuf.writeUInt32LE(128, 22);
+    const lfhSizeMismatchZip = join(dir, 'lfh-size-mismatch.zip');
+    writeFileSync(lfhSizeMismatchZip, sizeMismatchBuf);
+    await expect(verifyZipDecompressedSizeBounds(lfhSizeMismatchZip)).rejects.toThrow(/local header metadata mismatch/);
 
     let dittoInvokedOnBomb = false;
     await expect(

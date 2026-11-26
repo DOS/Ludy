@@ -60,14 +60,17 @@ function validateFileExists(label, value, exists) {
 }
 
 export function selectMacEntitlementsForFile(filePath) {
-  if (
-    filePath.includes('(GPU).app') ||
-    filePath.includes('(Plugin).app') ||
-    filePath.includes('(Alerts).app')
-  ) {
-    return MAC_HELPER_ENTITLEMENTS_PATH;
+  const norm = String(filePath).replace(/\\/g, '/').replace(/\/+$/, '');
+  const isMainBundleOrBinary =
+    /(?:^|\/)Ludy Desktop\.app(?:\/Contents\/MacOS\/Ludy Desktop)?$/i.test(norm);
+  const isAudioCaptureHelper =
+    /(?:^|\/)Ludy Desktop Helper(?: \(Renderer\))?\.app(?:\/Contents\/MacOS\/Ludy Desktop Helper(?: \(Renderer\))?)?$/i.test(
+      norm,
+    );
+  if (isMainBundleOrBinary || isAudioCaptureHelper) {
+    return MAC_DARWIN_ENTITLEMENTS_PATH;
   }
-  return MAC_DARWIN_ENTITLEMENTS_PATH;
+  return MAC_HELPER_ENTITLEMENTS_PATH;
 }
 
 export function buildMacExtendInfo() {
@@ -435,6 +438,11 @@ export async function withEphemeralMacKeychain(options) {
   const priorSearchList = parseKeychainSearchList(exec('security', ['list-keychains', '-d', 'user']));
   if (priorSearchList.includes(keychainPath)) {
     throw new Error(`Refused to reuse Keychain already present in search list: ${keychainPath}`);
+  }
+
+  const ownerMarkerPath = env.LUDY_MAC_KEYCHAIN_OWNER_MARKER?.trim() ?? '';
+  if (ownerMarkerPath) {
+    writeFileSync(ownerMarkerPath, keychainPath, { mode: 0o600 });
   }
 
   const ephemeralPassword = randomBytes(24).toString('hex');

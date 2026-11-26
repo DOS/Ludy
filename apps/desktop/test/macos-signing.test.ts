@@ -75,6 +75,12 @@ describe('macOS packaging CLI & signing helpers', () => {
       MAC_DARWIN_ENTITLEMENTS_PATH,
     );
     expect(
+      selectMacEntitlementsForFile('/tmp/Ludy Desktop.app/Contents/Frameworks/Ludy Desktop Helper.app'),
+    ).toBe(MAC_DARWIN_ENTITLEMENTS_PATH);
+    expect(
+      selectMacEntitlementsForFile('/tmp/Ludy Desktop.app/Contents/Frameworks/Ludy Desktop Helper (Renderer).app'),
+    ).toBe(MAC_DARWIN_ENTITLEMENTS_PATH);
+    expect(
       selectMacEntitlementsForFile('/tmp/Ludy Desktop.app/Contents/Frameworks/Ludy Desktop Helper (GPU).app'),
     ).toBe(MAC_HELPER_ENTITLEMENTS_PATH);
     expect(
@@ -82,6 +88,14 @@ describe('macOS packaging CLI & signing helpers', () => {
     ).toBe(MAC_HELPER_ENTITLEMENTS_PATH);
     expect(
       selectMacEntitlementsForFile('/tmp/Ludy Desktop.app/Contents/Frameworks/Ludy Desktop Helper (Alerts).app'),
+    ).toBe(MAC_HELPER_ENTITLEMENTS_PATH);
+    expect(
+      selectMacEntitlementsForFile('/tmp/Ludy Desktop.app/Contents/Frameworks/Squirrel.framework/Versions/A/Resources/ShipIt'),
+    ).toBe(MAC_HELPER_ENTITLEMENTS_PATH);
+    expect(
+      selectMacEntitlementsForFile(
+        '/tmp/Ludy Desktop.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Helpers/chrome_crashpad_handler',
+      ),
     ).toBe(MAC_HELPER_ENTITLEMENTS_PATH);
 
     const extendInfo = buildMacExtendInfo();
@@ -446,13 +460,15 @@ describe('macOS packaging CLI & signing helpers', () => {
     });
     if (!baseSigning.enabled) throw new Error('expected enabled');
 
+    const ownerMarker = join(dir, 'owner-marker.txt');
     await expect(
       withEphemeralMacKeychain({
         signing: baseSigning,
-        env: { LUDY_MAC_EPHEMERAL_KEYCHAIN: existingKc },
+        env: { LUDY_MAC_EPHEMERAL_KEYCHAIN: existingKc, LUDY_MAC_KEYCHAIN_OWNER_MARKER: ownerMarker },
         run: async () => undefined,
       }),
     ).rejects.toThrow(/Refused to clobber/);
+    expect(existsSync(ownerMarker)).toBe(false);
 
     await expect(
       withEphemeralMacKeychain({

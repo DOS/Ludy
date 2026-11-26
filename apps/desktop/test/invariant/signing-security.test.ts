@@ -367,7 +367,17 @@ describe('macOS signing credential, Keychain, entitlements, and ATS security inv
     const mainPlist = readFileSync(MAC_DARWIN_ENTITLEMENTS_PATH, 'utf8');
     const helperPlist = readFileSync(MAC_HELPER_ENTITLEMENTS_PATH, 'utf8');
     expect(selectMacEntitlementsForFile('/tmp/Ludy Desktop.app')).toBe(MAC_DARWIN_ENTITLEMENTS_PATH);
-    expect(selectMacEntitlementsForFile('/tmp/Ludy Desktop Helper (GPU).app')).toBe(MAC_HELPER_ENTITLEMENTS_PATH);
+    expect(selectMacEntitlementsForFile('/tmp/Ludy Desktop.app/Contents/Frameworks/Ludy Desktop Helper (GPU).app')).toBe(
+      MAC_HELPER_ENTITLEMENTS_PATH,
+    );
+    expect(
+      selectMacEntitlementsForFile('/tmp/Ludy Desktop.app/Contents/Frameworks/Squirrel.framework/Versions/A/Resources/ShipIt'),
+    ).toBe(MAC_HELPER_ENTITLEMENTS_PATH);
+    expect(
+      selectMacEntitlementsForFile(
+        '/tmp/Ludy Desktop.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Helpers/chrome_crashpad_handler',
+      ),
+    ).toBe(MAC_HELPER_ENTITLEMENTS_PATH);
 
     for (const forbidden of [
       'com.apple.security.cs.disable-library-validation',
@@ -418,6 +428,52 @@ describe('macOS signing credential, Keychain, entitlements, and ATS security inv
         { expectedTeamId: MAC_TEAM_ID },
       ),
     ).toThrow(/ad-hoc/);
+    expect(() =>
+      parseCodesignDisplayOutput(
+        [
+          'Identifier=vn.ludy.desktop',
+          'CodeDirectory v=20500 size=100 flags=0x10000(runtime)',
+          'Hash type=sha1 size=20',
+          `Authority=Developer ID Application: Ludy (${MAC_TEAM_ID})`,
+          'Authority=Developer ID Certification Authority',
+          'Authority=Apple Root CA',
+          'Timestamp=Nov 26, 2026 at 10:00:00',
+          `TeamIdentifier=${MAC_TEAM_ID}`,
+          'Sealed Resources version=2 rules=13 files=10',
+        ].join('\n'),
+        { expectedTeamId: MAC_TEAM_ID },
+      ),
+    ).toThrow(/SHA-256/);
+    expect(() =>
+      parseCodesignDisplayOutput(
+        [
+          'Identifier=vn.ludy.desktop',
+          'CodeDirectory v=20500 size=100 flags=0x10000(runtime)',
+          'Hash type=sha256 size=32',
+          `Authority=Developer ID Application: Ludy (${MAC_TEAM_ID})`,
+          'Authority=Self Signed Root',
+          'Timestamp=Nov 26, 2026 at 10:00:00',
+          `TeamIdentifier=${MAC_TEAM_ID}`,
+          'Sealed Resources version=2 rules=13 files=10',
+        ].join('\n'),
+        { expectedTeamId: MAC_TEAM_ID },
+      ),
+    ).toThrow(/Apple Root CA/);
+    expect(() =>
+      parseCodesignDisplayOutput(
+        [
+          'Identifier=vn.ludy.desktop',
+          'CodeDirectory v=20500 size=100 flags=0x10000(runtime)',
+          'Hash type=sha256 size=32',
+          `Authority=Developer ID Application: Ludy (${MAC_TEAM_ID})`,
+          'Authority=Developer ID Certification Authority',
+          'Authority=Apple Root CA',
+          `TeamIdentifier=${MAC_TEAM_ID}`,
+          'Sealed Resources version=2 rules=13 files=10',
+        ].join('\n'),
+        { expectedTeamId: MAC_TEAM_ID },
+      ),
+    ).toThrow(/timestamp/);
     expect(() =>
       parseSpctlAssessOutput('/app: accepted\nsource=Unnotarized Developer ID\norigin=Developer ID Application: X (A1B2C3D4E5)'),
     ).toThrow(/Notarized Developer ID/);

@@ -4,7 +4,7 @@
 import { execFile } from 'node:child_process';
 import { existsSync, lstatSync, mkdtempSync, openSync, closeSync, readdirSync, readlinkSync, readSync, realpathSync, rmSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve } from 'node:path';
-import { createInflateRaw } from 'node:zlib';
+import { createInflateRaw, crc32 as zlibCrc32 } from 'node:zlib';
 
 export const APPLE_BUNDLE_ID = 'vn.ludy.desktop';
 export const MAC_APP_BUNDLE_NAME = 'Ludy Desktop.app';
@@ -260,7 +260,9 @@ export function parseSpctlAssessOutput(
 
 interface ParsedZipEntryMeta {
   name: string;
+  flags: number;
   method: number;
+  crc32: number;
   compressedSize: number;
   uncompressedSize: number;
   localHeaderOffset: number;
@@ -348,7 +350,9 @@ function parseZipCentralDirectoryEntries(
       if (cursor + 46 > cdBuf.length || cdBuf.readUInt32LE(cursor) !== 0x02014b50) {
         throw new Error('Malformed ZIP central directory header');
       }
+      const flags = cdBuf.readUInt16LE(cursor + 8);
       const method = cdBuf.readUInt16LE(cursor + 10);
+      const crc32 = cdBuf.readUInt32LE(cursor + 16);
       const compressedSize = cdBuf.readUInt32LE(cursor + 20);
       const uncompressedSize = cdBuf.readUInt32LE(cursor + 24);
       const nameLen = cdBuf.readUInt16LE(cursor + 28);
@@ -371,6 +375,9 @@ function parseZipCentralDirectoryEntries(
       }
 
       const rawName = cdBuf.subarray(cursor + 46, cursor + 46 + nameLen).toString('utf8');
+      if ((flags & 0x0001) !== 0) {
+        throw new Error(`Encrypted ZIP entry is not supported: ${rawName}`);
+      }
       if (rawName.includes('\0') || rawName.includes('\\') || rawName.startsWith('/')) {
         throw new Error(`Unsafe ZIP entry path: ${rawName}`);
       }
@@ -394,7 +401,7 @@ function parseZipCentralDirectoryEntries(
         throw new Error(`Duplicate ZIP entry path: ${rawName}`);
       }
       seenLowerNames.add(lowerKey);
-      entries.push({ name: rawName, method, compressedSize, uncompressedSize, localHeaderOffset });
+      entries.push({ name: rawName, flags, method, crc32, compressedSize, uncompressedSize, localHeaderOffset });
       cursor = headerEnd;
     }
     if (cursor !== cdBuf.length) {
@@ -442,16 +449,86 @@ export async function verifyZipDecompressedSizeBounds(
       if (readSync(fd, lh, 0, 30, entry.localHeaderOffset) !== 30 || lh.readUInt32LE(0) !== 0x04034b50) {
         throw new Error(`Invalid ZIP local file header for ${entry.name}`);
       }
+      const lhFlags = lh.readUInt16LE(6);
+      const lhMethod = lh.readUInt16LE(8);
+      const lhCrc32 = lh.readUInt32LE(14);
+      const lhCompressedSize = lh.readUInt32LE(18);
+      const lhUncompressedSize = lh.readUInt32LE(22);
       const lhNameLen = lh.readUInt16LE(26);
       const lhExtraLen = lh.readUInt16LE(28);
+      if ((lhFlags & 0x0001) !== 0) {
+        throw new Error(`Encrypted ZIP local entry is not supported: ${entry.name}`);
+      }
+      if ((lhFlags & 0x0008) !== (entry.flags & 0x0008)) {
+        throw new Error(`ZIP local header flags mismatch for ${entry.name}`);
+      }
+      if (lhMethod !== entry.method) {
+        throw new Error(`ZIP local header compression method mismatch for ${entry.name}`);
+      }
       const dataStart = entry.localHeaderOffset + 30 + lhNameLen + lhExtraLen;
-      if (dataStart + entry.compressedSize > parsed.cdOffset) {
+      if (dataStart > parsed.cdOffset || dataStart + entry.compressedSize > parsed.cdOffset) {
         throw new Error(`ZIP compressed entry extends past central directory for ${entry.name}`);
+      }
+      const lhNameBuf = Buffer.alloc(lhNameLen);
+      if (lhNameLen > 0 && readSync(fd, lhNameBuf, 0, lhNameLen, entry.localHeaderOffset + 30) !== lhNameLen) {
+        throw new Error(`Failed reading ZIP local header filename for ${entry.name}`);
+      }
+      if (lhNameBuf.toString('utf8') !== entry.name) {
+        throw new Error(`ZIP local header filename mismatch for ${entry.name}`);
+      }
+      if ((lhFlags & 0x0008) === 0) {
+        if (
+          lhCompressedSize !== entry.compressedSize ||
+          lhUncompressedSize !== entry.uncompressedSize ||
+          lhCrc32 !== entry.crc32
+        ) {
+          throw new Error(`ZIP local header metadata mismatch for ${entry.name}`);
+        }
+      } else {
+        if (lhCompressedSize !== 0 || lhUncompressedSize !== 0 || lhCrc32 !== 0) {
+          throw new Error(`ZIP local header with data descriptor must zero inline fields for ${entry.name}`);
+        }
+        const ddOffset = dataStart + entry.compressedSize;
+        if (ddOffset + 12 > parsed.cdOffset) {
+          throw new Error(`ZIP data descriptor out of bounds for ${entry.name}`);
+        }
+        const dd = Buffer.alloc(Math.min(16, parsed.cdOffset - ddOffset));
+        if (readSync(fd, dd, 0, dd.length, ddOffset) !== dd.length) {
+          throw new Error(`Failed reading ZIP data descriptor for ${entry.name}`);
+        }
+        const hasSig = dd.length >= 16 && dd.readUInt32LE(0) === 0x08074b50;
+        const ddBase = hasSig ? 4 : 0;
+        if (
+          dd.readUInt32LE(ddBase) !== entry.crc32 ||
+          dd.readUInt32LE(ddBase + 4) !== entry.compressedSize ||
+          dd.readUInt32LE(ddBase + 8) !== entry.uncompressedSize
+        ) {
+          throw new Error(`ZIP data descriptor metadata mismatch for ${entry.name}`);
+        }
       }
 
       if (entry.method === 0) {
         if (entry.compressedSize !== entry.uncompressedSize) {
           throw new Error(`Stored ZIP entry size mismatch for ${entry.name}`);
+        }
+        let storedCrc = 0;
+        if (entry.uncompressedSize > 0) {
+          const ioBuf = Buffer.alloc(65_536);
+          let remaining = entry.uncompressedSize;
+          let pos = dataStart;
+          while (remaining > 0) {
+            const toRead = Math.min(remaining, ioBuf.length);
+            const bytesRead = readSync(fd, ioBuf, 0, toRead, pos);
+            if (bytesRead <= 0) {
+              throw new Error(`Unexpected EOF reading stored ZIP entry ${entry.name}`);
+            }
+            storedCrc = zlibCrc32(ioBuf.subarray(0, bytesRead), storedCrc);
+            pos += bytesRead;
+            remaining -= bytesRead;
+          }
+        }
+        if ((storedCrc >>> 0) !== entry.crc32) {
+          throw new Error(`ZIP entry ${entry.name} CRC-32 mismatch`);
         }
         actualTotalBytes += entry.uncompressedSize;
         if (actualTotalBytes > maxTotalBytes) {
@@ -466,6 +543,7 @@ export async function verifyZipDecompressedSizeBounds(
       const entryActualBytes = await new Promise<number>((resolveStream, rejectStream) => {
         const inflate = createInflateRaw();
         let entryBytes = 0;
+        let runningCrc = 0;
         let settled = false;
         const fail = (err: Error): void => {
           if (settled) return;
@@ -475,6 +553,7 @@ export async function verifyZipDecompressedSizeBounds(
         };
         inflate.on('error', (err) => fail(err));
         inflate.on('data', (chunk: Buffer) => {
+          runningCrc = zlibCrc32(chunk, runningCrc);
           entryBytes += chunk.byteLength;
           actualTotalBytes += chunk.byteLength;
           if (entryBytes > entry.uncompressedSize) {
@@ -492,6 +571,10 @@ export async function verifyZipDecompressedSizeBounds(
             rejectStream(
               new Error(`ZIP entry ${entry.name} decompressed size (${entryBytes}) does not match declared (${entry.uncompressedSize})`),
             );
+            return;
+          }
+          if ((runningCrc >>> 0) !== entry.crc32) {
+            rejectStream(new Error(`ZIP entry ${entry.name} CRC-32 mismatch`));
             return;
           }
           resolveStream(entryBytes);
