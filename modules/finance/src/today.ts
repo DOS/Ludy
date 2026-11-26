@@ -73,9 +73,8 @@ export const financeToday = defineQuery({
     };
     const items: TodayItem[] = [];
     if (ACTORS.includes(ctx.role)) {
-      const policy = await waitingPolicy(ctx, userId);
-      items.push(...(await waitingProposals(ctx, userId, policy, to)));
-      items.push(...(await flaggedProposals(ctx, userId, policy, to)));
+      items.push(...(await waitingProposals(ctx, userId, to)));
+      items.push(...(await flaggedProposals(ctx, userId, to)));
       items.push(...(await einvoiceItems(ctx, to)));
       items.push(...(await originalItems(ctx)));
       items.push(...(await bankItems(ctx, entities, to)));
@@ -89,49 +88,17 @@ export const financeToday = defineQuery({
 
 const RFC_UUID = '^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$';
 
-interface WaitingPolicy {
-  ledgerChiefAccountantOnly: boolean;
-  canApproveLedger: boolean;
-  canApproveLive: boolean;
-}
-
-// Loads the org's current approval preset and the caller's live eligibility once per finance.today read, matching
-// decideApproval (#2749): under the accountant preset, ledger proposals only accept non-viewer members holding
-// finance.proposal.approve org-wide, and never an author or co-author; non-ledger live commands accept any current
-// owner or admin regardless of the snapshot.
-async function waitingPolicy(ctx: QueryContext, userId: string): Promise<WaitingPolicy> {
-  const presetRow = await ctx.trx
-    .selectFrom('ludy_kernel.tenant as t')
-    .innerJoin('ludy_kernel.approval_preset as p', 'p.key', 't.approval_preset')
-    .select('p.ledger_chief_accountant_only')
-    .where('t.org_id', '=', ctx.orgId)
-    .executeTakeFirst();
-  const ledgerChiefAccountantOnly = presetRow?.ledger_chief_accountant_only ?? true;
-  const canApproveLive = ctx.role === 'owner' || ctx.role === 'admin';
-  let canApproveLedger = !ledgerChiefAccountantOnly && canApproveLive;
-  if (!canApproveLedger && ctx.role !== null && ctx.role !== 'viewer') {
-    const holder = await ctx.trx
-      .selectFrom('ludy_kernel.role_assignment as a')
-      .innerJoin('ludy_kernel.role_permission as rp', 'rp.role_key', 'a.role_key')
-      .select('a.user_id')
-      .where('a.org_id', '=', ctx.orgId)
-      .where('a.user_id', '=', userId)
-      .where('a.legal_entity_id', 'is', null)
-      .where('rp.permission', '=', LEDGER_APPROVE_PERMISSION)
-      .limit(1)
-      .executeTakeFirst();
-    canApproveLedger = holder !== undefined;
-  }
-  return { ledgerChiefAccountantOnly, canApproveLedger, canApproveLive };
-}
-
 // The proposals of `p` waiting for the caller's own decision (the rule of waitingProposals below), as one predicate: the flags over proposals use the same
-// one, so a flag is always about proposals the list counts and never about ones that wait for someone else.
-function waitingForCaller(ctx: QueryContext, userId: string, policy: WaitingPolicy) {
+// one, so a flag is always about proposals the list counts and never about ones that wait for someone else. Reads the org's preset and live roles in the same
+// SQL statement as the proposals so READ COMMITTED reads cannot observe a stale role or preset (#2749).
+function waitingForCaller(ctx: QueryContext, userId: string) {
   const isLedger = sql`p.command = ANY(${FINANCE_LEDGER_COMMANDS}::text[])`;
   const isLive = sql`p.command = ANY(${FINANCE_LIVE_COMMANDS}::text[])`;
-  const callerEligible = sql`((${isLedger} AND ${policy.canApproveLedger} AND coalesce(p.eligible_approvers, ARRAY[]::uuid[]) @> ARRAY[${userId}::uuid])
-    OR (${isLive} AND ${policy.canApproveLive}))`;
+  const isAccountant = sql`NOT EXISTS (
+    SELECT 1 FROM ludy_kernel.tenant t
+    JOIN ludy_kernel.approval_preset ap ON ap.key = t.approval_preset
+    WHERE t.org_id = p.org_id AND NOT ap.ledger_chief_accountant_only
+  )`;
   // Match parseAuthors in approval.ts: malformed authors (including a stray co_author entry in authors) fail closed.
   const validAuthors = sql`pg_catalog.jsonb_typeof(p.authors) = 'array'
     AND NOT EXISTS (
@@ -150,7 +117,7 @@ function waitingForCaller(ctx: QueryContext, userId: string, policy: WaitingPoli
         ${isLedger}
         AND m.user_id = ANY(coalesce(p.eligible_approvers, ARRAY[]::uuid[]))
         AND (
-          (${!policy.ledgerChiefAccountantOnly} AND m.role IN ('owner', 'admin'))
+          (NOT ${isAccountant} AND m.role IN ('owner', 'admin'))
           OR (
             m.role <> 'viewer'
             AND EXISTS (
@@ -165,12 +132,13 @@ function waitingForCaller(ctx: QueryContext, userId: string, policy: WaitingPoli
         )
       )
     )`;
+  const callerEligible = sql`EXISTS (SELECT 1 FROM ludy_kernel.tenant_member m WHERE m.user_id = ${userId}::uuid AND ${liveEligibleMember})`;
+  const callerIsOwner = sql`EXISTS (SELECT 1 FROM ludy_kernel.tenant_member m WHERE m.org_id = p.org_id AND m.user_id = ${userId}::uuid AND m.role = 'owner')`;
   const everyApproverWrote = sql`NOT EXISTS (SELECT 1 FROM ludy_kernel.tenant_member m WHERE ${liveEligibleMember} AND NOT ${author(sql`m.user_id::text`)})`;
-  const soleApprover = sql`(SELECT pg_catalog.count(*) FROM ludy_kernel.tenant_member m WHERE ${liveEligibleMember}) < 2`;
+  const soleApprover = sql`NOT EXISTS (SELECT 1 FROM ludy_kernel.tenant_member m WHERE m.user_id <> ${userId}::uuid AND ${liveEligibleMember})`;
   const someoneElseMayDecide = sql`EXISTS (SELECT 1 FROM ludy_kernel.tenant_member m WHERE ${liveEligibleMember} AND NOT ${author(sql`m.user_id::text`)} AND NOT ${coAuthor(sql`m.user_id`)})`;
-  const authorRule = ctx.role === 'owner' ? everyApproverWrote : soleApprover;
-  const authorAllowed = policy.ledgerChiefAccountantOnly ? sql`CASE WHEN ${isLedger} THEN false ELSE ${authorRule} END` : authorRule;
-  const coAuthorAllowed = policy.ledgerChiefAccountantOnly ? sql`CASE WHEN ${isLedger} THEN false ELSE NOT ${someoneElseMayDecide} END` : sql`NOT ${someoneElseMayDecide}`;
+  const authorAllowed = sql`CASE WHEN ${isLedger} AND ${isAccountant} THEN false WHEN ${callerIsOwner} THEN ${everyApproverWrote} ELSE ${soleApprover} END`;
+  const coAuthorAllowed = sql`CASE WHEN ${isLedger} AND ${isAccountant} THEN false ELSE NOT ${someoneElseMayDecide} END`;
   return sql`p.org_id = ${ctx.orgId}
         AND p.status = 'pending'
         AND p.command LIKE 'finance.%'
@@ -193,8 +161,7 @@ function waitingForCaller(ctx: QueryContext, userId: string, policy: WaitingPoli
 // counts as VND; one still waiting for its rate has the invoice's own amounts, so it is a group of its own currency.
 // Vouchers and other proposals have no invoice total and show no amount. A group list is capped, and the rest is one
 // more item that says how many.
-async function waitingProposals(ctx: QueryContext, userId: string, policy: WaitingPolicy, to: Link): Promise<TodayItem[]> {
-  if (!policy.canApproveLedger && !policy.canApproveLive) return [];
+async function waitingProposals(ctx: QueryContext, userId: string, to: Link): Promise<TodayItem[]> {
   const { rows } = await sql<GroupRow>`
     WITH w AS (
       SELECT p.legal_entity_id::text AS entity,
@@ -209,7 +176,7 @@ async function waitingProposals(ctx: QueryContext, userId: string, policy: Waiti
                   ELSE coalesce(nullif(p.payload #>> '{invoice,currency}', ''), 'VND') END AS currency,
              CASE WHEN p.kind = 'finance.purchase' AND (p.payload #>> '{invoice,total}') ~ ${MONEY} THEN (p.payload #>> '{invoice,total}')::numeric END AS total
       FROM ludy_kernel.proposal p
-      WHERE ${waitingForCaller(ctx, userId, policy)}
+      WHERE ${waitingForCaller(ctx, userId)}
     )
     SELECT entity, kind, direction, pg_catalog.min(party) AS party, currency,
            pg_catalog.count(*)::text AS n,
@@ -246,15 +213,14 @@ async function waitingProposals(ctx: QueryContext, userId: string, policy: Waiti
 
 // The proposals waiting for the caller (waitingProposals' rule) with a failed check (block) or a warning (warn), by entity: what to fix before approving. They are among the proposals
 // waitingProposals counts, so each flag annotates those items (a chip on them) and is not counted again.
-async function flaggedProposals(ctx: QueryContext, userId: string, policy: WaitingPolicy, to: Link): Promise<TodayItem[]> {
-  if (!policy.canApproveLedger && !policy.canApproveLive) return [];
+async function flaggedProposals(ctx: QueryContext, userId: string, to: Link): Promise<TodayItem[]> {
   const check = (status: string) => sql`EXISTS (SELECT 1 FROM pg_catalog.jsonb_array_elements(coalesce(p.payload -> 'checks', '[]'::jsonb)) c WHERE c ->> 'status' = ${status})`;
   const { rows } = await sql<FlagRow>`
     SELECT p.legal_entity_id::text AS entity,
            pg_catalog.count(*) FILTER (WHERE ${check('fail')})::text AS failed,
            pg_catalog.count(*) FILTER (WHERE NOT ${check('fail')} AND ${check('warn')})::text AS warned
     FROM ludy_kernel.proposal p
-    WHERE ${waitingForCaller(ctx, userId, policy)}
+    WHERE ${waitingForCaller(ctx, userId)}
     GROUP BY 1
     ORDER BY 1`.execute(ctx.trx);
   const items: TodayItem[] = [];
