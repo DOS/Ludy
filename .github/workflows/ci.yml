@@ -46,7 +46,7 @@ jobs:
       # Every module, also one the kernel does not import yet: typecheck and unit tests run over all of them, and the
       # marketing site, which pnpm typecheck covers with its tests (#1629).
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile --filter "@ludy/kernel-server..." --filter "@ludy/app..." --filter "./modules/*" --filter "@ludy/e2e" --filter "@ludy/web" --filter "@ludy/extension" --filter "@ludy/desktop" --filter "@ludy/media..." --filter "ludy-monorepo"
+        run: pnpm install --frozen-lockfile --filter "@ludy/kernel-server..." --filter "@ludy/app..." --filter "./modules/*" --filter "@ludy/e2e" --filter "@ludy/web" --filter "@ludy/extension" --filter "@ludy/desktop" --filter "@ludy/mobile" --filter "@ludy/media..." --filter "ludy-monorepo"
 
       - name: Lint
         run: pnpm lint

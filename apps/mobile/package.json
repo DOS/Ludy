@@ -1,0 +1,27 @@
+{
+  "name": "@ludy/mobile",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "description": "Ludy Mobile (ADR-0059, Phase 2a skeleton): an Expo app for iPhone and Android. Signs in with DOS ID (OAuth authorization code with PKCE, system browser), keeps the session in the phone's secure storage and opens behind the phone's biometrics.",
+  "main": "index.ts",
+  "scripts": {
+    "start": "expo start",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@ludy/client": "workspace:*",
+    "@tanstack/react-query": "catalog:",
+    "expo": "catalog:",
+    "expo-crypto": "catalog:",
+    "expo-local-authentication": "catalog:",
+    "expo-secure-store": "catalog:",
+    "expo-web-browser": "catalog:",
+    "react": "catalog:",
+    "react-native": "catalog:"
+  },
+  "devDependencies": {
+    "@types/react": "catalog:"
+  }
+}

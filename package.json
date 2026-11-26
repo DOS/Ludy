@@ -14,7 +14,7 @@
     "dev:web": "pnpm --filter @ludy/web dev",
     "build": "pnpm -r --filter=!@ludy/web build",
     "typecheck": "node tools/local-guard.mjs typecheck && pnpm -r --workspace-concurrency=1 typecheck && tsc --noEmit -p tools/tsconfig.json",
-    "lint": "oxlint --deny-warnings apps/kernel apps/extract apps/media apps/app apps/desktop apps/extension packages modules e2e && node tools/ui-colors.mjs",
+    "lint": "oxlint --deny-warnings apps/kernel apps/extract apps/media apps/app apps/desktop apps/extension apps/mobile packages modules e2e && node tools/ui-colors.mjs",
     "knip": "knip --no-progress",
     "depcruise": "depcruise --config .dependency-cruiser.mjs --output-type err-long apps packages modules e2e",
     "test": "node tools/local-guard.mjs test vitest run --project unit --",
