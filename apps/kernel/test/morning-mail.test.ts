@@ -414,10 +414,11 @@ describe('morning briefing contract (#5080)', () => {
     );
 
     expect(out).not.toBeNull();
-    expect(out?.subject).toBe('Lịch họp hôm nay');
+    expect(out?.subject).toBe('Lịch họp trong ngày');
     expect(out?.html).toContain('lang="vi"');
     expect(out?.text).toContain('Lịch họp ngày 26/11/2026 tại Công ty <A>');
-    expect(out?.text).toContain('Hôm nay bạn có 1 cuộc họp.');
+    expect(out?.text).toContain('Ngày 26/11/2026 bạn có 1 cuộc họp.');
+    expect(out?.text).not.toContain('Hôm nay');
     expect(out?.text).toContain('Mở trang Cuộc họp: https://ludy.test/o/acme/meetings');
     expect(out?.text).toContain('Cuộc họp 1: Họp giao ban tuần');
     expect(out?.text).toContain('Thời gian: 09:00 - 09:30 (Asia/Ho_Chi_Minh, UTC+07:00)');
@@ -438,6 +439,8 @@ describe('morning briefing contract (#5080)', () => {
 
     expect(out?.html).toContain('Công ty &lt;A&gt;');
     expect(out?.html).toContain('09:00 - 09:30 (Asia/Ho_Chi_Minh, UTC+07:00)');
+    expect(out?.html).toContain('overflow-wrap:anywhere;word-break:break-word');
+    expect(out?.html).not.toContain('Hôm nay');
     expect(out?.html).toContain(`href="https://ludy.test/o/acme/meetings/${ID}"`);
     expect(out?.html).toContain('href="https://ludy.test/o/acme/deals"');
     expect(out?.html).toContain('href="https://ludy.test/o/acme/settings/notifications"');
@@ -496,10 +499,11 @@ describe('morning briefing contract (#5080)', () => {
     );
 
     expect(out).not.toBeNull();
-    expect(out?.subject).toBe("Today's meetings");
+    expect(out?.subject).toBe('Daily meeting briefing');
     expect(out?.html).toContain('lang="en"');
     expect(out?.text).toContain('Meetings for 2026-11-26 at Acme Co');
-    expect(out?.text).toContain('You have 2 meetings today.');
+    expect(out?.text).toContain('You have 2 meetings scheduled for 2026-11-26.');
+    expect(out?.text).not.toContain('today');
     expect(out?.text).toContain('Meeting 1: Untitled meeting');
     expect(out?.text).toContain('Time: 09:00 - 10:30 (America/New_York, UTC-05:00)');
     expect(out?.text).toContain('Open Meetings: https://ludy.test/o/acme/meetings');
@@ -513,10 +517,13 @@ describe('morning briefing contract (#5080)', () => {
     expect(out?.text).toContain('Meeting 2: Engineering Sync');
     expect(out?.text).toContain('Time: 16:00 - 16:45 (Asia/Ho_Chi_Minh, UTC+07:00)');
     expect(out?.text).toContain('Open meeting recorder: https://ludy.test/o/acme/meetings/record');
+    expect(out?.text).toContain('Attendees:\n  Invitees: 0 invitees\n');
     expect(out?.text).toContain('This email contains your meeting content and was sent by Ludy because you asked for it in Acme Co.');
     expect(out?.text).toContain('Turn this notice off in Notification settings: https://ludy.test/o/acme/settings/notifications');
     expect(out?.html).toContain('09:00 - 10:30 (America/New_York, UTC-05:00)');
     expect(out?.html).toContain('16:00 - 16:45 (Asia/Ho_Chi_Minh, UTC+07:00)');
+    expect(out?.html).toContain('Attendees: 0 invitees');
+    expect(out?.html).not.toContain('today');
     expect(out?.html).toContain('Open meeting recorder');
     expect(out?.html).toContain('aria-label="Open Meetings (meeting 1)"');
     expect(out?.html).toContain('aria-label="Open meeting recorder (meeting 2)"');
@@ -636,7 +643,7 @@ describe('morning briefing contract (#5080)', () => {
 
     expect(out).not.toBeNull();
     // Fixed language-specific subject never leaks meeting titles, names, or injected headers.
-    expect(out?.subject).toBe('Lịch họp hôm nay');
+    expect(out?.subject).toBe('Lịch họp trong ngày');
     expect(out?.subject).not.toContain('Họp lương bí mật');
     expect(out?.subject).not.toContain('Bcc:');
     expect(out?.subject).not.toMatch(/[\p{Cc}\p{Cf}\u2028]/u);
@@ -792,12 +799,38 @@ describe('morning briefing contract (#5080)', () => {
     expect(Buffer.byteLength(out?.html ?? '', 'utf8')).toBeLessThanOrEqual(96 * 1024);
     expect(out?.html).toContain('https://ludy.test/o/acme/settings/notifications');
     expect(out?.text).toContain('https://ludy.test/o/acme/settings/notifications');
-    const shownMatch = /Showing the first (\d+) of 12 meetings\./.exec(out?.text ?? '');
+    const shownMatch = /Showing the first (\d+) of 12 meetings for 2026-11-26\./.exec(out?.text ?? '');
     expect(shownMatch).not.toBeNull();
     const shown = Number.parseInt(shownMatch?.[1] ?? '0', 10);
     expect(shown).toBeGreaterThan(0);
     expect(shown).toBeLessThan(MORNING_BRIEFING_CAPS.meetingsMax);
     expect(out?.text.match(/^Meeting \d+:/gm)).toHaveLength(shown);
+  });
+
+  it('wraps max-length unbroken tokens cleanly in mobile-width HTML containers', () => {
+    const unbrokenTitle = 'X'.repeat(MORNING_BRIEFING_CAPS.titleMax);
+    const unbrokenItem = 'Y'.repeat(MORNING_BRIEFING_CAPS.actionItemTextMax);
+    const out = renderMorningBriefingMail(
+      briefingMail({ lang: 'vi' }),
+      briefingContent({
+        meetings: [
+          sampleMeeting({
+            title: unbrokenTitle,
+            inviteeCount: 0,
+            readerNames: ['An'],
+            extraReadersCount: 0,
+            openItems: [{ text: unbrokenItem, dueOn: null, overdue: false, mine: false }],
+            vyLines: undefined,
+          }),
+        ],
+      }),
+      briefingCtx(),
+    );
+    expect(out?.text).toContain('Khách mời: 0 khách mời');
+    expect(out?.html).toContain('Thành phần: 0 khách mời; Người đọc trong tổ chức: An');
+    expect(out?.html).toContain('max-width:640px;width:100%;overflow-wrap:anywhere;word-break:break-word');
+    expect(out?.html).toContain(unbrokenTitle);
+    expect(out?.html).toContain(unbrokenItem);
   });
 
   it('renders clean zero-meetings state and truncated-day indicator', () => {
@@ -806,7 +839,7 @@ describe('morning briefing contract (#5080)', () => {
       briefingContent({ totalMeetings: 0, meetings: [] }),
       briefingCtx(),
     );
-    expect(emptyVi?.text).toContain('Hôm nay bạn không có cuộc họp nào trong lịch.');
+    expect(emptyVi?.text).toContain('Ngày 26/11/2026 bạn không có cuộc họp nào trong lịch.');
     expect(emptyVi?.text).not.toContain('Đang hiển thị');
     expect(emptyVi?.text).toContain('https://ludy.test/o/acme/meetings');
     expect(emptyVi?.text).toContain('https://ludy.test/o/acme/settings/notifications');
@@ -816,7 +849,7 @@ describe('morning briefing contract (#5080)', () => {
       briefingContent({ totalMeetings: 0, meetings: [] }),
       briefingCtx({ subject: 'Morning briefing' }),
     );
-    expect(emptyEn?.text).toContain('You have no meetings scheduled today.');
+    expect(emptyEn?.text).toContain('You have no meetings scheduled for 2026-11-26.');
     expect(emptyEn?.text).not.toContain('Showing the first');
 
     const truncatedEn = renderMorningBriefingMail(
@@ -832,16 +865,16 @@ describe('morning briefing contract (#5080)', () => {
       }),
       briefingCtx({ subject: 'Morning briefing' }),
     );
-    expect(truncatedEn?.text).toContain('You have 15 meetings today.');
-    expect(truncatedEn?.text).toContain('Showing the first 12 of 15 meetings.');
+    expect(truncatedEn?.text).toContain('You have 15 meetings scheduled for 2026-11-26.');
+    expect(truncatedEn?.text).toContain('Showing the first 12 of 15 meetings for 2026-11-26.');
 
     const truncatedVi = renderMorningBriefingMail(
       briefingMail({ lang: 'vi' }),
       briefingContent({ totalMeetings: 3, meetings: [] }),
       briefingCtx(),
     );
-    expect(truncatedVi?.text).toContain('Hôm nay bạn có 3 cuộc họp.');
-    expect(truncatedVi?.text).toContain('Mở trang Cuộc họp để xem chi tiết 3 cuộc họp hôm nay.');
+    expect(truncatedVi?.text).toContain('Ngày 26/11/2026 bạn có 3 cuộc họp.');
+    expect(truncatedVi?.text).toContain('Mở trang Cuộc họp để xem chi tiết 3 cuộc họp ngày 26/11/2026.');
   });
 
   it('returns null on blank/missing subject and rejects invalid paths, mismatched day, cap breaches, numeric amount, and rogue fields', () => {

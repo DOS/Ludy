@@ -40,14 +40,14 @@ const COPY = {
 
 const BRIEFING_COPY = {
   vi: {
-    subject: 'Lịch họp hôm nay',
+    subject: 'Lịch họp trong ngày',
     title: (day: string, org: string) => `Lịch họp ngày ${day} tại ${org}`,
-    leadNone: 'Hôm nay bạn không có cuộc họp nào trong lịch.',
-    leadCount: (total: number) => `Hôm nay bạn có ${total} cuộc họp.`,
-    truncated: (shown: number, total: number) =>
+    leadNone: (day: string) => `Ngày ${day} bạn không có cuộc họp nào trong lịch.`,
+    leadCount: (day: string, total: number) => `Ngày ${day} bạn có ${total} cuộc họp.`,
+    truncated: (shown: number, total: number, day: string) =>
       shown === 0
-        ? `Mở trang Cuộc họp để xem chi tiết ${total} cuộc họp hôm nay.`
-        : `Đang hiển thị ${shown} cuộc họp đầu tiên trong tổng số ${total} cuộc họp.`,
+        ? `Mở trang Cuộc họp để xem chi tiết ${total} cuộc họp ngày ${day}.`
+        : `Đang hiển thị ${shown} cuộc họp đầu tiên trong tổng số ${total} cuộc họp ngày ${day}.`,
     openMeetings: 'Mở trang Cuộc họp',
     meetingLabel: (index: number) => `Cuộc họp ${index}`,
     timeLabel: 'Thời gian',
@@ -78,14 +78,15 @@ const BRIEFING_COPY = {
     settingsLink: 'Tắt thông báo này trong Cài đặt thông báo',
   },
   en: {
-    subject: "Today's meetings",
+    subject: 'Daily meeting briefing',
     title: (day: string, org: string) => `Meetings for ${day} at ${org}`,
-    leadNone: 'You have no meetings scheduled today.',
-    leadCount: (total: number) => (total === 1 ? 'You have 1 meeting today.' : `You have ${total} meetings today.`),
-    truncated: (shown: number, total: number) =>
+    leadNone: (day: string) => `You have no meetings scheduled for ${day}.`,
+    leadCount: (day: string, total: number) =>
+      total === 1 ? `You have 1 meeting scheduled for ${day}.` : `You have ${total} meetings scheduled for ${day}.`,
+    truncated: (shown: number, total: number, day: string) =>
       shown === 0
-        ? `Open Meetings to see all ${total} meetings today.`
-        : `Showing the first ${shown} of ${total} meetings.`,
+        ? `Open Meetings to see all ${total} meetings for ${day}.`
+        : `Showing the first ${shown} of ${total} meetings for ${day}.`,
     openMeetings: 'Open Meetings',
     meetingLabel: (index: number) => `Meeting ${index}`,
     timeLabel: 'Time',
@@ -266,23 +267,16 @@ function meetingLinkLabel(path: string | undefined, orgPrefix: string, lang: Bri
 function buildAttendees(
   meeting: MorningBriefingMeeting,
   lang: BriefingLang,
-): { textLines: string[]; htmlLine: string } | null {
+): { textLines: string[]; htmlLine: string } {
   const t = BRIEFING_COPY[lang];
   const readers = meeting.readerNames
     .map((name) => oneLine(name, MORNING_BRIEFING_CAPS.nameMax))
     .filter((name) => name !== '');
-  const hasInvitees = meeting.inviteeCount > 0;
   const hasReaders = readers.length > 0 || meeting.extraReadersCount > 0;
-  if (!hasInvitees && !hasReaders) return null;
+  const inviteesText = t.invitees(meeting.inviteeCount);
 
-  const textLines: string[] = [`${t.attendeesLabel}:`];
-  const htmlParts: string[] = [];
-
-  if (hasInvitees) {
-    const inviteesText = t.invitees(meeting.inviteeCount);
-    textLines.push(`  ${t.inviteesLabel}: ${inviteesText}`);
-    htmlParts.push(inviteesText);
-  }
+  const textLines: string[] = [`${t.attendeesLabel}:`, `  ${t.inviteesLabel}: ${inviteesText}`];
+  const htmlParts: string[] = [inviteesText];
 
   if (hasReaders) {
     const extra = meeting.extraReadersCount > 0 ? t.moreReaders(meeting.extraReadersCount) : '';
@@ -390,8 +384,8 @@ function renderMeetingBlock(
     `${t.meetingLabel(meetingIndex)}: ${title}`,
     `${t.timeLabel}: ${timeWindow}`,
     `${openLabel}: ${meetingUrl}`,
+    ...attendees.textLines,
   ];
-  if (attendees) textLines.push(...attendees.textLines);
   if (decisions.length > 0) {
     textLines.push(`${t.decisionsHeading}:`, ...decisions.map((d) => `  - ${d}`));
   }
@@ -419,13 +413,11 @@ function renderMeetingBlock(
   }
 
   const htmlParts: string[] = [
-    '<section style="margin:0 0 18px;padding:14px 16px;border:1px solid #d0d7de;border-radius:8px;background:#ffffff">',
+    '<section style="margin:0 0 18px;padding:14px 16px;border:1px solid #d0d7de;border-radius:8px;background:#ffffff;overflow-wrap:anywhere;word-break:break-word">',
     `<p style="margin:0 0 4px;font-size:13px;color:#57606a">${escapeHtml(timeWindow)}</p>`,
-    `<h2 style="margin:0 0 8px;font-size:16px;line-height:1.4;color:#1f2328">${escapeHtml(title)}</h2>`,
+    `<h2 style="margin:0 0 8px;font-size:16px;line-height:1.4;color:#1f2328;overflow-wrap:anywhere;word-break:break-word">${escapeHtml(title)}</h2>`,
+    `<p style="margin:0 0 8px;font-size:14px;color:#57606a">${escapeHtml(attendees.htmlLine)}</p>`,
   ];
-  if (attendees) {
-    htmlParts.push(`<p style="margin:0 0 8px;font-size:14px;color:#57606a">${escapeHtml(attendees.htmlLine)}</p>`);
-  }
   if (decisions.length > 0) {
     htmlParts.push(
       `<h3 style="margin:10px 0 4px;font-size:13px;font-weight:600;color:#1f2328">${escapeHtml(t.decisionsHeading)}</h3>`,
@@ -522,7 +514,7 @@ export function renderMorningBriefingMail(
   const org = oneLine(mail.org, ORG_NAME_MAX) || brand;
   const formattedDay = formatDay(content.day, mail.lang);
   const heading = t.title(formattedDay, org);
-  const lead = content.totalMeetings === 0 ? t.leadNone : t.leadCount(content.totalMeetings);
+  const lead = content.totalMeetings === 0 ? t.leadNone(formattedDay) : t.leadCount(formattedDay, content.totalMeetings);
 
   const meetingsUrl = safeUrl(mail.path);
   const dealsUrl = safeUrl(`${orgPrefix}/deals`);
@@ -535,7 +527,7 @@ export function renderMorningBriefingMail(
   const buildHtml = (blocks: ReadonlyArray<{ html: string }>, note: string | null): string => `<!doctype html>
 <html lang="${mail.lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
 <body style="font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.5;color:#1f2328;background:#ffffff;margin:0;padding:16px">
-<div style="max-width:640px">
+<div style="max-width:640px;width:100%;overflow-wrap:anywhere;word-break:break-word">
 <h1 style="margin:0 0 8px;font-size:20px;line-height:1.3">${escapeHtml(heading)}</h1>
 <p style="margin:0 0 8px">${escapeHtml(lead)}</p>
 ${note ? `<p style="margin:0 0 12px;font-size:14px;color:#57606a">${escapeHtml(note)}</p>` : ''}
@@ -550,7 +542,7 @@ ${blocks.map((block) => block.html).join('\n')}
   for (const block of renderedMeetings) {
     const candidate = [...keptMeetings, block];
     const candidateNote =
-      content.totalMeetings > candidate.length ? t.truncated(candidate.length, content.totalMeetings) : null;
+      content.totalMeetings > candidate.length ? t.truncated(candidate.length, content.totalMeetings, formattedDay) : null;
     if (Buffer.byteLength(buildHtml(candidate, candidateNote), 'utf8') > BRIEFING_HTML_MAX_BYTES) {
       break;
     }
@@ -558,7 +550,7 @@ ${blocks.map((block) => block.html).join('\n')}
   }
 
   const truncatedNote =
-    content.totalMeetings > keptMeetings.length ? t.truncated(keptMeetings.length, content.totalMeetings) : null;
+    content.totalMeetings > keptMeetings.length ? t.truncated(keptMeetings.length, content.totalMeetings, formattedDay) : null;
 
   const textParts: string[] = [heading, '', lead];
   if (truncatedNote) textParts.push(truncatedNote);
