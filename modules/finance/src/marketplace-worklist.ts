@@ -200,6 +200,16 @@ export const createMarketplaceWorklist = (options: { maps?: Maps; feeClearing?: 
       const invoices: MarketplaceWorklist['invoices'] = [];
       const awaitingCodes = [...new Set(Object.values(maps).map((m) => m.feeAwaitingInvoice.code))];
       if (awaitingCodes.length === 0) awaitingCodes.push(MARKETPLACE_POSTING_MAPS.tt133?.feeAwaitingInvoice.code ?? '1388');
+      const regimes = new Map<string, Promise<string>>();
+      const readRegime = (entityId: string, date: string) => {
+        const key = `${entityId}:${date}`;
+        let p = regimes.get(key);
+        if (!p) {
+          p = booksOn(ctx, entityId, date).then((b) => b.regime);
+          regimes.set(key, p);
+        }
+        return p;
+      };
       for (const link of options.feeClearing === true ? await links.orderBy('m.platform').execute() : []) {
         const balances = new Map<string, Promise<{ balance: string; lastDate: string | null }>>();
         const readBalance = (code: string) => {
@@ -232,7 +242,7 @@ export const createMarketplaceWorklist = (options: { maps?: Maps; feeClearing?: 
         for (const doc of docs) {
           const entry = await standingInvoiceEntry(ctx, doc.id);
           if (!entry || entry.reversed) continue;
-          const resolved = await resolveInvoiceClearingState(ctx, maps, link.legal_entity_id, link.party_id, doc.id, entry.id, entry.entryDate, { readBalance });
+          const resolved = await resolveInvoiceClearingState(ctx, maps, link.legal_entity_id, link.party_id, doc.id, entry.id, entry.entryDate, { readBalance, readRegime });
           if (!resolved) continue;
           const waiting = money(resolved.waiting.balance);
           if (!waiting.greaterThan(0)) continue;

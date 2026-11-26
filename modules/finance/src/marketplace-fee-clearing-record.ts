@@ -151,7 +151,11 @@ export async function resolveInvoiceClearingState(
   documentId: string,
   entryId: string,
   invoiceDate: string,
-  options: { requireConfirmed?: boolean; readBalance?: (code: string) => Promise<{ balance: string; lastDate: string | null }> } = {},
+  options: {
+    requireConfirmed?: boolean;
+    readBalance?: (code: string) => Promise<{ balance: string; lastDate: string | null }>;
+    readRegime?: (entityId: string, date: string) => Promise<string>;
+  } = {},
 ): Promise<{
   date: string;
   map: MarketplacePostingMap;
@@ -160,33 +164,28 @@ export async function resolveInvoiceClearingState(
   waiting: { balance: string; lastDate: string | null };
 } | null> {
   const readBalance = options.readBalance ?? ((code: string) => balanceOf(ctx, legalEntityId, partyId, code));
+  const readRegime = options.readRegime ?? (async (entityId: string, date: string) => (await booksOn(ctx, entityId, date)).regime);
   const mapOf = (regime: string) => (Object.hasOwn(maps, regime) ? maps[regime] : undefined) ?? MARKETPLACE_POSTING_MAPS.tt133;
-  const initialRegime = (await booksOn(ctx, legalEntityId, invoiceDate)).regime;
+  const initialRegime = await readRegime(legalEntityId, invoiceDate);
   const initialMap = mapOf(initialRegime);
   const initialPayableCode = initialMap?.feePayable.code ?? '331';
-  let awaitingCode = initialMap?.feeAwaitingInvoice.code ?? '1388';
   let payable = await invoicePayable(ctx, entryId, partyId, initialPayableCode);
   if (!money(payable).greaterThan(0)) {
     if (options.requireConfirmed) throw notUsable('NO_PAYABLE');
     return null;
   }
-  let waiting = await readBalance(awaitingCode);
-  let date = waiting.lastDate && waiting.lastDate > invoiceDate ? waiting.lastDate : invoiceDate;
-  let regime = date === invoiceDate ? initialRegime : (await booksOn(ctx, legalEntityId, date)).regime;
-  let map = options.requireConfirmed ? requireConfirmedMarketplaceMap(regime, maps) : mapOf(regime);
-  if (!map) return null;
-  if (map.feeAwaitingInvoice.code !== awaitingCode) {
-    awaitingCode = map.feeAwaitingInvoice.code;
-    waiting = await readBalance(awaitingCode);
-    date = waiting.lastDate && waiting.lastDate > invoiceDate ? waiting.lastDate : invoiceDate;
-    regime = date === invoiceDate ? initialRegime : (await booksOn(ctx, legalEntityId, date)).regime;
-    map = options.requireConfirmed ? requireConfirmedMarketplaceMap(regime, maps) : mapOf(regime);
-    if (!map) return null;
-    if (map.feeAwaitingInvoice.code !== awaitingCode) {
-      if (options.requireConfirmed) throw notUsable('REGIME_MISMATCH');
-      return null;
-    }
+  const awaitingCodes = [...new Set(Object.values(maps).map((m) => m.feeAwaitingInvoice.code))];
+  if (awaitingCodes.length === 0) awaitingCodes.push(initialMap?.feeAwaitingInvoice.code ?? '1388');
+  let latestFeeDate: string | null = null;
+  for (const code of awaitingCodes) {
+    const b = await readBalance(code);
+    if (b.lastDate && money(b.balance).greaterThan(0) && (!latestFeeDate || b.lastDate > latestFeeDate)) latestFeeDate = b.lastDate;
   }
+  const date = latestFeeDate && latestFeeDate > invoiceDate ? latestFeeDate : invoiceDate;
+  const regime = date === invoiceDate ? initialRegime : await readRegime(legalEntityId, date);
+  const map = options.requireConfirmed ? requireConfirmedMarketplaceMap(regime, maps) : mapOf(regime);
+  if (!map) return null;
+  const waiting = await readBalance(map.feeAwaitingInvoice.code);
   if (map.feePayable.code !== initialPayableCode) {
     payable = await invoicePayable(ctx, entryId, partyId, map.feePayable.code);
     if (!money(payable).greaterThan(0)) {
