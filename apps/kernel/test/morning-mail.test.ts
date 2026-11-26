@@ -523,7 +523,7 @@ describe('morning briefing contract (#5080)', () => {
     expect(out?.html).toContain('09:00 - 10:30 (America/New_York, UTC-05:00)');
     expect(out?.html).toContain('16:00 - 16:45 (Asia/Ho_Chi_Minh, UTC+07:00)');
     expect(out?.html).toContain('Attendees: 0 invitees');
-    expect(out?.html.replace(/<[^>]+>/g, '')).toContain('Yours Overdue Send signed addendum');
+    expect(out?.html).toMatch(/<span[^>]*>Yours<\/span>\s+<span[^>]*>Overdue<\/span>\s+Send signed addendum/);
     expect(out?.html).not.toContain('today');
     expect(out?.html).toContain('Open meeting recorder');
     expect(out?.html).toContain('aria-label="Open Meetings (meeting 1)"');
