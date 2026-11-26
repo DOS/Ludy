@@ -184,6 +184,10 @@ export async function resolveInvoiceClearingState(
   const regime = date === invoiceDate ? initialRegime : await readRegime(legalEntityId, date);
   const map = options.requireConfirmed ? requireConfirmedMarketplaceMap(regime, maps) : mapOf(regime);
   if (!map) return null;
+  if (map.feePayable.code !== initialPayableCode) {
+    if (options.requireConfirmed) throw notUsable('REGIME_MISMATCH');
+    return null;
+  }
   const waiting = await readBalance(map.feeAwaitingInvoice.code);
   const cleared = await invoiceCleared(ctx, documentId);
   return { date, map, payable, cleared, waiting };

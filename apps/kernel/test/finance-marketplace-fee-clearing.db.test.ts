@@ -439,11 +439,14 @@ suite("the clearing of a platform's waiting fees on PostgreSQL (#2516)", () => {
     const [lineTax] = await rows<{ id: string }>('SELECT id FROM ludy_finance.channel_settlement_line WHERE org_id = $1 AND settlement_id = $2', [o3.orgId, sTax]);
     const payoutTax = await approve(o3, (await ask(o3, sTax, bTax, o3.admin, rt, [{ kind: 'withheld_in_error', lineId: lineTax?.id as string, amount: '2000' }])).proposalId);
     expect(await fees1388(o3)).toBe('12000');
+    const party3 = (await partyOf(o3, 'shopee')) as string;
+    const doc3 = await invoice(o3, party3);
+    const beforeRev = await askFee(o3, doc3);
+    expect(await payloadOf(o3, beforeRev.proposalId)).toMatchObject({ waiting: '10000', amount: '10000' });
+    await rt.execute('kernel.proposal.reject', { id: beforeRev.proposalId }, { actor: asUser(o3.owner), orgId: o3.orgId, idempotencyKey: randomUUID() });
     const rev = await rt.execute<{ proposalId: string }>('kernel.proposal.request', { command: 'finance.journal.reverse', input: { entryId: payoutTax.journalEntryId, entryDate: '2026-10-26', reason: 'Hủy chi trả' } }, { actor: asUser(o3.admin), orgId: o3.orgId, idempotencyKey: randomUUID() });
     await approve(o3, rev.proposalId);
     expect(await fees1388(o3)).toBe('10000');
-    const party3 = (await partyOf(o3, 'shopee')) as string;
-    const doc3 = await invoice(o3, party3);
     const afterRev = await askFee(o3, doc3);
     expect(await payloadOf(o3, afterRev.proposalId)).toMatchObject({ waiting: '10000', amount: '10000' });
     expect(payout2.journalEntryId).toEqual(expect.any(String));
