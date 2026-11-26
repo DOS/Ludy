@@ -11,6 +11,7 @@ import pg from 'pg';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createDb, createPool, type Db } from '@ludy/db';
 import type { ExtractClient } from '@ludy/extract-contract';
+import type { ParsedInvoice } from '@ludy/l10n-vn';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import { BlobNotFoundError, Runtime, fileKey, sha256Hex, type BlobRef, type BlobStore, type EvidenceHolds } from '@ludy/kernel-runtime';
@@ -22,6 +23,7 @@ import { TEST_MANIFESTS } from './manifests.ts';
 const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const FIXTURE = readFileSync(new URL('../../extract/test/fixtures/einvoice-basic.xml', import.meta.url)).toString('utf8');
+const PARSED = JSON.parse(readFileSync(new URL('../../../packages/l10n-vn/test/fixtures/einvoice-basic.parsed.json', import.meta.url), 'utf8')) as ParsedInvoice;
 const DAY = 86_400_000;
 
 // An in-memory store whose holds the test controls: the calls are recorded, and `refuse` makes the next ones fail.
@@ -288,5 +290,104 @@ suite('retention holds on evidence files (#1009)', () => {
       expect(holdFor(us, 3650), at).toEqual(new Date(until));
       if (at.endsWith('.000400Z')) expect(fromMs).not.toEqual(new Date(until));
     }
+  });
+
+  it('holds an original XML attached after a posted PDF, from the posting date (#2334)', async () => {
+    const num = String(Math.floor(1_000_000 + Math.random() * 8_000_000));
+    const pdfExtract: ExtractClient = {
+      extract: async (kind, bytes) => (kind === 'pdf_text' ? ({ ok: true, kind: 'pdf_text', text: 'x'.repeat(100), pages: 1 } as never) : extract.extract(kind, bytes)),
+    };
+    const reader = {
+      fromText: async () => ({ ...structuredClone(PARSED), source: 'ai' as const, number: num }),
+      fromImage: async () => null,
+    };
+    const pdfBytes = new TextEncoder().encode(`%PDF-1.4 hoa don ${num} ${randomUUID()}`);
+    const pdfSha = sha256Hex(pdfBytes);
+    const pdfKey = fileKey(orgId, pdfSha);
+    const pdfGen = await store.put(pdfKey, pdfBytes);
+    const pdf = await runtime.execute<{ fileId: string }>(
+      'kernel.file.ingest',
+      { filename: `hd-${num}.pdf`, contentType: 'application/pdf', sizeBytes: pdfBytes.byteLength, sha256: pdfSha, storageKey: pdfKey, generation: pdfGen, source: 'upload' },
+      { actor: asUser(owner), orgId },
+    );
+    const pdfProposed = await extractAndPropose({ runtime: workerRuntime, store, extractor: reader as never, extract: pdfExtract, today: () => '2026-10-13' }, orgId, pdf.fileId);
+    const proposalId = String(pdfProposed.proposalId);
+    expect(pdfProposed.proposalId).toEqual(expect.any(String));
+    const detail1 = await runtime.query<{ revision: number }>('kernel.inbox.get', { id: proposalId }, { actor: asUser(owner), orgId });
+    await runtime.execute(
+      'kernel.proposal.edit',
+      { id: proposalId, revision: detail1.revision, lineAccounts: [{ lineNo: 3, debitAccount: '6421' }] },
+      { actor: asUser(owner), orgId },
+    );
+    const detail2 = await runtime.query<{ revision: number }>('kernel.inbox.get', { id: proposalId }, { actor: asUser(owner), orgId });
+    const { journalEntryId } = await runtime.execute<{ journalEntryId: string }>(
+      'kernel.proposal.approve',
+      { acceptFailedChecks: true, acceptUnverifiedSignature: true, id: proposalId, revision: detail2.revision },
+      { actor: asMfa(owner), orgId, idempotencyKey: randomUUID() },
+    );
+    const expectedUntil = holdFor(await postedUs(journalEntryId), 3650);
+
+    // First pass holds the posted PDF.
+    expect(await run()).toMatchObject({ held: 1, failed: 0 });
+    expect((await holdRow(pdf.fileId))?.held_until).toEqual(expectedUntil);
+
+    // The seller's original XML arrives after posting and attaches to the posted proposal.
+    const xmlBytes = new TextEncoder().encode(FIXTURE.replace('<SHDon>1234</SHDon>', `<SHDon>${num}</SHDon>`));
+    const xml = await ingest(xmlBytes);
+    const attached = await extractAndPropose({ runtime: workerRuntime, store, extractor: null, extract, today: () => '2026-10-13' }, orgId, xml.fileId);
+    expect(attached.proposalId).toBeNull();
+
+    // Also confirm an unposted XML ingested alongside is never held.
+    const unpostedNum = String(Number(num) + 1);
+    const unpostedXml = await ingest(new TextEncoder().encode(FIXTURE.replace('<SHDon>1234</SHDon>', `<SHDon>${unpostedNum}</SHDon>`)));
+    await extractAndPropose({ runtime: workerRuntime, store, extractor: null, extract, today: () => '2026-10-13' }, orgId, unpostedXml.fileId);
+
+    expect(await run()).toMatchObject({ held: 1, failed: 0 });
+    expect((await holdRow(xml.fileId))?.held_until).toEqual(expectedUntil);
+    expect(store.held.get(xml.storageKey)).toEqual(expectedUntil);
+    expect((await holdRow(unpostedXml.fileId))?.held_until).toBeNull();
+    // Already held up to expectedUntil: rerunning is a no-op.
+    expect(await run()).toEqual({ held: 0, failed: 0, waiting: 0 });
+
+    // An XML attached after the retention deadline has passed is skipped instead of failing with a past Object Lock date.
+    const expiredNum = String(Number(num) + 2);
+    const expiredReader = {
+      fromText: async () => ({ ...structuredClone(PARSED), source: 'ai' as const, number: expiredNum }),
+      fromImage: async () => null,
+    };
+    const expiredPdfBytes = new TextEncoder().encode(`%PDF-1.4 hoa don ${expiredNum} ${randomUUID()}`);
+    const expiredPdfSha = sha256Hex(expiredPdfBytes);
+    const expiredPdfKey = fileKey(orgId, expiredPdfSha);
+    const expiredPdfGen = await store.put(expiredPdfKey, expiredPdfBytes);
+    const expiredPdf = await runtime.execute<{ fileId: string }>(
+      'kernel.file.ingest',
+      { filename: `hd-${expiredNum}.pdf`, contentType: 'application/pdf', sizeBytes: expiredPdfBytes.byteLength, sha256: expiredPdfSha, storageKey: expiredPdfKey, generation: expiredPdfGen, source: 'upload' },
+      { actor: asUser(owner), orgId },
+    );
+    const expiredProposed = await extractAndPropose({ runtime: workerRuntime, store, extractor: expiredReader as never, extract: pdfExtract, today: () => '2026-10-13' }, orgId, expiredPdf.fileId);
+    const expiredProposalId = String(expiredProposed.proposalId);
+    expect(expiredProposed.proposalId).toEqual(expect.any(String));
+    const expiredDetail1 = await runtime.query<{ revision: number }>('kernel.inbox.get', { id: expiredProposalId }, { actor: asUser(owner), orgId });
+    await runtime.execute(
+      'kernel.proposal.edit',
+      { id: expiredProposalId, revision: expiredDetail1.revision, lineAccounts: [{ lineNo: 3, debitAccount: '6421' }] },
+      { actor: asUser(owner), orgId },
+    );
+    const expiredDetail2 = await runtime.query<{ revision: number }>('kernel.inbox.get', { id: expiredProposalId }, { actor: asUser(owner), orgId });
+    const { journalEntryId: expiredEntryId } = await runtime.execute<{ journalEntryId: string }>(
+      'kernel.proposal.approve',
+      { acceptFailedChecks: true, acceptUnverifiedSignature: true, id: expiredProposalId, revision: expiredDetail2.revision },
+      { actor: asMfa(owner), orgId, idempotencyKey: randomUUID() },
+    );
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query("SET LOCAL session_replication_role = 'replica'");
+      await c.query("UPDATE ludy_finance.journal_entry SET created_at = now() - interval '3651 days' WHERE id = $1", [expiredEntryId]);
+      await c.query('COMMIT');
+    });
+    const lateXml = await ingest(new TextEncoder().encode(FIXTURE.replace('<SHDon>1234</SHDon>', `<SHDon>${expiredNum}</SHDon>`)));
+    await extractAndPropose({ runtime: workerRuntime, store, extractor: null, extract, today: () => '2026-10-13' }, orgId, lateXml.fileId);
+    expect(await run()).toEqual({ held: 0, failed: 0, waiting: 0 });
+    expect(await holdRow(lateXml.fileId)).toMatchObject({ held_until: null, hold_attempts: 0, hold_error: null });
   });
 });
