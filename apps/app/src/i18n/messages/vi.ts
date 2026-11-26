@@ -19744,6 +19744,7 @@ export const vi = {
           latest: 'Xem lần chạy gần nhất của Vy của tôi cho mục này',
           live: 'Xem Vy của tôi có đang chạy cho mục này không',
           start: 'Bắt đầu một lượt Vy làm việc cho bạn',
+          start_daily: 'Bắt đầu một lượt chạy bản tin hằng ngày của Vy cho thành viên',
         },
         subject_results: {
           drop: 'Xóa kết quả Vy đã lưu cho mục vừa chỉnh hoặc ẩn dữ liệu',

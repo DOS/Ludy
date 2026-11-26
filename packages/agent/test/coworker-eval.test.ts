@@ -21,6 +21,7 @@ import { MEMBER_VY_FEATURE_TABLE, bindPorts, noKnowledge, type ModelPort, type P
 import {
   ALL_COWORKER_FEATURE_KEYS,
   HR_POLICY_EVAL_NOTE_ID,
+  UNIMPLEMENTED_SYSTEM_FEATURES,
   buildCoworkerEvalCases,
   createCoworkerEvalRuntime,
   formatCoworkerEvalReport,
@@ -495,9 +496,13 @@ function createStubRuntime() {
 }
 
 describe('coworker eval suite and per-feature reporter (#3977)', () => {
-  it('covers 100% of AI_FEATURE_KEYS and MEMBER_VY_FEATURE_TABLE keys', () => {
+  it('covers 100% of AI_FEATURE_KEYS and implemented MEMBER_VY_FEATURE_TABLE keys', () => {
     const cases = buildCoworkerEvalCases();
-    const expected = new Set<string>([...AI_FEATURE_KEYS, ...Object.keys(MEMBER_VY_FEATURE_TABLE)]);
+    const memberVyKeys = Object.keys(MEMBER_VY_FEATURE_TABLE);
+    for (const pending of UNIMPLEMENTED_SYSTEM_FEATURES) {
+      expect(memberVyKeys).toContain(pending);
+    }
+    const expected = new Set<string>([...AI_FEATURE_KEYS, ...memberVyKeys.filter((k) => !UNIMPLEMENTED_SYSTEM_FEATURES.has(k))]);
     const covered = new Set<string>(cases.map((c) => c.feature));
     expect(ALL_COWORKER_FEATURE_KEYS.length).toBe(expected.size);
     expect([...expected].filter((k) => !covered.has(k))).toEqual([]);

@@ -643,8 +643,15 @@ async function scanPolicyContextReads(
       .map((d) => {
         const proc = procByOid.get(d.ref_oid)!;
         if (proc.sig === `${activeKernelSchema}.ctx_verified()`) return "crove_kernel.ctx_verified()";
+        if (proc.sig === `${activeKernelSchema}.ctx_acting_user_id()`) return "crove_kernel.ctx_acting_user_id()";
         const canon = toCanonSig(proc.sig);
-        return canonicalizeRelName(canon) === "crove_kernel.ctx_verified()" ? `nonkernel:${proc.sig}` : canon;
+        if (
+          canonicalizeRelName(canon) === "crove_kernel.ctx_verified()" ||
+          canonicalizeRelName(canon) === "crove_kernel.ctx_acting_user_id()"
+        ) {
+          return `nonkernel:${proc.sig}`;
+        }
+        return canon;
       });
     return {
       t: canonTable,
@@ -3688,6 +3695,21 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
         true,
       );
 
+      const appOwnerDailyFail = await outcome(
+        inContext(appUrl, userEnter(users.owner), (c) =>
+          c.query(
+            `INSERT INTO crove_kernel.member_vy_result
+             (org_id, id, member_user_id, run_id, feature, subject_type, subject_id, status, body, tainted, private_read, expires_at)
+             VALUES ($1, $2, $3, $4, 'meetings.brief_daily', 'meetings.brief_daily', $5, 'running', NULL, true, true, now() + interval '30 minutes')`,
+            [orgId, randomUUID(), users.vyUser, seededDailyRunId, subjectId],
+          ),
+        ),
+      );
+      expect(
+        appOwnerDailyFail,
+        "crove_app (owner) cannot insert meetings.brief_daily result row for vyUser",
+      ).toMatchObject({ ok: false, code: "42501" });
+
       const savedCatalog = (
         await admin((c) =>
           c.query<{ feature: string; module: string; adr: string }>(
@@ -3804,6 +3826,20 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
         await admin((c) => c.query("ALTER TABLE crove_kernel.member_vy_result DISABLE TRIGGER member_vy_result_bind"));
         try {
           await assertIndependentResultLayer("member_vy_result RLS policies without trigger");
+          const appOwnerWithoutTrigger = await outcome(
+            inContext(appUrl, userEnter(users.owner), (c) =>
+              c.query(
+                `INSERT INTO crove_kernel.member_vy_result
+                 (org_id, id, member_user_id, run_id, feature, subject_type, subject_id, status, body, tainted, private_read, expires_at)
+                 VALUES ($1, $2, $3, $4, 'meetings.brief_daily', 'meetings.brief_daily', $5, 'running', NULL, true, true, now() + interval '30 minutes')`,
+                [orgId, randomUUID(), users.vyUser, seededDailyRunId, subjectId],
+              ),
+            ),
+          );
+          expect(
+            appOwnerWithoutTrigger,
+            "member_vy_result RLS policies without trigger reject crove_app (owner) inserting vyUser daily row",
+          ).toMatchObject({ ok: false, code: "42501" });
         } finally {
           await admin((c) => c.query("ALTER TABLE crove_kernel.member_vy_result ENABLE TRIGGER member_vy_result_bind"));
         }
@@ -3958,6 +3994,95 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
         await admin((c) =>
           c.query(`UPDATE crove_kernel.ai_run SET status = 'cancelled', finished_at = now() WHERE id = $1`, [
             wrongModRunId,
+          ]),
+        );
+      }
+    });
+
+    it("enforces counts-only bodies on member_vy_result, immutable module on system ai_run, and click-feature exclusion on expired system cleanup (#5073)", async () => {
+      if (!hasSystemFeature) return;
+
+      const vyRun = await liveRun("vyUser");
+      const dailyRunId = randomUUID();
+      const dailyResultId = randomUUID();
+      await inContext(
+        workerUrl,
+        systemEnter,
+        async (c) => {
+          await c.query(
+            `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at, feature)
+             VALUES ($1, $2, $3, 'meetings', 'running', true, now(), now() + interval '30 minutes', 'meetings.brief_daily')`,
+            [orgId, dailyRunId, vyRun.agentId],
+          );
+          await c.query(
+            `INSERT INTO crove_kernel.member_vy_result
+             (org_id, id, member_user_id, run_id, feature, subject_type, subject_id, status, body, tainted, private_read, expires_at)
+             VALUES ($1, $2, $3, $4, 'meetings.brief_daily', 'meetings.brief_daily', $5, 'running', NULL, true, true, now() + interval '30 minutes')`,
+            [orgId, dailyResultId, users.vyUser, dailyRunId, randomUUID()],
+          );
+        },
+        true,
+      );
+      try {
+        const userSysRun = await outcome(
+          inContext(appUrl, userEnter(users.vyUser), (c) =>
+            c.query(
+              `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at, feature)
+               VALUES ($1, $2, $3, 'meetings', 'running', true, now(), now() + interval '30 minutes', 'meetings.brief_daily')`,
+              [orgId, randomUUID(), vyRun.agentId],
+            ),
+          ),
+        );
+        expect(userSysRun, "user context cannot insert system-only feature ai_run row").toMatchObject({ ok: false, code: "42501" });
+
+        const modChange = await outcome(
+          admin((c) => c.query(`UPDATE crove_kernel.ai_run SET module = 'notes' WHERE org_id = $1 AND id = $2`, [orgId, dailyRunId])),
+        );
+        expect(modChange, "ai_run.module is immutable on system-startable member_vy runs").toMatchObject({ ok: false, code: "42501" });
+
+        await inContext(workerUrl, memberEnter(vyRun.agentId, dailyRunId), async (c) => {
+          for (const badBody of [
+            "Tom tat hop luc 9h voi khach A",
+            JSON.stringify({ meetings: 2, note: "khong duoc luu chu" }),
+            JSON.stringify({ acme_secret_meeting: 1 }),
+            JSON.stringify([1, 2]),
+          ]) {
+            await c.query("SAVEPOINT sp_counts_bad");
+            const badRes = await outcome(
+              c.query(
+                `UPDATE crove_kernel.member_vy_result SET status = 'ready', body = $3 WHERE org_id = $1 AND id = $2`,
+                [orgId, dailyResultId, badBody],
+              ),
+            );
+            await c.query("ROLLBACK TO SAVEPOINT sp_counts_bad");
+            expect(badRes, `member_vy_result_bind rejects non-counts body: ${badBody}`).toMatchObject({ ok: false, code: "23514" });
+          }
+
+          const okRes = await c.query(
+            `UPDATE crove_kernel.member_vy_result SET status = 'ready', body = $3 WHERE org_id = $1 AND id = $2`,
+            [orgId, dailyResultId, JSON.stringify({ meetings: 2, lines: 4 })],
+          );
+          expect(okRes.rowCount, "member_vy_result_bind accepts allowlisted integer counter JSON").toBe(1);
+        });
+
+        const clickCleanup = await outcome(
+          inContext(workerUrl, systemEnter, (c) =>
+            c.query(`SELECT crove_kernel.member_vy_close_expired_system_run($1::uuid, 'notes.summary')`, [vyRun.agentId]),
+          ),
+        );
+        expect(clickCleanup, "member_vy_close_expired_system_run refuses click-only feature").toMatchObject({ ok: false, code: "22023" });
+
+        const appCleanup = await outcome(
+          inContext(appUrl, userEnter(users.vyUser), (c) =>
+            c.query(`SELECT crove_kernel.member_vy_close_expired_system_run($1::uuid, 'meetings.brief_daily')`, [vyRun.agentId]),
+          ),
+        );
+        expect(appCleanup, "crove_app cannot execute member_vy_close_expired_system_run").toMatchObject({ ok: false, code: "42501" });
+      } finally {
+        await admin((c) =>
+          c.query(`UPDATE crove_kernel.ai_run SET status = 'cancelled', finished_at = now() WHERE org_id = $1 AND id = $2 AND status = 'running'`, [
+            orgId,
+            dailyRunId,
           ]),
         );
       }
