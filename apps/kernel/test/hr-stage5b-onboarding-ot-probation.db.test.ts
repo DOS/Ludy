@@ -1810,34 +1810,45 @@ suite('HR Stage 5B onboarding, 2-level OT to payroll, and probation review (#444
         workDate: '2026-10-20',
         hours: '3.5',
         dayType: 'weekday',
+        reason: 'PII cần xóa',
       });
+      const branchOtPostErase = await o.exec<HrSelfOvertimeSubmitResult>(o.staffB, 'hr.self.overtime.submit', {
+        workDate: '2026-10-21',
+        hours: '1.5',
+        dayType: 'weekday',
+        reason: 'PII cần xóa sau',
+      });
+      const backdateEmployeeRetention = async (employeeId: string): Promise<void> => {
+        const eraseBackdate = await adminPool.connect();
+        let eraseCommitted = false;
+        let eraseBroken = false;
+        try {
+          await eraseBackdate.query('BEGIN');
+          await eraseBackdate.query('SET LOCAL session_replication_role = replica');
+          await eraseBackdate.query(
+            `UPDATE ludy_hr.payroll_employee
+                SET ended_on = ((pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - interval '10 years 1 day')::date
+              WHERE id = $1`,
+            [employeeId],
+          );
+          await eraseBackdate.query('COMMIT');
+          eraseCommitted = true;
+        } catch (err) {
+          if (!eraseCommitted) {
+            await eraseBackdate.query('ROLLBACK').catch(() => {
+              eraseBroken = true;
+            });
+          }
+          throw err;
+        } finally {
+          eraseBackdate.release(eraseBroken);
+        }
+      };
+
       // Unlink / end empBBranch past 10-year Accounting Law window and erase concurrently with approve_final:
       // hr_emp_erase and hr_ot_run/hr_ot_emp serialize safely without deadlock.
       await o.exec(o.owner, 'hr.payroll.employee.end', { employeeId: empBBranch, endedOn: '2026-10-25' }, asMfa(o.owner));
-      const eraseBackdate = await adminPool.connect();
-      let eraseCommitted = false;
-      let eraseBroken = false;
-      try {
-        await eraseBackdate.query('BEGIN');
-        await eraseBackdate.query('SET LOCAL session_replication_role = replica');
-        await eraseBackdate.query(
-          `UPDATE ludy_hr.payroll_employee
-              SET ended_on = ((pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - interval '10 years 1 day')::date
-            WHERE id = $1`,
-          [empBBranch],
-        );
-        await eraseBackdate.query('COMMIT');
-        eraseCommitted = true;
-      } catch (err) {
-        if (!eraseCommitted) {
-          await eraseBackdate.query('ROLLBACK').catch(() => {
-            eraseBroken = true;
-          });
-        }
-        throw err;
-      } finally {
-        eraseBackdate.release(eraseBroken);
-      }
+      await backdateEmployeeRetention(empBBranch);
       const eraseVsApprove = await Promise.allSettled([
         raceRt.execute(
           'hr.payroll.employee.erase',
@@ -1846,7 +1857,7 @@ suite('HR Stage 5B onboarding, 2-level OT to payroll, and probation review (#444
         ),
         raceRt.execute(
           'hr.overtime.approve_final',
-          { requestId: branchOt.requestId },
+          { requestId: branchOt.requestId, note: 'Ghi chú duyệt cần xóa' },
           { actor: asUser(o.admin), orgId: o.orgId },
         ),
       ]);
@@ -1857,6 +1868,41 @@ suite('HR Stage 5B onboarding, 2-level OT to payroll, and probation review (#444
         // If approve_final won lock first, branch entity run and erasure both serialized safely without deadlock.
         expect(eraseVsApprove[1].value).toMatchObject({ status: 'approved' });
       }
+
+      const empEraseRows = await adminPool.query<{ erased_at: Date | null }>(
+        'SELECT erased_at FROM ludy_hr.payroll_employee WHERE org_id = $1::uuid AND id = $2::uuid',
+        [o.orgId, empBBranch],
+      );
+      expect(empEraseRows.rows).toHaveLength(1);
+      expect(empEraseRows.rows[0]?.erased_at).not.toBeNull();
+
+      const branchOtRows = await adminPool.query<{ status: string; reason: string | null; decision_note: string | null }>(
+        'SELECT status, reason, decision_note FROM ludy_hr.overtime_request WHERE org_id = $1::uuid AND id = $2::uuid',
+        [o.orgId, branchOt.requestId],
+      );
+      expect(branchOtRows.rows[0]).toEqual({
+        status: eraseVsApprove[1].status === 'rejected' ? 'cancelled' : 'approved',
+        reason: null,
+        decision_note: null,
+      });
+
+      await expect(
+        raceRt.execute(
+          'hr.overtime.approve_final',
+          { requestId: branchOtPostErase.requestId },
+          { actor: asUser(o.admin), orgId: o.orgId },
+        ),
+      ).rejects.toMatchObject({ code: 'HR_EMPLOYEE_ERASED', status: 409 });
+
+      const postEraseOtRows = await adminPool.query<{ status: string; reason: string | null; decision_note: string | null }>(
+        'SELECT status, reason, decision_note FROM ludy_hr.overtime_request WHERE org_id = $1::uuid AND id = $2::uuid',
+        [o.orgId, branchOtPostErase.requestId],
+      );
+      expect(postEraseOtRows.rows[0]).toEqual({
+        status: 'cancelled',
+        reason: null,
+        decision_note: null,
+      });
       // Run branch entity payroll safely and verify empB's default entity 2h OT remained isolated on default entity.
       const branchRun = await o.exec<HrRunWritten>(
         o.owner,
@@ -1865,6 +1911,148 @@ suite('HR Stage 5B onboarding, 2-level OT to payroll, and probation review (#444
         asMfa(o.owner),
       );
       expect(branchRun.runId).toBeTruthy();
+
+      // Deterministic mid-erase race (#5055): hold detOt's row lock so employee.erase acquires hr_emp_erase
+      // and blocks before committing erased_at/cancelled, then start approve_final (preRead sees live row)
+      // and verify it waits on hr_emp_erase before seeing erased_at and returning HR_EMPLOYEE_ERASED (409).
+      const empBDet = (
+        await o.exec<HrWritten>(
+          o.owner,
+          'hr.payroll.employee.add',
+          {
+            legalEntityId: branchEntity.id,
+            displayName: 'Nguyễn Chờ Khóa Xóa',
+            employment: { effectiveFrom: '2026-10-16', contractType: 'indefinite', region: 'I', baseWage: '15000000' },
+          },
+          asMfa(o.owner),
+        )
+      ).employeeId as string;
+      await o.exec(o.owner, 'hr.payroll.employee.link_member', { employeeId: empBDet, userId: o.staffB }, asMfa(o.owner));
+      const detOt = await o.exec<HrSelfOvertimeSubmitResult>(o.staffB, 'hr.self.overtime.submit', {
+        workDate: '2026-10-22',
+        hours: '2',
+        dayType: 'weekday',
+        reason: 'PII chờ khóa xóa',
+      });
+      await o.exec(o.owner, 'hr.payroll.employee.end', { employeeId: empBDet, endedOn: '2026-10-25' }, asMfa(o.owner));
+      await backdateEmployeeRetention(empBDet);
+
+      await holder.query('BEGIN');
+      await enterUser(holder, o.owner, o.orgId);
+      const { rows: holderPidRows } = await holder.query<{ pid: number }>('SELECT pg_catalog.pg_backend_pid() AS pid');
+      const holderPid = holderPidRows[0]?.pid ?? 0;
+      expect(holderPid).toBeGreaterThan(0);
+      await holder.query(
+        'SELECT id FROM ludy_hr.overtime_request WHERE org_id = $1::uuid AND id = $2::uuid FOR UPDATE',
+        [o.orgId, detOt.requestId],
+      );
+
+      let eraseSettled = false;
+      const erasePromise = raceRt
+        .execute(
+          'hr.payroll.employee.erase',
+          { employeeId: empBDet },
+          { actor: asMfa(o.owner), orgId: o.orgId },
+        )
+        .then(
+          (value) => ({ ok: true as const, value }),
+          (reason: unknown) => ({ ok: false as const, reason }),
+        );
+      void erasePromise.then(() => {
+        eraseSettled = true;
+      });
+
+      let erasePid = 0;
+      for (let i = 0; i < 200; i += 1) {
+        const { rows } = await adminPool.query<{ pid: number }>(
+          `SELECT l.pid
+             FROM pg_catalog.pg_locks l
+             JOIN pg_catalog.pg_stat_activity a ON a.pid = l.pid
+            WHERE l.locktype = 'advisory'
+              AND l.granted
+              AND l.database = (SELECT oid FROM pg_catalog.pg_database WHERE datname = pg_catalog.current_database())
+              AND a.datname = pg_catalog.current_database()
+              AND a.wait_event_type = 'Lock'
+              AND l.pid <> $1
+            LIMIT 1`,
+          [holderPid],
+        );
+        if ((rows[0]?.pid ?? 0) > 0) {
+          erasePid = rows[0]?.pid ?? 0;
+          break;
+        }
+        if (eraseSettled) break;
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      expect(erasePid).toBeGreaterThan(0);
+      expect(eraseSettled).toBe(false);
+
+      let approveSettled = false;
+      const approvePromise = raceRt
+        .execute(
+          'hr.overtime.approve_final',
+          { requestId: detOt.requestId, note: 'Ghi chú race cần xóa' },
+          { actor: asUser(o.admin), orgId: o.orgId },
+        )
+        .then(
+          (value) => ({ ok: true as const, value }),
+          (reason: unknown) => ({ ok: false as const, reason }),
+        );
+      void approvePromise.then(() => {
+        approveSettled = true;
+      });
+
+      let waitedOnEraseLock = false;
+      for (let i = 0; i < 200; i += 1) {
+        const { rows } = await adminPool.query<{ n: number }>(
+          `SELECT count(*)::int AS n
+             FROM pg_catalog.pg_locks w
+             JOIN pg_catalog.pg_locks h
+               ON h.database = w.database
+              AND h.locktype = w.locktype
+              AND h.classid = w.classid
+              AND h.objid = w.objid
+              AND h.objsubid = w.objsubid
+            WHERE w.locktype = 'advisory'
+              AND NOT w.granted
+              AND h.granted
+              AND h.pid = $1`,
+          [erasePid],
+        );
+        if ((rows[0]?.n ?? 0) > 0) {
+          waitedOnEraseLock = true;
+          break;
+        }
+        if (approveSettled) break;
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      expect(waitedOnEraseLock).toBe(true);
+      expect(approveSettled).toBe(false);
+      expect(eraseSettled).toBe(false);
+
+      await holder.query('COMMIT');
+      const [eraseOutcome, approveOutcome] = await Promise.all([erasePromise, approvePromise]);
+      expect(eraseOutcome.ok, eraseOutcome.ok ? 'ok' : String(eraseOutcome.reason)).toBe(true);
+      expect(approveOutcome.ok).toBe(false);
+      if (!approveOutcome.ok) {
+        expect(approveOutcome.reason).toMatchObject({ code: 'HR_EMPLOYEE_ERASED', status: 409 });
+      }
+
+      const detOtRows = await adminPool.query<{ status: string; reason: string | null; decision_note: string | null }>(
+        'SELECT status, reason, decision_note FROM ludy_hr.overtime_request WHERE org_id = $1::uuid AND id = $2::uuid',
+        [o.orgId, detOt.requestId],
+      );
+      expect(detOtRows.rows[0]).toEqual({
+        status: 'cancelled',
+        reason: null,
+        decision_note: null,
+      });
+      const detEmpRows = await adminPool.query<{ erased_at: Date | null }>(
+        'SELECT erased_at FROM ludy_hr.payroll_employee WHERE org_id = $1::uuid AND id = $2::uuid',
+        [o.orgId, empBDet],
+      );
+      expect(detEmpRows.rows).toHaveLength(1);
+      expect(detEmpRows.rows[0]?.erased_at).not.toBeNull();
     } finally {
       await holder.query('ROLLBACK').catch(() => undefined);
       holder.release();
