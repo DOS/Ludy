@@ -22,7 +22,7 @@ import type { MemberRole } from '@ludy/db';
 import { BANK_FEED_FIRST_PULL_DAYS, isBankFeedProviderId, vietnamToday, zBankFeedPullOutcome, zBankFeedHookSet, zBankFeedMap, zBankFeedRecordAccounts, zBankFeedRecordOutcome, zBankFeedRecordPull, zId, type BankFeedAccountView, type BankFeedConnectionView, type BankFeedHookCreated, type BankFeedHookStatus, type BankFeedListedAccount, type BankImportResult } from '@ludy/kernel-contract';
 import { DomainError, defineCommand, defineQuery } from '@ludy/kernel-runtime';
 import { accountNumberDigits, feedAccountDigits } from './account-number.ts';
-import { bankAccount, feedCutover, ingestFeedLines } from './bank.ts';
+import { bankAccount, ingestFeedLines } from './bank.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -415,8 +415,10 @@ export const bankFeedRecordPull = defineCommand({
         await ctx.trx.updateTable('ludy_finance.bank_feed_account').set({ feed_from: start }).where('org_id', '=', ctx.orgId).where('id', '=', mapped.id).execute();
       }
     }
-    // From the cut-over day on the feed supplies the account (#4218): a line it brings from before that day (the first pull goes back a month) is the statement files', and is left out so one transaction is never booked under two keys.
-    const cutover = await feedCutover(ctx, mapped.legal_entity_id, mapped.bank_account);
+    // From this mapping's own cut-over day on, the feed supplies its lines (#4218, #4226): a line it brings from before
+    // that day (the first pull goes back a month) stays with statement files or another link on the same account, and is
+    // left out so one transaction is never booked under two keys.
+    const cutover = movedTo ?? mapped.feed_from;
     const lines = cutover === null ? input.lines : input.lines.filter((l) => l.date >= cutover);
     const skippedBefore = input.lines.length - lines.length;
     const result =
@@ -429,8 +431,8 @@ export const bankFeedRecordPull = defineCommand({
       .where('id', '=', mapped.id)
       .execute();
     if (!result) ctx.audit({ feedAccountId: mapped.id, lines: 0 });
-    // The lines the cut-over day kept out are on the trail whether or not the rest was stored (#4218); the audit fields merge into this command's one row.
-    if (skippedBefore > 0) ctx.audit({ feedFrom: cutover, skippedBeforeFeedFrom: skippedBefore });
+    // The lines this link's cut-over day kept out are on the trail whether or not the rest was stored (#4218, #4226); the audit fields merge into this command's one row.
+    if (skippedBefore > 0) ctx.audit({ feedAccountId: mapped.id, feedFrom: cutover, skippedBeforeFeedFrom: skippedBefore });
     if (movedTo !== null) ctx.audit({ feedFromMovedTo: movedTo, feedFromWas: mapped.feed_from });
     return result ?? { importId: null };
   },
