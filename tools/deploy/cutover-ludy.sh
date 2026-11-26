@@ -1608,6 +1608,7 @@ check_caddyfile_safe() {
   local file="$1" canon=''
   [ -f "$file" ] || return 0
   canon="$(sed -E '/^[[:space:]]*#/d' "$file" | tr '\r\n\t' '   ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')"
+  # shellcheck disable=SC2016
   case "$canon" in
     '{ admin off } {$CROVE_DOMAIN} { reverse_proxy {$CROVE_UPSTREAM:127.0.0.1:8080} }' | \
     '{ admin off } {$CROVE_DOMAIN} { reverse_proxy 127.0.0.1:8080 }' | \
