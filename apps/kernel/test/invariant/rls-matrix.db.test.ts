@@ -144,6 +144,13 @@ const AGENT_FORBIDDEN = /^AGENT_FORBIDDEN$/;
 // the SQL over alias t, schema-qualified operators, that picks the rows, given the member's user id. Each entry is pinned: the actor must
 // read exactly those rows (by id where the table has one), and an entry that selects every row fails as stale. A table not listed here is
 // read in full, as the member reads it. Sorted after ai_run, one table per line, a reason on each.
+const OPT_IN_MEETINGS_READ_TABLES = new Set<string>([
+  'crove_meetings.action_item',
+  'crove_meetings.calendar_agenda',
+  'crove_meetings.meeting',
+  'crove_meetings.meeting_link',
+  'crove_meetings.meeting_result',
+]);
 const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   // A member's Vy runs are the member's alone (policy member_vy_read); every other run is read as by any member.
   [
@@ -5093,6 +5100,7 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
   // The Vy of a second owner of org A in member mode, and that owner's user id.
   let memberVy: Actor;
   let memberVyUser = '';
+  const memberVyReadCatalog = new Set<string>();
   let memberVyAgent = '';
   let memberVyRun = '';
   // A member of org A limited by its external_accountant assignment to one legal entity, a branch with no rows: it
@@ -5193,7 +5201,10 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
 
   // The org A rows the member-mode actor reads of a table: how many, which (by id, where the table has one) and how many rows org A has.
   async function memberVyVisible(table: string) {
-    const rule = MEMBER_VY_READS.get(table);
+    const rule =
+      table === 'crove_meetings.meeting' && memberVyReadCatalog.has('crove_meetings.meeting')
+        ? () => "t.visibility OPERATOR(pg_catalog.=) 'org'::text"
+        : MEMBER_VY_READS.get(table);
     const where = `t.org_id OPERATOR(pg_catalog.=) $1::uuid AND (${rule ? rule(memberVyUser) : 'true'})`;
     const { rows: counted } = await admin.query<{ n: number }>(`SELECT count(*)::int AS n FROM ${table} t WHERE ${where}`, [orgs.A.id]);
     const { rows: total } = await admin.query<{ n: number }>(`SELECT count(*)::int AS n FROM ${table} WHERE org_id = $1`, [orgs.A.id]);
@@ -5218,7 +5229,10 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
     hidden: (await memberVyVisible(table)).count === 0,
     seen: { noop: 0 },
   });
-  const unreached = (g: Guarded) => g.hidden || (MEMBER_VY_UNREACHED.get(g.table) ?? []).includes(g.op);
+  const unreached = (g: Guarded) =>
+    g.hidden ||
+    (MEMBER_VY_UNREACHED.get(g.table) ?? []).includes(g.op) ||
+    (g.table === 'crove_meetings.meeting' && memberVyReadCatalog.has('crove_meetings.meeting'));
   function expectGuarded(outcome: Outcome, g: Guarded, where: string) {
     if (outcome.ok) {
       expect(outcome.rowCount, `${where}: rows changed by member mode`).toBe(0);
@@ -5236,7 +5250,10 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
   }
   // A MEMBER_VY_UNREACHED entry whose statements all reached the guard is stale.
   function expectUnreachedUsed(g: Guarded) {
-    if ((MEMBER_VY_UNREACHED.get(g.table) ?? []).includes(g.op)) {
+    if (
+      (MEMBER_VY_UNREACHED.get(g.table) ?? []).includes(g.op) ||
+      (g.table === 'crove_meetings.meeting' && memberVyReadCatalog.has('crove_meetings.meeting'))
+    ) {
       expect(g.seen.noop, `${g.table}: MEMBER_VY_UNREACHED lists '${g.op}' but every ${g.op} of member mode was refused by the guard: remove it`).toBeGreaterThan(0);
     }
   }
@@ -5453,6 +5470,13 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
     // the matrix seeds (a vy.use denial for org A's first owner) off it. The member_vy agent and its live run are committed setup
     // rows made as the superuser (the run's binding guards need a member's own context, which the UNGUARDED_TABLES exception sets
     // aside), with an expiry relative to now so a long run of the file never outlives it.
+    const { rows: rawMemberVyReads } = await admin.query<{ table_name: string }>(
+      "SELECT table_name FROM crove_kernel.member_vy_table WHERE mode = 'read'",
+    );
+    for (const r of rawMemberVyReads) {
+      memberVyReadCatalog.add(dbIds ? dbIds.toCanonicalTable(r.table_name) : r.table_name);
+    }
+
     const vyUser = freshUser();
     memberVyUser = vyUser;
     const vyAgent = randomUUID();
@@ -5600,10 +5624,21 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
       catalog.filter((r) => r.mode === 'write').map((r) => r.table_name).sort(),
       "member_vy_table write rows: the matrix expects AGENT_FORBIDDEN for the factories' rows of each (MEMBER_VY_WRITES)",
     ).toEqual([...MEMBER_VY_WRITES].sort());
+    const readCatalog = catalog.filter((r) => r.mode === 'read').map((r) => r.table_name).sort();
     expect(
-      catalog.filter((r) => r.mode === 'read').map((r) => r.table_name).sort(),
-      'member_vy_table read rows: each read as its member (MEMBER_VY_READS)',
-    ).toEqual(['crove_kernel.member_vy_memory', 'crove_notes.note'].sort());
+      readCatalog,
+      'member_vy_table read rows: always include member_vy_memory and notes.note',
+    ).toEqual(expect.arrayContaining(['crove_kernel.member_vy_memory', 'crove_notes.note']));
+    const unexpectedReads = readCatalog.filter(
+      (t) =>
+        t !== 'crove_kernel.member_vy_memory' &&
+        t !== 'crove_notes.note' &&
+        !OPT_IN_MEETINGS_READ_TABLES.has(t),
+    );
+    expect(
+      unexpectedReads,
+      'member_vy_table read rows: allow only core tables plus the five opt-in Meetings read tables',
+    ).toEqual([]);
     const names = relations.map((r) => r.name);
     const listed = [...MEMBER_VY_READS.keys()];
     expect(listed.filter((t) => !names.includes(t) && !PENDING_TABLES.has(t)), 'MEMBER_VY_READS lists tables that no longer have org_id').toEqual([]);
@@ -6297,4 +6332,301 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
       }
     });
   }
+
+  it('reads published or own allowed Meetings rows and refuses drafts, hidden rows, and viewer vy.use actors across the five opt-in tables (#5073)', async () => {
+    const mkMeeting = (recorder: string, visibility: 'org' | 'attendees') => ({
+      ...meetingsMeetingRow({ id: orgs.A.id, owner: recorder }, visibility),
+    });
+    const mOrg = mkMeeting(orgs.A.owner, 'org');
+    const mAtt = mkMeeting(orgs.A.owner, 'attendees');
+    const mSharedMine = mkMeeting(orgs.A.owner, 'attendees');
+    const mRecMine = mkMeeting(memberVyUser, 'attendees');
+    const mRecScoped = mkMeeting(scopedVyUser, 'attendees');
+
+    const sharedReader = {
+      org_id: orgs.A.id,
+      id: randomUUID(),
+      meeting_id: mSharedMine.id,
+      user_id: memberVyUser,
+    };
+
+    const mkResult = (meetingId: string, stage: 'draft' | 'published') => ({
+      org_id: orgs.A.id,
+      id: randomUUID(),
+      meeting_id: meetingId,
+      summary: 'RLS matrix meetings control',
+      decisions: '["Quyet dinh 1"]',
+      feature: 'meetings.summary',
+      stage,
+      tainted: stage === 'draft' ? 'true' : 'false',
+    });
+    const resOrgPub = mkResult(mOrg.id, 'published');
+    const resOrgDraft = mkResult(mOrg.id, 'draft');
+    const resAttPub = mkResult(mAtt.id, 'published');
+    const resSharedPub = mkResult(mSharedMine.id, 'published');
+    const resSharedDraft = mkResult(mSharedMine.id, 'draft');
+    const resRecPub = mkResult(mRecMine.id, 'published');
+    const resRecDraft = mkResult(mRecMine.id, 'draft');
+    const resScopedPub = mkResult(mRecScoped.id, 'published');
+    const resScopedDraft = mkResult(mRecScoped.id, 'draft');
+
+    const mkItem = (meetingId: string, stage: 'draft' | 'published') => ({
+      org_id: orgs.A.id,
+      id: randomUUID(),
+      meeting_id: meetingId,
+      title: 'RLS matrix action control',
+      who_drafted: 'Nguyen Van A',
+      who_parsed: orgs.A.owner,
+      when_drafted: 'Thu sau',
+      when_parsed: '2026-11-13',
+      transcript_seconds: 120,
+      stage,
+      status: 'suggested',
+      flags: '[]',
+      tainted: stage === 'draft' ? 'true' : 'false',
+    });
+    const itemOrgPub = mkItem(mOrg.id, 'published');
+    const itemOrgDraft = mkItem(mOrg.id, 'draft');
+    const itemAttPub = mkItem(mAtt.id, 'published');
+    const itemSharedPub = mkItem(mSharedMine.id, 'published');
+    const itemSharedDraft = mkItem(mSharedMine.id, 'draft');
+    const itemRecPub = mkItem(mRecMine.id, 'published');
+    const itemRecDraft = mkItem(mRecMine.id, 'draft');
+    const itemScopedPub = mkItem(mRecScoped.id, 'published');
+    const itemScopedDraft = mkItem(mRecScoped.id, 'draft');
+
+    const mkLink = (meetingId: string, createdBy: string) => ({
+      org_id: orgs.A.id,
+      id: randomUUID(),
+      meeting_id: meetingId,
+      deal_id: randomUUID(),
+      created_by: createdBy,
+    });
+    const linkOrg = mkLink(mOrg.id, orgs.A.owner);
+    const linkAtt = mkLink(mAtt.id, orgs.A.owner);
+    const linkShared = mkLink(mSharedMine.id, orgs.A.owner);
+    const linkRec = mkLink(mRecMine.id, memberVyUser);
+    const linkScoped = mkLink(mRecScoped.id, scopedVyUser);
+
+    const { rows: insertedViewer } = await admin.query<{ id: string }>(
+      `INSERT INTO crove_kernel.user_account (issuer, subject, email)
+       VALUES ('rls-matrix', $1, $2) RETURNING id`,
+      [`viewer-vy-${randomUUID()}`, `viewer-vy-${randomUUID()}@rls.test`],
+    );
+    const viewerVyUser = insertedViewer[0]?.id as string;
+    const viewerVyAgent = randomUUID();
+    const viewerVyRun = randomUUID();
+
+    const calConnVy = calendarConnectionRow({ id: orgs.A.id, owner: memberVyUser });
+    const calConnOwner = calendarConnectionRow({ id: orgs.A.id, owner: orgs.A.owner });
+    const calConnViewer = calendarConnectionRow({ id: orgs.A.id, owner: viewerVyUser });
+    const calAgendaVy = {
+      org_id: orgs.A.id,
+      id: randomUUID(),
+      connection_id: calConnVy.id,
+      user_id: memberVyUser,
+      external_id: `rlsmatrix-vy-${randomUUID()}`,
+      title: 'Vy agenda',
+      starts_at: '2031-01-01T01:00:00Z',
+      ends_at: '2031-01-01T01:30:00Z',
+      time_zone: 'Asia/Ho_Chi_Minh',
+    };
+    const calAgendaOwner = {
+      org_id: orgs.A.id,
+      id: randomUUID(),
+      connection_id: calConnOwner.id,
+      user_id: orgs.A.owner,
+      external_id: `rlsmatrix-owner-${randomUUID()}`,
+      title: 'Owner agenda',
+      starts_at: '2031-01-01T02:00:00Z',
+      ends_at: '2031-01-01T02:30:00Z',
+      time_zone: 'Asia/Ho_Chi_Minh',
+    };
+    const calAgendaViewer = {
+      org_id: orgs.A.id,
+      id: randomUUID(),
+      connection_id: calConnViewer.id,
+      user_id: viewerVyUser,
+      external_id: `rlsmatrix-viewer-${randomUUID()}`,
+      title: 'Viewer agenda',
+      starts_at: '2031-01-01T03:00:00Z',
+      ends_at: '2031-01-01T03:30:00Z',
+      time_zone: 'Asia/Ho_Chi_Minh',
+    };
+
+    const meetingsIds = [mOrg.id, mAtt.id, mSharedMine.id, mRecMine.id, mRecScoped.id];
+    const resultIds = [
+      resOrgPub.id,
+      resOrgDraft.id,
+      resAttPub.id,
+      resSharedPub.id,
+      resSharedDraft.id,
+      resRecPub.id,
+      resRecDraft.id,
+      resScopedPub.id,
+      resScopedDraft.id,
+    ];
+    const itemIds = [
+      itemOrgPub.id,
+      itemOrgDraft.id,
+      itemAttPub.id,
+      itemSharedPub.id,
+      itemSharedDraft.id,
+      itemRecPub.id,
+      itemRecDraft.id,
+      itemScopedPub.id,
+      itemScopedDraft.id,
+    ];
+    const linkIds = [linkOrg.id, linkAtt.id, linkShared.id, linkRec.id, linkScoped.id];
+    const agendaIds = [calAgendaVy.id, calAgendaOwner.id, calAgendaViewer.id];
+    const connIds = [calConnVy.id, calConnOwner.id, calConnViewer.id];
+
+    await adminTx([
+      { table: 'crove_kernel.tenant_member', values: { org_id: orgs.A.id, user_id: viewerVyUser, role: 'viewer' } },
+      {
+        table: 'crove_kernel.member_permission_override',
+        values: { org_id: orgs.A.id, user_id: viewerVyUser, permission: 'vy.use', allowed: 'true', set_by: orgs.A.owner },
+      },
+      {
+        table: 'crove_kernel.agent',
+        unguarded: true,
+        values: {
+          ...agentRow(orgs.A),
+          id: viewerVyAgent,
+          template_key: 'kernel.member_vy',
+          display_name: 'Vy',
+          kind: 'member_vy',
+          member_user_id: viewerVyUser,
+          created_by: viewerVyUser,
+        },
+      },
+      {
+        table: 'crove_kernel.ai_run',
+        unguarded: true,
+        values: {
+          org_id: orgs.A.id,
+          id: viewerVyRun,
+          agent_id: viewerVyAgent,
+          module: 'notes',
+          status: 'running',
+          started_at: new Date().toISOString(),
+          expires_at: new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString(),
+          ...AI_RUN_FEATURE,
+        },
+      },
+      { table: 'crove_meetings.meeting', values: mOrg },
+      { table: 'crove_meetings.meeting', values: mAtt },
+      { table: 'crove_meetings.meeting', values: mSharedMine },
+      { table: 'crove_meetings.meeting', values: mRecMine },
+      { table: 'crove_meetings.meeting', values: mRecScoped },
+      { table: 'crove_meetings.meeting_reader', values: sharedReader },
+      { table: 'crove_meetings.meeting_result', values: resOrgPub },
+      { table: 'crove_meetings.meeting_result', values: resOrgDraft },
+      { table: 'crove_meetings.meeting_result', values: resAttPub },
+      { table: 'crove_meetings.meeting_result', values: resSharedPub },
+      { table: 'crove_meetings.meeting_result', values: resSharedDraft },
+      { table: 'crove_meetings.meeting_result', values: resRecPub },
+      { table: 'crove_meetings.meeting_result', values: resRecDraft },
+      { table: 'crove_meetings.meeting_result', values: resScopedPub },
+      { table: 'crove_meetings.meeting_result', values: resScopedDraft },
+      { table: 'crove_meetings.action_item', values: itemOrgPub },
+      { table: 'crove_meetings.action_item', values: itemOrgDraft },
+      { table: 'crove_meetings.action_item', values: itemAttPub },
+      { table: 'crove_meetings.action_item', values: itemSharedPub },
+      { table: 'crove_meetings.action_item', values: itemSharedDraft },
+      { table: 'crove_meetings.action_item', values: itemRecPub },
+      { table: 'crove_meetings.action_item', values: itemRecDraft },
+      { table: 'crove_meetings.action_item', values: itemScopedPub },
+      { table: 'crove_meetings.action_item', values: itemScopedDraft },
+      { table: 'crove_meetings.meeting_link', values: linkOrg },
+      { table: 'crove_meetings.meeting_link', values: linkAtt },
+      { table: 'crove_meetings.meeting_link', values: linkShared },
+      { table: 'crove_meetings.meeting_link', values: linkRec },
+      { table: 'crove_meetings.meeting_link', values: linkScoped },
+      { table: 'crove_kernel.calendar_connection', values: calConnVy },
+      { table: 'crove_kernel.calendar_connection', values: calConnOwner },
+      { table: 'crove_kernel.calendar_connection', values: calConnViewer },
+      { table: 'crove_meetings.calendar_agenda', values: calAgendaVy },
+      { table: 'crove_meetings.calendar_agenda', values: calAgendaOwner },
+      { table: 'crove_meetings.calendar_agenda', values: calAgendaViewer },
+    ]);
+
+    const viewerVy: Actor = {
+      name: 'crove_worker as a viewer with vy.use of org A in member mode',
+      role: 'crove_worker',
+      client: memberVy.client,
+      org: 'A',
+      memberMode: true,
+      enter: async (c) => {
+        await c.query('SELECT crove_kernel.enter_member_vy_context($1::uuid, $2::uuid, $3::uuid)', [orgs.A.id, viewerVyAgent, viewerVyRun]);
+      },
+    };
+
+    const seenIds = async (actor: Actor, table: string, ids: readonly string[]) =>
+      expectRows(
+        await probe(actor, (c) => c.query(`SELECT id::text AS org FROM ${table} WHERE id = ANY($1::uuid[])`, [ids])),
+        `${actor.name} reading ${table}`,
+      )
+        .rows.map((r) => r.org)
+        .sort();
+
+    try {
+      const viewerActing = expectRows(
+        await probe(viewerVy, (c) => c.query('SELECT crove_kernel.ctx_acting_user_id()::text AS org')),
+        viewerVy.name,
+      );
+      expect(viewerActing.rows, 'viewer with vy.use can enter member_vy context').toEqual([{ org: viewerVyUser }]);
+
+      const hasMeeting = memberVyReadCatalog.has('crove_meetings.meeting');
+      expect(await seenIds(memberVy, 'crove_meetings.meeting', meetingsIds), 'memberVy meeting ids').toEqual(
+        hasMeeting ? [mOrg.id, mSharedMine.id, mRecMine.id].sort() : [],
+      );
+      expect(await seenIds(scopedVy, 'crove_meetings.meeting', meetingsIds), 'scopedVy meeting ids').toEqual(
+        hasMeeting ? [mRecScoped.id] : [],
+      );
+      expect(await seenIds(viewerVy, 'crove_meetings.meeting', meetingsIds), 'viewerVy meeting ids').toEqual([]);
+
+      const hasResult = memberVyReadCatalog.has('crove_meetings.meeting_result');
+      expect(await seenIds(memberVy, 'crove_meetings.meeting_result', resultIds), 'memberVy meeting_result ids').toEqual(
+        hasResult ? [resOrgPub.id, resSharedPub.id, resRecPub.id].sort() : [],
+      );
+      expect(await seenIds(scopedVy, 'crove_meetings.meeting_result', resultIds), 'scopedVy meeting_result ids').toEqual(
+        hasResult ? [resScopedPub.id] : [],
+      );
+      expect(await seenIds(viewerVy, 'crove_meetings.meeting_result', resultIds), 'viewerVy meeting_result ids').toEqual([]);
+
+      const hasItem = memberVyReadCatalog.has('crove_meetings.action_item');
+      expect(await seenIds(memberVy, 'crove_meetings.action_item', itemIds), 'memberVy action_item ids').toEqual(
+        hasItem ? [itemOrgPub.id, itemSharedPub.id, itemRecPub.id].sort() : [],
+      );
+      expect(await seenIds(scopedVy, 'crove_meetings.action_item', itemIds), 'scopedVy action_item ids').toEqual(
+        hasItem ? [itemScopedPub.id] : [],
+      );
+      expect(await seenIds(viewerVy, 'crove_meetings.action_item', itemIds), 'viewerVy action_item ids').toEqual([]);
+
+      const hasLink = memberVyReadCatalog.has('crove_meetings.meeting_link');
+      expect(await seenIds(memberVy, 'crove_meetings.meeting_link', linkIds), 'memberVy meeting_link ids').toEqual(
+        hasLink ? [linkOrg.id, linkShared.id, linkRec.id].sort() : [],
+      );
+      expect(await seenIds(scopedVy, 'crove_meetings.meeting_link', linkIds), 'scopedVy meeting_link ids').toEqual(
+        hasLink ? [linkScoped.id] : [],
+      );
+      expect(await seenIds(viewerVy, 'crove_meetings.meeting_link', linkIds), 'viewerVy meeting_link ids').toEqual([]);
+
+      const hasAgenda = memberVyReadCatalog.has('crove_meetings.calendar_agenda');
+      expect(await seenIds(memberVy, 'crove_meetings.calendar_agenda', agendaIds), 'memberVy calendar_agenda ids').toEqual(
+        hasAgenda ? [calAgendaVy.id] : [],
+      );
+      expect(await seenIds(scopedVy, 'crove_meetings.calendar_agenda', agendaIds), 'scopedVy calendar_agenda ids').toEqual([]);
+      expect(await seenIds(viewerVy, 'crove_meetings.calendar_agenda', agendaIds), 'viewerVy calendar_agenda ids').toEqual([]);
+    } finally {
+      await admin.query('DELETE FROM crove_meetings.action_item WHERE id = ANY($1::uuid[])', [itemIds]);
+      await admin.query('DELETE FROM crove_meetings.meeting_link WHERE id = ANY($1::uuid[])', [linkIds]);
+      await admin.query('DELETE FROM crove_meetings.meeting_result WHERE id = ANY($1::uuid[])', [resultIds]);
+      await admin.query('DELETE FROM crove_meetings.meeting_reader WHERE id = $1::uuid', [sharedReader.id]);
+      await admin.query('DELETE FROM crove_meetings.meeting WHERE id = ANY($1::uuid[])', [meetingsIds]);
+      await admin.query('DELETE FROM crove_meetings.calendar_agenda WHERE id = ANY($1::uuid[])', [agendaIds]);
+      await admin.query('DELETE FROM crove_kernel.calendar_connection WHERE id = ANY($1::uuid[])', [connIds]);
+    }
+  });
 });
