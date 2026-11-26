@@ -22,7 +22,6 @@ import {
   safeStorage,
   session,
   shell,
-  systemPreferences,
   Tray,
   type IpcMainEvent,
   type MenuItemConstructorOptions,
@@ -31,7 +30,7 @@ import { noticeToCopy, type RecordingNoticeLanguage } from './capture/consent.ts
 import { createCaptureController, type CaptureDraft, type ConsentWindowViewState, type PillViewState } from './capture/controller.ts';
 import { createDesktopCaptureModule, CAPTURE_UI_SPECS, type ElectronWorkerBridge } from './capture/desktop-capture.ts';
 import { createDiskRecordingStore } from './capture/live-sender.ts';
-import { installCaptureSessionHandlers } from './capture/session-handlers.ts';
+import { installCaptureSessionHandlers, requestMacMicrophoneAccess } from './capture/session-handlers.ts';
 import { isExpectedUiOrigin, resolveUiBundleFile, UI_CSP } from './capture/ui-bundle.ts';
 import { listMeetingWindows, resolveHelperExePath } from './capture/windows.ts';
 import { deviceNameFor } from './connect-url.ts';
@@ -406,16 +405,7 @@ async function main(): Promise<void> {
     isPackaged: app.isPackaged,
     resourcesPath: process.resourcesPath,
     bridge: workerBridge,
-    ...(isDarwin
-      ? {
-          requestMicPermission: async () => {
-            const status = systemPreferences.getMediaAccessStatus('microphone');
-            if (status === 'granted') return true;
-            if (status === 'not-determined') return systemPreferences.askForMediaAccess('microphone');
-            return false;
-          },
-        }
-      : {}),
+    ...(isDarwin ? { requestMicPermission: requestMacMicrophoneAccess } : {}),
     log,
   });
 

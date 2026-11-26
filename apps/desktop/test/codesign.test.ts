@@ -24,6 +24,7 @@ import {
   resolveMacAppBundlePath,
   verifyExtractedDirectorySymlinks,
   verifyMacAppBundle,
+  verifyMacDmgPackage,
   verifyMacSignedPackage,
   type MacExecCmd,
 } from '../src/codesign.ts';
@@ -537,5 +538,30 @@ describe('macOS codesign verification', () => {
       verifyMacSignedPackage(zipPath, TEAM_ID, { platform: 'darwin', execCmd: badDittoExec }),
     ).rejects.toThrow(/must contain only/);
     expect(readdirSync(zipDir)).toEqual(['LudyDesktop-0.1.0-darwin-arm64.zip']);
+
+    const dmgPath = join(zipDir, 'LudyDesktop-0.1.0-darwin-arm64.dmg');
+    await expect(
+      verifyMacDmgPackage(dmgPath, TEAM_ID, {
+        platform: 'darwin',
+        execCmd: async (file, args) => {
+          if (file === 'codesign' && args.includes('--verify')) return { stdout: '', stderr: '' };
+          if (file === 'codesign' && args.includes('--display')) return { stdout: '', stderr: validDisplayOutput() };
+          if (file === 'spctl') return { stdout: `${dmgPath}: accepted\nsource=Notarized Developer ID\n`, stderr: '' };
+          throw new Error(`unexpected: ${file}`);
+        },
+      }),
+    ).resolves.toBeUndefined();
+    await expect(
+      verifyMacDmgPackage(dmgPath, TEAM_ID, {
+        platform: 'darwin',
+        execCmd: async (file, args) => {
+          if (file === 'codesign' && args.includes('--verify')) return { stdout: '', stderr: '' };
+          if (file === 'codesign' && args.includes('--display')) {
+            return { stdout: '', stderr: validDisplayOutput({ timestamp: '' }) };
+          }
+          return { stdout: '', stderr: '' };
+        },
+      }),
+    ).rejects.toThrow(/missing secure Apple timestamp/);
   });
 });

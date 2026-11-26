@@ -754,3 +754,46 @@ export async function verifyMacSignedPackage(
     rmSync(extractDir, { recursive: true, force: true });
   }
 }
+
+export async function verifyMacDmgPackage(
+  dmgPath: string,
+  expectedTeamId: string,
+  options: {
+    execCmd?: MacExecCmd | undefined;
+    platform?: NodeJS.Platform | undefined;
+  } = {},
+): Promise<void> {
+  const platform = options.platform ?? process.platform;
+  if (platform !== 'darwin') {
+    throw new Error('macOS .dmg verification is only supported on macOS');
+  }
+  const expected = normalizeAppleTeamId(expectedTeamId);
+  if (!expected) {
+    throw new Error(`Invalid expected Apple Team ID for .dmg verification: ${expectedTeamId}`);
+  }
+  const execCmd = options.execCmd ?? defaultMacExecCmd;
+
+  await execCmd('codesign', ['--verify', '--verbose=2', dmgPath]);
+  const displayOut = await execCmd('codesign', ['--display', '--verbose=4', dmgPath]);
+  const lines = `${displayOut.stdout}\n${displayOut.stderr}`
+    .replace(/\r?\n/g, '\n')
+    .split('\n')
+    .map((l) => l.trim());
+  const teamLine = lines.find((l) => l.startsWith('TeamIdentifier='));
+  const foundTeam = teamLine ? normalizeAppleTeamId(teamLine.slice('TeamIdentifier='.length)) : null;
+  if (!foundTeam || foundTeam !== expected) {
+    throw new Error(`.dmg TeamIdentifier ${foundTeam ?? 'missing'} does not match expected ${expectedTeamId}`);
+  }
+  if (!lines.some((l) => l.startsWith('Authority=Developer ID Application:'))) {
+    throw new Error(`.dmg signature is missing Developer ID Application authority: ${dmgPath}`);
+  }
+  if (!lines.some((l) => l.startsWith('Timestamp=') && l.slice('Timestamp='.length).trim().length > 0)) {
+    throw new Error(`.dmg signature is missing secure Apple timestamp: ${dmgPath}`);
+  }
+
+  const spctlOut = await execCmd('spctl', ['-a', '-t', 'open', '--context', 'context:primary-signature', '-vv', dmgPath]);
+  parseSpctlAssessOutput(`${spctlOut.stdout}\n${spctlOut.stderr}`, {
+    expectedTeamId: expected,
+    requireOrigin: false,
+  });
+}

@@ -14,9 +14,8 @@ import { packager } from '@electron/packager';
 import {
   APPLE_BUNDLE_ID,
   MAC_APP_BUNDLE_NAME,
-  normalizeAppleTeamId,
-  parseSpctlAssessOutput,
   verifyMacAppBundle,
+  verifyMacDmgPackage,
   verifyMacSignedPackage,
 } from '../src/codesign.ts';
 import { build } from './build.mjs';
@@ -133,42 +132,9 @@ function stapleAndValidate(targetPath) {
   runCommand('xcrun', ['stapler', 'validate', targetPath]);
 }
 
-function verifySignedDmg(dmgPath, expectedTeamId) {
-  runCommand('codesign', ['--verify', '--verbose=2', dmgPath]);
-  const displayRes = spawnSync('codesign', ['--display', '--verbose=4', dmgPath], {
-    encoding: 'utf8',
-    maxBuffer: 8 * 1024 * 1024,
-  });
-  if (displayRes.status !== 0) {
-    throw new Error(`codesign --display failed for ${dmgPath}: ${(displayRes.stderr || displayRes.stdout || '').trim()}`);
-  }
-  const displayText = `${displayRes.stdout || ''}\n${displayRes.stderr || ''}`;
-  const lines = displayText.replace(/\r?\n/g, '\n').split('\n').map((l) => l.trim());
-  const teamLine = lines.find((l) => l.startsWith('TeamIdentifier='));
-  const foundTeam = teamLine ? normalizeAppleTeamId(teamLine.slice('TeamIdentifier='.length)) : null;
-  const expected = normalizeAppleTeamId(expectedTeamId);
-  if (!foundTeam || !expected || foundTeam !== expected) {
-    throw new Error(`.dmg TeamIdentifier ${foundTeam ?? 'missing'} does not match expected ${expectedTeamId}`);
-  }
-  if (!lines.some((l) => l.startsWith('Authority=Developer ID Application:'))) {
-    throw new Error(`.dmg signature is missing Developer ID Application authority: ${dmgPath}`);
-  }
-  if (!lines.some((l) => l.startsWith('Timestamp=') && l.slice('Timestamp='.length).trim().length > 0)) {
-    throw new Error(`.dmg signature is missing secure Apple timestamp: ${dmgPath}`);
-  }
-
+async function verifySignedDmg(dmgPath, expectedTeamId) {
   runCommand('xcrun', ['stapler', 'validate', dmgPath]);
-  const spctlRes = spawnSync('spctl', ['-a', '-t', 'open', '--context', 'context:primary-signature', '-vv', dmgPath], {
-    encoding: 'utf8',
-    maxBuffer: 8 * 1024 * 1024,
-  });
-  if (spctlRes.status !== 0) {
-    throw new Error(`spctl Gatekeeper check failed for ${dmgPath}: ${(spctlRes.stderr || spctlRes.stdout || '').trim()}`);
-  }
-  parseSpctlAssessOutput(`${spctlRes.stdout || ''}\n${spctlRes.stderr || ''}`, {
-    expectedTeamId,
-    requireOrigin: false,
-  });
+  await verifyMacDmgPackage(dmgPath, expectedTeamId);
 }
 
 if (isMainEntry(process.argv[1], fileURLToPath(import.meta.url))) {
@@ -276,7 +242,7 @@ if (isMainEntry(process.argv[1], fileURLToPath(import.meta.url))) {
           expectedArch: arch,
           requireGatekeeper: true,
         });
-        verifySignedDmg(dmgPath, signing.teamId);
+        await verifySignedDmg(dmgPath, signing.teamId);
         await verifyMacSignedPackage(zipPath, signing.teamId, {
           expectedVersion: built.version,
           expectedArch: arch,
