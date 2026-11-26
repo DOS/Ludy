@@ -15,7 +15,7 @@ export const privacyEn: PrivacyCopy = {
   crumbLabel: 'Breadcrumb',
   title: 'Privacy policy',
   lead: 'This page explains how Ludy handles data when you use the Ludy browser extension and when you use Ludy Cloud. The extension comes first, because it is the part to read before you press record.',
-  versionLine: 'Version 1.2, effective 25 November 2026.',
+  versionLine: 'Version 1.3, effective 26 November 2026.',
   reviewNotice: 'This policy is being reviewed and may be updated.',
   contentsTitle: 'Contents',
   sections: [
@@ -45,7 +45,7 @@ export const privacyEn: PrivacyCopy = {
       blocks: [
         {
           kind: 'p',
-          text: 'The Ludy extension (Chrome and Edge) has one purpose: to record the audio of a meeting open in a browser tab, together with your microphone, and upload it as a meeting in your Ludy workspace when you stop. A recording holds the voices of the participants, and their faces if you record video too. That is personal data.',
+          text: 'The Ludy extension (Chrome and Edge) captures work from your active browser tab into your Ludy workspace: primarily recording the audio of a meeting open in a browser tab together with your microphone (and video only when you tick it) and uploading it when you stop after consent confirmation; and optionally, when your workspace runs Notes and you turn it on, Quick Capture and click-only Web Clipper to save a note or task into Ludy. A meeting recording holds the voices of the participants, and their faces if you record video too. That is personal data.',
         },
         {
           kind: 'table',
@@ -60,11 +60,13 @@ export const privacyEn: PrivacyCopy = {
             ['The Ludy address and the features you turned on', 'When you set the extension up', 'Kept in the extension\'s own storage on your computer'],
             ['Your next meetings from your calendar (title, time, place; at most 5 in the next 30 minutes)', 'Only when you turn on calendar reading in Ludy and allow it once more when you sign in to the extension', 'To show the "Starting soon" card and fill in the meeting title when you click "Record this meeting". The extension only displays this list and does not keep it'],
             ['Audio sent while you record', 'Only when you tick "Live notes" for that meeting', `So ${N.gm} can take notes during the meeting: small pieces of audio go to your Ludy address while you record, without waiting for you to stop; this may use extra transcription minutes`],
+            ['Address of the active meeting tab (https origin and path only, with query parameters and fragments removed)', 'Only when you turn on meeting recording and click "Start recording"', 'Sent once to your Ludy server so it can detect whether another session is already recording the same call; nothing of the address is kept'],
+            ['Active page title, http or https address, and selected text or sanitized main page content (Markdown)', 'Only when you turn on Web Clipper inside Notes and explicitly click Clip in the popup', 'To save a private note (or pre-fill your quick-capture draft) into your Ludy workspace. Never runs in the background and refuses internal browser pages'],
           ],
         },
         {
           kind: 'p',
-          text: 'The extension does not read the content, address, title or selected text of any web page. It does not collect browsing history, location, financial or health information, and it has no analytics, telemetry or advertising identifier.',
+          text: 'Outside those two explicit clicks (reading the active meeting tab address when you press "Start recording", and clipping the active http or https page when you turn on Web Clipper and click Clip), the extension runs no content scripts in the background and does not read the content, address, title or selected text of any other web page you visit. It does not collect browsing history, location, financial or health information, and it has no analytics, telemetry or advertising identifier.',
         },
         { kind: 'p', text: 'The consent step comes before any recording:' },
         {
@@ -81,7 +83,7 @@ export const privacyEn: PrivacyCopy = {
           items: [
             'The extension talks to one address only: app.ludy.vn (Ludy Cloud), or the address of your company\'s own Ludy server that you type at setup. For your own server, the browser asks for permission for exactly that address. The extension contacts no other address and accepts only https addresses (or localhost).',
             'A recording that is not uploaded yet stays on your computer, in the extension\'s own storage, and is deleted once the upload is done. If the upload fails it stays until you retry or remove it from the device.',
-            'Sign-in happens on the Ludy sign-in page, opened in a browser window. The extension never sees your password or the app\'s session.',
+            'Sign-in happens on the Ludy sign-in page, opened in a normal browser tab (returning to the extension\'s own landing page for app.ludy.vn and localhost) or a browser window fallback. The extension never sees your password or the app\'s session.',
             'The extension\'s token is valid for one organization, one member and the features you turned on. It expires after 90 days, stops working at once if you are removed from the organization, and every use leaves a row in the audit log.',
           ],
         },
@@ -90,10 +92,11 @@ export const privacyEn: PrivacyCopy = {
           kind: 'list',
           items: [
             'Storage: keeps the Ludy address, the token and the features you turned on, and keeps a recording on the device until it is uploaded.',
-            'Identity: opens the Ludy sign-in page so you can sign in and allow the extension.',
-            'The address app.ludy.vn: sends the recording and the meeting details to Ludy Cloud, and gets the list of features.',
-            'Tab capture and offscreen document: asked for only when you turn on "Record meetings", and given back when you turn it off. They record the audio of the tab where you pressed record, and never another tab.',
-            'One own-server address: only for companies that run Ludy themselves, and only the single address you type. The extension never asks for permission on a site you are viewing.',
+            'Identity: opens the Ludy sign-in page in the fallback browser window (for a self-hosted address or when a tab cannot open) so you can sign in and allow the extension.',
+            'The address app.ludy.vn: sends the recording, meeting details, and member-clipped notes or tasks to Ludy Cloud, and gets the list of features.',
+            'Tab capture (tabCapture), offscreen document (offscreen), and active tab (activeTab) for Meetings: asked for only when you turn on "Record meetings", and given back when you turn it off (keeping activeTab only while Web Clipper is also on). They record the audio of the tab where you pressed record and read its meeting address on click to detect duplicate recordings, and never record another tab.',
+            'Active tab (activeTab) and scripting (scripting) for Web Clipper: optional permissions asked for only when you turn on Web Clipper inside Notes, and given back when you turn it off. Scripts run once on an explicit click in the popup on the active http or https tab to extract the title, address, and selected or main content into Ludy, never in the background.',
+            'One own-server address: only for companies that run Ludy themselves, and only the single address you type for API requests to that server. The extension never asks for host permission on a site you are browsing.',
           ],
         },
         { kind: 'p', text: 'The extension uses no remote code: all of its code is in the installed package.' },

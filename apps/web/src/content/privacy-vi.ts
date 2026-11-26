@@ -15,7 +15,7 @@ export const privacyVi: PrivacyCopy = {
   crumbLabel: 'Đường dẫn trang',
   title: 'Chính sách quyền riêng tư',
   lead: 'Trang này nói rõ Ludy xử lý dữ liệu thế nào khi bạn dùng tiện ích Ludy cho trình duyệt và khi bạn dùng Ludy Cloud. Phần về tiện ích đi trước, vì đó là phần cần đọc trước khi bạn bấm ghi.',
-  versionLine: 'Phiên bản 1.2, có hiệu lực từ 25/11/2026.',
+  versionLine: 'Phiên bản 1.3, có hiệu lực từ 26/11/2026.',
   reviewNotice: 'Chính sách này đang được rà soát và có thể được cập nhật.',
   contentsTitle: 'Nội dung',
   sections: [
@@ -45,7 +45,7 @@ export const privacyVi: PrivacyCopy = {
       blocks: [
         {
           kind: 'p',
-          text: 'Tiện ích Ludy (Chrome và Edge) có một mục đích: ghi âm thanh của cuộc họp đang mở trong một tab trình duyệt, cùng micro của bạn, rồi tải lên thành một cuộc họp trong không gian Ludy của bạn khi bạn dừng. Bản ghi chứa giọng nói của người tham gia, và khuôn mặt của họ nếu bạn ghi cả video. Đó là dữ liệu cá nhân.',
+          text: 'Tiện ích Ludy (Chrome và Edge) giúp bạn đưa công việc từ tab trình duyệt đang mở vào không gian Ludy của mình: mục đích chính là ghi âm thanh của cuộc họp đang mở cùng micro của bạn (và video chỉ khi bạn tick chọn) rồi tải lên thành một cuộc họp sau khi dừng; ngoài ra, khi không gian dùng mục Ghi chú và bạn tự bật, tiện ích có thêm Lưu nhanh và Cắt trang web (Web Clipper) theo từng lần bấm nút để lưu ghi chú hoặc việc cần làm. Bản ghi cuộc họp chứa giọng nói của người tham gia, và khuôn mặt của họ nếu bạn ghi cả video. Đó là dữ liệu cá nhân.',
         },
         {
           kind: 'table',
@@ -60,11 +60,13 @@ export const privacyVi: PrivacyCopy = {
             ['Địa chỉ Ludy và các tính năng bạn đã bật', 'Khi bạn cài đặt tiện ích', 'Lưu trong bộ nhớ riêng của tiện ích trên máy bạn'],
             ['Các cuộc họp sắp tới trong lịch của bạn (tên, giờ, nơi họp; tối đa 5 cuộc trong 30 phút tới)', 'Chỉ khi bạn bật đọc lịch trong Ludy và cho phép thêm một lần ở bước đăng nhập tiện ích', 'Để hiện thẻ "Sắp họp" và điền sẵn tên cuộc họp khi bạn bấm "Ghi cuộc họp này". Tiện ích chỉ hiển thị danh sách này, không lưu'],
             ['Âm thanh gửi đi trong lúc ghi', 'Chỉ khi bạn tick "Ghi chú trực tiếp" cho cuộc họp đó', `Để ${N.gm} ghi chú ngay trong cuộc họp: các mẩu âm thanh được gửi tới địa chỉ Ludy của bạn khi đang ghi, không đợi tới lúc dừng; có thể tốn thêm phút phiên âm`],
+            ['Địa chỉ của tab họp đang mở (chỉ nguồn và đường dẫn, đã bỏ tham số truy vấn và đoạn neo)', 'Chỉ khi bạn bật "Ghi cuộc họp" và bấm "Bắt đầu ghi"', 'Gửi một lần tới máy chủ Ludy của bạn để kiểm tra xem cuộc gọi này có đang được ghi ở phiên khác hay không; máy chủ không lưu lại địa chỉ này'],
+            ['Tiêu đề trang web, địa chỉ http hoặc https, và đoạn chữ bạn chọn hoặc nội dung chính đã làm sạch (Markdown)', 'Chỉ khi bạn bật Cắt trang web (Web Clipper) trong mục Ghi chú và tự bấm nút cắt trang trong cửa sổ tiện ích', 'Lưu ghi chú riêng tư (hoặc điền sẵn bản nháp) vào không gian Ludy của bạn. Không bao giờ chạy nền và từ chối trang nội bộ của trình duyệt'],
           ],
         },
         {
           kind: 'p',
-          text: 'Tiện ích không đọc nội dung, địa chỉ, tiêu đề hay văn bản bạn chọn của bất kỳ trang web nào. Nó không thu lịch sử duyệt web, vị trí, thông tin tài chính hay sức khỏe, và không có công cụ phân tích, đo đạc hay mã định danh quảng cáo.',
+          text: 'Ngoài hai thao tác do bạn tự bấm nút nói trên (đọc đường dẫn tab họp khi bấm "Bắt đầu ghi" và cắt nội dung trang http hoặc https khi bạn bật Web Clipper rồi bấm nút cắt), tiện ích không chạy tập lệnh nền trên trang web và không đọc nội dung, địa chỉ, tiêu đề hay văn bản của bất kỳ trang nào khác bạn truy cập. Nó không thu lịch sử duyệt web, vị trí, thông tin tài chính hay sức khỏe, và không có công cụ phân tích, đo đạc hay mã định danh quảng cáo.',
         },
         { kind: 'p', text: 'Bước xác nhận đi trước mọi bản ghi:' },
         {
@@ -81,7 +83,7 @@ export const privacyVi: PrivacyCopy = {
           items: [
             'Tiện ích chỉ liên lạc với một địa chỉ: app.ludy.vn (Ludy Cloud), hoặc địa chỉ máy chủ Ludy riêng của công ty bạn mà bạn gõ lúc cài đặt. Với máy chủ riêng, trình duyệt hỏi quyền cho đúng địa chỉ đó. Tiện ích không liên lạc địa chỉ nào khác và chỉ nhận địa chỉ https (hoặc localhost).',
             'Bản ghi chưa tải lên nằm trên máy bạn, trong bộ nhớ riêng của tiện ích, và bị xóa khi đã tải lên xong. Nếu tải lên lỗi, bản ghi còn đó cho đến khi bạn tải lại hoặc xóa khỏi máy.',
-            'Đăng nhập diễn ra ở trang đăng nhập của Ludy, mở trong cửa sổ trình duyệt. Tiện ích không bao giờ thấy mật khẩu hay phiên đăng nhập của ứng dụng.',
+            'Đăng nhập diễn ra ở trang đăng nhập của Ludy, mở trong một tab trình duyệt (quay về trang đích nội bộ của tiện ích với app.ludy.vn và localhost) hoặc cửa sổ đăng nhập dự phòng. Tiện ích không bao giờ thấy mật khẩu hay phiên đăng nhập của ứng dụng.',
             'Mã đăng nhập của tiện ích chỉ có hiệu lực cho một tổ chức, một thành viên và các tính năng bạn đã bật. Nó hết hạn sau 90 ngày, mất hiệu lực ngay khi bạn bị gỡ khỏi tổ chức, và mỗi lần dùng đều có dòng trong nhật ký kiểm toán.',
           ],
         },
@@ -90,10 +92,11 @@ export const privacyVi: PrivacyCopy = {
           kind: 'list',
           items: [
             'Lưu trữ (storage): giữ địa chỉ Ludy, mã đăng nhập và các tính năng bạn đã bật, và giữ bản ghi trên máy đến khi tải lên xong.',
-            'Đăng nhập (identity): mở trang đăng nhập Ludy để bạn đăng nhập và cho phép tiện ích.',
-            'Địa chỉ app.ludy.vn: gửi bản ghi và thông tin cuộc họp tới Ludy Cloud, và lấy danh sách tính năng.',
-            'Ghi tab (tabCapture) và tài liệu ngoài màn hình (offscreen): chỉ được xin khi bạn bật "Ghi cuộc họp", và trả lại khi bạn tắt. Chúng ghi âm thanh của tab bạn đã bấm ghi, và không bao giờ ghi tab khác.',
-            'Một địa chỉ máy chủ riêng: chỉ với công ty tự chạy Ludy, và chỉ đúng một địa chỉ do bạn gõ. Tiện ích không bao giờ xin quyền cho một trang web bạn đang xem.',
+            'Đăng nhập (identity): mở trang đăng nhập Ludy trong cửa sổ dự phòng (máy chủ riêng hoặc khi không mở được tab thường) để bạn đăng nhập và cho phép tiện ích.',
+            'Địa chỉ app.ludy.vn: gửi bản ghi, thông tin cuộc họp và ghi chú hoặc việc bạn chủ động lưu tới Ludy Cloud, và lấy danh sách tính năng.',
+            'Ghi tab (tabCapture), tài liệu ngoài màn hình (offscreen) và tab đang mở (activeTab) cho Ghi cuộc họp: chỉ được xin khi bạn bật "Ghi cuộc họp", và trả lại khi bạn tắt (chỉ giữ activeTab nếu bạn vẫn bật Web Clipper). Chúng chỉ ghi âm thanh của tab bạn đã bấm ghi và đọc đường dẫn tab họp ngay lúc bấm để tránh ghi trùng, không bao giờ ghi tab khác.',
+            'Tab đang mở (activeTab) và chạy tập lệnh theo thao tác bấm (scripting) cho Cắt trang web: quyền tùy chọn chỉ được xin khi bạn bật Web Clipper trong mục Ghi chú và trả lại khi bạn tắt. Tập lệnh chỉ chạy một lần khi bạn bấm nút cắt trong cửa sổ tiện ích trên trang http hoặc https đang mở để lấy tiêu đề, đường dẫn và nội dung cần lưu, không bao giờ chạy nền.',
+            'Một địa chỉ máy chủ riêng: chỉ với công ty tự chạy Ludy, và chỉ đúng một địa chỉ do bạn gõ để kết nối API tới máy chủ đó, không bao giờ xin quyền cho trang web bạn đang xem.',
           ],
         },
         { kind: 'p', text: 'Tiện ích không dùng mã tải từ xa: toàn bộ mã nằm trong gói cài đặt.' },
