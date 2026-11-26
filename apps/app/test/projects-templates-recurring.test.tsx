@@ -96,7 +96,7 @@ vi.mock('@tanstack/react-router', async (importOriginal) => {
 });
 
 vi.mock('@ludy/ui/components/dialog', async () => {
-  const { cloneElement, createContext, createElement, isValidElement, useContext, useRef, useState } = await import('react');
+  const { cloneElement, createContext, createElement, isValidElement, useContext, useEffect, useRef, useState } = await import('react');
   const DialogCtx = createContext<{
     open: boolean;
     setOpen: (next: boolean) => void;
@@ -121,6 +121,18 @@ vi.mock('@ludy/ui/components/dialog', async () => {
       const [internalOpen, setInternalOpen] = useState(false);
       const [closing, setClosing] = useState(false);
       const finalFocusRef = useRef<unknown>(undefined);
+      const mountedRef = useRef(true);
+      const pendingCompleteRef = useRef<(() => void) | null>(null);
+      useEffect(() => {
+        mountedRef.current = true;
+        return () => {
+          mountedRef.current = false;
+          if (pendingCompleteRef.current && dialogMockState.pendingComplete === pendingCompleteRef.current) {
+            dialogMockState.pendingComplete = null;
+          }
+          pendingCompleteRef.current = null;
+        };
+      }, []);
       const isOpen = open === undefined ? internalOpen : Boolean(open);
       const runFinalFocus = () => {
         const ff = finalFocusRef.current;
@@ -136,13 +148,21 @@ vi.mock('@ludy/ui/components/dialog', async () => {
         if (!next && dialogMockState.deferClose) {
           setClosing(true);
           onOpenChange?.(false);
-          dialogMockState.pendingComplete = () => {
-            dialogMockState.pendingComplete = null;
+          const complete = () => {
+            if (dialogMockState.pendingComplete === complete) {
+              dialogMockState.pendingComplete = null;
+            }
+            if (pendingCompleteRef.current === complete) {
+              pendingCompleteRef.current = null;
+            }
+            if (!mountedRef.current) return;
             setClosing(false);
             if (open === undefined) setInternalOpen(false);
             runFinalFocus();
             onOpenChangeComplete?.(false);
           };
+          pendingCompleteRef.current = complete;
+          dialogMockState.pendingComplete = complete;
           return;
         }
         if (open === undefined) setInternalOpen(next);
@@ -933,10 +953,8 @@ describe('ProjectTemplateDialog mounted DOM lifecycle (#4908, #5035)', () => {
       for (let i = 0; i < 6; i += 1) await Promise.resolve();
       await new Promise((resolve) => setTimeout(resolve, 20));
     });
-    await act(async () => {
-      dialogMockState.pendingComplete?.();
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    });
+    // Base UI cancels pending close completion when ConfirmDialog unmounts on fallback switch; focus must still recover via onSuccess.
+    expect(dialogMockState.pendingComplete).toBeNull();
 
     const fallbackRadio = container.querySelector('[data-testid="template-option-software-project"]');
     expect(fallbackRadio?.getAttribute('aria-checked')).toBe('true');

@@ -26,7 +26,7 @@ import {
 import type { MemberRole } from '@ludy/db';
 import { DomainError, defineCommand, type CommandContext } from '@ludy/kernel-runtime';
 import { NOTE_ATTACHMENT_EXTRACT_QUEUED_EVENT } from './attachments.ts';
-import { lockNotebookReorder } from './locks.ts';
+import { lockNotebookReorder, lockNotebooksSharedInOrder } from './locks.ts';
 import { resolveNotebookForNote } from './notes.ts';
 import { detailsOf, due, lockTodoListOrder, lockTodoSortOrder, lockTodosInOrder, ownKeys, parseSections, remindAt } from './todos.ts';
 
@@ -115,13 +115,21 @@ export const noteImportEnex = defineCommand({
         }
       };
 
+      // Follow global notebook DAG: notes.erase (S) -> notes.notebook.reorder -> notes.notebook:<id> (S, id ASC)
+      // before locking or creating notebooks, preventing concurrent notebook edits/deletes or erasures from racing reused file notebooks.
+      await lockNotebookReorder(ctx);
       await loadPrivateNotebooks();
+      const matchedExistingIds = [...new Set(
+        [...neededFileNotebookNames]
+          .map((key) => privateNotebookByName.get(key))
+          .filter((id): id is string => id !== undefined),
+      )].sort();
+      if (matchedExistingIds.length > 0) {
+        await lockNotebooksSharedInOrder(ctx, matchedExistingIds);
+        await loadPrivateNotebooks();
+      }
       const missingAnyFileNotebook = [...neededFileNotebookNames].some((key) => !privateNotebookByName.has(key));
       if (missingAnyFileNotebook) {
-        // Only hold the org-wide notebook reorder lock when at least one file notebook is missing and must be created.
-        await lockNotebookReorder(ctx);
-        await loadPrivateNotebooks();
-
         const existingAllCountRow = await ctx.trx
           .selectFrom('ludy_notes.notebook')
           .select(({ fn }) => fn.countAll<string>().as('n'))

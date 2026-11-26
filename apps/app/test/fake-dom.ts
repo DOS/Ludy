@@ -138,6 +138,10 @@ export class FakeDomNode {
       return;
     }
     for (const child of this.childNodes) {
+      const doc = globalThis.document as unknown as { activeElement?: unknown; body?: FakeDomNode } | undefined;
+      if (doc && doc.activeElement instanceof FakeDomNode && child.contains(doc.activeElement)) {
+        doc.activeElement = doc.body ?? null;
+      }
       if (child.parentNode === this) child.parentNode = null;
     }
     this.childNodes = [];
@@ -161,6 +165,10 @@ export class FakeDomNode {
   removeChild(child: FakeDomNode): FakeDomNode {
     const idx = this.childNodes.indexOf(child);
     if (idx >= 0) {
+      const doc = globalThis.document as unknown as { activeElement?: unknown; body?: FakeDomNode } | undefined;
+      if (doc && doc.activeElement instanceof FakeDomNode && child.contains(doc.activeElement)) {
+        doc.activeElement = doc.body ?? null;
+      }
       this.childNodes.splice(idx, 1);
       child.parentNode = null;
     }
@@ -293,6 +301,7 @@ export class FakeDomNode {
   reportValidity(): boolean {
     return true;
   }
+  setCustomValidity(_message: string): void {}
   contains(node: FakeDomNode | null): boolean {
     let cur = node;
     while (cur) {

@@ -35,6 +35,27 @@ const SYSTEM = { type: 'system' as const, component: 'notes' };
 const SECRET = 'test-only-jwt-secret-for-note-attachments-0123456789';
 const ISSUER = 'https://issuer.example.com';
 
+// Tracks started concurrent commands so early rejections are observed immediately during lock-wait polling and drained after gate ROLLBACK.
+function createConcurrencyTracker() {
+  const started: Array<Promise<unknown>> = [];
+  let earlyError: { error: unknown } | null = null;
+  return {
+    track<T>(promise: Promise<T>): Promise<T> {
+      void promise.catch((err) => {
+        if (!earlyError) earlyError = { error: err };
+      });
+      started.push(promise);
+      return promise;
+    },
+    throwIfFailed(): void {
+      if (earlyError) throw earlyError.error;
+    },
+    async drain(): Promise<void> {
+      await Promise.allSettled(started);
+    },
+  };
+}
+
 class MemoryStore implements BlobStore {
   readonly blobs = new Map<string, Uint8Array>();
   async put(key: string, bytes: Uint8Array) {
@@ -573,6 +594,7 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
     await lockClient.connect();
     let eraseOut!: PersonalDataErasure;
     let extraAtt!: NoteAttachment;
+    const tracker = createConcurrencyTracker();
     try {
       const pidRes = await lockClient.query<{ pid: number }>('SELECT pg_catalog.pg_backend_pid() AS pid');
       const lockPid = pidRes.rows[0]?.pid;
@@ -580,15 +602,18 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
       await lockClient.query('BEGIN');
       // Hold concurrentNote FOR UPDATE (like notes.link.add before insertRecordLink) so private_erase and attachment.create must wait on it.
       await lockClient.query('SELECT 1 FROM ludy_notes.note WHERE org_id = $1 AND id = $2 FOR UPDATE', [o.orgId, concurrentNote]);
-      const erasePromise = rt.execute<PersonalDataErasure>(
-        'kernel.personal_data.erase',
-        { value: email },
-        { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() },
+      const erasePromise = tracker.track(
+        rt.execute<PersonalDataErasure>(
+          'kernel.personal_data.erase',
+          { value: email },
+          { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() },
+        ),
       );
       let sawEraseLockWait = false;
       let erasePid: number | undefined;
       const deadline = Date.now() + 1500;
       while (!sawEraseLockWait && Date.now() < deadline) {
+        tracker.throwIfFailed();
         const waits = await rows<{ pid: number }>(
           `SELECT a.pid
              FROM pg_catalog.pg_stat_activity a
@@ -609,10 +634,11 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
       }
       expect(sawEraseLockWait).toBe(true);
       // Also launch notes.attachment.create against concurrentNote while lockClient holds it so erase and attachment.create genuinely contend upon release.
-      const attachPromise = attached(o, o.author, concurrentNote, pdf('extra'), 'bo-sung.pdf');
+      const attachPromise = tracker.track(attached(o, o.author, concurrentNote, pdf('extra'), 'bo-sung.pdf'));
       let sawAttachLockWait = false;
       const attachDeadline = Date.now() + 1000;
       while (!sawAttachLockWait && Date.now() < attachDeadline) {
+        tracker.throwIfFailed();
         const waits = await rows<{ n: number }>(
           `SELECT 1 AS n
              FROM pg_catalog.pg_stat_activity a
@@ -641,6 +667,7 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
       [eraseOut, extraAtt] = await Promise.all([erasePromise, attachPromise]);
     } finally {
       await lockClient.query('ROLLBACK').catch(() => undefined);
+      await tracker.drain();
       await lockClient.end().catch(() => undefined);
     }
 
@@ -675,6 +702,7 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
     );
     const nbLockClient = new pg.Client({ connectionString: adminUrl });
     await nbLockClient.connect();
+    const nbTracker = createConcurrencyTracker();
     try {
       const pidRes = await nbLockClient.query<{ pid: number }>('SELECT pg_catalog.pg_backend_pid() AS pid');
       const nbLockPid = pidRes.rows[0]?.pid;
@@ -684,14 +712,17 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
         'SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1, 0))',
         [`notes.notebook:${o.orgId.toLowerCase()}:${privNb.notebookId.toLowerCase()}`],
       );
-      const upperNotePromise = rt.execute<NoteWritten>(
-        'notes.note.create',
-        { title: 'Ghi chú UUID hoa', body: 'Nội dung', visibility: 'private', notebookId: privNb.notebookId.toUpperCase() },
-        { actor: asUser(o.author.id), orgId: o.orgId },
+      const upperNotePromise = nbTracker.track(
+        rt.execute<NoteWritten>(
+          'notes.note.create',
+          { title: 'Ghi chú UUID hoa', body: 'Nội dung', visibility: 'private', notebookId: privNb.notebookId.toUpperCase() },
+          { actor: asUser(o.author.id), orgId: o.orgId },
+        ),
       );
       let sawNbLockWait = false;
       const nbDeadline = Date.now() + 1500;
       while (!sawNbLockWait && Date.now() < nbDeadline) {
+        nbTracker.throwIfFailed();
         const waits = await rows<{ n: number }>(
           `SELECT 1 AS n
              FROM pg_catalog.pg_stat_activity a
@@ -712,6 +743,7 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
       expect(upperCreated.noteId).toBeTruthy();
     } finally {
       await nbLockClient.query('ROLLBACK').catch(() => undefined);
+      await nbTracker.drain();
       await nbLockClient.end().catch(() => undefined);
     }
   });
@@ -765,9 +797,14 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
       await c.query('COMMIT');
     });
 
-    const waitBlockedOnPid = async (blockingPid: number, queryPattern: string): Promise<number> => {
+    const waitBlockedOnPid = async (
+      blockingPid: number,
+      queryPattern: string,
+      tracker: ReturnType<typeof createConcurrencyTracker>,
+    ): Promise<number> => {
       const deadline = Date.now() + 5000;
       while (Date.now() < deadline) {
+        tracker.throwIfFailed();
         const waits = await rows<{ pid: number }>(
           `SELECT a.pid
              FROM pg_catalog.pg_stat_activity a
@@ -788,56 +825,68 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
     // Interleaving 1: erase holds shared notebook row lock + notes.erase barrier and waits on createdA row lock while noteUpdate tries to move createdA -> sharedNbA.
     const gateA = new pg.Client({ connectionString: adminUrl });
     await gateA.connect();
+    const trackerA = createConcurrencyTracker();
     try {
       const gateAPid = (await gateA.query<{ pid: number }>('SELECT pg_catalog.pg_backend_pid() AS pid')).rows[0]!.pid;
       await gateA.query('BEGIN');
       await gateA.query('SELECT 1 FROM ludy_notes.note WHERE org_id = $1 AND id = $2 FOR UPDATE', [o.orgId, createdA.noteId]);
-      const erasePromise = rt.execute<PersonalDataErasure>(
-        'kernel.personal_data.erase',
-        { value: emailA },
-        { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() },
+      const erasePromise = trackerA.track(
+        rt.execute<PersonalDataErasure>(
+          'kernel.personal_data.erase',
+          { value: emailA },
+          { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() },
+        ),
       );
-      const erasePid = await waitBlockedOnPid(gateAPid, '%private_erase%');
-      const movePromise = rt.execute<NoteWritten>(
-        'notes.note.update',
-        { noteId: createdA.noteId, revision: createdA.revision, notebookId: sharedNbA.notebookId },
-        { actor: asUser(o.author.id), orgId: o.orgId },
+      const erasePid = await waitBlockedOnPid(gateAPid, '%private_erase%', trackerA);
+      const movePromise = trackerA.track(
+        rt.execute<NoteWritten>(
+          'notes.note.update',
+          { noteId: createdA.noteId, revision: createdA.revision, notebookId: sharedNbA.notebookId },
+          { actor: asUser(o.author.id), orgId: o.orgId },
+        ),
       );
-      await waitBlockedOnPid(erasePid, '%pg_advisory_xact_lock_shared%');
+      await waitBlockedOnPid(erasePid, '%pg_advisory_xact_lock_shared%', trackerA);
       await gateA.query('COMMIT');
       const [eraseRes, moveRes] = await Promise.all([erasePromise, movePromise]);
       expect(eraseRes.erased).toContainEqual({ column: 'ludy_notes.notebook.name', rows: 1 });
       expect(moveRes.noteId).toBe(createdA.noteId);
     } finally {
       await gateA.query('ROLLBACK').catch(() => undefined);
+      await trackerA.drain();
       await gateA.end().catch(() => undefined);
     }
 
     // Interleaving 2: noteUpdate holds shared notes.erase barrier and createdB FOR UPDATE while erase(emailB) arrives.
     const gateB = new pg.Client({ connectionString: adminUrl });
     await gateB.connect();
+    const trackerB = createConcurrencyTracker();
     try {
       const gateBPid = (await gateB.query<{ pid: number }>('SELECT pg_catalog.pg_backend_pid() AS pid')).rows[0]!.pid;
       await gateB.query('BEGIN');
       await gateB.query('SELECT 1 FROM ludy_notes.note WHERE org_id = $1 AND id = $2 FOR UPDATE', [o.orgId, createdB.noteId]);
-      const movePromise = rt.execute<NoteWritten>(
-        'notes.note.update',
-        { noteId: createdB.noteId, revision: createdB.revision, notebookId: sharedNbB.notebookId },
-        { actor: asUser(o.author.id), orgId: o.orgId },
+      const movePromise = trackerB.track(
+        rt.execute<NoteWritten>(
+          'notes.note.update',
+          { noteId: createdB.noteId, revision: createdB.revision, notebookId: sharedNbB.notebookId },
+          { actor: asUser(o.author.id), orgId: o.orgId },
+        ),
       );
-      const movePid = await waitBlockedOnPid(gateBPid, '%from "ludy_notes"."note"%for update%');
-      const erasePromise = rt.execute<PersonalDataErasure>(
-        'kernel.personal_data.erase',
-        { value: emailB },
-        { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() },
+      const movePid = await waitBlockedOnPid(gateBPid, '%from "ludy_notes"."note"%for update%', trackerB);
+      const erasePromise = trackerB.track(
+        rt.execute<PersonalDataErasure>(
+          'kernel.personal_data.erase',
+          { value: emailB },
+          { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() },
+        ),
       );
-      await waitBlockedOnPid(movePid, '%pg_advisory_xact_lock%');
+      await waitBlockedOnPid(movePid, '%pg_advisory_xact_lock%', trackerB);
       await gateB.query('COMMIT');
       const [moveRes, eraseRes] = await Promise.all([movePromise, erasePromise]);
       expect(moveRes.noteId).toBe(createdB.noteId);
       expect(eraseRes.erased).toContainEqual({ column: 'ludy_notes.notebook.name', rows: 1 });
     } finally {
       await gateB.query('ROLLBACK').catch(() => undefined);
+      await trackerB.drain();
       await gateB.end().catch(() => undefined);
     }
 
@@ -884,9 +933,14 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
     };
     const beforeTs = await noteUpdatedAt();
 
-    const waitBlockedOnPid = async (blockingPid: number, queryPattern: string): Promise<number> => {
+    const waitBlockedOnPid = async (
+      blockingPid: number,
+      queryPattern: string,
+      tracker: ReturnType<typeof createConcurrencyTracker>,
+    ): Promise<number> => {
       const deadline = Date.now() + 5000;
       while (Date.now() < deadline) {
+        tracker.throwIfFailed();
         const waits = await rows<{ pid: number }>(
           `SELECT a.pid
              FROM pg_catalog.pg_stat_activity a
@@ -906,29 +960,35 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
 
     const attGate = new pg.Client({ connectionString: adminUrl });
     await attGate.connect();
+    const attTracker = createConcurrencyTracker();
     try {
       const attGatePid = (await attGate.query<{ pid: number }>('SELECT pg_catalog.pg_backend_pid() AS pid')).rows[0]!.pid;
       await attGate.query('BEGIN');
       // Hold sharedAtt1 row lock so personalDataErase acquires sharedNote FOR NO KEY UPDATE first and waits at attachment DELETE.
       await attGate.query('SELECT 1 FROM ludy_notes.attachment WHERE org_id = $1 AND id = $2 FOR UPDATE', [o.orgId, sharedAtt1.id]);
-      const erasePromise = rt.execute<PersonalDataErasure>(
-        'kernel.personal_data.erase',
-        { value: sharedEmail },
-        { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() },
+      const erasePromise = attTracker.track(
+        rt.execute<PersonalDataErasure>(
+          'kernel.personal_data.erase',
+          { value: sharedEmail },
+          { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() },
+        ),
       );
-      const erasePid = await waitBlockedOnPid(attGatePid, '%delete from ludy_notes.attachment%');
+      const erasePid = await waitBlockedOnPid(attGatePid, '%delete from ludy_notes.attachment%', attTracker);
       // Concurrent noteAttachmentDelete on sharedAtt2 blocks cleanly on erasePid's parent sharedNote lock (note -> attachment order).
-      const deletePromise = rt.execute(
-        'notes.attachment.delete',
-        { attachmentId: sharedAtt2.id },
-        { actor: asUser(o.author.id), orgId: o.orgId },
+      const deletePromise = attTracker.track(
+        rt.execute(
+          'notes.attachment.delete',
+          { attachmentId: sharedAtt2.id },
+          { actor: asUser(o.author.id), orgId: o.orgId },
+        ),
       );
-      await waitBlockedOnPid(erasePid, '%from "ludy_notes"."note"%for update%');
+      await waitBlockedOnPid(erasePid, '%from "ludy_notes"."note"%for update%', attTracker);
       await attGate.query('COMMIT');
       const [eraseRes] = await Promise.all([erasePromise, deletePromise]);
       expect(eraseRes.erased).toContainEqual({ column: 'ludy_notes.attachment.extracted_text', rows: 1 });
     } finally {
       await attGate.query('ROLLBACK').catch(() => undefined);
+      await attTracker.drain();
       await attGate.end().catch(() => undefined);
     }
 

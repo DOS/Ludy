@@ -726,7 +726,7 @@ export const notebookUpdate = defineCommand({
           pinned: nextPinned,
           sort_key: nextSortKey,
           revision: before.revision + 1,
-          updated_at: ctx.now,
+          updated_at: sql<Date>`GREATEST(updated_at, ${ctx.now})`,
         })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', before.id)

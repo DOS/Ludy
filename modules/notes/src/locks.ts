@@ -18,6 +18,13 @@ export async function lockNotebook(ctx: Pick<QueryContext, 'trx' | 'orgId'>, not
   }
 }
 
+export async function lockNotebooksSharedInOrder(ctx: Pick<QueryContext, 'trx' | 'orgId'>, notebookIds: readonly string[]): Promise<void> {
+  if (notebookIds.length === 0) return;
+  const sorted = [...new Set(notebookIds.map((id) => id.toLowerCase()))].sort();
+  const orgPrefix = `notes.notebook:${ctx.orgId.toLowerCase()}:`;
+  await sql`SELECT pg_catalog.pg_advisory_xact_lock_shared(pg_catalog.hashtextextended(${orgPrefix} || id, 0)) FROM unnest(${sorted}::text[]) AS id ORDER BY id`.execute(ctx.trx);
+}
+
 export async function lockNotebookReorder(ctx: Pick<QueryContext, 'trx' | 'orgId'>): Promise<void> {
   const eraseKey = `notes.erase:${ctx.orgId.toLowerCase()}`;
   const lockKey = `notes.notebook.reorder:${ctx.orgId.toLowerCase()}`;

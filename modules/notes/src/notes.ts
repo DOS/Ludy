@@ -415,7 +415,7 @@ export const noteUpdate = defineCommand({
           ...(input.notebookId !== undefined ? { notebook_id: nextNotebookId } : {}),
           ...(clearTaint ? { tainted: false } : {}),
           revision: before.revision + 1,
-          updated_at: ctx.now,
+          updated_at: sql<Date>`GREATEST(updated_at, ${ctx.now})`,
         })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.noteId)
@@ -538,7 +538,7 @@ export const noteSetVisibility = defineCommand({
     try {
       row = await ctx.trx
         .updateTable('ludy_notes.note')
-        .set({ visibility: input.visibility, revision: before.revision + 1, updated_at: ctx.now })
+        .set({ visibility: input.visibility, revision: before.revision + 1, updated_at: sql<Date>`GREATEST(updated_at, ${ctx.now})` })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.noteId)
         .returning(['id', 'revision'])
@@ -877,7 +877,7 @@ export const noteRestoreVersion = defineCommand({
         tags: version.tags,
         tainted: nextTainted,
         revision: before.revision + 1,
-        updated_at: ctx.now,
+        updated_at: sql<Date>`GREATEST(updated_at, ${ctx.now})`,
       })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.noteId)

@@ -804,14 +804,18 @@ export const todoComplete = defineCommand({
     if (!stopSeries) {
       const peek = await ctx.trx
         .selectFrom('ludy_notes.todo')
-        .select(['list_id', 'recurrence', 'series_id', 'created_at'])
+        .select(['id', 'revision', 'status', 'deleted_at', 'list_id', 'recurrence', 'series_id', 'created_at'])
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', todoId)
         .executeTakeFirst();
-      if (peek && peek.recurrence !== null) {
+      if (!peek) throw notFound();
+      assertNotInTrash(peek);
+      if (peek.status === 'done') return written(peek);
+      if (peek.status !== 'open') throw new DomainError('TODO_NOT_CHANGEABLE', 409, 'Việc này đã được giao hoặc đã hủy');
+      if (peek.recurrence !== null) {
         // Read the series siblings once under lockTodoSeries and reuse them both to skip ownKeys when a newer
-        // sibling already exists and to compute the next occurrence date/time if spawning. Precompute whenever a
-        // recurring row might spawn so concurrent status/trash flips between peek and load cannot skip precomputedSortKey.
+        // sibling already exists and to compute the next occurrence date/time if spawning. Precompute only after
+        // verifying the locked series row is actually open and non-trashed so no-op retries never rebalance sort keys.
         const peekSeriesId = peek.series_id ?? todoId;
         const peekCreatedAt = new Date(peek.created_at).getTime();
         preSiblings = await ctx.trx

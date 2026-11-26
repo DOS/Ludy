@@ -268,7 +268,7 @@ export const noteAcceptSummary = defineCommand({
             }
           : {}),
         revision: before.revision + 1,
-        updated_at: ctx.now,
+        updated_at: sql<Date>`GREATEST(updated_at, ${ctx.now})`,
       })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.noteId)
