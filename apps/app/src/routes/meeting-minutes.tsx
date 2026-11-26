@@ -6,14 +6,14 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
 import { useState, type ReactNode } from 'react';
 import { useTranslations } from 'use-intl';
-import type { MeetingSummaryTemplate } from '@ludy/kernel-contract';
+import { MEETING_PLACE_MAX, type MeetingSummaryTemplate } from '@ludy/kernel-contract';
 import { Button } from '@ludy/ui/components/button';
 import { Input } from '@ludy/ui/components/input';
 import { Label } from '@ludy/ui/components/label';
 import { MinutesDocxButton } from '../components/meeting-minutes-docx.tsx';
 import { canCreateMeetingMinutesEnvelope, MeetingMinutesSignHandoff } from '../components/meeting-minutes-sign-handoff.tsx';
 import { memberLabel } from '../components/meeting-results.tsx';
-import { ErrorText, ListSkeleton } from '../components/ui.tsx';
+import { FieldError, ListSkeleton, fieldControl, fieldHintId } from '../components/ui.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { buildMinutes, type MinutesModel } from '../lib/minutes.ts';
 import { usePrintInLight } from '../lib/print.ts';
@@ -186,6 +186,9 @@ export function MeetingMinutesPage() {
   const members = org.data.members;
   const savedPlace = meeting.data.place ?? '';
   const place = typed ?? savedPlace;
+  // The limit is counted in code points, as the server and the database count it (#5043): an emoji is one, so the field's maxLength (UTF-16 units) is not used.
+  const placeTooLong = [...place.trim()].length > MEETING_PLACE_MAX;
+  const placeError = savePlace.error ? errorMessage(savePlace.error) : placeTooLong ? t('minutes.placeTooLong', { max: MEETING_PLACE_MAX }) : null;
   const model = buildMinutes(meeting.data, results.data, (userId) => memberLabel(members, userId, t('results.unknownMember')));
   return frame(
     <div className="space-y-4">
@@ -197,16 +200,18 @@ export function MeetingMinutesPage() {
         <div className="flex flex-wrap items-end gap-3">
           <div className="space-y-1">
             <Label htmlFor="minutes-place">{t('minutes.placeLabel')}</Label>
-            <Input id="minutes-place" value={place} maxLength={200} onChange={(e) => setTyped(e.target.value)} className="w-72" />
-            <p className="text-xs text-muted-foreground">{t(meeting.data.isRecorder ? 'minutes.placeHintRecorder' : 'minutes.placeHint')}</p>
-            {savePlace.error && <ErrorText>{errorMessage(savePlace.error)}</ErrorText>}
+            <Input {...fieldControl('minutes-place', { hint: true, error: placeError !== null })} value={place} onChange={(e) => setTyped(e.target.value)} className="w-72" />
+            <p id={fieldHintId('minutes-place')} className="text-xs text-muted-foreground">
+              {t(meeting.data.isRecorder ? 'minutes.placeHintRecorder' : 'minutes.placeHint')}
+            </p>
+            <FieldError id="minutes-place">{placeError}</FieldError>
           </div>
           {meeting.data.isRecorder && place.trim() !== savedPlace && (
-            <Button variant="outline" loading={savePlace.isPending} onClick={() => savePlace.mutate(place)}>
+            <Button type="button" variant="outline" loading={savePlace.isPending} disabled={placeTooLong} onClick={() => savePlace.mutate(place)}>
               {t('minutes.placeSave')}
             </Button>
           )}
-          <Button onClick={() => window.print()}>{t('minutes.print')}</Button>
+          <Button type="button" onClick={() => window.print()}>{t('minutes.print')}</Button>
           {/* The published minutes as a Word file (#4774): built on the server from the published rows only. */}
           {model.published && <MinutesDocxButton meetingId={id} place={place} />}
           {model.published && (
