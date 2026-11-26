@@ -83,7 +83,7 @@ describe('the landing page', () => {
     const calls: Array<[string, string, string]> = [];
     const exchange = async (address: string, code: string, verifier: string) => {
       calls.push([address, code, verifier]);
-      return { token: 'crx_new', orgId: 'org1', scopes: ['meetings'], expiresAt: '2027-01-01T00:00:00.000Z' };
+      return { token: 'crx_new', tokenId: 'tok_new', orgId: 'org1', scopes: ['meetings'], expiresAt: '2027-01-01T00:00:00.000Z' };
     };
     return { session, local, calls, exchange };
   };
@@ -94,7 +94,7 @@ describe('the landing page', () => {
     expect(await run(s, answer(`code=${CODE}&org=cong-ty&state=st1`))).toBe('connected');
     expect(s.calls).toEqual([['https://app.ludy.vn', CODE, 'v'.repeat(43)]]);
     const state = await loadState(s.local);
-    expect(state.accounts.org1).toMatchObject({ orgSlug: 'cong-ty', token: 'crx_new' });
+    expect(state.accounts.org1).toMatchObject({ orgSlug: 'cong-ty', token: 'crx_new', tokenId: 'tok_new' });
     expect(state.activeOrg).toBe('org1');
     expect(s.session.data.has(PENDING_KEY)).toBe(false);
     // The same address again (a reload, a second tab) finds nothing and trades nothing.

@@ -144,7 +144,7 @@ export const mcpRoadmapIdeas = defineQuery({
         ON p.org_id = b.org_id
        AND p.id = b.project_id
       WHERE i.org_id = ${ctx.orgId}::uuid
-        AND (b.project_id IS NULL OR COALESCE(pg_catalog.to_jsonb(p)->>'visibility', 'public') <> 'private')
+        AND (b.project_id IS NULL OR p.visibility = 'org')
         ${input.boardId ? sql`AND i.board_id = ${input.boardId}::uuid` : sql``}
         ${input.stage ? sql`AND i.stage = ${input.stage}` : sql``}
         ${input.moderationStatus ? sql`AND i.moderation_status = ${input.moderationStatus}` : sql``}
@@ -208,7 +208,7 @@ export const mcpRoadmapDemandSummary = defineQuery({
         ON p.org_id = b.org_id
        AND p.id = b.project_id
       WHERE b.org_id = ${ctx.orgId}::uuid
-        AND (b.project_id IS NULL OR COALESCE(pg_catalog.to_jsonb(p)->>'visibility', 'public') <> 'private')
+        AND (b.project_id IS NULL OR p.visibility = 'org')
         ${input.boardId ? sql`AND b.id = ${input.boardId}::uuid` : sql``}
       ORDER BY b.created_at ASC, b.id ASC`.execute(ctx.trx);
 
@@ -247,7 +247,7 @@ export const mcpRoadmapDemandSummary = defineQuery({
         ON p.org_id = b.org_id
        AND p.id = b.project_id
       WHERE i.org_id = ${ctx.orgId}::uuid
-        AND (b.project_id IS NULL OR COALESCE(pg_catalog.to_jsonb(p)->>'visibility', 'public') <> 'private')
+        AND (b.project_id IS NULL OR p.visibility = 'org')
         ${input.boardId ? sql`AND i.board_id = ${input.boardId}::uuid` : sql``}`.execute(ctx.trx);
 
     const { rows: topRows } = await sql<{
@@ -270,7 +270,7 @@ export const mcpRoadmapDemandSummary = defineQuery({
        AND p.id = b.project_id
       WHERE i.org_id = ${ctx.orgId}::uuid
         AND i.moderation_status = 'published'
-        AND (b.project_id IS NULL OR COALESCE(pg_catalog.to_jsonb(p)->>'visibility', 'public') <> 'private')
+        AND (b.project_id IS NULL OR p.visibility = 'org')
         ${input.boardId ? sql`AND i.board_id = ${input.boardId}::uuid` : sql``}
       ORDER BY i.vote_count DESC, i.created_at DESC, i.id DESC
       LIMIT ${input.topLimit}`.execute(ctx.trx);
@@ -291,7 +291,7 @@ export const mcpRoadmapDemandSummary = defineQuery({
        AND p.id = b.project_id
       WHERE a.org_id = ${ctx.orgId}::uuid
         AND a.status = 'published'
-        AND (b.project_id IS NULL OR COALESCE(pg_catalog.to_jsonb(p)->>'visibility', 'public') <> 'private')
+        AND (b.project_id IS NULL OR p.visibility = 'org')
         ${input.boardId ? sql`AND a.board_id = ${input.boardId}::uuid` : sql``}
       ORDER BY a.published_at DESC, a.id DESC
       LIMIT 10`.execute(ctx.trx);
@@ -349,7 +349,7 @@ export const mcpTriageSummary = defineQuery({
 
     if (input.projectId !== undefined) {
       const project = await loadProject(ctx.trx, ctx.orgId, input.projectId, false);
-      if (project.visibility === 'private' || project.status === 'archived') {
+      if (project.visibility !== 'org' || project.status === 'archived') {
         throw new DomainError('PROJECT_NOT_FOUND', 404, 'Không tìm thấy dự án này');
       }
     }
@@ -371,7 +371,7 @@ export const mcpTriageSummary = defineQuery({
       .where('pti.org_id', '=', ctx.orgId)
       .where('p.is_template', '=', false)
       .where('p.status', '<>', 'archived')
-      .where('p.visibility', '<>', 'private')
+      .where('p.visibility', '=', 'org')
       .where('pti.source_type', '=', 'meetings.meeting')
       .where('pti.source_id', 'is not', null);
     if (input.projectId !== undefined) {
@@ -436,7 +436,7 @@ export const mcpTriageSummary = defineQuery({
      WHERE pti.org_id = ${ctx.orgId}::uuid
        AND p.is_template = false
        AND p.status <> 'archived'
-       AND p.visibility <> 'private'
+       AND p.visibility = 'org'
        AND ${meetingVisibilityGuard}
        ${input.projectId !== undefined ? sql`AND p.id = ${input.projectId}::uuid` : sql``}`.execute(ctx.trx);
 
@@ -463,7 +463,7 @@ export const mcpTriageSummary = defineQuery({
       .where('pti.org_id', '=', ctx.orgId)
       .where('p.is_template', '=', false)
       .where('p.status', '<>', 'archived')
-      .where('p.visibility', '<>', 'private')
+      .where('p.visibility', '=', 'org')
       .where(meetingVisibilityGuard)
       .$if(input.projectId !== undefined, (qb) => qb.where('pti.project_id', '=', input.projectId!))
       .$if(input.status !== undefined, (qb) => qb.where('pti.status', '=', input.status!))

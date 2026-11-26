@@ -496,10 +496,24 @@ test('the consent step shows the recording notice: the text, the other language,
 test('a recording that ended by itself shows when and why in the popup and the badge, until the member says they saw it (A1, #3159)', async () => {
   await seed({ meetings: true });
   const worker = context.serviceWorkers()[0]!;
-  await worker.evaluate(async () => {
-    await chrome.storage.local.set({ 'ludy-extension-recording-lost': { meetingId: 'm1', title: 'Họp thử', reason: 'tab_closed', at: Date.now(), uploaded: true } });
-    await chrome.action.setBadgeText({ text: '!' });
-  });
+  await worker.evaluate(
+    async ([origin]) => {
+      await chrome.storage.local.set({
+        'ludy-extension-recording-lost': {
+          meetingId: 'm1',
+          title: 'Họp thử',
+          reason: 'tab_closed',
+          at: Date.now(),
+          uploaded: true,
+          orgId: 'org1',
+          address: origin,
+          tokenId: 't1',
+        },
+      });
+      await chrome.action.setBadgeText({ text: '!' });
+    },
+    [fake.origin] as const,
+  );
   const page = await popupGranted();
   const lost = page.locator('#lost');
   await expect(lost).toContainText('Ghi âm đã dừng lúc');

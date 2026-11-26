@@ -95,10 +95,11 @@ export async function startCapture(params: CaptureParams, deps: CaptureDeps = br
   let micMissing = false;
   // A1 (#3159): a recording that ends without the member's click is reported once, with a code.
   let stopRequested = false;
+  let stopInFlight: Promise<{ uploaded: boolean; meetingId: string; message?: string }> | null = null;
   let lost: RecordingStopReason | null = null;
   const lostListeners: Array<(reason: RecordingStopReason) => void> = [];
   const fireLost = (reason: RecordingStopReason) => {
-    if (stopRequested || lost !== null) return;
+    if (stopRequested || stopInFlight !== null || lost !== null) return;
     lost = reason;
     for (const listener of lostListeners) listener(reason);
   };
@@ -206,24 +207,65 @@ export async function startCapture(params: CaptureParams, deps: CaptureDeps = br
         else lostListeners.push(listener);
       },
       async stop(stopReason) {
-        stopRequested = true;
-        // The capture is over now, not 90 seconds from now, so a new recording of the call is not refused by this one. Sent and not waited for: a stalled network must never hold up the stop or the upload.
-        clearInterval(heartbeat);
-        void client.captureHeartbeat({ meetingId, end: true }).catch(() => undefined);
-        // How it ended is saved with the recording, so even a retry from the popup later carries the right code.
-        await writer.markStopped(stopReason ?? 'user');
-        clock.pause(deps.now());
-        // The live recorder stops first and its last piece is taken before the devices are released.
-        await live?.halt();
-        if (recorder.state !== 'inactive') recorder.stop();
-        await stopped;
-        for (const track of stream.getTracks()) track.stop();
-        for (const cleanup of cleanups) cleanup();
-        // The last chunk fires before `stop`; the writer queue is drained by touching it.
-        await writer.touch(clock.elapsedMs(deps.now()));
-        // The live pieces are refused once the final recording is stored, so they finish (or give up) first.
-        const uploaded = await uploadAfterLive(live, () => uploadSaved(deps, client, params.uploads, writer.meta()));
-        return { uploaded: uploaded.ok, meetingId, ...(uploaded.ok ? {} : { message: uploaded.message }) };
+        if (stopInFlight) return stopInFlight;
+        const task = (async () => {
+          // Persist stopReason before releasing devices if still active so pre-stop IDB errors stay retryable without losing heartbeats or device guards (#4725).
+          if (recorder.state !== 'inactive') {
+            await writer.markStopped(stopReason ?? 'user');
+          } else {
+            await writer.markStopped(stopReason ?? 'user').catch(() => undefined);
+          }
+          stopRequested = true;
+          try {
+            // The capture is over now, not 90 seconds from now, so a new recording of the call is not refused by this one. Sent and not waited for: a stalled network must never hold up the stop or the upload.
+            clearInterval(heartbeat);
+            void client.captureHeartbeat({ meetingId, end: true }).catch(() => undefined);
+            clock.pause(deps.now());
+            // The live recorder stops first and its last piece is taken before the devices are released; always release tracks even if halt/stopped rejects (#4725).
+            try {
+              await live?.halt().catch(() => undefined);
+              if (recorder.state !== 'inactive') {
+                try {
+                  recorder.stop();
+                } catch {
+                  // Already stopped or inactive.
+                }
+              }
+              await stopped.catch(() => undefined);
+            } finally {
+              for (const track of stream.getTracks()) {
+                try {
+                  track.stop();
+                } catch {
+                  // Ignore track teardown errors after stopping.
+                }
+              }
+              for (const cleanup of cleanups) {
+                try {
+                  cleanup();
+                } catch {
+                  // Ignore device cleanup errors after stopping.
+                }
+              }
+            }
+            // Once devices have stopped, stop() must never throw and strand offscreen `current` on bookkeeping errors (#4725).
+            await writer.touch(clock.elapsedMs(deps.now())).catch(() => undefined);
+            // The live pieces are refused once the final recording is stored, so they finish (or give up) first.
+            const uploaded = await uploadAfterLive(live, () => uploadSaved(deps, client, params.uploads, writer.meta())).catch(
+              (err) => ({ ok: false as const, message: err instanceof Error ? err.message : 'Không tải lên được' }),
+            );
+            return { uploaded: uploaded.ok, meetingId, ...(uploaded.ok ? {} : { message: uploaded.message }) };
+          } catch (err) {
+            return { uploaded: false, meetingId, message: err instanceof Error ? err.message : 'Không tải lên được' };
+          }
+        })();
+        stopInFlight = task;
+        try {
+          return await task;
+        } catch (error) {
+          stopInFlight = null;
+          throw error;
+        }
       },
     },
   };

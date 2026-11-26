@@ -113,9 +113,9 @@ async function assertPublicProjectAllowed(
     name: string;
     status: string;
     is_template: boolean;
-    visibility: string | null;
+    visibility: string;
   }>`
-    SELECT p.id, p.name, p.status, p.is_template, pg_catalog.to_jsonb(p)->>'visibility' AS visibility
+    SELECT p.id, p.name, p.status, p.is_template, p.visibility AS visibility
       FROM ludy_projects.project p
      WHERE p.org_id = ${orgId}::uuid
        AND p.id = ${projectId}::uuid
@@ -127,7 +127,7 @@ async function assertPublicProjectAllowed(
   if (project.is_template) {
     throw new DomainError('ROADMAP_TEMPLATE_PROJECT_FORBIDDEN', 422, 'Không thể gắn mẫu dự án vào bảng lộ trình');
   }
-  if (project.visibility === 'private') {
+  if (project.visibility !== 'org') {
     throw new DomainError('ROADMAP_PRIVATE_PROJECT_FORBIDDEN', 422, 'Không thể gắn dự án riêng tư vào bảng lộ trình công khai');
   }
   return { id: project.id, name: project.name, status: project.status as ProjectRow['status'] };
@@ -341,7 +341,7 @@ export const roadmapBoards = defineQuery({
        WHERE p.org_id = ${ctx.orgId}::uuid
          AND p.is_template = false
          AND p.status <> 'archived'
-         AND COALESCE(pg_catalog.to_jsonb(p)->>'visibility', 'public') <> 'private'
+         AND p.visibility = 'org'
        ORDER BY p.updated_at DESC, p.id DESC
        LIMIT 200`.execute(ctx.trx);
 
@@ -1639,7 +1639,7 @@ export const roadmapShippedMailData = defineQuery({
         a.linked_item_ids,
         b.enabled AS board_enabled,
         b.project_id,
-        COALESCE(pg_catalog.to_jsonb(p)->>'visibility', 'public') AS project_visibility
+        p.visibility AS project_visibility
       FROM ludy_projects.roadmap_announcement a
       JOIN ludy_projects.roadmap_board b
         ON b.org_id = a.org_id AND b.id = a.board_id
@@ -1649,7 +1649,7 @@ export const roadmapShippedMailData = defineQuery({
         AND a.id = ${input.announcementId}::uuid`.execute(ctx.trx);
 
     const ann = annRows[0];
-    if (!ann || ann.status !== 'published' || !ann.board_enabled || ann.project_visibility === 'private') {
+    if (!ann || ann.status !== 'published' || !ann.board_enabled || (ann.project_id !== null && ann.project_visibility !== 'org')) {
       return null;
     }
 

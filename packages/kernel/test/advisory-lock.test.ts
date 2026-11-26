@@ -2,7 +2,15 @@
 import { DummyDriver, Kysely, PostgresAdapter, PostgresIntrospector, PostgresQueryCompiler, type CompiledQuery } from 'kysely';
 import { describe, expect, it } from 'vitest';
 import type { CommandContext } from '@ludy/kernel-runtime';
-import { acquireAdvisoryXactLock, acquireChannelLocks, acquireChannelLocksForStoredRow, advisoryLockKey } from '../src/advisory-lock.ts';
+import {
+  acquireAdvisoryXactLock,
+  acquireAdvisoryXactLockShared,
+  acquireChannelLocks,
+  acquireChannelLocksForStoredRow,
+  acquireNoteVyLock,
+  advisoryLockKey,
+  noteVyLockKey,
+} from '../src/advisory-lock.ts';
 
 function createCapturingDb() {
   const executed: CompiledQuery[] = [];
@@ -100,5 +108,57 @@ describe('shared PostgreSQL transaction advisory lock helper (#3447)', () => {
       ['ludy.whatsapp_handover:10400000009999'],
       ['crove.channel:org-3:whatsapp:10400000009999'],
     ]);
+  });
+
+  it('acquires lowercase canonical shared advisory locks via acquireAdvisoryXactLockShared and acquireNoteVyLock (#4725)', async () => {
+    const executed: CompiledQuery[] = [];
+    let currentIso = 'read committed';
+    const baseDriver = new DummyDriver();
+    const db = new Kysely<unknown>({
+      dialect: {
+        createAdapter: () => new PostgresAdapter(),
+        createIntrospector: (k) => new PostgresIntrospector(k),
+        createQueryCompiler: () => new PostgresQueryCompiler(),
+        createDriver: () => ({
+          ...baseDriver,
+          init: async () => undefined,
+          acquireConnection: async () => ({
+            executeQuery: async <R>(compiledQuery: CompiledQuery) => {
+              executed.push(compiledQuery);
+              if (compiledQuery.sql.includes("current_setting('transaction_isolation')")) {
+                return { rows: [{ iso: currentIso } as unknown as R] };
+              }
+              return { rows: [] as R[] };
+            },
+            streamQuery: async function* <R>(): AsyncIterableIterator<{ rows: R[] }> {
+              yield { rows: [] };
+            },
+          }),
+          beginTransaction: async () => undefined,
+          commitTransaction: async () => undefined,
+          rollbackTransaction: async () => undefined,
+          releaseConnection: async () => undefined,
+          destroy: async () => undefined,
+        }),
+      },
+    });
+
+    await expect(acquireAdvisoryXactLockShared(db as unknown as CommandContext['trx'], ' ')).rejects.toThrow(/non-empty lock key/);
+    const orgUpper = '00000000-0000-7000-8000-0000000000AA';
+    expect(noteVyLockKey(orgUpper)).toBe(`ludy.note_vy:${orgUpper.toLowerCase()}`);
+
+    await acquireNoteVyLock(db as unknown as CommandContext['trx'], orgUpper);
+    expect(executed).toHaveLength(2);
+    expect(executed[0]?.sql).toBe("SELECT pg_catalog.current_setting('transaction_isolation') AS iso");
+    expect(executed[1]?.sql).toBe('SELECT pg_catalog.pg_advisory_xact_lock_shared(pg_catalog.hashtextextended($1, 0))');
+    expect(executed[1]?.parameters).toEqual([`ludy.note_vy:${orgUpper.toLowerCase()}`]);
+
+    currentIso = 'repeatable read';
+    await expect(acquireNoteVyLock(db as unknown as CommandContext['trx'], orgUpper)).rejects.toMatchObject({
+      code: 'CONFLICT',
+      status: 409,
+    });
+    expect(executed).toHaveLength(3);
+    await db.destroy();
   });
 });

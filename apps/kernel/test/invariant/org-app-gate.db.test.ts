@@ -19,6 +19,7 @@ import { migrate } from '@ludy/db/migrate';
 import { buildKernelCommands, createOrg, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import { Runtime, defineCommand, defineQuery, mintContextToken, type AgentActor, type Lookup } from '@ludy/kernel-runtime';
 import { financeCommands, financeQueries } from '@ludy/mod-finance';
+import { notesCommands, notesQueries } from '@ludy/mod-notes';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
@@ -354,5 +355,73 @@ suite('the per-org app gate of the runtime (ADR-0053, slice b)', () => {
     await o.setApp('probe', false);
     // Off by the org's own choice: refused whatever the port says (the choice does not depend on billing).
     expectModuleOff(await outcome(o.run(failing, o.member)));
+  });
+
+  it('refuses note-bound kernel.member_vy.run.start when notes is uninstalled, switched off for the org, or unentitled (#4725)', async () => {
+    const o = await org();
+    const expectNotesOff = (answer: Awaited<ReturnType<typeof outcome<unknown>>>) => {
+      expect('refused' in answer, JSON.stringify(answer)).toBe(true);
+      expect((answer as { refused: unknown }).refused).toMatchObject({ code: 'MODULE_OFF', status: 404, details: { module: 'notes' } });
+    };
+
+    // Uninstalled on runtime: refused before creating ai_run or member_vy_result.
+    expectNotesOff(
+      await outcome(
+        rt.execute('kernel.member_vy.run.start', { feature: 'notes.summary', subjectType: 'notes.note', subjectId: randomUUID() }, { actor: asUser(o.member), orgId: o.orgId }),
+      ),
+    );
+
+    const makeNotesRt = (entitlements: (orgId: string) => Promise<readonly string[]>) =>
+      new Runtime(createDb(pool), { manifests: TEST_MANIFESTS, entitlements }).register({
+        commands: [...buildKernelCommands({ shippedModules: [...SHIPPED, 'notes'] }), ...notesCommands],
+        queries: [
+          ...kernelQueries({ inboundDomain: null, apps: { shipped: [...SHIPPED, 'notes'], deployment: [...SHIPPED, 'notes'], entitlements } }),
+          ...notesQueries,
+        ],
+      });
+
+    const notesRt = makeNotesRt(async () => ['full']);
+    const created = await notesRt.execute<{ noteId: string }>(
+      'notes.note.create',
+      { title: 'Ghi chú kiểm tra cổng ứng dụng', body: 'Nội dung', visibility: 'org' },
+      { actor: asUser(o.owner), orgId: o.orgId },
+    );
+
+    // Org toggled notes off: refused with MODULE_OFF instead of bypassing via raw table read.
+    await notesRt.execute('kernel.org.set_app', { module: 'notes', enabled: false }, { actor: asUser(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
+    try {
+      expectNotesOff(
+        await outcome(
+          notesRt.execute(
+            'kernel.member_vy.run.start',
+            { feature: 'notes.summary', subjectType: 'notes.note', subjectId: created.noteId },
+            { actor: asUser(o.member), orgId: o.orgId },
+          ),
+        ),
+      );
+    } finally {
+      await notesRt.execute('kernel.org.set_app', { module: 'notes', enabled: true }, { actor: asUser(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
+    }
+
+    // Org lacks notes entitlement: also refused with MODULE_OFF.
+    const unentitledRt = makeNotesRt(async () => []);
+    expectNotesOff(
+      await outcome(
+        unentitledRt.execute(
+          'kernel.member_vy.run.start',
+          { feature: 'notes.summary', subjectType: 'notes.note', subjectId: created.noteId },
+          { actor: asUser(o.member), orgId: o.orgId },
+        ),
+      ),
+    );
+
+    // Enabled + entitled + readable: succeeds cleanly.
+    await expect(
+      notesRt.execute<{ runId: string }>(
+        'kernel.member_vy.run.start',
+        { feature: 'notes.summary', subjectType: 'notes.note', subjectId: created.noteId },
+        { actor: asUser(o.member), orgId: o.orgId },
+      ),
+    ).resolves.toHaveProperty('runId');
   });
 });

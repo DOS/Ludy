@@ -60,7 +60,7 @@ export const isExtensionPageAddress = (url: string): boolean => /^chrome-extensi
 
 export type TabSignInResult = 'connected' | 'denied' | 'failed' | 'nothing';
 
-type Exchange = (address: string, code: string, verifier: string) => Promise<{ token: string; orgId: string; scopes: string[]; expiresAt: string }>;
+type Exchange = (address: string, code: string, verifier: string) => Promise<{ token: string; tokenId?: string; orgId: string; scopes: string[]; expiresAt: string }>;
 const exchangeWithKernel: Exchange = (address, code, verifier) => createClient(address, null).exchangeCode(code, verifier);
 
 // The orgs whose sign-in asked for the notes scope and did not get it (the org has no Notes), kept for this browser session.
@@ -101,7 +101,16 @@ export async function completeTabSignIn(
     if (state.address !== pending.address) return 'failed';
     const done = await (deps.exchange ?? exchangeWithKernel)(pending.address, result.code, pending.verifier);
     await rememberNotesExcluded(deps.session, done.orgId, pending.notesAsked && !done.scopes.includes(NOTES_SCOPE));
-    await saveState(deps.local, withAccount(await loadState(deps.local), { orgId: done.orgId, orgSlug: result.org, token: done.token, expiresAt: done.expiresAt }));
+    await saveState(
+      deps.local,
+      withAccount(await loadState(deps.local), {
+        orgId: done.orgId,
+        orgSlug: result.org,
+        token: done.token,
+        expiresAt: done.expiresAt,
+        ...(done.tokenId ? { tokenId: done.tokenId } : {}),
+      }),
+    );
     return 'connected';
   } catch {
     // A storage or network failure is a failed sign-in the page can say so about, not a blank page.

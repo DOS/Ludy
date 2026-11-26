@@ -380,6 +380,10 @@ suite('note templates and version history on PostgreSQL (#3562)', () => {
       name: 'Mẫu công ty author',
       visibility: 'org',
     });
+    const authorOrgDelete = await o.exec<NoteTemplateWritten>(o.author, 'notes.template.create', {
+      name: 'Mẫu công ty author để xóa',
+      visibility: 'org',
+    });
     const adminOrg = await o.exec<NoteTemplateWritten>(o.admin, 'notes.template.create', {
       name: 'Mẫu công ty admin',
       visibility: 'org',
@@ -506,5 +510,33 @@ suite('note templates and version history on PostgreSQL (#3562)', () => {
         visibility: 'private',
       }),
     ).toEqual({ templateId: authorOrg.templateId, revision: 2 });
+
+    // Branch-scoped member cannot see or delete another member's org template (404 command / 0-row SQL).
+    await expect(
+      o.exec(limited, 'notes.template.delete', { templateId: authorOrgDelete.templateId }),
+    ).rejects.toMatchObject({ code: 'NOTE_TEMPLATE_NOT_FOUND', status: 404 });
+
+    const limitedSqlDel = await asTenantSql(limited, (c) =>
+      c.query(`DELETE FROM ludy_notes.note_template WHERE id = $1 RETURNING id`, [authorOrgDelete.templateId]),
+    );
+    expect(limitedSqlDel).toMatchObject({ ok: true });
+    if (limitedSqlDel.ok) expect(limitedSqlDel.value.rowCount).toBe(0);
+
+    // Narrowed author cannot delete someone else's org template, while deleting their own existing org template remains allowed.
+    await expect(
+      o.exec(o.author, 'notes.template.delete', { templateId: ownerOrg.templateId }),
+    ).rejects.toMatchObject({ code: 'NOTE_TEMPLATE_NOT_FOUND', status: 404 });
+
+    expect(
+      await o.exec<{ templateId: string }>(o.author, 'notes.template.delete', { templateId: authorOrgDelete.templateId }),
+    ).toEqual({ templateId: authorOrgDelete.templateId });
+
+    const remainingAuthorDelete = await admin((c) =>
+      c.query<{ n: number }>(`SELECT count(*)::int AS n FROM ludy_notes.note_template WHERE org_id = $1 AND id = $2`, [
+        o.orgId,
+        authorOrgDelete.templateId,
+      ]),
+    );
+    expect(remainingAuthorDelete.rows[0]?.n).toBe(0);
   });
 });

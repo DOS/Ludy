@@ -522,9 +522,9 @@ suite("member-scoped agent actor in the runtime", () => {
     const started = await app.execute<{ runId: string; resultId: string }>(
       "kernel.member_vy.run.start",
       {
-        feature: "notes.summary",
-        subjectType: "note",
-        subjectId: randomUUID(),
+        feature: "notes.todo_plan",
+        subjectType: "member",
+        subjectId: memberActor.userId,
       },
       { actor: memberActor, orgId },
     );
@@ -655,7 +655,7 @@ suite("member-scoped agent actor in the runtime", () => {
       const member = users.member as string;
       const started = await app.execute<{ runId: string; resultId: string }>(
         "kernel.member_vy.run.start",
-        { feature: "notes.summary", subjectType: "note", subjectId: randomUUID() },
+        { feature: "notes.todo_plan", subjectType: "member", subjectId: member },
         { actor: { type: "user", userId: member, aal: "aal1" }, orgId },
       );
       const agentId = await admin(

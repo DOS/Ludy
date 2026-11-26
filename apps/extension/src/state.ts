@@ -10,6 +10,7 @@ export interface Account {
   orgSlug: string;
   token: string;
   expiresAt: string;
+  tokenId?: string;
 }
 
 export interface State {
@@ -35,7 +36,16 @@ export function readState(raw: unknown): State {
   const r = raw as Partial<State>;
   const accounts: Record<string, Account> = {};
   for (const [orgId, a] of Object.entries(r.accounts ?? {})) {
-    if (a && typeof a.token === 'string' && typeof a.orgSlug === 'string' && typeof a.expiresAt === 'string' && a.orgId === orgId) accounts[orgId] = a;
+    if (
+      a &&
+      typeof a.token === 'string' &&
+      typeof a.orgSlug === 'string' &&
+      typeof a.expiresAt === 'string' &&
+      (a.tokenId === undefined || typeof a.tokenId === 'string') &&
+      a.orgId === orgId
+    ) {
+      accounts[orgId] = a;
+    }
   }
   const enabled: Record<string, boolean> = {};
   for (const [id, on] of Object.entries(r.enabled ?? {})) if (on === true) enabled[id] = true;

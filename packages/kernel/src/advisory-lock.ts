@@ -5,7 +5,7 @@
 // transaction (`ctx.trx`) so concurrent writers on the same logical resource serialize cleanly and release the
 // lock automatically on commit or rollback without holding session locks on pooled connections.
 import { sql } from 'kysely';
-import type { CommandContext } from '@ludy/kernel-runtime';
+import { DomainError, type CommandContext } from '@ludy/kernel-runtime';
 
 /** Builds a canonical colon-delimited advisory lock key (`<namespace>:<part1>:<part2>...`) from non-empty segments. */
 export function advisoryLockKey(namespace: string, ...parts: readonly string[]): string {
@@ -28,6 +28,32 @@ export async function acquireAdvisoryXactLock(trx: CommandContext['trx'], key: s
     throw new Error('acquireAdvisoryXactLock requires a non-empty lock key');
   }
   await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${trimmed}, 0))`.execute(trx);
+}
+
+/** Acquires a transaction-scoped PostgreSQL shared advisory lock (`pg_advisory_xact_lock_shared(hashtextextended(key, 0))`) on `trx`. */
+export async function acquireAdvisoryXactLockShared(trx: CommandContext['trx'], key: string): Promise<void> {
+  const trimmed = key.trim();
+  if (!trimmed) {
+    throw new Error('acquireAdvisoryXactLockShared requires a non-empty lock key');
+  }
+  await sql`SELECT pg_catalog.pg_advisory_xact_lock_shared(pg_catalog.hashtextextended(${trimmed}, 0))`.execute(trx);
+}
+
+/** Canonical per-org lock key serializing note-bound Vy starts (shared) against note hard-delete trigger (exclusive). */
+export function noteVyLockKey(orgId: string): string {
+  return advisoryLockKey('ludy.note_vy', orgId.toLowerCase());
+}
+
+/** Acquires the shared transaction-scoped advisory lock for starting a note-bound Vy run without requiring UPDATE RLS on notes. */
+export async function acquireNoteVyLock(trx: CommandContext['trx'], orgId: string): Promise<void> {
+  const { rows } = await sql<{ iso: string }>`SELECT pg_catalog.current_setting('transaction_isolation') AS iso`.execute(trx);
+  const iso = rows[0]?.iso;
+  if (iso !== 'read committed') {
+    throw new DomainError('CONFLICT', 409, 'Giao dịch cần ở mức READ COMMITTED để đồng bộ hóa khóa ghi chú', {
+      isolation: iso ?? 'unknown',
+    });
+  }
+  await acquireAdvisoryXactLockShared(trx, noteVyLockKey(orgId));
 }
 
 // Global lock hierarchy for WhatsApp number hand-over (#3152):

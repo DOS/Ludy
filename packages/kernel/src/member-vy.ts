@@ -13,8 +13,10 @@ import { sql } from 'kysely';
 import { z } from 'zod';
 import { tableWrite, zId } from '@ludy/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
+import { acquireNoteVyLock } from './advisory-lock.ts';
 import { deleteAiBudgetReservation, lockAiBudgetOrg, reserveAiBudget, type AiBudgetReserve } from './ai-budget.ts';
 import { kernelManifest } from './manifest.ts';
+import { offAppsOf } from './org-apps.ts';
 
 const MEMBER_ROLES = ['owner', 'admin', 'member', 'viewer'] as const;
 
@@ -71,6 +73,13 @@ export const MEMBER_VY_FEATURES = {
 } as const;
 export type MemberVyFeature = keyof typeof MEMBER_VY_FEATURES;
 const FEATURE_KEYS = Object.keys(MEMBER_VY_FEATURES) as [MemberVyFeature, ...MemberVyFeature[]];
+// Subject-bound Vy features must name a valid target subjectType (preventing 'member' bypass of note locks/RLS).
+const FEATURE_ALLOWED_SUBJECT_TYPES: Partial<Record<MemberVyFeature, ReadonlySet<string>>> = {
+  'notes.summary': new Set(['note', 'notes.note']),
+  'notes.todo_suggest': new Set(['note', 'notes.note']),
+  'projects.tasks_from_note': new Set(['note', 'notes.note']),
+  'projects.tasks_from_source': new Set(['note', 'notes.note', 'meetings.meeting', 'kernel.conversation']),
+};
 
 // How long a result is kept (decision 3).
 const RESULT_DAYS = 30;
@@ -128,6 +137,39 @@ export const memberVyRunStart = defineCommand({
   handler: async (ctx, input): Promise<{ runId: string; resultId: string; expiresAt: string }> => {
     const userId = requireUser(ctx);
     if (!(await mayUseVy(ctx))) throw new DomainError('VY_NOT_ALLOWED', 403, 'Bạn chưa được phép làm việc với Vy');
+    const isNoteSubject = input.subjectType === 'note' || input.subjectType === 'notes.note';
+    const allowedSubjectTypes = FEATURE_ALLOWED_SUBJECT_TYPES[input.feature];
+    if (allowedSubjectTypes && !allowedSubjectTypes.has(input.subjectType)) {
+      throw new DomainError('VALIDATION', 422, 'Loại đối tượng không khớp với tính năng Vy');
+    }
+    // Check app gate/entitlements before acquiring the shared note_vy lock so an entitlement lookup never stalls note deletes:
+    //   (note row locks of DELETE) -> adv_lock('ludy.note_vy:<org>') -> ai_run FOR UPDATE -> member_vy_result.
+    // Re-verifying the readable non-trashed note under this shared advisory lock prevents orphaned runs after delete.
+    if (isNoteSubject) {
+      if (!ctx.installed('notes')) {
+        throw new DomainError('MODULE_OFF', 404, 'Ứng dụng notes chưa được bật cho công ty này', { module: 'notes' });
+      }
+      // Enforce org-level app gate and entitlements before acquiring the org lock and without querying notes.note.get.
+      const notesEnabled = ctx.appEnabled
+        ? await ctx.appEnabled('notes')
+        : !(await offAppsOf(ctx.trx, ctx.orgId)).includes('notes');
+      if (!notesEnabled) {
+        throw new DomainError('MODULE_OFF', 404, 'Ứng dụng notes đã được tắt cho công ty này', { module: 'notes' });
+      }
+      await acquireNoteVyLock(ctx.trx, ctx.orgId);
+      const note = await ctx.trx
+        .selectFrom('ludy_notes.note')
+        .select(['id', 'deleted_at'])
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', input.subjectId)
+        .executeTakeFirst();
+      if (!note) {
+        throw new DomainError('NOTE_NOT_FOUND', 404, 'Không tìm thấy ghi chú');
+      }
+      if (note.deleted_at !== null) {
+        throw new DomainError('NOTE_IN_TRASH', 409, 'Ghi chú đang ở thùng rác; hãy khôi phục trước');
+      }
+    }
     const feature = MEMBER_VY_FEATURES[input.feature];
     let agent = await ctx.trx
       .selectFrom('ludy_kernel.agent')

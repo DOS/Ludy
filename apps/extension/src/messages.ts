@@ -33,6 +33,14 @@ export function tabAddress(raw: unknown): string | undefined {
   }
 }
 
+export interface RecordingScope {
+  orgId: string;
+  address: string;
+  tokenId?: string;
+}
+export const PENDING_SCOPE_KEY_PREFIX = 'ludy-extension-pending-scope:';
+export const pendingScopeKey = (meetingId: string): string => `${PENDING_SCOPE_KEY_PREFIX}${meetingId}`;
+
 export interface CaptureStart {
   target: 'offscreen';
   type: 'capture-start';
@@ -49,7 +57,7 @@ export interface CaptureStart {
   joinUrl?: string;
 }
 
-export type OffscreenMessage = CaptureStart | { target: 'offscreen'; type: 'capture-stop' };
+export type OffscreenMessage = CaptureStart | { target: 'offscreen'; type: 'capture-stop' } | { target: 'offscreen'; type: 'capture-status' };
 
 export interface Tick {
   type: 'tick';
@@ -72,7 +80,7 @@ export interface CaptureHeld {
   since: string;
 }
 export type StartReply = { ok: true; meetingId: string; startedAt: number; micMissing: boolean } | { ok: false; reason: StartFailure; held?: CaptureHeld };
-export type StopReply = { ok: true; uploaded: boolean; meetingId: string; message?: string } | { ok: false; reason: 'idle' };
+export type StopReply = { ok: true; uploaded: boolean; meetingId: string; message?: string } | { ok: false; reason: 'idle' | 'error' };
 
 export interface RecordingState {
   meetingId: string;
@@ -80,6 +88,9 @@ export interface RecordingState {
   startedAt: number;
   keepVideo: boolean;
   micMissing: boolean;
+  orgId?: string;
+  address?: string;
+  tokenId?: string;
 }
 export const RECORDING_KEY = 'ludy-extension-recording';
 
@@ -91,6 +102,9 @@ export interface LostState {
   reason: RecordingStopReason;
   at: number;
   uploaded: boolean;
+  orgId?: string;
+  address?: string;
+  tokenId?: string;
 }
 export const LOST_KEY = 'ludy-extension-recording-lost';
 
@@ -112,9 +126,18 @@ export function parseLost(raw: unknown): Lost | null {
 
 export function readLost(raw: unknown): LostState | null {
   if (!isObject(raw)) return null;
-  const { meetingId, title, reason, at, uploaded } = raw;
+  const { meetingId, title, reason, at, uploaded, orgId, address, tokenId } = raw;
   if (typeof meetingId !== 'string' || typeof title !== 'string' || !isRecordingStopReason(reason) || typeof at !== 'number' || !Number.isFinite(at) || typeof uploaded !== 'boolean') return null;
-  return { meetingId, title, reason, at, uploaded };
+  return {
+    meetingId,
+    title,
+    reason,
+    at,
+    uploaded,
+    ...(typeof orgId === 'string' && orgId !== '' ? { orgId } : {}),
+    ...(typeof address === 'string' && address !== '' ? { address } : {}),
+    ...(typeof tokenId === 'string' && tokenId !== '' ? { tokenId } : {}),
+  };
 }
 
 // Only this extension's own pages and worker may send it a message: an id that is not ours (another extension, a page
@@ -134,6 +157,17 @@ export function parseStartRequest(raw: unknown): StartRequest | null {
   // The tab's address is a hint: anything that is not an https address is left out, never a reason to refuse the start, and only its host and path are kept.
   const address = tabAddress(joinUrl);
   return { title, consentMethod, consentAgreed, keepVideo, liveNotes, streamId, ...(address ? { joinUrl: address } : {}) };
+}
+
+export function readPendingScope(raw: unknown): RecordingScope | null {
+  if (!isObject(raw)) return null;
+  const { orgId, address, tokenId } = raw;
+  if (typeof orgId !== 'string' || orgId === '' || typeof address !== 'string' || address === '') return null;
+  return {
+    orgId,
+    address,
+    ...(typeof tokenId === 'string' && tokenId !== '' ? { tokenId } : {}),
+  };
 }
 
 // The worker's capture command for the offscreen document, or null when it is malformed.

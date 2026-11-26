@@ -1108,35 +1108,149 @@ suite('Notes N8: member-scoped Vy summary, suggested to-dos, and monotonic taint
       error: 'NOTE_REMOVED',
     });
 
-    // Verify trigger function security metadata and zero runtime EXECUTE grants.
-    const fnInfo = await sqlAdmin<{
-      definer: boolean;
-      config: string[] | null;
-      pub: boolean;
-      tenant: boolean;
-      app: boolean;
-      workerRole: boolean;
-      definerTenant: boolean;
-    }>(
-      `SELECT p.prosecdef AS definer,
-              p.proconfig AS config,
-              pg_catalog.has_function_privilege('public', p.oid, 'EXECUTE') AS pub,
-              pg_catalog.has_function_privilege('ludy_tenant', p.oid, 'EXECUTE') AS tenant,
-              pg_catalog.has_function_privilege('ludy_app', p.oid, 'EXECUTE') AS app,
-              pg_catalog.has_function_privilege('ludy_worker', p.oid, 'EXECUTE') AS "workerRole",
-              pg_catalog.has_function_privilege('ludy_definer_tenant', p.oid, 'EXECUTE') AS "definerTenant"
-         FROM pg_catalog.pg_proc p
-        WHERE p.oid = 'ludy_notes.note_discard_vy()'::pg_catalog.regprocedure`,
-    );
-    expect(fnInfo.rows[0]).toEqual({
-      definer: true,
-      config: ['search_path=pg_catalog, pg_temp'],
-      pub: false,
-      tenant: false,
-      app: false,
-      workerRole: false,
-      definerTenant: false,
+    // Audit parity (#4725): each cancelled running run emits one notes.vy.run_cancelled event (never for already-succeeded or non-note runs).
+    const cancelledAudits = async (orgId: string, runId: string) =>
+      (
+        await sqlAdmin<{
+          actor_type: string;
+          actor_id: string | null;
+          command: string;
+          outcome: string;
+          target_type: string | null;
+          target_id: string | null;
+          detail: Record<string, unknown>;
+        }>(
+          `SELECT actor_type, actor_id, command, outcome, target_type, target_id, detail
+             FROM ludy_kernel.audit_event
+            WHERE org_id = $1 AND command = 'notes.vy.run_cancelled' AND target_id = $2`,
+          [orgId, runId],
+        )
+      ).rows;
+
+    expect(await cancelledAudits(org1.orgId, targetSuggestRun.runId)).toMatchObject([
+      {
+        actor_type: 'system',
+        actor_id: null,
+        command: 'notes.vy.run_cancelled',
+        outcome: 'ok',
+        target_type: 'kernel.ai_run',
+        target_id: targetSuggestRun.runId,
+        detail: {
+          runId: targetSuggestRun.runId,
+          noteId: targetNote.noteId,
+          feature: 'notes.todo_suggest',
+          reason: 'NOTE_REMOVED',
+        },
+      },
+    ]);
+    expect(await cancelledAudits(org1.orgId, targetProjectRun.runId)).toMatchObject([
+      {
+        actor_type: 'system',
+        actor_id: null,
+        command: 'notes.vy.run_cancelled',
+        outcome: 'ok',
+        target_type: 'kernel.ai_run',
+        target_id: targetProjectRun.runId,
+        detail: {
+          runId: targetProjectRun.runId,
+          noteId: targetNote.noteId,
+          feature: 'projects.tasks_from_note',
+          reason: 'NOTE_REMOVED',
+        },
+      },
+    ]);
+    expect(await cancelledAudits(org1.orgId, directSourceRun.runId)).toEqual([
+      {
+        actor_type: 'system',
+        actor_id: null,
+        command: 'notes.vy.run_cancelled',
+        outcome: 'ok',
+        target_type: 'kernel.ai_run',
+        target_id: directSourceRun.runId,
+        detail: {
+          runId: directSourceRun.runId,
+          noteId: directDeleteNote.noteId,
+          feature: 'projects.tasks_from_source',
+          reason: 'NOTE_REMOVED',
+        },
+      },
+    ]);
+    expect(await cancelledAudits(org1.orgId, targetSum.runId!)).toEqual([]);
+    expect(await cancelledAudits(org1.orgId, ownerPlanRun.runId)).toEqual([]);
+    expect(await cancelledAudits(org1.orgId, siblingSuggestRun.runId)).toEqual([]);
+    expect(await cancelledAudits(org2.orgId, otherOrgSuggestRun.runId)).toEqual([]);
+  });
+
+  it('cancels, audits, and purges Vy runs in one O(1) org-locked batch across multi-note DELETE (#4725)', async () => {
+    const o = await setupOrg();
+    const batchNoteA = await o.exec<NoteWritten>(o.owner.userId, 'notes.note.create', {
+      title: 'Ghi chú xóa hàng loạt A',
+      body: 'Ghi chú thứ nhất trong một câu lệnh DELETE nhiều dòng.',
+      visibility: 'org',
     });
+    const batchNoteB = await o.exec<NoteWritten>(o.owner.userId, 'notes.note.create', {
+      title: 'Ghi chú xóa hàng loạt B',
+      body: 'Ghi chú thứ hai trong cùng câu lệnh DELETE.',
+      visibility: 'org',
+    });
+    const batchNoteC = await o.exec<NoteWritten>(o.owner.userId, 'notes.note.create', {
+      title: 'Ghi chú xóa hàng loạt C không có Vy',
+      body: 'Ghi chú không có lượt chạy Vy đi kèm.',
+      visibility: 'org',
+    });
+    const batchRunA = await o.exec<{ runId: string }>(o.alice.userId, 'kernel.member_vy.run.start', {
+      feature: 'notes.summary',
+      subjectType: 'notes.note',
+      subjectId: batchNoteA.noteId,
+    });
+    const batchRunB = await o.exec<{ runId: string }>(o.alice.userId, 'kernel.member_vy.run.start', {
+      feature: 'notes.todo_suggest',
+      subjectType: 'notes.note',
+      subjectId: batchNoteB.noteId,
+    });
+
+    await sqlAdmin(`DELETE FROM ludy_notes.note WHERE org_id = $1 AND id = ANY($2::uuid[])`, [
+      o.orgId,
+      [batchNoteA.noteId, batchNoteB.noteId, batchNoteC.noteId],
+    ]);
+
+    const batchOrphans = await sqlAdmin<{ n: number }>(
+      `SELECT count(*)::int AS n FROM ludy_kernel.member_vy_result WHERE org_id = $1 AND subject_id = ANY($2::uuid[])`,
+      [o.orgId, [batchNoteA.noteId, batchNoteB.noteId, batchNoteC.noteId]],
+    );
+    expect(batchOrphans.rows[0]?.n).toBe(0);
+
+    const batchRuns = await sqlAdmin<{ id: string; status: string; error: string | null }>(
+      `SELECT id, status, error FROM ludy_kernel.ai_run WHERE org_id = $1 AND id = ANY($2::uuid[]) ORDER BY id`,
+      [o.orgId, [batchRunA.runId, batchRunB.runId]],
+    );
+    expect(batchRuns.rows).toEqual(
+      [
+        { id: batchRunA.runId, status: 'cancelled', error: 'NOTE_REMOVED' },
+        { id: batchRunB.runId, status: 'cancelled', error: 'NOTE_REMOVED' },
+      ].sort((a, b) => a.id.localeCompare(b.id)),
+    );
+
+    const batchAudits = await sqlAdmin<{ target_id: string; command: string; detail: Record<string, unknown> }>(
+      `SELECT target_id, command, detail FROM ludy_kernel.audit_event
+       WHERE org_id = $1 AND command = 'notes.vy.run_cancelled' AND target_id = ANY($2::uuid[])
+       ORDER BY target_id`,
+      [o.orgId, [batchRunA.runId, batchRunB.runId]],
+    );
+    expect(batchAudits.rows).toEqual(
+      [
+        {
+          target_id: batchRunA.runId,
+          command: 'notes.vy.run_cancelled',
+          detail: { runId: batchRunA.runId, noteId: batchNoteA.noteId, feature: 'notes.summary', reason: 'NOTE_REMOVED' },
+        },
+        {
+          target_id: batchRunB.runId,
+          command: 'notes.vy.run_cancelled',
+          detail: { runId: batchRunB.runId, noteId: batchNoteB.noteId, feature: 'notes.todo_suggest', reason: 'NOTE_REMOVED' },
+        },
+      ].sort((a, b) => a.target_id.localeCompare(b.target_id)),
+    );
   });
 
   it('handles trashed, partially purged (seq=0 gone), concurrently accepted, and fully purged todo suggestion runs (#3522)', async () => {

@@ -87,6 +87,7 @@ export function orgDetailQuery(options: OrgDetailOptions) {
       const tenant = await ctx.trx
         .selectFrom('ludy_kernel.tenant')
         .select(['org_id', 'slug', 'name', 'inbound_token', 'conversation_token', 'tax_code', 'vat_filing_period', 'address', 'contact_email', 'approval_preset', 'approval_policy_version'])
+        .select([sql<boolean>`'*' = ANY (ludy_kernel.ctx_le_scope()::text[])`.as('whole_org_scope')])
         .where('org_id', '=', ctx.orgId)
         .executeTakeFirstOrThrow();
       const memberRows = await ctx.trx
@@ -127,6 +128,7 @@ export function orgDetailQuery(options: OrgDetailOptions) {
         permissions: await myPermissions(ctx),
         approvalPreset: tenant.approval_preset,
         approvalPolicyVersion: tenant.approval_policy_version,
+        wholeOrgScope: tenant.whole_org_scope === true,
       };
     },
   });

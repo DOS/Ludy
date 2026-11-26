@@ -200,6 +200,10 @@ export function toDomainError(error: unknown): DomainError {
       // The owner backstop (ludy_kernel.tenant_member_keeps_owner, at commit): the same refusal as the commands'.
       if (pg.message === 'LAST_OWNER') return new DomainError('LAST_OWNER', 409, 'Tổ chức phải còn ít nhất một chủ sở hữu');
       return new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
+    case 'P0002':
+      // Raised by note_member_vy_guard() when a note disappears or becomes unreadable before insert commits (#4725).
+      if (pg.message === 'NOTE_NOT_FOUND') return new DomainError('NOTE_NOT_FOUND', 404, 'Không tìm thấy ghi chú');
+      return new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
     case '53400':
       return new DomainError('OVERLOADED', 503, 'Hệ thống đang quá tải, hãy thử lại sau');
     case '40001':

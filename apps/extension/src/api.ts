@@ -89,8 +89,8 @@ export interface CaptureBeat {
 
 export interface Client {
   config(options?: { signal?: AbortSignal }): Promise<{ uploads: 'presigned' | 'direct'; modules?: readonly string[] }>;
-  exchangeCode(code: string, codeVerifier: string): Promise<{ token: string; orgId: string; scopes: string[]; expiresAt: string }>;
-  me(): Promise<Me>;
+  exchangeCode(code: string, codeVerifier: string): Promise<{ token: string; tokenId?: string; orgId: string; scopes: string[]; expiresAt: string }>;
+  me(options?: { signal?: AbortSignal }): Promise<Me>;
   // The member's next calendar meetings (B2, the agenda scope): null when the answer is not the expected shape. Throws LudyError with the HTTP status (403 when the token lacks the scope).
   agendaNext(): Promise<AgendaNext | null>;
   clipNote(input: NoteClipInput): Promise<NoteWritten>;
@@ -100,6 +100,8 @@ export interface Client {
   sendLiveChunk(input: { meetingId: string; seq: number; lengthSeconds: number; blob: Blob }): Promise<void>;
   // The capture is alive (every 30 seconds), or over when `end` is set because the member stopped (ADR-0055 slice 1, #4123). Callers never fail on it.
   captureHeartbeat(input: { meetingId: string; end?: boolean }): Promise<CaptureBeat>;
+  // Verifies whether the active token owns an unscoped legacy meeting before showing local pending media (#4725).
+  extensionMeetingOwned(meetingId: string, options?: { signal?: AbortSignal }): Promise<'owned' | 'not_owned' | 'unknown'>;
   // `stopReason`: the recording stopped without the member's click (A1, #3159); the server keeps the code on the meeting.
   // The recording ended and no media will reach the server (nothing saved, the upload failed, the capture failed to start): the meeting gets its end time
   // and the code, once, so the app's recording chip lets go (#3196). The server ignores it when the meeting already has a recording; callers never fail on it.
@@ -141,10 +143,10 @@ export function createClient(address: string, token: string | null, fetchImpl: F
         : { uploads };
     },
     async exchangeCode(code, codeVerifier) {
-      return (await (await call('/api/extension/token', json({ code, codeVerifier }), false)).json()) as { token: string; orgId: string; scopes: string[]; expiresAt: string };
+      return (await (await call('/api/extension/token', json({ code, codeVerifier }), false)).json()) as { token: string; tokenId?: string; orgId: string; scopes: string[]; expiresAt: string };
     },
-    async me() {
-      return (await (await call('/api/extension/me')).json()) as Me;
+    async me(options) {
+      return (await (await call('/api/extension/me', options?.signal ? { signal: options.signal } : {})).json()) as Me;
     },
     async agendaNext() {
       return readAgendaNext(await (await call('/api/rpc/meetings/agenda/next', json({ json: {} }))).json());
@@ -196,6 +198,40 @@ export function createClient(address: string, token: string | null, fetchImpl: F
     async captureHeartbeat({ meetingId, end }) {
       const out = (await (await call('/api/rpc/meetings/captureHeartbeat', json({ json: { meetingId, ...(end ? { end: true } : {}) } }))).json()) as { json?: { open?: unknown } };
       return { open: out.json?.open === true };
+    },
+    async extensionMeetingOwned(meetingId, options) {
+      try {
+        const res = await call('/api/rpc/meetings/extensionStatus', {
+          ...json({ json: { meetingId } }),
+          ...(options?.signal ? { signal: options.signal } : {}),
+        });
+        const body = (await res.json().catch(() => null)) as {
+          json?: {
+            meetingId?: unknown;
+            status?: unknown;
+            keepVideo?: unknown;
+            liveNotes?: unknown;
+            hasAudio?: unknown;
+            hasVideo?: unknown;
+          };
+        } | null;
+        const status = body?.json;
+        const valid =
+          status !== null &&
+          status !== undefined &&
+          status.meetingId === meetingId &&
+          typeof status.status === 'string' &&
+          typeof status.keepVideo === 'boolean' &&
+          typeof status.liveNotes === 'boolean' &&
+          typeof status.hasAudio === 'boolean' &&
+          typeof status.hasVideo === 'boolean';
+        return valid ? 'owned' : 'unknown';
+      } catch (error) {
+        if (error instanceof LudyError && (error.status === 404 || error.status === 403 || error.status === 401)) {
+          return 'not_owned';
+        }
+        return 'unknown';
+      }
     },
     async recordingStopped({ meetingId, reason, lengthSeconds }) {
       await call('/api/rpc/meetings/recordingStopped', json({ json: { meetingId, ...(reason ? { reason } : {}), ...(lengthSeconds !== undefined ? { lengthSeconds } : {}) } }));
