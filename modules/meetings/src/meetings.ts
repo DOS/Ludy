@@ -671,21 +671,20 @@ const VI_FOLD_FROM =
 const VI_FOLD_TO =
   'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaeeeeeeeeeeeeeeeeeeeeeeiiiiiiiiiioooooooooooooooooooooooooooooooooouuuuuuuuuuuuuuuuuuuuuuyyyyyyyyyydd';
 const SEARCH_FOLD_KEPT = new Set(`abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789${VI_FOLD_FROM}`);
-const SEARCH_MEANINGFUL_BASE = /[\p{L}\p{N}\p{Extended_Pictographic}\p{Regional_Indicator}]/u;
-const SEARCH_EMOJI_MODIFIER = /\p{Emoji_Modifier}/u;
-const SEARCH_EMOJI_JOIN_CODEPOINTS = new Set(['\u{200D}', '\u{FE0F}', '\u{20E3}']);
+const GRAPHEME_SEGMENTER = new Intl.Segmenter('en', { granularity: 'grapheme' });
+const SEARCH_MEANINGFUL_GRAPHEME = /[\p{L}\p{N}\p{Extended_Pictographic}\p{Regional_Indicator}]/u;
 
-// Maximal runs of meaningful characters dropped by search_fold (CJK, Hangul, Cyrillic, emoji, regional-indicator flags,
-// non-Vietnamese diacritics) plus whitespace-delimited tokens carrying literal `%` or `_`, so mixed queries like
-// "東京 2026", "🎯 Q4", "🇻🇳 Q4", "50%", or "ma_01" require those parts alongside the Vietnamese-folded match (#5052).
+// Maximal runs of meaningful graphemes dropped or altered by search_fold (CJK, Hangul, Cyrillic, emoji,
+// regional-indicator flags, keycap sequences like `1️⃣`/`#️⃣`, non-Vietnamese diacritics) plus whitespace-delimited
+// tokens carrying literal `%` or `_`, so mixed and non-Latin queries enforce those parts consistently (#5052).
 function unfoldedSearchTerms(search: string): string[] {
   const nfc = search.normalize('NFC');
   const terms = new Set<string>();
   let run = '';
-  for (const ch of nfc) {
-    const isEmojiJoin = run !== '' && (SEARCH_EMOJI_JOIN_CODEPOINTS.has(ch) || SEARCH_EMOJI_MODIFIER.test(ch));
-    if (!SEARCH_FOLD_KEPT.has(ch) && (SEARCH_MEANINGFUL_BASE.test(ch) || isEmojiJoin)) {
-      run += ch;
+  for (const { segment } of GRAPHEME_SEGMENTER.segment(nfc)) {
+    const isKeycap = segment.includes('\u{20E3}');
+    if (!SEARCH_FOLD_KEPT.has(segment) && (isKeycap || SEARCH_MEANINGFUL_GRAPHEME.test(segment))) {
+      run += segment;
     } else if (run !== '') {
       terms.add(run);
       run = '';
@@ -720,13 +719,17 @@ export function buildMeetingListQuery(db: Db, orgId: string, today: string, inpu
   const search = input.search?.trim();
   if (search) {
     const normalized = search.normalize('NFC');
-    query = query.where(
-      sql<boolean>`(CASE WHEN ludy_kernel.search_fold(${search}) = '' THEN pg_catalog.strpos(pg_catalog.lower(pg_catalog.translate(pg_catalog.normalize(title, 'NFC'), ${VI_FOLD_FROM}, ${VI_FOLD_TO})), pg_catalog.lower(pg_catalog.translate(${normalized}, ${VI_FOLD_FROM}, ${VI_FOLD_TO}))) > 0 ELSE pg_catalog.strpos(ludy_kernel.search_fold(title), ludy_kernel.search_fold(${search})) > 0 END)`,
-    );
     const extraTerms = unfoldedSearchTerms(normalized);
     if (extraTerms.length > 0) {
       query = query.where(
+        sql<boolean>`(ludy_kernel.search_fold(${search}) = '' OR pg_catalog.strpos(ludy_kernel.search_fold(title), ludy_kernel.search_fold(${search})) > 0)`,
+      );
+      query = query.where(
         sql<boolean>`NOT EXISTS (SELECT 1 FROM pg_catalog.unnest(${extraTerms}::text[]) AS t(term) WHERE pg_catalog.strpos(pg_catalog.lower(pg_catalog.translate(pg_catalog.normalize(title, 'NFC'), ${VI_FOLD_FROM}, ${VI_FOLD_TO})), pg_catalog.lower(pg_catalog.translate(t.term, ${VI_FOLD_FROM}, ${VI_FOLD_TO}))) = 0)`,
+      );
+    } else {
+      query = query.where(
+        sql<boolean>`(CASE WHEN ludy_kernel.search_fold(${search}) = '' THEN pg_catalog.strpos(pg_catalog.lower(pg_catalog.translate(pg_catalog.normalize(title, 'NFC'), ${VI_FOLD_FROM}, ${VI_FOLD_TO})), pg_catalog.lower(pg_catalog.translate(${normalized}, ${VI_FOLD_FROM}, ${VI_FOLD_TO}))) > 0 ELSE pg_catalog.strpos(ludy_kernel.search_fold(title), ludy_kernel.search_fold(${search})) > 0 END)`,
       );
     }
   }

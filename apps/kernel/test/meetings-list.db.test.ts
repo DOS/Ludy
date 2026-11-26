@@ -163,6 +163,7 @@ suite('meetings.meeting.list search and cursor pagination (#5052)', () => {
     const lotusNew = await seedMeeting('Họp khách Hoa Sen đợt 2', { startedAt: '2026-11-25T05:00:00Z' });
     const lotusOld = await seedMeeting('Tổng kết Hoa Sen đợt 1', { startedAt: '2026-11-25T04:00:00Z' });
     const tokyo = await seedMeeting('Họp 東京 2026', { startedAt: '2026-11-25T03:00:00Z' });
+    const jpMulti = await seedMeeting('東京 進捗 大阪 Q4', { startedAt: '2026-11-25T02:45:00Z' });
     await seedMeeting('Họp Hà Nội 2026', { startedAt: '2026-11-25T02:30:00Z' });
     const pct = await seedMeeting('Tăng 50% quý 4', { startedAt: '2026-11-25T02:00:00Z' });
     await seedMeeting('50 người tham dự', { startedAt: '2026-11-25T01:45:00Z' });
@@ -170,13 +171,18 @@ suite('meetings.meeting.list search and cursor pagination (#5052)', () => {
     await seedMeeting('Mã-01 nội bộ', { startedAt: '2026-11-25T01:15:00Z' });
     const emojiQ4 = await seedMeeting('🎯 Kế hoạch Q4', { startedAt: '2026-11-25T01:00:00Z' });
     const vnFlagQ4 = await seedMeeting('🇻🇳 Kế hoạch Q4', { startedAt: '2026-11-25T00:45:00Z' });
+    const keycapOne = await seedMeeting('Họp 1️⃣ ưu tiên', { startedAt: '2026-11-25T00:40:00Z' });
+    await seedMeeting('Họp lần 1 thường', { startedAt: '2026-11-25T00:35:00Z' });
     await seedMeeting('Kế hoạch Q4 chung', { startedAt: '2026-11-25T00:30:00Z' });
 
     expect((await listMeetings('solo', { search: 'dien thoai' })).map((m) => m.id)).toEqual([phone]);
     expect((await listMeetings('solo', { search: 'HOA SEN' })).map((m) => m.id)).toEqual([lotusNew, lotusOld]);
     expect((await listMeetings('solo', { search: '東京 2026' })).map((m) => m.id)).toEqual([tokyo]);
+    expect((await listMeetings('solo', { search: '東京 大阪' })).map((m) => m.id)).toEqual([jpMulti]);
+    expect((await listMeetings('solo', { search: '東京 大阪 Q4' })).map((m) => m.id)).toEqual([jpMulti]);
     expect((await listMeetings('solo', { search: '🎯 Q4' })).map((m) => m.id)).toEqual([emojiQ4]);
     expect((await listMeetings('solo', { search: '🇻🇳 Q4' })).map((m) => m.id)).toEqual([vnFlagQ4]);
+    expect((await listMeetings('solo', { search: '1️⃣' })).map((m) => m.id)).toEqual([keycapOne]);
     expect((await listMeetings('solo', { search: '50%' })).map((m) => m.id)).toEqual([pct]);
     expect((await listMeetings('solo', { search: 'tang 50%' })).map((m) => m.id)).toEqual([pct]);
     expect((await listMeetings('solo', { search: 'ma_01' })).map((m) => m.id)).toEqual([under]);
@@ -184,7 +190,7 @@ suite('meetings.meeting.list search and cursor pagination (#5052)', () => {
     expect((await listMeetings('solo', { search: '%' })).map((m) => m.id)).toEqual([pct]);
     expect((await listMeetings('solo', { search: '_' })).map((m) => m.id)).toEqual([under]);
     expect((await listMeetings('solo', { search: '🎯' })).map((m) => m.id)).toEqual([emojiQ4]);
-    expect(await listMeetings('solo', { search: '   ' })).toHaveLength(12);
+    expect(await listMeetings('solo', { search: '   ' })).toHaveLength(15);
 
     const searchPage1 = await listMeetings('solo', { search: 'hoa sen', limit: 1 });
     expect(searchPage1.map((m) => m.id)).toEqual([lotusNew]);
