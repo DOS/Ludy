@@ -293,7 +293,8 @@ async function seriesLockKey(ctx: Pick<QueryContext, 'trx' | 'orgId'>, todoId: s
 
 // Serializes series-wide transitions (spawn, stopSeries, and reopen/undo) on an org-scoped advisory xact lock.
 async function lockTodoSeries(ctx: Pick<QueryContext, 'trx' | 'orgId'>, seriesKey: string): Promise<void> {
-  await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`ludy_notes.todo_series:${ctx.orgId}:${seriesKey}`}, 0))`.execute(ctx.trx);
+  const lockKey = `ludy_notes.todo_series:${ctx.orgId.toLowerCase()}:${seriesKey.toLowerCase()}`;
+  await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${lockKey}, 0))`.execute(ctx.trx);
 }
 
 // Serializes per-(org, user) personal to-do sort_key reads and REBALANCE_AT key spreading so

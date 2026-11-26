@@ -19,6 +19,7 @@ DECLARE
   v_templates jsonb := '[]'::jsonb;
   v_lists jsonb := '[]'::jsonb;
   v_notebooks jsonb := '[]'::jsonb;
+  v_lock_notebooks uuid[] := '{}'::uuid[];
 BEGIN
   IF v_org IS NULL OR ludy_kernel.ctx_actor_type() IS DISTINCT FROM 'user' OR NOT EXISTS (
     SELECT 1 FROM ludy_kernel.tenant_member m
@@ -31,10 +32,10 @@ BEGIN
 
   -- Global lock DAG: notebook advisory lock -> notebook[id ASC] -> note[id ASC] -> note_template[id ASC] -> todo_list[id ASC] -> todo[id ASC]
   -- before any DELETE/UPDATE so concurrent noteUpdate (resolveNotebookForNote advisory lock -> note FOR UPDATE -> notebook FOR SHARE)
-  -- and FK ON DELETE SET NULL / CASCADE stay deadlock-free.
-  PERFORM pg_catalog.pg_advisory_xact_lock(
-    pg_catalog.hashtextextended('notes.notebook:' || v_org::text || ':' || nb.id::text, 0)
-  )
+  -- and FK ON DELETE SET NULL / CASCADE stay deadlock-free. Compute the matched notebook IDs once so advisory locks
+  -- and row FOR UPDATE locks cover the exact same canonical ID set without repeating the scan under READ COMMITTED.
+  SELECT COALESCE(pg_catalog.array_agg(nb.id ORDER BY nb.id), '{}'::uuid[])
+    INTO v_lock_notebooks
     FROM (
       SELECT b.id
         FROM ludy_notes.notebook b
@@ -58,32 +59,21 @@ BEGIN
            )
          )
        ORDER BY b.id
-      OFFSET 0
     ) nb;
 
-  PERFORM b.id
-    FROM ludy_notes.notebook b
-   WHERE b.org_id = v_org AND b.visibility = 'private'
-     AND (
-       ludy_kernel.text_mentions(b.name, p_kind, p_value)
-       OR ludy_kernel.text_mentions(b.stack_name, p_kind, p_value)
-       OR EXISTS (
-         SELECT 1 FROM ludy_notes.note n
-          WHERE n.org_id = v_org AND n.notebook_id = b.id AND n.visibility = 'private'
-            AND (ludy_kernel.text_mentions(n.title, p_kind, p_value)
-                 OR ludy_kernel.text_mentions(n.body, p_kind, p_value)
-                 OR ludy_kernel.text_mentions(pg_catalog.array_to_string(n.tags, ' '), p_kind, p_value)
-                 OR EXISTS (
-                   SELECT 1 FROM ludy_notes.note_version v
-                    WHERE v.org_id = n.org_id AND v.note_id = n.id
-                      AND (ludy_kernel.text_mentions(v.title, p_kind, p_value)
-                           OR ludy_kernel.text_mentions(v.body, p_kind, p_value)
-                           OR ludy_kernel.text_mentions(pg_catalog.array_to_string(v.tags, ' '), p_kind, p_value))
-                 ))
-       )
-     )
-   ORDER BY b.id
-   FOR UPDATE;
+  IF COALESCE(pg_catalog.array_length(v_lock_notebooks, 1), 0) > 0 THEN
+    PERFORM pg_catalog.pg_advisory_xact_lock(
+      pg_catalog.hashtextextended('notes.notebook:' || v_org::text || ':' || nb_id::text, 0)
+    )
+      FROM pg_catalog.unnest(v_lock_notebooks) WITH ORDINALITY AS u(nb_id, ord)
+     ORDER BY u.ord;
+
+    PERFORM b.id
+      FROM ludy_notes.notebook b
+     WHERE b.org_id = v_org AND b.id = ANY (v_lock_notebooks)
+     ORDER BY b.id
+     FOR UPDATE;
+  END IF;
 
   PERFORM n.id
     FROM ludy_notes.note n

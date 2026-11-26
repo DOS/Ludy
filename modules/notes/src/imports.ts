@@ -26,7 +26,7 @@ import {
 import type { MemberRole } from '@ludy/db';
 import { DomainError, defineCommand, type CommandContext } from '@ludy/kernel-runtime';
 import { NOTE_ATTACHMENT_EXTRACT_QUEUED_EVENT } from './attachments.ts';
-import { resolveNotebookForNote } from './notes.ts';
+import { lockNotebookReorder, resolveNotebookForNote } from './notes.ts';
 import { detailsOf, due, lockTodoListOrder, lockTodoSortOrder, lockTodosInOrder, ownKeys, parseSections, remindAt } from './todos.ts';
 
 const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
@@ -77,7 +77,8 @@ export const noteImportEnex = defineCommand({
 
     if (input.skipDuplicates) {
       // Serialize duplicate checks per user before acquiring any org-wide notebook lock.
-      await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`notes.note.import_enex:${ctx.orgId}:${userId}`}, 0))`.execute(ctx.trx);
+      const enexLockKey = `notes.note.import_enex:${ctx.orgId.toLowerCase()}:${userId.toLowerCase()}`;
+      await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${enexLockKey}, 0))`.execute(ctx.trx);
     }
 
     const targetNotebookId = input.targetNotebookId ? input.targetNotebookId.toLowerCase() : null;
@@ -117,7 +118,7 @@ export const noteImportEnex = defineCommand({
       const missingAnyFileNotebook = [...neededFileNotebookNames].some((key) => !privateNotebookByName.has(key));
       if (missingAnyFileNotebook) {
         // Only hold the org-wide notebook reorder lock when at least one file notebook is missing and must be created.
-        await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`notes.notebook.reorder:${ctx.orgId}`}, 0))`.execute(ctx.trx);
+        await lockNotebookReorder(ctx);
         await loadPrivateNotebooks();
 
         const existingAllCountRow = await ctx.trx

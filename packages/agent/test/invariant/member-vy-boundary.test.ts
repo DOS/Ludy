@@ -302,6 +302,7 @@ interface ScanSourceResult {
   suspiciousDivisionStarts: Set<number>;
   suspiciousRegexStarts: Set<number>;
   unambiguousRegexSpans: Array<{ start: number; end: number }>;
+  commentSpans: Array<{ start: number; end: number }>;
 }
 
 function scanSource(
@@ -325,6 +326,7 @@ function scanSource(
   const suspiciousDivisionStarts = new Set<number>();
   const suspiciousRegexStarts = new Set<number>();
   const unambiguousRegexSpans: Array<{ start: number; end: number }> = [];
+  const commentSpans: Array<{ start: number; end: number }> = [];
 
   let i = 0;
   let line = 1;
@@ -508,6 +510,7 @@ function scanSource(
       while (stop < text.length && !isLineTerminatorCode(text.charCodeAt(stop))) {
         stop += 1;
       }
+      commentSpans.push({ start: i, end: stop });
       pushBlankedComments(text.slice(i, stop));
       i = stop;
       continue;
@@ -525,6 +528,7 @@ function scanSource(
         i = text.length;
       } else {
         const stop = close + 2;
+        commentSpans.push({ start: i, end: stop });
         const raw = text.slice(i, stop);
         line += countNewlines(raw);
         pushBlankedComments(raw);
@@ -1054,6 +1058,7 @@ function scanSource(
     suspiciousDivisionStarts,
     suspiciousRegexStarts,
     unambiguousRegexSpans,
+    commentSpans,
   };
 }
 
@@ -4488,16 +4493,19 @@ export function meteredNotes(text: string, options?: { includeUnresolved?: boole
   const resolvedOpts = { includeUnresolved: Boolean(options?.includeUnresolved) };
   const resolvedParenStarts = new Set<number>();
   const ignoreUnresolvedInRanges = resolvedOpts.includeUnresolved ? primary.unambiguousRegexSpans : [];
-  const validTextSpans = primary.tokens
-    .filter(
-      (tk) =>
-        tk.kind === 'string' ||
-        tk.kind === 'template' ||
-        tk.kind === 'template_head' ||
-        tk.kind === 'template_middle' ||
-        tk.kind === 'template_tail',
-    )
-    .map((tk) => ({ start: tk.start, end: tk.end }));
+  const validSkipSpans = [
+    ...primary.tokens
+      .filter(
+        (tk) =>
+          tk.kind === 'string' ||
+          tk.kind === 'template' ||
+          tk.kind === 'template_head' ||
+          tk.kind === 'template_middle' ||
+          tk.kind === 'template_tail',
+      )
+      .map((tk) => ({ start: tk.start, end: tk.end })),
+    ...primary.commentSpans,
+  ].sort((a, b) => a.start - b.start);
   const found = new Set<string>([
     ...collectMeteredNotesFromTokens(primary.tokens, text, { ...resolvedOpts, resolvedParenStarts }),
     ...collectMeteredNotesFromTokens(tokenize(text, { scanRegexAsDivision: true }), text, {
@@ -4505,7 +4513,7 @@ export function meteredNotes(text: string, options?: { includeUnresolved?: boole
       ignoreUnresolvedInRanges,
     }),
     ...(extraTokens ? collectMeteredNotesFromTokens(extraTokens, text, { ...resolvedOpts, resolvedParenStarts }) : []),
-    ...collectRawMeteredNotes(text, resolvedParenStarts, validTextSpans),
+    ...collectRawMeteredNotes(text, resolvedParenStarts, validSkipSpans),
     ...[...text.matchAll(/\bmetered\(\s*['"`](notes\.[a-z0-9_]+)['"`]/g)].map((m) => m[1]!),
   ]);
   return [...found];
@@ -7753,12 +7761,14 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
       memberVyViolations("<T,>({ require: r }: any): T extends { a: 1 } ? 1 : 2 => r('pg')"),
     ).toContain('uses require alias or bare require reference');
 
-    // 6. collectRawMeteredNotes folds comments before '(' / quotes / '+' outside valid string/template literals; leak check handles unclosed backticks + comments + 3-way splits.
+    // 6. collectRawMeteredNotes folds comments before '(' / quotes / '+' outside valid string/template/comment literals; leak check handles unclosed backticks + comments + 3-way splits.
     expect(meteredNotes("metered /* c */ ( /* q */ 'no' /* c1 */ + 't' + 'es.summary', fn)")).toContain(
       'notes.summary',
     );
     expect(meteredNotes('const msg = "metered(\'no\' + \'tes.summary\', fn)";')).toEqual([]);
     expect(meteredNotes("const tpl = `prefix ${x} metered('no' + 'tes.summary', fn)`;")).toEqual([]);
+    expect(meteredNotes("// metered('no' + 'tes.summary', fn)")).toEqual([]);
+    expect(meteredNotes("/* metered('no' + 'tes.summary', fn) */")).toEqual([]);
     expect(
       workspaceAdapterLeakViolations(
         "const bad = `unclosed;\nrequire('@lu' /* c */ + 'dy/' /* c2 */ + 'agent');",

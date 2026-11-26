@@ -32,12 +32,14 @@ const NOW = new Date('2026-11-25T00:00:00.000Z');
 
 function createTodoAcceptTrx(opts: {
   note?: { id: string; revision: number; deleted_at: Date | null } | undefined;
+  noteOnRecheck?: { id: string; revision: number; deleted_at: Date | null } | undefined;
   priorTodoId?: string | undefined;
   uniqueConflictOnInsert?: boolean | undefined;
 }) {
   const queries: CompiledQuery[] = [];
   const insertedSeqs: Array<number | null> = [];
   let insertCount = 0;
+  let noteSelectCount = 0;
 
   const conn: DatabaseConnection = {
     executeQuery: async <R>(compiled: CompiledQuery): Promise<QueryResult<R>> => {
@@ -47,7 +49,9 @@ function createTodoAcceptTrx(opts: {
         return { rows: [{ pg_advisory_xact_lock: '' }] } as QueryResult<R>;
       }
       if (sqlText.includes('from "ludy_notes"."note"')) {
-        return { rows: opts.note ? [opts.note] : [] } as QueryResult<R>;
+        noteSelectCount += 1;
+        const selected = noteSelectCount > 1 && opts.noteOnRecheck ? opts.noteOnRecheck : opts.note;
+        return { rows: selected ? [selected] : [] } as QueryResult<R>;
       }
       if (sqlText.startsWith('insert into "ludy_notes"."todo"')) {
         if (opts.uniqueConflictOnInsert) {
@@ -358,5 +362,14 @@ describe('todoAcceptSuggestions handler (#3522)', () => {
     await expect(
       todoAcceptSuggestions.handler(makeTodoCtx(stale.trx).ctx, baseInput),
     ).rejects.toMatchObject({ code: 'NOTE_REVISION_CONFLICT', status: 409, details: { revision: 3 } });
+
+    const staleAfterRebalance = createTodoAcceptTrx({
+      note: { id: NOTE_ID, revision: 2, deleted_at: null },
+      noteOnRecheck: { id: NOTE_ID, revision: 2, deleted_at: NOW },
+    });
+    await expect(
+      todoAcceptSuggestions.handler(makeTodoCtx(staleAfterRebalance.trx).ctx, baseInput),
+    ).rejects.toMatchObject({ code: 'NOTE_IN_TRASH', status: 409 });
+    expect(staleAfterRebalance.insertedSeqs).toEqual([]);
   });
 });

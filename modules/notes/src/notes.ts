@@ -127,6 +127,20 @@ function rethrowNotebookConstraintError(err: unknown): never {
   throw err;
 }
 
+export async function lockNotebook(ctx: Pick<QueryContext, 'trx' | 'orgId'>, notebookId: string, shared = false): Promise<void> {
+  const lockKey = `notes.notebook:${ctx.orgId.toLowerCase()}:${notebookId.toLowerCase()}`;
+  if (shared) {
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock_shared(pg_catalog.hashtextextended(${lockKey}, 0))`.execute(ctx.trx);
+  } else {
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${lockKey}, 0))`.execute(ctx.trx);
+  }
+}
+
+export async function lockNotebookReorder(ctx: Pick<QueryContext, 'trx' | 'orgId'>): Promise<void> {
+  const lockKey = `notes.notebook.reorder:${ctx.orgId.toLowerCase()}`;
+  await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${lockKey}, 0))`.execute(ctx.trx);
+}
+
 // Checks notebook readability under caller SELECT RLS with uniform 404 for missing or unreadable notebooks
 // so cross-member private notebook_id probing yields zero existence oracle, takes a shared per-notebook advisory
 // lock (SELECT FOR SHARE in PostgreSQL would apply UPDATE RLS and hide shared notebooks from plain members),
@@ -137,7 +151,6 @@ export async function resolveNotebookForNote(
   noteAuthorUserId: string,
   noteVisibility: NoteVisibility,
 ): Promise<{ id: string; visibility: NoteVisibility }> {
-  const normOrgId = ctx.orgId.toLowerCase();
   const normNotebookId = notebookId.toLowerCase();
   const first = await ctx.trx
     .selectFrom('ludy_notes.notebook')
@@ -146,7 +159,7 @@ export async function resolveNotebookForNote(
     .where('id', '=', normNotebookId)
     .executeTakeFirst();
   if (!first) throw notebookNotFound();
-  await sql`SELECT pg_catalog.pg_advisory_xact_lock_shared(pg_catalog.hashtextextended(${`notes.notebook:${normOrgId}:${normNotebookId}`}, 0))`.execute(ctx.trx);
+  await lockNotebook(ctx, normNotebookId, true);
   const nb = await ctx.trx
     .selectFrom('ludy_notes.notebook')
     .select(['id', 'author_user_id', 'visibility'])

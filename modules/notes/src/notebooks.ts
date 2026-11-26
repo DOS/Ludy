@@ -25,7 +25,7 @@ import {
 import type { MemberRole } from '@ludy/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { notesManifest } from './manifest.ts';
-import { NOTE_SUMMARY_COLUMNS, hasWholeOrgScope, noteSummaryRow } from './notes.ts';
+import { NOTE_SUMMARY_COLUMNS, hasWholeOrgScope, lockNotebook, lockNotebookReorder, noteSummaryRow } from './notes.ts';
 
 const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 const READERS: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -309,7 +309,7 @@ export const notebookCreate = defineCommand({
       throw new DomainError('FORBIDDEN', 403, 'Thành viên giới hạn theo pháp nhân không tạo được sổ tay dùng chung');
     }
 
-    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`notes.notebook.reorder:${ctx.orgId}`}, 0))`.execute(ctx.trx);
+    await lockNotebookReorder(ctx);
 
     const existing = await ctx.trx
       .selectFrom('ludy_notes.notebook')
@@ -672,9 +672,9 @@ export const notebookUpdate = defineCommand({
     }
 
     if (input.reorder) {
-      await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`notes.notebook.reorder:${ctx.orgId.toLowerCase()}`}, 0))`.execute(ctx.trx);
+      await lockNotebookReorder(ctx);
     }
-    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`notes.notebook:${ctx.orgId.toLowerCase()}:${input.notebookId.toLowerCase()}`}, 0))`.execute(ctx.trx);
+    await lockNotebook(ctx, input.notebookId);
 
     const before = await ctx.trx
       .selectFrom('ludy_notes.notebook')
@@ -772,7 +772,7 @@ export const notebookDelete = defineCommand({
     if (!peek) throw notebookNotFound();
     if (!canManageNotebook(peek, userId, ctx.role, wholeOrg)) throw notebookAuthorOnly();
 
-    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`notes.notebook:${ctx.orgId.toLowerCase()}:${input.notebookId.toLowerCase()}`}, 0))`.execute(ctx.trx);
+    await lockNotebook(ctx, input.notebookId);
 
     const locked = await ctx.trx
       .selectFrom('ludy_notes.notebook')
