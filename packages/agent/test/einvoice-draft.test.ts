@@ -2053,5 +2053,93 @@ describe('per-clause figure and VAT rate binding (#4119)', () => {
         answer([line({ description: 'Gạo', unit: 'kg', quantity: '2', unitPrice: '25', vatRate: null })], null),
       ),
     ).toEqual({ kind: 'none', code: 'FIGURES' });
+
+    // Multi-extra-column tables preserve header price scaling, unresolvable scaled headers fail closed, ₫ scales work, and row notes mark tax-inclusive rows.
+    expect(
+      checkEInvoiceDraft(
+        req('SL\tĐơn giá (nghìn đồng)\tTên hàng\tKho\tNhóm\n2\t50\tBút\tA\tVăn phòng'),
+        answer([line({ description: 'Bút', unit: null, quantity: '2', unitPrice: '50000', vatRate: null })], null),
+      ).kind,
+    ).toBe('proposal');
+    expect(
+      checkEInvoiceDraft(
+        req('SL\tĐơn giá (nghìn đồng)\tTên hàng\tKho\tNhóm\n2\t50\tBút\tA\tVăn phòng'),
+        answer([line({ description: 'Bút', unit: null, quantity: '2', unitPrice: '50', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(
+      checkEInvoiceDraft(
+        req('SL\tThành tiền\tTên hàng\tĐơn giá (nghìn đồng)\tKho\tNhóm\n2\t100\tBút\t50\tHN\tABC'),
+        answer([line({ description: 'Bút', unit: null, quantity: '2', unitPrice: '50000', vatRate: null })], null),
+      ).kind,
+    ).toBe('proposal');
+    expect(
+      checkEInvoiceDraft(
+        req('SL\tĐơn giá (nghìn đồng)\tCột X\tCột Y\n2\t50\tBút\tA'),
+        answer([line({ description: 'Bút', unit: null, quantity: '2', unitPrice: '50', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(
+      checkEInvoiceDraft(
+        req('Tên hàng\tSL\tĐơn giá (₫)\nBút\t2\t50000'),
+        answer([line({ description: 'Bút', unit: null, quantity: '2', unitPrice: '50000', vatRate: null })], null),
+      ).kind,
+    ).toBe('proposal');
+    expect(
+      checkEInvoiceDraft(
+        req('Tên hàng\tSL\tĐơn giá (1.000 ₫)\nBút\t2\t50'),
+        answer([line({ description: 'Bút', unit: null, quantity: '2', unitPrice: '50000', vatRate: null })], null),
+      ).kind,
+    ).toBe('proposal');
+    expect(
+      checkEInvoiceDraft(
+        req('Tên hàng\tSL\tĐơn giá (nghìn đồng)\tVAT\tGhi chú\nBút\t2\t50\t10%\tĐã gồm VAT'),
+        answer([line({ description: 'Bút', unit: null, quantity: '2', unitPrice: '50000', vatRate: '10%' })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(
+      checkEInvoiceDraft(
+        req('Đơn giá đã gồm VAT 8%:\nTên hàng\tSL\tĐơn giá\nGạo chưa VAT\t2\t50000'),
+        answer([line({ description: 'Gạo chưa VAT', unit: null, quantity: '2', unitPrice: '50000', vatRate: '8%' })], null),
+      ).kind,
+    ).toBe('proposal');
+
+    // Invoice-scoped trailing tax-inclusive clause marks all items, multi-word explicit units stay intact, partial/numeric unit tricks fail, and M/L size changes are caught.
+    expect(
+      checkEInvoiceDraft(
+        req('2 kg gạo giá 40k VAT 8%; 3 kg trà giá 50k, đã gồm VAT 8% cho toàn bộ hóa đơn'),
+        answer([line({ description: 'Gạo', unit: 'kg', quantity: '2', unitPrice: '40000', vatRate: '8%' })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(
+      checkEInvoiceDraft(
+        req('Tư vấn, đơn vị ngày công, số lượng 2, đơn giá 300000'),
+        answer([line({ description: 'Tư vấn', unit: 'ngày công', quantity: '2', unitPrice: '300000', vatRate: null })], null),
+      ).kind,
+    ).toBe('proposal');
+    expect(
+      checkEInvoiceDraft(
+        req('Tư vấn, đơn vị ngày công, số lượng 2, đơn giá 300000'),
+        answer([line({ description: 'Tư vấn', unit: 'ngày', quantity: '2', unitPrice: '300000', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(
+      checkEInvoiceDraft(
+        req('Tên hàng\tĐVT\tSL\tĐơn giá\nGạo\tkg\t2\t25000'),
+        answer([line({ description: 'Gạo', unit: 'kg/2', quantity: '2', unitPrice: '25000', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(
+      checkEInvoiceDraft(
+        req('Tên hàng\tĐVT\tSL\tĐơn giá\nGạo\tkg\t2\t25000'),
+        answer([line({ description: 'Gạo', unit: '2', quantity: '2', unitPrice: '25000', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(
+      checkEInvoiceDraft(
+        req('Tên hàng\tSL\tĐơn giá (nghìn đồng)\nÁo size S\t2\t50'),
+        answer([line({ description: 'Áo size M', unit: null, quantity: '2', unitPrice: '50000', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
   });
 });
