@@ -248,7 +248,7 @@ export const en: Dictionary = {
       {
         key: 'sign',
         name: 'Ludy eSign',
-        body: `End-to-end PDF signing: sandbox PDF safety checks, 5 SME starter contracts and reusable templates, ${N.gm} field and playbook checks, Zalo or direct signing links, in-person counter signing, verified attachments, tamper-evident sealing with audit certificates, and offline verification.`,
+        body: `End-to-end signing of PDFs from PDF or .docx uploads: offline .docx to A4 PDF conversion, 1-5 PDF packets, 5 SME starters and reusable templates, ${N.gm} field, 2-5 PDF discrepancy and playbook checks, Zalo OA (when connected) or QR scan-to-sign, remote post-sign VietQR deposits proposed for Ludy Finance accountant matching, tamper-evident sealing and offline verification.`,
         agent: N.gm,
         page: 'sign',
       },
@@ -587,12 +587,12 @@ export const en: Dictionary = {
     },
     sign: {
       name: 'Ludy eSign',
-      body: 'Draft contracts or reuse templates, hand off from Engage, Teamwork, Projects or HR, place fields and stamps with optional AI playbook checks, send Zalo links, direct links or in-person sessions, track renewals and verify sealed files offline.',
+      body: 'Draft contracts or upload PDFs and Word (.docx) converted to A4 PDF for signing, bundle 1-5 document packets, hand off from Engage, Teamwork, Projects or HR, place fields with optional AI playbook checks, send via Zalo link, Zalo OA or QR scan-to-sign, attach remote post-sign VietQR deposits and verify sealed files offline.',
       points: [
-        'Isolated PDF safety check (up to 25 MB, 200 pages), 5 built-in SME starter templates, reusable template library with automatic text-tag placement, and offline page-by-page revision comparison',
-        '9 field types including red company or title stamps, 1-click initial all pages, dropdown/radio choices and verified ID or business attachments; optional AI field, risk and 6-rule SME playbook checks with human approval',
-        'Private Zalo links, optional 6-digit email verification code, permanent direct links, public form hub and 30-minute in-person counter sessions; in-flight recipient corrections and audited delegation',
-        'One-click handoffs from Ludy Engage quotes, meeting minutes, project acceptance and HR labor contracts; tamper-evident sealing with audit certificates, renewal alerts on Today, offline verification, webhooks and REST API',
+        'Offline Word (.docx up to 10 MB) to A4 PDF conversion preserving signing tags and rejecting unaccepted Track Changes, isolated PDF safety checks for 1-5 PDF packets (up to 25 MB, 200 pages), 5 SME starter templates, reusable text-tag templates and offline revision diff',
+        '9 field types including red stamps, 1-click initial all pages and verified attachments; 10 optional AI features proposing fields, checking the 6-rule SME playbook and flagging 2-5 PDF cross-document discrepancies for human review',
+        'No-referrer Zalo links (inserted into Zalo OA Inbox for human send when connected), desktop-to-phone and counter QR scan-to-sign, optional 6-digit email OTP, direct links, public hub, in-flight recipient fixes and audited delegation',
+        'One-click handoffs from Engage quotes, meeting minutes, project acceptance and HR contracts; remote post-sign VietQR deposits proposed for accountant matching in Ludy Finance, unified certificates on 2-5 PDF packets, Today renewal alerts, offline verify, webhooks and REST API',
       ],
       soonLabel: 'Coming soon',
       soon: 'Vietnam public CA connections (VNPT SmartCA, Viettel MySign, MISA WeSign) and long-term signature validation for envelopes (awaiting envelope workflow wiring, provider test credentials and legal review)',

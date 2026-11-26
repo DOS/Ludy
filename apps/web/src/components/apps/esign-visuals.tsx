@@ -10,10 +10,14 @@ import {
   FileDiff,
   FilePenLine,
   FileText,
+  FileUp,
   KeyRound,
+  Landmark,
+  Layers,
   Lock,
   Mail,
   PenLine,
+  QrCode,
   Search,
   ShieldCheck,
   Smartphone,
@@ -49,7 +53,7 @@ function FauxButton({ children, primary = false }: { children: string; primary?:
   );
 }
 
-// Hero: sequential envelope with Signer/CC roles, red stamp + initials, dashed AI proposal, SME playbook check and human Send gate.
+// Hero: sequential 2-PDF packet from .docx with Signer/CC roles, red stamp + initials, dashed AI proposal, SME playbook check, post-sign VietQR note and human Send gate.
 export function EsignHero({ dict, copy }: Props) {
   const f = copy.fragments.hero;
   return (
@@ -67,7 +71,7 @@ export function EsignHero({ dict, copy }: Props) {
               {f.sourceChip}
             </Chip>
             <Chip tone="neutral">{f.routingChip}</Chip>
-            <Chip tone="ok">
+            <Chip tone="ok" wrap>
               <Check className="size-3" strokeWidth={3} aria-hidden="true" />
               {f.inspectBadge}
             </Chip>
@@ -127,7 +131,7 @@ export function EsignHero({ dict, copy }: Props) {
           </div>
         </div>
 
-        {/* Right: Playbook & clause check + human Send gate */}
+        {/* Right: Playbook & packet consistency check + post-sign VietQR note + human Send gate */}
         <div className="flex min-w-0 flex-col rounded-md border border-dashed border-accent/60 bg-bg p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="text-sm font-semibold text-fg">{f.vyTitle}</span>
@@ -137,6 +141,10 @@ export function EsignHero({ dict, copy }: Props) {
             </Chip>
           </div>
           <p className="mt-3 rounded-sm border border-line bg-surface p-3 text-xs text-muted">{f.vyClause}</p>
+          <p className="mt-2.5 flex items-start gap-1.5 rounded-sm border border-line bg-surface px-2.5 py-2 text-[11px] text-muted">
+            <Landmark className="mt-0.5 size-3.5 shrink-0 text-ok" aria-hidden="true" />
+            <span>{f.postSignNote}</span>
+          </p>
           <div className="mt-auto pt-4">
             <span
               className="flex h-9 items-center justify-center rounded-md border border-line-strong/70 bg-surface-2 text-sm font-medium text-fg"
@@ -155,7 +163,7 @@ export function EsignHero({ dict, copy }: Props) {
   );
 }
 
-// Group 1: Starter A4 drafter, reusable template tags, 9 field types + 1-click initials, and revision diff.
+// Group 1: Native .docx -> A4 PDF with signing tags, 1-5 PDF packet + Vy consistency check, starter A4 drafter, tags, 9 fields, and revision diff.
 export function IntakeAndTemplatesVisual({ copy }: Props) {
   const f = copy.fragments.templatesAndDrafting;
   return (
@@ -165,6 +173,47 @@ export function IntakeAndTemplatesVisual({ copy }: Props) {
         <span className="sr-only">{copy.fragments.sample}</span>
       </figcaption>
       <div className="px-4 py-3 text-xs">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="flex items-center gap-1.5 font-semibold text-fg">
+            <FileUp className="size-3.5 shrink-0 text-ok" aria-hidden="true" />
+            {f.docxTitle}
+          </span>
+          <code className="rounded-sm border border-line bg-surface px-2 py-0.5 font-mono text-[11px] text-fg">{f.docxCode}</code>
+        </div>
+        <p className="mt-1 text-muted">{f.docxNote}</p>
+      </div>
+      <div className="border-t border-line px-4 py-3 text-xs">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="flex items-center gap-1.5 font-semibold text-fg">
+            <Layers className="size-3.5 shrink-0 text-accent-ink" aria-hidden="true" />
+            {f.packetTitle}
+          </span>
+          <span className="num text-[11px] text-subtle">{f.packetStats}</span>
+        </div>
+        <ul className="mt-2 grid gap-2 sm:grid-cols-2">
+          {f.packetDocs.map((doc) => (
+            <li key={doc.index} className="rounded-sm border border-line bg-surface px-2.5 py-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-medium text-fg">
+                  <span className="num text-subtle">{doc.index}</span> {doc.title}
+                </span>
+              </div>
+              <span className="mt-0.5 block text-[11px] text-muted">{doc.meta}</span>
+            </li>
+          ))}
+        </ul>
+        <div className="mt-2.5 rounded-sm border border-dashed border-accent/60 bg-accent-soft/50 p-2.5">
+          <div className="flex flex-wrap items-center justify-between gap-1.5">
+            <code className="font-mono text-[11px] font-medium text-fg">{f.packetCheckCode}</code>
+            <Chip tone="accent" wrap>
+              <Sparkles className="size-3" aria-hidden="true" />
+              {f.packetCheckBadge}
+            </Chip>
+          </div>
+          <p className="mt-1 text-[11px] text-muted">{f.packetCheckNote}</p>
+        </div>
+      </div>
+      <div className="border-t border-line px-4 py-3 text-xs">
         <span className="font-semibold text-subtle">{f.starterTitle}</span>
         <ul className="mt-2 flex flex-wrap gap-1.5">
           {f.starterKinds.map((kind) => (
@@ -217,7 +266,7 @@ export function IntakeAndTemplatesVisual({ copy }: Props) {
   );
 }
 
-// Group 2: Connected suite handoffs from Engage, Meeting minutes, Projects -> Finance invoice, and HR (Decree 337/2025).
+// Group 2: Connected suite handoffs across Engage quotes, Zalo OA Inbox, VietQR deposits -> Finance, Meeting minutes, Projects -> Finance invoice, and HR (Decree 337/2025).
 export function HandoffsVisual({ copy }: Props) {
   const f = copy.fragments.handoffs;
   return (
@@ -231,9 +280,14 @@ export function HandoffsVisual({ copy }: Props) {
           <li key={card.from} className="rounded-sm border border-line bg-surface p-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="font-semibold text-fg">{card.from}</span>
-              <Chip tone={card.tone} wrap>
-                {card.badge}
-              </Chip>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {card.code ? (
+                  <code className="rounded-sm border border-line bg-bg px-1.5 py-0.5 font-mono text-[11px] text-fg">{card.code}</code>
+                ) : null}
+                <Chip tone={card.tone} wrap>
+                  {card.badge}
+                </Chip>
+              </div>
             </div>
             <div className="mt-1.5 flex items-start gap-1.5 text-muted">
               <ArrowRight className="mt-0.5 size-3.5 shrink-0 text-subtle" aria-hidden="true" />
@@ -246,7 +300,7 @@ export function HandoffsVisual({ copy }: Props) {
   );
 }
 
-// Group 3: Mobile-first signing ceremony across Zalo fragment, direct links, public hub, stamps, attachments and delegation.
+// Group 3: Mobile-first signing ceremony across Zalo fragment, QR scan-to-sign, direct links, public hub, stamps, attachments, delegation and post-sign VietQR note.
 export function CeremonyVisual({ copy }: Props) {
   const f = copy.fragments.ceremony;
   return (
@@ -273,6 +327,18 @@ export function CeremonyVisual({ copy }: Props) {
         <span className="sr-only">{copy.fragments.sample}</span>
       </figcaption>
       <div className="flex flex-col gap-3 px-4 py-3 text-xs">
+        <div className="rounded-sm border border-line bg-surface p-2.5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="flex items-center gap-1.5 font-semibold text-fg">
+              <QrCode className="size-4 shrink-0 text-accent-ink" aria-hidden="true" />
+              {f.qrTitle}
+            </span>
+            <Chip tone="accent" wrap>
+              {f.qrBadge}
+            </Chip>
+          </div>
+          <p className="mt-1 text-[11px] text-muted">{f.qrNote}</p>
+        </div>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="min-w-0 text-sm font-medium text-fg">{f.docTitle}</span>
           <Chip tone="accent" wrap>
@@ -315,6 +381,10 @@ export function CeremonyVisual({ copy }: Props) {
             <FauxButton>{f.declineBtn}</FauxButton>
             <FauxButton primary>{f.submitBtn}</FauxButton>
           </div>
+        </div>
+        <div className="flex items-start gap-1.5 rounded-sm border border-line bg-surface-2 px-2.5 py-2 text-[11px] text-muted">
+          <Landmark className="mt-0.5 size-3.5 shrink-0 text-ok" aria-hidden="true" />
+          <span>{f.depositPreview}</span>
         </div>
       </div>
     </figure>
