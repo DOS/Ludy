@@ -1778,5 +1778,63 @@ describe('per-clause figure and VAT rate binding (#4119)', () => {
         answer([line({ description: 'Bút', unit: null, quantity: '2', unitPrice: '5000', vatRate: null })], null),
       ).kind,
     ).toBe('proposal');
+
+    expect(
+      checkEInvoiceDraft(
+        req('Đơn giá đã gồm VAT 8%: 2 áo giá 50k'),
+        answer([line({ description: 'Áo', unit: null, quantity: '2', unitPrice: '50000', vatRate: '8%' })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(
+      checkEInvoiceDraft(
+        req('Đơn giá chưa gồm VAT 8%: 2 áo giá 50k'),
+        answer([line({ description: 'Áo', unit: null, quantity: '2', unitPrice: '50000', vatRate: '8%' })], null),
+      ).kind,
+    ).toBe('proposal');
+
+    expect(
+      checkEInvoiceDraft(
+        req('Tên hàng\tSL\tĐơn giá\tThuế GTGT (nghìn đồng)\nGạo\t2\t40000\t8'),
+        answer([line({ description: 'Gạo', unit: null, quantity: '2', unitPrice: '40000', vatRate: '8%' })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'RATE' });
+
+    expect(
+      checkEInvoiceDraft(
+        req('2 áo giá 50k, đã gồm VAT 8%, thành tiền 100k'),
+        answer([line({ description: 'Áo', unit: null, quantity: '2', unitPrice: '50000', vatRate: '8%' })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+
+    const squareMeterTable = req('Tên hàng\tĐVT\tSL\tĐơn giá\nThảm\tm²\t2\t100000');
+    expect(
+      checkEInvoiceDraft(
+        squareMeterTable,
+        answer([line({ description: 'Thảm', unit: 'm²', quantity: '2', unitPrice: '100000', vatRate: null })], null),
+      ).kind,
+    ).toBe('proposal');
+    expect(
+      checkEInvoiceDraft(
+        squareMeterTable,
+        answer([line({ description: 'Thảm', unit: 'm', quantity: '2', unitPrice: '100000', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+
+    expect(
+      checkEInvoiceDraft(
+        req('2 hộp trà giá 50k; thêm 3 hộp trà giá 70k'),
+        answer([
+          line({ description: 'Trà', unit: 'hộp', quantity: '2', unitPrice: '50000', vatRate: null }),
+          line({ description: 'Trà', unit: 'hộp', quantity: '3', unitPrice: '70000', vatRate: null }),
+        ], null),
+      ).kind,
+    ).toBe('proposal');
+
+    expect(
+      checkEInvoiceDraft(
+        req('Tên hàng\tSL/kg\tĐơn giá\nGạo\t2\t50000'),
+        answer([line({ description: 'Gạo', unit: 'kg', quantity: '2', unitPrice: '50000', vatRate: null })], null),
+      ).kind,
+    ).toBe('proposal');
   });
 });
