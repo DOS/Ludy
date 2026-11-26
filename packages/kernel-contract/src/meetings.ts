@@ -131,10 +131,20 @@ export const zMeetingDetail = zMeetingSummary.extend({
 });
 export type MeetingDetail = z.infer<typeof zMeetingDetail>;
 
-export const zMeetingListInput = z.strictObject({
-  visibility: zMeetingVisibility.optional(),
-  limit: z.number().int().min(1).max(200).optional(),
-});
+export const zMeetingListInput = z
+  .strictObject({
+    visibility: zMeetingVisibility.optional(),
+    limit: z.number().int().min(1).max(200).optional(),
+    // Plain-text title search (Vietnamese diacritics and case folded; #5052). Empty or whitespace-only behaves as unset.
+    search: z.string().trim().max(200).optional(),
+    // Keyset cursor (#5052): held time (`startedAt ?? createdAt`) and `id` of the last item of the previous page, both or neither.
+    afterStartedAt: z.iso.datetime({ offset: true }).optional(),
+    afterId: zId.optional(),
+  })
+  .refine((v) => (v.afterStartedAt === undefined) === (v.afterId === undefined), {
+    message: 'afterStartedAt and afterId come together',
+    path: ['afterId'],
+  });
 export type MeetingListInput = z.infer<typeof zMeetingListInput>;
 
 export const zMeetingCreate = z.strictObject({

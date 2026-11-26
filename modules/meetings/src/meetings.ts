@@ -678,8 +678,25 @@ export const meetingList = defineQuery({
       query = query.where('visibility', '=', input.visibility);
     }
 
+    const search = input.search?.trim();
+    if (search) {
+      query = query.where(
+        sql<boolean>`(CASE WHEN ludy_kernel.search_fold(${search}) = '' THEN pg_catalog.strpos(pg_catalog.lower(title), pg_catalog.lower(${search})) > 0 ELSE pg_catalog.strpos(ludy_kernel.search_fold(title), ludy_kernel.search_fold(${search})) > 0 END)`,
+      );
+    }
+
+    // Ordered and paged by the held time as the answer carries it (milliseconds: startedAt ?? createdAt),
+    // so a page boundary inside one millisecond neither repeats nor skips a meeting (#5052).
+    const heldAt = sql`pg_catalog.date_trunc('milliseconds', COALESCE(started_at, created_at))`;
+    if (input.afterStartedAt !== undefined && input.afterId !== undefined) {
+      query = query.where(
+        sql<boolean>`(${heldAt}, id) < (pg_catalog.date_trunc('milliseconds', ${input.afterStartedAt}::timestamptz), ${input.afterId}::uuid)`,
+      );
+    }
+
     const rows = (await query
-      .orderBy('started_at', 'desc')
+      .orderBy(heldAt, 'desc')
+      .orderBy('id', 'desc')
       .limit(input.limit ?? 50)
       .execute()) as unknown as MeetingRow[];
 
