@@ -462,8 +462,10 @@ const KNOWN_REFRESH_ERROR_CODES = new Set([
   'authError',
   'AUTH_TYPE_UNSUPPORTED',
   'IncompleteSignature',
+  'InvalidParameter',
   'InvalidAppKey',
   'IllegalAppKey',
+  'AppKeyNotFound',
   'InvalidTimestamp',
   'ApiCallLimit',
   'AppCallLimit',
@@ -579,19 +581,24 @@ export const channelRefreshFail = defineCommand({
     if (backoffSeconds > 0) {
       const nowMs = ctx.now.getTime();
       let nextMs = nowMs + backoffSeconds * 1000;
-      // Threads refreshes with its access token itself (no separate refresh token): keep one final try 15 minutes
-      // before expiry when the backoff would otherwise jump past a still-recoverable token's end.
+      let skipBackoff = false;
+      // Threads refreshes with its access token itself (no separate refresh token): keep one final try before
+      // expiry whenever backoff would otherwise jump past a still-unexpired token's end.
       if (row.provider === 'threads' && row.expires_at !== null) {
         const expMs = new Date(row.expires_at).getTime();
-        if (expMs - 15 * 60_000 > nowMs) {
-          const lastChanceMs = Math.max(nowMs + 10 * 60_000, expMs - 15 * 60_000);
-          if (nextMs > lastChanceMs) {
-            nextMs = lastChanceMs;
+        if (expMs > nowMs && nextMs > expMs) {
+          if (expMs - 15 * 60_000 > nowMs) {
+            nextMs = Math.max(nowMs + 10 * 60_000, expMs - 15 * 60_000);
             backoffSeconds = Math.max(1, Math.round((nextMs - nowMs) / 1000));
+          } else {
+            // Inside the final 15 minutes before expiry: leave next_at null so the next 10-minute sweep gets one
+            // last attempt before expiry; once expired, normal backoff applies.
+            skipBackoff = true;
+            backoffSeconds = 0;
           }
         }
       }
-      nextAt = new Date(nextMs).toISOString();
+      nextAt = skipBackoff ? null : new Date(nextMs).toISOString();
     }
     await ctx.trx
       .updateTable('ludy_kernel.channel_connection')
