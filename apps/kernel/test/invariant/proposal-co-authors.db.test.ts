@@ -352,18 +352,22 @@ suite('the co-authors of a proposal on PostgreSQL (#2736)', () => {
     // while SQL accepts the entry type as a co-author (restricting only, never unlocking four-eyes or owner override).
     const insertRawAuthors = async (authors: unknown[], snapshot: string[]): Promise<{ id: string; revision: number } | null> =>
       admin(async (c) => {
+        const stmt = `INSERT INTO crove_kernel.proposal (org_id, kind, command, status, title, payload, eligible_approvers, authors, co_authors)
+                      VALUES ($1, 'journal_voucher', $2, 'pending', 'T2749', '{}', $3::uuid[], $4::jsonb, NULL) RETURNING id, revision`;
         try {
-          const r = await c.query<{ id: string; revision: number }>(
-            `INSERT INTO crove_kernel.proposal (org_id, kind, command, status, title, payload, eligible_approvers, authors, co_authors)
-             VALUES ($1, 'journal_voucher', $2, 'pending', 'T2749', '{}', $3::uuid[], $4::jsonb, NULL) RETURNING id, revision`,
-            [big.orgId, COMMAND, snapshot, JSON.stringify(authors)],
-          );
+          const r = await c.query<{ id: string; revision: number }>(stmt, [big.orgId, COMMAND, snapshot, JSON.stringify(authors)]);
           return r.rows[0] as { id: string; revision: number };
         } catch (error) {
-          // If a future constraint refuses invalid author entries even for staff writes, keep verifying the decision functions directly.
+          // Only tolerate a future CHECK/trigger refusal if replacing authors alone with a valid user entry succeeds.
           const pg = error as { code?: string };
-          if (pg?.code === '23514') return null;
-          throw error;
+          if (pg?.code !== '23514') throw error;
+          await c.query('BEGIN');
+          try {
+            await c.query(stmt, [big.orgId, COMMAND, snapshot, authorsOf(big.admin)]);
+          } finally {
+            await c.query('ROLLBACK').catch(() => {});
+          }
+          return null;
         }
       });
     const tsAndSql = async (authors: unknown[], snapshot: string[], actor: string) => {
