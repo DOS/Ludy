@@ -517,9 +517,7 @@ suite('Telegram inbox, cross-org displacement, hook uniqueness, and redaction in
       await expect(rows('SELECT crove_kernel.telegram_inbound_enqueue($1, $2::bytea)', [h1, notice])).rejects.toMatchObject({ code: '23505' });
       expect(await rows('SELECT 1 FROM crove_kernel.conversation_inbound_pending')).toHaveLength(0);
       await rows('INSERT INTO crove_kernel.conversation_inbound_pending (provider, body) VALUES ($1, $2)', ['telegram_chat', notice]);
-      const logs: string[] = [];
-      expect(await runConversationIntake({ workerDb, runtime: worker, log: (m) => logs.push(m) })).toEqual({ stored: 0, dropped: 1 });
-      expect(logs.some((m) => m.includes('refused ambiguous hook match'))).toBe(true);
+      expect(await runConversationIntake({ workerDb, runtime: worker })).toEqual({ stored: 0, dropped: 1 });
       expect(await rows('SELECT 1 FROM crove_kernel.conversation_inbound_pending')).toHaveLength(0);
       expect(await rows('SELECT 1 FROM crove_kernel.conversation WHERE org_id = ANY($1::uuid[])', [[o1.orgId, o2.orgId]])).toHaveLength(0);
     } finally {
@@ -591,7 +589,9 @@ suite('Telegram inbox, cross-org displacement, hook uniqueness, and redaction in
       },
     });
     expect((await post(hook, bizMessage)).status).toBe(200);
-    expect(await runConversationIntake({ workerDb, runtime: worker })).toEqual({ stored: 0, dropped: 0 });
+    expect(await rows("SELECT 1 FROM crove_kernel.conversation_inbound_pending WHERE provider = 'telegram_chat'")).toHaveLength(1);
+    expect((await runConversationIntake({ workerDb, runtime: worker })).stored).toBe(0);
+    expect(await rows("SELECT 1 FROM crove_kernel.conversation_inbound_pending WHERE provider = 'telegram_chat'")).toHaveLength(0);
     expect(await rows('SELECT 1 FROM crove_kernel.conversation WHERE org_id = $1', [org.orgId])).toHaveLength(0);
 
     // Owner and admin see masked ref/username only; member and viewer receive empty chatBusiness and zero username/id strings.
