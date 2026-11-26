@@ -6,7 +6,7 @@
 // calls them (S3); here the API login is shown to be refused them without one.
 // Set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL; each run creates and drops its own database.
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { mkdtempSync, readdirSync, rmSync, symlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -160,18 +160,32 @@ suite('Marketplace push hook (#4316)', () => {
     const base = new URL(ADMIN as string);
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
-    const preDir = mkdtempSync(join(tmpdir(), 'ludy-4326-pre-'));
+    const preRoot = mkdtempSync(join(tmpdir(), 'ludy-4326-pre-'));
+    const preDir = join(preRoot, 'migrations');
+    const preVariantsDir = join(preRoot, 'shared-variants');
     try {
+      mkdirSync(preDir);
+      mkdirSync(preVariantsDir);
       const migrationNames = readdirSync(MIGRATIONS).filter((n) => n.endsWith('.sql')).sort();
       const cutFile = migrationNames.find((n) => n.endsWith('_ludy_finance_marketplace_hook_reject_generation.sql'));
       expect(cutFile).toBeTruthy();
+      const keptMigrations = new Set<string>();
       for (const name of migrationNames) {
-        if (name < cutFile!) symlinkSync(join(MIGRATIONS, name), join(preDir, name));
+        if (name < cutFile!) {
+          symlinkSync(join(MIGRATIONS, name), join(preDir, name));
+          keptMigrations.add(name);
+        }
+      }
+      const variantsSource = fileURLToPath(new URL('../../../supabase/shared-variants', import.meta.url));
+      if (existsSync(variantsSource)) {
+        for (const name of readdirSync(variantsSource)) {
+          if (keptMigrations.has(name)) symlinkSync(join(variantsSource, name), join(preVariantsDir, name));
+        }
       }
       await migrate({
         adminUrl,
         dir: preDir,
-        sharedVariantsDir: fileURLToPath(new URL('../../../supabase/shared-variants', import.meta.url)),
+        sharedVariantsDir: preVariantsDir,
       });
       await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
       const login = (username: string, password: string) => {
@@ -229,7 +243,7 @@ suite('Marketplace push hook (#4316)', () => {
 
       await migrate({ adminUrl, dir: MIGRATIONS });
     } finally {
-      rmSync(preDir, { recursive: true, force: true });
+      rmSync(preRoot, { recursive: true, force: true });
     }
   }, 120_000);
 

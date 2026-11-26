@@ -60,7 +60,7 @@ END $$;
 
 DROP TRIGGER IF EXISTS marketplace_hook_rotate_guard_trg ON ludy_finance.marketplace_hook;
 CREATE TRIGGER marketplace_hook_rotate_guard_trg
-  BEFORE UPDATE ON ludy_finance.marketplace_hook
+  BEFORE UPDATE OF key_sha256, rotated_at ON ludy_finance.marketplace_hook
   FOR EACH ROW
   EXECUTE FUNCTION ludy_finance.marketplace_hook_rotate_guard();
 
