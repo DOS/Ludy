@@ -354,7 +354,7 @@ const zEInvoiceDraftOut = z.object({
     z.object({
       description: z.string().describe('A short description of the thing sold, in the words of the text'),
       unit: z.string().nullable().describe('The unit the text gives (hộp, cái, kg...), or null'),
-      quantity: z.string().describe('The quantity as plain digits, 1 when the text gives none'),
+      quantity: z.string().describe('The quantity as plain digits, exactly a figure of the text'),
       unitPrice: z.string().describe('The unit price in dong as plain digits with no separator or currency, exactly a figure of the text'),
       vatRate: z.string().nullable().describe('The VAT rate only when the text states one (10%, 8%, 5%, 0%, KCT, KKKNT), else null'),
     }),

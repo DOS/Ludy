@@ -133,7 +133,7 @@ export function figuresOfText(text: string): Set<string> {
 // The VAT rates the text states: a number before a percent sign, a number after "VAT", "GTGT" or "thuế (suất)", and the words of the two exemptions.
 // A percent after a discount word is a discount, not a rate.
 const RATE_BEFORE_SIGN = /(?<!(?:giảm(?:\s+giá)?|giam(?:\s+gia)?|chiết khấu|chiet khau|ck|discount|off)\s{0,3})(?<![\d.,])(\d{1,3}(?:[.,]\d+)?)(?![\d.,]\d)\s*%/gu;
-const RATE_AFTER_WORD = /(?:vat|gtgt|thuế\s+suất|thuế|thue\s+suat|thue)\s*:?\s*(\d{1,3}(?:[.,]\d+)?)(?![\d.,]\d)(?!\d)/gu;
+const RATE_AFTER_WORD = /(?:vat|gtgt|thuế\s+suất|thuế|thue\s+suat|thue)\s*(?::\s*)?(\d{1,3}(?:[.,]\d+)?)(?![\d.,]\d)(?!\d)/gu;
 function ratesInBody(body: string): Set<string> {
   const rates = new Set<string>();
   for (const re of [RATE_BEFORE_SIGN, RATE_AFTER_WORD]) {
@@ -159,6 +159,7 @@ type FigureRole = 'qty' | 'price' | 'total' | 'unknown';
 interface FigureToken {
   value: string;
   role: FigureRole;
+  embeddedInProduct: boolean;
   start: number;
   end: number;
 }
@@ -178,6 +179,8 @@ interface SubPiece {
   isVatOnly: boolean;
   isBuyerOnly: boolean;
   isExplicitUnit: boolean;
+  isExplicitQtyOnly: boolean;
+  isExplicitPriceOnly: boolean;
   isTotalOnly: boolean;
   hasProductWords: boolean;
 }
@@ -186,15 +189,17 @@ const DATE_SLASH_OR_DASH = /(?<!\d)\d{1,2}[/-]\d{1,2}[/-]\d{2,4}(?!\d)/gu;
 const DATE_ISO = /(?<!\d)\d{4}-\d{1,2}-\d{1,2}(?!\d)/gu;
 const PERCENT_ANY = /(?<!\d)\d{1,3}(?:[.,]\d+)?\s*%/gu;
 const LIST_PAREN_PREFIX = /^\s*\d+\)\s+/u;
-const LIST_DOT_PREFIX = /^\s*\d+\.\s+(?=[^\d\s])/u;
+const LIST_DOT_PREFIX = /^\s*\d{1,2}\.\s+/u;
 const CURRENCY_SUFFIX = /^\s*(?:đồng|dong|vnđ|vnd|đ)(?![\p{L}])/iu;
 const PER_UNIT_SUFFIX = /^\s*(?:\/\s*[\p{L}]+|mỗi\s+[\p{L}]+|moi\s+[\p{L}]+|per\s+[\p{L}]+)/iu;
-const SPEC_SUFFIX = /^(?:gsm|gb|tb|mb|kb|mah|wh|hz|px)(?![\p{L}])/iu;
-const QTY_PREFIX = /(?:số\s+lượng|so\s+luong|(?<![\p{L}])sl(?![\p{L}])|(?<![\p{L}])qty(?![\p{L}])|quantity)\s*:?\s*$/iu;
-const PRICE_PREFIX = /(?:đơn\s+giá|don\s+gia|giá\s+bán|gia\s+ban|giá\s+trị|gia\s+tri|giá|gia|unit\s+price|price|@)(?:\s+(?:bán|lẻ|sỉ|mới|cũ|chưa\s+thuế|chưa\s+vat|gồm\s+vat|sau\s+thuế|trước\s+thuế|dự\s+kiến|khoảng|tầm))?\s*:?\s*$/iu;
-const TOTAL_PREFIX = /(?:tổng\s+cộng|tong\s+cong|thành\s+tiền|thanh\s+tien|tổng\s+tiền|tong\s+tien|tổng|tong|total|amount)\s*:?\s*$/iu;
+const SPEC_SUFFIX = /^(?:ml|cl|dl|mg|mm|cm|m2|m3|gsm|gb|tb|mb|kb|mah|wh|hz|px)(?![\p{L}])/iu;
+const GLUED_UNIT_SUFFIX = /^(?:g|kg|l|m)(?![\p{L}])/iu;
+const QTY_PREFIX = /(?:số\s+lượng|so\s+luong|(?<![\p{L}])sl(?![\p{L}])|(?<![\p{L}])qty(?![\p{L}])|quantity)\s*(?::\s*)?$/iu;
+const PRICE_PREFIX = /(?:đơn\s+giá|don\s+gia|giá\s+bán|gia\s+ban|giá\s+trị|gia\s+tri|giá|gia|unit\s+price|price|@)(?:\s+(?:bán|lẻ|sỉ|mới|cũ|chưa\s+thuế|chưa\s+vat|gồm\s+vat|sau\s+thuế|trước\s+thuế|dự\s+kiến|khoảng|tầm))?\s*(?::\s*)?$/iu;
+const TOTAL_PREFIX = /(?:tổng\s+cộng|tong\s+cong|thành\s+tiền|thanh\s+tien|tổng\s+tiền|tong\s+tien|tổng|tong|total|amount)\s*(?::\s*)?$/iu;
 const MULTIPLY_PREFIX = /(?:\*|×|(?<![\p{L}])x)\s*$/iu;
 const COLON_PREAMBLE = /^([^:]+):([\s\S]+)$/u;
+const SENTENCE_SPLIT = /\r?\n|;|(?:(?<=[^\d.])|(?<=\d{3,}))\.(?=\s|$)/u;
 const SUB_SPLIT = /(?<!\d),|,(?!\d)|\s+(?:và|and|\+)\s+|(?<=[\p{L}\d%])\s*\+\s*(?=(?:\d|vat|gtgt|thuế|thue))/iu;
 const BUYER_ONLY_PREFIX = /^\s*(?:cho|giao(?:\s+cho)?|người\s+mua|nguoi\s+mua|khách(?:\s+hàng)?|khach(?:\s+hang)?|buyer|customer)\b/iu;
 const EXPLICIT_UNIT_PREFIX = /^\s*(?:đơn\s+vị|don\s+vi|đvt|dvt|unit)\b/iu;
@@ -206,6 +211,7 @@ const BOILERPLATE_TOKENS = new Set([
   'cong', 'thanh', 'tien', 'moi', 'per', 'va', 'and', 'cua', 'khach', 'gui',
   'tri', 'chi', 'giam', 'chiet', 'khau', 'ck', 'discount', 'off', 'khong', 'chiu',
   'ke', 'khai', 'kct', 'kkknt', 'loai', 'giao', 'nguoi', 'co', 'hoi',
+  'da', 'gom', 'chua', 'ap', 'dung',
   'invoice', 'sales', 'sale', 'tax', 'order',
 ]);
 const UNIT_ONLY_TOKENS = new Set([
@@ -215,6 +221,20 @@ const UNIT_ONLY_TOKENS = new Set([
   'box', 'pcs', 'pc', 'set', 'pack', 'hour', 'hours',
 ]);
 
+// Strips dates, VAT expressions, scaled/currency amounts, and explicitly labeled figures before extracting item description words and model numbers.
+const STRIP_MONEY_OR_LABELED = new RegExp(
+  [
+    DATE_SLASH_OR_DASH.source,
+    DATE_ISO.source,
+    PERCENT_ANY.source,
+    RATE_AFTER_WORD.source,
+    String.raw`(?:đơn\s+giá|don\s+gia|giá\s+bán|gia\s+ban|giá\s+trị|gia\s+tri|giá|gia|unit\s+price|price|số\s+lượng|so\s+luong|(?<![\p{L}])sl(?![\p{L}])|(?<![\p{L}])qty(?![\p{L}])|quantity|tổng\s+cộng|tong\s+cong|thành\s+tiền|thanh\s+tien|tổng\s+tiền|tong\s+tien|tổng|tong|total|amount)\s*(?::\s*)?\d+(?:[.,]\d+)*(?:\s*(?:tr(?:iệu|ieu)?|tỷ|ty|k|nghìn|nghin|ngàn|ngan)(?![\p{L}])\d*)?(?:\s*(?:đồng|dong|vnđ|vnd|đ)(?![\p{L}]))?`,
+    String.raw`\d+(?:[.,]\d+)*\s*(?:tr(?:iệu|ieu)?|tỷ|ty|k|nghìn|nghin|ngàn|ngan)(?![\p{L}])\d*(?:\s*(?:đồng|dong|vnđ|vnd|đ)(?![\p{L}]))?`,
+    String.raw`\d+(?:[.,]\d+)*\s*(?:đồng|dong|vnđ|vnd|đ)(?![\p{L}])`,
+  ].join('|'),
+  'giu',
+);
+
 function foldDiacritics(value: string): string {
   return value.normalize('NFD').replace(/\p{Mn}/gu, '').replace(/đ/g, 'd').replace(/Đ/g, 'D').normalize('NFKC');
 }
@@ -223,8 +243,16 @@ function descriptionTokens(text: string): { exact: Set<string>; folded: Set<stri
   const exact = new Set<string>();
   const folded = new Set<string>();
   let hasProduct = false;
-  for (const raw of readPlain(text).match(/[\p{L}\p{N}]+/gu) ?? []) {
-    if (!/\p{L}/u.test(raw)) continue;
+  const cleaned = read(text).replace(STRIP_MONEY_OR_LABELED, ' ');
+  for (const raw of cleaned.match(/[\p{L}\p{N}]+/gu) ?? []) {
+    if (/^\d+$/u.test(raw)) {
+      // Keep model/version digits that follow a product word ("iPhone 15", "tháng 11"), while ignoring leading quantity digits.
+      if (hasProduct) {
+        exact.add(raw);
+        folded.add(raw);
+      }
+      continue;
+    }
     const f = foldDiacritics(raw);
     if (BOILERPLATE_TOKENS.has(f)) continue;
     exact.add(raw);
@@ -232,6 +260,12 @@ function descriptionTokens(text: string): { exact: Set<string>; folded: Set<stri
     if (!UNIT_ONLY_TOKENS.has(f)) hasProduct = true;
   }
   return { exact, folded, hasProduct };
+}
+
+function startsWithUnitWord(after: string): boolean {
+  const m = /^\s*([\p{L}]+)/u.exec(after);
+  if (!m) return false;
+  return UNIT_ONLY_TOKENS.has(foldDiacritics(m[1]!.toLowerCase()));
 }
 
 function excludedSpans(body: string): Span[] {
@@ -280,8 +314,8 @@ function extractFigureTokens(body: string): FigureToken[] {
       lastBoundary = end;
       continue;
     }
-    // Leading zero on multi-digit integers ("0912345678", "0100109106") denotes phone numbers or tax codes, never quantities or prices.
-    if (/^0\d+$/u.test(digits)) {
+    // Leading zero before another digit ("0912345678", "091.234.567", "0100109106") denotes phone numbers or tax codes, never quantities or prices.
+    if (/^0\d/u.test(digits)) {
       lastBoundary = end;
       continue;
     }
@@ -308,7 +342,17 @@ function extractFigureTokens(body: string): FigureToken[] {
     else if (hasQtyPrefix && !hasPricePrefix && !hasMoneySuffix && !hasPerUnitSuffix) role = 'qty';
     else if ((hasPricePrefix || hasMoneySuffix || hasPerUnitSuffix) && !hasQtyPrefix) role = 'price';
     else if (hasMultiplyBefore) role = prevToken.role === 'price' ? 'qty' : 'price';
-    tokens.push({ value, role, start, end });
+
+    // Model numbers ("iPhone 15") or glued packaging weights ("Sữa 850g") after product words without a comma, quantity label, or unit word cannot act as sale quantities.
+    const segmentBefore = before.slice(before.lastIndexOf(',') + 1);
+    const hasProductBefore = descriptionTokens(segmentBefore).hasProduct;
+    const isGluedPackaging = unit === undefined && GLUED_UNIT_SUFFIX.test(after) && hasProductBefore;
+    const embeddedInProduct =
+      role === 'unknown' &&
+      hasProductBefore &&
+      (isGluedPackaging || !startsWithUnitWord(after));
+
+    tokens.push({ value, role, embeddedInProduct, start, end });
     lastBoundary = end;
   }
   return tokens;
@@ -323,13 +367,34 @@ function summarizeSubPiece(rawText: string): SubPiece {
   const isVatOnly = rates.size > 0 && tokens.length === 0;
   const isBuyerOnly = tokens.length === 0 && rates.size === 0 && BUYER_ONLY_PREFIX.test(text);
   const isExplicitUnit = tokens.length === 0 && rates.size === 0 && EXPLICIT_UNIT_PREFIX.test(text);
+  const isExplicitQtyOnly = !hasProduct && usable.length === 1 && usable[0]!.role === 'qty';
+  const isExplicitPriceOnly = !hasProduct && usable.length === 1 && usable[0]!.role === 'price';
   const isTotalOnly = usable.length === 0 && tokens.length > 0 && rates.size === 0;
-  return { text, tokens, usable, rates, isVatOnly, isBuyerOnly, isExplicitUnit, isTotalOnly, hasProductWords: hasProduct };
+  return {
+    text,
+    tokens,
+    usable,
+    rates,
+    isVatOnly,
+    isBuyerOnly,
+    isExplicitUnit,
+    isExplicitQtyOnly,
+    isExplicitPriceOnly,
+    isTotalOnly,
+    hasProductWords: hasProduct,
+  };
 }
 
 function shouldMergePiece(cur: SourceClause, piece: SubPiece): boolean {
   if (cur.usable.length === 0) return true;
-  if (cur.usable.length >= 2) return piece.isExplicitUnit || piece.isTotalOnly;
+  if (piece.isExplicitUnit || piece.isTotalOnly) return true;
+  const curHasExplicitQty = cur.usable.some((t) => t.role === 'qty');
+  const curHasExplicitPrice = cur.usable.some((t) => t.role === 'price');
+  if (!(curHasExplicitQty && curHasExplicitPrice)) {
+    if (piece.isExplicitQtyOnly && !curHasExplicitQty) return true;
+    if (piece.isExplicitPriceOnly && !curHasExplicitPrice) return true;
+  }
+  if (cur.usable.length >= 2) return false;
   if (piece.usable.length === 0) return true;
   if (piece.usable.length >= 2) return false;
   const curTok = cur.usable[0]!;
@@ -365,9 +430,13 @@ function buildClause(piece: SubPiece): SourceClause {
 function parseSourceClauses(source: string): { clauses: SourceClause[]; sharedRates: Set<string> } {
   const body = read(source);
   const rawSegments = body
-    .split(/\r?\n|;/u)
+    .split(SENTENCE_SPLIT)
     .map((s) => s.trim())
-    .filter((s) => s !== '');
+    .filter((s) => {
+      if (s === '') return false;
+      const pieces = s.split(SUB_SPLIT).map(summarizeSubPiece).filter((p) => p.text !== '');
+      return pieces.length > 0 && !pieces.every((p) => p.isBuyerOnly);
+    });
   const clauses: SourceClause[] = [];
   const leadingShared = new Set<string>();
   const trailingShared = new Set<string>();
@@ -379,23 +448,28 @@ function parseSourceClauses(source: string): { clauses: SourceClause[]; sharedRa
     const seg = rawSegments[segIdx]!;
     const isBullet = /^\s*[-*•]/u.test(seg);
     let bodySeg = seg.replace(/^\s*[-*•]\s*/u, '');
+    const segPrefixRates = new Set<string>();
     const colonMatch = COLON_PREAMBLE.exec(bodySeg);
     if (colonMatch) {
       const prefix = colonMatch[1]!.trim();
       const prefixRates = ratesInBody(prefix);
       if (prefixRates.size > 0 && extractFigureTokens(prefix).length === 0 && !descriptionTokens(prefix).hasProduct) {
-        if (!anyItemSeen) for (const r of prefixRates) leadingShared.add(r);
+        if (isSingleSegment) {
+          for (const r of prefixRates) leadingShared.add(r);
+        } else {
+          for (const r of prefixRates) segPrefixRates.add(r);
+        }
         bodySeg = colonMatch[2]!.trim();
       }
     }
     const pieces = bodySeg
       .split(SUB_SPLIT)
       .map(summarizeSubPiece)
-      .filter((p) => p.text !== '');
+      .filter((p) => p.text !== '' && !p.isBuyerOnly);
     if (pieces.length === 0) continue;
 
     // A standalone VAT-only line/segment at the very start or end (when no item stated its own local VAT) is invoice-wide.
-    if (pieces.every((p) => (p.isVatOnly && !p.hasProductWords) || p.isBuyerOnly) && pieces.some((p) => p.isVatOnly) && !isBullet) {
+    if (pieces.every((p) => p.isVatOnly && !p.hasProductWords) && !isBullet) {
       const rates = pieces.flatMap((p) => [...p.rates]);
       if (!anyItemSeen) {
         for (const r of rates) leadingShared.add(r);
@@ -411,9 +485,21 @@ function parseSourceClauses(source: string): { clauses: SourceClause[]; sharedRa
     let cur: SourceClause | null = null;
     for (let i = 0; i < pieces.length; i += 1) {
       const piece = pieces[i]!;
-      if (piece.isBuyerOnly) continue;
       if (piece.isVatOnly) {
-        if (cur === null && segClauses.length === 0 && !anyItemSeen) {
+        if (piece.hasProductWords) {
+          // Product-named VAT clause ("sách VAT 5%") stays an item clause and never leaks into sharedRates.
+          if (cur === null) {
+            cur = buildClause(piece);
+          } else if (cur.usable.length === 0 && !descriptionTokens(cur.text).hasProduct) {
+            cur = appendToClause(cur, piece);
+          } else {
+            segClauses.push(cur);
+            cur = buildClause(piece);
+          }
+          anyLocalVatSeen = true;
+          continue;
+        }
+        if (cur === null && segClauses.length === 0 && !anyItemSeen && isSingleSegment) {
           for (const r of piece.rates) leadingShared.add(r);
           continue;
         }
@@ -427,7 +513,7 @@ function parseSourceClauses(source: string): { clauses: SourceClause[]; sharedRa
           for (const r of piece.rates) trailingShared.add(r);
           continue;
         }
-        if (cur !== null && cur.usable.length > 0) {
+        if (cur !== null && (cur.usable.length > 0 || cur.localRates.size > 0)) {
           for (const r of piece.rates) cur.localRates.add(r);
           anyLocalVatSeen = true;
         } else {
@@ -435,8 +521,10 @@ function parseSourceClauses(source: string): { clauses: SourceClause[]; sharedRa
           if (prev) {
             for (const r of piece.rates) prev.localRates.add(r);
             anyLocalVatSeen = true;
-          } else if (!anyItemSeen) {
+          } else if (!anyItemSeen && isSingleSegment) {
             for (const r of piece.rates) leadingShared.add(r);
+          } else {
+            for (const r of piece.rates) segPrefixRates.add(r);
           }
         }
         continue;
@@ -446,27 +534,19 @@ function parseSourceClauses(source: string): { clauses: SourceClause[]; sharedRa
       } else if (shouldMergePiece(cur, piece)) {
         cur = appendToClause(cur, piece);
       } else {
-        if (cur.usable.length > 0) segClauses.push(cur);
+        if (cur.usable.length > 0 || cur.localRates.size > 0) segClauses.push(cur);
         cur = buildClause(piece);
       }
     }
     if (cur !== null) {
-      if (cur.usable.length > 0) {
+      if (cur.usable.length > 0 || cur.localRates.size > 0 || descriptionTokens(cur.text).hasProduct) {
         segClauses.push(cur);
-      } else if (cur.localRates.size > 0) {
-        // A trailing 0-figure clause cannot bind VAT rates; promote to shared when at the end with no prior local rates.
-        if (segIdx === rawSegments.length - 1 && !isBullet && !anyLocalVatSeen) {
-          for (const r of cur.localRates) trailingShared.add(r);
-        } else {
-          const prev = segClauses[segClauses.length - 1] ?? clauses[clauses.length - 1];
-          if (prev) {
-            for (const r of cur.localRates) prev.localRates.add(r);
-            anyLocalVatSeen = true;
-          }
-        }
       }
     }
     for (const c of segClauses) {
+      if (segPrefixRates.size > 0 && c.localRates.size === 0) {
+        for (const r of segPrefixRates) c.localRates.add(r);
+      }
       if (c.localRates.size > 0) anyLocalVatSeen = true;
       clauses.push(c);
       anyItemSeen = true;
@@ -474,17 +554,17 @@ function parseSourceClauses(source: string): { clauses: SourceClause[]; sharedRa
   }
 
   const sharedRates = new Set<string>([...leadingShared, ...trailingShared]);
-  const validClauses = clauses.filter((c) => c.usable.length >= 2);
-  return { clauses: validClauses, sharedRates };
+  return { clauses, sharedRates };
 }
 
 function clauseAcceptsFigures(clause: SourceClause, quantity: string, unitPrice: string): boolean {
   const usable = clause.usable;
+  if (usable.length < 2) return false;
   const hasExplicitQty = usable.some((t) => t.role === 'qty');
   const hasExplicitPrice = usable.some((t) => t.role === 'price');
   for (let qi = 0; qi < usable.length; qi += 1) {
     const qTok = usable[qi]!;
-    if (qTok.value !== quantity || qTok.role === 'price') continue;
+    if (qTok.value !== quantity || qTok.role === 'price' || qTok.embeddedInProduct) continue;
     if (hasExplicitQty && qTok.role !== 'qty') continue;
     for (let pi = 0; pi < usable.length; pi += 1) {
       if (qi === pi) continue;
@@ -592,7 +672,8 @@ export function checkEInvoiceDraft(request: EInvoiceDraftRequest, output: EInvoi
   if (lines.length === 0) return { kind: 'proposal', lines, buyerIndex };
 
   const { clauses, sharedRates } = parseSourceClauses(source);
-  if (lines.length > clauses.length) return { kind: 'none', code: 'FIGURES' };
+  const validClauseCount = clauses.filter((c) => c.usable.length >= 2).length;
+  if (lines.length > validClauseCount) return { kind: 'none', code: 'FIGURES' };
 
   const fullEdges: number[][] = [];
   const figEdges: number[][] = [];

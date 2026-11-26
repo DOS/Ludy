@@ -308,6 +308,24 @@ describe('CoworkerBox (#4119)', () => {
     });
     expect(host.statusNode()).toBeNull();
 
+    // 3b. `stale` clears when the invoice date is edited too.
+    await act(async () => {
+      clickButton(host.askButton());
+    });
+    await act(async () => {
+      host.setDate('2026-11-29');
+    });
+    await act(async () => {
+      resolveDeferred(USED_PROPOSAL);
+      await flushAsync();
+    });
+    expect(host.statusNode()?.getAttribute('data-state')).toBe('stale');
+
+    await act(async () => {
+      host.setDate('2026-11-30');
+    });
+    expect(host.statusNode()).toBeNull();
+
     // 4. `refused` clears immediately when a new request starts and never lingers beside a request error.
     mode = 'refused';
     await act(async () => {

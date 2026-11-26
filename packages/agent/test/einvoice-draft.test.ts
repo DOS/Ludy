@@ -382,5 +382,154 @@ describe('per-clause figure and VAT rate binding (#4119)', () => {
         ], null),
       ).kind,
     ).toBe('proposal');
+    expect(
+      checkEInvoiceDraft(
+        req('Xuất hóa đơn đã gồm VAT 8%: 2 sách giá 50k, 3 bánh giá 100k'),
+        answer([
+          line({ description: 'Sách', unit: null, quantity: '2', unitPrice: '50000', vatRate: '8%' }),
+          line({ description: 'Bánh', unit: null, quantity: '3', unitPrice: '100000', vatRate: '8%' }),
+        ], null),
+      ).kind,
+    ).toBe('proposal');
+    expect(
+      checkEInvoiceDraft(
+        req('2 sách giá 50k, 3 bánh giá 100k, VAT 8%, cho anh Nam'),
+        answer([
+          line({ description: 'Sách', unit: null, quantity: '2', unitPrice: '50000', vatRate: '8%' }),
+          line({ description: 'Bánh', unit: null, quantity: '3', unitPrice: '100000', vatRate: '8%' }),
+        ], null),
+      ).kind,
+    ).toBe('proposal');
+
+    // Per-group colon VAT prefixes and product-named VAT clauses stay local to their own group.
+    expect(
+      checkEInvoiceDraft(
+        req('VAT 5%: 2 sách giá 50k; VAT 8%: 3 bánh giá 100k'),
+        answer([
+          line({ description: 'Sách', unit: null, quantity: '2', unitPrice: '50000', vatRate: '5%' }),
+          line({ description: 'Bánh', unit: null, quantity: '3', unitPrice: '100000', vatRate: '8%' }),
+        ], null),
+      ).kind,
+    ).toBe('proposal');
+    expect(
+      checkEInvoiceDraft(
+        req('VAT 5%: 2 sách giá 50k; VAT 8%: 3 bánh giá 100k'),
+        answer([
+          line({ description: 'Sách', unit: null, quantity: '2', unitPrice: '50000', vatRate: '5%' }),
+          line({ description: 'Bánh', unit: null, quantity: '3', unitPrice: '100000', vatRate: '5%' }),
+        ], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'RATE' });
+    expect(
+      checkEInvoiceDraft(
+        req('10 hộp bánh A giá 120k\nVAT 8%: 2 hộp trà B giá 1tr2'),
+        answer([
+          line({ description: 'Bánh A', unit: 'hộp', quantity: '10', unitPrice: '120000', vatRate: null }),
+          line({ description: 'Trà B', unit: 'hộp', quantity: '2', unitPrice: '1200000', vatRate: '8%' }),
+        ], null),
+      ).kind,
+    ).toBe('proposal');
+    expect(
+      checkEInvoiceDraft(
+        req('sách VAT 5%; 3 bánh giá 100k'),
+        answer([
+          line({ description: 'Bánh', unit: null, quantity: '3', unitPrice: '100000', vatRate: '5%' }),
+        ], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'RATE' });
+  });
+
+  it('handles sentences, comma-separated scaled prices, packaging specs, model numbers, and incomplete sibling clauses (#4119)', () => {
+    // Incomplete sibling cannot donate another line's numbers.
+    expect(
+      checkEInvoiceDraft(
+        req('áo đỏ giá 50k; 3 áo xanh giá 100k'),
+        answer([line({ description: 'Áo đỏ', unit: null, quantity: '3', unitPrice: '100000', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+
+    // Packaging volume/weight specs cannot act as quantities.
+    expect(
+      checkEInvoiceDraft(
+        req('2 chai nước 500ml giá 12k'),
+        answer([line({ description: 'Nước 500ml', unit: 'chai', quantity: '500', unitPrice: '12000', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(
+      checkEInvoiceDraft(
+        req('2 chai nước 500ml giá 12k'),
+        answer([line({ description: 'Nước 500ml', unit: 'chai', quantity: '2', unitPrice: '12000', vatRate: null })], null),
+      ).kind,
+    ).toBe('proposal');
+
+    // Sentence boundaries split items cleanly while keeping decimals intact.
+    expect(
+      checkEInvoiceDraft(
+        req('2 sách giá 50k. 3 bánh giá 100k.'),
+        answer([
+          line({ description: 'Sách', unit: null, quantity: '2', unitPrice: '50000', vatRate: null }),
+          line({ description: 'Bánh', unit: null, quantity: '3', unitPrice: '100000', vatRate: null }),
+        ], null),
+      ).kind,
+    ).toBe('proposal');
+    expect(
+      checkEInvoiceDraft(
+        req('2 sách giá 50k. 3 bánh giá 100k.'),
+        answer([line({ description: 'Sách', unit: null, quantity: '2', unitPrice: '100000', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+
+    // Product model numbers distinguish items for matching and cannot pass as quantities.
+    const phones = req('2 iPhone 15 giá 10tr; 1 iPhone 16 giá 20tr');
+    expect(
+      checkEInvoiceDraft(
+        phones,
+        answer([
+          line({ description: 'iPhone 15', unit: null, quantity: '2', unitPrice: '10000000', vatRate: null }),
+          line({ description: 'iPhone 16', unit: null, quantity: '1', unitPrice: '20000000', vatRate: null }),
+        ], null),
+      ).kind,
+    ).toBe('proposal');
+    expect(
+      checkEInvoiceDraft(
+        phones,
+        answer([line({ description: 'iPhone 15', unit: null, quantity: '1', unitPrice: '20000000', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(
+      checkEInvoiceDraft(
+        phones,
+        answer([line({ description: 'iPhone 15', unit: null, quantity: '15', unitPrice: '10000000', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+
+    // Comma-separated scaled prices and labeled previous-invoice lines with product specs/model numbers stay grouped.
+    expect(
+      checkEInvoiceDraft(
+        req('bán 10 hộp bánh A, giá 120k'),
+        answer([line({ vatRate: null })], null),
+      ).kind,
+    ).toBe('proposal');
+    expect(
+      checkEInvoiceDraft(
+        req('đơn giá 120k, số lượng 10 bánh A'),
+        answer([line({ unit: null, vatRate: null })], null),
+      ).kind,
+    ).toBe('proposal');
+    expect(
+      checkEInvoiceDraft(
+        req('giống lần trước\n\nHóa đơn trước gửi cùng khách:\n- iPhone 15, số lượng 2, đơn giá 20000000\n- Sữa 850g, đơn vị hộp, số lượng 3, đơn giá 800000'),
+        answer([
+          line({ description: 'iPhone 15', unit: null, quantity: '2', unitPrice: '20000000', vatRate: null }),
+          line({ description: 'Sữa 850g', unit: 'hộp', quantity: '3', unitPrice: '800000', vatRate: null }),
+        ], null),
+      ).kind,
+    ).toBe('proposal');
+    expect(
+      checkEInvoiceDraft(
+        req('091.234.567 bán 2 sách giá 50k'),
+        answer([line({ description: 'Sách', unit: null, quantity: '91234567', unitPrice: '50000', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
   });
 });
