@@ -217,6 +217,8 @@ describe('desktop-package workflow guardrails', () => {
     expect(buildWorkflow).toContain('node apps/desktop/scripts/package-mac.mjs --arch all');
     expect(buildWorkflow).toContain('shasum -a 256 -c SHA256SUMS.txt');
     expect(buildWorkflow).toContain('hdiutil verify "$arch_dir/$dmg"');
+    expect(buildWorkflow).toContain('inspectZipCentralDirectory(process.argv[1])');
+    expect(buildWorkflow).toContain('verifyExtractedDirectorySymlinks');
     expect(buildWorkflow).not.toContain('secrets.');
     const buildUses = [...buildWorkflow.matchAll(/uses:\s*([^\s#]+)/g)].map((m) => m[1]);
     expect(buildUses.length).toBeGreaterThan(0);

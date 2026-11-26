@@ -142,7 +142,7 @@ async function main(): Promise<void> {
   const squirrelInstalled = process.platform === 'win32' && app.isPackaged && existsSync(resolve(dirname(process.execPath), '..', 'Update.exe'));
   const macAppBundlePath = isDarwin && app.isPackaged ? resolveMacAppBundlePath(process.execPath) : null;
   const updaterAdapter: AutoUpdaterLike = {
-    setFeedURL: (url) => autoUpdater.setFeedURL(isDarwin ? { url, serverType: 'json' } : { url }),
+    setFeedURL: (url) => autoUpdater.setFeedURL(isDarwin ? { url, serverType: 'default' } : { url }),
     checkForUpdates: () => autoUpdater.checkForUpdates(),
     quitAndInstall: () => autoUpdater.quitAndInstall(),
     subscribe(events) {
@@ -154,30 +154,36 @@ async function main(): Promise<void> {
     },
   };
   const smokeDir = smokeDirFor(process.env, config.ludyUrl);
-  let runningMacTeamId: string | null = config.expectedTeamId;
-  let runningExecutableHasSignature = false;
-  if (isDarwin) {
-    if (macAppBundlePath !== null) {
-      try {
-        const verifiedSelf = await verifyMacAppBundle(macAppBundlePath, {
-          expectedTeamId: config.expectedTeamId,
-          requireGatekeeper: false,
-        });
-        runningMacTeamId = runningMacTeamId ?? verifiedSelf.teamId;
-        runningExecutableHasSignature = true;
-      } catch {
-        runningExecutableHasSignature = false;
-      }
+  let cachedMacTeamId: string | null = config.expectedTeamId;
+  let cachedMacBundleVerify: Promise<string | null> | null = null;
+  const verifyRunningMacBundle = (): Promise<string | null> => {
+    if (cachedMacTeamId) return Promise.resolve(cachedMacTeamId);
+    if (!isDarwin || !app.isPackaged || macAppBundlePath === null) return Promise.resolve(null);
+    if (!cachedMacBundleVerify) {
+      cachedMacBundleVerify = verifyMacAppBundle(macAppBundlePath, {
+        expectedTeamId: config.expectedTeamId,
+        requireGatekeeper: false,
+      })
+        .then((verified) => {
+          cachedMacTeamId = verified.teamId;
+          return verified.teamId;
+        })
+        .catch(() => null);
     }
-  } else {
-    runningExecutableHasSignature = true;
+    return cachedMacBundleVerify;
+  };
+  let runningExecutableHasSignature = false;
+  if (!isDarwin) {
     try {
       extractEmbeddedPkcs7Der(process.execPath);
+      runningExecutableHasSignature = true;
     } catch {
       runningExecutableHasSignature = false;
     }
+  } else if (smokeDir !== null && config.updateUrl !== null && !config.expectedTeamId && macAppBundlePath !== null) {
+    runningExecutableHasSignature = (await verifyRunningMacBundle()) !== null;
   }
-  const updaterSupported = squirrelInstalled || (isDarwin && app.isPackaged && macAppBundlePath !== null && runningExecutableHasSignature);
+  const updaterSupported = squirrelInstalled || (isDarwin && app.isPackaged && macAppBundlePath !== null);
   const allowUnsignedSmoke =
     smokeDir !== null && !config.expectedPublisherThumbprint && !config.expectedTeamId && !runningExecutableHasSignature;
   const resolveHost = (targetHost: string) => lookup(targetHost, { all: true });
@@ -204,11 +210,15 @@ async function main(): Promise<void> {
     currentVersion: app.getVersion(),
     stagingDir: join(userData, 'update-staging'),
     resolveTrustedThumbprint,
-    resolveTrustedTeamId: async () => runningMacTeamId,
+    resolveTrustedTeamId: verifyRunningMacBundle,
     verifySignedManifest: isDarwin ? undefined : verifyWindowsSignedManifest,
     verifySignedPackage: isDarwin
-      ? async (pkgPath, teamId) => {
-          await verifyMacSignedPackage(pkgPath, teamId);
+      ? async (pkgPath, teamId, target) => {
+          const targetArch = target?.arch === 'arm64' || target?.arch === 'x64' ? target.arch : undefined;
+          await verifyMacSignedPackage(pkgPath, teamId, {
+            expectedVersion: target?.version,
+            expectedArch: targetArch,
+          });
         }
       : verifyWindowsSignedPackage,
     log,

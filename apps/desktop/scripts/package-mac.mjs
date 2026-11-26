@@ -235,6 +235,8 @@ if (isMainEntry(process.argv[1], fileURLToPath(import.meta.url))) {
       if (signing.enabled) {
         await verifyMacAppBundle(appPath, {
           expectedTeamId: signing.teamId,
+          expectedVersion: built.version,
+          expectedArch: arch,
           requireGatekeeper: false,
         });
 
@@ -270,10 +272,15 @@ if (isMainEntry(process.argv[1], fileURLToPath(import.meta.url))) {
 
         await verifyMacAppBundle(appPath, {
           expectedTeamId: signing.teamId,
+          expectedVersion: built.version,
+          expectedArch: arch,
           requireGatekeeper: true,
         });
         verifySignedDmg(dmgPath, signing.teamId);
-        await verifyMacSignedPackage(zipPath, signing.teamId);
+        await verifyMacSignedPackage(zipPath, signing.teamId, {
+          expectedVersion: built.version,
+          expectedArch: arch,
+        });
       } else {
         createZipFromApp(appPath, zipPath);
         createDmgFromApp(appPath, dmgPath, outRoot);

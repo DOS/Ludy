@@ -257,6 +257,25 @@ jobs:
 
             (cd "$arch_dir" && shasum -a 256 -c SHA256SUMS.txt)
             hdiutil verify "$arch_dir/$dmg"
+            node --input-type=module -e '
+              import fs from "node:fs";
+              import os from "node:os";
+              import path from "node:path";
+              import { execFileSync } from "node:child_process";
+              import { inspectZipCentralDirectory, verifyExtractedDirectorySymlinks } from "./apps/desktop/src/codesign.ts";
+              inspectZipCentralDirectory(process.argv[1]);
+              const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ludy-ci-zip-"));
+              try {
+                execFileSync("ditto", ["-x", "-k", process.argv[1], tmp]);
+                const top = fs.readdirSync(tmp);
+                if (top.length !== 1 || top[0] !== "Ludy Desktop.app") {
+                  throw new Error("Unexpected extracted top entries: " + JSON.stringify(top));
+                }
+                verifyExtractedDirectorySymlinks(path.join(tmp, top[0]));
+              } finally {
+                fs.rmSync(tmp, { recursive: true, force: true });
+              }
+            ' "$arch_dir/$zip"
             node -e '
               const fs = require("node:fs");
               const m = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
@@ -302,12 +321,41 @@ jobs:
             echo ""
           } >> "$GITHUB_STEP_SUMMARY"
           if kill -0 "$app_pid" 2>/dev/null; then
-            rss_kb="$(ps -o rss= -p "$app_pid" | tr -d ' ')"
-            rss_mb="$(node -p "Math.round(Number(process.argv[1]) / 1024)" "$rss_kb")"
-            echo "| pid | RSS |" >> "$GITHUB_STEP_SUMMARY"
+            tree_info="$(ps -axo pid=,ppid=,rss= | node -e '
+              const fs = require("node:fs");
+              const root = Number(process.argv[1]);
+              const rows = fs.readFileSync(0, "utf8").trim().split("\n").map((line) => {
+                const m = /^\s*(\d+)\s+(\d+)\s+(\d+)/.exec(line);
+                return m ? { pid: Number(m[1]), ppid: Number(m[2]), rssKb: Number(m[3]) } : null;
+              }).filter(Boolean);
+              const treePids = new Set([root]);
+              let changed = true;
+              while (changed) {
+                changed = false;
+                for (const row of rows) {
+                  if (treePids.has(row.ppid) && !treePids.has(row.pid)) {
+                    treePids.add(row.pid);
+                    changed = true;
+                  }
+                }
+              }
+              const matched = rows.filter((row) => treePids.has(row.pid));
+              const totalKb = matched.reduce((sum, row) => sum + row.rssKb, 0);
+              console.log(JSON.stringify({
+                count: matched.length,
+                totalMb: Math.round(totalKb / 1024),
+                pids: matched.map((row) => row.pid),
+              }));
+            ' "$app_pid")"
+            proc_count="$(node -p "JSON.parse(process.argv[1]).count" "$tree_info")"
+            rss_mb="$(node -p "JSON.parse(process.argv[1]).totalMb" "$tree_info")"
+            tree_pids="$(node -p "JSON.parse(process.argv[1]).pids.join(' ')" "$tree_info")"
+            echo "| processes | RSS (all app processes) |" >> "$GITHUB_STEP_SUMMARY"
             echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
-            echo "| $app_pid | ${rss_mb} MB |" >> "$GITHUB_STEP_SUMMARY"
-            kill "$app_pid" 2>/dev/null || true
+            echo "| $proc_count | ${rss_mb} MB |" >> "$GITHUB_STEP_SUMMARY"
+            for p in $tree_pids; do
+              kill "$p" 2>/dev/null || true
+            done
           else
             echo "The packaged macOS app exited before 15 s." >> "$GITHUB_STEP_SUMMARY"
             exit 1

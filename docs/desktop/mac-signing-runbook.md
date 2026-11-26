@@ -62,8 +62,8 @@ How CI handles credentials safely: `desktop-package.yml` decodes the `.p12` (and
 
 Before publishing the draft release or pointing users to a new macOS release:
 
-1. Download the `.dmg` matching the test Mac's CPU (`arm64` for Apple Silicon, `x64` for Intel) and `SHA256SUMS-darwin-<arch>.txt` from the draft release on a clean Mac that does NOT have the Developer ID private key installed.
-2. Verify checksum, signature, and Gatekeeper:
+1. Download all artifacts for the test Mac's CPU (`arm64` for Apple Silicon, `x64` for Intel) from the draft release on a clean Mac that does NOT have the Developer ID private key installed (`LudyDesktop-X.Y.Z-darwin-<arch>.dmg`, `LudyDesktop-X.Y.Z-darwin-<arch>.zip`, `release-manifest-darwin-<arch>.json`, and `SHA256SUMS-darwin-<arch>.txt`).
+2. Verify checksums, signature, and Gatekeeper:
    ```bash
    shasum -a 256 -c SHA256SUMS-darwin-arm64.txt
    spctl -a -t open --context context:primary-signature -vv LudyDesktop-X.Y.Z-darwin-arm64.dmg

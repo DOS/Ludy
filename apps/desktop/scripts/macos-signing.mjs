@@ -480,7 +480,7 @@ export async function withEphemeralMacKeychain(options) {
 
     result = await run({
       identity: chosenIdentity,
-      keychainPath,
+      keychainPath: signing.certMode === 'p12' ? keychainPath : signing.keychainPath,
       notaryKeychainPath: signing.notary.notaryMode === 'apple-id' ? keychainPath : null,
       notaryProfile,
     });

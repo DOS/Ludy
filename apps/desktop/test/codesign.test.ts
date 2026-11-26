@@ -18,6 +18,7 @@ import {
   normalizeAppleTeamId,
   parseCodesignDisplayOutput,
   parseCodesignVerifyOutput,
+  parseInfoPlistJson,
   parseSpctlAssessOutput,
   resolveMacAppBundlePath,
   verifyExtractedDirectorySymlinks,
@@ -205,7 +206,34 @@ describe('macOS codesign verification', () => {
       timestamp: 'Nov 26, 2026 at 10:00:00',
       hashType: 'sha256',
       hardenedRuntime: true,
+      arches: ['arm64'],
     });
+
+    expect(() =>
+      parseCodesignDisplayOutput(validDisplayOutput(), { expectedTeamId: TEAM_ID, expectedArch: 'x64' }),
+    ).toThrow(/architecture \(arm64\) does not match expected x64/);
+
+    const universal = parseCodesignDisplayOutput(
+      validDisplayOutput().replace(
+        'Format=app bundle with Mach-O thin (arm64)',
+        'Format=app bundle with Mach-O universal (x86_64 arm64)',
+      ),
+      { expectedTeamId: TEAM_ID, expectedArch: 'x64' },
+    );
+    expect(universal.arches).toEqual(['x64', 'arm64']);
+
+    expect(() =>
+      parseInfoPlistJson(
+        JSON.stringify({ CFBundleIdentifier: APPLE_BUNDLE_ID, CFBundleShortVersionString: '0.1.9' }),
+        { expectedVersion: '0.2.0' },
+      ),
+    ).toThrow(/version mismatch/);
+    expect(() =>
+      parseInfoPlistJson(
+        JSON.stringify({ CFBundleIdentifier: 'com.evil.app', CFBundleShortVersionString: '0.2.0' }),
+        { expectedVersion: '0.2.0' },
+      ),
+    ).toThrow(/CFBundleIdentifier mismatch/);
 
     expect(() => parseCodesignDisplayOutput('')).toThrow(/empty output/);
     expect(() => parseCodesignDisplayOutput(validDisplayOutput({ identifier: 'com.evil.app' }))).toThrow(/Identifier mismatch/);
@@ -314,9 +342,36 @@ describe('macOS codesign verification', () => {
     );
     expect(() => inspectZipCentralDirectory(bombZip, { maxTotalUncompressedBytes: 1024 * 1024 })).toThrow(/safety limit/);
 
-    const badBoundsZip = join(dir, 'bad-bounds.zip');
-    writeFileSync(badBoundsZip, buildSyntheticZip([{ name: `${MAC_APP_BUNDLE_NAME}/Contents/Info.plist` }], { cdSize: 10 }));
-    expect(() => inspectZipCentralDirectory(badBoundsZip)).toThrow(/unexpected trailing bytes/);
+    const dittoSeqZip = join(dir, 'ditto-seq.zip');
+    writeFileSync(
+      dittoSeqZip,
+      buildSyntheticZip([
+        { name: `${MAC_APP_BUNDLE_NAME}/Contents/Info.plist`, dataSize: 120 },
+        { name: '__MACOSX/', dataSize: 0 },
+        { name: `__MACOSX/${MAC_APP_BUNDLE_NAME}/Contents/._Info.plist`, dataSize: 64 },
+      ]),
+    );
+    expect(inspectZipCentralDirectory(dittoSeqZip).entryCount).toBe(3);
+
+    const evilAppleDoubleZip = join(dir, 'evil-appledouble.zip');
+    writeFileSync(evilAppleDoubleZip, buildSyntheticZip([{ name: '__MACOSX/Evil.app/payload' }]));
+    expect(() => inspectZipCentralDirectory(evilAppleDoubleZip)).toThrow(/Unexpected ZIP entry outside/);
+
+    const truncatedHeaderZip = join(dir, 'truncated-cd.zip');
+    writeFileSync(
+      truncatedHeaderZip,
+      buildSyntheticZip([{ name: `${MAC_APP_BUNDLE_NAME}/Contents/Info.plist` }], { cdSize: 10 }),
+    );
+    expect(() => inspectZipCentralDirectory(truncatedHeaderZip)).toThrow(/Malformed ZIP central directory header/);
+
+    const trailingBytesZip = join(dir, 'trailing-cd.zip');
+    writeFileSync(
+      trailingBytesZip,
+      buildSyntheticZip([{ name: `${MAC_APP_BUNDLE_NAME}/Contents/Info.plist` }], {
+        trailingCdBytes: Buffer.from('junk'),
+      }),
+    );
+    expect(() => inspectZipCentralDirectory(trailingBytesZip)).toThrow(/unexpected trailing bytes/);
 
     const nonZip = join(dir, 'empty.zip');
     writeFileSync(nonZip, Buffer.from('not-a-zip'));
@@ -344,6 +399,12 @@ describe('macOS codesign verification', () => {
       writeFileSync(outsideFile, 'secret');
       symlinkSync('../../../outside-secret.txt', join(macOsDir, 'escape-link'));
       expect(() => verifyExtractedDirectorySymlinks(bundleRoot)).toThrow(/escaping symlink/);
+
+      const realExternalApp = join(dir, 'External.app');
+      mkdirSync(realExternalApp, { recursive: true });
+      const symlinkRoot = join(dir, 'SymlinkRoot.app');
+      symlinkSync(realExternalApp, symlinkRoot);
+      expect(() => verifyExtractedDirectorySymlinks(symlinkRoot)).toThrow(/Refused symlink/);
     } else {
       expect(() => verifyExtractedDirectorySymlinks(bundleRoot)).not.toThrow();
     }
@@ -368,6 +429,15 @@ describe('macOS codesign verification', () => {
       if (file === 'codesign' && args.includes('--display')) {
         return { stdout: '', stderr: validDisplayOutput() };
       }
+      if (file === 'plutil') {
+        return {
+          stdout: JSON.stringify({
+            CFBundleIdentifier: APPLE_BUNDLE_ID,
+            CFBundleShortVersionString: '0.1.0',
+          }),
+          stderr: '',
+        };
+      }
       if (file === 'spctl') {
         return { stdout: validSpctlOutput(), stderr: '' };
       }
@@ -376,12 +446,36 @@ describe('macOS codesign verification', () => {
 
     const sig = await verifyMacAppBundle(appDir, {
       expectedTeamId: TEAM_ID,
+      expectedVersion: '0.1.0',
+      expectedArch: 'arm64',
       platform: 'darwin',
       execCmd: okExec,
     });
     expect(sig.teamId).toBe(TEAM_ID);
     expect(sig.hardenedRuntime).toBe(true);
-    expect(calls.map((c) => c[0])).toEqual(['codesign', 'codesign', 'spctl']);
+    expect(sig.bundleVersion).toBe('0.1.0');
+    expect(sig.arches).toEqual(['arm64']);
+    expect(calls.map((c) => c[0])).toEqual(['codesign', 'codesign', 'plutil', 'spctl']);
+
+    await expect(
+      verifyMacAppBundle(appDir, {
+        expectedTeamId: TEAM_ID,
+        expectedVersion: '0.9.9',
+        expectedArch: 'arm64',
+        platform: 'darwin',
+        execCmd: okExec,
+      }),
+    ).rejects.toThrow(/version mismatch/);
+
+    await expect(
+      verifyMacAppBundle(appDir, {
+        expectedTeamId: TEAM_ID,
+        expectedVersion: '0.1.0',
+        expectedArch: 'x64',
+        platform: 'darwin',
+        execCmd: okExec,
+      }),
+    ).rejects.toThrow(/architecture \(arm64\) does not match expected x64/);
 
     const zipDir = makeTempDir('ludy-zip-pkg-');
     const zipPath = join(zipDir, 'LudyDesktop-0.1.0-darwin-arm64.zip');
@@ -404,11 +498,27 @@ describe('macOS codesign verification', () => {
       return okExec(file, args);
     };
     const pkgSig = await verifyMacSignedPackage(zipPath, TEAM_ID, {
+      expectedVersion: '0.1.0',
+      expectedArch: 'arm64',
       platform: 'darwin',
       execCmd: packageExec,
     });
     expect(pkgSig.teamId).toBe(TEAM_ID);
+    expect(pkgSig.bundleVersion).toBe('0.1.0');
     expect(readdirSync(zipDir)).toEqual(['LudyDesktop-0.1.0-darwin-arm64.zip']);
+
+    if (process.platform !== 'win32') {
+      const symExtractExec: MacExecCmd = async (file, args) => {
+        if (file === 'ditto') {
+          symlinkSync(appDir, join(args[3]!, MAC_APP_BUNDLE_NAME));
+          return { stdout: '', stderr: '' };
+        }
+        return okExec(file, args);
+      };
+      await expect(
+        verifyMacSignedPackage(zipPath, TEAM_ID, { platform: 'darwin', execCmd: symExtractExec }),
+      ).rejects.toThrow(/Refused symlink/);
+    }
 
     const badDittoExec: MacExecCmd = async (file, args) => {
       if (file === 'ditto') {

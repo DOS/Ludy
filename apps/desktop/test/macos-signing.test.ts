@@ -512,6 +512,58 @@ describe('macOS packaging CLI & signing helpers', () => {
     expect(kcExistsOnDisk).toBe(false);
     expect(currentSearchList).toEqual(['/Users/runner/Library/Keychains/login.keychain-db']);
 
+    // Keep signing keychain separate from ephemeral notary keychain when certMode is identity + notaryMode is apple-id
+    const customSigningKc = join(dir, 'custom-signing.keychain-db');
+    writeFileSync(customSigningKc, 'custom-kc');
+    const identityAppleId = resolveMacSigningConfig({
+      sign: true,
+      env: {
+        APPLE_TEAM_ID: TEAM_ID,
+        APPLE_CODESIGN_IDENTITY: `Developer ID Application: Ludy Test (${TEAM_ID})`,
+        APPLE_KEYCHAIN_PATH: customSigningKc,
+        APPLE_ID: 'dev@example.com',
+        APPLE_APP_SPECIFIC_PASSWORD: 'apple-app-password',
+      },
+      exists: () => true,
+    });
+    if (!identityAppleId.enabled) throw new Error('expected enabled');
+    const notaryOnlyKc = join(dir, 'notary-only.keychain-db');
+    let notaryKcExists = false;
+    let notarySearchList = ['/Users/runner/Library/Keychains/login.keychain-db'];
+    await withEphemeralMacKeychain({
+      signing: identityAppleId,
+      env: {
+        LUDY_MAC_EPHEMERAL_KEYCHAIN: notaryOnlyKc,
+        APPLE_APP_SPECIFIC_PASSWORD: 'apple-app-password',
+      },
+      exists: (p) => (p === notaryOnlyKc ? notaryKcExists : true),
+      runSecurityInteractive: () => {
+        notaryKcExists = true;
+      },
+      storeNotaryProfile: () => undefined,
+      exec: (_file, args) => {
+        if (args[0] === 'list-keychains' && !args.includes('-s')) {
+          return notarySearchList.map((p) => `    "${p}"`).join('\n');
+        }
+        if (args[0] === 'list-keychains' && args.includes('-s')) {
+          notarySearchList = args.slice(4);
+          return '';
+        }
+        if (args[0] === 'delete-keychain') {
+          notaryKcExists = false;
+          notarySearchList = notarySearchList.filter((p) => p !== args[1]);
+          return '';
+        }
+        throw new Error(`unexpected security args: ${args.join(' ')}`);
+      },
+      run: async (ctx) => {
+        expect(ctx.identity).toBe(`Developer ID Application: Ludy Test (${TEAM_ID})`);
+        expect(ctx.keychainPath).toBe(customSigningKc);
+        expect(ctx.notaryKeychainPath).toBe(notaryOnlyKc);
+      },
+    });
+    expect(notaryKcExists).toBe(false);
+
     // Fail closed if ephemeral Keychain remains in search list or on disk after cleanup
     let stickySearchList = ['/Users/runner/Library/Keychains/login.keychain-db'];
     await expect(

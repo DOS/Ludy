@@ -22,6 +22,7 @@ import {
   inspectZipCentralDirectory,
   MAC_APP_BUNDLE_NAME,
   parseCodesignDisplayOutput,
+  parseInfoPlistJson,
   parseSpctlAssessOutput,
   verifyExtractedDirectorySymlinks,
   verifyMacSignedPackage,
@@ -810,9 +811,9 @@ describe('macOS update feed, Team ID pinning, ZIP safety, and Gatekeeper invaria
   function buildTestZip(
     entries: Array<{ name: string; dataSize?: number; uncompressedSizeOverride?: number }>,
     overrides: { diskNumber?: number; entryCount?: number } = {},
-  ): Buffer {
-    const localChunks: Buffer[] = [];
-    const cdChunks: Buffer[] = [];
+  ) {
+    const localChunks: Array<Buffer<ArrayBuffer>> = [];
+    const cdChunks: Array<Buffer<ArrayBuffer>> = [];
     let offset = 0;
     for (const entry of entries) {
       const nameBuf = Buffer.from(entry.name, 'utf8');
@@ -1015,8 +1016,9 @@ describe('macOS update feed, Team ID pinning, ZIP safety, and Gatekeeper invaria
         [`${FEED}/LudyDesktop-0.2.0-darwin-arm64.zip`]: new Response(zipBytes, { status: 200 }),
       }),
       stagingDir: join(makeTempDir(), 'mac-good-zip'),
-      verifySignedPackage: async (pkgPath, team) => {
+      verifySignedPackage: async (pkgPath, team, target) => {
         expect(team).toBe(TEAM_ID);
+        expect(target).toEqual({ version: '0.2.0', arch: 'arm64' });
         inspectZipCentralDirectory(pkgPath, { requiredTopDir: `${MAC_APP_BUNDLE_NAME}/` });
       },
     });
@@ -1028,6 +1030,10 @@ describe('macOS update feed, Team ID pinning, ZIP safety, and Gatekeeper invaria
     const evilZip = join(dir, 'evil.zip');
     writeFileSync(evilZip, buildTestZip([{ name: `${MAC_APP_BUNDLE_NAME}/../evil` }]));
     expect(() => inspectZipCentralDirectory(evilZip)).toThrow(/Path traversal/);
+
+    const evilAppleDouble = join(dir, 'evil-appledouble.zip');
+    writeFileSync(evilAppleDouble, buildTestZip([{ name: '__MACOSX/Evil.app/Contents/MacOS/evil' }]));
+    expect(() => inspectZipCentralDirectory(evilAppleDouble)).toThrow(/Unexpected ZIP entry outside/);
 
     const dupZip = join(dir, 'dup.zip');
     writeFileSync(
@@ -1051,7 +1057,38 @@ describe('macOS update feed, Team ID pinning, ZIP safety, and Gatekeeper invaria
       mkdirSync(join(symBundle, 'Contents', 'MacOS'), { recursive: true });
       symlinkSync('/etc/passwd', join(symBundle, 'Contents', 'MacOS', 'escape'));
       expect(() => verifyExtractedDirectorySymlinks(symBundle)).toThrow(/absolute symlink/);
+
+      const externalBundle = join(dir, 'External.app');
+      mkdirSync(join(externalBundle, 'Contents', 'MacOS'), { recursive: true });
+      const rootSym = join(dir, 'RootSym.app');
+      symlinkSync(externalBundle, rootSym);
+      expect(() => verifyExtractedDirectorySymlinks(rootSym)).toThrow(/Refused symlink/);
     }
+
+    expect(() =>
+      parseInfoPlistJson(
+        JSON.stringify({ CFBundleIdentifier: APPLE_BUNDLE_ID, CFBundleShortVersionString: '0.1.0' }),
+        { expectedVersion: '0.2.0' },
+      ),
+    ).toThrow(/version mismatch/);
+
+    expect(() =>
+      parseCodesignDisplayOutput(
+        [
+          `Identifier=${APPLE_BUNDLE_ID}`,
+          'Format=app bundle with Mach-O thin (x86_64)',
+          'CodeDirectory v=20500 size=100 flags=0x10000(runtime)',
+          'Hash type=sha256 size=32',
+          `Authority=Developer ID Application: Ludy (${TEAM_ID})`,
+          'Authority=Developer ID Certification Authority',
+          'Authority=Apple Root CA',
+          'Timestamp=Nov 26, 2026',
+          `TeamIdentifier=${TEAM_ID}`,
+          'Sealed Resources version=2',
+        ].join('\n'),
+        { expectedTeamId: TEAM_ID, expectedArch: 'arm64' },
+      ),
+    ).toThrow(/architecture \(x64\) does not match expected arm64/);
 
     expect(() =>
       parseCodesignDisplayOutput(
@@ -1074,6 +1111,48 @@ describe('macOS update feed, Team ID pinning, ZIP safety, and Gatekeeper invaria
       parseSpctlAssessOutput('/app: rejected\nsource=no usable signature', { expectedTeamId: TEAM_ID }),
     ).toThrow(/did not accept/);
 
+    const goodMacZip = join(dir, 'LudyDesktop-0.2.0-darwin-arm64.zip');
+    writeFileSync(goodMacZip, zipBytes);
     await expect(verifyMacSignedPackage(evilZip, null, { platform: 'darwin' })).rejects.toThrow(/Team ID/);
+    await expect(
+      verifyMacSignedPackage(goodMacZip, TEAM_ID, {
+        platform: 'darwin',
+        expectedVersion: '0.2.0',
+        expectedArch: 'arm64',
+        execCmd: async (file, args) => {
+          if (file === 'ditto') {
+            mkdirSync(join(args[3]!, MAC_APP_BUNDLE_NAME, 'Contents', 'MacOS'), { recursive: true });
+            return { stdout: '', stderr: '' };
+          }
+          if (file === 'codesign' && args.includes('--verify')) {
+            return { stdout: 'Ludy Desktop.app: valid on disk\nsatisfies its Designated Requirement', stderr: '' };
+          }
+          if (file === 'codesign' && args.includes('--display')) {
+            return {
+              stdout: [
+                `Identifier=${APPLE_BUNDLE_ID}`,
+                'Format=app bundle with Mach-O thin (arm64)',
+                'CodeDirectory v=20500 size=100 flags=0x10000(runtime)',
+                'Hash type=sha256 size=32',
+                `Authority=Developer ID Application: Ludy (${TEAM_ID})`,
+                'Authority=Developer ID Certification Authority',
+                'Authority=Apple Root CA',
+                'Timestamp=Nov 26, 2026',
+                `TeamIdentifier=${TEAM_ID}`,
+                'Sealed Resources version=2',
+              ].join('\n'),
+              stderr: '',
+            };
+          }
+          if (file === 'plutil') {
+            return {
+              stdout: JSON.stringify({ CFBundleIdentifier: APPLE_BUNDLE_ID, CFBundleShortVersionString: '0.1.9' }),
+              stderr: '',
+            };
+          }
+          return { stdout: '', stderr: '' };
+        },
+      }),
+    ).rejects.toThrow(/version mismatch/);
   });
 });

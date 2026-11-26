@@ -11,6 +11,8 @@ export const APPLE_TEAM_ID_PATTERN = /^[A-Z0-9]{10}$/;
 export const MAX_ZIP_ENTRIES = 20_000;
 export const MAX_ZIP_EXTRACTED_BYTES = 1024 * 1024 * 1024;
 
+export type MacBundleArch = 'arm64' | 'x64';
+
 export interface VerifiedMacAppSignature {
   identifier: string;
   teamId: string;
@@ -18,6 +20,8 @@ export interface VerifiedMacAppSignature {
   timestamp: string;
   hashType: 'sha256';
   hardenedRuntime: true;
+  arches: MacBundleArch[];
+  bundleVersion?: string | undefined;
 }
 
 export type MacExecResult = { stdout: string; stderr: string };
@@ -70,9 +74,25 @@ export function parseCodesignVerifyOutput(output: string): void {
   }
 }
 
+function parseCodesignFormatArches(formatLine: string): MacBundleArch[] {
+  const m = /\(([^)]+)\)\s*$/.exec(formatLine);
+  if (!m?.[1]) return [];
+  const tokens = m[1].trim().split(/\s+/);
+  const arches: MacBundleArch[] = [];
+  for (const tok of tokens) {
+    const clean = tok.toLowerCase();
+    if ((clean === 'arm64' || clean.startsWith('arm64e')) && !arches.includes('arm64')) {
+      arches.push('arm64');
+    } else if (clean === 'x86_64' && !arches.includes('x64')) {
+      arches.push('x64');
+    }
+  }
+  return arches;
+}
+
 export function parseCodesignDisplayOutput(
   output: string,
-  options: { expectedIdentifier?: string; expectedTeamId?: string | null } = {},
+  options: { expectedIdentifier?: string; expectedTeamId?: string | null; expectedArch?: MacBundleArch | undefined } = {},
 ): VerifiedMacAppSignature {
   const normalized = output.replace(/\r?\n/g, '\n');
   if (!normalized.trim()) {
@@ -82,6 +102,7 @@ export function parseCodesignDisplayOutput(
   const expectedIdentifier = options.expectedIdentifier ?? APPLE_BUNDLE_ID;
 
   let identifier = '';
+  let formatLine = '';
   let codeDirLine = '';
   let hashType = '';
   const authorities: string[] = [];
@@ -92,6 +113,8 @@ export function parseCodesignDisplayOutput(
   for (const line of lines) {
     if (line.startsWith('Identifier=')) {
       identifier = line.slice('Identifier='.length).trim();
+    } else if (line.startsWith('Format=')) {
+      formatLine = line.slice('Format='.length).trim();
     } else if (line.startsWith('CodeDirectory ')) {
       codeDirLine = line;
     } else if (line.startsWith('Hash type=')) {
@@ -109,6 +132,12 @@ export function parseCodesignDisplayOutput(
 
   if (identifier !== expectedIdentifier) {
     throw new Error(`codesign Identifier mismatch: expected ${expectedIdentifier}, got ${identifier || '(missing)'}`);
+  }
+  const arches = formatLine ? parseCodesignFormatArches(formatLine) : [];
+  if (options.expectedArch && !arches.includes(options.expectedArch)) {
+    throw new Error(
+      `macOS app bundle architecture (${arches.join(', ') || 'unknown'}) does not match expected ${options.expectedArch}`,
+    );
   }
   if (!codeDirLine) {
     throw new Error('codesign --display missing CodeDirectory flags');
@@ -154,7 +183,41 @@ export function parseCodesignDisplayOutput(
     timestamp,
     hashType: 'sha256',
     hardenedRuntime: true,
+    arches,
   };
+}
+
+export function parseInfoPlistJson(
+  rawJson: string,
+  options: { expectedIdentifier?: string | undefined; expectedVersion?: string | undefined } = {},
+): { bundleIdentifier: string; bundleVersion: string } {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawJson);
+  } catch {
+    throw new Error('macOS bundle Info.plist conversion returned invalid JSON');
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('macOS bundle Info.plist must be a dictionary object');
+  }
+  const record = parsed as Record<string, unknown>;
+  const bundleIdentifier = typeof record.CFBundleIdentifier === 'string' ? record.CFBundleIdentifier.trim() : '';
+  const bundleVersion = typeof record.CFBundleShortVersionString === 'string' ? record.CFBundleShortVersionString.trim() : '';
+  const expectedIdentifier = options.expectedIdentifier ?? APPLE_BUNDLE_ID;
+  if (bundleIdentifier !== expectedIdentifier) {
+    throw new Error(
+      `macOS Info.plist CFBundleIdentifier mismatch: expected ${expectedIdentifier}, got ${bundleIdentifier || '(missing)'}`,
+    );
+  }
+  if (!bundleVersion) {
+    throw new Error('macOS Info.plist is missing CFBundleShortVersionString');
+  }
+  if (options.expectedVersion && bundleVersion !== options.expectedVersion) {
+    throw new Error(
+      `macOS app version mismatch: expected ${options.expectedVersion}, got ${bundleVersion} in Info.plist`,
+    );
+  }
+  return { bundleIdentifier, bundleVersion };
 }
 
 export function parseSpctlAssessOutput(
@@ -293,7 +356,15 @@ export function inspectZipCentralDirectory(
       if (segments.some((seg) => seg === '..' || seg === '.')) {
         throw new Error(`Path traversal segment in ZIP entry: ${rawName}`);
       }
-      if (!rawName.startsWith(requiredTopDir) && rawName !== requiredTopDir.replace(/\/+$/, '')) {
+      const topBundle = requiredTopDir.replace(/\/+$/, '');
+      const allowedAppEntry = rawName === topBundle || rawName.startsWith(`${topBundle}/`);
+      const allowedAppleDoubleEntry =
+        rawName === '__MACOSX' ||
+        rawName === '__MACOSX/' ||
+        rawName === `__MACOSX/${topBundle}` ||
+        rawName.startsWith(`__MACOSX/${topBundle}/`) ||
+        rawName === `__MACOSX/._${topBundle}`;
+      if (!allowedAppEntry && !allowedAppleDoubleEntry) {
         throw new Error(`Unexpected ZIP entry outside ${requiredTopDir}: ${rawName}`);
       }
       const lowerKey = rawName.replace(/\/+$/, '').toLowerCase();
@@ -313,6 +384,10 @@ export function inspectZipCentralDirectory(
 }
 
 export function verifyExtractedDirectorySymlinks(rootDir: string): void {
+  const rootStat = lstatSync(rootDir);
+  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
+    throw new Error(`Refused symlink or non-directory at macOS bundle root: ${rootDir}`);
+  }
   const realRoot = realpathSync(rootDir);
   const stack: string[] = [rootDir];
   while (stack.length > 0) {
@@ -348,6 +423,8 @@ export async function verifyMacAppBundle(
   appPath: string,
   options: {
     expectedTeamId?: string | null | undefined;
+    expectedVersion?: string | undefined;
+    expectedArch?: MacBundleArch | undefined;
     requireGatekeeper?: boolean | undefined;
     execCmd?: MacExecCmd | undefined;
     platform?: NodeJS.Platform | undefined;
@@ -357,8 +434,14 @@ export async function verifyMacAppBundle(
   if (platform !== 'darwin') {
     throw new Error('macOS codesign verification is only supported on macOS');
   }
-  if (!existsSync(appPath) || !statSync(appPath).isDirectory()) {
+  let rootStat;
+  try {
+    rootStat = lstatSync(appPath);
+  } catch {
     throw new Error(`macOS app bundle does not exist: ${appPath}`);
+  }
+  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
+    throw new Error(`Refused symlink or non-directory macOS app bundle: ${appPath}`);
   }
   const execCmd = options.execCmd ?? defaultMacExecCmd;
 
@@ -369,7 +452,17 @@ export async function verifyMacAppBundle(
   const parsed = parseCodesignDisplayOutput(`${displayOut.stdout}\n${displayOut.stderr}`, {
     expectedIdentifier: APPLE_BUNDLE_ID,
     expectedTeamId: options.expectedTeamId ?? null,
+    expectedArch: options.expectedArch,
   });
+
+  if (options.expectedVersion) {
+    const plistOut = await execCmd('plutil', ['-convert', 'json', '-o', '-', join(appPath, 'Contents', 'Info.plist')]);
+    const plist = parseInfoPlistJson(plistOut.stdout, {
+      expectedIdentifier: APPLE_BUNDLE_ID,
+      expectedVersion: options.expectedVersion,
+    });
+    parsed.bundleVersion = plist.bundleVersion;
+  }
 
   if (options.requireGatekeeper !== false) {
     const spctlOut = await execCmd('spctl', ['-a', '-t', 'exec', '-vv', appPath]);
@@ -386,6 +479,8 @@ export async function verifyMacSignedPackage(
   zipPath: string,
   expectedTeamId: string | null,
   options: {
+    expectedVersion?: string | undefined;
+    expectedArch?: MacBundleArch | undefined;
     execCmd?: MacExecCmd | undefined;
     platform?: NodeJS.Platform | undefined;
   } = {},
@@ -411,6 +506,8 @@ export async function verifyMacSignedPackage(
     verifyExtractedDirectorySymlinks(appPath);
     return await verifyMacAppBundle(appPath, {
       expectedTeamId,
+      expectedVersion: options.expectedVersion,
+      expectedArch: options.expectedArch,
       requireGatekeeper: true,
       execCmd,
       platform,

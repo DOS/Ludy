@@ -1150,7 +1150,11 @@ export async function validateUpdateFeed(options: ValidateUpdateFeedOptions): Pr
   return { feedUrl: checkedFeed.url, platform: 'win32', releases: releases!, manifest, rawManifestBytes: manifestBuf };
 }
 
-export type SignedPackageVerifier = (packagePath: string, expectedPublisher: string | null) => Promise<unknown>;
+export type SignedPackageVerifier = (
+  packagePath: string,
+  expectedPublisher: string | null,
+  target?: { version?: string | undefined; arch?: DesktopMacArch | 'x64' | undefined },
+) => Promise<unknown>;
 export type SignedManifestVerifier = (
   manifestScriptPath: string,
   expectedJsonBytes: Buffer,
@@ -1357,7 +1361,10 @@ export async function prepareVerifiedUpdate(options: PrepareVerifiedUpdateOption
 
       if (requireSigned && options.verifySignedPackage) {
         const expectedVerifierTeam = trustedTeamId ?? validated.manifest.signing.teamId;
-        await options.verifySignedPackage(tempPath, expectedVerifierTeam);
+        await options.verifySignedPackage(tempPath, expectedVerifierTeam, {
+          version: target.version,
+          arch: validated.manifest.arch,
+        });
       }
 
       rmSync(finalPath, { force: true });
