@@ -431,6 +431,19 @@ suite('the posting of a pay run on PostgreSQL (#2532)', () => {
     await expect(approve(o, proposalId, o.owner)).rejects.toMatchObject({ code: 'FOUR_EYES_REQUIRED' });
     await expect(approve(o, proposalId, o.admin)).rejects.toMatchObject({ code: 'FOUR_EYES_REQUIRED' });
     await expect(approve(o, proposalId, o.admin2)).resolves.toMatchObject({ journalEntryId: expect.any(String) });
+    const [otherAudit] = await rows<{ detail: Record<string, unknown> }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.proposal.approve'`, [o.orgId]);
+    expect(otherAudit?.detail).toMatchObject({ self_approved: false, policy: { P12: 'pass', P10: 'pass' } });
+    expect(otherAudit?.detail.co_author).toBeUndefined();
+  });
+
+  it('records co_author: true in the approve audit row when a co-author approves because nobody else is eligible (#2749)', async () => {
+    const o = await org('tt133', 'standard');
+    const { runId } = await approvedRun(o);
+    const { proposalId } = await ask(o, runId, o.admin);
+    // Only the owner (co-author) and the admin (requester) are eligible, so the owner approves under the co-author exception.
+    await expect(approve(o, proposalId, o.owner)).resolves.toMatchObject({ journalEntryId: expect.any(String) });
+    const [audit] = await rows<{ detail: Record<string, unknown> }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.proposal.approve'`, [o.orgId]);
+    expect(audit?.detail).toMatchObject({ self_approved: false, co_author: true, policy: { P12: 'pass', P10: 'pass' } });
   });
 
   it('keeps the one-person path: a lone owner who approved the run asks for and approves its posting, flagged self-approved', async () => {
@@ -438,8 +451,9 @@ suite('the posting of a pay run on PostgreSQL (#2532)', () => {
     const { runId } = await approvedRun(o);
     const { proposalId } = await ask(o, runId, o.owner);
     await expect(approve(o, proposalId, o.owner)).resolves.toMatchObject({ journalEntryId: expect.any(String) });
-    const [audit] = await rows<{ self_approved: string }>(`SELECT detail ->> 'self_approved' AS self_approved FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.proposal.approve'`, [o.orgId]);
-    expect(audit?.self_approved).toBe('true');
+    const [audit] = await rows<{ detail: Record<string, unknown> }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.proposal.approve'`, [o.orgId]);
+    expect(audit?.detail).toMatchObject({ self_approved: true, policy: { P12: 'pass', P10: 'self_approved' } });
+    expect(audit?.detail.co_author).toBeUndefined();
   });
 
   it('declares the run approver again when an expired posting proposal is asked for again', async () => {
