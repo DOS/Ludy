@@ -83,3 +83,25 @@ export function buildQuickCreateItems(input: {
 
   return items;
 }
+
+// The jobs Home puts in the thumb row on a phone (#4784), the four of #4783 that a small business does every week
+// (Tải chứng từ, Ghi khoản chi, Lập hóa đơn bán, Thêm người liên hệ). A job of an app that is off is never shown, and nothing
+// else fills its place: the rest stays in the `+` menu. Links only, so the row is plain navigation.
+export const HOME_CREATE_ORDER: readonly Exclude<QuickCreateItemId, 'quickCapture'>[] = ['uploadDocument', 'recordExpense', 'createSalesInvoice', 'newContact'];
+
+export const HOME_CREATE_MAX = 4;
+
+export type QuickCreateLink = Extract<QuickCreateItem, { kind: 'link' }>;
+
+/** The create links of the phone Home row, from the member's own quick-create items (so an app that is off or a viewer's role shows none). */
+export function homeCreateItems(items: readonly QuickCreateItem[], max = HOME_CREATE_MAX): QuickCreateLink[] {
+  if (max <= 0) return [];
+  const links = items.filter((item): item is QuickCreateLink => item.kind === 'link');
+  const picked: QuickCreateLink[] = [];
+  for (const id of HOME_CREATE_ORDER) {
+    const found = links.find((item) => item.id === id);
+    if (found) picked.push(found);
+    if (picked.length === max) break;
+  }
+  return picked;
+}

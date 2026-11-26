@@ -323,7 +323,7 @@ export type TaskTable = Refine<
   {
     kind: Generated<TaskKind>;
     source: TaskSource;
-    // Stamped from the context by a trigger, with created_by_id and created_by_run.
+    // Stamped from the context by a trigger, with created_by_id, created_by_run, done_at, and completed_by.
     created_by_type: ActorType;
     status: Generated<TaskStatus>;
     fence: ColumnType<string, string | number | undefined, string | number>;

@@ -1,8 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from 'vitest';
-import type { MarketplaceSettlementProposal } from '@ludy/kernel-contract';
+import {
+  JOURNAL_VOUCHER_MAX_LINES,
+  MARKETPLACE_SETTLEMENT_MAX_LINES,
+  MARKETPLACE_SETTLEMENT_MAX_MONTHS,
+  zJournalVoucherProposal,
+  zMarketplaceSettlementProposal,
+  zMarketplaceSettlementRequest,
+  type MarketplaceSettlementProposal,
+} from '@ludy/kernel-contract';
+
 import { createMarketplaceSettlementCommands, platformPartyName, settlementProposalMismatch } from '../src/marketplace-settlement-record.ts';
-import { zMarketplaceSettlementProposal, zMarketplaceSettlementRequest } from '@ludy/kernel-contract';
 
 const ID = '0192a000-0000-7000-8000-000000000001';
 const ENTITY = '0192a000-0000-7000-8000-000000000002';
@@ -83,5 +91,32 @@ describe('marketplace settlement commands', () => {
     expect(zMarketplaceSettlementProposal.safeParse({ ...built(), months: [{ month: '2026-13', date: '2026-10-15', total: '335000' }] }).success).toBe(false);
     expect(zMarketplaceSettlementProposal.safeParse(built()).success).toBe(true);
     expect(zMarketplaceSettlementProposal.safeParse({ ...built(), sales: '1.5' }).success).toBe(false);
+  });
+
+  it('accepts long multi-month household settlements past 50 lines and 12 months while keeping the 50-line cap on plain journal vouchers (#4341)', () => {
+    const months = Array.from({ length: 14 }, (_, i) => {
+      const year = 2025 + Math.floor((10 + i) / 12);
+      const m = String(((10 + i) % 12) + 1).padStart(2, '0');
+      return { month: `${year}-${m}`, date: `${year}-${m}-28`, total: '100000' };
+    });
+    const lines = months.flatMap((m) => [
+      { account: '131', party: null, debit: '100000', credit: '0', memo: m.month },
+      { account: '521', party: null, debit: '10000', credit: '0', memo: m.month },
+      { account: '5111', party: null, debit: '0', credit: '100000', memo: m.month },
+      { account: '33311', party: null, debit: '0', credit: '10000', memo: m.month },
+      { account: '5111', party: null, debit: '1000', credit: '0', memo: m.month },
+      { account: '3331', party: null, debit: '0', credit: '1000', memo: m.month },
+      { account: '4212', party: null, debit: '500', credit: '0', memo: m.month },
+      { account: '3335', party: null, debit: '0', credit: '500', memo: m.month },
+    ]);
+    expect(lines).toHaveLength(14 * 8);
+    expect(lines.length).toBeGreaterThan(JOURNAL_VOUCHER_MAX_LINES);
+    expect(zMarketplaceSettlementProposal.safeParse({ ...built(), months, lines }).success).toBe(true);
+    expect(zJournalVoucherProposal.safeParse({ ...built(), lines }).success).toBe(false);
+
+    const tooManyMonths = Array.from({ length: MARKETPLACE_SETTLEMENT_MAX_MONTHS + 1 }, () => ({ month: '2026-10', date: '2026-10-15', total: '1000' }));
+    expect(zMarketplaceSettlementProposal.safeParse({ ...built(), months: tooManyMonths }).success).toBe(false);
+    const tooManyLines = Array.from({ length: MARKETPLACE_SETTLEMENT_MAX_LINES + 1 }, () => built().lines[0]!);
+    expect(zMarketplaceSettlementProposal.safeParse({ ...built(), lines: tooManyLines }).success).toBe(false);
   });
 });

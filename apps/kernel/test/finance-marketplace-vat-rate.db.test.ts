@@ -12,7 +12,7 @@ import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import type { MarketplaceVatRates } from '@ludy/kernel-contract';
 import { Runtime, defineQuery } from '@ludy/kernel-runtime';
-import { financeCommands, financeQueries, marketplaceVatRateAt } from '@ludy/mod-finance';
+import { financeCommands, financeQueries, marketplaceVatRateAt, marketplaceVatRateEntries, pickMarketplaceVatRate, resolveVatRates } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
@@ -62,6 +62,21 @@ suite('marketplace VAT rate of an entity (#4303 S3a)', () => {
     access: ['owner', 'admin', 'member', 'viewer'],
     handler: (ctx, input) => marketplaceVatRateAt(ctx, input.legalEntityId, input.date),
   });
+  const parityProbe = defineQuery({
+    name: 't4341.vat_rate_parity',
+    input: z.object({ legalEntityId: z.string(), dates: z.array(z.string()) }),
+    access: ['owner', 'admin', 'member', 'viewer'],
+    handler: async (ctx, input) => {
+      const entries = await marketplaceVatRateEntries(ctx, input.legalEntityId);
+      const resolved = await resolveVatRates(ctx, input.legalEntityId, input.dates);
+      const expected = await Promise.all(input.dates.map((d) => marketplaceVatRateAt(ctx, input.legalEntityId, d)));
+      return {
+        picked: input.dates.map((d) => pickMarketplaceVatRate(entries, d)),
+        resolved,
+        expected,
+      };
+    },
+  });
   const rateAt = (o: Org, date: string) => query<Row | null>(o, 't4303.vat_rate_at', { legalEntityId: o.entity, date });
 
   beforeAll(async () => {
@@ -81,7 +96,7 @@ suite('marketplace VAT rate of an entity (#4303 S3a)', () => {
     db = createDb(pool);
     rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register({
       commands: [...kernelCommands, ...financeCommands],
-      queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries, probe],
+      queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries, probe, parityProbe],
     });
   }, 120_000);
 
@@ -180,5 +195,27 @@ suite('marketplace VAT rate of an entity (#4303 S3a)', () => {
     const rows = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.marketplace_vat_rate.set' AND outcome = 'ok'`, [o.orgId])).rows);
     expect(rows).toHaveLength(1);
     expect(rows[0]?.detail).toMatchObject({ legalEntityId: o.entity, rows: [{ effectiveFrom: '2026-01-01', method: 'deduction', vatPercent: '8' }] });
+  });
+
+  it('matches marketplaceVatRateAt for every date across backfills, same-day overrides and method switches (#4341)', async () => {
+    const o = await org();
+    const dates = ['2025-12-31', '2026-01-01', '2026-02-28', '2026-03-01', '2026-03-15', '2026-04-01', '2026-12-31', '2027-01-01', '2027-06-01', '2028-01-01'];
+    // Empty table: both return null for every day.
+    const empty = await query<{ picked: (Row | null)[]; resolved: Record<string, { method: 'deduction'; vatPercent: string } | { method: 'none' } | null>; expected: (Row | null)[] }>(o, 't4341.vat_rate_parity', { legalEntityId: o.entity, dates });
+    expect(empty.picked).toEqual(empty.expected);
+
+    await setRates(o, [{ effectiveFrom: '2026-03-01', method: 'deduction', vatPercent: '80' }]);
+    await setRates(o, [{ effectiveFrom: '2026-03-01', method: 'deduction', vatPercent: '8' }]);
+    await setRates(o, [{ effectiveFrom: '2026-01-01', method: 'none', vatPercent: null }]);
+    await setRates(o, [{ effectiveFrom: '2026-03-01', method: 'deduction', vatPercent: '10' }, { effectiveFrom: '2026-04-01', method: 'deduction', vatPercent: '8' }]);
+    await setRates(o, [{ effectiveFrom: '2027-01-01', method: 'none', vatPercent: null }]);
+    await setRates(o, [{ effectiveFrom: '2027-01-01', method: 'deduction', vatPercent: '10' }]);
+
+    const parity = await query<{ picked: (Row | null)[]; resolved: Record<string, { method: 'deduction'; vatPercent: string } | { method: 'none' } | null>; expected: (Row | null)[] }>(o, 't4341.vat_rate_parity', { legalEntityId: o.entity, dates });
+    expect(parity.picked).toEqual(parity.expected);
+    for (const [i, d] of dates.entries()) {
+      const exp = parity.expected[i] ?? null;
+      expect(parity.resolved[d]).toEqual(exp === null ? null : exp.method === 'deduction' && exp.vatPercent !== null ? { method: 'deduction', vatPercent: exp.vatPercent } : { method: 'none' });
+    }
   });
 });

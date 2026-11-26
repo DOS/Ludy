@@ -593,4 +593,24 @@ suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
     const lines = (await payloadOf(o, (await ask(o, settlement)).proposalId))?.lines.map((l) => [l.account, l.debit, l.credit]);
     expect(lines).toEqual([['131', '972000', '0'], ['5111', '0', '900000'], ['33311', '0', '72000']]);
   });
+
+  it('posts a long multi-month household settlement past 50 proposal lines and 12 months, and reads it back in kernel.inbox.get (#4341)', async () => {
+    const o = await org();
+    await household(o, ['goods']);
+    await setRate(o, [{ from: '2025-01-01', method: 'deduction', percent: '8' }], true);
+    // 14 months (2025-11 through 2026-12), each carrying 131, 5111, 33311, 5111(vat), 3331, 4212, 3335 = 7 lines/month -> 98 proposal lines (> 50 and > 12 months).
+    const seedLines: SeedLine[] = Array.from({ length: 14 }, (_, i) => {
+      const year = 2025 + Math.floor((10 + i) / 12);
+      const month = String(((10 + i) % 12) + 1).padStart(2, '0');
+      return { sales: '1080000', delivered: `${year}-${month}-15`, tax: '15000' };
+    });
+    const settlement = await seed(o, 'shopee', '2026-12-01', '2026-12-31', seedLines);
+    const { proposalId } = await ask(o, settlement);
+    const stored = await payloadOf(o, proposalId);
+    expect(stored?.lines).toHaveLength(14 * 7);
+    const inbox = await rt.query<{ journalVoucher: { lines: unknown[]; total: string } | null }>('kernel.inbox.get', { id: proposalId }, { actor: asUser(o.owner), orgId: o.orgId });
+    expect(inbox.journalVoucher?.lines).toHaveLength(14 * 7);
+    await approve(o, proposalId);
+    expect(await vouchersOf(o, settlement)).toHaveLength(14);
+  });
 });

@@ -13,7 +13,15 @@
 // No model call is made: everything here is deterministic over stored facts.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { JOURNAL_VOUCHER_KIND, MARKETPLACE_SETTLEMENT_COMMAND, zMarketplaceSettlementProposal, zMarketplaceSettlementRequest, type JournalVoucherProposal, type MarketplaceSettlementProposal } from '@ludy/kernel-contract';
+import {
+  JOURNAL_VOUCHER_KIND,
+  MARKETPLACE_SETTLEMENT_COMMAND,
+  MARKETPLACE_SETTLEMENT_MAX_MONTHS,
+  zMarketplaceSettlementProposal,
+  zMarketplaceSettlementRequest,
+  type JournalVoucherProposal,
+  type MarketplaceSettlementProposal,
+} from '@ludy/kernel-contract';
 import { money, sum, toMoney } from '@ludy/l10n-vn';
 import type { MemberRole } from '@ludy/db';
 import { DomainError, defineCommand, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
@@ -120,6 +128,12 @@ async function buildSettlement(ctx: QueryContext, maps: Maps, settlementId: stri
     }
   }
   if (proposals.length === 0) throw notPostable('Kỳ đối soát có doanh thu ròng bằng 0; không có bút toán để lập', { net: '0' });
+  if (proposals.length > MARKETPLACE_SETTLEMENT_MAX_MONTHS) {
+    throw notPostable(`Kỳ đối soát trải qua quá nhiều tháng (${proposals.length}, tối đa ${MARKETPLACE_SETTLEMENT_MAX_MONTHS}) để lập một đề xuất`, {
+      months: proposals.length,
+      maxMonths: MARKETPLACE_SETTLEMENT_MAX_MONTHS,
+    });
+  }
   // Every entry date must be in an open period: the earliest locked one refuses the whole settlement.
   const lockedThrough = await periodLockedThrough(ctx, settlement.legal_entity_id);
   const locked = lockedThrough ? proposals.find((m) => m.date <= lockedThrough) : undefined;
@@ -171,7 +185,7 @@ function proposalPayload(built: Built, party: Party = built.party): MarketplaceS
   const sums = (pick: (m: SettlementProposal) => string) => toMoney(sum(built.months.map(pick)));
   return zMarketplaceSettlementProposal.parse({
     date: built.periodTo,
-    description: `Đối soát ${platformPartyName(built.platform)} ${built.periodFrom} đến ${built.periodTo}`.slice(0, 500),
+    description: `Đối soát ${platformPartyName(built.platform)} ${built.periodFrom} đến ${built.periodTo}`.slice(0, 300),
     lines: built.months.flatMap((m) => monthLines(built, m, party)),
     total: sums((m) => m.total),
     legalEntityId: built.legalEntityId,

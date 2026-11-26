@@ -4,7 +4,7 @@
 // never reads the report's buyer columns.
 import { z } from 'zod';
 import { zMonth } from './journal-voucher.ts';
-import { zId, zJournalAmount, zJournalVoucherProposal, zLocalDate } from './schemas.ts';
+import { MARKETPLACE_SETTLEMENT_MAX_LINES, MARKETPLACE_SETTLEMENT_MAX_MONTHS, zId, zJournalAmount, zJournalVoucherLine, zJournalVoucherProposal, zLocalDate } from './schemas.ts';
 import { STOCK_SUGGEST_LINES_MAX, zStockAiState, zStockFactor } from './stock.ts';
 
 export const MARKETPLACE_PLATFORM_KEYS = ['shopee', 'tiktok_shop', 'lazada'] as const;
@@ -244,10 +244,12 @@ export type MarketplaceSettlementRequest = z.infer<typeof zMarketplaceSettlement
 // The proposal (kind finance.journal_voucher, shown as one) with the settlement it posts, the platform and the period, and the settlement's sales, seller discounts and refunds in whole dong,
 // so the refund stays visible beside the net. The platform's party on the 131 line is null until the platform's first posting creates it.
 export const zMarketplaceSettlementProposal = zJournalVoucherProposal.extend({
+  lines: z.array(zJournalVoucherLine).min(2).max(MARKETPLACE_SETTLEMENT_MAX_LINES),
   settlementId: zId,
   // A settlement posts as one general voucher per month of delivery (#2516 rework slice C1), all of them by this one proposal in one transaction: the proposal shows the entries of every month
   // one after the other in `lines` (each line's memo names its month) and lists the months, their entry dates and totals here; `date` is the settlement's last day and `total` the sum.
-  months: z.array(z.strictObject({ month: zMonth, date: zLocalDate, total: zJournalAmount })).min(1).max(12),
+  // Each posted voucher holds only one month (at most 8 lines), so the combined proposal cap covers the full calendar span the importers accept (2000-01 to 2100-12, #4341).
+  months: z.array(z.strictObject({ month: zMonth, date: zLocalDate, total: zJournalAmount })).min(1).max(MARKETPLACE_SETTLEMENT_MAX_MONTHS),
   platform: zMarketplacePlatform,
   periodFrom: zLocalDate,
   periodTo: zLocalDate,
