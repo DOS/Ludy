@@ -107,6 +107,7 @@ export interface LiveApprovalExtra {
 export interface LiveApprovalsSnapshot {
   serverUrl: string;
   orgSlug: string;
+  userId: string;
   role: OrgDetail['role'];
   savedAt: number;
   items: CachedApprovalSummary[];
@@ -392,14 +393,90 @@ interface LoadApprovalsParams {
 }
 
 const HR_FETCH_LIMIT = 100;
+const INBOX_FETCH_LIMIT = 200;
+
+type HrTaskResult =
+  | {
+      kind: 'admin';
+      leavesL1: { failed: boolean; value: HrLeaveRequestItem[] };
+      leavesFinal: { failed: boolean; value: HrLeaveRequestItem[] };
+      advancesL1: { failed: boolean; value: HrAdvanceRequestItem[] };
+      advancesFinal: { failed: boolean; value: HrAdvanceRequestItem[] };
+      tripsL1: { failed: boolean; value: HrTripRequestItem[] };
+      tripsFinal: { failed: boolean; value: HrTripRequestItem[] };
+    }
+  | { kind: 'member_empty'; profileFailed: boolean }
+  | {
+      kind: 'member';
+      profileFailed: boolean;
+      managedIds: Set<string>;
+      selfEmpId: string | null;
+      leavesRes: { failed: boolean; value: HrLeaveRequestItem[] };
+      advRes: { failed: boolean; value: { l1Queue: HrAdvanceRequestItem[] } };
+      tripRes: { failed: boolean; value: { l1Queue: HrTripRequestItem[] } };
+    }
+  | null;
+
+function isHrTodayNoticeCovered(noticeId: string, hrRes: HrTaskResult): boolean {
+  if (!hrRes) return false;
+  if (hrRes.kind === 'member_empty') return !hrRes.profileFailed;
+  if (hrRes.kind === 'admin') {
+    if (noticeId === 'leave-approvals') {
+      return (
+        !hrRes.leavesL1.failed &&
+        !hrRes.leavesFinal.failed &&
+        hrRes.leavesL1.value.length < HR_FETCH_LIMIT &&
+        hrRes.leavesFinal.value.length < HR_FETCH_LIMIT
+      );
+    }
+    if (noticeId === 'leave-approvals-l1') {
+      return !hrRes.leavesL1.failed && hrRes.leavesL1.value.length < HR_FETCH_LIMIT;
+    }
+    if (noticeId === 'salary-advance-approvals') {
+      return (
+        !hrRes.advancesL1.failed &&
+        !hrRes.advancesFinal.failed &&
+        hrRes.advancesL1.value.length < HR_FETCH_LIMIT &&
+        hrRes.advancesFinal.value.length < HR_FETCH_LIMIT
+      );
+    }
+    if (noticeId === 'salary-advance-approvals-l1') {
+      return !hrRes.advancesL1.failed && hrRes.advancesL1.value.length < HR_FETCH_LIMIT;
+    }
+    if (noticeId === 'business-trip-approvals') {
+      return (
+        !hrRes.tripsL1.failed &&
+        !hrRes.tripsFinal.failed &&
+        hrRes.tripsL1.value.length < HR_FETCH_LIMIT &&
+        hrRes.tripsFinal.value.length < HR_FETCH_LIMIT
+      );
+    }
+    if (noticeId === 'business-trip-approvals-l1') {
+      return !hrRes.tripsL1.failed && hrRes.tripsL1.value.length < HR_FETCH_LIMIT;
+    }
+    return false;
+  }
+  if (hrRes.profileFailed) return false;
+  if (noticeId === 'leave-approvals' || noticeId === 'leave-approvals-l1') {
+    return !hrRes.leavesRes.failed && hrRes.leavesRes.value.length < HR_FETCH_LIMIT;
+  }
+  if (noticeId === 'salary-advance-approvals' || noticeId === 'salary-advance-approvals-l1') {
+    return !hrRes.advRes.failed && hrRes.advRes.value.l1Queue.length < HR_FETCH_LIMIT;
+  }
+  if (noticeId === 'business-trip-approvals' || noticeId === 'business-trip-approvals-l1') {
+    return !hrRes.tripRes.failed && hrRes.tripRes.value.l1Queue.length < HR_FETCH_LIMIT;
+  }
+  return false;
+}
 
 export async function loadApprovalsSnapshot(params: LoadApprovalsParams): Promise<LiveApprovalsSnapshot> {
   const { client, serverUrl, orgSlug } = params;
   const now = params.now ?? (() => Date.now());
 
-  const [orgDetail, appsResult] = await Promise.all([
+  const [orgDetail, appsResult, meResult] = await Promise.all([
     client.org.get(),
     client.org.apps(),
+    client.me.get(),
   ]);
 
   const effectiveApps = new Set(
@@ -408,7 +485,56 @@ export async function loadApprovalsSnapshot(params: LoadApprovalsParams): Promis
   const role = orgDetail.role;
   const isAdminOrOwner = role === 'owner' || role === 'admin';
 
-  const [todayRes, inboxRes] = await Promise.all([
+  const runSocialTask = async () => {
+    if (!isAdminOrOwner || !effectiveApps.has('social')) return null;
+    return safeRead(() => client.social.reviewInbox({}), { items: [], total: 0 });
+  };
+
+  const runHrTask = async () => {
+    if (!effectiveApps.has('hr') || role === 'viewer') return null;
+    if (isAdminOrOwner) {
+      const [leavesL1, leavesFinal, advancesL1, advancesFinal, tripsL1, tripsFinal] = await Promise.all([
+        safeRead(() => client.hr.leaveRequests.list({ status: 'pending_l1', limit: HR_FETCH_LIMIT }), [] as HrLeaveRequestItem[]),
+        safeRead(() => client.hr.leaveRequests.list({ status: 'pending_final', limit: HR_FETCH_LIMIT }), [] as HrLeaveRequestItem[]),
+        safeRead(() => client.hr.salaryAdvances.list({ status: 'pending_l1', limit: HR_FETCH_LIMIT }), [] as HrAdvanceRequestItem[]),
+        safeRead(() => client.hr.salaryAdvances.list({ status: 'pending_final', limit: HR_FETCH_LIMIT }), [] as HrAdvanceRequestItem[]),
+        safeRead(() => client.hr.businessTrips.list({ status: 'pending_l1', limit: HR_FETCH_LIMIT }), [] as HrTripRequestItem[]),
+        safeRead(() => client.hr.businessTrips.list({ status: 'pending_final', limit: HR_FETCH_LIMIT }), [] as HrTripRequestItem[]),
+      ]);
+      return { kind: 'admin' as const, leavesL1, leavesFinal, advancesL1, advancesFinal, tripsL1, tripsFinal };
+    }
+    const profileRes = await safeRead(() => client.hr.self.profile.get({}), null);
+    if (!profileRes.value || profileRes.value.managedDepartments.length === 0) {
+      return { kind: 'member_empty' as const, profileFailed: profileRes.failed };
+    }
+    const managedIds = new Set(profileRes.value.managedDepartments.map((d) => d.id));
+    const selfEmpId = profileRes.value.employeeId;
+    const [leavesRes, advRes, tripRes] = await Promise.all([
+      safeRead(
+        () => client.hr.self.leave.requests({ scope: 'all', status: 'pending_l1', limit: HR_FETCH_LIMIT }),
+        [] as HrLeaveRequestItem[],
+      ),
+      safeRead(
+        () => client.hr.self.salaryAdvance.list({ status: 'pending_l1', limit: HR_FETCH_LIMIT }),
+        { employeeId: null, employeeName: null, departmentId: null, items: [], l1Queue: [] },
+      ),
+      safeRead(
+        () => client.hr.self.businessTrips.list({ status: 'pending_l1', limit: HR_FETCH_LIMIT }),
+        { employeeId: null, employeeName: null, departmentId: null, items: [], l1Queue: [] },
+      ),
+    ]);
+    return {
+      kind: 'member' as const,
+      profileFailed: profileRes.failed,
+      managedIds,
+      selfEmpId,
+      leavesRes,
+      advRes,
+      tripRes,
+    };
+  };
+
+  const [todayRes, inboxRes, socialRes, hrRes] = await Promise.all([
     safeRead<TodayResult>(() => client.today.list(), {
       items: [],
       coworkers: { ...DEFAULT_COWORKERS },
@@ -417,6 +543,8 @@ export async function loadApprovalsSnapshot(params: LoadApprovalsParams): Promis
       failed: 0,
     }),
     safeRead(() => client.inbox.list({ status: 'pending' }), [] as InboxListItem[]),
+    runSocialTask(),
+    runHrTask(),
   ]);
 
   if (todayRes.failed && inboxRes.failed) {
@@ -430,7 +558,19 @@ export async function loadApprovalsSnapshot(params: LoadApprovalsParams): Promis
     marketing: todayRes.value.coworkers.marketing || DEFAULT_COWORKERS.marketing,
   };
 
-  let partialFailureCount = (todayRes.failed ? 1 : 0) + (inboxRes.failed ? 1 : 0) + (todayRes.value.failed > 0 ? 1 : 0);
+  const inboxTruncated = !inboxRes.failed && inboxRes.value.length >= INBOX_FETCH_LIMIT;
+  const inboxFullyCovered = !inboxRes.failed && !inboxTruncated;
+  const socialTruncated = Boolean(
+    socialRes && !socialRes.failed && socialRes.value.items.length < socialRes.value.total,
+  );
+  const socialFullyCovered = Boolean(socialRes && !socialRes.failed && !socialTruncated);
+
+  let partialFailureCount =
+    (todayRes.failed ? 1 : 0) +
+    (inboxRes.failed ? 1 : 0) +
+    (todayRes.value.failed > 0 ? 1 : 0) +
+    (inboxTruncated ? 1 : 0) +
+    (socialTruncated ? 1 : 0);
 
   const items: CachedApprovalSummary[] = [];
   const liveByKey: Record<string, LiveApprovalExtra> = {};
@@ -442,8 +582,7 @@ export async function loadApprovalsSnapshot(params: LoadApprovalsParams): Promis
     liveByKey[summary.key] = { inbox: inboxItem };
   }
 
-  if (isAdminOrOwner && effectiveApps.has('social')) {
-    const socialRes = await safeRead(() => client.social.reviewInbox({}), { items: [], total: 0 });
+  if (socialRes) {
     if (socialRes.failed) partialFailureCount += 1;
     for (const reviewItem of socialRes.value.items) {
       const channelNames = reviewItem.channels.map((ch) => ch.displayName).join(', ');
@@ -483,84 +622,65 @@ export async function loadApprovalsSnapshot(params: LoadApprovalsParams): Promis
     }
   }
 
-  if (effectiveApps.has('hr') && role !== 'viewer') {
-    if (isAdminOrOwner) {
-      const [leavesL1, leavesFinal, advancesL1, advancesFinal, tripsL1, tripsFinal] = await Promise.all([
-        safeRead(() => client.hr.leaveRequests.list({ status: 'pending_l1', limit: HR_FETCH_LIMIT }), [] as HrLeaveRequestItem[]),
-        safeRead(() => client.hr.leaveRequests.list({ status: 'pending_final', limit: HR_FETCH_LIMIT }), [] as HrLeaveRequestItem[]),
-        safeRead(() => client.hr.salaryAdvances.list({ status: 'pending_l1', limit: HR_FETCH_LIMIT }), [] as HrAdvanceRequestItem[]),
-        safeRead(() => client.hr.salaryAdvances.list({ status: 'pending_final', limit: HR_FETCH_LIMIT }), [] as HrAdvanceRequestItem[]),
-        safeRead(() => client.hr.businessTrips.list({ status: 'pending_l1', limit: HR_FETCH_LIMIT }), [] as HrTripRequestItem[]),
-        safeRead(() => client.hr.businessTrips.list({ status: 'pending_final', limit: HR_FETCH_LIMIT }), [] as HrTripRequestItem[]),
-      ]);
-
-      const hrBatch = [leavesL1, leavesFinal, advancesL1, advancesFinal, tripsL1, tripsFinal];
+  if (hrRes) {
+    if (hrRes.kind === 'admin') {
+      const hrBatch = [
+        hrRes.leavesL1,
+        hrRes.leavesFinal,
+        hrRes.advancesL1,
+        hrRes.advancesFinal,
+        hrRes.tripsL1,
+        hrRes.tripsFinal,
+      ];
       for (const res of hrBatch) {
         if (res.failed || res.value.length >= HR_FETCH_LIMIT) partialFailureCount += 1;
       }
 
-      for (const leave of dedupeById([leavesL1.value, leavesFinal.value])) {
+      for (const leave of dedupeById([hrRes.leavesL1.value, hrRes.leavesFinal.value])) {
         if (leave.status !== 'pending_l1' && leave.status !== 'pending_final') continue;
         const summary = buildLeaveSummary(leave, role);
         items.push(summary);
         liveByKey[summary.key] = { leave };
       }
-      for (const adv of dedupeById([advancesL1.value, advancesFinal.value])) {
+      for (const adv of dedupeById([hrRes.advancesL1.value, hrRes.advancesFinal.value])) {
         const summary = buildAdvanceSummary(adv, role);
         if (!summary) continue;
         items.push(summary);
         liveByKey[summary.key] = { advance: adv };
       }
-      for (const trip of dedupeById([tripsL1.value, tripsFinal.value])) {
+      for (const trip of dedupeById([hrRes.tripsL1.value, hrRes.tripsFinal.value])) {
         const summary = buildTripSummary(trip, role);
         if (!summary) continue;
         items.push(summary);
         liveByKey[summary.key] = { trip };
       }
-    } else if (role === 'member') {
-      const profileRes = await safeRead(() => client.hr.self.profile.get({}), null);
-      if (profileRes.failed) partialFailureCount += 1;
-      if (profileRes.value && profileRes.value.managedDepartments.length > 0) {
-        const managedIds = new Set(profileRes.value.managedDepartments.map((d) => d.id));
-        const selfEmpId = profileRes.value.employeeId;
-        const [leavesRes, advRes, tripRes] = await Promise.all([
-          safeRead(
-            () => client.hr.self.leave.requests({ scope: 'all', status: 'pending_l1', limit: HR_FETCH_LIMIT }),
-            [] as HrLeaveRequestItem[],
-          ),
-          safeRead(
-            () => client.hr.self.salaryAdvance.list({ status: 'pending_l1', limit: HR_FETCH_LIMIT }),
-            { employeeId: null, employeeName: null, departmentId: null, items: [], l1Queue: [] },
-          ),
-          safeRead(
-            () => client.hr.self.businessTrips.list({ status: 'pending_l1', limit: HR_FETCH_LIMIT }),
-            { employeeId: null, employeeName: null, departmentId: null, items: [], l1Queue: [] },
-          ),
-        ]);
-        if (leavesRes.failed || leavesRes.value.length >= HR_FETCH_LIMIT) partialFailureCount += 1;
-        if (advRes.failed || advRes.value.l1Queue.length >= HR_FETCH_LIMIT) partialFailureCount += 1;
-        if (tripRes.failed || tripRes.value.l1Queue.length >= HR_FETCH_LIMIT) partialFailureCount += 1;
+    } else if (hrRes.kind === 'member_empty') {
+      if (hrRes.profileFailed) partialFailureCount += 1;
+    } else {
+      if (hrRes.profileFailed) partialFailureCount += 1;
+      if (hrRes.leavesRes.failed || hrRes.leavesRes.value.length >= HR_FETCH_LIMIT) partialFailureCount += 1;
+      if (hrRes.advRes.failed || hrRes.advRes.value.l1Queue.length >= HR_FETCH_LIMIT) partialFailureCount += 1;
+      if (hrRes.tripRes.failed || hrRes.tripRes.value.l1Queue.length >= HR_FETCH_LIMIT) partialFailureCount += 1;
 
-        for (const leave of leavesRes.value) {
-          if (leave.status !== 'pending_l1') continue;
-          if (selfEmpId && leave.employeeId === selfEmpId) continue;
-          if (!leave.departmentId || !managedIds.has(leave.departmentId)) continue;
-          const summary = buildLeaveSummary(leave, role);
-          items.push(summary);
-          liveByKey[summary.key] = { leave };
-        }
-        for (const adv of advRes.value.l1Queue) {
-          const summary = buildAdvanceSummary(adv, role);
-          if (!summary) continue;
-          items.push(summary);
-          liveByKey[summary.key] = { advance: adv };
-        }
-        for (const trip of tripRes.value.l1Queue) {
-          const summary = buildTripSummary(trip, role);
-          if (!summary) continue;
-          items.push(summary);
-          liveByKey[summary.key] = { trip };
-        }
+      for (const leave of hrRes.leavesRes.value) {
+        if (leave.status !== 'pending_l1') continue;
+        if (hrRes.selfEmpId && leave.employeeId === hrRes.selfEmpId) continue;
+        if (!leave.departmentId || !hrRes.managedIds.has(leave.departmentId)) continue;
+        const summary = buildLeaveSummary(leave, role);
+        items.push(summary);
+        liveByKey[summary.key] = { leave };
+      }
+      for (const adv of hrRes.advRes.value.l1Queue) {
+        const summary = buildAdvanceSummary(adv, role);
+        if (!summary) continue;
+        items.push(summary);
+        liveByKey[summary.key] = { advance: adv };
+      }
+      for (const trip of hrRes.tripRes.value.l1Queue) {
+        const summary = buildTripSummary(trip, role);
+        if (!summary) continue;
+        items.push(summary);
+        liveByKey[summary.key] = { trip };
       }
     }
   }
@@ -570,10 +690,12 @@ export async function loadApprovalsSnapshot(params: LoadApprovalsParams): Promis
   const todayNotices: CachedTodayNotice[] = [];
   for (const notice of todayRes.value.items) {
     if (notice.annotates === 'proposal') continue;
-    // Skip only the exact summary notices already replaced by individual items in `items`.
-    if (notice.app === 'finance' && notice.kind === 'proposal') continue;
-    if (notice.app === 'social' && notice.id === 'review') continue;
-    if (notice.app === 'hr' && HR_QUEUE_TODAY_IDS.has(notice.id)) continue;
+    // Skip summary notices only when the corresponding detailed list succeeded without truncation.
+    if (notice.app === 'finance' && notice.kind === 'proposal' && inboxFullyCovered) continue;
+    if (notice.app === 'social' && notice.id === 'review' && socialFullyCovered) continue;
+    if (notice.app === 'hr' && HR_QUEUE_TODAY_IDS.has(notice.id) && isHrTodayNoticeCovered(notice.id, hrRes)) {
+      continue;
+    }
 
     const coworkerId = todayCoworkerKeyForApp(notice.app);
     todayNotices.push({
@@ -596,6 +718,7 @@ export async function loadApprovalsSnapshot(params: LoadApprovalsParams): Promis
   return {
     serverUrl,
     orgSlug,
+    userId: meResult.userId,
     role,
     savedAt: now(),
     items,

@@ -69,8 +69,15 @@ export function ApprovalsQueueScreen(props: ApprovalsQueueScreenProps) {
     setFilter('all');
     setCacheLoaded(false);
 
+    if (!userId) {
+      setCacheLoaded(true);
+      return () => {
+        cancelled = true;
+      };
+    }
+
     void approvalsCache
-      .load(serverUrl, orgSlug)
+      .load(serverUrl, orgSlug, userId)
       .then((snap) => {
         if (!cancelled) {
           setCachedSnapshot(snap);
@@ -86,32 +93,64 @@ export function ApprovalsQueueScreen(props: ApprovalsQueueScreenProps) {
     return () => {
       cancelled = true;
     };
-  }, [serverUrl, orgSlug]);
+  }, [serverUrl, orgSlug, userId]);
 
   const queueQuery = useQuery<LiveApprovalsSnapshot>({
-    queryKey: ['approvals', serverUrl, orgSlug],
-    queryFn: async () => {
+    queryKey: ['approvals', serverUrl, orgSlug, userId ?? ''],
+    queryFn: async ({ signal }) => {
+      const startEpoch = approvalsCache.epoch();
       const live = await loadApprovalsSnapshot({ client, serverUrl, orgSlug });
-      // Persistence errors must never discard live server results.
+      if (signal.aborted) {
+        throw new Error('aborted');
+      }
+      const cur = session.state();
+      const stillSameActiveSession =
+        cur.status === 'active' &&
+        cur.serverUrl === serverUrl &&
+        cur.orgSlug === orgSlug &&
+        (!userId || live.userId === userId) &&
+        approvalsCache.epoch() === startEpoch;
+
+      if (!stillSameActiveSession) {
+        throw new Error('stale-session');
+      }
+
+      // Persistence errors must never discard live server results; stale epoch saves are ignored by cache.
       void approvalsCache
-        .save({
-          serverUrl: live.serverUrl,
-          orgSlug: live.orgSlug,
-          savedAt: live.savedAt,
-          items: live.items,
-          todayNotices: live.todayNotices,
-          coworkers: live.coworkers,
+        .save(
+          {
+            serverUrl: live.serverUrl,
+            orgSlug: live.orgSlug,
+            userId: live.userId,
+            savedAt: live.savedAt,
+            items: live.items,
+            todayNotices: live.todayNotices,
+            coworkers: live.coworkers,
+          },
+          { expectedEpoch: startEpoch },
+        )
+        .then((saved) => {
+          if (!saved || signal.aborted) return;
+          const after = session.state();
+          if (
+            after.status === 'active' &&
+            after.serverUrl === serverUrl &&
+            after.orgSlug === orgSlug &&
+            (!userId || live.userId === userId)
+          ) {
+            setCachedSnapshot({
+              v: 1,
+              serverUrl: live.serverUrl,
+              orgSlug: live.orgSlug,
+              userId: live.userId,
+              savedAt: live.savedAt,
+              items: live.items,
+              todayNotices: live.todayNotices,
+              coworkers: live.coworkers,
+            });
+          }
         })
         .catch(() => undefined);
-      setCachedSnapshot({
-        v: 1,
-        serverUrl: live.serverUrl,
-        orgSlug: live.orgSlug,
-        savedAt: live.savedAt,
-        items: live.items,
-        todayNotices: live.todayNotices,
-        coworkers: live.coworkers,
-      });
       return live;
     },
     enabled: cacheLoaded,
@@ -121,8 +160,8 @@ export function ApprovalsQueueScreen(props: ApprovalsQueueScreenProps) {
   const isNonNetworkError = Boolean(queueQuery.isError && !isNetworkOffline);
   const liveData = isNonNetworkError ? undefined : queueQuery.data;
   const activeSnapshot = isNonNetworkError ? null : (liveData ?? cachedSnapshot);
-  const isShowingOfflineCache = Boolean(isNetworkOffline && !liveData && cachedSnapshot);
-  const isCachedPreview = !liveData;
+  const isShowingOfflineBanner = Boolean(isNetworkOffline && activeSnapshot !== null);
+  const isCachedPreview = !liveData || isNetworkOffline;
 
   const items = activeSnapshot?.items ?? [];
   const todayNotices = activeSnapshot?.todayNotices ?? [];
@@ -135,12 +174,12 @@ export function ApprovalsQueueScreen(props: ApprovalsQueueScreenProps) {
   );
 
   async function openWebPath(path: string) {
+    const allowedOrigin = normalizeServerUrl(serverUrl);
     const url = buildWebUrl(serverUrl, orgSlug, path, SERVER_POLICY);
-    if (!url) {
+    if (!url || !allowedOrigin) {
       setBannerMessage(t('approvals.outcome.webError'));
       return;
     }
-    const allowedOrigin = normalizeServerUrl(serverUrl) ?? undefined;
     const opened = await externalBrowser.openWeb(url, allowedOrigin);
     if (!opened) setBannerMessage(t('approvals.outcome.webError'));
   }
@@ -151,7 +190,7 @@ export function ApprovalsQueueScreen(props: ApprovalsQueueScreenProps) {
         coworkers={activeSnapshot?.coworkers}
         currentUserId={userId}
         isCachedPreview={isCachedPreview}
-        isOffline={isNetworkOffline || isShowingOfflineCache}
+        isOffline={isNetworkOffline || isShowingOfflineBanner}
         liveExtra={liveData?.liveByKey[selectedSummary.key]}
         locale={locale}
         onBack={() => setSelectedKey(null)}
@@ -221,11 +260,11 @@ export function ApprovalsQueueScreen(props: ApprovalsQueueScreenProps) {
           </Banner>
         ) : null}
 
-        {isShowingOfflineCache && cachedSnapshot ? (
+        {isShowingOfflineBanner && activeSnapshot ? (
           <Banner tone="warn">
             <Body tone="warning">
               {t('approvals.offlineBanner', {
-                time: formatDateTimeShort(cachedSnapshot.savedAt, locale),
+                time: formatDateTimeShort(activeSnapshot.savedAt, locale),
               })}
             </Body>
           </Banner>
@@ -243,7 +282,7 @@ export function ApprovalsQueueScreen(props: ApprovalsQueueScreenProps) {
           </Banner>
         ) : null}
 
-        {isNetworkOffline && !cachedSnapshot ? (
+        {isNetworkOffline && !activeSnapshot ? (
           <Banner tone="danger">
             <Body tone="danger">{t('home.error.generic')}</Body>
             <PrimaryButton label={t('home.retry')} onPress={() => void queueQuery.refetch()} />
@@ -252,7 +291,12 @@ export function ApprovalsQueueScreen(props: ApprovalsQueueScreenProps) {
 
         {!isNonNetworkError ? (
           <>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+            <ScrollView
+              accessibilityRole="tablist"
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={{ gap: 8 }}
+            >
               {filterChips.map((chip) => {
                 const selected = filter === chip.id;
                 return (
@@ -311,6 +355,20 @@ export function ApprovalsQueueScreen(props: ApprovalsQueueScreenProps) {
                   item.counterparty,
                   amountText,
                   item.aiCoworker ? t('approvals.ai.preparedBy', { name: item.aiCoworker.label }) : null,
+                  item.requiresStepUp ? t('approvals.badge.stepUp') : null,
+                  item.failedChecks > 0
+                    ? t('approvals.badge.failedChecks', { count: String(item.failedChecks) })
+                    : null,
+                  item.warnChecks > 0
+                    ? t('approvals.badge.warnChecks', { count: String(item.warnChecks) })
+                    : null,
+                  (item.anomalyChecks ?? 0) > 0
+                    ? t('approvals.badge.anomalyChecks', { count: String(item.anomalyChecks ?? 0) })
+                    : null,
+                  item.unclassifiedLines > 0
+                    ? t('approvals.badge.unclassified', { count: String(item.unclassifiedLines) })
+                    : null,
+                  item.multiDecisionOnly ? t('approvals.badge.webOnlyA11y') : null,
                 ]
                   .filter(Boolean)
                   .join(', ');

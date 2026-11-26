@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Detail screen for a single cross-app approval item with biometric step-up, inline account edit and web hand-off (issue #4881).
 
+import { isMfaRequired } from '@ludy/client';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useMemo, useRef, useState } from 'react';
 import {
@@ -40,9 +41,11 @@ import {
 } from './actions.ts';
 import type { CachedApprovalSummary, CachedCoworkerDirectory } from './cache.ts';
 import {
+  bookedInvoiceCurrency,
   buildWebUrl,
   createIdempotencyKey,
   formatDateShort,
+  formatDateTimeShort,
   formatMoney,
   type Locale,
 } from './format.ts';
@@ -59,6 +62,7 @@ import {
   resolveHrActionGuards,
   resolveInboxActionGuards,
   resolveSocialActionGuards,
+  shouldShowEngageHiddenBanner,
 } from './view-state.ts';
 
 export interface ApprovalDetailScreenProps {
@@ -145,7 +149,38 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
     enabled: editingAccounts && summary.source === 'inbox',
   });
 
-  const inboxDetail = inboxDetailQuery.data ?? null;
+  const inboxRefused = Boolean(
+    summary.source === 'inbox' && inboxDetailQuery.isError && !isLikelyNetworkError(inboxDetailQuery.error),
+  );
+  const socialRefused = Boolean(
+    summary.source === 'social_post' &&
+      socialDetailQuery.isError &&
+      !isLikelyNetworkError(socialDetailQuery.error),
+  );
+  const einvoiceRefused = Boolean(
+    summary.source === 'inbox' &&
+      summary.subtype === 'finance.einvoice_issue' &&
+      einvoiceQuery.isError &&
+      !isLikelyNetworkError(einvoiceQuery.error),
+  );
+  const adsRefused = Boolean(
+    summary.source === 'inbox' &&
+      isAdsProposalKind(summary.subtype) &&
+      adsQuery.isError &&
+      !isLikelyNetworkError(adsQuery.error),
+  );
+  const journalRefused = Boolean(
+    Boolean(reversalEntryId) && journalQuery.isError && !isLikelyNetworkError(journalQuery.error),
+  );
+  const detailRefused = inboxRefused || socialRefused || einvoiceRefused || adsRefused || journalRefused;
+  const detailMfaRefused =
+    (inboxRefused && isMfaRequired(inboxDetailQuery.error)) ||
+    (socialRefused && isMfaRequired(socialDetailQuery.error)) ||
+    (einvoiceRefused && isMfaRequired(einvoiceQuery.error)) ||
+    (adsRefused && isMfaRequired(adsQuery.error)) ||
+    (journalRefused && isMfaRequired(journalQuery.error));
+
+  const inboxDetail = inboxRefused ? null : (inboxDetailQuery.data ?? null);
   const purchasePayload =
     summary.source === 'inbox' &&
     (summary.subtype === 'finance.purchase' || summary.subtype === 'finance.sale')
@@ -175,15 +210,16 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
     (inboxDetailQuery.isError && isLikelyNetworkError(inboxDetailQuery.error)) ||
     (socialDetailQuery.isError && isLikelyNetworkError(socialDetailQuery.error)) ||
     (einvoiceQuery.isError && isLikelyNetworkError(einvoiceQuery.error)) ||
-    (adsQuery.isError && isLikelyNetworkError(adsQuery.error));
+    (adsQuery.isError && isLikelyNetworkError(adsQuery.error)) ||
+    (journalQuery.isError && isLikelyNetworkError(journalQuery.error));
 
   async function handleOpenWeb(pathOverride?: string) {
+    const allowedOrigin = normalizeServerUrl(serverUrl);
     const url = buildWebUrl(serverUrl, orgSlug, pathOverride ?? summary.webPath, SERVER_POLICY);
-    if (!url) {
+    if (!url || !allowedOrigin) {
       setFeedback({ tone: 'danger', text: t('approvals.outcome.webError') });
       return;
     }
-    const allowedOrigin = normalizeServerUrl(serverUrl) ?? undefined;
     const opened = await externalBrowser.openWeb(url, allowedOrigin);
     if (!opened) {
       setFeedback({ tone: 'danger', text: t('approvals.outcome.webError') });
@@ -212,8 +248,7 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
     setFeedback({ tone: 'danger', text: t('approvals.outcome.refused', { detail: detailText }) });
   }
 
-  async function refreshAfterWrite(doneMessage: string) {
-    await qc.invalidateQueries({ queryKey: ['approvals', serverUrl, orgSlug] });
+  function finishWrite(doneMessage: string) {
     props.onCompleted(doneMessage);
   }
 
@@ -221,9 +256,12 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
   const journalVoucherPayload = inboxDetail?.journalVoucher ?? null;
   const reversalPayload = inboxDetail?.reversal ?? null;
   const engagePayload = inboxDetail?.engage ?? null;
-  const einvoiceDetail = einvoiceQuery.data ?? null;
-  const adsChange = adsQuery.data?.change ?? null;
-  const socialPost = socialDetailQuery.data ?? null;
+  const einvoiceDetail = einvoiceRefused ? null : (einvoiceQuery.data ?? null);
+  const adsView = adsRefused ? null : (adsQuery.data ?? null);
+  const adsChange = adsView?.change ?? null;
+  const adsCanLaunch = adsView?.canLaunch ?? null;
+  const socialPost = socialRefused ? null : (socialDetailQuery.data ?? null);
+  const journalDetail = journalRefused ? null : (journalQuery.data ?? null);
 
   const acceptFailedChecks = Boolean(inboxDetail && failedAckRevision === inboxDetail.revision);
   const acceptUnverifiedSig = Boolean(inboxDetail && sigAckRevision === inboxDetail.revision);
@@ -235,6 +273,7 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
     acceptUnverifiedSig,
     einvoiceLoaded: einvoiceDetail !== null,
     adsLoaded: adsChange !== null,
+    journalLoaded: journalDetail !== null,
   });
 
   const socialGuards = resolveSocialActionGuards(summary, socialPost, {
@@ -266,7 +305,12 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
   const displayedAiCoworker = useMemo(() => {
     if (summary.aiCoworker) return summary.aiCoworker.label;
     if (socialPost && (socialPost.origin === 'ai' || socialPost.tainted)) return marketingCoworkerName;
-    if (adsChange?.change === 'campaign_launch' && adsChange.origin === 'ai') return marketingCoworkerName;
+    if (
+      adsChange?.change === 'campaign_launch' &&
+      (adsChange.origin === 'ai' || adsChange.aiFields.length > 0)
+    ) {
+      return marketingCoworkerName;
+    }
     return null;
   }, [summary.aiCoworker, socialPost, adsChange, marketingCoworkerName]);
 
@@ -286,7 +330,7 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
     }
     setFeedback(null);
     setBusyAction('approve');
-    const slot = `approve:${inboxDetail.id}:${inboxDetail.revision}`;
+    const slot = `approve:${inboxDetail.id}:${inboxDetail.revision}:${note.trim()}:${acceptFailedChecks ? '1' : '0'}:${acceptUnverifiedSig ? '1' : '0'}`;
     try {
       const outcome = await approveInboxProposal(
         { client, stepUp, crypto: deviceCrypto, isOffline: effectiveOffline, onKernelError },
@@ -305,7 +349,7 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
         return;
       }
       retryKeysRef.current.delete(slot);
-      await refreshAfterWrite(t('approvals.outcome.approved'));
+      finishWrite(t('approvals.outcome.approved'));
     } finally {
       setBusyAction(null);
     }
@@ -325,7 +369,8 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
     }
     setFeedback(null);
     setBusyAction('edit');
-    const slot = `edit:${inboxDetail.id}:${inboxDetail.revision}`;
+    const linesKey = changedLines.map((l) => `${l.lineNo}=${l.debitAccount}`).join(',');
+    const slot = `edit:${inboxDetail.id}:${inboxDetail.revision}:${linesKey}`;
     try {
       const outcome = await editInboxProposal(
         { client, crypto: deviceCrypto, isOffline: effectiveOffline, onKernelError },
@@ -366,7 +411,7 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
         applyOutcomeError(outcome);
         return;
       }
-      await refreshAfterWrite(t('approvals.outcome.rejected'));
+      finishWrite(t('approvals.outcome.rejected'));
     } finally {
       setBusyAction(null);
     }
@@ -409,7 +454,7 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
           : decision === 'changes_requested'
             ? 'approvals.outcome.changesRequested'
             : 'approvals.outcome.rejected';
-      await refreshAfterWrite(t(key));
+      finishWrite(t(key));
     } finally {
       setBusyAction(null);
     }
@@ -450,7 +495,7 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
           {
             requestId: summary.id,
             stage,
-            estimatedAllowance: summary.amount,
+            estimatedAllowance: liveExtra?.trip?.estimatedAllowance ?? summary.amount,
             note,
             prompt: t('approvals.biometric.prompt', { title: summary.title }),
           },
@@ -460,13 +505,23 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
           return;
         }
       }
-      await refreshAfterWrite(action === 'approve' ? t('approvals.outcome.approved') : t('approvals.outcome.rejected'));
+      finishWrite(action === 'approve' ? t('approvals.outcome.approved') : t('approvals.outcome.rejected'));
     } finally {
       setBusyAction(null);
     }
   }
 
-  const formattedSummaryAmount = summary.amount ? formatMoney(summary.amount, summary.currency, locale) : null;
+  const purchaseBookedCurrency = purchasePayload ? bookedInvoiceCurrency(purchasePayload.invoice) : null;
+  const authoritativeSummaryCurrency = purchaseBookedCurrency
+    ? purchaseBookedCurrency
+    : einvoiceDetail
+      ? einvoiceDetail.currency
+      : adsChange && 'currency' in adsChange
+        ? adsChange.currency
+        : summary.currency;
+  const formattedSummaryAmount = summary.amount
+    ? formatMoney(summary.amount, authoritativeSummaryCurrency, locale)
+    : null;
   const anyBusy = busyAction !== null;
 
   const isMultiSocial = summary.source === 'social_post' && socialGuards.isMultiDecision;
@@ -486,16 +541,19 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
 
   const isDetailLoading =
     !effectiveOffline &&
+    !detailRefused &&
     ((summary.source === 'inbox' && inboxDetailQuery.isPending) ||
       (summary.source === 'social_post' && socialDetailQuery.isPending) ||
       (summary.source === 'inbox' && summary.subtype === 'finance.einvoice_issue' && einvoiceQuery.isPending) ||
-      (summary.source === 'inbox' && isAdsProposalKind(summary.subtype) && adsQuery.isPending));
+      (summary.source === 'inbox' && isAdsProposalKind(summary.subtype) && adsQuery.isPending) ||
+      (Boolean(reversalEntryId) && journalQuery.isPending));
 
   const detailLoadFailedOffline =
-    (summary.source === 'inbox' && inboxDetailQuery.isError) ||
-    (summary.source === 'social_post' && socialDetailQuery.isError) ||
-    (summary.source === 'inbox' && summary.subtype === 'finance.einvoice_issue' && einvoiceQuery.isError) ||
-    (summary.source === 'inbox' && isAdsProposalKind(summary.subtype) && adsQuery.isError);
+    !detailRefused &&
+    ((summary.source === 'inbox' && inboxDetailQuery.isError) ||
+      (summary.source === 'social_post' && socialDetailQuery.isError) ||
+      (summary.source === 'inbox' && summary.subtype === 'finance.einvoice_issue' && einvoiceQuery.isError) ||
+      (summary.source === 'inbox' && isAdsProposalKind(summary.subtype) && adsQuery.isError));
 
   const hideNoteInput =
     editingAccounts ||
@@ -574,7 +632,13 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
           </View>
         ) : null}
 
-        {detailLoadFailedOffline ? (
+        {detailRefused ? (
+          <Banner tone="danger">
+            <Body tone="danger">
+              {detailMfaRefused ? t('home.error.mfa') : t('approvals.detail.detailRefused')}
+            </Body>
+          </Banner>
+        ) : detailLoadFailedOffline ? (
           <Banner tone="warn">
             <Body tone="warning">{t('approvals.detail.offlineError')}</Body>
           </Banner>
@@ -598,8 +662,25 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
               {`${purchasePayload.invoice.series}-${purchasePayload.invoice.number} | ${formatDateShort(purchasePayload.invoice.issueDate, locale)}`}
             </Text>
             <Text style={[styles.amount, { color: palette.text }]}>
-              {formatMoney(purchasePayload.invoice.total, purchasePayload.invoice.currency, locale)}
+              {formatMoney(
+                purchasePayload.invoice.total,
+                bookedInvoiceCurrency(purchasePayload.invoice),
+                locale,
+              )}
             </Text>
+            {purchasePayload.invoice.foreign ? (
+              <Text style={[styles.meta, { color: palette.muted }]}>
+                {`${formatMoney(
+                  purchasePayload.invoice.foreign.total,
+                  purchasePayload.invoice.foreign.currency,
+                  locale,
+                )} (1 ${purchasePayload.invoice.foreign.currency} = ${formatMoney(
+                  purchasePayload.invoice.foreign.rate,
+                  null,
+                  locale,
+                )} VND)`}
+              </Text>
+            ) : null}
 
             {purchasePayload.checks.length > 0 ? (
               <View style={{ gap: 6, marginTop: 4 }}>
@@ -657,7 +738,11 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
                       {accountDisplay}
                     </Text>
                     <Text style={[styles.meta, { color: palette.text }]}>
-                      {formatMoney(line.amount, purchasePayload.invoice.currency, locale)}
+                      {formatMoney(
+                        line.amount,
+                        bookedInvoiceCurrency(purchasePayload.invoice),
+                        locale,
+                      )}
                     </Text>
                   </View>
                   {editingAccounts ? (
@@ -687,10 +772,44 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
         {voucherPayload ? (
           <View style={[styles.card, { borderColor: palette.border, backgroundColor: palette.surface }]}>
             <Body>{voucherPayload.description}</Body>
-            {voucherPayload.party ? <Body tone="muted">{voucherPayload.party.name}</Body> : null}
+            <Text style={[styles.meta, { color: palette.muted }]}>
+              {`${t('approvals.detail.cashAccount')}: ${voucherPayload.cashAccount}`}
+            </Text>
+            {voucherPayload.matchedBy?.kind === 'suggested' ? (
+              <Badge label={t('approvals.detail.matchedBySuggested')} tone="info" />
+            ) : null}
+            {voucherPayload.party ? (
+              <Body tone="muted">
+                {`${voucherPayload.party.name}${voucherPayload.party.taxCode ? ` (${t('approvals.detail.taxCode')}: ${voucherPayload.party.taxCode})` : ''}`}
+              </Body>
+            ) : null}
+            {voucherPayload.personName ? <Body tone="muted">{voucherPayload.personName}</Body> : null}
             <Text style={[styles.amount, { color: palette.text }]}>
               {formatMoney(voucherPayload.total, 'VND', locale)}
             </Text>
+            {voucherPayload.checks && voucherPayload.checks.length > 0 ? (
+              <View style={{ gap: 4, marginTop: 4 }}>
+                <SectionHeading>{t('approvals.detail.checksWarningTitle')}</SectionHeading>
+                {voucherPayload.checks.map((chk) => (
+                  <Text
+                    key={chk.id}
+                    style={[
+                      styles.meta,
+                      {
+                        color:
+                          chk.status === 'fail'
+                            ? palette.danger
+                            : chk.status === 'warn'
+                              ? palette.warning
+                              : palette.muted,
+                      },
+                    ]}
+                  >
+                    {`[${chk.status.toUpperCase()}] ${chk.message}`}
+                  </Text>
+                ))}
+              </View>
+            ) : null}
             {voucherPayload.lines.map((line, index) => (
               <Text key={`${line.account}-${index}`} style={[styles.meta, { color: palette.muted }]}>
                 {`${line.account}: ${formatMoney(line.amount, 'VND', locale)}${line.memo ? ` (${line.memo})` : ''}`}
@@ -711,7 +830,7 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
               : journalVoucherPayload.lines.slice(0, INITIAL_LINES_PREVIEW)
             ).map((line, index) => (
               <Text key={`${line.account}-${index}`} style={[styles.meta, { color: palette.muted }]}>
-                {`${line.account}: Nợ ${formatMoney(line.debit, 'VND', locale)} / Có ${formatMoney(line.credit, 'VND', locale)}`}
+                {`${line.account}: ${t('approvals.detail.debitShort')} ${formatMoney(line.debit, 'VND', locale)} / ${t('approvals.detail.creditShort')} ${formatMoney(line.credit, 'VND', locale)}`}
               </Text>
             ))}
             {!showAllLines && journalVoucherPayload.lines.length > INITIAL_LINES_PREVIEW ? (
@@ -728,9 +847,34 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
           <View style={[styles.card, { borderColor: palette.border, backgroundColor: palette.surface }]}>
             <Body>{`${t('approvals.detail.reason')}: ${reversalPayload.reason}`}</Body>
             <Text style={[styles.meta, { color: palette.muted }]}>
-              {formatDateShort(reversalPayload.entryDate, locale)}
+              {`${t('approvals.detail.date')}: ${formatDateShort(reversalPayload.entryDate, locale)}`}
             </Text>
-            {journalQuery.data ? <Body tone="muted">{journalQuery.data.description}</Body> : null}
+            {journalQuery.isPending && !journalRefused ? (
+              <Body tone="muted">{t('approvals.detail.entryLinesLoading')}</Body>
+            ) : journalDetail ? (
+              <View style={{ gap: 6, marginTop: 6 }}>
+                <SectionHeading>{t('approvals.detail.journalEntryTitle')}</SectionHeading>
+                <Body tone="muted">{`${formatDateShort(journalDetail.entryDate, locale)} | ${journalDetail.description}`}</Body>
+                {journalDetail.document ? (
+                  <Text style={[styles.meta, { color: palette.muted }]}>
+                    {`${t('approvals.detail.sourceDocument')}: ${journalDetail.document.series}-${journalDetail.document.number} (${journalDetail.document.partyName}, ${formatDateShort(journalDetail.document.issueDate, locale)})`}
+                  </Text>
+                ) : null}
+                {(showAllLines ? journalDetail.lines : journalDetail.lines.slice(0, INITIAL_LINES_PREVIEW)).map((line) => (
+                  <Text key={line.lineNo} style={[styles.meta, { color: palette.text }]}>
+                    {`${line.lineNo}. ${line.accountCode} ${line.accountName}: ${t('approvals.detail.debitShort')} ${formatMoney(line.debit, 'VND', locale)} / ${t('approvals.detail.creditShort')} ${formatMoney(line.credit, 'VND', locale)}`}
+                  </Text>
+                ))}
+                {!showAllLines && journalDetail.lines.length > INITIAL_LINES_PREVIEW ? (
+                  <LinkButton
+                    label={t('approvals.detail.showAllLines', { count: String(journalDetail.lines.length) })}
+                    onPress={() => setShowAllLines(true)}
+                  />
+                ) : null}
+              </View>
+            ) : journalQuery.isError ? (
+              <Body tone="danger">{t('approvals.detail.entryLinesError')}</Body>
+            ) : null}
           </View>
         ) : null}
 
@@ -767,12 +911,104 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
           <View style={[styles.card, { borderColor: palette.border, backgroundColor: palette.surface }]}>
             <Body>{`Ads: ${adsChange.change}`}</Body>
             {'adAccountName' in adsChange && adsChange.adAccountName ? (
-              <Body tone="muted">{adsChange.adAccountName}</Body>
+              <Text style={[styles.meta, { color: palette.muted }]}>
+                {`${t('approvals.detail.adsAccount')}: ${adsChange.adAccountName}`}
+              </Text>
             ) : null}
             {'amount' in adsChange ? (
               <Text style={[styles.amount, { color: palette.text }]}>
                 {formatMoney(adsChange.amount, adsChange.currency, locale)}
               </Text>
+            ) : null}
+            {adsChange.change === 'campaign_launch' && adsCanLaunch === false ? (
+              <Banner tone="warn">
+                <Body tone="warning">{t('approvals.detail.adsNoLauncher')}</Body>
+              </Banner>
+            ) : null}
+            {adsChange.change === 'campaign_launch' ? (
+              <View style={{ gap: 6, marginTop: 4 }}>
+                <Body>{adsChange.plan.name}</Body>
+                <Text style={[styles.meta, { color: palette.muted }]}>
+                  {`${t('approvals.detail.adsObjective')}: ${adsChange.plan.objective}`}
+                </Text>
+                <Text style={[styles.meta, { color: palette.muted }]}>
+                  {`${t('approvals.detail.adsDailyBudget')}: ${formatMoney(adsChange.plan.dailyBudget, adsChange.currency, locale)} (${t('approvals.detail.adsDaysCount', { days: String(adsChange.days) })})`}
+                </Text>
+                <Text style={[styles.meta, { color: palette.muted }]}>
+                  {`${t('approvals.detail.adsSchedule')}: ${formatDateShort(adsChange.plan.startOn, locale)} - ${formatDateShort(adsChange.plan.endOn, locale)}`}
+                </Text>
+                <Text style={[styles.meta, { color: palette.muted }]}>
+                  {`${t('approvals.detail.adsAudience')}: ${adsChange.plan.targeting.locations
+                    .map((loc) => (loc.region ? `${loc.country} (${loc.region})` : loc.country))
+                    .join(', ')} | ${adsChange.plan.targeting.ageMin}-${adsChange.plan.targeting.ageMax} | ${adsChange.plan.targeting.gender}${
+                    adsChange.plan.targeting.interests.length > 0
+                      ? ` | ${adsChange.plan.targeting.interests.join(', ')}`
+                      : ''
+                  }`}
+                </Text>
+                {adsChange.plan.linkUrl ? (
+                  <Text style={[styles.meta, { color: palette.muted }]}>
+                    {`${t('approvals.detail.adsDestination')}: ${adsChange.plan.linkUrl}`}
+                  </Text>
+                ) : null}
+                <SectionHeading>
+                  {t('approvals.detail.adsVariants', { count: String(adsChange.plan.variants.length) })}
+                </SectionHeading>
+                {adsChange.plan.variants.map((variant, idx) => (
+                  <View
+                    key={idx}
+                    style={{ borderTopWidth: 1, borderTopColor: palette.border, paddingTop: 6, gap: 2 }}
+                  >
+                    <Body>{`${idx + 1}. ${variant.headline} [${variant.callToAction}]`}</Body>
+                    <Text style={[styles.meta, { color: palette.muted }]}>{variant.primaryText}</Text>
+                  </View>
+                ))}
+              </View>
+            ) : null}
+            {adsChange.change === 'object_resume' ? (
+              <View style={{ gap: 4 }}>
+                <Body>{`${adsChange.campaignName} / ${adsChange.objectName}`}</Body>
+                <Text style={[styles.meta, { color: palette.muted }]}>
+                  {`${t('approvals.detail.adsPreviousAmount')}: ${formatMoney(adsChange.previousAmount, adsChange.currency, locale)}`}
+                </Text>
+                <Text style={[styles.meta, { color: palette.muted }]}>
+                  {`${t('approvals.detail.adsDailyBudget')}: ${formatMoney(adsChange.dailyBudget, adsChange.currency, locale)} | ${formatDateShort(adsChange.endOn, locale)}`}
+                </Text>
+              </View>
+            ) : null}
+            {adsChange.change === 'budget_raise' ? (
+              <View style={{ gap: 4 }}>
+                <Body>{adsChange.campaignName}</Body>
+                <Text style={[styles.meta, { color: palette.muted }]}>
+                  {`${t('approvals.detail.adsBudgetChange')}: ${formatMoney(adsChange.fromBudget, adsChange.currency, locale)} -> ${formatMoney(adsChange.toBudget, adsChange.currency, locale)}`}
+                </Text>
+                <Text style={[styles.meta, { color: palette.muted }]}>
+                  {`${t('approvals.detail.adsPreviousAmount')}: ${formatMoney(adsChange.previousAmount, adsChange.currency, locale)}`}
+                </Text>
+              </View>
+            ) : null}
+            {adsChange.change === 'schedule_extend' ? (
+              <View style={{ gap: 4 }}>
+                <Body>{adsChange.campaignName}</Body>
+                <Text style={[styles.meta, { color: palette.muted }]}>
+                  {`${t('approvals.detail.adsEndDateChange')}: ${formatDateShort(adsChange.fromEndOn, locale)} -> ${formatDateShort(adsChange.toEndOn, locale)}`}
+                </Text>
+                <Text style={[styles.meta, { color: palette.muted }]}>
+                  {`${t('approvals.detail.adsPreviousAmount')}: ${formatMoney(adsChange.previousAmount, adsChange.currency, locale)} | ${t('approvals.detail.adsDailyBudget')}: ${formatMoney(adsChange.dailyBudget, adsChange.currency, locale)}`}
+                </Text>
+              </View>
+            ) : null}
+            {adsChange.change === 'cap_set' ? (
+              <View style={{ gap: 4 }}>
+                <Text style={[styles.meta, { color: palette.muted }]}>
+                  {`${t('approvals.detail.adsScope')}: ${adsChange.scope} (${adsChange.period})`}
+                </Text>
+                {adsChange.previous !== null ? (
+                  <Text style={[styles.meta, { color: palette.muted }]}>
+                    {`${t('approvals.detail.adsPreviousAmount')}: ${formatMoney(adsChange.previous, adsChange.previousCurrency ?? adsChange.currency, locale)}`}
+                  </Text>
+                ) : null}
+              </View>
             ) : null}
           </View>
         ) : null}
@@ -782,7 +1018,7 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
           <Banner tone="warn">
             <Body tone="warning">{t('approvals.detail.unsupportedOnMobile')}</Body>
           </Banner>
-        ) : inboxDetail && !engagePayload && summary.aiCoworker && !purchasePayload && !isAdsProposalKind(summary.subtype) ? (
+        ) : shouldShowEngageHiddenBanner(inboxDetail) ? (
           <Banner tone="info">
             <Body tone="muted">{t('approvals.detail.engageHidden')}</Body>
           </Banner>
@@ -815,13 +1051,63 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
                 <Body tone="warning">{t('approvals.detail.socialTainted')}</Body>
               </Banner>
             ) : null}
-            {socialPost.title ? <Text style={[styles.cardTitle, { color: palette.text }]}>{socialPost.title}</Text> : null}
+            {singleSocialVariant ? (
+              <Text style={[styles.meta, { color: palette.muted }]}>
+                {`${t('approvals.detail.socialChannelLabel')}: ${singleSocialVariant.provider}${
+                  singleSocialVariant.effectiveAt ?? socialPost.scheduledAt
+                    ? ` | ${t('approvals.detail.socialScheduledAt')}: ${formatDateTimeShort(
+                        singleSocialVariant.effectiveAt ?? socialPost.scheduledAt,
+                        locale,
+                      )}`
+                    : ''
+                }`}
+              </Text>
+            ) : null}
+            {singleSocialVariant?.effective.title ?? socialPost.title ? (
+              <Text style={[styles.cardTitle, { color: palette.text }]}>
+                {singleSocialVariant?.effective.title ?? socialPost.title}
+              </Text>
+            ) : null}
             <Body>{singleSocialVariant ? singleSocialVariant.effective.body : socialPost.body}</Body>
+            {singleSocialVariant?.effective.linkUrl ?? socialPost.linkUrl ? (
+              <Text style={[styles.meta, { color: palette.muted }]}>
+                {`${t('approvals.detail.socialLink')}: ${singleSocialVariant?.effective.linkUrl ?? socialPost.linkUrl}`}
+              </Text>
+            ) : null}
+            {singleSocialVariant && singleSocialVariant.media.length > 0 ? (
+              <View style={{ gap: 6, marginTop: 4 }}>
+                <Banner tone="warn">
+                  <Body tone="warning">
+                    {t('approvals.detail.socialMediaNotice', { count: String(singleSocialVariant.media.length) })}
+                  </Body>
+                </Banner>
+                {singleSocialVariant.media.map((m, idx) => (
+                  <Text key={`${m.fileId}-${idx}`} style={[styles.meta, { color: palette.muted }]}>
+                    {`${idx + 1}. ${m.filename ?? m.mime}${m.width && m.height ? ` (${m.width}x${m.height})` : ''}${m.altText ? ` | ${m.altText}` : ''}`}
+                  </Text>
+                ))}
+              </View>
+            ) : null}
+            {singleSocialVariant?.duplicateOf ? (
+              <Banner tone="warn">
+                <Body tone="warning">{t('approvals.detail.socialDuplicate')}</Body>
+              </Banner>
+            ) : null}
+            {singleSocialVariant && singleSocialVariant.issues.length > 0 ? (
+              <Text style={[styles.meta, { color: palette.warning }]}>
+                {`${t('approvals.detail.socialIssues')}: ${singleSocialVariant.issues.map((iss) => `${iss.code} (${iss.field})`).join(', ')}`}
+              </Text>
+            ) : null}
             {singleSocialVariant && singleSocialVariant.bannedWords.length > 0 ? (
               <Banner tone="danger">
                 <Body tone="danger">
                   {singleSocialVariant.bannedWords.map((w) => `${w.phrase} (${w.level})`).join(', ')}
                 </Body>
+              </Banner>
+            ) : null}
+            {socialGuards.hasBlockingBannedWord ? (
+              <Banner tone="danger">
+                <Body tone="danger">{t('approvals.detail.socialBannedBlocked')}</Body>
               </Banner>
             ) : null}
             {singleSocialVariant && singleSocialVariant.checklist.length > 0 ? (
@@ -1052,7 +1338,8 @@ export function ApprovalDetailScreen(props: ApprovalDetailScreenProps) {
           <View style={{ gap: 10 }}>
             {!socialGuards.isFourEyesBlocked &&
             !socialGuards.alreadyApprovedByMe &&
-            !socialGuards.clientWaitingOnly ? (
+            !socialGuards.clientWaitingOnly &&
+            !socialGuards.hasBlockingBannedWord ? (
               <PrimaryButton
                 label={busyAction === 'approve' ? t('approvals.action.working') : t('approvals.action.approve')}
                 accessibilityLabel={`${t('approvals.action.approve')}: ${summary.title}`}

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Pure formatting, UUID idempotency keys, and safe web hand-off URL helpers for mobile approvals.
+// Pure formatting, UUID idempotency keys, currency helpers, and safe web hand-off URL builders for mobile approvals.
 
 import { normalizeServerUrl, serverAllowed, type ServerPolicy } from '../../config.ts';
 
@@ -31,12 +31,14 @@ export function formatMoney(
   const match = DECIMAL_RE.exec(trimmed);
   if (!match) return trimmed;
 
-  const sign = match[1] ? '-' : '';
+  const isZero = isZeroMoney(trimmed);
+  const sign = match[1] && !isZero ? '-' : '';
   const rawInt = (match[2] ?? '0').replace(/^0+(?=\d)/, '');
   let frac = (match[3] ?? '').replace(/0+$/, '');
 
   const normalizedCurrency = currency ? currency.trim().toUpperCase() : '';
-  if (frac.length > 4) frac = frac.slice(0, 4).replace(/0+$/, '');
+  // Preserve up to 10 fractional digits so small rates (e.g. 0.00005) and 8-decimal contract amounts never truncate to zero.
+  if (frac.length > 10) frac = frac.slice(0, 10).replace(/0+$/, '');
   if (normalizedCurrency && normalizedCurrency !== 'VND' && frac.length === 1) {
     frac = `${frac}0`;
   }
@@ -49,6 +51,13 @@ export function formatMoney(
   if (!normalizedCurrency) return numberPart;
   if (normalizedCurrency === 'VND') return `${numberPart} ₫`;
   return `${numberPart} ${normalizedCurrency}`;
+}
+
+/**
+ * Per zPurchaseProposal: when `invoice.foreign` is set, booked invoice totals and line amounts are stored in VND.
+ */
+export function bookedInvoiceCurrency(invoice: { currency: string; foreign?: unknown }): string {
+  return invoice.foreign ? 'VND' : invoice.currency;
 }
 
 export function isZeroMoney(raw: string | null | undefined): boolean {
@@ -139,18 +148,46 @@ export function formatDateTimeShort(value: string | number | null | undefined, l
   return locale === 'vi' ? `${hh}:${min} ${dd}/${mm}/${yyyy}` : `${yyyy}-${mm}-${dd} ${hh}:${min}`;
 }
 
+function hasUnsafeSegmentChars(segment: string): boolean {
+  if (segment === '.' || segment === '..') return true;
+  if (/%2e/i.test(segment) || /%2f/i.test(segment) || /%5c/i.test(segment)) return true;
+  try {
+    const decoded = decodeURIComponent(segment);
+    if (decoded === '.' || decoded === '..' || decoded.includes('/') || decoded.includes('\\')) return true;
+  } catch {
+    return true;
+  }
+  return false;
+}
+
+export function isValidOrgSlug(orgSlug: string | null | undefined): orgSlug is string {
+  if (!orgSlug) return false;
+  if (orgSlug === '.' || orgSlug === '..') return false;
+  if (/[/\\\s]|\p{C}/u.test(orgSlug)) return false;
+  if (hasUnsafeSegmentChars(orgSlug)) return false;
+  return true;
+}
+
 export function isSafeRelativeWebPath(path: string): boolean {
   if (!path || path[0] !== '/') return false;
   if (path.startsWith('//') || path.includes('\\')) return false;
-  for (let i = 0; i < path.length; i++) {
-    const code = path.charCodeAt(i);
-    if (code <= 0x20 || code === 0x7f) return false;
+  if (/[\s\p{C}]/u.test(path)) return false;
+
+  const qIdx = path.indexOf('?');
+  const hIdx = path.indexOf('#');
+  const cutIdx = qIdx === -1 ? hIdx : hIdx === -1 ? qIdx : Math.min(qIdx, hIdx);
+  const rawPathname = cutIdx === -1 ? path : path.slice(0, cutIdx);
+
+  const segments = rawPathname.split('/');
+  for (let i = 1; i < segments.length; i++) {
+    const seg = segments[i] ?? '';
+    if (hasUnsafeSegmentChars(seg)) return false;
   }
   return true;
 }
 
 /**
- * Builds a validated `https:` (or local dev `http:`) web hand-off URL scoped to the active org.
+ * Builds a validated `https:` (or local dev `http:`) web hand-off URL strictly scoped to the active org.
  */
 export function buildWebUrl(
   serverUrl: string,
@@ -163,27 +200,61 @@ export function buildWebUrl(
   if (policy && !serverAllowed(policy, origin)) return null;
   if (!isSafeRelativeWebPath(relativePath)) return null;
 
-  if (relativePath === '/' && !orgSlug) return `${origin}/`;
-  if (!orgSlug) return null;
+  if (relativePath === '/' && !orgSlug) {
+    try {
+      const rootParsed = new URL('/', origin);
+      if (rootParsed.origin !== origin || rootParsed.username !== '' || rootParsed.password !== '') return null;
+      if (rootParsed.pathname !== '/') return null;
+      return rootParsed.toString();
+    } catch {
+      return null;
+    }
+  }
+
+  if (!isValidOrgSlug(orgSlug)) return null;
 
   const encodedSlug = encodeURIComponent(orgSlug);
-  if (relativePath.startsWith('/o/')) {
-    const rest = relativePath.slice(3);
-    const slashIdx = rest.indexOf('/');
-    const pathSlug = slashIdx === -1 ? rest : rest.slice(0, slashIdx);
-    if (pathSlug !== encodedSlug && pathSlug !== orgSlug) return null;
-    return `${origin}${relativePath}`;
+  const orgPrefix = `/o/${encodedSlug}`;
+
+  const qIdx = relativePath.indexOf('?');
+  const hIdx = relativePath.indexOf('#');
+  const cutIdx = qIdx === -1 ? hIdx : hIdx === -1 ? qIdx : Math.min(qIdx, hIdx);
+  const rawPathname = cutIdx === -1 ? relativePath : relativePath.slice(0, cutIdx);
+
+  let candidate: string;
+  if (rawPathname === '/o' || rawPathname.startsWith('/o/')) {
+    if (rawPathname !== orgPrefix && !rawPathname.startsWith(`${orgPrefix}/`)) {
+      // Allow unencoded slug matching as well before URL verification.
+      const unencodedPrefix = `/o/${orgSlug}`;
+      if (rawPathname !== unencodedPrefix && !rawPathname.startsWith(`${unencodedPrefix}/`)) {
+        return null;
+      }
+    }
+    candidate = `${origin}${relativePath}`;
+  } else {
+    candidate = `${origin}${orgPrefix}${relativePath}`;
   }
-  return `${origin}/o/${encodedSlug}${relativePath}`;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(candidate);
+  } catch {
+    return null;
+  }
+  if (parsed.origin !== origin || parsed.username !== '' || parsed.password !== '') return null;
+  if (parsed.pathname !== orgPrefix && !parsed.pathname.startsWith(`${orgPrefix}/`)) return null;
+
+  return parsed.toString();
 }
 
 const EXTERNAL_LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
 
 /**
  * Validates that an external web hand-off URL uses `https:` (or local dev `http:`) with no embedded credentials,
- * optionally pinned to the active server's origin.
+ * strictly matching a non-empty `allowedOrigin`.
  */
-export function isSafeExternalWebUrl(rawUrl: string, allowedOrigin?: string): boolean {
+export function isSafeExternalWebUrl(rawUrl: string, allowedOrigin: string): boolean {
+  if (!allowedOrigin || !allowedOrigin.trim()) return false;
   let parsed: URL;
   try {
     parsed = new URL(rawUrl);
@@ -193,6 +264,6 @@ export function isSafeExternalWebUrl(rawUrl: string, allowedOrigin?: string): bo
   const local = EXTERNAL_LOCAL_HOSTS.has(parsed.hostname);
   if (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && local)) return false;
   if (parsed.username !== '' || parsed.password !== '') return false;
-  if (allowedOrigin && parsed.origin !== allowedOrigin) return false;
+  if (parsed.origin !== allowedOrigin) return false;
   return true;
 }

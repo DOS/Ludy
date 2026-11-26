@@ -13,7 +13,7 @@ export const systemBrowser: BrowserPort = {
 };
 
 interface ExternalWebPort {
-  openWeb(url: string, allowedOrigin?: string): Promise<boolean>;
+  openWeb(url: string, allowedOrigin: string): Promise<boolean>;
 }
 
 export const externalBrowser: ExternalWebPort = {

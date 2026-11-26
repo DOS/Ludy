@@ -6,6 +6,7 @@ import type { CachedApprovalSummary, CachedTodayNotice } from './cache.ts';
 import type { Locale } from './format.ts';
 import {
   isAdsProposalKind,
+  isEngageProposalKind,
   isSupportedMobileInboxKind,
   type ChartAccount,
   type InboxDetail,
@@ -248,6 +249,7 @@ export function resolveInboxActionGuards(
     acceptUnverifiedSig: boolean;
     einvoiceLoaded?: boolean;
     adsLoaded?: boolean;
+    journalLoaded?: boolean;
   },
 ): InboxActionGuards {
   if (!detail) {
@@ -290,7 +292,7 @@ export function resolveInboxActionGuards(
   } else if (detail.kind === 'finance.journal_voucher') {
     payloadReady = detail.journalVoucher !== null;
   } else if (detail.kind === 'finance.journal_reversal') {
-    payloadReady = detail.reversal !== null;
+    payloadReady = detail.reversal !== null && options.journalLoaded === true;
   } else if (detail.kind === 'finance.einvoice_issue') {
     payloadReady = options.einvoiceLoaded === true;
   } else if (isAdsProposalKind(detail.kind)) {
@@ -337,6 +339,10 @@ export function resolveInboxActionGuards(
   };
 }
 
+export function shouldShowEngageHiddenBanner(detail: InboxDetail | null): boolean {
+  return Boolean(detail && !detail.engage && isEngageProposalKind(detail.kind));
+}
+
 interface SocialActionGuards {
   pendingVariants: SocialPostDetail['variants'];
   singleVariant: SocialPostDetail['variants'][number] | null;
@@ -344,6 +350,8 @@ interface SocialActionGuards {
   isFourEyesBlocked: boolean;
   alreadyApprovedByMe: boolean;
   clientWaitingOnly: boolean;
+  hasBlockingBannedWord: boolean;
+  hasUnpreviewableMedia: boolean;
   missingChecklistCount: number;
   canApproveNow: boolean;
   canRequestChangesNow: boolean;
@@ -374,6 +382,12 @@ export function resolveSocialActionGuards(
       singleVariant.review.approvedBy.length >= singleVariant.review.required &&
       singleVariant.review.client,
   );
+  const hasBlockingBannedWord = Boolean(
+    singleVariant &&
+      (singleVariant.bannedWordsStatus === 'too_complex' ||
+        singleVariant.bannedWords?.some((w) => w.level === 'block')),
+  );
+  const hasUnpreviewableMedia = Boolean(singleVariant && (singleVariant.media?.length ?? 0) > 0);
 
   const requiredChecks = singleVariant?.checklist ?? [];
   const missingChecklistCount = requiredChecks.filter((c) => options.tickedChecklistIds[c.id] !== true).length;
@@ -386,16 +400,26 @@ export function resolveSocialActionGuards(
     isFourEyesBlocked,
     alreadyApprovedByMe,
     clientWaitingOnly,
+    hasBlockingBannedWord,
+    hasUnpreviewableMedia,
     missingChecklistCount,
     canApproveNow:
       canActSingle &&
       !isFourEyesBlocked &&
       !alreadyApprovedByMe &&
       !clientWaitingOnly &&
+      !hasBlockingBannedWord &&
+      !hasUnpreviewableMedia &&
       missingChecklistCount === 0,
     canRequestChangesNow: canActSingle,
     canRejectNow: canActSingle,
-    showWebPrimary: isMultiDecision || isFourEyesBlocked || alreadyApprovedByMe || clientWaitingOnly,
+    showWebPrimary:
+      isMultiDecision ||
+      isFourEyesBlocked ||
+      alreadyApprovedByMe ||
+      clientWaitingOnly ||
+      hasBlockingBannedWord ||
+      hasUnpreviewableMedia,
   };
 }
 

@@ -39,6 +39,7 @@ describe('approvals persisted KeyValue read cache', () => {
     await cache.save({
       serverUrl: SERVER,
       orgSlug: 'acme-vn',
+      userId: 'user-a',
       savedAt: 1_764_140_000_000,
       items,
       todayNotices: [
@@ -69,7 +70,7 @@ describe('approvals persisted KeyValue read cache', () => {
     }
     expect(chunkCount).toBeGreaterThan(1);
 
-    const loaded = await cache.load(SERVER, 'acme-vn');
+    const loaded = await cache.load(SERVER, 'acme-vn', 'user-a');
     expect(loaded).not.toBeNull();
     expect(loaded?.savedAt).toBe(1_764_140_000_000);
     expect(loaded?.items).toHaveLength(18);
@@ -85,6 +86,7 @@ describe('approvals persisted KeyValue read cache', () => {
     await cache.save({
       serverUrl: SERVER,
       orgSlug: 'acme-vn',
+      userId: 'user-a',
       savedAt: 2_000_000,
       items,
       todayNotices: Array.from({ length: 40 }, (_, i) => ({
@@ -105,27 +107,128 @@ describe('approvals persisted KeyValue read cache', () => {
       coworkers: { marketing: 'Uy' },
     });
 
-    const loaded = await cache.load(SERVER, 'acme-vn');
+    const loaded = await cache.load(SERVER, 'acme-vn', 'user-a');
     expect(loaded).not.toBeNull();
     expect(loaded?.items.length).toBeGreaterThan(0);
     expect(loaded?.items.length).toBeLessThanOrEqual(60);
   });
 
-  it('never leaks cached data across different serverUrl or orgSlug', async () => {
+  it('never leaks cached data across different serverUrl, orgSlug, or userId', async () => {
     const store = memoryStore();
     const cache = createApprovalsCache(store);
     await cache.save({
       serverUrl: SERVER,
       orgSlug: 'org-a',
+      userId: 'user-a',
       savedAt: 1000,
       items: [makeSummary(1)],
       todayNotices: [],
       coworkers: { finance: 'Ly' },
     });
 
-    expect(await cache.load(SERVER, 'org-b')).toBeNull();
-    expect(await cache.load('https://other.example', 'org-a')).toBeNull();
-    expect(await cache.load(SERVER, 'org-a')).not.toBeNull();
+    expect(await cache.load(SERVER, 'org-b', 'user-a')).toBeNull();
+    expect(await cache.load('https://other.example', 'org-a', 'user-a')).toBeNull();
+    expect(await cache.load(SERVER, 'org-a', 'user-b')).toBeNull();
+    expect(await cache.load(SERVER, 'org-a', null)).toBeNull();
+    expect(await cache.load(SERVER, 'org-a', 'user-a')).not.toBeNull();
+  });
+
+  it('drops stale save started before clear() on sign-out or org switch', async () => {
+    const base = memoryStore();
+    const gate: { enter: (() => void) | null; release: (() => void) | null } = {
+      enter: null,
+      release: null,
+    };
+    const enteredSet = new Promise<void>((resolve) => {
+      gate.enter = resolve;
+    });
+    const delayedStore = {
+      ...base,
+      async set(key: string, value: string) {
+        if (key.startsWith('ludy.approvals.cache.v1.')) {
+          gate.enter?.();
+          await new Promise<void>((resolve) => {
+            gate.release = resolve;
+          });
+        }
+        return base.set(key, value);
+      },
+    };
+    const cache = createApprovalsCache(delayedStore);
+    const startEpoch = cache.epoch();
+
+    const pendingSave = cache.save(
+      {
+        serverUrl: SERVER,
+        orgSlug: 'org-a',
+        userId: 'user-a',
+        savedAt: 1000,
+        items: [makeSummary(1)],
+        todayNotices: [],
+        coworkers: { finance: 'Ly' },
+      },
+      { expectedEpoch: startEpoch },
+    );
+
+    // Wait until chunk write enters store.set, then clear() synchronously before releasing it.
+    await enteredSet;
+    const pendingClear = cache.clear();
+    expect(cache.epoch()).toBe(startEpoch + 1);
+    gate.release?.();
+
+    expect(await pendingSave).toBe(false);
+    await pendingClear;
+    expect(await cache.load(SERVER, 'org-a', 'user-a')).toBeNull();
+    expect(base.data.size).toBe(0);
+
+    // Post-clear stale expectedEpoch saves fail immediately too.
+    expect(
+      await cache.save(
+        {
+          serverUrl: SERVER,
+          orgSlug: 'org-a',
+          userId: 'user-a',
+          savedAt: 2000,
+          items: [makeSummary(2)],
+          todayNotices: [],
+          coworkers: {},
+        },
+        { expectedEpoch: startEpoch },
+      ),
+    ).toBe(false);
+    expect(await cache.load(SERVER, 'org-a', 'user-a')).toBeNull();
+  });
+
+  it('cleans up orphaned chunks left behind by an interrupted mid-write failure', async () => {
+    const base = memoryStore();
+    let chunkWrites = 0;
+    const flakyStore = {
+      ...base,
+      async set(key: string, value: string) {
+        if (key.startsWith('ludy.approvals.cache.v1.')) {
+          chunkWrites += 1;
+          if (chunkWrites >= 2) throw new Error('disk full');
+        }
+        return base.set(key, value);
+      },
+    };
+    const cache = createApprovalsCache(flakyStore);
+
+    await expect(
+      cache.save({
+        serverUrl: SERVER,
+        orgSlug: 'org-a',
+        userId: 'user-a',
+        savedAt: 1000,
+        items: Array.from({ length: 12 }, (_, i) => makeSummary(i)),
+        todayNotices: [],
+        coworkers: {},
+      }),
+    ).rejects.toThrow('disk full');
+
+    expect(base.data.size).toBeGreaterThan(0);
+    await cache.clear();
+    expect(base.data.size).toBe(0);
   });
 
   it('removes previous generation chunks on subsequent save and clears all keys on clear()', async () => {
@@ -135,6 +238,7 @@ describe('approvals persisted KeyValue read cache', () => {
     await cache.save({
       serverUrl: SERVER,
       orgSlug: 'org-a',
+      userId: 'user-a',
       savedAt: 1000,
       items: Array.from({ length: 12 }, (_, i) => makeSummary(i)),
       todayNotices: [],
@@ -146,6 +250,7 @@ describe('approvals persisted KeyValue read cache', () => {
     await cache.save({
       serverUrl: SERVER,
       orgSlug: 'org-a',
+      userId: 'user-a',
       savedAt: 2000,
       items: [makeSummary(1)],
       todayNotices: [],
@@ -167,15 +272,16 @@ describe('approvals persisted KeyValue read cache', () => {
     await cache.save({
       serverUrl: SERVER,
       orgSlug: 'org-a',
+      userId: 'user-a',
       savedAt: 1000,
       items: Array.from({ length: 10 }, (_, i) => makeSummary(i)),
       todayNotices: [],
       coworkers: {},
     });
     store.data.delete('ludy.approvals.cache.v1.1.0');
-    expect(await cache.load(SERVER, 'org-a')).toBeNull();
+    expect(await cache.load(SERVER, 'org-a', 'user-a')).toBeNull();
 
     store.data.set('ludy.approvals.cache.meta.v1', '{broken-json');
-    expect(await cache.load(SERVER, 'org-a')).toBeNull();
+    expect(await cache.load(SERVER, 'org-a', 'user-a')).toBeNull();
   });
 });

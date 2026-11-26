@@ -29,13 +29,24 @@ export default function App() {
     });
     return () => subscription.remove();
   }, []);
+  const activeScope = state.status === 'active' ? `${state.serverUrl}|${state.orgSlug ?? ''}` : null;
+  const previousScope = useRef<string | null>(activeScope);
+
   useEffect(() => {
-    if (state.status !== 'active') stepUp.reset();
+    if (state.status !== 'active') {
+      stepUp.reset();
+      previousScope.current = null;
+    } else {
+      if (previousScope.current !== null && previousScope.current !== activeScope) {
+        stepUp.reset();
+      }
+      previousScope.current = activeScope;
+    }
     if (state.status === 'signed-out') {
       queryClient.clear();
       void approvalsCache.clear();
     }
-  }, [state.status]);
+  }, [state.status, activeScope]);
 
   return (
     <QueryClientProvider client={queryClient}>

@@ -30,6 +30,7 @@ import {
   resolveHrActionGuards,
   resolveInboxActionGuards,
   resolveSocialActionGuards,
+  shouldShowEngageHiddenBanner,
 } from '../src/screens/approvals/view-state.ts';
 import { SERVER } from './helpers.ts';
 
@@ -66,6 +67,14 @@ function fakeInboxItem(overrides: Partial<InboxListItem> = {}): InboxListItem {
 
 function makeFakeClient(overrides: Record<string, unknown> = {}): LudyClient {
   const base = {
+    me: {
+      get: async () => ({
+        userId: 'u-owner',
+        email: 'owner@example.com',
+        displayName: 'Owner',
+        orgs: [],
+      }),
+    },
     org: {
       get: async () => ({
         orgId: 'o1',
@@ -425,9 +434,55 @@ describe('cross-app queue aggregation and AI coworker attribution', () => {
     });
 
     const snap = await loadApprovalsSnapshot({ client, serverUrl: SERVER, orgSlug: 'demo' });
+    expect(snap.userId).toBe('u-owner');
     expect(snap.items.map((i) => i.id)).toEqual(['trip-1', 'lv-team']);
     expect(snap.items.every((i) => i.webPath === '/hr/my')).toBe(true);
     expect(snap.partialFailureCount).toBe(1);
+  });
+
+  it('retains aggregated Today notices when social list is truncated or HR detail query fails', async () => {
+    const client = makeFakeClient({
+      today: {
+        list: async () => ({
+          items: [
+            { kind: 'proposal', app: 'social', id: 'review', count: 60, title: { key: 'social.review', params: { count: 60 } }, href: '/social' },
+            { kind: 'proposal', app: 'hr', id: 'leave-approvals', count: 3, title: { key: 'hr.leaveApprovalsPending', params: { count: 3 } }, href: '/hr/employees' },
+          ],
+          coworkers: { ...DEFAULT_COWORKERS },
+          dropped: 0,
+          truncated: 0,
+          failed: 0,
+        }),
+      },
+      social: {
+        reviewInbox: async () => ({
+          items: [
+            {
+              postId: 'soc-partial',
+              title: 'Bài 1',
+              excerpt: 'Excerpt',
+              channels: [{ variantId: 'v1', provider: 'facebook_page', displayName: 'Page' }],
+              at: null,
+              submittedAt: '2026-11-26T09:00:00Z',
+            },
+          ],
+          total: 60,
+        }),
+      },
+      hr: {
+        leaveRequests: {
+          list: async () => {
+            throw Object.assign(new Error('503'), { status: 503 });
+          },
+        },
+        salaryAdvances: { list: async () => [] },
+        businessTrips: { list: async () => [] },
+      },
+    });
+
+    const snap = await loadApprovalsSnapshot({ client, serverUrl: SERVER, orgSlug: 'demo' });
+    expect(snap.todayNotices.map((n) => n.id)).toEqual(['review', 'leave-approvals']);
+    expect(snap.partialFailureCount).toBeGreaterThanOrEqual(2);
   });
 
   it('distinguishes Engage Ads proposals from Ads spend proposals and classifies errors cleanly', async () => {
@@ -653,6 +708,72 @@ describe('queue filtering, localized Today notices, directional accounts and det
     expect(supplierGuards.canApproveNow).toBe(false);
     expect(supplierGuards.showWebPrimary).toBe(true);
 
+    // Journal reversal must wait for original journal entry lines before allowing approve.
+    const reversalDetail: InboxDetail = {
+      ...detail,
+      kind: 'finance.journal_reversal',
+      payload: null,
+      failedChecks: 0,
+      signatureStatus: null,
+      reversal: { entryId: '00000000-0000-4000-8000-000000000020', entryDate: '2026-11-26', reason: 'Sai kỳ' },
+    };
+    const reversalWaitingGuards = resolveInboxActionGuards(reversalDetail, {
+      isOffline: false,
+      editingAccounts: false,
+      acceptFailedChecks: true,
+      acceptUnverifiedSig: true,
+      journalLoaded: false,
+    });
+    expect(reversalWaitingGuards.payloadReady).toBe(false);
+    expect(reversalWaitingGuards.canApproveNow).toBe(false);
+    expect(reversalWaitingGuards.showWebPrimary).toBe(true);
+
+    const reversalReadyGuards = resolveInboxActionGuards(reversalDetail, {
+      isOffline: false,
+      editingAccounts: false,
+      acceptFailedChecks: true,
+      acceptUnverifiedSig: true,
+      journalLoaded: true,
+    });
+    expect(reversalReadyGuards.payloadReady).toBe(true);
+    expect(reversalReadyGuards.canApproveNow).toBe(true);
+
+    // AI-proposed finance items with `engage: null` must NOT trigger the hidden-Engage banner.
+    expect(
+      shouldShowEngageHiddenBanner({
+        ...detail,
+        kind: 'finance.cash_voucher',
+        requestedByAgent: { id: 'agent-ly', name: 'Ly' },
+        payload: null,
+        engage: null,
+      }),
+    ).toBe(false);
+    expect(
+      shouldShowEngageHiddenBanner({
+        ...detail,
+        kind: 'finance.einvoice_issue',
+        requestedByAgent: { id: 'agent-ly', name: 'Ly' },
+        payload: null,
+        engage: null,
+      }),
+    ).toBe(false);
+    expect(
+      shouldShowEngageHiddenBanner({
+        ...detail,
+        kind: 'crm.quote_send',
+        payload: null,
+        engage: null,
+      }),
+    ).toBe(true);
+    expect(
+      shouldShowEngageHiddenBanner({
+        ...detail,
+        kind: 'crm.quote_send',
+        payload: null,
+        engage: { kind: 'crm.quote_send' } as unknown as InboxDetail['engage'],
+      }),
+    ).toBe(false);
+
     // Social `in_review`: another reviewer CAN approve even when fourEyes policy is enabled; author CANNOT.
     const socialPost = {
       id: 'soc-1',
@@ -663,6 +784,9 @@ describe('queue filtering, localized Today notices, directional accounts and det
           status: 'in_review',
           checklist: [{ id: 'chk-1', connectionId: 'c1', position: 0, label: 'Kiểm tra CTA' }],
           review: { required: 1, approvedBy: [], fourEyes: true, client: false, clientVerdict: null },
+          bannedWords: [],
+          bannedWordsStatus: 'checked',
+          media: [],
         },
       ],
     } as unknown as SocialPostDetail;
@@ -690,6 +814,101 @@ describe('queue filtering, localized Today notices, directional accounts and det
         tickedChecklistIds: {},
       }).canApproveNow,
     ).toBe(false);
+
+    // Social blocking banned word (`level: 'block'` or `bannedWordsStatus: 'too_complex'`) blocks approve
+    // while keeping request-changes and reject available.
+    const blockedWordPost = {
+      ...socialPost,
+      variants: [
+        {
+          ...socialPost.variants[0],
+          bannedWords: [{ word: 'cam kết 100%', level: 'block' }],
+          bannedWordsStatus: 'checked',
+        },
+      ],
+    } as unknown as SocialPostDetail;
+    const blockedWordGuards = resolveSocialActionGuards({ multiDecisionOnly: false }, blockedWordPost, {
+      isOffline: false,
+      currentUserId: 'reviewer-u',
+      tickedChecklistIds: { 'chk-1': true },
+    });
+    expect(blockedWordGuards.hasBlockingBannedWord).toBe(true);
+    expect(blockedWordGuards.canApproveNow).toBe(false);
+    expect(blockedWordGuards.showWebPrimary).toBe(true);
+    expect(blockedWordGuards.canRequestChangesNow).toBe(true);
+    expect(blockedWordGuards.canRejectNow).toBe(true);
+
+    const warnWordPost = {
+      ...socialPost,
+      variants: [
+        {
+          ...socialPost.variants[0],
+          bannedWords: [{ word: 'siêu rẻ', level: 'warn' }],
+          bannedWordsStatus: 'checked',
+        },
+      ],
+    } as unknown as SocialPostDetail;
+    const warnWordGuards = resolveSocialActionGuards({ multiDecisionOnly: false }, warnWordPost, {
+      isOffline: false,
+      currentUserId: 'reviewer-u',
+      tickedChecklistIds: { 'chk-1': true },
+    });
+    expect(warnWordGuards.hasBlockingBannedWord).toBe(false);
+    expect(warnWordGuards.canApproveNow).toBe(true);
+
+    const tooComplexPost = {
+      ...socialPost,
+      variants: [
+        {
+          ...socialPost.variants[0],
+          bannedWords: [],
+          bannedWordsStatus: 'too_complex',
+        },
+      ],
+    } as unknown as SocialPostDetail;
+    const tooComplexGuards = resolveSocialActionGuards({ multiDecisionOnly: false }, tooComplexPost, {
+      isOffline: false,
+      currentUserId: 'reviewer-u',
+      tickedChecklistIds: { 'chk-1': true },
+    });
+    expect(tooComplexGuards.hasBlockingBannedWord).toBe(true);
+    expect(tooComplexGuards.canApproveNow).toBe(false);
+    expect(tooComplexGuards.showWebPrimary).toBe(true);
+    expect(tooComplexGuards.canRequestChangesNow).toBe(true);
+    expect(tooComplexGuards.canRejectNow).toBe(true);
+
+    // Media attachments cannot be visually previewed in full on mobile, so Approve requires web
+    // while request-changes and reject remain usable.
+    const mediaPost = {
+      ...socialPost,
+      variants: [
+        {
+          ...socialPost.variants[0],
+          media: [
+            {
+              fileId: '00000000-0000-4000-8000-000000000099',
+              altText: 'Product photo',
+              mime: 'image/jpeg',
+              sizeBytes: 2048,
+              durationMs: null,
+              width: 800,
+              height: 600,
+              filename: 'photo.jpg',
+            },
+          ],
+        },
+      ],
+    } as unknown as SocialPostDetail;
+    const mediaGuards = resolveSocialActionGuards({ multiDecisionOnly: false }, mediaPost, {
+      isOffline: false,
+      currentUserId: 'reviewer-u',
+      tickedChecklistIds: { 'chk-1': true },
+    });
+    expect(mediaGuards.hasUnpreviewableMedia).toBe(true);
+    expect(mediaGuards.canApproveNow).toBe(false);
+    expect(mediaGuards.showWebPrimary).toBe(true);
+    expect(mediaGuards.canRequestChangesNow).toBe(true);
+    expect(mediaGuards.canRejectNow).toBe(true);
 
     // HR cached preview without live data must stay non-actionable.
     expect(
