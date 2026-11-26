@@ -1958,5 +1958,100 @@ describe('per-clause figure and VAT rate binding (#4119)', () => {
         answer([line({ description: 'Bánh', unit: 'hộp', quantity: '50000', unitPrice: '2', vatRate: null })], null),
       ),
     ).toEqual({ kind: 'none', code: 'FIGURES' });
+
+    // Standalone invoice-level tax-inclusive notes before or after tables reject net unit-price fills, while explicit "chưa gồm" line notes exempt that line.
+    expect(
+      checkEInvoiceDraft(
+        req('Đơn giá đã gồm VAT 8%:\nTên hàng\tSL\tĐơn giá (nghìn đồng)\nGạo\t2\t50'),
+        answer([line({ description: 'Gạo', unit: null, quantity: '2', unitPrice: '50000', vatRate: '8%' })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(
+      checkEInvoiceDraft(
+        req('Tên hàng\tSL\tĐơn giá (nghìn đồng)\nGạo\t2\t50\nBánh\t3\t60\nĐã gồm VAT 8% cho toàn bộ hóa đơn'),
+        answer([
+          line({ description: 'Gạo', unit: null, quantity: '2', unitPrice: '50000', vatRate: '8%' }),
+          line({ description: 'Bánh', unit: null, quantity: '3', unitPrice: '60000', vatRate: '8%' }),
+        ], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(
+      checkEInvoiceDraft(
+        req('Đơn giá đã gồm VAT 8%:\nTên hàng\tSL\tĐơn giá\nGạo chưa gồm VAT\t2\t50000'),
+        answer([line({ description: 'Gạo chưa gồm VAT', unit: null, quantity: '2', unitPrice: '50000', vatRate: '8%' })], null),
+      ).kind,
+    ).toBe('proposal');
+
+    // Conflicting ĐVT vs SL(unit) and compound ĐVT specs ("hộp 10 kg") fail closed on ambiguous unit selections.
+    expect(
+      checkEInvoiceDraft(
+        req('Tên hàng\tĐVT\tSL (kg)\tĐơn giá\nGạo\tbao\t2\t50000'),
+        answer([line({ description: 'Gạo', unit: 'kg', quantity: '2', unitPrice: '50000', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(
+      checkEInvoiceDraft(
+        req('Tên hàng\tĐVT\tSL (kg)\tĐơn giá\nGạo\tbao\t2\t50000'),
+        answer([line({ description: 'Gạo', unit: 'bao', quantity: '2', unitPrice: '50000', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(
+      checkEInvoiceDraft(
+        req('Tên hàng\tĐVT\tSL\tĐơn giá\nBánh\thộp 10 kg\t2\t50000'),
+        answer([line({ description: 'Bánh', unit: 'kg', quantity: '2', unitPrice: '50000', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(
+      checkEInvoiceDraft(
+        req('Tên hàng\tĐVT\tSL\tĐơn giá\nBánh\thộp 10 kg\t2\t50000'),
+        answer([line({ description: 'Bánh', unit: 'hộp', quantity: '2', unitPrice: '50000', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+
+    // Table items whose name also appears in UNIT_ONLY_EXACT still enforce name matching, and size variants are checked.
+    expect(
+      checkEInvoiceDraft(
+        req('Tên hàng\tSL\tĐơn giá (nghìn đồng)\nHộp\t2\t50'),
+        answer([line({ description: 'Máy tính', unit: null, quantity: '2', unitPrice: '50000', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(
+      checkEInvoiceDraft(
+        req('Tên hàng\tSL\tĐơn giá (nghìn đồng)\nHộp\t2\t50'),
+        answer([line({ description: 'Hộp', unit: null, quantity: '2', unitPrice: '50000', vatRate: null })], null),
+      ).kind,
+    ).toBe('proposal');
+    expect(
+      checkEInvoiceDraft(
+        req('Tên hàng\tSL\tĐơn giá (nghìn đồng)\nÁo size S\t2\t50'),
+        answer([line({ description: 'Áo size XL', unit: null, quantity: '2', unitPrice: '50000', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(
+      checkEInvoiceDraft(
+        req('Tên hàng\tSL\tĐơn giá (nghìn đồng)\nÁo size S\t2\t50'),
+        answer([line({ description: 'Áo size S', unit: null, quantity: '2', unitPrice: '50000', vatRate: null })], null),
+      ).kind,
+    ).toBe('proposal');
+
+    // Glued quantity+unit ("2kg gạo") matches identically to spaced ("3 kg gạo"), and combined paren currency/unit "(đ/kg)" is parsed safely.
+    expect(
+      checkEInvoiceDraft(
+        req('2kg gạo giá 25k/kg; 3 kg gạo giá 30k/kg'),
+        answer([line({ description: 'Gạo', unit: 'kg', quantity: '2', unitPrice: '25000', vatRate: null })], null),
+      ).kind,
+    ).toBe('proposal');
+    expect(
+      checkEInvoiceDraft(
+        req('Tên hàng\tSL (kg)\tĐơn giá (đ/kg)\nGạo\t2\t25000'),
+        answer([line({ description: 'Gạo', unit: 'kg', quantity: '2', unitPrice: '25000', vatRate: null })], null),
+      ).kind,
+    ).toBe('proposal');
+    expect(
+      checkEInvoiceDraft(
+        req('Tên hàng\tSL (kg)\tĐơn giá (USD/kg)\nGạo\t2\t25'),
+        answer([line({ description: 'Gạo', unit: 'kg', quantity: '2', unitPrice: '25', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
   });
 });
