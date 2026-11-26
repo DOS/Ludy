@@ -14,6 +14,8 @@ import type { FetchLike } from './exchange.ts';
 import {
   prepareVerifiedUpdate,
   resolveFeedUrl,
+  type DesktopMacArch,
+  type DesktopTargetPlatform,
   type HostLookup,
   type SignedManifestVerifier,
   type SignedPackageVerifier,
@@ -55,11 +57,14 @@ export interface UpdaterOptions {
   updater: AutoUpdaterLike;
   // null: no feed configured.
   feedUrl: string | null;
-  // false off Windows, or when the app was not installed by Squirrel (a dev run, a portable copy): there is no Update.exe to update with.
+  // false when the app is not an installed Squirrel.Windows or signed Squirrel.Mac app bundle.
   supported: boolean;
+  platform?: DesktopTargetPlatform | undefined;
+  arch?: DesktopMacArch | 'x64' | undefined;
   fetch?: FetchLike | undefined;
   allowedOrigin?: string | null | undefined;
   expectedPublisherThumbprint?: string | null | undefined;
+  expectedTeamId?: string | null | undefined;
   expectedManifestPublicKey?: string | null | undefined;
   requireSigned?: boolean | undefined;
   allowUnsigned?: boolean | undefined;
@@ -67,6 +72,7 @@ export interface UpdaterOptions {
   currentVersion?: string | null | undefined;
   stagingDir?: string | undefined;
   resolveTrustedThumbprint?: (() => Promise<string | null>) | undefined;
+  resolveTrustedTeamId?: (() => Promise<string | null>) | undefined;
   verifySignedManifest?: SignedManifestVerifier | undefined;
   verifySignedPackage?: SignedPackageVerifier | undefined;
   serveLocalFeed?: ((stagingDir: string, packageFile: string) => Promise<LocalFeedServer>) | undefined;
@@ -87,11 +93,17 @@ export interface UpdaterController {
   stop(): void;
 }
 
-async function startLocalFeedServer(stagingDir: string, packageFile: string): Promise<LocalFeedServer> {
+async function startLocalFeedServer(
+  stagingDir: string,
+  packageFile: string,
+  meta: { platform?: DesktopTargetPlatform; version?: string; sha256?: string; size?: number } = {},
+): Promise<LocalFeedServer> {
   const releasesPath = join(stagingDir, 'RELEASES');
   const packagePath = join(stagingDir, packageFile);
   const encodedPkgPath = `/${encodeURIComponent(packageFile)}`;
   const rawPkgPath = `/${packageFile}`;
+  const isDarwin = meta.platform === 'darwin';
+  let boundPort = 0;
 
   const server: Server = createServer((req, res) => {
     if (req.method !== 'GET' && req.method !== 'HEAD') {
@@ -105,7 +117,22 @@ async function startLocalFeedServer(stagingDir: string, packageFile: string): Pr
       res.writeHead(400).end();
       return;
     }
-    if (pathname === '/RELEASES') {
+    if (isDarwin && pathname === '/feed.json') {
+      const feedBody = Buffer.from(
+        JSON.stringify({
+          url: `http://127.0.0.1:${boundPort}${encodedPkgPath}`,
+          name: meta.version ?? '',
+          ...(meta.sha256 ? { sha256: meta.sha256 } : {}),
+          ...(meta.size !== undefined ? { size: meta.size } : {}),
+        }),
+        'utf8',
+      );
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'content-length': String(feedBody.byteLength) });
+      if (req.method === 'HEAD') res.end();
+      else res.end(feedBody);
+      return;
+    }
+    if (!isDarwin && pathname === '/RELEASES') {
       try {
         const body = readFileSync(releasesPath);
         res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'content-length': String(body.byteLength) });
@@ -154,8 +181,9 @@ async function startLocalFeedServer(stagingDir: string, packageFile: string): Pr
     server.close();
     throw new Error('Failed binding local update feed server to 127.0.0.1');
   }
+  boundPort = addr.port;
   return {
-    url: `http://127.0.0.1:${addr.port}`,
+    url: isDarwin ? `http://127.0.0.1:${addr.port}/feed.json` : `http://127.0.0.1:${addr.port}`,
     close: () =>
       new Promise<void>((resolve) => {
         if (typeof server.closeAllConnections === 'function') server.closeAllConnections();
@@ -238,16 +266,20 @@ export function createUpdater(options: UpdaterOptions): UpdaterController {
       } else if (options.fetch && options.stagingDir) {
         const prepared = await prepareVerifiedUpdate({
           feedUrl,
+          platform: options.platform,
+          arch: options.arch,
           fetch: options.fetch,
           allowedOrigin: options.allowedOrigin ?? null,
           requireSigned: options.requireSigned,
           allowUnsigned: options.allowUnsigned,
           expectedPublisherThumbprint: options.expectedPublisherThumbprint ?? null,
+          expectedTeamId: options.expectedTeamId ?? null,
           expectedManifestPublicKey: options.expectedManifestPublicKey ?? null,
           lookupHost: options.lookupHost,
           currentVersion: options.currentVersion ?? null,
           stagingDir: options.stagingDir,
           resolveTrustedThumbprint: options.resolveTrustedThumbprint,
+          resolveTrustedTeamId: options.resolveTrustedTeamId,
           verifySignedManifest: options.verifySignedManifest,
           verifySignedPackage: options.verifySignedPackage,
         });
@@ -263,7 +295,12 @@ export function createUpdater(options: UpdaterOptions): UpdaterController {
         await closeLocalFeed(false);
         const server = await (options.serveLocalFeed
           ? options.serveLocalFeed(prepared.stagingDir, prepared.packageFile)
-          : startLocalFeedServer(prepared.stagingDir, prepared.packageFile));
+          : startLocalFeedServer(prepared.stagingDir, prepared.packageFile, {
+              platform: options.platform ?? 'win32',
+              version: prepared.version,
+              sha256: prepared.sha256,
+              size: prepared.size,
+            }));
         if (isHalted()) {
           await server.close().catch(() => undefined);
           try {

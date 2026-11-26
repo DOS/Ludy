@@ -80,6 +80,7 @@ export interface DesktopCaptureDeps {
   log?: (line: string) => void;
   spawnHelper?: (exePath: string, args: readonly string[]) => ChildProcessWithoutNullStreams;
   resolveHelperPath?: (options: { isPackaged: boolean; resourcesPath: string }) => string | null;
+  requestMicPermission?: () => Promise<boolean>;
   startupTimeoutMs?: number;
   platform?: NodeJS.Platform;
   darwinRelease?: string;
@@ -243,6 +244,13 @@ export function createDesktopCaptureModule(deps: DesktopCaptureDeps): CaptureMod
           throw new ProcessLoopbackUnsupportedError();
         }
         deps.bridge.armSystemFallback();
+      }
+
+      if (isDarwin && source !== 'system-audio' && deps.requestMicPermission) {
+        const micAllowed = await deps.requestMicPermission().catch(() => true);
+        if (!micAllowed && source === 'microphone') {
+          throw new Error('MICROPHONE_UNAVAILABLE');
+        }
       }
 
       const pieceQueue = new AsyncPieceQueue();

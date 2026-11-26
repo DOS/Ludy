@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Ludy Desktop's main process (ADR-0055 slices 2 and 3, #4515/#4516): tray shell + Windows per-app meeting capture.
+// Ludy Desktop's main process (ADR-0055 slices 2 and 3, #4515/#4516/#4884/#4885): tray shell + Windows/macOS meeting capture.
 // Loads ONLY local bundled files over privileged ludy-desktop://ui with strict CSP, locks permissions exclusively to the
-// internal capture worker window, persists tokens in DPAPI/keychain, and keeps capture logic isolated under src/capture/.
+// internal capture worker window, persists tokens in DPAPI/Keychain, and keeps capture logic isolated under src/capture/.
 import { spawn } from 'node:child_process';
 import { lookup } from 'node:dns/promises';
 import { existsSync, statSync } from 'node:fs';
@@ -22,6 +22,7 @@ import {
   safeStorage,
   session,
   shell,
+  systemPreferences,
   Tray,
   type IpcMainEvent,
   type MenuItemConstructorOptions,
@@ -43,6 +44,7 @@ import { handleSquirrelStartup } from './squirrel.ts';
 import { createSessionStore, type FileIO, type SecretBox } from './token-store.ts';
 import { describeTray, type TrayIcon, type TrayItem } from './tray-model.ts';
 import { extractEmbeddedPkcs7Der, verifyWindowsAuthenticodeFiles, verifyWindowsSignedManifest, verifyWindowsSignedPackage } from './authenticode.ts';
+import { resolveMacAppBundlePath, verifyMacAppBundle, verifyMacSignedPackage } from './codesign.ts';
 import { createPinnedFetch } from './update-feed.ts';
 import { createUpdater, type AutoUpdaterLike } from './updater.ts';
 
@@ -136,9 +138,11 @@ async function main(): Promise<void> {
     remove: (path) => rm(path, { force: true }),
   };
 
+  const isDarwin = process.platform === 'darwin';
   const squirrelInstalled = process.platform === 'win32' && app.isPackaged && existsSync(resolve(dirname(process.execPath), '..', 'Update.exe'));
+  const macAppBundlePath = isDarwin && app.isPackaged ? resolveMacAppBundlePath(process.execPath) : null;
   const updaterAdapter: AutoUpdaterLike = {
-    setFeedURL: (url) => autoUpdater.setFeedURL({ url }),
+    setFeedURL: (url) => autoUpdater.setFeedURL(isDarwin ? { url, serverType: 'json' } : { url }),
     checkForUpdates: () => autoUpdater.checkForUpdates(),
     quitAndInstall: () => autoUpdater.quitAndInstall(),
     subscribe(events) {
@@ -150,13 +154,32 @@ async function main(): Promise<void> {
     },
   };
   const smokeDir = smokeDirFor(process.env, config.ludyUrl);
-  let runningExecutableHasSignature = true;
-  try {
-    extractEmbeddedPkcs7Der(process.execPath);
-  } catch {
-    runningExecutableHasSignature = false;
+  let runningMacTeamId: string | null = config.expectedTeamId;
+  let runningExecutableHasSignature = false;
+  if (isDarwin) {
+    if (macAppBundlePath !== null) {
+      try {
+        const verifiedSelf = await verifyMacAppBundle(macAppBundlePath, {
+          expectedTeamId: config.expectedTeamId,
+          requireGatekeeper: false,
+        });
+        runningMacTeamId = runningMacTeamId ?? verifiedSelf.teamId;
+        runningExecutableHasSignature = true;
+      } catch {
+        runningExecutableHasSignature = false;
+      }
+    }
+  } else {
+    runningExecutableHasSignature = true;
+    try {
+      extractEmbeddedPkcs7Der(process.execPath);
+    } catch {
+      runningExecutableHasSignature = false;
+    }
   }
-  const allowUnsignedSmoke = smokeDir !== null && !config.expectedPublisherThumbprint && !runningExecutableHasSignature;
+  const updaterSupported = squirrelInstalled || (isDarwin && app.isPackaged && macAppBundlePath !== null && runningExecutableHasSignature);
+  const allowUnsignedSmoke =
+    smokeDir !== null && !config.expectedPublisherThumbprint && !config.expectedTeamId && !runningExecutableHasSignature;
   const resolveHost = (targetHost: string) => lookup(targetHost, { all: true });
   let cachedRunningThumbprint: string | null = config.expectedPublisherThumbprint;
   const resolveTrustedThumbprint = async (): Promise<string | null> => {
@@ -169,17 +192,25 @@ async function main(): Promise<void> {
   const updater = createUpdater({
     updater: updaterAdapter,
     feedUrl: config.updateUrl,
-    supported: squirrelInstalled,
+    supported: updaterSupported,
+    platform: isDarwin ? 'darwin' : 'win32',
+    arch: process.arch === 'arm64' ? 'arm64' : 'x64',
     fetch: createPinnedFetch(resolveHost),
     allowedOrigin: config.allowedUpdateOrigin,
     expectedPublisherThumbprint: config.expectedPublisherThumbprint,
+    expectedTeamId: config.expectedTeamId,
     allowUnsigned: allowUnsignedSmoke,
     lookupHost: resolveHost,
     currentVersion: app.getVersion(),
     stagingDir: join(userData, 'update-staging'),
     resolveTrustedThumbprint,
-    verifySignedManifest: verifyWindowsSignedManifest,
-    verifySignedPackage: verifyWindowsSignedPackage,
+    resolveTrustedTeamId: async () => runningMacTeamId,
+    verifySignedManifest: isDarwin ? undefined : verifyWindowsSignedManifest,
+    verifySignedPackage: isDarwin
+      ? async (pkgPath, teamId) => {
+          await verifyMacSignedPackage(pkgPath, teamId);
+        }
+      : verifyWindowsSignedPackage,
     log,
   });
 
@@ -351,6 +382,16 @@ async function main(): Promise<void> {
     isPackaged: app.isPackaged,
     resourcesPath: process.resourcesPath,
     bridge: workerBridge,
+    ...(isDarwin
+      ? {
+          requestMicPermission: async () => {
+            const status = systemPreferences.getMediaAccessStatus('microphone');
+            if (status === 'granted') return true;
+            if (status === 'not-determined') return systemPreferences.askForMediaAccess('microphone');
+            return false;
+          },
+        }
+      : {}),
     log,
   });
 

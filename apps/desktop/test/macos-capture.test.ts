@@ -390,4 +390,37 @@ describe('macOS Core Audio capture gating, silent-permission warning, and win32 
     expect(h.startConfigs.at(-1)).toEqual({ source: 'system-audio-and-microphone', mode: 'wasapi', liveNotes: false });
     await mod.stop();
   });
+
+  it('requests macOS microphone permission cleanly before worker launch and blocks mic-only when denied', async () => {
+    const h = makeBridgeHarness();
+    let micChecks = 0;
+    let allowMic = false;
+    const mod = createDesktopCaptureModule({
+      isPackaged: false,
+      resourcesPath: '',
+      platform: 'darwin',
+      darwinRelease: '23.2.0',
+      bridge: h.bridge,
+      requestMicPermission: async () => {
+        micChecks += 1;
+        return allowMic;
+      },
+    });
+
+    await expect(mod.start('microphone', '')).rejects.toThrow(/MICROPHONE_UNAVAILABLE/);
+    expect(micChecks).toBe(1);
+
+    await mod.start('system-audio-and-microphone', '', { allowSystemFallback: true });
+    expect(micChecks).toBe(2);
+    await mod.stop();
+
+    allowMic = true;
+    await mod.start('microphone', '');
+    expect(micChecks).toBe(3);
+    await mod.stop();
+
+    await mod.start('system-audio', '', { allowSystemFallback: true });
+    expect(micChecks).toBe(3);
+    await mod.stop();
+  });
 });

@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Security invariant suite for Ludy Desktop update feed validation, SSRF blocks, origin pinning,
-// manifest cryptographic signature checks, and Authenticode verification guardrails (#4884).
+// manifest cryptographic signature checks, Authenticode, and macOS codesign/Gatekeeper/ZIP verification guardrails (#4884, #4885).
 // Self-contained under test/invariant/: imports only the modules under test and Node built-ins.
 import { createHash, generateKeyPairSync, sign as cryptoSign } from 'node:crypto';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -17,6 +17,15 @@ import {
   verifyWindowsAuthenticodeFiles,
   verifyWindowsSignedManifest,
 } from '../../src/authenticode.ts';
+import {
+  APPLE_BUNDLE_ID,
+  inspectZipCentralDirectory,
+  MAC_APP_BUNDLE_NAME,
+  parseCodesignDisplayOutput,
+  parseSpctlAssessOutput,
+  verifyExtractedDirectorySymlinks,
+  verifyMacSignedPackage,
+} from '../../src/codesign.ts';
 import type { FetchLike } from '../../src/exchange.ts';
 import {
   createPinnedFetch,
@@ -34,6 +43,7 @@ import {
   unwrapIpLiteral,
   UpdateFeedError,
   validateUpdateFeed,
+  verifyDarwinReleaseManifest,
   verifyEd25519ManifestSignature,
   verifyReleaseManifestAgainstReleases,
 } from '../../src/update-feed.ts';
@@ -753,5 +763,317 @@ describe('update signature and trusted publisher invariants', () => {
       verifySignedPackage: async () => undefined,
     });
     expect(okStaged.status).toBe('staged');
+  });
+});
+
+describe('macOS update feed, Team ID pinning, ZIP safety, and Gatekeeper invariants', () => {
+  const TEAM_ID = 'A1B2C3D4E5';
+
+  function macManifestJson(overrides: Record<string, unknown> = {}): string {
+    const version = (overrides.version as string | undefined) ?? '0.2.0';
+    const arch = (overrides.arch as string | undefined) ?? 'arm64';
+    const zipSha256 = (overrides.zipSha256 as string | undefined) ?? SHA256_B;
+    const zipSize = (overrides.zipSize as number | undefined) ?? 2048;
+    const { zipSha256: _zSha, zipSize: _zSize, ...rest } = overrides;
+    return JSON.stringify({
+      schemaVersion: 1,
+      product: 'ludy-desktop',
+      platform: 'darwin',
+      arch,
+      version,
+      signed: true,
+      signing: {
+        algorithm: 'sha256',
+        teamId: TEAM_ID,
+        bundleId: APPLE_BUNDLE_ID,
+        hardenedRuntime: true,
+        notarized: true,
+      },
+      installer: {
+        file: `LudyDesktop-${version}-darwin-${arch}.dmg`,
+        sha256: SHA256_SETUP,
+        size: 4096,
+      },
+      packages: [
+        {
+          file: `LudyDesktop-${version}-darwin-${arch}.zip`,
+          kind: 'full',
+          version,
+          sha256: zipSha256,
+          size: zipSize,
+        },
+      ],
+      ...rest,
+    });
+  }
+
+  function buildTestZip(
+    entries: Array<{ name: string; dataSize?: number; uncompressedSizeOverride?: number }>,
+    overrides: { diskNumber?: number; entryCount?: number } = {},
+  ): Buffer {
+    const localChunks: Buffer[] = [];
+    const cdChunks: Buffer[] = [];
+    let offset = 0;
+    for (const entry of entries) {
+      const nameBuf = Buffer.from(entry.name, 'utf8');
+      const size = entry.dataSize ?? 4;
+      const lh = Buffer.alloc(30 + nameBuf.length + size);
+      lh.writeUInt32LE(0x04034b50, 0);
+      lh.writeUInt16LE(20, 4);
+      lh.writeUInt32LE(size, 18);
+      lh.writeUInt32LE(size, 22);
+      lh.writeUInt16LE(nameBuf.length, 26);
+      nameBuf.copy(lh, 30);
+
+      const cd = Buffer.alloc(46 + nameBuf.length);
+      cd.writeUInt32LE(0x02014b50, 0);
+      cd.writeUInt16LE(20, 4);
+      cd.writeUInt16LE(20, 6);
+      cd.writeUInt32LE(size, 20);
+      cd.writeUInt32LE(entry.uncompressedSizeOverride ?? size, 24);
+      cd.writeUInt16LE(nameBuf.length, 28);
+      cd.writeUInt32LE(offset, 42);
+      nameBuf.copy(cd, 46);
+      localChunks.push(lh);
+      cdChunks.push(cd);
+      offset += lh.length;
+    }
+    const cdBuf = Buffer.concat(cdChunks);
+    const eocd = Buffer.alloc(22);
+    eocd.writeUInt32LE(0x06054b50, 0);
+    eocd.writeUInt16LE(overrides.diskNumber ?? 0, 4);
+    eocd.writeUInt16LE(overrides.diskNumber ?? 0, 6);
+    eocd.writeUInt16LE(overrides.entryCount ?? entries.length, 8);
+    eocd.writeUInt16LE(overrides.entryCount ?? entries.length, 10);
+    eocd.writeUInt32LE(cdBuf.length, 12);
+    eocd.writeUInt32LE(offset, 16);
+    return Buffer.concat([...localChunks, cdBuf, eocd]);
+  }
+
+  it('rejects cross-platform, wrong-arch, unsigned, unnotarized, and Team-ID-mismatched macOS manifests', async () => {
+    await expect(
+      validateUpdateFeed({
+        feedUrl: FEED,
+        platform: 'darwin',
+        arch: 'arm64',
+        expectedTeamId: TEAM_ID,
+        fetch: mockFeedFetch({
+          [`${FEED}/release-manifest.json`]: new Response(macManifestJson({ arch: 'x64' }), { status: 200 }),
+        }),
+      }),
+    ).rejects.toThrow(/does not match arm64/);
+
+    const winAsMac = JSON.stringify({
+      schemaVersion: 1,
+      product: 'ludy-desktop',
+      platform: 'win32',
+      arch: 'x64',
+      version: '0.2.0',
+      signed: true,
+      signing: { algorithm: 'sha256', timestampServer: null, publisherThumbprint: THUMB },
+      installer: { file: 'LudyDesktop-Setup.exe', sha256: SHA256_SETUP, size: 100 },
+      packages: [
+        {
+          file: 'LudyDesktop-0.2.0-full.nupkg',
+          kind: 'full',
+          version: '0.2.0',
+          sha1: SHA1_B,
+          sha256: SHA256_B,
+          size: 100,
+        },
+      ],
+    });
+    await expect(
+      validateUpdateFeed({
+        feedUrl: FEED,
+        platform: 'darwin',
+        arch: 'arm64',
+        expectedTeamId: TEAM_ID,
+        fetch: mockFeedFetch({ [`${FEED}/release-manifest.json`]: new Response(winAsMac, { status: 200 }) }),
+      }),
+    ).rejects.toThrow(/does not match darwin/);
+
+    const parsedUnnotarized = parseDesktopReleaseManifest(
+      macManifestJson({
+        signing: {
+          algorithm: 'sha256',
+          teamId: TEAM_ID,
+          bundleId: APPLE_BUNDLE_ID,
+          hardenedRuntime: true,
+          notarized: false,
+        },
+      }),
+      { platform: 'darwin', arch: 'arm64' },
+    );
+    if (parsedUnnotarized.platform !== 'darwin') throw new Error('expected darwin');
+    expect(() => verifyDarwinReleaseManifest(parsedUnnotarized, { requireSigned: true })).toThrow(
+      /Hardened Runtime and notarization/,
+    );
+
+    await expect(
+      validateUpdateFeed({
+        feedUrl: 'http://127.0.0.1:4123/feed',
+        platform: 'darwin',
+        arch: 'arm64',
+        allowUnsigned: true,
+        expectedTeamId: TEAM_ID,
+        fetch: mockFeedFetch({
+          'http://127.0.0.1:4123/feed/release-manifest.json': new Response(
+            macManifestJson({
+              signed: false,
+              signing: {
+                algorithm: 'sha256',
+                teamId: null,
+                bundleId: APPLE_BUNDLE_ID,
+                hardenedRuntime: false,
+                notarized: false,
+              },
+            }),
+            { status: 200 },
+          ),
+        }),
+      }),
+    ).rejects.toThrow(/Refused unsigned macOS release manifest/);
+
+    await expect(
+      prepareVerifiedUpdate({
+        feedUrl: FEED,
+        platform: 'darwin',
+        arch: 'arm64',
+        fetch: mockFeedFetch({
+          [`${FEED}/release-manifest.json`]: new Response(macManifestJson(), { status: 200 }),
+        }),
+        stagingDir: join(makeTempDir(), 'mac-no-trust'),
+        verifySignedPackage: async () => undefined,
+      }),
+    ).rejects.toThrow(/trusted Apple Team ID/);
+
+    await expect(
+      prepareVerifiedUpdate({
+        feedUrl: FEED,
+        platform: 'darwin',
+        arch: 'arm64',
+        expectedTeamId: TEAM_ID,
+        fetch: mockFeedFetch({
+          [`${FEED}/release-manifest.json`]: new Response(
+            macManifestJson({
+              signing: {
+                algorithm: 'sha256',
+                teamId: 'OTHERTEAM1',
+                bundleId: APPLE_BUNDLE_ID,
+                hardenedRuntime: true,
+                notarized: true,
+              },
+            }),
+            { status: 200 },
+          ),
+        }),
+        stagingDir: join(makeTempDir(), 'mac-mismatch'),
+        verifySignedPackage: async () => undefined,
+      }),
+    ).rejects.toThrow(/does not match/);
+  });
+
+  it('rejects tampered macOS archives before verification and enforces ZIP traversal, Zip64, symlink, codesign, and spctl bounds', async () => {
+    const zipBytes = buildTestZip([{ name: `${MAC_APP_BUNDLE_NAME}/Contents/MacOS/Ludy Desktop`, dataSize: 16 }]);
+    const zipSha256 = createHash('sha256').update(zipBytes).digest('hex');
+
+    let verifierCalled = false;
+    await expect(
+      prepareVerifiedUpdate({
+        feedUrl: FEED,
+        platform: 'darwin',
+        arch: 'arm64',
+        expectedTeamId: TEAM_ID,
+        fetch: mockFeedFetch({
+          [`${FEED}/release-manifest.json`]: new Response(
+            macManifestJson({ zipSha256, zipSize: zipBytes.length }),
+            { status: 200 },
+          ),
+          [`${FEED}/LudyDesktop-0.2.0-darwin-arm64.zip`]: new Response(Buffer.alloc(zipBytes.length, 0xaa), {
+            status: 200,
+          }),
+        }),
+        stagingDir: join(makeTempDir(), 'mac-tampered-zip'),
+        verifySignedPackage: async () => {
+          verifierCalled = true;
+        },
+      }),
+    ).rejects.toThrow(/SHA-256 or size mismatch/);
+    expect(verifierCalled).toBe(false);
+
+    const staged = await prepareVerifiedUpdate({
+      feedUrl: FEED,
+      platform: 'darwin',
+      arch: 'arm64',
+      expectedTeamId: TEAM_ID,
+      fetch: mockFeedFetch({
+        [`${FEED}/release-manifest.json`]: new Response(
+          macManifestJson({ zipSha256, zipSize: zipBytes.length }),
+          { status: 200 },
+        ),
+        [`${FEED}/LudyDesktop-0.2.0-darwin-arm64.zip`]: new Response(zipBytes, { status: 200 }),
+      }),
+      stagingDir: join(makeTempDir(), 'mac-good-zip'),
+      verifySignedPackage: async (pkgPath, team) => {
+        expect(team).toBe(TEAM_ID);
+        inspectZipCentralDirectory(pkgPath, { requiredTopDir: `${MAC_APP_BUNDLE_NAME}/` });
+      },
+    });
+    expect(staged.status).toBe('staged');
+    if (staged.status !== 'staged') throw new Error('expected staged');
+    expect(existsSync(join(staged.stagingDir, staged.packageFile))).toBe(true);
+
+    const dir = makeTempDir();
+    const evilZip = join(dir, 'evil.zip');
+    writeFileSync(evilZip, buildTestZip([{ name: `${MAC_APP_BUNDLE_NAME}/../evil` }]));
+    expect(() => inspectZipCentralDirectory(evilZip)).toThrow(/Path traversal/);
+
+    const dupZip = join(dir, 'dup.zip');
+    writeFileSync(
+      dupZip,
+      buildTestZip([
+        { name: `${MAC_APP_BUNDLE_NAME}/Contents/Info.plist` },
+        { name: `${MAC_APP_BUNDLE_NAME}/contents/info.plist` },
+      ]),
+    );
+    expect(() => inspectZipCentralDirectory(dupZip)).toThrow(/Duplicate/);
+
+    const zip64 = join(dir, 'zip64.zip');
+    writeFileSync(
+      zip64,
+      buildTestZip([{ name: `${MAC_APP_BUNDLE_NAME}/Contents/Info.plist` }], { entryCount: 0xffff }),
+    );
+    expect(() => inspectZipCentralDirectory(zip64)).toThrow(/Zip64/);
+
+    if (process.platform !== 'win32') {
+      const symBundle = join(dir, 'sym-bundle');
+      mkdirSync(join(symBundle, 'Contents', 'MacOS'), { recursive: true });
+      symlinkSync('/etc/passwd', join(symBundle, 'Contents', 'MacOS', 'escape'));
+      expect(() => verifyExtractedDirectorySymlinks(symBundle)).toThrow(/absolute symlink/);
+    }
+
+    expect(() =>
+      parseCodesignDisplayOutput(
+        [
+          `Identifier=${APPLE_BUNDLE_ID}`,
+          'CodeDirectory v=20500 size=100 flags=0x0(none)',
+          'Hash type=sha256 size=32',
+          `Authority=Developer ID Application: Ludy (${TEAM_ID})`,
+          'Authority=Developer ID Certification Authority',
+          'Authority=Apple Root CA',
+          'Timestamp=Nov 26, 2026',
+          `TeamIdentifier=${TEAM_ID}`,
+          'Sealed Resources version=2',
+        ].join('\n'),
+        { expectedTeamId: TEAM_ID },
+      ),
+    ).toThrow(/Hardened Runtime/);
+
+    expect(() =>
+      parseSpctlAssessOutput('/app: rejected\nsource=no usable signature', { expectedTeamId: TEAM_ID }),
+    ).toThrow(/did not accept/);
+
+    await expect(verifyMacSignedPackage(evilZip, null, { platform: 'darwin' })).rejects.toThrow(/Team ID/);
   });
 });
