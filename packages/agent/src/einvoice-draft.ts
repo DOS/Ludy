@@ -137,11 +137,11 @@ const VALID_PERCENT_VAT_RATES = new Set(['0%', '5%', '8%', '10%']);
 const TAX_MONEY_LABEL_NUMBER =
   /(?<![\p{L}])(?:tiền\s+(?:thuế(?:\s+(?:gtgt|vat))?|vat|gtgt)|tien\s+(?:thue(?:\s+(?:gtgt|vat))?|vat|gtgt))(?:\s+(?:là|la|is)(?![\p{L}]))?\s*(?:[:=]\s*)?\d+(?:[.,]\d+)*(?![\d.,])(?!\s*%)(?:\s*(?:tr(?:iệu|ieu)?|tỷ|ty|k|nghìn|nghin|ngàn|ngan|đồng|dong|vnđ|vnd|đ|₫)(?![\p{L}]))?/giu;
 const stripTaxAmountNotes = (text: string): string => text.replace(TAX_MONEY_LABEL_NUMBER, ' ');
-const TAX_RATE_PREFIX = /(?<![\p{L}])(?:vat|gtgt|thuế\s+suất|thuế|thue\s+suat|thue)\s*(?::\s*)?$/iu;
+const TAX_RATE_PREFIX = /(?<![\p{L}])(?:vat|gtgt|thuế\s+suất|thuế|thue\s+suat|thue)\s*(?:[:=]\s*)?$/iu;
 const TAX_RATE_AFTER = /^\s*(?:vat|gtgt|thuế(?:\s+gtgt)?|thue(?:\s+gtgt)?)(?![\p{L}])/iu;
 const MONEY_END_BEFORE_RATE = /(?:\d\s*(?:đồng|dong|vnđ|vnd|đ|₫|tr(?:iệu|ieu)?|tỷ|ty|k|nghìn|nghin|ngàn|ngan)|\d{4,})\s*$/iu;
 const RATE_BEFORE_SIGN = /(?<!(?:giảm(?:\s+giá)?|giam(?:\s+gia)?|chiết khấu|chiet khau|ck|discount|off)\s{0,3})(?<![\d.,])(\d{1,3}(?:[.,]\d+)?)(?![\d.,]\d)\s*%/gu;
-const RATE_AFTER_WORD = /(?<![\p{L}])(?:vat|gtgt|thuế\s+suất|thuế|thue\s+suat|thue)\s*(?::\s*)?(\d{1,3}(?:[.,]\d+)?)(?![\d.,]\d)(?!\d)(?!\s*(?:tr(?:iệu|ieu)?|tỷ|ty|k|nghìn|nghin|ngàn|ngan|đồng|dong|vnđ|vnd|đ|₫)(?![\p{L}]))/gu;
+const RATE_AFTER_WORD = /(?<![\p{L}])(?:vat|gtgt|thuế\s+suất|thuế|thue\s+suat|thue)\s*(?:[:=]\s*)?(\d{1,3}(?:[.,]\d+)?)(?![\d.,]\d)(?!\d)(?!\s*(?:tr(?:iệu|ieu)?|tỷ|ty|k|nghìn|nghin|ngàn|ngan|đồng|dong|vnđ|vnd|đ|₫)(?![\p{L}]))/giu;
 function ratesInBody(rawBody: string): Set<string> {
   const body = stripTaxAmountNotes(rawBody);
   const rates = new Set<string>();
@@ -283,7 +283,8 @@ const COLON_PREAMBLE = /^([^:]+):([\s\S]+)$/u;
 const INVOICE_HEADER_SCOPE = /(?:^|[^\p{L}])(?:hóa\s+đơn|hoa\s+don|invoice|toàn\s+bộ|toan\s+bo|áp\s+dụng\s+chung|ap\s+dung\s+chung)(?![\p{L}])/iu;
 const INVOICE_VAT_SCOPE = /(?:^|[^\p{L}])(?:(?:cho|của|cua|trên|tren|on|tính\s+trên|tinh\s+tren|áp\s+dụng(?:\s+chung)?(?:\s+cho)?|ap\s+dung(?:\s+chung)?(?:\s+cho)?)\s+)?(?:toàn\s+bộ(?:\s+(?:hóa\s+đơn|hoa\s+don|đơn(?:\s+hàng)?|don(?:\s+hang)?|mặt\s+hàng|mat\s+hang|hàng|hang))?|toan\s+bo(?:\s+(?:hoa\s+don|don(?:\s+hang)?|mat\s+hang|hang))?|cả\s+(?:hóa\s+đơn|hoa\s+don|đơn(?:\s+hàng)?|don(?:\s+hang)?)|ca\s+(?:hoa\s+don|don(?:\s+hang)?)|tất\s+cả(?:\s+(?:mặt\s+hàng|hàng|hóa\s+đơn))?|tat\s+ca(?:\s+(?:mat\s+hang|hang|hoa\s+don))?|toàn\s+đơn|toan\s+don|cả\s+đơn|ca\s+don|hóa\s+đơn|hoa\s+don|áp\s+dụng\s+chung|ap\s+dung\s+chung|for\s+(?:the\s+)?(?:whole\s+invoice|all(?:\s+items)?)|all\s+items|entire\s+invoice)(?![\p{L}])/giu;
 const BATCH_DESCRIPTOR = String.raw`(?:đầu(?:\s+tiên)?|dau(?:\s+tien)?|sau|trước|truoc|cuối|cuoi|tiếp(?:\s+theo)?|tiep(?:\s+theo)?|kế(?:\s+tiếp)?|ke(?:\s+tiep)?|này|nay|kia|mới|moi|cũ|cu|hàng|hang|thứ\s+[\p{L}\p{N}]+|thu\s+[\p{L}\p{N}]+|số\s*[\p{L}\p{N}]+|so\s*[\p{L}\p{N}]+|\d+|[a-z])`;
-const BATCH_LABEL_PREFIX_CORE = String.raw`(?:(?:lô|lo|đợt|dot|chuyến|chuyen|phiên|phien|kỳ|ky|lần|lan|phần|phan|mục|muc|batch|lot)(?:\s+${BATCH_DESCRIPTOR})+|(?:ghi\s+chú|ghi\s+chu|lưu\s+ý|luu\s+y|note|remarks?|hàng\s+bổ\s+sung|hang\s+bo\s+sung|bổ\s+sung|bo\s+sung))`;
+const SALES_CHANNEL_NOTE = String.raw`(?:(?:bán|ban|mua|xuất|xuat|giao|lấy|lay|đặt|dat)\s+(?:lẻ|le|sỉ|si|buôn|buon|gấp|gap|nhanh)|giá\s+(?:lẻ|le|sỉ|si|buôn|buon)|gia\s+(?:le|si|buon))`;
+const BATCH_LABEL_PREFIX_CORE = String.raw`(?:(?:lô|lo|đợt|dot|chuyến|chuyen|phiên|phien|kỳ|ky|lần|lan|phần|phan|mục|muc|batch|lot)(?:\s+${BATCH_DESCRIPTOR})+|${SALES_CHANNEL_NOTE}|(?:ghi\s+chú|ghi\s+chu|lưu\s+ý|luu\s+y|note|remarks?|hàng\s+bổ\s+sung|hang\s+bo\s+sung|bổ\s+sung|bo\s+sung))`;
 const LEADING_BATCH_LABEL = new RegExp(
   String.raw`^\s*${BATCH_LABEL_PREFIX_CORE}\s*(?::\s*|[-–]\s*(?=\d)|(?=\d))`,
   'iu',
@@ -292,8 +293,9 @@ const LEADING_BATCH_BEFORE_NUM = new RegExp(
   String.raw`^\s*${BATCH_LABEL_PREFIX_CORE}\s*(?::\s*|[-–]\s*|$)`,
   'iu',
 );
-const LEADING_TRANSACTION_VERB = /^\s*(?:(?:khách(?:\s+(?:hàng|quen|lẻ|mua))?|khach(?:\s+(?:hang|quen|le|mua))?|người\s+mua|nguoi\s+mua)\s+(?:đặt|dat|mua|lấy|lay|chốt|chot|gửi|gui|order)(?:\s+(?:thêm|them|lại|lai))?|(?:mua|bán|ban|xuất|xuat|đặt|dat|lấy|lay|chốt|chot|gửi|gui|giao|thêm|them|kèm|kem|cộng|cong|nhập|nhap|order|buy|sell|sold|bought|purchased|invoiced|plus|add)(?![\p{L}])(?:\s+(?:đầu|dau|sau|trước|truoc|tiếp|tiep|lại|lai|thêm|them|kèm|kem))*)\s*(?=\d)/iu;
-const TRANSACTION_VERB_SPLIT = /(?:^|\s)(?:mua|bán|ban|xuất|xuat|đặt|dat|lấy|lay|chốt|chot|gửi|gui|giao|thêm|them|kèm|kem|cộng|cong|nhập|nhap|order|buy|sell|sold|bought|purchased|invoiced|plus|add)(?![\p{L}])\s*/giu;
+const INLINE_SALES_CHANNEL_NOTE = new RegExp(String.raw`(?<![\p{L}])${SALES_CHANNEL_NOTE}(?![\p{L}])\s*(?:[:=]\s*)?`, 'giu');
+const LEADING_TRANSACTION_VERB = /^\s*(?:(?:khách(?:\s+(?:hàng|quen|lẻ|mua))?|khach(?:\s+(?:hang|quen|le|mua))?|người\s+mua|nguoi\s+mua)\s+(?:đặt|dat|mua|lấy|lay|chốt|chot|gửi|gui|order)(?:\s+(?:lẻ|le|sỉ|si|thêm|them|lại|lai))*|(?:mua|bán|ban|xuất|xuat|đặt|dat|lấy|lay|chốt|chot|gửi|gui|giao|thêm|them|kèm|kem|cộng|cong|nhập|nhap|order|buy|sell|sold|bought|purchased|invoiced|plus|add)(?![\p{L}])(?:\s+(?:lẻ|le|sỉ|si|buôn|buon|gấp|gap|nhanh|đầu|dau|sau|trước|truoc|tiếp|tiep|lại|lai|thêm|them|kèm|kem))*)\s*(?=\d)/iu;
+const TRANSACTION_VERB_SPLIT = /(?:^|\s)(?:mua|bán|ban|xuất|xuat|đặt|dat|lấy|lay|chốt|chot|gửi|gui|giao|thêm|them|kèm|kem|cộng|cong|nhập|nhap|order|buy|sell|sold|bought|purchased|invoiced|plus|add)(?![\p{L}])(?:\s+(?:lẻ|le|sỉ|si|buôn|buon|gấp|gap|nhanh))?\s*/giu;
 const RECIPIENT_BEFORE_NUMBER = /^\s*(?:(?:(?:cho|tới|toi|đến|den)(?![\p{L}])\s+)?(?:anh|chị|chi|cô|co|chú|chu|bác|bac|ông|ong|bà|ba|em|khách\s+(?:hàng|lẻ|mua)|khach\s+(?:hang|le|mua)|người\s+mua|nguoi\s+mua|công\s+ty|cong\s+ty|cty)(?![\p{L}])(?:\s+[\p{L}]+){0,3}|(?:cho|tới|toi|đến|den|gửi|gui)(?![\p{L}])(?:\s+[\p{L}]+){1,3})\s*$/iu;
 const SENTENCE_DELIM = /\r?\n|;|\.(?=\s|$)/gu;
 const SUB_SPLIT = /(?<!\d),|,(?!\d)|\s+(?:và|va|and|\+)\s+|(?<=[\p{L}\d%])\s*\+\s*(?=(?:\d|vat|gtgt|thuế|thue))|\s*[&|]\s*|\s+\/\s+/giu;
@@ -868,9 +870,13 @@ function extractExplicitUnits(plainText: string): Set<string> {
 }
 
 function stripLeadingBatchForCore(text: string, keepLeadingNumbers: boolean): string {
-  const stripped = text.replace(LEADING_BATCH_LABEL, '');
-  if (stripped === text) return text;
-  return descriptionTokens(collapseGroupedSpaces(readPlain(stripped)), keepLeadingNumbers).hasProduct ? stripped : text;
+  const withoutLead = text.replace(LEADING_BATCH_LABEL, '');
+  const withoutSales = withoutLead.replace(INLINE_SALES_CHANNEL_NOTE, ' ');
+  const candidate = descriptionTokens(collapseGroupedSpaces(readPlain(withoutSales)), keepLeadingNumbers).hasProduct
+    ? withoutSales
+    : withoutLead;
+  if (candidate === text) return text;
+  return descriptionTokens(collapseGroupedSpaces(readPlain(candidate)), keepLeadingNumbers).hasProduct ? candidate : text;
 }
 
 function coreProductTokens(basisText: string, tokens: readonly FigureToken[] = [], keepLeadingNumbers = false): Set<string> {
@@ -884,6 +890,20 @@ function coreProductTokens(basisText: string, tokens: readonly FigureToken[] = [
     if (nonAttrProductGroup(descriptionTokens(collapseGroupedSpaces(readPlain(beforePriceClean)), keepLeadingNumbers).exact, keepLeadingNumbers).exact.size > 0) {
       effectiveText = basisText.slice(0, priceTok.end);
     }
+  }
+  const qtyTok = tokens.find((t) => (t.role === 'qty' || t.role === 'unknown') && isUsableToken(t) && !t.embeddedInProduct && !t.packagingSpec);
+  const afterQtyEnd = priceTok !== undefined && qtyTok !== undefined && priceTok.start > qtyTok.end ? priceTok.start : effectiveText.length;
+  if (
+    !keepLeadingNumbers &&
+    qtyTok !== undefined &&
+    qtyTok.start > 0 &&
+    qtyTok.end <= afterQtyEnd &&
+    /^\s*(?:mua|bán|ban|xuất|xuat|đặt|dat|lấy|lay|chốt|chot|gửi|gui|giao|thêm|them|kèm|kem|cộng|cong|nhập|nhap|lô|lo|đợt|dot|chuyến|chuyen|lần|lan|khách|khach|người\s+mua|nguoi\s+mua|bổ\s+sung|bo\s+sung|order|buy|sell|sold|bought|purchased|invoiced|plus|add)(?![\p{L}])/iu.test(
+      effectiveText.slice(0, qtyTok.start),
+    ) &&
+    nonAttrProductGroup(descriptionTokens(collapseGroupedSpaces(readPlain(effectiveText.slice(qtyTok.end, afterQtyEnd))), false).exact, false).exact.size > 0
+  ) {
+    effectiveText = effectiveText.slice(qtyTok.start);
   }
   const withoutNotes = stripLeadingBatchForCore(effectiveText, keepLeadingNumbers)
     .replace(/\([^()]*\)/gu, ' ')
@@ -1356,9 +1376,27 @@ function buildLockedItemClause(input: {
   return clause;
 }
 
+const DECIMAL = /^\d{1,12}(\.\d{1,6})?$/;
 const PREVIOUS_INVOICE_HEADER = /^\s*hóa\s+đơn\s+trước(?:\s+gửi\s+cùng\s+khách)?\s*:\s*$/iu;
 const STRUCTURED_INVOICE_ROW =
   /^\s*-\s+(.+?)(?:,\s*(?:đơn\s+vị|don\s+vi)\s+([^,\r\n]+?))?,\s*(?:số\s+lượng|so\s+luong)\s+([^,\r\n]+?),\s*(?:đơn\s+giá|don\s+gia)\s+([^,\r\n]+?)(?:,\s*(?:vat|gtgt)\s+([^,\r\n]+?))?\s*$/iu;
+
+function makeStructuredDecimalToken(value: string, role: 'qty' | 'price'): FigureToken {
+  return {
+    value: money(value).toFixed(),
+    role,
+    embeddedInProduct: false,
+    packagingSpec: false,
+    labeledPrice: role === 'price',
+    dealValueOnly: false,
+    afterUnit: false,
+    countUnit: undefined,
+    priceUnit: undefined,
+    wordAfter: undefined,
+    start: 0,
+    end: 0,
+  };
+}
 
 function buildStructuredInvoiceRowClause(rawLine: string): SourceClause | null {
   const m = STRUCTURED_INVOICE_ROW.exec(rawLine);
@@ -1389,7 +1427,10 @@ function buildStructuredInvoiceRowClause(rawLine: string): SourceClause | null {
     UNSUPPORTED_CELL_CURRENCY.test(rawQty) ||
     UNSUPPORTED_CELL_CURRENCY.test(rawPrice);
   if (!hasForeignCurrency) {
-    if (!/^\s*[-−]/u.test(rawQty)) {
+    // Canonical numbers produced by issuedLines()/invoiceSourceText() ("1.125", "50000") always use dot as a decimal point, never as thousands grouping.
+    if (DECIMAL.test(rawQty)) {
+      tokens.push(makeStructuredDecimalToken(rawQty, 'qty'));
+    } else if (!/^\s*[-−]/u.test(rawQty)) {
       const qtyCellMatch = PLAIN_QTY_CELL.exec(rawQty);
       if (qtyCellMatch) {
         const qToks = extractFigureTokens(collapseGroupedSpaces(`số lượng ${rawQty}`));
@@ -1402,7 +1443,9 @@ function buildStructuredInvoiceRowClause(rawLine: string): SourceClause | null {
         }
       }
     }
-    if (!/^\s*[-−]/u.test(rawPrice)) {
+    if (DECIMAL.test(rawPrice)) {
+      tokens.push(makeStructuredDecimalToken(rawPrice, 'price'));
+    } else if (!/^\s*[-−]/u.test(rawPrice)) {
       const pToks = extractFigureTokens(collapseGroupedSpaces(`đơn giá ${rawPrice}`));
       if (pToks.length === 1 && pToks[0]!.role === 'price' && !pToks[0]!.embeddedInProduct && !pToks[0]!.packagingSpec) {
         const tok = pToks[0]!;
@@ -1680,7 +1723,7 @@ function parseSourceClauses(source: string): { clauses: SourceClause[]; sharedRa
             leadingUnsupportedVat = true;
           } else if (pieces.some((p) => p.isInvoiceScopeVat) || (isLastBlock && segIdx === rawSegments.length - 1 && !anyLocalVatSeen && !indentedAfterNewline)) {
             trailingUnsupportedVat = true;
-          } else if (prevClause && prevClause.localRates.size === 0) {
+          } else if (prevClause) {
             prevClause.hasAmbiguousLocalVat = true;
             anyLocalVatSeen = true;
           }
@@ -2077,7 +2120,6 @@ function maxBipartiteMatch(leftCount: number, rightCount: number, edges: readonl
   return matched;
 }
 
-const DECIMAL = /^\d{1,12}(\.\d{1,6})?$/;
 // A decimal as it compares: no trailing zeros ("120000.00" is "120000"), or null when it is not one the draft takes.
 function plainDecimal(value: string): string | null {
   const text = value.trim();
