@@ -96,6 +96,16 @@ and it carries JOY's authority, so a change to it is a change to agent instructi
   `tools/ci/migration-order.mjs origin/main`, `tools/ci/migration-lint.mjs`)
   and pushes to GitHub Actions CI for typecheck and tests; `ludy-pg17-shared`
   is reserved strictly for `pnpm db:types`.
+- Owner decision 2026-11-27 (Antigravity coordinator chat): "PR --> dev -->
+  promote main". Switch integration from merging task PRs directly into
+  `main` to `PR -> dev -> promote main`: task PRs merge into `dev` via squash
+  merge and cite tracking issues with `Refs #<n>` (plus `ready-for-prod` once
+  runtime behavior passes verification); periodic promotion PRs merge `dev`
+  into `main` via merge commit (preserving commit ancestry) with
+  `Closes #<n>`. Pushes to `main` continue auto-deploying the `apps/web`
+  landing page to Vercel Production, while the `pilot` backend and
+  `app.ludy.vn` (`release-branch.yml`) remain gated on owner-approved `v*`
+  tags.
 
 ## Board
 
@@ -230,18 +240,19 @@ The DOS organization ids are the same in every DOS repository.
 
 ## Branches, environments and gates
 
-- integration_branch: main
+- integration_branch: dev
 - integration_merge: squash
 - default_branch: main
 - draft_pr_first: no
-- production_branch: none
-- production_effect: two things ship from `main`.
+- production_branch: main
+- production_merge: merge commit (merge `dev` into `main` without squashing so common commit history stays intact)
+- production_effect: task PRs land on `dev` first, then `dev -> main` promotion PRs update `main`; two things ship from `main`.
   - Every merge into `main` deploys the landing page (`apps/web`) to
     Vercel Production on ludy.vn and ludy.so within minutes.
-  - The app reaches the pilot instance only through `deploy.yml` on a `v*`
-    tag of `main`. Pushing that tag is a Production step that JOY approves
-    in the coordinator's chat (AGENTS.md, "Production, secret and
-    credential steps").
+  - The app reaches the pilot instance (and `app.ludy.vn` via
+    `release-branch.yml`) only through a `v*` tag of `main`. Pushing that
+    tag is a Production step that JOY approves in the coordinator's chat
+    (AGENTS.md, "Production, secret and credential steps").
   - Who pushes the tag (learned 2026-11-11): a cloud session cannot. Its
     git proxy allows writes only to its own branch and pull requests (the
     GitHub API answers "Write access to this GitHub API path is not
@@ -259,8 +270,16 @@ The DOS organization ids are the same in every DOS repository.
     that deploy fails at pull and changes nothing; rerun it after linking.
   - Release history: `CHANGELOG.md` at the repository root, one section per
     `v*` tag, written by the coordinator when the tag is cut.
-- test_environment: none yet (a beta instance from a `dev` branch is
-  planned in plan §3.5).
+- promotion_notes: periodic promotion PRs merge `dev` into `main` via merge
+  commit (never squash) and close promoted issues (`Closes #<n>`). Runtime
+  issues must pass verification and carry `ready-for-prod` before promotion;
+  direct `main` PRs are limited to urgent hotfixes or workflow and docs
+  bootstrapping.
+- test_environment: beta (push to `dev` runs `deploy.yml` release
+  `dev-<first 12 characters of the commit>`; host SSH deploy skips cleanly
+  when `beta` environment secrets are unset).
+- ready_for_prod_label: ready-for-prod
+- pr_issue_keyword: Refs (task PRs into `dev`; promotion PRs into `main` use `Closes #<n>`)
 
 ## Checks and review
 
@@ -271,13 +290,17 @@ The DOS organization ids are the same in every DOS repository.
   is not a failure.
 - claim_gate: none
 - external_review_app: none
-- local_reviews: `codex review -c model_reasoning_effort=<subagent_effort> --base origin/main`
-  in the background, then a fresh-context subagent given the diff and the
-  issue; docs-only PRs skip both and need `pnpm docs:check`. A protected-path
-  PR also gets an independent security review before merge, run by its line's
-  PO with a fresh-context flagship-model reviewer that did not write the
-  change, and a PR that changes the shared core also gets the Platform PO's
-  review of those files ("Shared-core review").
+- local_reviews: `codex review -c model_reasoning_effort=<subagent_effort> --base origin/dev`
+  in the background (or `--base origin/main` for `dev -> main` promotion
+  PRs), then a fresh-context subagent given the diff and the issue; docs-only
+  PRs skip both and need `pnpm docs:check`. A protected-path PR also gets an
+  independent security review before merge, run by its line's PO with a
+  fresh-context flagship-model reviewer that did not write the change, and a
+  PR that changes the shared core also gets the Platform PO's review of
+  those files ("Shared-core review").
+- promotion_reviews: `local_reviews` against `origin/main` plus independent
+  flagship security review for any protected paths not cleared at that head
+  and confirmation that promoted runtime issues carry `ready-for-prod`.
 - shared_core_review: `line:platform`: the paths in "Shared-core review"
   below.
 - agent_model: claude-sonnet-5-5 (Claude Code sub-sessions; Antigravity:
@@ -356,8 +379,8 @@ How to ask and how long to wait (owner decision 2026-11-16):
   request wakes it.
 - A review stays valid for later heads while
   `git diff <reviewed head>..<head> -- <the shared-core files>` is empty:
-  a merge of `main`, a migration rename or a module-only fix needs no new
-  request.
+  a merge of `dev` (or `main` on a promotion PR), a migration rename or a
+  module-only fix needs no new request.
 - If the Platform PO has not answered within 4 hours, the PR's PO runs an
   independent, fresh-context flagship-model reviewer on the shared-core files
   only, posts it as `## Shared-core review (stand-in)`, and may merge. The
