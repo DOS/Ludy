@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // What Ludy Desktop is pointed at (ADR-0055 slice 2, issue #4515). Nothing is baked in: no default server, no secret.
 //   - LUDY_URL (or `ludyUrl` in config.json in the user data folder): the Ludy deployment to sign in to and to open.
-//   - LUDY_DESKTOP_UPDATE_URL (or `updateUrl`): the folder that holds the Squirrel.Windows feed (RELEASES and the nupkg).
+//   - LUDY_DESKTOP_UPDATE_URL (or `updateUrl`): the folder that holds the Squirrel.Windows feed (RELEASES, release-manifest.json and the nupkg).
+//   - LUDY_DESKTOP_UPDATE_ORIGIN (or `updateOrigin`): optional origin pin that the update feed URL must match.
+//   - LUDY_DESKTOP_UPDATE_PUBLISHER_SHA1 (or `updatePublisherThumbprint`): optional 40-hex signing certificate thumbprint pin.
 // An environment variable wins over the file. A value that is not a safe address is reported and ignored, never used: the shell
 // sends the member's token only to the configured Ludy origin, and loads no remote content at all.
+import { parseFeedOrigin, resolveFeedUrl, type FeedUrlOptions } from './update-feed.ts';
 
 export interface DesktopConfig {
   // The origin of the Ludy deployment, or null when none (valid) is configured.
@@ -14,9 +17,16 @@ export interface DesktopConfig {
   problems: string[];
 }
 
+export interface UpdatePolicyConfig extends DesktopConfig {
+  allowedUpdateOrigin: string | null;
+  expectedPublisherThumbprint: string | null;
+}
+
 export type UrlCheck = { ok: true; url: string } | { ok: false; reason: string };
 
-// localhost, 127.0.0.1, [::1] and *.localhost: the development hosts where plain http is accepted.
+const SHA1_THUMBPRINT = /^[0-9a-fA-F]{40}$/;
+
+// localhost, 127.0.0.1, [::1] and *.localhost: the development hosts where plain http is accepted for Ludy URL.
 export function isLoopbackHost(hostname: string): boolean {
   const host = hostname.toLowerCase();
   return host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host.endsWith('.localhost');
@@ -37,7 +47,7 @@ function parseHttpUrl(value: string): URL | string {
   return url;
 }
 
-// The Ludy deployment: an origin, nothing after it.
+// The Ludy deployment: an origin, nothing after it (allows internal HTTPS origins for self-hosted deployments).
 export function parseLudyUrl(value: string): UrlCheck {
   const url = parseHttpUrl(value);
   if (typeof url === 'string') return { ok: false, reason: url };
@@ -45,11 +55,9 @@ export function parseLudyUrl(value: string): UrlCheck {
   return { ok: true, url: url.origin };
 }
 
-// The update feed folder: the Squirrel.Windows client asks `<url>/RELEASES`, so a path is fine and a trailing slash is not kept.
-export function parseUpdateUrl(value: string): UrlCheck {
-  const url = parseHttpUrl(value);
-  if (typeof url === 'string') return { ok: false, reason: url };
-  return { ok: true, url: `${url.origin}${url.pathname.replace(/\/+$/, '')}` };
+// The update feed folder: Squirrel.Windows asks `<url>/RELEASES` and `release-manifest.json`, with SSRF and origin-pinning checks.
+export function parseUpdateUrl(value: string, options: FeedUrlOptions = {}): UrlCheck {
+  return resolveFeedUrl(value, options);
 }
 
 export interface ConfigSources {
@@ -58,15 +66,52 @@ export interface ConfigSources {
   configFile: string | null;
 }
 
-function readFileConfig(text: string | null, problems: string[]): { ludyUrl?: string; updateUrl?: string } {
+interface RawFileConfig {
+  ludyUrl?: string;
+  updateUrl?: string;
+  updateOrigin?: string;
+  updatePublisherThumbprint?: string;
+  invalidLudyType?: boolean;
+  invalidUpdateType?: boolean;
+  invalidOriginType?: boolean;
+  invalidThumbprintType?: boolean;
+}
+
+function readFileConfig(text: string | null, problems: string[]): RawFileConfig {
   if (text === null) return {};
   try {
     const parsed: unknown = JSON.parse(text);
     if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('not an object');
     const record = parsed as Record<string, unknown>;
-    const out: { ludyUrl?: string; updateUrl?: string } = {};
-    if (typeof record.ludyUrl === 'string') out.ludyUrl = record.ludyUrl;
-    if (typeof record.updateUrl === 'string') out.updateUrl = record.updateUrl;
+    const out: RawFileConfig = {};
+    if (Object.hasOwn(record, 'ludyUrl') && record.ludyUrl !== undefined) {
+      if (typeof record.ludyUrl === 'string') out.ludyUrl = record.ludyUrl;
+      else {
+        out.invalidLudyType = true;
+        problems.push('ludyUrl trong config.json phải là chuỗi');
+      }
+    }
+    if (Object.hasOwn(record, 'updateUrl') && record.updateUrl !== undefined) {
+      if (typeof record.updateUrl === 'string') out.updateUrl = record.updateUrl;
+      else {
+        out.invalidUpdateType = true;
+        problems.push('updateUrl trong config.json phải là chuỗi');
+      }
+    }
+    if (Object.hasOwn(record, 'updateOrigin') && record.updateOrigin !== undefined) {
+      if (typeof record.updateOrigin === 'string') out.updateOrigin = record.updateOrigin;
+      else {
+        out.invalidOriginType = true;
+        problems.push('updateOrigin trong config.json phải là chuỗi');
+      }
+    }
+    if (Object.hasOwn(record, 'updatePublisherThumbprint') && record.updatePublisherThumbprint !== undefined) {
+      if (typeof record.updatePublisherThumbprint === 'string') out.updatePublisherThumbprint = record.updatePublisherThumbprint;
+      else {
+        out.invalidThumbprintType = true;
+        problems.push('updatePublisherThumbprint trong config.json phải là chuỗi');
+      }
+    }
     return out;
   } catch {
     problems.push('config.json không đọc được (phải là JSON dạng {"ludyUrl": "..."})');
@@ -74,22 +119,63 @@ function readFileConfig(text: string | null, problems: string[]): { ludyUrl?: st
   }
 }
 
-export function loadConfig(sources: ConfigSources): DesktopConfig {
+export function loadUpdateConfig(sources: ConfigSources): UpdatePolicyConfig {
   const problems: string[] = [];
   const file = readFileConfig(sources.configFile, problems);
-  const ludyRaw = sources.env.LUDY_URL?.trim() || file.ludyUrl;
-  const updateRaw = sources.env.LUDY_DESKTOP_UPDATE_URL?.trim() || file.updateUrl;
+  const envLudy = sources.env.LUDY_URL?.trim();
+  const envUpdate = sources.env.LUDY_DESKTOP_UPDATE_URL?.trim();
+  const envOrigin = sources.env.LUDY_DESKTOP_UPDATE_ORIGIN?.trim();
+  const envThumbprint = sources.env.LUDY_DESKTOP_UPDATE_PUBLISHER_SHA1?.trim();
+
+  const ludyRaw = envLudy || file.ludyUrl;
+  const updateRaw = envUpdate || file.updateUrl;
+  const originRaw = envOrigin || file.updateOrigin?.trim() || '';
+  const thumbprintRaw = envThumbprint || file.updatePublisherThumbprint?.trim() || '';
+
   let ludyUrl: string | null = null;
-  let updateUrl: string | null = null;
   if (ludyRaw) {
     const checked = parseLudyUrl(ludyRaw);
     if (checked.ok) ludyUrl = checked.url;
     else problems.push(`Địa chỉ Ludy ${checked.reason}`);
   }
-  if (updateRaw) {
-    const checked = parseUpdateUrl(updateRaw);
-    if (checked.ok) updateUrl = checked.url;
-    else problems.push(`Địa chỉ cập nhật ${checked.reason}`);
+
+  let allowedUpdateOrigin: string | null = null;
+  let originInvalid = Boolean(!envOrigin && file.invalidOriginType);
+  if (originRaw) {
+    const checkedOrigin = parseFeedOrigin(originRaw);
+    if (checkedOrigin.ok) allowedUpdateOrigin = checkedOrigin.url;
+    else {
+      originInvalid = true;
+      problems.push(`Địa chỉ gốc cập nhật được ghim ${checkedOrigin.reason}`);
+    }
   }
-  return { ludyUrl, updateUrl, problems };
+
+  let expectedPublisherThumbprint: string | null = null;
+  let thumbprintInvalid = Boolean(!envThumbprint && file.invalidThumbprintType);
+  if (thumbprintRaw) {
+    if (SHA1_THUMBPRINT.test(thumbprintRaw)) expectedPublisherThumbprint = thumbprintRaw.toLowerCase();
+    else {
+      thumbprintInvalid = true;
+      problems.push('Mã chứng chỉ ký cập nhật (SHA-1) phải gồm đúng 40 ký tự hex');
+    }
+  }
+
+  let updateUrl: string | null = null;
+  if (updateRaw && !(file.invalidUpdateType && !envUpdate)) {
+    if (originInvalid || thumbprintInvalid) {
+      // Fail closed when pinning policy is invalid so an unverified feed cannot run.
+      updateUrl = null;
+    } else {
+      const checked = parseUpdateUrl(updateRaw, { ludyUrl, allowedOrigin: allowedUpdateOrigin });
+      if (checked.ok) updateUrl = checked.url;
+      else problems.push(`Địa chỉ cập nhật ${checked.reason}`);
+    }
+  }
+
+  return { ludyUrl, updateUrl, allowedUpdateOrigin, expectedPublisherThumbprint, problems };
+}
+
+export function loadConfig(sources: ConfigSources): DesktopConfig {
+  const full = loadUpdateConfig(sources);
+  return { ludyUrl: full.ludyUrl, updateUrl: full.updateUrl, problems: full.problems };
 }

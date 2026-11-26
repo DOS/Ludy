@@ -10,7 +10,7 @@ Install and the unsigned-build warning: [docs/desktop/install.md](../../docs/des
 - **Sign-in as the member**, the extension's flow: PKCE (S256) in the system browser, a one-time code back to `http://127.0.0.1:<port>/ludy-desktop/callback` (RFC 8252), traded at `POST /api/extension/token` with `client: "desktop"` for a `crx_` token. The token is one org, one member, and holds **no scope** in this slice, so it reaches `/api/extension/me` alone.
 - **Token storage:** only as a blob encrypted by Electron `safeStorage` (DPAPI on Windows) in the user data folder. If the OS cannot encrypt, nothing is written and the sign-in lasts until the app quits. The stored session is bound to the configured Ludy address.
 - **Revocation:** the token is listed under "thiết bị đã kết nối" next to the extension's devices. The shell checks `GET /api/extension/me` at start and every 15 minutes; a 401 signs it out and deletes the stored token. "Đăng xuất" in the tray removes the token from this computer only (the device stays listed until it is revoked there).
-- **Auto-update:** Electron's built-in `autoUpdater` (Squirrel.Windows) against the deployment's own feed, `LUDY_DESKTOP_UPDATE_URL`. Off without that variable. Checks at start and every 6 hours; a downloaded update waits for the member ("Khởi động lại để cập nhật"); a failed update leaves the running version untouched.
+- **Auto-update:** Electron's built-in `autoUpdater` (Squirrel.Windows) against the deployment's own feed (`LUDY_DESKTOP_UPDATE_URL`), verified before Squirrel runs by `src/update-feed.ts` (HTTPS only outside literal loopback, SSRF IP/host blocks, origin pinning, `RELEASES` and `release-manifest.json` consistency and signature metadata check, fail closed). Checks at start and every 6 hours; a downloaded update waits for the member ("Khởi động lại để cập nhật"); a failed update leaves the running version untouched.
 - **Capture module slot:** `CaptureModule { start(source, meetingKey), pieces, stop() }`, with a stub that refuses (`CAPTURE_NOT_AVAILABLE`).
 
 ## Configuration
@@ -18,7 +18,9 @@ Install and the unsigned-build warning: [docs/desktop/install.md](../../docs/des
 | Setting | Environment variable | `config.json` key (in the user data folder) |
 |---|---|---|
 | The Ludy deployment (an https origin; http only for localhost, 127.0.0.1, [::1]) | `LUDY_URL` | `ludyUrl` |
-| The update feed folder (https; http only for loopback test feeds) | `LUDY_DESKTOP_UPDATE_URL` | `updateUrl` |
+| The update feed folder (https, or relative path on `LUDY_URL`; http only for literal loopback test feeds) | `LUDY_DESKTOP_UPDATE_URL` | `updateUrl` |
+| Optional pinned origin for the update feed | `LUDY_DESKTOP_UPDATE_ORIGIN` | `updateOrigin` |
+| Optional 40-hex SHA-1 signing certificate thumbprint pin | `LUDY_DESKTOP_UPDATE_PUBLISHER_SHA1` | `updatePublisherThumbprint` |
 | A throwaway profile (CI, tests) | `LUDY_DESKTOP_USER_DATA` | none |
 
 There is no default address and no secret in the repository.

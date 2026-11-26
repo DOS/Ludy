@@ -1,11 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { describe, expect, it } from 'vitest';
+import { createHash } from 'node:crypto';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
+import { RELEASE_MANIFEST_SCRIPT_FILENAME } from '../src/authenticode.ts';
 import type { DesktopConfig } from '../src/config.ts';
 import type { FetchLike } from '../src/exchange.ts';
 import type { LoopbackListener } from '../src/loopback.ts';
 import { createShell, SESSION_CHECK_INTERVAL_MS, type Shell } from '../src/shell.ts';
+import { describeTray } from '../src/tray-model.ts';
 import { createSessionStore, type FileIO, type SecretBox } from '../src/token-store.ts';
-import { createUpdater } from '../src/updater.ts';
+import { createUpdater, type AutoUpdaterLike, type UpdaterEvents } from '../src/updater.ts';
+
+const tempDirs: string[] = [];
+afterEach(() => {
+  for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
 
 const LUDY = 'https://ludy.example.vn';
 const TOKEN = `crx_${'t'.repeat(43)}`;
@@ -61,6 +72,12 @@ function setup(options: { config?: Partial<DesktopConfig>; boxAvailable?: boolea
 }
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+const waitUntil = async (check: () => boolean): Promise<void> => {
+  for (let i = 0; i < 400 && !check(); i++) {
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  expect(check()).toBe(true);
+};
 
 describe('shell sign-in', () => {
   it('opens the system browser at the Ludy sign-in, exchanges the code and keeps the token in the key store only', async () => {
@@ -209,5 +226,170 @@ describe('shell token check', () => {
     await t.shell.signOut();
     expect(t.shell.model().auth.kind).toBe('signed-out');
     expect(t.files.size).toBe(0);
+  });
+});
+
+describe('shell update checks', () => {
+  it('propagates verified update availability to the tray model and triggers quitAndInstall only on restart', async () => {
+    const feed = 'https://updates.example.vn/desktop';
+    const payload = Buffer.from('verified-shell-update-nupkg');
+    const sha1 = createHash('sha1').update(payload).digest('hex');
+    const sha256 = createHash('sha256').update(payload).digest('hex');
+    const thumb = 'e'.repeat(40);
+    const stagingDir = mkdtempSync(join(tmpdir(), 'ludy-shell-upd-'));
+    tempDirs.push(stagingDir);
+    const calls: string[] = [];
+    let events: UpdaterEvents | null = null;
+    const autoUpdater: AutoUpdaterLike = {
+      setFeedURL: (url) => void calls.push(`feed:${url}`),
+      checkForUpdates: () => void calls.push('check'),
+      quitAndInstall: () => void calls.push('quitAndInstall'),
+      subscribe: (e) => {
+        events = e;
+      },
+    };
+    const updateFetch: FetchLike = async (url) => {
+      const s = String(url);
+      if (s.endsWith('/RELEASES')) {
+        return new Response(`${sha1.toUpperCase()} LudyDesktop-0.1.1-full.nupkg ${payload.length}\n`, { status: 200 });
+      }
+      if (s.endsWith('/release-manifest.json')) {
+        return new Response(
+          JSON.stringify({
+            schemaVersion: 1,
+            product: 'ludy-desktop',
+            platform: 'win32',
+            arch: 'x64',
+            version: '0.1.1',
+            signed: true,
+            signing: { algorithm: 'sha256', timestampServer: 'http://timestamp.digicert.com', publisherThumbprint: thumb },
+            installer: { file: 'LudyDesktop-Setup.exe', sha256: 'a'.repeat(64), size: 9000 },
+            packages: [{ file: 'LudyDesktop-0.1.1-full.nupkg', kind: 'full', version: '0.1.1', sha1, sha256, size: payload.length }],
+          }),
+          { status: 200 },
+        );
+      }
+      if (s.endsWith(`/${RELEASE_MANIFEST_SCRIPT_FILENAME}`)) {
+        return new Response('# signed manifest script', { status: 200 });
+      }
+      if (s.endsWith('/LudyDesktop-0.1.1-full.nupkg')) {
+        return new Response(payload, { status: 200 });
+      }
+      return new Response('Not found', { status: 404 });
+    };
+    const files = new Map<string, Uint8Array>();
+    const store = createSessionStore({
+      file: 's.bin',
+      box: { isAvailable: () => true, encrypt: (p) => Buffer.from(p), decrypt: (b) => Buffer.from(b).toString('utf8') },
+      io: { read: async (p) => files.get(p) ?? null, write: async (p, d) => void files.set(p, d), remove: async (p) => void files.delete(p) },
+    });
+    const updater = createUpdater({
+      updater: autoUpdater,
+      feedUrl: feed,
+      supported: true,
+      fetch: updateFetch,
+      allowedOrigin: 'https://updates.example.vn',
+      expectedPublisherThumbprint: thumb,
+      currentVersion: '0.1.0',
+      stagingDir,
+      verifySignedManifest: async () => undefined,
+      verifySignedPackage: async () => undefined,
+      setInterval: () => 0,
+      clearInterval: () => undefined,
+    });
+    const shell = createShell({
+      config: { ludyUrl: LUDY, updateUrl: feed, problems: [] },
+      store,
+      updater,
+      fetch: async () => json(200, {}),
+      openExternal: async () => undefined,
+      deviceName: 'Ludy Desktop, Windows, TEST',
+      setInterval: () => 0,
+      clearInterval: () => undefined,
+    });
+
+    await shell.start();
+    await waitUntil(() => calls.length === 2);
+    expect(calls[0]).toMatch(/^feed:http:\/\/127\.0\.0\.1:\d+$/);
+    expect(calls[1]).toBe('check');
+    events!.available();
+    expect(shell.model().update).toEqual({ kind: 'downloading' });
+    events!.downloaded('0.1.1');
+    expect(shell.model().update).toEqual({ kind: 'ready', version: '0.1.1' });
+    const tray = describeTray(shell.model());
+    expect(tray.icon).toBe('update');
+    expect(tray.items.some((item) => item.kind === 'action' && item.id === 'restart')).toBe(true);
+    expect(calls).not.toContain('quitAndInstall');
+    expect(shell.restartForUpdate()).toBe(true);
+    expect(calls.at(-1)).toBe('quitAndInstall');
+    shell.stop();
+  });
+
+  it('fails closed when shell.checkForUpdates sees an unsigned production manifest', async () => {
+    const feed = 'https://updates.example.vn/desktop';
+    const sha1 = '1'.repeat(40);
+    const thumb = 'e'.repeat(40);
+    const stagingDir = mkdtempSync(join(tmpdir(), 'ludy-shell-unsigned-'));
+    tempDirs.push(stagingDir);
+    const calls: string[] = [];
+    const autoUpdater: AutoUpdaterLike = {
+      setFeedURL: (url) => void calls.push(`feed:${url}`),
+      checkForUpdates: () => void calls.push('check'),
+      quitAndInstall: () => void calls.push('quitAndInstall'),
+      subscribe: () => undefined,
+    };
+    const unsignedFetch: FetchLike = async (url) => {
+      if (String(url).endsWith('/RELEASES')) {
+        return new Response(`${sha1} LudyDesktop-0.1.1-full.nupkg 5000\n`, { status: 200 });
+      }
+      return new Response(
+        JSON.stringify({
+          schemaVersion: 1,
+          product: 'ludy-desktop',
+          platform: 'win32',
+          arch: 'x64',
+          version: '0.1.1',
+          signed: false,
+          signing: { algorithm: 'sha256', timestampServer: null, publisherThumbprint: null },
+          installer: { file: 'LudyDesktop-Setup.exe', sha256: 'a'.repeat(64), size: 9000 },
+          packages: [{ file: 'LudyDesktop-0.1.1-full.nupkg', kind: 'full', version: '0.1.1', sha1, sha256: 'b'.repeat(64), size: 5000 }],
+        }),
+        { status: 200 },
+      );
+    };
+    const files = new Map<string, Uint8Array>();
+    const store = createSessionStore({
+      file: 's.bin',
+      box: { isAvailable: () => true, encrypt: (p) => Buffer.from(p), decrypt: (b) => Buffer.from(b).toString('utf8') },
+      io: { read: async (p) => files.get(p) ?? null, write: async (p, d) => void files.set(p, d), remove: async (p) => void files.delete(p) },
+    });
+    const updater = createUpdater({
+      updater: autoUpdater,
+      feedUrl: feed,
+      supported: true,
+      fetch: unsignedFetch,
+      expectedPublisherThumbprint: thumb,
+      stagingDir,
+      setInterval: () => 0,
+      clearInterval: () => undefined,
+    });
+    const shell = createShell({
+      config: { ludyUrl: LUDY, updateUrl: feed, problems: [] },
+      store,
+      updater,
+      fetch: async () => json(200, {}),
+      openExternal: async () => undefined,
+      deviceName: 'Ludy Desktop, Windows, TEST',
+      setInterval: () => 0,
+      clearInterval: () => undefined,
+    });
+
+    shell.checkForUpdates();
+    await waitUntil(() => shell.model().update.kind === 'failed');
+    expect(shell.model().update.kind).toBe('failed');
+    expect((shell.model().update as { kind: 'failed'; message: string }).message).toMatch(/signed/i);
+    expect(calls).toEqual([]);
+    expect(shell.restartForUpdate()).toBe(false);
+    shell.stop();
   });
 });

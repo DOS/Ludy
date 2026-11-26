@@ -7,10 +7,16 @@
 // <dir> holds what scripts/package.mjs made (LudyDesktop-Setup.exe, RELEASES, the full nupkg). Every step has a name; the first failure
 // stops the run and names its step. No certificate, no real server, no internet: the only network is 127.0.0.1. Logs under --out never
 // hold a token (the last step searches them for the tokens the fake issued).
-import { execFile, spawn } from 'node:child_process';
+import { execFile, execFileSync, spawn } from 'node:child_process';
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { startFakeLudy } from '../test/support/fake-ludy.ts';
+import {
+  RELEASE_MANIFEST_SCRIPT_FILENAME,
+  resolveSystemPowerShellPath,
+  verifyWindowsAuthenticodeFiles,
+} from '../src/authenticode.ts';
+import { extractSigntoolDigestAlgorithm, RELEASE_MANIFEST_FILENAME } from './signing.mjs';
 
 if (process.platform !== 'win32') {
   console.error('smoke-windows.mjs runs on Windows (in CI) only.');
@@ -26,6 +32,7 @@ function arg(name) {
 const installerA = arg('--installer-a');
 const installerB = arg('--installer-b');
 const out = arg('--out');
+const expectSigned = process.argv.includes('--expect-signed');
 const smokeDir = join(out, 'smoke-state');
 const statesDir = join(out, 'states');
 const logFile = join(out, 'steps.log');
@@ -61,6 +68,35 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
+async function resolveSmokeSigntoolPath() {
+  const configured = process.env.WINDOWS_SIGNTOOL_PATH?.trim();
+  if (configured) return configured;
+  try {
+    const { resolveBundledModernSigntool } = await import('./package.mjs');
+    const bundled = resolveBundledModernSigntool();
+    if (existsSync(bundled)) return bundled;
+  } catch {
+    // Standalone smoke runs without devDependencies installed fall back to signtool.exe in PATH.
+  }
+  return 'signtool.exe';
+}
+
+async function verifyAuthenticode(filePaths, expectedThumbprint = null) {
+  const verified = await verifyWindowsAuthenticodeFiles(filePaths, expectedThumbprint);
+  const peTargets = filePaths.filter((p) => !p.toLowerCase().endsWith('.ps1'));
+  if (peTargets.length > 0) {
+    const signtoolExe = await resolveSmokeSigntoolPath();
+    for (const target of peTargets) {
+      const signtoolOut = execFileSync(signtoolExe, ['verify', '/pa', '/v', target], {
+        encoding: 'utf8',
+        maxBuffer: 8 * 1024 * 1024,
+      });
+      extractSigntoolDigestAlgorithm(signtoolOut);
+    }
+  }
+  return verified;
+}
+
 function run(file, args, { timeoutMs = 120_000, env } = {}) {
   return new Promise((done, fail) => {
     execFile(file, args, { timeout: timeoutMs, windowsHide: true, env, maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => {
@@ -81,14 +117,27 @@ function appEnv(extra) {
 // The feed starts as A's own (nothing newer), so the app's check at start reports "no update"; the update steps swap it.
 let feedDir = installerA;
 const fake = await startFakeLudy({ feedDir: () => feedDir });
-const env = appEnv({ LUDY_URL: fake.url, LUDY_DESKTOP_UPDATE_URL: `${fake.url}/feed`, LUDY_DESKTOP_SMOKE_DIR: smokeDir });
+let pinnedThumbprint = null;
+if (expectSigned && existsSync(join(installerA, RELEASE_MANIFEST_FILENAME))) {
+  try {
+    pinnedThumbprint = JSON.parse(readFileSync(join(installerA, RELEASE_MANIFEST_FILENAME), 'utf8')).signing?.publisherThumbprint ?? null;
+  } catch {
+    pinnedThumbprint = null;
+  }
+}
+const env = appEnv({
+  LUDY_URL: fake.url,
+  LUDY_DESKTOP_UPDATE_URL: `${fake.url}/feed`,
+  LUDY_DESKTOP_SMOKE_DIR: smokeDir,
+  ...(pinnedThumbprint ? { LUDY_DESKTOP_UPDATE_PUBLISHER_SHA1: pinnedThumbprint } : {}),
+});
 log(`fake Ludy on ${fake.url}`);
 
 // ---- helpers over the installed app ----
 
 async function ludyProcesses() {
   const ps = `Get-CimInstance Win32_Process -Filter "Name='${EXE}'" | Select-Object ProcessId,ExecutablePath,CommandLine | ConvertTo-Json -Compress`;
-  const { stdout } = await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { timeoutMs: 60_000 });
+  const { stdout } = await run(resolveSystemPowerShellPath(), ['-NoProfile', '-NonInteractive', '-Command', ps], { timeoutMs: 60_000 });
   const text = stdout.trim();
   if (!text) return [];
   const parsed = JSON.parse(text);
@@ -149,7 +198,7 @@ function findShortcuts() {
 // The "Apps and features" entries Squirrel wrote for the user (HKCU Uninstall), by display name.
 async function uninstallEntries() {
   const ps = "Get-ChildItem 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall' -ErrorAction SilentlyContinue | Get-ItemProperty | Where-Object { $_.DisplayName -like '*Ludy*' } | ForEach-Object { $_.DisplayName }";
-  const { stdout } = await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { timeoutMs: 60_000 });
+  const { stdout } = await run(resolveSystemPowerShellPath(), ['-NoProfile', '-NonInteractive', '-Command', ps], { timeoutMs: 60_000 });
   return stdout.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
 }
 
@@ -208,13 +257,31 @@ let failed = false;
 try {
   await step('feed-and-installers-present', async () => {
     for (const dir of [installerA, installerB]) {
-      for (const name of ['LudyDesktop-Setup.exe', 'RELEASES']) assert(existsSync(join(dir, name)), `${dir} has no ${name}`);
+      const required = ['LudyDesktop-Setup.exe', 'RELEASES', RELEASE_MANIFEST_FILENAME];
+      if (expectSigned) required.push(RELEASE_MANIFEST_SCRIPT_FILENAME);
+      for (const name of required) {
+        assert(existsSync(join(dir, name)), `${dir} has no ${name}`);
+      }
       assert(readdirSync(dir).some((n) => n.endsWith('-full.nupkg')), `${dir} has no full nupkg`);
+      const manifest = JSON.parse(readFileSync(join(dir, RELEASE_MANIFEST_FILENAME), 'utf8'));
+      assert(manifest.signed === expectSigned, `${dir}/${RELEASE_MANIFEST_FILENAME} signed=${String(manifest.signed)}, expected ${String(expectSigned)}`);
+    }
+    if (expectSigned) {
+      assert(pinnedThumbprint && /^[0-9a-f]{40}$/i.test(pinnedThumbprint), 'signed smoke requires publisherThumbprint in installer A release-manifest.json');
+      await verifyAuthenticode(
+        [
+          join(installerA, 'LudyDesktop-Setup.exe'),
+          join(installerB, 'LudyDesktop-Setup.exe'),
+          join(installerA, RELEASE_MANIFEST_SCRIPT_FILENAME),
+          join(installerB, RELEASE_MANIFEST_SCRIPT_FILENAME),
+        ],
+        pinnedThumbprint,
+      );
     }
     versionA = /-(\d+\.\d+\.\d+)-full\.nupkg/.exec(readdirSync(installerA).find((n) => n.endsWith('-full.nupkg')) ?? '')?.[1] ?? 'A';
     versionB = /-(\d+\.\d+\.\d+)-full\.nupkg/.exec(readdirSync(installerB).find((n) => n.endsWith('-full.nupkg')) ?? '')?.[1] ?? 'B';
     assert(versionA !== versionB, `both builds are ${versionA}`);
-    return `A ${versionA}, B ${versionB}`;
+    return `A ${versionA}, B ${versionB}${expectSigned ? ' (signed)' : ' (unsigned)'}`;
   });
 
   await step('install-version-a-unsigned-silent', async () => {
@@ -253,6 +320,16 @@ try {
     assert(state.squirrelInstalled === true, 'the app did not detect its Squirrel install (Update.exe one folder up), so the updater would be off');
     assert(state.execPath.includes(`\\app-${versionA}\\`), `unexpected exe path ${state.execPath}`);
     assert(state.update.kind === 'idle' || state.update.kind === 'checking', `update state at start: ${JSON.stringify(state.update)} (feed ${fake.url}/feed)`);
+    if (expectSigned) {
+      await verifyAuthenticode(
+        [
+          updateExe,
+          join(installRoot, `app-${versionA}`, EXE),
+          join(installRoot, `app-${versionA}`, 'resources', 'app.asar.unpacked', 'bin', 'ludy-wasapi-loopback.exe'),
+        ],
+        pinnedThumbprint,
+      );
+    }
     return note;
   });
 
@@ -370,6 +447,16 @@ try {
     });
     assert(state.execPath.includes(`\\app-${versionB}\\`), `unexpected exe path ${state.execPath}`);
     assert(state.squirrelInstalled === true, 'the updated app does not detect its Squirrel install');
+    if (expectSigned) {
+      await verifyAuthenticode(
+        [
+          updateExe,
+          join(installRoot, `app-${versionB}`, EXE),
+          join(installRoot, `app-${versionB}`, 'resources', 'app.asar.unpacked', 'bin', 'ludy-wasapi-loopback.exe'),
+        ],
+        pinnedThumbprint,
+      );
+    }
     await waitState('the updated app still signed in', (s) => s.auth.kind === 'signed-in', { timeoutMs: 60_000 });
     writeFileSync(join(out, 'running-version.txt'), `${state.version}\n`);
     copyDiagnostics('after-update');
@@ -412,7 +499,7 @@ try {
   }
   await fake.close();
   const rows = results.map((r) => `| ${r.ok ? 'pass' : '**FAIL**'} | ${r.name} | ${r.seconds.toFixed(1)} s | ${r.note.replace(/\|/g, '/').replace(/\r?\n/g, ' ')} |`);
-  const lines = [`### Ludy Desktop Windows install smoke (unsigned, ${versionA} then ${versionB})`, '', '| result | step | time | note |', '|---|---|---|---|', ...rows];
+  const lines = [`### Ludy Desktop Windows install smoke (${expectSigned ? 'signed' : 'unsigned'}, ${versionA} then ${versionB})`, '', '| result | step | time | note |', '|---|---|---|---|', ...rows];
   if (failed) lines.push('', `**Stopped at step: ${current}.** Logs: the "ludy-desktop-windows-smoke-logs" artifact (steps.log, states/, squirrel/, fake-ludy-requests.log).`);
   writeFileSync(join(out, 'summary.md'), `${lines.join('\n')}\n`);
   if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${lines.join('\n')}\n`);
