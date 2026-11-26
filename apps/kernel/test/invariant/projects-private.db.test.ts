@@ -565,6 +565,49 @@ suite('invariant (#2604, ADR-0056): private projects visibility and cross-module
         expect(row.has_policy, `${row.table_name} RESTRICTIVE project_visibility policy`).toBe(true);
       }
 
+      // #5157 Step 0 / #5158 Slice 1 (Projects GitHub Integration, ADR-0060): pre-registered project_id-bearing
+      // tables. Returns zero rows while absent on dev; once created in Slice 1, each MUST carry project_id, RLS,
+      // and RESTRICTIVE project_visibility (#2604) even if ALSO in MACHINERY (REVOKE ALL) like github_sync_delivery.
+      // Slice 1 moves them into the required arrayContaining list above and adds actor-matrix probes.
+      const PENDING_GITHUB_PROJECT_TABLES = [
+        'github_project_binding',
+        'github_project_repo',
+        'github_sync_delivery',
+        'github_task_link',
+      ] as const;
+      const { rows: pendingGithubTables } = await c.query<{
+        table_name: string;
+        relrowsecurity: boolean;
+        has_project_id: boolean;
+        has_policy: boolean;
+      }>(
+        `SELECT t.relname AS table_name,
+                t.relrowsecurity,
+                EXISTS (
+                  SELECT 1 FROM pg_catalog.pg_attribute a
+                   WHERE a.attrelid = t.oid AND a.attname = 'project_id' AND NOT a.attisdropped
+                ) AS has_project_id,
+                EXISTS (
+                  SELECT 1 FROM pg_catalog.pg_policy p
+                   WHERE p.polrelid = t.oid
+                     AND p.polname = 'project_visibility'
+                     AND NOT p.polpermissive
+                     AND p.polcmd = '*'
+                ) AS has_policy
+           FROM pg_catalog.pg_class t
+           JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace
+          WHERE n.nspname = 'crove_projects'
+            AND t.relkind IN ('r', 'p')
+            AND t.relname = ANY($1::text[])
+          ORDER BY t.relname`,
+        [[...PENDING_GITHUB_PROJECT_TABLES]],
+      );
+      for (const row of pendingGithubTables) {
+        expect(row.has_project_id, `${row.table_name} carries project_id`).toBe(true);
+        expect(row.relrowsecurity, `${row.table_name} RLS enabled`).toBe(true);
+        expect(row.has_policy, `${row.table_name} RESTRICTIVE project_visibility policy`).toBe(true);
+      }
+
       const { rows: roadmapTriggers } = await c.query<{ tg: string }>(
         `SELECT c.relname || '.' || tg.tgname AS tg
            FROM pg_catalog.pg_trigger tg

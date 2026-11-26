@@ -98,6 +98,9 @@ const CLASSES: Record<string, { app: string; gate: Gate; why: string }> = {
   // #4723 (eSign Slice 6d): ludy_sign.public_deposit_qr_source and public_record_deposit_notice enforce org_app_on + entitlement -> opaque 404.
   '/api/sign/deposit-qr': { app: 'sign', gate: 'sql', why: 'crove_sign.public_deposit_qr_source checks org_app_on + entitlement -> 404 (#4723)' },
   '/api/sign/deposit-notice': { app: 'sign', gate: 'sql', why: 'crove_sign.public_record_deposit_notice checks org_app_on + entitlement -> 404 (#4723)' },
+  // #5157 Step 0 / #5158 Slice 1 (Projects GitHub Integration, ADR-0060): webhook routes move to 'dropped' / 'sql' when #5158 lands them.
+  '/api/projects/github/webhook': { app: 'projects', gate: 'pending', why: '#5158 (ADR-0060 GitHub App webhook moves to dropped after raw-byte HMAC check + worker org_app_on + entitlement drop)' },
+  '/api/projects/github/webhook/:hookKey': { app: 'projects', gate: 'pending', why: '#5158 (ADR-0060 PAT per-connection webhook moves to sql via crove_projects hook definer checking org_app_on + entitlement -> 404)' },
 };
 
 // The paths of the two lists of route-coverage.test.ts: a key at the start of a line inside `const PUBLIC` or `const PENDING`. A line at the key indent that

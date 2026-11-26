@@ -133,6 +133,9 @@ export const DEPS_REACH: Readonly<Record<string, readonly Reach[]>> = {
   // The meeting platform adapters (meetings integrations C1, #3173): the offline sandbox reaches nothing, and a real adapter (Google Meet, Zoom, Teams: C2 to C4) its platform's own API hosts, each bound to them by its allowlisted
   // fetch; the file itself is downloaded by the import job through guardedStream, so the field is classified for what it can reach: the platforms of @ludy/channel. Only the import job and its sweep reach the field.
   'channels.meetingPlatforms': ['provider:channel'],
+  // The GitHub API adapter for modules/projects (@ludy/github, ADR-0060, #5157 Step 0 / #5158 Slice 1 / #5159 Slice 2): bound strictly to https://api.github.com via guardedRequest/egressFetch (maxRedirects: 0, private-IP DNS pinning).
+  // Reached only by projects-github-hydrate and projects-github-outbound. Classified before the field exists (step 0, as for channels.misaAmis: the base copy of this suite must know it when the field lands).
+  'channels.github': ['provider:github'],
   publicUrl: [],
   // Where the links in mail and chat alerts open the web app (APP_URL, #2261): a string, no egress.
   appUrl: [],
