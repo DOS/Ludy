@@ -605,6 +605,7 @@ export const KERNEL_ERROR_CODES = [
   'SALES_INSIGHT_BUSY',
   'MEETING_TITLE_EMPTY',
   'MEETING_TITLE_TOO_LONG',
+  'MEETING_PLACE_TOO_LONG',
   // The weekly digest across meetings (#3949).
   'DIGEST_OFF',
   'DIGEST_BUSY',

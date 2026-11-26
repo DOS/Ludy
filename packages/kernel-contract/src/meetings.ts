@@ -93,6 +93,8 @@ export const zMeetingSummary = z.strictObject({
   liveNotes: z.boolean(),
   // The minutes template the recorder picked (Meetings A4, #3162): a code; its sections live in code (meeting-templates.ts).
   summaryTemplate: zMeetingSummaryTemplate,
+  // The place the recorder set for the biên bản (#5013): one line, null when none. Read where the title is.
+  place: z.string().max(200).nullable(),
   audioRetentionDate: z.string(),
   // null: the org keeps text until a person deletes the meeting.
   textRetentionDate: z.string().nullable(),

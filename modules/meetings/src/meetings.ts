@@ -11,6 +11,7 @@ import { transcribeCommandList } from './transcribe.ts';
 import { transcribeRunCommands, transcribeRunQueries } from './transcribe-run.ts';
 import { chaptersCommands, chaptersQueries } from './chapters.ts';
 import { chaptersRunCommands, chaptersRunQueries } from './chapters-run.ts';
+import { placeCommands } from './place.ts';
 import { titleCommands, titleQueries } from './title.ts';
 import { commitmentsCommands, commitmentsQueries } from './commitments.ts';
 import { templateSuggestCommands, templateSuggestQueries } from './template-suggest.ts';
@@ -186,6 +187,7 @@ interface MeetingRow {
   keep_video: boolean;
   live_notes: boolean;
   summary_template: MeetingSummaryTemplate;
+  place: string | null;
   minutes_template_name: string | null;
   minutes_template_sections: unknown;
   minutes_template_hash: string | null;
@@ -222,6 +224,7 @@ function toSummary(
     keepVideo: r.keep_video,
     liveNotes: r.live_notes,
     summaryTemplate: r.summary_template,
+    place: r.place,
     audioRetentionDate: dayText(r.audio_retention_date),
     textRetentionDate: r.text_retention_date === null ? null : dayText(r.text_retention_date),
     hasAudio,
@@ -1146,6 +1149,7 @@ export const meetingsCommands = [
   ...labelsCommands,
   ...chaptersRunCommands,
   ...titleCommands,
+  ...placeCommands,
   ...commitmentsCommands,
   ...templateSuggestCommands,
   ...openPointsCommands,

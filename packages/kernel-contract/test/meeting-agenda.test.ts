@@ -75,6 +75,7 @@ describe('meeting-agenda contracts (#4477)', () => {
       keepVideo: false,
       liveNotes: false,
       summaryTemplate: 'general',
+      place: null,
       audioRetentionDate: '2026-12-23',
       textRetentionDate: null,
       hasAudio: true,

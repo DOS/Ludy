@@ -2,7 +2,7 @@
 // "Xem biên bản" (Meetings A4, #3162): the printable minutes of a meeting in the layout Vietnamese offices use. The browser prints it (to PDF as well); there is no document
 // library. It reads what the meeting's readers may read (the recorder a draft beside the published result, a reader the published one only) and SHOWS only what the recorder
 // published; until then it says "Bản nháp". The facts come from the meeting row and code (see lib/minutes.ts); Ludy signs nothing, so the signature block is blank.
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
 import { useState, type ReactNode } from 'react';
 import { useTranslations } from 'use-intl';
@@ -14,7 +14,7 @@ import { MinutesDocxButton } from '../components/meeting-minutes-docx.tsx';
 import { canCreateMeetingMinutesEnvelope, MeetingMinutesSignHandoff } from '../components/meeting-minutes-sign-handoff.tsx';
 import { memberLabel } from '../components/meeting-results.tsx';
 import { ErrorText, ListSkeleton } from '../components/ui.tsx';
-import { errorMessage, orpc } from '../lib/api.ts';
+import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { buildMinutes, type MinutesModel } from '../lib/minutes.ts';
 import { usePrintInLight } from '../lib/print.ts';
 import { useScreenTitle } from '../lib/screen-title.ts';
@@ -149,12 +149,21 @@ export function MinutesSheet({ model, company, title, place, template }: { model
 export function MeetingMinutesPage() {
   const t = useTranslations('meetings');
   const { slug, id } = useParams({ strict: false }) as { slug: string; id: string };
-  const [place, setPlace] = useState('');
+  // What the person typed since the page opened; null until then, so the field shows the place the recorder saved (#5013).
+  const [typed, setTyped] = useState<string | null>(null);
   // Paper gets the light theme while printing, whatever the screen uses.
   usePrintInLight();
   // Outside the shell nothing else names the tab (WCAG 2.4.2, DESIGN.md section 7).
   useScreenTitle(t('minutes.pageTitle'));
   const meeting = useQuery(orpc.meetings.get.queryOptions({ input: { meetingId: id } }));
+  // The recorder saves the place on the meeting; it is then in the meeting's own read, for the recorder and the readers.
+  const savePlace = useMutation({
+    mutationFn: (value: string) => orpc.meetings.setPlace.call({ meetingId: id, place: value.trim() === '' ? null : value }),
+    onSuccess: () => {
+      setTyped(null);
+      void queryClient.invalidateQueries({ queryKey: orpc.meetings.key() });
+    },
+  });
   const results = useQuery({ ...orpc.meetings.results.get.queryOptions({ input: { meetingId: id } }), ...READ_ONCE });
   const org = useQuery(orpc.org.get.queryOptions());
   const back = (
@@ -175,6 +184,8 @@ export function MeetingMinutesPage() {
     );
   }
   const members = org.data.members;
+  const savedPlace = meeting.data.place ?? '';
+  const place = typed ?? savedPlace;
   const model = buildMinutes(meeting.data, results.data, (userId) => memberLabel(members, userId, t('results.unknownMember')));
   return frame(
     <div className="space-y-4">
@@ -186,9 +197,15 @@ export function MeetingMinutesPage() {
         <div className="flex flex-wrap items-end gap-3">
           <div className="space-y-1">
             <Label htmlFor="minutes-place">{t('minutes.placeLabel')}</Label>
-            <Input id="minutes-place" value={place} maxLength={200} onChange={(e) => setPlace(e.target.value)} className="w-72" />
-            <p className="text-xs text-muted-foreground">{t('minutes.placeHint')}</p>
+            <Input id="minutes-place" value={place} maxLength={200} onChange={(e) => setTyped(e.target.value)} className="w-72" />
+            <p className="text-xs text-muted-foreground">{t(meeting.data.isRecorder ? 'minutes.placeHintRecorder' : 'minutes.placeHint')}</p>
+            {savePlace.error && <ErrorText>{errorMessage(savePlace.error)}</ErrorText>}
           </div>
+          {meeting.data.isRecorder && place.trim() !== savedPlace && (
+            <Button variant="outline" loading={savePlace.isPending} onClick={() => savePlace.mutate(place)}>
+              {t('minutes.placeSave')}
+            </Button>
+          )}
           <Button onClick={() => window.print()}>{t('minutes.print')}</Button>
           {/* The published minutes as a Word file (#4774): built on the server from the published rows only. */}
           {model.published && <MinutesDocxButton meetingId={id} place={place} />}

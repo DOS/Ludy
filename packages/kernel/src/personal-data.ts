@@ -436,6 +436,15 @@ export const PERSONAL_DATA_COLUMNS = {
     handling: 'erase',
     reason: "A meeting's title, which may name a person: found where the actor reads the meeting; counted per recorder where the owner cannot; deleted with the meeting (its recorder, an owner for a personal-data request, or the retention job)",
   },
+  // The place of a meeting (#5013, #5014): one line the recorder types for the biên bản ("Phòng họp tầng 3, 12 Nguyễn Huệ"), which may name or describe a person or an address. It is handled as the title is: the finder
+  // lists it where the actor reads the meeting (ludy_meetings.personal_row_ids, with the title as one hit of kind 4), counts it per recorder where the owner cannot (ludy_meetings.personal_matches, as a title), and the
+  // erasure redacts the value in it by the rule of the title (ludy_meetings.personal_erase, counted in the titles, cut to 200 characters). A place the owner cannot read is part of the stamp of the notice (ludy_meetings.text_stamp),
+  // so a place added or changed after a notice is not covered by it; a meeting with no place keeps the stamp it had. It goes with the meeting (the recorder's delete, an owner's delete, the retention job, the org purge).
+  'ludy_meetings.meeting.place': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: "The place of a meeting, which may name or describe a person or an address: found where the actor reads the meeting; counted per recorder where the owner cannot; the owner's erasure edits the value out of it as out of a meeting title; deleted with the meeting (its recorder, an owner for a personal-data request, the retention job or the org purge)",
+  },
   // The transcript (ADR-0047 point 7, issue #2578): what was said and who it is attributed to. A draft is the recorder's alone and
   // a published line is read by the meeting's readers.
   'ludy_meetings.transcript_segment.text': {
@@ -1411,6 +1420,7 @@ const SHORT_NUMBER_COLUMNS = new Set([
 // The meeting text columns the redaction of ludy_meetings.personal_erase would change, left as they are for a short number (#3064).
 const SHORT_NUMBER_MEETING_COLUMNS = new Set([
   'ludy_meetings.meeting.title',
+  'ludy_meetings.meeting.place',
   'ludy_meetings.transcript_segment.text',
   'ludy_meetings.transcript_segment.speaker_label',
   'ludy_meetings.meeting_result.summary',

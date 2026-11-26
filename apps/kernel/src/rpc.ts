@@ -1696,6 +1696,7 @@ export function createRpcHandler(
       importDiscardEmpty: os.meetings.importDiscardEmpty.handler(meetingsCommand('meetings.import.discard_empty')),
       setTemplate: os.meetings.setTemplate.handler(meetingsCommand('meetings.minutes.set_template')),
       rename: os.meetings.rename.handler(meetingsCommand('meetings.meeting.rename')),
+      setPlace: os.meetings.setPlace.handler(meetingsCommand('meetings.meeting.set_place')),
       delete: os.meetings.delete.handler(meetingsCommand('meetings.meeting.delete')),
       ownerDelete: os.meetings.ownerDelete.handler(meetingsCommand('meetings.meeting.owner_delete')),
       ownerList: os.meetings.ownerList.handler(meetingsCommand('meetings.meeting.owner_list')),

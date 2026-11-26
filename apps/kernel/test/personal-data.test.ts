@@ -89,6 +89,7 @@ describe('personal-data registry: meetings (#2578)', () => {
     // The finder searches every meeting text column as free text (#2594): the rows an actor reads are listed, the rest counted per recorder.
     for (const key of [
       'ludy_meetings.meeting.title',
+      'ludy_meetings.meeting.place',
       'ludy_meetings.transcript_segment.text',
       'ludy_meetings.transcript_segment.speaker_label',
       'ludy_meetings.meeting_result.summary',
