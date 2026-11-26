@@ -343,7 +343,23 @@ suite('marketplace push hook security invariants (#4326)', () => {
     ).toEqual({ status: 200 });
     await withAdmin((c) => c.query("UPDATE crove_kernel.tenant SET apps_off = ARRAY['finance'] WHERE org_id = $1", [orgId]));
     expect(await acceptMarketplacePush(apiRuntime, 'shopee', { key: shopeeKey, authorization: HEADER, body: BODY }, budget, PUBLIC_URL)).toEqual({ status: 404 });
+    expect(
+      await appPool
+        .query<{ put: string }>('SELECT crove_finance.marketplace_hook_put_notice($1::uuid, $2, $3, $4, $5, $6) AS put', [
+          shopeeHookId,
+          sha(shopeeKey),
+          sha('finance-off-put'),
+          HEADER,
+          BODY,
+          null,
+        ])
+        .then((r) => r.rows[0]?.put),
+    ).toBe('gone');
     expect(await workerDb.transaction().execute((trx) => claimMarketplaceHookNotices(trx))).toEqual([]);
+    await withAdmin(async (c) => {
+      const left = await c.query<{ n: number }>('SELECT pg_catalog.count(*)::int AS n FROM crove_finance.marketplace_hook_notice');
+      expect(left.rows[0]?.n).toBe(0);
+    });
     await withAdmin((c) => c.query("UPDATE crove_kernel.tenant SET apps_off = '{}'::text[] WHERE org_id = $1", [orgId]));
   });
 
