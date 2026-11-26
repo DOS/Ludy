@@ -19,6 +19,7 @@ on:
     paths:
       - 'apps/desktop/**'
       - '.github/workflows/desktop-build.yml'
+      - '.github/workflows/desktop-package.yml'
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
   push:
@@ -26,6 +27,7 @@ on:
     paths:
       - 'apps/desktop/**'
       - '.github/workflows/desktop-build.yml'
+      - '.github/workflows/desktop-package.yml'
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
   workflow_dispatch:
@@ -93,6 +95,14 @@ jobs:
           if (-not (Test-Path "$out/installer/RELEASES")) { throw 'no RELEASES file' }
           if (-not (Get-ChildItem "$out/installer" -Filter '*-full.nupkg')) { throw 'no full nupkg' }
           if (-not (Test-Path "$out/installer/LudyDesktop-Setup.exe")) { throw 'no Setup.exe' }
+          if (-not (Test-Path "$out/installer/release-manifest.json")) { throw 'no release-manifest.json file' }
+          if (-not (Test-Path "$out/installer/SHA256SUMS.txt")) { throw 'no SHA256SUMS.txt file' }
+          $signtool = node -e "import('./apps/desktop/scripts/package.mjs').then((m) => console.log(m.resolveBundledModernSigntool()))"
+          if (-not (Test-Path -PathType Leaf "$signtool")) { throw "bundled modern signtool.exe missing at $signtool" }
+          $ps3Out = '["a.exe","b.exe","c.exe"]' | powershell.exe -NoProfile -NonInteractive -Command '$items = ConvertFrom-Json -InputObject ([Console]::In.ReadToEnd()); if ($items -isnot [System.Array]) { $items = @($items) }; Write-Output $items.Count'
+          if ($ps3Out.Trim() -ne '3') { throw "PowerShell 5.1 multi-item stdin JSON array regression: got $ps3Out" }
+          $ps1Out = '["a.exe"]' | powershell.exe -NoProfile -NonInteractive -Command '$items = ConvertFrom-Json -InputObject ([Console]::In.ReadToEnd()); if ($items -isnot [System.Array]) { $items = @($items) }; Write-Output $items.Count'
+          if ($ps1Out.Trim() -ne '1') { throw "PowerShell 5.1 single-item stdin JSON array regression: got $ps1Out" }
           $exe = "$out/pkg/ludy-desktop-win32-x64/resources/app.asar.unpacked/bin/ludy-wasapi-loopback.exe"
           if (-not ((Test-Path -PathType Leaf "$exe") -and ((Get-Item "$exe").Length -gt 0))) { throw 'no unpacked native helper binary' }
 

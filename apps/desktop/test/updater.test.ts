@@ -1,6 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { describe, expect, it } from 'vitest';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
+import { RELEASE_MANIFEST_SCRIPT_FILENAME } from '../src/authenticode.ts';
+import type { FetchLike } from '../src/exchange.ts';
 import { CHECK_INTERVAL_MS, createUpdater, type AutoUpdaterLike, type UpdaterEvents } from '../src/updater.ts';
+
+const tempDirs: string[] = [];
+afterEach(() => {
+  for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
 
 // A fake Electron autoUpdater: tests drive its events like Squirrel.Windows does.
 function fake() {
@@ -21,7 +32,16 @@ function fake() {
   return { calls, updater, events: () => events!, failNextCheck: (e: Error) => { failCheck = e; } };
 }
 
-function make(options: { feedUrl?: string | null; supported?: boolean } = {}) {
+function make(
+  options: {
+    feedUrl?: string | null;
+    supported?: boolean;
+    fetch?: FetchLike;
+    allowedOrigin?: string | null;
+    expectedPublisherThumbprint?: string | null;
+    requireSigned?: boolean;
+  } = {},
+) {
   const f = fake();
   const timers: Array<{ cb: () => void; ms: number }> = [];
   const logs: string[] = [];
@@ -29,12 +49,23 @@ function make(options: { feedUrl?: string | null; supported?: boolean } = {}) {
     updater: f.updater,
     feedUrl: options.feedUrl === undefined ? 'https://updates.example.vn/feed' : options.feedUrl,
     supported: options.supported ?? true,
+    fetch: options.fetch,
+    allowedOrigin: options.allowedOrigin,
+    expectedPublisherThumbprint: options.expectedPublisherThumbprint,
+    requireSigned: options.requireSigned,
     setInterval: (cb, ms) => timers.push({ cb, ms }),
     clearInterval: () => undefined,
     log: (m) => logs.push(m),
   });
   return { ...f, controller, timers, logs };
 }
+
+const waitUntil = async (check: () => boolean): Promise<void> => {
+  for (let i = 0; i < 100 && !check(); i++) {
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  expect(check()).toBe(true);
+};
 
 describe('updater', () => {
   it('is off, and never touches the autoUpdater, without a feed or off a Squirrel install', () => {
@@ -105,5 +136,157 @@ describe('updater', () => {
     u.failNextCheck(new Error('No Update.exe'));
     u.controller.start();
     expect(u.controller.state()).toEqual({ kind: 'failed', message: 'No Update.exe' });
+  });
+
+  it('fails closed during preflight on HTTP download URLs or unsigned HTTPS feeds without calling Squirrel', async () => {
+    const sha1 = '1'.repeat(40);
+    const badFetch: FetchLike = async (url) => {
+      if (String(url).endsWith('/RELEASES')) {
+        return new Response(`${sha1} http://updates.example.vn/feed/LudyDesktop-0.1.1-full.nupkg 1024\n`, { status: 200 });
+      }
+      return new Response('Not found', { status: 404 });
+    };
+    const bad = make({ fetch: badFetch });
+    bad.controller.start();
+    expect(bad.controller.state()).toEqual({ kind: 'checking' });
+    await waitUntil(() => bad.controller.state().kind === 'failed');
+    expect(bad.calls).toEqual([]);
+
+    const thumb = 'a'.repeat(40);
+    const validFetch: FetchLike = async (url) => {
+      if (String(url).endsWith('/RELEASES')) {
+        return new Response(`${sha1} LudyDesktop-0.1.1-full.nupkg 1024\n`, { status: 200 });
+      }
+      return new Response(
+        JSON.stringify({
+          schemaVersion: 1,
+          product: 'ludy-desktop',
+          platform: 'win32',
+          arch: 'x64',
+          version: '0.1.1',
+          signed: true,
+          signing: { algorithm: 'sha256', timestampServer: 'http://timestamp.digicert.com', publisherThumbprint: thumb },
+          installer: { file: 'LudyDesktop-Setup.exe', sha256: 'b'.repeat(64), size: 2048 },
+          packages: [{ file: 'LudyDesktop-0.1.1-full.nupkg', kind: 'full', version: '0.1.1', sha1, sha256: 'c'.repeat(64), size: 1024 }],
+        }),
+        { status: 200 },
+      );
+    };
+    const good = make({
+      fetch: validFetch,
+      allowedOrigin: 'https://updates.example.vn',
+      expectedPublisherThumbprint: thumb,
+    });
+    good.controller.start();
+    // Overlapping checkNow while preflight is in flight is ignored.
+    good.controller.checkNow();
+    await waitUntil(() => good.calls.length === 2);
+    expect(good.calls).toEqual(['feed:https://updates.example.vn/feed', 'check']);
+    good.events().available();
+    good.events().downloaded('0.1.1');
+    expect(good.controller.state()).toEqual({ kind: 'ready', version: '0.1.1' });
+    expect(good.controller.restart()).toBe(true);
+    expect(good.calls.at(-1)).toBe('quitAndInstall');
+  });
+
+  it('stages verified update once and serves Squirrel strictly over an ephemeral 127.0.0.1 local feed', async () => {
+    const payload = Buffer.from('verified-nupkg-binary');
+    const sha1 = createHash('sha1').update(payload).digest('hex');
+    const sha256 = createHash('sha256').update(payload).digest('hex');
+    const thumb = 'a'.repeat(40);
+    const feed = 'https://updates.example.vn/feed';
+    const stagingDir = mkdtempSync(join(tmpdir(), 'ludy-updater-stage-'));
+    tempDirs.push(stagingDir);
+
+    let packageFetches = 0;
+    const fetchFeed: FetchLike = async (url) => {
+      const s = String(url);
+      if (s.endsWith('/RELEASES')) {
+        return new Response(`${sha1.toUpperCase()} LudyDesktop-0.1.2-full.nupkg ${payload.length}\n`, { status: 200 });
+      }
+      if (s.endsWith('/release-manifest.json')) {
+        return new Response(
+          JSON.stringify({
+            schemaVersion: 1,
+            product: 'ludy-desktop',
+            platform: 'win32',
+            arch: 'x64',
+            version: '0.1.2',
+            signed: true,
+            signing: { algorithm: 'sha256', timestampServer: 'http://timestamp.digicert.com', publisherThumbprint: thumb },
+            installer: { file: 'LudyDesktop-Setup.exe', sha256: 'b'.repeat(64), size: 2048 },
+            packages: [{ file: 'LudyDesktop-0.1.2-full.nupkg', kind: 'full', version: '0.1.2', sha1, sha256, size: payload.length }],
+          }),
+          { status: 200 },
+        );
+      }
+      if (s.endsWith(`/${RELEASE_MANIFEST_SCRIPT_FILENAME}`)) {
+        return new Response('# signed manifest script', { status: 200 });
+      }
+      if (s.endsWith('/LudyDesktop-0.1.2-full.nupkg')) {
+        packageFetches += 1;
+        return new Response(payload, { status: 200 });
+      }
+      return new Response('Not found', { status: 404 });
+    };
+
+    const f = fake();
+    const controller = createUpdater({
+      updater: f.updater,
+      feedUrl: feed,
+      supported: true,
+      fetch: fetchFeed,
+      allowedOrigin: 'https://updates.example.vn',
+      expectedPublisherThumbprint: thumb,
+      currentVersion: '0.1.1',
+      stagingDir,
+      verifySignedManifest: async () => undefined,
+      verifySignedPackage: async () => undefined,
+      setInterval: () => 0,
+      clearInterval: () => undefined,
+    });
+
+    controller.start();
+    await waitUntil(() => f.calls.includes('check'));
+    expect(packageFetches).toBe(1);
+    const setFeedCall = f.calls.find((c) => c.startsWith('feed:'));
+    expect(setFeedCall).toMatch(/^feed:http:\/\/127\.0\.0\.1:\d+$/);
+    const localBaseUrl = setFeedCall!.slice('feed:'.length);
+
+    // Local feed serves RELEASES and the staged nupkg, and rejects unknown paths.
+    const releasesRes = await fetch(`${localBaseUrl}/RELEASES?id=LudyDesktop`);
+    expect(releasesRes.status).toBe(200);
+    expect(await releasesRes.text()).toContain('LudyDesktop-0.1.2-full.nupkg');
+    const pkgRes = await fetch(`${localBaseUrl}/LudyDesktop-0.1.2-full.nupkg`);
+    expect(pkgRes.status).toBe(200);
+    expect(Buffer.from(await pkgRes.arrayBuffer()).equals(payload)).toBe(true);
+    expect((await fetch(`${localBaseUrl}/other`)).status).toBe(404);
+
+    f.events().downloaded('0.1.2');
+    expect(controller.state()).toEqual({ kind: 'ready', version: '0.1.2' });
+    // After downloaded closes the local server and removes stagingDir; restart works cleanly.
+    await expect(fetch(`${localBaseUrl}/RELEASES`)).rejects.toThrow();
+    await waitUntil(() => !existsSync(stagingDir));
+    expect(controller.restart()).toBe(true);
+    controller.stop();
+
+    // When currentVersion already matches feed version, idle cleanly without invoking Squirrel.
+    const sameVer = fake();
+    const sameCtrl = createUpdater({
+      updater: sameVer.updater,
+      feedUrl: feed,
+      supported: true,
+      fetch: fetchFeed,
+      expectedPublisherThumbprint: thumb,
+      currentVersion: '0.1.2',
+      stagingDir,
+      verifySignedManifest: async () => undefined,
+      verifySignedPackage: async () => undefined,
+      setInterval: () => 0,
+      clearInterval: () => undefined,
+    });
+    sameCtrl.start();
+    await waitUntil(() => sameCtrl.state().kind === 'idle');
+    expect(sameVer.calls).toEqual([]);
   });
 });

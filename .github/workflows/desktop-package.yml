@@ -1,0 +1,442 @@
+name: desktop-package
+
+# Ludy Desktop signed Windows packaging workflow (#4884, ADR-0055, docs/desktop/signing-runbook.md):
+# - Dispatched strictly from `refs/heads/main` (`workflow_dispatch`):
+#   - `mode=dry-run` (default) builds the unsigned installer without secrets for verification.
+#   - `mode=signed` validates an existing `desktop-vX.Y.Z` tag on `main` + green CI gates, runs `build-signed` inside
+#     the protected `desktop-release` GitHub environment (main-only deployment branch + owner approval required), signs
+#     the app, native helper, Update.exe and Setup.exe using operator-supplied secrets (failing closed if secrets are
+#     missing or invalid), verifies Authenticode + SHA-256 + RFC 3161 timestamps, generates release-manifest.json and
+#     SHA256SUMS.txt, and creates a draft GitHub Release (`--draft --latest=false`) after re-verifying the live tag SHA.
+# - No certificate, password, token, or private key is ever stored in this workflow or repository.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Build mode (dry-run builds unsigned without secrets; signed requires desktop-release approval and tag on main)
+        type: choice
+        options: [dry-run, signed]
+        default: dry-run
+      version:
+        description: Version X.Y.Z for dry-run builds
+        type: string
+        required: false
+        default: '0.1.0'
+      tag:
+        description: Existing release tag desktop-vX.Y.Z on main when running mode=signed
+        type: string
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-package-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Validate release target and CI gates
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: read
+      checks: read
+    outputs:
+      mode: ${{ steps.target.outputs.mode }}
+      version: ${{ steps.target.outputs.version }}
+      tag: ${{ steps.target.outputs.tag }}
+      sha: ${{ steps.target.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Validate release tag, version, and main ancestry
+        id: target
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          SHA: ${{ github.sha }}
+          INPUT_MODE: ${{ inputs.mode }}
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" != 'workflow_dispatch' ] || [ "$REF" != 'refs/heads/main' ]; then
+            echo "::error::desktop-package runs only via workflow_dispatch from refs/heads/main (got $EVENT on $REF)"
+            exit 1
+          fi
+
+          mode='dry-run'
+          version=''
+          tag=''
+          target_sha="$SHA"
+
+          if [ "$INPUT_MODE" = 'signed' ]; then
+            mode='signed'
+            tag="${INPUT_TAG:-}"
+            if ! [[ "$tag" =~ ^desktop-v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+              echo "::error::release tag must match desktop-vX.Y.Z (got '$tag')"
+              exit 1
+            fi
+            version="${BASH_REMATCH[1]}"
+            git fetch --no-tags origin main "refs/tags/$tag:refs/tags/$tag"
+            target_sha="$(git rev-parse "refs/tags/$tag^{commit}")"
+            if ! git merge-base --is-ancestor "$target_sha" origin/main; then
+              echo "::error::$tag ($target_sha) is not on a commit of main"
+              exit 1
+            fi
+            package_version="$(git show "$target_sha:apps/desktop/package.json" | jq -r '.version // empty')"
+            if [ "$package_version" != "$version" ]; then
+              echo "::error::$tag says $version, but apps/desktop/package.json at $target_sha says $package_version"
+              exit 1
+            fi
+          elif [ "$INPUT_MODE" = 'dry-run' ]; then
+            mode='dry-run'
+            version="$INPUT_VERSION"
+            if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::dry-run version must match X.Y.Z (got '$version')"
+              exit 1
+            fi
+          else
+            echo "::error::unsupported release mode '$INPUT_MODE'"
+            exit 1
+          fi
+
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "sha=$target_sha" >> "$GITHUB_OUTPUT"
+          echo "### Ludy Desktop release ($mode): $version (${tag:-no tag}, $target_sha)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Required CI checks are green on the release commit
+        if: steps.target.outputs.mode == 'signed'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ steps.target.outputs.sha }}
+        run: |
+          set -euo pipefail
+          desktop_sha="$(git log -n 1 --format=%H "$SHA" -- apps/desktop/ .github/workflows/desktop-build.yml .github/workflows/desktop-package.yml pnpm-lock.yaml pnpm-workspace.yaml)"
+          if [ -z "$desktop_sha" ]; then
+            echo "::error::could not determine latest commit modifying desktop build inputs at $SHA"
+            exit 1
+          fi
+
+          check_workflow_jobs() {
+            local target_sha="$1"
+            local workflow_path="$2"
+            shift 2
+            local run_id jobs name row status conclusion
+            run_id="$(gh api "repos/$REPO/actions/runs?head_sha=$target_sha&per_page=100" --paginate \
+              --jq "[.workflow_runs[] | select(.path == \"$workflow_path\" and .head_branch == \"main\")] | sort_by(.created_at) | last | .id // empty")"
+            if [ -z "$run_id" ]; then
+              for name in "$@"; do
+                pending+=("$name@$target_sha")
+              done
+              return
+            fi
+            jobs="$(gh api "repos/$REPO/actions/runs/$run_id/jobs?per_page=100" --paginate \
+              --jq '.jobs[] | [.name, .status, (.conclusion // "")] | @tsv')"
+            for name in "$@"; do
+              row="$(awk -F'\t' -v n="$name" '$1 == n { print; exit }' <<<"$jobs")"
+              status="$(cut -f2 <<<"$row")"
+              conclusion="$(cut -f3 <<<"$row")"
+              if [ "$status" != 'completed' ]; then
+                pending+=("$name@$target_sha")
+              elif [ "$conclusion" != 'success' ]; then
+                failed+=("$name@$target_sha: $conclusion")
+              fi
+            done
+          }
+
+          deadline=$((SECONDS + 1800))
+          while :; do
+            pending=()
+            failed=()
+            check_workflow_jobs "$SHA" '.github/workflows/ci.yml' 'Lint, typecheck, test'
+            check_workflow_jobs "$desktop_sha" '.github/workflows/desktop-build.yml' \
+              'Windows build (unsigned), tests, size and memory' \
+              'Windows install smoke (tray, sign-in, update A to B, uninstall)'
+            if ((${#failed[@]} > 0)); then
+              printf '::error::required check not green: %s\n' "${failed[*]}"
+              exit 1
+            fi
+            if ((${#pending[@]} == 0)); then
+              echo "All required checks succeeded (CI on $SHA, Windows desktop checks on $desktop_sha)"
+              break
+            fi
+            if ((SECONDS >= deadline)); then
+              printf '::error::timed out waiting for required checks: %s\n' "${pending[*]}"
+              exit 1
+            fi
+            echo "Waiting for required checks: ${pending[*]}"
+            sleep 30
+          done
+
+  build-dry-run:
+    name: Windows dry-run build (unsigned, no secrets)
+    needs: prepare
+    if: github.ref == 'refs/heads/main' && needs.prepare.outputs.mode == 'dry-run'
+    runs-on: windows-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.sha }}
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '26'
+
+      - name: Install pnpm
+        run: npm install -g pnpm@10.34.7 --no-fund --no-audit
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --filter "@ludy/desktop" --filter "ludy-monorepo"
+
+      - name: Typecheck
+        run: pnpm --filter "@ludy/desktop" typecheck
+
+      - name: Unit tests
+        run: pnpm exec vitest run --project unit apps/desktop
+
+      - name: Compile Win32 WASAPI loopback helper
+        run: node apps/desktop/scripts/build-native.mjs --require-win32
+
+      - name: Build unsigned dry-run installer and release manifest
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          node apps/desktop/scripts/package.mjs --version "$env:VERSION" --skip-native
+          if ($LASTEXITCODE -ne 0) { throw "package.mjs failed with exit code $LASTEXITCODE" }
+
+      - name: Verify dry-run installer artifacts and manifest
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $out = 'apps/desktop/out/installer'
+          foreach ($f in @('LudyDesktop-Setup.exe', 'RELEASES', 'release-manifest.json', 'SHA256SUMS.txt')) {
+            if (-not (Test-Path -PathType Leaf "$out/$f")) { throw "missing $f" }
+          }
+          $manifest = Get-Content "$out/release-manifest.json" -Raw | ConvertFrom-Json
+          if ($manifest.version -ne $env:VERSION) { throw "manifest version mismatch: $($manifest.version)" }
+          if ($manifest.signed -ne $false) { throw 'dry-run manifest must report signed=false' }
+
+      - name: Upload dry-run artifacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ludy-desktop-dry-run-win32-x64
+          path: apps/desktop/out/installer/
+          retention-days: 7
+          if-no-files-found: error
+
+  build-signed:
+    name: Build and sign Windows installer
+    needs: prepare
+    if: github.ref == 'refs/heads/main' && needs.prepare.outputs.mode == 'signed'
+    runs-on: windows-latest
+    timeout-minutes: 30
+    environment: desktop-release
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.sha }}
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '26'
+
+      - name: Install pnpm
+        run: npm install -g pnpm@10.34.7 --no-fund --no-audit
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --filter "@ludy/desktop" --filter "ludy-monorepo"
+
+      # Fail closed if signing secrets are missing or incomplete; if a base64 PFX is supplied, import it ephemerally into
+      # Cert:\CurrentUser\My so the password never crosses a CLI boundary and remove it in the cleanup step.
+      - name: Validate and stage signing credentials
+        shell: pwsh
+        env:
+          WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+          WINDOWS_SIGN_WITH_PARAMS: ${{ secrets.WINDOWS_SIGN_WITH_PARAMS }}
+          WINDOWS_SIGN_HOOK_MODULE_PATH: ${{ secrets.WINDOWS_SIGN_HOOK_MODULE_PATH }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $hasPfx = -not [string]::IsNullOrWhiteSpace($env:WINDOWS_CERT_PFX_BASE64)
+          $hasPwd = -not [string]::IsNullOrWhiteSpace($env:WINDOWS_CERT_PASSWORD)
+          $hasParams = -not [string]::IsNullOrWhiteSpace($env:WINDOWS_SIGN_WITH_PARAMS)
+          $hasHook = -not [string]::IsNullOrWhiteSpace($env:WINDOWS_SIGN_HOOK_MODULE_PATH)
+
+          if ($hasPfx -xor $hasPwd) {
+            Write-Error 'Both WINDOWS_CERT_PFX_BASE64 and WINDOWS_CERT_PASSWORD must be set together.'
+            exit 1
+          }
+          $modes = @($hasPfx, $hasParams, $hasHook) | Where-Object { $_ }
+          if ($modes.Count -eq 0) {
+            Write-Error 'Missing Windows signing secrets in the desktop-release environment. Configure WINDOWS_CERT_PFX_BASE64 + WINDOWS_CERT_PASSWORD, WINDOWS_SIGN_WITH_PARAMS, or WINDOWS_SIGN_HOOK_MODULE_PATH. See docs/desktop/signing-runbook.md.'
+            exit 1
+          }
+          if ($modes.Count -gt 1) {
+            Write-Error 'Ambiguous Windows signing secrets in the desktop-release environment: configure exactly one signing mode.'
+            exit 1
+          }
+
+          if ($hasPfx) {
+            $pfxPath = Join-Path $env:RUNNER_TEMP 'ludy-signing.pfx'
+            $bytes = [System.Convert]::FromBase64String($env:WINDOWS_CERT_PFX_BASE64.Trim())
+            [System.IO.File]::WriteAllBytes($pfxPath, $bytes)
+            try {
+              $secure = ConvertTo-SecureString -String $env:WINDOWS_CERT_PASSWORD -AsPlainText -Force
+              $cert = Import-PfxCertificate -FilePath $pfxPath -CertStoreLocation 'Cert:\CurrentUser\My' -Password $secure
+              if (-not $cert.Thumbprint) { throw 'Imported signing certificate has no thumbprint' }
+              "WINDOWS_CERT_SHA1=$($cert.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+            } finally {
+              if (Test-Path -LiteralPath $pfxPath) { Remove-Item -LiteralPath $pfxPath -Force }
+            }
+          }
+
+      - name: Typecheck
+        run: pnpm --filter "@ludy/desktop" typecheck
+
+      - name: Unit tests
+        run: pnpm exec vitest run --project unit apps/desktop
+
+      - name: Compile Win32 WASAPI loopback helper
+        run: node apps/desktop/scripts/build-native.mjs --require-win32
+
+      - name: Build and sign Squirrel.Windows installer and feed artifacts
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          WINDOWS_TIMESTAMP_SERVER: ${{ vars.WINDOWS_TIMESTAMP_SERVER }}
+          WINDOWS_SIGN_WITH_PARAMS: ${{ secrets.WINDOWS_SIGN_WITH_PARAMS }}
+          WINDOWS_SIGNTOOL_PATH: ${{ vars.WINDOWS_SIGNTOOL_PATH }}
+          WINDOWS_SIGN_HOOK_MODULE_PATH: ${{ secrets.WINDOWS_SIGN_HOOK_MODULE_PATH }}
+        run: |
+          node apps/desktop/scripts/package.mjs --version "$env:VERSION" --skip-native --sign
+          if ($LASTEXITCODE -ne 0) { throw "package.mjs --sign failed with exit code $LASTEXITCODE" }
+
+      - name: Verify release manifest and checksums
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $out = 'apps/desktop/out/installer'
+          foreach ($f in @('LudyDesktop-Setup.exe', 'RELEASES', 'release-manifest.json', 'release-manifest.ps1', 'SHA256SUMS.txt')) {
+            if (-not (Test-Path -PathType Leaf "$out/$f")) { throw "missing $f" }
+          }
+          $manifest = Get-Content "$out/release-manifest.json" -Raw | ConvertFrom-Json
+          if ($manifest.version -ne $env:VERSION) { throw "manifest version mismatch: $($manifest.version)" }
+          if ($manifest.signed -ne $true) { throw 'signed release manifest must report signed=true' }
+          if (-not ($manifest.signing.publisherThumbprint -match '^[0-9a-f]{40}$')) { throw 'missing publisherThumbprint in manifest' }
+
+          $sig = Get-AuthenticodeSignature -LiteralPath "$out/LudyDesktop-Setup.exe"
+          if ($sig.Status -ne 'Valid' -or $null -eq $sig.TimeStamperCertificate) {
+            throw "LudyDesktop-Setup.exe signature check failed: $($sig.Status)"
+          }
+
+          $lines = @(
+            '### Ludy Desktop signed release (win32-x64)',
+            '',
+            ('- version: `{0}`' -f $manifest.version),
+            ('- installer SHA-256: `{0}`' -f $manifest.installer.sha256),
+            ('- signer thumbprint: `{0}`' -f $manifest.signing.publisherThumbprint)
+          )
+          $lines | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+
+      - name: Clean up ephemeral signing certificate
+        if: always()
+        shell: pwsh
+        run: |
+          if ($env:WINDOWS_CERT_SHA1) {
+            $storePath = "Cert:\CurrentUser\My\$($env:WINDOWS_CERT_SHA1)"
+            if (Test-Path -LiteralPath $storePath) {
+              Remove-Item -LiteralPath $storePath -DeleteKey -ErrorAction SilentlyContinue
+            }
+          }
+          $pfxPath = Join-Path $env:RUNNER_TEMP 'ludy-signing.pfx'
+          if (Test-Path -LiteralPath $pfxPath) {
+            Remove-Item -LiteralPath $pfxPath -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: Upload signed release artifacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ludy-desktop-signed-win32-x64
+          path: apps/desktop/out/installer/
+          retention-days: 30
+          if-no-files-found: error
+
+  release:
+    name: Create draft GitHub release for signed desktop artifacts
+    needs: [prepare, build-signed]
+    if: github.ref == 'refs/heads/main' && needs.prepare.outputs.mode == 'signed' && needs.prepare.outputs.tag != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      # Holds contents:write with zero repo checkout; verifies SHA256SUMS.txt and re-verifies tag SHA before staging a draft release.
+      - name: Download signed release artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: gh run download "$RUN_ID" --repo "$REPO" --name ludy-desktop-signed-win32-x64 --dir "$RUNNER_TEMP/desktop-release"
+
+      - name: Verify checksums and create draft GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          EXPECTED_SHA: ${{ needs.prepare.outputs.sha }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/desktop-release"
+          sha256sum --check SHA256SUMS.txt
+          tag_ref_json="$(gh api "repos/$REPO/git/ref/tags/$TAG")"
+          obj_type="$(jq -r '.object.type' <<<"$tag_ref_json")"
+          obj_sha="$(jq -r '.object.sha' <<<"$tag_ref_json")"
+          if [ "$obj_type" = 'tag' ]; then
+            live_sha="$(gh api "repos/$REPO/git/tags/$obj_sha" --jq '.object.sha')"
+          else
+            live_sha="$obj_sha"
+          fi
+          if [ "$live_sha" != "$EXPECTED_SHA" ]; then
+            echo "::error::Tag $TAG moved from validated commit $EXPECTED_SHA to $live_sha; aborting draft release"
+            exit 1
+          fi
+          if gh release view "$TAG" --repo "$REPO" > /dev/null 2>&1; then
+            echo "::error::$TAG already has a GitHub release; refusing to overwrite"
+            exit 1
+          fi
+          {
+            echo "Ludy Desktop $VERSION for Windows (x64, signed Squirrel.Windows installer and update feed)."
+            echo
+            echo "Draft release created after Authenticode, SHA-256, and timestamp verification. Complete the clean Windows SmartScreen and A-to-B update check (docs/desktop/windows-smoke.md), upload the feed files (RELEASES, release-manifest.json, release-manifest.ps1, *.nupkg) to your HTTPS feed host, then publish this release (docs/desktop/signing-runbook.md)."
+            echo
+            echo '```'
+            cat SHA256SUMS.txt
+            echo '```'
+          } > notes.md
+          files=(LudyDesktop-Setup.exe RELEASES release-manifest.json release-manifest.ps1 SHA256SUMS.txt *.nupkg)
+          gh release create "$TAG" --repo "$REPO" --draft --verify-tag --latest=false --title "Desktop $VERSION" --notes-file notes.md "${files[@]}"

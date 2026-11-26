@@ -48,6 +48,7 @@ export interface Shell {
   cancelSignIn(): void;
   signOut(): Promise<void>;
   openLudy(): Promise<void>;
+  checkForUpdates(): void;
   restartForUpdate(): boolean;
   checkSessionNow(): Promise<void>;
   currentSession(): ActiveDesktopSession | null;
@@ -266,6 +267,7 @@ export function createShell(deps: ShellDeps): Shell {
       if (config.ludyUrl === null) return;
       await deps.openExternal(config.ludyUrl).catch(() => setAuth(auth, SIGN_IN_FAILURES.browser ?? null));
     },
+    checkForUpdates: () => updater.checkNow(),
     restartForUpdate: () => updater.restart(),
     checkSessionNow,
     currentSession() {

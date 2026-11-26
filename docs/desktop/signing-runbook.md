@@ -1,53 +1,105 @@
 # Runbook: signing, update hosting and publishing Ludy Desktop
 
-**Status: written, nothing run.** Slice 2 of [ADR-0055](../adr/0055-three-capture-paths-one-meeting.md) ships unsigned development builds only (the `desktop-build` workflow). Everything below is an owner action: accounts, payments, secrets. No worker or team lead runs a step; per [AGENTS.md](../../AGENTS.md) the coordinator runs exactly the step list the owner approved in its chat, one approval per run, and stops at the first failure. Owner decision 7 of ADR-0055: do not buy signing accounts or certificates until the shell (slice 2) is approved.
+**Status: CI wiring and code ready; live signing and publishing run only on owner approval.** Per [AGENTS.md](../../AGENTS.md), no worker or team lead executes Production or credential steps. The coordinator runs the exact approved steps and stops at the first failure.
 
-## What exists and what does not
+## What is built vs what requires owner approval
 
-| Thing | State |
-|---|---|
-| Unsigned Squirrel.Windows installer, `.nupkg` and `RELEASES` as a CI artifact (7 days) | Built by `.github/workflows/desktop-build.yml` on every change of `apps/desktop` |
-| Windows code-signing certificate | Does not exist |
-| A hosted update feed | Does not exist; the shell reads `LUDY_DESKTOP_UPDATE_URL` and is off without it |
-| Release publishing (a tag, a GitHub release, a download page) | Does not exist |
-| macOS build, Apple account, notarization | Out of scope until the capture slice for macOS |
+| Component | State | Notes |
+|---|---|---|
+| Unsigned CI build and A-to-B install smoke | Automated | [.github/workflows/desktop-build.yml](../../.github/workflows/desktop-build.yml) |
+| Signed build script and Authenticode verifier | Ready in repo | `apps/desktop/scripts/package.mjs --sign` + `apps/desktop/scripts/signing.mjs` |
+| Release workflow (dry-run and secret-gated signed release) | Ready in repo | [.github/workflows/desktop-package.yml](../../.github/workflows/desktop-package.yml) (`workflow_dispatch` on `main`) |
+| Update feed manifest and shell verification | Ready in repo | `RELEASES` + `release-manifest.json` + Authenticode-signed `release-manifest.ps1` + `SHA256SUMS.txt`; HTTPS, DNS-pinned fetch, SSRF, origin pinning, and Windows Authenticode checks in `apps/desktop/src/update-feed.ts` and `apps/desktop/src/authenticode.ts` |
+| Windows code-signing certificate secrets in `desktop-release` environment | Owner action | Never store certificates, passwords, or private keys in the repository |
+| Hosted HTTPS update feed and public release | Owner / coordinator action | Static host controlled by the deployment |
 
-## Step 1. Decide where the signed build is made (owner)
+## Step 1. Configure the `desktop-release` GitHub environment (owner)
 
-Signing needs a secret (a certificate, or a cloud-signing credential), so it is a **separate, protected workflow** to be reviewed as a security change, never a secret added to `desktop-build.yml`. Record the choice in the issue that tracks it: a new workflow `desktop-release.yml` that runs only on a tag `desktop-vX.Y.Z` of a commit on `main`, with the signing secret held in a GitHub environment that needs approval.
+1. In GitHub repository settings, create an environment named `desktop-release`.
+2. Enable **Required reviewers** and add the owner so no signed build can access signing credentials without explicit approval.
+3. Restrict **Deployment branches and tags** on `desktop-release` to **Selected branches** -> `main` only (because `desktop-package.yml` dispatches strictly from `refs/heads/main`, so the workflow definition always comes from reviewed `main`).
+4. Keep `desktop-build.yml` completely secret-free for pull request and `main` CI checks.
 
-## Step 2. A Windows certificate (owner: account, payment, identity checks)
+## Step 2. Add certificate secrets to `desktop-release` (owner)
 
-ADR-0055 section 4 records the findings of 2026-11-19: Azure Artifact Signing does not list Vietnam among the countries open to organizations, so a Vietnamese company will most likely need a certificate from a certificate authority.
+Choose **one** of the supported signing modes in `desktop-release` (configuring more than one fails closed):
 
-1. The owner picks the certificate authority and the type (EV or OV; EV or an HSM or cloud-HSM key, since certificate authorities no longer issue plain downloadable keys for code signing).
-2. The owner buys it with the company's details and completes the identity validation (days to weeks).
-3. The private key never enters the repository, a chat or a log. It stays in the authority's cloud HSM or a hardware token; CI reaches it through the authority's signing service with a credential held in the protected GitHub environment of step 1.
-4. Record the certificate's name, expiry date and the person who renews it (validity is about 460 days since 2026-03-01) in the owner's list of renewals.
+### Option A: PFX / PKCS#12 certificate (when holding an exportable `.pfx`)
 
-Stop if the identity validation is refused or asks for documents: ask the owner.
+Set two **Secrets** in the `desktop-release` environment:
 
-## Step 3. Sign in CI (after step 2; a code change, reviewed as protected)
+- `WINDOWS_CERT_PFX_BASE64`: base64 encoding of the `.pfx` file (single line, no headers).
+- `WINDOWS_CERT_PASSWORD`: password to decrypt the `.pfx`.
 
-1. `electron-winstaller` accepts signing options (`windowsSign`) for the installer, the Setup.exe and the nupkg's `ludy-desktop.exe`; `@electron/packager` can sign the app's executable with `windowsSign` as well. Both call `@electron/windows-sign`.
-2. The release workflow passes the signing credential only to that step, as an environment secret, never printed.
-3. Verify on a clean Windows machine: `Get-AuthenticodeSignature` reports `Valid` on `LudyDesktop-Setup.exe` and on `ludy-desktop.exe` inside the installed folder, and SmartScreen shows the publisher's name (reputation may still take time to build even with a valid signature; the sources disagree on whether an EV certificate gives it at once).
+How CI handles it safely: `desktop-package.yml` decodes `WINDOWS_CERT_PFX_BASE64` into a temporary file, imports it into the ephemeral runner's `Cert:\CurrentUser\My` store via a PowerShell `SecureString`, deletes the `.pfx` immediately, passes only the SHA-1 thumbprint (`WINDOWS_CERT_SHA1`) to `package.mjs --sign`, and removes both the certificate and key (`Remove-Item -DeleteKey`) in an `if: always()` cleanup step. Passwords never appear on a `Squirrel.exe` or `signtool.exe` command line.
 
-## Step 4. Host the update feed (owner: server or bucket, DNS, spending)
+### Option B: Cloud HSM / CA signing tool (EV or non-exportable cloud key)
 
-1. Pick a static host the deployment controls (a bucket behind the deployment's own domain, or the same host that serves Ludy). The feed is a folder holding `RELEASES` and every `*-full.nupkg` (and `*-delta.nupkg` if deltas are kept). https only.
-2. Upload the signed release files after each signed build. The update's integrity rests on the signature of the executable Squirrel installs plus https on the feed: an unsigned production feed would let anyone who controls the feed's host run code on members' machines, so the feed is not switched on for members before step 3 is done.
-3. Give each deployment its address: the member's `LUDY_DESKTOP_UPDATE_URL` (see [install.md](install.md)). A hosted-Ludy operator sets it for the machines it manages.
-4. Check: install the previous signed build, publish the next one to the feed, and see the tray offer "Khởi động lại để cập nhật".
+ADR-0055 section 4 notes that Azure Artifact Signing does not list Vietnam, so Vietnamese organizations typically use an OV or EV certificate from a CA (Sectigo, DigiCert, GlobalSign, SSL.com). Most CAs store the private key in a cloud HSM or KSP.
 
-Stop if the feed answers 404 for `RELEASES` or the signature does not verify: do not point members at it.
+Set **one** of the following in the `desktop-release` environment:
 
-## Step 5. Publish (owner)
+1. **KSP / CSP SignTool parameters**:
+   - Secret `WINDOWS_SIGN_WITH_PARAMS`: `signtool.exe` flags selecting the key provider and certificate (for example `/csp "DigiCert Signing Manager KSP" /kc <keypair> /f <cert-path>`). Never pass `/p` or a password in `WINDOWS_SIGN_WITH_PARAMS` (the script rejects `/p`).
+   - Optional Variable `WINDOWS_SIGNTOOL_PATH`: path to a custom `signtool.exe` if not using the bundled Windows SDK `signtool.exe`.
+   - Any CA-specific API credential secrets required by the provider's KSP must be mapped into the `Build and sign Squirrel.Windows installer` step in `desktop-package.yml`.
+2. **Custom hook module**:
+   - Secret `WINDOWS_SIGN_HOOK_MODULE_PATH`: path to a `.js`, `.mjs`, or `.cjs` module exporting a signing function `(fileToSign) => Promise<void>` for CA CLIs such as `CodeSignTool` or `smctl`.
 
-1. Tag the release commit `desktop-vX.Y.Z` (the `apps/desktop/package.json` version is bumped first).
-2. Download the signed installer from the release workflow, check its SHA-256, and attach it to a GitHub release or put it on the page members download from.
-3. Say plainly on that page which version is current and that the first install of an unsigned build is no longer needed.
+### Timestamp server (both options)
 
-## Revoking a leaked certificate or feed
+- Optional Variable `WINDOWS_TIMESTAMP_SERVER` in `desktop-release`: defaults to `http://timestamp.digicert.com`.
+- Both `@electron/packager` (`@electron/windows-sign`) and Squirrel (`signtool.exe`) sign with SHA-256 (`/fd sha256`) and attach an RFC 3161 SHA-256 timestamp (`/tr <server> /td sha256`).
+- **Fail closed:** if the timestamp server is unreachable or does not attach a `TimeStamperCertificate`, `package.mjs --sign` rejects the build so untimestamped binaries are never shipped.
+- Record the certificate subject, issuer, serial/thumbprint, expiry date (around 460 days since 2026-03-01), and renewal owner in the renewal calendar.
 
-Contact the certificate authority to revoke, stop the update feed (remove `RELEASES`), publish a new build signed with a new certificate, and revoke the affected devices in "thiết bị đã kết nối" if a token may be exposed.
+## Step 3. Run dry-run check first (no secrets)
+
+Before touching secrets or tagging a release, verify packaging and manifest generation on `main`:
+
+1. Trigger `desktop-package.yml` manually on `main` with `mode=dry-run` and `version=0.1.0` (matches `apps/desktop/package.json`).
+2. Confirm the `build-dry-run` job passes typecheck, unit tests, Win32 native build, and produces `LudyDesktop-Setup.exe`, `RELEASES`, `*-full.nupkg`, `release-manifest.json` (`signed: false`), and `SHA256SUMS.txt`.
+
+## Step 4. Cut and verify a signed release (owner-approved run)
+
+1. Bump `"version"` in `apps/desktop/package.json` on `main` via a merged PR and confirm `Lint, typecheck, test`, `Windows build (unsigned), tests, size and memory`, and `Windows install smoke` are green on that commit.
+2. Create and push tag `desktop-vX.Y.Z` on that commit of `main`, then trigger **desktop-package** (`desktop-package.yml`) via **Run workflow** on branch `main` with `mode=signed` and `tag=desktop-vX.Y.Z`. (`desktop-package.yml` runs strictly on `refs/heads/main`, verifies the tag points to an ancestor of `origin/main` matching `apps/desktop/package.json`, confirms green CI check-runs on that commit, and re-verifies the live tag commit SHA before creating the draft release.)
+3. Approve the pending `desktop-release` environment gate in GitHub Actions.
+4. Confirm `build-signed` passes all checks:
+   - `package.mjs --sign` verifies `Get-AuthenticodeSignature` (`Status: Valid`, matching signer thumbprint, attached RFC 3161 timestamp), CMS `SignedCms` SHA-256 digest + RFC 3161 OID (`1.3.6.1.4.1.311.3.3.1`), and `signtool verify /pa /v` (`Hash of file (sha256)`) across `LudyDesktop-Setup.exe`, `ludy-desktop.exe`, `ludy-wasapi-loopback.exe`, unpacked `.nupkg` binaries including `Squirrel.exe` (`Update.exe`), and the signed `release-manifest.ps1`.
+   - `release` re-verifies that `desktop-vX.Y.Z` still points to the validated commit SHA, verifies `sha256sum --check SHA256SUMS.txt`, and creates a **draft** GitHub release (`--draft --latest=false`) containing `LudyDesktop-Setup.exe`, `RELEASES`, `*-full.nupkg`, `release-manifest.json` (`signed: true`), `release-manifest.ps1`, and `SHA256SUMS.txt`.
+5. Download the draft artifacts to a clean Windows machine and complete the signed verification checklist in [windows-smoke.md](windows-smoke.md) (SmartScreen publisher display, `Get-AuthenticodeSignature`, and A-to-B update).
+
+## Step 5. Host the HTTPS update feed and publish
+
+1. Choose a static HTTPS origin controlled by the deployment (for example `https://updates.example.vn/ludy-desktop/win32-x64` or under the Ludy deployment domain). HTTPS is mandatory; the Electron shell rejects plain `http://` feeds outside literal loopback test hosts, blocks private/reserved SSRF IPs (using DNS-pinned sockets), blocks HTML/redirects, and refuses cross-origin or HTTP download URLs inside `RELEASES`.
+2. Upload **all** feed files together atomically (upload `.nupkg` files before updating `RELEASES`, `release-manifest.json`, and `release-manifest.ps1` so clients never see a half-published manifest):
+   - `LudyDesktop-X.Y.Z-full.nupkg` (and `*-delta.nupkg` if kept)
+   - `RELEASES`
+   - `release-manifest.json`
+   - `release-manifest.ps1` (Authenticode-signed integrity script binding the whole `.nupkg` SHA-256)
+   - `SHA256SUMS.txt`
+3. Why manifest and payload verification is mandatory on HTTPS feeds: before handing an update to Squirrel.Windows, `apps/desktop/src/update-feed.ts` and `apps/desktop/src/authenticode.ts` verify `release-manifest.ps1` against the trusted publisher thumbprint (from `LUDY_DESKTOP_UPDATE_PUBLISHER_SHA1` or the running signed `ludy-desktop.exe`), download the `.nupkg` once over a DNS-pinned non-redirecting fetch, verify streaming SHA-1 and SHA-256 checksums (covering `app.asar`, DLLs, and all bundle assets), and run Windows Authenticode + RFC 3161 + SHA-256 checks on the extracted `.exe` binaries (`ludy-desktop.exe`, `Squirrel.exe`, `ludy-wasapi-loopback.exe`), serving only the locally staged verified package to Squirrel. Missing `release-manifest.json`, missing/invalid `release-manifest.ps1`, `signed: false`, checksum mismatch, or invalid Authenticode fails closed and leaves the running app untouched.
+4. Configure clients (managed machines or [install.vi.md](install.vi.md) / [install.md](install.md)):
+   - `LUDY_DESKTOP_UPDATE_URL=https://updates.example.vn/ludy-desktop/win32-x64` (or `updateUrl` in `%APPDATA%\ludy-desktop\config.json`).
+   - Optional pinning: `LUDY_DESKTOP_UPDATE_ORIGIN` (pins the feed origin) and `LUDY_DESKTOP_UPDATE_PUBLISHER_SHA1` (40-hex certificate SHA-1 thumbprint pin).
+5. Publish the draft GitHub release (or update the download page) with the verified `SHA256SUMS.txt` digest and current version number.
+
+Stop if the feed returns 404/HTML for `RELEASES` or `release-manifest.json`, if `sha256sum --check SHA256SUMS.txt` fails, or if `Get-AuthenticodeSignature` is not `Valid`.
+
+## Rollback and revocation
+
+### Roll back a bad desktop release
+
+1. **Immediate halt:** remove `RELEASES` and `release-manifest.json` from the HTTPS feed host (or restore the previous known-good version's `RELEASES`, `release-manifest.json`, `SHA256SUMS.txt`, and `.nupkg` files). Clients already on the previous version stop seeing an update; clients on the bad version stay running until a newer fixed version is published.
+2. **Forward fix:** Squirrel.Windows only upgrades forward in semver (`X.Y.Z`). To roll members back from `0.1.2` to `0.1.1` automatically, rebuild and sign the fixed source as `0.1.3`, verify it, and publish `0.1.3` to the feed.
+3. Unpublish or mark the bad GitHub release as superseded so new downloads do not pick it up.
+
+### Revoke a compromised certificate or feed
+
+1. Contact the CA immediately to revoke the compromised code-signing certificate.
+2. Disable the update feed immediately by removing `RELEASES` and `release-manifest.json` on the HTTPS host.
+3. Rotate credentials in the `desktop-release` GitHub environment and remove the old secrets.
+4. Issue a new certificate, update `desktop-release` secrets, cut a new signed version `desktop-vX.Y.Z`, and publish both the installer and feed.
+5. **Client trust recovery across certificate changes:** both explicitly pinned machines (`LUDY_DESKTOP_UPDATE_PUBLISHER_SHA1` / `updatePublisherThumbprint`) and default machines (which implicitly pin the running `ludy-desktop.exe` Authenticode thumbprint via `resolveTrustedThumbprint`) reject updates signed by a different certificate and cannot verify the revoked old binary. For both groups, transfer trust out of band by updating `LUDY_DESKTOP_UPDATE_PUBLISHER_SHA1` if configured and reinstalling `LudyDesktop-Setup.exe` from the newly signed verified installer before expecting automatic HTTPS updates to resume.
+6. If host or user credentials may have been exposed, instruct members or admins to revoke desktop devices under **Cài đặt -> Thiết bị đã kết nối**.

@@ -3,6 +3,7 @@
 // Loads ONLY local bundled files over privileged ludy-desktop://ui with strict CSP, locks permissions exclusively to the
 // internal capture worker window, persists tokens in DPAPI/keychain, and keeps capture logic isolated under src/capture/.
 import { spawn } from 'node:child_process';
+import { lookup } from 'node:dns/promises';
 import { existsSync, statSync } from 'node:fs';
 import { chmod, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { hostname } from 'node:os';
@@ -33,7 +34,7 @@ import { installCaptureSessionHandlers } from './capture/session-handlers.ts';
 import { isExpectedUiOrigin, resolveUiBundleFile, UI_CSP } from './capture/ui-bundle.ts';
 import { listMeetingWindows, resolveHelperExePath } from './capture/windows.ts';
 import { deviceNameFor } from './connect-url.ts';
-import { loadConfig, parseLudyUrl } from './config.ts';
+import { loadUpdateConfig, parseLudyUrl } from './config.ts';
 import { trayIconPng } from './icons.ts';
 import { createLogger } from './redact.ts';
 import { createShell } from './shell.ts';
@@ -41,6 +42,8 @@ import { createSmoke, smokeDirFor, type SmokeCommand } from './smoke.ts';
 import { handleSquirrelStartup } from './squirrel.ts';
 import { createSessionStore, type FileIO, type SecretBox } from './token-store.ts';
 import { describeTray, type TrayIcon, type TrayItem } from './tray-model.ts';
+import { extractEmbeddedPkcs7Der, verifyWindowsAuthenticodeFiles, verifyWindowsSignedManifest, verifyWindowsSignedPackage } from './authenticode.ts';
+import { createPinnedFetch } from './update-feed.ts';
 import { createUpdater, type AutoUpdaterLike } from './updater.ts';
 
 const log = createLogger((line) => console.log(`[ludy-desktop] ${line}`));
@@ -113,7 +116,7 @@ async function main(): Promise<void> {
 
   const userData = app.getPath('userData');
   const configFile = await readFile(join(userData, 'config.json'), 'utf8').catch(() => null);
-  const config = loadConfig({ env: process.env, configFile });
+  const config = loadUpdateConfig({ env: process.env, configFile });
   for (const problem of config.problems) log(problem);
 
   const box: SecretBox = {
@@ -146,7 +149,39 @@ async function main(): Promise<void> {
       autoUpdater.on('error', (error) => events.error(error.message));
     },
   };
-  const updater = createUpdater({ updater: updaterAdapter, feedUrl: config.updateUrl, supported: squirrelInstalled, log });
+  const smokeDir = smokeDirFor(process.env, config.ludyUrl);
+  let runningExecutableHasSignature = true;
+  try {
+    extractEmbeddedPkcs7Der(process.execPath);
+  } catch {
+    runningExecutableHasSignature = false;
+  }
+  const allowUnsignedSmoke = smokeDir !== null && !config.expectedPublisherThumbprint && !runningExecutableHasSignature;
+  const resolveHost = (targetHost: string) => lookup(targetHost, { all: true });
+  let cachedRunningThumbprint: string | null = config.expectedPublisherThumbprint;
+  const resolveTrustedThumbprint = async (): Promise<string | null> => {
+    if (cachedRunningThumbprint) return cachedRunningThumbprint;
+    if (process.platform !== 'win32' || !squirrelInstalled) return null;
+    const verified = await verifyWindowsAuthenticodeFiles([process.execPath]);
+    cachedRunningThumbprint = verified.thumbprint;
+    return cachedRunningThumbprint;
+  };
+  const updater = createUpdater({
+    updater: updaterAdapter,
+    feedUrl: config.updateUrl,
+    supported: squirrelInstalled,
+    fetch: createPinnedFetch(resolveHost),
+    allowedOrigin: config.allowedUpdateOrigin,
+    expectedPublisherThumbprint: config.expectedPublisherThumbprint,
+    allowUnsigned: allowUnsignedSmoke,
+    lookupHost: resolveHost,
+    currentVersion: app.getVersion(),
+    stagingDir: join(userData, 'update-staging'),
+    resolveTrustedThumbprint,
+    verifySignedManifest: verifyWindowsSignedManifest,
+    verifySignedPackage: verifyWindowsSignedPackage,
+    log,
+  });
 
   const desktop = createShell({
     config,
@@ -417,7 +452,6 @@ async function main(): Promise<void> {
   // The Windows smoke channel (#4566): off unless LUDY_DESKTOP_SMOKE_DIR is set AND the Ludy address is a loopback one (src/smoke.ts).
   let secondInstances = 0;
   let lastSpec = describeTray(desktop.model());
-  const smokeDir = smokeDirFor(process.env, config.ludyUrl);
   const smoke =
     smokeDir === null
       ? null
@@ -454,7 +488,7 @@ async function main(): Promise<void> {
           }),
           run: (command: SmokeCommand) => {
             // The same functions as the tray menu items.
-            if (command === 'check-update') updater.checkNow();
+            if (command === 'check-update') desktop.checkForUpdates();
             else actions[command]();
           },
           log,
