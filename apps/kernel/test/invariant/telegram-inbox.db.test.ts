@@ -330,8 +330,8 @@ suite('Telegram inbox, cross-org displacement, hook uniqueness, and redaction in
         expect(proc.rows[0]?.secdef).toBe(true);
         expect(proc.rows[0]?.config ?? []).toContain(SEARCH_PATH);
 
-        const acl = await c.query<{ grantee: string }>(
-          `SELECT COALESCE(r.rolname, 'PUBLIC') AS grantee
+        const acl = await c.query<{ grantee: string; grantable: boolean }>(
+          `SELECT COALESCE(r.rolname, 'PUBLIC') AS grantee, a.is_grantable AS grantable
              FROM pg_catalog.pg_proc p
              CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(p.proacl, pg_catalog.acldefault('f', p.proowner))) a
              LEFT JOIN pg_catalog.pg_roles r ON r.oid = a.grantee
@@ -341,7 +341,7 @@ suite('Telegram inbox, cross-org displacement, hook uniqueness, and redaction in
             ORDER BY 1`,
           [dbIds.rewriteSql(signature)],
         );
-        expect(acl.rows.map((r) => canonical(r.grantee))).toEqual([...allowed]);
+        expect(acl.rows.map((r) => [canonical(r.grantee), r.grantable])).toEqual([...allowed].map((role) => [role, false]));
 
         const audit = await auditRoleFunctionExecute(c, dbIds, signature, allowed, 'non_system');
         expect(audit.rows.filter((r) => r.ok !== r.expected), signature).toEqual([]);
@@ -520,6 +520,7 @@ suite('Telegram inbox, cross-org displacement, hook uniqueness, and redaction in
       const logs: string[] = [];
       expect(await runConversationIntake({ workerDb, runtime: worker, log: (m) => logs.push(m) })).toEqual({ stored: 0, dropped: 1 });
       expect(logs.some((m) => m.includes('refused ambiguous hook match'))).toBe(true);
+      expect(await rows('SELECT 1 FROM crove_kernel.conversation_inbound_pending')).toHaveLength(0);
       expect(await rows('SELECT 1 FROM crove_kernel.conversation WHERE org_id = ANY($1::uuid[])', [[o1.orgId, o2.orgId]])).toHaveLength(0);
     } finally {
       await rows("UPDATE crove_kernel.channel_connection SET chat_hook_next = NULL, chat_state = 'on' WHERE org_id = $1 AND id = $2", [
