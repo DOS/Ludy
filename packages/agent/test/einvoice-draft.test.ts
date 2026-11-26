@@ -2785,5 +2785,57 @@ describe('per-clause figure and VAT rate binding (#4119)', () => {
         answer([line({ description: 'Bộ bút 3 chiếc, 2 màu', unit: 'bộ', quantity: '2', unitPrice: '50000', vatRate: '10%' })], null),
       ).kind,
     ).toBe('proposal');
+    expect(
+      checkEInvoiceDraft(
+        req('2 hộp sữa giá 50k, 8% hoặc 10% VAT'),
+        answer([line({ description: 'Sữa', unit: 'hộp', quantity: '2', unitPrice: '50000', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'RATE' });
+    expect(
+      checkEInvoiceDraft(
+        req('2 hộp sữa giá 50k, VAT 8% hoặc 7%'),
+        answer([line({ description: 'Sữa', unit: 'hộp', quantity: '2', unitPrice: '50000', vatRate: '8%' })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'RATE' });
+    expect(
+      checkEInvoiceDraft(
+        req('2 hộp sữa giá 50k, 7% hoặc 8% VAT'),
+        answer([line({ description: 'Sữa', unit: 'hộp', quantity: '2', unitPrice: '50000', vatRate: '8%' })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'RATE' });
+    expect(
+      checkEInvoiceDraft(
+        req('2 hộp sữa giá 50k, giảm giá 5% hoặc 10%'),
+        answer([line({ description: 'Sữa', unit: 'hộp', quantity: '2', unitPrice: '50000', vatRate: null })], null),
+      ).kind,
+    ).toBe('proposal');
+    expect(
+      checkEInvoiceDraft(
+        req('Đơn vị tiền: USD\nBút\nsố lượng 2, đơn giá 50'),
+        answer([line({ description: 'Bút', unit: null, quantity: '2', unitPrice: '50', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(
+      checkEInvoiceDraft(
+        req('Đơn giá tính bằng USD\nTên hàng\tSL\tĐơn giá (nghìn)\nBút\t2\t50'),
+        answer([line({ description: 'Bút', unit: null, quantity: '2', unitPrice: '50000', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(
+      checkEInvoiceDraft(
+        req('Đơn vị tiền: USD / EUR\nTên hàng\tSL\tĐơn giá (nghìn)\nBút\t2\t50'),
+        answer([line({ description: 'Bút', unit: null, quantity: '2', unitPrice: '50000', vatRate: null })], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(
+      checkEInvoiceDraft(
+        req('2 bút giá 50k\nĐơn vị tiền: USD\n3 vở giá 20\n4 thước giá 10'),
+        answer([
+          line({ description: 'Bút', unit: null, quantity: '2', unitPrice: '50000', vatRate: null }),
+          line({ description: 'Vở', unit: null, quantity: '3', unitPrice: '20', vatRate: null }),
+          line({ description: 'Thước', unit: null, quantity: '4', unitPrice: '10', vatRate: null }),
+        ], null),
+      ),
+    ).toEqual({ kind: 'none', code: 'FIGURES' });
   });
 });
