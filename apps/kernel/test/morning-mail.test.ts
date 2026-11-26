@@ -635,8 +635,8 @@ describe('morning briefing contract (#5080)', () => {
     }
   });
 
-  it('formats overnight meetings across midnight cleanly in the meeting timeZone', () => {
-    const out = renderMorningBriefingMail(
+  it('formats overnight meetings across midnight and DST transitions cleanly in the meeting timeZone', () => {
+    const overnight = renderMorningBriefingMail(
       briefingMail({ lang: 'vi' }),
       briefingContent({
         meetings: [
@@ -650,7 +650,26 @@ describe('morning briefing contract (#5080)', () => {
       }),
       briefingCtx(),
     );
-    expect(out?.text).toContain('26/11/2026 23:30 - 27/11/2026 00:30 (Asia/Ho_Chi_Minh) | Họp giao ban tuần');
+    expect(overnight?.text).toContain('26/11/2026 23:30 - 27/11/2026 00:30 (Asia/Ho_Chi_Minh) | Họp giao ban tuần');
+
+    // Fall-back DST transition in America/New_York (2026-11-01): 05:45Z (UTC-04:00) to 06:15Z (UTC-05:00).
+    const dst = renderMorningBriefingMail(
+      briefingMail({ lang: 'en', day: '2026-11-01' }),
+      briefingContent({
+        day: '2026-11-01',
+        meetings: [
+          sampleMeeting({
+            startAt: '2026-11-01T05:45:00Z',
+            endAt: '2026-11-01T06:15:00Z',
+            timeZone: 'America/New_York',
+            vyLines: undefined,
+          }),
+        ],
+      }),
+      briefingCtx({ subject: 'Morning briefing' }),
+    );
+    expect(dst?.text).toContain('01:45 (UTC-04:00) - 01:15 (UTC-05:00) (America/New_York) | Họp giao ban tuần');
+    expect(dst?.html).toContain('01:45 (UTC-04:00) - 01:15 (UTC-05:00) (America/New_York)');
   });
 
   it('renders clean zero-meetings state and truncated-day indicator', () => {
@@ -722,6 +741,16 @@ describe('morning briefing contract (#5080)', () => {
         briefingCtx(),
       ),
     ).toThrow();
+    // Non-meetings internal routes (deals, settings/notifications) must not be accepted as a meeting's link.
+    for (const nonMeetingPath of ['/o/acme/deals', '/o/acme/settings/notifications']) {
+      expect(() =>
+        renderMorningBriefingMail(
+          briefingMail(),
+          briefingContent({ meetings: [sampleMeeting({ path: nonMeetingPath })] }),
+          briefingCtx(),
+        ),
+      ).toThrow();
+    }
     // Invalid publicUrl protocol, credentials, query, fragment, or control chars.
     for (const badUrl of [
       'javascript:alert(1)',

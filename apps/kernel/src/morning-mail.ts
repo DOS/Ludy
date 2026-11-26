@@ -105,10 +105,16 @@ function formatDay(day: string, lang: BriefingLang): string {
   return lang === 'vi' ? `${d}/${m}/${y}` : day;
 }
 
+function normalizeUtcOffset(raw: string | undefined): string {
+  const cleaned = (raw ?? 'GMT+00:00').replace('\u2212', '-');
+  if (cleaned === 'GMT' || cleaned === 'UTC') return 'UTC+00:00';
+  return cleaned.startsWith('GMT') ? `UTC${cleaned.slice(3)}` : cleaned;
+}
+
 function formatZonedParts(
   ms: number,
   timeZone: string,
-): { year: string; month: string; day: string; hour: string; minute: string } | null {
+): { year: string; month: string; day: string; hour: string; minute: string; offset: string } | null {
   try {
     const fmt = new Intl.DateTimeFormat('en-GB', {
       timeZone,
@@ -118,6 +124,7 @@ function formatZonedParts(
       hour: '2-digit',
       minute: '2-digit',
       hourCycle: 'h23',
+      timeZoneName: 'longOffset',
     });
     const parts: Record<string, string> = {};
     for (const part of fmt.formatToParts(new Date(ms))) {
@@ -130,6 +137,7 @@ function formatZonedParts(
       day: parts.day,
       hour: parts.hour === '24' ? '00' : parts.hour,
       minute: parts.minute,
+      offset: normalizeUtcOffset(parts.timeZoneName),
     };
   } catch {
     return null;
@@ -155,8 +163,9 @@ function formatTimeWindow(startAt: string, endAt: string, timeZone: string, cont
   }
   const startDay = `${startParts.year}-${startParts.month}-${startParts.day}`;
   const endDay = `${endParts.year}-${endParts.month}-${endParts.day}`;
-  const startTime = `${startParts.hour}:${startParts.minute}`;
-  const endTime = `${endParts.hour}:${endParts.minute}`;
+  const showOffsets = startParts.offset !== endParts.offset;
+  const startTime = `${startParts.hour}:${startParts.minute}${showOffsets ? ` (${startParts.offset})` : ''}`;
+  const endTime = `${endParts.hour}:${endParts.minute}${showOffsets ? ` (${endParts.offset})` : ''}`;
   if (startDay === endDay) {
     return startDay === contentDay
       ? `${startTime} - ${endTime} (${zone})`
@@ -267,6 +276,13 @@ function renderMeetingBlock(
   const t = BRIEFING_COPY[lang];
   const timeWindow = formatTimeWindow(meeting.startAt, meeting.endAt, meeting.timeZone, contentDay, lang);
   const title = oneLine(meeting.title) || t.untitled;
+  if (
+    meeting.path !== undefined &&
+    meeting.path !== `${orgPrefix}/meetings` &&
+    !meeting.path.startsWith(`${orgPrefix}/meetings/`)
+  ) {
+    throw new Error('TEMPLATE_DATA: invalid meeting briefing path');
+  }
   const meetingUrl = safeUrl(meeting.path ?? fallbackPath);
   const openLabel = meetingLinkLabel(meeting.path, orgPrefix, lang);
   const attendees = buildAttendeesLine(meeting, lang);
