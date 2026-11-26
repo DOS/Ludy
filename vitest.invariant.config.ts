@@ -7,7 +7,7 @@ import { defineConfig } from 'vitest/config';
 
 // The context token key of the test suites (#1822), as in vitest.config.ts.
 const TEST_CONTEXT_TOKEN_KEY = Buffer.from('test-only-context-token-key-0123456789').toString('base64');
-const env = { LUDY_CONTEXT_TOKEN_KEY: TEST_CONTEXT_TOKEN_KEY, CROVE_CONTEXT_TOKEN_KEY: TEST_CONTEXT_TOKEN_KEY };
+const env = { LUDY_CONTEXT_TOKEN_KEY: TEST_CONTEXT_TOKEN_KEY };
 
 export default defineConfig({
   test: {

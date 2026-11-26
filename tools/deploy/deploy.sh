@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deploys a Crove release to a single docker compose host, and rolls it back (issue #56, docs/runbooks/deploy.md).
+# Deploys a Ludy release to a single docker compose host, and rolls it back (issue #56, docs/runbooks/deploy.md).
 # Runs on the host. The deploy workflow (.github/workflows/deploy.yml) uploads it with the release's
 # docker-compose.yml and runs it over SSH; it also installs itself as <dir>/.deploy/deploy.sh, so an operator can
 # roll back from a shell on the host with one command.
@@ -21,21 +21,21 @@
 #
 # --auth-settings (#2704, "The pilot's identity provider settings" below): writes the pilot's remote identity provider settings
 # into the env file, after a dated private copy of it, and puts that copy back when the deploy fails or the release is
-# rolled back. --modules (#3531): writes CROVE_MODULES=<list> into the env file with the same single dated backup and
+# rolled back. --modules (#3531): writes LUDY_MODULES=<list> into the env file with the same single dated backup and
 # rollback behavior (composing into one backup when both are given). Without them the env file is never edited (apart from
 # the context token key).
 #
 # Smoke: the checks a user needs to sign in (health, readiness, config, Supabase Auth, the sign-in page), and, with
 # SMOKE_EMAIL, SMOKE_PASSWORD and SMOKE_ORG set, an account step that signs in and uploads one synthetic e-invoice
 # (see smoke_account). Without them it says the account step is skipped. With a build id (#892: the git SHA the image
-# was built from, its CROVE_BUILD) it also checks that /version reports that build and no missing migration, so an
+# was built from, its LUDY_BUILD) it also checks that /version reports that build and no missing migration, so an
 # old container that still answers fails the test. A deploy given --build checks the same, and so does a rollback to
 # a release that was deployed with one; a release without a build id (deployed before /version) skips that step.
 #
 # Deploy: pull the three images by digest, start the database, make the context token key when the env file has none and
 # count the plain idempotency rows (#3282), run `migrate`, start Supabase Auth and run `auth-grants`,
 # start the other services, then the app: the worker before the API when they run as separate services (`worker`
-# and `api`), else the all-in-one `crove` service. It waits for /readyz (every committed migration in the ledger,
+# and `api`), else the all-in-one `ludy` service. It waits for /readyz (every committed migration in the ledger,
 # Supabase Auth grants in place) and runs the smoke test. When anything after the migration fails, it rolls back to
 # the release that ran before and exits 1.
 #
@@ -46,7 +46,7 @@
 # Order of separate services (plan §3.5, #1965): toward a newer build the worker before the API, toward an older one
 # the API before the worker, so a newer API does not serve beside an older worker (whose work it may not know; its
 # /readyz answers 503 worker_build then, #1952). A build is older by the build time its image carries
-# (CROVE_BUILD_TIME, the commit's date, recorded as BUILD_EPOCH in release.env), so a deploy of an older tag rolls the
+# (LUDY_BUILD_TIME, the commit's date, recorded as BUILD_EPOCH in release.env), so a deploy of an older tag rolls the
 # API first and the rollback from it the worker first; between releases without one (images from before #1952), by
 # the time each was deployed (STAGED_AT).
 #
@@ -63,26 +63,26 @@ export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'
 
 # The env file is the one source of the context token key (#3282): a variable of the SSH session would win over the file in
 # compose's interpolation, and `migrate` would install a key the file does not hold.
-unset LUDY_CONTEXT_TOKEN_KEY CROVE_CONTEXT_TOKEN_KEY
+unset LUDY_CONTEXT_TOKEN_KEY
 
-DEPLOY_DIR="${LUDY_DEPLOY_DIR:-${CROVE_DEPLOY_DIR:-/opt/crove}}"
-ENV_FILE="${LUDY_ENV_FILE:-${CROVE_ENV_FILE:-}}"
+DEPLOY_DIR="${LUDY_DEPLOY_DIR:-/opt/ludy}"
+ENV_FILE="${LUDY_ENV_FILE:-}"
 # Seconds: `docker compose up --wait` per step (Supabase Auth may migrate for minutes on an upgrade), /readyz, and
 # how long a separate worker must stay running before the API is rolled.
-WAIT_TIMEOUT="${LUDY_WAIT_TIMEOUT:-${CROVE_WAIT_TIMEOUT:-600}}"
-READY_TIMEOUT="${LUDY_READY_TIMEOUT:-${CROVE_READY_TIMEOUT:-300}}"
-WORKER_SETTLE="${LUDY_WORKER_SETTLE:-${CROVE_WORKER_SETTLE:-15}}"
+WAIT_TIMEOUT="${LUDY_WAIT_TIMEOUT:-600}"
+READY_TIMEOUT="${LUDY_READY_TIMEOUT:-300}"
+WORKER_SETTLE="${LUDY_WORKER_SETTLE:-15}"
 # Release directories kept on the host (the current and previous ones are never removed).
-KEEP_RELEASES="${LUDY_KEEP_RELEASES:-${CROVE_KEEP_RELEASES:-5}}"
+KEEP_RELEASES="${LUDY_KEEP_RELEASES:-5}"
 # Dated copies of the env file kept next to it (the newest, and the one a rollback needs).
-KEEP_ENV_BACKUPS="${LUDY_KEEP_ENV_BACKUPS:-${CROVE_KEEP_ENV_BACKUPS:-5}}"
+KEEP_ENV_BACKUPS="${LUDY_KEEP_ENV_BACKUPS:-5}"
 # Base URL of the smoke test on the host; default: the loopback port the API service publishes.
-SMOKE_URL="${LUDY_SMOKE_URL:-${CROVE_SMOKE_URL:-}}"
+SMOKE_URL="${LUDY_SMOKE_URL:-}"
 # Seconds the account step of the smoke test waits for the worker to turn its upload into a proposal.
-SMOKE_POLL_SECONDS="${LUDY_SMOKE_POLL_SECONDS:-${CROVE_SMOKE_POLL_SECONDS:-120}}"
+SMOKE_POLL_SECONDS="${LUDY_SMOKE_POLL_SECONDS:-120}"
 # Seconds check-app-build waits for the static web host to serve the bundle matching /version (#3580).
-APP_BUILD_TIMEOUT="${LUDY_APP_BUILD_TIMEOUT:-${CROVE_APP_BUILD_TIMEOUT:-600}}"
-APP_BUILD_POLL="${LUDY_APP_BUILD_POLL:-${CROVE_APP_BUILD_POLL:-15}}"
+APP_BUILD_TIMEOUT="${LUDY_APP_BUILD_TIMEOUT:-600}"
+APP_BUILD_POLL="${LUDY_APP_BUILD_POLL:-15}"
 
 # Output may go to an SSH session that has dropped (see the signal traps in main): a failed write never stops a
 # deploy halfway.
@@ -193,7 +193,7 @@ smoke_invoice() {
     </TTChung>
     <NDHDon>
       <NBan><Ten>CÔNG TY KIỂM THỬ TRIỂN KHAI</Ten><MST>0101234564</MST><DChi>1 Đường Mẫu, Hà Nội</DChi></NBan>
-      <NMua><Ten>TỔ CHỨC KIỂM THỬ CROVE</Ten><MST>0309876546</MST><DChi>2 Đường Thử, TP Hồ Chí Minh</DChi></NMua>
+      <NMua><Ten>TỔ CHỨC KIỂM THỬ LUDY</Ten><MST>0309876546</MST><DChi>2 Đường Thử, TP Hồ Chí Minh</DChi></NMua>
       <DSHHDVu>
         <HHDVu>
           <TChat>1</TChat><STT>1</STT><THHDVu>Kiểm thử sau triển khai</THHDVu><DVTinh>Lần</DVTinh>
@@ -318,7 +318,7 @@ check_app_build() {
   if [ -n "$api_url" ]; then
     [[ "$api_url" =~ ^https?://[A-Za-z0-9.:-]+$ ]] || die "$EXIT_USAGE" "api url must be an http(s) origin: '$3'"
   fi
-  [[ "$APP_BUILD_TIMEOUT" =~ ^[0-9]+$ && "$APP_BUILD_POLL" =~ ^[0-9]+$ ]] || die "$EXIT_USAGE" 'CROVE_APP_BUILD_TIMEOUT and CROVE_APP_BUILD_POLL must be non-negative integers'
+  [[ "$APP_BUILD_TIMEOUT" =~ ^[0-9]+$ && "$APP_BUILD_POLL" =~ ^[0-9]+$ ]] || die "$EXIT_USAGE" 'LUDY_APP_BUILD_TIMEOUT and LUDY_APP_BUILD_POLL must be non-negative integers'
   local app_build_timeout=$((10#$APP_BUILD_TIMEOUT)) app_build_poll=$((10#$APP_BUILD_POLL))
 
   if [ -n "$api_url" ]; then
@@ -403,8 +403,8 @@ smoke_account() {
     printf 'authorization: Bearer %s\nx-ludy-org: %s\n' "$token" "$SMOKE_ORG" >"$headers"
 
     number="$(date -u +%s)"
-    smoke_invoice "$number" "$(date -u +%F)" >"$work/crove-smoke-$number.xml"
-    answer="$(smoke_api "$headers" "$base/api/files" --form "file=@$work/crove-smoke-$number.xml;type=application/xml")" || {
+    smoke_invoice "$number" "$(date -u +%F)" >"$work/ludy-smoke-$number.xml"
+    answer="$(smoke_api "$headers" "$base/api/files" --form "file=@$work/ludy-smoke-$number.xml;type=application/xml")" || {
       err "smoke: uploading the synthetic e-invoice to org $SMOKE_ORG failed"
       exit 1
     }
@@ -694,25 +694,25 @@ guard_run() {
   trap on_signal TERM INT
 }
 
-# docker compose for the active files in $DEPLOY_DIR. The project name comes from the compose file (`crove`) or
+# docker compose for the active files in $DEPLOY_DIR. The project name comes from the compose file (`ludy`) or
 # COMPOSE_PROJECT_NAME in the env file, so volumes stay the same from release to release.
 DC_PREFIX=()
 dc() {
   local args=(compose --project-directory "$DEPLOY_DIR" --env-file "$ENV_FILE" -f "$DEPLOY_DIR/docker-compose.yml")
   # The pilot's split API and worker (tools/deploy/compose.pilot.yml, #2118) right after the release's file: they extend its
-  # `crove` service, whose image the release's pins (next) must then replace. The host chooses the layout by listing the file
+  # `ludy` service, whose image the release's pins (next) must then replace. The host chooses the layout by listing the file
   # in COMPOSE_FILE (#2133); the file itself comes with each release (activate), so it stays in step with docker-compose.yml.
   if pilot_layout && [ -f "$DEPLOY_DIR/compose.pilot.yml" ]; then args+=(-f "$DEPLOY_DIR/compose.pilot.yml"); fi
   args+=(-f "$DEPLOY_DIR/docker-compose.override.yml")
   # The database image with pgBackRest and the bucket's settings (tools/backup/compose.wal.yml, #2120). The image
-  # (crove-db:local, built from tools/wal) is on the host, never pulled: a deploy starts `db` with --no-build.
+  # (ludy-db:local, built from tools/wal) is on the host, never pulled: a deploy starts `db` with --no-build.
   if [ -f "$DEPLOY_DIR/compose.wal.yml" ]; then args+=(-f "$DEPLOY_DIR/compose.wal.yml"); fi
   if [ -f "$DEPLOY_DIR/compose.host.yml" ]; then args+=(-f "$DEPLOY_DIR/compose.host.yml"); fi
   # DC_PREFIX: a command to run docker under (the count of plain idempotency rows runs under `timeout`).
   ${DC_PREFIX[@]+"${DC_PREFIX[@]}"} docker "${args[@]}" "$@"
 }
 
-# Image pins of a release. The images are exported too, so compose.host.yml can use ${CROVE_IMAGE} for services it
+# Image pins of a release. The images are exported too, so compose.host.yml can use ${LUDY_IMAGE} for services it
 # adds (`api` and `worker` with split roles).
 write_override() {
   local image="$1" extract="$2" media="$3"
@@ -722,11 +722,11 @@ write_override() {
 services:
   migrate: { image: '$image', build: !reset null }
   auth-grants: { image: '$image', build: !reset null }
-  crove: { image: '$image', build: !reset null }
+  ludy: { image: '$image', build: !reset null }
   prober: { image: '$image', build: !reset null }
   usage: { image: '$image', build: !reset null }
-  crove-extract: { image: '$extract', build: !reset null }
-  crove-media: { image: '$media', build: !reset null }
+  ludy-extract: { image: '$extract', build: !reset null }
+  ludy-media: { image: '$media', build: !reset null }
 EOF
 }
 
@@ -746,7 +746,7 @@ env_compose_file_lists() {
 }
 
 # In the pilot layout, the same image pins for `api` and `worker`, so a plain `docker compose` in the stack directory
-# (tools/backup/restore.sh, a manual `up`) runs the release's digest, not crove:local. Only in that layout: an `api` service
+# (tools/backup/restore.sh, a manual `up`) runs the release's digest, not ludy:local. Only in that layout: an `api` service
 # defined by a pin alone would run the all-in-one role with no settings, and `has_service` would roll it.
 pilot_pins() {
   pilot_layout || return 0
@@ -772,12 +772,9 @@ activate() {
   cp -f "$rel/docker-compose.override.yml" "$DEPLOY_DIR/docker-compose.override.yml.tmp"
   LUDY_IMAGE="$(release_field "$1" IMAGE)"
   LUDY_EXTRACT_IMAGE="$(release_field "$1" EXTRACT_IMAGE)"
-  # Empty for a release staged before crove-media was published (a rollback to it): nothing is pulled for it and its override pins none; its
-  # own compose files decide whether crove-media runs (a release from before #2988 keeps it behind the `media` profile).
+  # Empty for a release staged before ludy-media was published (a rollback to it): nothing is pulled for it and its override pins none; its
+  # own compose files decide whether media runs (a release from before #2988 keeps it behind the `media` profile).
   LUDY_MEDIA_IMAGE="$(release_field "$1" MEDIA_IMAGE)"
-  CROVE_IMAGE="$LUDY_IMAGE"
-  CROVE_EXTRACT_IMAGE="$LUDY_EXTRACT_IMAGE"
-  CROVE_MEDIA_IMAGE="$LUDY_MEDIA_IMAGE"
   # The pins of `api` and `worker` follow the layout of now, whatever the release was staged under: taken out of a release
   # staged in the pilot layout when the host has gone back to one container (they would define bare services), put in
   # one staged before (#2133).
@@ -801,7 +798,7 @@ activate() {
   if [ -f "$DEPLOY_DIR/compose.pilot.yml.tmp" ]; then mv -f "$DEPLOY_DIR/compose.pilot.yml.tmp" "$DEPLOY_DIR/compose.pilot.yml"; fi
   mv -f "$DEPLOY_DIR/docker-compose.yml.tmp" "$DEPLOY_DIR/docker-compose.yml"
   mv -f "$DEPLOY_DIR/docker-compose.override.yml.tmp" "$DEPLOY_DIR/docker-compose.override.yml"
-  export LUDY_IMAGE LUDY_EXTRACT_IMAGE LUDY_MEDIA_IMAGE CROVE_IMAGE CROVE_EXTRACT_IMAGE CROVE_MEDIA_IMAGE
+  export LUDY_IMAGE LUDY_EXTRACT_IMAGE LUDY_MEDIA_IMAGE
   # The build the release's image reports on /version; empty for a release deployed without --build.
   ACTIVE_BUILD="$(release_field "$1" BUILD)"
 }
@@ -820,17 +817,74 @@ has_service() {
   for s in "${SERVICES[@]}"; do [ "$s" = "$1" ] && return 0; done
   return 1
 }
-# One-shot jobs and the app are rolled by name; everything else (Supabase Auth, crove-extract, a reverse proxy from
-# compose.host.yml) is infrastructure and starts before the app. The prober starts last.
+# One-shot jobs and the app are rolled by name; everything else (Supabase Auth, ludy-extract, ludy-media, a reverse proxy from
+# compose.host.yml) is infrastructure and starts before the app. Both `ludy` and `crove` are excluded so rolling back to an older
+# release keeps working (#3972). The prober starts last.
 infra_services() {
   local s
   for s in "${SERVICES[@]}"; do
-    case "$s" in db | migrate | auth-grants | usage | crove | api | worker | prober | '') ;; *) printf '%s\n' "$s" ;; esac
+    case "$s" in db | migrate | auth-grants | usage | ludy | crove | api | worker | prober | '') ;; *) printf '%s\n' "$s" ;; esac
   done
 }
 
-# The app's HTTP service and the loopback URL the smoke test uses.
-api_service() { if has_service api; then echo api; else echo crove; fi; }
+# The app's HTTP service and the loopback URL the smoke test uses (tolerating older releases named `crove`).
+api_service() {
+  if has_service api; then echo api; elif has_service ludy; then echo ludy; else echo crove; fi
+}
+
+unquote_compose_scalar() {
+  local line="$1"
+  line="${line#"${line%%[![:space:]]*}"}"
+  if [[ "$line" =~ ^\"([^\"]*)\"[[:space:]]*(#.*)?$ ]]; then
+    printf '%s' "${BASH_REMATCH[1]}"
+  elif [[ "$line" =~ ^\'([^\']*)\'[[:space:]]*(#.*)?$ ]]; then
+    printf '%s' "${BASH_REMATCH[1]}"
+  else
+    line="${line%%[[:space:]]#*}"
+    line="${line%"${line##*[![:space:]]}"}"
+    printf '%s' "$line"
+  fi
+}
+
+# Project name docker compose gives containers in $DEPLOY_DIR, matching Compose's own precedence:
+# COMPOSE_PROJECT_NAME (env) -> COMPOSE_PROJECT_NAME (in $ENV_FILE) -> top-level `name:` in docker-compose.yml -> basename of $DEPLOY_DIR.
+compose_project() {
+  local raw='' line
+  if [ -n "${COMPOSE_PROJECT_NAME:-}" ]; then
+    raw="$COMPOSE_PROJECT_NAME"
+  elif [ -n "${ENV_FILE:-}" ] && [ -f "$ENV_FILE" ]; then
+    line="$(sed -n -E 's/^[[:space:]]*(export[[:space:]]+)?COMPOSE_PROJECT_NAME[[:space:]]*[=:][[:space:]]*(.*)$/\2/p' "$ENV_FILE" | tail -n 1)"
+    line="${line%$'\r'}"
+    if [ -n "$line" ]; then raw="$(unquote_compose_scalar "$line")"; fi
+  fi
+  if [ -z "$raw" ] && [ -f "$DEPLOY_DIR/docker-compose.yml" ]; then
+    line="$(sed -n -E 's/^name:[[:space:]]*(.*)$/\1/p' "$DEPLOY_DIR/docker-compose.yml" | head -n 1)"
+    line="${line%$'\r'}"
+    if [ -n "$line" ]; then raw="$(unquote_compose_scalar "$line")"; fi
+  fi
+  if [ -z "$raw" ]; then raw="$(basename "$DEPLOY_DIR")"; fi
+  raw="${raw,,}"
+  raw="${raw//[^a-z0-9_-]/}"
+  if [[ "$raw" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then printf '%s' "$raw"; fi
+}
+
+# Removes containers belonging to a renamed service from a prior release (e.g., crove-extract -> ludy-extract across v0.3.12 -> Stage 7)
+# scoped strictly by this stack's Compose project label so other stacks on the host are untouched.
+remove_orphan_service() {
+  local svc="$1" proj id removed
+  local -a ids=()
+  proj="$(compose_project)"
+  [ -n "$proj" ] || return 0
+  while IFS= read -r id; do
+    if [[ "$id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then ids+=("$id"); fi
+  done < <(docker ps -aq --filter "label=com.docker.compose.project=$proj" --filter "label=com.docker.compose.service=$svc" 2>/dev/null || true)
+  ((${#ids[@]} > 0)) || return 0
+  log "removing old $svc container(s) from project $proj"
+  if ! removed="$(docker rm --force "${ids[@]}" 2>&1)"; then
+    log "could not remove old $svc container(s) (the deploy goes on): ${removed:0:300}"
+  fi
+}
+
 local_url() {
   local mapped port
   if [ -n "$SMOKE_URL" ]; then
@@ -862,11 +916,11 @@ wait_ready() {
 
 up() { dc up --detach --no-build --no-deps --wait --wait-timeout "$WAIT_TIMEOUT" "$@"; }
 
-# The build time an image carries (CROVE_BUILD_TIME, #1952), in seconds since the epoch; nothing when it has none or
+# The build time an image carries (LUDY_BUILD_TIME, #1952), in seconds since the epoch; nothing when it has none or
 # the image is not on the host.
 image_build_epoch() {
   local t
-  t="$(docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$1" 2>/dev/null | sed -n -e 's/^LUDY_BUILD_TIME=//p' -e 's/^CROVE_BUILD_TIME=//p' | head -n 1)" || true
+  t="$(docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$1" 2>/dev/null | sed -n -e 's/^LUDY_BUILD_TIME=//p' | head -n 1)" || true
   [ -n "$t" ] || return 0
   date -u -d "$t" +%s 2>/dev/null || true
 }
@@ -917,7 +971,11 @@ roll_worker() {
 # the default) rolls a separate worker before the API, back (toward an older one) the API before the worker (see the
 # header and direction_to).
 roll_services() {
-  local direction="${1:-forward}" infra=() rest=() url s
+  local direction="${1:-forward}" infra=() rest=() url s all_in_one=ludy other_all_in_one=crove
+  if [ -f "$DEPLOY_DIR/docker-compose.yml" ] && grep -q -E '^  crove:[[:space:]]*$' "$DEPLOY_DIR/docker-compose.yml" && ! grep -q -E '^  ludy:[[:space:]]*$' "$DEPLOY_DIR/docker-compose.yml"; then
+    all_in_one=crove
+    other_all_in_one=ludy
+  fi
   load_services || return 1
   mapfile -t infra < <(infra_services)
   if has_service auth; then
@@ -928,16 +986,22 @@ roll_services() {
     log 'running auth-grants'
     dc run --rm --no-TTY --no-deps auth-grants || return 1
   fi
+  # Clean up renamed sandbox containers across v0.3.12 <-> Stage 7 deploy/rollback transitions before starting replacements.
+  if has_service ludy-extract && ! has_service crove-extract; then remove_orphan_service crove-extract; fi
+  if has_service ludy-media && ! has_service crove-media; then remove_orphan_service crove-media; fi
+  if has_service crove-extract && ! has_service ludy-extract; then remove_orphan_service ludy-extract; fi
+  if has_service crove-media && ! has_service ludy-media; then remove_orphan_service ludy-media; fi
   for s in "${infra[@]}"; do if [ "$s" != auth ]; then rest+=("$s"); fi; done
   if ((${#rest[@]} > 0)); then
     log "starting ${rest[*]}"
     up "${rest[@]}" || return 1
   fi
   if has_service worker && has_service api; then
-    # The first deploy of the pilot layout on a host that ran the all-in-one `crove`: that container would keep the API's
+    # The first deploy of the pilot layout on a host that ran the all-in-one container: that container would keep the API's
     # port and run the worker's jobs beside the new one (#2118). Nothing to remove on a later deploy.
     local removed
-    if ! removed="$(dc rm --stop --force crove 2>&1)"; then log "could not remove the old crove container (the deploy goes on): ${removed:0:300}"; fi
+    if ! removed="$(dc rm --stop --force "$all_in_one" 2>&1)"; then log "could not remove the old $all_in_one container (the deploy goes on): ${removed:0:300}"; fi
+    remove_orphan_service "$other_all_in_one"
     if [ "$direction" = back ]; then
       log 'rolling the API (toward an older build: the API before the worker)'
       up api || return 1
@@ -947,7 +1011,12 @@ roll_services() {
       log 'rolling the API'
       up api || return 1
     fi
+  elif has_service ludy; then
+    remove_orphan_service crove
+    log 'rolling ludy (api and worker in one container)'
+    up ludy || return 1
   else
+    remove_orphan_service ludy
     log 'rolling crove (api and worker in one container)'
     up crove || return 1
   fi
@@ -978,7 +1047,7 @@ pull_images() {
     log "pulling $extract"
     DOCKER_CONFIG="$PULL_CONFIG" docker pull --quiet "$extract" >/dev/null || rc=$?
   fi
-  # A release staged before crove-media was published has no media image to pull (a rollback to it).
+  # A release staged before ludy-media was published has no media image to pull (a rollback to it).
   if [ "$rc" = 0 ] && [ -n "$media" ]; then
     log "pulling $media"
     DOCKER_CONFIG="$PULL_CONFIG" docker pull --quiet "$media" >/dev/null || rc=$?
@@ -1019,7 +1088,7 @@ preflight() {
 # Production steps of a deploy (#3282, docs/runbooks/deploy.md, "Steps for the context token key and plain
 # idempotency rows"). They run on the host, after the database is up and before `migrate`, so the key never leaves it.
 
-# The line numbers of the last CROVE_CONTEXT_TOKEN_KEY assignment in the env file, and whether its value is set. Read like a
+# The line numbers of the last LUDY_CONTEXT_TOKEN_KEY assignment in the env file, and whether its value is set. Read like a
 # dotenv file, the last assignment wins: `export` and spaces around `=` (or `:`, which the dotenv parser of compose accepts too) are allowed, a ` # comment` is not part of the value, `""` and
 # `''` are empty, and a commented-out line is not an assignment. When a value is in doubt (`KEY=#x`) it counts as set: a key that
 # is there is never replaced, and a deploy that wrongly takes a key for missing would destroy one.
@@ -1027,14 +1096,13 @@ preflight() {
 # an argument or an environment variable of another process, and it is never printed.
 KEY_LINE=0 KEY_SET=0
 env_key_scan() {
-  local file="${1:-$ENV_FILE}" line name raw value n=0 val_set=0 ludy_line=0 ludy_set=0 crove_line=0 crove_set=0
+  local file="${1:-$ENV_FILE}" line raw value n=0 val_set=0
   KEY_LINE=0 KEY_SET=0
   while IFS= read -r line || [ -n "$line" ]; do
     n=$((n + 1))
     line="${line%$'\r'}"
-    if [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?(LUDY_CONTEXT_TOKEN_KEY|CROVE_CONTEXT_TOKEN_KEY)[[:space:]]*[=:](.*)$ ]]; then
-      name="${BASH_REMATCH[2]}"
-      raw="${BASH_REMATCH[3]}"
+    if [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?LUDY_CONTEXT_TOKEN_KEY[[:space:]]*[=:](.*)$ ]]; then
+      raw="${BASH_REMATCH[2]}"
       value="$raw"
       if [[ "$raw" =~ ^[[:space:]]+# ]]; then
         value=''
@@ -1049,17 +1117,10 @@ env_key_scan() {
         fi
       fi
       if [ -n "$value" ]; then val_set=1; else val_set=0; fi
-      if [ "$name" = LUDY_CONTEXT_TOKEN_KEY ]; then
-        ludy_line=$n
-        ludy_set=$val_set
-      else
-        crove_line=$n
-        crove_set=$val_set
-      fi
+      KEY_LINE=$n
+      KEY_SET=$val_set
     fi
   done <"$file"
-  if ((ludy_line > 0)); then KEY_LINE=$ludy_line; else KEY_LINE=$crove_line; fi
-  if ((ludy_set || crove_set)); then KEY_SET=1; else KEY_SET=0; fi
 }
 
 # Before anything changes: when the env file has no context token key, the deploy must be able to make one.
@@ -1515,7 +1576,7 @@ auth_settings_probe() {
   ((ok))
 }
 
-# apply_env_settings <has_auth 0|1> <has_modules 0|1> <modules_list>: writes AUTH_LINES and/or CROVE_MODULES=<list>
+# apply_env_settings <has_auth 0|1> <has_modules 0|1> <modules_list>: writes AUTH_LINES and/or LUDY_MODULES=<list>
 # into $ENV_FILE in one atomic pass, after keeping a single dated copy next to it (mode 600).
 # Returns 0 (done, or the file already had exactly these settings: then no copy is made), 1 (nothing changed) or 2 (the write
 # failed and the file could not be put back: the copy is kept and named).
@@ -1535,11 +1596,11 @@ apply_env_settings() {
     for key in "${AUTH_SETTING_NAMES[@]}" AUTH_SESSION_CHECK AUTH_UPSTREAM_URL "${AUTH_SETTING_DROPPED[@]}"; do managed[$key]=1; done
     for key in "${AUTH_SETTING_DROPPED[@]}"; do dropped[$key]=1; done
   fi
-  # Pre-scan for CRLF endings across the whole file and the last LUDY_MODULES / CROVE_MODULES assignment line.
+  # Pre-scan for CRLF endings across the whole file and the last LUDY_MODULES assignment line.
   while IFS= read -r line || [ -n "$line" ]; do
     n=$((n + 1))
     if [ "${line: -1}" = $'\r' ]; then cr=$'\r'; fi
-    if ((has_modules)) && [[ "${line%$'\r'}" =~ ^[[:space:]]*(export[[:space:]]+)?(LUDY_MODULES|CROVE_MODULES)[[:space:]]*[=:] ]]; then
+    if ((has_modules)) && [[ "${line%$'\r'}" =~ ^[[:space:]]*(export[[:space:]]+)?LUDY_MODULES[[:space:]]*[=:] ]]; then
       mod_line=$n
     fi
   done <"$ENV_FILE"
@@ -1553,7 +1614,7 @@ apply_env_settings() {
           if [ -n "${dropped[$key]:-}" ]; then gone+=("$key"); fi
           continue
         fi
-        if ((has_modules)) && { [ "$key" = LUDY_MODULES ] || [ "$key" = CROVE_MODULES ]; }; then
+        if ((has_modules)) && [ "$key" = LUDY_MODULES ]; then
           if [ "$n" = "$mod_line" ]; then
             printf 'LUDY_MODULES=%s%s\n' "$modules_list" "$cr"
             written_count=$((written_count + 1))
@@ -1590,7 +1651,7 @@ apply_env_settings() {
     for key in "${written[@]}"; do
       if [ "$key" = "LUDY_MODULES=$modules_list$cr" ]; then
         mod_seen=$((mod_seen + 1))
-      elif [[ "${key%$'\r'}" =~ ^[[:space:]]*(export[[:space:]]+)?(LUDY_MODULES|CROVE_MODULES)[[:space:]]*[=:] ]]; then
+      elif [[ "${key%$'\r'}" =~ ^[[:space:]]*(export[[:space:]]+)?LUDY_MODULES[[:space:]]*[=:] ]]; then
         err 'the new env file has an unexpected LUDY_MODULES line; the env file was not touched'
         return 1
       fi

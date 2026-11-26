@@ -11,14 +11,14 @@ import { AVAILABLE_MODULES } from '../../apps/kernel/src/config.ts';
 const repo = resolve(import.meta.dirname, '../..');
 const script = join(repo, 'tools/deploy/deploy.sh');
 // Linux and macOS (CI runs it on Linux). Under Git Bash on Windows the same suite takes about 15 minutes, since every
-// case forks a few hundred processes; set CROVE_DEPLOY_TESTS=1 to run it there anyway.
+// case forks a few hundred processes; set LUDY_DEPLOY_TESTS=1 to run it there anyway.
 const hasBash = spawnSync('bash', ['-c', 'exit 0']).status === 0;
-const runHere = hasBash && (process.platform !== 'win32' || process.env['CROVE_DEPLOY_TESTS'] === '1');
+const runHere = hasBash && (process.platform !== 'win32' || process.env['LUDY_DEPLOY_TESTS'] === '1');
 
 const digest = (c: string) => c.repeat(64);
-const image = (c: string) => `ghcr.io/example/crove@sha256:${digest(c)}`;
-const extract = (c: string) => `ghcr.io/example/crove-extract@sha256:${digest(c)}`;
-const media = (c: string) => `ghcr.io/example/crove-media@sha256:${digest(c)}`;
+const image = (c: string) => `ghcr.io/example/ludy@sha256:${digest(c)}`;
+const extract = (c: string) => `ghcr.io/example/ludy-extract@sha256:${digest(c)}`;
+const media = (c: string) => `ghcr.io/example/ludy-media@sha256:${digest(c)}`;
 const releaseDir = (release: string, c: string) => `${release}-${digest(c).slice(0, 12)}`;
 // Forward slashes: the script takes absolute paths without backslashes (Git Bash on Windows accepts C:/...).
 const slash = (p: string) => p.replaceAll('\\', '/');
@@ -65,7 +65,7 @@ const indexOf = (lines: string[], text: string) => lines.findIndex((l) => l.incl
 
 describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
   beforeEach(() => {
-    root = slash(mkdtempSync(join(tmpdir(), 'crove-deploy-')));
+    root = slash(mkdtempSync(join(tmpdir(), 'ludy-deploy-')));
     dir = `${root}/host`;
     log = `${root}/calls.log`;
     compose = `${root}/docker-compose.yml`;
@@ -79,12 +79,12 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       chmodSync(`${root}/bin/${stub}`, 0o755);
     }
     writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\n');
-    writeFileSync(compose, 'name: crove\nservices: {}\n');
+    writeFileSync(compose, 'name: ludy\nservices: {}\n');
   });
   afterEach(() => rmSync(root, { recursive: true, force: true }));
 
   it('pulls by digest, migrates first, then rolls infrastructure, the app and the prober, and records the release', () => {
-    const res = deploy('v1.0.0', 'a', { STUB_SERVICES: 'db migrate auth auth-grants crove-extract crove-media mailpit crove prober' });
+    const res = deploy('v1.0.0', 'a', { STUB_SERVICES: 'db migrate auth auth-grants ludy-extract ludy-media mailpit ludy prober' });
     expect(res.status, res.out).toBe(0);
     const c = calls();
     const order = [
@@ -96,9 +96,9 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       'compose run --rm --no-TTY --no-deps migrate',
       'compose up --detach --no-build --no-deps --wait --wait-timeout 600 auth',
       'compose run --rm --no-TTY --no-deps auth-grants',
-      'compose up --detach --no-build --no-deps --wait --wait-timeout 600 crove-extract crove-media mailpit',
-      'compose up --detach --no-build --no-deps --wait --wait-timeout 600 crove',
-      'compose port crove 8080',
+      'compose up --detach --no-build --no-deps --wait --wait-timeout 600 ludy-extract ludy-media mailpit',
+      'compose up --detach --no-build --no-deps --wait --wait-timeout 600 ludy',
+      'compose port ludy 8080',
       'compose up --detach --no-build --no-deps --wait --wait-timeout 600 prober',
     ].map((step) => indexOf(c, step));
     expect(order.every((i) => i >= 0), c.join('\n')).toBe(true);
@@ -106,11 +106,11 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
 
     expect(state('current')).toBe(releaseDir('v1.0.0', 'a'));
     expect(state('previous')).toBe('');
-    expect(running()).toContain(`crove: { image: '${image('a')}', build: !reset null }`);
-    expect(running()).toContain(`crove-extract: { image: '${extract('a')}', build: !reset null }`);
-    expect(running()).toContain(`crove-media: { image: '${media('a')}', build: !reset null }`);
+    expect(running()).toContain(`ludy: { image: '${image('a')}', build: !reset null }`);
+    expect(running()).toContain(`ludy-extract: { image: '${extract('a')}', build: !reset null }`);
+    expect(running()).toContain(`ludy-media: { image: '${media('a')}', build: !reset null }`);
     expect(readFileSync(`${dir}/releases/${releaseDir('v1.0.0', 'a')}/release.env`, 'utf8')).toContain(`MEDIA_IMAGE=${media('a')}`);
-    expect(readFileSync(`${dir}/docker-compose.yml`, 'utf8')).toBe('name: crove\nservices: {}\n');
+    expect(readFileSync(`${dir}/docker-compose.yml`, 'utf8')).toBe('name: ludy\nservices: {}\n');
     expect(readFileSync(`${dir}/.deploy/history.log`, 'utf8')).toMatch(/deploy v1\.0\.0-a{12} ok/);
     // The script installs itself for a manual rollback.
     expect(readFileSync(`${dir}/.deploy/deploy.sh`, 'utf8')).toBe(readFileSync(script, 'utf8'));
@@ -120,7 +120,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
 
   // #2118, #2133: the pilot's split API and worker. compose.pilot.yml ships with each release, next to its compose file;
   // the host chooses the layout by listing it in COMPOSE_FILE, and the pins of api and worker follow that choice.
-  const SPLIT = 'db migrate auth auth-grants crove-extract mailpit api worker';
+  const SPLIT = 'db migrate auth auth-grants ludy-extract mailpit api worker';
   const PILOT_ENV = 'POSTGRES_PASSWORD=x\nCOMPOSE_FILE=docker-compose.yml:compose.pilot.yml:docker-compose.override.yml:compose.host.yml\n';
   const NOT_PILOT_ENV = 'POSTGRES_PASSWORD=x\nCOMPOSE_FILE=docker-compose.yml:docker-compose.override.yml:compose.host.yml\n';
   const filesOf = () => readFileSync(`${log}.files`, 'utf8').split('\n').filter(Boolean);
@@ -150,8 +150,8 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     // The split roles roll worker first, then the API, and the smoke test finds the API's port.
     const c = calls();
     // The all-in-one container of an earlier layout goes first, so it keeps neither the API's port nor the worker's jobs.
-    expect(indexOf(c, 'compose rm --stop --force crove')).toBeGreaterThanOrEqual(0);
-    expect(indexOf(c, 'compose rm --stop --force crove')).toBeLessThan(indexOf(c, 'compose up --detach --no-build --no-deps worker'));
+    expect(indexOf(c, 'compose rm --stop --force ludy')).toBeGreaterThanOrEqual(0);
+    expect(indexOf(c, 'compose rm --stop --force ludy')).toBeLessThan(indexOf(c, 'compose up --detach --no-build --no-deps worker'));
     expect(indexOf(c, 'compose up --detach --no-build --no-deps worker')).toBeLessThan(indexOf(c, 'compose up --detach --no-build --no-deps --wait --wait-timeout 600 api'));
     expect(c.some((l) => l === 'compose port api 8080')).toBe(true);
 
@@ -199,23 +199,23 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     }
   });
 
-  it('rolls back to a release staged before crove-media was published: no media image to pull, none pinned (#2988)', () => {
+  it('rolls back to a release staged before ludy-media was published: no media image to pull, none pinned (#2988)', () => {
     expect(deploy('v1.0.0', 'a').status).toBe(0);
     expect(deploy('v1.1.0', 'b').status).toBe(0);
     // Release a as an earlier deploy.sh staged it: no MEDIA_IMAGE in release.env and no pin in its override.
     const old = `${dir}/releases/${releaseDir('v1.0.0', 'a')}`;
     writeFileSync(`${old}/release.env`, readFileSync(`${old}/release.env`, 'utf8').split('\n').filter((l) => !l.startsWith('MEDIA_IMAGE=')).join('\n'));
-    writeFileSync(`${old}/docker-compose.override.yml`, readFileSync(`${old}/docker-compose.override.yml`, 'utf8').split('\n').filter((l) => !l.includes('crove-media:')).join('\n'));
+    writeFileSync(`${old}/docker-compose.override.yml`, readFileSync(`${old}/docker-compose.override.yml`, 'utf8').split('\n').filter((l) => !l.includes('ludy-media:')).join('\n'));
     writeFileSync(log, '');
     const back = run(['rollback']);
     expect(back.status, back.out).toBe(0);
     const c = calls();
     expect(indexOf(c, `pull ${image('a')}`)).toBeGreaterThanOrEqual(0);
     expect(indexOf(c, `pull ${extract('a')}`)).toBeGreaterThanOrEqual(0);
-    // Nothing was pulled for a media image: no `pull` with an empty reference, no crove-media digest.
+    // Nothing was pulled for a media image: no `pull` with an empty reference, no ludy-media digest.
     expect(c.filter((line) => line.startsWith('pull') && !line.includes('@sha256:'))).toEqual([]);
-    expect(c.some((line) => line.includes('crove-media@'))).toBe(false);
-    expect(running()).not.toContain('crove-media: {');
+    expect(c.some((line) => line.includes('ludy-media@'))).toBe(false);
+    expect(running()).not.toContain('ludy-media: {');
   });
 
   it('takes the pins of api and worker out when the host goes back to one container, and from a release staged with them (#2133)', () => {
@@ -240,7 +240,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     expect(run(['rollback']).status).toBe(0);
     expect(running()).not.toContain('api: {');
     expect(running()).not.toContain('worker: {');
-    expect(running()).toContain(`crove: { image: '${image('b')}', build: !reset null }`);
+    expect(running()).toContain(`ludy: { image: '${image('b')}', build: !reset null }`);
     // And forward again into the pilot layout: the pins come back with the layout.
     writeFileSync(`${dir}/.env`, PILOT_ENV);
     expect(deploy('v1.3.0', 'd', { STUB_SERVICES: SPLIT }).status).toBe(0);
@@ -262,9 +262,9 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     expect(res.out).toContain('lists compose.wal.yml but');
   });
 
-  it('stops before pulling when COMPOSE_FILE lists compose.pilot.yml and neither the release nor the host has the file, rather than roll the all-in-one crove (#2118, #2133)', () => {
+  it('stops before pulling when COMPOSE_FILE lists compose.pilot.yml and neither the release nor the host has the file, rather than roll the all-in-one ludy (#2118, #2133)', () => {
     writeFileSync(`${dir}/.env`, PILOT_ENV);
-    const res = deploy('v1.0.0', 'a', { STUB_SERVICES: 'db migrate auth auth-grants crove-extract mailpit crove' });
+    const res = deploy('v1.0.0', 'a', { STUB_SERVICES: 'db migrate auth auth-grants ludy-extract mailpit ludy' });
     expect(res.status, res.out).toBe(2);
     expect(res.out).toContain('lists compose.pilot.yml but this release does not carry it');
     expect(calls().some((l) => l.startsWith('pull '))).toBe(false);
@@ -286,12 +286,56 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     for (const files of filesOf()) expect(files).toBe(`${dir}/docker-compose.yml ${dir}/compose.pilot.yml ${dir}/docker-compose.override.yml`);
   });
 
-  it('says so when it cannot remove the old crove container, and goes on', () => {
+  it('says so when it cannot remove the old ludy container, and goes on', () => {
     writeFileSync(`${dir}/.env`, PILOT_ENV);
     writeFileSync(`${root}/compose.pilot.yml`, 'services: {}\n');
-    const res = deploy('v1.0.0', 'a', { STUB_SERVICES: 'db migrate auth auth-grants crove-extract mailpit api worker', STUB_RM_FAIL: '1' });
+    const res = deploy('v1.0.0', 'a', { STUB_SERVICES: 'db migrate auth auth-grants ludy-extract mailpit api worker', STUB_RM_FAIL: '1' });
     expect(res.status, res.out).toBe(0);
-    expect(res.out).toContain('could not remove the old crove container (the deploy goes on): rm: stub failure');
+    expect(res.out).toContain('could not remove the old ludy container (the deploy goes on): rm: stub failure');
+  });
+
+  it('cleans up renamed v0.3.12 crove-extract/crove-media/crove containers scoped to the project before starting replacements, and supports rolling back to v0.3.12 (#3972)', () => {
+    writeFileSync(`${dir}/.env`, `${PILOT_ENV}COMPOSE_PROJECT_NAME=ludy\n`);
+    writeFileSync(`${root}/compose.pilot.yml`, 'services: {}\n');
+    const res = deploy('v0.4.0', 'b', {
+      STUB_SERVICES: 'db migrate auth auth-grants ludy-extract ludy-media mailpit api worker',
+      STUB_ORPHAN_CONTAINERS: 'ludy:crove-extract=cid-ext ludy:crove-media=cid-media ludy:crove=cid-app otherproj:crove-extract=cid-other',
+    });
+    expect(res.status, res.out).toBe(0);
+    const c = calls();
+    expect(indexOf(c, 'docker rm --force cid-ext')).toBeGreaterThanOrEqual(0);
+    expect(indexOf(c, 'docker rm --force cid-ext')).toBeLessThan(indexOf(c, 'compose up --detach --no-build --no-deps --wait --wait-timeout 600 ludy-extract ludy-media mailpit'));
+    expect(indexOf(c, 'docker rm --force cid-media')).toBeGreaterThanOrEqual(0);
+    expect(indexOf(c, 'docker rm --force cid-media')).toBeLessThan(indexOf(c, 'compose up --detach --no-build --no-deps --wait --wait-timeout 600 ludy-extract ludy-media mailpit'));
+    expect(indexOf(c, 'docker rm --force cid-app')).toBeGreaterThanOrEqual(0);
+    expect(indexOf(c, 'docker rm --force cid-app')).toBeLessThan(indexOf(c, 'compose up --detach --no-build --no-deps worker'));
+    expect(c.some((l) => l.includes('cid-other'))).toBe(false);
+
+    // Stage a v0.3.12-shaped release using legacy service names (`crove`, `crove-extract`, `crove-media`) as previous and roll back to it.
+    writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nCOMPOSE_PROJECT_NAME=ludy\n');
+    const legacyRel = releaseDir('v0.3.12', 'a');
+    const legacyDir = `${dir}/releases/${legacyRel}`;
+    mkdirSync(legacyDir, { recursive: true });
+    writeFileSync(`${legacyDir}/docker-compose.yml`, 'name: crove\nservices:\n  crove:\n  crove-extract:\n  crove-media:\n');
+    writeFileSync(
+      `${legacyDir}/docker-compose.override.yml`,
+      `services:\n  crove: { image: '${image('a')}', build: !reset null }\n  crove-extract: { image: '${extract('a')}', build: !reset null }\n  crove-media: { image: '${media('a')}', build: !reset null }\n`,
+    );
+    writeFileSync(`${legacyDir}/release.env`, `RELEASE=v0.3.12\nIMAGE=${image('a')}\nEXTRACT_IMAGE=${extract('a')}\nMEDIA_IMAGE=${media('a')}\nBUILD=\nSTAGED_AT=20261124T000000.000000000Z\n`);
+    writeFileSync(`${dir}/.deploy/previous`, `${legacyRel}\n`);
+    writeFileSync(log, '');
+    const back = run(['rollback'], {
+      STUB_SERVICES: 'db migrate auth auth-grants crove-extract crove-media mailpit crove',
+      STUB_ORPHAN_CONTAINERS: 'ludy:ludy-extract=cid-new-ext ludy:ludy-media=cid-new-media ludy:ludy=cid-new-app',
+    });
+    expect(back.status, back.out).toBe(0);
+    const rc = calls();
+    expect(indexOf(rc, 'docker rm --force cid-new-ext')).toBeGreaterThanOrEqual(0);
+    expect(indexOf(rc, 'docker rm --force cid-new-ext')).toBeLessThan(indexOf(rc, 'compose up --detach --no-build --no-deps --wait --wait-timeout 600 crove-extract crove-media mailpit'));
+    expect(indexOf(rc, 'docker rm --force cid-new-media')).toBeGreaterThanOrEqual(0);
+    expect(indexOf(rc, 'docker rm --force cid-new-app')).toBeGreaterThanOrEqual(0);
+    expect(rc.some((l) => l === 'compose port crove 8080')).toBe(true);
+    expect(rc.some((l) => l.endsWith('compose up --detach --no-build --no-deps --wait --wait-timeout 600 crove'))).toBe(true);
   });
 
   // #892: with --build, /version must report the build being deployed, so an old container that still answers fails.
@@ -355,7 +399,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
   });
 
   it('rolls the worker before the API when they run as separate services', () => {
-    const res = deploy('v1.0.0', 'a', { STUB_SERVICES: 'db migrate auth auth-grants crove-extract api worker' });
+    const res = deploy('v1.0.0', 'a', { STUB_SERVICES: 'db migrate auth auth-grants ludy-extract api worker' });
     expect(res.status, res.out).toBe(0);
     const c = calls();
     const worker = indexOf(c, 'compose up --detach --no-build --no-deps worker');
@@ -365,13 +409,13 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     expect(ps).toBeGreaterThan(worker);
     expect(api).toBeGreaterThan(ps);
     expect(indexOf(c, 'compose port api 8080')).toBeGreaterThan(api);
-    expect(c.some((l) => / crove$/.test(l) && !l.startsWith('compose rm '))).toBe(false);
+    expect(c.some((l) => / (ludy|crove)$/.test(l) && !l.startsWith('compose rm ') && !l.startsWith('docker rm '))).toBe(false);
   });
 
   // #1965 (plan §3.5): toward an older release the API goes first, so the worker that runs is never older than the API
   // that serves (whose /readyz waits on an older worker, #1952); toward a newer one, the worker first.
   describe('separate services, toward an older release (#1965)', () => {
-    const env = { STUB_SERVICES: 'db migrate auth crove-extract api worker' };
+    const env = { STUB_SERVICES: 'db migrate auth ludy-extract api worker' };
     const worker = 'compose up --detach --no-build --no-deps worker';
     const api = 'compose up --detach --no-build --no-deps --wait --wait-timeout 600 api';
     const last = (lines: string[], text: string) => lines.findLastIndex((l) => l.includes(text));
@@ -462,7 +506,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
   });
 
   it('does not roll the API when the new worker does not stay up, and rolls back', () => {
-    const env = { STUB_SERVICES: 'db migrate auth crove-extract api worker' };
+    const env = { STUB_SERVICES: 'db migrate auth ludy-extract api worker' };
     expect(deploy('v1.0.0', 'a', env).status).toBe(0);
     rmSync(log);
     const res = deploy('v1.1.0', 'b', { ...env, STUB_WORKER_DOWN_DIGEST: digest('b') });
@@ -480,7 +524,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
   it('asks for readiness at least once, however short the timeout, so a ready instance is never taken for a failed one (#1841)', () => {
     // A timeout of 0 forces the boundary that made the case above flaky: the whole second passes before the first
     // question, as when bash's SECONDS ticks right after the deadline is set.
-    const env = { CROVE_READY_TIMEOUT: '0', STUB_SERVICES: 'db migrate auth crove-extract api worker' };
+    const env = { LUDY_READY_TIMEOUT: '0', STUB_SERVICES: 'db migrate auth ludy-extract api worker' };
     const ready = deploy('v1.0.0', 'a', env);
     expect(ready.status, ready.out).toBe(0);
     expect(ready.out).toContain('ready: every committed migration is applied');
@@ -514,7 +558,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
   });
 
   it('never runs the account step of the smoke test on the host, so a rollback cannot depend on the smoke account', () => {
-    const res = deploy('v1.0.0', 'a', { SMOKE_EMAIL: 'smoke@example.com', SMOKE_PASSWORD: 'x', SMOKE_ORG: 'crove-smoke', STUB_SIGNIN_FAIL: '1' });
+    const res = deploy('v1.0.0', 'a', { SMOKE_EMAIL: 'smoke@example.com', SMOKE_PASSWORD: 'x', SMOKE_ORG: 'ludy-smoke', STUB_SIGNIN_FAIL: '1' });
     expect(res.status, res.out).toBe(0);
     expect(res.out).not.toContain('signs in, uploads');
     expect(readFileSync(log, 'utf8')).not.toContain('/auth/v1/token');
@@ -610,9 +654,9 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
 
   it.each([
     ['a release id with shell characters', ['--release', 'v1;rm -rf /', '--image', image('a'), '--extract-image', extract('a'), '--media-image', media('a')], '--release must match'],
-    ['an image without a digest', ['--release', 'v1', '--image', 'ghcr.io/example/crove:v1', '--extract-image', extract('a'), '--media-image', media('a')], '--image must be pinned by digest'],
-    ['an extract image without a digest', ['--release', 'v1', '--image', image('a'), '--extract-image', 'crove-extract:latest', '--media-image', media('a')], '--extract-image must be pinned'],
-    ['a media image without a digest', ['--release', 'v1', '--image', image('a'), '--extract-image', extract('a'), '--media-image', 'crove-media:latest'], '--media-image must be pinned'],
+    ['an image without a digest', ['--release', 'v1', '--image', 'ghcr.io/example/ludy:v1', '--extract-image', extract('a'), '--media-image', media('a')], '--image must be pinned by digest'],
+    ['an extract image without a digest', ['--release', 'v1', '--image', image('a'), '--extract-image', 'ludy-extract:latest', '--media-image', media('a')], '--extract-image must be pinned'],
+    ['a media image without a digest', ['--release', 'v1', '--image', image('a'), '--extract-image', extract('a'), '--media-image', 'ludy-media:latest'], '--media-image must be pinned'],
     ['no media image', ['--release', 'v1', '--image', image('a'), '--extract-image', extract('a')], '--media-image must be pinned'],
   ])('refuses %s before calling docker', (_name, args, message) => {
     const res = run(['deploy', ...args, '--compose', compose]);
@@ -667,7 +711,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
   });
 
   it('keeps the newest releases and never removes the current or previous one', () => {
-    for (const [i, c] of ['a', 'b', 'c', 'd'].entries()) expect(deploy(`v1.${i}.0`, c, { CROVE_KEEP_RELEASES: '2' }).status).toBe(0);
+    for (const [i, c] of ['a', 'b', 'c', 'd'].entries()) expect(deploy(`v1.${i}.0`, c, { LUDY_KEEP_RELEASES: '2' }).status).toBe(0);
     const left = readdirSync(`${dir}/releases`).sort();
     expect(left).toEqual([releaseDir('v1.2.0', 'c'), releaseDir('v1.3.0', 'd')]);
   });
@@ -750,8 +794,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
 
     it.each([
       ['a value', 'LUDY_CONTEXT_TOKEN_KEY=abc'],
-      ['legacy CROVE_CONTEXT_TOKEN_KEY value', 'CROVE_CONTEXT_TOKEN_KEY=abc'],
-      ['export and a quoted value', 'export LUDY_CONTEXT_TOKEN_KEY="abc"'],
+        ['export and a quoted value', 'export LUDY_CONTEXT_TOKEN_KEY="abc"'],
       ['a value and a comment', 'LUDY_CONTEXT_TOKEN_KEY = abc # mine'],
       ['a quoted value with a space and a hash', 'LUDY_CONTEXT_TOKEN_KEY="a # b"'],
       ['a value that starts with a hash (in doubt: kept)', 'LUDY_CONTEXT_TOKEN_KEY=#abc'],
@@ -793,7 +836,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
         writeFileSync(`${root}/bin/${name}`, `#!/bin/sh\nprintf '%s %s\\n' "${name}" "$*" >>"$STUB_LOG.shim-argv"\nenv >>"$STUB_LOG.shim-env"\nexec ${real} "$@"\n`);
         chmodSync(`${root}/bin/${name}`, 0o755);
       }
-      writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nCROVE_CONTEXT_TOKEN_KEY=\n');
+      writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nLUDY_CONTEXT_TOKEN_KEY=\n');
       const res = deploy('v1.0.0', 'a');
       expect(res.status, res.out).toBe(0);
       const key = keyOf();
@@ -817,17 +860,17 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     });
 
     it('stops before anything changes when the key cannot be made, and leaves the env file as it was', () => {
-      writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nCROVE_CONTEXT_TOKEN_KEY=\n');
+      writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nLUDY_CONTEXT_TOKEN_KEY=\n');
       expect(deploy('v1.0.0', 'a', { STUB_OPENSSL_FAIL: '1' }).status).toBe(1);
       expect(deploy('v1.0.0', 'a').status).toBe(0);
-      writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nCROVE_CONTEXT_TOKEN_KEY=\n');
+      writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nLUDY_CONTEXT_TOKEN_KEY=\n');
       rmSync(log);
       const failed = deploy('v1.1.0', 'b', { STUB_OPENSSL_FAIL: '1' });
       expect(failed.status, failed.out).toBe(1);
       expect(failed.out).toContain('openssl did not make a 32 byte key');
       expect(failed.out).toContain('the context token key could not be written');
       expect(failed.out).toContain(`${releaseDir('v1.0.0', 'a')} still runs`);
-      expect(envFile()).toBe('POSTGRES_PASSWORD=x\nCROVE_CONTEXT_TOKEN_KEY=\n');
+      expect(envFile()).toBe('POSTGRES_PASSWORD=x\nLUDY_CONTEXT_TOKEN_KEY=\n');
       // The migration did not run, the services were not changed, no copy of the env file is left.
       expect(calls().some((l) => l.startsWith('compose run'))).toBe(false);
       expect(running()).toContain(image('a'));
@@ -852,7 +895,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       expect(calls()).toEqual([]);
       // A key that is there needs no write access.
       chmodSync(`${dir}/.env`, 0o644);
-      writeFileSync(`${dir}/.env`, 'CROVE_CONTEXT_TOKEN_KEY=abc\n');
+      writeFileSync(`${dir}/.env`, 'LUDY_CONTEXT_TOKEN_KEY=abc\n');
       chmodSync(`${dir}/.env`, 0o444);
       expect(deploy('v1.0.0', 'a').status).toBe(0);
     });
@@ -868,7 +911,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     });
 
     it('leaves the key where it is when the migration fails, on a rollback and on a later deploy', () => {
-      writeFileSync(`${dir}/.env`, 'CROVE_CONTEXT_TOKEN_KEY=\n');
+      writeFileSync(`${dir}/.env`, 'LUDY_CONTEXT_TOKEN_KEY=\n');
       const failed = deploy('v1.0.0', 'a', { STUB_MIGRATE_EXIT: '1' });
       expect(failed.status, failed.out).toBe(1);
       const key = keyOf();
@@ -882,7 +925,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
 
     // A write into the env file that fails or is cut off is put back; when even that fails, both copies stay and are named.
     describe('a failed overwrite of the env file', () => {
-      const ORIGINAL = 'POSTGRES_PASSWORD=x\nCROVE_CONTEXT_TOKEN_KEY=\nOTHER=1\n';
+      const ORIGINAL = 'POSTGRES_PASSWORD=x\nLUDY_CONTEXT_TOKEN_KEY=\nOTHER=1\n';
       // A `cat` that writes three bytes and fails when it reads the pattern's file.
       const failingCat = (pattern: string) => {
         const real = spawnSync('bash', ['-c', 'command -v cat'], { encoding: 'utf8' }).stdout.trim();
@@ -923,7 +966,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
 
     it('takes the key from the env file only: a variable of the caller does not reach migrate', () => {
       writeFileSync(`${dir}/.env`, 'LUDY_CONTEXT_TOKEN_KEY=\n');
-      const res = deploy('v1.0.0', 'a', { CROVE_CONTEXT_TOKEN_KEY: 'from-the-session', LUDY_CONTEXT_TOKEN_KEY: 'from-the-session' });
+      const res = deploy('v1.0.0', 'a', { LUDY_CONTEXT_TOKEN_KEY: 'from-the-session' });
       expect(res.status, res.out).toBe(0);
       expect(res.out).toContain('context token key generated');
       expect(existsSync(`${log}.envvar`)).toBe(false);
@@ -975,30 +1018,30 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
 
   describe('smoke', () => {
     it('passes when every check answers', () => {
-      const res = run(['smoke', 'https://crove.example.test/']);
+      const res = run(['smoke', 'https://ludy.example.test/']);
       expect(res.status, res.out).toBe(0);
       const urls = readFileSync(log, 'utf8');
       for (const path of ['/healthz', '/readyz', '/api/config', '/auth/v1/health', '/login', '/assets/index-abc123.js']) {
-        expect(urls).toContain(`curl https://crove.example.test${path}\n`);
+        expect(urls).toContain(`curl https://ludy.example.test${path}\n`);
       }
     });
 
     it('checks /version when given the build being deployed (#892)', () => {
-      const ok = run(['smoke', 'https://crove.example.test', 'dev']);
+      const ok = run(['smoke', 'https://ludy.example.test', 'dev']);
       expect(ok.status, ok.out).toBe(0);
       expect(ok.out).toContain('smoke ok: /version answers build dev with every migration applied');
-      const other = run(['smoke', 'https://crove.example.test', '0123456789ab']);
+      const other = run(['smoke', 'https://ludy.example.test', '0123456789ab']);
       expect(other.status).toBe(1);
       expect(other.out).toContain('smoke failed: /version answers build 0123456789ab with every migration applied');
-      const behind = run(['smoke', 'https://crove.example.test', 'dev'], { STUB_MIGRATION_MISSING: '1' });
+      const behind = run(['smoke', 'https://ludy.example.test', 'dev'], { STUB_MIGRATION_MISSING: '1' });
       expect(behind.status).toBe(1);
-      expect(behind.out).toContain('"migrationsMissing":["20990101000000_crove_kernel_next.sql"]');
-      expect(run(['smoke', 'https://crove.example.test']).out).not.toContain('/version');
-      expect(run(['smoke', 'https://crove.example.test', 'a b']).status).toBe(2);
+      expect(behind.out).toContain('"migrationsMissing":["20990101000000_ludy_kernel_next.sql"]');
+      expect(run(['smoke', 'https://ludy.example.test']).out).not.toContain('/version');
+      expect(run(['smoke', 'https://ludy.example.test', 'a b']).status).toBe(2);
     });
 
     it('fails, naming the check, when one does not answer', () => {
-      const res = run(['smoke', 'https://crove.example.test'], { STUB_READYZ_FAIL: '1' });
+      const res = run(['smoke', 'https://ludy.example.test'], { STUB_READYZ_FAIL: '1' });
       expect(res.status).toBe(1);
       expect(res.out).toContain('smoke failed: /readyz answers ready');
       expect(res.out).toContain('smoke ok: /healthz answers ok');
@@ -1007,25 +1050,25 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     describe('account step (#690)', () => {
       // A password with characters a JSON body or a shell would have to escape.
       const PASSWORD = 'smoke "pass" \\ word $HOME 0123';
-      const account = { SMOKE_EMAIL: 'smoke@example.com', SMOKE_PASSWORD: PASSWORD, SMOKE_ORG: 'crove-smoke', CROVE_SMOKE_POLL_SECONDS: '1' };
-      const STEP = 'signs in, uploads a synthetic e-invoice to org crove-smoke and gets a proposal';
+      const account = { SMOKE_EMAIL: 'smoke@example.com', SMOKE_PASSWORD: PASSWORD, SMOKE_ORG: 'ludy-smoke', LUDY_SMOKE_POLL_SECONDS: '1' };
+      const STEP = 'signs in, uploads a synthetic e-invoice to org ludy-smoke and gets a proposal';
       const read = (suffix: string) => (existsSync(`${log}.${suffix}`) ? readFileSync(`${log}.${suffix}`, 'utf8') : '');
 
       it('is skipped with a notice without SMOKE_EMAIL and SMOKE_PASSWORD', () => {
-        const res = run(['smoke', 'https://crove.example.test'], { SMOKE_EMAIL: 'smoke@example.com' });
+        const res = run(['smoke', 'https://ludy.example.test'], { SMOKE_EMAIL: 'smoke@example.com' });
         expect(res.status, res.out).toBe(0);
         expect(res.out).toContain('smoke skipped: sign-in and upload (SMOKE_EMAIL and SMOKE_PASSWORD are not set)');
         expect(readFileSync(log, 'utf8')).not.toContain('/auth/v1/token');
       });
 
       it('fails the smoke command, which makes the workflow roll back', () => {
-        const res = run(['smoke', 'https://crove.example.test'], { ...account, STUB_SIGNIN_FAIL: '1' });
+        const res = run(['smoke', 'https://ludy.example.test'], { ...account, STUB_SIGNIN_FAIL: '1' });
         expect(res.status).toBe(1);
-        expect(res.out).toContain('smoke test failed on https://crove.example.test');
+        expect(res.out).toContain('smoke test failed on https://ludy.example.test');
       });
 
       it('signs in, uploads one synthetic e-invoice, waits for its proposal and rejects it', () => {
-        const res = run(['smoke', 'https://crove.example.test'], account);
+        const res = run(['smoke', 'https://ludy.example.test'], account);
         expect(res.status, res.out).toBe(0);
         expect(res.out).toContain(`smoke ok: ${STEP}`);
         expect(JSON.parse(read('signin'))).toEqual({ email: 'smoke@example.com', password: PASSWORD });
@@ -1043,7 +1086,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       });
 
       it('fails when the sign-in is refused, without uploading', () => {
-        const res = run(['smoke', 'https://crove.example.test'], { ...account, STUB_SIGNIN_FAIL: '1' });
+        const res = run(['smoke', 'https://ludy.example.test'], { ...account, STUB_SIGNIN_FAIL: '1' });
         expect(res.status).toBe(1);
         expect(res.out).toContain('smoke: signing in with SMOKE_EMAIL and SMOKE_PASSWORD failed');
         expect(res.out).toContain(`smoke failed: ${STEP}`);
@@ -1051,34 +1094,34 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       });
 
       it('fails when the worker cannot extract the upload, or no proposal comes in time', () => {
-        const failed = run(['smoke', 'https://crove.example.test'], { ...account, STUB_FILE_STATUS: 'failed' });
+        const failed = run(['smoke', 'https://ludy.example.test'], { ...account, STUB_FILE_STATUS: 'failed' });
         expect(failed.status).toBe(1);
         expect(failed.out).toContain('smoke: the worker could not extract the synthetic e-invoice: UNREADABLE');
-        const pending = run(['smoke', 'https://crove.example.test'], { ...account, STUB_FILE_STATUS: 'extracting' });
+        const pending = run(['smoke', 'https://ludy.example.test'], { ...account, STUB_FILE_STATUS: 'extracting' });
         expect(pending.status).toBe(1);
         expect(pending.out).toContain('smoke: no proposal after 1s (file extracting)');
         // An empty proposal id is not filled from the next field.
-        const noId = run(['smoke', 'https://crove.example.test'], { ...account, STUB_FILE_STATUS: 'proposed-no-id' });
+        const noId = run(['smoke', 'https://ludy.example.test'], { ...account, STUB_FILE_STATUS: 'proposed-no-id' });
         expect(noId.status).toBe(1);
         expect(noId.out).toContain('smoke: no proposal after 1s (file proposed)');
         expect(read('rpc')).toBe('');
       });
 
       it('fails when the proposal cannot be rejected', () => {
-        const res = run(['smoke', 'https://crove.example.test'], { ...account, STUB_REJECT_FAIL: '1' });
+        const res = run(['smoke', 'https://ludy.example.test'], { ...account, STUB_REJECT_FAIL: '1' });
         expect(res.status).toBe(1);
         expect(res.out).toContain('smoke: rejecting the smoke proposal proposal-1 failed');
       });
 
       it('never sends the password over plain http to another host', () => {
-        const res = run(['smoke', 'http://crove.example.test'], account);
+        const res = run(['smoke', 'http://ludy.example.test'], account);
         expect(res.status).toBe(1);
         expect(res.out).toContain('the account step signs in only over https');
         expect(read('signin')).toBe('');
       });
 
       it('refuses an org that is not a slug', () => {
-        const res = run(['smoke', 'https://crove.example.test'], { ...account, SMOKE_ORG: 'Crove Smoke' });
+        const res = run(['smoke', 'https://ludy.example.test'], { ...account, SMOKE_ORG: 'Ludy Smoke' });
         expect(res.status).toBe(1);
         expect(res.out).toContain("SMOKE_ORG must be the smoke org's slug");
         expect(read('signin')).toBe('');
@@ -1098,8 +1141,8 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
         STUB_VERSION_BUILD: SHA,
         STUB_APP_HTML: html,
         STUB_APP_BUNDLE_JS: `const env={PROD:!0,VITE_BUILD:\`${SHA}\`};`,
-        CROVE_APP_BUILD_TIMEOUT: '0',
-        CROVE_APP_BUILD_POLL: '0',
+        LUDY_APP_BUILD_TIMEOUT: '0',
+        LUDY_APP_BUILD_POLL: '0',
       });
       expect(backtick.status, backtick.out).toBe(0);
       expect(backtick.out).toContain(`web app ok: ${APP} bundle VITE_BUILD matches ${API}/version (${SHA})`);
@@ -1107,8 +1150,8 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       const quoted = run(['check-app-build', `${APP}/`, SHA], {
         STUB_APP_HTML: html,
         STUB_APP_BUNDLE_JS: `const env={"VITE_BUILD":"${SHA}"};`,
-        CROVE_APP_BUILD_TIMEOUT: '0',
-        CROVE_APP_BUILD_POLL: '0',
+        LUDY_APP_BUILD_TIMEOUT: '0',
+        LUDY_APP_BUILD_POLL: '0',
       });
       expect(quoted.status, quoted.out).toBe(0);
       expect(quoted.out).toContain(`web app ok: ${APP} bundle VITE_BUILD matches ${SHA}`);
@@ -1121,8 +1164,8 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
           STUB_VERSION_BUILD: SHA,
           STUB_APP_BUNDLE_JS: `navigator.serviceWorker?.register("/assets/sw.js");import("${ref}");`,
           STUB_APP_ROUTER_JS: `const e={VITE_BUILD:\`${SHA}\`};`,
-          CROVE_APP_BUILD_TIMEOUT: '0',
-          CROVE_APP_BUILD_POLL: '0',
+          LUDY_APP_BUILD_TIMEOUT: '0',
+          LUDY_APP_BUILD_POLL: '0',
         });
         expect(ok.status, `${ref}: ${ok.out}`).toBe(0);
         const curls = readFileSync(log, 'utf8');
@@ -1137,8 +1180,8 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
         STUB_APP_BUNDLE_JS: `const env={VITE_BUILD:\`${OLD}\`};`,
         STUB_APP_BUNDLE_NEXT: `const env={VITE_BUILD:\`${SHA}\`};`,
         STUB_APP_SWITCH_ON: '2',
-        CROVE_APP_BUILD_TIMEOUT: '2',
-        CROVE_APP_BUILD_POLL: '0',
+        LUDY_APP_BUILD_TIMEOUT: '2',
+        LUDY_APP_BUILD_POLL: '0',
       });
       expect(res.status, res.out).toBe(0);
       expect(res.out).toContain(`waiting for web app at ${APP} to serve build ${SHA} (observed: ${OLD})`);
@@ -1149,8 +1192,8 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       const stale = run(['check-app-build', APP, SHA, API], {
         STUB_VERSION_BUILD: SHA,
         STUB_APP_BUNDLE_JS: `const env={VITE_BUILD:\`${OLD}\`};`,
-        CROVE_APP_BUILD_TIMEOUT: '0',
-        CROVE_APP_BUILD_POLL: '0',
+        LUDY_APP_BUILD_TIMEOUT: '0',
+        LUDY_APP_BUILD_POLL: '0',
       });
       expect(stale.status).toBe(1);
       expect(stale.out).toContain(`web app at ${APP} does not serve bundle build ${SHA} (observed: ${OLD}) matching ${API}/version`);
@@ -1158,8 +1201,8 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       const staleQuoted = run(['check-app-build', APP, SHA, API], {
         STUB_VERSION_BUILD: SHA,
         STUB_APP_BUNDLE_JS: `const env={"VITE_BUILD":"${OLD}"};`,
-        CROVE_APP_BUILD_TIMEOUT: '0',
-        CROVE_APP_BUILD_POLL: '0',
+        LUDY_APP_BUILD_TIMEOUT: '0',
+        LUDY_APP_BUILD_POLL: '0',
       });
       expect(staleQuoted.status).toBe(1);
       expect(staleQuoted.out).toContain(`web app at ${APP} does not serve bundle build ${SHA} (observed: ${OLD}) matching ${API}/version`);
@@ -1167,8 +1210,8 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       const empty = run(['check-app-build', APP, SHA, API], {
         STUB_VERSION_BUILD: SHA,
         STUB_APP_BUNDLE_JS: 'const env={VITE_BUILD:``};',
-        CROVE_APP_BUILD_TIMEOUT: '0',
-        CROVE_APP_BUILD_POLL: '0',
+        LUDY_APP_BUILD_TIMEOUT: '0',
+        LUDY_APP_BUILD_POLL: '0',
       });
       expect(empty.status).toBe(1);
       expect(empty.out).toContain('(observed: (empty))');
@@ -1176,16 +1219,16 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       const apiMismatch = run(['check-app-build', APP, SHA, API], {
         STUB_VERSION_BUILD: OLD,
         STUB_APP_BUNDLE_JS: `const env={VITE_BUILD:\`${SHA}\`};`,
-        CROVE_APP_BUILD_TIMEOUT: '0',
-        CROVE_APP_BUILD_POLL: '0',
+        LUDY_APP_BUILD_TIMEOUT: '0',
+        LUDY_APP_BUILD_POLL: '0',
       });
       expect(apiMismatch.status).toBe(1);
       expect(apiMismatch.out).toContain(`API at ${API}/version does not report build ${SHA}`);
 
       const noBundle = run(['check-app-build', APP, SHA], {
         STUB_NO_BUNDLE: '1',
-        CROVE_APP_BUILD_TIMEOUT: '0',
-        CROVE_APP_BUILD_POLL: '0',
+        LUDY_APP_BUILD_TIMEOUT: '0',
+        LUDY_APP_BUILD_POLL: '0',
       });
       expect(noBundle.status).toBe(1);
       expect(noBundle.out).toContain('(observed: no script bundle in HTML)');
@@ -1193,8 +1236,8 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       const bareShaWithoutKey = run(['check-app-build', APP, SHA, API], {
         STUB_VERSION_BUILD: SHA,
         STUB_APP_BUNDLE_JS: `const COMMIT="${SHA}";`,
-        CROVE_APP_BUILD_TIMEOUT: '0',
-        CROVE_APP_BUILD_POLL: '0',
+        LUDY_APP_BUILD_TIMEOUT: '0',
+        LUDY_APP_BUILD_POLL: '0',
       });
       expect(bareShaWithoutKey.status).toBe(1);
       expect(bareShaWithoutKey.out).toContain('(observed: none)');
@@ -1210,8 +1253,8 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       ].join('');
       const unsafeOnly = run(['check-app-build', APP, SHA], {
         STUB_APP_HTML: unsafeHtml,
-        CROVE_APP_BUILD_TIMEOUT: '0',
-        CROVE_APP_BUILD_POLL: '0',
+        LUDY_APP_BUILD_TIMEOUT: '0',
+        LUDY_APP_BUILD_POLL: '0',
       });
       expect(unsafeOnly.status).toBe(1);
       expect(unsafeOnly.out).toContain('(observed: no script bundle in HTML)');
@@ -1222,8 +1265,8 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       const mixed = run(['check-app-build', APP, SHA], {
         STUB_APP_HTML: `${unsafeHtml}<script type="module" src="/assets/index-abc123.js"></script>`,
         STUB_APP_BUNDLE_JS: `const env={VITE_BUILD:\`${SHA}\`};`,
-        CROVE_APP_BUILD_TIMEOUT: '0',
-        CROVE_APP_BUILD_POLL: '0',
+        LUDY_APP_BUILD_TIMEOUT: '0',
+        LUDY_APP_BUILD_POLL: '0',
       });
       expect(mixed.status, mixed.out).toBe(0);
       expect(readFileSync(log, 'utf8')).toBe(`curl ${APP}/login\ncurl ${APP}/assets/index-abc123.js\n`);
@@ -1232,16 +1275,16 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
 
       const redirect = run(['check-app-build', APP, SHA], {
         STUB_APP_REDIRECT: '1',
-        CROVE_APP_BUILD_TIMEOUT: '0',
-        CROVE_APP_BUILD_POLL: '0',
+        LUDY_APP_BUILD_TIMEOUT: '0',
+        LUDY_APP_BUILD_POLL: '0',
       });
       expect(redirect.status).toBe(1);
       expect(redirect.out).toContain('(observed: request failed)');
 
       const leadingZero = run(['check-app-build', APP, SHA], {
         STUB_APP_BUNDLE_JS: `const env={VITE_BUILD:\`${SHA}\`};`,
-        CROVE_APP_BUILD_TIMEOUT: '08',
-        CROVE_APP_BUILD_POLL: '00',
+        LUDY_APP_BUILD_TIMEOUT: '08',
+        LUDY_APP_BUILD_POLL: '00',
       });
       expect(leadingZero.status, leadingZero.out).toBe(0);
     });
@@ -1267,7 +1310,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     // What a stale pilot env file holds before: the bundled Supabase Auth, an invite-only sign-up policy and its prober.
     const BEFORE = [
       'POSTGRES_PASSWORD=x',
-      'CROVE_CONTEXT_TOKEN_KEY=already-here',
+      'LUDY_CONTEXT_TOKEN_KEY=already-here',
       '# kept comment: AUTH_SIGNUP_POLICY=open',
       'AUTH_JWT_SECRET=keep-this-secret',
       'AUTH_ISSUER=crove-auth',
@@ -1275,7 +1318,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       'export AUTH_UPSTREAM_URL=http://auth:9999',
       'AUTH_SIGNUP_POLICY=invite_only',
       'AUTH_SIGNUP_ALLOWED_DOMAINS=example.net',
-      'PROBER_AUTH_URL=http://crove:8080/auth/v1',
+      'PROBER_AUTH_URL=http://ludy:8080/auth/v1',
       'AUTH_OAUTH_PROVIDERS=github',
       'PUBLIC_URL=https://api.example.com',
       '',
@@ -1296,7 +1339,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     const copies = () => readdirSync(dir).filter((f) => f.startsWith('.env.bak-'));
     const everyFile = (d: string): string[] =>
       readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? everyFile(`${d}/${e.name}`) : [`${d}/${e.name}`]));
-    const SPLIT_SERVICES = 'db migrate auth auth-grants crove-extract api worker prober';
+    const SPLIT_SERVICES = 'db migrate auth auth-grants ludy-extract api worker prober';
 
     it('leaves the env file alone without --auth-settings', () => {
       writeFileSync(`${dir}/.env`, BEFORE);
@@ -1317,7 +1360,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       expect(res.status, res.out).toBe(0);
       expect(lines(envFile())).toEqual([
         'POSTGRES_PASSWORD=x',
-        'CROVE_CONTEXT_TOKEN_KEY=already-here',
+        'LUDY_CONTEXT_TOKEN_KEY=already-here',
         '# kept comment: AUTH_SIGNUP_POLICY=open',
         'AUTH_JWT_SECRET=keep-this-secret',
         'PUBLIC_URL=https://api.example.com',
@@ -1392,7 +1435,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     });
 
     it('keeps Windows line breaks: the added lines get them too', () => {
-      writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\r\nCROVE_CONTEXT_TOKEN_KEY=already-here\r\nAUTH_SIGNUP_POLICY=invite_only\r\n');
+      writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\r\nLUDY_CONTEXT_TOKEN_KEY=already-here\r\nAUTH_SIGNUP_POLICY=invite_only\r\n');
       expect(deployIdp('v1.0.0', 'a').status).toBe(0);
       const text = envFile();
       expect(text.split('\n').filter(Boolean).every((l) => l.endsWith('\r'))).toBe(true);
@@ -1401,7 +1444,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     });
 
     it('does not take a commented-out line, another setting with a longer name or a value for an assignment', () => {
-      const before = '# AUTH_ISSUER=old\nAUTH_ISSUER_EXTRA=keep\nSOME=AUTH_SIGNUP_POLICY=x\nCROVE_CONTEXT_TOKEN_KEY=already-here\n  AUTH_SIGNUP_POLICY : allowlist\n';
+      const before = '# AUTH_ISSUER=old\nAUTH_ISSUER_EXTRA=keep\nSOME=AUTH_SIGNUP_POLICY=x\nLUDY_CONTEXT_TOKEN_KEY=already-here\n  AUTH_SIGNUP_POLICY : allowlist\n';
       writeFileSync(`${dir}/.env`, before);
       expect(deployIdp('v1.0.0', 'a').status).toBe(0);
       const env = lines(envFile());
@@ -1777,7 +1820,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
 
     it('does not print the worker log when the env file lists who may sign in (it may be a public CI log), and does otherwise', () => {
       const down = { STUB_SERVICES: SPLIT_SERVICES, STUB_WORKER_DOWN_DIGEST: digest('a'), STUB_WORKER_LOG: 'worker: refused owner@gmail.com- in AUTH_ALLOWED_EMAILS' };
-      writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nCROVE_CONTEXT_TOKEN_KEY=k\nAUTH_ALLOWED_EMAILS=@example.com,owner@gmail.com-\n');
+      writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nLUDY_CONTEXT_TOKEN_KEY=k\nAUTH_ALLOWED_EMAILS=@example.com,owner@gmail.com-\n');
       const hidden = deploy('v1.0.0', 'a', down);
       expect(hidden.status, hidden.out).toBe(1);
       expect(hidden.out).toContain('the worker is not running');
@@ -1785,7 +1828,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       expect(hidden.out).not.toContain('owner@gmail.com-');
       // An empty value, a commented-out line and another setting that starts with the name are not a list.
       for (const line of ['AUTH_ALLOWED_EMAILS=\n', '# AUTH_ALLOWED_EMAILS=@example.com\n', 'AUTH_ALLOWED_EMAILS_X=@example.com\n']) {
-        writeFileSync(`${dir}/.env`, `POSTGRES_PASSWORD=x\nCROVE_CONTEXT_TOKEN_KEY=k\n${line}`);
+        writeFileSync(`${dir}/.env`, `POSTGRES_PASSWORD=x\nLUDY_CONTEXT_TOKEN_KEY=k\n${line}`);
         const shown = deploy('v1.0.0', 'a', down);
         expect(shown.out, line).toContain('worker: refused owner@gmail.com-');
       }
@@ -1839,7 +1882,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
 
     it('removes only a regular settings file of the incoming directory: not through .., not a link', () => {
       writeFileSync(`${dir}/.env`, BEFORE);
-      writeFileSync(`${dir}/docker-compose.yml`, 'name: crove\nservices: {}\n');
+      writeFileSync(`${dir}/docker-compose.yml`, 'name: ludy\nservices: {}\n');
       mkdirSync(`${dir}/.deploy/incoming/run`, { recursive: true });
       const args = (file: string) => ['deploy', '--release', 'v1.0.0', '--image', image('a'), '--extract-image', extract('a'), '--media-image', media('a'), '--compose', compose, '--auth-settings', file];
       // The compose file reached with ..: read (and refused: not settings), never deleted.
@@ -1914,7 +1957,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
 
     it('skips the proxy checks of the smoke test when the env file has no bundled proxy, however the line is written, and not otherwise', () => {
       const smoked = (line: string, extra: Record<string, string> = {}) => {
-        writeFileSync(`${dir}/.env`, `POSTGRES_PASSWORD=x\nCROVE_CONTEXT_TOKEN_KEY=k\n${line}`);
+        writeFileSync(`${dir}/.env`, `POSTGRES_PASSWORD=x\nLUDY_CONTEXT_TOKEN_KEY=k\n${line}`);
         rmSync(log, { force: true });
         return deploy('v1.0.0', 'a', extra);
       };
@@ -1930,10 +1973,10 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       }
       // The workflow's public smoke test has no env file: it reads the deployed /api/config. An authUrl that is not the API's own /auth/v1
       // means a remote provider, and the account step is skipped.
-      const account = { SMOKE_EMAIL: 'smoke@example.test', SMOKE_PASSWORD: 'smoke-password-1', SMOKE_ORG: 'crove-smoke' };
-      const pub = run(['smoke', 'https://crove.example.test'], { ...account, STUB_AUTH_URL: 'https://idp.example.com/auth/v1', STUB_NO_PROXY: '1' });
+      const account = { SMOKE_EMAIL: 'smoke@example.test', SMOKE_PASSWORD: 'smoke-password-1', SMOKE_ORG: 'ludy-smoke' };
+      const pub = run(['smoke', 'https://ludy.example.test'], { ...account, STUB_AUTH_URL: 'https://idp.example.com/auth/v1', STUB_NO_PROXY: '1' });
       // The kernel with no proxy still answers 200 to a GET with its page: not the proxy.
-      const pubPage = run(['smoke', 'https://crove.example.test'], { ...account, STUB_AUTH_URL: 'https://idp.example.com/auth/v1', STUB_NO_PROXY: 'html' });
+      const pubPage = run(['smoke', 'https://ludy.example.test'], { ...account, STUB_AUTH_URL: 'https://idp.example.com/auth/v1', STUB_NO_PROXY: 'html' });
       expect(pubPage.status, pubPage.out).toBe(0);
       expect(pubPage.out).toContain('smoke skipped: /auth/v1/health');
       // (Another host, but a proxy that answers here, is still the bundled Auth: that is checked below.)
@@ -1942,25 +1985,25 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       expect(pub.out).toContain('smoke skipped: sign-in and upload');
       expect(readFileSync(`${log}.argv`, 'utf8')).not.toContain('/auth/v1/token');
       // The bundled proxy, announced at the address asked, is still checked, account step included.
-      const bundled = run(['smoke', 'https://crove.example.test'], account);
+      const bundled = run(['smoke', 'https://ludy.example.test'], account);
       expect(bundled.status, bundled.out).toBe(0);
       expect(bundled.out).toContain('smoke ok: /auth/v1/health answers');
       expect(bundled.out).toContain('signs in, uploads a synthetic e-invoice');
       // An address that only differs in case, scheme or a default port is the same bundled Auth: still checked, and a broken sign-in still fails.
-      for (const authUrl of ['https://CROVE.example.test/auth/v1', 'https://crove.example.test:443/auth/v1', 'http://crove.example.test/auth/v1']) {
-        const same = run(['smoke', 'https://crove.example.test'], { ...account, STUB_AUTH_URL: authUrl, STUB_SIGNIN_FAIL: '1' });
+      for (const authUrl of ['https://LUDY.example.test/auth/v1', 'https://ludy.example.test:443/auth/v1', 'http://ludy.example.test/auth/v1']) {
+        const same = run(['smoke', 'https://ludy.example.test'], { ...account, STUB_AUTH_URL: authUrl, STUB_SIGNIN_FAIL: '1' });
         expect(same.status, `${authUrl}: ${same.out}`).toBe(1);
         expect(same.out).not.toContain('Supabase Auth is a remote provider');
         expect(same.out).toContain('smoke ok: /auth/v1/health answers');
       }
       // With the Auth URL the settings name, /api/config must report exactly that: the right one passes, anything else fails.
-      const otherHostWithProxy = run(['smoke', 'https://crove.example.test'], { ...account, STUB_AUTH_URL: 'https://idp.example.com/auth/v1', STUB_SIGNIN_FAIL: '1' });
+      const otherHostWithProxy = run(['smoke', 'https://ludy.example.test'], { ...account, STUB_AUTH_URL: 'https://idp.example.com/auth/v1', STUB_SIGNIN_FAIL: '1' });
       expect(otherHostWithProxy.status, otherHostWithProxy.out).toBe(1);
       expect(otherHostWithProxy.out).toContain('smoke ok: /auth/v1/health answers');
-      const right = run(['smoke', 'https://crove.example.test'], { STUB_AUTH_URL: 'https://idp.example.com/auth/v1', SMOKE_EXPECT_AUTH_URL: 'https://idp.example.com/auth/v1' });
+      const right = run(['smoke', 'https://ludy.example.test'], { STUB_AUTH_URL: 'https://idp.example.com/auth/v1', SMOKE_EXPECT_AUTH_URL: 'https://idp.example.com/auth/v1' });
       expect(right.status, right.out).toBe(0);
       expect(right.out).toContain('smoke ok: /api/config names the configured Auth URL');
-      const stale = run(['smoke', 'https://crove.example.test'], { SMOKE_EXPECT_AUTH_URL: 'https://idp.example.com/auth/v1' });
+      const stale = run(['smoke', 'https://ludy.example.test'], { SMOKE_EXPECT_AUTH_URL: 'https://idp.example.com/auth/v1' });
       expect(stale.status).toBe(1);
       expect(stale.out).toContain('smoke failed: /api/config names the configured Auth URL');
       expect(stale.out).not.toContain('idp.example.com');
@@ -1979,9 +2022,9 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     const MOD_BEFORE = [
       'POSTGRES_PASSWORD=x',
       'LUDY_CONTEXT_TOKEN_KEY=already-here',
-      '# CROVE_MODULES=commented-old',
-      'CROVE_MODULES_EXTRA=keep',
-      'CROVE_MODULES=finance,crm,social',
+      '# LUDY_MODULES=commented-old',
+      'LUDY_MODULES_EXTRA=keep',
+      'LUDY_MODULES=finance,crm,social',
       'OTHER=1',
       '',
     ].join('\n');
@@ -2061,7 +2104,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       expect(copies()).toEqual([]);
     });
 
-    it('writes LUDY_MODULES (replacing legacy CROVE_MODULES without conflicts), preserves lines/comments/CRLF/inode/mode, backs up once, verifies /api/config, and is idempotent', () => {
+    it('writes LUDY_MODULES, preserves lines/comments/CRLF/inode/mode, backs up once, verifies /api/config, and is idempotent', () => {
       writeFileSync(`${dir}/.env`, MOD_BEFORE);
       chmodSync(`${dir}/.env`, 0o600);
       const beforeStat = statSync(`${dir}/.env`);
@@ -2070,8 +2113,8 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       expect(lines(envFile())).toEqual([
         'POSTGRES_PASSWORD=x',
         'LUDY_CONTEXT_TOKEN_KEY=already-here',
-        '# CROVE_MODULES=commented-old',
-        'CROVE_MODULES_EXTRA=keep',
+        '# LUDY_MODULES=commented-old',
+        'LUDY_MODULES_EXTRA=keep',
         'LUDY_MODULES=finance,crm,social,sign',
         'OTHER=1',
       ]);
@@ -2097,7 +2140,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       expect(existsSync(`${dir}/.deploy/env-backup`)).toBe(false);
 
       // Deduplicates multiple assignments, appends when missing, and preserves CRLF line endings.
-      writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\r\nLUDY_CONTEXT_TOKEN_KEY=already-here\r\nCROVE_MODULES=old\r\nOTHER=1\r\nexport LUDY_MODULES = finance\r\n');
+      writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\r\nLUDY_CONTEXT_TOKEN_KEY=already-here\r\nLUDY_MODULES=old\r\nOTHER=1\r\nexport LUDY_MODULES = finance\r\n');
       const crlf = deployModules('v1.2.0', 'c', 'finance,sign');
       expect(crlf.status, crlf.out).toBe(0);
       expect(envFile()).toBe('POSTGRES_PASSWORD=x\r\nLUDY_CONTEXT_TOKEN_KEY=already-here\r\nOTHER=1\r\nLUDY_MODULES=finance,sign\r\n');
@@ -2115,14 +2158,14 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
         '["crm","finance","kernel","sign","social"]',
         '[ "sign" , "social" , "crm" , "finance" , "kernel" ]',
       ]) {
-        const ok = run(['smoke', 'https://crove.example.test'], { SMOKE_EXPECT_MODULES: 'finance,crm,social,sign', STUB_CONFIG_MODULES: modulesJson });
+        const ok = run(['smoke', 'https://ludy.example.test'], { SMOKE_EXPECT_MODULES: 'finance,crm,social,sign', STUB_CONFIG_MODULES: modulesJson });
         expect(ok.status, `${modulesJson}: ${ok.out}`).toBe(0);
         expect(ok.out).toContain('smoke ok: /api/config lists the expected modules');
       }
-      expect(run(['smoke', 'https://crove.example.test'], { SMOKE_EXPECT_MODULES: 'kernel', STUB_CONFIG_MODULES: '["kernel"]' }).status).toBe(0);
+      expect(run(['smoke', 'https://ludy.example.test'], { SMOKE_EXPECT_MODULES: 'kernel', STUB_CONFIG_MODULES: '["kernel"]' }).status).toBe(0);
 
       for (const badJson of ['[]', '["kernel","finance","crm","social"]', '["kernel","finance","crm","social","sign","ads"]', '["kernel","finance","finance"]']) {
-        const bad = run(['smoke', 'https://crove.example.test'], { SMOKE_EXPECT_MODULES: 'finance,crm,social,sign', STUB_CONFIG_MODULES: badJson });
+        const bad = run(['smoke', 'https://ludy.example.test'], { SMOKE_EXPECT_MODULES: 'finance,crm,social,sign', STUB_CONFIG_MODULES: badJson });
         expect(bad.status, `${badJson}: ${bad.out}`).toBe(1);
         expect(bad.out).toContain('smoke failed: /api/config lists the expected modules');
       }
@@ -2205,7 +2248,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       writeFileSync(`${dir}/.env`, COMBINED_BEFORE);
       expect(deploy('v1.0.0', 'a').status).toBe(0);
 
-      // Failure on module smoke mismatch restores the true pre-deploy .env (both old AUTH_* and old CROVE_MODULES).
+      // Failure on module smoke mismatch restores the true pre-deploy .env (both old AUTH_* and old LUDY_MODULES).
       const modFail = deployBoth('v1.1.0', 'b', IDP, 'finance,crm,social,sign', { STUB_CONFIG_MODULES: 'kernel,finance,crm,social' });
       expect(modFail.status, modFail.out).toBe(1);
       expect(modFail.out).toContain('smoke failed: /api/config lists the expected modules');

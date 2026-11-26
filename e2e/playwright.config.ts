@@ -1,4 +1,4 @@
-// Runs against a stack started with `pnpm --filter @ludy/e2e stack:up` (docker compose, project crove-e2e).
+// Runs against a stack started with `pnpm --filter @ludy/e2e stack:up` (docker compose, project ludy-e2e).
 import { defineConfig, devices } from '@playwright/test';
 
 export default defineConfig({

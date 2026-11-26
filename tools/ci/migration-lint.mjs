@@ -112,6 +112,7 @@ const ADR_DIR = 'docs/adr/';
 // (some break them: they predate the rules). With --since, as CI runs, the cutoff is not used: every file a PR adds
 // gets every rule, so raising it exempts nothing in CI.
 export const BREAKING_RULES_AFTER = '20261103090000';
+export const STAGE7_CUTOVER_VERSION = '20270327180000';
 const MODULE = /^\d{14}_(crove|ludy)_([a-z0-9]+)_[a-z0-9_]+\.sql$/;
 const BANNED_GRANTEES = new Set(['anon', 'authenticated', 'public']);
 const TRANSACTION_WORDS = new Set(['begin', 'start', 'commit', 'end', 'rollback', 'abort']);
@@ -606,16 +607,17 @@ function withWrites(tokens, objects, schemas) {
 }
 
 // The roles a migration may hand an object to (#1225). A function, procedure, routine or aggregate may go to the NOLOGIN
-// roles definer functions run as (crove_definer_tenant, crove_auth_reader, crove_definer_einvoice); any object may stay the runner's own
-// (CURRENT_USER, CURRENT_ROLE, SESSION_USER, as keywords). No table, schema or other object goes to another role: its
-// owner bypasses the table's RLS and its grants. Login roles own nothing (AGENTS.md, "Tenancy").
+// roles definer functions run as; post-Stage-7 (> STAGE7_CUTOVER_VERSION) only ludy_* definer roles are allowed (#3972).
+const LUDY_DEFINER_OWNER_ROLES = new Set([
+  'ludy_definer_tenant',
+  'ludy_auth_reader',
+  'ludy_definer_einvoice',
+]);
 const DEFINER_OWNER_ROLES = new Set([
   'crove_definer_tenant',
   'crove_auth_reader',
   'crove_definer_einvoice',
-  'ludy_definer_tenant',
-  'ludy_auth_reader',
-  'ludy_definer_einvoice',
+  ...LUDY_DEFINER_OWNER_ROLES,
 ]);
 const RUNNER_KEYWORDS = new Set(['current_user', 'current_role', 'session_user']);
 const ROUTINE_KINDS = new Set(['function', 'procedure', 'routine', 'aggregate']);
@@ -624,10 +626,10 @@ const ROUTINE_KINDS = new Set(['function', 'procedure', 'routine', 'aggregate'])
 // SCHEMA ... AUTHORIZATION <role>, REASSIGN OWNED (every object of a role at once), and a switch of the session's role
 // (SET ROLE, SET SESSION AUTHORIZATION, set_config('role' or 'session_authorization')), which makes every object the
 // file creates afterwards that role's. A role is a word (lowercase) or a quoted name (exactly as written).
-export function ownerHandOvers(tokens) {
+export function ownerHandOvers(tokens, allowedDefinerRoles = DEFINER_OWNER_ROLES) {
   const head = tokens[0];
   const roleOf = (token) => (token?.t === 'word' ? { name: token.v, keyword: true } : token?.t === 'qident' ? { name: token.v, keyword: false } : undefined);
-  const allows = (role, routine) => role !== undefined && ((role.keyword && RUNNER_KEYWORDS.has(role.name)) || (routine && DEFINER_OWNER_ROLES.has(role.name)));
+  const allows = (role, routine) => role !== undefined && ((role.keyword && RUNNER_KEYWORDS.has(role.name)) || (routine && allowedDefinerRoles.has(role.name)));
   const label = (role) => (role === undefined ? 'a role the lint cannot read' : role.name);
   if (isWord(head, 'reassign')) return [{ role: 'every object of a role', line: head.line, what: 'REASSIGN OWNED', allowed: false }];
   const out = [];
@@ -1097,6 +1099,7 @@ export function functionsCreated(sql) {
 
 const WAIVER = /^--\s*migration-lint:\s*cross-module(?:\s+(.*))?$/;
 const CONTRACT = /^--\s*(?:crove|ludy):contract(?:\s+adr=(\S*))?(?:\s|$)/;
+const LUDY_CONTRACT = /^--\s*ludy:contract(?:\s+adr=(\S*))?(?:\s|$)/;
 // Kinds a plain CREATE (no OR REPLACE, no IF NOT EXISTS) makes new in this file, so dropping or locking them later in
 // the same file is neither a contract change nor DDL on a table anyone else holds.
 const PLAIN_CREATE_KINDS = new Set(['table', 'view', 'materialized', 'sequence', 'type', 'domain']);
@@ -1104,16 +1107,16 @@ const PLAIN_CREATE_KINDS = new Set(['table', 'view', 'materialized', 'sequence',
 // A file the runner applies outside a transaction to build indexes concurrently (#1791, packages/db/src/migrate.ts,
 // concurrentIndexes): CONCURRENT_INDEX_MARKER is one of its leading comment lines, before the first statement.
 export const CONCURRENT_INDEX_MARKER = '-- crove:concurrent-index';
-const LUDY_CONCURRENT_INDEX_MARKER = '-- ludy:concurrent-index';
+export const LUDY_CONCURRENT_INDEX_MARKER = '-- ludy:concurrent-index';
 const CONCURRENT_INDEX_MARKERS = new Set([CONCURRENT_INDEX_MARKER, LUDY_CONCURRENT_INDEX_MARKER]);
 // The access methods PostgreSQL ships, as the runner lists them (BUILT_IN_INDEX_METHODS).
 const BUILT_IN_INDEX_METHODS = ['btree', 'hash', 'gist', 'spgist', 'gin', 'brin'];
-export function concurrentIndexMarked(sql) {
+export function concurrentIndexMarked(sql, strictLudy = false) {
   for (const raw of sql.split('\n')) {
     const line = raw.trim();
     if (line === '') continue;
     if (!line.startsWith('--')) return false;
-    if (CONCURRENT_INDEX_MARKERS.has(line)) return true;
+    if (strictLudy ? line === LUDY_CONCURRENT_INDEX_MARKER : CONCURRENT_INDEX_MARKERS.has(line)) return true;
   }
   return false;
 }
@@ -1122,19 +1125,27 @@ export function concurrentIndexMarked(sql) {
 // but `CREATE [UNIQUE] INDEX CONCURRENTLY IF NOT EXISTS <name> ON <schema>.<table> ...;` statements, or a comment,
 // dollar quote, quoted identifier or backslash after the first statement (the runner splits the file on semicolons and
 // refuses the same); in any file, the marker anywhere but the leading comment lines, where the runner does not see it.
-export function concurrentIndexProblems(sql, statements, marked) {
+export function concurrentIndexProblems(sql, statements, marked, strictLudy = false) {
   const problems = [];
   const lines = sql.replaceAll('\r\n', '\n').split('\n');
+  const marker = strictLudy ? LUDY_CONCURRENT_INDEX_MARKER : CONCURRENT_INDEX_MARKER;
+  if (strictLudy) {
+    lines.forEach((l, idx) => {
+      if (l.includes('crove:concurrent-index')) {
+        problems.push({ line: idx + 1, message: `post-Stage-7 migrations must use ${LUDY_CONCURRENT_INDEX_MARKER} instead of ${CONCURRENT_INDEX_MARKER}` });
+      }
+    });
+  }
   if (!marked) {
-    const at = lines.findIndex((l) => l.includes('crove:concurrent-index') || l.includes('ludy:concurrent-index'));
-    if (at !== -1) problems.push({ line: at + 1, message: `the ${CONCURRENT_INDEX_MARKER} marker counts only among the comment lines before the first statement` });
+    const at = lines.findIndex((l) => l.includes('ludy:concurrent-index') || (!strictLudy && l.includes('crove:concurrent-index')));
+    if (at !== -1) problems.push({ line: at + 1, message: `the ${marker} marker counts only among the comment lines before the first statement` });
     return problems;
   }
   const first = lines.findIndex((l) => l.trim() !== '' && !l.trim().startsWith('--'));
-  if (first === -1) return [{ line: 1, message: `a file marked ${CONCURRENT_INDEX_MARKER} builds at least one index` }];
+  if (first === -1) return [{ line: 1, message: `a file marked ${marker} builds at least one index` }];
   lines.slice(first).forEach((text, k) => {
     if (/--|\/\*|\$|\\|"/.test(text)) {
-      problems.push({ line: first + k + 1, message: `a file marked ${CONCURRENT_INDEX_MARKER} holds no comment, dollar quote, quoted identifier or backslash after its first statement (the runner applies it statement by statement)` });
+      problems.push({ line: first + k + 1, message: `a file marked ${marker} holds no comment, dollar quote, quoted identifier or backslash after its first statement (the runner applies it statement by statement)` });
     }
   });
   for (const tokens of statements) {
@@ -1169,7 +1180,7 @@ export function concurrentIndexProblems(sql, statements, marked) {
       continue;
     }
     if (!shaped) {
-      problems.push({ line: tokens[0].line, message: `a file marked ${CONCURRENT_INDEX_MARKER} holds only CREATE [UNIQUE] INDEX CONCURRENTLY IF NOT EXISTS <name> ON <schema>.<table> statements; anything else goes in a transactional migration` });
+      problems.push({ line: tokens[0].line, message: `a file marked ${marker} holds only CREATE [UNIQUE] INDEX CONCURRENTLY IF NOT EXISTS <name> ON <schema>.<table> statements; anything else goes in a transactional migration` });
     }
   }
   return problems;
@@ -1256,18 +1267,27 @@ export function lintMigration(file, sql, {
   adrs = /** @type {Set<string> | undefined} */ (undefined),
 } = {}) {
   const findings = [];
+  const base = basename(file);
+  const version = /^(\d{14})_/.exec(base)?.[1];
+  const strictLudy = version !== undefined && version > STAGE7_CUTOVER_VERSION;
+  const activeDefinerRoles = strictLudy ? LUDY_DEFINER_OWNER_ROLES : DEFINER_OWNER_ROLES;
+  const activeContract = strictLudy ? LUDY_CONTRACT : CONTRACT;
+  const activeContractLabel = strictLudy ? 'ludy:contract' : 'crove:contract';
+  const activeConcurrentMarker = strictLudy ? LUDY_CONCURRENT_INDEX_MARKER : CONCURRENT_INDEX_MARKER;
   // A file the runner applies outside a transaction to build indexes concurrently (#1791).
-  const marked = concurrentIndexMarked(sql);
-  const fileMatch = MODULE.exec(basename(file));
+  const marked = concurrentIndexMarked(sql, strictLudy);
+  const fileMatch = MODULE.exec(base);
   const fileBrand = fileMatch?.[1];
   const module = fileMatch?.[2];
   const schema = module === undefined ? undefined : `${fileBrand}_${module}`;
   const allowedSameModule =
     module === undefined
       ? undefined
-      : fileBrand === 'ludy'
-        ? new Set([`ludy_${module}`, `crove_${module}`])
-        : new Set([`crove_${module}`]);
+      : strictLudy
+        ? new Set([`ludy_${module}`])
+        : fileBrand === 'ludy'
+          ? new Set([`ludy_${module}`, `crove_${module}`])
+          : new Set([`crove_${module}`]);
   const report = (line, rule, message) => findings.push({ file, line, rule, message });
   const droppedPolicies = new Set();
   const functions = []; // { key, line }: functions created, waiting for their REVOKE
@@ -1290,7 +1310,7 @@ export function lintMigration(file, sql, {
   // The first unused contract header in the comment lines right above `line` (no blank or code line between).
   const contractHeader = (line) => {
     for (let at = line - 1; commentAt.has(at); at--) {
-      const match = CONTRACT.exec(commentAt.get(at));
+      const match = activeContract.exec(commentAt.get(at));
       if (match && !usedHeaders.has(at)) return { line: at, adr: match[1] ?? '' };
     }
     return undefined;
@@ -1312,7 +1332,7 @@ export function lintMigration(file, sql, {
     const line = tokens[0].line;
     const header = contractHeader(anchorLine);
     if (header === undefined) {
-      report(line, 'contract-header', `${change.what} is a contract change: put \`-- crove:contract adr=<id>\` on the line before the statement, naming the ADR that records it, and merge it only once no code uses what it removes (plan §3.5)`);
+      report(line, 'contract-header', `${change.what} is a contract change: put \`-- ${activeContractLabel} adr=<id>\` on the line before the statement, naming the ADR that records it, and merge it only once no code uses what it removes (plan §3.5)`);
       return;
     }
     usedHeaders.add(header.line);
@@ -1349,11 +1369,12 @@ export function lintMigration(file, sql, {
     if (name && !name.dynamic) createdPlain.add(`${kind}:${name.schema ?? ''}.${name.name}`);
   };
 
-  if (schema === undefined) report(1, 'module-schema', `the file name does not match <14-digit version>_(crove|ludy)_<module>_<description>.sql, so its module is unknown`);
+  if (schema === undefined) report(1, 'module-schema', `the file name does not match <14-digit version>_${strictLudy ? 'ludy' : '(crove|ludy)'}_<module>_<description>.sql, so its module is unknown`);
+  else if (strictLudy && fileBrand === 'crove') report(1, 'module-schema', 'post-Stage-7 migrations must use <14-digit version>_ludy_<module>_<description>.sql (not crove_)');
 
   // `waiver` is the cross-module waiver on the line before the statement, if any; `waived` collects the schemas it
-  // covered. A waiver covers only crove_* or ludy_* schemas: no module touches public, auth or extensions.
-  const isBrandSchema = (name) => name.startsWith('crove_') || name.startsWith('ludy_');
+  // covered. Post-Stage-7 waivers cover only ludy_* schemas; older files may still name crove_* or ludy_*.
+  const isBrandSchema = (name) => (strictLudy ? name.startsWith('ludy_') : name.startsWith('crove_') || name.startsWith('ludy_'));
   const checkSchema = (name, line, what, waiver, waived) => {
     if (schema === undefined) return;
     if (name === undefined) {
@@ -1364,8 +1385,10 @@ export function lintMigration(file, sql, {
         return;
       }
       const why = waiver === undefined
-        ? `put that change in a ${fileBrand}_${name.replace(/^(?:crove|ludy)_/, '')} migration, or put \`-- migration-lint: cross-module <reason>\` on the line before the statement`
-        : waiver.reason ? 'a waiver covers only crove_* or ludy_* schemas' : `the waiver on line ${waiver.line} has no reason`;
+        ? strictLudy && name.startsWith('crove_')
+          ? `post-Stage-7 migrations must use ludy_* schemas (use ludy_${name.slice('crove_'.length)} instead of ${name})`
+          : `put that change in a ${fileBrand}_${name.replace(/^(?:crove|ludy)_/, '')} migration, or put \`-- migration-lint: cross-module <reason>\` on the line before the statement`
+        : waiver.reason ? `a waiver covers only ${strictLudy ? 'ludy_*' : 'crove_* or ludy_*'} schemas` : `the waiver on line ${waiver.line} has no reason`;
       report(line, 'module-schema', `touches schema ${name}, but this file belongs to ${schema}; ${why}`);
     }
   };
@@ -1408,16 +1431,16 @@ export function lintMigration(file, sql, {
 
     for (const token of tokens) {
       if (isWord(token, 'concurrently') && !marked) {
-        report(token.line, 'no-concurrently', `CONCURRENTLY cannot run in the transaction the runner applies each migration in; an index on a hot table goes in a file of its own marked ${CONCURRENT_INDEX_MARKER}`);
+        report(token.line, 'no-concurrently', `CONCURRENTLY cannot run in the transaction the runner applies each migration in; an index on a hot table goes in a file of its own marked ${activeConcurrentMarker}`);
       }
     }
     // An index built on a hot table outside a marked file holds a lock for its whole build, and every write waits (#1791).
     if (hotIndexRule) {
       const build = hotIndexBuild(tokens);
       if (build?.all) {
-        report(head.line, 'hot-index-concurrently', `${build.what} rebuilds the indexes of ${build.target}, hot tables among them, and blocks their writes for the whole rebuild: reindex the one index that needs it with REINDEX INDEX CONCURRENTLY, outside a migration, or build a new index concurrently in a file marked ${CONCURRENT_INDEX_MARKER} (#1791)`);
+        report(head.line, 'hot-index-concurrently', `${build.what} rebuilds the indexes of ${build.target}, hot tables among them, and blocks their writes for the whole rebuild: reindex the one index that needs it with REINDEX INDEX CONCURRENTLY, outside a migration, or build a new index concurrently in a file marked ${activeConcurrentMarker} (#1791)`);
       } else if (build && isHotTable(build.table) && !createdPlain.has(`table:${build.table.schema}.${build.table.name}`)) {
-        report(head.line, 'hot-index-concurrently', `${build.what} on the hot table ${build.table.schema}.${build.table.name} blocks every write to it for the whole build: build the index with CREATE INDEX CONCURRENTLY IF NOT EXISTS, in a file of its own marked ${CONCURRENT_INDEX_MARKER} (#1791)${build.constraint ? ', then add the constraint with ADD CONSTRAINT ... USING INDEX' : ''}`);
+        report(head.line, 'hot-index-concurrently', `${build.what} on the hot table ${build.table.schema}.${build.table.name} blocks every write to it for the whole build: build the index with CREATE INDEX CONCURRENTLY IF NOT EXISTS, in a file of its own marked ${activeConcurrentMarker} (#1791)${build.constraint ? ', then add the constraint with ADD CONSTRAINT ... USING INDEX' : ''}`);
       }
     }
 
@@ -1428,9 +1451,9 @@ export function lintMigration(file, sql, {
     if (isWord(head, 'truncate')) report(head.line, 'no-truncate', 'TRUNCATE is not allowed in a migration');
     // Ownership goes only to the roles definer functions run as (#1225): an object a login role owns escapes its grants
     // and policies.
-    for (const { role, line, what, allowed } of ownerHandOvers(tokens)) {
+    for (const { role, line, what, allowed } of ownerHandOvers(tokens, activeDefinerRoles)) {
       if (!allowed) {
-        report(line, 'owner-to', `${what} (${role}) hands objects to a role that may not own them: a migration gives a function, procedure or aggregate only to ${[...DEFINER_OWNER_ROLES].join(' or ')}, the roles definer functions run as, and leaves everything else the runner's; login roles own nothing`);
+        report(line, 'owner-to', `${what} (${role}) hands objects to a role that may not own them: a migration gives a function, procedure or aggregate only to ${[...activeDefinerRoles].join(' or ')}, the roles definer functions run as, and leaves everything else the runner's; login roles own nothing`);
       }
     }
     // A string setting changed, PostgreSQL and this lint's lexer would disagree on where a string ends, and a statement
@@ -1443,7 +1466,7 @@ export function lintMigration(file, sql, {
       const at = isWord(head, 'grant') ? 0 : findWord(tokens, 2, 'grant');
       if (at !== -1) {
         for (const { role, line } of grantees(tokens, at + 1)) {
-          if (BANNED_GRANTEES.has(role)) report(line, 'no-public-grant', `GRANT to ${role} is not allowed; grant to the Crove roles that need it`);
+          if (BANNED_GRANTEES.has(role)) report(line, 'no-public-grant', `GRANT to ${role} is not allowed; grant to the ${strictLudy ? 'Ludy' : 'Crove'} roles that need it`);
         }
       }
     }
@@ -1534,7 +1557,7 @@ export function lintMigration(file, sql, {
   const statements = splitStatements(lex(sql, 1, comments));
   collectWaivers();
   for (const statement of statements) lintStatement(statement, false);
-  for (const { line, message } of concurrentIndexProblems(sql, statements, marked)) report(line, 'concurrent-index', message);
+  for (const { line, message } of concurrentIndexProblems(sql, statements, marked, strictLudy)) report(line, 'concurrent-index', message);
 
   for (const fn of functions) {
     // A function dropped earlier in this file and created again is new: the drop took its privileges with it.

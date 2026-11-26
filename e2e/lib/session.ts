@@ -54,7 +54,7 @@ if (!response.ok) {
 // Acts on the same compose project as the database helpers, so it throws on a non-default E2E_BASE_URL without
 // E2E_COMPOSE_PROJECT.
 export function createConfirmedUser(email: string, password = PASSWORD): void {
-  compose(['exec', '-T', 'crove', 'node', '--input-type=module', '-e', CREATE_CONFIRMED_USER, email, password]);
+  compose(['exec', '-T', 'ludy', 'node', '--input-type=module', '-e', CREATE_CONFIRMED_USER, email, password]);
 }
 
 // A confirmed user created with createConfirmedUser, signed in through the login form, on onboarding (no org yet).

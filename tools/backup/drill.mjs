@@ -34,7 +34,7 @@
 // --wal off skips the point-in-time restore drill that follows (tools/backup/wal-drill.mjs, #2120).
 // --seal off uploads the runs unsealed. --keep leaves everything running for a look (tear down with
 // `docker compose -p <project> down -v`).
-// Environment: DRILL_PREFIX (default crove-drill; names the compose projects, the target, its network and the image
+// Environment: DRILL_PREFIX (default ludy-drill; names the compose projects, the target, its network and the image
 // tag, so two drills on one machine stay apart), DRILL_SRC_PORT (default 18181), DRILL_RESTORE_PORT (18182),
 // DRILL_BASH (default bash).
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -58,14 +58,14 @@ const WAL = option('--wal', 'on');
 if (!['on', 'off'].includes(WAL)) throw new Error('--wal is on or off');
 if (!['s3', 'local'].includes(STORAGE) || !['s3', 'local'].includes(RESTORE_STORAGE)) throw new Error('--storage and --restore-storage are s3 or local');
 if (!['on', 'off'].includes(SEAL)) throw new Error('--seal is on or off');
-const PREFIX = process.env.DRILL_PREFIX ?? 'crove-drill';
+const PREFIX = process.env.DRILL_PREFIX ?? 'ludy-drill';
 if (!/^[a-z][a-z0-9-]{0,30}$/.test(PREFIX)) throw new Error('DRILL_PREFIX is lower-case letters, digits and -');
-// The drill removes volumes, networks and images by this name: a prefix without `drill` (a mistyped `crove`) could be a stack.
+// The drill removes volumes, networks and images by this name: a prefix without `drill` (a mistyped `ludy`) could be a stack.
 if (!PREFIX.includes('drill')) throw new Error('DRILL_PREFIX must contain "drill", so it can never name a real stack');
 const TAG = PREFIX;
 const BASH = process.env.DRILL_BASH ?? 'bash';
 const MC_IMAGE = 'pgsty/minio:RELEASE.2026-08-04T00-00-00Z@sha256:b6bfe7239bfc83fb90d31612d9704d86039dd714f7904b3f1ad68f211e602372';
-const TARGET = { name: `${PREFIX}-backup-s3`, network: `${PREFIX}-backup-net`, user: 'crove-drill', secret: 'crove-drill-backup-secret', bucket: 'crove-backups' };
+const TARGET = { name: `${PREFIX}-backup-s3`, network: `${PREFIX}-backup-net`, user: 'ludy-drill', secret: 'ludy-drill-backup-secret', bucket: 'ludy-backups' };
 // The WORM archive both stacks use (#2007): a volume of its own, which wiping the source stack keeps.
 const ARCHIVE_VOLUME = `${PREFIX}-archive`;
 const INVOICE = readFileSync(`${ROOT}apps/extract/test/fixtures/einvoice-basic.xml`, 'utf8');
@@ -86,28 +86,28 @@ const backupDir = `${work}/backups`;
 // A stack: s3 is docker-compose.split.yml (api and worker, files in MinIO), local the all-in-one stack with the files
 // volume; a local restore target also gets tools/backup/scratch.compose.yml, as the monthly restore test does. Each
 // gets an override with image tags of its own and no published Mailpit port, so a stack already running on this
-// machine is untouched. The service that writes the WORM archive (the worker, or the all-in-one crove) keeps it in
+// machine is untouched. The service that writes the WORM archive (the worker, or the all-in-one ludy) keeps it in
 // read-only files on the drill's archive volume, with the shortest lag, so a posting is archived within two minutes.
 function stack(name, port, storage, scratch) {
   const split = storage === 's3';
   const override = `${work}/${name}.compose.yml`;
-  const services = ['migrate', 'auth-grants', 'crove', 'prober', ...(split ? ['api', 'worker'] : [])];
-  const archiver = split ? 'worker' : 'crove';
+  const services = ['migrate', 'auth-grants', 'ludy', 'prober', ...(split ? ['api', 'worker'] : [])];
+  const archiver = split ? 'worker' : 'ludy';
   writeFileSync(
     override,
     [
       'services:',
       ...services.flatMap((s) => [
         `  ${s}:`,
-        `    image: crove:${TAG}`,
+        `    image: ludy:${TAG}`,
         ...(s === archiver
           ? ['    environment:', '      ARCHIVE_STORE: local', "      ARCHIVE_LAG_SECONDS: '60'", '    volumes:', '      - archive:/data/archive']
           : []),
       ]),
-      '  crove-extract:',
-      `    image: crove-extract:${TAG}`,
-      '  crove-media:',
-      `    image: crove-media:${TAG}`,
+      '  ludy-extract:',
+      `    image: ludy-extract:${TAG}`,
+      '  ludy-media:',
+      `    image: ludy-media:${TAG}`,
       '  mailpit:',
       '    ports: !reset []',
       'volumes:',
@@ -160,11 +160,11 @@ const docker = (argv, options = {}) => execFileSync('docker', argv, { encoding: 
 const compose = (stack, argv) => docker(['compose', ...argv], { env: stackEnv(stack), stdio: ['ignore', 'pipe', 'inherit'] });
 // The MinIO client inside the target container (its alias `local` is the target itself).
 const targetMc = (argv, options = {}) => docker(['exec', TARGET.name, 'mc', ...argv], options);
-// Puts an object into the target bucket under the default prefix (crove/).
+// Puts an object into the target bucket under the default prefix (ludy/).
 function putObject(key, bytes) {
   writeFileSync(`${work}/object`, bytes);
   docker(['cp', `${work}/object`, `${TARGET.name}:/tmp/object`]);
-  targetMc(['cp', '--quiet', '/tmp/object', `local/${TARGET.bucket}/crove/${key}`]);
+  targetMc(['cp', '--quiet', '/tmp/object', `local/${TARGET.bucket}/ludy/${key}`]);
 }
 const quietly = (fn) => {
   try {
@@ -177,7 +177,7 @@ const quietly = (fn) => {
 // Runs a backup script; its output streams to this console. Returns the exit code and the output.
 function script(name, stack, extraEnv, argv = []) {
   const result = spawnSync(BASH, [`${ROOT}tools/backup/${name}`, ...argv], {
-    env: { ...stackEnv(stack), LUDY_DIR: ROOT, CROVE_DIR: ROOT, ...targetEnv, ...extraEnv },
+    env: { ...stackEnv(stack), LUDY_DIR: ROOT, ...targetEnv, ...extraEnv },
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
   });
@@ -421,7 +421,7 @@ function teardown() {
   quietly(() => docker(['rm', '-f', TARGET.name]));
   quietly(() => docker(['network', 'rm', TARGET.network]));
   quietly(() => docker(['volume', 'rm', '-f', ARCHIVE_VOLUME]));
-  quietly(() => docker(['image', 'rm', `crove:${TAG}`, `crove-extract:${TAG}`, `crove-media:${TAG}`]));
+  quietly(() => docker(['image', 'rm', `ludy:${TAG}`, `ludy-extract:${TAG}`, `ludy-media:${TAG}`]));
   rmSync(work, { recursive: true, force: true });
   log('torn down: both stacks with their volumes and networks, the backup target, the images and the work directory');
 }
@@ -473,13 +473,13 @@ async function main() {
   assert(readFileSync(`${backupDir}/last-success`, 'utf8').includes(`ENCRYPTION=${SEAL === 'on' ? 'aes-256-gcm' : 'none'}`), 'last-success names the run');
   if (SEAL === 'on') {
     // Nothing readable in the bucket: run files are sealed (.enc), and neither the roles nor an invoice show.
-    const objects = targetMc(['ls', '--recursive', `local/${TARGET.bucket}/crove/`]);
+    const objects = targetMc(['ls', '--recursive', `local/${TARGET.bucket}/ludy/`]);
     const runFiles = objects.split('\n').filter((l) => /\d{8}T\d{6}Z\//.test(l));
     assert(runFiles.length > 0 && runFiles.every((l) => l.trim().endsWith('.enc')), 'every run file in the bucket is sealed');
     const runId = /run (\d{8}T\d{6}Z) into/.exec(first.output)[1];
-    const roles = targetMc(['cat', `local/${TARGET.bucket}/crove/${runId}/roles.sql.enc`], { encoding: 'latin1' });
+    const roles = targetMc(['cat', `local/${TARGET.bucket}/ludy/${runId}/roles.sql.enc`], { encoding: 'latin1' });
     assert(roles.startsWith('CRB1') && !roles.includes('CREATE ROLE'), 'roles.sql is sealed in the bucket');
-    const blob = targetMc(['cat', `local/${TARGET.bucket}/crove/${one.store}/org/${seeded.orgId}/${sha256(seeded.files[0].bytes)}`], { encoding: 'latin1' });
+    const blob = targetMc(['cat', `local/${TARGET.bucket}/ludy/${one.store}/org/${seeded.orgId}/${sha256(seeded.files[0].bytes)}`], { encoding: 'latin1' });
     assert(blob.startsWith('CRB1') && !blob.includes('SHDon'), 'an invoice blob is sealed in the bucket');
     log('sealed: every run file and blob in the bucket is CRB1, with no plaintext roles or invoice');
   }
@@ -498,7 +498,7 @@ async function main() {
   assert(two.deleted === 1 && two.unlisted === 0, `the stray blob is deleted (${two.deleted} deleted, ${two.unlisted} unlisted)`);
   let strayGone = false;
   try {
-    targetMc(['stat', `local/${TARGET.bucket}/crove/${stray}`]);
+    targetMc(['stat', `local/${TARGET.bucket}/ludy/${stray}`]);
   } catch {
     strayGone = true;
   }
@@ -521,7 +521,7 @@ async function main() {
   // A STORAGE that differs from the target stack's would write the blobs where the target does not read them (the
   // production bucket, for a scratch stack): restore.sh refuses before it touches anything.
   const wrongStorage = DST.storage === 's3' ? 'local' : 's3';
-  const refused = script('restore.sh', DST, { STORAGE: wrongStorage, S3_BUCKET: 'crove-files' }, ['s3:latest']);
+  const refused = script('restore.sh', DST, { STORAGE: wrongStorage, S3_BUCKET: 'ludy-files' }, ['s3:latest']);
   assert(refused.status === 1, `restore.sh with STORAGE=${wrongStorage} exits 1 (got ${refused.status})`);
   assert(refused.output.includes(`the target compose project uses STORAGE=${DST.storage}`), 'restore.sh names the storage mismatch');
   log(`refused: restore.sh with STORAGE=${wrongStorage} onto a STORAGE=${DST.storage} stack`);
@@ -538,7 +538,7 @@ async function main() {
     putObject(extra, Buffer.from('stray'));
   }
   const unlisted = script('restore.sh', DST, DST.storage === 's3' ? { RESTORE_PRESTART: 'db minio' } : {}, ['s3:latest']);
-  targetMc(['rm', '--quiet', `local/${TARGET.bucket}/crove/${extra}`]);
+  targetMc(['rm', '--quiet', `local/${TARGET.bucket}/ludy/${extra}`]);
   assert(unlisted.status === 1, `restore.sh with an unlisted file exits 1 (got ${unlisted.status})`);
   assert(unlisted.output.includes('neither SHA256SUMS nor files.sha256 lists'), 'restore.sh names the unlisted file');
   log('refused: a run with a file its checksums do not list');
@@ -547,7 +547,7 @@ async function main() {
     const forged = '29991231T000000Z';
     putObject(`${forged}/SHA256SUMS`, Buffer.from('forged\n'));
     const downgrade = script('restore.sh', DST, DST.storage === 's3' ? { RESTORE_PRESTART: 'db minio' } : {}, ['s3:latest']);
-    targetMc(['rm', '--quiet', '--recursive', '--force', `local/${TARGET.bucket}/crove/${forged}/`]);
+    targetMc(['rm', '--quiet', '--recursive', '--force', `local/${TARGET.bucket}/ludy/${forged}/`]);
     assert(downgrade.status === 1, `restore.sh of an unsealed run with a key set exits 1 (got ${downgrade.status})`);
     assert(downgrade.output.includes('is not sealed although BACKUP_ENCRYPTION_KEY is set'), 'restore.sh names the unsealed run');
     log('refused: an unsealed run in the bucket while BACKUP_ENCRYPTION_KEY is set');

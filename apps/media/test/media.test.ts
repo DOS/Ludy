@@ -134,7 +134,7 @@ describe('crove-media config and allowlist', () => {
       PORT: '8095',
       EXTRA_SETTING: '1',
     };
-    expect(() => loadMediaConfig(env)).toThrow(/crove-media runs with its own settings only; remove EXTRA_SETTING/);
+    expect(() => loadMediaConfig(env)).toThrow(/ludy-media runs with its own settings only; remove EXTRA_SETTING/);
   });
 
   it('refuses to start when image marker exists, even if NODE_ENV=development', () => {

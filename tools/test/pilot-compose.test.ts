@@ -38,30 +38,30 @@ function config(files: string[], env: Record<string, string> = {}, profiles: str
 
 describe.skipIf(!hasCompose)('compose.pilot.yml', { timeout: 60_000 }, () => {
   beforeAll(() => {
-    dir = mkdtempSync(join(tmpdir(), 'crove-pilot-compose-'));
+    dir = mkdtempSync(join(tmpdir(), 'ludy-pilot-compose-'));
     copyFileSync(join(repo, 'docker-compose.yml'), join(dir, 'docker-compose.yml'));
     copyFileSync(join(repo, 'docker-compose.split.yml'), join(dir, 'docker-compose.split.yml'));
     copyFileSync(join(repo, 'tools/deploy/compose.pilot.yml'), join(dir, 'compose.pilot.yml'));
     // The release pins the images in a generated override, as deploy.sh writes it.
     writeFileSync(join(dir, 'docker-compose.override.yml'), [
         'services:',
-        "  crove: { image: 'registry.example/ludy@sha256:aa', build: !reset null }",
+        "  ludy: { image: 'registry.example/ludy@sha256:aa', build: !reset null }",
         "  api: { image: 'registry.example/ludy@sha256:aa', build: !reset null }",
         "  worker: { image: 'registry.example/ludy@sha256:aa', build: !reset null }",
-        "  crove-media: { image: 'registry.example/ludy-media@sha256:bb', build: !reset null }",
+        "  ludy-media: { image: 'registry.example/ludy-media@sha256:bb', build: !reset null }",
         '',
       ].join('\n'));
     writeFileSync(join(dir, '.env'), '');
   });
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
-  it('leaves docker-compose.yml alone: one crove service running every role and every module', () => {
+  it('leaves docker-compose.yml alone: one ludy service running every role and every module', () => {
     const services = config(['docker-compose.yml']);
-    expect(services['crove']?.command).toEqual(['all']);
-    expect(services['crove']?.profiles).toBeUndefined();
-    expect(services['crove']?.environment?.['WORKER_DATABASE_URL']).toContain('ludy_worker');
-    expect(services['crove']?.environment?.['LUDY_MODULES']).toBe('');
-    expect(services['crove']?.networks).toEqual({ default: { aliases: ['ludy'] }, extract: null, media: null });
+    expect(services['ludy']?.command).toEqual(['all']);
+    expect(services['ludy']?.profiles).toBeUndefined();
+    expect(services['ludy']?.environment?.['WORKER_DATABASE_URL']).toContain('ludy_worker');
+    expect(services['ludy']?.environment?.['LUDY_MODULES']).toBe('');
+    expect(services['ludy']?.networks).toEqual({ default: null, extract: null, media: null });
     expect(services['api']).toBeUndefined();
     expect(services['worker']).toBeUndefined();
   });
@@ -69,18 +69,18 @@ describe.skipIf(!hasCompose)('compose.pilot.yml', { timeout: 60_000 }, () => {
   it('starts api and worker apart and not the all-in-one service', () => {
     const files = ['docker-compose.yml', 'compose.pilot.yml', 'docker-compose.override.yml'];
     const services = config(files);
-    expect(services['crove']).toBeUndefined();
+    expect(services['ludy']).toBeUndefined();
     expect(services['api']?.command).toEqual(['api']);
     expect(services['worker']?.command).toEqual(['worker']);
     // The release's digest, which deploy.sh pins for both while compose.pilot.yml is on the host.
     expect(services['api']?.image).toBe('registry.example/ludy@sha256:aa');
     expect(services['worker']?.image).toBe('registry.example/ludy@sha256:aa');
-    // Without the pins (a stack built from a checkout) they run what `crove` runs.
+    // Without the pins (a stack built from a checkout) they run what `ludy` runs.
     const unpinned = config(['docker-compose.yml', 'compose.pilot.yml']);
-    expect(unpinned['api']?.image).toBe('crove:local');
-    expect(unpinned['worker']?.image).toBe('crove:local');
+    expect(unpinned['api']?.image).toBe('ludy:local');
+    expect(unpinned['worker']?.image).toBe('ludy:local');
     // The all-in-one service is one profile away, for a laptop.
-    expect(config(files, {}, ['all-in-one'])['crove']?.profiles).toEqual(['all-in-one']);
+    expect(config(files, {}, ['all-in-one'])['ludy']?.profiles).toEqual(['all-in-one']);
   });
 
   it('keeps the worker database login and the sandbox away from the API', () => {
@@ -97,19 +97,19 @@ describe.skipIf(!hasCompose)('compose.pilot.yml', { timeout: 60_000 }, () => {
     expect(worker?.environment?.['EXTRACT_URL']).toBe('http://ludy-extract:8090');
     expect(Object.keys(worker?.networks ?? {}).sort()).toEqual(['default', 'extract', 'media']);
     expect(worker?.environment?.['MEDIA_URL']).toBe('http://ludy-media:8095');
-    // crove-media runs in both layouts (the release publishes and pins its image, #2988): no profile keeps it out, and the pin wins over its build.
-    const pinned = config(['docker-compose.yml', 'compose.pilot.yml', 'docker-compose.override.yml'])['crove-media'] as (Service & { image?: string; build?: unknown }) | undefined;
+    // ludy-media runs in both layouts (the release publishes and pins its image, #2988): no profile keeps it out, and the pin wins over its build.
+    const pinned = config(['docker-compose.yml', 'compose.pilot.yml', 'docker-compose.override.yml'])['ludy-media'] as (Service & { image?: string; build?: unknown }) | undefined;
     expect(pinned?.image).toBe('registry.example/ludy-media@sha256:bb');
     expect(pinned?.build).toBeUndefined();
-    expect(config(['docker-compose.yml'])['crove-media']?.profiles).toBeUndefined();
-    expect(services['crove-media']?.profiles).toBeUndefined();
+    expect(config(['docker-compose.yml'])['ludy-media']?.profiles).toBeUndefined();
+    expect(services['ludy-media']?.profiles).toBeUndefined();
     // Where a recording sits decrypted while it is measured is a tmpfs, not a volume, so a killed container leaves nothing on the host (#2989).
-    const media = config(['docker-compose.yml', 'compose.pilot.yml'])['crove-media'] as (Service & { tmpfs?: string[]; volumes?: unknown[]; mem_limit?: unknown }) | undefined;
+    const media = config(['docker-compose.yml', 'compose.pilot.yml'])['ludy-media'] as (Service & { tmpfs?: string[]; volumes?: unknown[]; mem_limit?: unknown }) | undefined;
     expect(media?.tmpfs?.some((t) => t.startsWith('/data/scratch'))).toBe(true);
     expect(media?.volumes ?? []).toEqual([]);
     // The pilot host has 8 GB: the sandbox is held to about 1 GB of video, with the scratch, the memory and the cap together, and the API refuses by the same cap (#2989).
     const pilot = config(['docker-compose.yml', 'compose.pilot.yml']);
-    const pilotMedia = pilot['crove-media'] as (Service & { tmpfs?: string[]; mem_limit?: unknown; memswap_limit?: unknown }) | undefined;
+    const pilotMedia = pilot['ludy-media'] as (Service & { tmpfs?: string[]; mem_limit?: unknown; memswap_limit?: unknown }) | undefined;
     expect(pilotMedia?.tmpfs).toEqual(['/tmp:size=64m,noexec,nosuid', '/data/scratch:size=1g,mode=0700,uid=1000,gid=1000,noexec,nosuid']);
     expect(String(pilotMedia?.mem_limit)).toBe('1610612736');
     expect(String(pilotMedia?.memswap_limit)).toBe('1610612736');
@@ -118,7 +118,7 @@ describe.skipIf(!hasCompose)('compose.pilot.yml', { timeout: 60_000 }, () => {
     // The cap fits inside the scratch (1 GiB = 1073741824), and the memory limit holds the scratch and a decode.
     expect(Number(pilotMedia?.environment?.['MEDIA_MAX_INPUT_BYTES'])).toBeLessThan(1024 ** 3);
     // The default stack keeps the full 2 GB: 2304m of scratch, 4g of memory.
-    const full = config(['docker-compose.yml'])['crove-media'] as (Service & { tmpfs?: string[]; mem_limit?: unknown }) | undefined;
+    const full = config(['docker-compose.yml'])['ludy-media'] as (Service & { tmpfs?: string[]; mem_limit?: unknown }) | undefined;
     expect(full?.tmpfs?.[1]).toBe('/data/scratch:size=2304m,mode=0700,uid=1000,gid=1000,noexec,nosuid');
     expect(String(full?.mem_limit)).toBe('4294967296');
     expect(full?.environment?.['MEDIA_MAX_INPUT_BYTES']).toBe('2147483648');
@@ -128,7 +128,7 @@ describe.skipIf(!hasCompose)('compose.pilot.yml', { timeout: 60_000 }, () => {
     expect(worker?.healthcheck?.disable).toBe(true);
   });
 
-  // #2130: what each role keeps of the release's `crove` service. The lists come from reading which role reads each variable
+  // #2130: what each role keeps of the release's `ludy` service. The lists come from reading which role reads each variable
   // (kernel.ts start(): the api branch builds the HTTP app, the worker branch runs startWorker); see the audit on the issue. A variable in
   // neither list reaches both roles, which is the safe default for a new one.
   const WORKER_ONLY = [
@@ -144,16 +144,16 @@ describe.skipIf(!hasCompose)('compose.pilot.yml', { timeout: 60_000 }, () => {
   const API_NEEDS = ['S3_ACCESS_KEY_ID', 'S3_SECRET_ACCESS_KEY', 'STORAGE', 'CREDENTIAL_KEY', 'CHANNEL_META_APP_SECRET', 'CHANNEL_ZALO_APP_SECRET', 'CHANNEL_THREADS_APP_SECRET', 'EXPORT_ENCRYPTION_KEY', 'EVIDENCE_LOCK_DAYS', 'EXPORT_RETENTION_DAYS'];
 
   it('takes the worker-only settings and the archive volume away from the API, and the API-only ones from the worker, and nothing else', () => {
-    const all = config(['docker-compose.yml', 'compose.pilot.yml'], {}, ['all-in-one'])['crove'];
+    const all = config(['docker-compose.yml', 'compose.pilot.yml'], {}, ['all-in-one'])['ludy'];
     const pilot = config(['docker-compose.yml', 'compose.pilot.yml']);
-    const crove = Object.keys(all?.environment ?? {});
+    const ludy = Object.keys(all?.environment ?? {});
     const apiKeys = Object.keys(pilot['api']?.environment ?? {}).sort();
     const workerKeys = Object.keys(pilot['worker']?.environment ?? {}).sort();
-    // Exactly the lists are gone, and every other variable of crove reaches both roles, so a new variable stays on both until it is sorted here.
-    expect(apiKeys).toEqual(crove.filter((k) => !WORKER_ONLY.includes(k)).sort());
-    expect(workerKeys).toEqual(crove.filter((k) => !API_ONLY.includes(k)).sort());
-    // Every name in the lists exists in crove (a renamed variable would drop out of the list unnoticed).
-    for (const name of [...WORKER_ONLY, ...API_ONLY]) expect(crove, name).toContain(name);
+    // Exactly the lists are gone, and every other variable of ludy reaches both roles, so a new variable stays on both until it is sorted here.
+    expect(apiKeys).toEqual(ludy.filter((k) => !WORKER_ONLY.includes(k)).sort());
+    expect(workerKeys).toEqual(ludy.filter((k) => !API_ONLY.includes(k)).sort());
+    // Every name in the lists exists in ludy (a renamed variable would drop out of the list unnoticed).
+    for (const name of [...WORKER_ONLY, ...API_ONLY]) expect(ludy, name).toContain(name);
     for (const name of API_NEEDS) expect(apiKeys, name).toContain(name);
     // Volumes: the API has no archive, keeps files, keys and the read-only status; the worker keeps the archive.
     const targets = (name: string) => (pilot[name]?.volumes ?? []).map((v) => v.target).sort();
@@ -239,13 +239,11 @@ describe.skipIf(!hasCompose)('compose.pilot.yml', { timeout: 60_000 }, () => {
     expect(loaded.AUTH_ALLOWED_EMAILS).toEqual(['owner@example.test']);
   });
 
-  it('runs the finance module by default for api, worker and prober, and follows LUDY_MODULES (or legacy CROVE_MODULES)', () => {
+  it('runs the finance module by default for api, worker and prober, and follows LUDY_MODULES', () => {
     const files = ['docker-compose.yml', 'compose.pilot.yml'];
     for (const [env, expected] of [
       [{}, 'finance'],
       [{ LUDY_MODULES: '' }, 'finance'],
-      [{ CROVE_MODULES: '' }, 'finance'],
-      [{ CROVE_MODULES: 'finance,crm' }, 'finance,crm'],
       [{ LUDY_MODULES: 'finance,crm' }, 'finance,crm'],
     ] as const) {
       const services = config(files, env, ['prober']);
@@ -253,21 +251,21 @@ describe.skipIf(!hasCompose)('compose.pilot.yml', { timeout: 60_000 }, () => {
     }
   });
 
-  it('points the prober at the API, since crove does not run', () => {
+  it('points the prober at the API, since ludy does not run', () => {
     const prober = config(['docker-compose.yml', 'compose.pilot.yml'], {}, ['prober'])['prober'];
     expect(prober?.environment?.['PROBER_AUTH_URL']).toBe('http://api:8080/auth/v1');
     expect(config(['docker-compose.yml', 'compose.pilot.yml'], { PROBER_AUTH_URL: 'https://auth.example/auth/v1' }, ['prober'])['prober']?.environment?.['PROBER_AUTH_URL']).toBe('https://auth.example/auth/v1');
   });
 
   it('wires the five Ludy-branded Vietnamese auth mail templates and subjects to the ludy API alias (#3577)', () => {
-    for (const [files, httpService] of [
-      [['docker-compose.yml'], 'crove'],
-      [['docker-compose.yml', 'compose.pilot.yml'], 'api'],
-      [['docker-compose.yml', 'docker-compose.split.yml'], 'api'],
+    for (const [files, httpService, defaultNet] of [
+      [['docker-compose.yml'], 'ludy', null],
+      [['docker-compose.yml', 'compose.pilot.yml'], 'api', { aliases: ['ludy'] }],
+      [['docker-compose.yml', 'docker-compose.split.yml'], 'api', { aliases: ['ludy'] }],
     ] as const) {
       const services = config([...files]);
       const auth = services['auth'];
-      expect(services[httpService]?.networks?.['default']).toEqual({ aliases: ['ludy'] });
+      expect(services[httpService]?.networks?.['default']).toEqual(defaultNet);
       expect(auth?.environment?.['GOTRUE_MAILER_TEMPLATES_CONFIRMATION']).toBe('http://ludy:8080/auth-templates/confirmation.html');
       expect(auth?.environment?.['GOTRUE_MAILER_TEMPLATES_RECOVERY']).toBe('http://ludy:8080/auth-templates/recovery.html');
       expect(auth?.environment?.['GOTRUE_MAILER_TEMPLATES_MAGIC_LINK']).toBe('http://ludy:8080/auth-templates/magic_link.html');

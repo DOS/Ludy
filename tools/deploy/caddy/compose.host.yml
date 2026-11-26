@@ -1,8 +1,8 @@
-# Host-specific services for a Crove instance on one server (docs/runbooks/deploy.md, "One-time setup of the host").
-# Copy it with the Caddyfile next to it into the stack directory (/opt/crove) and list it in COMPOSE_FILE (deploy.md);
+# Host-specific services for a Ludy instance on one server (docs/runbooks/deploy.md, "One-time setup of the host").
+# Copy it with the Caddyfile next to it into the stack directory (/opt/ludy) and list it in COMPOSE_FILE (deploy.md);
 # the deploy passes it on and starts its services before the app. Issue #306, docs/runbooks/provision-pilot.md.
 services:
-  # TLS on ports 80 and 443 for CROVE_DOMAIN, in front of the app on loopback (127.0.0.1:${PORT}). On the host's
+  # TLS on ports 80 and 443 for LUDY_DOMAIN, in front of the app on loopback (127.0.0.1:${PORT}). On the host's
   # network: a published port would show Caddy the Docker bridge's address instead of the client's for every IPv6
   # client (and on some hosts for IPv4 too), and the per-client rate limits would then share one bucket.
   caddy:
@@ -10,9 +10,9 @@ services:
     restart: unless-stopped
     network_mode: host
     environment:
-      LUDY_DOMAIN: ${LUDY_DOMAIN:-${CROVE_DOMAIN:?set LUDY_DOMAIN to the host name of PUBLIC_URL}}
-      # The port the compose file publishes on loopback for the app (crove, or api in a split layout).
-      LUDY_UPSTREAM: ${LUDY_UPSTREAM:-${CROVE_UPSTREAM:-127.0.0.1:${PORT:-8080}}}
+      LUDY_DOMAIN: ${LUDY_DOMAIN:?set LUDY_DOMAIN to the host name of PUBLIC_URL}
+      # The port the compose file publishes on loopback for the app (ludy, or api in a split layout).
+      LUDY_UPSTREAM: ${LUDY_UPSTREAM:-127.0.0.1:${PORT:-8080}}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       # The certificates and the ACME account: keep this volume, or every restart asks Let's Encrypt again.

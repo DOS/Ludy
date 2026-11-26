@@ -532,8 +532,8 @@ describe('crove-extract configuration', () => {
   });
 
   it('inside the image (marker file present), NODE_ENV=development or test cannot switch the allowlist off', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'crove-extract-marker-'));
-    const marker = join(dir, 'crove-extract-image');
+    const dir = mkdtempSync(join(tmpdir(), 'ludy-extract-marker-'));
+    const marker = join(dir, 'ludy-extract-image');
     try {
       writeFileSync(marker, 'test');
       for (const nodeEnv of ['development', 'test']) {

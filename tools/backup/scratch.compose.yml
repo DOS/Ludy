@@ -1,9 +1,9 @@
-# A scratch Crove next to a running one, for the monthly restore test (docs/runbooks/backup-and-restore.md). An
+# A scratch Ludy next to a running one, for the monthly restore test (docs/runbooks/backup-and-restore.md). An
 # override of docker-compose.yml:
 #
-#   COMPOSE_PROJECT_NAME=crove-restore-test COMPOSE_FILE=docker-compose.yml:tools/backup/scratch.compose.yml \
+#   COMPOSE_PROJECT_NAME=ludy-restore-test COMPOSE_FILE=docker-compose.yml:tools/backup/scratch.compose.yml \
 #     PORT=18090 PUBLIC_URL=http://localhost:18090 STORAGE=local tools/backup/restore.sh s3:latest
-#   COMPOSE_PROJECT_NAME=crove-restore-test docker compose down -v
+#   COMPOSE_PROJECT_NAME=ludy-restore-test docker compose down -v
 #
 # The restored copy must not act on the world: its mail goes to its own Mailpit (port not published), it calls no AI
 # endpoint, and its files go to its own `files` volume (STORAGE=local; the local store reads a blob by its key and
@@ -17,7 +17,7 @@ services:
       GOTRUE_SMTP_USER: ''
       GOTRUE_SMTP_PASS: ''
 
-  crove:
+  ludy:
     environment:
       STORAGE: local
       SMTP_HOST: mailpit

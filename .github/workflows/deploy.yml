@@ -19,8 +19,8 @@ name: deploy
 # repository or organization level: those fall back into every environment. Without the opt-in the env file is never edited.
 #
 # Opt-in (#3531): when DEPLOY_MODULES_ENVIRONMENT names the environment being deployed, the deploy writes
-# CROVE_MODULES=<DEPLOY_CROVE_MODULES> into the host's env file and verifies /api/config reports those modules (plus kernel).
-# Define DEPLOY_MODULES_ENVIRONMENT and DEPLOY_CROVE_MODULES in the environment only.
+# LUDY_MODULES=<DEPLOY_LUDY_MODULES> into the host's env file and verifies /api/config reports those modules (plus kernel).
+# Define DEPLOY_MODULES_ENVIRONMENT and DEPLOY_LUDY_MODULES in the environment only.
 
 on:
   push:
@@ -251,7 +251,7 @@ jobs:
             echo 'ready=false' >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          port="${DEPLOY_PORT:-22}" dir="${DEPLOY_DIR:-/opt/crove}"
+          port="${DEPLOY_PORT:-22}" dir="${DEPLOY_DIR:-/opt/ludy}"
           env_file="${DEPLOY_ENV_FILE:-$dir/.env}"
           # Checked here because they become part of the SSH configuration and the remote command line.
           [[ "$DEPLOY_HOST" =~ ^[A-Za-z0-9.:-]+$ ]] || { echo '::error::DEPLOY_HOST must be a host name or an IP address'; exit 1; }
@@ -260,7 +260,7 @@ jobs:
           [[ "$dir" =~ ^/[A-Za-z0-9._/-]+$ ]] || { echo '::error::DEPLOY_DIR must be an absolute path of letters, digits, ., _, - and /'; exit 1; }
           [[ "$env_file" =~ ^/[A-Za-z0-9._/-]+$ ]] || { echo '::error::DEPLOY_ENV_FILE must be an absolute path of letters, digits, ., _, - and /'; exit 1; }
           if [ -n "$PUBLIC_URL" ] && ! [[ "$PUBLIC_URL" =~ ^https?://[A-Za-z0-9.:-]+/?$ ]]; then
-            echo '::error::DEPLOY_PUBLIC_URL must be an origin such as https://crove.example.com'
+            echo '::error::DEPLOY_PUBLIC_URL must be an origin such as https://ludy.example.com'
             exit 1
           fi
           if [ -n "$APP_URL" ] && ! [[ "$APP_URL" =~ ^https?://[A-Za-z0-9.:-]+/?$ ]]; then
@@ -273,7 +273,7 @@ jobs:
           (umask 077; printf '%s\n' "$DEPLOY_SSH_KEY" > "$ssh_dir/key"; printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$ssh_dir/known_hosts")
           # The host key must be listed in DEPLOY_KNOWN_HOSTS: no trust on first use.
           cat > "$ssh_dir/config" <<EOF
-          Host crove-target
+          Host ludy-target
             HostName $DEPLOY_HOST
             User $DEPLOY_USER
             Port $port
@@ -371,7 +371,7 @@ jobs:
             echo "auth_url=$DEPLOY_IDP_PUBLIC_AUTH_URL"
           } >> "$GITHUB_OUTPUT"
 
-      # Opt-in (#3531): when DEPLOY_MODULES_ENVIRONMENT names this environment, validate DEPLOY_CROVE_MODULES and pass it via
+      # Opt-in (#3531): when DEPLOY_MODULES_ENVIRONMENT names this environment, validate DEPLOY_LUDY_MODULES and pass it via
       # --modules to deploy.sh, plus SMOKE_EXPECT_MODULES to the public smoke check. Define both in the environment only.
       - name: Prepare the module settings
         id: modules
@@ -379,7 +379,7 @@ jobs:
         env:
           ENVIRONMENT: ${{ needs.target.outputs.environment }}
           OPT_IN: ${{ vars.DEPLOY_MODULES_ENVIRONMENT }}
-          MODULES: ${{ vars.DEPLOY_LUDY_MODULES || vars.DEPLOY_CROVE_MODULES }}
+          MODULES: ${{ vars.DEPLOY_LUDY_MODULES }}
         run: |
           set -euo pipefail
           if [ "$OPT_IN" != "$ENVIRONMENT" ]; then
@@ -421,7 +421,7 @@ jobs:
           extra=()
           if [ -n "$IDP_FILE" ]; then extra=(-C "$(dirname "$IDP_FILE")" auth-settings.env); fi
           tar -cf - -C tools/deploy "${files[@]}" -C "$GITHUB_WORKSPACE" docker-compose.yml "${extra[@]}" \
-            | ssh -F "$SSH_CONFIG" crove-target "umask 077 && mkdir -p '$REMOTE' && tar -xf - -C '$REMOTE'"
+            | ssh -F "$SSH_CONFIG" ludy-target "umask 077 && mkdir -p '$REMOTE' && tar -xf - -C '$REMOTE'"
 
       - name: Deploy, or roll back, on the host
         id: host
@@ -442,7 +442,7 @@ jobs:
           # The read-only token goes over stdin: never on a command line, and the host keeps it only for the pull.
           registry="--dir '$DIR' --env-file '$ENV_FILE' --registry ghcr.io --registry-user '$ACTOR' --registry-password-stdin"
           if [ "$ACTION" = rollback ]; then
-            printf '%s\n' "$GH_TOKEN" | ssh -F "$SSH_CONFIG" crove-target "bash '$REMOTE/deploy.sh' rollback $registry"
+            printf '%s\n' "$GH_TOKEN" | ssh -F "$SSH_CONFIG" ludy-target "bash '$REMOTE/deploy.sh' rollback $registry"
           else
             [[ "$IMAGE" =~ ^[a-z0-9./_:-]+@sha256:[0-9a-f]{64}$ && "$EXTRACT" =~ ^[a-z0-9./_:-]+@sha256:[0-9a-f]{64}$ && "$MEDIA" =~ ^[a-z0-9./_:-]+@sha256:[0-9a-f]{64}$ ]] || { echo '::error::image digests missing'; exit 1; }
             [[ "$BUILD" =~ ^[0-9a-f]{40}$ ]] || { echo '::error::the release commit is missing'; exit 1; }
@@ -453,7 +453,7 @@ jobs:
               [[ "$MODULES" =~ ^[a-z][a-z0-9_]{0,31}(,[a-z][a-z0-9_]{0,31}){0,9}$ ]] || { echo '::error::unexpected module list'; exit 1; }
               settings+=" --modules '$MODULES'"
             fi
-            printf '%s\n' "$GH_TOKEN" | ssh -F "$SSH_CONFIG" crove-target \
+            printf '%s\n' "$GH_TOKEN" | ssh -F "$SSH_CONFIG" ludy-target \
               "bash '$REMOTE/deploy.sh' deploy $registry --release '$RELEASE' --image '$IMAGE' --extract-image '$EXTRACT' --media-image '$MEDIA' --build '$BUILD' --compose '$REMOTE/docker-compose.yml'$settings"
           fi
 
@@ -487,7 +487,7 @@ jobs:
         run: |
           echo '::error::the public smoke test failed; rolling back'
           [[ "$ACTOR" =~ ^[A-Za-z0-9._-]+(\[bot\])?$ ]] || { echo '::error::unexpected actor name'; exit 1; }
-          printf '%s\n' "$GH_TOKEN" | ssh -F "$SSH_CONFIG" crove-target \
+          printf '%s\n' "$GH_TOKEN" | ssh -F "$SSH_CONFIG" ludy-target \
             "bash '$REMOTE/deploy.sh' rollback --dir '$DIR' --env-file '$ENV_FILE' --registry ghcr.io --registry-user '$ACTOR' --registry-password-stdin"
 
       - name: Summary
@@ -513,7 +513,7 @@ jobs:
           SSH_CONFIG: ${{ steps.config.outputs.ssh_config }}
           REMOTE: ${{ steps.config.outputs.remote }}
         run: |
-          ssh -F "$SSH_CONFIG" crove-target "rm -rf '$REMOTE'" < /dev/null || true
+          ssh -F "$SSH_CONFIG" ludy-target "rm -rf '$REMOTE'" < /dev/null || true
           rm -rf "$(dirname "$SSH_CONFIG")" "$RUNNER_TEMP/idp"
 
   # The partner's release notes (#691; plan §7 rule 6): one line per PR, from the "Release note (vi):" line of its body

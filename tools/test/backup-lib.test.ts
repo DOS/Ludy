@@ -10,7 +10,7 @@ import { keyId, sealedSize } from '../backup/seal.mjs';
 
 const lib = resolve(import.meta.dirname, '../backup/lib.sh').replaceAll('\\', '/');
 const hasBash = spawnSync('bash', ['-c', 'exit 0']).status === 0;
-const dir = mkdtempSync(join(tmpdir(), 'crove-backup-lib-'));
+const dir = mkdtempSync(join(tmpdir(), 'ludy-backup-lib-'));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 function bash(script: string, env: Record<string, string> = {}, input = '') {
@@ -104,8 +104,8 @@ describe.skipIf(!hasBash)('backup lib.sh', { timeout: 120_000 }, () => {
   });
 
   it('tells a development URL from a deployment, and counts no URL as a deployment', () => {
-    const local = ['http://localhost:8080', 'http://LOCALHOST', 'http://crove.localhost/x', 'http://127.0.0.1:18181', 'http://127.12.0.3', 'http://[::1]:8080'];
-    const deployed = ['', 'https://crove.example.com', 'https://127.example.com', 'http://127.0.0.1.nip.io', 'https://localhost.example.com', 'http://10.0.0.5:8080'];
+    const local = ['http://localhost:8080', 'http://LOCALHOST', 'http://ludy.localhost/x', 'http://127.0.0.1:18181', 'http://127.12.0.3', 'http://[::1]:8080'];
+    const deployed = ['', 'https://ludy.example.com', 'https://127.example.com', 'http://127.0.0.1.nip.io', 'https://localhost.example.com', 'http://10.0.0.5:8080'];
     const res = bash(`for u in ${[...local, ...deployed].map((u) => `'${u}'`).join(' ')}; do if is_local_url "$u"; then echo local; else echo deployed; fi; done`);
     expect(res.out.trim().split('\n')).toEqual([...local.map(() => 'local'), ...deployed.map(() => 'deployed')]);
   });

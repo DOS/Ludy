@@ -2,7 +2,7 @@
 // migrations build (plan §2 DB row, issue #48). Run `pnpm db:types` after adding or changing a migration and commit
 // the result; CI runs it too and fails when the committed file is not current.
 //
-// Needs LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) (a superuser URL on PostgreSQL 17, as for `pnpm test:db`). The run creates a throwaway
+// Needs LUDY_TEST_ADMIN_URL (a superuser URL on PostgreSQL 17, as for `pnpm test:db`). The run creates a throwaway
 // database, applies supabase/migrations with the built-in runner, reads it with Kanel and kanel-kysely, and drops it.
 //
 // What is generated, and how it differs from Kanel's defaults:
@@ -79,7 +79,7 @@ const TYPE_MAP = {
 
 const pascal = (name) => name.replace(/(^|_)([a-z0-9])/g, (_, __, c) => c.toUpperCase());
 // ludy_kernel.tenant -> KernelTenantTable: unique across schemas, which may reuse a table name.
-const tableInterface = (schema, table) => `${pascal(schema.replace(/^(?:crove|ludy)_/, ''))}${pascal(table)}Table`;
+const tableInterface = (schema, table) => `${pascal(schema.replace(/^ludy_/, ''))}${pascal(table)}Table`;
 const byName = (a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
 
 // The column's base type from the type map (through a domain to its base type), ignoring Kanel's identifier types
@@ -162,7 +162,7 @@ function singleFile(outputPath, writable) {
             typeImports: kysely.map((name) => ({ name, isDefault: false, path: 'kysely', isAbsolute: true, importAsType: true })),
             exportAs: 'named',
           });
-        } else if (declaration.declarationType === 'interface' && /^(?:Crove|Ludy)[A-Za-z]+Schema$/.test(declaration.name)) {
+        } else if (declaration.declarationType === 'interface' && /^Ludy[A-Za-z]+Schema$/.test(declaration.name)) {
           schemaInterfaces.push({
             ...declaration,
             properties: [...declaration.properties].sort(byName),
@@ -240,8 +240,8 @@ async function tenantPrivileges(dbUrl) {
 }
 
 async function main() {
-  const adminUrl = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
-  if (!adminUrl) throw new Error('db-types: set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL on PostgreSQL 17');
+  const adminUrl = process.env.LUDY_TEST_ADMIN_URL;
+  if (!adminUrl) throw new Error('db-types: set LUDY_TEST_ADMIN_URL to a superuser URL on PostgreSQL 17');
   const dbName = `ludy_types_${Date.now()}_${randomBytes(4).toString('hex')}`;
   const url = new URL(adminUrl);
   url.pathname = `/${dbName}`;
@@ -305,7 +305,7 @@ async function main() {
 
 // A run killed before its finally (Ctrl-C) leaves its database behind; the next run drops those older than an hour.
 async function dropStale(admin) {
-  const { rows } = await admin.query("SELECT datname FROM pg_catalog.pg_database WHERE datname ~ '^(?:crove|ludy)_types_[0-9]+_[0-9a-f]{8}$'");
+  const { rows } = await admin.query("SELECT datname FROM pg_catalog.pg_database WHERE datname ~ '^ludy_types_[0-9]+_[0-9a-f]{8}$'");
   for (const { datname } of rows) {
     if (Date.now() - Number(datname.split('_')[2]) > 3_600_000) {
       // Another run may be dropping it at the same time; a leftover is not worth failing this run.

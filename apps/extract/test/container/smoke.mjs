@@ -1,4 +1,4 @@
-// Container smoke test of the crove-extract image (External-tenant gate T12), run by the `extract-image` CI job.
+// Container smoke test of the ludy-extract image (External-tenant gate T12), run by the `extract-image` CI job.
 // It runs in a client container on the same internal network as the service and sends real files, so each parse
 // goes through the image's pnpm layout under the parser process's permission model. Usage:
 //   node smoke.mjs <base url> <fixture directory>
@@ -7,7 +7,7 @@ import { join } from 'node:path';
 // Node built-ins only, run as TypeScript by type stripping.
 import { buildLimitArchive } from '../zip-fixture.ts';
 
-const [base = 'http://crove-extract:8090', fixtures = '/t/fixtures'] = process.argv.slice(2);
+const [base = 'http://ludy-extract:8090', fixtures = '/t/fixtures'] = process.argv.slice(2);
 const encode = (text) => new TextEncoder().encode(text);
 const xml = readFileSync(join(fixtures, 'einvoice-basic.xml'));
 
