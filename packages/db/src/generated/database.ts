@@ -3595,6 +3595,7 @@ export interface KernelTaskTable {
   checklist: ColumnType<unknown, string | undefined, string>;
   done_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   revision: Generated<number>;
+  completed_by: string | null;
 }
 
 /** ludy_kernel.tax_obligation_done */

@@ -126,8 +126,8 @@ suite("the Sàn screen's work list on PostgreSQL (#2516)", () => {
 
   const askSettlement = (o: Org, settlementId: string, user = o.admin, runtime = rt) =>
     runtime.execute<{ proposalId: string }>('kernel.proposal.request', { command: 'finance.marketplace_settlement.record', input: { settlementId } }, { actor: asUser(user), orgId: o.orgId, idempotencyKey: randomUUID() });
-  const ask = (o: Org, settlementId: string, bankLineId: string, user = o.admin, runtime = rt) =>
-    runtime.execute<{ proposalId: string }>('kernel.proposal.request', { command: 'finance.marketplace_payout.record', input: { settlementId, bankLineId } }, { actor: asUser(user), orgId: o.orgId, idempotencyKey: randomUUID() });
+  const ask = (o: Org, settlementId: string, bankLineId: string, user = o.admin, runtime = rt, adjustments?: { kind: 'withheld_in_error'; lineId: string; amount: string }[]) =>
+    runtime.execute<{ proposalId: string }>('kernel.proposal.request', { command: 'finance.marketplace_payout.record', input: { settlementId, bankLineId, ...(adjustments ? { adjustments } : {}) } }, { actor: asUser(user), orgId: o.orgId, idempotencyKey: randomUUID() });
   async function approve(o: Org, proposalId: string, user = o.owner, runtime = rt) {
     const detail = await runtime.query<{ revision: number }>('kernel.inbox.get', { id: proposalId }, { actor: asUser(user), orgId: o.orgId });
     return runtime.execute<{ voucherId: string; journalEntryId: string; code: string }>('kernel.proposal.approve', { id: proposalId, revision: detail.revision }, { actor: asMfa(user), orgId: o.orgId });
@@ -395,6 +395,35 @@ suite("the Sàn screen's work list on PostgreSQL (#2516)", () => {
     expect((await worklist(o)).invoices.map((i) => [i.documentId, i.clearable])).toEqual([[doc, '18000']]);
     await approve(o, (await askFee(o, doc)).proposalId);
     expect((await worklist(o)).invoices).toEqual([]);
+  });
+
+  it('never treats tax withheld by mistake on 1388 as fees awaiting an invoice even when feeClearing is enabled (#4336)', async () => {
+    const rtPayout331 = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS }).register({
+      commands: [...kernelCommands, ...financeCommands.filter((c) => notMarketplace(c.name)), ...createMarketplaceSettlementCommands({ maps: confirmedMaps() }).commands, ...createMarketplacePayoutCommands({ maps: confirmedMaps() }).commands],
+      queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries.filter((q) => q.name !== 'finance.marketplace.worklist'), createMarketplaceWorklist({ maps: confirmedMaps(), feeClearing: true })],
+    });
+    // Under the current 331 fee path, a company's withheld_in_error debits 1388 for 2 000 while fees go to 331.
+    const o1 = await org('tt133', false);
+    const s1 = await seed(o1, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '100000', commission: '10000', tax: '2000' }]);
+    await approve(o1, (await askSettlement(o1, s1, o1.admin, rtPayout331)).proposalId, o1.owner, rtPayout331);
+    const b1 = await bankLine(o1, '2026-10-20', '88000');
+    const [line1] = await rows<{ id: string }>('SELECT id FROM ludy_finance.channel_settlement_line WHERE org_id = $1 AND settlement_id = $2', [o1.orgId, s1]);
+    await approve(o1, (await ask(o1, s1, b1, o1.admin, rtPayout331, [{ kind: 'withheld_in_error', lineId: line1?.id as string, amount: '2000' }])).proposalId, o1.owner, rtPayout331);
+    const party1 = (await partyOf(o1, 'shopee')) as string;
+    await invoice(o1, party1);
+    expect((await worklist(o1, rtPayout331)).invoices).toEqual([]);
+    expect((await worklist(o1, rt)).invoices).toEqual([]);
+
+    // Even when a payout puts both fees (10 000) and withheld_in_error (2 000) on 1388, only the 10 000 fees are offered for clearing.
+    const o2 = await org('tt133', false);
+    const s2 = await seed(o2, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '100000', commission: '10000', tax: '2000' }]);
+    await post(o2, s2);
+    const b2 = await bankLine(o2, '2026-10-20', '88000');
+    const [line2] = await rows<{ id: string }>('SELECT id FROM ludy_finance.channel_settlement_line WHERE org_id = $1 AND settlement_id = $2', [o2.orgId, s2]);
+    await approve(o2, (await ask(o2, s2, b2, o2.admin, rt, [{ kind: 'withheld_in_error', lineId: line2?.id as string, amount: '2000' }])).proposalId);
+    const party2 = (await partyOf(o2, 'shopee')) as string;
+    const doc2 = await invoice(o2, party2);
+    expect((await worklist(o2)).invoices.map((i) => [i.documentId, i.clearable])).toEqual([[doc2, '10000']]);
   });
 
   it('shows nothing to anyone who may not see the entity, and every role may read it', async () => {

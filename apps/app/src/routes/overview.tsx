@@ -23,6 +23,7 @@ import {
   HrPendingBlock,
   TeamworkMyWorkBlock,
 } from '../components/home-blocks.tsx';
+import { HomeCreateBar } from '../components/home-create-bar.tsx';
 import { HomeCustomizePanel } from '../components/home-customize-panel.tsx';
 import { HomeVyBar } from '../components/home-vy-bar.tsx';
 import { OrgNotesPanel } from '../components/notes-panel.tsx';
@@ -38,6 +39,7 @@ import { client, clientForOrg, errorMessage, getCurrentOrg, orpc, queryClient } 
 import { OPEN_TASK_STATUSES, agentPermissions } from '../lib/agents.ts';
 import { installedApps, type AppId } from '../lib/apps.ts';
 import { deadlineTone } from '../lib/clients.ts';
+import { buildQuickCreateItems } from '../lib/quick-create.ts';
 import { readStartCardState, showStartCard, writeStartCardState, type StartCardState } from '../lib/home-actions.ts';
 import {
   buildFallbackHomeLayout,
@@ -292,6 +294,8 @@ export function OverviewPage() {
   const orgPermissions = useOrgPermissions(hasOrgMembership);
   const role = meOrg?.role ?? orgPermissions.role;
   const canViewAiBudgets = agentPermissions(role).budgets;
+  // The phone's thumb row of create jobs (#4784): the member's own quick-create links, so an app that is off or a viewer shows none.
+  const createItems = buildQuickCreateItems({ modules, role, canCreateTeamTask: agentPermissions(role).tasks, canQuickCapture: false });
 
   const aiMeter = useQuery({
     ...orpc.ai.meter.queryOptions({ input: {} }),
@@ -769,6 +773,8 @@ export function OverviewPage() {
 
       {/* The org's notes (#1671): in a client company's org, notes about the client. */}
       {notesOn && <OrgNotesPanel slug={slug} />}
+
+      <HomeCreateBar slug={slug} items={createItems} />
     </div>
   );
 }

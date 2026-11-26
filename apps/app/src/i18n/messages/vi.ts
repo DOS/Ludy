@@ -55,6 +55,7 @@ export const vi = {
       inspect: 'Xem nhanh',
       position: '{index} / {total}',
     },
+    phoneActions: 'Thao tác nhanh',
   },
   roles: {
     owner: 'Chủ sở hữu',
@@ -229,6 +230,7 @@ export const vi = {
     quickCreate: {
       trigger: 'Tạo nhanh',
       menuLabel: 'Tạo mới nhanh',
+      homeRow: 'Việc hay làm',
       uploadDocument: 'Tải chứng từ lên',
       recordExpense: 'Ghi khoản chi',
       createSalesInvoice: 'Lập hóa đơn bán',

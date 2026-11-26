@@ -316,12 +316,13 @@ suite('invariant: invalidation hints honor the legal-entity scope', () => {
     await root.end();
   });
 
-  // Every trigger whose function sends on crove_stream, whatever its name: the row trigger stream_hint, and the
-  // statement and update triggers of notes and to-dos (stream_hint_delete, stream_hint_update; #1992, #2036, #2037).
+  // Every trigger whose function sends on crove_stream/ludy_stream or through stream_hint_bounded, whatever its name:
+  // the row trigger stream_hint, and the statement and update triggers of notes, to-dos, parties, and deals
+  // (stream_hint_delete, stream_hint_update, stream_hint_insert; #1992, #2036, #2037, #3423, #4427).
   const STREAM_TRIGGERS = `
     FROM pg_catalog.pg_trigger t
     JOIN pg_catalog.pg_proc f ON f.oid = t.tgfoid
-    WHERE NOT t.tgisinternal AND (f.prosrc LIKE '%crove_stream%' OR f.prosrc LIKE '%ludy_stream%')`;
+    WHERE NOT t.tgisinternal AND (f.prosrc LIKE '%crove_stream%' OR f.prosrc LIKE '%ludy_stream%' OR f.prosrc ILIKE '%stream_hint_bounded%')`;
 
   it('names the entity column in the stream hint of every table under le_scope, and of no other', async () => {
     const rows = await admin(async (c) =>
@@ -335,9 +336,19 @@ suite('invariant: invalidation hints honor the legal-entity scope', () => {
       ).rows,
     );
     const triggers = rows.map((r) => ({ table: `${r.tbl} ${r.name}`, scoped: r.scoped, args: r.args.toString('utf8').split('\u0000').filter((a) => a !== '') }));
-    // The scan finds the delete and update triggers of notes and to-dos, not only those named stream_hint.
+    // The scan finds the delete, insert, and update triggers of notes, to-dos, parties, and deals, not only those named stream_hint.
     expect(triggers.map((t) => t.table)).toEqual(
-      expect.arrayContaining(['crove_notes.note stream_hint', 'crove_notes.note stream_hint_delete', 'crove_notes.todo stream_hint_delete', 'crove_notes.todo stream_hint_update']),
+      expect.arrayContaining([
+        'crove_notes.note stream_hint',
+        'crove_notes.note stream_hint_delete',
+        'crove_notes.todo stream_hint_delete',
+        'crove_notes.todo stream_hint_update',
+        'crove_kernel.party stream_hint',
+        'crove_kernel.party stream_hint_update',
+        'crove_crm.deal stream_hint_insert',
+        'crove_crm.deal stream_hint_update',
+        'crove_crm.deal stream_hint_delete',
+      ]),
     );
     // The tables the issue names are among the scoped ones.
     const scoped = triggers.filter((t) => t.scoped).map((t) => t.table.split(' ')[0]);
@@ -373,6 +384,57 @@ suite('invariant: invalidation hints honor the legal-entity scope', () => {
     // scoped table's type must be there: a hint of an unlisted scoped type that lost its entity would reach everyone.
     expect([...ENTITY_HINT_TYPES].sort()).toEqual([...scopedTypes].sort());
     expect([...orgWideTypes].filter((type) => scopedTypes.has(type))).toEqual([]);
+  });
+
+  it('finds triggers that call stream_hint_bounded or stream_hint_bounded_batch via STREAM_TRIGGERS even without channel names (#4427)', async () => {
+    const found = await admin(async (c) => {
+      await c.query('BEGIN');
+      try {
+        await c.query('CREATE TEMP TABLE stream_bounded_probe (id uuid)');
+        await c.query(`
+          CREATE FUNCTION pg_temp.stream_bounded_probe_fn() RETURNS trigger
+          LANGUAGE plpgsql AS $$
+          BEGIN
+            PERFORM crove_kernel.STREAM_HINT_BOUNDED_BATCH('crm_party', ARRAY[]::uuid[], ARRAY[]::uuid[]);
+            RETURN NULL;
+          END $$
+        `);
+        await c.query(`
+          CREATE FUNCTION pg_temp.stream_bounded_single_probe_fn() RETURNS trigger
+          LANGUAGE plpgsql AS $$
+          BEGIN
+            PERFORM crove_kernel.stream_hint_bounded('crm_party', NULL, NULL);
+            RETURN NULL;
+          END $$
+        `);
+        await c.query(`
+          CREATE TRIGGER stream_hint_batch_probe AFTER INSERT ON stream_bounded_probe
+          FOR EACH STATEMENT EXECUTE FUNCTION pg_temp.stream_bounded_probe_fn('crm_party', 'id')
+        `);
+        await c.query(`
+          CREATE TRIGGER stream_hint_single_probe AFTER UPDATE ON stream_bounded_probe
+          FOR EACH ROW EXECUTE FUNCTION pg_temp.stream_bounded_single_probe_fn('crm_party', 'id')
+        `);
+        const res = await c.query<{ name: string; args: Buffer; scoped: boolean }>(
+          `SELECT t.tgname AS name, t.tgargs AS args,
+                  EXISTS (SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid = t.tgrelid AND p.polname = 'le_scope') AS scoped
+           ${STREAM_TRIGGERS}
+             AND t.tgrelid = 'pg_temp.stream_bounded_probe'::regclass
+           ORDER BY 1`,
+        );
+        return res.rows.map((r) => ({
+          name: r.name,
+          scoped: r.scoped,
+          args: r.args.toString('utf8').split('\u0000').filter((a) => a !== ''),
+        }));
+      } finally {
+        await c.query('ROLLBACK');
+      }
+    });
+    expect(found).toEqual([
+      { name: 'stream_hint_batch_probe', scoped: false, args: ['crm_party', 'id'] },
+      { name: 'stream_hint_single_probe', scoped: false, args: ['crm_party', 'id'] },
+    ]);
   });
 
   it('carries the entity on the channel for an entity-scoped row and nothing more for an org-wide one', async () => {

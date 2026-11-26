@@ -444,7 +444,8 @@ export interface PhoneActionBarProps {
 }
 
 // Thumb-zone action bar fixed or sticky to the bottom on phones (< 640px, sm:hidden). A control focused by the
-// keyboard stops above it (#1575, WCAG 2.4.11) and interactive links/buttons keep >= 44px touch height.
+// keyboard stops above it (#1575, WCAG 2.4.11) and interactive links/buttons keep >= 44px touch height. It is a labelled
+// group (a bare label on a div is not announced), and it sits last in the DOM, so the keyboard reaches it after the record.
 export function PhoneActionBar({
   children,
   className,
@@ -453,13 +454,15 @@ export function PhoneActionBar({
   'data-testid': testId = 'phone-action-bar',
   'aria-label': ariaLabel,
 }: PhoneActionBarProps) {
+  const t = useTranslations('common');
   const bar = useRef<HTMLDivElement>(null);
   useScrollRoom(bar, 'bottom', scrollContainer);
   return (
     <div
       ref={bar}
+      role="group"
       data-testid={testId}
-      aria-label={ariaLabel}
+      aria-label={ariaLabel ?? t('phoneActions')}
       className={cn(
         placement === 'sticky' ? 'sticky bottom-0 z-20 mt-auto shrink-0' : 'fixed inset-x-0 bottom-0 z-20',
         'flex flex-wrap items-center justify-end gap-2 border-t border-border bg-sidebar px-4 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] sm:hidden',

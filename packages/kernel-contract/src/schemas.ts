@@ -677,24 +677,26 @@ export type CashVoucherProposal = z.infer<typeof zCashVoucherProposal>;
 // on the side a line does not use.
 export const zJournalAmount = z.string().regex(/^\d{1,15}$/, 'whole VND amount');
 export const JOURNAL_VOUCHER_MAX_LINES = 50;
+// A single month of a marketplace settlement writes at most 8 lines (131, 521, 511, 33311, plus withheld VAT and PIT for a household). The combined settlement proposal carries every month's lines
+// across the calendar range the marketplace importers accept (2000-01 to 2100-12 = 1,212 months) while each posted voucher stays at most 8 lines (#4341).
+export const MARKETPLACE_SETTLEMENT_MAX_MONTHS = 1212;
+export const MARKETPLACE_SETTLEMENT_MAX_LINES = MARKETPLACE_SETTLEMENT_MAX_MONTHS * 8;
+
+export const zJournalVoucherLine = z.object({
+  account: zAccountCode,
+  party: z.object({ id: zId, name: z.string().max(500), taxCode: z.string().max(20).nullable() }).nullable(),
+  debit: zJournalAmount,
+  credit: zJournalAmount,
+  memo: z.string().max(300).optional(),
+});
+export type JournalVoucherLine = z.infer<typeof zJournalVoucherLine>;
 
 // The payload of a finance.journal_voucher proposal, built by the server from the request (each party as found, the
 // total of the debits). finance.journal_voucher.record checks it all again when the proposal is approved.
 export const zJournalVoucherProposal = z.object({
   date: zLocalDate,
   description: z.string().min(1).max(300),
-  lines: z
-    .array(
-      z.object({
-        account: zAccountCode,
-        party: z.object({ id: zId, name: z.string().max(500), taxCode: z.string().max(20).nullable() }).nullable(),
-        debit: zJournalAmount,
-        credit: zJournalAmount,
-        memo: z.string().max(300).optional(),
-      }),
-    )
-    .min(2)
-    .max(JOURNAL_VOUCHER_MAX_LINES),
+  lines: z.array(zJournalVoucherLine).min(2).max(JOURNAL_VOUCHER_MAX_LINES),
   total: zJournalAmount,
   // The legal entity whose books the voucher is posted in (#1280), resolved when it was asked for. Absent on proposals
   // made before #1280: the entity resolved for the approver.
@@ -704,6 +706,11 @@ export const zJournalVoucherProposal = z.object({
   surplusCountId: zId.optional(),
 });
 export type JournalVoucherProposal = z.infer<typeof zJournalVoucherProposal>;
+
+// A journal voucher shown in the Inbox detail: accepts multi-month marketplace settlement proposals up to MARKETPLACE_SETTLEMENT_MAX_LINES (#4341).
+export const zInboxJournalVoucherProposal = zJournalVoucherProposal.extend({
+  lines: z.array(zJournalVoucherLine).min(2).max(MARKETPLACE_SETTLEMENT_MAX_LINES),
+});
 
 // Payload of a finance.journal_reversal proposal (#138), asked for with inbox.request and executed by
 // finance.journal.reverse on approval.
@@ -769,7 +776,7 @@ export const zInboxDetail = zInboxItem.extend({
   reversal: zJournalReversal.nullable(),
   voucher: zCashVoucherProposal.nullable(),
   // A general journal voucher (kind finance.journal_voucher, #888).
-  journalVoucher: zJournalVoucherProposal.nullable(),
+  journalVoucher: zInboxJournalVoucherProposal.nullable(),
   // The ask of an AI coworker in an Engage line (a reply, a quote, a booking change, a post, an ad change), for its card; null for every other proposal.
   engage: zEngageProposalView.nullable(),
   error: z.string().nullable(),
