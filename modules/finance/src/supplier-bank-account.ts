@@ -139,6 +139,8 @@ async function insertChange(
 // A new active row for a supplier: the number and the holder sealed under the supplier's key, the subject-keyed hash, the last four digits.
 async function insertAccount(ctx: CommandContext, partyId: string, input: { bankName: string; accountHolder: string; accountNumber: string }): Promise<{ row: AccountRow; hash: string }> {
   const digits = normalizeAccountNumber(input.accountNumber);
+  // Compute the subject-keyed hash once up front; if an active duplicate exists, the transaction rolls back cleanly.
+  const { hash, keyId } = await hashNumber(ctx, partyId, digits);
   // Each active account is judged under its own hash scheme (subject-keyed rows under the supplier's subject key; legacy rows under their credential key id).
   const active = await ctx.trx
     .selectFrom('ludy_finance.supplier_bank_account')
@@ -147,15 +149,10 @@ async function insertAccount(ctx: CommandContext, partyId: string, input: { bank
     .where('party_id', '=', partyId)
     .where('status', '=', 'active')
     .execute();
-  let cachedSubjectHash: string | null | undefined;
   for (const row of active) {
-    const matched =
-      row.hash_key_id === SUBJECT_HASH_KEY_ID
-        ? (cachedSubjectHash ??= await ctx.subjectHash(supplierSubject(partyId), HASH_PURPOSE, digits, { create: false })) === row.number_hash
-        : await matchesAccountHash(ctx, partyId, digits, row);
+    const matched = row.hash_key_id === SUBJECT_HASH_KEY_ID ? hash === row.number_hash : await matchesAccountHash(ctx, partyId, digits, row);
     if (matched) throw new DomainError('SUPPLIER_BANK_ACCOUNT_EXISTS', 409, 'Nhà cung cấp này đã có tài khoản với số đó');
   }
-  const { hash, keyId } = await hashNumber(ctx, partyId, digits);
   const subject = supplierSubject(partyId);
   const numberSealed = await ctx.seal(subject, NUMBER_PLACE, digits);
   const holderSealed = await ctx.seal(subject, HOLDER_PLACE, input.accountHolder);
@@ -180,6 +177,8 @@ async function insertAccount(ctx: CommandContext, partyId: string, input: { bank
 export const supplierBankAccountAdd = defineCommand({
   name: 'finance.supplier_bank_account.add',
   input: zSupplierBankAccountAdd,
+  // The full number and holder are sealed under the supplier's key; keep them out of audit and idempotency input hashes (#3751).
+  sealedInput: ['accountNumber', 'accountHolder'],
   // A supplier's account is where money goes: a human with a fresh second factor, an owner or an admin; never an agent, never over MCP.
   risk: 'R3',
   sideEffect: 'internal',
@@ -199,6 +198,7 @@ export const supplierBankAccountAdd = defineCommand({
 export const supplierBankAccountReplace = defineCommand({
   name: 'finance.supplier_bank_account.replace',
   input: zSupplierBankAccountReplace,
+  sealedInput: ['accountNumber', 'accountHolder'],
   risk: 'R3',
   sideEffect: 'internal',
   access: MANAGERS,

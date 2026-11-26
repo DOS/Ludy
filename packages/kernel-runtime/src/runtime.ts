@@ -528,6 +528,7 @@ export interface CommandContext extends QueryContext {
   // By default (`create: true`), creates the subject's key if missing (user owner/admin/member only). With `{ create: false }`,
   // looks up an existing key without creating one and returns null when absent or shredded.
   subjectHash(ref: string, purpose: string, value: string): Promise<string>;
+  subjectHash(ref: string, purpose: string, value: string, options: { create: true }): Promise<string>;
   subjectHash(ref: string, purpose: string, value: string, options: { create: false }): Promise<string | null>;
   subjectHash(ref: string, purpose: string, value: string, options?: { create?: boolean }): Promise<string | null>;
   // A keyed hash (HMAC-SHA256 hex) of a short value, for comparing it later without reading it back (a bank account number: is it the same account, did it change). The key derives from
@@ -3515,7 +3516,7 @@ export class Runtime {
   }
 
   // Ensures the subject's data key (created when the org has none under the ref; two concurrent callers converge on the stored one), runs `fn`, and wipes the data key.
-  private async withEnsuredSubjectKey<T>(vault: SubjectVault, trx: Transaction<Database>, orgId: string, ref: string, fn: (dataKey: Buffer, subjectId: string) => T): Promise<T> {
+  private async withEnsuredSubjectKey<T>(vault: SubjectVault, trx: Transaction<Database>, orgId: string, ref: string, fn: (dataKey: Buffer, subjectId: string) => T | Promise<T>): Promise<T> {
     const subjectId = uuidv7();
     const fresh = vault.newDataKey(orgId, subjectId);
     let dataKey = fresh.dataKey;
@@ -3528,7 +3529,7 @@ export class Runtime {
         dataKey.fill(0);
         dataKey = vault.unwrap(orgId, stored.id, stored.key_id, stored.wrapped_key);
       }
-      return fn(dataKey, stored.id);
+      return await fn(dataKey, stored.id);
     } finally {
       dataKey.fill(0);
     }

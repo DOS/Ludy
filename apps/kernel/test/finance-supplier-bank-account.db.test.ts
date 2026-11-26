@@ -151,6 +151,16 @@ suite('a supplier\'s bank accounts (#3113 S1)', () => {
     const history = await rows<{ kind: string; old_number_hash: string | null; new_number_hash: string | null; step_up_at: Date }>('SELECT kind, old_number_hash, new_number_hash, step_up_at FROM ludy_finance.supplier_bank_account_change WHERE org_id = $1', [o.orgId]);
     expect(history).toHaveLength(1);
     expect(history[0]).toMatchObject({ kind: 'added', old_number_hash: null, new_number_hash: stored?.number_hash });
+    // sealedInput keeps accountNumber and accountHolder out of audit_event.input_sha256: two adds differing only in those fields produce the same input hash.
+    const o2 = await org();
+    await add(o2, { partyId: o2.supplier, accountHolder: 'Other Holder', accountNumber: '7777888899' });
+    await add(o2, { partyId: o2.supplier, accountHolder: 'Third Holder', accountNumber: '6666555544' });
+    const inputHashes = await rows<{ input_sha256: string }>(
+      "SELECT input_sha256 FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.supplier_bank_account.add' ORDER BY id",
+      [o2.orgId],
+    );
+    expect(inputHashes).toHaveLength(2);
+    expect(inputHashes[0]?.input_sha256).toBe(inputHashes[1]?.input_sha256);
   });
 
   it('asks for a fresh second factor and an owner or an admin, and refuses a bad number, a second account with the same number and an unknown supplier', async () => {
