@@ -5,9 +5,10 @@
 // credential keys keep working via ctx.keyedHash); the last four digits are for display. A change never edits a number: the old row is retired and a new one added, with one row in the append-only history.
 // Every change needs a fresh second factor (R3) and an owner or an admin; no agent, no MCP tool, no signal ever carries a number.
 // - finance.supplier_bank_account.add / .replace / .retire: R3, owners and admins.
-// - finance.supplier_bank_account.erase: R3, owners only; retires the accounts and shreds the supplier's key, so the sealed number and holder can never be opened again.
+// - finance.supplier_bank_account.erase: R3, owners only; retires the accounts, shreds the supplier's key so the sealed number and holder can never be opened again, and wipes last4 and stored hashes with tombstones.
 // - finance.supplier_bank_account.list: the accounts (bank, last four, status) and the change history of a supplier. Never a number, never a holder.
 // - finance.signals.supplier_bank_changes: rule 3's first read (contract in packages/kernel-contract/src/signals.ts).
+import { timingSafeEqual } from 'node:crypto';
 import {
   SIGNALS_MAX_CRM,
   SIGNAL_PARTIAL_VIEW_CODE,
@@ -69,20 +70,38 @@ async function hashNumber(ctx: Pick<CommandContext, 'subjectHash'>, partyId: str
   return { hash: await ctx.subjectHash(supplierSubject(partyId), HASH_PURPOSE, digits), keyId: SUBJECT_HASH_KEY_ID };
 }
 
+const HEX64 = /^[0-9a-f]{64}$/;
+
+function equalDigests(a: string, b: string): boolean {
+  if (!HEX64.test(a) || !HEX64.test(b)) return false;
+  return timingSafeEqual(Buffer.from(a, 'hex'), Buffer.from(b, 'hex'));
+}
+
+export type AccountHashLookupContext = {
+  keyedHash: CommandContext['keyedHash'];
+  subjectHash: (ref: string, purpose: string, value: string, opts: { create: false }) => Promise<string | null>;
+};
+
+// Serializes supplier bank erasure against concurrent payment request creation (`supplierPaymentPrepare`) for the same supplier.
+export async function lockSupplierBank(trx: Trx, orgId: string, partyId: string): Promise<void> {
+  await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`finance.supplier_bank:${orgId}:${partyId.toLowerCase()}`}, 0))`.execute(trx);
+}
+
 // Whether `digits` matches a stored account's hash. Subject-keyed rows (`SUBJECT_HASH_KEY_ID`) look up the supplier's subject key without creating one (an erased key answers false);
-// legacy rows hashed under a credential key id check via `ctx.keyedHash` while that key is kept, answering false once retired.
+// legacy rows hashed under a credential key id check via `ctx.keyedHash` while that key is kept, answering false once retired. Erased tombstones are rejected before any key lookup.
 export async function matchesAccountHash(
-  ctx: Pick<CommandContext, 'keyedHash' | 'subjectHash'>,
+  ctx: AccountHashLookupContext,
   partyId: string,
   digits: string,
   row: Pick<AccountRow, 'number_hash' | 'hash_key_id'>,
 ): Promise<boolean> {
+  if (!HEX64.test(row.number_hash)) return false;
   if (row.hash_key_id === SUBJECT_HASH_KEY_ID) {
     const hash = await ctx.subjectHash(supplierSubject(partyId), HASH_PURPOSE, digits, { create: false });
-    return hash !== null && hash === row.number_hash;
+    return hash !== null && equalDigests(hash, row.number_hash);
   }
   try {
-    return ctx.keyedHash(HASH_PURPOSE, digits, row.hash_key_id) === row.number_hash;
+    return equalDigests(ctx.keyedHash(HASH_PURPOSE, digits, row.hash_key_id), row.number_hash);
   } catch (error) {
     if (error instanceof DomainError && error.code === 'KEYED_HASH_KEY_RETIRED') return false;
     throw error;
@@ -115,6 +134,18 @@ async function loadAccount(trx: Trx, orgId: string, accountId: string): Promise<
     .executeTakeFirst();
   if (!row) throw accountNotFound();
   return row;
+}
+
+async function loadLockedAccountForSupplier(trx: Trx, orgId: string, accountId: string): Promise<AccountRow> {
+  const existing = await trx
+    .selectFrom('ludy_finance.supplier_bank_account')
+    .select('party_id')
+    .where('org_id', '=', orgId)
+    .where('id', '=', accountId.toLowerCase())
+    .executeTakeFirst();
+  if (!existing) throw accountNotFound();
+  await lockSupplierBank(trx, orgId, existing.party_id);
+  return loadAccount(trx, orgId, accountId);
 }
 
 async function insertChange(
@@ -150,7 +181,7 @@ async function insertAccount(ctx: CommandContext, partyId: string, input: { bank
     .where('status', '=', 'active')
     .execute();
   for (const row of active) {
-    const matched = row.hash_key_id === SUBJECT_HASH_KEY_ID ? hash === row.number_hash : await matchesAccountHash(ctx, partyId, digits, row);
+    const matched = row.hash_key_id === SUBJECT_HASH_KEY_ID ? equalDigests(hash, row.number_hash) : await matchesAccountHash(ctx, partyId, digits, row);
     if (matched) throw new DomainError('SUPPLIER_BANK_ACCOUNT_EXISTS', 409, 'Nhà cung cấp này đã có tài khoản với số đó');
   }
   const subject = supplierSubject(partyId);
@@ -187,6 +218,7 @@ export const supplierBankAccountAdd = defineCommand({
   handler: async (ctx, input): Promise<SupplierBankAccount> => {
     const partyId = input.partyId.toLowerCase();
     await requireSupplier(ctx.trx, ctx.orgId, partyId);
+    await lockSupplierBank(ctx.trx, ctx.orgId, partyId);
     const { row, hash } = await insertAccount(ctx, partyId, input);
     await insertChange(ctx, { partyId, accountId: row.id, kind: 'added', oldHash: null, newHash: hash });
     // The party, the account and the kind: never the number, the last four digits or the hash in full.
@@ -204,7 +236,7 @@ export const supplierBankAccountReplace = defineCommand({
   access: MANAGERS,
   target: (input) => ({ type: 'finance.supplier_bank_account', id: input.accountId }),
   handler: async (ctx, input): Promise<SupplierBankAccount> => {
-    const old = await loadAccount(ctx.trx, ctx.orgId, input.accountId);
+    const old = await loadLockedAccountForSupplier(ctx.trx, ctx.orgId, input.accountId);
     if (old.status !== 'active') throw new DomainError('SUPPLIER_BANK_ACCOUNT_NOT_ACTIVE', 409, 'Tài khoản này đã được ngừng dùng');
     if (await matchesAccountHash(ctx, old.party_id, normalizeAccountNumber(input.accountNumber), old)) {
       throw new DomainError('SUPPLIER_BANK_ACCOUNT_SAME', 409, 'Số tài khoản mới trùng với số hiện tại; hãy bỏ qua nếu không đổi');
@@ -225,7 +257,7 @@ export const supplierBankAccountRetire = defineCommand({
   access: MANAGERS,
   target: (input) => ({ type: 'finance.supplier_bank_account', id: input.accountId }),
   handler: async (ctx, input): Promise<SupplierBankAccount> => {
-    const old = await loadAccount(ctx.trx, ctx.orgId, input.accountId);
+    const old = await loadLockedAccountForSupplier(ctx.trx, ctx.orgId, input.accountId);
     if (old.status !== 'active') throw new DomainError('SUPPLIER_BANK_ACCOUNT_NOT_ACTIVE', 409, 'Tài khoản này đã được ngừng dùng');
     const row = await ctx.trx
       .updateTable('ludy_finance.supplier_bank_account')
@@ -240,8 +272,8 @@ export const supplierBankAccountRetire = defineCommand({
   },
 });
 
-// The erasure of a supplier who is a person (plan 6.6, the design's section 6): the accounts are retired and the supplier's key is shredded, so the sealed number and holder, which stay in their rows byte
-// for byte, can never be opened again. The history keeps only keyed hashes. R3 for owners: it cannot be undone.
+// The erasure of a supplier who is a person (plan 6.6, the design's section 6): active accounts are retired, the supplier's key is shredded so the sealed number and holder (which stay byte for byte)
+// can never be opened again, and last4 plus all stored hashes across accounts, change history and finished payments are overwritten with tombstones so legacy keyed hashes and trailing digits cannot be recovered. R3 for owners: it cannot be undone.
 export const supplierBankAccountErase = defineCommand({
   name: 'finance.supplier_bank_account.erase',
   runsWhenOff: "erases a supplier's sealed bank account data and shreds its subject key while Finance is off",
@@ -251,28 +283,108 @@ export const supplierBankAccountErase = defineCommand({
   access: OWNERS,
   target: (input) => ({ type: 'finance.supplier_bank_account', id: input.partyId }),
   handler: async (ctx, input): Promise<SupplierBankAccountErased> => {
+    const stepUp = stepUpAt(ctx);
     const partyId = input.partyId.toLowerCase();
     await requireSupplier(ctx.trx, ctx.orgId, partyId);
+    // Lock terminal supplier-payment proposals still carrying un-erased last4 BEFORE lockSupplierBank
+    // so erase matches kernel.proposal.resubmit's lock order (proposal -> lockSupplierBank) without transferring row IDs to Node.
+    await sql`
+      SELECT pg_catalog.count(*)::int AS n
+      FROM (
+        SELECT id FROM ludy_kernel.proposal
+         WHERE org_id = ${ctx.orgId}::uuid
+           AND command = 'finance.supplier_payment.record'
+           AND status IN ('executed', 'rejected', 'failed', 'expired')
+           AND pg_catalog.lower(payload ->> 'partyId') = ${partyId}
+           AND (
+             (pg_catalog.jsonb_typeof(payload) = 'object' AND payload ? 'last4' AND payload ->> 'last4' IS DISTINCT FROM '****')
+             OR (pg_catalog.jsonb_typeof(result) = 'object' AND result ? 'last4' AND result ->> 'last4' IS DISTINCT FROM '****')
+           )
+         ORDER BY id FOR UPDATE
+      ) AS locked`.execute(ctx.trx);
+    // Serialize against concurrent add/replace/retire and supplierPaymentPrepare before reading active accounts or pending proposals.
+    await lockSupplierBank(ctx.trx, ctx.orgId, partyId);
+    // Lock all bank-account rows of this supplier in id order first so concurrent operations serialize cleanly with erasure.
+    const accounts = await ctx.trx
+      .selectFrom('ludy_finance.supplier_bank_account')
+      .select(['id', 'status', 'number_hash'])
+      .where('org_id', '=', ctx.orgId)
+      .where('party_id', '=', partyId)
+      .orderBy('id', 'asc')
+      .forUpdate()
+      .execute();
     // A payment waiting (approved, or a request not decided yet) names this supplier's account: it is cancelled or decided first, so no approver is left holding a request for an account that is gone.
     const waiting = await sql<{ n: number }>`
       SELECT (SELECT count(*) FROM ludy_finance.supplier_payment p WHERE p.org_id = ${ctx.orgId}::uuid AND p.party_id = ${partyId}::uuid AND p.status = 'approved')
            + (SELECT count(*) FROM ludy_kernel.proposal q WHERE q.org_id = ${ctx.orgId}::uuid AND q.command = 'finance.supplier_payment.record' AND q.status = 'pending' AND pg_catalog.lower(q.payload->>'partyId') = ${partyId}) AS n`.execute(ctx.trx);
     if (Number(waiting.rows[0]?.n ?? 0) > 0) throw new DomainError('SUPPLIER_PAYMENT_WAITING', 409, 'Nhà cung cấp này còn khoản chi đang chờ duyệt hoặc chờ chi; hãy hủy hoặc xử lý trước khi xóa dữ liệu ngân hàng');
-    const active = await ctx.trx
-      .selectFrom('ludy_finance.supplier_bank_account')
-      .select(['id', 'number_hash'])
-      .where('org_id', '=', ctx.orgId)
-      .where('party_id', '=', partyId)
-      .where('status', '=', 'active')
-      .forUpdate()
-      .execute();
+    const active = accounts.filter((account) => account.status === 'active');
     for (const account of active) {
       await ctx.trx.updateTable('ludy_finance.supplier_bank_account').set({ status: 'retired', retired_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', account.id).execute();
       await insertChange(ctx, { partyId, accountId: account.id, kind: 'retired', oldHash: account.number_hash, newHash: null });
     }
     const { rows } = await sql<{ n: number }>`SELECT ludy_kernel.subject_key_shred(ARRAY[${supplierSubject(partyId)}]::text[]) AS n`.execute(ctx.trx);
     const shreddedKeys = Number(rows[0]?.n ?? 0);
-    ctx.audit({ partyId, shreddedKeys, retired: active.length });
+    const tombstoned = await sql<{ accounts: number; changes: number; payments: number; proposals: number }>`
+      SELECT accounts, changes, payments, proposals
+      FROM ludy_finance.supplier_bank_account_erase_tombstone(${partyId}::uuid, ${stepUp}::timestamptz)`.execute(ctx.trx);
+    const counts = tombstoned.rows[0] ?? { accounts: 0, changes: 0, payments: 0, proposals: 0 };
+    // Scrub cached last4 copies from idempotency_key.response (both {value,last4} and prepare's {value,payload,last4}) so replays after erase cannot return pre-erasure digits.
+    const { rows: scrubbed } = await sql<{ n: number }>`
+      WITH direct AS (
+        UPDATE ludy_kernel.idempotency_key k
+           SET response = pg_catalog.jsonb_set(k.response, '{value,last4}', pg_catalog.to_jsonb('****'::text), false)
+         WHERE k.org_id = ${ctx.orgId}::uuid
+           AND pg_catalog.jsonb_typeof(k.response) = 'object'
+           AND pg_catalog.jsonb_typeof(k.response -> 'value') = 'object'
+           AND k.response -> 'value' ? 'last4'
+           AND k.response -> 'value' ->> 'last4' IS DISTINCT FROM '****'
+           AND pg_catalog.lower(k.response -> 'value' ->> 'partyId') = ${partyId}
+           AND (
+             k.command IN (
+               'finance.supplier_bank_account.add',
+               'finance.supplier_bank_account.replace',
+               'finance.supplier_bank_account.retire',
+               'finance.supplier_payment.confirm_account',
+               'finance.supplier_payment.cancel',
+               'finance.supplier_payment.record'
+             )
+             OR (
+               k.command = 'kernel.proposal.approve'
+               AND EXISTS (
+                 SELECT 1 FROM ludy_finance.supplier_payment p
+                 WHERE p.org_id = k.org_id
+                   AND p.party_id = ${partyId}::uuid
+                   AND p.id::text = pg_catalog.lower(k.response -> 'value' ->> 'id')
+               )
+             )
+           )
+         RETURNING 1
+      ), prepared AS (
+        UPDATE ludy_kernel.idempotency_key k
+           SET response = pg_catalog.jsonb_set(k.response, '{value,payload,last4}', pg_catalog.to_jsonb('****'::text), false)
+         WHERE k.org_id = ${ctx.orgId}::uuid
+           AND k.command = 'finance.supplier_payment.prepare'
+           AND pg_catalog.jsonb_typeof(k.response) = 'object'
+           AND pg_catalog.jsonb_typeof(k.response -> 'value') = 'object'
+           AND pg_catalog.jsonb_typeof(k.response -> 'value' -> 'payload') = 'object'
+           AND k.response -> 'value' -> 'payload' ? 'last4'
+           AND k.response -> 'value' -> 'payload' ->> 'last4' IS DISTINCT FROM '****'
+           AND pg_catalog.lower(k.response -> 'value' -> 'payload' ->> 'partyId') = ${partyId}
+         RETURNING 1
+      )
+      SELECT ((SELECT pg_catalog.count(*)::int FROM direct) + (SELECT pg_catalog.count(*)::int FROM prepared)) AS n`.execute(ctx.trx);
+    const scrubbedIdempotencyKeys = Number(scrubbed[0]?.n ?? 0);
+    ctx.audit({
+      partyId,
+      shreddedKeys,
+      retired: active.length,
+      tombstonedAccounts: Number(counts.accounts),
+      tombstonedChanges: Number(counts.changes),
+      tombstonedPayments: Number(counts.payments),
+      tombstonedProposals: Number(counts.proposals),
+      scrubbedIdempotencyKeys,
+    });
     return { partyId, shreddedKeys, retired: active.length };
   },
 });

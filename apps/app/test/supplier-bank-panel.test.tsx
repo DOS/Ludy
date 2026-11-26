@@ -84,4 +84,15 @@ describe('the bank accounts panel of a supplier', () => {
     expect(en).toContain("Erase the supplier&#x27;s bank data");
     expect(en).not.toContain('Chưa có');
   });
+
+  it('renders an erased last4 tombstone as dots without literal asterisks', () => {
+    const html = render(true, {
+      accounts: [
+        { id: '00000000-0000-4000-8000-0000000000d3', partyId: PARTY, bankName: 'Vietcombank', last4: '****', status: 'retired', createdAt: '2026-10-01T01:00:00.000Z', retiredAt: '2026-11-18T01:00:00.000Z' },
+      ],
+      changes: [],
+    });
+    expect(html).toContain('••••');
+    expect(html).not.toContain('****');
+  });
 });
