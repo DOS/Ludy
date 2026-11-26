@@ -29,3 +29,19 @@ export async function acquireAdvisoryXactLock(trx: CommandContext['trx'], key: s
   }
   await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${trimmed}, 0))`.execute(trx);
 }
+
+// Global lock hierarchy for WhatsApp number hand-over (#3152):
+//   1. ludy.whatsapp_handover:<externalAccountId> (cross-org advisory lock)
+//   2. crove.channel:<orgId>:<provider>:<externalAccountId> (per-org advisory lock)
+//   3. SELECT ... FOR UPDATE (row lock acquired by the caller after this helper returns)
+export async function acquireChannelLocks(
+  trx: CommandContext['trx'],
+  orgId: string,
+  provider: string,
+  externalAccountId: string,
+): Promise<void> {
+  if (provider === 'whatsapp') {
+    await acquireAdvisoryXactLock(trx, `ludy.whatsapp_handover:${externalAccountId}`);
+  }
+  await acquireAdvisoryXactLock(trx, `crove.channel:${orgId}:${provider}:${externalAccountId}`);
+}

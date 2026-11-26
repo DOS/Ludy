@@ -282,6 +282,204 @@ suite('WhatsApp conversations on PostgreSQL (#3131)', () => {
       expect(await rows('SELECT 1 FROM ludy_kernel.conversation WHERE org_id = $1', [b.orgId])).toHaveLength(1);
       expect(await rows('SELECT 1 FROM ludy_kernel.conversation WHERE org_id = $1', [a.orgId])).toHaveLength(0);
     });
+
+    it('serializes Org B connect behind Org A disconnect on the handover lock and stores post-lock connected_at (#3152)', async () => {
+      const a = await org();
+      const b = await org();
+      const connect = (o: Org, phoneId: string) => {
+        const sealed = vault.seal(JSON.stringify({ accessToken: ACCESS_TOKEN, wabaId: '204000000000001' }), { orgId: o.orgId, provider: 'whatsapp', externalAccountId: phoneId });
+        return api.execute<{ connectionId: string; reconnected: boolean }>(
+          'kernel.channel.connect',
+          { provider: 'whatsapp', externalAccountId: phoneId, displayName: 'Tiệm Mới', scopes: ['whatsapp_business_messaging'], expiresAt: null, credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') } },
+          { actor: asUser(o.owner), orgId: o.orgId },
+        );
+      };
+      const waitUntil = async (client: pg.Client, sqlText: string): Promise<void> => {
+        const deadline = Date.now() + 5_000;
+        while (Date.now() < deadline) {
+          const res = await client.query<{ ready: boolean }>(sqlText);
+          if (res.rows[0]?.ready) return;
+          await new Promise((r) => setTimeout(r, 5));
+        }
+        throw new Error(`Timed out waiting for lock condition: ${sqlText}`);
+      };
+
+      const blocker = new pg.Client({ connectionString: adminUrl });
+      const observer = new pg.Client({ connectionString: adminUrl });
+      await blocker.connect();
+      await observer.connect();
+      let disconnectPromise: Promise<unknown> | undefined;
+      let connectPromise: Promise<{ connectionId: string; reconnected: boolean }> | undefined;
+      let connectStartedAt = 0;
+      let finalNoticeAt = 0;
+      try {
+        // Hold FOR KEY SHARE on Org A's connection (no advisory lock) so disconnect acquires ludy.whatsapp_handover:<phoneId>
+        // first and then pauses at FOR UPDATE while Org B attempts a simultaneous connect.
+        await blocker.query('BEGIN');
+        await blocker.query('SELECT id FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2 FOR KEY SHARE', [a.orgId, a.connectionId]);
+
+        disconnectPromise = api.execute('kernel.channel.disconnect', { connectionId: a.connectionId }, { actor: asUser(a.owner), orgId: a.orgId });
+        await waitUntil(
+          observer,
+          `SELECT EXISTS (
+             SELECT 1 FROM pg_locks l
+             JOIN pg_stat_activity s ON s.pid = l.pid
+             WHERE l.locktype = 'advisory' AND l.granted
+               AND s.datname = current_database() AND s.pid <> pg_backend_pid() AND s.wait_event_type = 'Lock'
+           ) AS ready`,
+        );
+
+        connectStartedAt = Date.now();
+        connectPromise = connect(b, a.phoneId);
+        await waitUntil(
+          observer,
+          `SELECT EXISTS (
+             SELECT 1 FROM pg_locks l
+             JOIN pg_stat_activity s ON s.pid = l.pid
+             WHERE l.locktype = 'advisory' AND NOT l.granted
+               AND s.datname = current_database() AND s.pid <> pg_backend_pid()
+           ) AS ready`,
+        );
+
+        // Org A receives a final customer notice strictly after Org B's connect transaction began, while Org A still holds the number.
+        await new Promise((r) => setTimeout(r, 20));
+        finalNoticeAt = Date.now();
+        expect(finalNoticeAt).toBeGreaterThan(connectStartedAt);
+        expect((await post(app, customerNotice(a, message(LAN, { timestamp: String(finalNoticeAt) })))).status).toBe(200);
+        await new Promise((r) => setTimeout(r, 20));
+        await blocker.query('COMMIT');
+      } finally {
+        await blocker.query('ROLLBACK').catch(() => undefined);
+        await blocker.end().catch(() => undefined);
+        await observer.end().catch(() => undefined);
+      }
+
+      const [discRes, connRes] = await Promise.all([disconnectPromise, connectPromise]);
+      expect(discRes).toEqual({ connectionId: a.connectionId, status: 'revoked' });
+      expect(connRes).toMatchObject({ reconnected: false });
+      const bConn = await rows<{ connected_at: Date }>('SELECT connected_at FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [b.orgId, connRes?.connectionId]);
+      const bConnectedMs = new Date(bConn[0]?.connected_at as Date).getTime();
+      expect(bConnectedMs).toBeGreaterThan(finalNoticeAt);
+      expect(bConnectedMs).toBeGreaterThan(connectStartedAt);
+
+      // Intake ignores Org A's delayed notice because B.connected_at was read post-lock via clock_timestamp(), not stale ctx.now.
+      expect(await intake()).toMatchObject({ dropped: 0 });
+      expect(await rows('SELECT 1 FROM ludy_kernel.conversation WHERE org_id = ANY($1::uuid[])', [[a.orgId, b.orgId]])).toHaveLength(0);
+
+      // A notice dated after Org B's post-lock connected_at belongs to Org B.
+      await new Promise((r) => setTimeout(r, 15));
+      const holder: Org = { ...b, phoneId: a.phoneId, connectionId: connRes?.connectionId as string };
+      expect((await post(app, customerNotice(holder, message(MINH, { timestamp: String(Date.now()) })))).status).toBe(200);
+      expect(await intake()).toMatchObject({ dropped: 0 });
+      expect(await rows('SELECT 1 FROM ludy_kernel.conversation WHERE org_id = $1', [b.orgId])).toHaveLength(1);
+      expect(await rows('SELECT 1 FROM ludy_kernel.conversation WHERE org_id = $1', [a.orgId])).toHaveLength(0);
+    });
+
+    it('forces lock contention without AB-BA deadlocks across disconnect, revoke_by_platform, erase_channel, and post-delete org_purge unique-index waits (#3152)', async () => {
+      const waitUntil = async (client: pg.Client, sqlText: string): Promise<void> => {
+        const deadline = Date.now() + 5_000;
+        while (Date.now() < deadline) {
+          const res = await client.query<{ ready: boolean }>(sqlText);
+          if (res.rows[0]?.ready) return;
+          await new Promise((r) => setTimeout(r, 5));
+        }
+        throw new Error(`Timed out waiting for lock condition: ${sqlText}`);
+      };
+      const connect = (o: Org, phoneId = o.phoneId) => {
+        const sealed = vault.seal(JSON.stringify({ accessToken: ACCESS_TOKEN, wabaId: '204000000000001' }), { orgId: o.orgId, provider: 'whatsapp', externalAccountId: phoneId });
+        return api.execute<{ connectionId: string }>(
+          'kernel.channel.connect',
+          { provider: 'whatsapp', externalAccountId: phoneId, displayName: 'Tiệm A', scopes: ['whatsapp_business_messaging'], expiresAt: null, credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') } },
+          { actor: asUser(o.owner), orgId: o.orgId },
+        );
+      };
+      const runContendedWithConnect = async (
+        o: Org,
+        startLockHolderCommand: () => Promise<unknown>,
+      ): Promise<void> => {
+        const blocker = new pg.Client({ connectionString: adminUrl });
+        const observer = new pg.Client({ connectionString: adminUrl });
+        await blocker.connect();
+        await observer.connect();
+        let holderPromise: Promise<unknown> | undefined;
+        let connectPromise: Promise<{ connectionId: string }> | undefined;
+        try {
+          await blocker.query('BEGIN');
+          await blocker.query('SELECT id FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2 FOR KEY SHARE', [o.orgId, o.connectionId]);
+          holderPromise = startLockHolderCommand();
+          await waitUntil(
+            observer,
+            `SELECT EXISTS (
+               SELECT 1 FROM pg_locks l
+               JOIN pg_stat_activity s ON s.pid = l.pid
+               WHERE l.locktype = 'advisory' AND l.granted
+                 AND s.datname = current_database() AND s.pid <> pg_backend_pid() AND s.wait_event_type = 'Lock'
+             ) AS ready`,
+          );
+          connectPromise = connect(o);
+          await waitUntil(
+            observer,
+            `SELECT EXISTS (
+               SELECT 1 FROM pg_locks l
+               JOIN pg_stat_activity s ON s.pid = l.pid
+               WHERE l.locktype = 'advisory' AND NOT l.granted
+                 AND s.datname = current_database() AND s.pid <> pg_backend_pid()
+             ) AS ready`,
+          );
+          await blocker.query('COMMIT');
+        } finally {
+          await blocker.query('ROLLBACK').catch(() => undefined);
+          await blocker.end().catch(() => undefined);
+          await observer.end().catch(() => undefined);
+        }
+        const results = await Promise.allSettled([holderPromise, connectPromise]);
+        expect(results.map((r) => r.status)).toEqual(['fulfilled', 'fulfilled']);
+      };
+
+      const o1 = await org();
+      await runContendedWithConnect(o1, () => api.execute('kernel.channel.disconnect', { connectionId: o1.connectionId }, { actor: asUser(o1.owner), orgId: o1.orgId }));
+      const o2 = await org();
+      await runContendedWithConnect(o2, () => worker.execute('kernel.channel.revoke_by_platform', { connectionId: o2.connectionId }, { actor: SYSTEM, orgId: o2.orgId }));
+      const o3 = await org();
+      await runContendedWithConnect(o3, () => api.execute('kernel.conversation.erase_channel', { connectionId: o3.connectionId, confirm: true }, { actor: asMfa(o3.owner), orgId: o3.orgId }));
+
+      // Simulate org_purge releasing a WhatsApp number via DELETE without taking the advisory lock:
+      // Org B waits on channel_connection_whatsapp_account_uq inside INSERT and stamps connected_at strictly AFTER INSERT unblocks.
+      const purgedOrg = await org();
+      const takerOrg = await org();
+      const purgeClient = new pg.Client({ connectionString: adminUrl });
+      const obs = new pg.Client({ connectionString: adminUrl });
+      await purgeClient.connect();
+      await obs.connect();
+      let takerPromise: Promise<{ connectionId: string }> | undefined;
+      let delayedNoticeAt = 0;
+      try {
+        await purgeClient.query('BEGIN');
+        await purgeClient.query('DELETE FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [purgedOrg.orgId, purgedOrg.connectionId]);
+        takerPromise = connect(takerOrg, purgedOrg.phoneId);
+        await waitUntil(
+          obs,
+          `SELECT EXISTS (
+             SELECT 1 FROM pg_stat_activity s
+             WHERE s.datname = current_database() AND s.pid <> pg_backend_pid() AND s.wait_event_type = 'Lock'
+           ) AS ready`,
+        );
+        await new Promise((r) => setTimeout(r, 20));
+        delayedNoticeAt = Date.now();
+        expect((await post(app, customerNotice(purgedOrg, message(LAN, { timestamp: String(delayedNoticeAt) })))).status).toBe(200);
+        await new Promise((r) => setTimeout(r, 20));
+        await purgeClient.query('COMMIT');
+      } finally {
+        await purgeClient.query('ROLLBACK').catch(() => undefined);
+        await purgeClient.end().catch(() => undefined);
+        await obs.end().catch(() => undefined);
+      }
+      const takerConn = await takerPromise;
+      const takerRow = await rows<{ connected_at: Date }>('SELECT connected_at FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [takerOrg.orgId, takerConn?.connectionId]);
+      expect(new Date(takerRow[0]?.connected_at as Date).getTime()).toBeGreaterThan(delayedNoticeAt);
+      expect(await intake()).toMatchObject({ dropped: 0 });
+      expect(await rows('SELECT 1 FROM ludy_kernel.conversation WHERE org_id = $1', [takerOrg.orgId])).toHaveLength(0);
+    });
   });
 
   describe('the route', () => {
@@ -769,6 +967,34 @@ suite('WhatsApp conversations on PostgreSQL (#3131)', () => {
       await dueConversationAttachments(workerDb);
       expect(await pending(o)).toEqual([]);
       expect((await rows('SELECT 1 FROM ludy_kernel.conversation_message WHERE org_id = $1 AND body = $2', [o.orgId, '[Khách gửi ảnh]'])).length).toBe(5);
+    });
+
+    it('fails closed without opening credentials or dropping another connection’s pending attachment when connectionId mismatches (#3152)', async () => {
+      const o = await org();
+      const otherPhoneId = `1040000000${String(1000 + phones++)}`;
+      const sealed2 = vault.seal(JSON.stringify({ accessToken: ACCESS_TOKEN, wabaId: '204000000000001' }), { orgId: o.orgId, provider: 'whatsapp', externalAccountId: otherPhoneId });
+      const otherConn = await api.execute<{ connectionId: string }>(
+        'kernel.channel.connect',
+        { provider: 'whatsapp', externalAccountId: otherPhoneId, displayName: 'Số Khác', scopes: ['whatsapp_business_messaging'], expiresAt: null, credential: { keyId: sealed2.keyId, envelope: sealed2.envelope.toString('base64') } },
+        { actor: asUser(o.owner), orgId: o.orgId },
+      );
+      expect((await post(app, imageNotice(o, '555999000111'))).status).toBe(200);
+      expect(await intake()).toEqual({ stored: 1, dropped: 0 });
+      const [row] = await pending(o);
+      const attachmentId = (row as { id: string }).id;
+      const spy = media({ kind: 'ok', bytes: PNG });
+      const blobsBefore = store.blobs.size;
+      const outcome = await runConversationAttachment(
+        { runtime: worker, store, broker: vault, adapter: () => spy.adapter, egress: { allowed: () => true, anyPort: true, httpsOnly: false } },
+        { orgId: o.orgId, connectionId: otherConn.connectionId, action: 'attachment', attachmentId },
+      );
+      expect(outcome).toBe('ATTACHMENT_CONNECTION_MISMATCH');
+      expect(spy.given).toHaveLength(0);
+      expect(store.blobs.size).toBe(blobsBefore);
+      // The owning connection's pending attachment remains intact so its legitimate job still stores the image.
+      expect(await pending(o)).toEqual([expect.objectContaining({ id: attachmentId, state: 'pending', source_ref: '555999000111' })]);
+      expect(await fetchOne(o, attachmentId, spy.adapter)).toBe('stored');
+      expect(spy.given).toHaveLength(1);
     });
 
     it('is refused by the database when a row names both an address and a reference, and the reference may hold no URL', async () => {

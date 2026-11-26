@@ -5878,6 +5878,7 @@ export const en = {
       placeLabel: 'Meeting place',
       placeHint: 'For printing only; not saved (only the meeting recorder can save a place). Leave it empty to print a dotted line to fill in by hand.',
       placeHintRecorder: 'Saved once for this meeting; the people who read the meeting see it too. Save it empty to print a dotted line to fill in by hand.',
+      placeTooLong: 'A place holds at most {max} characters.',
       placeSave: 'Save the place',
       screenNote: 'This page has only what the recorder shared. The date and time, attendees, owners and due dates come from the meeting, not from Vy. Ludy signs nothing.',
       heading: 'MEETING MINUTES',

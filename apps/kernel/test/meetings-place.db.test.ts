@@ -113,6 +113,11 @@ suite("the place of a meeting (#5013)", () => {
     expect(await set('a'.repeat(200))).toEqual({ meetingId, place: 'a'.repeat(200) });
     expect(await refuses(set('a'.repeat(201)))).toBe('MEETING_PLACE_TOO_LONG');
     expect(await placeOf(meetingId)).toBe('a'.repeat(200));
+    // The limit counts code points, as the database's char_length does (#5043): 200 emoji (400 UTF-16 units) are stored and read back, 201 are refused.
+    expect(await set('😀'.repeat(200))).toEqual({ meetingId, place: '😀'.repeat(200) });
+    expect(await placeOf(meetingId)).toBe('😀'.repeat(200));
+    expect(await refuses(set('😀'.repeat(201)))).toBe('MEETING_PLACE_TOO_LONG');
+    expect(await placeOf(meetingId)).toBe('😀'.repeat(200));
     expect(await set('​ ‮')).toEqual({ meetingId, place: null });
     expect(await placeOf(meetingId)).toBeNull();
     await set('Quán cà phê');
