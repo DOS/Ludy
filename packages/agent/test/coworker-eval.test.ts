@@ -195,7 +195,7 @@ function createStubRuntime() {
     stockMatch: async () => ({ output: { answers: [{ line: 1, item: 1, reason: 'Trung ten Ca phe Arabica' }] }, usage: zeroUsage }),
     reorder: async () => ({ output: { text: 'De nghi dat them 10 kg Ca phe tu Nha cung cap X.' }, usage: zeroUsage }),
     einvoiceDraft: async () => ({
-      output: { buyer: 1, lines: [{ description: 'Dich vu tu van ke toan', unit: 'Goi', quantity: '1', unitPrice: '100000', vatRate: null }] },
+      output: { buyer: 1, lines: [{ description: 'Dich vu tu van', unit: 'Goi', quantity: '1', unitPrice: '100000', vatRate: null }] },
       usage: zeroUsage,
     }),
     einvoiceRate: async () => ({ output: { sentence: 'Thue suat dieu chinh tu 10% xuong 8% theo quy dinh.' }, usage: zeroUsage }),
